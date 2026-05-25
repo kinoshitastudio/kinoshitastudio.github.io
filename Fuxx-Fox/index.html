@@ -3349,13 +3349,42 @@ function injectHoverScript(iframe) {
   } catch(e) {}
 }
 
+// ── Slot thumbnail update from edited export HTML ────────
+function updateSlotThumbnails(exportHtml) {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(exportHtml, 'text/html');
+    const allCSS = Array.from(doc.querySelectorAll('style')).map(s => s.textContent).join('\n');
+    const fontLink = doc.querySelector('link[href*="fonts.googleapis"]');
+    const fontTag = fontLink ? `<link href="${fontLink.href}" rel="stylesheet">` : '';
+    slots.forEach(s => {
+      if (!s.partId) return;
+      const cls = 'ff-' + s.partId.replace(/[^a-z0-9]/gi, '-');
+      const div = doc.querySelector('.' + cls);
+      if (!div) return;
+      const html = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">${fontTag}<style>${allCSS}</style></head><body>${div.outerHTML}</body></html>`;
+      const slotEl = document.querySelector(`.slot-filled[data-uid="${s.uid}"]`);
+      if (!slotEl) return;
+      const iframe = slotEl.querySelector('iframe');
+      if (!iframe) return;
+      if (iframe._editBlob) URL.revokeObjectURL(iframe._editBlob);
+      const blob = new Blob([html], { type: 'text/html' });
+      iframe._editBlob = URL.createObjectURL(blob);
+      iframe.onload = function() { scaleOneIframe(this); };
+      iframe.src = iframe._editBlob;
+    });
+  } catch(e) {}
+}
+
 function goTo(n) {
   // leaving export screen → save edited state
+  let savedHtml = null;
   if (n !== 2) {
     const codeEl = document.getElementById('exportCode');
     if (codeEl && codeEl.textContent.trim()) {
+      savedHtml = codeEl.textContent;
       _savedExport = {
-        html:    codeEl.textContent,
+        html:    savedHtml,
         partIds: slots.filter(s => s.partId).map(s => s.partId)
       };
       saveDraft();
@@ -3379,6 +3408,10 @@ function goTo(n) {
       const iframe = document.getElementById('exportIframe');
       if(iframe) injectHoverScript(iframe);
     }, 800);
+  }
+  // screen 1 に戻ったとき、編集済みHTMLをサムネイルに反映
+  if (n === 1 && savedHtml) {
+    updateSlotThumbnails(savedHtml);
   }
 }
 
