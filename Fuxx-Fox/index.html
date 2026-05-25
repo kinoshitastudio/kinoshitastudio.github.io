@@ -310,9 +310,22 @@ body {
 .slot-between-add {
   display: flex; align-items: center; gap: 8px;
   height: 28px; cursor: pointer;
-  opacity: .45; transition: opacity .15s;
+  opacity: .45; transition: opacity .15s, height .15s, background .15s;
+  border-radius: 6px;
 }
 .slot-between-add:hover { opacity: 1; }
+.slot-between-add.drop-target {
+  height: 56px; opacity: 1;
+  background: rgba(43,114,232,.15);
+  border: 2px dashed #2B72E8;
+  justify-content: center;
+}
+.slot-between-add.drop-target .sba-line { display: none; }
+.slot-between-add.drop-target .sba-btn { display: none; }
+.slot-between-add.drop-target::after {
+  content: 'ここに挿入';
+  color: #2B72E8; font-size: 12px; font-weight: 700; letter-spacing: .06em;
+}
 .sba-line { flex: 1; height: 1px; background: rgba(255,255,255,.5); }
 .sba-btn {
   background: rgba(255,255,255,.15);
@@ -2002,7 +2015,7 @@ function renderSlots() {
   slots.forEach((s, i) => {
     // ── between-slot insert button ──
     if (i > 0) {
-      parts.push(`<div class="slot-between-add" onclick="insertSlotAt(${i})">
+      parts.push(`<div class="slot-between-add" data-insert-idx="${i}" onclick="insertSlotAt(${i})">
         <div class="sba-line"></div>
         <button class="sba-btn" draggable="false">＋</button>
         <div class="sba-line"></div>
@@ -2065,7 +2078,6 @@ function initDnD() {
   document.querySelectorAll('.slot-filled[data-idx]').forEach(el => {
     // ── Desktop drag ──
     el.addEventListener('dragstart', e => {
-      if (e.target.closest('button')) { e.preventDefault(); return; }
       dragSrcUid = parseInt(el.dataset.uid);
       el.classList.add('dragging');
       e.dataTransfer.effectAllowed = 'move';
@@ -2073,10 +2085,12 @@ function initDnD() {
     el.addEventListener('dragend', () => {
       el.classList.remove('dragging');
       document.querySelectorAll('.slot-filled').forEach(b => b.classList.remove('drag-over'));
+      document.querySelectorAll('.slot-between-add').forEach(b => b.classList.remove('drop-target'));
     });
     el.addEventListener('dragover', e => {
       e.preventDefault();
       document.querySelectorAll('.slot-filled').forEach(b => b.classList.remove('drag-over'));
+      document.querySelectorAll('.slot-between-add').forEach(b => b.classList.remove('drop-target'));
       el.classList.add('drag-over');
     });
     el.addEventListener('drop', e => {
@@ -2092,6 +2106,30 @@ function initDnD() {
       dragSrcUid = null;
     });
 
+    // ── Between-add drop zones ──
+  });
+  document.querySelectorAll('.slot-between-add[data-insert-idx]').forEach(el => {
+    el.addEventListener('dragover', e => {
+      e.preventDefault();
+      document.querySelectorAll('.slot-filled').forEach(b => b.classList.remove('drag-over'));
+      document.querySelectorAll('.slot-between-add').forEach(b => b.classList.remove('drop-target'));
+      el.classList.add('drop-target');
+    });
+    el.addEventListener('dragleave', () => { el.classList.remove('drop-target'); });
+    el.addEventListener('drop', e => {
+      e.preventDefault();
+      el.classList.remove('drop-target');
+      const insertIdx = parseInt(el.dataset.insertIdx);
+      if (dragSrcUid == null) return;
+      const si = slots.findIndex(s => s.uid === dragSrcUid);
+      const [item] = slots.splice(si, 1);
+      slots.splice(si < insertIdx ? insertIdx - 1 : insertIdx, 0, item);
+      dragSrcUid = null;
+      renderSlots();
+    });
+  });
+  // dummy forEach close — reopen for touch drag
+  document.querySelectorAll('.slot-filled[data-idx]').forEach(el => {
     // ── Touch drag (drag bar only) ──
     const bar = el.querySelector('.slot-drag-bar');
     if (bar) {
