@@ -3696,6 +3696,8 @@ function toggleAnim() {
 
 let _editIframe = null;   // 編集中のiframe参照
 let _editLastRange = null; // 最後の選択レンジ
+let _ffLpTimer = null, _ffLpX = 0, _ffLpY = 0;
+let _ffTouchStartH = null, _ffTouchMoveH = null, _ffTouchEndH = null;
 
 function _iframeWin() {
   try { return document.getElementById('exportIframe').contentWindow; } catch(e) { return null; }
@@ -3782,7 +3784,15 @@ function _ffImgClick(e) {
     fi.addEventListener('change', function() {
       var f = fi.files[0]; if (!f || !fi._img) return;
       var rd = new FileReader();
-      rd.onload = function(ev) { if (fi._img) { fi._img.dataset.ffOriginalSrc = ev.target.result; fi._img.src = ev.target.result; fi._img = null; } fi.value = ''; };
+      rd.onload = function(ev) {
+        if (fi._img) {
+          var _img = fi._img; fi._img = null; fi.value = '';
+          _img.dataset.ffOriginalSrc = ev.target.result;
+          _img.src = ev.target.result;
+          var _dx = _editIframe ? _editIframe.contentDocument : null;
+          if (_dx) setTimeout(function() { _ffShowCropUI(_dx, _img, ev.target.result); }, 80);
+        }
+      };
       rd.readAsDataURL(f);
     });
   }
@@ -3851,7 +3861,13 @@ function _ffShowCropUI(_d, img, src) {
     var xPct=(fX/rendW*100).toFixed(1),yPct=(fY/rendH*100).toFixed(1);
     var posVal=xPct+'% '+yPct+'%';
     if(img.dataset.ffOriginalSrc)img.src=img.dataset.ffOriginalSrc;
-    img.style.objectFit='cover';
+    // 親要素が小さい（ロゴ等）場合はcontainで縦幅にフィット、大きい場合はcoverで
+    var parentH = img.parentElement ? img.parentElement.offsetHeight : 999;
+    if(parentH > 0 && parentH < 100){
+      img.style.objectFit='contain'; img.style.height='100%'; img.style.width='auto'; img.style.maxHeight='100%';
+    } else {
+      img.style.objectFit='cover';
+    }
     if(activeTab==='mobile'){
       if(!img.dataset.ffImgId)img.dataset.ffImgId='ffi'+Date.now();
       var sid=img.dataset.ffImgId;
@@ -3879,6 +3895,7 @@ function _ffShowCropUI(_d, img, src) {
 function _ffCtxMenu(e) {
   if (!editModeOn || !_editIframe) return;
   if (e.preventDefault) e.preventDefault();
+  if (e.stopImmediatePropagation) e.stopImmediatePropagation();
   var _d = _editIframe.contentDocument; if (!_d) return;
   var old = _d.getElementById('__ffCtx'); if (old) old.remove();
   var target = e.target;
@@ -3933,13 +3950,42 @@ function _ffCtxMenu(e) {
   var bgFi = document.createElement('input'); bgFi.type='file'; bgFi.accept='image/*'; bgFi.style.display='none';
   bgFi.addEventListener('change',function(){
     if(!bgFi.files[0]) return;
-    var r=new FileReader(); r.onload=function(ev){target.style.backgroundImage='url('+ev.target.result+')';target.style.backgroundSize='cover';target.style.backgroundPosition='center';target.style.backgroundColor='';};
+    var r=new FileReader(); r.onload=function(ev){
+      target.style.backgroundImage='url('+ev.target.result+')';
+      // ロゴ・小要素はcontain、ヒーロー系はcoverで
+      if(target.offsetHeight > 0 && target.offsetHeight < 100){
+        target.style.backgroundSize='contain';
+        target.style.backgroundRepeat='no-repeat';
+        target.style.backgroundPosition='center left';
+      } else {
+        target.style.backgroundSize='cover';
+        target.style.backgroundRepeat='';
+        target.style.backgroundPosition='center';
+      }
+      target.style.backgroundColor='';
+      setTimeout(function(){syncEditedCode(_d);},50);
+    };
     r.readAsDataURL(bgFi.files[0]); m.remove();
   });
   document.body.appendChild(bgFi);
   bgRow.appendChild(mkBtn('🖼 画像をアップロード',function(){bgFi.click();},'width:100%;text-align:left;'));
   if(target.style.backgroundImage&&target.style.backgroundImage!=='none'){
     bgRow.appendChild(mkBtn('✕ 背景画像を削除',function(){target.style.backgroundImage='';m.remove();},'font-size:10px;padding:3px 7px;width:100%;text-align:left;margin-top:2px;'));
+    // 背景画像フォーカルポイント（9マスグリッド）
+    var bgPosLbl = _d.createElement('div'); bgPosLbl.textContent='背景位置'; bgPosLbl.style.cssText='font-size:10px;color:rgba(255,255,255,.5);margin-top:4px;';
+    bgRow.appendChild(bgPosLbl);
+    var bgGrid = _d.createElement('div'); bgGrid.style.cssText='display:grid;grid-template-columns:repeat(3,1fr);gap:2px;';
+    [['左上','0% 0%'],['上','50% 0%'],['右上','100% 0%'],
+     ['左','0% 50%'],['中央','50% 50%'],['右','100% 50%'],
+     ['左下','0% 100%'],['下','50% 100%'],['右下','100% 100%']].forEach(function(pair){
+      var btn=_d.createElement('button'); btn.title=pair[0]; btn.textContent=pair[0];
+      btn.style.cssText='background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.7);border-radius:3px;cursor:pointer;font-size:9px;padding:3px 2px;';
+      if(target.style.backgroundPosition===pair[1]) btn.style.background='rgba(43,114,232,.5)';
+      btn.addEventListener('mousedown',function(ev){ev.preventDefault();ev.stopPropagation();});
+      btn.addEventListener('click',function(ev){ev.stopPropagation();target.style.backgroundPosition=pair[1];setTimeout(function(){syncEditedCode(_d);},50);});
+      bgGrid.appendChild(btn);
+    });
+    bgRow.appendChild(bgGrid);
   }
   m.appendChild(bgRow);
 
@@ -4214,6 +4260,27 @@ function toggleEditMode() {
     doc.addEventListener('selectionchange', _ffTrackSel);
     doc.addEventListener('click', _ffImgClick, true);
     doc.addEventListener('contextmenu', _ffCtxMenu, true);
+    // モバイル長押し → 親コンテキストから _ffCtxMenu を起動
+    _ffTouchStartH = function(e) {
+      if (e.target.closest && (e.target.closest('#__ffCtx') || e.target.closest('#__ffCropUI'))) return;
+      var t = e.target, tc = e.touches[0];
+      _ffLpX = tc.clientX; _ffLpY = tc.clientY;
+      clearTimeout(_ffLpTimer);
+      _ffLpTimer = setTimeout(function() {
+        _ffLpTimer = null;
+        try { navigator.vibrate && navigator.vibrate(25); } catch(ex) {}
+        _ffCtxMenu({ target: t, clientX: _ffLpX, clientY: _ffLpY, preventDefault: function(){} });
+      }, 600);
+    };
+    _ffTouchMoveH = function(e) {
+      if (!_ffLpTimer) return;
+      var tc = e.touches[0];
+      if (Math.abs(tc.clientX - _ffLpX) > 12 || Math.abs(tc.clientY - _ffLpY) > 12) { clearTimeout(_ffLpTimer); _ffLpTimer = null; }
+    };
+    _ffTouchEndH = function() { if (_ffLpTimer) { clearTimeout(_ffLpTimer); _ffLpTimer = null; } };
+    doc.addEventListener('touchstart', _ffTouchStartH, { passive: true });
+    doc.addEventListener('touchmove', _ffTouchMoveH, { passive: true });
+    doc.addEventListener('touchend', _ffTouchEndH, { passive: true });
 
     // ── CSS を親コンテキストから直接注入（script実行不要） ──
     if (!doc.getElementById('__ffSt')) {
@@ -4675,6 +4742,10 @@ function toggleEditMode() {
     doc.removeEventListener('selectionchange', _ffTrackSel);
     doc.removeEventListener('click', _ffImgClick, true);
     doc.removeEventListener('contextmenu', _ffCtxMenu, true);
+    if (_ffTouchStartH) { doc.removeEventListener('touchstart', _ffTouchStartH, { passive: true }); _ffTouchStartH = null; }
+    if (_ffTouchMoveH) { doc.removeEventListener('touchmove', _ffTouchMoveH, { passive: true }); _ffTouchMoveH = null; }
+    if (_ffTouchEndH) { doc.removeEventListener('touchend', _ffTouchEndH, { passive: true }); _ffTouchEndH = null; }
+    clearTimeout(_ffLpTimer); _ffLpTimer = null;
     _editIframe = null; _editLastRange = null;
     ['__ffSt', '__ffFi', '__ffScript', '__ffCropUI', '__ffCtx'].forEach(function(id) {
       var el = doc.getElementById(id); if (el) el.remove();
