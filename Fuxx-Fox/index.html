@@ -3694,15 +3694,132 @@ function toggleAnim() {
 
 // ── Edit mode ─────────────────────────────────────────
 
+let _editIframe = null;   // 編集中のiframe参照
+let _editLastRange = null; // 最後の選択レンジ
+
 function _iframeWin() {
   try { return document.getElementById('exportIframe').contentWindow; } catch(e) { return null; }
 }
-function fmtExec(cmd) {
-  try { _iframeWin().postMessage({ type:'ffFmt', cmd }, '*'); } catch(e){}
+
+function _ffApplyFontSize(_d, px) {
+  var sel = _d.getSelection(); if (!sel || !sel.rangeCount || sel.isCollapsed) return;
+  var r = sel.getRangeAt(0), sp = _d.createElement('span'); sp.style.fontSize = px;
+  try { sp.appendChild(r.extractContents()); r.insertNode(sp); } catch(ex) {
+    _d.execCommand('fontSize', false, '7');
+    _d.querySelectorAll('font[size="7"]').forEach(function(f) {
+      var s2 = _d.createElement('span'); s2.style.fontSize = px; s2.innerHTML = f.innerHTML;
+      f.parentNode.replaceChild(s2, f);
+    });
+  }
+  var nr = _d.createRange(); nr.selectNodeContents(sp);
+  sel.removeAllRanges(); sel.addRange(nr); _editLastRange = nr.cloneRange();
+}
+
+function _ffRestoreSel(_d) {
+  if (!_editLastRange) return;
+  try { var sel = _d.getSelection(); sel.removeAllRanges(); sel.addRange(_editLastRange); } catch(e) {}
+}
+
+function fmtExec(cmd, value) {
+  // postMessage（inject script が動いている場合）
+  try { _iframeWin().postMessage({ type:'ffFmt', cmd, value: value || null }, '*'); } catch(e) {}
+  // 親コンテキスト直接実行フォールバック
+  if (!editModeOn || !_editIframe) return;
+  var _d = _editIframe.contentDocument; if (!_d) return;
+  _ffRestoreSel(_d);
+  try {
+    if (cmd === 'bold' || cmd === 'italic' || cmd === 'undo' || cmd === 'redo') { _d.execCommand(cmd, false, null); }
+    else if (cmd === 'foreColor' && value) { _d.execCommand('foreColor', false, value); }
+    else if (cmd && cmd.startsWith('fontSize_')) { _ffApplyFontSize(_d, cmd.split('_')[1] + 'px'); }
+  } catch(e) {}
+  setTimeout(function() { try { syncEditedCode(_d); } catch(e) {} }, 50);
 }
 function fmtSize(px) { fmtExec('fontSize_' + px); }
 function openMobileMenu() {
   try { _iframeWin().postMessage({ type:'ffOpenMenu' }, '*'); } catch(e){}
+  // フォールバック：最後にタッチした要素で contextmenu を擬似発火
+  if (_editIframe) { var _d = _editIframe.contentDocument; if (_d && _d.body) _ffCtxMenu({ target: _d.body, clientX: 20, clientY: 80, preventDefault: function(){} }); }
+}
+
+// ── 親コンテキストから直接追加するeditモードイベントハンドラ ────
+
+function _ffTrackSel() {
+  if (!_editIframe) return;
+  var _d = _editIframe.contentDocument; if (!_d) return;
+  var sel = _d.getSelection();
+  if (sel && sel.rangeCount && !sel.isCollapsed) {
+    try { _editLastRange = sel.getRangeAt(0).cloneRange(); } catch(e) {}
+  }
+}
+
+// 画像クリック → ファイル選択
+function _ffImgClick(e) {
+  if (!editModeOn || !_editIframe) return;
+  var el = e.target;
+  if (el.tagName !== 'IMG') el = el.closest ? el.closest('img') : null;
+  if (!el) return;
+  var _d = _editIframe.contentDocument;
+  if (_d && (_d.getElementById('__ffCtx') || _d.getElementById('__ffCropUI'))) return;
+  e.preventDefault(); if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+  var fi = document.getElementById('__ffParentFi');
+  if (!fi) {
+    fi = document.createElement('input'); fi.type = 'file'; fi.accept = 'image/*';
+    fi.style.display = 'none'; fi.id = '__ffParentFi'; document.body.appendChild(fi);
+    fi.addEventListener('change', function() {
+      var f = fi.files[0]; if (!f || !fi._img) return;
+      var rd = new FileReader();
+      rd.onload = function(ev) { if (fi._img) { fi._img.dataset.ffOriginalSrc = ev.target.result; fi._img.src = ev.target.result; fi._img = null; } fi.value = ''; };
+      rd.readAsDataURL(f);
+    });
+  }
+  fi._img = el; fi.click();
+}
+
+// 右クリックコンテキストメニュー
+function _ffCtxMenu(e) {
+  if (!editModeOn || !_editIframe) return;
+  if (e.preventDefault) e.preventDefault();
+  var _d = _editIframe.contentDocument; if (!_d) return;
+  var old = _d.getElementById('__ffCtx'); if (old) old.remove();
+  var target = e.target, isImg = target && target.tagName === 'IMG';
+  var m = _d.createElement('div'); m.id = '__ffCtx';
+  m.style.cssText = 'position:fixed;z-index:99999;background:#1a1a1a;border:1px solid #444;border-radius:10px;padding:8px 0;min-width:160px;box-shadow:0 8px 24px rgba(0,0,0,.5);font-family:system-ui,sans-serif;font-size:13px;color:#fff;';
+  var cw = _d.documentElement.clientWidth || 400, ch = _d.documentElement.clientHeight || 400;
+  m.style.left = Math.min(e.clientX || 20, cw - 180) + 'px';
+  m.style.top  = Math.min(e.clientY || 80,  ch - 200) + 'px';
+  function mkItem(label, fn) {
+    var b = _d.createElement('button');
+    b.textContent = label;
+    b.style.cssText = 'display:block;width:100%;padding:8px 16px;background:none;border:none;color:#fff;text-align:left;cursor:pointer;font-size:13px;white-space:nowrap;';
+    b.addEventListener('mouseenter', function(){ b.style.background='rgba(255,255,255,.12)'; });
+    b.addEventListener('mouseleave', function(){ b.style.background='none'; });
+    b.addEventListener('mousedown', function(ev){ ev.preventDefault(); ev.stopPropagation(); m.remove(); fn(); });
+    m.appendChild(b);
+  }
+  function mkSep() { var s=_d.createElement('div'); s.style.cssText='height:1px;background:rgba(255,255,255,.1);margin:4px 0;'; m.appendChild(s); }
+
+  if (isImg) {
+    mkItem('🖼 画像を差し替え', function(){ _ffImgClick({ target: target, preventDefault:function(){}, stopImmediatePropagation:function(){} }); });
+  } else {
+    mkItem('🎨 文字色を変更', function(){
+      var c = window.prompt('色コード（例: #ff0000 / rgba(255,0,0,1)）', '');
+      if (!c) return;
+      _ffRestoreSel(_d);
+      try { _d.execCommand('foreColor', false, c); setTimeout(function(){ syncEditedCode(_d); }, 50); } catch(er){}
+    });
+    mkSep();
+    mkItem('🖌 背景色を変更', function(){
+      var c = window.prompt('色コード（例: #ffff00）', '');
+      if (!c) return;
+      if (target) target.style.backgroundColor = c;
+      setTimeout(function(){ syncEditedCode(_d); }, 50);
+    });
+  }
+  mkSep();
+  mkItem('✕ 閉じる', function(){});
+  _d.body.appendChild(m);
+  function closeCtx(ev){ if (m && m.parentNode && !m.contains(ev.target)){ m.remove(); _d.removeEventListener('click', closeCtx, true); } }
+  setTimeout(function(){ _d.addEventListener('click', closeCtx, true); }, 0);
 }
 // ── ホバー/クリック 共通ハンドラ ─────────────────────
 function handleHoverActive(comp, tag, tagIdx) {
@@ -3884,6 +4001,13 @@ function toggleEditMode() {
   if (editModeOn) {
     doc.body.contentEditable = 'true';
     doc.body.spellcheck = false;
+
+    // ── 親コンテキストからイベントリスナー登録 ──
+    _editIframe = iframe;
+    _editLastRange = null;
+    doc.addEventListener('selectionchange', _ffTrackSel);
+    doc.addEventListener('click', _ffImgClick, true);
+    doc.addEventListener('contextmenu', _ffCtxMenu, true);
 
     // ── CSS を親コンテキストから直接注入（script実行不要） ──
     if (!doc.getElementById('__ffSt')) {
@@ -4338,10 +4462,15 @@ function toggleEditMode() {
     } catch(_) {}
 
   } else {
+    // ── editモード終了: 直接DOM操作でクリーンアップ ──
     doc.body.contentEditable = 'false';
-    const s2 = doc.createElement('script');
-    s2.textContent = `window.__ffEditActive = false; ['__ffSt','__ffFi','__ffScript','__ffCropUI'].forEach(function(id){var el=document.getElementById(id);if(el)el.remove();});`;
-    (doc.head || doc.body).appendChild(s2);
+    doc.removeEventListener('selectionchange', _ffTrackSel);
+    doc.removeEventListener('click', _ffImgClick, true);
+    doc.removeEventListener('contextmenu', _ffCtxMenu, true);
+    _editIframe = null; _editLastRange = null;
+    ['__ffSt', '__ffFi', '__ffScript', '__ffCropUI', '__ffCtx'].forEach(function(id) {
+      var el = doc.getElementById(id); if (el) el.remove();
+    });
     syncEditedCode(doc);
   }
 }
