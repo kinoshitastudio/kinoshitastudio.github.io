@@ -3867,67 +3867,157 @@ function _ffShowCropUI(_d, img, src) {
   ov.remove=function(){_d.removeEventListener('keydown',onKey,true);_d.removeEventListener('mousemove',mmDoc);_d.removeEventListener('mouseup',muDoc);_d.removeEventListener('touchmove',tmDoc,{passive:false});_origRm();};
 }
 
-// 右クリックコンテキストメニュー
+// 右クリックコンテキストメニュー（フル版）
 function _ffCtxMenu(e) {
   if (!editModeOn || !_editIframe) return;
   if (e.preventDefault) e.preventDefault();
   var _d = _editIframe.contentDocument; if (!_d) return;
   var old = _d.getElementById('__ffCtx'); if (old) old.remove();
-  var target = e.target, isImg = target && target.tagName === 'IMG';
-  var m = _d.createElement('div'); m.id = '__ffCtx';
-  m.style.cssText = 'position:fixed;z-index:99999;background:#1a1a1a;border:1px solid #444;border-radius:10px;padding:8px 0;min-width:170px;box-shadow:0 8px 24px rgba(0,0,0,.5);font-family:system-ui,sans-serif;font-size:13px;color:#fff;';
-  var cw = _d.documentElement.clientWidth || 400, ch = _d.documentElement.clientHeight || 400;
-  m.style.left = Math.min(e.clientX || 20, cw - 190) + 'px';
-  m.style.top  = Math.min(e.clientY || 80, ch - 220) + 'px';
-  function mkItem(label, fn) {
-    var b = _d.createElement('button'); b.textContent = label;
-    b.style.cssText = 'display:block;width:100%;padding:8px 16px;background:none;border:none;color:#fff;text-align:left;cursor:pointer;font-size:13px;white-space:nowrap;';
-    b.addEventListener('mouseenter',function(){b.style.background='rgba(255,255,255,.12)';});
-    b.addEventListener('mouseleave',function(){b.style.background='none';});
-    b.addEventListener('mousedown',function(ev){ev.preventDefault();ev.stopPropagation();m.remove();fn();});
-    m.appendChild(b);
-  }
-  function mkSep(){var s=_d.createElement('div');s.style.cssText='height:1px;background:rgba(255,255,255,.1);margin:4px 0;';m.appendChild(s);}
+  var target = e.target;
+  var imgEl = (target.closest ? target.closest('img') : null) || (target.tagName==='IMG' ? target : null);
+  var sel = _d.getSelection();
+  var hasSel = sel && !sel.isCollapsed;
+  if (hasSel) { try { _editLastRange = sel.getRangeAt(0).cloneRange(); } catch(ex) {} }
 
-  if (isImg) {
-    mkItem('🖼 画像を差し替え', function(){
+  function mkBtn(html, onCk, extra) {
+    var b = _d.createElement('button'); b.innerHTML = html;
+    b.style.cssText = 'background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);color:#fff;border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit;padding:5px 8px;'+(extra||'');
+    b.addEventListener('mousedown',function(ev){ev.preventDefault();ev.stopPropagation();});
+    b.addEventListener('click',function(ev){ev.stopPropagation();onCk();});
+    return b;
+  }
+  function mkColorRow(label, onChange, initColor) {
+    var row = _d.createElement('div'); row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:3px 2px;';
+    var lbl = _d.createElement('span'); lbl.textContent = label; lbl.style.cssText = 'flex:1;color:rgba(255,255,255,.65);font-size:10px;white-space:nowrap;';
+    var sw = _d.createElement('div'); sw.style.cssText = 'width:22px;height:22px;border-radius:4px;background:'+(initColor||'#fff')+';border:1.5px solid rgba(255,255,255,.35);flex-shrink:0;position:relative;cursor:pointer;';
+    var inp = _d.createElement('input'); inp.type = 'color'; inp.value = initColor||'#ffffff';
+    inp.style.cssText = 'opacity:0;position:absolute;inset:0;width:100%;height:100%;cursor:pointer;border:none;';
+    inp.addEventListener('mousedown',function(ev){ev.stopPropagation();});
+    inp.addEventListener('input',function(){sw.style.background=inp.value;onChange(inp.value);});
+    sw.appendChild(inp); row.appendChild(lbl); row.appendChild(sw); return row;
+  }
+  function mkSep(){var d=_d.createElement('div');d.style.cssText='border-top:1px solid rgba(255,255,255,.1);margin:4px 0;';return d;}
+
+  var m = _d.createElement('div'); m.id = '__ffCtx'; m.contentEditable = 'false';
+  m.style.cssText = 'position:fixed;z-index:99999;background:#18262E;border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:8px;box-shadow:0 12px 32px rgba(0,0,0,.55);font-family:sans-serif;min-width:180px;max-width:220px;';
+
+  // ── テキスト選択時: B/I/サイズ + 文字色 ──
+  if (hasSel) {
+    var fRow = _d.createElement('div'); fRow.style.cssText = 'display:flex;gap:3px;flex-wrap:wrap;';
+    fRow.appendChild(mkBtn('<b>B</b>',function(){_ffRestoreSel(_d);_d.execCommand('bold',false,null);}));
+    fRow.appendChild(mkBtn('<i>I</i>',function(){_ffRestoreSel(_d);_d.execCommand('italic',false,null);}));
+    [['S','12px'],['M','16px'],['L','24px'],['XL','36px']].forEach(function(p){
+      fRow.appendChild(mkBtn(p[0],function(){_ffRestoreSel(_d);_ffApplyFontSize(_d,p[1]);m.remove();}));
+    });
+    m.appendChild(fRow);
+    m.appendChild(mkColorRow('文字色',function(c){_ffRestoreSel(_d);_d.execCommand('foreColor',false,c);}));
+    m.appendChild(mkSep());
+  }
+
+  // ── 背景色 ──
+  m.appendChild(mkColorRow('背景色 <'+target.tagName.toLowerCase()+'>',function(c){target.style.backgroundColor=c;},target.style.backgroundColor||'#ffffff'));
+
+  // ── 背景画像 ──
+  m.appendChild(mkSep());
+  var bgRow = _d.createElement('div'); bgRow.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+  var bgLbl = _d.createElement('div'); bgLbl.textContent = '背景画像'; bgLbl.style.cssText = 'font-size:10px;color:rgba(255,255,255,.6);letter-spacing:.05em;';
+  bgRow.appendChild(bgLbl);
+  var bgFi = document.createElement('input'); bgFi.type='file'; bgFi.accept='image/*'; bgFi.style.display='none';
+  bgFi.addEventListener('change',function(){
+    if(!bgFi.files[0]) return;
+    var r=new FileReader(); r.onload=function(ev){target.style.backgroundImage='url('+ev.target.result+')';target.style.backgroundSize='cover';target.style.backgroundPosition='center';target.style.backgroundColor='';};
+    r.readAsDataURL(bgFi.files[0]); m.remove();
+  });
+  document.body.appendChild(bgFi);
+  bgRow.appendChild(mkBtn('🖼 画像をアップロード',function(){bgFi.click();},'width:100%;text-align:left;'));
+  if(target.style.backgroundImage&&target.style.backgroundImage!=='none'){
+    bgRow.appendChild(mkBtn('✕ 背景画像を削除',function(){target.style.backgroundImage='';m.remove();},'font-size:10px;padding:3px 7px;width:100%;text-align:left;margin-top:2px;'));
+  }
+  m.appendChild(bgRow);
+
+  // ── 枠線 ──
+  m.appendChild(mkColorRow('枠線',function(c){target.style.border='2px solid '+c;},target.style.borderColor||'#cccccc'));
+  m.appendChild(mkBtn('✕ 枠線なし',function(){target.style.border='none';},'font-size:10px;padding:3px 7px;margin-top:2px;width:100%;text-align:left;'));
+
+  // ── 角丸 ──
+  var rrRow = _d.createElement('div'); rrRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:6px;';
+  var rrLbl = _d.createElement('div'); rrLbl.textContent='角丸'; rrLbl.style.cssText='font-size:10px;color:rgba(255,255,255,.6);flex:1;letter-spacing:.05em;';
+  var rrInp = _d.createElement('input'); rrInp.type='number'; rrInp.min='0'; rrInp.max='999'; rrInp.step='1';
+  rrInp.value = parseInt(target.style.borderRadius)||0;
+  rrInp.style.cssText = 'width:62px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.3);border-radius:3px;color:#fff;padding:4px 8px;font-size:12px;outline:none;text-align:center;font-family:inherit;';
+  rrInp.addEventListener('mousedown',function(ev){ev.stopPropagation();});
+  rrInp.addEventListener('input',function(){target.style.borderRadius=Math.max(0,parseInt(rrInp.value)||0)+'px';});
+  rrInp.addEventListener('keydown',function(ev){if(ev.key==='Enter'||ev.key==='Escape')m.remove();ev.stopPropagation();});
+  var rrUnit = _d.createElement('span'); rrUnit.textContent='px'; rrUnit.style.cssText='font-size:11px;color:rgba(255,255,255,.4);';
+  var rrBtns = _d.createElement('div'); rrBtns.style.cssText='display:flex;gap:4px;';
+  rrBtns.appendChild(mkBtn('⬭ 丸め',function(){rrInp.value=999;target.style.borderRadius='999px';},'font-size:10px;padding:3px 7px;'));
+  rrBtns.appendChild(mkBtn('⬜ なし',function(){rrInp.value=0;target.style.borderRadius='0';},'font-size:10px;padding:3px 7px;'));
+  rrRow.appendChild(rrLbl); rrRow.appendChild(rrInp); rrRow.appendChild(rrUnit);
+  m.appendChild(rrRow); m.appendChild(rrBtns);
+
+  // ── リンクURL ──
+  var linkEl = (target.closest ? target.closest('a') : null) || (target.tagName==='A' ? target : null);
+  if (linkEl) {
+    m.appendChild(mkSep());
+    var lkRow = _d.createElement('div'); lkRow.style.cssText='display:flex;flex-direction:column;gap:4px;';
+    var lkLbl = _d.createElement('div'); lkLbl.textContent='🔗 リンク先URL'; lkLbl.style.cssText='font-size:10px;color:rgba(255,255,255,.6);letter-spacing:.05em;';
+    var lkInp = _d.createElement('input'); lkInp.type='text'; lkInp.placeholder='https://...'; lkInp.value=linkEl.getAttribute('href')||'';
+    lkInp.style.cssText='width:100%;box-sizing:border-box;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.3);border-radius:3px;color:#fff;padding:5px 8px;font-size:12px;outline:none;';
+    lkInp.addEventListener('mousedown',function(ev){ev.stopPropagation();});
+    lkInp.addEventListener('keydown',function(ev){if(ev.key==='Enter'){linkEl.setAttribute('href',lkInp.value);m.remove();}if(ev.key==='Escape'){m.remove();}ev.stopPropagation();});
+    lkInp.addEventListener('blur',function(){linkEl.setAttribute('href',lkInp.value);});
+    var ntLbl = _d.createElement('label'); ntLbl.style.cssText='display:flex;align-items:center;gap:6px;font-size:11px;color:rgba(255,255,255,.7);cursor:pointer;';
+    var ntChk = _d.createElement('input'); ntChk.type='checkbox'; ntChk.checked=linkEl.getAttribute('target')==='_blank';
+    ntChk.addEventListener('change',function(){linkEl.setAttribute('target',ntChk.checked?'_blank':'_self');});
+    ntLbl.appendChild(ntChk); ntLbl.appendChild(document.createTextNode('新しいタブで開く'));
+    lkRow.appendChild(lkLbl); lkRow.appendChild(lkInp); lkRow.appendChild(ntLbl);
+    m.appendChild(lkRow);
+  }
+
+  // ── 画像 ──
+  if (imgEl) {
+    m.appendChild(mkSep());
+    function _getParentFi() {
       var fi = document.getElementById('__ffParentFi');
       if (!fi) {
-        fi = document.createElement('input'); fi.type = 'file'; fi.accept = 'image/*';
-        fi.style.display = 'none'; fi.id = '__ffParentFi'; document.body.appendChild(fi);
-        fi.addEventListener('change', function() {
-          var f = fi.files[0]; if (!f || !fi._img) return;
-          var rd = new FileReader();
-          rd.onload = function(ev) { if (fi._img) { fi._img.dataset.ffOriginalSrc = ev.target.result; fi._img.src = ev.target.result; fi._img = null; } fi.value = ''; };
+        fi = document.createElement('input'); fi.type='file'; fi.accept='image/*'; fi.style.display='none'; fi.id='__ffParentFi'; document.body.appendChild(fi);
+        fi.addEventListener('change',function(){
+          var f=fi.files[0]; if(!f||!fi._img) return;
+          var rd=new FileReader(); rd.onload=function(ev){if(fi._img){fi._img.dataset.ffOriginalSrc=ev.target.result;fi._img.src=ev.target.result;fi._img=null;}fi.value='';};
           rd.readAsDataURL(f);
         });
       }
-      fi._img = target; fi.click();
-    });
-    mkItem('✂ フォーカルポイント設定', function(){
-      var src = target.dataset.ffOriginalSrc || target.src;
-      _ffShowCropUI(_d, target, src);
-    });
-  } else {
-    mkItem('🎨 文字色を変更', function(){
-      _ffPickColor(function(c){
-        _ffRestoreSel(_d);
-        try { _d.execCommand('foreColor', false, c); setTimeout(function(){syncEditedCode(_d);}, 50); } catch(er){}
-      });
-    });
-    mkSep();
-    mkItem('🖌 背景色を変更', function(){
-      _ffPickColor(function(c){
-        if (target) target.style.backgroundColor = c;
-        setTimeout(function(){syncEditedCode(_d);}, 50);
-      });
-    });
+      return fi;
+    }
+    m.appendChild(mkBtn('🖼 画像を差し替え',function(){var fi=_getParentFi();fi._img=imgEl;m.remove();fi.click();},'width:100%;text-align:left;'));
+    m.appendChild(mkBtn('✂ 再クロップ',function(){
+      if(imgEl.dataset.ffOriginalSrc){m.remove();_ffShowCropUI(_d,imgEl,imgEl.dataset.ffOriginalSrc);}
+      else{var fi=_getParentFi();fi._img=imgEl;m.remove();fi.click();}
+    },'width:100%;text-align:left;margin-top:2px;'));
   }
-  mkSep();
-  mkItem('✕ 閉じる', function(){});
+
   _d.body.appendChild(m);
-  function closeCtx(ev){ if(m&&m.parentNode&&!m.contains(ev.target)){m.remove();_d.removeEventListener('click',closeCtx,true);} }
-  setTimeout(function(){_d.addEventListener('click',closeCtx,true);}, 0);
+
+  // ── 位置調整 ──
+  var vW=_d.documentElement.clientWidth, vH=_d.documentElement.clientHeight;
+  var mx=e.clientX||20, my=e.clientY||80;
+  m.style.left=mx+'px'; m.style.top=my+'px';
+  requestAnimationFrame(function(){
+    var r=m.getBoundingClientRect();
+    if(r.right>vW) m.style.left=(mx-r.width)+'px';
+    if(r.bottom>vH) m.style.top=(my-r.height)+'px';
+  });
+
+  // ── 外クリックで閉じる ──
+  setTimeout(function(){
+    function closeCtx(ev){
+      if(!m||!m.parentNode) return;
+      var tgt=ev.changedTouches?_d.elementFromPoint(ev.changedTouches[0].clientX,ev.changedTouches[0].clientY):ev.target;
+      if(!tgt||!m.contains(tgt)){m.remove();_d.removeEventListener('mousedown',closeCtx,true);_d.removeEventListener('touchend',closeCtx,true);}
+    }
+    _d.addEventListener('mousedown',closeCtx,true);
+    _d.addEventListener('touchend',closeCtx,true);
+  },50);
 }
 // ── ホバー/クリック 共通ハンドラ ─────────────────────
 function handleHoverActive(comp, tag, tagIdx) {
@@ -4585,8 +4675,11 @@ function toggleEditMode() {
 
 function syncEditedCode(doc) {
   if (!doc) return;
-  const html = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
-  setExportCode(html);
+  var clone = doc.documentElement.cloneNode(true);
+  ['__ffSt','__ffScript','__ffFi','__ffParentFi','__ffCropUI','__ffCtx'].forEach(function(id){
+    var el = clone.querySelector('#'+id); if(el) el.remove();
+  });
+  setExportCode('<!DOCTYPE html>\n' + clone.outerHTML);
 }
 
 // ── Code panel toggle (desktop) ──────────────────────
