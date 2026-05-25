@@ -3752,7 +3752,20 @@ function _ffTrackSel() {
   }
 }
 
-// 画像クリック → ファイル選択
+// カラーピッカー（parent pageのnative input type=color を使用）
+function _ffPickColor(callback) {
+  var inp = document.getElementById('__ffColorPick');
+  if (!inp) {
+    inp = document.createElement('input'); inp.type = 'color';
+    inp.style.cssText = 'position:fixed;opacity:0;pointer-events:none;width:0;height:0;'; inp.id = '__ffColorPick';
+    document.body.appendChild(inp);
+  }
+  function once() { inp.removeEventListener('change', once); callback(inp.value); }
+  inp.addEventListener('change', once);
+  inp.click();
+}
+
+// 画像クリック → crop UI または ファイル選択
 function _ffImgClick(e) {
   if (!editModeOn || !_editIframe) return;
   var el = e.target;
@@ -3761,6 +3774,7 @@ function _ffImgClick(e) {
   var _d = _editIframe.contentDocument;
   if (_d && (_d.getElementById('__ffCtx') || _d.getElementById('__ffCropUI'))) return;
   e.preventDefault(); if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+  if (el.dataset.ffOriginalSrc) { _ffShowCropUI(_d, el, el.dataset.ffOriginalSrc); return; }
   var fi = document.getElementById('__ffParentFi');
   if (!fi) {
     fi = document.createElement('input'); fi.type = 'file'; fi.accept = 'image/*';
@@ -3775,6 +3789,84 @@ function _ffImgClick(e) {
   fi._img = el; fi.click();
 }
 
+// フォーカルポイント crop UI（PC/モバイル独立タブ）
+function _ffShowCropUI(_d, img, src) {
+  var old = _d.getElementById('__ffCropUI'); if (old) old.remove();
+  var activeTab = 'pc';
+  var ov = _d.createElement('div'); ov.id = '__ffCropUI';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.85);display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:20px;gap:12px;';
+  // Tabs
+  var tabRow = _d.createElement('div'); tabRow.style.cssText = 'display:flex;gap:8px;flex-shrink:0;';
+  var tabPc = _d.createElement('button'); tabPc.textContent = 'PC';
+  var tabMb = _d.createElement('button'); tabMb.textContent = 'Mobile';
+  function stTab(b,on){ b.style.cssText='padding:6px 18px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-weight:700;'+(on?'background:#2B72E8;color:#fff;':'background:rgba(255,255,255,.15);color:#fff;'); }
+  stTab(tabPc,true); stTab(tabMb,false);
+  tabRow.appendChild(tabPc); tabRow.appendChild(tabMb); ov.appendChild(tabRow);
+  // Label
+  var lbl = _d.createElement('div'); lbl.style.cssText = 'color:#fff;font-size:12px;text-align:center;opacity:.8;flex-shrink:0;';
+  lbl.textContent = 'PC用フォーカルポイント ― 表示させたい部分を枠に入れて確定 / ドラッグ移動 / スクロールでサイズ調整'; ov.appendChild(lbl);
+  // Image wrap
+  var wrap = _d.createElement('div'); wrap.style.cssText = 'position:relative;overflow:hidden;max-width:90vw;max-height:55vh;border-radius:8px;background:#111;flex-shrink:1;';
+  var ci = _d.createElement('img'); ci.src = src; ci.crossOrigin = 'anonymous';
+  ci.style.cssText = 'display:block;max-width:100%;max-height:55vh;object-fit:contain;user-select:none;-webkit-user-drag:none;';
+  var bx = _d.createElement('div'); bx.style.cssText = 'position:absolute;border:2px solid #2B72E8;box-shadow:0 0 0 9999px rgba(0,0,0,.5);cursor:move;touch-action:none;';
+  var dot = _d.createElement('div'); dot.style.cssText = 'position:absolute;width:16px;height:16px;border-radius:50%;background:#2B72E8;border:2px solid #fff;pointer-events:none;transform:translate(-50%,-50%);';
+  wrap.appendChild(ci); wrap.appendChild(bx); wrap.appendChild(dot); ov.appendChild(wrap);
+  // Buttons
+  var row = _d.createElement('div'); row.style.cssText = 'display:flex;gap:10px;flex-shrink:0;';
+  var btnOk = _d.createElement('button'); btnOk.textContent = '確定'; btnOk.style.cssText = 'background:#2B72E8;color:#fff;border:none;padding:10px 32px;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer;';
+  var btnNg = _d.createElement('button'); btnNg.textContent = 'キャンセル'; btnNg.style.cssText = 'background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.3);padding:10px 20px;border-radius:6px;font-size:14px;cursor:pointer;';
+  row.appendChild(btnOk); row.appendChild(btnNg); ov.appendChild(row);
+  _d.body.appendChild(ov);
+  // Crop state
+  var cbx=0,cby=0,cbw=0,cbh=0;
+  function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
+  function setBox(x,y,w,h){var mW=ci.offsetWidth,mH=ci.offsetHeight;cbw=clamp(w,40,mW);cbh=clamp(h!==undefined?h:(cbh||w*0.6),30,mH);cbx=clamp(x,0,mW-cbw);cby=clamp(y,0,mH-cbh);bx.style.left=cbx+'px';bx.style.top=cby+'px';bx.style.width=cbw+'px';bx.style.height=cbh+'px';dot.style.left=(cbx+cbw/2)+'px';dot.style.top=(cby+cbh/2)+'px';}
+  function initBox(){var w=ci.offsetWidth*0.65,h=w*0.55;setBox((ci.offsetWidth-w)/2,(ci.offsetHeight-h)/2,w,h);}
+  ci.onload=initBox; if(ci.complete&&ci.naturalWidth)initBox();
+  // Drag
+  var dragging=false,dx0,dy0,bx0,by0;
+  bx.addEventListener('mousedown',function(e){e.preventDefault();e.stopPropagation();dragging=true;dx0=e.clientX;dy0=e.clientY;bx0=cbx;by0=cby;});
+  var mmDoc=function(e){if(!dragging)return;setBox(bx0+e.clientX-dx0,by0+e.clientY-dy0,cbw,cbh);};
+  var muDoc=function(){dragging=false;};
+  _d.addEventListener('mousemove',mmDoc); _d.addEventListener('mouseup',muDoc);
+  bx.addEventListener('touchstart',function(e){e.preventDefault();e.stopPropagation();dragging=true;dx0=e.touches[0].clientX;dy0=e.touches[0].clientY;bx0=cbx;by0=cby;},{passive:false});
+  var tmDoc=function(e){if(!dragging)return;e.preventDefault();setBox(bx0+e.touches[0].clientX-dx0,by0+e.touches[0].clientY-dy0,cbw,cbh);};
+  _d.addEventListener('touchmove',tmDoc,{passive:false}); _d.addEventListener('touchend',function(){dragging=false;},{passive:true});
+  wrap.addEventListener('wheel',function(e){e.preventDefault();var d=e.deltaY<0?1.06:0.94;setBox(cbx+cbw*(1-d)/2,cby+cbh*(1-d)/2,cbw*d,cbh*d);},{passive:false});
+  // Tabs
+  tabPc.addEventListener('click',function(){activeTab='pc';stTab(tabPc,true);stTab(tabMb,false);lbl.textContent='PC用フォーカルポイント ― 表示させたい部分を枠に入れて確定 / ドラッグ移動 / スクロールでサイズ調整';});
+  tabMb.addEventListener('click',function(){activeTab='mobile';stTab(tabPc,false);stTab(tabMb,true);lbl.textContent='モバイル用フォーカルポイント ― スマホ表示での見せ方を設定 / ドラッグ移動 / スクロールでサイズ調整';});
+  // Confirm
+  function confirmCrop(){
+    var mW=ci.offsetWidth,mH=ci.offsetHeight;
+    var xPct=((cbx+cbw/2)/mW*100).toFixed(1),yPct=((cby+cbh/2)/mH*100).toFixed(1);
+    var posVal=xPct+'% '+yPct+'%';
+    if(img.dataset.ffOriginalSrc)img.src=img.dataset.ffOriginalSrc;
+    img.style.objectFit='cover';
+    if(activeTab==='mobile'){
+      if(!img.dataset.ffImgId)img.dataset.ffImgId='ffi'+Date.now();
+      var sid=img.dataset.ffImgId;
+      var styleEl=_d.getElementById('__ffRespImgPos');
+      if(!styleEl){styleEl=_d.createElement('style');styleEl.id='__ffRespImgPos';(_d.head||_d.body).appendChild(styleEl);}
+      var newRule='@media(max-width:640px){img[data-ff-img-id="'+sid+'"]{object-position:'+posVal+'!important}}';
+      var esc=sid.replace(/[.*+?^$()|[\]\\]|\{|\}/g,'\\$&');
+      var re=new RegExp('@media[^{]*\\{[^{]*data-ff-img-id="'+esc+'"[^}]*\\}[^}]*\\}');
+      styleEl.textContent=re.test(styleEl.textContent)?styleEl.textContent.replace(re,newRule):styleEl.textContent+'\n'+newRule;
+    } else {
+      img.style.objectPosition=posVal;
+    }
+    ov.remove();
+    setTimeout(function(){syncEditedCode(_d);},50);
+  }
+  btnOk.addEventListener('click',confirmCrop);
+  btnNg.addEventListener('click',function(){ov.remove();});
+  function onKey(e){if(e.key==='Enter'){e.preventDefault();e.stopPropagation();confirmCrop();}else if(e.key==='Escape'){ov.remove();}}
+  _d.addEventListener('keydown',onKey,true);
+  var _origRm=ov.remove.bind(ov);
+  ov.remove=function(){_d.removeEventListener('keydown',onKey,true);_d.removeEventListener('mousemove',mmDoc);_d.removeEventListener('mouseup',muDoc);_d.removeEventListener('touchmove',tmDoc,{passive:false});_origRm();};
+}
+
 // 右クリックコンテキストメニュー
 function _ffCtxMenu(e) {
   if (!editModeOn || !_editIframe) return;
@@ -3783,43 +3875,59 @@ function _ffCtxMenu(e) {
   var old = _d.getElementById('__ffCtx'); if (old) old.remove();
   var target = e.target, isImg = target && target.tagName === 'IMG';
   var m = _d.createElement('div'); m.id = '__ffCtx';
-  m.style.cssText = 'position:fixed;z-index:99999;background:#1a1a1a;border:1px solid #444;border-radius:10px;padding:8px 0;min-width:160px;box-shadow:0 8px 24px rgba(0,0,0,.5);font-family:system-ui,sans-serif;font-size:13px;color:#fff;';
+  m.style.cssText = 'position:fixed;z-index:99999;background:#1a1a1a;border:1px solid #444;border-radius:10px;padding:8px 0;min-width:170px;box-shadow:0 8px 24px rgba(0,0,0,.5);font-family:system-ui,sans-serif;font-size:13px;color:#fff;';
   var cw = _d.documentElement.clientWidth || 400, ch = _d.documentElement.clientHeight || 400;
-  m.style.left = Math.min(e.clientX || 20, cw - 180) + 'px';
-  m.style.top  = Math.min(e.clientY || 80,  ch - 200) + 'px';
+  m.style.left = Math.min(e.clientX || 20, cw - 190) + 'px';
+  m.style.top  = Math.min(e.clientY || 80, ch - 220) + 'px';
   function mkItem(label, fn) {
-    var b = _d.createElement('button');
-    b.textContent = label;
+    var b = _d.createElement('button'); b.textContent = label;
     b.style.cssText = 'display:block;width:100%;padding:8px 16px;background:none;border:none;color:#fff;text-align:left;cursor:pointer;font-size:13px;white-space:nowrap;';
-    b.addEventListener('mouseenter', function(){ b.style.background='rgba(255,255,255,.12)'; });
-    b.addEventListener('mouseleave', function(){ b.style.background='none'; });
-    b.addEventListener('mousedown', function(ev){ ev.preventDefault(); ev.stopPropagation(); m.remove(); fn(); });
+    b.addEventListener('mouseenter',function(){b.style.background='rgba(255,255,255,.12)';});
+    b.addEventListener('mouseleave',function(){b.style.background='none';});
+    b.addEventListener('mousedown',function(ev){ev.preventDefault();ev.stopPropagation();m.remove();fn();});
     m.appendChild(b);
   }
-  function mkSep() { var s=_d.createElement('div'); s.style.cssText='height:1px;background:rgba(255,255,255,.1);margin:4px 0;'; m.appendChild(s); }
+  function mkSep(){var s=_d.createElement('div');s.style.cssText='height:1px;background:rgba(255,255,255,.1);margin:4px 0;';m.appendChild(s);}
 
   if (isImg) {
-    mkItem('🖼 画像を差し替え', function(){ _ffImgClick({ target: target, preventDefault:function(){}, stopImmediatePropagation:function(){} }); });
+    mkItem('🖼 画像を差し替え', function(){
+      var fi = document.getElementById('__ffParentFi');
+      if (!fi) {
+        fi = document.createElement('input'); fi.type = 'file'; fi.accept = 'image/*';
+        fi.style.display = 'none'; fi.id = '__ffParentFi'; document.body.appendChild(fi);
+        fi.addEventListener('change', function() {
+          var f = fi.files[0]; if (!f || !fi._img) return;
+          var rd = new FileReader();
+          rd.onload = function(ev) { if (fi._img) { fi._img.dataset.ffOriginalSrc = ev.target.result; fi._img.src = ev.target.result; fi._img = null; } fi.value = ''; };
+          rd.readAsDataURL(f);
+        });
+      }
+      fi._img = target; fi.click();
+    });
+    mkItem('✂ フォーカルポイント設定', function(){
+      var src = target.dataset.ffOriginalSrc || target.src;
+      _ffShowCropUI(_d, target, src);
+    });
   } else {
     mkItem('🎨 文字色を変更', function(){
-      var c = window.prompt('色コード（例: #ff0000 / rgba(255,0,0,1)）', '');
-      if (!c) return;
-      _ffRestoreSel(_d);
-      try { _d.execCommand('foreColor', false, c); setTimeout(function(){ syncEditedCode(_d); }, 50); } catch(er){}
+      _ffPickColor(function(c){
+        _ffRestoreSel(_d);
+        try { _d.execCommand('foreColor', false, c); setTimeout(function(){syncEditedCode(_d);}, 50); } catch(er){}
+      });
     });
     mkSep();
     mkItem('🖌 背景色を変更', function(){
-      var c = window.prompt('色コード（例: #ffff00）', '');
-      if (!c) return;
-      if (target) target.style.backgroundColor = c;
-      setTimeout(function(){ syncEditedCode(_d); }, 50);
+      _ffPickColor(function(c){
+        if (target) target.style.backgroundColor = c;
+        setTimeout(function(){syncEditedCode(_d);}, 50);
+      });
     });
   }
   mkSep();
   mkItem('✕ 閉じる', function(){});
   _d.body.appendChild(m);
-  function closeCtx(ev){ if (m && m.parentNode && !m.contains(ev.target)){ m.remove(); _d.removeEventListener('click', closeCtx, true); } }
-  setTimeout(function(){ _d.addEventListener('click', closeCtx, true); }, 0);
+  function closeCtx(ev){ if(m&&m.parentNode&&!m.contains(ev.target)){m.remove();_d.removeEventListener('click',closeCtx,true);} }
+  setTimeout(function(){_d.addEventListener('click',closeCtx,true);}, 0);
 }
 // ── ホバー/クリック 共通ハンドラ ─────────────────────
 function handleHoverActive(comp, tag, tagIdx) {
