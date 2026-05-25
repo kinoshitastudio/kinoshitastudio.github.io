@@ -3020,18 +3020,25 @@ addSlot('nav', 'Navigation', false);
 renderPageSidebar();
 
 // ── Slot management ─────────────────────────────────
+// renderSlots 後に保存済みサムネイルも復元するヘルパー
+function _renderAndUpdateThumbs() {
+  renderSlots();
+  const se = _savedExport || (_currentPage() && _currentPage()._savedExport);
+  if (se && se.html) updateSlotThumbnails(se.html);
+}
+
 function addSlot(cat, label, openPanel = true) {
   const uid = ++uidCtr;
   slots.push({ uid, cat, label, partId: null });
   closePicker();
-  renderSlots();
+  _renderAndUpdateThumbs();
   if (openPanel) openCatalogPanel(uid, cat);
 }
 
 function removeSlot(uid) {
   slots = slots.filter(s => s.uid !== uid);
   if (activePanelUid === uid) closePanel();
-  renderSlots();
+  _renderAndUpdateThumbs();
   updateFooter();
 }
 
@@ -3042,7 +3049,7 @@ function setSlotPart(uid, partId) {
   slot.partId = partId;
   slot.label  = part.nameJa;
   closePanel();
-  renderSlots();
+  _renderAndUpdateThumbs();
   updateFooter();
 }
 
@@ -3139,7 +3146,7 @@ function initDnD() {
         const di = slots.findIndex(s => s.uid === dropUid);
         const [item] = slots.splice(si, 1);
         slots.splice(di, 0, item);
-        renderSlots();
+        _renderAndUpdateThumbs();
       }
       dragSrcUid = null;
     });
@@ -3163,7 +3170,7 @@ function initDnD() {
       const [item] = slots.splice(si, 1);
       slots.splice(si < insertIdx ? insertIdx - 1 : insertIdx, 0, item);
       dragSrcUid = null;
-      renderSlots();
+      _renderAndUpdateThumbs();
     });
   });
   // dummy forEach close — reopen for touch drag
@@ -3214,7 +3221,7 @@ function initDnD() {
         const di = slots.findIndex(s => s.uid === dropUid);
         const [item] = slots.splice(si, 1);
         slots.splice(di, 0, item);
-        renderSlots();
+        _renderAndUpdateThumbs();
       }
     }
     if (touchDragEl) touchDragEl.classList.remove('dragging');
@@ -3240,14 +3247,14 @@ function openCatalogPanel(uid, catHint) {
   document.getElementById('builderWrap').classList.add('panel-open');
   const validCats = ['hero','nav','section','card','cta'];
   setPanelFilter(validCats.includes(catHint) ? catHint : 'all');
-  renderSlots();
-  setTimeout(scalePanelIframes, 260); // re-scale after panel slide-in animation
+  _renderAndUpdateThumbs();
+  setTimeout(scalePanelIframes, 260);
 }
 
 function closePanel() {
   activePanelUid = null;
   document.getElementById('builderWrap').classList.remove('panel-open');
-  renderSlots();
+  _renderAndUpdateThumbs();
 }
 
 function setPanelFilter(cat) {
@@ -3507,7 +3514,7 @@ function buildExport() {
     if (orderChanged) { _savedExport = null; }
 
     if (!orderChanged && removedParts.length === 0 && newParts.length > 0) {
-      // Only additions: inject new parts before </body>
+      // Only additions: inject new parts before </body>、_savedExport を更新して保持
       let mergedHtml = _savedExport.html;
       newParts.forEach(s => {
         const src = parseSrc(getSource(s.partId));
@@ -3519,6 +3526,8 @@ function buildExport() {
           .replace(/<\/head>/, styleTag + '\n</head>')
           .replace(/<\/body>/, bodyDiv + '\n</body>');
       });
+      _savedExport = { html: mergedHtml, partIds: currentIds };
+      const curPg = _currentPage(); if (curPg) curPg._savedExport = _savedExport;
       setExportCode(mergedHtml);
       const prev = document.getElementById('exportIframe');
       if (prev._blob) URL.revokeObjectURL(prev._blob);
@@ -3526,10 +3535,10 @@ function buildExport() {
       prev._blob = URL.createObjectURL(blob);
       prev.onload = function(){ injectHoverScript(this); };
       prev.src   = prev._blob;
-      _savedExport = null;
       return;
     } else if (!orderChanged && removedParts.length === 0 && newParts.length === 0) {
-      // No change: restore saved HTML as-is
+      // No change: saved HTML をそのまま使う、_savedExport は維持
+      const curPg = _currentPage(); if (curPg) curPg._savedExport = _savedExport;
       setExportCode(_savedExport.html);
       const prev = document.getElementById('exportIframe');
       if (prev._blob) URL.revokeObjectURL(prev._blob);
@@ -3537,7 +3546,6 @@ function buildExport() {
       prev._blob = URL.createObjectURL(blob);
       prev.onload = function(){ injectHoverScript(this); };
       prev.src   = prev._blob;
-      _savedExport = null;
       return;
     }
     // Parts removed or reordered → rebuild from scratch
@@ -3576,6 +3584,10 @@ ${allBody}
 </body>
 </html>`;
 
+  // フレッシュビルド結果を _savedExport に保存（以後の再訪問で保持）
+  const freshIds = filled.map(s => s.partId);
+  _savedExport = { html, partIds: freshIds };
+  const curPgFresh = _currentPage(); if (curPgFresh) curPgFresh._savedExport = _savedExport;
   setExportCode(html);
   const prev = document.getElementById('exportIframe');
   if (prev._blob) URL.revokeObjectURL(prev._blob);
@@ -4395,7 +4407,7 @@ function parseSrc(html) {
 function insertSlotAt(idx) {
   const uid = ++uidCtr;
   slots.splice(idx, 0, { uid, cat: 'section', label: 'セクション', partId: null });
-  renderSlots();
+  _renderAndUpdateThumbs();
   openCatalogPanel(uid, 'section');
 }
 
@@ -4405,7 +4417,7 @@ function moveSlot(uid, dir) {
   const j = i + dir;
   if (j < 0 || j >= slots.length) return;
   [slots[i], slots[j]] = [slots[j], slots[i]];
-  renderSlots();
+  _renderAndUpdateThumbs();
 }
 
 // ── iframe scaling ────────────────────────────────────
