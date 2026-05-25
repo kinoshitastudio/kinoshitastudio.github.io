@@ -794,6 +794,23 @@ body {
   transition: all .12s; letter-spacing: .04em; white-space: nowrap;
 }
 .btn-toggle-code:hover { background: rgba(255,255,255,.22); color: #fff; }
+.btn-anim {
+  margin-left: 8px;
+  background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25);
+  color: rgba(255,255,255,.7); border-radius: 3px; padding: 3px 10px;
+  font-size: 10px; font-weight: 700; cursor: pointer; font-family: inherit;
+  transition: all .15s; letter-spacing: .04em; white-space: nowrap;
+}
+.btn-anim:hover { background: rgba(255,255,255,.22); color: #fff; }
+.btn-anim.active { background: #22c55e; border-color: #22c55e; color: #fff; }
+.btn-anim-make {
+  background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2);
+  color: rgba(255,255,255,.6); border-radius: 4px; padding: 6px 14px;
+  font-size: 11px; font-weight: 700; cursor: pointer; font-family: inherit;
+  transition: all .15s; letter-spacing: .04em; white-space: nowrap; margin-left: 8px;
+}
+.btn-anim-make:hover { background: rgba(255,255,255,.18); color: #fff; }
+.btn-anim-make.active { background: #22c55e; border-color: #22c55e; color: #fff; }
 
 /* ── Mobile export ── */
 @media (max-width: 700px) {
@@ -1193,7 +1210,10 @@ pre[class*="language-"]::after { display: none !important; }
 
       <div class="canvas-footer">
         <span class="canvas-footer-info" id="footerInfo">スロットにパーツを追加してください</span>
-        <button class="btn-to-export" id="btnToExport" onclick="goTo(2)">編集画面へ →</button>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="btn-anim btn-anim-make" id="btnAnimMake" onclick="toggleAnim()">✨ アニメ</button>
+          <button class="btn-to-export" id="btnToExport" onclick="goTo(2)">編集画面へ →</button>
+        </div>
       </div>
     </div>
 
@@ -1227,6 +1247,7 @@ pre[class*="language-"]::after { display: none !important; }
           <button class="pvtab on" onclick="setPreviewMode('pc')">PC</button>
           <button class="pvtab" onclick="setPreviewMode('mobile')">モバイル</button>
         </div>
+        <button class="btn-anim" id="btnAnimOut" onclick="toggleAnim()">✨ アニメ</button>
         <button class="btn-editmode" id="btnEditMode" onclick="toggleEditMode()">✎ 編集</button>
         <button class="btn-toggle-code" id="btnToggleCode" onclick="toggleCode()">コード 隠す</button>
       </div>
@@ -3395,7 +3416,7 @@ function goTo(n) {
   if (n !== 2) {
     const codeEl = document.getElementById('exportCode');
     if (codeEl && codeEl.textContent.trim()) {
-      savedHtml = codeEl.textContent;
+      savedHtml = stripAnimScript(codeEl.textContent);
       _savedExport = {
         html:    savedHtml,
         partIds: slots.filter(s => s.partId).map(s => s.partId)
@@ -3422,7 +3443,7 @@ function goTo(n) {
     // hover script 注入フォールバック（onload が間に合わない場合）
     setTimeout(() => {
       const iframe = document.getElementById('exportIframe');
-      if(iframe) injectHoverScript(iframe);
+      if(iframe) { injectHoverScript(iframe); if(animEnabled) injectAnimScript(iframe); }
     }, 800);
   }
   // screen 1 に戻ったとき、編集済みHTMLをサムネイルに反映
@@ -3528,23 +3549,23 @@ function buildExport() {
       });
       _savedExport = { html: mergedHtml, partIds: currentIds };
       const curPg = _currentPage(); if (curPg) curPg._savedExport = _savedExport;
-      setExportCode(mergedHtml);
+      setExportCode(resolveAnimHtml(mergedHtml));
       const prev = document.getElementById('exportIframe');
       if (prev._blob) URL.revokeObjectURL(prev._blob);
-      const blob = new Blob([mergedHtml], { type: 'text/html' });
+      const blob = new Blob([resolveAnimHtml(mergedHtml)], { type: 'text/html' });
       prev._blob = URL.createObjectURL(blob);
-      prev.onload = function(){ injectHoverScript(this); };
+      prev.onload = function(){ injectHoverScript(this); if(animEnabled) injectAnimScript(this); };
       prev.src   = prev._blob;
       return;
     } else if (!orderChanged && removedParts.length === 0 && newParts.length === 0) {
       // No change: saved HTML をそのまま使う、_savedExport は維持
       const curPg = _currentPage(); if (curPg) curPg._savedExport = _savedExport;
-      setExportCode(_savedExport.html);
+      setExportCode(resolveAnimHtml(_savedExport.html));
       const prev = document.getElementById('exportIframe');
       if (prev._blob) URL.revokeObjectURL(prev._blob);
-      const blob = new Blob([_savedExport.html], { type: 'text/html' });
+      const blob = new Blob([resolveAnimHtml(_savedExport.html)], { type: 'text/html' });
       prev._blob = URL.createObjectURL(blob);
-      prev.onload = function(){ injectHoverScript(this); };
+      prev.onload = function(){ injectHoverScript(this); if(animEnabled) injectAnimScript(this); };
       prev.src   = prev._blob;
       return;
     }
@@ -3588,13 +3609,87 @@ ${allBody}
   const freshIds = filled.map(s => s.partId);
   _savedExport = { html, partIds: freshIds };
   const curPgFresh = _currentPage(); if (curPgFresh) curPgFresh._savedExport = _savedExport;
-  setExportCode(html);
+  setExportCode(resolveAnimHtml(html));
   const prev = document.getElementById('exportIframe');
   if (prev._blob) URL.revokeObjectURL(prev._blob);
-  const blob = new Blob([html], { type: 'text/html' });
+  const blob = new Blob([resolveAnimHtml(html)], { type: 'text/html' });
   prev._blob = URL.createObjectURL(blob);
-  prev.onload = function(){ injectHoverScript(this); };
+  prev.onload = function(){ injectHoverScript(this); if(animEnabled) injectAnimScript(this); };
   prev.src   = prev._blob;
+}
+
+// ── Animation mode ────────────────────────────────────
+let animEnabled = false;
+
+const FF_ANIM_JS = `(function(){
+  if(window.__ffAnimActive)return;
+  window.__ffAnimActive=true;
+  var st=document.createElement('style');
+  st.id='__ffAnimSt';
+  st.textContent=[
+    '[data-ff-anim]{opacity:0;transform:translateY(24px);transition:opacity .7s cubic-bezier(.22,1,.36,1),transform .7s cubic-bezier(.22,1,.36,1)}',
+    '[data-ff-anim].ff-in{opacity:1;transform:none}',
+    '[data-ff-anim][data-ff-delay="1"]{transition-delay:.12s}',
+    '[data-ff-anim][data-ff-delay="2"]{transition-delay:.24s}',
+    '[data-ff-anim][data-ff-delay="3"]{transition-delay:.38s}',
+    '[data-ff-anim][data-ff-delay="4"]{transition-delay:.52s}',
+    '[data-ff-anim][data-ff-delay="5"]{transition-delay:.66s}',
+    '[data-ff-anim][data-ff-delay="6"]{transition-delay:.8s}'
+  ].join('');
+  document.head.appendChild(st);
+  var io=new IntersectionObserver(function(entries){
+    entries.forEach(function(e){if(e.isIntersecting)e.target.classList.add('ff-in');});
+  },{threshold:0.12,rootMargin:'0px 0px -20px 0px'});
+  document.querySelectorAll('[data-ff-anim]').forEach(function(el){io.observe(el);});
+})();`;
+
+function stripAnimScript(html) {
+  return html.replace(/<script id="__ffAnim">[\s\S]*?<\/script>\n?/g, '');
+}
+function addAnimScript(html) {
+  html = stripAnimScript(html);
+  return html.replace(/<\/body>/, '<script id="__ffAnim">\n' + FF_ANIM_JS + '\n<\/script>\n</body>');
+}
+function resolveAnimHtml(html) {
+  return animEnabled ? addAnimScript(html) : stripAnimScript(html);
+}
+function injectAnimScript(iframe) {
+  try {
+    const doc = iframe.contentDocument;
+    if (!doc || !doc.body) return;
+    if (doc.getElementById('__ffAnimSt')) return;
+    const s = doc.createElement('script');
+    s.id = '__ffAnimInject';
+    s.textContent = FF_ANIM_JS;
+    doc.body.appendChild(s);
+  } catch(e) {}
+}
+function removeAnimScript(iframe) {
+  try {
+    const doc = iframe.contentDocument;
+    if (!doc) return;
+    ['__ffAnimSt', '__ffAnimInject', '__ffAnim'].forEach(id => {
+      const el = doc.getElementById(id); if (el) el.remove();
+    });
+    if (doc.defaultView) doc.defaultView.__ffAnimActive = false;
+    doc.querySelectorAll('[data-ff-anim]').forEach(el => {
+      el.style.opacity = '1'; el.style.transform = 'none';
+    });
+  } catch(e) {}
+}
+function toggleAnim() {
+  animEnabled = !animEnabled;
+  document.querySelectorAll('.btn-anim').forEach(b => {
+    b.classList.toggle('active', animEnabled);
+    b.textContent = animEnabled ? '✨ ON' : '✨ アニメ';
+  });
+  const codeEl = document.getElementById('exportCode');
+  if (codeEl && codeEl.textContent.trim()) {
+    const clean = stripAnimScript(codeEl.textContent);
+    setExportCode(animEnabled ? addAnimScript(clean) : clean);
+  }
+  const iframe = document.getElementById('exportIframe');
+  if (iframe) { if (animEnabled) injectAnimScript(iframe); else removeAnimScript(iframe); }
 }
 
 // ── Edit mode ─────────────────────────────────────────
@@ -4294,7 +4389,7 @@ async function runDownloadZip(siteTitle, siteDesc) {
     for (const pg of pages) {
       const rawHtml = pg.id === currentPageId
         ? getFinalCode()
-        : (buildPageHtml(pg.slots) || '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + pg.name + '</title></head><body></body></html>');
+        : resolveAnimHtml(buildPageHtml(pg.slots) || '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + pg.name + '</title></head><body></body></html>');
 
       const doc = parser.parseFromString(rawHtml, 'text/html');
 
@@ -4567,7 +4662,7 @@ function confirmBack() {
       if (doc && doc.body) {
         const clone = doc.documentElement.cloneNode(true);
         // FFが注入したスクリプト・スタイルを除去
-        ['__ffHover', '__ffScript', '__ffSt'].forEach(id => {
+        ['__ffHover', '__ffScript', '__ffSt', '__ffAnim', '__ffAnimSt', '__ffAnimInject'].forEach(id => {
           const el = clone.querySelector('#' + id);
           if (el) el.remove();
         });
