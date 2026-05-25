@@ -991,6 +991,37 @@ pre[class*="language-"]::after { display: none !important; }
   font-family: 'Courier New', Courier, monospace;
   font-size: 11px; line-height: 1.65; color: #C0EDE8; white-space: pre; tab-size: 2;
 }
+/* ── Export settings modal ── */
+.export-modal-bg {
+  position: fixed; inset: 0; z-index: 600;
+  background: rgba(0,0,0,.6);
+  display: none; align-items: center; justify-content: center; padding: 20px;
+}
+.export-modal-bg.on { display: flex; }
+.export-modal-box {
+  background: #1A2830; border: 1.5px solid rgba(255,255,255,.2); border-radius: 8px;
+  width: 100%; max-width: 420px;
+  box-shadow: 0 16px 48px rgba(0,0,0,.5); padding: 24px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+.export-modal-title { font-size: 14px; font-weight: 700; color: #fff; letter-spacing: .06em; }
+.export-modal-field { display: flex; flex-direction: column; gap: 6px; }
+.export-modal-label { font-size: 11px; color: rgba(255,255,255,.55); letter-spacing: .05em; }
+.export-modal-input {
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.2);
+  border-radius: 4px; color: #fff; padding: 9px 12px; font-size: 13px;
+  font-family: inherit; outline: none; transition: border-color .12s;
+}
+.export-modal-input:focus { border-color: #2B72E8; }
+.export-modal-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+.export-modal-cancel {
+  background: none; border: 1px solid rgba(255,255,255,.25); color: rgba(255,255,255,.6);
+  border-radius: 4px; padding: 8px 18px; font-size: 12px; cursor: pointer; font-family: inherit;
+}
+.export-modal-go {
+  background: #2B72E8; border: none; color: #fff;
+  border-radius: 4px; padding: 8px 22px; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit;
+}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
@@ -1159,6 +1190,25 @@ pre[class*="language-"]::after { display: none !important; }
     <span class="draft-ind" id="draftInd"></span>
     <button class="btn-save-draft" onclick="confirmSaveDraft()">下書き保存</button>
     <button class="btn-reset" onclick="confirmReset()">最初からやり直す</button>
+  </div>
+</div>
+
+<!-- ━━ EXPORT SETTINGS MODAL ━━━━━━━━━━━━━━━━━━━━ -->
+<div class="export-modal-bg" id="exportModalBg">
+  <div class="export-modal-box">
+    <div class="export-modal-title">ZIP 書き出し設定</div>
+    <div class="export-modal-field">
+      <label class="export-modal-label">サイトタイトル</label>
+      <input class="export-modal-input" id="exportTitleInp" type="text" placeholder="My Site" maxlength="80">
+    </div>
+    <div class="export-modal-field">
+      <label class="export-modal-label">メタ description（省略可）</label>
+      <input class="export-modal-input" id="exportDescInp" type="text" placeholder="サイトの説明文" maxlength="160">
+    </div>
+    <div class="export-modal-btns">
+      <button class="export-modal-cancel" onclick="closeExportModal()">キャンセル</button>
+      <button class="export-modal-go" id="exportModalGo">書き出す →</button>
+    </div>
   </div>
 </div>
 
@@ -3076,7 +3126,15 @@ document.getElementById('btnCopy').addEventListener('click', () => {
   });
 });
 
-async function downloadZip() {
+function openExportModal() {
+  document.getElementById('exportModalBg').classList.add('on');
+  setTimeout(() => document.getElementById('exportTitleInp').focus(), 50);
+}
+function closeExportModal() {
+  document.getElementById('exportModalBg').classList.remove('on');
+}
+
+async function runDownloadZip(siteTitle, siteDesc) {
   const btn = document.getElementById('btnDl');
   btn.textContent = '生成中...'; btn.disabled = true;
 
@@ -3084,6 +3142,15 @@ async function downloadZip() {
     const rawHtml = getFinalCode();
     const parser = new DOMParser();
     const doc = parser.parseFromString(rawHtml, 'text/html');
+
+    // ── 0. タイトル・メタ description ──
+    const titleEl = doc.querySelector('title');
+    if (titleEl) titleEl.textContent = siteTitle;
+    if (siteDesc) {
+      const metaDesc = doc.createElement('meta');
+      metaDesc.name = 'description'; metaDesc.content = siteDesc;
+      doc.head.appendChild(metaDesc);
+    }
 
     // ── 1. CSS を外部ファイルへ ──
     const styleEls = [...doc.querySelectorAll('style:not([id])')]
@@ -3128,7 +3195,8 @@ async function downloadZip() {
     const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'my-site.zip'; a.click();
+    const zipName = siteTitle ? siteTitle.replace(/[^a-zA-Z0-9぀-鿿_-]/g, '-').replace(/-+/g, '-').toLowerCase() : 'my-site';
+    a.download = zipName + '.zip'; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   } catch(e) {
     console.error('zip error', e);
@@ -3138,7 +3206,24 @@ async function downloadZip() {
   }
 }
 
-document.getElementById('btnDl').addEventListener('click', downloadZip);
+document.getElementById('btnDl').addEventListener('click', openExportModal);
+document.getElementById('exportModalGo').addEventListener('click', async () => {
+  const title = document.getElementById('exportTitleInp').value.trim() || 'My Site';
+  const desc  = document.getElementById('exportDescInp').value.trim();
+  closeExportModal();
+  await runDownloadZip(title, desc);
+});
+document.getElementById('exportModalBg').addEventListener('click', e => {
+  if (e.target === document.getElementById('exportModalBg')) closeExportModal();
+});
+document.getElementById('exportTitleInp').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('exportModalGo').click();
+  if (e.key === 'Escape') closeExportModal();
+});
+document.getElementById('exportDescInp').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('exportModalGo').click();
+  if (e.key === 'Escape') closeExportModal();
+});
 
 function resetAll() {
   slots = []; uidCtr = 0; activePanelUid = null;
