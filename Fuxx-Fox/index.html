@@ -630,11 +630,13 @@ body {
   background: #3ACFC6; flex-shrink: 0;
 }
 .section-desc-bar {
-  display: none; padding: 5px 14px; flex-shrink: 0;
-  background: rgba(43,114,232,.1); border-bottom: 1px solid rgba(43,114,232,.2);
-  font-size: 10px; gap: 8px; align-items: baseline;
+  position: absolute; top: 0; left: 0; right: 0; z-index: 5;
+  display: flex; padding: 5px 14px; gap: 8px; align-items: baseline;
+  background: rgba(26,40,48,.88); border-bottom: 1px solid rgba(43,114,232,.3);
+  font-size: 10px; backdrop-filter: blur(4px);
+  opacity: 0; pointer-events: none; transition: opacity .18s;
 }
-.section-desc-bar.on { display: flex; }
+.section-desc-bar.on { opacity: 1; }
 .section-desc-name { font-weight: 700; color: #3ACFC6; white-space: nowrap; flex-shrink: 0; }
 .section-desc-text { color: rgba(255,255,255,.75); }
 .preview-toggle { display: flex; gap: 3px; margin-left: auto; }
@@ -777,6 +779,7 @@ pre[class*="language-"]::after { display: none !important; }
   background: transparent; text-shadow: none;
   color: #D4D4D4; font-size: 11px; line-height: 1.65;
   font-family: 'SF Mono','Fira Code',Consolas,'Courier New',monospace;
+  padding: 0 !important; margin: 0 !important;
 }
 .export-code-scroll .token.tag .token.tag,
 .export-code-scroll .token.tag .token.punctuation { color: #569CD6; }
@@ -1107,11 +1110,11 @@ pre[class*="language-"]::after { display: none !important; }
         <button class="fb-btn fb-menu-btn" id="fbMenuBtn" onmousedown="event.preventDefault()" onclick="openMobileMenu()">🎨 色・画像</button>
         <span class="fb-el" id="fbEl">右クリックで色変更</span>
       </div>
-      <div class="section-desc-bar" id="sectionDescBar">
-        <span class="section-desc-name" id="sectionDescName"></span>
-        <span class="section-desc-text" id="sectionDescText"></span>
-      </div>
       <div class="export-preview-scroll" id="exportPreviewScroll">
+        <div class="section-desc-bar" id="sectionDescBar">
+          <span class="section-desc-name" id="sectionDescName"></span>
+          <span class="section-desc-text" id="sectionDescText"></span>
+        </div>
         <div id="hoverOverlay"></div>
         <iframe id="exportIframe" title="preview"></iframe>
       </div>
@@ -2435,22 +2438,34 @@ function openMobileMenu() {
   try { _iframeWin().postMessage({ type:'ffOpenMenu' }, '*'); } catch(e){}
 }
 // ── ホバー/クリック 共通ハンドラ ─────────────────────
-function handleHoverActive(comp, tag) {
+function handleHoverActive(comp, tag, tagIdx) {
+  tagIdx = tagIdx || 0;
   if(tag && document.getElementById('fbEl'))
     document.getElementById('fbEl').textContent = (tag ? '<' + tag + '> · ' : '') + comp;
 
-  // セクション説明バー
+  // 要素タイプ別の説明
+  const ELEM_DESC = {
+    img:    '画像を差し替えられます。クロップ・トリミングも可能。',
+    h1:     '見出しテキストを編集できます。サイズ（S〜XL）・太字・色の変更も可。',
+    h2:     '見出しテキストを編集できます。サイズ（S〜XL）・太字・色の変更も可。',
+    h3:     '見出しテキストを編集できます。サイズ（S〜XL）・太字・色の変更も可。',
+    h4:     '見出しテキストを編集できます。サイズ（S〜XL）・太字・色の変更も可。',
+    p:      'テキストを編集できます。サイズ・太字・斜体・色の変更も可。',
+    span:   'テキストを編集できます。サイズ・太字・斜体・色の変更も可。',
+    li:     'テキストを編集できます。サイズ・太字・斜体・色の変更も可。',
+    a:      'ボタン／リンクのテキストを編集できます。背景色・文字色の変更も可。',
+    button: 'ボタンのテキストを編集できます。背景色・文字色の変更も可。',
+  };
   const partInfo = PARTS.find(p => 'ff-' + p.id === comp);
-  if(partInfo) {
-    const bar = document.getElementById('sectionDescBar');
-    const nameEl = document.getElementById('sectionDescName');
-    const textEl = document.getElementById('sectionDescText');
-    if(bar && nameEl && textEl) {
-      nameEl.textContent = partInfo.nameJa;
-      textEl.textContent = partInfo.desc;
-      bar.classList.add('on');
-      clearTimeout(bar._hideTimer);
-    }
+  const elemDesc = ELEM_DESC[tag] || null;
+  const bar = document.getElementById('sectionDescBar');
+  const nameEl = document.getElementById('sectionDescName');
+  const textEl = document.getElementById('sectionDescText');
+  if(bar && nameEl && textEl && (elemDesc || partInfo)) {
+    nameEl.textContent = partInfo ? partInfo.nameJa : '';
+    textEl.textContent = elemDesc || '';
+    bar.classList.add('on');
+    clearTimeout(bar._hideTimer);
   }
 
   // コードハイライト
@@ -2460,12 +2475,42 @@ function handleHoverActive(comp, tag) {
   if(!codeEl || !scrollEl) return;
   const lines = codeEl.textContent.split('\n');
   const LH = 18.15, PAD = 12;
-  let startLine = -1, endLine = lines.length - 1;
+
+  // セクション境界を探す
+  let secStart = -1, secEnd = lines.length - 1;
   for(let i = 0; i < lines.length; i++) {
-    if(startLine === -1 && lines[i].indexOf(comp) !== -1) { startLine = i; }
-    else if(startLine !== -1 && i > startLine && /class="ff-[\w-]+"/.test(lines[i])) { endLine = i - 1; break; }
+    if(secStart === -1 && lines[i].indexOf(comp) !== -1) { secStart = i; }
+    else if(secStart !== -1 && i > secStart && /class="ff-[\w-]+"/.test(lines[i])) { secEnd = i - 1; break; }
   }
-  if(startLine < 0) return;
+  if(secStart < 0) return;
+
+  // 要素レベルのハイライト（葉要素の場合）
+  let startLine = secStart, endLine = secEnd;
+  const LEAF = ['img','h1','h2','h3','h4','h5','h6','p','span','li','a','button'];
+  if(LEAF.includes(tag)) {
+    const tagPat = new RegExp('<' + tag + '[\\s>/]', 'i');
+    let count = 0;
+    for(let i = secStart; i <= secEnd; i++) {
+      if(tagPat.test(lines[i])) {
+        if(count === tagIdx) {
+          startLine = i;
+          if(tag === 'img') {
+            let j = i;
+            while(j <= secEnd && !/\/>|<\/img>/.test(lines[j]) && j === i) j++;
+            endLine = j;
+          } else {
+            const close = '</' + tag + '>';
+            let j = i + 1;
+            while(j <= secEnd && lines[j].indexOf(close) === -1) j++;
+            endLine = Math.min(j, secEnd);
+          }
+          break;
+        }
+        count++;
+      }
+    }
+  }
+
   const top = PAD + startLine * LH;
   const h   = (endLine - startLine + 1) * LH;
   scrollEl.scrollTo({ top: Math.max(0, top - 80), behavior: 'smooth' });
@@ -2508,7 +2553,14 @@ window.addEventListener('message', function(e) {
           if(node.className && typeof node.className === 'string') {
             const mm = node.className.match(/\bff-[\w-]+/);
             if(mm) {
-              if(mm[0] !== _last) { _last = mm[0]; handleHoverActive(mm[0], node.tagName.toLowerCase()); }
+              const elTag = el.tagName.toLowerCase();
+              let tagIdx = 0;
+              try {
+                const siblings = node.querySelectorAll(elTag);
+                for(let i = 0; i < siblings.length; i++) { if(siblings[i] === el) { tagIdx = i; break; } }
+              } catch(_){}
+              const key = mm[0] + '|' + elTag + '|' + tagIdx;
+              if(key !== _last) { _last = key; handleHoverActive(mm[0], elTag, tagIdx); }
               return;
             }
           }
