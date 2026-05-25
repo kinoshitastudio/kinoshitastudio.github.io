@@ -3415,6 +3415,8 @@ function goTo(n) {
   // leaving export screen → save edited state
   let savedHtml = null;
   if (n !== 2) {
+    // 編集モードを先に終了して syncEditedCode を走らせてから保存
+    if (editModeOn) toggleEditMode();
     const codeEl = document.getElementById('exportCode');
     if (codeEl && codeEl.textContent.trim()) {
       savedHtml = stripAnimScript(codeEl.textContent);
@@ -3427,8 +3429,6 @@ function goTo(n) {
       if (curPg) curPg._savedExport = _savedExport;
       saveDraft();
     }
-    // exit edit mode cleanly
-    if (editModeOn) toggleEditMode();
   }
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('on'));
   document.getElementById('scr' + n).classList.add('on');
@@ -3823,7 +3823,7 @@ function _ffShowCropUI(_d, img, src) {
   function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
   function setBox(x,y,w,h){var mW=ci.offsetWidth,mH=ci.offsetHeight;cbw=clamp(w,40,mW);cbh=clamp(h!==undefined?h:(cbh||w*0.6),30,mH);cbx=clamp(x,0,mW-cbw);cby=clamp(y,0,mH-cbh);bx.style.left=cbx+'px';bx.style.top=cby+'px';bx.style.width=cbw+'px';bx.style.height=cbh+'px';dot.style.left=(cbx+cbw/2)+'px';dot.style.top=(cby+cbh/2)+'px';}
   function initBox(){var w=ci.offsetWidth*0.65,h=w*0.55;setBox((ci.offsetWidth-w)/2,(ci.offsetHeight-h)/2,w,h);}
-  ci.onload=initBox; if(ci.complete&&ci.naturalWidth)initBox();
+  ci.onload=function(){setTimeout(initBox,16);}; if(ci.complete&&ci.naturalWidth)setTimeout(initBox,16);
   // Drag
   var dragging=false,dx0,dy0,bx0,by0;
   bx.addEventListener('mousedown',function(e){e.preventDefault();e.stopPropagation();dragging=true;dx0=e.clientX;dy0=e.clientY;bx0=cbx;by0=cby;});
@@ -3839,8 +3839,16 @@ function _ffShowCropUI(_d, img, src) {
   tabMb.addEventListener('click',function(){activeTab='mobile';stTab(tabPc,false);stTab(tabMb,true);lbl.textContent='モバイル用フォーカルポイント ― スマホ表示での見せ方を設定 / ドラッグ移動 / スクロールでサイズ調整';});
   // Confirm
   function confirmCrop(){
-    var mW=ci.offsetWidth,mH=ci.offsetHeight;
-    var xPct=((cbx+cbw/2)/mW*100).toFixed(1),yPct=((cby+cbh/2)/mH*100).toFixed(1);
+    var ciW=ci.offsetWidth,ciH=ci.offsetHeight;
+    var natW=ci.naturalWidth||ciW,natH=ci.naturalHeight||ciH;
+    if(!ciW||!ciH){ov.remove();return;}
+    // object-fit:contain のレターボックスを除いた実描画領域を計算
+    var rendW,rendH,offX,offY;
+    if(natW/natH>ciW/ciH){rendW=ciW;rendH=ciW*natH/natW;offX=0;offY=(ciH-rendH)/2;}
+    else{rendH=ciH;rendW=ciH*natW/natH;offX=(ciW-rendW)/2;offY=0;}
+    var fX=Math.max(0,Math.min(rendW,cbx+cbw/2-offX));
+    var fY=Math.max(0,Math.min(rendH,cby+cbh/2-offY));
+    var xPct=(fX/rendW*100).toFixed(1),yPct=(fY/rendH*100).toFixed(1);
     var posVal=xPct+'% '+yPct+'%';
     if(img.dataset.ffOriginalSrc)img.src=img.dataset.ffOriginalSrc;
     img.style.objectFit='cover';
