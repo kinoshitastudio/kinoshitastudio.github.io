@@ -702,15 +702,20 @@ body {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 .export-wrap {
   flex: 1; display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 5px 1fr;
   overflow: hidden; min-height: 0;
 }
 .export-wrap.code-hidden {
-  grid-template-columns: 1fr 0px;
+  grid-template-columns: 1fr 0px 0px;
 }
 .export-wrap.code-hidden .export-code {
   overflow: hidden; min-width: 0; border: none;
 }
+.export-resizer {
+  background: rgba(255,255,255,.18); cursor: col-resize;
+  transition: background .15s; z-index: 10; flex-shrink: 0;
+}
+.export-resizer:hover, .export-resizer.dragging { background: #3ACFC6; }
 .export-preview {
   border-right: 1.5px solid rgba(255,255,255,.2);
   display: flex; flex-direction: column; overflow: hidden;
@@ -1014,6 +1019,7 @@ pre[class*="language-"]::after { display: none !important; }
 .fb-swatch { width: 10px; height: 10px; border-radius: 2px; background: #000; border: 1px solid rgba(255,255,255,.35); pointer-events: none; }
 .fb-color-wrap input[type="color"] { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; cursor: pointer; border: none; padding: 0; }
 .fb-el { margin-left: auto; color: rgba(255,255,255,.32); font-size: 9px; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+.fb-size { margin-left: 8px; color: rgba(255,255,255,.45); font-size: 9px; font-family: monospace; white-space: nowrap; letter-spacing: .04em; flex-shrink: 0; }
 .fb-menu-btn { display: none; background: rgba(255,214,0,.18) !important; border-color: rgba(255,214,0,.4) !important; color: #FFD600 !important; font-size: 13px !important; white-space: nowrap; flex-shrink: 0; }
 
 /* ━━ CODE MODAL ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
@@ -1263,6 +1269,7 @@ pre[class*="language-"]::after { display: none !important; }
         <span class="fb-sep"></span>
         <button class="fb-btn" onmousedown="event.preventDefault()" onclick="fmtExec('undo')" title="元に戻す">↩</button>
         <button class="fb-btn" onmousedown="event.preventDefault()" onclick="fmtExec('redo')" title="やり直す">↪</button>
+        <span class="fb-size" id="fbSize"></span>
         <span class="fb-sep"></span>
         <button class="fb-btn fb-menu-btn" id="fbMenuBtn" onmousedown="event.preventDefault()" onclick="openMobileMenu()">🎨 色・画像</button>
         <span class="fb-el" id="fbEl">右クリックで色変更</span>
@@ -1276,6 +1283,7 @@ pre[class*="language-"]::after { display: none !important; }
         <iframe id="exportIframe" title="preview"></iframe>
       </div>
     </div>
+    <div class="export-resizer" id="exportResizer"></div>
     <div class="export-code" id="exportCodePanel">
       <div class="export-code-bar" onclick="toggleMobCode()">
         <span>完成コード <i class="mob-code-arrow">▲</i></span>
@@ -3446,6 +3454,7 @@ function goTo(n) {
       const iframe = document.getElementById('exportIframe');
       if(iframe) { injectHoverScript(iframe); if(animEnabled) injectAnimScript(iframe); }
     }, 800);
+    setTimeout(updateSizeDisplay, 100);
   }
   // screen 1 に戻ったとき、編集済みHTMLをサムネイルに反映
   if (n === 1 && savedHtml) {
@@ -4904,6 +4913,21 @@ function toggleEditMode() {
       var el = doc.getElementById(id); if (el) el.remove();
     });
     syncEditedCode(doc);
+
+    // ── プレビューモード: アニメをリセットしてスクロールトリガー有効化 ──
+    if (animEnabled) {
+      // 凍結していた ff-in を除去 → IntersectionObserver が再トリガー
+      doc.querySelectorAll('[data-ff-anim].ff-in').forEach(function(el) {
+        el.classList.remove('ff-in');
+      });
+      // __ffAnimActive フラグをリセットして再注入
+      if (doc.defaultView) doc.defaultView.__ffAnimActive = false;
+      var _oldSt = doc.getElementById('__ffAnimSt');
+      var _oldSc = doc.getElementById('__ffAnimInject');
+      if (_oldSt) _oldSt.remove();
+      if (_oldSc) _oldSc.remove();
+      injectAnimScript(iframe);
+    }
   }
 }
 
@@ -4922,7 +4946,71 @@ function toggleCode() {
   const btn  = document.getElementById('btnToggleCode');
   const hidden = wrap.classList.toggle('code-hidden');
   btn.textContent = hidden ? 'コード 表示' : 'コード 隠す';
+  // reset inline grid so resizer position is restored
+  if (!hidden) wrap.style.gridTemplateColumns = '';
+  updateSizeDisplay();
 }
+
+function updateSizeDisplay() {
+  var el = document.getElementById('fbSize');
+  if (!el) return;
+  var scroll = document.getElementById('exportPreviewScroll');
+  if (!scroll) return;
+  var isMobile = scroll.classList.contains('mobile-mode');
+  var w = isMobile ? 390 : Math.round(scroll.clientWidth);
+  var h = isMobile ? 844 : Math.round(scroll.clientHeight);
+  el.textContent = w + ' × ' + h + ' px';
+}
+
+// ── Preview resizer drag ──────────────────────────────
+(function(){
+  var resizer = document.getElementById('exportResizer');
+  if (!resizer) return;
+  var wrap = resizer.closest('.export-wrap');
+  var dragging = false, startX = 0, startLeftW = 0;
+
+  resizer.addEventListener('mousedown', function(e) {
+    e.preventDefault();
+    dragging = true;
+    resizer.classList.add('dragging');
+    startX = e.clientX;
+    startLeftW = wrap.querySelector('.export-preview').getBoundingClientRect().width;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  });
+  document.addEventListener('mousemove', function(e) {
+    if (!dragging) return;
+    var totalW = wrap.getBoundingClientRect().width;
+    var newLeft = Math.max(220, Math.min(startLeftW + (e.clientX - startX), totalW - 225));
+    wrap.style.gridTemplateColumns = newLeft + 'px 5px 1fr';
+    updateSizeDisplay();
+  });
+  document.addEventListener('mouseup', function() {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+  // touch support
+  resizer.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    dragging = true;
+    resizer.classList.add('dragging');
+    startX = e.touches[0].clientX;
+    startLeftW = wrap.querySelector('.export-preview').getBoundingClientRect().width;
+  }, { passive: false });
+  document.addEventListener('touchmove', function(e) {
+    if (!dragging) return;
+    var totalW = wrap.getBoundingClientRect().width;
+    var newLeft = Math.max(220, Math.min(startLeftW + (e.touches[0].clientX - startX), totalW - 225));
+    wrap.style.gridTemplateColumns = newLeft + 'px 5px 1fr';
+    updateSizeDisplay();
+  }, { passive: false });
+  document.addEventListener('touchend', function() {
+    dragging = false; resizer.classList.remove('dragging');
+  });
+})();
 
 // ── Code panel toggle (mobile: tap bar) ──────────────
 function toggleMobCode() {
@@ -4935,6 +5023,7 @@ function setPreviewMode(mode) {
   const scroll = document.getElementById('exportPreviewScroll');
   scroll.classList.toggle('mobile-mode', mode === 'mobile');
   document.querySelectorAll('.pvtab').forEach(b => b.classList.toggle('on', b.textContent.trim() === (mode === 'pc' ? 'PC' : 'モバイル')));
+  updateSizeDisplay();
 }
 
 function getFinalCode() {
@@ -5168,7 +5257,7 @@ function scalePanelIframes() {
   document.querySelectorAll('.panel-card-preview iframe').forEach(f => scalePanelIframe(f));
 }
 
-window.addEventListener('resize', () => { scaleSlotIframes(); scalePanelIframes(); });
+window.addEventListener('resize', () => { scaleSlotIframes(); scalePanelIframes(); updateSizeDisplay(); });
 
 // ── Draft save / restore ──────────────────────────────
 function restoreDraft() {
