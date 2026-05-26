@@ -3044,6 +3044,15 @@ function setLang(lang) {
   document.querySelectorAll('iframe').forEach(f => {
     try { f.contentWindow.postMessage({ type:'setLang', lang }, '*'); } catch(e) {}
   });
+  // exportIframe は組み立て済みHTMLなので直接DOMを切り替える
+  try {
+    const _expDoc = document.getElementById('exportIframe')?.contentDocument;
+    if (_expDoc) {
+      const _isJp = lang === 'jp';
+      _expDoc.querySelectorAll('.jp').forEach(el => el.style.display = _isJp ? '' : 'none');
+      _expDoc.querySelectorAll('.en').forEach(el => el.style.display = _isJp ? 'none' : '');
+    }
+  } catch(e) {}
 }
 
 // ── Init ────────────────────────────────────────────
@@ -3711,19 +3720,36 @@ function toggleAnim() {
   const iframe = document.getElementById('exportIframe');
   if (iframe) {
     if (animEnabled) {
-      // ff-in をリセットしてから再注入 → アニメが最初から再生される
+      // IO に頼らず reflow trick で確実に再生
       var doc = iframe.contentDocument;
-      if (doc) {
-        doc.querySelectorAll('[data-ff-anim].ff-in').forEach(function(el) { el.classList.remove('ff-in'); });
-        if (doc.defaultView) doc.defaultView.__ffAnimActive = false;
+      if (doc && doc.body) {
+        if (doc.defaultView) doc.defaultView.__ffAnimActive = true;
+        ['__ffAnimInject','__ffAnim'].forEach(function(id){ var e=doc.getElementById(id);if(e)e.remove(); });
+        // __ffAnimSt を再作成して確実に CSS を適用
         var _ost = doc.getElementById('__ffAnimSt'); if (_ost) _ost.remove();
-        var _osc = doc.getElementById('__ffAnimInject'); if (_osc) _osc.remove();
-        // double-rAF: opacity:0 が描画された後に IO を立てる
-        var _iw = iframe.contentWindow;
-        var _raf = (_iw && _iw.requestAnimationFrame) ? _iw.requestAnimationFrame.bind(_iw) : requestAnimationFrame;
-        _raf(function() { _raf(function() { injectAnimScript(iframe); }); });
-      } else {
-        injectAnimScript(iframe);
+        var _st = doc.createElement('style'); _st.id = '__ffAnimSt';
+        _st.textContent = [
+          '[data-ff-anim]{opacity:0;transition-property:opacity,transform;transition-timing-function:cubic-bezier(.22,1,.36,1)}',
+          '[data-ff-anim]:not([data-ff-anim-type]),[data-ff-anim-type="fade-up"]{transform:translateY(24px)}',
+          '[data-ff-anim-type="fade-left"]{transform:translateX(-30px)}',
+          '[data-ff-anim-type="fade-right"]{transform:translateX(30px)}',
+          '[data-ff-anim-type="zoom"]{transform:scale(.95)}',
+          '[data-ff-anim-type="fade"]{transform:none}',
+          '[data-ff-anim].ff-in{opacity:1!important;transform:none!important}'
+        ].join('');
+        doc.head.appendChild(_st);
+        var _animEls = Array.from(doc.querySelectorAll('[data-ff-anim]'));
+        _animEls.forEach(function(el){
+          var dur = parseFloat(el.dataset.ffAnimDur) || 0.7;
+          el.style.transitionDuration = dur + 's,' + dur + 's';
+          el.classList.remove('ff-in');
+        });
+        void doc.body.offsetHeight; // reflow: opacity:0 を確定させる
+        _animEls.forEach(function(el){
+          var delay = parseFloat(el.dataset.ffAnimDelay) || 0;
+          if (delay > 0) { setTimeout(function(){ el.classList.add('ff-in'); }, delay * 1000); }
+          else { el.classList.add('ff-in'); }
+        });
       }
     } else {
       removeAnimScript(iframe);
