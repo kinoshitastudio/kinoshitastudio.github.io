@@ -194,6 +194,21 @@ html,body{height:100%;overflow:hidden;background:#1e1e1e;
 }
 #sidebar-backdrop.visible{display:block}
 
+/* BPM sidebar */
+.bpm-section{padding:10px 12px 8px;border-top:1px solid #2d2d2d;margin-top:8px}
+.bpm-row{display:flex;align-items:center;gap:6px}
+.bpm-title{font-size:10px;color:#555;letter-spacing:.5px;margin-bottom:7px}
+.bpm-btn{background:none;border:1px solid #3c3c3c;color:#858585;
+  font-family:'Consolas','Courier New',monospace;font-size:14px;
+  width:22px;height:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.bpm-btn:hover{border-color:#FF6600;color:#FF6600}
+#sb-bpm-val{color:#FF6600;font-size:14px;min-width:34px;text-align:center}
+#sb-bpm-range{-webkit-appearance:none;appearance:none;flex:1;height:2px;
+  background:linear-gradient(to right,#FF6600 var(--pct,25%),#333 var(--pct,25%));
+  outline:none;cursor:pointer}
+#sb-bpm-range::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;
+  border-radius:50%;background:#FF6600;cursor:pointer}
+
 /* Mixer */
 .mix-section{padding:10px 10px 6px;border-top:1px solid #2d2d2d;margin-top:4px}
 .mix-title{font-size:10px;color:#555;letter-spacing:.5px;margin-bottom:8px}
@@ -340,6 +355,17 @@ html,body{height:100%;overflow:hidden;background:#1e1e1e;
         <span style="color:#4fc1ff">@</span> loop boundary<br>
         <span style="color:#FF6600">1–8</span> note / vel<br>
         <span style="color:#4ec9b0">R</span> random prefix
+      </div>
+    </div>
+
+    <!-- BPM -->
+    <div class="bpm-section">
+      <div class="bpm-title">BPM</div>
+      <div class="bpm-row">
+        <button class="bpm-btn" id="sb-bpm-down">−</button>
+        <span id="sb-bpm-val">120</span>
+        <button class="bpm-btn" id="sb-bpm-up">+</button>
+        <input type="range" id="sb-bpm-range" min="40" max="300" step="1" value="120">
       </div>
     </div>
 
@@ -647,6 +673,7 @@ const COLS = 64;
 
 // instrument map: single-char prefix → id
 const INST_MAP = {k:'kick', h:'hat', s:'snare', c:'clap', p:'pad'};
+const INST_DEFAULT_OCT = {kick:2, hat:5, snare:3, clap:4, pad:4};
 const NOTE_NAMES = ['ド','レ','ミ','ファ','ソ','ラ','シ','ド↑'];
 const MIDI_NOTES = [60,62,64,65,67,69,71,72];
 
@@ -764,9 +791,7 @@ function switchTab(idx){
   activeTab=idx;
   const t=tabs[activeTab];
   for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) grid[r][c]=t.grid[r][c];
-  bpm=t.bpm;
-  document.getElementById('tb-bpm').textContent=bpm;
-  stopPlay();cRow=0;cCol=0;clearDirty();
+  stopPlay();setBpm(t.bpm);cRow=0;cCol=0;clearDirty();
   renderAll();updateStatus();renderTabBar();editor.focus();
 }
 function newTab(){
@@ -775,7 +800,7 @@ function newTab(){
   tabs.push({name,grid:Array.from({length:ROWS},()=>new Array(COLS).fill('·')),bpm:120});
   activeTab=tabs.length-1;
   for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) grid[r][c]='·';
-  bpm=120;document.getElementById('tb-bpm').textContent=bpm;
+  stopPlay();setBpm(120);
   stopPlay();cRow=0;cCol=0;clearDirty();
   renderAll();updateStatus();renderTabBar();editor.focus();
   saveToStorage();
@@ -793,8 +818,7 @@ function _doCloseTab(idx){
   activeTab=Math.max(0,newIdx);
   const t=tabs[activeTab];
   for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) grid[r][c]=t.grid[r][c];
-  bpm=t.bpm;document.getElementById('tb-bpm').textContent=bpm;
-  stopPlay();cRow=0;cCol=0;clearDirty();
+  stopPlay();setBpm(t.bpm);cRow=0;cCol=0;clearDirty();
   renderAll();updateStatus();renderTabBar();saveToStorage();editor.focus();
 }
 document.getElementById('modal-confirm').addEventListener('click',()=>{
@@ -939,7 +963,12 @@ const SEMITONES  = [0,2,4,5,7,9,11,12]; // 1=C 2=D 3=E 4=F 5=G 6=A 7=B 8=C↑
 // buffers: builtin + url-override slots
 const builtinBufs = {kick:null,hat:null,snare:null,clap:null,pad:null};
 const urlBufs     = {kick:null,hat:null,snare:null,clap:null,pad:null};
-function sampleFor(inst){ return urlBufs[inst] || builtinBufs[inst]; }
+const kitBufs     = {kick:Array(8).fill(null),hat:Array(8).fill(null),snare:Array(8).fill(null),clap:Array(8).fill(null),pad:Array(8).fill(null)};
+const instMode    = {kick:'single',hat:'single',snare:'single',clap:'single',pad:'single'};
+function sampleFor(inst,n=1){
+  if(instMode[inst]==='kit') return kitBufs[inst][(n-1)%8]||builtinBufs[inst];
+  return urlBufs[inst]||builtinBufs[inst];
+}
 
 // ── pre-render built-in samples (OfflineAudioContext) ─────────
 async function offline(dur, fn){
@@ -1354,6 +1383,10 @@ function stopPlay(){
 function setBpm(v){
   bpm=Math.max(40,Math.min(300,v));
   document.getElementById('tb-bpm').textContent=bpm;
+  const sv=document.getElementById('sb-bpm-val');
+  const sr=document.getElementById('sb-bpm-range');
+  if(sv)sv.textContent=bpm;
+  if(sr){sr.value=bpm;sr.style.setProperty('--pct',((bpm-40)/260*100).toFixed(1)+'%');}
   if(playing){clearInterval(intervalId);intervalId=setInterval(tick,stepMs());}
 }
 function doFlash(r,s){
@@ -1369,6 +1402,12 @@ document.getElementById('btnPlay').addEventListener('click',()=>{actx();startPla
 document.getElementById('btnStop').addEventListener('click',()=>{stopPlay();refocus();});
 document.getElementById('btnBpmUp').addEventListener('click',()=>{setBpm(bpm+4);refocus();});
 document.getElementById('btnBpmDown').addEventListener('click',()=>{setBpm(bpm-4);refocus();});
+document.getElementById('sb-bpm-down').addEventListener('click',()=>{setBpm(bpm-4);refocus();});
+document.getElementById('sb-bpm-up').addEventListener('click',()=>{setBpm(bpm+4);refocus();});
+(()=>{const r=document.getElementById('sb-bpm-range');
+  r.addEventListener('input',()=>{setBpm(+r.value);});
+  r.addEventListener('keydown',e=>e.stopPropagation());
+})();
 
 // ── panel switching ───────────────────────────────────────────
 function showPanel(name){
@@ -1438,7 +1477,7 @@ document.getElementById('imp-file').addEventListener('change',e=>{
     let start=0;
     if(lines[0]&&lines[0].startsWith('// bpm:')){
       const b=parseInt(lines[0].slice(7));
-      if(!isNaN(b)){bpm=Math.max(40,Math.min(300,b));document.getElementById('tb-bpm').textContent=bpm;}
+      if(!isNaN(b)){setBpm(b);}
       start=1;
     }
     for(let r=0;r<ROWS;r++){
@@ -1459,9 +1498,9 @@ const _origStart=startPlay, _origStop=stopPlay;
 loadMixer();
 buildMixerRows();
 if(loadFromStorage()){
-  document.getElementById('tb-bpm').textContent=bpm;
   flashSaveMsg('// session restored');
 }
+setBpm(bpm);
 renderTabBar();
 renderAll();
 updateStatus();
