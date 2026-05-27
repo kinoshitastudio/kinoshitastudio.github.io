@@ -617,7 +617,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);
   <div id="editor-col">
     <div id="tabs">
       <div id="hamburger" onclick="toggleSidebar()">☰</div>
-      <div class="tab"><span>settings.json</span><span class="tab-close">✕</span></div>
+      <div class="tab" id="settings-tab" onclick="openSettingsView()"><span>settings.json</span></div>
       <div id="tab-list"></div>
       <div id="tab-add" onclick="newTab()" title="New baka">+</div>
     </div>
@@ -625,6 +625,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);
       <span class="seg">lifehack</span>
       <span class="arr">›</span>
       <span class="seg" style="color:#FF8C00">baka.seq</span>
+    </div>
+
+    <div id="settings-view" style="display:none;flex:1;overflow:auto;outline:none;background:var(--bg);font-family:'Consolas','Courier New',monospace;font-size:13px;background-image:radial-gradient(circle at center,var(--c-dot) 0.6px,transparent 1.4px);background-size:8px 19px;background-position:50px 9px;background-attachment:local">
+      <div id="settings-lines"></div>
     </div>
 
     <div id="ed-term">
@@ -951,7 +955,8 @@ function renderTabBar(){
   renderSidebarTabs();
 }
 function switchTab(idx){
-  if(idx===activeTab)return;
+  if(idx===activeTab&&!_settingsOpen)return;
+  if(_settingsOpen) closeSettingsView();
   saveCurrentTab();saveToStorage();
   activeTab=idx;
   const t=tabs[activeTab];
@@ -1995,6 +2000,78 @@ function applyTheme(name){
     el.classList.toggle('active', el.dataset.theme===name);
   });
   localStorage.setItem('baka_theme', name);
+}
+
+let _settingsOpen = false;
+
+function openSettingsView(){
+  _settingsOpen = true;
+  document.getElementById('settings-view').style.display = 'flex';
+  document.getElementById('ed-term').style.display = 'none';
+  document.getElementById('settings-tab').classList.add('active');
+  // パンくず更新
+  const seg = document.querySelector('#crumb .seg:last-child');
+  if(seg){ seg.textContent='settings.json'; seg.style.color='var(--tx2)'; }
+  // アクティブなbakaタブのハイライトを外す
+  document.querySelectorAll('#tab-list .tab').forEach(t=>t.classList.remove('active'));
+  renderSettingsJson();
+}
+
+function closeSettingsView(){
+  _settingsOpen = false;
+  document.getElementById('settings-view').style.display = 'none';
+  document.getElementById('ed-term').style.display = '';
+  document.getElementById('settings-tab').classList.remove('active');
+  const seg = document.querySelector('#crumb .seg:last-child');
+  if(seg){ seg.textContent=tabs[activeTab]?.name||'baka.seq'; seg.style.color='var(--ac2)'; }
+  renderTabBar();
+  updateStatus();
+  editor.focus();
+}
+
+function renderSettingsJson(){
+  const panMap={'-3':'L3','-2':'L2','-1':'L1','0':'C','1':'R1','2':'R2','3':'R3'};
+  const mixer={};
+  ['kick','hat','snare','clap','pad'].forEach(inst=>{
+    mixer[inst]={vol:instVol[inst], pan:panMap[String(instPan[inst])]||instPan[inst]};
+  });
+  const obj={
+    'baka.bpm': bpm,
+    'baka.theme': currentTheme,
+    'baka.tabs': tabs.map(t=>t.name),
+    'baka.activeTab': tabs[activeTab]?.name,
+    'baka.mixer': mixer
+  };
+  const raw = JSON.stringify(obj, null, 2);
+  const lines = ['// baka — settings.json  (read only)', '', ...raw.split('\n')];
+  const container = document.getElementById('settings-lines');
+  container.innerHTML = '';
+  lines.forEach((line, i) => {
+    const ln = document.createElement('div');
+    ln.className = 'ln';
+    const lnum = document.createElement('span');
+    lnum.className = 'lnum';
+    lnum.textContent = i + 1;
+    const content = document.createElement('span');
+    content.className = 'ln-content';
+    // シンタックスカラー
+    let html = line
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    if(i === 0){
+      html = `<span style="color:var(--tx3)">${html}</span>`;
+    } else {
+      html = html
+        .replace(/(&quot;baka\.[^&]+&quot;)(\s*:)/g, '<span style="color:var(--c-mark)">$1</span>$2')
+        .replace(/(&quot;(?:kick|hat|snare|clap|pad)&quot;)(\s*:)/g, '<span style="color:var(--c-inst)">$1</span>$2')
+        .replace(/:\s*(\d+)/g, ': <span style="color:var(--c-note)">$1</span>')
+        .replace(/:\s*(&quot;[^&]*&quot;)/g, ': <span style="color:var(--c-rand)">$1</span>')
+        .replace(/(\[|\]|\{|\})/g, '<span style="color:var(--tx3)">$1</span>');
+    }
+    content.innerHTML = html;
+    ln.appendChild(lnum);
+    ln.appendChild(content);
+    container.appendChild(ln);
+  });
 }
 
 function openThemePicker(e){
