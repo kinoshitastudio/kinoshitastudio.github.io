@@ -899,7 +899,16 @@ body {
   box-shadow: 0 24px 60px rgba(0,0,0,.5);
 }
 #font-picker.open { display: block; }
-.fp-title { font-size: 10px; letter-spacing: .16em; color: rgba(255,255,255,.35); text-transform: uppercase; margin-bottom: 14px; }
+.fp-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.fp-title { font-size: 10px; letter-spacing: .16em; color: rgba(255,255,255,.35); text-transform: uppercase; }
+.fp-italic-btn {
+  font-size: 11px; font-weight: 700; padding: 5px 12px; border-radius: 6px;
+  border: 1px solid rgba(255,255,255,.2); background: transparent;
+  color: rgba(255,255,255,.45); cursor: pointer; transition: all .15s;
+  font-family: inherit; letter-spacing: .04em;
+}
+.fp-italic-btn:hover { border-color: rgba(255,255,255,.4); color: rgba(255,255,255,.8); }
+.fp-italic-btn.on { border-color: #7c3aed; background: rgba(124,58,237,.25); color: #c4b5fd; }
 .fp-section-label { font-size: 9px; letter-spacing: .14em; color: rgba(255,255,255,.25); text-transform: uppercase; margin: 14px 0 8px; }
 .fp-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; }
 .fp-item {
@@ -1854,7 +1863,10 @@ pre[class*="language-"]::after { display: none !important; }
 
 <!-- ━━ FONT PICKER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
 <div id="font-picker">
-  <div class="fp-title">Aa フォントを選ぶ</div>
+  <div class="fp-header">
+    <div class="fp-title">Aa フォントを選ぶ</div>
+    <button class="fp-italic-btn" id="btnItalicToggle" onclick="toggleItalic()" title="em要素の斜体ON/OFF"><i>I</i> 斜体</button>
+  </div>
   <div id="fpGrid"></div>
 </div>
 
@@ -3283,6 +3295,7 @@ let currentLang    = 'jp';
 let _savedExport   = null;
 let animEnabled    = true;
 let selectedFontId = 'default';
+let italicEnabled  = false;
 let editModeOn     = false;
 
 // ── EN/JP labels ─────────────────────────────────────
@@ -3860,7 +3873,8 @@ function buildPageHtml(pageSlots) {
     ? `body{font-family:${fp.body};}h1,h2,h3,h4,h5,h6{font-family:${fp.heading};}`
     : '';
   const fontOverrideTag = fontOverride ? `<style id="ff-font-override">${fontOverride}</style>` : '';
-  return `<!DOCTYPE html>\n<html lang="ja">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>My Site — Fuxx Fox</title>\n${fontLink}\n${fontOverrideTag}\n<style>\n*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }\n\n${allCSS}\n</style>\n</head>\n<body>\n\n${allBody}\n\n</body>\n</html>`;
+  const italicOverrideTag = italicEnabled ? `<style id="ff-italic-override">em{font-style:italic!important}</style>` : '';
+  return `<!DOCTYPE html>\n<html lang="ja">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>My Site — Fuxx Fox</title>\n${fontLink}\n${fontOverrideTag}\n${italicOverrideTag}\n<style>\n*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }\n\n${allCSS}\n</style>\n</head>\n<body>\n\n${allBody}\n\n</body>\n</html>`;
 }
 
 // ── Export ───────────────────────────────────────────
@@ -4086,6 +4100,9 @@ function renderFontPicker() {
     html += '</div>';
   });
   container.innerHTML = html;
+  // イタリックボタン状態を同期
+  const ibtn = document.getElementById('btnItalicToggle');
+  if (ibtn) ibtn.classList.toggle('on', italicEnabled);
 }
 
 function toggleFontPicker(e) {
@@ -4124,6 +4141,52 @@ function applyFontToSavedHtml() {
   prev.onload = function(){ injectHoverScript(this); if(animEnabled) injectAnimScript(this); };
   prev.src = prev._blob;
   return true;
+}
+
+function applyItalicToHtml() {
+  const btn = document.getElementById('btnItalicToggle');
+  if (btn) btn.classList.toggle('on', italicEnabled);
+
+  const overrideTag = italicEnabled
+    ? '<style id="ff-italic-override">em{font-style:italic!important}</style>'
+    : '';
+
+  if (_savedExport && _savedExport.html) {
+    let html = _savedExport.html;
+    html = html.replace(/<style id="ff-italic-override">[\s\S]*?<\/style>\n?/g, '');
+    if (italicEnabled) html = html.replace('</head>', `${overrideTag}\n</head>`);
+    _savedExport.html = html;
+    const curPg = _currentPage(); if (curPg) curPg._savedExport = _savedExport;
+    setExportCode(resolveAnimHtml(html));
+    const prev = document.getElementById('exportIframe');
+    if (prev) {
+      if (prev._blob) URL.revokeObjectURL(prev._blob);
+      const blob = new Blob([resolveAnimHtml(html)], { type: 'text/html' });
+      prev._blob = URL.createObjectURL(blob);
+      prev.onload = function(){ injectHoverScript(this); if(animEnabled) injectAnimScript(this); };
+      prev.src = prev._blob;
+    }
+  }
+
+  // スロットiframeにも即時反映
+  document.querySelectorAll('.slot-iframe').forEach(ifr => {
+    try {
+      const d = ifr.contentDocument;
+      if (!d) return;
+      let el = d.getElementById('ff-italic-override');
+      if (italicEnabled) {
+        if (!el) { el = d.createElement('style'); el.id = 'ff-italic-override'; d.head.appendChild(el); }
+        el.textContent = 'em{font-style:italic!important}';
+      } else {
+        if (el) el.remove();
+      }
+    } catch(e) {}
+  });
+}
+
+function toggleItalic() {
+  italicEnabled = !italicEnabled;
+  applyItalicToHtml();
 }
 
 function applyFont(id) {
