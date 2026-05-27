@@ -19,14 +19,14 @@
 }
 /* dim: 漆黒モノクローム */
 [data-theme="dim"]{
-  --bg:#080808;--bg2:#0f0f0f;--bg3:#161616;--bg4:#131313;--bg5:#1a1a1a;
-  --bdr:#161616;--bdr2:#222222;
-  --tx:#888888;--tx2:#777777;--tx3:#3a3a3a;--tx4:#2a2a2a;
-  --ac:#555555;--ac2:#666666;
-  --c-note:#777777;--c-inst:#505050;--c-mark:#606060;
-  --c-rand:#585858;--c-txt:#353535;--c-dot:#181818;
-  --ph1:rgba(120,120,120,.05);--ph2:rgba(120,120,120,.18);--ph3:rgba(120,120,120,.3);
-  --sb-bg:#111111;--sb-tx:#555555;
+  --bg:#111111;--bg2:#1a1a1a;--bg3:#222222;--bg4:#1e1e1e;--bg5:#272727;
+  --bdr:#222222;--bdr2:#333333;
+  --tx:#bbbbbb;--tx2:#aaaaaa;--tx3:#666666;--tx4:#444444;
+  --ac:#cc5500;--ac2:#dd6600;
+  --c-note:#cc5500;--c-inst:#9966bb;--c-mark:#3a9fcc;
+  --c-rand:#3aaa88;--c-txt:#4a8040;--c-dot:#252525;
+  --ph1:rgba(180,80,0,.06);--ph2:rgba(180,80,0,.2);--ph3:rgba(180,80,0,.35);
+  --sb-bg:#222222;--sb-tx:#cc5500;
 }
 /* light: ライトモード */
 [data-theme="light"]{
@@ -110,7 +110,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);
 #editor::-webkit-scrollbar-thumb{background:var(--bdr2)}
 
 /* Lines */
-.ln{display:flex;align-items:center;min-height:19px;line-height:19px;white-space:nowrap}
+.ln{display:flex;align-items:center;min-height:19px;line-height:19px;white-space:nowrap;min-width:100%}
 .ln:hover{background:rgba(128,128,128,.04)}
 .ln.cur-ln{background:rgba(128,128,128,.07)}
 .ln-num{min-width:50px;text-align:right;padding-right:14px;
@@ -669,6 +669,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);
             <span class="term-val" id="tb-bpm">120</span>
             <button class="term-btn" id="btnBpmUp">+</button>
             <span class="term-midi" id="tb-midi">// MIDI: ---</span>
+            <button class="term-btn" id="btnUndo">⟲ undo</button>
+            <button class="term-btn" id="btnRedo">⟳ redo</button>
             <button class="term-btn" id="btnSave">save</button>
             <button class="term-btn" id="btnExport">↓ exp</button>
             <button class="term-btn" id="btnImport">↑ imp</button>
@@ -736,7 +738,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);
 
 // ── config ────────────────────────────────────────────────────
 const ROWS = 32;
-const COLS = 64;
+const COLS = 128;
 
 // instrument map: single-char prefix → id
 const INST_MAP = {k:'kick', h:'hat', s:'snare', c:'clap', p:'pad'};
@@ -753,6 +755,31 @@ let intervalId = null, audioCtx = null, midiOut = null;
 let isDirty = false, _autoSaveTimer = null;
 let selAnchor = null; // {r,c} 選択の起点、null=選択なし
 let selClipboard = null; // {rows:string[][], w, h} コピーバッファ
+const undoStack = [];
+const redoStack = [];
+const UNDO_LIMIT = 50;
+
+function snapGrid(){ return grid.map(row=>[...row]); }
+function applySnap(snap){ for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)grid[r][c]=snap[r][c]; }
+function pushUndo(){
+  undoStack.push(snapGrid());
+  if(undoStack.length>UNDO_LIMIT) undoStack.shift();
+  redoStack.length=0;
+}
+function undo(){
+  if(!undoStack.length) return;
+  redoStack.push(snapGrid());
+  applySnap(undoStack.pop());
+  markDirty(); renderAll(); updateStatus();
+  flashSaveMsg('// undo');
+}
+function redo(){
+  if(!redoStack.length) return;
+  undoStack.push(snapGrid());
+  applySnap(redoStack.pop());
+  markDirty(); renderAll(); updateStatus();
+  flashSaveMsg('// redo');
+}
 const STORAGE_KEY = 'baka_session_v2';
 
 // multi-tab state
@@ -953,6 +980,7 @@ function copySelection(){
 
 function pasteClipboard(){
   if(!selClipboard) return;
+  pushUndo();
   const {rows,h,w}=selClipboard;
   for(let dr=0;dr<h;dr++){
     for(let dc=0;dc<w;dc++){
@@ -965,23 +993,70 @@ function pasteClipboard(){
   cCol=Math.min(cCol+w-1,COLS-1);
   markDirty(); renderAll(); updateStatus();
 }
-function moveSelContent(dr,dc){
+// ── ドラッグ移動（プレビューモード） ─────────────────────────────
+let selDragBuf = null; // {rows, origR0, origC0, origR1, origC1}
+let selDragDr = 0, selDragDc = 0;
+
+function startDrag(){
+  if(selDragBuf) return;
   const rect=getSelRect(); if(!rect) return;
-  if(rect.r0+dr<0||rect.r1+dr>=ROWS||rect.c0+dc<0||rect.c1+dc>=COLS) return;
-  const buf=[];
+  const rows=[];
   for(let r=rect.r0;r<=rect.r1;r++){
     const row=[];
     for(let c=rect.c0;c<=rect.c1;c++) row.push(grid[r][c]);
-    buf.push(row);
+    rows.push(row);
   }
-  for(let r=rect.r0;r<=rect.r1;r++)
-    for(let c=rect.c0;c<=rect.c1;c++) grid[r][c]='·';
-  for(let r=rect.r0;r<=rect.r1;r++)
-    for(let c=rect.c0;c<=rect.c1;c++)
-      grid[r+dr][c+dc]=buf[r-rect.r0][c-rect.c0];
+  selDragBuf={rows,origR0:rect.r0,origC0:rect.c0,origR1:rect.r1,origC1:rect.c1};
+  selDragDr=0; selDragDc=0;
+}
+
+function commitDrag(){
+  if(!selDragBuf){clearSel();return;}
+  pushUndo();
+  const {rows,origR0,origC0,origR1,origC1}=selDragBuf;
+  const h=origR1-origR0+1, w=origC1-origC0+1;
+  for(let r=origR0;r<=origR1;r++)
+    for(let c=origC0;c<=origC1;c++) grid[r][c]='·';
+  for(let dr2=0;dr2<h;dr2++)
+    for(let dc2=0;dc2<w;dc2++){
+      const nr=origR0+selDragDr+dr2, nc=origC0+selDragDc+dc2;
+      if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS) grid[nr][nc]=rows[dr2][dc2];
+    }
+  selDragBuf=null; selDragDr=0; selDragDc=0;
+  clearSel(); markDirty(); renderAll(); updateStatus();
+}
+
+function cancelDrag(){
+  selDragBuf=null; selDragDr=0; selDragDc=0;
+  clearSel(); renderAll(); updateStatus();
+}
+
+// 表示用グリッド（ドラッグ中はプレビューを合成）
+function getDisplayCell(r,c){
+  if(!selDragBuf) return grid[r][c];
+  const {rows,origR0,origC0,origR1,origC1}=selDragBuf;
+  const h=origR1-origR0+1, w=origC1-origC0+1;
+  // 移動先（プレビュー）優先
+  const pr=r-(origR0+selDragDr), pc=c-(origC0+selDragDc);
+  if(pr>=0&&pr<h&&pc>=0&&pc<w) return rows[pr][pc];
+  // 元の位置は '·' として表示（移動中は抜けているように見せる）
+  if(r>=origR0&&r<=origR1&&c>=origC0&&c<=origC1) return '·';
+  return grid[r][c];
+}
+
+function moveSelContent(dr,dc){
+  if(!hasSelection()) return false;
+  if(!selDragBuf) startDrag();
+  if(!selDragBuf) return false;
+  const {origR0,origC0,origR1,origC1}=selDragBuf;
+  const h=origR1-origR0+1, w=origC1-origC0+1;
+  const newR0=origR0+selDragDr+dr, newC0=origC0+selDragDc+dc;
+  if(newR0<0||newR0+h-1>=ROWS||newC0<0||newC0+w-1>=COLS) return false;
+  selDragDr+=dr; selDragDc+=dc;
   selAnchor.r+=dr; selAnchor.c+=dc;
   cRow+=dr; cCol+=dc;
-  markDirty(); renderAll(); updateStatus();
+  renderAll(); updateStatus();
+  return true;
 }
 
 // ── sequence scanner ──────────────────────────────────────────
@@ -1484,7 +1559,7 @@ const rowEls = [];
 
 for(let r=0;r<ROWS;r++){
   const d=document.createElement('div');
-  d.className='ln';d.id='rln'+r;
+  d.className='ln';d.id='rln'+r;d.dataset.r=r;
   d.innerHTML=`<div class="ln-num">${r+1}</div><div class="ln-content"></div>`;
   editor.appendChild(d);
   rowEls.push(d);
@@ -1548,7 +1623,7 @@ function renderRow(r){
   const {rangeMap,phMap}=buildMaps();
   let h='';
   for(let s=0;s<COLS;s++){
-    const ch=grid[r][s];
+    const ch=getDisplayCell(r,s);
     const cls=cellClass(r,s,ch,rangeMap,phMap);
     h+=`<span class="${cls}" data-r="${r}" data-s="${s}">${ch}</span>`;
   }
@@ -1562,7 +1637,7 @@ function renderAll(){
   for(let r=0;r<ROWS;r++){
     let h='';
     for(let s=0;s<COLS;s++){
-      const ch=grid[r][s];
+      const ch=getDisplayCell(r,s);
       const cls=cellClass(r,s,ch,rangeMap,phMap);
       h+=`<span class="${cls}" data-r="${r}" data-s="${s}">${ch}</span>`;
     }
@@ -1594,7 +1669,25 @@ function onCellClick(e){
   renderAll(); updateStatus(); editor.focus();
 }
 editor.addEventListener('click',e=>{
-  const c=e.target.closest('.cell');if(c)onCellClick({currentTarget:c,shiftKey:e.shiftKey});
+  const c=e.target.closest('.cell');
+  if(c){onCellClick({currentTarget:c,shiftKey:e.shiftKey});return;}
+  // セル外（行末の空白）をクリック → 行・列を計算して移動
+  const ln=e.target.closest('.ln');
+  if(!ln||ln.dataset.r===undefined) return;
+  const r=+ln.dataset.r;
+  if(isNaN(r)) return;
+  const lnRect=ln.getBoundingClientRect();
+  const firstCell=ln.querySelector('.cell');
+  const cellW=firstCell?firstCell.getBoundingClientRect().width:8;
+  const numW=firstCell?firstCell.getBoundingClientRect().left-lnRect.left:50;
+  const col=Math.min(Math.max(Math.floor((e.clientX-lnRect.left-numW)/cellW),0),COLS-1);
+  if(e.shiftKey){
+    if(!selAnchor) selAnchor={r:cRow,c:cCol};
+    cRow=r; cCol=col;
+  } else {
+    clearSel(); cRow=r; cCol=col;
+  }
+  renderAll(); updateStatus(); editor.focus();
 });
 
 document.addEventListener('keydown',e=>{
@@ -1603,25 +1696,29 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){
     const m=document.getElementById('close-modal');
     if(m.classList.contains('open')){m.classList.remove('open');_pendingCloseIdx=-1;return;}
+    if(selDragBuf){cancelDrag();return;}
     if(selAnchor){clearSel();renderAll();return;}
   }
   if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();saveToStorage();return;}
+  if((e.ctrlKey||e.metaKey)&&e.key==='z'&&!e.shiftKey){e.preventDefault();undo();return;}
+  if((e.ctrlKey||e.metaKey)&&(e.key==='y'||(e.key==='z'&&e.shiftKey))){e.preventDefault();redo();return;}
   if((e.ctrlKey||e.metaKey)&&e.key==='c'){if(hasSelection()){e.preventDefault();copySelection();}return;}
   if((e.ctrlKey||e.metaKey)&&e.key==='v'){e.preventDefault();pasteClipboard();return;}
   if(e.code==='Space'){e.preventDefault();playing?stopPlay():startPlay();return;}
-  if(e.key==='Enter'){e.preventDefault();clearSel();cRow=(cRow+1)%ROWS;cCol=0;renderAll();updateStatus();return;}
+  if(e.key==='Enter'){e.preventDefault();if(selDragBuf){commitDrag();}else{clearSel();cRow=(cRow+1)%ROWS;cCol=0;renderAll();updateStatus();}return;}
   // Shift+矢印 → 選択範囲を広げる
   if(e.shiftKey&&e.key==='ArrowRight'){e.preventDefault();if(!selAnchor)selAnchor={r:cRow,c:cCol};cCol=Math.min(cCol+1,COLS-1);renderAll();updateStatus();return;}
   if(e.shiftKey&&e.key==='ArrowLeft'){e.preventDefault();if(!selAnchor)selAnchor={r:cRow,c:cCol};cCol=Math.max(cCol-1,0);renderAll();updateStatus();return;}
   if(e.shiftKey&&e.key==='ArrowDown'){e.preventDefault();if(!selAnchor)selAnchor={r:cRow,c:cCol};cRow=Math.min(cRow+1,ROWS-1);renderAll();updateStatus();return;}
   if(e.shiftKey&&e.key==='ArrowUp'){e.preventDefault();if(!selAnchor)selAnchor={r:cRow,c:cCol};cRow=Math.max(cRow-1,0);renderAll();updateStatus();return;}
   // 矢印キー: 選択中→内容ごと移動、通常→カーソル移動
-  if(e.key==='ArrowRight'){e.preventDefault();if(hasSelection()){moveSelContent(0,1);}else{clearSel();cCol=(cCol+1)%COLS;renderAll();updateStatus();}return;}
-  if(e.key==='ArrowLeft'){e.preventDefault();if(hasSelection()){moveSelContent(0,-1);}else{clearSel();cCol=(cCol-1+COLS)%COLS;renderAll();updateStatus();}return;}
-  if(e.key==='ArrowDown'){e.preventDefault();if(hasSelection()){moveSelContent(1,0);}else{clearSel();cRow=(cRow+1)%ROWS;renderAll();updateStatus();}return;}
-  if(e.key==='ArrowUp'){e.preventDefault();if(hasSelection()){moveSelContent(-1,0);}else{clearSel();cRow=(cRow-1+ROWS)%ROWS;renderAll();updateStatus();}return;}
+  if(e.key==='ArrowRight'){e.preventDefault();if(hasSelection()){if(!moveSelContent(0,1)){clearSel();cCol=(cCol+1)%COLS;renderAll();updateStatus();}}else{clearSel();cCol=(cCol+1)%COLS;renderAll();updateStatus();}return;}
+  if(e.key==='ArrowLeft'){e.preventDefault();if(hasSelection()){if(!moveSelContent(0,-1)){clearSel();cCol=(cCol-1+COLS)%COLS;renderAll();updateStatus();}}else{clearSel();cCol=(cCol-1+COLS)%COLS;renderAll();updateStatus();}return;}
+  if(e.key==='ArrowDown'){e.preventDefault();if(hasSelection()){if(!moveSelContent(1,0)){clearSel();cRow=(cRow+1)%ROWS;renderAll();updateStatus();}}else{clearSel();cRow=(cRow+1)%ROWS;renderAll();updateStatus();}return;}
+  if(e.key==='ArrowUp'){e.preventDefault();if(hasSelection()){if(!moveSelContent(-1,0)){clearSel();cRow=(cRow-1+ROWS)%ROWS;renderAll();updateStatus();}}else{clearSel();cRow=(cRow-1+ROWS)%ROWS;renderAll();updateStatus();}return;}
   if(e.key==='Backspace'||e.key==='Delete'){
     e.preventDefault();
+    pushUndo();
     const rect=getSelRect();
     if(rect){for(let r=rect.r0;r<=rect.r1;r++)for(let c=rect.c0;c<=rect.c1;c++)grid[r][c]='·';clearSel();}
     else grid[cRow][cCol]='·';
@@ -1629,6 +1726,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Tab'){e.preventDefault();cCol=(cCol+1)%COLS;renderAll();updateStatus();return;}
   if(e.key.length===1&&!e.ctrlKey&&!e.metaKey){
     const ch=e.key;
+    pushUndo();
     grid[cRow][cCol]=ch;
     markDirty();
     if(ch>='1'&&ch<='8'){
@@ -1753,6 +1851,8 @@ document.getElementById('btnPlayMobile').addEventListener('click',()=>{
   document.getElementById('btnPlayMobile').classList.toggle('on',playing);
 });
 
+document.getElementById('btnUndo').addEventListener('click',()=>{undo();refocus();});
+document.getElementById('btnRedo').addEventListener('click',()=>{redo();refocus();});
 document.getElementById('btnSave').addEventListener('click',()=>{saveToStorage();refocus();});
 document.getElementById('btnExport').addEventListener('click',()=>{exportFile();refocus();});
 document.getElementById('btnImport').addEventListener('click',()=>{document.getElementById('imp-file').click();});
