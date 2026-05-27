@@ -3859,7 +3859,8 @@ function buildPageHtml(pageSlots) {
   const fontOverride = fp.heading
     ? `body{font-family:${fp.body};}h1,h2,h3,h4,h5,h6{font-family:${fp.heading};}`
     : '';
-  return `<!DOCTYPE html>\n<html lang="ja">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>My Site — Fuxx Fox</title>\n${fontLink}\n<style>\n*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }\n${fontOverride}\n\n${allCSS}\n</style>\n</head>\n<body>\n\n${allBody}\n\n</body>\n</html>`;
+  const fontOverrideTag = fontOverride ? `<style id="ff-font-override">${fontOverride}</style>` : '';
+  return `<!DOCTYPE html>\n<html lang="ja">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>My Site — Fuxx Fox</title>\n${fontLink}\n${fontOverrideTag}\n<style>\n*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }\n\n${allCSS}\n</style>\n</head>\n<body>\n\n${allBody}\n\n</body>\n</html>`;
 }
 
 // ── Export ───────────────────────────────────────────
@@ -3985,7 +3986,14 @@ const FF_ANIM_JS = `(function(){
   document.head.appendChild(st);
   var io=new IntersectionObserver(function(entries){
     entries.forEach(function(e){
-      if(e.isIntersecting){e.target.classList.add('ff-in');io.unobserve(e.target);}
+      if(e.isIntersecting){
+        var dur=parseFloat(e.target.dataset.ffAnimDur)||0.9;
+        var delay=parseFloat(e.target.dataset.ffAnimDelay)||0;
+        e.target.style.transitionDuration=dur+'s,'+dur+'s';
+        if(delay) e.target.style.transitionDelay=delay+'s';
+        e.target.classList.add('ff-in');
+        io.unobserve(e.target);
+      }
     });
   },{threshold:0.08,rootMargin:'0px 0px -32px 0px'});
   document.querySelectorAll('[data-ff-anim]').forEach(function(el){io.observe(el);});
@@ -4088,6 +4096,36 @@ function toggleFontPicker(e) {
   if (!isOpen) renderFontPicker();
 }
 
+function applyFontToSavedHtml() {
+  if (!_savedExport || !_savedExport.html) return false;
+  const fp = FONT_PAIRS.find(f => f.id === selectedFontId) || FONT_PAIRS[0];
+  const newLink = fp.gfUrl
+    ? `<link href="${fp.gfUrl}" rel="stylesheet">`
+    : `<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+JP:wght@300;400;500;700;800&display=swap" rel="stylesheet">`;
+  const fontOverride = fp.heading
+    ? `body{font-family:${fp.body};}h1,h2,h3,h4,h5,h6{font-family:${fp.heading};}`
+    : '';
+  let html = _savedExport.html;
+  // Google Fonts linkを差し替え
+  html = html.replace(/<link[^>]*fonts\.googleapis\.com[^>]*>/g, newLink);
+  // 既存のfont-overrideタグを除去して再挿入
+  html = html.replace(/<style id="ff-font-override">[\s\S]*?<\/style>\n?/g, '');
+  if (fontOverride) {
+    html = html.replace('</head>', `<style id="ff-font-override">${fontOverride}</style>\n</head>`);
+  }
+  _savedExport.html = html;
+  const curPg = _currentPage(); if (curPg) curPg._savedExport = _savedExport;
+  setExportCode(resolveAnimHtml(html));
+  const prev = document.getElementById('exportIframe');
+  if (!prev) return true;
+  if (prev._blob) URL.revokeObjectURL(prev._blob);
+  const blob = new Blob([resolveAnimHtml(html)], { type: 'text/html' });
+  prev._blob = URL.createObjectURL(blob);
+  prev.onload = function(){ injectHoverScript(this); if(animEnabled) injectAnimScript(this); };
+  prev.src = prev._blob;
+  return true;
+}
+
 function applyFont(id) {
   selectedFontId = id;
   const fp = FONT_PAIRS.find(f => f.id === id);
@@ -4098,10 +4136,11 @@ function applyFont(id) {
   });
   document.getElementById('font-picker').classList.remove('open');
   renderFontPicker();
-  // エクスポート再ビルド
-  const codeEl = document.getElementById('exportCode');
-  if (codeEl && codeEl.textContent.trim()) {
-    buildExport();
+  // savedExportがあれば直接HTML書き換え（再ビルド不要）
+  if (!applyFontToSavedHtml()) {
+    // 未エクスポートの場合はexportCodeがあれば再ビルド
+    const codeEl = document.getElementById('exportCode');
+    if (codeEl && codeEl.textContent.trim()) buildExport();
   }
 }
 
@@ -4565,13 +4604,13 @@ function _ffCtxMenu(e) {
         hasAnim=false;
       } else {
         target.setAttribute('data-ff-anim',''); target.setAttribute('data-ff-anim-type',pair[1]);
-        target.classList.add('ff-in'); // keep visible in editor; stripped by syncEditedCode before export
         hasAnim=true; curType=pair[1];
       }
       typeRow.querySelectorAll('button').forEach(function(b,i){
         var s=(TYPES[i][1]==='none'&&!hasAnim)||(hasAnim&&TYPES[i][1]===curType);
         b.style.background=s?'#2B72E8':'rgba(255,255,255,.08)';
       });
+      if(hasAnim) setTimeout(function(){_runPrev(target);},80);
       setTimeout(function(){syncEditedCode(_d);},50);
     });
     typeRow.appendChild(btn);
@@ -4592,6 +4631,7 @@ function _ffCtxMenu(e) {
       ev.stopPropagation(); curDur=v;
       target.setAttribute('data-ff-anim-dur',v);
       durRow.querySelectorAll('button').forEach(function(b,i){b.style.background=DURS[i]===v?'#2B72E8':'rgba(255,255,255,.08)';});
+      setTimeout(function(){_runPrev(target);},80);
       setTimeout(function(){syncEditedCode(_d);},50);
     });
     durRow.appendChild(btn);
@@ -4613,35 +4653,35 @@ function _ffCtxMenu(e) {
       if(v==='0') target.removeAttribute('data-ff-anim-delay');
       else target.setAttribute('data-ff-anim-delay',v);
       delRow.querySelectorAll('button').forEach(function(b,i){b.style.background=DELS[i]===v?'#2B72E8':'rgba(255,255,255,.08)';});
+      setTimeout(function(){_runPrev(target);},80);
       setTimeout(function(){syncEditedCode(_d);},50);
     });
     delRow.appendChild(btn);
   });
   animSec.appendChild(delRow);
 
-  // プレビュー再生ボタン
-  animSec.appendChild(mkBtn('▶ プレビュー再生',function(){
-    if(!target.hasAttribute('data-ff-anim')) return;
-    var type=target.dataset.ffAnimType||'fade-up';
-    var dur=parseFloat(target.dataset.ffAnimDur)||0.9;
-    var delay=parseFloat(target.dataset.ffAnimDelay)||0;
+  // アニメプレビュー共通関数（設定変更時にも呼ぶ）
+  function _runPrev(t){
+    if(!t||!t.hasAttribute('data-ff-anim')) return;
+    var type=t.dataset.ffAnimType||'fade-up';
+    var dur=parseFloat(t.dataset.ffAnimDur)||0.9;
+    var delay=parseFloat(t.dataset.ffAnimDelay)||0;
     var tfMap={'fade-up':'translateY(40px) scale(0.97)','fade-left':'translateX(-48px) scale(0.97)','fade-right':'translateX(48px) scale(0.97)','zoom':'scale(0.88)','fade':'none'};
     var tf=tfMap[type]||'translateY(40px) scale(0.97)';
-    target.style.transition='none';
-    target.style.opacity='0';
-    if(tf!=='none') target.style.transform=tf; else target.style.transform='';
-    target.classList.remove('ff-in');
-    void target.offsetHeight;
-    target.style.transition='opacity '+dur+'s cubic-bezier(0.16,1,0.3,1)'+(tf!=='none'?',transform '+dur+'s cubic-bezier(0.16,1,0.3,1)':'');
-    target.style.transitionDelay=delay+'s';
+    t.style.transition='none'; t.style.opacity='0';
+    if(tf!=='none') t.style.transform=tf; else t.style.transform='';
+    t.classList.remove('ff-in');
+    void t.offsetHeight;
+    t.style.transition='opacity '+dur+'s cubic-bezier(0.16,1,0.3,1)'+(tf!=='none'?',transform '+dur+'s cubic-bezier(0.16,1,0.3,1)':'');
+    t.style.transitionDelay=delay+'s';
     setTimeout(function(){
-      target.style.opacity='1'; target.style.transform='none';
-      setTimeout(function(){
-        target.style.transition=''; target.style.transitionDelay='';
-        target.classList.add('ff-in');
-      },(dur+delay)*1000+100);
+      t.style.opacity='1'; t.style.transform='none';
+      setTimeout(function(){ t.style.transition=''; t.style.transitionDelay=''; t.classList.add('ff-in'); },(dur+delay)*1000+100);
     },16);
-  },'width:100%;margin-top:2px;background:rgba(43,114,232,.3);border-color:rgba(43,114,232,.6);'));
+  }
+
+  // プレビュー再生ボタン
+  animSec.appendChild(mkBtn('▶ プレビュー再生',function(){ _runPrev(target); },'width:100%;margin-top:2px;background:rgba(43,114,232,.3);border-color:rgba(43,114,232,.6);'));
 
   m.appendChild(animSec);
 
