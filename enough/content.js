@@ -52,15 +52,19 @@
     startTimer(DEFAULT_DURATION);
   }
 
-  // メトリクス非表示は即時実行（storage コールバック待ちにしない）
-  setupMetrics();
+  // メトリクス非表示: storage を確認してから実行
+  // 200ms 以内に応答がなければフォールバックで実行（コールバック不発対策）
+  let _metricsStarted = false;
+  const _startMetrics = () => { if (!_metricsStarted) { _metricsStarted = true; setupMetrics(); } };
+  const _metricsTimer = setTimeout(_startMetrics, 200);
 
-  // ストレージはモーダルのテキスト・タイマー調整のみに使う
   try {
     chrome.storage.sync.get(
       { message: '', duration: DEFAULT_DURATION, hideMetrics: true },
       (data) => {
-        if (chrome.runtime.lastError) return;
+        clearTimeout(_metricsTimer);
+        if (chrome.runtime.lastError) { _startMetrics(); return; }
+        if (data.hideMetrics !== false) _startMetrics();
         if (overlay) {
           const message = (data.message || '').trim() || DEFAULT_MESSAGE;
           const duration = Math.min(30, Math.max(1, data.duration || DEFAULT_DURATION));
@@ -70,7 +74,10 @@
         }
       }
     );
-  } catch (e) {}
+  } catch (e) {
+    clearTimeout(_metricsTimer);
+    _startMetrics();
+  }
 
 
   // ─── メトリクス非表示 ──────────────────────────────────
@@ -323,7 +330,7 @@
       });
 
       // likes リンク経由のカウント
-      document.querySelectorAll('a[href*="/likes"], a[href*="like"]').forEach(a => {
+      document.querySelectorAll('a[href*="/likes"]').forEach(a => {
         a.querySelectorAll('span, div').forEach(child => {
           if (/\d/.test(child.textContent.trim())) hideEl(child);
         });
