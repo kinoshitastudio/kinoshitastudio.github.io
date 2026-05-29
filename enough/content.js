@@ -1,4 +1,19 @@
 (function () {
+  // Reddit: Shadow DOM が querySelectorAll/CSS を遮断するため attachShadow を早期パッチ
+  if (location.hostname.includes('reddit.com')) {
+    const _REDDIT_CSS = 'faceplate-number { display: none !important; }';
+    const _origAttachShadow = Element.prototype.attachShadow;
+    Element.prototype.attachShadow = function(init) {
+      const shadow = _origAttachShadow.call(this, init);
+      try {
+        const s = document.createElement('style');
+        s.textContent = _REDDIT_CSS;
+        shadow.appendChild(s);
+      } catch(e) {}
+      return shadow;
+    };
+  }
+
   // 同一サイト内のナビゲーション（カテゴリ・記事間の移動）ではモーダルをスキップ
   // 判定1: sessionStorage（同タブ内ナビゲーション）
   // 判定2: referrer が同じホスト（同サイトのリンクから新タブを開いたケース）
@@ -150,83 +165,32 @@
   }
 
   function setupReddit() {
-    injectCSS(`
-      faceplate-number { display: none !important; }
-      [id^="vote-arrows"] span, [id^="vote-arrows"] faceplate-number,
-      shreddit-post [slot="vote-bar"] faceplate-number,
-      .score, .points, [class*="karma"],
-      [data-testid="post-total-votes"],
-      [data-click-id="upvote"] + span,
-      [aria-label*="upvote"] ~ faceplate-number { visibility: hidden !important; }
-    `);
+    const REDDIT_CSS = 'faceplate-number { display: none !important; } .score, .points, [class*="karma"] { visibility: hidden !important; }';
 
-    const NUMERIC = /^\d[\d,.]+[KMBkmb万千億]?$|^\d+$/;
-
-    const hideEl = (el) => {
-      if (!el || el === document.body) return;
-      el.style.setProperty('visibility', 'hidden', 'important');
-    };
-
-    const hide = () => {
-      // faceplate-number カスタム要素（新 Reddit UI）
-      // 親 button の visibility:visible に負けるため display:none で対応
-      document.querySelectorAll('faceplate-number').forEach(el => {
+    // Shadow DOM を再帰的に走査して CSS 注入 + 要素を直接隠す
+    function walkShadow(root) {
+      try {
+        if (!root.querySelector('#enough-reddit-style')) {
+          const s = document.createElement('style');
+          s.id = 'enough-reddit-style';
+          s.textContent = REDDIT_CSS;
+          root.appendChild(s);
+        }
+      } catch(e) {}
+      root.querySelectorAll('faceplate-number').forEach(el => {
         el.style.setProperty('display', 'none', 'important');
       });
-
-      // vote-arrows コンテナ内の数値
-      document.querySelectorAll('[id^="vote-arrows"]').forEach(el => {
-        el.querySelectorAll('span, div, faceplate-number').forEach(child => {
-          if (!child.children.length && NUMERIC.test(child.textContent.trim())) hideEl(child);
-        });
-        // Shadow DOM 対応
-        if (el.shadowRoot) {
-          el.shadowRoot.querySelectorAll('span, faceplate-number').forEach(child => {
-            if (NUMERIC.test(child.textContent.trim())) hideEl(child);
-          });
-        }
+      root.querySelectorAll('*').forEach(el => {
+        if (el.shadowRoot) walkShadow(el.shadowRoot);
       });
+    }
 
-      // コメント数・シェア数（投稿カード下部）
-      document.querySelectorAll(
-        '[data-testid="comment-count"], [data-click-id="comments"] span, ' +
-        'a[href*="/comments/"] span, [aria-label*="comment"] span'
-      ).forEach(el => {
-        if (!el.children.length && NUMERIC.test(el.textContent.trim())) hideEl(el);
-      });
+    injectCSS(REDDIT_CSS);
 
-      // プロフィール karma
-      document.querySelectorAll('[class*="karma"], [id*="karma"]').forEach(el => {
-        el.style.setProperty('visibility', 'hidden', 'important');
-      });
-
-      // テキストスキャン: 数値のみのノード
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-      let node;
-      while ((node = walker.nextNode())) {
-        const t = node.textContent.trim();
-        if (t.length < 12 && NUMERIC.test(t)) {
-          const p = node.parentElement;
-          if (!p || p.dataset.enoughHidden || p === document.body) continue;
-          // vote-arrows や post-footer 付近のみ対象（誤爆防止）
-          let ancestor = p;
-          for (let i = 0; i < 6; i++) {
-            if (!ancestor) break;
-            const id = ancestor.id || '';
-            const cls = ancestor.className || '';
-            if (/vote|score|karma|comment|share|award/i.test(id + cls)) {
-              hideEl(p);
-              p.dataset.enoughHidden = '1';
-              break;
-            }
-            ancestor = ancestor.parentElement;
-          }
-        }
-      }
-    };
+    const hide = () => walkShadow(document);
 
     const start = () => {
-      [0, 500, 1500, 3000, 5000].forEach(ms => setTimeout(hide, ms));
+      [0, 300, 800, 1500, 3000, 5000].forEach(ms => setTimeout(hide, ms));
       const obs = new MutationObserver(hide);
       obs.observe(document.body, { childList: true, subtree: true });
       setInterval(hide, 3000);
