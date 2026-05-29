@@ -52,12 +52,15 @@
     startTimer(DEFAULT_DURATION);
   }
 
-  // メトリクス非表示は毎ページ実行（モーダルの有無に関わらず）
+  // メトリクス非表示は即時実行（storage コールバック待ちにしない）
+  setupMetrics();
+
+  // ストレージはモーダルのテキスト・タイマー調整のみに使う
   try {
     chrome.storage.sync.get(
       { message: '', duration: DEFAULT_DURATION, hideMetrics: true },
       (data) => {
-        if (chrome.runtime.lastError) { setupMetrics(); return; }
+        if (chrome.runtime.lastError) return;
         if (overlay) {
           const message = (data.message || '').trim() || DEFAULT_MESSAGE;
           const duration = Math.min(30, Math.max(1, data.duration || DEFAULT_DURATION));
@@ -65,12 +68,10 @@
           if (msgEl) msgEl.textContent = message;
           startTimer(duration);
         }
-        if (data.hideMetrics) setupMetrics();
       }
     );
-  } catch (e) {
-    setupMetrics();
-  }
+  } catch (e) {}
+
 
   // ─── メトリクス非表示 ──────────────────────────────────
   function setupMetrics() {
