@@ -151,9 +151,7 @@
 
   function setupReddit() {
     injectCSS(`
-      faceplate-number,
-      faceplate-number span,
-      faceplate-number * { visibility: hidden !important; }
+      faceplate-number { display: none !important; }
       [id^="vote-arrows"] span, [id^="vote-arrows"] faceplate-number,
       shreddit-post [slot="vote-bar"] faceplate-number,
       .score, .points, [class*="karma"],
@@ -171,7 +169,10 @@
 
     const hide = () => {
       // faceplate-number カスタム要素（新 Reddit UI）
-      document.querySelectorAll('faceplate-number').forEach(hideEl);
+      // 親 button の visibility:visible に負けるため display:none で対応
+      document.querySelectorAll('faceplate-number').forEach(el => {
+        el.style.setProperty('display', 'none', 'important');
+      });
 
       // vote-arrows コンテナ内の数値
       document.querySelectorAll('[id^="vote-arrows"]').forEach(el => {
