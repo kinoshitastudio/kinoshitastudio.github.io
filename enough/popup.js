@@ -1,5 +1,5 @@
 const DEFAULT_MESSAGE = '数字は、あなたじゃない。';
-const DEFAULT_DURATION = 2;
+const DEFAULT_DURATION = 1;
 
 const messageEl = document.getElementById('message');
 const durationEl = document.getElementById('duration');
@@ -18,7 +18,7 @@ chrome.storage.sync.get(
 
 saveBtn.addEventListener('click', () => {
   const message = messageEl.value.trim();
-  const duration = Math.min(30, Math.max(2, parseInt(durationEl.value) || DEFAULT_DURATION));
+  const duration = Math.min(30, Math.max(1, parseInt(durationEl.value) || DEFAULT_DURATION));
   const hideMetrics = hideMetricsEl.checked;
 
   chrome.storage.sync.set({ message, duration, hideMetrics }, () => {
