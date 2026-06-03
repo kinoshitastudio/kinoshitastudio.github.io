@@ -181,16 +181,15 @@
 
   // ── 再生開始（失敗してもlocalStorageは変えない） ─────────────
   function startPlay(vol) {
-    // 保存済みの再生位置から再開
-    if (savedTime > 0 && !isNaN(savedTime)) {
-      audio.currentTime = savedTime;
-    }
     audio.muted = false;
     setMuteIcon(false);
     audio.play().then(function(){
+      // play()成功後にcurrentTimeを設定（メタデータがロード済みになってから）
+      if (savedTime > 0 && !isNaN(savedTime)) {
+        audio.currentTime = savedTime;
+      }
       fadeIn(vol);
       showFloat();
-      // resume ボタンを非表示
       var rb = document.getElementById('bgm-resume-btn');
       if (rb) rb.style.display = 'none';
     }).catch(function(){
