@@ -37,7 +37,7 @@
       '#bgm-skip-btn{background:none;color:#7a7770;border:1px solid rgba(26,26,24,.18);padding:.9rem 1.2rem;font-family:"Space Mono",monospace;font-size:.58rem;letter-spacing:.15em;cursor:pointer;transition:border-color .2s,color .2s;}',
       '#bgm-skip-btn:hover{border-color:#7a7770;color:#1a1a18;}',
       /* floating control */
-      '#bgm-float{position:fixed;top:.75rem;right:3.8rem;z-index:8500;display:none;align-items:center;gap:.5rem;opacity:0;pointer-events:none;transition:opacity .4s ease;padding:.3rem .5rem;}',
+      '#bgm-float{position:fixed;top:.85rem;right:5.5rem;z-index:8500;display:none;align-items:center;gap:.5rem;opacity:0;pointer-events:none;transition:opacity .4s ease;padding:.3rem .5rem;}',
       '#bgm-float.visible{opacity:1;pointer-events:all;}',
       '#bgm-mute-btn{background:none;border:none;cursor:pointer;padding:0;display:flex;align-items:center;opacity:.6;transition:opacity .2s;}',
       '#bgm-mute-btn:hover{opacity:1;}',
@@ -53,7 +53,7 @@
       '#bgm-resume-btn{background:none;border:none;cursor:pointer;padding:0;display:flex;align-items:center;opacity:.55;transition:opacity .2s;}',
       '#bgm-resume-btn:hover{opacity:1;}',
       '#bgm-resume-btn svg{width:16px;height:16px;stroke:#1a1a18;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;}',
-      '@media(max-width:768px){#bgm-modal{padding:2rem 1.5rem;}#bgm-float{top:.7rem;right:3.4rem;}#bgm-nav-slider{display:none;}}'
+      '@media(max-width:768px){#bgm-modal{padding:2rem 1.5rem;}#bgm-float{top:.7rem;right:4.5rem;}#bgm-nav-slider{display:none;}}'
     ].join('');
     document.head.appendChild(style);
   }
@@ -169,6 +169,10 @@
 
   // ── フェードアウト ────────────────────────────────────────────
   function fadeOut(cb) {
+    // 遷移直前に再生位置を確実に保存
+    if (!isNaN(audio.currentTime) && audio.currentTime > 0) {
+      localStorage.setItem(KEY_TIME, audio.currentTime);
+    }
     var vol = audio.volume;
     if (vol === 0) { if (cb) cb(); return; }
     var step = 0;
@@ -184,9 +188,18 @@
     audio.muted = false;
     setMuteIcon(false);
     audio.play().then(function(){
-      // play()成功後にcurrentTimeを設定（メタデータがロード済みになってから）
+      // データが実際にseekできる状態になってからcurrentTimeを設定
       if (savedTime > 0 && !isNaN(savedTime)) {
-        audio.currentTime = savedTime;
+        var doSeek = function(){
+          if (audio.seekable && audio.seekable.length > 0) {
+            audio.currentTime = savedTime;
+          }
+        };
+        if (audio.readyState >= 3) {
+          doSeek();
+        } else {
+          audio.addEventListener('canplay', doSeek, { once: true });
+        }
       }
       fadeIn(vol);
       showFloat();
