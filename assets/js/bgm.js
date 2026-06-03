@@ -187,6 +187,7 @@
   function startPlay(vol) {
     audio.muted = false;
     setMuteIcon(false);
+    audio.volume = vol;
     audio.play().then(function(){
       // データが実際にseekできる状態になってからcurrentTimeを設定
       if (savedTime > 0 && !isNaN(savedTime)) {
@@ -201,7 +202,6 @@
           audio.addEventListener('canplay', doSeek, { once: true });
         }
       }
-      fadeIn(vol);
       showFloat();
       var rb = document.getElementById('bgm-resume-btn');
       if (rb) rb.style.display = 'none';
@@ -263,6 +263,7 @@
       localStorage.setItem(KEY_VOLUME, vol);
       localStorage.setItem(KEY_SHOWN, '1');
       savedVol = vol;
+      savedTime = 0; // 初回は最初から
       startPlay(vol);
     }
 
