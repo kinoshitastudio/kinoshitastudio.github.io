@@ -4,7 +4,8 @@
   var AUDIO_SRC   = '/assets/Ishin%20Denshin%20_%20%E4%BB%A5%E5%BF%83%E4%BC%9D%E5%BF%83.mp3';
   var KEY_PLAYING = 'bgm_playing';
   var KEY_VOLUME  = 'bgm_volume';
-  var KEY_SHOWN   = 'bgm_modal_shown'; // 一度でも見せたら二度と出さない
+  var KEY_SHOWN   = 'bgm_modal_shown';
+  var KEY_TIME    = 'bgm_time'; // 再生位置を保存
   var DEFAULT_VOL = 0.20;
   var FADE_STEPS  = 80;  // 約5秒のフェードイン
   var FADE_MS     = 60;
@@ -36,7 +37,7 @@
       '#bgm-skip-btn{background:none;color:#7a7770;border:1px solid rgba(26,26,24,.18);padding:.9rem 1.2rem;font-family:"Space Mono",monospace;font-size:.58rem;letter-spacing:.15em;cursor:pointer;transition:border-color .2s,color .2s;}',
       '#bgm-skip-btn:hover{border-color:#7a7770;color:#1a1a18;}',
       /* floating control */
-      '#bgm-float{position:fixed;bottom:4.5rem;right:2rem;z-index:8500;display:none;align-items:center;gap:.5rem;opacity:0;pointer-events:none;transition:opacity .4s ease;background:rgba(235,232,226,.92);backdrop-filter:blur(4px);border:1px solid rgba(26,26,24,.12);padding:.5rem .8rem;}',
+      '#bgm-float{position:fixed;top:.75rem;right:3.8rem;z-index:8500;display:none;align-items:center;gap:.5rem;opacity:0;pointer-events:none;transition:opacity .4s ease;padding:.3rem .5rem;}',
       '#bgm-float.visible{opacity:1;pointer-events:all;}',
       '#bgm-mute-btn{background:none;border:none;cursor:pointer;padding:0;display:flex;align-items:center;opacity:.6;transition:opacity .2s;}',
       '#bgm-mute-btn:hover{opacity:1;}',
@@ -52,7 +53,7 @@
       '#bgm-resume-btn{background:none;border:none;cursor:pointer;padding:0;display:flex;align-items:center;opacity:.55;transition:opacity .2s;}',
       '#bgm-resume-btn:hover{opacity:1;}',
       '#bgm-resume-btn svg{width:16px;height:16px;stroke:#1a1a18;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;}',
-      '@media(max-width:600px){#bgm-modal{padding:2rem 1.5rem;}#bgm-float{bottom:5.5rem;right:1rem;}#bgm-nav-slider{width:40px;}}'
+      '@media(max-width:768px){#bgm-modal{padding:2rem 1.5rem;}#bgm-float{top:.7rem;right:3.4rem;}#bgm-nav-slider{display:none;}}'
     ].join('');
     document.head.appendChild(style);
   }
@@ -114,6 +115,7 @@
 
   // ── 状態読み込み ──────────────────────────────────────────────
   var savedVol   = parseFloat(localStorage.getItem(KEY_VOLUME) || DEFAULT_VOL);
+  var savedTime  = parseFloat(localStorage.getItem(KEY_TIME)   || 0);
   var isPlaying  = localStorage.getItem(KEY_PLAYING) === 'yes';
   var modalShown = localStorage.getItem(KEY_SHOWN)   === '1';
 
@@ -147,6 +149,13 @@
     if (btn) btn.style.opacity = muted ? '0.25' : '0.6';
   }
 
+  // ── 再生位置を定期保存（1秒ごと） ───────────────────────────
+  setInterval(function(){
+    if (!audio.paused && !isNaN(audio.currentTime)) {
+      localStorage.setItem(KEY_TIME, audio.currentTime);
+    }
+  }, 1000);
+
   // ── フェードイン ──────────────────────────────────────────────
   function fadeIn(targetVol) {
     audio.volume = 0;
@@ -172,6 +181,10 @@
 
   // ── 再生開始（失敗してもlocalStorageは変えない） ─────────────
   function startPlay(vol) {
+    // 保存済みの再生位置から再開
+    if (savedTime > 0 && !isNaN(savedTime)) {
+      audio.currentTime = savedTime;
+    }
     audio.muted = false;
     setMuteIcon(false);
     audio.play().then(function(){
