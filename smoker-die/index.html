@@ -262,6 +262,17 @@
 
     .lapse-actions { display: flex; flex-direction: column; gap: 0.8rem; }
 
+    /* ───────────────────────────────── HEART */
+    #heart { justify-content: flex-start; gap: 1.2rem; }
+    .heart-canvas-wrap { width: 100%; aspect-ratio: 1; }
+    #heart-canvas { display: block; width: 100%; height: 100%; }
+    .heart-vitality {
+      font-family: 'Space Mono', monospace;
+      font-size: 0.6rem; letter-spacing: 0.14em;
+      text-transform: uppercase; color: var(--ink-faint);
+      text-align: center;
+    }
+
     /* ───────────────────────────────── STATS */
     #stats { justify-content: flex-start; gap: 2rem; }
 
@@ -423,6 +434,7 @@
     <button class="btn-primary" onclick="showCraving()">今、吸いたい</button>
     <button class="btn-ghost" onclick="showLapse()">1本吸ってしまった</button>
     <button class="btn-ghost" onclick="showStats()" style="font-size:0.65rem;letter-spacing:0.12em;color:var(--ink-faint);">記録・グラフ →</button>
+    <button class="btn-ghost" onclick="showHeart()" style="font-size:0.65rem;letter-spacing:0.12em;color:var(--ink-faint);">ハート →</button>
   </div>
 </div>
 
@@ -503,6 +515,18 @@
     <div class="stats-label">渇望ログ</div>
     <div id="log-list" class="log-list"></div>
   </div>
+</div>
+
+<!-- ── HEART ──────────────────────────────────── -->
+<div id="heart" class="screen">
+  <div class="main-header">
+    <div class="tag">ハート</div>
+    <button class="btn-ghost" onclick="showMain()">← 戻る</button>
+  </div>
+  <div class="heart-canvas-wrap">
+    <canvas id="heart-canvas"></canvas>
+  </div>
+  <div class="heart-vitality" id="heart-vitality">—</div>
 </div>
 
 <!-- TOAST -->
@@ -755,14 +779,14 @@
   function restartFromNow() {
     const now = new Date().toISOString();
     state.lapses = [...(state.lapses || []), { at: now, from: state.quitDate }];
-    // Mark pending craving log as lapsed
     const log = state.cravingLog || [];
     log.forEach((e, i) => { if (e.outcome === 'pending') log[i] = { ...e, outcome: 'lapsed' }; });
     state.cravingLog = log;
     state.quitDate = now;
     state.shownMilestones = [];
     save();
-    showMain();
+    HEART.triggerBurn();
+    showHeart();
   }
 
   // ── UTILS ─────────────────────────────────────
@@ -783,6 +807,7 @@
     clearInterval(cravingInterval);
     clearInterval(breathInterval);
     document.getElementById('craving-timer').classList.remove('done');
+    HEART.stop();
   }
 
   // ── RESET ─────────────────────────────────────
@@ -797,6 +822,128 @@
     document.getElementById('cigs-per-day').value = 20;
     document.getElementById('price-per-pack').value = 650;
     showScreen('setup');
+  }
+
+  // ── HEART ─────────────────────────────────────
+  const HEART = (() => {
+    let canvas, ctx, raf, particles = [], _burnPending = false;
+
+    function calcHealth() {
+      if (!state.quitDate) return 50;
+      const lapseCount = (state.lapses || []).length;
+      const hoursClean = Math.max(0, (Date.now() - new Date(state.quitDate).getTime()) / 3600000);
+      const damage = lapseCount * 20;
+      const recovery = Math.min(damage, hoursClean * 0.5);
+      return Math.max(5, Math.min(100, 100 - damage + recovery));
+    }
+
+    function targetCount(h) { return Math.round(8 + h * 0.72); }
+
+    function newParticle(W, H, h) {
+      const cx = W / 2, cy = H / 2, R = Math.min(W, H) * 0.44;
+      const angle = Math.random() * Math.PI * 2;
+      const dist = Math.random() * R;
+      const dir = Math.random() * Math.PI * 2;
+      const speed = 0.12 + Math.random() * 0.3 * (h / 100 * 0.6 + 0.4);
+      return {
+        x: cx + Math.cos(angle) * dist,
+        y: cy + Math.sin(angle) * dist,
+        vx: Math.cos(dir) * speed,
+        vy: Math.sin(dir) * speed,
+        r: 0.7 + Math.random() * 2.4 * (h / 100 * 0.65 + 0.35),
+        a: 0.12 + Math.random() * 0.6 * (h / 100 * 0.55 + 0.45),
+        phase: Math.random() * Math.PI * 2,
+        burning: false, burnT: 0,
+      };
+    }
+
+    function triggerBurn() { _burnPending = true; }
+
+    function tick() {
+      raf = requestAnimationFrame(tick);
+      const W = canvas.width, H = canvas.height;
+      const cx = W / 2, cy = H / 2, R = Math.min(W, H) * 0.44;
+      const h = calcHealth();
+
+      // Misty trail
+      ctx.fillStyle = 'rgba(235, 232, 226, 0.17)';
+      ctx.fillRect(0, 0, W, H);
+
+      // Burn flash + mark victims
+      if (_burnPending) {
+        _burnPending = false;
+        ctx.fillStyle = 'rgba(185, 115, 25, 0.22)';
+        ctx.fillRect(0, 0, W, H);
+        const alive = particles.filter(p => !p.burning);
+        const killN = Math.floor(alive.length * 0.45 + 3);
+        alive.sort(() => Math.random() - 0.5).slice(0, killN).forEach(p => {
+          p.burning = true; p.burnT = 28 + Math.random() * 22;
+        });
+      }
+
+      // Maintain particle count (only alive ones count toward target)
+      const aliveCount = particles.filter(p => !p.burning).length;
+      const target = targetCount(h);
+      for (let i = aliveCount; i < target; i++) particles.push(newParticle(W, H, h));
+
+      // Update & draw
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        if (p.burning) {
+          p.burnT--;
+          p.a *= 0.91;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.r * 1.2, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(185, 115, 25, ${p.a})`;
+          ctx.fill();
+          if (p.a < 0.015) particles.splice(i, 1);
+          continue;
+        }
+        // Organic drift
+        p.phase += 0.016;
+        const wander = (h / 100) * 0.55 + 0.45;
+        p.vx = (p.vx + (cx - p.x) * 0.0007 + Math.sin(p.phase) * 0.038 * wander) * 0.975;
+        p.vy = (p.vy + (cy - p.y) * 0.0007 + Math.cos(p.phase * 1.19) * 0.038 * wander) * 0.975;
+        p.x += p.vx; p.y += p.vy;
+        // Soft boundary
+        const dx = p.x - cx, dy = p.y - cy;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d > R) { p.vx -= dx * 0.012; p.vy -= dy * 0.012; }
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(26, 26, 24, ${p.a})`;
+        ctx.fill();
+      }
+
+      const el = document.getElementById('heart-vitality');
+      if (el) el.textContent = `vitality  ${Math.round(h)}`;
+    }
+
+    function start() {
+      if (raf) cancelAnimationFrame(raf);
+      canvas = document.getElementById('heart-canvas');
+      ctx = canvas.getContext('2d');
+      const size = canvas.parentElement.offsetWidth;
+      canvas.width = size; canvas.height = size;
+      ctx.fillStyle = '#EBE8E2';
+      ctx.fillRect(0, 0, size, size);
+      if (particles.length === 0) {
+        const h = calcHealth(), t = targetCount(h);
+        for (let i = 0; i < t; i++) particles.push(newParticle(size, size, h));
+      }
+      tick();
+    }
+
+    function stop() { if (raf) { cancelAnimationFrame(raf); raf = null; } }
+
+    return { start, stop, triggerBurn };
+  })();
+
+  function showHeart() {
+    clearAll();
+    showScreen('heart');
+    HEART.start();
   }
 
   // ── STATS ─────────────────────────────────────
