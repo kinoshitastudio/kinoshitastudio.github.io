@@ -13,11 +13,12 @@
     'research-admin.html'
   ]);
   const LS_BGM_KEY = 'ks_bgm_pref'; // 'on' | 'off' | null (first visit)
+  const LS_BGM_VOL = 'ks_bgm_vol';  // float string, persists across reloads
 
   /* ─── audio element (persisted forever) ─── */
   const audio = new Audio();
-  audio.loop = true;
-  audio.volume = 0.35;
+  audio.loop    = true;
+  audio.volume  = parseFloat(localStorage.getItem(LS_BGM_VOL) || '0.35');
   audio.preload = 'none';
   let audioReady = false;
 
@@ -250,8 +251,14 @@
   updateBarBtn();
   updateBarMute();
 
+  // barVol を audio.volume に合わせる（フルリロード時もlocalStorage値を反映）
+  barVol.value = audio.volume;
+
   barBtn.addEventListener('click', toggleBGM);
-  barVol.addEventListener('input', () => { audio.volume = parseFloat(barVol.value); });
+  barVol.addEventListener('input', () => {
+    audio.volume = parseFloat(barVol.value);
+    localStorage.setItem(LS_BGM_VOL, barVol.value);
+  });
   barMute.addEventListener('click', () => {
     audio.muted = !audio.muted;
     updateBarMute();
@@ -280,7 +287,12 @@
   const modalPlayBtn = document.getElementById('ks-modal-play');
   const modalSkipBtn = document.getElementById('ks-modal-skip');
 
-  modalVolRange.addEventListener('input', () => { audio.volume = parseFloat(modalVolRange.value); barVol.value = modalVolRange.value; });
+  modalVolRange.value = audio.volume; // 保存済み音量を反映
+  modalVolRange.addEventListener('input', () => {
+    audio.volume = parseFloat(modalVolRange.value);
+    barVol.value = modalVolRange.value;
+    localStorage.setItem(LS_BGM_VOL, modalVolRange.value);
+  });
   modalPlayBtn.addEventListener('click', () => { closeModal(); localStorage.setItem(LS_BGM_KEY, 'on'); playBGM(); });
   modalSkipBtn.addEventListener('click', () => { closeModal(); localStorage.setItem(LS_BGM_KEY, 'off'); });
 
