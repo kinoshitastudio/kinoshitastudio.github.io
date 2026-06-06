@@ -425,16 +425,46 @@
     }
 
     bindLinks();
+
+    // ハンバーガーメニュー 保証バインド (inline script が失敗した場合のフォールバック)
+    (function() {
+      var btn = document.getElementById('nav-hamburger');
+      var menu = document.getElementById('nav-menu');
+      var overlay = document.getElementById('nav-overlay');
+      var close = document.getElementById('nav-close');
+      if (!btn || !menu) return;
+      function _o() { menu.classList.add('open'); if (overlay) overlay.classList.add('open'); document.body.style.overflow = 'hidden'; }
+      function _c() { menu.classList.remove('open'); if (overlay) overlay.classList.remove('open'); document.body.style.overflow = ''; }
+      btn.addEventListener('click', _o);
+      if (close) close.addEventListener('click', _c);
+      if (overlay) overlay.addEventListener('click', _c);
+      document.querySelectorAll('.nav-menu-link, .nav-menu a').forEach(function(a) { a.addEventListener('click', _c); });
+    }());
   }
 
-  // viewport 内の reveal 要素を即座に visible にする (IO タイミング問題の根本対策)
+  // viewport 内の reveal 要素を即座に visible にする (IO タイミング + CSS animation delay 両対応)
   function forceRevealViewport() {
     const h = window.innerHeight;
+
+    // ① IO ベースの reveal (.fade-in / .reveal / .rv)
     document.querySelectorAll(
       '.fade-in:not(.visible), .reveal:not(.visible), .rv:not(.visible)'
     ).forEach(el => {
       const r = el.getBoundingClientRect();
       if (r.top < h && r.bottom > 0) el.classList.add('visible');
+    });
+
+    // ② CSS animation delay で opacity:0 のまま viewport 内にある要素を強制表示
+    //    (about.html / experience-translator.html 等の fadeUp stagger 対策)
+    document.querySelectorAll('[class]').forEach(el => {
+      const r = el.getBoundingClientRect();
+      if (r.top >= h || r.bottom <= 0 || r.width === 0) return;
+      const s = getComputedStyle(el);
+      if (s.opacity === '0' && s.animationName && s.animationName !== 'none') {
+        el.style.animation = 'none';
+        el.style.opacity   = '1';
+        el.style.transform = 'none';
+      }
     });
   }
 
