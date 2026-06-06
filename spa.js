@@ -226,6 +226,10 @@
       bottom: calc(40px + 1.5rem) !important;
       z-index: 9995 !important;
     }
+    /* ── PJAX遷移中: scroll-behavior: smooth を強制無効化 ──
+       各ページが html{scroll-behavior:smooth} を持つため、
+       遷移中のスクロールがアニメーション付きで見えてしまう問題の修正。 */
+    html.ks-navigating, html.ks-navigating * { scroll-behavior: auto !important; }
     /* ── mobile: 横スクロール・自動ズーム防止 ── */
     html { overflow-x: hidden; }
     body { overflow-x: hidden; max-width: 100vw; }
@@ -395,6 +399,7 @@
     }
 
     _navigating = true;
+    document.documentElement.classList.add('ks-navigating'); // smooth scroll 無効化
 
     // fade out
     fade.classList.add('ks-in');
@@ -437,13 +442,9 @@
 
     if (bar.classList.contains('ks-visible')) document.body.classList.add('ks-bar-on');
 
-    // フェード中に即時スクロール (smooth-scroll の残像を防ぐ)
+    // フェード中に即時スクロール (ks-navigating で smooth 無効済みなので instant)
     const hash = new URL(url, location.href).hash;
-    if (!hash) {
-      document.documentElement.style.scrollBehavior = 'auto';
-      window.scrollTo(0, 0);
-      document.documentElement.style.scrollBehavior = '';
-    }
+    window.scrollTo(0, 0);
 
     // 各 script を個別に try/catch して1つのエラーで navigate 全体が止まるのを防ぐ
     document.body.querySelectorAll('script').forEach(old => {
@@ -471,16 +472,22 @@
     try {
       await new Promise(r => requestAnimationFrame(r));
       forceRevealViewport();
+
+      // hash アンカーへのスクロールはフェードが上がる前に完了させる
+      // (ks-navigating 有効中 = instant scroll なのでユーザーには見えない)
+      if (hash) {
+        const target = document.querySelector(hash);
+        if (target) {
+          target.scrollIntoView();
+          forceRevealViewport(); // 新しいビューポート位置で再reveal
+        }
+      }
+
       await new Promise(r => setTimeout(r, 30));
     } finally {
       fade.classList.remove('ks-in'); // エラーが起きても必ずフェードを解除
       _navigating = false;
-    }
-
-    // アンカーはフェード後にスムーズスクロール
-    if (hash) {
-      const target = document.querySelector(hash);
-      if (target) target.scrollIntoView({ behavior: 'smooth' });
+      document.documentElement.classList.remove('ks-navigating'); // smooth scroll 復元
     }
 
     bindLinks();
