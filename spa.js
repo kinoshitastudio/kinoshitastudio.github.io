@@ -385,8 +385,15 @@
     await new Promise(r => setTimeout(r, 30));
     fade.classList.remove('ks-in');
 
-    // scroll to top
-    window.scrollTo(0, 0);
+    // scroll to anchor or top
+    const hash = new URL(url, location.href).hash;
+    if (hash) {
+      const target = document.querySelector(hash);
+      if (target) { target.scrollIntoView({ behavior: 'smooth' }); }
+      else { window.scrollTo(0, 0); }
+    } else {
+      window.scrollTo(0, 0);
+    }
 
     // re-bind spa links on new content
     bindLinks();
