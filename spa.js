@@ -558,15 +558,18 @@
       if (r.top < h && r.bottom > 0) el.classList.add('visible');
     });
 
-    // ② CSS animation delay で opacity:0 のまま viewport 内にある要素を強制表示
-    //    クラス無し inline-style 要素も含めて全要素を対象にする
-    //    (index.html の inline opacity:0 div, about.html / experience-translator.html 等の fadeUp stagger 対策)
+    // ② inline style で opacity:0 かつ animation がある要素を強制表示
+    //    (index.html の style="opacity:0;animation:fadeUp..." 等の JS-set 要素対策)
+    //    CSS クラスで animation だけ定義している入場アニメーション (heroIn 等) は
+    //    el.style.opacity が空のため除外し、自然に再生させる
     document.querySelectorAll('*').forEach(el => {
       if (el === bar || el === fade || el === modalWrap) return; // SPA管理要素はスキップ
       const r = el.getBoundingClientRect();
       if (r.top >= h || r.bottom <= 0 || r.width === 0 || r.height === 0) return;
       const s = getComputedStyle(el);
-      if (s.opacity === '0' && s.animationName && s.animationName !== 'none') {
+      // el.style.opacity (inline) が '0' = JS-set stuck 要素
+      // s.opacity (computed) だけが '0' = CSS animation 中の入場要素 → スキップ
+      if (el.style.opacity === '0' && s.animationName && s.animationName !== 'none') {
         el.style.animation = 'none';
         el.style.opacity   = '1';
         el.style.transform = 'none';
