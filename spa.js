@@ -5,6 +5,16 @@
   if (window.__spa) return;
   window.__spa = true;
 
+  // ブラウザの自動スクロール復元を無効化 (back/forward で「少し下がった」問題の修正)
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+
+  // 初期URLを正規化: /index.html → / (back/forward で index.html と / が混在するのを防ぐ)
+  (function() {
+    var p = location.pathname.replace(/\/index\.html$/, '/');
+    if (p !== location.pathname) history.replaceState({ url: p }, '', p);
+    else if (!history.state) history.replaceState({ url: p }, '', p);
+  }());
+
   /* ─── config ─── */
   const BGM_SRC = '/assets/audio/bgm.mp3';
   const EXCLUDE = new Set([
@@ -375,11 +385,13 @@
   async function navigate(url, push) {
     if (_navigating) return; // 競合ナビゲーション防止
 
-    // 同一ページへの遷移: PJAX 不要、スクロールトップだけ
-    const _dest = new URL(url, location.href);
-    if (_dest.pathname === location.pathname && !_dest.hash) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
+    // リンククリック時のみ同一ページ判定 (back/forward では行わない)
+    if (push) {
+      const _dest = new URL(url, location.href);
+      if (_dest.pathname === location.pathname && !_dest.hash) {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
     }
 
     _navigating = true;
@@ -447,7 +459,10 @@
     window.dispatchEvent(new Event('load'));
     window.dispatchEvent(new Event('scroll'));
 
-    if (push) history.pushState({ url }, '', url);
+    if (push) {
+      const _canon = new URL(url, location.href).pathname;
+      history.pushState({ url: _canon }, '', _canon);
+    }
 
     const trackSpan = document.getElementById('ks-bar-track');
     if (trackSpan) trackSpan.textContent = 'BIWAKO SILENCE';
@@ -584,7 +599,7 @@
 
   // popstate (back/forward)
   window.addEventListener('popstate', e => {
-    const url = (e.state && e.state.url) || location.href;
+    const url = (e.state && e.state.url) || location.pathname;
     navigate(url, false);
   });
 
