@@ -361,6 +361,14 @@
 
   async function navigate(url, push) {
     if (_navigating) return; // 競合ナビゲーション防止
+
+    // 同一ページへの遷移: PJAX 不要、スクロールトップだけ
+    const _dest = new URL(url, location.href);
+    if (_dest.pathname === location.pathname && !_dest.hash) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
     _navigating = true;
 
     // fade out
