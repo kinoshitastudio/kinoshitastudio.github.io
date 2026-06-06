@@ -473,7 +473,8 @@
     window.dispatchEvent(new Event('scroll'));
 
     if (push) {
-      const _canon = new URL(url, location.href).pathname;
+      let _canon = new URL(url, location.href).pathname;
+      _canon = _canon.replace(/\/index\.html$/, '/'); // index.html → / に正規化
       history.pushState({ url: _canon }, '', _canon);
     }
 
@@ -618,7 +619,8 @@
 
   // popstate (back/forward)
   window.addEventListener('popstate', e => {
-    const url     = (e.state && e.state.url) || location.pathname;
+    let url       = (e.state && e.state.url) || location.pathname;
+    url = url.replace(/\/index\.html$/, '/'); // 旧 history state の /index.html を正規化
     const scrollY = (e.state && e.state.scrollY != null) ? e.state.scrollY : 0;
     navigate(url, false, scrollY);
   });
