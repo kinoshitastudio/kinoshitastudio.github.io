@@ -241,10 +241,10 @@
   const barVol  = document.getElementById('ks-bar-vol');
   const barMute = document.getElementById('ks-bar-mute');
 
-  function svgPlay()  { return `<svg viewBox="0 0 16 16"><path d="M5 3l9 5-9 5V3z"/></svg>`; }
-  function svgPause() { return `<svg viewBox="0 0 16 16"><rect x="3" y="2" width="4" height="12"/><rect x="9" y="2" width="4" height="12"/></svg>`; }
-  function svgVol()   { return `<svg viewBox="0 0 16 16"><path d="M2 5h3l4-3v12l-4-3H2zm9 1a4 4 0 0 1 0 6"/></svg>`; }
-  function svgMuted() { return `<svg viewBox="0 0 16 16"><path d="M2 5h3l4-3v12l-4-3H2zm8 1l4 4m0-4l-4 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>`; }
+  function svgPlay()  { return `<svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 3l9 5-9 5V3z"/></svg>`; }
+  function svgPause() { return `<svg viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="2" width="4" height="12"/><rect x="9" y="2" width="4" height="12"/></svg>`; }
+  function svgVol()   { return `<svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 5h3l4-3v12l-4-3H2z"/><path d="M10 5a5 5 0 0 1 0 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`; }
+  function svgMuted() { return `<svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 5h3l4-3v12l-4-3H2z"/><line x1="10" y1="6" x2="14" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="14" y1="6" x2="10" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`; }
 
   function updateBarBtn()  { barBtn.innerHTML  = audio.paused ? svgPlay() : svgPause(); }
   function updateBarMute() { barMute.innerHTML = audio.muted  ? svgMuted() : svgVol(); }
@@ -400,16 +400,17 @@
       old.replaceWith(fresh);
     });
 
-    // load イベントを期待しているページ向け (window.addEventListener('load', ...) )
+    // load / scroll イベントを dispatch: IntersectionObserver 初期評価 + 'load' 依存ページ対応
     window.dispatchEvent(new Event('load'));
+    window.dispatchEvent(new Event('scroll'));
 
     if (push) history.pushState({ url }, '', url);
 
     const trackSpan = document.getElementById('ks-bar-track');
     if (trackSpan) trackSpan.textContent = 'BIWAKO SILENCE';
 
-    // fade in
-    await new Promise(r => setTimeout(r, 30));
+    // IO が評価されるのを待ってからフェードイン
+    await new Promise(r => setTimeout(r, 80));
     fade.classList.remove('ks-in');
 
     // アンカーはフェード後にスムーズスクロール
@@ -454,6 +455,21 @@
       });
     });
   }
+
+  // onclick="location.href='...'" を PJAX に乗せる (capture phase)
+  document.addEventListener('click', e => {
+    const el = e.target.closest('[onclick]');
+    if (!el) return;
+    const attr = el.getAttribute('onclick') || '';
+    const m = attr.match(/(?:window\.)?location\.href\s*=\s*['"]([^'"]+)['"]/);
+    if (!m) return;
+    const href = m[1];
+    if (/^(mailto:|tel:|javascript:|https?:\/\/)/.test(href)) return;
+    const filename = href.split('/').pop().split('?')[0];
+    if (EXCLUDE.has(filename)) return;
+    e.stopImmediatePropagation(); // onclick を実行させない
+    navigate(href, true);
+  }, true); // capture phase
 
   // popstate (back/forward)
   window.addEventListener('popstate', e => {
