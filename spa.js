@@ -216,6 +216,18 @@
       bottom: calc(40px + 1.5rem) !important;
       z-index: 9995 !important;
     }
+    /* ── mobile: 横スクロール・自動ズーム防止 ── */
+    html { overflow-x: hidden; }
+    body { overflow-x: hidden; max-width: 100vw; }
+    /* iOS: テキスト入力でのピンチズーム防止 (font-size < 16px が原因) */
+    input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"]),
+    textarea, select {
+      font-size: max(16px, 1em) !important;
+    }
+    /* ダブルタップズーム・300ms遅延を無効化 */
+    a, button, [onclick], label, input, textarea, select {
+      touch-action: manipulation;
+    }
   `;
   document.head.appendChild(styleEl);
 
@@ -325,6 +337,8 @@
   });
 
   /* ─── PJAX ─── */
+  let _navigating = false; // concurrent navigation guard
+
   function isSpaLink(a) {
     const href = a.getAttribute('href') || '';
     if (a.target === '_blank') return false;
@@ -342,6 +356,9 @@
   }
 
   async function navigate(url, push) {
+    if (_navigating) return; // 競合ナビゲーション防止
+    _navigating = true;
+
     // fade out
     fade.classList.add('ks-in');
     await new Promise(r => setTimeout(r, 200));
@@ -349,12 +366,10 @@
     let html;
     try {
       const res = await fetch(url, { credentials: 'same-origin' });
-      if (!res.ok) { location.href = url; return; }
+      if (!res.ok) { fade.classList.remove('ks-in'); _navigating = false; location.href = url; return; }
       html = await res.text();
     } catch (e) {
-      fade.classList.remove('ks-in');
-      location.href = url;
-      return;
+      fade.classList.remove('ks-in'); _navigating = false; location.href = url; return;
     }
 
     const parser = new DOMParser();
@@ -393,11 +408,14 @@
       document.documentElement.style.scrollBehavior = '';
     }
 
+    // 各 script を個別に try/catch して1つのエラーで navigate 全体が止まるのを防ぐ
     document.body.querySelectorAll('script').forEach(old => {
-      const fresh = document.createElement('script');
-      if (old.src) { fresh.src = old.src; fresh.async = false; }
-      else { fresh.textContent = old.textContent; }
-      old.replaceWith(fresh);
+      try {
+        const fresh = document.createElement('script');
+        if (old.src) { fresh.src = old.src; fresh.async = false; }
+        else { fresh.textContent = old.textContent; }
+        old.replaceWith(fresh);
+      } catch(e) { /* 個別スクリプトエラーを隔離 */ }
     });
 
     // load / scroll を dispatch (why-not-delivered.html 等の window.load 依存ページ対応)
@@ -410,13 +428,14 @@
     if (trackSpan) trackSpan.textContent = 'BIWAKO SILENCE';
 
     // 1 rAF 待ってレイアウト確定後、viewport 内の reveal 要素を強制表示
-    // (IntersectionObserver のタイミングに依存しない)
-    await new Promise(r => requestAnimationFrame(r));
-    forceRevealViewport();
-
-    // フェードイン
-    await new Promise(r => setTimeout(r, 30));
-    fade.classList.remove('ks-in');
+    try {
+      await new Promise(r => requestAnimationFrame(r));
+      forceRevealViewport();
+      await new Promise(r => setTimeout(r, 30));
+    } finally {
+      fade.classList.remove('ks-in'); // エラーが起きても必ずフェードを解除
+      _navigating = false;
+    }
 
     // アンカーはフェード後にスムーズスクロール
     if (hash) {
@@ -426,17 +445,24 @@
 
     bindLinks();
 
-    // ハンバーガーメニュー 保証バインド (inline script が失敗した場合のフォールバック)
+    // ハンバーガーメニュー 保証バインド
+    // cloneNode で古いリスナーを全消しして新規バインドする (重複防止)
     (function() {
       var btn = document.getElementById('nav-hamburger');
       var menu = document.getElementById('nav-menu');
-      var overlay = document.getElementById('nav-overlay');
-      var close = document.getElementById('nav-close');
       if (!btn || !menu) return;
+      var overlay = document.getElementById('nav-overlay');
+      var close   = document.getElementById('nav-close');
+
+      // cloneNode でリスナーをリセット
+      var nb = btn.cloneNode(true); btn.parentNode.replaceChild(nb, btn); btn = nb;
+      if (close)   { var nc = close.cloneNode(true);   close.parentNode.replaceChild(nc, close);     close   = nc; }
+      if (overlay) { var no = overlay.cloneNode(true); overlay.parentNode.replaceChild(no, overlay); overlay = no; }
+
       function _o() { menu.classList.add('open'); if (overlay) overlay.classList.add('open'); document.body.style.overflow = 'hidden'; }
       function _c() { menu.classList.remove('open'); if (overlay) overlay.classList.remove('open'); document.body.style.overflow = ''; }
       btn.addEventListener('click', _o);
-      if (close) close.addEventListener('click', _c);
+      if (close)   close.addEventListener('click', _c);
       if (overlay) overlay.addEventListener('click', _c);
       document.querySelectorAll('.nav-menu-link, .nav-menu a').forEach(function(a) { a.addEventListener('click', _c); });
     }());
@@ -455,10 +481,12 @@
     });
 
     // ② CSS animation delay で opacity:0 のまま viewport 内にある要素を強制表示
-    //    (about.html / experience-translator.html 等の fadeUp stagger 対策)
-    document.querySelectorAll('[class]').forEach(el => {
+    //    クラス無し inline-style 要素も含めて全要素を対象にする
+    //    (index.html の inline opacity:0 div, about.html / experience-translator.html 等の fadeUp stagger 対策)
+    document.querySelectorAll('*').forEach(el => {
+      if (el === bar || el === fade || el === modalWrap) return; // SPA管理要素はスキップ
       const r = el.getBoundingClientRect();
-      if (r.top >= h || r.bottom <= 0 || r.width === 0) return;
+      if (r.top >= h || r.bottom <= 0 || r.width === 0 || r.height === 0) return;
       const s = getComputedStyle(el);
       if (s.opacity === '0' && s.animationName && s.animationName !== 'none') {
         el.style.animation = 'none';
