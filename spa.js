@@ -47,17 +47,18 @@
 
   /* ─── inject styles ─── */
   const styleEl = document.createElement('style');
+  styleEl.id = 'ks-spa-style';
   styleEl.textContent = `
-    /* ── top bar ── */
+    /* ── bottom bar ── */
     #ks-bar {
-      position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
-      height: 36px;
-      background: rgba(26,26,24,0.92);
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 9990;
+      height: 40px;
+      background: rgba(26,26,24,0.94);
       backdrop-filter: blur(8px) saturate(1.4);
       -webkit-backdrop-filter: blur(8px) saturate(1.4);
       display: flex; align-items: center; gap: 10px;
       padding: 0 16px;
-      transform: translateY(-100%);
+      transform: translateY(100%);
       transition: transform 0.35s cubic-bezier(.4,0,.2,1);
       pointer-events: none;
     }
@@ -196,7 +197,7 @@
     }
     #ks-fade.ks-in { opacity: 1; pointer-events: auto; }
     /* ── body offset for bar ── */
-    body.ks-bar-on { padding-top: 36px; }
+    body.ks-bar-on { padding-bottom: 40px; }
   `;
   document.head.appendChild(styleEl);
 
@@ -204,9 +205,9 @@
   // fade overlay
   const fade = document.createElement('div');
   fade.id = 'ks-fade';
-  document.body.prepend(fade);
+  document.body.appendChild(fade);
 
-  // top bar
+  // bottom bar
   const bar = document.createElement('div');
   bar.id = 'ks-bar';
   bar.innerHTML = `
@@ -215,7 +216,7 @@
     <span id="ks-bar-dot"></span>
     <input id="ks-bar-vol" type="range" min="0" max="1" step="0.01" value="0.35" aria-label="volume">
   `;
-  document.body.prepend(bar);
+  document.body.appendChild(bar);
 
   const barBtn = document.getElementById('ks-bar-btn');
   const barVol = document.getElementById('ks-bar-vol');
@@ -337,8 +338,6 @@
       const cloned = document.adoptNode(s);
       document.head.appendChild(cloned);
     });
-    // keep spa.js style pinned
-    styleEl.id = 'ks-spa-style';
 
     // detach bar + modal + fade from body before innerHTML swap
     bar.remove();
@@ -352,8 +351,8 @@
     document.body.className = doc.body.className;
 
     // re-attach spa elements
-    document.body.prepend(fade);
-    document.body.prepend(bar);
+    document.body.appendChild(fade);
+    document.body.appendChild(bar);
     if (modalExists) document.body.appendChild(modalExists);
 
     // re-apply bar-on class
