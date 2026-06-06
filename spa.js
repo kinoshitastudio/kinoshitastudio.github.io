@@ -400,7 +400,7 @@
       old.replaceWith(fresh);
     });
 
-    // load / scroll イベントを dispatch: IntersectionObserver 初期評価 + 'load' 依存ページ対応
+    // load / scroll を dispatch (why-not-delivered.html 等の window.load 依存ページ対応)
     window.dispatchEvent(new Event('load'));
     window.dispatchEvent(new Event('scroll'));
 
@@ -409,8 +409,13 @@
     const trackSpan = document.getElementById('ks-bar-track');
     if (trackSpan) trackSpan.textContent = 'BIWAKO SILENCE';
 
-    // IO が評価されるのを待ってからフェードイン
-    await new Promise(r => setTimeout(r, 80));
+    // 1 rAF 待ってレイアウト確定後、viewport 内の reveal 要素を強制表示
+    // (IntersectionObserver のタイミングに依存しない)
+    await new Promise(r => requestAnimationFrame(r));
+    forceRevealViewport();
+
+    // フェードイン
+    await new Promise(r => setTimeout(r, 30));
     fade.classList.remove('ks-in');
 
     // アンカーはフェード後にスムーズスクロール
@@ -420,6 +425,17 @@
     }
 
     bindLinks();
+  }
+
+  // viewport 内の reveal 要素を即座に visible にする (IO タイミング問題の根本対策)
+  function forceRevealViewport() {
+    const h = window.innerHeight;
+    document.querySelectorAll(
+      '.fade-in:not(.visible), .reveal:not(.visible), .rv:not(.visible)'
+    ).forEach(el => {
+      const r = el.getBoundingClientRect();
+      if (r.top < h && r.bottom > 0) el.classList.add('visible');
+    });
   }
 
   function updateMeta(doc) {
