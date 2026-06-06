@@ -211,14 +211,7 @@
       transition: opacity 0.2s;
     }
     #ks-modal-skip:hover { opacity: 0.6; }
-    /* ── page fade ── */
-    #ks-fade {
-      position: fixed; inset: 0; z-index: 9998;
-      background: #1a1a18;
-      opacity: 0; pointer-events: none;
-      transition: opacity 0.22s ease;
-    }
-    #ks-fade.ks-in { opacity: 1; pointer-events: auto; }
+    /* ── page fade: 削除済み (各ページの pageIn アニメーションで遷移) ── */
     /* ── body offset for bar ── */
     body.ks-bar-on { padding-bottom: 40px; }
     /* ── scroll-top button: push above bar ── */
@@ -246,10 +239,7 @@
   document.head.appendChild(styleEl);
 
   /* ─── build DOM ─── */
-  // fade overlay
-  const fade = document.createElement('div');
-  fade.id = 'ks-fade';
-  document.body.appendChild(fade);
+  // fade overlay を廃止 (pageIn アニメーションで代替)
 
   // bottom bar
   const bar = document.createElement('div');
@@ -406,17 +396,13 @@
     _navigating = true;
     document.documentElement.classList.add('ks-navigating'); // smooth scroll 無効化
 
-    // fade out
-    fade.classList.add('ks-in');
-    await new Promise(r => setTimeout(r, 200));
-
     let html;
     try {
       const res = await fetch(url, { credentials: 'same-origin' });
-      if (!res.ok) { fade.classList.remove('ks-in'); _navigating = false; location.href = url; return; }
+      if (!res.ok) { _navigating = false; document.documentElement.classList.remove('ks-navigating'); location.href = url; return; }
       html = await res.text();
     } catch (e) {
-      fade.classList.remove('ks-in'); _navigating = false; location.href = url; return;
+      _navigating = false; document.documentElement.classList.remove('ks-navigating'); location.href = url; return;
     }
 
     const parser = new DOMParser();
@@ -431,17 +417,15 @@
     });
 
     bar.remove();
-    fade.remove();
     const modalExists = document.getElementById('ks-modal-wrap');
     if (modalExists) modalExists.remove();
 
     document.body.innerHTML = doc.body.innerHTML;
     document.body.className = doc.body.className;
-    document.body.style.animation = 'none';
+    // body.style.animation は上書きしない → 各ページの pageIn アニメーションを自然に再生させる
     document.body.style.opacity   = '';
     document.body.style.overflow  = '';  // hamburger が残した overflow:hidden をリセット
 
-    document.body.appendChild(fade);
     document.body.appendChild(bar);
     if (modalExists) document.body.appendChild(modalExists);
 
@@ -504,7 +488,6 @@
 
       await new Promise(r => setTimeout(r, 30));
     } finally {
-      fade.classList.remove('ks-in'); // エラーが起きても必ずフェードを解除
       _navigating = false;
       document.documentElement.classList.remove('ks-navigating'); // smooth scroll 復元
     }
@@ -563,7 +546,7 @@
     //    CSS クラスで animation だけ定義している入場アニメーション (heroIn 等) は
     //    el.style.opacity が空のため除外し、自然に再生させる
     document.querySelectorAll('*').forEach(el => {
-      if (el === bar || el === fade || el === modalWrap) return; // SPA管理要素はスキップ
+      if (el === bar || el === modalWrap) return; // SPA管理要素はスキップ
       const r = el.getBoundingClientRect();
       if (r.top >= h || r.bottom <= 0 || r.width === 0 || r.height === 0) return;
       const s = getComputedStyle(el);
