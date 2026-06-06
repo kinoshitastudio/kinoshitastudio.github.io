@@ -340,6 +340,19 @@
   let _mouseX = 0, _mouseY = 0;
   document.addEventListener('mousemove', e => { _mouseX = e.clientX; _mouseY = e.clientY; }, { passive: true, capture: true });
 
+  /* ─── スクロールリビール (IO の代替・補完) ─────────────────────
+     IntersectionObserver は PJAX 後のタイミングで発火しないことがある。
+     spa.js のスクロールハンドラが .reveal / .rv / .fade-in を確実に拾う。
+  ─────────────────────────────────────────────────────────────── */
+  function _revealOnScroll() {
+    var h = window.innerHeight;
+    document.querySelectorAll('.reveal:not(.visible),.rv:not(.visible),.fade-in:not(.visible)').forEach(function(el) {
+      var r = el.getBoundingClientRect();
+      if (r.top < h - 40 && r.bottom > 0) el.classList.add('visible');
+    });
+  }
+  window.addEventListener('scroll', _revealOnScroll, { passive: true });
+
   /* ─── PJAX ─── */
   let _navigating = false; // concurrent navigation guard
 
