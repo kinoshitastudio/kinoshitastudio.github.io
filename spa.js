@@ -97,15 +97,27 @@
     }
     #ks-bar-vol {
       -webkit-appearance: none; appearance: none;
-      width: 56px; height: 2px;
+      width: 72px; height: 2px;
       background: rgba(235,232,226,0.2);
       border-radius: 1px; outline: none; cursor: pointer;
       flex-shrink: 0;
     }
     #ks-bar-vol::-webkit-slider-thumb {
       -webkit-appearance: none;
-      width: 10px; height: 10px; border-radius: 50%;
-      background: rgba(235,232,226,0.8);
+      width: 14px; height: 14px; border-radius: 50%;
+      background: rgba(235,232,226,0.9);
+    }
+    /* mobile: hide vol slider (iOS ignores JS vol), show mute btn */
+    #ks-bar-mute {
+      display: none;
+      background: none; border: none; padding: 0;
+      color: rgba(235,232,226,0.6);
+      cursor: pointer; flex-shrink: 0;
+    }
+    #ks-bar-mute svg { width: 14px; height: 14px; fill: currentColor; display: block; }
+    @media (hover: none) and (pointer: coarse) {
+      #ks-bar-vol { display: none; }
+      #ks-bar-mute { display: flex; align-items: center; }
     }
     /* ── modal ── */
     #ks-modal-wrap {
@@ -220,25 +232,30 @@
     <span id="ks-bar-track">BIWAKO SILENCE</span>
     <span id="ks-bar-dot"></span>
     <input id="ks-bar-vol" type="range" min="0" max="1" step="0.01" value="0.35" aria-label="volume">
+    <button id="ks-bar-mute" aria-label="mute"></button>
   `;
   document.body.appendChild(bar);
 
-  const barBtn = document.getElementById('ks-bar-btn');
-  const barVol = document.getElementById('ks-bar-vol');
+  const barBtn  = document.getElementById('ks-bar-btn');
+  const barVol  = document.getElementById('ks-bar-vol');
+  const barMute = document.getElementById('ks-bar-mute');
 
-  function svgPlay() {
-    return `<svg viewBox="0 0 16 16"><path d="M5 3l9 5-9 5V3z"/></svg>`;
-  }
-  function svgPause() {
-    return `<svg viewBox="0 0 16 16"><rect x="3" y="2" width="4" height="12"/><rect x="9" y="2" width="4" height="12"/></svg>`;
-  }
-  function updateBarBtn() {
-    barBtn.innerHTML = audio.paused ? svgPlay() : svgPause();
-  }
+  function svgPlay()  { return `<svg viewBox="0 0 16 16"><path d="M5 3l9 5-9 5V3z"/></svg>`; }
+  function svgPause() { return `<svg viewBox="0 0 16 16"><rect x="3" y="2" width="4" height="12"/><rect x="9" y="2" width="4" height="12"/></svg>`; }
+  function svgVol()   { return `<svg viewBox="0 0 16 16"><path d="M2 5h3l4-3v12l-4-3H2zm9 1a4 4 0 0 1 0 6"/></svg>`; }
+  function svgMuted() { return `<svg viewBox="0 0 16 16"><path d="M2 5h3l4-3v12l-4-3H2zm8 1l4 4m0-4l-4 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>`; }
+
+  function updateBarBtn()  { barBtn.innerHTML  = audio.paused ? svgPlay() : svgPause(); }
+  function updateBarMute() { barMute.innerHTML = audio.muted  ? svgMuted() : svgVol(); }
   updateBarBtn();
+  updateBarMute();
 
   barBtn.addEventListener('click', toggleBGM);
   barVol.addEventListener('input', () => { audio.volume = parseFloat(barVol.value); });
+  barMute.addEventListener('click', () => {
+    audio.muted = !audio.muted;
+    updateBarMute();
+  });
 
   // modal
   const modalWrap = document.createElement('div');
@@ -331,42 +348,39 @@
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
 
-    // update <title>
     document.title = doc.title;
-
-    // update canonical / OG meta
     updateMeta(doc);
 
-    // swap <style> in <head>: remove old page styles, inject new ones
     document.head.querySelectorAll('style:not(#ks-spa-style)').forEach(s => s.remove());
     doc.head.querySelectorAll('style').forEach(s => {
-      const cloned = document.adoptNode(s);
-      document.head.appendChild(cloned);
+      document.head.appendChild(document.adoptNode(s));
     });
 
-    // detach bar + modal + fade from body before innerHTML swap
     bar.remove();
     fade.remove();
-    // modal may already be removed; only detach if still present
     const modalExists = document.getElementById('ks-modal-wrap');
     if (modalExists) modalExists.remove();
 
-    // swap body content
     document.body.innerHTML = doc.body.innerHTML;
     document.body.className = doc.body.className;
-    // cancel per-page body animation (pageIn etc.) — spa.js handles transitions itself
     document.body.style.animation = 'none';
-    document.body.style.opacity = '';
+    document.body.style.opacity   = '';
+    document.body.style.overflow  = '';  // hamburger が残した overflow:hidden をリセット
 
-    // re-attach spa elements
     document.body.appendChild(fade);
     document.body.appendChild(bar);
     if (modalExists) document.body.appendChild(modalExists);
 
-    // re-apply bar-on class
     if (bar.classList.contains('ks-visible')) document.body.classList.add('ks-bar-on');
 
-    // re-execute inline scripts
+    // フェード中に即時スクロール (smooth-scroll の残像を防ぐ)
+    const hash = new URL(url, location.href).hash;
+    if (!hash) {
+      document.documentElement.style.scrollBehavior = 'auto';
+      window.scrollTo(0, 0);
+      document.documentElement.style.scrollBehavior = '';
+    }
+
     document.body.querySelectorAll('script').forEach(old => {
       const fresh = document.createElement('script');
       if (old.src) { fresh.src = old.src; fresh.async = false; }
@@ -374,10 +388,11 @@
       old.replaceWith(fresh);
     });
 
-    // update URL
+    // load イベントを期待しているページ向け (window.addEventListener('load', ...) )
+    window.dispatchEvent(new Event('load'));
+
     if (push) history.pushState({ url }, '', url);
 
-    // update bar track name
     const trackSpan = document.getElementById('ks-bar-track');
     if (trackSpan) trackSpan.textContent = 'BIWAKO SILENCE';
 
@@ -385,17 +400,12 @@
     await new Promise(r => setTimeout(r, 30));
     fade.classList.remove('ks-in');
 
-    // scroll to anchor or top
-    const hash = new URL(url, location.href).hash;
+    // アンカーはフェード後にスムーズスクロール
     if (hash) {
       const target = document.querySelector(hash);
-      if (target) { target.scrollIntoView({ behavior: 'smooth' }); }
-      else { window.scrollTo(0, 0); }
-    } else {
-      window.scrollTo(0, 0);
+      if (target) target.scrollIntoView({ behavior: 'smooth' });
     }
 
-    // re-bind spa links on new content
     bindLinks();
   }
 
