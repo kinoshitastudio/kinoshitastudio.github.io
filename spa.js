@@ -198,6 +198,11 @@
     #ks-fade.ks-in { opacity: 1; pointer-events: auto; }
     /* ── body offset for bar ── */
     body.ks-bar-on { padding-bottom: 40px; }
+    /* ── scroll-top button: push above bar ── */
+    body.ks-bar-on #scroll-top {
+      bottom: calc(40px + 1.5rem) !important;
+      z-index: 9995 !important;
+    }
   `;
   document.head.appendChild(styleEl);
 
@@ -349,6 +354,9 @@
     // swap body content
     document.body.innerHTML = doc.body.innerHTML;
     document.body.className = doc.body.className;
+    // cancel per-page body animation (pageIn etc.) — spa.js handles transitions itself
+    document.body.style.animation = 'none';
+    document.body.style.opacity = '';
 
     // re-attach spa elements
     document.body.appendChild(fade);
