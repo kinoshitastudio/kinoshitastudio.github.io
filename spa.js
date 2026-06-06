@@ -525,7 +525,18 @@
       btn.addEventListener('click', _o);
       if (close)   close.addEventListener('click', _c);
       if (overlay) overlay.addEventListener('click', _c);
-      document.querySelectorAll('.nav-menu-link, .nav-menu a').forEach(function(a) { a.addEventListener('click', _c); });
+      document.querySelectorAll('.nav-menu-link, .nav-menu a').forEach(function(a) {
+        a.addEventListener('click', function(e) {
+          _c();
+          const href = a.getAttribute('href') || '';
+          if (href.startsWith('#')) {
+            e.preventDefault();
+            var id = href.slice(1);
+            var target = document.getElementById(id);
+            if (target) requestAnimationFrame(function() { target.scrollIntoView({ behavior: 'smooth' }); });
+          }
+        });
+      });
     }());
   }
 
