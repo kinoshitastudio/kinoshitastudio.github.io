@@ -452,9 +452,11 @@
     // back/forward は保存済み scrollY に、通常遷移は top へ
     window.scrollTo(0, hash ? 0 : (restoreScrollY || 0));
 
-    // カーソルスクリプトが正しい位置で初期化できるよう座標をグローバルで渡す
+    // カーソルスクリプトが正しい位置で初期化できるよう座標と世代番号をグローバルで渡す
+    // 世代番号を上げると古い tick()/mousemove ループが自動停止する (蓄積による固まりバグの修正)
     window._ksCursorX = _mouseX;
     window._ksCursorY = _mouseY;
+    window._ksCursorGen = (window._ksCursorGen || 0) + 1;
 
     // 各 script を個別に try/catch して1つのエラーで navigate 全体が止まるのを防ぐ
     document.body.querySelectorAll('script').forEach(old => {
