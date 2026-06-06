@@ -386,7 +386,7 @@
     return p === '/' ? 'index' : p.replace(/^\//, '').replace(/\.html$/, '').replace(/-/g, ' ');
   }
 
-  async function navigate(url, push) {
+  async function navigate(url, push, restoreScrollY) {
     if (_navigating) return; // 競合ナビゲーション防止
 
     // リンククリック時のみ同一ページ判定 (back/forward では行わない)
@@ -396,6 +396,11 @@
         window.scrollTo({ top: 0, behavior: 'smooth' });
         return;
       }
+      // 現在のページのスクロール位置を history state に保存してから遷移
+      history.replaceState(
+        Object.assign({}, history.state || {}, { scrollY: window.scrollY }),
+        '', location.href
+      );
     }
 
     _navigating = true;
@@ -444,7 +449,12 @@
 
     // フェード中に即時スクロール (ks-navigating で smooth 無効済みなので instant)
     const hash = new URL(url, location.href).hash;
-    window.scrollTo(0, 0);
+    // back/forward は保存済み scrollY に、通常遷移は top へ
+    window.scrollTo(0, hash ? 0 : (restoreScrollY || 0));
+
+    // カーソルスクリプトが正しい位置で初期化できるよう座標をグローバルで渡す
+    window._ksCursorX = _mouseX;
+    window._ksCursorY = _mouseY;
 
     // 各 script を個別に try/catch して1つのエラーで navigate 全体が止まるのを防ぐ
     document.body.querySelectorAll('script').forEach(old => {
@@ -606,8 +616,9 @@
 
   // popstate (back/forward)
   window.addEventListener('popstate', e => {
-    const url = (e.state && e.state.url) || location.pathname;
-    navigate(url, false);
+    const url     = (e.state && e.state.url) || location.pathname;
+    const scrollY = (e.state && e.state.scrollY != null) ? e.state.scrollY : 0;
+    navigate(url, false, scrollY);
   });
 
   // initial bind
