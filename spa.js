@@ -476,6 +476,12 @@
       let _canon = new URL(url, location.href).pathname;
       _canon = _canon.replace(/\/index\.html$/, '/'); // index.html → / に正規化
       history.pushState({ url: _canon }, '', _canon);
+    } else {
+      // back/forward: URL バーをコンテンツに合わせる (/index.html → / 等の正規化)
+      const _canon = (new URL(url, location.href).pathname).replace(/\/index\.html$/, '/');
+      if (_canon !== location.pathname) {
+        history.replaceState(Object.assign({}, history.state || {}, { url: _canon }), '', _canon);
+      }
     }
 
     const trackSpan = document.getElementById('ks-bar-track');
