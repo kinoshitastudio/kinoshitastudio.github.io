@@ -336,6 +336,10 @@
     }
   });
 
+  /* ─── グローバルマウス座標追跡 (カーソル左端固定バグ修正用) ─── */
+  let _mouseX = 0, _mouseY = 0;
+  document.addEventListener('mousemove', e => { _mouseX = e.clientX; _mouseY = e.clientY; }, { passive: true, capture: true });
+
   /* ─── PJAX ─── */
   let _navigating = false; // concurrent navigation guard
 
@@ -444,6 +448,18 @@
     }
 
     bindLinks();
+
+    // index.html の カスタムカーソル (cur-dot/cur-ring) を最後のマウス位置に初期化
+    // (PJAX後に left:0,top:0 で左端に固定される問題の修正)
+    (function() {
+      var cd = document.getElementById('cur-dot');
+      var cr = document.getElementById('cur-ring');
+      if (cd) { cd.style.left = _mouseX + 'px'; cd.style.top = _mouseY + 'px'; }
+      if (cr) { cr.style.left = _mouseX + 'px'; cr.style.top = _mouseY + 'px'; }
+      if (cd || cr) {
+        document.dispatchEvent(new MouseEvent('mousemove', { clientX: _mouseX, clientY: _mouseY, bubbles: true }));
+      }
+    }());
 
     // ハンバーガーメニュー 保証バインド
     // cloneNode で古いリスナーを全消しして新規バインドする (重複防止)
