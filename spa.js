@@ -211,6 +211,36 @@
       transition: opacity 0.2s;
     }
     #ks-modal-skip:hover { opacity: 0.6; }
+    /* ── unified hamburger accordion ── */
+    .nav-menu-group {
+      font-family: 'Space Mono', monospace;
+      font-size: 0.7rem; letter-spacing: 0.2em; text-transform: uppercase;
+      color: rgba(235,232,226,0.55);
+      padding: 0.8rem 0;
+      border: none; border-bottom: 1px solid rgba(235,232,226,0.1);
+      display: flex; justify-content: space-between; align-items: center;
+      cursor: pointer; background: none; width: 100%;
+      text-align: left; transition: color 0.3s; user-select: none;
+    }
+    .nav-menu-group:hover, .nav-menu-group.open { color: rgba(235,232,226,0.95); }
+    .nmg-arrow {
+      display: inline-block; font-style: normal;
+      transition: transform 0.25s cubic-bezier(.4,0,.2,1);
+      font-size: 1em; line-height: 1;
+    }
+    .nav-menu-group.open .nmg-arrow { transform: rotate(45deg); }
+    .nav-menu-sub {
+      max-height: 0; overflow: hidden;
+      transition: max-height 0.3s cubic-bezier(.4,0,.2,1);
+    }
+    .nav-menu-sub.open { max-height: 400px; }
+    .nav-menu-sub .nav-menu-link, .nav-menu-sub a {
+      font-size: 0.6rem !important; padding-left: 1.2rem !important;
+      color: rgba(235,232,226,0.45) !important; border-top: none !important;
+    }
+    .nav-menu-sub .nav-menu-link:hover, .nav-menu-sub a:hover {
+      color: rgba(235,232,226,0.85) !important;
+    }
     /* ── page fade: 削除済み (各ページの pageIn アニメーションで遷移) ── */
     /* ── body offset for bar ── */
     body.ks-bar-on { padding-bottom: 40px; }
@@ -382,8 +412,13 @@
     // リンククリック時のみ同一ページ判定 (back/forward では行わない)
     if (push) {
       const _dest = new URL(url, location.href);
-      if (_dest.pathname === location.pathname && !_dest.hash) {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (_dest.pathname === location.pathname) {
+        if (_dest.hash) {
+          const _t = document.getElementById(_dest.hash.slice(1));
+          if (_t) _t.scrollIntoView({ behavior: 'smooth' });
+        } else {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
         return;
       }
       // 現在のページのスクロール位置を history state に保存してから遷移
@@ -493,6 +528,7 @@
     }
 
     bindLinks();
+    bindAccordion();
 
     // index.html の カスタムカーソル (cur-dot/cur-ring) を最後のマウス位置に初期化
     // (PJAX後に left:0,top:0 で左端に固定される問題の修正)
@@ -541,6 +577,26 @@
   }
 
   // viewport 内の reveal 要素を即座に visible にする (IO タイミング + CSS animation delay 両対応)
+  function bindAccordion() {
+    document.querySelectorAll('.nav-menu-group').forEach(function(btn) {
+      if (btn.__ks_acc) return;
+      btn.__ks_acc = true;
+      btn.addEventListener('click', function() {
+        var subId = btn.getAttribute('data-sub');
+        var sub = subId ? document.getElementById(subId) : null;
+        if (!sub) return;
+        var isOpen = btn.classList.contains('open');
+        // 他のグループを閉じる
+        document.querySelectorAll('.nav-menu-group.open').forEach(function(b) {
+          b.classList.remove('open');
+          var s = b.getAttribute('data-sub');
+          if (s) { var el = document.getElementById(s); if (el) el.classList.remove('open'); }
+        });
+        if (!isOpen) { btn.classList.add('open'); sub.classList.add('open'); }
+      });
+    });
+  }
+
   function forceRevealViewport() {
     const h = window.innerHeight;
 
@@ -639,9 +695,9 @@
 
   // initial bind
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', bindLinks);
+    document.addEventListener('DOMContentLoaded', function() { bindLinks(); bindAccordion(); });
   } else {
-    bindLinks();
+    bindLinks(); bindAccordion();
   }
 
 })();
