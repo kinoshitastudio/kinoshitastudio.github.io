@@ -374,6 +374,36 @@
   let _mouseX = 0, _mouseY = 0;
   document.addEventListener('mousemove', e => { _mouseX = e.clientX; _mouseY = e.clientY; }, { passive: true, capture: true });
 
+  /* ─── Adaptive cursor color: 背景輝度に応じてカーソル色を自動切替 ─── */
+  let _curColorRaf = 0;
+  document.addEventListener('mousemove', function(e) {
+    if (_curColorRaf) return;
+    var _ex = e.clientX, _ey = e.clientY;
+    _curColorRaf = requestAnimationFrame(function() {
+      _curColorRaf = 0;
+      if (document.body.classList.contains('cur-hover')) return;
+      var dot = document.getElementById('cur-dot');
+      var ring = document.getElementById('cur-ring');
+      if (!dot || !ring) return;
+      var el = document.elementFromPoint(_ex, _ey);
+      if (!el) return;
+      var bg = null, node = el;
+      while (node && node !== document.documentElement) {
+        var c = getComputedStyle(node).backgroundColor;
+        if (c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent') { bg = c; break; }
+        node = node.parentElement;
+      }
+      if (!bg) bg = getComputedStyle(document.body).backgroundColor;
+      if (!bg) return;
+      var m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+      if (!m) return;
+      var lum = 0.2126*(m[1]/255) + 0.7152*(m[2]/255) + 0.0722*(m[3]/255);
+      var isDark = lum < 0.4;
+      dot.style.background = isDark ? 'rgba(235,232,226,0.9)' : '#1a1a18';
+      ring.style.borderColor = isDark ? 'rgba(235,232,226,0.45)' : 'rgba(26,26,24,0.4)';
+    });
+  }, {passive: true});
+
   /* ─── スクロールリビール (IO の代替・補完) ─────────────────────
      IntersectionObserver は PJAX 後のタイミングで発火しないことがある。
      spa.js のスクロールハンドラが .reveal / .rv / .fade-in を確実に拾う。
