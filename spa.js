@@ -241,11 +241,6 @@
     .nav-menu-sub .nav-menu-link:hover, .nav-menu-sub a:hover {
       color: rgba(235,232,226,0.85) !important;
     }
-    .nav-works-sub-link {
-      padding-left: 2.6rem !important; font-size: 0.54rem !important;
-      color: rgba(235,232,226,0.3) !important;
-    }
-    .nav-works-sub-link:hover { color: rgba(235,232,226,0.75) !important; }
     .nav-menu-line-link {
       font-family: 'Space Mono', monospace;
       font-size: 0.58rem; letter-spacing: 0.18em;
