@@ -300,10 +300,12 @@
   // barVol を audio.volume に合わせる（フルリロード時もlocalStorage値を反映）
   barVol.value = audio.volume;
 
-  // タッチ端末でも JS 音量制御が効く場合（Android 等）はスライダーを表示
+  // iOS は JS 音量制御不可（UA 判定）→ スライダー非表示のまま / Android 等は表示
   (function() {
-    const t = new Audio(); t.volume = 0.5;
-    if (t.volume === 0.5) { barVol.style.display = 'block'; barMute.style.display = 'none'; }
+    const ua = navigator.userAgent;
+    const isIOS = /iPad|iPhone|iPod/.test(ua) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (!isIOS) { barVol.style.display = 'block'; barMute.style.display = 'none'; }
   })();
 
   barBtn.addEventListener('click', toggleBGM);
