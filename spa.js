@@ -231,9 +231,9 @@
     .nav-menu-group.open .nmg-arrow { transform: rotate(45deg); }
     .nav-menu-sub {
       max-height: 0; overflow: hidden;
-      transition: max-height 0.3s cubic-bezier(.4,0,.2,1);
+      transition: max-height 0.35s cubic-bezier(.4,0,.2,1);
     }
-    .nav-menu-sub.open { max-height: 400px; }
+    .nav-menu-sub.open { max-height: 800px; }
     .nav-menu-sub .nav-menu-link, .nav-menu-sub a {
       font-size: 0.6rem !important; padding-left: 1.2rem !important;
       color: rgba(235,232,226,0.45) !important; border-top: none !important;
@@ -241,6 +241,21 @@
     .nav-menu-sub .nav-menu-link:hover, .nav-menu-sub a:hover {
       color: rgba(235,232,226,0.85) !important;
     }
+    .nav-works-sub-link {
+      padding-left: 2.6rem !important; font-size: 0.54rem !important;
+      color: rgba(235,232,226,0.3) !important;
+    }
+    .nav-works-sub-link:hover { color: rgba(235,232,226,0.75) !important; }
+    .nav-menu-line-link {
+      font-family: 'Space Mono', monospace;
+      font-size: 0.58rem; letter-spacing: 0.18em;
+      color: rgba(6,199,85,0.65) !important;
+      text-decoration: none;
+      display: block; padding: 0.9rem 0;
+      border-top: 1px solid rgba(235,232,226,0.08);
+      transition: color 0.25s;
+    }
+    .nav-menu-line-link:hover { color: #06C755 !important; }
     /* ── page fade: 削除済み (各ページの pageIn アニメーションで遷移) ── */
     /* ── body offset for bar ── */
     body.ks-bar-on { padding-bottom: 40px; }
