@@ -118,7 +118,7 @@
       width: 14px; height: 14px; border-radius: 50%;
       background: rgba(235,232,226,0.9);
     }
-    /* mobile: show both vol slider and mute btn (Android supports JS vol; iOS ignores vol but slider still visible) */
+    /* mobile: hide vol slider by default on touch; JS shows it if volume control works (Android) */
     #ks-bar-mute {
       display: none;
       background: none; border: none; padding: 0;
@@ -127,7 +127,7 @@
     }
     #ks-bar-mute svg { width: 14px; height: 14px; fill: currentColor; display: block; }
     @media (hover: none) and (pointer: coarse) {
-      #ks-bar-vol { display: block; width: 60px; }
+      #ks-bar-vol { display: none; }
       #ks-bar-mute { display: flex; align-items: center; }
     }
     /* ── modal ── */
@@ -299,6 +299,12 @@
 
   // barVol を audio.volume に合わせる（フルリロード時もlocalStorage値を反映）
   barVol.value = audio.volume;
+
+  // タッチ端末でも JS 音量制御が効く場合（Android 等）はスライダーを表示
+  (function() {
+    const t = new Audio(); t.volume = 0.5;
+    if (t.volume === 0.5) { barVol.style.display = 'block'; barMute.style.display = 'none'; }
+  })();
 
   barBtn.addEventListener('click', toggleBGM);
   barVol.addEventListener('input', () => {
