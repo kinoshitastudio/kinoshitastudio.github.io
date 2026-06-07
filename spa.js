@@ -118,7 +118,7 @@
       width: 14px; height: 14px; border-radius: 50%;
       background: rgba(235,232,226,0.9);
     }
-    /* mobile: hide vol slider (iOS ignores JS vol), show mute btn */
+    /* mobile: show both vol slider and mute btn (Android supports JS vol; iOS ignores vol but slider still visible) */
     #ks-bar-mute {
       display: none;
       background: none; border: none; padding: 0;
@@ -127,7 +127,7 @@
     }
     #ks-bar-mute svg { width: 14px; height: 14px; fill: currentColor; display: block; }
     @media (hover: none) and (pointer: coarse) {
-      #ks-bar-vol { display: none; }
+      #ks-bar-vol { display: block; width: 60px; }
       #ks-bar-mute { display: flex; align-items: center; }
     }
     /* ── modal ── */
