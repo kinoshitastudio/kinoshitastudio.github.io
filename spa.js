@@ -333,8 +333,8 @@
   modalWrap.id = 'ks-modal-wrap';
   modalWrap.innerHTML = `
     <div id="ks-modal">
-      <h2>BGM</h2>
-      <p>このサイトにはサウンドスケープが流れます。<br>音量を調整してお楽しみください。</p>
+      <h2>ようこそ、木下スタジオへ。</h2>
+      <p>木下貴博が作曲した音楽が、<br>このサイトには流れています。<br>ご不要な方はそのままSKIPでお進みください。</p>
       <div class="ks-modal-vol">
         <label>VOL</label>
         <input id="ks-modal-vol-range" type="range" min="0" max="1" step="0.01" value="0.35">
