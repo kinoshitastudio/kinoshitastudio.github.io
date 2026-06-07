@@ -596,12 +596,21 @@
     document.querySelectorAll('a[href]').forEach(a => {
       if (a.__ks_bound) return;
       a.__ks_bound = true;
-      if (!isSpaLink(a)) return;
-      a.addEventListener('click', e => {
-        e.preventDefault();
-        const href = a.getAttribute('href');
-        navigate(href, true);
-      });
+      const href = a.getAttribute('href') || '';
+      if (isSpaLink(a)) {
+        a.addEventListener('click', e => {
+          e.preventDefault();
+          navigate(href, true);
+        });
+      } else if (href.startsWith('#') && href.length > 1) {
+        // ネイティブ hash ナビの代わりに scrollIntoView を使う
+        // (SPA 環境で body overflow:hidden 解除タイミング等による上部スクロール問題を回避)
+        a.addEventListener('click', e => {
+          e.preventDefault();
+          const target = document.getElementById(href.slice(1));
+          if (target) target.scrollIntoView({ behavior: 'smooth' });
+        });
+      }
     });
   }
 
