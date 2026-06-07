@@ -251,6 +251,25 @@
       transition: color 0.25s;
     }
     .nav-menu-line-link:hover { color: #06C755 !important; }
+    .nav-menu-sns {
+      display: flex; align-items: center; gap: 1.4rem;
+      padding: 1.2rem 0 0.4rem;
+      border-top: 1px solid rgba(235,232,226,0.08);
+      margin-top: 0.4rem;
+    }
+    .nav-menu-sns a {
+      color: rgba(235,232,226,0.35); transition: color 0.25s;
+      display: flex; align-items: center; text-decoration: none;
+      font-family: 'Space Mono', monospace; font-size: 0.52rem; letter-spacing: 0.12em;
+    }
+    .nav-menu-sns a:hover { color: rgba(235,232,226,0.85); }
+    .footer-sns { display: flex; align-items: center; gap: 1.6rem; }
+    .footer-sns a {
+      color: #7a7a77; transition: color 0.25s;
+      display: flex; align-items: center; text-decoration: none;
+      font-family: 'Space Mono', monospace; font-size: 0.5rem; letter-spacing: 0.12em;
+    }
+    .footer-sns a:hover { color: var(--ink, #1a1a18); }
     /* ── page fade: 削除済み (各ページの pageIn アニメーションで遷移) ── */
     /* ── body offset for bar ── */
     body.ks-bar-on { padding-bottom: 40px; }
