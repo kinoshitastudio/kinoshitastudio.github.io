@@ -211,6 +211,24 @@
       transition: opacity 0.2s;
     }
     #ks-modal-skip:hover { opacity: 0.6; }
+    /* ── unified nav base (overrides per-page CSS) ── */
+    .nav-menu {
+      background: #3a3a37 !important;
+      border-left: 1px solid rgba(235,232,226,0.06) !important;
+    }
+    .nav-menu-close {
+      color: rgba(235,232,226,0.35) !important;
+    }
+    .nav-menu-close:hover { color: rgba(235,232,226,0.85) !important; }
+    .nav-menu-label {
+      color: rgba(235,232,226,0.28) !important;
+    }
+    .nav-menu > a.nav-menu-link, .nav-menu > a {
+      color: rgba(235,232,226,0.55) !important;
+      border-bottom: 1px solid rgba(235,232,226,0.08) !important;
+      border-top: none !important;
+    }
+    .nav-menu > a.nav-menu-link:hover { color: rgba(235,232,226,0.95) !important; }
     /* ── unified hamburger accordion ── */
     .nav-menu-group {
       font-family: 'Space Mono', monospace;
