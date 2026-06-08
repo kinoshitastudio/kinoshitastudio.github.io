@@ -28,7 +28,7 @@
   /* ─── audio element (persisted forever) ─── */
   const audio = new Audio();
   audio.loop    = true;
-  audio.volume  = parseFloat(localStorage.getItem(LS_BGM_VOL) || '0.35');
+  audio.volume  = parseFloat(localStorage.getItem(LS_BGM_VOL) || '0.20');
   audio.preload = 'none';
   let audioReady = false;
 
@@ -70,7 +70,7 @@
       display: flex; align-items: center; gap: 10px;
       padding: 0 16px;
       transform: translateY(100%);
-      transition: transform 0.35s cubic-bezier(.4,0,.2,1);
+      transition: transform 0.20s cubic-bezier(.4,0,.2,1);
       pointer-events: none;
     }
     #ks-bar.ks-visible {
@@ -202,7 +202,7 @@
     #ks-modal-play:hover { opacity: 0.75; }
     #ks-modal-skip {
       background: none;
-      color: rgba(235,232,226,0.35);
+      color: rgba(235,232,226,0.20);
       border: 1px solid rgba(235,232,226,0.12);
       border-radius: 1px;
       font-family: 'Space Mono', monospace;
@@ -231,7 +231,7 @@
     .nav-menu-group.open .nmg-arrow { transform: rotate(45deg); }
     .nav-menu-sub {
       max-height: 0; overflow: hidden;
-      transition: max-height 0.35s cubic-bezier(.4,0,.2,1);
+      transition: max-height 0.20s cubic-bezier(.4,0,.2,1);
     }
     .nav-menu-sub.open { max-height: 800px; }
     .nav-menu-sub .nav-menu-link, .nav-menu-sub a {
@@ -258,7 +258,7 @@
       margin-top: 0.4rem;
     }
     .nav-menu-sns a {
-      color: rgba(235,232,226,0.35); transition: color 0.25s;
+      color: rgba(235,232,226,0.20); transition: color 0.25s;
       display: flex; align-items: center; text-decoration: none;
       font-family: 'Space Mono', monospace; font-size: 0.52rem; letter-spacing: 0.12em;
     }
@@ -307,7 +307,7 @@
     <button id="ks-bar-btn" aria-label="BGM play/pause"></button>
     <span id="ks-bar-track">BIWAKO SILENCE</span>
     <span id="ks-bar-dot"></span>
-    <input id="ks-bar-vol" type="range" min="0" max="1" step="0.01" value="0.35" aria-label="volume">
+    <input id="ks-bar-vol" type="range" min="0" max="1" step="0.01" value="0.20" aria-label="volume">
     <button id="ks-bar-mute" aria-label="mute"></button>
   `;
   document.body.appendChild(bar);
@@ -356,7 +356,7 @@
       <p>木下貴博が作曲した音楽が、<br>このサイトには流れています。<br>ご不要な方はそのままSKIPでお進みください。</p>
       <div class="ks-modal-vol">
         <label>VOL</label>
-        <input id="ks-modal-vol-range" type="range" min="0" max="1" step="0.01" value="0.35">
+        <input id="ks-modal-vol-range" type="range" min="0" max="1" step="0.01" value="0.20">
       </div>
       <div class="ks-modal-btns">
         <button id="ks-modal-play">▶ PLAY</button>
