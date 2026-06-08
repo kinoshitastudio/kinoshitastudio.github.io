@@ -232,6 +232,7 @@
     .nav-menu-sub {
       max-height: 0; overflow: hidden;
       transition: max-height 0.20s cubic-bezier(.4,0,.2,1);
+      flex-shrink: 0;
     }
     .nav-menu-sub.open { max-height: 800px; }
     .nav-menu-sub .nav-menu-link, .nav-menu-sub a {
