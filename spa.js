@@ -69,12 +69,15 @@
       -webkit-backdrop-filter: blur(8px) saturate(1.4);
       display: flex; align-items: center; gap: 10px;
       padding: 0 16px;
-      transform: translateY(100%);
+      transform: translateY(100%) translateZ(0);
+      -webkit-transform: translateY(100%) translateZ(0);
       transition: transform 0.20s cubic-bezier(.4,0,.2,1);
+      will-change: transform;
       pointer-events: none;
     }
     #ks-bar.ks-visible {
-      transform: translateY(0);
+      transform: translateY(0) translateZ(0);
+      -webkit-transform: translateY(0) translateZ(0);
       pointer-events: auto;
     }
     #ks-bar-btn {
