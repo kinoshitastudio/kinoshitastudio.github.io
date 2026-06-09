@@ -211,6 +211,28 @@
       transition: opacity 0.2s;
     }
     #ks-modal-skip:hover { opacity: 0.6; }
+    /* ── lang toggle ── */
+    #ks-modal-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 20px;
+    }
+    #ks-modal-header h2 { margin-bottom: 0; }
+    #ks-lang-toggle {
+      display: flex; gap: 0;
+      border: 1px solid rgba(235,232,226,0.15);
+      border-radius: 1px; overflow: hidden; flex-shrink: 0;
+    }
+    .ks-lang-btn {
+      font-family: 'Space Mono', monospace;
+      font-size: 9px; letter-spacing: 0.12em;
+      background: none; border: none; cursor: pointer;
+      padding: 4px 8px; color: rgba(235,232,226,0.35);
+      transition: background 0.2s, color 0.2s;
+    }
+    .ks-lang-btn.active {
+      background: rgba(235,232,226,0.12);
+      color: rgba(235,232,226,0.85);
+    }
     /* ── unified nav base (overrides per-page CSS) ── */
     .nav-menu {
       background: #3a3a37 !important;
@@ -371,8 +393,14 @@
   modalWrap.id = 'ks-modal-wrap';
   modalWrap.innerHTML = `
     <div id="ks-modal">
-      <h2>ようこそ、木下スタジオへ。</h2>
-      <p>木下貴博が作曲した音楽が、<br>このサイトには流れています。<br>ご不要な方はそのままSKIPでお進みください。</p>
+      <div id="ks-modal-header">
+        <h2 id="ks-modal-title">ようこそ、木下スタジオへ。</h2>
+        <div id="ks-lang-toggle">
+          <button class="ks-lang-btn active" data-lang="jp">JP</button>
+          <button class="ks-lang-btn" data-lang="en">EN</button>
+        </div>
+      </div>
+      <p id="ks-modal-body">木下貴博が作曲した音楽が、<br>このサイトには流れています。<br>ご不要な方はそのままSKIPでお進みください。</p>
       <div class="ks-modal-vol">
         <label>VOL</label>
         <input id="ks-modal-vol-range" type="range" min="0" max="1" step="0.01" value="0.20">
@@ -388,6 +416,30 @@
   const modalVolRange = document.getElementById('ks-modal-vol-range');
   const modalPlayBtn = document.getElementById('ks-modal-play');
   const modalSkipBtn = document.getElementById('ks-modal-skip');
+
+  // lang toggle
+  const LANG = {
+    jp: {
+      title: 'ようこそ、木下スタジオへ。',
+      body:  '木下貴博が作曲した音楽が、<br>このサイトには流れています。<br>ご不要な方はそのままSKIPでお進みください。',
+      play:  '▶ PLAY', skip: 'SKIP'
+    },
+    en: {
+      title: 'Welcome to Kinoshita Studio.',
+      body:  'Music composed by Takahiro Kinoshita<br>plays throughout this site.<br>Press SKIP if you prefer silence.',
+      play:  '▶ PLAY', skip: 'SKIP'
+    }
+  };
+  document.querySelectorAll('.ks-lang-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const lang = btn.dataset.lang;
+      document.querySelectorAll('.ks-lang-btn').forEach(b => b.classList.toggle('active', b === btn));
+      document.getElementById('ks-modal-title').textContent = LANG[lang].title;
+      document.getElementById('ks-modal-body').innerHTML   = LANG[lang].body;
+      modalPlayBtn.textContent = LANG[lang].play;
+      modalSkipBtn.textContent = LANG[lang].skip;
+    });
+  });
 
   modalVolRange.value = audio.volume; // 保存済み音量を反映
   modalVolRange.addEventListener('input', () => {
