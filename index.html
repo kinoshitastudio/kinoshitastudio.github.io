@@ -2044,101 +2044,91 @@
 
 
   <script>
-    // Three.js wave shader illustration
+    // Raw WebGL wave shader — no dependencies
     (function(){
       const canvas = document.getElementById('heroCanvas');
       if(!canvas) return;
-
-      const script = document.createElement('script');
-      script.src = 'https://unpkg.com/three@0.160.0/build/three.min.js';
-      script.onload = function(){ initWave(); };
-      document.head.appendChild(script);
-
-      function initWave(){
-        const renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-        const scene = new THREE.Scene();
-        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-
-        const isMobileInit = canvas.parentElement.clientWidth < 768;
-        const imgSrc = isMobileInit
+      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if(!gl){
+        // WebGL非対応フォールバック
+        const img = document.createElement('img');
+        img.style.cssText = 'display:block;width:100%;height:auto;';
+        img.src = canvas.parentElement.clientWidth < 768
           ? 'assets/img/hero-illustration-mobile.png'
           : 'assets/img/hero-illustration.png';
-
-        const texture = new THREE.TextureLoader().load(imgSrc, function(tex){
-          const imgW = tex.image.naturalWidth  || tex.image.width;
-          const imgH = tex.image.naturalHeight || tex.image.height;
-          const imgAspect = imgW / imgH;
-          function resize(){
-            const w = canvas.parentElement.clientWidth;
-            const h = Math.round(w / imgAspect);
-            renderer.setSize(w, h);
-            canvas.style.height = h + 'px';
-            camera.left   = -1;
-            camera.right  =  1;
-            camera.top    =  1;
-            camera.bottom = -1;
-            camera.updateProjectionMatrix();
-          }
-          resize();
-          window.addEventListener('resize', resize);
-        });
-
-        const vertexShader = `
-          varying vec2 vUv;
-          void main(){
-            vUv = uv;
-            gl_Position = vec4(position, 1.0);
-          }
-        `;
-        const fragmentShader = `
-          uniform sampler2D uTex;
-          uniform float uTime;
-          uniform vec2 uMouse;
-          varying vec2 vUv;
-          void main(){
-            vec2 uv = vUv;
-            float wx = sin(uv.x * 7.0 + uTime * 0.6) * 0.005;
-            float wy = sin(uv.y * 5.0 + uTime * 0.5) * 0.005;
-            float wx2 = sin(uv.y * 9.0 + uTime * 0.35) * 0.003;
-            float wy2 = sin(uv.x * 6.0 + uTime * 0.45) * 0.003;
-            uv.x += wx + wx2 + uMouse.x * 0.025;
-            uv.y += wy + wy2 - uMouse.y * 0.018;
-            gl_FragColor = texture2D(uTex, uv);
-          }
-        `;
-
-        const material = new THREE.ShaderMaterial({
-          uniforms: {
-            uTex:   { value: texture },
-            uTime:  { value: 0.0 },
-            uMouse: { value: new THREE.Vector2(0, 0) }
-          },
-          vertexShader: vertexShader,
-          fragmentShader: fragmentShader,
-          transparent: true
-        });
-
-        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
-        scene.add(mesh);
-
-        let mx = 0, my = 0, cmx = 0, cmy = 0;
-        document.addEventListener('mousemove', function(e){
-          mx = (e.clientX / window.innerWidth  - 0.5);
-          my = (e.clientY / window.innerHeight - 0.5);
-        });
-
-        function animate(t){
-          requestAnimationFrame(animate);
-          cmx += (mx - cmx) * 0.06;
-          cmy += (my - cmy) * 0.06;
-          material.uniforms.uTime.value  = t * 0.001;
-          material.uniforms.uMouse.value.set(cmx, cmy);
-          renderer.render(scene, camera);
-        }
-        requestAnimationFrame(animate);
+        canvas.parentElement.replaceChild(img, canvas);
+        return;
       }
+
+      const VS = `attribute vec2 a_pos;varying vec2 vUv;
+void main(){vUv=a_pos*.5+.5;vUv.y=1.-vUv.y;gl_Position=vec4(a_pos,0.,1.);}`;
+      const FS = `precision mediump float;
+uniform sampler2D uTex;uniform float uTime;uniform vec2 uMouse;varying vec2 vUv;
+void main(){
+  vec2 uv=vUv;
+  uv.x+=sin(uv.x*7.+uTime*.6)*.005+sin(uv.y*9.+uTime*.35)*.003+uMouse.x*.025;
+  uv.y+=sin(uv.y*5.+uTime*.5)*.005+sin(uv.x*6.+uTime*.45)*.003-uMouse.y*.018;
+  gl_FragColor=texture2D(uTex,uv);
+}`;
+
+      function shader(type, src){
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src); gl.compileShader(s); return s;
+      }
+      const prog = gl.createProgram();
+      gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
+      gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
+      gl.linkProgram(prog); gl.useProgram(prog);
+
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+      const aPos = gl.getAttribLocation(prog, 'a_pos');
+      gl.enableVertexAttribArray(aPos);
+      gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+      const uTime  = gl.getUniformLocation(prog, 'uTime');
+      const uMouse = gl.getUniformLocation(prog, 'uMouse');
+      gl.uniform1i(gl.getUniformLocation(prog, 'uTex'), 0);
+
+      const tex = gl.createTexture();
+      const image = new Image();
+      image.crossOrigin = 'anonymous';
+      image.src = canvas.parentElement.clientWidth < 768
+        ? 'assets/img/hero-illustration-mobile.png'
+        : 'assets/img/hero-illustration.png';
+      image.onload = function(){
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+        const aspect = image.naturalWidth / image.naturalHeight;
+        function resize(){
+          const w = canvas.parentElement.clientWidth;
+          const h = Math.round(w / aspect);
+          canvas.width = w; canvas.height = h;
+          canvas.style.height = h + 'px';
+          gl.viewport(0, 0, w, h);
+        }
+        resize();
+        window.addEventListener('resize', resize);
+
+        let mx=0,my=0,cmx=0,cmy=0;
+        document.addEventListener('mousemove', function(e){
+          mx=(e.clientX/window.innerWidth-.5);
+          my=(e.clientY/window.innerHeight-.5);
+        });
+        (function tick(t){
+          requestAnimationFrame(tick);
+          cmx+=(mx-cmx)*.06; cmy+=(my-cmy)*.06;
+          gl.uniform1f(uTime, t*.001);
+          gl.uniform2f(uMouse, cmx, cmy);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        })(0);
+      };
     })();
   </script>
   <script src="/spa.js"></script>
