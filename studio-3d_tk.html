@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio 3D — Kinoshita Studio</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a08; overflow: hidden; font-family: 'Space Mono', monospace; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%);
+    font-size: 0.5rem; letter-spacing: 0.2em; color: rgba(235,232,226,0.3);
+    text-transform: uppercase; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="ui">drag to rotate · scroll to zoom</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ─── Renderer ───────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+// ─── Scene / Camera ─────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d0d0b);
+scene.fog = new THREE.Fog(0x0d0d0b, 8, 16);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 30);
+camera.position.set(3.2, 2.2, 4.5);
+camera.lookAt(0, 0.9, -0.5);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.9, -0.5);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 1.5;
+controls.maxDistance = 9;
+controls.maxPolarAngle = Math.PI * 0.72;
+controls.update();
+
+// ─── Helpers ────────────────────────────────────────────
+function box(w, h, d, color, roughness = 0.8, metalness = 0) {
+  const g = new THREE.BoxGeometry(w, h, d);
+  const m = new THREE.MeshStandardMaterial({ color, roughness, metalness });
+  const mesh = new THREE.Mesh(g, m);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+function place(mesh, x, y, z) { mesh.position.set(x, y, z); return mesh; }
+
+// ─── Lights ─────────────────────────────────────────────
+// 薄い環境光（夜の室内）
+const ambient = new THREE.AmbientLight(0xffe8c8, 0.18);
+scene.add(ambient);
+
+// 天井照明（中央上）
+const ceiling = new THREE.PointLight(0xfff5e0, 1.4, 6);
+ceiling.position.set(0, 2.4, -0.5);
+ceiling.castShadow = true;
+ceiling.shadow.radius = 8;
+scene.add(ceiling);
+
+// デスクライト（青白い、ラップトップの後ろ）
+const deskLamp = new THREE.PointLight(0xc8e8ff, 1.8, 2.5);
+deskLamp.position.set(-0.4, 1.35, -1.0);
+deskLamp.castShadow = false;
+scene.add(deskLamp);
+
+// モニター発光（右側）
+const monitorGlow = new THREE.PointLight(0x8899cc, 0.4, 1.5);
+monitorGlow.position.set(0.9, 1.05, -0.3);
+scene.add(monitorGlow);
+
+// 窓の外（暗い夜）
+const windowLight = new THREE.SpotLight(0x1a2a3a, 0.3, 4, Math.PI * 0.3);
+windowLight.position.set(0, 2.2, -1.85);
+windowLight.target.position.set(0, 0.5, -0.5);
+scene.add(windowLight);
+scene.add(windowLight.target);
+
+// ─── Room ───────────────────────────────────────────────
+const WALL = 0xf0ebe0;
+const FLOOR_C = 0xb8a888;
+
+// 床
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(5.5, 5),
+  new THREE.MeshStandardMaterial({ color: FLOOR_C, roughness: 0.9 })
+);
+floor.rotation.x = -Math.PI / 2;
+floor.position.set(0, 0, 0.5);
+floor.receiveShadow = true;
+scene.add(floor);
+
+// 天井
+const ceiling_m = new THREE.Mesh(
+  new THREE.PlaneGeometry(5.5, 5),
+  new THREE.MeshStandardMaterial({ color: 0xfaf7f0, roughness: 1 })
+);
+ceiling_m.rotation.x = Math.PI / 2;
+ceiling_m.position.set(0, 2.6, 0.5);
+ceiling_m.receiveShadow = true;
+scene.add(ceiling_m);
+
+// 背面壁（窓あり）
+const backWall = new THREE.Mesh(
+  new THREE.PlaneGeometry(5.5, 2.6),
+  new THREE.MeshStandardMaterial({ color: WALL, roughness: 0.95 })
+);
+backWall.position.set(0, 1.3, -1.95);
+backWall.receiveShadow = true;
+scene.add(backWall);
+
+// 左壁
+const leftWall = new THREE.Mesh(
+  new THREE.PlaneGeometry(5, 2.6),
+  new THREE.MeshStandardMaterial({ color: 0xe8e3d8, roughness: 0.95 })
+);
+leftWall.rotation.y = Math.PI / 2;
+leftWall.position.set(-2.5, 1.3, 0.5);
+leftWall.receiveShadow = true;
+scene.add(leftWall);
+
+// 右壁
+const rightWall = new THREE.Mesh(
+  new THREE.PlaneGeometry(5, 2.6),
+  new THREE.MeshStandardMaterial({ color: 0xe8e3d8, roughness: 0.95 })
+);
+rightWall.rotation.y = -Math.PI / 2;
+rightWall.position.set(2.5, 1.3, 0.5);
+rightWall.receiveShadow = true;
+scene.add(rightWall);
+
+// ─── 窓 ─────────────────────────────────────────────────
+// 窓枠（白）
+const winFrame = box(1.5, 1.1, 0.06, 0xd0ccc0, 0.7);
+place(winFrame, 0, 1.65, -1.92);
+scene.add(winFrame);
+
+// 窓ガラス（暗い夜）
+const glass = new THREE.Mesh(
+  new THREE.PlaneGeometry(1.36, 0.95),
+  new THREE.MeshStandardMaterial({ color: 0x050a0e, roughness: 0.1, metalness: 0.2 })
+);
+glass.position.set(0, 1.65, -1.90);
+scene.add(glass);
+
+// 窓の仕切り（縦）
+const winDiv = box(0.04, 0.95, 0.04, 0xd0ccc0, 0.7);
+place(winDiv, 0, 1.65, -1.91);
+scene.add(winDiv);
+
+// ─── 左の大きなデスク ────────────────────────────────────
+const DESK_C = 0x8a7560;
+const LEG_C  = 0x1a1a1a;
+
+// 天板
+const desk1 = box(1.7, 0.04, 0.72, DESK_C, 0.6);
+place(desk1, -0.95, 0.74, -0.75);
+scene.add(desk1);
+
+// 脚4本
+[[-0.75, -0.45], [-0.75, -1.0], [-1.15, -0.45], [-1.15, -1.0]].forEach(([x, z]) => {
+  const leg = box(0.04, 0.74, 0.04, LEG_C, 0.5, 0.8);
+  place(leg, x, 0.37, z);
+  scene.add(leg);
+});
+
+// 下段棚板
+const shelf1 = box(1.7, 0.03, 0.65, DESK_C, 0.7);
+place(shelf1, -0.95, 0.28, -0.75);
+scene.add(shelf1);
+
+// 棚の中身（HDD・ファイルなど、暗い塊）
+const shelfItems = box(1.4, 0.22, 0.5, 0x2a2520, 0.9);
+place(shelfItems, -0.95, 0.14, -0.75);
+scene.add(shelfItems);
+
+// ─── プリンター（デスク左上）───────────────────────────
+const printer = box(0.44, 0.14, 0.34, 0xf0f0ee, 0.5);
+place(printer, -1.5, 0.83, -0.78);
+scene.add(printer);
+// プリンター操作パネル（薄い黒）
+const printerPanel = box(0.44, 0.04, 0.05, 0x222220, 0.4);
+place(printerPanel, -1.5, 0.89, -0.61);
+scene.add(printerPanel);
+
+// ─── LEDラック（窓左上）──────────────────────────────
+const rack = box(0.25, 0.7, 0.22, 0x2a2a28, 0.4, 0.6);
+place(rack, -1.6, 1.05, -1.7);
+scene.add(rack);
+// LED（赤っぽい光）
+const rackGlow = new THREE.PointLight(0xff3300, 0.2, 0.5);
+rackGlow.position.set(-1.6, 1.35, -1.6);
+scene.add(rackGlow);
+const rackLed = box(0.22, 0.04, 0.02, 0xff4400, 0.1);
+place(rackLed, -1.6, 1.38, -1.59);
+scene.add(rackLed);
+
+// ─── 植物（窓左、垂れ下がる）────────────────────────────
+const pot = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.07, 0.05, 0.1, 8),
+  new THREE.MeshStandardMaterial({ color: 0x6a7a5a, roughness: 0.9 })
+);
+pot.position.set(-0.8, 0.8, -1.75);
+pot.castShadow = true;
+scene.add(pot);
+
+// 葉（球体×複数）
+const leafMat = new THREE.MeshStandardMaterial({ color: 0x4a6a3a, roughness: 0.95 });
+[
+  [0, 0.07, 0], [-0.07, 0.04, -0.04], [0.06, 0.02, 0.03],
+  [-0.05, -0.04, 0.05], [0.04, -0.06, -0.03], [-0.08, -0.08, 0.02],
+].forEach(([dx, dy, dz]) => {
+  const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.065, 6, 5), leafMat);
+  leaf.position.set(-0.8 + dx, 0.87 + dy, -1.75 + dz);
+  leaf.castShadow = true;
+  scene.add(leaf);
+});
+
+// ─── ラップトップ ────────────────────────────────────────
+// 本体
+const laptop_base = box(0.34, 0.022, 0.24, 0x1a1a18, 0.4, 0.5);
+place(laptop_base, -0.55, 0.762, -0.85);
+scene.add(laptop_base);
+
+// 画面（開いた状態、少し後ろに傾く）
+const screen = box(0.34, 0.22, 0.014, 0x111110, 0.3, 0.4);
+screen.position.set(-0.55, 0.886, -0.98);
+screen.rotation.x = -Math.PI * 0.18;
+scene.add(screen);
+
+// 画面の光（風景画 → オレンジっぽい）
+const screenGlow2 = new THREE.PointLight(0xd4a870, 0.6, 1.0);
+screenGlow2.position.set(-0.55, 0.9, -0.92);
+scene.add(screenGlow2);
+
+// 画面表示（明るい矩形）
+const display = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.30, 0.19),
+  new THREE.MeshStandardMaterial({ color: 0xe8b870, roughness: 0.1, emissive: 0xd4944a, emissiveIntensity: 0.5 })
+);
+display.position.set(-0.55, 0.887, -0.973);
+display.rotation.x = -Math.PI * 0.18;
+scene.add(display);
+
+// ─── デスクライト ────────────────────────────────────────
+// アーム根元
+const lampBase = box(0.08, 0.04, 0.08, 0x4a5560, 0.5, 0.7);
+place(lampBase, -0.35, 0.762, -1.35);
+scene.add(lampBase);
+
+// アーム（縦）
+const lampArm1 = box(0.025, 0.38, 0.025, 0x5a6570, 0.5, 0.7);
+place(lampArm1, -0.35, 0.97, -1.35);
+scene.add(lampArm1);
+
+// アーム（斜め横方向）
+const lampArm2 = box(0.025, 0.32, 0.025, 0x5a6570, 0.5, 0.7);
+lampArm2.position.set(-0.22, 1.22, -1.28);
+lampArm2.rotation.z = Math.PI * 0.2;
+scene.add(lampArm2);
+
+// ランプシェード
+const shade = new THREE.Mesh(
+  new THREE.ConeGeometry(0.1, 0.12, 8),
+  new THREE.MeshStandardMaterial({ color: 0x6a7888, roughness: 0.4, metalness: 0.3 })
+);
+shade.position.set(-0.08, 1.28, -1.18);
+shade.rotation.z = Math.PI * 0.15;
+shade.castShadow = true;
+scene.add(shade);
+
+// ─── キーボード（デスク上）──────────────────────────────
+const keyboard = box(0.36, 0.01, 0.14, 0x1a1a18, 0.7);
+place(keyboard, -0.55, 0.752, -0.63);
+scene.add(keyboard);
+
+// マウス
+const mouse = box(0.07, 0.025, 0.12, 0x111110, 0.5);
+place(mouse, -0.2, 0.752, -0.7);
+scene.add(mouse);
+
+// ─── 付箋など（デスク上）────────────────────────────────
+const stickyMat = new THREE.MeshStandardMaterial({ color: 0xf5d040, roughness: 0.9, emissive: 0xd4aa00, emissiveIntensity: 0.1 });
+[[0, 0], [0.08, 0.04], [-0.07, -0.03]].forEach(([dx, dz]) => {
+  const sticky = new THREE.Mesh(new THREE.PlaneGeometry(0.08, 0.08), stickyMat);
+  sticky.rotation.x = -Math.PI / 2;
+  sticky.position.set(-1.1 + dx, 0.762, -0.68 + dz);
+  scene.add(sticky);
+});
+
+// ─── 右サイドテーブル ────────────────────────────────────
+const desk2 = box(0.85, 0.03, 0.55, DESK_C, 0.6);
+place(desk2, 0.85, 0.68, -0.7);
+scene.add(desk2);
+
+[[0.5, -0.48], [0.5, -0.92], [1.2, -0.48], [1.2, -0.92]].forEach(([x, z]) => {
+  const leg = box(0.03, 0.68, 0.03, LEG_C, 0.5, 0.8);
+  place(leg, x, 0.34, z);
+  scene.add(leg);
+});
+
+// ─── モニター ────────────────────────────────────────────
+// パネル
+const monitor = box(0.58, 0.36, 0.04, 0x0d0d0c, 0.3, 0.3);
+monitor.position.set(0.92, 1.04, -0.88);
+monitor.rotation.y = -Math.PI * 0.08;
+scene.add(monitor);
+
+// 画面（暗い、オフ）
+const monDisplay = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.52, 0.30),
+  new THREE.MeshStandardMaterial({ color: 0x080c18, roughness: 0.05, emissive: 0x0a1030, emissiveIntensity: 0.3 })
+);
+monDisplay.position.set(0.92, 1.04, -0.856);
+monDisplay.rotation.y = -Math.PI * 0.08;
+scene.add(monDisplay);
+
+// スタンド
+const monStand = box(0.14, 0.22, 0.12, 0x151514, 0.5, 0.3);
+monStand.position.set(0.92, 0.79, -0.78);
+monStand.rotation.y = -Math.PI * 0.08;
+scene.add(monStand);
+const monFoot = box(0.28, 0.025, 0.18, 0x151514, 0.5, 0.3);
+monFoot.position.set(0.92, 0.68, -0.72);
+monFoot.rotation.y = -Math.PI * 0.08;
+scene.add(monFoot);
+
+// ─── 椅子 ────────────────────────────────────────────────
+const CHAIR_LEG = 0x1a1a18;
+// 座面（木製）
+const seat = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.2, 0.2, 0.04, 16),
+  new THREE.MeshStandardMaterial({ color: 0xa88c6a, roughness: 0.85 })
+);
+seat.position.set(0.25, 0.44, 0.42);
+seat.castShadow = true;
+seat.receiveShadow = true;
+scene.add(seat);
+
+// 椅子脚4本（X字ベース）
+[[-0.15, -0.15], [-0.15, 0.15], [0.15, -0.15], [0.15, 0.15]].forEach(([dx, dz]) => {
+  const cl = box(0.025, 0.44, 0.025, CHAIR_LEG, 0.5, 0.8);
+  cl.position.set(0.25 + dx, 0.22, 0.42 + dz);
+  scene.add(cl);
+});
+
+// 背もたれ
+const back = box(0.32, 0.36, 0.025, CHAIR_LEG, 0.5, 0.5);
+back.position.set(0.25, 0.74, 0.23);
+back.rotation.x = -Math.PI * 0.08;
+scene.add(back);
+
+// ─── 人物（後ろ向き） ────────────────────────────────────
+// 胴体（黒白モノクロジャケット）
+const bodyMat = new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.95 });
+const body = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.58, 0.28), bodyMat);
+body.position.set(0.25, 1.07, 0.2);
+body.castShadow = true;
+scene.add(body);
+
+// 白ストライプ（ジャケットの白ライン）
+const stripe = box(0.04, 0.58, 0.005, 0xe8e8e8, 0.9);
+stripe.position.set(0.25 + 0.16, 1.07, 0.2 + 0.141);
+scene.add(stripe);
+const stripe2 = box(0.04, 0.58, 0.005, 0xe8e8e8, 0.9);
+stripe2.position.set(0.25 - 0.16, 1.07, 0.2 + 0.141);
+scene.add(stripe2);
+
+// 肩（少し広め）
+const shoulder = box(0.56, 0.12, 0.26, 0x181818, 0.95);
+shoulder.position.set(0.25, 1.34, 0.2);
+scene.add(shoulder);
+
+// 頭（ビーニー帽、黒）
+const headMat = new THREE.MeshStandardMaterial({ color: 0x0d0d0c, roughness: 0.9 });
+const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 10), headMat);
+head.position.set(0.25, 1.56, 0.15);
+head.castShadow = true;
+scene.add(head);
+// ビーニーの縁
+const beanieRim = new THREE.Mesh(
+  new THREE.TorusGeometry(0.13, 0.025, 6, 16),
+  new THREE.MeshStandardMaterial({ color: 0x0d0d0c, roughness: 0.95 })
+);
+beanieRim.position.set(0.25, 1.48, 0.15);
+scene.add(beanieRim);
+
+// 腕（デスクに向かう）
+const armMat = new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.95 });
+const armL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.38), armMat);
+armL.position.set(-0.02, 1.06, -0.08);
+armL.rotation.x = Math.PI * 0.1;
+scene.add(armL);
+const armR = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.38), armMat);
+armR.position.set(0.52, 1.06, -0.08);
+armR.rotation.x = Math.PI * 0.1;
+scene.add(armR);
+
+// ─── ホワイトボード（右壁）──────────────────────────────
+const wb = box(0.85, 0.62, 0.025, 0xe8e8e4, 0.6);
+wb.position.set(2.47, 1.55, -0.6);
+wb.rotation.y = -Math.PI / 2;
+scene.add(wb);
+// フレーム
+const wbFrame = box(0.9, 0.67, 0.01, 0x9a9890, 0.5, 0.5);
+wbFrame.position.set(2.48, 1.55, -0.6);
+wbFrame.rotation.y = -Math.PI / 2;
+scene.add(wbFrame);
+
+// 付箋（右壁上の黄色付箋群）
+const stickyWallMat = new THREE.MeshStandardMaterial({ color: 0xf0c830, roughness: 0.9, emissive: 0xc8a000, emissiveIntensity: 0.12 });
+[
+  [1.55, 0.1], [1.55, -0.05], [1.55, -0.2],
+  [1.7, 0.08], [1.7, -0.1],
+].forEach(([y, z]) => {
+  const sw = new THREE.Mesh(new THREE.PlaneGeometry(0.1, 0.1), stickyWallMat);
+  sw.rotation.y = -Math.PI / 2;
+  sw.position.set(2.49, y, z);
+  scene.add(sw);
+});
+
+// ─── スイッチプレート（右壁）────────────────────────────
+const switchPlate = box(0.09, 0.09, 0.01, 0xf0eeea, 0.5);
+switchPlate.position.set(2.49, 1.7, 0.9);
+switchPlate.rotation.y = -Math.PI / 2;
+scene.add(switchPlate);
+
+// ─── コード類（床）──────────────────────────────────────
+const cordMat = new THREE.MeshStandardMaterial({ color: 0x151513, roughness: 1.0 });
+for (let i = 0; i < 5; i++) {
+  const cord = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.005, 0.4 + Math.random() * 0.3), cordMat);
+  cord.position.set(-1.2 + Math.random() * 0.6, 0.003, -0.2 + Math.random() * 0.5);
+  cord.rotation.y = Math.random() * 0.5;
+  scene.add(cord);
+}
+
+// ─── Resize ─────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ─── Animate ────────────────────────────────────────────
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
