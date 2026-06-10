@@ -113,8 +113,9 @@
   const styleEl = document.createElement('style');
   styleEl.id = 'ks-spa-style';
   styleEl.textContent = `
-    /* ── bottom bar ── */
+    /* ── bottom bar (hidden; nav controls are used instead) ── */
     #ks-bar {
+      display: none !important;
       position: fixed;
       bottom: 0;
       left: 0; right: 0; z-index: 9990;
@@ -370,13 +371,49 @@
     }
     .footer-sns a:hover { color: var(--ink, #1a1a18); }
     /* ── page fade: 削除済み (各ページの pageIn アニメーションで遷移) ── */
-    /* ── body offset for bar ── */
-    body.ks-bar-on { padding-bottom: 40px; }
-    /* ── scroll-top button: push above bar ── */
-    body.ks-bar-on #scroll-top {
-      bottom: calc(40px + 1.5rem) !important;
-      z-index: 9995 !important;
+    /* ── nav audio controls ── */
+    #nav-audio {
+      display: flex; align-items: center; gap: 6px;
+      margin-left: 14px;
     }
+    #nav-audio-play {
+      background: none; border: none; padding: 0;
+      color: var(--ink, #1a1a18); cursor: crosshair;
+      display: flex; align-items: center;
+      transition: opacity 0.2s; flex-shrink: 0;
+    }
+    #nav-audio-play:hover { opacity: 0.35; }
+    #nav-audio-play svg { width: 10px; height: 10px; fill: currentColor; display: block; }
+    #nav-audio-dot {
+      width: 4px; height: 4px; border-radius: 50%;
+      background: rgba(26,26,24,0.18); flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    #nav-audio.na-playing #nav-audio-dot {
+      background: #1a1a18;
+      animation: ks-pulse 1.8s ease-in-out infinite;
+    }
+    #nav-audio-vol {
+      -webkit-appearance: none; appearance: none;
+      width: 52px; height: 2px;
+      background: rgba(26,26,24,0.15); border-radius: 1px;
+      outline: none; cursor: pointer; flex-shrink: 0;
+    }
+    #nav-audio-vol::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #1a1a18;
+    }
+    #nav-audio-mute {
+      display: none; background: none; border: none; padding: 0;
+      color: rgba(26,26,24,0.7); cursor: crosshair;
+      flex-shrink: 0; align-items: center;
+      transition: opacity 0.2s;
+    }
+    #nav-audio-mute:hover { opacity: 0.4; }
+    #nav-audio-mute svg { width: 10px; height: 10px; fill: currentColor; display: block; }
+    /* ── body offset (bar hidden; no padding needed) ── */
+    body.ks-bar-on { padding-bottom: 0; }
     /* ── PJAX遷移中: scroll-behavior: smooth を強制無効化 ──
        各ページが html{scroll-behavior:smooth} を持つため、
        遷移中のスクロールがアニメーション付きで見えてしまう問題の修正。 */
@@ -422,8 +459,8 @@
   function svgVol()   { return `<svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 5h3l4-3v12l-4-3H2z"/><path d="M10 5a5 5 0 0 1 0 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`; }
   function svgMuted() { return `<svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 5h3l4-3v12l-4-3H2z"/><line x1="10" y1="6" x2="14" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="14" y1="6" x2="10" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`; }
 
-  function updateBarBtn()  { barBtn.innerHTML  = audio.paused ? svgPlay() : svgPause(); }
-  function updateBarMute() { barMute.innerHTML = audio.muted  ? svgMuted() : svgVol(); }
+  function updateBarBtn()  { barBtn.innerHTML  = audio.paused ? svgPlay() : svgPause(); _syncNavAudio(); }
+  function updateBarMute() { barMute.innerHTML = audio.muted  ? svgMuted() : svgVol(); _syncNavAudio(); }
   updateBarBtn();
   updateBarMute();
 
@@ -523,6 +560,7 @@
   function showBar() {
     bar.classList.add('ks-visible');
     document.body.classList.add('ks-bar-on');
+    injectNavAudio();
   }
 
   /* ─── init on load ─── */
@@ -742,6 +780,7 @@
 
     bindLinks();
     bindAccordion();
+    injectNavAudio();
 
     // index.html の カスタムカーソル (cur-dot/cur-ring) を最後のマウス位置に初期化
     // (PJAX後に left:0,top:0 で左端に固定される問題の修正)
@@ -820,6 +859,50 @@
   }, true);
 
   function bindAccordion() { /* touchend/click delegation で処理済み */ }
+
+  function _syncNavAudio() {
+    var na = document.getElementById('nav-audio');
+    if (!na) return;
+    var pb = document.getElementById('nav-audio-play');
+    var vs = document.getElementById('nav-audio-vol');
+    var mb = document.getElementById('nav-audio-mute');
+    if (pb) pb.innerHTML = audio.paused ? svgPlay() : svgPause();
+    if (vs) vs.value = audio.volume;
+    if (mb) mb.innerHTML = audio.muted ? svgMuted() : svgVol();
+    na.classList.toggle('na-playing', !audio.paused);
+  }
+
+  function injectNavAudio() {
+    var navEl = document.getElementById('main-nav');
+    if (!navEl || document.getElementById('nav-audio')) return;
+    var logoEl = navEl.querySelector('.nav-logo');
+    var na = document.createElement('div');
+    na.id = 'nav-audio';
+    na.innerHTML =
+      '<button id="nav-audio-play" aria-label="BGM play/pause"></button>' +
+      '<span id="nav-audio-dot"></span>' +
+      '<input id="nav-audio-vol" type="range" min="0" max="1" step="0.01" aria-label="volume">' +
+      '<button id="nav-audio-mute" aria-label="mute"></button>';
+    if (logoEl) logoEl.after(na); else navEl.prepend(na);
+    _syncNavAudio();
+    // iOS: volume slider hidden, mute button shown
+    var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var vs = document.getElementById('nav-audio-vol');
+    var mb = document.getElementById('nav-audio-mute');
+    if (isIOS) { vs.style.display = 'none'; mb.style.display = 'flex'; }
+    else { vs.style.display = 'block'; mb.style.display = 'none'; }
+    document.getElementById('nav-audio-play').addEventListener('click', toggleBGM);
+    vs.addEventListener('input', function() {
+      audio.volume = parseFloat(this.value);
+      barVol.value = this.value;
+      localStorage.setItem(LS_BGM_VOL, this.value);
+    });
+    mb.addEventListener('click', function() {
+      audio.muted = !audio.muted;
+      updateBarMute();
+    });
+  }
 
   function forceRevealViewport() {
     const h = window.innerHeight;
