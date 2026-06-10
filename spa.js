@@ -5,6 +5,9 @@
   if (window.__spa) return;
   window.__spa = true;
 
+  // Windows PC: SPA遷移を無効化（ブラウザネイティブ遷移の方が高速）
+  if (/Windows/.test(navigator.userAgent)) return;
+
   // ブラウザの自動スクロール復元を無効化 (back/forward で「少し下がった」問題の修正)
   if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 
