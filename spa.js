@@ -6,7 +6,15 @@
   window.__spa = true;
 
   // Windows PC: SPA遷移を無効化（ブラウザネイティブ遷移の方が高速）
-  if (/Windows/.test(navigator.userAgent)) return;
+  if (/Windows/.test(navigator.userAgent)) {
+    // loading="lazy"を全てeagerに変更（じわじわ表示を防止）
+    function _winEager(){
+      document.querySelectorAll('img[loading="lazy"]').forEach(function(img){ img.loading = 'eager'; });
+    }
+    if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', _winEager); }
+    else { _winEager(); }
+    return;
+  }
 
   // ブラウザの自動スクロール復元を無効化 (back/forward で「少し下がった」問題の修正)
   if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
