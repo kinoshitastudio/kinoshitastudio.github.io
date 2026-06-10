@@ -379,9 +379,11 @@
        各ページが html{scroll-behavior:smooth} を持つため、
        遷移中のスクロールがアニメーション付きで見えてしまう問題の修正。 */
     html.ks-navigating, html.ks-navigating * { scroll-behavior: auto !important; }
-    /* ── mobile: 横スクロール・自動ズーム防止 ── */
-    html { overflow-x: clip; }
-    body { overflow-x: clip; max-width: 100vw; }
+    /* ── mobile: 横スクロール・自動ズーム防止 ──
+       NOTE: overflow-x on <body> breaks position:fixed on iOS Safari.
+       overflow-x on <html> alone is safe; body must stay overflow visible. */
+    html { overflow-x: hidden; }
+    body { max-width: 100vw; }
     /* iOS: テキスト入力でのピンチズーム防止 (font-size < 16px が原因) */
     input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"]),
     textarea, select {
