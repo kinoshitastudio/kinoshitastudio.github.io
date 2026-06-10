@@ -789,26 +789,37 @@
     }());
   }
 
-  function bindAccordion() {
-    // inline script が既に実行済み (_ksNavDone=true) なら二重バインドしない
-    if (window._ksNavDone) return;
-    document.querySelectorAll('.nav-menu-group').forEach(function(btn) {
-      if (btn.__ks_acc) return;
-      btn.__ks_acc = true;
-      btn.addEventListener('click', function() {
-        var subId = btn.getAttribute('data-sub');
-        var sub = subId ? document.getElementById(subId) : null;
-        if (!sub) return;
-        var isOpen = btn.classList.contains('open');
-        document.querySelectorAll('.nav-menu-group.open').forEach(function(b) {
-          b.classList.remove('open');
-          var s = b.getAttribute('data-sub');
-          if (s) { var el = document.getElementById(s); if (el) el.classList.remove('open'); }
-        });
-        if (!isOpen) { btn.classList.add('open'); sub.classList.add('open'); }
-      });
+  function _accToggle(target) {
+    var grp = target && target.closest ? target.closest('.nav-menu-group') : null;
+    if (!grp) return;
+    var subId = grp.getAttribute('data-sub');
+    var sub = subId ? document.getElementById(subId) : null;
+    if (!sub) return;
+    var isOpen = grp.classList.contains('open');
+    document.querySelectorAll('.nav-menu-group.open').forEach(function(b) {
+      b.classList.remove('open');
+      var s = b.getAttribute('data-sub');
+      if (s) { var el = document.getElementById(s); if (el) el.classList.remove('open'); }
     });
+    if (!isOpen) { grp.classList.add('open'); sub.classList.add('open'); }
   }
+
+  // iOS: touchend で即処理、preventDefault で後続 click を抑制
+  document.addEventListener('touchend', function(e) {
+    if (!e.target.closest('.nav-menu-group')) return;
+    e.preventDefault();
+    _accToggle(e.target);
+  }, { capture: true, passive: false });
+
+  // Desktop: click capture で per-element ハンドラ含め全て止めて1回だけ処理
+  // stopImmediatePropagation = target 自身のハンドラも含め後続を全停止
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('.nav-menu-group')) return;
+    e.stopImmediatePropagation();
+    _accToggle(e.target);
+  }, true);
+
+  function bindAccordion() { /* touchend/click delegation で処理済み */ }
 
   function forceRevealViewport() {
     const h = window.innerHeight;
