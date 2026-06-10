@@ -784,10 +784,13 @@
     }());
   }
 
-  // accordion: イベントデリゲーション方式 (DOM再構築・PJAX遷移に依存しない)
+  // accordion: capture phase デリゲーション
+  // capture=true + stopPropagation で per-element ハンドラ(各ページ inline script)が
+  // 二重発火するのを防ぐ。開く→即閉じる バグの根本修正。
   document.addEventListener('click', function(e) {
     var grp = e.target.closest('.nav-menu-group');
     if (!grp) return;
+    e.stopPropagation(); // per-element ハンドラへの伝播を止める
     var subId = grp.getAttribute('data-sub');
     var sub = subId ? document.getElementById(subId) : null;
     if (!sub) return;
@@ -798,7 +801,7 @@
       if (s) { var el = document.getElementById(s); if (el) el.classList.remove('open'); }
     });
     if (!isOpen) { grp.classList.add('open'); sub.classList.add('open'); }
-  });
+  }, true); // capture phase
 
   function bindAccordion() { /* デリゲーション方式のため per-element バインド不要 */ }
 
