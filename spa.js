@@ -7,9 +7,13 @@
 
   // Windows PC: SPA遷移を無効化（ブラウザネイティブ遷移の方が高速）
   if (/Windows/.test(navigator.userAgent)) {
-    // loading="lazy"を全てeagerに変更（じわじわ表示を防止）
+    // ビューポート2画面分以内の画像だけeager、それ以降はlazyのまま
     function _winEager(){
-      document.querySelectorAll('img[loading="lazy"]').forEach(function(img){ img.loading = 'eager'; });
+      var vh2 = window.innerHeight * 2;
+      document.querySelectorAll('img[loading="lazy"]').forEach(function(img){
+        var rect = img.getBoundingClientRect();
+        if(rect.top < vh2) img.loading = 'eager';
+      });
     }
     if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', _winEager); }
     else { _winEager(); }
