@@ -15,8 +15,41 @@
         if(rect.top < vh2) img.loading = 'eager';
       });
     }
-    if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', _winEager); }
-    else { _winEager(); }
+    // ハンバーガーメニュー + サブメニューアコーディオン（SPA無効時も必須）
+    function _winNav(){
+      var btn = document.getElementById('nav-hamburger');
+      var menu = document.getElementById('nav-menu');
+      if (btn && menu) {
+        var overlay = document.getElementById('nav-overlay');
+        var close   = document.getElementById('nav-close');
+        function _o(){ menu.classList.add('open'); if(overlay) overlay.classList.add('open'); document.body.style.overflow='hidden'; }
+        function _c(){ menu.classList.remove('open'); if(overlay) overlay.classList.remove('open'); document.body.style.overflow=''; }
+        btn.addEventListener('click', _o);
+        if(close)   close.addEventListener('click', _c);
+        if(overlay) overlay.addEventListener('click', _c);
+        document.querySelectorAll('.nav-menu-link, .nav-menu a').forEach(function(a){
+          a.addEventListener('click', _c);
+        });
+      }
+      document.querySelectorAll('.nav-menu-group').forEach(function(grp){
+        grp.addEventListener('click', function(){
+          var subId = grp.getAttribute('data-sub');
+          var sub = subId ? document.getElementById(subId) : null;
+          if(!sub) return;
+          var isOpen = grp.classList.contains('open');
+          document.querySelectorAll('.nav-menu-group.open').forEach(function(b){
+            b.classList.remove('open');
+            var s = b.getAttribute('data-sub'); if(s){var el=document.getElementById(s);if(el)el.classList.remove('open');}
+          });
+          if(!isOpen){ grp.classList.add('open'); sub.classList.add('open'); }
+        });
+      });
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function(){ _winEager(); _winNav(); });
+    } else {
+      _winEager(); _winNav();
+    }
     return;
   }
 
