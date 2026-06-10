@@ -683,6 +683,9 @@
     window._ksCursorY = _mouseY;
     window._ksCursorGen = (window._ksCursorGen || 0) + 1;
 
+    // 各ページの inline nav script が再バインドできるようフラグをリセット
+    window._ksNavDone = false;
+
     // 各 script を個別に try/catch して1つのエラーで navigate 全体が止まるのを防ぐ
     document.body.querySelectorAll('script').forEach(old => {
       try {
@@ -784,26 +787,24 @@
     }());
   }
 
-  // accordion: capture phase デリゲーション
-  // capture=true + stopPropagation で per-element ハンドラ(各ページ inline script)が
-  // 二重発火するのを防ぐ。開く→即閉じる バグの根本修正。
-  document.addEventListener('click', function(e) {
-    var grp = e.target.closest('.nav-menu-group');
-    if (!grp) return;
-    e.stopPropagation(); // per-element ハンドラへの伝播を止める
-    var subId = grp.getAttribute('data-sub');
-    var sub = subId ? document.getElementById(subId) : null;
-    if (!sub) return;
-    var isOpen = grp.classList.contains('open');
-    document.querySelectorAll('.nav-menu-group.open').forEach(function(b) {
-      b.classList.remove('open');
-      var s = b.getAttribute('data-sub');
-      if (s) { var el = document.getElementById(s); if (el) el.classList.remove('open'); }
+  function bindAccordion() {
+    document.querySelectorAll('.nav-menu-group').forEach(function(btn) {
+      if (btn.__ks_acc) return;
+      btn.__ks_acc = true;
+      btn.addEventListener('click', function() {
+        var subId = btn.getAttribute('data-sub');
+        var sub = subId ? document.getElementById(subId) : null;
+        if (!sub) return;
+        var isOpen = btn.classList.contains('open');
+        document.querySelectorAll('.nav-menu-group.open').forEach(function(b) {
+          b.classList.remove('open');
+          var s = b.getAttribute('data-sub');
+          if (s) { var el = document.getElementById(s); if (el) el.classList.remove('open'); }
+        });
+        if (!isOpen) { btn.classList.add('open'); sub.classList.add('open'); }
+      });
     });
-    if (!isOpen) { grp.classList.add('open'); sub.classList.add('open'); }
-  }, true); // capture phase
-
-  function bindAccordion() { /* デリゲーション方式のため per-element バインド不要 */ }
+  }
 
   function forceRevealViewport() {
     const h = window.innerHeight;
