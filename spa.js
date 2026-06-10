@@ -572,13 +572,23 @@
     _navigating = true;
     document.documentElement.classList.add('ks-navigating'); // smooth scroll 無効化
 
+    // ローディングバー表示
+    let _pbar = document.getElementById('ks-pbar');
+    if (!_pbar) {
+      _pbar = document.createElement('div'); _pbar.id = 'ks-pbar';
+      _pbar.style.cssText = 'position:fixed;top:0;left:0;height:2px;width:0;background:#1a1a18;z-index:99999;transition:width 0.4s ease,opacity 0.3s ease;pointer-events:none;';
+      document.body.appendChild(_pbar);
+    }
+    _pbar.style.opacity = '1'; _pbar.style.width = '40%';
+
     let html;
     try {
       const res = await fetch(url, { credentials: 'same-origin' });
-      if (!res.ok) { _navigating = false; document.documentElement.classList.remove('ks-navigating'); location.href = url; return; }
+      if (!res.ok) { _navigating = false; document.documentElement.classList.remove('ks-navigating'); _pbar.style.opacity='0'; location.href = url; return; }
+      _pbar.style.width = '80%';
       html = await res.text();
     } catch (e) {
-      _navigating = false; document.documentElement.classList.remove('ks-navigating'); location.href = url; return;
+      _navigating = false; document.documentElement.classList.remove('ks-navigating'); _pbar.style.opacity='0'; location.href = url; return;
     }
 
     const parser = new DOMParser();
@@ -666,6 +676,8 @@
     } finally {
       _navigating = false;
       document.documentElement.classList.remove('ks-navigating'); // smooth scroll 復元
+      const _pb = document.getElementById('ks-pbar');
+      if (_pb) { _pb.style.width = '100%'; setTimeout(() => { _pb.style.opacity='0'; setTimeout(()=>{ _pb.style.width='0'; },300); }, 150); }
     }
 
     bindLinks();
@@ -795,6 +807,13 @@
       a.__ks_bound = true;
       const href = a.getAttribute('href') || '';
       if (isSpaLink(a)) {
+        a.addEventListener('mouseenter', () => {
+          const abs = new URL(href, location.href).href;
+          if (!document.head.querySelector('link[rel="prefetch"][href="' + abs + '"]')) {
+            const pf = document.createElement('link'); pf.rel = 'prefetch'; pf.href = abs;
+            document.head.appendChild(pf);
+          }
+        }, { once: true, passive: true });
         a.addEventListener('click', e => {
           e.preventDefault();
           navigate(href, true);
