@@ -784,26 +784,23 @@
     }());
   }
 
-  // viewport 内の reveal 要素を即座に visible にする (IO タイミング + CSS animation delay 両対応)
-  function bindAccordion() {
-    document.querySelectorAll('.nav-menu-group').forEach(function(btn) {
-      if (btn.__ks_acc) return;
-      btn.__ks_acc = true;
-      btn.addEventListener('click', function() {
-        var subId = btn.getAttribute('data-sub');
-        var sub = subId ? document.getElementById(subId) : null;
-        if (!sub) return;
-        var isOpen = btn.classList.contains('open');
-        // 他のグループを閉じる
-        document.querySelectorAll('.nav-menu-group.open').forEach(function(b) {
-          b.classList.remove('open');
-          var s = b.getAttribute('data-sub');
-          if (s) { var el = document.getElementById(s); if (el) el.classList.remove('open'); }
-        });
-        if (!isOpen) { btn.classList.add('open'); sub.classList.add('open'); }
-      });
+  // accordion: イベントデリゲーション方式 (DOM再構築・PJAX遷移に依存しない)
+  document.addEventListener('click', function(e) {
+    var grp = e.target.closest('.nav-menu-group');
+    if (!grp) return;
+    var subId = grp.getAttribute('data-sub');
+    var sub = subId ? document.getElementById(subId) : null;
+    if (!sub) return;
+    var isOpen = grp.classList.contains('open');
+    document.querySelectorAll('.nav-menu-group.open').forEach(function(b) {
+      b.classList.remove('open');
+      var s = b.getAttribute('data-sub');
+      if (s) { var el = document.getElementById(s); if (el) el.classList.remove('open'); }
     });
-  }
+    if (!isOpen) { grp.classList.add('open'); sub.classList.add('open'); }
+  });
+
+  function bindAccordion() { /* デリゲーション方式のため per-element バインド不要 */ }
 
   function forceRevealViewport() {
     const h = window.innerHeight;
