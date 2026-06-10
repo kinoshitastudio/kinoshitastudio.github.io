@@ -295,30 +295,30 @@
       border-left: 1px solid rgba(235,232,226,0.06) !important;
     }
     .nav-menu-close {
-      color: rgba(235,232,226,0.35) !important;
+      color: rgba(235,232,226,0.6) !important;
     }
-    .nav-menu-close:hover { color: rgba(235,232,226,0.85) !important; }
+    .nav-menu-close:hover { color: rgba(235,232,226,0.95) !important; }
     .nav-menu-label {
-      color: rgba(235,232,226,0.28) !important;
+      color: rgba(235,232,226,0.5) !important;
     }
     .nav-menu > a.nav-menu-link, .nav-menu > a {
-      color: rgba(235,232,226,0.55) !important;
+      color: rgba(235,232,226,0.8) !important;
       border-bottom: 1px solid rgba(235,232,226,0.08) !important;
       border-top: none !important;
     }
-    .nav-menu > a.nav-menu-link:hover { color: rgba(235,232,226,0.95) !important; }
+    .nav-menu > a.nav-menu-link:hover { color: rgba(235,232,226,1) !important; }
     /* ── unified hamburger accordion ── */
     .nav-menu-group {
       font-family: 'Space Mono', monospace;
       font-size: 0.7rem; letter-spacing: 0.2em; text-transform: uppercase;
-      color: rgba(235,232,226,0.55);
+      color: rgba(235,232,226,0.8);
       padding: 0.8rem 0;
       border: none; border-bottom: 1px solid rgba(235,232,226,0.1);
       display: flex; justify-content: space-between; align-items: center;
       cursor: pointer; background: none; width: 100%;
       text-align: left; transition: color 0.3s; user-select: none;
     }
-    .nav-menu-group:hover, .nav-menu-group.open { color: rgba(235,232,226,0.95); }
+    .nav-menu-group:hover, .nav-menu-group.open { color: rgba(235,232,226,1); }
     .nmg-arrow {
       display: inline-block; font-style: normal;
       transition: transform 0.25s cubic-bezier(.4,0,.2,1);
@@ -333,10 +333,10 @@
     .nav-menu-sub.open { max-height: 800px; }
     .nav-menu-sub .nav-menu-link, .nav-menu-sub a {
       font-size: 0.6rem !important; padding-left: 1.2rem !important;
-      color: rgba(235,232,226,0.45) !important; border-top: none !important;
+      color: rgba(235,232,226,0.65) !important; border-top: none !important;
     }
     .nav-menu-sub .nav-menu-link:hover, .nav-menu-sub a:hover {
-      color: rgba(235,232,226,0.85) !important;
+      color: rgba(235,232,226,0.95) !important;
     }
     .nav-menu-line-link {
       font-family: 'Space Mono', monospace;
@@ -355,11 +355,11 @@
       margin-top: 0.4rem;
     }
     .nav-menu-sns a {
-      color: rgba(235,232,226,0.20); transition: color 0.25s;
+      color: rgba(235,232,226,0.55); transition: color 0.25s;
       display: flex; align-items: center; text-decoration: none;
       font-family: 'Space Mono', monospace; font-size: 0.52rem; letter-spacing: 0.12em;
     }
-    .nav-menu-sns a:hover { color: rgba(235,232,226,0.85); }
+    .nav-menu-sns a:hover { color: rgba(235,232,226,0.95); }
     .footer-sns { display: flex; align-items: center; gap: 1.6rem; }
     .footer-sns a {
       color: #7a7a77; transition: color 0.25s;
