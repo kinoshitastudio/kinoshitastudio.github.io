@@ -7,6 +7,11 @@
 
   // Windows PC: SPA遷移を無効化（ブラウザネイティブ遷移の方が高速）
   if (/Windows/.test(navigator.userAgent)) {
+    // カスタムカーソル非表示 + デフォルトカーソル復元（全ページ共通）
+    document.documentElement.classList.add('is-win');
+    var ws = document.createElement('style');
+    ws.textContent = '.is-win #cur-dot,.is-win #cur-ring{display:none!important}.is-win,.is-win *{cursor:auto!important}.is-win a,.is-win button{cursor:pointer!important}';
+    document.head.appendChild(ws);
     // ビューポート2画面分以内の画像だけeager、それ以降はlazyのまま
     function _winEager(){
       var vh2 = window.innerHeight * 2;
