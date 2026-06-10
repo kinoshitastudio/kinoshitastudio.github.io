@@ -117,7 +117,6 @@
     #ks-bar {
       position: fixed;
       bottom: 0;
-      bottom: env(safe-area-inset-bottom, 0px);
       left: 0; right: 0; z-index: 9990;
       height: 40px;
       background: rgba(26,26,24,0.94);
@@ -791,6 +790,8 @@
   }
 
   function bindAccordion() {
+    // inline script が既に実行済み (_ksNavDone=true) なら二重バインドしない
+    if (window._ksNavDone) return;
     document.querySelectorAll('.nav-menu-group').forEach(function(btn) {
       if (btn.__ks_acc) return;
       btn.__ks_acc = true;
