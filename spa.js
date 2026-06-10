@@ -115,22 +115,25 @@
   styleEl.textContent = `
     /* ── bottom bar ── */
     #ks-bar {
-      position: fixed; bottom: 0; left: 0; right: 0; z-index: 9990;
+      position: fixed;
+      bottom: 0;
+      bottom: env(safe-area-inset-bottom, 0px);
+      left: 0; right: 0; z-index: 9990;
       height: 40px;
       background: rgba(26,26,24,0.94);
       backdrop-filter: blur(8px) saturate(1.4);
       -webkit-backdrop-filter: blur(8px) saturate(1.4);
       display: flex; align-items: center; gap: 10px;
       padding: 0 16px;
-      transform: translateY(100%) translateZ(0);
-      -webkit-transform: translateY(100%) translateZ(0);
+      transform: translateY(100%);
+      -webkit-transform: translateY(100%);
       transition: transform 0.20s cubic-bezier(.4,0,.2,1);
-      will-change: transform;
+      -webkit-transition: -webkit-transform 0.20s cubic-bezier(.4,0,.2,1);
       pointer-events: none;
     }
     #ks-bar.ks-visible {
-      transform: translateY(0) translateZ(0);
-      -webkit-transform: translateY(0) translateZ(0);
+      transform: translateY(0);
+      -webkit-transform: translateY(0);
       pointer-events: auto;
     }
     #ks-bar-btn {
@@ -409,8 +412,7 @@
     <input id="ks-bar-vol" type="range" min="0" max="1" step="0.01" value="0.20" aria-label="volume">
     <button id="ks-bar-mute" aria-label="mute"></button>
   `;
-  // bar を <html> に append: body の overflow/transform の影響を受けず position:fixed が確実に効く
-  document.documentElement.appendChild(bar);
+  document.body.appendChild(bar);
 
   const barBtn  = document.getElementById('ks-bar-btn');
   const barVol  = document.getElementById('ks-bar-vol');
@@ -470,7 +472,7 @@
       </div>
     </div>
   `;
-  document.documentElement.appendChild(modalWrap);
+  document.body.appendChild(modalWrap);
 
   const modalVolRange = document.getElementById('ks-modal-vol-range');
   const modalPlayBtn = document.getElementById('ks-modal-play');
@@ -658,7 +660,7 @@
       document.head.appendChild(document.adoptNode(s));
     });
 
-    // bar は <html> 直下にあるため body.innerHTML 差し替えの影響を受けない (削除不要)
+    bar.remove();
     const modalExists = document.getElementById('ks-modal-wrap');
     if (modalExists) modalExists.remove();
 
@@ -668,7 +670,8 @@
     document.body.style.opacity   = '';
     document.body.style.overflow  = '';  // hamburger が残した overflow:hidden をリセット
 
-    if (modalExists) document.documentElement.appendChild(modalExists);
+    document.body.appendChild(bar);
+    if (modalExists) document.body.appendChild(modalExists);
 
     if (bar.classList.contains('ks-visible')) document.body.classList.add('ks-bar-on');
 
