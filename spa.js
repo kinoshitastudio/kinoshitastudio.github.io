@@ -50,10 +50,57 @@
         });
       });
     }
+    // BGM + nav audio for Windows (SPA無効環境)
+    function _winAudio(){
+      var BGM_SRC = '/assets/audio/biwako-silence.mp3';
+      var LS_KEY  = 'ks_bgm_pref';
+      var LS_VOL  = 'ks_bgm_vol';
+      var audio   = new Audio();
+      audio.loop  = true;
+      audio.volume = parseFloat(localStorage.getItem(LS_VOL) || '0.20');
+      var loaded  = false;
+      function load(){ if(!loaded){ audio.src = BGM_SRC; loaded = true; } }
+      function svgPlay(){ return '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 3l9 5-9 5V3z"/></svg>'; }
+      function svgPause(){ return '<svg viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="2" width="4" height="12"/><rect x="9" y="2" width="4" height="12"/></svg>'; }
+      function svgVol(){ return '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 5h3l4-3v12l-4-3H2z"/><path d="M10 5a5 5 0 0 1 0 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>'; }
+      function svgMuted(){ return '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 5h3l4-3v12l-4-3H2z"/><line x1="10" y1="6" x2="14" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="14" y1="6" x2="10" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>'; }
+      function inject(){
+        var navEl = document.querySelector('#main-nav, nav');
+        if(!navEl || document.getElementById('nav-audio')) return;
+        var logoEl = navEl.querySelector('.nav-logo');
+        var na = document.createElement('div');
+        na.id = 'nav-audio';
+        na.style.cssText = 'display:flex;align-items:center;gap:8px;margin-left:14px;';
+        var pb = document.createElement('button');
+        pb.id = 'nav-audio-play'; pb.setAttribute('aria-label','BGM play/pause');
+        pb.style.cssText = 'background:none;border:none;padding:0;color:#1a1a18;cursor:pointer;display:flex;align-items:center;';
+        pb.innerHTML = svgPlay();
+        var dot = document.createElement('span');
+        dot.id = 'nav-audio-dot';
+        dot.style.cssText = 'width:5px;height:5px;border-radius:50%;background:rgba(26,26,24,0.18);flex-shrink:0;';
+        var vs = document.createElement('input');
+        vs.id = 'nav-audio-vol'; vs.type = 'range'; vs.min = '0'; vs.max = '1'; vs.step = '0.01';
+        vs.value = audio.volume; vs.setAttribute('aria-label','volume');
+        vs.style.cssText = 'width:60px;cursor:pointer;';
+        na.appendChild(pb); na.appendChild(dot); na.appendChild(vs);
+        if(logoEl) logoEl.after(na); else navEl.prepend(na);
+        var pref = localStorage.getItem(LS_KEY);
+        if(pref === null){
+          if(confirm('木下スタジオのBGMを再生しますか？')) { load(); audio.play().catch(function(){}); localStorage.setItem(LS_KEY,'on'); pb.innerHTML=svgPause(); dot.style.background='#1a1a18'; }
+          else { localStorage.setItem(LS_KEY,'off'); }
+        } else if(pref === 'on') { load(); audio.play().catch(function(){}); pb.innerHTML=svgPause(); dot.style.background='#1a1a18'; }
+        pb.addEventListener('click', function(){
+          if(audio.paused){ load(); audio.play().catch(function(){}); pb.innerHTML=svgPause(); dot.style.background='#1a1a18'; localStorage.setItem(LS_KEY,'on'); }
+          else { audio.pause(); pb.innerHTML=svgPlay(); dot.style.background='rgba(26,26,24,0.18)'; localStorage.setItem(LS_KEY,'off'); }
+        });
+        vs.addEventListener('input', function(){ audio.volume=parseFloat(this.value); localStorage.setItem(LS_VOL,this.value); });
+      }
+      inject();
+    }
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function(){ _winEager(); _winNav(); });
+      document.addEventListener('DOMContentLoaded', function(){ _winEager(); _winNav(); _winAudio(); });
     } else {
-      _winEager(); _winNav();
+      _winEager(); _winNav(); _winAudio();
     }
     return;
   }
@@ -383,7 +430,7 @@
       transition: opacity 0.2s; flex-shrink: 0;
     }
     #nav-audio-play:hover { opacity: 0.35; }
-    #nav-audio-play svg { width: 10px; height: 10px; fill: currentColor; display: block; }
+    #nav-audio-play svg { width: 14px; height: 14px; fill: currentColor; display: block; }
     #nav-audio-dot {
       width: 4px; height: 4px; border-radius: 50%;
       background: rgba(26,26,24,0.18); flex-shrink: 0;
@@ -411,7 +458,7 @@
       transition: opacity 0.2s;
     }
     #nav-audio-mute:hover { opacity: 0.4; }
-    #nav-audio-mute svg { width: 10px; height: 10px; fill: currentColor; display: block; }
+    #nav-audio-mute svg { width: 14px; height: 14px; fill: currentColor; display: block; }
     /* ── body offset (bar hidden; no padding needed) ── */
     body.ks-bar-on { padding-bottom: 0; }
     /* ── PJAX遷移中: scroll-behavior: smooth を強制無効化 ──
