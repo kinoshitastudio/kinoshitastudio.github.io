@@ -89,9 +89,8 @@
       font-family: 'Space Mono', monospace; font-size: 0.5rem; letter-spacing: 0.12em;
     }
     .footer-sns a:hover { color: var(--ink, #1a1a18); }
-    /* ── mobile: overflow / zoom 防止 ── */
-    html { overflow-x: hidden; }
-    body { max-width: 100vw; }
+    /* ── mobile: zoom 防止 (overflow-x は html/body に設定しない → iOS position:fixed が壊れる) ── */
+    body { max-width: 100vw; overflow-x: clip; }
     input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"]),
     textarea, select { font-size: max(16px, 1em) !important; }
     a, button, [onclick], label, input, textarea, select { touch-action: manipulation; }
