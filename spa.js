@@ -565,6 +565,7 @@
 
   /* ─── init on load ─── */
   window.addEventListener('DOMContentLoaded', () => {
+    injectNavAudio(); // always inject regardless of modal state
     const pref = localStorage.getItem(LS_BGM_KEY);
     if (pref === null) {
       openModal();
@@ -873,7 +874,7 @@
   }
 
   function injectNavAudio() {
-    var navEl = document.getElementById('main-nav');
+    var navEl = document.querySelector('#main-nav, nav');
     if (!navEl || document.getElementById('nav-audio')) return;
     var logoEl = navEl.querySelector('.nav-logo');
     var na = document.createElement('div');
