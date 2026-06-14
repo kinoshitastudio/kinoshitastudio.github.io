@@ -138,7 +138,7 @@ mekuri.landing.lang                       (localStorage · landing only)
 
 ---
 
-## Notion 的デザイン方針
+## デザイン方針
 
 ```
 ・ 白背景 + 細いグレーの境界線
