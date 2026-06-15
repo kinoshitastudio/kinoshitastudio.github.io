@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>N O A — Loading</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+:root { --y: #e8e020; --yd: #8c8808; --bg: #0a0a08; }
+
+body {
+  background: var(--bg);
+  color: var(--y);
+  font-family: 'Space Mono', monospace;
+  height: 100vh; overflow: hidden;
+  cursor: crosshair;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+}
+
+/* scanlines */
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: 10; pointer-events: none;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.09) 2px, rgba(0,0,0,.09) 4px);
+}
+/* noise */
+body::after {
+  content: ''; position: fixed; inset: 0; z-index: 11; pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  opacity: .35;
+}
+
+/* ── grid floor ── */
+.floor {
+  position: fixed; bottom: 0; left: 0; right: 0; height: 22%;
+  background:
+    linear-gradient(rgba(232,224,32,.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(232,224,32,.05) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: linear-gradient(to top, rgba(0,0,0,.5), transparent);
+}
+
+/* ── horizon line ── */
+.horizon {
+  position: fixed; bottom: 22%; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(232,224,32,.12), transparent);
+}
+
+/* ── stage (robots + planes share) ── */
+.stage { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+
+/* ── ROBOTS (ground level) ── */
+.robot {
+  position: absolute;
+  font-size: 11px; line-height: 1.35; white-space: pre;
+  color: var(--y);
+  text-shadow: 0 0 10px rgba(232,224,32,.45);
+}
+@keyframes walkL { from { transform: translateX(110vw); } to { transform: translateX(-32vw); } }
+@keyframes walkR { from { transform: translateX(-32vw) scaleX(-1); } to { transform: translateX(110vw) scaleX(-1); } }
+@keyframes bob   { 0%,100% { margin-bottom:0; } 50% { margin-bottom:5px; } }
+.robot.L { animation: walkL linear infinite, bob ease-in-out infinite; }
+.robot.R { animation: walkR linear infinite, bob ease-in-out infinite; }
+
+/* ── PLANES (sky level) ── */
+.plane {
+  position: absolute;
+  font-size: 10px; line-height: 1.2; white-space: pre;
+  color: rgba(232,224,32,.75);
+  text-shadow: 0 0 12px rgba(232,224,32,.5);
+}
+@keyframes flyL { from { transform: translateX(110vw); }            to { transform: translateX(-50vw); } }
+@keyframes flyR { from { transform: translateX(-50vw) scaleX(-1); } to { transform: translateX(110vw) scaleX(-1); } }
+.plane.L { animation: flyL linear; }
+.plane.R { animation: flyR linear; }
+
+/* ── MISSILES / BOMBS ── */
+.missile {
+  position: absolute;
+  font-size: 9px; white-space: pre; line-height: 1.2;
+  color: rgba(255,200,20,.8);
+  text-shadow: 0 0 8px rgba(255,180,0,.6);
+  animation: missilefall linear forwards;
+}
+@keyframes missilefall {
+  0%   { opacity:1; transform: translateY(0); }
+  80%  { opacity:1; }
+  100% { opacity:0; transform: translateY(var(--fall-dist,55vh)); }
+}
+
+/* ── EXPLOSIONS ── */
+.boom {
+  position: absolute;
+  font-size: 11px; white-space: pre; text-align: center;
+  color: rgba(232,224,32,1);
+  text-shadow:
+    0 0 20px rgba(255,200,0,.9),
+    0 0 40px rgba(255,150,0,.5);
+  animation: boomAnim .7s ease-out forwards;
+  transform-origin: center center;
+}
+@keyframes boomAnim {
+  0%   { opacity:1; transform: scale(.4) rotate(-10deg); }
+  35%  { opacity:1; transform: scale(1.5) rotate(5deg); }
+  70%  { opacity:.7; transform: scale(1.1) rotate(-3deg); }
+  100% { opacity:0; transform: scale(.7) rotate(0deg); }
+}
+
+/* ── LASER SHOTS from planes ── */
+.laser {
+  position: absolute;
+  width: 2px;
+  background: linear-gradient(to bottom, rgba(232,224,32,.9), transparent);
+  animation: lasershot .18s linear forwards;
+}
+@keyframes lasershot {
+  from { opacity:1; height: 0; }
+  to   { opacity:0; height: 80px; }
+}
+
+/* ── center UI ── */
+.ui {
+  position: relative; z-index: 20;
+  display: flex; flex-direction: column;
+  align-items: center; text-align: center;
+  animation: uiIn .9s cubic-bezier(0.34,1.56,.64,1) .2s both;
+}
+@keyframes uiIn {
+  from { opacity:0; transform:translateY(24px) scale(.94); }
+  to   { opacity:1; transform:none; }
+}
+
+.noa-label {
+  font-size: .38rem; letter-spacing: .55em; text-transform: uppercase;
+  color: rgba(232,224,32,.35); margin-bottom: 1.4rem;
+}
+
+/* ── BIG COUNTDOWN ── */
+.countdown {
+  font-size: clamp(5rem, 22vw, 12rem);
+  letter-spacing: -.02em; font-weight: 700; line-height: 1;
+  color: var(--y);
+  text-shadow:
+    0 0 30px rgba(232,224,32,.5),
+    0 0 80px rgba(232,224,32,.18),
+    6px 6px 0 rgba(140,136,8,.55);
+  margin-bottom: 1.2rem;
+  font-variant-numeric: tabular-nums;
+}
+.countdown.pulse {
+  animation: cdPulse .35s cubic-bezier(0.34,1.56,.64,1);
+}
+@keyframes cdPulse {
+  0%  { transform: scale(1.1); }
+  100%{ transform: scale(1); }
+}
+
+/* ── progress bar ── */
+.bar-wrap {
+  width: clamp(200px, 40vw, 380px); height: 3px;
+  background: rgba(232,224,32,.1); border-radius: 2px; overflow: hidden;
+  margin-bottom: 1.6rem;
+}
+.bar-fill {
+  height: 100%; width: 100%;
+  background: var(--y); box-shadow: 0 0 8px rgba(232,224,32,.5);
+  transform-origin: left; transform: scaleX(1);
+  transition: transform .1s linear;
+}
+
+.hint {
+  font-size: .32rem; letter-spacing: .22em; text-transform: uppercase;
+  color: rgba(232,224,32,.22); margin-bottom: 2.4rem;
+}
+
+.btn-row {
+  display: flex; gap: .8rem; flex-wrap: wrap; justify-content: center;
+}
+.skip-btn, .about-btn {
+  font-family: 'Space Mono', monospace;
+  font-size: .35rem; letter-spacing: .18em; text-transform: uppercase;
+  background: none; border-radius: 4px;
+  padding: .55em 1.4em; cursor: crosshair;
+  transition: color .2s, border-color .2s, background .2s;
+  text-decoration: none; display: inline-block;
+}
+.skip-btn {
+  color: rgba(232,224,32,.28);
+  border: 1px solid rgba(232,224,32,.14);
+}
+.skip-btn:hover { color: rgba(232,224,32,.7); border-color: rgba(232,224,32,.4); }
+.about-btn {
+  color: rgba(232,224,32,.7);
+  border: 1px solid rgba(232,224,32,.4);
+}
+.about-btn:hover {
+  background: rgba(232,224,32,.12);
+  color: rgba(232,224,32,1);
+  border-color: rgba(232,224,32,.7);
+}
+
+/* ── vol ── */
+.vol {
+  position: fixed; bottom: 1.8rem; right: 1.8rem; z-index: 20;
+  display: flex; align-items: center; gap: .5rem;
+  font-size: .3rem; letter-spacing: .15em;
+  color: rgba(232,224,32,.22); cursor: crosshair; transition: color .2s;
+  animation: uiIn .5s ease 2s both;
+}
+.vol:hover { color: rgba(232,224,32,.55); }
+.vol-bars { display: flex; gap: 2px; align-items: flex-end; height: 12px; }
+.vol-bar { width: 3px; background: currentColor; border-radius: 1px; animation: vp .7s ease-in-out infinite; }
+.vol-bar:nth-child(1){ height:4px;  animation-delay:0s; }
+.vol-bar:nth-child(2){ height:9px;  animation-delay:.1s; }
+.vol-bar:nth-child(3){ height:12px; animation-delay:.2s; }
+.vol-bar:nth-child(4){ height:6px;  animation-delay:.3s; }
+@keyframes vp { 0%,100%{ transform:scaleY(1); } 50%{ transform:scaleY(.35); } }
+.vol.muted .vol-bars { opacity:.2; }
+
+/* ── NOA label top-left ── */
+.noa-topleft {
+  position: fixed; top: 1.5rem; left: 1.8rem; z-index: 20;
+  font-size: .55rem; letter-spacing: .45em; font-weight: 700;
+  color: rgba(232,224,32,.55);
+  text-shadow: 0 0 20px rgba(232,224,32,.25);
+  animation: uiIn .6s ease .1s both;
+}
+
+/* ── status line top-right ── */
+.status {
+  position: fixed; top: 1.5rem; right: 1.8rem; z-index: 20;
+  font-size: .28rem; letter-spacing: .12em;
+  color: rgba(232,224,32,.18);
+  animation: uiIn .5s ease 2.5s both;
+  text-align: right;
+}
+
+/* ── ENTER OVERLAY ── */
+.enter-overlay {
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 1.2rem;
+  background: rgba(10,10,8,.88);
+  backdrop-filter: blur(4px);
+  cursor: crosshair;
+  transition: opacity .5s ease;
+}
+.enter-overlay.hide { opacity:0; pointer-events:none; }
+.enter-pulse {
+  font-size: clamp(1.2rem, 5vw, 2.2rem);
+  letter-spacing: .55em; font-weight: 700;
+  color: var(--y);
+  text-shadow: 0 0 30px rgba(232,224,32,.5);
+  animation: ep 1.1s ease-in-out infinite;
+}
+@keyframes ep { 0%,100%{opacity:1;} 50%{opacity:.25;} }
+.enter-sub {
+  font-size: .34rem; letter-spacing: .22em;
+  color: rgba(232,224,32,.3);
+}
+
+/* ── BULLETS (player) ── */
+.bullet {
+  position: fixed; z-index: 15; pointer-events: none;
+  font-size: 13px; line-height: 1;
+  color: #fff; text-shadow: 0 0 8px rgba(255,255,255,.8);
+  font-family: 'Space Mono', monospace;
+}
+
+/* ── HIT / DYING ── */
+.robot.dying, .plane.dying {
+  animation: dyeout .35s ease forwards !important;
+}
+@keyframes dyeout {
+  0%  { opacity:1; filter:brightness(4) sepia(1) saturate(5) hue-rotate(0deg); transform:scale(1.2); }
+  100%{ opacity:0; transform:scale(2.5) rotate(20deg); }
+}
+
+/* ── SCORE ── */
+.score {
+  position: fixed; bottom: 1.8rem; left: 1.8rem; z-index: 20;
+  font-family: 'Space Mono', monospace;
+  font-size: .3rem; letter-spacing: .15em;
+  color: rgba(232,224,32,.28);
+  animation: uiIn .5s ease 2s both;
+}
+
+/* ── launch flash ── */
+.flash { position:fixed; inset:0; z-index:50; background:var(--y); opacity:0; pointer-events:none; }
+.flash.go { animation: flashOut .5s ease forwards; }
+@keyframes flashOut { 0%{ opacity:.85; } 100%{ opacity:0; } }
+</style>
+</head>
+<body>
+
+<div class="stage" id="stage"></div>
+<div class="floor"></div>
+<div class="horizon"></div>
+
+<div class="enter-overlay" id="enter-overlay">
+  <div class="enter-pulse">▶ ENTER</div>
+  <div class="enter-sub">クリックして以心伝心を再生 — BGM</div>
+</div>
+
+<div class="score" id="score">KILL: 0</div>
+<div class="noa-topleft">N · O · A</div>
+<div class="status" id="status">SYS: BATTLE INITIATED — NOA DEPLOYING</div>
+
+<div class="ui">
+  <div class="countdown" id="cd">1:00</div>
+  <div class="bar-wrap"><div class="bar-fill" id="bar"></div></div>
+  <div class="hint">Noa について読み込み中...</div>
+  <div class="btn-row">
+    <a class="about-btn" href="/noa.html">Noa について詳しく →</a>
+    <button class="skip-btn" id="skip">スキップ</button>
+  </div>
+</div>
+
+<div class="vol" id="vol">
+  <div class="vol-bars">
+    <div class="vol-bar"></div><div class="vol-bar"></div>
+    <div class="vol-bar"></div><div class="vol-bar"></div>
+  </div>
+  <span id="vol-label">以心伝心</span>
+</div>
+
+<div class="flash" id="flash"></div>
+<audio id="bgm" src="assets/audio/ishin-denshin.mp3" loop preload="auto"></audio>
+
+<script>
+(function(){
+'use strict';
+
+var stage = document.getElementById('stage');
+
+/* ════════════════════════════════
+   ROBOTS  (ground zone: bottom 10-28%)
+   ════════════════════════════════ */
+var BOTS = [
+  ['  ╔═══╗  ','  ║O O║  ','  ║ ▼ ║  ','╔═╩═══╩═╗','║  NOA  ║','╚═╦═╦═╦═╝','  ║ ║ ║  ',' ═╝ ╚═╝═ '],
+  ['  ┌─────┐  ','  │● · ●│  ','  │  ╨  │  ','┌─┴─────┴─┐','│  [■■■]  │','└─┬──┬──┬─┘','  │  │  │  ',' ─┘  └──┘─ '],
+  [' [O_O] ',' |NOA| ','/|   |\\','  | | |  ','──┘   └── '],
+  ['┌──[NOA]──┐','│ ◉     ◉ │','│   ___   │','│  (___) │','└──┬───┬──┘','   │   │   ','  ─┘   └─  '],
+  [' ╭─────╮ ','│ ◈   ◈ │','│   ╥   │','╰─┬───┬─╯','  │ ‖ │  ',' ═╧═╪═╧═ '],
+];
+
+function spawnBot() {
+  var b   = BOTS[Math.floor(Math.random() * BOTS.length)];
+  var el  = document.createElement('div');
+  el.className = 'robot';
+  el.textContent = b.join('\n');
+  var goLeft = Math.random() > .5;
+  el.classList.add(goLeft ? 'L' : 'R');
+  var dur = 12 + Math.random() * 15;
+  var bob = .25 + Math.random() * .2;
+  el.style.cssText =
+    'bottom:' + (9 + Math.random() * 13) + '%;' +
+    'font-size:' + (9 + Math.random() * 5) + 'px;' +
+    'opacity:' + (.45 + Math.random() * .5).toFixed(2) + ';' +
+    'animation-duration:' + dur + 's,' + bob + 's;' +
+    'animation-delay:' + (-Math.random() * dur) + 's,0s;';
+  stage.appendChild(el);
+}
+for (var i = 0; i < 7; i++) spawnBot();
+setInterval(function(){ if (countByClass('robot') < 11) spawnBot(); }, 2600);
+
+/* ════════════════════════════════
+   PLANES  (sky zone: top 5-45%)
+   ════════════════════════════════ */
+var PLANE_ART = [
+  /* jet right */
+  ['   __   ','  /  )=====>>','  \\__/  '],
+  /* bomber */
+  ['  _____  ',' /  NOA  >====>>','/_______\\'],
+  /* fighter */
+  ['  /\\  ','>(  )====>>','  \\/  '],
+  /* scout */
+  ['-=[O]=====>>'],
+  /* drone */
+  [' .--. ',' |AI|=====>>',' `--\' '],
+];
+
+function spawnPlane() {
+  var art   = PLANE_ART[Math.floor(Math.random() * PLANE_ART.length)];
+  var el    = document.createElement('div');
+  el.className = 'plane';
+  el.textContent = art.join('\n');
+  var goLeft = Math.random() > .5;
+  el.classList.add(goLeft ? 'L' : 'R');
+  var dur   = 5 + Math.random() * 8;
+  var topPc = 5 + Math.random() * 40; /* sky zone */
+  el.style.cssText =
+    'top:' + topPc + '%;' +
+    'font-size:' + (9 + Math.random() * 4) + 'px;' +
+    'opacity:' + (.5 + Math.random() * .45).toFixed(2) + ';' +
+    'animation-duration:' + dur + 's;' +
+    'animation-delay:0s;';
+  stage.appendChild(el);
+
+  /* ── drop missiles during flight ── */
+  var drops = 1 + Math.floor(Math.random() * 3);
+  for (var d = 0; d < drops; d++) {
+    (function(delay){
+      setTimeout(function(){
+        if (!el.isConnected) return;
+        dropMissile(el, topPc);
+      }, delay * 1000);
+    })(1.5 + Math.random() * (dur - 3));
+  }
+
+  /* remove after done */
+  setTimeout(function(){ if (el.parentNode) el.parentNode.removeChild(el); }, (dur + .5) * 1000);
+}
+
+setInterval(function(){ if (countByClass('plane') < 5) spawnPlane(); }, 1400);
+for (var p = 0; p < 3; p++) setTimeout(spawnPlane, p * 800);
+
+/* ── drop missile from plane ── */
+var MISSILES = ['  |\n  |\n  ▼', ' |\n ▼', '!\n▼', ' *\n |', ' ⚡'];
+
+function dropMissile(planeEl, topPc) {
+  var rect = planeEl.getBoundingClientRect();
+  if (!rect.width) return;
+
+  var xPx = rect.left + rect.width * (.2 + Math.random() * .6);
+  var yPx = rect.bottom;
+  var fallDist = window.innerHeight - yPx - 20;
+  if (fallDist < 30) return;
+
+  var m = document.createElement('div');
+  m.className = 'missile';
+  m.textContent = MISSILES[Math.floor(Math.random() * MISSILES.length)];
+  var dur = .6 + Math.random() * .8;
+  m.style.cssText =
+    'left:' + xPx + 'px;' +
+    'top:'  + yPx + 'px;' +
+    '--fall-dist:' + fallDist + 'px;' +
+    'animation-duration:' + dur + 's;';
+  stage.appendChild(m);
+
+  /* explosion at impact */
+  setTimeout(function(){
+    if (m.parentNode) m.parentNode.removeChild(m);
+    spawnExplosion(xPx, yPx + fallDist);
+  }, dur * 1000);
+}
+
+/* ── explosion ── */
+var BOOMS = [
+  ' \\|/\n--✦--\n /|\\',
+  '★彡\n ✸\n彡★',
+  ' * * \n* ✦ *\n * * ',
+  '╔☆╗\n☆★☆\n╚☆╝',
+  ' !!\n\\✸/\n /\\',
+];
+
+function spawnExplosion(x, y) {
+  var el = document.createElement('div');
+  el.className = 'boom';
+  el.textContent = BOOMS[Math.floor(Math.random() * BOOMS.length)];
+  el.style.cssText = 'left:' + (x - 20) + 'px; top:' + (y - 20) + 'px;';
+  stage.appendChild(el);
+  setTimeout(function(){ if (el.parentNode) el.parentNode.removeChild(el); }, 750);
+}
+
+/* ── utility ── */
+function countByClass(cls) {
+  return stage.getElementsByClassName(cls).length;
+}
+
+/* ════════════════════════════════
+   BGM + ENTER OVERLAY
+   ════════════════════════════════ */
+var audio    = document.getElementById('bgm');
+var volEl    = document.getElementById('vol');
+var volLbl   = document.getElementById('vol-label');
+var enterEl  = document.getElementById('enter-overlay');
+var muted    = false;
+var started  = false;
+audio.volume = .6;
+
+function startSession() {
+  if (started) return;
+  started = true;
+  enterEl.classList.add('hide');
+  audio.play().catch(function(){});
+  tick(); /* start countdown */
+}
+
+enterEl.addEventListener('click', startSession);
+document.addEventListener('keydown', function(e) {
+  if (e.key === ' ' || e.key === 'Enter') startSession();
+}, {once:true});
+
+volEl.addEventListener('click', function(e){
+  e.stopPropagation();
+  muted = !muted;
+  audio.muted = muted;
+  volEl.classList.toggle('muted', muted);
+  volLbl.textContent = muted ? 'MUTE' : '以心伝心';
+});
+
+/* ════════════════════════════════
+   SHOOTING MECHANIC
+   ════════════════════════════════ */
+var kills   = 0;
+var scoreEl = document.getElementById('score');
+
+/* active bullets: { el, x, y } */
+var bullets = [];
+
+stage.addEventListener('click', function(e) {
+  if (!started) return;
+  /* don't shoot if clicking UI */
+  if (e.target !== stage) return;
+  shoot(e.clientX, e.clientY);
+});
+
+function shoot(x, y) {
+  var b = document.createElement('div');
+  b.className = 'bullet';
+  b.textContent = '⬆';
+  b.style.left = (x - 6) + 'px';
+  b.style.top  = y + 'px';
+  document.body.appendChild(b);
+
+  var obj = { el: b, x: x, y: y };
+  bullets.push(obj);
+  moveBullet(obj);
+}
+
+function moveBullet(obj) {
+  if (!obj.el.isConnected) return;
+  obj.y -= 14; /* speed px per frame */
+  obj.el.style.top = obj.y + 'px';
+
+  if (obj.y < -20) {
+    obj.el.remove();
+    bullets.splice(bullets.indexOf(obj), 1);
+    return;
+  }
+
+  /* collision check */
+  var bRect = obj.el.getBoundingClientRect();
+  var targets = stage.querySelectorAll('.robot:not(.dying), .plane:not(.dying)');
+  for (var i = 0; i < targets.length; i++) {
+    var tRect = targets[i].getBoundingClientRect();
+    if (bRect.right  > tRect.left   &&
+        bRect.left   < tRect.right  &&
+        bRect.bottom > tRect.top    &&
+        bRect.top    < tRect.bottom) {
+      /* HIT! */
+      targets[i].classList.add('dying');
+      setTimeout((function(t){ return function(){ if(t.parentNode) t.parentNode.removeChild(t); }; })(targets[i]), 380);
+      spawnExplosion(
+        tRect.left + tRect.width  / 2,
+        tRect.top  + tRect.height / 2
+      );
+      obj.el.remove();
+      bullets.splice(bullets.indexOf(obj), 1);
+      kills++;
+      scoreEl.textContent = 'KILL: ' + kills;
+      return;
+    }
+  }
+  requestAnimationFrame(function(){ moveBullet(obj); });
+}
+
+/* ════════════════════════════════
+   COUNTDOWN
+   ════════════════════════════════ */
+var TOTAL     = 60;
+var remaining = TOTAL;
+var cdEl      = document.getElementById('cd');
+var barFill   = document.getElementById('bar');
+var flash     = document.getElementById('flash');
+var statusEl  = document.getElementById('status');
+var dest      = '/noa.html';
+
+var STATUS_MSGS = [
+  'SYS: BATTLE INITIATED — NOA DEPLOYING',
+  'WAVE 2 INCOMING — HOLD THE LINE',
+  'AI FORCES ADVANCING — STANDBY',
+  'SIGNAL LOCKED — NOA TRANSMISSION READY',
+  'PERIMETER BREACH DETECTED — EVACUATE',
+  'LOADING NOA INTELLIGENCE CORE...',
+  'ROBOT ARMY MOBILIZED — T MINUS ',
+];
+
+function fmt(s) {
+  var m   = Math.floor(s / 60);
+  var sec = s % 60;
+  return m + ':' + (sec < 10 ? '0' : '') + sec;
+}
+
+var tick_i = 0;
+function tick() {
+  cdEl.textContent = fmt(remaining);
+  barFill.style.transform = 'scaleX(' + (remaining / TOTAL) + ')';
+
+  if (tick_i % 8 === 0) {
+    var msg = STATUS_MSGS[Math.floor(tick_i / 8) % STATUS_MSGS.length];
+    if (msg.slice(-2) === 'S ') msg += fmt(remaining);
+    statusEl.textContent = msg;
+  }
+
+  cdEl.classList.remove('pulse');
+  void cdEl.offsetWidth;
+  cdEl.classList.add('pulse');
+
+  if (remaining <= 0) { go(); return; }
+  remaining--;
+  tick_i++;
+  setTimeout(tick, 1000);
+}
+/* tick() は startSession() で呼ぶ */
+
+function go() {
+  statusEl.textContent = 'REDIRECTING TO NOA...';
+  flash.classList.add('go');
+  var fader = setInterval(function(){
+    if (audio.volume > .05) audio.volume = Math.max(0, audio.volume - .05);
+    else { clearInterval(fader); audio.pause(); }
+  }, 60);
+  setTimeout(function(){ window.location.href = dest; }, 560);
+}
+
+document.getElementById('skip').addEventListener('click', function(){
+  if (!started) startSession();
+  remaining = 0;
+  go();
+});
+
+})();
+</script>
+</body>
+</html>
