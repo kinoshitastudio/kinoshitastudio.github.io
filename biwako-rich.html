@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>BIWAKO — RICH</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#040812; overflow:hidden; }
+canvas { display:block; width:100%; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const c   = document.getElementById('c');
+const ctx = c.getContext('2d');
+
+function resize() {
+  c.width  = window.innerWidth;
+  c.height = Math.round(window.innerWidth * 0.44);
+}
+resize();
+window.addEventListener('resize', () => { resize(); init(); });
+
+// ── wave math ────────────────────────────────────────────────
+function wv(x, t, layer) {
+  return Math.sin(x*.006  + t*1.0  - layer*.38) * 14
+       + Math.sin(x*.013  - t*.72  + layer*.22) *  9
+       + Math.sin(x*.024  + t*.55  - layer*.61) *  5
+       + Math.sin(x*.041  - t*.35  + layer*.15) *  3;
+}
+
+// ── particles ────────────────────────────────────────────────
+let particles = [];
+class Spray {
+  constructor(x, y, v=1) {
+    this.x=x; this.y=y;
+    this.vx=(Math.random()-.5)*4.5*v;
+    this.vy=-(Math.random()*6+2)*v;
+    this.life=1; this.decay=.038+Math.random()*.03;
+    this.r=Math.random()*2.5+.7;
+  }
+  update() { this.x+=this.vx; this.y+=this.vy; this.vy+=.24; this.vx*=.97; this.life-=this.decay; }
+  draw() {
+    ctx.globalAlpha=this.life*.9;
+    ctx.fillStyle='#b8d8f0'; ctx.beginPath();
+    ctx.arc(this.x,this.y,this.r,0,Math.PI*2); ctx.fill();
+    ctx.globalAlpha=1;
+  }
+}
+
+// ── fish drawing ─────────────────────────────────────────────
+function drawFish(x, y, sc, angle, flip) {
+  const s = sc * Math.min(c.width, c.height) * .034;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  if (flip) ctx.scale(-1, 1);
+
+  // body
+  const bg = ctx.createLinearGradient(0,-s*.95,0,s*.95);
+  bg.addColorStop(0,   '#122438');
+  bg.addColorStop(.4,  '#1e4a6e');
+  bg.addColorStop(.75, '#7888a0');
+  bg.addColorStop(1,   '#a08050');
+  ctx.fillStyle=bg;
+  ctx.beginPath();
+  ctx.moveTo( s*.95, 0);
+  ctx.bezierCurveTo( s*.7,-s*.4, -s*.55,-s*.42,-s*.92, 0);
+  ctx.bezierCurveTo(-s*.55, s*.42, s*.7, s*.4, s*.95, 0);
+  ctx.closePath(); ctx.fill();
+
+  // iridescent sheen
+  const ig=ctx.createLinearGradient(-s*.4,-s*.4,s*.4,s*.1);
+  ig.addColorStop(0,'rgba(140,210,255,0)');
+  ig.addColorStop(.5,'rgba(140,210,255,.42)');
+  ig.addColorStop(1,'rgba(140,210,255,0)');
+  ctx.fillStyle=ig;
+  ctx.beginPath();
+  ctx.ellipse(-s*.08,-s*.18,s*.58,s*.23,0,0,Math.PI*2); ctx.fill();
+
+  // lateral (trout) stripe
+  ctx.strokeStyle='rgba(190,65,65,.7)'; ctx.lineWidth=s*.08; ctx.lineCap='round';
+  ctx.beginPath();
+  ctx.moveTo(s*.72,s*.06);
+  ctx.bezierCurveTo(s*.2,s*.06,-s*.4,s*.09,-s*.86,s*.05);
+  ctx.stroke();
+
+  // tail
+  ctx.fillStyle='#0e1e30';
+  [[  -s*.85, -s*1.55,-s*.5, -s*1.62,-s*.09],
+   [  -s*.85,  s*1.62, s*.09, -s*1.55, s*.5 ]].forEach(([ox,ax,ay,bx,by])=>{
+    ctx.beginPath(); ctx.moveTo(ox,0); ctx.lineTo(ax,ay); ctx.lineTo(bx,by); ctx.closePath(); ctx.fill();
+  });
+
+  // dorsal fin
+  ctx.fillStyle='rgba(15,40,65,.88)';
+  ctx.beginPath();
+  ctx.moveTo(-s*.18,-s*.38);
+  ctx.bezierCurveTo(s*.02,-s*.78,s*.48,-s*.72,s*.60,-s*.38);
+  ctx.lineTo(-s*.18,-s*.38); ctx.fill();
+
+  // pectoral fin
+  ctx.fillStyle='rgba(25,55,80,.6)';
+  ctx.beginPath();
+  ctx.moveTo(s*.32,s*.1);
+  ctx.bezierCurveTo(s*.14,s*.52,-s*.12,s*.46,-s*.06,s*.1);
+  ctx.fill();
+
+  // eye
+  ctx.fillStyle='#080e18';
+  ctx.beginPath(); ctx.arc(s*.6,-s*.1,s*.11,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='rgba(170,215,255,.85)';
+  ctx.beginPath(); ctx.arc(s*.57,-s*.12,s*.045,0,Math.PI*2); ctx.fill();
+
+  ctx.restore();
+}
+
+// ── Fish entity ───────────────────────────────────────────────
+class Fish {
+  constructor(W, wY, delay) {
+    this.W=W; this.wY=wY;
+    this.size=.7+Math.random()*.7;
+    this.state='wait';
+    this.timer=delay || (Math.random()*360+80);
+    this.x=Math.random()*W; this.y=wY;
+    this.vx=0; this.vy=0; this.angle=0; this.flip=false;
+    this.didExit=false; this.didEntry=false;
+  }
+  launch() {
+    this.x=Math.random()*(this.W*.75)+this.W*.12;
+    this.y=this.wY;
+    this.flip=Math.random()>.5;
+    const dir=this.flip?-1:1;
+    this.vx=dir*(2.2+Math.random()*3.2);
+    this.vy=-(8.5+Math.random()*8);
+    this.state='air'; this.didExit=false; this.didEntry=false;
+  }
+  update() {
+    if (this.state==='wait') { if(--this.timer<=0) this.launch(); return; }
+    this.vy+=.4; this.x+=this.vx; this.y+=this.vy;
+    this.angle=Math.atan2(this.vy,Math.abs(this.vx))*(this.flip?-1:1);
+    if (!this.didExit && this.y<this.wY-8) {
+      this.didExit=true;
+      for(let i=0;i<10;i++) particles.push(new Spray(this.x,this.wY,.8));
+    }
+    if (this.y>=this.wY) {
+      if(!this.didEntry) {
+        this.didEntry=true;
+        for(let i=0;i<22;i++) particles.push(new Spray(this.x,this.wY,1.2));
+      }
+      this.state='wait'; this.timer=Math.random()*380+140;
+    }
+  }
+  draw() {
+    if (this.state!=='air'||this.y>=this.wY) return;
+    drawFish(this.x,this.y,this.size,this.angle,this.flip);
+  }
+}
+
+// ── Person entity (rare, surreal emergence) ───────────────────
+class Person {
+  constructor(W, wY) {
+    this.W=W; this.wY=wY;
+    this.state='wait'; this.timer=600+Math.random()*900;
+    this.x=W*.5; this.y=wY; this.vy=0; this.angle=0;
+    this.splashed=false;
+  }
+  launch() {
+    this.x=this.W*(.2+Math.random()*.6);
+    this.y=this.wY; this.vy=-(13+Math.random()*5);
+    this.angle=(Math.random()-.5)*.4;
+    this.state='air'; this.splashed=false;
+  }
+  update() {
+    if (this.state==='wait') { if(--this.timer<=0) this.launch(); return; }
+    this.vy+=.3; this.y+=this.vy;
+    if (!this.splashed&&this.y<this.wY-10) {
+      this.splashed=true;
+      for(let i=0;i<18;i++) particles.push(new Spray(this.x,this.wY,1.1));
+    }
+    if (this.y>=this.wY) {
+      for(let i=0;i<28;i++) particles.push(new Spray(this.x,this.wY,1.4));
+      this.state='wait'; this.timer=700+Math.random()*1100;
+    }
+  }
+  draw() {
+    if (this.state!=='air'||this.y>=this.wY) return;
+    const s=Math.min(c.width,c.height)*.062;
+    ctx.save(); ctx.translate(this.x,this.y); ctx.rotate(this.angle*.3);
+    const pg=ctx.createLinearGradient(0,-s*3.6,0,0);
+    pg.addColorStop(0,'#182838'); pg.addColorStop(1,'#0c1a28');
+    ctx.fillStyle=pg; ctx.strokeStyle='#182838';
+    ctx.lineCap='round'; ctx.lineJoin='round';
+    // head
+    ctx.beginPath(); ctx.arc(0,-s*3.2,s*.72,0,Math.PI*2); ctx.fill();
+    // torso
+    ctx.beginPath();
+    ctx.moveTo(-s*.42,-s*2.48); ctx.lineTo(-s*.34,-s*.04);
+    ctx.lineTo( s*.34,-s*.04); ctx.lineTo( s*.42,-s*2.48);
+    ctx.closePath(); ctx.fill();
+    // arms raised
+    ctx.lineWidth=s*.2;
+    ctx.strokeStyle='#182838';
+    ctx.beginPath();
+    ctx.moveTo(-s*.38,-s*1.8); ctx.lineTo(-s*1.25,-s*2.9); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo( s*.38,-s*1.8); ctx.lineTo( s*1.25,-s*2.9); ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// ── Caustics ─────────────────────────────────────────────────
+const CAU = Array.from({length:38},()=>({
+  rx:Math.random(), ry:Math.random()*.65+.05,
+  r:Math.random()*3+1.5, ph:Math.random()*Math.PI*2,
+  sp:Math.random()*.0025+.0008,
+}));
+
+function drawCaustics(wY,t) {
+  const W=c.width, H=c.height;
+  CAU.forEach(ca=>{
+    const x=((ca.rx*W + t*ca.sp*W*28)%W+W)%W;
+    const y=wY + ca.ry*(H-wY) + Math.sin(t*2.3+ca.ph)*9;
+    const a=(0.22+Math.sin(t*3.6+ca.ph)*.17)*.55;
+    ctx.globalAlpha=a;
+    ctx.fillStyle='#60c8e8';
+    ctx.beginPath();
+    ctx.ellipse(x,y,ca.r*2.4,ca.r*.55,Math.sin(t*.9+ca.ph)*.9,0,Math.PI*2);
+    ctx.fill();
+  });
+  ctx.globalAlpha=1;
+}
+
+// ── Baked stars ───────────────────────────────────────────────
+const STARS = Array.from({length:55},(_,i)=>({
+  x:((i*73+17)%97)/97,
+  y:((i*41+11)%83)/83,
+  r:((i*29+7)%5)/5*.9+.25,
+  ph:i*.7,
+}));
+
+// ── Drawing passes ────────────────────────────────────────────
+function drawSky(wY) {
+  const W=c.width;
+  const g=ctx.createLinearGradient(0,0,0,wY);
+  g.addColorStop(0,  '#030710');
+  g.addColorStop(.28,'#08142a');
+  g.addColorStop(.62,'#281208');
+  g.addColorStop(.84,'#5a2208');
+  g.addColorStop(1,  '#b04410');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,wY+2);
+}
+
+function drawStars(wY,t) {
+  const W=c.width,H=c.height;
+  STARS.forEach(s=>{
+    const sx=s.x*W, sy=s.y*wY*.78;
+    const a=(0.35+Math.sin(t*.6+s.ph)*.2)*(1-sy/(wY*.78));
+    ctx.globalAlpha=a; ctx.fillStyle='#c8d8f8';
+    ctx.beginPath(); ctx.arc(sx,sy,s.r,0,Math.PI*2); ctx.fill();
+  });
+  ctx.globalAlpha=1;
+}
+
+function drawGodRays(sx,sy,t) {
+  const H=c.height;
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  for(let i=0;i<8;i++){
+    const ang=i/8*Math.PI*2+t*.035;
+    const wid=.065+Math.sin(t*.5+i*1.4)*.025;
+    const len=H*2.2;
+    const g=ctx.createRadialGradient(sx,sy,8,sx,sy,len);
+    g.addColorStop(0,'rgba(255,165,55,.14)');
+    g.addColorStop(.45,'rgba(255,130,35,.04)');
+    g.addColorStop(1,'rgba(255,80,15,0)');
+    ctx.fillStyle=g;
+    ctx.beginPath();
+    ctx.moveTo(sx,sy);
+    ctx.lineTo(sx+Math.cos(ang-wid)*len, sy+Math.sin(ang-wid)*len);
+    ctx.lineTo(sx+Math.cos(ang+wid)*len, sy+Math.sin(ang+wid)*len);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.globalCompositeOperation='source-over'; ctx.restore();
+}
+
+function drawSun(sx,sy) {
+  let g=ctx.createRadialGradient(sx,sy,0,sx,sy,130);
+  g.addColorStop(0,'rgba(255,200,80,.28)');
+  g.addColorStop(.45,'rgba(255,130,40,.10)');
+  g.addColorStop(1,'rgba(255,70,15,0)');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(sx,sy,130,0,Math.PI*2); ctx.fill();
+
+  g=ctx.createRadialGradient(sx,sy,0,sx,sy,50);
+  g.addColorStop(0,'rgba(255,245,180,1)');
+  g.addColorStop(.55,'rgba(255,175,55,.8)');
+  g.addColorStop(1,'rgba(255,100,20,0)');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(sx,sy,50,0,Math.PI*2); ctx.fill();
+
+  ctx.fillStyle='#fffde0';
+  ctx.beginPath(); ctx.arc(sx,sy,20,0,Math.PI*2); ctx.fill();
+}
+
+function drawMountains(wY) {
+  const W=c.width, H=c.height;
+  const layers=[
+    { peaks:[{cx:.24,cy:.44,w:.40},{cx:.58,cy:.52,w:.46},{cx:.88,cy:.40,w:.32}],
+      c0:'#0c1828', c1:'#060f1c', a:.65 },
+    { peaks:[{cx:.12,cy:.30,w:.28},{cx:.40,cy:.38,w:.34},{cx:.70,cy:.33,w:.30},{cx:.96,cy:.26,w:.22}],
+      c0:'#081220', c1:'#050c16', a:.82 },
+    { peaks:[{cx:.06,cy:.20,w:.22},{cx:.33,cy:.26,w:.24},{cx:.60,cy:.22,w:.26},{cx:.86,cy:.18,w:.20}],
+      c0:'#060e18', c1:'#040a10', a:.95 },
+  ];
+  layers.forEach(l=>{
+    l.peaks.forEach(p=>{
+      const g=ctx.createLinearGradient(0,wY-H*p.cy,0,wY);
+      g.addColorStop(0,l.c0); g.addColorStop(1,l.c1);
+      ctx.fillStyle=g; ctx.globalAlpha=l.a;
+      const mx=W*p.cx, py=wY-H*p.cy;
+      ctx.beginPath();
+      ctx.moveTo(W*(p.cx-p.w*.5), wY+4);
+      ctx.lineTo(mx-W*p.w*.12, py+H*p.cy*.32);
+      ctx.lineTo(mx, py);
+      ctx.lineTo(mx+W*p.w*.1, py+H*p.cy*.28);
+      ctx.lineTo(W*(p.cx+p.w*.5), wY+4);
+      ctx.closePath(); ctx.fill();
+    });
+    ctx.globalAlpha=1;
+  });
+  // horizon mist
+  const mist=ctx.createLinearGradient(0,wY-H*.14,0,wY);
+  mist.addColorStop(0,'rgba(12,28,50,0)');
+  mist.addColorStop(1,'rgba(12,28,50,.45)');
+  ctx.fillStyle=mist; ctx.fillRect(0,wY-H*.14,c.width,H*.14+4);
+}
+
+function drawWater(wY, t) {
+  const W=c.width, H=c.height;
+  // 3 wave layers back→front
+  [[32,2,'#091e30','#050e1a'],[16,1,'#0e2840','#07141e'],[0,0,'#142e48','#091624']].forEach(([yo,layer,c0,c1])=>{
+    const bY=wY+yo;
+    const g=ctx.createLinearGradient(0,bY,0,H);
+    g.addColorStop(0,c0); g.addColorStop(.5,c1); g.addColorStop(1,'#020609');
+    ctx.fillStyle=g;
+    ctx.beginPath();
+    ctx.moveTo(0, bY+wv(0,t,layer));
+    for(let x=2;x<=W;x+=2) ctx.lineTo(x, bY+wv(x,t,layer));
+    ctx.lineTo(W,H+10); ctx.lineTo(0,H+10); ctx.closePath(); ctx.fill();
+  });
+  // crest highlight stroke
+  ctx.strokeStyle='rgba(160,220,255,.28)'; ctx.lineWidth=1.8;
+  ctx.beginPath();
+  ctx.moveTo(0, wY+wv(0,t,0));
+  for(let x=2;x<=W;x+=2) ctx.lineTo(x, wY+wv(x,t,0));
+  ctx.stroke();
+}
+
+function drawSunReflection(sx, wY, t) {
+  const W=c.width, H=c.height;
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  for(let y=wY;y<H;y+=3){
+    const prog=(y-wY)/(H-wY);
+    const xOff=Math.sin(t*1.6+y*.022)*10;
+    const hw=45*(1+prog*1.8);
+    const a=.28*(1-prog*.7);
+    ctx.fillStyle=`rgba(210,115,35,${a})`;
+    ctx.fillRect(sx+xOff-hw, y, hw*2, 3);
+  }
+  ctx.globalCompositeOperation='source-over'; ctx.restore();
+}
+
+// ── Scene entities ────────────────────────────────────────────
+let fishes=[], persons=[];
+
+function init() {
+  const W=c.width, wY=c.height*.59;
+  fishes=[
+    new Fish(W,wY,50),
+    new Fish(W,wY,150),
+    new Fish(W,wY,260),
+    new Fish(W,wY,380),
+    new Fish(W,wY,480),
+    new Fish(W,wY,600),
+  ];
+  persons=[new Person(W,wY)];
+  particles=[];
+}
+init();
+
+// ── Main loop ─────────────────────────────────────────────────
+let t=0;
+function draw() {
+  const W=c.width, H=c.height, wY=H*.59;
+  const sunX=W*.73, sunY=wY-H*.41;
+
+  ctx.clearRect(0,0,W,H);
+
+  drawSky(wY);
+  drawStars(wY,t);
+  drawGodRays(sunX,sunY,t);
+  drawSun(sunX,sunY);
+  drawMountains(wY);
+  drawSunReflection(sunX,wY,t);
+
+  // clip above front wave → creatures + spray
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(0,0); ctx.lineTo(W,0);
+  ctx.lineTo(W, wY+wv(W,t,0));
+  for(let x=W-2;x>=0;x-=2) ctx.lineTo(x, wY+wv(x,t,0));
+  ctx.closePath(); ctx.clip();
+
+  fishes.forEach(f=>f.draw());
+  persons.forEach(p=>p.draw());
+  particles.forEach(p=>p.draw());
+
+  ctx.restore();
+
+  // water on top
+  drawWater(wY,t);
+  drawCaustics(wY,t);
+
+  // update
+  fishes.forEach(f=>f.update());
+  persons.forEach(p=>p.update());
+  particles=particles.filter(p=>{ p.update(); return p.life>0; });
+
+  t+=.016;
+  requestAnimationFrame(draw);
+}
+draw();
+</script>
+</body>
+</html>
