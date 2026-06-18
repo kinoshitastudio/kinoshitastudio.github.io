@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>reaction-diffusion — 生成され続けるフィールド</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:ui-monospace,"Space Mono",monospace}
+  #c{display:block;width:100vw;height:100vh}
+  .hud{position:fixed;left:14px;bottom:12px;color:rgba(255,255,255,.65);font-size:11px;letter-spacing:.04em;
+       mix-blend-mode:difference;pointer-events:none;line-height:1.6}
+  .bar{position:fixed;right:14px;bottom:12px;display:flex;gap:6px;align-items:center}
+  .bar button{font:11px/1 ui-monospace,monospace;color:#eee;background:rgba(255,255,255,.1);
+    border:1px solid rgba(255,255,255,.3);border-radius:5px;padding:7px 11px;cursor:pointer}
+  .bar button:hover{background:rgba(255,255,255,.22)}
+  .err{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#e55;padding:24px;text-align:center;font-size:14px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hud">reaction-diffusion · 斑点が湧き／育ち／分裂し続ける · ドラッグで種まき</div>
+<div class="bar">
+  <button id="mode">挙動: 分裂</button>
+  <button id="palette">配色: vivid</button>
+  <button id="rate">速度: 速</button>
+  <button id="reseed">まき直し</button>
+</div>
+<script>
+const cv=document.getElementById('c');
+const gl=cv.getContext('webgl2',{antialias:false});
+const ext=gl&&gl.getExtension('EXT_color_buffer_float');
+if(!gl||!ext){ document.body.innerHTML='<div class="err">この効果には WebGL2 + 浮動小数テクスチャが必要です（Chrome / Safari 最新）。</div>'; }
+
+const VERT=`#version 300 es
+const vec2 V[3]=vec2[3](vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));
+out vec2 vUv;void main(){vec2 p=V[gl_VertexID];vUv=p*0.5+0.5;gl_Position=vec4(p,0.,1.);}`;
+
+const NOISE=`
+float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+  float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));
+  return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}
+float fbm(vec2 p){float v=0.,a=.5;mat2 m=mat2(1.6,1.2,-1.2,1.6);
+  for(int i=0;i<4;i++){v+=a*vnoise(p);p=m*p;a*=.5;}return v;}`;
+
+/* === Gray-Scott 反応拡散 === */
+const SIM=`#version 300 es
+precision highp float;
+${NOISE}
+uniform sampler2D uState; uniform vec2 uRes; uniform float uTime,uAspect,uRate,uFeed,uKill,uVary; uniform int uFrame; uniform vec2 uSeedPt; uniform float uSeedOn;
+in vec2 vUv; out vec4 o;
+vec2 lap(vec2 uv){ vec2 t=1.0/uRes; vec2 s=vec2(0.);
+  s+=texture(uState,uv+vec2(-t.x,0)).xy*0.2; s+=texture(uState,uv+vec2(t.x,0)).xy*0.2;
+  s+=texture(uState,uv+vec2(0,-t.y)).xy*0.2; s+=texture(uState,uv+vec2(0,t.y)).xy*0.2;
+  s+=texture(uState,uv+vec2(-t.x,-t.y)).xy*0.05; s+=texture(uState,uv+vec2(t.x,-t.y)).xy*0.05;
+  s+=texture(uState,uv+vec2(-t.x,t.y)).xy*0.05;  s+=texture(uState,uv+vec2(t.x,t.y)).xy*0.05;
+  s-=texture(uState,uv).xy; return s; }
+void main(){
+  vec2 v=texture(uState,vUv).xy;
+  if(uFrame<2){ // たっぷり種まき → 即生成が始まる
+    float seed=step(0.55, fbm(vUv*12.0+3.0));
+    o=vec4(1.0, seed*0.8, 0.,1.); return;
+  }
+  float A=v.x,B=v.y;
+  vec2 L=lap(vUv);
+  // feed を空間＋時間でゆっくり変調 → 場所ごとに別々の模様・スケールが生成され続ける
+  float feed=uFeed + uVary*(fbm(vUv*2.2 + uTime*0.05)-0.5);
+  float kill=uKill + 0.004*(fbm(vUv*2.0 - uTime*0.04)-0.5);
+  float Da=1.0,Db=0.5,dt=1.0*uRate;
+  float rA=Da*L.x - A*B*B + feed*(1.0-A);
+  float rB=Db*L.y + A*B*B - (kill+feed)*B;
+  A=clamp(A+rA*dt,0.,1.); B=clamp(B+rB*dt,0.,1.);
+  if(uSeedOn>0.5){ float d=distance(vUv*vec2(uAspect,1.0),uSeedPt*vec2(uAspect,1.0)); if(d<0.045) B=0.9; }
+  o=vec4(A,B,0.,1.);
+}`;
+
+const DISP=`#version 300 es
+precision highp float;
+uniform sampler2D uState; uniform vec2 uRes; uniform float uTime,uPalette;
+in vec2 vUv; out vec4 o;
+float gh(vec2 uv){return texture(uState,uv).y;}
+vec3 magma(float t){ t=clamp(t,0.,1.);
+  return clamp(vec3(1.6*t-0.1, 1.5*t*t-0.15, 0.6*t + 1.4*t*t*t - 0.05),0.,1.); }
+vec3 ai(float t){ return 0.5+0.5*cos(6.2831*(t*1.4+uTime*0.03+vec3(0.0,0.33,0.66))); }
+vec3 clay(float t){ vec3 a=vec3(0.95,0.91,0.78),b=vec3(0.88,0.66,0.62),c=vec3(0.45,0.66,0.80);
+  return t<0.5?mix(a,b,t*2.):mix(b,c,(t-0.5)*2.); }
+void main(){
+  float B=gh(vUv);
+  // コントラストを立てて見やすく
+  float f=smoothstep(0.05,0.5,B);
+  // 法線で軽い陰影
+  vec2 e=vec2(1.4/uRes.y);
+  float bl=gh(vUv-vec2(e.x,0)),br=gh(vUv+vec2(e.x,0)),bd=gh(vUv-vec2(0,e.x)),bu=gh(vUv+vec2(0,e.x));
+  vec3 nrm=normalize(vec3((bl-br)*6.0,(bd-bu)*6.0,1.0));
+  float diff=clamp(dot(nrm,normalize(vec3(0.4,0.55,0.8)))*0.5+0.5,0.,1.);
+  vec3 col = uPalette<0.5? magma(f) : (uPalette<1.5? ai(f) : clay(f));
+  col*=(0.65+0.55*diff);
+  col+=(fract(sin(dot(vUv*uRes,vec2(12.9898,78.233))+uTime)*43758.5)-0.5)*0.03;
+  o=vec4(clamp(col,0.,1.),1.);
+}`;
+
+function sh(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
+  if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(o),s);return o;}
+function prog(f){const p=gl.createProgram();gl.attachShader(p,sh(gl.VERTEX_SHADER,VERT));
+  gl.attachShader(p,sh(gl.FRAGMENT_SHADER,f));gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))console.error(gl.getProgramInfoLog(p));return p;}
+const simP=prog(SIM),dispP=prog(DISP);
+gl.bindVertexArray(gl.createVertexArray());
+
+let texA,texB,fboA,fboB,simW,simH,swap=false,frame=0;
+function mkTex(w,h){const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA16F,w,h,0,gl.RGBA,gl.HALF_FLOAT,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);return t;}
+function mkFbo(t){const f=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,f);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0);return f;}
+function resize(){const dpr=Math.min(devicePixelRatio||1,2);
+  cv.width=Math.floor(innerWidth*dpr);cv.height=Math.floor(innerHeight*dpr);
+  const scale=Math.min(1,560/innerWidth);
+  simW=Math.max(64,Math.floor(innerWidth*scale));simH=Math.max(64,Math.floor(innerHeight*scale));
+  texA=mkTex(simW,simH);texB=mkTex(simW,simH);fboA=mkFbo(texA);fboB=mkFbo(texB);frame=0;}
+addEventListener('resize',resize);resize();
+const getRead=()=>swap?texB:texA,getWriteFbo=()=>swap?fboA:fboB;
+
+// 挙動プリセット（feed,kill,vary）
+const MODES={分裂:[0.0367,0.0649,0.010], 虫:[0.046,0.063,0.012], 斑点:[0.030,0.062,0.008], 珊瑚:[0.0545,0.062,0.010]};
+let mk='分裂', feed=0.0367, kill=0.0649, vary=0.010;
+let palette=0, rate=1.0, seedPt=[0,0], seedOn=0, t0=performance.now(),last=0;
+
+function simStep(time,aspect){
+  gl.useProgram(simP);gl.viewport(0,0,simW,simH);gl.bindFramebuffer(gl.FRAMEBUFFER,getWriteFbo());
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,getRead());
+  gl.uniform1i(gl.getUniformLocation(simP,'uState'),0);
+  gl.uniform2f(gl.getUniformLocation(simP,'uRes'),simW,simH);
+  gl.uniform1f(gl.getUniformLocation(simP,'uTime'),time);gl.uniform1f(gl.getUniformLocation(simP,'uAspect'),aspect);
+  gl.uniform1f(gl.getUniformLocation(simP,'uRate'),rate);
+  gl.uniform1f(gl.getUniformLocation(simP,'uFeed'),feed);gl.uniform1f(gl.getUniformLocation(simP,'uKill'),kill);gl.uniform1f(gl.getUniformLocation(simP,'uVary'),vary);
+  gl.uniform1i(gl.getUniformLocation(simP,'uFrame'),frame);
+  gl.uniform2f(gl.getUniformLocation(simP,'uSeedPt'),seedPt[0],seedPt[1]);gl.uniform1f(gl.getUniformLocation(simP,'uSeedOn'),seedOn);
+  gl.drawArrays(gl.TRIANGLES,0,3);swap=!swap;frame++;
+}
+function draw(now){
+  requestAnimationFrame(draw);
+  const time=(now-t0)/1000,aspect=cv.width/cv.height;
+  const steps=frame<2?2:10;
+  for(let i=0;i<steps;i++){simStep(time,aspect);seedOn=0;}
+  if(now-last<1000/30)return;last=now;
+  gl.useProgram(dispP);gl.viewport(0,0,cv.width,cv.height);gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,getRead());
+  gl.uniform1i(gl.getUniformLocation(dispP,'uState'),0);
+  gl.uniform2f(gl.getUniformLocation(dispP,'uRes'),simW,simH);
+  gl.uniform1f(gl.getUniformLocation(dispP,'uTime'),time);gl.uniform1f(gl.getUniformLocation(dispP,'uPalette'),palette);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+}
+requestAnimationFrame(draw);
+
+let dragging=false;
+cv.addEventListener('pointerdown',e=>{dragging=true;seed(e);});
+addEventListener('pointermove',e=>{if(dragging)seed(e);});
+addEventListener('pointerup',()=>dragging=false);
+function seed(e){seedPt=[e.clientX/innerWidth,1.0-e.clientY/innerHeight];seedOn=1;}
+
+const md=document.getElementById('mode'),pl=document.getElementById('palette'),rt=document.getElementById('rate'),rs=document.getElementById('reseed');
+md.onclick=()=>{const k=Object.keys(MODES);mk=k[(k.indexOf(mk)+1)%k.length];[feed,kill,vary]=MODES[mk];frame=0;md.textContent='挙動: '+mk;};
+pl.onclick=()=>{palette=(palette+1)%3;pl.textContent='配色: '+['vivid','AI極彩','clay'][palette];};
+const rates={遅:0.6,中:0.8,速:1.0};let rk='速';
+rt.onclick=()=>{const k=Object.keys(rates);rk=k[(k.indexOf(rk)+1)%k.length];rate=rates[rk];rt.textContent='速度: '+rk;};
+rs.onclick=()=>{frame=0;};
+</script>
+</body>
+</html>

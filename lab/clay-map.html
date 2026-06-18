@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>clay map — ずっと生成され続ける粘土地図</title>
+<style>
+  html,body{margin:0;height:100%;background:#0a0a0a;overflow:hidden;font-family:ui-monospace,"Space Mono",monospace}
+  #c{display:block;width:100vw;height:100vh}
+  .hud{position:fixed;left:14px;bottom:12px;color:rgba(0,0,0,.5);font-size:11px;letter-spacing:.04em;
+       mix-blend-mode:hard-light;pointer-events:none;line-height:1.6;text-shadow:0 1px 0 rgba(255,255,255,.3)}
+  .bar{position:fixed;right:14px;bottom:12px;display:flex;gap:6px;align-items:center}
+  .bar button{font:11px/1 ui-monospace,monospace;color:#222;background:rgba(255,255,255,.7);
+    border:1px solid rgba(0,0,0,.2);border-radius:5px;padding:7px 11px;cursor:pointer}
+  .bar button:hover{background:#fff}
+  .loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#888;font-size:13px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="loading" id="loading">地図タイル読み込み中…</div>
+<div class="hud">clay map · 琵琶湖 (OSM/CARTO) · ドラッグで光 · クリックで再生成</div>
+<div class="bar">
+  <button id="gen">生成: 中</button>
+  <button id="relief">凹凸: 中</button>
+  <button id="speed">24fps</button>
+</div>
+<script>
+const cv=document.getElementById('c');
+const gl=cv.getContext('webgl2',{antialias:false});
+const hasFloat=gl.getExtension('EXT_color_buffer_float');
+const ST_TYPE=hasFloat?gl.HALF_FLOAT:gl.UNSIGNED_BYTE, ST_IFMT=hasFloat?gl.RGBA16F:gl.RGBA8;
+
+/* ===== ラベル無しCARTOタイル 3x3・琵琶湖 z11（CORS可） ===== */
+const Z=11,X0=1796,Y0=810,N=3,TS=256;
+function loadTiles(){
+  const cnv=document.createElement('canvas'); cnv.width=cnv.height=N*TS; const ctx=cnv.getContext('2d');
+  const subs=['a','b','c'], jobs=[];
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++) jobs.push(new Promise(res=>{
+    const img=new Image(); img.crossOrigin='anonymous';
+    img.onload=()=>{ctx.drawImage(img,i*TS,j*TS);res(true);}; img.onerror=()=>res(false);
+    img.src=`https://${subs[(i+j)%3]}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/${Z}/${X0+i}/${Y0+j}.png`;
+  }));
+  return Promise.all(jobs).then(r=>({cnv,ok:r.some(Boolean)}));
+}
+function fallbackMap(){
+  const cnv=document.createElement('canvas'); cnv.width=cnv.height=512; const ctx=cnv.getContext('2d');
+  const im=ctx.createImageData(512,512), d=im.data;
+  const nn=(x,y)=>{let v=0,a=.5,fx=x,fy=y;for(let o=0;o<5;o++){v+=a*(Math.sin(fx*0.7)*Math.cos(fy*0.9)*.5+.5);fx*=2;fy*=2;a*=.5;}return v;};
+  for(let y=0;y<512;y++)for(let x=0;x<512;x++){const h=nn(x*0.02,y*0.02),i=(y*512+x)*4,land=h>0.5;
+    d[i]=land?245:120;d[i+1]=land?238:170;d[i+2]=land?220:215;d[i+3]=255;}
+  ctx.putImageData(im,0,0); return cnv;
+}
+
+const VERT=`#version 300 es
+const vec2 V[3]=vec2[3](vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));
+out vec2 vUv; void main(){vec2 p=V[gl_VertexID];vUv=p*0.5+0.5;gl_Position=vec4(p,0.,1.);}`;
+
+const NOISE=`
+float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+  float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));
+  return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}
+float fbm(vec2 p){float v=0.,a=.5;mat2 m=mat2(1.6,1.2,-1.2,1.6);
+  for(int i=0;i<4;i++){v+=a*vnoise(p);p=m*p;a*=.5;}return v;}
+vec2 curl(vec2 p){float e=.01;
+  float n1=fbm(p+vec2(0,e)),n2=fbm(p-vec2(0,e)),n3=fbm(p+vec2(e,0)),n4=fbm(p-vec2(e,0));
+  return vec2(n1-n2,-(n3-n4))/(2.*e);}`;
+
+/* ===== SIM: 地図から「高さ場（水/陸）」を取り出してフィードバック生成 =====
+   色は使わず高さだけ持つので白飛びしない。時間は単調＝ループしない ===== */
+const SIM=`#version 300 es
+precision highp float;
+${NOISE}
+uniform sampler2D uState,uMap; uniform float uTime,uAspect,uGen; uniform int uFrame;
+in vec2 vUv; out vec4 o;
+vec2 mapUV(vec2 uv){vec2 p=(uv-0.5);p.x*=uAspect;return clamp(p*0.42+0.5,0.001,0.999);}
+float targetHeight(vec2 uv){
+  vec3 m=texture(uMap,mapUV(uv)).rgb;
+  float blue=m.b-0.5*(m.r+m.g);             // 水は青め
+  float water=smoothstep(0.0,0.06,blue);
+  float green=m.g-0.5*(m.r+m.b);            // 公園・緑
+  float h=mix(0.64,0.20,water);             // 陸0.64 / 水0.20
+  h+=green*0.5;                              // 緑地は少し盛る
+  h+=(fbm(uv*5.0+uTime*0.05)-0.5)*0.10;      // 有機的な凹凸＝生成感
+  return clamp(h,0.,1.);
+}
+void main(){
+  vec2 fl = curl(vUv*2.2 + uTime*0.05)*(0.0045*uGen) + curl(vUv*5.5 - uTime*0.075)*(0.0018*uGen);
+  float prev = texture(uState, vUv+fl).r;
+  vec2 mw = vUv + curl(vUv*3.0 + uTime*0.022)*0.013;
+  float h = targetHeight(mw);
+  float gen = fbm(vUv*2.6 + vec2(uTime*0.13,uTime*0.10));   // 動く再生成パッチ
+  float k = mix(0.03,0.14, smoothstep(0.45,0.72,gen))*uGen;
+  float next = mix(prev, h, clamp(k,0.,0.5));
+  next += (fbm(vUv*9.0+uTime*0.22)-0.5)*0.012;              // 微細churn
+  if(uFrame<3) next=h;
+  o=vec4(vec3(clamp(next,0.,1.)),1.);
+}`;
+
+/* ===== DISPLAY: 高さ場→クレイ配色（青い湖＋クリームの陸）＋やわらか陰影 ===== */
+const DISP=`#version 300 es
+precision highp float;
+uniform sampler2D uState; uniform vec2 uRes; uniform float uTime,uRelief; uniform vec2 uLight;
+in vec2 vUv; out vec4 o;
+float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+float S(vec2 uv){return texture(uState,clamp(uv,0.001,0.999)).r;}
+vec3 clayPalette(float f){
+  vec3 deep=vec3(0.36,0.56,0.72);   // 深い水
+  vec3 water=vec3(0.55,0.74,0.84);  // 浅い水
+  vec3 shore=vec3(0.83,0.86,0.80);  // 渚
+  vec3 land=vec3(0.95,0.90,0.77);   // クリームの陸
+  vec3 high=vec3(0.86,0.74,0.58);   // 高地（茶）
+  if(f<0.32) return mix(deep,water,f/0.32);
+  if(f<0.42) return mix(water,shore,(f-0.32)/0.10);
+  return mix(land,high,smoothstep(0.5,0.85,f));
+}
+void main(){
+  float f=S(vUv);
+  vec2 e=vec2(1.5/uRes.y);
+  float hL=S(vUv-vec2(e.x,0)),hR=S(vUv+vec2(e.x,0));
+  float hD=S(vUv-vec2(0,e.x)),hU=S(vUv+vec2(0,e.x));
+  vec3 nrm=normalize(vec3((hL-hR)*uRelief*4.0,(hD-hU)*uRelief*4.0,1.0));
+  vec3 ldir=normalize(vec3(uLight,0.8));
+  float diff=clamp(dot(nrm,ldir)*0.5+0.5,0.,1.);
+  vec3 col=clayPalette(f);
+  col*=(0.6+0.65*diff);                  // 粘土の陰影
+  col=floor(col*10.0+0.5)/10.0;          // ゆるいポスタライズ
+  col+=(hash(vUv*uRes+uTime)-0.5)*0.03;  // 粒状
+  float vg=smoothstep(1.35,0.45,length((vUv-0.5)*vec2(uRes.x/uRes.y,1.0)));
+  col*=mix(0.92,1.0,vg);
+  o=vec4(clamp(col,0.,1.),1.);
+}`;
+
+function sh(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
+  if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(o),s);return o;}
+function prog(f){const p=gl.createProgram();gl.attachShader(p,sh(gl.VERTEX_SHADER,VERT));
+  gl.attachShader(p,sh(gl.FRAGMENT_SHADER,f));gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))console.error(gl.getProgramInfoLog(p));return p;}
+const simP=prog(SIM),dispP=prog(DISP);
+gl.bindVertexArray(gl.createVertexArray());
+
+let mapTex;
+function uploadMap(cnv){mapTex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,mapTex);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,cnv);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);}
+
+let texA,texB,fboA,fboB,simW,simH,swap=false,frame=0;
+function mkTex(w,h){const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,ST_IFMT,w,h,0,gl.RGBA,ST_TYPE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);return t;}
+function mkFbo(t){const f=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,f);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0);return f;}
+function resize(){const dpr=Math.min(devicePixelRatio||1,2);
+  cv.width=Math.floor(innerWidth*dpr);cv.height=Math.floor(innerHeight*dpr);
+  const scale=Math.min(1,760/innerWidth);
+  simW=Math.max(64,Math.floor(innerWidth*scale));simH=Math.max(64,Math.floor(innerHeight*scale));
+  texA=mkTex(simW,simH);texB=mkTex(simW,simH);fboA=mkFbo(texA);fboB=mkFbo(texB);frame=0;}
+addEventListener('resize',resize);resize();
+const getRead=()=>swap?texB:texA, getWriteFbo=()=>swap?fboA:fboB;
+
+let gen=1.0, relief=1.0, fps=24, light=[0.45,0.55];
+const genSteps={弱:0.55,中:1.0,強:1.7}, reliefSteps={弱:0.6,中:1.0,強:1.8};
+let last=0,t0=performance.now();
+function draw(now){
+  requestAnimationFrame(draw);
+  if(!mapTex) return;
+  if(now-last<1000/fps) return; last=now;
+  const time=(now-t0)/1000, aspect=cv.width/cv.height;
+  gl.useProgram(simP); gl.viewport(0,0,simW,simH);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,getWriteFbo());
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,getRead());
+  gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,mapTex);
+  gl.uniform1i(gl.getUniformLocation(simP,'uState'),0);
+  gl.uniform1i(gl.getUniformLocation(simP,'uMap'),1);
+  gl.uniform1f(gl.getUniformLocation(simP,'uTime'),time);
+  gl.uniform1f(gl.getUniformLocation(simP,'uAspect'),aspect);
+  gl.uniform1f(gl.getUniformLocation(simP,'uGen'),gen);
+  gl.uniform1i(gl.getUniformLocation(simP,'uFrame'),frame);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  swap=!swap; frame++;
+  gl.useProgram(dispP); gl.viewport(0,0,cv.width,cv.height);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,getRead());
+  gl.uniform1i(gl.getUniformLocation(dispP,'uState'),0);
+  gl.uniform2f(gl.getUniformLocation(dispP,'uRes'),simW,simH);
+  gl.uniform1f(gl.getUniformLocation(dispP,'uTime'),time);
+  gl.uniform1f(gl.getUniformLocation(dispP,'uRelief'),relief);
+  gl.uniform2f(gl.getUniformLocation(dispP,'uLight'),light[0],light[1]);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+}
+requestAnimationFrame(draw);
+
+loadTiles().then(({cnv,ok})=>{uploadMap(ok?cnv:fallbackMap());document.getElementById('loading').style.display='none';})
+  .catch(()=>{uploadMap(fallbackMap());document.getElementById('loading').style.display='none';});
+
+let dragging=false;
+cv.addEventListener('pointerdown',e=>{dragging=true;moveLight(e);});
+addEventListener('pointermove',e=>{if(dragging)moveLight(e);});
+addEventListener('pointerup',()=>dragging=false);
+function moveLight(e){light=[(e.clientX/innerWidth-0.5)*2,(0.5-e.clientY/innerHeight)*2];}
+cv.addEventListener('click',()=>{frame=0;});
+
+const gn=document.getElementById('gen'),rl=document.getElementById('relief'),sp=document.getElementById('speed');
+let gnk='中',rlk='中';
+gn.onclick=()=>{const k=Object.keys(genSteps);gnk=k[(k.indexOf(gnk)+1)%k.length];gen=genSteps[gnk];gn.textContent='生成: '+gnk;};
+rl.onclick=()=>{const k=Object.keys(reliefSteps);rlk=k[(k.indexOf(rlk)+1)%k.length];relief=reliefSteps[rlk];rl.textContent='凹凸: '+rlk;};
+sp.onclick=()=>{const o=[15,24,30,60];fps=o[(o.indexOf(fps)+1)%o.length];sp.textContent=fps+'fps';};
+</script>
+</body>
+</html>

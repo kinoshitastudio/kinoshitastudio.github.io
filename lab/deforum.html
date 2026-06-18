@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>deforum-ish — 延々と再生成されるドロドロ</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:ui-monospace,"Space Mono",monospace}
+  #c{display:block;width:100vw;height:100vh}
+  .hud{position:fixed;left:14px;bottom:12px;color:rgba(255,255,255,.7);font-size:11px;letter-spacing:.04em;
+       mix-blend-mode:difference;pointer-events:none;line-height:1.6}
+  .bar{position:fixed;right:14px;bottom:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;max-width:70vw}
+  .bar button,.bar label{font:11px/1 ui-monospace,monospace;color:#eee;background:rgba(255,255,255,.1);
+    border:1px solid rgba(255,255,255,.3);border-radius:5px;padding:7px 11px;cursor:pointer}
+  .bar button:hover{background:rgba(255,255,255,.22)}
+  .drop{position:fixed;inset:0;display:none;align-items:center;justify-content:center;color:#fff;font-size:18px;
+    background:rgba(0,0,0,.5);border:3px dashed rgba(255,255,255,.6);z-index:5}
+  .drop.on{display:flex}
+  .err{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#e55;padding:24px;text-align:center}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hud">deforum-ish · 種画像が延々と再生成され続ける · 画像をD&Dで種を差し替え</div>
+<div class="drop" id="drop">画像をドロップ → 種にする</div>
+<div class="bar">
+  <button id="motion">動き: 中</button>
+  <button id="seedw">種の残り: 中</button>
+  <button id="sharp">構造: 中</button>
+  <button id="flick">チラつき: 中</button>
+  <button id="pal">色: そのまま</button>
+  <button id="koma">コマ: 中</button>
+  <button id="seedimg">種絵: ロゴ</button>
+  <button id="reset">リセット</button>
+</div>
+<script>
+const cv=document.getElementById('c');
+const gl=cv.getContext('webgl2',{antialias:false});
+const ext=gl&&gl.getExtension('EXT_color_buffer_float');
+if(!gl){document.body.innerHTML='<div class="err">WebGL2が必要です（Chrome/Safari最新）。</div>';}
+const ST_T=ext?gl.HALF_FLOAT:gl.UNSIGNED_BYTE, ST_I=ext?gl.RGBA16F:gl.RGBA8;
+
+/* デフォルトの種：手続きでカラフルな“何か”を描く（差し替え可能） */
+function defaultSeed(){
+  const s=document.createElement('canvas'); s.width=s.height=640; const x=s.getContext('2d');
+  const g=x.createLinearGradient(0,0,640,640);
+  g.addColorStop(0,'#e8d24a'); g.addColorStop(.4,'#d76a55'); g.addColorStop(.7,'#5b76c8'); g.addColorStop(1,'#2a9d6f');
+  x.fillStyle=g; x.fillRect(0,0,640,640);
+  for(let i=0;i<26;i++){ x.beginPath();
+    x.fillStyle=`hsla(${(i*53)%360},70%,60%,${0.25+Math.random()*0.4})`;
+    x.ellipse(Math.random()*640,Math.random()*640,30+Math.random()*120,20+Math.random()*100,Math.random()*6,0,7); x.fill(); }
+  x.fillStyle='rgba(20,16,10,.85)'; x.font='bold 150px monospace'; x.textAlign='center';
+  x.fillText('KINOSHITA',320,300); x.font='bold 64px monospace'; x.fillText('S T U D I O',320,390);
+  return s;
+}
+function _cv(){const s=document.createElement('canvas');s.width=s.height=640;return [s,s.getContext('2d')];}
+function seedLandscape(){const[s,x]=_cv();
+  const g=x.createLinearGradient(0,0,0,640);g.addColorStop(0,'#fdd06a');g.addColorStop(.45,'#f0876a');g.addColorStop(1,'#5b6ec8');x.fillStyle=g;x.fillRect(0,0,640,640);
+  x.fillStyle='rgba(255,244,200,.95)';x.beginPath();x.arc(430,200,72,0,7);x.fill();
+  x.fillStyle='#3a4a6b';x.beginPath();x.moveTo(0,450);x.lineTo(190,300);x.lineTo(350,450);x.lineTo(500,330);x.lineTo(640,470);x.lineTo(640,640);x.lineTo(0,640);x.closePath();x.fill();
+  x.fillStyle='#2e5d3a';x.fillRect(0,520,640,120);return s;}
+function seedPortrait(){const[s,x]=_cv();
+  x.fillStyle='#26313f';x.fillRect(0,0,640,640);
+  x.fillStyle='#e8c19a';x.beginPath();x.ellipse(320,340,150,200,0,0,7);x.fill();           // 顔
+  x.fillStyle='#3a2a22';x.beginPath();x.ellipse(320,180,170,120,0,Math.PI,0);x.fill();      // 髪
+  x.fillStyle='#2a1c16';x.beginPath();x.ellipse(255,330,26,16,0,0,7);x.ellipse(385,330,26,16,0,0,7);x.fill(); // 目
+  x.strokeStyle='#8a4a3a';x.lineWidth=8;x.beginPath();x.arc(320,430,55,0.2,Math.PI-0.2);x.stroke(); // 口
+  return s;}
+function seedAbstract(){const[s,x]=_cv();
+  const g=x.createLinearGradient(0,0,640,640);g.addColorStop(0,'#7be0c7');g.addColorStop(.5,'#e2c84a');g.addColorStop(1,'#d2557a');x.fillStyle=g;x.fillRect(0,0,640,640);
+  for(let i=0;i<32;i++){x.beginPath();x.fillStyle=`hsla(${(i*47)%360},75%,60%,${0.3+Math.random()*0.4})`;
+    x.ellipse(Math.random()*640,Math.random()*640,30+Math.random()*130,25+Math.random()*110,Math.random()*6,0,7);x.fill();}
+  return s;}
+function seedCity(){const[s,x]=_cv();
+  const g=x.createLinearGradient(0,0,0,640);g.addColorStop(0,'#2a2350');g.addColorStop(.6,'#c85a7a');g.addColorStop(1,'#f0a85a');x.fillStyle=g;x.fillRect(0,0,640,640);
+  x.fillStyle='rgba(255,230,160,.9)';x.beginPath();x.arc(150,160,55,0,7);x.fill();
+  x.fillStyle='#1a1530';for(let i=0;i<14;i++){const w=30+Math.random()*40,h=120+Math.random()*300;x.fillRect(i*46,640-h,w,h);
+    x.fillStyle='rgba(255,220,120,.5)';for(let wy=640-h+12;wy<632;wy+=22)for(let wx=i*46+6;wx<i*46+w-6;wx+=14)if(Math.random()>.4)x.fillRect(wx,wy,5,8);x.fillStyle='#1a1530';}
+  return s;}
+const SEEDS={ロゴ:defaultSeed,風景:seedLandscape,人物:seedPortrait,抽象:seedAbstract,街:seedCity};
+
+const VERT=`#version 300 es
+const vec2 V[3]=vec2[3](vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));
+out vec2 vUv;void main(){vec2 p=V[gl_VertexID];vUv=p*0.5+0.5;gl_Position=vec4(p,0.,1.);}`;
+
+const NOISE=`
+float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+  float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));
+  return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}
+float fbm(vec2 p){float v=0.,a=.5;mat2 m=mat2(1.6,1.2,-1.2,1.6);
+  for(int i=0;i<4;i++){v+=a*vnoise(p);p=m*p;a*=.5;}return v;}
+vec2 curl(vec2 p){float e=.01;
+  float n1=fbm(p+vec2(0,e)),n2=fbm(p-vec2(0,e)),n3=fbm(p+vec2(e,0)),n4=fbm(p-vec2(e,0));
+  return vec2(n1-n2,-(n3-n4))/(2.*e);}
+/* 3Dノイズ：時間を奥行きにして“その場で沸く”（左右ドリフトが出ない） */
+float hash3(vec3 p){p=fract(p*0.3183099+0.1);p*=17.0;return fract(p.x*p.y*p.z*(p.x+p.y+p.z));}
+float vnoise3(vec3 p){vec3 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+  return mix(mix(mix(hash3(i+vec3(0,0,0)),hash3(i+vec3(1,0,0)),f.x),mix(hash3(i+vec3(0,1,0)),hash3(i+vec3(1,1,0)),f.x),f.y),
+             mix(mix(hash3(i+vec3(0,0,1)),hash3(i+vec3(1,0,1)),f.x),mix(hash3(i+vec3(0,1,1)),hash3(i+vec3(1,1,1)),f.x),f.y),f.z);}
+float fbm3(vec3 p){float v=0.,a=.5;for(int i=0;i<4;i++){v+=a*vnoise3(p);p*=2.0;a*=.5;}return v;}
+vec2 curlZ(vec2 p,float z){float e=.01;
+  float n1=fbm3(vec3(p+vec2(0,e),z)),n2=fbm3(vec3(p-vec2(0,e),z)),n3=fbm3(vec3(p+vec2(e,0),z)),n4=fbm3(vec3(p-vec2(e,0),z));
+  return vec2(n1-n2,-(n3-n4))/(2.*e);}`;
+
+/* === img2img ループバック：ズーム＋歪み＋種再注入＋擬似デノイズ＋フリッカー === */
+const SIM=`#version 300 es
+precision highp float;
+${NOISE}
+uniform sampler2D uState,uSeed; uniform vec2 uRes; uniform float uTime,uMotion,uSeedW,uSharp,uFlick; uniform int uFrame;
+in vec2 vUv; out vec4 o;
+void main(){
+  if(uFrame<2){ o=vec4(texture(uSeed,vUv).rgb,1.); return; }
+  vec2 t=1.0/uRes;
+  // ズーム/回転/ドリフトなし：その場で沸いて溶けるだけ（時間=奥行きの3Dノイズ）
+  vec2 uv2=vUv + curlZ(vUv*3.0, uTime*0.18)*(0.007*uMotion)
+              + curlZ(vUv*6.5, uTime*0.25+12.0)*(0.0025*uMotion);
+  vec3 prev=texture(uState,uv2).rgb;
+  // 近傍平均（拡散）で白黒リップル/モアレ（フィードバックの渦中心）を溶かす
+  vec3 blurP=(texture(uState,uv2+vec2(t.x,0)).rgb+texture(uState,uv2-vec2(t.x,0)).rgb
+             +texture(uState,uv2+vec2(0,t.y)).rgb+texture(uState,uv2-vec2(0,t.y)).rgb
+             +texture(uState,uv2+t).rgb+texture(uState,uv2-t).rgb)*0.16667;
+  prev=mix(prev, blurP, 0.24);
+  // 種画像を部分再注入（img2imgの“denoise強度”相当・パッチ状）
+  vec3 seed=texture(uSeed,vUv).rgb;
+  float reinj=(0.03+0.06*fbm3(vec3(vUv*2.2, uTime*0.10)))*uSeedW;
+  vec3 base=mix(prev,seed,clamp(reinj,0.,0.6));
+  // 構造ノイズ注入（控えめ）
+  base+=(fbm3(vec3(vUv*7.0, uTime*0.30))-0.5)*0.035;
+  // 構造はごく軽く（リップルを増やさない程度）
+  base+=(base-blurP)*(0.22*uSharp);
+  // フリッカー（毎フレームの微妙なコントラスト揺れ＝初期SDのチラつき）
+  float fl=1.0+(hash(vec2(float(uFrame),uTime))-0.5)*0.06*uFlick;
+  base=(base-0.5)*fl+0.5;
+  o=vec4(clamp(base,0.,1.),1.);
+}`;
+
+const DISP=`#version 300 es
+precision highp float;
+uniform sampler2D uState; uniform vec2 uRes; uniform float uTime,uPal;
+in vec2 vUv; out vec4 o;
+float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+void main(){
+  vec3 c=texture(uState,vUv).rgb;
+  if(uPal>0.5){ // 昔のAIっぽい濁り：彩度持ち上げ＋軽いポスタライズ
+    float l=dot(c,vec3(.299,.587,.114));
+    c=mix(vec3(l),c,1.35);
+    c=floor(c*16.0+0.5)/16.0;
+  }
+  c+=(hash(vUv*uRes+uTime)-0.5)*0.035; // グレイン
+  o=vec4(clamp(c,0.,1.),1.);
+}`;
+
+function sh(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
+  if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(o),s);return o;}
+function prog(f){const p=gl.createProgram();gl.attachShader(p,sh(gl.VERTEX_SHADER,VERT));
+  gl.attachShader(p,sh(gl.FRAGMENT_SHADER,f));gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))console.error(gl.getProgramInfoLog(p));return p;}
+const simP=prog(SIM),dispP=prog(DISP);
+gl.bindVertexArray(gl.createVertexArray());
+
+let seedTex;
+function uploadSeed(src){ if(!seedTex)seedTex=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,seedTex); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,src);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.MIRRORED_REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.MIRRORED_REPEAT);
+  frame=0; }
+
+let texA,texB,fboA,fboB,simW,simH,swap=false,frame=0;
+function mkTex(w,h){const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,ST_I,w,h,0,gl.RGBA,ST_T,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.MIRRORED_REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.MIRRORED_REPEAT);return t;}
+function mkFbo(t){const f=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,f);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0);return f;}
+function resize(){const dpr=Math.min(devicePixelRatio||1,2);
+  cv.width=Math.floor(innerWidth*dpr);cv.height=Math.floor(innerHeight*dpr);
+  const scale=Math.min(1,720/innerWidth);
+  simW=Math.max(64,Math.floor(innerWidth*scale));simH=Math.max(64,Math.floor(innerHeight*scale));
+  texA=mkTex(simW,simH);texB=mkTex(simW,simH);fboA=mkFbo(texA);fboB=mkFbo(texB);frame=0;}
+addEventListener('resize',resize);resize();
+const getRead=()=>swap?texB:texA,getWriteFbo=()=>swap?fboA:fboB;
+
+let motion=1.0,seedW=1.0,sharp=1.0,flick=1.0,pal=0,last=0;
+let simTime=0, stepDelta=0.06, stepHz=14;  // コマ送り：1フレームで時間をstepDelta進める（大きいほどカクカク）
+function draw(now){
+  requestAnimationFrame(draw);
+  if(!seedTex)return;
+  if(now-last<1000/stepHz)return;last=now;
+  simTime+=stepDelta;
+  const time=simTime;
+  gl.useProgram(simP);gl.viewport(0,0,simW,simH);gl.bindFramebuffer(gl.FRAMEBUFFER,getWriteFbo());
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,getRead());
+  gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,seedTex);
+  gl.uniform1i(gl.getUniformLocation(simP,'uState'),0);gl.uniform1i(gl.getUniformLocation(simP,'uSeed'),1);
+  gl.uniform2f(gl.getUniformLocation(simP,'uRes'),simW,simH);
+  gl.uniform1f(gl.getUniformLocation(simP,'uTime'),time);
+  gl.uniform1f(gl.getUniformLocation(simP,'uMotion'),motion);gl.uniform1f(gl.getUniformLocation(simP,'uSeedW'),seedW);
+  gl.uniform1f(gl.getUniformLocation(simP,'uSharp'),sharp);gl.uniform1f(gl.getUniformLocation(simP,'uFlick'),flick);
+  gl.uniform1i(gl.getUniformLocation(simP,'uFrame'),frame);
+  gl.drawArrays(gl.TRIANGLES,0,3);swap=!swap;frame++;
+  gl.useProgram(dispP);gl.viewport(0,0,cv.width,cv.height);gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,getRead());
+  gl.uniform1i(gl.getUniformLocation(dispP,'uState'),0);
+  gl.uniform2f(gl.getUniformLocation(dispP,'uRes'),simW,simH);
+  gl.uniform1f(gl.getUniformLocation(dispP,'uTime'),time);gl.uniform1f(gl.getUniformLocation(dispP,'uPal'),pal);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+}
+requestAnimationFrame(draw);
+uploadSeed(defaultSeed());
+
+/* D&Dで種を差し替え */
+const drop=document.getElementById('drop');
+addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('on');});
+addEventListener('dragleave',e=>{if(e.clientX===0&&e.clientY===0)drop.classList.remove('on');});
+addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('on');
+  const f=e.dataTransfer.files[0]; if(!f)return; const img=new Image();
+  img.onload=()=>uploadSeed(img); img.src=URL.createObjectURL(f);});
+
+const cyc=(id,steps,set,label,startK)=>{const btn=document.getElementById(id);let k=startK;set(steps[k]);btn.textContent=label+': '+k;
+  btn.onclick=()=>{const ks=Object.keys(steps);k=ks[(ks.indexOf(k)+1)%ks.length];set(steps[k]);btn.textContent=label+': '+k;};};
+cyc('motion',{弱:0.5,中:1.0,強:2.0},v=>motion=v,'動き','弱');
+cyc('seedw',{薄:0.4,中:1.0,濃:1.8},v=>seedW=v,'種の残り','中');
+cyc('sharp',{弱:0.5,中:1.0,強:1.8},v=>sharp=v,'構造','弱');
+cyc('flick',{無:0.0,中:1.0,激:2.5},v=>flick=v,'チラつき','無');
+pal=1; document.getElementById('pal').textContent='色: AI濁り';
+document.getElementById('pal').onclick=e=>{pal=pal?0:1;e.target.textContent='色: '+(pal?'AI濁り':'そのまま');};
+const KOMA={なめらか:[30,0.03],中:[14,0.06],カクカク:[8,0.13],極:[5,0.22]};
+let komaK='中';
+document.getElementById('koma').onclick=()=>{const ks=Object.keys(KOMA);komaK=ks[(ks.indexOf(komaK)+1)%ks.length];[stepHz,stepDelta]=KOMA[komaK];document.getElementById('koma').textContent='コマ: '+komaK;};
+let seedK='ロゴ';
+document.getElementById('seedimg').onclick=()=>{const ks=Object.keys(SEEDS);seedK=ks[(ks.indexOf(seedK)+1)%ks.length];
+  uploadSeed(SEEDS[seedK]());document.getElementById('seedimg').textContent='種絵: '+seedK;};
+document.getElementById('reset').onclick=()=>{frame=0;};
+</script>
+</body>
+</html>
