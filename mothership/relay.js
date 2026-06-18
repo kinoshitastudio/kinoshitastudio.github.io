@@ -39,7 +39,19 @@ http.createServer((req, res) => {
     return;
   }
 
-  res.end("Mothership relay · GET /pull · POST /push");
+  // 静的配信（library.html / library/*.json など）。/ は library.html
+  const safe = decodeURIComponent(u.pathname).replace(/\.\.+/g, "");
+  const fp = path.join(__dirname, safe === "/" ? "library.html" : safe);
+  fs.readFile(fp, (err, data) => {
+    if (err) { res.writeHead(404); res.end("not found"); return; }
+    const ext = path.extname(fp).toLowerCase();
+    const ct = ext === ".html" ? "text/html; charset=utf-8"
+      : ext === ".json" ? "application/json; charset=utf-8"
+      : ext === ".js" ? "text/javascript" : ext === ".css" ? "text/css"
+      : ext === ".svg" ? "image/svg+xml" : "application/octet-stream";
+    res.setHeader("Content-Type", ct);
+    res.end(data);
+  });
 }).listen(PORT, () => {
   console.log("▲ Mothership relay  →  http://localhost:" + PORT);
   console.log("  watching : " + FILE);
