@@ -1,0 +1,1352 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>KODY Typography — Directional Poster Editor · kinoshita studio</title>
+<meta name="description" content="マウスで方向を決めながら、キーを打つたびに文字が流れる実験的なポスター・エディタ。日本語・画像コラージュ対応。" />
+<meta name="author"      content="kinoshita studio" />
+<meta name="theme-color" content="#fafaf8" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#0f0f0f" media="(prefers-color-scheme: dark)" />
+
+<!-- Favicons -->
+<link rel="icon"             type="image/svg+xml" href="./favicon.svg" />
+<link rel="mask-icon"        href="./favicon.svg" color="#0f0f0f" />
+<link rel="apple-touch-icon" href="./apple-touch-icon.svg" />
+
+<!-- Open Graph -->
+<meta property="og:type"            content="website" />
+<meta property="og:site_name"       content="kinoshita studio" />
+<meta property="og:title"           content="KODY Typography — Directional Poster Editor" />
+<meta property="og:description"     content="マウスで方向を決めながら、キーを打つたびに文字が走る。日本語と画像を混ぜ合わせる、実験的なポスター・エディタ。" />
+<meta property="og:image"           content="./og-image.svg" />
+<meta property="og:image:type"      content="image/svg+xml" />
+<meta property="og:image:width"     content="1200" />
+<meta property="og:image:height"    content="630" />
+<meta property="og:image:alt"       content="KODY Typography" />
+<meta property="og:locale"          content="ja_JP" />
+
+<!-- Twitter / X -->
+<meta name="twitter:card"        content="summary_large_image" />
+<meta name="twitter:title"       content="KODY Typography" />
+<meta name="twitter:description" content="方向性タイピングによる実験的ポスター・エディタ。kinoshita studio" />
+<meta name="twitter:image"       content="./og-image.svg" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@700&family=Noto+Sans+JP:wght@500;900&display=swap" rel="stylesheet">
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<style>
+  html, body, #root { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+  body {
+    background: #000;
+    color: #fff;
+    font-family: 'Space Mono', ui-monospace, monospace;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    caret-color: transparent;
+  }
+  *:focus { outline: none !important; }
+  .edge-band {
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    line-height: 1.6;
+  }
+  @keyframes kodyBubblePop {
+    0%   { opacity: 0; transform: translateY(8px) scale(0.88); }
+    60%  { opacity: 1; transform: translateY(-2px) scale(1.04); }
+    100% { opacity: 1; transform: translateY(0)    scale(1); }
+  }
+  @keyframes kodyWobble {
+    0%, 100% { transform: translateY(0)   rotate(0deg); }
+    25%      { transform: translateY(-2px) rotate(-1.5deg); }
+    50%      { transform: translateY(0)   rotate(0deg); }
+    75%      { transform: translateY(-2px) rotate(1.5deg); }
+  }
+  .ime-sink {
+    /* iOS: オフスクリーン配置だと仮想キーボードが出ないことがあるので
+       画面内に置き、見た目だけ透明化。font-size:16pxはiOSのフォーカスズーム回避。 */
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+    font-size: 16px;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: transparent;
+    caret-color: transparent;
+  }
+</style>
+
+<script type="importmap">
+{
+  "imports": {
+    "react":            "https://esm.sh/react@18.3.1",
+    "react-dom":        "https://esm.sh/react-dom@18.3.1?external=react",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?external=react",
+    "lucide-react":     "https://esm.sh/lucide-react@0.441.0?external=react"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel" data-type="module" data-presets="react">
+// ═══════════════════════════════════════════════════════════════════════════
+// KODY Typography — Directional Typing Poster Editor
+//
+// Philosophy:
+//   マウスは方向を与え、キーは文字を与える。
+//   文字は走り、画像は静かに重なり、差分が予期せぬ視覚を生む。
+//   KODY は右下で目をぎょろぎょろさせ、近づいてきたレイヤーを食べる。
+//
+// Core interaction:
+//   1. click a spot on the canvas     — sets the start point
+//   2. move the mouse                  — decides the heading (angle)
+//   3. type any key                    — drops one glyph at the walker,
+//                                        then the walker advances in the
+//                                        current heading
+//   4. keep moving + typing            — glyphs flow along whatever path
+//                                        the pointer traces
+//   5. press Enter                     — freeze this run as a layer
+//
+// Hackable points (surfaced at the top):
+//   · FONT_FAMILY, FONT_WEIGHT        — typographic voice
+//   · DEFAULT_FONT_SIZE               — initial glyph size
+//   · IMG_FILTER                      — the monochrome pipeline
+//   · exportPNG                       — offscreen canvas flatten
+// ═══════════════════════════════════════════════════════════════════════════
+
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { createRoot } from 'react-dom/client';
+import { Minus } from 'lucide-react';
+
+const FONT_FAMILY       = "'Noto Sans JP', 'Hiragino Kaku Gothic ProN', sans-serif";
+const FONT_WEIGHT       = 900;
+const DEFAULT_FONT_SIZE = 30;
+const FONT_MIN          = 10;
+const FONT_MAX          = 320;
+const FONT_STEP         = 4;
+const IMG_FILTER        = 'grayscale(100%) contrast(1.55) brightness(1.02)';
+
+let _id = 0;
+const genId = () => `l${++_id}_${Date.now().toString(36)}`;
+
+// ── KODY character — pixel-art cube, lives in the bottom-right corner ────
+const KODY_SIZE         = 96;
+const KODY_MARGIN       = 22;
+const KODY_EAT_RADIUS   = 78;   // how close a released layer must be to be eaten
+const KODY_HOVER_RADIUS = 110;  // how close the cursor counts as "looking at him"
+function getKodyCenter() {
+  return {
+    x: window.innerWidth  - KODY_MARGIN - KODY_SIZE / 2,
+    y: window.innerHeight - KODY_MARGIN - KODY_SIZE / 2,
+  };
+}
+
+// ぶっきらぼうな一言。hover 中にローテーションで出てくる
+const KODY_QUIPS = [
+  '何？',      'うん？',   '…',        '用？',        'やめろ',
+  'ほう',      '触るな',   'ふん',      'で？',        '見るな',
+  'はあ',      'めんどくさ','なに見てんだ','離せ',     '話しかけるな',
+  'あっち行け','いちいち','放っておけ','んー',        'ちょっと',
+  'えっ',      'ぐぬぬ',   '寝てた',   '忙しい',      'ぼさっとすんな',
+];
+
+// 自発的に切り替わる"素"の気分
+const KODY_ACTIVE_POOL = ['googly','googly','googly','happy','worried','sleepy'];
+const isActiveMood = (s) => s==='googly'||s==='happy'||s==='worried'||s==='sleepy';
+
+// shared offscreen canvas for measuring character widths
+const _measure = document.createElement('canvas').getContext('2d');
+function measureChar(ch, fontSize) {
+  _measure.font = `${FONT_WEIGHT} ${fontSize}px ${FONT_FAMILY}`;
+  const w = _measure.measureText(ch).width;
+  return w > 0 ? w : fontSize;
+}
+
+// ── walker position = where the next glyph will be placed
+function getWalker(typing) {
+  if (!typing) return { x: 0, y: 0 };
+  const { startPt, chars } = typing;
+  if (chars.length === 0) return { x: startPt.x, y: startPt.y };
+  const last = chars[chars.length - 1];
+  return {
+    x: last.pos.x + last.advance * Math.cos(last.angle),
+    y: last.pos.y + last.advance * Math.sin(last.angle),
+  };
+}
+
+function App() {
+  const [layers,   setLayers]   = useState([]);    // committed layers
+  const [typing,   setTyping]   = useState(null);  // { startPt, chars:[{ch,pos,angle,advance,fontSize}] }
+  const [hoverPt,  setHoverPt]  = useState({ x: 0, y: 0 });
+  const [fontSize, setFontSize] = useState(DEFAULT_FONT_SIZE);
+  const [inverted, setInverted] = useState(true);   // default bg = white
+  const [selected, setSelected] = useState(null);  // image layer id
+  const [drag,     setDrag]     = useState(null);
+  const [dropHint, setDropHint] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(true);
+  // モバイル判定（初期のみ）— 実機のリサイズ検出は window resize で対応
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches
+  );
+  // 操作ガイドの表示 — デスクトップは default open、モバイルは default closed
+  const [controlsOpen, setControlsOpen] = useState(() =>
+    !(typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches)
+  );
+
+  // KODY
+  // default 'googly' so auto-rotate + hover work from the first render
+  const [kodyState,  setKodyState]  = useState('googly');  // googly | happy | worried | sleepy | annoyed | greeting | hungry | eating
+  const [kodyBubble, setKodyBubble] = useState('');
+  const [eatingId,   setEatingId]   = useState(null);
+  const greetedRef = useRef(false);
+
+  const imeRef    = useRef(null);
+  const composingRef = useRef(false);
+  const typingRef = useRef(null); typingRef.current = typing;
+  const hoverRef  = useRef({x:0,y:0}); hoverRef.current = hoverPt;
+  const sizeRef   = useRef(fontSize); sizeRef.current = fontSize;
+
+  const fg = inverted ? '#000000' : '#FFFFFF';
+  const bg = inverted ? '#FFFFFF' : '#000000';
+  const walker = typing ? getWalker(typing) : null;
+
+  // ── hit-test the topmost image under a pt ───────────────────────────────
+  const hitImage = useCallback((pt) => {
+    for (let i = layers.length - 1; i >= 0; i--) {
+      const L = layers[i];
+      if (L.kind !== 'image') continue;
+      if (pt.x >= L.x && pt.x <= L.x + L.w &&
+          pt.y >= L.y && pt.y <= L.y + L.h) return L;
+    }
+    return null;
+  }, [layers]);
+
+  // ── tight bbox of a text layer (each glyph's rotated rectangle, unioned)
+  const textLayerBBox = (chars) => {
+    if (!chars || chars.length === 0) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const c of chars) {
+      const hh = c.fontSize * 0.5;
+      const ca = Math.cos(c.angle), sa = Math.sin(c.angle);
+      const corners = [[0,-hh],[c.advance,-hh],[c.advance,hh],[0,hh]];
+      for (const [lx, ly] of corners) {
+        const x = c.pos.x + lx * ca - ly * sa;
+        const y = c.pos.y + lx * sa + ly * ca;
+        if (x < minX) minX = x; if (y < minY) minY = y;
+        if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+      }
+    }
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  };
+
+  // ── hit-test the topmost text layer under a pt ──────────────────────────
+  const hitText = useCallback((pt) => {
+    for (let i = layers.length - 1; i >= 0; i--) {
+      const L = layers[i];
+      if (L.kind !== 'text') continue;
+      const bb = textLayerBBox(L.chars);
+      if (!bb) continue;
+      const pad = 6;
+      if (pt.x >= bb.x - pad && pt.x <= bb.x + bb.w + pad &&
+          pt.y >= bb.y - pad && pt.y <= bb.y + bb.h + pad) return L;
+    }
+    return null;
+  }, [layers]);
+
+  // ── commit current typing as a layer (if any chars) ────────────────────
+  const commitTyping = useCallback(() => {
+    const t = typingRef.current;
+    if (t && t.chars.length > 0) {
+      setLayers(ls => [...ls, { id: genId(), kind: 'text', chars: t.chars }]);
+    }
+    setTyping(null);
+  }, []);
+
+  // ── add one glyph at the walker and advance ────────────────────────────
+  const addChar = useCallback((ch) => {
+    setTyping(t => {
+      if (!t) return t;
+      const w = getWalker(t);
+      const angle = Math.atan2(hoverRef.current.y - w.y, hoverRef.current.x - w.x);
+      const fs    = sizeRef.current;
+      const advance = measureChar(ch, fs);
+      const nc = { ch, pos: { x: w.x, y: w.y }, angle, advance, fontSize: fs };
+      return { ...t, chars: [...t.chars, nc] };
+    });
+  }, []);
+
+  // ── mouse: start typing / drag images ──────────────────────────────────
+  const isNearKody = (pt) => {
+    if (!pt) return false;
+    const c = getKodyCenter();
+    return Math.hypot(pt.x - c.x, pt.y - c.y) <= KODY_EAT_RADIUS;
+  };
+
+  const onCanvasMouseDown = (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest('.help-card')) return;
+    if (e.target.closest('.edge-band'))  return;
+    if (e.target.closest('.kody'))       return;   // KODY is a dead zone
+
+    // first click only dismisses the help overlay — doesn't start typing
+    if (helpOpen) { setHelpOpen(false); return; }
+
+    const pt = { x: e.clientX, y: e.clientY };
+    if (isNearKody(pt)) return;   // don't start typing inside KODY's bite zone
+
+    // 1. image (topmost)
+    const img = hitImage(pt);
+    if (img) {
+      if (e.target.dataset && e.target.dataset.handle === 'resize') return;
+      setSelected(img.id);
+      setDrag({ kind: 'move', id: img.id, startPt: pt, original: { ...img } });
+      return;
+    }
+
+    // 2. committed text layer → select & drag
+    const txt = hitText(pt);
+    if (txt) {
+      setSelected(txt.id);
+      setDrag({
+        kind: 'move', id: txt.id, startPt: pt,
+        originalChars: txt.chars.map(c => ({ ...c, pos: { ...c.pos } })),
+      });
+      return;
+    }
+
+    // 3. empty area — commit prior run, open a new one
+    setSelected(null);
+    if (typing && typing.chars.length > 0) {
+      setLayers(ls => [...ls, { id: genId(), kind: 'text', chars: typing.chars }]);
+    }
+    setTyping({ startPt: pt, chars: [] });
+    // focus the hidden IME sink so keystrokes + composition reach us
+    if (imeRef.current) imeRef.current.focus();
+  };
+
+  const onCanvasMouseMove = (e) => {
+    setHoverPt({ x: e.clientX, y: e.clientY });
+    if (!drag) return;
+    const dx = e.clientX - drag.startPt.x;
+    const dy = e.clientY - drag.startPt.y;
+    setLayers(ls => ls.map(l => {
+      if (l.id !== drag.id) return l;
+      if (drag.kind === 'move') {
+        if (l.kind === 'image' && drag.original) {
+          return { ...l, x: drag.original.x + dx, y: drag.original.y + dy };
+        }
+        if (l.kind === 'text' && drag.originalChars) {
+          return {
+            ...l,
+            chars: drag.originalChars.map(c => ({
+              ...c,
+              pos: { x: c.pos.x + dx, y: c.pos.y + dy },
+            })),
+          };
+        }
+      }
+      if (drag.kind === 'resize' && l.kind === 'image' && drag.original) {
+        const newW = Math.max(24, drag.original.w + dx);
+        const newH = Math.max(24, drag.original.h + dy);
+        return { ...l, w: newW, h: newH };
+      }
+      return l;
+    }));
+  };
+
+  const onCanvasMouseUp = (e) => {
+    // Eating: if a drag is released inside KODY's bite zone → animate + delete
+    if (drag) {
+      const pt = { x: e.clientX, y: e.clientY };
+      if (isNearKody(pt)) {
+        const id = drag.id;
+        setEatingId(id);
+        setKodyState('eating');
+        setDrag(null);
+        setSelected(null);
+        setTimeout(() => {
+          setLayers(ls => ls.filter(l => l.id !== id));
+          setEatingId(null);
+          setKodyState('googly');
+        }, 520);
+        return;
+      }
+    }
+    setDrag(null);
+  };
+
+  // ── Touch 操作 — mouse ハンドラを touches[0] 経由で呼び出す ──
+  const lastTouchRef = useRef(null);
+  const onCanvasTouchStart = (e) => {
+    if (!e.touches || e.touches.length === 0) return;
+    const t = e.touches[0];
+    lastTouchRef.current = { x: t.clientX, y: t.clientY };
+    // mouse event 相当のオブジェクトを合成
+    const synth = {
+      button: 0,
+      clientX: t.clientX, clientY: t.clientY,
+      target: e.target,
+      preventDefault: () => e.preventDefault(),
+      stopPropagation: () => e.stopPropagation(),
+    };
+    onCanvasMouseDown(synth);
+  };
+  const onCanvasTouchMove = (e) => {
+    if (!e.touches || e.touches.length === 0) return;
+    const t = e.touches[0];
+    lastTouchRef.current = { x: t.clientX, y: t.clientY };
+    // ドラッグ中はスクロール抑止
+    if (drag) e.preventDefault();
+    onCanvasMouseMove({
+      clientX: t.clientX, clientY: t.clientY,
+      target: e.target,
+      preventDefault: () => e.preventDefault(),
+    });
+  };
+  const onCanvasTouchEnd = (e) => {
+    // touchend は changedTouches の最初のポイントを使う（touches は空）
+    const t = (e.changedTouches && e.changedTouches[0])
+      || (lastTouchRef.current ? { clientX: lastTouchRef.current.x, clientY: lastTouchRef.current.y } : { clientX: 0, clientY: 0 });
+    onCanvasMouseUp({ clientX: t.clientX, clientY: t.clientY });
+  };
+
+  const startResize = (e, id) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const L = layers.find(l => l.id === id);
+    if (!L) return;
+    setDrag({
+      kind: 'resize', id, startPt: { x: e.clientX, y: e.clientY }, original: { ...L }
+    });
+  };
+
+  // ── drag-drop images ───────────────────────────────────────────────────
+  const onDragOver  = (e) => { e.preventDefault(); setDropHint(true); };
+  const onDragLeave = () => setDropHint(false);
+  const onDrop = (e) => {
+    e.preventDefault();
+    setDropHint(false);
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!file || !file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const i = new Image();
+      i.onload = () => {
+        const maxSide = Math.min(window.innerWidth, window.innerHeight) * 0.5;
+        const ratio = i.width / i.height;
+        const w = ratio >= 1 ? maxSide : maxSide * ratio;
+        const h = ratio >= 1 ? maxSide / ratio : maxSide;
+        setLayers(ls => [...ls, {
+          id: genId(), kind: 'image',
+          src: ev.target.result,
+          x: e.clientX - w/2, y: e.clientY - h/2,
+          w, h,
+        }]);
+      };
+      i.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // ── keyboard ───────────────────────────────────────────────────────────
+  const onKeyDown = useCallback((e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.isComposing || e.keyCode === 229)  return;  // IME in progress
+
+    const t = typingRef.current;
+
+    // Always-on shortcuts — font size: − / + (also accept _ and =)
+    if (e.key === '-' || e.key === '_') { setFontSize(f => Math.max(FONT_MIN, f - FONT_STEP)); e.preventDefault(); return; }
+    if (e.key === '+' || e.key === '=') { setFontSize(f => Math.min(FONT_MAX, f + FONT_STEP)); e.preventDefault(); return; }
+    if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+      setHelpOpen(v => !v); e.preventDefault(); return;
+    }
+    if (e.key === 'Escape') {
+      if (helpOpen) { setHelpOpen(false); e.preventDefault(); return; }
+      if (t)         { setTyping(null);   e.preventDefault(); return; }
+      if (selected)  { setSelected(null); e.preventDefault(); return; }
+    }
+    if (e.key === 'Backspace' && selected && !t) {
+      // delete selected image layer
+      setLayers(ls => ls.filter(l => l.id !== selected));
+      setSelected(null);
+      e.preventDefault();
+      return;
+    }
+
+    if (t) {
+      if (e.key === 'Enter') {
+        commitTyping();
+        e.preventDefault(); return;
+      }
+      if (e.key === 'Backspace') {
+        setTyping(tt => {
+          if (!tt) return tt;
+          if (tt.chars.length === 0) return null;         // empty → exit typing
+          return { ...tt, chars: tt.chars.slice(0, -1) };
+        });
+        e.preventDefault();
+        return;
+      }
+      // printable keys → flow through to input / compositionend
+      if (e.key.length === 1) {
+        // latin/ascii path fires here with the final char
+        addChar(e.key);
+        e.preventDefault();
+        return;
+      }
+    } else {
+      // no active typing → shortcuts
+      const k = e.key.toLowerCase();
+      if (k === 'c') { setLayers([]); setSelected(null); e.preventDefault(); return; }
+      if (k === 'i') { setInverted(v => !v);             e.preventDefault(); return; }
+      if (k === 's') { exportPNG();                      e.preventDefault(); return; }
+      if (k === 'v') { exportSVG();                      e.preventDefault(); return; }
+    }
+  }, [addChar, commitTyping, selected, helpOpen]);
+
+  useEffect(() => {
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onKeyDown]);
+
+  // ── リサイズでモバイル判定を更新 ─────────────────────────
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    const update = () => setIsMobile(mq.matches);
+    mq.addEventListener ? mq.addEventListener('change', update) : mq.addListener(update);
+    return () => { mq.removeEventListener ? mq.removeEventListener('change', update) : mq.removeListener(update); };
+  }, []);
+
+  // ── KODY greeting: triggers once when the initial help overlay is dismissed
+  useEffect(() => {
+    if (helpOpen || greetedRef.current) return;
+    greetedRef.current = true;
+    const t1 = setTimeout(() => { setKodyBubble('僕はKODYだよ'); setKodyState('greeting'); }, 450);
+    const t2 = setTimeout(() => { setKodyBubble('');             setKodyState('googly');   }, 3400);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [helpOpen]);
+
+  // ── KODY: hungry feedback while dragging near him ─────────────────────
+  useEffect(() => {
+    if (kodyState === 'eating' || kodyState === 'greeting') return;
+    const wantsFood = !!drag && isNearKody(hoverPt);
+    if (wantsFood && kodyState !== 'hungry') {
+      setKodyState('hungry');
+    } else if (!wantsFood && kodyState === 'hungry') {
+      setKodyState('googly');
+    }
+  }, [drag, hoverPt, kodyState]);
+
+  // ── KODY: cursor hovering on him (no drag) → 'annoyed' + rotating quips
+  //   greetedRef is intentionally NOT required — hover reacts from the start.
+  //   We only block during modal/in-progress states (drag, typing, help,
+  //   eating, hungry, and the greeting bubble).
+  const isHoveringKody =
+    !drag && !typing && !helpOpen &&
+    kodyState !== 'eating' && kodyState !== 'greeting' && kodyState !== 'hungry' &&
+    Math.hypot(hoverPt.x - getKodyCenter().x, hoverPt.y - getKodyCenter().y) <= KODY_HOVER_RADIUS;
+
+  useEffect(() => {
+    if (!isHoveringKody) return;
+    // unconditional — if we are allowed to hover, always show the annoyed face
+    setKodyState('annoyed');
+
+    let lastIx = -1;
+    const pickQuip = () => {
+      let i;
+      do { i = Math.floor(Math.random() * KODY_QUIPS.length); }
+      while (i === lastIx && KODY_QUIPS.length > 1);
+      lastIx = i;
+      setKodyBubble(KODY_QUIPS[i]);
+    };
+    pickQuip();
+    const id = setInterval(pickQuip, 2200);
+
+    return () => {
+      clearInterval(id);
+      setKodyBubble('');
+      setKodyState(prev => prev === 'annoyed' ? 'googly' : prev);
+    };
+  }, [isHoveringKody]);
+
+  // ── KODY: auto-rotate between moods during passive phase (googly/happy/worried/sleepy)
+  useEffect(() => {
+    if (!isActiveMood(kodyState)) return;
+    const id = setTimeout(() => {
+      setKodyState(prev => {
+        if (!isActiveMood(prev)) return prev;
+        const pool = KODY_ACTIVE_POOL.filter(m => m !== prev);
+        return pool[Math.floor(Math.random() * pool.length)] || prev;
+      });
+    }, 3200 + Math.random() * 3500);
+    return () => clearTimeout(id);
+  }, [kodyState]);
+
+  // IME composition — collect multi-byte output and push through addChar
+  const onImeInput = (e) => {
+    if (composingRef.current) return;     // compositionend will flush
+    const val = e.target.value;
+    if (val && typingRef.current) {
+      for (const ch of val) addChar(ch);
+    }
+    e.target.value = '';
+  };
+  const onImeCompositionStart = () => { composingRef.current = true; };
+  const onImeCompositionEnd = (e) => {
+    composingRef.current = false;
+    const val = e.data || e.target.value;
+    if (val && typingRef.current) {
+      for (const ch of val) addChar(ch);
+    }
+    e.target.value = '';
+  };
+
+  // keep IME sink focused so IME works as soon as user starts typing
+  useEffect(() => {
+    const refocus = () => {
+      if (imeRef.current && document.activeElement !== imeRef.current) {
+        imeRef.current.focus({ preventScroll: true });
+      }
+    };
+    refocus();
+    window.addEventListener('mouseup', refocus);
+    window.addEventListener('click',   refocus);
+    return () => {
+      window.removeEventListener('mouseup', refocus);
+      window.removeEventListener('click',   refocus);
+    };
+  }, []);
+
+  // ── filename helper
+  const stamp = () => new Date().toISOString().replace(/[:.]/g, '-');
+
+  // ── PNG export · transparent background, text drawn in the current fg ────
+  // We skip the bg fill and also skip the mix-blend-mode, so the exported
+  // pixels match the visible color exactly but lift cleanly off any surface
+  // the PNG is later placed onto.
+  async function exportPNG() {
+    try {
+      if (document.fonts && document.fonts.load) {
+        await document.fonts.load(`${FONT_WEIGHT} ${DEFAULT_FONT_SIZE}px "Noto Sans JP"`);
+      }
+    } catch {}
+
+    const W  = window.innerWidth;
+    const H  = window.innerHeight;
+    const pr = Math.min(window.devicePixelRatio || 1, 2);
+    const canvas = document.createElement('canvas');
+    canvas.width  = W * pr;
+    canvas.height = H * pr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(pr, pr);
+
+    // NO background fill — transparent PNG
+
+    // images (grayscale)
+    for (const L of layers.filter(l => l.kind === 'image')) {
+      const img = await new Promise((res, rej) => {
+        const im = new Image();
+        im.onload  = () => res(im);
+        im.onerror = () => rej();
+        im.src = L.src;
+      }).catch(() => null);
+      if (!img) continue;
+      ctx.save();
+      try { ctx.filter = IMG_FILTER; } catch {}
+      ctx.drawImage(img, L.x, L.y, L.w, L.h);
+      ctx.restore();
+    }
+
+    // text drawn directly in the currently-visible fg color
+    for (const L of layers.filter(l => l.kind === 'text')) {
+      for (const c of L.chars) {
+        ctx.save();
+        ctx.fillStyle    = fg;
+        ctx.font         = `${FONT_WEIGHT} ${c.fontSize}px ${FONT_FAMILY}`;
+        ctx.textBaseline = 'middle';
+        ctx.translate(c.pos.x, c.pos.y);
+        ctx.rotate(c.angle);
+        ctx.fillText(c.ch, 0, 0);
+        ctx.restore();
+      }
+    }
+
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `echo_${stamp()}.png`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 600);
+    }, 'image/png');
+  }
+
+  // ── SVG export · transparent background, vector text + linked images ────
+  function exportSVG() {
+    const W = window.innerWidth, H = window.innerHeight;
+    const esc = (s) => String(s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;');
+
+    const out = [];
+    out.push(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`);
+    out.push(`<defs>`);
+    out.push(`  <filter id="echoBW" color-interpolation-filters="sRGB">`);
+    out.push(`    <feColorMatrix type="matrix" values="0.33 0.33 0.33 0 0  0.33 0.33 0.33 0 0  0.33 0.33 0.33 0 0  0 0 0 1 0"/>`);
+    out.push(`    <feComponentTransfer><feFuncR type="linear" slope="1.55"/><feFuncG type="linear" slope="1.55"/><feFuncB type="linear" slope="1.55"/></feComponentTransfer>`);
+    out.push(`  </filter>`);
+    out.push(`</defs>`);
+
+    // images (linked via data URL, grayscale via filter)
+    for (const L of layers.filter(l => l.kind === 'image')) {
+      out.push(
+        `<image href="${L.src}" xlink:href="${L.src}" ` +
+        `x="${L.x.toFixed(2)}" y="${L.y.toFixed(2)}" ` +
+        `width="${L.w.toFixed(2)}" height="${L.h.toFixed(2)}" ` +
+        `filter="url(#echoBW)" preserveAspectRatio="none"/>`
+      );
+    }
+
+    // text — stays as real glyphs, selectable/resolvable in any SVG viewer
+    out.push(`<g font-family="${esc(FONT_FAMILY)}" font-weight="${FONT_WEIGHT}" fill="${fg}">`);
+    for (const L of layers.filter(l => l.kind === 'text')) {
+      for (const c of L.chars) {
+        const deg = (c.angle * 180 / Math.PI).toFixed(3);
+        const px  = c.pos.x.toFixed(2), py = c.pos.y.toFixed(2);
+        out.push(
+          `  <text x="${px}" y="${py}" font-size="${c.fontSize}" ` +
+          `dominant-baseline="central" ` +
+          `transform="rotate(${deg} ${px} ${py})" xml:space="preserve">${esc(c.ch)}</text>`
+        );
+      }
+    }
+    out.push(`</g>`);
+    out.push(`</svg>`);
+
+    const blob = new Blob([out.join('\n')], { type: 'image/svg+xml;charset=utf-8' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `echo_${stamp()}.svg`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 600);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // RENDER
+  // ══════════════════════════════════════════════════════════════════════
+  return (
+    <div
+      onMouseDown={onCanvasMouseDown}
+      onMouseMove={onCanvasMouseMove}
+      onMouseUp={onCanvasMouseUp}
+      onTouchStart={onCanvasTouchStart}
+      onTouchMove={onCanvasTouchMove}
+      onTouchEnd={onCanvasTouchEnd}
+      onTouchCancel={onCanvasTouchEnd}
+      onDrop={onDrop}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      style={{
+        background: bg, color: fg,
+        position: 'fixed', inset: 0,
+        overflow: 'hidden',
+        cursor: typing ? 'crosshair' : 'default',
+        touchAction: 'none',  // iOS: ダブルタップ拡大・pinch対策
+      }}
+    >
+      {/* ── IMAGE layers (bottom) ──────────────────────────────────────── */}
+      {layers.filter(l => l.kind === 'image').map(L => {
+        const eating = L.id === eatingId;
+        const lc = { x: L.x + L.w / 2, y: L.y + L.h / 2 };
+        const kc = getKodyCenter();
+        const dx = eating ? (kc.x - lc.x) : 0;
+        const dy = eating ? (kc.y - lc.y) : 0;
+        return (
+          <div
+            key={L.id}
+            style={{
+              position: 'absolute',
+              left: L.x, top: L.y, width: L.w, height: L.h,
+              pointerEvents: 'none',
+              outline: (L.id === selected && !eating) ? `1px dashed ${fg}` : 'none',
+              outlineOffset: 2,
+              transformOrigin: 'center',
+              transform: eating ? `translate(${dx}px, ${dy}px) scale(0.05) rotate(-320deg)` : '',
+              opacity: eating ? 0 : 1,
+              transition: eating ? 'transform 500ms cubic-bezier(0.5, 0, 0.75, 0.9), opacity 520ms ease-in' : '',
+            }}
+          >
+            <img
+              src={L.src}
+              draggable={false}
+              style={{
+                width: '100%', height: '100%',
+                display: 'block',
+                filter: IMG_FILTER,
+                userSelect: 'none',
+                pointerEvents: 'none',
+              }}
+            />
+            {L.id === selected && !eating && (
+              <div
+                data-handle="resize"
+                onMouseDown={(e) => startResize(e, L.id)}
+                style={{
+                  position: 'absolute',
+                  right: -5, bottom: -5,
+                  width: 10, height: 10,
+                  background: fg, border: `1px solid ${bg}`,
+                  cursor: 'nwse-resize',
+                  pointerEvents: 'auto',
+                }}
+              />
+            )}
+          </div>
+        );
+      })}
+
+      {/* ── TEXT layers (committed), blended against anything below ────── */}
+      <div style={{ position: 'absolute', inset: 0, mixBlendMode: 'difference', pointerEvents: 'none' }}>
+        {layers.filter(l => l.kind === 'text').map(L => {
+          const eating = L.id === eatingId;
+          const bb = textLayerBBox(L.chars);
+          const lc = bb ? { x: bb.x + bb.w/2, y: bb.y + bb.h/2 } : { x: 0, y: 0 };
+          const kc = getKodyCenter();
+          const dx = eating ? (kc.x - lc.x) : 0;
+          const dy = eating ? (kc.y - lc.y) : 0;
+          return (
+            <div key={L.id} style={{
+              position: 'absolute', inset: 0,
+              transformOrigin: `${lc.x}px ${lc.y}px`,
+              transform: eating ? `translate(${dx}px, ${dy}px) scale(0.05) rotate(-320deg)` : '',
+              opacity:  eating ? 0 : 1,
+              transition: eating ? 'transform 500ms cubic-bezier(0.5, 0, 0.75, 0.9), opacity 520ms ease-in' : '',
+            }}>
+              {L.chars.map((c, i) => (
+                <span key={i} style={glyphStyle(c)}>{c.ch}</span>
+              ))}
+            </div>
+          );
+        })}
+
+        {/* live typing glyphs */}
+        {typing && typing.chars.map((c, i) => (
+          <span key={'live'+i} style={glyphStyle(c)}>{c.ch}</span>
+        ))}
+      </div>
+
+      {/* Selection outline for text layers — above text, difference-blended */}
+      {selected && (() => {
+        const L = layers.find(l => l.id === selected && l.kind === 'text');
+        if (!L) return null;
+        const bb = textLayerBBox(L.chars);
+        if (!bb) return null;
+        return (
+          <div style={{
+            position: 'absolute',
+            left: bb.x - 6, top: bb.y - 6,
+            width: bb.w + 12, height: bb.h + 12,
+            border: `1px dashed ${fg}`,
+            pointerEvents: 'none',
+            mixBlendMode: 'difference',
+          }}/>
+        );
+      })()}
+
+      {/* ── walker + direction preview (only while typing) ─────────────── */}
+      {typing && walker && (
+        <svg
+          style={{ position: 'absolute', inset: 0, pointerEvents: 'none', mixBlendMode: 'difference' }}
+          width="100%" height="100%"
+        >
+          <line
+            x1={walker.x} y1={walker.y} x2={hoverPt.x} y2={hoverPt.y}
+            stroke="#ffffff" strokeWidth="1" strokeDasharray="4 4" opacity="0.8"
+          />
+          <circle cx={walker.x} cy={walker.y} r="4" fill="#ffffff"/>
+          <circle cx={hoverPt.x} cy={hoverPt.y} r="3" fill="none" stroke="#ffffff" strokeWidth="1"/>
+        </svg>
+      )}
+
+      {/* ── film grain ──────────────────────────────────────────────── */}
+      <svg
+        className="fixed inset-0 pointer-events-none"
+        style={{ width: '100%', height: '100%', opacity: 0.11, mixBlendMode: 'overlay' }}
+        aria-hidden
+      >
+        <filter id="echoGrainPoster">
+          <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/>
+          <feColorMatrix values="0.3 0.3 0.3 0 0  0.3 0.3 0.3 0 0  0.3 0.3 0.3 0 0  0 0 0 1 0"/>
+        </filter>
+        <rect width="100%" height="100%" filter="url(#echoGrainPoster)"/>
+      </svg>
+
+      {/* ── drop hint ──────────────────────────────────────────────── */}
+      {dropHint && (
+        <div
+          style={{
+            position: 'fixed', inset: 16,
+            border: `1px dashed ${fg}`,
+            pointerEvents: 'none',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: fg, letterSpacing: '0.4em', fontSize: 12,
+            mixBlendMode: 'difference',
+          }}
+        >
+          DROP IMAGE
+        </div>
+      )}
+
+      {/* ── edge bands (always-on ref UI) ───────────────────────────── */}
+      <div
+        className="edge-band fixed top-3 left-4 flex items-center gap-2 text-[10px] tracking-[0.3em]"
+        style={bandStyle(fg, bg, inverted)}
+      >
+        <Minus size={10} strokeWidth={2.25}/>
+        <span>KODY TYPOGRAPHY</span>
+        <span style={{ opacity: 0.55, marginLeft: 8, letterSpacing: '0.22em' }}>kinoshita studio</span>
+      </div>
+
+      <div
+        className="edge-band fixed top-3 right-4 text-[10px] tracking-[0.18em] text-right"
+        style={bandStyle(fg, bg, inverted)}
+      >
+        <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.12em', lineHeight: 1.25 }}>
+          FONT&nbsp;{fontSize}<span style={{ fontSize: 9, opacity: 0.7 }}>px</span>
+        </div>
+        <div style={{ fontSize: 9, opacity: 0.65, letterSpacing: '0.14em', marginBottom: 3 }}>
+          − / + で拡大縮小
+        </div>
+        <div>LAYERS · {String(layers.length).padStart(3,'0')}{typing && typing.chars.length > 0 ? ' +1' : ''}</div>
+        <div>BG · {inverted ? '白 (WHITE)' : '黒 (BLACK)'} &nbsp;<span style={{opacity:0.7}}>I で切替</span></div>
+        <div>{typing ? 'TYPING…' : (selected ? (layers.find(l=>l.id===selected)?.kind==='image'?'IMAGE SELECTED':'TEXT SELECTED') : 'READY')}</div>
+      </div>
+
+      {/* 操作ガイド — 開閉可・モバイルでコンパクト */}
+      {controlsOpen && (
+        <div
+          className="edge-band fixed bottom-3 left-4"
+          style={{
+            ...bandStyle(fg, bg, inverted),
+            padding: isMobile ? '8px 10px 8px 12px' : '10px 14px',
+            lineHeight: 1.5,
+            maxWidth: isMobile ? 'calc(100vw - 32px)' : 'min(620px, calc(100vw - 32px))',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: isMobile ? 4 : 6 }}>
+            <div className="text-[9px] tracking-[0.22em] opacity-70">操作ガイド · CONTROLS</div>
+            <button
+              onClick={(e) => { e.stopPropagation(); setControlsOpen(false); }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              aria-label="操作ガイドを閉じる"
+              style={{
+                background: 'none', border: `1px solid ${fg}`, color: fg,
+                width: 22, height: 22, borderRadius: 4, cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 11, lineHeight: 1, fontWeight: 700, padding: 0, flexShrink: 0,
+              }}
+            >✕</button>
+          </div>
+          {isMobile ? (
+            <div className="text-[10px] tracking-[0.02em]" style={{ lineHeight: 1.55 }}>
+              <div><b>タップ</b>→始点 / <b>指で方向</b> / <b>キー</b>→文字</div>
+              <div><b>Enter</b>確定 · <b>Backspace</b>削除</div>
+              <div style={{ opacity: 0.75, marginTop: 2 }}>画像D&amp;D · −/+フォント · I反転 · C全消 · S/V保存</div>
+            </div>
+          ) : (
+            <div
+              className="text-[10px] tracking-[0.04em]"
+              style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 14, rowGap: 3 }}
+            >
+              <b>クリック</b>          <span>キャンバスをクリック → その場所が始点</span>
+              <b>マウス移動</b>        <span>カーソル位置で次の文字の進行方向が決まる</span>
+              <b>キー入力</b>          <span>打つたびに1文字配置（英数・日本語IME両対応）</span>
+              <b>ENTER</b>             <span>現在の文字列を1つのレイヤーとして確定</span>
+              <b>Backspace</b>         <span>入力中：最後の1文字を削除 / 選択中：レイヤーを削除</span>
+              <b>レイヤーをクリック</b> <span>完成した文字／画像を選択 → ドラッグで移動</span>
+              <b>KODY に近づける</b>    <span>選択したレイヤーを右下の KODY へ → 食べて削除</span>
+              <b>画像D&amp;D</b>        <span>画像ファイルをドロップ → 自動でモノクロ化</span>
+              <b>−</b> / <b>+</b>       <span>フォントサイズ − / + （現在 <b>{fontSize}px</b>）</span>
+              <b>I</b>                 <span>背景を 黒 ⇄ 白 で切替</span>
+              <b>C</b>                 <span>キャンバス全消去</span>
+              <b>S</b>                 <span>PNG で保存（背景は透過）</span>
+              <b>V</b>                 <span>SVG で保存（ベクター・背景透過）</span>
+              <b>?</b> / <b>ESC</b>     <span>このヘルプを表示 / 閉じる</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ガイド復元ボタン（閉じた時だけ表示） */}
+      {!controlsOpen && (
+        <button
+          className="edge-band fixed bottom-3 left-4"
+          onClick={(e) => { e.stopPropagation(); setControlsOpen(true); }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          aria-label="操作ガイドを表示"
+          style={{
+            ...bandStyle(fg, bg, inverted),
+            width: 38, height: 38, borderRadius: 10, padding: 0,
+            fontSize: 15, fontWeight: 700, cursor: 'pointer',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            lineHeight: 1,
+          }}
+        >?</button>
+      )}
+
+
+      {/* ── KODY — mascot, trash can, greeter ──────────────────────────── */}
+      <Kody
+        state={kodyState}
+        bubble={kodyBubble}
+        inverted={inverted}
+      />
+
+      {/* ── help card (centered, dismiss on any handled key / click) ──── */}
+      {helpOpen && (
+        <div className="fixed inset-0 flex items-center justify-center" style={{ zIndex: 30, pointerEvents: 'none', padding: isMobile ? 16 : 0 }}>
+          <div
+            className="help-card"
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            style={{
+              pointerEvents: 'auto',
+              background: bg, color: fg, border: `1px solid ${fg}`,
+              fontFamily: "'Space Mono', ui-monospace, monospace",
+              padding: isMobile ? '20px 22px' : '28px 40px',
+              minWidth: isMobile ? 0 : 520,
+              maxWidth: isMobile ? 'calc(100vw - 32px)' : '720px',
+              maxHeight: isMobile ? 'calc(100vh - 80px)' : 'calc(100vh - 80px)',
+              overflowY: 'auto',
+              position: 'relative',
+              boxShadow: inverted ? '0 20px 60px rgba(0,0,0,0.12)' : '0 20px 60px rgba(0,0,0,0.6)',
+            }}
+          >
+            <button
+              onClick={(e) => { e.stopPropagation(); setHelpOpen(false); }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              aria-label="閉じる"
+              style={{
+                position: 'absolute', top: 10, right: 10,
+                background: 'none', border: `1px solid ${fg}`, color: fg,
+                width: 26, height: 26, borderRadius: 6, cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 13, lineHeight: 1, fontWeight: 700, padding: 0,
+              }}
+            >✕</button>
+            <div className={isMobile ? "text-[9px] tracking-[0.34em] opacity-70 mb-1" : "text-[10px] tracking-[0.42em] opacity-70 mb-1"}>KODY TYPOGRAPHY</div>
+            <div className={isMobile ? "text-[16px] tracking-[0.08em] font-bold mb-3 leading-tight pr-8" : "text-[22px] tracking-[0.14em] font-bold mb-4"}>DIRECTIONAL POSTER EDITOR</div>
+            <div className={isMobile ? "text-[11px] leading-[1.7] opacity-90 mb-4" : "text-[11px] tracking-[0.04em] leading-[1.8] opacity-90 mb-5"}>
+              {isMobile ? (
+                <>タップで始点、指で方向を決めながらキーボードで文字を打つ。<br/>画像D&amp;D・反転・保存に対応。</>
+              ) : (
+                <>クリックで始点を置き、マウスで方向を決めながらキーを打つと、<br/>文字がカーソルの軌跡に沿って流れていきます。<br/>日本語IME入力、画像のドラッグ&ドロップ、反転、保存すべて対応。</>
+              )}
+            </div>
+            {!isMobile && (
+              <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-[11px] tracking-[0.06em]">
+                <div className="text-right font-bold">クリック</div>          <div>始点を設置して入力開始</div>
+                <div className="text-right font-bold">マウス移動</div>        <div>次に置く文字の進行方向を決める</div>
+                <div className="text-right font-bold">キー入力</div>          <div>1キー = 1文字（英数・日本語IME対応）</div>
+                <div className="text-right font-bold">ENTER</div>             <div>現在の文字列を1レイヤーとして確定</div>
+                <div className="text-right font-bold">Backspace</div>         <div>入力中：最後の文字を戻す / 選択中：そのレイヤー削除</div>
+                <div className="text-right font-bold">レイヤーをクリック</div> <div>文字レイヤー・画像 どちらもドラッグで移動可</div>
+                <div className="text-right font-bold">KODY に近づける</div>    <div>レイヤーを右下の KODY に重ねて離す → 食べて削除</div>
+                <div className="text-right font-bold">画像 D&amp;D</div>       <div>画像ファイルを落とすと自動モノクロで配置</div>
+                <div className="text-right font-bold">− &nbsp; +</div>         <div>フォントサイズ − / +</div>
+                <div className="text-right font-bold">I</div>                 <div>背景を 黒 ⇄ 白 に切替</div>
+                <div className="text-right font-bold">C</div>                 <div>キャンバス全消去</div>
+                <div className="text-right font-bold">S</div>                 <div>PNG で保存（背景透過）</div>
+                <div className="text-right font-bold">V</div>                 <div>SVG で保存（ベクター・背景透過）</div>
+                <div className="text-right font-bold">?</div>                 <div>このヘルプ表示 / ESC で閉じる</div>
+              </div>
+            )}
+            {isMobile && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 10, rowGap: 4, fontSize: 10, lineHeight: 1.55 }}>
+                <b>タップ</b>         <span>始点を設置して入力開始</span>
+                <b>指で方向</b>       <span>次の文字の進行方向を決める</span>
+                <b>キー</b>           <span>1キー=1文字（IME対応）</span>
+                <b>Enter</b>          <span>文字列を確定</span>
+                <b>Backspace</b>      <span>1文字戻す／選択中は削除</span>
+                <b>画像D&amp;D</b>    <span>落とすとモノクロ配置</span>
+                <b>−/+</b>            <span>フォントサイズ</span>
+                <b>I / C / S / V</b>  <span>反転 / 全消去 / PNG / SVG</span>
+              </div>
+            )}
+            <div className={isMobile ? "text-[9px] tracking-[0.16em] opacity-55 mt-4 text-right" : "text-[9px] tracking-[0.34em] opacity-55 mt-6 text-right"}>
+              {isMobile ? 'TAP ANYWHERE TO BEGIN' : 'CLICK OR PRESS ANY KEY TO BEGIN  ·  ESC · CLOSE'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hidden sink for keyboard + IME composition.
+          When typing, we park it at the walker so the IME candidate popup
+          opens exactly where the next glyph will land — the key fix for
+          smooth Japanese input. */}
+      <input
+        ref={imeRef}
+        autoComplete="off"
+        spellCheck={false}
+        onInput={onImeInput}
+        onCompositionStart={onImeCompositionStart}
+        onCompositionEnd={onImeCompositionEnd}
+        aria-hidden
+        style={{
+          position: 'fixed',
+          left: (typing && walker) ? walker.x + 'px' : '-9999px',
+          top:  (typing && walker) ? walker.y + 'px' : '0',
+          width: 1, height: 1,
+          opacity: 0,
+          pointerEvents: 'none',
+          border: 'none',
+          padding: 0,
+          margin: 0,
+          background: 'transparent',
+          color: 'transparent',
+          fontFamily: FONT_FAMILY,
+          fontSize: (typing ? fontSize : 16) + 'px',
+          fontWeight: FONT_WEIGHT,
+          zIndex: 1,
+        }}
+      />
+    </div>
+  );
+}
+
+// ── glyph style (shared between committed & live) ────────────────────────
+function glyphStyle(c) {
+  return {
+    position: 'absolute',
+    left: c.pos.x,
+    top:  c.pos.y - 0.5 * c.fontSize,
+    fontFamily: FONT_FAMILY,
+    fontWeight: FONT_WEIGHT,
+    fontSize:   c.fontSize + 'px',
+    lineHeight: 1,
+    transformOrigin: '0 50%',
+    transform: `rotate(${c.angle}rad)`,
+    color: '#FFFFFF',              // always pure white — difference-blend decides the visible tone
+    whiteSpace: 'pre',
+    userSelect: 'none',
+    pointerEvents: 'none',
+    letterSpacing: 0,
+  };
+}
+
+// ── shared band style for edge UI ─────────────────────────────────────────
+function bandStyle(fg, bg, inverted) {
+  return {
+    color: fg,
+    background: inverted ? 'rgba(255,255,255,0.72)' : 'rgba(0,0,0,0.55)',
+    border: `1px solid ${inverted ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.18)'}`,
+    padding: '8px 12px',
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// KODY — pixel-art mascot. Lives in the bottom-right corner.
+//
+//   idle / googly        : eyes drift around independently ("ぎょろぎょろ")
+//   happy                : upward ∪ smiling eyes
+//   worried              : downward ⌒ eyes, brow pulled
+//   sleepy               : thin horizontal slits
+//   annoyed              : narrow flat bars (hovered-over state)
+//   greeting             : normal eyes + speech bubble above
+//   hungry               : narrowed eyebrows, small mouth forming
+//   eating               : mouth open, body wobble; victim layer animates in
+//
+// Eyes are simple solid black pixel blocks — easy to swap for custom art
+// later. Each mood returns its own rect set.
+// ══════════════════════════════════════════════════════════════════════════
+function Kody({ state, bubble, inverted }) {
+  const [eyes, setEyes] = React.useState({ lx: 0, ly: 0, rx: 0, ry: 0 });
+
+  // Eye drift only during "googly" to keep other moods still
+  React.useEffect(() => {
+    if (state !== 'googly') {
+      setEyes({ lx: 0, ly: 0, rx: 0, ry: 0 });
+      return;
+    }
+    let tL, tR;
+    const roam = (which) => {
+      const nx = (Math.random() * 2 - 1) * 3.2;
+      const ny = (Math.random() * 2 - 1) * 2.4;
+      setEyes(e => which === 'L' ? { ...e, lx: nx, ly: ny } : { ...e, rx: nx, ry: ny });
+      const delay = 380 + Math.random() * 800;
+      if (which === 'L') tL = setTimeout(() => roam('L'), delay);
+      else               tR = setTimeout(() => roam('R'), delay);
+    };
+    roam('L'); roam('R');
+    return () => { clearTimeout(tL); clearTimeout(tR); };
+  }, [state]);
+
+  // KODY inverts with theme — always visible
+  const bodyDark  = inverted ? '#0f0f0f' : '#ecebe4';
+  const bodyShade = inverted ? '#1d1d1d' : '#d8d5cc';
+  const face      = inverted ? '#ecebe4' : '#141414';
+  const ink       = inverted ? '#0a0a0a' : '#ecebe4';   // the "black" of eyes
+
+  const eating   = state === 'eating';
+  const hungry   = state === 'hungry';
+  const mouthOpen = eating || hungry;
+
+  // Eye rect sets per mood. Each is drawn inside a 16×16 area.
+  //   The caller translates the group to the eye's base position.
+  const renderEye = (baseX, baseY, ox, oy) => {
+    const tx = baseX + ox, ty = baseY + oy;
+    let shape;
+    if (state === 'happy') {
+      // upward ∪ smile — high on edges, low in middle
+      shape = <>
+        <rect x="0"  y="4" width="3" height="4" fill={ink}/>
+        <rect x="3"  y="7" width="3" height="3" fill={ink}/>
+        <rect x="6"  y="9" width="4" height="3" fill={ink}/>
+        <rect x="10" y="7" width="3" height="3" fill={ink}/>
+        <rect x="13" y="4" width="3" height="4" fill={ink}/>
+      </>;
+    } else if (state === 'worried') {
+      // downward ⌒ — low on edges, high in middle
+      shape = <>
+        <rect x="0"  y="8" width="3" height="4" fill={ink}/>
+        <rect x="3"  y="6" width="3" height="3" fill={ink}/>
+        <rect x="6"  y="4" width="4" height="3" fill={ink}/>
+        <rect x="10" y="6" width="3" height="3" fill={ink}/>
+        <rect x="13" y="8" width="3" height="4" fill={ink}/>
+      </>;
+    } else if (state === 'sleepy') {
+      // thin line across — like closed eyes
+      shape = <rect x="0" y="7" width="16" height="3" fill={ink}/>;
+    } else if (state === 'annoyed') {
+      // flat narrow slab — a bit taller than sleepy
+      shape = <rect x="0" y="5" width="16" height="5" fill={ink}/>;
+    } else {
+      // default / googly / idle / greeting — solid block pupil (translated for roam)
+      shape = <rect x="3" y="1" width="10" height="14" fill={ink}/>;
+    }
+    return <g transform={`translate(${tx}, ${ty})`}>{shape}</g>;
+  };
+
+  const wrapperStyle = {
+    position: 'fixed',
+    right:  KODY_MARGIN,
+    bottom: KODY_MARGIN,
+    width:  KODY_SIZE,
+    height: KODY_SIZE,
+    zIndex: 40,
+    pointerEvents: 'none',
+    transform: eating ? 'scale(1.14)'
+                      : hungry ? 'scale(1.06)'
+                      : state === 'annoyed' ? 'scale(1.02)' : 'scale(1.00)',
+    transition: 'transform 220ms cubic-bezier(0.2, 0.8, 0.3, 1.2)',
+    animation: eating ? 'kodyWobble 0.42s ease-in-out 1' : 'none',
+  };
+
+  return (
+    <>
+      <div className="kody" style={wrapperStyle} aria-hidden>
+        <svg
+          viewBox="0 0 100 100"
+          width="100%"
+          height="100%"
+          style={{ shapeRendering: 'crispEdges', overflow: 'visible' }}
+        >
+          {/* body — cube with a thicker bottom shadow */}
+          <rect x="3" y="6" width="94" height="90" fill={bodyShade}/>
+          <rect x="3" y="3" width="94" height="90" fill={bodyDark}/>
+          {/* face plate */}
+          <rect x="12" y="14" width="76" height="68" fill={face}/>
+
+          {mouthOpen ? (
+            /* hungry / eating */
+            <g>
+              <rect x="22" y="28" width="18" height="4" fill={ink}/>
+              <rect x="60" y="28" width="18" height="4" fill={ink}/>
+              <rect x="26" y="46" width="48" height="26" fill={ink}/>
+              <rect x="30" y="50" width="40" height="18" fill={bodyDark}/>
+              <rect x="34" y="50" width="4"  height="4" fill={ink}/>
+              <rect x="62" y="50" width="4"  height="4" fill={ink}/>
+              <rect x="40" y="58" width="20" height="6" fill={ink}/>
+            </g>
+          ) : (
+            <g>
+              {renderEye(26, 40, eyes.lx, eyes.ly)}
+              {renderEye(58, 40, eyes.rx, eyes.ry)}
+            </g>
+          )}
+        </svg>
+      </div>
+
+      {/* Speech bubble — anchored above KODY, tail pointing to him */}
+      {bubble && (
+        <div
+          style={{
+            position: 'fixed',
+            right:  KODY_MARGIN - 6,
+            bottom: KODY_MARGIN + KODY_SIZE + 14,
+            padding: '10px 14px',
+            background: inverted ? '#ffffff' : '#101010',
+            color:      inverted ? '#000000' : '#ffffff',
+            border:     `2px solid ${inverted ? '#000' : '#fff'}`,
+            boxShadow:  `4px 4px 0 ${inverted ? '#000' : '#fff'}`,
+            fontFamily: "'Noto Sans JP', sans-serif",
+            fontWeight: 700,
+            fontSize:   13,
+            letterSpacing: '0.05em',
+            whiteSpace: 'nowrap',
+            zIndex: 41,
+            pointerEvents: 'none',
+            animation: 'kodyBubblePop 320ms cubic-bezier(0.2, 0.8, 0.3, 1.2)',
+          }}
+        >
+          {bubble}
+          {/* tail — two stacked triangles for the border effect */}
+          <span
+            style={{
+              position: 'absolute',
+              bottom: -12, right: 14,
+              width: 0, height: 0,
+              borderLeft:  '8px solid transparent',
+              borderRight: '2px solid transparent',
+              borderTop:   `12px solid ${inverted ? '#000' : '#fff'}`,
+            }}
+          />
+          <span
+            style={{
+              position: 'absolute',
+              bottom: -7, right: 17,
+              width: 0, height: 0,
+              borderLeft:  '5px solid transparent',
+              borderRight: '1px solid transparent',
+              borderTop:   `8px solid ${inverted ? '#fff' : '#101010'}`,
+            }}
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+createRoot(document.getElementById('root')).render(<App />);
+</script>
+
+</body>
+</html>
