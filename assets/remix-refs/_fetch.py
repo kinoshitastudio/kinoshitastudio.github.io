@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # Remix 参考グリッドのサムネを一度だけ生成して保存（事前ベイク）
-import os, time, urllib.parse, urllib.request
-from concurrent.futures import ThreadPoolExecutor
+import os, time, ssl, urllib.parse, urllib.request, urllib.error
+
+CTX = ssl._create_unverified_context()  # macOS Python の証明書未設定を回避（ローカルベイク用）
 
 STYLE = ", contemporary abstract generative art, bold graphic composition, high quality, no text, no watermark"
 SIZE = 512
@@ -36,22 +37,29 @@ def fetch(item):
     if os.path.exists(path) and os.path.getsize(path) > 4000:
         return idx, "skip(exists)"
     url = url_for(prompt)
-    for attempt in range(4):
+    last = "?"
+    for attempt in range(6):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=45) as r:
+            with urllib.request.urlopen(req, timeout=60, context=CTX) as r:
                 data = r.read()
             if len(data) > 4000:
                 with open(path, "wb") as f:
                     f.write(data)
                 return idx, f"ok({len(data)//1024}KB)"
+            last = "empty"
+            time.sleep(6)
+        except urllib.error.HTTPError as e:
+            last = f"HTTP {e.code}"
+            time.sleep(20 if e.code == 429 else 6)
         except Exception as e:
             last = str(e)
-            time.sleep(2)
-    return idx, f"FAIL({last if 'last' in dir() else '?'})"
+            time.sleep(6)
+    return idx, f"FAIL({last})"
 
 if __name__ == "__main__":
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        for idx, status in ex.map(fetch, REFS):
-            print(f"ref-{idx}: {status}", flush=True)
+    for item in REFS:
+        idx, status = fetch(item)          # 逐次（並列にするとすぐ429）
+        print(f"ref-{idx}: {status}", flush=True)
+        time.sleep(4)                      # be gentle
     print("done")
