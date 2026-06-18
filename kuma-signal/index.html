@@ -1,0 +1,1079 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <link rel="canonical" href="https://kinoshita.studio/kuma-signal/">
+  <meta name="description" content="クマの出没のような見えない気配を地図上のシグナルとして可視化する実験的インターフェース。木下スタジオ（滋賀・木下貴博）の体験研究。">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>KUMA SIGNAL — 気配を可視化する</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500&display=swap');
+
+/* ══════════════════════════════════════════
+   DESIGN TOKENS
+══════════════════════════════════════════ */
+:root {
+  /* Surface */
+  --bg:       #0d1210;
+  --bg2:      #131a16;
+  --bg3:      #1a2420;
+  --surface:  #1f2d28;
+  --border:   rgba(255,255,255,.07);
+  --border2:  rgba(255,255,255,.12);
+
+  /* Signal levels */
+  --safe:     #2ecc71;
+  --safe-dim: rgba(46,204,113,.15);
+  --safe-glow:rgba(46,204,113,.35);
+  --warn:     #f0a500;
+  --warn-dim: rgba(240,165,0,.15);
+  --warn-glow:rgba(240,165,0,.3);
+  --danger:   #e84040;
+  --danger-dim:rgba(232,64,64,.15);
+  --danger-glow:rgba(232,64,64,.35);
+
+  /* Text */
+  --t1: rgba(255,255,255,.88);
+  --t2: rgba(255,255,255,.5);
+  --t3: rgba(255,255,255,.28);
+
+  /* Accent green (muted) */
+  --accent: #3d6b57;
+  --accent2:#4a8068;
+
+  --tab-h: 60px;
+  --r: 10px;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body { height:100%; background:var(--bg); font-family:'DM Sans','Noto Sans JP',sans-serif; color:var(--t1); overflow:hidden; }
+#app { display:flex; flex-direction:column; height:100%; max-width:480px; margin:0 auto; }
+
+/* ══════════════════════════════════════════
+   BOOT
+══════════════════════════════════════════ */
+#boot {
+  position:fixed; inset:0; background:var(--bg); z-index:9999;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px;
+  transition:opacity .7s ease;
+}
+#boot.hide { opacity:0; pointer-events:none; }
+.boot-mark {
+  width:64px; height:64px;
+  border-radius:50%;
+  background:var(--bg3);
+  border:1.5px solid var(--border2);
+  display:flex; align-items:center; justify-content:center;
+  font-size:28px;
+  box-shadow:0 0 40px rgba(46,204,113,.15);
+  animation:boot-breathe 2s ease-in-out infinite;
+}
+@keyframes boot-breathe { 0%,100%{box-shadow:0 0 20px rgba(46,204,113,.1)} 50%{box-shadow:0 0 50px rgba(46,204,113,.25)} }
+.boot-name { font-family:'DM Mono',monospace; font-size:18px; font-weight:500; letter-spacing:4px; color:var(--t1); }
+.boot-concept { font-size:11px; letter-spacing:3px; color:var(--t3); }
+.boot-progress { width:120px; height:1px; background:rgba(255,255,255,.08); border-radius:1px; overflow:hidden; }
+.boot-prog-fill { height:100%; background:var(--safe); width:0; transition:width 1.6s ease; }
+
+/* ══════════════════════════════════════════
+   HEADER
+══════════════════════════════════════════ */
+.hdr {
+  flex-shrink:0;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:12px 18px 10px;
+  background:var(--bg);
+  border-bottom:1px solid var(--border);
+}
+.hdr-logo { display:flex; align-items:center; gap:8px; }
+.hdr-logo-mark { font-size:18px; }
+.hdr-logo-name { font-family:'DM Mono',monospace; font-size:13px; font-weight:500; letter-spacing:3px; color:var(--t1); }
+.hdr-logo-beta { font-size:8px; letter-spacing:2px; color:var(--warn); background:var(--warn-dim); border:1px solid rgba(240,165,0,.25); border-radius:3px; padding:1px 5px; margin-left:4px; vertical-align:middle; }
+.hdr-right { display:flex; align-items:center; gap:10px; }
+.snd-btn { background:none; border:none; color:var(--t3); font-size:16px; cursor:pointer; padding:4px; transition:color .2s; }
+.snd-btn.on { color:var(--safe); }
+
+/* ══════════════════════════════════════════
+   PAGES
+══════════════════════════════════════════ */
+.pages { flex:1; overflow:hidden; position:relative; }
+.page { position:absolute; inset:0; overflow-y:auto; overflow-x:hidden; opacity:0; pointer-events:none; transition:opacity .2s ease; }
+.page.active { opacity:1; pointer-events:all; }
+
+/* ══════════════════════════════════════════
+   TAB BAR
+══════════════════════════════════════════ */
+.tabbar {
+  flex-shrink:0; height:var(--tab-h);
+  display:flex;
+  background:var(--bg2);
+  border-top:1px solid var(--border);
+}
+.tab { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; cursor:pointer; position:relative; user-select:none; transition:background .2s; }
+.tab:active { background:rgba(255,255,255,.04); }
+.tab.on { background:rgba(255,255,255,.03); }
+.ti { font-size:17px; opacity:.3; transition:opacity .2s; }
+.tab.on .ti { opacity:1; }
+.tl { font-family:'DM Mono',monospace; font-size:8px; letter-spacing:2px; color:var(--t3); transition:color .2s; }
+.tab.on .tl { color:var(--t2); }
+.tline { position:absolute; top:0; left:50%; transform:translateX(-50%); width:0; height:2px; background:var(--safe); border-radius:0 0 2px 2px; transition:width .3s cubic-bezier(.34,1.56,.64,1); }
+.tab.on .tline { width:36px; }
+.tbadge { position:absolute; top:8px; right:calc(50% - 18px); background:var(--danger); color:#fff; font-size:8px; font-family:'DM Mono',monospace; width:14px; height:14px; border-radius:50%; display:flex; align-items:center; justify-content:center; }
+
+/* ══════════════════════════════════════════
+   PAGE: SIGNAL (TOP)
+══════════════════════════════════════════ */
+#pSignal { padding:14px 16px 24px; display:flex; flex-direction:column; gap:10px; }
+
+/* ── DANGER LEVEL CARD ── */
+.signal-card {
+  border-radius:var(--r);
+  border:1.5px solid var(--border2);
+  background:var(--bg2);
+  /* overflow:hidden を削除 → 行動ガイドが見切れない */
+  transition:border-color .5s;
+  flex-shrink:0;
+}
+.signal-card.level-safe   { border-color:rgba(46,204,113,.3); }
+.signal-card.level-warn   { border-color:rgba(240,165,0,.3); }
+.signal-card.level-danger { border-color:rgba(232,64,64,.4); }
+
+.signal-top {
+  padding:20px 20px 16px;
+  display:flex; align-items:center; gap:16px;
+}
+/* 大きなシグナルアイコン */
+.signal-orb {
+  width:64px; height:64px; flex-shrink:0;
+  border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  position:relative;
+}
+.signal-orb-inner {
+  width:44px; height:44px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  font-size:22px; position:relative; z-index:2;
+  transition:background .5s, box-shadow .5s;
+}
+.level-safe   .signal-orb-inner { background:var(--safe-dim); box-shadow:0 0 20px var(--safe-glow); }
+.level-warn   .signal-orb-inner { background:var(--warn-dim); box-shadow:0 0 20px var(--warn-glow); }
+.level-danger .signal-orb-inner { background:var(--danger-dim); box-shadow:0 0 24px var(--danger-glow); }
+
+/* 波紋アニメ */
+.signal-orb-ring {
+  position:absolute; inset:0; border-radius:50%;
+  border:1px solid transparent;
+  animation:orb-ring 2.5s ease-out infinite;
+}
+.signal-orb-ring2 { animation-delay:1.2s; }
+.level-safe   .signal-orb-ring { border-color:var(--safe-glow); }
+.level-warn   .signal-orb-ring { border-color:var(--warn-glow); }
+.level-danger .signal-orb-ring { border-color:var(--danger-glow); }
+@keyframes orb-ring {
+  0%   { transform:scale(.7); opacity:.8; }
+  100% { transform:scale(1.6); opacity:0; }
+}
+
+.signal-meta { flex:1; }
+.signal-level-label {
+  font-family:'DM Mono',monospace; font-size:10px; letter-spacing:3px;
+  color:var(--t3); margin-bottom:4px;
+}
+.signal-level-text {
+  font-size:26px; font-weight:500; line-height:1.1;
+  transition:color .5s;
+}
+.level-safe   .signal-level-text { color:var(--safe); }
+.level-warn   .signal-level-text { color:var(--warn); }
+.level-danger .signal-level-text { color:var(--danger); }
+.signal-level-sub {
+  font-size:11px; color:var(--t3); margin-top:4px; font-family:'Noto Sans JP',sans-serif; font-weight:300;
+}
+
+/* 行動ガイド */
+.action-guide {
+  border-top:1px solid var(--border);
+  padding:10px 14px 14px;
+  display:flex; flex-direction:column; gap:7px;
+}
+.action-row {
+  display:flex; align-items:center; justify-content:space-between; gap:7px;
+}
+.action-item {
+  flex:1; display:flex; align-items:center; gap:6px;
+  background:var(--bg3); border-radius:8px; padding:7px 8px;
+  border:1px solid var(--border);
+}
+.action-icon { font-size:13px; flex-shrink:0; }
+.action-text { font-family:'Noto Sans JP',sans-serif; font-size:9px; font-weight:400; color:var(--t2); flex:1; }
+.action-status {
+  font-size:8px; font-family:'DM Mono',monospace; letter-spacing:1px;
+  padding:2px 6px; border-radius:4px; white-space:nowrap; font-weight:500;
+}
+.st-ok    { background:var(--safe-dim);   color:var(--safe);   }
+.st-care  { background:var(--warn-dim);   color:var(--warn);   }
+.st-ng    { background:var(--danger-dim); color:var(--danger); }
+
+/* ── 最新シグナル ── */
+.latest-signal {
+  background:var(--bg2); border:1px solid var(--border); border-radius:var(--r); padding:14px 16px;
+  display:flex; gap:12px; align-items:flex-start;
+}
+.ls-time { font-family:'DM Mono',monospace; font-size:10px; color:var(--t3); white-space:nowrap; padding-top:2px; }
+.ls-body { flex:1; }
+.ls-loc { font-size:13px; font-weight:500; color:var(--t1); margin-bottom:3px; }
+.ls-detail { font-family:'Noto Sans JP',sans-serif; font-size:11px; font-weight:300; color:var(--t2); line-height:1.6; }
+.ls-badge { font-size:9px; font-family:'DM Mono',monospace; background:var(--danger-dim); border:1px solid rgba(232,64,64,.3); color:var(--danger); border-radius:4px; padding:2px 7px; white-space:nowrap; align-self:center; }
+
+/* ── 近接通知バナー ── */
+.proximity-banner {
+  border-radius:var(--r); padding:14px 16px;
+  background:var(--danger-dim); border:1px solid rgba(232,64,64,.3);
+  display:none; align-items:center; gap:12px;
+}
+.proximity-banner.show { display:flex; animation:banner-in .3s ease-out; }
+@keyframes banner-in { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
+.pb-icon { font-size:20px; flex-shrink:0; }
+.pb-body { flex:1; }
+.pb-title { font-size:12px; font-weight:500; color:var(--danger); margin-bottom:3px; }
+.pb-action { font-family:'Noto Sans JP',sans-serif; font-size:11px; font-weight:300; color:rgba(232,64,64,.8); line-height:1.5; }
+
+/* ── 条件フィルター ── */
+.context-bar {
+  display:flex; gap:6px; overflow-x:auto; padding-bottom:2px;
+}
+.context-bar::-webkit-scrollbar { display:none; }
+.ctx-btn {
+  font-family:'DM Mono',monospace; font-size:8px; letter-spacing:1px;
+  padding:5px 12px; border-radius:20px;
+  border:1px solid var(--border2); background:transparent;
+  color:var(--t3); cursor:pointer; white-space:nowrap; transition:all .2s;
+}
+.ctx-btn.on { background:var(--surface); border-color:var(--border2); color:var(--t1); }
+
+/* ── ステータスバー ── */
+.status-bar {
+  display:flex; justify-content:space-between; align-items:center;
+  padding:0 2px; font-family:'DM Mono',monospace; font-size:9px; color:var(--t3); letter-spacing:1px;
+}
+.sdot { display:inline-block; width:5px; height:5px; border-radius:50%; background:var(--safe); margin-right:5px; animation:pulse-dot 3s ease-in-out infinite; }
+@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+/* ══════════════════════════════════════════
+   PAGE: RADAR (簡潔に)
+══════════════════════════════════════════ */
+#pRadar { padding:16px 16px 20px; display:flex; flex-direction:column; align-items:center; gap:12px; }
+
+.radar-wrap {
+  width:100%; max-width:340px;
+  aspect-ratio:1;
+  border-radius:50%;
+  background:radial-gradient(ellipse at 40% 35%, #0d1f14 0%, #080f0a 60%, #040804 100%);
+  position:relative; overflow:hidden;
+  border:1px solid rgba(255,255,255,.08);
+  box-shadow:0 0 40px rgba(46,204,113,.06), inset 0 0 40px rgba(0,0,0,.5);
+}
+/* Scanlines subtle */
+.radar-wrap::after {
+  content:''; position:absolute; inset:0;
+  background:repeating-linear-gradient(to bottom, transparent 0, transparent 3px, rgba(0,0,0,.1) 3px, rgba(0,0,0,.1) 4px);
+  border-radius:50%; pointer-events:none; z-index:40;
+}
+/* Vignette */
+.radar-wrap::before {
+  content:''; position:absolute; inset:0;
+  background:radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,.8) 100%);
+  border-radius:50%; pointer-events:none; z-index:41;
+}
+#rc { position:absolute; inset:0; width:100%; height:100%; border-radius:50%; z-index:1; }
+
+/* blips — 意味を持つ点 */
+.blip { position:absolute; transform:translate(-50%,-50%); z-index:20; pointer-events:none; }
+.bd { border-radius:50%; position:relative; z-index:2; }
+.bd.fresh  { width:10px; height:10px; background:var(--danger); box-shadow:0 0 8px var(--danger-glow); animation:blip-p 1.8s ease-in-out infinite; }
+.bd.recent { width:8px;  height:8px;  background:var(--warn);   box-shadow:0 0 6px var(--warn-glow);   animation:blip-p 2.2s ease-in-out infinite; }
+.bd.old    { width:6px;  height:6px;  background:rgba(46,204,113,.5); box-shadow:0 0 4px rgba(46,204,113,.3); animation:blip-p 3s ease-in-out infinite; }
+@keyframes blip-p { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.6;transform:scale(.85)} }
+
+/* 波紋 — 時間経過を表現 */
+.br { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); border-radius:50%; border:1px solid; animation:ripple 2.4s ease-out infinite; }
+.br2 { animation-delay:1.2s; }
+.bd.fresh  ~ .br { border-color:rgba(232,64,64,.5); }
+.bd.recent ~ .br { border-color:rgba(240,165,0,.4); }
+.bd.old    ~ .br { border-color:rgba(46,204,113,.3); }
+@keyframes ripple { 0%{width:10px;height:10px;opacity:.8} 100%{width:42px;height:42px;opacity:0} }
+
+/* self — 明るいシアンで存在感アップ */
+.blip-self .bd { width:12px; height:12px; background:#00d4ff; box-shadow:0 0 12px #00d4ff,0 0 24px rgba(0,212,255,.6),0 0 40px rgba(0,212,255,.25); animation:blip-p 2s ease-in-out infinite; }
+.blip-self .br { border-color:rgba(0,212,255,.6); animation:ripple 2.2s ease-out infinite; }
+.acc-circle { position:absolute; transform:translate(-50%,-50%); border-radius:50%; border:1.5px dashed rgba(0,212,255,.55); background:rgba(0,212,255,.06); pointer-events:none; z-index:18; box-shadow:0 0 10px rgba(0,212,255,.15); }
+.blip-arrow { position:absolute; transform:translate(-50%,-50%); z-index:20; font-size:10px; color:rgba(0,212,255,.7); pointer-events:none; text-shadow:0 0 8px rgba(0,212,255,.8); }
+
+/* Map self dot — 明るいシアン */
+.self-dot { width:14px; height:14px; background:#00d4ff; border-radius:50%; border:2px solid rgba(255,255,255,.5); box-shadow:0 0 14px #00d4ff,0 0 28px rgba(0,212,255,.5),0 0 50px rgba(0,212,255,.2); animation:blip-p 2s ease-in-out infinite; }
+
+/* sweep — subtle */
+.swpc { position:absolute; inset:0; border-radius:50%; z-index:5; overflow:hidden; pointer-events:none; }
+.swp  { position:absolute; top:50%; left:50%; width:50%; height:1px; transform-origin:left center; animation:sweep 4s linear infinite; background:linear-gradient(to right, transparent, rgba(46,204,113,.4)); }
+.swpf { position:absolute; inset:0; border-radius:50%; background:conic-gradient(from 0deg, transparent 0%, transparent 65%, rgba(46,204,113,.02) 82%, rgba(46,204,113,.07) 100%); animation:sweep 4s linear infinite; pointer-events:none; }
+@keyframes sweep { from{transform:rotate(0)} to{transform:rotate(360deg)} }
+.ccross { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10; pointer-events:none; }
+.ccross::before,.ccross::after { content:''; position:absolute; background:rgba(255,255,255,.1); }
+.ccross::before { width:1px; height:20px; left:0; top:-10px; }
+.ccross::after  { width:20px; height:1px; left:-10px; top:0; }
+
+/* GPS toggle */
+.gps-btn { width:100%; max-width:340px; display:flex; align-items:center; justify-content:space-between; background:var(--bg2); border:1px solid var(--border2); border-radius:8px; padding:10px 14px; cursor:pointer; transition:background .2s; }
+.gps-btn.active { border-color:rgba(96,160,255,.35); background:rgba(96,160,255,.05); }
+.gps-btn-left { display:flex; align-items:center; gap:10px; }
+.gps-label { font-size:12px; font-weight:400; color:var(--t1); }
+.gps-status { font-family:'DM Mono',monospace; font-size:9px; color:var(--t3); margin-top:2px; letter-spacing:1px; }
+.gps-status.on  { color:#60a0ff; }
+.gps-status.err { color:var(--danger); }
+.toggle { width:38px; height:20px; background:rgba(255,255,255,.1); border:1px solid var(--border2); border-radius:10px; position:relative; transition:background .25s; }
+.toggle.on { background:rgba(96,160,255,.3); border-color:rgba(96,160,255,.4); }
+.toggle::after { content:''; position:absolute; top:3px; left:3px; width:12px; height:12px; background:var(--t3); border-radius:50%; transition:transform .25s cubic-bezier(.34,1.56,.64,1), background .25s; }
+.toggle.on::after { transform:translateX(18px); background:#60a0ff; }
+
+/* Radar legend */
+.radar-legend { width:100%; max-width:340px; display:flex; gap:12px; justify-content:center; }
+.rl-item { display:flex; align-items:center; gap:5px; font-family:'DM Mono',monospace; font-size:9px; color:var(--t3); }
+.rl-dot { width:7px; height:7px; border-radius:50%; }
+
+/* Bottom panel */
+.bpanel { display:flex; gap:8px; width:100%; max-width:340px; }
+.dr { flex:1; background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:8px 10px; }
+.dr .dl { font-family:'DM Mono',monospace; font-size:8px; letter-spacing:1px; color:var(--t3); margin-bottom:4px; }
+.dr .dv { font-family:'DM Mono',monospace; font-size:12px; color:var(--t1); }
+.dr .dv.al { color:var(--danger); }
+.dr .dv.cy { color:#60a0ff; }
+.sbar { display:flex; justify-content:space-between; font-family:'DM Mono',monospace; font-size:9px; color:var(--t3); letter-spacing:1px; width:100%; max-width:340px; padding:0 2px; }
+
+/* ══════════════════════════════════════════
+   PAGE: MAP
+══════════════════════════════════════════ */
+#pMap { position:relative; height:100%; overflow:hidden; }
+#leafMap { position:absolute; inset:0; filter:saturate(0) brightness(.42) contrast(1.6) sepia(.5) hue-rotate(100deg) brightness(1.15); }
+.mscan { position:absolute; inset:0; pointer-events:none; z-index:410; background:repeating-linear-gradient(to bottom, transparent 0, transparent 3px, rgba(46,204,113,.02) 3px, rgba(46,204,113,.02) 4px); }
+.mvig  { position:absolute; inset:0; background:radial-gradient(ellipse at center, transparent 30%, rgba(4,8,4,.6) 100%); pointer-events:none; z-index:412; }
+.mhud-tl { position:absolute; top:12px; left:12px; z-index:500; font-family:'DM Mono',monospace; font-size:9px; letter-spacing:1px; color:rgba(46,204,113,.6); background:rgba(4,8,4,.85); padding:7px 11px; border:1px solid rgba(46,204,113,.15); border-radius:6px; pointer-events:none; line-height:1.9; }
+.mhud-tr { position:absolute; top:12px; right:12px; z-index:500; pointer-events:none; }
+.mscale { display:flex; align-items:center; gap:5px; background:rgba(4,8,4,.85); padding:5px 10px; border:1px solid rgba(46,204,113,.15); border-radius:6px; }
+.mscalebar { width:36px; height:1.5px; background:rgba(46,204,113,.6); }
+.mscalelbl { font-family:'DM Mono',monospace; font-size:8px; color:rgba(46,204,113,.5); }
+
+/* Map markers */
+.bear-dot { width:16px; height:16px; border-radius:50%; cursor:pointer; position:relative; display:flex; align-items:center; justify-content:center; font-size:10px; }
+.bear-dot.fresh  { background:rgba(232,64,64,.9);   box-shadow:0 0 12px var(--danger-glow), 0 0 24px rgba(232,64,64,.2); animation:blip-p 1.8s ease-in-out infinite; }
+.bear-dot.recent { background:rgba(240,165,0,.9);   box-shadow:0 0 10px var(--warn-glow);   animation:blip-p 2.2s ease-in-out infinite; }
+.bear-dot.old    { background:rgba(46,204,113,.5);  box-shadow:0 0 8px var(--safe-glow);    animation:blip-p 3s ease-in-out infinite; }
+.bear-dot::after { content:''; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:16px; height:16px; border-radius:50%; border:1px solid currentColor; opacity:.6; animation:ripple 2s ease-out infinite; }
+.self-dot { width:12px; height:12px; background:#60a0ff; border-radius:50%; border:2px solid rgba(255,255,255,.3); box-shadow:0 0 10px rgba(96,160,255,.5); animation:blip-p 2s ease-in-out infinite; }
+
+/* Leaflet popup — 高コントラスト・読みやすく */
+.leaflet-popup-content-wrapper {
+  background:#111a14!important;
+  border:1px solid rgba(255,255,255,.18)!important;
+  border-radius:12px!important;
+  box-shadow:0 12px 40px rgba(0,0,0,.7)!important;
+  color:#fff!important;
+  font-family:'DM Sans','Noto Sans JP',sans-serif!important;
+  padding:0!important;
+}
+.leaflet-popup-content {
+  margin:0!important;
+  color:#fff!important;
+  width:auto!important;
+}
+.leaflet-popup-tip-container { display:none; }
+.leaflet-popup-close-button {
+  color:rgba(255,255,255,.4)!important;
+  font-size:18px!important;
+  top:8px!important; right:10px!important;
+  width:24px!important; height:24px!important;
+  display:flex!important; align-items:center!important; justify-content:center!important;
+}
+.leaflet-popup-close-button:hover { color:#fff!important; }
+
+/* ポップアップ内コンテンツ */
+.lp-wrap { padding:14px 16px 14px; min-width:220px; }
+.lp-header { display:flex; align-items:center; gap:6px; margin-bottom:10px; }
+.lp-age-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.lp-age-dot.fresh  { background:#e84040; box-shadow:0 0 6px rgba(232,64,64,.6); }
+.lp-age-dot.recent { background:#f0a500; box-shadow:0 0 6px rgba(240,165,0,.5); }
+.lp-age-dot.old    { background:#2ecc71; box-shadow:0 0 6px rgba(46,204,113,.4); }
+.lp-time {
+  font-family:'DM Mono',monospace; font-size:11px;
+  color:rgba(255,255,255,.9); font-weight:500; letter-spacing:.5px;
+}
+.lp-source {
+  font-family:'DM Mono',monospace; font-size:10px;
+  color:rgba(255,255,255,.4); margin-left:auto;
+}
+.lp-loc {
+  font-size:15px; font-weight:700; color:#fff;
+  margin-bottom:6px; letter-spacing:-.2px;
+  font-family:'Noto Sans JP',sans-serif;
+}
+.lp-det {
+  font-family:'Noto Sans JP',sans-serif;
+  font-size:12px; font-weight:300;
+  color:rgba(255,255,255,.75); line-height:1.65;
+  margin-bottom:10px;
+}
+.lp-footer { display:flex; align-items:center; gap:6px; }
+.lp-badge {
+  font-size:10px; font-family:'DM Mono',monospace;
+  padding:3px 10px; border-radius:5px; font-weight:500;
+}
+.lp-badge.fresh  { background:rgba(232,64,64,.2);  color:#e84040; border:1px solid rgba(232,64,64,.35); }
+.lp-badge.recent { background:rgba(240,165,0,.2);  color:#f0a500; border:1px solid rgba(240,165,0,.3);  }
+.lp-badge.old    { background:rgba(46,204,113,.15);color:#2ecc71; border:1px solid rgba(46,204,113,.25);}
+.lp-count { font-family:'DM Mono',monospace; font-size:10px; color:rgba(255,255,255,.5); }
+.leaflet-control-attribution { background:rgba(13,18,16,.8)!important; color:rgba(255,255,255,.2)!important; font-size:9px!important; }
+.leaflet-control-attribution a { color:rgba(255,255,255,.3)!important; }
+.leaflet-control-zoom a { background:rgba(13,18,16,.9)!important; color:var(--t2)!important; border-color:var(--border2)!important; }
+.leaflet-control-zoom a:hover { background:var(--surface)!important; }
+
+/* ══════════════════════════════════════════
+   PAGE: LOG
+══════════════════════════════════════════ */
+#pLog { padding:16px 16px 20px; }
+.sec-hdr { font-family:'DM Mono',monospace; font-size:9px; letter-spacing:3px; color:var(--t3); margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+.sec-hdr::after { content:''; flex:1; height:1px; background:linear-gradient(to right, var(--border2), transparent); }
+.sec-hdr-right { font-family:'DM Mono',monospace; font-size:9px; color:var(--t3); }
+
+.lstats { display:flex; gap:8px; margin-bottom:14px; }
+.sc { flex:1; background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:10px 10px; text-align:center; }
+.sc .sl { font-family:'DM Mono',monospace; font-size:8px; letter-spacing:1px; color:var(--t3); margin-bottom:5px; }
+.sc .sv { font-family:'DM Mono',monospace; font-size:18px; color:var(--t1); }
+.sc .sv.r { color:var(--danger); }
+
+.filter-bar { display:flex; gap:6px; margin-bottom:12px; overflow-x:auto; padding-bottom:2px; }
+.filter-bar::-webkit-scrollbar { display:none; }
+.fbtn { font-family:'DM Mono',monospace; font-size:8px; letter-spacing:1px; padding:5px 12px; border-radius:20px; border:1px solid var(--border); background:transparent; color:var(--t3); cursor:pointer; white-space:nowrap; transition:all .2s; }
+.fbtn.on { background:var(--surface); border-color:var(--border2); color:var(--t1); }
+
+.le {
+  background:var(--bg2); border:1px solid var(--border);
+  border-radius:8px; padding:12px 14px;
+  display:flex; gap:12px; align-items:flex-start;
+  margin-bottom:8px; cursor:pointer;
+  transition:background .15s, border-color .15s, transform .15s;
+  animation:le-in .3s ease-out both;
+}
+@keyframes le-in { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+.le:hover { background:var(--surface); border-color:var(--border2); transform:translateY(-1px); }
+.le-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; margin-top:4px; }
+.le-dot.fresh  { background:var(--danger); box-shadow:0 0 6px var(--danger-glow); }
+.le-dot.recent { background:var(--warn);   box-shadow:0 0 6px var(--warn-glow); }
+.le-dot.old    { background:rgba(46,204,113,.4); }
+.le.old { opacity:.65; }
+.lt { font-family:'DM Mono',monospace; font-size:9px; color:var(--t3); white-space:nowrap; padding-top:2px; }
+.lb { flex:1; }
+.lloc { font-size:13px; font-weight:500; color:var(--t1); margin-bottom:3px; }
+.ldet { font-family:'Noto Sans JP',sans-serif; font-size:11px; font-weight:300; color:var(--t2); line-height:1.55; }
+.map-hint { font-family:'DM Mono',monospace; font-size:8px; color:var(--t3); letter-spacing:1px; margin-top:5px; transition:color .2s; }
+.le:hover .map-hint { color:var(--t2); }
+.lcnt { font-family:'DM Mono',monospace; font-size:9px; color:var(--t2); white-space:nowrap; align-self:center; }
+.le.hidden { display:none; }
+
+/* ══════════════════════════════════════════
+   PAGE: INFO
+══════════════════════════════════════════ */
+#pInfo { padding:16px 16px 40px; display:flex; flex-direction:column; gap:14px; }
+
+.beta-banner { background:var(--warn-dim); border:1px solid rgba(240,165,0,.25); border-radius:var(--r); padding:14px 16px; }
+.beta-title { font-family:'DM Mono',monospace; font-size:10px; letter-spacing:2px; color:var(--warn); margin-bottom:7px; }
+.beta-body { font-family:'Noto Sans JP',sans-serif; font-size:11px; font-weight:300; color:rgba(240,165,0,.75); line-height:1.75; }
+
+.info-block { background:var(--bg2); border:1px solid var(--border); border-radius:var(--r); padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
+.info-block .ib-title { font-family:'DM Mono',monospace; font-size:9px; letter-spacing:2px; color:var(--t3); }
+.info-item { display:flex; gap:10px; align-items:flex-start; }
+.info-item .ii-icon { font-size:14px; flex-shrink:0; }
+.info-item .ii-text { font-family:'Noto Sans JP',sans-serif; font-size:11px; font-weight:300; color:var(--t2); line-height:1.65; }
+.info-item .ii-text strong { color:var(--t1); font-weight:500; }
+.info-item .ii-text a { color:var(--safe); text-decoration:none; border-bottom:1px solid rgba(46,204,113,.3); }
+
+.contact-block { background:var(--bg2); border:1px solid var(--border); border-radius:var(--r); padding:14px 16px; display:flex; flex-direction:column; gap:12px; }
+.cb-studio { font-family:'DM Mono',monospace; font-size:11px; letter-spacing:2px; color:var(--t1); }
+.cb-sub { font-family:'Noto Sans JP',sans-serif; font-size:11px; font-weight:300; color:var(--t3); line-height:1.6; }
+.cc-links { display:flex; flex-direction:column; gap:6px; }
+.cc-link { display:flex; align-items:center; gap:10px; padding:10px 12px; background:var(--bg3); border:1px solid var(--border); border-radius:8px; text-decoration:none; color:var(--t1); transition:background .2s, border-color .2s; cursor:pointer; }
+.cc-link:hover { background:var(--surface); border-color:var(--border2); }
+.cc-icon { font-size:15px; flex-shrink:0; }
+.cc-label { font-family:'DM Mono',monospace; font-size:8px; letter-spacing:2px; color:var(--t3); display:block; margin-bottom:2px; }
+.cc-val { font-size:12px; color:var(--t2); }
+.cc-arr { color:var(--t3); margin-left:auto; }
+.ver { font-family:'DM Mono',monospace; font-size:8px; color:var(--t3); text-align:center; letter-spacing:2px; }
+
+/* Toast */
+#toast { position:fixed; top:58px; left:50%; transform:translateX(-50%) translateY(-8px); background:var(--danger-dim); border:1px solid rgba(232,64,64,.3); border-radius:8px; padding:9px 16px; font-size:11px; color:var(--danger); z-index:9000; opacity:0; transition:opacity .3s, transform .3s; pointer-events:none; max-width:90%; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<!-- BOOT -->
+<div id="boot">
+  <div class="boot-mark">🐻</div>
+  <div class="boot-name">KUMA SIGNAL</div>
+  <div class="boot-concept">気配を可視化する</div>
+  <div class="boot-progress"><div class="boot-prog-fill" id="bootFill"></div></div>
+</div>
+
+<div id="toast"></div>
+
+<div id="app">
+  <div class="hdr">
+    <div class="hdr-logo">
+      <span class="hdr-logo-mark">🐻</span>
+      <span class="hdr-logo-name">KUMA SIGNAL</span>
+      <span class="hdr-logo-beta">BETA</span>
+    </div>
+    <div class="hdr-right">
+      <button class="snd-btn" id="sndBtn">🔇</button>
+    </div>
+  </div>
+
+  <div class="pages">
+
+    <!-- ══ SIGNAL (TOP) ══ -->
+    <div id="pSignal" class="page active">
+
+      <!-- 近接警告バナー -->
+      <div class="proximity-banner" id="proxBanner">
+        <span class="pb-icon">⚠️</span>
+        <div class="pb-body">
+          <div class="pb-title" id="proxTitle">近くにクマが出没しています</div>
+          <div class="pb-action" id="proxAction">ルート変更を推奨します</div>
+        </div>
+      </div>
+
+      <!-- 危険度カード -->
+      <div class="signal-card" id="signalCard">
+        <div class="signal-top">
+          <div class="signal-orb">
+            <div class="signal-orb-ring"></div>
+            <div class="signal-orb-ring signal-orb-ring2"></div>
+            <div class="signal-orb-inner" id="signalOrb">🐻</div>
+          </div>
+          <div class="signal-meta">
+            <div class="signal-level-label">SIGNAL LEVEL</div>
+            <div class="signal-level-text" id="signalText">読み込み中</div>
+            <div class="signal-level-sub" id="signalSub"></div>
+          </div>
+        </div>
+        <!-- 行動ガイド -->
+        <div class="action-guide" id="actionGuide"></div>
+      </div>
+
+      <!-- 条件フィルター -->
+      <div class="context-bar">
+        <button class="ctx-btn on" data-ctx="now">📍 現在</button>
+        <button class="ctx-btn" data-ctx="morning">🌅 朝</button>
+        <button class="ctx-btn" data-ctx="night">🌙 夜間</button>
+        <button class="ctx-btn" data-ctx="child">👶 子連れ</button>
+        <button class="ctx-btn" data-ctx="dog">🐕 犬の散歩</button>
+      </div>
+
+      <!-- 最新シグナル -->
+      <div>
+        <div class="sec-hdr" style="margin-bottom:8px;">LATEST SIGNAL</div>
+        <div id="latestSignals"></div>
+      </div>
+
+      <div class="status-bar">
+        <span><span class="sdot"></span>滋賀県 全域スキャン中</span>
+        <span id="clk">--:--:--</span>
+      </div>
+    </div>
+
+    <!-- ══ RADAR ══ -->
+    <div id="pRadar" class="page">
+      <div class="gps-btn" id="gpsBtn">
+        <div class="gps-btn-left">
+          <span style="font-size:18px;">📍</span>
+          <div>
+            <div class="gps-label">現在地を表示</div>
+            <div class="gps-status" id="gpsStatus">OFF</div>
+          </div>
+        </div>
+        <div class="toggle" id="gpsToggle"></div>
+      </div>
+
+      <div class="radar-wrap">
+        <canvas id="rc"></canvas>
+        <div class="swpc"><div class="swpf"></div><div class="swp"></div></div>
+        <div class="ccross"></div>
+        <div id="blips"></div>
+      </div>
+
+      <div class="radar-legend">
+        <div class="rl-item"><div class="rl-dot" style="background:var(--danger)"></div>直近</div>
+        <div class="rl-item"><div class="rl-dot" style="background:var(--warn)"></div>今日</div>
+        <div class="rl-item"><div class="rl-dot" style="background:rgba(46,204,113,.5)"></div>過去</div>
+        <div class="rl-item"><div class="rl-dot" style="background:#60a0ff"></div>現在地</div>
+      </div>
+
+      <div class="bpanel">
+        <div class="dr"><div class="dl">本日検知</div><div class="dv al" id="tc">0</div></div>
+        <div class="dr"><div class="dl">最新</div><div class="dv" id="ltime" style="font-size:10px;">--:--</div></div>
+        <div class="dr"><div class="dl">現在地</div><div class="dv cy" id="selfPos">--</div></div>
+      </div>
+      <div class="sbar"><span><span class="sdot"></span>SCANNING SHIGA PREF.</span><span id="clk2">--:--:--</span></div>
+    </div>
+
+    <!-- ══ MAP ══ -->
+    <div id="pMap" class="page">
+      <div id="leafMap"></div>
+      <div class="mscan"></div><div class="mvig"></div>
+      <div class="mhud-tl" id="mapHud">SHIGA PREF.<br>N 35°21' E 136°06'<br>SCANNING</div>
+      <div class="mhud-tr"><div class="mscale"><div class="mscalebar"></div><span class="mscalelbl">10KM</span></div></div>
+    </div>
+
+    <!-- ══ LOG ══ -->
+    <div id="pLog" class="page">
+      <div class="sec-hdr">SIGNAL LOG <span class="sec-hdr-right" id="updateTime"></span></div>
+      <div class="lstats">
+        <div class="sc"><div class="sl">本日</div><div class="sv r" id="stToday">0</div></div>
+        <div class="sc"><div class="sl">今月</div><div class="sv" id="stMonth">0</div></div>
+        <div class="sc"><div class="sl">頭数</div><div class="sv r" id="stBears">0</div></div>
+      </div>
+      <div class="filter-bar">
+        <button class="fbtn on" data-filter="all">ALL</button>
+        <button class="fbtn" data-filter="fresh">🔴 直近</button>
+        <button class="fbtn" data-filter="recent">🟡 今日</button>
+        <button class="fbtn" data-filter="old">⚫ 過去</button>
+      </div>
+      <div id="logEl"></div>
+    </div>
+
+    <!-- ══ INFO ══ -->
+    <div id="pInfo" class="page">
+      <div class="beta-banner">
+        <div class="beta-title">⚠ BETA VERSION — テスト運用中</div>
+        <div class="beta-body">表示データはサンプルです。リアルタイム情報ではありません。実際の出没情報は滋賀県・各市町村の公式発表を必ずご確認ください。</div>
+      </div>
+
+      <div class="info-block">
+        <div class="ib-title">DATA NOTICE</div>
+        <div class="info-item"><span class="ii-icon">⚡</span><div class="ii-text"><strong>リアルタイムAPIについて</strong><br>滋賀県・各関係機関はクマ出没のリアルタイムAPIを現時点では公開していません。本アプリは<a href="https://kumamap.com/ja/areas/shiga" target="_blank">kumamap.com</a>および滋賀県公式発表を参照したサンプルデータを使用しています。</div></div>
+        <div class="info-item"><span class="ii-icon">📋</span><div class="ii-text"><strong>参照元：</strong>滋賀県自然環境保全課 / kumamap.com / 各市町村公式発表</div></div>
+        <div class="info-item"><span class="ii-icon">🔄</span><div class="ii-text"><strong>更新：</strong>現在は手動更新（β版）。正式版ではリアルタイム自動取得を予定しています。</div></div>
+        <div class="info-item"><span class="ii-icon">⚠</span><div class="ii-text"><strong>免責：</strong>本アプリの情報のみで行動判断せず、必ず公式情報と併用してください。</div></div>
+      </div>
+
+      <div class="contact-block">
+        <div class="cb-studio">KINOSHITA STUDIO</div>
+        <div class="cb-sub">体験翻訳家 / Experience Translator<br>UX Design × Shiga Prefecture</div>
+        <div class="cc-links">
+          <a class="cc-link" href="/cdn-cgi/l/email-protection#345d5a525b745f5d5a5b475c5d4055474041505d5b1a575b59">
+            <span class="cc-icon">✉</span><div><span class="cc-label">EMAIL</span><span class="cc-val"><span class="__cf_email__" data-cfemail="2b42454d446b404245445843425f4a585f5e4f424405484446">[email&#160;protected]</span></span></div><span class="cc-arr">›</span>
+          </a>
+          <a class="cc-link" href="https://kinoshitastudio.github.io" target="_blank">
+            <span class="cc-icon">🌐</span><div><span class="cc-label">WEBSITE</span><span class="cc-val">kinoshitastudio.github.io</span></div><span class="cc-arr">›</span>
+          </a>
+          <a class="cc-link" href="https://www.instagram.com/kkinoshita.studio/" target="_blank">
+            <span class="cc-icon">📸</span><div><span class="cc-label">INSTAGRAM</span><span class="cc-val">@kkinoshita.studio</span></div><span class="cc-arr">›</span>
+          </a>
+        </div>
+        <div style="font-family:'Noto Sans JP',sans-serif;font-size:11px;font-weight:300;color:var(--t3);line-height:1.7;">データ提供・行政連携・機能改善のご提案など、お気軽にご連絡ください。</div>
+      </div>
+
+      <div class="ver">KUMA SIGNAL v0.5-beta &nbsp;·&nbsp; KINOSHITA STUDIO &nbsp;·&nbsp; 2026</div>
+    </div>
+
+  </div>
+
+  <div class="tabbar">
+    <div class="tab on"  data-page="pSignal"><div class="tline"></div><span class="ti">🔔</span><span class="tl">SIGNAL</span></div>
+    <div class="tab"     data-page="pRadar"> <div class="tline"></div><span class="ti">📡</span><span class="tl">RADAR</span></div>
+    <div class="tab"     data-page="pMap">   <div class="tline"></div><span class="ti">🗺</span><span class="tl">MAP</span><div class="tbadge" id="mbadge">0</div></div>
+    <div class="tab"     data-page="pLog">   <div class="tline"></div><span class="ti">📋</span><span class="tl">LOG</span></div>
+    <div class="tab"     data-page="pInfo">  <div class="tline"></div><span class="ti">ℹ️</span><span class="tl">INFO</span></div>
+  </div>
+</div>
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+/* ═══════════════════════════════════════
+   DATA
+═══════════════════════════════════════ */
+const INC = [
+  {id:1,  time:"03/23 07:23", lat:35.1285, lng:135.8730, location:"大津市仰木",       detail:"体長約1.2m 単独行動 民家裏山で目撃",     count:1, age:"fresh",  source:"目撃"},
+  {id:2,  time:"03/23 06:47", lat:35.2758, lng:136.2618, location:"彦根市鳥居本町",   detail:"農道付近 足跡確認 親子グマとみられる",   count:2, age:"fresh",  source:"足跡"},
+  {id:3,  time:"03/23 05:12", lat:34.8890, lng:136.1780, location:"甲賀市信楽町",     detail:"茶畑に侵入 蜂の巣破壊の痕跡あり",       count:1, age:"recent", source:"痕跡"},
+  {id:4,  time:"03/22 22:04", lat:34.9580, lng:136.0710, location:"湖南市夏見",       detail:"住宅街から目撃 警戒レベル引き上げ",     count:1, age:"old",    source:"目撃"},
+  {id:5,  time:"03/22 18:30", lat:35.5100, lng:136.2280, location:"長浜市余呉町",     detail:"国道365号沿い横断 ドライバーが目撃",    count:1, age:"old",    source:"目撃"},
+  {id:6,  time:"03/22 14:17", lat:35.1200, lng:136.3500, location:"東近江市政所町",   detail:"廃屋付近に糞確認 生ごみ漁りの跡",       count:1, age:"old",    source:"痕跡"},
+  {id:7,  time:"01/22 09:15", lat:35.0820, lng:135.8640, location:"大津市坂本五丁目", detail:"ツキノワグマ1頭 神社付近で目撃",        count:1, age:"old",    source:"目撃"},
+  {id:8,  time:"01/18 16:40", lat:35.4720, lng:136.2040, location:"長浜市高月町",     detail:"余呉川沿いの竹藪に侵入 農業被害あり",  count:1, age:"old",    source:"農業被害"},
+  {id:9,  time:"01/10 08:00", lat:35.0163, lng:135.9985, location:"栗東市安養寺",     detail:"市街地周辺 早朝に目撃情報",            count:1, age:"old",    source:"目撃"},
+];
+
+/* ═══════════════════════════════════════
+   STATE
+═══════════════════════════════════════ */
+let gpsOn=false, gpsWatchId=null, selfLatLng=null;
+let leafMap=null, mapInit=false;
+let selfMapMark=null, selfAccCirc=null, bearMarkers={};
+let soundOn=false, audioCtx=null;
+let currentCtx='now', currentFilter='all';
+
+/* ═══════════════════════════════════════
+   BOOT
+═══════════════════════════════════════ */
+function doRenderSignal(){
+  try { renderSignalPage(); } catch(e){ console.error('renderSignalPage error:',e); }
+  try { renderLog(); }        catch(e){ console.error('renderLog error:',e); }
+  try { updateStats(); }      catch(e){ console.error('updateStats error:',e); }
+}
+
+window.addEventListener('DOMContentLoaded', ()=>{
+  const fill = document.getElementById('bootFill');
+  if(fill) fill.style.width='100%';
+  setTimeout(()=>{
+    const boot = document.getElementById('boot');
+    if(boot){ boot.classList.add('hide'); setTimeout(()=>{ if(boot.parentNode) boot.parentNode.removeChild(boot); }, 700); }
+    doRenderSignal();
+  }, 900);
+});
+
+/* ═══════════════════════════════════════
+   SIGNAL LEVEL LOGIC
+═══════════════════════════════════════ */
+function getSignalLevel(){
+  const fresh  = INC.filter(i=>i.age==='fresh');
+  const recent = INC.filter(i=>i.age==='recent');
+  if(fresh.length>=2)  return 'danger';
+  if(fresh.length>=1)  return 'warn';
+  if(recent.length>=1) return 'warn';
+  return 'safe';
+}
+
+// 条件別の行動ガイドを返す
+function getActionGuide(ctx, level){
+  const guides = {
+    now: {
+      safe:   [{icon:'🚶',label:'外出',status:'ok',text:'外出OK'},{icon:'👦',label:'子供の外遊び',status:'ok',text:'通常通り'},{icon:'🐕',label:'犬の散歩',status:'ok',text:'問題なし'}],
+      warn:   [{icon:'🚶',label:'外出',status:'care',text:'注意して'},{icon:'👦',label:'子供の外遊び',status:'care',text:'大人同伴で'},{icon:'🐕',label:'犬の散歩',status:'care',text:'短時間推奨'}],
+      danger: [{icon:'🚶',label:'外出',status:'ng',text:'控えて'},{icon:'👦',label:'子供の外遊び',status:'ng',text:'屋内を推奨'},{icon:'🐕',label:'犬の散歩',status:'ng',text:'中止推奨'}],
+    },
+    morning: {
+      safe:   [{icon:'🌅',label:'早朝外出',status:'ok',text:'OK'},{icon:'🏃',label:'ランニング',status:'ok',text:'OK'},{icon:'🚗',label:'通勤',status:'ok',text:'通常通り'}],
+      warn:   [{icon:'🌅',label:'早朝外出',status:'care',text:'明るい道で'},{icon:'🏃',label:'ランニング',status:'care',text:'複数人で'},{icon:'🚗',label:'通勤',status:'ok',text:'車は問題なし'}],
+      danger: [{icon:'🌅',label:'早朝外出',status:'ng',text:'控えて'},{icon:'🏃',label:'ランニング',status:'ng',text:'中止推奨'},{icon:'🚗',label:'通勤',status:'ok',text:'車は問題なし'}],
+    },
+    night: {
+      safe:   [{icon:'🌙',label:'夜間外出',status:'care',text:'注意を'},{icon:'🔦',label:'照明',status:'ok',text:'推奨'},{icon:'🐕',label:'夜間散歩',status:'care',text:'短時間で'}],
+      warn:   [{icon:'🌙',label:'夜間外出',status:'ng',text:'控えて'},{icon:'🔦',label:'照明',status:'care',text:'必須'},{icon:'🐕',label:'夜間散歩',status:'ng',text:'中止推奨'}],
+      danger: [{icon:'🌙',label:'夜間外出',status:'ng',text:'中止'},{icon:'🏠',label:'屋内待機',status:'ok',text:'推奨'},{icon:'🚗',label:'車移動',status:'care',text:'窓閉めて'}],
+    },
+    child: {
+      safe:   [{icon:'👶',label:'公園遊び',status:'ok',text:'OK'},{icon:'🏫',label:'通学路',status:'ok',text:'通常通り'},{icon:'🧒',label:'一人遊び',status:'ok',text:'OK'}],
+      warn:   [{icon:'👶',label:'公園遊び',status:'care',text:'大人同伴'},{icon:'🏫',label:'通学路',status:'care',text:'集団登校を'},{icon:'🧒',label:'一人遊び',status:'ng',text:'避けて'}],
+      danger: [{icon:'👶',label:'公園遊び',status:'ng',text:'中止'},{icon:'🏫',label:'通学路',status:'ng',text:'車送迎を'},{icon:'🧒',label:'一人遊び',status:'ng',text:'禁止'}],
+    },
+    dog: {
+      safe:   [{icon:'🐕',label:'散歩',status:'ok',text:'OK'},{icon:'🌲',label:'山沿い',status:'care',text:'注意を'},{icon:'⏰',label:'時間帯',status:'ok',text:'昼間推奨'}],
+      warn:   [{icon:'🐕',label:'散歩',status:'care',text:'短時間で'},{icon:'🌲',label:'山沿い',status:'ng',text:'避けて'},{icon:'⏰',label:'時間帯',status:'care',text:'昼間のみ'}],
+      danger: [{icon:'🐕',label:'散歩',status:'ng',text:'中止推奨'},{icon:'🏘',label:'住宅街のみ',status:'care',text:'短時間'},{icon:'📢',label:'声出し',status:'ok',text:'効果あり'}],
+    },
+  };
+  return guides[ctx]?.[level] || guides.now[level];
+}
+
+function renderSignalPage(){
+  const level = getSignalLevel();
+  const card  = document.getElementById('signalCard');
+  const fresh  = INC.filter(i=>i.age==='fresh');
+  const recent = INC.filter(i=>i.age==='recent');
+
+  // カードレベル
+  card.className = `signal-card level-${level}`;
+
+  // テキスト
+  const texts = {
+    safe:   ['安全', '直近24時間の出没報告はありません'],
+    warn:   ['注意', `本日${(fresh.length+recent.length)}件の出没報告があります`],
+    danger: ['危険', `現在${fresh.length}件の緊急出没報告があります`],
+  };
+  document.getElementById('signalText').textContent = texts[level][0];
+  document.getElementById('signalSub').textContent  = texts[level][1];
+
+  // アクションガイド
+  const actions = getActionGuide(currentCtx, level);
+  const guide = document.getElementById('actionGuide');
+  guide.innerHTML = '';
+  // 2列×行
+  for(let i=0; i<actions.length; i+=2){
+    const row=document.createElement('div'); row.className='action-row';
+    [actions[i], actions[i+1]].forEach(a=>{
+      if(!a) return;
+      const el=document.createElement('div'); el.className='action-item';
+      el.innerHTML=`<span class="action-icon">${a.icon}</span><span class="action-text">${a.label}</span><span class="action-status st-${a.status}">${a.text}</span>`;
+      row.appendChild(el);
+    });
+    guide.appendChild(row);
+  }
+
+  // 最新シグナル（直近2件）
+  const latest = document.getElementById('latestSignals');
+  latest.innerHTML='';
+  INC.filter(i=>i.age!=='old').slice(0,3).forEach(inc=>{
+    const el=document.createElement('div'); el.className='latest-signal'; el.style.marginBottom='8px'; el.style.cursor='pointer';
+    el.innerHTML=`
+      <div class="ls-time">${inc.time}</div>
+      <div class="ls-body">
+        <div class="ls-loc">📍 ${inc.location}</div>
+        <div class="ls-detail">${inc.detail}</div>
+      </div>
+      <div class="ls-badge">${inc.age==='fresh'?'直近':'今日'}</div>`;
+    el.addEventListener('click',()=>flyToIncident(inc));
+    latest.appendChild(el);
+  });
+
+  // 近接チェック（GPS有効時）
+  if(selfLatLng) checkProximity();
+}
+
+// 条件ボタン
+document.querySelectorAll('.ctx-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.ctx-btn').forEach(b=>b.classList.remove('on'));
+    btn.classList.add('on');
+    currentCtx=btn.dataset.ctx;
+    renderSignalPage();
+    if(soundOn) playPing(500,.03);
+  });
+});
+
+/* ═══════════════════════════════════════
+   AUDIO
+═══════════════════════════════════════ */
+function initAudio(){ if(!audioCtx) audioCtx=new(window.AudioContext||window.webkitAudioContext)(); }
+function playPing(freq=600,vol=0.06){
+  if(!soundOn||!audioCtx) return;
+  const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+  o.connect(g);g.connect(audioCtx.destination);
+  o.type='sine';o.frequency.value=freq;
+  g.gain.setValueAtTime(vol,audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(.001,audioCtx.currentTime+.5);
+  o.start();o.stop(audioCtx.currentTime+.5);
+}
+function playAlert(){
+  if(!soundOn||!audioCtx) return;
+  [0,.18,.36].forEach(t=>{ const o=audioCtx.createOscillator(),g=audioCtx.createGain(); o.connect(g);g.connect(audioCtx.destination); o.type='triangle';o.frequency.value=380; g.gain.setValueAtTime(.06,audioCtx.currentTime+t); g.gain.exponentialRampToValueAtTime(.001,audioCtx.currentTime+t+.15); o.start(audioCtx.currentTime+t);o.stop(audioCtx.currentTime+t+.15); });
+}
+setInterval(()=>{ if(soundOn) playPing(500,.025); },4000);
+document.getElementById('sndBtn').addEventListener('click',()=>{
+  initAudio(); soundOn=!soundOn;
+  document.getElementById('sndBtn').textContent=soundOn?'🔊':'🔇';
+  document.getElementById('sndBtn').classList.toggle('on',soundOn);
+  if(soundOn) playPing(700,.07);
+});
+
+/* ═══════════════════════════════════════
+   TABS
+═══════════════════════════════════════ */
+document.querySelectorAll('.tab').forEach(t=>{
+  t.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+    document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
+    t.classList.add('on');
+    const pid=t.dataset.page;
+    document.getElementById(pid).classList.add('active');
+    if(pid==='pMap'){ if(!mapInit){initMap();mapInit=true;} else setTimeout(()=>leafMap.invalidateSize(),80); }
+    if(soundOn) playPing(500,.03);
+  });
+});
+
+/* ═══════════════════════════════════════
+   GPS
+═══════════════════════════════════════ */
+document.getElementById('gpsBtn').addEventListener('click',()=>{ initAudio(); gpsOn?stopGPS():startGPS(); });
+function startGPS(){
+  if(!('geolocation' in navigator)){setGpsStatus('このブラウザは非対応','err');return;}
+  setGpsStatus('取得中...',''); document.getElementById('gpsToggle').classList.add('on'); document.getElementById('gpsBtn').classList.add('active'); gpsOn=true;
+  gpsWatchId=navigator.geolocation.watchPosition(pos=>{
+    selfLatLng={lat:pos.coords.latitude,lng:pos.coords.longitude,acc:pos.coords.accuracy};
+    setGpsStatus('✓ 受信中 ±'+Math.round(selfLatLng.acc)+'m','on');
+    document.getElementById('selfPos').textContent='ON';
+    renderBlips(); if(mapInit) updateSelfOnMap(); checkProximity();
+  },err=>{
+    const m={1:'許可が必要です',2:'取得失敗',3:'タイムアウト'};
+    setGpsStatus(m[err.code]||'エラー','err');
+  },{enableHighAccuracy:true,maximumAge:5000,timeout:20000});
+}
+function stopGPS(){
+  if(gpsWatchId!==null){navigator.geolocation.clearWatch(gpsWatchId);gpsWatchId=null;}
+  gpsOn=false;selfLatLng=null;
+  document.getElementById('gpsToggle').classList.remove('on'); document.getElementById('gpsBtn').classList.remove('active');
+  setGpsStatus('OFF',''); document.getElementById('selfPos').textContent='--';
+  renderBlips();
+  if(selfMapMark&&leafMap){leafMap.removeLayer(selfMapMark);selfMapMark=null;}
+  if(selfAccCirc&&leafMap){leafMap.removeLayer(selfAccCirc);selfAccCirc=null;}
+}
+function setGpsStatus(t,c){ const el=document.getElementById('gpsStatus'); el.textContent=t; el.className='gps-status'+(c?' '+c:''); }
+
+function checkProximity(){
+  if(!selfLatLng) return;
+  const fresh=INC.filter(i=>i.age==='fresh');
+  let closest=null, minD=999;
+  for(const inc of fresh){ const d=haversine(selfLatLng.lat,selfLatLng.lng,inc.lat,inc.lng); if(d<minD){minD=d;closest=inc;} }
+  const banner=document.getElementById('proxBanner');
+  if(closest&&minD<10){
+    document.getElementById('proxTitle').textContent=`${closest.location}から${minD.toFixed(1)}km圏内に出没`;
+    document.getElementById('proxAction').textContent=minD<3?'直ちにルート変更を推奨します':'外出時は十分にご注意ください';
+    banner.classList.add('show');
+    if(soundOn) playAlert();
+  } else { banner.classList.remove('show'); }
+}
+function haversine(a,b,c,d){ const R=6371,r=Math.PI/180,da=(c-a)*r,db=(d-b)*r; const x=Math.sin(da/2)**2+Math.cos(a*r)*Math.cos(c*r)*Math.sin(db/2)**2; return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x)); }
+
+/* ═══════════════════════════════════════
+   TOAST
+═══════════════════════════════════════ */
+let toastTimer=null;
+function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); if(toastTimer) clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),4000); }
+
+/* ═══════════════════════════════════════
+   RADAR
+═══════════════════════════════════════ */
+const canvas=document.getElementById('rc'), ctx2=canvas.getContext('2d');
+const RADAR_CENTER={lat:35.22,lng:136.07}, RADAR_KM=22;
+function km2px(km){return(canvas.width/2/RADAR_KM)*km;}
+function ll2r(lat,lng){ const R=6371,r=Math.PI/180; const dy=(lat-RADAR_CENTER.lat)*r*R, dx=(lng-RADAR_CENTER.lng)*r*R*Math.cos(RADAR_CENTER.lat*r); const cx=canvas.width/2; return{px:cx+dx*(cx/RADAR_KM),py:cx-dy*(cx/RADAR_KM)}; }
+
+function resizeCanvas(){ const s=canvas.parentElement.offsetWidth; canvas.width=s;canvas.height=s; drawGrid();renderBlips(); }
+function drawGrid(){
+  const W=canvas.width,cx=W/2,r=W/2; ctx2.clearRect(0,0,W,W);
+  [.25,.5,.75,1].forEach(t=>{ ctx2.beginPath();ctx2.arc(cx,cx,r*t,0,Math.PI*2); ctx2.strokeStyle=t===1?'rgba(255,255,255,.1)':'rgba(255,255,255,.05)'; ctx2.lineWidth=t===1?1:.5; ctx2.stroke(); });
+  ctx2.strokeStyle='rgba(255,255,255,.05)';ctx2.lineWidth=.5;
+  ctx2.beginPath();ctx2.moveTo(0,cx);ctx2.lineTo(W,cx);ctx2.stroke();
+  ctx2.beginPath();ctx2.moveTo(cx,0);ctx2.lineTo(cx,W);ctx2.stroke();
+  ctx2.font='bold 9px DM Mono,monospace';ctx2.fillStyle='rgba(255,255,255,.25)';ctx2.textAlign='center';
+  [['N',0],['E',90],['S',180],['W',270]].forEach(([d,deg])=>{ const rad=(deg-90)*Math.PI/180; ctx2.fillText(d,cx+Math.cos(rad)*(r*.88),cx+Math.sin(rad)*(r*.88)+3); });
+  ctx2.fillStyle='rgba(255,255,255,.15)';ctx2.font='7px DM Mono,monospace';ctx2.textAlign='left';
+  ['5km','10km','15km'].forEach((l,i)=>ctx2.fillText(l,cx+3,cx-r*(.25+i*.25)+3));
+}
+function renderBlips(){
+  const c=document.getElementById('blips');c.innerHTML='';
+  const size=canvas.width,cx=size/2;
+  INC.forEach(inc=>{
+    const {px,py}=ll2r(inc.lat,inc.lng); const dx=px-cx,dy=py-cx,dist=Math.sqrt(dx*dx+dy*dy);
+    let fpx=px,fpy=py; if(dist>cx*.9){const s=cx*.87/dist;fpx=cx+dx*s;fpy=cx+dy*s;}
+    const b=document.createElement('div');b.className='blip';b.style.left=fpx+'px';b.style.top=fpy+'px';
+    const dot=document.createElement('div');dot.className=`bd ${inc.age}`;
+    const r1=document.createElement('div');r1.className='br';
+    const r2=document.createElement('div');r2.className='br br2';
+    b.appendChild(dot);b.appendChild(r1);b.appendChild(r2);c.appendChild(b);
+  });
+  if(gpsOn&&selfLatLng){
+    const {px,py}=ll2r(selfLatLng.lat,selfLatLng.lng); const dx=px-cx,dy=py-cx,dist=Math.sqrt(dx*dx+dy*dy);
+    if(dist<cx*.9){
+      const accPx=km2px(selfLatLng.acc/1000)*2;
+      if(accPx>6&&accPx<size*.8){const ac=document.createElement('div');ac.className='acc-circle';ac.style.left=px+'px';ac.style.top=py+'px';ac.style.width=accPx+'px';ac.style.height=accPx+'px';c.appendChild(ac);}
+      const b=document.createElement('div');b.className='blip blip-self';b.style.left=px+'px';b.style.top=py+'px';
+      const dot=document.createElement('div');dot.className='bd';
+      b.appendChild(dot);b.appendChild(Object.assign(document.createElement('div'),{className:'br'}));b.appendChild(Object.assign(document.createElement('div'),{className:'br br2'}));c.appendChild(b);
+    } else {
+      const ang=Math.atan2(dy,dx),ex=cx+Math.cos(ang)*cx*.84,ey=cx+Math.sin(ang)*cx*.84;
+      const arr=document.createElement('div');arr.className='blip-arrow';arr.style.left=ex+'px';arr.style.top=ey+'px';arr.style.transform=`translate(-50%,-50%) rotate(${ang*180/Math.PI+90}deg)`;arr.textContent='▲';c.appendChild(arr);
+    }
+  }
+}
+
+/* ═══════════════════════════════════════
+   MAP
+═══════════════════════════════════════ */
+function initMap(){
+  leafMap=L.map('leafMap',{center:[35.22,136.07],zoom:10,zoomControl:true,attributionControl:true});
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',maxZoom:18}).addTo(leafMap);
+  const bounds=[];
+  INC.forEach(inc=>{
+    const ageLabel={fresh:'直近',recent:'今日',old:'過去'}[inc.age];
+    const icon=L.divIcon({className:'',html:`<div class="bear-dot ${inc.age}">🐻</div>`,iconSize:[16,16],iconAnchor:[8,8],popupAnchor:[0,-12]});
+    const m=L.marker([inc.lat,inc.lng],{icon}).addTo(leafMap);
+    m.bindPopup(`
+      <div class="lp-wrap">
+        <div class="lp-header">
+          <div class="lp-age-dot ${inc.age}"></div>
+          <span class="lp-time">${inc.time}</span>
+          <span class="lp-source">${inc.source}</span>
+        </div>
+        <div class="lp-loc">📍 ${inc.location}</div>
+        <div class="lp-det">${inc.detail}</div>
+        <div class="lp-footer">
+          <span class="lp-badge ${inc.age}">${ageLabel}</span>
+          <span class="lp-count">🐻 ×${inc.count}</span>
+        </div>
+      </div>`,{maxWidth:260,className:''});
+    bearMarkers[inc.id]=m; bounds.push([inc.lat,inc.lng]);
+  });
+  setTimeout(()=>{ leafMap.invalidateSize(); if(bounds.length) leafMap.fitBounds(bounds,{padding:[40,40],maxZoom:11}); },150);
+}
+function updateSelfOnMap(){
+  if(!leafMap||!selfLatLng) return;
+  const {lat,lng,acc}=selfLatLng;
+  const icon=L.divIcon({className:'',html:'<div class="self-dot"></div>',iconSize:[14,14],iconAnchor:[7,7]});
+  if(selfMapMark) selfMapMark.setLatLng([lat,lng]); else{ selfMapMark=L.marker([lat,lng],{icon,zIndexOffset:1000}).addTo(leafMap); selfMapMark.bindTooltip('📍 現在地',{direction:'top',permanent:false}); }
+  if(selfAccCirc) selfAccCirc.setLatLng([lat,lng]).setRadius(acc); else selfAccCirc=L.circle([lat,lng],{radius:acc,color:'#00d4ff',fillColor:'#00d4ff',fillOpacity:.07,weight:1.5,dashArray:'5,4'}).addTo(leafMap);
+  document.getElementById('mapHud').innerHTML=`SHIGA PREF.<br>N ${lat.toFixed(4)} E ${lng.toFixed(4)}<br>GPS LOCKED`;
+}
+function flyToIncident(inc){
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+  document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
+  document.querySelector('[data-page="pMap"]').classList.add('on');
+  document.getElementById('pMap').classList.add('active');
+  if(!mapInit){initMap();mapInit=true;}
+  if(soundOn) playPing(600,.05);
+  setTimeout(()=>{ leafMap.invalidateSize(); leafMap.flyTo([inc.lat,inc.lng],12,{animate:true,duration:.8}); setTimeout(()=>{if(bearMarkers[inc.id])bearMarkers[inc.id].openPopup();},900); },100);
+}
+
+/* ═══════════════════════════════════════
+   LOG
+═══════════════════════════════════════ */
+document.querySelectorAll('.fbtn').forEach(btn=>{
+  btn.addEventListener('click',()=>{ document.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('on')); btn.classList.add('on'); currentFilter=btn.dataset.filter; applyFilter(); if(soundOn) playPing(450,.02); });
+});
+function applyFilter(){ document.querySelectorAll('.le').forEach(el=>{ el.classList.toggle('hidden',(currentFilter!=='all')&&el.dataset.age!==currentFilter); }); }
+function renderLog(){
+  const el=document.getElementById('logEl');el.innerHTML='';
+  [...INC].sort((a,b)=>b.id-a.id).forEach((inc,i)=>{
+    const e=document.createElement('div');e.className=`le ${inc.age}`;e.dataset.age=inc.age;e.style.animationDelay=(i*.04)+'s';
+    e.innerHTML=`<div class="le-dot ${inc.age}"></div><div class="lt">${inc.time}</div><div class="lb"><div class="lloc">📍 ${inc.location}</div><div class="ldet">${inc.detail}</div><div class="map-hint">· ${inc.source} &nbsp; 地図で見る →</div></div><div class="lcnt">🐻×${inc.count}</div>`;
+    e.addEventListener('click',()=>flyToIncident(inc));
+    el.appendChild(e);
+  });
+  const today=INC.filter(i=>i.age!=='old'), bears=INC.reduce((a,i)=>a+i.count,0);
+  document.getElementById('stToday').textContent=today.length+'件';
+  document.getElementById('stMonth').textContent=INC.length+'件';
+  document.getElementById('stBears').textContent=bears+'頭';
+  const now=new Date();
+  document.getElementById('updateTime').textContent=`${now.getMonth()+1}/${now.getDate()} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')} 更新`;
+  applyFilter();
+}
+
+/* ═══════════════════════════════════════
+   STATS / CLOCK
+═══════════════════════════════════════ */
+function updateStats(){
+  const t=INC.filter(i=>i.age!=='old');
+  document.getElementById('tc').textContent=t.length+'件';
+  const f=INC.find(i=>i.age==='fresh');
+  if(f) document.getElementById('ltime').textContent=(f.time.split(' ')[1]||f.time);
+  document.getElementById('mbadge').textContent=INC.length;
+}
+function tick(){
+  const n=new Date(), s=[n.getHours(),n.getMinutes(),n.getSeconds()].map(x=>String(x).padStart(2,'0')).join(':');
+  document.getElementById('clk').textContent=s;
+  const c2=document.getElementById('clk2'); if(c2) c2.textContent=s;
+}
+setInterval(tick,1000);tick();
+
+window.addEventListener('resize',()=>{ try{resizeCanvas();}catch(e){} });
+</script>
+</body>
+</html>
