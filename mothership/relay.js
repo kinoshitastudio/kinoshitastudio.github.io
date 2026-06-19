@@ -7,6 +7,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const { spawn } = require("child_process");
 
 const FILE = path.join(__dirname, "mothership.json");
 const PORT = process.env.PORT || 4575;
@@ -42,6 +43,37 @@ http.createServer((req, res) => {
       }
     } catch (e) {}
     return res.end(JSON.stringify(out));
+  }
+
+  // チャット: claude -p（Maxのheadless Claude Code）を起動し mothership.json を編集させる（AI課金なし）
+  if (u.pathname === "/chat" && req.method === "POST") {
+    let b = "";
+    req.on("data", (d) => (b += d));
+    req.on("end", () => {
+      let msg = "";
+      try { msg = (JSON.parse(b).message || "").toString(); } catch (e) {}
+      res.setHeader("Content-Type", "application/json");
+      if (!msg.trim()) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "メッセージが空です" })); }
+
+      let done = false;
+      const finish = (obj) => { if (done) return; done = true; clearTimeout(timer); res.end(JSON.stringify(obj)); };
+
+      let child;
+      try {
+        child = spawn("claude", ["-p", msg, "--permission-mode", "acceptEdits"], { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"] });
+      } catch (e) {
+        return finish({ ok: false, error: "claude 起動失敗: " + (e && e.message ? e.message : e) });
+      }
+      let out = "", err = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (err += d));
+      child.on("error", (e) => finish({ ok: false, error: "claude が見つかりません（PATH確認）: " + (e && e.message ? e.message : e) }));
+      child.on("close", (code) => finish({ ok: code === 0, text: out.trim(), error: err.trim(), code: code }));
+
+      // 安全弁: 240秒で打ち切り
+      var timer = setTimeout(() => { try { child.kill(); } catch (e) {} finish({ ok: false, error: "タイムアウト（240s）" }); }, 240000);
+    });
+    return;
   }
 
   // 任意: HTTP経由で設計を流し込む（Claude Codeが curl で叩く用）
