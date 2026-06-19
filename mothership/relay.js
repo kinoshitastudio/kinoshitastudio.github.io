@@ -96,7 +96,9 @@ http.createServer((req, res) => {
     const ct = ext === ".html" ? "text/html; charset=utf-8"
       : ext === ".json" ? "application/json; charset=utf-8"
       : ext === ".js" ? "text/javascript" : ext === ".css" ? "text/css"
-      : ext === ".svg" ? "image/svg+xml" : "application/octet-stream";
+      : ext === ".svg" ? "image/svg+xml"
+      : ext === ".png" ? "image/png" : (ext === ".jpg" || ext === ".jpeg") ? "image/jpeg"
+      : ext === ".webp" ? "image/webp" : "application/octet-stream";
     res.setHeader("Content-Type", ct);
     res.end(data);
   });
