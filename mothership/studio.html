@@ -35,6 +35,19 @@
   .propbar .sep{color:var(--gold);font-weight:700}
   .propbar button.del{border-color:#a5564e;color:#e0a39c}
   .propbar button.del:hover{background:#a5564e;color:#fff;border-color:#a5564e}
+  .main{flex:1;display:flex;min-height:0}
+  .layers{width:212px;flex-shrink:0;border-left:1px solid var(--line);background:#1f1f1c;display:flex;flex-direction:column;min-height:0;transition:width .15s}
+  .layers.collapsed{width:32px}
+  .lhead{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;border-bottom:1px solid var(--line);font-size:9px;letter-spacing:.22em;color:var(--faint);flex-shrink:0}
+  .layers.collapsed .lhead span{display:none}
+  .layers.collapsed .llist{display:none}
+  .lhead button{background:none;border:none;color:var(--faint);cursor:pointer;font-size:13px;padding:2px 4px}
+  .lhead button:hover{color:var(--gold)}
+  .llist{overflow-y:auto;flex:1}
+  .lrow{display:flex;align-items:center;gap:7px;padding:7px 11px;font-size:10.5px;color:var(--ink);cursor:pointer;border-bottom:1px solid rgba(255,255,255,.03)}
+  .lrow:hover{background:rgba(168,144,96,.12)}
+  .lrow.sel{background:rgba(168,144,96,.24);color:#fff}
+  .lrow .lt{color:var(--faint);font-size:8px;text-transform:uppercase;margin-left:auto;letter-spacing:.1em}
   #selbox{position:absolute;border:1.5px solid #a89060;pointer-events:none;z-index:8;display:none}
   #selbox .selh{position:absolute;width:12px;height:12px;background:#fff;border:1.5px solid #a89060;border-radius:2px;pointer-events:auto;box-sizing:border-box}
   #selbox .selh.nw{left:-6px;top:-6px;cursor:nwse-resize}
@@ -66,11 +79,17 @@
     <button id="propdel" class="del">削除</button>
     <button id="propclose">選択解除</button>
   </div>
-  <div class="stage" id="stage">
-    <div class="wrap" id="wrap">
-      <div class="design" id="design"></div>
-      <div class="ref" id="ref"></div>
+  <div class="main" id="main">
+    <div class="stage" id="stage">
+      <div class="wrap" id="wrap">
+        <div class="design" id="design"></div>
+        <div class="ref" id="ref"></div>
+      </div>
     </div>
+    <aside class="layers" id="layers">
+      <div class="lhead"><span>LAYERS</span><button id="ltoggle" title="折りたたみ">⟩</button></div>
+      <div class="llist" id="llist"></div>
+    </aside>
   </div>
   <div class="hint">設計(JSON)をHTMLで描画＝"頭の中"／参照画像を重ねて当て込み → ズレを見て指示。`mothership.json` の更新は自動で反映されます。</div>
   <div class="drop" id="dropzone">参照画像をドロップ</div>
@@ -144,6 +163,7 @@ function render(doc){
   wrap.style.width=w+'px'; wrap.style.height=h+'px';
   refEl.style.width=w+'px'; refEl.style.height=h+'px';
   attachDrag(doc.root, node);
+  renderLayers();
   applyRef();
 }
 
@@ -155,7 +175,7 @@ function attachDrag(rootJson, rootDom){
     if(!dom || (childJson.x==null && childJson.y==null)) return;
     dom.style.cursor='move';
     dom.addEventListener('pointerdown', function(e){
-      e.preventDefault(); e.stopPropagation(); dragging=true;
+      e.preventDefault(); e.stopPropagation(); dragging=true; snapshot();
       var sx=e.clientX, sy=e.clientY, ox=(childJson.x||0), oy=(childJson.y||0), moved=false;
       try{dom.setPointerCapture(e.pointerId);}catch(_){}
       function mv(ev){
@@ -165,13 +185,16 @@ function attachDrag(rootJson, rootDom){
         dom.style.left=childJson.x+'px'; dom.style.top=childJson.y+'px';
         showReadout((childJson.name||childJson.type||'要素')+'  x:'+childJson.x+'  y:'+childJson.y);
       }
-      function up(){ dom.removeEventListener('pointermove',mv); dom.removeEventListener('pointerup',up); dragging=false; hideReadout(); if(moved){pushDoc();} else {selectEl(childJson,dom);} }
+      function up(){ dom.removeEventListener('pointermove',mv); dom.removeEventListener('pointerup',up); dragging=false; hideReadout(); if(moved){pushDoc();} else {history.pop(); selectEl(childJson,dom);} }
       dom.addEventListener('pointermove',mv); dom.addEventListener('pointerup',up);
     });
   });
 }
 function pushDoc(){ if(!curDoc)return; selfPush=true; try{ fetch('/push',{method:'POST',body:JSON.stringify(curDoc,null,2)}); }catch(e){} }
 function pushSoon(){ clearTimeout(pushT); pushT=setTimeout(pushDoc,350); }
+var history=[];
+function snapshot(){ if(curDoc){ history.push(JSON.stringify(curDoc)); if(history.length>60) history.shift(); } }
+function undo(){ if(!history.length)return; deselect(); try{ curDoc=JSON.parse(history.pop()); render(curDoc); pushDoc(); showReadout('↩ 戻した'); setTimeout(hideReadout,700); }catch(e){} }
 /* クリックで要素選択→プロパティバーでサイズ調整 */
 function selectEl(node, dom){
   if(selDom) selDom.style.outline='';
@@ -187,8 +210,9 @@ function selectEl(node, dom){
   if(isText){ node.font=node.font||{}; document.getElementById('propsize').value=node.font.size||16; document.getElementById('propls').value=node.font.letterSpacing||0; document.getElementById('proptext').value=(node.text||''); var _c=node.fill; document.getElementById('propcol').value=(typeof _c==='string'&&_c[0]==='#')?_c:'#1a1a18'; }
   else { document.getElementById('propw').value=node.w!=null?node.w:Math.round(dom.offsetWidth); document.getElementById('proph').value=node.h!=null?node.h:Math.round(dom.offsetHeight); }
   positionSelbox(); if(selbox)selbox.style.display='block';
+  highlightLayer();
 }
-function deselect(){ if(selDom)selDom.style.outline=''; selNode=null; selDom=null; document.getElementById('propbar').style.display='none'; if(selbox)selbox.style.display='none'; }
+function deselect(){ if(selDom)selDom.style.outline=''; selNode=null; selDom=null; document.getElementById('propbar').style.display='none'; if(selbox)selbox.style.display='none'; highlightLayer(); }
 function positionSelbox(){
   if(!selbox||!selDom)return;
   var wr=wrap.getBoundingClientRect(), er=selDom.getBoundingClientRect();
@@ -197,36 +221,52 @@ function positionSelbox(){
   selbox.style.width=(er.width/zoom)+'px';
   selbox.style.height=(er.height/zoom)+'px';
 }
+/* 部分木を等比スケールしてJSONに焼き込む（グループの中身ごと拡大縮小） */
+function scaleNode(n,k){
+  if(n.w!=null) n.w=Math.round(n.w*k);
+  if(n.h!=null) n.h=Math.round(n.h*k);
+  if(typeof n.radius==='number') n.radius=Math.round(n.radius*k);
+  if(n.strokeWidth) n.strokeWidth=Math.round(n.strokeWidth*k*100)/100;
+  if(n.font){ if(n.font.size)n.font.size=Math.round(n.font.size*k*10)/10; if(n.font.letterSpacing)n.font.letterSpacing=Math.round(n.font.letterSpacing*k*100)/100; if(n.font.lineHeight)n.font.lineHeight=Math.round(n.font.lineHeight*k); }
+  if(n.layout){ if(n.layout.gap)n.layout.gap=Math.round(n.layout.gap*k); var p=n.layout.padding; if(typeof p==='number')n.layout.padding=Math.round(p*k); else if(p&&typeof p==='object'){['top','right','bottom','left'].forEach(function(s){if(p[s])p[s]=Math.round(p[s]*k);});} }
+  (n.children||[]).forEach(function(c){scaleNode(c,k);});
+}
 function startResize(corner, e){
   if(!selNode||!selDom)return;
-  e.preventDefault(); e.stopPropagation(); dragging=true;
+  e.preventDefault(); e.stopPropagation(); dragging=true; snapshot();
   var sx=e.clientX, sy=e.clientY, isText=(selNode.type==='text');
-  var startW=selDom.offsetWidth, startH=selDom.offsetHeight;
-  var startX=(selNode.x||0), startY=(selNode.y||0);
+  var startW=selDom.offsetWidth||1, startH=selDom.offsetHeight||1;
   var startFont=isText?((selNode.font&&selNode.font.size)||16):0;
   var startNW=(selNode.w!=null?selNode.w:startW);
   var signX=corner.indexOf('e')>=0?1:(corner.indexOf('w')>=0?-1:0);
   var signY=corner.indexOf('s')>=0?1:(corner.indexOf('n')>=0?-1:0);
+  var curK=1;
   function mv(ev){
     var dx=(ev.clientX-sx)/zoom, dy=(ev.clientY-sy)/zoom;
-    var newW=Math.max(6,startW+signX*dx), newH=Math.max(6,startH+signY*dy);
+    var newW=Math.max(4,startW+signX*dx), newH=Math.max(4,startH+signY*dy);
+    var k=Math.max(newW/startW, newH/startH); curK=k;
     if(isText){
-      var scale=ev.shiftKey ? Math.max(newW/startW,newH/startH) : (newW/Math.max(1,startW));
-      selNode.font=selNode.font||{}; selNode.font.size=Math.max(1,Math.round(startFont*scale*10)/10);
-      if(selNode.w!=null){ selNode.w=Math.round(startNW*scale); selDom.style.width=selNode.w+'px'; }
+      selNode.font=selNode.font||{}; selNode.font.size=Math.max(1,Math.round(startFont*k*10)/10);
+      if(selNode.w!=null){ selNode.w=Math.round(startNW*k); selDom.style.width=selNode.w+'px'; }
       selDom.style.fontSize=selNode.font.size+'px';
       var pe=document.getElementById('propsize'); if(pe)pe.value=selNode.font.size;
     } else {
-      if(ev.shiftKey){ var s=Math.max(newW/startW,newH/startH); newW=startW*s; newH=startH*s; }
-      selNode.w=Math.round(newW); selNode.h=Math.round(newH);
-      if(signX<0){ selNode.x=Math.round(startX+(startW-newW)); selDom.style.left=selNode.x+'px'; }
-      if(signY<0){ selNode.y=Math.round(startY+(startH-newH)); selDom.style.top=selNode.y+'px'; }
-      selDom.style.width=selNode.w+'px'; selDom.style.height=selNode.h+'px';
+      selDom.style.transformOrigin='0 0'; selDom.style.transform='scale('+k+')';
     }
     positionSelbox();
-    showReadout((selNode.name||selNode.type)+(isText?('  size:'+selNode.font.size):('  '+selNode.w+'×'+selNode.h)));
+    showReadout((selNode.name||selNode.type)+'  ×'+(Math.round(k*100)/100)+(isText?(' / '+selNode.font.size+'px'):''));
   }
-  function up(){ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); dragging=false; hideReadout(); pushDoc(); }
+  function up(){
+    window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); dragging=false; hideReadout();
+    if(curK===1){ history.pop(); }
+    if(!isText && curK!==1){
+      var nodeRef=selNode, idx=curDoc.root.children.indexOf(selNode);
+      selDom.style.transform=''; selDom.style.transformOrigin='';
+      scaleNode(nodeRef,curK); render(curDoc);
+      var rd=designEl.firstChild; if(rd&&rd.children[idx]) selectEl(nodeRef, rd.children[idx]);
+    }
+    pushDoc();
+  }
   window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up);
 }
 var selbox=document.createElement('div'); selbox.id='selbox';
@@ -235,6 +275,7 @@ wrap.appendChild(selbox);
 window.addEventListener('scroll', positionSelbox, true);
 function addText(){
   if(!curDoc||!curDoc.root)return;
+  snapshot();
   curDoc.root.children=curDoc.root.children||[];
   var cx=Math.round((curDoc.root.w||800)/2-40), cy=Math.round((curDoc.root.h||800)/2);
   var node={type:'text',name:'Text',text:'テキスト',x:cx,y:cy,fill:'#1a1a18',font:{family:(curDoc.font||'Noto Sans JP'),size:24,weight:500}};
@@ -247,9 +288,28 @@ function addText(){
 }
 function deleteSelected(){
   if(!selNode||!curDoc||!curDoc.root||!curDoc.root.children)return;
+  snapshot();
   var i=curDoc.root.children.indexOf(selNode);
   if(i>=0) curDoc.root.children.splice(i,1);
   deselect(); render(curDoc); pushDoc();
+}
+function renderLayers(){
+  var ll=document.getElementById('llist'); if(!ll)return; ll.innerHTML='';
+  if(!curDoc||!curDoc.root||!curDoc.root.children)return;
+  curDoc.root.children.forEach(function(ch,i){
+    var row=document.createElement('div'); row.className='lrow';
+    var nm=document.createElement('span'); nm.textContent=ch.name||ch.type||('要素'+i);
+    var tp=document.createElement('span'); tp.className='lt'; tp.textContent=ch.type||'';
+    row.appendChild(nm); row.appendChild(tp);
+    row.onclick=function(){ var rd=designEl.firstChild; if(rd&&rd.children[i]) selectEl(ch, rd.children[i]); };
+    ll.appendChild(row);
+  });
+  highlightLayer();
+}
+function highlightLayer(){
+  var ll=document.getElementById('llist'); if(!ll)return;
+  var idx=(selNode&&curDoc&&curDoc.root&&curDoc.root.children)?curDoc.root.children.indexOf(selNode):-1;
+  Array.prototype.forEach.call(ll.children,function(r,i){ r.classList.toggle('sel', i===idx); });
 }
 function showReadout(t){ if(!readout){readout=document.createElement('div'); readout.style.cssText='position:fixed;bottom:34px;left:16px;background:#a89060;color:#1a1a18;font-family:monospace;font-size:11px;padding:5px 9px;border-radius:5px;z-index:40'; document.body.appendChild(readout);} readout.textContent=t; readout.style.display='block'; }
 function hideReadout(){ if(readout)readout.style.display='none'; }
@@ -298,9 +358,13 @@ window.addEventListener('drop',function(e){e.preventDefault();dz.classList.remov
   document.getElementById('proptext').oninput=function(){ if(!selNode)return; selNode.text=this.value; if(selDom)selDom.textContent=this.value; positionSelbox(); pushSoon(); };
   document.getElementById('propcol').oninput=function(){ if(!selNode)return; selNode.fill=this.value; if(selDom)selDom.style.color=this.value; pushSoon(); };
   document.getElementById('addtext').onclick=addText;
+  document.getElementById('ltoggle').onclick=function(){ var L=document.getElementById('layers'); L.classList.toggle('collapsed'); this.textContent=L.classList.contains('collapsed')?'⟨':'⟩'; };
   document.getElementById('propdel').onclick=deleteSelected;
   document.getElementById('propclose').onclick=deselect;
+  ['proptext','propcol','propsize','propls','propw','proph'].forEach(function(id){ var el2=document.getElementById(id); if(el2)el2.addEventListener('focus',snapshot); });
   window.addEventListener('keydown',function(e){
+    if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='z'){ e.preventDefault(); undo(); return; }
+    if(e.key==='Escape'){ deselect(); return; }
     if((e.key==='Delete'||e.key==='Backspace') && selNode){
       var a=document.activeElement;
       if(a && (a.tagName==='INPUT'||a.tagName==='TEXTAREA')) return;
