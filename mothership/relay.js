@@ -77,6 +77,21 @@ http.createServer((req, res) => {
     } catch (e) { res.writeHead(500); return res.end(JSON.stringify({ ok: false, error: String(e && e.message ? e.message : e) })); }
   }
 
+  // library のパターン削除
+  if (u.pathname === "/delete-lib" && req.method === "POST") {
+    res.setHeader("Content-Type", "application/json");
+    let b = ""; req.on("data", (d) => (b += d));
+    req.on("end", () => {
+      try {
+        let file = (JSON.parse(b).file || "").toString();
+        if (file.indexOf("library/") !== 0 || file.indexOf("..") >= 0) { res.writeHead(400); return res.end('{"ok":false,"error":"bad path"}'); }
+        fs.unlinkSync(path.join(__dirname, file));
+        res.end('{"ok":true}');
+      } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: String(e && e.message ? e.message : e) })); }
+    });
+    return;
+  }
+
   // library/*.json の一覧（name付き）。library.html / ハブが使う
   if (u.pathname === "/list") {
     res.setHeader("Content-Type", "application/json");
