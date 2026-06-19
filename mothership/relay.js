@@ -20,6 +20,11 @@ let navView = "", navV = 0, lastNavPoll = 0;
 // チャット生成中フラグ（パネル↔大きい画面で「考えています」を同期）
 let chatBusy = false, chatBusySince = 0;
 
+// 会話ログ（relayが唯一の書き手＝どのタブに移動しても会話が消えない）
+const CHATLOG = path.join(__dirname, "_chat-log.json");
+const readLog = () => { try { const a = JSON.parse(fs.readFileSync(CHATLOG, "utf8")); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
+const appendLog = (entry) => { try { const a = readLog(); a.push(entry); fs.writeFileSync(CHATLOG, JSON.stringify(a.slice(-60))); } catch (e) {} };
+
 http.createServer((req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "*");
@@ -119,8 +124,8 @@ http.createServer((req, res) => {
     let b = "";
     req.on("data", (d) => (b += d));
     req.on("end", () => {
-      let msg = "", image = "";
-      try { const j = JSON.parse(b); msg = (j.message || "").toString(); image = (j.image || "").toString(); } catch (e) {}
+      let msg = "", image = "", display = "";
+      try { const j = JSON.parse(b); msg = (j.message || "").toString(); image = (j.image || "").toString(); display = (j.display || "").toString(); } catch (e) {}
       res.setHeader("Content-Type", "application/json");
       if (!msg.trim() && !image) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "メッセージが空です" })); }
 
@@ -139,8 +144,16 @@ http.createServer((req, res) => {
       }
 
       chatBusy = true; chatBusySince = Date.now();   // 生成開始（両画面で「考えています」同期用）
+      appendLog({ cls: "me", text: display || msg });  // 発言を即サーバー保存（離脱しても残る）
       let done = false;
-      const finish = (obj) => { if (done) return; done = true; chatBusy = false; clearTimeout(timer); res.end(JSON.stringify(obj)); };
+      const finish = (obj) => {
+        if (done) return; done = true; chatBusy = false; clearTimeout(timer);
+        const secs = ((Date.now() - chatBusySince) / 1000).toFixed(1);
+        // 返信もサーバーが保存（res.end前に書くので、どのタブに移動しても会話が継続する）
+        if (obj.ok) appendLog({ cls: "ms", text: (obj.text || "（完了）") + "  ·  ⏱" + secs + "s" });
+        else appendLog({ cls: "err", text: (obj.error || "失敗") + (obj.text ? "\n\n" + obj.text : "") });
+        res.end(JSON.stringify(obj));
+      };
 
       let child;
       try {

@@ -38,11 +38,18 @@ async function ensureFont(family, weight) {
 /* ---------- 色 / トークン / ペイント ---------- */
 function hexToRGB(hex) {
   hex = String(hex == null ? "#000000" : hex).replace("#", "").trim();
-  if (hex.length === 3) hex = hex.split("").map((c) => c + c).join("");
+  if (hex.length === 3 || hex.length === 4) hex = hex.slice(0, 3).split("").map((c) => c + c).join("");  // #RGB / #RGBA → 色は先頭3桁
   const n = parseInt(hex.slice(0, 6), 16) || 0;
   return { r: ((n >> 16) & 255) / 255, g: ((n >> 8) & 255) / 255, b: (n & 255) / 255 };
 }
-function rgba(hex, a) { const c = hexToRGB(hex); return { r: c.r, g: c.g, b: c.b, a: a == null ? 1 : a }; }
+// hexのアルファ（#RRGGBBAA / #RGBA）。無ければ1。"#00000000" を透明として扱うために必要
+function hexAlpha(hex) {
+  hex = String(hex == null ? "" : hex).replace("#", "").trim();
+  if (hex.length === 4) return parseInt(hex[3] + hex[3], 16) / 255;
+  if (hex.length === 8) return parseInt(hex.slice(6, 8), 16) / 255;
+  return 1;
+}
+function rgba(hex, a) { const c = hexToRGB(hex); return { r: c.r, g: c.g, b: c.b, a: a == null ? hexAlpha(hex) : a }; }
 
 let TOKENS = {};
 function resolve(val) {
@@ -62,7 +69,11 @@ function linearTransform(angleDeg) {
 function toPaint(fill, opacity) {
   fill = resolve(fill);
   if (fill == null) return null;
-  if (typeof fill === "string") return { type: "SOLID", color: hexToRGB(fill), opacity: opacity == null ? 1 : opacity };
+  if (typeof fill === "string") {
+    const a = (opacity == null ? 1 : opacity) * hexAlpha(fill);   // 8桁hexのアルファを尊重
+    if (a <= 0) return null;                                       // 完全透明（例: #00000000）はペイントしない
+    return { type: "SOLID", color: hexToRGB(fill), opacity: a };
+  }
   let stops = fill.stops;
   if (!stops && Array.isArray(fill.gradient)) {
     const cols = fill.gradient.map(resolve);
@@ -205,6 +216,10 @@ async function build(node) {
 
 /* ---------- エントリ（名前ベースの和解） ---------- */
 figma.showUI(__html__, { width: 380, height: 600, title: "Mothership" });
+// 前回のパネルサイズを復元（ユーザーが右下ドラッグで変えたサイズを記憶）
+figma.clientStorage.getAsync("ms_size").then((s) => {
+  if (s && s.w && s.h) figma.ui.resize(s.w, s.h);
+}).catch(() => {});
 
 const generated = {}; // name -> 生成済みノード（同名は置き換え、新名は新フレーム）
 
@@ -284,4 +299,10 @@ figma.ui.onmessage = async (msg) => {
   if (msg.type === "generate") await generate(msg.json, true);
   else if (msg.type === "live") await generate(msg.json, false);
   else if (msg.type === "open" && msg.url) figma.openExternal(msg.url);
+  else if (msg.type === "resize") {
+    const w = Math.max(300, Math.min(1400, Math.round(msg.w || 380)));
+    const h = Math.max(360, Math.min(1600, Math.round(msg.h || 600)));
+    figma.ui.resize(w, h);
+    figma.clientStorage.setAsync("ms_size", { w: w, h: h });  // 次回起動時に復元
+  }
 };
