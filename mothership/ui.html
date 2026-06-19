@@ -157,6 +157,7 @@
         <textarea id="cinput" rows="1" placeholder="作りたいデザインを書いて Enter（改行 Shift+Enter）"></textarea>
         <div class="composer-row">
           <button class="iconbtn" id="attachbtn" title="画像を添付（ドラッグでもOK）">📎</button>
+          <button class="iconbtn" id="imgbtn" title="画像プロンプト生成モード（MJ/DALL·E用のプロンプトを作る）">🎨</button>
           <button class="primary" id="csend" data-i18n="send">送信</button>
         </div>
         <input type="file" id="attachinput" accept="image/*" style="display:none">
@@ -333,6 +334,11 @@
   attachBtn.onclick = function () { attachInput.click(); };
   attachInput.onchange = function () { if (this.files[0]) readImg(this.files[0]); };
   document.getElementById('attachclear').onclick = clearPending;
+
+  /* 🎨 画像プロンプト生成モード（claudeはファイルを編集せず、画像生成プロンプトを返す） */
+  var imgMode = false, imgBtn = document.getElementById('imgbtn');
+  var IMG_PREFIX = '【画像プロンプト生成モード】ファイルは一切編集しないこと。現在の mothership.json のデザイン（配色・雰囲気）を読んで踏まえ、下記の要望に合うKV/写真用の画像生成プロンプトを作る。Midjourney用（--ar等のフラグ付き・横長KV比）と DALL·E/Gemini用（文章調・純白背景を明記）の2種を、それぞれコードブロックで返す。説明は最小限。\n\n要望: ';
+  imgBtn.onclick = function () { imgMode = !imgMode; imgBtn.classList.toggle('on', imgMode); cinput.placeholder = imgMode ? '🎨 どんな画像が欲しい？（例：このKVに合う3Dグラデのblob）' : tr('ph'); cinput.focus(); };
   var chatView = document.getElementById('view-chat');
   ['dragenter', 'dragover'].forEach(function (ev) { chatView.addEventListener(ev, function (e) { e.preventDefault(); chatView.classList.add('dragover'); }); });
   chatView.addEventListener('dragleave', function (e) { e.preventDefault(); chatView.classList.remove('dragover'); });
@@ -344,13 +350,15 @@
     if (!text && !pendingImg) return;
     cbusy = true; csend.disabled = true;
     var img = pendingImg; cinput.value = ''; cinput.style.height = 'auto'; clearPending();
-    logPush('me', text, img);
+    var useImg = imgMode; if (imgMode) { imgMode = false; imgBtn.classList.remove('on'); cinput.placeholder = tr('ph'); }  // 1回限り
+    var sendMsg = useImg ? (IMG_PREFIX + text) : text;
+    logPush('me', (useImg ? '🎨 ' : '') + text, img);
     var t0 = Date.now();
     var tb = cbubble('Mothership', 'think', '');
     function tick() { var s = ((Date.now() - t0) / 1000).toFixed(1); tb.innerHTML = '<span class="loadring"></span>' + tr('think') + '  <span class="secs">' + s + 's</span>'; }
     tick(); var ti = setInterval(tick, 100);
     try {
-      var r = await fetch(relayBase() + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text, image: img || '' }) });
+      var r = await fetch(relayBase() + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: sendMsg, image: img || '' }) });
       var data = await r.json(); clearInterval(ti); tb.parentElement.remove();
       var secs = ((Date.now() - t0) / 1000).toFixed(1);
       var note = connected ? '' : '\n\n⚠ ' + tr('notconn');
