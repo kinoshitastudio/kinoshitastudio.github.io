@@ -50,17 +50,31 @@ http.createServer((req, res) => {
     let b = "";
     req.on("data", (d) => (b += d));
     req.on("end", () => {
-      let msg = "";
-      try { msg = (JSON.parse(b).message || "").toString(); } catch (e) {}
+      let msg = "", image = "";
+      try { const j = JSON.parse(b); msg = (j.message || "").toString(); image = (j.image || "").toString(); } catch (e) {}
       res.setHeader("Content-Type", "application/json");
-      if (!msg.trim()) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "メッセージが空です" })); }
+      if (!msg.trim() && !image) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "メッセージが空です" })); }
+
+      // 添付画像があればファイルに書き出し、claudeにReadさせる
+      let prompt = msg;
+      if (image && image.indexOf("data:image/") === 0) {
+        try {
+          const m = image.match(/^data:image\/(\w+);base64,(.*)$/);
+          if (m) {
+            const ext = m[1] === "jpeg" ? "jpg" : m[1];
+            const fname = "_chat-ref." + ext;
+            fs.writeFileSync(path.join(__dirname, fname), Buffer.from(m[2], "base64"));
+            prompt = "ユーザーが参照画像を添付しました: ./" + fname + " （Readツールで画像を見て、デザインの参考にしてください）。\n\n" + (msg || "この画像を参考に、Mothership JSONでデザインを作って。");
+          }
+        } catch (e) {}
+      }
 
       let done = false;
       const finish = (obj) => { if (done) return; done = true; clearTimeout(timer); res.end(JSON.stringify(obj)); };
 
       let child;
       try {
-        child = spawn("claude", ["-p", msg, "--permission-mode", "acceptEdits"], { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"] });
+        child = spawn("claude", ["-p", prompt, "--permission-mode", "acceptEdits"], { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"] });
       } catch (e) {
         return finish({ ok: false, error: "claude 起動失敗: " + (e && e.message ? e.message : e) });
       }
