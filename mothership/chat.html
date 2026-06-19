@@ -51,6 +51,15 @@
     border:1px solid var(--gold);background:var(--gold);color:#1a1a18;font-weight:700;flex-shrink:0;transition:.15s}
   .send:hover{filter:brightness(1.08)}
   .send:disabled{opacity:.45;cursor:default;filter:none}
+  .iconbtn{flex:0 0 auto;font-family:inherit;font-size:16px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:9px;padding:11px 13px;cursor:pointer;transition:.15s}
+  .iconbtn:hover{border-color:var(--gold)}
+  .iconbtn.on{border-color:var(--gold);color:var(--gold)}
+  .attachchip{display:none;align-items:center;gap:10px;max-width:780px;margin:0 auto 8px;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:9px;font-size:11px;color:var(--faint)}
+  .attachchip.show{display:flex}
+  .attachchip img{width:38px;height:38px;object-fit:cover;border-radius:6px}
+  .attachchip .x{margin-left:auto;border:none;background:none;color:var(--faint);cursor:pointer;font-size:13px}
+  .feed.dragover{outline:2px dashed var(--gold);outline-offset:-6px}
+  .msg .body img{max-width:280px;border-radius:8px;margin-top:6px;display:block}
   .foot{max-width:780px;margin:7px auto 0;color:var(--faint);font-size:9.5px;letter-spacing:.04em}
   .foot code{color:var(--gold)}
 </style>
@@ -77,10 +86,14 @@
   </div>
 
   <div class="composer">
+    <div class="attachchip" id="attachchip"><img id="attachthumb" alt=""><span id="attachname">画像</span><button class="x" id="attachclear">✕</button></div>
     <div class="composer-inner">
+      <button class="iconbtn" id="attachbtn" title="画像を添付（ドラッグでもOK）">📎</button>
+      <button class="iconbtn" id="imgbtn" title="画像プロンプト生成モード（MJ/DALL·E用のプロンプトを作る）">🎨</button>
       <textarea id="input" placeholder="作りたいデザイン・直したい点を書いて Enter（改行は Shift+Enter）" rows="1"></textarea>
       <button class="send" id="send">送信</button>
     </div>
+    <input type="file" id="attachinput" accept="image/*" style="display:none">
     <div class="foot">relay <code>/chat</code> → <code>claude -p</code> → <code>mothership.json</code> 編集 → Figma自動更新。プラグインを「接続」しておくとライブ反映。</div>
   </div>
 
@@ -88,13 +101,14 @@
   var RELAY = location.origin;
   var inner = document.getElementById('inner'), feed = document.getElementById('feed');
   var input = document.getElementById('input'), sendBtn = document.getElementById('send');
-  var busy = false, chatLog = [];
+  var busy = false, chatLog = [], pendingImg = null;
 
   function scroll(){ feed.scrollTop = feed.scrollHeight; }
-  function bubble(who, cls, text){
+  function bubble(who, cls, text, img){
     var m = document.createElement('div'); m.className = 'msg ' + cls;
     var w = document.createElement('div'); w.className = 'who'; w.textContent = who;
-    var b = document.createElement('div'); b.className = 'body'; b.textContent = text;
+    var b = document.createElement('div'); b.className = 'body'; if(text)b.textContent = text;
+    if(img){ var im=document.createElement('img'); im.src=img; b.appendChild(im); }
     m.appendChild(w); m.appendChild(b); inner.appendChild(m); scroll();
     return b;
   }
@@ -102,24 +116,43 @@
   function labelFor(cls){ return cls==='me'?'あなた':cls==='err'?'エラー':'Mothership'; }
   function saveChat(){ var s=JSON.stringify(chatLog.slice(-60).map(function(e){return {cls:e.cls,text:e.text};})); lastChatStr=s; try{ fetch(RELAY+'/chat-log',{method:'POST',headers:{'Content-Type':'application/json'},body:s}); }catch(e){} }
   function renderChatLog(){ Array.prototype.slice.call(inner.querySelectorAll('.msg')).forEach(function(n){n.remove();}); var h=document.getElementById('hello'); if(h)h.style.display=chatLog.length?'none':''; chatLog.forEach(function(e){ bubble(labelFor(e.cls),e.cls,e.text); }); scroll(); }
-  function logBubble(cls, text){ chatLog.push({cls:cls,text:text}); saveChat(); var h=document.getElementById('hello'); if(h)h.style.display='none'; return bubble(labelFor(cls),cls,text); }
+  function logBubble(cls, text, img){ chatLog.push({cls:cls,text:text}); saveChat(); var h=document.getElementById('hello'); if(h)h.style.display='none'; return bubble(labelFor(cls),cls,text,img); }
+
+  /* 📎画像添付 / 🎨画像プロンプトモード（パネルと同等） */
+  var attachInput=document.getElementById('attachinput'), attachChip=document.getElementById('attachchip'), attachThumb=document.getElementById('attachthumb'), attachName=document.getElementById('attachname'), attachBtn=document.getElementById('attachbtn');
+  function setPending(d,name){ pendingImg=d; attachThumb.src=d; attachName.textContent=name||'画像'; attachChip.classList.add('show'); attachBtn.classList.add('on'); }
+  function clearPending(){ pendingImg=null; attachChip.classList.remove('show'); attachBtn.classList.remove('on'); attachInput.value=''; }
+  function readImg(file){ if(!file||file.type.indexOf('image')!==0)return; var rd=new FileReader(); rd.onload=function(){ setPending(rd.result,file.name); }; rd.readAsDataURL(file); }
+  attachBtn.onclick=function(){ attachInput.click(); };
+  attachInput.onchange=function(){ if(this.files[0])readImg(this.files[0]); };
+  document.getElementById('attachclear').onclick=clearPending;
+  ['dragenter','dragover'].forEach(function(ev){ feed.addEventListener(ev,function(e){ e.preventDefault(); feed.classList.add('dragover'); }); });
+  feed.addEventListener('dragleave',function(e){ e.preventDefault(); feed.classList.remove('dragover'); });
+  feed.addEventListener('drop',function(e){ e.preventDefault(); feed.classList.remove('dragover'); var f=e.dataTransfer&&e.dataTransfer.files[0]; if(f)readImg(f); });
+  var imgMode=false, imgBtn=document.getElementById('imgbtn');
+  var IMG_PREFIX='【画像プロンプト生成モード】ファイルは一切編集しないこと。現在の mothership.json のデザイン（配色・雰囲気）を読んで踏まえ、下記の要望に合うKV/写真用の画像生成プロンプトを作る。Midjourney用（--ar等のフラグ付き・横長KV比）と DALL·E/Gemini用（文章調・純白背景を明記）の2種を、それぞれコードブロックで返す。説明は最小限。\n\n要望: ';
+  var DEFAULT_PH=input.placeholder;
+  imgBtn.onclick=function(){ imgMode=!imgMode; imgBtn.classList.toggle('on',imgMode); input.placeholder=imgMode?'🎨 どんな画像が欲しい？（例：このKVに合う3Dグラデのblob）':DEFAULT_PH; input.focus(); };
   async function loadChatLog(){ try{ var r=await fetch(RELAY+'/chat-log',{cache:'no-store'}); var txt=await r.text(); lastChatStr=txt; var a=JSON.parse(txt); chatLog=Array.isArray(a)?a:[]; }catch(e){ chatLog=[]; lastChatStr=''; } renderChatLog(); }
   async function pollChat(){ if(busy)return; try{ var r=await fetch(RELAY+'/chat-log',{cache:'no-store'}); var txt=await r.text(); if(txt!==lastChatStr){ lastChatStr=txt; var a=JSON.parse(txt); chatLog=Array.isArray(a)?a:[]; renderChatLog(); } }catch(e){} }
 
   async function send(){
     if (busy) return;
     var text = input.value.trim();
-    if (!text) return;
+    if (!text && !pendingImg) return;
     var hello = document.getElementById('hello'); if (hello) hello.remove();
     busy = true; sendBtn.disabled = true;
-    input.value = ''; input.style.height = 'auto';
-    logBubble('me', text);
+    var img = pendingImg; input.value = ''; input.style.height = 'auto';
+    var useImg = imgMode; if (imgMode) { imgMode = false; imgBtn.classList.remove('on'); input.placeholder = DEFAULT_PH; }
+    var sendMsg = useImg ? (IMG_PREFIX + text) : text;
+    clearPending();
+    logBubble('me', (useImg ? '🎨 ' : '') + text, img);
     var t0 = Date.now();
     var thinkBody = bubble('Mothership', 'think', '');
     function tick(){ var s=((Date.now()-t0)/1000).toFixed(1); thinkBody.innerHTML = '<span class="loadring"></span>考えています…（mothership.json を編集中） <span class="secs">'+s+'s</span>'; }
     tick(); var ti=setInterval(tick,100);
     try{
-      var r = await fetch(RELAY + '/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: text }) });
+      var r = await fetch(RELAY + '/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: sendMsg, image: img||'' }) });
       var data = await r.json();
       clearInterval(ti); thinkBody.parentElement.remove();
       var secs=((Date.now()-t0)/1000).toFixed(1);
