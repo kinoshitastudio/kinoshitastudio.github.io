@@ -28,6 +28,8 @@
   .msg.think .body{color:var(--gold)}
   .spin{display:inline-block;animation:rot 1.1s linear infinite}
   @keyframes rot{to{transform:rotate(360deg)}}
+  .loadring{display:inline-block;width:15px;height:15px;border:2px solid var(--line);border-top-color:var(--gold);border-radius:50%;vertical-align:-3px;margin-right:8px;animation:rot .7s linear infinite}
+  .secs{color:var(--gold);font-weight:700;font-variant-numeric:tabular-nums}
   .hello{color:var(--faint);text-align:center;line-height:1.8;padding:30px 10px}
   .hello b{color:var(--gold)}
   .ex{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:12px}
@@ -93,10 +95,13 @@
     m.appendChild(w); m.appendChild(b); inner.appendChild(m); scroll();
     return b;
   }
+  var lastChatStr='';
   function labelFor(cls){ return cls==='me'?'あなた':cls==='err'?'エラー':'Mothership'; }
-  function saveChat(){ try{ fetch(RELAY+'/chat-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(chatLog.slice(-60))}); }catch(e){} }
-  function logBubble(cls, text){ chatLog.push({cls:cls,text:text}); saveChat(); var h=document.getElementById('hello'); if(h)h.remove(); return bubble(labelFor(cls),cls,text); }
-  async function loadChatLog(){ try{ var r=await fetch(RELAY+'/chat-log',{cache:'no-store'}); var a=await r.json(); chatLog=Array.isArray(a)?a:[]; }catch(e){ chatLog=[]; } if(chatLog.length){ var h=document.getElementById('hello'); if(h)h.remove(); chatLog.forEach(function(e){ bubble(labelFor(e.cls),e.cls,e.text); }); } }
+  function saveChat(){ var s=JSON.stringify(chatLog.slice(-60).map(function(e){return {cls:e.cls,text:e.text};})); lastChatStr=s; try{ fetch(RELAY+'/chat-log',{method:'POST',headers:{'Content-Type':'application/json'},body:s}); }catch(e){} }
+  function renderChatLog(){ Array.prototype.slice.call(inner.querySelectorAll('.msg')).forEach(function(n){n.remove();}); var h=document.getElementById('hello'); if(h)h.style.display=chatLog.length?'none':''; chatLog.forEach(function(e){ bubble(labelFor(e.cls),e.cls,e.text); }); scroll(); }
+  function logBubble(cls, text){ chatLog.push({cls:cls,text:text}); saveChat(); var h=document.getElementById('hello'); if(h)h.style.display='none'; return bubble(labelFor(cls),cls,text); }
+  async function loadChatLog(){ try{ var r=await fetch(RELAY+'/chat-log',{cache:'no-store'}); var txt=await r.text(); lastChatStr=txt; var a=JSON.parse(txt); chatLog=Array.isArray(a)?a:[]; }catch(e){ chatLog=[]; lastChatStr=''; } renderChatLog(); }
+  async function pollChat(){ if(busy)return; try{ var r=await fetch(RELAY+'/chat-log',{cache:'no-store'}); var txt=await r.text(); if(txt!==lastChatStr){ lastChatStr=txt; var a=JSON.parse(txt); chatLog=Array.isArray(a)?a:[]; renderChatLog(); } }catch(e){} }
 
   async function send(){
     if (busy) return;
@@ -106,19 +111,22 @@
     busy = true; sendBtn.disabled = true;
     input.value = ''; input.style.height = 'auto';
     logBubble('me', text);
-    var thinkBody = bubble('Mothership', 'think', '∞ 考えています…');
-    thinkBody.innerHTML = '<span class="spin">∞</span> 考えています…（claude が mothership.json を編集中）';
+    var t0 = Date.now();
+    var thinkBody = bubble('Mothership', 'think', '');
+    function tick(){ var s=((Date.now()-t0)/1000).toFixed(1); thinkBody.innerHTML = '<span class="loadring"></span>考えています…（mothership.json を編集中） <span class="secs">'+s+'s</span>'; }
+    tick(); var ti=setInterval(tick,100);
     try{
       var r = await fetch(RELAY + '/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: text }) });
       var data = await r.json();
-      thinkBody.parentElement.remove();
+      clearInterval(ti); thinkBody.parentElement.remove();
+      var secs=((Date.now()-t0)/1000).toFixed(1);
       if (data.ok){
-        logBubble('ms', data.text || '（完了）');
+        logBubble('ms', (data.text || '（完了）') + '  ·  ⏱'+secs+'s');
       } else {
         logBubble('err', (data.error || '失敗') + (data.text ? '\n\n' + data.text : ''));
       }
     }catch(e){
-      thinkBody.parentElement.remove();
+      clearInterval(ti); thinkBody.parentElement.remove();
       logBubble('err', 'relayに接続できません。cd mothership && node relay.js で起動してください。\n' + (e.message||e));
     }
     busy = false; sendBtn.disabled = false; input.focus();
@@ -129,6 +137,7 @@
   input.addEventListener('input', function(){ this.style.height='auto'; this.style.height=Math.min(this.scrollHeight,160)+'px'; });
   document.querySelectorAll('.ex button').forEach(function(b){ b.onclick = function(){ input.value = b.textContent; send(); }; });
   loadChatLog();
+  setInterval(pollChat, 1500);  // パネル↔大きい画面の双方向同期
   input.focus();
 </script>
 </body>

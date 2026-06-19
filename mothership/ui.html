@@ -59,6 +59,8 @@
   .msg.think .bd{color:var(--gold)}
   .spin{display:inline-block;animation:rot 1.1s linear infinite}
   @keyframes rot{to{transform:rotate(360deg)}}
+  .loadring{display:inline-block;width:13px;height:13px;border:2px solid var(--line);border-top-color:var(--gold);border-radius:50%;vertical-align:-2px;margin-right:7px;animation:rot .7s linear infinite}
+  .secs{color:var(--gold);font-weight:700;font-variant-numeric:tabular-nums}
   .hello{color:var(--faint);font-size:10px;line-height:1.7;text-align:center;padding:12px 6px}
   .hello b{color:var(--gold)}
   .ex{display:flex;flex-direction:column;gap:6px;margin-top:10px}
@@ -289,11 +291,14 @@
 
   /* ---------- チャット（履歴保存 / 画像添付 / クリア） ---------- */
   var feed = document.getElementById('feed'), cinput = document.getElementById('cinput'), csend = document.getElementById('csend'), cbusy = false, pendingImg = null;
-  var chatLog = [];
-  function saveChat() { // relayに共有保存（パネルと大きい画面で会話継続）。画像は保存しない
-    try { fetch(relayBase() + '/chat-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(chatLog.slice(-60).map(function (e) { return { cls: e.cls, text: e.text }; })) }); } catch (e) {}
+  var chatLog = [], lastChatStr = '';
+  function saveChat() { // relayに共有保存（パネルと大きい画面で双方向同期）。画像は保存しない
+    var s = JSON.stringify(chatLog.slice(-60).map(function (e) { return { cls: e.cls, text: e.text }; }));
+    lastChatStr = s;
+    try { fetch(relayBase() + '/chat-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: s }); } catch (e) {}
   }
-  async function loadChatLog() { try { var r = await fetch(relayBase() + '/chat-log', { cache: 'no-store' }); var a = await r.json(); chatLog = Array.isArray(a) ? a : []; } catch (e) { chatLog = []; } renderChatLog(); }
+  async function loadChatLog() { try { var r = await fetch(relayBase() + '/chat-log', { cache: 'no-store' }); var txt = await r.text(); lastChatStr = txt; var a = JSON.parse(txt); chatLog = Array.isArray(a) ? a : []; } catch (e) { chatLog = []; lastChatStr = ''; } renderChatLog(); }
+  async function pollChat() { if (cbusy) return; try { var r = await fetch(relayBase() + '/chat-log', { cache: 'no-store' }); var txt = await r.text(); if (txt !== lastChatStr) { lastChatStr = txt; var a = JSON.parse(txt); chatLog = Array.isArray(a) ? a : []; renderChatLog(); } } catch (e) {} }
   function cscroll() { feed.scrollTop = feed.scrollHeight; }
   function labelFor(cls) { return cls === 'me' ? tr('you') : cls === 'err' ? tr('err') : 'Mothership'; }
   function cbubble(who, cls, text, img) {
@@ -332,14 +337,18 @@
     cbusy = true; csend.disabled = true;
     var img = pendingImg; cinput.value = ''; cinput.style.height = 'auto'; clearPending();
     logPush('me', text, img);
-    var tb = cbubble('Mothership', 'think', ''); tb.innerHTML = '<span class="spin">∞</span> ' + tr('think');
+    var t0 = Date.now();
+    var tb = cbubble('Mothership', 'think', '');
+    function tick() { var s = ((Date.now() - t0) / 1000).toFixed(1); tb.innerHTML = '<span class="loadring"></span>' + tr('think') + '  <span class="secs">' + s + 's</span>'; }
+    tick(); var ti = setInterval(tick, 100);
     try {
       var r = await fetch(relayBase() + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text, image: img || '' }) });
-      var data = await r.json(); tb.parentElement.remove();
-      if (data.ok) logPush('ms', data.text || tr('done'));
+      var data = await r.json(); clearInterval(ti); tb.parentElement.remove();
+      var secs = ((Date.now() - t0) / 1000).toFixed(1);
+      if (data.ok) logPush('ms', (data.text || tr('done')) + '  ·  ⏱' + secs + 's');
       else logPush('err', (data.error || tr('fail')) + (data.text ? '\n\n' + data.text : ''));
     } catch (e) {
-      tb.parentElement.remove();
+      clearInterval(ti); tb.parentElement.remove();
       logPush('err', tr('noconn') + '\n' + (e.message || e));
     }
     cbusy = false; csend.disabled = false; cinput.focus();
@@ -359,6 +368,7 @@
     } catch (e) { var b = document.getElementById('savelib'); b.textContent = tr('savefail'); setTimeout(function () { b.textContent = tr('savelib'); }, 1800); }
   };
   loadChatLog();
+  setInterval(pollChat, 1500);  // パネル↔大きい画面の双方向同期
 
   /* ---------- オンボーディング（初回モーダル / ?で再表示） ---------- */
   var OB = {
