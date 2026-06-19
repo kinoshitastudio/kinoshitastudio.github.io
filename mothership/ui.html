@@ -75,10 +75,31 @@
   .nav button.on{background:var(--gold);color:#1a1a18;border-color:var(--gold);font-weight:700}
   .view{flex:1;display:flex;flex-direction:column;min-height:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
   .frameview iframe{flex:1;width:100%;border:none;background:#1b1b19}
+  /* オンボーディング（初回モーダル） */
+  .onboard{position:fixed;inset:0;z-index:200;background:var(--bg);display:none;flex-direction:column;padding:20px 20px 16px}
+  .onboard.show{display:flex}
+  .ob-top{display:flex;align-items:center;gap:8px;flex-shrink:0}
+  .ob-top .lg{font-weight:700;letter-spacing:.2em;font-size:11px}
+  .ob-skip{margin-left:auto;background:none;border:none;color:var(--faint);font-family:inherit;font-size:10px;letter-spacing:.1em;cursor:pointer;padding:4px}
+  .ob-skip:hover{color:var(--ink)}
+  .ob-card{flex:1;display:flex;flex-direction:column;justify-content:center;text-align:center;gap:11px;padding:8px 4px}
+  .ob-ico{font-size:30px;line-height:1}
+  .ob-step{font-size:9px;letter-spacing:.22em;color:var(--gold);text-transform:uppercase}
+  .ob-t{font-size:16px;font-weight:700;color:#fff;letter-spacing:.02em}
+  .ob-d{font-size:11.5px;line-height:1.75;color:var(--faint)}
+  .ob-d b{color:var(--ink)}
+  .ob-code{font-family:inherit;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:11px 12px;font-size:11px;line-height:1.6;white-space:pre;text-align:left;color:#e7dcc6;overflow-x:auto}
+  .ob-dots{display:flex;gap:6px;justify-content:center;margin:8px 0 12px}
+  .ob-dots i{width:6px;height:6px;border-radius:50%;background:var(--line);transition:.2s}
+  .ob-dots i.on{background:var(--gold);transform:scale(1.15)}
+  .ob-nav{display:flex;gap:8px;flex-shrink:0}
+  .ob-nav button{flex:1}
+  .ob-nav .back{flex:0 0 auto;padding-left:14px;padding-right:14px}
 </style>
 </head>
 <body>
   <header>
+    <button class="langbtn" id="helpbtn" style="right:46px;padding:4px 9px" title="使い方">?</button>
     <button class="langbtn" id="langbtn">EN</button>
     <div class="logo"><svg width="22" height="15" viewBox="2 9 46 32" fill="none" stroke="#a89060" stroke-width="4.2" stroke-linecap="round"><path d="M25 25 C25 11 4 11 4 25 C4 39 25 39 25 25 C25 11 46 11 46 25 C46 39 25 39 25 25 Z"/></svg>M O T H E R S H I P<span> ·</span></div>
     <div class="sub"><span data-i18n="sub">設計の原本(JSON)を、編集可能な本物のFigmaノードに翻訳する。</span><br>Kinoshita Studio</div>
@@ -133,6 +154,8 @@
       </div>
     </details>
   </div>
+
+<div class="onboard" id="onboard"></div>
 
 <script>
   var EXAMPLE = {
@@ -272,11 +295,45 @@
     cbusy = false; csend.disabled = false; cinput.focus();
   }
   csend.onclick = chatSend;
-  cinput.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); chatSend(); } });
+  cinput.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); chatSend(); } });
   cinput.addEventListener('input', function () { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 110) + 'px'; });
   document.querySelectorAll('.ex button').forEach(function (b) { b.onclick = function () { cinput.value = b.textContent; chatSend(); }; });
 
+  /* ---------- オンボーディング（初回モーダル / ?で再表示） ---------- */
+  var OB = {
+    ja:{ slides:[
+      {ico:'∞', step:'Welcome', t:'Mothership へようこそ', d:'設計の母艦。<b>チャットで頼む</b>と、claude が原本(JSON)を編集し、Figmaに<b>本物のレイヤー</b>として生成されます。'},
+      {ico:'▸_', step:'Step 1', t:'relay を起動', d:'ターミナルでこれを1回だけ実行。Mothershipの中継サーバーが立ち上がります。', code:'cd mothership\nnode relay.js'},
+      {ico:'◉', step:'Step 2', t:'接続する', d:'下の <b>「接続」</b> ボタンを押す。緑の「接続中」になればライブ連携OK。'},
+      {ico:'💬', step:'Step 3', t:'話しかける', d:'下のチャットに「<b>シンプルな料金表を作って</b>」など入力 → Enter。Figmaにネイティブ生成されます。'}
+    ], next:'次へ', back:'戻る', start:'はじめる', skip:'スキップ' },
+    en:{ slides:[
+      {ico:'∞', step:'Welcome', t:'Welcome to Mothership', d:'The design mothership. <b>Ask in chat</b> and claude edits the source JSON, building <b>real Figma layers</b>.'},
+      {ico:'▸_', step:'Step 1', t:'Start the relay', d:'Run this once in your terminal. It launches the local relay.', code:'cd mothership\nnode relay.js'},
+      {ico:'◉', step:'Step 2', t:'Connect', d:'Press <b>Connect</b> below. When it turns green, live sync is ready.'},
+      {ico:'💬', step:'Step 3', t:'Ask', d:'Type e.g. "<b>Make a simple pricing table</b>" in the chat → Enter. It builds natively in Figma.'}
+    ], next:'Next', back:'Back', start:"Let's go", skip:'Skip' }
+  };
+  var obIdx = 0;
+  function obData(){ return OB[lang] || OB.ja; }
+  function renderOb(){
+    var d = obData(), s = d.slides[obIdx], el = document.getElementById('onboard');
+    el.innerHTML =
+      '<div class="ob-top"><span class="lg">∞ MOTHERSHIP</span><button class="ob-skip" id="ob-skip">'+d.skip+' ✕</button></div>'
+      +'<div class="ob-card"><div class="ob-ico">'+s.ico+'</div><div class="ob-step">'+s.step+'</div><div class="ob-t">'+s.t+'</div><div class="ob-d">'+s.d+'</div>'
+      +(s.code?'<div class="ob-code">'+s.code+'</div>':'')+'</div>'
+      +'<div class="ob-dots">'+d.slides.map(function(_,i){return '<i class="'+(i===obIdx?'on':'')+'"></i>';}).join('')+'</div>'
+      +'<div class="ob-nav">'+(obIdx>0?'<button class="back" id="ob-back">'+d.back+'</button>':'')+'<button class="primary" id="ob-next">'+(obIdx<d.slides.length-1?d.next:d.start)+'</button></div>';
+    document.getElementById('ob-skip').onclick = closeOb;
+    document.getElementById('ob-next').onclick = function(){ if(obIdx < d.slides.length-1){ obIdx++; renderOb(); } else closeOb(); };
+    var b = document.getElementById('ob-back'); if(b) b.onclick = function(){ if(obIdx>0){ obIdx--; renderOb(); } };
+  }
+  function openOb(){ obIdx = 0; renderOb(); document.getElementById('onboard').classList.add('show'); }
+  function closeOb(){ document.getElementById('onboard').classList.remove('show'); try{ localStorage.setItem('ms_onboarded','1'); }catch(e){} }
+  document.getElementById('helpbtn').onclick = openOb;
+
   applyLang(); // 初期言語を適用
+  try{ if(!localStorage.getItem('ms_onboarded')) openOb(); }catch(e){}  // 初回のみ自動表示
 </script>
 </body>
 </html>
