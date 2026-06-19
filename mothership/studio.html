@@ -115,6 +115,7 @@ function el(node,t){
   if(node.w!=null)s.width=rv(node.w,t)+'px';
   if(node.h!=null)s.height=rv(node.h,t)+'px';
   if(node.radius!=null)s.borderRadius=(type==='ellipse'?'50%':rv(node.radius,t)+'px');
+  if(node.clip)s.overflow='hidden';
   if(node.opacity!=null)s.opacity=node.opacity;
   if(node.stroke)s.border=(node.strokeWidth||1)+'px solid '+cssFill(node.stroke,t);
   if(node.shadow){const sh=Array.isArray(node.shadow)?node.shadow[0]:node.shadow; s.boxShadow=(sh.inner?'inset ':'')+(sh.x||0)+'px '+(sh.y==null?8:sh.y)+'px '+(sh.blur==null?16:sh.blur)+'px '+(sh.spread||0)+'px '+hexA(sh.color||'#000',sh.opacity==null?0.18:sh.opacity);}
@@ -155,7 +156,7 @@ function el(node,t){
 /* ---------- state / sync ---------- */
 var designEl=document.getElementById('design'), refEl=document.getElementById('ref'), wrap=document.getElementById('wrap');
 var stEl=document.getElementById('st'), dot=document.getElementById('dot');
-var lastVer=-1, refImg=null, zoom=0.62, frontRef=true, curDoc=null, dragging=false, readout=null, selNode=null, selDom=null, pushT=null, selfPush=false, lastMoved=false;
+var lastVer=-1, refImg=null, zoom=0.62, frontRef=true, curDoc=null, dragging=false, readout=null, selNode=null, selDom=null, pushT=null, selfPush=false, lastMoved=false, nodeDom=null;
 window.addEventListener('error', function(ev){ var d=document.getElementById('jserr'); if(!d){d=document.createElement('div'); d.id='jserr'; d.style.cssText='position:fixed;bottom:8px;right:8px;max-width:60%;background:#a5564e;color:#fff;font:11px/1.4 monospace;padding:8px 10px;border-radius:6px;z-index:99999;white-space:pre-wrap'; document.body.appendChild(d);} d.textContent='JS ERROR: '+ev.message+'  @line '+(ev.lineno||'?'); });
 
 /* ---------- i18n (EN / 日本語) ---------- */
@@ -187,36 +188,41 @@ function render(doc){
   var w=(doc.root&&doc.root.w)||node.offsetWidth||800, h=(doc.root&&doc.root.h)||node.offsetHeight||600;
   wrap.style.width=w+'px'; wrap.style.height=h+'px';
   refEl.style.width=w+'px'; refEl.style.height=h+'px';
-  attachDrag(doc.root, node);
+  nodeDom=new WeakMap(); nodeDom.set(doc.root||doc, node);
+  wireTree(doc.root||doc, node);
   renderLayers();
   applyRef();
 }
 
-/* ルート直下の絶対配置要素をドラッグで移動→JSON更新→relay(/push)→Figma */
-function attachDrag(rootJson, rootDom){
-  if(!rootJson || !rootJson.children) return;
-  rootJson.children.forEach(function(childJson, i){
-    var dom=rootDom.children[i];
-    if(!dom || (childJson.x==null && childJson.y==null)) return;
-    dom.style.cursor='move';
-    dom.addEventListener('mouseenter', function(){ if(dom!==selDom) positionHoverbox(dom); });
-    dom.addEventListener('mouseleave', function(){ if(hoverbox) hoverbox.style.display='none'; });
-    dom.addEventListener('mousedown', function(e){
+/* 全階層の要素を選択可能に。絶対配置(x/y)はドラッグ移動も。→JSON更新→relay(/push)→Figma */
+function wireTree(json, dom){
+  if(!json || !json.children) return;
+  json.children.forEach(function(childJson, i){
+    var cdom=dom.children[i];
+    if(!cdom) return;
+    nodeDom.set(childJson, cdom);
+    var draggable=(childJson.x!=null || childJson.y!=null);
+    cdom.style.cursor=draggable?'move':'pointer';
+    cdom.addEventListener('mouseenter', function(e){ e.stopPropagation(); if(cdom!==selDom) positionHoverbox(cdom); });
+    cdom.addEventListener('mouseleave', function(){ if(hoverbox) hoverbox.style.display='none'; });
+    cdom.addEventListener('mousedown', function(e){
       e.preventDefault(); e.stopPropagation();
-      selectEl(childJson, dom);
+      selectEl(childJson, cdom);
+      if(!draggable) return;          // オートレイアウト内の子は選択のみ（位置はレイアウト管理）
       snapshot(); dragging=true;
       var sx=e.clientX, sy=e.clientY, ox=(childJson.x||0), oy=(childJson.y||0), moved=false;
       function mv(ev){
         moved=true;
         childJson.x=Math.round(ox+(ev.clientX-sx)/zoom);
         childJson.y=Math.round(oy+(ev.clientY-sy)/zoom);
-        dom.style.left=childJson.x+'px'; dom.style.top=childJson.y+'px';
-        if(selDom===dom) positionSelbox();
+        cdom.style.left=childJson.x+'px'; cdom.style.top=childJson.y+'px';
+        if(selDom===cdom) positionSelbox();
         showReadout((childJson.name||childJson.type||'要素')+'  x:'+childJson.x+'  y:'+childJson.y);
       }
       function up(){ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); dragging=false; hideReadout(); if(moved){pushDoc();} else {undoStack.pop();} }
       document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
     });
+    wireTree(childJson, cdom);       // 再帰：入れ子も配線
   });
 }
 function pushDoc(){ if(!curDoc)return; selfPush=true; try{ fetch('/push',{method:'POST',body:JSON.stringify(curDoc,null,2)}); }catch(e){} }
@@ -341,30 +347,37 @@ function addText(){
   var pt=document.getElementById('proptext'); pt.focus(); pt.select();
   pushDoc();
 }
+function removeNode(parent, target){
+  if(!parent||!parent.children)return false;
+  var i=parent.children.indexOf(target);
+  if(i>=0){ parent.children.splice(i,1); return true; }
+  return parent.children.some(function(c){ return removeNode(c, target); });
+}
 function deleteSelected(){
-  if(!selNode||!curDoc||!curDoc.root||!curDoc.root.children)return;
+  if(!selNode||!curDoc||!curDoc.root)return;
   snapshot();
-  var i=curDoc.root.children.indexOf(selNode);
-  if(i>=0) curDoc.root.children.splice(i,1);
-  deselect(); render(curDoc); pushDoc();
+  if(removeNode(curDoc.root, selNode)){ deselect(); render(curDoc); pushDoc(); }
 }
 function renderLayers(){
   var ll=document.getElementById('llist'); if(!ll)return; ll.innerHTML='';
-  if(!curDoc||!curDoc.root||!curDoc.root.children)return;
-  curDoc.root.children.forEach(function(ch,i){
-    var row=document.createElement('div'); row.className='lrow';
-    var nm=document.createElement('span'); nm.textContent=ch.name||ch.type||('要素'+i);
-    var tp=document.createElement('span'); tp.className='lt'; tp.textContent=ch.type||'';
-    row.appendChild(nm); row.appendChild(tp);
-    row.onclick=function(){ var rd=designEl.firstChild; if(rd&&rd.children[i]) selectEl(ch, rd.children[i]); };
-    ll.appendChild(row);
-  });
+  if(!curDoc||!curDoc.root)return;
+  (function walk(node, depth){
+    (node.children||[]).forEach(function(ch){
+      var row=document.createElement('div'); row.className='lrow'; row.style.paddingLeft=(10+depth*14)+'px';
+      var nm=document.createElement('span'); nm.textContent=ch.name||ch.type||'要素';
+      var tp=document.createElement('span'); tp.className='lt'; tp.textContent=ch.type||'';
+      row.appendChild(nm); row.appendChild(tp);
+      row.__json=ch;
+      row.onclick=function(){ var dom=nodeDom&&nodeDom.get(ch); if(dom) selectEl(ch, dom); };
+      ll.appendChild(row);
+      walk(ch, depth+1);
+    });
+  })(curDoc.root, 0);
   highlightLayer();
 }
 function highlightLayer(){
   var ll=document.getElementById('llist'); if(!ll)return;
-  var idx=(selNode&&curDoc&&curDoc.root&&curDoc.root.children)?curDoc.root.children.indexOf(selNode):-1;
-  Array.prototype.forEach.call(ll.children,function(r,i){ var on=(i===idx); r.classList.toggle('sel',on); if(on&&r.scrollIntoView)r.scrollIntoView({block:'nearest'}); });
+  Array.prototype.forEach.call(ll.children,function(r){ var on=(r.__json===selNode&&selNode!=null); r.classList.toggle('sel',on); if(on&&r.scrollIntoView)r.scrollIntoView({block:'nearest'}); });
 }
 function showReadout(t){ if(!readout){readout=document.createElement('div'); readout.style.cssText='position:fixed;bottom:34px;left:16px;background:#a89060;color:#1a1a18;font-family:monospace;font-size:11px;padding:5px 9px;border-radius:5px;z-index:40'; document.body.appendChild(readout);} readout.textContent=t; readout.style.display='block'; }
 function hideReadout(){ if(readout)readout.style.display='none'; }
