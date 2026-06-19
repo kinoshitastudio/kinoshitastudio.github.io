@@ -48,7 +48,7 @@
   .lrow:hover{background:rgba(168,144,96,.12)}
   .lrow.sel{background:rgba(168,144,96,.24);color:#fff}
   .lrow .lt{color:var(--faint);font-size:8px;text-transform:uppercase;margin-left:auto;letter-spacing:.1em}
-  #selbox{position:absolute;border:1.5px solid #a89060;pointer-events:none;z-index:8;display:none}
+  #selbox{position:absolute;border:1.5px solid #a89060;pointer-events:auto;cursor:move;z-index:8;display:none}
   #selbox .selh{position:absolute;width:12px;height:12px;background:#fff;border:1.5px solid #a89060;border-radius:2px;pointer-events:auto;box-sizing:border-box}
   #selbox .selh.nw{left:-6px;top:-6px;cursor:nwse-resize}
   #selbox .selh.ne{right:-6px;top:-6px;cursor:nesw-resize}
@@ -174,6 +174,8 @@ function attachDrag(rootJson, rootDom){
     var dom=rootDom.children[i];
     if(!dom || (childJson.x==null && childJson.y==null)) return;
     dom.style.cursor='move';
+    dom.addEventListener('mouseenter', function(){ if(dom!==selDom){ dom.style.outline='1px dashed rgba(168,144,96,.6)'; dom.style.outlineOffset='1px'; } });
+    dom.addEventListener('mouseleave', function(){ if(dom!==selDom){ dom.style.outline=''; } });
     dom.addEventListener('pointerdown', function(e){
       e.preventDefault(); e.stopPropagation(); dragging=true; snapshot();
       var sx=e.clientX, sy=e.clientY, ox=(childJson.x||0), oy=(childJson.y||0), moved=false;
@@ -273,6 +275,21 @@ var selbox=document.createElement('div'); selbox.id='selbox';
 ['nw','ne','sw','se'].forEach(function(c){ var h=document.createElement('div'); h.className='selh '+c; h.addEventListener('pointerdown',function(ev){ startResize(c,ev); }); selbox.appendChild(h); });
 wrap.appendChild(selbox);
 window.addEventListener('scroll', positionSelbox, true);
+/* 選択枠の本体を掴んで移動（レイヤー選択でも確実に動く） */
+selbox.addEventListener('pointerdown', function(e){
+  if(!selNode||!selDom) return;
+  e.preventDefault(); dragging=true; snapshot();
+  var sx=e.clientX, sy=e.clientY, ox=(selNode.x||0), oy=(selNode.y||0), moved=false;
+  function mv(ev){
+    if(Math.abs(ev.clientX-sx)+Math.abs(ev.clientY-sy)>3) moved=true;
+    selNode.x=Math.round(ox+(ev.clientX-sx)/zoom); selNode.y=Math.round(oy+(ev.clientY-sy)/zoom);
+    selDom.style.left=selNode.x+'px'; selDom.style.top=selNode.y+'px';
+    positionSelbox(); showReadout((selNode.name||selNode.type)+'  x:'+selNode.x+'  y:'+selNode.y);
+  }
+  function up(){ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); dragging=false; hideReadout(); if(!moved)history.pop(); pushDoc(); }
+  window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up);
+});
+var _stg=document.getElementById('stage'); if(_stg) _stg.addEventListener('pointerdown', function(e){ if(e.target===_stg) deselect(); });
 function addText(){
   if(!curDoc||!curDoc.root)return;
   snapshot();
@@ -309,7 +326,7 @@ function renderLayers(){
 function highlightLayer(){
   var ll=document.getElementById('llist'); if(!ll)return;
   var idx=(selNode&&curDoc&&curDoc.root&&curDoc.root.children)?curDoc.root.children.indexOf(selNode):-1;
-  Array.prototype.forEach.call(ll.children,function(r,i){ r.classList.toggle('sel', i===idx); });
+  Array.prototype.forEach.call(ll.children,function(r,i){ var on=(i===idx); r.classList.toggle('sel',on); if(on&&r.scrollIntoView)r.scrollIntoView({block:'nearest'}); });
 }
 function showReadout(t){ if(!readout){readout=document.createElement('div'); readout.style.cssText='position:fixed;bottom:34px;left:16px;background:#a89060;color:#1a1a18;font-family:monospace;font-size:11px;padding:5px 9px;border-radius:5px;z-index:40'; document.body.appendChild(readout);} readout.textContent=t; readout.style.display='block'; }
 function hideReadout(){ if(readout)readout.style.display='none'; }
