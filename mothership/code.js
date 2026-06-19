@@ -223,6 +223,14 @@ async function generate(jsonStr, zoom) {
 
   try {
     const made = [];
+    // 新規フレームの配置基準：選択中フレームの右隣／無ければ今見ている場所（遠くに飛ばさない）
+    const vc = figma.viewport.center;
+    const sel = figma.currentPage.selection;
+    let anchorX, anchorY, anchorMode;
+    if (sel.length && typeof sel[0].x === "number") {
+      anchorX = sel[0].x + (sel[0].width || 0) + 80; anchorY = sel[0].y; anchorMode = "right";
+    } else { anchorX = vc.x; anchorY = vc.y; anchorMode = "center"; }
+    let stack = 0;
     for (const r of roots) {
       const name = r.name || "Frame";
       let px = null, py = null;
@@ -234,8 +242,14 @@ async function generate(jsonStr, zoom) {
 
       const node = await build(r);
       figma.currentPage.appendChild(node);
-      node.x = (px != null) ? px : (r.x != null ? r.x : nextFreeX());
-      node.y = (py != null) ? py : (r.y != null ? r.y : figma.viewport.center.y);
+      if (px != null) { node.x = px; node.y = py; }                          // 既存：その場で更新（動かさない）
+      else if (r.x != null || r.y != null) { node.x = (r.x != null ? r.x : anchorX); node.y = (r.y != null ? r.y : anchorY); } // JSON指定優先
+      else if (anchorMode === "center") {                                    // 何も選択なし：今見ている中央に
+        node.x = Math.round(vc.x - node.width / 2) + stack * 40;
+        node.y = Math.round(vc.y - node.height / 2) + stack * 40; stack++;
+      } else {                                                               // 選択あり：その右隣に並べる
+        node.x = anchorX + stack * (node.width + 80); node.y = anchorY; stack++;
+      }
       generated[name] = node;
       made.push(node);
     }
