@@ -222,7 +222,7 @@ async function generate(jsonStr, zoom) {
   const t0 = Date.now();
 
   try {
-    const made = [], freshNodes = [];
+    const made = [];
     for (const r of roots) {
       const name = r.name || "Frame";
       let px = null, py = null;
@@ -238,12 +238,10 @@ async function generate(jsonStr, zoom) {
       node.y = (py != null) ? py : (r.y != null ? r.y : figma.viewport.center.y);
       generated[name] = node;
       made.push(node);
-      if (isNew) freshNodes.push(node);
     }
     figma.currentPage.selection = made;
-    // 手動生成 or 新規フレームのときだけカメラを寄せる（既存の詰め更新ではカメラを動かさない）
-    if (zoom) figma.viewport.scrollAndZoomIntoView(made);
-    else if (freshNodes.length) figma.viewport.scrollAndZoomIntoView(freshNodes);
+    // 生成・更新のたびに結果へカメラを寄せる（ライブラリ送信／詰め書き出しのどちらでも追える）
+    figma.viewport.scrollAndZoomIntoView(made);
     figma.ui.postMessage({ type: "gen-done", count: made.length, ms: Date.now() - t0 });
   } catch (e) {
     figma.ui.postMessage({ type: "gen-done", count: 0, ms: Date.now() - t0, error: String(e && e.message ? e.message : e) });
