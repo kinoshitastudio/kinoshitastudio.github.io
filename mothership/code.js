@@ -254,4 +254,5 @@ async function generate(jsonStr, zoom) {
 figma.ui.onmessage = async (msg) => {
   if (msg.type === "generate") await generate(msg.json, true);
   else if (msg.type === "live") await generate(msg.json, false);
+  else if (msg.type === "open" && msg.url) figma.openExternal(msg.url);
 };

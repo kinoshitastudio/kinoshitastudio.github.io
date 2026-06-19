@@ -28,6 +28,22 @@ http.createServer((req, res) => {
     return res.end(JSON.stringify({ version: ver(), json: read() }));
   }
 
+  // library/*.json の一覧（name付き）。library.html / ハブが使う
+  if (u.pathname === "/list") {
+    res.setHeader("Content-Type", "application/json");
+    let out = [];
+    try {
+      const dir = path.join(__dirname, "library");
+      for (const f of fs.readdirSync(dir)) {
+        if (!f.endsWith(".json")) continue;
+        let name = f;
+        try { name = (JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")).name) || f; } catch (e) {}
+        out.push({ file: "library/" + f, name: name });
+      }
+    } catch (e) {}
+    return res.end(JSON.stringify(out));
+  }
+
   // 任意: HTTP経由で設計を流し込む（Claude Codeが curl で叩く用）
   if (u.pathname === "/push" && req.method === "POST") {
     let b = "";
