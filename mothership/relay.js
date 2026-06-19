@@ -177,6 +177,7 @@ http.createServer((req, res) => {
       : ext === ".png" ? "image/png" : (ext === ".jpg" || ext === ".jpeg") ? "image/jpeg"
       : ext === ".webp" ? "image/webp" : "application/octet-stream";
     res.setHeader("Content-Type", ct);
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");  // ⌘Rで毎回最新を取得（キャッシュ無効）
     res.end(data);
   });
 }).listen(PORT, () => {
