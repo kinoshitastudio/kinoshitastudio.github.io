@@ -149,6 +149,14 @@ async function build(node) {
     try { const img = await figma.createImageAsync(node.src); n.fills = [{ type: "IMAGE", scaleMode: node.scaleMode || "FILL", imageHash: img.hash }]; }
     catch (e) { n.fills = fills("#999999"); }
 
+  } else if (type === "svg") {
+    try {
+      n = figma.createNodeFromSvg(String(node.svg || "<svg/>"));   // ベクター（ロゴ/アイコン）をネイティブで
+      if (node.w && node.h && n.resize) n.resize(resolve(node.w), resolve(node.h));
+    } catch (e) {
+      n = figma.createFrame(); n.resize(resolve(node.w) || 100, resolve(node.h) || 100); n.fills = fills("#cccccc");
+    }
+
   } else {
     n = figma.createFrame();
     n.resize(resolve(node.w) || 200, resolve(node.h) || 200);
