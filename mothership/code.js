@@ -192,10 +192,12 @@ figma.showUI(__html__, { width: 380, height: 600, title: "Mothership" });
 const generated = {}; // name -> 生成済みノード（同名は置き換え、新名は新フレーム）
 
 function nextFreeX() {
+  // ページ上の全トップレベルノードの右端を基準に（重なり防止・再起動をまたいでも有効）
   let maxRight = null;
-  for (const k in generated) {
-    const n = generated[k];
-    if (n && !n.removed) { const r = n.x + n.width; if (maxRight == null || r > maxRight) maxRight = r; }
+  for (const n of figma.currentPage.children) {
+    if (!n || n.removed) continue;
+    const r = n.x + n.width;
+    if (maxRight == null || r > maxRight) maxRight = r;
   }
   return maxRight == null ? figma.viewport.center.x : maxRight + 80;
 }
@@ -220,22 +222,28 @@ async function generate(jsonStr, zoom) {
   const t0 = Date.now();
 
   try {
-    const made = [];
+    const made = [], freshNodes = [];
     for (const r of roots) {
       const name = r.name || "Frame";
       let px = null, py = null;
-      const prev = generated[name];
-      if (prev && !prev.removed) { px = prev.x; py = prev.y; prev.remove(); delete generated[name]; }
+      // メモリの記録 → 無ければページ上の同名フレームを探す（プラグイン再起動をまたいでも同じ原本を更新＝増殖しない）
+      let prev = generated[name];
+      if (!(prev && !prev.removed)) prev = figma.currentPage.children.find((n) => n.name === name);
+      const isNew = !(prev && !prev.removed);
+      if (!isNew) { px = prev.x; py = prev.y; prev.remove(); delete generated[name]; }
 
       const node = await build(r);
       figma.currentPage.appendChild(node);
-      node.x = (r.x != null) ? r.x : (px != null ? px : nextFreeX());
-      node.y = (r.y != null) ? r.y : (py != null ? py : figma.viewport.center.y);
+      node.x = (px != null) ? px : (r.x != null ? r.x : nextFreeX());
+      node.y = (py != null) ? py : (r.y != null ? r.y : figma.viewport.center.y);
       generated[name] = node;
       made.push(node);
+      if (isNew) freshNodes.push(node);
     }
     figma.currentPage.selection = made;
+    // 手動生成 or 新規フレームのときだけカメラを寄せる（既存の詰め更新ではカメラを動かさない）
     if (zoom) figma.viewport.scrollAndZoomIntoView(made);
+    else if (freshNodes.length) figma.viewport.scrollAndZoomIntoView(freshNodes);
     figma.ui.postMessage({ type: "gen-done", count: made.length, ms: Date.now() - t0 });
   } catch (e) {
     figma.ui.postMessage({ type: "gen-done", count: 0, ms: Date.now() - t0, error: String(e && e.message ? e.message : e) });
