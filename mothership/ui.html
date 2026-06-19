@@ -311,6 +311,18 @@
   }
   async function loadChatLog() { try { var r = await fetch(relayBase() + '/chat-log', { cache: 'no-store' }); var txt = await r.text(); lastChatStr = txt; var a = JSON.parse(txt); chatLog = Array.isArray(a) ? a : []; } catch (e) { chatLog = []; lastChatStr = ''; } renderChatLog(); }
   async function pollChat() { if (cbusy) return; try { var r = await fetch(relayBase() + '/chat-log', { cache: 'no-store' }); var txt = await r.text(); if (txt !== lastChatStr) { lastChatStr = txt; var a = JSON.parse(txt); chatLog = Array.isArray(a) ? a : []; renderChatLog(); } } catch (e) {} }
+  /* 生成中（他の画面が送信中）を同期表示 */
+  var remoteBusy = false, remoteSince = 0, syncThinkMsg = null;
+  function ensureSyncThink() {
+    var show = remoteBusy && !cbusy;
+    if (show) {
+      if (!syncThinkMsg) { var bd = cbubble('Mothership', 'think', ''); bd.innerHTML = '<span class="loadring"></span>' + tr('think') + '  <span class="secs">0.0s</span>'; syncThinkMsg = bd.parentElement; }
+      if (syncThinkMsg.parentElement !== feed) feed.appendChild(syncThinkMsg);
+      var se = syncThinkMsg.querySelector('.secs'); if (se) se.textContent = ((Date.now() - remoteSince) / 1000).toFixed(1) + 's';
+      cscroll();
+    } else if (syncThinkMsg) { if (syncThinkMsg.parentElement) syncThinkMsg.remove(); syncThinkMsg = null; }
+  }
+  async function pollBusy() { try { var b = await (await fetch(relayBase() + '/chat-busy', { cache: 'no-store' })).json(); remoteBusy = !!b.busy; remoteSince = b.since || 0; } catch (e) { remoteBusy = false; } ensureSyncThink(); }
   function cscroll() { feed.scrollTop = feed.scrollHeight; }
   function labelFor(cls) { return cls === 'me' ? tr('you') : cls === 'err' ? tr('err') : 'Mothership'; }
   function cbubble(who, cls, text, img) {
@@ -325,6 +337,7 @@
     Array.prototype.slice.call(feed.querySelectorAll('.msg')).forEach(function (n) { n.remove(); });
     chatLog.forEach(function (e) { cbubble(labelFor(e.cls), e.cls, e.text, e.img); });
     var h = document.getElementById('hello'); if (h) h.style.display = chatLog.length ? 'none' : '';
+    ensureSyncThink();   // 再描画後に生成中表示を維持
   }
   function logPush(cls, text, img) { chatLog.push({ cls: cls, text: text, img: img || null }); saveChat(); var h = document.getElementById('hello'); if (h) h.style.display = 'none'; return cbubble(labelFor(cls), cls, text, img); }
 
@@ -382,6 +395,7 @@
   document.getElementById('chatclear').onclick = function () { chatLog = []; saveChat(); renderChatLog(); };
   loadChatLog();
   setInterval(pollChat, 1500);  // パネル↔大きい画面の双方向同期
+  setInterval(pollBusy, 700);   // 生成中「考えています」も両画面で同期
   try { if (localStorage.getItem('ms_conn') !== '0') connect(); } catch (e) { connect(); }  // 切断するまで自動接続を維持
 
   /* ---------- オンボーディング（初回モーダル / ?で再表示） ---------- */

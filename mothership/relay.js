@@ -17,6 +17,8 @@ const ver  = () => { try { return Math.floor(fs.statSync(FILE).mtimeMs); } catch
 
 // ブラウザのタブを使い回すためのナビ状態（新規ウィンドウを増やさない）
 let navView = "", navV = 0, lastNavPoll = 0;
+// チャット生成中フラグ（パネル↔大きい画面で「考えています」を同期）
+let chatBusy = false, chatBusySince = 0;
 
 http.createServer((req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -45,6 +47,10 @@ http.createServer((req, res) => {
   if (u.pathname === "/nav-status") {
     res.setHeader("Content-Type", "application/json");
     return res.end(JSON.stringify({ alive: (Date.now() - lastNavPoll) < 3000 }));
+  }
+  if (u.pathname === "/chat-busy") {
+    res.setHeader("Content-Type", "application/json");
+    return res.end(JSON.stringify({ busy: chatBusy, since: chatBusySince }));
   }
 
   // チャット履歴の共有ストア（パネルと大きい画面で会話を継続）
@@ -132,8 +138,9 @@ http.createServer((req, res) => {
         } catch (e) {}
       }
 
+      chatBusy = true; chatBusySince = Date.now();   // 生成開始（両画面で「考えています」同期用）
       let done = false;
-      const finish = (obj) => { if (done) return; done = true; clearTimeout(timer); res.end(JSON.stringify(obj)); };
+      const finish = (obj) => { if (done) return; done = true; chatBusy = false; clearTimeout(timer); res.end(JSON.stringify(obj)); };
 
       let child;
       try {

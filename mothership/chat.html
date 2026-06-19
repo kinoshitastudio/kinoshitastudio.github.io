@@ -118,7 +118,7 @@
   var lastChatStr='';
   function labelFor(cls){ return cls==='me'?'あなた':cls==='err'?'エラー':'Mothership'; }
   function saveChat(){ var s=JSON.stringify(chatLog.slice(-60).map(function(e){return {cls:e.cls,text:e.text};})); lastChatStr=s; try{ fetch(RELAY+'/chat-log',{method:'POST',headers:{'Content-Type':'application/json'},body:s}); }catch(e){} }
-  function renderChatLog(){ Array.prototype.slice.call(inner.querySelectorAll('.msg')).forEach(function(n){n.remove();}); var h=document.getElementById('hello'); if(h)h.style.display=chatLog.length?'none':''; chatLog.forEach(function(e){ bubble(labelFor(e.cls),e.cls,e.text); }); scroll(); }
+  function renderChatLog(){ Array.prototype.slice.call(inner.querySelectorAll('.msg')).forEach(function(n){n.remove();}); var h=document.getElementById('hello'); if(h)h.style.display=chatLog.length?'none':''; chatLog.forEach(function(e){ bubble(labelFor(e.cls),e.cls,e.text); }); if(typeof ensureSyncThink==='function')ensureSyncThink(); scroll(); }
   function logBubble(cls, text, img){ chatLog.push({cls:cls,text:text}); saveChat(); var h=document.getElementById('hello'); if(h)h.style.display='none'; return bubble(labelFor(cls),cls,text,img); }
 
   /* 📎画像添付 / 🎨画像プロンプトモード（パネルと同等） */
@@ -138,6 +138,17 @@
   imgBtn.onclick=function(){ imgMode=!imgMode; imgBtn.classList.toggle('on',imgMode); input.placeholder=imgMode?'🎨 画像生成プロンプトを作る（MJ/DALL·E用）— どんな画像？':DEFAULT_PH; input.focus(); };
   async function loadChatLog(){ try{ var r=await fetch(RELAY+'/chat-log',{cache:'no-store'}); var txt=await r.text(); lastChatStr=txt; var a=JSON.parse(txt); chatLog=Array.isArray(a)?a:[]; }catch(e){ chatLog=[]; lastChatStr=''; } renderChatLog(); }
   async function pollChat(){ if(busy)return; try{ var r=await fetch(RELAY+'/chat-log',{cache:'no-store'}); var txt=await r.text(); if(txt!==lastChatStr){ lastChatStr=txt; var a=JSON.parse(txt); chatLog=Array.isArray(a)?a:[]; renderChatLog(); } }catch(e){} }
+  var remoteBusy=false, remoteSince=0, syncThinkMsg=null;
+  function ensureSyncThink(){
+    var show=remoteBusy && !busy;
+    if(show){
+      if(!syncThinkMsg){ var bd=bubble('Mothership','think',''); bd.innerHTML='<span class="loadring"></span>考えています…（mothership.json を編集中） <span class="secs">0.0s</span>'; syncThinkMsg=bd.parentElement; }
+      if(syncThinkMsg.parentElement!==inner) inner.appendChild(syncThinkMsg);
+      var se=syncThinkMsg.querySelector('.secs'); if(se) se.textContent=((Date.now()-remoteSince)/1000).toFixed(1)+'s';
+      scroll();
+    } else if(syncThinkMsg){ if(syncThinkMsg.parentElement)syncThinkMsg.remove(); syncThinkMsg=null; }
+  }
+  async function pollBusy(){ try{ var b=await (await fetch(RELAY+'/chat-busy',{cache:'no-store'})).json(); remoteBusy=!!b.busy; remoteSince=b.since||0; }catch(e){ remoteBusy=false; } ensureSyncThink(); }
 
   async function send(){
     if (busy) return;
@@ -179,6 +190,7 @@
   document.querySelectorAll('.ex button').forEach(function(b){ b.onclick = function(){ input.value = b.textContent; send(); }; });
   loadChatLog();
   setInterval(pollChat, 1500);  // パネル↔大きい画面の双方向同期
+  setInterval(pollBusy, 700);   // 生成中「考えています」も両画面で同期
   (function(){ var SELF='chat', lastV=null;
     setInterval(function(){ fetch('/nav',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){ if(lastV===null){lastV=d.v;return;} if(d.v!==lastV){ lastV=d.v; if(d.view && d.view!==SELF) location.href='/'+d.view+'.html'; } }).catch(function(){}); }, 1000);
   })();
