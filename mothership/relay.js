@@ -15,6 +15,9 @@ const PORT = process.env.PORT || 4575;
 const read = () => { try { return fs.readFileSync(FILE, "utf8"); } catch (e) { return "{}"; } };
 const ver  = () => { try { return Math.floor(fs.statSync(FILE).mtimeMs); } catch (e) { return 0; } };
 
+// ブラウザのタブを使い回すためのナビ状態（新規ウィンドウを増やさない）
+let navView = "", navV = 0, lastNavPoll = 0;
+
 http.createServer((req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "*");
@@ -27,6 +30,21 @@ http.createServer((req, res) => {
   if (u.pathname === "/pull") {
     res.setHeader("Content-Type", "application/json");
     return res.end(JSON.stringify({ version: ver(), json: read() }));
+  }
+
+  // タブ使い回し用ナビ。開いてるページが /nav を見て自分で遷移する（新規ウィンドウを増やさない）
+  if (u.pathname === "/nav") {
+    res.setHeader("Content-Type", "application/json");
+    if (req.method === "GET") { lastNavPoll = Date.now(); return res.end(JSON.stringify({ v: navV, view: navView })); }
+    if (req.method === "POST") {
+      let b = ""; req.on("data", (d) => (b += d));
+      req.on("end", () => { try { navView = (JSON.parse(b).view || "").toString(); navV++; } catch (e) {} res.end(JSON.stringify({ ok: true, v: navV })); });
+      return;
+    }
+  }
+  if (u.pathname === "/nav-status") {
+    res.setHeader("Content-Type", "application/json");
+    return res.end(JSON.stringify({ alive: (Date.now() - lastNavPoll) < 3000 }));
   }
 
   // チャット履歴の共有ストア（パネルと大きい画面で会話を継続）
