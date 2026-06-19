@@ -135,6 +135,7 @@ function el(node,t){
     const fillv=node.fill!=null?node.fill:(type==='rect'||type==='ellipse'?'#cccccc':null);
     if(fillv!=null){const c=cssFill(fillv,t); if(c&&c.indexOf('gradient')>=0)s.backgroundImage=c; else if(c)s.background=c;}
     const L=node.layout;
+    s.position='relative';   // 子の絶対配置の基準に（オートレイアウトでも）
     if(L){
       s.display='flex'; s.flexDirection=L.mode==='horizontal'?'row':'column';
       if(L.gap!=null)s.gap=rv(L.gap,t)+'px';
@@ -142,11 +143,11 @@ function el(node,t){
       if(pad!=null){if(typeof pad==='number')s.padding=pad+'px';else s.padding=(pad.top||0)+'px '+(pad.right||0)+'px '+(pad.bottom||0)+'px '+(pad.left||0)+'px';}
       const al=L.align||'start'; s.alignItems=al==='center'?'center':al==='end'?'flex-end':'flex-start';
       const ju=L.justify||'start'; s.justifyContent=ju==='center'?'center':ju==='end'?'flex-end':ju==='between'?'space-between':'flex-start';
-    } else { s.position='relative'; }
+    }
     (node.children||[]).forEach(ch=>{
       const cn=el(ch,t);
-      if(L){ if(ch.stretch)cn.style.alignSelf='stretch'; if(ch.grow)cn.style.flexGrow='1'; }
-      else if(ch.x!=null||ch.y!=null){ cn.style.position='absolute'; if(ch.x!=null)cn.style.left=rv(ch.x,t)+'px'; if(ch.y!=null)cn.style.top=rv(ch.y,t)+'px'; }
+      if(ch.x!=null||ch.y!=null){ cn.style.position='absolute'; if(ch.x!=null)cn.style.left=rv(ch.x,t)+'px'; if(ch.y!=null)cn.style.top=rv(ch.y,t)+'px'; }
+      else if(L){ if(ch.stretch)cn.style.alignSelf='stretch'; if(ch.grow)cn.style.flexGrow='1'; }
       d.appendChild(cn);
     });
   }
@@ -201,17 +202,22 @@ function wireTree(json, dom){
     var cdom=dom.children[i];
     if(!cdom) return;
     nodeDom.set(childJson, cdom);
-    var draggable=(childJson.x!=null || childJson.y!=null);
-    cdom.style.cursor=draggable?'move':'pointer';
+    cdom.style.cursor='move';
     cdom.addEventListener('mouseenter', function(e){ e.stopPropagation(); if(cdom!==selDom) positionHoverbox(cdom); });
     cdom.addEventListener('mouseleave', function(){ if(hoverbox) hoverbox.style.display='none'; });
     cdom.addEventListener('mousedown', function(e){
       e.preventDefault(); e.stopPropagation();
       selectEl(childJson, cdom);
-      if(!draggable) return;          // オートレイアウト内の子は選択のみ（位置はレイアウト管理）
       snapshot(); dragging=true;
-      var sx=e.clientX, sy=e.clientY, ox=(childJson.x||0), oy=(childJson.y||0), moved=false;
+      var sx=e.clientX, sy=e.clientY, ox=null, oy=null, moved=false;
       function mv(ev){
+        if(ox===null){  // 初回移動時に基準確定。オートレイアウト内なら現在位置をx/yに固定して絶対配置に切替
+          if(childJson.x==null && childJson.y==null){
+            childJson.x=Math.round(cdom.offsetLeft); childJson.y=Math.round(cdom.offsetTop);
+            cdom.style.position='absolute'; cdom.style.left=childJson.x+'px'; cdom.style.top=childJson.y+'px';
+          }
+          ox=(childJson.x||0); oy=(childJson.y||0);
+        }
         moved=true;
         childJson.x=Math.round(ox+(ev.clientX-sx)/zoom);
         childJson.y=Math.round(oy+(ev.clientY-sy)/zoom);

@@ -174,7 +174,16 @@ async function build(node) {
     for (const child of node.children || []) {
       const c = await build(child);
       n.appendChild(c);
-      if (L) { if (child.grow) c.layoutGrow = 1; if (child.stretch) c.layoutAlign = "STRETCH"; }
+      if (L) {
+        if (child.x != null || child.y != null) {            // オートレイアウト内でも x/y があれば絶対配置
+          c.layoutPositioning = "ABSOLUTE";
+          if (child.x != null) c.x = resolve(child.x);
+          if (child.y != null) c.y = resolve(child.y);
+        } else {
+          if (child.grow) c.layoutGrow = 1;
+          if (child.stretch) c.layoutAlign = "STRETCH";
+        }
+      }
     }
   }
 
