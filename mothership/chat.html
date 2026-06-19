@@ -83,7 +83,7 @@
   var RELAY = location.origin;
   var inner = document.getElementById('inner'), feed = document.getElementById('feed');
   var input = document.getElementById('input'), sendBtn = document.getElementById('send');
-  var busy = false;
+  var busy = false, chatLog = [];
 
   function scroll(){ feed.scrollTop = feed.scrollHeight; }
   function bubble(who, cls, text){
@@ -93,6 +93,10 @@
     m.appendChild(w); m.appendChild(b); inner.appendChild(m); scroll();
     return b;
   }
+  function labelFor(cls){ return cls==='me'?'あなた':cls==='err'?'エラー':'Mothership'; }
+  function saveChat(){ try{ fetch(RELAY+'/chat-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(chatLog.slice(-60))}); }catch(e){} }
+  function logBubble(cls, text){ chatLog.push({cls:cls,text:text}); saveChat(); var h=document.getElementById('hello'); if(h)h.remove(); return bubble(labelFor(cls),cls,text); }
+  async function loadChatLog(){ try{ var r=await fetch(RELAY+'/chat-log',{cache:'no-store'}); var a=await r.json(); chatLog=Array.isArray(a)?a:[]; }catch(e){ chatLog=[]; } if(chatLog.length){ var h=document.getElementById('hello'); if(h)h.remove(); chatLog.forEach(function(e){ bubble(labelFor(e.cls),e.cls,e.text); }); } }
 
   async function send(){
     if (busy) return;
@@ -101,7 +105,7 @@
     var hello = document.getElementById('hello'); if (hello) hello.remove();
     busy = true; sendBtn.disabled = true;
     input.value = ''; input.style.height = 'auto';
-    bubble('あなた', 'me', text);
+    logBubble('me', text);
     var thinkBody = bubble('Mothership', 'think', '∞ 考えています…');
     thinkBody.innerHTML = '<span class="spin">∞</span> 考えています…（claude が mothership.json を編集中）';
     try{
@@ -109,13 +113,13 @@
       var data = await r.json();
       thinkBody.parentElement.remove();
       if (data.ok){
-        bubble('Mothership', 'ms', data.text || '（完了）');
+        logBubble('ms', data.text || '（完了）');
       } else {
-        bubble('エラー', 'err', (data.error || '失敗') + (data.text ? '\n\n' + data.text : ''));
+        logBubble('err', (data.error || '失敗') + (data.text ? '\n\n' + data.text : ''));
       }
     }catch(e){
       thinkBody.parentElement.remove();
-      bubble('エラー', 'err', 'relayに接続できません。cd mothership && node relay.js で起動してください。\n' + (e.message||e));
+      logBubble('err', 'relayに接続できません。cd mothership && node relay.js で起動してください。\n' + (e.message||e));
     }
     busy = false; sendBtn.disabled = false; input.focus();
   }
@@ -124,6 +128,7 @@
   input.addEventListener('keydown', function(e){ if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229){ e.preventDefault(); send(); } });
   input.addEventListener('input', function(){ this.style.height='auto'; this.style.height=Math.min(this.scrollHeight,160)+'px'; });
   document.querySelectorAll('.ex button').forEach(function(b){ b.onclick = function(){ input.value = b.textContent; send(); }; });
+  loadChatLog();
   input.focus();
 </script>
 </body>

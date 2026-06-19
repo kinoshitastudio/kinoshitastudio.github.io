@@ -29,6 +29,36 @@ http.createServer((req, res) => {
     return res.end(JSON.stringify({ version: ver(), json: read() }));
   }
 
+  // チャット履歴の共有ストア（パネルと大きい画面で会話を継続）
+  if (u.pathname === "/chat-log") {
+    const LOG = path.join(__dirname, "_chat-log.json");
+    if (req.method === "GET") {
+      res.setHeader("Content-Type", "application/json");
+      try { return res.end(fs.readFileSync(LOG, "utf8")); } catch (e) { return res.end("[]"); }
+    }
+    if (req.method === "POST") {
+      let b = ""; req.on("data", (d) => (b += d));
+      req.on("end", () => { try { JSON.parse(b); fs.writeFileSync(LOG, b); res.setHeader("Content-Type", "application/json"); res.end('{"ok":true}'); } catch (e) { res.writeHead(400); res.end('{"ok":false}'); } });
+      return;
+    }
+  }
+
+  // 現在の mothership.json を library/ に保存（パネルの「ライブラリに保存」ボタン）
+  if (u.pathname === "/save-lib" && req.method === "POST") {
+    res.setHeader("Content-Type", "application/json");
+    try {
+      const src = read();
+      const doc = JSON.parse(src);
+      let name = (doc.name || (doc.root && doc.root.name) || "design").toString().trim();
+      let safe = name.replace(/[\/\\:*?"<>|]+/g, "-").replace(/\s+/g, " ").slice(0, 60) || "design";
+      const dir = path.join(__dirname, "library");
+      try { fs.mkdirSync(dir); } catch (e) {}
+      const file = "library/" + safe + ".json";
+      fs.writeFileSync(path.join(__dirname, file), src);
+      return res.end(JSON.stringify({ ok: true, file: file, name: name }));
+    } catch (e) { res.writeHead(500); return res.end(JSON.stringify({ ok: false, error: String(e && e.message ? e.message : e) })); }
+  }
+
   // library/*.json の一覧（name付き）。library.html / ハブが使う
   if (u.pathname === "/list") {
     res.setHeader("Content-Type", "application/json");
