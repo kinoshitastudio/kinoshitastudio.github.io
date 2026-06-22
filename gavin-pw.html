@@ -3,9 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Gavin PW｜ローカル完結のパスワード金庫 - 木下スタジオ</title>
-<meta name="description" content="Gavin PW は、すべてをブラウザのローカルに保存するパスワード金庫。APIキーやライセンスの失効アラート、使用先・重要度を管理する「管制塔」ビューを備えた木下スタジオのプロダクト。">
-<link rel="canonical" href="https://kinoshita.studio/gavin-pw.html">
+<title>Gavin PW</title>
 <link href="https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Space+Mono:wght@400;700&family=Zen+Kaku+Gothic+New:wght@400&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -514,7 +512,7 @@ button{cursor:pointer;border:none;background:none;color:inherit}
     </div>
     <div style="display:flex;gap:10px;align-items:center">
       <label class="import-lbl" for="import-file">インポート</label>
-      <input type="file" id="import-file" accept=".json" style="display:none">
+      <input type="file" id="import-file" accept=".gavin,.json" style="display:none">
       <button class="export-btn" id="export-btn">エクスポート</button>
     </div>
   </div>
@@ -676,8 +674,10 @@ function renderTower(){
   if(noProd.length){html+=`<div class="tower-card"><div class="tower-prod unsorted">未分類<span class="tower-prod-count">${noProd.length} 件</span></div>${noProd.map(depRow).join('')}</div>`}
   tv.innerHTML=html;
 }
-function exportVault(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(vault,null,2)],{type:'application/json'}));a.download=`gavin-pw-${new Date().toISOString().slice(0,10)}.json`;a.click()}
-function importVault(file){const r=new FileReader();r.onload=async e=>{try{const d=JSON.parse(e.target.result);if(!d.entries)throw 0;if(!confirm(`${d.entries.length} 件をインポートします。よろしいですか？`))return;const ids=new Set(vault.entries.map(x=>x.id));d.entries.forEach(e=>{if(!ids.has(e.id))vault.entries.push(e)});await saveVault();render()}catch{alert('読み込めませんでした')}};r.readAsText(file)}
+// エクスポート: ゼロ知識E2E。マスターPWで暗号化した .gavin を書き出す（Dropbox/Drive/iCloud等、ユーザー自身のクラウドに手動で置く前提）。クラウドは暗号文しか見ない。
+async function exportVault(){const cipher=await encryptData(vault,masterPassword);const env=JSON.stringify({format:'gavin-vault',v:1,enc:'AES-GCM',cipher});const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([env],{type:'application/octet-stream'}));a.download=`gavin-vault-${new Date().toISOString().slice(0,10)}.gavin`;a.click()}
+// インポート: 暗号化(.gavin / 生base64)を優先。まず現在のマスターPWで復号、ダメなら書き出し時のPWを尋ねる。旧形式の平文JSONも後方互換で受ける。重複IDはスキップしてマージ。
+function importVault(file){const r=new FileReader();r.onload=async e=>{const raw=e.target.result;let cipher=null,plain=null;try{const j=JSON.parse(raw);if(j&&j.format==='gavin-vault'&&j.cipher)cipher=j.cipher;else if(j&&Array.isArray(j.entries))plain=j;else cipher=raw.trim()}catch{cipher=raw.trim()}let data=plain;if(!data&&cipher){data=await decryptData(cipher,masterPassword).catch(()=>null);if(!data){const pw=prompt('このファイルを暗号化したマスターパスワードを入力してください');if(pw==null)return;data=await decryptData(cipher,pw).catch(()=>null)}}if(!data||!Array.isArray(data.entries)){alert('読み込めませんでした（ファイルが壊れているか、パスワードが違います）');return}if(!confirm(`${data.entries.length} 件をインポートします。よろしいですか？（重複IDはスキップ）`))return;const ids=new Set(vault.entries.map(x=>x.id));data.entries.forEach(en=>{if(!ids.has(en.id))vault.entries.push(en)});await saveVault();render();alert('インポート完了')};r.readAsText(file)}
 
 document.addEventListener('DOMContentLoaded',()=>{
   const hintEl=document.getElementById('lock-hint'),btnEl=document.getElementById('unlock-btn');
