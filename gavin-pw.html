@@ -513,7 +513,8 @@ button{cursor:pointer;border:none;background:none;color:inherit}
     </div>
     <div style="display:flex;gap:10px;align-items:center">
       <label class="import-lbl" for="import-file">インポート</label>
-      <input type="file" id="import-file" accept=".gavin,.json" style="display:none">
+      <!-- accept は付けない: iOSは .json を認識すると未知の .gavin をグレーアウトしてしまう。形式判定は importVault 側で行う -->
+      <input type="file" id="import-file" style="display:none">
       <button class="export-btn" id="export-btn">エクスポート</button>
     </div>
   </div>
@@ -678,7 +679,7 @@ function renderTower(){
 // エクスポート: ゼロ知識E2E。マスターPWで暗号化した .gavin を書き出す（Dropbox/Drive/iCloud等、ユーザー自身のクラウドに手動で置く前提）。クラウドは暗号文しか見ない。
 async function exportVault(){const cipher=await encryptData(vault,masterPassword);const env=JSON.stringify({format:'gavin-vault',v:1,enc:'AES-GCM',cipher});const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([env],{type:'application/octet-stream'}));a.download=`gavin-vault-${new Date().toISOString().slice(0,10)}.gavin`;a.click()}
 // インポート: 暗号化(.gavin / 生base64)を優先。まず現在のマスターPWで復号、ダメなら書き出し時のPWを尋ねる。旧形式の平文JSONも後方互換で受ける。重複IDはスキップしてマージ。
-function importVault(file){const r=new FileReader();r.onload=async e=>{const raw=e.target.result;let cipher=null,plain=null;try{const j=JSON.parse(raw);if(j&&j.format==='gavin-vault'&&j.cipher)cipher=j.cipher;else if(j&&Array.isArray(j.entries))plain=j;else cipher=raw.trim()}catch{cipher=raw.trim()}let data=plain;if(!data&&cipher){data=await decryptData(cipher,masterPassword).catch(()=>null);if(!data){const pw=prompt('このファイルを暗号化したマスターパスワードを入力してください');if(pw==null)return;data=await decryptData(cipher,pw).catch(()=>null)}}if(!data||!Array.isArray(data.entries)){alert('読み込めませんでした（ファイルが壊れているか、パスワードが違います）');return}if(!confirm(`${data.entries.length} 件をインポートします。よろしいですか？（重複IDはスキップ）`))return;const ids=new Set(vault.entries.map(x=>x.id));data.entries.forEach(en=>{if(!ids.has(en.id))vault.entries.push(en)});await saveVault();render();alert('インポート完了')};r.readAsText(file)}
+function importVault(file){const r=new FileReader();r.onload=async e=>{const raw=e.target.result;let cipher=null,plain=null;try{const j=JSON.parse(raw);if(j&&j.format==='gavin-vault'&&j.cipher)cipher=j.cipher;else if(j&&Array.isArray(j.entries))plain=j;else cipher=raw.trim()}catch{cipher=raw.trim()}let data=plain;if(!data&&cipher){data=await decryptData(cipher,masterPassword).catch(()=>null);if(!data){const pw=prompt('このファイルを暗号化したマスターパスワードを入力してください');if(pw==null)return;data=await decryptData(cipher,pw).catch(()=>null)}}if(!data||!Array.isArray(data.entries)){alert('読み込めませんでした（ファイルが壊れているか、パスワードが違います）');return}if(!confirm(`${data.entries.length} 件をインポートします。よろしいですか？\n（同じ項目は更新日時が新しい方を採用します）`))return;const byId=new Map(vault.entries.map(en=>[en.id,en]));let added=0,updated=0;data.entries.forEach(en=>{const cur=byId.get(en.id);if(!cur){byId.set(en.id,en);added++}else{const t1=Date.parse(en.updatedAt)||0,t0=Date.parse(cur.updatedAt)||0;if(t1>t0){byId.set(en.id,en);updated++}}});vault.entries=Array.from(byId.values());await saveVault();render();alert(`インポート完了：新規 ${added} 件 / 更新 ${updated} 件`)};r.readAsText(file)}
 
 document.addEventListener('DOMContentLoaded',()=>{
   const hintEl=document.getElementById('lock-hint'),btnEl=document.getElementById('unlock-btn');
