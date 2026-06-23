@@ -338,7 +338,12 @@
     }
   }
 
-  function connect() {
+  async function connect() {
+    // 接続前に一度だけ疎通確認。relay未起動なら接続しない＝以降fetchせずコンソールを汚さない
+    setStatus(tr('connecting'), true);
+    var ok = false;
+    try { var r = await fetch(relayInput.value.replace(/\/+$/, '') + '/pull', { cache: 'no-store' }); if (r.ok) { await r.json(); ok = true; } } catch (e) {}
+    if (!ok) { connected = false; setStatus(tr('wait'), false); return; }
     connected = true;
     try { localStorage.setItem('ms_conn', '1'); } catch (e) {}  // 切断するまで接続を保つ
     connectBtn.textContent = tr('disconnect');
@@ -348,6 +353,7 @@
     setStatus(tr('connecting'), true);
     poll();
     timer = setInterval(poll, 1200);
+    loadChatLog();
   }
   function disconnect() {
     connected = false;
@@ -366,6 +372,7 @@
 
   // 既に開いてるブラウザがあれば同じタブで切替、無ければ新規で開く（窓を増やさない）
   async function navTo(view) {
+    if (!connected) { openExt('/' + view + '.html'); return; }  // 未接続時は疎通確認せず直接オープン
     try {
       var s = await (await fetch(relayBase() + '/nav-status', { cache: 'no-store' })).json();
       if (s.alive) { await fetch(relayBase() + '/nav', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ view: view }) }); }
@@ -382,10 +389,11 @@
   function saveChat() { // relayに共有保存（パネルと大きい画面で双方向同期）。画像は保存しない
     var s = JSON.stringify(chatLog.slice(-60).map(function (e) { return { cls: e.cls, text: e.text }; }));
     lastChatStr = s;
+    if (!connected) return;
     try { fetch(relayBase() + '/chat-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: s }); } catch (e) {}
   }
-  async function loadChatLog() { try { var r = await fetch(relayBase() + '/chat-log', { cache: 'no-store' }); var txt = await r.text(); lastChatStr = txt; var a = JSON.parse(txt); chatLog = Array.isArray(a) ? a : []; } catch (e) { chatLog = []; lastChatStr = ''; } renderChatLog(); }
-  async function pollChat() { if (cbusy) return; try { var r = await fetch(relayBase() + '/chat-log', { cache: 'no-store' }); var txt = await r.text(); if (txt !== lastChatStr) { lastChatStr = txt; var a = JSON.parse(txt); chatLog = Array.isArray(a) ? a : []; renderChatLog(); } } catch (e) {} }
+  async function loadChatLog() { if (!connected) { renderChatLog(); return; } try { var r = await fetch(relayBase() + '/chat-log', { cache: 'no-store' }); var txt = await r.text(); lastChatStr = txt; var a = JSON.parse(txt); chatLog = Array.isArray(a) ? a : []; } catch (e) { chatLog = []; lastChatStr = ''; } renderChatLog(); }
+  async function pollChat() { if (!connected || cbusy) return; try { var r = await fetch(relayBase() + '/chat-log', { cache: 'no-store' }); var txt = await r.text(); if (txt !== lastChatStr) { lastChatStr = txt; var a = JSON.parse(txt); chatLog = Array.isArray(a) ? a : []; renderChatLog(); } } catch (e) {} }
   /* 生成中（他の画面が送信中）を同期表示 */
   var remoteBusy = false, remoteSince = 0, syncThinkMsg = null;
   function ensureSyncThink() {
@@ -398,7 +406,7 @@
     } else if (syncThinkMsg) { if (syncThinkMsg.parentElement) syncThinkMsg.remove(); syncThinkMsg = null; }
   }
   function setLamp(on) { var l = document.getElementById('uselamp'); if (l) l.classList.toggle('on', !!on); }
-  async function pollBusy() { try { var b = await (await fetch(relayBase() + '/chat-busy', { cache: 'no-store' })).json(); remoteBusy = !!b.busy; remoteSince = b.since || 0; } catch (e) { remoteBusy = false; } ensureSyncThink(); setLamp(remoteBusy || cbusy); }
+  async function pollBusy() { if (!connected) { setLamp(cbusy); return; } try { var b = await (await fetch(relayBase() + '/chat-busy', { cache: 'no-store' })).json(); remoteBusy = !!b.busy; remoteSince = b.since || 0; } catch (e) { remoteBusy = false; } ensureSyncThink(); setLamp(remoteBusy || cbusy); }
   function cscroll() { feed.scrollTop = feed.scrollHeight; }
   function labelFor(cls) { return cls === 'me' ? tr('you') : cls === 'err' ? tr('err') : 'Mothership'; }
   function cbubble(who, cls, text, img) {
@@ -440,6 +448,7 @@
     if (cbusy) return;
     var text = cinput.value.trim();
     if (!text && !pendingImg) return;
+    if (!connected) { cbubble(labelFor('err'), 'err', tr('noconn')); cscroll(); return; }  // 未接続ならfetchせず案内
     cbusy = true; csend.disabled = true; setLamp(true);
     var img = pendingImg; cinput.value = ''; cinput.style.height = 'auto'; clearPending();
     var useImg = imgMode; if (imgMode) { imgMode = false; imgBtn.classList.remove('on'); cinput.placeholder = tr('ph'); }  // 1回限り
@@ -475,7 +484,7 @@
   loadChatLog();
   setInterval(pollChat, 1500);  // パネル↔大きい画面の双方向同期
   setInterval(pollBusy, 700);   // 生成中「考えています」も両画面で同期
-  try { if (localStorage.getItem('ms_conn') !== '0') connect(); } catch (e) { connect(); }  // 切断するまで自動接続を維持
+  setStatus(tr('off'), false);  // 起動時は未接続＝一切fetchしない（コンソールを汚さない）。relay起動→「接続」で疎通確認の上つながる
 
   /* ---------- オンボーディング（初回モーダル / ?で再表示） ---------- */
   var OB = {

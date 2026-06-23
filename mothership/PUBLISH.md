@@ -130,6 +130,42 @@ Figmaから**定型のソフト拒否**（具体指摘なし・ガイドライ�
 
 - （掲載本文の Setup 冒頭にも「**まず『⚡ Build sample』で動作確認 → ライブモードはrelay起動後**」を1行足すと初手が明確。）
 
+## 6. 再提出メモ②（2026-06-23 拒否＝具体指摘あり → 解消済み）
+拒否理由が今回は**具体的**：レビュアー添付スクショ＝起動時に `GET http://localhost:4575/chat-busy net::ERR_CONNECTION_REFUSED` が**大量**。Resource ID `1650150569984509789` / Status solved。
+
+### 原因
+`ui.html` の **3つのポーリングが起動時から無条件で走る**：`setInterval(pollChat,1500)` / `setInterval(pollBusy,700)` / 自動接続→`setInterval(poll,1200)`。relay未起動（＝レビュアー環境）だと全部が `localhost:4575` を叩いて `ERR_CONNECTION_REFUSED` をループ出力。`try/catch` してもブラウザは fetch失敗をコンソールに必ず記録するため、**接続するまで一切 fetch しない**しかない。
+
+### 修正（`ui.html` のみ・再審査対象）
+- **起動時の自動接続を撤廃** → 起動直後は未接続＝fetchゼロ。
+- **「接続」ボタンを疎通確認ファースト** → 押下時に `/pull` を一度だけ試し、relay未起動なら繋がず「待機中」表示（ループ無し）。
+- `pollChat`/`pollBusy`/`loadChatLog`/`saveChat`/`navTo`/`chatSend` を **`if(!connected)` でガード**（未接続中は fetch しない）。
+- 結果：**レビュアー環境（relay起動なし）でコンソールにプラグイン由来のエラーが一切出ない**（検証済み）。
+- 仕様変更：実ユーザーは毎回「接続」を1クリック（オンボーディングStep 2が案内済み）。ゼロエラー保証の唯一の方法。
+
+### 残る表示は全て Figma 本体由来（無害・取れない）
+- `[Local fonts] using agent`（`vendor-core…min.js`）＝Figmaのログ。
+- ⚠ `Unrecognized feature: 'local-network-access'`（`figma_app_beta…min.js`）＝localhost接続を要求するプラグインにFigmaが付ける iframe許可属性の警告。**relay機能を持つ以上は構造的に出る／エラーではなくwarning**。
+
+### 再Publish の「Release notes / 変更点」にそのまま貼る
+> **EN:** Fixed: the plugin no longer makes any network requests on launch, so the console stays clean when the optional local relay isn't running. Live mode now connects only after you click **Connect** (with a one-time reachability check).
+>
+> **JP:** 修正：起動時にネットワーク要求を一切行わないようにし、任意のローカルrelayが未起動でもコンソールがクリーンになりました。ライブモードは**「接続」を押したときだけ**（疎通確認の上で）つながります。
+
+### 「Notes to reviewer」に1行追記
+> The previous console errors on launch are fixed — the plugin makes **zero network requests until you click Connect**. To test the core feature with no setup, just click **“⚡ Build sample”**.
+
+### レビュアー会話スレッド（Figma support request）への返信＝**再申請の送信後**に貼る
+**EN:**
+> Hi Priscila, thank you for the detailed feedback.
+> I've fixed the console errors on launch and just submitted a new version for review.
+> Root cause: the plugin was polling the optional local relay (localhost:4575) on startup, which logged connection errors when the relay wasn't running. The plugin now makes zero network requests until the user explicitly clicks "Connect" (with a one-time reachability check), so the console stays completely clean on launch.
+> To evaluate the core feature with no setup, just open the plugin and click "⚡ Build sample" — it generates real, editable Figma layers with no relay, no account, and no network.
+> Thanks again for your time!
+
+**JP（控え）:**
+> Priscilaさん、丁寧なフィードバックありがとうございます。起動時のコンソールエラーを修正し、新バージョンを再申請しました。原因は任意のローカルrelay(localhost:4575)を起動時にポーリングしていたことです。現在は「接続」を押すまで一切ネットワーク要求を行わないため起動時のコンソールは完全にクリーンです。セットアップ不要での確認は「⚡ Build sample」を押すだけで編集可能な本物のFigmaレイヤーが生成されます。
+
 ## メモ
 - 公開後のアップデートはバージョンを上げて再Publish（初回審査が最重・以降は軽い）。
 - Bundle/manifest 以外の `library/` 等は公開バンドルに不要なら同梱しない（Figmaはmanifestで参照されるファイルのみ取り込む）。
