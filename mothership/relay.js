@@ -8,12 +8,32 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
+const { bake } = require("./tools/bake");   // svgプリスケール＋画像base64化（ボードで描ける形へ）
 
 const FILE = path.join(__dirname, "mothership.json");
 const PORT = process.env.PORT || 4575;
 
 const read = () => { try { return fs.readFileSync(FILE, "utf8"); } catch (e) { return "{}"; } };
 const ver  = () => { try { return Math.floor(fs.statSync(FILE).mtimeMs); } catch (e) { return 0; } };
+
+// /pull で返す前に「焼き込み」（svgプリスケール／画像→base64-SVG）。版が変わった時だけ実行しキャッシュ
+// （/pullは高頻度ポーリング）。失敗時・不正JSON時は素のまま返す＝壊れない。冪等なので焼済みは無処理。
+let bakeCache = { v: -1, json: null };
+let baking = null; // { v, promise }
+async function pulledJSON() {
+  const v = ver();
+  if (bakeCache.v === v && bakeCache.json != null) return { version: v, json: bakeCache.json };
+  if (baking && baking.v === v) return { version: v, json: await baking.promise };
+  const p = (async () => {
+    const raw = read();
+    let obj; try { obj = JSON.parse(raw); } catch (e) { return raw; }
+    try { await bake(obj, { rootDir: __dirname }); } catch (e) { return raw; }
+    return JSON.stringify(obj);
+  })();
+  baking = { v, promise: p };
+  try { const json = await p; bakeCache = { v, json }; return { version: v, json }; }
+  finally { if (baking && baking.v === v) baking = null; }
+}
 
 // ブラウザのタブを使い回すためのナビ状態（新規ウィンドウを増やさない）
 let navView = "", navV = 0, lastNavPoll = 0;
@@ -33,10 +53,13 @@ http.createServer((req, res) => {
 
   const u = new URL(req.url, "http://x");
 
-  // プラグインがポーリングで取りに来る
+  // プラグインがポーリングで取りに来る（焼き込み済みを返す＝ボードで実画像/正サイズ）
   if (u.pathname === "/pull") {
     res.setHeader("Content-Type", "application/json");
-    return res.end(JSON.stringify({ version: ver(), json: read() }));
+    pulledJSON()
+      .then((out) => res.end(JSON.stringify(out)))
+      .catch(() => res.end(JSON.stringify({ version: ver(), json: read() })));
+    return;
   }
 
   // タブ使い回し用ナビ。開いてるページが /nav を見て自分で遷移する（新規ウィンドウを増やさない）
