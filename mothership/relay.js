@@ -173,6 +173,36 @@ http.createServer((req, res) => {
     return;
   }
 
+  // 参照URL → スペック抽出（#12）。tools/url-to-spec.js を子プロセスで実行（playwrightは子側のみ＝relayは依存ゼロ維持）
+  if (u.pathname === "/ref" && req.method === "POST") {
+    let b = ""; req.on("data", (d) => (b += d));
+    req.on("end", () => {
+      res.setHeader("Content-Type", "application/json");
+      let url = "", w = 1440, h = 900;
+      try { const j = JSON.parse(b); url = (j.url || "").toString(); if (j.w) w = parseInt(j.w, 10) || 1440; if (j.h) h = parseInt(j.h, 10) || 900; } catch (e) {}
+      if (!/^https?:\/\//.test(url)) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "URLが不正です" })); }
+      const safe = url.replace(/^https?:\/\//, "").replace(/[^\w.-]+/g, "_").slice(0, 60) || "ref";
+      const outRel = "refs/" + safe + ".json";
+      let child, err = "", done = false;
+      const fail = (m) => { if (done) return; done = true; clearTimeout(timer); res.writeHead(500); res.end(JSON.stringify({ ok: false, error: m })); };
+      try {
+        child = spawn("node", [path.join(__dirname, "tools", "url-to-spec.js"), url, "--w", String(w), "--h", String(h), "--out", outRel], { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"] });
+      } catch (e) { return fail("起動失敗: " + (e && e.message ? e.message : e)); }
+      child.stderr.on("data", (d) => (err += d));
+      child.on("error", (e) => fail("node起動失敗: " + (e && e.message ? e.message : e)));
+      child.on("close", (code) => {
+        if (done) return; done = true; clearTimeout(timer);
+        if (code !== 0) { res.writeHead(500); return res.end(JSON.stringify({ ok: false, error: "採取失敗（playwright未導入の可能性）: " + err.trim().slice(-400) })); }
+        try {
+          const spec = JSON.parse(fs.readFileSync(path.join(__dirname, outRel), "utf8"));
+          res.end(JSON.stringify({ ok: true, file: outRel, count: spec.count, spec: spec }));
+        } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: "読込失敗: " + (e && e.message ? e.message : e) })); }
+      });
+      var timer = setTimeout(() => { try { child.kill(); } catch (e) {} fail("タイムアウト（90s）"); }, 90000);
+    });
+    return;
+  }
+
   // 任意: HTTP経由で設計を流し込む（Claude Codeが curl で叩く用）
   if (u.pathname === "/push" && req.method === "POST") {
     let b = "";
