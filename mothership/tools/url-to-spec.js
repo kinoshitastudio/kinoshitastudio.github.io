@@ -26,7 +26,7 @@ const OUT = getOpt('--out', null);
 if (!url) { console.error('Usage: node tools/url-to-spec.js "<URL>" [--w 1440] [--h 900] [--out refs/x.json]'); process.exit(1); }
 
 // --- ページ内で走る採取関数（ref-capture.js と同一ロジック） ---
-function capture(W, H) {
+function capture({ W, H }) {
   const WANT = ['position','display','flexDirection','justifyContent','alignItems','gap',
     'padding','backgroundColor','backgroundImage','color','fontFamily','fontSize','fontWeight',
     'lineHeight','letterSpacing','textAlign','borderRadius','border','boxShadow','opacity',
@@ -68,7 +68,7 @@ function capture(W, H) {
   } catch (e) { /* networkidleに達しないサイトもある＝続行 */ }
   await page.waitForTimeout(1500); // 遅延読み込み/アニメ初期化を少し待つ
 
-  const nodes = await page.evaluate(capture, W, H);
+  const nodes = await page.evaluate(capture, { W, H });
   const spec = { url, viewport: { w: W, h: H }, capturedAt: new Date().toISOString(), count: nodes.length, nodes };
   const json = JSON.stringify(spec, null, 2);
 
