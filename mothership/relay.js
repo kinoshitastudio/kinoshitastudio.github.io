@@ -168,7 +168,7 @@ http.createServer((req, res) => {
 
       chatBusy = true; chatBusySince = Date.now();   // 生成開始（両画面で「考えています」同期用）
       appendLog({ cls: "me", text: display || msg });  // 発言を即サーバー保存（離脱しても残る）
-      let done = false;
+      let done = false, activeChild = null;
       const finish = (obj) => {
         if (done) return; done = true; chatBusy = false; clearTimeout(timer);
         const secs = ((Date.now() - chatBusySince) / 1000).toFixed(1);
@@ -178,20 +178,65 @@ http.createServer((req, res) => {
         res.end(JSON.stringify(obj));
       };
 
-      let child;
-      try {
-        child = spawn("claude", ["-p", prompt, "--permission-mode", "acceptEdits"], { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"] });
-      } catch (e) {
-        return finish({ ok: false, error: "claude 起動失敗: " + (e && e.message ? e.message : e) });
-      }
-      let out = "", err = "";
-      child.stdout.on("data", (d) => (out += d));
-      child.stderr.on("data", (d) => (err += d));
-      child.on("error", (e) => finish({ ok: false, error: "claude が見つかりません（PATH確認）: " + (e && e.message ? e.message : e) }));
-      child.on("close", (code) => finish({ ok: code === 0, text: out.trim(), error: err.trim(), code: code }));
+      // claude -p を起動して mothership.json を編集させる
+      const launch = (finalPrompt) => {
+        let child;
+        try {
+          child = spawn("claude", ["-p", finalPrompt, "--permission-mode", "acceptEdits"], { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"] });
+        } catch (e) { return finish({ ok: false, error: "claude 起動失敗: " + (e && e.message ? e.message : e) }); }
+        activeChild = child;
+        let out = "", err = "";
+        child.stdout.on("data", (d) => (out += d));
+        child.stderr.on("data", (d) => (err += d));
+        child.on("error", (e) => finish({ ok: false, error: "claude が見つかりません（PATH確認）: " + (e && e.message ? e.message : e) }));
+        child.on("close", (code) => {
+          // 成功した設計を新規ライブラリファイルに自動保存（既存名は上書きしない＝保存忘れ→上書きでの喪失を防ぐ）
+          if (code === 0) {
+            try {
+              const cur = read(); const j = JSON.parse(cur);
+              const nm = (j.name || "").toString().replace(/[\\/:*?"<>|]+/g, "_").trim().slice(0, 60);
+              if (nm) {
+                const dir = path.join(__dirname, "library"); fs.mkdirSync(dir, { recursive: true });
+                const f = path.join(dir, nm + ".json");
+                if (!fs.existsSync(f)) fs.writeFileSync(f, cur);  // 同名が既にあれば触らない（手動保存/既存を尊重）
+              }
+            } catch (e) {}
+          }
+          finish({ ok: code === 0, text: out.trim(), error: err.trim(), code: code });
+        });
+      };
 
-      // 安全弁: 240秒で打ち切り
-      var timer = setTimeout(() => { try { child.kill(); } catch (e) {} finish({ ok: false, error: "タイムアウト（240s）" }); }, 240000);
+      // 安全弁: 300秒で打ち切り（採取最大90s＋生成）
+      var timer = setTimeout(() => { try { if (activeChild) activeChild.kill(); } catch (e) {} finish({ ok: false, error: "タイムアウト（300s）" }); }, 300000);
+
+      // ★URL再現の自動採取：メッセージにURL＋再現意図があれば、relayが先に採取してspecをclaudeに渡す
+      //   （claudeはRead/Writeだけで済む＝Bash承認プロンプトが出ない＝チャットだけで完結）
+      const urlMatch = msg.match(/https?:\/\/[^\s"'<>）)】」]+/);
+      const wantsRepro = /再現|再構成|複製|コピー|clone|同じ|そっくり|作成して|作って|reproduce/i.test(msg);
+      if (urlMatch && wantsRepro) {
+        const url = urlMatch[0].replace(/[。、,]+$/, "");
+        const mobile = /スマホ|モバイル|mobile|スマートフォン|390/i.test(msg);
+        const w = mobile ? 390 : 1440, h = mobile ? 780 : 900;
+        const safe = url.replace(/^https?:\/\//, "").replace(/[^\w.-]+/g, "_").slice(0, 60) || "ref";
+        const outRel = "refs/" + safe + ".json";
+        let capDone = false;
+        const onCap = (ok) => {
+          if (capDone) return; capDone = true;
+          const note = ok
+            ? "【参照スペック採取済み】" + outRel + " に " + url + " のファーストビュー（算出スタイル付き構造JSON）がある。これを Read して、CLAUDE.md『URLからサイトを再現する』の手順で **そのKV（ファーストビュー）** を mothership.json に再現せよ。画像は元サイトのURLを image.src にそのまま入れてよい（relayが /pull で自動取り込み）。新しい name の新フレームで作り、最後に何をどこに出したか1〜2文で返答。\n\nユーザー依頼: "
+            : "（参照URLの自動採取に失敗＝playwright未導入等の可能性。可能な範囲で対応し、無理なら一言添えて。）\n\n";
+          launch(note + prompt);
+        };
+        let cap;
+        try {
+          cap = spawn("node", [path.join(__dirname, "tools", "url-to-spec.js"), url, "--w", String(w), "--h", String(h), "--out", outRel], { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"] });
+        } catch (e) { return onCap(false); }
+        cap.on("error", () => onCap(false));
+        cap.on("close", (code) => onCap(code === 0));
+        setTimeout(() => { try { cap.kill(); } catch (e) {} onCap(false); }, 90000);
+      } else {
+        launch(prompt);
+      }
     });
     return;
   }
