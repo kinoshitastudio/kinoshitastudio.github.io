@@ -69,6 +69,33 @@ function capture({ W, H }) {
   await page.waitForTimeout(1500); // 遅延読み込み/アニメ初期化を少し待つ
 
   const nodes = await page.evaluate(capture, { W, H });
+
+  // SVG要素を「実グラフィック」としてスクショ採取（スプライト/縦書き等＝DOMに字形が出ない要素対策）。
+  // 採れたら spec の該当svgノードに src(refs/img配下)＋graphic:true を付ける → 再構成はそれをimageとして使う。
+  try {
+    const ASSETDIR = path.resolve(__dirname, '..', 'refs', 'img');
+    fs.mkdirSync(ASSETDIR, { recursive: true });
+    const base = (url.replace(/^https?:\/\//, '').replace(/[^\w.-]+/g, '_').slice(0, 40)) || 'site';
+    const svgs = await page.$$('svg');
+    let shot = 0;
+    for (let k = 0; k < svgs.length; k++) {
+      const h = svgs[k];
+      const nested = await h.evaluate((el) => !!(el.parentElement && el.parentElement.closest('svg'))).catch(() => true);
+      if (nested) continue;                                   // 入れ子svgは外側が拾うのでスキップ
+      let box = null; try { box = await h.boundingBox(); } catch (e) {}
+      if (!box || box.width < 16 || box.height < 16) continue;
+      const n = nodes.find((nd) => nd.tag === 'svg' && !nd.src && Math.abs(nd.x - box.x) < 3 && Math.abs(nd.y - box.y) < 3);
+      if (!n) continue;
+      try {
+        const fname = base + '_g' + k + '.png';
+        await h.screenshot({ path: path.join(ASSETDIR, fname), omitBackground: true });
+        n.src = 'refs/img/' + fname; n.graphic = true;        // ＝この要素は実画像で採取済み
+        shot++;
+      } catch (e) {}
+    }
+    if (shot) console.error('🖼 SVGグラフィック採取: ' + shot + '枚');
+  } catch (e) { /* スクショ不可でも継続 */ }
+
   const spec = { url, viewport: { w: W, h: H }, capturedAt: new Date().toISOString(), count: nodes.length, nodes };
   const json = JSON.stringify(spec, null, 2);
 
