@@ -230,6 +230,9 @@ figma.showUI(__html__, { width: 380, height: 600, title: "Mothership" });
 figma.clientStorage.getAsync("ms_size").then((s) => {
   if (s && s.w && s.h) figma.ui.resize(s.w, s.h);
 }).catch(() => {});
+// 選択状態をUIへ通知（メインチャットで「選択フレームを編集」に切替えるため）
+figma.on("selectionchange", () => { try { postSel(); } catch (e) {} });
+setTimeout(() => { try { postSel(); } catch (e) {} }, 60);  // 起動直後の現在選択も送る
 
 const generated = {}; // name -> 生成済みノード（同名は置き換え、新名は新フレーム）
 
@@ -505,10 +508,15 @@ function serForAI(node, depth) {
   if (node.children && node.type !== "INSTANCE" && depth < 8) o.children = node.children.filter((c) => c.visible !== false).map((c) => serForAI(c, depth + 1));
   return o;
 }
-function collectForAI() {
+function collectForAI(src) {
   const sel = figma.currentPage.selection;
-  if (!sel.length) { figma.ui.postMessage({ type: "ai-structure", error: "フレームを選んでください" }); return; }
-  figma.ui.postMessage({ type: "ai-structure", structure: sel.map((n) => serForAI(n, 0)) });
+  if (!sel.length) { figma.ui.postMessage({ type: "ai-structure", src: src, error: "フレームを選んでください" }); return; }
+  figma.ui.postMessage({ type: "ai-structure", src: src, structure: sel.map((n) => serForAI(n, 0)) });
+}
+// 選択状態をUIに通知（メインチャットで「選択フレームを編集」モードに切替えるため）
+function postSel() {
+  const s = figma.currentPage.selection;
+  figma.ui.postMessage({ type: "sel", n: s.length, name: s.length ? String(s[0].name) : "" });
 }
 // テキストの文字/サイズを変える前に現在のフォントを読み込む（未読込だと編集でエラー）
 async function loadNodeFont(n) {
@@ -519,7 +527,7 @@ async function loadNodeFont(n) {
     }
   } catch (e) {}
 }
-async function applyAIOps(ops) {
+async function applyAIOps(ops, src) {
   let ok = 0, fail = 0;
   const get = async (id) => { try { return await figma.getNodeByIdAsync(id); } catch (e) { return null; } };
   const setPad = (n, p) => { if (Array.isArray(p)) { n.paddingTop = p[0] || 0; n.paddingRight = p[1] || 0; n.paddingBottom = p[2] || 0; n.paddingLeft = p[3] || 0; } };
@@ -584,7 +592,7 @@ async function applyAIOps(ops) {
       } catch (e) { fail++; }
     }
   } finally {
-    figma.ui.postMessage({ type: "ai-done", ok: ok, fail: fail });
+    figma.ui.postMessage({ type: "ai-done", ok: ok, fail: fail, src: src });
     figma.notify("AI整え：" + ok + " 操作" + (fail ? ("／失敗 " + fail) : ""));
   }
 }
@@ -594,8 +602,8 @@ figma.ui.onmessage = async (msg) => {
   else if (msg.type === "live") await generate(msg.json, false);
   else if (msg.type === "lint") await runLint();
   else if (msg.type === "fix") await applyFixes(msg.ids);
-  else if (msg.type === "ai-collect") collectForAI();
-  else if (msg.type === "ai-apply") await applyAIOps(msg.ops);
+  else if (msg.type === "ai-collect") collectForAI(msg.src);
+  else if (msg.type === "ai-apply") await applyAIOps(msg.ops, msg.src);
   else if (msg.type === "reveal") {  // パネルの行クリック→該当レイヤーをFigmaで選択＋ズーム
     const f = _lintFix[msg.id];
     if (f && f.node && !f.node.removed) {

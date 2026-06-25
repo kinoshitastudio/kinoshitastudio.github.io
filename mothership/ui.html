@@ -108,6 +108,10 @@
   .attachchip.show{display:flex}
   .attachchip img{width:32px;height:32px;object-fit:cover;border-radius:5px}
   .attachchip .x{margin-left:auto;border:none;background:none;color:var(--faint);cursor:pointer;font-size:12px;padding:2px 4px}
+  .editchip{display:none;align-items:center;gap:8px;padding:6px 10px;background:color-mix(in srgb,var(--gold) 16%,var(--panel));border:1px solid color-mix(in srgb,var(--gold) 50%,transparent);border-radius:8px;font-size:10px;color:#f2ecdd;overflow:hidden}
+  .editchip.show{display:flex}
+  .editchip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .editchip .x{margin-left:auto;border:none;background:none;color:var(--gold);cursor:pointer;font-size:12px;padding:2px 4px;flex-shrink:0}
   .chat.dragover{outline:2px dashed var(--gold);outline-offset:-4px}
   .msg .bd img{max-width:100%;border-radius:6px;margin-top:5px;display:block}
   .manual{flex-shrink:0;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:8px 11px}
@@ -226,6 +230,7 @@
       </div>
       <div class="composer">
         <div class="attachchip" id="attachchip"><img id="attachthumb" alt=""><span id="attachname">画像</span><button class="x" id="attachclear">✕</button></div>
+        <div class="editchip" id="editchip"><span id="editchipname">選択を編集</span><button class="x" id="editchipx" title="新規生成に切替">✕</button></div>
         <textarea id="cinput" rows="1" placeholder="作りたいデザインを書いて Enter（改行 Shift+Enter）"></textarea>
         <div class="composer-row">
           <button class="iconbtn" id="attachbtn" title="画像を添付（ドラッグでもOK）">📎</button>
@@ -547,6 +552,14 @@
     var text = cinput.value.trim();
     if (!text && !pendingImg) return;
     if (!connected) { cbubble(labelFor('err'), 'err', tr('noconn')); cscroll(); return; }  // 未接続ならfetchせず案内
+    // ★フレーム選択中＝メインチャットの指示で「選択フレームをその場編集」（外部/手描きもOK・写真保持）
+    if (selN >= 1 && editSelOn && text) {
+      if (cbusy) { cbubble(labelFor('err'), 'err', lang==='ja'?'前の処理が終わってから送ってね（⏹で停止も可）':'Wait for the current task to finish (⏹ to stop).'); cscroll(); return; }
+      var h1 = document.getElementById('hello'); if (h1) h1.style.display = 'none';
+      cinput.value = ''; cinput.style.height = 'auto';
+      chatEditSelection(text);
+      return;
+    }
     var useImg = imgMode; if (imgMode) { imgMode = false; imgBtn.classList.remove('on'); cinput.placeholder = tr('ph'); }  // 1回限り
     var img = pendingImg; clearPending();
     var payload = { sendMsg: useImg ? (IMG_PREFIX + text) : text, disp: (useImg ? '🎨 ' : '') + text, img: img };
@@ -555,6 +568,54 @@
     if (cbusy) { sendQueue.push(payload); renderChatLog(); cscroll(); return; }  // 考え中なら順番待ちに積む
     doSend(payload);
   }
+  // ===== 選択フレームをメインチャットで会話編集（src:'chat'で/ai-editへ） =====
+  var selN = 0, selName = '', editSelOn = true, chatEdit = null;
+  var editChip = document.getElementById('editchip'), editChipName = document.getElementById('editchipname');
+  function updateEditChip() {
+    if (selN >= 1 && editSelOn) { editChip.classList.add('show'); editChipName.textContent = (lang === 'ja' ? '✎ 選択「' + selName + '」を編集' : '✎ Edit “' + selName + '”'); }
+    else editChip.classList.remove('show');
+  }
+  if (document.getElementById('editchipx')) document.getElementById('editchipx').onclick = function () { editSelOn = false; updateEditChip(); };
+  function chatEditSelection(instruction) {
+    cbusy = true; updateStopUI(); setLamp(true);
+    cbubble(labelFor('me'), 'me', '✎ ' + (selName ? '[' + selName + '] ' : '') + instruction);
+    var t0 = Date.now();
+    var tb = cbubble('Mothership', 'think', '');
+    tb.innerHTML = '<span class="loadring"></span>' + (lang === 'ja' ? '選択を読んで編集中…' : 'Reading selection, editing…') + '  <span class="secs">0.0s</span>';
+    var secsEl = tb.querySelector('.secs');
+    var ti = setInterval(function () { secsEl.textContent = ((Date.now() - t0) / 1000).toFixed(1) + 's'; }, 200);
+    chatEdit = { instruction: instruction, tb: tb, ti: ti, t0: t0, note: '' };
+    parent.postMessage({ pluginMessage: { type: 'ai-collect', src: 'chat' } }, '*');
+  }
+  function endChatEdit(done, errText) {
+    if (chatEdit) { clearInterval(chatEdit.ti); if (chatEdit.tb && chatEdit.tb.parentElement) chatEdit.tb.parentElement.remove(); }
+    cbusy = false; updateStopUI();
+    if (errText) cbubble(labelFor('err'), 'err', errText);
+    else if (done) {
+      var secs = chatEdit ? ((Date.now() - chatEdit.t0) / 1000).toFixed(1) : '?';
+      var msg = (lang === 'ja' ? '✎ 編集しました：' : '✎ Edited: ') + done.ok + (lang === 'ja' ? ' 操作' : ' ops') + (done.fail ? ('／失敗 ' + done.fail) : '') + '  ·  ⏱' + secs + 's';
+      if (chatEdit && chatEdit.note) msg += '\n\n💬 ' + chatEdit.note;
+      msg += (lang === 'ja' ? '\n（キャンバスをクリック→Cmd+Zで戻せます）' : '\n(Click canvas then Cmd+Z to undo)');
+      cbubble('Mothership', 'ms', msg);
+    }
+    chatEdit = null; cscroll();
+  }
+  window.addEventListener('message', function (e) {
+    var m = e.data && e.data.pluginMessage; if (!m) return;
+    if (m.type === 'sel') { selN = m.n || 0; selName = m.name || ''; if (selN >= 1) editSelOn = true; updateEditChip(); return; }
+    if (m.src !== 'chat') return;  // チャット由来のAI編集だけ処理（パネル由来は別リスナー）
+    if (m.type === 'ai-structure') {
+      if (m.error) { endChatEdit(null, String(m.error)); return; }
+      fetch(relayBase() + '/ai-edit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ structure: m.structure, instruction: chatEdit ? chatEdit.instruction : '' }) })
+        .then(function (r) { return r.json(); }).then(function (d) {
+          if (d.aborted) { endChatEdit(null, lang === 'ja' ? '停止しました' : 'Stopped'); return; }
+          if (!d.ok || !d.ops) { endChatEdit(null, (lang === 'ja' ? 'AI編集失敗：' : 'AI edit failed: ') + (d.error || '')); return; }
+          if (chatEdit) chatEdit.note = (d.note || '').trim();
+          if (!d.ops.length) { endChatEdit(null, (chatEdit && chatEdit.note) ? ('💬 ' + chatEdit.note) : (lang === 'ja' ? '変える点はありませんでした' : 'Nothing to change')); return; }
+          parent.postMessage({ pluginMessage: { type: 'ai-apply', ops: d.ops, src: 'chat' } }, '*');
+        }).catch(function () { endChatEdit(null, lang === 'ja' ? 'relayに繋がりません' : 'Cannot reach relay'); });
+    } else if (m.type === 'ai-done') { endChatEdit(m, null); }
+  });
   // 生成を停止（実行中のclaude/採取をrelayでkill）。順番待ちもクリア
   async function chatAbort() { sendQueue = []; try { await fetch(relayBase() + '/abort', { method: 'POST' }); } catch (e) {} renderChatLog(); }
   if (stopBtn) stopBtn.onclick = chatAbort;
@@ -735,7 +796,7 @@
       if (!connected){ needConn(); return; }
       aiMode = 'tidy'; aiBusy = true; aiBtn.disabled = true; aiBtn.textContent = (lang==='ja'?'AIに依頼中…':'Asking AI…');
       note(lang==='ja'?'🤖 選択を読んで、AIが整え方を考えています…（数十秒・⏹で停止可）':'🤖 Reading selection — AI is planning the cleanup… (⏹ to stop)');
-      parent.postMessage({pluginMessage:{type:'ai-collect'}}, '*');
+      parent.postMessage({pluginMessage:{type:'ai-collect', src:'panel'}}, '*');
     };
     function runEdit(){
       if (aiBusy) return;
@@ -744,7 +805,7 @@
       if (!connected){ needConn(); return; }
       aiMode = 'edit'; aiInstruction = ins; aiBusy = true; if (editBtn){ editBtn.disabled = true; editBtn.textContent = (lang==='ja'?'依頼中…':'Working…'); }
       note(lang==='ja'?'🛠 選択を読んで、指示どおり編集を考えています…（数十秒・⏹で停止可）':'🛠 Reading selection — editing per your instruction… (⏹ to stop)');
-      parent.postMessage({pluginMessage:{type:'ai-collect'}}, '*');
+      parent.postMessage({pluginMessage:{type:'ai-collect', src:'panel'}}, '*');
     }
     if (editBtn) editBtn.onclick = runEdit;
     if (editInput) editInput.addEventListener('keydown', function(e){ if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229){ e.preventDefault(); runEdit(); } });
@@ -803,6 +864,7 @@
       if (m.type === 'lint-result') { disarm(); render(m.findings, m.summary); }  // fix適用後も runLint が再送→自動で残りに更新
       else if (m.type === 'fix-done') disarm();
       else if (m.type === 'ai-structure') {
+        if (m.src === 'chat') return;   // メインチャット由来はチャット側で処理
         if (m.error){ note(esc(m.error)); aiReset(); return; }
         var ep = aiMode === 'edit' ? '/ai-edit' : '/ai-tidy';
         var body = aiMode === 'edit' ? {structure:m.structure, instruction:aiInstruction} : {structure:m.structure};
@@ -815,10 +877,11 @@
             aiNote = (d.note || '').trim();   // Claudeからの補足（できなかった事・提案など）
             if (!d.ops.length){ note(aiNote ? ('💬 '+esc(aiNote)) : noneMsg); aiReset(); return; }  // 操作ゼロでも理由を伝える
             note((lang==='ja'?'適用中… ':'Applying… ')+d.ops.length+(lang==='ja'?' 操作':' ops'));
-            parent.postMessage({pluginMessage:{type:'ai-apply', ops:d.ops}}, '*');
+            parent.postMessage({pluginMessage:{type:'ai-apply', ops:d.ops, src:'panel'}}, '*');
           }).catch(function(){ note(lang==='ja'?'relayに繋がりません':'Cannot reach relay'); aiReset(); });
       }
       else if (m.type === 'ai-done') {
+        if (m.src === 'chat') return;   // メインチャット由来はチャット側で処理
         aiReset();
         var base = (lang==='ja'?('🤖 適用：'+m.ok+' 操作'+(m.fail?('／失敗 '+m.fail):'')+'。キャンバスをクリックしてから Cmd+Z で戻せます。'):('🤖 Applied: '+m.ok+' ops'+(m.fail?(' / '+m.fail+' failed'):'')+'. Click canvas then Cmd+Z to undo.'));
         note(base + (aiNote ? ('<br><br>💬 '+esc(aiNote)) : ''));   // Claudeの補足があれば併記
