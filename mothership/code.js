@@ -597,6 +597,69 @@ async function applyAIOps(ops, src) {
   }
 }
 
+/* ============================================================
+   色をトークン化（Figma Variables）＝チーム独自DSの第一歩（決定的・ローカル）
+   選択内の繰り返し塗り色を Variable 化し、各塗りをバインドする。写真(IMAGE)は触らない。
+   ============================================================ */
+function _hexToRGBA(hex) { const c = hexToRGB(hex); return { r: c.r, g: c.g, b: c.b, a: 1 }; }
+function _colorClass(hex) {
+  const c = hexToRGB(hex);
+  const lum = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+  const mx = Math.max(c.r, c.g, c.b), mn = Math.min(c.r, c.g, c.b);
+  const sat = mx === 0 ? 0 : (mx - mn) / mx;
+  if (lum < 0.18) return "ink";       // 濃い＝文字系
+  if (lum > 0.92) return "surface";   // 明るい＝地
+  if (sat < 0.12) return "neutral";   // 無彩色＝グレー
+  return "accent";                     // 有彩色
+}
+async function tokenizeSelection() {
+  const sel = figma.currentPage.selection;
+  if (!sel.length) { figma.ui.postMessage({ type: "tokenize-done", error: "フレームを選んでください" }); return; }
+  try {
+    const all = [];
+    for (const r of sel) lintWalk(r, all);
+    const counts = {};
+    for (const n of all) {
+      if ("fills" in n && Array.isArray(n.fills)) {
+        for (const f of n.fills) if (f && f.type === "SOLID" && f.visible !== false) {
+          const hex = _rgbToHex(f.color); counts[hex] = (counts[hex] || 0) + 1;
+        }
+      }
+    }
+    const palette = Object.keys(counts).map((h) => ({ hex: h, n: counts[h] })).sort((a, b) => b.n - a.n);
+    if (!palette.length) { figma.ui.postMessage({ type: "tokenize-done", error: "塗り色が見つかりません" }); return; }
+    let toks = palette.filter((p) => p.n >= 2);   // 繰り返し色＝トークン化の価値あり
+    if (!toks.length) toks = palette;             // 無ければ全色
+    const col = figma.variables.createVariableCollection("Mothership Tokens");
+    const modeId = col.modes[0].modeId;
+    const cat = {}, byHex = {};
+    for (const t of toks) {
+      const cl = _colorClass(t.hex); cat[cl] = (cat[cl] || 0) + 1;
+      const v = figma.variables.createVariable(cl + "/" + cat[cl], col, "COLOR");
+      v.setValueForMode(modeId, _hexToRGBA(t.hex));
+      byHex[t.hex] = v;
+    }
+    let bound = 0;
+    for (const n of all) {
+      if ("fills" in n && Array.isArray(n.fills) && n.fills.length) {
+        let changed = false;
+        const nf = n.fills.map((f) => {
+          if (f && f.type === "SOLID" && f.visible !== false) {
+            const v = byHex[_rgbToHex(f.color)];
+            if (v) { changed = true; bound++; return figma.variables.setBoundVariableForPaint(f, "color", v); }
+          }
+          return f;
+        });
+        if (changed) n.fills = nf;
+      }
+    }
+    figma.ui.postMessage({ type: "tokenize-done", vars: toks.length, bound: bound, colors: palette.length });
+    figma.notify("トークン化：" + toks.length + " 変数を作成・" + bound + " 箇所に適用");
+  } catch (e) {
+    figma.ui.postMessage({ type: "tokenize-done", error: "Variables APIエラー: " + (e && e.message ? e.message : e) });
+  }
+}
+
 figma.ui.onmessage = async (msg) => {
   if (msg.type === "generate") await generate(msg.json, true);
   else if (msg.type === "live") await generate(msg.json, false);
@@ -604,6 +667,7 @@ figma.ui.onmessage = async (msg) => {
   else if (msg.type === "fix") await applyFixes(msg.ids);
   else if (msg.type === "ai-collect") collectForAI(msg.src);
   else if (msg.type === "ai-apply") await applyAIOps(msg.ops, msg.src);
+  else if (msg.type === "tokenize") await tokenizeSelection();
   else if (msg.type === "reveal") {  // パネルの行クリック→該当レイヤーをFigmaで選択＋ズーム
     const f = _lintFix[msg.id];
     if (f && f.node && !f.node.removed) {
