@@ -332,25 +332,31 @@ function inAutoLayout(n) {
 }
 function _num(v) { return typeof v === "number"; }
 function _median(a) { const s = a.slice().sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
-// 手置きの子が「きれいな1行/1列」なら {axis:"x"|"y", gap} を返す（オートレイアウト化の候補）
+function _spread(a) { return Math.max(...a) - Math.min(...a); }
+function _snap8(v) { v = Math.max(0, v); if (v < 2) return 0; if (v < 6) return 4; return Math.round(v / 8) * 8; }  // 8ptグリッド（小さい間は4）
+function _snap4(v) { return Math.round(v / 4) * 4; }
+function _offGrid(v) { return _num(v) && v > 0 && v % 4 !== 0; }   // 4の倍数でない＝グリッド外
+// フレーム内で「背景/装飾」とみなす子（大きく覆う・全幅/全高）。オートレイアウト化では絶対配置で残す
+function _isDecor(c, fw, fh) { return (c.width * c.height) >= fw * fh * 0.55 || c.width >= fw * 0.92 || c.height >= fh * 0.92; }
+// 手置きの子が「1行/1列の積み重ね」なら {axis,gap} を返す。装飾は除外し、間隔のバラつきは許容（中央値を8ptに）
 function autoCandidate(n) {
   if ((n.type !== "FRAME" && n.type !== "COMPONENT") || !("layoutMode" in n) || n.layoutMode !== "NONE") return null;
-  const kids = (n.children || []).filter((c) => c.visible !== false && _num(c.x) && _num(c.y) && _num(c.width) && _num(c.height));
-  if (kids.length < 3) return null;
+  const all = (n.children || []).filter((c) => c.visible !== false && _num(c.x) && _num(c.y) && _num(c.width) && _num(c.height));
+  if (all.length < 2) return null;
+  const kids = all.filter((c) => !_isDecor(c, n.width, n.height));
+  if (kids.length < 2) return null;
   const evalAxis = (main) => {
     const cross = main === "x" ? "y" : "x", msz = main === "x" ? "width" : "height", csz = main === "x" ? "height" : "width";
     const sorted = kids.slice().sort((a, b) => a[main] - b[main]);
     const gaps = [];
     for (let i = 1; i < sorted.length; i++) gaps.push(sorted[i][main] - (sorted[i - 1][main] + sorted[i - 1][msz]));
-    if (gaps.some((g) => g < -1)) return null;                       // 主軸で重なり＝行/列でない
-    const gmin = Math.min(...gaps), gmax = Math.max(...gaps), gmean = gaps.reduce((a, b) => a + b, 0) / gaps.length;
-    if (gmax - gmin > Math.max(12, gmean * 0.6)) return null;        // 間隔がバラバラ＝整列でない
+    if (gaps.some((g) => g < -2)) return null;                       // 主軸で重なり＝1D並びでない
     const cmax = Math.max(...kids.map((c) => c[csz]));
-    const centers = kids.map((c) => c[cross] + c[csz] / 2);
-    if (Math.max(...centers) - Math.min(...centers) > cmax * 0.6) return null;  // クロス軸の帯から外れる
-    return { axis: main, gap: Math.max(0, Math.round(_median(gaps))) };
+    const centers = kids.map((c) => c[cross] + c[csz] / 2), lefts = kids.map((c) => c[cross]);
+    if (Math.min(_spread(centers), _spread(lefts)) > cmax * 0.5) return null;  // 中央揃いも端揃いも崩れ＝1D並びでない
+    return { axis: main, gap: _snap8(_median(gaps)) };
   };
-  return evalAxis("x") || evalAxis("y");
+  return evalAxis("y") || evalAxis("x");   // 縦積み優先
 }
 
 async function runLint() {
@@ -404,9 +410,15 @@ async function runLint() {
     if (multiFam && n.type === "TEXT" && n.fontName && n.fontName !== figma.mixed && n.fontName.family !== dom) {
       add("font", "med", "フォント揺れ", n, "unifyFont", { family: dom }, "「" + n.fontName.family + "」→「" + dom + "」");
     }
-    // 5) オートレイアウト化（手置きで並んだ行/列をオートレイアウトへ）
+    // 5) オートレイアウト化（手置きで並んだ行/列をオートレイアウトへ・装飾は絶対配置で温存）
     const ac = autoCandidate(n);
-    if (ac) add("auto", "med", "オートレイアウト化", n, "autolayout", { axis: ac.axis, gap: ac.gap }, (ac.axis === "x" ? "横並び" : "縦並び") + "・間隔" + ac.gap + "px");
+    if (ac) add("auto", "med", "オートレイアウト化", n, "autolayout", { axis: ac.axis, gap: ac.gap }, (ac.axis === "x" ? "横並び" : "縦並び") + "・間隔" + ac.gap + "px・余白も8pt整列");
+    // 6) 余白グリッド（既存オートレイアウトの padding/gap が4/8pxグリッド外）
+    if (("layoutMode" in n) && n.layoutMode && n.layoutMode !== "NONE") {
+      if ([n.paddingTop, n.paddingRight, n.paddingBottom, n.paddingLeft, n.itemSpacing].some(_offGrid)) {
+        add("grid", "low", "余白がグリッド外", n, "grid8", null, "→ 4/8pxに整列");
+      }
+    }
   }
   figma.ui.postMessage({ type: "lint-result", findings, summary: { nodes: all.length, scope: sel.length ? "selection" : "page", dominant: dom } });
 }
@@ -429,26 +441,29 @@ async function applyFixes(ids) {
           if (n.type === "TEXT" && n.fontName && n.fontName !== figma.mixed) n.fontName = await ensureFontStyle(f.data.family, n.fontName.style);
         } else if (f.action === "autolayout") {
           const horiz = f.data.axis === "x";
-          const main = horiz ? "x" : "y", msz = horiz ? "width" : "height", cross = horiz ? "y" : "x", csz = horiz ? "height" : "width";
-          const kids = (n.children || []).filter((c) => _num(c.x) && c.visible !== false);
-          if (kids.length >= 2 && "layoutMode" in n) {
-            const sorted = kids.slice().sort((a, b) => a[main] - b[main]);
-            const last = sorted[sorted.length - 1];
-            const frameMain = horiz ? n.width : n.height, frameCross = horiz ? n.height : n.width;
-            const padMain = Math.max(0, Math.round(sorted[0][main]));
-            const trailMain = Math.max(0, Math.round(frameMain - (last[main] + last[msz])));
-            const padCross = Math.max(0, Math.round(Math.min(...kids.map((c) => c[cross]))));
-            const trailCross = Math.max(0, Math.round(frameCross - Math.max(...kids.map((c) => c[cross] + c[csz]))));
-            const cents = kids.map((c) => c[cross] + c[csz] / 2), tops = kids.map((c) => c[cross]);
-            const spread = (a) => Math.max(...a) - Math.min(...a);
-            const align = spread(cents) < spread(tops) ? "CENTER" : "MIN";
-            sorted.forEach((c) => n.appendChild(c));     // 視覚順に並べ替えてから有効化
+          const main = horiz ? "x" : "y", cross = horiz ? "y" : "x", csz = horiz ? "height" : "width";
+          const all = (n.children || []).filter((c) => _num(c.x) && c.visible !== false);
+          const decor = all.filter((c) => _isDecor(c, n.width, n.height)), content = all.filter((c) => !_isDecor(c, n.width, n.height));
+          if (content.length >= 2 && "layoutMode" in n) {
+            const sorted = content.slice().sort((a, b) => a[main] - b[main]);
+            const padMain = _snap8(sorted[0][main]);                                   // 先頭までの余白を8ptに
+            const padCross = _snap8(Math.min(...content.map((c) => c[cross])));        // クロス軸の余白を8ptに
+            const cents = content.map((c) => c[cross] + c[csz] / 2), lefts = content.map((c) => c[cross]);
+            const align = _spread(cents) <= _spread(lefts) ? "CENTER" : "MIN";
+            const dpos = decor.map((c) => ({ c: c, x: c.x, y: c.y }));
+            decor.forEach((c) => n.appendChild(c));        // 装飾を背面に
+            sorted.forEach((c) => n.appendChild(c));       // 中身を視覚順に
             n.layoutMode = horiz ? "HORIZONTAL" : "VERTICAL";
             n.primaryAxisSizingMode = "FIXED"; n.counterAxisSizingMode = "FIXED";
             n.itemSpacing = f.data.gap;
-            if (horiz) { n.paddingLeft = padMain; n.paddingRight = trailMain; n.paddingTop = padCross; n.paddingBottom = trailCross; }
-            else { n.paddingTop = padMain; n.paddingBottom = trailMain; n.paddingLeft = padCross; n.paddingRight = trailCross; }
+            if (horiz) { n.paddingLeft = n.paddingRight = padMain; n.paddingTop = n.paddingBottom = padCross; }
+            else { n.paddingTop = n.paddingBottom = padMain; n.paddingLeft = n.paddingRight = padCross; }
             n.counterAxisAlignItems = align; n.primaryAxisAlignItems = "MIN";
+            dpos.forEach((d) => { try { d.c.layoutPositioning = "ABSOLUTE"; d.c.x = d.x; d.c.y = d.y; } catch (e) {} });  // 装飾は元位置に固定
+          }
+        } else if (f.action === "grid8") {
+          if ("layoutMode" in n && n.layoutMode && n.layoutMode !== "NONE") {
+            ["paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "itemSpacing"].forEach((k) => { if (_offGrid(n[k])) n[k] = _snap4(n[k]); });
           }
         }
         ok++;
