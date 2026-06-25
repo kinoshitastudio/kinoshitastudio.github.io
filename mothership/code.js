@@ -684,8 +684,7 @@ async function tokenizeTypography() {
     for (const n of all) { const s = _typeSig(n); if (s) { if (!sigs[s.key]) sigs[s.key] = { sig: s, nodes: [], n: 0 }; sigs[s.key].nodes.push(n); sigs[s.key].n++; } }
     let entries = Object.keys(sigs).map((k) => sigs[k]);
     if (!entries.length) { figma.ui.postMessage({ type: "tokenize-done", kind: "type", error: "テキストが見つかりません" }); return; }
-    let toks = entries.filter((e) => e.n >= 2);
-    if (!toks.length) toks = entries;
+    let toks = entries;   // タイポは1回しか使われない型も「役割」として価値あり＝全ての異なる型をスタイル化
     toks.sort((a, b) => b.sig.size - a.sig.size);   // 大きい順＝heading/1 が最大
     const cat = {}; let made = 0, bound = 0;
     for (const e of toks) {
