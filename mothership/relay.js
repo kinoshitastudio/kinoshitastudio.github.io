@@ -78,32 +78,44 @@ const AI_EDIT_PROMPT = `あなたはFigma編集の専門家。渡された「Fig
 - **★可読性を絶対に壊さない**：あなたは描画結果を見られない（構造JSONのみ）。文字色を背景と同系/近い明度にして**読めなくしない**。背景色を変えたら、その上の文字色も十分なコントラスト（明背景→濃い文字／暗背景→明るい文字）になるよう必ずセットで変える。写真の上の文字は触らない（背景不明なため）。迷ったら文字色は変えない。
 - 「良い感じに」等の曖昧な指示は、**読みやすさを保ったまま**の控えめな配色/余白調整に留める（破壊的な作り直しはしない）。
 - **各ノードに fill が付く＝現在の色**（#RRGGBB ／ "image"=写真・触らない ／ "gradient"）。これを見て**現在の配色を把握**し、**同系の色は一括でまとめて変える**（例：複数の赤 #e0..系を全部まとめて落ち着いた色へ）。グループ/オートレイアウトの**ネスト内の子も id で個別に setFill** できる＝深い階層の色も拾って変える。色変更は対象の **全ノード**に漏れなく出す。
+- フォント変更(setFont)は **Figmaに入っているフォントしか使えない**（無い指定はInter等に代替／日本語は日本語フォントが要る）。確信が無い・できない指示は無理に実行せず、note でユーザーに伝える。
 - idは入力のidをそのまま使う（ネストの深い子でもOK）。
 
-## 出力（厳守）
-**JSON配列だけ**を返す（前後に説明文を書かない）。使える操作：
-[
- {"op":"setText","id":"<id>","text":"<新しい文字>"},
- {"op":"setFontSize","id":"<id>","size":<px>},
- {"op":"setFill","id":"<id>","color":"#RRGGBB"},
- {"op":"resize","id":"<id>","w":<px>,"h":<px>},
- {"op":"setGap","id":"<id>","gap":<px>},
- {"op":"pad","id":"<id>","pad":[上,右,下,左]},
- {"op":"setRadius","id":"<id>","radius":<px>},
- {"op":"rename","id":"<id>","name":"<名>"},
- {"op":"autolayout","id":"<id>","mode":"vertical|horizontal","gap":<px>,"pad":[上,右,下,左],"align":"min|center|max"},
- {"op":"group","ids":["<id>","<id>"],"name":"<名>","mode":"horizontal|vertical","gap":<px>},
- {"op":"remove","id":"<id>"}
-]
-変える点が無ければ空配列 []。`;
+## できない/苦手なこと（無理にやらず note で伝える）
+- 全面リデザイン・要素の新規追加・画像の差し替え/生成・複雑な再構成は、この編集の範囲外（→ note で「チャットでの新規生成が向いています」等と案内）。
+- 指示が曖昧/対象が特定できない時も note で確認を促す。
 
-// claude -p の出力から JSON配列を取り出す（前後の説明やコードフェンスを許容）
+## 出力（厳守）
+**JSONオブジェクトだけ**を返す（前後に文章を書かない）。形式：
+{"ops":[ ...操作... ], "note":"<日本語の短い補足。できなかった事・代替・提案など。無ければ空文字>"}
+ops に使える操作：
+ {"op":"setText","id":"<id>","text":"<新しい文字>"}
+ {"op":"setFontSize","id":"<id>","size":<px>}
+ {"op":"setFont","id":"<id>","family":"<フォント名>","weight":<100-900の任意>}
+ {"op":"setFill","id":"<id>","color":"#RRGGBB"}
+ {"op":"resize","id":"<id>","w":<px>,"h":<px>}
+ {"op":"setGap","id":"<id>","gap":<px>}
+ {"op":"pad","id":"<id>","pad":[上,右,下,左]}
+ {"op":"setRadius","id":"<id>","radius":<px>}
+ {"op":"rename","id":"<id>","name":"<名>"}
+ {"op":"autolayout","id":"<id>","mode":"vertical|horizontal","gap":<px>,"pad":[上,右,下,左],"align":"min|center|max"}
+ {"op":"group","ids":["<id>","<id>"],"name":"<名>","mode":"horizontal|vertical","gap":<px>}
+ {"op":"remove","id":"<id>"}
+変える点が無ければ {"ops":[], "note":"理由や提案"}。`;
+
+// claude -p の出力から JSON配列(ops)を取り出す（配列でも {ops:[...]} オブジェクトでも内側の[...]を拾う）
 function extractOps(s) {
   let m = String(s).match(/```(?:json)?\s*([\s\S]*?)```/);
   let txt = m ? m[1] : String(s);
   const a = txt.indexOf("["), b = txt.lastIndexOf("]");
   if (a < 0 || b < 0 || b < a) return null;
   try { const p = JSON.parse(txt.slice(a, b + 1)); return Array.isArray(p) ? p : null; } catch (e) { return null; }
+}
+// 出力中の "note":"..." を取り出す（できなかった事・提案などのユーザー向け補足）
+function extractNote(s) {
+  const m = String(s).match(/"note"\s*:\s*"((?:\\.|[^"\\])*)"/);
+  if (!m) return "";
+  try { return JSON.parse('"' + m[1] + '"'); } catch (e) { return m[1]; }
 }
 
 http.createServer((req, res) => {
@@ -178,7 +190,7 @@ http.createServer((req, res) => {
         if (code !== 0) return finish({ ok: false, error: "claude失敗: " + err.trim().slice(-300) });
         const ops = extractOps(out);
         if (!ops) return finish({ ok: false, error: "操作JSONを取り出せませんでした", raw: out.trim().slice(-300) });
-        finish({ ok: true, ops: ops });
+        finish({ ok: true, ops: ops, note: extractNote(out) });
       });
       var timer = setTimeout(() => { try { if (currentChild) currentChild.kill(); } catch (e) {} finish({ ok: false, error: "タイムアウト（180s）" }); }, 180000);
     });
@@ -214,7 +226,7 @@ http.createServer((req, res) => {
         if (code !== 0) return finish({ ok: false, error: "claude失敗: " + err.trim().slice(-300) });
         const ops = extractOps(out);
         if (!ops) return finish({ ok: false, error: "操作JSONを取り出せませんでした", raw: out.trim().slice(-300) });
-        finish({ ok: true, ops: ops });
+        finish({ ok: true, ops: ops, note: extractNote(out) });
       });
       var timer = setTimeout(() => { try { if (currentChild) currentChild.kill(); } catch (e) {} finish({ ok: false, error: "タイムアウト（180s）" }); }, 180000);
     });

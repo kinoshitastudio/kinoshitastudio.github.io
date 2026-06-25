@@ -561,6 +561,16 @@ async function applyAIOps(ops) {
           const n = await get(op.id); if (n && n.type === "TEXT") { await loadNodeFont(n); n.characters = String(op.text != null ? op.text : n.characters); }
         } else if (op.op === "setFontSize") {
           const n = await get(op.id); if (n && n.type === "TEXT" && _num(op.size)) { await loadNodeFont(n); try { n.fontSize = op.size; } catch (e) {} }
+        } else if (op.op === "setFont") {
+          const n = await get(op.id);
+          if (n && n.type === "TEXT") {
+            const cur = (n.fontName && n.fontName !== figma.mixed) ? n.fontName : { family: "Inter", style: "Regular" };
+            const fam = op.family || cur.family;
+            let style = cur.style;
+            if (op.weight != null) style = WEIGHT_STYLE[op.weight] || style;
+            else if (op.style) style = op.style;
+            try { await loadNodeFont(n); n.fontName = await ensureFontStyle(fam, style || "Regular"); } catch (e) {}
+          }
         } else if (op.op === "setFill") {
           const n = await get(op.id); if (n && "fills" in n && op.color) { const cur = Array.isArray(n.fills) ? n.fills : []; if (!cur.some((f) => f.type === "IMAGE")) n.fills = [{ type: "SOLID", color: hexToRGB(op.color), opacity: 1 }]; }  // 画像塗りは保持
         } else if (op.op === "resize") {

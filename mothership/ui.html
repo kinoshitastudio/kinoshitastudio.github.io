@@ -726,7 +726,7 @@
     // 🤖 AIで整える：選択を読む→relay→Claude→操作を適用（その場編集・写真保持）
     var aiBtn = document.getElementById('lint-ai'), aiBusy = false;
     var editBtn = document.getElementById('lint-edit'), editInput = document.getElementById('lint-edit-input');
-    var aiMode = 'tidy', aiInstruction = '';   // ai-collect の結果を /ai-tidy か /ai-edit のどちらへ送るか
+    var aiMode = 'tidy', aiInstruction = '', aiNote = '';   // ai-collect の結果を /ai-tidy か /ai-edit のどちらへ送るか／Claudeの補足
     function aiReset(){ aiBusy = false; if (aiBtn){ aiBtn.disabled = false; aiBtn.textContent = tr('lint_ai'); } if (editBtn){ editBtn.disabled = false; editBtn.textContent = tr('lint_edit'); } }
     function note(t){ out.innerHTML = '<div class="lint-empty">'+t+'</div>'; }
     function needConn(){ note(lang==='ja'?'AI整え・編集は relay 接続が必要です（上の「接続」を押してね）':'AI tidy/edit needs the relay connected (press Connect above)'); }
@@ -812,14 +812,17 @@
           .then(function(r){ return r.json(); }).then(function(d){
             if (d.aborted){ note(lang==='ja'?'停止しました':'Stopped'); aiReset(); return; }
             if (!d.ok || !d.ops){ note(failMsg+esc(d.error||'')); aiReset(); return; }
-            if (!d.ops.length){ note(noneMsg); aiReset(); return; }
+            aiNote = (d.note || '').trim();   // Claudeからの補足（できなかった事・提案など）
+            if (!d.ops.length){ note(aiNote ? ('💬 '+esc(aiNote)) : noneMsg); aiReset(); return; }  // 操作ゼロでも理由を伝える
             note((lang==='ja'?'適用中… ':'Applying… ')+d.ops.length+(lang==='ja'?' 操作':' ops'));
             parent.postMessage({pluginMessage:{type:'ai-apply', ops:d.ops}}, '*');
           }).catch(function(){ note(lang==='ja'?'relayに繋がりません':'Cannot reach relay'); aiReset(); });
       }
       else if (m.type === 'ai-done') {
         aiReset();
-        note((lang==='ja'?('🤖 AIで整えました：'+m.ok+' 操作'+(m.fail?('／失敗 '+m.fail):'')+'。キャンバスをクリックしてから Cmd+Z で戻せます（数回押す場合あり）。'):('🤖 Tidied: '+m.ok+' ops'+(m.fail?(' / '+m.fail+' failed'):'')+'. Undo with Cmd+Z.')));
+        var base = (lang==='ja'?('🤖 適用：'+m.ok+' 操作'+(m.fail?('／失敗 '+m.fail):'')+'。キャンバスをクリックしてから Cmd+Z で戻せます。'):('🤖 Applied: '+m.ok+' ops'+(m.fail?(' / '+m.fail+' failed'):'')+'. Click canvas then Cmd+Z to undo.'));
+        note(base + (aiNote ? ('<br><br>💬 '+esc(aiNote)) : ''));   // Claudeの補足があれば併記
+        aiNote = '';
       }
     });
   })();
