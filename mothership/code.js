@@ -653,10 +653,57 @@ async function tokenizeSelection() {
         if (changed) n.fills = nf;
       }
     }
-    figma.ui.postMessage({ type: "tokenize-done", vars: toks.length, bound: bound, colors: palette.length });
+    figma.ui.postMessage({ type: "tokenize-done", kind: "color", vars: toks.length, bound: bound, colors: palette.length });
     figma.notify("トークン化：" + toks.length + " 変数を作成・" + bound + " 箇所に適用");
   } catch (e) {
-    figma.ui.postMessage({ type: "tokenize-done", error: "Variables APIエラー: " + (e && e.message ? e.message : e) });
+    figma.ui.postMessage({ type: "tokenize-done", kind: "color", error: "Variables APIエラー: " + (e && e.message ? e.message : e) });
+  }
+}
+
+/* ============================================================
+   文字をスタイル化（Figma Text Styles）＝DSの"型"トークン（決定的・ローカル）
+   選択内の繰り返すタイプ（font/size/行間/字間）を Text Style 化し、各テキストに適用。
+   ============================================================ */
+function _typeSig(n) {
+  if (n.type !== "TEXT" || !n.fontName || n.fontName === figma.mixed) return null;
+  if (typeof n.fontSize !== "number") return null;            // 混在サイズは除外
+  const lh = n.lineHeight, ls = n.letterSpacing;
+  if (lh === figma.mixed || ls === figma.mixed) return null;
+  const lhK = (lh && lh.unit) ? (lh.unit === "AUTO" ? "auto" : lh.unit + (lh.value || 0)) : "auto";
+  const lsK = (ls && ls.unit) ? (ls.unit + (ls.value || 0)) : "0";
+  return { key: n.fontName.family + "|" + n.fontName.style + "|" + n.fontSize + "|" + lhK + "|" + lsK, fontName: n.fontName, size: n.fontSize, lineHeight: lh, letterSpacing: ls };
+}
+function _typeClass(size) { return size >= 24 ? "heading" : (size >= 15 ? "body" : "caption"); }
+async function tokenizeTypography() {
+  const sel = figma.currentPage.selection;
+  if (!sel.length) { figma.ui.postMessage({ type: "tokenize-done", kind: "type", error: "フレームを選んでください" }); return; }
+  try {
+    const all = [];
+    for (const r of sel) lintWalk(r, all);
+    const sigs = {};
+    for (const n of all) { const s = _typeSig(n); if (s) { if (!sigs[s.key]) sigs[s.key] = { sig: s, nodes: [], n: 0 }; sigs[s.key].nodes.push(n); sigs[s.key].n++; } }
+    let entries = Object.keys(sigs).map((k) => sigs[k]);
+    if (!entries.length) { figma.ui.postMessage({ type: "tokenize-done", kind: "type", error: "テキストが見つかりません" }); return; }
+    let toks = entries.filter((e) => e.n >= 2);
+    if (!toks.length) toks = entries;
+    toks.sort((a, b) => b.sig.size - a.sig.size);   // 大きい順＝heading/1 が最大
+    const cat = {}; let made = 0, bound = 0;
+    for (const e of toks) {
+      try {
+        await figma.loadFontAsync(e.sig.fontName);
+        const cl = _typeClass(e.sig.size); cat[cl] = (cat[cl] || 0) + 1;
+        const st = figma.createTextStyle(); st.name = cl + "/" + cat[cl];
+        st.fontName = e.sig.fontName; st.fontSize = e.sig.size;
+        if (e.sig.lineHeight) st.lineHeight = e.sig.lineHeight;
+        if (e.sig.letterSpacing) st.letterSpacing = e.sig.letterSpacing;
+        made++;
+        for (const n of e.nodes) { try { await loadNodeFont(n); if (typeof n.setTextStyleIdAsync === "function") await n.setTextStyleIdAsync(st.id); else n.textStyleId = st.id; bound++; } catch (e2) {} }
+      } catch (e1) {}
+    }
+    figma.ui.postMessage({ type: "tokenize-done", kind: "type", styles: made, bound: bound, total: entries.length });
+    figma.notify("文字スタイル化：" + made + " スタイル作成・" + bound + " 箇所に適用");
+  } catch (e) {
+    figma.ui.postMessage({ type: "tokenize-done", kind: "type", error: "Text Styles APIエラー: " + (e && e.message ? e.message : e) });
   }
 }
 
@@ -668,6 +715,7 @@ figma.ui.onmessage = async (msg) => {
   else if (msg.type === "ai-collect") collectForAI(msg.src);
   else if (msg.type === "ai-apply") await applyAIOps(msg.ops, msg.src);
   else if (msg.type === "tokenize") await tokenizeSelection();
+  else if (msg.type === "tokenize-type") await tokenizeTypography();
   else if (msg.type === "reveal") {  // パネルの行クリック→該当レイヤーをFigmaで選択＋ズーム
     const f = _lintFix[msg.id];
     if (f && f.node && !f.node.removed) {
