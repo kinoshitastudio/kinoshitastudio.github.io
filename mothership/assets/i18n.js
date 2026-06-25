@@ -47,4 +47,16 @@
     window.__setTheme(cur === 'light' ? 'dark' : 'light');
   });
   applyTheme(getTheme());
+
+  /* ===== モバイル: ハンバーガーメニュー ===== */
+  document.addEventListener('click', function (e) {
+    var nav = document.querySelector('nav');
+    if (!nav) return;
+    var tog = e.target.closest && e.target.closest('[data-navtoggle]');
+    if (tog) { e.preventDefault(); var open = nav.classList.toggle('open'); tog.setAttribute('aria-expanded', open ? 'true' : 'false'); return; }
+    // メニュー内リンク/ボタンを押したら閉じる
+    if (e.target.closest && e.target.closest('nav .links a, nav .links [data-langtog]')) { nav.classList.remove('open'); return; }
+    // メニュー外をタップしたら閉じる
+    if (nav.classList.contains('open') && !e.target.closest('nav')) nav.classList.remove('open');
+  });
 })();
