@@ -497,6 +497,15 @@ function collectForAI() {
   if (!sel.length) { figma.ui.postMessage({ type: "ai-structure", error: "フレームを選んでください" }); return; }
   figma.ui.postMessage({ type: "ai-structure", structure: sel.map((n) => serForAI(n, 0)) });
 }
+// テキストの文字/サイズを変える前に現在のフォントを読み込む（未読込だと編集でエラー）
+async function loadNodeFont(n) {
+  try {
+    if (n.fontName && n.fontName !== figma.mixed) { await figma.loadFontAsync(n.fontName); return; }
+    if (n.fontName === figma.mixed && typeof n.getRangeAllFontNames === "function") {
+      for (const f of n.getRangeAllFontNames(0, n.characters.length)) await figma.loadFontAsync(f);
+    }
+  } catch (e) {}
+}
 async function applyAIOps(ops) {
   let ok = 0, fail = 0;
   const get = async (id) => { try { return await figma.getNodeByIdAsync(id); } catch (e) { return null; } };
@@ -535,6 +544,18 @@ async function applyAIOps(ops) {
           f.layoutMode = horiz ? "HORIZONTAL" : "VERTICAL";
           if (_num(op.gap)) f.itemSpacing = op.gap;
           f.primaryAxisSizingMode = "AUTO"; f.counterAxisSizingMode = "AUTO";
+        } else if (op.op === "setText") {
+          const n = await get(op.id); if (n && n.type === "TEXT") { await loadNodeFont(n); n.characters = String(op.text != null ? op.text : n.characters); }
+        } else if (op.op === "setFontSize") {
+          const n = await get(op.id); if (n && n.type === "TEXT" && _num(op.size)) { await loadNodeFont(n); try { n.fontSize = op.size; } catch (e) {} }
+        } else if (op.op === "setFill") {
+          const n = await get(op.id); if (n && "fills" in n && op.color) { const cur = Array.isArray(n.fills) ? n.fills : []; if (!cur.some((f) => f.type === "IMAGE")) n.fills = [{ type: "SOLID", color: hexToRGB(op.color), opacity: 1 }]; }  // 画像塗りは保持
+        } else if (op.op === "resize") {
+          const n = await get(op.id); if (n && "resize" in n) { const w = _num(op.w) ? op.w : n.width, h = _num(op.h) ? op.h : n.height; try { n.resize(Math.max(1, w), Math.max(1, h)); } catch (e) {} }
+        } else if (op.op === "setGap") {
+          const n = await get(op.id); if (n && "itemSpacing" in n && n.layoutMode && n.layoutMode !== "NONE" && _num(op.gap)) n.itemSpacing = op.gap;
+        } else if (op.op === "setRadius") {
+          const n = await get(op.id); if (n && "cornerRadius" in n && _num(op.radius)) n.cornerRadius = op.radius;
         }
         ok++;
       } catch (e) { fail++; }

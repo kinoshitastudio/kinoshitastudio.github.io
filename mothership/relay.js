@@ -68,6 +68,32 @@ const AI_TIDY_PROMPT = `あなたはFigmaレイアウト整理の専門家。渡
 ]
 idは入力のidをそのまま使う。新規groupにidは振らない。整える点が無ければ空配列 []。`;
 
+// AI会話編集（B拡張）：選択フレームの構造＋ユーザー指示 → 編集オペ(JSON配列)だけを返す
+const AI_EDIT_PROMPT = `あなたはFigma編集の専門家。渡された「Figmaフレーム構造JSON」と「ユーザーの編集指示」から、その指示を実現する【編集操作リスト】だけを返す。実際のノード編集はプラグインが行う＝あなたは操作を設計するだけ。画像は再生成せず温存する（既存ノードを編集）。
+
+## 方針
+- ユーザー指示を忠実に実現する最小の操作を出す。指示に無い所は変えない。
+- サイズ変更時は8ptグリッド（4の倍数・基本8の倍数）。レイアウトを崩さない。
+- 文字色や背景色の変更は対象ノードだけ。画像塗りのノードには setFill しない。
+- idは入力のidをそのまま使う。
+
+## 出力（厳守）
+**JSON配列だけ**を返す（前後に説明文を書かない）。使える操作：
+[
+ {"op":"setText","id":"<id>","text":"<新しい文字>"},
+ {"op":"setFontSize","id":"<id>","size":<px>},
+ {"op":"setFill","id":"<id>","color":"#RRGGBB"},
+ {"op":"resize","id":"<id>","w":<px>,"h":<px>},
+ {"op":"setGap","id":"<id>","gap":<px>},
+ {"op":"pad","id":"<id>","pad":[上,右,下,左]},
+ {"op":"setRadius","id":"<id>","radius":<px>},
+ {"op":"rename","id":"<id>","name":"<名>"},
+ {"op":"autolayout","id":"<id>","mode":"vertical|horizontal","gap":<px>,"pad":[上,右,下,左],"align":"min|center|max"},
+ {"op":"group","ids":["<id>","<id>"],"name":"<名>","mode":"horizontal|vertical","gap":<px>},
+ {"op":"remove","id":"<id>"}
+]
+変える点が無ければ空配列 []。`;
+
 // claude -p の出力から JSON配列を取り出す（前後の説明やコードフェンスを許容）
 function extractOps(s) {
   let m = String(s).match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -130,6 +156,42 @@ http.createServer((req, res) => {
       try { structure = JSON.parse(b).structure; } catch (e) {}
       if (!structure) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "structureが空です" })); }
       const prompt = AI_TIDY_PROMPT + "\n\n## 構造JSON\n" + JSON.stringify(structure);
+      chatBusy = true; chatBusySince = Date.now();
+      let done = false;
+      const finish = (obj) => {
+        if (done) return; done = true; chatBusy = false; currentChild = null; clearTimeout(timer);
+        if (aborted) { aborted = false; return res.end(JSON.stringify({ ok: false, aborted: true })); }
+        res.end(JSON.stringify(obj));
+      };
+      let child;
+      try { child = spawn("claude", ["-p", prompt], { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"] }); }
+      catch (e) { return finish({ ok: false, error: "claude起動失敗: " + (e && e.message ? e.message : e) }); }
+      currentChild = child;
+      let out = "", err = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (err += d));
+      child.on("error", (e) => finish({ ok: false, error: "claudeが見つかりません: " + (e && e.message ? e.message : e) }));
+      child.on("close", (code) => {
+        if (code !== 0) return finish({ ok: false, error: "claude失敗: " + err.trim().slice(-300) });
+        const ops = extractOps(out);
+        if (!ops) return finish({ ok: false, error: "操作JSONを取り出せませんでした", raw: out.trim().slice(-300) });
+        finish({ ok: true, ops: ops });
+      });
+      var timer = setTimeout(() => { try { if (currentChild) currentChild.kill(); } catch (e) {} finish({ ok: false, error: "タイムアウト（180s）" }); }, 180000);
+    });
+    return;
+  }
+
+  // AI会話編集（B拡張）：選択フレーム構造＋ユーザー指示 → 編集オペ。どんなフレーム（外部/手描き）も対象
+  if (u.pathname === "/ai-edit" && req.method === "POST") {
+    let b = ""; req.on("data", (d) => (b += d));
+    req.on("end", () => {
+      res.setHeader("Content-Type", "application/json");
+      let structure = null, instruction = "";
+      try { const j = JSON.parse(b); structure = j.structure; instruction = (j.instruction || "").toString(); } catch (e) {}
+      if (!structure) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "structureが空です" })); }
+      if (!instruction.trim()) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "編集指示が空です" })); }
+      const prompt = AI_EDIT_PROMPT + "\n\n## ユーザーの編集指示\n" + instruction + "\n\n## 構造JSON\n" + JSON.stringify(structure);
       chatBusy = true; chatBusySince = Date.now();
       let done = false;
       const finish = (obj) => {
