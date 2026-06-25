@@ -96,6 +96,45 @@ qlmanage -t -s 1920 -o . cover.svg && sips -c 960 1920 cover.svg.png --out cover
   - networkAccess は `localhost:4575` のまま（送信先はあくまでローカルrelay。relayの先のClaude Codeはユーザー環境）。リリースノートに「AI整えはユーザー自身のClaude Codeを使う＝第三者サーバへの送信なし・APIキー不要」と明記。
 - **写真は保持**：AI整えは構造の操作（autolayout/group/rename/pad）を実ノードに適用＝**画像/ベクターはそのまま**（再生成しない）。
 
+## ★ 再Publish キット（2026-06-25・コピペ用）
+
+### A. リリースノート（Figmaの「What's new」欄に貼る・EN/JP）
+```
+🧹 Clean up (Lint & Fix) — select any frame on the board and tidy it in one click (works on frames not made by Mothership too):
+• Naming, font unify, pixel snap, junk-layer removal, auto-layout, 8pt spacing
+• 🤖 Tidy with AI — your own Claude Code judges nested auto-layout, spacing & naming and applies it in place (photos preserved)
+Also: chat Stop button + queue while thinking, collapsible panel, theme switch, smoother resize.
+
+🧹 「整える（Lint & Fix）」を新搭載 — ボード上のどのフレームでも選んで診断→ワンクリックで整う（Mothership製でなくてOK）：
+・命名／フォント統一／ピクセル整列／不要レイヤー削除／オートレイアウト化／8pt余白
+・🤖 AIで整える — あなたの Claude Code が入れ子オートレイアウト・余白・命名まで判断し、その場で適用（写真は保持）
+ほか：チャットの停止ボタン＋考え中でも投稿、パネル折りたたみ、テーマ切替、リサイズ改善。
+```
+
+### B. データセキュリティ申告の更新（★今回の肝・前回から変更）
+前回＝「Figma派生データは送らない（JSON→Figmaの一方向）」。今回「🤖 AIで整える」を追加したため**更新が必要**：
+- **Q：Figma APIから読んだデータを外部に送る/保存するか → 「送信する（保存しない）」に変更**。
+- 説明文（コピペ）：
+```
+The "Tidy with AI" feature sends the STRUCTURE of the user's selected frame (layer types, names, positions, sizes, text content, font names — NO image/binary data) through a local relay (http://localhost:4575) to the user's OWN Claude Code (Anthropic API) to compute layout-tidy operations. Nothing is stored or sent to any Kinoshita Studio / third-party server. All other features run fully locally.
+
+「AIで整える」は、ユーザーが選択したフレームの【構造】（レイヤー種別・名前・座標・サイズ・テキスト・フォント名／画像やバイナリは含まない）を、ローカルrelay(http://localhost:4575)経由でユーザー自身のClaude Code(Anthropic API)へ送り、整え操作を計算します。木下スタジオや第三者サーバーへの送信・保存は一切ありません。他機能は完全ローカル動作です。
+```
+- **networkAccess は変更不要**（`["http://localhost:4575"]` のまま）。送信先はローカルrelay＝その先のClaude Codeはユーザー自身の環境。
+
+### C. 事前チェック（済）
+- code.js / ui.html / relay.js すべて構文OK。**起動時に自動fetchしない**（接続は手動・pollはconnected後のみ）＝前回拒否②（コンソールエラー）の再発なし。
+- 公開バンドル（code.js/ui.html/manifest）に私物データ無し（mothership.json/libraryはバンドル対象外）。
+
+### D. 手順（Figmaデスクトップ）
+1. Figmaデスクトップで **Plugins → Manage plugins**（または対象プラグインの「…」）→ Mothership を選ぶ。
+2. **「Publish new release」**（新しいバージョンを公開）。
+3. リリースノート欄に **A** を貼る。
+4. **データセキュリティの質問で B のとおり Q4 を「送信する」に更新**＋説明文を貼る。
+5. カバー/アイコン/説明文は前回のままでOK（変更不要）。送信。
+6. 審査中は公開ページに黄色バナー（自分だけ表示）＝正常。結果メール待ち。
+7. ※ 再拒否時は具体指摘が付くはず→文面もらって即修正。
+
 ## 3. networkAccess（審査ポイント・判断材料）
 - **現状（2026-06-23 変更）：`allowedDomains: ["http://localhost:4575"]`**。reasoning を「生成本体はネットワーク不要・通信はライブモードのrelayのみ」と EN+JP で明確化（manifest.json）。
 - 旧 `["*"]` はワイルドカードで審査の減点ポイントだったため (a) に縮退。
