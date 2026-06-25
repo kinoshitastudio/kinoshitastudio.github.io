@@ -22,4 +22,29 @@
     window.__setLang(getLang() === 'ja' ? 'en' : 'ja');
   });
   apply(getLang());
+
+  /* ===== ライト / ダーク テーマ ===== */
+  var TKEY = 'ms_site_theme';
+  function getTheme() {
+    try { return localStorage.getItem(TKEY) || (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'); }
+    catch (e) { return 'dark'; }
+  }
+  function applyTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', t === 'light' ? '#f2f0ea' : '#0a0a0b');
+    document.querySelectorAll('[data-themetog]').forEach(function (b) {
+      b.setAttribute('aria-label', t === 'light' ? 'ダークモードへ' : 'ライトモードへ');
+      b.setAttribute('title', t === 'light' ? 'ダークモードへ' : 'ライトモードへ');
+    });
+  }
+  window.__setTheme = function (t) { try { localStorage.setItem(TKEY, t); } catch (e) {} applyTheme(t); };
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('[data-themetog]');
+    if (!b) return;
+    e.preventDefault();
+    var cur = document.documentElement.getAttribute('data-theme') || getTheme();
+    window.__setTheme(cur === 'light' ? 'dark' : 'light');
+  });
+  applyTheme(getTheme());
 })();
