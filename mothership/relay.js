@@ -39,6 +39,7 @@ async function pulledJSON() {
 let navView = "", navV = 0, lastNavPoll = 0;
 // チャット生成中フラグ（パネル↔大きい画面で「考えています」を同期）
 let chatBusy = false, chatBusySince = 0;
+let currentChild = null, aborted = false;   // 実行中プロセスを外（/abort）から止められるよう保持
 
 // 会話ログ（relayが唯一の書き手＝どのタブに移動しても会話が消えない）
 const CHATLOG = path.join(__dirname, "_chat-log.json");
@@ -79,6 +80,14 @@ http.createServer((req, res) => {
   if (u.pathname === "/chat-busy") {
     res.setHeader("Content-Type", "application/json");
     return res.end(JSON.stringify({ busy: chatBusy, since: chatBusySince }));
+  }
+
+  // 実行中のチャット生成（claude / 採取）を停止する
+  if (u.pathname === "/abort" && req.method === "POST") {
+    res.setHeader("Content-Type", "application/json");
+    let killed = false;
+    if (currentChild) { aborted = true; try { currentChild.kill("SIGTERM"); killed = true; } catch (e) {} }
+    return res.end(JSON.stringify({ ok: true, killed: killed }));
   }
 
   // チャット履歴の共有ストア（パネルと大きい画面で会話を継続）
@@ -170,8 +179,9 @@ http.createServer((req, res) => {
       appendLog({ cls: "me", text: display || msg });  // 発言を即サーバー保存（離脱しても残る）
       let done = false, activeChild = null;
       const finish = (obj) => {
-        if (done) return; done = true; chatBusy = false; clearTimeout(timer);
+        if (done) return; done = true; chatBusy = false; clearTimeout(timer); currentChild = null;
         const secs = ((Date.now() - chatBusySince) / 1000).toFixed(1);
+        if (aborted) { aborted = false; appendLog({ cls: "ms", text: "⏹ 停止しました  ·  ⏱" + secs + "s" }); return res.end(JSON.stringify({ ok: false, aborted: true })); }
         // 返信もサーバーが保存（res.end前に書くので、どのタブに移動しても会話が継続する）
         if (obj.ok) appendLog({ cls: "ms", text: (obj.text || "（完了）") + "  ·  ⏱" + secs + "s" });
         else appendLog({ cls: "err", text: (obj.error || "失敗") + (obj.text ? "\n\n" + obj.text : "") });
@@ -184,7 +194,7 @@ http.createServer((req, res) => {
         try {
           child = spawn("claude", ["-p", finalPrompt, "--permission-mode", "acceptEdits"], { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"] });
         } catch (e) { return finish({ ok: false, error: "claude 起動失敗: " + (e && e.message ? e.message : e) }); }
-        activeChild = child;
+        activeChild = child; currentChild = child;
         let out = "", err = "";
         child.stdout.on("data", (d) => (out += d));
         child.stderr.on("data", (d) => (err += d));
@@ -222,6 +232,7 @@ http.createServer((req, res) => {
         let capDone = false;
         const onCap = (ok) => {
           if (capDone) return; capDone = true;
+          if (aborted) return finish({ ok: false, aborted: true });  // 採取中に停止されたらclaudeを起動しない
           const note = ok
             ? "【参照スペック採取済み】" + outRel + " に " + url + " のファーストビュー（算出スタイル付き構造JSON）がある。これを Read して、CLAUDE.md『URLからサイトを再現する』の手順で **そのKV（ファーストビュー）** を mothership.json に再現せよ。画像は元サイトのURLを image.src にそのまま入れてよい（relayが /pull で自動取り込み）。新しい name の新フレームで作り、最後に何をどこに出したか1〜2文で返答。\n\nユーザー依頼: "
             : "（参照URLの自動採取に失敗＝playwright未導入等の可能性。可能な範囲で対応し、無理なら一言添えて。）\n\n";
@@ -231,6 +242,7 @@ http.createServer((req, res) => {
         try {
           cap = spawn("node", [path.join(__dirname, "tools", "url-to-spec.js"), url, "--w", String(w), "--h", String(h), "--out", outRel], { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"] });
         } catch (e) { return onCap(false); }
+        currentChild = cap;  // 採取中も /abort で止められる
         cap.on("error", () => onCap(false));
         cap.on("close", (code) => onCap(code === 0));
         setTimeout(() => { try { cap.kill(); } catch (e) {} onCap(false); }, 90000);

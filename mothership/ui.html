@@ -93,6 +93,9 @@
   .composer button{padding:10px 13px}
   .composer-row{display:flex;gap:7px}
   .composer-row .primary{flex:1}
+  #stopbtn{border-color:#a5564e;color:#e0938b}
+  #stopbtn:hover{background:#a5564e;color:#fff}
+  .msg.q .bd{opacity:.6;font-style:italic}
   .composer .iconbtn{flex:0 0 auto;background:var(--panel);border:1px solid var(--line);color:var(--ink);font-size:14px;padding:9px 12px}
   .composer .iconbtn:hover{border-color:var(--gold)}
   .composer .iconbtn.on{border-color:var(--gold);color:var(--gold)}
@@ -214,6 +217,7 @@
         <div class="composer-row">
           <button class="iconbtn" id="attachbtn" title="画像を添付（ドラッグでもOK）">📎</button>
           <button class="iconbtn" id="imgbtn" title="画像プロンプト生成モード（MJ/DALL·E用のプロンプトを作る）">🎨</button>
+          <button class="iconbtn" id="stopbtn" title="生成を停止" style="display:none">⏹</button>
           <button class="primary" id="csend" data-i18n="send">送信</button>
         </div>
         <input type="file" id="attachinput" accept="image/*" style="display:none">
@@ -433,7 +437,7 @@
     } else if (syncThinkMsg) { if (syncThinkMsg.parentElement) syncThinkMsg.remove(); syncThinkMsg = null; }
   }
   function setLamp(on) { var l = document.getElementById('uselamp'); if (l) l.classList.toggle('on', !!on); }
-  async function pollBusy() { if (!connected) { setLamp(cbusy); return; } try { var b = await (await fetch(relayBase() + '/chat-busy', { cache: 'no-store' })).json(); remoteBusy = !!b.busy; remoteSince = b.since || 0; } catch (e) { remoteBusy = false; } ensureSyncThink(); setLamp(remoteBusy || cbusy); }
+  async function pollBusy() { if (!connected) { setLamp(cbusy); updateStopUI(); return; } try { var b = await (await fetch(relayBase() + '/chat-busy', { cache: 'no-store' })).json(); remoteBusy = !!b.busy; remoteSince = b.since || 0; } catch (e) { remoteBusy = false; } ensureSyncThink(); setLamp(remoteBusy || cbusy); updateStopUI(); }
   function cscroll() { feed.scrollTop = feed.scrollHeight; }
   function labelFor(cls) { return cls === 'me' ? tr('you') : cls === 'err' ? tr('err') : 'Mothership'; }
   function cbubble(who, cls, text, img) {
@@ -447,8 +451,10 @@
   function renderChatLog() {
     Array.prototype.slice.call(feed.querySelectorAll('.msg')).forEach(function (n) { n.remove(); });
     chatLog.forEach(function (e) { cbubble(labelFor(e.cls), e.cls, e.text, e.img); });
-    var h = document.getElementById('hello'); if (h) h.style.display = chatLog.length ? 'none' : '';
+    var h = document.getElementById('hello'); if (h) h.style.display = (chatLog.length || sendQueue.length) ? 'none' : '';
     ensureSyncThink();   // 再描画後に生成中表示を維持
+    // 順番待ちのメッセージ（考え中でも投稿できる＝完了後に自動送信される）
+    sendQueue.forEach(function (q) { var b = cbubble(tr('you'), 'me', '⏳ ' + q.disp, q.img); if (b.parentElement) b.parentElement.classList.add('q'); });
   }
   function logPush(cls, text, img) { chatLog.push({ cls: cls, text: text, img: img || null }); saveChat(); var h = document.getElementById('hello'); if (h) h.style.display = 'none'; return cbubble(labelFor(cls), cls, text, img); }
 
@@ -471,38 +477,49 @@
   chatView.addEventListener('dragleave', function (e) { e.preventDefault(); chatView.classList.remove('dragover'); });
   chatView.addEventListener('drop', function (e) { e.preventDefault(); chatView.classList.remove('dragover'); var f = e.dataTransfer && e.dataTransfer.files[0]; if (f) readImg(f); });
 
-  async function chatSend() {
-    if (cbusy) return;
+  var sendQueue = [];
+  var stopBtn = document.getElementById('stopbtn');
+  function updateStopUI() { if (stopBtn) stopBtn.style.display = (cbusy || remoteBusy) ? '' : 'none'; }
+  // 実際の送信（1度に1件。relayは並走できないのでキューで順番に流す）
+  async function doSend(p) {
+    cbusy = true; updateStopUI(); setLamp(true);
+    cbubble(labelFor('me'), 'me', p.disp, p.img);  // 楽観表示のみ。保存はrelayが行う
+    var t0 = Date.now();
+    var tb = cbubble('Mothership', 'think', '');
+    var isImg = p.disp.indexOf('🎨') === 0;
+    tb.innerHTML = '<span class="loadring"></span>' + (isImg ? '🎨 プロンプトを作成中…' : tr('think')) + '  <span class="secs">0.0s</span>';
+    var secsEl = tb.querySelector('.secs');
+    var ti = setInterval(function () { secsEl.textContent = ((Date.now() - t0) / 1000).toFixed(1) + 's'; }, 100);
+    try {
+      var r = await fetch(relayBase() + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: p.sendMsg, image: p.img || '', display: p.disp }) });
+      var data = await r.json(); clearInterval(ti); if (tb.parentElement) tb.parentElement.remove();
+      var secs = ((Date.now() - t0) / 1000).toFixed(1);
+      if (data.aborted) cbubble('Mothership', 'ms', '⏹ ' + (lang === 'ja' ? '停止しました' : 'Stopped') + '  ·  ⏱' + secs + 's');
+      else if (data.ok) cbubble(labelFor('ms'), 'ms', (data.text || tr('done')) + '  ·  ⏱' + secs + 's');
+      else cbubble(labelFor('err'), 'err', (data.error || tr('fail')) + (data.text ? '\n\n' + data.text : ''));
+    } catch (e) {
+      clearInterval(ti); if (tb.parentElement) tb.parentElement.remove();
+      cbubble(labelFor('err'), 'err', tr('noconn') + '\n' + (e.message || e));
+    }
+    cbusy = false; updateStopUI(); cinput.focus();
+    cscroll(); pollChat();  // relay保存版に即同期
+    if (sendQueue.length) { var nx = sendQueue.shift(); renderChatLog(); doSend(nx); }  // 順番待ちを自動送信
+  }
+  function chatSend() {
     var text = cinput.value.trim();
     if (!text && !pendingImg) return;
     if (!connected) { cbubble(labelFor('err'), 'err', tr('noconn')); cscroll(); return; }  // 未接続ならfetchせず案内
-    cbusy = true; csend.disabled = true; setLamp(true);
-    var img = pendingImg; cinput.value = ''; cinput.style.height = 'auto'; clearPending();
     var useImg = imgMode; if (imgMode) { imgMode = false; imgBtn.classList.remove('on'); cinput.placeholder = tr('ph'); }  // 1回限り
-    var sendMsg = useImg ? (IMG_PREFIX + text) : text;
-    var disp = (useImg ? '🎨 ' : '') + text;
+    var img = pendingImg; clearPending();
+    var payload = { sendMsg: useImg ? (IMG_PREFIX + text) : text, disp: (useImg ? '🎨 ' : '') + text, img: img };
+    cinput.value = ''; cinput.style.height = 'auto';
     var h0 = document.getElementById('hello'); if (h0) h0.style.display = 'none';
-    cbubble(labelFor('me'), 'me', disp, img);  // 楽観表示のみ。会話の保存はrelayが行う（別タブに移動しても消えない）
-    var t0 = Date.now();
-    var tb = cbubble('Mothership', 'think', '');
-    tb.innerHTML = '<span class="loadring"></span>' + (useImg ? '🎨 プロンプトを作成中…' : tr('think')) + '  <span class="secs">0.0s</span>';
-    var secsEl = tb.querySelector('.secs');  // リングは固定、秒数だけ更新（カクつき防止）
-    function tick() { secsEl.textContent = ((Date.now() - t0) / 1000).toFixed(1) + 's'; }
-    var ti = setInterval(tick, 100);
-    try {
-      var r = await fetch(relayBase() + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: sendMsg, image: img || '', display: disp }) });
-      var data = await r.json(); clearInterval(ti); tb.parentElement.remove();
-      var secs = ((Date.now() - t0) / 1000).toFixed(1);
-      var note = connected ? '' : '\n\n⚠ ' + tr('notconn');
-      if (data.ok) cbubble(labelFor('ms'), 'ms', (data.text || tr('done')) + '  ·  ⏱' + secs + 's' + note);  // 楽観表示。直後のpollでrelay保存版に同期
-      else cbubble(labelFor('err'), 'err', (data.error || tr('fail')) + (data.text ? '\n\n' + data.text : ''));
-    } catch (e) {
-      clearInterval(ti); tb.parentElement.remove();
-      cbubble(labelFor('err'), 'err', tr('noconn') + '\n' + (e.message || e));
-    }
-    cbusy = false; csend.disabled = false; cinput.focus();
-    cscroll(); pollChat();  // relay保存版に即同期（楽観表示を正本へ置換）
+    if (cbusy) { sendQueue.push(payload); renderChatLog(); cscroll(); return; }  // 考え中なら順番待ちに積む
+    doSend(payload);
   }
+  // 生成を停止（実行中のclaude/採取をrelayでkill）。順番待ちもクリア
+  async function chatAbort() { sendQueue = []; try { await fetch(relayBase() + '/abort', { method: 'POST' }); } catch (e) {} renderChatLog(); }
+  if (stopBtn) stopBtn.onclick = chatAbort;
   csend.onclick = chatSend;
   cinput.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); chatSend(); } });
   cinput.addEventListener('input', function () { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 110) + 'px'; });
@@ -581,25 +598,28 @@
   // ===== パネル全体の折りたたみ（13インチ等で場所を取らないよう、ヘッダーだけの細いバーに最小化） =====
   (function(){
     var minbtn = document.getElementById('minbtn');
-    var body = document.querySelector('.body');
-    var rz = document.getElementById('resizer');
+    var header = document.querySelector('header');
+    var helpbtn = document.getElementById('helpbtn');
+    var langbtn = document.getElementById('langbtn');
     var collapsed = false;
+    // ヘッダー以外の直下要素を全部隠す（取りこぼし防止）。モーダル等も含めて確実に畳む
+    function siblings(){ return Array.prototype.filter.call(document.body.children, function(el){ return el !== header; }); }
     function setCollapsed(c){
       collapsed = c;
-      if (body) body.style.display = c ? 'none' : '';
-      if (rz) rz.style.display = c ? 'none' : '';
+      siblings().forEach(function(el){ el.style.display = c ? 'none' : ''; });
+      if (helpbtn) helpbtn.style.display = c ? 'none' : '';  // 折りたたみ中は誤爆防止で ?/EN を隠す
+      if (langbtn) langbtn.style.display = c ? 'none' : '';
       minbtn.textContent = c ? '▢' : '—';
       minbtn.title = c ? (lang==='ja'?'展開':'Expand') : (lang==='ja'?'折りたたみ':'Collapse');
       if (c){
         try{ localStorage.setItem('ms_full', JSON.stringify({w:window.innerWidth, h:window.innerHeight})); }catch(e){}
-        var hh = (document.querySelector('header').offsetHeight || 44) + 2;
-        parent.postMessage({pluginMessage:{type:'panelsize', w:Math.max(230, Math.min(window.innerWidth, 320)), h:hh, remember:false}}, '*');
+        var hh = Math.round((header.getBoundingClientRect().height || 44)) + 4;
+        parent.postMessage({pluginMessage:{type:'panelsize', w:Math.max(240, Math.min(window.innerWidth, 340)), h:hh, remember:false}}, '*');
       } else {
         var f = {w:380, h:600};
         try{ var s = JSON.parse(localStorage.getItem('ms_full')); if (s && s.w && s.h) f = s; }catch(e){}
         parent.postMessage({pluginMessage:{type:'panelsize', w:f.w, h:f.h, remember:true}}, '*');
       }
-      try{ localStorage.setItem('ms_collapsed', c?'1':'0'); }catch(e){}
     }
     minbtn.onclick = function(){ setCollapsed(!collapsed); };
   })();
