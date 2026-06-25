@@ -46,6 +46,37 @@ const CHATLOG = path.join(__dirname, "_chat-log.json");
 const readLog = () => { try { const a = JSON.parse(fs.readFileSync(CHATLOG, "utf8")); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
 const appendLog = (entry) => { try { const a = readLog(); a.push(entry); fs.writeFileSync(CHATLOG, JSON.stringify(a.slice(-60))); } catch (e) {} };
 
+// AI整え（B）：構造JSONを渡し「整え操作リスト(JSON配列)だけ」を返させるプロンプト
+const AI_TIDY_PROMPT = `あなたはFigmaレイアウト整理の専門家。渡された「Figmaフレーム構造JSON」を、プロ基準で整える【操作リスト】だけを返す。実際のノード編集はプラグインが行う＝あなたは操作を設計するだけ。
+
+## 整えの方針
+- 8ptグリッド：余白(pad)・間隔(gap)は4の倍数、基本は8の倍数(8/16/24/32…)。
+- 手置きで並んだ要素はオートレイアウト化。2次元（縦積み＋横並びが混在）は【入れ子】に：横に並ぶ行(ボタン群等)は group でまとめ→その後で親を vertical の autolayout にする。**groupは親autolayoutより先に出す**。
+- 背景・装飾（大きく覆う/全幅/全高の要素）は触らない（フロー外＝そのまま）。
+- 既定名（"Frame 12"等）は中身のテキストから意味のある名前へ rename。
+- 削除は明らかなゴミ(非表示/サイズ0)のみ。むやみに消さない。
+
+## 出力（厳守）
+**JSON配列だけ**を返す。前後に説明文・コードフェンス以外の文章を書かない。要素は次のいずれか：
+[
+ {"op":"rename","id":"<入力id>","name":"<新名>"},
+ {"op":"group","ids":["<id>","<id>"],"name":"<名>","mode":"horizontal|vertical","gap":<数>},
+ {"op":"autolayout","id":"<id>","mode":"vertical|horizontal","gap":<数>,"pad":[上,右,下,左],"align":"min|center|max"},
+ {"op":"pad","id":"<id>","pad":[上,右,下,左]},
+ {"op":"unifyFont","family":"<フォント名>"},
+ {"op":"remove","id":"<id>"}
+]
+idは入力のidをそのまま使う。新規groupにidは振らない。整える点が無ければ空配列 []。`;
+
+// claude -p の出力から JSON配列を取り出す（前後の説明やコードフェンスを許容）
+function extractOps(s) {
+  let m = String(s).match(/```(?:json)?\s*([\s\S]*?)```/);
+  let txt = m ? m[1] : String(s);
+  const a = txt.indexOf("["), b = txt.lastIndexOf("]");
+  if (a < 0 || b < 0 || b < a) return null;
+  try { const p = JSON.parse(txt.slice(a, b + 1)); return Array.isArray(p) ? p : null; } catch (e) { return null; }
+}
+
 http.createServer((req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "*");
@@ -88,6 +119,41 @@ http.createServer((req, res) => {
     let killed = false;
     if (currentChild) { aborted = true; try { currentChild.kill("SIGTERM"); killed = true; } catch (e) {} }
     return res.end(JSON.stringify({ ok: true, killed: killed }));
+  }
+
+  // AI整え（B）：選択フレームの構造JSON → claude が「整え操作リスト」を返す（ファイルは編集しない）
+  if (u.pathname === "/ai-tidy" && req.method === "POST") {
+    let b = ""; req.on("data", (d) => (b += d));
+    req.on("end", () => {
+      res.setHeader("Content-Type", "application/json");
+      let structure = null;
+      try { structure = JSON.parse(b).structure; } catch (e) {}
+      if (!structure) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "structureが空です" })); }
+      const prompt = AI_TIDY_PROMPT + "\n\n## 構造JSON\n" + JSON.stringify(structure);
+      chatBusy = true; chatBusySince = Date.now();
+      let done = false;
+      const finish = (obj) => {
+        if (done) return; done = true; chatBusy = false; currentChild = null; clearTimeout(timer);
+        if (aborted) { aborted = false; return res.end(JSON.stringify({ ok: false, aborted: true })); }
+        res.end(JSON.stringify(obj));
+      };
+      let child;
+      try { child = spawn("claude", ["-p", prompt], { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"] }); }
+      catch (e) { return finish({ ok: false, error: "claude起動失敗: " + (e && e.message ? e.message : e) }); }
+      currentChild = child;
+      let out = "", err = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (err += d));
+      child.on("error", (e) => finish({ ok: false, error: "claudeが見つかりません: " + (e && e.message ? e.message : e) }));
+      child.on("close", (code) => {
+        if (code !== 0) return finish({ ok: false, error: "claude失敗: " + err.trim().slice(-300) });
+        const ops = extractOps(out);
+        if (!ops) return finish({ ok: false, error: "操作JSONを取り出せませんでした", raw: out.trim().slice(-300) });
+        finish({ ok: true, ops: ops });
+      });
+      var timer = setTimeout(() => { try { if (currentChild) currentChild.kill(); } catch (e) {} finish({ ok: false, error: "タイムアウト（180s）" }); }, 180000);
+    });
+    return;
   }
 
   // チャット履歴の共有ストア（パネルと大きい画面で会話を継続）

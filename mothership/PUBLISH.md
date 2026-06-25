@@ -88,6 +88,14 @@ qlmanage -t -s 1920 -o . cover.svg && sips -c 960 1920 cover.svg.png --out cover
 
 ---
 
+## ★ 次バージョン（Lint & Fix／AI整え）の再申請メモ（2026-06-25）
+このバージョンで `code.js`/`ui.html` を変更＝**再Publish（再審査）必須**。要点：
+- **追加機能**：Lint & Fix（命名/フォント/ピクセル/不要レイヤー/オートレイアウト化/余白8pt）＝**全てローカル処理・外部送信なし**。＋ チャット停止/順番待ち/折りたたみ。
+- **★データセキュリティ申告の更新が必要（AI整え機能のため）**：新機能「🤖 AIで整える」は **選択フレームの構造（レイヤー種別・名前・座標・サイズ・テキスト・フォント名）を localhost relay 経由で、ユーザー自身の Claude Code（Anthropic API）に送って「整え操作」を計算**する。＝**Figma APIから読んだデータを外部（Anthropic）に送信する**。
+  - よって申告 **Q4（Figma派生データの保存/送信）を「送信する」に更新**：内容＝選択の構造のみ（画像バイナリは送らない）、目的＝整え操作の算出、保存しない、宛先＝ユーザーの Claude Code(Anthropic)。
+  - networkAccess は `localhost:4575` のまま（送信先はあくまでローカルrelay。relayの先のClaude Codeはユーザー環境）。リリースノートに「AI整えはユーザー自身のClaude Codeを使う＝第三者サーバへの送信なし・APIキー不要」と明記。
+- **写真は保持**：AI整えは構造の操作（autolayout/group/rename/pad）を実ノードに適用＝**画像/ベクターはそのまま**（再生成しない）。
+
 ## 3. networkAccess（審査ポイント・判断材料）
 - **現状（2026-06-23 変更）：`allowedDomains: ["http://localhost:4575"]`**。reasoning を「生成本体はネットワーク不要・通信はライブモードのrelayのみ」と EN+JP で明確化（manifest.json）。
 - 旧 `["*"]` はワイルドカードで審査の減点ポイントだったため (a) に縮退。

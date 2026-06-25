@@ -479,11 +479,79 @@ async function applyFixes(ids) {
   }
 }
 
+/* ============================================================
+   AI整え（B）— 選択を読む → relay→Claude が「整え操作」を返す → ボードに適用
+   チャットでなくパネルのボタンで起動。判断系（入れ子オートレイアウト等）を担う。
+   ============================================================ */
+function serForAI(node, depth) {
+  const o = { id: node.id, type: node.type, name: node.name };
+  if (_num(node.x)) { o.x = Math.round(node.x); o.y = Math.round(node.y); }
+  if (_num(node.width)) { o.w = Math.round(node.width); o.h = Math.round(node.height); }
+  if ("layoutMode" in node && node.layoutMode && node.layoutMode !== "NONE") o.autolayout = { mode: node.layoutMode, gap: node.itemSpacing, pad: [node.paddingTop, node.paddingRight, node.paddingBottom, node.paddingLeft] };
+  if (node.type === "TEXT") { o.text = String(node.characters || "").slice(0, 40); if (node.fontName && node.fontName !== figma.mixed) o.font = node.fontName.family; }
+  if (node.children && node.type !== "INSTANCE" && depth < 6) o.children = node.children.filter((c) => c.visible !== false).map((c) => serForAI(c, depth + 1));
+  return o;
+}
+function collectForAI() {
+  const sel = figma.currentPage.selection;
+  if (!sel.length) { figma.ui.postMessage({ type: "ai-structure", error: "フレームを選んでください" }); return; }
+  figma.ui.postMessage({ type: "ai-structure", structure: sel.map((n) => serForAI(n, 0)) });
+}
+async function applyAIOps(ops) {
+  let ok = 0, fail = 0;
+  const get = async (id) => { try { return await figma.getNodeByIdAsync(id); } catch (e) { return null; } };
+  const setPad = (n, p) => { if (Array.isArray(p)) { n.paddingTop = p[0] || 0; n.paddingRight = p[1] || 0; n.paddingBottom = p[2] || 0; n.paddingLeft = p[3] || 0; } };
+  const ALIGN = { min: "MIN", center: "CENTER", max: "MAX" };
+  try {
+    for (const op of (ops || [])) {
+      try {
+        if (op.op === "rename") { const n = await get(op.id); if (n && !n.removed) n.name = String(op.name || n.name); }
+        else if (op.op === "remove") { const n = await get(op.id); if (n && !n.removed) n.remove(); }
+        else if (op.op === "pad") { const n = await get(op.id); if (n && "layoutMode" in n && n.layoutMode !== "NONE") setPad(n, op.pad); }
+        else if (op.op === "autolayout") {
+          const n = await get(op.id); if (!n || n.removed || !("layoutMode" in n)) continue;
+          n.layoutMode = op.mode === "horizontal" ? "HORIZONTAL" : "VERTICAL";
+          if (_num(op.gap)) n.itemSpacing = op.gap;
+          if (op.pad) setPad(n, op.pad);
+          n.primaryAxisSizingMode = "FIXED"; n.counterAxisSizingMode = "FIXED";
+          if (op.align && ALIGN[op.align]) n.counterAxisAlignItems = ALIGN[op.align];
+        } else if (op.op === "unifyFont") {
+          for (const root of figma.currentPage.selection) {
+            const stack = [root];
+            while (stack.length) { const x = stack.pop(); if (x.type === "TEXT" && x.fontName && x.fontName !== figma.mixed && x.fontName.family !== op.family) { try { x.fontName = await ensureFontStyle(op.family, x.fontName.style); } catch (e) {} } if (x.children && x.type !== "INSTANCE") stack.push.apply(stack, x.children); }
+          }
+        } else if (op.op === "group") {
+          const nodes = [];
+          for (const id of (op.ids || [])) { const n = await get(id); if (n && !n.removed) nodes.push(n); }
+          if (nodes.length < 2) continue;
+          const parent = nodes[0].parent; if (!parent) continue;
+          const horiz = op.mode !== "vertical";
+          const f = figma.createFrame(); f.name = String(op.name || "Group"); f.fills = []; f.clipsContent = false;
+          const minX = Math.min.apply(null, nodes.map((n) => n.x)), minY = Math.min.apply(null, nodes.map((n) => n.y));
+          const maxX = Math.max.apply(null, nodes.map((n) => n.x + n.width)), maxY = Math.max.apply(null, nodes.map((n) => n.y + n.height));
+          parent.appendChild(f); f.x = minX; f.y = minY; f.resize(Math.max(1, maxX - minX), Math.max(1, maxY - minY));
+          nodes.sort((a, b) => horiz ? a.x - b.x : a.y - b.y);
+          for (const n of nodes) f.appendChild(n);
+          f.layoutMode = horiz ? "HORIZONTAL" : "VERTICAL";
+          if (_num(op.gap)) f.itemSpacing = op.gap;
+          f.primaryAxisSizingMode = "AUTO"; f.counterAxisSizingMode = "AUTO";
+        }
+        ok++;
+      } catch (e) { fail++; }
+    }
+  } finally {
+    figma.ui.postMessage({ type: "ai-done", ok: ok, fail: fail });
+    figma.notify("AI整え：" + ok + " 操作" + (fail ? ("／失敗 " + fail) : ""));
+  }
+}
+
 figma.ui.onmessage = async (msg) => {
   if (msg.type === "generate") await generate(msg.json, true);
   else if (msg.type === "live") await generate(msg.json, false);
   else if (msg.type === "lint") await runLint();
   else if (msg.type === "fix") await applyFixes(msg.ids);
+  else if (msg.type === "ai-collect") collectForAI();
+  else if (msg.type === "ai-apply") await applyAIOps(msg.ops);
   else if (msg.type === "reveal") {  // パネルの行クリック→該当レイヤーをFigmaで選択＋ズーム
     const f = _lintFix[msg.id];
     if (f && f.node && !f.node.removed) {
