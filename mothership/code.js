@@ -483,13 +483,26 @@ async function applyFixes(ids) {
    AI整え（B）— 選択を読む → relay→Claude が「整え操作」を返す → ボードに適用
    チャットでなくパネルのボタンで起動。判断系（入れ子オートレイアウト等）を担う。
    ============================================================ */
+// RGB(0-1)→#RRGGBB。AIが現在の色を把握して整合性ある配色変更をするため
+function _rgbToHex(c) { const h = (v) => ("0" + Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16)).slice(-2); return "#" + h(c.r) + h(c.g) + h(c.b); }
+// ノードの代表的な塗り：solid=hex / image=写真(触らない) / gradient
+function nodeFill(node) {
+  if (!("fills" in node) || !Array.isArray(node.fills) || !node.fills.length) return null;
+  const f = node.fills.filter((x) => x.visible !== false).pop() || node.fills[node.fills.length - 1];
+  if (!f) return null;
+  if (f.type === "SOLID") return _rgbToHex(f.color);
+  if (f.type === "IMAGE") return "image";
+  if (f.type && f.type.indexOf("GRADIENT") === 0) return "gradient";
+  return null;
+}
 function serForAI(node, depth) {
   const o = { id: node.id, type: node.type, name: node.name };
   if (_num(node.x)) { o.x = Math.round(node.x); o.y = Math.round(node.y); }
   if (_num(node.width)) { o.w = Math.round(node.width); o.h = Math.round(node.height); }
   if ("layoutMode" in node && node.layoutMode && node.layoutMode !== "NONE") o.autolayout = { mode: node.layoutMode, gap: node.itemSpacing, pad: [node.paddingTop, node.paddingRight, node.paddingBottom, node.paddingLeft] };
+  const fl = nodeFill(node); if (fl) o.fill = fl;   // ★現在の色（hex/image/gradient）＝AIが色を認識して整合的に変更できる
   if (node.type === "TEXT") { o.text = String(node.characters || "").slice(0, 40); if (node.fontName && node.fontName !== figma.mixed) o.font = node.fontName.family; }
-  if (node.children && node.type !== "INSTANCE" && depth < 6) o.children = node.children.filter((c) => c.visible !== false).map((c) => serForAI(c, depth + 1));
+  if (node.children && node.type !== "INSTANCE" && depth < 8) o.children = node.children.filter((c) => c.visible !== false).map((c) => serForAI(c, depth + 1));
   return o;
 }
 function collectForAI() {
