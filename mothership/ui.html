@@ -498,15 +498,29 @@
   var stopBtn = document.getElementById('stopbtn');
   function updateStopUI() { if (stopBtn) stopBtn.style.display = (cbusy || remoteBusy) ? '' : 'none'; }
   // 実際の送信（1度に1件。relayは並走できないのでキューで順番に流す）
+  // 経過時間で「今やっていること」を切り替える（残り時間は取れないので段階メッセージで待ち体験を改善）
+  function phaseFor(s, isImg) {
+    var JA = isImg
+      ? [[0,'🎨 プロンプトを作成中…'],[20,'🎨 配色や雰囲気を読み取っています…'],[45,'🎨 仕上げています…']]
+      : [[0,'考え中…'],[12,'内容を読み解いています…'],[28,'構成を考えています…'],[48,'デザインを組み立てています…'],[78,'細部を整えています…'],[115,'もう少しで完成です…'],[165,'大きめの生成中です。もう少しお待ちください…']];
+    var EN = isImg
+      ? [[0,'🎨 Writing the prompt…'],[20,'🎨 Reading the palette & mood…'],[45,'🎨 Finishing up…']]
+      : [[0,'Thinking…'],[12,'Reading the request…'],[28,'Planning the structure…'],[48,'Building the design…'],[78,'Refining details…'],[115,'Almost done…'],[165,'Large generation — hang tight…']];
+    var arr = (lang === 'ja') ? JA : EN, m = arr[0][1];
+    for (var i = 0; i < arr.length; i++) { if (s >= arr[i][0]) m = arr[i][1]; }
+    return m;
+  }
   async function doSend(p) {
     cbusy = true; updateStopUI(); setLamp(true);
     cbubble(labelFor('me'), 'me', p.disp, p.img);  // 楽観表示のみ。保存はrelayが行う
     var t0 = Date.now();
     var tb = cbubble('Mothership', 'think', '');
     var isImg = p.disp.indexOf('🎨') === 0;
-    tb.innerHTML = '<span class="loadring"></span>' + (isImg ? '🎨 プロンプトを作成中…' : tr('think')) + '  <span class="secs">0.0s</span>';
-    var secsEl = tb.querySelector('.secs');
-    var ti = setInterval(function () { secsEl.textContent = ((Date.now() - t0) / 1000).toFixed(1) + 's'; }, 100);
+    tb.innerHTML = '<span class="loadring"></span><span class="ph"></span>  <span class="secs">0.0s</span>';
+    var secsEl = tb.querySelector('.secs'), phEl = tb.querySelector('.ph');
+    function upd() { var s = (Date.now() - t0) / 1000; secsEl.textContent = s.toFixed(1) + 's'; phEl.textContent = phaseFor(s, isImg); }
+    upd();
+    var ti = setInterval(upd, 200);
     try {
       var r = await fetch(relayBase() + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: p.sendMsg, image: p.img || '', display: p.disp }) });
       var data = await r.json(); clearInterval(ti); if (tb.parentElement) tb.parentElement.remove();
