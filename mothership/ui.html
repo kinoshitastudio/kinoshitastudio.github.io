@@ -181,6 +181,7 @@
 </head>
 <body>
   <header>
+    <button class="langbtn" id="themebtn" style="right:114px;padding:4px 9px" title="テーマ切替">◐</button>
     <button class="langbtn" id="minbtn" style="right:80px;padding:4px 9px" title="折りたたみ">—</button>
     <button class="langbtn" id="helpbtn" style="right:46px;padding:4px 9px" title="使い方">?</button>
     <button class="langbtn" id="langbtn">EN</button>
@@ -336,6 +337,7 @@
     var ci = document.getElementById('cinput'); if (ci) ci.placeholder = tr('ph');
     var cb = document.getElementById('connect'); if (cb) cb.textContent = connected ? tr('disconnect') : tr('connect');
     if (!connected) { var s = document.getElementById('status'); if (s) s.textContent = tr('off'); }
+    if (window._reapplyTheme) window._reapplyTheme();  // テーマボタンのツールチップを言語に合わせる
     document.documentElement.lang = lang;
   }
   function toggleLang() { lang = (lang === 'ja') ? 'en' : 'ja'; try { localStorage.setItem('ms_lang', lang); } catch (e) {} applyLang(); }
@@ -589,20 +591,40 @@
     });
   })();
 
-  // ===== 右下ハンドルでパネルをリサイズ（幅・高さ。サイズはcode.js側で記憶） =====
+  // ===== テーマ切替（◐ボタンで 標準→mono→cream→ink を循環・localStorage保存） =====
+  (function(){
+    var THEMES = ['', 'mono', 'cream', 'ink'];
+    var NAMES = { '':{ja:'標準',en:'Default'}, mono:{ja:'モノ',en:'Mono'}, cream:{ja:'クリーム',en:'Cream'}, ink:{ja:'インク',en:'Ink'} };
+    var tb = document.getElementById('themebtn');
+    var cur = ''; try{ cur = localStorage.getItem('ms_theme') || ''; }catch(e){}
+    function apply(t){
+      if (t) document.body.setAttribute('data-theme', t); else document.body.removeAttribute('data-theme');
+      if (tb) tb.title = (lang==='ja'?'テーマ: ':'Theme: ') + (NAMES[t] ? NAMES[t][lang] : t);
+    }
+    if (THEMES.indexOf(cur) < 0) cur = '';
+    apply(cur);
+    if (tb) tb.onclick = function(){ cur = THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length]; try{ localStorage.setItem('ms_theme', cur); }catch(e){} apply(cur); };
+    window._reapplyTheme = function(){ apply(cur); };  // 言語切替時にツールチップを更新
+  })();
+
+  // ===== 右下ハンドルでパネルをリサイズ（rAFで間引き＝カクつき防止／クランプ／座標はscreen基準で安定） =====
   (function(){
     var rz=document.getElementById('resizer');
     if(!rz) return;
+    function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
     rz.addEventListener('pointerdown', function(e){
       e.preventDefault();
-      try{ rz.setPointerCapture(e.pointerId); }catch(_){}   // iframeの外にドラッグしてもイベントを受け続ける（必須）
+      try{ rz.setPointerCapture(e.pointerId); }catch(_){}   // iframe外へドラッグしてもイベントを受け続ける（必須）
       var sw=window.innerWidth, sh=window.innerHeight, sx=e.screenX, sy=e.screenY;
+      var pendW=sw, pendH=sh, lastW=sw, lastH=sh, raf=0;
+      function flush(){ raf=0; if(pendW!==lastW||pendH!==lastH){ lastW=pendW; lastH=pendH; parent.postMessage({pluginMessage:{type:'resize', w:pendW, h:pendH}},'*'); } }
       function mv(ev){
-        var w=sw+(ev.screenX-sx), h=sh+(ev.screenY-sy);  // screen座標基準＝iframeリサイズ中もブレない
-        parent.postMessage({pluginMessage:{type:'resize', w:Math.round(w), h:Math.round(h)}},'*');
+        pendW=clamp(Math.round(sw+(ev.screenX-sx)),300,1400);   // screen基準＝iframeが伸びてもブレない
+        pendH=clamp(Math.round(sh+(ev.screenY-sy)),360,1600);
+        if(!raf) raf=requestAnimationFrame(flush);              // 1フレーム1回に間引く＝resize氾濫を防ぐ
       }
-      function up(){ try{ rz.releasePointerCapture(e.pointerId); }catch(_){} rz.removeEventListener('pointermove',mv); rz.removeEventListener('pointerup',up); }
-      rz.addEventListener('pointermove',mv); rz.addEventListener('pointerup',up);
+      function up(){ if(raf){ cancelAnimationFrame(raf); flush(); } try{ rz.releasePointerCapture(e.pointerId); }catch(_){} rz.removeEventListener('pointermove',mv); rz.removeEventListener('pointerup',up); rz.removeEventListener('pointercancel',up); }
+      rz.addEventListener('pointermove',mv); rz.addEventListener('pointerup',up); rz.addEventListener('pointercancel',up);
     });
   })();
 
@@ -618,8 +640,9 @@
     function setCollapsed(c){
       collapsed = c;
       siblings().forEach(function(el){ el.style.display = c ? 'none' : ''; });
-      if (helpbtn) helpbtn.style.display = c ? 'none' : '';  // 折りたたみ中は誤爆防止で ?/EN を隠す
+      if (helpbtn) helpbtn.style.display = c ? 'none' : '';  // 折りたたみ中は誤爆防止で ?/EN/テーマ を隠す
       if (langbtn) langbtn.style.display = c ? 'none' : '';
+      var tb = document.getElementById('themebtn'); if (tb) tb.style.display = c ? 'none' : '';
       minbtn.textContent = c ? '▢' : '—';
       minbtn.title = c ? (lang==='ja'?'展開':'Expand') : (lang==='ja'?'折りたたみ':'Collapse');
       if (c){
