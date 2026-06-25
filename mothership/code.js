@@ -34,6 +34,16 @@ async function ensureFont(family, weight) {
   if (await _tryLoad("Inter", "Regular")) return { family: "Inter", style: "Regular" };
   return { family, style: "Regular" };
 }
+// 既存テキストのスタイル名(例 "Semi Bold")を保ったまま別ファミリへ寄せる（Lint のフォント統一用）
+async function ensureFontStyle(family, style) {
+  if (await _tryLoad(family, style)) return { family, style };
+  for (const fb of (STYLE_FALLBACKS[style] || ["Regular"])) {
+    if (await _tryLoad(family, fb)) return { family, style: fb };
+  }
+  if (await _tryLoad(family, "Regular")) return { family, style: "Regular" };
+  await _tryLoad("Inter", "Regular");
+  return { family: "Inter", style: "Regular" };
+}
 
 /* ---------- 色 / トークン / ペイント ---------- */
 function hexToRGB(hex) {
@@ -295,14 +305,138 @@ async function generate(jsonStr, zoom) {
   }
 }
 
+/* ============================================================
+   Lint & Fix — 選択（無ければページ全体）を読んで崩れを検知→一括修正
+   ローカル規則のみ（Figma外へ一切送らない）。selection/SceneTree の読み書きは
+   通常プラグインAPIの正当範囲。Mothership製でないフレームも対象にできる。
+   ============================================================ */
+const DEFAULT_NAME = /^(Frame|Group|Rectangle|Ellipse|Line|Polygon|Star|Vector|Component|Slice|Section|Image)(\s\d+)?$/;
+let _lintFix = {};  // findingId -> {nodeId, action, data}
+
+// 走査：選択配下を平らに集める。インスタンス内部は主コンポ依存なので降りない
+function lintWalk(node, out) {
+  out.push(node);
+  if (node.type === "INSTANCE") return;
+  for (const c of (node.children || [])) lintWalk(c, out);
+}
+// コンテナ命名用：最初のテキスト内容を拾う
+function firstText(node) {
+  if (node.type === "TEXT" && node.characters) return node.characters;
+  for (const c of (node.children || [])) { if (c.type === "INSTANCE") continue; const t = firstText(c); if (t) return t; }
+  return null;
+}
+function cleanName(s) { s = String(s).replace(/\s+/g, " ").trim(); return s.length > 40 ? s.slice(0, 40) + "…" : s; }
+// オートレイアウト配下（絶対配置でない）＝x/yはレイアウト管理なので触らない
+function inAutoLayout(n) {
+  return n.parent && "layoutMode" in n.parent && n.parent.layoutMode !== "NONE" && n.layoutPositioning !== "ABSOLUTE";
+}
+
+async function runLint() {
+  const sel = figma.currentPage.selection;
+  const roots = sel.length ? sel.slice() : figma.currentPage.children.slice();
+  const all = [];
+  for (const r of roots) lintWalk(r, all);
+
+  // フォント分布（最多ファミリを基準＝dominant）
+  const fam = {};
+  for (const n of all) if (n.type === "TEXT" && n.fontName && n.fontName !== figma.mixed) fam[n.fontName.family] = (fam[n.fontName.family] || 0) + 1;
+  let dom = null, domc = -1;
+  for (const f in fam) if (fam[f] > domc) { dom = f; domc = fam[f]; }
+  const multiFam = Object.keys(fam).length > 1;
+
+  _lintFix = {};
+  let idn = 0;
+  const findings = [];
+  const r1 = (v) => Math.round(v * 10) / 10;  // 表示用に小数1桁
+  // ノード参照を直接保持（documentAccess:"dynamic-page" では同期 getNodeById が使えないため）
+  const add = (cat, sev, msg, node, action, data, detail) => {
+    const fid = "f" + (idn++);
+    _lintFix[fid] = { node, action: action || null, data: data || null };
+    findings.push({ id: fid, cat, sev, msg, node: node.name, fixable: !!action, detail: detail || "" });
+  };
+
+  for (const n of all) {
+    const w = ("width" in n) ? n.width : null, h = ("height" in n) ? n.height : null;
+    // 1) 不要レイヤー（非表示／不透明度0／サイズ0の残骸）
+    if (n.visible === false) { add("cruft", "low", "非表示レイヤー", n, "remove", null, "削除される"); continue; }
+    if ("opacity" in n && n.opacity === 0) { add("cruft", "low", "不透明度0のレイヤー", n, "remove", null, "削除される"); continue; }
+    if (w === 0 || h === 0) { add("cruft", "low", "サイズ0のレイヤー", n, "remove", null, "削除される"); continue; }
+    // 2) サブピクセルのずれ（整数スナップ）— 何がどう変わるかを before→after で示す
+    const sub = (v) => v != null && Math.abs(v - Math.round(v)) > 0.01;
+    const auto = inAutoLayout(n);
+    const parts = [];
+    if (!auto) { if (sub(n.x)) parts.push("x " + r1(n.x) + "→" + Math.round(n.x)); if (sub(n.y)) parts.push("y " + r1(n.y) + "→" + Math.round(n.y)); }
+    if (sub(w)) parts.push("W " + r1(w) + "→" + Math.round(w)); if (sub(h)) parts.push("H " + r1(h) + "→" + Math.round(h));
+    if (parts.length) add("snap", "low", "サブピクセルのずれ", n, "snap", null, parts.join("  "));
+    // 3) 既定の名前（コンテナは中身のテキストから命名／それ以外は指摘のみ）
+    if (DEFAULT_NAME.test(n.name)) {
+      if (n.type === "FRAME" || n.type === "GROUP" || n.type === "SECTION" || n.type === "COMPONENT") {
+        const t = firstText(n);
+        if (t) add("name", "med", "既定の名前", n, "rename", { newName: cleanName(t) }, "→「" + cleanName(t) + "」");
+        else add("name", "low", "既定の名前（中身にテキスト無し）", n, null, null, "手動で命名");
+      } else {
+        add("name", "low", "既定の名前", n, null, null, "手動で命名");
+      }
+    }
+    // 4) フォント揺れ（最多ファミリへ統一・スタイルは保持）
+    if (multiFam && n.type === "TEXT" && n.fontName && n.fontName !== figma.mixed && n.fontName.family !== dom) {
+      add("font", "med", "フォント揺れ", n, "unifyFont", { family: dom }, "「" + n.fontName.family + "」→「" + dom + "」");
+    }
+  }
+  figma.ui.postMessage({ type: "lint-result", findings, summary: { nodes: all.length, scope: sel.length ? "selection" : "page", dominant: dom } });
+}
+
+async function applyFixes(ids) {
+  let ok = 0, failN = 0;
+  try {
+    for (const fid of (ids || [])) {
+      const f = _lintFix[fid];
+      if (!f || !f.action) continue;
+      const n = f.node;                      // 参照を直接保持済み
+      if (!n || n.removed) continue;
+      try {
+        if (f.action === "remove") n.remove();
+        else if (f.action === "rename") n.name = f.data.newName;
+        else if (f.action === "snap") {
+          if (!inAutoLayout(n)) { if (typeof n.x === "number") n.x = Math.round(n.x); if (typeof n.y === "number") n.y = Math.round(n.y); }
+          if ("resize" in n && typeof n.width === "number") n.resize(Math.round(n.width), Math.round(n.height));
+        } else if (f.action === "unifyFont") {
+          if (n.type === "TEXT" && n.fontName && n.fontName !== figma.mixed) n.fontName = await ensureFontStyle(f.data.family, n.fontName.style);
+        }
+        ok++;
+      } catch (e) { failN++; }              // 1件の失敗で全体を止めない
+    }
+  } catch (e) {
+    figma.notify("修正でエラー: " + (e && e.message ? e.message : e));
+  } finally {
+    // 何が起きても必ず UI を解放する（残りを再スキャンして返す＋完了通知）
+    try { await runLint(); } catch (e) { figma.ui.postMessage({ type: "lint-result", findings: [], summary: { nodes: 0, scope: "error" } }); }
+    figma.ui.postMessage({ type: "fix-done", ok, fail: failN });
+    figma.notify("整えました：" + ok + " 件" + (failN ? ("／失敗 " + failN) : ""));
+  }
+}
+
 figma.ui.onmessage = async (msg) => {
   if (msg.type === "generate") await generate(msg.json, true);
   else if (msg.type === "live") await generate(msg.json, false);
+  else if (msg.type === "lint") await runLint();
+  else if (msg.type === "fix") await applyFixes(msg.ids);
+  else if (msg.type === "reveal") {  // パネルの行クリック→該当レイヤーをFigmaで選択＋ズーム
+    const f = _lintFix[msg.id];
+    if (f && f.node && !f.node.removed) {
+      try { figma.currentPage.selection = [f.node]; figma.viewport.scrollAndZoomIntoView([f.node]); } catch (e) {}
+    }
+  }
   else if (msg.type === "open" && msg.url) figma.openExternal(msg.url);
   else if (msg.type === "resize") {
     const w = Math.max(300, Math.min(1400, Math.round(msg.w || 380)));
     const h = Math.max(360, Math.min(1600, Math.round(msg.h || 600)));
     figma.ui.resize(w, h);
     figma.clientStorage.setAsync("ms_size", { w: w, h: h });  // 次回起動時に復元
+  } else if (msg.type === "panelsize") {  // 折りたたみ用：最小高さ制限を回さず小さくできる
+    const w = Math.max(200, Math.min(1400, Math.round(msg.w || 380)));
+    const h = Math.max(40, Math.min(1600, Math.round(msg.h || 600)));
+    figma.ui.resize(w, h);
+    if (msg.remember) figma.clientStorage.setAsync("ms_size", { w: w, h: h });
   }
 };
