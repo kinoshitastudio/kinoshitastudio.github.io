@@ -85,6 +85,11 @@
         <div class="lang-toggle" role="group" aria-label="language">
           <button type="button" data-lang="ja" class="on">JA</button><span>/</span><button type="button" data-lang="en">EN</button>
         </div>
+        <button class="sndtoggle" id="sndToggle" aria-label="効果音のオン・オフ" aria-pressed="true" title="効果音 ON / OFF">
+          <svg class="ic-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor" stroke="none"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8 8 0 0 1 0 12"/></svg>
+          <svg class="ic-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor" stroke="none"/><path d="M16 9l5 5M21 9l-5 5"/></svg>
+          <span class="snd-label mono">sound</span>
+        </button>
       </div>
       <div class="mh-col">
         <h3>explore</h3>
@@ -114,7 +119,11 @@
       </div>
       <!-- 右端グラフィック：OtOの「画面」モチーフ（黒べた＋白線・波形＋ピアノロールが重なる） -->
       <div class="mh-col mh-gfx">
-        <img src="assets/oto-big.png" alt="OtO" class="oto-big">
+        <div class="oto-spin" role="img" aria-label="OtO">
+          <img class="op op-l" src="assets/oto-part-left-o.png" alt="" aria-hidden="true">
+          <img class="op op-t" src="assets/oto-part-mid-t.png" alt="" aria-hidden="true">
+          <img class="op op-r" src="assets/oto-part-right-o.png" alt="" aria-hidden="true">
+        </div>
       </div>
     </div>
   </header>
@@ -442,6 +451,56 @@
   document.addEventListener('keydown',function(e){ if(e.key==='Escape') set(false); });
 })();
 
+// ===== 効果音エンジン（Web Audio・初回操作で起動・スピーカーでON/OFF） =====
+var OtoAudio=(function(){
+  var ctx=null, master=null, muted=false;
+  try{ muted = localStorage.getItem('oto_muted')==='1'; }catch(e){}
+  function ensure(){
+    if(ctx) return;
+    try{
+      var AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
+      ctx=new AC(); master=ctx.createGain(); master.gain.value=0.30; master.connect(ctx.destination);
+    }catch(e){}
+  }
+  function arm(){ if(muted) return; ensure(); if(ctx&&ctx.state==='suspended'){ ctx.resume(); } }
+  function ready(){ return !muted && ctx && ctx.state==='running'; }
+  function note(o){
+    if(!ready()) return; o=o||{};
+    var t=ctx.currentTime, dur=o.dur||0.25, f=o.freq||440;
+    var osc=ctx.createOscillator(), g=ctx.createGain();
+    osc.type=o.type||'sine'; osc.frequency.setValueAtTime(f,t);
+    if(o.glide){ osc.frequency.exponentialRampToValueAtTime(Math.max(20,f*o.glide), t+dur); }
+    var peak=Math.max(0.02,Math.min(0.9,o.gain||0.3));
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.exponentialRampToValueAtTime(peak,t+0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    osc.connect(g); g.connect(master); osc.start(t); osc.stop(t+dur+0.03);
+    if(o.bell){ // ベル/音叉：軽い倍音を重ねる
+      var o2=ctx.createOscillator(), g2=ctx.createGain();
+      o2.type='sine'; o2.frequency.setValueAtTime(f*2.01,t);
+      g2.gain.setValueAtTime(0.0001,t); g2.gain.exponentialRampToValueAtTime(peak*0.42,t+0.006);
+      g2.gain.exponentialRampToValueAtTime(0.0001,t+dur*1.5);
+      o2.connect(g2); g2.connect(master); o2.start(t); o2.stop(t+dur*1.5+0.03);
+    }
+  }
+  function setMuted(m){ muted=!!m; try{ localStorage.setItem('oto_muted', muted?'1':'0'); }catch(e){} if(!muted) arm(); }
+  function isMuted(){ return muted; }
+  ['pointerdown','keydown','touchstart','click'].forEach(function(ev){ window.addEventListener(ev, arm, {passive:true}); });
+  // スピーカーボタン連動
+  var btn=document.getElementById('sndToggle');
+  if(btn){
+    if(muted) btn.classList.add('muted');
+    btn.setAttribute('aria-pressed', muted?'false':'true');
+    btn.addEventListener('click', function(e){
+      e.stopPropagation();
+      setMuted(!muted);
+      btn.classList.toggle('muted', muted);
+      btn.setAttribute('aria-pressed', muted?'false':'true');
+    });
+  }
+  return {arm:arm, ready:ready, note:note, isMuted:isMuted};
+})();
+
 // ===== ピンボール：メニューのアイコン（●▶■）を白背景内で回転しながら跳ね回らせる =====
 (function(){
   var fold=document.querySelector('.fold');
@@ -451,25 +510,50 @@
   var icons=[].slice.call(document.querySelectorAll('.mh-ico svg'));
   if(!icons.length) return;
   // 跳ね回る範囲：白い領域の上端〜黒ヘッダー画像の上端
-  var minX=0,maxX=0,minY=0,maxY=0;
+  var minX=0,maxX=0,minY=0,maxY=0, obstacles=[], NOW=0;
   function measure(){
     var fr=fold.getBoundingClientRect();
     maxX=fr.width;
     minX=0; minY=0;
     maxY = split ? (split.getBoundingClientRect().top - fr.top) : fr.height;
     if(maxY<60) maxY=fr.height;
+    // 右上のOtO 3オブジェクトを障害物（円で近似）として登録。配置%から算出＝回転しても不変
+    obstacles=[];
+    var cont=document.querySelector('.oto-spin');
+    if(cont){
+      var rc=cont.getBoundingClientRect();
+      var ox=rc.left-fr.left, oy=rc.top-fr.top, W=rc.width, Hc=rc.height;
+      obstacles.push({cx:ox+W*0.202565, cy:oy+W*0.37835/2, r:W*0.37835/2*0.97, role:'o',    el:document.querySelector('.op-l'), snd:0});
+      obstacles.push({cx:ox+W*0.796870, cy:oy+W*0.37946/2, r:W*0.37946/2*0.97, role:'o',    el:document.querySelector('.op-r'), snd:0});
+      var fw=W*0.17299, fh=fw*(333/155);
+      obstacles.push({cx:ox+W*0.503900, cy:oy+Hc*0.03989+fh/2, r:fw*0.5*0.92, role:'fork', el:document.querySelector('.op-t'), snd:0});
+    }
   }
   function rand(a,b){ return a+Math.random()*(b-a); }
   measure();
+  // OtOの世界観：Y=音程。上ほど高い音（ペンタトニックで心地よく）
+  var SCALE=[261.63,293.66,329.63,392.00,440.00,523.25,587.33,659.25];
+  function pitchFromY(cy){
+    var f=1-Math.max(0,Math.min(1,cy/(maxY||1)));
+    return SCALE[Math.round(f*(SCALE.length-1))];
+  }
+  function playRole(role, cy, imp){
+    var freq=pitchFromY(cy), g=Math.min(0.5, 0.12+imp*0.0016);
+    if(role==='triangle') OtoAudio.note({type:'triangle',freq:freq,dur:0.18,gain:g});          // ▶ アタック
+    else if(role==='square') OtoAudio.note({type:'square',freq:freq*0.5,dur:0.12,gain:g*0.8});  // ■ 打撃
+    else OtoAudio.note({type:'sine',freq:freq,dur:0.28,gain:g});                                 // ● 丸い音
+  }
   var balls=icons.map(function(svg,i){
     svg.classList.add('fly');
     var isTri=!!svg.querySelector('path');
+    var isSq=!isTri && !!svg.querySelector('rect');
+    var role=isTri?'triangle':(isSq?'square':'circle');
     var w=isTri?42:30, h=isTri?36:26;
     svg.style.width=w+'px'; svg.style.height=h+'px';
     var r=Math.min(w,h)/2*0.92;
     var dir=rand(0,Math.PI*2), spd=rand(80,130);
     return {
-      el:svg, w:w, h:h, r:r,
+      el:svg, w:w, h:h, r:r, role:role, snd:0,
       x:rand(minX,Math.max(minX+1,maxX-w)),
       y:rand(minY,Math.max(minY+1,maxY-h)),
       vx:Math.cos(dir)*spd, vy:Math.sin(dir)*spd,
@@ -498,23 +582,66 @@
             b.vx-=rel*nx; b.vy-=rel*ny;
             // 当たった勢いで回転にも変化を
             a.va=-a.va; b.va=-b.va;
+            // それぞれの役割で違う音（Y=音程・当たりの強さ=音量）
+            if(OtoAudio.ready()){
+              var imp=-rel;
+              if(NOW-a.snd>55){ a.snd=NOW; playRole(a.role, acy, imp); }
+              if(NOW-b.snd>55){ b.snd=NOW; playRole(b.role, bcy, imp); }
+            }
           }
         }
       }
     }
   }
+  // 小さいオブジェクトが右上のOtOロゴに当たる → はじかれる＋役割音
+  function hitObstacles(b){
+    if(!obstacles.length) return;
+    var bcx=b.x+b.w/2, bcy=b.y+b.h/2;
+    for(var i=0;i<obstacles.length;i++){
+      var o=obstacles[i];
+      var dx=bcx-o.cx, dy=bcy-o.cy;
+      var dist=Math.sqrt(dx*dx+dy*dy)||0.0001;
+      var minD=o.r+b.r;
+      if(dist<minD){
+        var nx=dx/dist, ny=dy/dist, overlap=minD-dist;
+        b.x+=nx*overlap; b.y+=ny*overlap; bcx=b.x+b.w/2; bcy=b.y+b.h/2;
+        var rel=b.vx*nx+b.vy*ny;
+        if(rel<0){
+          b.vx-=2*rel*nx; b.vy-=2*rel*ny;   // 静止した重い障害物で反射（はじかれる）
+          b.va=-b.va;
+          if(OtoAudio.ready() && NOW-o.snd>70){
+            o.snd=NOW;
+            var sp=Math.sqrt(b.vx*b.vx+b.vy*b.vy), gg=Math.min(0.5,0.16+sp*0.0013);
+            if(o.role==='fork') OtoAudio.note({type:'triangle',freq:pitchFromY(o.cy),dur:0.55,gain:gg,bell:true}); // 音叉＝ベル
+            else OtoAudio.note({type:'sine',freq:pitchFromY(o.cy),dur:0.42,gain:gg,bell:true});                     // O＝丸い鐘
+          }
+        }
+      }
+    }
+  }
+  // 壁に当たった音（各シェイプの役割音・少し弱め）
+  function wallTick(b, sp){
+    if(!OtoAudio.ready() || NOW-b.snd<=55) return; b.snd=NOW;
+    playRole(b.role, b.y+b.h/2, sp*0.6);
+  }
+  // KV（黒いHERO）の上端に当たる＝深い衝撃音
+  function kvHit(b, sp){
+    if(!OtoAudio.ready() || NOW-b.snd<=60) return; b.snd=NOW;
+    OtoAudio.note({type:'sine',freq:70,dur:0.34,gain:Math.min(0.6,0.2+sp*0.001),glide:0.5});
+  }
   var last=null, running=true;
   function tick(t){
     if(!running) return;
     if(last==null) last=t;
-    var dt=Math.min(0.05,(t-last)/1000); last=t;
+    var dt=Math.min(0.05,(t-last)/1000); last=t; NOW=t;
     for(var i=0;i<balls.length;i++){
       var b=balls[i];
       b.x+=b.vx*dt; b.y+=b.vy*dt; b.rot+=b.va*dt;
-      if(b.x<minX){ b.x=minX; b.vx=Math.abs(b.vx); }
-      else if(b.x+b.w>maxX){ b.x=maxX-b.w; b.vx=-Math.abs(b.vx); }
-      if(b.y<minY){ b.y=minY; b.vy=Math.abs(b.vy); }
-      else if(b.y+b.h>maxY){ b.y=maxY-b.h; b.vy=-Math.abs(b.vy); }
+      if(b.x<minX){ b.x=minX; b.vx=Math.abs(b.vx); wallTick(b,Math.abs(b.vx)); }
+      else if(b.x+b.w>maxX){ b.x=maxX-b.w; b.vx=-Math.abs(b.vx); wallTick(b,Math.abs(b.vx)); }
+      if(b.y<minY){ b.y=minY; b.vy=Math.abs(b.vy); wallTick(b,Math.abs(b.vy)); }
+      else if(b.y+b.h>maxY){ b.y=maxY-b.h; var _sp=Math.abs(b.vy); b.vy=-_sp; kvHit(b,_sp); }
+      hitObstacles(b);
     }
     collide();
     for(var k=0;k<balls.length;k++){
@@ -530,6 +657,39 @@
       if(balls[i].y+balls[i].h>maxY) balls[i].y=Math.max(minY,maxY-balls[i].h);
     }
   });
+  requestAnimationFrame(tick);
+})();
+
+// ===== 分割ロゴ：左右ノブをランダムに回す（ゆっくり→急停止→急加速…真ん中は固定） =====
+(function(){
+  if(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  var els=[].slice.call(document.querySelectorAll('.oto-spin .op-l,.oto-spin .op-r'));
+  if(!els.length) return;
+  function rand(a,b){ return a+Math.random()*(b-a); }
+  function pickTarget(){
+    var r=Math.random();
+    if(r<0.30) return 0;                                          // 急停止
+    var mag=(Math.random()<0.5) ? rand(15,70) : rand(150,360);    // ゆっくり or 急加速
+    return (Math.random()<0.5?-1:1)*mag;                          // 向きもランダム
+  }
+  var knobs=els.map(function(el){
+    el.style.animation='none';                 // CSS等速アニメを止めてJS駆動に
+    return { el:el, ang:rand(0,360), v:0, vt:pickTarget(), timer:rand(0.3,1.8), stiff:rand(3,12) };
+  });
+  var last=null;
+  function tick(t){
+    if(last==null) last=t;
+    var dt=Math.min(0.05,(t-last)/1000); last=t;
+    for(var i=0;i<knobs.length;i++){
+      var k=knobs[i];
+      k.timer-=dt;
+      if(k.timer<=0){ k.vt=pickTarget(); k.timer=rand(0.3,2.2); k.stiff=rand(3,14); } // 次の挙動を抽選
+      k.v += (k.vt-k.v)*Math.min(1, k.stiff*dt);   // 目標速度へ寄せる（stiffで急停止/緩やかを変える）
+      k.ang=(k.ang + k.v*dt)%360;
+      k.el.style.transform='rotate('+k.ang.toFixed(2)+'deg)';
+    }
+    requestAnimationFrame(tick);
+  }
   requestAnimationFrame(tick);
 })();
 </script>
