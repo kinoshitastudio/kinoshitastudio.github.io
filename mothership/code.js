@@ -887,9 +887,53 @@ async function motionTidy(apply) {
    ops形式: {id, tracks:[{field:'TRANSLATION_Y', baseValue:0, keyframes:[{t(秒),v(値),easing?}]}]}。値はFLOAT。
    ============================================================ */
 function _serMotion(n) { return { id: n.id, name: String(n.name), type: n.type, w: Math.round(n.width || 0), h: Math.round(n.height || 0) }; }
+// 🎞 スライドショー＝重なったSlide群を「決定的に」順送り生成（AIを介さない＝確実）。手前(番号大)ほど後に0→1で現れ下を覆う＝カット切替。
+function _isSlideshow(n) {
+  return n && ("children" in n) && (String(n.name) === "Slideshow" || n.children.filter((c) => /^Slide\s*\d/i.test(String(c.name))).length >= 2) && n.children.length >= 2;
+}
+function slideshowMotion(frame, instruction) {
+  if (!_motionOK()) { figma.ui.postMessage({ type: "motion-ai-done", error: "このFigmaはMotion APIに未対応です（Figmaを更新）。" }); return; }
+  const slides = frame.children.slice();
+  if (slides.length < 2) { figma.ui.postMessage({ type: "motion-ai-done", error: "スライドが2枚未満です" }); return; }
+  const ins = String(instruction || "");
+  let style = "push";   // 既定＝プッシュ＋ディゾルブ
+  if (/ハードカット|hard\s*cut|カット|cut/i.test(ins)) style = "cut";
+  else if (/ズーム|ドリー|ケン|zoom|dolly|ken\s*burns/i.test(ins)) style = "zoom";
+  else if (/ディゾルブ|dissolve|フェード|fade/i.test(ins)) style = "dissolve";
+  else if (/プッシュ|スライド|push|slide/i.test(ins)) style = "push";
+  const HOLD = 2.0, TR = (style === "cut") ? 0.001 : 0.6, W = frame.width || 800;
+  const F = (v) => ({ type: "FLOAT", value: v });
+  const XY = (v) => ({ type: "VECTOR", value: { x: v, y: v } });
+  const total = slides.length * HOLD;
+  let applied = 0; const summary = [];
+  for (let i = 0; i < slides.length; i++) {
+    const s = slides[i], t = i * HOLD, fields = [];
+    try {
+      if (i === 0) {   // 最背面＝常時表示（＋ゆっくり寄るケン・バーンズ）
+        s.applyManualKeyframeTrack({ type: "PROPERTY", name: "OPACITY" }, { baseValue: F(1), keyframes: [{ timelinePosition: 0, value: F(1) }] });
+        s.applyManualKeyframeTrack({ type: "PROPERTY", name: "SCALE_XY" }, { baseValue: XY(1), keyframes: [{ timelinePosition: 0, value: XY(1), easing: { type: "LINEAR" } }, { timelinePosition: total, value: XY(1.06) }] });
+        fields.push("常時表示＋寄る");
+      } else {         // 手前＝登場まで透明(baseValue0)、tで0→1（cutはHOLDで一瞬）、以降1のまま覆う
+        const opKf = (style === "cut")
+          ? [{ timelinePosition: t, value: F(0), easing: { type: "HOLD" } }, { timelinePosition: t + 0.001, value: F(1) }]
+          : [{ timelinePosition: t, value: F(0), easing: { type: "EASE_OUT" } }, { timelinePosition: t + TR, value: F(1) }];
+        s.applyManualKeyframeTrack({ type: "PROPERTY", name: "OPACITY" }, { baseValue: F(0), keyframes: opKf });
+        if (style === "push") s.applyManualKeyframeTrack({ type: "PROPERTY", name: "TRANSLATION_X" }, { baseValue: F(W * 0.35), keyframes: [{ timelinePosition: t, value: F(W * 0.35), easing: { type: "EASE_OUT" } }, { timelinePosition: t + TR, value: F(0) }] });
+        else if (style === "zoom") s.applyManualKeyframeTrack({ type: "PROPERTY", name: "SCALE_XY" }, { baseValue: XY(1.15), keyframes: [{ timelinePosition: t, value: XY(1.15), easing: { type: "EASE_OUT" } }, { timelinePosition: t + TR, value: XY(1) }] });
+        else if (style === "dissolve") s.applyManualKeyframeTrack({ type: "PROPERTY", name: "SCALE_XY" }, { baseValue: XY(1.05), keyframes: [{ timelinePosition: t, value: XY(1.05), easing: { type: "EASE_OUT" } }, { timelinePosition: t + TR, value: XY(1) }] });
+        fields.push("登場 " + Math.round(t * 1000) + "ms");
+      }
+      applied++; summary.push({ name: String(s.name), fields: fields });
+    } catch (e) {}
+  }
+  try { figma.currentPage.selection = [frame]; figma.viewport.scrollAndZoomIntoView([frame]); } catch (e) {}
+  figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: 0, summary: summary, errs: [], notes: ["スライドショー＝決定的に順送り生成（" + style + "）。1枚目は常時表示、以降は隠して順に手前へ現す。"] });
+  figma.notify("🎬 スライドショー：" + applied + "枚を順送り（" + style + "）。タイムラインで再生・Cmd+Zで戻せます。");
+}
 function collectMotion(instruction) {
   const sel = figma.currentPage.selection;
   if (!sel.length) { figma.ui.postMessage({ type: "motion-structure", error: "フレームを選んでください" }); return; }
+  if (sel.length === 1 && _isSlideshow(sel[0])) { slideshowMotion(sel[0], instruction); return; }   // 重なりスライド＝決定的に順送り（AI経由しない）
   const nodes = [];
   for (const n of sel) { nodes.push(_serMotion(n)); if ("children" in n) for (const c of n.children.slice(0, 40)) nodes.push(Object.assign(_serMotion(c), { parent: n.id })); }
   figma.ui.postMessage({ type: "motion-structure", nodes: nodes, instruction: instruction || "" });
@@ -993,7 +1037,7 @@ async function stackForSlideshow() {
   }
   figma.currentPage.selection = [parent];
   figma.viewport.scrollAndZoomIntoView([parent]);
-  figma.ui.postMessage({ type: "slideshow-done", count: added, total: sel.length, skipped: skipped, errs: errs });
+  figma.ui.postMessage({ type: "slideshow-done", count: added, total: sel.length, skipped: skipped, errs: errs, names: sel.map((n) => String(n.name)) });
   figma.notify("🎞 " + added + "/" + sel.length + " 枚を「Slideshow」に重ねました" + (skipped ? "（" + skipped + "枚スキップ）" : "") + "。Cmd+Zで戻せます。");
 }
 
