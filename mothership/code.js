@@ -706,6 +706,99 @@ async function tokenizeTypography() {
   }
 }
 
+/* ============================================================
+   D 既存トークンへ寄せる（Snap to existing tokens）＝DSへ収束（決定的・ローカル・relay不要）
+   新色/新型を新規で増やさず、選択内の色・文字を「既存 Variables / Text Styles の最近傍」へ束ねる。
+   まず診断(dry-run)→［寄せる］で適用。既にバインド/スタイル適用済みは触らない（非破壊）。
+   ============================================================ */
+function _srgb2lin(c) { return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+function rgb2lab(r, g, b) {                 // sRGB(0-1) → CIE-Lab（ガンマ展開→XYZ(D65)→Lab）
+  const R = _srgb2lin(r), G = _srgb2lin(g), B = _srgb2lin(b);
+  let X = (R * 0.4124 + G * 0.3576 + B * 0.1805) / 0.95047;
+  let Y = (R * 0.2126 + G * 0.7152 + B * 0.0722) / 1.0;
+  let Z = (R * 0.0193 + G * 0.1192 + B * 0.9505) / 1.08883;
+  const f = (t) => t > 0.008856 ? Math.cbrt(t) : (7.787 * t + 16 / 116);
+  const fx = f(X), fy = f(Y), fz = f(Z);
+  return { L: 116 * fy - 16, a: 500 * (fx - fy), b: 200 * (fy - fz) };
+}
+function deltaE76(p, q) { const dL = p.L - q.L, da = p.a - q.a, db = p.b - q.b; return Math.sqrt(dL * dL + da * da + db * db); }
+async function _resolveVarRGB(v, colById) {   // Variableの既定モードのRGB(0-1)。エイリアス/非色はnull
+  try {
+    const col = colById[v.variableCollectionId];
+    const modeId = col ? col.defaultModeId : Object.keys(v.valuesByMode)[0];
+    const val = v.valuesByMode[modeId];
+    if (!val || val.type === "VARIABLE_ALIAS" || typeof val.r !== "number") return null;
+    return { r: val.r, g: val.g, b: val.b };
+  } catch (e) { return null; }
+}
+async function snapToTokens(apply) {           // 色を既存Variableへ寄せる
+  const sel = figma.currentPage.selection;
+  if (!sel.length) { figma.ui.postMessage({ type: "snap-done", kind: "color", error: "フレームを選んでください" }); return; }
+  try {
+    const vars = await figma.variables.getLocalVariablesAsync("COLOR");
+    if (!vars.length) { figma.ui.postMessage({ type: "snap-done", kind: "color", empty: true, error: "既存の色トークンがありません。まず 🏷 色をトークン化 を実行してください。" }); return; }
+    const cols = await figma.variables.getLocalVariableCollectionsAsync();
+    const colById = {}; cols.forEach((c) => { colById[c.id] = c; });
+    const targets = [];
+    for (const v of vars) { const rgb = await _resolveVarRGB(v, colById); if (rgb) targets.push({ v: v, name: v.name, lab: rgb2lab(rgb.r, rgb.g, rgb.b) }); }
+    if (!targets.length) { figma.ui.postMessage({ type: "snap-done", kind: "color", empty: true, error: "解決できる色トークンがありません" }); return; }
+    const all = []; for (const r of sel) lintWalk(r, all);
+    const T = 6;                               // ΔE閾値（≤=寄せる／>=新規候補）
+    const seen = {}; let applied = 0, skipped = 0;
+    for (const n of all) {
+      if (!("fills" in n) || !Array.isArray(n.fills) || !n.fills.length) continue;
+      let changed = false;
+      const nf = n.fills.map((f) => {
+        if (f && f.type === "SOLID" && f.visible !== false) {
+          if (f.boundVariables && f.boundVariables.color) { skipped++; return f; }   // 既にバインド済＝壊さない
+          const hex = _rgbToHex(f.color), lab = rgb2lab(f.color.r, f.color.g, f.color.b);
+          let best = null, bestDE = Infinity;
+          for (const t of targets) { const dE = deltaE76(lab, t.lab); if (dE < bestDE) { bestDE = dE; best = t; } }
+          const hit = best && bestDE <= T;
+          if (!seen[hex]) seen[hex] = { hex: hex, n: 0, near: hit ? best.name : null, dE: best ? Math.round(bestDE * 10) / 10 : null };
+          seen[hex].n++;
+          if (hit && apply) { changed = true; applied++; return figma.variables.setBoundVariableForPaint(f, "color", best.v); }
+        }
+        return f;
+      });
+      if (apply && changed) n.fills = nf;
+    }
+    const rows = Object.keys(seen).map((h) => seen[h]).sort((a, b) => b.n - a.n);
+    const merged = rows.filter((r) => r.near).length, fresh = rows.filter((r) => !r.near).length;
+    figma.ui.postMessage({ type: "snap-done", kind: "color", apply: !!apply, merged: merged, fresh: fresh, applied: applied, skipped: skipped, T: T, rows: rows });
+    if (apply) figma.notify("寄せる：" + applied + " 箇所を既存トークンへ統合" + (fresh ? "（新規候補 " + fresh + " 色は🏷で作成可）" : ""));
+  } catch (e) {
+    figma.ui.postMessage({ type: "snap-done", kind: "color", error: "Variables APIエラー: " + (e && e.message ? e.message : e) });
+  }
+}
+async function snapTypeToStyles(apply) {       // 文字を既存Text Styleへ寄せる
+  const sel = figma.currentPage.selection;
+  if (!sel.length) { figma.ui.postMessage({ type: "snap-done", kind: "type", error: "フレームを選んでください" }); return; }
+  try {
+    const styles = await figma.getLocalTextStylesAsync();
+    if (!styles.length) { figma.ui.postMessage({ type: "snap-done", kind: "type", empty: true, error: "既存の文字スタイルがありません。まず 🔤 文字をスタイル化 を実行してください。" }); return; }
+    const cand = styles.map((s) => ({ s: s, name: s.name, family: s.fontName.family, style: s.fontName.style, size: s.fontSize }));
+    const all = []; for (const r of sel) lintWalk(r, all);
+    const seen = {}; let applied = 0, skipped = 0;
+    for (const n of all) {
+      if (n.type !== "TEXT") continue;
+      if (n.textStyleId && n.textStyleId !== "" && n.textStyleId !== figma.mixed) { skipped++; continue; }  // 既にスタイル適用済＝触らない
+      const sig = _typeSig(n); if (!sig) continue;
+      let best = null;
+      for (const c of cand) { if (c.family === sig.fontName.family && c.style === sig.fontName.style && Math.abs(c.size - sig.size) <= 1) { best = c; break; } }
+      if (!seen[sig.key]) seen[sig.key] = { label: sig.fontName.family + " " + sig.fontName.style + " · " + sig.size + "px", n: 0, near: best ? best.name : null };
+      seen[sig.key].n++;
+      if (best && apply) { try { await loadNodeFont(n); if (typeof n.setTextStyleIdAsync === "function") await n.setTextStyleIdAsync(best.s.id); else n.textStyleId = best.s.id; applied++; } catch (e2) {} }
+    }
+    const rows = Object.keys(seen).map((k) => seen[k]).sort((a, b) => b.n - a.n);
+    const merged = rows.filter((r) => r.near).length, fresh = rows.filter((r) => !r.near).length;
+    figma.ui.postMessage({ type: "snap-done", kind: "type", apply: !!apply, merged: merged, fresh: fresh, applied: applied, skipped: skipped, rows: rows });
+    if (apply) figma.notify("寄せる：" + applied + " 箇所を既存スタイルへ統合" + (fresh ? "（新規候補 " + fresh + " 種は🔤で作成可）" : ""));
+  } catch (e) {
+    figma.ui.postMessage({ type: "snap-done", kind: "type", error: "Text Styles APIエラー: " + (e && e.message ? e.message : e) });
+  }
+}
+
 figma.ui.onmessage = async (msg) => {
   if (msg.type === "generate") await generate(msg.json, true);
   else if (msg.type === "live") await generate(msg.json, false);
@@ -715,6 +808,8 @@ figma.ui.onmessage = async (msg) => {
   else if (msg.type === "ai-apply") await applyAIOps(msg.ops, msg.src);
   else if (msg.type === "tokenize") await tokenizeSelection();
   else if (msg.type === "tokenize-type") await tokenizeTypography();
+  else if (msg.type === "snap") await snapToTokens(msg.apply);            // D 色を既存トークンへ寄せる（apply=false診断/true適用）
+  else if (msg.type === "snap-type") await snapTypeToStyles(msg.apply);   // D 文字を既存スタイルへ寄せる
   else if (msg.type === "reveal") {  // パネルの行クリック→該当レイヤーをFigmaで選択＋ズーム
     const f = _lintFix[msg.id];
     if (f && f.node && !f.node.removed) {
