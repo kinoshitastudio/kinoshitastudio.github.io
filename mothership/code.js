@@ -830,6 +830,57 @@ async function detachTokens() {
   }
 }
 
+/* ============================================================
+   🎞 Motion＝モーションを時間トークンに整える（Motion Lint を吸収・決定的・relay不要・非破壊）
+   node.animationStyles の duration / timelineOffset を MOTION_TOKENS(ms) の最近傍へ収束（見た目=props保持）。
+   収束 = applyAnimationStyle(presetStyleId,{新timing, props}) → removeAnimationStyle(旧id)。フェイルセーフ付き。
+   ＝🎯寄せる(色/文字)のモーション版＝DSのモーション次元。図: figma.motion.figmaAnimationStyles()/node.animationStyles。
+   ============================================================ */
+const MOTION_TOKENS = [100, 150, 200, 250, 300, 400, 500, 600, 800, 1000];   // ms・DSの"時間の語彙"
+function _nearMs(v) { let best = MOTION_TOKENS[0], bd = Math.abs(v - best); for (let i = 1; i < MOTION_TOKENS.length; i++) { const d = Math.abs(v - MOTION_TOKENS[i]); if (d < bd) { bd = d; best = MOTION_TOKENS[i]; } } return best; }
+function _motionPresets() { const m = {}; try { (figma.motion.figmaAnimationStyles() || []).forEach((p) => { if (p && p.name) m[p.name] = p.styleId; }); } catch (e) {} return m; }
+function _motionOK() { return !!(figma.motion && typeof figma.motion.figmaAnimationStyles === "function"); }
+async function motionTidy(apply) {
+  if (!_motionOK()) { figma.ui.postMessage({ type: "motion-done", error: "このFigmaはMotion APIに未対応です（Figmaを更新してください）。" }); return; }
+  try {
+    const presets = _motionPresets();
+    const roots = figma.currentPage.selection.length ? figma.currentPage.selection : figma.currentPage.children;
+    const all = []; for (const r of roots) lintWalk(r, all);
+    const rows = []; let applied = 0, skipped = 0; const EPS = 0.5;
+    for (const node of all) {
+      let styles = null; try { styles = node.animationStyles; } catch (e) { continue; }
+      if (!styles || !styles.length) continue;
+      for (const st of styles) {
+        const durMs = (typeof st.duration === "number") ? st.duration * 1000 : null;
+        const offMs = (typeof st.timelineOffset === "number") ? st.timelineOffset * 1000 : 0;
+        const dNear = durMs != null ? _nearMs(durMs) : null;
+        const oNear = offMs > 0 ? _nearMs(offMs) : null;
+        const durOff = dNear != null && Math.abs(durMs - dNear) > EPS;
+        const offOff = oNear != null && Math.abs(offMs - oNear) > EPS;
+        if (!durOff && !offOff) continue;
+        const presetId = presets[st.name];
+        if (apply) {
+          if (!presetId || !node || node.removed) { skipped++; continue; }
+          try {
+            const cfg = { duration: durOff ? dNear / 1000 : st.duration, timelineOffset: offOff ? oNear / 1000 : (st.timelineOffset || 0) };
+            const props = Object.assign({}, st.props, { delay: cfg.timelineOffset });   // offsetはtimelineOffsetとprops.delayの二重持ち＝揃える
+            try { await node.applyAnimationStyle(presetId, Object.assign({}, cfg, { props: props })); }
+            catch (e) { await node.applyAnimationStyle(presetId, cfg); }                  // propsで弾かれたらtimingのみ
+            try { node.removeAnimationStyle(st.id); } catch (e) {}                         // 旧（トークン外）を除去
+            applied++;
+          } catch (e) { skipped++; }
+        } else {
+          rows.push({ node: node.name, prop: String(st.name || "").replace("motion.preset_name.", ""), durFrom: durMs != null ? Math.round(durMs * 10) / 10 : null, durTo: durOff ? dNear : null, offFrom: offMs > 0 ? Math.round(offMs * 10) / 10 : null, offTo: offOff ? oNear : null, canFix: !!presetId });
+        }
+      }
+    }
+    if (apply) { figma.ui.postMessage({ type: "motion-done", apply: true, applied: applied, skipped: skipped }); figma.notify("モーション整え：" + applied + " 件をトークンへ" + (skipped ? "／スキップ " + skipped : "") + "。Cmd+Zで戻せます。"); }
+    else { figma.ui.postMessage({ type: "motion-done", apply: false, count: rows.length, fixable: rows.filter((r) => r.canFix).length, rows: rows, tokens: MOTION_TOKENS }); }
+  } catch (e) {
+    figma.ui.postMessage({ type: "motion-done", error: "Motion APIエラー: " + (e && e.message ? e.message : e) });
+  }
+}
+
 figma.ui.onmessage = async (msg) => {
   if (msg.type === "generate") await generate(msg.json, true);
   else if (msg.type === "live") await generate(msg.json, false);
@@ -842,6 +893,7 @@ figma.ui.onmessage = async (msg) => {
   else if (msg.type === "snap") await snapToTokens(msg.apply);            // D 色を既存トークンへ寄せる（apply=false診断/true適用）
   else if (msg.type === "snap-type") await snapTypeToStyles(msg.apply);   // D 文字を既存スタイルへ寄せる
   else if (msg.type === "detach") await detachTokens();                   // 🔓 トークン/スタイルのバインドを解除＝生の値に戻す
+  else if (msg.type === "motion") await motionTidy(msg.apply);             // 🎞 モーションを時間トークンへ整える（apply=false診断/true適用）
   else if (msg.type === "reveal") {  // パネルの行クリック→該当レイヤーをFigmaで選択＋ズーム
     const f = _lintFix[msg.id];
     if (f && f.node && !f.node.removed) {
