@@ -896,7 +896,7 @@ function slideshowMotion(frame, instruction) {
   const slides = frame.children.slice();
   if (slides.length < 2) { figma.ui.postMessage({ type: "motion-ai-done", error: "スライドが2枚未満です" }); return; }
   const ins = String(instruction || "");
-  let style = "push";   // 既定＝プッシュ＋ディゾルブ
+  let style = "varied";   // 既定＝映画的に"毎回違う"トランジション（単調な横スライドを避ける）
   if (/ハードカット|hard\s*cut|カット|cut/i.test(ins)) style = "cut";
   else if (/ズーム|ドリー|ケン|zoom|dolly|ken\s*burns/i.test(ins)) style = "zoom";
   else if (/ディゾルブ|dissolve|フェード|fade/i.test(ins)) style = "dissolve";
@@ -923,10 +923,20 @@ function slideshowMotion(frame, instruction) {
           ? [{ timelinePosition: t, value: F(0), easing: { type: "HOLD" } }, { timelinePosition: t + 0.001, value: F(1) }]
           : [{ timelinePosition: t, value: F(0), easing: { type: "EASE_OUT" } }, { timelinePosition: t + TR, value: F(1) }];
         s.applyManualKeyframeTrack({ type: "PROPERTY", name: "OPACITY" }, { baseValue: F(0), keyframes: opKf });
-        if (style === "push") s.applyManualKeyframeTrack({ type: "PROPERTY", name: "TRANSLATION_X" }, { baseValue: F(W * 0.35), keyframes: [{ timelinePosition: t, value: F(W * 0.35), easing: { type: "EASE_OUT" } }, { timelinePosition: t + TR, value: F(0) }] });
-        else if (style === "zoom") s.applyManualKeyframeTrack({ type: "PROPERTY", name: "SCALE_XY" }, { baseValue: XY(1.15), keyframes: [{ timelinePosition: t, value: XY(1.15), easing: { type: "EASE_OUT" } }, { timelinePosition: t + TR, value: XY(1) }] });
-        else if (style === "dissolve") s.applyManualKeyframeTrack({ type: "PROPERTY", name: "SCALE_XY" }, { baseValue: XY(1.05), keyframes: [{ timelinePosition: t, value: XY(1.05), easing: { type: "EASE_OUT" } }, { timelinePosition: t + TR, value: XY(1) }] });
-        fields.push("登場 " + Math.round(t * 1000) + "ms");
+        // ▼ トランジションを1枚ごとに変える（映画の編集感）。指定style時もpush/zoomは左右・前後で交互に
+        const VAR = ["zoomIn", "pushL", "dissolve", "pushR", "zoomOut", "pushUp"];
+        let v = "dissolve";
+        if (style === "varied") v = VAR[(i - 1) % VAR.length];
+        else if (style === "push") v = (i % 2) ? "pushL" : "pushR";
+        else if (style === "zoom") v = (i % 2) ? "zoomIn" : "zoomOut";
+        else if (style === "dissolve") v = "dissolve";
+        else if (style === "cut") v = "cut";
+        const tx = (from) => s.applyManualKeyframeTrack({ type: "PROPERTY", name: "TRANSLATION_X" }, { baseValue: F(from), keyframes: [{ timelinePosition: t, value: F(from), easing: { type: "EASE_OUT" } }, { timelinePosition: t + TR, value: F(0) }] });
+        const ty = (from) => s.applyManualKeyframeTrack({ type: "PROPERTY", name: "TRANSLATION_Y" }, { baseValue: F(from), keyframes: [{ timelinePosition: t, value: F(from), easing: { type: "EASE_OUT" } }, { timelinePosition: t + TR, value: F(0) }] });
+        const sc = (from) => s.applyManualKeyframeTrack({ type: "PROPERTY", name: "SCALE_XY" }, { baseValue: XY(from), keyframes: [{ timelinePosition: t, value: XY(from), easing: { type: "EASE_OUT" } }, { timelinePosition: t + TR, value: XY(1) }] });
+        if (v === "pushL") tx(W * 0.5); else if (v === "pushR") tx(-W * 0.5); else if (v === "pushUp") ty(H * 0.5);
+        else if (v === "zoomIn") sc(1.35); else if (v === "zoomOut") sc(0.6); else if (v === "dissolve") sc(1.06);
+        fields.push("登場 " + Math.round(t * 1000) + "ms・" + v);
       }
       applied++; summary.push({ name: String(s.name), fields: fields });
     } catch (e) {}
