@@ -881,6 +881,41 @@ async function motionTidy(apply) {
   }
 }
 
+/* ============================================================
+   🎬 chat-to-animate＝会話でモーションを付ける（Phase2）＝Claudeがキーフレームを設計→applyManualKeyframeTrackで適用。
+   collectMotion: 選択＋子(1階層)の id/name/type/w/h をAIへ渡す → relay /ai-motion → ops → applyMotionOps。
+   ops形式: {id, tracks:[{field:'TRANSLATION_Y', baseValue:0, keyframes:[{t(秒),v(値),easing?}]}]}。値はFLOAT。
+   ============================================================ */
+function _serMotion(n) { return { id: n.id, name: String(n.name), type: n.type, w: Math.round(n.width || 0), h: Math.round(n.height || 0) }; }
+function collectMotion(instruction) {
+  const sel = figma.currentPage.selection;
+  if (!sel.length) { figma.ui.postMessage({ type: "motion-structure", error: "フレームを選んでください" }); return; }
+  const nodes = [];
+  for (const n of sel) { nodes.push(_serMotion(n)); if ("children" in n) for (const c of n.children.slice(0, 40)) nodes.push(Object.assign(_serMotion(c), { parent: n.id })); }
+  figma.ui.postMessage({ type: "motion-structure", nodes: nodes, instruction: instruction || "" });
+}
+async function applyMotionOps(ops) {
+  if (!_motionOK()) { figma.ui.postMessage({ type: "motion-ai-done", error: "このFigmaはMotion APIに未対応です（Figmaを更新）。" }); return; }
+  const get = async (id) => { try { return await figma.getNodeByIdAsync(id); } catch (e) { return null; } };
+  let applied = 0, fail = 0;
+  for (const op of (ops || [])) {
+    let n = await get(op.id);
+    if (!n && op.name) { try { n = figma.currentPage.findOne((x) => x.name === op.name); } catch (e) {} }
+    if (!n || n.removed) { fail++; continue; }
+    for (const t of (op.tracks || [])) {
+      try {
+        const kfs = (t.keyframes || []).map((k) => { const kf = { timelinePosition: Number(k.t) || 0, value: { type: "FLOAT", value: Number(k.v) || 0 } }; if (k.easing) kf.easing = { type: String(k.easing) }; return kf; });
+        if (!kfs.length) continue;
+        const base = (t.baseValue != null) ? Number(t.baseValue) : kfs[0].value.value;
+        n.applyManualKeyframeTrack({ type: "PROPERTY", name: String(t.field) }, { baseValue: { type: "FLOAT", value: base || 0 }, keyframes: kfs });
+        applied++;
+      } catch (e) { fail++; }
+    }
+  }
+  figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: fail });
+  figma.notify("🎬 モーション適用：" + applied + " トラック" + (fail ? "／失敗 " + fail : "") + "。Cmd+Zで戻せます。");
+}
+
 figma.ui.onmessage = async (msg) => {
   if (msg.type === "generate") await generate(msg.json, true);
   else if (msg.type === "live") await generate(msg.json, false);
@@ -894,6 +929,8 @@ figma.ui.onmessage = async (msg) => {
   else if (msg.type === "snap-type") await snapTypeToStyles(msg.apply);   // D 文字を既存スタイルへ寄せる
   else if (msg.type === "detach") await detachTokens();                   // 🔓 トークン/スタイルのバインドを解除＝生の値に戻す
   else if (msg.type === "motion") await motionTidy(msg.apply);             // 🎞 モーションを時間トークンへ整える（apply=false診断/true適用）
+  else if (msg.type === "collect-motion") collectMotion(msg.instruction);  // 🎬 chat-to-animate：選択をAIへ渡す
+  else if (msg.type === "motion-apply") await applyMotionOps(msg.ops);     // 🎬 AIのキーフレームopsを適用
   else if (msg.type === "reveal") {  // パネルの行クリック→該当レイヤーをFigmaで選択＋ズーム
     const f = _lintFix[msg.id];
     if (f && f.node && !f.node.removed) {

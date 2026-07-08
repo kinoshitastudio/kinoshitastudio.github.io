@@ -128,6 +128,30 @@ ops に使える操作：
  {"op":"remove","id":"<id>"}
 変える点が無ければ {"ops":[], "note":"理由や提案"}。`;
 
+const AI_MOTION_PROMPT = `あなたはFigmaモーション(アニメーション)の専門家。渡された「ノード一覧(id/name/type/幅高さ)」と「ユーザーの指示」から、Figmaにモーションを付ける【操作リスト】だけを返す。実際の適用はプラグインが applyManualKeyframeTrack で行う＝あなたはキーフレームを設計するだけ。JSONのみ返す(前後に説明文を書かない)。
+
+## 出力フォーマット
+{"ops":[
+ {"id":"<node id>","tracks":[
+   {"field":"TRANSLATION_Y","baseValue":0,"keyframes":[{"t":0,"v":20,"easing":"EASE_OUT"},{"t":0.3,"v":0}]},
+   {"field":"OPACITY","baseValue":0,"keyframes":[{"t":0,"v":0,"easing":"EASE_OUT"},{"t":0.3,"v":1}]}
+ ]}
+]}
+
+## 使える field（プロパティ）
+TRANSLATION_X / TRANSLATION_Y(位置px・正=右/下)、ROTATION(度)、SCALE_X / SCALE_Y(1=等倍)、OPACITY(0〜1)、WIDTH / HEIGHT、CORNER_RADIUS。
+
+## キーフレーム
+- t=時間(秒)。0から始める。duration は時間トークン 0.1/0.15/0.2/0.25/0.3/0.4/0.5/0.6/0.8/1.0 秒に合わせる。
+- v=その時刻の値(数値)。baseValue=開始前の基準値(省略時は最初のvを使用)。
+- easing(任意): EASE_OUT(入場の定番)/EASE_IN/EASE_IN_AND_OUT/LINEAR/BOUNCY/GENTLE/QUICK/SLOW/EASE_OUT_BACK/EASE_IN_BACK/HOLD。
+- 入場の型: TRANSLATION_Y 20→0 と OPACITY 0→1 を EASE_OUT・0.3秒で同時に。
+- 「順番に/スタッガー」= 各ノードの最初の t を 0.06秒ずつ後ろへずらす。
+
+## 原則
+- 指示に沿って自然で上質なモーションを。過剰にしない。時間は必ずトークンに合わせる。
+- id は渡された一覧のものだけ使う。指示に無いノードは触らない。付ける点が無ければ {"ops":[],"note":"理由"}。JSONのみ返す。`;
+
 // claude -p の出力から JSON配列(ops)を取り出す（配列でも {ops:[...]} オブジェクトでも内側の[...]を拾う）
 function extractOps(s) {
   let m = String(s).match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -256,6 +280,38 @@ http.createServer((req, res) => {
         if (code !== 0) return finish({ ok: false, error: "claude失敗: " + err.trim().slice(-300) });
         const ops = extractOps(out);
         if (!ops) return finish({ ok: false, error: "操作JSONを取り出せませんでした", raw: out.trim().slice(-300) });
+        finish({ ok: true, ops: ops, note: extractNote(out) });
+      });
+      var timer = setTimeout(() => { try { if (currentChild) currentChild.kill(); } catch (e) {} finish({ ok: false, error: "タイムアウト（180s）" }); }, 180000);
+    });
+    return;
+  }
+
+  // 🎬 AI会話モーション（chat-to-animate）：ノード一覧＋指示 → claudeがキーフレームops → プラグインがapplyManualKeyframeTrack
+  if (u.pathname === "/ai-motion" && req.method === "POST") {
+    let b = ""; req.on("data", (d) => (b += d));
+    req.on("end", () => {
+      res.setHeader("Content-Type", "application/json");
+      let nodes = null, instruction = "", engine = "";
+      try { const j = JSON.parse(b); nodes = j.structure || j.nodes; instruction = (j.instruction || "").toString(); engine = j.engine || ""; } catch (e) {}
+      if (!nodes) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "nodesが空です" })); }
+      if (!instruction.trim()) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "モーション指示が空です" })); }
+      const prompt = AI_MOTION_PROMPT + "\n\n## ユーザーの指示\n" + instruction + "\n\n## ノード一覧\n" + JSON.stringify(nodes);
+      chatBusy = true; chatBusySince = Date.now();
+      let done = false;
+      const finish = (obj) => { if (done) return; done = true; chatBusy = false; currentChild = null; clearTimeout(timer); if (aborted) { aborted = false; return res.end(JSON.stringify({ ok: false, aborted: true })); } res.end(JSON.stringify(obj)); };
+      let child;
+      try { child = spawnAI(engine, prompt, false); }
+      catch (e) { return finish({ ok: false, error: "AI起動失敗: " + (e && e.message ? e.message : e) }); }
+      currentChild = child;
+      let out = "", err = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (err += d));
+      child.on("error", (e) => finish({ ok: false, error: "AIが見つかりません: " + (e && e.message ? e.message : e) }));
+      child.on("close", (code) => {
+        if (code !== 0) return finish({ ok: false, error: "AI失敗: " + err.trim().slice(-300) });
+        const ops = extractOps(out);
+        if (!ops) return finish({ ok: false, error: "モーションJSONを取り出せませんでした", raw: out.trim().slice(-300) });
         finish({ ok: true, ops: ops, note: extractNote(out) });
       });
       var timer = setTimeout(() => { try { if (currentChild) currentChild.kill(); } catch (e) {} finish({ ok: false, error: "タイムアウト（180s）" }); }, 180000);
