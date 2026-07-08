@@ -894,33 +894,72 @@ function collectMotion(instruction) {
   for (const n of sel) { nodes.push(_serMotion(n)); if ("children" in n) for (const c of n.children.slice(0, 40)) nodes.push(Object.assign(_serMotion(c), { parent: n.id })); }
   figma.ui.postMessage({ type: "motion-structure", nodes: nodes, instruction: instruction || "" });
 }
+function _fillColor(n) {   // ノードの最初のsolid塗り色（線色の下地に使う）
+  try { const fs = n.fills; if (Array.isArray(fs)) { const s = fs.find((p) => p && p.type === "SOLID" && p.visible !== false); if (s) return { r: s.color.r, g: s.color.g, b: s.color.b }; } } catch (e) {}
+  return null;
+}
+function _revealTracks(dur) {   // パスドロー代替＝ふわっと出すリビール（OPACITY 0→1 ＋ SCALE 0.9→1）
+  const d = dur > 0 ? dur : 0.5;
+  return [
+    { field: "OPACITY", baseValue: 0, keyframes: [{ t: 0, v: 0, easing: "EASE_OUT" }, { t: d, v: 1 }] },
+    { field: "SCALE_XY", baseValue: 0.9, keyframes: [{ t: 0, v: 0.9, easing: "EASE_OUT" }, { t: d, v: 1 }] },
+  ];
+}
+function _applyTrack(n, t) {   // 1トラックを適用（成功=fieldラベル / キーフレーム無し=null / 失敗=throw）
+  const raw = (t.keyframes || []).map((k) => ({ tp: Number(k.t) || 0, v: Number(k.v) || 0, easing: k.easing }));
+  if (!raw.length) return null;
+  const isXY = /_XY$/.test(String(t.field));   // SCALE_XY / TRANSLATION_XY は VECTOR 値が必須（FLOATだと弾かれる）
+  const mkVal = (num) => isXY ? { type: "VECTOR", value: { x: num, y: num } } : { type: "FLOAT", value: num };
+  const kfs = raw.map((k) => { const kf = { timelinePosition: k.tp, value: mkVal(k.v) }; if (k.easing) kf.easing = { type: String(k.easing) }; return kf; });
+  const baseNum = (t.baseValue != null) ? Number(t.baseValue) : raw[0].v;
+  n.applyManualKeyframeTrack({ type: "PROPERTY", name: String(t.field) }, { baseValue: mkVal(baseNum || 0), keyframes: kfs });
+  const dur = Math.max.apply(null, raw.map((k) => k.tp));
+  return String(t.field) + (dur ? " " + Math.round(dur * 1000) + "ms" : "");
+}
 async function applyMotionOps(ops) {
   if (!_motionOK()) { figma.ui.postMessage({ type: "motion-ai-done", error: "このFigmaはMotion APIに未対応です（Figmaを更新）。" }); return; }
   const get = async (id) => { try { return await figma.getNodeByIdAsync(id); } catch (e) { return null; } };
-  let applied = 0, fail = 0; const summary = [], errs = []; let lastNode = null;
+  let applied = 0, fail = 0; const summary = [], errs = [], notes = []; let lastNode = null;
   for (const op of (ops || [])) {
     let n = await get(op.id);
     if (!n && op.name) { try { n = figma.currentPage.findOne((x) => x.name === op.name); } catch (e) {} }
     if (!n || n.removed) { fail++; continue; }
+    let tracks = (op.tracks || []).slice();
+    // ▼ パスドロー(PATH_TRIM)は線が必須。塗り形＝描ければ輪郭を描く(線を付与)／線を持てない形はリビールへ代替
+    if (tracks.some((t) => /^PATH_TRIM/.test(String(t.field)))) {
+      if ("strokes" in n) {
+        if (!(n.strokes && n.strokes.length)) {   // 塗り形にストローク無し → 塗り色から線を足して輪郭を描けるように
+          try {
+            n.strokes = [{ type: "SOLID", color: _fillColor(n) || { r: 0.12, g: 0.12, b: 0.12 } }];
+            if ("strokeWeight" in n && !(n.strokeWeight > 0)) n.strokeWeight = 2;
+            notes.push(String(n.name) + "：輪郭を描くため線を追加");
+          } catch (e) {}
+        }
+      } else {                                     // ストロークを持てない型 → PATH_TRIMを外してリビール
+        let d = 0.5; tracks.forEach((t) => { if (/^PATH_TRIM/.test(String(t.field))) (t.keyframes || []).forEach((k) => { d = Math.max(d, Number(k.t) || 0); }); });
+        tracks = tracks.filter((t) => !/^PATH_TRIM/.test(String(t.field))).concat(_revealTracks(d));
+        notes.push(String(n.name) + "：パスドロー不可→リビールに代替");
+      }
+    }
     const fields = [];
-    for (const t of (op.tracks || [])) {
+    let ptFail = false, ptDur = 0.5;
+    for (const t of tracks) {
       try {
-        const raw = (t.keyframes || []).map((k) => ({ tp: Number(k.t) || 0, v: Number(k.v) || 0, easing: k.easing }));
-        if (!raw.length) continue;
-        const isXY = /_XY$/.test(String(t.field));   // SCALE_XY / TRANSLATION_XY は VECTOR 値が必須（FLOATだと弾かれる）
-        const mkVal = (num) => isXY ? { type: "VECTOR", value: { x: num, y: num } } : { type: "FLOAT", value: num };
-        const kfs = raw.map((k) => { const kf = { timelinePosition: k.tp, value: mkVal(k.v) }; if (k.easing) kf.easing = { type: String(k.easing) }; return kf; });
-        const baseNum = (t.baseValue != null) ? Number(t.baseValue) : raw[0].v;
-        n.applyManualKeyframeTrack({ type: "PROPERTY", name: String(t.field) }, { baseValue: mkVal(baseNum || 0), keyframes: kfs });
-        applied++; lastNode = n;
-        const dur = Math.max.apply(null, raw.map((k) => k.tp));
-        fields.push(String(t.field) + (dur ? " " + Math.round(dur * 1000) + "ms" : ""));
-      } catch (e) { fail++; if (errs.length < 5) errs.push(String(n.name) + "." + String(t.field) + " → " + (e && e.message ? e.message : String(e))); }
+        const lbl = _applyTrack(n, t);
+        if (lbl) { applied++; lastNode = n; fields.push(lbl); }
+      } catch (e) {
+        if (/^PATH_TRIM/.test(String(t.field))) { ptFail = true; (t.keyframes || []).forEach((k) => { ptDur = Math.max(ptDur, Number(k.t) || 0); }); }   // パスドロー失敗は握って後でリビール
+        else { fail++; if (errs.length < 5) errs.push(String(n.name) + "." + String(t.field) + " → " + (e && e.message ? e.message : String(e))); }
+      }
+    }
+    if (ptFail) {   // ▼ 線を足しても描けなかった → リビールで代替（無理ならリビール）
+      for (const t of _revealTracks(ptDur)) { try { const lbl = _applyTrack(n, t); if (lbl) { applied++; lastNode = n; fields.push(lbl); } } catch (e) {} }
+      notes.push(String(n.name) + "：パスドロー失敗→リビールに代替");
     }
     if (fields.length) summary.push({ name: String(n.name), fields: fields });
   }
   if (lastNode) { try { figma.currentPage.selection = [lastNode]; figma.viewport.scrollAndZoomIntoView([lastNode]); } catch (e) {} }   // 付けたノードを選択＝タイムラインにモーションが出る
-  figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: fail, summary: summary, errs: errs });
+  figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: fail, summary: summary, errs: errs, notes: notes });
   figma.notify("🎬 モーション適用：" + applied + " トラック" + (fail ? "／失敗 " + fail : "") + "。Cmd+Zで戻せます。");
 }
 
