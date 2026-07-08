@@ -897,22 +897,27 @@ function collectMotion(instruction) {
 async function applyMotionOps(ops) {
   if (!_motionOK()) { figma.ui.postMessage({ type: "motion-ai-done", error: "このFigmaはMotion APIに未対応です（Figmaを更新）。" }); return; }
   const get = async (id) => { try { return await figma.getNodeByIdAsync(id); } catch (e) { return null; } };
-  let applied = 0, fail = 0;
+  let applied = 0, fail = 0; const summary = []; let lastNode = null;
   for (const op of (ops || [])) {
     let n = await get(op.id);
     if (!n && op.name) { try { n = figma.currentPage.findOne((x) => x.name === op.name); } catch (e) {} }
     if (!n || n.removed) { fail++; continue; }
+    const fields = [];
     for (const t of (op.tracks || [])) {
       try {
         const kfs = (t.keyframes || []).map((k) => { const kf = { timelinePosition: Number(k.t) || 0, value: { type: "FLOAT", value: Number(k.v) || 0 } }; if (k.easing) kf.easing = { type: String(k.easing) }; return kf; });
         if (!kfs.length) continue;
         const base = (t.baseValue != null) ? Number(t.baseValue) : kfs[0].value.value;
         n.applyManualKeyframeTrack({ type: "PROPERTY", name: String(t.field) }, { baseValue: { type: "FLOAT", value: base || 0 }, keyframes: kfs });
-        applied++;
+        applied++; lastNode = n;
+        const dur = Math.max.apply(null, kfs.map((k) => k.timelinePosition));
+        fields.push(String(t.field) + (dur ? " " + Math.round(dur * 1000) + "ms" : ""));
       } catch (e) { fail++; }
     }
+    if (fields.length) summary.push({ name: String(n.name), fields: fields });
   }
-  figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: fail });
+  if (lastNode) { try { figma.currentPage.selection = [lastNode]; figma.viewport.scrollAndZoomIntoView([lastNode]); } catch (e) {} }   // 付けたノードを選択＝タイムラインにモーションが出る
+  figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: fail, summary: summary });
   figma.notify("🎬 モーション適用：" + applied + " トラック" + (fail ? "／失敗 " + fail : "") + "。Cmd+Zで戻せます。");
 }
 
