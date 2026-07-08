@@ -980,18 +980,21 @@ async function stackForSlideshow() {
   parent.x = Math.max.apply(null, sel.map((n) => n.x + n.width)) + 80;   // 選択の右隣に置く
   parent.y = Math.min.apply(null, sel.map((n) => n.y));
   figma.currentPage.appendChild(parent);
-  let i = 0;
+  let added = 0, skipped = 0; const errs = [];
   for (const n of sel) {
-    const c = n.clone();
-    parent.appendChild(c);
-    c.x = Math.round((w - c.width) / 2);   // 中央に重ねる（サイズ違いも中央合わせ）
-    c.y = Math.round((h - c.height) / 2);
-    c.name = "Slide " + (++i);
+    try {
+      const c = n.clone();                    // クローン（原本は非破壊）
+      parent.appendChild(c);                  // 親に入れる＝重なる
+      c.x = Math.round((w - c.width) / 2);    // 中央に重ねる（サイズ違いも中央合わせ）
+      c.y = Math.round((h - c.height) / 2);
+      c.name = "Slide " + (added + 1);
+      added++;
+    } catch (e) { skipped++; if (errs.length < 3) errs.push(String(n.name) + " → " + (e && e.message ? e.message : String(e))); }
   }
   figma.currentPage.selection = [parent];
   figma.viewport.scrollAndZoomIntoView([parent]);
-  figma.ui.postMessage({ type: "slideshow-done", count: sel.length });
-  figma.notify("🎞 " + sel.length + " 枚を重ねて「Slideshow」を作成。これを選んでモーションで『映画的に順送り』等を指示。Cmd+Zで戻せます。");
+  figma.ui.postMessage({ type: "slideshow-done", count: added, total: sel.length, skipped: skipped, errs: errs });
+  figma.notify("🎞 " + added + "/" + sel.length + " 枚を「Slideshow」に重ねました" + (skipped ? "（" + skipped + "枚スキップ）" : "") + "。Cmd+Zで戻せます。");
 }
 
 figma.ui.onmessage = async (msg) => {
