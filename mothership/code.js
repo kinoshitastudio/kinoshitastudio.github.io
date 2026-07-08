@@ -931,9 +931,9 @@ function slideshowMotion(frame, instruction) {
       applied++; summary.push({ name: String(s.name), fields: fields });
     } catch (e) {}
   }
-  _setTimeline(slides[slides.length - 1], total);   // 尺を全長へ＝全部の切り替えが再生される
+  const _tlS = _extendTimelines(slides, total);   // 尺を全長へ＝全部の切り替えが再生される
   try { figma.currentPage.selection = [frame]; figma.viewport.scrollAndZoomIntoView([frame]); } catch (e) {}
-  figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: 0, summary: summary, errs: [], notes: ["スライドショー＝決定的に順送り生成（" + style + "・約" + Math.round(total) + "秒）。1枚目は常時表示、以降は隠して順に手前へ現す。"] });
+  figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: 0, summary: summary, errs: [], notes: ["スライドショー＝決定的に順送り生成（" + style + "・約" + Math.round(total) + "秒・timelines:" + _tlS + "）。1枚目は常時表示、以降は隠して順に手前へ現す。", (_tlS ? "" : "⚠ タイムライン尺を設定できませんでした（node.timelines が空）。実機情報として共有ください。")].filter(Boolean) });
   figma.notify("🎬 スライドショー：" + applied + "枚を順送り（" + style + "）。タイムラインで再生・Cmd+Zで戻せます。");
 }
 // ✦ パーティクル化：選択1個をN個に複製して散布した「Particles」フレームを作る＝増殖/星の流れ の土台（モーションは新規オブジェクトを作れないので"先に増やす"）
@@ -1014,9 +1014,9 @@ function particleMotion(box, instruction) {
     } catch (e) {}
   }
   const maxT = (style === "flow") ? 6.5 : (style === "rain") ? 2.3 : (style === "shake") ? 0.9 : 2.1;
-  _setTimeline(ps[ps.length - 1], maxT);   // 尺を全長へ
+  const _tlP = _extendTimelines(ps, maxT);   // 尺を全長へ
   try { figma.currentPage.selection = [box]; figma.viewport.scrollAndZoomIntoView([box]); } catch (e) {}
-  figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: 0, summary: summary, errs: [], notes: ["パーティクル＝決定的に生成（" + style + "・" + ps.length + "個・約" + Math.round(maxT) + "秒）。タイムラインで再生・Cmd+Zで戻せます。"] });
+  figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: 0, summary: summary, errs: [], notes: ["パーティクル＝決定的に生成（" + style + "・" + ps.length + "個・約" + Math.round(maxT) + "秒・timelines:" + _tlP + "）。タイムラインで再生・Cmd+Zで戻せます。"] });
   figma.notify("✦ パーティクル：" + applied + "個を動かしました（" + style + "）。Cmd+Zで戻せます。");
 }
 function collectMotion(instruction) {
@@ -1050,11 +1050,18 @@ function _applyTrack(n, t) {   // 1トラックを適用（成功=fieldラベル
   const dur = Math.max.apply(null, raw.map((k) => k.tp));
   return String(t.field) + (dur ? " " + Math.round(dur * 1000) + "ms" : "");
 }
-// タイムラインの尺を animation 全長に合わせる（既定2秒だと長いモーションが途中で切れ＝「1回しか再生されない」問題の対策）。node.setTimelineDuration(秒)。
-function _setTimeline(node, durSec) {
-  if (!node || !(durSec > 0)) return;
-  const d = durSec + 0.2;
-  for (const c of [node, node.parent, figma.currentPage]) { try { if (c && typeof c.setTimelineDuration === "function") { c.setTimelineDuration(d); return; } } catch (e) {} }
+// タイムライン尺を全長へ伸ばす。★正しいAPI＝node.setTimelineDuration(timelineId, 秒)（node.timelines[].id が必須・単位=秒）。既定2秒だと長い動きが切れて「1回しか再生されない」対策。返り値=尺を設定できたタイムライン数（診断用）。
+function _extendTimelines(nodes, durSec) {
+  if (!(durSec > 0)) return 0;
+  const d = durSec + 0.3, seen = {}; let cnt = 0;
+  for (const n of (nodes || [])) {
+    if (!n) continue;
+    try {
+      const tls = n.timelines || [];
+      for (const tl of tls) { if (tl && tl.id && !seen[tl.id] && typeof n.setTimelineDuration === "function") { n.setTimelineDuration(tl.id, d); seen[tl.id] = true; cnt++; } }
+    } catch (e) {}
+  }
+  return cnt;
 }
 async function applyMotionOps(ops) {
   if (!_motionOK()) { figma.ui.postMessage({ type: "motion-ai-done", error: "このFigmaはMotion APIに未対応です（Figmaを更新）。" }); return; }
@@ -1103,7 +1110,8 @@ async function applyMotionOps(ops) {
     }
     if (fields.length) summary.push({ name: String(n.name), fields: fields });
   }
-  _setTimeline(lastNode, maxT);   // 尺を全長へ＝途中で切れない
+  const _tlA = _extendTimelines([lastNode], maxT);   // 尺を全長へ＝途中で切れない
+  if (maxT > 2) notes.push("尺を約" + Math.round(maxT) + "秒へ調整（timelines:" + _tlA + "）");
   if (lastNode) { try { figma.currentPage.selection = [lastNode]; figma.viewport.scrollAndZoomIntoView([lastNode]); } catch (e) {} }   // 付けたノードを選択＝タイムラインにモーションが出る
   figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: fail, summary: summary, errs: errs, notes: notes });
   figma.notify("🎬 モーション適用：" + applied + " トラック" + (fail ? "／失敗 " + fail : "") + "。Cmd+Zで戻せます。");
