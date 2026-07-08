@@ -942,16 +942,20 @@ async function applyMotionOps(ops) {
       }
     }
     const fields = [];
-    let ptFail = false, ptDur = 0.5;
+    let ptFail = false, ptDur = 0.5, blocked = false;
     for (const t of tracks) {
+      if (blocked) break;   // プロダクトコンポーネントはノード単位で不可＝残りトラックも試さない
       try {
         const lbl = _applyTrack(n, t);
         if (lbl) { applied++; lastNode = n; fields.push(lbl); }
       } catch (e) {
-        if (/^PATH_TRIM/.test(String(t.field))) { ptFail = true; (t.keyframes || []).forEach((k) => { ptDur = Math.max(ptDur, Number(k.t) || 0); }); }   // パスドロー失敗は握って後でリビール
-        else { fail++; if (errs.length < 5) errs.push(String(n.name) + "." + String(t.field) + " → " + (e && e.message ? e.message : String(e))); }
+        const msg = (e && e.message ? e.message : String(e));
+        if (/product component/i.test(msg)) { blocked = true; }   // Figma制約＝APIでアニメ書込不可。赤エラーにせず情報通知へ
+        else if (/^PATH_TRIM/.test(String(t.field))) { ptFail = true; (t.keyframes || []).forEach((k) => { ptDur = Math.max(ptDur, Number(k.t) || 0); }); }   // パスドロー失敗は握って後でリビール
+        else { fail++; if (errs.length < 5) errs.push(String(n.name) + "." + String(t.field) + " → " + msg); }
       }
     }
+    if (blocked) notes.push(String(n.name) + "：プロダクトコンポーネントのため動かせません（分解すれば可・Figmaの制約）");
     if (ptFail) {   // ▼ 線を足しても描けなかった → リビールで代替（無理ならリビール）
       for (const t of _revealTracks(ptDur)) { try { const lbl = _applyTrack(n, t); if (lbl) { applied++; lastNode = n; fields.push(lbl); } } catch (e) {} }
       notes.push(String(n.name) + "：パスドロー失敗→リビールに代替");
