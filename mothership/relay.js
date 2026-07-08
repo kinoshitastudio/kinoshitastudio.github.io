@@ -138,8 +138,8 @@ const AI_MOTION_PROMPT = `あなたはFigmaモーション(アニメーション
  ]}
 ]}
 
-## 使える field（プロパティ）
-TRANSLATION_X / TRANSLATION_Y(位置px・正=右/下)、ROTATION(度)、SCALE_X / SCALE_Y(1=等倍)、OPACITY(0〜1)、WIDTH / HEIGHT、CORNER_RADIUS。
+## 使える field（プロパティ・全部数値）
+TRANSLATION_X / TRANSLATION_Y(位置px・正=右/下)、TRANSLATION_XY、ROTATION(度)、SCALE_X / SCALE_Y / SCALE_XY(1=等倍)、OPACITY(0〜1)、WIDTH / HEIGHT、CORNER_RADIUS(角丸px)、STROKE_WEIGHT(線幅px)、PATH_TRIM_START / PATH_TRIM_END(0〜1＝線を描く/消す)、STACK_SPACING / GRID_ROW_GAP / GRID_COLUMN_GAP(オートレイアウトの間隔px)、STACK_PADDING_TOP / STACK_PADDING_RIGHT / STACK_PADDING_BOTTOM / STACK_PADDING_LEFT(余白px)。
 
 ## キーフレーム
 - t=時間(秒)。0から始める。duration は時間トークン 0.1/0.15/0.2/0.25/0.3/0.4/0.5/0.6/0.8/1.0 秒に合わせる。
@@ -147,6 +147,23 @@ TRANSLATION_X / TRANSLATION_Y(位置px・正=右/下)、ROTATION(度)、SCALE_X 
 - easing(任意): EASE_OUT(入場の定番)/EASE_IN/EASE_IN_AND_OUT/LINEAR/BOUNCY/GENTLE/QUICK/SLOW/EASE_OUT_BACK/EASE_IN_BACK/HOLD。
 - 入場の型: TRANSLATION_Y 20→0 と OPACITY 0→1 を EASE_OUT・0.3秒で同時に。
 - 「順番に/スタッガー」= 各ノードの最初の t を 0.06秒ずつ後ろへずらす。
+
+## ★ぐにゃぐにゃ / スクワッシュ&ストレッチ / うねうね / 変形しながら を求められたら（重要）
+- SCALE_X と SCALE_Y を「逆相」で振る＝体積保存（縦に伸びる時は横に潰れる）。**必ず5〜8個のキーフレーム**で、はっきり揺らす（差を大きく）。
+- 例（0.8秒・EASE_IN_AND_OUT）:
+  SCALE_Y: t0=1, 0.15→1.3, 0.35→0.8, 0.55→1.15, 0.75→0.95, 0.8→1
+  SCALE_X: t0=1, 0.15→0.8, 0.35→1.3, 0.55→0.9,  0.75→1.05, 0.8→1
+- 「下から上へのぼりながら」なら上記に TRANSLATION_Y（下の正値→0へ滑らかに上昇）を重ねる。
+- より有機的にするなら ROTATION を ±6〜12度で軽く混ぜる。
+- 「ぐにゃぐにゃ/うねうね」は controlの弱い単発ではなく、**振れ幅を大きく・回数を多く**。中途半端にしない。
+
+## ★"普通では手で作りにくい"モーション（指示が抽象的なら積極的に使う）
+- **パスドロー（線が描かれる）**: PATH_TRIM_START=0固定・PATH_TRIM_END を 0→1。署名・アイコンの描画・進捗リング・地図の経路。線/ベクター/ストロークに有効。
+- **レイアウト・コレオグラフィ**: STACK_SPACING や GRID_ROW_GAP/GRID_COLUMN_GAP を 小→大 で「ふわっと開いて並ぶ」「間隔が呼吸する」。オートレイアウト自体を動かす＝珍しい。
+- **角丸モーフ**: CORNER_RADIUS を 0↔大 で 四角⇄丸 のトランジション（ボタン等）。
+- **線幅パルス**: STROKE_WEIGHT を増減で強調・鼓動。
+- **スプリング/バウンド**: easing に BOUNCY か EASE_OUT_BACK ＝着地で軽くオーバーシュートして弾む。
+- 「かっこよく/印象的に/ユニークに」等の抽象指示なら、上記＋スクワッシュ&ストレッチ＋スタッガーを上質に組み合わせる。過剰にはしない。
 
 ## 原則
 - 指示に沿って自然で上質なモーションを。過剰にしない。時間は必ずトークンに合わせる。
