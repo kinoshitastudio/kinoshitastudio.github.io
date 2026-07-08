@@ -897,7 +897,7 @@ function collectMotion(instruction) {
 async function applyMotionOps(ops) {
   if (!_motionOK()) { figma.ui.postMessage({ type: "motion-ai-done", error: "このFigmaはMotion APIに未対応です（Figmaを更新）。" }); return; }
   const get = async (id) => { try { return await figma.getNodeByIdAsync(id); } catch (e) { return null; } };
-  let applied = 0, fail = 0; const summary = []; let lastNode = null;
+  let applied = 0, fail = 0; const summary = [], errs = []; let lastNode = null;
   for (const op of (ops || [])) {
     let n = await get(op.id);
     if (!n && op.name) { try { n = figma.currentPage.findOne((x) => x.name === op.name); } catch (e) {} }
@@ -912,12 +912,12 @@ async function applyMotionOps(ops) {
         applied++; lastNode = n;
         const dur = Math.max.apply(null, kfs.map((k) => k.timelinePosition));
         fields.push(String(t.field) + (dur ? " " + Math.round(dur * 1000) + "ms" : ""));
-      } catch (e) { fail++; }
+      } catch (e) { fail++; if (errs.length < 5) errs.push(String(n.name) + "." + String(t.field) + " → " + (e && e.message ? e.message : String(e))); }
     }
     if (fields.length) summary.push({ name: String(n.name), fields: fields });
   }
   if (lastNode) { try { figma.currentPage.selection = [lastNode]; figma.viewport.scrollAndZoomIntoView([lastNode]); } catch (e) {} }   // 付けたノードを選択＝タイムラインにモーションが出る
-  figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: fail, summary: summary });
+  figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: fail, summary: summary, errs: errs });
   figma.notify("🎬 モーション適用：" + applied + " トラック" + (fail ? "／失敗 " + fail : "") + "。Cmd+Zで戻せます。");
 }
 
