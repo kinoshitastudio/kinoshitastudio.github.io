@@ -10,6 +10,31 @@ const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const { bake } = require("./tools/bake");   // svgプリスケール＋画像base64化（ボードで描ける形へ）
 
+/* ============================================================
+   AIエンジン切替＝relayは「ユーザー環境のAI CLI」を spawn する。頭脳は交換可能（Claude/Codex/Gemini/…）。
+   ★開発者バックエンドは無いまま（どれもユーザーのマシン/サブスクで動く）。
+   ※Claude=既定・実績あり。codex/geminiのフラグはbest-effort＝各CLIの版に合わせ調整可（下を書き換えるだけ）。
+   args(prompt, edit): edit=true はファイル編集(=mothership.json)を自動許可する呼び方（/chat用）／false は応答テキストのみ（/ai-tidy,/ai-edit）。
+   ============================================================ */
+const ENGINES = {
+  claude: { label: "Claude Code", bin: "claude", versionArgs: ["--version"], args: (p, edit) => edit ? ["-p", p, "--permission-mode", "acceptEdits"] : ["-p", p] },
+  codex:  { label: "Codex (OpenAI)", bin: "codex", versionArgs: ["--version"], args: (p, edit) => ["exec", "--full-auto", p] },
+  gemini: { label: "Gemini", bin: "gemini", versionArgs: ["--version"], args: (p, edit) => edit ? ["-y", "-p", p] : ["-p", p] },
+};
+function engineKey(k) { return (k && ENGINES[k]) ? k : "claude"; }   // 未知/未指定は claude にフォールバック
+function spawnAI(key, prompt, edit) {                                // 選んだエンジンのCLIを one-shot 起動
+  const e = ENGINES[engineKey(key)];
+  return spawn(e.bin, e.args(prompt, edit), { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"] });
+}
+const engineAvail = {};   // 起動時に各エンジンCLIの有無を検出＝パネルは「入っているものだけ」選べる（誤操作防止）
+function detectEngines() {
+  Object.keys(ENGINES).forEach((k) => {
+    try { const r = spawnSync(ENGINES[k].bin, ENGINES[k].versionArgs, { encoding: "utf8", timeout: 8000 }); engineAvail[k] = !!(r && !r.error && r.status === 0); }
+    catch (e) { engineAvail[k] = false; }
+  });
+  return engineAvail;
+}
+
 const FILE = path.join(__dirname, "mothership.json");
 const PORT = process.env.PORT || 4575;
 
@@ -127,6 +152,11 @@ http.createServer((req, res) => {
   const u = new URL(req.url, "http://x");
 
   // プラグインがポーリングで取りに来る（焼き込み済みを返す＝ボードで実画像/正サイズ）
+  if (u.pathname === "/engines") {   // パネルが利用可能なAIエンジンを取得（検出済みのものだけ選べる）
+    res.setHeader("Content-Type", "application/json");
+    const list = Object.keys(ENGINES).map((k) => ({ key: k, label: ENGINES[k].label, available: !!engineAvail[k] }));
+    return res.end(JSON.stringify({ engines: list, default: "claude" }));
+  }
   if (u.pathname === "/pull") {
     res.setHeader("Content-Type", "application/json");
     pulledJSON()
@@ -167,8 +197,8 @@ http.createServer((req, res) => {
     let b = ""; req.on("data", (d) => (b += d));
     req.on("end", () => {
       res.setHeader("Content-Type", "application/json");
-      let structure = null;
-      try { structure = JSON.parse(b).structure; } catch (e) {}
+      let structure = null, engine = "";
+      try { const j = JSON.parse(b); structure = j.structure; engine = j.engine || ""; } catch (e) {}
       if (!structure) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "structureが空です" })); }
       const prompt = AI_TIDY_PROMPT + "\n\n## 構造JSON\n" + JSON.stringify(structure);
       chatBusy = true; chatBusySince = Date.now();
@@ -179,7 +209,7 @@ http.createServer((req, res) => {
         res.end(JSON.stringify(obj));
       };
       let child;
-      try { child = spawn("claude", ["-p", prompt], { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"] }); }
+      try { child = spawnAI(engine, prompt, false); }
       catch (e) { return finish({ ok: false, error: "claude起動失敗: " + (e && e.message ? e.message : e) }); }
       currentChild = child;
       let out = "", err = "";
@@ -202,8 +232,8 @@ http.createServer((req, res) => {
     let b = ""; req.on("data", (d) => (b += d));
     req.on("end", () => {
       res.setHeader("Content-Type", "application/json");
-      let structure = null, instruction = "";
-      try { const j = JSON.parse(b); structure = j.structure; instruction = (j.instruction || "").toString(); } catch (e) {}
+      let structure = null, instruction = "", engine = "";
+      try { const j = JSON.parse(b); structure = j.structure; instruction = (j.instruction || "").toString(); engine = j.engine || ""; } catch (e) {}
       if (!structure) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "structureが空です" })); }
       if (!instruction.trim()) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "編集指示が空です" })); }
       const prompt = AI_EDIT_PROMPT + "\n\n## ユーザーの編集指示\n" + instruction + "\n\n## 構造JSON\n" + JSON.stringify(structure);
@@ -215,7 +245,7 @@ http.createServer((req, res) => {
         res.end(JSON.stringify(obj));
       };
       let child;
-      try { child = spawn("claude", ["-p", prompt], { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"] }); }
+      try { child = spawnAI(engine, prompt, false); }
       catch (e) { return finish({ ok: false, error: "claude起動失敗: " + (e && e.message ? e.message : e) }); }
       currentChild = child;
       let out = "", err = "";
@@ -299,8 +329,8 @@ http.createServer((req, res) => {
     let b = "";
     req.on("data", (d) => (b += d));
     req.on("end", () => {
-      let msg = "", image = "", display = "";
-      try { const j = JSON.parse(b); msg = (j.message || "").toString(); image = (j.image || "").toString(); display = (j.display || "").toString(); } catch (e) {}
+      let msg = "", image = "", display = "", engine = "";
+      try { const j = JSON.parse(b); msg = (j.message || "").toString(); image = (j.image || "").toString(); display = (j.display || "").toString(); engine = j.engine || ""; } catch (e) {}
       res.setHeader("Content-Type", "application/json");
       if (!msg.trim() && !image) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "メッセージが空です" })); }
 
@@ -335,7 +365,7 @@ http.createServer((req, res) => {
       const launch = (finalPrompt) => {
         let child;
         try {
-          child = spawn("claude", ["-p", finalPrompt, "--permission-mode", "acceptEdits"], { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"] });
+          child = spawnAI(engine, finalPrompt, true);
         } catch (e) { return finish({ ok: false, error: "claude 起動失敗: " + (e && e.message ? e.message : e) }); }
         activeChild = child; currentChild = child;
         let out = "", err = "";
@@ -458,17 +488,19 @@ http.createServer((req, res) => {
   console.log("  watching : " + FILE);
   console.log("  Figmaでプラグイン Mothership を開き「接続」を押すとライブ連携が始まります。");
   console.log("  以後 mothership.json を保存するたび Figma が自動更新されます。");
-  // claude CLI 自己チェック＝接続前に「AI（作る/整える/編集）が使えるか」を切り分ける（relayはリクエスト時に claude -p を spawn するため）
+  // AIエンジン自己チェック＝接続前に「どの頭脳が使えるか」を切り分ける（relayはリクエスト時に選択CLIを spawn するため）
   try {
-    var _cc = spawnSync("claude", ["--version"], { encoding: "utf8", timeout: 8000 });
-    if (_cc.error || _cc.status !== 0) {
-      console.log("  ⚠️  claude CLI が見つかりません → AI（作る/整える/会話編集）は動きません。");
-      console.log("      Claude Code を入れてログイン（Pro/Max）してください: https://claude.com/claude-code");
-      console.log("      ※ ⚡サンプル生成 は relay/claude なしでも動きます。");
-    } else {
-      console.log("  ✅ claude CLI OK (" + String(_cc.stdout || "").trim() + ") — AI機能が使えます（未ログインなら初回に要ログイン）。");
+    detectEngines();
+    if (engineAvail.claude) console.log("  ✅ claude CLI OK — 既定エンジンが使えます（未ログインなら初回に要ログイン）。");
+    else {
+      console.log("  ⚠️  claude CLI が見つかりません → 既定AI（作る/整える/会話編集）が動きません。");
+      console.log("      Claude Code を入れてログイン（Pro/Max）: https://claude.com/claude-code　※⚡サンプル生成はrelay無しでも動く。");
     }
+    var _others = ["codex", "gemini"].filter((k) => engineAvail[k]).map((k) => ENGINES[k].label);
+    if (_others.length) console.log("  ＋ 追加エンジン検出: " + _others.join(", ") + "（パネルで切替可・フラグはrelay.jsのENGINESで調整）");
+    var _avail = Object.keys(ENGINES).filter((k) => engineAvail[k]).map((k) => ENGINES[k].label);
+    console.log("  利用可能エンジン: " + (_avail.length ? _avail.join(" / ") : "なし"));
   } catch (e) {
-    console.log("  ⚠️  claude CLI チェックに失敗: " + (e && e.message ? e.message : e));
+    console.log("  ⚠️  エンジン検出に失敗: " + (e && e.message ? e.message : e));
   }
 });
