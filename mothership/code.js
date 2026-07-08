@@ -905,12 +905,15 @@ async function applyMotionOps(ops) {
     const fields = [];
     for (const t of (op.tracks || [])) {
       try {
-        const kfs = (t.keyframes || []).map((k) => { const kf = { timelinePosition: Number(k.t) || 0, value: { type: "FLOAT", value: Number(k.v) || 0 } }; if (k.easing) kf.easing = { type: String(k.easing) }; return kf; });
-        if (!kfs.length) continue;
-        const base = (t.baseValue != null) ? Number(t.baseValue) : kfs[0].value.value;
-        n.applyManualKeyframeTrack({ type: "PROPERTY", name: String(t.field) }, { baseValue: { type: "FLOAT", value: base || 0 }, keyframes: kfs });
+        const raw = (t.keyframes || []).map((k) => ({ tp: Number(k.t) || 0, v: Number(k.v) || 0, easing: k.easing }));
+        if (!raw.length) continue;
+        const isXY = /_XY$/.test(String(t.field));   // SCALE_XY / TRANSLATION_XY は VECTOR 値が必須（FLOATだと弾かれる）
+        const mkVal = (num) => isXY ? { type: "VECTOR", value: { x: num, y: num } } : { type: "FLOAT", value: num };
+        const kfs = raw.map((k) => { const kf = { timelinePosition: k.tp, value: mkVal(k.v) }; if (k.easing) kf.easing = { type: String(k.easing) }; return kf; });
+        const baseNum = (t.baseValue != null) ? Number(t.baseValue) : raw[0].v;
+        n.applyManualKeyframeTrack({ type: "PROPERTY", name: String(t.field) }, { baseValue: mkVal(baseNum || 0), keyframes: kfs });
         applied++; lastNode = n;
-        const dur = Math.max.apply(null, kfs.map((k) => k.timelinePosition));
+        const dur = Math.max.apply(null, raw.map((k) => k.tp));
         fields.push(String(t.field) + (dur ? " " + Math.round(dur * 1000) + "ms" : ""));
       } catch (e) { fail++; if (errs.length < 5) errs.push(String(n.name) + "." + String(t.field) + " → " + (e && e.message ? e.message : String(e))); }
     }
