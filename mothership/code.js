@@ -799,6 +799,37 @@ async function snapTypeToStyles(apply) {       // 文字を既存Text Styleへ�
   }
 }
 
+/* 🔓 解除（Detach）＝トークン化/寄せるの逆＝バインドを外して"生の値"に戻す（非破壊・Cmd+Z可）
+   色：Variableバインドを外し、現在の解決色を素のSOLIDに戻す／文字：Text Style適用を外し現在の見た目を保持。 */
+async function detachTokens() {
+  const sel = figma.currentPage.selection;
+  if (!sel.length) { figma.ui.postMessage({ type: "detach-done", error: "フレームを選んでください" }); return; }
+  try {
+    const all = []; for (const r of sel) lintWalk(r, all);
+    let colors = 0, texts = 0;
+    for (const n of all) {
+      if ("fills" in n && Array.isArray(n.fills) && n.fills.length) {
+        let changed = false;
+        const nf = n.fills.map((f) => {
+          if (f && f.type === "SOLID" && f.boundVariables && f.boundVariables.color) {
+            changed = true; colors++;
+            return { type: "SOLID", color: { r: f.color.r, g: f.color.g, b: f.color.b }, opacity: (f.opacity != null ? f.opacity : 1), visible: (f.visible !== false), blendMode: (f.blendMode || "NORMAL") };
+          }
+          return f;
+        });
+        if (changed) n.fills = nf;
+      }
+      if (n.type === "TEXT" && n.textStyleId && n.textStyleId !== "" && n.textStyleId !== figma.mixed) {
+        try { await loadNodeFont(n); if (typeof n.setTextStyleIdAsync === "function") await n.setTextStyleIdAsync(""); else n.textStyleId = ""; texts++; } catch (e2) {}
+      }
+    }
+    figma.ui.postMessage({ type: "detach-done", colors: colors, texts: texts });
+    figma.notify("解除：色バインド " + colors + " ／ 文字スタイル " + texts + " を生の値に戻しました");
+  } catch (e) {
+    figma.ui.postMessage({ type: "detach-done", error: "解除エラー: " + (e && e.message ? e.message : e) });
+  }
+}
+
 figma.ui.onmessage = async (msg) => {
   if (msg.type === "generate") await generate(msg.json, true);
   else if (msg.type === "live") await generate(msg.json, false);
@@ -810,6 +841,7 @@ figma.ui.onmessage = async (msg) => {
   else if (msg.type === "tokenize-type") await tokenizeTypography();
   else if (msg.type === "snap") await snapToTokens(msg.apply);            // D 色を既存トークンへ寄せる（apply=false診断/true適用）
   else if (msg.type === "snap-type") await snapTypeToStyles(msg.apply);   // D 文字を既存スタイルへ寄せる
+  else if (msg.type === "detach") await detachTokens();                   // 🔓 トークン/スタイルのバインドを解除＝生の値に戻す
   else if (msg.type === "reveal") {  // パネルの行クリック→該当レイヤーをFigmaで選択＋ズーム
     const f = _lintFix[msg.id];
     if (f && f.node && !f.node.removed) {
