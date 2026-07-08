@@ -967,6 +967,33 @@ async function applyMotionOps(ops) {
   figma.notify("🎬 モーション適用：" + applied + " トラック" + (fail ? "／失敗 " + fail : "") + "。Cmd+Zで戻せます。");
 }
 
+// 🎞 スライドショー化：選択した複数フレームを1つの親フレームに「同じ位置で重ねる」＝1本のタイムラインでシーン切替できる下ごしらえ（クローンで重ねる＝原本は非破壊）
+async function stackForSlideshow() {
+  const sel = figma.currentPage.selection.filter((n) => ("clone" in n) && typeof n.width === "number");
+  if (sel.length < 2) { figma.ui.postMessage({ type: "slideshow-done", error: "スライドにするフレームを2枚以上選んでください" }); return; }
+  const w = Math.max.apply(null, sel.map((n) => n.width));
+  const h = Math.max.apply(null, sel.map((n) => n.height));
+  const parent = figma.createFrame();
+  parent.name = "Slideshow";
+  parent.resize(w, h);
+  parent.clipsContent = true;
+  parent.x = Math.max.apply(null, sel.map((n) => n.x + n.width)) + 80;   // 選択の右隣に置く
+  parent.y = Math.min.apply(null, sel.map((n) => n.y));
+  figma.currentPage.appendChild(parent);
+  let i = 0;
+  for (const n of sel) {
+    const c = n.clone();
+    parent.appendChild(c);
+    c.x = Math.round((w - c.width) / 2);   // 中央に重ねる（サイズ違いも中央合わせ）
+    c.y = Math.round((h - c.height) / 2);
+    c.name = "Slide " + (++i);
+  }
+  figma.currentPage.selection = [parent];
+  figma.viewport.scrollAndZoomIntoView([parent]);
+  figma.ui.postMessage({ type: "slideshow-done", count: sel.length });
+  figma.notify("🎞 " + sel.length + " 枚を重ねて「Slideshow」を作成。これを選んでモーションで『映画的に順送り』等を指示。Cmd+Zで戻せます。");
+}
+
 figma.ui.onmessage = async (msg) => {
   if (msg.type === "generate") await generate(msg.json, true);
   else if (msg.type === "live") await generate(msg.json, false);
@@ -982,6 +1009,7 @@ figma.ui.onmessage = async (msg) => {
   else if (msg.type === "motion") await motionTidy(msg.apply);             // 🎞 モーションを時間トークンへ整える（apply=false診断/true適用）
   else if (msg.type === "collect-motion") collectMotion(msg.instruction);  // 🎬 chat-to-animate：選択をAIへ渡す
   else if (msg.type === "motion-apply") await applyMotionOps(msg.ops);     // 🎬 AIのキーフレームopsを適用
+  else if (msg.type === "slideshow") await stackForSlideshow();            // 🎞 選択を1親フレームに重ねる（スライドショーの下ごしらえ）
   else if (msg.type === "reveal") {  // パネルの行クリック→該当レイヤーをFigmaで選択＋ズーム
     const f = _lintFix[msg.id];
     if (f && f.node && !f.node.removed) {
