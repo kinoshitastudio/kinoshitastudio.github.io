@@ -901,7 +901,12 @@ function slideshowMotion(frame, instruction) {
   else if (/ズーム|ドリー|ケン|zoom|dolly|ken\s*burns/i.test(ins)) style = "zoom";
   else if (/ディゾルブ|dissolve|フェード|fade/i.test(ins)) style = "dissolve";
   else if (/プッシュ|スライド|push|slide/i.test(ins)) style = "push";
-  const HOLD = 2.0, TR = (style === "cut") ? 0.001 : 0.6, W = frame.width || 800;
+  let HOLD = 2.0;   // 1枚あたりの尺（保持）
+  const mSec = ins.match(/(\d+(?:\.\d+)?)\s*(秒|s\b|sec|second)/i);
+  if (mSec) HOLD = Math.max(0.6, parseFloat(mSec[1]) / slides.length);   // 「◯秒で」＝全体尺÷枚数
+  else if (/長め|ゆっくり|じっくり|long|slow/i.test(ins)) HOLD = 3.5;
+  else if (/短め|速く|テンポ|素早|quick|fast/i.test(ins)) HOLD = 1.2;
+  const TR = (style === "cut") ? 0.001 : 0.6, W = frame.width || 800;
   const F = (v) => ({ type: "FLOAT", value: v });
   const XY = (v) => ({ type: "VECTOR", value: { x: v, y: v } });
   const total = slides.length * HOLD;
@@ -926,13 +931,98 @@ function slideshowMotion(frame, instruction) {
       applied++; summary.push({ name: String(s.name), fields: fields });
     } catch (e) {}
   }
+  _setTimeline(slides[slides.length - 1], total);   // 尺を全長へ＝全部の切り替えが再生される
   try { figma.currentPage.selection = [frame]; figma.viewport.scrollAndZoomIntoView([frame]); } catch (e) {}
-  figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: 0, summary: summary, errs: [], notes: ["スライドショー＝決定的に順送り生成（" + style + "）。1枚目は常時表示、以降は隠して順に手前へ現す。"] });
+  figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: 0, summary: summary, errs: [], notes: ["スライドショー＝決定的に順送り生成（" + style + "・約" + Math.round(total) + "秒）。1枚目は常時表示、以降は隠して順に手前へ現す。"] });
   figma.notify("🎬 スライドショー：" + applied + "枚を順送り（" + style + "）。タイムラインで再生・Cmd+Zで戻せます。");
+}
+// ✦ パーティクル化：選択1個をN個に複製して散布した「Particles」フレームを作る＝増殖/星の流れ の土台（モーションは新規オブジェクトを作れないので"先に増やす"）
+function scatterParticles(count) {
+  const sel = figma.currentPage.selection;
+  if (sel.length !== 1 || !("clone" in sel[0])) { figma.ui.postMessage({ type: "particles-done", error: "散らす元を1つだけ選んでください" }); return; }
+  const src = sel[0], host = src.parent;
+  const isFrame = host && ("width" in host) && host.type !== "PAGE" && host.type !== "DOCUMENT";
+  const W = isFrame ? host.width : 1600, H = isFrame ? host.height : 900;
+  const N = Math.max(3, Math.min(200, Math.round(count || 40)));
+  const box = figma.createFrame();
+  box.name = "Particles"; box.resize(W, H); box.fills = []; box.clipsContent = false;
+  if (isFrame) { host.appendChild(box); box.x = 0; box.y = 0; }
+  else { figma.currentPage.appendChild(box); box.x = Math.round(src.x - W / 2); box.y = Math.round(src.y - H / 2); }
+  let made = 0;
+  for (let i = 0; i < N; i++) {
+    try {
+      const c = src.clone(); box.appendChild(c);
+      if (typeof c.rescale === "function") c.rescale(0.3 + Math.random() * 1.0);
+      c.x = Math.round(Math.random() * Math.max(1, W - c.width));
+      c.y = Math.round(Math.random() * Math.max(1, H - c.height));
+      if ("rotation" in c) { try { c.rotation = Math.round(Math.random() * 360); } catch (e) {} }
+      if ("opacity" in c) { try { c.opacity = 0.55 + Math.random() * 0.45; } catch (e) {} }
+      c.name = "P" + (i + 1); made++;
+    } catch (e) {}
+  }
+  figma.currentPage.selection = [box];
+  figma.viewport.scrollAndZoomIntoView([box]);
+  figma.ui.postMessage({ type: "particles-done", count: made });
+  figma.notify("✦ " + made + "個に複製して散らしました（Particles）。これを選んでモーションで『中心から湧く／星のように流れる／揺れる』を試せます。Cmd+Zで戻せます。");
+}
+function _isParticles(n) { return n && String(n.name) === "Particles" && ("children" in n) && n.children.length >= 3; }
+// ✦ パーティクルの決定的モーション：burst(中心から湧く=増殖)/flow(星が流れる)/shake(揺れる)/rain(降る)
+function particleMotion(box, instruction) {
+  if (!_motionOK()) { figma.ui.postMessage({ type: "motion-ai-done", error: "このFigmaはMotion APIに未対応です（Figmaを更新）。" }); return; }
+  const ps = box.children.slice();
+  if (ps.length < 3) { figma.ui.postMessage({ type: "motion-ai-done", error: "パーティクルが少なすぎます" }); return; }
+  const ins = String(instruction || "");
+  let style = "burst";
+  if (/流れ|星|フロー|flow|star/i.test(ins)) style = "flow";
+  else if (/揺れ|ゆれ|shake|振動/i.test(ins)) style = "shake";
+  else if (/降|雨|rain|落ち/i.test(ins)) style = "rain";
+  else if (/湧|増え|増殖|集ま|中心|burst|multiply/i.test(ins)) style = "burst";
+  const W = box.width || 1600, H = box.height || 900, cx = W / 2, cy = H / 2;
+  const F = (v) => ({ type: "FLOAT", value: v });
+  const XY = (v) => ({ type: "VECTOR", value: { x: v, y: v } });
+  let applied = 0; const summary = [];
+  for (let i = 0; i < ps.length; i++) {
+    const p = ps[i], fields = [];
+    const px = p.x + (p.width || 0) / 2, py = p.y + (p.height || 0) / 2;
+    const st = (i % 24) * 0.05;   // スタッガー（波打つ）
+    try {
+      if (style === "flow") {   // 星のように斜めに流れて消える
+        const dur = 3 + (i % 5) * 0.5, drift = W * 0.6;
+        p.applyManualKeyframeTrack({ type: "PROPERTY", name: "TRANSLATION_X" }, { baseValue: F(0), keyframes: [{ timelinePosition: st, value: F(0), easing: { type: "LINEAR" } }, { timelinePosition: st + dur, value: F(drift) }] });
+        p.applyManualKeyframeTrack({ type: "PROPERTY", name: "TRANSLATION_Y" }, { baseValue: F(0), keyframes: [{ timelinePosition: st, value: F(0), easing: { type: "LINEAR" } }, { timelinePosition: st + dur, value: F(-drift * 0.4) }] });
+        p.applyManualKeyframeTrack({ type: "PROPERTY", name: "OPACITY" }, { baseValue: F(0), keyframes: [{ timelinePosition: st, value: F(0), easing: { type: "EASE_OUT" } }, { timelinePosition: st + 0.6, value: F(1) }, { timelinePosition: st + dur - 0.5, value: F(1) }, { timelinePosition: st + dur, value: F(0) }] });
+        fields.push("流れ");
+      } else if (style === "shake") {   // 小刻みに揺れる
+        const a = 3 + (i % 4) * 2;
+        p.applyManualKeyframeTrack({ type: "PROPERTY", name: "TRANSLATION_X" }, { baseValue: F(0), keyframes: [{ timelinePosition: 0, value: F(0) }, { timelinePosition: 0.1, value: F(a) }, { timelinePosition: 0.2, value: F(-a) }, { timelinePosition: 0.3, value: F(a) }, { timelinePosition: 0.4, value: F(-a) }, { timelinePosition: 0.5, value: F(0) }] });
+        p.applyManualKeyframeTrack({ type: "PROPERTY", name: "ROTATION" }, { baseValue: F(0), keyframes: [{ timelinePosition: 0, value: F(0) }, { timelinePosition: 0.25, value: F(a) }, { timelinePosition: 0.5, value: F(-a) }, { timelinePosition: 0.75, value: F(0) }] });
+        fields.push("揺れ");
+      } else if (style === "rain") {   // 上から降り注ぐ
+        const dy0 = -(py + (p.height || 0));
+        p.applyManualKeyframeTrack({ type: "PROPERTY", name: "TRANSLATION_Y" }, { baseValue: F(dy0), keyframes: [{ timelinePosition: st, value: F(dy0), easing: { type: "EASE_IN" } }, { timelinePosition: st + 1.0, value: F(0) }] });
+        p.applyManualKeyframeTrack({ type: "PROPERTY", name: "OPACITY" }, { baseValue: F(0), keyframes: [{ timelinePosition: st, value: F(0), easing: { type: "EASE_OUT" } }, { timelinePosition: st + 0.3, value: F(1) }] });
+        fields.push("降下");
+      } else {   // burst＝中心から湧いて散る（増殖に見える）
+        const dx = cx - px, dy = cy - py;
+        p.applyManualKeyframeTrack({ type: "PROPERTY", name: "OPACITY" }, { baseValue: F(0), keyframes: [{ timelinePosition: st, value: F(0), easing: { type: "EASE_OUT" } }, { timelinePosition: st + 0.5, value: F(1) }] });
+        p.applyManualKeyframeTrack({ type: "PROPERTY", name: "SCALE_XY" }, { baseValue: XY(0), keyframes: [{ timelinePosition: st, value: XY(0), easing: { type: "EASE_OUT_BACK" } }, { timelinePosition: st + 0.6, value: XY(1) }] });
+        p.applyManualKeyframeTrack({ type: "PROPERTY", name: "TRANSLATION_X" }, { baseValue: F(dx), keyframes: [{ timelinePosition: st, value: F(dx), easing: { type: "EASE_OUT" } }, { timelinePosition: st + 0.7, value: F(0) }] });
+        p.applyManualKeyframeTrack({ type: "PROPERTY", name: "TRANSLATION_Y" }, { baseValue: F(dy), keyframes: [{ timelinePosition: st, value: F(dy), easing: { type: "EASE_OUT" } }, { timelinePosition: st + 0.7, value: F(0) }] });
+        fields.push("湧出");
+      }
+      applied++; if (summary.length < 8) summary.push({ name: String(p.name), fields: fields });
+    } catch (e) {}
+  }
+  const maxT = (style === "flow") ? 6.5 : (style === "rain") ? 2.3 : (style === "shake") ? 0.9 : 2.1;
+  _setTimeline(ps[ps.length - 1], maxT);   // 尺を全長へ
+  try { figma.currentPage.selection = [box]; figma.viewport.scrollAndZoomIntoView([box]); } catch (e) {}
+  figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: 0, summary: summary, errs: [], notes: ["パーティクル＝決定的に生成（" + style + "・" + ps.length + "個・約" + Math.round(maxT) + "秒）。タイムラインで再生・Cmd+Zで戻せます。"] });
+  figma.notify("✦ パーティクル：" + applied + "個を動かしました（" + style + "）。Cmd+Zで戻せます。");
 }
 function collectMotion(instruction) {
   const sel = figma.currentPage.selection;
   if (!sel.length) { figma.ui.postMessage({ type: "motion-structure", error: "フレームを選んでください" }); return; }
+  if (sel.length === 1 && _isParticles(sel[0])) { particleMotion(sel[0], instruction); return; }     // パーティクル＝決定的に湧く/流れる/揺れる
   if (sel.length === 1 && _isSlideshow(sel[0])) { slideshowMotion(sel[0], instruction); return; }   // 重なりスライド＝決定的に順送り（AI経由しない）
   const nodes = [];
   for (const n of sel) { nodes.push(_serMotion(n)); if ("children" in n) for (const c of n.children.slice(0, 40)) nodes.push(Object.assign(_serMotion(c), { parent: n.id })); }
@@ -960,10 +1050,17 @@ function _applyTrack(n, t) {   // 1トラックを適用（成功=fieldラベル
   const dur = Math.max.apply(null, raw.map((k) => k.tp));
   return String(t.field) + (dur ? " " + Math.round(dur * 1000) + "ms" : "");
 }
+// タイムラインの尺を animation 全長に合わせる（既定2秒だと長いモーションが途中で切れ＝「1回しか再生されない」問題の対策）。node.setTimelineDuration(秒)。
+function _setTimeline(node, durSec) {
+  if (!node || !(durSec > 0)) return;
+  const d = durSec + 0.2;
+  for (const c of [node, node.parent, figma.currentPage]) { try { if (c && typeof c.setTimelineDuration === "function") { c.setTimelineDuration(d); return; } } catch (e) {} }
+}
 async function applyMotionOps(ops) {
   if (!_motionOK()) { figma.ui.postMessage({ type: "motion-ai-done", error: "このFigmaはMotion APIに未対応です（Figmaを更新）。" }); return; }
   const get = async (id) => { try { return await figma.getNodeByIdAsync(id); } catch (e) { return null; } };
-  let applied = 0, fail = 0; const summary = [], errs = [], notes = []; let lastNode = null;
+  let applied = 0, fail = 0; const summary = [], errs = [], notes = []; let lastNode = null, maxT = 0;
+  for (const op of (ops || [])) for (const t of (op.tracks || [])) (t.keyframes || []).forEach((k) => { maxT = Math.max(maxT, Number(k.t) || 0); });   // 全キーフレームの最大時刻＝必要な尺
   for (const op of (ops || [])) {
     let n = await get(op.id);
     if (!n && op.name) { try { n = figma.currentPage.findOne((x) => x.name === op.name); } catch (e) {} }
@@ -1006,6 +1103,7 @@ async function applyMotionOps(ops) {
     }
     if (fields.length) summary.push({ name: String(n.name), fields: fields });
   }
+  _setTimeline(lastNode, maxT);   // 尺を全長へ＝途中で切れない
   if (lastNode) { try { figma.currentPage.selection = [lastNode]; figma.viewport.scrollAndZoomIntoView([lastNode]); } catch (e) {} }   // 付けたノードを選択＝タイムラインにモーションが出る
   figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: fail, summary: summary, errs: errs, notes: notes });
   figma.notify("🎬 モーション適用：" + applied + " トラック" + (fail ? "／失敗 " + fail : "") + "。Cmd+Zで戻せます。");
@@ -1057,6 +1155,7 @@ figma.ui.onmessage = async (msg) => {
   else if (msg.type === "collect-motion") collectMotion(msg.instruction);  // 🎬 chat-to-animate：選択をAIへ渡す
   else if (msg.type === "motion-apply") await applyMotionOps(msg.ops);     // 🎬 AIのキーフレームopsを適用
   else if (msg.type === "slideshow") await stackForSlideshow();            // 🎞 選択を1親フレームに重ねる（スライドショーの下ごしらえ）
+  else if (msg.type === "particles") scatterParticles(msg.count);          // ✦ 複製して散らす（パーティクル化）
   else if (msg.type === "reveal") {  // パネルの行クリック→該当レイヤーをFigmaで選択＋ズーム
     const f = _lintFix[msg.id];
     if (f && f.node && !f.node.removed) {
