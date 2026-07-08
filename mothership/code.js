@@ -907,6 +907,12 @@ async function applyMotionOps(ops) {
       try {
         const kfs = (t.keyframes || []).map((k) => { const kf = { timelinePosition: Number(k.t) || 0, value: { type: "FLOAT", value: Number(k.v) || 0 } }; if (k.easing) kf.easing = { type: String(k.easing) }; return kf; });
         if (!kfs.length) continue;
+        // パスドロー(PATH_TRIM)はストロークが必須＝無ければ塗り色に合わせて自動追加（"輪郭が描かれる"を成立させる・Cmd+Zで戻せる）
+        if (String(t.field).indexOf("PATH_TRIM") === 0 && "strokes" in n && (!Array.isArray(n.strokes) || !n.strokes.length)) {
+          let _c = { r: 0.1, g: 0.1, b: 0.1 };
+          try { if ("fills" in n && Array.isArray(n.fills)) { const _sf = n.fills.filter((f) => f && f.type === "SOLID")[0]; if (_sf) _c = { r: _sf.color.r, g: _sf.color.g, b: _sf.color.b }; } } catch (e) {}
+          try { n.strokes = [{ type: "SOLID", color: _c }]; if ("strokeWeight" in n && (!n.strokeWeight || n.strokeWeight < 0.5)) n.strokeWeight = 2; } catch (e) {}
+        }
         const base = (t.baseValue != null) ? Number(t.baseValue) : kfs[0].value.value;
         n.applyManualKeyframeTrack({ type: "PROPERTY", name: String(t.field) }, { baseValue: { type: "FLOAT", value: base || 0 }, keyframes: kfs });
         applied++; lastNode = n;

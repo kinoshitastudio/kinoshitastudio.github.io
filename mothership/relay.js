@@ -242,10 +242,9 @@ http.createServer((req, res) => {
       try { const j = JSON.parse(b); structure = j.structure; engine = j.engine || ""; } catch (e) {}
       if (!structure) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "structureが空です" })); }
       const prompt = AI_TIDY_PROMPT + "\n\n## 構造JSON\n" + JSON.stringify(structure);
-      chatBusy = true; chatBusySince = Date.now();
-      let done = false;
+      let done = false;   // ★整え/編集/モーションのAI-opsはチャットのbusyフラグに触らない(チャットが誤って「考え中」表示になるのを防ぐ)
       const finish = (obj) => {
-        if (done) return; done = true; chatBusy = false; currentChild = null; clearTimeout(timer);
+        if (done) return; done = true; currentChild = null; clearTimeout(timer);
         if (aborted) { aborted = false; return res.end(JSON.stringify({ ok: false, aborted: true })); }
         res.end(JSON.stringify(obj));
       };
@@ -278,10 +277,9 @@ http.createServer((req, res) => {
       if (!structure) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "structureが空です" })); }
       if (!instruction.trim()) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "編集指示が空です" })); }
       const prompt = AI_EDIT_PROMPT + "\n\n## ユーザーの編集指示\n" + instruction + "\n\n## 構造JSON\n" + JSON.stringify(structure);
-      chatBusy = true; chatBusySince = Date.now();
-      let done = false;
+      let done = false;   // ★整え/編集/モーションのAI-opsはチャットのbusyフラグに触らない(チャットが誤って「考え中」表示になるのを防ぐ)
       const finish = (obj) => {
-        if (done) return; done = true; chatBusy = false; currentChild = null; clearTimeout(timer);
+        if (done) return; done = true; currentChild = null; clearTimeout(timer);
         if (aborted) { aborted = false; return res.end(JSON.stringify({ ok: false, aborted: true })); }
         res.end(JSON.stringify(obj));
       };
@@ -314,9 +312,8 @@ http.createServer((req, res) => {
       if (!nodes) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "nodesが空です" })); }
       if (!instruction.trim()) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "モーション指示が空です" })); }
       const prompt = AI_MOTION_PROMPT + "\n\n## ユーザーの指示\n" + instruction + "\n\n## ノード一覧\n" + JSON.stringify(nodes);
-      chatBusy = true; chatBusySince = Date.now();
-      let done = false;
-      const finish = (obj) => { if (done) return; done = true; chatBusy = false; currentChild = null; clearTimeout(timer); if (aborted) { aborted = false; return res.end(JSON.stringify({ ok: false, aborted: true })); } res.end(JSON.stringify(obj)); };
+      let done = false;   // ★整え/編集/モーションのAI-opsはチャットのbusyフラグに触らない(チャットが誤って「考え中」表示になるのを防ぐ)
+      const finish = (obj) => { if (done) return; done = true; currentChild = null; clearTimeout(timer); if (aborted) { aborted = false; return res.end(JSON.stringify({ ok: false, aborted: true })); } res.end(JSON.stringify(obj)); };
       let child;
       try { child = spawnAI(engine, prompt, false); }
       catch (e) { return finish({ ok: false, error: "AI起動失敗: " + (e && e.message ? e.message : e) }); }
