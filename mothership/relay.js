@@ -7,7 +7,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const { bake } = require("./tools/bake");   // svgプリスケール＋画像base64化（ボードで描ける形へ）
 
 const FILE = path.join(__dirname, "mothership.json");
@@ -458,4 +458,17 @@ http.createServer((req, res) => {
   console.log("  watching : " + FILE);
   console.log("  Figmaでプラグイン Mothership を開き「接続」を押すとライブ連携が始まります。");
   console.log("  以後 mothership.json を保存するたび Figma が自動更新されます。");
+  // claude CLI 自己チェック＝接続前に「AI（作る/整える/編集）が使えるか」を切り分ける（relayはリクエスト時に claude -p を spawn するため）
+  try {
+    var _cc = spawnSync("claude", ["--version"], { encoding: "utf8", timeout: 8000 });
+    if (_cc.error || _cc.status !== 0) {
+      console.log("  ⚠️  claude CLI が見つかりません → AI（作る/整える/会話編集）は動きません。");
+      console.log("      Claude Code を入れてログイン（Pro/Max）してください: https://claude.com/claude-code");
+      console.log("      ※ ⚡サンプル生成 は relay/claude なしでも動きます。");
+    } else {
+      console.log("  ✅ claude CLI OK (" + String(_cc.stdout || "").trim() + ") — AI機能が使えます（未ログインなら初回に要ログイン）。");
+    }
+  } catch (e) {
+    console.log("  ⚠️  claude CLI チェックに失敗: " + (e && e.message ? e.message : e));
+  }
 });
