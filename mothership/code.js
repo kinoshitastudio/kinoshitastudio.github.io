@@ -1157,6 +1157,44 @@ async function stackForSlideshow() {
   figma.notify("🎞 " + added + "/" + sel.length + " 枚を「Slideshow」に重ねました" + (skipped ? "（" + skipped + "枚スキップ）" : "") + "。Cmd+Zで戻せます。");
 }
 
+// 🖊 パスを滑らかに：頂点は動かさず(形キープ)、接線ハンドルを Catmull-Rom で補間＝曲線が自然に流れる。鋭角(矢印先端等)は角度判定で保持。dynamic-page対応＝setVectorNetworkAsync。
+async function smoothVectorPaths(strength) {
+  const k = (typeof strength === "number" && strength > 0) ? strength : 1.0;
+  const sel = figma.currentPage.selection;
+  const vectors = [];
+  const walk = (n) => { if (n && n.type === "VECTOR") vectors.push(n); if (n && "children" in n && n.type !== "INSTANCE") for (const c of n.children) walk(c); };
+  sel.forEach(walk);
+  if (!vectors.length) { figma.ui.postMessage({ type: "smooth-done", error: "ベクター（パス）を選んでください。塗り/線のシェイプはベクター化してから。" }); return; }
+  let done = 0, fail = 0; const errs = [];
+  for (const v of vectors) {
+    try {
+      const net = v.vectorNetwork;
+      if (!net || !net.vertices || !net.segments || !net.segments.length) continue;
+      const verts = net.vertices;
+      const neigh = verts.map(() => []);
+      net.segments.forEach((s) => { neigh[s.start].push(s.end); neigh[s.end].push(s.start); });
+      const off = (vi, toward) => {
+        const nb = neigh[vi]; if (!nb || nb.length !== 2) return null;   // 端点・分岐は触らない
+        const p0 = verts[nb[0]], p1 = verts[nb[1]], vt = verts[vi];
+        const ax = p0.x - vt.x, ay = p0.y - vt.y, bx = p1.x - vt.x, by = p1.y - vt.y;
+        const ma = Math.sqrt(ax * ax + ay * ay), mb = Math.sqrt(bx * bx + by * by);
+        if (ma < 0.001 || mb < 0.001) return null;
+        const cos = (ax * bx + ay * by) / (ma * mb);
+        if (cos > -0.35) return null;   // 角度が浅い(≲110°)＝意図的な角として鋭く残す。深い(≳110°)＝曲線として滑らかに
+        const dx = (p1.x - p0.x) * k / 6, dy = (p1.y - p0.y) * k / 6;
+        if (toward === nb[1]) return { x: dx, y: dy };
+        if (toward === nb[0]) return { x: -dx, y: -dy };
+        return null;
+      };
+      const segments = net.segments.map((s) => ({ start: s.start, end: s.end, tangentStart: off(s.start, s.end) || { x: 0, y: 0 }, tangentEnd: off(s.end, s.start) || { x: 0, y: 0 } }));
+      await v.setVectorNetworkAsync({ vertices: net.vertices, segments: segments, regions: net.regions });   // 頂点・領域は据え置き＝形キープ
+      done++;
+    } catch (e) { fail++; if (errs.length < 4) errs.push(String(v.name) + " → " + (e && e.message ? e.message : String(e))); }
+  }
+  figma.ui.postMessage({ type: "smooth-done", done: done, fail: fail, errs: errs, strength: k });
+  figma.notify("🖊 パスを滑らかに：" + done + " 個を補間（形はキープ・鋭角は保持）" + (fail ? "／失敗 " + fail : "") + "。Cmd+Zで戻せます。");
+}
+
 figma.ui.onmessage = async (msg) => {
   if (msg.type === "generate") await generate(msg.json, true);
   else if (msg.type === "live") await generate(msg.json, false);
@@ -1174,6 +1212,7 @@ figma.ui.onmessage = async (msg) => {
   else if (msg.type === "motion-apply") await applyMotionOps(msg.ops);     // 🎬 AIのキーフレームopsを適用
   else if (msg.type === "slideshow") await stackForSlideshow();            // 🎞 選択を1親フレームに重ねる（スライドショーの下ごしらえ）
   else if (msg.type === "particles") scatterParticles(msg.count);          // ✦ 複製して散らす（パーティクル化）
+  else if (msg.type === "smooth-path") await smoothVectorPaths(msg.strength); // 🖊 パスを滑らかに（形キープ・Catmull-Rom）
   else if (msg.type === "reveal") {  // パネルの行クリック→該当レイヤーをFigmaで選択＋ズーム
     const f = _lintFix[msg.id];
     if (f && f.node && !f.node.removed) {
