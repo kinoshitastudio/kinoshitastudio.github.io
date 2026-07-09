@@ -258,6 +258,7 @@ function make(P, reuse, preview) {
   const curve = num(P.curve, 2)
   const relief = num(P.relief, 0.9)
   const spread = num(P.spread, 0.4)
+  const debris = num(P.debris, 0)
 
   /* `sink` is a height field. A dent and a bump shrink their cells exactly the
      same way — the only thing that tells them apart is which wall catches the
@@ -283,10 +284,17 @@ function make(P, reuse, preview) {
        Without this a dent is only a hole; with it, the blow has consequences. */
     const slope = Math.sqrt(dx * dx + dy * dy)
     const swell = 1 + spread * slope * 3.2 * (1 - k)
-    const size = base * (1 - k * num(P.sink, 0.7)) * swell
+    let size = base * (1 - k * num(P.sink, 0.7)) * swell
     if (!isFinite(size) || size < 1) continue
 
-    const push = spread * slope * cell * 5.5
+    let push = spread * slope * cell * 5.5
+
+    /* Torn loose. Past a certain blow the cells on the wall stop being surface:
+       they lose their shape, become debris, and are thrown clear. A square that
+       is still part of the panel keeps its corners. One that is in the air does
+       not. */
+    const loose = debris > 0 && k > 0.2 && k < 0.85 && R() < debris
+    if (loose) push *= 1.6 + R() * 2.4
     // only a cell that is already moving gets nudged — a closed rim stays closed
     const j = cell * 0.16 * Math.min(1, k * 3)
     const cx = (gx + 0.5) * cell - dx / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
@@ -303,8 +311,10 @@ function make(P, reuse, preview) {
     const lit = (k - 0.82) / 0.18
     if (lit > 0) col = mixC(col, mixC(grey(1), accent, 0.6), Math.min(1, lit * P.glow))
 
+    if (loose) size *= 0.35 + R() * 0.4
+
     let node
-    if (P.shape === 'ci') {
+    if (loose || P.shape === 'ci') {
       node = figma.createEllipse()
       node.resize(size, size)
       node.x = cx - size / 2; node.y = cy - size / 2
@@ -316,7 +326,8 @@ function make(P, reuse, preview) {
     }
     node.fills = [{ type: 'SOLID', color: col }]
     if (k > 0.02) node.opacity = 1 - k * 0.28
-    node.name = 'cell'
+    if (loose) node.opacity = Math.max(0.15, node.opacity * (0.35 + R() * 0.5))
+    node.name = loose ? 'debris' : 'cell'
     frame.appendChild(node)
     cells.push(node)
   }
