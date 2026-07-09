@@ -176,7 +176,8 @@ function make(P, reuse, preview) {
   /* Averaging a gradient down to one colour throws away the thing that made it
      worth taking. If the artwork's paint is wanted, wear the paint. */
   const worn = P.useFill && P.srcFills && P.srcFills.length ? P.srcFills : null
-  const light = worn ? lumaOf(worn) > 0.5 : num(P.bgL, 0) > 0.5
+  const pale = worn ? lumaOf(worn) > 0.5 : num(P.bgL, 0) > 0.5
+  const light = P.flip ? !pale : pale
   frame.fills = worn
     ? JSON.parse(JSON.stringify(worn))
     : [{ type: 'SOLID', color: hsl(num(P.bgH,0), num(P.bgS,0), num(P.bgL,0)) }]
