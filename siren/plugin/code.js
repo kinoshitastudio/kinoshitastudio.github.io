@@ -59,12 +59,41 @@ function hsl(h, s, l) {
 }
 
 /* the last flat paint on a node — so Siren can borrow the colour it sits on */
+/* What the layer actually looks like. A gradient is averaged across its stops;
+   stacked fills are composited the way Figma stacks them (index 0 is bottom).
+   The point isn't colour theory — it's that the ground should already belong
+   to the artwork. */
+function fillColour(p) {
+  if (p.type === 'SOLID') return { c: p.color, a: p.opacity == null ? 1 : p.opacity }
+  if (p.type && p.type.indexOf('GRADIENT') === 0 && p.gradientStops && p.gradientStops.length) {
+    let r = 0, g = 0, b = 0, a = 0
+    for (const st of p.gradientStops) {
+      r += st.color.r; g += st.color.g; b += st.color.b
+      a += st.color.a == null ? 1 : st.color.a
+    }
+    const n = p.gradientStops.length
+    const op = p.opacity == null ? 1 : p.opacity
+    return { c: { r: r / n, g: g / n, b: b / n }, a: (a / n) * op }
+  }
+  return null                       // images and video: nothing to sample
+}
 function paintOf(node) {
   if (!node || !('fills' in node) || node.fills === figma.mixed) return null
   const vis = node.fills.filter((p) => p.visible !== false)
   if (!vis.length) return null
-  const p = vis[vis.length - 1]
-  return p.type === 'SOLID' ? p.color : null
+
+  let out = null
+  for (const p of vis) {
+    const f = fillColour(p)
+    if (!f) continue
+    if (!out) { out = { r: f.c.r, g: f.c.g, b: f.c.b }; continue }
+    out = {
+      r: out.r + (f.c.r - out.r) * f.a,
+      g: out.g + (f.c.g - out.g) * f.a,
+      b: out.b + (f.c.b - out.b) * f.a,
+    }
+  }
+  return out
 }
 
 /* Figma rotates around a node's origin, not its centre. Place it by hand. */
