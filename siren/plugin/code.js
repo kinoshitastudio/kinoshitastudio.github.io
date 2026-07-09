@@ -127,34 +127,43 @@ function make(P, reuse, preview) {
   const sel = figma.currentPage.selection
   const target = sel.length === 1 && 'width' in sel[0] && !sel[0].getPluginData(KEY) ? sel[0] : null
   if (target) lastTarget = target.id
-  const bb = target ? target.absoluteBoundingBox : null
-  const W = bb ? Math.round(bb.width)  : DEF
-  const H = bb ? Math.round(bb.height) : DEF
+  const W = target ? Math.round(target.width)  : DEF
+  const H = target ? Math.round(target.height) : DEF
   const S = Math.min(W, H)   // the ring lives on the short edge
 
   // Reuse the frame we made last time, so LIVE does not scatter frames around.
   let frame = reuse ? findFrame(preview) : null
-  /* The frame always lives at the top of the page, never inside a group.
-     A group re-computes its own bounds, which drags the frame around, and a
-     frame buried in a group is invisible to findFrame() on the next run. */
-  let fx, fy
-  if (bb) { fx = Math.round(bb.x); fy = Math.round(bb.y) }
-  if (frame) {
-    for (const c of [...frame.children]) c.remove()
-    if (frame.parent !== figma.currentPage) figma.currentPage.appendChild(frame)
-    if (!target) { fx = frame.x; fy = frame.y }
-  } else {
-    frame = figma.createFrame()
+  if (frame) { for (const c of [...frame.children]) c.remove() }
+  else frame = figma.createFrame()
+
+  frame.name = 'Siren'
+  frame.clipsContent = true
+
+  if (target) {
+    /* Sit directly above the target, inside its parent — a layer that always
+       floats on top of the document is not a layer, it is a sticker.
+       Park the frame on the page first so indexOf() is not thrown off by it. */
     figma.currentPage.appendChild(frame)
-    if (!target) {
+    const parent = target.parent
+    parent.insertChild(parent.children.indexOf(target) + 1, frame)
+    // an auto layout would otherwise pack the frame into the flow
+    if ('layoutMode' in parent && parent.layoutMode !== 'NONE') {
+      frame.layoutPositioning = 'ABSOLUTE'
+    }
+    frame.resize(W, H)
+    // siblings share a coordinate space, so the target's own x/y is the answer
+    frame.x = target.x
+    frame.y = target.y
+  } else {
+    const fresh = frame.parent !== figma.currentPage
+    if (fresh) figma.currentPage.appendChild(frame)
+    frame.resize(W, H)
+    if (!reuse || fresh) {
       const v = figma.viewport.center
-      fx = Math.round(v.x - W / 2); fy = Math.round(v.y - H / 2)
+      frame.x = Math.round(v.x - W / 2)
+      frame.y = Math.round(v.y - H / 2)
     }
   }
-  frame.name = 'Siren'
-  frame.resize(W, H)
-  frame.x = fx; frame.y = fy
-  frame.clipsContent = true
   frame.setPluginData(KEY, JSON.stringify(P))
   frame.setPluginData(TMP, preview ? '1' : '')
   const bg = hsl(num(P.bgH,0), num(P.bgS,0), num(P.bgL,0))
