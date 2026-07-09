@@ -176,13 +176,21 @@ function make(P, reuse, preview) {
   /* Averaging a gradient down to one colour throws away the thing that made it
      worth taking. If the artwork's paint is wanted, wear the paint. */
   const worn = P.useFill && P.srcFills && P.srcFills.length ? P.srcFills : null
+  const dialled = hsl(num(P.bgH, 0), num(P.bgS, 0), num(P.bgL, 0))
+  const chosen = worn ? (paintOf({ fills: worn }) || grey(0)) : dialled
   const pale = worn ? lumaOf(worn) > 0.5 : num(P.bgL, 0) > 0.5
-  const light = P.flip ? !pale : pale
-  frame.fills = worn
-    ? JSON.parse(JSON.stringify(worn))
-    : [{ type: 'SOLID', color: hsl(num(P.bgH,0), num(P.bgS,0), num(P.bgL,0)) }]
-  // what a cell falls toward when the kick drives it into the surface
-  const ground = worn ? (paintOf({ fills: worn }) || grey(0)) : hsl(num(P.bgH,0), num(P.bgS,0), num(P.bgL,0))
+
+  /* 反転 swaps the panel and the void. Turning the ink over while the ground
+     stays put just makes the surface disappear into it — inversion has to move
+     both, or it moves nothing. */
+  const panel = pale ? grey(0.06) : grey(0.92)      // the colour of the surface
+  const ground = P.flip ? panel : chosen            // what shows through a hole
+  const light = P.flip ? !pale : pale               // a pale void wants dark ink
+  const inkBase0 = light ? 0.06 : 0.92
+
+  frame.fills = (P.flip || !worn)
+    ? [{ type: 'SOLID', color: ground }]
+    : JSON.parse(JSON.stringify(worn))
 
   const cA = hueRGB(P.h1), cB = hueRGB(P.h2), accent = hueRGB(P.hue)
 
@@ -253,7 +261,7 @@ function make(P, reuse, preview) {
   const cells = []
   // size 1 = a closed surface. Holes are what the kick leaves behind.
   const base = cell * num(P.fill, 1) * (1 + bassLift * num(P.bass, 0.5) * 0.5)
-  const inkBase = light ? 0.06 : 0.92
+  const inkBase = inkBase0
 
   const curve = num(P.curve, 2)
   const relief = num(P.relief, 0.9)
