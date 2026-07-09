@@ -10,6 +10,7 @@ const UI = { width: 400, height: 680 }
 const KEY = 'kaibou'         // settings, stored on the result
 const SRC = 'kaibou.source'  // id of the hidden original
 const FILLS = 'kaibou.fills' // the paint we replaced, so we can put it back
+const PRV = 'kaibou.preview' // '1' while LIVE is only trying it on
 
 figma.showUI(__html__, UI)
 
@@ -90,6 +91,39 @@ async function push() {
  }
 }
 
+/* Put a node back the way it was. Works for both modes: a swapped paint gets
+   its fills returned, a baked layer is removed and its source unhidden. */
+async function restore(node) {
+  if (!node) return false
+
+  const paint = node.getPluginData(FILLS)
+  if (paint) {
+    node.fills = JSON.parse(paint)
+    node.setPluginData(FILLS, '')
+    node.setPluginData(KEY, '')
+    node.setPluginData(PRV, '')
+    return true
+  }
+
+  const srcId = node.getPluginData(SRC)
+  if (!srcId) return false
+  const source = await figma.getNodeByIdAsync(srcId)
+  if (!source) return false
+  source.visible = true
+  source.locked = false
+  source.name = source.name.replace(/^⟨source⟩ /, '')
+  figma.currentPage.selection = [source]
+  node.remove()
+  return true
+}
+
+/* Everything LIVE put on the canvas, and nothing else. */
+async function discardPreviews() {
+  const previews = figma.currentPage.findAll(n => n.getPluginData(PRV) === '1')
+  for (const n of previews) await restore(n)
+  return previews.length
+}
+
 figma.on('selectionchange', push)
 // the UI also asks for the first push once its script is running
 push()
@@ -104,6 +138,8 @@ figma.ui.onmessage = async (msg) => {
 
     const image = figma.createImage(new Uint8Array(msg.bytes))
     const settings = JSON.stringify(msg.settings)
+    // A LIVE push is a fitting, not a decision. Only 適用 commits.
+    const trial = msg.preview ? '1' : ''
 
     // Paint-only: swap the node's fill, leave everything inside it alone.
     if (msg.mode === 'fill') {
@@ -112,6 +148,7 @@ figma.ui.onmessage = async (msg) => {
       }
       node.fills = [{ type: 'IMAGE', imageHash: image.hash, scaleMode: 'FILL' }]
       node.setPluginData(KEY, settings)
+      node.setPluginData(PRV, trial)
       return
     }
 
@@ -119,6 +156,8 @@ figma.ui.onmessage = async (msg) => {
     if (node.getPluginData(SRC)) {
       node.fills = [{ type: 'IMAGE', imageHash: image.hash, scaleMode: 'FILL' }]
       node.setPluginData(KEY, settings)
+      // once committed, a layer never goes back to being a preview
+      if (!msg.preview) node.setPluginData(PRV, '')
       return
     }
 
@@ -160,6 +199,7 @@ figma.ui.onmessage = async (msg) => {
     rect.setPluginData(KEY, settings)
     rect.setPluginData(SRC, node.id)
     rect.setPluginData(FILLS, '')
+    rect.setPluginData(PRV, trial)
 
     parent.insertChild(index, rect)
     if (canHoldPaint) rect.relativeTransform = place
@@ -169,31 +209,22 @@ figma.ui.onmessage = async (msg) => {
     node.locked = true
 
     figma.currentPage.selection = [rect]
-    figma.notify('元のレイヤーは残してあります')
+    if (!msg.preview) figma.notify('元のレイヤーは残してあります')
+  }
+
+  // LIVE was switched off: nothing tried on stays.
+  if (msg.type === 'discard') {
+    const n = await discardPreviews()
+    if (n) figma.notify('プレビューを消しました')
+    return
   }
 
   if (msg.type === 'restore') {
     const node = figma.currentPage.selection[0]
-    if (!node) return
-
-    const paint = node.getPluginData(FILLS)
-    if (paint) {
-      node.fills = JSON.parse(paint)
-      node.setPluginData(FILLS, '')
-      node.setPluginData(KEY, '')
-      figma.notify('塗りを元に戻しました')
+    if (!(await restore(node))) {
+      figma.notify('これは Kaibou のレイヤーではありません')
       return
     }
-
-    const srcId = node.getPluginData(SRC)
-    if (!srcId) { figma.notify('これは Kaibou のレイヤーではありません'); return }
-    const source = await figma.getNodeByIdAsync(srcId)
-    if (!source) { figma.notify('元のレイヤーが見つかりません'); return }
-    source.visible = true
-    source.locked = false
-    source.name = source.name.replace(/^⟨source⟩ /, '')
-    figma.currentPage.selection = [source]
-    node.remove()
     figma.notify('元に戻しました')
   }
 
