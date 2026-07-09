@@ -8,9 +8,27 @@
  */
 
 const KEY = 'siren'
-const S = 1000
+const TMP = 'siren.preview'   // this frame is only a preview; LIVE off throws it away
+const DEF = 1000
+let lastTarget = null
 
 figma.showUI(__html__, { width: 400, height: 720 })
+
+/* Tell the UI what we are about to fill, so its preview has the same shape. */
+function tellTarget() {
+  const sel = figma.currentPage.selection
+  const n = sel.length === 1 && 'width' in sel[0] && !sel[0].getPluginData(KEY) ? sel[0] : null
+  const bb = n && n.absoluteBoundingBox
+  figma.ui.postMessage({
+    type: 'target',
+    w: bb ? Math.round(bb.width)  : DEF,
+    h: bb ? Math.round(bb.height) : DEF,
+    name: n ? n.name : null,
+    paint: paintOf(n),
+  })
+}
+figma.on('selectionchange', tellTarget)
+tellTarget()
 
 /* ---------- helpers ---------- */
 function rng(seed) {
@@ -31,6 +49,22 @@ const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v)
 const mixC = (a, b, t) => ({ r: a.r + (b.r - a.r) * t, g: a.g + (b.g - a.g) * t, b: a.b + (b.b - a.b) * t })
 const grey = (v) => ({ r: clamp01(v), g: clamp01(v), b: clamp01(v) })
 
+/* hsl → figma rgb (0..1) */
+function hsl(h, s, l) {
+  const a = s * Math.min(l, 1 - l)
+  const f = (n) => { const k = (n + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1))) }
+  return { r: clamp01(f(0)), g: clamp01(f(8)), b: clamp01(f(4)) }
+}
+
+/* the last flat paint on a node — so Siren can borrow the colour it sits on */
+function paintOf(node) {
+  if (!node || !('fills' in node) || node.fills === figma.mixed) return null
+  const vis = node.fills.filter((p) => p.visible !== false)
+  if (!vis.length) return null
+  const p = vis[vis.length - 1]
+  return p.type === 'SOLID' ? p.color : null
+}
+
 /* Figma rotates around a node's origin, not its centre. Place it by hand. */
 function centreAt(node, cx, cy, w, h, angle) {
   const c = Math.cos(angle), s = Math.sin(angle)
@@ -41,32 +75,60 @@ function centreAt(node, cx, cy, w, h, angle) {
 }
 
 /* ---------- generate ---------- */
-function make(P, reuse) {
+/* A preview is disposable. A committed frame is not. Keep them apart. */
+const isSiren   = (n) => n.type === 'FRAME' && !!n.getPluginData(KEY)
+const isPreview = (n) => isSiren(n) && n.getPluginData(TMP) === '1'
+
+function findPreview() { return figma.currentPage.findOne(isPreview) }
+function findFrame(preview) {
+  return preview ? findPreview() : (findPreview() || figma.currentPage.findOne(isSiren))
+}
+function discard() {
+  const all = figma.currentPage.findAll(isPreview)
+  for (const f of all) f.remove()
+  return all.length
+}
+
+function make(P, reuse, preview) {
   const R = rng(P.seed * 7919 + 13)
 
+  // A selected node decides the canvas: same size, same place, same parent.
+  const sel = figma.currentPage.selection
+  const target = sel.length === 1 && 'width' in sel[0] && !sel[0].getPluginData(KEY) ? sel[0] : null
+  if (target) lastTarget = target.id
+  const bb = target ? target.absoluteBoundingBox : null
+  const W = bb ? Math.round(bb.width)  : DEF
+  const H = bb ? Math.round(bb.height) : DEF
+  const S = Math.min(W, H)   // the ring lives on the short edge
+
   // Reuse the frame we made last time, so LIVE does not scatter frames around.
-  let frame = null
-  if (reuse) {
-    for (const n of figma.currentPage.children) {
-      if (n.type === 'FRAME' && n.getPluginData(KEY)) { frame = n; break }
-    }
-  }
+  let frame = reuse ? findFrame(preview) : null
+  /* The frame always lives at the top of the page, never inside a group.
+     A group re-computes its own bounds, which drags the frame around, and a
+     frame buried in a group is invisible to findFrame() on the next run. */
   let fx, fy
+  if (bb) { fx = Math.round(bb.x); fy = Math.round(bb.y) }
   if (frame) {
-    fx = frame.x; fy = frame.y
     for (const c of [...frame.children]) c.remove()
+    if (frame.parent !== figma.currentPage) figma.currentPage.appendChild(frame)
+    if (!target) { fx = frame.x; fy = frame.y }
   } else {
     frame = figma.createFrame()
-    const v = figma.viewport.center
-    fx = Math.round(v.x - S / 2); fy = Math.round(v.y - S / 2)
     figma.currentPage.appendChild(frame)
+    if (!target) {
+      const v = figma.viewport.center
+      fx = Math.round(v.x - W / 2); fy = Math.round(v.y - H / 2)
+    }
   }
   frame.name = 'Siren'
-  frame.resize(S, S)
+  frame.resize(W, H)
   frame.x = fx; frame.y = fy
   frame.clipsContent = true
   frame.setPluginData(KEY, JSON.stringify(P))
-  frame.fills = [{ type: 'SOLID', color: P.invert ? grey(0.95) : grey(0.043) }]
+  frame.setPluginData(TMP, preview ? '1' : '')
+  const bg = hsl(num(P.bgH,0), num(P.bgS,0), num(P.bgL,0))
+  const light = num(P.bgL,0) > 0.5            // a pale ground wants dark ink
+  frame.fills = [{ type: 'SOLID', color: bg }]
 
   const cA = hueRGB(P.h1), cB = hueRGB(P.h2), accent = hueRGB(P.hue)
 
@@ -74,7 +136,7 @@ function make(P, reuse) {
   if (P.wash > 0) {
     const wash = figma.createRectangle()
     wash.name = 'wash'
-    wash.resize(S, S)
+    wash.resize(W, H)
     wash.x = 0; wash.y = 0
     wash.opacity = P.wash
     wash.fills = [{
@@ -91,7 +153,8 @@ function make(P, reuse) {
   /* --- run the sequence --- */
   const G = P.grid
   const cell = S / G
-  const sink = new Float32Array(G * G)
+  const GX = Math.ceil(W / cell), GY = Math.ceil(H / cell)
+  const sink = new Float32Array(GX * GY)
   const hits = [], cracks = [], dust = []
   let bassLift = 0
   const jit = (a) => (R() * 2 - 1) * a * P.hum
@@ -100,31 +163,31 @@ function make(P, reuse) {
     for (let s = 0; s < 16; s++) {
       const ang = (s / 16) * Math.PI * 2 - Math.PI / 2 + jit(0.06)
 
-      if (P.kick.indexOf(s) >= 0) {
+      if (P.kickSeq.indexOf(s) >= 0) {
         const r = S * 0.5 * 0.30 * (1 + jit(0.10))
-        const hx = S / 2 + Math.cos(ang) * r, hy = S / 2 + Math.sin(ang) * r
-        const reach = P.reach * (1 + jit(0.18))
+        const hx = W / 2 + Math.cos(ang) * r, hy = H / 2 + Math.sin(ang) * r
+        const reach = P.reach * (1 + jit(0.18)) * (S / DEF)
         hits.push({ x: hx, y: hy, r: reach })
-        for (let gy = 0; gy < G; gy++) for (let gx = 0; gx < G; gx++) {
+        for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
           const cx = (gx + 0.5) * cell, cy = (gy + 0.5) * cell
           const d2 = (cx - hx) * (cx - hx) + (cy - hy) * (cy - hy)
-          sink[gy * G + gx] += Math.exp(-d2 / (reach * reach))
+          sink[gy * GX + gx] += Math.exp(-d2 / (reach * reach))
         }
       }
-      if (P.snare.indexOf(s) >= 0 && P.crack > 0) {
+      if (P.snareSeq.indexOf(s) >= 0 && P.crack > 0) {
         const r = S * 0.5 * 0.50 * (1 + jit(0.06))
         cracks.push({ ang: ang + jit(0.05), r, len: S * 0.16 * (0.6 + R() * 0.8), w: 1.4 + R() * 2.6 })
       }
-      if (P.hat.indexOf(s) >= 0 && P.dust > 0) {
+      if (P.hatSeq.indexOf(s) >= 0 && P.dust > 0) {
         const r = S * 0.5 * 0.72
         const n = 5 + Math.round(R() * 7)
         for (let i = 0; i < n; i++) {
           const aa = ang + (R() - 0.5) * 0.16
           const rr = r * (1 + (R() - 0.5) * 0.10)
-          dust.push({ x: S / 2 + Math.cos(aa) * rr, y: S / 2 + Math.sin(aa) * rr, s: 1 + R() * 3.2, o: 0.15 + R() * 0.6 })
+          dust.push({ x: W / 2 + Math.cos(aa) * rr, y: H / 2 + Math.sin(aa) * rr, s: 1 + R() * 3.2, o: 0.15 + R() * 0.6 })
         }
       }
-      if (P.bass.indexOf(s) >= 0) bassLift += 0.12
+      if (P.bassSeq.indexOf(s) >= 0) bassLift += 0.12
     }
   }
 
@@ -149,7 +212,7 @@ function make(P, reuse) {
           { position: 1,    color: { r: 1, g: 1, b: 1, a: 0 } },
         ],
       }]
-      e.effects = [{ type: 'LAYER_BLUR', radius: P.blur, visible: true }]
+      e.effects = [{ type: 'LAYER_BLUR', radius: P.blur * (S / DEF), visible: true }]
       e.blendMode = 'SCREEN'
       e.opacity = Math.min(1, P.glow)
       e.name = 'hit'
@@ -162,18 +225,19 @@ function make(P, reuse) {
 
   /* --- the field: every cell samples its colour out of the wash --- */
   const cells = []
-  const base = cell * P.fill * (1 + bassLift * P.bass * 0.5)
-  const inkBase = P.invert ? 0.06 : 0.92
+  const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d)
+  const base = cell * num(P.fill, 0.7) * (1 + bassLift * num(P.bass, 0.5) * 0.5)
+  const inkBase = light ? 0.06 : 0.92
 
-  for (let gy = 0; gy < G; gy++) for (let gx = 0; gx < G; gx++) {
-    const k = sink[gy * G + gx] / smax
-    const size = base * (1 - k * P.sink)
-    if (size < 1) continue
+  for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
+    const k = sink[gy * GX + gx] / smax
+    const size = base * (1 - k * num(P.sink, 0.7))
+    if (!isFinite(size) || size < 1) continue
     const cx = (gx + 0.5) * cell + jit(cell * 0.16)
     const cy = (gy + 0.5) * cell + jit(cell * 0.16)
 
-    const t = cx / S * 0.6 + cy / S * 0.4
-    const g0 = inkBase + (P.invert ? 1 : -1) * k * P.dark * (P.invert ? 0.7 : 0.8)
+    const t = cx / W * 0.6 + cy / H * 0.4
+    const g0 = inkBase + (light ? 1 : -1) * k * P.dark * (light ? 0.7 : 0.8)
     let col = mixC(grey(g0), mixC(cA, cB, t), P.sample * (1 - k * 0.55))
     col = mixC(col, grey(1), Math.max(0, k - 0.55) * 1.4 * P.glow)
     if (k > 0.86) col = mixC(col, accent, 0.75)
@@ -204,10 +268,10 @@ function make(P, reuse) {
       const n = figma.createRectangle()
       const w = c.len, h = Math.max(0.6, c.w * P.crack)
       n.resize(w, h)
-      const cx = S / 2 + Math.cos(c.ang) * c.r, cy = S / 2 + Math.sin(c.ang) * c.r
+      const cx = W / 2 + Math.cos(c.ang) * c.r, cy = H / 2 + Math.sin(c.ang) * c.r
       centreAt(n, cx, cy, w, h, c.ang)
       n.cornerRadius = h / 2
-      n.fills = [{ type: 'SOLID', color: P.invert ? grey(0.07) : grey(0.96) }]
+      n.fills = [{ type: 'SOLID', color: light ? grey(0.07) : grey(0.96) }]
       n.name = 'crack'
       frame.appendChild(n); cs.push(n)
     }
@@ -221,7 +285,7 @@ function make(P, reuse) {
       const n = figma.createRectangle()
       n.resize(d.s, d.s)
       n.x = d.x; n.y = d.y
-      n.fills = [{ type: 'SOLID', color: P.invert ? grey(0.07) : grey(1) }]
+      n.fills = [{ type: 'SOLID', color: light ? grey(0.07) : grey(1) }]
       n.opacity = Math.min(1, d.o * P.dust)
       n.name = 'grain'
       frame.appendChild(n); ds.push(n)
@@ -229,7 +293,8 @@ function make(P, reuse) {
     figma.group(ds, frame).name = 'dust'
   }
 
-  figma.currentPage.selection = [frame]
+  // A preview must not steal the selection, or the target is lost on the next tick.
+  if (!preview) figma.currentPage.selection = [frame]
   return frame
 }
 
@@ -237,13 +302,20 @@ function make(P, reuse) {
 figma.ui.onmessage = (msg) => {
   if (msg.type === 'make' || msg.type === 'live') {
     try {
-      const f = make(msg.p, true)
-      if (msg.type === 'make') figma.viewport.scrollAndZoomIntoView([f])
+      const preview = msg.type === 'live'
+      const f = make(msg.p, true, preview)
+      if (!preview) figma.viewport.scrollAndZoomIntoView([f])
       figma.ui.postMessage({ type: 'made', nodes: f.children.length })
     } catch (err) {
       console.error('[siren]', err)
       figma.ui.postMessage({ type: 'error', message: String((err && err.message) || err) })
     }
   }
+  if (msg.type === 'discard') {
+    const n = discard()
+    figma.ui.postMessage({ type: 'discarded', gone: n })
+    figma.notify(n ? `プレビューを ${n} 個消しました` : '消すプレビューはありません')
+  }
+  if (msg.type === 'target') tellTarget()
   if (msg.type === 'close') figma.closePlugin()
 }
