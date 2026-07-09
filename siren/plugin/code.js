@@ -361,14 +361,27 @@ function make(P, reuse, preview) {
     const ux = LX / LN, uy = LY / LN          // toward the light
     const g = Math.min(1.4, P.glow)
 
+    /* Every hit threw its spark in the same direction, because every one of them
+       borrowed the light's direction. But a hit is an event with a place: what
+       flies off it flies away from where it happened. Give each one its own
+       outward vector, jittered, and the ring stops looking like a stamp. */
     const lamp = (h, o) => {
       const D = h.r * 2
       const d = D * o.size
       if (!(d > 0.5)) return null
+      let dirx = o.away ? -ux : ux, diry = o.away ? -uy : uy
+      if (o.burst) {
+        let rx = h.x - W / 2, ry = h.y - H / 2
+        const rl = Math.sqrt(rx * rx + ry * ry)
+        if (rl > 1e-3) {
+          const a = Math.atan2(ry, rx) + (R() * 2 - 1) * 0.6      // scatter, don't stamp
+          dirx = Math.cos(a); diry = Math.sin(a)
+        }
+      }
       const e = figma.createEllipse()
       e.resize(d, d)
-      e.x = h.x + D * o.off * (o.away ? -ux : ux) - d / 2
-      e.y = h.y + D * o.off * (o.away ? -uy : uy) - d / 2
+      e.x = h.x + D * o.off * dirx - d / 2
+      e.y = h.y + D * o.off * diry - d / 2
       e.fills = [{
         type: 'GRADIENT_RADIAL',
         gradientTransform: [[0.5, 0, 0.25], [0, 0.5, 0.25]],
@@ -395,8 +408,9 @@ function make(P, reuse, preview) {
          puts a smudge on top of it.
          What survives is what a real surface would still show: one hard pin of
          reflection on the far wall, and colour bleeding into the hollow. */
-      parts.push(lamp(h, { name:'spec',   c:white,  a:0.90, size:0.20, off:0.30, away:1, blur:0.06, mode:'SCREEN',     op:0.75*g }))
-      parts.push(lamp(h, { name:'colour', c:accent, a:0.30, size:0.60, off:0.30, away:1, blur:0.20, mode:'SOFT_LIGHT', op:0.7*g }))
+      const throwOut = 0.3 + spread * 0.55            // a harder blow throws further
+      parts.push(lamp(h, { name:'spec',   c:white,  a:0.90, size:0.20, off:throwOut, burst:1, blur:0.06, mode:'SCREEN',     op:0.75*g }))
+      parts.push(lamp(h, { name:'colour', c:accent, a:0.30, size:0.60, off:throwOut, burst:1, blur:0.20, mode:'SOFT_LIGHT', op:0.7*g }))
     }
     const kept = parts.filter(Boolean)
     if (kept.length) figma.group(kept, frame).name = 'light'
