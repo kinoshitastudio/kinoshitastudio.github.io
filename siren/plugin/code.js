@@ -313,66 +313,66 @@ function make(P, reuse, preview) {
   if (cells.length) figma.group(cells, frame).name = 'field'
 
   /* --- light ---------------------------------------------------------------
-     A dent is not one glow. Reading a surface as sunken takes a stack, in this
-     order, each one a blurred ellipse of paint:
+     SCREEN can only add. MULTIPLY can only subtract. So on a dark ground the
+     highlights fire and the illusion lives; on a pale ground they add nothing
+     and only the shadows remain — which is exactly what a dent on white paper
+     looks like. Build the stack the ground can actually carry.
 
-       1 occlusion  the whole hollow loses ambient light          MULTIPLY
-       2 shadow     the near wall, turned away from the light     MULTIPLY
-       3 bounce     colour thrown back off the floor              SCREEN
-       4 rim        the far wall, catching the light              SCREEN
-       5 core       the floor itself                              SCREEN
-       6 spec       one hard pin of reflection                    SCREEN
-
-     SCREEN can only add, so every one of these needs somewhere dark to land.
-     That is why this work lives on black — not taste, arithmetic.
-     Nothing here is 3D. It is six ellipses and a blur. --------------------- */
-  if (P.glow > 0 && hits.length) {
+     Blur radii are fractions of D, the crater's diameter. A hot specular is
+     small and barely blurred; the diffuse under it is large and soft. That size
+     contrast is what separates "wet" from "matte".
+     Nothing here is 3D. Ellipses, gradients, a blur. ------------------------ */
+  if (P.glow > 0 && hits.length && relief > 0) {
     const px = S / DEF
     const LN = Math.sqrt(LX * LX + LY * LY)
     const ux = LX / LN, uy = LY / LN          // toward the light
     const g = Math.min(1.4, P.glow)
 
-    const lamp = (h, {size, dxr, dyr, stops, mode, blur, op, name}) => {
-      const d = h.r * size
+    const lamp = (h, o) => {
+      const D = h.r * 2
+      const d = D * o.size
+      if (!(d > 0.5)) return null
       const e = figma.createEllipse()
       e.resize(d, d)
-      e.x = h.x + h.r * dxr - d / 2
-      e.y = h.y + h.r * dyr - d / 2
+      e.x = h.x + D * o.off * (o.away ? -ux : ux) - d / 2
+      e.y = h.y + D * o.off * (o.away ? -uy : uy) - d / 2
       e.fills = [{
         type: 'GRADIENT_RADIAL',
         gradientTransform: [[0.5, 0, 0.25], [0, 0.5, 0.25]],
-        gradientStops: stops,
+        gradientStops: [
+          { position: 0,    color: { r: o.c.r, g: o.c.g, b: o.c.b, a: o.a } },
+          { position: 0.45, color: { r: o.c.r, g: o.c.g, b: o.c.b, a: o.a * 0.3 } },
+          { position: 1,    color: { r: o.c.r, g: o.c.g, b: o.c.b, a: 0 } },
+        ],
       }]
-      e.effects = [{ type: 'LAYER_BLUR', radius: Math.max(0.5, d * blur), visible: true }]
-      e.blendMode = mode
-      e.opacity = Math.max(0, Math.min(1, op))
-      e.name = name
+      e.effects = [{ type: 'LAYER_BLUR', radius: Math.max(0.4, D * o.blur), visible: true }]
+      e.blendMode = o.mode
+      e.opacity = Math.max(0, Math.min(1, o.op))
+      e.name = o.name
       frame.appendChild(e)
       return e
     }
-    const fade = (c, a) => ([
-      { position: 0,    color: { r: c.r, g: c.g, b: c.b, a } },
-      { position: 0.42, color: { r: c.r, g: c.g, b: c.b, a: a * 0.34 } },
-      { position: 1,    color: { r: c.r, g: c.g, b: c.b, a: 0 } },
-    ])
-    const black = grey(0), white = grey(1)
 
+    const black = grey(0), white = grey(1)
     const parts = []
     for (const h of hits) {
-      parts.push(lamp(h, { name:'occlusion', size:2.9, dxr:0,          dyr:0,
-        stops: fade(black, 0.55), mode:'MULTIPLY', blur:0.24, op:0.85 * relief }))
-      parts.push(lamp(h, { name:'shadow',    size:1.85, dxr:ux*0.34,  dyr:uy*0.34,
-        stops: fade(black, 0.72), mode:'MULTIPLY', blur:0.20, op:0.9 * relief }))
-      parts.push(lamp(h, { name:'bounce',    size:2.3, dxr:-ux*0.15,  dyr:-uy*0.15,
-        stops: fade(accent, 0.5),  mode:'SCREEN',   blur:0.32, op:0.42 * g }))
-      parts.push(lamp(h, { name:'rim',       size:1.5, dxr:-ux*0.44,  dyr:-uy*0.44,
-        stops: fade(white, 0.9),   mode:'SCREEN',   blur:0.14, op:0.8 * g }))
-      parts.push(lamp(h, { name:'core',      size:1.15, dxr:0,        dyr:0,
-        stops: fade(white, 0.95),  mode:'SCREEN',   blur: Math.max(0.06, (P.blur * px) / (h.r * 1.15)), op:0.7 * g }))
-      parts.push(lamp(h, { name:'spec',      size:0.3, dxr:-ux*0.5,   dyr:-uy*0.5,
-        stops: fade(white, 1),     mode:'SCREEN',   blur:0.4,  op:0.95 * g }))
+      // the hollow loses ambient light, and its near lip turns away from it
+      parts.push(lamp(h, { name:'occlusion',  c:black, a:0.70, size:1.15, off:0,    blur:0.15, mode:'MULTIPLY', op:0.75*relief }))
+      parts.push(lamp(h, { name:'shadow',     c:black, a:0.65, size:0.70, off:0.22, blur:0.20, mode:'MULTIPLY', op:0.85*relief }))
+
+      // On white, none of the following can add a single photon. Skip them.
+      if (light) continue
+
+      // the far wall takes the light; shadow and diffuse are an opposed pair,
+      // and it is that opposition that makes a flat disc read as a curved wall
+      parts.push(lamp(h, { name:'diffuse',    c:white,  a:0.50, size:0.60, off:0.30, away:1, blur:0.25, mode:'SCREEN',     op:0.9*g }))
+      parts.push(lamp(h, { name:'bounce',     c:accent, a:0.20, size:0.50, off:0.28,         blur:0.18, mode:'SCREEN',     op:0.8*g }))
+      parts.push(lamp(h, { name:'bloom',      c:white,  a:0.40, size:0.35, off:0.30, away:1, blur:0.14, mode:'SCREEN',     op:0.85*g }))
+      parts.push(lamp(h, { name:'spec',       c:white,  a:0.90, size:0.20, off:0.30, away:1, blur:0.06, mode:'SCREEN',     op:0.95*g }))
+      parts.push(lamp(h, { name:'colour',     c:accent, a:0.30, size:0.60, off:0.30, away:1, blur:0.20, mode:'SOFT_LIGHT', op:0.7*g }))
     }
-    if (parts.length) figma.group(parts, frame).name = 'light'
+    const kept = parts.filter(Boolean)
+    if (kept.length) figma.group(kept, frame).name = 'light'
   }
 
   /* --- snare: the surface splits --- */
