@@ -322,7 +322,11 @@ function make(P, reuse, preview) {
      small and barely blurred; the diffuse under it is large and soft. That size
      contrast is what separates "wet" from "matte".
      Nothing here is 3D. Ellipses, gradients, a blur. ------------------------ */
-  if (P.glow > 0 && hits.length && relief > 0) {
+  /* Black is the ground this instrument is built on. On white the lamps have
+     nothing to add and their MULTIPLY halves survive alone as dark balls — so
+     on a pale ground we place none of them. The cells' own shading carries the
+     dent there, which is all a dent on paper ever is. */
+  if (P.glow > 0 && hits.length && relief > 0 && !light) {
     const px = S / DEF
     const LN = Math.sqrt(LX * LX + LY * LY)
     const ux = LX / LN, uy = LY / LN          // toward the light
@@ -359,9 +363,6 @@ function make(P, reuse, preview) {
       // the hollow loses ambient light, and its near lip turns away from it
       parts.push(lamp(h, { name:'occlusion',  c:black, a:0.70, size:1.15, off:0,    blur:0.15, mode:'MULTIPLY', op:0.75*relief }))
       parts.push(lamp(h, { name:'shadow',     c:black, a:0.65, size:0.70, off:0.22, blur:0.20, mode:'MULTIPLY', op:0.85*relief }))
-
-      // On white, none of the following can add a single photon. Skip them.
-      if (light) continue
 
       // the far wall takes the light; shadow and diffuse are an opposed pair,
       // and it is that opposition that makes a flat disc read as a curved wall
