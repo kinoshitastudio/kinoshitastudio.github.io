@@ -249,34 +249,6 @@ function make(P, reuse, preview) {
   for (const v of sink) if (v > smax) smax = v
   if (smax < 1e-6) smax = 1
 
-  /* --- light: a blurred radial at every hit. the dent glows at its rim. --- */
-  if (P.glow > 0 && hits.length) {
-    const lights = []
-    for (const h of hits) {
-      const e = figma.createEllipse()
-      const d = h.r * 2.3
-      e.resize(d, d)
-      e.x = h.x - d / 2; e.y = h.y - d / 2
-      e.fills = [{
-        type: 'GRADIENT_RADIAL',
-        gradientTransform: [[0.5, 0, 0.25], [0, 0.5, 0.25]],
-        gradientStops: [
-          { position: 0,    color: { r: 1, g: 1, b: 1, a: 0.95 } },
-          { position: 0.45, color: { r: 1, g: 1, b: 1, a: 0.28 } },
-          { position: 1,    color: { r: 1, g: 1, b: 1, a: 0 } },
-        ],
-      }]
-      e.effects = [{ type: 'LAYER_BLUR', radius: P.blur * (S / DEF), visible: true }]
-      e.blendMode = 'SCREEN'
-      e.opacity = Math.min(1, P.glow)
-      e.name = 'hit'
-      frame.appendChild(e)
-      lights.push(e)
-    }
-    const g = figma.group(lights, frame)
-    g.name = 'light'
-  }
-
   /* --- the field: every cell samples its colour out of the wash --- */
   const cells = []
   // size 1 = a closed surface. Holes are what the kick leaves behind.
@@ -284,10 +256,25 @@ function make(P, reuse, preview) {
   const inkBase = light ? 0.06 : 0.92
 
   const curve = num(P.curve, 2)
+  const relief = num(P.relief, 0.9)
+
+  /* `sink` is a height field. A dent and a bump shrink their cells exactly the
+     same way — the only thing that tells them apart is which wall catches the
+     light. So take the normal and light it. The light sits up and to the left,
+     which means the near wall of a dent goes dark and the far wall goes bright.
+     Reverse that and the eye reads a bump. This is the whole illusion. */
+  const kAt = (x, y) => Math.pow(
+    sink[Math.min(GY - 1, Math.max(0, y)) * GX + Math.min(GX - 1, Math.max(0, x))] / smax, curve)
+  const LX = -0.62, LY = -0.62, LZ = 0.48
+
   for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
     // The rim of a dent is still surface. Bending the falloff keeps the holes
     // near the impact instead of spreading them evenly over the whole field.
     const k = Math.pow(sink[gy * GX + gx] / smax, curve)
+    // slope of the crater wall under this cell
+    const dx = (kAt(gx + 1, gy) - kAt(gx - 1, gy)) * 0.5
+    const dy = (kAt(gx, gy + 1) - kAt(gx, gy - 1)) * 0.5
+    const shade = (dx * LX + dy * LY + LZ) / Math.sqrt(dx * dx + dy * dy + 1) - LZ
     const size = base * (1 - k * num(P.sink, 0.7))
     if (!isFinite(size) || size < 1) continue
     // only a cell that is already moving gets nudged — a closed rim stays closed
@@ -299,6 +286,9 @@ function make(P, reuse, preview) {
     let col = mixC(grey(inkBase), mixC(cA, cB, t), P.sample * (1 - k * 0.55))
     // A dent is a cell falling toward the ground, not a cell lighting up.
     col = mixC(col, ground, Math.min(1, k * P.dark * 1.25))
+    // the wall facing the light is lit; the wall turned away falls into shadow
+    if (shade > 0) col = mixC(col, grey(1), Math.min(1, shade * 2.2 * relief))
+    else if (shade < 0) col = mixC(col, ground, Math.min(1, -shade * 2.2 * relief))
     // only the very floor of the impact catches light, and it takes the accent
     const lit = (k - 0.82) / 0.18
     if (lit > 0) col = mixC(col, mixC(grey(1), accent, 0.6), Math.min(1, lit * P.glow))
@@ -321,6 +311,69 @@ function make(P, reuse, preview) {
     cells.push(node)
   }
   if (cells.length) figma.group(cells, frame).name = 'field'
+
+  /* --- light ---------------------------------------------------------------
+     A dent is not one glow. Reading a surface as sunken takes a stack, in this
+     order, each one a blurred ellipse of paint:
+
+       1 occlusion  the whole hollow loses ambient light          MULTIPLY
+       2 shadow     the near wall, turned away from the light     MULTIPLY
+       3 bounce     colour thrown back off the floor              SCREEN
+       4 rim        the far wall, catching the light              SCREEN
+       5 core       the floor itself                              SCREEN
+       6 spec       one hard pin of reflection                    SCREEN
+
+     SCREEN can only add, so every one of these needs somewhere dark to land.
+     That is why this work lives on black — not taste, arithmetic.
+     Nothing here is 3D. It is six ellipses and a blur. --------------------- */
+  if (P.glow > 0 && hits.length) {
+    const px = S / DEF
+    const LN = Math.sqrt(LX * LX + LY * LY)
+    const ux = LX / LN, uy = LY / LN          // toward the light
+    const g = Math.min(1.4, P.glow)
+
+    const lamp = (h, {size, dxr, dyr, stops, mode, blur, op, name}) => {
+      const d = h.r * size
+      const e = figma.createEllipse()
+      e.resize(d, d)
+      e.x = h.x + h.r * dxr - d / 2
+      e.y = h.y + h.r * dyr - d / 2
+      e.fills = [{
+        type: 'GRADIENT_RADIAL',
+        gradientTransform: [[0.5, 0, 0.25], [0, 0.5, 0.25]],
+        gradientStops: stops,
+      }]
+      e.effects = [{ type: 'LAYER_BLUR', radius: Math.max(0.5, d * blur), visible: true }]
+      e.blendMode = mode
+      e.opacity = Math.max(0, Math.min(1, op))
+      e.name = name
+      frame.appendChild(e)
+      return e
+    }
+    const fade = (c, a) => ([
+      { position: 0,    color: { r: c.r, g: c.g, b: c.b, a } },
+      { position: 0.42, color: { r: c.r, g: c.g, b: c.b, a: a * 0.34 } },
+      { position: 1,    color: { r: c.r, g: c.g, b: c.b, a: 0 } },
+    ])
+    const black = grey(0), white = grey(1)
+
+    const parts = []
+    for (const h of hits) {
+      parts.push(lamp(h, { name:'occlusion', size:2.9, dxr:0,          dyr:0,
+        stops: fade(black, 0.55), mode:'MULTIPLY', blur:0.24, op:0.85 * relief }))
+      parts.push(lamp(h, { name:'shadow',    size:1.85, dxr:ux*0.34,  dyr:uy*0.34,
+        stops: fade(black, 0.72), mode:'MULTIPLY', blur:0.20, op:0.9 * relief }))
+      parts.push(lamp(h, { name:'bounce',    size:2.3, dxr:-ux*0.15,  dyr:-uy*0.15,
+        stops: fade(accent, 0.5),  mode:'SCREEN',   blur:0.32, op:0.42 * g }))
+      parts.push(lamp(h, { name:'rim',       size:1.5, dxr:-ux*0.44,  dyr:-uy*0.44,
+        stops: fade(white, 0.9),   mode:'SCREEN',   blur:0.14, op:0.8 * g }))
+      parts.push(lamp(h, { name:'core',      size:1.15, dxr:0,        dyr:0,
+        stops: fade(white, 0.95),  mode:'SCREEN',   blur: Math.max(0.06, (P.blur * px) / (h.r * 1.15)), op:0.7 * g }))
+      parts.push(lamp(h, { name:'spec',      size:0.3, dxr:-ux*0.5,   dyr:-uy*0.5,
+        stops: fade(white, 1),     mode:'SCREEN',   blur:0.4,  op:0.95 * g }))
+    }
+    if (parts.length) figma.group(parts, frame).name = 'light'
+  }
 
   /* --- snare: the surface splits --- */
   if (cracks.length) {
