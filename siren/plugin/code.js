@@ -282,8 +282,11 @@ function make(P, reuse, preview) {
   const base = cell * num(P.fill, 0.7) * (1 + bassLift * num(P.bass, 0.5) * 0.5)
   const inkBase = light ? 0.06 : 0.92
 
+  const curve = num(P.curve, 2)
   for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
-    const k = sink[gy * GX + gx] / smax
+    // The rim of a dent is still surface. Bending the falloff keeps the holes
+    // near the impact instead of spreading them evenly over the whole field.
+    const k = Math.pow(sink[gy * GX + gx] / smax, curve)
     const size = base * (1 - k * num(P.sink, 0.7))
     if (!isFinite(size) || size < 1) continue
     const cx = (gx + 0.5) * cell + jit(cell * 0.16)
