@@ -1189,7 +1189,8 @@ async function smoothVectorPaths(strength) {
         if (toward === nb[0]) return { x: -dx, y: -dy };
         return null;
       };
-      const segments = net.segments.map((s) => ({ start: s.start, end: s.end, tangentStart: off(s.start, s.end) || { x: 0, y: 0 }, tangentEnd: off(s.end, s.start) || { x: 0, y: 0 } }));
+      const keep = (t) => (t ? { x: t.x, y: t.y } : { x: 0, y: 0 });   // ★平滑化しない箇所は"元の接線を維持"（0で上書きすると既存カーブが直線化する＝バグ修正）
+      const segments = net.segments.map((s) => ({ start: s.start, end: s.end, tangentStart: off(s.start, s.end) || keep(s.tangentStart), tangentEnd: off(s.end, s.start) || keep(s.tangentEnd) }));
       await v.setVectorNetworkAsync({ vertices: net.vertices, segments: segments, regions: net.regions });   // 頂点・領域は据え置き＝形キープ
       done++;
     } catch (e) { fail++; if (errs.length < 4) errs.push(String(v.name) + " → " + (e && e.message ? e.message : String(e))); }
