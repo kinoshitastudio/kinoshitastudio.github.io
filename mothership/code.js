@@ -1157,46 +1157,96 @@ async function stackForSlideshow() {
   figma.notify("🎞 " + added + "/" + sel.length + " 枚を「Slideshow」に重ねました" + (skipped ? "（" + skipped + "枚スキップ）" : "") + "。Cmd+Zで戻せます。");
 }
 
-// 🖊 パスを滑らかに：頂点は動かさず(形キープ)、接線ハンドルを Catmull-Rom で補間＝曲線が自然に流れる。鋭角(矢印先端等)は角度判定で保持。dynamic-page対応＝setVectorNetworkAsync。
-async function smoothVectorPaths(strength) {
-  const k = (typeof strength === "number" && strength > 0) ? strength : 1.0;
+// ===== 🖊 高度なパス整形：RDP簡略化＋コーナー検出＋Catmull-Romスムーズ。ノイズ頂点を間引いて自然な曲線にfit。regions/塗り保持・非破壊。 =====
+function _rdp(pts, eps) {   // 開いた点列のRamer-Douglas-Peucker簡略化（両端固定）
+  const n = pts.length; if (n < 3) return pts.slice();
+  const keep = new Array(n).fill(false); keep[0] = keep[n - 1] = true;
+  const stack = [[0, n - 1]];
+  while (stack.length) {
+    const seg = stack.pop(), a = seg[0], b = seg[1], A = pts[a], B = pts[b];
+    const dx = B.x - A.x, dy = B.y - A.y, len = Math.sqrt(dx * dx + dy * dy) || 1e-9;
+    let maxD = -1, idx = -1;
+    for (let i = a + 1; i < b; i++) { const P = pts[i], d = Math.abs((P.x - A.x) * dy - (P.y - A.y) * dx) / len; if (d > maxD) { maxD = d; idx = i; } }
+    if (maxD > eps && idx > -1) { keep[idx] = true; stack.push([a, idx]); stack.push([idx, b]); }
+  }
+  const out = []; for (let i = 0; i < n; i++) if (keep[i]) out.push(pts[i]); return out;
+}
+function _rdpClosed(pts, eps) {   // 閉ループ：最遠点を軸に2弧へ割ってRDP
+  const n = pts.length; if (n < 5) return pts.slice();
+  let far = 0, fd = -1; for (let i = 1; i < n; i++) { const ddx = pts[i].x - pts[0].x, ddy = pts[i].y - pts[0].y, d = ddx * ddx + ddy * ddy; if (d > fd) { fd = d; far = i; } }
+  const s1 = _rdp(pts.slice(0, far + 1), eps), s2 = _rdp(pts.slice(far).concat([pts[0]]), eps);
+  const out = s1.slice(); for (let i = 1; i < s2.length - 1; i++) out.push(s2[i]); return out;
+}
+async function smoothVectorPaths(eps) {
+  const EPS = (typeof eps === "number" && eps > 0) ? eps : 1.5;   // 簡略化の許容誤差(px)。大きいほど大胆に整う
+  const K = 1.0, STEPS = 10, CORNER_COS = -0.2;   // 曲線強さ / 曲線サンプル数 / cos>-0.2(≒101°未満)は角として鋭く残す
   const sel = figma.currentPage.selection;
   const vectors = [];
   const walk = (n) => { if (n && n.type === "VECTOR") vectors.push(n); if (n && "children" in n && n.type !== "INSTANCE") for (const c of n.children) walk(c); };
   sel.forEach(walk);
   if (!vectors.length) { figma.ui.postMessage({ type: "smooth-done", error: "ベクター（パス）を選んでください。塗り/線のシェイプはベクター化してから。" }); return; }
-  let done = 0, fail = 0; const errs = [];
+  let done = 0, fail = 0, before = 0, after = 0; const errs = [];
   for (const v of vectors) {
     try {
       const net = v.vectorNetwork;
       if (!net || !net.vertices || !net.segments || !net.segments.length) continue;
-      const verts = net.vertices;
-      const neigh = verts.map(() => []);
-      net.segments.forEach((s) => { neigh[s.start].push(s.end); neigh[s.end].push(s.start); });
-      const off = (vi, toward) => {
-        const nb = neigh[vi]; if (!nb || nb.length !== 2) return null;   // 端点・分岐は触らない
-        const p0 = verts[nb[0]], p1 = verts[nb[1]], vt = verts[vi];
-        const ax = p0.x - vt.x, ay = p0.y - vt.y, bx = p1.x - vt.x, by = p1.y - vt.y;
-        const ma = Math.sqrt(ax * ax + ay * ay), mb = Math.sqrt(bx * bx + by * by);
-        if (ma < 0.001 || mb < 0.001) return null;
-        const cos = (ax * bx + ay * by) / (ma * mb);
-        if (cos > -0.35) return null;   // 角度が浅い(≲110°)＝意図的な角として鋭く残す。深い(≳110°)＝曲線として滑らかに
-        let dx = (p1.x - p0.x) * k / 6, dy = (p1.y - p0.y) * k / 6;
-        const tgt = verts[toward], segLen = Math.sqrt((tgt.x - vt.x) * (tgt.x - vt.x) + (tgt.y - vt.y) * (tgt.y - vt.y));
-        const hLen = Math.sqrt(dx * dx + dy * dy), cap = segLen * 0.33;   // ★ハンドル長をセグメント長の1/3に上限クランプ＝辺が大きく膨らまない＝形が崩れない保険
-        if (hLen > cap && hLen > 0.001) { const r = cap / hLen; dx *= r; dy *= r; }
-        if (toward === nb[1]) return { x: dx, y: dy };
-        if (toward === nb[0]) return { x: -dx, y: -dy };
-        return null;
-      };
-      const keep = (t) => (t ? { x: t.x, y: t.y } : { x: 0, y: 0 });   // ★平滑化しない箇所は"元の接線を維持"（0で上書きすると既存カーブが直線化する＝バグ修正）
-      const segments = net.segments.map((s) => ({ start: s.start, end: s.end, tangentStart: off(s.start, s.end) || keep(s.tangentStart), tangentEnd: off(s.end, s.start) || keep(s.tangentEnd) }));
-      await v.setVectorNetworkAsync({ vertices: net.vertices, segments: segments, regions: net.regions });   // 頂点・領域は据え置き＝形キープ
+      if (!net.regions || !net.regions.length) continue;   // v1は塗り(regions)ベクター専用
+      const V = net.vertices, S = net.segments;
+      before += V.length;
+      const newVerts = [], newSegs = [], newRegions = [];
+      for (const region of net.regions) {
+        const outLoops = [];
+        for (const loop of region.loops) {
+          if (!loop || !loop.length) { outLoops.push([]); continue; }
+          // 1) ループのセグメントを向き付きで並べる
+          const dir = [];
+          const first = S[loop[0]], second = S[loop[1 % loop.length]];
+          const fwd0 = loop.length === 1 || (second && (first.end === second.start || first.end === second.end));
+          dir.push({ seg: loop[0], from: fwd0 ? first.start : first.end, to: fwd0 ? first.end : first.start, fwd: fwd0 });
+          for (let i = 1; i < loop.length; i++) { const s = S[loop[i]], prevTo = dir[i - 1].to, f = (s.start === prevTo); dir.push({ seg: loop[i], from: f ? s.start : s.end, to: f ? s.end : s.start, fwd: f }); }
+          // 2) 曲線を点列に展開（閉ループ）
+          const pts = [];
+          for (const d of dir) {
+            const seg = S[d.seg], P0 = V[d.from], P3 = V[d.to];
+            const tS = d.fwd ? seg.tangentStart : seg.tangentEnd, tE = d.fwd ? seg.tangentEnd : seg.tangentStart;
+            const isLine = (!tS || (tS.x === 0 && tS.y === 0)) && (!tE || (tE.x === 0 && tE.y === 0));
+            if (isLine) { pts.push({ x: P0.x, y: P0.y }); }
+            else { const P1 = { x: P0.x + (tS ? tS.x : 0), y: P0.y + (tS ? tS.y : 0) }, P2 = { x: P3.x + (tE ? tE.x : 0), y: P3.y + (tE ? tE.y : 0) }; for (let i = 0; i < STEPS; i++) { const t = i / STEPS, u = 1 - t; pts.push({ x: u * u * u * P0.x + 3 * u * u * t * P1.x + 3 * u * t * t * P2.x + t * t * t * P3.x, y: u * u * u * P0.y + 3 * u * u * t * P1.y + 3 * u * t * t * P2.y + t * t * t * P3.y }); } }
+          }
+          // 3) RDP簡略化（閉）→ 4) コーナー検出＋Catmull-Rom接線
+          let sp = _rdpClosed(pts, EPS); if (sp.length < 3) sp = pts.slice();
+          const m = sp.length, tan = new Array(m);
+          for (let i = 0; i < m; i++) {
+            const P = sp[i], A = sp[(i - 1 + m) % m], B = sp[(i + 1) % m];
+            const ax = A.x - P.x, ay = A.y - P.y, bx = B.x - P.x, by = B.y - P.y;
+            const ma = Math.sqrt(ax * ax + ay * ay), mb = Math.sqrt(bx * bx + by * by);
+            let t = { x: 0, y: 0 };
+            if (ma > 0.001 && mb > 0.001 && (ax * bx + ay * by) / (ma * mb) <= CORNER_COS) t = { x: (B.x - A.x) * K / 6, y: (B.y - A.y) * K / 6 };   // 鋭角=接線0(角を残す)
+            tan[i] = t;
+          }
+          // 5) 新頂点・新セグメント（キャップ付き＝形が崩れない）
+          const base = newVerts.length;
+          for (let i = 0; i < m; i++) newVerts.push({ x: sp[i].x, y: sp[i].y });
+          const segIdxs = [];
+          for (let i = 0; i < m; i++) {
+            const j = (i + 1) % m, segLen = Math.sqrt((sp[j].x - sp[i].x) * (sp[j].x - sp[i].x) + (sp[j].y - sp[i].y) * (sp[j].y - sp[i].y)), cap = segLen * 0.4;
+            const clamp = (t2) => { const h = Math.sqrt(t2.x * t2.x + t2.y * t2.y); return (h > cap && h > 0.001) ? { x: t2.x * cap / h, y: t2.y * cap / h } : { x: t2.x, y: t2.y }; };
+            newSegs.push({ start: base + i, end: base + j, tangentStart: clamp(tan[i]), tangentEnd: clamp({ x: -tan[j].x, y: -tan[j].y }) });
+            segIdxs.push(newSegs.length - 1);
+          }
+          outLoops.push(segIdxs);
+        }
+        const nr = { windingRule: region.windingRule, loops: outLoops };
+        if (region.fills) nr.fills = region.fills; if (region.fillStyleId) nr.fillStyleId = region.fillStyleId;
+        newRegions.push(nr);
+      }
+      after += newVerts.length;
+      await v.setVectorNetworkAsync({ vertices: newVerts, segments: newSegs, regions: newRegions });
       done++;
     } catch (e) { fail++; if (errs.length < 4) errs.push(String(v.name) + " → " + (e && e.message ? e.message : String(e))); }
   }
-  figma.ui.postMessage({ type: "smooth-done", done: done, fail: fail, errs: errs, strength: k });
-  figma.notify("🖊 パスを滑らかに：" + done + " 個を補間（形はキープ・鋭角は保持）" + (fail ? "／失敗 " + fail : "") + "。Cmd+Zで戻せます。");
+  figma.ui.postMessage({ type: "smooth-done", done: done, fail: fail, errs: errs, eps: EPS, before: before, after: after });
+  figma.notify("🖊 パス整形：" + done + " 個（頂点 " + before + "→" + after + "・ε=" + EPS + "）" + (fail ? "／失敗 " + fail : "") + "。Cmd+Zで戻せます。");
 }
 
 figma.ui.onmessage = async (msg) => {
@@ -1216,7 +1266,7 @@ figma.ui.onmessage = async (msg) => {
   else if (msg.type === "motion-apply") await applyMotionOps(msg.ops);     // 🎬 AIのキーフレームopsを適用
   else if (msg.type === "slideshow") await stackForSlideshow();            // 🎞 選択を1親フレームに重ねる（スライドショーの下ごしらえ）
   else if (msg.type === "particles") scatterParticles(msg.count);          // ✦ 複製して散らす（パーティクル化）
-  else if (msg.type === "smooth-path") await smoothVectorPaths(msg.strength); // 🖊 パスを滑らかに（形キープ・Catmull-Rom）
+  else if (msg.type === "smooth-path") await smoothVectorPaths(msg.eps);    // 🖊 パス整形（RDP簡略化＋Catmull-Romスムーズ）
   else if (msg.type === "reveal") {  // パネルの行クリック→該当レイヤーをFigmaで選択＋ズーム
     const f = _lintFix[msg.id];
     if (f && f.node && !f.node.removed) {
