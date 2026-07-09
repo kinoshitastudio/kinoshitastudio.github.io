@@ -906,37 +906,37 @@ function slideshowMotion(frame, instruction) {
   if (mSec) HOLD = Math.max(0.6, parseFloat(mSec[1]) / slides.length);   // 「◯秒で」＝全体尺÷枚数
   else if (/長め|ゆっくり|じっくり|long|slow/i.test(ins)) HOLD = 3.5;
   else if (/短め|速く|テンポ|素早|quick|fast/i.test(ins)) HOLD = 1.2;
-  const TR = (style === "cut") ? 0.001 : 0.6, W = frame.width || 800;
+  const W = frame.width || 800, H = frame.height || 600;   // ★Hを定義（未定義バグ修正）
   const F = (v) => ({ type: "FLOAT", value: v });
   const XY = (v) => ({ type: "VECTOR", value: { x: v, y: v } });
+  const EO = { type: "EASE_OUT" }, LN = { type: "LINEAR" }, HD = { type: "HOLD" };
+  const put = (s, name, base, arr) => { try { s.applyManualKeyframeTrack({ type: "PROPERTY", name: name }, { baseValue: base, keyframes: arr }); } catch (e) {} };   // 1トラック失敗が他を壊さないよう個別try
   const total = slides.length * HOLD;
+  const pans = [[1, 0.6], [-0.8, 0.7], [0.5, -0.9], [-0.7, -0.5], [0.9, 0.4], [-0.5, 0.8]];   // ケンバーンズのパン方向（決定的に散らす）
   let applied = 0; const summary = [];
   for (let i = 0; i < slides.length; i++) {
     const s = slides[i], t = i * HOLD, fields = [];
+    const IN = Math.min(0.7, HOLD * 0.45);   // 登場にかける秒
+    const pk = pans[i % pans.length], panX = W * 0.06 * pk[0], panY = H * 0.06 * pk[1];   // 保持中のゆっくりパン量
     try {
-      if (i === 0) {   // 最背面＝常時表示（＋ゆっくり寄るケン・バーンズ）
-        s.applyManualKeyframeTrack({ type: "PROPERTY", name: "OPACITY" }, { baseValue: F(1), keyframes: [{ timelinePosition: 0, value: F(1) }] });
-        s.applyManualKeyframeTrack({ type: "PROPERTY", name: "SCALE_XY" }, { baseValue: XY(1), keyframes: [{ timelinePosition: 0, value: XY(1), easing: { type: "LINEAR" } }, { timelinePosition: total, value: XY(1.06) }] });
-        fields.push("常時表示＋寄る");
-      } else {         // 手前＝登場まで透明(baseValue0)、tで0→1（cutはHOLDで一瞬）、以降1のまま覆う
-        const opKf = (style === "cut")
-          ? [{ timelinePosition: t, value: F(0), easing: { type: "HOLD" } }, { timelinePosition: t + 0.001, value: F(1) }]
-          : [{ timelinePosition: t, value: F(0), easing: { type: "EASE_OUT" } }, { timelinePosition: t + TR, value: F(1) }];
-        s.applyManualKeyframeTrack({ type: "PROPERTY", name: "OPACITY" }, { baseValue: F(0), keyframes: opKf });
-        // ▼ トランジションを1枚ごとに変える（映画の編集感）。指定style時もpush/zoomは左右・前後で交互に
-        const VAR = ["zoomIn", "pushL", "dissolve", "pushR", "zoomOut", "pushUp"];
-        let v = "dissolve";
-        if (style === "varied") v = VAR[(i - 1) % VAR.length];
-        else if (style === "push") v = (i % 2) ? "pushL" : "pushR";
-        else if (style === "zoom") v = (i % 2) ? "zoomIn" : "zoomOut";
-        else if (style === "dissolve") v = "dissolve";
-        else if (style === "cut") v = "cut";
-        const tx = (from) => s.applyManualKeyframeTrack({ type: "PROPERTY", name: "TRANSLATION_X" }, { baseValue: F(from), keyframes: [{ timelinePosition: t, value: F(from), easing: { type: "EASE_OUT" } }, { timelinePosition: t + TR, value: F(0) }] });
-        const ty = (from) => s.applyManualKeyframeTrack({ type: "PROPERTY", name: "TRANSLATION_Y" }, { baseValue: F(from), keyframes: [{ timelinePosition: t, value: F(from), easing: { type: "EASE_OUT" } }, { timelinePosition: t + TR, value: F(0) }] });
-        const sc = (from) => s.applyManualKeyframeTrack({ type: "PROPERTY", name: "SCALE_XY" }, { baseValue: XY(from), keyframes: [{ timelinePosition: t, value: XY(from), easing: { type: "EASE_OUT" } }, { timelinePosition: t + TR, value: XY(1) }] });
-        if (v === "pushL") tx(W * 0.5); else if (v === "pushR") tx(-W * 0.5); else if (v === "pushUp") ty(H * 0.5);
-        else if (v === "zoomIn") sc(1.35); else if (v === "zoomOut") sc(0.6); else if (v === "dissolve") sc(1.06);
-        fields.push("登場 " + Math.round(t * 1000) + "ms・" + v);
+      if (i === 0) {   // 最背面＝常時表示＋全編ケン・バーンズ（ゆっくり寄り＆パン）
+        put(s, "OPACITY", F(1), [{ timelinePosition: 0, value: F(1) }]);
+        put(s, "SCALE_XY", XY(1.04), [{ timelinePosition: 0, value: XY(1.04), easing: LN }, { timelinePosition: total, value: XY(1.13) }]);
+        put(s, "TRANSLATION_X", F(-panX), [{ timelinePosition: 0, value: F(-panX), easing: LN }, { timelinePosition: total, value: F(panX) }]);
+        put(s, "TRANSLATION_Y", F(-panY), [{ timelinePosition: 0, value: F(-panY), easing: LN }, { timelinePosition: total, value: F(panY) }]);
+        fields.push("常時・ケンバーンズ");
+      } else if (style === "cut") {   // ハードカット＝一瞬で切替＋保持中に軽く寄る
+        put(s, "OPACITY", F(0), [{ timelinePosition: t, value: F(0), easing: HD }, { timelinePosition: t + 0.001, value: F(1) }]);
+        put(s, "SCALE_XY", XY(1), [{ timelinePosition: t, value: XY(1), easing: LN }, { timelinePosition: t + HOLD, value: XY(1.07) }]);
+        fields.push("ハードカット＋寄り " + Math.round(t * 1000) + "ms");
+      } else {   // ▼ シネマティック＝プッシュ(方向交互)＋ドリーズーム＋フェード＋保持中ケンバーンズ を全部重ねる
+        const dir = i % 4; let fromX = 0, fromY = 0;
+        if (dir === 0) fromX = W * 0.55; else if (dir === 1) fromY = H * 0.55; else if (dir === 2) fromX = -W * 0.55; else fromY = -H * 0.55;
+        put(s, "OPACITY", F(0), [{ timelinePosition: t, value: F(0), easing: EO }, { timelinePosition: t + IN * 0.7, value: F(1) }]);
+        put(s, "SCALE_XY", XY(1.16), [{ timelinePosition: t, value: XY(1.16), easing: EO }, { timelinePosition: t + IN, value: XY(1) }, { timelinePosition: t + HOLD, value: XY(1.09), easing: LN }]);   // 入りのドリー→保持中の寄り
+        put(s, "TRANSLATION_X", F(fromX), [{ timelinePosition: t, value: F(fromX), easing: EO }, { timelinePosition: t + IN, value: F(0) }, { timelinePosition: t + HOLD, value: F(panX), easing: LN }]);   // プッシュ→保持中パン
+        put(s, "TRANSLATION_Y", F(fromY), [{ timelinePosition: t, value: F(fromY), easing: EO }, { timelinePosition: t + IN, value: F(0) }, { timelinePosition: t + HOLD, value: F(panY), easing: LN }]);
+        fields.push("登場 " + Math.round(t * 1000) + "ms・シネマ" + ["→", "↑", "←", "↓"][dir]);
       }
       applied++; summary.push({ name: String(s.name), fields: fields });
     } catch (e) {}
@@ -1153,7 +1153,7 @@ async function stackForSlideshow() {
   }
   figma.currentPage.selection = [parent];
   figma.viewport.scrollAndZoomIntoView([parent]);
-  figma.ui.postMessage({ type: "slideshow-done", count: added, total: sel.length, skipped: skipped, errs: errs, names: sel.map((n) => String(n.name)) });
+  figma.ui.postMessage({ type: "slideshow-done", count: added, total: sel.length, skipped: skipped, errs: errs, names: sel.map((n) => String(n.name) + " " + Math.round(n.width) + "×" + Math.round(n.height)) });
   figma.notify("🎞 " + added + "/" + sel.length + " 枚を「Slideshow」に重ねました" + (skipped ? "（" + skipped + "枚スキップ）" : "") + "。Cmd+Zで戻せます。");
 }
 
