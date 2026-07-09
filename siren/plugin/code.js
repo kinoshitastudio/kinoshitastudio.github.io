@@ -10,6 +10,8 @@
 const KEY = 'siren'
 const TMP = 'siren.preview'   // this frame is only a preview; LIVE off throws it away
 const DEF = 1000
+// a payload can arrive with a missing or NaN knob; never let it reach resize()
+const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d)
 let lastTarget = null
 
 figma.showUI(__html__, { width: 400, height: 720 })
@@ -225,7 +227,6 @@ function make(P, reuse, preview) {
 
   /* --- the field: every cell samples its colour out of the wash --- */
   const cells = []
-  const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d)
   const base = cell * num(P.fill, 0.7) * (1 + bassLift * num(P.bass, 0.5) * 0.5)
   const inkBase = light ? 0.06 : 0.92
 
