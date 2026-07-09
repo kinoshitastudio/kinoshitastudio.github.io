@@ -1181,7 +1181,10 @@ async function smoothVectorPaths(strength) {
         if (ma < 0.001 || mb < 0.001) return null;
         const cos = (ax * bx + ay * by) / (ma * mb);
         if (cos > -0.35) return null;   // 角度が浅い(≲110°)＝意図的な角として鋭く残す。深い(≳110°)＝曲線として滑らかに
-        const dx = (p1.x - p0.x) * k / 6, dy = (p1.y - p0.y) * k / 6;
+        let dx = (p1.x - p0.x) * k / 6, dy = (p1.y - p0.y) * k / 6;
+        const tgt = verts[toward], segLen = Math.sqrt((tgt.x - vt.x) * (tgt.x - vt.x) + (tgt.y - vt.y) * (tgt.y - vt.y));
+        const hLen = Math.sqrt(dx * dx + dy * dy), cap = segLen * 0.33;   // ★ハンドル長をセグメント長の1/3に上限クランプ＝辺が大きく膨らまない＝形が崩れない保険
+        if (hLen > cap && hLen > 0.001) { const r = cap / hLen; dx *= r; dy *= r; }
         if (toward === nb[1]) return { x: dx, y: dy };
         if (toward === nb[0]) return { x: -dx, y: -dy };
         return null;
