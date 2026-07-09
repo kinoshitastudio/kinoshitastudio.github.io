@@ -27,6 +27,7 @@ function tellTarget() {
     h: bb ? Math.round(bb.height) : DEF,
     name: n ? n.name : null,
     paint: paintOf(n),
+    fills: n && 'fills' in n && n.fills !== figma.mixed ? JSON.parse(JSON.stringify(n.fills)) : null,
   })
 }
 figma.on('selectionchange', tellTarget)
@@ -94,6 +95,12 @@ function paintOf(node) {
     }
   }
   return out
+}
+
+/* How bright a paint stack reads, so the ink can choose to be dark or light. */
+function lumaOf(fills) {
+  const c = paintOf({ fills })
+  return c ? 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b : 0
 }
 
 /* Figma rotates around a node's origin, not its centre. Place it by hand. */
@@ -166,9 +173,15 @@ function make(P, reuse, preview) {
   }
   frame.setPluginData(KEY, JSON.stringify(P))
   frame.setPluginData(TMP, preview ? '1' : '')
-  const bg = hsl(num(P.bgH,0), num(P.bgS,0), num(P.bgL,0))
-  const light = num(P.bgL,0) > 0.5            // a pale ground wants dark ink
-  frame.fills = [{ type: 'SOLID', color: bg }]
+  /* Averaging a gradient down to one colour throws away the thing that made it
+     worth taking. If the artwork's paint is wanted, wear the paint. */
+  const worn = P.useFill && P.srcFills && P.srcFills.length ? P.srcFills : null
+  const light = worn ? lumaOf(worn) > 0.5 : num(P.bgL, 0) > 0.5
+  frame.fills = worn
+    ? JSON.parse(JSON.stringify(worn))
+    : [{ type: 'SOLID', color: hsl(num(P.bgH,0), num(P.bgS,0), num(P.bgL,0)) }]
+  // what a cell falls toward when the kick drives it into the surface
+  const ground = worn ? (paintOf({ fills: worn }) || grey(0)) : hsl(num(P.bgH,0), num(P.bgS,0), num(P.bgL,0))
 
   const cA = hueRGB(P.h1), cB = hueRGB(P.h2), accent = hueRGB(P.hue)
 
@@ -276,13 +289,12 @@ function make(P, reuse, preview) {
     const cy = (gy + 0.5) * cell + jit(cell * 0.16)
 
     const t = cx / W * 0.6 + cy / H * 0.4
-    const g0 = inkBase + (light ? 1 : -1) * k * P.dark * (light ? 0.7 : 0.8)
-    let col = mixC(grey(g0), mixC(cA, cB, t), P.sample * (1 - k * 0.55))
-    col = mixC(col, grey(1), Math.max(0, k - 0.55) * 1.4 * P.glow)
-    // the accent is the colour of the impact, so it should be readable across
-    // the whole dent — not only on the deepest cell
-    const a = (k - 0.4) / 0.6
-    if (a > 0) col = mixC(col, accent, Math.min(1, a) * 0.85)
+    let col = mixC(grey(inkBase), mixC(cA, cB, t), P.sample * (1 - k * 0.55))
+    // A dent is a cell falling toward the ground, not a cell lighting up.
+    col = mixC(col, ground, Math.min(1, k * P.dark * 1.25))
+    // only the very floor of the impact catches light, and it takes the accent
+    const lit = (k - 0.82) / 0.18
+    if (lit > 0) col = mixC(col, mixC(grey(1), accent, 0.6), Math.min(1, lit * P.glow))
 
     let node
     if (P.shape === 'ci') {

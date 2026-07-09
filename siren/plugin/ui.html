@@ -173,10 +173,11 @@ const TRACKS = [
 const P = { sink:0.72, reach:190, dark:0.62, grid:20, fill:0.82, hum:0.35, bars:3,
             crack:0.7, dust:0.6, bass:0.5, shape:'ci', hue:55, seed:7,
             glow:0.75, blur:70, h1:262, h2:22, wash:0, sample:0,
-            bgH:0, bgS:0, bgL:0 }
+            bgH:0, bgS:0, bgL:0, useFill:false }
 // light === "the surface is pale, so the ink must be dark"
 const isLight = ()=> P.bgL > 0.5
-let srcPaint = null            // the selected node's flat colour, if it has one
+let srcPaint = null            // the selected node's colour, averaged, for the ink maths
+let srcFills = null            // the selected node's actual paints — gradients included
 
 /* Light lives on black. Fons works on black for the same reason: SCREEN only
    ever adds, so a dark surface is the only one that has room to be lit. */
@@ -196,12 +197,12 @@ let live = false, busy = false
 const T = {
   ja:{ seq:'シーケンス', kick:'Kick — 面を殴る', field:'Field — 面', light:'Light — 殴った跡は光る',
        voice:'Voices', look:'Look', make:'鳴らす', close:'閉じる',
-       pre:'プリセット', bg:'背景', pick:'素材の色を拾う', from:'素材から',
+       pre:'プリセット', bg:'背景', pick:'素材の塗りを拾う', from:'素材から',
        about:'名前は 99LETTERS のアルバム <i>Kaibou Zukan</i> の9曲目<b>「Siren（鳴物）」</b>から。鳴物は打楽器の総称。',
        body:'<b>キックは丸ではない。キックは、面が受けた打撃の跡。</b>見えないグリッドの上をシーケンスが一周し、キックが鳴った角度のセルが沈む。近いほど深く。<br><br>殴った跡は<b>沈むと同時に光る</b>。光はぼかした放射グラデ。Fons のあの質感は 3D ではなく、<b>ぼかしたグラデ図形を重ねたもの</b>。同じ部品を、手ではなくリズムが置く。<br><br><b>出てくるのは全部ベクター。</b>楕円も矩形もグラデもレイヤーブラーも Figma のネイティブノード。色は後から変えられる。<b>ここから Kaibou に通せば、作品になる。</b>' },
   en:{ seq:'Sequence', kick:'Kick — it hits the surface', field:'Field', light:'Light — the dent glows',
        voice:'Voices', look:'Look', make:'Play', close:'Close',
-       pre:'Preset', bg:'Background', pick:'pick from the art', from:'from art',
+       pre:'Preset', bg:'Background', pick:'wear the artwork\u2019s paint', from:'from art',
        about:'Named after <b>Siren (鳴物)</b>, track 9 of <i>Kaibou Zukan</i> by 99LETTERS. 鳴物 is the word for percussion.',
        body:'<b>A kick is not a circle. A kick is the mark a surface takes.</b> The sequence goes once around an invisible grid; wherever the kick lands, the cells cave in. Closer means deeper.<br><br>The dent <b>sinks and glows at once</b>. Fons\\u2019s surfaces are not 3D — they are <b>blurred gradient shapes, stacked</b>. Here the rhythm places them instead of the hand.<br><br><b>Everything it makes is vector.</b> Ellipses, rectangles, gradients, layer blur — native Figma nodes. Recolour them later. <b>Run it through Kaibou and it becomes a piece.</b>' }
 }
@@ -270,9 +271,28 @@ bind('glow','glow',pc); bind('blur','blur',v=>v); bind('wash','wash',pc); bind('
 bind('h1','h1',v=>v+'°'); bind('h2','h2',v=>v+'°')
 bind('crack','crack',pc); bind('dust','dust',pc); bind('bass','bass',pc); bind('hue','hue',v=>v+'°')
 bind('bgH','bgH',v=>v+'°'); bind('bgS','bgS',pc); bind('bgL','bgL',pc)
+for(const id of ['bgH','bgS','bgL']){
+  const el = document.getElementById(id), prev = el.oninput
+  el.oninput = (e)=>{
+    P.useFill = false
+    document.getElementById('pick').classList.remove('on')
+    prev(e)
+    // at light 0 every hue is black, so those two knobs would be dead.
+    // Lift the ground just off the floor the moment someone reaches for colour.
+    if((id==='bgH' || id==='bgS') && P.bgL < 0.02){
+      P.bgL = 0.08
+      const l = document.getElementById('bgL')
+      l.value = P.bgL
+      l.parentElement.querySelector('.val').textContent = SHOW.bgL(P.bgL)
+      render()
+    }
+    paintSwatch()
+  }
+  el.onchange = onRelease
+}
 
 const swatch = document.getElementById('swatch')
-function paintSwatch(){ swatch.style.background = hslCss(P.bgH,P.bgS,P.bgL) }
+function paintSwatch(){ swatch.style.background = css(groundArr()) }
 
 /* Pull every knob back to P — presets and picked colours have to show up. */
 function syncUI(){
@@ -291,10 +311,15 @@ function syncUI(){
   paintSwatch()
 }
 
+/* Wear the artwork's paint. A gradient averaged into one colour throws away
+   the reason it was worth taking. */
 document.getElementById('pick').onclick = ()=>{
-  if(!srcPaint){ document.getElementById('count').textContent = lang==='ja' ? '単色の塗りがある素材を選んで' : 'select a layer with a flat fill'; return }
-  const [h,sat,l] = rgbToHsl(srcPaint.r, srcPaint.g, srcPaint.b)
-  P.bgH = Math.round(h); P.bgS = +sat.toFixed(2); P.bgL = +l.toFixed(3)
+  if(!srcFills || !srcFills.length){
+    document.getElementById('count').textContent = lang==='ja' ? '塗りのある素材を選んで' : 'select a layer that has a fill'
+    return
+  }
+  P.useFill = true
+  document.getElementById('pick').classList.add('on')
   syncUI(); render(); onRelease()
 }
 
@@ -324,11 +349,16 @@ function rng(seed){
     let t=Math.imul(a^(a>>>15),1|a); t=(t+Math.imul(t^(t>>>7),61|t))^t
     return ((t^(t>>>14))>>>0)/4294967296 }
 }
-function hslCss(h,sat,l){
+function hslArr(h,sat,l){
   const a=sat*Math.min(l,1-l)
   const f=n=>{const k=(n+h/30)%12; return 255*(l-a*Math.max(-1,Math.min(k-3,Math.min(9-k,1))))}
-  return `rgb(${Math.round(f(0))},${Math.round(f(8))},${Math.round(f(4))})`
+  return [f(0),f(8),f(4)]
 }
+const hslCss = (h,s,l)=> css(hslArr(h,s,l))
+/* The ground: either the artwork's own paint, or the colour we dialled in. */
+const groundArr = ()=> (P.useFill && srcPaint)
+  ? [srcPaint.r*255, srcPaint.g*255, srcPaint.b*255]
+  : hslArr(P.bgH,P.bgS,P.bgL)
 /* rgb 0..1 -> hsl, so a colour picked off the artwork lands on the sliders */
 function rgbToHsl(r,g,b){
   const mx=Math.max(r,g,b), mn=Math.min(r,g,b), l=(mx+mn)/2, d=mx-mn
@@ -345,6 +375,24 @@ const hueArr = h=>{ const k=n=>(n+h/30)%12, f=n=>255*(1-Math.max(-1,Math.min(k(n
 const hueCss = h=>{ const c=hueArr(h); return `rgb(${c.map(v=>Math.round(v)).join(',')})` }
 const mix = (a,b,t)=> a.map((v,i)=> v+(b[i]-v)*t)
 const css = c => `rgb(${c.map(v=>Math.round(Math.max(0,Math.min(255,v)))).join(',')})`
+
+/* Approximate the picked paint in the panel. Figma draws it exactly. */
+function srcGradient(){
+  if(!P.useFill || !srcFills || !srcFills.length) return null
+  const p = srcFills[srcFills.length-1]
+  if(!p || !p.gradientStops || !p.gradientStops.length) return null
+  const id = 'src'
+  const defs = document.createElementNS(NS,'defs')
+  const stops = p.gradientStops.map(st =>
+    `<stop offset="${st.position}" stop-color="rgb(${Math.round(st.color.r*255)},${Math.round(st.color.g*255)},${Math.round(st.color.b*255)})" stop-opacity="${st.color.a==null?1:st.color.a}"/>`
+  ).join('')
+  const radial = p.type === 'GRADIENT_RADIAL'
+  defs.innerHTML = radial
+    ? `<radialGradient id="${id}">${stops}</radialGradient>`
+    : `<linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1">${stops}</linearGradient>`
+  art.append(defs)
+  return `url(#${id})`
+}
 
 /* ---------------- preview (svg, same maths as the plugin) ---------------- */
 function render(){
@@ -374,7 +422,8 @@ function render(){
 
   const bg = document.createElementNS(NS,'rect')
   bg.setAttribute('width',W); bg.setAttribute('height',H)
-  bg.setAttribute('fill', hslCss(P.bgH,P.bgS,P.bgL)); art.append(bg)
+  bg.setAttribute('fill', srcGradient() || css(groundArr())); art.append(bg)
+
 
   if(P.wash>0){
     const w = document.createElementNS(NS,'rect')
@@ -432,7 +481,10 @@ function render(){
     art.append(g)
   }
 
-  const light = isLight()
+  const ground = groundArr()
+  const light = P.useFill && srcPaint
+    ? (0.2126*ground[0] + 0.7152*ground[1] + 0.0722*ground[2]) / 255 > 0.5
+    : isLight()
   const inkBase = light?16:235
   const accent = hueArr(P.hue), cA = hueArr(P.h1), cB = hueArr(P.h2)
   const base = cell*P.fill*(1+bassLift*P.bass*0.5)
@@ -444,11 +496,10 @@ function render(){
     if(size<0.6) continue
     const cx=(gx+0.5)*cell+jit(cell*0.16), cy=(gy+0.5)*cell+jit(cell*0.16)
     const tt=cx/W*0.6+cy/H*0.4
-    const grey=inkBase+(light?1:-1)*k*P.dark*(light?180:200)
-    let col=mix([grey,grey,grey], mix(cA,cB,tt), P.sample*(1-k*0.55))
-    col=mix(col,[255,255,255],Math.max(0,k-0.55)*1.4*P.glow)
-    const a=(k-0.4)/0.6
-    if(a>0) col=mix(col,accent,Math.min(1,a)*0.85)
+    let col=mix([inkBase,inkBase,inkBase], mix(cA,cB,tt), P.sample*(1-k*0.55))
+    col=mix(col, ground, Math.min(1,k*P.dark*1.25))       // it falls into the hole
+    const lit=(k-0.82)/0.18                                // only the floor is lit
+    if(lit>0) col=mix(col, mix([255,255,255],accent,0.6), Math.min(1,lit*P.glow))
     let el
     if(P.shape==='ci'){
       el=document.createElementNS(NS,'circle')
@@ -492,6 +543,7 @@ function render(){
 function payload(){
   // the tracks travel under `*Seq`, so they never collide with the amounts
   return Object.assign({}, P, {
+    srcFills: P.useFill ? srcFills : null,
     kickSeq: TRACKS[0].on.slice(), snareSeq: TRACKS[1].on.slice(),
     hatSeq:  TRACKS[2].on.slice(), bassSeq:  TRACKS[3].on.slice(),
   })
@@ -530,8 +582,10 @@ onmessage = e=>{
   if(m.type==='target'){
     W = m.w || 1000; H = m.h || 1000
     srcPaint = m.paint || null
-    document.getElementById('pick').disabled = !srcPaint
-    render()
+    srcFills = m.fills || null
+    if(!srcFills){ P.useFill = false; document.getElementById('pick').classList.remove('on') }
+    document.getElementById('pick').disabled = !srcFills
+    paintSwatch(); render()
   }
   if(m.type==='error') document.getElementById('count').textContent = 'ERR: ' + m.message
 }
