@@ -270,7 +270,10 @@ function make(P, reuse, preview) {
     const g0 = inkBase + (light ? 1 : -1) * k * P.dark * (light ? 0.7 : 0.8)
     let col = mixC(grey(g0), mixC(cA, cB, t), P.sample * (1 - k * 0.55))
     col = mixC(col, grey(1), Math.max(0, k - 0.55) * 1.4 * P.glow)
-    if (k > 0.86) col = mixC(col, accent, 0.75)
+    // the accent is the colour of the impact, so it should be readable across
+    // the whole dent — not only on the deepest cell
+    const a = (k - 0.4) / 0.6
+    if (a > 0) col = mixC(col, accent, Math.min(1, a) * 0.85)
 
     let node
     if (P.shape === 'ci') {
