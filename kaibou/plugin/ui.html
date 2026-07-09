@@ -686,10 +686,11 @@ onmessage = async (e)=>{
 }
 
 /* `cap` limits the long edge. Live pushes at 1024 so the canvas keeps up;
-   Apply goes to 2048. Everything else is identical. */
-let pending = 0            // a release that arrived while we were rendering
-async function push(cap){
-  if(busy){ pending = Math.max(pending, cap); return }   // never drop the last one
+   Apply goes to 2048. `preview` marks the layer as a fitting: switching LIVE
+   off, or 元に戻す, takes it straight back off again. Only 適用 commits. */
+let pending = null         // a release that arrived while we were rendering
+async function push(cap, preview){
+  if(busy){ pending = {cap, preview}; return }   // never drop the last one
   if(!full && mode!=='fill') return
   busy = true
 
@@ -710,30 +711,35 @@ async function push(cap){
   }
   await new Promise(res => out.toBlob(async blob=>{
     const bytes = new Uint8Array(await blob.arrayBuffer())
-    parent.postMessage({pluginMessage:{type:'apply', bytes, settings:P, mode}}, '*')
+    parent.postMessage({pluginMessage:{type:'apply', bytes, settings:P, mode, preview:!!preview}}, '*')
     res()
   }, 'image/png'))
   busy = false
-  if(pending){ const c = pending; pending = 0; push(c) }
+  if(pending){ const q = pending; pending = null; push(q.cap, q.preview) }
 }
 
+const liveBtn = document.getElementById('live')
 applyBtn.onclick = async ()=>{
   applyBtn.disabled = true
   applyBtn.textContent = t().working
   await new Promise(r=>setTimeout(r,16))
-  await push(2048)
+  await push(2048, false)
+  live = false; liveBtn.classList.remove('on')
   applyBtn.textContent = t().apply
   applyBtn.disabled = false
 }
 
-const liveBtn = document.getElementById('live')
 liveBtn.onclick = ()=>{
   live = !live
   liveBtn.classList.toggle('on', live)
-  if(live) push(1024)
+  if(live) push(1024, true)
+  else parent.postMessage({pluginMessage:{type:'discard'}}, '*')   // a fitting is never kept
 }
-function onRelease(){ if(live) push(1024) }
-document.getElementById('restore').onclick = ()=> parent.postMessage({pluginMessage:{type:'restore'}}, '*')
+function onRelease(){ if(live) push(1024, true) }
+document.getElementById('restore').onclick = ()=>{
+  live = false; liveBtn.classList.remove('on')
+  parent.postMessage({pluginMessage:{type:'restore'}}, '*')
+}
 
 
 /* ---------------- language ---------------- */
