@@ -1178,14 +1178,14 @@ function _rdpClosed(pts, eps) {   // 閉ループ：最遠点を軸に2弧へ割
   const out = s1.slice(); for (let i = 1; i < s2.length - 1; i++) out.push(s2[i]); return out;
 }
 async function smoothVectorPaths(eps) {
-  const EPS = (typeof eps === "number" && eps > 0) ? eps : 1.5;   // 簡略化の許容誤差(px)。大きいほど大胆に整う
+  const AUTO = !(typeof eps === "number" && eps > 0);   // eps未指定/0以下＝オート（頂点密度からεを自動決定：多パスほど強め）
   const K = 1.0, STEPS = 10, CORNER_COS = -0.2;   // 曲線強さ / 曲線サンプル数 / cos>-0.2(≒101°未満)は角として鋭く残す
   const sel = figma.currentPage.selection;
   const vectors = [];
   const walk = (n) => { if (n && n.type === "VECTOR") vectors.push(n); if (n && "children" in n && n.type !== "INSTANCE") for (const c of n.children) walk(c); };
   sel.forEach(walk);
   if (!vectors.length) { figma.ui.postMessage({ type: "smooth-done", error: "ベクター（パス）を選んでください。塗り/線のシェイプはベクター化してから。" }); return; }
-  let done = 0, fail = 0, before = 0, after = 0; const errs = [];
+  let done = 0, fail = 0, before = 0, after = 0, lastEps = 0; const errs = [];
   for (const v of vectors) {
     try {
       const net = v.vectorNetwork;
@@ -1193,6 +1193,9 @@ async function smoothVectorPaths(eps) {
       if (!net.regions || !net.regions.length) continue;   // v1は塗り(regions)ベクター専用
       const V = net.vertices, S = net.segments;
       before += V.length;
+      let epsUse = AUTO ? 1.5 : eps;   // オート＝バウンディングボックス対角と頂点数の密度からεを算出（密なほど強く間引く）
+      if (AUTO) { let mnx = Infinity, mny = Infinity, mxx = -Infinity, mxy = -Infinity; for (const p of V) { if (p.x < mnx) mnx = p.x; if (p.y < mny) mny = p.y; if (p.x > mxx) mxx = p.x; if (p.y > mxy) mxy = p.y; } const diag = Math.sqrt((mxx - mnx) * (mxx - mnx) + (mxy - mny) * (mxy - mny)) || 1, density = V.length / (diag / 10); epsUse = Math.max(0.8, Math.min(6, 0.5 + density * 0.15)); }
+      lastEps = epsUse;
       const newVerts = [], newSegs = [], newRegions = [];
       for (const region of net.regions) {
         const outLoops = [];
@@ -1214,7 +1217,7 @@ async function smoothVectorPaths(eps) {
             else { const P1 = { x: P0.x + (tS ? tS.x : 0), y: P0.y + (tS ? tS.y : 0) }, P2 = { x: P3.x + (tE ? tE.x : 0), y: P3.y + (tE ? tE.y : 0) }; for (let i = 0; i < STEPS; i++) { const t = i / STEPS, u = 1 - t; pts.push({ x: u * u * u * P0.x + 3 * u * u * t * P1.x + 3 * u * t * t * P2.x + t * t * t * P3.x, y: u * u * u * P0.y + 3 * u * u * t * P1.y + 3 * u * t * t * P2.y + t * t * t * P3.y }); } }
           }
           // 3) RDP簡略化（閉）→ 4) コーナー検出＋Catmull-Rom接線
-          let sp = _rdpClosed(pts, EPS); if (sp.length < 3) sp = pts.slice();
+          let sp = _rdpClosed(pts, epsUse); if (sp.length < 3) sp = pts.slice();
           const m = sp.length, tan = new Array(m);
           for (let i = 0; i < m; i++) {
             const P = sp[i], A = sp[(i - 1 + m) % m], B = sp[(i + 1) % m];
@@ -1245,8 +1248,9 @@ async function smoothVectorPaths(eps) {
       done++;
     } catch (e) { fail++; if (errs.length < 4) errs.push(String(v.name) + " → " + (e && e.message ? e.message : String(e))); }
   }
-  figma.ui.postMessage({ type: "smooth-done", done: done, fail: fail, errs: errs, eps: EPS, before: before, after: after });
-  figma.notify("🖊 パス整形：" + done + " 個（頂点 " + before + "→" + after + "・ε=" + EPS + "）" + (fail ? "／失敗 " + fail : "") + "。Cmd+Zで戻せます。");
+  const epsLabel = AUTO ? ("オート≈" + lastEps.toFixed(1)) : eps;
+  figma.ui.postMessage({ type: "smooth-done", done: done, fail: fail, errs: errs, eps: epsLabel, before: before, after: after });
+  figma.notify("🖊 パス整形：" + done + " 個（頂点 " + before + "→" + after + "・ε=" + epsLabel + "）" + (fail ? "／失敗 " + fail : "") + "。Cmd+Zで戻せます。");
 }
 
 figma.ui.onmessage = async (msg) => {
