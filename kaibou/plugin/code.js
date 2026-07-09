@@ -65,11 +65,8 @@ async function push() {
   if (source.visible) {
     bytes = await source.exportAsync(opts)
   } else {
-    // clone() lands in the SAME parent, so it must be moved to page level
-    // before it is made visible — otherwise the auto layout sees an extra
-    // visible child for one frame and shoves the result node sideways.
+    // clone() already parents under the page, where no layout can see it.
     const tmp = source.clone()
-    figma.currentPage.appendChild(tmp)
     tmp.visible = true
     tmp.locked = false
     try { bytes = await tmp.exportAsync(opts) } finally { tmp.remove() }
@@ -134,6 +131,11 @@ figma.ui.onmessage = async (msg) => {
     // Text is the exception: its shape *is* the glyphs, so it becomes a rect.
     const canHoldPaint = node.type !== 'TEXT' && 'fills' in node && node.fills !== figma.mixed
 
+    // clone() parents the copy under the page, so its x/y become absolute.
+    // Moving it back into `parent` keeps those numbers and the layer lands at
+    // the parent's origin offset. Remember the placement and restore it.
+    const place = node.relativeTransform
+
     let rect
     if (canHoldPaint) {
       rect = node.clone()
@@ -160,6 +162,7 @@ figma.ui.onmessage = async (msg) => {
     rect.setPluginData(FILLS, '')
 
     parent.insertChild(index, rect)
+    if (canHoldPaint) rect.relativeTransform = place
 
     node.name = '⟨source⟩ ' + node.name
     node.visible = false
