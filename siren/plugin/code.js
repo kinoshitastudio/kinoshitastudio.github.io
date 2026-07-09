@@ -367,17 +367,15 @@ function make(P, reuse, preview) {
       return e
     }
 
-    const black = grey(0), white = grey(1)
+    const white = grey(1)
     const parts = []
     for (const h of hits) {
-      // the hollow loses ambient light, and its near lip turns away from it
-      parts.push(lamp(h, { name:'occlusion',  c:black, a:0.70, size:1.15, off:0,    blur:0.15, mode:'MULTIPLY', op:0.75*relief }))
-      parts.push(lamp(h, { name:'shadow',     c:black, a:0.65, size:0.70, off:0.22, blur:0.20, mode:'MULTIPLY', op:0.85*relief }))
-
-      /* No diffuse ball. The cells are already shaded by the surface normal, so
-         a big soft white ellipse on top only reads as a ball sitting in the
-         crater. What is left is what a real surface would still show: one hard
-         pin of reflection on the far wall, and colour bleeding into the hollow. */
+      /* No occlusion, no shadow, no diffuse ball. The dark inside the dent is not
+         painted on — it is the ground, and it appears because the panels above it
+         fell away. Painting darkness over a surface that is already falling only
+         puts a smudge on top of it.
+         What survives is what a real surface would still show: one hard pin of
+         reflection on the far wall, and colour bleeding into the hollow. */
       parts.push(lamp(h, { name:'spec',   c:white,  a:0.90, size:0.20, off:0.30, away:1, blur:0.06, mode:'SCREEN',     op:0.75*g }))
       parts.push(lamp(h, { name:'colour', c:accent, a:0.30, size:0.60, off:0.30, away:1, blur:0.20, mode:'SOFT_LIGHT', op:0.7*g }))
     }
