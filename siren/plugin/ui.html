@@ -189,6 +189,7 @@ const P = { sink:0.72, reach:190, dark:0.62, grid:20, fill:1, hum:0.35, bars:3,
             bgH:0, bgS:0, bgL:0, useFill:false, flip:false }
 // light === "the surface is pale, so the ink must be dark"
 const isLight = ()=> P.bgL > 0.5
+let groundTouched = false      // once a ground is chosen by hand, stop guessing
 let srcPaint = null            // the selected node's colour, averaged, for the ink maths
 let srcFills = null            // the selected node's actual paints — gradients included
 
@@ -207,7 +208,6 @@ const PRESETS = {
   Through:  { sink:0.98, dark:0.85, glow:1.1,  blur:110, curve:1.7, crack:0.7, dust:0.6,  hum:0.45, relief:1.1, spread:0.70, debris:0.12, reach:280 },
   Collapse: { sink:1.2,  dark:1,    glow:1.35, blur:150, curve:1.0, crack:1,   dust:0.95, hum:0.7,  relief:1.3, spread:1.25, debris:0.4,  reach:400 },
   Scatter:  { sink:1.2,  dark:1,    glow:1.4,  blur:170, curve:0.7, crack:1,   dust:1,    hum:0.85, relief:1.4, spread:1.9,  debris:0.85, reach:420 },
-},
 }
 
 let live = false, busy = false
@@ -296,7 +296,7 @@ bind('bgH','bgH',v=>v+'°'); bind('bgS','bgS',pc); bind('bgL','bgL',pc)
 for(const id of ['bgH','bgS','bgL']){
   const el = document.getElementById(id), prev = el.oninput
   el.oninput = (e)=>{
-    P.useFill = false
+    P.useFill = false; groundTouched = true
     document.getElementById('pick').classList.remove('on')
     prev(e)
     // at light 0 every hue is black, so those two knobs would be dead.
@@ -324,7 +324,7 @@ function paintSwatch(){
    ground can be lifted straight off the artwork on screen. */
 function setGround(r,g,b){
   const [h,sat,l] = rgbToHsl(r/255, g/255, b/255)
-  P.useFill = false
+  P.useFill = false; groundTouched = true
   document.getElementById('pick').classList.remove('on')
   P.bgH = Math.round(h); P.bgS = +sat.toFixed(2); P.bgL = +l.toFixed(3)
   syncUI(); render()
@@ -372,7 +372,7 @@ document.getElementById('pick').onclick = ()=>{
     document.getElementById('count').textContent = lang==='ja' ? '塗りのある素材を選んで' : 'select a layer that has a fill'
     return
   }
-  P.useFill = true
+  P.useFill = true; groundTouched = false
   document.getElementById('pick').classList.add('on')
   syncUI(); render(); onRelease()
 }
@@ -499,10 +499,21 @@ function draw(){
     <filter id="soft" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="${P.blur*(S/DEF)}"/></filter>`
   art.append(defs)
 
+  const chosen = groundArr()
+  const pale = P.useFill && srcPaint
+    ? (0.2126*chosen[0] + 0.7152*chosen[1] + 0.0722*chosen[2]) / 255 > 0.5
+    : isLight()
+  /* 反転 swaps the panel and the void. Turning the ink over while the ground
+     stays put only makes the surface vanish into it. */
+  const panel = pale ? [16,16,16] : [235,235,235]
+  const ground = P.flip ? panel : chosen
+  const light = P.flip ? !pale : pale
+  const inkBase = light?16:235
+
   const bg = document.createElementNS(NS,'rect')
   bg.setAttribute('width',W); bg.setAttribute('height',H)
-  bg.setAttribute('fill', css(groundArr())); art.append(bg)
-  drawSrcFills()
+  bg.setAttribute('fill', css(ground)); art.append(bg)
+  if(!P.flip) drawSrcFills()
 
 
   if(P.wash>0){
@@ -549,12 +560,6 @@ function draw(){
   let smax=0; for(const v of sink) smax=Math.max(smax,v); if(smax<1e-6) smax=1
 
 
-  const ground = groundArr()
-  const pale = P.useFill && srcPaint
-    ? (0.2126*ground[0] + 0.7152*ground[1] + 0.0722*ground[2]) / 255 > 0.5
-    : isLight()
-  const light = P.flip ? !pale : pale        // 反転: dark ink on a dark ground, if you want it
-  const inkBase = light?16:235
   const accent = hueArr(P.hue), cA = hueArr(P.h1), cB = hueArr(P.h2)
   const base = cell*P.fill*(1+bassLift*P.bass*0.5)
   let n=0
@@ -716,7 +721,11 @@ onmessage = e=>{
     W = m.w || 1000; H = m.h || 1000
     srcPaint = m.paint || null
     srcFills = m.fills || null
-    if(!srcFills){ P.useFill = false; document.getElementById('pick').classList.remove('on') }
+    // Match the artwork by default. Nobody wants to press a button to be told
+    // what colour the thing they just selected is.
+    if(srcFills && !groundTouched) P.useFill = true
+    if(!srcFills){ P.useFill = false }
+    document.getElementById('pick').classList.toggle('on', !!P.useFill)
     document.getElementById('pick').disabled = !srcFills
     paintSwatch(); render()
   }
