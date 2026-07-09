@@ -54,18 +54,25 @@ async function push() {
   }
 
   const scale = Math.min(2, MAX_PX / Math.max(source.width, source.height))
+  const opts = { format: 'PNG', constraint: { type: 'SCALE', value: Math.max(0.25, scale) } }
 
-  // A hidden node exports as transparent, so show it for the length of the call.
-  const wasVisible = source.visible
-  if (!wasVisible) source.visible = true
+  // A hidden node exports as transparent, so it has to be visible to export.
+  // Never un-hide the original in place: if it sits in an auto layout, showing
+  // it re-flows the parent and shoves the result node — which is its sibling —
+  // sideways. Every LIVE push would nudge the artwork further off. So export a
+  // throwaway clone parked at page level, where no layout can see it.
   let bytes
-  try {
-    bytes = await source.exportAsync({
-      format: 'PNG',
-      constraint: { type: 'SCALE', value: Math.max(0.25, scale) },
-    })
-  } finally {
-    if (!wasVisible) source.visible = false
+  if (source.visible) {
+    bytes = await source.exportAsync(opts)
+  } else {
+    // clone() lands in the SAME parent, so it must be moved to page level
+    // before it is made visible — otherwise the auto layout sees an extra
+    // visible child for one frame and shoves the result node sideways.
+    const tmp = source.clone()
+    figma.currentPage.appendChild(tmp)
+    tmp.visible = true
+    tmp.locked = false
+    try { bytes = await tmp.exportAsync(opts) } finally { tmp.remove() }
   }
 
   const saved = node.getPluginData(KEY)
