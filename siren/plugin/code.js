@@ -257,6 +257,7 @@ function make(P, reuse, preview) {
 
   const curve = num(P.curve, 2)
   const relief = num(P.relief, 0.9)
+  const spread = num(P.spread, 0.4)
 
   /* `sink` is a height field. A dent and a bump shrink their cells exactly the
      same way — the only thing that tells them apart is which wall catches the
@@ -275,12 +276,21 @@ function make(P, reuse, preview) {
     const dx = (kAt(gx + 1, gy) - kAt(gx - 1, gy)) * 0.5
     const dy = (kAt(gx, gy + 1) - kAt(gx, gy - 1)) * 0.5
     const shade = (dx * LX + dy * LY + LZ) / Math.sqrt(dx * dx + dy * dy + 1) - LZ
-    const size = base * (1 - k * num(P.sink, 0.7))
+
+    /* Material has to go somewhere. Where the wall is steep the surface is being
+       displaced: cells are shoved outward, down the slope, and the ones just
+       outside the pit swell with the material that used to be inside it.
+       Without this a dent is only a hole; with it, the blow has consequences. */
+    const slope = Math.sqrt(dx * dx + dy * dy)
+    const swell = 1 + spread * slope * 3.2 * (1 - k)
+    const size = base * (1 - k * num(P.sink, 0.7)) * swell
     if (!isFinite(size) || size < 1) continue
+
+    const push = spread * slope * cell * 5.5
     // only a cell that is already moving gets nudged — a closed rim stays closed
     const j = cell * 0.16 * Math.min(1, k * 3)
-    const cx = (gx + 0.5) * cell + (R() * 2 - 1) * j * P.hum
-    const cy = (gy + 0.5) * cell + (R() * 2 - 1) * j * P.hum
+    const cx = (gx + 0.5) * cell - dx / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
+    const cy = (gy + 0.5) * cell - dy / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
 
     const t = cx / W * 0.6 + cy / H * 0.4
     let col = mixC(grey(inkBase), mixC(cA, cB, t), P.sample * (1 - k * 0.55))
