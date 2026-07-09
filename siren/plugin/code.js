@@ -279,7 +279,8 @@ function make(P, reuse, preview) {
 
   /* --- the field: every cell samples its colour out of the wash --- */
   const cells = []
-  const base = cell * num(P.fill, 0.7) * (1 + bassLift * num(P.bass, 0.5) * 0.5)
+  // size 1 = a closed surface. Holes are what the kick leaves behind.
+  const base = cell * num(P.fill, 1) * (1 + bassLift * num(P.bass, 0.5) * 0.5)
   const inkBase = light ? 0.06 : 0.92
 
   const curve = num(P.curve, 2)
@@ -289,8 +290,10 @@ function make(P, reuse, preview) {
     const k = Math.pow(sink[gy * GX + gx] / smax, curve)
     const size = base * (1 - k * num(P.sink, 0.7))
     if (!isFinite(size) || size < 1) continue
-    const cx = (gx + 0.5) * cell + jit(cell * 0.16)
-    const cy = (gy + 0.5) * cell + jit(cell * 0.16)
+    // only a cell that is already moving gets nudged — a closed rim stays closed
+    const j = cell * 0.16 * Math.min(1, k * 3)
+    const cx = (gx + 0.5) * cell + (R() * 2 - 1) * j * P.hum
+    const cy = (gy + 0.5) * cell + (R() * 2 - 1) * j * P.hum
 
     const t = cx / W * 0.6 + cy / H * 0.4
     let col = mixC(grey(inkBase), mixC(cA, cB, t), P.sample * (1 - k * 0.55))
@@ -308,7 +311,7 @@ function make(P, reuse, preview) {
     } else {
       node = figma.createRectangle()
       node.resize(size, size)
-      const rot = jit(6) * Math.PI / 180
+      const rot = (R() * 2 - 1) * 6 * P.hum * Math.min(1, k * 3) * Math.PI / 180
       centreAt(node, cx, cy, size, size, rot)
     }
     node.fills = [{ type: 'SOLID', color: col }]
