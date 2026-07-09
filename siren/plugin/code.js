@@ -364,13 +364,12 @@ function make(P, reuse, preview) {
       parts.push(lamp(h, { name:'occlusion',  c:black, a:0.70, size:1.15, off:0,    blur:0.15, mode:'MULTIPLY', op:0.75*relief }))
       parts.push(lamp(h, { name:'shadow',     c:black, a:0.65, size:0.70, off:0.22, blur:0.20, mode:'MULTIPLY', op:0.85*relief }))
 
-      // the far wall takes the light; shadow and diffuse are an opposed pair,
-      // and it is that opposition that makes a flat disc read as a curved wall
-      parts.push(lamp(h, { name:'diffuse',    c:white,  a:0.50, size:0.60, off:0.30, away:1, blur:0.25, mode:'SCREEN',     op:0.9*g }))
-      parts.push(lamp(h, { name:'bounce',     c:accent, a:0.20, size:0.50, off:0.28,         blur:0.18, mode:'SCREEN',     op:0.8*g }))
-      parts.push(lamp(h, { name:'bloom',      c:white,  a:0.40, size:0.35, off:0.30, away:1, blur:0.14, mode:'SCREEN',     op:0.85*g }))
-      parts.push(lamp(h, { name:'spec',       c:white,  a:0.90, size:0.20, off:0.30, away:1, blur:0.06, mode:'SCREEN',     op:0.95*g }))
-      parts.push(lamp(h, { name:'colour',     c:accent, a:0.30, size:0.60, off:0.30, away:1, blur:0.20, mode:'SOFT_LIGHT', op:0.7*g }))
+      /* No diffuse ball. The cells are already shaded by the surface normal, so
+         a big soft white ellipse on top only reads as a ball sitting in the
+         crater. What is left is what a real surface would still show: one hard
+         pin of reflection on the far wall, and colour bleeding into the hollow. */
+      parts.push(lamp(h, { name:'spec',   c:white,  a:0.90, size:0.20, off:0.30, away:1, blur:0.06, mode:'SCREEN',     op:0.75*g }))
+      parts.push(lamp(h, { name:'colour', c:accent, a:0.30, size:0.60, off:0.30, away:1, blur:0.20, mode:'SOFT_LIGHT', op:0.7*g }))
     }
     const kept = parts.filter(Boolean)
     if (kept.length) figma.group(kept, frame).name = 'light'
