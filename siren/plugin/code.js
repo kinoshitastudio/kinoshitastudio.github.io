@@ -267,38 +267,20 @@ function make(P, reuse, preview) {
   const relief = num(P.relief, 0.9)
   const spread = num(P.spread, 0.4)
   const debris = num(P.debris, 0)
-  const rim = num(P.rim, 0.35)
-
-  /* Inigo Quilez's cubic pulse. A monotonic falloff only ever sinks toward the
-     middle and fades away — the eye reads that as blur. Subtract a pulse just
-     outside the pit and the profile overshoots ABOVE the resting surface: the
-     material the kick displaced has to pile up somewhere, and it piles at the
-     rim. This single term is what separates a dent from a smudge. */
-  const cpulse = (c, w, x) => {
-    let d = Math.abs(x - c)
-    if (d > w) return 0
-    d /= w
-    return 1 - d * d * (3 - 2 * d)
-  }
-  const profile = (raw) => {
-    const k0 = Math.pow(raw, curve)
-    return k0 - rim * cpulse(0.28, 0.28, k0)   // negative = raised lip
-  }
 
   /* `sink` is a height field. A dent and a bump shrink their cells exactly the
      same way — the only thing that tells them apart is which wall catches the
      light. So take the normal and light it. The light sits up and to the left,
      which means the near wall of a dent goes dark and the far wall goes bright.
      Reverse that and the eye reads a bump. This is the whole illusion. */
-  const kAt = (x, y) => profile(
-    sink[Math.min(GY - 1, Math.max(0, y)) * GX + Math.min(GX - 1, Math.max(0, x))] / smax)
+  const kAt = (x, y) => Math.pow(
+    sink[Math.min(GY - 1, Math.max(0, y)) * GX + Math.min(GX - 1, Math.max(0, x))] / smax, curve)
   const LX = -0.62, LY = -0.62, LZ = 0.48
 
   for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
     // The rim of a dent is still surface. Bending the falloff keeps the holes
     // near the impact instead of spreading them evenly over the whole field.
-    const h = profile(sink[gy * GX + gx] / smax)   // <0 on the raised lip
-    const k = Math.max(0, h)                       // depth, for darkening
+    const k = Math.pow(sink[gy * GX + gx] / smax, curve)
     // slope of the crater wall under this cell
     const dx = (kAt(gx + 1, gy) - kAt(gx - 1, gy)) * 0.5
     const dy = (kAt(gx, gy + 1) - kAt(gx, gy - 1)) * 0.5
@@ -309,11 +291,8 @@ function make(P, reuse, preview) {
        outside the pit swell with the material that used to be inside it.
        Without this a dent is only a hole; with it, the blow has consequences. */
     const slope = Math.sqrt(dx * dx + dy * dy)
-    const sk = num(P.sink, 0.7)
-    let size = base * (1 - h * sk)                 // h<0 swells the lip
-    // Cells that shrink to nothing pop. A surface bottoms out; it does not
-    // evaporate. Only a blow past full depth is allowed to punch through.
-    if (sk <= 1) size = Math.max(size, base * 0.25)
+    const swell = 1 + spread * slope * 3.2 * (1 - k)
+    let size = base * (1 - k * num(P.sink, 0.7)) * swell
     if (!isFinite(size) || size < 1) continue
 
     let push = spread * slope * cell * 5.5
