@@ -8,7 +8,7 @@
  *
  * Four instruments, four operators on ONE surface — not four pictures:
  *   kick  hits it and then decays (what it tore loose comes down as dust)
- *   snare tears it (the cells part; the ground shows in the split)
+ *   snare breaks it (Voronoi plates move apart; a crack is the space between)
  *   hat   roughens it (粒子。粒状の荒れ — no new shape, just grain)
  *   bass  swells it (a sustained arc, not a point)
  *
@@ -155,7 +155,7 @@ function field(R, P, V, W, H, S) {
   const GX = Math.ceil(W / cell), GY = Math.ceil(H / cell)
   const sink = new Float32Array(GX * GY), grit = new Float32Array(GX * GY), lift = new Float32Array(GX * GY)
   const jit = (a) => (R() * 2 - 1) * a * P.hum
-  const hits = [], tears = [], arcs = []
+  const hits = [], cracks = [], arcs = []
   const K = V.kick
 
   for (let bar = 0; bar < P.bars; bar++) for (let s = 0; s < 16; s++) {
@@ -172,14 +172,13 @@ function field(R, P, V, W, H, S) {
         sink[gy * GX + gx] += Math.exp(-d2 / (reach * reach))
       }
     }
-    /* A crack drawn as a line is an illustration of a crack. Here the cells
-       themselves part: each tear pushes the surface aside along its own normal,
-       and what shows in the gap is the ground that was always underneath. */
+    /* A crack drawn as a line is an illustration of a crack. Here the surface
+       itself comes apart: the snare marks where it was struck, and the field
+       shatters into plates around those points. */
     if (V.snare.on.indexOf(s) >= 0 && V.snare.amt > 0) {
       const r = S * 0.5 * V.snare.ring * (1 + jit(0.06))
       const a = ang + jit(0.05)
-      tears.push({ x: W / 2 + Math.cos(a) * r, y: H / 2 + Math.sin(a) * r, c: Math.cos(a), s: Math.sin(a),
-                   len: S * V.snare.len * (0.6 + R() * 0.8), w: cell * V.snare.w * (0.7 + R() * 0.6) })
+      cracks.push({ x: W / 2 + Math.cos(a) * r, y: H / 2 + Math.sin(a) * r })
     }
     /* ハイハット = 粒子。粒状の荒れ。
        Not a shape. Not a smaller kick — a smaller kick belongs inside the kick.
@@ -217,10 +216,38 @@ function field(R, P, V, W, H, S) {
     }
   }
 
+  /* ⭐ Voronoi plates. Each seed owns the cells nearest to it, and the whole plate
+     moves as one body, away from the blow that broke it. Two neighbouring plates
+     go different ways, so a gap opens along the seam they used to share — and what
+     you see in the gap is the ground. There is no crack node. A crack is the space
+     between two pieces that used to touch. */
+  const shards = []
+  if (V.snare.amt > 0 && cracks.length) {
+    const n = Math.round(16 + V.snare.pieces * 56)
+    const reach = V.snare.reach * (S / DEF)
+    for (let i = 0; i < n; i++) {
+      const sx = R() * W, sy = R() * H
+      let bx = 0, by = 0, bd = 1e18
+      for (const c of cracks) {
+        const d = (sx - c.x) * (sx - c.x) + (sy - c.y) * (sy - c.y)
+        if (d < bd) { bd = d; bx = c.x; by = c.y }
+      }
+      const dx = sx - bx, dy = sy - by, d = Math.sqrt(dx * dx + dy * dy) || 1
+      /* mostly away from the blow, partly its own way. Real fracture is not
+         radially obedient, and two hits on one axis would otherwise send every
+         plate sideways and lay the cracks down in stripes. */
+      const ra = R() * Math.PI * 2, m = 0.6
+      let vx = (dx / d) * m + Math.cos(ra) * (1 - m), vy = (dy / d) * m + Math.sin(ra) * (1 - m)
+      const vl = Math.sqrt(vx * vx + vy * vy) || 1
+      shards.push({ x: sx, y: sy, vx: vx / vl, vy: vy / vl,
+                    f: Math.exp(-bd / (reach * reach)), rot: (R() * 2 - 1) * 0.10 })
+    }
+  }
+
   let smax = 0; for (const v of sink) if (v > smax) smax = v; if (smax < 1e-6) smax = 1
   let gmax = 0; for (const v of grit) if (v > gmax) gmax = v; if (gmax < 1e-6) gmax = 1
   let lmax = 0; for (const v of lift) if (v > lmax) lmax = v; if (lmax < 1e-6) lmax = 1
-  return { cell, GX, GY, sink, grit, lift, smax, gmax, lmax, hits, tears, arcs }
+  return { cell, GX, GY, sink, grit, lift, smax, gmax, lmax, hits, shards, arcs }
 }
 
 /* the crater floor, sampled anywhere — not just at cell centres, because the
@@ -244,26 +271,14 @@ function biAtF(arr, F, x, y) {
   return a + (b - a) * ty
 }
 const liftAtF = (F, x, y) => biAtF(F.lift, F, x, y) / F.lmax
-/* how far this cell has been pulled apart, and which way it goes */
-function tearAt(F, x, y) {
-  let ox = 0, oy = 0, near = 0
-  for (const t of F.tears) {
-    const rx = x - t.x, ry = y - t.y
-    const al = rx * t.c + ry * t.s
-    const hl = t.len / 2
-    if (Math.abs(al) > hl) continue
-    const pe = -rx * t.s + ry * t.c
-    const ap = Math.abs(pe)
-    if (ap > t.w) continue
-    const u = al / hl
-    const fall = (1 - ap / t.w) * (1 - u * u)
-    if (fall <= 0) continue
-    const sg = pe < 0 ? -1 : 1
-    ox += -t.s * sg * fall * F.cell * 1.1
-    oy +=  t.c * sg * fall * F.cell * 1.1
-    if (fall > near) near = fall
+/* which plate this point belongs to. Nearest seed wins — that is Voronoi. */
+function shardAt(F, x, y) {
+  let best = null, bd = 1e18
+  for (const sh of F.shards) {
+    const d = (x - sh.x) * (x - sh.x) + (y - sh.y) * (y - sh.y)
+    if (d < bd) { bd = d; best = sh }
   }
-  return { ox, oy, near }
+  return best
 }
 
 function make(P, reuse, preview) {
@@ -442,11 +457,14 @@ function make(P, reuse, preview) {
     const gN = Math.min(1, grit[gy * GX + gx] / gmax) * num(HT.amt, 0)   // how grainy it is here
     const px = (gx + 0.5) * cell, py = (gy + 0.5) * cell
 
+    /* which plate owns this cell, and how hard that plate was hit */
+    const sh = (Sn.amt > 0 && F.shards.length) ? shardAt(F, px, py) : null
+    const sF = sh ? Sn.amt * sh.f : 0
+
     if (canFold && gN < 0.02) {
       const kC = kAtF(F, px, py, curve)
-      const tC = Sn.amt > 0 ? tearAt(F, px, py).near : 0
       // nothing reached this cell. It is still the surface it always was.
-      if (kC < 0.012 && tC <= 0) { asleep[gy * GX + gx] = 1; continue }
+      if (kC < 0.012 && sF < 0.02) { asleep[gy * GX + gx] = 1; continue }
     }
 
     // The rim of a dent is still surface. Bending the falloff keeps the holes
@@ -481,10 +499,15 @@ function make(P, reuse, preview) {
     let cx = px - dx / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
     let cy = py - dy / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
 
-    const tr = tearAt(F, px, py)
-    if (tr.near > 0) {
-      cx += tr.ox * Sn.amt; cy += tr.oy * Sn.amt
-      size *= 1 - tr.near * Sn.amt * 0.5
+    /* the whole plate moves as one body. At a whisper it only shrinks toward
+       itself — hairline cracks along every shared edge (craquelure). At a blow it
+       flies outward and the gaps open into the ground. */
+    let spin = 0
+    if (sF > 0.002) {
+      const push2 = sF * cell * 0.55
+      cx += sh.vx * push2; cy += sh.vy * push2
+      size *= 1 - sF * 0.13
+      spin = sh.rot * sF
       if (!(size > 0.6)) continue
     }
 
@@ -498,7 +521,6 @@ function make(P, reuse, preview) {
     // only the very floor of the impact catches light, and it takes the accent
     const lit = (k - 0.82) / 0.18
     if (lit > 0) col = mixC(col, mixC(grey(1), accent, 0.6), Math.min(1, lit * K.glow))
-    if (tr.near > 0) col = mixC(col, ground, tr.near * Sn.amt * 0.85)  // the split shows the ground
     if (gN > 0.02) {
       const g = 1 + nz * 0.45 * gN
       const gi = { r: clamp01(ink.r * g), g: clamp01(ink.g * g), b: clamp01(ink.b * g) }
@@ -521,7 +543,7 @@ function make(P, reuse, preview) {
     } else {
       node = figma.createRectangle()
       node.resize(dsz, dsz)
-      const rot = (R() * 2 - 1) * 6 * P.hum * Math.min(1, k * 3) * Math.PI / 180
+      const rot = (R() * 2 - 1) * 6 * P.hum * Math.min(1, k * 3) * Math.PI / 180 + spin
       centreAt(node, cx, cy, dsz, dsz, rot)
     }
     node.fills = [{ type: 'SOLID', color: col }]
