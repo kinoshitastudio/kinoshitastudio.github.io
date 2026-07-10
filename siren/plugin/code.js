@@ -971,7 +971,14 @@ function make(P, reuse, preview) {
       const c = mixG.clone()
       frame.appendChild(c)
       c.relativeTransform = [[1, 0, T[0][2] + dirs[i][0]], [0, 1, T[1][2] + dirs[i][1]]]
-      for (const nd of c.findAll((x) => 'fills' in x)) nd.fills = [{ type: 'SOLID', color: ch[i] }]
+      /* ⚠️ Tint what is painted, not everything. A rim cell has no fill and a
+         stroke — giving it a fill puts the face back on, and the rim's whole
+         sentence (面が消えて縁が残る) is undone by the tape. */
+      for (const nd of c.findAll((x) => 'fills' in x)) {
+        if (Array.isArray(nd.fills) && nd.fills.length) nd.fills = [{ type: 'SOLID', color: ch[i] }]
+        if ('strokes' in nd && Array.isArray(nd.strokes) && nd.strokes.length)
+          nd.strokes = [{ type: 'SOLID', color: ch[i] }]
+      }
       c.blendMode = ink ? 'MULTIPLY' : 'SCREEN'
       c.name = ink ? 'plate ' + 'CMY'[i] : 'channel ' + 'RGB'[i]
     }
