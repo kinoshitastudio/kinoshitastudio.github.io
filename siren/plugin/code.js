@@ -442,18 +442,20 @@ function make(P, reuse, preview) {
   const chosen = worn ? (paintOf({ fills: worn }) || grey(0)) : dialled
   const pale = worn ? lumaOf(worn) > 0.5 : num(P.bgL, 0) > 0.5
 
-  /* 反転 swaps the panel and the void. Turning the ink over while the ground
-     stays put just makes the surface disappear into it — inversion has to move
-     both, or it moves nothing. */
-  const panel = pale ? grey(0.06) : grey(0.92)      // the colour of the surface
-  const ground = P.flip ? panel : chosen            // what shows through a hole
-  const light = P.flip ? !pale : pale               // a pale void wants dark ink
-  /* The panel used to be whatever the ground was not. That is a good default and
-     a bad law — a red ground turned the panel black with no way to say otherwise.
-     The ground and the surface are two colours, so they take two controls. */
-  const ink = P.inkAuto === false
+  /* The panel used to be whatever the ground was not. A good default and a bad
+     law — a red ground turned the panel black with no way to say otherwise. The
+     ground and the surface are two colours, so they take two controls. */
+  const inkC = P.inkAuto === false
     ? hsl(num(P.inkH, 0), num(P.inkS, 0), num(P.inkL, 0.92))
-    : grey(light ? 0.06 : 0.92)
+    : grey(pale ? 0.06 : 0.92)
+
+  /* ⭐ 反転 swaps the panel and the void. Not "make the ground a grey board" — the
+     two colours trade places. The blue you picked was the hole; now it is the
+     surface, and what the surface was is what shows through. Throwing the picked
+     colour away and substituting a slab was never an inversion of anything. */
+  const ground = P.flip ? inkC : chosen             // what shows through a hole
+  const ink    = P.flip ? chosen : inkC             // the surface itself
+  const light  = 0.2126 * ground.r + 0.7152 * ground.g + 0.0722 * ground.b > 0.5
 
   /* the ground is a child now, so the mask can cut it as well */
   frame.fills = []
