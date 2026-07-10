@@ -542,10 +542,11 @@ function make(P, reuse, preview) {
          the bottom of the kick shrinks to nothing and the ground is what is left.
          An unbroken plate overlaps its neighbour, or the shared edge draws itself. */
       const grow = 1 + 0.022 * (1 - Math.min(1, sF * 6))
-      const f = (1 - sF * 0.10) * (1 - k * sinkAmt * 0.62) * grow
-      if (!(f > 0.02)) return
+      const f = (1 - sF * 0.145) * (1 - k * sinkAmt * 0.62) * grow
+      if (!(f > 0.02)) return                    // this plate has gone
       let p = shrinkPoly(poly, c, f)
-      const push = sF * cell * 0.9, rot = sh.rot * sF
+      // once loose, a plate accelerates: it is no longer part of anything
+      const push = Math.pow(sF, 1.25) * cell * 0.9, rot = sh.rot * sF
       const cs = Math.cos(rot), sn = Math.sin(rot)
       p = p.map((q) => {
         const rx = q[0] - c[0], ry = q[1] - c[1]
@@ -557,7 +558,7 @@ function make(P, reuse, preview) {
       v.strokes = []
       // past a certain distance a plate has left the surface, and it thins out
       const gone = Math.max(0, sF - 1)
-      const op = (1 - k * 0.28) * Math.max(0.18, 1 - gone * 0.46)
+      const op = (1 - k * 0.28) * Math.max(0.06, 1 - gone * 0.34)
       if (k > 0.02 || gone > 0) v.opacity = Math.max(0, Math.min(1, op))
       v.name = 'plate'
       frame.appendChild(v)
