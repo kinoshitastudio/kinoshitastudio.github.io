@@ -17,6 +17,11 @@ h1:hover{opacity:.82}
 /* the wordmark stacks, so the instrument has room to sit beside it */
 .wm{display:flex;flex-direction:column;align-items:flex-start;min-width:0}
 .by{font-size:7px;letter-spacing:.11em;text-transform:uppercase;color:var(--dim2);white-space:nowrap}
+/* Haettenschweiler has no kana. The nearest thing a system font can do is a
+   heavy gothic, squeezed — condensed weight is what the latin face is made of. */
+h1 .jp{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic",-apple-system,sans-serif;
+  font-weight:800;font-size:15px;letter-spacing:.02em;margin-left:7px;
+  display:inline-block;transform:scaleX(.86);transform-origin:left center;vertical-align:baseline}
 .wmr{display:flex;align-items:baseline;gap:7px}
 .ver{font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.12em;color:var(--dim)}
 /* Kick has seven marks on its axis, and seven is what has to fit: a second row
@@ -110,6 +115,10 @@ input[type=range]{flex:1;accent-color:var(--fg);height:3px}
 .ch .sm button{padding:3px 4px}     /* the desk is 7 channels wide now */
 .gap{border-left:1px solid var(--line);height:104px;justify-self:center}
 .modes{display:flex;flex-direction:column;gap:2px;width:100%}
+/* the sends' modes and the voices' swing share one slot above the fader */
+.hum{width:100%;height:12px;accent-color:var(--dim);cursor:pointer;padding:0}
+.hum.wide{accent-color:var(--fg)}          /* this hand is loose */
+.nohum{font-size:8.5px;color:var(--dim2);letter-spacing:.04em;text-align:center;line-height:1.2}
 .modes button{font-size:8.5px;padding:3px 0;border-radius:3px;line-height:1.2;width:100%}
 .modes button.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 /* the chosen physics contradicts the ground it is standing on */
@@ -169,7 +178,7 @@ footer .sp{flex:1}
 </div>
 
 <header>
-  <div class="wm"><div class="wmr"><h1 id="title">Siren</h1><span class="ver">V1</span></div><span class="by">by Kinoshita Studio</span></div>
+  <div class="wm"><div class="wmr"><h1 id="title">Siren<span class="jp">鳴物</span></h1><span class="ver">V1</span></div><span class="by">by Kinoshita Studio</span></div>
   <div class="iwrap">
     <button id="instBtn">Kick ▾</button>
     <div id="instMenu" class="imenu" hidden></div>
@@ -362,15 +371,15 @@ const VOICES = ['kick','snare','hat','rim','bass']
 const SENDS = ['reverb','tape']
 const ALL = VOICES.concat(SENDS)
 const V = {
-  kick:  { on:[0,3,8,11], sink:0.72, reach:190, dark:0.48, curve:2.2, spread:0.4, debris:0,
+  kick:  { on:[0,3,8,11], hum:1, sink:0.72, reach:190, dark:0.48, curve:2.2, spread:0.4, debris:0,
            decay:0.4, glow:0.75, bloom:70, relief:0.9 },
-  snare: { on:[4,12], amt:0, pieces:0.4, reach:180, ring:0.5 },
-  hat:   { on:[0,2,4,6,8,10,12,14], amt:0, size:1.35, reach:120, ring:0.42 },
+  snare: { on:[4,12], hum:1, amt:0, pieces:0.4, reach:180, ring:0.5 },
+  hat:   { on:[0,2,4,6,8,10,12,14], hum:1, amt:0, size:1.35, reach:120, ring:0.42 },
   /* ⭐ Rim is a high-pass, and it is the only voice that takes something away.
      The untouched plain is flat and the floor of the crater is flat; both are
      low frequency, and both leave. What is left is the slope between them —
      which is the rim. So the rim can draw nothing the kick has not made first. */
-  rim:   { on:[6,14], amt:0, reach:220, ring:0.30, weight:2.4 },
+  rim:   { on:[6,14], hum:1, amt:0, reach:220, ring:0.30, weight:2.4 },
   bass:  { on:[0,8], amt:0.5, layers:5, drop:0.5, size:0.9 },
   reverb:{ mode:'tail', amt:0, taps:4, spread:16 },
   tape:  { mode:'auto', amt:0, off:3, wow:0 },
@@ -614,11 +623,26 @@ function buildMix(){
     if(v==='reverb'){ const g=document.createElement('div'); g.className='gap'; mixEl.append(g) }
     const d = document.createElement('div')
     d.className='ch'; d.dataset.v = v
+    /* ⭐ Swing per voice. `P.hum` is the master; this scales it. Bass never calls
+       jit() — a held note has no attack point, so there is nothing to be late.
+       The desk says that rather than offering a knob that does nothing. */
     d.innerHTML =
-      (MODES[v] ? '<div class="modes">'+MODES[v].map(m=>'<button data-m="'+m+'">'+MODEL[m]+'</button>').join('')+'</div>' : '') +
+      (MODES[v] ? '<div class="modes">'+MODES[v].map(m=>'<button data-m="'+m+'">'+MODEL[m]+'</button>').join('')+'</div>'
+        : typeof V[v].hum === 'number' ? '<input class="hum" type="range" min="0" max="2" step="0.02">'
+        : '<span class="nohum">no<br>attack</span>') +
       '<input class="fader" type="range" orient="vertical" min="0" max="1" step="0.002">' +
       '<div class="sm"><button class="sbtn">S</button><button class="mbtn">M</button></div>' +
       '<span class="nm">'+cap(v)+'</span>'
+    const hum = d.querySelector('.hum')
+    if(hum){
+      hum.value = V[v].hum
+      hum.title = 'humanize — ' + cap(v)
+      /* not bound: swing is not one of the marks on the depth axis, so turning it
+         must not tell the panel the voice has left that axis. */
+      hum.oninput = ()=>{ V[v].hum = +hum.value; hum.classList.toggle('wide', V[v].hum > 1); render() }
+      hum.onchange = onRelease
+      hum.classList.toggle('wide', V[v].hum > 1)
+    }
     const f = d.querySelector('.fader')
     f.value = depthOf[v]
     f.oninput = ()=> setDepthOf(v, +f.value)
@@ -1325,7 +1349,13 @@ function field(R, W, H, S){
   const G=P.grid, cell=S/G
   const GX=Math.ceil(W/cell), GY=Math.ceil(H/cell)
   const sink=new Float32Array(GX*GY), grit=new Float32Array(GX*GY), hp=new Float32Array(GX*GY)
-  const jit = a=>(R()*2-1)*a*P.hum
+  /* ⭐ Swing is not one number. The kick sits dead on the beat and the hat pushes,
+     and that difference IS the groove — one global humanize can only smear all
+     four hands by the same amount. `P.hum` stays the master; each voice scales it.
+     ⚠️ `jit` draws exactly one R() whether or not the voice is loose, so the
+     scalar is free: the rng contract does not notice. */
+  const swing = v => (V[v] && typeof V[v].hum === 'number') ? V[v].hum : 1
+  const jit = (a, v)=>(R()*2-1)*a*P.hum*(v ? swing(v) : 1)
   const hits=[], cracks=[]
   let hold=0
   const K=V.kick
@@ -1338,9 +1368,13 @@ function field(R, W, H, S){
     const ang = (s/16)*Math.PI*2 - Math.PI/2 + jit(0.06)
 
     if(K.on.includes(s)){
-      const r = S*0.5*0.30*(1+jit(0.10))
-      const hx=W/2+Math.cos(ang)*r, hy=H/2+Math.sin(ang)*r
-      const reach=K.reach*(1+jit(0.18))*(S/DEF)
+      /* ⭐ Swing is lateness, and lateness is an angle: the step is a place on the
+         turn. Jittering only the radius moves where the hand lands, never when —
+         so the hat could not push and the kick could not sit back. */
+      const ka = ang + jit(0.05,'kick')
+      const r = S*0.5*0.30*(1+jit(0.10,'kick'))
+      const hx=W/2+Math.cos(ka)*r, hy=H/2+Math.sin(ka)*r
+      const reach=K.reach*(1+jit(0.18,'kick'))*(S/DEF)
       hits.push({x:hx,y:hy,r:reach})
       for(let gy=0;gy<GY;gy++) for(let gx=0;gx<GX;gx++){
         const cx=(gx+0.5)*cell, cy=(gy+0.5)*cell
@@ -1352,8 +1386,8 @@ function field(R, W, H, S){
        itself comes apart: the snare marks where it was struck, and the field
        shatters into plates around those points. */
     if(V.snare.on.includes(s) && V.snare.amt>0){
-      const r=S*0.5*V.snare.ring*(1+jit(0.06))
-      const a=ang+jit(0.05)
+      const r=S*0.5*V.snare.ring*(1+jit(0.06,'snare'))
+      const a=ang+jit(0.05,'snare')
       cracks.push({ x:W/2+Math.cos(a)*r, y:H/2+Math.sin(a)*r })
     }
     /* ハイハット = 粒子。粒状の荒れ。
@@ -1363,9 +1397,10 @@ function field(R, W, H, S){
        points, with a minimum distance between them — the only way a particle can
        be smaller than the space around it. */
     if(V.hat.on.includes(s) && V.hat.amt>0){
-      const r=S*0.5*V.hat.ring*(1+jit(0.05))
-      const hx=W/2+Math.cos(ang)*r, hy=H/2+Math.sin(ang)*r
-      const reach=V.hat.reach*(1+jit(0.20))*(S/DEF)
+      const ha = ang + jit(0.05,'hat')
+      const r=S*0.5*V.hat.ring*(1+jit(0.05,'hat'))
+      const hx=W/2+Math.cos(ha)*r, hy=H/2+Math.sin(ha)*r
+      const reach=V.hat.reach*(1+jit(0.20,'hat'))*(S/DEF)
       for(let gy=0;gy<GY;gy++) for(let gx=0;gx<GX;gx++){
         const cx=(gx+0.5)*cell, cy=(gy+0.5)*cell
         const d2=(cx-hx)*(cx-hx)+(cy-hy)*(cy-hy)
@@ -1380,9 +1415,10 @@ function field(R, W, H, S){
        Like the hat, this map only says WHERE. How much survives is decided per
        cell, from the slope, when the cells are painted. */
     if(V.rim.on.includes(s) && V.rim.amt>0){
-      const r=S*0.5*V.rim.ring*(1+jit(0.05))
-      const hx=W/2+Math.cos(ang)*r, hy=H/2+Math.sin(ang)*r
-      const reach=V.rim.reach*(1+jit(0.20))*(S/DEF)
+      const ra = ang + jit(0.05,'rim')
+      const r=S*0.5*V.rim.ring*(1+jit(0.05,'rim'))
+      const hx=W/2+Math.cos(ra)*r, hy=H/2+Math.sin(ra)*r
+      const reach=V.rim.reach*(1+jit(0.20,'rim'))*(S/DEF)
       for(let gy=0;gy<GY;gy++) for(let gx=0;gx<GX;gx++){
         const cx=(gx+0.5)*cell, cy=(gy+0.5)*cell
         const d2=(cx-hx)*(cx-hx)+(cy-hy)*(cy-hy)
@@ -1631,8 +1667,9 @@ function paintCells(R, F, W, H, S, ground, ink, light){
     if(loose){ push *= 1.6+R()*2.4; size *= 0.35+R()*0.4 }
     // only a cell that is already moving gets nudged — a closed rim stays closed
     const j = cell*0.16*Math.min(1, k*3)
-    let cx = px - dx/(slope||1)*push + (R()*2-1)*j*P.hum
-    let cy = py - dy/(slope||1)*push + (R()*2-1)*j*P.hum
+    const kh = P.hum * (typeof K.hum === 'number' ? K.hum : 1)
+    let cx = px - dx/(slope||1)*push + (R()*2-1)*j*kh
+    let cy = py - dy/(slope||1)*push + (R()*2-1)*j*kh
     cx += wowAt(py, H)
 
     /* ⭐ The high-pass, cell by cell. `pass` is the high-frequency energy here:
@@ -1669,7 +1706,7 @@ function paintCells(R, F, W, H, S, ground, ink, light){
         el=document.createElementNS(NS,'rect')
         el.setAttribute('x',(cx-dsz/2).toFixed(2)); el.setAttribute('y',(cy-dsz/2).toFixed(2))
         el.setAttribute('width',dsz.toFixed(2)); el.setAttribute('height',dsz.toFixed(2))
-      const rot=(R()*2-1)*6*P.hum*Math.min(1, k*3)
+      const rot=(R()*2-1)*6*kh*Math.min(1, k*3)
         if(Math.abs(rot)>0.2) el.setAttribute('transform',`rotate(${rot.toFixed(2)} ${cx.toFixed(2)} ${cy.toFixed(2)})`)
       }
       if(hollow){
