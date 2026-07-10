@@ -1426,6 +1426,270 @@ async function smoothVectorPaths(eps) {
   figma.notify("🖊 パス整形：" + done + " 個（頂点 " + before + "→" + after + "・ε=" + epsLabel + "）" + (fail ? "／失敗 " + fail : "") + "。Cmd+Zで戻せます。");
 }
 
+/* ============================================================
+   ◆ DS 蒸留（Distill）＝散らかったフレームからデザインシステムを"発掘"する。
+   DSの難所はコンポーネント化のクリックではなく ①同一性の判定 ②軸と命名の合意。ここを機械で埋める。
+   L1: 選択を1つのコンポーネントにする（＝Assetsパネルに出る。publishはFigma UI側の操作＝APIでは不可）。
+   L2: 構造フィンガープリントで「同じ形」を塊にし、塊の中の差分から
+       離散的な塗り/寸法 → VARIANT軸 ／ 自由テキスト → TEXTプロパティ ／ 要素の有無 → BOOLEANプロパティ
+       に自動で振り分ける（＝"テキストごとにバリアントを増やす"DS破綻を機械的に防ぐ）。
+   非破壊：元のフレームは触らず、複製から組む。診断→[組み立て]の2フェーズ・Cmd+Zで戻せる。
+   ============================================================ */
+const DS_MAX_AXIS_VALUES = 5;    // これを超える離散値は「軸」ではない（ただの個体差）とみなす
+const DS_FP_DEPTH = 3;           // フィンガープリントを取る深さ
+
+function _dsRole(n) {   // ノードの"役割"＝色/寸法/文字内容を捨てた型情報
+  if (n.type === "TEXT") return "T";
+  if (n.type === "INSTANCE") return "I";
+  if (n.type === "VECTOR" || n.type === "STAR" || n.type === "POLYGON" || n.type === "BOOLEAN_OPERATION" || n.type === "LINE") return "V";
+  if ("children" in n) return "F";
+  return "S";
+}
+function _dsFp(n, depth) {   // 構造フィンガープリント：型＋オートレイアウトの向き＋子の役割列（数値・色・文字は無視）
+  const role = _dsRole(n);
+  if (depth <= 0 || !("children" in n) || !n.children.length) return role;
+  const dir = n.layoutMode === "HORIZONTAL" ? "h" : n.layoutMode === "VERTICAL" ? "v" : "-";
+  const kids = n.children.filter((c) => c.visible !== false || true).map((c) => _dsFp(c, depth - 1));
+  return role + dir + "(" + kids.join(",") + ")";
+}
+function _dsFpChildren(n) { return ("children" in n) ? n.children.map((c) => _dsFp(c, DS_FP_DEPTH - 1)) : []; }
+function _dsHex(n) {   // ノード自身の最初のsolid塗り（軸候補）。変数にバインドされていればその名前も返す＝トークンの語彙をそのまま軸の値名に使える
+  try {
+    const fs = n.fills;
+    if (!Array.isArray(fs)) return null;
+    const f = fs.find((p) => p && p.type === "SOLID" && p.visible !== false);
+    if (!f) return null;
+    let vname = null;
+    try {
+      const bv = f.boundVariables && f.boundVariables.color;
+      if (bv && bv.id) { const v = figma.variables.getVariableById(bv.id); if (v) vname = String(v.name).split("/").pop(); }
+    } catch (e) {}
+    return { hex: _rgbToHex(f.color), vname: vname };
+  } catch (e) { return null; }
+}
+function _dsTexts(n) {   // 中のテキストを index パス付きで拾う（TEXTプロパティ候補）
+  const out = [];
+  const walk = (x, path) => {
+    if (x.type === "TEXT") { out.push({ path: path.slice(), name: String(x.name), chars: String(x.characters || "") }); return; }
+    if ("children" in x) x.children.forEach((c, i) => { path.push(i); walk(c, path); path.pop(); });
+  };
+  if ("children" in n) n.children.forEach((c, i) => walk(c, [i]));
+  return out;
+}
+function _dsCandidates(root, out) {   // コンポーネント候補＝子を持つフレーム。コンポーネント/インスタンスの中身は対象外（Figma側の制約）
+  if (!root || root.removed) return;
+  if (root.type === "COMPONENT" || root.type === "COMPONENT_SET" || root.type === "INSTANCE") return;
+  if (("children" in root) && root.children.length) {
+    if (root.type === "FRAME" || root.type === "GROUP") out.push(root);
+    root.children.forEach((c) => _dsCandidates(c, out));
+  }
+}
+function _dsIsDescendant(node, maybeAncestor) {
+  let p = node.parent;
+  while (p) { if (p === maybeAncestor) return true; p = p.parent; }
+  return false;
+}
+// 「子が1つだけ多い/少ない」クラスタは同じ塊とみなし、その差分の子を BOOLEAN 候補にする（アイコン有無など）
+function _dsMergeableChildIndex(longFp, shortFp) {
+  if (longFp.length !== shortFp.length + 1) return -1;
+  for (let skip = 0; skip < longFp.length; skip++) {
+    let okAll = true;
+    for (let i = 0, j = 0; i < longFp.length; i++) { if (i === skip) continue; if (longFp[i] !== shortFp[j++]) { okAll = false; break; } }
+    if (okAll) return skip;
+  }
+  return -1;
+}
+function _dsSizeKey(n) { return Math.round(n.width) + "x" + Math.round(n.height); }
+
+let _dsClusters = [];   // 直近の診断結果（UIはidで参照する）
+
+// ◆ 診断：選択（無ければページ全体）から「同じ形」の塊を探し、軸とプロパティを提案する。破壊的操作はゼロ。
+function dsScan() {
+  const roots = figma.currentPage.selection.length ? figma.currentPage.selection : figma.currentPage.children;
+  const cands = [];
+  for (const r of roots) _dsCandidates(r, cands);
+  if (!cands.length) { figma.ui.postMessage({ type: "ds-scan", error: "コンポーネント候補（子を持つフレーム）が見つかりません" }); return; }
+
+  const groups = {};   // fp → nodes
+  for (const n of cands) { const fp = _dsFp(n, DS_FP_DEPTH); (groups[fp] = groups[fp] || []).push(n); }
+
+  // 子が1つ違うだけのグループを吸収（＝要素の有無＝BOOLEAN候補）
+  const keys = Object.keys(groups).sort((a, b) => groups[b].length - groups[a].length);
+  const merged = {}, boolOf = {};
+  for (const k of keys) {
+    if (merged[k]) continue;
+    for (const k2 of keys) {
+      if (k2 === k || merged[k2] || boolOf[k2]) continue;
+      const A = groups[k][0], B = groups[k2][0];
+      const fa = _dsFpChildren(A), fb = _dsFpChildren(B);
+      const idx = _dsMergeableChildIndex(fa, fb);
+      if (idx >= 0) { merged[k2] = k; boolOf[k] = { childIndex: idx, name: String(A.children[idx].name || "Icon") }; }
+    }
+  }
+  for (const k2 in merged) { groups[merged[k2]] = groups[merged[k2]].concat(groups[k2]); delete groups[k2]; }
+
+  _dsClusters = [];
+  for (const fp of Object.keys(groups)) {
+    let members = groups[fp];
+    if (members.length < 2) continue;
+    members = members.filter((m) => !members.some((o) => o !== m && _dsIsDescendant(m, o)));   // 同じ塊の入れ子は代表だけ残す
+    if (members.length < 2) continue;
+
+    // ---- 差分を数える ----
+    const tones = {}, sizes = {};
+    members.forEach((m) => {
+      const c = _dsHex(m); if (c) { tones[c.hex] = tones[c.hex] || { hex: c.hex, vname: c.vname, n: 0 }; tones[c.hex].n++; }
+      const s = _dsSizeKey(m); sizes[s] = (sizes[s] || 0) + 1;
+    });
+    const toneVals = Object.keys(tones), sizeVals = Object.keys(sizes);
+    const axes = [];
+    if (toneVals.length >= 2 && toneVals.length <= DS_MAX_AXIS_VALUES) {
+      axes.push({ name: "Tone", by: "fill", values: toneVals.map((h, i) => ({ key: h, label: tones[h].vname || ("Tone" + (i + 1)) })) });
+    }
+    if (sizeVals.length >= 2 && sizeVals.length <= 4) {
+      const order = sizeVals.slice().sort((a, b) => { const pa = a.split("x"), pb = b.split("x"); return (pa[0] * pa[1]) - (pb[0] * pb[1]); });
+      const names = order.length === 2 ? ["S", "L"] : order.length === 3 ? ["S", "M", "L"] : ["XS", "S", "M", "L"];
+      axes.push({ name: "Size", by: "size", values: order.map((s, i) => ({ key: s, label: names[i] })) });
+    }
+
+    // ---- テキストは軸にしない＝TEXTプロパティにする（"文字ごとにバリアント"がDS破綻の元） ----
+    const props = [];
+    const t0 = _dsTexts(members[0]);
+    t0.forEach((t, i) => {
+      const all = members.map((m) => { const ts = _dsTexts(m); return ts[i] ? ts[i].chars : null; }).filter((x) => x !== null);
+      const uniq = {}; all.forEach((c) => (uniq[c] = 1));
+      if (Object.keys(uniq).length >= 2) props.push({ name: (t.name && t.name !== t.chars ? t.name : "Label") + (i ? " " + (i + 1) : ""), type: "TEXT", path: t.path, default: t.chars });
+    });
+    const bo = boolOf[fp];
+    if (bo) props.push({ name: bo.name, type: "BOOLEAN", path: [bo.childIndex], default: true });
+    // 中のインスタンスが違う＝差し替え軸（INSTANCE_SWAP）
+    if ("children" in members[0]) members[0].children.forEach((c, i) => {
+      if (c.type !== "INSTANCE") return;
+      const mains = {};
+      members.forEach((m) => { const ch = m.children[i]; if (ch && ch.type === "INSTANCE") { try { mains[ch.mainComponent ? ch.mainComponent.id : "?"] = 1; } catch (e) {} } });
+      if (Object.keys(mains).length >= 2) props.push({ name: String(c.name || "Icon"), type: "INSTANCE_SWAP", path: [i], default: null });
+    });
+
+    if (!axes.length && !props.length) continue;   // 差分ゼロ＝ただの重複。DSにする意味がない
+
+    // 提案名＝一番大きいテキスト、無ければ型
+    let name = String(members[0].name || "Component");
+    if (t0.length) { name = t0[0].chars.trim().slice(0, 24) || name; }
+    name = name.replace(/\s+/g, " ").trim();
+
+    _dsClusters.push({
+      id: "c" + _dsClusters.length, fp: fp, name: name, count: members.length,
+      memberIds: members.map((m) => m.id), axes: axes, props: props,
+      cells: _dsCells(members, axes).length,
+    });
+  }
+  if (!_dsClusters.length) { figma.ui.postMessage({ type: "ds-scan", error: "同じ形の繰り返し（2個以上）が見つかりません。カードやボタンが並んだ範囲を選んでください。" }); return; }
+  _dsClusters.sort((a, b) => b.count - a.count);
+  figma.ui.postMessage({ type: "ds-scan", clusters: _dsClusters.map((c) => ({ id: c.id, name: c.name, count: c.count, cells: c.cells, axes: c.axes, props: c.props })) });
+}
+function _dsCellKey(n, axes) { return axes.map((a) => (a.by === "fill" ? ((_dsHex(n) || {}).hex || "-") : _dsSizeKey(n))).join("|"); }
+function _dsCells(members, axes) {   // 軸の組み合わせごとに代表を1つ選ぶ（同じセルの重複は捨てる＝バリアント爆発を防ぐ）
+  if (!axes.length) return [{ node: members[0], key: "", labels: [] }];
+  const seen = {}, cells = [];
+  for (const m of members) {
+    const key = _dsCellKey(m, axes);
+    if (seen[key]) continue;
+    seen[key] = 1;
+    const labels = axes.map((a) => {
+      const k = a.by === "fill" ? ((_dsHex(m) || {}).hex || "-") : _dsSizeKey(m);
+      const v = a.values.find((x) => x.key === k);
+      return { axis: a.name, label: v ? v.label : "Default" };
+    });
+    cells.push({ node: m, key: key, labels: labels });
+  }
+  return cells;
+}
+function _dsSafe(s) { return String(s).replace(/[=,]/g, "-").trim() || "Default"; }
+
+// ◆ L1/L2 組み立て：複製から組む（元は非破壊）。1セルならコンポーネント、複数セルなら combineAsVariants でバリアントに束ねる。
+async function dsBuild(clusterId, nameOverride) {
+  const cl = _dsClusters.find((c) => c.id === clusterId);
+  if (!cl) { figma.ui.postMessage({ type: "ds-build", error: "先に診断してください" }); return; }
+  const members = [];
+  for (const id of cl.memberIds) { const n = await figma.getNodeByIdAsync(id); if (n && !n.removed) members.push(n); }
+  if (!members.length) { figma.ui.postMessage({ type: "ds-build", error: "対象ノードが見つかりません（作り直してから診断してください）" }); return; }
+  const dsName = _dsSafe(nameOverride || cl.name);
+  const cells = _dsCells(members, cl.axes);
+
+  // 元の右隣に置く
+  const bx = Math.max.apply(null, members.map((m) => m.x + m.width)) + 120;
+  const by = Math.min.apply(null, members.map((m) => m.y));
+
+  const comps = []; const errs = [];
+  let cx = bx;
+  for (const cell of cells) {
+    try {
+      const clone = cell.node.clone();
+      figma.currentPage.appendChild(clone);
+      clone.x = cx; clone.y = by; cx += clone.width + 40;
+      const comp = figma.createComponentFromNode(clone);
+      comp.name = cell.labels.length ? cell.labels.map((l) => _dsSafe(l.axis) + "=" + _dsSafe(l.label)).join(", ") : dsName;
+      comps.push(comp);
+    } catch (e) { errs.push((e && e.message ? e.message : String(e))); }
+  }
+  if (!comps.length) { figma.ui.postMessage({ type: "ds-build", error: "コンポーネント化に失敗：" + (errs[0] || "") }); return; }
+
+  let target = comps[0], isSet = false;
+  if (comps.length >= 2 && cl.axes.length) {
+    try { target = figma.combineAsVariants(comps, figma.currentPage); target.name = dsName; isSet = true; }
+    catch (e) { errs.push("バリアント化に失敗：" + (e && e.message ? e.message : e)); target = comps[0]; }
+  } else if (comps.length >= 2) {
+    for (let i = 1; i < comps.length; i++) { try { comps[i].remove(); } catch (e) {} }   // 軸が無いのに複数セルは作らない
+    comps.length = 1; target = comps[0]; target.name = dsName;
+  } else { target.name = dsName; }
+
+  // ---- TEXT / BOOLEAN / INSTANCE_SWAP プロパティを付けて、中のノードに実際に結線する ----
+  const variants = isSet ? target.children : [target];
+  const added = [];
+  for (const p of cl.props) {
+    try {
+      const def = p.type === "TEXT" ? String(p.default || "") : p.type === "BOOLEAN" ? true : "";
+      if (p.type === "INSTANCE_SWAP") continue;   // v1は提案のみ（既定インスタンスの決定が要るため未結線）
+      const pid = target.addComponentProperty(_dsSafe(p.name), p.type, def);
+      let bound = 0;
+      for (const v of variants) {
+        // BOOLEAN の対象（有無が変わる子）は index が変位するので**名前でだけ引く**。
+        // ここで index パスへフォールバックすると、その子を持たないバリアントで別ノード（Label等）の visible を結線してしまう。
+        const node = (p.type === "BOOLEAN") ? _byName(v, p.name) : _byPath(v, p.path);
+        if (!node || node === v) continue;
+        if (p.type === "TEXT" && node.type === "TEXT") { node.componentPropertyReferences = { characters: pid }; bound++; }
+        else if (p.type === "BOOLEAN") { node.componentPropertyReferences = { visible: pid }; bound++; }
+      }
+      if (!bound) { try { target.deleteComponentProperty(pid); } catch (e) {} errs.push(p.name + "：結線先が見つからず取り消し"); continue; }   // 空のプロパティを残さない
+      if (bound < variants.length) errs.push(p.name + "：" + bound + "/" + variants.length + " バリアントにのみ結線（構造差）");
+      added.push(p.name + "(" + p.type + ")");
+    } catch (e) { errs.push(p.name + " → " + (e && e.message ? e.message : e)); }
+  }
+  const swaps = cl.props.filter((p) => p.type === "INSTANCE_SWAP").map((p) => p.name);
+
+  try { figma.currentPage.selection = [target]; figma.viewport.scrollAndZoomIntoView([target]); } catch (e) {}
+  figma.ui.postMessage({
+    type: "ds-build", name: dsName, variants: isSet ? variants.length : 1, isSet: isSet,
+    props: added, swaps: swaps, errs: errs.slice(0, 5), members: members.length,
+  });
+  figma.notify("◆ 「" + dsName + "」を作成：" + (isSet ? variants.length + " バリアント" : "コンポーネント") + (added.length ? "／" + added.length + " プロパティ" : "") + "。Assetsパネルに出ます。Cmd+Zで戻せます。");
+}
+
+// ◆ L1：選択をそのままコンポーネントにする（バリアント無し・一番安全な一歩）
+function dsComponentize(name) {
+  const sel = figma.currentPage.selection;
+  if (sel.length !== 1) { figma.ui.postMessage({ type: "ds-build", error: "コンポーネントにするフレームを1つだけ選んでください" }); return; }
+  try {
+    const comp = figma.createComponentFromNode(sel[0]);
+    comp.name = _dsSafe(name || comp.name);
+    figma.currentPage.selection = [comp];
+    figma.ui.postMessage({ type: "ds-build", name: comp.name, variants: 1, isSet: false, props: [], swaps: [], errs: [], members: 1 });
+    figma.notify("◆ 「" + comp.name + "」をコンポーネントにしました。Assetsパネルに出ます。Cmd+Zで戻せます。");
+  } catch (e) {
+    figma.ui.postMessage({ type: "ds-build", error: "コンポーネントにできません：" + (e && e.message ? e.message : e) + "（コンポーネント/インスタンスの中身は不可）" });
+  }
+}
+
 figma.ui.onmessage = async (msg) => {
   if (msg.type === "generate") await generate(msg.json, true);
   else if (msg.type === "live") await generate(msg.json, false);
@@ -1441,6 +1705,9 @@ figma.ui.onmessage = async (msg) => {
   else if (msg.type === "motion") await motionTidy(msg.apply);             // 🎞 モーションを時間トークンへ整える（apply=false診断/true適用）
   else if (msg.type === "collect-motion") collectMotion(msg.instruction);  // 🎬 chat-to-animate：選択をAIへ渡す
   else if (msg.type === "motion-apply") await applyMotionOps(msg.ops);     // 🎬 AIのキーフレームopsを適用
+  else if (msg.type === "ds-scan") dsScan();                               // ◆ DS蒸留：同じ形の塊と軸を診断（非破壊）
+  else if (msg.type === "ds-build") await dsBuild(msg.id, msg.name);       // ◆ DS蒸留：複製から組み立て（L2＝バリアント＋プロパティ）
+  else if (msg.type === "ds-componentize") dsComponentize(msg.name);       // ◆ L1：選択をコンポーネント化
   else if (msg.type === "motion-read") readMotionDoc(msg.name);            // ◆ 選択のモーションを読み取ってJSON化（ライブラリ保存の材料）
   else if (msg.type === "motion-doc-apply") await applyMotionDoc(msg.doc); // ◆ ライブラリのモーションを選択へ再適用
   else if (msg.type === "motionlib-load") await motionlibList();           // ◆ 控え（clientStorage）の一覧
