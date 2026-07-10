@@ -127,9 +127,8 @@ const isSiren   = (n) => n.type === 'FRAME' && !!n.getPluginData(KEY)
 const isPreview = (n) => isSiren(n) && n.getPluginData(TMP) === '1'
 
 function findPreview() { return figma.currentPage.findOne(isPreview) }
-function findFrame(preview) {
-  return preview ? findPreview() : (findPreview() || figma.currentPage.findOne(isSiren))
-}
+// only a preview is ever reused. A committed frame belongs to the document.
+function findFrame(preview) { return preview ? findPreview() : null }
 function discard() {
   const all = figma.currentPage.findAll(isPreview)
   for (const f of all) f.remove()
@@ -659,7 +658,12 @@ figma.ui.onmessage = (msg) => {
   if (msg.type === 'make' || msg.type === 'live') {
     try {
       const preview = msg.type === 'live'
-      const f = make(msg.p, true, preview)
+      /* LIVE reuses its one throwaway frame, so dragging a knob does not litter
+         the page. 鳴らす does NOT: a committed Siren is a finished thing, and the
+         next one is a NEW thing. Reusing it meant the second hit picked up the
+         first and dragged it across the canvas to the new selection. */
+      if (!preview) discard()
+      const f = make(msg.p, preview, preview)
       if (!preview) figma.viewport.scrollAndZoomIntoView([f])
       figma.ui.postMessage({ type: 'made', nodes: f.children.length })
     } catch (err) {
