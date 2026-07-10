@@ -357,7 +357,9 @@ function make(P, reuse, preview) {
   if (frame) { for (const c of [...frame.children]) c.remove() }
   else frame = figma.createFrame()
 
-  frame.name = 'Siren'
+  /* Soloed layers stack on the same artwork — one for the kick, one for the hat.
+     They are different graphics and they must be told apart in the layer panel. */
+  frame.name = P.soloOf ? 'Siren — ' + P.soloOf : 'Siren'
   frame.clipsContent = true
 
   if (target) {
