@@ -737,81 +737,6 @@ function make(P, reuse, preview) {
      and let it through. The panel hides its own glow until it is holed. */
   if (fieldGroup) frame.appendChild(fieldGroup)
 
-  /* --- reverb: ぼかし＝畳み込み ---------------------------------------------
-     Not a metaphor. A gaussian blur and a reverb tail are the same computation, so
-     the tail is drawn the only honest way: copies of the surface, each offset
-     further, blurred more, fainter. The blur GROWING is the whole thing — late
-     reflections diffuse and a sharp edge dissolves into a wash you cannot count.
-
-     Echo is the sibling, not the same knob: discrete repeats, evenly spaced, NOT
-     blurred. You can count them. Never mix the two.
-
-     余白 is not a third mechanism. It is the tail aimed into an emptiness: bias it
-     one way, leave that way clear, and the eye extrapolates the decay past the
-     last copy. Empty space with nothing decaying into it is just a margin. --- */
-  const RV = V.reverb || { amt: 0 }
-  if (fieldGroup && num(RV.amt, 0) > 0) {
-    const N = Math.max(1, Math.round(num(RV.taps, 5)))
-    const px = S / DEF
-    const at = frame.children.indexOf(fieldGroup)
-    /* ⚠️ clone() is born on the PAGE, not beside its original, so its x/y become
-       absolute. insertChild() then plants it at the frame's origin plus that,
-       which is the frame's own offset away from where it belongs. Read the
-       source's position first and write it back after it has a parent.
-       Counting DOWN from the far tap would also stack them backwards: each
-       insertChild(at) pushes the previous one up, so the last one inserted ends
-       up furthest back. Insert near first, far last. */
-    const bx = fieldGroup.x, by = fieldGroup.y
-    for (let i = 1; i <= N; i++) {
-      const t = i / N
-      const echo = RV.mode === 'echo'
-      const blur = echo ? 0 : Math.max(0.3, t * num(RV.spread, 26) * 0.55 * px)
-      const step = num(RV.spread, 26) * px
-      const dx = echo ? i * step * 0.8 : (RV.mode === 'ma' ? Math.pow(t, 0.8) * step * N * 0.45 : t * step * 1.1)
-      const dy = echo ? i * step * 0.35 : (RV.mode === 'ma' ? 0 : t * step * 0.45)
-      const op = (echo ? Math.pow(0.62, i) : Math.pow(0.55, i) * 1.6) * RV.amt
-      if (op < 0.004) continue
-      const c = fieldGroup.clone()
-      frame.insertChild(at, c)              // the tail decays BEHIND its source
-      c.x = bx + dx; c.y = by + dy
-      if (blur > 0.3) c.effects = [{ type: 'LAYER_BLUR', radius: blur, visible: true }]
-      c.opacity = Math.max(0, Math.min(1, op))
-      /* ⚠️ NOT SCREEN. A tail is not light — it is the image of the source,
-         fainter. SCREEN on a white panel blows it out and the surface vanishes,
-         leaving only what was drawn in MULTIPLY still visible. Light lives on
-         black; a reflection lives anywhere. NORMAL is ground-independent, which
-         is what a decaying copy should be. */
-      c.name = echo ? 'echo' : 'tail'
-    }
-  }
-
-  /* --- tape: 全体の揺れ、色ズレ -----------------------------------------------
-     ⭐ Ink is subtractive: cyan on white paper absorbs red, two inks overlapping
-     make the paper darker. That is MULTIPLY, and it does something only on a light
-     ground. Light is additive: red + green + blue is white. That is SCREEN, and it
-     does something only on a dark ground.
-
-     So there is no single misregistration. There are two, and the ground decides
-     which physics you are in. ------------------------------------------------ */
-  const TP = V.tape || { amt: 0 }
-  if (fieldGroup && num(TP.amt, 0) > 0) {
-    const ink = TP.mode === 'cmy' || (TP.mode === 'auto' && light)
-    const ch = ink ? CH_CMY : CH_RGB
-    const off = num(TP.off, 6) * (S / DEF) * TP.amt
-    const dirs = [[-off, -off * 0.4], [0, off * 0.5], [off, -off * 0.2]]
-    // same clone-lands-on-the-page trap as the reverb above
-    const bx = fieldGroup.x, by = fieldGroup.y
-    for (let i = 0; i < 3; i++) {
-      const c = fieldGroup.clone()
-      frame.appendChild(c)
-      c.x = bx + dirs[i][0]; c.y = by + dirs[i][1]
-      for (const nd of c.findAll((x) => 'fills' in x)) nd.fills = [{ type: 'SOLID', color: ch[i] }]
-      c.blendMode = ink ? 'MULTIPLY' : 'SCREEN'
-      c.name = ink ? 'plate ' + 'CMY'[i] : 'channel ' + 'RGB'[i]
-    }
-    fieldGroup.visible = false             // the channels replace it
-  }
-
   /* --- bass: 面積・重心・暗さ ------------------------------------------------
      A drum is an event. A held note is not — no attack point, no edge, so it
      cannot be a shape that happens. It is mass: nested planes, each a flat tone,
@@ -911,6 +836,91 @@ function make(P, reuse, preview) {
     }
     if (bits.length) figma.group(bits, frame).name = 'dust'
   }
+
+  /* ⭐ A send is on the master bus. Reverb does not act on the surface and leave
+     the grain dry — nobody sends only the kick to the reverb. Everything the
+     sequence made goes into one `mix`, and the sends act on that. Otherwise you
+     cannot tell what the reverb is even touching. The ground and the mask stay
+     out of it: they are the room, not the sound. */
+  const body = frame.children.filter((c) => c !== mask && c !== bg)
+  const mixG = body.length ? figma.group(body, frame) : null
+  if (mixG) mixG.name = 'mix'
+
+  /* --- reverb: ぼかし＝畳み込み ---------------------------------------------
+     Not a metaphor. A gaussian blur and a reverb tail are the same computation, so
+     the tail is drawn the only honest way: copies of the surface, each offset
+     further, blurred more, fainter. The blur GROWING is the whole thing — late
+     reflections diffuse and a sharp edge dissolves into a wash you cannot count.
+
+     Echo is the sibling, not the same knob: discrete repeats, evenly spaced, NOT
+     blurred. You can count them. Never mix the two.
+
+     余白 is not a third mechanism. It is the tail aimed into an emptiness: bias it
+     one way, leave that way clear, and the eye extrapolates the decay past the
+     last copy. Empty space with nothing decaying into it is just a margin. --- */
+  const RV = V.reverb || { amt: 0 }
+  if (mixG && num(RV.amt, 0) > 0) {
+    const N = Math.max(1, Math.round(num(RV.taps, 5)))
+    const px = S / DEF
+    const at = frame.children.indexOf(mixG)
+    /* ⚠️ clone() is born on the PAGE, not beside its original, so its x/y become
+       absolute. insertChild() then plants it at the frame's origin plus that,
+       which is the frame's own offset away from where it belongs. Read the
+       source's position first and write it back after it has a parent.
+       Counting DOWN from the far tap would also stack them backwards: each
+       insertChild(at) pushes the previous one up, so the last one inserted ends
+       up furthest back. Insert near first, far last. */
+    const bx = mixG.x, by = mixG.y
+    for (let i = 1; i <= N; i++) {
+      const t = i / N
+      const echo = RV.mode === 'echo'
+      const blur = echo ? 0 : Math.max(0.3, t * num(RV.spread, 26) * 0.55 * px)
+      const step = num(RV.spread, 26) * px
+      const dx = echo ? i * step * 0.8 : (RV.mode === 'ma' ? Math.pow(t, 0.8) * step * N * 0.45 : t * step * 1.1)
+      const dy = echo ? i * step * 0.35 : (RV.mode === 'ma' ? 0 : t * step * 0.45)
+      const op = (echo ? Math.pow(0.62, i) : Math.pow(0.55, i) * 1.6) * RV.amt
+      if (op < 0.004) continue
+      const c = mixG.clone()
+      frame.insertChild(at, c)              // the tail decays BEHIND its source
+      c.x = bx + dx; c.y = by + dy
+      if (blur > 0.3) c.effects = [{ type: 'LAYER_BLUR', radius: blur, visible: true }]
+      c.opacity = Math.max(0, Math.min(1, op))
+      /* ⚠️ NOT SCREEN. A tail is not light — it is the image of the source,
+         fainter. SCREEN on a white panel blows it out and the surface vanishes,
+         leaving only what was drawn in MULTIPLY still visible. Light lives on
+         black; a reflection lives anywhere. NORMAL is ground-independent, which
+         is what a decaying copy should be. */
+      c.name = echo ? 'echo' : 'tail'
+    }
+  }
+
+  /* --- tape: 全体の揺れ、色ズレ -----------------------------------------------
+     ⭐ Ink is subtractive: cyan on white paper absorbs red, two inks overlapping
+     make the paper darker. That is MULTIPLY, and it does something only on a light
+     ground. Light is additive: red + green + blue is white. That is SCREEN, and it
+     does something only on a dark ground.
+
+     So there is no single misregistration. There are two, and the ground decides
+     which physics you are in. ------------------------------------------------ */
+  const TP = V.tape || { amt: 0 }
+  if (mixG && num(TP.amt, 0) > 0) {
+    const ink = TP.mode === 'cmy' || (TP.mode === 'auto' && light)
+    const ch = ink ? CH_CMY : CH_RGB
+    const off = num(TP.off, 6) * (S / DEF) * TP.amt
+    const dirs = [[-off, -off * 0.4], [0, off * 0.5], [off, -off * 0.2]]
+    // same clone-lands-on-the-page trap as the reverb above
+    const bx = mixG.x, by = mixG.y
+    for (let i = 0; i < 3; i++) {
+      const c = mixG.clone()
+      frame.appendChild(c)
+      c.x = bx + dirs[i][0]; c.y = by + dirs[i][1]
+      for (const nd of c.findAll((x) => 'fills' in x)) nd.fills = [{ type: 'SOLID', color: ch[i] }]
+      c.blendMode = ink ? 'MULTIPLY' : 'SCREEN'
+      c.name = ink ? 'plate ' + 'CMY'[i] : 'channel ' + 'RGB'[i]
+    }
+    mixG.visible = false                   // the channels replace it
+  }
+
 
   // A preview must not steal the selection, or the target is lost on the next tick.
   if (!preview) figma.currentPage.selection = [frame]
