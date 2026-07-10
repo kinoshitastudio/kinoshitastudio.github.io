@@ -9,7 +9,7 @@
  * Four instruments, four operators on ONE surface — not four pictures:
  *   kick  hits it and then decays (what it tore loose comes down as dust)
  *   snare breaks it (Voronoi plates move apart; a crack is the space between)
- *   hat   roughens it (粒子。粒状の荒れ — no new shape, just grain)
+ *   hat   roughens it (粒子。粒状の荒れ — blue-noise grain, smaller than its own spacing)
  *   bass  swells it (a sustained arc, not a point)
  *
  * ⚠ make() and draw() in ui.html must consume the RNG in exactly the same
@@ -182,9 +182,10 @@ function field(R, P, V, W, H, S) {
     }
     /* ハイハット = 粒子。粒状の荒れ。
        Not a shape. Not a smaller kick — a smaller kick belongs inside the kick.
-       The hat adds nothing to the field; it roughens what the field already has.
-       Where it lands the cells go grainy: their value scatters and they lose a
-       little of their size, so the ground shows between them. Adds no nodes. */
+       The hat adds nothing to the field and takes nothing from it. This map only
+       says WHERE the grain is dense. The grain itself is scattered later as
+       points, with a minimum distance between them — the only way a particle can
+       be smaller than the space around it. */
     if (V.hat.on.indexOf(s) >= 0 && V.hat.amt > 0) {
       const r = S * 0.5 * V.hat.ring * (1 + jit(0.05))
       const hx = W / 2 + Math.cos(ang) * r, hy = H / 2 + Math.sin(ang) * r
@@ -271,6 +272,38 @@ function biAtF(arr, F, x, y) {
   return a + (b - a) * ty
 }
 const liftAtF = (F, x, y) => biAtF(F.lift, F, x, y) / F.lmax
+/* ---- blue noise: Bridson's Poisson-disc -----------------------------------
+   ⭐ Every point is at least r from every other, otherwise random. That kills the
+   clumping of white noise AND the regularity of a grid at once. Because there are
+   no cells, the grain's size is decoupled from its spacing — and a grain far
+   smaller than the gap around it IS the definition of grain. A grid can never do
+   this: its dot can never be smaller than its own cell. That was the whole bug. */
+function poisson(R, r, w, h) {
+  const cs = r / Math.SQRT2, gw = Math.ceil(w / cs), gh = Math.ceil(h / cs)
+  const grid = new Int32Array(gw * gh).fill(-1), pts = [], act = []
+  const put = (p) => { pts.push(p); act.push(pts.length - 1); grid[(p[1] / cs | 0) * gw + (p[0] / cs | 0)] = pts.length - 1 }
+  put([R() * w, R() * h])
+  while (act.length) {
+    const ai = R() * act.length | 0, p = pts[act[ai]]
+    let hit = false
+    for (let i = 0; i < 18; i++) {
+      const a = R() * Math.PI * 2, rr = r * (1 + R())
+      const q = [p[0] + Math.cos(a) * rr, p[1] + Math.sin(a) * rr]
+      if (q[0] < 0 || q[1] < 0 || q[0] >= w || q[1] >= h) continue
+      const gx = q[0] / cs | 0, gy = q[1] / cs | 0
+      let ok = true
+      for (let yy = Math.max(0, gy - 2); yy <= Math.min(gh - 1, gy + 2) && ok; yy++)
+        for (let xx = Math.max(0, gx - 2); xx <= Math.min(gw - 1, gx + 2); xx++) {
+          const id = grid[yy * gw + xx]
+          if (id >= 0 && Math.hypot(pts[id][0] - q[0], pts[id][1] - q[1]) < r) { ok = false; break }
+        }
+      if (ok) { put(q); hit = true; break }
+    }
+    if (!hit) act.splice(ai, 1)
+  }
+  return pts
+}
+
 /* ---- Voronoi by half-plane clipping. No library, no Delaunay. -------------
    A cell is the box, clipped once against the bisector with every other seed. */
 function clipHalf(poly, a, b) {
@@ -454,7 +487,7 @@ function make(P, reuse, preview) {
   }
 
   const F = field(R, P, V, W, H, S)
-  const { cell, GX, GY, grit, gmax } = F
+  const { cell, GX, GY } = F
 
   /* --- the field ------------------------------------------------------------
      `sink` is a height field. A dent and a bump shrink their cells exactly the
@@ -522,24 +555,22 @@ function make(P, reuse, preview) {
       v.vectorPaths = [{ windingRule: 'NONZERO', data: pathD(p) }]
       v.fills = [{ type: 'SOLID', color: col }]
       v.strokes = []
-      if (k > 0.02) v.opacity = Math.max(0, Math.min(1, 1 - k * 0.28))
+      // past a certain distance a plate has left the surface, and it thins out
+      const gone = Math.max(0, sF - 1)
+      const op = (1 - k * 0.28) * Math.max(0.18, 1 - gone * 0.46)
+      if (k > 0.02 || gone > 0) v.opacity = Math.max(0, Math.min(1, op))
       v.name = 'plate'
       frame.appendChild(v)
       cells.push(v)
     })
   } else
   for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
-    const gN = Math.min(1, grit[gy * GX + gx] / gmax) * num(HT.amt, 0)   // how grainy it is here
     const px = (gx + 0.5) * cell, py = (gy + 0.5) * cell
 
-    /* which plate owns this cell, and how hard that plate was hit */
-    const sh = (Sn.amt > 0 && F.shards.length) ? shardAt(F, px, py) : null
-    const sF0 = sh ? Sn.amt * sh.f : 0
-
-    if (canFold && gN < 0.02) {
+    if (canFold) {
       const kC = kAtF(F, px, py, curve)
       // nothing reached this cell. It is still the surface it always was.
-      if (kC < 0.012 && sF0 < 0.02) { asleep[gy * GX + gx] = 1; continue }
+      if (kC < 0.012) { asleep[gy * GX + gx] = 1; continue }
     }
 
     // The rim of a dent is still surface. Bending the falloff keeps the holes
@@ -554,19 +585,7 @@ function make(P, reuse, preview) {
        outside the pit swell with what used to be inside it. */
     const slope = Math.sqrt(dx * dx + dy * dy)
     const swell = 1 + spread * slope * 3.2 * (1 - k)
-    /* ⭐ A surface breaks where the stress is, and the stress is on the wall of
-       the dent. Without this the snare is a net of cracks laid over the kick's
-       picture — two layers, not one event. The crater's rim tears first; the
-       flat field barely gives. */
-    const sF = sF0 * (0.28 + 0.72 * Math.min(1, slope * 6))
     let size = base * (1 - k * sinkAmt) * swell
-    /* the hat, again: it roughens, it does not build. A grain of value and a
-       grain of size — no new shape, no finer grid, no BIT. */
-    let nz = 0
-    if (gN > 0.02) {
-      nz = R() * 2 - 1
-      size *= 1 - gN * (0.10 + 0.30 * R())
-    }
     if (!(size > 0.6)) continue
 
     let push = spread * slope * cell * 5.5
@@ -579,17 +598,6 @@ function make(P, reuse, preview) {
     let cx = px - dx / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
     let cy = py - dy / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
 
-    /* the whole plate moves as one body. At a whisper it only shrinks toward
-       itself — hairline cracks along every shared edge (craquelure). At a blow it
-       flies outward and the gaps open into the ground. */
-    let spin = 0
-    if (sF > 0.002) {
-      const push2 = sF * cell * 0.55
-      cx += sh.vx * push2; cy += sh.vy * push2
-      size *= 1 - sF * 0.13
-      spin = sh.rot * sF
-      if (!(size > 0.6)) continue
-    }
 
     const t = cx / W * 0.6 + cy / H * 0.4
     let col = mixC(ink, mixC(cA, cB, t), P.sample * (1 - k * 0.55))
@@ -601,18 +609,13 @@ function make(P, reuse, preview) {
     // only the very floor of the impact catches light, and it takes the accent
     const lit = (k - 0.82) / 0.18
     if (lit > 0) col = mixC(col, mixC(grey(1), accent, 0.6), Math.min(1, lit * K.glow))
-    if (gN > 0.02) {
-      const g = 1 + nz * 0.45 * gN
-      const gi = { r: clamp01(ink.r * g), g: clamp01(ink.g * g), b: clamp01(ink.b * g) }
-      col = mixC(col, gi, Math.min(0.85, gN * 0.7))
-    }
 
     /* A closed surface must not have its own grid drawn across it. Cells that sit
        exactly edge to edge leave a hairline seam where they meet, and a field of
        hairlines reads as BIT — Kaibou's word, not Siren's. So a cell that is
        still surface overlaps its neighbour. The further it has fallen, the less
        it reaches: a hole must stay open. */
-    const seam = (P.shape === 'sq' && !loose && num(P.fill, 1) > 0.9 && gN < 0.02)
+    const seam = (P.shape === 'sq' && !loose && num(P.fill, 1) > 0.9)
       ? cell * 0.09 * Math.min(1, (num(P.fill, 1) - 0.9) / 0.1) * (1 - Math.min(1, k * 1.5)) : 0
     const dsz = size + seam
     let node
@@ -623,7 +626,7 @@ function make(P, reuse, preview) {
     } else {
       node = figma.createRectangle()
       node.resize(dsz, dsz)
-      const rot = (R() * 2 - 1) * 6 * P.hum * Math.min(1, k * 3) * Math.PI / 180 + spin
+      const rot = (R() * 2 - 1) * 6 * P.hum * Math.min(1, k * 3) * Math.PI / 180
       centreAt(node, cx, cy, dsz, dsz, rot)
     }
     node.fills = [{ type: 'SOLID', color: col }]
@@ -776,6 +779,38 @@ function make(P, reuse, preview) {
       }
     }
     if (bs.length) figma.group(bs, frame).name = 'bass'
+  }
+
+  /* --- the hat: 粒子・粒状の荒れ --------------------------------------------
+     Grain sits ON the surface and never asks what the surface is made of — cells,
+     plates, it does not care. It is the ground showing through where the panel has
+     worn away. Dense where the hat landed, absent where it did not. It adds no
+     structure, so it cannot add BIT. ---------------------------------------- */
+  if (num(HT.amt, 0) > 0) {
+    // spacing tightens as the hat opens. The grain gets denser, never bigger.
+    const gr = Math.max(3, (34 - 14 * HT.amt) * (S / DEF))
+    const pts = poisson(R, gr, W, H)
+    const sz0 = num(HT.size, 1.1) * 2.0 * (S / DEF)
+    const gs = []
+    for (const p of pts) {
+      /* A hi-hat is not a place, it is a texture: it grains the whole surface, and
+         the ring it plays on only makes some of that surface grainier. */
+      const dens = HT.amt * (0.45 + 0.55 * Math.min(1, biAtF(F.grit, F, p[0], p[1]) / F.gmax))
+      if (R() > dens) continue
+      const k = kAtF(F, p[0], p[1], curve)
+      if (k > 0.72) continue                               // the hole is already ground
+      const sz = sz0 * (0.30 + Math.pow(R(), 2.4) * 2.7)   // many tiny, a few larger
+      if (!(sz > 0.30)) continue
+      const op = 0.35 + R() * 0.65
+      const e = figma.createEllipse()
+      e.resize(sz * 2, sz * 2)
+      e.x = p[0] - sz; e.y = p[1] - sz
+      e.fills = [{ type: 'SOLID', color: ground }]
+      e.opacity = Math.max(0, Math.min(1, op))
+      e.name = 'grain'
+      frame.appendChild(e); gs.push(e)
+    }
+    if (gs.length) figma.group(gs, frame).name = 'grain'
   }
 
   /* --- dust ----------------------------------------------------------------
