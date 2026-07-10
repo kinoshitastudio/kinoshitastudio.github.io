@@ -102,6 +102,7 @@ input[type=range]{flex:1;accent-color:var(--fg);height:3px}
 .ch .nm{font-size:9.5px;font-weight:500;letter-spacing:.06em;color:var(--dim);cursor:pointer;text-transform:uppercase}
 .ch.sel .nm{color:var(--fg)}
 .fader{-webkit-appearance:slider-vertical;appearance:slider-vertical;width:20px;height:88px;accent-color:var(--fg);padding:0;cursor:pointer}
+.fader.off{accent-color:var(--dim2)}   /* the voice has left the axis */
 .sm{display:flex;gap:3px}
 .gap{border-left:1px solid var(--line);height:104px;justify-self:center}
 .modes{display:flex;flex-direction:column;gap:2px;width:100%}
@@ -581,7 +582,9 @@ function buildMix(){
 function paintMix(){
   for(const el of mixEl.querySelectorAll('.ch')){
     const v = el.dataset.v
-    el.querySelector('.fader').value = depthOf[v]
+    const f = el.querySelector('.fader')
+    f.classList.toggle('off', depthOf[v] === null)   // no axis to stand on
+    if(depthOf[v] !== null) f.value = depthOf[v]
     if(MODES[v]) for(const b of el.querySelectorAll('.modes button'))
       b.classList.toggle('on', b.dataset.m === V[v].mode)
   }
@@ -590,9 +593,10 @@ function paintMix(){
 const depthEl = document.getElementById('depth'), depthV = document.getElementById('depthV')
 function paintDepth(){
   const d = depthOf[inst]
-  depthEl.value = d
   paintMix()                       // the fader IS the depth, seen from the desk
   const nm = chosen_[inst]
+  if(d === null){ depthV.textContent = 'custom'; return }   // off the axis entirely
+  depthEl.value = d
   if(nm){ depthV.textContent = nm }
   else {
     const names = stagesOf(inst)
@@ -780,9 +784,14 @@ function bind(id, box, key, fmt){
   const show = ()=>{ out.textContent = fmt(box[key]) }
   el.oninput = ()=>{
     box[key]=+el.value; show()
-    // the sound is no longer the preset's sound
-    if(owner && chosen_[owner]){ chosen_[owner]=null; for(const c of chipsEl.children) c.classList.remove('on') }
-    state(); render()
+    /* The sound is no longer the preset's sound — and it is no longer anywhere on
+       the axis either. A slider that keeps pointing at the place you left is
+       lying, so the axis goes null and every view of it says `custom`. */
+    if(owner){
+      chosen_[owner]=null; depthOf[owner]=null
+      if(owner===inst) for(const c of chipsEl.children) c.classList.remove('on')
+    }
+    state(); paintDepth(); render()
   }
   el.onchange = onRelease
   show()
@@ -1003,7 +1012,7 @@ function setMaterial(m){
   Object.assign(V.kick, MATERIAL[m].kick)
   chosen_.kick = (m==='panel') ? 'Hole' : null    // Dots is nobody's depth
   if(m==='panel') depthOf.kick = stagesOf('kick').indexOf('Hole')/(stagesOf('kick').length-1)
-  else depthOf.kick = 1   // Dots is nobody's depth; park the axis at the end
+  else depthOf.kick = null   // Dots is nobody's depth
   document.getElementById('mPanel').classList.toggle('on', m==='panel')
   document.getElementById('mDots').classList.toggle('on', m==='dots')
   syncUI(); paintDepth(); state(); render(); onRelease()
