@@ -940,7 +940,7 @@ function make(P, reuse, preview) {
   }
 
   // A preview must not steal the selection, or the target is lost on the next tick.
-  if (!preview) figma.currentPage.selection = [frame]
+  if (!preview && !P.keepSel) figma.currentPage.selection = [frame]
   return frame
 }
 
@@ -1052,6 +1052,39 @@ figma.ui.onmessage = (msg) => {
     const n = discard()
     figma.ui.postMessage({ type: 'discarded', gone: n })
     figma.notify(n ? `プレビューを ${n} 個消しました` : '消すプレビューはありません')
+  }
+  /* ⭐ The sequence, laid out as frames. Everything stays vector — colours, shapes
+     and all — so the strip can be recoloured, animated with Smart Animate, or
+     exported to GIF by whatever tool the user already trusts. Siren does not
+     flatten what it makes.
+
+     Each frame is the same picture stopped one step earlier: `until` tells the
+     field to stop reading the sequence there. */
+  if (msg.type === 'frames') {
+    try {
+      const P0 = msg.p
+      const N = Math.min(32, 16 * Math.max(1, Math.round(P0.bars || 1)))
+      discard()
+      const sel0 = figma.currentPage.selection
+      const tgt = sel0.length === 1 && 'width' in sel0[0] && !sel0[0].getPluginData(KEY) ? sel0[0] : null
+      const made = []
+      for (let i = 0; i < N; i++) {
+        // put the target back: make() reads the selection to find its canvas
+        if (tgt) figma.currentPage.selection = [tgt]
+        made.push(make(Object.assign({}, P0, { until: i, keepSel: true }), false, false))
+      }
+      // lay the strip out left to right, in the order the beat plays it
+      const w = made[0].width, gap = Math.max(16, Math.round(w * 0.06))
+      const x0 = made[0].x, y0 = made[0].y
+      made.forEach((f, i) => { f.x = x0 + i * (w + gap); f.y = y0 })
+      const g = figma.group(made, made[0].parent)
+      g.name = 'Siren — ' + N + ' frames'
+      figma.currentPage.selection = [g]
+      figma.ui.postMessage({ type: 'framed', frames: N, nodes: made.reduce((a, f) => a + f.children.length, 0) })
+    } catch (err) {
+      console.error('[siren]', err)
+      figma.ui.postMessage({ type: 'error', message: String((err && err.message) || err).slice(0, 120) })
+    }
   }
   if (msg.type === 'send') {
     try {
