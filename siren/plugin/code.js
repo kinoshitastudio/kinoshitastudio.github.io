@@ -170,7 +170,11 @@ function field(R, P, V, W, H, S) {
   let hold = 0
   const K = V.kick
 
+  const until = (typeof P.until === 'number' && P.until >= 0) ? P.until : Infinity
+  let tick = 0
+  outer:
   for (let bar = 0; bar < P.bars; bar++) for (let s = 0; s < 16; s++) {
+    if (tick++ > until) break outer      // the beat has not got here yet
     const ang = (s / 16) * Math.PI * 2 - Math.PI / 2 + jit(0.06)
 
     if (K.on.indexOf(s) >= 0) {

@@ -80,6 +80,9 @@ input[type=range]{flex:1;accent-color:var(--fg);height:3px}
 .st.beat{border-color:#454549}
 .st{border-left-width:1px}
 .st.bar{border-left:1px solid #4a4a4e}
+.st.now{box-shadow:0 0 0 1.5px var(--hot);border-radius:3px}
+#play{padding:3px 9px;font-size:11px;line-height:1;min-width:30px}
+#play.on{background:var(--hot);color:#000;border-color:var(--hot)}
 .trk{font-size:10px;color:var(--dim);display:flex;align-items:center;gap:4px}
 .trk span{cursor:pointer}
 .trk.sel span{color:var(--fg)}
@@ -166,7 +169,8 @@ footer .sp{flex:1}
   <div class="sec" id="secSeq">
     <div class="seqhead">
       <p class="lbl" id="lSeq" style="margin:0">Sequence</p>
-      <span class="bars"><span id="lBars">周</span>
+      <span class="bars"><button id="play" title="play">▶</button>
+        <span id="lBars">周</span>
         <input id="bars2" type="range" min="1" max="8" step="1" value="3"><b id="barsV">3</b></span>
     </div>
     <div class="seq" id="seq"></div>
@@ -393,7 +397,7 @@ function paintSolo(){
 // a diamond. Choose ■ for a rim with no holes at all.)
 const P = { grid:22, fill:1, hum:0.35, bars:3, shape:'sq', hue:55, seed:7,
             h1:262, h2:22, wash:0, sample:0,
-            bgH:0, bgS:0, bgL:0, useFill:false, flip:false,
+            bgH:0, bgS:0, bgL:0, useFill:false, flip:false, until:-1,
             inkAuto:true, inkH:0, inkS:0, inkL:0.92, clip:true }
 // light === "the surface is pale, so the ink must be dark"
 const isLight = ()=> P.bgL > 0.5
@@ -735,7 +739,7 @@ for(const v of VOICES){
   for(let i=0;i<16;i++){
     const b = document.createElement('div')
     b.className = 'st' + (on.includes(i)?' on':'') + (i%4===0?' beat bar':'')
-    b.dataset.v = v
+    b.dataset.v = v; b.dataset.i = i
     b.onclick = ()=>{
       const k = on.indexOf(i)
       if(k<0) on.push(i); else on.splice(k,1)
@@ -796,6 +800,33 @@ const barsEl = document.getElementById('bars2'), barsV = document.getElementById
 barsEl.value = P.bars; barsV.textContent = P.bars
 barsEl.oninput = ()=>{ P.bars = +barsEl.value; barsV.textContent = P.bars; render() }
 barsEl.onchange = onRelease
+
+/* ⭐ Press play and the picture assembles in the order the beat plays it. Siren
+   folds time into a circle, and this is the only place you can watch it happen:
+   each step lands, the surface takes it, and by the end of the turn you are
+   looking at the still image you had all along. `until` clips the sequence — the
+   field simply stops reading steps past it. */
+const playBtn = document.getElementById('play')
+let playing = false, playStep = 0, playTimer = 0
+function paintStep(){
+  const cur = playing ? playStep % 16 : -1
+  for(const el of document.querySelectorAll('.st')) el.classList.toggle('now', +el.dataset.i === cur)
+}
+function stopPlay(){
+  playing = false; clearInterval(playTimer); playTimer = 0
+  playBtn.classList.remove('on'); playBtn.textContent = '▶'
+  P.until = -1; paintStep(); render()
+}
+playBtn.onclick = ()=>{
+  if(playing) return stopPlay()
+  playing = true; playStep = -1
+  playBtn.classList.add('on'); playBtn.textContent = '■'
+  playTimer = setInterval(()=>{
+    playStep = (playStep + 1) % (16 * P.bars)
+    P.until = playStep
+    paintStep(); render()
+  }, 110)
+}
 bind('wash',P,'wash',pc); bind('sample',P,'sample',pc)
 bind('h1',P,'h1',v=>v+'°'); bind('h2',P,'h2',v=>v+'°'); bind('hue',P,'hue',v=>v+'°')
 bind('bgH',P,'bgH',v=>v+'°'); bind('bgS',P,'bgS',pc); bind('bgL',P,'bgL',pc)
@@ -1164,7 +1195,11 @@ function field(R, W, H, S){
   let hold=0
   const K=V.kick
 
+  const until = (typeof P.until === 'number' && P.until >= 0) ? P.until : Infinity
+  let tick = 0
+  outer:
   for(let bar=0;bar<P.bars;bar++) for(let s=0;s<16;s++){
+    if(tick++ > until) break outer      // the beat has not got here yet
     const ang = (s/16)*Math.PI*2 - Math.PI/2 + jit(0.06)
 
     if(K.on.includes(s)){
@@ -1794,6 +1829,7 @@ document.getElementById('undo').onclick = ()=>{
 }
 document.getElementById('make').onclick = ()=>{
   live = false; liveBtn.classList.remove('on')
+  if(playing) stopPlay()          // never commit a half-played turn
   send('make')
 }
 
