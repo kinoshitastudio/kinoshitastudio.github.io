@@ -776,7 +776,11 @@ function make(P, reuse, preview) {
       c.x = bx + dx; c.y = by + dy
       if (blur > 0.3) c.effects = [{ type: 'LAYER_BLUR', radius: blur, visible: true }]
       c.opacity = Math.max(0, Math.min(1, op))
-      c.blendMode = light ? 'MULTIPLY' : 'SCREEN'
+      /* ⚠️ NOT SCREEN. A tail is not light — it is the image of the source,
+         fainter. SCREEN on a white panel blows it out and the surface vanishes,
+         leaving only what was drawn in MULTIPLY still visible. Light lives on
+         black; a reflection lives anywhere. NORMAL is ground-independent, which
+         is what a decaying copy should be. */
       c.name = echo ? 'echo' : 'tail'
     }
   }
