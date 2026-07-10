@@ -869,14 +869,12 @@ function make(P, reuse, preview) {
     const N = Math.max(1, Math.round(num(RV.taps, 5)))
     const px = S / DEF
     const at = frame.children.indexOf(mixG)
-    /* ⚠️ clone() is born on the PAGE, not beside its original, so its x/y become
-       absolute. insertChild() then plants it at the frame's origin plus that,
-       which is the frame's own offset away from where it belongs. Read the
-       source's position first and write it back after it has a parent.
+    /* ⚠️ clone() is born on the PAGE, not beside its original, so everything about
+       its placement is absolute. Setting x/y after insertChild() is not enough —
+       write the transform itself, the way Siren places every rotated cell.
        Counting DOWN from the far tap would also stack them backwards: each
-       insertChild(at) pushes the previous one up, so the last one inserted ends
-       up furthest back. Insert near first, far last. */
-    const bx = mixG.x, by = mixG.y
+       insertChild(at) pushes the previous one up. Insert near first, far last. */
+    const T = mixG.relativeTransform
     for (let i = 1; i <= N; i++) {
       const t = i / N
       const echo = RV.mode === 'echo'
@@ -888,7 +886,7 @@ function make(P, reuse, preview) {
       if (op < 0.004) continue
       const c = mixG.clone()
       frame.insertChild(at, c)              // the tail decays BEHIND its source
-      c.x = bx + dx; c.y = by + dy
+      c.relativeTransform = [[1, 0, T[0][2] + dx], [0, 1, T[1][2] + dy]]
       if (blur > 0.3) c.effects = [{ type: 'LAYER_BLUR', radius: blur, visible: true }]
       c.opacity = Math.max(0, Math.min(1, op))
       /* ⚠️ NOT SCREEN. A tail is not light — it is the image of the source,
@@ -915,11 +913,11 @@ function make(P, reuse, preview) {
     const off = num(TP.off, 6) * (S / DEF) * TP.amt
     const dirs = [[-off, -off * 0.4], [0, off * 0.5], [off, -off * 0.2]]
     // same clone-lands-on-the-page trap as the reverb above
-    const bx = mixG.x, by = mixG.y
+    const T = mixG.relativeTransform
     for (let i = 0; i < 3; i++) {
       const c = mixG.clone()
       frame.appendChild(c)
-      c.x = bx + dirs[i][0]; c.y = by + dirs[i][1]
+      c.relativeTransform = [[1, 0, T[0][2] + dirs[i][0]], [0, 1, T[1][2] + dirs[i][1]]]
       for (const nd of c.findAll((x) => 'fills' in x)) nd.fills = [{ type: 'SOLID', color: ch[i] }]
       c.blendMode = ink ? 'MULTIPLY' : 'SCREEN'
       c.name = ink ? 'plate ' + 'CMY'[i] : 'channel ' + 'RGB'[i]
@@ -1036,7 +1034,7 @@ figma.ui.onmessage = (msg) => {
          first and dragged it across the canvas to the new selection. */
       if (!preview) discard()
       const f = make(msg.p, preview, preview)
-      if (!preview) figma.viewport.scrollAndZoomIntoView([f])
+      // no scrollAndZoomIntoView: 鳴らす should not move the user's view
       figma.ui.postMessage({ type: 'made', nodes: f.children.length, into, many, preview })
     } catch (err) {
       console.error('[siren]', err)
