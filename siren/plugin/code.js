@@ -26,11 +26,19 @@ let lastTarget = null
 
 figma.showUI(__html__, { width: 400, height: 720 })
 
-/* Tell the UI what we are about to fill, so its preview has the same shape. */
-function tellTarget() {
+/* Tell the UI what we are about to fill, so its preview has the same shape.
+   ⭐ "the same shape" literally: the plugin masks its output to the selected
+   node, so the panel has to clip its preview to that node too, or the panel is
+   lying about what 鳴らす will produce. Ship the node's own outline as SVG. */
+async function tellTarget() {
   const sel = figma.currentPage.selection
   const n = sel.length === 1 && 'width' in sel[0] && !sel[0].getPluginData(KEY) ? sel[0] : null
   const bb = n && n.absoluteBoundingBox
+
+  let shape = null
+  if (n && bb && bb.width * bb.height < 6e6) {      // a huge node is not worth the wait
+    try { shape = await n.exportAsync({ format: 'SVG_STRING' }) } catch (e) { shape = null }
+  }
   figma.ui.postMessage({
     type: 'target',
     w: bb ? Math.round(bb.width)  : DEF,
@@ -38,6 +46,7 @@ function tellTarget() {
     name: n ? n.name : null,
     paint: paintOf(n),
     fills: n && 'fills' in n && n.fills !== figma.mixed ? JSON.parse(JSON.stringify(n.fills)) : null,
+    shape,
   })
 }
 figma.on('selectionchange', tellTarget)
@@ -712,6 +721,12 @@ figma.ui.onmessage = (msg) => {
   if (msg.type === 'make' || msg.type === 'live') {
     try {
       const preview = msg.type === 'live'
+      /* say WHERE it went. A node count alone cannot tell you whether the thing
+         you selected is the thing that got filled. */
+      const sel0 = figma.currentPage.selection
+      const tgt = sel0.length === 1 && 'width' in sel0[0] && !sel0[0].getPluginData(KEY) ? sel0[0] : null
+      const into = tgt ? tgt.name : null
+      const many = sel0.length > 1
       /* LIVE reuses its one throwaway frame, so dragging a knob does not litter
          the page. 鳴らす does NOT: a committed Siren is a finished thing, and the
          next one is a NEW thing. Reusing it meant the second hit picked up the
@@ -719,7 +734,7 @@ figma.ui.onmessage = (msg) => {
       if (!preview) discard()
       const f = make(msg.p, preview, preview)
       if (!preview) figma.viewport.scrollAndZoomIntoView([f])
-      figma.ui.postMessage({ type: 'made', nodes: f.children.length })
+      figma.ui.postMessage({ type: 'made', nodes: f.children.length, into, many, preview })
     } catch (err) {
       console.error('[siren]', err)
       figma.ui.postMessage({ type: 'error', message: String((err && err.message) || err) })
