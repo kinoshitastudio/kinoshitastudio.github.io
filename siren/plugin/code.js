@@ -9,7 +9,7 @@
  * Four instruments, four operators on ONE surface — not four pictures:
  *   kick  hits it and then decays (what it tore loose comes down as dust)
  *   snare tears it (the cells part; the ground shows in the split)
- *   hat   breaks it up (the grid subdivides wherever it lands)
+ *   hat   roughens it (粒子。粒状の荒れ — no new shape, just grain)
  *   bass  swells it (a sustained arc, not a point)
  *
  * ⚠ make() and draw() in ui.html must consume the RNG in exactly the same
@@ -145,7 +145,7 @@ const LX = -0.62, LY = -0.62, LZ = 0.48
 function field(R, P, V, W, H, S) {
   const G = P.grid, cell = S / G
   const GX = Math.ceil(W / cell), GY = Math.ceil(H / cell)
-  const sink = new Float32Array(GX * GY), sub = new Float32Array(GX * GY), lift = new Float32Array(GX * GY)
+  const sink = new Float32Array(GX * GY), grit = new Float32Array(GX * GY), lift = new Float32Array(GX * GY)
   const jit = (a) => (R() * 2 - 1) * a * P.hum
   const hits = [], tears = [], arcs = []
   const K = V.kick
@@ -173,10 +173,11 @@ function field(R, P, V, W, H, S) {
       tears.push({ x: W / 2 + Math.cos(a) * r, y: H / 2 + Math.sin(a) * r, c: Math.cos(a), s: Math.sin(a),
                    len: S * V.snare.len * (0.6 + R() * 0.8), w: cell * V.snare.w * (0.7 + R() * 0.6) })
     }
-    /* The hat is the high end. It does not sprinkle specks on the surface — it
-       shatters the surface into smaller pieces wherever it lands. This is the
-       one knob that answers "it looks like BIT", and it answers it without
-       paying for a finer grid everywhere. */
+    /* ハイハット = 粒子。粒状の荒れ。
+       Not a shape. Not a smaller kick — a smaller kick belongs inside the kick.
+       The hat adds nothing to the field; it roughens what the field already has.
+       Where it lands the cells go grainy: their value scatters and they lose a
+       little of their size, so the ground shows between them. Adds no nodes. */
     if (V.hat.on.indexOf(s) >= 0 && V.hat.amt > 0) {
       const r = S * 0.5 * V.hat.ring * (1 + jit(0.05))
       const hx = W / 2 + Math.cos(ang) * r, hy = H / 2 + Math.sin(ang) * r
@@ -184,7 +185,7 @@ function field(R, P, V, W, H, S) {
       for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
         const cx = (gx + 0.5) * cell, cy = (gy + 0.5) * cell
         const d2 = (cx - hx) * (cx - hx) + (cy - hy) * (cy - hy)
-        sub[gy * GX + gx] += Math.exp(-d2 / (reach * reach))
+        grit[gy * GX + gx] += Math.exp(-d2 / (reach * reach))
       }
     }
     /* A sustained note is not a point. It is held, so it is an arc — and a band
@@ -209,9 +210,9 @@ function field(R, P, V, W, H, S) {
   }
 
   let smax = 0; for (const v of sink) if (v > smax) smax = v; if (smax < 1e-6) smax = 1
-  let umax = 0; for (const v of sub)  if (v > umax) umax = v; if (umax < 1e-6) umax = 1
+  let gmax = 0; for (const v of grit) if (v > gmax) gmax = v; if (gmax < 1e-6) gmax = 1
   let lmax = 0; for (const v of lift) if (v > lmax) lmax = v; if (lmax < 1e-6) lmax = 1
-  return { cell, GX, GY, sink, sub, lift, smax, umax, lmax, hits, tears, arcs }
+  return { cell, GX, GY, sink, grit, lift, smax, gmax, lmax, hits, tears, arcs }
 }
 
 /* the crater floor, sampled anywhere — not just at cell centres, because the
@@ -345,7 +346,7 @@ function make(P, reuse, preview) {
   }
 
   const F = field(R, P, V, W, H, S)
-  const { cell, GX, GY, sub, umax } = F
+  const { cell, GX, GY, grit, gmax } = F
 
   /* --- the field ------------------------------------------------------------
      `sink` is a height field. A dent and a bump shrink their cells exactly the
@@ -354,6 +355,7 @@ function make(P, reuse, preview) {
      which means the near wall of a dent goes dark and the far wall goes bright.
      Reverse that and the eye reads a bump. This is the whole illusion. */
   const cells = []
+  const base = cell * num(P.fill, 1)   // a closed surface: size 1 = the cell
   const curve = num(K.curve, 2)
   const relief = num(K.relief, 0.9)
   const spread = num(K.spread, 0.4)
@@ -370,108 +372,96 @@ function make(P, reuse, preview) {
   const canFold = P.shape === 'sq' && num(P.fill, 1) > 0.9 && num(P.sample, 0) < 0.02
 
   for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
-    /* how many pieces this cell has been broken into. The threshold is dithered
-       so the boundary between 1× and 2× does not read as a hard ring — the same
-       trick as Kaibou's Crush. */
-    const sdN = Math.min(1, sub[gy * GX + gx] / umax)
-    const grainN = sdN * num(HT.amt, 0)             // how far this cell is broken
-    const want = 1 + sdN * num(HT.amt, 0) * (num(HT.depth, 2) - 1)
-    const fl = Math.floor(want)
-    const nsub = Math.max(1, Math.min(num(HT.depth, 2), fl + (R() < want - fl ? 1 : 0)))
-    const step = cell / nsub
-    const sbase = step * num(P.fill, 1)
+    const gN = Math.min(1, grit[gy * GX + gx] / gmax) * num(HT.amt, 0)   // how grainy it is here
+    const px = (gx + 0.5) * cell, py = (gy + 0.5) * cell
 
-    if (canFold && grainN < 0.02) {
-      const mx = (gx + 0.5) * cell, my = (gy + 0.5) * cell
-      const kC = kAtF(F, mx, my, curve)
-      const lC = 0
-      const tC = Sn.amt > 0 ? tearAt(F, mx, my).near : 0
+    if (canFold && gN < 0.02) {
+      const kC = kAtF(F, px, py, curve)
+      const tC = Sn.amt > 0 ? tearAt(F, px, py).near : 0
       // nothing reached this cell. It is still the surface it always was.
-      if (kC < 0.012 && lC < 0.02 && tC <= 0) { asleep[gy * GX + gx] = 1; continue }
+      if (kC < 0.012 && tC <= 0) { asleep[gy * GX + gx] = 1; continue }
     }
 
-    for (let sy = 0; sy < nsub; sy++) for (let sx = 0; sx < nsub; sx++) {
-      const px = (gx + (sx + 0.5) / nsub) * cell, py = (gy + (sy + 0.5) / nsub) * cell
-      // The rim of a dent is still surface. Bending the falloff keeps the holes
-      // near the impact instead of spreading them over the whole field.
-      const k = kAtF(F, px, py, curve)
-      const dx = (kAtF(F, px + cell, py, curve) - kAtF(F, px - cell, py, curve)) * 0.5
-      const dy = (kAtF(F, px, py + cell, curve) - kAtF(F, px, py - cell, curve)) * 0.5
-      const shade = (dx * LX + dy * LY + LZ) / Math.sqrt(dx * dx + dy * dy + 1) - LZ
+    // The rim of a dent is still surface. Bending the falloff keeps the holes
+    // near the impact instead of spreading them over the whole field.
+    const k = kAtF(F, px, py, curve)
+    const dx = (kAtF(F, px + cell, py, curve) - kAtF(F, px - cell, py, curve)) * 0.5
+    const dy = (kAtF(F, px, py + cell, curve) - kAtF(F, px, py - cell, curve)) * 0.5
+    const shade = (dx * LX + dy * LY + LZ) / Math.sqrt(dx * dx + dy * dy + 1) - LZ
 
-      /* Material has to go somewhere. Where the wall is steep the surface is
-         being displaced: cells are shoved outward, down the slope, and the ones
-         just outside the pit swell with what used to be inside it. Without this
-         a dent is only a hole; with it, the blow has consequences. */
-      const slope = Math.sqrt(dx * dx + dy * dy)
-      const swell = 1 + spread * slope * 3.2 * (1 - k)
-      // grain: the pieces do not fill the space the whole panel used to, and
-      // no two of them are the same. A regular 2x2 split is a tile, not a shard.
-      const grain = 1 - grainN * 0.32
-      let size = sbase * (1 - k * sinkAmt) * swell * grain
-      if (grainN > 0.02) size *= 0.55 + R() * 0.75
+    /* Material has to go somewhere. Where the wall is steep the surface is being
+       displaced: cells are shoved outward, down the slope, and the ones just
+       outside the pit swell with what used to be inside it. */
+    const slope = Math.sqrt(dx * dx + dy * dy)
+    const swell = 1 + spread * slope * 3.2 * (1 - k)
+    let size = base * (1 - k * sinkAmt) * swell
+    /* the hat, again: it roughens, it does not build. A grain of value and a
+       grain of size — no new shape, no finer grid, no BIT. */
+    let nz = 0
+    if (gN > 0.02) {
+      nz = R() * 2 - 1
+      size *= 1 - gN * (0.10 + 0.30 * R())
+    }
+    if (!(size > 0.6)) continue
+
+    let push = spread * slope * cell * 5.5
+    /* Torn loose. Past a certain blow the cells on the wall stop being surface:
+       they lose their shape, become debris, and are thrown clear. */
+    const loose = debris > 0 && k > 0.2 && k < 0.85 && R() < debris
+    if (loose) { push *= 1.6 + R() * 2.4; size *= 0.35 + R() * 0.4 }
+    // only a cell that is already moving gets nudged — a closed rim stays closed
+    const j = cell * 0.16 * Math.min(1, k * 3)
+    let cx = px - dx / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
+    let cy = py - dy / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
+
+    const tr = tearAt(F, px, py)
+    if (tr.near > 0) {
+      cx += tr.ox * Sn.amt; cy += tr.oy * Sn.amt
+      size *= 1 - tr.near * Sn.amt * 0.5
       if (!(size > 0.6)) continue
-
-      let push = spread * slope * cell * 5.5
-      /* Torn loose. Past a certain blow the cells on the wall stop being surface:
-         they lose their shape, become debris, and are thrown clear. A square
-         still part of the panel keeps its corners. One in the air does not. */
-      const loose = debris > 0 && k > 0.2 && k < 0.85 && R() < debris
-      if (loose) { push *= 1.6 + R() * 2.4; size *= 0.35 + R() * 0.4 }
-      // only a cell that is already moving gets nudged — a closed rim stays closed
-      const j = step * 0.16 * Math.min(1, k * 3)
-      let cx = px - dx / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
-      let cy = py - dy / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
-      if (grainN > 0.02) {                    // shards scatter; tiles do not
-        const gj = step * 0.34 * grainN
-        cx += (R() * 2 - 1) * gj; cy += (R() * 2 - 1) * gj
-      }
-
-      const tr = tearAt(F, px, py)
-      if (tr.near > 0) {
-        cx += tr.ox * Sn.amt; cy += tr.oy * Sn.amt
-        size *= 1 - tr.near * Sn.amt * 0.5
-        if (!(size > 0.6)) continue
-      }
-
-      const t = cx / W * 0.6 + cy / H * 0.4
-      let col = mixC(grey(inkBase), mixC(cA, cB, t), P.sample * (1 - k * 0.55))
-      // A dent is a cell falling toward the ground, not a cell lighting up.
-      col = mixC(col, ground, Math.min(1, k * K.dark * 1.25))
-      // the wall facing the light is lit; the wall turned away falls into shadow
-      if (shade > 0) col = mixC(col, grey(1), Math.min(1, shade * 2.2 * relief))
-      else if (shade < 0) col = mixC(col, ground, Math.min(1, -shade * 1.5 * relief))
-      // only the very floor of the impact catches light, and it takes the accent
-      const lit = (k - 0.82) / 0.18
-      if (lit > 0) col = mixC(col, mixC(grey(1), accent, 0.6), Math.min(1, lit * K.glow))
-      if (tr.near > 0) col = mixC(col, ground, tr.near * Sn.amt * 0.85)  // the split shows the ground
-
-      /* A closed surface must not have its own grid drawn across it. Cells that
-         sit exactly edge to edge leave a hairline seam where they meet — and a
-         field of hairlines reads as BIT, which is Kaibou's job, not Siren's.
-         So a cell that is still surface overlaps its neighbour a little. The
-         further it has fallen, the less it reaches: a hole must stay open. */
-      const seam = (P.shape === 'sq' && !loose && P.fill > 0.9)
-        ? step * 0.09 * Math.min(1, (P.fill - 0.9) / 0.1) * (1 - Math.min(1, k * 1.5)) : 0
-      const dsz = size + seam
-      let node
-      if (loose || P.shape === 'ci') {
-        node = figma.createEllipse()
-        node.resize(size, size)
-        node.x = cx - size / 2; node.y = cy - size / 2
-      } else {
-        node = figma.createRectangle()
-        node.resize(dsz, dsz)
-        const rot = (R() * 2 - 1) * (6 * P.hum * Math.min(1, k * 3) + 22 * grainN) * Math.PI / 180
-        centreAt(node, cx, cy, dsz, dsz, rot)
-      }
-      node.fills = [{ type: 'SOLID', color: col }]
-      const op = loose ? Math.max(0.15, (1 - k * 0.28) * (0.35 + R() * 0.5)) : (1 - k * 0.28)
-      if (k > 0.02 || loose) node.opacity = Math.max(0, Math.min(1, op))
-      node.name = loose ? 'debris' : 'cell'
-      frame.appendChild(node)
-      cells.push(node)
     }
+
+    const t = cx / W * 0.6 + cy / H * 0.4
+    let col = mixC(grey(inkBase), mixC(cA, cB, t), P.sample * (1 - k * 0.55))
+    // A dent is a cell falling toward the ground, not a cell lighting up.
+    col = mixC(col, ground, Math.min(1, k * K.dark * 1.25))
+    // the wall facing the light is lit; the wall turned away is dimmer, not black
+    if (shade > 0) col = mixC(col, grey(1), Math.min(1, shade * 2.2 * relief))
+    else if (shade < 0) col = mixC(col, ground, Math.min(1, -shade * 1.5 * relief))
+    // only the very floor of the impact catches light, and it takes the accent
+    const lit = (k - 0.82) / 0.18
+    if (lit > 0) col = mixC(col, mixC(grey(1), accent, 0.6), Math.min(1, lit * K.glow))
+    if (tr.near > 0) col = mixC(col, ground, tr.near * Sn.amt * 0.85)  // the split shows the ground
+    if (gN > 0.02) {
+      const v = Math.max(0, Math.min(1, inkBase + nz * 0.41))
+      col = mixC(col, grey(v), Math.min(0.85, gN * 0.7))
+    }
+
+    /* A closed surface must not have its own grid drawn across it. Cells that sit
+       exactly edge to edge leave a hairline seam where they meet, and a field of
+       hairlines reads as BIT — Kaibou's word, not Siren's. So a cell that is
+       still surface overlaps its neighbour. The further it has fallen, the less
+       it reaches: a hole must stay open. */
+    const seam = (P.shape === 'sq' && !loose && num(P.fill, 1) > 0.9 && gN < 0.02)
+      ? cell * 0.09 * Math.min(1, (num(P.fill, 1) - 0.9) / 0.1) * (1 - Math.min(1, k * 1.5)) : 0
+    const dsz = size + seam
+    let node
+    if (loose || P.shape === 'ci') {
+      node = figma.createEllipse()
+      node.resize(size, size)
+      node.x = cx - size / 2; node.y = cy - size / 2
+    } else {
+      node = figma.createRectangle()
+      node.resize(dsz, dsz)
+      const rot = (R() * 2 - 1) * 6 * P.hum * Math.min(1, k * 3) * Math.PI / 180
+      centreAt(node, cx, cy, dsz, dsz, rot)
+    }
+    node.fills = [{ type: 'SOLID', color: col }]
+    const op = loose ? Math.max(0.15, (1 - k * 0.28) * (0.35 + R() * 0.5)) : (1 - k * 0.28)
+    if (k > 0.02 || loose) node.opacity = Math.max(0, Math.min(1, op))
+    node.name = loose ? 'debris' : 'cell'
+    frame.appendChild(node)
+    cells.push(node)
   }
   /* one rectangle per horizontal run of sleeping cells */
   const rest = []
