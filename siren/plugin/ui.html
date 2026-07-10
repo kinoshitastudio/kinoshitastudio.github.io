@@ -81,6 +81,7 @@ footer{flex:none;border-top:1px solid var(--line);padding:10px 14px;display:flex
 footer .sp{flex:1}
 #make{background:var(--fg);color:var(--bg);border-color:var(--fg);font-weight:500;padding:7px 16px}
 #count.heavy{color:var(--hot)}
+#solo.on{background:var(--hot);color:#000;border-color:var(--hot)}
 #count.err{color:#ff6b6b}
 #count.ok{color:var(--fg)}
 
@@ -221,6 +222,7 @@ footer .sp{flex:1}
 </div>
 
 <footer>
+  <button id="solo">SOLO</button>
   <button id="live">LIVE</button>
   <button id="undo">元に戻す</button>
   <span class="mono" id="count" style="color:var(--dim);font-size:10px"></span>
@@ -254,6 +256,26 @@ const V = {
   bass:  { on:[0,8], amt:0.5, arc:0.75, width:0.45, ring:0.55 },
 }
 let inst = 'kick'
+let solo = false
+
+/* ⭐ Choosing an instrument selects what you EDIT. Solo selects what you HEAR.
+   Without it the panel always shows the mix, so switching to the hat shows you
+   the kick's hole and the snare's plates and no way to tell what the hat did.
+   A mixer's solo changes the output, not just the monitor — so this changes what
+   鳴らす makes too. It is a listening mode you can commit. */
+function silenced(v){
+  /* Turning the amount to zero is not silence — the kick still lays down its
+     height field, so cells still refuse to fold and a ghost of the crater stays
+     on screen. A voice that is not playing has no steps. */
+  if(v==='kick') return { on:[], sink:0, dark:0, glow:0, relief:0, decay:0, spread:0, debris:0 }
+  return { on:[], amt:0 }
+}
+function withSolo(fn){
+  if(!solo) return fn()
+  const bak = JSON.parse(JSON.stringify(V))
+  for(const v of VOICES) if(v!==inst) Object.assign(V[v], silenced(v))
+  try { return fn() } finally { for(const v of VOICES) Object.assign(V[v], bak[v]) }
+}
 
 // The default is the web version: black, white ink, one yellow accent.
 // Colour is a preset, not a starting point.
@@ -489,6 +511,7 @@ function applyInst(){
   for(const el of document.querySelectorAll('.trk')) el.classList.toggle('sel', el.dataset.v===inst)
   for(const el of document.querySelectorAll('.st')) el.classList.toggle('mute', el.dataset.v!==inst)
   buildChips(); paintDepth(); state()
+  if(solo) { render(); onRelease() }
 }
 instBtn.onclick = e=>{ e.stopPropagation(); instMenu.hidden = !instMenu.hidden }
 addEventListener('click', ()=>{ instMenu.hidden = true })
@@ -781,7 +804,7 @@ function drawSrcFills(){
 let frameReq = 0
 function render(){
   if(frameReq) return
-  frameReq = requestAnimationFrame(()=>{ frameReq = 0; draw() })
+  frameReq = requestAnimationFrame(()=>{ frameReq = 0; withSolo(draw) })
 }
 
 /* ---------------- preview (svg, same maths as the plugin) ----------------
@@ -1384,10 +1407,9 @@ function dust(R, F, ink){
 
 /* ---------------- to figma ---------------- */
 function payload(){
-  return Object.assign({}, P, {
-    srcFills: P.useFill ? srcFills : null,
-    v: JSON.parse(JSON.stringify(V)),
-  })
+  // what the plugin builds must be what the panel showed
+  const v = withSolo(()=> JSON.parse(JSON.stringify(V)))
+  return Object.assign({}, P, { srcFills: P.useFill ? srcFills : null, v })
 }
 /* The count is also the status line: pressing a button and seeing nothing change
    for half a second is indistinguishable from pressing a button that did nothing. */
@@ -1417,6 +1439,12 @@ function send(type){
 }
 function onRelease(){ if(live) send('live') }
 
+const soloBtn = document.getElementById('solo')
+soloBtn.onclick = ()=>{
+  solo = !solo
+  soloBtn.classList.toggle('on', solo)
+  render(); onRelease()
+}
 const liveBtn = document.getElementById('live')
 liveBtn.onclick = ()=>{
   live = !live
