@@ -1127,6 +1127,179 @@ async function applyMotionOps(ops) {
   figma.notify("🎬 モーション適用：" + applied + " トラック" + (fail ? "／失敗 " + fail : "") + "。Cmd+Zで戻せます。");
 }
 
+/* ============================================================
+   ◆ モーション・ライブラリ＝選択のモーションを読み取ってJSONにし、別のフレームへ再適用する。
+   読み: node.manualKeyframeTracks（手打ちキーフレーム）＋ node.animationStyles（プリセット）。
+   ＝Mothership製でなくても、手でタイムラインに打ったモーションを"所有できるJSON"にできる（Lint&Fixと同じ思想）。
+   保存: relay の motion/*.json（所有・git管理・共有）＋ figma.clientStorage（relay無しでも使える控え）。
+   照合: ルートからの index パス優先 → 同名 → 見つからなければ skipped に計上（構造が違っても壊れない）。
+   v1の範囲: 数値(FLOAT)/座標(VECTOR)のトラックのみ。色(fills)/効果(effects)のトラックは値型が違うので保存対象外＝skippedで通知。
+   ============================================================ */
+const MOTION_DOC_KIND = "mothership.motion";   // JSONの身元（他のJSONを間違って適用しない）
+const MOTIONLIB_KEY = "motionlib";             // clientStorage のキー
+const MOTIONLIB_MAX = 30;                      // 控えの上限（古いものから落とす）
+
+function _kfValueOut(v) {   // Figmaのvalue → JSONの素の値（FLOAT=数値 / VECTOR=[x,y]）。色/効果など他型は null＝v1では保存しない
+  if (v == null) return null;
+  if (typeof v === "number") return v;
+  if (v.type === "FLOAT" && typeof v.value === "number") return v.value;
+  if (v.type === "VECTOR" && v.value && typeof v.value.x === "number") return [v.value.x, v.value.y];
+  return null;
+}
+function _kfValueIn(v, field) {   // JSONの素の値 → Figmaのvalue。配列=VECTOR。数値でも _XY 系はVECTOR必須（FLOATだと弾かれる）
+  if (Array.isArray(v)) return { type: "VECTOR", value: { x: Number(v[0]) || 0, y: Number(v[1]) || 0 } };
+  const num = Number(v) || 0;
+  return /_XY$/.test(String(field)) ? { type: "VECTOR", value: { x: num, y: num } } : { type: "FLOAT", value: num };
+}
+function _easingOut(e) {   // イージングは type だけでなくカスタム曲線/スプリングの係数まで保存する（＝再適用で同じ質感が出る）
+  if (!e) return null;
+  if (typeof e === "string") return { type: e };
+  const o = { type: String(e.type || "LINEAR") };
+  if (e.easingFunctionCubicBezier) o.easingFunctionCubicBezier = e.easingFunctionCubicBezier;
+  if (e.easingFunctionSpring) o.easingFunctionSpring = e.easingFunctionSpring;
+  return o;
+}
+function _easingIn(e) {
+  if (!e) return null;
+  if (typeof e === "string") return { type: e };
+  const o = { type: String(e.type || "LINEAR") };
+  if (e.easingFunctionCubicBezier) o.easingFunctionCubicBezier = e.easingFunctionCubicBezier;
+  if (e.easingFunctionSpring) o.easingFunctionSpring = e.easingFunctionSpring;
+  return o;
+}
+// manualKeyframeTracks の実データ形状はFigma側の実装依存＝{field: track} のオブジェクトでも、track の配列でも読めるようにする
+function _readTracks(n) {
+  let raw = null;
+  try { raw = n.manualKeyframeTracks; } catch (e) { return { tracks: [], skipped: 0 }; }
+  if (!raw) return { tracks: [], skipped: 0 };
+  const entries = [];
+  if (Array.isArray(raw)) raw.forEach((t) => { if (t) entries.push([(t.field && t.field.name) || t.name || t.property || "", t]); });
+  else for (const k in raw) { if (raw[k]) entries.push([k, raw[k]]); }
+  const tracks = []; let skipped = 0;
+  for (const ent of entries) {
+    const field = String(ent[0] || ""), t = ent[1];
+    const kfs = t.keyframes || [];
+    if (!field || !kfs.length) continue;
+    const out = []; let unsupported = false;
+    for (const k of kfs) {
+      const v = _kfValueOut(k.value);
+      if (v === null) { unsupported = true; break; }   // 色/効果トラック＝v1では非対応
+      const kf = { t: Math.round((Number(k.timelinePosition) || 0) * 1e4) / 1e4, v: v };
+      const ez = _easingOut(k.easing); if (ez) kf.easing = ez;
+      out.push(kf);
+    }
+    if (unsupported) { skipped++; continue; }
+    const track = { field: field, keyframes: out };
+    const base = _kfValueOut(t.baseValue); if (base !== null) track.baseValue = base;
+    tracks.push(track);
+  }
+  return { tracks: tracks, skipped: skipped };
+}
+function _walkMotion(n, path, out, budget) {
+  if (out.length >= budget) return;
+  const r = _readTracks(n);
+  let presets = [];
+  try { presets = (n.animationStyles || []).map((s) => ({ name: String(s.name), duration: s.duration, timelineOffset: s.timelineOffset || 0 })); } catch (e) {}
+  if (r.tracks.length || presets.length) {
+    const nd = { path: path.slice(), name: String(n.name), type: n.type, tracks: r.tracks };
+    if (presets.length) nd.presets = presets;
+    if (r.skipped) nd.skipped = r.skipped;
+    out.push(nd);
+  }
+  if ("children" in n) n.children.forEach((c, i) => { path.push(i); _walkMotion(c, path, out, budget); path.pop(); });
+}
+// ◆ 保存：選択1つのモーションを読み取って doc(JSON) にし、UIへ返す（保存先の書き込みはUI側＝relay／下の motionlibSave＝控え）
+function readMotionDoc(name) {
+  if (!_motionOK()) { figma.ui.postMessage({ type: "motion-read", error: "このFigmaはMotion APIに未対応です（Figmaを更新）。" }); return; }
+  const sel = figma.currentPage.selection;
+  if (sel.length !== 1) { figma.ui.postMessage({ type: "motion-read", error: "モーションを保存したいフレームを1つだけ選んでください" }); return; }
+  const root = sel[0], nodes = [];
+  _walkMotion(root, [], nodes, 500);
+  if (!nodes.length) { figma.ui.postMessage({ type: "motion-read", error: "選択にモーションが見つかりません（タイムラインにキーフレームがあるフレームを選んでください）" }); return; }
+  let dur = 0, tracks = 0, skipped = 0;
+  nodes.forEach((nd) => { tracks += nd.tracks.length; skipped += nd.skipped || 0; nd.tracks.forEach((t) => t.keyframes.forEach((k) => { dur = Math.max(dur, k.t); })); });
+  const doc = {
+    kind: MOTION_DOC_KIND, version: 1,
+    name: String(name || root.name || "Motion").trim().slice(0, 60),
+    rootName: String(root.name), rootType: root.type,
+    duration: Math.round(dur * 1000) / 1000,
+    nodes: nodes,
+  };
+  figma.ui.postMessage({ type: "motion-read", doc: doc, count: nodes.length, tracks: tracks, skipped: skipped });
+}
+function _byPath(root, path) { let n = root; for (const i of (path || [])) { if (!n || !("children" in n) || !n.children[i]) return null; n = n.children[i]; } return n; }
+function _byName(root, name) {
+  if (!name) return null;
+  if (String(root.name) === name) return root;
+  try { return ("findOne" in root) ? root.findOne((x) => String(x.name) === name) : null; } catch (e) { return null; }
+}
+// ◆ 再適用：doc のトラックを、選択したフレームの同じ位置（index パス）のノードへ付け直す。パスが無ければ同名で拾う。
+async function applyMotionDoc(doc) {
+  if (!_motionOK()) { figma.ui.postMessage({ type: "motion-ai-done", error: "このFigmaはMotion APIに未対応です（Figmaを更新）。" }); return; }
+  if (!doc || doc.kind !== MOTION_DOC_KIND || !Array.isArray(doc.nodes)) { figma.ui.postMessage({ type: "motion-ai-done", error: "モーションJSONではありません" }); return; }
+  const roots = figma.currentPage.selection;
+  if (!roots.length) { figma.ui.postMessage({ type: "motion-ai-done", error: "モーションを付けるフレームを選んでください" }); return; }
+  const presets = _motionPresets();
+  const single = doc.nodes.length === 1 && !(doc.nodes[0].path || []).length;   // ルート1個だけの doc＝選択した全ノードにそれぞれ適用できる
+  let applied = 0, fail = 0, missed = 0, maxT = 0; const summary = [], errs = [], notes = [], touched = [];
+  doc.nodes.forEach((nd) => nd.tracks.forEach((t) => (t.keyframes || []).forEach((k) => { maxT = Math.max(maxT, Number(k.t) || 0); })));
+  for (const root of roots) {
+    for (const nd of doc.nodes) {
+      let n = single ? root : (_byPath(root, nd.path) || _byName(root, nd.name));
+      if (!n || n.removed) { missed++; continue; }
+      const fields = []; let blocked = false;
+      for (const t of (nd.tracks || [])) {
+        if (blocked) break;
+        try {
+          const kfs = (t.keyframes || []).map((k) => {
+            const kf = { timelinePosition: Number(k.t) || 0, value: _kfValueIn(k.v, t.field) };
+            const ez = _easingIn(k.easing); if (ez) kf.easing = ez;
+            return kf;
+          });
+          if (!kfs.length) continue;
+          const base = (t.baseValue != null) ? t.baseValue : (t.keyframes[0] && t.keyframes[0].v);
+          n.applyManualKeyframeTrack({ type: "PROPERTY", name: String(t.field) }, { baseValue: _kfValueIn(base, t.field), keyframes: kfs });
+          applied++; fields.push(String(t.field));
+          if (touched.indexOf(n) < 0) touched.push(n);
+        } catch (e) {
+          const msg = (e && e.message ? e.message : String(e));
+          if (/product component/i.test(msg)) blocked = true;   // Figma制約＝APIでアニメ書込不可（赤エラーにせず情報通知）
+          else { fail++; if (errs.length < 5) errs.push(String(n.name) + "." + String(t.field) + " → " + msg); }
+        }
+      }
+      for (const p of (nd.presets || [])) {   // プリセット型（Scale/Fade等）＝名前でstyleIdを引き直して同じ尺で付け直す
+        const id = presets[p.name];
+        if (!id) { if (notes.length < 6) notes.push(String(nd.name) + "：プリセット「" + String(p.name).replace("motion.preset_name.", "") + "」が見つからずスキップ"); continue; }
+        try { await n.applyAnimationStyle(id, { duration: p.duration, timelineOffset: p.timelineOffset || 0 }); applied++; fields.push("preset:" + String(p.name).replace("motion.preset_name.", "")); if (touched.indexOf(n) < 0) touched.push(n); }
+        catch (e) { fail++; }
+      }
+      if (blocked) notes.push(String(n.name) + "：プロダクトコンポーネントのため動かせません（分解すれば可・Figmaの制約）");
+      if (fields.length) summary.push({ name: String(n.name), fields: fields });
+    }
+  }
+  const tl = _extendTimelines(touched.length ? [touched[touched.length - 1]] : [], maxT || doc.duration || 0);   // 尺を全長へ＝途中で切れない
+  if (missed) notes.push(missed + " 個は対応するノードが無くスキップ（構造が違う＝index パスも同名も見つからない）");
+  if (maxT > 2) notes.push("尺を約" + Math.round(maxT) + "秒へ調整（timelines:" + tl + "）");
+  if (touched.length) { try { figma.currentPage.selection = [touched[touched.length - 1]]; figma.viewport.scrollAndZoomIntoView([roots[0]]); } catch (e) {} }
+  figma.ui.postMessage({ type: "motion-ai-done", applied: applied, fail: fail, summary: summary, errs: errs, notes: notes });
+  figma.notify("◆ 「" + String(doc.name) + "」を適用：" + applied + " トラック" + (fail ? "／失敗 " + fail : "") + "。Cmd+Zで戻せます。");
+}
+// ◆ 控え（clientStorage）＝relayが無くても使える。relayがあれば motion/*.json が正本で、こちらは同名で上書きされる。
+async function motionlibRead() { try { const a = await figma.clientStorage.getAsync(MOTIONLIB_KEY); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+async function motionlibList() { figma.ui.postMessage({ type: "motionlib", items: await motionlibRead() }); }
+async function motionlibSave(doc) {
+  if (!doc || doc.kind !== MOTION_DOC_KIND) return;
+  const a = (await motionlibRead()).filter((d) => d && d.name !== doc.name);   // 同名は上書き
+  a.unshift(doc);
+  try { await figma.clientStorage.setAsync(MOTIONLIB_KEY, a.slice(0, MOTIONLIB_MAX)); figma.ui.postMessage({ type: "motionlib-saved", name: doc.name }); }
+  catch (e) { figma.ui.postMessage({ type: "motionlib-saved", error: "控えに保存できません（容量超過の可能性）: " + (e && e.message ? e.message : e) }); }
+}
+async function motionlibDelete(name) {
+  const a = (await motionlibRead()).filter((d) => d && d.name !== name);
+  try { await figma.clientStorage.setAsync(MOTIONLIB_KEY, a); } catch (e) {}
+  figma.ui.postMessage({ type: "motionlib", items: a });
+}
+
 // 🎞 スライドショー化：選択した複数フレームを1つの親フレームに「同じ位置で重ねる」＝1本のタイムラインでシーン切替できる下ごしらえ（クローンで重ねる＝原本は非破壊）
 async function stackForSlideshow() {
   const sel = figma.currentPage.selection.filter((n) => ("clone" in n) && typeof n.width === "number");
@@ -1268,6 +1441,11 @@ figma.ui.onmessage = async (msg) => {
   else if (msg.type === "motion") await motionTidy(msg.apply);             // 🎞 モーションを時間トークンへ整える（apply=false診断/true適用）
   else if (msg.type === "collect-motion") collectMotion(msg.instruction);  // 🎬 chat-to-animate：選択をAIへ渡す
   else if (msg.type === "motion-apply") await applyMotionOps(msg.ops);     // 🎬 AIのキーフレームopsを適用
+  else if (msg.type === "motion-read") readMotionDoc(msg.name);            // ◆ 選択のモーションを読み取ってJSON化（ライブラリ保存の材料）
+  else if (msg.type === "motion-doc-apply") await applyMotionDoc(msg.doc); // ◆ ライブラリのモーションを選択へ再適用
+  else if (msg.type === "motionlib-load") await motionlibList();           // ◆ 控え（clientStorage）の一覧
+  else if (msg.type === "motionlib-save") await motionlibSave(msg.doc);    // ◆ 控えへ保存
+  else if (msg.type === "motionlib-delete") await motionlibDelete(msg.name); // ◆ 控えから削除
   else if (msg.type === "slideshow") await stackForSlideshow();            // 🎞 選択を1親フレームに重ねる（スライドショーの下ごしらえ）
   else if (msg.type === "particles") scatterParticles(msg.count);          // ✦ 複製して散らす（パーティクル化）
   else if (msg.type === "smooth-path") await smoothVectorPaths(msg.eps);    // 🖊 パス整形（RDP簡略化＋Catmull-Romスムーズ）

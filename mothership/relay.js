@@ -391,6 +391,60 @@ http.createServer((req, res) => {
     } catch (e) { res.writeHead(500); return res.end(JSON.stringify({ ok: false, error: String(e && e.message ? e.message : e) })); }
   }
 
+  // ◆ モーション・ライブラリ＝motion/*.json（デザインの library/ と同じ思想＝所有・git管理・チーム共有）。
+  //    パネルの「◆ 保存」がノードから読み取った doc を投げてくる。プラグイン側は clientStorage にも控えを持つ。
+  if (u.pathname === "/save-motion" && req.method === "POST") {
+    res.setHeader("Content-Type", "application/json");
+    let b = ""; req.on("data", (d) => (b += d));
+    req.on("end", () => {
+      try {
+        const doc = JSON.parse(b);
+        if (!doc || doc.kind !== "mothership.motion" || !Array.isArray(doc.nodes)) { res.writeHead(400); return res.end('{"ok":false,"error":"not a motion doc"}'); }
+        const name = String(doc.name || "motion").trim();
+        const safe = name.replace(/[\/\\:*?"<>|]+/g, "-").replace(/\s+/g, " ").slice(0, 60) || "motion";
+        const dir = path.join(__dirname, "motion");
+        try { fs.mkdirSync(dir); } catch (e) {}
+        const file = "motion/" + safe + ".json";
+        fs.writeFileSync(path.join(__dirname, file), JSON.stringify(doc, null, 2));
+        res.end(JSON.stringify({ ok: true, file: file, name: name }));
+      } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: String(e && e.message ? e.message : e) })); }
+    });
+    return;
+  }
+
+  // motion/*.json の一覧（name・尺・ノード数付き）
+  if (u.pathname === "/list-motion") {
+    res.setHeader("Content-Type", "application/json");
+    const out = [];
+    try {
+      const dir = path.join(__dirname, "motion");
+      for (const f of fs.readdirSync(dir)) {
+        if (!f.endsWith(".json")) continue;
+        try {
+          const d = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));
+          if (!d || d.kind !== "mothership.motion") continue;
+          out.push({ file: "motion/" + f, name: d.name || f, duration: d.duration || 0, count: (d.nodes || []).length });
+        } catch (e) {}
+      }
+    } catch (e) {}
+    return res.end(JSON.stringify(out));
+  }
+
+  // motion のパターン削除
+  if (u.pathname === "/delete-motion" && req.method === "POST") {
+    res.setHeader("Content-Type", "application/json");
+    let b = ""; req.on("data", (d) => (b += d));
+    req.on("end", () => {
+      try {
+        const file = (JSON.parse(b).file || "").toString();
+        if (file.indexOf("motion/") !== 0 || file.indexOf("..") >= 0) { res.writeHead(400); return res.end('{"ok":false,"error":"bad path"}'); }
+        fs.unlinkSync(path.join(__dirname, file));
+        res.end('{"ok":true}');
+      } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: String(e && e.message ? e.message : e) })); }
+    });
+    return;
+  }
+
   // library のパターン削除
   if (u.pathname === "/delete-lib" && req.method === "POST") {
     res.setHeader("Content-Type", "application/json");
