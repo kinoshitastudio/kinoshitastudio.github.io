@@ -41,6 +41,10 @@ input[type=color]::-webkit-color-swatch{border:none;border-radius:3px}
 .imenu button.on{background:var(--fg);color:var(--bg)}
 .imenu small{display:block;font-size:9px;color:var(--dim);letter-spacing:0;text-transform:none}
 .imenu button.on small{color:var(--bg);opacity:.6}
+.imenu button i{font-style:normal;float:right;font-size:9.5px;color:var(--dim);letter-spacing:.06em;text-transform:uppercase}
+.imenu button.on i{color:var(--bg);opacity:.7}
+.trk.silent{opacity:.38}
+#instBtn u{text-decoration:none;opacity:.55;margin-left:5px;font-weight:400}
 
 .scroll{flex:1;overflow-y:auto;padding:12px 14px 0;position:relative}
 /* the preview earns its keep, but the sequencer has to stay reachable */
@@ -339,6 +343,20 @@ function applyLang(){
   applyInst()
 }
 const cap = s=> s[0].toUpperCase()+s.slice(1)
+/* Choosing an instrument selects what you are editing. It does not make a sound.
+   So every place a voice is named has to say whether it is sounding at all —
+   otherwise switching to a silent Snare looks like a broken plugin. */
+const silent = v => v==='kick' ? !(V.kick.sink>0 || V.kick.decay>0) : !(V[v].amt>0)
+function state(){
+  const pre = chosen_[inst]
+  instBtn.innerHTML = cap(inst) + (pre ? '<u>'+pre+'</u>' : '') + ' ▾'
+  for(const el of document.querySelectorAll('.trk')) el.classList.toggle('silent', silent(el.dataset.v))
+  for(const b of instMenu.children){
+    const v = b.dataset.v
+    const tag = b.querySelector('i')
+    if(tag) tag.textContent = silent(v) ? 'off' : (chosen_[v] || 'custom')
+  }
+}
 document.getElementById('langJa').onclick = ()=>{ lang='ja'; applyLang() }
 document.getElementById('langEn').onclick = ()=>{ lang='en'; applyLang() }
 
@@ -349,7 +367,8 @@ function buildMenu(){
   instMenu.innerHTML = ''
   for(const v of VOICES){
     const b = document.createElement('button')
-    b.innerHTML = cap(v) + '<small>' + t().sub[v] + '</small>'
+    b.dataset.v = v
+    b.innerHTML = cap(v) + '<i></i><small>' + t().sub[v] + '</small>'
     b.classList.toggle('on', v===inst)
     b.onclick = ()=>{ inst = v; instMenu.hidden = true; applyInst() }
     instMenu.append(b)
@@ -358,12 +377,11 @@ function buildMenu(){
 /* Choosing an instrument re-points the preset chips, the knobs and the
    sequencer row. Everything below the header is about the chosen one. */
 function applyInst(){
-  instBtn.textContent = cap(inst) + ' ▾'
   for(const v of VOICES) document.getElementById('v'+cap(v)).hidden = (v!==inst)
-  for(const b of instMenu.children) b.classList.toggle('on', b.textContent.toLowerCase().indexOf(inst)===0)
+  for(const b of instMenu.children) b.classList.toggle('on', b.dataset.v===inst)
   for(const el of document.querySelectorAll('.trk')) el.classList.toggle('sel', el.dataset.v===inst)
   for(const el of document.querySelectorAll('.st')) el.classList.toggle('mute', el.dataset.v!==inst)
-  buildChips()
+  buildChips(); state()
 }
 instBtn.onclick = e=>{ e.stopPropagation(); instMenu.hidden = !instMenu.hidden }
 addEventListener('click', ()=>{ instMenu.hidden = true })
@@ -401,10 +419,16 @@ const SHOW = {}, BOUND = []
 function bind(id, box, key, fmt){
   SHOW[id] = fmt
   BOUND.push([id, box, key])
+  const owner = VOICES.find(v=>V[v]===box)   // null for the mix
   const el = document.getElementById(id)
   const out = el.parentElement.querySelector('.val')
   const show = ()=>{ out.textContent = fmt(box[key]) }
-  el.oninput = ()=>{ box[key]=+el.value; show(); render() }
+  el.oninput = ()=>{
+    box[key]=+el.value; show()
+    // the sound is no longer the preset's sound
+    if(owner && chosen_[owner]){ chosen_[owner]=null; for(const c of chipsEl.children) c.classList.remove('on') }
+    state(); render()
+  }
   el.onchange = onRelease
   show()
 }
@@ -517,7 +541,7 @@ function buildChips(){
       chosen_[inst] = name
       for(const el of chipsEl.children) el.classList.remove('on')
       b.classList.add('on')
-      syncUI(); render(); onRelease()
+      syncUI(); state(); render(); onRelease()
     }
     chipsEl.append(b)
   }
