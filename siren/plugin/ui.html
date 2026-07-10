@@ -215,6 +215,16 @@ footer .sp{flex:1}
     <div class="row"><label>ring</label><input id="h_ring" type="range" min="0.05" max="0.95" step="0.01" value="0.42"><span class="val mono"></span></div>
   </div>
 
+  <!-- cutoff, not amount: this voice subtracts. There is nothing for it to do
+       on a surface the kick has not already bent. -->
+  <div class="sec" id="vRim" hidden>
+    <p class="lbl" id="lRim">Rim</p>
+    <div class="row"><label>cutoff</label><input id="rm_amt" type="range" min="0" max="1" step="0.01" value="0"><span class="val mono"></span></div>
+    <div class="row"><label>reach</label><input id="rm_reach" type="range" min="40" max="480" step="1" value="220"><span class="val mono"></span></div>
+    <div class="row"><label>ring</label><input id="rm_ring" type="range" min="0.05" max="0.95" step="0.01" value="0.30"><span class="val mono"></span></div>
+    <div class="row"><label>weight</label><input id="rm_weight" type="range" min="0.4" max="12" step="0.1" value="3.0"><span class="val mono"></span></div>
+  </div>
+
   <div class="sec" id="vBass" hidden>
     <p class="lbl" id="lBass">Bass</p>
     <div class="row"><label>weight</label><input id="b_amt" type="range" min="0" max="1" step="0.01" value="0.5"><span class="val mono"></span></div>
@@ -325,7 +335,7 @@ let art = document.getElementById('art')
                            offset downward. MULTIPLY, so it darkens the panel and
                            leaves the ground alone. Nothing happens: that is what
                            being held sounds like */
-const VOICES = ['kick','snare','hat','bass']
+const VOICES = ['kick','snare','hat','rim','bass']
 /* Sends, not instruments. They have no steps: they act on everything at once.
    Kaibou is an effect that comes AFTER the instrument, in raster. These two stay
    inside, in vector, because 木下's chain always runs through tape. */
@@ -336,6 +346,11 @@ const V = {
            decay:0.4, glow:0.75, bloom:70, relief:0.9 },
   snare: { on:[4,12], amt:0, pieces:0.4, reach:200, ring:0.5 },
   hat:   { on:[0,2,4,6,8,10,12,14], amt:0, size:1.1, reach:120, ring:0.42 },
+  /* ⭐ Rim is a high-pass, and it is the only voice that takes something away.
+     The untouched plain is flat and the floor of the crater is flat; both are
+     low frequency, and both leave. What is left is the slope between them —
+     which is the rim. So the rim can draw nothing the kick has not made first. */
+  rim:   { on:[6,14], amt:0, reach:220, ring:0.30, weight:3.0 },
   bass:  { on:[0,8], amt:0.5, layers:5, drop:0.5, size:0.9 },
   reverb:{ mode:'tail', amt:0, taps:5, spread:26 },
   tape:  { mode:'auto', amt:0, off:6, wow:0 },
@@ -483,6 +498,17 @@ const PRESETS = {
     Powder:   { amt:0.75, size:0.95, reach:200, ring:0.48 },
     Mist:     { amt:1,    size:0.75, reach:260, ring:0.54 },
   },
+  /* ⭐ The cutoff, climbing. One axis: how much of the surface is still allowed
+     to be surface. Off → the field as it was. Ghost → the flat has thinned to an
+     outline. Contour → nothing survives but the walls of the crater, and the
+     picture is a map of its own relief. */
+  rim: {
+    Off:      { amt:0,    reach:220, ring:0.30, weight:3.0 },
+    Ghost:    { amt:0.30, reach:220, ring:0.30, weight:2.4 },
+    Hollow:   { amt:0.55, reach:250, ring:0.32, weight:3.0 },
+    Outline:  { amt:0.80, reach:280, ring:0.34, weight:3.6 },
+    Contour:  { amt:1,    reach:320, ring:0.36, weight:4.2 },
+  },
   /* Reverb is a room. Echo you can count; reverb you cannot. */
   reverb: {
     Off:      { amt:0,    taps:5, spread:26 },
@@ -506,7 +532,7 @@ const PRESETS = {
     Bloom:    { amt:1,    layers:8, drop:0.85, size:0.72 },
   },
 }
-const DEFPRE = { kick:'Hole', snare:'Off', hat:'Off', bass:'Swell', reverb:'Off', tape:'Off' }
+const DEFPRE = { kick:'Hole', snare:'Off', hat:'Off', rim:'Off', bass:'Swell', reverb:'Off', tape:'Off' }
 const chosen_ = Object.assign({}, DEFPRE)
 
 /* ⭐ The presets were never seven pictures. They are seven marks on one axis:
@@ -627,24 +653,26 @@ const T = {
        make:'鳴らす', close:'閉じる',
        pre:'プリセット', depth:'深さ', mix:'ミックス', bg:'地 — 穴から見える色', pick:'素材の塗りを拾う', from:'素材から', flip:'反転', surf:'面', ink:'面の色', auto:'地に合わせる', shape:'形', clipT:'素材の形で抜く',
        inst:{ kick:'Kick — 面を殴る', snare:'Snare — 面が割れる',
-              hat:'Hi-Hat — 面が荒れる',  bass:'Bass — 面が重くなる',
+              hat:'Hi-Hat — 面が荒れる',  rim:'Rim — 面が消えて縁が残る', bass:'Bass — 面が重くなる',
               reverb:'Reverb — にじみ、余白', tape:'Tape — 全体の揺れ、色ズレ' },
        sub:{ kick:'低い周波数。広く、深い変位', snare:'トランジェント。面が破片に割れて離れる',
-             hat:'粒子。粒状の荒れ', bass:'持続音。面積・重心・暗さ',
+             hat:'粒子。粒状の荒れ', rim:'ハイパス。平らな面が落ち、斜面だけが残る', bass:'持続音。面積・重心・暗さ',
              reverb:'ぼかし＝畳み込み。エコーは数えられる', tape:'版ズレか色収差か。地が決める' },
        about:'名前は 99LETTERS のアルバム <i>Kaibou Zukan</i> の9曲目<b>「Siren（鳴物）」</b>から。鳴物は打楽器の総称。',
-       body:'<b>キックは丸ではない。キックは、面が受けた打撃の跡。</b>見えないグリッドの上をシーケンスが一周し、キックが鳴った角度のセルが沈む。近いほど深く。<br><br>四つの楽器は四つの絵ではなく、<b>同じ面に対する四つの演算</b>。キックは殴り、スネアは裂き、<b>ハットは当たった所のグリッドを細かく割り</b>、ベースは持続する弧で面を持ち上げる。<br><br>殴った跡は<b>沈むと同時に光る</b>。光はぼかした放射グラデ。Fons のあの質感は 3D ではなく、<b>ぼかしたグラデ図形を重ねたもの</b>。同じ部品を、手ではなくリズムが置く。<br><br><b>出てくるのは全部ベクター。</b>楕円も矩形もグラデもレイヤーブラーも Figma のネイティブノード。色は後から変えられる。<b>ここから Kaibou に通せば、作品になる。</b>' },
+       body:'<b>キックは丸ではない。キックは、面が受けた打撃の跡。</b>見えないグリッドの上をシーケンスが一周し、キックが鳴った角度のセルが沈む。近いほど深く。<br><br>五つの声は五つの絵ではなく、<b>同じ面に対する五つの演算</b>。キックは殴り、スネアは裂き、<b>ハットは当たった所のグリッドを細かく割り</b>、ベースは持続する弧で面を持ち上げる。<b>リムだけが引く</b> — 平らな面を落とし、斜面だけを残す。だからリムは、キックが作った起伏の上でしか鳴らない。<br><br>殴った跡は<b>沈むと同時に光る</b>。光はぼかした放射グラデ。Fons のあの質感は 3D ではなく、<b>ぼかしたグラデ図形を重ねたもの</b>。同じ部品を、手ではなくリズムが置く。<br><br><b>出てくるのは全部ベクター。</b>楕円も矩形もグラデもレイヤーブラーも Figma のネイティブノード。色は後から変えられる。<b>ここから Kaibou に通せば、作品になる。</b>' },
   en:{ seq:'Sequence — sixteen steps, one turn', bars:'turns', field:'Field', colour:'Colour', look:'Look',
        make:'Play', close:'Close',
        pre:'Preset', depth:'depth', mix:'Mix', bg:'Ground — what shows through', pick:'wear the artwork’s paint', from:'from art', flip:'Invert', surf:'surface', ink:'panel colour', auto:'match ground', shape:'shape', clipT:'cut to the artwork',
        inst:{ kick:'Kick — it hits the surface', snare:'Snare — the surface shatters',
-              hat:'Hi-Hat — the surface goes grainy', bass:'Bass — the surface takes on weight',
+              hat:'Hi-Hat — the surface goes grainy', rim:'Rim — the surface goes, the edge stays',
+              bass:'Bass — the surface takes on weight',
               reverb:'Reverb — bleed, and the space it went into', tape:'Tape — wobble and misregistration' },
        sub:{ kick:'low frequency. wide, deep displacement', snare:'a transient. the plates part',
-             hat:'particles. a granular roughness', bass:'sustain. area, weight, darkness',
+             hat:'particles. a granular roughness', rim:'high-pass. the flat leaves, the slope remains',
+             bass:'sustain. area, weight, darkness',
              reverb:'blur is convolution. echo you can count', tape:'ink or light — the ground decides' },
        about:'Named after <b>Siren (鳴物)</b>, track 9 of <i>Kaibou Zukan</i> by 99LETTERS. 鳴物 is the word for percussion.',
-       body:'<b>A kick is not a circle. A kick is the mark a surface takes.</b> The sequence goes once around an invisible grid; wherever the kick lands, the cells cave in. Closer means deeper.<br><br>The four instruments are not four pictures but <b>four operators on one surface</b>. Kick hits it, snare tears it, <b>hat subdivides the grid where it lands</b>, bass lifts a sustained arc.<br><br>The dent <b>sinks and glows at once</b>. Fons’s surfaces are not 3D — they are <b>blurred gradient shapes, stacked</b>. Here the rhythm places them instead of the hand.<br><br><b>Everything it makes is vector.</b> Ellipses, rectangles, gradients, layer blur — native Figma nodes. Recolour them later. <b>Run it through Kaibou and it becomes a piece.</b>' }
+       body:'<b>A kick is not a circle. A kick is the mark a surface takes.</b> The sequence goes once around an invisible grid; wherever the kick lands, the cells cave in. Closer means deeper.<br><br>The five voices are not five pictures but <b>five operators on one surface</b>. Kick hits it, snare tears it, <b>hat subdivides the grid where it lands</b>, bass lifts a sustained arc. <b>Only the rim subtracts</b> — it drops the flat and leaves the slope, so it can sound only on relief the kick has already made.<br><br>The dent <b>sinks and glows at once</b>. Fons’s surfaces are not 3D — they are <b>blurred gradient shapes, stacked</b>. Here the rhythm places them instead of the hand.<br><br><b>Everything it makes is vector.</b> Ellipses, rectangles, gradients, layer blur — native Figma nodes. Recolour them later. <b>Run it through Kaibou and it becomes a piece.</b>' }
 }
 let lang = 'ja'
 const t = ()=>T[lang]
@@ -677,7 +705,7 @@ function applyLang(){
   buildMenu()
   applyInst()
 }
-const LABEL = { kick:'Kick', snare:'Snare', hat:'Hi-Hat', bass:'Bass', reverb:'Reverb', tape:'Tape' }
+const LABEL = { kick:'Kick', snare:'Snare', hat:'Hi-Hat', rim:'Rim', bass:'Bass', reverb:'Reverb', tape:'Tape' }
 const cap = s=> LABEL[s] || (s[0].toUpperCase()+s.slice(1))   // for people
 const idOf = s=> s[0].toUpperCase()+s.slice(1)                // for getElementById
 /* Choosing an instrument selects what you are editing. It does not make a sound.
@@ -798,7 +826,7 @@ function bind(id, box, key, fmt){
   el.onchange = onRelease
   show()
 }
-const K = V.kick, S_ = V.snare, HT = V.hat, B = V.bass
+const K = V.kick, S_ = V.snare, HT = V.hat, RM = V.rim, B = V.bass
 bind('k_sink',K,'sink',pc);      bind('k_reach',K,'reach',v=>v);   bind('k_dark',K,'dark',pc)
 bind('k_curve',K,'curve',v=>v.toFixed(1)+'×'); bind('k_spread',K,'spread',pc); bind('k_debris',K,'debris',pc)
 bind('k_decay',K,'decay',pc)
@@ -807,6 +835,8 @@ bind('s_amt',S_,'amt',pc);       bind('s_pieces',S_,'pieces',v=>Math.round(20+v*
 bind('s_reach',S_,'reach',v=>v); bind('s_ring',S_,'ring',pc)
 bind('h_amt',HT,'amt',pc);       bind('h_size',HT,'size',v=>v.toFixed(2)+'px')
 bind('h_reach',HT,'reach',v=>v); bind('h_ring',HT,'ring',pc)
+bind('rm_amt',RM,'amt',pc);      bind('rm_reach',RM,'reach',v=>v)
+bind('rm_ring',RM,'ring',pc);    bind('rm_weight',RM,'weight',v=>v.toFixed(1)+'px')
 bind('b_amt',B,'amt',pc);        bind('b_layers',B,'layers',v=>v)
 bind('b_drop',B,'drop',pc);      bind('b_size',B,'size',pc)
 const RV = V.reverb, TP = V.tape
@@ -1221,7 +1251,7 @@ function draw(){
 function field(R, W, H, S){
   const G=P.grid, cell=S/G
   const GX=Math.ceil(W/cell), GY=Math.ceil(H/cell)
-  const sink=new Float32Array(GX*GY), grit=new Float32Array(GX*GY)
+  const sink=new Float32Array(GX*GY), grit=new Float32Array(GX*GY), hp=new Float32Array(GX*GY)
   const jit = a=>(R()*2-1)*a*P.hum
   const hits=[], cracks=[]
   let hold=0
@@ -1269,6 +1299,23 @@ function field(R, W, H, S){
         grit[gy*GX+gx] += Math.exp(-d2/(reach*reach))
       }
     }
+    /* ⭐ Rim = ハイパス。面が消えて縁が残る。
+       Every other voice adds to the field. This one filters it. Low frequency is
+       flatness, and there are two kinds of flat: the plain nobody has touched,
+       and the floor of the crater. A high-pass cannot tell them apart, so it
+       takes both, and leaves the wall standing between them.
+       Like the hat, this map only says WHERE. How much survives is decided per
+       cell, from the slope, when the cells are painted. */
+    if(V.rim.on.includes(s) && V.rim.amt>0){
+      const r=S*0.5*V.rim.ring*(1+jit(0.05))
+      const hx=W/2+Math.cos(ang)*r, hy=H/2+Math.sin(ang)*r
+      const reach=V.rim.reach*(1+jit(0.20))*(S/DEF)
+      for(let gy=0;gy<GY;gy++) for(let gx=0;gx<GX;gx++){
+        const cx=(gx+0.5)*cell, cy=(gy+0.5)*cell
+        const d2=(cx-hx)*(cx-hx)+(cy-hy)*(cy-hy)
+        hp[gy*GX+gx] += Math.exp(-d2/(reach*reach))
+      }
+    }
     /* A held note has no attack point and no edge, so it draws nothing here. How
        long it is held is all the field needs to know. */
     if(V.bass.on.includes(s)) hold++
@@ -1304,7 +1351,7 @@ function field(R, W, H, S){
 
   let smax=0; for(const v of sink) if(v>smax) smax=v; if(smax<1e-6) smax=1
   let gmax=0; for(const v of grit) if(v>gmax) gmax=v; if(gmax<1e-6) gmax=1
-  return {cell,GX,GY,sink,grit,smax,gmax,hits,shards,hold}
+  return {cell,GX,GY,sink,grit,hp,smax,gmax,hits,shards,hold}
 }
 
 /* the crater floor, sampled anywhere — not just at cell centres, because the
@@ -1484,8 +1531,12 @@ function paintCells(R, F, W, H, S, ground, ink, light){
 
   for(let gy=0;gy<GY;gy++) for(let gx=0;gx<GX;gx++){
     const px=(gx+0.5)*cell, py=(gy+0.5)*cell
+    /* how hard the high-pass is biting here. 0 everywhere the rim never sounded */
+    const cut = Math.min(1, F.hp[gy*GX+gx]) * RM.amt
 
-    if(canFold){
+    // A folded run is one flat panel — which is exactly what the rim deletes.
+    // Cells under it have to be asked, one at a time, whether they survive.
+    if(canFold && cut<0.02){
       const kC = kAtF(F,px,py,K.curve)
       // nothing reached this cell. It is still the surface it always was.
       if(kC<0.012){ asleep[gy*GX+gx]=1; continue }
@@ -1511,6 +1562,20 @@ function paintCells(R, F, W, H, S, ground, ink, light){
     let cy = py - dy/(slope||1)*push + (R()*2-1)*j*P.hum
     cx += wowAt(py, H)
 
+    /* ⭐ The high-pass, cell by cell. `pass` is the high-frequency energy here:
+       a steep wall has it, a flat has none. The plain and the crater floor both
+       read as zero, and the cutoff takes both. What is left standing between
+       them is the rim.
+       As the face thins it does not simply fade — it opens. The fill goes and
+       the outline stays, and that is the sentence: 面が消えて縁が残る。
+       ⚠️ This decision comes AFTER every R() above it, and both files skip at
+       exactly this line. A cell that leaves early takes the sequence's random
+       numbers with it. */
+    const pass   = Math.min(1, slope*5.5)
+    const solid  = 1 - cut*(1-pass)
+    if(solid < 0.18) continue          // neither the face nor the edge survives
+    const hollow = solid < 0.8
+
 
     const tt=cx/W*0.6+cy/H*0.4
     let col=mix(ink, mix(cA,cB,tt), P.sample*(1-k*0.55))
@@ -1534,7 +1599,10 @@ function paintCells(R, F, W, H, S, ground, ink, light){
       const rot=(R()*2-1)*6*P.hum*Math.min(1, k*3)
         if(Math.abs(rot)>0.2) el.setAttribute('transform',`rotate(${rot.toFixed(2)} ${cx.toFixed(2)} ${cy.toFixed(2)})`)
       }
-      el.setAttribute('fill',css(col))
+      if(hollow){
+        el.setAttribute('fill','none')
+        el.setAttribute('stroke',css(col)); el.setAttribute('stroke-width',RM.weight.toFixed(2))
+      }else el.setAttribute('fill',css(col))
       const op = loose ? Math.max(0.15,(1-k*0.28)*(0.35+R()*0.5)) : (1-k*0.28)
       if(k>0.02 || loose) el.setAttribute('opacity',op.toFixed(2))
     gF.append(el); n++

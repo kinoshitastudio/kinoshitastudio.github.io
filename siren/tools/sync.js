@@ -76,7 +76,7 @@ function loadUI() {
   if (!blocks.length) throw new Error('ui.html: no <script>')
   const src = blocks.map(b => b.slice(8, -9)).sort((a, b) => b.length - a.length)[0]
   const body = instrument(src, 'ui.html') +
-    '\n; return { P, V, draw, withSolo, payload, __rngCount, __rngReset }'
+    '\n; return { P, V, draw, withSolo, payload, soloSet, muteSet, __rngCount, __rngReset }'
   // bare `onmessage =` and `addEventListener(` are window properties in the
   // browser; under `new Function` they have to be handed in as parameters
   const f = new Function(
@@ -94,11 +94,18 @@ function fakeFigma() {
     const n = {
       type, name: '', children: [], plugin: {},
       x: 0, y: 0, width: 1, height: 1,
+      relativeTransform: [[1, 0, 0], [0, 1, 0]],
       resize(w, h){ this.width = w; this.height = h },
       appendChild(c){ c.parent = this; this.children.push(c) },
       insertChild(i, c){ c.parent = this; this.children.splice(i, 0, c) },
       remove(){ if (this.parent) this.parent.children.splice(this.parent.children.indexOf(this), 1) },
-      clone(){ const c = node(type); Object.assign(c, this, { children: [], parent: null }); page.appendChild(c); return c },
+      clone(){
+        const c = node(type)
+        for (const k of ['x', 'y', 'width', 'height', 'name', 'fills', 'strokes', 'opacity', 'blendMode', 'relativeTransform', 'effects'])
+          if (k in this) c[k] = this[k]
+        page.appendChild(c)          // ⚠️ a clone is born at the page root, as in Figma
+        return c
+      },
       setPluginData(k, v){ this.plugin[k] = String(v) },
       getPluginData(k){ return this.plugin[k] || '' },
       findAll(){ return [] }, findOne(){ return null },
@@ -144,30 +151,58 @@ function loadCode() {
   return new Function('figma', '__html__', body)(fakeFigma(), '')
 }
 
-/* ---------------- the check ---------------- */
+/* ---------------- the check ----------------
+   ⚠️ A voice at zero runs none of its code. Checking only the defaults proves
+   the silent path and calls it a day, so every voice sounds in at least one
+   scene, and the last one has them all going at once. */
 const SEEDS = [7, 1, 42, 1234]
 const ui = loadUI()
 const code = loadCode()
 
+const SCENES = {
+  'defaults      ': (V) => {},
+  'rim, contour  ': (V) => { V.rim.amt = 1; V.rim.reach = 320; V.rim.ring = 0.36 },
+  'rim, hollow   ': (V) => { V.rim.amt = 0.55 },
+  'snare + hat   ': (V) => { V.snare.amt = 1.2; V.hat.amt = 0.5 },
+  'everything on ': (V) => {
+    V.rim.amt = 0.7; V.snare.amt = 0.8; V.hat.amt = 0.6
+    V.bass.amt = 0.7; V.kick.debris = 0.3; V.reverb.amt = 0.5; V.tape.amt = 0.4; V.tape.wow = 0.3
+  },
+}
+
+// solo would silence the very voices this is trying to exercise
+ui.soloSet.clear(); ui.muteSet.clear()
+const pristine = JSON.parse(JSON.stringify(ui.V))
+
+/* ⚠️ In place. ui.html holds `const RM = V.rim` and friends, so handing V a new
+   object for a voice leaves the panel drawing the old one — and the desync you
+   then measure is the harness's, not the code's. */
+const restore = (V) => { for (const v of Object.keys(pristine)) Object.assign(V[v], JSON.parse(JSON.stringify(pristine[v]))) }
+
 let bad = 0
-for (const seed of SEEDS) {
-  ui.P.seed = seed
-  ui.__rngReset()
-  ui.withSolo(ui.draw)
-  const a = ui.__rngCount()
+for (const [name, scene] of Object.entries(SCENES)) {
+  for (const seed of SEEDS) {
+    restore(ui.V)
+    scene(ui.V)
+    ui.P.seed = seed
 
-  const p = ui.payload()
-  code.__rngReset()
-  code.make(p, false, false)
-  const b = code.__rngCount()
+    ui.__rngReset()
+    ui.withSolo(ui.draw)
+    const a = ui.__rngCount()
 
-  const ok = a === b
-  if (!ok) bad++
-  console.log(`seed ${String(seed).padEnd(5)} rng ui ${String(a).padEnd(7)} | code ${String(b).padEnd(7)} ` +
-              (ok ? '✅ IN SYNC' : `❌ OUT OF SYNC (${b - a > 0 ? '+' : ''}${b - a})`))
+    const p = ui.payload()
+    code.__rngReset()
+    code.make(p, false, false)
+    const b = code.__rngCount()
+
+    const ok = a === b
+    if (!ok) bad++
+    console.log(`${name} seed ${String(seed).padEnd(5)} rng ui ${String(a).padEnd(7)} | code ${String(b).padEnd(7)} ` +
+                (ok ? '✅ IN SYNC' : `❌ OUT OF SYNC (${b - a > 0 ? '+' : ''}${b - a})`))
+  }
 }
 if (bad) {
   console.error('\nThe panel and the canvas are drawing different pictures. Change one, change both.')
   process.exit(1)
 }
-console.log('\nall seeds in sync.')
+console.log('\nall scenes in sync.')
