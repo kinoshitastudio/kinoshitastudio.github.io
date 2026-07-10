@@ -79,6 +79,8 @@ footer{flex:none;border-top:1px solid var(--line);padding:10px 14px;display:flex
 footer .sp{flex:1}
 #make{background:var(--fg);color:var(--bg);border-color:var(--fg);font-weight:500;padding:7px 16px}
 #count.heavy{color:var(--hot)}
+#count.err{color:#ff6b6b}
+#count.ok{color:var(--fg)}
 
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;z-index:30;padding:16px}
 .modal[hidden]{display:none}
@@ -223,7 +225,7 @@ footer .sp{flex:1}
 const NS = 'http://www.w3.org/2000/svg'
 let W = 1000, H = 1000            // set by whatever is selected in figma
 const DEF = 1000
-const art = document.getElementById('art')
+let art = document.getElementById('art')
 
 /* Four instruments, four operators on one surface. Not four pictures.
    A kick is not a circle and a hat is not a speck of dust: they are different
@@ -263,6 +265,24 @@ const inkArr = light => P.inkAuto ? (light ? [16,16,16] : [235,235,235])
 let groundTouched = false      // once a ground is chosen by hand, stop guessing
 let srcPaint = null            // the selected node's colour, averaged, for the ink maths
 let srcFills = null            // the selected node's actual paints — gradients included
+let srcShape = null            // the selected node's outline, so the panel clips like the plugin masks
+
+/* The plugin masks its output to the selected node. If the panel keeps drawing a
+   rectangle, the panel is lying about what 鳴らす will make. Take the node's own
+   SVG and turn it into a clipPath. Strokes carry no area, so a stroke-only node
+   yields nothing to clip with — fall back to the full rectangle rather than
+   erasing the picture. */
+function readShape(svgText){
+  srcShape = null
+  if(!svgText) return
+  try{
+    const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml')
+    if(doc.querySelector('parsererror')) return
+    const bits = doc.documentElement.querySelectorAll('path,rect,circle,ellipse,polygon')
+    if(!bits.length) return
+    srcShape = Array.from(bits).map(b=>b.cloneNode(true))
+  }catch(e){ srcShape = null }
+}
 
 /* Light lives on black. Fons works on black for the same reason: SCREEN only
    ever adds, so a dark surface is the only one that has room to be lit. */
@@ -609,7 +629,7 @@ function setMaterial(m){
 }
 /* A frame is a rectangle. The thing you selected usually is not. */
 const clipBtn = document.getElementById('clip')
-clipBtn.onclick = ()=>{ P.clip = !P.clip; clipBtn.classList.toggle('on', P.clip); onRelease() }
+clipBtn.onclick = ()=>{ P.clip = !P.clip; clipBtn.classList.toggle('on', P.clip); render(); onRelease() }
 document.getElementById('mPanel').onclick = ()=> setMaterial('panel')
 document.getElementById('mDots').onclick  = ()=> setMaterial('dots')
 
@@ -708,7 +728,7 @@ function draw(){
   const k0 = Math.min(availW / W, 236 / H)
   art.style.width  = Math.round(W * k0) + 'px'
   art.style.height = Math.round(H * k0) + 'px'
-  while(art.firstChild) art.removeChild(art.firstChild)
+  while(art.firstChild) art.removeChild(art.firstChild)   // art is still the <svg> here
 
   const defs = document.createElementNS(NS,'defs')
   defs.innerHTML = `
@@ -716,6 +736,22 @@ function draw(){
       <stop offset="0" stop-color="${hueCss(P.h1)}"/><stop offset="1" stop-color="${hueCss(P.h2)}"/>
     </linearGradient>`
   art.append(defs)
+
+  /* everything the sequence draws goes inside this, cut to the artwork's shape,
+     exactly as the plugin's mask cuts the real thing */
+  let stageG = art
+  if(P.clip && srcShape){
+    const cp = document.createElementNS(NS,'clipPath')
+    cp.setAttribute('id','srcclip')
+    cp.setAttribute('clipPathUnits','userSpaceOnUse')
+    for(const b of srcShape) cp.append(b.cloneNode(true))
+    defs.append(cp)
+    stageG = document.createElementNS(NS,'g')
+    stageG.setAttribute('clip-path','url(#srcclip)')
+    art.append(stageG)
+  }
+  const artOut = art
+  art = stageG
 
   const chosen = groundArr()
   const pale = P.useFill && srcPaint
@@ -749,9 +785,12 @@ function draw(){
   art.append(cells.gF)
   let n = cells.n + band(F, W, H) + dust(R, F, ink)
 
-  const cEl = document.getElementById('count')
-  cEl.textContent = n + ' nodes'
-  cEl.classList.toggle('heavy', n > 4000)
+  art = artOut
+
+  if(!sayTimer){                     // never clobber a status message
+    cEl.textContent = n + ' nodes'
+    cEl.classList.toggle('heavy', n > 4000)
+  }
 }
 
 /* ---- the field: run the sequence, build the three height maps + the tears --
@@ -1126,10 +1165,26 @@ function payload(){
     v: JSON.parse(JSON.stringify(V)),
   })
 }
+/* The count is also the status line: pressing a button and seeing nothing change
+   for half a second is indistinguishable from pressing a button that did nothing. */
+const cEl = document.getElementById('count')
+let sayTimer = 0
+function say(text, kind){
+  clearTimeout(sayTimer)
+  cEl.textContent = text
+  cEl.classList.toggle('err', kind==='err')
+  cEl.classList.toggle('ok', kind==='ok')
+  cEl.classList.toggle('heavy', kind==='warn')
+  if(kind==='busy') sayTimer = -1              // hold the line while it works
+  else if(kind) sayTimer = setTimeout(()=>{ sayTimer=0; cEl.className='mono'; render() }, 2600)
+  else sayTimer = 0
+}
+
 let pendingSend = null       // a release that landed mid-flight; never drop it
 function send(type){
   if(busy){ pendingSend = type; return }
   busy = true
+  say(lang==='ja' ? '反映しています…' : 'applying…', 'busy')
   parent.postMessage({pluginMessage:{type, p:payload()}}, '*')
   setTimeout(()=>{
     busy = false
@@ -1161,6 +1216,7 @@ onmessage = e=>{
     W = m.w || 1000; H = m.h || 1000
     srcPaint = m.paint || null
     srcFills = m.fills || null
+    readShape(m.shape)
     // Match the artwork by default. Nobody wants to press a button to be told
     // what colour the thing they just selected is.
     if(srcFills && !groundTouched) P.useFill = true
@@ -1169,7 +1225,15 @@ onmessage = e=>{
     document.getElementById('pick').disabled = !srcFills
     paintSwatch(); render()
   }
-  if(m.type==='error') document.getElementById('count').textContent = 'ERR: ' + m.message
+  if(m.type==='made'){
+    const ja = lang==='ja'
+    if(m.many) say(ja ? '素材を1つだけ選んで（複数選択は無視しました）' : 'select exactly one layer', 'err')
+    else if(!m.into) say(ja ? `${m.nodes} ノード — 素材が選ばれていないので画面の中央に置きました`
+                            : `${m.nodes} nodes — nothing selected, placed at the centre`, 'warn')
+    else say(ja ? `${m.nodes} ノードを「${m.into}」に${m.preview?'プレビュー':'反映'}しました`
+                : `${m.nodes} nodes ${m.preview?'previewed on':'placed on'} “${m.into}”`, 'ok')
+  }
+  if(m.type==='error') say('ERR: ' + m.message, 'err')
 }
 
 applyLang(); paintSwatch(); paintInk(); render()
