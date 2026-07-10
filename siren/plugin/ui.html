@@ -198,6 +198,12 @@ footer .sp{flex:1}
       <span style="flex:1"></span>
       <button id="dice">⟳</button>
     </div>
+    <div class="row"><label id="lSurf">面</label>
+      <button id="mPanel" class="on" style="flex:1">Panel</button>
+      <button id="mDots" style="flex:1">Dots</button></div>
+    <div class="row"><label id="lInk">インク</label>
+      <button id="inkAuto" class="on" style="flex:1">地に合わせる</button>
+      <input id="inkSw" class="sw" type="color" value="#ebebeb"></div>
     <div class="row"><label>accent</label><input id="hue" type="range" min="0" max="360" step="1" value="55"><span class="val mono"></span></div>
   </div>
 </div>
@@ -242,9 +248,16 @@ let inst = 'kick'
 // a diamond. Choose ■ for a rim with no holes at all.)
 const P = { grid:22, fill:1, hum:0.35, bars:3, shape:'sq', hue:55, seed:7,
             h1:262, h2:22, wash:0, sample:0,
-            bgH:0, bgS:0, bgL:0, useFill:false, flip:false }
+            bgH:0, bgS:0, bgL:0, useFill:false, flip:false,
+            inkAuto:true, inkH:0, inkS:0, inkL:0.92 }
 // light === "the surface is pale, so the ink must be dark"
 const isLight = ()=> P.bgL > 0.5
+/* The panel used to be whatever the ground was not: white on black, black on
+   white. That is a good default and a bad law — a red ground turned the panel
+   black and there was no way to say otherwise. The ground and the surface are
+   two different colours, so they get two different controls. */
+const inkArr = light => P.inkAuto ? (light ? [16,16,16] : [235,235,235])
+                                  : hslArr(P.inkH, P.inkS, P.inkL)
 let groundTouched = false      // once a ground is chosen by hand, stop guessing
 let srcPaint = null            // the selected node's colour, averaged, for the ink maths
 let srcFills = null            // the selected node's actual paints — gradients included
@@ -301,7 +314,7 @@ let live = false, busy = false
 const T = {
   ja:{ seq:'シーケンス', field:'Field — 面', colour:'Colour', look:'Look',
        make:'鳴らす', close:'閉じる',
-       pre:'プリセット', bg:'背景', pick:'素材の塗りを拾う', from:'素材から', flip:'反転',
+       pre:'プリセット', bg:'背景', pick:'素材の塗りを拾う', from:'素材から', flip:'反転', surf:'面', ink:'インク', auto:'地に合わせる',
        inst:{ kick:'Kick — 面を殴る', snare:'Snare — 面を裂く',
               hat:'Hat — 面が荒れる',  bass:'Bass — 面を持ち上げる' },
        sub:{ kick:'低い周波数。広く、深い変位', snare:'トランジェント。セルが避けて口が開く',
@@ -310,7 +323,7 @@ const T = {
        body:'<b>キックは丸ではない。キックは、面が受けた打撃の跡。</b>見えないグリッドの上をシーケンスが一周し、キックが鳴った角度のセルが沈む。近いほど深く。<br><br>四つの楽器は四つの絵ではなく、<b>同じ面に対する四つの演算</b>。キックは殴り、スネアは裂き、<b>ハットは当たった所のグリッドを細かく割り</b>、ベースは持続する弧で面を持ち上げる。<br><br>殴った跡は<b>沈むと同時に光る</b>。光はぼかした放射グラデ。Fons のあの質感は 3D ではなく、<b>ぼかしたグラデ図形を重ねたもの</b>。同じ部品を、手ではなくリズムが置く。<br><br><b>出てくるのは全部ベクター。</b>楕円も矩形もグラデもレイヤーブラーも Figma のネイティブノード。色は後から変えられる。<b>ここから Kaibou に通せば、作品になる。</b>' },
   en:{ seq:'Sequence', field:'Field', colour:'Colour', look:'Look',
        make:'Play', close:'Close',
-       pre:'Preset', bg:'Background', pick:'wear the artwork’s paint', from:'from art', flip:'Invert',
+       pre:'Preset', bg:'Background', pick:'wear the artwork’s paint', from:'from art', flip:'Invert', surf:'surface', ink:'ink', auto:'match ground',
        inst:{ kick:'Kick — it hits the surface', snare:'Snare — the surface tears',
               hat:'Hat — the surface goes grainy', bass:'Bass — the surface swells' },
        sub:{ kick:'low frequency. wide, deep displacement', snare:'a transient. cells part and the split opens',
@@ -331,6 +344,9 @@ function applyLang(){
   document.getElementById('lPick').textContent = t().from
   document.getElementById('pick').textContent = t().pick
   document.getElementById('flip').textContent = t().flip
+  document.getElementById('lSurf').textContent = t().surf
+  document.getElementById('lInk').textContent = t().ink
+  document.getElementById('inkAuto').textContent = t().auto
   document.getElementById('undo').textContent = lang==='ja' ? '元に戻す' : 'Discard'
   document.getElementById('mClose').textContent = t().close
   document.getElementById('mSub').innerHTML = t().about
@@ -467,6 +483,13 @@ for(const id of ['bgH','bgS','bgL']){
 
 const swatch = document.getElementById('swatch')   // <input type="color">
 const hex2 = v=>('0'+Math.round(Math.max(0,Math.min(255,v))).toString(16)).slice(-2)
+/* what draw() will decide, so the swatch can show it before we draw */
+function inkLight(){
+  const g = groundArr()
+  const pale = (P.useFill && srcPaint)
+    ? (0.2126*g[0] + 0.7152*g[1] + 0.0722*g[2]) / 255 > 0.5 : isLight()
+  return P.flip ? !pale : pale
+}
 function paintSwatch(){
   const g = groundArr()
   swatch.value = '#' + hex2(g[0]) + hex2(g[1]) + hex2(g[2])
@@ -510,7 +533,7 @@ function syncUI(){
   sq.classList.toggle('on', P.shape==='sq')
   ci.classList.toggle('on', P.shape==='ci')
   document.getElementById('flip').classList.toggle('on', !!P.flip)
-  paintSwatch()
+  paintSwatch(); paintInk()
 }
 
 /* Wear the artwork's paint. A gradient averaged into one colour throws away
@@ -544,6 +567,44 @@ function buildChips(){
     chipsEl.append(b)
   }
 }
+
+const inkSw = document.getElementById('inkSw'), inkAutoBtn = document.getElementById('inkAuto')
+function paintInk(){
+  const c = inkArr(inkLight())
+  inkSw.value = '#' + hex2(c[0]) + hex2(c[1]) + hex2(c[2])
+  inkAutoBtn.classList.toggle('on', P.inkAuto)
+}
+inkSw.oninput = ()=>{
+  const v = inkSw.value
+  const [h,sat,l] = rgbToHsl(parseInt(v.slice(1,3),16)/255, parseInt(v.slice(3,5),16)/255, parseInt(v.slice(5,7),16)/255)
+  P.inkAuto = false; P.inkH = Math.round(h); P.inkS = +sat.toFixed(2); P.inkL = +l.toFixed(3)
+  inkAutoBtn.classList.remove('on'); render()
+}
+inkSw.onchange = onRelease
+inkAutoBtn.onclick = ()=>{ P.inkAuto = true; paintInk(); render(); onRelease() }
+
+/* Panel / Dots is the material of the surface, not a depth. It moves the shape,
+   the grid, the relief and the light together, because those five knobs ARE the
+   material. The web version's picture is Dots: circles that touch, so the ground
+   shows through the diamonds between them, and no shading at all. */
+const MATERIAL = {
+  panel: { P:{shape:'sq', grid:22, hum:0.35},
+           kick:{sink:0.72, reach:210, dark:0.48, curve:2.2, spread:0.40, debris:0, decay:0.40, glow:0.75, bloom:70, relief:0.9} },
+  dots:  { P:{shape:'ci', grid:30, hum:0},
+           kick:{sink:0.85, reach:260, dark:1,    curve:1.7, spread:0,    debris:0, decay:0,    glow:1,    bloom:0,  relief:0} },
+}
+let material = 'panel'
+function setMaterial(m){
+  material = m
+  Object.assign(P, MATERIAL[m].P)
+  Object.assign(V.kick, MATERIAL[m].kick)
+  chosen_.kick = (m==='panel') ? 'Hole' : null    // Dots is nobody's depth
+  document.getElementById('mPanel').classList.toggle('on', m==='panel')
+  document.getElementById('mDots').classList.toggle('on', m==='dots')
+  syncUI(); state(); render(); onRelease()
+}
+document.getElementById('mPanel').onclick = ()=> setMaterial('panel')
+document.getElementById('mDots').onclick  = ()=> setMaterial('dots')
 
 const sq = document.getElementById('sq'), ci = document.getElementById('ci')
 sq.onclick = ()=>{ P.shape='sq'; sq.classList.add('on'); ci.classList.remove('on'); render(); onRelease() }
@@ -658,7 +719,7 @@ function draw(){
   const panel = pale ? [16,16,16] : [235,235,235]
   const ground = P.flip ? panel : chosen
   const light = P.flip ? !pale : pale
-  const inkBase = light?16:235
+  const ink = inkArr(light)
 
   const bg = document.createElementNS(NS,'rect')
   bg.setAttribute('width',W); bg.setAttribute('height',H)
@@ -672,14 +733,14 @@ function draw(){
   }
 
   const F = field(R, W, H, S)
-  const cells = paintCells(R, F, W, H, S, ground, inkBase, light)
+  const cells = paintCells(R, F, W, H, S, ground, ink, light)
   /* The lamps go UNDER the panel. Light on a white surface is a white smudge —
      SCREEN can only add, and a closed panel has nothing to add to. So the light
      lives beneath, the way the dark does, and it shows only where the surface
      broke and let it through. The panel hides its own glow until it is holed. */
   lamps(R, F, W, H, S, light)
   art.append(cells.gF)
-  let n = cells.n + band(F, W, H) + dust(R, F, inkBase)
+  let n = cells.n + band(F, W, H) + dust(R, F, ink)
 
   const cEl = document.getElementById('count')
   cEl.textContent = n + ' nodes'
@@ -807,7 +868,7 @@ function tearAt(F,x,y){
 
 const LX=-0.62, LY=-0.62, LZ=0.48
 
-function paintCells(R, F, W, H, S, ground, inkBase, light){
+function paintCells(R, F, W, H, S, ground, ink, light){
   const {cell,GX,GY,grit,gmax} = F
   const K=V.kick, HTv=V.hat, Sn=V.snare, Bs=V.bass
   const accent = hueArr(P.hue), cA = hueArr(P.h1), cB = hueArr(P.h2)
@@ -868,7 +929,7 @@ function paintCells(R, F, W, H, S, ground, inkBase, light){
     }
 
     const tt=cx/W*0.6+cy/H*0.4
-    let col=mix([inkBase,inkBase,inkBase], mix(cA,cB,tt), P.sample*(1-k*0.55))
+    let col=mix(ink, mix(cA,cB,tt), P.sample*(1-k*0.55))
     col=mix(col, ground, Math.min(1,k*K.dark*1.25))       // it falls into the hole
     if(shade>0)      col=mix(col,[255,255,255],Math.min(1, shade*2.2*K.relief))
     else if(shade<0) col=mix(col, ground,       Math.min(1,-shade*1.5*K.relief))
@@ -876,8 +937,8 @@ function paintCells(R, F, W, H, S, ground, inkBase, light){
     if(lit>0) col=mix(col, mix([255,255,255],accent,0.6), Math.min(1,lit*K.glow))
     if(tr.near>0) col=mix(col, ground, tr.near*Sn.amt*0.85)  // the split shows the ground
     if(gN>0.02){
-      const v = Math.max(0, Math.min(255, inkBase + nz*105))
-      col = mix(col, [v,v,v], Math.min(0.85, gN*0.7))
+      const g = 1 + nz*0.45*gN
+      col = mix(col, ink.map(c=>Math.max(0,Math.min(255,c*g))), Math.min(0.85, gN*0.7))
     }
 
     const seam = (P.shape==='sq' && !loose && P.fill>0.9 && gN<0.02)
@@ -901,7 +962,7 @@ function paintCells(R, F, W, H, S, ground, inkBase, light){
   }
 
   /* one rectangle per horizontal run of sleeping cells */
-  const flat = css([inkBase,inkBase,inkBase])
+  const flat = css(ink)
   const over = cell*0.14
   for(let gy=0;gy<GY;gy++){
     let x0=-1
@@ -1026,11 +1087,11 @@ function band(F, W, H){
    So the decay is this: debris that has settled. It is the panel's own colour,
    so it can only be seen where the panel is gone — inside the crater, where the
    ground shows through. That is where it fell. */
-function dust(R, F, inkBase){
+function dust(R, F, ink){
   const K=V.kick
   if(!(K.decay>0) || !F.hits.length) return 0
   let n=0
-  const ink=css([inkBase,inkBase,inkBase])
+  const inkCss=css(ink)
   for(const h of F.hits){
     const cnt = Math.round(K.decay*30)
     for(let i=0;i<cnt;i++){
@@ -1043,7 +1104,7 @@ function dust(R, F, inkBase){
       el.setAttribute('x',(h.x+Math.cos(a)*rr-sz/2).toFixed(2))
       el.setAttribute('y',(h.y+Math.sin(a)*rr-sz/2).toFixed(2))
       el.setAttribute('width',sz.toFixed(2)); el.setAttribute('height',sz.toFixed(2))
-      el.setAttribute('fill',ink)
+      el.setAttribute('fill',inkCss)
       el.setAttribute('opacity',(K.decay*(0.3+0.7*(1-u))*0.8).toFixed(2))
       art.append(el); n++
     }
@@ -1104,6 +1165,6 @@ onmessage = e=>{
   if(m.type==='error') document.getElementById('count').textContent = 'ERR: ' + m.message
 }
 
-applyLang(); paintSwatch(); render()
+applyLang(); paintSwatch(); paintInk(); render()
 parent.postMessage({pluginMessage:{type:'target'}}, '*')
 </script>
