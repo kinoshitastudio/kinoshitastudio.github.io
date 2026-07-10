@@ -69,9 +69,16 @@ button.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 input[type=range]{flex:1;accent-color:var(--fg);height:3px}
 .val{font-size:10px;width:42px;text-align:right;flex:none}
 
-.seq{display:grid;grid-template-columns:44px repeat(16,1fr);gap:2px;align-items:center}
-.trk{font-size:9px;color:var(--dim);cursor:pointer}
-.trk.sel{color:var(--fg)}
+.seq{display:grid;grid-template-columns:80px repeat(16,1fr);gap:2px;align-items:center}
+.trk{font-size:9px;color:var(--dim);display:flex;align-items:center;gap:4px}
+.trk span{cursor:pointer}
+.trk.sel span{color:var(--fg)}
+.trk.dim{opacity:.3}
+.sbtn{font-size:7.5px;line-height:1;padding:2px 4px;border-radius:3px;border:1px solid var(--line);
+  background:transparent;color:var(--dim);cursor:pointer;flex:none}
+.sbtn.on{background:var(--hot);color:#000;border-color:var(--hot)}
+.mbtn.on{background:#7a4a4a;color:#fff;border-color:#7a4a4a}
+.st.dim{opacity:.22}
 .st{aspect-ratio:1;border:1px solid var(--line);border-radius:2px;cursor:pointer}
 .st.on{background:var(--fg);border-color:var(--fg)}
 .st.beat{border-color:#3a3a3d}
@@ -246,7 +253,6 @@ footer .sp{flex:1}
 </div>
 
 <footer>
-  <button id="solo">SOLO</button>
   <button id="live">LIVE</button>
   <button id="undo">元に戻す</button>
   <span class="mono" id="count" style="color:var(--dim);font-size:10px"></span>
@@ -290,7 +296,15 @@ const V = {
   tape:  { mode:'auto', amt:0, off:6, wow:0 },
 }
 let inst = 'kick'
-let solo = false
+/* ⭐ Solo is a set, not a switch. Press kick, then snare, and you hear both —
+   which is how anyone actually builds a beat. Empty set means the whole mix.
+   And solo alone is not enough: you also want three voices with one taken OUT.
+   That is mute, and it is a different question. Solo says what you are listening
+   to; mute says what is not playing. Solo decides first, mute has the last word.
+   Sends stay on the master bus and always sound: an effect with nothing to act
+   on is silence, not a quiet effect. */
+const soloSet = new Set(), muteSet = new Set()
+const audible = v => (soloSet.size ? soloSet.has(v) : true) && !muteSet.has(v)
 
 /* ⭐ Choosing an instrument selects what you EDIT. Solo selects what you HEAR.
    Without it the panel always shows the mix, so switching to the hat shows you
@@ -307,16 +321,20 @@ function silenced(v){
   return { on:[], amt:0 }
 }
 function withSolo(fn){
-  if(!solo) return fn()
+  if(!soloSet.size && !muteSet.size) return fn()
   const bak = JSON.parse(JSON.stringify(V))
-  /* ⭐ Soloing an instrument silences the other instruments. Soloing a SEND
-     silences the other sends and leaves the instruments playing — because an
-     effect with nothing to act on is not a quiet effect, it is silence. That is
-     the whole reason Siren exists: Kaibou is an effect, and an effect cannot make
-     anything on its own. */
-  const mute = SENDS.includes(inst) ? SENDS : ALL
-  for(const v of mute) if(v!==inst) Object.assign(V[v], silenced(v))
-  try { return fn() } finally { for(const v of ALL) Object.assign(V[v], bak[v]) }
+  for(const v of VOICES) if(!audible(v)) Object.assign(V[v], silenced(v))
+  try { return fn() } finally { for(const v of VOICES) Object.assign(V[v], bak[v]) }
+}
+function paintSolo(){
+  for(const el of document.querySelectorAll('.trk')){
+    const v = el.dataset.v
+    el.classList.toggle('dim', !audible(v))
+    el.querySelector('.sbtn').classList.toggle('on', soloSet.has(v))
+    el.querySelector('.mbtn').classList.toggle('on', muteSet.has(v))
+  }
+  for(const el of document.querySelectorAll('.st'))
+    el.classList.toggle('dim', !audible(el.dataset.v))
 }
 
 // The default is the web version: black, white ink, one yellow accent.
@@ -575,7 +593,6 @@ function applyInst(){
   for(const el of document.querySelectorAll('.trk')) el.classList.toggle('sel', el.dataset.v===inst)
   for(const el of document.querySelectorAll('.st')) el.classList.toggle('mute', el.dataset.v!==inst)
   buildChips(); paintDepth(); state()
-  if(solo) { render(); onRelease() }
 }
 instBtn.onclick = e=>{ e.stopPropagation(); instMenu.hidden = !instMenu.hidden }
 addEventListener('click', ()=>{ instMenu.hidden = true })
@@ -589,8 +606,17 @@ addEventListener('keydown', e=>{ if(e.key==='Escape'){ modal.hidden=true; instMe
 /* ---------------- sequencer ---------------- */
 const seqEl = document.getElementById('seq')
 for(const v of VOICES){
-  const l = document.createElement('div'); l.className='trk'; l.textContent = v; l.dataset.v = v
-  l.onclick = ()=>{ inst = v; applyInst() }
+  const l = document.createElement('div'); l.className='trk'; l.dataset.v = v
+  l.innerHTML = '<button class="sbtn">S</button><button class="mbtn">M</button><span>'+v+'</span>'
+  l.querySelector('span').onclick = ()=>{ inst = v; applyInst() }
+  l.querySelector('.sbtn').onclick = ()=>{
+    soloSet.has(v) ? soloSet.delete(v) : soloSet.add(v)
+    paintSolo(); render(); onRelease()
+  }
+  l.querySelector('.mbtn').onclick = ()=>{
+    muteSet.has(v) ? muteSet.delete(v) : muteSet.add(v)
+    paintSolo(); render(); onRelease()
+  }
   seqEl.append(l)
   const on = V[v].on
   for(let i=0;i<16;i++){
@@ -1567,7 +1593,9 @@ function payload(){
   // what the plugin builds must be what the panel showed
   const v = withSolo(()=> JSON.parse(JSON.stringify(V)))
   // soloed layers stack on the same artwork; they have to say which voice they are
-  return Object.assign({}, P, { srcFills: P.useFill ? srcFills : null, v, soloOf: solo ? inst : null })
+  const on = VOICES.filter(audible)
+  const named = (soloSet.size || muteSet.size) ? on.join('+') : null
+  return Object.assign({}, P, { srcFills: P.useFill ? srcFills : null, v, soloOf: named })
 }
 /* The count is also the status line: pressing a button and seeing nothing change
    for half a second is indistinguishable from pressing a button that did nothing. */
@@ -1604,12 +1632,6 @@ for(const [id,which] of [['rvApply','reverb'],['tpApply','tape']]){
     say(lang==='ja' ? '素材に掛けています…' : 'applying to artwork…', 'busy')
     parent.postMessage({pluginMessage:{type:'send', p:payload(), which}}, '*')
   }
-}
-const soloBtn = document.getElementById('solo')
-soloBtn.onclick = ()=>{
-  solo = !solo
-  soloBtn.classList.toggle('on', solo)
-  render(); onRelease()
 }
 const liveBtn = document.getElementById('live')
 liveBtn.onclick = ()=>{
@@ -1656,6 +1678,6 @@ onmessage = e=>{
   if(m.type==='error') say('ERR: ' + m.message, 'err')
 }
 
-applyLang(); paintSwatch(); paintInk(); render()
+applyLang(); paintSwatch(); paintInk(); paintSolo(); render()
 parent.postMessage({pluginMessage:{type:'target'}}, '*')
 </script>
