@@ -319,7 +319,12 @@ function make(P, reuse, preview) {
   const panel = pale ? grey(0.06) : grey(0.92)      // the colour of the surface
   const ground = P.flip ? panel : chosen            // what shows through a hole
   const light = P.flip ? !pale : pale               // a pale void wants dark ink
-  const inkBase = light ? 0.06 : 0.92
+  /* The panel used to be whatever the ground was not. That is a good default and
+     a bad law — a red ground turned the panel black with no way to say otherwise.
+     The ground and the surface are two colours, so they take two controls. */
+  const ink = P.inkAuto === false
+    ? hsl(num(P.inkH, 0), num(P.inkS, 0), num(P.inkL, 0.92))
+    : grey(light ? 0.06 : 0.92)
 
   frame.fills = (P.flip || !worn)
     ? [{ type: 'SOLID', color: ground }]
@@ -422,7 +427,7 @@ function make(P, reuse, preview) {
     }
 
     const t = cx / W * 0.6 + cy / H * 0.4
-    let col = mixC(grey(inkBase), mixC(cA, cB, t), P.sample * (1 - k * 0.55))
+    let col = mixC(ink, mixC(cA, cB, t), P.sample * (1 - k * 0.55))
     // A dent is a cell falling toward the ground, not a cell lighting up.
     col = mixC(col, ground, Math.min(1, k * K.dark * 1.25))
     // the wall facing the light is lit; the wall turned away is dimmer, not black
@@ -433,8 +438,9 @@ function make(P, reuse, preview) {
     if (lit > 0) col = mixC(col, mixC(grey(1), accent, 0.6), Math.min(1, lit * K.glow))
     if (tr.near > 0) col = mixC(col, ground, tr.near * Sn.amt * 0.85)  // the split shows the ground
     if (gN > 0.02) {
-      const v = Math.max(0, Math.min(1, inkBase + nz * 0.41))
-      col = mixC(col, grey(v), Math.min(0.85, gN * 0.7))
+      const g = 1 + nz * 0.45 * gN
+      const gi = { r: clamp01(ink.r * g), g: clamp01(ink.g * g), b: clamp01(ink.b * g) }
+      col = mixC(col, gi, Math.min(0.85, gN * 0.7))
     }
 
     /* A closed surface must not have its own grid drawn across it. Cells that sit
@@ -476,7 +482,7 @@ function make(P, reuse, preview) {
           const r = figma.createRectangle()
           r.resize((gx - x0) * cell + over * 2, cell + over * 2)
           r.x = x0 * cell - over; r.y = gy * cell - over
-          r.fills = [{ type: 'SOLID', color: grey(inkBase) }]
+          r.fills = [{ type: 'SOLID', color: ink }]
           r.name = 'surface'
           frame.appendChild(r); rest.push(r)
           x0 = -1
@@ -634,7 +640,7 @@ function make(P, reuse, preview) {
         n.resize(sz, sz)
         n.x = h.x + Math.cos(a) * rr - sz / 2
         n.y = h.y + Math.sin(a) * rr - sz / 2
-        n.fills = [{ type: 'SOLID', color: grey(inkBase) }]
+        n.fills = [{ type: 'SOLID', color: ink }]
         n.opacity = Math.max(0, Math.min(1, decay * (0.3 + 0.7 * (1 - u)) * 0.8))
         n.name = 'dust'
         frame.appendChild(n); bits.push(n)
