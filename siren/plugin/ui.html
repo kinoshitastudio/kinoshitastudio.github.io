@@ -129,7 +129,7 @@ footer .sp{flex:1}
       <span class="val mono" id="depthV" style="width:66px"></span></div>
   </div>
 
-  <div class="sec">
+  <div class="sec" id="secSeq">
     <p class="lbl" id="lSeq">Sequence</p>
     <div class="seq" id="seq"></div>
   </div>
@@ -171,6 +171,28 @@ footer .sp{flex:1}
     <div class="row"><label>planes</label><input id="b_layers" type="range" min="2" max="9" step="1" value="5"><span class="val mono"></span></div>
     <div class="row"><label>gravity</label><input id="b_drop" type="range" min="0" max="1" step="0.01" value="0.5"><span class="val mono"></span></div>
     <div class="row"><label>area</label><input id="b_size" type="range" min="0.3" max="1" step="0.01" value="0.9"><span class="val mono"></span></div>
+  </div>
+
+  <div class="sec" id="vReverb" hidden>
+    <p class="lbl" id="lReverb">Reverb</p>
+    <div class="row"><label id="lRvMode">mode</label>
+      <button class="rvm on" data-m="tail" style="flex:1">Tail</button>
+      <button class="rvm" data-m="echo" style="flex:1">Echo</button>
+      <button class="rvm" data-m="ma" style="flex:1">余白</button></div>
+    <div class="row"><label>amount</label><input id="r_amt" type="range" min="0" max="1" step="0.01" value="0"><span class="val mono"></span></div>
+    <div class="row"><label>taps</label><input id="r_taps" type="range" min="1" max="9" step="1" value="5"><span class="val mono"></span></div>
+    <div class="row"><label>spread</label><input id="r_spread" type="range" min="2" max="90" step="1" value="26"><span class="val mono"></span></div>
+  </div>
+
+  <div class="sec" id="vTape" hidden>
+    <p class="lbl" id="lTape">Tape</p>
+    <div class="row"><label id="lTpMode">mode</label>
+      <button class="tpm on" data-m="auto" style="flex:1">Auto</button>
+      <button class="tpm" data-m="rgb" style="flex:1">RGB</button>
+      <button class="tpm" data-m="cmy" style="flex:1">CMY</button></div>
+    <div class="row"><label>split</label><input id="t_amt" type="range" min="0" max="1" step="0.01" value="0"><span class="val mono"></span></div>
+    <div class="row"><label>offset</label><input id="t_off" type="range" min="1" max="26" step="0.5" value="6"><span class="val mono"></span></div>
+    <div class="row"><label>wow</label><input id="t_wow" type="range" min="0" max="1" step="0.01" value="0"><span class="val mono"></span></div>
   </div>
 
   <div class="sec">
@@ -251,12 +273,19 @@ let art = document.getElementById('art')
                            leaves the ground alone. Nothing happens: that is what
                            being held sounds like */
 const VOICES = ['kick','snare','hat','bass']
+/* Sends, not instruments. They have no steps: they act on everything at once.
+   Kaibou is an effect that comes AFTER the instrument, in raster. These two stay
+   inside, in vector, because 木下's chain always runs through tape. */
+const SENDS = ['reverb','tape']
+const ALL = VOICES.concat(SENDS)
 const V = {
   kick:  { on:[0,3,8,11], sink:0.72, reach:190, dark:0.48, curve:2.2, spread:0.4, debris:0,
            decay:0.4, glow:0.75, bloom:70, relief:0.9 },
   snare: { on:[4,12], amt:0, pieces:0.4, reach:200, ring:0.5 },
   hat:   { on:[0,2,4,6,8,10,12,14], amt:0, size:1.1, reach:120, ring:0.42 },
   bass:  { on:[0,8], amt:0.5, layers:5, drop:0.5, size:0.9 },
+  reverb:{ mode:'tail', amt:0, taps:5, spread:26 },
+  tape:  { mode:'auto', amt:0, off:6, wow:0 },
 }
 let inst = 'kick'
 let solo = false
@@ -271,13 +300,15 @@ function silenced(v){
      height field, so cells still refuse to fold and a ghost of the crater stays
      on screen. A voice that is not playing has no steps. */
   if(v==='kick') return { on:[], sink:0, dark:0, glow:0, relief:0, decay:0, spread:0, debris:0 }
+  if(v==='tape') return { amt:0, wow:0 }
+  if(v==='reverb') return { amt:0 }
   return { on:[], amt:0 }
 }
 function withSolo(fn){
   if(!solo) return fn()
   const bak = JSON.parse(JSON.stringify(V))
-  for(const v of VOICES) if(v!==inst) Object.assign(V[v], silenced(v))
-  try { return fn() } finally { for(const v of VOICES) Object.assign(V[v], bak[v]) }
+  for(const v of ALL) if(v!==inst) Object.assign(V[v], silenced(v))
+  try { return fn() } finally { for(const v of ALL) Object.assign(V[v], bak[v]) }
 }
 
 // The default is the web version: black, white ink, one yellow accent.
@@ -361,6 +392,20 @@ const PRESETS = {
     Powder:   { amt:0.75, size:0.95, reach:200, ring:0.48 },
     Mist:     { amt:1,    size:0.75, reach:260, ring:0.54 },
   },
+  /* Reverb is a room. Echo you can count; reverb you cannot. */
+  reverb: {
+    Off:      { amt:0,    taps:5, spread:26 },
+    Room:     { amt:0.30, taps:4, spread:16 },
+    Hall:     { amt:0.55, taps:6, spread:32 },
+    Cathedral:{ amt:0.85, taps:9, spread:56 },
+  },
+  /* Tape: the ground decides which physics you get. */
+  tape: {
+    Off:      { amt:0,    off:6,  wow:0 },
+    Worn:     { amt:0.28, off:3,  wow:0.14 },
+    Loose:    { amt:0.58, off:7,  wow:0.36 },
+    Broken:   { amt:1,    off:15, wow:0.72 },
+  },
   // 面積・重心・暗さ。how much mass is being held
   bass: {
     Off:      { amt:0,    layers:5, drop:0.50, size:0.90 },
@@ -370,7 +415,7 @@ const PRESETS = {
     Bloom:    { amt:1,    layers:8, drop:0.85, size:0.72 },
   },
 }
-const DEFPRE = { kick:'Hole', snare:'Off', hat:'Off', bass:'Swell' }
+const DEFPRE = { kick:'Hole', snare:'Off', hat:'Off', bass:'Swell', reverb:'Off', tape:'Off' }
 const chosen_ = Object.assign({}, DEFPRE)
 
 /* ⭐ The presets were never seven pictures. They are seven marks on one axis:
@@ -380,7 +425,7 @@ const chosen_ = Object.assign({}, DEFPRE)
    true first — an axis can only exist if every stage moves the same knobs.) */
 const stagesOf = inst => Object.keys(PRESETS[inst])
 const depthOf  = {}
-for(const v of VOICES) depthOf[v] = stagesOf(v).indexOf(DEFPRE[v]) / (stagesOf(v).length-1)
+for(const v of ALL) depthOf[v] = stagesOf(v).indexOf(DEFPRE[v]) / (stagesOf(v).length-1)
 
 function presetAt(inst, d){
   const names = stagesOf(inst)
@@ -430,18 +475,22 @@ const T = {
        make:'鳴らす', close:'閉じる',
        pre:'プリセット', depth:'深さ', bg:'背景', pick:'素材の塗りを拾う', from:'素材から', flip:'反転', surf:'面', ink:'インク', auto:'地に合わせる', shape:'形', clipT:'素材の形で抜く',
        inst:{ kick:'Kick — 面を殴る', snare:'Snare — 面が割れる',
-              hat:'Hat — 面が荒れる',  bass:'Bass — 面が重くなる' },
+              hat:'Hat — 面が荒れる',  bass:'Bass — 面が重くなる',
+              reverb:'Reverb — にじみ、余白', tape:'Tape — 全体の揺れ、色ズレ' },
        sub:{ kick:'低い周波数。広く、深い変位', snare:'トランジェント。面が破片に割れて離れる',
-             hat:'粒子。粒状の荒れ', bass:'持続音。面積・重心・暗さ' },
+             hat:'粒子。粒状の荒れ', bass:'持続音。面積・重心・暗さ',
+             reverb:'ぼかし＝畳み込み。エコーは数えられる', tape:'版ズレか色収差か。地が決める' },
        about:'名前は 99LETTERS のアルバム <i>Kaibou Zukan</i> の9曲目<b>「Siren（鳴物）」</b>から。鳴物は打楽器の総称。',
        body:'<b>キックは丸ではない。キックは、面が受けた打撃の跡。</b>見えないグリッドの上をシーケンスが一周し、キックが鳴った角度のセルが沈む。近いほど深く。<br><br>四つの楽器は四つの絵ではなく、<b>同じ面に対する四つの演算</b>。キックは殴り、スネアは裂き、<b>ハットは当たった所のグリッドを細かく割り</b>、ベースは持続する弧で面を持ち上げる。<br><br>殴った跡は<b>沈むと同時に光る</b>。光はぼかした放射グラデ。Fons のあの質感は 3D ではなく、<b>ぼかしたグラデ図形を重ねたもの</b>。同じ部品を、手ではなくリズムが置く。<br><br><b>出てくるのは全部ベクター。</b>楕円も矩形もグラデもレイヤーブラーも Figma のネイティブノード。色は後から変えられる。<b>ここから Kaibou に通せば、作品になる。</b>' },
   en:{ seq:'Sequence', field:'Field', colour:'Colour', look:'Look',
        make:'Play', close:'Close',
        pre:'Preset', depth:'depth', bg:'Background', pick:'wear the artwork’s paint', from:'from art', flip:'Invert', surf:'surface', ink:'ink', auto:'match ground', shape:'shape', clipT:'cut to the artwork',
        inst:{ kick:'Kick — it hits the surface', snare:'Snare — the surface shatters',
-              hat:'Hat — the surface goes grainy', bass:'Bass — the surface takes on weight' },
-       sub:{ kick:'low frequency. wide, deep displacement', snare:'a transient. the surface shatters and the plates part',
-             hat:'high frequency. the grid subdivides where it lands', bass:'sustain. area, weight, darkness' },
+              hat:'Hat — the surface goes grainy', bass:'Bass — the surface takes on weight',
+              reverb:'Reverb — bleed, and the space it went into', tape:'Tape — wobble and misregistration' },
+       sub:{ kick:'low frequency. wide, deep displacement', snare:'a transient. the plates part',
+             hat:'particles. a granular roughness', bass:'sustain. area, weight, darkness',
+             reverb:'blur is convolution. echo you can count', tape:'ink or light — the ground decides' },
        about:'Named after <b>Siren (鳴物)</b>, track 9 of <i>Kaibou Zukan</i> by 99LETTERS. 鳴物 is the word for percussion.',
        body:'<b>A kick is not a circle. A kick is the mark a surface takes.</b> The sequence goes once around an invisible grid; wherever the kick lands, the cells cave in. Closer means deeper.<br><br>The four instruments are not four pictures but <b>four operators on one surface</b>. Kick hits it, snare tears it, <b>hat subdivides the grid where it lands</b>, bass lifts a sustained arc.<br><br>The dent <b>sinks and glows at once</b>. Fons’s surfaces are not 3D — they are <b>blurred gradient shapes, stacked</b>. Here the rhythm places them instead of the hand.<br><br><b>Everything it makes is vector.</b> Ellipses, rectangles, gradients, layer blur — native Figma nodes. Recolour them later. <b>Run it through Kaibou and it becomes a piece.</b>' }
 }
@@ -470,7 +519,7 @@ function applyLang(){
   document.getElementById('mBody').innerHTML = t().body
   document.getElementById('langJa').classList.toggle('on', lang==='ja')
   document.getElementById('langEn').classList.toggle('on', lang==='en')
-  for(const v of VOICES) document.getElementById('l'+cap(v)).textContent = t().inst[v]
+  for(const v of ALL) document.getElementById('l'+cap(v)).textContent = t().inst[v]
   buildMenu()
   applyInst()
 }
@@ -478,7 +527,9 @@ const cap = s=> s[0].toUpperCase()+s.slice(1)
 /* Choosing an instrument selects what you are editing. It does not make a sound.
    So every place a voice is named has to say whether it is sounding at all —
    otherwise switching to a silent Snare looks like a broken plugin. */
-const silent = v => v==='kick' ? !(V.kick.sink>0 || V.kick.decay>0) : !(V[v].amt>0)
+const silent = v => v==='kick' ? !(V.kick.sink>0 || V.kick.decay>0)
+                 : v==='tape' ? !(V.tape.amt>0 || V.tape.wow>0)
+                 : !(V[v].amt>0)
 function state(){
   const pre = chosen_[inst]
   instBtn.innerHTML = cap(inst) + (pre ? '<u>'+pre+'</u>' : '') + ' ▾'
@@ -497,7 +548,7 @@ const instBtn = document.getElementById('instBtn')
 const instMenu = document.getElementById('instMenu')
 function buildMenu(){
   instMenu.innerHTML = ''
-  for(const v of VOICES){
+  for(const v of ALL){
     const b = document.createElement('button')
     b.dataset.v = v
     b.innerHTML = cap(v) + '<i></i><small>' + t().sub[v] + '</small>'
@@ -509,7 +560,9 @@ function buildMenu(){
 /* Choosing an instrument re-points the preset chips, the knobs and the
    sequencer row. Everything below the header is about the chosen one. */
 function applyInst(){
-  for(const v of VOICES) document.getElementById('v'+cap(v)).hidden = (v!==inst)
+  for(const v of ALL) document.getElementById('v'+cap(v)).hidden = (v!==inst)
+  // a send has no steps: it acts on everything at once
+  document.getElementById('secSeq').hidden = SENDS.includes(inst)
   for(const b of instMenu.children) b.classList.toggle('on', b.dataset.v===inst)
   for(const el of document.querySelectorAll('.trk')) el.classList.toggle('sel', el.dataset.v===inst)
   for(const el of document.querySelectorAll('.st')) el.classList.toggle('mute', el.dataset.v!==inst)
@@ -576,6 +629,19 @@ bind('h_amt',HT,'amt',pc);       bind('h_size',HT,'size',v=>v.toFixed(2)+'px')
 bind('h_reach',HT,'reach',v=>v); bind('h_ring',HT,'ring',pc)
 bind('b_amt',B,'amt',pc);        bind('b_layers',B,'layers',v=>v)
 bind('b_drop',B,'drop',pc);      bind('b_size',B,'size',pc)
+const RV = V.reverb, TP = V.tape
+bind('r_amt',RV,'amt',pc);       bind('r_taps',RV,'taps',v=>v); bind('r_spread',RV,'spread',v=>v)
+bind('t_amt',TP,'amt',pc);       bind('t_off',TP,'off',v=>v.toFixed(1)); bind('t_wow',TP,'wow',pc)
+for(const b of document.querySelectorAll('.rvm')) b.onclick=()=>{
+  RV.mode=b.dataset.m
+  for(const o of document.querySelectorAll('.rvm')) o.classList.toggle('on', o===b)
+  render(); onRelease()
+}
+for(const b of document.querySelectorAll('.tpm')) b.onclick=()=>{
+  TP.mode=b.dataset.m
+  for(const o of document.querySelectorAll('.tpm')) o.classList.toggle('on', o===b)
+  render(); onRelease()
+}
 bind('grid',P,'grid',v=>v); bind('fill',P,'fill',pc); bind('hum',P,'hum',pc); bind('bars',P,'bars',v=>v)
 bind('wash',P,'wash',pc); bind('sample',P,'sample',pc)
 bind('h1',P,'h1',v=>v+'°'); bind('h2',P,'h2',v=>v+'°'); bind('hue',P,'hue',v=>v+'°')
@@ -882,8 +948,11 @@ function draw(){
      lives beneath, the way the dark does, and it shows only where the surface
      broke and let it through. The panel hides its own glow until it is holed. */
   lamps(R, F, W, H, S, light)
+  /* the tail decays BEHIND the thing that made it */
+  let n = cells.n + reverb(cells.gF, W, H, S, light)
   art.append(cells.gF)
-  let n = cells.n + albers(F, W, H, S, light) + grains(R, F, W, H, S, ground) + dust(R, F, ink)
+  n += tape(cells.gF, W, H, S, light)
+  n += albers(F, W, H, S, light) + grains(R, F, W, H, S, ground) + dust(R, F, ink)
 
   art = artOut
 
@@ -1071,6 +1140,15 @@ function shardAt(F,x,y){
 
 const LX=-0.62, LY=-0.62, LZ=0.48
 
+/* wow & flutter: a slow sine down the frame plus a fine tremor. Transport speed
+   instability, drawn. It is a coordinate transform — no effect, no blend mode. */
+function wowAt(y, H){
+  const w = V.tape.wow
+  if(!(w>0)) return 0
+  const t = y/H
+  return (Math.sin(t*Math.PI*2.2 + P.seed*0.7)*9 + Math.sin(t*Math.PI*17 + P.seed)*1.6) * w
+}
+
 /* ---- the surface, when it has broken --------------------------------------
    ⭐ When the snare sounds, the field is no longer a grid. It IS the plates.
    The kick's hole does not sit on top of them — it is the plates near the impact
@@ -1117,7 +1195,7 @@ function paintPlates(R, F, W, H, S, ground, ink, light){
     const cs=Math.cos(rot), sn=Math.sin(rot)
     p=p.map(q=>{
       const rx=q[0]-c[0], ry=q[1]-c[1]
-      return [c[0]+rx*cs-ry*sn + sh.vx*push, c[1]+rx*sn+ry*cs + sh.vy*push]
+      return [c[0]+rx*cs-ry*sn + sh.vx*push + wowAt(q[1],H), c[1]+rx*sn+ry*cs + sh.vy*push]
     })
     const el=document.createElementNS(NS,'path')
     el.setAttribute('d', pathD(p))
@@ -1174,6 +1252,7 @@ function paintCells(R, F, W, H, S, ground, ink, light){
     const j = cell*0.16*Math.min(1, k*3)
     let cx = px - dx/(slope||1)*push + (R()*2-1)*j*P.hum
     let cy = py - dy/(slope||1)*push + (R()*2-1)*j*P.hum
+    cx += wowAt(py, H)
 
 
     const tt=cx/W*0.6+cy/H*0.4
@@ -1274,6 +1353,82 @@ function lamps(R, F, W, H, S, light){
     lamp(h,{c:WH,    a:0.90,size:0.20,off:throwOut,burst:1,blur:0.06,mode:'screen',    op:0.75*gl})
     lamp(h,{c:accent,a:0.30,size:0.60,off:throwOut,burst:1,blur:0.20,mode:'soft-light',op:0.7*gl})
   }
+}
+
+/* ---- reverb: ぼかし＝畳み込み ---------------------------------------------
+   Not a metaphor. A gaussian blur and a reverb tail are the same computation, so
+   the tail is drawn the only honest way: copies of the surface, each offset
+   further, each blurred more, each fainter. The blur GROWING is the whole thing —
+   late reflections diffuse, and a sharp edge dissolves into a wash you can no
+   longer count.
+
+   Echo is the sibling, not the same knob: discrete repeats, evenly spaced, NOT
+   blurred. You can count them. Never mix the two.
+
+   余白 is not a third mechanism. It is R1 aimed into an emptiness: bias the tail
+   one way and leave that way clear, and the eye extrapolates the decay past the
+   last copy. Empty space with nothing decaying into it is just a margin. */
+function reverb(gF, W, H, S, light){
+  const RV=V.reverb
+  if(!(RV.amt>0)) return 0
+  const N = Math.max(1, Math.round(RV.taps))
+  const px = S/DEF
+  const defs = document.createElementNS(NS,'defs')
+  art.append(defs)
+  let n=0
+  for(let i=N;i>=1;i--){
+    const t = i/N
+    const echo = RV.mode==='echo'
+    const blur = echo ? 0 : Math.max(0.3, t*RV.spread*0.55*px)
+    const step = RV.spread*px
+    const dx = echo ? i*step*0.8 : (RV.mode==='ma' ? Math.pow(t,0.8)*step*N*0.45 : t*step*1.1)
+    const dy = echo ? i*step*0.35 : (RV.mode==='ma' ? 0 : t*step*0.45)
+    const op = (echo ? Math.pow(0.62,i) : Math.pow(0.55,i)*1.6) * RV.amt
+    if(op < 0.004) continue
+    const c = gF.cloneNode(true)
+    if(blur>0.3){
+      const id='rv'+i
+      defs.innerHTML += `<filter id="${id}" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="${blur.toFixed(2)}"/></filter>`
+      c.setAttribute('filter',`url(#${id})`)
+    }
+    c.setAttribute('transform',`translate(${dx.toFixed(2)},${dy.toFixed(2)})`)
+    c.setAttribute('opacity',op.toFixed(3))
+    c.setAttribute('style','mix-blend-mode:'+(light?'multiply':'screen'))
+    art.append(c); n += c.childElementCount
+  }
+  return n
+}
+
+/* ---- tape: 全体の揺れ、色ズレ ---------------------------------------------
+   ⭐ Ink is subtractive: cyan on white paper absorbs red, and two inks overlapping
+   make the paper darker. That is MULTIPLY, and it only does anything on a light
+   ground. Light is additive: red plus green plus blue is white. That is SCREEN,
+   and it only does anything on a dark ground.
+
+   So there is no single misregistration. There are two, and the ground decides
+   which physics you are in. Auto asks the ground. Choose by hand if you want the
+   wrong one on purpose. */
+const CH_RGB = [[255,0,0],[0,255,0],[0,0,255]]
+const CH_CMY = [[0,183,200],[229,0,109],[255,216,0]]
+function tape(gF, W, H, S, light){
+  const TP=V.tape
+  if(!(TP.amt>0)) return 0
+  const ink = TP.mode==='cmy' || (TP.mode==='auto' && light)
+  const ch = ink ? CH_CMY : CH_RGB
+  const off = TP.off*(S/DEF)*TP.amt
+  const dirs = [[-off,-off*0.4],[0,off*0.5],[off,-off*0.2]]
+  let n=0
+  gF.setAttribute('style','display:none')      // the channels replace it
+  for(let i=0;i<3;i++){
+    const c = gF.cloneNode(true)
+    c.removeAttribute('style')
+    const col = css(ch[i])
+    for(const e of c.querySelectorAll('*')) e.setAttribute('fill', col)
+    c.setAttribute('transform',`translate(${dirs[i][0].toFixed(2)},${dirs[i][1].toFixed(2)})`)
+    c.setAttribute('style','mix-blend-mode:'+(ink?'multiply':'screen'))
+    art.append(c); n += c.childElementCount
+  }
+  return n
 }
 
 /* ---- bass: 面積・重心・暗さ ------------------------------------------------

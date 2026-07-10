@@ -146,6 +146,17 @@ function discard() {
 
 const LX = -0.62, LY = -0.62, LZ = 0.48
 
+/* wow & flutter: a slow sine down the frame plus a fine tremor. Transport speed
+   instability, drawn. A coordinate transform — no effect, no blend mode. */
+function wowAt(P, y, H) {
+  const w = P.v.tape ? num(P.v.tape.wow, 0) : 0
+  if (!(w > 0)) return 0
+  const t = y / H
+  return (Math.sin(t * Math.PI * 2.2 + P.seed * 0.7) * 9 + Math.sin(t * Math.PI * 17 + P.seed) * 1.6) * w
+}
+const CH_RGB = [{ r: 1, g: 0, b: 0 }, { r: 0, g: 1, b: 0 }, { r: 0, g: 0, b: 1 }]
+const CH_CMY = [{ r: 0, g: 0.72, b: 0.78 }, { r: 0.9, g: 0, b: 0.43 }, { r: 1, g: 0.85, b: 0 }]
+
 /* ---- the field: run the sequence, build the three height maps + the tears ---
    Shared, verbatim, with draw() in ui.html. `sink` is what the kick digs; `sub`
    is how finely the hat has broken the surface; `lift` is the band the bass
@@ -533,7 +544,7 @@ function make(P, reuse, preview) {
       const cs = Math.cos(rot), sn = Math.sin(rot)
       p = p.map((q) => {
         const rx = q[0] - c[0], ry = q[1] - c[1]
-        return [c[0] + rx * cs - ry * sn + sh.vx * push, c[1] + rx * sn + ry * cs + sh.vy * push]
+        return [c[0] + rx * cs - ry * sn + sh.vx * push + wowAt(P, q[1], H), c[1] + rx * sn + ry * cs + sh.vy * push]
       })
       const v = figma.createVector()
       v.vectorPaths = [{ windingRule: 'NONZERO', data: pathD(p) }]
@@ -581,6 +592,7 @@ function make(P, reuse, preview) {
     const j = cell * 0.16 * Math.min(1, k * 3)
     let cx = px - dx / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
     let cy = py - dy / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
+    cx += wowAt(P, py, H)
 
 
     const t = cx / W * 0.6 + cy / H * 0.4
@@ -722,6 +734,67 @@ function make(P, reuse, preview) {
      lives beneath, the way the dark does, and shows only where the surface broke
      and let it through. The panel hides its own glow until it is holed. */
   if (fieldGroup) frame.appendChild(fieldGroup)
+
+  /* --- reverb: ぼかし＝畳み込み ---------------------------------------------
+     Not a metaphor. A gaussian blur and a reverb tail are the same computation, so
+     the tail is drawn the only honest way: copies of the surface, each offset
+     further, blurred more, fainter. The blur GROWING is the whole thing — late
+     reflections diffuse and a sharp edge dissolves into a wash you cannot count.
+
+     Echo is the sibling, not the same knob: discrete repeats, evenly spaced, NOT
+     blurred. You can count them. Never mix the two.
+
+     余白 is not a third mechanism. It is the tail aimed into an emptiness: bias it
+     one way, leave that way clear, and the eye extrapolates the decay past the
+     last copy. Empty space with nothing decaying into it is just a margin. --- */
+  const RV = V.reverb || { amt: 0 }
+  if (fieldGroup && num(RV.amt, 0) > 0) {
+    const N = Math.max(1, Math.round(num(RV.taps, 5)))
+    const px = S / DEF
+    const at = frame.children.indexOf(fieldGroup)
+    for (let i = N; i >= 1; i--) {
+      const t = i / N
+      const echo = RV.mode === 'echo'
+      const blur = echo ? 0 : Math.max(0.3, t * num(RV.spread, 26) * 0.55 * px)
+      const step = num(RV.spread, 26) * px
+      const dx = echo ? i * step * 0.8 : (RV.mode === 'ma' ? Math.pow(t, 0.8) * step * N * 0.45 : t * step * 1.1)
+      const dy = echo ? i * step * 0.35 : (RV.mode === 'ma' ? 0 : t * step * 0.45)
+      const op = (echo ? Math.pow(0.62, i) : Math.pow(0.55, i) * 1.6) * RV.amt
+      if (op < 0.004) continue
+      const c = fieldGroup.clone()
+      frame.insertChild(at, c)              // the tail decays BEHIND its source
+      c.x += dx; c.y += dy
+      if (blur > 0.3) c.effects = [{ type: 'LAYER_BLUR', radius: blur, visible: true }]
+      c.opacity = Math.max(0, Math.min(1, op))
+      c.blendMode = light ? 'MULTIPLY' : 'SCREEN'
+      c.name = echo ? 'echo' : 'tail'
+    }
+  }
+
+  /* --- tape: 全体の揺れ、色ズレ -----------------------------------------------
+     ⭐ Ink is subtractive: cyan on white paper absorbs red, two inks overlapping
+     make the paper darker. That is MULTIPLY, and it does something only on a light
+     ground. Light is additive: red + green + blue is white. That is SCREEN, and it
+     does something only on a dark ground.
+
+     So there is no single misregistration. There are two, and the ground decides
+     which physics you are in. ------------------------------------------------ */
+  const TP = V.tape || { amt: 0 }
+  if (fieldGroup && num(TP.amt, 0) > 0) {
+    const ink = TP.mode === 'cmy' || (TP.mode === 'auto' && light)
+    const ch = ink ? CH_CMY : CH_RGB
+    const off = num(TP.off, 6) * (S / DEF) * TP.amt
+    const dirs = [[-off, -off * 0.4], [0, off * 0.5], [off, -off * 0.2]]
+    for (let i = 0; i < 3; i++) {
+      const c = fieldGroup.clone()
+      frame.appendChild(c)
+      c.x += dirs[i][0]; c.y += dirs[i][1]
+      for (const nd of c.findAll((x) => 'fills' in x)) nd.fills = [{ type: 'SOLID', color: ch[i] }]
+      c.blendMode = ink ? 'MULTIPLY' : 'SCREEN'
+      c.name = ink ? 'plate ' + 'CMY'[i] : 'channel ' + 'RGB'[i]
+    }
+    fieldGroup.visible = false             // the channels replace it
+  }
 
   /* --- bass: 面積・重心・暗さ ------------------------------------------------
      A drum is an event. A held note is not — no attack point, no edge, so it
