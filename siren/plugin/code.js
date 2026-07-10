@@ -412,6 +412,11 @@ function make(P, reuse, preview) {
      the parent's origin shifts it. (Kaibou learned this one the hard way.)
      The ground has to be cut too, so the frame stops painting itself and the
      ground becomes a child. */
+  /* The mask is built here but NOT armed here. A Figma mask cuts the siblings
+     ABOVE it, so it has to be the bottom-most child at the moment it is switched
+     on — and everything after this point still rearranges the frame: the mix gets
+     grouped, reverb taps get inserted, tape channels get appended. Arm it last.
+     (See the end of make().) */
   let mask = null
   if (target && P.clip !== false && 'clone' in target) {
     mask = target.clone()
@@ -428,7 +433,6 @@ function make(P, reuse, preview) {
     }
     mask.opacity = 1
     mask.visible = true
-    mask.isMask = true
     mask.name = '⟨shape⟩'
   }
   /* Averaging a gradient down to one colour throws away the thing that made it
@@ -842,7 +846,7 @@ function make(P, reuse, preview) {
      sequence made goes into one `mix`, and the sends act on that. Otherwise you
      cannot tell what the reverb is even touching. The ground and the mask stay
      out of it: they are the room, not the sound. */
-  const body = frame.children.filter((c) => c !== mask && c !== bg)
+  const body = frame.children.filter((c) => c !== mask && c !== bg)   // never the mask, never the ground
   const mixG = body.length ? figma.group(body, frame) : null
   if (mixG) mixG.name = 'mix'
 
@@ -921,6 +925,13 @@ function make(P, reuse, preview) {
     mixG.visible = false                   // the channels replace it
   }
 
+
+  /* ⭐ Arm the mask now that nothing else will move. It must sit at the bottom,
+     because a mask cuts what is above it and only what is above it. */
+  if (mask) {
+    frame.insertChild(0, mask)
+    mask.isMask = true
+  }
 
   // A preview must not steal the selection, or the target is lost on the next tick.
   if (!preview) figma.currentPage.selection = [frame]
