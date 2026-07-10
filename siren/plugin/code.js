@@ -322,7 +322,7 @@ function voronoiCells(seeds, W, H) {
 }
 const centroid = (p) => { let x = 0, y = 0; for (const q of p) { x += q[0]; y += q[1] } return [x / p.length, y / p.length] }
 const shrinkPoly = (p, c, f) => p.map((q) => [c[0] + (q[0] - c[0]) * f, c[1] + (q[1] - c[1]) * f])
-const pathD = (p) => 'M' + p.map((q) => q[0].toFixed(2) + ',' + q[1].toFixed(2)).join('L') + 'Z'
+const pathD = (p) => 'M ' + p.map((q) => q[0].toFixed(2) + ' ' + q[1].toFixed(2)).join(' L ') + ' Z'
 
 /* which plate this point belongs to. Nearest seed wins — that is Voronoi. */
 function shardAt(F, x, y) {
@@ -552,8 +552,10 @@ function make(P, reuse, preview) {
         const rx = q[0] - c[0], ry = q[1] - c[1]
         return [c[0] + rx * cs - ry * sn + sh.vx * push + wowAt(P, q[1], H), c[1] + rx * sn + ry * cs + sh.vy * push]
       })
+      const d = pathD(p)
+      if (d.indexOf('NaN') >= 0) return          // a degenerate plate: drop it, do not throw
       const v = figma.createVector()
-      v.vectorPaths = [{ windingRule: 'NONZERO', data: pathD(p) }]
+      v.vectorPaths = [{ windingRule: 'NONZERO', data: d }]
       v.fills = [{ type: 'SOLID', color: col }]
       v.strokes = []
       // past a certain distance a plate has left the surface, and it thins out
@@ -663,7 +665,7 @@ function make(P, reuse, preview) {
   // but still above the wash
   for (const c of cells) frame.appendChild(c)
   const all = rest.concat(cells)
-  const fieldGroup = all.length ? figma.group(all, frame) : null
+  const fieldGroup = all.length ? figma.group(all, frame) : null   // group([]) throws
   if (fieldGroup) fieldGroup.name = 'field'
 
   /* --- light ---------------------------------------------------------------
@@ -847,7 +849,7 @@ function make(P, reuse, preview) {
      cannot tell what the reverb is even touching. The ground and the mask stay
      out of it: they are the room, not the sound. */
   const body = frame.children.filter((c) => c !== mask && c !== bg)   // never the mask, never the ground
-  const mixG = body.length ? figma.group(body, frame) : null
+  const mixG = body.length ? figma.group(body, frame) : null         // group([]) throws
   if (mixG) mixG.name = 'mix'
 
   /* --- reverb: ぼかし＝畳み込み ---------------------------------------------
@@ -1038,7 +1040,8 @@ figma.ui.onmessage = (msg) => {
       figma.ui.postMessage({ type: 'made', nodes: f.children.length, into, many, preview })
     } catch (err) {
       console.error('[siren]', err)
-      figma.ui.postMessage({ type: 'error', message: String((err && err.message) || err) })
+      const m = String((err && err.message) || err)
+      figma.ui.postMessage({ type: 'error', message: m.slice(0, 120) })
     }
   }
   if (msg.type === 'discard') {
