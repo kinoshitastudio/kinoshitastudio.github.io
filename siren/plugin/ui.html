@@ -300,6 +300,7 @@ footer .sp{flex:1}
   <button id="undo">元に戻す</button>
   <span class="mono" id="count" style="color:var(--dim);font-size:10.5px"></span>
   <span class="sp"></span>
+  <button id="gif" title="ラスター — 確認・共有用">GIF</button>
   <button id="frames">連番</button>
   <button id="make">鳴らす</button>
 </footer>
@@ -1869,6 +1870,205 @@ document.getElementById('frames').onclick = ()=>{
   say(lang==='ja' ? `${n} フレームを作っています…` : `building ${n} frames…`, 'busy')
   parent.postMessage({pluginMessage:{type:'frames', p:payload()}}, '*')
 }
+/* ---------------- GIF — a raster copy, to show someone --------------------
+   ⚠ Siren's output is `連番`: vector, every frame. This is not that. A GIF is a
+   photograph of the panel — 256 colours, no layers, nothing to recolour. It
+   exists so the turn can be shown to someone who does not have Figma open.
+
+   gif.js cannot be bundled in a plugin, so the LZW is here: one global palette
+   (median cut) shared by every frame, full frames, disposal 1. */
+const GIF_MAX = 480          // longest side. past this it is only slower
+const GIF_DELAY = 11         // ×10ms — the transport's 110ms
+
+function ByteBuf(){ this.d = new Uint8Array(1<<18); this.n = 0 }
+ByteBuf.prototype.b = function(v){
+  if(this.n === this.d.length){ const t = new Uint8Array(this.d.length*2); t.set(this.d); this.d = t }
+  this.d[this.n++] = v
+}
+ByteBuf.prototype.w     = function(v){ this.b(v & 255); this.b((v>>8) & 255) }
+ByteBuf.prototype.ascii = function(s){ for(let i=0;i<s.length;i++) this.b(s.charCodeAt(i)) }
+
+/* Split the widest box along its widest channel. Widest, not biggest — the
+   ground is most of the pixels and needs one entry; the accent is a handful of
+   pixels and is the reason anyone looks at the picture. */
+function palette(samples){
+  const spread = b=>{
+    const lo = [255,255,255], hi = [0,0,0]
+    for(const p of b) for(let c=0;c<3;c++){ if(p[c]<lo[c]) lo[c]=p[c]; if(p[c]>hi[c]) hi[c]=p[c] }
+    let ch = 0, r = -1
+    for(let c=0;c<3;c++){ const d = hi[c]-lo[c]; if(d>r){ r=d; ch=c } }
+    return {ch, r}
+  }
+  let boxes = [samples]
+  while(boxes.length < 256){
+    let bi = -1, best = 0, bch = 0
+    for(let i=0;i<boxes.length;i++){
+      if(boxes[i].length < 2) continue
+      const s = spread(boxes[i])
+      if(s.r > best){ best = s.r; bi = i; bch = s.ch }
+    }
+    if(bi < 0) break                       // every box is one colour: done
+    const b = boxes[bi]
+    b.sort((p,q)=>p[bch]-q[bch])
+    const m = b.length >> 1
+    boxes.splice(bi, 1, b.slice(0,m), b.slice(m))
+  }
+  const pal = boxes.map(b=>{
+    let r=0, g=0, bl=0
+    for(const p of b){ r+=p[0]; g+=p[1]; bl+=p[2] }
+    return [Math.round(r/b.length), Math.round(g/b.length), Math.round(bl/b.length)]
+  })
+  while(pal.length < 256) pal.push([0,0,0])
+  return pal
+}
+
+/* Nearest entry, weighted the way the eye weights it, cached on the top 5 bits
+   of each channel. Without the cache this is 256 distances per pixel. */
+function mapper(pal){
+  const lut = new Int16Array(32768).fill(-1)
+  return (r,g,b)=>{
+    const k = ((r>>3)<<10) | ((g>>3)<<5) | (b>>3)
+    const hit = lut[k]
+    if(hit >= 0) return hit
+    let bd = 1e9, bi = 0
+    for(let i=0;i<256;i++){
+      const p = pal[i], dr = r-p[0], dg = g-p[1], db = b-p[2]
+      const d = dr*dr*3 + dg*dg*6 + db*db
+      if(d < bd){ bd = d; bi = i }
+    }
+    lut[k] = bi
+    return bi
+  }
+}
+
+/* Variable-width LZW, 8-bit minimum. The table is cleared at 4096 rather than
+   frozen — a decoder that follows the spec expects the clear code. */
+function lzw(px, out){
+  const CLEAR = 256, EOI = 257
+  let next = 258, size = 9, cur = 0, shift = 0
+  const bytes = []
+  const emit = c=>{
+    cur |= c << shift; shift += size
+    while(shift >= 8){ bytes.push(cur & 255); cur >>= 8; shift -= 8 }
+  }
+  let table = new Map()
+  emit(CLEAR)
+  let ib = px[0]
+  for(let i=1;i<px.length;i++){
+    const k = px[i], key = (ib<<8) | k
+    const c = table.get(key)
+    if(c !== undefined){ ib = c; continue }
+    emit(ib)
+    if(next === 4096){ emit(CLEAR); table = new Map(); next = 258; size = 9 }
+    else { if(next >= (1<<size)) size++; table.set(key, next++) }
+    ib = k
+  }
+  emit(ib); emit(EOI)
+  if(shift > 0) bytes.push(cur & 255)
+
+  out.b(8)                                        // minimum code size
+  for(let i=0;i<bytes.length;i+=255){             // sub-blocks, 255 bytes each
+    const n = Math.min(255, bytes.length - i)
+    out.b(n)
+    for(let j=0;j<n;j++) out.b(bytes[i+j])
+  }
+  out.b(0)
+}
+
+function writeGif(frames, pal, w, h){
+  const o = new ByteBuf()
+  o.ascii('GIF89a')
+  o.w(w); o.w(h)
+  o.b(0xF7); o.b(0); o.b(0)                       // global table, 256 entries
+  for(const p of pal){ o.b(p[0]); o.b(p[1]); o.b(p[2]) }
+  o.b(0x21); o.b(0xFF); o.b(11); o.ascii('NETSCAPE2.0')
+  o.b(3); o.b(1); o.w(0); o.b(0)                  // loop forever
+  for(const f of frames){
+    o.b(0x21); o.b(0xF9); o.b(4); o.b(0x04); o.w(GIF_DELAY); o.b(0); o.b(0)
+    o.b(0x2C); o.w(0); o.w(0); o.w(w); o.w(h); o.b(0)
+    lzw(f, o)
+  }
+  o.b(0x3B)
+  return o.d.subarray(0, o.n)
+}
+
+/* The panel's own SVG, serialised and handed to the image decoder. No fonts, no
+   external refs — the picture is closed over itself, which is why this works at
+   all inside a plugin iframe. */
+function raster(ctx, w, h){
+  const c = document.getElementById('art').cloneNode(true)
+  c.setAttribute('xmlns', NS)
+  c.setAttribute('width', w); c.setAttribute('height', h)
+  c.removeAttribute('style')                      // the panel's px size is not the GIF's
+  const src = 'data:image/svg+xml;charset=utf-8,' +
+    encodeURIComponent(new XMLSerializer().serializeToString(c))
+  return new Promise((res, rej)=>{
+    const img = new Image()
+    img.onload  = ()=>{ ctx.clearRect(0,0,w,h); ctx.drawImage(img,0,0,w,h); res(ctx.getImageData(0,0,w,h).data) }
+    img.onerror = ()=> rej(new Error('the panel would not rasterise'))
+    img.src = src
+  })
+}
+
+const breathe = ()=> new Promise(r=>setTimeout(r,0))   // let the status line land
+
+const gifBtn = document.getElementById('gif')
+gifBtn.onclick = async ()=>{
+  if(gifBtn.disabled) return
+  if(playing) stopPlay()
+  live = false; liveBtn.classList.remove('on')
+  gifBtn.disabled = true
+  const ja = lang === 'ja'
+  const prevUntil = P.until
+  const n  = Math.min(64, 16 * P.bars)
+  const k  = Math.min(1, GIF_MAX / Math.max(W, H))
+  const ow = Math.max(1, Math.round(W*k)), oh = Math.max(1, Math.round(H*k))
+  const cv = document.createElement('canvas'); cv.width = ow; cv.height = oh
+  const ctx = cv.getContext('2d', {willReadFrequently:true})
+  try{
+    const rgb = []
+    for(let f=0; f<n; f++){
+      say(ja ? `GIF — ${f+1}/${n} コマを焼いています…` : `GIF — rendering ${f+1}/${n}…`, 'busy')
+      await breathe()
+      P.until = f                                 // the same clip the transport uses
+      withSolo(draw)
+      rgb.push(await raster(ctx, ow, oh))
+    }
+    say(ja ? 'GIF — 色をまとめています…' : 'GIF — building the palette…', 'busy')
+    await breathe()
+    const stride = Math.max(1, Math.floor(n*ow*oh / 24000))
+    const samples = []
+    let seen = 0
+    for(const px of rgb) for(let i=0;i<px.length;i+=4){
+      if((seen++ % stride) === 0) samples.push([px[i], px[i+1], px[i+2]])
+    }
+    const pal = palette(samples), near = mapper(pal)
+    const idx = []
+    for(let f=0; f<rgb.length; f++){
+      say(ja ? `GIF — ${f+1}/${n} コマを詰めています…` : `GIF — packing ${f+1}/${n}…`, 'busy')
+      await breathe()
+      const px = rgb[f], a = new Uint8Array(ow*oh)
+      for(let i=0, j=0; j<a.length; i+=4, j++) a[j] = near(px[i], px[i+1], px[i+2])
+      idx.push(a)
+    }
+    const bytes = writeGif(idx, pal, ow, oh)
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(new Blob([bytes], {type:'image/gif'}))
+    a.download = `siren-${P.seed}-${ow}x${oh}.gif`
+    a.click()
+    setTimeout(()=>URL.revokeObjectURL(a.href), 4000)
+    const kb = Math.round(bytes.length/1024)
+    say(ja ? `GIF を保存しました — ${n} コマ / ${ow}×${oh} / ${kb} KB（ラスター・確認用）`
+           : `GIF saved — ${n} frames / ${ow}×${oh} / ${kb} KB (raster, for looking)`, 'ok')
+  }catch(err){
+    say('ERR: ' + (err && err.message || err), 'err')
+  }finally{
+    P.until = prevUntil                           // the panel goes back to where it was
+    gifBtn.disabled = false
+    render()
+  }
+}
+
 document.getElementById('make').onclick = ()=>{
   live = false; liveBtn.classList.remove('on')
   if(playing) stopPlay()          // never commit a half-played turn
