@@ -164,7 +164,7 @@ const CH_CMY = [{ r: 0, g: 0.72, b: 0.78 }, { r: 0.9, g: 0, b: 0.43 }, { r: 1, g
 function field(R, P, V, W, H, S) {
   const G = P.grid, cell = S / G
   const GX = Math.ceil(W / cell), GY = Math.ceil(H / cell)
-  const sink = new Float32Array(GX * GY), grit = new Float32Array(GX * GY)
+  const sink = new Float32Array(GX * GY), grit = new Float32Array(GX * GY), hp = new Float32Array(GX * GY)
   const jit = (a) => (R() * 2 - 1) * a * P.hum
   const hits = [], cracks = []
   let hold = 0
@@ -212,6 +212,23 @@ function field(R, P, V, W, H, S) {
         grit[gy * GX + gx] += Math.exp(-d2 / (reach * reach))
       }
     }
+    /* ⭐ Rim = ハイパス。面が消えて縁が残る。
+       Every other voice adds to the field. This one filters it. Low frequency is
+       flatness, and there are two kinds of flat: the plain nobody has touched,
+       and the floor of the crater. A high-pass cannot tell them apart, so it
+       takes both, and leaves the wall standing between them.
+       Like the hat, this map only says WHERE. How much survives is decided per
+       cell, from the slope, when the cells are painted. */
+    if (V.rim && V.rim.on.indexOf(s) >= 0 && V.rim.amt > 0) {
+      const r = S * 0.5 * V.rim.ring * (1 + jit(0.05))
+      const hx = W / 2 + Math.cos(ang) * r, hy = H / 2 + Math.sin(ang) * r
+      const reach = V.rim.reach * (1 + jit(0.20)) * (S / DEF)
+      for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
+        const cx = (gx + 0.5) * cell, cy = (gy + 0.5) * cell
+        const d2 = (cx - hx) * (cx - hx) + (cy - hy) * (cy - hy)
+        hp[gy * GX + gx] += Math.exp(-d2 / (reach * reach))
+      }
+    }
     /* A held note has no attack point and no edge, so it draws nothing here. How
        long it is held is all the field needs to know. */
     if (V.bass.on.indexOf(s) >= 0) hold++
@@ -247,7 +264,7 @@ function field(R, P, V, W, H, S) {
 
   let smax = 0; for (const v of sink) if (v > smax) smax = v; if (smax < 1e-6) smax = 1
   let gmax = 0; for (const v of grit) if (v > gmax) gmax = v; if (gmax < 1e-6) gmax = 1
-  return { cell, GX, GY, sink, grit, smax, gmax, hits, shards, hold }
+  return { cell, GX, GY, sink, grit, hp, smax, gmax, hits, shards, hold }
 }
 
 /* the crater floor, sampled anywhere — not just at cell centres, because the
@@ -509,6 +526,8 @@ function make(P, reuse, preview) {
   const debris = num(K.debris, 0)
   const sinkAmt = num(K.sink, 0.7)
   const decay = num(K.decay, 0)     // declared up here: the cell loop reads it too
+  const Rm = V.rim || { amt: 0, weight: 1.6 }   // a file saved before the rim existed
+  const rimCut = num(Rm.amt, 0), rimW = num(Rm.weight, 1.6)
 
   /* ⭐ Only a cell that MOVED has to be a node.
      A fine grid costs thousands of rectangles, and almost all of them are asleep:
@@ -576,7 +595,12 @@ function make(P, reuse, preview) {
   for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
     const px = (gx + 0.5) * cell, py = (gy + 0.5) * cell
 
-    if (canFold) {
+    /* how hard the high-pass is biting here. 0 everywhere the rim never sounded */
+    const cut = Math.min(1, F.hp[gy * GX + gx]) * rimCut
+
+    // A folded run is one flat panel — which is exactly what the rim deletes.
+    // Cells under it have to be asked, one at a time, whether they survive.
+    if (canFold && cut < 0.02) {
       const kC = kAtF(F, px, py, curve)
       // nothing reached this cell. It is still the surface it always was.
       if (kC < 0.012) { asleep[gy * GX + gx] = 1; continue }
@@ -607,6 +631,20 @@ function make(P, reuse, preview) {
     let cx = px - dx / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
     let cy = py - dy / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
     cx += wowAt(P, py, H)
+
+    /* ⭐ The high-pass, cell by cell. `pass` is the high-frequency energy here:
+       a steep wall has it, a flat has none. The plain and the crater floor both
+       read as zero, and the cutoff takes both. What is left standing between
+       them is the rim.
+       As the face thins it does not simply fade — it opens. The fill goes and
+       the outline stays, and that is the sentence: 面が消えて縁が残る。
+       ⚠️ This decision comes AFTER every R() above it, and both files skip at
+       exactly this line. A cell that leaves early takes the sequence's random
+       numbers with it. */
+    const pass = Math.min(1, slope * 5.5)
+    const solid = 1 - cut * (1 - pass)
+    if (solid < 0.18) continue          // neither the face nor the edge survives
+    const hollow = solid < 0.8
 
 
     const t = cx / W * 0.6 + cy / H * 0.4
@@ -639,10 +677,19 @@ function make(P, reuse, preview) {
       const rot = (R() * 2 - 1) * 6 * P.hum * Math.min(1, k * 3) * Math.PI / 180
       centreAt(node, cx, cy, dsz, dsz, rot)
     }
-    node.fills = [{ type: 'SOLID', color: col }]
+    if (hollow) {
+      // the face is gone; the outline is not. A stroke is not a decoration here,
+      // it is what a cell looks like when only its high frequencies are left.
+      node.fills = []
+      node.strokes = [{ type: 'SOLID', color: col }]
+      node.strokeWeight = rimW
+      node.strokeAlign = 'CENTER'
+    } else {
+      node.fills = [{ type: 'SOLID', color: col }]
+    }
     const op = loose ? Math.max(0.15, (1 - k * 0.28) * (0.35 + R() * 0.5)) : (1 - k * 0.28)
     if (k > 0.02 || loose) node.opacity = Math.max(0, Math.min(1, op))
-    node.name = loose ? 'debris' : 'cell'
+    node.name = hollow ? 'rim' : loose ? 'debris' : 'cell'
     frame.appendChild(node)
     cells.push(node)
   }
