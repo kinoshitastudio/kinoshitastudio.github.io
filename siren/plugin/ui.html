@@ -329,7 +329,18 @@ let inst = 'kick'
 /* Open on the kick alone. A beat is built one voice at a time; that is what
    this instrument is for, and the panel should start where the work starts. */
 const soloSet = new Set(['kick']), muteSet = new Set()
-const audible = v => (soloSet.size ? soloSet.has(v) : true) && !muteSet.has(v)
+/* ⭐ Solo works WITHIN a kind. Soloing the kick silences the other instruments and
+   leaves the sends alone; soloing the reverb silences the other sends and leaves
+   the instruments playing. An effect with nothing to act on is not a quiet
+   effect, it is silence — which is the whole reason Siren exists at all.
+
+   So "the reverb's graphic" is the mix with only the reverb on it. The send never
+   makes a picture by itself, and it never has to. */
+function audible(v){
+  const kin = SENDS.includes(v) ? SENDS : VOICES
+  const soloed = kin.some(x => soloSet.has(x))
+  return (soloed ? soloSet.has(v) : true) && !muteSet.has(v)
+}
 
 /* ⭐ Choosing an instrument selects what you EDIT. Solo selects what you HEAR.
    Without it the panel always shows the mix, so switching to the hat shows you
@@ -348,19 +359,17 @@ function silenced(v){
 function withSolo(fn){
   if(!soloSet.size && !muteSet.size) return fn()
   const bak = JSON.parse(JSON.stringify(V))
-  for(const v of VOICES) if(!audible(v)) Object.assign(V[v], silenced(v))
-  try { return fn() } finally { for(const v of VOICES) Object.assign(V[v], bak[v]) }
+  for(const v of ALL) if(!audible(v)) Object.assign(V[v], silenced(v))
+  try { return fn() } finally { for(const v of ALL) Object.assign(V[v], bak[v]) }
 }
 function paintSolo(){
   for(const el of document.querySelectorAll('.trk')) el.classList.toggle('dim', !audible(el.dataset.v))
   for(const el of document.querySelectorAll('.st')) el.classList.toggle('dim', !audible(el.dataset.v))
   for(const el of document.querySelectorAll('.ch')){
     const v = el.dataset.v
-    if(VOICES.includes(v)){
-      el.classList.toggle('dim', !audible(v))
-      el.querySelector('.sbtn').classList.toggle('on', soloSet.has(v))
-      el.querySelector('.mbtn').classList.toggle('on', muteSet.has(v))
-    }
+    el.classList.toggle('dim', !audible(v))
+    el.querySelector('.sbtn').classList.toggle('on', soloSet.has(v))
+    el.querySelector('.mbtn').classList.toggle('on', muteSet.has(v))
     el.classList.toggle('sel', v===inst)
   }
 }
@@ -516,26 +525,23 @@ function buildMix(){
     if(v==='reverb'){ const g=document.createElement('div'); g.className='gap'; mixEl.append(g) }
     const d = document.createElement('div')
     d.className='ch'; d.dataset.v = v
-    const send = SENDS.includes(v)
     d.innerHTML =
       (MODES[v] ? '<div class="modes">'+MODES[v].map(m=>'<button data-m="'+m+'">'+MODEL[m]+'</button>').join('')+'</div>' : '') +
       '<input class="fader" type="range" orient="vertical" min="0" max="1" step="0.002">' +
-      (send ? '' : '<div class="sm"><button class="sbtn">S</button><button class="mbtn">M</button></div>') +
+      '<div class="sm"><button class="sbtn">S</button><button class="mbtn">M</button></div>' +
       '<span class="nm">'+cap(v)+'</span>'
     const f = d.querySelector('.fader')
     f.value = depthOf[v]
     f.oninput = ()=> setDepthOf(v, +f.value)
     f.onchange = onRelease
     d.querySelector('.nm').onclick = ()=>{ inst=v; applyInst() }
-    if(!send){
-      d.querySelector('.sbtn').onclick = ()=>{
-        soloSet.has(v) ? soloSet.delete(v) : soloSet.add(v)
-        paintSolo(); render(); onRelease()
-      }
-      d.querySelector('.mbtn').onclick = ()=>{
-        muteSet.has(v) ? muteSet.delete(v) : muteSet.add(v)
-        paintSolo(); render(); onRelease()
-      }
+    d.querySelector('.sbtn').onclick = ()=>{
+      soloSet.has(v) ? soloSet.delete(v) : soloSet.add(v)
+      paintSolo(); render(); onRelease()
+    }
+    d.querySelector('.mbtn').onclick = ()=>{
+      muteSet.has(v) ? muteSet.delete(v) : muteSet.add(v)
+      paintSolo(); render(); onRelease()
     }
     if(MODES[v]) for(const b of d.querySelectorAll('.modes button')) b.onclick = ()=>{
       V[v].mode = b.dataset.m
@@ -1685,7 +1691,7 @@ function payload(){
   // what the plugin builds must be what the panel showed
   const v = withSolo(()=> JSON.parse(JSON.stringify(V)))
   // soloed layers stack on the same artwork; they have to say which voice they are
-  const on = VOICES.filter(audible)
+  const on = ALL.filter(audible)
   const named = (soloSet.size || muteSet.size) ? on.join('+') : null
   return Object.assign({}, P, { srcFills: P.useFill ? srcFills : null, v, soloOf: named })
 }
