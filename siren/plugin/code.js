@@ -7,7 +7,7 @@
  * Here the same parts get placed by the rhythm instead of by hand.
  *
  * Four instruments, four operators on ONE surface — not four pictures:
- *   kick  hits it and then decays (rings ripple out, thrown dust settles)
+ *   kick  hits it and then decays (what it tore loose comes down as dust)
  *   snare tears it (the cells part; the ground shows in the split)
  *   hat   breaks it up (the grid subdivides wherever it lands)
  *   bass  swells it (a sustained arc, not a point)
@@ -142,13 +142,10 @@ const LX = -0.62, LY = -0.62, LZ = 0.48
    Shared, verbatim, with draw() in ui.html. `sink` is what the kick digs; `sub`
    is how finely the hat has broken the surface; `lift` is the band the bass
    holds up. */
-const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
-
 function field(R, P, V, W, H, S) {
   const G = P.grid, cell = S / G
   const GX = Math.ceil(W / cell), GY = Math.ceil(H / cell)
   const sink = new Float32Array(GX * GY), sub = new Float32Array(GX * GY), lift = new Float32Array(GX * GY)
-  const ripple = new Float32Array(GX * GY)
   const jit = (a) => (R() * 2 - 1) * a * P.hum
   const hits = [], tears = []
   const K = V.kick
@@ -161,26 +158,10 @@ function field(R, P, V, W, H, S) {
       const hx = W / 2 + Math.cos(ang) * r, hy = H / 2 + Math.sin(ang) * r
       const reach = K.reach * (1 + jit(0.18)) * (S / DEF)
       hits.push({ x: hx, y: hy, r: reach })
-      const ring = K.rings > 0 && K.decay > 0
       for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
         const cx = (gx + 0.5) * cell, cy = (gy + 0.5) * cell
         const d2 = (cx - hx) * (cx - hx) + (cy - hy) * (cy - hy)
         sink[gy * GX + gx] += Math.exp(-d2 / (reach * reach))
-        /* The blow does not stop at the rim. Outside it the surface swings back:
-           up a little, then down a little, dying out. That is decay — the same
-           damped oscillation a drum head makes after it is struck.
-
-           ⚠ This never touches `sink`. The hole is not allowed to fill back in.
-           (That is exactly what the reverted min-size clamp did, and why the
-           crater became a flat black disc.) It only breathes on size + value. */
-        if (ring) {
-          const dd = Math.sqrt(d2) / reach
-          const g = smooth(0.85, 1.35, dd)      // silent inside the crater
-          if (g > 0) {
-            const q = dd - 1
-            ripple[gy * GX + gx] += g * Math.exp(-(q * q) / 0.25) * Math.sin(q * Math.PI * K.rings)
-          }
-        }
       }
     }
     /* A crack drawn as a line is an illustration of a crack. Here the cells
@@ -229,7 +210,7 @@ function field(R, P, V, W, H, S) {
   let smax = 0; for (const v of sink) if (v > smax) smax = v; if (smax < 1e-6) smax = 1
   let umax = 0; for (const v of sub)  if (v > umax) umax = v; if (umax < 1e-6) umax = 1
   let lmax = 0; for (const v of lift) if (v > lmax) lmax = v; if (lmax < 1e-6) lmax = 1
-  return { cell, GX, GY, sink, sub, lift, ripple, smax, umax, lmax, hits, tears }
+  return { cell, GX, GY, sink, sub, lift, smax, umax, lmax, hits, tears }
 }
 
 /* the crater floor, sampled anywhere — not just at cell centres, because the
@@ -252,8 +233,7 @@ function biAtF(arr, F, x, y) {
   const b = g(x0, y0 + 1) + (g(x0 + 1, y0 + 1) - g(x0, y0 + 1)) * tx
   return a + (b - a) * ty
 }
-const liftAtF   = (F, x, y) => biAtF(F.lift, F, x, y) / F.lmax
-const rippleAtF = (F, x, y) => biAtF(F.ripple, F, x, y)
+const liftAtF = (F, x, y) => biAtF(F.lift, F, x, y) / F.lmax
 /* how far this cell has been pulled apart, and which way it goes */
 function tearAt(F, x, y) {
   let ox = 0, oy = 0, near = 0
@@ -380,6 +360,14 @@ function make(P, reuse, preview) {
   const sinkAmt = num(K.sink, 0.7)
   const decay = num(K.decay, 0)     // declared up here: the cell loop reads it too
 
+  /* ⭐ Only a cell that MOVED has to be a node.
+     A fine grid costs thousands of rectangles, and almost all of them are asleep:
+     closed, flat, the same colour as the one beside them. Those are not panels,
+     they are one panel. Fold each run of sleeping cells into a single rectangle
+     and spend the budget where something actually happened. */
+  const asleep = new Uint8Array(GX * GY)
+  const canFold = P.shape === 'sq' && num(P.fill, 1) > 0.9 && num(P.sample, 0) < 0.02
+
   for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
     /* how many pieces this cell has been broken into. The threshold is dithered
        so the boundary between 1× and 2× does not read as a hard ring — the same
@@ -390,6 +378,15 @@ function make(P, reuse, preview) {
     const step = cell / nsub
     const sbase = step * num(P.fill, 1)
 
+    if (canFold) {
+      const mx = (gx + 0.5) * cell, my = (gy + 0.5) * cell
+      const kC = kAtF(F, mx, my, curve)
+      const lC = liftAtF(F, mx, my) * num(Bs.amt, 0)
+      const tC = Sn.amt > 0 ? tearAt(F, mx, my).near : 0
+      // nothing reached this cell. It is still the surface it always was.
+      if (kC < 0.012 && lC < 0.02 && tC <= 0) { asleep[gy * GX + gx] = 1; continue }
+    }
+
     for (let sy = 0; sy < nsub; sy++) for (let sx = 0; sx < nsub; sx++) {
       const px = (gx + (sx + 0.5) / nsub) * cell, py = (gy + (sy + 0.5) / nsub) * cell
       // The rim of a dent is still surface. Bending the falloff keeps the holes
@@ -397,18 +394,7 @@ function make(P, reuse, preview) {
       const k = kAtF(F, px, py, curve)
       const dx = (kAtF(F, px + cell, py, curve) - kAtF(F, px - cell, py, curve)) * 0.5
       const dy = (kAtF(F, px, py + cell, curve) - kAtF(F, px, py - cell, curve)) * 0.5
-      /* The ripple is not drawn and it does not resize anything — shrinking a
-         cell opens a gap to the ground, and a ring of gaps reads as a grid, not
-         as a wave. It goes into the NORMAL instead. A slope is a slope: the
-         light finds the far side of a swell exactly as it finds the far wall of
-         a crater. The surface stays closed and it still undulates. */
-      let ndx = dx, ndy = dy
-      if (decay > 0 && K.rings > 0) {
-        const rw = decay * 0.32
-        ndx += (rippleAtF(F, px + cell, py) - rippleAtF(F, px - cell, py)) * 0.5 * rw
-        ndy += (rippleAtF(F, px, py + cell) - rippleAtF(F, px, py - cell)) * 0.5 * rw
-      }
-      const shade = (ndx * LX + ndy * LY + LZ) / Math.sqrt(ndx * ndx + ndy * ndy + 1) - LZ
+      const shade = (dx * LX + dy * LY + LZ) / Math.sqrt(dx * dx + dy * dy + 1) - LZ
 
       /* Material has to go somewhere. Where the wall is steep the surface is
          being displaced: cells are shoved outward, down the slope, and the ones
@@ -450,6 +436,14 @@ function make(P, reuse, preview) {
       if (lit > 0) col = mixC(col, mixC(grey(1), accent, 0.6), Math.min(1, lit * K.glow))
       if (tr.near > 0) col = mixC(col, ground, tr.near * Sn.amt * 0.85)  // the split shows the ground
 
+      /* A closed surface must not have its own grid drawn across it. Cells that
+         sit exactly edge to edge leave a hairline seam where they meet — and a
+         field of hairlines reads as BIT, which is Kaibou's job, not Siren's.
+         So a cell that is still surface overlaps its neighbour a little. The
+         further it has fallen, the less it reaches: a hole must stay open. */
+      const seam = (P.shape === 'sq' && !loose && P.fill > 0.9)
+        ? step * 0.09 * Math.min(1, (P.fill - 0.9) / 0.1) * (1 - Math.min(1, k * 1.5)) : 0
+      const dsz = size + seam
       let node
       if (loose || P.shape === 'ci') {
         node = figma.createEllipse()
@@ -457,9 +451,9 @@ function make(P, reuse, preview) {
         node.x = cx - size / 2; node.y = cy - size / 2
       } else {
         node = figma.createRectangle()
-        node.resize(size, size)
+        node.resize(dsz, dsz)
         const rot = (R() * 2 - 1) * 6 * P.hum * Math.min(1, k * 3) * Math.PI / 180
-        centreAt(node, cx, cy, size, size, rot)
+        centreAt(node, cx, cy, dsz, dsz, rot)
       }
       node.fills = [{ type: 'SOLID', color: col }]
       const op = loose ? Math.max(0.15, (1 - k * 0.28) * (0.35 + R() * 0.5)) : (1 - k * 0.28)
@@ -469,7 +463,33 @@ function make(P, reuse, preview) {
       cells.push(node)
     }
   }
-  if (cells.length) figma.group(cells, frame).name = 'field'
+  /* one rectangle per horizontal run of sleeping cells */
+  const rest = []
+  if (canFold) {
+    const over = cell * 0.14
+    for (let gy = 0; gy < GY; gy++) {
+      let x0 = -1
+      for (let gx = 0; gx <= GX; gx++) {
+        const on = gx < GX && asleep[gy * GX + gx]
+        if (on && x0 < 0) x0 = gx
+        else if (!on && x0 >= 0) {
+          const r = figma.createRectangle()
+          r.resize((gx - x0) * cell + over * 2, cell + over * 2)
+          r.x = x0 * cell - over; r.y = gy * cell - over
+          r.fills = [{ type: 'SOLID', color: grey(inkBase) }]
+          r.name = 'surface'
+          frame.appendChild(r); rest.push(r)
+          x0 = -1
+        }
+      }
+    }
+  }
+  // the untouched surface sits under everything the sequence did to it,
+  // but still above the wash
+  for (const c of cells) frame.appendChild(c)
+  const all = rest.concat(cells)
+  const fieldGroup = all.length ? figma.group(all, frame) : null
+  if (fieldGroup) fieldGroup.name = 'field'
 
   /* --- light ---------------------------------------------------------------
      SCREEN can only add. MULTIPLY can only subtract. So on a dark ground the
@@ -533,23 +553,30 @@ function make(P, reuse, preview) {
          puts a smudge on top of it.
          What survives is what a real surface would still show: one hard pin of
          reflection thrown clear of the crater, and colour bleeding into the hollow. */
-      const throwOut = 0.3 + spread * 0.55            // a harder blow throws further
+      const throwOut = 0.08 + spread * 0.10   // it still flies outward, but the panel is over it
       parts.push(lamp(h, { name:'spec',   c:white,  a:0.90, size:0.20, off:throwOut, burst:1, blur:0.06, mode:'SCREEN',     op:0.75*g }))
       parts.push(lamp(h, { name:'colour', c:accent, a:0.30, size:0.60, off:throwOut, burst:1, blur:0.20, mode:'SOFT_LIGHT', op:0.7*g }))
     }
     const kept = parts.filter(Boolean)
     if (kept.length) figma.group(kept, frame).name = 'light'
   }
+  /* The lamps go UNDER the panel. Light on a white surface is a white smudge —
+     SCREEN can only add, and a closed panel has nothing to add to. So the light
+     lives beneath, the way the dark does, and shows only where the surface broke
+     and let it through. The panel hides its own glow until it is holed. */
+  if (fieldGroup) frame.appendChild(fieldGroup)
 
   /* --- dust ----------------------------------------------------------------
-     The rings of the decay are NOT here. They live in the height field, in
-     `ripple` — because a ring drawn on top of the panel is a white ring drawn on
-     a white surface, and it disappears. The surface has to ripple; you cannot
-     paint the ripple on. (SCREEN only ever adds, so it only ever shows on a dark
-     ground. Same physics as Fons's black canvas.)
+     There are no shock rings here, and no ripple in the height field either.
+     Both were tried. A ring painted over the panel is white light on a white
+     surface and it vanishes; a ripple shaded into the cells turns the field into
+     a staircase, because every cell is a shape and a thousand shapes look like a
+     thousand shapes. Smooth shading is not something a vector synth can say. It
+     is what Kaibou is for — blur is reverb, and reverb belongs after the
+     instrument, not inside it.
 
-     What IS here is debris that has settled. It is the panel's own colour, so it
-     can only be seen where the panel is gone — inside the crater, where the
+     So the decay is this: debris that has settled. It is the panel's own colour,
+     so it can only be seen where the panel is gone — inside the crater, where the
      ground shows through. That is where it fell. ---------------------------- */
   if (decay > 0 && F.hits.length) {
     const bits = []
