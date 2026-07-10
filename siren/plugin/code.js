@@ -913,6 +913,85 @@ function make(P, reuse, preview) {
   return frame
 }
 
+/* ---------- sends, applied to the artwork itself --------------------------
+   ⭐ Siren does not have to make a surface. A send acts on whatever is already
+   there — a path, a shape, a whole group. Nothing is baked, nothing is replaced:
+   the original node is never touched.
+
+   reverb: copies BEHIND the source, offset further, blurred more, fainter.
+   tape:   two tinted copies ABOVE it, offset apart, in the blend mode the ground
+           can actually carry. The original still reads; the colour leaks at the
+           edges. That is what misregistration looks like when you have not thrown
+           the artwork away to get it. ------------------------------------- */
+function applySend(P, which) {
+  const sel = figma.currentPage.selection
+  const t = sel.length === 1 && 'clone' in sel[0] && !sel[0].getPluginData(KEY) ? sel[0] : null
+  if (!t) throw new Error(sel.length ? '素材を1つだけ選んで' : '素材を選んで')
+  const parent = t.parent
+  if (!parent || !('insertChild' in parent)) throw new Error('この親には追加できない')
+
+  const bb = t.absoluteBoundingBox
+  const S = bb ? Math.min(bb.width, bb.height) : DEF
+  const px = S / DEF
+  const bx = t.x, by = t.y
+  const at = parent.children.indexOf(t)
+  const V = P.v
+  const light = num(P.bgL, 0) > 0.5     // the ground the artwork sits on
+  const made = []
+
+  if (which === 'reverb') {
+    const RV = V.reverb
+    if (!(num(RV.amt, 0) > 0)) throw new Error('Reverb が 0 です')
+    const N = Math.max(1, Math.round(num(RV.taps, 5)))
+    for (let i = 1; i <= N; i++) {
+      const f = i / N
+      const echo = RV.mode === 'echo'
+      const blur = echo ? 0 : Math.max(0.3, f * num(RV.spread, 26) * 0.55 * px)
+      const step = num(RV.spread, 26) * px
+      const dx = echo ? i * step * 0.8 : (RV.mode === 'ma' ? Math.pow(f, 0.8) * step * N * 0.45 : f * step * 1.1)
+      const dy = echo ? i * step * 0.35 : (RV.mode === 'ma' ? 0 : f * step * 0.45)
+      const op = (echo ? Math.pow(0.62, i) : Math.pow(0.55, i) * 1.6) * RV.amt
+      if (op < 0.004) continue
+      const c = t.clone()
+      parent.insertChild(at, c)          // behind the source it came from
+      c.x = bx + dx; c.y = by + dy       // clone() was born on the page: absolute
+      if (blur > 0.3) c.effects = [{ type: 'LAYER_BLUR', radius: blur, visible: true }]
+      c.opacity = Math.max(0, Math.min(1, op))
+      c.name = echo ? 'echo' : 'tail'
+      made.push(c)
+    }
+  } else {
+    const TP = V.tape
+    if (!(num(TP.amt, 0) > 0)) throw new Error('Tape が 0 です')
+    const ink = TP.mode === 'cmy' || (TP.mode === 'auto' && light)
+    /* Two channels, not three: the artwork itself is the third. Keep it, and the
+       colour only leaks where the copies do not line up. */
+    const tint = ink ? [{ r: 0, g: 0.72, b: 0.78 }, { r: 0.9, g: 0, b: 0.43 }]
+                     : [{ r: 1, g: 0, b: 0 }, { r: 0, g: 0.78, b: 1 }]
+    const off = num(TP.off, 6) * px * TP.amt
+    const dirs = [[-off, -off * 0.35], [off, off * 0.35]]
+    for (let i = 0; i < 2; i++) {
+      const c = t.clone()
+      parent.insertChild(at + 1, c)      // above the source, as an overlay
+      c.x = bx + dirs[i][0]; c.y = by + dirs[i][1]
+      for (const nd of ('findAll' in c ? c.findAll((x) => 'fills' in x) : [])) {
+        nd.fills = [{ type: 'SOLID', color: tint[i] }]
+      }
+      if ('fills' in c) c.fills = [{ type: 'SOLID', color: tint[i] }]
+      c.blendMode = ink ? 'MULTIPLY' : 'SCREEN'
+      c.opacity = Math.max(0, Math.min(1, TP.amt * 0.6))
+      c.name = (ink ? 'plate ' : 'channel ') + i
+      made.push(c)
+    }
+  }
+  if (!made.length) throw new Error('何も作られませんでした')
+  const g = figma.group(made, parent)
+  g.name = 'Siren ' + which
+  g.expanded = false
+  figma.currentPage.selection = [t]      // the artwork is still yours
+  return made.length
+}
+
 /* ---------- messages ---------- */
 figma.ui.onmessage = (msg) => {
   if (msg.type === 'make' || msg.type === 'live') {
@@ -941,6 +1020,14 @@ figma.ui.onmessage = (msg) => {
     const n = discard()
     figma.ui.postMessage({ type: 'discarded', gone: n })
     figma.notify(n ? `プレビューを ${n} 個消しました` : '消すプレビューはありません')
+  }
+  if (msg.type === 'send') {
+    try {
+      const n = applySend(msg.p, msg.which)
+      figma.ui.postMessage({ type: 'sent', nodes: n, which: msg.which })
+    } catch (err) {
+      figma.ui.postMessage({ type: 'error', message: String((err && err.message) || err) })
+    }
   }
   if (msg.type === 'target') tellTarget()
   if (msg.type === 'close') figma.closePlugin()
