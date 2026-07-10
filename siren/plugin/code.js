@@ -10,7 +10,7 @@
  *   kick  hits it and then decays (what it tore loose comes down as dust)
  *   snare breaks it (Voronoi plates move apart; a crack is the space between)
  *   hat   roughens it (粒子。粒状の荒れ — blue-noise grain, smaller than its own spacing)
- *   bass  swells it (a sustained arc, not a point)
+ *   bass  weighs it (面積・重心・暗さ — nested planes, MULTIPLY, settled low)
  *
  * ⚠ make() and draw() in ui.html must consume the RNG in exactly the same
  * order, or the same seed draws two different pictures. Every `continue`, every
@@ -153,9 +153,10 @@ const LX = -0.62, LY = -0.62, LZ = 0.48
 function field(R, P, V, W, H, S) {
   const G = P.grid, cell = S / G
   const GX = Math.ceil(W / cell), GY = Math.ceil(H / cell)
-  const sink = new Float32Array(GX * GY), grit = new Float32Array(GX * GY), lift = new Float32Array(GX * GY)
+  const sink = new Float32Array(GX * GY), grit = new Float32Array(GX * GY)
   const jit = (a) => (R() * 2 - 1) * a * P.hum
-  const hits = [], cracks = [], arcs = []
+  const hits = [], cracks = []
+  let hold = 0
   const K = V.kick
 
   for (let bar = 0; bar < P.bars; bar++) for (let s = 0; s < 16; s++) {
@@ -196,25 +197,9 @@ function field(R, P, V, W, H, S) {
         grit[gy * GX + gx] += Math.exp(-d2 / (reach * reach))
       }
     }
-    /* A sustained note is not a point. It is held, so it is an arc — and a band
-       of the surface stays lifted for as long as it rings. */
-    if (V.bass.on.indexOf(s) >= 0) {
-      const span = V.bass.arc * Math.PI / 2
-      const ringR = S * 0.5 * V.bass.ring
-      const band = Math.max(cell, V.bass.width * S * 0.22)
-      arcs.push({ ang, span, ringR, band })
-      for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
-        const cx = (gx + 0.5) * cell, cy = (gy + 0.5) * cell
-        const dr = Math.sqrt((cx - W / 2) * (cx - W / 2) + (cy - H / 2) * (cy - H / 2)) - ringR
-        const rad = Math.exp(-(dr * dr) / (band * band))
-        if (rad < 0.02) continue
-        let da = Math.atan2(cy - H / 2, cx - W / 2) - ang
-        da = ((da % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)
-        if (da > span) continue
-        const e = Math.min(1, Math.min(da, span - da) / (span * 0.35 + 1e-6))   // fade at both ends
-        lift[gy * GX + gx] += rad * (e * e * (3 - 2 * e))
-      }
-    }
+    /* A held note has no attack point and no edge, so it draws nothing here. How
+       long it is held is all the field needs to know. */
+    if (V.bass.on.indexOf(s) >= 0) hold++
   }
 
   /* ⭐ Voronoi plates. Each seed owns the cells nearest to it, and the whole plate
@@ -247,8 +232,7 @@ function field(R, P, V, W, H, S) {
 
   let smax = 0; for (const v of sink) if (v > smax) smax = v; if (smax < 1e-6) smax = 1
   let gmax = 0; for (const v of grit) if (v > gmax) gmax = v; if (gmax < 1e-6) gmax = 1
-  let lmax = 0; for (const v of lift) if (v > lmax) lmax = v; if (lmax < 1e-6) lmax = 1
-  return { cell, GX, GY, sink, grit, lift, smax, gmax, lmax, hits, shards, arcs }
+  return { cell, GX, GY, sink, grit, smax, gmax, hits, shards, hold }
 }
 
 /* the crater floor, sampled anywhere — not just at cell centres, because the
@@ -271,7 +255,6 @@ function biAtF(arr, F, x, y) {
   const b = g(x0, y0 + 1) + (g(x0 + 1, y0 + 1) - g(x0, y0 + 1)) * tx
   return a + (b - a) * ty
 }
-const liftAtF = (F, x, y) => biAtF(F.lift, F, x, y) / F.lmax
 /* ---- blue noise: Bridson's Poisson-disc -----------------------------------
    ⭐ Every point is at least r from every other, otherwise random. That kills the
    clumping of white noise AND the regularity of a grid at once. Because there are
@@ -740,44 +723,35 @@ function make(P, reuse, preview) {
      and let it through. The panel hides its own glow until it is holed. */
   if (fieldGroup) frame.appendChild(fieldGroup)
 
-  /* --- bass: a held note is a surface, not a point --------------------------
-     A drum is a cell. A sustained note is not — it has no edge and no instant,
-     so it cannot be a square. It is a band of the field, held for as long as it
-     rings, and the only honest way to draw that is the way Fons draws
-     everything: a blurred gradient shape. SOFT_LIGHT, so it lifts the white
-     panel without burning it out and lifts the ground without becoming a lamp.
+  /* --- bass: 面積・重心・暗さ ------------------------------------------------
+     A drum is an event. A held note is not — no attack point, no edge, so it
+     cannot be a shape that happens. It is mass: nested planes, each a flat tone,
+     offset downward so the visual weight settles low. Area is the mass, the low
+     placement is the centre of gravity, the tone is the darkness. Nothing
+     happens, and that is what being held looks like.
 
-     Different instrument, different part. That is what a mixer is. ---------- */
-  if (num(Bs.amt, 0) > 0 && F.arcs.length) {
+     MULTIPLY darkens the panel and does nothing to the ground, which is already
+     dark — the same arithmetic that keeps the lamps off a pale surface. On a pale
+     ground the panels ARE the dark thing, so it lightens instead. ---------- */
+  if (num(Bs.amt, 0) > 0 && F.hold) {
+    const held = Math.min(1, F.hold / 6)      // how long it is held = its area
+    const N = Math.max(2, Math.round(num(Bs.layers, 5)))
+    const w0 = Math.min(W, H) * num(Bs.size, 0.9) * (0.55 + 0.45 * held)
     const bs = []
-    for (const a of F.arcs) {
-      const beads = 7
-      for (let i = 0; i <= beads; i++) {
-        const t = i / beads
-        const e = Math.min(1, Math.min(t, 1 - t) / 0.34)     // the note swells and dies
-        const op = num(Bs.amt, 0) * 0.45 * (e * e * (3 - 2 * e))
-        if (op < 0.012) continue
-        const th = a.ang + a.span * t
-        const cx = W / 2 + Math.cos(th) * a.ringR, cy = H / 2 + Math.sin(th) * a.ringR
-        const d = a.band * 1.7
-        const e2 = figma.createEllipse()
-        e2.resize(d, d)
-        e2.x = cx - d / 2; e2.y = cy - d / 2
-        e2.fills = [{
-          type: 'GRADIENT_RADIAL',
-          gradientTransform: [[0.5, 0, 0.25], [0, 0.5, 0.25]],
-          gradientStops: [
-            { position: 0,   color: { r: 1, g: 1, b: 1, a: 0.92 } },
-            { position: 0.5, color: { r: 1, g: 1, b: 1, a: 0.35 } },
-            { position: 1,   color: { r: 1, g: 1, b: 1, a: 0 } },
-          ],
-        }]
-        e2.effects = [{ type: 'LAYER_BLUR', radius: Math.max(0.4, a.band * 0.6), visible: true }]
-        e2.blendMode = 'SOFT_LIGHT'
-        e2.opacity = Math.max(0, Math.min(1, op))
-        e2.name = 'band'
-        frame.appendChild(e2); bs.push(e2)
-      }
+    for (let i = 0; i < N; i++) {
+      const t = i / (N - 1)
+      const w = w0 * (1 - t * 0.72)
+      const y = H / 2 - w / 2 + (w0 - w) * 0.5 * num(Bs.drop, 0.5)
+      const v = 1 - t * 0.86
+      const c = light ? grey(1 - v * Bs.amt * 0.9) : grey(v)
+      const r = figma.createRectangle()
+      r.resize(w, w)
+      r.x = W / 2 - w / 2; r.y = y
+      r.fills = [{ type: 'SOLID', color: c }]
+      r.blendMode = light ? 'SCREEN' : 'MULTIPLY'
+      r.opacity = Math.max(0, Math.min(1, Bs.amt * (0.30 + 0.70 * held)))
+      r.name = 'plane'
+      frame.appendChild(r); bs.push(r)
     }
     if (bs.length) figma.group(bs, frame).name = 'bass'
   }
