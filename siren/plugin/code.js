@@ -266,8 +266,13 @@ function make(P, reuse, preview) {
   const sel = figma.currentPage.selection
   const target = sel.length === 1 && 'width' in sel[0] && !sel[0].getPluginData(KEY) ? sel[0] : null
   if (target) lastTarget = target.id
-  const W = target ? Math.round(target.width)  : DEF
-  const H = target ? Math.round(target.height) : DEF
+  /* ⚠️ node.x/y is the node's ORIGIN, not the top-left of what you see. For a
+     vector or a rotated node those are different points, and the frame lands
+     somewhere else entirely. The bounding box is the only thing that means
+     "where this looks like it is". Same for width/height. */
+  const tbb = target && target.absoluteBoundingBox
+  const W = tbb ? Math.round(tbb.width)  : DEF
+  const H = tbb ? Math.round(tbb.height) : DEF
   const S = Math.min(W, H)   // the ring lives on the short edge
 
   // Reuse the frame we made last time, so LIVE does not scatter frames around.
@@ -281,18 +286,33 @@ function make(P, reuse, preview) {
   if (target) {
     /* Sit directly above the target, inside its parent — a layer that always
        floats on top of the document is not a layer, it is a sticker.
-       Park the frame on the page first so indexOf() is not thrown off by it. */
+       Park the frame on the page first so indexOf() is not thrown off by it.
+       But some parents will not take a child: a component instance, a locked
+       tree. Never let that throw — fall back to the page and place by absolute
+       coordinates instead. It has to work on ANY node, or it works on none. */
     figma.currentPage.appendChild(frame)
     const parent = target.parent
-    parent.insertChild(parent.children.indexOf(target) + 1, frame)
+    let nested = false
+    try {
+      if (parent && parent.type !== 'INSTANCE' && 'insertChild' in parent) {
+        parent.insertChild(parent.children.indexOf(target) + 1, frame)
+        nested = true
+      }
+    } catch (e) { nested = false }
     // an auto layout would otherwise pack the frame into the flow
-    if ('layoutMode' in parent && parent.layoutMode !== 'NONE') {
+    const host = frame.parent
+    if (host && 'layoutMode' in host && host.layoutMode !== 'NONE') {
       frame.layoutPositioning = 'ABSOLUTE'
     }
     frame.resize(W, H)
-    // siblings share a coordinate space, so the target's own x/y is the answer
-    frame.x = target.x
-    frame.y = target.y
+    /* Put the frame's bounding box exactly on the target's bounding box. Doing
+       this in absolute space and then correcting means it is right whatever the
+       parent is doing — rotated, nested, auto laid out. */
+    const fbb = frame.absoluteBoundingBox
+    if (fbb && tbb) {
+      frame.x += tbb.x - fbb.x
+      frame.y += tbb.y - fbb.y
+    }
   } else {
     const fresh = frame.parent !== figma.currentPage
     if (fresh) figma.currentPage.appendChild(frame)
@@ -305,6 +325,33 @@ function make(P, reuse, preview) {
   }
   frame.setPluginData(KEY, JSON.stringify(P))
   frame.setPluginData(TMP, preview ? '1' : '')
+
+  /* ⭐ A frame is a rectangle. The thing you selected is usually not.
+     Clone the target and make it a mask: everything after it in the frame gets
+     cut to that shape — a triangle, an ellipse, a letterform. The clone lands on
+     the page, not in the frame, so put it where it belongs BEFORE moving it, or
+     the parent's origin shifts it. (Kaibou learned this one the hard way.)
+     The ground has to be cut too, so the frame stops painting itself and the
+     ground becomes a child. */
+  let mask = null
+  if (target && P.clip !== false && 'clone' in target) {
+    mask = target.clone()
+    frame.insertChild(0, mask)
+    const fb = frame.absoluteBoundingBox, mb = mask.absoluteBoundingBox
+    if (fb && mb) { mask.x += fb.x - mb.x; mask.y += fb.y - mb.y }
+    else { mask.x = 0; mask.y = 0 }
+    if ('effects' in mask) mask.effects = []
+    if ('strokes' in mask) mask.strokes = []
+    // a stroke-only path clones into an EMPTY mask, and an empty mask erases
+    // everything behind it. Give it something to be.
+    if ('fills' in mask && (mask.fills === figma.mixed || !mask.fills.length)) {
+      mask.fills = [{ type: 'SOLID', color: grey(1) }]
+    }
+    mask.opacity = 1
+    mask.visible = true
+    mask.isMask = true
+    mask.name = '⟨shape⟩'
+  }
   /* Averaging a gradient down to one colour throws away the thing that made it
      worth taking. If the artwork's paint is wanted, wear the paint. */
   const worn = P.useFill && P.srcFills && P.srcFills.length ? P.srcFills : null
@@ -325,9 +372,16 @@ function make(P, reuse, preview) {
     ? hsl(num(P.inkH, 0), num(P.inkS, 0), num(P.inkL, 0.92))
     : grey(light ? 0.06 : 0.92)
 
-  frame.fills = (P.flip || !worn)
+  /* the ground is a child now, so the mask can cut it as well */
+  frame.fills = []
+  const bg = figma.createRectangle()
+  bg.name = 'ground'
+  bg.resize(W, H)
+  bg.x = 0; bg.y = 0
+  bg.fills = (P.flip || !worn)
     ? [{ type: 'SOLID', color: ground }]
     : JSON.parse(JSON.stringify(worn))
+  frame.appendChild(bg)
 
   const cA = hueRGB(P.h1), cB = hueRGB(P.h2), accent = hueRGB(P.hue)
 
