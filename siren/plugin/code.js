@@ -1108,30 +1108,38 @@ figma.ui.onmessage = (msg) => {
      Each frame is the same picture stopped one step earlier: `until` tells the
      field to stop reading the sequence there. */
   if (msg.type === 'frames') {
-    try {
-      const P0 = msg.p
-      const N = Math.min(32, 16 * Math.max(1, Math.round(P0.bars || 1)))
-      discard()
-      const sel0 = figma.currentPage.selection
-      const tgt = sel0.length === 1 && 'width' in sel0[0] && !sel0[0].getPluginData(KEY) ? sel0[0] : null
-      const made = []
-      for (let i = 0; i < N; i++) {
-        // put the target back: make() reads the selection to find its canvas
-        if (tgt) figma.currentPage.selection = [tgt]
-        made.push(make(Object.assign({}, P0, { until: i, keepSel: true }), false, false))
+    /* ⚠️ Thirty-two pictures, built one after another with nothing in between,
+       hold Figma's only thread for as long as it takes — and a frozen window is
+       indistinguishable from a crashed one. Yield after each frame: the same
+       work, but the app keeps breathing and the panel can count out loud. */
+    ;(async () => {
+      try {
+        const P0 = msg.p
+        const N = Math.min(32, 16 * Math.max(1, Math.round(P0.bars || 1)))
+        discard()
+        const sel0 = figma.currentPage.selection
+        const tgt = sel0.length === 1 && 'width' in sel0[0] && !sel0[0].getPluginData(KEY) ? sel0[0] : null
+        const made = []
+        for (let i = 0; i < N; i++) {
+          // put the target back: make() reads the selection to find its canvas
+          if (tgt) figma.currentPage.selection = [tgt]
+          made.push(make(Object.assign({}, P0, { until: i, keepSel: true }), false, false))
+          figma.ui.postMessage({ type: 'framing', i: i + 1, n: N })
+          await new Promise((r) => setTimeout(r, 0))
+        }
+        // lay the strip out left to right, in the order the beat plays it
+        const w = made[0].width, gap = Math.max(16, Math.round(w * 0.06))
+        const x0 = made[0].x, y0 = made[0].y
+        made.forEach((f, i) => { f.x = x0 + i * (w + gap); f.y = y0 })
+        const g = figma.group(made, made[0].parent)
+        g.name = 'Siren — ' + N + ' frames'
+        figma.currentPage.selection = [g]
+        figma.ui.postMessage({ type: 'framed', frames: N, nodes: made.reduce((a, f) => a + f.children.length, 0) })
+      } catch (err) {
+        console.error('[siren]', err)
+        figma.ui.postMessage({ type: 'error', message: String((err && err.message) || err).slice(0, 120) })
       }
-      // lay the strip out left to right, in the order the beat plays it
-      const w = made[0].width, gap = Math.max(16, Math.round(w * 0.06))
-      const x0 = made[0].x, y0 = made[0].y
-      made.forEach((f, i) => { f.x = x0 + i * (w + gap); f.y = y0 })
-      const g = figma.group(made, made[0].parent)
-      g.name = 'Siren — ' + N + ' frames'
-      figma.currentPage.selection = [g]
-      figma.ui.postMessage({ type: 'framed', frames: N, nodes: made.reduce((a, f) => a + f.children.length, 0) })
-    } catch (err) {
-      console.error('[siren]', err)
-      figma.ui.postMessage({ type: 'error', message: String((err && err.message) || err).slice(0, 120) })
-    }
+    })()
   }
   if (msg.type === 'send') {
     try {
