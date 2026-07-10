@@ -147,7 +147,7 @@ function field(R, P, V, W, H, S) {
   const GX = Math.ceil(W / cell), GY = Math.ceil(H / cell)
   const sink = new Float32Array(GX * GY), sub = new Float32Array(GX * GY), lift = new Float32Array(GX * GY)
   const jit = (a) => (R() * 2 - 1) * a * P.hum
-  const hits = [], tears = []
+  const hits = [], tears = [], arcs = []
   const K = V.kick
 
   for (let bar = 0; bar < P.bars; bar++) for (let s = 0; s < 16; s++) {
@@ -193,6 +193,7 @@ function field(R, P, V, W, H, S) {
       const span = V.bass.arc * Math.PI / 2
       const ringR = S * 0.5 * V.bass.ring
       const band = Math.max(cell, V.bass.width * S * 0.22)
+      arcs.push({ ang, span, ringR, band })
       for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
         const cx = (gx + 0.5) * cell, cy = (gy + 0.5) * cell
         const dr = Math.sqrt((cx - W / 2) * (cx - W / 2) + (cy - H / 2) * (cy - H / 2)) - ringR
@@ -210,7 +211,7 @@ function field(R, P, V, W, H, S) {
   let smax = 0; for (const v of sink) if (v > smax) smax = v; if (smax < 1e-6) smax = 1
   let umax = 0; for (const v of sub)  if (v > umax) umax = v; if (umax < 1e-6) umax = 1
   let lmax = 0; for (const v of lift) if (v > lmax) lmax = v; if (lmax < 1e-6) lmax = 1
-  return { cell, GX, GY, sink, sub, lift, smax, umax, lmax, hits, tears }
+  return { cell, GX, GY, sink, sub, lift, smax, umax, lmax, hits, tears, arcs }
 }
 
 /* the crater floor, sampled anywhere — not just at cell centres, because the
@@ -372,16 +373,18 @@ function make(P, reuse, preview) {
     /* how many pieces this cell has been broken into. The threshold is dithered
        so the boundary between 1× and 2× does not read as a hard ring — the same
        trick as Kaibou's Crush. */
-    const want = 1 + Math.min(1, sub[gy * GX + gx] / umax) * num(HT.amt, 0) * (num(HT.depth, 2) - 1)
+    const sdN = Math.min(1, sub[gy * GX + gx] / umax)
+    const grainN = sdN * num(HT.amt, 0)             // how far this cell is broken
+    const want = 1 + sdN * num(HT.amt, 0) * (num(HT.depth, 2) - 1)
     const fl = Math.floor(want)
     const nsub = Math.max(1, Math.min(num(HT.depth, 2), fl + (R() < want - fl ? 1 : 0)))
     const step = cell / nsub
     const sbase = step * num(P.fill, 1)
 
-    if (canFold) {
+    if (canFold && grainN < 0.02) {
       const mx = (gx + 0.5) * cell, my = (gy + 0.5) * cell
       const kC = kAtF(F, mx, my, curve)
-      const lC = liftAtF(F, mx, my) * num(Bs.amt, 0)
+      const lC = 0
       const tC = Sn.amt > 0 ? tearAt(F, mx, my).near : 0
       // nothing reached this cell. It is still the surface it always was.
       if (kC < 0.012 && lC < 0.02 && tC <= 0) { asleep[gy * GX + gx] = 1; continue }
@@ -402,8 +405,11 @@ function make(P, reuse, preview) {
          a dent is only a hole; with it, the blow has consequences. */
       const slope = Math.sqrt(dx * dx + dy * dy)
       const swell = 1 + spread * slope * 3.2 * (1 - k)
-      const rise = 1 + liftAtF(F, px, py) * num(Bs.amt, 0) * 0.6     // the bass holds it up
-      let size = sbase * (1 - k * sinkAmt) * swell * rise
+      // grain: the pieces do not fill the space the whole panel used to, and
+      // no two of them are the same. A regular 2x2 split is a tile, not a shard.
+      const grain = 1 - grainN * 0.32
+      let size = sbase * (1 - k * sinkAmt) * swell * grain
+      if (grainN > 0.02) size *= 0.55 + R() * 0.75
       if (!(size > 0.6)) continue
 
       let push = spread * slope * cell * 5.5
@@ -416,6 +422,10 @@ function make(P, reuse, preview) {
       const j = step * 0.16 * Math.min(1, k * 3)
       let cx = px - dx / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
       let cy = py - dy / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
+      if (grainN > 0.02) {                    // shards scatter; tiles do not
+        const gj = step * 0.34 * grainN
+        cx += (R() * 2 - 1) * gj; cy += (R() * 2 - 1) * gj
+      }
 
       const tr = tearAt(F, px, py)
       if (tr.near > 0) {
@@ -452,7 +462,7 @@ function make(P, reuse, preview) {
       } else {
         node = figma.createRectangle()
         node.resize(dsz, dsz)
-        const rot = (R() * 2 - 1) * 6 * P.hum * Math.min(1, k * 3) * Math.PI / 180
+        const rot = (R() * 2 - 1) * (6 * P.hum * Math.min(1, k * 3) + 22 * grainN) * Math.PI / 180
         centreAt(node, cx, cy, dsz, dsz, rot)
       }
       node.fills = [{ type: 'SOLID', color: col }]
@@ -565,6 +575,48 @@ function make(P, reuse, preview) {
      lives beneath, the way the dark does, and shows only where the surface broke
      and let it through. The panel hides its own glow until it is holed. */
   if (fieldGroup) frame.appendChild(fieldGroup)
+
+  /* --- bass: a held note is a surface, not a point --------------------------
+     A drum is a cell. A sustained note is not — it has no edge and no instant,
+     so it cannot be a square. It is a band of the field, held for as long as it
+     rings, and the only honest way to draw that is the way Fons draws
+     everything: a blurred gradient shape. SOFT_LIGHT, so it lifts the white
+     panel without burning it out and lifts the ground without becoming a lamp.
+
+     Different instrument, different part. That is what a mixer is. ---------- */
+  if (num(Bs.amt, 0) > 0 && F.arcs.length) {
+    const bs = []
+    for (const a of F.arcs) {
+      const beads = 7
+      for (let i = 0; i <= beads; i++) {
+        const t = i / beads
+        const e = Math.min(1, Math.min(t, 1 - t) / 0.34)     // the note swells and dies
+        const op = num(Bs.amt, 0) * 0.45 * (e * e * (3 - 2 * e))
+        if (op < 0.012) continue
+        const th = a.ang + a.span * t
+        const cx = W / 2 + Math.cos(th) * a.ringR, cy = H / 2 + Math.sin(th) * a.ringR
+        const d = a.band * 1.7
+        const e2 = figma.createEllipse()
+        e2.resize(d, d)
+        e2.x = cx - d / 2; e2.y = cy - d / 2
+        e2.fills = [{
+          type: 'GRADIENT_RADIAL',
+          gradientTransform: [[0.5, 0, 0.25], [0, 0.5, 0.25]],
+          gradientStops: [
+            { position: 0,   color: { r: 1, g: 1, b: 1, a: 0.92 } },
+            { position: 0.5, color: { r: 1, g: 1, b: 1, a: 0.35 } },
+            { position: 1,   color: { r: 1, g: 1, b: 1, a: 0 } },
+          ],
+        }]
+        e2.effects = [{ type: 'LAYER_BLUR', radius: Math.max(0.4, a.band * 0.6), visible: true }]
+        e2.blendMode = 'SOFT_LIGHT'
+        e2.opacity = Math.max(0, Math.min(1, op))
+        e2.name = 'band'
+        frame.appendChild(e2); bs.push(e2)
+      }
+    }
+    if (bs.length) figma.group(bs, frame).name = 'bass'
+  }
 
   /* --- dust ----------------------------------------------------------------
      There are no shock rings here, and no ripple in the height field either.
