@@ -430,7 +430,7 @@ function make(P, reuse, preview) {
       col = mixC(col, ground, Math.min(1, k * K.dark * 1.25))
       // the wall facing the light is lit; the wall turned away falls into shadow
       if (shade > 0) col = mixC(col, grey(1), Math.min(1, shade * 2.2 * relief))
-      else if (shade < 0) col = mixC(col, ground, Math.min(1, -shade * 2.2 * relief))
+      else if (shade < 0) col = mixC(col, ground, Math.min(1, -shade * 1.5 * relief))
       // only the very floor of the impact catches light, and it takes the accent
       const lit = (k - 0.82) / 0.18
       if (lit > 0) col = mixC(col, mixC(grey(1), accent, 0.6), Math.min(1, lit * K.glow))
