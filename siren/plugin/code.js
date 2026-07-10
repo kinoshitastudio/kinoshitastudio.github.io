@@ -223,7 +223,7 @@ function field(R, P, V, W, H, S) {
      between two pieces that used to touch. */
   const shards = []
   if (V.snare.amt > 0 && cracks.length) {
-    const n = Math.round(16 + V.snare.pieces * 56)
+    const n = Math.round(20 + V.snare.pieces * 100)
     const reach = V.snare.reach * (S / DEF)
     for (let i = 0; i < n; i++) {
       const sx = R() * W, sy = R() * H
@@ -271,6 +271,32 @@ function biAtF(arr, F, x, y) {
   return a + (b - a) * ty
 }
 const liftAtF = (F, x, y) => biAtF(F.lift, F, x, y) / F.lmax
+/* ---- Voronoi by half-plane clipping. No library, no Delaunay. -------------
+   A cell is the box, clipped once against the bisector with every other seed. */
+function clipHalf(poly, a, b) {
+  const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2, nx = b[0] - a[0], ny = b[1] - a[1]
+  const f = (p) => (p[0] - mx) * nx + (p[1] - my) * ny
+  const out = []
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i], q = poly[(i + 1) % poly.length]
+    const dp = f(p), dq = f(q)
+    if (dp <= 0) out.push(p)
+    if ((dp <= 0) !== (dq <= 0)) { const t = dp / (dp - dq); out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]) }
+  }
+  return out
+}
+function voronoiCells(seeds, W, H) {
+  const box = [[0, 0], [W, 0], [W, H], [0, H]]
+  return seeds.map((s, i) => {
+    let poly = box
+    for (let j = 0; j < seeds.length; j++) { if (i !== j) { poly = clipHalf(poly, s, seeds[j]); if (!poly.length) break } }
+    return poly
+  })
+}
+const centroid = (p) => { let x = 0, y = 0; for (const q of p) { x += q[0]; y += q[1] } return [x / p.length, y / p.length] }
+const shrinkPoly = (p, c, f) => p.map((q) => [c[0] + (q[0] - c[0]) * f, c[1] + (q[1] - c[1]) * f])
+const pathD = (p) => 'M' + p.map((q) => q[0].toFixed(2) + ',' + q[1].toFixed(2)).join('L') + 'Z'
+
 /* which plate this point belongs to. Nearest seed wins — that is Voronoi. */
 function shardAt(F, x, y) {
   let best = null, bd = 1e18
@@ -451,20 +477,69 @@ function make(P, reuse, preview) {
      they are one panel. Fold each run of sleeping cells into a single rectangle
      and spend the budget where something actually happened. */
   const asleep = new Uint8Array(GX * GY)
-  const canFold = P.shape === 'sq' && num(P.fill, 1) > 0.9 && num(P.sample, 0) < 0.02
+  /* ⭐ Broken or whole. When the snare sounds the field is no longer a grid — it
+     IS the plates. The kick's hole does not sit on top of them: it is the plates
+     near the impact going dark and shrinking away until the ground shows. One
+     event, not two layers. */
+  const broken = num(Sn.amt, 0) > 0 && F.shards.length > 0
+  const canFold = !broken && P.shape === 'sq' && num(P.fill, 1) > 0.9 && num(P.sample, 0) < 0.02
 
+  if (broken) {
+    const polys = voronoiCells(F.shards.map((sh) => [sh.x, sh.y]), W, H)
+    polys.forEach((poly, i) => {
+      if (poly.length < 3) return
+      const sh = F.shards[i]
+      const c = centroid(poly)
+      const k = kAtF(F, c[0], c[1], curve)
+      const dx = (kAtF(F, c[0] + cell, c[1], curve) - kAtF(F, c[0] - cell, c[1], curve)) * 0.5
+      const dy = (kAtF(F, c[0], c[1] + cell, curve) - kAtF(F, c[0], c[1] - cell, curve)) * 0.5
+      const shade = (dx * LX + dy * LY + LZ) / Math.sqrt(dx * dx + dy * dy + 1) - LZ
+      // a surface breaks where the stress is, and the stress is on the crater wall
+      const slope = Math.sqrt(dx * dx + dy * dy)
+      const sF = Sn.amt * sh.f * (0.28 + 0.72 * Math.min(1, slope * 6))
+
+      let col = mixC(ink, mixC(cA, cB, c[0] / W * 0.6 + c[1] / H * 0.4), P.sample * (1 - k * 0.55))
+      col = mixC(col, ground, Math.min(1, k * K.dark * 1.25))
+      if (shade > 0) col = mixC(col, grey(1), Math.min(1, shade * 2.2 * relief))
+      else if (shade < 0) col = mixC(col, ground, Math.min(1, -shade * 1.5 * relief))
+      const lit = (k - 0.82) / 0.18
+      if (lit > 0) col = mixC(col, mixC(grey(1), accent, 0.6), Math.min(1, lit * K.glow))
+
+      /* the plate shrinks — that is the crack, and it is also the hole: a plate at
+         the bottom of the kick shrinks to nothing and the ground is what is left.
+         An unbroken plate overlaps its neighbour, or the shared edge draws itself. */
+      const grow = 1 + 0.022 * (1 - Math.min(1, sF * 6))
+      const f = (1 - sF * 0.10) * (1 - k * sinkAmt * 0.62) * grow
+      if (!(f > 0.02)) return
+      let p = shrinkPoly(poly, c, f)
+      const push = sF * cell * 0.9, rot = sh.rot * sF
+      const cs = Math.cos(rot), sn = Math.sin(rot)
+      p = p.map((q) => {
+        const rx = q[0] - c[0], ry = q[1] - c[1]
+        return [c[0] + rx * cs - ry * sn + sh.vx * push, c[1] + rx * sn + ry * cs + sh.vy * push]
+      })
+      const v = figma.createVector()
+      v.vectorPaths = [{ windingRule: 'NONZERO', data: pathD(p) }]
+      v.fills = [{ type: 'SOLID', color: col }]
+      v.strokes = []
+      if (k > 0.02) v.opacity = Math.max(0, Math.min(1, 1 - k * 0.28))
+      v.name = 'plate'
+      frame.appendChild(v)
+      cells.push(v)
+    })
+  } else
   for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
     const gN = Math.min(1, grit[gy * GX + gx] / gmax) * num(HT.amt, 0)   // how grainy it is here
     const px = (gx + 0.5) * cell, py = (gy + 0.5) * cell
 
     /* which plate owns this cell, and how hard that plate was hit */
     const sh = (Sn.amt > 0 && F.shards.length) ? shardAt(F, px, py) : null
-    const sF = sh ? Sn.amt * sh.f : 0
+    const sF0 = sh ? Sn.amt * sh.f : 0
 
     if (canFold && gN < 0.02) {
       const kC = kAtF(F, px, py, curve)
       // nothing reached this cell. It is still the surface it always was.
-      if (kC < 0.012 && sF < 0.02) { asleep[gy * GX + gx] = 1; continue }
+      if (kC < 0.012 && sF0 < 0.02) { asleep[gy * GX + gx] = 1; continue }
     }
 
     // The rim of a dent is still surface. Bending the falloff keeps the holes
@@ -479,6 +554,11 @@ function make(P, reuse, preview) {
        outside the pit swell with what used to be inside it. */
     const slope = Math.sqrt(dx * dx + dy * dy)
     const swell = 1 + spread * slope * 3.2 * (1 - k)
+    /* ⭐ A surface breaks where the stress is, and the stress is on the wall of
+       the dent. Without this the snare is a net of cracks laid over the kick's
+       picture — two layers, not one event. The crater's rim tears first; the
+       flat field barely gives. */
+    const sF = sF0 * (0.28 + 0.72 * Math.min(1, slope * 6))
     let size = base * (1 - k * sinkAmt) * swell
     /* the hat, again: it roughens, it does not build. A grain of value and a
        grain of size — no new shape, no finer grid, no BIT. */

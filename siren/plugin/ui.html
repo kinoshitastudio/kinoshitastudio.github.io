@@ -309,11 +309,11 @@ const PRESETS = {
   /* how far the surface has come apart. One geometry, one knob: at a whisper the
      plates only shrink and the cracks are hairlines; at a blow they fly apart. */
   snare: {
-    Off:      { amt:0,    pieces:0.40, reach:200, ring:0.50 },
-    Hairline: { amt:0.16, pieces:0.28, reach:180, ring:0.50 },
-    Split:    { amt:0.32, pieces:0.42, reach:210, ring:0.50 },
-    Rift:     { amt:0.60, pieces:0.58, reach:250, ring:0.52 },
-    Shatter:  { amt:1,    pieces:0.88, reach:310, ring:0.55 },
+    Off:      { amt:0,    reach:200, ring:0.50 },
+    Hairline: { amt:0.16, reach:180, ring:0.50 },
+    Split:    { amt:0.32, reach:210, ring:0.50 },
+    Rift:     { amt:0.60, reach:250, ring:0.52 },
+    Shatter:  { amt:1,    reach:310, ring:0.55 },
   },
   // 粒子。粒状の荒れ。how rough the surface has gone
   hat: {
@@ -481,7 +481,7 @@ bind('k_sink',K,'sink',pc);      bind('k_reach',K,'reach',v=>v);   bind('k_dark'
 bind('k_curve',K,'curve',v=>v.toFixed(1)+'×'); bind('k_spread',K,'spread',pc); bind('k_debris',K,'debris',pc)
 bind('k_decay',K,'decay',pc)
 bind('k_glow',K,'glow',pc);      bind('k_bloom',K,'bloom',v=>v);   bind('k_relief',K,'relief',pc)
-bind('s_amt',S_,'amt',pc);       bind('s_pieces',S_,'pieces',v=>Math.round(10+v*30))
+bind('s_amt',S_,'amt',pc);       bind('s_pieces',S_,'pieces',v=>Math.round(20+v*100))
 bind('s_reach',S_,'reach',v=>v); bind('s_ring',S_,'ring',pc)
 bind('h_amt',HT,'amt',pc);       bind('h_reach',HT,'reach',v=>v); bind('h_ring',HT,'ring',pc)
 bind('b_amt',B,'amt',pc);        bind('b_arc',B,'arc',pc)
@@ -781,7 +781,11 @@ function draw(){
   }
 
   const F = field(R, W, H, S)
-  const cells = paintCells(R, F, W, H, S, ground, ink, light)
+  /* Broken or whole — the field is one or the other, never a grid with a net of
+     cracks painted over it. */
+  const broken = V.snare.amt>0 && F.shards.length>0
+  const cells = broken ? paintPlates(R, F, W, H, S, ground, ink, light)
+                       : paintCells(R, F, W, H, S, ground, ink, light)
   /* The lamps go UNDER the panel. Light on a white surface is a white smudge —
      SCREEN can only add, and a closed panel has nothing to add to. So the light
      lives beneath, the way the dark does, and it shows only where the surface
@@ -874,7 +878,7 @@ function field(R, W, H, S){
      space between two pieces that used to touch. */
   const shards=[]
   if(V.snare.amt>0 && cracks.length){
-    const n = Math.round(16 + V.snare.pieces*56)
+    const n = Math.round(20 + V.snare.pieces*100)
     const reach = V.snare.reach*(S/DEF)
     for(let i=0;i<n;i++){
       const sx=R()*W, sy=R()*H
@@ -922,6 +926,32 @@ function biAtF(arr,F,x,y){
   return a+(b-a)*ty
 }
 const liftAtF = (F,x,y)=> biAtF(F.lift,F,x,y)/F.lmax
+/* ---- Voronoi by half-plane clipping. No library, no Delaunay. -------------
+   A cell is the box, clipped once against the bisector with every other seed. */
+function clipHalf(poly,a,b){
+  const mx=(a[0]+b[0])/2, my=(a[1]+b[1])/2, nx=b[0]-a[0], ny=b[1]-a[1]
+  const f=p=>(p[0]-mx)*nx+(p[1]-my)*ny
+  const out=[]
+  for(let i=0;i<poly.length;i++){
+    const p=poly[i], q=poly[(i+1)%poly.length]
+    const dp=f(p), dq=f(q)
+    if(dp<=0) out.push(p)
+    if((dp<=0)!==(dq<=0)){ const t=dp/(dp-dq); out.push([p[0]+(q[0]-p[0])*t, p[1]+(q[1]-p[1])*t]) }
+  }
+  return out
+}
+function voronoiCells(seeds,W,H){
+  const box=[[0,0],[W,0],[W,H],[0,H]]
+  return seeds.map((s,i)=>{
+    let poly=box
+    for(let j=0;j<seeds.length;j++){ if(i!==j){ poly=clipHalf(poly,s,seeds[j]); if(!poly.length) break } }
+    return poly
+  })
+}
+const centroid=p=>{ let x=0,y=0; for(const q of p){x+=q[0];y+=q[1]} return [x/p.length,y/p.length] }
+const shrinkPoly=(p,c,f)=>p.map(q=>[c[0]+(q[0]-c[0])*f, c[1]+(q[1]-c[1])*f])
+const pathD=p=>'M'+p.map(q=>q[0].toFixed(2)+','+q[1].toFixed(2)).join('L')+'Z'
+
 /* which plate this point belongs to. Nearest seed wins — that is Voronoi. */
 function shardAt(F,x,y){
   let best=null, bd=1e18
@@ -933,6 +963,62 @@ function shardAt(F,x,y){
 }
 
 const LX=-0.62, LY=-0.62, LZ=0.48
+
+/* ---- the surface, when it has broken --------------------------------------
+   ⭐ When the snare sounds, the field is no longer a grid. It IS the plates.
+   The kick's hole does not sit on top of them — it is the plates near the impact
+   going dark and shrinking away until the ground shows through. One event, not
+   two layers. That is why the cells go away instead of being decorated. */
+function paintPlates(R, F, W, H, S, ground, ink, light){
+  const {cell} = F
+  const K=V.kick, Sn=V.snare
+  const accent = hueArr(P.hue), cA = hueArr(P.h1), cB = hueArr(P.h2)
+  const gF=document.createElementNS(NS,'g')
+  const polys = voronoiCells(F.shards.map(s=>[s.x,s.y]), W, H)
+  let n=0
+
+  polys.forEach((poly,i)=>{
+    if(poly.length<3) return
+    const sh=F.shards[i]
+    const c=centroid(poly)
+    const k=kAtF(F,c[0],c[1],K.curve)
+    const dx=(kAtF(F,c[0]+cell,c[1],K.curve)-kAtF(F,c[0]-cell,c[1],K.curve))*0.5
+    const dy=(kAtF(F,c[0],c[1]+cell,K.curve)-kAtF(F,c[0],c[1]-cell,K.curve))*0.5
+    const shade=(dx*LX+dy*LY+LZ)/Math.sqrt(dx*dx+dy*dy+1)-LZ
+    // a surface breaks where the stress is, and the stress is on the crater wall
+    const slope=Math.sqrt(dx*dx+dy*dy)
+    const sF=Sn.amt*sh.f*(0.28 + 0.72*Math.min(1, slope*6))
+
+    let col=mix(ink, mix(cA,cB,c[0]/W*0.6+c[1]/H*0.4), P.sample*(1-k*0.55))
+    col=mix(col, ground, Math.min(1,k*K.dark*1.25))
+    if(shade>0)      col=mix(col,[255,255,255],Math.min(1, shade*2.2*K.relief))
+    else if(shade<0) col=mix(col, ground,       Math.min(1,-shade*1.5*K.relief))
+    const lit=(k-0.82)/0.18
+    if(lit>0) col=mix(col, mix([255,255,255],accent,0.6), Math.min(1,lit*K.glow))
+
+    /* the plate shrinks — that is the crack, and it is also the hole: a plate at
+       the bottom of the kick shrinks to nothing and the ground is what is left */
+    /* A plate that has not moved must not draw its own outline — neighbouring
+       polygons that share an edge exactly still leave a hairline where they meet.
+       Unbroken plates overlap a little; broken ones open for real. */
+    const grow=1 + 0.022*(1-Math.min(1, sF*6))
+    const f=(1 - sF*0.10)*(1 - k*K.sink*0.62)*grow
+    if(!(f>0.02)) { n++; return }
+    let p=shrinkPoly(poly,c,f)
+    const push=sF*cell*0.9, rot=sh.rot*sF
+    const cs=Math.cos(rot), sn=Math.sin(rot)
+    p=p.map(q=>{
+      const rx=q[0]-c[0], ry=q[1]-c[1]
+      return [c[0]+rx*cs-ry*sn + sh.vx*push, c[1]+rx*sn+ry*cs + sh.vy*push]
+    })
+    const el=document.createElementNS(NS,'path')
+    el.setAttribute('d', pathD(p))
+    el.setAttribute('fill', css(col))
+    if(k>0.02) el.setAttribute('opacity',(1-k*0.28).toFixed(2))
+    gF.append(el); n++
+  })
+  return {n, gF}
+}
 
 function paintCells(R, F, W, H, S, ground, ink, light){
   const {cell,GX,GY,grit,gmax} = F
@@ -956,12 +1042,12 @@ function paintCells(R, F, W, H, S, ground, ink, light){
 
     /* which plate owns this cell, and how hard that plate was hit */
     const sh = (Sn.amt>0 && F.shards.length) ? shardAt(F,px,py) : null
-    const sF = sh ? Sn.amt*sh.f : 0
+    const sF0 = sh ? Sn.amt*sh.f : 0
 
     if(canFold && gN<0.02){
       const kC = kAtF(F,px,py,K.curve)
       // nothing reached this cell. It is still the surface it always was.
-      if(kC<0.012 && sF<0.02){ asleep[gy*GX+gx]=1; continue }
+      if(kC<0.012 && sF0<0.02){ asleep[gy*GX+gx]=1; continue }
     }
 
     const k = kAtF(F,px,py,K.curve)          // the rim stays surface
@@ -971,6 +1057,11 @@ function paintCells(R, F, W, H, S, ground, ink, light){
     // displaced material: shoved down the slope, piled just outside the pit
     const slope=Math.sqrt(dx*dx+dy*dy)
     const swell=1 + K.spread*slope*3.2*(1-k)
+    /* ⭐ A surface breaks where the stress is, and the stress is on the wall of
+       the dent. Without this the snare is a net of cracks laid over the kick's
+       picture — two layers, not one event. The crater's rim tears first; the
+       flat field barely gives. */
+    const sF = sF0*(0.28 + 0.72*Math.min(1, slope*6))
     let size = base*(1-k*K.sink)*swell
     /* the hat, again: it roughens, it does not build. A grain of value and a
        grain of size — no new shape, no finer grid, no BIT. */
