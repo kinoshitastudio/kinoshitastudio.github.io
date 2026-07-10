@@ -123,14 +123,19 @@ details.sec[open]>summary::after{content:' −'}
 
 footer{flex:none;border-top:1px solid var(--line);padding:8px 14px 10px;display:flex;flex-wrap:wrap;gap:7px;align-items:center}
 footer>button{flex:none}
+footer button.icon{font-size:14px;line-height:1;padding:6px 9px}
 footer .sp{flex:1}
 /* ⭐ The status line gets its own row. Six buttons leave it about forty pixels,
    and a sentence squeezed to `37…` is no more readable than the same sentence
    standing on end — which is what it did before, because a flex item will not go
    below its content width unless you say min-width:0. It is the only thing here
    that can be any length, so it is the only thing that gives way. */
-#count{order:-1;flex:1 0 100%;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  padding-bottom:2px}
+#count{order:-1;flex:1 0 100%;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* A count that only says 12/32 leaves you doing the arithmetic. The bar is the
+   same number, read without counting. */
+#prog{order:-1;flex:1 0 100%;height:2px;margin:4px 0 1px;background:var(--line);border-radius:1px;overflow:hidden}
+#prog[hidden]{display:none}
+#prog i{display:block;height:100%;width:0;background:var(--fg);transition:width .1s linear}
 #make{background:var(--fg);color:var(--bg);border-color:var(--fg);font-weight:500;padding:7px 16px}
 #count.heavy{color:var(--hot)}
 #solo.on{background:var(--hot);color:#000;border-color:var(--hot)}
@@ -318,8 +323,9 @@ footer .sp{flex:1}
 <footer>
   <button id="play" title="play">▶</button>
   <button id="live">LIVE</button>
-  <button id="undo">元に戻す</button>
+  <button id="undo" class="icon" title="元に戻す" aria-label="元に戻す">↺</button>
   <span class="mono" id="count" style="color:var(--dim);font-size:10.5px"></span>
+  <div id="prog" hidden><i></i></div>
   <span class="sp"></span>
   <button id="gif" title="ラスター — 確認・共有用">GIF</button>
   <button id="frames">連番</button>
@@ -719,7 +725,9 @@ function applyLang(){
   document.getElementById('lClip').textContent = t().shape
   document.getElementById('clip').textContent = t().clipT
   document.getElementById('inkAuto').textContent = t().auto
-  document.getElementById('undo').textContent = lang==='ja' ? '元に戻す' : 'Discard'
+  /* the glyph says it in either language; the tooltip is what changes */
+  const undoBtn = document.getElementById('undo')
+  undoBtn.title = undoBtn.ariaLabel = lang==='ja' ? '元に戻す' : 'Discard'
   document.getElementById('mClose').textContent = t().close
   document.getElementById('mSub').innerHTML = t().about
   document.getElementById('mBody').innerHTML = t().body
@@ -1913,6 +1921,14 @@ function payload(){
 /* The count is also the status line: pressing a button and seeing nothing change
    for half a second is indistinguishable from pressing a button that did nothing. */
 const cEl = document.getElementById('count')
+/* `prog(f)` — a fraction, or null to put the bar away. Two long jobs use it:
+   the GIF, which is this thread, and 連番, which is the plugin's. */
+const progEl = document.getElementById('prog'), progBar = progEl.firstElementChild
+function prog(f){
+  if(f == null){ progEl.hidden = true; progBar.style.width = '0'; return }
+  progEl.hidden = false
+  progBar.style.width = (Math.max(0, Math.min(1, f))*100).toFixed(1) + '%'
+}
 let sayTimer = 0
 function say(text, kind){
   clearTimeout(sayTimer)
@@ -2113,6 +2129,7 @@ const breathe = ()=> new Promise(r=>setTimeout(r,0))   // let the status line la
 const gifBtn = document.getElementById('gif')
 gifBtn.onclick = async ()=>{
   if(gifBtn.disabled) return
+  prog(0)
   if(playing) stopPlay()
   live = false; liveBtn.classList.remove('on')
   gifBtn.disabled = true
@@ -2127,6 +2144,7 @@ gifBtn.onclick = async ()=>{
     const rgb = []
     for(let f=0; f<n; f++){
       say(ja ? `GIF — ${f+1}/${n} コマを焼いています…` : `GIF — rendering ${f+1}/${n}…`, 'busy')
+      prog((f+1)/(n*2))
       await breathe()
       P.until = f                                 // the same clip the transport uses
       withSolo(draw)
@@ -2144,6 +2162,7 @@ gifBtn.onclick = async ()=>{
     const idx = []
     for(let f=0; f<rgb.length; f++){
       say(ja ? `GIF — ${f+1}/${n} コマを詰めています…` : `GIF — packing ${f+1}/${n}…`, 'busy')
+      prog((n+f+1)/(n*2))
       await breathe()
       const px = rgb[f], a = new Uint8Array(ow*oh)
       for(let i=0, j=0; j<a.length; i+=4, j++) a[j] = near(px[i], px[i+1], px[i+2])
@@ -2161,6 +2180,7 @@ gifBtn.onclick = async ()=>{
   }catch(err){
     say('ERR: ' + (err && err.message || err), 'err')
   }finally{
+    prog(null)
     P.until = prevUntil                           // the panel goes back to where it was
     gifBtn.disabled = false
     render()
@@ -2197,12 +2217,13 @@ onmessage = e=>{
     else say(ja ? `${m.nodes} ノードを「${m.into}」に${m.preview?'プレビュー':'反映'}しました`
                 : `${m.nodes} nodes ${m.preview?'previewed on':'placed on'} “${m.into}”`, 'ok')
   }
-  if(m.type==='framing') say(lang==='ja' ? `連番 — ${m.i}/${m.n} フレーム目…` : `frames — ${m.i}/${m.n}…`, 'busy')
+  if(m.type==='framing'){ prog(m.i/m.n); say(lang==='ja' ? `連番 — ${m.i}/${m.n} フレーム目…` : `frames — ${m.i}/${m.n}…`, 'busy') }
+  if(m.type==='framed'){ prog(null) } 
   if(m.type==='framed') say(lang==='ja' ? `${m.frames} フレームを並べました（${m.nodes} ノード）`
                                         : `${m.frames} frames laid out (${m.nodes} nodes)`, 'ok')
   if(m.type==='sent') say(lang==='ja' ? `${m.which} を素材に掛けました（${m.nodes} ノード）`
                                        : `${m.which} applied to the artwork (${m.nodes} nodes)`, 'ok')
-  if(m.type==='error') say('ERR: ' + m.message, 'err')
+  if(m.type==='error'){ prog(null); say('ERR: ' + m.message, 'err') }
 }
 
 buildMix(); applyLang(); paintSwatch(); paintInk(); paintSolo(); render()
