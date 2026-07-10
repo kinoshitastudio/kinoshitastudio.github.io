@@ -165,7 +165,12 @@ function field(R, P, V, W, H, S) {
   const G = P.grid, cell = S / G
   const GX = Math.ceil(W / cell), GY = Math.ceil(H / cell)
   const sink = new Float32Array(GX * GY), grit = new Float32Array(GX * GY), hp = new Float32Array(GX * GY)
-  const jit = (a) => (R() * 2 - 1) * a * P.hum
+  /* ⭐ Swing is not one number. The kick sits dead on the beat and the hat pushes,
+     and that difference IS the groove. `P.hum` is the master; each voice scales it.
+     ⚠️ `jit` draws exactly one R() whether or not the voice is loose, so the
+     scalar is free: the rng contract does not notice. */
+  const swing = (v) => (V[v] && typeof V[v].hum === 'number') ? V[v].hum : 1
+  const jit = (a, v) => (R() * 2 - 1) * a * P.hum * (v ? swing(v) : 1)
   const hits = [], cracks = []
   let hold = 0
   const K = V.kick
@@ -178,9 +183,13 @@ function field(R, P, V, W, H, S) {
     const ang = (s / 16) * Math.PI * 2 - Math.PI / 2 + jit(0.06)
 
     if (K.on.indexOf(s) >= 0) {
-      const r = S * 0.5 * 0.30 * (1 + jit(0.10))
-      const hx = W / 2 + Math.cos(ang) * r, hy = H / 2 + Math.sin(ang) * r
-      const reach = K.reach * (1 + jit(0.18)) * (S / DEF)
+      /* ⭐ Swing is lateness, and lateness is an angle: the step is a place on the
+         turn. Jittering only the radius moves where the hand lands, never when —
+         so the hat could not push and the kick could not sit back. */
+      const ka = ang + jit(0.05, 'kick')
+      const r = S * 0.5 * 0.30 * (1 + jit(0.10, 'kick'))
+      const hx = W / 2 + Math.cos(ka) * r, hy = H / 2 + Math.sin(ka) * r
+      const reach = K.reach * (1 + jit(0.18, 'kick')) * (S / DEF)
       hits.push({ x: hx, y: hy, r: reach })
       for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
         const cx = (gx + 0.5) * cell, cy = (gy + 0.5) * cell
@@ -192,8 +201,8 @@ function field(R, P, V, W, H, S) {
        itself comes apart: the snare marks where it was struck, and the field
        shatters into plates around those points. */
     if (V.snare.on.indexOf(s) >= 0 && V.snare.amt > 0) {
-      const r = S * 0.5 * V.snare.ring * (1 + jit(0.06))
-      const a = ang + jit(0.05)
+      const r = S * 0.5 * V.snare.ring * (1 + jit(0.06, 'snare'))
+      const a = ang + jit(0.05, 'snare')
       cracks.push({ x: W / 2 + Math.cos(a) * r, y: H / 2 + Math.sin(a) * r })
     }
     /* ハイハット = 粒子。粒状の荒れ。
@@ -203,9 +212,10 @@ function field(R, P, V, W, H, S) {
        points, with a minimum distance between them — the only way a particle can
        be smaller than the space around it. */
     if (V.hat.on.indexOf(s) >= 0 && V.hat.amt > 0) {
-      const r = S * 0.5 * V.hat.ring * (1 + jit(0.05))
-      const hx = W / 2 + Math.cos(ang) * r, hy = H / 2 + Math.sin(ang) * r
-      const reach = V.hat.reach * (1 + jit(0.20)) * (S / DEF)
+      const ha = ang + jit(0.05, 'hat')
+      const r = S * 0.5 * V.hat.ring * (1 + jit(0.05, 'hat'))
+      const hx = W / 2 + Math.cos(ha) * r, hy = H / 2 + Math.sin(ha) * r
+      const reach = V.hat.reach * (1 + jit(0.20, 'hat')) * (S / DEF)
       for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
         const cx = (gx + 0.5) * cell, cy = (gy + 0.5) * cell
         const d2 = (cx - hx) * (cx - hx) + (cy - hy) * (cy - hy)
@@ -220,9 +230,10 @@ function field(R, P, V, W, H, S) {
        Like the hat, this map only says WHERE. How much survives is decided per
        cell, from the slope, when the cells are painted. */
     if (V.rim && V.rim.on.indexOf(s) >= 0 && V.rim.amt > 0) {
-      const r = S * 0.5 * V.rim.ring * (1 + jit(0.05))
-      const hx = W / 2 + Math.cos(ang) * r, hy = H / 2 + Math.sin(ang) * r
-      const reach = V.rim.reach * (1 + jit(0.20)) * (S / DEF)
+      const ra = ang + jit(0.05, 'rim')
+      const r = S * 0.5 * V.rim.ring * (1 + jit(0.05, 'rim'))
+      const hx = W / 2 + Math.cos(ra) * r, hy = H / 2 + Math.sin(ra) * r
+      const reach = V.rim.reach * (1 + jit(0.20, 'rim')) * (S / DEF)
       for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
         const cx = (gx + 0.5) * cell, cy = (gy + 0.5) * cell
         const d2 = (cx - hx) * (cx - hx) + (cy - hy) * (cy - hy)
@@ -628,8 +639,10 @@ function make(P, reuse, preview) {
     if (loose) { push *= 1.6 + R() * 2.4; size *= 0.35 + R() * 0.4 }
     // only a cell that is already moving gets nudged — a closed rim stays closed
     const j = cell * 0.16 * Math.min(1, k * 3)
-    let cx = px - dx / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
-    let cy = py - dy / (slope || 1) * push + (R() * 2 - 1) * j * P.hum
+    // the cells are the kick's field, so they are late by the kick's hand
+    const kh = P.hum * (typeof K.hum === 'number' ? K.hum : 1)
+    let cx = px - dx / (slope || 1) * push + (R() * 2 - 1) * j * kh
+    let cy = py - dy / (slope || 1) * push + (R() * 2 - 1) * j * kh
     cx += wowAt(P, py, H)
 
     /* ⭐ The high-pass, cell by cell. `pass` is the high-frequency energy here:
@@ -674,7 +687,7 @@ function make(P, reuse, preview) {
     } else {
       node = figma.createRectangle()
       node.resize(dsz, dsz)
-      const rot = (R() * 2 - 1) * 6 * P.hum * Math.min(1, k * 3) * Math.PI / 180
+      const rot = (R() * 2 - 1) * 6 * kh * Math.min(1, k * 3) * Math.PI / 180
       centreAt(node, cx, cy, dsz, dsz, rot)
     }
     if (hollow) {
