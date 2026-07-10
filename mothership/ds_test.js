@@ -16,12 +16,20 @@ function node(opts) {
     visible: true, removed: false, layoutMode: "HORIZONTAL", fills: [], children: null,
     characters: undefined, parent: null, componentPropertyReferences: null,
   }, opts);
-  if (n.children) n.children.forEach((c) => (c.parent = n));
+  if (n.children) { n.children = n.children.slice(); n.children.forEach((c) => (c.parent = n)); }   // 配列は複製する（共有すると insertChild/remove が呼び出し側の配列を壊す）
   n.clone = function () {
     const c = node(Object.assign({}, n, { id: undefined, children: n.children ? n.children.map((k) => k.clone()) : null, parent: null }));
     return c;
   };
-  n.remove = function () { n.removed = true; };
+  n.remove = function () { n.removed = true; if (n.parent && n.parent.children) { const i = n.parent.children.indexOf(n); if (i >= 0) n.parent.children.splice(i, 1); } };
+  n.insertChild = function (i, c) { if (!n.children) n.children = []; n.children.splice(i, 0, c); c.parent = n; };
+  n.createInstance = function () {   // ComponentNode.createInstance()
+    if (n.type !== "COMPONENT") throw new Error("not a component");
+    const inst = node({ type: "INSTANCE", name: n.name, width: n.width, height: n.height, children: (n.children || []).map((k) => k.clone()) });
+    inst.overrides = {};
+    inst.setProperties = function (o) { Object.keys(o).forEach((k) => { inst.overrides[k] = o[k]; }); };
+    return inst;
+  };
   if (!("children" in opts)) delete n.children;   // 子なしノードは "children" in n を false に
   if (n.children === null) delete n.children;
   return n;
@@ -185,6 +193,30 @@ ok(c5.cells === 1, "軸が無いのでセルは1つ（バリアント爆発し�
   } else {
     ok(r3.errs.some((e) => /取り消し/.test(e)), "結線できなければプロパティを残さない", r3.errs);
   }
+
+  // ===== 7.5 元をインスタンスに差し替える（swap）＝見た目が変わらないこと =====
+  console.log("\n[7.5] 差し替え：元がインスタンスになり、文字・要素の有無がプロパティ値で復元される");
+  const sw = [
+    btn("#a89060", 100, 40, "Save", true), btn("#a89060", 100, 40, "Send", true),
+    btn("#262422", 100, 40, "Cancel", false), btn("#262422", 100, 40, "Back", false),
+  ];
+  const p75 = node({ type: "FRAME", name: "P75", children: sw });
+  const origIds = sw.map((b) => b.id), origXY = sw.map((b) => [b.x, b.y]);
+  universe = [p75]; pageKids = [p75]; selection = [p75]; posted = []; created = [];
+  ctx.dsScan();
+  const id75 = posted[0].clusters[0].id;
+  posted = [];
+  await ctx.dsBuild(id75, "Btn", true);
+  const r75 = posted[posted.length - 1];
+  ok(!r75.error, "組み立て成功", r75.error);
+  ok(r75.swapped === 4, "元4個すべてがインスタンスに", [r75.swapped, r75.errs]);
+  ok(sw.every((b) => b.removed), "元フレームは削除された");
+  ok(p75.children.length === 4 && p75.children.every((c) => c.type === "INSTANCE"), "親の子は4つのインスタンス", p75.children.map((c) => c.type));
+  ok(p75.children.every((c, i) => c.x === origXY[i][0] && c.y === origXY[i][1]), "位置と並び順が保たれる");
+  const texts = p75.children.map((c) => { const o = c.overrides || {}; return Object.keys(o).map((k) => o[k]).filter((v) => typeof v === "string"); }).flat();
+  ok(texts.join(",") === "Save,Send,Cancel,Back", "★元の文字がTEXTプロパティ値として復元される", texts);
+  const bools = p75.children.map((c) => { const o = c.overrides || {}; return Object.keys(o).map((k) => o[k]).find((v) => typeof v === "boolean"); });
+  ok(JSON.stringify(bools) === "[true,true,false,false]", "★アイコンの有無がBOOLEAN値として復元される", bools);
 
   // ===== 8. L1＝選択をそのままコンポーネント化 =====
   console.log("\n[8] L1：選択をコンポーネント化");

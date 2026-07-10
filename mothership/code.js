@@ -1555,10 +1555,13 @@ function dsScan() {
     // ---- テキストは軸にしない＝TEXTプロパティにする（"文字ごとにバリアント"がDS破綻の元） ----
     const props = [];
     const t0 = _dsTexts(members[0]);
+    const nameCount = {}; t0.forEach((t) => { nameCount[t.name] = (nameCount[t.name] || 0) + 1; });
     t0.forEach((t, i) => {
       const all = members.map((m) => { const ts = _dsTexts(m); return ts[i] ? ts[i].chars : null; }).filter((x) => x !== null);
       const uniq = {}; all.forEach((c) => (uniq[c] = 1));
-      if (Object.keys(uniq).length >= 2) props.push({ name: (t.name && t.name !== t.chars ? t.name : "Label") + (i ? " " + (i + 1) : ""), type: "TEXT", path: t.path, default: t.chars });
+      // ref＝テキストノード名が一意なら名前で引く（オプショナルな子があるとindexパスがバリアントごとにズレるため）
+      const ref = (nameCount[t.name] === 1 && t.name !== t.chars) ? t.name : null;
+      if (Object.keys(uniq).length >= 2) props.push({ name: (t.name && t.name !== t.chars ? t.name : "Label") + (i ? " " + (i + 1) : ""), type: "TEXT", path: t.path, ref: ref, default: t.chars });
     });
     const bo = boolOf[fp];
     if (bo) props.push({ name: bo.name, type: "BOOLEAN", path: [bo.childIndex], default: true });
@@ -1587,6 +1590,14 @@ function dsScan() {
   _dsClusters.sort((a, b) => b.count - a.count);
   figma.ui.postMessage({ type: "ds-scan", clusters: _dsClusters.map((c) => ({ id: c.id, name: c.name, count: c.count, cells: c.cells, axes: c.axes, props: c.props })) });
 }
+// プロパティの結線先を引く。★オプショナルな子（アイコン等）があると index パスはバリアントごとにズレるので、
+//   名前で一意に引けるときは名前を優先する。BOOLEAN は必ず名前（パスへ落とすと別ノードのvisibleを結線してしまう）。
+function _dsResolve(root, p) {
+  if (p.type === "BOOLEAN") { const n = _byName(root, p.name); return (n && n !== root) ? n : null; }
+  if (p.ref) { const n = _byName(root, p.ref); if (n && n !== root && n.type === "TEXT") return n; }
+  const n2 = _byPath(root, p.path);
+  return (n2 && n2.type === "TEXT") ? n2 : null;
+}
 function _dsCellKey(n, axes) { return axes.map((a) => (a.by === "fill" ? ((_dsHex(n) || {}).hex || "-") : _dsSizeKey(n))).join("|"); }
 function _dsCells(members, axes) {   // 軸の組み合わせごとに代表を1つ選ぶ（同じセルの重複は捨てる＝バリアント爆発を防ぐ）
   if (!axes.length) return [{ node: members[0], key: "", labels: [] }];
@@ -1607,7 +1618,7 @@ function _dsCells(members, axes) {   // 軸の組み合わせごとに代表を1
 function _dsSafe(s) { return String(s).replace(/[=,]/g, "-").trim() || "Default"; }
 
 // ◆ L1/L2 組み立て：複製から組む（元は非破壊）。1セルならコンポーネント、複数セルなら combineAsVariants でバリアントに束ねる。
-async function dsBuild(clusterId, nameOverride) {
+async function dsBuild(clusterId, nameOverride, swapOriginals) {
   const cl = _dsClusters.find((c) => c.id === clusterId);
   if (!cl) { figma.ui.postMessage({ type: "ds-build", error: "先に診断してください" }); return; }
   const members = [];
@@ -1645,34 +1656,62 @@ async function dsBuild(clusterId, nameOverride) {
 
   // ---- TEXT / BOOLEAN / INSTANCE_SWAP プロパティを付けて、中のノードに実際に結線する ----
   const variants = isSet ? target.children : [target];
-  const added = [];
+  const added = [], pidOf = {};   // pidOf[propName] = "Name#123" ＝ インスタンス差し替え時の setProperties に使う
   for (const p of cl.props) {
     try {
       const def = p.type === "TEXT" ? String(p.default || "") : p.type === "BOOLEAN" ? true : "";
       if (p.type === "INSTANCE_SWAP") continue;   // v1は提案のみ（既定インスタンスの決定が要るため未結線）
       const pid = target.addComponentProperty(_dsSafe(p.name), p.type, def);
+      pidOf[p.name] = pid;
       let bound = 0;
       for (const v of variants) {
-        // BOOLEAN の対象（有無が変わる子）は index が変位するので**名前でだけ引く**。
-        // ここで index パスへフォールバックすると、その子を持たないバリアントで別ノード（Label等）の visible を結線してしまう。
-        const node = (p.type === "BOOLEAN") ? _byName(v, p.name) : _byPath(v, p.path);
-        if (!node || node === v) continue;
-        if (p.type === "TEXT" && node.type === "TEXT") { node.componentPropertyReferences = { characters: pid }; bound++; }
+        const node = _dsResolve(v, p);
+        if (!node) continue;
+        if (p.type === "TEXT") { node.componentPropertyReferences = { characters: pid }; bound++; }
         else if (p.type === "BOOLEAN") { node.componentPropertyReferences = { visible: pid }; bound++; }
       }
-      if (!bound) { try { target.deleteComponentProperty(pid); } catch (e) {} errs.push(p.name + "：結線先が見つからず取り消し"); continue; }   // 空のプロパティを残さない
+      if (!bound) { try { target.deleteComponentProperty(pid); } catch (e) {} delete pidOf[p.name]; errs.push(p.name + "：結線先が見つからず取り消し"); continue; }   // 空のプロパティを残さない
       if (bound < variants.length) errs.push(p.name + "：" + bound + "/" + variants.length + " バリアントにのみ結線（構造差）");
       added.push(p.name + "(" + p.type + ")");
     } catch (e) { errs.push(p.name + " → " + (e && e.message ? e.message : e)); }
   }
   const swaps = cl.props.filter((p) => p.type === "INSTANCE_SWAP").map((p) => p.name);
 
+  // ---- 元フレームをインスタンスに差し替える（任意・これを押して初めてデザインがDSに繋がる） ----
+  // 各元フレームが属するセルのコンポーネントからインスタンスを作り、元の位置・並び順に差し込む。
+  // 元が持っていた文字と要素の有無は、さっき作った TEXT/BOOLEAN プロパティの値として復元する（＝見た目が変わらない）。
+  let swapped = 0;
+  if (swapOriginals) {
+    const compOf = {};   // セルキー → コンポーネント
+    cells.forEach((cell, i) => { if (comps[i]) compOf[cell.key] = comps[i]; });
+    for (const m of members) {
+      try {
+        const comp = compOf[_dsCellKey(m, cl.axes)] || comps[0];
+        if (!comp || !m.parent) { errs.push(String(m.name) + "：差し替え先が見つかりません"); continue; }
+        const parent = m.parent, idx = parent.children.indexOf(m);
+        const inst = comp.createInstance();
+        const overrides = {};
+        for (const p of cl.props) {
+          const pid = pidOf[p.name];
+          if (!pid) continue;
+          if (p.type === "TEXT") { const t = _dsResolve(m, p); if (t) overrides[pid] = String(t.characters || ""); }
+          else if (p.type === "BOOLEAN") { const c = _dsResolve(m, p); overrides[pid] = !!(c && c.visible !== false); }
+        }
+        if (Object.keys(overrides).length) inst.setProperties(overrides);
+        parent.insertChild(idx >= 0 ? idx : parent.children.length, inst);   // 並び順を保つ（オートレイアウトでも崩れない）
+        inst.x = m.x; inst.y = m.y;
+        m.remove();
+        swapped++;
+      } catch (e) { errs.push(String(m.name) + " → " + (e && e.message ? e.message : e)); }
+    }
+  }
+
   try { figma.currentPage.selection = [target]; figma.viewport.scrollAndZoomIntoView([target]); } catch (e) {}
   figma.ui.postMessage({
     type: "ds-build", name: dsName, variants: isSet ? variants.length : 1, isSet: isSet,
-    props: added, swaps: swaps, errs: errs.slice(0, 5), members: members.length,
+    props: added, swaps: swaps, errs: errs.slice(0, 5), members: members.length, swapped: swapped,
   });
-  figma.notify("◆ 「" + dsName + "」を作成：" + (isSet ? variants.length + " バリアント" : "コンポーネント") + (added.length ? "／" + added.length + " プロパティ" : "") + "。Assetsパネルに出ます。Cmd+Zで戻せます。");
+  figma.notify("◆ 「" + dsName + "」を作成：" + (isSet ? variants.length + " バリアント" : "コンポーネント") + (added.length ? "／" + added.length + " プロパティ" : "") + (swapped ? "／元 " + swapped + " 個をインスタンス化" : "") + "。Assetsパネルに出ます。Cmd+Zで戻せます。");
 }
 
 // ◆ L1：選択をそのままコンポーネントにする（バリアント無し・一番安全な一歩）
@@ -1706,7 +1745,7 @@ figma.ui.onmessage = async (msg) => {
   else if (msg.type === "collect-motion") collectMotion(msg.instruction);  // 🎬 chat-to-animate：選択をAIへ渡す
   else if (msg.type === "motion-apply") await applyMotionOps(msg.ops);     // 🎬 AIのキーフレームopsを適用
   else if (msg.type === "ds-scan") dsScan();                               // ◆ DS蒸留：同じ形の塊と軸を診断（非破壊）
-  else if (msg.type === "ds-build") await dsBuild(msg.id, msg.name);       // ◆ DS蒸留：複製から組み立て（L2＝バリアント＋プロパティ）
+  else if (msg.type === "ds-build") await dsBuild(msg.id, msg.name, msg.swap);   // ◆ DS蒸留：複製から組み立て（L2＝バリアント＋プロパティ・swap=元をインスタンス化）
   else if (msg.type === "ds-componentize") dsComponentize(msg.name);       // ◆ L1：選択をコンポーネント化
   else if (msg.type === "motion-read") readMotionDoc(msg.name);            // ◆ 選択のモーションを読み取ってJSON化（ライブラリ保存の材料）
   else if (msg.type === "motion-doc-apply") await applyMotionDoc(msg.doc); // ◆ ライブラリのモーションを選択へ再適用
