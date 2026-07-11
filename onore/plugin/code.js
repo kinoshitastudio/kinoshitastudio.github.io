@@ -84,19 +84,20 @@ function build(layers, seed) {
   frame.clipsContent = true
 
   const live = layers.filter(L => L.descriptors.length)
-  /* ⭐ One frame per engine. With a single engine, NORMAL — on the black ground its
-     opaque shapes read the same as SCREEN (screen-vs-black is the colour itself),
-     and NORMAL keeps Wave's overlapping strips from lighting their seams. With the
-     mixer layering several, SCREEN so the engines add as light, the way the preview
-     screens each group. The fader is the frame's opacity. */
-  const bm = live.length > 1 ? 'SCREEN' : 'NORMAL'
+  const BLEND = { screen: 'SCREEN', multiply: 'MULTIPLY' }
+  /* ⭐ One frame per layer (engine or send). Each layer says how it blends: engines
+     and the reverb tail SCREEN (add as light), a CMY tape plate MULTIPLYs. When one
+     engine plays alone with no send, NORMAL — on the black ground its opaque shapes
+     read the same as SCREEN, and NORMAL keeps Wave's overlapping strips from lighting
+     their seams. The fader is the frame's opacity. */
+  const soloAlone = live.length === 1 && !live[0].blend
   let total = 0, engines = 0
   for (const L of live) {
     const ef = figma.createFrame()
     ef.resize(W, H); ef.x = 0; ef.y = 0; ef.name = L.key
     ef.fills = []                 // transparent, so only the shapes carry colour
     ef.clipsContent = false
-    ef.blendMode = bm
+    ef.blendMode = soloAlone ? 'NORMAL' : (BLEND[L.blend] || 'SCREEN')
     if (L.level != null) ef.opacity = Math.max(0, Math.min(1, L.level))
     for (const d of L.descriptors) { ef.appendChild(node(d)); total++ }
     frame.appendChild(ef); engines++
