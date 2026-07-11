@@ -68,8 +68,8 @@ for (const ef of engineFrames) {
   const kinds = [...new Set(ef.children.map(c => c.type))].join(',')
   console.log(`${ef.name.padEnd(10)} ${String(ef.children.length).padStart(5)}   ${kinds.padEnd(20)} ${ef._bm}`)
   total += ef.children.length
-  check(ef._bm === 'SCREEN', `${ef.name} frame is SCREEN`)
-  check(ef.children.every(c => c._bm === 'NORMAL'), `${ef.name} shapes are explicit NORMAL (no PASS_THROUGH → no white grid)`)
+  check(ef._bm === 'NORMAL', `${ef.name} frame is NORMAL (no screen → no additive seam grid on Wave)`)
+  check(ef.children.every(c => c._bm === 'NORMAL'), `${ef.name} shapes are explicit NORMAL`)
 }
 console.log('─'.repeat(52))
 check(engineFrames.length === layers.length, `one frame per engine (${engineFrames.length}/${layers.length})`)
