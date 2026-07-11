@@ -37,7 +37,7 @@
   .presets{display:flex;gap:5px;flex-wrap:wrap}
   .presets button{font-size:10.5px;padding:5px 11px;border:1px solid #333;border-radius:20px;background:#141414;color:#bbb;cursor:pointer}
   .presets button:hover{background:#222;color:#fff;border-color:#555}
-  #stage{flex:none;margin:12px 12px 0;background:#000;border:1px solid #222;border-radius:6px;display:flex;justify-content:center;align-items:center;padding:6px 0}.sec{border:1px solid #222;border-radius:6px;padding:10px 12px}.sectitle{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#777;margin-bottom:9px}
+  #stage{flex:none;margin:12px 12px 0;background:#000;border:1px solid #222;border-radius:6px;display:flex;justify-content:center;align-items:center;padding:6px 0}.sec{border:1px solid #222;border-radius:6px;padding:10px 12px}.sectitle{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#777;margin-bottom:9px}.gbtn{border:1px solid #444;background:#111;color:#aaa;border-radius:5px;padding:5px 9px;font-size:13px;cursor:pointer;margin-right:6px;flex:none}.gbtn:hover{color:#fff;border-color:#888}#engList{display:flex;flex-direction:column;gap:3px;margin-bottom:12px}.engrow{display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border:1px solid #2a2a2a;border-radius:7px;cursor:pointer;color:#ccc;font-size:12px}.engrow:hover{border-color:#555}.engrow.on{background:#fff;color:#000;border-color:#fff}.engrow.full{opacity:.4;cursor:not-allowed}
   svg{display:block;width:100%;height:212px}
   .mix{display:grid;grid-template-columns:repeat(7,1fr) 7px repeat(2,1fr);gap:4px}
   .gap2{border-left:1px solid #333;height:30px;justify-self:center}
@@ -94,6 +94,8 @@
   </div>
 </div>
 
+<div id="engModal" class="modal" hidden><div class="sheet"><p class="mt">Mixer</p><p class="ms" id="engModalSub"></p><div id="engList"></div><button id="engClose" class="mcl">Close</button></div></div>
+
 <header>
   <div class="wm">
     <div class="wmr"><h1 id="title">ONORE<span class="jp">己</span></h1><span class="ver">V1</span></div>
@@ -103,7 +105,7 @@
     <button id="engBtn"></button>
     <div id="engMenu" class="emenu" hidden></div>
   </div>
-  <div class="lang"><button id="langJa" class="on">JP</button><button id="langEn">EN</button></div>
+  <button id="gear" class="gbtn" title="mixer engines">⚙</button><div class="lang"><button id="langJa" class="on">JP</button><button id="langEn">EN</button></div>
 </header>
 
 <div id="stage"><svg id="art" viewBox="0 0 720 900"></svg></div>
@@ -247,7 +249,7 @@ function applyPreset(pr){
   for(const e of ENGINES){e.params=JSON.parse(JSON.stringify(DEFAULTS[e.key]));if(pr.p&&pr.p[e.key])Object.assign(e.params,pr.p[e.key]);level[e.key]=pr.level[e.key]||0}
   for(const s of SENDS){s.params=JSON.parse(JSON.stringify(SDEF[s.key].params));s.mode=SDEF[s.key].mode;if(pr.sp&&pr.sp[s.key])Object.assign(s.params,pr.sp[s.key]);if(pr.mode&&pr.mode[s.key])s.mode=pr.mode[s.key];level[s.key]=pr.level[s.key]||0}
   solo.clear();mute.clear();if(pr.seed!=null)seed=pr.seed
-  let best='wave',bv=-1;for(const e of ENGINES)if(level[e.key]>bv){bv=level[e.key];best=e.key}
+  const used=ENGINES.filter(e=>level[e.key]>0).map(e=>e.key),fill=[...shown].filter(k=>!used.includes(k));shown.clear();[...used,...fill].slice(0,MAXSHOWN).forEach(k=>shown.add(k));if(!shown.size)shown.add('wave');let best='wave',bv=-1;for(const e of ENGINES)if(shown.has(e.key)&&level[e.key]>bv){bv=level[e.key];best=e.key}
   active=best
   document.getElementById('seed').value=seed;document.getElementById('seedv').textContent=seed
   paintSel();buildMix();buildKnobs();draw()
@@ -285,6 +287,8 @@ function toSVG(S,g){
    The selector / mixer name picks which engine the knobs edit. ---- */
 const cap=s=>s[0].toUpperCase()+s.slice(1)
 const level={};for(const e of ENGINES)level[e.key]=0;for(const s of SENDS)level[s.key]=0;level.wave=1
+const shown=new Set(['wave','partials','field','rings','beat'])   // engines shown in the mixer (max 5); Reverb/Tape always on
+const MAXSHOWN=5
 const solo=new Set(),mute=new Set()
 let active='wave', seed=7, lastLayers=[]
 /* solo works WITHIN a kind — soloing an engine leaves the sends, and a send with
@@ -296,7 +300,7 @@ function draw(){
   while(art.firstChild)art.removeChild(art.firstChild)
   gcount=0; lastLayers=[]
   const eng=[]
-  for(const e of ENGINES){if(!(level[e.key]>0)||!audible(e.key))continue;eng.push({key:e.key,S:e.emit(e.params,mb((seed+e.seedOff)*7919+13))})}
+  for(const e of ENGINES){if(!shown.has(e.key)||!(level[e.key]>0)||!audible(e.key))continue;eng.push({key:e.key,S:e.emit(e.params,mb((seed+e.seedOff)*7919+13))})}
   const master=[].concat(...eng.map(x=>x.S))
   // reverb: fading offset copies, BEHIND the dry mix
   const rv=sendOf('reverb')
@@ -349,7 +353,7 @@ function selectEngine(k){stopPlay();active=k;solo.clear();solo.add(k);mute.delet
 /* ---- engine selector (in the fixed bar, next to the logo) ---- */
 const engBtn=document.getElementById('engBtn'),engMenu=document.getElementById('engMenu')
 function buildMenu(){engMenu.innerHTML=''
-  for(const e of [...ENGINES,...SENDS]){const b=document.createElement('button');b.textContent=e.label[lang].split(' — ')[0];b.classList.toggle('on',e.key===active)
+  for(const e of [...ENGINES.filter(x=>shown.has(x.key)),...SENDS]){const b=document.createElement('button');b.textContent=e.label[lang].split(' — ')[0];b.classList.toggle('on',e.key===active)
     b.onclick=()=>{engMenu.hidden=true;selectEngine(e.key)};engMenu.append(b)}}
 function paintSel(){const e=allOf(active);engBtn.innerHTML=`${e.label[lang].split(' — ')[0]}<span class="ar">▾</span>`
   for(const b of engMenu.children)b.classList.toggle('on',b.textContent===e.label[lang].split(' — ')[0])}
@@ -367,7 +371,8 @@ function mixCh(k){const ch=document.createElement('div');ch.className='ch';ch.da
   ch.querySelector('.nm2').onclick=()=>selectEngine(k)
   return ch}
 function buildMix(){mixEl.innerHTML=''
-  for(const e of ENGINES)mixEl.append(mixCh(e.key))
+  mixEl.style.gridTemplateColumns='repeat('+shown.size+',1fr) 7px repeat(2,1fr)'
+  for(const e of ENGINES)if(shown.has(e.key))mixEl.append(mixCh(e.key))
   const gp=document.createElement('div');gp.className='gap2';mixEl.append(gp)   // instruments | sends
   for(const s of SENDS)mixEl.append(mixCh(s.key))
   paintMix()}
@@ -443,5 +448,18 @@ onmessage=e=>{const m=e.data.pluginMessage;if(!m)return;if(m.type==='made')msg.t
 
 const presetsEl=document.getElementById('presets')
 for(const pr of PRESETS){const b=document.createElement('button');b.textContent=pr.name;b.onclick=()=>applyPreset(pr);presetsEl.append(b)}
+function nmOf(e){return e.label[lang].split(' — ')[0]}
+function buildEngModal(){const el=document.getElementById('engList');el.innerHTML=''
+  document.getElementById('engModalSub').textContent=lang==='ja'?('ミキサーに出すエンジンを選ぶ（最大'+MAXSHOWN+'・Reverb/Tapeは常時）'):('Choose engines for the mixer (max '+MAXSHOWN+'; Reverb / Tape always on)')
+  for(const e of ENGINES){const on=shown.has(e.key),full=shown.size>=MAXSHOWN&&!on
+    const row=document.createElement('div');row.className='engrow'+(on?' on':'')+(full?' full':'')
+    row.innerHTML='<span>'+nmOf(e)+'</span><span>'+(on?'●':'○')+'</span>'
+    row.onclick=()=>{if(on){if(shown.size>1)shown.delete(e.key)}else{if(shown.size<MAXSHOWN)shown.add(e.key)}
+      if(!isSend(active)&&!shown.has(active))active=[...shown][0]||'wave'
+      buildEngModal();buildMenu();paintSel();buildMix();buildKnobs();draw()}
+    el.append(row)}}
+document.getElementById('gear').onclick=()=>{buildEngModal();document.getElementById('engModal').hidden=false}
+document.getElementById('engClose').onclick=()=>{document.getElementById('engModal').hidden=true}
+document.getElementById('engModal').onclick=ev=>{if(ev.target.id==='engModal')document.getElementById('engModal').hidden=true}
 applyLang();draw()
 </script>
