@@ -51,7 +51,9 @@
   .nm2{font-size:8.5px;color:#777;cursor:pointer;text-align:center;line-height:1.15;letter-spacing:.02em}
   .ch.sel .nm2{color:#fff}
   .ch.dim .nm2{color:#4a4a4a}
-  .wtl{font-size:10px;color:#888;margin:0 0 5px;letter-spacing:.03em}
+  .wthead{display:flex;align-items:center;gap:7px;margin-bottom:5px}
+  .wtplay{font-size:10px;padding:2px 9px;border:1px solid #444;border-radius:4px;background:#111;color:#ddd;cursor:pointer;flex:none;line-height:1.2}
+  .wtl{font-size:10px;color:#888;letter-spacing:.03em}
   svg.wt{width:100%;height:58px;background:#000;border:1px solid #222;border-radius:5px;display:block;touch-action:none;cursor:crosshair}
   .wtp{display:flex;gap:4px;margin-top:5px}
   .wtp button{flex:1;font-size:9px;padding:4px;border:1px solid #444;border-radius:3px;background:#111;color:#999;cursor:pointer}
@@ -121,6 +123,7 @@
 'use strict'
 const NS='http://www.w3.org/2000/svg', art=document.getElementById('art')
 const W=720, H=900, TAU=Math.PI*2
+let wavePhase=0   // ⭐ the transport scrolls the wave when Play is running
 const mb=s=>{let a=s>>>0;return()=>{a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296}}
 const osc=(a,k)=>{const s=Math.sin(a);if(k<=0)return s;const saw=2*(a/TAU-Math.floor(a/TAU+0.5));if(k<=1)return s*(1-k)+saw*k;const sq=Math.sign(s)||1;return saw*(2-k)+sq*(k-1)}
 const D={poly:(S,pts,o)=>S.push(Object.assign({t:'poly',pts},o)),line:(S,a,b,o)=>S.push(Object.assign({t:'line',a,b},o)),
@@ -169,7 +172,7 @@ const ENGINES=[
      shading (dark edge → bright ridge → dark edge, the ridge moving with the LFO)
      is a linear gradient sampled across the width. ~240 nodes instead of ~3600, no
      internal grid, and Figma never has thousands of touching quads to seam. */
-  emit(P,R){const S=[],N=240,ds=1/N,ph0=R()*TAU,ph1=R()*TAU,centre=s=>{const a=TAU*P.turns*s+0.6+ph0;return{x:W/2+P.amp*wtSample(P.wt,a),y:H*s}}
+  emit(P,R){const S=[],N=240,ds=1/N,ph0=R()*TAU,ph1=R()*TAU,centre=s=>{const a=TAU*P.turns*s+0.6+ph0+wavePhase;return{x:W/2+P.amp*wtSample(P.wt,a),y:H*s}}
     let pv=null;for(let i=0;i<=N;i++){const s=i/N,c=centre(s),a=centre(s-ds*0.6),b=centre(s+ds*0.6);let tx=b.x-a.x,ty=b.y-a.y;const tl=Math.hypot(tx,ty)||1;tx/=tl;ty/=tl;const nx=-ty,ny=tx,hw=P.width*0.5,la=1.15*Math.sin(TAU*P.twist*s+ph1)
       const el=[c.x-hw*nx,c.y-hw*ny],er=[c.x+hw*nx,c.y+hw*ny]
       if(pv){
@@ -239,6 +242,7 @@ const PRESETS=[
 { name:'Split',   level:{wave:1,tape:0.7},   p:{wave:{step:12,hue:180}}, sp:{tape:{offset:15}}, mode:{tape:'rgb'},          seed:19 },
 ]
 function applyPreset(pr){
+  stopPlay()
   for(const e of ENGINES){e.params=JSON.parse(JSON.stringify(DEFAULTS[e.key]));if(pr.p&&pr.p[e.key])Object.assign(e.params,pr.p[e.key]);level[e.key]=pr.level[e.key]||0}
   for(const s of SENDS){s.params=JSON.parse(JSON.stringify(SDEF[s.key].params));s.mode=SDEF[s.key].mode;if(pr.sp&&pr.sp[s.key])Object.assign(s.params,pr.sp[s.key]);if(pr.mode&&pr.mode[s.key])s.mode=pr.mode[s.key];level[s.key]=pr.level[s.key]||0}
   solo.clear();mute.clear();if(pr.seed!=null)seed=pr.seed
@@ -312,6 +316,26 @@ function draw(){
 let rafPending=0
 function render(){if(rafPending)return;rafPending=requestAnimationFrame(()=>{rafPending=0;draw()})}
 
+/* ⭐ Transport — same idea as Siren's ▶. A playhead sweeps the wavetable left to
+   right; as it goes the wave scrolls, so the ribbon flows (a sustained tone, alive),
+   and each time the head wraps the seed steps — the next variation flows in like the
+   next note. The output stays a still: press "Figma に出す" to keep the frame you like. */
+let playing=false, playT=0, playLast=0, wtLine=null
+function movePlayhead(){if(wtLine){const x=(playT*16).toFixed(2);wtLine.setAttribute('x1',x);wtLine.setAttribute('x2',x);wtLine.setAttribute('opacity',playing?0.9:0)}}
+function playTick(ts){
+  if(!playing){playLast=0;return}
+  const dt=playLast?Math.min(0.05,(ts-playLast)/1000):0;playLast=ts
+  const prev=playT
+  playT=(playT+dt/4)%1                    // one sweep ≈ 4s
+  wavePhase=(wavePhase+dt*1.1)%TAU        // the ribbon flows
+  if(playT<prev){seed=(seed+1)%61;seedEl.value=seed;seedB.textContent=seed}  // a new note each loop
+  movePlayhead();draw()
+  requestAnimationFrame(playTick)
+}
+function setPlay(on,btn){playing=on;if(btn)btn.textContent=on?'■':'▶'
+  if(on){playLast=0;requestAnimationFrame(playTick)}else{wavePhase=0;playT=0;movePlayhead();draw()}}
+function stopPlay(){if(playing)setPlay(false,document.getElementById('wtPlay'))}
+
 /* pick which engine the knobs edit; raise its fader if it was silent, so you
    always see what you are editing */
 /* ⭐ Like Siren: choosing from the selector (or a fader's name) SOLOS that one —
@@ -319,7 +343,7 @@ function render(){if(rafPending)return;rafPending=requestAnimationFrame(()=>{raf
    isolation. Click the lit S off to hear the whole mix again. (Presets don't solo
    — they show the layered scene.) Solo is within a kind, so soloing a send leaves
    the instruments playing, which is the only way a send has anything to act on. */
-function selectEngine(k){active=k;solo.clear();solo.add(k);mute.delete(k);if(!(level[k]>0))level[k]=1;paintSel();buildMix();buildKnobs();draw()}
+function selectEngine(k){stopPlay();active=k;solo.clear();solo.add(k);mute.delete(k);if(!(level[k]>0))level[k]=1;paintSel();buildMix();buildKnobs();draw()}
 
 /* ---- engine selector (in the fixed bar, next to the logo) ---- */
 const engBtn=document.getElementById('engBtn'),engMenu=document.getElementById('engMenu')
@@ -364,13 +388,18 @@ function buildKnobs(){const e=allOf(active);knobEl.innerHTML=''
 const WT_PRESETS={sine:i=>Math.sin(i/16*TAU),saw:i=>1-2*(i/16),square:i=>i<8?1:-1,tri:i=>1-4*Math.abs(i/16-0.5)}
 function buildWavetable(){
   const e=engOf('wave'),wrap=document.createElement('div');wrap.className='wtwrap'
-  const lab=document.createElement('div');lab.className='wtl';lab.textContent=lang==='ja'?'ウェーブテーブル — 16ステップで波形を描く':'Wavetable — draw the wave across 16 steps';wrap.append(lab)
+  const head=document.createElement('div');head.className='wthead'
+  const play=document.createElement('button');play.id='wtPlay';play.className='wtplay';play.textContent=playing?'■':'▶'
+  play.onclick=()=>setPlay(!playing,play)
+  const lab=document.createElement('span');lab.className='wtl';lab.textContent=lang==='ja'?'ウェーブテーブル — 描く／▶で流す':'Wavetable — draw it, ▶ plays it'
+  head.append(play,lab);wrap.append(head)
   const svg=document.createElementNS(NS,'svg');svg.setAttribute('class','wt');svg.setAttribute('viewBox','0 0 16 2');svg.setAttribute('preserveAspectRatio','none');wrap.append(svg)
   const mk=(t,at)=>{const el=document.createElementNS(NS,t);for(const k in at)el.setAttribute(k,at[k]);svg.append(el);return el}
   const redraw=()=>{svg.textContent=''
     mk('line',{x1:0,y1:1,x2:16,y2:1,stroke:'#333','stroke-width':1,'vector-effect':'non-scaling-stroke'})
     mk('polyline',{points:e.params.wt.map((v,i)=>`${i+0.5},${(1-v).toFixed(3)}`).join(' '),fill:'none',stroke:'#fff','stroke-width':1.5,'vector-effect':'non-scaling-stroke'})
-    e.params.wt.forEach((v,i)=>mk('circle',{cx:i+0.5,cy:(1-v).toFixed(3),r:0.11,fill:'#8ad'}))}
+    e.params.wt.forEach((v,i)=>mk('circle',{cx:i+0.5,cy:(1-v).toFixed(3),r:0.11,fill:'#8ad'}))
+    wtLine=mk('line',{x1:(playT*16).toFixed(2),y1:0,x2:(playT*16).toFixed(2),y2:2,stroke:'#e8b13a','stroke-width':1.4,'vector-effect':'non-scaling-stroke',opacity:playing?0.9:0})}
   const setAt=ev=>{const r=svg.getBoundingClientRect(),i=Math.max(0,Math.min(15,Math.floor((ev.clientX-r.left)/r.width*16))),v=Math.max(-1,Math.min(1,1-((ev.clientY-r.top)/r.height)*2));e.params.wt[i]=Math.round(v*50)/50;redraw();render()}
   let paint=false
   svg.onpointerdown=ev=>{paint=true;try{svg.setPointerCapture(ev.pointerId)}catch(_){}setAt(ev)}
