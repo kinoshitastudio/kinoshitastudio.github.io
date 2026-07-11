@@ -12,7 +12,7 @@
  */
 const W = 720, H = 900
 
-figma.showUI(__html__, { width: 560, height: 640 })
+figma.showUI(__html__, { width: 400, height: 640 })
 
 function hsl2rgb(h, s, l) {
   h /= 360; s /= 100; l /= 100
