@@ -1,0 +1,146 @@
+<!doctype html><meta charset="utf-8">
+<!--
+  Onore — 99letters synth. Figma plugin UI.
+  ⭐ Engines emit DESCRIPTORS (図形の記述). The same descriptor list draws the SVG
+     preview here AND is posted to code.js, which turns it into native Figma nodes.
+     One source of truth → preview and plugin cannot diverge. No sync.js needed.
+  ⚠ No 汚し here. Grit / blur-as-texture / misregistration is downstream (Kaibou).
+  ⭐ Add an engine: push one entry to ENGINES. Rack, panel, preview, output follow.
+-->
+<style>
+  html,body{margin:0;background:#0a0a0a;color:#ddd;font:12px ui-monospace,Menlo,monospace;height:100%}
+  body{display:flex;flex-direction:column}
+  #top{flex:1;display:flex;gap:12px;padding:12px;min-height:0}
+  #stage{flex:none;display:flex;align-items:flex-start}
+  svg{display:block;background:#000;border:1px solid #222;border-radius:4px}
+  #side{flex:1;display:flex;flex-direction:column;gap:9px;overflow:auto}
+  h1{font:600 12px ui-monospace;letter-spacing:.14em;margin:0;color:#fff}
+  h1 .jp{font-family:"Hiragino Sans",sans-serif;font-weight:800;font-size:11px;margin-left:6px;display:inline-block;transform:scaleX(.86)}
+  small{color:#666;line-height:1.5}
+  .rack{display:flex;flex-direction:column;gap:3px;border:1px solid #222;border-radius:6px;padding:5px}
+  .eng{display:flex;align-items:center;gap:6px;padding:4px 5px;border-radius:4px;cursor:pointer}
+  .eng.sel{background:#1c1c1c}.eng .nm{flex:1;color:#ccc;font-size:11px}.eng.sel .nm{color:#fff}.eng.off .nm{color:#555}
+  .dot{width:11px;height:11px;border-radius:50%;border:1px solid #555;flex:none}.eng.on .dot{background:#fff;border-color:#fff}
+  .sm{display:flex;gap:3px}.sm button{font-size:9px;font-weight:600;padding:2px 5px;border-radius:3px;border:1px solid #444;background:#111;color:#888;cursor:pointer}
+  .sm .s.on{background:#e8b13a;color:#000;border-color:#e8b13a}.sm .m.on{background:#7a4a4a;color:#fff;border-color:#7a4a4a}
+  .knobs{display:flex;flex-direction:column;gap:6px;border:1px solid #222;border-radius:6px;padding:8px}
+  label{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:#999;align-items:center}
+  label b{color:#eee;min-width:40px;text-align:right}
+  input[type=range]{flex:1;accent-color:#fff}
+  footer{flex:none;border-top:1px solid #222;padding:9px 12px;display:flex;gap:8px;align-items:center}
+  footer .sp{flex:1}
+  button.act{font-size:11px;padding:7px 12px;border-radius:4px;border:1px solid #444;background:#111;color:#ddd;cursor:pointer}
+  #out{background:#fff;color:#000;border-color:#fff;font-weight:600}
+  #msg{color:#888;font-size:10.5px}
+</style>
+<div id="top">
+  <div id="stage"><svg id="art" viewBox="0 0 720 900" width="272" height="340"></svg></div>
+  <div id="side">
+    <h1>ONORE<span class="jp">鳴物</span></h1>
+    <small>99letters のシンセ。エンジンを切替・重ねる。<br>出るのは全部パス。汚しは Kaibou / Siren。</small>
+    <div class="rack" id="rack"></div>
+    <div class="knobs" id="knobs"></div>
+  </div>
+</div>
+<footer>
+  <label style="flex:none;width:120px">seed <input id="seed" type="range" min="0" max="60" step="1" value="7"><b>7</b></label>
+  <span id="msg"></span>
+  <span class="sp"></span>
+  <button class="act" id="rnd">⟳</button>
+  <button class="act" id="out">Figma に出す</button>
+</footer>
+<script>
+'use strict'
+const NS='http://www.w3.org/2000/svg', art=document.getElementById('art')
+const W=720, H=900, TAU=Math.PI*2
+const mb=s=>{let a=s>>>0;return()=>{a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296}}
+const osc=(a,k)=>{const s=Math.sin(a);if(k<=0)return s;const saw=2*(a/TAU-Math.floor(a/TAU+0.5));if(k<=1)return s*(1-k)+saw*k;const sq=Math.sign(s)||1;return saw*(2-k)+sq*(k-1)}
+
+/* descriptor helpers — an engine describes shapes, it does not draw them */
+const D={poly:(S,pts,o)=>S.push(Object.assign({t:'poly',pts},o)),line:(S,a,b,o)=>S.push(Object.assign({t:'line',a,b},o)),
+  circle:(S,c,r,fill)=>S.push({t:'circle',c,r,fill}),rect:(S,x,y,w,h,rx,fill)=>S.push({t:'rect',x,y,w,h,rx,fill})}
+
+const ENGINES=[
+{ key:'wave', label:'Wave — 波が面になる', seedOff:0,
+  params:{wshape:0,amp:190,turns:2.2,width:150,twist:2,spec:1.4,hue:20,spread:0.7},
+  knobs:[['wshape','sine→saw→sq',0,2,0.01],['amp','振幅',0,300,1],['turns','sustain',0.5,6,0.05],['width','面の幅',20,240,1],['twist','LFO',0,6,0.05],['spec','倍音の鋭さ',0.4,4,0.05],['hue','基音の色',0,360,1],['spread','倍音の広がり',0,1.5,0.01]],
+  emit(P,R){const S=[],N=240,M=15,ds=1/N,centre=s=>{const a=TAU*P.turns*s+0.6;let w=osc(a,P.wshape)+0.28*osc(2*a,P.wshape)+0.14*osc(3*a,P.wshape);return{x:W/2+P.amp*(w/1.42),y:H*s}}
+    let prev=null;for(let i=0;i<=N;i++){const s=i/N,c=centre(s),a=centre(s-ds*0.6),b=centre(s+ds*0.6);let tx=b.x-a.x,ty=b.y-a.y;const tl=Math.hypot(tx,ty)||1;tx/=tl;ty/=tl;const nx=-ty,ny=tx,hw=P.width*0.5,la=1.15*Math.sin(TAU*P.twist*s)
+      const row=[];for(let j=0;j<=M;j++){const u=(j/M)*2-1;row.push([c.x+u*hw*nx,c.y+u*hw*ny])}
+      if(prev)for(let j=0;j<M;j++){const um=((j+0.5)/M)*2-1,ang=um*1.3,bght=Math.pow(Math.max(0,Math.cos(ang-la)),1+P.spec)
+        D.poly(S,[prev[j],prev[j+1],row[j+1],row[j]],{fill:[(P.hue+P.spread*s*300+40*bght)%360,58+18*bght,6+90*Math.pow(bght,1.35)],close:true})}
+      prev=row}return S}},
+{ key:'partials', label:'Partials — 倍音の束', seedOff:11,
+  params:{rays:150,partials:6,aim:-1.2,hue:200,spread:1,len:0.42,cy:0.5},
+  knobs:[['rays','倍音の本数',20,360,2],['partials','倍音の次数',1,16,1],['aim','片寄り',-3.14,3.14,0.05],['hue','基音の色',0,360,1],['spread','広がり',0,2,0.02],['len','伸び',0.2,0.6,0.01],['cy','高さ',0.15,0.85,0.01]],
+  emit(P,R){const S=[],cx=W/2,cy=H*P.cy,n=Math.round(P.rays);for(let i=0;i<n;i++){const a=(i/n)*TAU+R()*0.01,len=W*P.len*(0.5+0.5*Math.pow(R(),0.4)),k=1+Math.floor(R()*P.partials),op=Math.pow(0.5+0.5*Math.cos(a-P.aim),1.4)*0.85/Math.sqrt(k);D.line(S,[cx,cy],[cx+Math.cos(a)*len,cy+Math.sin(a)*len],{stroke:[(P.hue+k*P.spread*40)%360,85,55],w:0.6+R()*1.1,op})}return S}},
+{ key:'field', label:'Field — 持続＝面積', seedOff:23,
+  params:{notes:6,hold:1,hue:285,spread:0.7,soft:1.7},
+  knobs:[['notes','音数',1,24,1],['hold','持続の長さ',0.1,2,0.02],['hue','基音の色',0,360,1],['spread','色の広がり',0,1.5,0.02],['soft','ぼけ',1,3,0.05]],
+  emit(P,R){const S=[],blobs=[];for(let i=0;i<Math.round(P.notes);i++)blobs.push({x:R()*W,y:R()*H,r:60+R()*P.hold*180,h:(P.hue+R()*P.spread*120)%360});for(const b of blobs)for(let k=22;k>=1;k--){const t=k/22;D.circle(S,[b.x,b.y],b.r*t,[b.h,60,8+70*Math.pow(1-t,P.soft)])}return S}},
+{ key:'rings', label:'Rings — FM / リング変調', seedOff:31,
+  params:{rings:14,spacing:26,modfreq:5,moddepth:14,hue:205,spread:1.1,cx:0.5,cy:0.5},
+  knobs:[['rings','倍音の輪',3,44,1],['spacing','間隔',8,60,1],['modfreq','変調周波数',0,16,1],['moddepth','変調の深さ',0,42,1],['hue','基音の色',0,360,1],['spread','分光',0,2,0.02],['cx','中心X',0.2,0.8,0.01],['cy','中心Y',0.2,0.8,0.01]],
+  emit(P,R){const S=[],cx=W*P.cx,cy=H*P.cy,seg=170,ph=R()*TAU;for(let k=1;k<=Math.round(P.rings);k++){const rr=k*P.spacing,pts=[];for(let i=0;i<=seg;i++){const th=i/seg*TAU,r=rr+P.moddepth*Math.sin(P.modfreq*th+k*0.6+ph);pts.push([cx+Math.cos(th)*r,cy+Math.sin(th)*r])}D.poly(S,pts,{stroke:[(P.hue+k*P.spread*30)%360,90,58],w:1.2,close:true})}return S}},
+{ key:'beat', label:'Beat — デチューン / うなり', seedOff:43,
+  params:{lines:40,angle:0.1,detune:0.16,spacing:17,hue:32,len:1},
+  knobs:[['lines','本数',8,120,1],['angle','角度',-1.5,1.5,0.02],['detune','デチューン',0,0.6,0.01],['spacing','間隔',6,40,1],['hue','色',0,360,1],['len','長さ',0.3,1.2,0.02]],
+  emit(P,R){const S=[],fam=(ang,hs)=>{const n=Math.round(P.lines),dx=Math.cos(ang+Math.PI/2),dy=Math.sin(ang+Math.PI/2),nx=Math.cos(ang),ny=Math.sin(ang),L=H*P.len;for(let i=0;i<n;i++){const off=(i-n/2)*P.spacing,cx=W/2+nx*off,cy=H/2+ny*off;D.line(S,[cx-dx*L/2,cy-dy*L/2],[cx+dx*L/2,cy+dy*L/2],{stroke:[(P.hue+hs)%360,85,60],w:1.1,op:0.62})}};fam(P.angle,0);fam(P.angle+P.detune,90);return S}},
+{ key:'pulse', label:'Pulse — PWM / パルス幅', seedOff:57,
+  params:{rows:9,duty:0.55,pwm:0.32,pwmfreq:2,radius:26,hue:14},
+  knobs:[['rows','段',3,22,1],['duty','基準幅',0.1,1,0.02],['pwm','PWM',0,0.5,0.02],['pwmfreq','PWM周期',0.5,6,0.1],['radius','丸み',2,44,1],['hue','色',0,360,1]],
+  emit(P,R){const S=[],rows=Math.round(P.rows),rh=H/rows;for(let i=0;i<rows;i++){const cy=(i+0.5)*rh,d=Math.max(0.05,Math.min(1,P.duty+P.pwm*Math.sin(P.pwmfreq*(i/rows)*TAU+R()*0.3))),w=W*0.86*d,x=W*0.07;for(let s=6;s>=0;s--){const t=s/6,ins=t*rh*0.42;D.rect(S,x+ins,cy-rh*0.34+ins,Math.max(1,w-ins*2),Math.max(1,rh*0.68-ins*2),Math.max(1,P.radius-ins),[P.hue,72,14+70*(1-t)])}}return S}},
+{ key:'grid', label:'Grid — サンプル&ホールド', seedOff:71,
+  params:{grid:16,freq:2.4,hue:200,spread:0.5,gap:0.12},
+  knobs:[['grid','格子',6,44,1],['freq','周波数',0.5,6,0.1],['hue','色',0,360,1],['spread','色広がり',0,1.5,0.02],['gap','隙間',0,0.45,0.02]],
+  emit(P,R){const S=[],G=Math.round(P.grid),cw=W/G,ch=H/G,p1=R()*TAU,p2=R()*TAU;for(let gy=0;gy<G;gy++)for(let gx=0;gx<G;gx++){const u=gx/G,v=gy/G;let f=0.5+0.5*Math.sin(TAU*P.freq*u+p1)*Math.cos(TAU*P.freq*v+p2);f=Math.pow(f,1.4);const size=Math.min(cw,ch)*(1-P.gap)*(0.28+0.72*f),cx=(gx+0.5)*cw,cy=(gy+0.5)*ch;D.rect(S,cx-size/2,cy-size/2,size,size,0,[(P.hue+f*P.spread*120)%360,60,10+70*f])}return S}}
+]
+
+/* ---- preview: the SAME descriptors, drawn as SVG ---- */
+const hsl=c=>`hsl(${c[0].toFixed(0)} ${c[1].toFixed(0)}% ${c[2].toFixed(0)}%)`
+function toSVG(S,g){
+  for(const d of S){let el
+    if(d.t==='rect'){el=document.createElementNS(NS,'rect');el.setAttribute('x',d.x.toFixed(1));el.setAttribute('y',d.y.toFixed(1));el.setAttribute('width',d.w.toFixed(1));el.setAttribute('height',d.h.toFixed(1));if(d.rx)el.setAttribute('rx',d.rx.toFixed(1));el.setAttribute('fill',hsl(d.fill))}
+    else if(d.t==='circle'){el=document.createElementNS(NS,'circle');el.setAttribute('cx',d.c[0].toFixed(1));el.setAttribute('cy',d.c[1].toFixed(1));el.setAttribute('r',d.r.toFixed(1));el.setAttribute('fill',hsl(d.fill))}
+    else if(d.t==='line'){el=document.createElementNS(NS,'path');el.setAttribute('d',`M${d.a[0].toFixed(1)} ${d.a[1].toFixed(1)}L${d.b[0].toFixed(1)} ${d.b[1].toFixed(1)}`);el.setAttribute('stroke',hsl(d.stroke));el.setAttribute('stroke-width',d.w.toFixed(2));el.setAttribute('fill','none');if(d.op!=null)el.setAttribute('opacity',d.op.toFixed(2))}
+    else if(d.t==='poly'){el=document.createElementNS(NS,'path');el.setAttribute('d','M'+d.pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L')+(d.close?'Z':''));if(d.fill){el.setAttribute('fill',hsl(d.fill))}else{el.setAttribute('fill','none');el.setAttribute('stroke',hsl(d.stroke));el.setAttribute('stroke-width',d.w.toFixed(2))}}
+    g.append(el)}
+}
+
+/* ---- state: switch by default, layer on the dot ---- */
+const on=new Set(['wave']), solo=new Set(), mute=new Set()
+let sel='wave', seed=7, lastLayers=[]
+const audible=k=>(solo.size?solo.has(k):true)&&!mute.has(k)
+
+function layers(){const out=[];for(const e of ENGINES){if(!on.has(e.key)||!audible(e.key))continue;out.push({key:e.key,descriptors:e.emit(e.params,mb((seed+e.seedOff)*7919+13))})}return out}
+function draw(){
+  while(art.firstChild)art.removeChild(art.firstChild)
+  lastLayers=layers()
+  for(const L of lastLayers){const g=document.createElementNS(NS,'g');g.setAttribute('style','mix-blend-mode:screen');toSVG(L.descriptors,g);art.append(g)}
+}
+
+const rackEl=document.getElementById('rack'),knobEl=document.getElementById('knobs')
+function buildRack(){rackEl.innerHTML=''
+  for(const e of ENGINES){const row=document.createElement('div');row.className='eng';row.dataset.k=e.key
+    row.innerHTML=`<span class="dot"></span><span class="nm">${e.label}</span><span class="sm"><button class="s">S</button><button class="m">M</button></span>`
+    row.querySelector('.dot').onclick=ev=>{ev.stopPropagation();on.has(e.key)?on.delete(e.key):on.add(e.key);sel=e.key;buildKnobs();paint();draw()}
+    row.querySelector('.s').onclick=ev=>{ev.stopPropagation();solo.has(e.key)?solo.delete(e.key):solo.add(e.key);paint();draw()}
+    row.querySelector('.m').onclick=ev=>{ev.stopPropagation();mute.has(e.key)?mute.delete(e.key):mute.add(e.key);paint();draw()}
+    row.onclick=()=>{on.clear();on.add(e.key);solo.clear();mute.clear();sel=e.key;buildKnobs();paint();draw()}
+    rackEl.append(row)}}
+function paint(){for(const row of rackEl.children){const k=row.dataset.k;row.classList.toggle('on',on.has(k));row.classList.toggle('off',!on.has(k)||!audible(k));row.classList.toggle('sel',k===sel);row.querySelector('.s').classList.toggle('on',solo.has(k));row.querySelector('.m').classList.toggle('on',mute.has(k))}}
+function buildKnobs(){const e=ENGINES.find(x=>x.key===sel);knobEl.innerHTML=''
+  for(const[id,lbl,min,max,step]of e.knobs){const l=document.createElement('label');l.innerHTML=`${lbl}<input type="range" min="${min}" max="${max}" step="${step}" value="${e.params[id]}"><b>${(+e.params[id]).toFixed(step<1?2:0)}</b>`
+    const inp=l.querySelector('input'),b=l.querySelector('b');inp.oninput=()=>{e.params[id]=+inp.value;b.textContent=(+inp.value).toFixed(step<1?2:0);draw()};knobEl.append(l)}}
+const seedEl=document.getElementById('seed'),seedB=seedEl.parentElement.querySelector('b')
+seedEl.oninput=()=>{seed=+seedEl.value;seedB.textContent=seed;draw()}
+document.getElementById('rnd').onclick=()=>{seed=(seed*7+13)%61;seedEl.value=seed;seedB.textContent=seed;draw()}
+const msg=document.getElementById('msg')
+document.getElementById('out').onclick=()=>{
+  if(!lastLayers.length){msg.textContent='鳴っているエンジンがない';return}
+  msg.textContent='出しています…'
+  parent.postMessage({pluginMessage:{type:'generate',layers:lastLayers,seed}},'*')
+}
+onmessage=e=>{const m=e.data.pluginMessage;if(!m)return;if(m.type==='made')msg.textContent=`${m.nodes} ノードを出しました（${m.engines} エンジン）`}
+buildRack();buildKnobs();paint();draw()
+</script>

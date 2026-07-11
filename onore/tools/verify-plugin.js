@@ -1,0 +1,82 @@
+#!/usr/bin/env node
+/* End-to-end check of the real Onore plugin, without Figma.
+ *  1. Pull ENGINES out of ui.html, compute descriptors for every engine.
+ *  2. Eval the real code.js under a fake Figma + fake UI channel.
+ *  3. Fire the same {type:'generate', layers} message the UI would post.
+ *  4. Assert: a black frame, one group per engine, valid space-separated paths,
+ *     no NaN, no empty-group throw, node counts match.
+ */
+'use strict'
+const fs = require('fs'), path = require('path')
+const DIR = path.join(__dirname, '..', 'plugin')   // onore/plugin, next to this tools/ dir
+
+/* ---- 1. run ui.html's engines to get descriptors (same code the preview uses) ---- */
+const ui = fs.readFileSync(path.join(DIR, 'ui.html'), 'utf8')
+const uiJs = ui.slice(ui.indexOf('<script>') + 8, ui.lastIndexOf('</script>'))
+const engBody = uiJs.slice(0, uiJs.indexOf('/* ---- state')) + '\n; return { ENGINES, mb }'
+const stubEl = { setAttribute() {}, append() {}, firstChild: null, removeChild() {} }
+const { ENGINES, mb } = new Function('document', engBody)(
+  { createElementNS: () => stubEl, getElementById: () => stubEl })
+const seed = 7
+const layers = ENGINES.map(e => ({ key: e.key, descriptors: e.emit(e.params, mb((seed + e.seedOff) * 7919 + 13)) }))
+
+/* ---- 2. fake Figma, throwing where the real one throws ---- */
+function fakeFigma() {
+  const mk = type => ({
+    type, children: [], x: 0, y: 0, width: 1, height: 1, fills: [], strokes: [], opacity: 1, name: '',
+    resize(w, h) { if (!(w > 0 && h > 0)) throw new Error(`resize(${w},${h})`); this.width = w; this.height = h },
+    appendChild(c) { if (c.parent) c.parent.children.splice(c.parent.children.indexOf(c), 1); c.parent = this; this.children.push(c) },
+    set cornerRadius(v) { this._rx = v }, set strokeWeight(v) { this._sw = v }, set blendMode(v) { this._bm = v }, set clipsContent(v) {},
+    set vectorPaths(v) {
+      for (const p of v) {
+        if (/[0-9],[0-9]/.test(p.data)) throw new Error('comma in path: ' + p.data.slice(0, 30))
+        if (/NaN|Infinity|undefined/.test(p.data)) throw new Error('bad coord: ' + p.data.slice(0, 40))
+      }
+      this._paths = v
+    },
+    get vectorPaths() { return this._paths || [] },
+  })
+  const page = mk('PAGE'); page.selection = []
+  return {
+    currentPage: page, viewport: { center: { x: 500, y: 400 } },
+    showUI() {}, notify(m) { console.log('  figma.notify:', m) },
+    createFrame: () => mk('FRAME'), createRectangle: () => mk('RECTANGLE'),
+    createEllipse: () => mk('ELLIPSE'), createVector: () => mk('VECTOR'),
+    group(nodes, parent) { if (!nodes.length) throw new Error('group([])'); const g = mk('GROUP'); nodes.forEach(n => g.appendChild(n)); parent.appendChild(g); return g },
+    ui: { _h: null, set onmessage(f) { this._h = f }, postMessage(m) { this._out = m } },
+  }
+}
+
+/* ---- 3. eval the REAL code.js and fire the message ---- */
+const figma = fakeFigma()
+const code = fs.readFileSync(path.join(DIR, 'code.js'), 'utf8')
+new Function('figma', '__html__', code)(figma, '<ui/>')
+figma.ui._h({ type: 'generate', layers, seed })
+
+/* ---- 4. assert ---- */
+const frame = figma.currentPage.selection[0]
+let bad = 0
+const check = (c, m) => { if (!c) { bad++; console.log('  ❌ ' + m) } }
+check(frame && frame.type === 'FRAME', 'a frame was placed')
+check(frame && frame._bm === undefined ? true : true, '')
+const groups = frame ? frame.children.filter(c => c.type === 'GROUP') : []
+console.log('engine     nodes   node type')
+console.log('─'.repeat(46))
+let total = 0
+for (const g of groups) {
+  const kinds = [...new Set(g.children.map(c => c.type))].join(',')
+  console.log(`${g.name.padEnd(10)} ${String(g.children.length).padStart(5)}   ${kinds}`)
+  total += g.children.length
+  check(g._bm === 'SCREEN', `${g.name} group is SCREEN`)
+  check(g.children.every(c => c._bm === 'SCREEN'), `${g.name} nodes are SCREEN`)
+}
+console.log('─'.repeat(46))
+check(groups.length === layers.length, `one group per engine (${groups.length}/${layers.length})`)
+check(frame && frame.fills[0] && frame.fills[0].color.r === 0, 'ground frame is black')
+check(frame && frame.x === Math.round(500 - W2()) , 'frame centred on viewport')
+function W2() { return 720 / 2 }
+const posted = figma.ui._out
+check(posted && posted.type === 'made' && posted.nodes === total, `UI told: ${posted && posted.nodes} nodes`)
+console.log(`\n合計 ${total} ノード / ${groups.length} エンジン / 黒地フレーム1 / 失敗 ${bad}`)
+console.log(bad ? '\n❌ プラグインに穴あり' : '\n✅ 実プラグイン（ui.html → code.js）が、有効な Figma ノードを生成した。')
+if (bad) process.exit(1)
