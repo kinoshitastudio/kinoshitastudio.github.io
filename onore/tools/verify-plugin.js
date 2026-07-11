@@ -69,7 +69,7 @@ for (const ef of engineFrames) {
   console.log(`${ef.name.padEnd(10)} ${String(ef.children.length).padStart(5)}   ${kinds.padEnd(20)} ${ef._bm}`)
   total += ef.children.length
   check(ef._bm === 'SCREEN', `${ef.name} frame is SCREEN`)
-  check(ef.children.every(c => c._bm === undefined), `${ef.name} shapes are NORMAL (no per-shape SCREEN → no white grid)`)
+  check(ef.children.every(c => c._bm === 'NORMAL'), `${ef.name} shapes are explicit NORMAL (no PASS_THROUGH → no white grid)`)
 }
 console.log('─'.repeat(52))
 check(engineFrames.length === layers.length, `one frame per engine (${engineFrames.length}/${layers.length})`)

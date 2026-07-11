@@ -47,11 +47,13 @@ function node(d) {
     if (d.fill) { nd.vectorPaths = [{ windingRule: 'NONZERO', data }]; nd.fills = [{ type: 'SOLID', color: rgb(d.fill) }] }
     else { nd.vectorPaths = [{ windingRule: 'NONE', data }]; nd.fills = []; nd.strokes = [{ type: 'SOLID', color: rgb(d.stroke) }]; nd.strokeWeight = d.w }
   }
-  /* ⚠ NORMAL, not SCREEN, per shape. The preview screens the whole ENGINE onto
-     the ground, and the shapes inside it composite normally. Screening each shape
-     instead makes every shared edge add against its neighbour — the anti-aliased
-     seams brighten and a white grid appears over the ribbon. Keep the shapes
-     opaque and normal; the engine frame below carries the SCREEN. */
+  /* ⚠ Set NORMAL explicitly. A fresh Figma node defaults to PASS_THROUGH, which
+     blends it against the backdrop as if its parent frame's SCREEN weren't there
+     — so every quad SCREEN-adds against its neighbour and the shared, anti-aliased
+     edges brighten into a white grid over the ribbon. NORMAL makes the shapes just
+     stack (alpha-over) within the engine frame, exactly like the SVG preview's
+     children; only the engine frame carries the SCREEN. */
+  nd.blendMode = 'NORMAL'
   return nd
 }
 
