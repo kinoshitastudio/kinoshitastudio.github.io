@@ -34,6 +34,9 @@
   .lang button:last-child{border-radius:0 5px 5px 0;margin-left:-1px}
   #body{flex:1;display:flex;flex-direction:column;gap:10px;padding:12px;overflow:auto;min-height:0}
   small{color:#666;line-height:1.5}
+  .presets{display:flex;gap:5px;flex-wrap:wrap}
+  .presets button{font-size:10.5px;padding:5px 11px;border:1px solid #333;border-radius:20px;background:#141414;color:#bbb;cursor:pointer}
+  .presets button:hover{background:#222;color:#fff;border-color:#555}
   #stage{width:100%;background:#000;border:1px solid #222;border-radius:6px;display:flex;justify-content:center;align-items:center;padding:6px 0}
   svg{display:block;width:100%;height:212px}
   .mix{display:grid;grid-template-columns:repeat(7,1fr) 7px repeat(2,1fr);gap:4px;border:1px solid #222;border-radius:6px;padding:10px 8px 8px}
@@ -102,6 +105,7 @@
 </header>
 
 <div id="body">
+  <div class="presets" id="presets"></div>
   <div id="stage"><svg id="art" viewBox="0 0 720 900"></svg></div>
   <div class="mix" id="mix"></div>
   <div class="knobs" id="knobs"></div>
@@ -219,6 +223,31 @@ const sendOf=k=>SENDS.find(s=>s.key===k)
 const isSend=k=>!!sendOf(k)
 const allOf=k=>engOf(k)||sendOf(k)
 
+/* ⭐ Presets — a whole mixer state in one press: which engines are up and how
+   loud, a few signature knobs each, the sends, the seed. Captured against the
+   engines' original defaults so a preset always lands the same, whatever you have
+   been dialling. Add one by pushing to PRESETS. */
+const DEFAULTS={};for(const e of ENGINES)DEFAULTS[e.key]=JSON.parse(JSON.stringify(e.params))
+const SDEF={};for(const s of SENDS)SDEF[s.key]={params:JSON.parse(JSON.stringify(s.params)),mode:s.mode}
+const PRESETS=[
+{ name:'Ribbon',  level:{wave:1},            p:{wave:{step:16,hue:20,twist:2}},                                            seed:7 },
+{ name:'Chrome',  level:{wave:1,reverb:0.3}, p:{wave:{step:0,hue:210,spread:0.2,spec:2.6,twist:2.6}},                       seed:3 },
+{ name:'Aurora',  level:{wave:1,field:0.6},  p:{wave:{hue:120,step:14},field:{hue:285,notes:5,soft:2.1}},                   seed:11 },
+{ name:'Spectra', level:{partials:1,rings:0.8}, p:{partials:{hue:200,spread:1.4,rays:220},rings:{hue:20,spread:1.6,rings:20}}, seed:5 },
+{ name:'Moiré',   level:{beat:1,grid:0.55},  p:{beat:{hue:32,detune:0.22,lines:52},grid:{hue:200,freq:3.2,spread:0.8}},      seed:9 },
+{ name:'Bloom',   level:{field:1},           p:{field:{notes:9,hold:1.4,soft:2.3,hue:300,spread:1}},                        seed:13 },
+{ name:'Split',   level:{wave:1,tape:0.7},   p:{wave:{step:12,hue:180}}, sp:{tape:{offset:15}}, mode:{tape:'rgb'},          seed:19 },
+]
+function applyPreset(pr){
+  for(const e of ENGINES){e.params=JSON.parse(JSON.stringify(DEFAULTS[e.key]));if(pr.p&&pr.p[e.key])Object.assign(e.params,pr.p[e.key]);level[e.key]=pr.level[e.key]||0}
+  for(const s of SENDS){s.params=JSON.parse(JSON.stringify(SDEF[s.key].params));s.mode=SDEF[s.key].mode;if(pr.sp&&pr.sp[s.key])Object.assign(s.params,pr.sp[s.key]);if(pr.mode&&pr.mode[s.key])s.mode=pr.mode[s.key];level[s.key]=pr.level[s.key]||0}
+  solo.clear();mute.clear();if(pr.seed!=null)seed=pr.seed
+  let best='wave',bv=-1;for(const e of ENGINES)if(level[e.key]>bv){bv=level[e.key];best=e.key}
+  active=best
+  document.getElementById('seed').value=seed;document.getElementById('seedv').textContent=seed
+  paintSel();buildMix();buildKnobs();draw()
+}
+
 const T={
   ja:{ intro:'99letters のシンセ。上のセレクタでエンジンを選ぶ。<br>出るのは全部パス。汚しは Kaibou / Siren。',
        out:'Figma に出す', close:'閉じる',
@@ -285,7 +314,12 @@ function render(){if(rafPending)return;rafPending=requestAnimationFrame(()=>{raf
 
 /* pick which engine the knobs edit; raise its fader if it was silent, so you
    always see what you are editing */
-function selectEngine(k){active=k;if(!(level[k]>0))level[k]=1;paintSel();buildMix();buildKnobs();draw()}
+/* ⭐ Like Siren: choosing from the selector (or a fader's name) SOLOS that one —
+   the mixer follows (its S lights), and the preview shows just it, so you edit in
+   isolation. Click the lit S off to hear the whole mix again. (Presets don't solo
+   — they show the layered scene.) Solo is within a kind, so soloing a send leaves
+   the instruments playing, which is the only way a send has anything to act on. */
+function selectEngine(k){active=k;solo.clear();solo.add(k);mute.delete(k);if(!(level[k]>0))level[k]=1;paintSel();buildMix();buildKnobs();draw()}
 
 /* ---- engine selector (in the fixed bar, next to the logo) ---- */
 const engBtn=document.getElementById('engBtn'),engMenu=document.getElementById('engMenu')
@@ -377,5 +411,7 @@ document.getElementById('out').onclick=()=>{
 }
 onmessage=e=>{const m=e.data.pluginMessage;if(!m)return;if(m.type==='made')msg.textContent=lang==='ja'?`${m.nodes} ノードを出しました`:`${m.nodes} nodes sent`}
 
+const presetsEl=document.getElementById('presets')
+for(const pr of PRESETS){const b=document.createElement('button');b.textContent=pr.name;b.onclick=()=>applyPreset(pr);presetsEl.append(b)}
 applyLang();draw()
 </script>
