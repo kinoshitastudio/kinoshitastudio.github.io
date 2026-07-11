@@ -1,228 +1,225 @@
-<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Onore — 99letters synth</title>
+<!doctype html><meta charset="utf-8">
 <!--
-  Onore — a synth that outputs vector paths. Three engines (oscillators) stack on
-  one black ground, summed in SCREEN, the way a synth's oscillators sum.
-  ⭐ To add a 4th engine: push one entry to ENGINES below. Nothing else changes.
-  ⚠ No 汚し here. Grit / blur-as-texture / misregistration is downstream (Kaibou,
-    Siren). Onore stays clean generation. That boundary is what keeps it growable.
+  Onore — 99letters synth. Figma plugin UI.
+  ⭐ Engines emit DESCRIPTORS (図形の記述). The same descriptor list draws the SVG
+     preview here AND is posted to code.js, which turns it into native Figma nodes.
+     One source of truth → preview and plugin cannot diverge. No sync.js needed.
+  ⚠ No 汚し here. Grit / blur-as-texture / misregistration is downstream (Kaibou).
+  ⭐ Add an engine: push one entry to ENGINES. Selector, panel, preview, output follow.
+  Layout: fixed top bar (logo + engine selector + JP/EN) · full-width preview ·
+          the selected engine's sliders · footer. Mixer (levels + S/M) comes later.
 -->
 <style>
-  html,body{margin:0;background:#0a0a0a;color:#ddd;font:12px ui-monospace,Menlo,monospace}
-  #wrap{display:flex;gap:16px;padding:16px;flex-wrap:wrap}
-  svg{display:block;background:#000;border:1px solid #222;border-radius:4px}
-  #side{display:flex;flex-direction:column;gap:10px;width:250px}
-  h1{font:600 13px ui-monospace;letter-spacing:.12em;margin:0;color:#fff}
+  html,body{margin:0;background:#0a0a0a;color:#ddd;font:12px ui-monospace,Menlo,monospace;height:100%}
+  body{display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:12px;padding:9px 12px 8px;border-bottom:1px solid #222;flex:none}
+  .wm{display:flex;flex-direction:column;align-items:flex-start;min-width:0;flex:none}
+  .wmr{display:flex;align-items:baseline;gap:7px}
+  h1{font-family:"Haettenschweiler","Impact","Arial Narrow Bold",sans-serif;font-size:19px;letter-spacing:.06em;text-transform:uppercase;margin:0;font-weight:400;cursor:pointer;line-height:1.05;color:#fff}
+  h1 .jp{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic",-apple-system,sans-serif;font-weight:800;font-size:15px;letter-spacing:.02em;margin-left:7px;display:inline-block;transform:scaleX(.86);transform-origin:left center;vertical-align:baseline}
+  .ver{font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.12em;color:#777}
+  .by{font-size:7px;letter-spacing:.11em;text-transform:uppercase;color:#555;white-space:nowrap;margin-top:2px}
+  .esel{position:relative;flex:1;min-width:0}
+  #engBtn{width:100%;text-align:left;border:1px solid #333;background:#141414;color:#fff;border-radius:6px;padding:7px 10px;font-size:12px;cursor:pointer}
+  #engBtn .ar{float:right;color:#888}
+  .emenu{position:absolute;top:calc(100% + 4px);left:0;right:0;background:#181818;border:1px solid #333;border-radius:7px;padding:4px;z-index:20;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+  .emenu[hidden]{display:none}
+  .emenu button{display:block;width:100%;text-align:left;border:none;border-radius:5px;padding:8px 9px;font-size:11.5px;background:none;color:#ccc;cursor:pointer}
+  .emenu button:hover{background:#242424}
+  .emenu button.on{background:#fff;color:#000}
+  .lang{display:flex;flex:none}
+  .lang button{border:1px solid #444;background:#111;color:#888;border-radius:0;padding:5px 10px;font-size:11px;cursor:pointer}
+  .lang button.on{background:#fff;color:#000;border-color:#fff}
+  .lang button:first-child{border-radius:5px 0 0 5px}
+  .lang button:last-child{border-radius:0 5px 5px 0;margin-left:-1px}
+  #body{flex:1;display:flex;flex-direction:column;gap:10px;padding:12px;overflow:auto;min-height:0}
   small{color:#666;line-height:1.5}
-  .rack{display:flex;flex-direction:column;gap:4px;border:1px solid #222;border-radius:6px;padding:6px}
-  .eng{display:flex;align-items:center;gap:6px;padding:4px 5px;border-radius:4px;cursor:pointer}
-  .eng.sel{background:#1c1c1c}
-  .eng .nm{flex:1;color:#ccc;letter-spacing:.04em}
-  .eng.sel .nm{color:#fff}
-  .eng.off .nm{color:#555}
-  .dot{width:11px;height:11px;border-radius:50%;border:1px solid #555;flex:none}
-  .eng.on .dot{background:#fff;border-color:#fff}
-  .sm{display:flex;gap:3px}
-  .sm button{font-size:9px;font-weight:600;padding:2px 5px;border-radius:3px;border:1px solid #444;background:#111;color:#888;cursor:pointer}
-  .sm .s.on{background:#e8b13a;color:#000;border-color:#e8b13a}
-  .sm .m.on{background:#7a4a4a;color:#fff;border-color:#7a4a4a}
-  .knobs{display:flex;flex-direction:column;gap:7px;border:1px solid #222;border-radius:6px;padding:9px}
-  label{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:#999;align-items:center}
-  label b{color:#eee;min-width:42px;text-align:right}
+  #stage{width:100%;background:#000;border:1px solid #222;border-radius:6px;display:flex;justify-content:center;align-items:center;padding:6px 0}
+  svg{display:block;width:100%;height:300px}
+  .knobs{display:flex;flex-direction:column;gap:7px;border:1px solid #222;border-radius:6px;padding:10px 12px}
+  label{display:flex;justify-content:space-between;gap:10px;font-size:11px;color:#999;align-items:center}
+  label span.k{flex:none;width:96px}
+  label b{color:#eee;min-width:40px;text-align:right}
   input[type=range]{flex:1;accent-color:#fff}
-  .foot{display:flex;gap:8px;align-items:center}
-  .foot button{font-size:11px;padding:6px 10px;border-radius:4px;border:1px solid #444;background:#111;color:#ddd;cursor:pointer}
+  footer{flex:none;border-top:1px solid #222;padding:9px 12px;display:flex;gap:8px;align-items:center}
+  footer .fl{color:#999;font-size:11px;flex:none}
+  #seed{width:92px;flex:none}
+  #seedv{color:#eee;min-width:20px;font-size:11px}
+  .sp{flex:1}
+  #msg{color:#888;font-size:10.5px;max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
+  button.act{font-size:11px;padding:7px 12px;border-radius:4px;border:1px solid #444;background:#111;color:#ddd;cursor:pointer;flex:none}
+  #out{background:#fff;color:#000;border-color:#fff;font-weight:600}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;z-index:30;padding:16px}
+  .modal[hidden]{display:none}
+  .sheet{background:#141414;border:1px solid #222;border-radius:12px;padding:22px 20px 16px;width:100%;max-width:420px;max-height:88vh;overflow-y:auto}
+  .mt{font-family:"Haettenschweiler","Impact",sans-serif;text-transform:uppercase;letter-spacing:.06em;font-size:24px;margin:0 0 8px;font-weight:400;color:#fff}
+  .ms{font-size:11.5px;color:#888;margin:0 0 14px;line-height:1.75}
+  .ms b{color:#ddd;font-weight:500}
+  .mlink{display:flex;justify-content:space-between;padding:10px 12px;border:1px solid #222;border-radius:7px;margin-bottom:7px;color:#ddd;text-decoration:none;font-size:11.5px}
+  .mlink small{color:#888;margin-left:5px}
+  .mcl{width:100%;margin-top:8px;padding:8px;border:1px solid #444;background:#111;color:#ddd;border-radius:5px;cursor:pointer}
 </style>
-<div id="wrap">
-  <svg id="art" viewBox="0 0 720 900" width="480" height="600"></svg>
-  <div id="side">
-    <h1>ONORE — 99letters synth</h1>
-    <small>持続音の楽器。3つのエンジンが同じ黒地の上に重なる（SCREENで足し合う）。<br>出てくるのは全部ベクター。汚しは Kaibou / Siren。</small>
-    <div class="rack" id="rack"></div>
-    <div class="knobs" id="knobs"></div>
-    <div class="foot">
-      <label style="flex:1">seed <input id="seed" type="range" min="0" max="60" step="1" value="7"><b>7</b></label>
-      <button id="rnd">⟳</button>
-    </div>
+
+<div id="modal" class="modal" hidden>
+  <div class="sheet">
+    <p class="mt">ONORE 己</p>
+    <p class="ms" id="mSub"></p>
+    <p class="ms" id="mBody"></p>
+    <a class="mlink" href="https://kinoshita.studio" target="_blank" rel="noopener"><span>kinoshita studio</span><span>↗</span></a>
+    <a class="mlink" href="https://99letters.bandcamp.com/album/kaibou-zukan" target="_blank" rel="noopener"><span>99LETTERS — Kaibou Zukan <small>Bandcamp</small></span><span>↗</span></a>
+    <button id="mClose" class="mcl"></button>
   </div>
 </div>
+
+<header>
+  <div class="wm">
+    <div class="wmr"><h1 id="title">ONORE<span class="jp">己</span></h1><span class="ver">V1</span></div>
+    <span class="by">by Kinoshita Studio</span>
+  </div>
+  <div class="esel">
+    <button id="engBtn"></button>
+    <div id="engMenu" class="emenu" hidden></div>
+  </div>
+  <div class="lang"><button id="langJa" class="on">JP</button><button id="langEn">EN</button></div>
+</header>
+
+<div id="body">
+  <small id="intro"></small>
+  <div id="stage"><svg id="art" viewBox="0 0 720 900"></svg></div>
+  <div class="knobs" id="knobs"></div>
+</div>
+<footer>
+  <span class="fl">seed</span><input id="seed" type="range" min="0" max="60" step="1" value="7"><b id="seedv">7</b>
+  <span class="sp"></span>
+  <span id="msg"></span>
+  <button class="act" id="rnd">⟳</button>
+  <button class="act" id="out"></button>
+</footer>
 <script>
 'use strict'
 const NS='http://www.w3.org/2000/svg', art=document.getElementById('art')
 const W=720, H=900, TAU=Math.PI*2
 const mb=s=>{let a=s>>>0;return()=>{a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296}}
 const osc=(a,k)=>{const s=Math.sin(a);if(k<=0)return s;const saw=2*(a/TAU-Math.floor(a/TAU+0.5));if(k<=1)return s*(1-k)+saw*k;const sq=Math.sign(s)||1;return saw*(2-k)+sq*(k-1)}
+const D={poly:(S,pts,o)=>S.push(Object.assign({t:'poly',pts},o)),line:(S,a,b,o)=>S.push(Object.assign({t:'line',a,b},o)),
+  circle:(S,c,r,fill)=>S.push({t:'circle',c,r,fill}),rect:(S,x,y,w,h,rx,fill)=>S.push({t:'rect',x,y,w,h,rx,fill})}
 
-/* ⭐ Every engine is one entry here. Its `draw` appends into a SCREEN group, so
-   whatever it makes sums with the other engines on the black ground. Add a fourth
-   by pushing another entry — the rack, the panel and the render all follow. */
+/* ⭐ Every engine keeps a colour knob first, so every synth is recolourable and the
+   control is always in the same place. label/knob labels carry both languages. */
 const ENGINES=[
-{ key:'wave', label:'Wave — 波が面になる', seedOff:0,
-  params:{wshape:0, amp:190, turns:2.2, width:150, twist:2.0, spec:1.4, hue:20, spread:0.7, cut:0},
-  knobs:[['wshape','sine→saw→sq',0,2,0.01],['amp','振幅',0,300,1],['turns','sustain',0.5,6,0.05],
-         ['width','面の幅',20,240,1],['twist','LFO',0,6,0.05],['spec','倍音の鋭さ',0.4,4,0.05],
-         ['hue','基音の色',0,360,1],['spread','倍音の広がり',0,1.5,0.01],['cut','ローパス',0,1,0.01]],
-  draw(g,P,R){
-    const N=240,M=15,ds=1/N
-    const centre=s=>{const a=TAU*P.turns*s+0.6;let w=osc(a,P.wshape)+0.28*osc(2*a,P.wshape)+0.14*osc(3*a,P.wshape);return{x:W/2+P.amp*(w/1.42),y:H*s}}
-    let prev=null
-    for(let i=0;i<=N;i++){
-      const s=i/N,c=centre(s),a=centre(s-ds*0.6),b=centre(s+ds*0.6)
-      let tx=b.x-a.x,ty=b.y-a.y;const tl=Math.hypot(tx,ty)||1;tx/=tl;ty/=tl
-      const nx=-ty,ny=tx,hw=P.width*0.5,lightAng=1.15*Math.sin(TAU*P.twist*s)
-      const row=[];for(let j=0;j<=M;j++){const u=(j/M)*2-1;row.push({x:c.x+u*hw*nx,y:c.y+u*hw*ny})}
-      if(prev)for(let j=0;j<M;j++){
-        const um=((j+0.5)/M)*2-1,ang=um*1.3
-        let bght=Math.pow(Math.max(0,Math.cos(ang-lightAng)),1+P.spec)
-        if(P.cut>0)bght=bght*(1-P.cut)+(0.5-0.5*Math.cos((um+1)*Math.PI/2))*P.cut*0.6
-        const hue=(P.hue+P.spread*s*300+40*bght)%360,lgt=6+90*Math.pow(bght,1.35)
-        const q=document.createElementNS(NS,'path')
-        q.setAttribute('d',`M${prev[j].x.toFixed(1)} ${prev[j].y.toFixed(1)}L${prev[j+1].x.toFixed(1)} ${prev[j+1].y.toFixed(1)}L${row[j+1].x.toFixed(1)} ${row[j+1].y.toFixed(1)}L${row[j].x.toFixed(1)} ${row[j].y.toFixed(1)}Z`)
-        q.setAttribute('fill',`hsl(${hue.toFixed(0)} ${(58+18*bght).toFixed(0)}% ${lgt.toFixed(0)}%)`)
-        g.append(q)
-      }
-      prev=row
-    }
-  }},
-{ key:'partials', label:'Partials — 倍音の束', seedOff:11,
-  params:{rays:150, partials:6, aim:-1.2, hue:200, spread:1.0, len:0.42, cy:0.5},
-  knobs:[['rays','倍音の本数',20,360,2],['partials','倍音の次数',1,16,1],['aim','片寄り',-3.14,3.14,0.05],
-         ['hue','基音の色',0,360,1],['spread','広がり',0,2,0.02],['len','伸び',0.2,0.6,0.01],['cy','高さ',0.15,0.85,0.01]],
-  draw(g,P,R){
-    const cx=W/2,cy=H*P.cy,n=Math.round(P.rays)
-    for(let i=0;i<n;i++){
-      const a=(i/n)*TAU+R()*0.01,len=W*P.len*(0.5+0.5*Math.pow(R(),0.4))
-      const k=1+Math.floor(R()*P.partials),op=Math.pow(0.5+0.5*Math.cos(a-P.aim),1.4)*0.85/Math.sqrt(k)
-      const hue=(P.hue+k*P.spread*40)%360
-      const ln=document.createElementNS(NS,'path')
-      ln.setAttribute('d',`M${cx} ${cy.toFixed(1)}L${(cx+Math.cos(a)*len).toFixed(1)} ${(cy+Math.sin(a)*len).toFixed(1)}`)
-      ln.setAttribute('stroke',`hsl(${hue.toFixed(0)} 85% 55%)`);ln.setAttribute('stroke-width',(0.6+R()*1.1).toFixed(2))
-      ln.setAttribute('opacity',op.toFixed(2));ln.setAttribute('fill','none');g.append(ln)
-    }
-  }},
-{ key:'field', label:'Field — 持続＝面積', seedOff:23,
-  params:{notes:6, hold:1.0, hue:285, spread:0.7, soft:1.7},
-  knobs:[['notes','音数',1,24,1],['hold','持続の長さ',0.1,2,0.02],['hue','基音の色',0,360,1],['spread','色の広がり',0,1.5,0.02],['soft','ぼけ',1,3,0.05]],
-  draw(g,P,R){
-    const blobs=[];for(let i=0;i<Math.round(P.notes);i++)blobs.push({x:R()*W,y:R()*H,r:60+R()*P.hold*180,h:(P.hue+R()*P.spread*120)%360})
-    for(const b of blobs)for(let k=22;k>=1;k--){
-      const t=k/22,c=document.createElementNS(NS,'circle')
-      c.setAttribute('cx',b.x.toFixed(1));c.setAttribute('cy',b.y.toFixed(1));c.setAttribute('r',(b.r*t).toFixed(1))
-      c.setAttribute('fill',`hsl(${b.h.toFixed(0)} 60% ${(8+70*Math.pow(1-t,P.soft)).toFixed(0)}%)`)
-      g.append(c)
-    }
-  }},
-{ key:'rings', label:'Rings — FM / リング変調', seedOff:31,
-  params:{rings:14, spacing:26, modfreq:5, moddepth:14, hue:205, spread:1.1, cx:0.5, cy:0.5},
-  knobs:[['rings','倍音の輪',3,44,1],['spacing','間隔',8,60,1],['modfreq','変調周波数',0,16,1],['moddepth','変調の深さ',0,42,1],['hue','基音の色',0,360,1],['spread','分光',0,2,0.02],['cx','中心X',0.2,0.8,0.01],['cy','中心Y',0.2,0.8,0.01]],
-  draw(g,P,R){
-    const cx=W*P.cx, cy=H*P.cy, seg=170, ph=R()*TAU
-    for(let k=1;k<=Math.round(P.rings);k++){
-      const rr=k*P.spacing, hue=(P.hue+k*P.spread*30)%360, pts=[]
-      for(let i=0;i<=seg;i++){const th=i/seg*TAU, r=rr+P.moddepth*Math.sin(P.modfreq*th+k*0.6+ph);pts.push((cx+Math.cos(th)*r).toFixed(1)+' '+(cy+Math.sin(th)*r).toFixed(1))}
-      const p=document.createElementNS(NS,'path')
-      p.setAttribute('d','M'+pts.join('L')+'Z');p.setAttribute('fill','none')
-      p.setAttribute('stroke',`hsl(${hue.toFixed(0)} 90% 58%)`);p.setAttribute('stroke-width','1.2');p.setAttribute('opacity','0.85')
-      g.append(p)
-    }
-  }},
-{ key:'beat', label:'Beat — デチューン / うなり', seedOff:43,
-  params:{lines:40, angle:0.10, detune:0.16, spacing:17, hue:32, len:1.0},
-  knobs:[['lines','本数',8,120,1],['angle','角度',-1.5,1.5,0.02],['detune','デチューン',0,0.6,0.01],['spacing','間隔',6,40,1],['hue','色',0,360,1],['len','長さ',0.3,1.2,0.02]],
-  draw(g,P,R){
-    const fam=(ang,hs)=>{const n=Math.round(P.lines),dx=Math.cos(ang+Math.PI/2),dy=Math.sin(ang+Math.PI/2),nx=Math.cos(ang),ny=Math.sin(ang),L=H*P.len
-      for(let i=0;i<n;i++){const off=(i-n/2)*P.spacing,cx=W/2+nx*off,cy=H/2+ny*off
-        const ln=document.createElementNS(NS,'path')
-        ln.setAttribute('d',`M${(cx-dx*L/2).toFixed(1)} ${(cy-dy*L/2).toFixed(1)}L${(cx+dx*L/2).toFixed(1)} ${(cy+dy*L/2).toFixed(1)}`)
-        ln.setAttribute('stroke',`hsl(${((P.hue+hs)%360).toFixed(0)} 85% 60%)`);ln.setAttribute('stroke-width','1.1');ln.setAttribute('opacity','0.62');ln.setAttribute('fill','none')
-        g.append(ln)}}
-    // ⭐ 交わる所だけ SCREEN で二重に明るくなる＝うなり（moire）。2本の周波数の差がそのまま絵になる。
-    fam(P.angle,0); fam(P.angle+P.detune,90)   // 2つ目のオシレータ＝デチューン
-  }},
-{ key:'pulse', label:'Pulse — PWM / パルス幅', seedOff:57,
-  params:{rows:9, duty:0.55, pwm:0.32, pwmfreq:2, radius:26, hue:14},
-  knobs:[['rows','段',3,22,1],['duty','基準幅',0.1,1,0.02],['pwm','PWM',0,0.5,0.02],['pwmfreq','PWM周期',0.5,6,0.1],['radius','丸み',2,44,1],['hue','色',0,360,1]],
-  draw(g,P,R){
-    const rows=Math.round(P.rows),rh=H/rows
-    for(let i=0;i<rows;i++){
-      const cy=(i+0.5)*rh,d=Math.max(0.05,Math.min(1,P.duty+P.pwm*Math.sin(P.pwmfreq*(i/rows)*TAU+R()*0.3))),w=W*0.86*d,x=W*0.07
-      for(let s=6;s>=0;s--){const t=s/6,inset=t*rh*0.42
-        const r=document.createElementNS(NS,'rect')
-        r.setAttribute('x',(x+inset).toFixed(1));r.setAttribute('y',(cy-rh*0.34+inset).toFixed(1))
-        r.setAttribute('width',Math.max(1,w-inset*2).toFixed(1));r.setAttribute('height',Math.max(1,rh*0.68-inset*2).toFixed(1))
-        r.setAttribute('rx',Math.max(1,P.radius-inset).toFixed(1))
-        r.setAttribute('fill',`hsl(${P.hue.toFixed(0)} 72% ${(14+70*(1-t)).toFixed(0)}%)`)
-        g.append(r)}
-    }
-  }},
-{ key:'grid', label:'Grid — サンプル&ホールド', seedOff:71,
-  params:{grid:16, freq:2.4, hue:200, spread:0.5, gap:0.12},
-  knobs:[['grid','格子',6,44,1],['freq','周波数',0.5,6,0.1],['hue','色',0,360,1],['spread','色広がり',0,1.5,0.02],['gap','隙間',0,0.45,0.02]],
-  draw(g,P,R){
-    const G=Math.round(P.grid),cw=W/G,ch=H/G,ph1=R()*TAU,ph2=R()*TAU
-    for(let gy=0;gy<G;gy++)for(let gx=0;gx<G;gx++){
-      const u=gx/G,v=gy/G
-      let f=0.5+0.5*Math.sin(TAU*P.freq*u+ph1)*Math.cos(TAU*P.freq*v+ph2);f=Math.pow(f,1.4)
-      const size=Math.min(cw,ch)*(1-P.gap)*(0.28+0.72*f),cx=(gx+0.5)*cw,cy=(gy+0.5)*ch,hue=(P.hue+f*P.spread*120)%360
-      const r=document.createElementNS(NS,'rect')
-      r.setAttribute('x',(cx-size/2).toFixed(1));r.setAttribute('y',(cy-size/2).toFixed(1))
-      r.setAttribute('width',size.toFixed(1));r.setAttribute('height',size.toFixed(1))
-      r.setAttribute('fill',`hsl(${hue.toFixed(0)} 60% ${(10+70*f).toFixed(0)}%)`)
-      g.append(r)
-    }
-  }}
+{ key:'wave', label:{ja:'Wave — 波が面になる',en:'Wave — a wave becomes a surface'}, seedOff:0,
+  params:{hue:20,spread:0.7,wshape:0,amp:190,turns:2.2,width:150,twist:2,spec:1.4},
+  knobs:[['hue',{ja:'基音の色',en:'root colour'},0,360,1],['spread',{ja:'倍音の広がり',en:'harmonic spread'},0,1.5,0.01],['wshape',{ja:'sine→saw→sq',en:'sine→saw→sq'},0,2,0.01],['amp',{ja:'振幅',en:'amplitude'},0,300,1],['turns',{ja:'sustain',en:'sustain'},0.5,6,0.05],['width',{ja:'面の幅',en:'surface width'},20,240,1],['twist',{ja:'LFO',en:'LFO'},0,6,0.05],['spec',{ja:'倍音の鋭さ',en:'harmonic edge'},0.4,4,0.05]],
+  emit(P,R){const S=[],N=240,M=15,ds=1/N,centre=s=>{const a=TAU*P.turns*s+0.6;let w=osc(a,P.wshape)+0.28*osc(2*a,P.wshape)+0.14*osc(3*a,P.wshape);return{x:W/2+P.amp*(w/1.42),y:H*s}}
+    let prev=null;for(let i=0;i<=N;i++){const s=i/N,c=centre(s),a=centre(s-ds*0.6),b=centre(s+ds*0.6);let tx=b.x-a.x,ty=b.y-a.y;const tl=Math.hypot(tx,ty)||1;tx/=tl;ty/=tl;const nx=-ty,ny=tx,hw=P.width*0.5,la=1.15*Math.sin(TAU*P.twist*s)
+      const row=[];for(let j=0;j<=M;j++){const u=(j/M)*2-1;row.push([c.x+u*hw*nx,c.y+u*hw*ny])}
+      if(prev)for(let j=0;j<M;j++){const um=((j+0.5)/M)*2-1,ang=um*1.3,bght=Math.pow(Math.max(0,Math.cos(ang-la)),1+P.spec)
+        D.poly(S,[prev[j],prev[j+1],row[j+1],row[j]],{fill:[(P.hue+P.spread*s*300+40*bght)%360,58+18*bght,6+90*Math.pow(bght,1.35)],close:true})}
+      prev=row}return S}},
+{ key:'partials', label:{ja:'Partials — 倍音の束',en:'Partials — a bundle of harmonics'}, seedOff:11,
+  params:{hue:200,spread:1,rays:150,partials:6,aim:-1.2,len:0.42,cy:0.5},
+  knobs:[['hue',{ja:'基音の色',en:'root colour'},0,360,1],['spread',{ja:'倍音の広がり',en:'harmonic spread'},0,2,0.02],['rays',{ja:'倍音の本数',en:'partials'},20,360,2],['partials',{ja:'倍音の次数',en:'harmonic n'},1,16,1],['aim',{ja:'片寄り',en:'bias'},-3.14,3.14,0.05],['len',{ja:'伸び',en:'length'},0.2,0.6,0.01],['cy',{ja:'高さ',en:'height'},0.15,0.85,0.01]],
+  emit(P,R){const S=[],cx=W/2,cy=H*P.cy,n=Math.round(P.rays);for(let i=0;i<n;i++){const a=(i/n)*TAU+R()*0.01,len=W*P.len*(0.5+0.5*Math.pow(R(),0.4)),k=1+Math.floor(R()*P.partials),op=Math.pow(0.5+0.5*Math.cos(a-P.aim),1.4)*0.85/Math.sqrt(k);D.line(S,[cx,cy],[cx+Math.cos(a)*len,cy+Math.sin(a)*len],{stroke:[(P.hue+k*P.spread*40)%360,85,55],w:0.6+R()*1.1,op})}return S}},
+{ key:'field', label:{ja:'Field — 持続＝面積',en:'Field — sustain is area'}, seedOff:23,
+  params:{hue:285,spread:0.7,notes:6,hold:1,soft:1.7},
+  knobs:[['hue',{ja:'基音の色',en:'root colour'},0,360,1],['spread',{ja:'色の広がり',en:'colour spread'},0,1.5,0.02],['notes',{ja:'音数',en:'notes'},1,24,1],['hold',{ja:'持続の長さ',en:'hold'},0.1,2,0.02],['soft',{ja:'ぼけ',en:'softness'},1,3,0.05]],
+  emit(P,R){const S=[],blobs=[];for(let i=0;i<Math.round(P.notes);i++)blobs.push({x:R()*W,y:R()*H,r:60+R()*P.hold*180,h:(P.hue+R()*P.spread*120)%360});for(const b of blobs)for(let k=22;k>=1;k--){const t=k/22;D.circle(S,[b.x,b.y],b.r*t,[b.h,60,8+70*Math.pow(1-t,P.soft)])}return S}},
+{ key:'rings', label:{ja:'Rings — FM / リング変調',en:'Rings — FM / ring mod'}, seedOff:31,
+  params:{hue:205,spread:1.1,rings:14,spacing:26,modfreq:5,moddepth:14,cx:0.5,cy:0.5},
+  knobs:[['hue',{ja:'基音の色',en:'root colour'},0,360,1],['spread',{ja:'分光',en:'dispersion'},0,2,0.02],['rings',{ja:'倍音の輪',en:'rings'},3,44,1],['spacing',{ja:'間隔',en:'spacing'},8,60,1],['modfreq',{ja:'変調周波数',en:'mod freq'},0,16,1],['moddepth',{ja:'変調の深さ',en:'mod depth'},0,42,1],['cx',{ja:'中心X',en:'centre X'},0.2,0.8,0.01],['cy',{ja:'中心Y',en:'centre Y'},0.2,0.8,0.01]],
+  emit(P,R){const S=[],cx=W*P.cx,cy=H*P.cy,seg=170,ph=R()*TAU;for(let k=1;k<=Math.round(P.rings);k++){const rr=k*P.spacing,pts=[];for(let i=0;i<=seg;i++){const th=i/seg*TAU,r=rr+P.moddepth*Math.sin(P.modfreq*th+k*0.6+ph);pts.push([cx+Math.cos(th)*r,cy+Math.sin(th)*r])}D.poly(S,pts,{stroke:[(P.hue+k*P.spread*30)%360,90,58],w:1.2,close:true})}return S}},
+{ key:'beat', label:{ja:'Beat — デチューン / うなり',en:'Beat — detune / beating'}, seedOff:43,
+  params:{hue:32,lines:40,angle:0.1,detune:0.16,spacing:17,len:1},
+  knobs:[['hue',{ja:'色',en:'colour'},0,360,1],['lines',{ja:'本数',en:'lines'},8,120,1],['angle',{ja:'角度',en:'angle'},-1.5,1.5,0.02],['detune',{ja:'デチューン',en:'detune'},0,0.6,0.01],['spacing',{ja:'間隔',en:'spacing'},6,40,1],['len',{ja:'長さ',en:'length'},0.3,1.2,0.02]],
+  emit(P,R){const S=[],fam=(ang,hs)=>{const n=Math.round(P.lines),dx=Math.cos(ang+Math.PI/2),dy=Math.sin(ang+Math.PI/2),nx=Math.cos(ang),ny=Math.sin(ang),L=H*P.len;for(let i=0;i<n;i++){const off=(i-n/2)*P.spacing,cx=W/2+nx*off,cy=H/2+ny*off;D.line(S,[cx-dx*L/2,cy-dy*L/2],[cx+dx*L/2,cy+dy*L/2],{stroke:[(P.hue+hs)%360,85,60],w:1.1,op:0.62})}};fam(P.angle,0);fam(P.angle+P.detune,90);return S}},
+{ key:'pulse', label:{ja:'Pulse — PWM / パルス幅',en:'Pulse — PWM / pulse width'}, seedOff:57,
+  params:{hue:14,rows:9,duty:0.55,pwm:0.32,pwmfreq:2,radius:26},
+  knobs:[['hue',{ja:'色',en:'colour'},0,360,1],['rows',{ja:'段',en:'rows'},3,22,1],['duty',{ja:'基準幅',en:'duty'},0.1,1,0.02],['pwm',{ja:'PWM',en:'PWM'},0,0.5,0.02],['pwmfreq',{ja:'PWM周期',en:'PWM freq'},0.5,6,0.1],['radius',{ja:'丸み',en:'radius'},2,44,1]],
+  emit(P,R){const S=[],rows=Math.round(P.rows),rh=H/rows;for(let i=0;i<rows;i++){const cy=(i+0.5)*rh,d=Math.max(0.05,Math.min(1,P.duty+P.pwm*Math.sin(P.pwmfreq*(i/rows)*TAU+R()*0.3))),w=W*0.86*d,x=W*0.07;for(let s=6;s>=0;s--){const t=s/6,ins=t*rh*0.42;D.rect(S,x+ins,cy-rh*0.34+ins,Math.max(1,w-ins*2),Math.max(1,rh*0.68-ins*2),Math.max(1,P.radius-ins),[P.hue,72,14+70*(1-t)])}}return S}},
+{ key:'grid', label:{ja:'Grid — サンプル&ホールド',en:'Grid — sample & hold'}, seedOff:71,
+  params:{hue:200,spread:0.5,grid:16,freq:2.4,gap:0.12},
+  knobs:[['hue',{ja:'色',en:'colour'},0,360,1],['spread',{ja:'色広がり',en:'colour spread'},0,1.5,0.02],['grid',{ja:'格子',en:'grid'},6,44,1],['freq',{ja:'周波数',en:'freq'},0.5,6,0.1],['gap',{ja:'隙間',en:'gap'},0,0.45,0.02]],
+  emit(P,R){const S=[],G=Math.round(P.grid),cw=W/G,ch=H/G,p1=R()*TAU,p2=R()*TAU;for(let gy=0;gy<G;gy++)for(let gx=0;gx<G;gx++){const u=gx/G,v=gy/G;let f=0.5+0.5*Math.sin(TAU*P.freq*u+p1)*Math.cos(TAU*P.freq*v+p2);f=Math.pow(f,1.4);const size=Math.min(cw,ch)*(1-P.gap)*(0.28+0.72*f),cx=(gx+0.5)*cw,cy=(gy+0.5)*ch;D.rect(S,cx-size/2,cy-size/2,size,size,0,[(P.hue+f*P.spread*120)%360,60,10+70*f])}return S}}
 ]
 
-/* ⭐ Basically it switches — clicking a name shows that engine alone. But it can
-   combine — the dot toggles an engine on top without switching away. So the
-   default is one voice, and layering is a deliberate act, not the starting mud. */
-const on=new Set(['wave']), solo=new Set(), mute=new Set()
-let sel='wave', seed=7
-const audible=k=> (solo.size? solo.has(k): true) && !mute.has(k)
+const T={
+  ja:{ intro:'99letters のシンセ。上のセレクタでエンジンを選ぶ。<br>出るのは全部パス。汚しは Kaibou / Siren。',
+       out:'Figma に出す', close:'閉じる',
+       mSub:'<b>己（おのれ）</b>＝ シンセ。持続音の楽器。Siren が打楽器（点）なら、Onore は面。',
+       mBody:'<b>波は止まらない。波は線、持続する線は面。</b>7つのエンジンはオシレータ — 波形・倍音・持続・FM・デチューン・PWM・サンプル&ホールド。<b>いずれミキサーで重ねる。</b><br><br><b>出てくるのは全部ベクター。</b>色は後から変えられる。<b>汚し（ぼかし・粒・版ズレ）は下流の Kaibou / Siren。</b>' },
+  en:{ intro:'The 99letters synth. Pick an engine in the bar above.<br>Output is all vector. Grit is Kaibou / Siren.',
+       out:'Send to Figma', close:'Close',
+       mSub:'<b>己 (onore)</b> — the synth. A sustained-tone instrument. If Siren is percussion (points), Onore is the surface.',
+       mBody:'<b>A wave never stops. A wave is a line; a line that holds is a surface.</b> Seven engines, all oscillators — waveform, partials, sustain, FM, detune, PWM, sample &amp; hold. <b>A mixer will layer them.</b><br><br><b>Everything it makes is vector.</b> Recolour it later. <b>Grit — blur, grain, misregistration — is downstream, in Kaibou / Siren.</b>' }
+}
+let lang='ja'
+
+/* ---- preview: the SAME descriptors, drawn as SVG ---- */
+const hsl=c=>`hsl(${c[0].toFixed(0)} ${c[1].toFixed(0)}% ${c[2].toFixed(0)}%)`
+function toSVG(S,g){
+  for(const d of S){let el
+    if(d.t==='rect'){el=document.createElementNS(NS,'rect');el.setAttribute('x',d.x.toFixed(1));el.setAttribute('y',d.y.toFixed(1));el.setAttribute('width',d.w.toFixed(1));el.setAttribute('height',d.h.toFixed(1));if(d.rx)el.setAttribute('rx',d.rx.toFixed(1));el.setAttribute('fill',hsl(d.fill))}
+    else if(d.t==='circle'){el=document.createElementNS(NS,'circle');el.setAttribute('cx',d.c[0].toFixed(1));el.setAttribute('cy',d.c[1].toFixed(1));el.setAttribute('r',d.r.toFixed(1));el.setAttribute('fill',hsl(d.fill))}
+    else if(d.t==='line'){el=document.createElementNS(NS,'path');el.setAttribute('d',`M${d.a[0].toFixed(1)} ${d.a[1].toFixed(1)}L${d.b[0].toFixed(1)} ${d.b[1].toFixed(1)}`);el.setAttribute('stroke',hsl(d.stroke));el.setAttribute('stroke-width',d.w.toFixed(2));el.setAttribute('fill','none');if(d.op!=null)el.setAttribute('opacity',d.op.toFixed(2))}
+    else if(d.t==='poly'){el=document.createElementNS(NS,'path');el.setAttribute('d','M'+d.pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L')+(d.close?'Z':''));if(d.fill){el.setAttribute('fill',hsl(d.fill))}else{el.setAttribute('fill','none');el.setAttribute('stroke',hsl(d.stroke));el.setAttribute('stroke-width',d.w.toFixed(2))}}
+    g.append(el)}
+}
+
+/* ---- state: one active engine (mixer / layering comes later) ---- */
+let active='wave', seed=7, lastLayers=[]
+const engOf=k=>ENGINES.find(e=>e.key===k)
 
 function draw(){
   while(art.firstChild)art.removeChild(art.firstChild)
-  for(const e of ENGINES){
-    if(!on.has(e.key) || !audible(e.key)) continue
-    const g=document.createElementNS(NS,'g'); g.setAttribute('style','mix-blend-mode:screen')
-    e.draw(g, e.params, mb((seed+e.seedOff)*7919+13)); art.append(g)
-  }
+  const e=engOf(active)
+  const S=e.emit(e.params,mb((seed+e.seedOff)*7919+13))
+  lastLayers=[{key:e.key,descriptors:S}]
+  const g=document.createElementNS(NS,'g');g.setAttribute('style','mix-blend-mode:screen');toSVG(S,g);art.append(g)
 }
 
-const rackEl=document.getElementById('rack'), knobEl=document.getElementById('knobs')
-function buildRack(){
-  rackEl.innerHTML=''
-  for(const e of ENGINES){
-    const row=document.createElement('div'); row.className='eng'; row.dataset.k=e.key
-    row.innerHTML=`<span class="dot"></span><span class="nm">${e.label}</span><span class="sm"><button class="s">S</button><button class="m">M</button></span>`
-    // dot = layer this engine on top (or take it off) without leaving the others
-    row.querySelector('.dot').onclick=ev=>{ev.stopPropagation();on.has(e.key)?on.delete(e.key):on.add(e.key);sel=e.key;buildKnobs();paint();draw()}
-    row.querySelector('.s').onclick=ev=>{ev.stopPropagation();solo.has(e.key)?solo.delete(e.key):solo.add(e.key);paint();draw()}
-    row.querySelector('.m').onclick=ev=>{ev.stopPropagation();mute.has(e.key)?mute.delete(e.key):mute.add(e.key);paint();draw()}
-    // name = switch: this engine alone, and edit it
-    row.onclick=()=>{on.clear();on.add(e.key);solo.clear();mute.clear();sel=e.key;buildKnobs();paint();draw()}
-    rackEl.append(row)
-  }
+/* ---- engine selector (in the fixed bar, next to the logo) ---- */
+const engBtn=document.getElementById('engBtn'),engMenu=document.getElementById('engMenu')
+function buildMenu(){engMenu.innerHTML=''
+  for(const e of ENGINES){const b=document.createElement('button');b.textContent=e.label[lang];b.classList.toggle('on',e.key===active)
+    b.onclick=()=>{active=e.key;engMenu.hidden=true;paintSel();buildKnobs();draw()};engMenu.append(b)}}
+function paintSel(){const e=engOf(active);engBtn.innerHTML=`${e.label[lang]}<span class="ar">▾</span>`
+  for(const b of engMenu.children)b.classList.toggle('on',b.textContent===e.label[lang])}
+engBtn.onclick=ev=>{ev.stopPropagation();engMenu.hidden=!engMenu.hidden}
+addEventListener('click',()=>{engMenu.hidden=true})
+
+const knobEl=document.getElementById('knobs')
+function buildKnobs(){const e=engOf(active);knobEl.innerHTML=''
+  for(const[id,lbl,min,max,step]of e.knobs){const l=document.createElement('label');l.innerHTML=`<span class="k">${lbl[lang]}</span><input type="range" min="${min}" max="${max}" step="${step}" value="${e.params[id]}"><b>${(+e.params[id]).toFixed(step<1?2:0)}</b>`
+    const inp=l.querySelector('input'),b=l.querySelector('b');inp.oninput=()=>{e.params[id]=+inp.value;b.textContent=(+inp.value).toFixed(step<1?2:0);draw()};knobEl.append(l)}}
+
+function applyLang(){
+  document.getElementById('langJa').classList.toggle('on',lang==='ja')
+  document.getElementById('langEn').classList.toggle('on',lang==='en')
+  document.getElementById('intro').innerHTML=T[lang].intro
+  document.getElementById('out').textContent=T[lang].out
+  document.getElementById('mSub').innerHTML=T[lang].mSub
+  document.getElementById('mBody').innerHTML=T[lang].mBody
+  document.getElementById('mClose').textContent=T[lang].close
+  buildMenu();paintSel();buildKnobs()
 }
-function paint(){
-  for(const row of rackEl.children){
-    const k=row.dataset.k
-    row.classList.toggle('on',on.has(k)); row.classList.toggle('off',!on.has(k)||!audible(k)); row.classList.toggle('sel',k===sel)
-    row.querySelector('.s').classList.toggle('on',solo.has(k)); row.querySelector('.m').classList.toggle('on',mute.has(k))
-  }
-}
-function buildKnobs(){
-  const e=ENGINES.find(x=>x.key===sel); knobEl.innerHTML=''
-  for(const [id,lbl,min,max,step] of e.knobs){
-    const l=document.createElement('label')
-    l.innerHTML=`${lbl}<input type="range" min="${min}" max="${max}" step="${step}" value="${e.params[id]}"><b>${(+e.params[id]).toFixed(step<1?2:0)}</b>`
-    const inp=l.querySelector('input'),b=l.querySelector('b')
-    inp.oninput=()=>{e.params[id]=+inp.value;b.textContent=(+inp.value).toFixed(step<1?2:0);draw()}
-    knobEl.append(l)
-  }
-}
-const seedEl=document.getElementById('seed'),seedB=seedEl.parentElement.querySelector('b')
+document.getElementById('langJa').onclick=()=>{lang='ja';applyLang()}
+document.getElementById('langEn').onclick=()=>{lang='en';applyLang()}
+const modal=document.getElementById('modal')
+document.getElementById('title').onclick=()=>{modal.hidden=false}
+document.getElementById('mClose').onclick=()=>{modal.hidden=true}
+modal.onclick=e=>{if(e.target===modal)modal.hidden=true}
+addEventListener('keydown',e=>{if(e.key==='Escape')modal.hidden=true})
+
+const seedEl=document.getElementById('seed'),seedB=document.getElementById('seedv')
 seedEl.oninput=()=>{seed=+seedEl.value;seedB.textContent=seed;draw()}
 document.getElementById('rnd').onclick=()=>{seed=(seed*7+13)%61;seedEl.value=seed;seedB.textContent=seed;draw()}
-buildRack();buildKnobs();paint();draw()
+const msg=document.getElementById('msg')
+document.getElementById('out').onclick=()=>{
+  if(!lastLayers.length){return}
+  msg.textContent=lang==='ja'?'出しています…':'sending…'
+  parent.postMessage({pluginMessage:{type:'generate',layers:lastLayers,seed}},'*')
+}
+onmessage=e=>{const m=e.data.pluginMessage;if(!m)return;if(m.type==='made')msg.textContent=lang==='ja'?`${m.nodes} ノードを出しました`:`${m.nodes} nodes sent`}
+
+applyLang();draw()
 </script>
