@@ -36,7 +36,8 @@
   small{color:#666;line-height:1.5}
   #stage{width:100%;background:#000;border:1px solid #222;border-radius:6px;display:flex;justify-content:center;align-items:center;padding:6px 0}
   svg{display:block;width:100%;height:212px}
-  .mix{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;border:1px solid #222;border-radius:6px;padding:10px 8px 8px}
+  .mix{display:grid;grid-template-columns:repeat(7,1fr) 7px repeat(2,1fr);gap:4px;border:1px solid #222;border-radius:6px;padding:10px 8px 8px}
+  .gap2{border-left:1px solid #333;height:96px;justify-self:center}
   .ch{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:0}
   .ch .fader{-webkit-appearance:slider-vertical;appearance:slider-vertical;width:16px;height:78px;accent-color:#fff;cursor:pointer;padding:0}
   .ch.dim .fader{accent-color:#555}
@@ -125,6 +126,22 @@ const D={poly:(S,pts,o)=>S.push(Object.assign({t:'poly',pts},o)),line:(S,a,b,o)=
 const inflate=(pts,m)=>{let cx=0,cy=0;for(const p of pts){cx+=p[0];cy+=p[1]}cx/=pts.length;cy/=pts.length
   return pts.map(p=>{const dx=p[0]-cx,dy=p[1]-cy,d=Math.hypot(dx,dy)||1;return[p[0]+dx/d*m,p[1]+dy/d*m]})}
 
+/* ---- sends act on the whole mix. A send is the MASTER descriptors re-drawn,
+   offset (and for tape, recoloured to one channel). Still vector — blur is Kaibou. */
+const lumOf=c=>{const s=c[1]/100,l=c[2]/100;if(s===0)return l;const q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q,h=c[0]/360
+  const f=t=>{t=(t+1)%1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p}
+  return 0.2126*f(h+1/3)+0.7152*f(h)+0.0722*f(h-1/3)}
+const CHAN={r:0,g:120,b:240,c:180,m:300,y:60}
+const tintCol=(c,ch)=>[CHAN[ch],100,lumOf(c)*55]     // one channel, black→that hue by luminance
+function xform(S,dx,dy,ch){return S.map(d=>{const o=Object.assign({},d)
+  if(d.t==='rect'){o.x=d.x+dx;o.y=d.y+dy}
+  else if(d.t==='circle'){o.c=[d.c[0]+dx,d.c[1]+dy]}
+  else if(d.t==='line'){o.a=[d.a[0]+dx,d.a[1]+dy];o.b=[d.b[0]+dx,d.b[1]+dy]}
+  else if(d.t==='poly'){o.pts=d.pts.map(p=>[p[0]+dx,p[1]+dy])}
+  else if(d.t==='grad'){o.pts=d.pts.map(p=>[p[0]+dx,p[1]+dy]);o.a=[d.a[0]+dx,d.a[1]+dy];o.b=[d.b[0]+dx,d.b[1]+dy]}
+  if(ch){if(d.fill)o.fill=tintCol(d.fill,ch);if(d.stroke)o.stroke=tintCol(d.stroke,ch);if(d.stops)o.stops=d.stops.map(st=>({p:st.p,c:tintCol(st.c,ch)}))}
+  return o})}
+
 /* ⭐ Every engine keeps a colour knob first, so every synth is recolourable and the
    control is always in the same place. label/knob labels carry both languages. */
 const ENGINES=[
@@ -174,6 +191,21 @@ const ENGINES=[
   emit(P,R){const S=[],G=Math.round(P.grid),cw=W/G,ch=H/G,p1=R()*TAU,p2=R()*TAU;for(let gy=0;gy<G;gy++)for(let gx=0;gx<G;gx++){const u=gx/G,v=gy/G;let f=0.5+0.5*Math.sin(TAU*P.freq*u+p1)*Math.cos(TAU*P.freq*v+p2);f=Math.pow(f,1.4);const size=Math.min(cw,ch)*(1-P.gap)*(0.28+0.72*f),cx=(gx+0.5)*cw,cy=(gy+0.5)*ch;D.rect(S,cx-size/2,cy-size/2,size,size,0,[(P.hue+f*P.spread*120)%360,60,10+70*f])}return S}}
 ]
 
+/* ---- sends: they act on the MASTER (all engines), staying vector. Reverb = a
+   fading offset tail; Tape = an RGB or CMY channel split. Blur is Kaibou's. ---- */
+const SENDS=[
+{ key:'reverb', label:{ja:'Reverb — にじみ（尾）',en:'Reverb — bleed (tail)'},
+  params:{taps:4,spread:32,decay:0.6},
+  knobs:[['taps',{ja:'タップ',en:'taps'},1,8,1],['spread',{ja:'広がり',en:'spread'},4,90,1],['decay',{ja:'減衰',en:'decay'},0.3,0.9,0.01]] },
+{ key:'tape', label:{ja:'Tape — 色ズレ',en:'Tape — misregistration'}, modes:['rgb','cmy'], mode:'rgb',
+  params:{offset:9},
+  knobs:[['offset',{ja:'ズレ幅',en:'offset'},1,32,0.5]] }
+]
+const engOf=k=>ENGINES.find(e=>e.key===k)
+const sendOf=k=>SENDS.find(s=>s.key===k)
+const isSend=k=>!!sendOf(k)
+const allOf=k=>engOf(k)||sendOf(k)
+
 const T={
   ja:{ intro:'99letters のシンセ。上のセレクタでエンジンを選ぶ。<br>出るのは全部パス。汚しは Kaibou / Siren。',
        out:'Figma に出す', close:'閉じる',
@@ -205,21 +237,32 @@ function toSVG(S,g){
 /* ---- state: a mixer. each engine has a LEVEL; the mix layers them (SCREEN).
    The selector / mixer name picks which engine the knobs edit. ---- */
 const cap=s=>s[0].toUpperCase()+s.slice(1)
-const level={};for(const e of ENGINES)level[e.key]=0;level.wave=1
+const level={};for(const e of ENGINES)level[e.key]=0;for(const s of SENDS)level[s.key]=0;level.wave=1
 const solo=new Set(),mute=new Set()
 let active='wave', seed=7, lastLayers=[]
-const engOf=k=>ENGINES.find(e=>e.key===k)
-const audible=k=>(solo.size?solo.has(k):true)&&!mute.has(k)
+/* solo works WITHIN a kind — soloing an engine leaves the sends, and a send with
+   nothing to act on is silence, not a quiet effect (the whole point of a send). */
+const audible=k=>{const kin=isSend(k)?SENDS.map(s=>s.key):ENGINES.map(e=>e.key)
+  const soloed=kin.some(x=>solo.has(x));return (soloed?solo.has(k):true)&&!mute.has(k)}
 
 function draw(){
   while(art.firstChild)art.removeChild(art.firstChild)
   gcount=0; lastLayers=[]
-  for(const e of ENGINES){
-    if(!(level[e.key]>0)||!audible(e.key))continue
-    const S=e.emit(e.params,mb((seed+e.seedOff)*7919+13))
-    lastLayers.push({key:e.key,descriptors:S,level:level[e.key]})
-    const g=document.createElementNS(NS,'g');g.setAttribute('style','mix-blend-mode:screen');g.setAttribute('opacity',level[e.key].toFixed(2));toSVG(S,g);art.append(g)
-  }
+  const eng=[]
+  for(const e of ENGINES){if(!(level[e.key]>0)||!audible(e.key))continue;eng.push({key:e.key,S:e.emit(e.params,mb((seed+e.seedOff)*7919+13))})}
+  const master=[].concat(...eng.map(x=>x.S))
+  // reverb: fading offset copies, BEHIND the dry mix
+  const rv=sendOf('reverb')
+  if(level.reverb>0&&audible('reverb')&&master.length){const dx=Math.cos(0.5),dy=Math.sin(0.5)
+    for(let t=Math.round(rv.params.taps);t>=1;t--){const op=level.reverb*Math.pow(rv.params.decay,t);if(op<0.03)continue
+      lastLayers.push({key:'reverb',descriptors:xform(master,dx*rv.params.spread*t,dy*rv.params.spread*t),level:op,blend:'screen'})}}
+  // dry engines
+  for(const x of eng)lastLayers.push({key:x.key,descriptors:x.S,level:level[x.key],blend:'screen'})
+  // tape: channel split copies, ON TOP
+  const tp=sendOf('tape')
+  if(level.tape>0&&audible('tape')&&master.length){const chs=tp.mode==='cmy'?['c','m','y']:['r','g','b'],dirs=[[-1,-0.4],[0,0.5],[1,-0.2]]
+    chs.forEach((cch,i)=>lastLayers.push({key:'tape',descriptors:xform(master,dirs[i][0]*tp.params.offset,dirs[i][1]*tp.params.offset,cch),level:level.tape,blend:tp.mode==='cmy'?'multiply':'screen'}))}
+  for(const L of lastLayers){const g=document.createElementNS(NS,'g');g.setAttribute('style','mix-blend-mode:'+(L.blend||'screen'));g.setAttribute('opacity',(L.level!=null?L.level:1).toFixed(2));toSVG(L.descriptors,g);art.append(g)}
 }
 
 /* pick which engine the knobs edit; raise its fader if it was silent, so you
@@ -229,31 +272,37 @@ function selectEngine(k){active=k;if(!(level[k]>0))level[k]=1;paintSel();buildMi
 /* ---- engine selector (in the fixed bar, next to the logo) ---- */
 const engBtn=document.getElementById('engBtn'),engMenu=document.getElementById('engMenu')
 function buildMenu(){engMenu.innerHTML=''
-  for(const e of ENGINES){const b=document.createElement('button');b.textContent=e.label[lang];b.classList.toggle('on',e.key===active)
+  for(const e of [...ENGINES,...SENDS]){const b=document.createElement('button');b.textContent=e.label[lang];b.classList.toggle('on',e.key===active)
     b.onclick=()=>{engMenu.hidden=true;selectEngine(e.key)};engMenu.append(b)}}
-function paintSel(){const e=engOf(active);engBtn.innerHTML=`${e.label[lang]}<span class="ar">▾</span>`
+function paintSel(){const e=allOf(active);engBtn.innerHTML=`${e.label[lang]}<span class="ar">▾</span>`
   for(const b of engMenu.children)b.classList.toggle('on',b.textContent===e.label[lang])}
 engBtn.onclick=ev=>{ev.stopPropagation();engMenu.hidden=!engMenu.hidden}
 addEventListener('click',()=>{engMenu.hidden=true})
 
 /* ---- the mixer: a fader per engine (level) with S / M, Siren-style ---- */
 const mixEl=document.getElementById('mix')
+function mixCh(k){const ch=document.createElement('div');ch.className='ch';ch.dataset.k=k
+  ch.innerHTML=`<input class="fader" type="range" min="0" max="1" step="0.01" orient="vertical"><div class="sm2"><button class="s">S</button><button class="m">M</button></div><span class="nm2">${cap(k)}</span>`
+  const f=ch.querySelector('.fader');f.value=level[k]
+  f.oninput=()=>{level[k]=+f.value;paintMix();draw()}
+  ch.querySelector('.s').onclick=()=>{solo.has(k)?solo.delete(k):solo.add(k);paintMix();draw()}
+  ch.querySelector('.m').onclick=()=>{mute.has(k)?mute.delete(k):mute.add(k);paintMix();draw()}
+  ch.querySelector('.nm2').onclick=()=>selectEngine(k)
+  return ch}
 function buildMix(){mixEl.innerHTML=''
-  for(const e of ENGINES){const ch=document.createElement('div');ch.className='ch';ch.dataset.k=e.key
-    ch.innerHTML=`<input class="fader" type="range" min="0" max="1" step="0.01" orient="vertical"><div class="sm2"><button class="s">S</button><button class="m">M</button></div><span class="nm2">${cap(e.key)}</span>`
-    const f=ch.querySelector('.fader');f.value=level[e.key]
-    f.oninput=()=>{level[e.key]=+f.value;paintMix();draw()}
-    ch.querySelector('.s').onclick=()=>{solo.has(e.key)?solo.delete(e.key):solo.add(e.key);paintMix();draw()}
-    ch.querySelector('.m').onclick=()=>{mute.has(e.key)?mute.delete(e.key):mute.add(e.key);paintMix();draw()}
-    ch.querySelector('.nm2').onclick=()=>selectEngine(e.key)
-    mixEl.append(ch)}
+  for(const e of ENGINES)mixEl.append(mixCh(e.key))
+  const gp=document.createElement('div');gp.className='gap2';mixEl.append(gp)   // instruments | sends
+  for(const s of SENDS)mixEl.append(mixCh(s.key))
   paintMix()}
-function paintMix(){for(const ch of mixEl.children){const k=ch.dataset.k
+function paintMix(){for(const ch of mixEl.children){const k=ch.dataset.k;if(!k)continue
     ch.classList.toggle('sel',k===active);ch.classList.toggle('dim',!(level[k]>0)||!audible(k))
     ch.querySelector('.s').classList.toggle('on',solo.has(k));ch.querySelector('.m').classList.toggle('on',mute.has(k))}}
 
 const knobEl=document.getElementById('knobs')
-function buildKnobs(){const e=engOf(active);knobEl.innerHTML=''
+function buildKnobs(){const e=allOf(active);knobEl.innerHTML=''
+  if(e.modes){const l=document.createElement('label');l.innerHTML=`<span class="k">mode</span><span style="flex:1;display:flex;gap:4px">${e.modes.map(m=>`<button class="tmode" data-m="${m}" style="flex:1;padding:5px;border:1px solid #444;border-radius:4px;background:${m===e.mode?'#fff':'#111'};color:${m===e.mode?'#000':'#888'};cursor:pointer">${m.toUpperCase()}</button>`).join('')}</span>`
+    for(const b of l.querySelectorAll('.tmode'))b.onclick=()=>{e.mode=b.dataset.m;buildKnobs();draw()}
+    knobEl.append(l)}
   for(const[id,lbl,min,max,step]of e.knobs){const l=document.createElement('label');l.innerHTML=`<span class="k">${lbl[lang]}</span><input type="range" min="${min}" max="${max}" step="${step}" value="${e.params[id]}"><b>${(+e.params[id]).toFixed(step<1?2:0)}</b>`
     const inp=l.querySelector('input'),b=l.querySelector('b');inp.oninput=()=>{e.params[id]=+inp.value;b.textContent=(+inp.value).toFixed(step<1?2:0);draw()};knobEl.append(l)}}
 
