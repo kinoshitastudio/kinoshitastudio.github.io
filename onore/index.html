@@ -48,6 +48,12 @@
   .nm2{font-size:8.5px;color:#777;cursor:pointer;text-align:center;line-height:1.15;letter-spacing:.02em}
   .ch.sel .nm2{color:#fff}
   .ch.dim .nm2{color:#4a4a4a}
+  .wtl{font-size:10px;color:#888;margin:0 0 5px;letter-spacing:.03em}
+  svg.wt{width:100%;height:58px;background:#000;border:1px solid #222;border-radius:5px;display:block;touch-action:none;cursor:crosshair}
+  .wtp{display:flex;gap:4px;margin-top:5px}
+  .wtp button{flex:1;font-size:9px;padding:4px;border:1px solid #444;border-radius:3px;background:#111;color:#999;cursor:pointer}
+  .wtp button:hover{background:#222;color:#ddd}
+  .wtwrap{margin-bottom:4px}
   .knobs{display:flex;flex-direction:column;gap:7px;border:1px solid #222;border-radius:6px;padding:10px 12px}
   label{display:flex;justify-content:space-between;gap:10px;font-size:11px;color:#999;align-items:center}
   label span.k{flex:none;width:96px}
@@ -142,17 +148,24 @@ function xform(S,dx,dy,ch){return S.map(d=>{const o=Object.assign({},d)
   if(ch){if(d.fill)o.fill=tintCol(d.fill,ch);if(d.stroke)o.stroke=tintCol(d.stroke,ch);if(d.stops)o.stops=d.stops.map(st=>({p:st.p,c:tintCol(st.c,ch)}))}
   return o})}
 
+/* ⭐ Wavetable — the step sequencer, translated to a sustained tone. A held note
+   has no attack to trigger, but it has a SHAPE: the 16 steps ARE the waveform, and
+   Wave sweeps them. Same 16-step idea as Siren, different meaning. wtSample reads
+   the table at a phase, wrapping and interpolating. */
+const wtSample=(wt,ph)=>{const n=wt.length,x=((((ph/TAU)%1)+1)%1)*n,i=Math.floor(x),f=x-i;return wt[i%n]*(1-f)+wt[(i+1)%n]*f}
+const dfltWT=()=>Array.from({length:16},(_,i)=>{const a=i/16*TAU;return (Math.sin(a)+0.28*Math.sin(2*a)+0.14*Math.sin(3*a))/1.42})
+
 /* ⭐ Every engine keeps a colour knob first, so every synth is recolourable and the
    control is always in the same place. label/knob labels carry both languages. */
 const ENGINES=[
 { key:'wave', label:{ja:'Wave — 波が面になる',en:'Wave — a wave becomes a surface'}, seedOff:0,
-  params:{hue:20,spread:0.7,step:16,wshape:0,amp:190,turns:2.2,width:150,twist:2,spec:1.4},
-  knobs:[['hue',{ja:'基音の色',en:'root colour'},0,360,1],['spread',{ja:'倍音の広がり',en:'harmonic spread'},0,1.5,0.01],['step',{ja:'階調（0=滑らか）',en:'steps (0=smooth)'},0,28,1],['wshape',{ja:'sine→saw→sq',en:'sine→saw→sq'},0,2,0.01],['amp',{ja:'振幅',en:'amplitude'},0,300,1],['turns',{ja:'sustain',en:'sustain'},0.5,6,0.05],['width',{ja:'面の幅',en:'surface width'},20,240,1],['twist',{ja:'LFO',en:'LFO'},0,6,0.05],['spec',{ja:'倍音の鋭さ',en:'harmonic edge'},0.4,4,0.05]],
+  params:{hue:20,spread:0.7,step:16,wt:dfltWT(),amp:190,turns:2.2,width:150,twist:2,spec:1.4},
+  knobs:[['hue',{ja:'基音の色',en:'root colour'},0,360,1],['spread',{ja:'倍音の広がり',en:'harmonic spread'},0,1.5,0.01],['step',{ja:'階調（0=滑らか）',en:'steps (0=smooth)'},0,28,1],['amp',{ja:'振幅',en:'amplitude'},0,300,1],['turns',{ja:'sustain',en:'sustain'},0.5,6,0.05],['width',{ja:'面の幅',en:'surface width'},20,240,1],['twist',{ja:'LFO',en:'LFO'},0,6,0.05],['spec',{ja:'倍音の鋭さ',en:'harmonic edge'},0.4,4,0.05]],
   /* ⭐ One gradient strip per length-step, not a tile of quads. The cross-section
      shading (dark edge → bright ridge → dark edge, the ridge moving with the LFO)
      is a linear gradient sampled across the width. ~240 nodes instead of ~3600, no
      internal grid, and Figma never has thousands of touching quads to seam. */
-  emit(P,R){const S=[],N=240,ds=1/N,ph0=R()*TAU,ph1=R()*TAU,centre=s=>{const a=TAU*P.turns*s+0.6+ph0;let w=osc(a,P.wshape)+0.28*osc(2*a,P.wshape)+0.14*osc(3*a,P.wshape);return{x:W/2+P.amp*(w/1.42),y:H*s}}
+  emit(P,R){const S=[],N=240,ds=1/N,ph0=R()*TAU,ph1=R()*TAU,centre=s=>{const a=TAU*P.turns*s+0.6+ph0;return{x:W/2+P.amp*wtSample(P.wt,a),y:H*s}}
     let pv=null;for(let i=0;i<=N;i++){const s=i/N,c=centre(s),a=centre(s-ds*0.6),b=centre(s+ds*0.6);let tx=b.x-a.x,ty=b.y-a.y;const tl=Math.hypot(tx,ty)||1;tx/=tl;ty/=tl;const nx=-ty,ny=tx,hw=P.width*0.5,la=1.15*Math.sin(TAU*P.twist*s+ph1)
       const el=[c.x-hw*nx,c.y-hw*ny],er=[c.x+hw*nx,c.y+hw*ny]
       if(pv){
@@ -264,6 +277,11 @@ function draw(){
     chs.forEach((cch,i)=>lastLayers.push({key:'tape',descriptors:xform(master,dirs[i][0]*tp.params.offset,dirs[i][1]*tp.params.offset,cch),level:level.tape,blend:tp.mode==='cmy'?'multiply':'screen'}))}
   for(const L of lastLayers){const g=document.createElementNS(NS,'g');g.setAttribute('style','mix-blend-mode:'+(L.blend||'screen'));g.setAttribute('opacity',(L.level!=null?L.level:1).toFixed(2));toSVG(L.descriptors,g);art.append(g)}
 }
+/* ⭐ Dragging a fader fires far faster than a redraw of a few thousand nodes (the
+   sends copy the whole master), so coalesce onto the frame — one draw per frame,
+   and the faders move smoothly. */
+let rafPending=0
+function render(){if(rafPending)return;rafPending=requestAnimationFrame(()=>{rafPending=0;draw()})}
 
 /* pick which engine the knobs edit; raise its fader if it was silent, so you
    always see what you are editing */
@@ -284,7 +302,7 @@ const mixEl=document.getElementById('mix')
 function mixCh(k){const ch=document.createElement('div');ch.className='ch';ch.dataset.k=k
   ch.innerHTML=`<input class="fader" type="range" min="0" max="1" step="0.01" orient="vertical"><div class="sm2"><button class="s">S</button><button class="m">M</button></div><span class="nm2">${cap(k)}</span>`
   const f=ch.querySelector('.fader');f.value=level[k]
-  f.oninput=()=>{level[k]=+f.value;paintMix();draw()}
+  f.oninput=()=>{level[k]=+f.value;paintMix();render()}
   ch.querySelector('.s').onclick=()=>{solo.has(k)?solo.delete(k):solo.add(k);paintMix();draw()}
   ch.querySelector('.m').onclick=()=>{mute.has(k)?mute.delete(k):mute.add(k);paintMix();draw()}
   ch.querySelector('.nm2').onclick=()=>selectEngine(k)
@@ -300,11 +318,36 @@ function paintMix(){for(const ch of mixEl.children){const k=ch.dataset.k;if(!k)c
 
 const knobEl=document.getElementById('knobs')
 function buildKnobs(){const e=allOf(active);knobEl.innerHTML=''
+  if(active==='wave')knobEl.append(buildWavetable())     // ⭐ the step sequencer, for Wave
   if(e.modes){const l=document.createElement('label');l.innerHTML=`<span class="k">mode</span><span style="flex:1;display:flex;gap:4px">${e.modes.map(m=>`<button class="tmode" data-m="${m}" style="flex:1;padding:5px;border:1px solid #444;border-radius:4px;background:${m===e.mode?'#fff':'#111'};color:${m===e.mode?'#000':'#888'};cursor:pointer">${m.toUpperCase()}</button>`).join('')}</span>`
     for(const b of l.querySelectorAll('.tmode'))b.onclick=()=>{e.mode=b.dataset.m;buildKnobs();draw()}
     knobEl.append(l)}
   for(const[id,lbl,min,max,step]of e.knobs){const l=document.createElement('label');l.innerHTML=`<span class="k">${lbl[lang]}</span><input type="range" min="${min}" max="${max}" step="${step}" value="${e.params[id]}"><b>${(+e.params[id]).toFixed(step<1?2:0)}</b>`
-    const inp=l.querySelector('input'),b=l.querySelector('b');inp.oninput=()=>{e.params[id]=+inp.value;b.textContent=(+inp.value).toFixed(step<1?2:0);draw()};knobEl.append(l)}}
+    const inp=l.querySelector('input'),b=l.querySelector('b');inp.oninput=()=>{e.params[id]=+inp.value;b.textContent=(+inp.value).toFixed(step<1?2:0);render()};knobEl.append(l)}}
+
+/* ⭐ the wavetable editor: draw the wave by dragging across 16 steps. It edits
+   Wave's `wt` array; the descriptor pipeline does the rest, so code.js is untouched. */
+const WT_PRESETS={sine:i=>Math.sin(i/16*TAU),saw:i=>1-2*(i/16),square:i=>i<8?1:-1,tri:i=>1-4*Math.abs(i/16-0.5)}
+function buildWavetable(){
+  const e=engOf('wave'),wrap=document.createElement('div');wrap.className='wtwrap'
+  const lab=document.createElement('div');lab.className='wtl';lab.textContent=lang==='ja'?'ウェーブテーブル — 16ステップで波形を描く':'Wavetable — draw the wave across 16 steps';wrap.append(lab)
+  const svg=document.createElementNS(NS,'svg');svg.setAttribute('class','wt');svg.setAttribute('viewBox','0 0 16 2');svg.setAttribute('preserveAspectRatio','none');wrap.append(svg)
+  const mk=(t,at)=>{const el=document.createElementNS(NS,t);for(const k in at)el.setAttribute(k,at[k]);svg.append(el);return el}
+  const redraw=()=>{svg.textContent=''
+    mk('line',{x1:0,y1:1,x2:16,y2:1,stroke:'#333','stroke-width':1,'vector-effect':'non-scaling-stroke'})
+    mk('polyline',{points:e.params.wt.map((v,i)=>`${i+0.5},${(1-v).toFixed(3)}`).join(' '),fill:'none',stroke:'#fff','stroke-width':1.5,'vector-effect':'non-scaling-stroke'})
+    e.params.wt.forEach((v,i)=>mk('circle',{cx:i+0.5,cy:(1-v).toFixed(3),r:0.11,fill:'#8ad'}))}
+  const setAt=ev=>{const r=svg.getBoundingClientRect(),i=Math.max(0,Math.min(15,Math.floor((ev.clientX-r.left)/r.width*16))),v=Math.max(-1,Math.min(1,1-((ev.clientY-r.top)/r.height)*2));e.params.wt[i]=Math.round(v*50)/50;redraw();render()}
+  let paint=false
+  svg.onpointerdown=ev=>{paint=true;try{svg.setPointerCapture(ev.pointerId)}catch(_){}setAt(ev)}
+  svg.onpointermove=ev=>{if(paint)setAt(ev)}
+  svg.onpointerup=svg.onpointerleave=()=>{paint=false}
+  redraw()
+  const pr=document.createElement('div');pr.className='wtp'
+  for(const nm of ['sine','saw','square','tri','random']){const b=document.createElement('button');b.textContent=nm
+    b.onclick=()=>{e.params.wt=nm==='random'?Array.from({length:16},()=>Math.round((Math.random()*2-1)*50)/50):Array.from({length:16},(_,i)=>WT_PRESETS[nm](i));redraw();draw()};pr.append(b)}
+  wrap.append(pr);return wrap
+}
 
 function applyLang(){
   document.getElementById('langJa').classList.toggle('on',lang==='ja')
@@ -324,7 +367,7 @@ modal.onclick=e=>{if(e.target===modal)modal.hidden=true}
 addEventListener('keydown',e=>{if(e.key==='Escape')modal.hidden=true})
 
 const seedEl=document.getElementById('seed'),seedB=document.getElementById('seedv')
-seedEl.oninput=()=>{seed=+seedEl.value;seedB.textContent=seed;draw()}
+seedEl.oninput=()=>{seed=+seedEl.value;seedB.textContent=seed;render()}
 document.getElementById('rnd').onclick=()=>{seed=(seed*7+13)%61;seedEl.value=seed;seedB.textContent=seed;draw()}
 const msg=document.getElementById('msg')
 document.getElementById('out').onclick=()=>{
