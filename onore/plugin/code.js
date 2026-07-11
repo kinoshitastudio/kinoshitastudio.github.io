@@ -44,7 +44,7 @@ function node(d) {
   } else { // poly
     nd = figma.createVector()
     const data = 'M ' + d.pts.map(p => `${n2(p[0])} ${n2(p[1])}`).join(' L ') + (d.close ? ' Z' : '')
-    if (d.fill) { nd.vectorPaths = [{ windingRule: 'NONZERO', data }]; nd.fills = [{ type: 'SOLID', color: rgb(d.fill) }] }
+    if (d.fill) { nd.vectorPaths = [{ windingRule: 'NONZERO', data }]; nd.fills = [{ type: 'SOLID', color: rgb(d.fill) }]; nd.strokes = [] }
     else { nd.vectorPaths = [{ windingRule: 'NONE', data }]; nd.fills = []; nd.strokes = [{ type: 'SOLID', color: rgb(d.stroke) }]; nd.strokeWeight = d.w }
   }
   /* ⚠ Set NORMAL explicitly. A fresh Figma node defaults to PASS_THROUGH, which
