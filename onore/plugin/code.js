@@ -47,7 +47,11 @@ function node(d) {
     if (d.fill) { nd.vectorPaths = [{ windingRule: 'NONZERO', data }]; nd.fills = [{ type: 'SOLID', color: rgb(d.fill) }] }
     else { nd.vectorPaths = [{ windingRule: 'NONE', data }]; nd.fills = []; nd.strokes = [{ type: 'SOLID', color: rgb(d.stroke) }]; nd.strokeWeight = d.w }
   }
-  nd.blendMode = 'SCREEN'   // oscillators sum as light on the black ground
+  /* ⚠ NORMAL, not SCREEN, per shape. The preview screens the whole ENGINE onto
+     the ground, and the shapes inside it composite normally. Screening each shape
+     instead makes every shared edge add against its neighbour — the anti-aliased
+     seams brighten and a white grid appears over the ribbon. Keep the shapes
+     opaque and normal; the engine frame below carries the SCREEN. */
   return nd
 }
 
@@ -60,12 +64,18 @@ function build(layers, seed) {
 
   let total = 0, engines = 0
   for (const L of layers) {
-    const made = []
-    for (const d of L.descriptors) { const nd = node(d); frame.appendChild(nd); made.push(nd) }
-    if (made.length) {                       // ⚠ never group an empty set
-      const g = figma.group(made, frame); g.name = L.key; g.blendMode = 'SCREEN'
-      total += made.length; engines++
-    }
+    if (!L.descriptors.length) continue
+    /* ⭐ One isolated frame per engine. A frame with a blend mode isolates: its
+       children composite among themselves (normal, so the ribbon is seamless),
+       then the whole frame SCREENs onto the ground and the other engines — which
+       is exactly what the SVG preview's `mix-blend-mode:screen` group does. */
+    const ef = figma.createFrame()
+    ef.resize(W, H); ef.x = 0; ef.y = 0; ef.name = L.key
+    ef.fills = []                 // transparent, so only the shapes carry colour
+    ef.clipsContent = false
+    ef.blendMode = 'SCREEN'
+    for (const d of L.descriptors) { ef.appendChild(node(d)); total++ }
+    frame.appendChild(ef); engines++
   }
 
   // place at the middle of what the user is looking at

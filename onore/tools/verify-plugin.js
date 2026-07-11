@@ -59,24 +59,25 @@ let bad = 0
 const check = (c, m) => { if (!c) { bad++; console.log('  ❌ ' + m) } }
 check(frame && frame.type === 'FRAME', 'a frame was placed')
 check(frame && frame._bm === undefined ? true : true, '')
-const groups = frame ? frame.children.filter(c => c.type === 'GROUP') : []
-console.log('engine     nodes   node type')
-console.log('─'.repeat(46))
+// each engine is now an isolating SCREEN frame; its shapes stay NORMAL (seamless)
+const engineFrames = frame ? frame.children.filter(c => c.type === 'FRAME') : []
+console.log('engine     nodes   node type            blend')
+console.log('─'.repeat(52))
 let total = 0
-for (const g of groups) {
-  const kinds = [...new Set(g.children.map(c => c.type))].join(',')
-  console.log(`${g.name.padEnd(10)} ${String(g.children.length).padStart(5)}   ${kinds}`)
-  total += g.children.length
-  check(g._bm === 'SCREEN', `${g.name} group is SCREEN`)
-  check(g.children.every(c => c._bm === 'SCREEN'), `${g.name} nodes are SCREEN`)
+for (const ef of engineFrames) {
+  const kinds = [...new Set(ef.children.map(c => c.type))].join(',')
+  console.log(`${ef.name.padEnd(10)} ${String(ef.children.length).padStart(5)}   ${kinds.padEnd(20)} ${ef._bm}`)
+  total += ef.children.length
+  check(ef._bm === 'SCREEN', `${ef.name} frame is SCREEN`)
+  check(ef.children.every(c => c._bm === undefined), `${ef.name} shapes are NORMAL (no per-shape SCREEN → no white grid)`)
 }
-console.log('─'.repeat(46))
-check(groups.length === layers.length, `one group per engine (${groups.length}/${layers.length})`)
+console.log('─'.repeat(52))
+check(engineFrames.length === layers.length, `one frame per engine (${engineFrames.length}/${layers.length})`)
 check(frame && frame.fills[0] && frame.fills[0].color.r === 0, 'ground frame is black')
 check(frame && frame.x === Math.round(500 - W2()) , 'frame centred on viewport')
 function W2() { return 720 / 2 }
 const posted = figma.ui._out
 check(posted && posted.type === 'made' && posted.nodes === total, `UI told: ${posted && posted.nodes} nodes`)
-console.log(`\n合計 ${total} ノード / ${groups.length} エンジン / 黒地フレーム1 / 失敗 ${bad}`)
+console.log(`\n合計 ${total} ノード / ${engineFrames.length} エンジン（各 SCREEN 分離フレーム） / 黒地フレーム1 / 失敗 ${bad}`)
 console.log(bad ? '\n❌ プラグインに穴あり' : '\n✅ 実プラグイン（ui.html → code.js）が、有効な Figma ノードを生成した。')
 if (bad) process.exit(1)
