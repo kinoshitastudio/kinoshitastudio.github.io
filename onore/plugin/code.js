@@ -72,7 +72,7 @@ function node(d) {
      edges brighten into a white grid over the ribbon. NORMAL makes the shapes just
      stack (alpha-over) within the engine frame, exactly like the SVG preview's
      children; only the engine frame carries the SCREEN. */
-  nd.blendMode = 'NORMAL'
+  nd.blendMode = d.blend === 'screen' ? 'SCREEN' : 'NORMAL'
   return nd
 }
 

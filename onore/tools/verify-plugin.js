@@ -70,7 +70,8 @@ for (const ef of engineFrames) {
   total += ef.children.length
   // 7 engines exercised at once → the mixer's layered case → SCREEN frames
   check(ef._bm === 'SCREEN', `${ef.name} frame is SCREEN (layered mix; single engine would be NORMAL)`)
-  check(ef.children.every(c => c._bm === 'NORMAL'), `${ef.name} shapes are explicit NORMAL`)
+  const wantBM = ef.name === 'field' ? 'SCREEN' : 'NORMAL'   // Field's blobs screen-add into a soft glow; every other engine stacks NORMAL (no seam grid)
+  check(ef.children.every(c => c._bm === wantBM), `${ef.name} shapes are ${wantBM}`)
 }
 console.log('─'.repeat(52))
 check(engineFrames.length === layers.length, `one frame per engine (${engineFrames.length}/${layers.length})`)
