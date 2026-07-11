@@ -101,7 +101,10 @@ const W=720, H=900, TAU=Math.PI*2
 const mb=s=>{let a=s>>>0;return()=>{a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296}}
 const osc=(a,k)=>{const s=Math.sin(a);if(k<=0)return s;const saw=2*(a/TAU-Math.floor(a/TAU+0.5));if(k<=1)return s*(1-k)+saw*k;const sq=Math.sign(s)||1;return saw*(2-k)+sq*(k-1)}
 const D={poly:(S,pts,o)=>S.push(Object.assign({t:'poly',pts},o)),line:(S,a,b,o)=>S.push(Object.assign({t:'line',a,b},o)),
-  circle:(S,c,r,fill)=>S.push({t:'circle',c,r,fill}),rect:(S,x,y,w,h,rx,fill)=>S.push({t:'rect',x,y,w,h,rx,fill})}
+  circle:(S,c,r,fill)=>S.push({t:'circle',c,r,fill}),rect:(S,x,y,w,h,rx,fill)=>S.push({t:'rect',x,y,w,h,rx,fill}),
+  /* a filled quad whose colour runs as a linear gradient from a to b (absolute
+     coords). One shape → no internal seam, and far fewer nodes than a tile of quads. */
+  grad:(S,pts,a,b,stops)=>S.push({t:'grad',pts,a,b,stops})}
 /* ⭐ Figma anti-aliases every vector node on its own, so thousands of quads that
    only TOUCH show a hairline grid where their edges meet — even with no blending
    (the SVG preview merges them and stays smooth; Figma does not). Grow each quad
@@ -116,12 +119,16 @@ const ENGINES=[
 { key:'wave', label:{ja:'Wave — 波が面になる',en:'Wave — a wave becomes a surface'}, seedOff:0,
   params:{hue:20,spread:0.7,wshape:0,amp:190,turns:2.2,width:150,twist:2,spec:1.4},
   knobs:[['hue',{ja:'基音の色',en:'root colour'},0,360,1],['spread',{ja:'倍音の広がり',en:'harmonic spread'},0,1.5,0.01],['wshape',{ja:'sine→saw→sq',en:'sine→saw→sq'},0,2,0.01],['amp',{ja:'振幅',en:'amplitude'},0,300,1],['turns',{ja:'sustain',en:'sustain'},0.5,6,0.05],['width',{ja:'面の幅',en:'surface width'},20,240,1],['twist',{ja:'LFO',en:'LFO'},0,6,0.05],['spec',{ja:'倍音の鋭さ',en:'harmonic edge'},0.4,4,0.05]],
-  emit(P,R){const S=[],N=240,M=15,ds=1/N,ph0=R()*TAU,ph1=R()*TAU,centre=s=>{const a=TAU*P.turns*s+0.6+ph0;let w=osc(a,P.wshape)+0.28*osc(2*a,P.wshape)+0.14*osc(3*a,P.wshape);return{x:W/2+P.amp*(w/1.42),y:H*s}}
-    let prev=null;for(let i=0;i<=N;i++){const s=i/N,c=centre(s),a=centre(s-ds*0.6),b=centre(s+ds*0.6);let tx=b.x-a.x,ty=b.y-a.y;const tl=Math.hypot(tx,ty)||1;tx/=tl;ty/=tl;const nx=-ty,ny=tx,hw=P.width*0.5,la=1.15*Math.sin(TAU*P.twist*s+ph1)
-      const row=[];for(let j=0;j<=M;j++){const u=(j/M)*2-1;row.push([c.x+u*hw*nx,c.y+u*hw*ny])}
-      if(prev)for(let j=0;j<M;j++){const um=((j+0.5)/M)*2-1,ang=um*1.3,bght=Math.pow(Math.max(0,Math.cos(ang-la)),1+P.spec)
-        D.poly(S,inflate([prev[j],prev[j+1],row[j+1],row[j]],1.6),{fill:[(P.hue+P.spread*s*300+40*bght)%360,58+18*bght,6+90*Math.pow(bght,1.35)],close:true})}
-      prev=row}return S}},
+  /* ⭐ One gradient strip per length-step, not a tile of quads. The cross-section
+     shading (dark edge → bright ridge → dark edge, the ridge moving with the LFO)
+     is a linear gradient sampled across the width. ~240 nodes instead of ~3600, no
+     internal grid, and Figma never has thousands of touching quads to seam. */
+  emit(P,R){const S=[],N=240,ds=1/N,ph0=R()*TAU,ph1=R()*TAU,ST=9,centre=s=>{const a=TAU*P.turns*s+0.6+ph0;let w=osc(a,P.wshape)+0.28*osc(2*a,P.wshape)+0.14*osc(3*a,P.wshape);return{x:W/2+P.amp*(w/1.42),y:H*s}}
+    let pv=null;for(let i=0;i<=N;i++){const s=i/N,c=centre(s),a=centre(s-ds*0.6),b=centre(s+ds*0.6);let tx=b.x-a.x,ty=b.y-a.y;const tl=Math.hypot(tx,ty)||1;tx/=tl;ty/=tl;const nx=-ty,ny=tx,hw=P.width*0.5,la=1.15*Math.sin(TAU*P.twist*s+ph1)
+      const el=[c.x-hw*nx,c.y-hw*ny],er=[c.x+hw*nx,c.y+hw*ny]
+      if(pv){const stops=[];for(let q=0;q<ST;q++){const u=(q/(ST-1))*2-1,g=Math.pow(Math.max(0,Math.cos(u*1.3-la)),1+P.spec);stops.push({p:q/(ST-1),c:[(P.hue+P.spread*s*300+40*g)%360,58+18*g,6+90*Math.pow(g,1.35)]})}
+        D.grad(S,inflate([pv.l,pv.r,er,el],1.5),[(pv.l[0]+el[0])/2,(pv.l[1]+el[1])/2],[(pv.r[0]+er[0])/2,(pv.r[1]+er[1])/2],stops)}
+      pv={l:el,r:er}}return S}},
 { key:'partials', label:{ja:'Partials — 倍音の束',en:'Partials — a bundle of harmonics'}, seedOff:11,
   params:{hue:200,spread:1,rays:150,partials:6,aim:-1.2,len:0.42,cy:0.5},
   knobs:[['hue',{ja:'基音の色',en:'root colour'},0,360,1],['spread',{ja:'倍音の広がり',en:'harmonic spread'},0,2,0.02],['rays',{ja:'倍音の本数',en:'partials'},20,360,2],['partials',{ja:'倍音の次数',en:'harmonic n'},1,16,1],['aim',{ja:'片寄り',en:'bias'},-3.14,3.14,0.05],['len',{ja:'伸び',en:'length'},0.2,0.6,0.01],['cy',{ja:'高さ',en:'height'},0.15,0.85,0.01]],
@@ -162,9 +169,14 @@ let lang='ja'
 
 /* ---- preview: the SAME descriptors, drawn as SVG ---- */
 const hsl=c=>`hsl(${c[0].toFixed(0)} ${c[1].toFixed(0)}% ${c[2].toFixed(0)}%)`
+let gcount=0
 function toSVG(S,g){
+  let defs=null;const getDefs=()=>{if(!defs){defs=document.createElementNS(NS,'defs');g.append(defs)}return defs}
   for(const d of S){let el
-    if(d.t==='rect'){el=document.createElementNS(NS,'rect');el.setAttribute('x',d.x.toFixed(1));el.setAttribute('y',d.y.toFixed(1));el.setAttribute('width',d.w.toFixed(1));el.setAttribute('height',d.h.toFixed(1));if(d.rx)el.setAttribute('rx',d.rx.toFixed(1));el.setAttribute('fill',hsl(d.fill))}
+    if(d.t==='grad'){const id='og'+(gcount++);const lg=document.createElementNS(NS,'linearGradient');lg.setAttribute('id',id);lg.setAttribute('gradientUnits','userSpaceOnUse');lg.setAttribute('x1',d.a[0].toFixed(1));lg.setAttribute('y1',d.a[1].toFixed(1));lg.setAttribute('x2',d.b[0].toFixed(1));lg.setAttribute('y2',d.b[1].toFixed(1))
+      for(const st of d.stops){const s=document.createElementNS(NS,'stop');s.setAttribute('offset',st.p.toFixed(3));s.setAttribute('stop-color',hsl(st.c));lg.append(s)}getDefs().append(lg)
+      el=document.createElementNS(NS,'path');el.setAttribute('d','M'+d.pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L')+'Z');el.setAttribute('fill','url(#'+id+')')}
+    else if(d.t==='rect'){el=document.createElementNS(NS,'rect');el.setAttribute('x',d.x.toFixed(1));el.setAttribute('y',d.y.toFixed(1));el.setAttribute('width',d.w.toFixed(1));el.setAttribute('height',d.h.toFixed(1));if(d.rx)el.setAttribute('rx',d.rx.toFixed(1));el.setAttribute('fill',hsl(d.fill))}
     else if(d.t==='circle'){el=document.createElementNS(NS,'circle');el.setAttribute('cx',d.c[0].toFixed(1));el.setAttribute('cy',d.c[1].toFixed(1));el.setAttribute('r',d.r.toFixed(1));el.setAttribute('fill',hsl(d.fill))}
     else if(d.t==='line'){el=document.createElementNS(NS,'path');el.setAttribute('d',`M${d.a[0].toFixed(1)} ${d.a[1].toFixed(1)}L${d.b[0].toFixed(1)} ${d.b[1].toFixed(1)}`);el.setAttribute('stroke',hsl(d.stroke));el.setAttribute('stroke-width',d.w.toFixed(2));el.setAttribute('fill','none');if(d.op!=null)el.setAttribute('opacity',d.op.toFixed(2))}
     else if(d.t==='poly'){el=document.createElementNS(NS,'path');el.setAttribute('d','M'+d.pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L')+(d.close?'Z':''));if(d.fill){el.setAttribute('fill',hsl(d.fill))}else{el.setAttribute('fill','none');el.setAttribute('stroke',hsl(d.stroke));el.setAttribute('stroke-width',d.w.toFixed(2))}}
@@ -177,6 +189,7 @@ const engOf=k=>ENGINES.find(e=>e.key===k)
 
 function draw(){
   while(art.firstChild)art.removeChild(art.firstChild)
+  gcount=0
   const e=engOf(active)
   const S=e.emit(e.params,mb((seed+e.seedOff)*7919+13))
   lastLayers=[{key:e.key,descriptors:S}]

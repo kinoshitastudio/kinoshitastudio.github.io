@@ -41,6 +41,25 @@ function node(d) {
     nd.vectorPaths = [{ windingRule: 'NONE', data: `M ${n2(d.a[0])} ${n2(d.a[1])} L ${n2(d.b[0])} ${n2(d.b[1])}` }]
     nd.strokes = [{ type: 'SOLID', color: rgb(d.stroke) }]; nd.strokeWeight = d.w; nd.fills = []
     if (d.op != null) nd.opacity = Math.max(0, Math.min(1, d.op))
+  } else if (d.t === 'grad') {
+    /* a quad filled with a linear gradient running from d.a to d.b (absolute
+       coords). Figma's gradientTransform maps the node's normalised 0..1 space
+       into gradient space, so build the map (0,0)→A,(1,0)→B in normalised space
+       and invert it. This is the ribbon strip: one node, a smooth cross-section. */
+    nd = figma.createVector()
+    const data = 'M ' + d.pts.map(p => `${n2(p[0])} ${n2(p[1])}`).join(' L ') + ' Z'
+    nd.vectorPaths = [{ windingRule: 'NONZERO', data }]
+    let mnx = 1e9, mny = 1e9, mxx = -1e9, mxy = -1e9
+    for (const p of d.pts) { if (p[0] < mnx) mnx = p[0]; if (p[1] < mny) mny = p[1]; if (p[0] > mxx) mxx = p[0]; if (p[1] > mxy) mxy = p[1] }
+    const bw = Math.max(1e-3, mxx - mnx), bh = Math.max(1e-3, mxy - mny)
+    const Ax = (d.a[0] - mnx) / bw, Ay = (d.a[1] - mny) / bh, Bx = (d.b[0] - mnx) / bw, By = (d.b[1] - mny) / bh
+    const gx = Bx - Ax, gy = By - Ay, px = -gy, py = gx      // gradient axis + a perpendicular
+    const det = (gx * py - px * gy) || 1e-6                   // M = [[gx,px,Ax],[gy,py,Ay]]; want its inverse
+    const gt = [[py / det, -px / det, (px * Ay - py * Ax) / det],
+                [-gy / det, gx / det, (gy * Ax - gx * Ay) / det]]
+    nd.fills = [{ type: 'GRADIENT_LINEAR', gradientTransform: gt,
+      gradientStops: d.stops.map(st => { const c = rgb(st.c); return { position: st.p, color: { r: c.r, g: c.g, b: c.b, a: 1 } } }) }]
+    nd.strokes = []
   } else { // poly
     nd = figma.createVector()
     const data = 'M ' + d.pts.map(p => `${n2(p[0])} ${n2(p[1])}`).join(' L ') + (d.close ? ' Z' : '')
