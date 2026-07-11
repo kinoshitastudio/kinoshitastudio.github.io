@@ -67,15 +67,18 @@ function build(layers, seed) {
   let total = 0, engines = 0
   for (const L of layers) {
     if (!L.descriptors.length) continue
-    /* ⭐ One isolated frame per engine. A frame with a blend mode isolates: its
-       children composite among themselves (normal, so the ribbon is seamless),
-       then the whole frame SCREENs onto the ground and the other engines — which
-       is exactly what the SVG preview's `mix-blend-mode:screen` group does. */
+    /* ⭐ One frame per engine, NORMAL — not SCREEN. Wave tiles thousands of quads
+       edge to edge; if the frame screens, Figma adds each quad's anti-aliased edge
+       against its neighbour and a white grid lights up the seams. On the black
+       ground a single engine's opaque shapes look identical whether the frame is
+       NORMAL or SCREEN (screen-vs-black is the colour itself), so NORMAL loses
+       nothing and the ribbon stays seamless. When the mixer layers engines, the
+       additive SCREEN comes back — handled at that point, per engine, not per shape. */
     const ef = figma.createFrame()
     ef.resize(W, H); ef.x = 0; ef.y = 0; ef.name = L.key
     ef.fills = []                 // transparent, so only the shapes carry colour
     ef.clipsContent = false
-    ef.blendMode = 'SCREEN'
+    ef.blendMode = 'NORMAL'
     for (const d of L.descriptors) { ef.appendChild(node(d)); total++ }
     frame.appendChild(ef); engines++
   }
