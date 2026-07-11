@@ -83,21 +83,21 @@ function build(layers, seed) {
   frame.fills = [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }]
   frame.clipsContent = true
 
+  const live = layers.filter(L => L.descriptors.length)
+  /* ⭐ One frame per engine. With a single engine, NORMAL — on the black ground its
+     opaque shapes read the same as SCREEN (screen-vs-black is the colour itself),
+     and NORMAL keeps Wave's overlapping strips from lighting their seams. With the
+     mixer layering several, SCREEN so the engines add as light, the way the preview
+     screens each group. The fader is the frame's opacity. */
+  const bm = live.length > 1 ? 'SCREEN' : 'NORMAL'
   let total = 0, engines = 0
-  for (const L of layers) {
-    if (!L.descriptors.length) continue
-    /* ⭐ One frame per engine, NORMAL — not SCREEN. Wave tiles thousands of quads
-       edge to edge; if the frame screens, Figma adds each quad's anti-aliased edge
-       against its neighbour and a white grid lights up the seams. On the black
-       ground a single engine's opaque shapes look identical whether the frame is
-       NORMAL or SCREEN (screen-vs-black is the colour itself), so NORMAL loses
-       nothing and the ribbon stays seamless. When the mixer layers engines, the
-       additive SCREEN comes back — handled at that point, per engine, not per shape. */
+  for (const L of live) {
     const ef = figma.createFrame()
     ef.resize(W, H); ef.x = 0; ef.y = 0; ef.name = L.key
     ef.fills = []                 // transparent, so only the shapes carry colour
     ef.clipsContent = false
-    ef.blendMode = 'NORMAL'
+    ef.blendMode = bm
+    if (L.level != null) ef.opacity = Math.max(0, Math.min(1, L.level))
     for (const d of L.descriptors) { ef.appendChild(node(d)); total++ }
     frame.appendChild(ef); engines++
   }

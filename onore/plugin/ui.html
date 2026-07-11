@@ -36,6 +36,17 @@
   small{color:#666;line-height:1.5}
   #stage{width:100%;background:#000;border:1px solid #222;border-radius:6px;display:flex;justify-content:center;align-items:center;padding:6px 0}
   svg{display:block;width:100%;height:300px}
+  .mix{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;border:1px solid #222;border-radius:6px;padding:10px 8px 8px}
+  .ch{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:0}
+  .ch .fader{-webkit-appearance:slider-vertical;appearance:slider-vertical;width:16px;height:78px;accent-color:#fff;cursor:pointer;padding:0}
+  .ch.dim .fader{accent-color:#555}
+  .sm2{display:flex;gap:2px}
+  .sm2 button{font-size:8px;font-weight:600;padding:2px 4px;border-radius:3px;border:1px solid #444;background:#111;color:#888;cursor:pointer}
+  .sm2 .s.on{background:#e8b13a;color:#000;border-color:#e8b13a}
+  .sm2 .m.on{background:#7a4a4a;color:#fff;border-color:#7a4a4a}
+  .nm2{font-size:8.5px;color:#777;cursor:pointer;text-align:center;line-height:1.15;letter-spacing:.02em}
+  .ch.sel .nm2{color:#fff}
+  .ch.dim .nm2{color:#4a4a4a}
   .knobs{display:flex;flex-direction:column;gap:7px;border:1px solid #222;border-radius:6px;padding:10px 12px}
   label{display:flex;justify-content:space-between;gap:10px;font-size:11px;color:#999;align-items:center}
   label span.k{flex:none;width:96px}
@@ -85,6 +96,7 @@
 
 <div id="body">
   <div id="stage"><svg id="art" viewBox="0 0 720 900"></svg></div>
+  <div class="mix" id="mix"></div>
   <div class="knobs" id="knobs"></div>
 </div>
 <footer>
@@ -117,16 +129,23 @@ const inflate=(pts,m)=>{let cx=0,cy=0;for(const p of pts){cx+=p[0];cy+=p[1]}cx/=
    control is always in the same place. label/knob labels carry both languages. */
 const ENGINES=[
 { key:'wave', label:{ja:'Wave — 波が面になる',en:'Wave — a wave becomes a surface'}, seedOff:0,
-  params:{hue:20,spread:0.7,wshape:0,amp:190,turns:2.2,width:150,twist:2,spec:1.4},
-  knobs:[['hue',{ja:'基音の色',en:'root colour'},0,360,1],['spread',{ja:'倍音の広がり',en:'harmonic spread'},0,1.5,0.01],['wshape',{ja:'sine→saw→sq',en:'sine→saw→sq'},0,2,0.01],['amp',{ja:'振幅',en:'amplitude'},0,300,1],['turns',{ja:'sustain',en:'sustain'},0.5,6,0.05],['width',{ja:'面の幅',en:'surface width'},20,240,1],['twist',{ja:'LFO',en:'LFO'},0,6,0.05],['spec',{ja:'倍音の鋭さ',en:'harmonic edge'},0.4,4,0.05]],
+  params:{hue:20,spread:0.7,step:16,wshape:0,amp:190,turns:2.2,width:150,twist:2,spec:1.4},
+  knobs:[['hue',{ja:'基音の色',en:'root colour'},0,360,1],['spread',{ja:'倍音の広がり',en:'harmonic spread'},0,1.5,0.01],['step',{ja:'階調（0=滑らか）',en:'steps (0=smooth)'},0,28,1],['wshape',{ja:'sine→saw→sq',en:'sine→saw→sq'},0,2,0.01],['amp',{ja:'振幅',en:'amplitude'},0,300,1],['turns',{ja:'sustain',en:'sustain'},0.5,6,0.05],['width',{ja:'面の幅',en:'surface width'},20,240,1],['twist',{ja:'LFO',en:'LFO'},0,6,0.05],['spec',{ja:'倍音の鋭さ',en:'harmonic edge'},0.4,4,0.05]],
   /* ⭐ One gradient strip per length-step, not a tile of quads. The cross-section
      shading (dark edge → bright ridge → dark edge, the ridge moving with the LFO)
      is a linear gradient sampled across the width. ~240 nodes instead of ~3600, no
      internal grid, and Figma never has thousands of touching quads to seam. */
-  emit(P,R){const S=[],N=240,ds=1/N,ph0=R()*TAU,ph1=R()*TAU,ST=9,centre=s=>{const a=TAU*P.turns*s+0.6+ph0;let w=osc(a,P.wshape)+0.28*osc(2*a,P.wshape)+0.14*osc(3*a,P.wshape);return{x:W/2+P.amp*(w/1.42),y:H*s}}
+  emit(P,R){const S=[],N=240,ds=1/N,ph0=R()*TAU,ph1=R()*TAU,centre=s=>{const a=TAU*P.turns*s+0.6+ph0;let w=osc(a,P.wshape)+0.28*osc(2*a,P.wshape)+0.14*osc(3*a,P.wshape);return{x:W/2+P.amp*(w/1.42),y:H*s}}
     let pv=null;for(let i=0;i<=N;i++){const s=i/N,c=centre(s),a=centre(s-ds*0.6),b=centre(s+ds*0.6);let tx=b.x-a.x,ty=b.y-a.y;const tl=Math.hypot(tx,ty)||1;tx/=tl;ty/=tl;const nx=-ty,ny=tx,hw=P.width*0.5,la=1.15*Math.sin(TAU*P.twist*s+ph1)
       const el=[c.x-hw*nx,c.y-hw*ny],er=[c.x+hw*nx,c.y+hw*ny]
-      if(pv){const stops=[];for(let q=0;q<ST;q++){const u=(q/(ST-1))*2-1,g=Math.pow(Math.max(0,Math.cos(u*1.3-la)),1+P.spec);stops.push({p:q/(ST-1),c:[(P.hue+P.spread*s*300+40*g)%360,58+18*g,6+90*Math.pow(g,1.35)]})}
+      if(pv){
+        /* ⭐ colour across the width. `step` decides the texture: 0 = a smooth
+           gradient (Fons-chrome), higher = that many HARD bands (a pair of stops
+           at each edge) — the scale/snake look, more 木下 than Fons. */
+        const col=u=>{const g=Math.pow(Math.max(0,Math.cos(u*1.3-la)),1+P.spec);return[(P.hue+P.spread*s*300+40*g)%360,58+18*g,6+90*Math.pow(g,1.35)]}
+        const stops=[]
+        if(P.step>=1){const B=Math.round(P.step);for(let bd=0;bd<B;bd++){const c2=col(((bd+0.5)/B)*2-1);stops.push({p:bd/B,c:c2});stops.push({p:(bd+1)/B,c:c2})}}
+        else{for(let q=0;q<9;q++)stops.push({p:q/8,c:col((q/8)*2-1)})}
         D.grad(S,inflate([pv.l,pv.r,er,el],1.5),[(pv.l[0]+el[0])/2,(pv.l[1]+el[1])/2],[(pv.r[0]+er[0])/2,(pv.r[1]+er[1])/2],stops)}
       pv={l:el,r:er}}return S}},
 { key:'partials', label:{ja:'Partials — 倍音の束',en:'Partials — a bundle of harmonics'}, seedOff:11,
@@ -183,28 +202,55 @@ function toSVG(S,g){
     g.append(el)}
 }
 
-/* ---- state: one active engine (mixer / layering comes later) ---- */
+/* ---- state: a mixer. each engine has a LEVEL; the mix layers them (SCREEN).
+   The selector / mixer name picks which engine the knobs edit. ---- */
+const cap=s=>s[0].toUpperCase()+s.slice(1)
+const level={};for(const e of ENGINES)level[e.key]=0;level.wave=1
+const solo=new Set(),mute=new Set()
 let active='wave', seed=7, lastLayers=[]
 const engOf=k=>ENGINES.find(e=>e.key===k)
+const audible=k=>(solo.size?solo.has(k):true)&&!mute.has(k)
 
 function draw(){
   while(art.firstChild)art.removeChild(art.firstChild)
-  gcount=0
-  const e=engOf(active)
-  const S=e.emit(e.params,mb((seed+e.seedOff)*7919+13))
-  lastLayers=[{key:e.key,descriptors:S}]
-  const g=document.createElementNS(NS,'g');g.setAttribute('style','mix-blend-mode:screen');toSVG(S,g);art.append(g)
+  gcount=0; lastLayers=[]
+  for(const e of ENGINES){
+    if(!(level[e.key]>0)||!audible(e.key))continue
+    const S=e.emit(e.params,mb((seed+e.seedOff)*7919+13))
+    lastLayers.push({key:e.key,descriptors:S,level:level[e.key]})
+    const g=document.createElementNS(NS,'g');g.setAttribute('style','mix-blend-mode:screen');g.setAttribute('opacity',level[e.key].toFixed(2));toSVG(S,g);art.append(g)
+  }
 }
+
+/* pick which engine the knobs edit; raise its fader if it was silent, so you
+   always see what you are editing */
+function selectEngine(k){active=k;if(!(level[k]>0))level[k]=1;paintSel();buildMix();buildKnobs();draw()}
 
 /* ---- engine selector (in the fixed bar, next to the logo) ---- */
 const engBtn=document.getElementById('engBtn'),engMenu=document.getElementById('engMenu')
 function buildMenu(){engMenu.innerHTML=''
   for(const e of ENGINES){const b=document.createElement('button');b.textContent=e.label[lang];b.classList.toggle('on',e.key===active)
-    b.onclick=()=>{active=e.key;engMenu.hidden=true;paintSel();buildKnobs();draw()};engMenu.append(b)}}
+    b.onclick=()=>{engMenu.hidden=true;selectEngine(e.key)};engMenu.append(b)}}
 function paintSel(){const e=engOf(active);engBtn.innerHTML=`${e.label[lang]}<span class="ar">▾</span>`
   for(const b of engMenu.children)b.classList.toggle('on',b.textContent===e.label[lang])}
 engBtn.onclick=ev=>{ev.stopPropagation();engMenu.hidden=!engMenu.hidden}
 addEventListener('click',()=>{engMenu.hidden=true})
+
+/* ---- the mixer: a fader per engine (level) with S / M, Siren-style ---- */
+const mixEl=document.getElementById('mix')
+function buildMix(){mixEl.innerHTML=''
+  for(const e of ENGINES){const ch=document.createElement('div');ch.className='ch';ch.dataset.k=e.key
+    ch.innerHTML=`<input class="fader" type="range" min="0" max="1" step="0.01" orient="vertical"><div class="sm2"><button class="s">S</button><button class="m">M</button></div><span class="nm2">${cap(e.key)}</span>`
+    const f=ch.querySelector('.fader');f.value=level[e.key]
+    f.oninput=()=>{level[e.key]=+f.value;paintMix();draw()}
+    ch.querySelector('.s').onclick=()=>{solo.has(e.key)?solo.delete(e.key):solo.add(e.key);paintMix();draw()}
+    ch.querySelector('.m').onclick=()=>{mute.has(e.key)?mute.delete(e.key):mute.add(e.key);paintMix();draw()}
+    ch.querySelector('.nm2').onclick=()=>selectEngine(e.key)
+    mixEl.append(ch)}
+  paintMix()}
+function paintMix(){for(const ch of mixEl.children){const k=ch.dataset.k
+    ch.classList.toggle('sel',k===active);ch.classList.toggle('dim',!(level[k]>0)||!audible(k))
+    ch.querySelector('.s').classList.toggle('on',solo.has(k));ch.querySelector('.m').classList.toggle('on',mute.has(k))}}
 
 const knobEl=document.getElementById('knobs')
 function buildKnobs(){const e=engOf(active);knobEl.innerHTML=''
@@ -218,7 +264,7 @@ function applyLang(){
   document.getElementById('mSub').innerHTML=T[lang].mSub
   document.getElementById('mBody').innerHTML=T[lang].mBody
   document.getElementById('mClose').textContent=T[lang].close
-  buildMenu();paintSel();buildKnobs()
+  buildMenu();paintSel();buildMix();buildKnobs()
 }
 document.getElementById('langJa').onclick=()=>{lang='ja';applyLang()}
 document.getElementById('langEn').onclick=()=>{lang='en';applyLang()}
