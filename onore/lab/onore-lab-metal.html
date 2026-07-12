@@ -1,0 +1,103 @@
+<!doctype html><meta charset="utf-8">
+<title>Onore LAB — Metal / MatCap（法線で引く金属・綺麗↔破壊）</title>
+<!--
+  質感リサーチ＝MatCap（material capture）：ライティングした球の見えを、面の"法線"で
+  ルックアップしてフラットを金属3Dに見せる（Fons/ZBrushの定番。木下の「反射で立体に」）。
+  ⭐ 核心原理を内蔵：crush（bit-crusher）＝滑らかな金属(綺麗)↔ブロックに喰われた金属(破壊)を1本で。
+  torus の法線を計算→手続き matcap を引く→liquidで法線を揺らす→crushで pixelate+posterize。
+  ※これは torus 固定の"キープ版"。形を変える実験は onore-lab-metal2.html。
+-->
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#e8e8ea;font:400 12.5px/1.6 "Inter","Helvetica Neue",-apple-system,sans-serif}
+  #wrap{display:flex;gap:18px;padding:18px;box-sizing:border-box;min-height:100%}
+  #stage{border:1px solid #222;border-radius:10px;overflow:hidden;height:min-content;background:#000}
+  canvas{display:block;width:600px;height:600px}   /* 内部2倍解像度→CSS縮小＝AA */
+  #ctl{display:flex;flex-direction:column;gap:8px;min-width:264px}
+  h1{font:600 13px ui-monospace,Menlo,monospace;letter-spacing:.14em;text-transform:uppercase;margin:0 0 2px;color:#fff}
+  small{color:#6b6b70;line-height:1.6;font-size:11px}
+  label{display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:11.5px;color:#a6a6ab}
+  label b{color:#f2f2f3;min-width:44px;text-align:right;font-family:ui-monospace,Menlo,monospace}
+  input[type=range]{flex:1;accent-color:#fff;height:2px}
+  .row{display:flex;gap:8px;margin-top:6px}
+  button{flex:1;background:#141416;border:1px solid #2c2c2f;color:#ddd;border-radius:6px;padding:7px;font:inherit;cursor:pointer}
+  button:hover{border-color:#555}
+</style>
+<div id="wrap">
+  <div id="stage"><canvas id="art" width="1200" height="1200"></canvas></div>
+  <div id="ctl">
+    <h1>Onore LAB — Metal / MatCap</h1>
+    <small>法線で matcap を引く＝本物の金属質感。<br>⭐ crush＝形が折れる/変形（面が折れて別物に）。</small>
+    <label>Ro（輪の半径）<input id="Ro" type="range" min="0.2" max="0.42" step="0.005" value="0.3"><b></b></label>
+    <label>tube（太さ）<input id="tube" type="range" min="0.06" max="0.3" step="0.005" value="0.16"><b></b></label>
+    <label>wobble（液体の歪み）<input id="wob" type="range" min="0" max="0.5" step="0.01" value="0.2"><b></b></label>
+    <label>liquid（法線の揺れ）<input id="liquid" type="range" min="0" max="1.2" step="0.02" value="0.3"><b></b></label>
+    <label>⭐crush（形が折れる/変形）<input id="crush" type="range" min="0" max="1" step="0.01" value="0"><b></b></label>
+    <label>keyX（光の位置X）<input id="keyX" type="range" min="-0.8" max="0.8" step="0.02" value="-0.35"><b></b></label>
+    <label>keyY（光の位置Y）<input id="keyY" type="range" min="-0.8" max="0.8" step="0.02" value="0.5"><b></b></label>
+    <label>polish（艶／硬さ）<input id="polish" type="range" min="2" max="16" step="0.2" value="7"><b></b></label>
+    <label>disp（虹の縁）<input id="disp" type="range" min="0" max="0.25" step="0.005" value="0.03"><b></b></label>
+    <label>tintHue（色味）<input id="tintHue" type="range" min="0" max="360" step="1" value="210"><b></b></label>
+    <label>tintAmt（色味の強さ）<input id="tintAmt" type="range" min="0" max="0.5" step="0.02" value="0.1"><b></b></label>
+    <label>bright（明るさ）<input id="bright" type="range" min="0.6" max="1.6" step="0.02" value="1"><b></b></label>
+    <label>seed <input id="seed" type="range" min="0" max="60" step="1" value="7"><b></b></label>
+    <div class="row"><button id="play">▶ 流す</button><button id="rnd">⟳ seed</button></div>
+    <small id="note" style="margin-top:4px"></small>
+  </div>
+</div>
+<script>
+'use strict'
+const cv=document.getElementById('art'),ctx=cv.getContext('2d'),W=cv.width,H=cv.height,TAU=Math.PI*2
+const P={}
+for(const el of document.querySelectorAll('input')){
+  const b=el.parentElement.querySelector('b'),show=()=>b.textContent=(+el.value).toFixed(el.step<1?2:0)
+  el.oninput=()=>{P[el.id]=+el.value;show();schedule()};P[el.id]=+el.value;show()
+}
+const mb=s=>{let a=s>>>0;return()=>{a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296}}
+function hsl2rgb(h,s,l){h=((h%360)+360)%360/360;s/=100;l/=100;if(s===0){const v=l;return[v,v,v]}
+  const q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q,f=t=>{t=(t+1)%1;if(t<1/6)return p+(q-p)*6*t;if(t<0.5)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p}
+  return[f(h+1/3),f(h),f(h-1/3)]}
+let phase=0
+function matcap(nx,ny,nz){
+  let L=0.28 + 0.5*Math.max(0,ny)*Math.max(0,ny) + 0.3*Math.pow(Math.max(0,-ny),1.6)
+  const d1=(nx-P.keyX)*(nx-P.keyX)+(ny-P.keyY)*(ny-P.keyY); L+=1.0*Math.exp(-d1*P.polish)
+  const d2=(nx+0.4)*(nx+0.4)+(ny+0.3)*(ny+0.3); L+=0.32*Math.exp(-d2*P.polish*2.2)
+  L+=0.22*Math.pow(1-nz,3)
+  return L
+}
+let rafId=0,hqTimer=0
+function schedule(){clearTimeout(hqTimer);if(!rafId)rafId=requestAnimationFrame(()=>{rafId=0;draw(false)});hqTimer=setTimeout(()=>draw(true),240)}
+function draw(hq){
+  const res=(hq===false)?3:1   // ドラッグ中は低解像度で軽く、止まると高品質
+  const R=mb(P.seed*7919+13),cx=W/2,cy=H/2,mn=Math.min(W,H)
+  const ph=[R()*TAU,R()*TAU,R()*TAU,R()*TAU,R()*TAU,R()*TAU]
+  const Ro=mn*P.Ro,tube=mn*P.tube
+  const tint=hsl2rgb(P.tintHue,80,55)
+  const img=ctx.createImageData(W,H),D=img.data
+  for(let y=0;y<H;y+=res)for(let x=0;x<W;x+=res){
+    const dx=x-cx,dy=y-cy,d=Math.hypot(dx,dy),th=Math.atan2(dy,dx)
+    const Rmid=Ro*(1+P.wob*(0.5*Math.sin(th*3+ph[0]+phase)+0.3*Math.sin(th*5+ph[1])+0.2*Math.sin(th*2-ph[2])))
+    const Rt=tube*(1+P.wob*0.6*Math.sin(th*4+ph[3]))
+    const s=(d-Rmid)/Rt
+    let Rr=0,Gg=0,Bb=0
+    if(!(s< -1||s>1)){
+      let nx=s*Math.cos(th), ny=s*Math.sin(th), nz=Math.sqrt(Math.max(0,1-s*s))
+      const w1=Math.sin(th*6+s*5+ph[4]+phase), w2=Math.cos(th*8-s*4+ph[5]+phase*0.8)
+      nx+=P.liquid*0.5*w1; ny+=P.liquid*0.5*w2
+      if(P.crush>0){nx+=P.crush*1.4*Math.sin(th*4+s*8+ph[0]); ny+=P.crush*1.4*Math.cos(th*7-s*6+ph[1])}   // ⭐ crush=形が折れる（面が折れ/melt）
+      let nl=Math.hypot(nx,ny); if(nl>1){nx/=nl;ny/=nl;nl=1} nz=Math.sqrt(Math.max(0,1-nx*nx-ny*ny))
+      let r=matcap(nx+P.disp,ny,nz), g=matcap(nx,ny,nz), b=matcap(nx-P.disp,ny,nz)
+      Rr=Math.min(255,(r+tint[0]*P.tintAmt)/(1+P.tintAmt)*P.bright*255)
+      Gg=Math.min(255,(g+tint[1]*P.tintAmt)/(1+P.tintAmt)*P.bright*255)
+      Bb=Math.min(255,(b+tint[2]*P.tintAmt)/(1+P.tintAmt)*P.bright*255)
+    }
+    for(let yy=y;yy<y+res&&yy<H;yy++)for(let xx=x;xx<x+res&&xx<W;xx++){const p=(yy*W+xx)*4;D[p]=Rr;D[p+1]=Gg;D[p+2]=Bb;D[p+3]=255}
+  }
+  ctx.putImageData(img,0,0)
+}
+let playing=false,last=0
+function tick(ts){if(!playing)return;const dt=last?Math.min(0.05,(ts-last)/1000):0;last=ts;phase=(phase+dt*0.5)%TAU;draw(false);requestAnimationFrame(tick)}
+document.getElementById('play').onclick=e=>{playing=!playing;e.target.textContent=playing?'■ 停止':'▶ 流す';if(playing){last=0;requestAnimationFrame(tick)}else{phase=0;draw()}}
+document.getElementById('rnd').onclick=()=>{const el=document.getElementById('seed');el.value=(+el.value*7+13)%61;P.seed=+el.value;el.parentElement.querySelector('b').textContent=el.value;draw()}
+document.getElementById('note').textContent='matcap=法線で金属。crush=綺麗↔破壊(bit-crusher)。liquidで法線が流れる。';
+draw()
+</script>
