@@ -10,7 +10,7 @@
  *    - figma.group([]) throws.
  *    - a clone/new node is born at the page root; set position after appendChild.
  */
-const W = 720, H = 900
+const W = 720, H = 900, SQ = 1200   // ⭐ 書き出しは 1200×1200 の正方形。生成物(W×H)を中央に置く＝ひとつの作品
 
 figma.showUI(__html__, { width: 400, height: 640 })
 
@@ -79,7 +79,7 @@ function node(d) {
 function build(layers, seed) {
   // the ground: a black frame, so SCREEN has something to add onto
   const frame = figma.createFrame()
-  frame.resize(W, H); frame.name = 'Onore ' + (seed != null ? '#' + seed : '')
+  frame.resize(SQ, SQ); frame.name = 'Onore ' + (seed != null ? '#' + seed : '')
   frame.fills = [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }]
   frame.clipsContent = true
 
@@ -94,7 +94,7 @@ function build(layers, seed) {
   let total = 0, engines = 0
   for (const L of live) {
     const ef = figma.createFrame()
-    ef.resize(W, H); ef.x = 0; ef.y = 0; ef.name = L.key
+    ef.resize(W, H); ef.x = (SQ - W) / 2; ef.y = (SQ - H) / 2; ef.name = L.key   // 中央配置
     ef.fills = []                 // transparent, so only the shapes carry colour
     ef.clipsContent = false
     ef.blendMode = soloAlone ? 'NORMAL' : (BLEND[L.blend] || 'SCREEN')
@@ -105,7 +105,7 @@ function build(layers, seed) {
 
   // place at the middle of what the user is looking at
   const c = figma.viewport.center
-  frame.x = Math.round(c.x - W / 2); frame.y = Math.round(c.y - H / 2)
+  frame.x = Math.round(c.x - SQ / 2); frame.y = Math.round(c.y - SQ / 2)
   figma.currentPage.selection = [frame]
   return { total, engines }
 }
