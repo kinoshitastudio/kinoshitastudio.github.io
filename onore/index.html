@@ -237,6 +237,78 @@ const renv=(r,c)=>{const s=0.5+0.5*Math.sin(r*TAU);return Math.pow(s,c)}
 const rhsl=(h,s,l)=>{h=((h%360)+360)%360/360;s/=100;l/=100;if(s===0){const v=l;return[v,v,v]}const q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q,f=t=>{t=(t+1)%1;if(t<1/6)return p+(q-p)*6*t;if(t<0.5)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p};return[f(h+1/3),f(h),f(h-1/3)]}
 const rhash=(x,y)=>{let h=(x*374761393+y*668265263)>>>0;h=(h^(h>>>13))*1274126177>>>0;return((h^(h>>>16))>>>0)/4294967296}
 const rhsl255=(h,s,l)=>{const c=rhsl(h,s,l);return[c[0]*255,c[1]*255,c[2]*255]}
+/* ⭐ 3D raster = GPUレイマーチ。専用の非表示gl canvasに2×解像度で描き、2Dのターゲットへ縮小blit（＝AA）。
+   プレビュー用#rartは既に2Dコンテキストを持つのでglはここに置けない → 自前canvasで隔離。 */
+const FS3D=`precision highp float;
+uniform vec2 uRes; uniform float uShape,uRotX,uRotY,uSize,uTube,uRound,uLiquid,uCrush,uKeyX,uKeyY,uPolish,uHolo,uHueShift,uBright,uTime;
+vec3 rotp(vec3 p){
+  float cy=cos(uRotY),sy=sin(uRotY); float x1=cy*p.x+sy*p.z, z1=-sy*p.x+cy*p.z;
+  float cx=cos(uRotX),sx=sin(uRotX); float y1=cx*p.y-sx*z1, z2=sx*p.y+cx*z1;
+  return vec3(x1,y1,z2);
+}
+float sdf(vec3 p){
+  if(uLiquid>0.0){p.x+=uLiquid*sin(p.y*4.0+p.z*3.0+uTime);p.y+=uLiquid*sin(p.z*4.0+p.x*3.0+uTime);}
+  int s=int(uShape+0.5);
+  if(s==0){vec2 q=vec2(length(p.xz)-uSize*0.7,p.y);return length(q)-uTube;}
+  if(s==1){return length(p)-uSize;}
+  if(s==2){vec3 d=abs(p)-uSize*0.75;return length(max(d,0.0))+min(max(d.x,max(d.y,d.z)),0.0);}
+  if(s==3){float b=uSize*0.75-uRound;vec3 d=abs(p)-b;return length(max(d,0.0))+min(max(d.x,max(d.y,d.z)),0.0)-uRound;}
+  if(s==4){vec3 a=abs(p);return (a.x+a.y+a.z-uSize)*0.5773;}
+  float yy=p.y-clamp(p.y,-uSize*0.6,uSize*0.6);return length(vec3(p.x,yy,p.z))-uTube;
+}
+float scene(vec3 p){
+  vec3 q=rotp(p);
+  if(uCrush>0.0){float a=uCrush*2.8*q.y;float c=cos(a),s=sin(a);q=vec3(c*q.x-s*q.z,q.y,s*q.x+c*q.z);}
+  float d=sdf(q);
+  if(uCrush>0.0){d+=uCrush*0.14*sin(q.x*6.3+2.0)*sin(q.y*6.3)*sin(q.z*6.3);d*=0.62;}
+  return d;
+}
+vec3 nrm(vec3 p){vec2 e=vec2(0.0016,0.0);
+  return normalize(vec3(scene(p+e.xyy)-scene(p-e.xyy),scene(p+e.yxy)-scene(p-e.yxy),scene(p+e.yyx)-scene(p-e.yyx)));}
+vec3 hsl2rgb(float h,float s,float l){h=fract(h/360.0);s=clamp(s/100.0,0.0,1.0);l=clamp(l/100.0,0.0,1.0);
+  vec3 rgb=clamp(abs(mod(h*6.0+vec3(0.0,4.0,2.0),6.0)-3.0)-1.0,0.0,1.0);
+  return l+s*(rgb-0.5)*(1.0-abs(2.0*l-1.0));}
+float matcap(vec3 n){
+  float L=0.26+0.5*max(0.0,n.y)*max(0.0,n.y)+0.3*pow(max(0.0,-n.y),1.6);
+  float d1=(n.x-uKeyX)*(n.x-uKeyX)+(n.y-uKeyY)*(n.y-uKeyY);L+=1.0*exp(-d1*uPolish);
+  float d2=(n.x+0.4)*(n.x+0.4)+(n.y+0.3)*(n.y+0.3);L+=0.30*exp(-d2*uPolish*2.2);
+  float d3=(n.x-0.2)*(n.x-0.2)+(n.y-0.1)*(n.y-0.1);L+=0.5*exp(-d3*2.0);
+  L+=0.2*pow(1.0-n.z,3.0);return L;
+}
+vec3 render(vec2 uv){
+  vec3 ro=vec3(uv,-2.6), rd=vec3(0.0,0.0,1.0);
+  float t=0.0; bool hit=false; vec3 pos=ro;
+  for(int i=0;i<110;i++){pos=ro+rd*t;float d=scene(pos);if(d<0.0015){hit=true;break;}t+=d;if(t>5.6)break;}
+  if(!hit)return vec3(0.0);
+  vec3 n=nrm(pos);
+  vec3 vn=vec3(n.x,n.y,-n.z);
+  float L=matcap(vec3(vn.x,vn.y,max(0.0,vn.z)))*uBright;
+  float light=clamp(L,0.0,1.0);
+  float dn=n.z; vec3 rr=vec3(-2.0*dn*n.x,-2.0*dn*n.y,1.0-2.0*dn*n.z);
+  float hue=atan(rr.y,rr.x)*57.2958 + rr.z*160.0 + uHueShift;
+  float mid=1.0-abs(light-0.5)*2.0;
+  float sat=min(96.0,96.0*uHolo*max(0.0,mid));
+  return hsl2rgb(hue,sat,light*100.0);
+}
+void main(){
+  vec2 uv=(gl_FragCoord.xy/uRes*2.0-1.0); uv.x*=uRes.x/uRes.y; uv*=1.35;
+  gl_FragColor=vec4(render(uv),1.0);
+}`
+let glc3=null,gl3=null,prog3=null,uni3=null
+function ensureGL3(){
+  if(prog3)return true
+  if(!glc3){glc3=document.createElement('canvas');gl3=glc3.getContext('webgl')||glc3.getContext('experimental-webgl')}
+  if(!gl3)return false
+  const comp=(t,src)=>{const s=gl3.createShader(t);gl3.shaderSource(s,src);gl3.compileShader(s);if(!gl3.getShaderParameter(s,gl3.COMPILE_STATUS))throw gl3.getShaderInfoLog(s);return s}
+  const vs=comp(gl3.VERTEX_SHADER,'attribute vec2 p;void main(){gl_Position=vec4(p,0.0,1.0);}'),fs=comp(gl3.FRAGMENT_SHADER,FS3D)
+  prog3=gl3.createProgram();gl3.attachShader(prog3,vs);gl3.attachShader(prog3,fs);gl3.linkProgram(prog3)
+  if(!gl3.getProgramParameter(prog3,gl3.LINK_STATUS)){prog3=null;return false}
+  gl3.useProgram(prog3)
+  const buf=gl3.createBuffer();gl3.bindBuffer(gl3.ARRAY_BUFFER,buf);gl3.bufferData(gl3.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl3.STATIC_DRAW)
+  const loc=gl3.getAttribLocation(prog3,'p');gl3.enableVertexAttribArray(loc);gl3.vertexAttribPointer(loc,2,gl3.FLOAT,false,0,0)
+  uni3={};for(const u of ['uRes','uShape','uRotX','uRotY','uSize','uTube','uRound','uLiquid','uCrush','uKeyX','uKeyY','uPolish','uHolo','uHueShift','uBright','uTime'])uni3[u]=gl3.getUniformLocation(prog3,u)
+  return true
+}
 const RASTER=[
  {key:'metalR',label:{ja:'Metal — 液体金属',en:'Metal — liquid metal'},raster:true,
   params:{Ro:0.3,tube:0.16,wob:0.2,liquid:0.3,crush:0,keyX:-0.35,keyY:0.5,polish:7,disp:0.03,tintHue:210,tintAmt:0.1,bright:1},
@@ -326,7 +398,17 @@ const RASTER=[
     let nl=Math.hypot(nx,ny);if(nl>1){nx/=nl;ny/=nl}nz=Math.sqrt(Math.max(0,1-nx*nx-ny*ny))
     const L=mc(nx,ny,nz),light=Math.max(0,Math.min(1,L*P.bright)),hue=Math.atan2(ny,nx)*57.2958+nz*130+P.tintHue,mid=1-Math.abs(light-0.5)*2,sat=Math.min(96,96*P.holo*Math.max(0,mid)),col=rhsl(hue,sat,light*100)
     D[p]=Math.min(255,col[0]*255);D[p+1]=Math.min(255,col[1]*255);D[p+2]=Math.min(255,col[2]*255);D[p+3]=255}
-   ctx.putImageData(img,0,0)}}
+   ctx.putImageData(img,0,0)}},
+ {key:'d3R',label:{ja:'3D — レイマーチ金属',en:'3D — raymarched metal'},raster:true,gl:true,
+  params:{shape:0,rotX:0.5,rotY:0.6,size:0.95,tube:0.32,round:0.12,liquid:0,crush:0,keyX:-0.4,keyY:0.55,polish:7,holo:0.7,hueShift:200,bright:1},
+  knobs:[['shape',{ja:'形',en:'shape'},0,5,1],['rotX',{ja:'縦回転',en:'rot X'},-1.57,1.57,0.01],['rotY',{ja:'横回転',en:'rot Y'},-3.14,3.14,0.01],['size',{ja:'大きさ',en:'size'},0.5,1.3,0.01],['tube',{ja:'太さ',en:'tube'},0.1,0.5,0.01],['round',{ja:'角丸',en:'round'},0,0.4,0.01],['liquid',{ja:'うねり',en:'liquid'},0,0.4,0.01],['crush',{ja:'形が折れる',en:'crush(fold)'},0,1,0.01],['keyX',{ja:'光X',en:'key X'},-0.8,0.8,0.02],['keyY',{ja:'光Y',en:'key Y'},-0.8,0.8,0.02],['polish',{ja:'艶',en:'polish'},2,16,0.2],['holo',{ja:'虹/ホログラ',en:'holo'},0,1,0.02],['hueShift',{ja:'虹の位相',en:'hue phase'},0,360,1],['bright',{ja:'明るさ',en:'bright'},0.6,1.6,0.02]],
+  draw(cv,P,sd){const oc=cv.getContext('2d')
+   if(!ensureGL3()){oc.fillStyle='#000';oc.fillRect(0,0,cv.width,cv.height);oc.fillStyle='#f55';oc.font='14px sans-serif';oc.fillText('WebGL 使えず',12,24);return}
+   const SS=2,w=cv.width*SS,h=cv.height*SS;if(glc3.width!==w||glc3.height!==h){glc3.width=w;glc3.height=h}
+   gl3.viewport(0,0,w,h);gl3.uniform2f(uni3.uRes,w,h)
+   gl3.uniform1f(uni3.uShape,P.shape);gl3.uniform1f(uni3.uRotX,P.rotX);gl3.uniform1f(uni3.uRotY,P.rotY);gl3.uniform1f(uni3.uSize,P.size);gl3.uniform1f(uni3.uTube,P.tube);gl3.uniform1f(uni3.uRound,P.round);gl3.uniform1f(uni3.uLiquid,P.liquid);gl3.uniform1f(uni3.uCrush,P.crush);gl3.uniform1f(uni3.uKeyX,P.keyX);gl3.uniform1f(uni3.uKeyY,P.keyY);gl3.uniform1f(uni3.uPolish,P.polish);gl3.uniform1f(uni3.uHolo,P.holo);gl3.uniform1f(uni3.uHueShift,P.hueShift);gl3.uniform1f(uni3.uBright,P.bright);gl3.uniform1f(uni3.uTime,0)
+   gl3.drawArrays(gl3.TRIANGLES,0,3)
+   oc.imageSmoothingEnabled=true;oc.imageSmoothingQuality='high';oc.clearRect(0,0,cv.width,cv.height);oc.drawImage(glc3,0,0,cv.width,cv.height)}}
 ]
 const rasterOf=k=>RASTER.find(e=>e.key===k)
 let rasterActive=null
@@ -334,7 +416,7 @@ let ssc=null
 /* ⭐ 全raster共通の2×スーパーサンプリング。各engineは渡されたcanvasの解像度で描くだけ。
    ここで2倍offscreenに描いて縮小合成＝端のがびがびを一掃（metal/chrome/discs/pinwheel/metal2 全部）。 */
 function ssDraw(target,eng){if(!ssc)ssc=document.createElement('canvas');const SS=2;ssc.width=target.width*SS;ssc.height=target.height*SS;eng.draw(ssc,eng.params,seed);const oc=target.getContext('2d');oc.imageSmoothingEnabled=true;oc.imageSmoothingQuality='high';oc.clearRect(0,0,target.width,target.height);oc.drawImage(ssc,0,0,target.width,target.height)}
-function drawRaster(){if(rasterActive)ssDraw(rcv,rasterActive)}
+function drawRaster(){if(rasterActive){if(rasterActive.gl)rasterActive.draw(rcv,rasterActive.params,seed);else ssDraw(rcv,rasterActive)}}
 
 /* ⭐ Presets — a whole mixer state in one press: which engines are up and how
    loud, a few signature knobs each, the sends, the seed. Captured against the
@@ -549,7 +631,7 @@ seedEl.oninput=()=>{seed=+seedEl.value;seedB.textContent=seed;render()}
 document.getElementById('rnd').onclick=()=>{seed=(seed*7+13)%61;seedEl.value=seed;seedB.textContent=seed;draw()}
 const msg=document.getElementById('msg')
 document.getElementById('out').onclick=()=>{
-  if(rasterActive){const ex=document.createElement('canvas');ex.width=ex.height=1200;ssDraw(ex,rasterActive);msg.textContent=lang==='ja'?'出しています…':'sending…';ex.toBlob(bl=>bl.arrayBuffer().then(ab=>parent.postMessage({pluginMessage:{type:'generateRaster',bytes:new Uint8Array(ab),seed,name:rasterActive.key}},'*')),'image/png');return}
+  if(rasterActive){const ex=document.createElement('canvas');ex.width=ex.height=1200;if(rasterActive.gl)rasterActive.draw(ex,rasterActive.params,seed);else ssDraw(ex,rasterActive);msg.textContent=lang==='ja'?'出しています…':'sending…';ex.toBlob(bl=>bl.arrayBuffer().then(ab=>parent.postMessage({pluginMessage:{type:'generateRaster',bytes:new Uint8Array(ab),seed,name:rasterActive.key}},'*')),'image/png');return}
   if(!lastLayers.length){return}
   msg.textContent=lang==='ja'?'出しています…':'sending…'
   parent.postMessage({pluginMessage:{type:'generate',layers:lastLayers,seed}},'*')
