@@ -26,6 +26,38 @@ const n2 = v => Math.round(v * 100) / 100
 
 /* one descriptor → one native node */
 function node(d) {
+  /* ⭐ 'disc' = a holographic disc, expanded into REAL Figma layers so the making is
+     visible: a clipped frame (base colour + edge inner-shadow) holding a blurred
+     "mesh" frame of colour-blob ellipses + a sheen. Same shape the SVG preview draws. */
+  if (d.t === 'disc') {
+    const minr = Math.min(d.rx, d.ry)
+    const fr = figma.createFrame()
+    fr.resize(Math.max(0.01, d.rx * 2), Math.max(0.01, d.ry * 2))
+    fr.x = d.cx - d.rx; fr.y = d.cy - d.ry
+    fr.name = 'disc'; fr.clipsContent = true
+    fr.cornerRadius = Math.max(0, d.shape === 1 ? minr * d.round : minr)
+    fr.fills = [{ type: 'SOLID', color: rgb(d.base) }]
+    fr.effects = [{ type: 'INNER_SHADOW', color: { r: 0, g: 0, b: 0, a: d.edge }, offset: { x: 0, y: 0 }, radius: minr * 0.6, spread: 0, visible: true, blendMode: 'NORMAL' }]
+    const bf = figma.createFrame()
+    bf.resize(fr.width, fr.height); bf.x = 0; bf.y = 0; bf.name = 'mesh'
+    bf.fills = []; bf.clipsContent = false
+    bf.effects = [{ type: 'LAYER_BLUR', radius: Math.max(0, d.blur), visible: true }]
+    for (const b of d.blobs) {
+      const e = figma.createEllipse()
+      e.resize(Math.max(0.01, b.r * 2), Math.max(0.01, b.r * 2))
+      e.x = (b.cx - d.cx + d.rx) - b.r; e.y = (b.cy - d.cy + d.ry) - b.r
+      e.fills = [{ type: 'SOLID', color: rgb(b.c) }]
+      bf.appendChild(e)
+    }
+    const sh = figma.createEllipse()
+    sh.resize(Math.max(0.01, d.sheen.r * 2), Math.max(0.01, d.sheen.r * 2))
+    sh.x = (d.sheen.cx - d.cx + d.rx) - d.sheen.r; sh.y = (d.sheen.cy - d.cy + d.ry) - d.sheen.r
+    sh.fills = [{ type: 'SOLID', color: rgb(d.sheen.c), opacity: Math.max(0, Math.min(1, d.sheen.a)) }]
+    bf.appendChild(sh)
+    fr.appendChild(bf)
+    fr.blendMode = 'NORMAL'
+    return fr
+  }
   let nd
   if (d.t === 'rect') {
     nd = figma.createRectangle()
