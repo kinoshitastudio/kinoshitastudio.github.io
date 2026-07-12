@@ -1,0 +1,147 @@
+<!doctype html><meta charset="utf-8">
+<title>Onore LAB — 3D Metal (WebGL)（GPUでリアルタイム・斜め立体・ホログラ・折り）</title>
+<!--
+  WebGL フラグメントシェーダで SDF レイマーチ（GPU＝リアルタイム）。
+  matcap(質感)＋holo(反射の虹)＋crush(形が折れる)。rotX/rotYで斜め立体。内部2倍解像度でAA。
+-->
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#e8e8ea;font:400 12.5px/1.6 "Inter","Helvetica Neue",-apple-system,sans-serif}
+  #wrap{display:flex;gap:18px;padding:18px;box-sizing:border-box;min-height:100%}
+  #stage{border:1px solid #222;border-radius:10px;overflow:hidden;height:min-content;background:#000}
+  canvas{display:block;width:480px;height:480px}
+  #ctl{display:flex;flex-direction:column;gap:7px;min-width:268px}
+  h1{font:600 13px ui-monospace,Menlo,monospace;letter-spacing:.14em;text-transform:uppercase;margin:0 0 2px;color:#fff}
+  small{color:#6b6b70;line-height:1.6;font-size:11px}
+  label{display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:11.5px;color:#a6a6ab}
+  label b{color:#f2f2f3;min-width:58px;text-align:right;font-family:ui-monospace,Menlo,monospace;font-size:10.5px}
+  input[type=range]{flex:1;accent-color:#fff;height:2px}
+  .row{display:flex;gap:8px;margin-top:6px}
+  button{flex:1;background:#141416;border:1px solid #2c2c2f;color:#ddd;border-radius:6px;padding:7px;font:inherit;cursor:pointer}
+  button:hover{border-color:#555}
+  #err{color:#ff6a5a;font-size:10px;white-space:pre-wrap}
+</style>
+<div id="wrap">
+  <div id="stage"><canvas id="art" width="960" height="960"></canvas></div>
+  <div id="ctl">
+    <h1>Onore LAB — 3D Metal · WebGL</h1>
+    <small>GPUでリアルタイム。rotで斜め立体、holo=反射の虹、crush=形が折れる。</small>
+    <label>shape（形）<input id="shape" type="range" min="0" max="5" step="1" value="0"><b></b></label>
+    <label>rotX（縦回転）<input id="rotX" type="range" min="-1.57" max="1.57" step="0.01" value="0.5"><b></b></label>
+    <label>rotY（横回転）<input id="rotY" type="range" min="-3.14" max="3.14" step="0.01" value="0.6"><b></b></label>
+    <label>size（大きさ）<input id="size" type="range" min="0.5" max="1.3" step="0.01" value="0.95"><b></b></label>
+    <label>tube（太さ:輪/棒）<input id="tube" type="range" min="0.1" max="0.5" step="0.01" value="0.32"><b></b></label>
+    <label>round（角丸）<input id="round" type="range" min="0" max="0.4" step="0.01" value="0.12"><b></b></label>
+    <label>liquid（うねり）<input id="liquid" type="range" min="0" max="0.4" step="0.01" value="0"><b></b></label>
+    <label>⭐crush（形が折れる/変形）<input id="crush" type="range" min="0" max="1" step="0.01" value="0"><b></b></label>
+    <label>keyX（光X）<input id="keyX" type="range" min="-0.8" max="0.8" step="0.02" value="-0.4"><b></b></label>
+    <label>keyY（光Y）<input id="keyY" type="range" min="-0.8" max="0.8" step="0.02" value="0.55"><b></b></label>
+    <label>polish（艶）<input id="polish" type="range" min="2" max="16" step="0.2" value="7"><b></b></label>
+    <label>⭐holo（虹/ホログラ）<input id="holo" type="range" min="0" max="1" step="0.02" value="0.7"><b></b></label>
+    <label>hueShift（虹の位相）<input id="hueShift" type="range" min="0" max="360" step="1" value="200"><b></b></label>
+    <label>bright（明るさ）<input id="bright" type="range" min="0.6" max="1.6" step="0.02" value="1"><b></b></label>
+    <label>seed <input id="seed" type="range" min="0" max="60" step="1" value="7"><b></b></label>
+    <div class="row"><button id="play">▶ 流す</button><button id="rnd">⟳ seed</button></div>
+    <div id="err"></div>
+    <small id="note"></small>
+  </div>
+</div>
+<script id="fs" type="x-shader/x-fragment">
+precision highp float;
+uniform vec2 uRes; uniform float uShape,uRotX,uRotY,uSize,uTube,uRound,uLiquid,uCrush,uKeyX,uKeyY,uPolish,uHolo,uHueShift,uBright,uTime;
+vec3 rotp(vec3 p){
+  float cy=cos(uRotY),sy=sin(uRotY); float x1=cy*p.x+sy*p.z, z1=-sy*p.x+cy*p.z;
+  float cx=cos(uRotX),sx=sin(uRotX); float y1=cx*p.y-sx*z1, z2=sx*p.y+cx*z1;
+  return vec3(x1,y1,z2);
+}
+float sdf(vec3 p){
+  if(uLiquid>0.0){p.x+=uLiquid*sin(p.y*4.0+p.z*3.0+uTime);p.y+=uLiquid*sin(p.z*4.0+p.x*3.0+uTime);}
+  int s=int(uShape+0.5);
+  if(s==0){vec2 q=vec2(length(p.xz)-uSize*0.7,p.y);return length(q)-uTube;}
+  if(s==1){return length(p)-uSize;}
+  if(s==2){vec3 d=abs(p)-uSize*0.75;return length(max(d,0.0))+min(max(d.x,max(d.y,d.z)),0.0);}
+  if(s==3){float b=uSize*0.75-uRound;vec3 d=abs(p)-b;return length(max(d,0.0))+min(max(d.x,max(d.y,d.z)),0.0)-uRound;}
+  if(s==4){vec3 a=abs(p);return (a.x+a.y+a.z-uSize)*0.5773;}
+  float yy=p.y-clamp(p.y,-uSize*0.6,uSize*0.6);return length(vec3(p.x,yy,p.z))-uTube;
+}
+float scene(vec3 p){
+  vec3 q=rotp(p);
+  if(uCrush>0.0){float a=uCrush*2.8*q.y;float c=cos(a),s=sin(a);q=vec3(c*q.x-s*q.z,q.y,s*q.x+c*q.z);}
+  float d=sdf(q);
+  if(uCrush>0.0){d+=uCrush*0.14*sin(q.x*6.3+2.0)*sin(q.y*6.3)*sin(q.z*6.3);d*=0.62;}
+  return d;
+}
+vec3 nrm(vec3 p){vec2 e=vec2(0.0016,0.0);
+  return normalize(vec3(scene(p+e.xyy)-scene(p-e.xyy),scene(p+e.yxy)-scene(p-e.yxy),scene(p+e.yyx)-scene(p-e.yyx)));}
+vec3 hsl2rgb(float h,float s,float l){h=fract(h/360.0);s=clamp(s/100.0,0.0,1.0);l=clamp(l/100.0,0.0,1.0);
+  vec3 rgb=clamp(abs(mod(h*6.0+vec3(0.0,4.0,2.0),6.0)-3.0)-1.0,0.0,1.0);
+  return l+s*(rgb-0.5)*(1.0-abs(2.0*l-1.0));}
+float matcap(vec3 n){
+  float L=0.26+0.5*max(0.0,n.y)*max(0.0,n.y)+0.3*pow(max(0.0,-n.y),1.6);
+  float d1=(n.x-uKeyX)*(n.x-uKeyX)+(n.y-uKeyY)*(n.y-uKeyY);L+=1.0*exp(-d1*uPolish);
+  float d2=(n.x+0.4)*(n.x+0.4)+(n.y+0.3)*(n.y+0.3);L+=0.30*exp(-d2*uPolish*2.2);
+  float d3=(n.x-0.2)*(n.x-0.2)+(n.y-0.1)*(n.y-0.1);L+=0.5*exp(-d3*2.0);
+  L+=0.2*pow(1.0-n.z,3.0);return L;
+}
+vec3 render(vec2 uv){
+  vec3 ro=vec3(uv,-2.6), rd=vec3(0.0,0.0,1.0);
+  float t=0.0; bool hit=false; vec3 pos=ro;
+  for(int i=0;i<110;i++){pos=ro+rd*t;float d=scene(pos);if(d<0.0015){hit=true;break;}t+=d;if(t>5.6)break;}
+  if(!hit)return vec3(0.0);
+  vec3 n=nrm(pos);
+  vec3 vn=vec3(n.x,n.y,-n.z);
+  float L=matcap(vec3(vn.x,vn.y,max(0.0,vn.z)))*uBright;
+  float light=clamp(L,0.0,1.0);
+  float dn=n.z; vec3 rr=vec3(-2.0*dn*n.x,-2.0*dn*n.y,1.0-2.0*dn*n.z);
+  float hue=atan(rr.y,rr.x)*57.2958 + rr.z*160.0 + uHueShift;
+  float mid=1.0-abs(light-0.5)*2.0;
+  float sat=min(96.0,96.0*uHolo*max(0.0,mid));
+  return hsl2rgb(hue,sat,light*100.0);
+}
+void main(){
+  vec2 uv=(gl_FragCoord.xy/uRes*2.0-1.0); uv.x*=uRes.x/uRes.y; uv*=1.35;
+  gl_FragColor=vec4(render(uv),1.0);
+}
+</script>
+<script>
+'use strict'
+const cv=document.getElementById('art'),errEl=document.getElementById('err')
+const gl=cv.getContext('webgl')||cv.getContext('experimental-webgl')
+const P={}
+for(const el of document.querySelectorAll('input')){
+  const b=el.parentElement.querySelector('b'),show=()=>{b.textContent=lbl(el.id,+el.value)}
+  el.oninput=()=>{P[el.id]=+el.value;show();render()};P[el.id]=+el.value;show()
+}
+function lbl(id,v){if(id==='shape')return['torus 輪','sphere 球','box 立方','roundbox 角丸','gem 八面','capsule 棒'][v]||v;return v.toFixed(v%1?2:0)}
+let prog,uni={},phase=0
+function compile(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw gl.getShaderInfoLog(s);return s}
+function initGL(){
+  if(!gl){errEl.textContent='WebGL 使えず';return false}
+  const vs=compile(gl.VERTEX_SHADER,'attribute vec2 p;void main(){gl_Position=vec4(p,0.0,1.0);}')
+  const fs=compile(gl.FRAGMENT_SHADER,document.getElementById('fs').textContent)
+  prog=gl.createProgram();gl.attachShader(prog,vs);gl.attachShader(prog,fs);gl.linkProgram(prog)
+  if(!gl.getProgramParameter(prog,gl.LINK_STATUS))throw gl.getProgramInfoLog(prog)
+  gl.useProgram(prog)
+  const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf)
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW)
+  const loc=gl.getAttribLocation(prog,'p');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0)
+  for(const u of ['uRes','uShape','uRotX','uRotY','uSize','uTube','uRound','uLiquid','uCrush','uKeyX','uKeyY','uPolish','uHolo','uHueShift','uBright','uTime'])uni[u]=gl.getUniformLocation(prog,u)
+  gl.viewport(0,0,cv.width,cv.height)
+  return true
+}
+function render(){
+  if(!prog)return
+  gl.uniform2f(uni.uRes,cv.width,cv.height)
+  gl.uniform1f(uni.uShape,P.shape);gl.uniform1f(uni.uRotX,P.rotX);gl.uniform1f(uni.uRotY,P.rotY)
+  gl.uniform1f(uni.uSize,P.size);gl.uniform1f(uni.uTube,P.tube);gl.uniform1f(uni.uRound,P.round)
+  gl.uniform1f(uni.uLiquid,P.liquid);gl.uniform1f(uni.uCrush,P.crush);gl.uniform1f(uni.uKeyX,P.keyX);gl.uniform1f(uni.uKeyY,P.keyY)
+  gl.uniform1f(uni.uPolish,P.polish);gl.uniform1f(uni.uHolo,P.holo);gl.uniform1f(uni.uHueShift,P.hueShift);gl.uniform1f(uni.uBright,P.bright)
+  gl.uniform1f(uni.uTime,phase)
+  gl.drawArrays(gl.TRIANGLES,0,3)
+}
+let playing=false
+function tick(){if(!playing)return;phase+=0.02;render();requestAnimationFrame(tick)}
+document.getElementById('play').onclick=e=>{playing=!playing;e.target.textContent=playing?'■ 停止':'▶ 流す';if(playing)requestAnimationFrame(tick);else{phase=0;render()}}
+document.getElementById('rnd').onclick=()=>{const el=document.getElementById('seed');el.value=(+el.value*7+13)%61;P.seed=+el.value;el.parentElement.querySelector('b').textContent=el.value;render()}
+try{if(initGL()){render();document.getElementById('note').textContent='WebGL=GPUリアルタイム。スライダーぬるぬる、AAでガビガビ無し。'}}
+catch(err){errEl.textContent='シェーダエラー:\n'+err}
+</script>

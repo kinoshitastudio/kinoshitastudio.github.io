@@ -1,0 +1,124 @@
+<!doctype html><meta charset="utf-8">
+<title>Onore LAB — Holographic Shapes（Fons式・形/並べ方 可変）</title>
+<!--
+  Fons式 ultra gradient（色ブロブ→ブラーでメッシュ→ノイズ→tinted艶）を、
+  入れ物の形（楕円/スクエア/丸バブル）と並べ方（積む/グリッド/散らす）で切り替え。
+-->
+<style>
+  html,body{margin:0;height:100%;background:#0b0b0c;color:#e8e8ea;font:400 12.5px/1.6 "Inter","Helvetica Neue",-apple-system,sans-serif}
+  #wrap{display:flex;gap:18px;padding:18px;box-sizing:border-box;min-height:100%}
+  #stage{border:1px solid #222;border-radius:10px;overflow:hidden;height:min-content}
+  canvas{display:block;width:520px;height:740px}   /* 内部2倍解像度→CSS縮小＝AA(ガビガビ解消) */
+  #ctl{display:flex;flex-direction:column;gap:7px;min-width:266px}
+  h1{font:600 13px ui-monospace,Menlo,monospace;letter-spacing:.14em;text-transform:uppercase;margin:0 0 2px;color:#fff}
+  small{color:#6b6b70;line-height:1.6;font-size:11px}
+  label{display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:11.5px;color:#a6a6ab}
+  label b{color:#f2f2f3;min-width:64px;text-align:right;font-family:ui-monospace,Menlo,monospace;font-size:10.5px}
+  input[type=range]{flex:1;accent-color:#fff;height:2px}
+  .row{display:flex;gap:8px;margin-top:6px}
+  button{flex:1;background:#141416;border:1px solid #2c2c2f;color:#ddd;border-radius:6px;padding:7px;font:inherit;cursor:pointer}
+  button:hover{border-color:#555}
+</style>
+<div id="wrap">
+  <div id="stage"><canvas id="art" width="1040" height="1480"></canvas></div>
+  <div id="ctl">
+    <h1>Onore LAB — Holographic Shapes</h1>
+    <small>Fons式：色ブロブ→ブラーでメッシュ→ノイズ→艶。<br>形・並べ方だけ差し替え可能。</small>
+    <label>layout（並べ方）<input id="layout" type="range" min="0" max="2" step="1" value="0"><b></b></label>
+    <label>shape（形）<input id="shape" type="range" min="0" max="2" step="1" value="0"><b></b></label>
+    <label>round（角の丸み）<input id="round" type="range" min="0" max="1" step="0.02" value="0.35"><b></b></label>
+    <label>count（数）<input id="count" type="range" min="1" max="16" step="1" value="5"><b></b></label>
+    <label>size（大きさ）<input id="size" type="range" min="0.3" max="0.98" step="0.01" value="0.82"><b></b></label>
+    <label>flatten（積:下ほど平たく）<input id="flatten" type="range" min="0.1" max="0.9" step="0.02" value="0.72"><b></b></label>
+    <label>overlap（積:重なり）<input id="overlap" type="range" min="0.2" max="0.85" step="0.02" value="0.55"><b></b></label>
+    <label>taper（積:下ほど小さく）<input id="taper" type="range" min="0" max="0.4" step="0.01" value="0.12"><b></b></label>
+    <label>blobs（色の数）<input id="blobs" type="range" min="3" max="9" step="1" value="6"><b></b></label>
+    <label>blur（溶かし）<input id="blur" type="range" min="8" max="120" step="2" value="52"><b></b></label>
+    <label>hueBase（基音の色）<input id="hueBase" type="range" min="0" max="360" step="1" value="60"><b></b></label>
+    <label>hueSpan（玉虫の幅）<input id="hueSpan" type="range" min="120" max="360" step="5" value="300"><b></b></label>
+    <label>sat（彩度）<input id="sat" type="range" min="30" max="90" step="1" value="64"><b></b></label>
+    <label>light（明るさ）<input id="light" type="range" min="60" max="86" step="1" value="76"><b></b></label>
+    <label>sheen（色味の艶）<input id="sheen" type="range" min="0" max="0.7" step="0.02" value="0.34"><b></b></label>
+    <label>noise（粒）<input id="noise" type="range" min="0" max="26" step="1" value="9"><b></b></label>
+    <label>bgHue（地の色）<input id="bgHue" type="range" min="0" max="360" step="1" value="250"><b></b></label>
+    <label>bgSat（地の彩度）<input id="bgSat" type="range" min="0" max="50" step="1" value="6"><b></b></label>
+    <label>bg（地の明るさ）<input id="bg" type="range" min="4" max="94" step="1" value="12"><b></b></label>
+    <label>invert（反転）<input id="invert" type="range" min="0" max="1" step="1" value="0"><b></b></label>
+    <label>seed <input id="seed" type="range" min="0" max="60" step="1" value="7"><b></b></label>
+    <div class="row"><button id="rnd">⟳ seed</button></div>
+    <small id="note" style="margin-top:4px"></small>
+  </div>
+</div>
+<script>
+'use strict'
+const cv=document.getElementById('art'),ctx=cv.getContext('2d'),W=cv.width,H=cv.height,TAU=Math.PI*2
+const P={}
+for(const el of document.querySelectorAll('input')){
+  const b=el.parentElement.querySelector('b'),show=()=>{b.textContent=lbl(el.id,+el.value)}
+  el.oninput=()=>{P[el.id]=+el.value;show();draw()};P[el.id]=+el.value;show()
+}
+function lbl(id,v){
+  if(id==='layout')return['stack 積む','grid グリッド','scatter 散らす'][v]||v
+  if(id==='shape')return['ellipse 楕円','square スクエア','bubble 丸'][v]||v
+  if(id==='invert')return v?'on 反転':'off'
+  return v.toFixed(v%1?2:0)
+}
+const mb=s=>{let a=s>>>0;return()=>{a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296}}
+const hash=(x,y)=>{let h=(x*374761393+y*668265263)>>>0;h=(h^(h>>>13))*1274126177>>>0;return((h^(h>>>16))>>>0)/4294967296}
+function buildCells(R){
+  const n=Math.round(P.count),cx=W/2,list=[],L=Math.round(P.layout)
+  if(L===0){                                   // stack (discs)
+    const rx0=W*0.5*P.size,g=[]
+    for(let i=0;i<n;i++){const t=i/(n-1||1),rx=rx0*(1-P.taper*t),ry=Math.max(12,rx*(0.9*(1-t)+(0.9-P.flatten)*t));g.push({rx,ry})}
+    let cy=g[0].ry+H*0.05
+    for(let i=0;i<n;i++){if(i>0)cy+=g[i-1].ry*(1-P.overlap)+g[i].ry*(1-P.overlap);list.push({cx,cy,w:g[i].rx*2,h:g[i].ry*2,h0:P.hueBase+i*(P.hueSpan/n)+R()*50})}
+  }else if(L===1){                             // grid
+    const cols=Math.max(1,Math.round(Math.sqrt(n))),rows=Math.ceil(n/cols),cw=W/cols,ch=H/rows,sz=Math.min(cw,ch)*P.size
+    for(let i=0;i<n;i++){const gx=i%cols,gy=(i/cols)|0;list.push({cx:(gx+0.5)*cw,cy:(gy+0.5)*ch,w:sz,h:sz,h0:P.hueBase+i*(P.hueSpan/n)+R()*50})}
+  }else{                                       // scatter
+    for(let i=0;i<n;i++){const s=W*P.size*(0.3+0.55*R());list.push({cx:R()*W,cy:R()*H,w:s,h:s*(0.7+0.6*R()),h0:P.hueBase+P.hueSpan*R()})}
+  }
+  return list
+}
+function clipShape(c){
+  const sm=Math.round(P.shape)
+  if(sm===0){ctx.beginPath();ctx.ellipse(c.cx,c.cy,c.w/2,c.h/2,0,0,TAU)}
+  else if(sm===2){const r=Math.min(c.w,c.h)/2;ctx.beginPath();ctx.arc(c.cx,c.cy,r,0,TAU)}
+  else{const r=Math.min(c.w,c.h)/2*P.round,x=c.cx-c.w/2,y=c.cy-c.h/2;ctx.beginPath();if(ctx.roundRect)ctx.roundRect(x,y,c.w,c.h,r);else ctx.rect(x,y,c.w,c.h)}
+}
+function holo(c,R){
+  const x0=c.cx-c.w/2,y0=c.cy-c.h/2
+  ctx.save();clipShape(c);ctx.clip()
+  ctx.filter=`blur(${P.blur}px)`
+  ctx.fillStyle=`hsl(${c.h0%360} ${P.sat}% ${P.light}%)`
+  ctx.fillRect(x0-P.blur,y0-P.blur,c.w+P.blur*2,c.h+P.blur*2)
+  const nb=Math.round(P.blobs)
+  for(let k=0;k<nb;k++){
+    const hue=(c.h0+P.hueSpan*(k/nb)+(R()-0.5)*30)%360
+    const bx=c.cx+(R()-0.5)*c.w*0.8,by=c.cy+(R()-0.5)*c.h*0.85,br=Math.max(c.w,c.h)*(0.22+0.28*R())
+    ctx.fillStyle=`hsl(${hue.toFixed(0)} ${Math.min(92,P.sat+16)}% ${(P.light+(R()-0.5)*14).toFixed(0)}%)`
+    ctx.beginPath();ctx.arc(bx,by,br,0,TAU);ctx.fill()
+  }
+  ctx.filter='none'
+  const sh=ctx.createRadialGradient(c.cx-c.w*0.06,c.cy-c.h*0.28,0,c.cx-c.w*0.06,c.cy-c.h*0.28,Math.max(c.w,c.h)*0.5)
+  sh.addColorStop(0,`hsla(${(c.h0+30)%360} 40% 96% / ${P.sheen})`);sh.addColorStop(0.65,'hsla(0 0% 100% / 0)')
+  ctx.fillStyle=sh;ctx.fillRect(x0,y0,c.w,c.h)
+  const ed=ctx.createRadialGradient(c.cx,c.cy,Math.max(c.w,c.h)*0.34,c.cx,c.cy,Math.max(c.w,c.h)*0.5)
+  ed.addColorStop(0,'rgba(0,0,0,0)');ed.addColorStop(1,'rgba(0,0,0,0.24)')
+  ctx.fillStyle=ed;ctx.fillRect(x0,y0,c.w,c.h)
+  ctx.restore()
+}
+function draw(){
+  ctx.fillStyle=`hsl(${P.bgHue} ${P.bgSat}% ${P.bg}%)`;ctx.fillRect(0,0,W,H)
+  const R=mb(P.seed*7919+13)
+  for(const c of buildCells(R))holo(c,R)
+  if(P.noise>0||P.invert){const img=ctx.getImageData(0,0,W,H),D=img.data,a=P.noise,inv=P.invert
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++){const o=(y*W+x)*4
+      if(a>0){const nz=(hash(x,y)-0.5)*a;D[o]+=nz;D[o+1]+=nz;D[o+2]+=nz}
+      if(inv){D[o]=255-D[o];D[o+1]=255-D[o+1];D[o+2]=255-D[o+2]}}
+    ctx.putImageData(img,0,0)}
+}
+document.getElementById('rnd').onclick=()=>{const el=document.getElementById('seed');el.value=(+el.value*7+13)%61;P.seed=+el.value;el.parentElement.querySelector('b').textContent=el.value;draw()}
+document.getElementById('note').textContent='layout=積む/グリッド/散らす、shape=楕円/スクエア/丸。roundで角の丸み。'
+draw()
+</script>
