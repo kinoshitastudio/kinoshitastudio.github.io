@@ -77,7 +77,7 @@ console.log('─'.repeat(52))
 check(engineFrames.length === layers.length, `one frame per engine (${engineFrames.length}/${layers.length})`)
 check(frame && frame.fills[0] && frame.fills[0].color.r === 0, 'ground frame is black')
 check(frame && frame.x === Math.round(500 - W2()) , 'frame centred on viewport')
-function W2() { return 720 / 2 }
+function W2() { return 1200 / 2 }   // 書き出しは 1200×1200 正方形（中央に生成物）
 const posted = figma.ui._out
 check(posted && posted.type === 'made' && posted.nodes === total, `UI told: ${posted && posted.nodes} nodes`)
 console.log(`\n合計 ${total} ノード / ${engineFrames.length} エンジン（各 SCREEN 分離フレーム） / 黒地フレーム1 / 失敗 ${bad}`)
