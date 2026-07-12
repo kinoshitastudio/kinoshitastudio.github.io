@@ -106,7 +106,7 @@
     <button id="engBtn"></button>
     <div id="engMenu" class="emenu" hidden></div>
   </div>
-  <button id="gear" class="gbtn" title="mixer engines">⚙</button><div class="lang"><button id="langJa" class="on">JP</button><button id="langEn">EN</button></div>
+  <button id="rmode" class="gbtn" title="書き出し形式" hidden>画像</button><button id="gear" class="gbtn" title="mixer engines">⚙</button><div class="lang"><button id="langJa" class="on">JP</button><button id="langEn">EN</button></div>
 </header>
 
 <div id="stage"><svg id="art" viewBox="0 0 720 900"></svg><canvas id="rart" width="480" height="480" hidden></canvas></div>
@@ -595,10 +595,13 @@ function stopPlay(){if(playing)setPlay(false,document.getElementById('wtPlay'))}
    isolation. Click the lit S off to hear the whole mix again. (Presets don't solo
    — they show the layered scene.) Solo is within a kind, so soloing a send leaves
    the instruments playing, which is the only way a send has anything to act on. */
-function selectEngine(k){stopPlay();active=k;const ra=rasterOf(k),st=stdOf(k),svg=document.getElementById('art'),mixSec=document.getElementById('mix').closest('.sec')
-  if(ra){rasterActive=ra;stdActive=null;svg.style.display='';rcv.style.display='none';if(mixSec)mixSec.hidden=true;paintSel();buildKnobs();drawRasterVec()}
-  else if(st){stdActive=st;rasterActive=null;svg.style.display='';rcv.style.display='none';if(mixSec)mixSec.hidden=true;paintSel();buildKnobs();drawStd()}
-  else{rasterActive=null;stdActive=null;svg.style.display='';rcv.style.display='none';if(mixSec)mixSec.hidden=false;solo.clear();solo.add(k);mute.delete(k);if(!(level[k]>0))level[k]=1;paintSel();buildMix();buildKnobs();draw()}}
+let rasterVecMode=false   // ⭐ 金属の書き出し: false=画像(滑らか) / true=線画ベクター(パス)。既定は画像
+function selectEngine(k){stopPlay();active=k;const ra=rasterOf(k),st=stdOf(k),svg=document.getElementById('art'),mixSec=document.getElementById('mix').closest('.sec'),rm=document.getElementById('rmode')
+  if(ra){rasterActive=ra;stdActive=null;rm.hidden=false;rm.textContent=rasterVecMode?(lang==='ja'?'線画':'lines'):(lang==='ja'?'画像':'image');if(mixSec)mixSec.hidden=true;paintSel();buildKnobs()
+    if(rasterVecMode){svg.style.display='';rcv.style.display='none';drawRasterVec()}else{svg.style.display='none';rcv.style.display='block';drawRaster()}}
+  else if(st){stdActive=st;rasterActive=null;rm.hidden=true;svg.style.display='';rcv.style.display='none';if(mixSec)mixSec.hidden=true;paintSel();buildKnobs();drawStd()}
+  else{rasterActive=null;stdActive=null;rm.hidden=true;svg.style.display='';rcv.style.display='none';if(mixSec)mixSec.hidden=false;solo.clear();solo.add(k);mute.delete(k);if(!(level[k]>0))level[k]=1;paintSel();buildMix();buildKnobs();draw()}}
+document.getElementById('rmode').onclick=()=>{rasterVecMode=!rasterVecMode;if(rasterActive)selectEngine(active)}
 
 /* ---- engine selector (in the fixed bar, next to the logo) ---- */
 const engBtn=document.getElementById('engBtn'),engMenu=document.getElementById('engMenu')
@@ -637,7 +640,7 @@ function buildKnobs(){const e=allOf(active);document.getElementById('knobTitle')
     for(const b of l.querySelectorAll('.tmode'))b.onclick=()=>{e.mode=b.dataset.m;buildKnobs();draw()}
     knobEl.append(l)}
   for(const[id,lbl,min,max,step]of e.knobs){const l=document.createElement('label');l.innerHTML=`<span class="k">${lbl[lang]}</span><input type="range" min="${min}" max="${max}" step="${step}" value="${e.params[id]}"><b>${(+e.params[id]).toFixed(step<1?2:0)}</b>`
-    const inp=l.querySelector('input'),b=l.querySelector('b');inp.oninput=()=>{e.params[id]=+inp.value;b.textContent=(+inp.value).toFixed(step<1?2:0);(rasterActive?drawRasterVec():stdActive?drawStd():render())};knobEl.append(l)}}
+    const inp=l.querySelector('input'),b=l.querySelector('b');inp.oninput=()=>{e.params[id]=+inp.value;b.textContent=(+inp.value).toFixed(step<1?2:0);(rasterActive?(rasterVecMode?drawRasterVec():drawRaster()):stdActive?drawStd():render())};knobEl.append(l)}}
 
 /* ⭐ the wavetable editor: draw the wave by dragging across 16 steps. It edits
    Wave's `wt` array; the descriptor pipeline does the rest, so code.js is untouched. */
@@ -690,6 +693,7 @@ seedEl.oninput=()=>{seed=+seedEl.value;seedB.textContent=seed;render()}
 document.getElementById('rnd').onclick=()=>{seed=(seed*7+13)%61;seedEl.value=seed;seedB.textContent=seed;draw()}
 const msg=document.getElementById('msg')
 document.getElementById('out').onclick=()=>{
+  if(rasterActive&&!rasterVecMode){const ex=document.createElement('canvas');ex.width=ex.height=1200;if(rasterActive.gl)rasterActive.draw(ex,rasterActive.params,seed);else ssDraw(ex,rasterActive);msg.textContent=lang==='ja'?'出しています…':'sending…';ex.toBlob(bl=>bl.arrayBuffer().then(ab=>parent.postMessage({pluginMessage:{type:'generateRaster',bytes:new Uint8Array(ab),seed,name:rasterActive.key}},'*')),'image/png');return}
   if(!lastLayers.length){return}
   msg.textContent=lang==='ja'?'出しています…':'sending…'
   parent.postMessage({pluginMessage:{type:'generate',layers:lastLayers,seed}},'*')
