@@ -110,11 +110,38 @@ function build(layers, seed) {
   return { total, engines }
 }
 
+/* ⭐ Onore v2 — raster path. A raster engine (canvas/WebGL) renders its own pixels
+   in the UI and posts PNG bytes; here we wrap them into a Figma image fill, framed
+   1200² and centred, exactly like the vector export. One image node = one artwork.
+   Vector engines stay descriptors→nodes; raster engines are standalone (no mixing). */
+function buildRaster(bytes, seed, name) {
+  const img = figma.createImage(new Uint8Array(bytes))
+  const frame = figma.createFrame()
+  frame.resize(SQ, SQ); frame.name = 'Onore ' + (seed != null ? '#' + seed : '') + (name ? ' · ' + name : '')
+  frame.fills = [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }]; frame.clipsContent = true
+  const rect = figma.createRectangle()
+  rect.resize(SQ, SQ); rect.x = 0; rect.y = 0
+  rect.fills = [{ type: 'IMAGE', imageHash: img.hash, scaleMode: 'FILL' }]
+  frame.appendChild(rect)
+  const c = figma.viewport.center
+  frame.x = Math.round(c.x - SQ / 2); frame.y = Math.round(c.y - SQ / 2)
+  figma.currentPage.selection = [frame]
+  return { total: 1, engines: 1 }
+}
+
 figma.ui.onmessage = msg => {
   if (msg.type === 'generate') {
     try {
       const r = build(msg.layers || [], msg.seed)
       figma.ui.postMessage({ type: 'made', nodes: r.total, engines: r.engines })
+    } catch (err) {
+      figma.ui.postMessage({ type: 'made', nodes: 0, engines: 0 })
+      figma.notify('Onore: ' + (err && err.message || err))
+    }
+  } else if (msg.type === 'generateRaster') {
+    try {
+      const r = buildRaster(msg.bytes, msg.seed, msg.name)
+      figma.ui.postMessage({ type: 'made', nodes: r.total, engines: r.engines, raster: true })
     } catch (err) {
       figma.ui.postMessage({ type: 'made', nodes: 0, engines: 0 })
       figma.notify('Onore: ' + (err && err.message || err))
