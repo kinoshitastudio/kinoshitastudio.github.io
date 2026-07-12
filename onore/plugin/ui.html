@@ -382,6 +382,36 @@ let ssc=null
    ここで2倍offscreenに描いて縮小合成＝端のがびがびを一掃（metal/chrome/discs/pinwheel/metal2 全部）。 */
 function ssDraw(target,eng){if(!ssc)ssc=document.createElement('canvas');const SS=2;ssc.width=target.width*SS;ssc.height=target.height*SS;eng.draw(ssc,eng.params,seed);const oc=target.getContext('2d');oc.imageSmoothingEnabled=true;oc.imageSmoothingQuality='high';oc.clearRect(0,0,target.width,target.height);oc.drawImage(ssc,0,0,target.width,target.height)}
 function drawRaster(){if(rasterActive){if(rasterActive.gl)rasterActive.draw(rcv,rasterActive.params,seed);else ssDraw(rcv,rasterActive)}}
+/* ⭐ 素材(matcap/レイマーチ)は per-pixel。パス書き出しは"輝度の等高線"を線パスにして表現＝金属を解剖した線画。
+   ラスターを内部レンダ→marching squares→線分を1本のポリラインに繋ぐ→'poly'(stroke)descriptor。preview(SVG)=Figma出力。 */
+let _coff=null
+const _rgb2hsl=(r,g,b)=>{r/=255;g/=255;b/=255;const mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2,dd=mx-mn;let h=0,sa=0;if(dd){sa=l>0.5?dd/(2-mx-mn):dd/(mx+mn);if(mx===r)h=(g-b)/dd+(g<b?6:0);else if(mx===g)h=(b-r)/dd+2;else h=(r-g)/dd+4;h*=60}return [h,sa*100,l*100]}
+function _msSeg(field,W,H,level){const segs=[];const ip=(x1,y1,v1,x2,y2,v2)=>{const t=(level-v1)/((v2-v1)||1e-6);return [x1+(x2-x1)*t,y1+(y2-y1)*t]},V=(x,y)=>field[y*W+x];
+ for(let y=0;y<H-1;y++)for(let x=0;x<W-1;x++){const tl=V(x,y),tr=V(x+1,y),br=V(x+1,y+1),bl=V(x,y+1);let i=0;if(tl>level)i|=8;if(tr>level)i|=4;if(br>level)i|=2;if(bl>level)i|=1;if(i===0||i===15)continue;
+  const T=()=>ip(x,y,tl,x+1,y,tr),Rt=()=>ip(x+1,y,tr,x+1,y+1,br),B=()=>ip(x+1,y+1,br,x,y+1,bl),Lf=()=>ip(x,y+1,bl,x,y,tl),pu=(a,b)=>segs.push([a,b]);
+  switch(i){case 1:pu(Lf(),B());break;case 2:pu(B(),Rt());break;case 3:pu(Lf(),Rt());break;case 4:pu(Rt(),T());break;case 5:pu(Lf(),T());pu(B(),Rt());break;case 6:pu(B(),T());break;case 7:pu(Lf(),T());break;case 8:pu(T(),Lf());break;case 9:pu(T(),B());break;case 10:pu(Rt(),B());pu(T(),Lf());break;case 11:pu(T(),Rt());break;case 12:pu(Rt(),Lf());break;case 13:pu(Rt(),B());break;case 14:pu(B(),Lf());break;}}
+ return segs}
+function _stitch(segs){const key=p=>Math.round(p[0]*16)+','+Math.round(p[1]*16),inc=new Map();
+ segs.forEach((sg,i)=>{for(const p of sg){const k=key(p);let a=inc.get(k);if(!a){a=[];inc.set(k,a)}a.push(i)}});
+ const used=new Array(segs.length).fill(false),lines=[];
+ for(let i=0;i<segs.length;i++){if(used[i])continue;used[i]=true;const lp=[segs[i][0],segs[i][1]];let cur=segs[i][1],guard=0;
+  while(guard++<100000){const k=key(cur),cand=inc.get(k)||[];let nx=-1;for(const j of cand){if(!used[j]){nx=j;break}}if(nx<0)break;used[nx]=true;const sg=segs[nx];cur=(key(sg[0])===k)?sg[1]:sg[0];lp.push(cur);if(key(cur)===key(lp[0]))break}
+  lines.push(lp)}
+ return lines}
+function contourVec(eng,sd){const N=14,Fr=300,side=720,y0=(900-side)/2,sc=side/Fr,MINLEN=14
+ if(!_coff){_coff=document.createElement('canvas');_coff.width=_coff.height=Fr}
+ eng.draw(_coff,eng.params,sd)
+ const im=_coff.getContext('2d').getImageData(0,0,Fr,Fr).data,field=new Float32Array(Fr*Fr)
+ for(let i=0;i<Fr*Fr;i++)field[i]=(0.299*im[i*4]+0.587*im[i*4+1]+0.114*im[i*4+2])/255
+ const S=[{t:'rect',x:0,y:0,w:720,h:900,fill:[0,0,0]}]
+ const bandColor=(lo,hi)=>{let r=0,g=0,b=0,n=0;for(let i=0;i<Fr*Fr;i++){const L=field[i];if(L>=lo&&L<hi){r+=im[i*4];g+=im[i*4+1];b+=im[i*4+2];n++}}return n?_rgb2hsl(r/n,g/n,b/n):null}
+ for(let k=1;k<N;k++){const lv=k/N,col=bandColor(lv,(k+1)/N||1.01);if(!col)continue
+  const lines=_stitch(_msSeg(field,Fr,Fr,lv))
+  for(const lp of lines){if(lp.length<2)continue;const pts=[];for(let j=0;j<lp.length;j++){if(j%2&&j!==lp.length-1)continue;pts.push([+(lp[j][0]*sc).toFixed(1),+(y0+lp[j][1]*sc).toFixed(1)])}if(pts.length<3)continue;let ln=0;for(let j=1;j<pts.length;j++)ln+=Math.hypot(pts[j][0]-pts[j-1][0],pts[j][1]-pts[j-1][1]);if(ln<MINLEN)continue;S.push({t:'poly',pts,stroke:col,w:1.6,close:false})}}
+ return S}
+function drawRasterVec(){if(!rasterActive)return;while(art.firstChild)art.removeChild(art.firstChild);gcount=0
+ const S=contourVec(rasterActive,seed);lastLayers=[{key:rasterActive.key,descriptors:S,level:1,blend:null}]
+ const g=document.createElementNS(NS,'g');toSVG(S,g);art.append(g)}
 /* ⭐ 作り方が見えるベクター（standalone）。Wave と同じ descriptor を吐き、SVGプレビュー＝出力。
    幾何的に組めるもの（三角形/円+グラデ）は image でなく本物のパス/レイヤーで出す。単独（重ねない）。 */
 const _mixc=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t]
@@ -566,7 +596,7 @@ function stopPlay(){if(playing)setPlay(false,document.getElementById('wtPlay'))}
    — they show the layered scene.) Solo is within a kind, so soloing a send leaves
    the instruments playing, which is the only way a send has anything to act on. */
 function selectEngine(k){stopPlay();active=k;const ra=rasterOf(k),st=stdOf(k),svg=document.getElementById('art'),mixSec=document.getElementById('mix').closest('.sec')
-  if(ra){rasterActive=ra;stdActive=null;svg.style.display='none';rcv.style.display='block';if(mixSec)mixSec.hidden=true;paintSel();buildKnobs();drawRaster()}
+  if(ra){rasterActive=ra;stdActive=null;svg.style.display='';rcv.style.display='none';if(mixSec)mixSec.hidden=true;paintSel();buildKnobs();drawRasterVec()}
   else if(st){stdActive=st;rasterActive=null;svg.style.display='';rcv.style.display='none';if(mixSec)mixSec.hidden=true;paintSel();buildKnobs();drawStd()}
   else{rasterActive=null;stdActive=null;svg.style.display='';rcv.style.display='none';if(mixSec)mixSec.hidden=false;solo.clear();solo.add(k);mute.delete(k);if(!(level[k]>0))level[k]=1;paintSel();buildMix();buildKnobs();draw()}}
 
@@ -607,7 +637,7 @@ function buildKnobs(){const e=allOf(active);document.getElementById('knobTitle')
     for(const b of l.querySelectorAll('.tmode'))b.onclick=()=>{e.mode=b.dataset.m;buildKnobs();draw()}
     knobEl.append(l)}
   for(const[id,lbl,min,max,step]of e.knobs){const l=document.createElement('label');l.innerHTML=`<span class="k">${lbl[lang]}</span><input type="range" min="${min}" max="${max}" step="${step}" value="${e.params[id]}"><b>${(+e.params[id]).toFixed(step<1?2:0)}</b>`
-    const inp=l.querySelector('input'),b=l.querySelector('b');inp.oninput=()=>{e.params[id]=+inp.value;b.textContent=(+inp.value).toFixed(step<1?2:0);(rasterActive?drawRaster():stdActive?drawStd():render())};knobEl.append(l)}}
+    const inp=l.querySelector('input'),b=l.querySelector('b');inp.oninput=()=>{e.params[id]=+inp.value;b.textContent=(+inp.value).toFixed(step<1?2:0);(rasterActive?drawRasterVec():stdActive?drawStd():render())};knobEl.append(l)}}
 
 /* ⭐ the wavetable editor: draw the wave by dragging across 16 steps. It edits
    Wave's `wt` array; the descriptor pipeline does the rest, so code.js is untouched. */
@@ -660,7 +690,6 @@ seedEl.oninput=()=>{seed=+seedEl.value;seedB.textContent=seed;render()}
 document.getElementById('rnd').onclick=()=>{seed=(seed*7+13)%61;seedEl.value=seed;seedB.textContent=seed;draw()}
 const msg=document.getElementById('msg')
 document.getElementById('out').onclick=()=>{
-  if(rasterActive){const ex=document.createElement('canvas');ex.width=ex.height=1200;if(rasterActive.gl)rasterActive.draw(ex,rasterActive.params,seed);else ssDraw(ex,rasterActive);msg.textContent=lang==='ja'?'出しています…':'sending…';ex.toBlob(bl=>bl.arrayBuffer().then(ab=>parent.postMessage({pluginMessage:{type:'generateRaster',bytes:new Uint8Array(ab),seed,name:rasterActive.key}},'*')),'image/png');return}
   if(!lastLayers.length){return}
   msg.textContent=lang==='ja'?'出しています…':'sending…'
   parent.postMessage({pluginMessage:{type:'generate',layers:lastLayers,seed}},'*')
@@ -681,7 +710,7 @@ function buildEngModal(){const el=document.getElementById('engList');el.innerHTM
       if(!isSend(active)&&!rasterOf(active)&&!shown.has(active))active=[...shown][0]||'wave'
       buildEngModal();buildMenu();paintSel();buildMix();buildKnobs();draw()}
     el.append(row)}
-  head(lang==='ja'?'素材（ラスター・単独）':'Material (raster · standalone)')
+  head(lang==='ja'?'素材（等高線ベクター・単独）':'Material (contour vector · standalone)')
   for(const e of RASTER){const on=shownR.has(e.key)
     const row=document.createElement('div');row.className='engrow'+(on?' on':'')
     row.innerHTML='<span>'+nmOf(e)+'</span><span>'+(on?'●':'○')+'</span>'
