@@ -528,7 +528,7 @@ async function loadNodeFont(n) {
   } catch (e) {}
 }
 async function applyAIOps(ops, src) {
-  let ok = 0, fail = 0;
+  let ok = 0, fail = 0; const did = {};   // did＝何をしたか（op種別ごとの件数）＝UIに「何をしたか」を出すため
   const get = async (id) => { try { return await figma.getNodeByIdAsync(id); } catch (e) { return null; } };
   const setPad = (n, p) => { if (Array.isArray(p)) { n.paddingTop = p[0] || 0; n.paddingRight = p[1] || 0; n.paddingBottom = p[2] || 0; n.paddingLeft = p[3] || 0; } };
   const ALIGN = { min: "MIN", center: "CENTER", max: "MAX" };
@@ -588,11 +588,12 @@ async function applyAIOps(ops, src) {
         } else if (op.op === "setRadius") {
           const n = await get(op.id); if (n && "cornerRadius" in n && _num(op.radius)) n.cornerRadius = op.radius;
         }
+        did[op.op] = (did[op.op] || 0) + 1;
         ok++;
       } catch (e) { fail++; }
     }
   } finally {
-    figma.ui.postMessage({ type: "ai-done", ok: ok, fail: fail, src: src });
+    figma.ui.postMessage({ type: "ai-done", ok: ok, fail: fail, did: did, src: src });
     figma.notify("AI整え：" + ok + " 操作" + (fail ? ("／失敗 " + fail) : ""));
   }
 }
