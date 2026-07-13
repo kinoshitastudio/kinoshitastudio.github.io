@@ -560,6 +560,25 @@ http.createServer((req, res) => {
         } catch (e) {}
       }
 
+      // 直近の添付画像の継続：今回画像が無くても、前回添付した画像(_chat-ref.*)を参照できるようヒント
+      if (!(image && image.indexOf("data:image/") === 0)) {
+        try {
+          const ext = ["png", "jpg", "jpeg", "webp", "gif"].find((e) => fs.existsSync(path.join(__dirname, "_chat-ref." + e)));
+          if (ext) prompt = "（直近でユーザーが添付した画像が ./_chat-ref." + ext + " にある。今回の話がその画像に関するなら Read で見て参照してよい。関係なければ無視。）\n\n" + prompt;
+        } catch (e) {}
+      }
+      // 会話の継続性：直近ログを文脈として渡す（claude -p は毎回新規＝これで"覚えている"ように）
+      try {
+        const _arr = JSON.parse(fs.readFileSync(CHATLOG, "utf8"));
+        if (Array.isArray(_arr) && _arr.length) {
+          const _recent = _arr.slice(-16).map((e) => {
+            const who = e.cls === "me" ? "ユーザー" : (e.cls === "err" ? "システム" : "母艦");
+            const t = (e.text || "").replace(/\s*·\s*⏱[\d.]+s\s*$/, "").trim();
+            return t ? ("[" + who + "] " + t) : "";
+          }).filter((x) => x).join("\n");
+          if (_recent) prompt = "## これまでの会話（同一ユーザーとの続き。文脈として踏まえ、「さっきの」等の指示語も解決して応答する）\n" + _recent + "\n\n## 今回のメッセージ\n" + prompt;
+        }
+      } catch (e) {}
       if (lang === "en") prompt = "【UI language is English. Reply to the user in English (unless they clearly write in another language).】\n\n" + prompt;
       chatBusy = true; chatBusySince = Date.now();   // 生成開始（両画面で「考えています」同期用）
       appendLog({ cls: "me", text: display || msg });  // 発言を即サーバー保存（離脱しても残る）
