@@ -541,8 +541,8 @@ http.createServer((req, res) => {
     let b = "";
     req.on("data", (d) => (b += d));
     req.on("end", () => {
-      let msg = "", image = "", display = "", engine = "";
-      try { const j = JSON.parse(b); msg = (j.message || "").toString(); image = (j.image || "").toString(); display = (j.display || "").toString(); engine = j.engine || ""; } catch (e) {}
+      let msg = "", image = "", display = "", engine = "", lang = "ja";
+      try { const j = JSON.parse(b); msg = (j.message || "").toString(); image = (j.image || "").toString(); display = (j.display || "").toString(); engine = j.engine || ""; lang = (j.lang === "en") ? "en" : "ja"; } catch (e) {}
       res.setHeader("Content-Type", "application/json");
       if (!msg.trim() && !image) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "メッセージが空です" })); }
 
@@ -560,6 +560,7 @@ http.createServer((req, res) => {
         } catch (e) {}
       }
 
+      if (lang === "en") prompt = "【UI language is English. Reply to the user in English (unless they clearly write in another language).】\n\n" + prompt;
       chatBusy = true; chatBusySince = Date.now();   // 生成開始（両画面で「考えています」同期用）
       appendLog({ cls: "me", text: display || msg });  // 発言を即サーバー保存（離脱しても残る）
       let done = false, activeChild = null;
