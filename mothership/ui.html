@@ -61,6 +61,19 @@
   /* composer */
   .selbar{display:none;align-items:center;gap:6px;font-size:10px;font-weight:800;color:var(--ink);background:var(--mint);border:2.5px solid var(--ink);padding:5px 9px;margin-bottom:8px}
   .selbar.on{display:flex} .selbar b{font-weight:900}
+  .modal{position:fixed;inset:0;background:rgba(20,20,43,.55);display:none;align-items:center;justify-content:center;z-index:60}
+  .modal.on{display:flex}
+  .sheet{width:calc(100% - 36px);max-width:400px;background:var(--paper);border:3px solid var(--ink);padding:14px}
+  .sheet h3{font-size:13px;font-weight:900;margin-bottom:8px}
+  .sheet label{display:block;font-size:9px;font-weight:900;letter-spacing:.1em;opacity:.7;margin:8px 0 4px}
+  .sheet input[type=text]{width:100%;border:2.5px solid var(--ink);background:#fff;padding:8px 10px;font-size:12px;font-weight:700;color:var(--ink);font-family:inherit}
+  .sheet .row{display:flex;align-items:center;gap:7px;margin-top:10px;font-size:11px;font-weight:800;cursor:pointer}
+  .sheet .h2{font-size:9px;font-weight:700;opacity:.55;margin-top:5px;line-height:1.5}
+  .sheet .acts{display:flex;margin-top:13px}
+  .sheet .acts button{flex:1;border:3px solid var(--ink);font-size:11px;font-weight:900;padding:8px;cursor:pointer;font-family:inherit}
+  .sheet .sv{background:var(--mint);color:var(--ink);margin-right:-3px} .sheet .cx{background:var(--paper);color:var(--ink)}
+  .toast{position:fixed;left:50%;bottom:66px;transform:translateX(-50%);background:var(--ink);color:var(--mint);font-size:10.5px;font-weight:800;padding:7px 12px;z-index:70;opacity:0;transition:.3s;pointer-events:none;max-width:90%;text-align:center}
+  .toast.on{opacity:1}
   .composer{padding:8px 12px 12px}
   .engs{display:flex;gap:0;margin-bottom:8px;flex-wrap:wrap;align-items:center}
   .eng{font-size:10px;font-weight:900;letter-spacing:.02em;padding:6px 10px;border:2.5px solid var(--ink);color:var(--ink);cursor:pointer;margin-right:-2.5px;background:transparent;display:flex;align-items:center;gap:6px}
@@ -104,6 +117,7 @@
       <div id="btnTheme" title="ダーク/ライト">◐</div>
       <div id="btnFzMinus" title="文字を小さく" style="font-size:11px">A−</div>
       <div id="btnFzPlus" title="文字を大きく" style="font-size:11px">A+</div>
+      <div id="btnCfg" title="会話の保存設定" style="font-size:12px">⚙</div>
       <div id="btnLang" title="EN/JP" style="font-size:10px">JP</div>
     </div>
   </header>
@@ -132,6 +146,18 @@
     </div>
   </div>
 </div>
+<div class="modal" id="cfgModal">
+  <div class="sheet">
+    <h3>⚙ 会話の保存</h3>
+    <label>保存先フォルダ（絶対パス / ~ 可）</label>
+    <input type="text" id="cfgDir" placeholder="~/Documents/Mothership/chats">
+    <div class="h2">会話を .md で保存。無いフォルダは自動作成。Obsidianのフォルダを指定すればそのまま蓄積できます。Enterで確定。</div>
+    <div class="row"><input type="checkbox" id="cfgAuto"><span>返信ごとに自動保存する</span></div>
+    <div class="acts"><button class="sv" id="cfgSave">保存</button><button class="cx" id="cfgClose">閉じる</button></div>
+    <div class="acts" style="margin-top:7px"><button class="cx" id="cfgSaveNow" style="margin:0">この会話を今すぐ .md 書き出し</button></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
 <div class="grip" id="grip" title="ドラッグで窓をリサイズ"></div>
 <canvas id="fx"></canvas>
 <div id="screenflash"></div>
@@ -285,6 +311,7 @@ async function doSend(p){
     else{setState('idle');bubble('err',(d.error||'失敗')+(d.text?'\n\n'+d.text:''));}
   }catch(e){clearInterval(ti);if(thinkEl){thinkEl.remove();thinkEl=null;}setState('idle');bubble('err','relayに繋がりません\n'+(e.message||e));}
   setBusy(false);inp.focus();scrollEnd();pollChat();
+  if(CFG_AUTO)setTimeout(function(){saveChatMd(true);},1400);   // タスク5：返信後に自動で.md保存（chatLog同期を待つ）
   if(sendQueue.length){var nx=sendQueue.shift();doSend(nx);}
 }
 function suck(txt){ ripple(9,3.4); flash=1; }   // 送信フィードバック（コアに波紋＋閃光）
@@ -342,6 +369,22 @@ document.getElementById('btnTheme').onclick=function(){document.body.classList.t
 var _fz=1;function setFz(d){_fz=Math.max(0.7,Math.min(1.9,+(_fz+d).toFixed(2)));convo.style.zoom=_fz;}
 document.getElementById('btnFzMinus').onclick=function(){setFz(-0.1);};
 document.getElementById('btnFzPlus').onclick=function(){setFz(0.1);};
+// タスク5：会話の保存設定＋.md保存
+var CFG_AUTO=true,_chatFile=null;
+function _cfile(){if(!_chatFile){var d=new Date(),z=function(n){return String(n).padStart(2,'0');};_chatFile='会話_'+d.getFullYear()+z(d.getMonth()+1)+z(d.getDate())+'_'+z(d.getHours())+z(d.getMinutes())+'.md';}return _chatFile;}
+function _ctitle(){var f=chatLog.find(function(e){return e.cls==='me';});return f?('母艦: '+String(f.text||'').slice(0,24)):'母艦 会話ログ';}
+function _cmsgs(){return chatLog.filter(function(e){return e.cls==='me'||e.cls==='ms';}).map(function(e){return{role:e.cls==='me'?'user':'assistant',text:e.text||''};});}
+function toast(m){var t=document.getElementById('toast');if(!t)return;t.textContent=m;t.classList.add('on');setTimeout(function(){t.classList.remove('on');},2200);}
+async function saveChatMd(silent){if(!connected){if(!silent)toast('relayに接続してください');return;}var msgs=_cmsgs();if(!msgs.length){if(!silent)toast('まだ会話がありません');return;}
+  try{var r=await fetch(RELAY+'/save-chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:_ctitle(),file:_cfile(),messages:msgs})});var d=await r.json();if(d.ok){if(!silent)toast('保存しました → '+d.file);}else if(!silent)toast('保存失敗');}catch(e){if(!silent)toast('保存失敗（relay?）');}}
+var cfgModal=document.getElementById('cfgModal');
+function _saveCfg(){var dir=document.getElementById('cfgDir').value.trim(),auto=document.getElementById('cfgAuto').checked;fetch(RELAY+'/chat-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({saveDir:dir,autoSave:auto})}).then(function(r){return r.json();}).then(function(d){if(d.ok){CFG_AUTO=d.config.autoSave;toast('設定を保存しました');cfgModal.classList.remove('on');}else toast('設定保存失敗');}).catch(function(){toast('設定保存失敗（relay?）');});}
+document.getElementById('btnCfg').onclick=function(){fetch(RELAY+'/chat-config').then(function(r){return r.json();}).then(function(c){document.getElementById('cfgDir').value=c.saveDir||'';document.getElementById('cfgAuto').checked=c.autoSave!==false;CFG_AUTO=c.autoSave!==false;cfgModal.classList.add('on');}).catch(function(){cfgModal.classList.add('on');});};
+document.getElementById('cfgClose').onclick=function(){cfgModal.classList.remove('on');};
+document.getElementById('cfgSave').onclick=_saveCfg;
+document.getElementById('cfgSaveNow').onclick=function(){saveChatMd(false);};
+document.getElementById('cfgDir').addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();_saveCfg();}});
+try{fetch(RELAY+'/chat-config').then(function(r){return r.json();}).then(function(c){CFG_AUTO=c.autoSave!==false;}).catch(function(){});}catch(e){}
 
 // ============ 言語 ============
 var lang='ja';
@@ -364,10 +407,12 @@ try{if(localStorage.getItem('ms_conn')==='1')connect();else{ /* 未接続でも�
 // パネルサイズ通知（Figma）
 function notifySize(){toParent({type:'panelsize', w:Math.round(window.innerWidth), h:Math.round(window.innerHeight), remember:false});}
 window.addEventListener('resize',notifySize);
-// タスク3：右下グリップをドラッグで窓を自由リサイズ（code.jsの'resize'→figma.ui.resize＋次回復元）
-(function(){var grip=document.getElementById('grip'),rz=null;if(!grip)return;
+// タスク3：右下グリップをドラッグで窓を自由リサイズ（rAFで滑らかに間引き・ドラッグ中は保存せず離した時だけ保存）
+(function(){var grip=document.getElementById('grip'),rz=null,pend=null,raf=0;if(!grip)return;
+  function flush(){raf=0;if(!pend)return;toParent({type:'panelsize',w:pend.w,h:pend.h,remember:false});pend=null;}
   grip.addEventListener('pointerdown',function(e){e.preventDefault();rz={x:e.screenX,y:e.screenY,w:window.innerWidth,h:window.innerHeight};try{grip.setPointerCapture(e.pointerId);}catch(_){}});
-  grip.addEventListener('pointermove',function(e){if(!rz)return;var w=Math.max(300,rz.w+(e.screenX-rz.x)),h=Math.max(360,rz.h+(e.screenY-rz.y));toParent({type:'resize',w:w,h:h});});
-  var end=function(){rz=null;};grip.addEventListener('pointerup',end);grip.addEventListener('pointercancel',end);})();
+  grip.addEventListener('pointermove',function(e){if(!rz)return;pend={w:Math.max(320,rz.w+(e.screenX-rz.x)),h:Math.max(380,rz.h+(e.screenY-rz.y))};if(!raf)raf=requestAnimationFrame(flush);});
+  var end=function(){if(!rz)return;var fw=pend?pend.w:window.innerWidth,fh=pend?pend.h:window.innerHeight;toParent({type:'panelsize',w:fw,h:fh,remember:true});pend=null;rz=null;};
+  grip.addEventListener('pointerup',end);grip.addEventListener('pointercancel',end);})();
 </script>
 </body></html>

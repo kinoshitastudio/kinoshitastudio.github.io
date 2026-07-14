@@ -7,8 +7,17 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { spawn, spawnSync } = require("child_process");
 const { bake } = require("./tools/bake");   // svgプリスケール＋画像base64化（ボードで描ける形へ）
+
+// ── 会話の保存先設定（chat-config.jsonはgitignore＝個人環境依存パスをコードに埋めない。既定は中立フォルダ）──
+const CHAT_CFG = path.join(__dirname, "chat-config.json");
+function chatCfg() { try { const c = JSON.parse(fs.readFileSync(CHAT_CFG, "utf8")); return { saveDir: c.saveDir || path.join(os.homedir(), "Documents", "Mothership", "chats"), autoSave: c.autoSave !== false }; } catch (e) { return { saveDir: path.join(os.homedir(), "Documents", "Mothership", "chats"), autoSave: true }; } }
+function saveChatCfg(c) { try { fs.writeFileSync(CHAT_CFG, JSON.stringify(c, null, 2)); return true; } catch (e) { return false; } }
+function expandHome(p) { return (p && p[0] === "~") ? path.join(os.homedir(), p.slice(1)) : p; }
+function safeChatName(s) { return (String(s || "会話").replace(/[\/\\:*?"<>|\n]/g, "_").trim().slice(0, 60)) || "会話"; }
+function buildChatMd(j) { const d = new Date(), z = (n) => String(n).padStart(2, "0"); const stamp = d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()) + " " + z(d.getHours()) + ":" + z(d.getMinutes()); let body = ""; (j.messages || []).forEach((m) => { body += (m.role === "user" ? "### 木下\n" : "### 母艦\n") + String(m.text || "").replace(/\*/g, "").trim() + "\n\n"; }); return "---\ntitle: " + (j.title || "母艦 会話ログ") + "\ndate: " + stamp + "\nproject: mothership\ntags: [mothership, 会話ログ]\n---\n\n# " + (j.title || "母艦 会話ログ") + "  (" + stamp + ")\n\n" + body; }
 
 /* ============================================================
    AIエンジン切替＝relayは「ユーザー環境のAI CLI」を spawn する。頭脳は交換可能（Claude/Codex/Gemini/…）。
@@ -697,6 +706,20 @@ http.createServer((req, res) => {
       try { JSON.parse(b); fs.writeFileSync(FILE, b); res.end("ok"); }
       catch (e) { res.writeHead(400); res.end("invalid json"); }
     });
+    return;
+  }
+
+  // 会話の保存先設定 取得/更新
+  if (u.pathname === "/chat-config" && req.method === "GET") { res.setHeader("Content-Type", "application/json"); return res.end(JSON.stringify(chatCfg())); }
+  if (u.pathname === "/chat-config" && req.method === "POST") {
+    let b = ""; req.on("data", (d) => (b += d));
+    req.on("end", () => { try { const c = JSON.parse(b); const cur = chatCfg(); const nc = { saveDir: (c.saveDir || cur.saveDir), autoSave: (typeof c.autoSave === "boolean" ? c.autoSave : cur.autoSave) }; saveChatCfg(nc); res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify({ ok: true, config: nc })); } catch (e) { res.writeHead(400); res.end('{"ok":false}'); } });
+    return;
+  }
+  // 会話を .md で保存先フォルダに書き出し
+  if (u.pathname === "/save-chat" && req.method === "POST") {
+    let b = ""; req.on("data", (d) => (b += d));
+    req.on("end", () => { try { const j = JSON.parse(b); const cfg = chatCfg(); const dir = expandHome(cfg.saveDir); fs.mkdirSync(dir, { recursive: true }); const file = j.file || (safeChatName(j.title) + ".md"); const fp2 = path.join(dir, file); fs.writeFileSync(fp2, buildChatMd(j)); res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify({ ok: true, path: fp2, file: file })); } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: String(e && e.message ? e.message : e) })); } });
     return;
   }
 
