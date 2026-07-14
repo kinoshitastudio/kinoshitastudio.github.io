@@ -734,6 +734,38 @@ http.createServer((req, res) => {
     return;
   }
 
+  // 設計書save：会話をAIが「体験設計の設計書」にまとめて 保存先/設計書/ に .md 保存
+  if (u.pathname === "/save-doc" && req.method === "POST") {
+    let b = ""; req.on("data", (d) => (b += d));
+    req.on("end", () => {
+      res.setHeader("Content-Type", "application/json");
+      let messages = [], title = "設計書", engine = "";
+      try { const j = JSON.parse(b); messages = j.messages || []; title = j.title || "設計書"; engine = j.engine || ""; } catch (e) {}
+      if (!messages.length) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "会話がありません" })); }
+      const log = messages.map((m) => (m.role === "user" ? "ユーザー: " : "母艦: ") + String(m.text || "")).join("\n\n");
+      const prompt = "以下は母艦(デザインの相棒)とユーザーの相談ログ。この内容から「体験設計の設計書」を1つにまとめて。構成(この順・見出しは短く行頭ラベル+改行)：思想/背骨(目指す体験・芯を1〜2行)、決定と なぜ(主要な決定を論拠つき短段落で)、却下の墓場(検討して落とした案と理由)、原則/論拠(引いたUX原則があれば: JTBD/Nielsen/Fogg/Peak-End/WCAG等)、次の一手。装飾記号(* # - ・)は使わない。会話に無い決定を捏造しない。設計書の本文だけを出力し、前置き・後書き・保存やFigma化の申し出は書かない。\n\n## 相談ログ\n" + log;
+      let child; try { child = spawnAI(engine, prompt, false); } catch (e) { return res.end(JSON.stringify({ ok: false, error: "AI起動失敗: " + (e && e.message ? e.message : e) })); }
+      let out = "", err = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (err += d));
+      child.on("error", (e) => res.end(JSON.stringify({ ok: false, error: "AIが見つかりません: " + (e && e.message ? e.message : e) })));
+      child.on("close", (code) => {
+        try {
+          if (code !== 0 || !out.trim()) return res.end(JSON.stringify({ ok: false, error: "生成失敗: " + err.trim().slice(-200) }));
+          const d = new Date(), z = (n) => String(n).padStart(2, "0");
+          const stamp = d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()) + " " + z(d.getHours()) + ":" + z(d.getMinutes());
+          const md = "---\ntitle: " + title + " 設計書\ndate: " + stamp + "\nproject: mothership\ntags: [mothership, 設計書, 体験翻訳]\n---\n\n# " + title + " 設計書  (" + stamp + ")\n\n" + out.replace(/\*/g, "").trim() + "\n";
+          const dir = path.join(expandHome(chatCfg().saveDir), "設計書");
+          fs.mkdirSync(dir, { recursive: true });
+          const file = safeChatName(title) + "_設計書.md";
+          fs.writeFileSync(path.join(dir, file), md);
+          res.end(JSON.stringify({ ok: true, file: file, path: path.join(dir, file) }));
+        } catch (e) { res.end(JSON.stringify({ ok: false, error: String(e && e.message ? e.message : e) })); }
+      });
+    });
+    return;
+  }
+
   // 静的配信（library.html / library/*.json など）。/ は library.html
   const safe = decodeURIComponent(u.pathname).replace(/\.\.+/g, "");
   const fp = path.join(__dirname, safe === "/" ? "library.html" : safe);
