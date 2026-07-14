@@ -74,6 +74,20 @@
   .sheet .sv{background:var(--mint);color:var(--ink);margin-right:-3px} .sheet .cx{background:var(--paper);color:var(--ink)}
   .toast{position:fixed;left:50%;bottom:66px;transform:translateX(-50%);background:var(--ink);color:var(--mint);font-size:10.5px;font-weight:800;padding:7px 12px;z-index:70;opacity:0;transition:.3s;pointer-events:none;max-width:90%;text-align:center}
   .toast.on{opacity:1}
+  .propchip{align-self:flex-start;font-size:10.5px;font-weight:900;border:2.5px solid var(--ink);background:var(--mint);color:var(--ink);cursor:pointer;padding:6px 10px;margin-bottom:8px}
+  .propchip:hover{background:var(--mint2)}
+  .propset{align-self:stretch;background:var(--paper);border:3px solid var(--ink);margin:2px 0 4px}
+  .propset .ph{background:var(--ink);color:var(--paper);display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:10.5px;font-weight:900}
+  .propset .ph .re{margin-left:auto;font-size:9.5px;font-weight:900;color:var(--ink);background:var(--mint);padding:4px 8px;cursor:pointer}
+  .propset .ph .re:hover{background:var(--mint2)}
+  .popt{padding:9px 11px;border-top:2px solid #d5d5ea;cursor:pointer;position:relative}
+  .popt:hover{background:#fff}
+  .popt.sel{background:var(--ink)} .popt.sel *{color:var(--paper)!important}
+  .popt .nm{font-size:12.5px;font-weight:900;margin-bottom:3px}
+  .popt .why{font-size:10.5px;font-weight:700;line-height:1.5;color:#3a3a55}
+  .popt .trade{font-size:9.5px;font-weight:700;color:#8a8ab0;margin-top:4px}
+  .popt .pick{position:absolute;top:9px;right:10px;width:16px;height:16px;border:2.5px solid #bcbcd6;border-radius:50%}
+  .popt.sel .pick{border-color:var(--mint);background:var(--mint)}
   .composer{padding:8px 12px 12px}
   .engs{display:flex;gap:0;margin-bottom:8px;flex-wrap:wrap;align-items:center}
   .eng{font-size:10px;font-weight:900;letter-spacing:.02em;padding:6px 10px;border:2.5px solid var(--ink);color:var(--ink);cursor:pointer;margin-right:-2.5px;background:transparent;display:flex;align-items:center;gap:6px}
@@ -138,6 +152,7 @@
     </div>
     <div class="attach" id="attach"></div>
     <input type="file" id="file" accept="image/*" style="display:none">
+    <button class="propchip" id="propBtn">✦ この相談に3案ください</button>
     <div class="dock">
       <div class="plus" id="plus" title="画像を添付">+</div>
       <input id="inp" placeholder="作る・聞く・相談…" autocomplete="off">
@@ -383,6 +398,20 @@ var cfgModal=document.getElementById('cfgModal');
 function _saveCfg(){var dir=document.getElementById('cfgDir').value.trim(),auto=document.getElementById('cfgAuto').checked;fetch(RELAY+'/chat-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({saveDir:dir,autoSave:auto})}).then(function(r){return r.json();}).then(function(d){if(d.ok){CFG_AUTO=d.config.autoSave;toast('設定を保存しました');cfgModal.classList.remove('on');}else toast('設定保存失敗');}).catch(function(){toast('設定保存失敗（relay?）');});}
 document.getElementById('btnCfg').onclick=function(){document.getElementById('cfgDark').checked=document.body.classList.contains('dark');fetch(RELAY+'/chat-config').then(function(r){return r.json();}).then(function(c){document.getElementById('cfgDir').value=c.saveDir||'';document.getElementById('cfgAuto').checked=c.autoSave!==false;CFG_AUTO=c.autoSave!==false;cfgModal.classList.add('on');}).catch(function(){cfgModal.classList.add('on');});};
 document.getElementById('cfgDark').onchange=function(){setDark(this.checked);};
+// タスク1：選べる提案セット（AIが方向違いの3案→カード・選択・もう一周）
+function _lastUserMsg(){var a=chatLog.filter(function(e){return e.cls==='me';});return a.length?String(a[a.length-1].text||''):'';}
+function renderProps(opts,ask){var box=document.createElement('div');box.className='propset';box.innerHTML='<div class="ph">✦ 提案 '+opts.length+'案 <span class="re">↻ もう一周</span></div><div class="opts"></div>';var opd=box.querySelector('.opts');
+  opts.forEach(function(o,i){var el=document.createElement('div');el.className='popt';el.innerHTML='<div class="pick"></div><div class="nm">'+esc(o.name||('案'+(i+1)))+'</div><div class="why">'+esc(o.why||'')+'</div>'+(o.trade?'<div class="trade">△ '+esc(o.trade)+'</div>':'');
+    el.onclick=function(){box.querySelectorAll('.popt').forEach(function(x){x.classList.remove('sel');});el.classList.add('sel');inp.value='「'+(o.name||'')+'」の方向で進めたい。';inp.focus();};opd.appendChild(el);});
+  box.querySelector('.re').onclick=function(){box.remove();propose(ask);};convo.appendChild(box);scrollEnd();}
+async function propose(ask){if(!ask||!ask.trim()){var s=document.createElement('div');s.className='sys';s.textContent='相談を入力するか、先に会話してから押してね。';convo.appendChild(s);scrollEnd();return;}
+  if(!connected){app.classList.remove('empty');var s2=document.createElement('div');s2.className='sys';s2.textContent='⚠ 母艦に未接続です。右下の「接続」を。';convo.appendChild(s2);scrollEnd();return;}
+  app.classList.remove('empty');var th=document.createElement('div');th.className='think';th.innerHTML='<span class="loadring"></span>✦ 方向違いの3案を考え中…';convo.appendChild(th);scrollEnd();setState('gather');
+  try{var msgs=chatLog.filter(function(e){return e.cls==='me'||e.cls==='ms';}).map(function(e){return{role:e.cls==='me'?'user':'assistant',text:e.text||''};});
+    var r=await fetch(RELAY+'/propose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ask:ask,history:msgs,engine:aiEngine})});var d=await r.json();th.remove();
+    if(d.ok&&d.options&&d.options.length){setState('done');flashScreen();renderProps(d.options,ask);}else{bubble('err','提案に失敗: '+(d.error||''));setState('idle');}
+  }catch(e){th.remove();bubble('err','提案に失敗（relay?）');setState('idle');}}
+document.getElementById('propBtn').onclick=function(){propose(inp.value.trim()||_lastUserMsg());};
 document.getElementById('cfgClose').onclick=function(){cfgModal.classList.remove('on');};
 document.getElementById('cfgSave').onclick=_saveCfg;
 document.getElementById('cfgSaveNow').onclick=function(){saveChatMd(false);};

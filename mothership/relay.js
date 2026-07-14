@@ -766,6 +766,35 @@ http.createServer((req, res) => {
     return;
   }
 
+  // 選べる提案セット：相談に対し方向の違う3案をAIが生成（JSON配列で返す）
+  if (u.pathname === "/propose" && req.method === "POST") {
+    let b = ""; req.on("data", (d) => (b += d));
+    req.on("end", () => {
+      res.setHeader("Content-Type", "application/json");
+      let ask = "", history = [], engine = "";
+      try { const j = JSON.parse(b); ask = (j.ask || "").toString(); history = j.history || []; engine = j.engine || ""; } catch (e) {}
+      if (!ask.trim()) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "相談が空です" })); }
+      let h = ""; (history || []).slice(-8).forEach((m) => { h += (m.role === "user" ? "ユーザー: " : "母艦: ") + String(m.text || "") + "\n"; });
+      const prompt = "あなたは体験翻訳のUXパートナー。次の相談に、方向の違う提案を3つ出す。安易に1案に寄せず本気で振り幅を作る（同じ発想の変種にしない）。各案は name(8〜18字の短い名前) / why(なぜ効くか。引けるならUX原則名も: JTBD/Peak-End/Fogg/Hick's/Jakob's/WCAG等) / trade(トレードオフや捨てるものを一言)。出力はJSON配列のみ。前置き・後書き・装飾記号は一切書かない。形式: [{\"name\":\"\",\"why\":\"\",\"trade\":\"\"},{...},{...}]\n\n" + (h ? ("これまで:\n" + h + "\n") : "") + "相談: " + ask;
+      let child; try { child = spawnAI(engine, prompt, false); } catch (e) { return res.end(JSON.stringify({ ok: false, error: "AI起動失敗" })); }
+      let out = "", err = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (err += d));
+      child.on("error", (e) => res.end(JSON.stringify({ ok: false, error: "AIが見つかりません" })));
+      child.on("close", (code) => {
+        try {
+          if (code !== 0 || !out.trim()) return res.end(JSON.stringify({ ok: false, error: "生成失敗: " + err.trim().slice(-150) }));
+          const s = out.indexOf("["), e2 = out.lastIndexOf("]");
+          let opts = (s >= 0 && e2 > s) ? JSON.parse(out.slice(s, e2 + 1)) : [];
+          if (!Array.isArray(opts) || !opts.length) return res.end(JSON.stringify({ ok: false, error: "提案の解析に失敗" }));
+          opts = opts.slice(0, 3).map((o) => ({ name: String(o.name || "").replace(/\*/g, ""), why: String(o.why || "").replace(/\*/g, ""), trade: String(o.trade || "").replace(/\*/g, "") }));
+          res.end(JSON.stringify({ ok: true, options: opts }));
+        } catch (e) { res.end(JSON.stringify({ ok: false, error: "解析失敗" })); }
+      });
+    });
+    return;
+  }
+
   // 静的配信（library.html / library/*.json など）。/ は library.html
   const safe = decodeURIComponent(u.pathname).replace(/\.\.+/g, "");
   const fp = path.join(__dirname, safe === "/" ? "library.html" : safe);
