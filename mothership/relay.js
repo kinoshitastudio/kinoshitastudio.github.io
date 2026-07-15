@@ -159,13 +159,21 @@ const appendLog = (entry) => { try { const a = readLog(); a.push(entry); fs.writ
 const THREADS_DIR = path.join(__dirname, "threads");
 const ACTIVE_FILE = path.join(__dirname, "_active-thread.json");
 function _z(n) { return String(n).padStart(2, "0"); }
-function threadStamp() { const d = new Date(); return d.getFullYear() + _z(d.getMonth() + 1) + _z(d.getDate()) + "_" + _z(d.getHours()) + _z(d.getMinutes()); }
+function threadStamp() { const d = new Date(); return d.getFullYear() + _z(d.getMonth() + 1) + _z(d.getDate()) + "_" + _z(d.getHours()) + _z(d.getMinutes()) + _z(d.getSeconds()); }
+// スレッド固定.mdの名前は分→秒精度でも同一秒連打で衝突しうる→既存スレッドが使用中の名前を避けて一意化（同名.md上書き＝データ消失の防止）
+function uniqueChatFile() {
+  const used = new Set();
+  try { fs.mkdirSync(THREADS_DIR, { recursive: true }); for (const f of fs.readdirSync(THREADS_DIR)) { if (!f.endsWith(".json")) continue; try { const t = JSON.parse(fs.readFileSync(path.join(THREADS_DIR, f), "utf8")); if (t && t.file) used.add(t.file); } catch (e) {} } } catch (e) {}
+  const base = "会話_" + threadStamp(); let name = base + ".md", i = 2;
+  while (used.has(name)) { name = base + "_" + i + ".md"; i++; }
+  return name;
+}
 function titleFromLog(arr) { const f = (arr || []).find((e) => e && e.cls === "me"); return f ? String(f.text || "").replace(/\s+/g, " ").trim().slice(0, 24) : ""; }
 function readThreadFile(id) { try { return JSON.parse(fs.readFileSync(path.join(THREADS_DIR, id + ".json"), "utf8")); } catch (e) { return null; } }
 function writeThreadFile(t) { try { fs.mkdirSync(THREADS_DIR, { recursive: true }); fs.writeFileSync(path.join(THREADS_DIR, t.id + ".json"), JSON.stringify(t)); } catch (e) {} }
 function getActiveId() { try { return JSON.parse(fs.readFileSync(ACTIVE_FILE, "utf8")).id || null; } catch (e) { return null; } }
 function setActiveId(id) { try { fs.writeFileSync(ACTIVE_FILE, JSON.stringify({ id: id })); } catch (e) {} }
-function newThread() { const id = "t" + Date.now(); const t = { id: id, title: "", file: "会話_" + threadStamp() + ".md", created: Date.now(), updated: Date.now(), messages: [] }; writeThreadFile(t); setActiveId(id); return t; }
+function newThread() { const id = "t" + Date.now(); const t = { id: id, title: "", file: uniqueChatFile(), created: Date.now(), updated: Date.now(), messages: [] }; writeThreadFile(t); setActiveId(id); return t; }
 function ensureActive() { let id = getActiveId(); let t = id ? readThreadFile(id) : null; if (!t) { t = newThread(); const cur = readLog(); if (cur.length) { t.messages = cur; t.title = titleFromLog(cur); t.updated = Date.now(); writeThreadFile(t); } } return t; }
 function syncActive() { try { const t = ensureActive(); const cur = readLog(); t.messages = cur; if (!t.title) { const nt = titleFromLog(cur); if (nt) t.title = nt; } t.updated = Date.now(); writeThreadFile(t); } catch (e) {} }
 function listThreads() { let out = []; try { fs.mkdirSync(THREADS_DIR, { recursive: true }); for (const f of fs.readdirSync(THREADS_DIR)) { if (!f.endsWith(".json")) continue; try { const t = JSON.parse(fs.readFileSync(path.join(THREADS_DIR, f), "utf8")); out.push({ id: t.id, title: t.title || "", file: t.file || "", updated: t.updated || 0, count: (t.messages || []).length }); } catch (e) {} } } catch (e) {} out.sort((a, b) => b.updated - a.updated); return out; }
