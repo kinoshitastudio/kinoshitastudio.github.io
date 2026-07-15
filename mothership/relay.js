@@ -150,7 +150,25 @@ let currentChild = null, aborted = false;   // 実行中プロセスを外（/ab
 // 会話ログ（relayが唯一の書き手＝どのタブに移動しても会話が消えない）
 const CHATLOG = path.join(__dirname, "_chat-log.json");
 const readLog = () => { try { const a = JSON.parse(fs.readFileSync(CHATLOG, "utf8")); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
-const appendLog = (entry) => { try { const a = readLog(); a.push(entry); fs.writeFileSync(CHATLOG, JSON.stringify(a.slice(-60))); } catch (e) {} };
+const appendLog = (entry) => { try { const a = readLog(); a.push(entry); fs.writeFileSync(CHATLOG, JSON.stringify(a.slice(-60))); syncActive(); } catch (e) {} };
+
+// ── スレッド（要件/案件ごとの会話）───────────────────────────────
+// _chat-log.json = 現在アクティブなスレッドのライブlog（既存の/chat 16ターン注入はそのまま）。
+// threads/<id>.json = 各スレッド {id,title,file,created,updated,messages}。_active-thread.json = {id}。
+// タイトルは最初のユーザー発言から自動。.md はUI側の既存オート保存がスレッド固定fileへ書く＝自動追記。
+const THREADS_DIR = path.join(__dirname, "threads");
+const ACTIVE_FILE = path.join(__dirname, "_active-thread.json");
+function _z(n) { return String(n).padStart(2, "0"); }
+function threadStamp() { const d = new Date(); return d.getFullYear() + _z(d.getMonth() + 1) + _z(d.getDate()) + "_" + _z(d.getHours()) + _z(d.getMinutes()); }
+function titleFromLog(arr) { const f = (arr || []).find((e) => e && e.cls === "me"); return f ? String(f.text || "").replace(/\s+/g, " ").trim().slice(0, 24) : ""; }
+function readThreadFile(id) { try { return JSON.parse(fs.readFileSync(path.join(THREADS_DIR, id + ".json"), "utf8")); } catch (e) { return null; } }
+function writeThreadFile(t) { try { fs.mkdirSync(THREADS_DIR, { recursive: true }); fs.writeFileSync(path.join(THREADS_DIR, t.id + ".json"), JSON.stringify(t)); } catch (e) {} }
+function getActiveId() { try { return JSON.parse(fs.readFileSync(ACTIVE_FILE, "utf8")).id || null; } catch (e) { return null; } }
+function setActiveId(id) { try { fs.writeFileSync(ACTIVE_FILE, JSON.stringify({ id: id })); } catch (e) {} }
+function newThread() { const id = "t" + Date.now(); const t = { id: id, title: "", file: "会話_" + threadStamp() + ".md", created: Date.now(), updated: Date.now(), messages: [] }; writeThreadFile(t); setActiveId(id); return t; }
+function ensureActive() { let id = getActiveId(); let t = id ? readThreadFile(id) : null; if (!t) { t = newThread(); const cur = readLog(); if (cur.length) { t.messages = cur; t.title = titleFromLog(cur); t.updated = Date.now(); writeThreadFile(t); } } return t; }
+function syncActive() { try { const t = ensureActive(); const cur = readLog(); t.messages = cur; if (!t.title) { const nt = titleFromLog(cur); if (nt) t.title = nt; } t.updated = Date.now(); writeThreadFile(t); } catch (e) {} }
+function listThreads() { let out = []; try { fs.mkdirSync(THREADS_DIR, { recursive: true }); for (const f of fs.readdirSync(THREADS_DIR)) { if (!f.endsWith(".json")) continue; try { const t = JSON.parse(fs.readFileSync(path.join(THREADS_DIR, f), "utf8")); out.push({ id: t.id, title: t.title || "", file: t.file || "", updated: t.updated || 0, count: (t.messages || []).length }); } catch (e) {} } } catch (e) {} out.sort((a, b) => b.updated - a.updated); return out; }
 
 // AI整え（B）：構造JSONを渡し「整え操作リスト(JSON配列)だけ」を返させるプロンプト
 const AI_TIDY_PROMPT = `あなたはFigmaレイアウト整理の専門家。渡された「Figmaフレーム構造JSON」を、プロ基準で整える【操作リスト】だけを返す。実際のノード編集はプラグインが行う＝あなたは操作を設計するだけ。
@@ -451,9 +469,45 @@ http.createServer((req, res) => {
     }
     if (req.method === "POST") {
       let b = ""; req.on("data", (d) => (b += d));
-      req.on("end", () => { try { JSON.parse(b); fs.writeFileSync(LOG, b); res.setHeader("Content-Type", "application/json"); res.end('{"ok":true}'); } catch (e) { res.writeHead(400); res.end('{"ok":false}'); } });
+      req.on("end", () => { try { JSON.parse(b); fs.writeFileSync(LOG, b); syncActive(); res.setHeader("Content-Type", "application/json"); res.end('{"ok":true}'); } catch (e) { res.writeHead(400); res.end('{"ok":false}'); } });
       return;
     }
+  }
+
+  // ── スレッド管理（要件/案件ごとの会話の一覧・新規・切替・改名・削除）──
+  if (u.pathname === "/threads" && req.method === "GET") {
+    ensureActive();
+    res.setHeader("Content-Type", "application/json");
+    return res.end(JSON.stringify({ active: getActiveId(), threads: listThreads() }));
+  }
+  if (u.pathname === "/thread-new" && req.method === "POST") {
+    syncActive();                          // 現アクティブを保存してから
+    const t = newThread();                 // 新規スレッド＝アクティブに
+    fs.writeFileSync(CHATLOG, "[]");        // ライブlogをクリア
+    res.setHeader("Content-Type", "application/json");
+    return res.end(JSON.stringify({ ok: true, thread: { id: t.id, title: t.title, file: t.file } }));
+  }
+  if (u.pathname === "/thread-open" && req.method === "POST") {
+    let b = ""; req.on("data", (d) => (b += d));
+    req.on("end", () => { try { const id = JSON.parse(b).id; const t = readThreadFile(id); if (!t) { res.writeHead(404); return res.end('{"ok":false}'); }
+      syncActive();                                              // 現アクティブを保存
+      fs.writeFileSync(CHATLOG, JSON.stringify((t.messages || []).slice(-60)));  // 対象をライブへ
+      setActiveId(id);
+      res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify({ ok: true, thread: { id: t.id, title: t.title, file: t.file } }));
+    } catch (e) { res.writeHead(400); res.end('{"ok":false}'); } });
+    return;
+  }
+  if (u.pathname === "/thread-rename" && req.method === "POST") {
+    let b = ""; req.on("data", (d) => (b += d));
+    req.on("end", () => { try { const j = JSON.parse(b); const t = readThreadFile(j.id); if (!t) { res.writeHead(404); return res.end('{"ok":false}'); } t.title = String(j.title || "").replace(/\s+/g, " ").trim().slice(0, 40); t.updated = Date.now(); writeThreadFile(t); res.setHeader("Content-Type", "application/json"); res.end('{"ok":true}'); } catch (e) { res.writeHead(400); res.end('{"ok":false}'); } });
+    return;
+  }
+  if (u.pathname === "/thread-delete" && req.method === "POST") {
+    let b = ""; req.on("data", (d) => (b += d));
+    req.on("end", () => { try { const id = JSON.parse(b).id; try { fs.unlinkSync(path.join(THREADS_DIR, id + ".json")); } catch (e) {}
+      if (getActiveId() === id) { const list = listThreads(); if (list.length) { const nx = readThreadFile(list[0].id); fs.writeFileSync(CHATLOG, JSON.stringify((nx.messages || []).slice(-60))); setActiveId(nx.id); } else { newThread(); fs.writeFileSync(CHATLOG, "[]"); } }
+      res.setHeader("Content-Type", "application/json"); res.end('{"ok":true}'); } catch (e) { res.writeHead(400); res.end('{"ok":false}'); } });
+    return;
   }
 
   // 現在の mothership.json を library/ に保存（パネルの「ライブラリに保存」ボタン）

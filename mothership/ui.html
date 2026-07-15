@@ -16,6 +16,22 @@
   .logo .mk::before,.logo .mk::after{content:"";position:absolute;top:50%;width:8px;height:8px;border:2.2px solid var(--mint);border-radius:50%;transform:translateY(-50%)}
   .logo .mk::before{left:3px}.logo .mk::after{right:3px}
   .logo b{font-size:15px;font-weight:900;letter-spacing:-.02em;color:var(--ink)}
+  /* スレッドバー（要件/案件ごとの会話切替） */
+  .threadbar{flex:0 0 auto;position:relative;padding:4px 12px 5px;border-bottom:1.5px solid color-mix(in srgb,var(--ink) 22%,transparent);z-index:41}
+  .thbtn{display:flex;align-items:center;gap:6px;max-width:100%;background:transparent;border:none;cursor:pointer;font-family:inherit;color:var(--ink);padding:2px 0}
+  .thco{width:6px;height:6px;border-radius:50%;background:var(--mint2);flex:0 0 auto}
+  .thname{font-size:11.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+  .thcar{font-size:9px;color:var(--ink);opacity:.5;flex:0 0 auto}
+  .thmenu{display:none;position:absolute;left:8px;right:8px;top:29px;background:var(--paper);border:2.5px solid var(--ink);box-shadow:0 18px 38px rgba(0,0,0,.34);max-height:56vh;overflow-y:auto}
+  .thmenu.on{display:block}
+  .thmenu .thnew{display:block;width:100%;text-align:left;background:var(--ink);color:var(--mint);border:none;font-family:inherit;font-weight:900;font-size:11.5px;padding:9px 12px;cursor:pointer}
+  .thitem{display:flex;align-items:center;gap:7px;padding:9px 11px;border-top:1px solid color-mix(in srgb,var(--ink) 12%,transparent);cursor:pointer;color:var(--ink)}
+  .thitem:hover{background:color-mix(in srgb,var(--ink) 7%,transparent)}
+  .thitem.on{background:color-mix(in srgb,var(--mint2) 22%,transparent)}
+  .thitem .tht{flex:1;min-width:0;font-size:11.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .thitem .thc{font-size:9.5px;opacity:.5;flex:0 0 auto}
+  .thitem .thren,.thitem .thdel{flex:0 0 auto;opacity:.42;font-size:12px;padding:2px 3px;line-height:1}
+  .thitem .thren:hover,.thitem .thdel:hover{opacity:1}
   .hic{margin-left:auto;display:flex;gap:6px}
   .hic div{width:28px;height:28px;background:var(--ink);color:var(--mint);display:flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer;font-weight:900;user-select:none}
   .hic div:hover{background:#000}
@@ -170,6 +186,10 @@
       <div id="btnCfg" title="会話の保存設定" style="font-size:12px">⚙</div>
     </div>
   </header>
+  <div class="threadbar">
+    <button class="thbtn" id="thBtn" title="スレッド（案件）を切替"><span class="thco"></span><span class="thname" id="thName">新しいスレッド</span><span class="thcar">▾</span></button>
+    <div class="thmenu" id="thMenu"></div>
+  </div>
   <div class="stage">
     <canvas class="target" id="target"></canvas>
     <div class="status" id="status">未接続</div>
@@ -327,7 +347,7 @@ async function connect(){
   try{localStorage.setItem('ms_conn','1');}catch(e){}
   lastVer=(probe&&typeof probe.version!=='undefined')?probe.version:-1;
   poll();timer=setInterval(poll,1200);
-  loadChatLog();loadEngines();
+  loadChatLog();loadEngines();loadThreads();
   setInterval(pollChat,1400);setInterval(pollBusy,700);
 }
 function disconnect(){connected=false;setConnUI(false);setStatus('未接続');if(timer)clearInterval(timer);
@@ -379,6 +399,7 @@ async function doSend(p){
   }catch(e){clearInterval(ti);if(thinkEl){thinkEl.remove();thinkEl=null;}setState('idle');bubble('err','relayに繋がりません\n'+(e.message||e));}
   setBusy(false);inp.focus();scrollEnd();pollChat();
   if(CFG_AUTO)setTimeout(function(){saveChatMd(true);},1400);   // タスク5：返信後に自動で.md保存（chatLog同期を待つ）
+  setTimeout(function(){loadThreads(true);},1600);   // 最初の発言後に自動タイトルをヘッダーへ反映（名前だけ静かに更新）
   if(sendQueue.length){var nx=sendQueue.shift();doSend(nx);}
 }
 function suck(txt){ ripple(9,3.4); flash=1; }   // 送信フィードバック（コアに波紋＋閃光）
@@ -441,9 +462,61 @@ var _fz=1;function setFz(d){_fz=Math.max(0.7,Math.min(1.9,+(_fz+d).toFixed(2)));
 document.getElementById('btnFzMinus').onclick=function(){setFz(-0.1);};
 document.getElementById('btnFzPlus').onclick=function(){setFz(0.1);};
 // タスク5：会話の保存設定＋.md保存
-var CFG_AUTO=true,_chatFile=null;
-function _cfile(){if(!_chatFile){var d=new Date(),z=function(n){return String(n).padStart(2,'0');};_chatFile='会話_'+d.getFullYear()+z(d.getMonth()+1)+z(d.getDate())+'_'+z(d.getHours())+z(d.getMinutes())+'.md';}return _chatFile;}
-function _ctitle(){var f=chatLog.find(function(e){return e.cls==='me';});return f?('母艦: '+String(f.text||'').slice(0,24)):'母艦 会話ログ';}
+var CFG_AUTO=true,_chatFile=null,curThread={id:null,title:'',file:null};
+function _cfile(){if(curThread.file)return curThread.file;if(!_chatFile){var d=new Date(),z=function(n){return String(n).padStart(2,'0');};_chatFile='会話_'+d.getFullYear()+z(d.getMonth()+1)+z(d.getDate())+'_'+z(d.getHours())+z(d.getMinutes())+'.md';}return _chatFile;}
+function _ctitle(){if(curThread.title)return curThread.title;var f=chatLog.find(function(e){return e.cls==='me';});return f?String(f.text||'').replace(/\s+/g,' ').trim().slice(0,24):'母艦 会話ログ';}
+
+// ============ スレッド（要件/案件ごとの会話） ============
+var _threads=[];
+function _thShow(){var el=document.getElementById('thName');if(el)el.textContent=(curThread.title||'新しいスレッド');}
+async function loadThreads(nameOnly){
+  if(!connected)return;
+  try{var d=await(await fetch(RELAY+'/threads',{cache:'no-store'})).json();
+    _threads=d.threads||[];
+    var act=_threads.find(function(t){return t.id===d.active;});
+    if(act){curThread={id:act.id,title:act.title||'',file:act.file||null};}
+    _thShow();
+    if(!nameOnly)renderThreadMenu();
+  }catch(e){}
+}
+function renderThreadMenu(){
+  var m=document.getElementById('thMenu');if(!m)return;
+  var h='<button class="thnew" id="thNew">＋ 新しいスレッド</button>';
+  _threads.forEach(function(t){
+    var on=(t.id===curThread.id)?' on':'';
+    var name=(t.title||'（無題）');
+    h+='<div class="thitem'+on+'" data-id="'+t.id+'"><span class="tht" data-open="'+t.id+'">'+_esc(name)+'</span><span class="thc">'+(t.count||0)+'</span><span class="thren" data-ren="'+t.id+'" title="名前を変更">✎</span><span class="thdel" data-del="'+t.id+'" title="削除">✕</span></div>';
+  });
+  m.innerHTML=h;
+}
+function _esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+function toggleThMenu(open){var m=document.getElementById('thMenu');if(!m)return;var willOpen=(typeof open==='boolean')?open:!m.classList.contains('on');if(willOpen){renderThreadMenu();m.classList.add('on');}else{m.classList.remove('on');}}
+async function newThread(){
+  if(!connected){toast('先に接続してください');return;}
+  try{var d=await(await fetch(RELAY+'/thread-new',{method:'POST'})).json();if(d.ok){curThread={id:d.thread.id,title:d.thread.title||'',file:d.thread.file||null};chatLog=[];lastChatStr='[]';renderChatLog();app.classList.add('empty');_thShow();toggleThMenu(false);loadThreads(true);}}catch(e){toast('新規スレッド失敗（relay?）');}
+}
+async function openThread(id){
+  if(!connected||id===curThread.id){toggleThMenu(false);return;}
+  try{var d=await(await fetch(RELAY+'/thread-open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})})).json();if(d.ok){curThread={id:d.thread.id,title:d.thread.title||'',file:d.thread.file||null};_thShow();toggleThMenu(false);await loadChatLog();app.classList.toggle('empty',chatLog.length===0);}}catch(e){toast('切替失敗（relay?）');}
+}
+async function renameThread(id){
+  var t=_threads.find(function(x){return x.id===id;});var cur=t?(t.title||''):'';
+  var v=prompt('スレッド名（案件名）',cur);if(v===null)return;
+  try{await fetch(RELAY+'/thread-rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,title:v})});if(id===curThread.id){curThread.title=v.trim().slice(0,40);_thShow();}loadThreads();}catch(e){toast('改名失敗');}
+}
+async function deleteThread(id){
+  if(!confirm('このスレッドを削除しますか？（.mdファイルは残ります）'))return;
+  try{await fetch(RELAY+'/thread-delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})});if(id===curThread.id){await loadThreads(true);await loadChatLog();app.classList.toggle('empty',chatLog.length===0);}else{loadThreads();}}catch(e){toast('削除失敗');}
+}
+document.getElementById('thBtn').onclick=function(e){e.stopPropagation();toggleThMenu();};
+document.getElementById('thMenu').onclick=function(e){
+  var t=e.target;
+  if(t.id==='thNew'||t.closest('#thNew')){newThread();return;}
+  var ren=t.getAttribute('data-ren');if(ren){e.stopPropagation();renameThread(ren);return;}
+  var del=t.getAttribute('data-del');if(del){e.stopPropagation();deleteThread(del);return;}
+  var op=t.getAttribute('data-open')||(t.closest('.thitem')&&t.closest('.thitem').getAttribute('data-id'));if(op){openThread(op);return;}
+};
+document.addEventListener('click',function(e){var bar=e.target.closest&&e.target.closest('.threadbar');if(!bar)toggleThMenu(false);});
 function _cmsgs(){return chatLog.filter(function(e){return e.cls==='me'||e.cls==='ms';}).map(function(e){return{role:e.cls==='me'?'user':'assistant',text:e.text||''};});}
 function toast(m){var t=document.getElementById('toast');if(!t)return;t.textContent=m;t.classList.add('on');setTimeout(function(){t.classList.remove('on');},2200);}
 async function saveChatMd(silent){if(!connected){if(!silent)toast('relayに接続してください');return;}var msgs=_cmsgs();if(!msgs.length){if(!silent)toast('まだ会話がありません');return;}
