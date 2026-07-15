@@ -1011,6 +1011,80 @@ function make(P, reuse, preview) {
   return frame
 }
 
+/* ---------- 点 — scatter mode (自分たちで作る) --------------------------------
+   The particle-field redefinition. The panel has already DRAWN the scatter and
+   ships it as an SVG string (preview === result, so there is no RNG-order contract
+   to keep with make()). We parse it into native Figma nodes with createNodeFromSvg
+   and place it on/into the selected shape, masked to it — same framing as make(). */
+function makeScatter(P, reuse, preview) {
+  const sel = figma.currentPage.selection
+  const target = sel.length === 1 && 'width' in sel[0] && !sel[0].getPluginData(KEY) ? sel[0] : null
+  if (target) lastTarget = target.id
+  const tbb = target && target.absoluteBoundingBox
+  const W = tbb ? Math.round(tbb.width) : DEF
+  const H = tbb ? Math.round(tbb.height) : DEF
+
+  let frame = reuse ? findFrame(preview) : null
+  if (frame) { for (const c of [...frame.children]) c.remove() }
+  else frame = figma.createFrame()
+  frame.name = 'Siren — 点'
+  frame.clipsContent = true
+
+  if (target) {
+    figma.currentPage.appendChild(frame)
+    const parent = target.parent
+    try {
+      if (parent && parent.type !== 'INSTANCE' && 'insertChild' in parent) {
+        parent.insertChild(parent.children.indexOf(target) + 1, frame)
+      }
+    } catch (e) { /* some parents refuse a child — fall back to the page */ }
+    const host = frame.parent
+    if (host && 'layoutMode' in host && host.layoutMode !== 'NONE') frame.layoutPositioning = 'ABSOLUTE'
+    frame.resize(W, H)
+    const fbb = frame.absoluteBoundingBox
+    if (fbb && tbb) { frame.x += tbb.x - fbb.x; frame.y += tbb.y - fbb.y }
+  } else {
+    if (frame.parent !== figma.currentPage) figma.currentPage.appendChild(frame)
+    frame.resize(W, H)
+    if (!reuse) { const v = figma.viewport.center; frame.x = Math.round(v.x - W / 2); frame.y = Math.round(v.y - H / 2) }
+  }
+  frame.fills = []
+  frame.setPluginData(KEY, JSON.stringify({ mode: 'scatter' }))
+  frame.setPluginData(TMP, preview ? '1' : '')
+
+  // mask to the selected shape, exactly like make()
+  let mask = null
+  if (target && P.clip !== false && 'clone' in target) {
+    mask = target.clone()
+    frame.insertChild(0, mask)
+    const fb = frame.absoluteBoundingBox, mb = mask.absoluteBoundingBox
+    if (fb && mb) { mask.x += fb.x - mb.x; mask.y += fb.y - mb.y }
+    else { mask.x = 0; mask.y = 0 }
+    if ('effects' in mask) mask.effects = []
+    if ('strokes' in mask) mask.strokes = []
+    if ('fills' in mask && (mask.fills === figma.mixed || !mask.fills.length)) {
+      mask.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }]
+    }
+    mask.opacity = 1; mask.visible = true; mask.name = '⟨shape⟩'
+  }
+
+  // the scatter itself — parsed straight from the SVG the panel showed
+  if (P.svg) {
+    let node = null
+    try { node = figma.createNodeFromSvg(P.svg) } catch (e) { node = null }
+    if (node) {
+      node.name = '点'
+      frame.appendChild(node)
+      if ('resize' in node) node.resize(W, H)
+      node.x = 0; node.y = 0
+    }
+  }
+
+  if (mask) { frame.insertChild(0, mask); mask.isMask = true }
+  if (!preview && !P.keepSel) figma.currentPage.selection = [frame]
+  return frame
+}
+
 /* ---------- sends, applied to the artwork itself --------------------------
    ⭐ Siren does not have to make a surface. A send acts on whatever is already
    there — a path, a shape, a whole group. Nothing is baked, nothing is replaced:
@@ -1106,7 +1180,9 @@ figma.ui.onmessage = (msg) => {
          next one is a NEW thing. Reusing it meant the second hit picked up the
          first and dragged it across the canvas to the new selection. */
       if (!preview) discard()
-      const f = make(msg.p, preview, preview)
+      const f = (msg.p && msg.p.mode === 'scatter')
+        ? makeScatter(msg.p, preview, preview)
+        : make(msg.p, preview, preview)
       // no scrollAndZoomIntoView: 鳴らす should not move the user's view
       figma.ui.postMessage({ type: 'made', nodes: f.children.length, into, many, preview })
     } catch (err) {

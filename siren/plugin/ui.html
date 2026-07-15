@@ -189,6 +189,19 @@ footer .sp{flex:1}
 <div class="scroll">
   <div id="stage"><svg id="art" viewBox="0 0 1000 1000" xmlns="http://www.w3.org/2000/svg"></svg></div>
 
+  <div class="modes" id="modeBar" style="margin:10px 0 2px">
+    <button id="mSurface" class="on">面 — これまで</button>
+    <button id="mScatter">点 — 自分で作る</button>
+  </div>
+  <style>
+    #secScatter{display:none}
+    body.scatter #secScatter{display:block}
+    body.scatter .imenu{display:none!important}
+    body.scatter .scroll > .sec:not(#secSeq):not(#secScatter){display:none!important}
+    body.scatter .scroll > details.sec{display:none!important}
+    #secScatter .partrow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+  </style>
+
   <div class="sec">
     <p class="lbl" id="lPre">Preset</p>
     <div class="chips" id="chips"></div>
@@ -330,6 +343,31 @@ footer .sp{flex:1}
       <input id="inkSw" class="sw" type="color" value="#ebebeb"></div>
     <div class="row"><label>accent</label><input id="hue" type="range" min="0" max="360" step="1" value="55"><span class="val mono"></span></div>
   </details>
+
+  <!-- 点 — the scatter mode. Only on screen when 「点 — 自分で作る」 is selected. -->
+  <div class="sec" id="secScatter">
+    <p class="lbl">Part — 部品（撒くもの）</p>
+    <div class="partrow">
+      <button id="spDot" class="on">●</button><button id="spRing">◎</button><button id="spSq">■</button><button id="spTick">▬</button><button id="spCross">＋</button><button id="spCustom" disabled title="SVG を読み込むと有効">自作</button>
+      <button id="sdice" style="margin-left:auto" title="別のseedで撒き直す">⟳</button>
+    </div>
+    <div class="row"><label>size</label><input id="s_size" type="range" min="4" max="48" step="1" value="16"><span class="val mono"></span></div>
+    <div class="row"><label>vary</label><input id="s_var" type="range" min="0" max="1" step="0.01" value="0.5"><span class="val mono"></span></div>
+    <div class="row"><label>自作</label><input id="s_file" type="file" accept=".svg,image/svg+xml" style="flex:1;min-width:0;font-size:10px;color:var(--dim)"></div>
+    <p class="lbl" style="margin:14px 0 6px">Scatter — 撒く</p>
+    <div class="row"><label>density</label><input id="s_dens" type="range" min="0" max="1" step="0.01" value="0.5"><span class="val mono"></span></div>
+    <div class="row"><label>spread</label><input id="s_spread" type="range" min="20" max="360" step="1" value="150"><span class="val mono"></span></div>
+    <div class="row"><label>decay</label><input id="s_decay" type="range" min="0" max="1" step="0.01" value="0.5"><span class="val mono"></span></div>
+    <p class="lbl" style="margin:14px 0 6px">Flow — 動く（流れ）</p>
+    <div class="row"><label>flow</label><input id="s_flow" type="range" min="0" max="1" step="0.01" value="0.45"><span class="val mono"></span></div>
+    <div class="row"><label>scale</label><input id="s_fscale" type="range" min="0.3" max="3" step="0.01" value="1.2"><span class="val mono"></span></div>
+    <p class="lbl" style="margin:14px 0 6px">Light — 色</p>
+    <div class="row"><label>glow</label><input id="s_glow" type="range" min="0" max="1.4" step="0.01" value="0.7"><span class="val mono"></span></div>
+    <div class="row"><label>hue A</label><input id="s_h1" type="range" min="0" max="360" step="1" value="262"><span class="val mono"></span></div>
+    <div class="row"><label>hue B</label><input id="s_h2" type="range" min="0" max="360" step="1" value="22"><span class="val mono"></span></div>
+    <div class="row"><label>accent</label><input id="s_hue" type="range" min="0" max="360" step="1" value="28"><span class="val mono"></span></div>
+    <p style="margin:12px 0 0;font-size:10px;color:var(--dim);line-height:1.6">リズム（周・Sequence）が撒く位置を決めます。自作 SVG を読み込めば、それを点として撒けます。<br><b style="color:var(--fg)">撒く</b>で Figma に配置（選択した図形の形にマスク）。</p>
+  </div>
 </div>
 
 <footer>
@@ -2308,4 +2346,224 @@ onmessage = e=>{
 
 buildMix(); applyLang(); paintSwatch(); paintInk(); paintSolo(); render()
 parent.postMessage({pluginMessage:{type:'target'}}, '*')
+</script>
+
+<!-- ============ 点 — scatter mode (self-contained, opt-in) ============
+     Additive only. SM=false by default, so the surface path above is untouched.
+     Reuses the classic script's globals: P, V, W, H, render, draw, payload,
+     rng, hueArr, mix, css, audible. -->
+<script>
+'use strict'
+const SNS = 'http://www.w3.org/2000/svg'
+let SM = false
+let sUserPart = null
+
+Object.assign(P, {
+  spart:'dot', spsize:16, svar:0.5,
+  sdens:0.5, sspread:150, sdecay:0.5,
+  sflow:0.45, sfscale:1.2,
+  sglow:0.7, sh1:262, sh2:22, shue:28,
+})
+
+const _clampv = (v,a,b)=>Math.max(a,Math.min(b,v))
+
+/* one mark, repeated */
+function makePartS(x,y,size,rot,fill,op){
+  const half=size/2, deg=rot*57.29578
+  let el
+  if(P.spart==='custom' && sUserPart){
+    const k=(size*1.6)/sUserPart.w
+    el=document.createElementNS(SNS,'g')
+    el.innerHTML=sUserPart.inner
+    el.setAttribute('fill',fill); el.setAttribute('color',fill)
+    el.setAttribute('transform',`translate(${x.toFixed(2)} ${y.toFixed(2)}) rotate(${deg.toFixed(1)}) scale(${k.toFixed(3)}) translate(${(-sUserPart.w/2).toFixed(1)} ${(-sUserPart.h/2).toFixed(1)})`)
+    if(op<0.99) el.setAttribute('opacity',op.toFixed(2))
+    return el
+  }
+  if(P.spart==='dot'){
+    el=document.createElementNS(SNS,'circle')
+    el.setAttribute('cx',x.toFixed(2)); el.setAttribute('cy',y.toFixed(2)); el.setAttribute('r',half.toFixed(2)); el.setAttribute('fill',fill)
+  } else if(P.spart==='ring'){
+    el=document.createElementNS(SNS,'circle')
+    el.setAttribute('cx',x.toFixed(2)); el.setAttribute('cy',y.toFixed(2)); el.setAttribute('r',half.toFixed(2))
+    el.setAttribute('fill','none'); el.setAttribute('stroke',fill); el.setAttribute('stroke-width',Math.max(1,size*0.16).toFixed(2))
+  } else if(P.spart==='sq'){
+    el=document.createElementNS(SNS,'rect')
+    el.setAttribute('x',(x-half).toFixed(2)); el.setAttribute('y',(y-half).toFixed(2))
+    el.setAttribute('width',size.toFixed(2)); el.setAttribute('height',size.toFixed(2)); el.setAttribute('fill',fill)
+    el.setAttribute('transform',`rotate(${deg.toFixed(1)} ${x.toFixed(2)} ${y.toFixed(2)})`)
+  } else if(P.spart==='tick'){
+    el=document.createElementNS(SNS,'rect')
+    const w=Math.max(1.4,size*0.95), h=Math.max(1.4,size*0.24)
+    el.setAttribute('x',(x-w/2).toFixed(2)); el.setAttribute('y',(y-h/2).toFixed(2))
+    el.setAttribute('width',w.toFixed(2)); el.setAttribute('height',h.toFixed(2)); el.setAttribute('rx',(h/2).toFixed(2)); el.setAttribute('fill',fill)
+    el.setAttribute('transform',`rotate(${deg.toFixed(1)} ${x.toFixed(2)} ${y.toFixed(2)})`)
+  } else {
+    el=document.createElementNS(SNS,'g')
+    const w=Math.max(1.4,size), h=Math.max(1.4,size*0.2)
+    for(const extra of [0,90]){
+      const b=document.createElementNS(SNS,'rect')
+      b.setAttribute('x',(x-w/2).toFixed(2)); b.setAttribute('y',(y-h/2).toFixed(2))
+      b.setAttribute('width',w.toFixed(2)); b.setAttribute('height',h.toFixed(2)); b.setAttribute('fill',fill)
+      b.setAttribute('transform',`rotate(${(deg+extra).toFixed(1)} ${x.toFixed(2)} ${y.toFixed(2)})`)
+      el.append(b)
+    }
+  }
+  if(op<0.99) el.setAttribute('opacity',op.toFixed(2))
+  return el
+}
+
+/* rhythm → emitters. The Sequence decides WHERE; the Mix levels weight each voice. */
+function scatterEmitters(R,W,H){
+  const cx=W/2, cy=H/2, S=Math.min(W,H)
+  const jit=a=>(R()*2-1)*a*P.hum
+  const kOn=(V.kick&&V.kick.on)||[], snOn=(V.snare&&V.snare.on)||[], htOn=(V.hat&&V.hat.on)||[], bsOn=(V.bass&&V.bass.on)||[]
+  const d=P.sdens
+  const wSn=_clampv(((V.snare&&V.snare.amt)||0)/2,0,1), wHt=_clampv((V.hat&&V.hat.amt)||0,0,1), wBs=_clampv((V.bass&&V.bass.amt)||0,0,1)
+  const okK=audible('kick'), okSn=audible('snare'), okHt=audible('hat'), okBs=audible('bass')
+  const em=[]
+  for(let bar=0;bar<P.bars;bar++){
+    for(let s=0;s<16;s++){
+      const ang=(s/16)*Math.PI*2-Math.PI/2+jit(0.05)
+      if(okK && kOn.includes(s)){ const r=S*0.5*0.30*(1+jit(0.10)); em.push({x:cx+Math.cos(ang)*r,y:cy+Math.sin(ang)*r,spread:P.sspread,count:Math.round(5+d*34),size:1,dir:null,v:0}) }
+      if(okSn && snOn.includes(s) && wSn>0){ const r=S*0.5*0.50; em.push({x:cx+Math.cos(ang)*r,y:cy+Math.sin(ang)*r,spread:P.sspread*0.6,count:Math.round((3+d*16)*wSn),size:0.82,dir:ang,v:1}) }
+      if(okHt && htOn.includes(s) && wHt>0){ const r=S*0.5*0.72; em.push({x:cx+Math.cos(ang)*r,y:cy+Math.sin(ang)*r,spread:P.sspread*0.85,count:Math.round((4+d*22)*wHt),size:0.5,dir:null,v:2}) }
+      if(okBs && bsOn.includes(s) && wBs>0){ const r=S*0.5*0.14; em.push({x:cx+Math.cos(ang)*r,y:cy+Math.sin(ang)*r,spread:P.sspread*1.7,count:Math.round((2+d*9)*wBs),size:1.8,dir:null,v:3}) }
+    }
+  }
+  return em
+}
+
+/* fill a given <svg> with the scatter — used by preview AND by the string sent to Figma,
+   so the two are identical by construction (same seed, same order). */
+function scatterBuild(svg,W,H){
+  while(svg.firstChild) svg.removeChild(svg.firstChild)
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`)
+  const S=Math.min(W,H)
+  const R=rng(P.seed*7919+13)
+  const defs=document.createElementNS(SNS,'defs')
+  defs.innerHTML=`<radialGradient id="shit"><stop offset="0" stop-color="#fff" stop-opacity="0.9"/><stop offset="0.5" stop-color="#fff" stop-opacity="0.16"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient><filter id="ssoft" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="${Math.round(S*0.05)}"/></filter>`
+  svg.append(defs)
+  const bg=document.createElementNS(SNS,'rect'); bg.setAttribute('width',W); bg.setAttribute('height',H); bg.setAttribute('fill','#0b0b0c'); svg.append(bg)
+
+  const em=scatterEmitters(R,W,H)
+  let total=0; for(const e of em) total+=e.count
+  const CAP=(P.spart==='custom')?520:1300
+  const scl=total>CAP?CAP/total:1
+
+  function flowAng(x,y){ const nx=x/W,ny=y/H,sc=P.sfscale
+    return (Math.sin(nx*6.2832*sc)+Math.cos(ny*6.2832*sc*1.27)+0.6*Math.sin((nx+ny)*6.2832*sc*0.7))*1.35 }
+  const fsteps=Math.round(P.sflow*16), fstep=P.sspread*0.05+7
+  function advect(x,y){ let a=flowAng(x,y); for(let k=0;k<fsteps;k++){ a=flowAng(x,y); x+=Math.cos(a)*fstep*P.sflow; y+=Math.sin(a)*fstep*P.sflow } return {x,y,ang:a} }
+
+  const cA=hueArr(P.sh1), cB=hueArr(P.sh2), accent=hueArr(P.shue), inkBase=225
+
+  if(P.sglow>0){
+    const gL=document.createElementNS(SNS,'g'); gL.setAttribute('filter','url(#ssoft)'); gL.setAttribute('opacity',_clampv(P.sglow*0.6,0,1).toFixed(2)); gL.setAttribute('style','mix-blend-mode:screen')
+    for(const e of em){ if(e.v===2) continue; const a=advect(e.x,e.y); const c=document.createElementNS(SNS,'circle'); c.setAttribute('cx',a.x.toFixed(1)); c.setAttribute('cy',a.y.toFixed(1)); c.setAttribute('r',(e.spread*0.9).toFixed(1)); c.setAttribute('fill','url(#shit)'); gL.append(c) }
+    svg.append(gL)
+  }
+
+  const gF=document.createElementNS(SNS,'g'); gF.setAttribute('id','scatter')
+  let n=0
+  for(const e of em){
+    const cnt=Math.max(1,Math.round(e.count*scl))
+    for(let i=0;i<cnt;i++){
+      let a=R()*Math.PI*2
+      let rr=e.spread*Math.pow(R(),0.5+P.sdecay*1.8)
+      if(e.dir!==null){ a=e.dir+(R()-0.5)*0.5; rr=e.spread*Math.pow(R(),0.35)*1.3 }
+      let px=e.x+Math.cos(a)*rr, py=e.y+Math.sin(a)*rr
+      const ad=advect(px,py); px=ad.x; py=ad.y
+      const intensity=_clampv(1-rr/(e.spread*1.05),0,1)
+      const size=Math.max(1.2,P.spsize*e.size*(0.5+intensity*0.9)*(1+(R()*2-1)*P.svar))
+      const t=_clampv(px/W*0.6+py/H*0.4,0,1)
+      const sampled=mix([inkBase,inkBase,inkBase],mix(cA,cB,t),1)
+      const lit=mix(sampled,[255,255,255],intensity*0.5*P.sglow)
+      const fill=css(intensity>0.82?mix(lit,accent,0.6):lit)
+      let op=_clampv(0.22+intensity*0.78,0,1); if(e.v===2) op*=0.7
+      gF.append(makePartS(px,py,size,ad.ang,fill,op)); n++
+    }
+  }
+  svg.append(gF)
+  return n
+}
+
+/* preview into #art */
+function drawScatter(){
+  const svg=document.getElementById('art')
+  const stage=document.getElementById('stage')
+  const availW=Math.max(120, stage.clientWidth-14)
+  const k0=Math.min(availW/W, 236/H)
+  svg.style.width=Math.round(W*k0)+'px'; svg.style.height=Math.round(H*k0)+'px'
+  const n=scatterBuild(svg,W,H)
+  const cEl=document.getElementById('count'); cEl.textContent=n+' 点'; cEl.className='mono'
+}
+
+/* the string handed to code.js — same builder, fresh <svg>, so preview === result */
+function scatterSVGString(){
+  const tmp=document.createElementNS(SNS,'svg')
+  tmp.setAttribute('xmlns',SNS); tmp.setAttribute('width',W); tmp.setAttribute('height',H)
+  scatterBuild(tmp,W,H)
+  return new XMLSerializer().serializeToString(tmp)
+}
+
+/* ---- wire the panel ---- */
+function sbind(id,key,fmt){
+  const el=document.getElementById(id); if(!el) return
+  const out=el.parentElement.querySelector('.val')
+  const show=()=>{ if(out) out.textContent=fmt(P[key]) }
+  el.oninput=()=>{ P[key]=+el.value; show(); if(SM) render() }
+  show()
+}
+const _spc=v=>Math.round(v*100)+'%'
+sbind('s_size','spsize',v=>v); sbind('s_var','svar',_spc)
+sbind('s_dens','sdens',_spc); sbind('s_spread','sspread',v=>v); sbind('s_decay','sdecay',_spc)
+sbind('s_flow','sflow',_spc); sbind('s_fscale','sfscale',v=>(+v).toFixed(1))
+sbind('s_glow','sglow',_spc)
+sbind('s_h1','sh1',v=>v+'°'); sbind('s_h2','sh2',v=>v+'°'); sbind('s_hue','shue',v=>v+'°')
+
+const SPARTS=[['spDot','dot'],['spRing','ring'],['spSq','sq'],['spTick','tick'],['spCross','cross'],['spCustom','custom']]
+for(const [id,val] of SPARTS){
+  const b=document.getElementById(id); if(!b) continue
+  b.onclick=()=>{ if(val==='custom'&&!sUserPart) return
+    P.spart=val
+    for(const [i2] of SPARTS){ const e2=document.getElementById(i2); if(e2) e2.classList.toggle('on',i2===id) }
+    if(SM) render() }
+}
+document.getElementById('s_file').onchange=e=>{
+  const f=e.target.files[0]; if(!f) return
+  const rd=new FileReader()
+  rd.onload=()=>{
+    const doc=new DOMParser().parseFromString(rd.result,'image/svg+xml')
+    const s=doc.querySelector('svg')
+    if(!s||doc.querySelector('parsererror')) return
+    let vb=s.getAttribute('viewBox'), w, h
+    if(vb){ const p=vb.split(/[\s,]+/).map(Number); w=p[2]; h=p[3] }
+    else { w=parseFloat(s.getAttribute('width'))||100; h=parseFloat(s.getAttribute('height'))||100 }
+    sUserPart={ w:w||100, h:h||100, inner:s.innerHTML }
+    const b=document.getElementById('spCustom'); b.disabled=false; b.textContent='自作 ✓'; b.click()
+  }
+  rd.readAsText(f)
+}
+document.getElementById('sdice').onclick=()=>{ P.seed=1+Math.floor(Math.random()*998); if(SM) render() }
+
+/* ---- mode toggle: hook draw() + payload() without touching the classic code ---- */
+const _origDraw=draw
+draw=function(){ if(SM) return drawScatter(); return _origDraw() }
+const _origPayload=payload
+payload=function(){ const p=_origPayload(); if(SM){ p.mode='scatter'; try{ p.svg=scatterSVGString() }catch(e){ p.svg='' } } return p }
+
+const mSurface=document.getElementById('mSurface'), mScatter=document.getElementById('mScatter')
+function setSM(on){
+  SM=on
+  document.body.classList.toggle('scatter',on)
+  mSurface.classList.toggle('on',!on); mScatter.classList.toggle('on',on)
+  const mk=document.getElementById('make'); if(mk) mk.textContent = on ? '撒く' : '鳴らす'
+  // 連番 / GIF are surface-only for now
+  const fr=document.getElementById('frames'), gf=document.getElementById('gif')
+  if(fr) fr.disabled=on; if(gf) gf.disabled=on
+  render()
+}
+mSurface.onclick=()=>setSM(false)
+mScatter.onclick=()=>setSM(true)
 </script>
