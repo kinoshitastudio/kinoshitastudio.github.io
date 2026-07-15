@@ -795,6 +795,19 @@ http.createServer((req, res) => {
     return;
   }
 
+  // 保存先フォルダをmacネイティブのダイアログ(choose folder)で選ぶ→絶対パスを返す
+  if (u.pathname === "/pick-folder") {
+    res.setHeader("Content-Type", "application/json");
+    if (process.platform !== "darwin") { return res.end(JSON.stringify({ ok: false, error: "フォルダ選択はmacOSのみ対応（手入力してください）" })); }
+    let child; try { child = spawn("osascript", ["-e", 'POSIX path of (choose folder with prompt "会話の保存先フォルダを選ぶ")'], { stdio: ["ignore", "pipe", "pipe"] }); } catch (e) { return res.end(JSON.stringify({ ok: false, error: String(e && e.message ? e.message : e) })); }
+    let out = "", err = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (err += d));
+    child.on("error", (e) => res.end(JSON.stringify({ ok: false, error: String(e && e.message ? e.message : e) })));
+    child.on("close", (code) => { const p = out.trim(); if (code === 0 && p) { res.end(JSON.stringify({ ok: true, path: p })); } else { res.end(JSON.stringify({ ok: false, error: "キャンセルされました" })); } });
+    return;
+  }
+
   // 静的配信（library.html / library/*.json など）。/ は library.html
   const safe = decodeURIComponent(u.pathname).replace(/\.\.+/g, "");
   const fp = path.join(__dirname, safe === "/" ? "library.html" : safe);
