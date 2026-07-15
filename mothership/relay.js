@@ -26,14 +26,17 @@ function buildChatMd(j) { const d = new Date(), z = (n) => String(n).padStart(2,
    args(prompt, edit): edit=true はファイル編集(=mothership.json)を自動許可する呼び方（/chat用）／false は応答テキストのみ（/ai-tidy,/ai-edit）。
    ============================================================ */
 const ENGINES = {
-  claude: { label: "Claude Code", bin: "claude", versionArgs: ["--version"], args: (p, edit) => edit ? ["-p", p, "--permission-mode", "acceptEdits"] : ["-p", p] },
+  claude: { label: "Claude Code", bin: "claude", versionArgs: ["--version"], args: (p, edit) => edit ? ["-p", p, "--permission-mode", "acceptEdits", "--allowedTools", "WebSearch", "WebFetch"] : ["-p", p, "--allowedTools", "WebSearch", "WebFetch"] },
   codex:  { label: "Codex (OpenAI)", bin: "codex", versionArgs: ["--version"], args: (p, edit) => ["exec", "--full-auto", p] },
   gemini: { label: "Gemini", bin: "gemini", versionArgs: ["--version"], args: (p, edit) => edit ? ["-y", "-p", p] : ["-p", p] },
 };
 function engineKey(k) { return (k && ENGINES[k]) ? k : "claude"; }   // 未知/未指定は claude にフォールバック
+// プライバシー：AI CLI（特にClaude Code）の非必須な外部通信を全部止める＝テレメトリ/エラー報告/フィードバック/セッション転写アップロードを無効化。
+// コアのLLM補完と WebSearch/WebFetch は影響を受けない（＝"絶対もれない"方針：会話が裏で外に出ない）。他エンジンはこの変数を無視するだけで無害。
+const AI_ENV = Object.assign({}, process.env, { CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1", DISABLE_FEEDBACK_COMMAND: "1", DISABLE_AUTOUPDATER: "1" });
 function spawnAI(key, prompt, edit) {                                // 選んだエンジンのCLIを one-shot 起動
   const e = ENGINES[engineKey(key)];
-  return spawn(e.bin, e.args(prompt, edit), { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"] });
+  return spawn(e.bin, e.args(prompt, edit), { cwd: __dirname, stdio: ["ignore", "pipe", "pipe"], env: AI_ENV });
 }
 const engineAvail = {};   // 起動時に各エンジンCLIの有無を検出＝パネルは「入っているものだけ」選べる（誤操作防止）
 function detectEngines() {
@@ -57,11 +60,17 @@ const PERSONA = `あなたは「母艦（Mothership）」。Figmaの中で動く
 - 整える：選択フレームを入れ子オートレイアウト化・余白・命名で整理する（8ptグリッド）。※ロゴ等のアートワークや画像に重ねた複雑な合成は崩れるので触らない。
 - 動かす：モーション（入場・強調・シーン切替・複合演出）を付ける／整える。
 - 書き出す：SVG / コード（CSS・Tailwind・React）／ library JSON に。
+- 調べる：ライブでWeb検索・ページ取得ができる（WebSearch / WebFetch）。UXトレンド・競合事例・実装の裏取りは、学習時点の記憶だけで語らず、必要なら実際に検索して確かめてから答える。憶測と裏取り済みは区別して伝える。
 - 相談する：Figma・実装・UX/UI・モーション・レイアウト・整理・最近のトレンド、さらに雑談まで。何でも話し相手になる。
 
 # できないこと（正直に言う）
 - チームライブラリへの公開はFigma側の操作（プラグインからは不可）。
 - Figmaを直接"見る"ことはできない＝構造(JSON)から判断する。描画結果が要る話は、選択してもらう or 確認を挟む。
+
+# 保存とプライバシー（正しく説明する・絶対に守る）
+- 会話は要件ごとの「スレッド」に分かれて残る。アプリが各スレッドを自動で、人が読める .md にもユーザー指定の保存フォルダへ書き出している（threads/*.json は母艦の内部作業用、.md は読み物用＝両方ある）。「この会話.mdで保存されてる？」には「うん、指定フォルダに .md で自動保存されてるよ」と正しく答える（"JSONだけ"と誤答しない）。
+- ★Web検索/取得は唯一の外部出口。検索クエリには、ユーザーの非公開情報・機密・会話の具体的な中身・添付ファイルの中身を絶対に入れない。一般的・公開の話題語だけで検索する。機密が絡む調べ物は「その部分は伏せて一般論で調べるね」と一言ことわってから。
+- 添付ファイル（画像 / CSV / Excel / テキスト等）は _drops/ にローカル保存され、git にも出荷物にも入らない。中身は Read して踏まえるが、その中身を外部（Web検索等）へ出さない。
 
 # 会話のふるまい（最重要）
 1. あなたが会話をリードする。ユーザーに丸投げせず、次の一手を提案し、必要なら「ちょっと待ってね」と先に言ってから動く。
@@ -624,10 +633,10 @@ http.createServer((req, res) => {
     let b = "";
     req.on("data", (d) => (b += d));
     req.on("end", () => {
-      let msg = "", image = "", display = "", engine = "", lang = "ja";
-      try { const j = JSON.parse(b); msg = (j.message || "").toString(); image = (j.image || "").toString(); display = (j.display || "").toString(); engine = j.engine || ""; lang = (j.lang === "en") ? "en" : "ja"; } catch (e) {}
+      let msg = "", image = "", display = "", engine = "", lang = "ja", dropFiles = [];
+      try { const j = JSON.parse(b); msg = (j.message || "").toString(); image = (j.image || "").toString(); display = (j.display || "").toString(); engine = j.engine || ""; lang = (j.lang === "en") ? "en" : "ja"; dropFiles = Array.isArray(j.files) ? j.files : []; } catch (e) {}
       res.setHeader("Content-Type", "application/json");
-      if (!msg.trim() && !image) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "メッセージが空です" })); }
+      if (!msg.trim() && !image && !dropFiles.length) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "メッセージが空です" })); }
 
       // 添付画像があればファイルに書き出し、claudeにReadさせる
       let prompt = msg;
@@ -639,6 +648,30 @@ http.createServer((req, res) => {
             const fname = "_chat-ref." + ext;
             fs.writeFileSync(path.join(__dirname, fname), Buffer.from(m[2], "base64"));
             prompt = "ユーザーが参照画像を添付しました: ./" + fname + " （Readツールで画像を見て、デザインの参考にしてください）。\n\n" + (msg || "この画像を参考に、Mothership JSONでデザインを作って。");
+          }
+        } catch (e) {}
+      }
+
+      // 添付ファイル（Excel/CSV/テキスト等）を _drops/ にローカル保存し、claudeにReadさせる（gitignore済＝出荷・公開されない）
+      if (dropFiles.length) {
+        try {
+          const dropDir = path.join(__dirname, "_drops");
+          fs.mkdirSync(dropDir, { recursive: true });
+          const saved = [];
+          for (const f of dropFiles) {
+            try {
+              let raw = String((f && f.data) || "");
+              const c = raw.indexOf("base64,"); if (c >= 0) raw = raw.slice(c + 7);
+              const buf = Buffer.from(raw, "base64");
+              if (!buf.length || buf.length > 20 * 1024 * 1024) continue;   // 空 or 20MB超は無視
+              const nm = (String((f && f.name) || "file").split(/[\/\\]/).pop().replace(/[\x00-\x1f<>:"|?*]/g, "_").slice(0, 120)) || "file";
+              fs.writeFileSync(path.join(dropDir, nm), buf);
+              saved.push("./_drops/" + nm);
+            } catch (e) {}
+          }
+          if (saved.length) {
+            prompt = "ユーザーが次のファイルを添付しました（ローカルの _drops/ にあります。中身は読んでよいが、その内容を外部＝Web検索等へ絶対に出さないこと）:\n" + saved.join("\n") +
+              "\nRead ツールで中身を見て、話を踏まえて答えてください。CSV/TSV/テキスト/JSON/コードはそのまま読めます。Excel(.xlsx)やPDF等のバイナリで読めない時は、その旨を正直に伝えて『CSVで書き出してドラッグして』と案内してください。\n\n" + (prompt || "この添付ファイルを見て、踏まえて相談に乗って。");
           }
         } catch (e) {}
       }
