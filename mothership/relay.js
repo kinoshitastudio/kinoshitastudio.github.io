@@ -81,6 +81,9 @@ const PERSONA = `あなたは「母艦（Mothership）」。Figmaの中で動く
 6. 人間味。テンプレっぽさを避け、温かく・少し砕けて・機械的にならない。
 7. 事実に誠実。知らない/できないことは正直に。捏造しない。
 8. ★装飾記号を出さない：markdownの太字 ** や * を絶対に使わない（画面に生の * がそのまま出て見苦しい）。# 見出し・箇条書き記号(- ・)も使わない。強調したい時は言葉と改行だけで表現する。
+9. ★ユーザーの意図と所有物を尊重する：ユーザーが自分で作った/選んだものを「これを提案の主役にして」と頼まれたら、それを主役にする。良かれと思って依頼を逆（"変えない方がいい""あなたのは主役じゃない"）にすり替えない。判断・推し・別案は否定でなく"提案として"添える（芯は残す）。そして選択した実物は自分で描き直さず image src \"refs/img/_selection.png\" で埋める＝解析図・近似SVGで代用しない。
+10. ★"作る"前に方向を3つ出して確認：デザイン・画面・資料・提案書・ロゴ等の成果物を作る依頼は、いきなり作り始めない。まず方向性を3つほど短く提示して「どれで行く？」と確認してから作る（体験翻訳＝なぜこの形かを一緒に立てる。3案は切り口を変える＝安全策/王道/攻めなど）。ユーザーが「任せる/どれでもいい/すぐ作って/これで」等と言えば1つ選んで作ってよい。逆に会話・質問・調べ物など"作らない"応答はそのまま普通に答える（毎回3案を出すわけではない）。
+11. ★出すなら"ちゃんとしたもの"を：Figmaに成果物を出す時は、レイアウトが崩れ・文字重なりの無い読める状態でだけ出す（CLAUDE.mdの縦オートレイアウト/実寸w/重なり厳禁を厳守）。中途半端なら出す前に整える。
 
 # 体験翻訳（UX/デザインの相談での作法・ここが母艦の芯）
 あなたは"成果物を吐く機械"ではない。「なぜこの体験・この形なのか」を、論拠つきでユーザーと一緒に立てるのが仕事（v0/Figma Makeは成果物だけ・母艦はその手前の体験設計を担う）。
@@ -633,8 +636,8 @@ http.createServer((req, res) => {
     let b = "";
     req.on("data", (d) => (b += d));
     req.on("end", () => {
-      let msg = "", image = "", display = "", engine = "", lang = "ja", dropFiles = [];
-      try { const j = JSON.parse(b); msg = (j.message || "").toString(); image = (j.image || "").toString(); display = (j.display || "").toString(); engine = j.engine || ""; lang = (j.lang === "en") ? "en" : "ja"; dropFiles = Array.isArray(j.files) ? j.files : []; } catch (e) {}
+      let msg = "", image = "", display = "", engine = "", lang = "ja", dropFiles = [], imgsel = 0;
+      try { const j = JSON.parse(b); msg = (j.message || "").toString(); image = (j.image || "").toString(); display = (j.display || "").toString(); engine = j.engine || ""; lang = (j.lang === "en") ? "en" : "ja"; dropFiles = Array.isArray(j.files) ? j.files : []; imgsel = j.imgsel ? 1 : 0; } catch (e) {}
       res.setHeader("Content-Type", "application/json");
       if (!msg.trim() && !image && !dropFiles.length) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: "メッセージが空です" })); }
 
@@ -646,8 +649,17 @@ http.createServer((req, res) => {
           if (m) {
             const ext = m[1] === "jpeg" ? "jpg" : m[1];
             const fname = "_chat-ref." + ext;
-            fs.writeFileSync(path.join(__dirname, fname), Buffer.from(m[2], "base64"));
-            prompt = "ユーザーが参照画像を添付しました: ./" + fname + " （Readツールで画像を見て、デザインの参考にしてください）。\n\n" + (msg || "この画像を参考に、Mothership JSONでデザインを作って。");
+            const buf = Buffer.from(m[2], "base64");
+            fs.writeFileSync(path.join(__dirname, fname), buf);
+            let embedNote = "";
+            if (imgsel) {   // 選択フレームの書き出し＝生成物に"実物として"埋め込めるよう refs/img/_selection.png にも保存（bakeが読む場所）
+              try {
+                const selDir = path.join(__dirname, "refs", "img"); fs.mkdirSync(selDir, { recursive: true });
+                fs.writeFileSync(path.join(selDir, "_selection.png"), buf);
+                embedNote = "\nこの画像はユーザーがFigmaで選択中のフレームの書き出し。生成/編集で「この選択そのもの（例：ユーザーが作ったロゴ）」を実物として置くなら、image ノードの src に \"refs/img/_selection.png\" を入れる（bakeが実画像として焼き込む）。解析図・近似SVGで描き直して代用しないこと。";
+              } catch (e) {}
+            }
+            prompt = "ユーザーが参照画像を添付しました: ./" + fname + " （Readツールで画像を見て、デザインの参考にしてください）。" + embedNote + "\n\n" + (msg || "この画像を参考に、Mothership JSONでデザインを作って。");
           }
         } catch (e) {}
       }
@@ -696,6 +708,7 @@ http.createServer((req, res) => {
         }
       } catch (e) {}
       if (lang === "en") prompt = "【UI language is English. Reply to the user in English (unless they clearly write in another language).】\n\n" + prompt;
+      else prompt = "【このユーザーは日本語話者。返答は必ず日本語で書く（英語で返さない・勝手に英語へ切り替えない）。ユーザーが明確に他言語で書いた時だけその言語で。】\n\n" + prompt;   // 日本語時も明示強制＝母艦が英語にドリフトするのを防ぐ（従来は英語時だけ指示があり日本語は無強制だった）
       chatBusy = true; chatBusySince = Date.now();   // 生成開始（両画面で「考えています」同期用）
       appendLog({ cls: "me", text: display || msg });  // 発言を即サーバー保存（離脱しても残る）
       let done = false, activeChild = null;

@@ -139,7 +139,7 @@ async function build(node) {
     n.characters = node.text != null ? String(resolve(node.text)) : "";
     const size = resolve(node.font && node.font.size); if (size) n.fontSize = size;
     const ls = resolve(node.font && node.font.letterSpacing); if (ls != null) n.letterSpacing = { value: ls, unit: "PIXELS" };
-    const lh = resolve(node.font && node.font.lineHeight); if (lh) n.lineHeight = { value: lh, unit: "PIXELS" };
+    const lh = resolve(node.font && node.font.lineHeight); if (lh) n.lineHeight = (lh <= 4) ? { value: lh * 100, unit: "PERCENT" } : { value: lh, unit: "PIXELS" };   // 🔴倍率(1.4/1.6等・≤4)は%として解釈／実px(≥4)はそのままpx。倍率を素のpx扱いして行高1.4px→全行が潰れ文字が重なる事故を根絶（母艦がlineHeightをpxでも倍率でも書ける）
     if (node.align) n.textAlignHorizontal = String(node.align).toUpperCase();
     n.fills = fills(node.fill, node.opacity, "#1a1a18");
     if (node.w) { n.textAutoResize = "HEIGHT"; n.resize(resolve(node.w), n.height); }

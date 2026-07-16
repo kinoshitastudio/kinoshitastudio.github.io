@@ -43,15 +43,29 @@
 
 ### ノード種別 (`type`)
 - `frame` … 箱。`layout`があればオートレイアウト、無ければ子は`x/y`絶対配置。
-- `text` … `text`,`align`(left/center/right),`font`:{family,size,weight,lineHeight,letterSpacing},`fill`
+- `text` … `text`,`align`(left/center/right),`font`:{family,size,weight,lineHeight,letterSpacing},`fill`（`lineHeight`は実px推奨＝見出し41/本文21等。倍率1.4等でもcode.jsが%に解釈するのでどちらでも崩れない）
 - `rect` / `ellipse` … `w,h,radius,fill,stroke,strokeWidth,shadow`
 - `line` … 線
-- `image` … `src`(空可／**URLや画像パスを入れると relay が /pull で自動取り込み＝実画像になる**),`scaleMode`("FILL"/"FIT")。素のURL/原寸で書けばよい（DL・base64化はrelayが自動）。
+- `image` … `src`(空可／**URLや画像パスを入れると relay が /pull で自動取り込み＝実画像になる**),`scaleMode`("FILL"/"FIT")。素のURL/原寸で書けばよい（DL・base64化はrelayが自動）。**★ユーザーがFigmaで選択中のフレーム（＝直近の添付画像 _chat-ref）を生成物に"実物として"入れたい時は、src に `refs/img/_selection.png` を入れる**（relayが選択の書き出しをそこに保存済み・bakeが実画像として焼き込む）。この時は解析図やSVGで描き直して代用しない＝ユーザーの実物を置く。
 - `svg` … ベクター（ロゴ・アイコン・イラスト）。`{ "type":"svg", "name":"Logo", "w":..,"h":.., "svg":"<svg ...>...</svg>" }` でSVGマークアップを直接埋め込む → Figmaにネイティブのベクターとして出る。ロゴ等はこれを使う（ファイル書き出しは禁止）。
 
 ### 配置
 - オートレイアウト内: 子に `stretch:true`(交差軸いっぱい) / `grow:true`(主軸伸長)。
 - 絶対配置: 子に `x`,`y`（親frameにlayoutが無いとき）。
+- ★★★ 重なり厳禁（品質の生命線）＝文書・資料・提案書・ページ・カード集は**必ず縦オートレイアウト**（`layout:{mode:"vertical",gap:..,padding:..}`）で上から積む。見出し・本文・ステップ・数字カードを**絶対配置(x/y)で並べない**＝座標が被ってテキストが重なる事故の主因。各セクションも中身も入れ子オートレイアウトにし、間隔は必ず `gap` で取る（要素を近づけるのに座標を手で寄せない）。**テキストにも実寸 `w`（親幅−padding）を入れて折り返させる**（w無しの長文は横に溢れて隣要素と重なる）。**1つの位置に2つのテキスト/要素を置かない**。区切り線・帯・ハッチ等の装飾は本文の"上に重ねず"、オートレイアウトの子として行間に挟む（重ねると下の文字が透けて二重に見える）。出すなら必ず"重なりゼロで読める"状態にしてから出す。
+- ★崩れない資料の骨格テンプレ（これを守れば重ならない・全frameにw／横カラムは合計=親幅−padding／textにもw）:
+```jsonc
+{"type":"frame","name":"提案書","w":1080,"fill":"#fff","layout":{"mode":"vertical","gap":32,"padding":64,"align":"stretch"},"children":[
+  {"type":"text","w":952,"text":"見出し","font":{"size":40,"weight":800}},
+  {"type":"text","w":952,"text":"リード文。ここは必ずwを入れて折り返す。","font":{"size":16}},
+  {"type":"frame","name":"3カラム","w":952,"layout":{"mode":"horizontal","gap":16,"align":"stretch"},"children":[
+    {"type":"frame","w":306,"fill":"#f5f5f7","radius":12,"layout":{"mode":"vertical","gap":8,"padding":20},"children":[{"type":"text","w":266,"text":"01"},{"type":"text","w":266,"text":"本文…"}]},
+    {"type":"frame","w":306,"fill":"#f5f5f7","radius":12,"layout":{"mode":"vertical","gap":8,"padding":20},"children":[{"type":"text","w":266,"text":"02"},{"type":"text","w":266,"text":"本文…"}]},
+    {"type":"frame","w":306,"fill":"#f5f5f7","radius":12,"layout":{"mode":"vertical","gap":8,"padding":20},"children":[{"type":"text","w":266,"text":"03"},{"type":"text","w":266,"text":"本文…"}]}
+  ]}
+]}
+```
+  ＝縦に積む→横カラムは 306×3 + gap16×2 = 952（=1080−padding64×2）。区切り線を入れるなら children の間に `{"type":"rect","w":952,"h":1,"fill":"#eee"}` を挟む（本文の上に重ねない）。全部オートレイアウトなので座標指定ゼロ＝重ならない。
 
 ### ★★ Figma忠実度＝すべての frame に実寸 `w` を入れる（最重要・編集プレビューと必ず一致させる）
 ブラウザのプレビュー(flexbox)とFigma(オートレイアウト)は**別エンジン**。`grow`/`stretch`/hug 任せだと、プレビューでは綺麗でも **Figmaで潰れる・はみ出る・文字が「Goo…」のように切れる**事故が起きる（実際に多発）。これを根絶するため、**原則すべての frame に実寸の `w` を入れる**（必要なら `h` も）。サイズを明示すれば Figma は全部 FIXED で描く＝**プレビューと同じ見た目が確実に出る**。
