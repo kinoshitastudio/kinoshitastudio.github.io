@@ -916,6 +916,26 @@ http.createServer((req, res) => {
     return;
   }
 
+  // 🖼完成フレームの画像をチャットに貼る＝プラグイン(desktop)が書き出したPNGを results/ に保存し、
+  // チャットログに画像エントリを追加＝全クライアント(iPhone等)が /chat-log 同期で見られる（ログには軽いパスだけ載せる）
+  if (u.pathname === "/result-img" && req.method === "POST") {
+    let b = ""; req.on("data", (d) => (b += d));
+    req.on("end", () => {
+      res.setHeader("Content-Type", "application/json");
+      try {
+        const j = JSON.parse(b); const dataURL = String(j.img || ""); const name = String(j.name || "デザイン");
+        const mm = dataURL.match(/^data:image\/(\w+);base64,(.*)$/);
+        if (!mm) { res.writeHead(400); return res.end('{"ok":false}'); }
+        const dir = path.join(__dirname, "results"); fs.mkdirSync(dir, { recursive: true });
+        const fname = "r" + Date.now() + ".png";
+        fs.writeFileSync(path.join(dir, fname), Buffer.from(mm[2], "base64"));
+        appendLog({ cls: "ms", text: "🎨 「" + name + "」を作ったよ（画像タップで拡大）", img: "/results/" + fname, result: 1 });
+        res.end(JSON.stringify({ ok: true, path: "/results/" + fname }));
+      } catch (e) { res.writeHead(400); res.end('{"ok":false}'); }
+    });
+    return;
+  }
+
   // 静的配信（library.html / library/*.json など）。/ は library.html
   const safe = decodeURIComponent(u.pathname).replace(/\.\.+/g, "");
   const fp = path.join(__dirname, safe === "/" ? "library.html" : safe);

@@ -302,6 +302,16 @@ async function generate(jsonStr, zoom) {
     // 生成・更新のたびに結果へカメラを寄せる（ライブラリ送信／詰め書き出しのどちらでも追える）
     figma.viewport.scrollAndZoomIntoView(made);
     figma.ui.postMessage({ type: "gen-done", count: made.length, ms: Date.now() - t0 });
+    // 🖼完成したフレームを画像化してUIへ（→relay→チャットに貼付＝iPhone等Figmaを見れない端末でも結果が見える）
+    try {
+      for (const nd of made.slice(0, 3)) {
+        if (!nd || typeof nd.exportAsync !== "function") continue;
+        const longest = Math.max(nd.width || 0, nd.height || 0) || 1;
+        let scale = 1000 / longest; if (scale > 1.5) scale = 1.5; if (scale < 0.15) scale = 0.15;   // 長辺~1000pxに正規化
+        const bytes = await nd.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: scale } });
+        figma.ui.postMessage({ type: "result-img", name: String(nd.name || "デザイン"), img: "data:image/png;base64," + figma.base64Encode(bytes) });
+      }
+    } catch (e) {}
   } catch (e) {
     figma.ui.postMessage({ type: "gen-done", count: 0, ms: Date.now() - t0, error: String(e && e.message ? e.message : e) });
     figma.notify("Build error: " + (e && e.message ? e.message : e));

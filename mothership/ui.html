@@ -8,7 +8,9 @@
     background:var(--blue);
     background-image:linear-gradient(rgba(255,255,255,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.08) 1px,transparent 1px);
     background-size:30px 30px}
-  .app{height:100vh;height:100dvh;display:flex;flex-direction:column;width:100%}   /* dvh=モバイルのURLバー分を除いた実高さ（vhはバー裏まで含み下部が隠れる）。Figma内はdvh=フル高さで無害 */
+  .app{height:100vh;height:100dvh;display:flex;flex-direction:column;width:100%;position:relative}   /* dvh=モバイルのURLバー分を除いた実高さ（vhはバー裏まで含み下部が隠れる）。Figma内はdvh=フル高さで無害。position:relativeは↓最新ボタンの基準 */
+  #scrollBtn{display:none;position:absolute;right:14px;bottom:92px;z-index:60;width:36px;height:36px;border-radius:50%;background:var(--ink);color:var(--mint);border:2.5px solid var(--paper);font-size:17px;font-weight:900;line-height:1;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 3px 11px rgba(0,0,0,.32)}   /* 最新チャット下部へジャンプ（上にスクロールした時だけ表示） */
+  #scrollBtn.on{display:flex}
   /* header */
   header{display:flex;align-items:center;gap:10px;padding:12px 12px 8px}
   .logo{display:flex;align-items:center;gap:8px}
@@ -157,6 +159,9 @@
   .attach.on{display:flex}
   .thumb{position:relative;width:44px;height:44px;border:2.5px solid var(--ink);background-size:cover;background-position:center;flex:0 0 auto}
   .thumb .x{position:absolute;top:-8px;right:-8px;width:18px;height:18px;background:var(--ink);color:var(--mint);font-weight:900;font-size:11px;display:flex;align-items:center;justify-content:center;cursor:pointer;border:2px solid var(--paper)}
+  .cimg{display:block;max-width:100%;margin-top:6px;border:2px solid var(--ink);border-radius:6px;cursor:zoom-in}   /* チャット内の画像（送信画像・完成デザイン）＝タップで拡大 */
+  #lightbox{display:none;position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.86);align-items:center;justify-content:center;padding:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom));cursor:zoom-out}
+  #lightbox img{max-width:100%;max-height:100%;object-fit:contain;border-radius:4px}
   .fchip{display:inline-flex;align-items:center;gap:6px;max-width:180px;padding:4px 8px;border:2px solid var(--ink);background:color-mix(in srgb,var(--ink) 8%,transparent);font-size:11px;font-weight:700;flex:0 0 auto}
   .fchip .fn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .fchip .fx{cursor:pointer;font-weight:900;color:var(--ink);opacity:.7}
@@ -208,6 +213,7 @@
     </div>
   </div>
   <div class="convo" id="convo"></div>
+  <button id="scrollBtn" title="最新へ">↓</button>
   <div class="composer">
     <div class="selbar" id="selbar"></div>
     <div class="engs" id="engs">
@@ -315,10 +321,15 @@ requestAnimationFrame(loop);
 var convo=document.getElementById('convo'),app=document.getElementById('app'),inp=document.getElementById('inp');
 function esc(s){return String(s).replace(/[&<>]/g,function(m){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[m];});}
 function scrollEnd(){convo.scrollTop=convo.scrollHeight;}
+var scrollBtn=document.getElementById('scrollBtn');   // ↓最新へ：上にスクロールした時だけ出る／押すと最新の下部へ
+if(scrollBtn){scrollBtn.onclick=function(){try{convo.scrollTo({top:convo.scrollHeight,behavior:'smooth'});}catch(e){scrollEnd();}};convo.addEventListener('scroll',function(){var atBottom=(convo.scrollHeight-convo.scrollTop-convo.clientHeight)<80;scrollBtn.classList.toggle('on',!atBottom);});}   // 押すと最新へ"スルスル"スムーズスクロール（一気に飛ばない）。新着メッセージ時のscrollEndは従来どおり即時
+function imgSrc(u){return (u&&String(u).charAt(0)==='/')?(RELAY+u):u;}   // relay相対パス(/results/..)はRELAYを前置＝Figma内はlocalhost/モバイルはIP。dataURL・httpはそのまま
+function chatImg(src){var im=document.createElement('img');im.className='cimg';im.src=imgSrc(src);im.title='タップで拡大';im.onclick=function(){openLightbox(imgSrc(src));};return im;}
+function openLightbox(src){var lb=document.getElementById('lightbox');if(!lb){lb=document.createElement('div');lb.id='lightbox';lb.appendChild(document.createElement('img'));lb.onclick=function(){lb.style.display='none';};document.body.appendChild(lb);}lb.querySelector('img').src=src;lb.style.display='flex';}
 function bubble(cls,text,img){
   var m=document.createElement('div');
-  if(cls==='me'){m.className='me';if(img){var im=document.createElement('img');im.src=img;m.appendChild(im);}if(text){var tx=document.createElement('div');tx.textContent=text;m.appendChild(tx);}}
-  else if(cls==='ms'){m.className='reply';m.innerHTML='<div class="rh">◎ 母艦</div><div class="rt">'+esc(String(text).replace(/\*/g,''))+'</div>';}
+  if(cls==='me'){m.className='me';if(img){m.appendChild(chatImg(img));}if(text){var tx=document.createElement('div');tx.textContent=text;m.appendChild(tx);}}
+  else if(cls==='ms'){m.className='reply';var rh=document.createElement('div');rh.className='rh';rh.textContent='◎ 母艦';m.appendChild(rh);if(text){var rt=document.createElement('div');rt.className='rt';rt.textContent=String(text).replace(/\*/g,'');m.appendChild(rt);}if(img){m.appendChild(chatImg(img));}}   // ms吹き出しにも画像＝完成デザインを貼れる
   else if(cls==='err'){m.className='card err';m.innerHTML='<div class="top">⚠ 失敗</div><div class="bd">'+esc(text)+'</div>';}
   convo.appendChild(m);scrollEnd();return m;
 }
@@ -669,9 +680,11 @@ function updateSelbar(){var sb=document.getElementById('selbar');if(!sb)return;
     if(typeof cbusy!=='undefined'&&cbusy){sb.innerHTML='▣ <b>'+esc(_sel.name||'(無題)')+'</b> を編集中…';}
     else{sb.innerHTML='▣ 選択中：<b>'+esc(_sel.name||'(無題)')+'</b>'+(_sel.n>1?(' <span style="opacity:.7">他'+(_sel.n-1)+'件</span>'):'');}
   }else{sb.className='selbar';sb.innerHTML='';}}
+function postResultImg(dataURL,name){if(!connected||!dataURL||!inIframe)return;try{fetch(RELAY+'/result-img',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({img:dataURL,name:name||''})});}catch(e){}}   // desktop(Figma)側だけ：完成フレーム画像をrelayへ→チャットログに載る→iPhone等でも見える
 window.addEventListener('message',function(e){var m=e.data&&e.data.pluginMessage;if(!m)return;
   if(m.type==='sel'){_sel={n:m.n||0,name:m.name||''};updateSelbar();}
   if(m.type==='sel-img'){selImgs=Array.isArray(m.imgs)?m.imgs:[];selMuted=false;renderAttach();}   // 選択フレームの書き出し画像を受信＝母艦に見せる（選択し直しでmute解除）
+  if(m.type==='result-img'){postResultImg(m.img,m.name);}   // 完成したフレームの画像＝relay経由でチャットに貼付
 });
 try{if(localStorage.getItem('ms_conn')==='1')connect();else{ /* 未接続でも疎通してれば自動接続（ブラウザプレビュー用） */ fetch(RELAY+'/pull',{cache:'no-store'}).then(function(r){if(r.ok)connect();}).catch(function(){}); }}catch(e){}
 
