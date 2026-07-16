@@ -382,7 +382,7 @@ async function pollBusy(){if(!connected){return;}try{var b=await(await fetch(REL
   if((remoteBusy||cbusy)&&state==='idle')setState('gather');}
 
 // ============ 送信 ============
-var cbusy=false,thinkEl=null,sendQueue=[],pendingImg=null,pendingFiles=[];
+var cbusy=false,thinkEl=null,sendQueue=[],pendingImg=null,pendingFiles=[],selImgs=[],selMuted=false;   // selImgs=選択フレームの書き出し画像（母艦に自動で見せる・selMuted=×で今回は見せない）
 var sendBtn=document.getElementById('send');
 function setBusy(b){cbusy=b;if(b){sendBtn.classList.add('stop');sendBtn.innerHTML='<span class="stopsq"></span>';setState('gather');}else{sendBtn.classList.remove('stop');sendBtn.innerHTML='›';}try{updateSelbar();}catch(e){}}
 function phaseMsg(s){var A=[[0,'うーん、考えてるよ…！'],[12,'読み解いてるよ〜'],[28,'構成を練ってるよ！'],[48,'組み立ててるよ〜！'],[78,'細部を整えてるよ、もう少し！'],[120,'大物だ…！あと少し待ってね🙏']];var m=A[0][1];for(var i=0;i<A.length;i++)if(s>=A[i][0])m=A[i][1];return m;}
@@ -413,9 +413,12 @@ function chatSend(){
   var text=inp.value.trim();
   if(!text&&!pendingImg&&!pendingFiles.length)return;
   if(!connected){app.classList.remove('empty');var s=document.createElement('div');s.className='sys';s.textContent='⚠ 母艦に未接続です。右下の「接続」を押してください。';convo.appendChild(s);scrollEnd();ripple(60,-3.2);flash=1;return;}
-  var img=pendingImg,files=pendingFiles.slice();clearPending();
+  var img=pendingImg,files=pendingFiles.slice(),_usedSel=false,_selNames='';
+  if(!img&&!files.length&&selImgs.length&&!selMuted){img=selImgs[0].dataURL;for(var _si=1;_si<selImgs.length;_si++)files.push({name:(selImgs[_si].name||'frame')+'.png',data:selImgs[_si].dataURL});_usedSel=true;_selNames=selImgs.map(function(s){return s.name||'無題';}).join('、');}   // 手動添付が無ければ選択フレームを丸ごと母艦に見せる（複数選択は先頭をimage・残りはファイルとして）
+  clearPending();
   var sm=text;                                              // 送信本文（画面表示dispとは別。オンボの回答を初回だけ隠しコンテキストとして前置）
   if(pendingProfile){sm=pendingProfile+(text?('\n\n'+text):'');pendingProfile='';}
+  if(_usedSel){sm='（添付画像は、私がFigmaで選択中のフレーム「'+_selNames+'」を丸ごと書き出したものです。まずこれを Read で見て、その中身を踏まえて答えてください。※「これを参考に新しく作れ」という意味ではなく、この選択そのものについての相談です。）'+(sm?('\n\n'+sm):'');}   // 選択画像に"これは選択中フレームの書き出し"という文脈を付与＝母艦が"参考画像から生成"でなく"選択を読み解く"と正しく理解する
   var dsp=text;
   if(files.length){var _fn=files.map(function(f){return f.name;}).join('、');sm=(sm?sm+'\n\n':'')+'（添付ファイル: '+_fn+'）';dsp=(dsp?dsp+'\n':'')+'📎 '+_fn;}
   var payload={sendMsg:sm,disp:dsp,img:img,files:files};
@@ -444,12 +447,15 @@ function quickReplies(v){var ja,en;
 function appendQR(v){if(!v)return;var row=document.createElement('div');row.className='qr';quickReplies(v).forEach(function(lab){row.appendChild(chip(lab));});convo.appendChild(row);scrollEnd();}
 
 // ============ 画像添付 ============
-function renderAttach(){var a=document.getElementById('attach');if(!a)return;if(!pendingImg&&!pendingFiles.length){a.className='attach';a.innerHTML='';return;}
+function renderAttach(){var a=document.getElementById('attach');if(!a)return;var showSel=selImgs.length&&!selMuted;if(!pendingImg&&!pendingFiles.length&&!showSel){a.className='attach';a.innerHTML='';return;}
   a.className='attach on';a.innerHTML='';
   if(pendingImg){var t=document.createElement('div');t.className='thumb';t.style.backgroundImage='url('+pendingImg+')';
     var x=document.createElement('div');x.className='x';x.textContent='×';x.onclick=function(){pendingImg=null;renderAttach();};t.appendChild(x);a.appendChild(t);}
   pendingFiles.forEach(function(f,i){var c=document.createElement('div');c.className='fchip';var n=document.createElement('span');n.className='fn';n.textContent=f.name;c.appendChild(n);
-    var fx=document.createElement('span');fx.className='fx';fx.textContent='×';fx.onclick=function(){pendingFiles.splice(i,1);renderAttach();};c.appendChild(fx);a.appendChild(c);});}
+    var fx=document.createElement('span');fx.className='fx';fx.textContent='×';fx.onclick=function(){pendingFiles.splice(i,1);renderAttach();};c.appendChild(fx);a.appendChild(c);});
+  if(showSel){selImgs.forEach(function(im){var t=document.createElement('div');t.className='thumb';t.title='母艦に見せる選択：'+(im.name||'');t.style.backgroundImage='url('+im.dataURL+')';
+    var eye=document.createElement('div');eye.textContent='👁';eye.style.cssText='position:absolute;left:2px;top:1px;font-size:10px;line-height:1;pointer-events:none;filter:drop-shadow(0 1px 1px rgba(0,0,0,.6))';t.appendChild(eye);
+    var x=document.createElement('div');x.className='x';x.textContent='×';x.onclick=function(){selMuted=true;renderAttach();};t.appendChild(x);a.appendChild(t);});}}   // 👁=選択フレームを母艦に見せている印。×で今回は見せない（次に選択し直すと復活）
 function clearPending(){pendingImg=null;pendingFiles=[];renderAttach();document.getElementById('file').value='';}
 // 添付：画像→Figma画像として/そのほか（Excel/CSV/テキスト等）→_drops/へローカル保存して母艦がRead
 function addFile(f){if(!f)return;var r=new FileReader();if(f.type&&f.type.indexOf('image')===0){r.onload=function(){pendingImg=r.result;renderAttach();};}else{r.onload=function(){pendingFiles.push({name:f.name||'file',data:r.result});renderAttach();};}r.readAsDataURL(f);}
@@ -649,6 +655,7 @@ function updateSelbar(){var sb=document.getElementById('selbar');if(!sb)return;
   }else{sb.className='selbar';sb.innerHTML='';}}
 window.addEventListener('message',function(e){var m=e.data&&e.data.pluginMessage;if(!m)return;
   if(m.type==='sel'){_sel={n:m.n||0,name:m.name||''};updateSelbar();}
+  if(m.type==='sel-img'){selImgs=Array.isArray(m.imgs)?m.imgs:[];selMuted=false;renderAttach();}   // 選択フレームの書き出し画像を受信＝母艦に見せる（選択し直しでmute解除）
 });
 try{if(localStorage.getItem('ms_conn')==='1')connect();else{ /* 未接続でも疎通してれば自動接続（ブラウザプレビュー用） */ fetch(RELAY+'/pull',{cache:'no-store'}).then(function(r){if(r.ok)connect();}).catch(function(){}); }}catch(e){}
 

@@ -231,8 +231,8 @@ figma.clientStorage.getAsync("ms_size").then((s) => {
   if (s && s.w && s.h) figma.ui.resize(s.w, s.h);
 }).catch(() => {});
 // 選択状態をUIへ通知（メインチャットで「選択フレームを編集」に切替えるため）
-figma.on("selectionchange", () => { try { postSel(); } catch (e) {} });
-setTimeout(() => { try { postSel(); } catch (e) {} }, 60);  // 起動直後の現在選択も送る
+figma.on("selectionchange", () => { try { postSel(); } catch (e) {} scheduleSelExport(); });
+setTimeout(() => { try { postSel(); } catch (e) {} scheduleSelExport(); }, 60);  // 起動直後の現在選択も送る
 
 const generated = {}; // name -> 生成済みノード（同名は置き換え、新名は新フレーム）
 
@@ -517,6 +517,30 @@ function collectForAI(src) {
 function postSel() {
   const s = figma.currentPage.selection;
   figma.ui.postMessage({ type: "sel", n: s.length, name: s.length ? String(s[0].name) : "" });
+}
+// 選択したフレームを丸ごと（中身の見えるものすべて込みで）PNG書き出しし、母艦が"見て"読み解けるようUIへ渡す。
+// ⚠️これが無かったのが「選択したものを母艦が読み解けない（古い_chat-ref.pngを掴む）」バグの根本原因。
+let _selExpTok = 0, _selExpTimer = null;
+function scheduleSelExport() {
+  if (_selExpTimer) clearTimeout(_selExpTimer);
+  _selExpTimer = setTimeout(() => { exportSelImgs(figma.currentPage.selection).catch(() => {}); }, 140);   // 連続選択の書き出しを間引く
+}
+async function exportSelImgs(sel) {
+  const tok = ++_selExpTok;
+  if (!sel || !sel.length) { figma.ui.postMessage({ type: "sel-img", imgs: [] }); return; }
+  const nodes = sel.slice(0, 6);   // 選択したフレームを全部見せる（多すぎる時は上限6で保護）
+  const imgs = [];
+  for (const node of nodes) {
+    try {
+      if (typeof node.exportAsync !== "function") continue;
+      const longest = Math.max(node.width || 0, node.height || 0) || 1;
+      let scale = 1600 / longest; if (scale > 2) scale = 2; if (scale < 0.2) scale = 0.2;   // 長辺~1600pxへ正規化（大きすぎ/小さすぎ防止）
+      const bytes = await node.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: scale } });   // ノードを全子要素込みでレンダリング＝フレームの見た目そのまま
+      if (tok !== _selExpTok) return;   // 途中で選択が変わった＝この書き出しは捨てる
+      imgs.push({ name: String(node.name || "無題"), dataURL: "data:image/png;base64," + figma.base64Encode(bytes) });
+    } catch (e) {}
+  }
+  if (tok === _selExpTok) figma.ui.postMessage({ type: "sel-img", imgs: imgs });
 }
 // テキストの文字/サイズを変える前に現在のフォントを読み込む（未読込だと編集でエラー）
 async function loadNodeFont(n) {
