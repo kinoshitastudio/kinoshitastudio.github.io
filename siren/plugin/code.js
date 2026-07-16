@@ -1246,5 +1246,6 @@ figma.ui.onmessage = (msg) => {
     }
   }
   if (msg.type === 'target') tellTarget()
+  if (msg.type === 'resize') { try { figma.ui.resize(Math.max(320, msg.w | 0) || 400, Math.max(320, msg.h | 0) || 720) } catch (e) {} }
   if (msg.type === 'close') figma.closePlugin()
 }
