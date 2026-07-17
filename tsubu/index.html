@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>粒 TSUBU — 日本語をビットに落として組む / 木下スタジオ</title>
+<meta name="description" content="日本語の字を8bitのドットに落とし、1タイル=1つのグラデーションの塊として組み直すインタラクティブ組版ツール。画の向きが波になり、交点に球が出る。木下スタジオ（木下貴博 / 滋賀・琵琶湖）制作。">
+<link rel="canonical" href="https://kinoshita.studio/tsubu/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="粒 TSUBU — 日本語をビットに落として組む">
+<meta property="og:description" content="字を8bitのドットに落とし、グラデーションの塊で組み直す。画の向きが波に、交点に球。">
+<meta property="og:url" content="https://kinoshita.studio/tsubu/">
+<meta property="og:image" content="https://kinoshita.studio/assets/img/img-ui-tsubu.webp">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="粒 TSUBU — 日本語をビットに落として組む">
+<meta name="twitter:image" content="https://kinoshita.studio/assets/img/img-ui-tsubu.webp">
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700&family=Zen+Old+Mincho:wght@600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#0a0a0a;--paper:#f4f2ee;--line:rgba(10,10,10,.14);}
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;overflow:hidden;background:#111;}
+  body{font-family:"Zen Kaku Gothic New",sans-serif;font-weight:500;color:var(--ink);
+    -webkit-font-smoothing:antialiased;touch-action:none;}
+  /* メインだけ全画面。#gz や #warpcv まで巻き込まないよう限定する */
+  #cv{display:block;position:fixed;inset:0;width:100%;height:100%;image-rendering:pixelated;}
+  #gz,#warpcv{image-rendering:auto;}
+
+  #panel{position:fixed;top:16px;right:16px;z-index:20;width:228px;
+    background:rgba(244,242,238,.9);backdrop-filter:blur(12px);border:1px solid var(--line);
+    max-height:calc(100vh - 32px);overflow-y:auto;padding:12px;}
+  h2{font-family:"Space Mono",monospace;font-size:9px;letter-spacing:.24em;
+    opacity:.45;margin:12px 0 6px;}
+  h2:first-child{margin-top:0;}
+  .seg{display:flex;border:1px solid var(--line);margin-bottom:4px;}
+  .seg button{flex:1;background:none;border:none;cursor:pointer;padding:6px 0;
+    font-family:"Space Mono",monospace;font-size:7.5px;letter-spacing:.06em;
+    color:var(--ink);opacity:.4;border-right:1px solid var(--line);}
+  .seg button:last-child{border-right:none;}
+  .seg button.on{opacity:1;background:var(--ink);color:var(--paper);}
+  .row{display:flex;align-items:center;gap:8px;padding:2px 0;}
+  .row label{font-family:"Space Mono",monospace;font-size:8px;opacity:.5;width:46px;flex:none;letter-spacing:.06em;}
+  .row input[type=range]{-webkit-appearance:none;flex:1;height:1px;background:var(--line);outline:none;cursor:pointer;}
+  .row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:9px;height:9px;
+    border-radius:50%;background:var(--ink);cursor:pointer;}
+  input[type=color]{-webkit-appearance:none;width:22px;height:16px;border:1px solid var(--line);
+    padding:0;background:none;cursor:pointer;flex:none;}
+  input[type=color]::-webkit-color-swatch-wrapper{padding:1px;}
+  input[type=color]::-webkit-color-swatch{border:none;}
+  #cc label{width:auto;margin-left:2px;}
+  .val{font-family:"Space Mono",monospace;font-size:8px;opacity:.4;width:24px;text-align:right;flex:none;}
+  textarea{width:100%;height:52px;background:rgba(255,255,255,.5);border:1px solid var(--line);
+    padding:6px;font-family:"Zen Kaku Gothic New",sans-serif;font-size:10px;outline:none;resize:none;}
+  .big{width:100%;padding:9px 0;margin-top:8px;background:var(--ink);color:var(--paper);
+    border:none;cursor:pointer;font-family:"Space Mono",monospace;font-size:9px;letter-spacing:.2em;}
+  .note{font-family:"Space Mono",monospace;font-size:7px;line-height:1.8;opacity:.32;margin-top:6px;}
+  #gizmo{position:fixed;left:16px;bottom:16px;z-index:20;text-align:center;}
+  #gz{border:1px solid rgba(255,255,255,.14);cursor:grab;background:rgba(0,0,0,.35);touch-action:none;}
+  #gz:active{cursor:grabbing;}
+  #gztext{font-family:"Space Mono",monospace;font-size:8px;letter-spacing:.1em;color:#fff;opacity:.5;margin-top:5px;}
+  #hud{position:fixed;left:16px;top:16px;z-index:20;font-family:"Space Mono",monospace;
+    font-size:8.5px;letter-spacing:.14em;color:#fff;opacity:.5;line-height:2;}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="hud">粒 TSUBU / KINOSHITA STUDIO<br><span id="stat"></span></div>
+<a href="/ui-design-work.html" style="position:fixed;left:16px;top:44px;z-index:20;font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.18em;color:#fff;opacity:.4;text-decoration:none;">← KINOSHITA STUDIO</a>
+<div id="gizmo"><canvas id="gz" width="120" height="120"></canvas>
+  <div id="gztext">ANGLE 0°, 0°</div></div>
+
+<div id="panel">
+  <h2>壊れ方</h2>
+  <div class="seg" id="mode">
+    <button data-v="0" class="on">積もる</button>
+    <button data-v="1">集まる</button>
+    <button data-v="2">漂う</button>
+  </div>
+
+  <h2>字</h2>
+  <textarea id="txt">組彫墨鬱風夏森</textarea>
+  <div class="seg" id="font">
+    <button data-v="0" class="on">角ゴ</button>
+    <button data-v="1">明朝</button>
+  </div>
+  <div class="seg" id="lay">
+    <button data-v="0" class="on">横組</button>
+    <button data-v="1">縦組</button>
+  </div>
+  <div class="row"><label>折返し</label><input type="range" id="wrap" min="1" max="80" step="1" value="7"><span class="val"></span></div>
+  <div class="row"><label>字間</label><input type="range" id="gapx" min="-40" max="40" step="1" value="2"><span class="val"></span></div>
+  <div class="row"><label>行間</label><input type="range" id="gapy" min="-40" max="40" step="1" value="2"><span class="val"></span></div>
+  <div class="row"><label>解像</label><input type="range" id="res" min="8" max="96" step="4" value="16"><span class="val"></span></div>
+  <div class="row"><label>粒</label><input type="range" id="cell" min="1" max="80" step="1" value="7"><span class="val"></span></div>
+  <div class="row"><label>太さ</label><input type="range" id="fat" min="0" max="12" step="1" value="1"><span class="val"></span></div>
+  <div class="row"><label>落ち代</label><input type="range" id="fall" min="0" max="600" step="5" value="40"><span class="val"></span></div>
+
+  <h2>質感</h2>
+  <div class="seg" id="tex">
+    <button data-v="1" class="on">グラデ塊</button>
+    <button data-v="0">ドット</button>
+  </div>
+  <div class="seg" id="line">
+    <button data-v="0" class="on">波</button><button data-v="1">縞</button>
+    <button data-v="2">斜</button><button data-v="3">格子</button><button data-v="4">環</button>
+  </div>
+  <div class="seg" id="blob">
+    <button data-v="0" class="on">球</button><button data-v="1">輪</button>
+    <button data-v="2">錐</button><button data-v="3">花</button><button data-v="4">渦</button>
+  </div>
+  <div class="row"><label>細かさ</label><input type="range" id="wav" min="1" max="24" step="1" value="3"><span class="val"></span></div>
+  <div class="row"><label>塊出</label><input type="range" id="bead" min="0" max="100" step="1" value="55"><span class="val"></span></div>
+  <div class="row"><label>縦横比</label><input type="range" id="ar" min="10" max="800" step="5" value="100"><span class="val"></span></div>
+  <div class="row"><label>照り</label><input type="range" id="shine" min="0" max="200" step="1" value="60"><span class="val"></span></div>
+  <div class="row"><label>厚み</label><input type="range" id="depth" min="0" max="80" step="1" value="0"><span class="val"></span></div>
+  <div class="seg" id="warpax"><button data-v="0" class="on">縦ワープ</button><button data-v="1">横ワープ</button></div>
+  <div class="row"><label>ワープ</label><input type="range" id="warp" min="0" max="90" step="1" value="0"><span class="val"></span></div>
+  <canvas id="warpcv" width="204" height="52" style="width:100%;border:1px solid var(--line);cursor:crosshair;display:block;margin:3px 0;background:rgba(255,255,255,.35);"></canvas>
+  <div class="row"><label>山数</label><input type="range" id="warpn" min="1" max="8" step="1" value="2"><span class="val"></span></div>
+  <div class="note" style="margin-top:2px">カーブに点を打つ＝伸縮プロファイル<br>ドラッグで動かす／ダブルクリックで消す<br>山数を動かすとカーブを作り直す</div>
+  <div class="note">上＝画に沿う線／下＝交点に出る塊<br>塊出を下げるほど塊が増える</div>
+
+  <h2>グラデ（ディザ）</h2>
+  <div class="seg" id="pal">
+    <button data-v="0">墨</button>
+    <button data-v="1" class="on">奇抜</button>
+    <button data-v="2">琵琶湖</button>
+    <button data-v="3">自作</button>
+  </div>
+  <div class="row" id="cc"><label>波色</label><input type="color" id="ca" value="#e9201c">
+    <label style="width:auto">球色</label><input type="color" id="cb" value="#2434ff">
+    <label style="width:auto">地</label><input type="color" id="cbg" value="#000000"></div>
+  <div class="row"><label>階調</label><input type="range" id="steps" min="2" max="32" step="1" value="4"><span class="val"></span></div>
+  <div class="row"><label>網</label><input type="range" id="dith" min="0" max="100" step="1" value="100"><span class="val"></span></div>
+  <div class="row"><label>向き</label><input type="range" id="gdir" min="0" max="360" step="1" value="90"><span class="val"></span></div>
+  <div class="row"><label>流れ</label><input type="range" id="gflow" min="0" max="300" step="1" value="18"><span class="val"></span></div>
+
+  <h2>時間</h2>
+  <div class="row"><label>FPS</label><input type="range" id="fps" min="1" max="60" step="1" value="14"><span class="val"></span></div>
+  <div class="row"><label>重力</label><input type="range" id="grav" min="0" max="200" step="1" value="60"><span class="val"></span></div>
+
+  <button class="big" id="fitb" style="background:none;color:var(--ink);border:1px solid var(--line);">全体を見る</button>
+  <button class="big" id="go">崩す</button>
+  <button class="big" id="reset" style="background:none;color:var(--ink);border:1px solid var(--line);">戻す</button>
+  <div class="note">崩す＝素材になる／戻す＝字に帰る<br>左ドラッグ＝動かす／右ドラッグ＝角度<br>ホイール＝寄る・引く<br>FPSを下げるほどゲームの時間になる</div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   bit_tk — 字が壊れてドットになる。その壊れ方を3つ見て決める試作。
+
+   ・日本語の字を N×N のドットに落とす（16×16＝漢字が潰された事件の解像度）
+   ・グラデーションはディザ（網）で作る＝8bitがやった階調の偽装
+   ・時間も量子化する（FPSを落とす）＝ゲームの時間
+   ═══════════════════════════════════════════════════════════ */
+
+const cv = document.getElementById('cv'), g = cv.getContext('2d', { alpha:false });
+const P = { mode:0, res:16, cell:7, pal:1, steps:4, dith:100, gdir:90, gflow:18, fps:14, grav:60, font:0,
+            tex:1, wav:3, bead:55, line:0, blob:0, ar:100, shine:60, depth:0, fat:1,
+            lay:0, wrap:7, gapx:2, gapy:2, fall:40 };
+
+/* ── 見え ── 世界は画面と切り離す。引いて全体を見渡せるように ── */
+const cam = { s:1, x:0, y:0, rx:0, ry:0 };   // rx,ry = 擬似3Dの傾き
+const CUSTOM = { name:'自作', bg:'#000000', a:[233,32,28], b:[36,52,255],
+                 get cols(){ return PALS[1].cols; } };   // PALS 定義後に評価される
+function hexToRgb(h){ h = h.replace('#',''); return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16)); }
+function fit(){
+  const C = P.cell;
+  cam.s = Math.min(innerWidth / (W * C + 40), innerHeight / (H * C + 40));
+  cam.x = (innerWidth - W * C * cam.s) / 2;
+  cam.y = (innerHeight - H * C * cam.s) / 2;
+}
+
+/* ── パレット（色数が少ない＝8bitの制約。だからディザが要る） ── */
+const PALS = [
+  { name:'墨',     bg:'#000000', a:[236,233,226], b:[255,255,255],
+    cols:['#0a0a0a','#4a4a46','#8f8d86','#c9c6bd','#f4f2ee'] },
+  { name:'奇抜',   bg:'#000000', a:[233,32,28],  b:[36,52,255],
+    cols:['#ff2d6f','#ffd400','#00e5ff','#7cff3f','#8a2be2','#ffffff'] },
+  { name:'琵琶湖', bg:'#000000', a:[127,174,158], b:[223,231,226],
+    cols:['#0d1417','#1b3a42','#2f6b6b','#7fae9e','#dfe7e2'] },
+];
+
+/* ── 字 → ドット（ここが「日本語をビットに落とす」） ──
+   ⭐ ドットの座標だけでなく、その場所の「画の向き」と「太さ」も一緒に取る。
+      向き → タイルの波の向きになる（＝字の骨格がグラデーションの流れになる）
+      太さ → 画が交わって塊になっている所。そこに球が出る
+   ──────────────────────────────────────────────────────── */
+const oc = document.createElement('canvas'), og = oc.getContext('2d', { willReadFrequently:true });
+function glyphDots(ch, N, fontIdx){
+  oc.width = oc.height = N;
+  og.fillStyle = '#000'; og.fillRect(0, 0, N, N);
+  og.fillStyle = '#fff';
+  og.textAlign = 'center'; og.textBaseline = 'middle';
+  og.font = fontIdx ? '600 ' + Math.round(N*0.98) + 'px "Zen Old Mincho"'
+                    : '700 ' + Math.round(N*0.94) + 'px "Zen Kaku Gothic New"';
+  og.fillText(ch, N/2, N/2 + N*0.03);
+  const raw = og.getImageData(0, 0, N, N).data;
+
+  // ── 太らせ（膨張） ── 画を太くする＝画が交わる所（青玉）が増える。
+  //    日本語は非ボールドだと細く、玉が出にくい。ここで太字を作る。
+  let grd = new Uint8Array(N*N);
+  for(let i=0;i<N*N;i++) grd[i] = raw[i*4] > 110 ? 1 : 0;
+  for(let s=0; s<P.fat; s++){
+    const nx = new Uint8Array(N*N);
+    for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+      let v = grd[y*N+x];
+      if(!v){ if((x&&grd[y*N+x-1])||(x<N-1&&grd[y*N+x+1])||(y&&grd[(y-1)*N+x])||(y<N-1&&grd[(y+1)*N+x])) v=1; }
+      nx[y*N+x] = v;
+    }
+    grd = nx;
+  }
+  const on = (x, y) => (x < 0 || y < 0 || x >= N || y >= N) ? 0 : grd[y*N + x];
+
+  const out = [];
+  for(let y = 0; y < N; y++) for(let x = 0; x < N; x++){
+    if(!on(x, y)) continue;   // しきい値で二値化＝ドットに殺す。中間調はここで消える
+
+    // 太さ — 5×5(0..24) が何個埋まっているか。多いほど画の芯/交点。
+    //   3×3(9段)だと閾値1で大量が一斉に切り替わる。25段にして滑らかにする。
+    let dens = 0;
+    for(let j = -2; j <= 2; j++) for(let i = -2; i <= 2; i++) dens += on(x+i, y+j);
+
+    // 画の向き — Sobel で輪郭の法線を出し、90°回して画に沿わせる
+    const gx = (on(x+1,y-1) + 2*on(x+1,y) + on(x+1,y+1)) - (on(x-1,y-1) + 2*on(x-1,y) + on(x-1,y+1));
+    const gy = (on(x-1,y+1) + 2*on(x,y+1) + on(x+1,y+1)) - (on(x-1,y-1) + 2*on(x,y-1) + on(x+1,y-1));
+    const ang = (gx || gy) ? Math.atan2(gy, gx) + Math.PI/2 : 0;
+
+    out.push([x, y, ang, dens]);
+  }
+  return out;
+}
+
+/* ── タイル ── 8bit機がVRAMにパターンを持って敷き詰めたのと同じ。
+   1タイル＝1つのグラデーションの塊。焼くのは一度だけ。 */
+const TILE_ANGLES = 12, PHASES = 8;
+let tiles = [], tileC = 0, tilePal = -1, tileWav = -1, tileKey='';
+let flowT = 0;
+
+function buildTiles(){
+  const C = P.cell, pal = P.pal===3 ? CUSTOM : PALS[P.pal];
+  tiles = [];
+  // ⭐ タイルの谷（暗い部分）は黒固定ではなく「地の色」にする。
+  //    黒に落とすと何色を選んでも濁る。地に混ぜると選んだ色がそのまま出る。
+  const BG = (typeof pal.bg === 'string') ? hexToRgb(pal.bg.slice(1)) : (pal.bg || [0,0,0]);
+  const bgHex = `rgb(${BG.join(',')})`;
+  const mk = (fn) => {
+    const c = document.createElement('canvas'); c.width = c.height = C;
+    fn(c.getContext('2d'), C); return c;
+  };
+  // 波 — 向きごとに、位相 phase 段ずつ焼く。
+  //   phase をタイルのワールド座標に対応させると、隣のタイルと波が連続する
+  //   ＝塊が字をまたいで繋がり、1つの流れになる。
+  const LINE = P.line;
+  for(let a = 0; a < TILE_ANGLES; a++){
+    const th = a / TILE_ANGLES * Math.PI, ca = Math.cos(th), sa = Math.sin(th);
+    const set = [];
+    for(let p = 0; p < PHASES; p++){
+      set.push(mk((x, C) => {
+        const img = x.createImageData(C, C), D = img.data;
+        const ph = p / PHASES * Math.PI * 2, W2 = P.wav;
+        for(let j = 0; j < C; j++) for(let i = 0; i < C; i++){
+          const u = ((i + 0.5) * ca + (j + 0.5) * sa) / C;   // 画に沿う軸
+          const w = (-(i + 0.5) * sa + (j + 0.5) * ca) / C;  // 画に直交する軸
+          let v;
+          if(LINE === 0)      v = 0.5 + 0.5 * Math.cos(u * 6.2831853 * W2 + ph);            // 波
+          else if(LINE === 1) v = (Math.floor(u * W2 * 2 + ph/6.283) % 2) ? 1 : 0.12;       // 縞（矩形）
+          else if(LINE === 2) v = 0.5 + 0.5 * Math.cos((u + w) * 6.2831853 * W2 + ph);      // 斜線
+          else if(LINE === 3) v = (0.5+0.5*Math.cos(u*6.283*W2+ph)) * (0.5+0.5*Math.cos(w*6.283*W2)); // チェック
+          else                v = 0.5 + 0.5 * Math.cos(Math.hypot(u,w) * 6.2831853 * W2 - ph); // 同心
+          const sh = P.shine / 100;
+          const k = Math.pow(Math.max(0,v), 1.8);                   // 0=谷 1=山
+          const hi = Math.pow(Math.max(0,v), 6.0) * sh;             // 稜線の照り返し
+          const o = (j*C + i)*4;
+          // ⭐ 谷＝同じ色の暗い版、山＝波色。色相を保つ（地の色に混ぜると濁る）。
+          //   lo=0.14倍で暗く沈める → 明→暗のシェーディングになる
+          const lo = 0.14;
+          const kk = lo + (1 - lo) * k;
+          D[o]   = Math.min(255, pal.a[0]*kk + 255*hi);
+          D[o+1] = Math.min(255, pal.a[1]*kk + 255*hi);
+          D[o+2] = Math.min(255, pal.a[2]*kk + 255*hi); D[o+3] = 255;
+        }
+        x.putImageData(img, 0, 0);
+      }));
+    }
+    tiles.push(set);
+  }
+  // 塊 — 画が交わって塊になっている所に出る。息をする。
+  // 塊は角を透明にして地を透かす（黒角を出さない）。谷は同じ色の暗い版。
+  const BLOB = P.blob, bc = `rgb(${pal.b.join(',')})`;
+  const bdark = t => `rgba(${pal.b.map(v=>Math.round(v*0.35)).join(',')},${t})`;
+  const btrans = `rgba(${pal.b.join(',')},0)`;
+  const sph = [];
+  for(let p = 0; p < PHASES; p++){
+    sph.push(mk((x, C) => {
+      const ph = p / PHASES * Math.PI * 2;
+      x.clearRect(0, 0, C, C);                          // 角は透明＝地が透ける
+      if(BLOB === 0){                                   // 球
+        const hx = C*0.5+Math.cos(ph)*C*0.14, hy = C*0.42+Math.sin(ph*0.7)*C*0.10;
+        const g2 = x.createRadialGradient(hx, hy, C*0.02, C/2, C/2, C*0.6);
+        g2.addColorStop(0, bc); g2.addColorStop(0.6, bdark(1)); g2.addColorStop(1, btrans);
+        x.fillStyle = g2; x.beginPath(); x.arc(C/2, C/2, C*0.5, 0, 7); x.fill();
+      } else if(BLOB === 1){                            // リング
+        x.strokeStyle = bc; x.lineWidth = C*0.14;
+        x.beginPath(); x.arc(C/2, C/2, C*0.30 + Math.sin(ph)*C*0.06, 0, 7); x.stroke();
+      } else if(BLOB === 2){                            // 角錐（対角シェード）
+        const g2 = x.createLinearGradient(0,0,C,C);
+        g2.addColorStop(0, bc); g2.addColorStop(0.5+0.3*Math.sin(ph), bdark(1)); g2.addColorStop(1, bc);
+        x.fillStyle = g2; x.fillRect(0,0,C,C);
+      } else if(BLOB === 3){                            // 花（4方向）
+        x.fillStyle = bc; x.translate(C/2,C/2); x.rotate(ph*0.3);
+        for(let k=0;k<4;k++){ x.rotate(Math.PI/2); x.beginPath();
+          x.ellipse(0, -C*0.26, C*0.12, C*0.22, 0, 0, 7); x.fill(); }
+      } else {                                          // 渦
+        const g2 = x.createRadialGradient(C/2,C/2,C*0.05,C/2,C/2,C*0.6);
+        g2.addColorStop(0, bc); g2.addColorStop(1, btrans);
+        x.fillStyle = g2; x.fillRect(0,0,C,C);
+        x.strokeStyle = bdark(1); x.lineWidth = C*0.08; x.beginPath();
+        for(let t=0;t<6.28;t+=0.3){ const r=t*C*0.05;
+          x.lineTo(C/2+Math.cos(t+ph)*r, C/2+Math.sin(t+ph)*r); } x.stroke();
+      }
+    }));
+  }
+  tiles.push(sph);
+  tileC = C; tilePal = P.pal; tileWav = P.wav; tileKey = customKey();
+}
+const SPHERE = TILE_ANGLES;
+function cellWk(){ return P.ar<100 ? 200/(P.ar+100)*1 : 1; }
+function cellHk(){ return P.ar>100 ? P.ar/100 : 1; }
+function customKey(){ return CUSTOM.bg + CUSTOM.a.join() + CUSTOM.b.join(); }
+
+/* ── 粒 ── */
+let dots = [], W = 0, H = 0, grid = null, settled = 0;
+function idx(x, y){ return y * W + x; }
+
+function build(){
+  const text = [...document.getElementById('txt').value].filter(c => c.trim());
+  const N = P.res;
+  const vert = P.lay === 1;
+  const per = Math.max(1, P.wrap);                       // 何字で折り返すか
+  const AX = Math.max(N + P.gapx, 2), AY = Math.max(N + P.gapy, 2);   // 字送り/行送り（重なり可）
+
+  // 世界の大きさは中身から決める（画面サイズに縛られない）。
+  // ⚠️ 字1個分の幅 N を必ず足す。行間を詰めて行送り<Nでも端が切れないように。
+  const lines = Math.ceil(text.length / per);
+  const cols  = Math.min(text.length, per);
+  const charAdv = vert ? AY : AX;                        // 行内の字送り
+  const lineAdv = vert ? AY : AY;                        // 行の送り
+  const along  = (cols  - 1) * charAdv + N;              // 行方向の広がり
+  const across = (lines - 1) * lineAdv + N;              // 行をまたぐ広がり
+  const lw = vert ? across : along;                      // x 方向
+  const lh = vert ? along  : across;                     // y 方向
+  W = Math.max(Math.ceil(lw) + 4, 8);
+  H = Math.ceil(lh) + 4 + Math.round(P.fall);            // 積もるぶんの空
+  grid = new Int32Array(W * H).fill(-1);
+  dots = [];
+
+  const ox = Math.floor((W - lw) / 2), oy = 2;
+
+  text.forEach((ch, i) => {
+    const li = Math.floor(i / per), ci2 = i % per;
+    // 横組＝右へ流れて下へ折り返す／縦組＝下へ流れて左へ折り返す（日本語の作法）
+    const bx = vert ? (lw - N - li * lineAdv) : ci2 * charAdv;
+    const by = vert ? ci2 * charAdv : li * lineAdv;
+    for(const [x, y, ang, dens] of glyphDots(ch, N, P.font)){
+      const gx = Math.round(ox + bx + x), gy = Math.round(oy + by + y);
+      if(gx < 0 || gx >= W || gy < 0 || gy >= H) continue;
+      // ⭐ 画が交わって塊になっている所（3×3が埋まっている）に球。
+      //    それ以外は画の向きに沿った波。字の骨格がグラデーションの流れになる
+      const t = (dens / 24) >= (P.bead / 100) ? SPHERE
+              : (Math.round(((ang % Math.PI) + Math.PI) % Math.PI / Math.PI * TILE_ANGLES)) % TILE_ANGLES;
+      dots.push({
+        x:gx, y:gy,           // いまの居場所（格子）
+        hx:gx, hy:gy,         // 字だったときの居場所（＝戻る先）
+        gx0:gx, gy0:gy,       // 伸ばしの基準（元位置）
+        vy:0, live:false, seed:Math.random(),
+        ci:i, t, ang, dens,
+      });
+    }
+  });
+  settled = 0;
+  fit();
+  stat();
+}
+
+function stat(){
+  document.getElementById('stat').textContent =
+    `${dots.length} DOTS / ${P.res}×${P.res} / ${['積もる','集まる','漂う'][P.mode]}`;
+}
+
+/* ── 壊れ方 3種 ── */
+let running = false, t = 0;
+
+function step(){
+  const G = P.grav / 100;
+  if(P.mode === 0){
+    // ── 積もる ── 砂。⚠️ 落下中の粒も格子に入れないと、
+    //    全員が素通しで落ちて最下段に重なるだけで「積もらない」
+    grid.fill(-1);
+    for(let i = 0; i < dots.length; i++){ const d = dots[i]; grid[idx(d.x, d.y)] = i; }
+    // 下にいる粒から動かす（上から動かすと1フレームで落ちきる）
+    const order = dots.map((_, i) => i).sort((a, b) => dots[b].y - dots[a].y);
+    for(const i of order){
+      const d = dots[i];
+      if(!d.live) continue;
+      const ny = d.y + 1;
+      if(ny >= H){ d.live = false; continue; }                 // 底に着いた
+      if(grid[idx(d.x, ny)] < 0){                              // 真下が空 → 落ちる
+        grid[idx(d.x, d.y)] = -1; d.y = ny; grid[idx(d.x, ny)] = i; continue;
+      }
+      // 詰まった → 斜めに逃げる。これが山をつくる
+      const dir = Math.random() < 0.5 ? -1 : 1;
+      let moved = false;
+      for(const s of [dir, -dir]){
+        const nx = d.x + s;
+        if(nx >= 0 && nx < W && grid[idx(nx, ny)] < 0){
+          grid[idx(d.x, d.y)] = -1; d.x = nx; d.y = ny; grid[idx(nx, ny)] = i;
+          moved = true; break;
+        }
+      }
+      if(!moved) d.live = false;                               // 逃げ場なし → 静止
+    }
+  } else if(P.mode === 1){
+    // ── 集まる ── 字を離れて、別の像に集まり直す（渦）
+    for(const d of dots){
+      if(!d.live) continue;
+      const cx = W/2, cy = H/2;
+      const a = Math.atan2(d.y - cy, d.x - cx), r = Math.hypot(d.x - cx, d.y - cy);
+      const tr = 6 + (d.ci % 5) * 5 + Math.sin(t * 0.03 + d.seed * 6.28) * 3;  // 文字ごとの環
+      const na = a + 0.10 * G, nr = r + (tr - r) * 0.06 * (0.4 + G);
+      d.x = Math.max(0, Math.min(W-1, Math.round(cx + Math.cos(na) * nr)));
+      d.y = Math.max(0, Math.min(H-1, Math.round(cy + Math.sin(na) * nr)));
+    }
+  } else {
+    // ── 漂う ── 積みも集まりもしない。残骸だけが場に浮く
+    for(const d of dots){
+      if(!d.live) continue;
+      d.x = Math.max(0, Math.min(W-1, Math.round(d.hx + Math.sin(t*0.02 + d.seed*6.28) * 6 * G)));
+      d.y = Math.max(0, Math.min(H-1, Math.round(d.hy + Math.cos(t*0.017 + d.seed*9.1) * 6 * G)));
+    }
+  }
+  t++;
+}
+
+/* ── ディザ（8bitがグラデーションを偽装した方法） ── */
+const BAYER = [
+  [ 0, 8, 2,10],[12, 4,14, 6],
+  [ 3,11, 1, 9],[15, 7,13, 5]
+].flat().map(v => v / 16);
+
+function draw(){
+  const pal = P.pal===3 ? CUSTOM : PALS[P.pal], cols = pal.cols, C = P.cell;
+  const dpr = Math.min(devicePixelRatio, 2);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.fillStyle = pal.bg; g.fillRect(0, 0, innerWidth, innerHeight);
+  // 擬似3D — せん断＋縦横圧縮で板を寝かせる。右ドラッグで角度がつく
+  const shx = Math.sin(cam.ry) * 0.9, shy = Math.sin(cam.rx) * 0.9;
+  const sx = Math.cos(cam.ry) * 0.6 + 0.4, sy = Math.cos(cam.rx) * 0.6 + 0.4;
+  const cx = W*P.cell/2, cy = H*P.cell/2;
+  g.setTransform(dpr*cam.s, 0, 0, dpr*cam.s, dpr*cam.x, dpr*cam.y);
+  g.transform(sx, shy, shx, sy, cx*(1-sx)-cy*shx, cy*(1-sy)-cx*shy);
+
+  // ── グラデ塊 ── 焼いたタイルを敷き詰める。8bit機がVRAMでやっていたこと。
+  //   位相を「画の流れ方向のワールド座標 + 時間」で選ぶ＝塊が連結して流れる。
+  if(P.tex === 1){
+    if(tileC !== C || tilePal !== P.pal || tileWav !== P.wav || tileKey !== customKey()) buildTiles();
+    flowT += P.gflow / 100 * 0.5;
+    const CW = C * cellWk(), CH = C * cellHk();
+    const kw = cellWk() - 1, kh = cellHk() - 1;
+    // ── ワープ ── 行/列ごとに伸縮率が変わり、全体がうねる（砂時計/樽/波）。
+    //   累積マッピングで、隣のタイルとぴったり接する（隙間が出ない）。
+    const wAmt = P.warp / 100, wAx = P.warpax;
+    // アンカーカーブ（自分で打った点）から伸縮率を引く。v=1 が等倍
+    const scaleAt = (t) => Math.max(0.05, 1 + (anchorAt(t) - 1) * wAmt);
+    // 各グリッド線の累積位置と、そのセルの伸縮率を事前計算
+    const buildMap = (n) => {
+      const cum = new Float32Array(n + 1), sc = new Float32Array(n + 1);
+      let acc = 0;
+      for(let i = 0; i <= n; i++){ cum[i] = acc; const s = scaleAt(i / n); sc[i] = s; acc += s * C; }
+      const shift = (n * C - acc) / 2;            // 中央に寄せる
+      return { cum, sc, shift };
+    };
+    const px0 = d => (d.x - d.gx0*kw) * C;
+    const py0 = d => (d.y - d.gy0*kh) * C;
+    // ⭐ ワープはテキストの実範囲で正規化する（落ち代の空白込みの世界高で
+    //    やると1行が profile の一部しか通らず「移動だけ」に見える）
+    let rmin=Infinity,rmax=-Infinity,cmin=Infinity,cmax=-Infinity;
+    if(wAmt) for(const d of dots){ const ry=py0(d)/C, cx=px0(d)/C;
+      if(ry<rmin)rmin=ry; if(ry>rmax)rmax=ry; if(cx<cmin)cmin=cx; if(cx>cmax)cmax=cx; }
+    const buildMapC = (lo, hi) => {                       // lo..hi セル範囲で累積
+      const n = Math.max(1, Math.ceil(hi - lo));
+      const cum = new Float32Array(n + 1), sc = new Float32Array(n + 1);
+      let acc = 0;
+      for(let i=0;i<=n;i++){ cum[i]=acc; const s=scaleAt(i/n); sc[i]=s; acc += s*C; }
+      const base = lo * C, shift = ((hi-lo)*C - acc) / 2;
+      return { cum, sc, lo, base, shift };
+    };
+    const mapY = wAmt && wAx === 0 && isFinite(rmin) ? buildMapC(rmin, rmax+1) : null;
+    const mapX = wAmt && wAx === 1 && isFinite(cmin) ? buildMapC(cmin, cmax+1) : null;
+    const remap = (map, cellPos) => {
+      const local = cellPos - map.lo, r = Math.floor(local), f = local - r;
+      const i = Math.max(0, Math.min(map.cum.length - 2, r));
+      return { p: map.base + map.cum[i] + f * map.sc[i] * C + map.shift, s: map.sc[i] };
+    };
+    const px = d => mapX ? remap(mapX, px0(d)/C).p : px0(d);
+    const py = d => mapY ? remap(mapY, py0(d)/C).p : py0(d);
+    const scw = d => mapX ? remap(mapX, px0(d)/C).s : 1;
+    const sch = d => mapY ? remap(mapY, py0(d)/C).s : 1;
+    const phaseOf = d => d.t === SPHERE
+      ? (Math.floor(flowT + d.seed * PHASES)) % PHASES
+      : ((Math.round(d.x*Math.cos(d.ang) + d.y*Math.sin(d.ang) + flowT) % PHASES) + PHASES) % PHASES;
+
+    // 厚み — 側面を先に全部積む。向きは角度に連動（回すと厚みの見え方が変わる）
+    const dep = P.depth;
+    if(dep > 0){
+      const ddir = C * 0.14;
+      const ox = Math.sin(cam.ry) * ddir * 1.6;                 // ヨーで左右に回る
+      const oy = (0.25 - Math.sin(cam.rx) * 1.6) * ddir;        // 平面時わずかに下・ピッチで上下
+      // 側面の明度：奥ほど暗く、そこに縞を重ねる＝側面もグラデの塊になる
+      const layer = [];
+      for(let k = dep; k >= 1; k--){
+        const t = k / dep;                                  // 1=奥 0=手前
+        const band = 0.5 + 0.5 * Math.cos(k * 1.15);        // 稜（8bitの側面の段）
+        const b = 0.16 + (1 - t) * 0.40 + band * 0.16;      // 手前ほど明るい
+        layer.push(`rgb(${pal.a.map(v => Math.min(255, v*b)|0).join(',')})`);
+      }
+      for(let li = 0, k = dep; k >= 1; k--, li++){
+        g.fillStyle = layer[li];
+        for(const d of dots) g.fillRect(px(d) + ox*k, py(d) + oy*k, CW, CH);
+      }
+    }
+
+    // 天面 — タイル寸法もワープの伸縮率で伸ばす（隣とぴったり接する）
+    for(const d of dots){
+      g.drawImage(tiles[d.t][phaseOf(d)], px(d), py(d), CW*scw(d), CH*sch(d));
+    }
+    return;
+  }
+
+  const ang = P.gdir * Math.PI / 180, ca = Math.cos(ang), sa = Math.sin(ang);
+  const flow = P.gflow / 100 * t * 0.01;
+  const steps = P.steps, dith = P.dith / 100;
+
+  for(const d of dots){
+    // 場のグラデーション（＝全部の粒を貫くテープ）
+    let v = (d.x / W * ca + d.y / H * sa) * 0.5 + 0.5 + flow;
+    v = v - Math.floor(v);
+    // ディザ — 色数が足りないぶんを網で騙す
+    const b = BAYER[(d.y % 4) * 4 + (d.x % 4)];
+    const q = Math.floor(v * (steps - 1) + (b - 0.5) * dith + 0.5);
+    const ci = Math.max(0, Math.min(cols.length - 1,
+      Math.round(Math.max(0, Math.min(steps - 1, q)) / (steps - 1) * (cols.length - 1))));
+    g.fillStyle = cols[ci];
+    g.fillRect(d.x * C, d.y * C, C, C);
+  }
+}
+
+/* ── ループ（時間も量子化する＝ゲームの時間） ── */
+let last = 0;
+function loop(now){
+  requestAnimationFrame(loop);
+  if(now - last < 1000 / P.fps) return;
+  last = now;
+  if(running) step();
+  draw();
+  drawGizmo();
+}
+
+function resize(){
+  const dpr = Math.min(devicePixelRatio, 2);
+  cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
+  g.imageSmoothingEnabled = false;
+  if(!dots.length) build(); else fit();
+}
+addEventListener('resize', resize);
+
+/* ── UI ── */
+document.querySelectorAll('.seg').forEach(seg => {
+  seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    seg.querySelectorAll('button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    P[seg.id] = +b.dataset.v;
+    if(seg.id === 'font' || seg.id === 'lay') build();
+    if(seg.id === 'line' || seg.id === 'blob') buildTiles();
+    if(seg.id === 'pal') buildTiles();
+    if(seg.id === 'mode'){ running = false; build(); stat(); }
+  }));
+});
+['res','cell','pal','steps','dith','gdir','gflow','fps','grav','wav','bead','wrap','gapx','gapy','fall','ar','shine','depth','warp','warpn'].forEach(id => {
+  const r = document.getElementById(id); if(r.type !== 'range') return;
+  const v = r.parentElement.querySelector('.val');
+  const sync = (fromUser) => { P[id] = +r.value; if(v) v.textContent = r.value;
+    if(id==='warpn' && fromUser){ resetAnchors(+r.value); drawWarpCurve(); }
+    if(['res','cell','bead','wrap','gapx','gapy','fall','fat'].includes(id)) build();
+    if(id==='shine') buildTiles();
+    if(id === 'cell') fit(); };
+  r.addEventListener('input', () => sync(true)); sync();
+});
+document.getElementById('txt').addEventListener('input', () => { running = false; build(); });
+[['ca','a'],['cb','b']].forEach(([id,key])=>{
+  document.getElementById(id).addEventListener('input', e => {
+    CUSTOM[key] = hexToRgb(e.target.value.slice(1));
+    setPal3();
+  });
+});
+document.getElementById('cbg').addEventListener('input', e => { CUSTOM.bg = e.target.value; setPal3(); });
+function setPal3(){
+  P.pal = 3;
+  document.querySelectorAll('#pal button').forEach(b=>b.classList.toggle('on', b.dataset.v==='3'));
+}
+document.getElementById('fitb').onclick = () => { cam.rx = cam.ry = 0; fit(); };
+
+/* ── ワープのアンカーカーブ ── 点を打って伸縮プロファイルを描く ── */
+let ANCHORS = [{t:0,v:1.6},{t:0.5,v:0.4},{t:1,v:1.6}];   // 既定＝砂時計
+function anchorAt(t){
+  t = Math.max(0, Math.min(1, t));
+  const A = ANCHORS;
+  if(t <= A[0].t) return A[0].v;
+  for(let i=0;i<A.length-1;i++){
+    if(t <= A[i+1].t){
+      const f = (t - A[i].t) / (A[i+1].t - A[i].t || 1);
+      const s = f*f*(3-2*f);                 // なめらかに
+      return A[i].v + (A[i+1].v - A[i].v) * s;
+    }
+  }
+  return A[A.length-1].v;
+}
+function resetAnchors(humps){                // 山数からカーブを作り直す
+  ANCHORS = [];
+  const seg = humps * 2;
+  for(let i=0;i<=seg;i++) ANCHORS.push({ t:i/seg, v: 1 + Math.cos(i/seg*Math.PI*humps)*0.6 });
+}
+const wc = document.getElementById('warpcv'), wcg = wc.getContext('2d');
+function drawWarpCurve(){
+  const W2=wc.width, H2=wc.height; wcg.clearRect(0,0,W2,H2);
+  wcg.strokeStyle='rgba(10,10,10,.12)'; wcg.beginPath();
+  wcg.moveTo(0,H2/2); wcg.lineTo(W2,H2/2); wcg.stroke();     // 等倍ライン
+  const y = v => H2 - (v/2.2)*H2;
+  wcg.strokeStyle='rgba(10,10,10,.7)'; wcg.lineWidth=1.4; wcg.beginPath();
+  for(let x=0;x<=W2;x+=3){ const v=anchorAt(x/W2); x?wcg.lineTo(x,y(v)):wcg.moveTo(x,y(v)); }
+  wcg.stroke();
+  wcg.fillStyle='#0a0a0a';
+  for(const a of ANCHORS){ wcg.beginPath(); wcg.arc(a.t*W2, y(a.v), 3.5, 0, 7); wcg.fill(); }
+}
+let wcDrag=-1;
+function wcPt(e){ const r=wc.getBoundingClientRect();
+  return { t:(e.clientX-r.left)/r.width, v:(1-(e.clientY-r.top)/r.height)*2.2 }; }
+wc.addEventListener('pointerdown',e=>{
+  const p=wcPt(e); let best=-1,bd=1;
+  ANCHORS.forEach((a,i)=>{ const d=Math.abs(a.t-p.t); if(d<0.06&&d<bd){bd=d;best=i;} });
+  if(best<0){ ANCHORS.push({t:Math.max(0,Math.min(1,p.t)),v:Math.max(0.1,Math.min(2.2,p.v))});
+    ANCHORS.sort((a,b)=>a.t-b.t); best=ANCHORS.findIndex(a=>a.t===p.t); }
+  wcDrag=best; wc.setPointerCapture(e.pointerId); drawWarpCurve();
+});
+wc.addEventListener('pointermove',e=>{ if(wcDrag<0)return; const p=wcPt(e);
+  const a=ANCHORS[wcDrag];
+  if(wcDrag>0&&wcDrag<ANCHORS.length-1) a.t=Math.max(0.01,Math.min(0.99,p.t));  // 端は固定
+  a.v=Math.max(0.1,Math.min(2.2,p.v)); ANCHORS.sort((x,y)=>x.t-y.t); drawWarpCurve(); });
+wc.addEventListener('pointerup',()=>wcDrag=-1);
+wc.addEventListener('dblclick',e=>{ const p=wcPt(e);
+  const i=ANCHORS.findIndex(a=>Math.abs(a.t-p.t)<0.06);
+  if(i>0&&i<ANCHORS.length-1){ ANCHORS.splice(i,1); drawWarpCurve(); } });
+
+/* ── 角度ギズモ ── Spline 風のオービット球。緯線経線の回転で視点が見える ── */
+const gz = document.getElementById('gz'), gzg = gz.getContext('2d');
+function drawGizmo(){
+  const S = 120, cx = S/2, cy = S/2, r = 42;
+  gzg.clearRect(0,0,S,S);
+  const cp=Math.cos(cam.rx), sp=Math.sin(cam.rx), cyw=Math.cos(cam.ry), syw=Math.sin(cam.ry);
+  const rot = (x,y,z)=>{ let X=x*cyw+z*syw, Z=-x*syw+z*cyw;
+    let Y=y*cp-Z*sp; Z=y*sp+Z*cp; return [X,Y,Z]; };
+  const P2 = p => [cx+p[0]*r, cy+p[1]*r, p[2]];
+
+  gzg.beginPath(); gzg.arc(cx,cy,r,0,7);
+  gzg.fillStyle='rgba(0,0,0,.4)'; gzg.fill();
+  gzg.strokeStyle='rgba(255,255,255,.22)'; gzg.lineWidth=1; gzg.stroke();
+
+  const ring = (axis)=>{
+    const pts=[];
+    for(let a=0;a<=48;a++){ const t=a/48*6.2831853, c=Math.cos(t), s=Math.sin(t);
+      pts.push(P2(rot(axis===0?0:c, axis===2?0:(axis===0?c:s), axis===1?0:s))); }
+    for(let front=0;front<2;front++){
+      gzg.beginPath(); let started=false;
+      for(const p of pts){ const vis=(p[2]>0)===(front===1);
+        if(vis){ started?gzg.lineTo(p[0],p[1]):(gzg.moveTo(p[0],p[1]),started=true); } else started=false; }
+      gzg.strokeStyle= front?'rgba(36,52,255,.9)':'rgba(255,255,255,.12)';
+      gzg.lineWidth= front?1.4:1; gzg.stroke();
+    }
+  };
+  ring(0); ring(1); ring(2);
+
+  const pole=P2(rot(0,0,1));
+  gzg.beginPath(); gzg.arc(pole[0],pole[1],4,0,7);
+  gzg.fillStyle= pole[2]>0?'rgba(233,32,28,1)':'rgba(233,32,28,.3)'; gzg.fill();
+
+  document.getElementById('gztext').textContent =
+    `YAW ${Math.round(cam.ry*57)}°  PITCH ${Math.round(cam.rx*57)}°`;
+}
+let gzdrag=null;
+gz.addEventListener('pointerdown',e=>{gzdrag={x:e.clientX,y:e.clientY};gz.setPointerCapture(e.pointerId);});
+gz.addEventListener('pointermove',e=>{ if(!gzdrag)return;
+  cam.ry=Math.max(-1.3,Math.min(1.3,cam.ry+(e.clientX-gzdrag.x)*0.02));
+  cam.rx=Math.max(-1.3,Math.min(1.3,cam.rx-(e.clientY-gzdrag.y)*0.02));
+  gzdrag={x:e.clientX,y:e.clientY}; });
+gz.addEventListener('pointerup',()=>gzdrag=null);
+gz.addEventListener('dblclick',()=>{cam.rx=cam.ry=0;});
+
+let drag = null, dragR = false;
+cv.addEventListener('contextmenu', e => e.preventDefault());
+cv.addEventListener('pointerdown', e => {
+  drag = { x:e.clientX, y:e.clientY };
+  dragR = (e.button === 2 || e.shiftKey);     // 右 or Shift ＝ 角度
+  cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointermove', e => {
+  if(!drag) return;
+  if(dragR){
+    cam.ry = Math.max(-1.2, Math.min(1.2, cam.ry + (e.clientX - drag.x) * 0.006));
+    cam.rx = Math.max(-1.2, Math.min(1.2, cam.rx - (e.clientY - drag.y) * 0.006));
+  } else {
+    cam.x += e.clientX - drag.x; cam.y += e.clientY - drag.y;
+  }
+  drag = { x:e.clientX, y:e.clientY };
+});
+cv.addEventListener('pointerup', () => { drag = null; dragR = false; });
+cv.addEventListener('pointercancel', () => drag = null);
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  const k = Math.exp(-e.deltaY * 0.0016);
+  const ns = Math.max(0.02, Math.min(40, cam.s * k));
+  // カーソルの下にあるものが動かないように寄る
+  cam.x = e.clientX - (e.clientX - cam.x) * (ns / cam.s);
+  cam.y = e.clientY - (e.clientY - cam.y) * (ns / cam.s);
+  cam.s = ns;
+}, { passive:false });
+
+let pinch = 0;
+cv.addEventListener('touchmove', e => {
+  if(e.touches.length !== 2) return;
+  e.preventDefault();
+  const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                       e.touches[0].clientY - e.touches[1].clientY);
+  if(pinch) cam.s = Math.max(0.02, Math.min(40, cam.s * (d / pinch)));
+  pinch = d;
+}, { passive:false });
+cv.addEventListener('touchend', () => pinch = 0);
+
+document.getElementById('go').onclick = () => { for(const d of dots) d.live = true; running = true; t = 0; };
+document.getElementById('reset').onclick = () => { running = false; build(); };
+
+// ループは即開始する（fonts.ready 待ちに人質を取らせない）。
+// フォントが後から乗ったら字を焼き直す。
+resize();
+drawWarpCurve();
+requestAnimationFrame(loop);
+if(document.fonts && document.fonts.ready){
+  document.fonts.ready.then(() => { build(); }).catch(() => {});
+  document.fonts.load('700 24px "Zen Kaku Gothic New"').then(() => build()).catch(() => {});
+  document.fonts.load('600 24px "Zen Old Mincho"').then(() => build()).catch(() => {});
+}
+</script>
+</body>
+</html>
