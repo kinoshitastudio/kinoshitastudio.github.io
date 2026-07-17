@@ -1,0 +1,1445 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>彫 HORI — 線を引くと立体になるグラフィック楽器 / 木下スタジオ</title>
+<meta name="description" content="引いた線がそのまま彫られて立ち上がる、ブラウザで動くグラフィック楽器。押し出し・刻み・滲み・反転・色を7段のチェーンで組み、音がそのチェーンを叩く。木下スタジオ（木下貴博 / 滋賀・琵琶湖）制作。">
+<link rel="canonical" href="https://kinoshita.studio/hori/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="彫 HORI — 線を引くと立体になるグラフィック楽器">
+<meta property="og:description" content="操作は「線を引く」だけ。押し出し・刻み・滲み・反転・色の7段チェーンを、音が叩く。">
+<meta property="og:url" content="https://kinoshita.studio/hori/">
+<meta property="og:image" content="https://kinoshita.studio/assets/img/img-ui-hori.webp">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="彫 HORI — 線を引くと立体になるグラフィック楽器">
+<meta name="twitter:description" content="操作は「線を引く」だけ。押し出し・刻み・滲み・反転・色の7段チェーンを、音が叩く。">
+<meta name="twitter:image" content="https://kinoshita.studio/assets/img/img-ui-hori.webp">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0a0a0a;
+    --paper:#f4f2ee;
+    --line:rgba(10,10,10,.14);
+    --dim:rgba(10,10,10,.42);
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;overflow:hidden;background:var(--paper);}
+  body{
+    font-family:"Zen Kaku Gothic New",-apple-system,sans-serif;
+    font-weight:300;
+    color:var(--ink);
+    -webkit-font-smoothing:antialiased;
+    -webkit-tap-highlight-color:transparent;
+    touch-action:none;
+  }
+  canvas{display:block;position:fixed;inset:0;width:100%;height:100%;}
+
+  .mono{font-family:"Space Mono",monospace;}
+
+  /* ── title ───────────────────────────── */
+  #title{
+    position:fixed;top:22px;left:24px;z-index:10;
+    pointer-events:none;mix-blend-mode:difference;color:#fff;
+  }
+  #title h1{font-size:26px;font-weight:400;letter-spacing:.24em;line-height:1;}
+  #title p{
+    font-family:"Space Mono",monospace;font-size:9px;letter-spacing:.3em;
+    margin-top:9px;opacity:.5;
+  }
+
+  /* ── rack ────────────────────────────── */
+  #rack{
+    position:fixed;top:22px;right:22px;z-index:20;
+    width:224px;
+    background:rgba(244,242,238,.86);
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border:1px solid var(--line);
+    /* 7段を全部開いても下まで届くように。ラック自体がスクロールする */
+    max-height:calc(100vh - 44px);
+    overflow-y:auto;overscroll-behavior:contain;
+    scrollbar-width:thin;
+  }
+  #rack::-webkit-scrollbar{width:3px;}
+  #rack::-webkit-scrollbar-track{background:transparent;}
+  #rack::-webkit-scrollbar-thumb{background:rgba(10,10,10,.22);}
+  .unit{border-bottom:1px solid var(--line);}
+  .unit:last-child{border-bottom:none;}
+  .unit-head{
+    display:flex;align-items:center;gap:8px;
+    padding:9px 12px;cursor:pointer;user-select:none;
+  }
+  .unit-head:hover{background:rgba(10,10,10,.03);}
+  .led{
+    width:5px;height:5px;flex:none;border-radius:50%;
+    background:var(--ink);transition:opacity .18s;
+  }
+  .unit.off .led{opacity:.16;}
+  .unit.off .unit-body{display:none;}
+  .unit.off .unit-name{opacity:.38;}
+  .unit-idx{
+    font-family:"Space Mono",monospace;font-size:8px;
+    opacity:.32;letter-spacing:.1em;
+  }
+  .unit-name{
+    font-family:"Space Mono",monospace;font-size:10px;
+    letter-spacing:.18em;flex:1;
+  }
+  .unit-jp{font-size:10px;opacity:.4;letter-spacing:.08em;}
+  .unit-body{padding:2px 12px 11px;}
+
+  .row{display:flex;align-items:center;gap:9px;padding:3px 0;}
+  .row label{
+    font-family:"Space Mono",monospace;font-size:8.5px;
+    letter-spacing:.1em;opacity:.5;width:56px;flex:none;
+  }
+  .row input[type=range]{
+    -webkit-appearance:none;appearance:none;flex:1;height:1px;
+    background:var(--line);outline:none;cursor:pointer;
+  }
+  .row input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:9px;height:9px;border-radius:50%;
+    background:var(--ink);cursor:pointer;
+  }
+  .row input[type=range]::-moz-range-thumb{
+    width:9px;height:9px;border:none;border-radius:50%;
+    background:var(--ink);cursor:pointer;
+  }
+  .val{
+    font-family:"Space Mono",monospace;font-size:8.5px;
+    opacity:.42;width:26px;text-align:right;flex:none;
+  }
+  .seg{display:flex;gap:0;margin:5px 0 2px;border:1px solid var(--line);}
+  .seg button{
+    flex:1;background:none;border:none;cursor:pointer;
+    font-family:"Space Mono",monospace;font-size:8px;letter-spacing:.12em;
+    padding:5px 0;color:var(--ink);opacity:.4;
+    border-right:1px solid var(--line);
+  }
+  .seg button:last-child{border-right:none;}
+  .seg button.on{opacity:1;background:var(--ink);color:var(--paper);}
+
+  .prog{
+    height:3px;background:var(--line);margin:8px 0 3px;
+    cursor:pointer;position:relative;
+  }
+  .prog i{
+    display:block;height:100%;width:0;background:var(--ink);
+    transition:width .1s linear;
+  }
+  .ptime{
+    display:flex;justify-content:space-between;
+    font-family:"Space Mono",monospace;font-size:7.5px;
+    opacity:.38;letter-spacing:.05em;
+  }
+  .meters{display:flex;gap:3px;margin:7px 0 4px;height:2px;}
+  .meters i{flex:1;background:var(--line);position:relative;overflow:hidden;}
+  .meters i::after{
+    content:"";position:absolute;inset:0;transform-origin:left;
+    transform:scaleX(var(--v,0));background:var(--ink);
+  }
+  .mod{
+    font-family:"Space Mono",monospace;font-size:7.5px;
+    letter-spacing:.06em;line-height:1.8;opacity:.3;margin-top:7px;
+  }
+
+  /* ── transport ───────────────────────── */
+  #transport{
+    position:fixed;bottom:22px;left:24px;z-index:10;display:flex;gap:7px;
+  }
+  #transport button{
+    font-family:"Space Mono",monospace;font-size:9px;letter-spacing:.14em;
+    padding:8px 13px;background:rgba(244,242,238,.86);
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border:1px solid var(--line);color:var(--ink);cursor:pointer;
+    transition:background .15s,color .15s;
+  }
+  #transport button:hover{background:var(--ink);color:var(--paper);}
+  #transport button.rec{color:#b4241e;border-color:rgba(180,36,30,.4);}
+  #transport button.rec.on{background:#b4241e;color:var(--paper);border-color:#b4241e;}
+
+  /* ── home ────────────────────────────── */
+  #home{
+    position:fixed;top:26px;left:110px;z-index:10;
+    font-family:"Space Mono",monospace;font-size:8.5px;
+    letter-spacing:.18em;color:var(--ink);text-decoration:none;
+    opacity:.34;transition:opacity .25s;
+  }
+  #home:hover{opacity:1;}
+  @media(max-width:760px){ #home{top:20px;left:auto;right:14px;} }
+
+  /* ── hint ────────────────────────────── */
+  /* 右下はラックの下に潜って読めないので左（トランスポートの上）に置く */
+  #hint{
+    position:fixed;bottom:58px;left:24px;z-index:10;
+    font-family:"Space Mono",monospace;font-size:8.5px;
+    letter-spacing:.1em;line-height:1.9;text-align:left;
+    opacity:.34;pointer-events:none;
+  }
+
+  /* ── boot ────────────────────────────── */
+  #boot{
+    position:fixed;inset:0;z-index:50;background:var(--paper);
+    display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:14px;
+    transition:opacity .5s;
+  }
+  #boot.gone{opacity:0;pointer-events:none;}
+  #boot .k{font-size:40px;font-weight:300;letter-spacing:.3em;text-indent:.3em;}
+  #boot .s{
+    font-family:"Space Mono",monospace;font-size:9px;
+    letter-spacing:.3em;opacity:.4;
+  }
+
+  @media (max-width:760px){
+    #rack{
+      top:auto;bottom:70px;right:12px;left:12px;width:auto;
+      max-height:44vh;overflow-y:auto;
+    }
+    #transport{bottom:14px;left:12px;}
+    #hint{display:none;}
+    #title{top:16px;left:14px;}
+  }
+</style>
+</head>
+<body>
+
+<div id="boot">
+  <div class="k">彫</div>
+  <div class="s">HORI — LOADING</div>
+</div>
+
+<div id="title">
+  <h1>彫</h1>
+  <p>HORI / KINOSHITA STUDIO</p>
+</div>
+
+<a id="home" href="/ui-design-work.html">← KINOSHITA STUDIO</a>
+
+<div id="rack">
+  <!-- 01 AUDIO -->
+  <div class="unit off" data-unit="audio">
+    <div class="unit-head">
+      <span class="led"></span>
+      <span class="unit-idx">01</span>
+      <span class="unit-name">AUDIO</span>
+      <span class="unit-jp" id="src-label">鳴る</span>
+    </div>
+    <div class="unit-body">
+      <div class="seg" id="src-seg">
+        <button id="btn-mic">MIC</button>
+        <button id="btn-file">FILE</button>
+        <button id="btn-stop">STOP</button>
+      </div>
+      <div class="prog" id="prog"><i id="prog-fill"></i></div>
+      <div class="ptime"><span id="p-cur">0:00</span><span id="p-dur">0:00</span></div>
+      <div class="meters"><i id="m-low"></i><i id="m-mid"></i><i id="m-high"></i></div>
+      <div class="row"><label>AMOUNT</label><input type="range" data-p="amount" min="0" max="100" step="1" value="60"><span class="val"></span></div>
+      <div class="row"><label>SMOOTH</label><input type="range" data-p="smoothing" min="0" max="100" step="1" value="70"><span class="val"></span></div>
+      <div class="mod">低音 → 層が開く・厚み／中音 → うねり・滲み・色相<br>高音 → 刻み・回転／キック → 反転</div>
+    </div>
+  </div>
+
+  <!-- 02 SAMPLER -->
+  <div class="unit" data-unit="sampler">
+    <div class="unit-head">
+      <span class="led"></span>
+      <span class="unit-idx">02</span>
+      <span class="unit-name">SAMPLER</span>
+      <span class="unit-jp">引く</span>
+    </div>
+    <div class="unit-body">
+      <div class="row"><label>WIDTH</label><input type="range" data-p="width" min="2" max="60" step="1" value="22"><span class="val"></span></div>
+      <div class="row"><label>TAPER</label><input type="range" data-p="taper" min="0" max="100" step="1" value="62"><span class="val"></span></div>
+      <div class="row"><label>SMOOTH</label><input type="range" data-p="smooth" min="0" max="100" step="1" value="45"><span class="val"></span></div>
+    </div>
+  </div>
+
+  <!-- 03 EXTRUDE -->
+  <div class="unit" data-unit="extrude">
+    <div class="unit-head">
+      <span class="led"></span>
+      <span class="unit-idx">03</span>
+      <span class="unit-name">EXTRUDE</span>
+      <span class="unit-jp">彫る</span>
+    </div>
+    <div class="unit-body">
+      <div class="row"><label>DEPTH</label><input type="range" data-p="depth" min="1" max="120" step="1" value="46"><span class="val"></span></div>
+      <div class="row"><label>LAYER</label><input type="range" data-p="layer" min="0" max="40" step="1" value="12"><span class="val"></span></div>
+      <div class="row"><label>TWIST</label><input type="range" data-p="twist" min="0" max="100" step="1" value="22"><span class="val"></span></div>
+      <div class="row"><label>WAVE</label><input type="range" data-p="wave" min="0" max="120" step="1" value="0"><span class="val"></span></div>
+      <div class="row"><label>FREQ</label><input type="range" data-p="wavefreq" min="1" max="200" step="1" value="10"><span class="val"></span></div>
+      <div class="row"><label>SPEED</label><input type="range" data-p="speed" min="0" max="100" step="1" value="40"><span class="val"></span></div>
+      <div class="mod">WAVE は音でも叩かれる（中音）<br>0 でも AUDIO を点ければ動く</div>
+    </div>
+  </div>
+
+  <!-- 04 HATCH -->
+  <div class="unit" data-unit="hatch">
+    <div class="unit-head">
+      <span class="led"></span>
+      <span class="unit-idx">04</span>
+      <span class="unit-name">HATCH</span>
+      <span class="unit-jp">刻む</span>
+    </div>
+    <div class="unit-body">
+      <div class="seg" data-seg="hatchMode">
+        <button data-v="0" class="on">WALL</button>
+        <button data-v="1">TONE</button>
+        <button data-v="2">BOTH</button>
+      </div>
+      <div class="row"><label>DENSITY</label><input type="range" data-p="hatchDensity" min="1" max="100" step="1" value="34"><span class="val"></span></div>
+      <div class="row"><label>WEIGHT</label><input type="range" data-p="hatchWeight" min="0" max="100" step="1" value="46"><span class="val"></span></div>
+      <div class="row"><label>ANGLE</label><input type="range" data-p="hatchAngle" min="0" max="180" step="1" value="38"><span class="val"></span></div>
+    </div>
+  </div>
+
+  <!-- 05 BLEED -->
+  <div class="unit off" data-unit="bleed">
+    <div class="unit-head">
+      <span class="led"></span>
+      <span class="unit-idx">05</span>
+      <span class="unit-name">BLEED</span>
+      <span class="unit-jp">滲む</span>
+    </div>
+    <div class="unit-body">
+      <div class="row"><label>SPREAD</label><input type="range" data-p="spread" min="0" max="100" step="1" value="26"><span class="val"></span></div>
+      <div class="row"><label>DECAY</label><input type="range" data-p="decay" min="0" max="100" step="1" value="85"><span class="val"></span></div>
+      <div class="row"><label>FEED</label><input type="range" data-p="feed" min="0" max="100" step="1" value="100"><span class="val"></span></div>
+      <div class="row"><label>FLIP</label><input type="range" data-p="flip" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+      <div class="row"><label>CYCLES</label><input type="range" data-p="cycles" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+      <div class="row"><label>PULSE</label><input type="range" data-p="pulse" min="0" max="100" step="1" value="30"><span class="val"></span></div>
+      <div class="mod">FLIP を上げると反転が出る<br>CYCLES > 0 でリングが内側から湧き続ける</div>
+    </div>
+  </div>
+
+  <!-- 06 TAPE -->
+  <div class="unit" data-unit="tape">
+    <div class="unit-head">
+      <span class="led"></span>
+      <span class="unit-idx">06</span>
+      <span class="unit-name">TAPE</span>
+      <span class="unit-jp">通す</span>
+    </div>
+    <div class="unit-body">
+      <div class="row"><label>LEVELS</label><input type="range" data-p="levels" min="2" max="32" step="1" value="7"><span class="val"></span></div>
+      <div class="row"><label>GRAIN</label><input type="range" data-p="grain" min="0" max="100" step="1" value="30"><span class="val"></span></div>
+      <div class="row"><label>BIAS</label><input type="range" data-p="bias" min="0" max="100" step="1" value="50"><span class="val"></span></div>
+      <div class="seg" data-seg="invert">
+        <button data-v="0" class="on">紙 PAPER</button>
+        <button data-v="1">墨 SUMI</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 07 TINT -->
+  <div class="unit off" data-unit="tint">
+    <div class="unit-head">
+      <span class="led"></span>
+      <span class="unit-idx">07</span>
+      <span class="unit-name">TINT</span>
+      <span class="unit-jp">差す</span>
+    </div>
+    <div class="unit-body">
+      <div class="seg" data-seg="tintMode">
+        <button data-v="1" class="on">DUO</button>
+        <button data-v="2">IRID</button>
+        <button data-v="3">POSTER</button>
+      </div>
+      <div class="row"><label>HUE</label><input type="range" data-p="hue" min="0" max="360" step="1" value="196"><span class="val"></span></div>
+      <div class="row"><label>SAT</label><input type="range" data-p="sat" min="0" max="100" step="1" value="76"><span class="val"></span></div>
+      <div class="row"><label>VIVID</label><input type="range" data-p="vivid" min="0" max="100" step="1" value="72"><span class="val"></span></div>
+      <div class="row"><label>SHIFT</label><input type="range" data-p="shift" min="0" max="100" step="1" value="50"><span class="val"></span></div>
+      <div class="row"><label>RING</label><input type="range" data-p="ring" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+      <div class="row"><label>HUE 2</label><input type="range" data-p="hue2" min="0" max="360" step="1" value="196"><span class="val"></span></div>
+      <div class="row"><label>BG</label><input type="range" data-p="bg" min="0" max="360" step="1" value="40"><span class="val"></span></div>
+      <div class="row"><label>BG SAT</label><input type="range" data-p="bgsat" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+      <div class="mod">SAT 0 でモノクロームに戻る<br>POSTER = TAPE の版ごとに色が飛ぶ（奇抜側）<br>HUE 2 に補色を入れるとぶつかる</div>
+    </div>
+  </div>
+</div>
+
+<div id="transport">
+  <button id="btn-undo">UNDO</button>
+  <button id="btn-clear">CLEAR</button>
+  <button id="btn-spin">SPIN</button>
+  <button id="btn-png">PNG</button>
+  <button id="btn-rec" class="rec">REC</button>
+</div>
+
+<div id="hint">
+  DRAG — 引く<br>
+  RIGHT DRAG / 2 FINGERS — 回す<br>
+  WHEEL / PINCH — 寄る
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ═══════════════════════════════════════════════════════════
+   彫 HORI — 引いた線が彫られて立ち上がる
+   CHAIN : SAMPLER → EXTRUDE → HATCH → TAPE
+   エンジンは ENGINES に1エントリ足せば増える（descriptor方式）
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── PARAMS ─────────────────────────────────────────────── */
+const P = {
+  amount:60, smoothing:70,
+  width:22, taper:62, smooth:45,
+  depth:46, layer:12, twist:22, wave:0, wavefreq:10, speed:40,
+  hatchMode:0, hatchDensity:34, hatchWeight:46, hatchAngle:38,
+  spread:26, decay:85, feed:100, flip:0, cycles:0, pulse:30,
+  levels:7, grain:30, bias:50, invert:0,
+  tintMode:1, hue:196, sat:76, vivid:72, shift:50, ring:0, hue2:196, bg:40, bgsat:0,
+};
+const ON = { audio:false, sampler:true, extrude:true, hatch:true,
+             bleed:false, tape:true, tint:false };
+
+/* ── MOD — 音がチェーンを叩いた量。P はベース、M は offset ── */
+const M = { depth:0, spread:0, hdens:0, flip:0, hue:0, wave:0, push:0, spin:0 };
+
+/* ── ENGINE DESCRIPTORS ─────────────────────────────────────
+   1エントリ = 1エンジン。受け取るのは常に同じ鞄 U = {ink, bleed, post}。
+   uniform への流し込みだけを宣言する。次のアプリに棚ごと持っていける単位。
+   ──────────────────────────────────────────────────────── */
+const ENGINES = [
+  {
+    id:'audio', jp:'鳴る',
+    apply(){
+      analyse();                       // 音を読んで M を書く。下流が M を読む
+    },
+    bypass(){ M.depth = M.spread = M.hdens = M.flip = M.hue = 0; }
+  },
+  {
+    id:'sampler', jp:'引く',
+    apply(){ /* ストローク生成時に読まれる（geometry 側） */ },
+    bypass(){ /* off でも既存ストロークは残る */ }
+  },
+  {
+    id:'extrude', jp:'彫る',
+    apply(U){
+      U.ink.uDepthScale.value = Math.max(1 + M.depth, 0.02);  // 低音が厚みを叩く
+      U.ink.uTwist.value = P.twist / 100;
+      U.ink.uWave.value     = P.wave + M.wave;                // 音が形そのものを揺らす
+      U.ink.uWaveFreq.value = P.wavefreq;
+      U.ink.uSpeed.value    = P.speed / 100 * 3.0;
+      U.ink.uPush.value     = M.push;
+    },
+    bypass(U){
+      U.ink.uDepthScale.value = 0.02; U.ink.uTwist.value = 0;
+      U.ink.uWave.value = 0; U.ink.uPush.value = 0;
+    }
+  },
+  {
+    id:'hatch', jp:'刻む',
+    apply(U){
+      U.ink.uHatchMode.value   = P.hatchMode;
+      U.ink.uHatchDens.value   = 0.4 + Math.max(P.hatchDensity + M.hdens, 0) * 0.9;
+      U.ink.uHatchWeight.value = P.hatchWeight / 100;
+      U.ink.uHatchAngle.value  = P.hatchAngle * Math.PI / 180;
+    },
+    bypass(U){ U.ink.uHatchWeight.value = 0; }
+  },
+  {
+    id:'bleed', jp:'滲む',
+    apply(U){
+      U.bleed.uSpread.value = Math.max(P.spread + M.spread, 0) / 100 * 3.0;  // px / frame
+      U.bleed.uDecay.value  = 0.975 + P.decay / 100 * 0.025;
+      U.bleed.uFeed.value   = P.feed / 100;
+      U.post.uFlip.value    = Math.min(Math.max(P.flip + M.flip, 0), 100) / 100;
+      U.post.uCycles.value  = P.cycles / 10;      // 反転バンドの重なり回数
+      U.post.uPulse.value   = P.pulse / 100 * 4;  // リングが湧いて流れる速さ
+    },
+    bypass(U){ U.post.uFlip.value = 0; U.post.uCycles.value = 0; }
+  },
+  {
+    id:'tape', jp:'通す',
+    apply(U){
+      U.post.uLevels.value = P.levels;
+      U.post.uGrain.value  = P.grain / 100;
+      U.post.uBias.value   = (P.bias - 50) / 100;
+      U.post.uInvert.value = P.invert;
+    },
+    bypass(U){
+      U.post.uLevels.value = 0; U.post.uGrain.value = 0;
+      U.post.uBias.value = 0; U.post.uInvert.value = P.invert;
+    }
+  },
+  {
+    id:'tint', jp:'差す',
+    apply(U){
+      U.post.uTintMode.value = P.tintMode;
+      U.post.uHue.value      = (P.hue + M.hue) / 360;
+      U.post.uSat.value      = P.sat / 100;
+      U.post.uVal.value      = 0.34 + P.vivid / 100 * 0.66;
+      U.post.uShift.value    = P.shift / 100 * 2.0;
+      U.post.uRing.value     = P.ring / 100 * 3.0;
+      U.post.uHue2.value     = P.hue2 / 360;
+      U.post.uBg.value       = P.bg / 360;
+      U.post.uBgSat.value    = P.bgsat / 100;
+    },
+    bypass(U){ U.post.uTintMode.value = 0; U.post.uSat.value = 0;
+               U.post.uRing.value = 0; U.post.uBgSat.value = 0; }
+  },
+];
+
+/* ── RENDERER / SCENE ───────────────────────────────────── */
+const renderer = new THREE.WebGLRenderer({ antialias:true, preserveDrawingBuffer:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(42, innerWidth/innerHeight, 0.05, 80000);
+
+// カメラは球面。draw plane は z=0 の world plane。
+const cam = { az:0, el:0, dist:680, tAz:0, tEl:0, tDist:680 };
+function placeCamera(){
+  cam.az   += (cam.tAz   - cam.az)   * 0.12;
+  cam.el   += (cam.tEl   - cam.el)   * 0.12;
+  cam.dist += (cam.tDist - cam.dist) * 0.12;
+  const x = cam.dist * Math.cos(cam.el) * Math.sin(cam.az);
+  const y = cam.dist * Math.sin(cam.el);
+  const z = cam.dist * Math.cos(cam.el) * Math.cos(cam.az);
+  camera.position.set(x, y, z);
+  camera.lookAt(0, 0, 0);
+}
+
+/* ── INK SHADER ─────────────────────────────────────────────
+   面 = 法線 → グレースケール明度（彼の iridescent の位置に
+   モノクロームを置く）。側面 = 等間隔ハッチ。TONE = 明度を
+   スクリーン空間のハッチ密度に翻訳（銅版画）。
+   ──────────────────────────────────────────────────────── */
+const inkUniforms = {
+  uDepthScale:  { value:1 },
+  uTwist:       { value:0.22 },
+  uTime:        { value:0 },
+  uWave:        { value:0 },   // 帯がうねる量
+  uWaveFreq:    { value:1 },   // うねりの細かさ
+  uSpeed:       { value:0.4 }, // うねりの速さ
+  uPush:        { value:0 },   // 層が前後に開く量
+  uHatchMode:   { value:0 },
+  uHatchDens:   { value:31 },
+  uHatchWeight: { value:0.46 },
+  uHatchAngle:  { value:0.66 },
+  uPx:          { value:1 },
+};
+
+const inkMaterial = new THREE.ShaderMaterial({
+  uniforms: inkUniforms,
+  side: THREE.DoubleSide,
+  vertexShader:`
+    attribute float aU;      // ストローク方向の弧長
+    attribute float aFace;   // 0=top 1=bottom 2=wall
+    attribute vec3  aDOff;   // その頂点に乗っている押し出し分（厚みの実体）
+    attribute float aLayer;  // 何本目のストロークか
+    uniform   float uDepthScale, uTime, uWave, uWaveFreq, uSpeed, uPush;
+    varying vec3  vN;
+    varying float vU;
+    varying float vFace;
+    void main(){
+      vN    = normalize(normalMatrix * normal);
+      vU    = aU;
+      vFace = aFace;
+
+      // 厚みだけを伸縮する（低音が叩くのはここ）。再構築は要らない
+      vec3 pos = position - aDOff + aDOff * uDepthScale;
+
+      // うねり — 弧長に沿って帯が波打つ。ストロークごとに位相をずらすので
+      // 全体がバラバラに、しかし同じ拍で動く
+      vec3 axis = normalize(aDOff + vec3(0.0, 0.0, 0.0001));
+      float ph  = aU * uWaveFreq * 0.01 + aLayer * 1.7 + uTime * uSpeed;
+      pos += axis * sin(ph) * uWave;
+
+      // 層が前後に開く（キックで版が開く）
+      pos.z += sin(aLayer * 2.3 + uTime * uSpeed * 0.7) * uPush;
+
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+    }
+  `,
+  fragmentShader:`
+    precision highp float;
+    uniform float uHatchMode, uHatchDens, uHatchWeight, uHatchAngle, uPx;
+    varying vec3  vN;
+    varying float vU;
+    varying float vFace;
+
+    // 等間隔ハッチ（アンチエイリアス付き）
+    float stripe(float coord, float dens, float weight){
+      float s = fract(coord * dens);
+      float d = abs(s - 0.5) * 2.0;                 // 0=線の中心
+      float w = mix(0.08, 0.72, weight);
+      return smoothstep(w + 0.14, w - 0.14, d);     // 1 = インク
+    }
+
+    void main(){
+      vec3 n = normalize(vN);
+      if(!gl_FrontFacing) n = -n;
+
+      // 法線 → 明度（key + fill + ambient）
+      vec3 L1 = normalize(vec3( 0.42, 0.74,  0.52));
+      vec3 L2 = normalize(vec3(-0.62,-0.24,  0.44));
+      float lum = clamp(0.16
+                + 0.52 * max(dot(n, L1), 0.0)
+                + 0.30 * max(dot(n, L2), 0.0), 0.0, 1.0);
+
+      float tone  = pow(1.0 - lum, 0.78);           // インクの濃さ
+      bool  isWall = vFace > 1.5;
+
+      // 面 — 素の明度を薄く敷く（版の下地）
+      float ink = tone * 0.46;
+
+      // WALL — 側面に、ストロークの流れに沿った等間隔の刻み
+      if(isWall && (uHatchMode < 0.5 || uHatchMode > 1.5)){
+        ink = max(ink, stripe(vU, uHatchDens * 0.004, uHatchWeight) * 0.92);
+      }
+
+      // TONE — 明度をスクリーン空間ハッチの線幅に翻訳（銅版画）
+      if(uHatchMode > 0.5){
+        vec2 sc = gl_FragCoord.xy / uPx;
+        float a = uHatchAngle;
+        float coord = sc.x * cos(a) + sc.y * sin(a);
+        float t = stripe(coord, uHatchDens * 0.002, uHatchWeight * tone);
+        ink = max(ink, t * smoothstep(0.04, 0.2, tone) * 0.92);
+      }
+
+      // 輪郭 — 視線に対して寝た面が黒く締まる（彫った溝のエッジ）
+      float rim = pow(1.0 - abs(n.z), 3.5);
+      ink = max(ink, rim * 0.72);
+
+      // R = インク量 / GB = 法線xy（下流の TINT が色に変換する）
+      gl_FragColor = vec4(clamp(ink, 0.0, 1.0), n.x * 0.5 + 0.5, n.y * 0.5 + 0.5, 1.0);
+    }
+  `
+});
+
+/* ── STROKE GEOMETRY ────────────────────────────────────────
+   点列 → 断面 4 隅を掃引した角柱。top/bottom/wall を aFace で
+   分け、aU に弧長を積む（HATCH がこれを読む）。
+   ──────────────────────────────────────────────────────── */
+const strokes = [];       // { mesh, pts, z }
+const group = new THREE.Group();
+scene.add(group);
+
+function buildStroke(pts, z, layerIdx){
+  if(pts.length < 2) return null;
+
+  const half  = P.width * 0.5;
+  const depth = Math.max(P.depth, 0.6) * 0.5;
+  const taper = P.taper / 100;
+  const twist = P.twist / 100;
+
+  const pos = [], nor = [], us = [], fs = [], dof = [], lay = [], idx = [];
+  const secs = [];
+  let arc = 0;
+
+  for(let i = 0; i < pts.length; i++){
+    const p  = pts[i];
+    const pa = pts[Math.max(i-1, 0)];
+    const pb = pts[Math.min(i+1, pts.length-1)];
+    let tx = pb.x - pa.x, ty = pb.y - pa.y;
+    const tl = Math.hypot(tx, ty) || 1;
+    tx /= tl; ty /= tl;
+    const nx = -ty, ny = tx;
+
+    if(i > 0) arc += Math.hypot(p.x - pts[i-1].x, p.y - pts[i-1].y);
+
+    // TAPER — 端が細る（両端で 0 に向かう）
+    const t = pts.length > 1 ? i / (pts.length - 1) : 0.5;
+    const env = Math.pow(Math.sin(Math.PI * t), 0.55);
+    const w = half * (1 - taper + taper * env) * p.w;
+
+    // TWIST — 弧長に沿って断面を Z 方向にひねる
+    const th = twist * Math.sin(arc * 0.012) * 1.1;
+    const c = Math.cos(th), s = Math.sin(th);
+
+    // 断面ローカル軸：across = (n, 0)、up = (0,0,1) を twist で回す
+    const ax = nx * c, ay = ny * c, az =  s;
+    const bx = -nx * s, by = -ny * s, bz = c;
+
+    const cz = z + p.z;
+    // 押し出し分 d を別に持つ。シェーダーが d だけを伸縮できるように
+    const corner = (sw, sd) => ({
+      x: p.x + ax * (w * sw) + bx * (depth * sd),
+      y: p.y + ay * (w * sw) + by * (depth * sd),
+      z: cz  + az * (w * sw) + bz * (depth * sd),
+      dx: bx * (depth * sd),
+      dy: by * (depth * sd),
+      dz: bz * (depth * sd),
+    });
+
+    secs.push({
+      LT: corner( 1,  1), RT: corner(-1,  1),
+      RB: corner(-1, -1), LB: corner( 1, -1),
+      arc
+    });
+  }
+
+  // 4面 + 端キャップを quad で張る
+  const quad = (a, b, c, d, face, u0, u1) => {
+    const base = pos.length / 3;
+    const A = [a, b, c, d];
+    const U = [u0, u0, u1, u1];
+    // 面法線
+    const e1 = [b.x-a.x, b.y-a.y, b.z-a.z];
+    const e2 = [d.x-a.x, d.y-a.y, d.z-a.z];
+    let nx = e1[1]*e2[2] - e1[2]*e2[1];
+    let ny = e1[2]*e2[0] - e1[0]*e2[2];
+    let nz = e1[0]*e2[1] - e1[1]*e2[0];
+    const nl = Math.hypot(nx, ny, nz) || 1;
+    nx /= nl; ny /= nl; nz /= nl;
+    for(let k = 0; k < 4; k++){
+      pos.push(A[k].x, A[k].y, A[k].z);
+      nor.push(nx, ny, nz);
+      us.push(U[k]);
+      fs.push(face);
+      dof.push(A[k].dx, A[k].dy, A[k].dz);
+      lay.push(layerIdx);
+    }
+    idx.push(base, base+1, base+2, base, base+2, base+3);
+  };
+
+  for(let i = 0; i < secs.length - 1; i++){
+    const s0 = secs[i], s1 = secs[i+1];
+    quad(s0.LT, s0.RT, s1.RT, s1.LT, 0, s0.arc, s1.arc); // top
+    quad(s0.RB, s0.LB, s1.LB, s1.RB, 1, s0.arc, s1.arc); // bottom
+    quad(s0.LB, s0.LT, s1.LT, s1.LB, 2, s0.arc, s1.arc); // wall L
+    quad(s0.RT, s0.RB, s1.RB, s1.RT, 2, s0.arc, s1.arc); // wall R
+  }
+  const f = secs[0], l = secs[secs.length-1];
+  quad(f.LT, f.LB, f.RB, f.RT, 2, f.arc, f.arc);
+  quad(l.RT, l.RB, l.LB, l.LT, 2, l.arc, l.arc);
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal',   new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('aU',       new THREE.Float32BufferAttribute(us, 1));
+  g.setAttribute('aFace',    new THREE.Float32BufferAttribute(fs, 1));
+  g.setAttribute('aDOff',    new THREE.Float32BufferAttribute(dof, 3));
+  g.setAttribute('aLayer',   new THREE.Float32BufferAttribute(lay, 1));
+  g.setIndex(idx);
+  return new THREE.Mesh(g, inkMaterial);
+}
+
+/* ── DRAWING ────────────────────────────────────────────── */
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+let drawPlane = new THREE.Plane(new THREE.Vector3(0,0,1), 0);
+let cur = null, layerZ = 0;
+
+function toPlane(cx, cy, z){
+  ndc.x = (cx / innerWidth) * 2 - 1;
+  ndc.y = -(cy / innerHeight) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+  drawPlane.constant = -z;
+  const hit = new THREE.Vector3();
+  return raycaster.ray.intersectPlane(drawPlane, hit) ? hit : null;
+}
+
+let lastT = 0, lastP = null;
+
+function strokeStart(cx, cy){
+  layerZ = strokes.length * P.layer * 0.6;
+  const p = toPlane(cx, cy, layerZ);
+  if(!p) return;
+  cur = { pts:[{ x:p.x, y:p.y, z:0, w:1 }], mesh:null, z:layerZ };
+  lastT = performance.now(); lastP = p;
+}
+
+function strokeMove(cx, cy){
+  if(!cur) return;
+  const p = toPlane(cx, cy, layerZ);
+  if(!p) return;
+  const prev = cur.pts[cur.pts.length - 1];
+  const d = Math.hypot(p.x - prev.x, p.y - prev.y);
+  if(d < 3.5) return;
+
+  // 速度 → 太さ（速いほど細い＝筆致）
+  const now = performance.now();
+  const dt = Math.max(now - lastT, 1);
+  const speed = d / dt;
+  const w = THREE.MathUtils.clamp(1.35 - speed * 0.42, 0.28, 1.35);
+  lastT = now; lastP = p;
+
+  // SMOOTH — 前点に引っぱられる
+  const sm = P.smooth / 100 * 0.62;
+  const nx = prev.x + (p.x - prev.x) * (1 - sm);
+  const ny = prev.y + (p.y - prev.y) * (1 - sm);
+
+  cur.pts.push({ x:nx, y:ny, z:0, w });
+  rebuildCurrent();
+}
+
+function rebuildCurrent(){
+  if(!cur) return;
+  if(cur.mesh){ group.remove(cur.mesh); cur.mesh.geometry.dispose(); }
+  cur.mesh = buildStroke(cur.pts, cur.z, strokes.length);
+  if(cur.mesh) group.add(cur.mesh);
+}
+
+function strokeEnd(){
+  if(!cur) return;
+  if(cur.mesh) strokes.push(cur);
+  cur = null;
+}
+
+function rebuildAll(){
+  strokes.forEach((s, i) => {
+    if(s.mesh){ group.remove(s.mesh); s.mesh.geometry.dispose(); }
+    s.mesh = buildStroke(s.pts, s.z, i);
+    if(s.mesh) group.add(s.mesh);
+  });
+}
+
+/* ── INPUT ──────────────────────────────────────────────── */
+const el = renderer.domElement;
+let mode = null; // 'draw' | 'orbit'
+let orbitPrev = null, pinchPrev = 0;
+
+el.addEventListener('contextmenu', e => e.preventDefault());
+
+el.addEventListener('pointerdown', e => {
+  try { el.setPointerCapture(e.pointerId); } catch(_){}
+  if(e.button === 2 || e.shiftKey){
+    mode = 'orbit'; orbitPrev = { x:e.clientX, y:e.clientY };
+  } else {
+    mode = 'draw'; strokeStart(e.clientX, e.clientY);
+  }
+});
+el.addEventListener('pointermove', e => {
+  if(mode === 'draw') strokeMove(e.clientX, e.clientY);
+  else if(mode === 'orbit' && orbitPrev){
+    cam.tAz -= (e.clientX - orbitPrev.x) * 0.006;
+    cam.tEl = THREE.MathUtils.clamp(cam.tEl + (e.clientY - orbitPrev.y) * 0.006, -1.35, 1.35);
+    orbitPrev = { x:e.clientX, y:e.clientY };
+  }
+});
+const up = () => { if(mode === 'draw') strokeEnd(); mode = null; orbitPrev = null; };
+el.addEventListener('pointerup', up);
+el.addEventListener('pointercancel', up);
+
+el.addEventListener('wheel', e => {
+  e.preventDefault();
+  cam.tDist = THREE.MathUtils.clamp(cam.tDist * (1 + e.deltaY * 0.0018), 0.4, 40000);
+}, { passive:false });
+
+// 2本指 = 回す + 寄る
+el.addEventListener('touchstart', e => {
+  if(e.touches.length === 2){
+    mode = 'orbit'; cur = null;
+    orbitPrev = { x:(e.touches[0].clientX + e.touches[1].clientX)/2,
+                  y:(e.touches[0].clientY + e.touches[1].clientY)/2 };
+    pinchPrev = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                           e.touches[0].clientY - e.touches[1].clientY);
+  }
+}, { passive:false });
+el.addEventListener('touchmove', e => {
+  if(e.touches.length === 2 && orbitPrev){
+    e.preventDefault();
+    const mx = (e.touches[0].clientX + e.touches[1].clientX)/2;
+    const my = (e.touches[0].clientY + e.touches[1].clientY)/2;
+    cam.tAz -= (mx - orbitPrev.x) * 0.006;
+    cam.tEl = THREE.MathUtils.clamp(cam.tEl + (my - orbitPrev.y) * 0.006, -1.35, 1.35);
+    orbitPrev = { x:mx, y:my };
+    const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                         e.touches[0].clientY - e.touches[1].clientY);
+    if(pinchPrev) cam.tDist = THREE.MathUtils.clamp(cam.tDist * (pinchPrev / d), 0.4, 40000);
+    pinchPrev = d;
+  }
+}, { passive:false });
+
+/* ── BUFFERS ────────────────────────────────────────────── */
+const rtOpts = {
+  minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+  type: THREE.HalfFloatType, depthBuffer: true
+};
+const rt  = new THREE.WebGLRenderTarget(1, 1, rtOpts);            // その瞬間の版
+let   rtA = new THREE.WebGLRenderTarget(1, 1, { ...rtOpts, depthBuffer:false });  // 滲みの蓄積
+let   rtB = new THREE.WebGLRenderTarget(1, 1, { ...rtOpts, depthBuffer:false });
+
+const fsQuad = new THREE.PlaneGeometry(2, 2);
+const fsCam  = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const FS_VERT = `
+  varying vec2 vUv;
+  void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
+`;
+
+/* ── BLEED — 滲む（フィードバック） ─────────────────────────
+   前フレームのインクを読んで外へ膨らませ、そこに今引かれた線を
+   注ぎ足す。紙がインクを食っていく。
+   ──────────────────────────────────────────────────────── */
+const bleedUniforms = {
+  tPrev:   { value: null },
+  tSrc:    { value: rt.texture },
+  uSpread: { value: 0.78 },
+  uDecay:  { value: 0.9905 },
+  uFeed:   { value: 1 },
+  uRes:    { value: new THREE.Vector2(1,1) },
+};
+const bleedScene = new THREE.Scene();
+bleedScene.add(new THREE.Mesh(fsQuad, new THREE.ShaderMaterial({
+  uniforms: bleedUniforms,
+  vertexShader: FS_VERT,
+  fragmentShader:`
+    precision highp float;
+    uniform sampler2D tPrev, tSrc;
+    uniform float uSpread, uDecay, uFeed;
+    uniform vec2 uRes;
+    varying vec2 vUv;
+
+    void main(){
+      vec2 px = 1.0 / uRes;
+
+      // 膨張 — 8方向で一番濃い画素を拾う。法線(GB)ごと連れてくるので
+      // 滲みが色を持ったまま外へ食っていく。
+      vec4 m = texture2D(tPrev, vUv);
+      for(int i = 0; i < 8; i++){
+        float a = float(i) * 0.7853981634;
+        vec2  o = vec2(cos(a), sin(a)) * px * uSpread;
+        vec4  s = texture2D(tPrev, vUv + o);
+        if(s.r > m.r) m = s;
+      }
+
+      // 均し — 滲みの角を取る
+      float b = texture2D(tPrev, vUv + vec2( px.x, 0.0)).r
+              + texture2D(tPrev, vUv + vec2(-px.x, 0.0)).r
+              + texture2D(tPrev, vUv + vec2( 0.0,  px.y)).r
+              + texture2D(tPrev, vUv + vec2( 0.0, -px.y)).r;
+      b *= 0.25;
+
+      float v = mix(m.r, max(m.r, b), 0.5) * uDecay;
+
+      // 今引かれた線を注ぎ足す（新しい線が勝てば法線も差し替わる）
+      vec4 src = texture2D(tSrc, vUv);
+      if(src.r * uFeed > v){
+        gl_FragColor = vec4(clamp(src.r * uFeed, 0.0, 1.0), src.g, src.b, 1.0);
+      } else {
+        gl_FragColor = vec4(clamp(v, 0.0, 1.0), m.g, m.b, 1.0);
+      }
+    }
+  `
+})));
+
+/* ── TAPE — post pass ───────────────────────────────────── */
+const postUniforms = {
+  tSrc:    { value: rt.texture },
+  uLevels: { value: 7 },
+  uGrain:  { value: 0.3 },
+  uBias:   { value: 0 },
+  uInvert: { value: 0 },
+  uFlip:   { value: 0 },
+  uCycles: { value: 0 },
+  uPulse:  { value: 0 },
+  uT:      { value: 0 },
+  uRing:   { value: 0 },
+  uHue2:   { value: 0 },
+  uBg:     { value: 0 },
+  uBgSat:  { value: 0 },
+  uTime:   { value: 0 },
+  uRes:    { value: new THREE.Vector2(1,1) },
+  uTintMode:{ value: 0 },
+  uHue:    { value: 0 },
+  uSat:    { value: 0 },
+  uVal:    { value: 0.9 },
+  uShift:  { value: 0.5 },
+};
+const postScene = new THREE.Scene();
+const postCam   = fsCam;
+postScene.add(new THREE.Mesh(
+  fsQuad,
+  new THREE.ShaderMaterial({
+    uniforms: postUniforms,
+    vertexShader: FS_VERT,
+    fragmentShader:`
+      precision highp float;
+      uniform sampler2D tSrc;
+      uniform float uLevels, uGrain, uBias, uInvert, uFlip, uTime;
+      uniform float uTintMode, uHue, uSat, uVal, uShift, uRing, uHue2, uBg, uBgSat;
+      uniform float uCycles, uPulse, uT;
+      uniform vec2 uRes;
+      varying vec2 vUv;
+
+      float hash(vec2 p){
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+      }
+      vec3 hsv2rgb(vec3 c){
+        vec3 p = abs(fract(c.xxx + vec3(0.0, 0.6666667, 0.3333333)) * 6.0 - 3.0);
+        return c.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y);
+      }
+
+      void main(){
+        vec4 s = texture2D(tSrc, vUv);
+        float v = s.r;                      // インク量
+        vec2  n = s.gb * 2.0 - 1.0;         // 法線xy（TINT が読む）
+        float vIn = v;                      // 反転する前の滲み量（TINT が読む）
+        float vRing = 0.0;                  // 反転バンドの中にいるか
+
+        // FLIP — 版が裏返る
+        // CYCLES 0 = 閾値ひとつで内側が反転（単発）
+        // CYCLES > 0 = 滲み量そのものを位相にして周期バンドにする。
+        //   滲みの等高線は形に依存するので、リングは形ごとに違う崩れ方をする。
+        //   PULSE で位相を送ると、リングが内側から湧いて外へ流れ続ける。
+        if(uFlip > 0.001 && v > 0.015){
+          float k;
+          if(uCycles > 0.01){
+            float ph = v * uCycles * 6.2831853 - uT * uPulse;
+            float w  = 0.5 + 0.5 * sin(ph);
+            k = smoothstep(uFlip, uFlip + 0.16, w);
+          } else {
+            k = smoothstep(uFlip, uFlip + 0.03, v);
+          }
+          v = mix(v, 1.0 - v, k);
+          vRing = k;
+        }
+
+        // BIAS — 明度を持ち上げ / 沈める
+        v = clamp(v + uBias, 0.0, 1.0);
+
+        // GRAIN — 紙の粒子（テープのヒス）
+        if(uGrain > 0.001){
+          float g = hash(floor(vUv * uRes * 0.7) + uTime) - 0.5;
+          v = clamp(v + g * uGrain * 0.34, 0.0, 1.0);
+        }
+
+        // LEVELS — 明度圧縮（シルクスクリーンの版数）
+        if(uLevels >= 2.0){
+          float L = uLevels;
+          v = floor(v * L + 0.5) / L;
+        }
+
+        v = clamp(v, 0.0, 1.0);
+
+        vec3 paper = vec3(0.957, 0.949, 0.933);
+        vec3 sumi  = vec3(0.039);
+        vec3 bg    = uInvert > 0.5 ? sumi  : paper;   // 地
+        vec3 fg    = uInvert > 0.5 ? paper : sumi;    // インク（MONO）
+
+        // TINT — インクに色を差す。SAT 0 でモノクロームに戻る
+        if(uTintMode > 0.5 && uSat > 0.001){
+          float h = uHue;
+
+          if(uTintMode > 1.5 && uTintMode < 2.5){
+            // IRID — 法線の向きが色相になる（面が向きで発色する）
+            float ang = atan(n.y, n.x) / 6.2831853 + 0.5;
+            h = uHue + ang * uShift;
+          } else if(uTintMode > 2.5){
+            // POSTER — TAPE の版数ごとに色相が飛ぶ。段の境目で色が切り替わるので
+            //   隣り合う版がぶつかる。奇抜側はここ
+            float L = max(uLevels, 2.0);
+            h = uHue + (floor(vIn * L) / L) * uShift * 3.0;
+          }
+
+          // RING — 滲みの層ごとに色が変わる。反転バンドの中はさらにずらす
+          h += vIn * uRing + vRing * uRing * 0.5;
+
+          // HUE2 — 濃いところが2色目に転ぶ。補色を入れるとぶつかる
+          float hh = mix(h, h + (uHue2 - uHue), smoothstep(0.12, 0.88, vIn));
+
+          vec3 tint = hsv2rgb(vec3(fract(hh), uSat, uVal));
+          fg = mix(fg, tint, uSat);
+        }
+
+        // BG — 地にも色を差せる（紙白／墨黒から外れる）
+        if(uBgSat > 0.001){
+          vec3 bgc = hsv2rgb(vec3(fract(uBg), uBgSat, uInvert > 0.5 ? 0.30 : 0.94));
+          bg = mix(bg, bgc, uBgSat);
+        }
+
+        gl_FragColor = vec4(mix(bg, fg, v), 1.0);
+      }
+    `
+  })
+));
+
+/* ── AUDIO — 音がチェーンを叩く ─────────────────────────────
+   Ableton でオーディオがデバイスではなくモジュレーターとして横から
+   刺さるのと同じ。P はベース値、ここが書くのは M（offset）だけ。
+   ──────────────────────────────────────────────────────── */
+let actx = null, analyser = null, freq = null, audioEl = null, micStream = null;
+const env  = { low:0, mid:0, high:0 };
+const beat = { env:0, prev:0 };
+
+function ensureCtx(){
+  if(actx) return;
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+  analyser = actx.createAnalyser();
+  analyser.fftSize = 1024;
+  analyser.smoothingTimeConstant = 0.55;
+  freq = new Uint8Array(analyser.frequencyBinCount);
+}
+
+async function useMic(){
+  if(!navigator.mediaDevices?.getUserMedia){
+    throw Object.assign(new Error('no api'), { name:'NoMediaDevices' });
+  }
+  ensureCtx(); await actx.resume();
+  stopSource();
+
+  // 許可プロンプトは返ってこないことがある（OS側で権限が無い等）。
+  // 黙って固まるのが一番困るので、必ず何か出す。
+  setSourceLabel('許可待ち…');
+  const stream = await Promise.race([
+    navigator.mediaDevices.getUserMedia({ audio:{
+      echoCancellation:false, noiseSuppression:false, autoGainControl:false } }),
+    new Promise((_, rej) => setTimeout(
+      () => rej(Object.assign(new Error('timeout'), { name:'TimedOut' })), 8000)),
+  ]);
+
+  micStream = stream;
+  actx.createMediaStreamSource(micStream).connect(analyser);
+  setSourceLabel('MIC');
+}
+
+let fileName = '';
+function useFile(file){
+  ensureCtx(); actx.resume();
+  stopSource();
+  audioEl = new Audio(URL.createObjectURL(file));
+  audioEl.loop = true; audioEl.crossOrigin = 'anonymous';
+  const src = actx.createMediaElementSource(audioEl);
+  src.connect(analyser); src.connect(actx.destination);   // 聴こえるように
+  audioEl.play();
+  fileName = file.name.replace(/\.[^.]+$/, '').slice(0, 14).toUpperCase();
+  setSourceLabel(fileName);
+}
+
+// 進行状況
+const fmt = s => (isFinite(s) ? `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}` : '0:00');
+function drawProgress(){
+  const fill = document.getElementById('prog-fill');
+  if(!fill) return;
+  if(!audioEl || !isFinite(audioEl.duration)){
+    fill.style.width = '0%';
+    document.getElementById('p-cur').textContent = '0:00';
+    document.getElementById('p-dur').textContent = '0:00';
+    return;
+  }
+  fill.style.width = (audioEl.currentTime / audioEl.duration * 100) + '%';
+  document.getElementById('p-cur').textContent = fmt(audioEl.currentTime);
+  document.getElementById('p-dur').textContent = fmt(audioEl.duration);
+}
+
+function stopSource(){
+  if(audioEl){ audioEl.pause(); audioEl = null; }
+  if(micStream){ micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+}
+
+const MET = {};
+function meter(l, m, h){
+  if(!MET.low){
+    MET.low  = document.getElementById('m-low');
+    MET.mid  = document.getElementById('m-mid');
+    MET.high = document.getElementById('m-high');
+    if(!MET.low) return;
+  }
+  MET.low.style.setProperty('--v',  l.toFixed(3));
+  MET.mid.style.setProperty('--v',  m.toFixed(3));
+  MET.high.style.setProperty('--v', h.toFixed(3));
+}
+
+function setSourceLabel(t){
+  const el = document.getElementById('src-label');
+  if(el) el.textContent = t;
+}
+
+function bandAvg(a, b){
+  const n = freq.length;
+  let s = 0, c = 0;
+  for(let i = Math.floor(n*a); i < Math.floor(n*b); i++){ s += freq[i]; c++; }
+  return c ? s / c / 255 : 0;
+}
+
+function analyse(){
+  if(!analyser){ M.depth = M.spread = M.hdens = M.flip = M.hue = 0; return; }
+  analyser.getByteFrequencyData(freq);
+
+  const k = 0.06 + (1 - P.smoothing / 100) * 0.5;   // 追従の速さ
+  const lo = bandAvg(0.00, 0.07);
+  const md = bandAvg(0.07, 0.34);
+  const hi = bandAvg(0.34, 1.00);
+  env.low  += (lo - env.low ) * k;
+  env.mid  += (md - env.mid ) * k;
+  env.high += (hi - env.high) * k;
+
+  // キック — 低音の立ち上がりだけを拾う
+  const rise = Math.max(lo - beat.prev, 0);
+  beat.prev = lo;
+  beat.env = Math.max(beat.env * 0.88, rise * 6.0);
+
+  const A = P.amount / 100;
+  const kick = Math.min(beat.env, 1);
+
+  // 形が動く（ここが「全体で動いてる」の実体。派手側に振ってある）
+  M.wave   = env.mid  * A * 95                 // 中音 → 帯がうねる
+           + kick * A * 60;                    //   キックで一発ねじれる
+  M.push   = env.low  * A * 240                // 低音 → 層が前後に開く
+           + kick * A * 320;                   //   キックで版が弾ける
+  M.depth  = env.low  * A * 3.4;               // 低音 → 厚みが脈打つ
+  M.spin   = env.high * A * 0.024;             // 高音 → 回転が加速する
+
+  // 質感が動く
+  M.spread = env.mid  * A * 70;       // 中音 → 滲みが走る
+  M.hdens  = env.high * A * 46;       // 高音 → 刻みが細かくなる
+  M.flip   = kick * A * 62;           // キック → 版が裏返る
+  M.hue    = env.mid  * A * 120;      // 中音 → 色相が振れる
+
+  meter(env.low, env.mid, env.high);
+}
+
+/* ── CHAIN — descriptor を順に流す ──────────────────────── */
+const U = { ink: inkUniforms, bleed: bleedUniforms, post: postUniforms };
+function runChain(){
+  for(const e of ENGINES){
+    (ON[e.id] ? e.apply : e.bypass).call(e, U);
+  }
+}
+
+function clearBleed(){
+  const prev = renderer.getClearColor(new THREE.Color());
+  renderer.setClearColor(0x000000, 1);
+  for(const t of [rtA, rtB]){
+    renderer.setRenderTarget(t);
+    renderer.clear(true, false, false);
+  }
+  renderer.setRenderTarget(null);
+  renderer.setClearColor(prev, 1);
+}
+
+/* ── LOOP ───────────────────────────────────────────────── */
+let spin = false;
+function resize(){
+  const w = innerWidth, h = innerHeight;
+  const dpr = Math.min(devicePixelRatio, 2);
+  renderer.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  rt.setSize(w * dpr, h * dpr);
+  rtA.setSize(w * dpr, h * dpr);
+  rtB.setSize(w * dpr, h * dpr);
+  postUniforms.uRes.value.set(w * dpr, h * dpr);
+  bleedUniforms.uRes.value.set(w * dpr, h * dpr);
+  inkUniforms.uPx.value = dpr;
+  clearBleed();
+}
+addEventListener('resize', resize);
+resize();
+
+renderer.setClearColor(0x000000, 1);
+
+function frame(t){
+  requestAnimationFrame(frame);
+  runChain();
+  if(spin) cam.tAz += 0.0032 + M.spin;   // 高音が回転を煽る
+  placeCamera();
+  inkUniforms.uTime.value  = t * 0.001;
+  postUniforms.uTime.value = Math.floor(t * 0.024);
+  postUniforms.uT.value    = t * 0.001;
+  if(ON.audio) drawProgress();
+
+  // 版を焼く
+  renderer.setRenderTarget(rt);
+  renderer.clear();
+  renderer.render(scene, camera);
+
+  // 滲ませる（ping-pong）— off なら版をそのまま TAPE へ
+  if(ON.bleed){
+    bleedUniforms.tPrev.value = rtA.texture;
+    renderer.setRenderTarget(rtB);
+    renderer.render(bleedScene, fsCam);
+    const t = rtA; rtA = rtB; rtB = t;
+    postUniforms.tSrc.value = rtA.texture;
+  } else {
+    postUniforms.tSrc.value = rt.texture;
+  }
+
+  // テープを通す
+  renderer.setRenderTarget(null);
+  renderer.render(postScene, postCam);
+}
+requestAnimationFrame(frame);
+
+/* ── UI ─────────────────────────────────────────────────── */
+document.querySelectorAll('input[type=range]').forEach(r => {
+  const val = r.parentElement.querySelector('.val');
+  const sync = () => {
+    P[r.dataset.p] = +r.value;
+    val.textContent = r.value;
+    if(['width','taper','smooth','depth','layer','twist'].includes(r.dataset.p)) rebuildAll();
+  };
+  r.addEventListener('input', sync);
+  sync();
+});
+
+document.querySelectorAll('.seg[data-seg]').forEach(seg => {
+  seg.querySelectorAll('button').forEach(b => {
+    b.addEventListener('click', () => {
+      seg.querySelectorAll('button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      P[seg.dataset.seg] = +b.dataset.v;
+    });
+  });
+});
+
+document.querySelectorAll('.unit-head').forEach(h => {
+  h.addEventListener('click', () => {
+    const u = h.parentElement;
+    u.classList.toggle('off');
+    ON[u.dataset.unit] = !u.classList.contains('off');
+    // AUDIO は LED を落としたら鳴るのも止める（バイパスだけだと鳴りっぱなし）
+    if(u.dataset.unit === 'audio' && !ON.audio) stopAudio();
+  });
+});
+
+document.getElementById('btn-undo').onclick = () => {
+  const s = strokes.pop();
+  if(s?.mesh){ group.remove(s.mesh); s.mesh.geometry.dispose(); }
+};
+document.getElementById('btn-clear').onclick = () => {
+  for(const s of strokes){ if(s.mesh){ group.remove(s.mesh); s.mesh.geometry.dispose(); } }
+  strokes.length = 0;
+  clearBleed();
+};
+document.getElementById('btn-spin').onclick = e => {
+  spin = !spin; e.target.style.background = spin ? '#0a0a0a' : '';
+  e.target.style.color = spin ? '#f4f2ee' : '';
+};
+document.getElementById('btn-png').onclick = () => {
+  const a = document.createElement('a');
+  a.download = `hori_${Date.now()}.png`;
+  a.href = renderer.domElement.toDataURL('image/png');
+  a.click();
+};
+
+// REC — 制作過程がそのままリールになる
+let rec = null;
+document.getElementById('btn-rec').onclick = e => {
+  if(rec){
+    rec.stop(); rec = null; e.target.classList.remove('on'); e.target.textContent = 'REC';
+    return;
+  }
+  const stream = renderer.domElement.captureStream(60);
+  const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+    ? 'video/webm;codecs=vp9' : 'video/webm';
+  rec = new MediaRecorder(stream, { mimeType:mime, videoBitsPerSecond: 12e6 });
+  const chunks = [];
+  rec.ondataavailable = ev => ev.data.size && chunks.push(ev.data);
+  rec.onstop = () => {
+    const a = document.createElement('a');
+    a.download = `hori_${Date.now()}.webm`;
+    a.href = URL.createObjectURL(new Blob(chunks, { type:'video/webm' }));
+    a.click();
+  };
+  rec.start();
+  e.target.classList.add('on'); e.target.textContent = 'STOP';
+};
+
+addEventListener('keydown', e => {
+  if(e.metaKey && e.key === 'z'){ e.preventDefault(); document.getElementById('btn-undo').click(); }
+});
+
+/* ── AUDIO の口 ─────────────────────────────────────────── */
+function armAudio(){
+  document.querySelector('[data-unit=audio]').classList.remove('off');
+  ON.audio = true;
+}
+
+// 叩かれてた M を戻す（音が止まったら形も静止に帰る）
+function calmMod(){
+  M.depth = M.spread = M.hdens = M.flip = M.hue = M.wave = M.push = M.spin = 0;
+  env.low = env.mid = env.high = 0; beat.env = 0;
+  meter(0, 0, 0);
+}
+
+// STOP / PLAY — 止めても音源は捨てない。もう一度押せば鳴り直す
+function toggleAudio(){
+  const btn = document.getElementById('btn-stop');
+  if(audioEl){
+    if(audioEl.paused){                       // 鳴らし直す
+      actx?.resume(); audioEl.play();
+      armAudio(); setSourceLabel(fileName);
+      btn.textContent = 'STOP'; btn.classList.remove('on');
+    } else {                                  // 止める
+      audioEl.pause(); calmMod();
+      setSourceLabel('停止中');
+      btn.textContent = 'PLAY'; btn.classList.add('on');
+    }
+    return;
+  }
+  if(micStream){ stopAudio(); return; }
+  // 音源が無い＝何もしない（FILE を選ばせる）
+  setSourceLabel('音源なし');
+}
+
+// 完全に切る
+function stopAudio(){
+  stopSource(); calmMod();
+  fileName = '';
+  setSourceLabel('鳴る');
+  const btn = document.getElementById('btn-stop');
+  if(btn) btn.textContent = 'STOP';
+  srcBtn(null);
+  drawProgress();
+}
+function srcBtn(id){
+  ['btn-mic','btn-file','btn-stop'].forEach(b =>
+    document.getElementById(b).classList.toggle('on', b === id));
+}
+
+document.getElementById('btn-mic').onclick = async e => {
+  e.stopPropagation();
+  try {
+    await useMic(); armAudio(); srcBtn('btn-mic');
+  } catch(err){
+    // 握り潰さない — 何で落ちたかを出す
+    const why = {
+      NotAllowedError:'マイク拒否',
+      NotFoundError:'マイク無し',
+      NotReadableError:'使用中',
+      SecurityError:'要HTTPS',
+    }[err.name] || err.name || 'MIC ERR';
+    setSourceLabel(why);
+    console.error('[HORI] mic:', err);
+  }
+};
+
+document.getElementById('btn-stop').onclick = e => {
+  e.stopPropagation();
+  toggleAudio();
+};
+
+// 進行バーで頭出し
+document.getElementById('prog').onclick = e => {
+  e.stopPropagation();
+  if(!audioEl || !isFinite(audioEl.duration)) return;
+  const r = e.currentTarget.getBoundingClientRect();
+  audioEl.currentTime = ((e.clientX - r.left) / r.width) * audioEl.duration;
+  drawProgress();
+};
+const filePick = document.createElement('input');
+filePick.type = 'file'; filePick.accept = 'audio/*';
+filePick.onchange = () => {
+  if(!filePick.files[0]) return;
+  useFile(filePick.files[0]); armAudio(); srcBtn('btn-file');
+};
+document.getElementById('btn-file').onclick = e => { e.stopPropagation(); filePick.click(); };
+
+// 音源ファイルはドロップでも受ける
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => {
+  e.preventDefault();
+  const f = [...e.dataTransfer.files].find(f => f.type.startsWith('audio'));
+  if(f){ useFile(f); armAudio(); srcBtn('btn-file'); }
+});
+
+// 初期アングル：わずかに傾けて断面を見せる
+cam.tAz = -0.26; cam.tEl = 0.2; cam.az = -0.26; cam.el = 0.2;
+
+setTimeout(() => document.getElementById('boot').classList.add('gone'), 300);
+</script>
+</body>
+</html>
