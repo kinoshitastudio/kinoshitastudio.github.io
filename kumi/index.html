@@ -133,11 +133,15 @@
   #boot .s{font-family:"Space Mono",monospace;font-size:9px;letter-spacing:.3em;opacity:.4;}
 
   @media(max-width:760px){
-    #rack{top:auto;bottom:70px;right:12px;left:12px;width:auto;max-height:46vh;}
-    #transport{bottom:14px;left:12px;}
-    #hint{display:none;}
-    #title{top:16px;left:14px;}
-    #home{top:20px;left:auto;right:14px;}
+    canvas{ top:0; height:58vh; height:58dvh; bottom:auto; inset:auto; left:0; right:0; }
+    #rack{ top:58vh; top:58dvh; bottom:0; left:0; right:0; width:auto;
+           max-height:42vh; max-height:42dvh; overflow-y:auto;
+           border-left:none; border-top:1px solid var(--line);
+           background:rgba(244,242,238,.97); }
+    #transport{ bottom:auto; top:calc(58vh - 42px); top:calc(58dvh - 42px); left:8px; z-index:11; }
+    #hint{ display:none; }
+    #title{ top:10px; left:12px; }
+    #home{ top:12px; left:auto; right:12px; }
   }
 </style>
 </head>
@@ -160,6 +164,7 @@
     </div>
     <div class="unit-body">
       <div class="seg" id="src-seg">
+        <button id="btn-beat">BEAT</button>
         <button id="btn-mic">MIC</button>
         <button id="btn-file">FILE</button>
         <button id="btn-stop">STOP</button>
@@ -873,6 +878,47 @@ function ensureCtx(){
   analyser.fftSize = 1024; analyser.smoothingTimeConstant = .55;
   freq = new Uint8Array(analyser.frequencyBinCount);
 }
+
+/* ── サンプルビート（合成・外部ファイル不要）── アップロードせず即・音に反応を試せる */
+let demoTimer = null, demoMaster = null;
+function startDemo(){
+  ensureCtx(); actx.resume(); stopSource();
+  demoMaster = actx.createGain(); demoMaster.gain.value = 0.9;
+  demoMaster.connect(analyser); demoMaster.connect(actx.destination);
+  const bpm = 122, step = 60 / bpm / 2;                 // 8分音符
+  let next = actx.currentTime + 0.06, s = 0;
+  const noise = (() => { const b = actx.createBuffer(1, actx.sampleRate*0.2, actx.sampleRate);
+    const d = b.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1; return b; })();
+  const kick = t => { const o=actx.createOscillator(), g=actx.createGain();
+    o.frequency.setValueAtTime(150,t); o.frequency.exponentialRampToValueAtTime(45,t+0.12);
+    g.gain.setValueAtTime(1,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.2);
+    o.connect(g); g.connect(demoMaster); o.start(t); o.stop(t+0.22); };
+  const hat = t => { const src=actx.createBufferSource(); src.buffer=noise;
+    const hp=actx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=7000;
+    const g=actx.createGain(); g.gain.setValueAtTime(0.35,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.05);
+    src.connect(hp); hp.connect(g); g.connect(demoMaster); src.start(t); src.stop(t+0.06); };
+  const bass = (t,f) => { const o=actx.createOscillator(), g=actx.createGain();
+    o.type='sawtooth'; o.frequency.value=f;
+    const lp=actx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=520;
+    g.gain.setValueAtTime(0.28,t); g.gain.exponentialRampToValueAtTime(0.001,t+step*0.9);
+    o.connect(lp); lp.connect(g); g.connect(demoMaster); o.start(t); o.stop(t+step); };
+  const line = [55,0,82.4,0,55,0,73.4,49];              // ベースの音程
+  demoTimer = setInterval(() => {
+    if(!actx) return;
+    while(next < actx.currentTime + 0.12){
+      const b = s % 8;
+      if(b===0 || b===3 || b===6) kick(next);
+      if(b%2===1) hat(next);
+      if(line[b]) bass(next, line[b]);
+      next += step; s++;
+    }
+  }, 25);
+}
+function stopDemo(){
+  if(demoTimer){ clearInterval(demoTimer); demoTimer = null; }
+  if(demoMaster){ try{ demoMaster.disconnect(); }catch(_){} demoMaster = null; }
+}
+
 async function useMic(){
   if(!navigator.mediaDevices?.getUserMedia) throw Object.assign(new Error(), {name:'NoMediaDevices'});
   ensureCtx(); await actx.resume(); stopSource();
@@ -895,6 +941,7 @@ function useFile(file){
   setSourceLabel(fileName);
 }
 function stopSource(){
+  stopDemo();
   if(audioEl){ audioEl.pause(); audioEl = null; }
   if(micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream = null; }
 }
@@ -925,7 +972,7 @@ function armAudio(){
   ON.audio = true;
 }
 function srcBtn(id){
-  ['btn-mic','btn-file','btn-stop'].forEach(b =>
+  ['btn-beat','btn-mic','btn-file','btn-stop'].forEach(b =>
     document.getElementById(b).classList.toggle('on', b === id));
 }
 function setSourceLabel(t){
@@ -977,7 +1024,8 @@ function clearBleed(){
 /* ── LOOP ───────────────────────────────────────────────── */
 let spin = false;
 function resize(){
-  const w = innerWidth, h = innerHeight, dpr = Math.min(devicePixelRatio, 2);
+  const el = renderer.domElement;
+  const w = el.clientWidth || innerWidth, h = el.clientHeight || innerHeight, dpr = Math.min(devicePixelRatio, 2);
   renderer.setSize(w, h);
   const a = w / h, s2 = VIEW.size / 2;
   camera.left = -s2 * a; camera.right = s2 * a;
@@ -1141,6 +1189,11 @@ document.getElementById('btn-rec').onclick = e => {
   rec.start(); e.target.classList.add('on'); e.target.textContent = 'STOP';
 };
 
+document.getElementById('btn-beat').onclick = e => {
+  e.stopPropagation();
+  if(demoTimer){ stopAudio(); }
+  else { startDemo(); armAudio(); setSourceLabel('BEAT'); srcBtn('btn-beat'); }
+};
 document.getElementById('btn-mic').onclick = async e => {
   e.stopPropagation();
   try { await useMic(); armAudio(); srcBtn('btn-mic'); }
