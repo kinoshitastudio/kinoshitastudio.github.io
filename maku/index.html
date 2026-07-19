@@ -71,6 +71,9 @@
   <textarea id="txt">文字のカタチ</textarea>
   <div class="seg" id="font"><button data-v="0" class="on">角ゴ</button><button data-v="1">明朝</button></div>
   <div class="seg" id="dir"><button data-v="0" class="on">横組み</button><button data-v="1">縦組み</button></div>
+  <div class="row"><label>字間</label><input type="range" id="track" min="-60" max="120" value="0"><span class="val"></span></div>
+  <div class="row"><label>行間</label><input type="range" id="leading" min="-60" max="120" value="0"><span class="val"></span></div>
+  <div class="note">マイナス＝詰める（重なる）／プラス＝空ける</div>
 
   <h2>ワープ（連続面）</h2>
   <div class="row"><label>縦うねり</label><input type="range" id="vwarp" min="-100" max="100" value="30"><span class="val"></span></div>
@@ -86,7 +89,9 @@
   <div class="row"><label>傾ぎ</label><input type="range" id="L_rot" min="-100" max="100" value="0"><span class="val"></span></div>
   <div class="row"><label>うねり</label><input type="range" id="L_warp" min="-100" max="100" value="0"><span class="val"></span></div>
   <div class="row"><label>縞密度</label><input type="range" id="L_dens" min="-100" max="100" value="0"><span class="val"></span></div>
-  <div class="note">層を選ぶ＝その字種だけに効く<br>漢字/かな/カナが別の速度で流れる</div>
+  <div class="row"><label>縞角度</label><input type="range" id="L_sang" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>縞位置</label><input type="range" id="L_soff" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="note">層を選ぶ＝その字種だけに効く<br>漢字/かな/カナが別の速度で流れる<br>縞角度＝ハイライトを斜めに（±90°）／縞位置＝流し位置をずらす</div>
 
   <h2>変形（辺ごと）</h2>
   <div class="row"><label>上幅</label><input type="range" id="wtop" min="-100" max="100" value="0"><span class="val"></span></div>
@@ -100,7 +105,7 @@
   <div class="note">上下・左右を独立して広げる/ねじる<br>面が連続して歪む（タイル単位でない）</div>
 
   <h2>アンカー（面を押す）</h2>
-  <div class="note">左ドラッグ＝面を引っぱる／Alt+クリック＝消す<br>右ドラッグ＝傾ける・ホイール/ピンチ＝ズーム<br>Shift+ドラッグ＝移動・ダブルクリック＝正面に戻す</div>
+  <div class="note">左ドラッグ＝面を引っぱる／Alt+クリック＝消す<br>右ドラッグ＝傾ける・ホイール/ピンチ＝ズーム<br><b>スペース+ドラッグ＝ボードを動かす</b>（Shift/中ボタンも可）<br><b>H キー＝手のひらモード</b>（左ドラッグで動かせる）<br>ダブルクリック＝正面に戻す</div>
   <div class="row"><label>効き幅</label><input type="range" id="radius" min="5" max="80" value="30"><span class="val"></span></div>
   <div class="row"><label>強さ</label><input type="range" id="strength" min="0" max="100" value="55"><span class="val"></span></div>
 
@@ -134,7 +139,7 @@
       1エンジンとして KUMI の3層や TSUBU の画の向きと干渉させる（＝先）。
    ═══════════════════════════════════════════════════════════ */
 
-const DEFAULTS = { font:0, dir:0, layer:0, vwarp:30, hwarp:0, freq:2, thick:0,
+const DEFAULTS = { font:0, dir:0, layer:0, track:0, leading:0, vwarp:30, hwarp:0, freq:2, thick:0,
             wtop:0, wbot:0, hleft:0, hright:0,      // 辺ごとの 幅/高さ
             shearx:0, sheary:0,                     // せん断
             twtop:0, twbot:0,                       // 上下で別のねじれ
@@ -149,8 +154,8 @@ let selChar = -1;
 const VIEW = { zoom:1, panx:0, pany:0, rotx:0, roty:0 };   // ビュー：ズーム＋パン＋傾き（正投影で3層を保つ）
 
 /* ── 3層（漢字/かな/カナ/他）ごとのエンジン。値は UI 生値 -100..100 ── */
-const LAYER_KEYS = ['w','h','rot','warp','dens'];
-const newLayers = () => [0,1,2,3].map(()=>({w:0,h:0,rot:0,warp:0,dens:0}));
+const LAYER_KEYS = ['w','h','rot','warp','dens','sang','soff'];
+const newLayers = () => [0,1,2,3].map(()=>({w:0,h:0,rot:0,warp:0,dens:0,sang:0,soff:0}));
 let LAYERS = newLayers();
 // 開幕の絵：漢字は太く／かなは細くうねり／カナは傾ぐ（KUMI流＝開いた瞬間に3層が違って見える）
 LAYERS[0].w = 14; LAYERS[0].h = 6;
@@ -169,7 +174,9 @@ const tc = document.createElement('canvas'), tg = tc.getContext('2d', { willRead
 let texAspect = 1;
 function bakeText(){
   const lines = (document.getElementById('txt').value || ' ').split('\n');
-  const S = 256;                                   // 1文字の基準
+  // 1文字の基準px。字数が少ないほど高精細に焼く＝寄っても輪郭が壊れない
+  // （GPUの最大テクスチャに収まる範囲で 1024→512→… と自動で落とす）
+  const MAXT = gl ? gl.getParameter(gl.MAX_TEXTURE_SIZE) : 4096;
   // 組方向でグリッド配置を決める（gi = row*cols + col）
   let cols, rows; const cells = [];   // {ch, col, row}
   if(P.dir === 0){                                 // 横組み：行が上→下、字が左→右
@@ -182,6 +189,9 @@ function bakeText(){
     lines.forEach((line,li)=>{ const col = cols-1-li; [...line].forEach((ch,ci)=> cells.push({ch, col, row:ci})); });
   }
   COLS = cols; ROWS = rows;
+  const tkS = 1 + Math.max(0, P.track/100), ldS = 1 + Math.max(0, P.leading/100);
+  let S = 1024;
+  while((cols * S * tkS > MAXT || rows * S * ldS > MAXT) && S > 128) S /= 2;
   // 文字ごと制御用：グリッド・文字リスト・層を更新（既存の伸縮値は番号ごとに引き継ぐ）
   CHARS = []; CHARTYPE.length = 0;
   cells.forEach(({ch,col,row})=>{ const gi = row*cols + col; CHARS.push({ ch, gi }); CHARTYPE[gi] = classify(ch); });
@@ -189,14 +199,19 @@ function bakeText(){
   CHARSCALE.length = 0;
   for(let i=0;i<Math.min(cols*rows,32);i++) CHARSCALE.push(keep[i] || [1,1]);
   selChar = -1;
-  tc.width  = Math.max(cols * S, S);
-  tc.height = Math.max(rows * S, S);
+  // 字間・行間＝セルの寸法そのものを伸縮する（字の大きさは変えない）
+  // 横組みは 字間→横／行間→縦、縦組みは逆にかかる
+  const tk = P.track/100, ld = P.leading/100;
+  const cw = S * (1 + (P.dir === 0 ? tk : ld));    // セル幅
+  const chh= S * (1 + (P.dir === 0 ? ld : tk));    // セル高
+  tc.width  = Math.max(Math.round(cols * cw), 8);
+  tc.height = Math.max(Math.round(rows * chh), 8);
   tg.fillStyle = '#000'; tg.fillRect(0,0,tc.width,tc.height);
   tg.fillStyle = '#fff';
   tg.textAlign = 'center'; tg.textBaseline = 'middle';
   const fam = P.font ? '"Zen Old Mincho"' : '"Zen Kaku Gothic New"';
   tg.font = `900 ${S*0.86}px ${fam}, sans-serif`;
-  cells.forEach(({ch,col,row}) => tg.fillText(ch, col*S + S/2, row*S + S/2 + S*0.02));
+  cells.forEach(({ch,col,row}) => tg.fillText(ch, col*cw + cw/2, row*chh + chh/2 + S*0.02));
   texAspect = tc.width / tc.height;
   if(gl && tex){
     gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -209,6 +224,9 @@ function bakeText(){
 /* ── WebGL ── */
 const canvas = document.getElementById('gl');
 const gl = canvas.getContext('webgl', { antialias:true, preserveDrawingBuffer:true });
+gl.getExtension('OES_standard_derivatives');      // fwidth＝輪郭を寄っても滑らかに保つ
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
 const VERT = `
   attribute vec2 aUV;
@@ -228,8 +246,10 @@ const VERT = `
   uniform float uGridCols, uGridRows; // テクスチャの文字グリッド
   uniform int uCharN;
   uniform float uLW[4], uLH[4], uLRot[4], uLWarp[4], uLDens[4]; // 層ごとのエンジン
+  uniform float uLSAng[4], uLSOff[4];          // 層ごとの縞：角度・位置
   varying vec2 vUV;
   varying float vDens;
+  varying float vSAng, vSOff;                   // 縞の角度・位置を面に渡す
   void main(){
     vUV = aUV;
 
@@ -243,9 +263,10 @@ const VERT = `
     int ctype = 3;
     for(int i=0;i<32;i++){ if(i>=uCharN) break; if(i==cidx){ scl = uCharScale[i]; ctype = int(uCharType[i]); break; } }
     // 層のエンジン値を取り出す
-    float lw=0.0, lh=0.0, lrot=0.0, lwarp=0.0, ldens=0.0;
-    for(int i=0;i<4;i++){ if(i==ctype){ lw=uLW[i]; lh=uLH[i]; lrot=uLRot[i]; lwarp=uLWarp[i]; ldens=uLDens[i]; break; } }
+    float lw=0.0, lh=0.0, lrot=0.0, lwarp=0.0, ldens=0.0, lsang=0.0, lsoff=0.0;
+    for(int i=0;i<4;i++){ if(i==ctype){ lw=uLW[i]; lh=uLH[i]; lrot=uLRot[i]; lwarp=uLWarp[i]; ldens=uLDens[i]; lsang=uLSAng[i]; lsoff=uLSOff[i]; break; } }
     vDens = 1.0 + ldens;
+    vSAng = lsang; vSOff = lsoff;
 
     vec2 cc  = (vec2(ccol, crowB) + 0.5) / vec2(uGridCols, uGridRows);
     vec2 rel = (aUV - cc) * scl * vec2(1.0 + lw, 1.0 + lh);   // 文字ごと伸縮 × 層の太らせ/縦のび
@@ -295,29 +316,42 @@ const VERT = `
   }
 `;
 const FRAG = `
+  #extension GL_OES_standard_derivatives : enable
   precision highp float;
   uniform sampler2D uTex;
   uniform int uLook;
   uniform float uDensity;
   varying vec2 vUV;
   varying float vDens;                          // 層ごとの縞密度倍率
+  varying float vSAng, vSOff;                   // 層ごとの縞：角度・位置
   void main(){
     float m = texture2D(uTex, vUV).r;          // 字の内側=1
-    if(m < 0.4) discard;                        // 字の外は描かない
+    // 輪郭のアンチエイリアス — 画面上の傾きから境界の幅を求めるので、
+    // 寄っても（ズームしても）常に 1px 相当の滑らかさになる
+    float w = fwidth(m);
+    float a = smoothstep(0.5 - w, 0.5 + w, m);
+    if(a < 0.004) discard;                      // 完全に外側だけ捨てる
     float dens = uDensity * vDens;
+
+    // 縞の走る向きを面の中心まわりで回す（角度0＝従来どおり水平／±90°で垂直）
+    float ca = cos(vSAng), sa = sin(vSAng);
+    vec2 q = vUV - 0.5;
+    float dY = (q.x * sa + q.y * ca) + 0.5 + vSOff;   // 角度0 → vUV.y と一致
+    float dX = (q.x * ca - q.y * sa) + 0.5 + vSOff;   // 角度0 → vUV.x と一致
+
     vec3 col;
     if(uLook == 0){
       // 金属 — 縞は面（vUV）に沿って流れる＝メッシュを歪めると縞も一緒にうねる
-      float g = 0.5 + 0.5 * sin(vUV.y * dens * 6.2831853);
+      float g = 0.5 + 0.5 * sin(dY * dens * 6.2831853);
       g = pow(g, 0.6);
       col = vec3(g);
     } else if(uLook == 1){
       col = vec3(0.04);                         // 墨
     } else {
-      float g = step(0.5, fract(vUV.x * dens));  // 線も面に沿う
+      float g = step(0.5, fract(dX * dens));     // 線も面に沿う
       col = vec3(g);
     }
-    gl_FragColor = vec4(col, 1.0);
+    gl_FragColor = vec4(col, a);
   }
 `;
 function sh(type, src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
@@ -363,7 +397,7 @@ loc.uAnchorUV = gl.getUniformLocation(prog,'uAnchorUV');
 loc.uAnchorD  = gl.getUniformLocation(prog,'uAnchorD');
 loc.uCharScale = gl.getUniformLocation(prog,'uCharScale');
 loc.uCharType  = gl.getUniformLocation(prog,'uCharType');
-['uLW','uLH','uLRot','uLWarp','uLDens'].forEach(n=>loc[n]=gl.getUniformLocation(prog,n));
+['uLW','uLH','uLRot','uLWarp','uLDens','uLSAng','uLSOff'].forEach(n=>loc[n]=gl.getUniformLocation(prog,n));
 
 function draw(t){
   requestAnimationFrame(draw);
@@ -413,9 +447,13 @@ function draw(t){
     for(let i=0;i<32;i++) ct[i] = (CHARTYPE[i] === undefined ? 3 : CHARTYPE[i]);
     gl.uniform1fv(loc.uCharType, ct);
     const w4=new Float32Array(4), h4=new Float32Array(4), r4=new Float32Array(4), wp4=new Float32Array(4), d4=new Float32Array(4);
+    const sa4=new Float32Array(4), so4=new Float32Array(4);
     for(let i=0;i<4;i++){ const L=LAYERS[i]||{};
-      w4[i]=(L.w||0)/100*0.6; h4[i]=(L.h||0)/100*0.6; r4[i]=(L.rot||0)/100*0.6; wp4[i]=(L.warp||0)/100*0.15; d4[i]=(L.dens||0)/100*2; }
-    gl.uniform1fv(loc.uLW,w4); gl.uniform1fv(loc.uLH,h4); gl.uniform1fv(loc.uLRot,r4); gl.uniform1fv(loc.uLWarp,wp4); gl.uniform1fv(loc.uLDens,d4); }
+      w4[i]=(L.w||0)/100*0.6; h4[i]=(L.h||0)/100*0.6; r4[i]=(L.rot||0)/100*0.6; wp4[i]=(L.warp||0)/100*0.15; d4[i]=(L.dens||0)/100*2;
+      sa4[i]=(L.sang||0)/100*1.5707963;                    // ±90°
+      so4[i]=(L.soff||0)/100*1.0; }                        // 縞を流す位置
+    gl.uniform1fv(loc.uLW,w4); gl.uniform1fv(loc.uLH,h4); gl.uniform1fv(loc.uLRot,r4); gl.uniform1fv(loc.uLWarp,wp4); gl.uniform1fv(loc.uLDens,d4);
+    gl.uniform1fv(loc.uLSAng,sa4); gl.uniform1fv(loc.uLSOff,so4); }
   if(ANCHORS.length){
     const uv = new Float32Array(48), dd = new Float32Array(48);
     ANCHORS.forEach((a,i)=>{ uv[i*2]=a.u; uv[i*2+1]=a.v; dd[i*2]=a.du; dd[i*2+1]=a.dv; });
@@ -450,6 +488,17 @@ function ndc(e){ const r=canvas.getBoundingClientRect();
 let dragA=-1;
 const pointers=new Map();
 let viewMode=null, rotStart=null, panStart=null, pinch0=null;
+let spaceDown=false, handMode=false;             // Space長押し／手のひらモード＝ボードを掴んで動かす
+function applyCursor(){ canvas.style.cursor = (spaceDown||handMode) ? 'grab' : 'default'; }
+window.addEventListener('keydown', e=>{
+  if(e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+  if(e.code === 'Space'){ if(!spaceDown){ spaceDown=true; applyCursor(); } e.preventDefault(); }
+  if(e.key === 'h' || e.key === 'H'){ handMode = !handMode; applyCursor(); }
+});
+window.addEventListener('keyup', e=>{
+  if(e.code === 'Space'){ spaceDown=false; applyCursor(); }
+});
+window.addEventListener('blur', ()=>{ spaceDown=false; applyCursor(); });
 canvas.addEventListener('contextmenu', e=>e.preventDefault());
 canvas.addEventListener('pointerdown', e=>{
   pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
@@ -465,7 +514,7 @@ canvas.addEventListener('pointerdown', e=>{
   if(e.button===2){                              // 右ドラッグ＝傾ける
     viewMode='rot'; rotStart={x:e.clientX,y:e.clientY, rx:VIEW.rotx, ry:VIEW.roty}; return;
   }
-  if(e.shiftKey || e.button===1){                // Shift/中ボタン＝パン
+  if(e.shiftKey || e.button===1 || spaceDown || handMode){  // Shift/中ボタン/Space長押し/手のひらモード＝パン
     viewMode='pan'; panStart={x:e.clientX,y:e.clientY, px:VIEW.panx, py:VIEW.pany}; return;
   }
   viewMode=null;
@@ -529,7 +578,9 @@ document.querySelectorAll('#panel input[type=range]').forEach(r=>{
   }
   const sync=()=>{ P[r.id]=+r.value; if(val) val.textContent=r.value;
     if(r.id==='mesh') buildMesh(); };
-  r.addEventListener('input', sync); sync();
+  // 字間・行間はテクスチャを焼き直す（初期化中に呼ぶと参照順で落ちるので input 時だけ）
+  r.addEventListener('input', ()=>{ sync(); if(r.id==='track' || r.id==='leading') bakeText(); });
+  sync();
 });
 function syncLayerUI(){                             // 層を選び直したらスライダー表示をその層の値へ
   LAYER_KEYS.forEach(k=>{ const el=document.getElementById('L_'+k);
