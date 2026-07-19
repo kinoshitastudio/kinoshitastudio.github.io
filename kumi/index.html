@@ -488,7 +488,7 @@ document.body.appendChild(renderer.domElement);
 const scene  = new THREE.Scene();
 const VIEW = { size: 780 };   // 画面に収まる世界の高さ
 const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -50000, 50000);
-const cam = { az:0, el:0, dist:3000, tAz:0, tEl:0, tDist:3000, zoom:1, tZoom:1 };
+const cam = { az:0, el:0, dist:3000, tAz:0, tEl:0, tDist:3000, zoom:1, tZoom:1, px:0, py:0 };
 function placeCamera(){
   cam.az += (cam.tAz - cam.az) * 0.12;
   cam.el += (cam.tEl - cam.el) * 0.12;
@@ -719,6 +719,16 @@ function layout(){
     }
     ind.push(base, base+1, base+2, base, base+2, base+3);
     n++; col++;
+  }
+
+  // ⭐ 組版を原点中心に寄せる（縦センタリング）。横組は原点が上端に来て、
+  //    原点中心のカメラだと組版が画面の下半分に寄る＝それを防ぐ。
+  if(n){
+    let ymin=Infinity, ymax=-Infinity, xmin=Infinity, xmax=-Infinity;
+    for(let i=0;i<cen.length;i+=3){ const cx0=cen[i], cy0=cen[i+1];
+      if(cy0<ymin)ymin=cy0; if(cy0>ymax)ymax=cy0; if(cx0<xmin)xmin=cx0; if(cx0>xmax)xmax=cx0; }
+    const mx=(xmin+xmax)/2, my=(ymin+ymax)/2;
+    for(let i=0;i<cen.length;i+=3){ cen[i]-=mx; cen[i+1]-=my; }
   }
 
   if(mesh){ scene.remove(mesh); mesh.geometry.dispose(); }
@@ -1023,14 +1033,18 @@ function clearBleed(){
 
 /* ── LOOP ───────────────────────────────────────────────── */
 let spin = false;
+let projA = 1;
+function applyProj(){   // 正投影の範囲。cam.px/py で上下左右にパンできる
+  const s2 = VIEW.size / 2, a = projA;
+  camera.left = -s2*a + cam.px; camera.right = s2*a + cam.px;
+  camera.top = s2 + cam.py; camera.bottom = -s2 + cam.py;
+  camera.updateProjectionMatrix();
+}
 function resize(){
   const el = renderer.domElement;
   const w = el.clientWidth || innerWidth, h = el.clientHeight || innerHeight, dpr = Math.min(devicePixelRatio, 2);
   renderer.setSize(w, h);
-  const a = w / h, s2 = VIEW.size / 2;
-  camera.left = -s2 * a; camera.right = s2 * a;
-  camera.top = s2; camera.bottom = -s2;
-  camera.updateProjectionMatrix();
+  projA = w / h; applyProj();
   rt.setSize(w*dpr, h*dpr); rtA.setSize(w*dpr, h*dpr); rtB.setSize(w*dpr, h*dpr);
   postUniforms.uRes.value.set(w*dpr, h*dpr);
   bleedUniforms.uRes.value.set(w*dpr, h*dpr);
@@ -1064,36 +1078,55 @@ const postCam = () => fsCam;
 
 /* ── INPUT ──────────────────────────────────────────────── */
 const el = renderer.domElement;
-let orbitPrev = null, pinchPrev = 0;
+let orbitPrev = null, pinchPrev = 0, panPrev = null, twoFinger = false;
 el.addEventListener('pointerdown', e => {
   try{ el.setPointerCapture(e.pointerId); }catch(_){}
   orbitPrev = { x:e.clientX, y:e.clientY };
 });
 el.addEventListener('pointermove', e => {
-  if(!orbitPrev) return;
-  cam.tAz -= (e.clientX - orbitPrev.x) * 0.006;
-  cam.tEl = THREE.MathUtils.clamp(cam.tEl + (e.clientY - orbitPrev.y) * 0.006, -1.35, 1.35);
+  if(!orbitPrev || twoFinger) return;
+  if(e.shiftKey){                 // Shift+ドラッグ＝上下左右にパン
+    const w=el.clientWidth||innerWidth, h=el.clientHeight||innerHeight, s2=VIEW.size/2;
+    cam.px -= (e.clientX - orbitPrev.x) * (2*s2*projA/w);
+    cam.py += (e.clientY - orbitPrev.y) * (2*s2/h);
+    applyProj();
+  } else {
+    cam.tAz -= (e.clientX - orbitPrev.x) * 0.006;
+    cam.tEl = THREE.MathUtils.clamp(cam.tEl + (e.clientY - orbitPrev.y) * 0.006, -1.35, 1.35);
+  }
   orbitPrev = { x:e.clientX, y:e.clientY };
 });
 const up = () => { orbitPrev = null; };
 el.addEventListener('pointerup', up);
 el.addEventListener('pointercancel', up);
+el.addEventListener('touchend', e => { if(e.touches.length < 2){ twoFinger=false; panPrev=null; pinchPrev=0; } });
+el.addEventListener('dblclick', () => { cam.px=0; cam.py=0; applyProj(); });   // ダブルクリックでパンを戻す
 el.addEventListener('wheel', e => {
   e.preventDefault();
   cam.tZoom = THREE.MathUtils.clamp(cam.tZoom * (1 - e.deltaY * 0.0018), 0.06, 90);
 }, { passive:false });
 el.addEventListener('touchstart', e => {
-  if(e.touches.length === 2)
+  if(e.touches.length === 2){
+    twoFinger = true; orbitPrev = null;
     pinchPrev = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
                            e.touches[0].clientY - e.touches[1].clientY);
+    panPrev = { x:(e.touches[0].clientX+e.touches[1].clientX)/2, y:(e.touches[0].clientY+e.touches[1].clientY)/2 };
+  }
 }, { passive:false });
 el.addEventListener('touchmove', e => {
   if(e.touches.length === 2){
     e.preventDefault();
     const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
                          e.touches[0].clientY - e.touches[1].clientY);
+    const cx=(e.touches[0].clientX+e.touches[1].clientX)/2, cy=(e.touches[0].clientY+e.touches[1].clientY)/2;
     if(pinchPrev) cam.tZoom = THREE.MathUtils.clamp(cam.tZoom * (d/pinchPrev), 0.06, 90);
-    pinchPrev = d;
+    if(panPrev){                    // 2本指ドラッグ＝上下左右にパン
+      const w=el.clientWidth||innerWidth, h=el.clientHeight||innerHeight, s2=VIEW.size/2;
+      cam.px -= (cx - panPrev.x) * (2*s2*projA/w);
+      cam.py += (cy - panPrev.y) * (2*s2/h);
+      applyProj();
+    }
+    pinchPrev = d; panPrev = { x:cx, y:cy };
   }
 }, { passive:false });
 
