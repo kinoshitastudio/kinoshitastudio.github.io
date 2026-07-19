@@ -639,27 +639,36 @@ function drawGrid(){
   artLayer.activate();
 }
 
-/* ── 履歴（Undo/Redo）── */
+/* ── 履歴（Undo/Redo）──
+   ⚠️ snapshot() は「変更する直前」に呼ぶこと。
+   あとから呼ぶと、変更後の状態が積まれて戻しても何も起きない。 */
 const HIST = { past:[], future:[] };
 function snapshot(){
-  HIST.past.push(artLayer.exportJSON({ asString:true }));
-  if(HIST.past.length > 80) HIST.past.shift();
+  const json = artLayer.exportJSON({ asString:true });
+  if(HIST.past[HIST.past.length-1] === json) return;   // 同じ状態は積まない
+  HIST.past.push(json);
+  if(HIST.past.length > 200) HIST.past.shift();
   HIST.future.length = 0;
 }
 function restore(json){
   artLayer.removeChildren();
   artLayer.importJSON(json);
+  // 復元でオブジェクトが作り直されるので、掴んでいた参照を捨てる
+  pen = null; dragSeg = dragHandle = dragItem = null;
+  marquee = null; marqueeStart = null;
   paper.view.update();
 }
 function undo(){
-  if(!HIST.past.length) return;
+  if(!HIST.past.length){ stat('これ以上戻せません'); return; }
   HIST.future.push(artLayer.exportJSON({ asString:true }));
-  restore(HIST.past.pop()); stat('UNDO');
+  restore(HIST.past.pop());
+  guides(); stat(`戻した（残り ${HIST.past.length}）`);
 }
 function redo(){
-  if(!HIST.future.length) return;
+  if(!HIST.future.length){ stat('これ以上進めません'); return; }
   HIST.past.push(artLayer.exportJSON({ asString:true }));
-  restore(HIST.future.pop()); stat('REDO');
+  restore(HIST.future.pop());
+  guides(); stat('進めた');
 }
 
 /* ── 見た目の適用 ── */
@@ -727,6 +736,7 @@ let pen = null;                      // 作画中のパス
 function penDown(e){
   const p = e.point;
   if(!pen){
+    snapshot();                                   // パスを作る前の状態を保存
     pen = new Path();
     // 描画中は輪郭だけ薄く見せる（確定時に本来の塗り／線を当てる）
     pen.strokeColor = ACC; pen.strokeWidth = 1/paper.view.zoom; pen.fillColor = null;
@@ -736,16 +746,19 @@ function penDown(e){
   }
   // 始点の近くなら閉じる
   if(pen.segments.length > 1 && p.getDistance(pen.firstSegment.point) < 12/paper.view.zoom){
-    pen.closed = true; finishPen(); return;
+    snapshot(); pen.closed = true; finishPen(); return;
   }
+  snapshot();                                     // 点を足す前＝アンカー1つずつ戻せる
   pen.add(p); pen.__anchor = pen.lastSegment;
 }
 function penDrag(e){
   if(!pen || !pen.__anchor) return;
   const a = pen.__anchor;
   a.handleOut = e.point.subtract(a.point);          // ドラッグ＝曲線ハンドル
-  // Alt を押しながら＝ハンドルを折る（進行方向だけ動かす／イラレと同じ）
-  if(!e.modifiers.alt) a.handleIn = a.handleOut.multiply(-1);
+  // 最初のアンカーは「入りの線」がまだ無いので handleIn を作らない。
+  // ここで逆向きハンドルを付けると、閉じたときに余計な膨らみ（ポコ）になる。
+  const isFirst = (a === pen.firstSegment);
+  if(!e.modifiers.alt && !isFirst) a.handleIn = a.handleOut.multiply(-1);
   guides();
 }
 /* パスを確定して終える（閉じていなくてもよい＝イラレと同じ）
@@ -772,7 +785,7 @@ function finishPen(){
     pen.strokeWidth = S.sw; pen.strokeCap = S.cap || 'round'; pen.strokeJoin = S.join || 'round';
   }
   pen.selected = false; pen = null;
-  snapshot(); guides(); stat('パス確定 — 開いたままでもOK');
+  guides(); stat('パス確定 — 開いたままでもOK');
 }
 /* 描きかけを丸ごと捨てる（⌘Zと同じ役割。今は使っていない） */
 function cancelPen(){ if(pen){ pen.remove(); pen = null; guides(); stat('取消'); } }
@@ -781,7 +794,7 @@ function cancelPen(){ if(pen){ pen.remove(); pen = null; guides(); stat('取消'
    ドラッグした矩形に内接させる形で各シェイプを作る。
    Shift＝正方形/正円に固定、Alt＝始点を中心にして広げる（イラレと同じ） */
 let shape = null, shapeStart = null;
-function shapeDown(e){ shapeStart = e.point; }
+function shapeDown(e){ snapshot(); shapeStart = e.point; }
 function shapeDrag(e){
   if(!shapeStart) return;
   if(shape) shape.remove();
@@ -798,7 +811,7 @@ function shapeDrag(e){
   shape = makeShape(S.shape, r);
   if(shape){ shape.__kind = S.shape; styleOf(shape); }
 }
-function shapeUp(){ if(shape){ shape.selected = true; shape = null; snapshot(); guides(); reportSel(); } shapeStart = null; }
+function shapeUp(){ if(shape){ shape.selected = true; shape = null; guides(); reportSel(); } shapeStart = null; }
 
 /* 矩形 r に内接するシェイプを作る */
 function makeShape(kind, r){
@@ -873,6 +886,7 @@ function makeShape(kind, r){
 /* ══ ストローク（太い線）ツール ══ */
 let brush = null;
 function brushDown(e){
+  snapshot();                                     // 引き始める前の状態を保存
   // 線色が「なし」なら塗り色で描く（描いたのに見えない、を防ぐ）
   brush = new Path({
     strokeColor: S.stroke || S.fill || '#0a0a0a',
@@ -885,7 +899,7 @@ function brushDrag(e){ if(brush) brush.add(e.point); }
 function brushUp(){
   if(!brush) return;
   brush.simplify(6);                                  // 手ブレを整理して滑らかに
-  brush = null; snapshot(); stat('STROKE — 「線→塗り」でアウトライン化');
+  brush.selected = true; brush = null; guides(); stat('フリーハンド確定 — 「線→塗り」で輪郭に');
 }
 
 /* ══ 選択／ダイレクト選択 ══ */
@@ -900,6 +914,7 @@ function hit(point){
 }
 let marquee = null, marqueeStart = null;      // ドラッグの範囲選択（点線の矩形）
 function selDown(e){
+  snapshot();                                     // 動かす前の状態を保存
   let h = hit(e.point);
   // 塗りの内側なら、線に当たらなくても掴めるようにする
   if(!h){
@@ -969,7 +984,6 @@ function selUp(){
     marqueeStart = null;
     guides(); reportSel(); return;
   }
-  if(dragSeg||dragHandle||dragItem) snapshot();
   dragSeg = dragHandle = dragItem = null;
   reportSel();
 }
@@ -1322,8 +1336,8 @@ function roundCorner(seg, r){
 
 /* ══ テキスト ══ */
 function placeText(pt){
-  const txt = document.getElementById('tinput').value || '永';
   snapshot();
+  const txt = document.getElementById('tinput').value || '永';
   const t = new paper.PointText({
     point: pt || paper.view.center,
     content: txt,
