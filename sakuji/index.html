@@ -1,0 +1,1321 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>作字 / KINOSHITA STUDIO</title>
+<style>
+  :root{ --bg:#0a0a0a; --ink:#e8e8e8; --dim:#8a8a8a; --line:#232323; --acc:#fff; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; height:100%; background:var(--bg); color:var(--ink); overflow:hidden;
+    font-family:"Zen Kaku Gothic New","Hiragino Sans",sans-serif;
+    /* ⌘A などでUIの文字が選択されないようにする（選択はボード上の図形だけ） */
+    user-select:none; -webkit-user-select:none; }
+  input, textarea, select{ user-select:text; -webkit-user-select:text; }
+  #stage{ position:fixed; inset:0; }
+  canvas{ display:block; width:100%; height:100%; cursor:crosshair; }
+
+  /* ── HUD ── */
+  #hud{ position:fixed; left:18px; top:16px; font-family:ui-monospace,Menlo,monospace;
+    font-size:11px; letter-spacing:.14em; color:var(--dim); pointer-events:none; z-index:5; line-height:1.9 }
+  #hud b{ color:var(--ink); font-weight:400 }
+
+  /* ── ツールバー ── */
+  #tools{ position:fixed; left:18px; top:50%; transform:translateY(-50%); z-index:6;
+    display:flex; flex-direction:column; gap:6px; }
+  #tools button{ width:42px; height:42px; border:1px solid var(--line); background:#111; color:var(--dim);
+    border-radius:8px; cursor:pointer; font-size:15px; display:grid; place-items:center;
+    transition:.12s; font-family:inherit; position:relative; }
+  #tools button::after{ content:attr(data-k); position:absolute; right:3px; bottom:2px;
+    font-size:8px; font-family:ui-monospace,Menlo,monospace; opacity:.5; letter-spacing:0 }
+  /* ホバーで役割を出す（イラレ/Figma のツールチップ相当） */
+  #tools button::before{ content:attr(data-tip); position:absolute; left:50px; top:50%;
+    transform:translateY(-50%); background:#1a1a1a; border:1px solid var(--line); color:var(--ink);
+    font-size:11px; padding:6px 10px; border-radius:6px; white-space:nowrap; opacity:0;
+    pointer-events:none; transition:.12s; z-index:9 }
+  #tools button:hover::before{ opacity:1 }
+  #tools button:hover{ border-color:#3a3a3a; color:var(--ink) }
+  #tools button.on{ background:var(--ink); color:#000; border-color:var(--ink) }
+  #tools .sep{ height:1px; background:var(--line); margin:4px 2px }
+
+  /* ── 右パネル ── */
+  #panel{ position:fixed; right:0; top:0; bottom:0; width:268px; background:#0e0e0e;
+    border-left:1px solid var(--line); padding:20px 20px 40px; overflow-y:auto; z-index:6 }
+  #panel h2{ font-size:11px; letter-spacing:.2em; color:var(--dim); font-weight:400;
+    margin:22px 0 10px; font-family:ui-monospace,Menlo,monospace }
+  #panel h2:first-child{ margin-top:0 }
+  .row{ display:flex; align-items:center; gap:10px; margin-bottom:8px; font-size:12px }
+  .row label{ width:64px; color:var(--dim); flex:none }
+  .row input[type=range]{ flex:1; -webkit-appearance:none; height:1px; background:#2c2c2c; outline:none }
+  .row input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; width:11px; height:11px;
+    border-radius:50%; background:var(--ink); cursor:pointer }
+  .row .val{ width:34px; text-align:right; color:var(--dim); font-family:ui-monospace,Menlo,monospace; font-size:10px }
+  .seg{ display:flex; gap:0; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-bottom:10px }
+  .seg button{ flex:1; padding:8px 0; background:#111; color:var(--dim); border:0; cursor:pointer;
+    font-size:11.5px; font-family:inherit; transition:.12s }
+  .seg button.on{ background:var(--ink); color:#000 }
+  .note{ font-size:10.5px; color:#5a5a5a; line-height:1.75; margin-top:8px }
+  .btn{ width:100%; padding:9px; background:#111; border:1px solid var(--line); color:var(--ink);
+    border-radius:7px; cursor:pointer; font-size:11.5px; font-family:inherit; margin-bottom:6px; transition:.12s }
+  .btn:hover{ border-color:#3a3a3a; background:#161616 }
+  .btn.pri{ background:var(--ink); color:#000; border-color:var(--ink) }
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:6px }
+  #swatch{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px }
+  #swatch i{ width:28px; height:28px; border-radius:6px; border:1px solid var(--line); cursor:pointer; display:block }
+  #swatch i.on{ outline:2px solid var(--ink); outline-offset:1px }
+  /* 塗り／線チップ（イラレの重なった四角） */
+  #fs{ display:flex; align-items:center; gap:8px; margin-bottom:12px }
+  .chip{ width:38px; height:38px; border-radius:8px; border:1px solid var(--line); background:#111;
+    display:grid; place-items:center; cursor:pointer; transition:.12s; position:relative }
+  .chip.on{ border-color:var(--ink); box-shadow:0 0 0 2px rgba(255,255,255,.14) }
+  .chip i{ width:20px; height:20px; border-radius:4px; display:block; background:#fff }
+  #fsStroke i{ background:none; border:5px solid #fff; width:22px; height:22px; border-radius:5px }
+  .chip.none i{ background:
+      linear-gradient(45deg,transparent 44%,#e0554b 44%,#e0554b 56%,transparent 56%), #1a1a1a !important;
+    border-color:#3a3a3a }
+  #fsBtns{ display:flex; flex-direction:column; gap:4px }
+  .mini{ width:26px; height:17px; background:#111; border:1px solid var(--line); color:var(--dim);
+    border-radius:5px; cursor:pointer; font-size:10px; line-height:1; font-family:inherit; padding:0 }
+  .mini:hover{ color:var(--ink); border-color:#3a3a3a }
+  #picker{ width:100%; height:28px; background:#111; border:1px solid var(--line); border-radius:6px;
+    cursor:pointer; margin-bottom:10px; padding:2px }
+  select, #tinput{ background:#111; border:1px solid var(--line); color:var(--ink); border-radius:6px;
+    padding:7px 8px; font-size:11.5px; font-family:inherit; outline:none; width:100%; margin-bottom:8px }
+  select:focus, #tinput:focus{ border-color:#3a3a3a }
+  .row select{ margin-bottom:0 }
+  /* シェイプのフライアウト */
+  .flyout{ position:absolute; right:2px; top:2px; font-size:7px; opacity:.55 }
+  #shapeMenu{ position:fixed; left:70px; top:50%; transform:translateY(-50%) translateX(-8px);
+    width:214px; background:#141414; border:1px solid var(--line); border-radius:10px; padding:12px;
+    z-index:8; opacity:0; pointer-events:none; transition:.14s; box-shadow:0 12px 40px rgba(0,0,0,.5) }
+  #shapeMenu.open{ opacity:1; pointer-events:auto; transform:translateY(-50%) translateX(0) }
+  .sm-head{ font-size:10px; letter-spacing:.2em; color:var(--dim); font-family:ui-monospace,Menlo,monospace;
+    margin-bottom:10px }
+  .sm-grid{ display:grid; grid-template-columns:repeat(5,1fr); gap:5px; margin-bottom:10px }
+  .sm-grid button{ aspect-ratio:1; background:#0f0f0f; border:1px solid var(--line); color:var(--dim);
+    border-radius:6px; cursor:pointer; font-size:14px; display:grid; place-items:center; transition:.12s;
+    font-family:inherit; padding:0 }
+  .sm-grid button:hover{ color:var(--ink); border-color:#3a3a3a }
+  .sm-grid button.on{ background:var(--ink); color:#000; border-color:var(--ink) }
+  .sm-row{ display:flex; align-items:center; gap:8px; font-size:11px; color:var(--dim); margin-bottom:8px }
+  .sm-row input{ flex:1; -webkit-appearance:none; height:1px; background:#2c2c2c; outline:none }
+  .sm-row input::-webkit-slider-thumb{ -webkit-appearance:none; width:10px; height:10px; border-radius:50%;
+    background:var(--ink); cursor:pointer }
+  .sm-row .v{ width:18px; text-align:right; font-family:ui-monospace,Menlo,monospace; font-size:10px }
+  .sm-note{ font-size:10px; color:#5a5a5a; line-height:1.7 }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/paper@0.12.18/dist/paper-core.min.js"></script>
+</head>
+<body>
+
+<div id="stage"><canvas id="cv" resize></canvas></div>
+
+<div id="hud">
+  作字 SAKUJI / KINOSHITA STUDIO<br>
+  <span id="stat">READY</span>
+</div>
+
+<div id="tools">
+  <button data-tool="pen" class="on" data-k="P" data-tip="ペン — アンカーを打って線を繋ぐ">
+    <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6">
+      <path d="M12 2.5 L18.5 15 L12 12.2 L5.5 15 Z" stroke-linejoin="round"/>
+      <path d="M12 12.2 V21.5"/>
+    </svg>
+  </button>
+  <button data-tool="select" data-k="V" data-tip="選択 — 図形ぜんぶを掴んで動かす">
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+      <path d="M6 2.5 L18.5 13.5 L12.6 14.2 L15.6 20.6 L13 21.8 L10 15.4 L6 19.4 Z"/>
+    </svg>
+  </button>
+  <button data-tool="direct" data-k="A" data-tip="ダイレクト選択 — アンカー1点・ハンドルを掴む">
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7">
+      <path d="M6 2.5 L18.5 13.5 L12.6 14.2 L15.6 20.6 L13 21.8 L10 15.4 L6 19.4 Z" stroke-linejoin="round"/>
+    </svg>
+  </button>
+  <div class="sep"></div>
+  <button data-tool="shape" data-k="R" data-tip="シェイプ — 押すと種類を選べる" id="tShape">
+    <svg id="shapeIcon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+      <rect x="4" y="4" width="16" height="16" rx="4"/>
+    </svg>
+    <span class="flyout">▸</span>
+  </button>
+  <button data-tool="stroke" data-k="B" data-tip="フリーハンド — 手で線を引く（あとで塗りに変換）">
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7">
+      <path d="M3.5 17.5 L14.8 6.2 L18.2 9.6 L6.9 20.9 L3 21.5 Z" stroke-linejoin="round"/>
+      <path d="M14.8 6.2 L17.1 3.9 A2.2 2.2 0 0 1 20.5 7.3 L18.2 9.6" stroke-linejoin="round"/>
+    </svg>
+  </button>
+  <div class="sep"></div>
+  <button id="tUndo" data-k="⌘Z" data-tip="戻す">↶</button>
+  <button id="tRedo" data-k="⇧⌘Z" data-tip="進む">↷</button>
+</div>
+
+<!-- シェイプのフライアウト（イラレのツール展開） -->
+<div id="shapeMenu">
+  <div class="sm-head">シェイプ</div>
+  <div class="sm-grid">
+    <button data-s="rect"    title="矩形">▭</button>
+    <button data-s="rrect" class="on" title="角丸矩形">▢</button>
+    <button data-s="ellipse" title="円・楕円">◯</button>
+    <button data-s="tri"     title="三角">▲</button>
+    <button data-s="tri-r"   title="直角三角">◺</button>
+    <button data-s="trapez"  title="台形">⏢</button>
+    <button data-s="diamond" title="菱形">◆</button>
+    <button data-s="half"    title="半円">◗</button>
+    <button data-s="pie"     title="扇形">◔</button>
+    <button data-s="leaf"    title="リーフ（両端が尖る）">🜁</button>
+    <button data-s="slab"    title="片側だけ丸い（字画の端）">▰</button>
+    <button data-s="poly"    title="多角形">⬠</button>
+    <button data-s="star"    title="星">★</button>
+    <button data-s="arc"     title="弧（太い）">◜</button>
+  </div>
+  <div class="sm-row"><label>辺・角の数</label><input type="range" id="polyN" min="3" max="12" value="5"><span class="v">5</span></div>
+  <div class="sm-note">ドラッグで描く／Shift＝正方形・正円<br>Alt＝中心から広げる</div>
+</div>
+
+<div id="panel">
+  <h2>MODE</h2>
+  <div class="note" id="modehelp">ペン：クリック＝角／ドラッグ＝曲線<br>始点をクリックで閉じる・Enterで確定</div>
+
+  <h2>塗り / 線</h2>
+  <div id="fs">
+    <div id="fsFill"   class="chip on" title="塗り（X で切替）"><i></i></div>
+    <div id="fsStroke" class="chip"     title="線（X で切替）"><i></i></div>
+    <div id="fsBtns">
+      <button class="mini" id="fsSwap" title="入れ替え（⇧X）">⇄</button>
+      <button class="mini" id="fsNone" title="なし（/）">/</button>
+    </div>
+  </div>
+  <div id="swatch">
+    <i data-c="#ffffff" style="background:#fff"></i>
+    <i data-c="#0a0a0a" style="background:#0a0a0a"></i>
+    <i data-c="#2b3fd4" style="background:#2b3fd4"></i>
+    <i data-c="#d43b2b" style="background:#d43b2b"></i>
+    <i data-c="#e8dcc8" style="background:#e8dcc8"></i>
+    <i data-c="#7a7a7a" style="background:#7a7a7a"></i>
+  </div>
+  <input type="color" id="picker" value="#ffffff" title="自由な色">
+  <div class="row"><label>線幅</label><input type="range" id="sw" min="1" max="200" value="40"><span class="val"></span></div>
+  <div class="row"><label>線の位置</label>
+    <select id="align" style="flex:1">
+      <option value="center">中央</option>
+      <option value="inside">内側</option>
+      <option value="outside">外側</option>
+    </select>
+  </div>
+  <div class="row"><label>角</label>
+    <select id="join" style="flex:1">
+      <option value="round">丸</option>
+      <option value="miter">角</option>
+      <option value="bevel">面取り</option>
+    </select>
+  </div>
+  <div class="row"><label>端</label>
+    <select id="cap" style="flex:1">
+      <option value="round">丸</option>
+      <option value="butt">切り落とし</option>
+      <option value="square">square</option>
+    </select>
+  </div>
+  <div class="row"><label>角丸</label><input type="range" id="rad" min="0" max="300" value="0"><span class="val"></span></div>
+  <div class="note">選んでいる側（枠が光っている方）に色が入る<br>線の位置＝内側／外側は「線→塗り」で確定される</div>
+
+  <h2>BOARD</h2>
+  <div class="seg" id="bgsw">
+    <button data-v="dark">黒</button>
+    <button data-v="light" class="on">白</button>
+  </div>
+  <div class="seg" id="gridsw">
+    <button data-v="1" class="on">グリッド表示</button>
+    <button data-v="0">非表示</button>
+  </div>
+
+  <h2>GRID TYPE</h2>
+  <select id="gtype">
+    <option value="jp">和文 ─ 1字（仮想ボディ＋字面＋三分割）</option>
+    <option value="multi">和文 ─ 連続マス（並べて組む）</option>
+    <option value="latin">欧文（ベースライン／x-height／キャップ）</option>
+    <option value="mesh">方眼紙</option>
+    <option value="diag">方眼＋対角</option>
+    <option value="iso">アイソメ（立体をとる斜め）</option>
+    <option value="persp">斜め二点（奥行きをとる）</option>
+    <option value="none">枠だけ</option>
+  </select>
+  <div class="row"><label>字面枠</label><input type="range" id="face" min="50" max="98" value="88"><span class="val"></span></div>
+  <div class="row"><label>分割数</label><input type="range" id="div" min="2" max="32" value="8"><span class="val"></span></div>
+  <div class="row"><label>ボディ</label><input type="range" id="body" min="300" max="1600" value="900"><span class="val"></span></div>
+  <div class="note" id="gridnote">外枠＝仮想ボディ／内枠＝字面<br>中心線＝骨格の基準</div>
+
+  <h2>TEXT</h2>
+  <input type="text" id="tinput" placeholder="文字を入れる" value="永">
+  <div class="row"><label>書体</label>
+    <select id="tfont" style="flex:1">
+      <option value='"Zen Kaku Gothic New", sans-serif'>Zen 角ゴ</option>
+      <option value='"Zen Old Mincho", serif'>Zen 明朝</option>
+      <option value='"Hiragino Sans", sans-serif'>ヒラギノ角ゴ</option>
+      <option value='"Hiragino Mincho ProN", serif'>ヒラギノ明朝</option>
+      <option value='"Zen Maru Gothic", sans-serif'>Zen 丸ゴ</option>
+      <option value='ui-monospace, monospace'>等幅</option>
+    </select>
+  </div>
+  <div class="row"><label>ウェイト</label>
+    <select id="tweight" style="flex:1">
+      <option value="900">900</option><option value="700">700</option>
+      <option value="500">500</option><option value="400">400</option><option value="300">300</option>
+    </select>
+  </div>
+  <div class="row"><label>サイズ</label><input type="range" id="tsize" min="40" max="1400" value="700"><span class="val"></span></div>
+  <div class="grid2">
+    <button class="btn" id="bText">文字を置く</button>
+    <button class="btn" id="bOutlineText">アウトライン化</button>
+  </div>
+  <div class="note">置いた文字を選んで「アウトライン化」＝<b>編集できるパス</b>になる<br>そこからブーリアンで彫っていく</div>
+
+  <h2>PATH</h2>
+  <div class="grid2">
+    <button class="btn" id="bUnite">合体</button>
+    <button class="btn" id="bSub">前面で削る</button>
+    <button class="btn" id="bInter">交差</button>
+    <button class="btn" id="bOutline">線→塗り</button>
+  </div>
+  <div class="grid2">
+    <button class="btn" id="bSmooth">スムーズ</button>
+    <button class="btn" id="bCorner">コーナー</button>
+  </div>
+  <div class="note">複数選択（Shift+クリック）してから合体／削る</div>
+
+  <h2>ARRANGE</h2>
+  <div class="grid2">
+    <button class="btn" id="bDup">複製</button>
+    <button class="btn" id="bFlipH">左右反転</button>
+    <button class="btn" id="bFront">最前面</button>
+    <button class="btn" id="bBack">最背面</button>
+  </div>
+
+  <h2>EXPORT</h2>
+  <button class="btn pri" id="bSVG">SVG を書き出す</button>
+  <button class="btn" id="bPNG">PNG を書き出す</button>
+
+  <h2>SAVE</h2>
+  <div class="grid2">
+    <button class="btn" id="bSave">保存（JSON）</button>
+    <button class="btn" id="bLoad">読み込み</button>
+  </div>
+  <button class="btn" id="bSVGin">SVG を読み込む</button>
+  <input type="file" id="fileJSON" accept=".json,application/json" hidden>
+  <input type="file" id="fileSVG" accept=".svg,image/svg+xml" hidden>
+  <div class="note">JSON＝続きから編集できる形<br>グリッド設定・色も一緒に保存されます</div>
+  <button class="btn" id="bClear" style="margin-top:10px">全消去</button>
+
+  <h2>KEYS</h2>
+  <div class="note">
+    P ペン ／ A ダイレクト ／ V 選択<br>
+    R 矩形 ／ E 円 ／ B ストローク<br>
+    Space+ドラッグ＝移動・ホイール＝ズーム<br>
+    ⌘Z 戻す ／ ⇧⌘Z 進む ／ Delete 削除<br>
+    Enter＝パス確定・Esc＝取消
+  </div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════
+   作字 SAKUJI — 自分のための作字ツール
+   paper.js を土台に、ペン／アンカー編集／ブーリアン／
+   作字グリッドを載せる。出力は塗りパスの SVG。
+   ══════════════════════════════════════════════════ */
+const cv = document.getElementById('cv');
+paper.setup(cv);
+const { Path, Point, Group, Color, Rectangle, Size } = paper;
+
+const S = {
+  tool:'pen',
+  fill:'#0a0a0a', stroke:null, target:'fill',   // 塗り・線は同時に持てる（イラレ準拠）／target＝いま編集している側
+  sw:40, grid:1, face:88, bg:'light', gtype:'jp', div:8, body:900,
+  shape:'rrect', polyN:5, rad:0, join:'round', cap:'round',
+  spaceDown:false, panning:null
+};
+const stat = t => document.getElementById('stat').textContent = t;
+
+/* ── レイヤー構成：下=グリッド、上=作画 ── */
+const ACC = '#4a9eff';                // 編集ガイドの青（イラレ／Figma の流儀）
+paper.settings.handleSize = 7;
+const gridLayer = new paper.Layer();
+gridLayer.locked = true;              // グリッドが選択のヒット判定を奪わないようにする
+const artLayer  = new paper.Layer();
+const uiLayer   = new paper.Layer();  // 最前面：アンカー・ハンドル・ラバーバンド
+uiLayer.locked  = true;
+artLayer.activate();
+
+/* ── 編集ガイドの描画（アンカー／ハンドル／次の点までの線）── */
+let mousePt = null;
+function guides(){
+  uiLayer.activate(); uiLayer.removeChildren();
+  const Z = paper.view.zoom, r = 3.6/Z, lw = 1/Z;
+
+  const anchors = (item, live) => {
+    if(!item.segments) return;
+    item.segments.forEach(seg => {
+      // ハンドル（曲線の腕）
+      ['handleIn','handleOut'].forEach(k => {
+        const h = seg[k];
+        if(!h || (h.x === 0 && h.y === 0)) return;
+        const hp = seg.point.add(h);
+        const l = new Path.Line(seg.point, hp); l.strokeColor = ACC; l.strokeWidth = lw; l.opacity = .75;
+        const d = new Path.Circle(hp, r*0.85); d.fillColor = ACC; d.opacity = .9;
+      });
+      // アンカー（選択中は塗り／通常は白抜き）
+      const a = new Path.Rectangle(new Rectangle(seg.point.x-r, seg.point.y-r, r*2, r*2));
+      a.strokeColor = ACC; a.strokeWidth = lw;
+      a.fillColor = seg.selected ? ACC : (S.bg === 'light' ? '#fff' : '#0a0a0a');
+    });
+  };
+
+  if(pen){
+    // 次の点までのプレビュー線
+    if(mousePt && pen.lastSegment){
+      const seg = pen.lastSegment;
+      const prev = new Path({ segments:[seg, { point:mousePt }] });
+      prev.strokeColor = ACC; prev.strokeWidth = lw; prev.dashArray = [4/Z, 3/Z]; prev.opacity = .8;
+      const dot = new Path.Circle(mousePt, r*0.9); dot.strokeColor = ACC; dot.strokeWidth = lw;
+      // 始点に近い＝閉じられる合図
+      if(pen.segments.length > 1 && mousePt.getDistance(pen.firstSegment.point) < 12/Z){
+        const c = new Path.Circle(pen.firstSegment.point, r*2.4);
+        c.strokeColor = ACC; c.strokeWidth = 1.6/Z;
+      }
+    }
+    anchors(pen, true);
+  }
+  // 塗りも線も「なし」の図形は画面上で見えない＝迷子になるので、輪郭だけ薄く出す
+  artLayer.children.forEach(it => {
+    if(it.fillColor || it.strokeColor || !it.segments) return;
+    const ghost = it.clone({ insert:false });
+    ghost.fillColor = null;
+    ghost.strokeColor = new Color(0.5, 0.5, 0.5, 0.55);
+    ghost.strokeWidth = lw; ghost.dashArray = [5/Z, 4/Z];
+    uiLayer.addChild(ghost);
+  });
+  artLayer.children.forEach(it => { if(it.selected) anchors(it, false); });
+  artLayer.activate();
+}
+
+/* ── 作字グリッド ──
+   和文（仮想ボディ・字面・三分割）／欧文（ベースライン等）／方眼 を切り替える。
+   Glyphs のようにボディ寸法と分割数を数値で決められる。 */
+function drawGrid(){
+  gridLayer.activate(); gridLayer.removeChildren();
+  if(!S.grid){ artLayer.activate(); return; }
+
+  const L = S.bg === 'light';
+  const C = {
+    body : L ? '#b9b9b9' : '#333333',      // 仮想ボディ（いちばん強い枠）
+    face : L ? '#9fbfa2' : '#26402a',      // 字面枠
+    axis : L ? '#d2d2d2' : '#202020',      // 中心線
+    thin : L ? '#e6e6e6' : '#161616',      // 補助線
+    key  : L ? '#c8b48a' : '#3a3020'       // 欧文の基準線
+  };
+  const c = paper.view.center, B = S.body, half = B/2;
+  const line = (x1,y1,x2,y2,col,dash) => {
+    const p = new Path.Line(new Point(x1,y1), new Point(x2,y2));
+    p.strokeColor = col; p.strokeWidth = 1; if(dash) p.dashArray = dash; return p;
+  };
+  const rect = (r,col,dash) => {
+    const p = new Path.Rectangle(new Rectangle(c.x-r, c.y-r, r*2, r*2));
+    p.strokeColor = col; p.strokeWidth = 1; if(dash) p.dashArray = dash; return p;
+  };
+  const label = (txt, x, y) => {
+    const t = new paper.PointText(new Point(x, y));
+    t.content = txt; t.fillColor = C.key; t.fontSize = 10; t.fontFamily = 'ui-monospace, monospace';
+    return t;
+  };
+
+  // どのタイプでも仮想ボディは出す
+  rect(half, C.body);
+
+  if(S.gtype === 'jp'){
+    rect(B*(S.face/100)/2, C.face, [5,4]);                       // 字面枠
+    line(c.x-half, c.y, c.x+half, c.y, C.axis);                  // 中心
+    line(c.x, c.y-half, c.x, c.y+half, C.axis);
+    for(const t of [1/3, 2/3]){                                   // 三分割＝漢字の骨格
+      line(c.x-half, c.y-half+B*t, c.x+half, c.y-half+B*t, C.thin);
+      line(c.x-half+B*t, c.y-half, c.x-half+B*t, c.y+half, C.thin);
+    }
+  }
+  else if(S.gtype === 'latin'){
+    // 欧文の基準線（Glyphs 流）：ベースライン／x-height／キャップ／アセンダ／ディセンダ
+    const base = c.y + half*0.62;
+    const H = {
+      'ascender' : c.y - half*0.86,
+      'cap'      : c.y - half*0.72,
+      'x-height' : c.y - half*0.12,
+      'baseline' : base,
+      'descender': c.y + half*0.90
+    };
+    for(const [k,y] of Object.entries(H)){
+      line(c.x-half, y, c.x+half, y, k === 'baseline' ? C.face : C.key, k === 'baseline' ? null : [5,4]);
+      label(k, c.x+half+8, y+3);
+    }
+    line(c.x, c.y-half, c.x, c.y+half, C.axis);                  // 中心
+    // サイドベアリングの目安
+    const sb = B*0.08;
+    line(c.x-half+sb, c.y-half, c.x-half+sb, c.y+half, C.thin, [3,4]);
+    line(c.x+half-sb, c.y-half, c.x+half-sb, c.y+half, C.thin, [3,4]);
+  }
+  else if(S.gtype === 'multi'){
+    // 連続マス：中心のマスを基準に、上下左右へ同じ枡を敷き詰める
+    // ＝1字ずつ作りながら、並べたときの字間・統一感を見るための土台
+    const view = paper.view.bounds;
+    const nx = Math.ceil(view.width  / B) + 2;
+    const ny = Math.ceil(view.height / B) + 2;
+    const fh = B*(S.face/100)/2;
+    for(let iy = -Math.ceil(ny/2); iy <= Math.ceil(ny/2); iy++){
+      for(let ix = -Math.ceil(nx/2); ix <= Math.ceil(nx/2); ix++){
+        const ox = c.x + ix*B, oy = c.y + iy*B;
+        if(ox+half < view.left-B || ox-half > view.right+B) continue;
+        if(oy+half < view.top-B  || oy-half > view.bottom+B) continue;
+        const center = (ix === 0 && iy === 0);
+        const r = new Path.Rectangle(new Rectangle(ox-half, oy-half, B, B));
+        r.strokeColor = center ? C.body : C.thin; r.strokeWidth = 1;
+        const f = new Path.Rectangle(new Rectangle(ox-fh, oy-fh, fh*2, fh*2));
+        f.strokeColor = C.face; f.strokeWidth = 1; f.dashArray = [4,4];
+        f.opacity = center ? 1 : .45;
+        if(center){                       // 基準のマスだけ中心線を出す
+          line(ox-half, oy, ox+half, oy, C.axis);
+          line(ox, oy-half, ox, oy+half, C.axis);
+        }
+      }
+    }
+  }
+  else if(S.gtype === 'mesh' || S.gtype === 'diag'){
+    const n = S.div, step = B/n;
+    for(let i=1;i<n;i++){
+      const strong = (i === n/2);
+      line(c.x-half, c.y-half+step*i, c.x+half, c.y-half+step*i, strong ? C.axis : C.thin);
+      line(c.x-half+step*i, c.y-half, c.x-half+step*i, c.y+half, strong ? C.axis : C.thin);
+    }
+    if(S.gtype === 'diag'){
+      line(c.x-half, c.y-half, c.x+half, c.y+half, C.face, [6,5]);
+      line(c.x-half, c.y+half, c.x+half, c.y-half, C.face, [6,5]);
+    }
+  }
+  else if(S.gtype === 'iso'){
+    // アイソメトリック：垂直＋±30°。立体的な字面を起こすとき用
+    const n = S.div, step = B/n, ext = B*1.2, tan30 = Math.tan(Math.PI/6);
+    for(let i=-n; i<=n; i++){
+      const x = c.x + step*i;
+      line(x, c.y-half, x, c.y+half, i===0 ? C.axis : C.thin);          // 垂直
+      // 右上がり／右下がり（±30°）
+      const y0 = c.y + step*i*2;
+      line(c.x-ext, y0 + ext*tan30, c.x+ext, y0 - ext*tan30, i===0 ? C.face : C.thin);
+      line(c.x-ext, y0 - ext*tan30, c.x+ext, y0 + ext*tan30, i===0 ? C.face : C.thin);
+    }
+    rect(half, C.body);
+  }
+  else if(S.gtype === 'persp'){
+    // 斜め二点：左右の消失点へ向かう放射線＋水平線。奥行きのある字面を起こすとき用
+    const vpL = new Point(c.x - B*2.4, c.y), vpR = new Point(c.x + B*2.4, c.y);
+    const n = Math.max(6, S.div);
+    for(let i=0;i<=n;i++){
+      const t = i/n, y = c.y - half + B*t;
+      line(vpL.x, vpL.y, c.x+half, y, C.thin);
+      line(vpR.x, vpR.y, c.x-half, y, C.thin);
+    }
+    line(c.x-half*2, c.y, c.x+half*2, c.y, C.face, [6,5]);   // 地平線
+    for(let i=0;i<=n;i++){
+      const x = c.x - half + B*(i/n);
+      line(x, c.y-half, x, c.y+half, C.thin);                 // 垂直（高さの基準）
+    }
+    rect(half, C.body);
+  }
+  // 'none' は枠だけ
+  artLayer.activate();
+}
+
+/* ── 履歴（Undo/Redo）── */
+const HIST = { past:[], future:[] };
+function snapshot(){
+  HIST.past.push(artLayer.exportJSON({ asString:true }));
+  if(HIST.past.length > 80) HIST.past.shift();
+  HIST.future.length = 0;
+}
+function restore(json){
+  artLayer.removeChildren();
+  artLayer.importJSON(json);
+  paper.view.update();
+}
+function undo(){
+  if(!HIST.past.length) return;
+  HIST.future.push(artLayer.exportJSON({ asString:true }));
+  restore(HIST.past.pop()); stat('UNDO');
+}
+function redo(){
+  if(!HIST.future.length) return;
+  HIST.past.push(artLayer.exportJSON({ asString:true }));
+  restore(HIST.future.pop()); stat('REDO');
+}
+
+/* ── 見た目の適用 ── */
+/* 塗りと線を同時に持たせる（イラレ／Figma と同じ考え方）
+   どちらか片方が null なら「なし」 */
+function styleOf(item){
+  item.fillColor   = S.fill;
+  item.strokeColor = S.stroke;
+  if(S.stroke){ item.strokeWidth = S.sw; item.strokeCap = 'round'; item.strokeJoin = 'round'; }
+  return item;
+}
+const selected = () => artLayer.children.filter(c => c.selected);
+
+/* ══ ペンツール — アンカーを打って繋ぐ ══ */
+let pen = null;                      // 作画中のパス
+function penDown(e){
+  const p = e.point;
+  if(!pen){
+    pen = new Path();
+    // 描画中は輪郭だけ薄く見せる（確定時に本来の塗り／線を当てる）
+    pen.strokeColor = ACC; pen.strokeWidth = 1/paper.view.zoom; pen.fillColor = null;
+    pen.add(p); pen.__anchor = pen.lastSegment;
+    stat('ペン — 続けて打つ／始点で閉じる／Enter・Escで確定');
+    return;
+  }
+  // 始点の近くなら閉じる
+  if(pen.segments.length > 1 && p.getDistance(pen.firstSegment.point) < 12/paper.view.zoom){
+    pen.closed = true; finishPen(); return;
+  }
+  pen.add(p); pen.__anchor = pen.lastSegment;
+}
+function penDrag(e){
+  if(!pen || !pen.__anchor) return;
+  const a = pen.__anchor;
+  a.handleOut = e.point.subtract(a.point);          // ドラッグ＝曲線ハンドル
+  // Alt を押しながら＝ハンドルを折る（進行方向だけ動かす／イラレと同じ）
+  if(!e.modifiers.alt) a.handleIn = a.handleOut.multiply(-1);
+  guides();
+}
+/* パスを確定して終える（閉じていなくてもよい＝イラレと同じ）
+   途中でやめたいときは Enter / Esc / ダブルクリック / ツール切替 のどれでも */
+function finishPen(){
+  if(!pen) return;
+  const n = pen.segments.length;
+  const hasFill = !!S.fill, hasStroke = !!S.stroke;
+  // 見た目が何も残らないものは確定しない（見えないパスがゴミとして残るのを防ぐ）
+  //  ・点が1つだけ
+  //  ・塗りも線も「なし」
+  //  ・2点の直線なのに線が「なし」＝面積ゼロで何も見えない
+  if(n < 2 || (!hasFill && !hasStroke) || (n === 2 && !hasStroke && !pen.closed)){
+    pen.remove(); pen = null; guides();
+    stat(n < 2 ? '' : '描きかけを破棄（塗りも線も無いため）');
+    return;
+  }
+  styleOf(pen); pen.selected = false; pen = null;
+  snapshot(); guides(); stat('パス確定 — 開いたままでもOK');
+}
+/* 描きかけを丸ごと捨てる（⌘Zと同じ役割。今は使っていない） */
+function cancelPen(){ if(pen){ pen.remove(); pen = null; guides(); stat('取消'); } }
+
+/* ══ 図形ツール ══
+   ドラッグした矩形に内接させる形で各シェイプを作る。
+   Shift＝正方形/正円に固定、Alt＝始点を中心にして広げる（イラレと同じ） */
+let shape = null, shapeStart = null;
+function shapeDown(e){ shapeStart = e.point; }
+function shapeDrag(e){
+  if(!shapeStart) return;
+  if(shape) shape.remove();
+  let a = shapeStart, b = e.point;
+  if(e.modifiers.shift){                       // 正方形・正円に固定
+    const d = Math.max(Math.abs(b.x-a.x), Math.abs(b.y-a.y));
+    b = new Point(a.x + Math.sign(b.x-a.x)*d, a.y + Math.sign(b.y-a.y)*d);
+  }
+  let r = new Rectangle(a, b);
+  if(e.modifiers.alt){                          // 中心から広げる
+    const half = new Point(Math.abs(b.x-a.x), Math.abs(b.y-a.y));
+    r = new Rectangle(a.subtract(half), a.add(half));
+  }
+  shape = makeShape(S.shape, r);
+  if(shape) styleOf(shape);
+}
+function shapeUp(){ if(shape){ shape = null; snapshot(); stat('シェイプ'); } shapeStart = null; }
+
+/* 矩形 r に内接するシェイプを作る */
+function makeShape(kind, r){
+  const { x, y, width:w, height:h } = r;
+  const cx = x + w/2, cy = y + h/2, rx = w/2, ry = h/2;
+  const P2 = (px,py) => new Point(px,py);
+  const poly = pts => { const p = new Path(pts); p.closed = true; return p; };
+  const N = S.polyN || 5;
+
+  switch(kind){
+    case 'rect':    return new Path.Rectangle(r);
+    case 'rrect':   return new Path.Rectangle(r, Math.min(w,h) * (S.rad ? Math.min(0.5, S.rad/300) : 0.28));
+    case 'ellipse': return new Path.Ellipse(r);
+    case 'tri':     return poly([P2(cx, y), P2(x+w, y+h), P2(x, y+h)]);
+    case 'tri-r':   return poly([P2(x, y), P2(x, y+h), P2(x+w, y+h)]);
+    case 'trapez':  return poly([P2(x+w*0.24, y), P2(x+w*0.76, y), P2(x+w, y+h), P2(x, y+h)]);
+    case 'diamond': return poly([P2(cx, y), P2(x+w, cy), P2(cx, y+h), P2(x, y+h-h)]).remove() ||
+                           poly([P2(cx, y), P2(x+w, cy), P2(cx, y+h), P2(x, cy)]);
+    case 'half': {                                  // 半円（右半分）
+      const p = new Path.Arc(P2(cx, y), P2(x+w, cy), P2(cx, y+h));
+      p.closed = true; return p;
+    }
+    case 'pie': {                                   // 扇形（90°）
+      const p = new Path([P2(cx, cy)]);
+      p.arcTo(P2(cx + rx*0.707, cy - ry*0.707), P2(cx, cy - ry));
+      p.closed = true; return p;
+    }
+    case 'leaf': {                                  // 両端が尖る（字画の入り・抜き）
+      const p = new Path();
+      p.moveTo(P2(x, y+h));
+      p.arcTo(P2(cx, y + h*0.06), P2(x+w, y));
+      p.arcTo(P2(cx, y + h*0.94), P2(x, y+h));
+      p.closed = true; return p;
+    }
+    case 'slab': {                                  // 片側だけ丸い＝字画の端
+      const rr = Math.min(w, h)/2;
+      const p = new Path();
+      p.moveTo(P2(x, y));
+      p.lineTo(P2(x+w-rr, y));
+      p.arcTo(P2(x+w, cy), P2(x+w-rr, y+h));
+      p.lineTo(P2(x, y+h));
+      p.closed = true; return p;
+    }
+    case 'poly': {
+      const pts = [];
+      for(let i=0;i<N;i++){
+        const a = -Math.PI/2 + i*2*Math.PI/N;
+        pts.push(P2(cx + Math.cos(a)*rx, cy + Math.sin(a)*ry));
+      }
+      return poly(pts);
+    }
+    case 'star': {
+      const pts = [];
+      for(let i=0;i<N*2;i++){
+        const a = -Math.PI/2 + i*Math.PI/N, f = i%2 ? 0.42 : 1;
+        pts.push(P2(cx + Math.cos(a)*rx*f, cy + Math.sin(a)*ry*f));
+      }
+      return poly(pts);
+    }
+    case 'arc': {                                   // 太い弧（字画の曲がり）
+      const p = new Path();
+      p.moveTo(P2(x, y+h));
+      p.arcTo(P2(cx, y), P2(x+w, y+h));
+      p.lineTo(P2(x+w*0.78, y+h));
+      p.arcTo(P2(cx, y + h*0.26), P2(x+w*0.22, y+h));
+      p.closed = true; return p;
+    }
+    default: return new Path.Rectangle(r, Math.min(w,h)*0.28);
+  }
+}
+
+/* ══ ストローク（太い線）ツール ══ */
+let brush = null;
+function brushDown(e){
+  // 線色が「なし」なら塗り色で描く（描いたのに見えない、を防ぐ）
+  brush = new Path({
+    strokeColor: S.stroke || S.fill || '#0a0a0a',
+    strokeWidth: S.sw, strokeCap: S.cap || 'round', strokeJoin: S.join || 'round'
+  });
+  brush.add(e.point);
+  stat('フリーハンド — 離すと整う／「線→塗り」で輪郭が確定');
+}
+function brushDrag(e){ if(brush) brush.add(e.point); }
+function brushUp(){
+  if(!brush) return;
+  brush.simplify(6);                                  // 手ブレを整理して滑らかに
+  brush = null; snapshot(); stat('STROKE — 「線→塗り」でアウトライン化');
+}
+
+/* ══ 選択／ダイレクト選択 ══ */
+let dragItem = null, dragSeg = null, dragHandle = null, dragStart = null;
+function hit(point){
+  const tol = 11/paper.view.zoom;
+  // ハンドル → アンカー → 線 → 塗り の順で優先して拾う（イラレの掴み心地）
+  return artLayer.hitTest(point, { handles:true,  tolerance:tol })
+      || artLayer.hitTest(point, { segments:true, tolerance:tol })
+      || artLayer.hitTest(point, { stroke:true,   tolerance:tol })
+      || artLayer.hitTest(point, { fill:true,     tolerance:tol });
+}
+let marquee = null, marqueeStart = null;      // ドラッグの範囲選択（点線の矩形）
+function selDown(e){
+  let h = hit(e.point);
+  // 塗りの内側なら、線に当たらなくても掴めるようにする
+  if(!h){
+    const inside = artLayer.children.filter(c => c.contains && c.contains(e.point));
+    if(inside.length) h = { item: inside[inside.length-1], type:'fill' };
+  }
+  // 何も無いところからのドラッグ＝範囲選択の開始
+  if(!h){
+    if(!e.modifiers.shift) artLayer.children.forEach(c=>c.selected=false);
+    marqueeStart = e.point; guides(); return;
+  }
+  const item = h.item;
+  if(S.tool === 'direct'){
+    item.selected = true;
+    if(h.type === 'segment'){ dragSeg = h.segment; }
+    else if(h.type === 'handle-in' || h.type === 'handle-out'){ dragHandle = h; }
+    else { dragItem = item; dragStart = e.point; }
+  } else {
+    if(!e.modifiers.shift) artLayer.children.forEach(c=>c.selected=false);
+    item.selected = true; dragItem = item; dragStart = e.point;
+  }
+}
+function selDrag(e){
+  // 範囲選択：ドラッグ中は点線の矩形を出し、触れた図形を選ぶ
+  if(marqueeStart){
+    if(marquee) marquee.remove();
+    uiLayer.activate();
+    const Z = paper.view.zoom;
+    marquee = new Path.Rectangle(new Rectangle(marqueeStart, e.point));
+    marquee.strokeColor = ACC; marquee.strokeWidth = 1/Z; marquee.dashArray = [4/Z, 3/Z];
+    marquee.fillColor = new Color(0.29, 0.62, 1, 0.08);
+    artLayer.activate();
+    const r = new Rectangle(marqueeStart, e.point);
+    artLayer.children.forEach(it => {
+      // ダイレクト選択のときはアンカー単位、それ以外は図形単位で拾う
+      if(S.tool === 'direct' && it.segments){
+        it.segments.forEach(sg => sg.selected = r.contains(sg.point));
+        it.selected = it.segments.some(sg => sg.selected);
+      } else {
+        it.selected = r.intersects(it.bounds) || r.contains(it.bounds);
+      }
+    });
+    return;
+  }
+  const d = e.point.subtract(e.lastPoint);
+  if(dragSeg){
+    dragSeg.point = dragSeg.point.add(d);
+    // Alt＝そのアンカーのハンドルだけを対称に伸ばす（イラレの感触に寄せる）
+    guides(); return;
+  }
+  if(dragHandle){
+    const seg = dragHandle.segment;
+    if(dragHandle.type === 'handle-in'){
+      seg.handleIn = seg.handleIn.add(d);
+      if(!e.modifiers.alt && seg.handleOut) seg.handleOut = seg.handleIn.multiply(-1);  // 対称に連動
+    } else {
+      seg.handleOut = seg.handleOut.add(d);
+      if(!e.modifiers.alt && seg.handleIn) seg.handleIn = seg.handleOut.multiply(-1);
+    }
+    guides(); return;
+  }
+  if(dragItem){ selected().forEach(it => it.position = it.position.add(d)); guides(); }
+}
+function selUp(){
+  if(marqueeStart){
+    if(marquee){ marquee.remove(); marquee = null; }
+    marqueeStart = null;
+    const n = selected().length;
+    stat(n ? `${n} 個を選択` : '選択なし');
+    guides(); return;
+  }
+  if(dragSeg||dragHandle||dragItem) snapshot();
+  dragSeg = dragHandle = dragItem = null;
+}
+
+/* ══ 入力ルーティング ══ */
+const tool = new paper.Tool();
+tool.onMouseDown = e => {
+  if(S.spaceDown){ S.panning = e.point; return; }
+  switch(S.tool){
+    case 'pen': penDown(e); break;
+    case 'shape': shapeDown(e); break;
+    case 'stroke': brushDown(e); break;
+    default: selDown(e);
+  }
+};
+tool.onMouseDrag = e => {
+  if(S.spaceDown && S.panning){
+    paper.view.center = paper.view.center.subtract(e.point.subtract(e.downPoint));
+    drawGrid(); return;
+  }
+  switch(S.tool){
+    case 'pen': penDrag(e); break;
+    case 'shape': shapeDrag(e); break;
+    case 'stroke': brushDrag(e); break;
+    default: selDrag(e);
+  }
+};
+tool.onMouseUp = e => {
+  S.panning = null;
+  switch(S.tool){
+    case 'shape': shapeUp(); break;
+    case 'stroke': brushUp(); break;
+    case 'pen': break;
+    default: selUp();
+  }
+  guides();
+};
+tool.onMouseMove = e => { mousePt = e.point; if(pen) guides(); };
+// ダブルクリックでもパスを確定できる（イラレと同じ逃げ道）
+cv.addEventListener('dblclick', () => { if(pen) finishPen(); });
+
+/* ══ キー ══ */
+window.addEventListener('keydown', e => {
+  const t = e.target.tagName;
+  if(t === 'INPUT' || t === 'TEXTAREA') return;
+  const cmd = e.metaKey || e.ctrlKey;
+  if(e.code === 'Space'){ S.spaceDown = true; cv.style.cursor='grab'; e.preventDefault(); return; }
+  if(cmd && e.key.toLowerCase() === 'z'){ e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if(cmd && e.key.toLowerCase() === 'a'){          // ⌘A＝ぜんぶ選択
+    e.preventDefault();
+    artLayer.children.forEach(c => c.selected = true);
+    setTool('select'); guides(); stat(`${artLayer.children.length} 個を選択`); return;
+  }
+  if(cmd && e.key.toLowerCase() === 'd'){          // ⌘D＝複製
+    e.preventDefault(); document.getElementById('bDup').click(); return;
+  }
+  if(cmd && e.key.toLowerCase() === 'g'){          // ⌘G＝グループ／⇧⌘G＝解除
+    e.preventDefault();
+    if(e.shiftKey){
+      selected().forEach(it => { if(it instanceof Group){ const kids = it.removeChildren();
+        artLayer.addChildren(kids); kids.forEach(k=>k.selected=true); it.remove(); } });
+      stat('グループ解除');
+    } else {
+      const sel = selected(); if(sel.length < 2) return;
+      snapshot(); const g = new Group(sel); g.selected = true; stat('グループ化');
+    }
+    guides(); return;
+  }
+  // Enter / Esc はどちらも「描くのをやめる」＝パスは残る（イラレと同じ）
+  if(e.key === 'Enter'){ finishPen(); return; }
+  if(e.key === 'Escape'){
+    if(pen){ finishPen(); }
+    else { artLayer.children.forEach(c=>c.selected=false); guides(); }
+    return;
+  }
+  if(e.key === 'x' || e.key === 'X'){                 // X＝塗り／線の切替、⇧X＝入れ替え
+    if(e.shiftKey) document.getElementById('fsSwap').click();
+    else { S.target = S.target === 'fill' ? 'stroke' : 'fill'; syncFS(); }
+    return;
+  }
+  if(e.key === '/'){ applyColor(null); return; }      // /＝なし
+  if(e.key === 'd' || e.key === 'D'){                 // D＝初期設定（白塗り・線なし）
+    S.fill = '#ffffff'; S.stroke = null; syncFS(); return;
+  }
+  if(e.key === 'Backspace' || e.key === 'Delete'){
+    e.preventDefault();
+    if(S.tool === 'direct'){                       // アンカーだけ消す
+      artLayer.children.forEach(it=>{
+        if(!it.segments) return;
+        for(let i=it.segments.length-1;i>=0;i--) if(it.segments[i].selected) it.segments[i].remove();
+      });
+    } else { selected().forEach(it=>it.remove()); }
+    snapshot(); return;
+  }
+  const map = { p:'pen', a:'direct', v:'select', r:'shape', e:'shape', b:'stroke' };
+  const k = map[e.key.toLowerCase()];
+  if(k){ setTool(k); }
+});
+window.addEventListener('keyup', e => {
+  if(e.code === 'Space'){ S.spaceDown = false; S.panning = null; cv.style.cursor='crosshair'; }
+});
+cv.addEventListener('wheel', e => {                 // ホイール＝カーソル中心ズーム
+  e.preventDefault();
+  const f = e.deltaY < 0 ? 1.09 : 1/1.09;
+  const nz = Math.max(0.1, Math.min(40, paper.view.zoom * f));
+  const mp = paper.view.viewToProject(new Point(e.offsetX, e.offsetY));
+  paper.view.center = mp.add(paper.view.center.subtract(mp).multiply(paper.view.zoom / nz));
+  paper.view.zoom = nz; drawGrid();
+}, { passive:false });
+
+/* ══ UI ══ */
+function setTool(t){
+  finishPen();
+  S.tool = t;
+  document.querySelectorAll('#tools button').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+  const help = {
+    pen:'ペン：クリック＝角／ドラッグ＝曲線<br>始点をクリックで閉じる・Enterで確定',
+    direct:'<b>ダイレクト選択（白矢印）＝アンカー1点だけ</b><br>点を掴んで動かす／ハンドルで曲がり方を変える<br>＝形そのものを直すときはこちら',
+    select:'<b>選択（黒矢印）＝図形まるごと</b><br>クリックで選ぶ・Shiftで追加・ドラッグで動かす<br>何もない所からドラッグ＝範囲選択・⌘Aで全部',
+    shape:'<b>シェイプ</b>：ドラッグで描く<br>ツールをもう一度押す＝種類を選ぶ<br>Shift＝正方形・正円／Alt＝中心から',
+    stroke:'ストローク：ドラッグで太い線<br>「線→塗り」でアウトライン化'
+  };
+  document.getElementById('modehelp').innerHTML = help[t] || '';
+  cv.style.cursor = (t==='pen'||t==='shape'||t==='stroke') ? 'crosshair' : 'default';
+  stat(t.toUpperCase());
+}
+document.querySelectorAll('#tools button[data-tool]').forEach(b =>
+  b.addEventListener('click', () => {
+    setTool(b.dataset.tool);
+    // シェイプは押すたびにフライアウトを開閉（イラレのツール展開）
+    if(b.dataset.tool === 'shape') smToggle();
+    else smClose();
+  }));
+
+/* ── シェイプのフライアウト ── */
+const shapeMenu = document.getElementById('shapeMenu');
+const SHAPE_ICON = {
+  rect:'<rect x="3" y="6" width="18" height="12"/>',
+  rrect:'<rect x="4" y="4" width="16" height="16" rx="4"/>',
+  ellipse:'<ellipse cx="12" cy="12" rx="9" ry="7"/>',
+  tri:'<path d="M12 4 L21 20 L3 20 Z"/>',
+  'tri-r':'<path d="M4 4 L4 20 L20 20 Z"/>',
+  trapez:'<path d="M7 5 L17 5 L21 19 L3 19 Z"/>',
+  diamond:'<path d="M12 3 L21 12 L12 21 L3 12 Z"/>',
+  half:'<path d="M10 3 A9 9 0 0 1 10 21 Z"/>',
+  pie:'<path d="M12 12 L12 3 A9 9 0 0 1 21 12 Z"/>',
+  leaf:'<path d="M3 19 A14 14 0 0 1 21 5 A14 14 0 0 1 3 19 Z"/>',
+  slab:'<path d="M3 6 L15 6 A6 6 0 0 1 15 18 L3 18 Z"/>',
+  poly:'<path d="M12 3 L21 9.5 L17.5 20 L6.5 20 L3 9.5 Z"/>',
+  star:'<path d="M12 3 L14.6 9.6 L21.5 10 L16.2 14.4 L18 21 L12 17.2 L6 21 L7.8 14.4 L2.5 10 L9.4 9.6 Z"/>',
+  arc:'<path d="M3 20 A9 9 0 0 1 21 20 L16 20 A4 4 0 0 0 8 20 Z"/>'
+};
+function smToggle(){ shapeMenu.classList.toggle('open'); }
+function smClose(){ shapeMenu.classList.remove('open'); }
+document.querySelectorAll('#shapeMenu button[data-s]').forEach(b =>
+  b.addEventListener('click', () => {
+    S.shape = b.dataset.s;
+    document.querySelectorAll('#shapeMenu button[data-s]').forEach(x => x.classList.toggle('on', x===b));
+    document.getElementById('shapeIcon').innerHTML = SHAPE_ICON[S.shape] || SHAPE_ICON.rrect;
+    setTool('shape'); smClose();
+    stat('シェイプ：' + (b.title || S.shape));
+  }));
+{
+  const r = document.getElementById('polyN'), v = r.nextElementSibling;
+  r.addEventListener('input', () => { S.polyN = +r.value; v.textContent = r.value; });
+}
+// 画面の他をクリックしたら閉じる
+document.addEventListener('pointerdown', e => {
+  if(shapeMenu.classList.contains('open') &&
+     !shapeMenu.contains(e.target) && !e.target.closest('#tShape')) smClose();
+}, true);
+
+/* ── 塗り／線 ── */
+const chipFill = document.getElementById('fsFill'), chipStroke = document.getElementById('fsStroke');
+function syncFS(){
+  chipFill.classList.toggle('on', S.target === 'fill');
+  chipStroke.classList.toggle('on', S.target === 'stroke');
+  chipFill.classList.toggle('none', !S.fill);
+  chipStroke.classList.toggle('none', !S.stroke);
+  chipFill.querySelector('i').style.background = S.fill || '';
+  chipStroke.querySelector('i').style.borderColor = S.stroke || '';
+  const cur = S[S.target];
+  document.querySelectorAll('#swatch i').forEach(x => x.classList.toggle('on', x.dataset.c === cur));
+  if(cur) document.getElementById('picker').value = cur;
+}
+function applyColor(c){                              // 選択中があればその図形にも即反映
+  S[S.target] = c;
+  selected().forEach(it => {
+    if(S.target === 'fill') it.fillColor = c;
+    else { it.strokeColor = c; if(c) it.strokeWidth = S.sw; }
+  });
+  syncFS();
+}
+chipFill.onclick   = () => { S.target = 'fill';   syncFS(); };
+chipStroke.onclick = () => { S.target = 'stroke'; syncFS(); };
+document.getElementById('fsSwap').onclick = () => {  // 塗りと線を入れ替え（⇧X）
+  const f = S.fill; S.fill = S.stroke; S.stroke = f;
+  selected().forEach(it => { const a = it.fillColor, b = it.strokeColor;
+    it.fillColor = b; it.strokeColor = a; if(b) it.strokeWidth = S.sw; });
+  syncFS();
+};
+document.getElementById('fsNone').onclick = () => applyColor(null);   // なし（/）
+document.getElementById('picker').addEventListener('input', e => applyColor(e.target.value));
+document.querySelectorAll('#swatch i').forEach(sw =>
+  sw.addEventListener('click', () => applyColor(sw.dataset.c)));
+document.querySelectorAll('#gridsw button').forEach(b =>
+  b.addEventListener('click', () => {
+    S.grid = +b.dataset.v;
+    document.querySelectorAll('#gridsw button').forEach(x=>x.classList.toggle('on', x===b));
+    drawGrid();
+  }));
+
+/* ── ボードの地色（黒／白）── */
+function setBG(v){
+  S.bg = v;
+  const light = v === 'light';
+  document.documentElement.style.setProperty('--bg', light ? '#f4f4f4' : '#0a0a0a');
+  document.body.style.background = light ? '#f4f4f4' : '#0a0a0a';
+  document.querySelectorAll('#bgsw button').forEach(x => x.classList.toggle('on', x.dataset.v === v));
+  drawGrid(); guides();
+}
+document.querySelectorAll('#bgsw button').forEach(b =>
+  b.addEventListener('click', () => setBG(b.dataset.v)));
+
+function bindRange(id, fn){
+  const r = document.getElementById(id), v = r.parentElement.querySelector('.val');
+  const sync = () => { v.textContent = r.value; fn(+r.value); };
+  r.addEventListener('input', sync); sync();
+}
+bindRange('sw',   v => { S.sw = v; selected().forEach(it => { if(it.strokeColor) it.strokeWidth = v; }); });
+bindRange('face', v => { S.face = v; drawGrid(); });
+bindRange('div',  v => { S.div = v;  drawGrid(); });
+bindRange('body', v => { S.body = v; drawGrid(); });
+bindRange('tsize', v => { S.tsize = v; });
+bindRange('rad',  v => {                       // 角丸（選択中の図形の角を丸める）
+  S.rad = v;
+  selected().forEach(it => { if(it.segments) it.segments.forEach(sg => roundCorner(sg, v)); });
+  guides();
+});
+/* 角を丸める：コーナーのアンカーにハンドルを与えて円弧にする */
+function roundCorner(seg, r){
+  if(r <= 0){ seg.handleIn = null; seg.handleOut = null; return; }
+  const prev = seg.previous, next = seg.next;
+  if(!prev || !next) return;
+  const a = prev.point.subtract(seg.point), b = next.point.subtract(seg.point);
+  const la = Math.min(r, a.length/2), lb = Math.min(r, b.length/2);
+  seg.handleIn  = a.normalize().multiply(la * 0.55);
+  seg.handleOut = b.normalize().multiply(lb * 0.55);
+}
+['align','join','cap'].forEach(id => {
+  document.getElementById(id).addEventListener('change', e => {
+    S[id] = e.target.value;
+    selected().forEach(it => {
+      if(id === 'join') it.strokeJoin = e.target.value;
+      if(id === 'cap')  it.strokeCap  = e.target.value;
+    });
+  });
+});
+
+/* ══ テキスト ══ */
+document.getElementById('bText').onclick = () => {
+  const txt = document.getElementById('tinput').value || '永';
+  snapshot();
+  const t = new paper.PointText({
+    point: paper.view.center,
+    content: txt,
+    fillColor: S.fill || '#ffffff',
+    fontFamily: document.getElementById('tfont').value,
+    fontWeight: document.getElementById('tweight').value,
+    fontSize: +document.getElementById('tsize').value,
+    justification: 'center'
+  });
+  t.position = paper.view.center;
+  artLayer.children.forEach(c => c.selected = false);
+  t.selected = true; guides();
+  stat('文字を置いた — 「アウトライン化」でパスになる');
+};
+/* 文字 → パス（アウトライン化）
+   Canvas の Path2D から輪郭を取り出して paper のパスに変換する */
+document.getElementById('bOutlineText').onclick = async () => {
+  const texts = selected().filter(it => it instanceof paper.PointText);
+  if(!texts.length){ stat('文字を選んでください'); return; }
+  snapshot();
+  for(const t of texts){
+    const paths = await textToPaths(t);
+    if(paths){ paths.fillColor = t.fillColor; paths.selected = true; t.remove(); }
+  }
+  guides(); stat('アウトライン化 — 編集できるパスになった');
+};
+async function textToPaths(t){
+  // フォントの輪郭を取り出す：一旦 SVG のテキストにして、ブラウザにパス化させる
+  const size = t.fontSize, fam = t.fontFamily, wt = t.fontWeight, str = t.content;
+  const cvs = document.createElement('canvas');
+  const S2 = Math.ceil(size * 1.6), W = Math.ceil(size * (str.length + 1) * 1.3);
+  cvs.width = W; cvs.height = S2 * 2;
+  const ctx = cvs.getContext('2d');
+  ctx.fillStyle = '#000'; ctx.font = `${wt} ${size}px ${fam}`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(str, W/2, S2);
+  // ラスタから輪郭を追跡してベジェに寄せる（マーチングスクエア＋簡略化）
+  const img = ctx.getImageData(0,0,cvs.width,cvs.height);
+  const cont = traceBitmap(img, cvs.width, cvs.height);
+  if(!cont.length) return null;
+  const grp = new paper.CompoundPath({ children: cont.map(pts => {
+    const p = new Path(pts.map(([x,y]) => new Point(x,y)));
+    p.closed = true; p.simplify(1.2); return p;
+  })});
+  grp.position = t.position;
+  grp.scale(1);   // 実寸のまま
+  return grp;
+}
+/* 2値画像の輪郭を追う（moore neighborhood）*/
+function traceBitmap(img, W, H){
+  const on = (x,y) => (x<0||y<0||x>=W||y>=H) ? false : img.data[(y*W+x)*4+3] > 128;
+  const seen = new Uint8Array(W*H), out = [];
+  const dirs = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+    if(!on(x,y) || seen[y*W+x]) continue;
+    if(on(x-1,y)) continue;                       // 左が塗りなら輪郭の開始点ではない
+    const start=[x,y]; let cur=[x,y], dir=0, pts=[], guard=0;
+    do{
+      pts.push(cur); seen[cur[1]*W+cur[0]] = 1;
+      let found=false;
+      for(let i=0;i<8;i++){
+        const d=(dir+6+i)%8, nx=cur[0]+dirs[d][0], ny=cur[1]+dirs[d][1];
+        if(on(nx,ny)){ cur=[nx,ny]; dir=d; found=true; break; }
+      }
+      if(!found) break;
+    } while((cur[0]!==start[0]||cur[1]!==start[1]) && ++guard < 200000);
+    if(pts.length > 24) out.push(pts.filter((_,i)=> i%2===0));   // 間引いて軽くする
+  }
+  return out;
+}
+document.getElementById('gtype').addEventListener('change', e => {
+  S.gtype = e.target.value;
+  const note = {
+    jp:'外枠＝仮想ボディ／内枠＝字面<br>三分割線＝漢字の骨格の基準',
+    multi:'同じ枡を上下左右に敷き詰める<br><b>並べて初めて字間と統一感が見える</b><br>中央の濃い枡が基準・ボディで枡の大きさが変わる',
+    latin:'ベースライン／x-height／キャップ／アセンダ・ディセンダ<br>破線＝サイドベアリングの目安',
+    mesh:'等分割の方眼紙。分割数で密度を変える',
+    diag:'方眼＋対角。斜めの流れを揃えるとき',
+    iso:'垂直＋±30°。<b>立体的な字面を起こすとき</b>',
+    persp:'左右の消失点へ向かう放射線＋地平線<br><b>奥行きのある字を組むとき</b>',
+    none:'枠だけ。形に集中したいとき'
+  };
+  document.getElementById('gridnote').innerHTML = note[S.gtype] || '';
+  drawGrid();
+});
+
+/* ══ パス演算 ══ */
+function boolOp(op){
+  const sel = selected();
+  if(sel.length < 2){ stat('2つ以上選んでください'); return; }
+  snapshot();
+  let base = sel[0];
+  for(let i=1;i<sel.length;i++){
+    const r = base[op](sel[i]);
+    r.selected = false; base.remove(); sel[i].remove(); base = r;
+  }
+  base.selected = true; stat(op.toUpperCase());
+}
+document.getElementById('bUnite').onclick = () => boolOp('unite');
+document.getElementById('bSub').onclick   = () => boolOp('subtract');
+document.getElementById('bInter').onclick = () => boolOp('intersect');
+
+document.getElementById('bOutline').onclick = () => {   // 線 → 塗りパス（アウトライン化）
+  const sel = selected().filter(it => it.strokeColor);
+  if(!sel.length){ stat('線のパスを選んでください'); return; }
+  snapshot();
+  sel.forEach(it => {
+    // 線の輪郭を実体化：太い線をそのまま塗りに変える
+    const outline = it.clone();
+    outline.strokeWidth = it.strokeWidth;
+    const res = expandStroke(outline);
+    if(res){ res.fillColor = it.strokeColor; res.strokeColor = null; res.selected = true; it.remove(); }
+    outline.remove();
+  });
+  stat('OUTLINE');
+};
+/* 線を塗りに——両側にオフセットして閉じる（丸端） */
+function expandStroke(path){
+  const w = path.strokeWidth/2;
+  if(!path.segments || path.segments.length < 2) return null;
+  const pts = [];
+  const N = Math.max(24, Math.floor(path.length/3));
+  for(let i=0;i<=N;i++) pts.push(path.getPointAt(path.length*i/N));
+  const left = [], right = [];
+  for(let i=0;i<pts.length;i++){
+    const a = pts[Math.max(0,i-1)], b = pts[Math.min(pts.length-1,i+1)];
+    let n = b.subtract(a); if(n.length === 0) continue;
+    n = n.normalize().rotate(90);
+    left.push(pts[i].add(n.multiply(w)));
+    right.unshift(pts[i].subtract(n.multiply(w)));
+  }
+  const p = new Path(left.concat(right));
+  p.closed = true; p.smooth({ type:'continuous' });
+  return p;
+}
+
+document.getElementById('bSmooth').onclick = () => {
+  snapshot();
+  artLayer.children.forEach(it => { if(it.segments) it.segments.forEach(s => { if(s.selected) s.smooth(); }); });
+  selected().forEach(it => it.smooth({ type:'continuous' }));
+  stat('SMOOTH');
+};
+document.getElementById('bCorner').onclick = () => {
+  snapshot();
+  artLayer.children.forEach(it => {
+    if(!it.segments) return;
+    it.segments.forEach(s => { if(s.selected || it.selected){ s.handleIn = null; s.handleOut = null; } });
+  });
+  stat('CORNER');
+};
+
+/* ══ 配置 ══ */
+document.getElementById('bDup').onclick = () => { snapshot();
+  selected().forEach(it => { const c = it.clone(); c.position = c.position.add(new Point(24,24)); it.selected=false; c.selected=true; }); };
+document.getElementById('bFlipH').onclick = () => { snapshot(); selected().forEach(it => it.scale(-1,1)); };
+document.getElementById('bFront').onclick = () => { snapshot(); selected().forEach(it => it.bringToFront()); };
+document.getElementById('bBack').onclick  = () => { snapshot(); selected().forEach(it => it.sendToBack()); };
+
+/* ══ 書き出し ══ */
+document.getElementById('bSVG').onclick = () => {
+  const keep = artLayer.children.map(c => c.selected);
+  artLayer.children.forEach(c => c.selected = false);
+  const svg = artLayer.exportSVG({ asString:true, bounds:'content', matchShapes:true });
+  artLayer.children.forEach((c,i) => c.selected = keep[i]);
+  dl(new Blob([svg], {type:'image/svg+xml'}), 'sakuji.svg');
+  stat('SVG 書き出し');
+};
+document.getElementById('bPNG').onclick = () => {
+  const keep = artLayer.children.map(c => c.selected);
+  artLayer.children.forEach(c => c.selected = false);
+  paper.view.update();
+  cv.toBlob(b => { dl(b, 'sakuji.png');
+    artLayer.children.forEach((c,i) => c.selected = keep[i]); });
+  stat('PNG 書き出し');
+};
+document.getElementById('bClear').onclick = () => { snapshot(); artLayer.removeChildren(); guides(); stat('CLEAR'); };
+
+/* ══ 保存・読み込み（続きから編集できる形）══ */
+document.getElementById('bSave').onclick = () => {
+  const keep = artLayer.children.map(c => c.selected);
+  artLayer.children.forEach(c => c.selected = false);
+  const data = {
+    app:'sakuji', version:1, saved:new Date().toISOString(),
+    settings:{ fill:S.fill, stroke:S.stroke, sw:S.sw, grid:S.grid, gtype:S.gtype,
+               face:S.face, div:S.div, body:S.body, bg:S.bg },
+    art: artLayer.exportJSON()
+  };
+  artLayer.children.forEach((c,i) => c.selected = keep[i]);
+  dl(new Blob([JSON.stringify(data)], {type:'application/json'}), 'sakuji.json');
+  stat('保存しました');
+};
+document.getElementById('bLoad').onclick = () => document.getElementById('fileJSON').click();
+document.getElementById('fileJSON').addEventListener('change', e => {
+  const f = e.target.files[0]; if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    try{
+      const d = JSON.parse(rd.result);
+      if(d.app !== 'sakuji') throw new Error('形式が違います');
+      snapshot();
+      artLayer.removeChildren();
+      artLayer.importJSON(d.art);
+      const s = d.settings || {};
+      Object.assign(S, s);
+      // UIを保存値に合わせ直す
+      ['sw','face','div','body'].forEach(id => {
+        const r = document.getElementById(id);
+        if(r && s[id] !== undefined){ r.value = s[id]; r.dispatchEvent(new Event('input')); }
+      });
+      const gt = document.getElementById('gtype');
+      if(s.gtype){ gt.value = s.gtype; gt.dispatchEvent(new Event('change')); }
+      setBG(s.bg || 'dark'); syncFS(); drawGrid(); guides();
+      stat('読み込みました');
+    }catch(err){ stat('読み込めませんでした：' + err.message); }
+  };
+  rd.readAsText(f);
+  e.target.value = '';
+});
+/* SVG を取り込む（他ツールで作ったパスを持ち込む・下敷きにも使える）*/
+document.getElementById('bSVGin').onclick = () => document.getElementById('fileSVG').click();
+document.getElementById('fileSVG').addEventListener('change', e => {
+  const f = e.target.files[0]; if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    snapshot();
+    artLayer.activate();
+    artLayer.importSVG(rd.result, {
+      expandShapes:true,
+      onLoad:(item)=>{ item.position = paper.view.center; item.selected = true; guides(); stat('SVG 取り込み'); }
+    });
+  };
+  rd.readAsText(f);
+  e.target.value = '';
+});
+function dl(blob, name){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+}
+
+/* ══ 起動 ══ */
+document.getElementById('tUndo').onclick = undo;
+document.getElementById('tRedo').onclick = redo;
+paper.view.onResize = () => { drawGrid(); guides(); };
+setBG('light');
+syncFS();
+drawGrid(); guides();
+stat('READY — P でペン');
+</script>
+</body>
+</html>
