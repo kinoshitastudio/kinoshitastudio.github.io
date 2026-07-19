@@ -467,7 +467,24 @@ function guides(){
     // 次の点までのプレビュー線
     if(mousePt && pen.lastSegment){
       const seg = pen.lastSegment;
-      const prev = new Path({ segments:[seg, { point:mousePt }] });
+      // Shift 中は 45°刻みに拘束した位置でプレビューする
+      let mp = shiftDown ? snapAngle(seg.point, mousePt) : mousePt;
+      // 別パスの端に近ければ「＋」を出す＝ここで繋がる合図（イラレと同じ）
+      const t = endpointNear(mp, pen);
+      if(t){
+        mp = t.seg.point;
+        const s2 = 5/Z;
+        const pl = new Group([
+          new Path.Line(new Point(mp.x-s2, mp.y), new Point(mp.x+s2, mp.y)),
+          new Path.Line(new Point(mp.x, mp.y-s2), new Point(mp.x, mp.y+s2))
+        ]);
+        pl.strokeColor = ACC; pl.strokeWidth = 1.8/Z;
+        const ring = new Path.Circle(mp, r*2.2);
+        ring.strokeColor = ACC; ring.strokeWidth = 1.4/Z;
+      }
+      const mousePtSave = mousePt; mousePt = mp;
+      const prev = new Path({ segments:[seg, { point:mp }] });
+      mousePt = mousePtSave;
       prev.strokeColor = ACC; prev.strokeWidth = lw; prev.dashArray = [4/Z, 3/Z]; prev.opacity = .8;
       const dot = new Path.Circle(mousePt, r*0.9); dot.strokeColor = ACC; dot.strokeWidth = lw;
       // 始点に近い＝閉じられる合図
@@ -731,10 +748,41 @@ function styleOf(item){
 }
 const selected = () => artLayer.children.filter(c => c.selected);
 
+/* Shift＝45°刻みに拘束する（水平・垂直・斜め45°）。イラレと同じ感触 */
+function snapAngle(from, to){
+  const d = to.subtract(from);
+  if(d.length === 0) return to;
+  const step = Math.PI/4;
+  const a = Math.round(Math.atan2(d.y, d.x)/step)*step;
+  return from.add(new Point(Math.cos(a), Math.sin(a)).multiply(d.length));
+}
+
 /* ══ ペンツール — アンカーを打って繋ぐ ══ */
 let pen = null;                      // 作画中のパス
+let shiftDown = false;               // Shift＝45°に拘束
 function penDown(e){
-  const p = e.point;
+  let p = e.point;
+  // Shift＝直前の点から水平・垂直・45°に固定して打つ
+  if(e.modifiers.shift && pen && pen.lastSegment) p = snapAngle(pen.lastSegment.point, p);
+
+  // 別のパスの「端の点」に近づけたら、そこに繋げる（＝2本を1本にする）
+  if(pen && pen.segments.length >= 1){
+    const t = endpointNear(p, pen);
+    if(t){ joinTo(t); return; }
+  }
+  if(!pen){
+    // 何も描いていない状態で端点をクリック＝そのパスの続きから描き始める
+    const t = endpointNear(p, null);
+    if(t){
+      snapshot();
+      pen = t.path;
+      if(t.which === 'first') pen.reverse();        // 続きを描けるよう向きを揃える
+      pen.__anchor = pen.lastSegment;
+      pen.selected = false;
+      stat('続きから描く — 別の端に繋ぐと1本になる');
+      guides(); return;
+    }
+  }
   if(!pen){
     snapshot();                                   // パスを作る前の状態を保存
     pen = new Path();
@@ -761,17 +809,46 @@ function penDrag(e){
   if(!e.modifiers.alt && !isFirst) a.handleIn = a.handleOut.multiply(-1);
   guides();
 }
+/* 開いたパスの「端の点」が近くにあるか探す（自分自身は除く）
+   → ペンでそこをクリックすると、2本のパスを1本に繋げられる */
+function endpointNear(pt, exclude){
+  const tol = 14/paper.view.zoom;
+  let best = null, bd = tol;
+  artLayer.children.forEach(it => {
+    if(it === exclude || it.closed || !it.segments || it.segments.length < 2) return;
+    if(it.locked || !it.visible) return;
+    [['first', it.firstSegment], ['last', it.lastSegment]].forEach(([which, seg]) => {
+      const d = pt.getDistance(seg.point);
+      if(d < bd){ bd = d; best = { path: it, which, seg }; }
+    });
+  });
+  return best;
+}
+/* いま描いているパスを、相手の端に繋いで1本にする */
+function joinTo(t){
+  snapshot();
+  const other = t.path;
+  if(t.which === 'last') other.reverse();          // 相手の始点が繋ぎ目に来るよう揃える
+  pen.join(other);                                  // paper.js が2本を1本にする
+  pen.selected = false;
+  const merged = pen;
+  pen = null;
+  merged.selected = true;
+  guides();
+  stat(`パスを結合（${merged.segments.length}点）`);
+}
+
 /* パスを確定して終える（閉じていなくてもよい＝イラレと同じ）
    途中でやめたいときは Enter / Esc / ダブルクリック / ツール切替 のどれでも */
 function finishPen(){
   if(!pen) return;
   const n = pen.segments.length;
   const hasFill = !!S.fill, hasStroke = !!S.stroke;
+  // 「開いたパス＝線」の設定なら、塗り色が線に振り替わるので線ありとして扱う
+  const willStroke = hasStroke || (!pen.closed && S.openAs === 'stroke' && hasFill);
   // 見た目が何も残らないものは確定しない（見えないパスがゴミとして残るのを防ぐ）
-  //  ・点が1つだけ
-  //  ・塗りも線も「なし」
-  //  ・2点の直線なのに線が「なし」＝面積ゼロで何も見えない
-  if(n < 2 || (!hasFill && !hasStroke) || (n === 2 && !hasStroke && !pen.closed)){
+  //  ・点が1つだけ ・塗りも線も「なし」 ・2点の直線なのに線にならない＝面積ゼロで見えない
+  if(n < 2 || (!hasFill && !hasStroke) || (n === 2 && !willStroke && !pen.closed)){
     pen.remove(); pen = null; guides();
     stat(n < 2 ? '' : '描きかけを破棄（塗りも線も無いため）');
     return;
@@ -929,7 +1006,7 @@ function selDown(e){
   const item = h.item;
   if(S.tool === 'direct'){
     item.selected = true;
-    if(h.type === 'segment'){ dragSeg = h.segment; }
+    if(h.type === 'segment'){ dragSeg = h.segment; dragSeg.__from = h.segment.point.clone(); }
     else if(h.type === 'handle-in' || h.type === 'handle-out'){ dragHandle = h; }
     else { dragItem = item; dragStart = e.point; }
   } else {
@@ -961,6 +1038,10 @@ function selDrag(e){
   }
   const d = e.point.subtract(e.lastPoint);
   if(dragSeg){
+    if(e.modifiers.shift && dragSeg.__from){        // Shift＝掴んだ位置から45°刻み
+      dragSeg.point = snapAngle(dragSeg.__from, e.point);
+      guides(); return;
+    }
     dragSeg.point = dragSeg.point.add(d);
     // Alt＝そのアンカーのハンドルだけを対称に伸ばす（イラレの感触に寄せる）
     guides(); return;
@@ -1044,6 +1125,7 @@ window.addEventListener('keydown', e => {
   const t = e.target.tagName;
   if(t === 'INPUT' || t === 'TEXTAREA') return;
   const cmd = e.metaKey || e.ctrlKey;
+  if(e.key === 'Shift'){ shiftDown = true; if(pen) guides(); }
   if(e.code === 'Space'){ S.spaceDown = true; cv.style.cursor='grab'; e.preventDefault(); return; }
   if(cmd && e.key.toLowerCase() === 'z'){ e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if(cmd && e.key.toLowerCase() === 'a'){          // ⌘A＝ぜんぶ選択
@@ -1098,6 +1180,7 @@ window.addEventListener('keydown', e => {
   if(k){ setTool(k); }
 });
 window.addEventListener('keyup', e => {
+  if(e.key === 'Shift'){ shiftDown = false; if(pen) guides(); }
   if(e.code === 'Space'){ S.spaceDown = false; S.panning = null; cv.style.cursor='crosshair'; }
 });
 cv.addEventListener('wheel', e => {                 // ホイール＝カーソル中心ズーム
