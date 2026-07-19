@@ -226,6 +226,11 @@
 <div id="panel">
   <h2>MODE</h2>
   <div class="note" id="modehelp">ペン：クリック＝角／ドラッグ＝曲線<br>始点をクリックで閉じる・Enterで確定</div>
+  <div class="seg" id="openas" style="margin-top:10px">
+    <button data-v="stroke" class="on">開いたパス＝線</button>
+    <button data-v="fill">塗る</button>
+  </div>
+  <div class="note">閉じていないパスを、線として確定するか<br>塗って面にするか（イラレは端を結んで塗る）</div>
 
   <h2>塗り / 線</h2>
   <div id="fs">
@@ -419,7 +424,7 @@ const S = {
   tool:'pen',
   fill:'#0a0a0a', stroke:null, target:'fill',   // 塗り・線は同時に持てる（イラレ準拠）／target＝いま編集している側
   sw:40, grid:1, face:88, bg:'light', gtype:'jp', div:8, body:900,
-  shape:'rrect', polyN:5, rad:0, join:'round', cap:'round', fillMode:'solid',
+  shape:'rrect', polyN:5, rad:0, join:'round', cap:'round', fillMode:'solid', openAs:'stroke',
   spaceDown:false, panning:null
 };
 const stat = t => document.getElementById('stat').textContent = t;
@@ -574,44 +579,60 @@ function drawGrid(){
     }
   }
   else if(S.gtype === 'mesh' || S.gtype === 'diag'){
-    const n = S.div, step = B/n;
-    for(let i=1;i<n;i++){
-      const strong = (i === n/2);
-      line(c.x-half, c.y-half+step*i, c.x+half, c.y-half+step*i, strong ? C.axis : C.thin);
-      line(c.x-half+step*i, c.y-half, c.x-half+step*i, c.y+half, strong ? C.axis : C.thin);
+    // 方眼はボード全体に敷く（枠の中だけに閉じ込めない）
+    const v = paper.view.bounds, step = B/S.div;
+    const x0 = c.x - Math.ceil((c.x - v.left)/step)*step;
+    const y0 = c.y - Math.ceil((c.y - v.top )/step)*step;
+    for(let x = x0; x <= v.right; x += step){
+      const onAxis = Math.abs(x - c.x) < step*0.01;
+      line(x, v.top, x, v.bottom, onAxis ? C.axis : C.thin);
+    }
+    for(let y = y0; y <= v.bottom; y += step){
+      const onAxis = Math.abs(y - c.y) < step*0.01;
+      line(v.left, y, v.right, y, onAxis ? C.axis : C.thin);
     }
     if(S.gtype === 'diag'){
-      line(c.x-half, c.y-half, c.x+half, c.y+half, C.face, [6,5]);
-      line(c.x-half, c.y+half, c.x+half, c.y-half, C.face, [6,5]);
+      const R = Math.max(v.width, v.height) * 1.5;
+      for(let k = -20; k <= 20; k++){
+        const off = k * step * 2;
+        line(c.x - R + off, c.y - R, c.x + R + off, c.y + R, C.thin);
+        line(c.x - R + off, c.y + R, c.x + R + off, c.y - R, C.thin);
+      }
     }
+    rect(half, C.body);                        // 仮想ボディはその上に重ねる
   }
   else if(S.gtype === 'iso'){
-    // アイソメトリック：垂直＋±30°。立体的な字面を起こすとき用
-    const n = S.div, step = B/n, ext = B*1.2, tan30 = Math.tan(Math.PI/6);
-    for(let i=-n; i<=n; i++){
-      const x = c.x + step*i;
-      line(x, c.y-half, x, c.y+half, i===0 ? C.axis : C.thin);          // 垂直
-      // 右上がり／右下がり（±30°）
-      const y0 = c.y + step*i*2;
-      line(c.x-ext, y0 + ext*tan30, c.x+ext, y0 - ext*tan30, i===0 ? C.face : C.thin);
-      line(c.x-ext, y0 - ext*tan30, c.x+ext, y0 + ext*tan30, i===0 ? C.face : C.thin);
+    // アイソメトリック：垂直＋±30°。ボード全体に敷く
+    const v = paper.view.bounds, step = B/S.div;
+    const R = Math.max(v.width, v.height) * 1.6, tan30 = Math.tan(Math.PI/6);
+    const x0 = c.x - Math.ceil((c.x - v.left)/step)*step;
+    for(let x = x0; x <= v.right; x += step)
+      line(x, v.top, x, v.bottom, Math.abs(x-c.x) < step*0.01 ? C.axis : C.thin);
+    const vstep = step * 2 * tan30;            // 斜線の間隔（30°で等間隔に見える）
+    const yTop = c.y - R, yBot = c.y + R;
+    for(let y = yTop; y <= yBot; y += vstep){
+      line(c.x - R, y + R*tan30, c.x + R, y - R*tan30, Math.abs(y-c.y) < vstep*0.01 ? C.face : C.thin);
+      line(c.x - R, y - R*tan30, c.x + R, y + R*tan30, Math.abs(y-c.y) < vstep*0.01 ? C.face : C.thin);
     }
     rect(half, C.body);
   }
   else if(S.gtype === 'persp'){
-    // 斜め二点：左右の消失点へ向かう放射線＋水平線。奥行きのある字面を起こすとき用
+    // 斜め二点：左右の消失点へ向かう放射線＋地平線。ボード全体に伸ばす
+    const v = paper.view.bounds;
     const vpL = new Point(c.x - B*2.4, c.y), vpR = new Point(c.x + B*2.4, c.y);
-    const n = Math.max(6, S.div);
+    const n = Math.max(8, S.div * 2), R = Math.max(v.width, v.height) * 1.5;
+    const ray = (vp, ang) => {
+      const d = new Point(Math.cos(ang), Math.sin(ang)).multiply(R);
+      line(vp.x, vp.y, vp.x + d.x, vp.y + d.y, C.thin);
+    };
     for(let i=0;i<=n;i++){
-      const t = i/n, y = c.y - half + B*t;
-      line(vpL.x, vpL.y, c.x+half, y, C.thin);
-      line(vpR.x, vpR.y, c.x-half, y, C.thin);
+      const t = (i/n - 0.5) * Math.PI * 0.9;     // 上下に扇状へ
+      ray(vpL, t); ray(vpR, Math.PI - t);
     }
-    line(c.x-half*2, c.y, c.x+half*2, c.y, C.face, [6,5]);   // 地平線
-    for(let i=0;i<=n;i++){
-      const x = c.x - half + B*(i/n);
-      line(x, c.y-half, x, c.y+half, C.thin);                 // 垂直（高さの基準）
-    }
+    line(v.left, c.y, v.right, c.y, C.face, [6,5]);          // 地平線
+    const step = B/S.div;
+    const x0 = c.x - Math.ceil((c.x - v.left)/step)*step;
+    for(let x = x0; x <= v.right; x += step) line(x, v.top, x, v.bottom, C.thin);
     rect(half, C.body);
   }
   // 'none' は枠だけ
@@ -742,7 +763,15 @@ function finishPen(){
     stat(n < 2 ? '' : '描きかけを破棄（塗りも線も無いため）');
     return;
   }
-  styleOf(pen); pen.selected = false; pen = null;
+  styleOf(pen);
+  // 閉じていないパスは、既定では「線」として確定する
+  // （塗りのままだと端と端が結ばれて面になり、線を描いたつもりが三角になる）
+  if(!pen.closed && S.openAs === 'stroke'){
+    const c = S.fill || S.stroke || '#0a0a0a';
+    pen.strokeColor = c; pen.fillColor = null;
+    pen.strokeWidth = S.sw; pen.strokeCap = S.cap || 'round'; pen.strokeJoin = S.join || 'round';
+  }
+  pen.selected = false; pen = null;
   snapshot(); guides(); stat('パス確定 — 開いたままでもOK');
 }
 /* 描きかけを丸ごと捨てる（⌘Zと同じ役割。今は使っていない） */
@@ -769,7 +798,7 @@ function shapeDrag(e){
   shape = makeShape(S.shape, r);
   if(shape){ shape.__kind = S.shape; styleOf(shape); }
 }
-function shapeUp(){ if(shape){ shape = null; snapshot(); stat('シェイプ'); } shapeStart = null; }
+function shapeUp(){ if(shape){ shape.selected = true; shape = null; snapshot(); guides(); reportSel(); } shapeStart = null; }
 
 /* 矩形 r に内接するシェイプを作る */
 function makeShape(kind, r){
@@ -938,12 +967,24 @@ function selUp(){
   if(marqueeStart){
     if(marquee){ marquee.remove(); marquee = null; }
     marqueeStart = null;
-    const n = selected().length;
-    stat(n ? `${n} 個を選択` : '選択なし');
-    guides(); return;
+    guides(); reportSel(); return;
   }
   if(dragSeg||dragHandle||dragItem) snapshot();
   dragSeg = dragHandle = dragItem = null;
+  reportSel();
+}
+/* いま何を選んでいるかを HUD に出す（クリック選択でも範囲選択でも） */
+function reportSel(){
+  const s = selected();
+  if(!s.length){ stat('選択なし'); return; }
+  if(s.length === 1){
+    const it = s[0];
+    const segs = it.segments ? `・${it.segments.length}点` : '';
+    stat(`${itemName(it)}${segs}`);
+  } else {
+    stat(`${s.length} 個を選択`);
+  }
+  if(window.__syncRot) window.__syncRot();
 }
 
 /* ══ 入力ルーティング ══ */
@@ -994,7 +1035,7 @@ window.addEventListener('keydown', e => {
   if(cmd && e.key.toLowerCase() === 'a'){          // ⌘A＝ぜんぶ選択
     e.preventDefault();
     artLayer.children.forEach(c => c.selected = true);
-    setTool('select'); guides(); stat(`${artLayer.children.length} 個を選択`); return;
+    setTool('select'); guides(); reportSel(); return;
   }
   if(cmd && e.key.toLowerCase() === 'd'){          // ⌘D＝複製
     e.preventDefault(); document.getElementById('bDup').click(); return;
@@ -1180,6 +1221,25 @@ function applyPaint(){                       // 選択中の図形に塗りを�
   selected().forEach(it => { if(it.fillColor || S.fill) it.fillColor = paintOf(it); });
   guides();
 }
+document.querySelectorAll('#openas button').forEach(b =>
+  b.addEventListener('click', () => {
+    S.openAs = b.dataset.v;
+    document.querySelectorAll('#openas button').forEach(x => x.classList.toggle('on', x===b));
+    // 選択中の開いたパスにも即反映する
+    selected().forEach(it => {
+      if(!it.segments || it.closed) return;
+      if(S.openAs === 'stroke'){
+        const c = (it.fillColor && it.fillColor.toCSS) ? it.fillColor.toCSS(true) : (S.fill || '#0a0a0a');
+        it.strokeColor = it.strokeColor || c; it.fillColor = null;
+        it.strokeWidth = S.sw; it.strokeCap = S.cap || 'round'; it.strokeJoin = S.join || 'round';
+      } else {
+        it.fillColor = paintOf(it);
+      }
+    });
+    guides();
+    stat(S.openAs === 'stroke' ? '開いたパスは線として扱う' : '開いたパスも塗る（端が結ばれる）');
+  }));
+
 document.querySelectorAll('#fillmode button').forEach(b =>
   b.addEventListener('click', () => {
     S.fillMode = b.dataset.v;
@@ -1585,8 +1645,7 @@ function renderLayers(){
       if(a === 'vis'){ it.visible = !it.visible; renderLayers(); return; }
       if(a === 'lock'){ it.locked = !it.locked; renderLayers(); return; }
       if(!e.shiftKey) artLayer.children.forEach(c => c.selected = false);
-      it.selected = true; setTool('select'); guides(); renderLayers();
-      if(window.__syncRot) window.__syncRot();
+      it.selected = true; setTool('select'); guides(); renderLayers(); reportSel();
     });
     layList.appendChild(row);
   });
