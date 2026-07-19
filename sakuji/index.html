@@ -83,6 +83,56 @@
     padding:7px 8px; font-size:11.5px; font-family:inherit; outline:none; width:100%; margin-bottom:8px }
   select:focus, #tinput:focus{ border-color:#3a3a3a }
   .row select{ margin-bottom:0 }
+  .row input[type=number]{ width:48px; flex:none; margin:0; padding:4px 5px; text-align:right;
+    background:#111; border:1px solid var(--line); color:var(--ink); border-radius:5px;
+    font-size:11px; font-family:ui-monospace,Menlo,monospace }
+  .row input[type=number]::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0 }
+  .rot-row label{ width:32px }
+  .rot-row input[type=range]{ min-width:0 }
+  #panel .row{ max-width:100% }
+
+  /* ══ モバイル（縦画面）══
+     上＝ボード／下＝パネル の二分割にする。ツールは横一列でボードの下に浮かせる。 */
+  @media (max-width: 820px), (pointer: coarse) and (max-width: 1024px){
+    #stage{ inset:0 0 46vh 0; }                        /* ボードは上半分 */
+    canvas{ height:100%; }
+    #hud{ left:12px; top:10px; font-size:10px; letter-spacing:.1em }
+
+    /* ツールバー＝ボード下端に横並び */
+    #tools{ left:0; right:0; top:auto; bottom:calc(46vh + 8px); transform:none;
+      flex-direction:row; justify-content:center; gap:5px; padding:0 8px;
+      overflow-x:auto; -webkit-overflow-scrolling:touch; z-index:8 }
+    #tools button{ width:40px; height:40px; flex:none }
+    #tools button::before{ display:none }              /* ツールチップは出さない */
+    #tools .sep{ width:1px; height:auto; margin:6px 2px; flex:none }
+
+    /* パネル＝下半分に固定して縦スクロール */
+    #panel{ left:0; right:0; top:auto; bottom:0; width:100%; height:46vh;
+      border-left:0; border-top:1px solid var(--line); padding:14px 14px 28px;
+      -webkit-overflow-scrolling:touch }
+    #panel h2{ margin:16px 0 8px }
+    .grid2{ grid-template-columns:1fr 1fr }
+    .row label{ width:58px }
+
+    /* レイヤーはボードの右上に重ねる（ツールバーと重ならない位置） */
+    #layers{ right:10px; left:auto; top:64px; bottom:auto; width:min(200px, 56vw); max-height:30vh; z-index:9 }
+    #layOpen{ right:10px; left:auto; top:64px; bottom:auto; z-index:9 }
+
+    /* シェイプのフライアウトは画面中央に */
+    #shapeMenu{ left:50%; top:auto; bottom:calc(46vh + 56px);
+      transform:translateX(-50%) translateY(8px); width:min(300px, 92vw) }
+    #shapeMenu.open{ transform:translateX(-50%) translateY(0) }
+    .sm-grid{ grid-template-columns:repeat(7,1fr) }
+  }
+  /* 指で触りやすいサイズに */
+  @media (pointer: coarse){
+    .btn{ padding:11px }
+    .seg button{ padding:11px 0 }
+    .row input[type=range]{ height:2px }
+    .row input[type=range]::-webkit-slider-thumb{ width:18px; height:18px }
+    #swatch i{ width:34px; height:34px }
+    .chip{ width:44px; height:44px }
+  }
   /* シェイプのフライアウト */
   .flyout{ position:absolute; right:2px; top:2px; font-size:7px; opacity:.55 }
   #shapeMenu{ position:fixed; left:70px; top:50%; transform:translateY(-50%) translateX(-8px);
@@ -454,9 +504,11 @@
     <button class="btn" id="bBack">最背面</button>
     <button class="btn" id="bReset">角度リセット</button>
   </div>
-  <div class="row"><label>角度</label><input type="range" id="rot" min="-180" max="180" step="0.5" value="0">
-    <input type="number" id="rotNum" value="0" min="-360" max="360" step="0.5"
-           style="width:56px;margin:0;padding:4px 6px;text-align:right"></div>
+  <div class="row rot-row">
+    <label>角度</label>
+    <input type="range" id="rot" min="-180" max="180" step="0.5" value="0">
+    <input type="number" id="rotNum" value="0" min="-360" max="360" step="0.5">
+  </div>
   <div class="grid2">
     <button class="btn" id="bRotL">−90°</button>
     <button class="btn" id="bRotR">＋90°</button>
@@ -1344,6 +1396,46 @@ window.addEventListener('keyup', e => {
   if(e.key === 'Shift'){ shiftDown = false; if(pen) guides(); }
   if(e.code === 'Space'){ S.spaceDown = false; S.panning = null; cv.style.cursor='crosshair'; }
 });
+/* ── タッチ：2本指でパン＋ピンチズーム（1本指は描画のまま）── */
+{
+  const pts = new Map();
+  let p0 = null;
+  const center = () => {
+    const a = [...pts.values()];
+    return { x:(a[0].x+a[1].x)/2, y:(a[0].y+a[1].y)/2,
+             d:Math.hypot(a[0].x-a[1].x, a[0].y-a[1].y) };
+  };
+  cv.addEventListener('touchstart', e => {
+    [...e.touches].forEach(t => pts.set(t.identifier, { x:t.clientX, y:t.clientY }));
+    if(pts.size === 2){
+      const c = center();
+      p0 = { ...c, zoom: paper.view.zoom, cx: paper.view.center.x, cy: paper.view.center.y };
+      cancelPen();                                  // 2本指に入ったら描画は中断
+    }
+  }, { passive:true });
+  cv.addEventListener('touchmove', e => {
+    [...e.touches].forEach(t => { if(pts.has(t.identifier)) pts.set(t.identifier, { x:t.clientX, y:t.clientY }); });
+    if(pts.size === 2 && p0){
+      e.preventDefault();
+      const c = center();
+      const z = Math.max(0.1, Math.min(40, p0.zoom * (c.d / p0.d)));
+      paper.view.zoom = z;
+      // 指の中心の移動ぶんだけボードも動かす
+      paper.view.center = new Point(
+        p0.cx - (c.x - p0.x) / z,
+        p0.cy - (c.y - p0.y) / z
+      );
+      drawGrid(); guides();
+    }
+  }, { passive:false });
+  const end = e => {
+    [...e.changedTouches].forEach(t => pts.delete(t.identifier));
+    if(pts.size < 2) p0 = null;
+  };
+  cv.addEventListener('touchend', end, { passive:true });
+  cv.addEventListener('touchcancel', end, { passive:true });
+}
+
 cv.addEventListener('wheel', e => {                 // ホイール＝カーソル中心ズーム
   e.preventDefault();
   const f = e.deltaY < 0 ? 1.09 : 1/1.09;
@@ -2218,7 +2310,9 @@ document.querySelectorAll('#snapsw button').forEach(b3 =>
   }));
 
 drawGrid(); guides();
-layToggle(true);
+// 画面が狭いときはレイヤーを畳んでおく（ボードを広く使う）
+const isNarrow = window.matchMedia('(max-width: 820px), (pointer: coarse) and (max-width: 1024px)').matches;
+layToggle(!isNarrow);
 showZoom();
 stat('READY — P でペン');
 </script>
