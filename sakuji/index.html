@@ -44,6 +44,15 @@
   #panel h2{ font-size:11px; letter-spacing:.2em; color:var(--dim); font-weight:400;
     margin:22px 0 10px; font-family:ui-monospace,Menlo,monospace }
   #panel h2:first-child{ margin-top:0 }
+  /* 折りたためる見出し（実験機能は畳んでおく） */
+  #panel h2.fold{ cursor:pointer; display:flex; align-items:center; gap:7px; transition:.12s }
+  #panel h2.fold:hover{ color:var(--ink) }
+  #panel h2.fold::before{ content:'▸'; font-size:9px; transition:.15s; opacity:.7 }
+  #panel h2.fold.open::before{ transform:rotate(90deg) }
+  #panel h2.exp{ color:#7d6f52; letter-spacing:.12em }
+  #panel h2.exp:hover{ color:#c2ab7a }
+  .foldbox{ display:none; padding:2px 0 4px; border-left:1px solid #1e1a12; padding-left:11px; margin-left:2px }
+  .foldbox.open{ display:block }
   .row{ display:flex; align-items:center; gap:10px; margin-bottom:8px; font-size:12px }
   .row label{ width:64px; color:var(--dim); flex:none }
   .row input[type=range]{ flex:1; -webkit-appearance:none; height:1px; background:#2c2c2c; outline:none }
@@ -441,7 +450,8 @@
   </div>
   <div class="note">置いた文字を選んで「アウトライン化」＝<b>編集できるパス</b>になる<br>そこからブーリアンで彫っていく</div>
 
-  <h2>劣化（コピー機を通す）</h2>
+  <h2 class="fold exp" data-open="0">実験 ／ 劣化（コピー機を通す）</h2>
+  <div class="foldbox">
   <div class="note">デジタルのままの線を、一度物理に通したような状態にする<br>パスのまま崩すので<b>SVGで書き出せる</b></div>
   <div class="row"><label>荒れ</label><input type="range" id="degNoise" min="0" max="100" value="30"><span class="val"></span></div>
   <div class="row"><label>細かさ</label><input type="range" id="degFreq" min="1" max="40" value="12"><span class="val"></span></div>
@@ -451,6 +461,22 @@
     <button class="btn" id="bDegradeMore">もう一度通す</button>
   </div>
   <div class="note">「もう一度通す」＝コピーのコピー。重ねるほど崩れる</div>
+
+  </div>
+  <h2 class="fold exp" data-open="0">実験 ／ 手のゆらぎ（利き手を捨てる）</h2>
+  <div class="foldbox">
+  <div class="note">機械の劣化ではなく<b>身体のぶれ</b>を入れる<br>震え・筆圧・傾きを、パスのまま乗せる</div>
+  <div class="row"><label>震え</label><input type="range" id="wbTremor" min="0" max="100" value="35"><span class="val"></span></div>
+  <div class="row"><label>筆圧</label><input type="range" id="wbPress" min="0" max="100" value="40"><span class="val"></span></div>
+  <div class="row"><label>傾き</label><input type="range" id="wbSlant" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>速さ</label><input type="range" id="wbSpeed" min="0" max="100" value="50"><span class="val"></span></div>
+  <div class="grid2">
+    <button class="btn" id="bWobble">手で書き直す</button>
+    <button class="btn" id="bWobbleAgain">もう一度</button>
+  </div>
+  <div class="note">速さを上げる＝雑になる（角が丸まり線が流れる）<br>下げる＝丁寧だが線が硬くなる</div>
+
+  </div>
 
   <h2>PATH</h2>
   <div class="grid2">
@@ -1876,6 +1902,79 @@ function degrade(){
 document.getElementById('bDegrade').onclick = degrade;
 document.getElementById('bDegradeMore').onclick = degrade;
 
+/* ══ 手のゆらぎ（利き手を捨てる）══
+   山田和寛「左手で、手が震えるほど力を込めて書く」／「上手くなったら次は足とか口で描きます」
+   ＝ 技術を上げるのではなく、技術に枷をはめて偶然を呼び込む。
+   劣化フィルタが「機械のゆらぎ」なのに対し、これは「身体のゆらぎ」。
+   ・震え＝短い周期の細かいぶれ（手が止まらない）
+   ・筆圧＝進む向きに対して線が太る／細る（力の入り抜き）
+   ・傾き＝字全体が寝る（利き手でないと軸が傾く）
+   ・速さ＝上げるほど角が丸まり線が流れる（雑になる） */
+function wobblePath(path, o){
+  if(!path.segments || path.segments.length < 2) return;
+  const len = path.length;
+  if(!len) return;
+
+  // 速いほど点を減らす＝細部を拾えなくなる＝雑になる
+  const density = 3 + o.speed * 0.5;
+  const n = Math.max(10, Math.round(len / density));
+  const pts = [];
+  const c = path.bounds.center;
+
+  for(let i = 0; i < n; i++){
+    const t = len * i / n;
+    let p = path.getPointAt(t);
+    if(!p) continue;
+    const nor = path.getNormalAt(t) || new Point(0, 1);
+    const tan = path.getTangentAt(t) || new Point(1, 0);
+
+    // ① 震え — 短い周期。人の手は止まらないので常に微細に揺れる
+    const tr = (Math.sin(t * 0.9 + c.x * 0.03) * 0.6
+              + Math.sin(t * 2.3 + c.y * 0.05) * 0.4) * o.tremor;
+
+    // ② 筆圧 — 進む向きが変わるところで太く／細くなる（力の入り抜き）
+    //    水平に近い運びは太く、垂直に近い運びは細く＝右利きの逆側で書いた癖に近い
+    const dir = Math.abs(tan.y);                    // 0=水平 1=垂直
+    const press = (0.5 - dir) * o.press;
+
+    p = p.add(nor.multiply(tr + press));
+
+    // ③ 傾き — 字全体が寝る。上にある点ほど横へ流れる
+    const h = path.bounds.height || 1;
+    const up = (c.y - p.y) / h;                     // 上が＋
+    p = p.add(new Point(up * o.slant, 0));
+
+    pts.push(p);
+  }
+  if(pts.length < 3) return;
+  path.removeSegments();
+  pts.forEach(p => path.add(p));
+  path.closed = true;
+  // 速いほど滑らかに（角が丸まる）＝勢いで書いた線
+  path.smooth({ type:'continuous', factor: 0.25 + o.speed * 0.05 });
+  path.simplify(0.6 + o.speed * 0.35);
+}
+function wobble(){
+  const sel = selected();
+  if(!sel.length){ stat('図形を選んでください'); return; }
+  snapshot();
+  const g = id => +document.getElementById(id).value;
+  const o = {
+    tremor: g('wbTremor') / 100 * 5,
+    press : g('wbPress')  / 100 * 9,
+    slant : g('wbSlant')  / 100 * 26,
+    speed : g('wbSpeed')  / 100 * 6
+  };
+  sel.forEach(it => {
+    if(it.children) it.children.forEach(c => wobblePath(c, o));
+    else wobblePath(it, o);
+  });
+  guides();
+  stat('手で書き直した — 上手くなる前にもう一度');
+}
+document.getElementById('bWobble').onclick = wobble;
+document.getElementById('bWobbleAgain').onclick = wobble;
+
 /* ══ パス演算 ══ */
 function boolOp(op){
   const sel = selected();
@@ -2422,6 +2521,21 @@ const _snapshot = snapshot;
 snapshot = function(){ _snapshot(); setTimeout(renderLayers, 0); };
 const _guides = guides;
 guides = function(){ _guides(); renderLayers(); };
+
+/* ══ 折りたたみ（実験機能は畳んでおく）══
+   本体の作字機能を邪魔しないよう、実験系は初期状態で閉じる。 */
+document.querySelectorAll('#panel h2.fold').forEach(h => {
+  const box = h.nextElementSibling;
+  if(!box || !box.classList.contains('foldbox')) return;
+  const open = h.dataset.open === '1';
+  h.classList.toggle('open', open);
+  box.classList.toggle('open', open);
+  h.addEventListener('click', () => {
+    const now = !box.classList.contains('open');
+    box.classList.toggle('open', now);
+    h.classList.toggle('open', now);
+  });
+});
 
 /* ══ 起動 ══ */
 document.getElementById('tUndo').onclick = undo;
