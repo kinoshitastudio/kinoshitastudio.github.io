@@ -219,6 +219,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;500;700;900&family=Zen+Old+Mincho:wght@400;500;700;900&family=Zen+Maru+Gothic:wght@300;400;500;700;900&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/paper@0.12.18/dist/paper-core.min.js"></script>
+<!-- 読み込んだフォントのグリフを「ベジェのまま」取り出す（ラスタ追跡では曲線が近似になるため） -->
+<script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 </head>
 <body>
 
@@ -449,6 +451,9 @@
     <button class="btn" id="bOutlineText">アウトライン化</button>
   </div>
   <div class="note">置いた文字を選んで「アウトライン化」＝<b>編集できるパス</b>になる<br>そこからブーリアンで彫っていく</div>
+  <button class="btn" id="bLoadFont" style="width:100%">フォントファイルを読み込む（.ttf / .otf）</button>
+  <input type="file" id="fontFile" accept=".ttf,.otf,.woff,font/ttf,font/otf" multiple style="display:none">
+  <div class="note" id="fontnote">読み込んだ書体は<b>グリフのベジェをそのまま</b>取り出す＝アンカーが少なく曲線が正確<br>未読込の書体はラスタ追跡になる（近似）<br>⚠️ .ttc は非対応（.otf / .ttf を選ぶ）</div>
 
   <h2 class="fold exp" data-open="0">実験 ／ 劣化（コピー機を通す）</h2>
   <div class="foldbox">
@@ -1793,8 +1798,72 @@ document.getElementById('bOutlineText').onclick = async () => {
   }
   guides(); stat('アウトライン化 — 編集できるパスになった');
 };
+/* ── 読み込んだフォント（opentype.js）──
+   ラスタ追跡は輪郭を「なぞる」ので曲線が近似になり、アンカーが増える。
+   フォントファイルを直接読めば、グリフが持っているベジェをそのまま取り出せる。 */
+const FONTS = {};                                   // family名 → opentype.Font
+function famKey(css){                               // 'Zen Kaku Gothic New", sans-serif' → 最初の書体名
+  return String(css||'').split(',')[0].trim().replace(/^["']|["']$/g,'');
+}
+document.getElementById('bLoadFont').onclick = () => document.getElementById('fontFile').click();
+document.getElementById('fontFile').addEventListener('change', async e => {
+  const files = [...e.target.files];
+  for(const f of files){
+    try{
+      const buf = await f.arrayBuffer();
+      const font = opentype.parse(buf);
+      const name = (font.names.fullName && (font.names.fullName.ja || font.names.fullName.en))
+                || f.name.replace(/\.[^.]+$/,'');
+      FONTS[name] = font;
+      // 画面表示にも使えるように、同じ名前で FontFace として登録する
+      try{ const ff = new FontFace(name, buf); await ff.load(); document.fonts.add(ff); }catch(err){}
+      const sel = document.getElementById('tfont');
+      if(![...sel.options].some(o => famKey(o.value) === name)){
+        const o = document.createElement('option');
+        o.value = `"${name}", sans-serif`; o.textContent = name + ' ◆';
+        sel.appendChild(o);
+      }
+      sel.value = `"${name}", sans-serif`;
+    }catch(err){
+      // .ttc（Mac標準の日本語書体に多い）は中に複数書体が入っていて読めない
+      stat(/ttcf/.test(err.message) ? `${f.name} は .ttc で読めない — .otf / .ttf を選ぶ`
+                                    : 'このフォントは読めなかった: ' + f.name);
+    }
+  }
+  applyTextStyle();
+  const names = Object.keys(FONTS);
+  document.getElementById('fontnote').innerHTML = names.length
+    ? `◆ 印＝<b>グリフを直接取れる書体</b>（${names.length}）<br>` + names.join('／')
+    : document.getElementById('fontnote').innerHTML;
+  if(names.length) stat('フォントを読み込んだ — アウトライン化が正確になる');
+  e.target.value = '';
+});
+/* opentype のパスコマンド → paper の CompoundPath（ベジェをそのまま渡す） */
+function otfToPaths(font, str, size){
+  const p = font.getPath(str, 0, 0, size);
+  const children = []; let cur = null;
+  for(const c of p.commands){
+    if(c.type === 'M'){ cur = new Path(); cur.moveTo(new Point(c.x, c.y)); children.push(cur); }
+    else if(!cur) continue;
+    else if(c.type === 'L') cur.lineTo(new Point(c.x, c.y));
+    else if(c.type === 'C') cur.cubicCurveTo(new Point(c.x1,c.y1), new Point(c.x2,c.y2), new Point(c.x,c.y));
+    else if(c.type === 'Q') cur.quadraticCurveTo(new Point(c.x1,c.y1), new Point(c.x,c.y));
+    else if(c.type === 'Z'){ cur.closePath(); cur = null; }
+  }
+  if(!children.length) return null;
+  return new paper.CompoundPath({ children });      // 内側の輪郭は自動で穴になる
+}
 async function textToPaths(t){
   const size = t.fontSize, fam = t.fontFamily, wt = t.fontWeight, str = t.content;
+  // 読み込み済みの書体なら、ラスタを経由せずグリフのベジェを取る
+  const font = FONTS[famKey(fam)];
+  // 字が入っていない書体（サブセット等）で豆腐にならないよう、全字あるときだけ使う
+  const hasAll = font && [...str].every(ch => font.charToGlyphIndex(ch) > 0);
+  if(font && hasAll){
+    const grp = otfToPaths(font, str, size);
+    if(grp){ grp.position = t.position; return grp; }
+  }
+  if(font && !hasAll) stat('この書体に無い字がある — ラスタ追跡で出す');
   // Webフォントが未読込だと別の書体で焼かれるので、読み終わるのを待つ
   try{ await document.fonts.load(`${wt} ${size}px ${fam}`, str); await document.fonts.ready; }catch(e){}
   const cvs = document.createElement('canvas');
