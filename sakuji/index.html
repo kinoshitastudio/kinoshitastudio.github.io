@@ -172,6 +172,16 @@
   .lay-item .nm{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
   .lay-item .ic{ opacity:.5; font-size:10px; padding:0 1px }
   .lay-item .ic:hover{ opacity:1 }
+  .lay-head{ cursor:move; user-select:none }
+  .lay-opacity{ display:flex; align-items:center; gap:7px; padding:8px 10px; border-top:1px solid var(--line);
+    font-size:10.5px; color:var(--dim) }
+  .lay-opacity label{ white-space:nowrap; flex:none }
+  .lay-opacity input{ flex:1; -webkit-appearance:none; height:1px; background:#2c2c2c; outline:none }
+  .lay-opacity input::-webkit-slider-thumb{ -webkit-appearance:none; width:11px; height:11px; border-radius:50%;
+    background:var(--ink); cursor:pointer }
+  .lay-opacity .v{ width:24px; text-align:right; font-family:ui-monospace,Menlo,monospace }
+  .lay-item.locked{ opacity:.55 }
+  .lay-item.hidden{ opacity:.35; text-decoration:line-through }
   .lay-foot{ display:flex; gap:4px; padding:8px; border-top:1px solid var(--line) }
   .lay-foot button{ flex:1; background:#0f0f0f; border:1px solid var(--line); color:var(--dim);
     border-radius:5px; cursor:pointer; font-size:11px; padding:5px 0; font-family:inherit }
@@ -260,11 +270,16 @@
 
 <!-- レイヤー（重ね順・表示・ロック） -->
 <div id="layers">
-  <div class="lay-head">
+  <div class="lay-head" id="layDrag">
     <span>レイヤー</span>
     <button id="layClose" title="閉じる（L）">×</button>
   </div>
   <div id="layList"></div>
+  <div class="lay-opacity">
+    <label>不透明度</label>
+    <input type="range" id="layOp" min="0" max="100" value="100">
+    <span class="v">100</span>
+  </div>
   <div class="lay-foot">
     <button id="layUp" title="前面へ">↑</button>
     <button id="layDown" title="背面へ">↓</button>
@@ -426,6 +441,17 @@
   </div>
   <div class="note">置いた文字を選んで「アウトライン化」＝<b>編集できるパス</b>になる<br>そこからブーリアンで彫っていく</div>
 
+  <h2>劣化（コピー機を通す）</h2>
+  <div class="note">デジタルのままの線を、一度物理に通したような状態にする<br>パスのまま崩すので<b>SVGで書き出せる</b></div>
+  <div class="row"><label>荒れ</label><input type="range" id="degNoise" min="0" max="100" value="30"><span class="val"></span></div>
+  <div class="row"><label>細かさ</label><input type="range" id="degFreq" min="1" max="40" value="12"><span class="val"></span></div>
+  <div class="row"><label>太らせ</label><input type="range" id="degGrow" min="-40" max="40" value="0"><span class="val"></span></div>
+  <div class="grid2">
+    <button class="btn" id="bDegrade">かける</button>
+    <button class="btn" id="bDegradeMore">もう一度通す</button>
+  </div>
+  <div class="note">「もう一度通す」＝コピーのコピー。重ねるほど崩れる</div>
+
   <h2>PATH</h2>
   <div class="grid2">
     <button class="btn" id="bUnite">合体</button>
@@ -460,6 +486,16 @@
     <button class="btn" id="bPartClear">全消去</button>
   </div>
   <div id="partList"></div>
+
+  <h2>画像</h2>
+  <button class="btn" id="bImgLoad">画像を置く</button>
+  <input type="file" id="fileImg" accept="image/*" hidden>
+  <div class="row"><label>不透明度</label><input type="range" id="imgOp" min="0" max="100" value="100"><span class="val"></span></div>
+  <div class="grid2">
+    <button class="btn" id="bImgFit">枡に合わせる</button>
+    <button class="btn" id="bImgMask">選択パスで抜く</button>
+  </div>
+  <div class="note">置いた画像は他の図形と同じように移動・拡大できる<br>「選択パスで抜く」＝文字の形に画像を流し込む</div>
 
   <h2>下敷き（トレース）</h2>
   <button class="btn" id="bRefLoad">画像を敷く</button>
@@ -1162,11 +1198,14 @@ function gradUp(){ gradTargets = null; gradFrom = null; guides(); }
 let dragItem = null, dragSeg = null, dragHandle = null, dragStart = null;
 function hit(point){
   const tol = 11/paper.view.zoom;
+  // ロック・非表示の図形は掴めないようにする
+  const skip = it => { while(it){ if(it.locked || !it.visible) return true; it = it.parent; } return false; };
   // ハンドル → アンカー → 線 → 塗り の順で優先して拾う（イラレの掴み心地）
-  return artLayer.hitTest(point, { handles:true,  tolerance:tol })
-      || artLayer.hitTest(point, { segments:true, tolerance:tol })
-      || artLayer.hitTest(point, { stroke:true,   tolerance:tol })
-      || artLayer.hitTest(point, { fill:true,     tolerance:tol });
+  const h = artLayer.hitTest(point, { handles:true,  tolerance:tol })
+         || artLayer.hitTest(point, { segments:true, tolerance:tol })
+         || artLayer.hitTest(point, { stroke:true,   tolerance:tol })
+         || artLayer.hitTest(point, { fill:true,     tolerance:tol });
+  return (h && skip(h.item)) ? null : h;
 }
 let marquee = null, marqueeStart = null;      // ドラッグの範囲選択（点線の矩形）
 function selDown(e){
@@ -1174,7 +1213,7 @@ function selDown(e){
   let h = hit(e.point);
   // 塗りの内側なら、線に当たらなくても掴めるようにする
   if(!h){
-    const inside = artLayer.children.filter(c => c.contains && c.contains(e.point));
+    const inside = artLayer.children.filter(c => c.visible && !c.locked && c.contains && c.contains(e.point));
     if(inside.length) h = { item: inside[inside.length-1], type:'fill' };
   }
   // 何も無いところからのドラッグ＝範囲選択の開始
@@ -1789,6 +1828,54 @@ document.getElementById('gtype').addEventListener('change', e => {
   drawGrid();
 });
 
+/* ══ 劣化（コピー機を通す）══
+   佐々木俊「デジタルな文字を画面から出して、一度空気に触れさせる」
+   葛飾出身「一回印刷したものをスキャナーにかけ、質感をより粗悪にしている」
+   ＝ デジタル→物理→デジタルの往復を、パスを保ったまま再現する。
+   ラスタのフィルタにしないのは、SVGで書き出せる状態を守るため。 */
+function degradePath(path, amp, freq, grow){
+  if(!path.segments || path.segments.length < 2) return;
+  const len = path.length;
+  if(!len) return;
+  // 輪郭を等間隔にサンプリングし直す（点が少ないと崩しようがない）
+  const n = Math.max(12, Math.round(len / Math.max(2, 60 - freq)));
+  const pts = [];
+  for(let i = 0; i < n; i++){
+    const t = len * i / n;
+    const p = path.getPointAt(t);
+    if(!p) continue;
+    // 法線方向に押し引きする＝コピー機のにじみ／かすれ
+    let nor = path.getNormalAt(t) || new Point(0, 1);
+    // 位置に応じた擬似ノイズ（乱数を使わないので、同じ形なら同じ崩れ方＝再現できる）
+    const s1 = Math.sin(t * 0.13 + p.x * 0.021);
+    const s2 = Math.sin(t * 0.37 + p.y * 0.017);
+    const s3 = Math.sin(t * 0.71 + (p.x + p.y) * 0.009);
+    const noise = (s1 * 0.5 + s2 * 0.33 + s3 * 0.17);
+    pts.push(p.add(nor.multiply(noise * amp + grow)));
+  }
+  if(pts.length < 3) return;
+  path.removeSegments();
+  pts.forEach(p => path.add(p));
+  path.closed = true;
+  path.smooth({ type:'continuous', factor:0.35 });
+}
+function degrade(){
+  const sel = selected();
+  if(!sel.length){ stat('図形を選んでください'); return; }
+  snapshot();
+  const amp  = +document.getElementById('degNoise').value / 100 * 6;
+  const freq = +document.getElementById('degFreq').value;
+  const grow = +document.getElementById('degGrow').value / 10;
+  sel.forEach(it => {
+    if(it.children){ it.children.forEach(c => degradePath(c, amp, freq, grow)); }
+    else degradePath(it, amp, freq, grow);
+  });
+  guides();
+  stat('コピー機を通した — もう一度押すと重ねられます');
+}
+document.getElementById('bDegrade').onclick = degrade;
+document.getElementById('bDegradeMore').onclick = degrade;
+
 /* ══ パス演算 ══ */
 function boolOp(op){
   const sel = selected();
@@ -1960,6 +2047,62 @@ function dl(blob, name){
   a.href = URL.createObjectURL(blob); a.download = name; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
 }
+
+/* ══ 画像を置く ══
+   下敷きと違い、作画レイヤーに入るので他の図形と同じように扱える。
+   選択パスでマスクすれば「文字の形に画像を流し込む」ことができる。 */
+document.getElementById('bImgLoad').onclick = () => document.getElementById('fileImg').click();
+document.getElementById('fileImg').addEventListener('change', e => {
+  const f = e.target.files[0]; if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      snapshot();
+      artLayer.activate();
+      const r = new paper.Raster(img);
+      r.position = paper.view.center;
+      const k = (S.body * 0.9) / Math.max(r.width, r.height);
+      r.scale(k);
+      r.opacity = +document.getElementById('imgOp').value / 100;
+      artLayer.children.forEach(c => c.selected = false);
+      r.selected = true;
+      guides(); reportSel();
+      stat('画像を置いた — 移動・拡大できます');
+    };
+    img.src = rd.result;
+  };
+  rd.readAsDataURL(f);
+  e.target.value = '';
+});
+document.getElementById('bImgFit').onclick = () => {
+  const imgs = selected().filter(it => it instanceof paper.Raster);
+  if(!imgs.length){ stat('画像を選んでください'); return; }
+  snapshot();
+  const face = S.body * (S.face/100);
+  imgs.forEach(r => {
+    const b = r.bounds;
+    r.scale(Math.min(face/b.width, face/b.height), b.center);
+    r.position = paper.view.center;
+  });
+  guides(); stat('枡に合わせた');
+};
+/* 選択したパスで画像を抜く（クリッピング） */
+document.getElementById('bImgMask').onclick = () => {
+  const sel = selected();
+  const img = sel.find(it => it instanceof paper.Raster);
+  const shapes = sel.filter(it => it !== img && (it.segments || it.children));
+  if(!img || !shapes.length){ stat('画像とパスを一緒に選んでください'); return; }
+  snapshot();
+  const mask = shapes.length === 1 ? shapes[0] : new Group(shapes);
+  mask.clipMask = true;
+  const g = new Group([mask, img]);
+  g.clipped = true;
+  artLayer.children.forEach(c => c.selected = false);
+  g.selected = true;
+  guides(); reportSel();
+  stat('パスの形に画像を抜いた');
+};
 
 /* ══ 下敷き（トレース用の画像）══
    グリッド層に置くのでクリックを邪魔しない。固定を解いたときだけ動かせる。 */
@@ -2208,21 +2351,56 @@ function renderLayers(){
   layList.innerHTML = '';
   [...artLayer.children].reverse().forEach(it => {
     const row = document.createElement('div');
-    row.className = 'lay-item' + (it.selected ? ' on' : '');
+    row.className = 'lay-item' + (it.selected ? ' on' : '')
+      + (it.locked ? ' locked' : '') + (it.visible ? '' : ' hidden');
     row.innerHTML =
-      `<span class="ic" data-a="vis">${it.visible ? '👁' : '–'}</span>` +
+      `<span class="ic" data-a="vis" title="表示/非表示">${it.visible ? '👁' : '🚫'}</span>` +
       `<span class="sw" style="background:${swatchOf(it)}"></span>` +
       `<span class="nm">${itemName(it)}</span>` +
-      `<span class="ic" data-a="lock">${it.locked ? '🔒' : '·'}</span>`;
+      `<span class="ic" data-a="lock" title="ロック">${it.locked ? '🔒' : '🔓'}</span>`;
     row.addEventListener('click', e => {
       const a = e.target.dataset.a;
-      if(a === 'vis'){ it.visible = !it.visible; renderLayers(); return; }
-      if(a === 'lock'){ it.locked = !it.locked; renderLayers(); return; }
+      if(a === 'vis'){ it.visible = !it.visible; guides(); renderLayers(); return; }
+      if(a === 'lock'){
+        it.locked = !it.locked;
+        if(it.locked) it.selected = false;      // ロックしたら選択も外す
+        guides(); renderLayers(); return;
+      }
+      if(it.locked){ stat('ロック中（🔓で解除）'); return; }
       if(!e.shiftKey) artLayer.children.forEach(c => c.selected = false);
       it.selected = true; setTool('select'); guides(); renderLayers(); reportSel();
+      syncLayerOpacity();
     });
     layList.appendChild(row);
   });
+  syncLayerOpacity();
+}
+/* 選択中の不透明度をパネルに反映 */
+function syncLayerOpacity(){
+  const s = selected();
+  const r = document.getElementById('layOp');
+  if(!r || !s.length) return;
+  const v = Math.round((s[0].opacity ?? 1) * 100);
+  r.value = v; r.nextElementSibling.textContent = v;
+}
+/* レイヤーパネルをドラッグで動かせるようにする */
+{
+  const head = document.getElementById('layDrag');
+  let dx = 0, dy = 0, moving = false;
+  head.addEventListener('pointerdown', e => {
+    if(e.target.tagName === 'BUTTON') return;
+    const r = layersEl.getBoundingClientRect();
+    dx = e.clientX - r.left; dy = e.clientY - r.top;
+    moving = true; head.setPointerCapture(e.pointerId);
+    layersEl.style.right = 'auto'; layersEl.style.bottom = 'auto';
+  });
+  head.addEventListener('pointermove', e => {
+    if(!moving) return;
+    const w = layersEl.offsetWidth, h = layersEl.offsetHeight;
+    layersEl.style.left = Math.max(4, Math.min(innerWidth - w - 4, e.clientX - dx)) + 'px';
+    layersEl.style.top  = Math.max(4, Math.min(innerHeight - h - 4, e.clientY - dy)) + 'px';
+  });
+  head.addEventListener('pointerup', () => { moving = false; });
 }
 function layToggle(open){
   const o = open === undefined ? !layersEl.classList.contains('open') : open;
@@ -2297,6 +2475,18 @@ document.getElementById('bPartClear').onclick = () => { PARTS.length = 0; render
 bindRange('tracking', v => { S.tracking = v; });
 bindRange('leading',  v => { S.leading  = v; });
 bindRange('refOp', v => { if(refItem) refItem.opacity = v/100; });
+// 画像の不透明度（選択中の画像に効く）
+bindRange('imgOp', v => {
+  selected().filter(it => it instanceof paper.Raster).forEach(r => r.opacity = v/100);
+});
+// レイヤーパネルの不透明度（選択中すべてに効く）
+{
+  const r = document.getElementById('layOp'), v2 = r.nextElementSibling;
+  r.addEventListener('input', () => {
+    v2.textContent = r.value;
+    selected().forEach(it => it.opacity = +r.value/100);
+  });
+}
 bindRange('refSc', v => {
   if(!refItem || !refItem.__base) return;
   const k = (S.body * 0.9 * v/100) / refItem.__base;
