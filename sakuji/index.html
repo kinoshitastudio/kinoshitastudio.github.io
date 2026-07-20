@@ -548,6 +548,20 @@
   </div>
   <div class="note">薄く敷いた画像の上からパスでなぞる<br>固定を解くとドラッグで動かせる</div>
 
+  <h2 class="fold" data-open="0">採取（写真から字を拾う）</h2>
+  <div class="foldbox">
+  <div class="note">看板・印刷物・手書きを撮った写真から、<b>字の形だけパスにして持ち帰る</b><br>まず「白黒で見る」で拾う範囲を決めてから採取する</div>
+  <div class="row"><label>しきい値</label><input type="range" id="trThr" min="1" max="254" value="128"><span class="val"></span></div>
+  <div class="row"><label>なめらかさ</label><input type="range" id="trSm" min="0" max="60" value="18"><span class="val"></span></div>
+  <div class="row"><label>細部を捨てる</label><input type="range" id="trMin" min="0" max="100" value="12"><span class="val"></span></div>
+  <div class="grid2">
+    <button class="btn" id="bTrPrev">白黒で見る</button>
+    <button class="btn" id="bTrInv">明暗を反転</button>
+  </div>
+  <button class="btn" id="bTrace" style="width:100%">この下敷きから採取</button>
+  <div class="note">しきい値＝どこまでを「字」と見るか（読み込み時に自動で当てる）<br>なめらかさ＝アンカーを減らす／細部を捨てる＝小さなゴミを拾わない</div>
+  </div>
+
   <h2>ALIGN</h2>
   <div class="grid2">
     <button class="btn" id="alL">左</button>
@@ -1895,7 +1909,7 @@ async function textToPaths(t){
   return grp;
 }
 /* 2値画像の輪郭を追う（moore neighborhood）*/
-function traceBitmap(img, W, H){
+function traceBitmap(img, W, H, minLen){
   const on = (x,y) => (x<0||y<0||x>=W||y>=H) ? false : img.data[(y*W+x)*4+3] > 128;
   const seen = new Uint8Array(W*H), out = [];
   const dirs = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
@@ -1912,7 +1926,7 @@ function traceBitmap(img, W, H){
       }
       if(!found) break;
     } while((cur[0]!==start[0]||cur[1]!==start[1]) && ++guard < 200000);
-    if(pts.length > 24) out.push(pts.filter((_,i)=> i%2===0));   // 間引いて軽くする
+    if(pts.length > (minLen || 24)) out.push(pts.filter((_,i)=> i%2===0));   // 間引いて軽くする
   }
   return out;
 }
@@ -2299,7 +2313,19 @@ function loadRef(file){
       refItem.sendToBack();
       refItem.__base = refItem.bounds.width;
       artLayer.activate();
-      stat('下敷きを敷いた — 上からなぞれます');
+      // 採取用：元画像を持っておき、しきい値は写真ごとに自動で当てる
+      refSrcImg = img; trPrev = false;
+      document.getElementById('bTrPrev').textContent = '白黒で見る';
+      try{
+        const c = document.createElement('canvas');
+        const k = Math.min(1, 320 / Math.max(img.width, img.height));
+        c.width = Math.max(1, img.width*k|0); c.height = Math.max(1, img.height*k|0);
+        const x = c.getContext('2d'); x.drawImage(img, 0, 0, c.width, c.height);
+        const th = otsu(x.getImageData(0,0,c.width,c.height).data);
+        const el = document.getElementById('trThr');
+        el.value = th; el.dispatchEvent(new Event('input'));
+      }catch(e){}
+      stat('下敷きを敷いた — 上からなぞる／「採取」で自動でパスにする');
     };
     img.src = rd.result;
   };
@@ -2311,6 +2337,104 @@ document.getElementById('fileRef').addEventListener('change', e => {
 });
 document.getElementById('bRefDel').onclick = () => {
   if(refItem){ refItem.remove(); refItem = null; stat('下敷きを外した'); }
+};
+/* ══ 採取（写真から字を拾ってパスにする）══
+   撮った看板・印刷物・手書きから「字の形だけ」持ち帰る。下敷きの次の一手。
+   写真は影とムラがあるので、しきい値は読み込み時に自動で当てる（大津の二値化）。 */
+let refSrcImg = null, trInv = false, trPrev = false;
+
+/* 明るさのヒストグラムから、黒と白が一番きれいに分かれる位置を出す */
+function otsu(data){
+  const h = new Array(256).fill(0); let n = 0;
+  for(let i=0;i<data.length;i+=4){
+    if(data[i+3] < 8) continue;                                   // 透明は数えない
+    h[(data[i]*0.299 + data[i+1]*0.587 + data[i+2]*0.114)|0]++; n++;
+  }
+  if(!n) return 128;
+  let sum = 0; for(let t=0;t<256;t++) sum += t*h[t];
+  let sumB = 0, wB = 0, best = 0, th = 128;
+  for(let t=0;t<256;t++){
+    wB += h[t]; if(!wB) continue;
+    const wF = n - wB; if(!wF) break;
+    sumB += t*h[t];
+    const mB = sumB/wB, mF = (sum-sumB)/wF, v = wB*wF*(mB-mF)*(mB-mF);
+    if(v > best){ best = v; th = t; }
+  }
+  // t は「そこまでを黒に入れる」位置。判定は lum < th なので 1つ上を返す
+  return Math.max(1, Math.min(254, th + 1));
+}
+/* 元画像を「字＝不透明／地＝透明」の白黒に焼き直す */
+function binarize(img, th, inv, maxW){
+  const k = Math.min(1, maxW / Math.max(img.naturalWidth||img.width, img.naturalHeight||img.height));
+  const W = Math.max(1, Math.round((img.naturalWidth||img.width) * k));
+  const H = Math.max(1, Math.round((img.naturalHeight||img.height) * k));
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d'); x.drawImage(img, 0, 0, W, H);
+  const d = x.getImageData(0,0,W,H), a = d.data;
+  for(let i=0;i<a.length;i+=4){
+    const lum = a[i]*0.299 + a[i+1]*0.587 + a[i+2]*0.114;
+    let ink = lum < th;                                           // 既定は「暗いところが字」
+    if(inv) ink = !ink;
+    if(a[i+3] < 8) ink = false;
+    a[i]=a[i+1]=a[i+2]=0; a[i+3] = ink ? 255 : 0;
+  }
+  x.putImageData(d,0,0);
+  return { cvs:c, img:d, W, H };
+}
+/* 白黒プレビュー＝下敷きの見え方を焼き直したものに差し替える（元画像は持っておく）*/
+function refreshRefView(){
+  if(!refItem || !refSrcImg) return;
+  // 画像を差し替えると Raster の大きさが素の解像度に戻るので、位置と大きさを持ち越す
+  const keep = refItem.bounds.clone();
+  if(trPrev){
+    const b = binarize(refSrcImg, +document.getElementById('trThr').value, trInv, 1400);
+    refItem.image = b.cvs;
+  }else{
+    refItem.image = refSrcImg;
+  }
+  try{ refItem.bounds = keep; }catch(e){}
+}
+bindRange('trThr', () => { if(trPrev) refreshRefView(); });
+bindRange('trSm',  () => {});
+bindRange('trMin', () => {});
+document.getElementById('bTrPrev').onclick = () => {
+  if(!refItem){ stat('先に下敷きを敷いてください'); return; }
+  trPrev = !trPrev;
+  document.getElementById('bTrPrev').textContent = trPrev ? '写真で見る' : '白黒で見る';
+  refreshRefView();
+  stat(trPrev ? '白黒＝この黒いところが採れる' : '写真に戻した');
+};
+document.getElementById('bTrInv').onclick = () => {
+  trInv = !trInv;
+  document.getElementById('bTrInv').textContent = trInv ? '反転中' : '明暗を反転';
+  refreshRefView();
+  stat(trInv ? '明るいところを字として拾う' : '暗いところを字として拾う');
+};
+document.getElementById('bTrace').onclick = () => {
+  if(!refItem || !refSrcImg){ stat('先に下敷きを敷いてください'); return; }
+  const th  = +document.getElementById('trThr').value;
+  const sm  = +document.getElementById('trSm').value;
+  const min = +document.getElementById('trMin').value;
+  const b = binarize(refSrcImg, th, trInv, 1400);
+  const cont = traceBitmap(b.img, b.W, b.H, 8 + min * 2);
+  if(!cont.length){ stat('拾えなかった — しきい値か反転を変えてみる'); return; }
+  snapshot();
+  // 下敷きの画面上の位置・大きさにそのまま重ねる（なぞった結果と同じ場所に出る）
+  const R = refItem.bounds, sx = R.width / b.W, sy = R.height / b.H;
+  artLayer.activate();
+  const children = cont.map(pts => {
+    const p = new Path(pts.map(([x,y]) => new Point(R.left + x*sx, R.top + y*sy)));
+    p.closed = true;
+    if(sm > 0) p.simplify(sm / 10);
+    return p;
+  }).filter(p => p.segments.length > 2);
+  if(!children.length){ stat('拾えなかった — 「細部を捨てる」を下げてみる'); return; }
+  const grp = new paper.CompoundPath({ children });
+  try{ grp.reorient(false, true); }catch(e){}                     // 内側の輪郭を穴にする
+  grp.fillColor = paintOf(grp) || S.fill || '#0a0a0a';
+  artLayer.children.forEach(c => c.selected = false);
+  grp.selected = true; guides();
+  stat(`採取した — ${children.length}本の輪郭（なめらかさで整える）`);
 };
 document.getElementById('bRefLock').onclick = () => {
   refLocked = !refLocked;
