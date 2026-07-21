@@ -1262,6 +1262,7 @@ function hit(point){
   return (h && skip(h.item)) ? null : h;
 }
 let marquee = null, marqueeStart = null;      // ドラッグの範囲選択（点線の矩形）
+let clip = [];                                // コピー／カットしたオブジェクト（切り離した複製を保持）
 function selDown(e){
   snapshot();                                     // 動かす前の状態を保存
   let h = hit(e.point);
@@ -1398,8 +1399,11 @@ cv.addEventListener('dblclick', () => { if(pen) finishPen(); });
 
 /* ══ キー ══ */
 window.addEventListener('keydown', e => {
-  const t = e.target.tagName;
-  if(t === 'INPUT' || t === 'TEXTAREA') return;
+  // 文字入力中だけショートカットを止める。スライダーや色ピッカー等に
+  // フォーカスが残っていても Delete / ⌘Z / ⌘V などが効くようにする（残ると全部死ぬ）
+  const t = e.target.tagName, ty = (e.target.type || '').toLowerCase();
+  const typing = t === 'TEXTAREA' || (t === 'INPUT' && !/^(range|color|checkbox|radio|button|file|submit)$/.test(ty));
+  if(typing) return;
   const cmd = e.metaKey || e.ctrlKey;
   if(e.key === 'Shift'){ shiftDown = true; if(pen) guides(); }
   if(e.code === 'Space'){ S.spaceDown = true; cv.style.cursor='grab'; e.preventDefault(); return; }
@@ -1411,6 +1415,34 @@ window.addEventListener('keydown', e => {
   }
   if(cmd && e.key.toLowerCase() === 'd'){          // ⌘D＝複製
     e.preventDefault(); document.getElementById('bDup').click(); return;
+  }
+  if(cmd && e.key.toLowerCase() === 'c'){          // ⌘C＝コピー
+    e.preventDefault();
+    const sel = selected();
+    if(sel.length){ clip = sel.map(it => it.clone({ insert:false })); stat(`${sel.length}個をコピー`); }
+    return;
+  }
+  if(cmd && e.key.toLowerCase() === 'x'){          // ⌘X＝カット（切り取っても貼れる）
+    e.preventDefault();
+    const sel = selected();
+    if(sel.length){ snapshot(); clip = sel.map(it => it.clone({ insert:false })); sel.forEach(it => it.remove()); guides(); stat(`${sel.length}個をカット`); }
+    return;
+  }
+  if(cmd && e.key.toLowerCase() === 'v'){          // ⌘V＝ペースト（少しずらして重ねる・連続可）
+    e.preventDefault();
+    if(!clip.length) return;
+    snapshot();
+    artLayer.activate();
+    artLayer.children.forEach(c => c.selected = false);
+    clip.forEach(src => {
+      const c = src.clone({ insert:false });
+      artLayer.addChild(c);
+      c.position = c.position.add(new Point(24, 24));
+      c.selected = true;
+    });
+    setTool('select'); guides(); reportSel();
+    stat(`${clip.length}個をペースト`);
+    return;
   }
   if(cmd && e.key.toLowerCase() === 'g'){          // ⌘G＝グループ／⇧⌘G＝解除
     e.preventDefault();
@@ -1442,13 +1474,18 @@ window.addEventListener('keydown', e => {
   }
   if(e.key === 'Backspace' || e.key === 'Delete'){
     e.preventDefault();
+    snapshot();                                    // 消す前に保存（後だと戻せない）
     if(S.tool === 'direct'){                       // アンカーだけ消す
       artLayer.children.forEach(it=>{
         if(!it.segments) return;
         for(let i=it.segments.length-1;i>=0;i--) if(it.segments[i].selected) it.segments[i].remove();
       });
-    } else { selected().forEach(it=>it.remove()); }
-    snapshot(); return;
+    } else {
+      const sel = selected();
+      sel.forEach(it=>it.remove());
+      stat(sel.length ? `${sel.length}個を削除` : '選択されていません');
+    }
+    guides(); return;
   }
   if(e.key === 'l' || e.key === 'L'){ layToggle(); return; }
   // 矢印キー＝微調整（Shiftで大きく）。ダイレクト選択中はアンカーだけ動く
@@ -1789,9 +1826,13 @@ function roundCorner(seg, r){
   document.getElementById(id).addEventListener('change', e => {
     S[id] = e.target.value;
     selected().forEach(it => {
-      if(id === 'join') it.strokeJoin = e.target.value;
-      if(id === 'cap')  it.strokeCap  = e.target.value;
+      if(id === 'join') it.strokeJoin = e.target.value;   // 角＝即反映
+      if(id === 'cap')  it.strokeCap  = e.target.value;   // 端＝即反映
     });
+    // 線の位置（内側/外側）は画面の線には出せない（paperは中央線しか描けない）。
+    // 「線→塗り」で塗りに変換したときに、その位置で確定する。
+    if(id === 'align' && e.target.value !== 'center')
+      stat('線の位置は「線→塗り」で確定します（画面の線は中央に見えたまま）');
   });
 });
 
