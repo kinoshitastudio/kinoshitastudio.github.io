@@ -1654,11 +1654,18 @@ function syncFS(){
 }
 function applyColor(c){                              // 選択中があればその図形にも即反映
   S[S.target] = c;
-  selected().forEach(it => {
+  const sel = selected();
+  sel.forEach(it => {
     if(S.target === 'fill') it.fillColor = c ? paintOf(it) : null;   // グラデ／金属もここで反映
-    else { it.strokeColor = c; if(c) it.strokeWidth = S.sw; }
+    else {                                          // 線：色・幅・端・角をまとめて入れる
+      it.strokeColor = c;
+      if(c){ it.strokeWidth = S.sw; it.strokeCap = S.cap || 'round'; it.strokeJoin = S.join || 'round'; }
+    }
   });
   syncFS();
+  // 何も選んでいないと画面に変化が出ないので、次に描く図形へ効くことを伝える
+  if(!sel.length && c)
+    stat(S.target === 'stroke' ? '線の色をセット — 図形を選ぶか、これから描くと反映' : '塗りの色をセット');
 }
 /* ── 塗りの種類（単色／グラデ／放射／金属）── */
 function applyPaint(){                       // 選択中の図形に塗りを塗り直す
@@ -1717,13 +1724,37 @@ document.querySelectorAll('#gridsw button').forEach(b =>
     drawGrid();
   }));
 
-/* ── ボードの地色（黒／白）── */
+/* ── 色を反転（黒⇄白がそのまま入れ替わり、他の色は補色になる）── */
+function invPaint(col){
+  if(!col) return col;
+  if(col.gradient){                                  // グラデ／金属：各ストップを反転
+    col.gradient.stops.forEach(s => { const k = s.color; k.red = 1-k.red; k.green = 1-k.green; k.blue = 1-k.blue; });
+    return col;
+  }
+  col.red = 1-col.red; col.green = 1-col.green; col.blue = 1-col.blue;   // Color は破壊的に変えると再描画される
+  return col;
+}
+function invHex(h){ if(!h) return h; const c = new Color(h); return new Color(1-c.red, 1-c.green, 1-c.blue).toCSS(true); }
+
+/* ── ボードの地色（黒／白）。切り替えたら、置いてある色も一緒に反転する ── */
 function setBG(v){
+  const flip = S.bg && S.bg !== v;                   // 実際に切り替わったときだけ反転（初期化では回さない）
   S.bg = v;
   const light = v === 'light';
   document.documentElement.style.setProperty('--bg', light ? '#f4f4f4' : '#0a0a0a');
   document.body.style.background = light ? '#f4f4f4' : '#0a0a0a';
   document.querySelectorAll('#bgsw button').forEach(x => x.classList.toggle('on', x.dataset.v === v));
+  if(flip){
+    artLayer.children.forEach(it => {                // 画像はそのまま／塗り線だけ反転
+      if(it instanceof paper.Raster) return;
+      if(it.fillColor)   invPaint(it.fillColor);
+      if(it.strokeColor) invPaint(it.strokeColor);
+    });
+    S.fill = invHex(S.fill); S.stroke = invHex(S.stroke);   // これから描く色も合わせる
+    ['#swatch i'].forEach(()=>{});                    // スウォッチ選択表示だけ更新
+    if(typeof syncFS === 'function') syncFS();
+    stat('地色を反転 — 置いた色も反転した');
+  }
   drawGrid(); guides();
 }
 document.querySelectorAll('#bgsw button').forEach(b =>
@@ -2088,17 +2119,17 @@ document.getElementById('bOutline').onclick = () => {   // 線 → 塗りパス�
   if(!sel.length){ stat('線のパスを選んでください'); return; }
   snapshot();
   sel.forEach(it => {
-    // 線の輪郭を実体化：太い線をそのまま塗りに変える
+    // 線の輪郭を実体化：太い線をそのまま塗りに変える。線の位置（中央/内側/外側）もここで確定
     const outline = it.clone();
     outline.strokeWidth = it.strokeWidth;
-    const res = expandStroke(outline);
+    const res = expandStroke(outline, S.align || 'center');
     if(res){ res.fillColor = it.strokeColor; res.strokeColor = null; res.selected = true; it.remove(); }
     outline.remove();
   });
-  stat('OUTLINE');
+  stat('OUTLINE（線の位置＝' + ({center:'中央',inside:'内側',outside:'外側'}[S.align||'center']) + '）');
 };
-/* 線を塗りに——両側にオフセットして閉じる（丸端） */
-function expandStroke(path){
+/* 線を塗りに——中央に幅ぶんの帯を作り、閉じたパスなら「内側／外側」を元形状でクリップする */
+function expandStroke(path, side){
   const w = path.strokeWidth/2;
   if(!path.segments || path.segments.length < 2) return null;
   const pts = [];
@@ -2112,9 +2143,19 @@ function expandStroke(path){
     left.push(pts[i].add(n.multiply(w)));
     right.unshift(pts[i].subtract(n.multiply(w)));
   }
-  const p = new Path(left.concat(right));
-  p.closed = true; p.smooth({ type:'continuous' });
-  return p;
+  const band = new Path(left.concat(right));
+  band.closed = true; band.smooth({ type:'continuous' });
+  // 内側／外側は、閉じたパスでだけ意味を持つ（開いた線には表裏が無いので中央のまま）
+  if(path.closed && side && side !== 'center'){
+    const solid = path.clone();
+    solid.strokeColor = null; solid.fillColor = '#000';
+    let res = null;
+    try{ res = (side === 'inside') ? band.intersect(solid) : band.subtract(solid); }catch(e){}
+    solid.remove();
+    if(res && res.segments || (res && res.children && res.children.length)){ band.remove(); return res; }
+    if(res) res.remove();
+  }
+  return band;
 }
 
 document.getElementById('bSmooth').onclick = () => {
