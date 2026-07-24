@@ -7,11 +7,7 @@
 
 ## Name（`manifest.json` の `name` ＝ 掲載名）
 
-現在：`Siren`
-**提案（Kaibou と同じ型「Name — 何をするか」）**：
-1. `Siren — a drum machine for your marks`（推し。"自分のマークを鳴らすドラムマシン"そのまま）
-2. `Siren — play your marks as a rhythm`
-→ **木下が選ぶ**。決めたら `manifest.json` に反映。
+**確定：`Siren — a drum machine for your marks`**（2026-07-24 木下決定・`manifest.json` 反映済み）。"自分のマークを鳴らすドラムマシン"そのまま。
 
 ## Tagline（100字・一覧に出る一行）
 
