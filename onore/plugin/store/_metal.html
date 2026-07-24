@@ -1,0 +1,127 @@
+<!doctype html><meta charset="utf-8">
+<title>Onore LAB — Metal / MatCap v2（法線で金属・形可変・綺麗↔破壊）</title>
+<!--
+  質感＝MatCap（法線で"ライティング球"を引く＝本物の金属3D）。素材/エフェクトは固定、形だけ差し替え。
+  shape: 0=blob(水銀の粒/メタボール)・1=torus(輪)・2=sphere(球)。法線を出せば matcap も crush も同じ。
+  ⭐ crush＝形が折れる/変形（面が折れて別物に）＝Onoreの背骨。
+-->
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#e8e8ea;font:400 12.5px/1.6 "Inter","Helvetica Neue",-apple-system,sans-serif}
+  html,body{background:#0b0b0c}
+  #wrap{display:block;gap:0;padding:0;box-sizing:border-box;min-height:100%}
+  #ctl{display:none !important}
+  #stage{border:0;border-radius:0;overflow:hidden;height:min-content;background:#0b0b0c}
+  canvas{display:block;width:1080px;height:1080px}   /* 内部1200²→CSS＝AA */
+  #ctl{display:flex;flex-direction:column;gap:8px;min-width:264px}
+  h1{font:600 13px ui-monospace,Menlo,monospace;letter-spacing:.14em;text-transform:uppercase;margin:0 0 2px;color:#fff}
+  small{color:#6b6b70;line-height:1.6;font-size:11px}
+  label{display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:11.5px;color:#a6a6ab}
+  label b{color:#f2f2f3;min-width:56px;text-align:right;font-family:ui-monospace,Menlo,monospace;font-size:10.5px}
+  input[type=range]{flex:1;accent-color:#fff;height:2px}
+  .row{display:flex;gap:8px;margin-top:6px}
+  button{flex:1;background:#141416;border:1px solid #2c2c2f;color:#ddd;border-radius:6px;padding:7px;font:inherit;cursor:pointer}
+  button:hover{border-color:#555}
+</style>
+<div id="wrap">
+  <div id="stage"><canvas id="art" width="1200" height="1200"></canvas></div>
+  <div id="ctl">
+    <h1>Onore LAB — Metal v2</h1>
+    <small>素材/エフェクト固定（matcap＋crush）、形だけ差し替え。<br>⭐ crush＝形が折れる/変形（面が折れて別物に）。</small>
+    <label>shape（形）<input id="shape" type="range" min="0" max="4" step="1" value="2"><b></b></label>
+    <label>size（大きさ）<input id="size" type="range" min="0.12" max="0.42" step="0.005" value="0.36"><b></b></label>
+    <label>count（粒の数:blob）<input id="count" type="range" min="1" max="9" step="1" value="5"><b></b></label>
+    <label>relief（膨らみ:blob）<input id="relief" type="range" min="0.4" max="2.4" step="0.05" value="1.2"><b></b></label>
+    <label>tube（太さ:torus）<input id="tube" type="range" min="0.06" max="0.3" step="0.005" value="0.16"><b></b></label>
+    <label>wobble（歪み:torus）<input id="wob" type="range" min="0" max="0.5" step="0.01" value="0.2"><b></b></label>
+    <label>liquid（法線の揺れ）<input id="liquid" type="range" min="0" max="1.2" step="0.02" value="0.25"><b></b></label>
+    <label>⭐crush（形が折れる/変形）<input id="crush" type="range" min="0" max="1" step="0.01" value="0"><b></b></label>
+    <label>keyX（光の位置X）<input id="keyX" type="range" min="-0.8" max="0.8" step="0.02" value="-0.35"><b></b></label>
+    <label>keyY（光の位置Y）<input id="keyY" type="range" min="-0.8" max="0.8" step="0.02" value="0.5"><b></b></label>
+    <label>polish（艶／硬さ）<input id="polish" type="range" min="2" max="16" step="0.2" value="7"><b></b></label>
+    <label>disp（虹の縁）<input id="disp" type="range" min="0" max="0.25" step="0.005" value="0.03"><b></b></label>
+    <label>tintHue（色味）<input id="tintHue" type="range" min="0" max="360" step="1" value="210"><b></b></label>
+    <label>tintAmt（色味の強さ）<input id="tintAmt" type="range" min="0" max="0.5" step="0.02" value="0.1"><b></b></label>
+    <label>⭐holo（虹/ホログラ）<input id="holo" type="range" min="0" max="1" step="0.02" value="0.7"><b></b></label>
+    <label>bright（明るさ）<input id="bright" type="range" min="0.6" max="1.6" step="0.02" value="1"><b></b></label>
+    <label>seed <input id="seed" type="range" min="0" max="60" step="1" value="7"><b></b></label>
+    <div class="row"><button id="play">▶ 流す</button><button id="rnd">⟳ seed</button></div>
+    <small id="note" style="margin-top:4px"></small>
+  </div>
+</div>
+<script>
+'use strict'
+const cv=document.getElementById('art'),ctx=cv.getContext('2d'),W=cv.width,H=cv.height,TAU=Math.PI*2
+const P={}
+for(const el of document.querySelectorAll('input')){
+  const b=el.parentElement.querySelector('b'),show=()=>{b.textContent=lbl(el.id,+el.value)}
+  el.oninput=()=>{P[el.id]=+el.value;show();draw()};P[el.id]=+el.value;show()
+}
+function lbl(id,v){if(id==='shape')return['blob 粒','torus 輪','sphere 球','gem 多面体','capsule 棒'][v]||v;return v.toFixed(v%1?2:0)}
+const mb=s=>{let a=s>>>0;return()=>{a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296}}
+function hsl2rgb(h,s,l){h=((h%360)+360)%360/360;s/=100;l/=100;if(s===0){const v=l;return[v,v,v]}
+  const q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q,f=t=>{t=(t+1)%1;if(t<1/6)return p+(q-p)*6*t;if(t<0.5)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p}
+  return[f(h+1/3),f(h),f(h-1/3)]}
+let phase=0
+// procedural chrome MatCap: brightness from a lit studio sphere, looked up by view-space normal
+function matcap(nx,ny,nz){
+  let L=0.28+0.5*Math.max(0,ny)*Math.max(0,ny)+0.3*Math.pow(Math.max(0,-ny),1.6)
+  const d1=(nx-P.keyX)*(nx-P.keyX)+(ny-P.keyY)*(ny-P.keyY);L+=1.0*Math.exp(-d1*P.polish)
+  const d2=(nx+0.4)*(nx+0.4)+(ny+0.3)*(ny+0.3);L+=0.32*Math.exp(-d2*P.polish*2.2)
+  L+=0.22*Math.pow(1-nz,3)
+  return L
+}
+function draw(){
+  const R=mb(P.seed*7919+13),cx=W/2,cy=H/2,mn=Math.min(W,H)
+  const ph=[R()*TAU,R()*TAU,R()*TAU,R()*TAU,R()*TAU,R()*TAU]
+  const tint=hsl2rgb(P.tintHue,80,55),shp=Math.round(P.shape)
+  const Ro=mn*P.size, tube=mn*P.tube
+  // blob setup
+  let bl=null,K=1
+  if(shp===0){bl=[];const n=Math.round(P.count);for(let i=0;i<n;i++)bl.push({x:cx+(R()-0.5)*Ro*1.9,y:cy+(R()-0.5)*Ro*1.9,r:Ro*(0.5+0.6*R())});K=Ro*P.relief}
+  const img=ctx.createImageData(W,H),D=img.data
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const p=(y*W+x)*4
+    const sx=x, sy=y
+    let inside=false,nx=0,ny=0,nz=1
+    if(shp===1){ // torus
+      const dx=sx-cx,dy=sy-cy,d=Math.hypot(dx,dy),th=Math.atan2(dy,dx)
+      const Rmid=Ro*(1+P.wob*(0.5*Math.sin(th*3+ph[0]+phase)+0.3*Math.sin(th*5+ph[1])+0.2*Math.sin(th*2-ph[2])))
+      const Rt=tube*(1+P.wob*0.6*Math.sin(th*4+ph[3])), s=(d-Rmid)/Rt
+      if(s>=-1&&s<=1){inside=true;nx=s*Math.cos(th);ny=s*Math.sin(th);nz=Math.sqrt(Math.max(0,1-s*s))}
+    }else if(shp===2){ // sphere
+      const dx=(sx-cx)/Ro,dy=(sy-cy)/Ro,r2=dx*dx+dy*dy
+      if(r2<=1){inside=true;nx=dx;ny=dy;nz=Math.sqrt(Math.max(0,1-r2))}
+    }else if(shp===3){ // gem (faceted sphere)
+      const dx=(sx-cx)/Ro,dy=(sy-cy)/Ro,r2=dx*dx+dy*dy
+      if(r2<=1){inside=true;let ax=dx,ay=dy;const F=Math.max(2,Math.round(P.count));ax=Math.round(ax*F)/F;ay=Math.round(ay*F)/F;const rr=Math.hypot(ax,ay);if(rr>1){ax/=rr;ay/=rr}nx=ax;ny=ay;nz=Math.sqrt(Math.max(0,1-nx*nx-ny*ny))}
+    }else if(shp===4){ // capsule
+      const Lc=Ro*0.85,rc=Ro*0.5,ay=sy-cy,cyc=Math.max(-Lc,Math.min(Lc,ay)),ddx=sx-cx,ddy=ay-cyc,dist=Math.hypot(ddx,ddy)
+      if(dist<=rc){inside=true;nx=ddx/rc;ny=ddy/rc;nz=Math.sqrt(Math.max(0,1-nx*nx-ny*ny))}
+    }else{ // blob (metaballs)
+      let f=0,fx=0,fy=0
+      for(const b of bl){const ddx=sx-b.x,ddy=sy-b.y,r2=b.r*b.r,e=Math.exp(-(ddx*ddx+ddy*ddy)/(2*r2));f+=e;fx+=e*ddx/r2;fy+=e*ddy/r2}
+      if(f>=0.6){inside=true;let ax=fx*K,ay=fy*K;const al=Math.hypot(ax,ay);if(al>0.997){ax=ax/al*0.997;ay=ay/al*0.997}nx=ax;ny=ay;nz=Math.sqrt(Math.max(0,1-nx*nx-ny*ny))}
+    }
+    if(!inside){D[p]=0;D[p+1]=0;D[p+2]=0;D[p+3]=255;continue}
+    // liquid: perturb the normal with flowing noise → mercury warp (shape-agnostic)
+    nx+=P.liquid*0.5*Math.sin(sx*0.03+sy*0.02+ph[4]+phase); ny+=P.liquid*0.5*Math.cos(sx*0.025-sy*0.03+ph[5]+phase*0.8)
+    if(P.crush>0){nx+=P.crush*1.4*Math.sin(sx*0.02+sy*0.03+ph[0]);ny+=P.crush*1.4*Math.cos(sx*0.025-sy*0.02+ph[1])}  // ⭐ crush=形が折れる/変形（面が折れる。ピクセル化でなく変形）
+    let nl=Math.hypot(nx,ny);if(nl>1){nx/=nl;ny/=nl}nz=Math.sqrt(Math.max(0,1-nx*nx-ny*ny))
+    // brightness from matcap; holographic hue from the normal direction (bright=white, dark=black, mid=rainbow)
+    const L=matcap(nx,ny,nz)
+    const light=Math.max(0,Math.min(1,L*P.bright))
+    const hue=Math.atan2(ny,nx)*57.2958 + nz*130 + P.tintHue + phase*40
+    const mid=1-Math.abs(light-0.5)*2
+    const sat=Math.min(96,96*P.holo*Math.max(0,mid))
+    const col=hsl2rgb(hue,sat,light*100)
+    D[p]=Math.min(255,col[0]*255);D[p+1]=Math.min(255,col[1]*255);D[p+2]=Math.min(255,col[2]*255);D[p+3]=255
+  }
+  ctx.putImageData(img,0,0)
+}
+let playing=false,last=0
+function tick(ts){if(!playing)return;const dt=last?Math.min(0.05,(ts-last)/1000):0;last=ts;phase=(phase+dt*0.5)%TAU;draw();requestAnimationFrame(tick)}
+document.getElementById('play').onclick=e=>{playing=!playing;e.target.textContent=playing?'■ 停止':'▶ 流す';if(playing){last=0;requestAnimationFrame(tick)}else{phase=0;draw()}}
+document.getElementById('rnd').onclick=()=>{const el=document.getElementById('seed');el.value=(+el.value*7+13)%61;P.seed=+el.value;el.parentElement.querySelector('b').textContent=el.value;draw()}
+document.getElementById('note').textContent='shape=粒/輪/球。素材(matcap)とcrush(綺麗↔破壊)は共通。';
+draw()
+</script>
