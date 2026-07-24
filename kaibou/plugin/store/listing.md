@@ -7,9 +7,8 @@
 
 ## Name（`manifest.json` の `name` ＝ 掲載名）
 
-現在：`Kaibou`
-**提案：`Kaibou — run your material through a chain`**
-（OtO が `OtO — listen to your layout` の形。Kaibou も一言で何をするかを名前に入れる）
+**確定：`Kaibou — texture chain for your material`**（2026-07-24 木下決定・`manifest.json` 反映済み）
+OtO の `OtO — listen to your layout` と同じ型。"texture" が名前に入るので検索にも効く。
 
 ## Support contact
 
