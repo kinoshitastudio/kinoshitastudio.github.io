@@ -1,0 +1,476 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Kaibou — store art</title>
+<!-- Kaibou store art generator.
+     The mark is drawn as vectors, then run through the *actual* Kaibou chain
+     (runChain / noiseStage copied verbatim from plugin/ui.html) so the icon and
+     the cover are literally output of the plugin they advertise.
+     Shot headless: see _shoot.sh in this folder. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Space+Mono:wght@400;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;padding:0;background:#0b0b0c;overflow:hidden}
+  canvas{display:block}
+</style>
+<canvas id="out"></canvas>
+<script>
+'use strict'
+
+/* ============================================================
+   1. the chain — verbatim from plugin/ui.html
+   ============================================================ */
+function rng(seed){
+  let a = seed >>> 0
+  return ()=>{ a = (a + 0x6D2B79F5)|0
+    let t = Math.imul(a ^ (a>>>15), 1 | a)
+    t = (t + Math.imul(t ^ (t>>>7), 61 | t)) ^ t
+    return ((t ^ (t>>>14)) >>> 0) / 4294967296 }
+}
+
+function noiseStage(a, w, h){
+  const {amount, size, color, tone, clump, shards, variance, blotch, seed} = P.noise
+  if(amount <= 0) return
+  const s  = Math.max(1, Math.round(size))
+  const s2 = s*4
+  const c1w = Math.ceil(w/s), c1h = Math.ceil(h/s), c2w = Math.ceil(w/s2), c2h = Math.ceil(h/s2)
+  const amp = amount * 150
+
+  const R = rng((seed|0) * 7919 + 13)
+  const mk = (cw,ch)=>{
+    const b = new Float32Array(cw*ch*3)
+    for(let i=0;i<cw*ch;i++){
+      const m = (R()*2-1)*amp
+      for(let k=0;k<3;k++) b[i*3+k] = m*(1-color) + (R()*2-1)*amp*color
+    }
+    return b
+  }
+  const fine = mk(c1w,c1h), coarse = mk(c2w,c2h)
+
+  const K = Math.max(0, Math.min(8, Math.round(shards)))
+  const lines = []
+  for(let i=0;i<K;i++){
+    const a = R()*Math.PI
+    lines.push([Math.cos(a), Math.sin(a), (R()*0.9+0.05)*Math.max(w,h)])
+  }
+  const gains = new Float32Array(1<<K)
+  for(let i=0;i<gains.length;i++) gains[i] = 1 - variance + R()*variance*2
+
+  const bc = 6
+  const cloud = new Float32Array(bc*bc)
+  for(let i=0;i<cloud.length;i++) cloud[i] = R()
+
+  const img = a.getImageData(0,0,w,h), d = img.data
+  for(let y=0;y<h;y++){
+    const fy=(y/s)|0, cy=(y/s2)|0
+    for(let x=0;x<w;x++){
+      const p=(y*w+x)*4
+      const fi=(fy*c1w+((x/s)|0))*3, ci=(cy*c2w+((x/s2)|0))*3
+
+      const l=(0.299*d[p]+0.587*d[p+1]+0.114*d[p+2])/255
+      let wt=(1-tone)+tone*(4*l*(1-l))
+
+      if(K){
+        let id=0
+        for(let i=0;i<K;i++) if(x*lines[i][0] + y*lines[i][1] > lines[i][2]) id |= (1<<i)
+        wt *= gains[id]
+      }
+      if(blotch>0){
+        const u = Math.min(bc-1,(x/w*bc)|0), v = Math.min(bc-1,(y/h*bc)|0)
+        wt *= 1 - blotch + cloud[v*bc+u]*blotch*2
+      }
+
+      for(let k=0;k<3;k++){
+        const n = (1-clump)*fine[fi+k] + clump*coarse[ci+k]
+        const val = d[p+k] + n*wt
+        d[p+k] = val<0?0:val>255?255:val
+      }
+    }
+  }
+  a.putImageData(img,0,0)
+}
+
+/* chain state — the plugin's own default, "Kaibou" preset */
+let P = {
+  expo:{on:1,gain:0.85}, eq:{on:1,blur:1.6},
+  dec:{on:1,down:4,levels:4,jitter:0.30,dither:0.55},
+  amp:{on:1,drive:1.6,bias:0.05},
+  rev:{on:1,size:30,amount:0.43,dark:0.55},
+  echo:{on:1,fb:0.31,taps:2,lp:6,rot:0,dist:14,ang:20},
+  filt:{on:1,blur:1.1}, reg:{on:0,amount:0,ang:20},
+  util:{on:1,width:0.40,bassMono:0.7},
+  tint:{on:1,shadow:225,highlight:42,amount:0.07,accent:0},
+  noise:{on:1,amount:0.26,size:2,color:0.08,tone:0.90,clump:0.55,shards:5,variance:0.85,blotch:0.55,seed:7},
+  mix:{on:1,wet:1}
+}
+
+const cv = (w,h)=>{ const c=document.createElement('canvas'); c.width=w; c.height=h; return c }
+
+function hue2rgb(h){
+  const k = n => (n + h/30) % 12
+  const f = n => 255*(1 - Math.max(-1, Math.min(k(n)-3, Math.min(9-k(n), 1))))
+  return [f(0), f(8), f(4)]
+}
+
+function runChain(src, w, h){
+  const s = Math.max(w,h)/720
+  const px = v => v*s
+  const A = cv(w,h), a = A.getContext('2d',{willReadFrequently:true})
+  const B = cv(w,h), b = B.getContext('2d',{willReadFrequently:true})
+  const C = cv(w,h), c = C.getContext('2d')
+
+  const blurTo = (ctx, from, r)=>{
+    ctx.setTransform(1,0,0,1,0,0); ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1
+    ctx.filter = r>0 ? `blur(${r}px)` : 'none'
+    ctx.clearRect(0,0,w,h); ctx.drawImage(from,0,0); ctx.filter='none'
+  }
+  const duck = k=>{
+    b.setTransform(1,0,0,1,0,0); b.globalCompositeOperation='source-over'
+    b.clearRect(0,0,w,h); b.drawImage(A,0,0)
+    a.save(); a.globalCompositeOperation='source-over'; a.globalAlpha=1
+    a.filter=`brightness(${k})`; a.clearRect(0,0,w,h); a.drawImage(B,0,0)
+    a.filter='none'; a.restore()
+  }
+
+  a.filter = (P.eq.on && P.eq.blur>0) ? `blur(${px(P.eq.blur)}px)` : 'none'
+  a.drawImage(src,0,0,w,h); a.filter='none'
+
+  if(P.expo.on && P.expo.gain !== 1){
+    const g = P.expo.gain, im = a.getImageData(0,0,w,h), d = im.data
+    for(let i=0;i<d.length;i+=4)
+      for(let k=0;k<3;k++) d[i+k] = (1 - Math.exp(-(d[i+k]/255)*g*1.6))*255
+    a.putImageData(im,0,0)
+  }
+
+  if(P.dec.on){
+    const D = P.dec
+    const down = Math.max(1, Math.round(D.down*s))
+    const ww = Math.max(2, Math.round(w/down)), hh = Math.max(2, Math.round(h/down))
+    b.setTransform(1,0,0,1,0,0); b.globalCompositeOperation='source-over'; b.filter='none'
+    b.clearRect(0,0,w,h); b.imageSmoothingEnabled = true
+    b.drawImage(A, 0,0,w,h, 0,0,ww,hh)
+
+    const im = b.getImageData(0,0,ww,hh), d = im.data
+    const lv = Math.max(2, D.levels), step = 255/(lv-1), df = D.dither, jt = D.jitter*22
+    const buf = new Float32Array(ww*hh*3)
+    for(let i=0,p=0;i<ww*hh;i++,p+=4){ buf[i*3]=d[p]; buf[i*3+1]=d[p+1]; buf[i*3+2]=d[p+2] }
+    for(let y=0;y<hh;y++){
+      const ltr = (y%2===0)
+      for(let xi=0;xi<ww;xi++){
+        const x = ltr?xi:ww-1-xi, i=(y*ww+x)*3, dx = ltr?1:-1
+        for(let k=0;k<3;k++){
+          const v = buf[i+k] + (Math.random()-0.5)*jt
+          const q = Math.min(255, Math.max(0, Math.round(v/step)*step))
+          const e = (v-q)*df
+          buf[i+k] = q
+          if(e){
+            const put=(xx,yy,f)=>{ if(xx<0||xx>=ww||yy>=hh) return; buf[(yy*ww+xx)*3+k] += e*f }
+            put(x+dx,y,7/16); put(x-dx,y+1,3/16); put(x,y+1,5/16); put(x+dx,y+1,1/16)
+          }
+        }
+      }
+    }
+    for(let i=0,p=0;i<ww*hh;i++,p+=4){
+      for(let k=0;k<3;k++){ const v=buf[i*3+k]; d[p+k] = v<0?0:v>255?255:v }
+      d[p+3]=255
+    }
+    b.putImageData(im,0,0)
+    a.setTransform(1,0,0,1,0,0); a.globalCompositeOperation='source-over'; a.globalAlpha=1; a.filter='none'
+    a.imageSmoothingEnabled = false
+    a.clearRect(0,0,w,h); a.drawImage(B, 0,0,ww,hh, 0,0,w,h)
+    a.imageSmoothingEnabled = true
+  }
+
+  if(P.amp.on){
+    const g = P.amp.drive, bi = P.amp.bias, k = Math.tanh(g)
+    const im = a.getImageData(0,0,w,h), d = im.data
+    for(let i=0;i<d.length;i+=4)
+      for(let j=0;j<3;j++){
+        const x = d[i+j]/255
+        let y = Math.tanh(x*g)/k
+        y = y*(1-bi) + bi*x
+        d[i+j] = Math.round(Math.min(1,Math.max(0,y))*255)
+      }
+    a.putImageData(im,0,0)
+  }
+
+  if(P.rev.on && P.rev.amount>0){
+    blurTo(c, A, px(P.rev.size))
+    duck(1 - P.rev.amount*0.55)
+    a.save(); a.globalCompositeOperation='lighter'; a.globalAlpha = P.rev.amount
+    a.filter = `brightness(${P.rev.dark})`; a.drawImage(C,0,0); a.filter='none'; a.restore()
+  }
+
+  if(P.echo.on && P.echo.fb>0){
+    const {fb,taps,lp,rot,dist,ang} = P.echo
+    c.setTransform(1,0,0,1,0,0); c.clearRect(0,0,w,h); c.drawImage(A,0,0)
+    duck(1 - fb*0.5)
+    const rad = ang*Math.PI/180
+    a.save(); a.globalCompositeOperation='lighter'
+    let amp = fb
+    for(let i=1;i<=taps;i++){
+      a.globalAlpha = amp
+      a.filter = `blur(${px(lp)*i*0.5}px) brightness(0.85)`
+      a.save()
+      if(rot>0.5){ a.translate(w/2,h/2); a.rotate(i*Math.PI/2); a.translate(-w/2,-h/2) }
+      else { a.translate(Math.cos(rad)*px(dist)*i, Math.sin(rad)*px(dist)*i) }
+      a.drawImage(C,0,0); a.restore()
+      amp *= fb
+    }
+    a.filter='none'; a.restore()
+  }
+
+  if(P.filt.on && P.filt.blur>0){
+    c.setTransform(1,0,0,1,0,0); c.clearRect(0,0,w,h); c.drawImage(A,0,0)
+    blurTo(a, C, px(P.filt.blur))
+  }
+
+  if(P.reg.on && P.reg.amount>=0.4){
+    const rad = P.reg.ang*Math.PI/180, r = px(P.reg.amount)
+    const dx = Math.cos(rad)*r, dy = Math.sin(rad)*r
+    const srcD = a.getImageData(0,0,w,h).data
+    const out = a.createImageData(w,h), o = out.data
+    const at = (x,y,k)=>{
+      const xx = x<0?0:x>=w?w-1:x, yy = y<0?0:y>=h?h-1:y
+      return srcD[(yy*w+xx)*4+k]
+    }
+    for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+      const p=(y*w+x)*4
+      o[p]   = at(Math.round(x-dx), Math.round(y-dy), 0)
+      o[p+1] = srcD[p+1]
+      o[p+2] = at(Math.round(x+dx), Math.round(y+dy), 2)
+      o[p+3] = 255
+    }
+    a.putImageData(out,0,0)
+  }
+
+  if(P.util.on && P.util.width<1){
+    const mix = (1-P.util.width)/2
+    c.setTransform(-1,0,0,1,w,0); c.clearRect(0,0,w,h); c.drawImage(A,0,0); c.setTransform(1,0,0,1,0,0)
+    a.save(); a.globalCompositeOperation='source-over'; a.globalAlpha=mix; a.drawImage(C,0,0); a.restore()
+    if(P.util.bassMono>0){
+      blurTo(b, A, px(26))
+      c.setTransform(-1,0,0,1,w,0); c.clearRect(0,0,w,h); c.drawImage(B,0,0); c.setTransform(1,0,0,1,0,0)
+      a.save(); a.globalCompositeOperation='lighter'; a.globalAlpha = P.util.bassMono*0.14
+      a.drawImage(C,0,0); a.restore()
+    }
+  }
+
+  if(P.tint.on && (P.tint.amount>0 || P.tint.accent>0)){
+    const S = hue2rgb(P.tint.shadow), H = hue2rgb(P.tint.highlight), am = P.tint.amount, ac = P.tint.accent
+    const im = a.getImageData(0,0,w,h), d = im.data
+    for(let i=0;i<d.length;i+=4){
+      const l = (0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2])/255
+      for(let k=0;k<3;k++){
+        const t = S[k] + (H[k]-S[k])*l
+        d[i+k] = d[i+k]*(1-am) + t*am
+      }
+      if(ac>0 && l>0.34 && l<0.62){
+        d[i]  = d[i]  *(1-ac) + 122*ac
+        d[i+1]= d[i+1]*(1-ac) + 178*ac
+        d[i+2]= d[i+2]*(1-ac) + 214*ac
+      }
+    }
+    a.putImageData(im,0,0)
+  }
+
+  if(P.noise.on && P.noise.amount>0) noiseStage(a, w, h)
+
+  if(P.mix.on && P.mix.wet<1){
+    a.save(); a.globalCompositeOperation='source-over'; a.globalAlpha = 1-P.mix.wet
+    a.drawImage(src,0,0,w,h); a.restore()
+  }
+
+  {
+    b.setTransform(1,0,0,1,0,0); b.globalCompositeOperation='source-over'; b.globalAlpha=1; b.filter='none'
+    b.clearRect(0,0,w,h); b.drawImage(src,0,0,w,h)
+    const srcA = b.getImageData(0,0,w,h).data
+    const im = a.getImageData(0,0,w,h), d = im.data
+    for(let i=3;i<d.length;i+=4) d[i] = srcA[i]
+    a.putImageData(im,0,0)
+  }
+  return A
+}
+
+/* ============================================================
+   2. the mark — the SHIAN Kaibou glyph, as vectors
+      (assets/img/icon-kaibou.svg, proportions kept)
+   ============================================================ */
+const BG = '#0b0b0c', FG = '#e9e9e9', HOT = '#ff8a3d'
+
+/* draws the glyph centred on (cx,cy) at diameter d */
+function mark(g, cx, cy, d, o){
+  o = o || {}
+  const u = d/64            // the svg was authored on a 64 grid, 0..64
+  const X = v => cx + (v-32)*u
+  const Y = v => cy + (v-32)*u
+  g.lineCap = 'round'
+
+  // specimen — a soft body inside the ring, so the chain has something to bite
+  if(o.body){
+    const gr = g.createRadialGradient(X(28), Y(26), 0, X(32), Y(32), 17*u)
+    gr.addColorStop(0,   'rgba(255,168,110,.95)')
+    gr.addColorStop(.45, 'rgba(196,86,38,.55)')
+    gr.addColorStop(1,   'rgba(24,14,12,0)')
+    g.fillStyle = gr
+    g.beginPath(); g.arc(X(32), Y(32), 17*u, 0, 7); g.fill()
+  }
+
+  g.strokeStyle = FG; g.lineWidth = 5*u
+  g.beginPath(); g.arc(X(32), Y(32), 16*u, 0, 7); g.stroke()
+
+  g.strokeStyle = HOT; g.lineWidth = 4*u
+  g.beginPath(); g.moveTo(X(32), Y(14)); g.lineTo(X(32), Y(50)); g.stroke()
+
+  g.strokeStyle = FG; g.lineWidth = 3.5*u
+  g.beginPath(); g.moveTo(X(24), Y(26)); g.lineTo(X(40), Y(26)); g.stroke()
+  g.beginPath(); g.moveTo(X(23), Y(38)); g.lineTo(X(41), Y(38)); g.stroke()
+}
+
+/* ============================================================
+   3. the two pieces
+   ============================================================ */
+
+/* icon — the glyph, run through a restrained pass.
+   Grain has to survive 128px without reading as dirt, so: no crush,
+   one pixel of register slip, a little toner. */
+function drawIcon(S){
+  const src = cv(S,S), s = src.getContext('2d')
+  s.fillStyle = BG; s.fillRect(0,0,S,S)
+  // the glyph only occupies the middle ~56% of its own 64 grid, so the grid has
+  // to overflow the frame for the mark to actually fill the icon
+  mark(s, S/2, S/2, S*1.24, {body:true})
+
+  // Restrained: an icon that reads as grain, not as damage. Duotone is off —
+  // the plugin's default shadow hue is blue and it turns #0b0b0c navy.
+  P = {
+    expo:{on:1,gain:1.0}, eq:{on:0,blur:0},
+    dec:{on:0,down:1,levels:16,jitter:0,dither:0},
+    amp:{on:1,drive:1.2,bias:0.3},
+    rev:{on:1,size:14,amount:0.20,dark:0.75},
+    echo:{on:0,fb:0,taps:1,lp:0,rot:0,dist:0,ang:0},
+    filt:{on:0,blur:0}, reg:{on:1,amount:1.2,ang:20},
+    util:{on:0,width:1,bassMono:0},
+    tint:{on:0,shadow:0,highlight:0,amount:0,accent:0},
+    noise:{on:1,amount:0.09,size:1,color:0.05,tone:0.80,clump:0.30,shards:0,variance:0.5,blotch:0.20,seed:7},
+    mix:{on:1,wet:0.92}
+  }
+  return runChain(src, S, S)
+}
+
+/* cover — the same glyph, opened up. Left of the incision it is clean;
+   right of it, the plugin has been through it. The seam is the product. */
+function drawCover(W,H){
+  const out = cv(W,H), g = out.getContext('2d')
+
+  // ---- the specimen, drawn clean on its own canvas ----
+  const spec = cv(W,H), sp = spec.getContext('2d')
+  sp.fillStyle = BG; sp.fillRect(0,0,W,H)
+
+  const CX = W*0.672, CY = H*0.50, D = H*1.02
+
+  // halo — kept tight, so the field around the specimen stays black and the
+  // grain has nothing to chew on out there
+  const halo = sp.createRadialGradient(CX, CY, 0, CX, CY, D*0.52)
+  halo.addColorStop(0,  'rgba(255,138,61,.22)')
+  halo.addColorStop(.5, 'rgba(255,138,61,.05)')
+  halo.addColorStop(1,  'rgba(255,138,61,0)')
+  sp.fillStyle = halo; sp.fillRect(0,0,W,H)
+
+  mark(sp, CX, CY, D, {body:true})
+
+  // the incision runs the full height — the cut is not polite
+  sp.strokeStyle = 'rgba(255,138,61,.28)'; sp.lineWidth = 2
+  sp.beginPath(); sp.moveTo(CX, 0); sp.lineTo(CX, H); sp.stroke()
+
+  // ---- the same canvas, through the chain ----
+  // Enough that you can name every stage on sight — register slip, toner,
+  // a little crush — without the field turning into television static.
+  P = {
+    expo:{on:1,gain:0.95}, eq:{on:1,blur:0.8},
+    dec:{on:1,down:2,levels:10,jitter:0.18,dither:0.55},
+    amp:{on:1,drive:1.6,bias:0.15},
+    rev:{on:1,size:24,amount:0.32,dark:0.65},
+    echo:{on:1,fb:0.16,taps:2,lp:4,rot:0,dist:10,ang:20},
+    filt:{on:1,blur:0.4}, reg:{on:1,amount:3.2,ang:20},
+    util:{on:0,width:1,bassMono:0},
+    tint:{on:1,shadow:24,highlight:44,amount:0.06,accent:0},
+    noise:{on:1,amount:0.13,size:2,color:0.08,tone:0.94,clump:0.40,shards:0,variance:0.5,blotch:0.15,seed:7},
+    mix:{on:1,wet:1}
+  }
+  const done = runChain(spec, W, H)
+
+  // ---- compose: clean left of the seam, processed right ----
+  g.drawImage(spec, 0, 0)
+  g.save(); g.beginPath(); g.rect(CX, 0, W-CX, H); g.clip()
+  g.drawImage(done, 0, 0); g.restore()
+
+  // the seam itself
+  g.strokeStyle = HOT; g.lineWidth = 2
+  g.globalAlpha = .9
+  g.beginPath(); g.moveTo(CX, 0); g.lineTo(CX, H); g.stroke()
+  g.globalAlpha = 1
+
+  // ---- type, left ----
+  const L = W*0.062
+  g.textBaseline = 'alphabetic'
+
+  g.fillStyle = '#8a8a8e'
+  g.font = `400 ${Math.round(H*0.0205)}px 'Space Mono', ui-monospace, monospace`
+  const label = 'FIGMA PLUGIN — SHIAN 志庵'
+  let lx = L
+  for(const ch of label){ g.fillText(ch, lx, H*0.335); lx += g.measureText(ch).width + H*0.0048 }
+
+  g.fillStyle = FG
+  g.font = `400 ${Math.round(H*0.152)}px Anton, 'Arial Narrow', Impact, sans-serif`
+  g.fillText('KAIBOU', L - H*0.006, H*0.485)
+  const wmW = g.measureText('KAIBOU').width
+
+  g.fillStyle = '#8a8a8e'
+  g.font = `500 ${Math.round(H*0.056)}px 'Zen Kaku Gothic New', 'Hiragino Kaku Gothic ProN', sans-serif`
+  g.fillText('解剖', L + wmW + H*0.028, H*0.485)
+
+  g.fillStyle = FG
+  g.font = `400 ${Math.round(H*0.038)}px 'Zen Kaku Gothic New', 'Hiragino Kaku Gothic ProN', sans-serif`
+  g.fillText('素材を、あなたの質感に通す。', L, H*0.598)
+
+  g.fillStyle = '#5a5a5e'
+  g.font = `400 ${Math.round(H*0.0215)}px 'Space Mono', ui-monospace, monospace`
+  g.fillText('11-stage texture chain  ·  16 presets  ·  your original layer is kept', L, H*0.672)
+
+  return out
+}
+
+/* ============================================================
+   4. render whatever the url asked for
+   ============================================================ */
+const q = new URLSearchParams(location.search)
+const what = q.get('t') || 'cover'
+const S = parseInt(q.get('s') || '128', 10)
+
+/* A webfont used only from canvas is never requested — the loader has no DOM
+   node to hang it on. Ask for each face by hand before drawing. */
+async function fonts(){
+  const want = [
+    "400 100px Anton",
+    "400 40px 'Space Mono'",
+    "400 40px 'Zen Kaku Gothic New'",
+    "500 40px 'Zen Kaku Gothic New'",
+  ]
+  try {
+    await Promise.all(want.map(f => document.fonts.load(f, 'KAIBOU 解剖 素材')))
+    await document.fonts.ready
+  } catch(e){}
+  window.__fonts = want.map(f => f + ' → ' + document.fonts.check(f, 'KAIBOU 解剖'))
+}
+
+async function go(){
+  await fonts()
+  const out = document.getElementById('out')
+  const made = what === 'icon' ? drawIcon(S) : drawCover(1920, 960)
+  out.width = made.width; out.height = made.height
+  out.getContext('2d').drawImage(made, 0, 0)
+  document.title = 'ready'
+}
+go()
+</script>
