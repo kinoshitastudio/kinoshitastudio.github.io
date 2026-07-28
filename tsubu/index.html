@@ -78,6 +78,8 @@
   }
 /* 説明は見出しより必ず小さく・淡く。太字は要点1〜2語だけに効かせる */
 /* 説明は既定で畳む（詳細はマニュアル側に書く）。右上の ? で出せる */
+  /* 交点の柄によって意味を持たない項目は畳む（触れるのに効かない状態を作らない） */
+  body.only-men .men-off{display:none;}
   .hint{display:none;}
   body.help .hint{display:block;}
   #helpBtn{position:absolute;top:9px;right:10px;width:17px;height:17px;padding:0;line-height:1;
@@ -144,7 +146,7 @@
     <button data-v="5" class="on">面</button><button data-v="6">なし</button>
   </div>
   <div class="row"><label>玉</label><input type="range" id="bead" min="0" max="100" step="1" value="45"><span class="val"></span></div>
-  <div class="row"><label>大きさ</label><input type="range" id="beadk" min="1" max="4" step="1" value="1"><span class="val"></span></div>
+  <div class="row men-off"><label>大きさ</label><input type="range" id="beadk" min="1" max="4" step="1" value="1"><span class="val"></span></div>
   <div class="hint"><b>1＝粒ひとつが塊ひとつ</b>／<b>2＝2×2の4粒をまとめて1つ</b>／<b>3＝9粒で1つ</b>…。中の粒をまとめるので<b>穴もはみ出しも出ない</b>。⭐<b>解像度を変えても塊の見た目は保たれる</b>（解像に対する比で持っているため）。⚠️中がスカスカのマスはまとめない（細い画が太らないように）</div>
 
   <h2>グラデの断面 — 線と塊 両方に効く</h2>
@@ -178,7 +180,7 @@
     <button data-v="90">自作</button>
   </div>
   <div class="row" id="cc"><label>波色</label><input type="color" id="ca" value="#e9201c">
-    <label style="width:auto">球色</label><input type="color" id="cb" value="#2434ff">
+    <span class="men-off" style="display:contents"><label style="width:auto">球色</label><input type="color" id="cb" value="#2434ff"></span>
     <label style="width:auto">地</label><input type="color" id="cbg" value="#000000"></div>
   <div class="row"><label>階調</label><input type="range" id="steps" min="2" max="32" step="1" value="4"><span class="val"></span></div>
   <div class="row"><label>網</label><input type="range" id="dith" min="0" max="100" step="1" value="100"><span class="val"></span></div>
@@ -847,9 +849,11 @@ const touch = () => dirtyUntil = performance.now() + 1200;
 
 function loop(now){
   requestAnimationFrame(loop);
-  // ⭐ 流れ0・物理停止・操作なし＝絵が変わらないので描き直さない。
-  //    動きの正体は FPS ではなく gflow。FPS を落とすと操作まで鈍るので、ここで止める。
-  if(P.gflow === 0 && !running && now > dirtyUntil) return;
+  // ⭐ 静止しているあいだは「描かない」のではなく「頻度を落とす」。
+  //   ⚠️ 以前は完全に止めていたが、再描画を要求し忘れた項目（縦横比・厚み・格子・ワープ）が
+  //     そのまま「動かない機能」になった。漏れたら即バグになる設計だったのが誤り。
+  //     頻度を落とすだけなら、どこで何を変えても必ず反映される。
+  if(P.gflow === 0 && !running && now > dirtyUntil && now - last < 90) return;
   if(now - last < 1000 / P.fps) return;
   last = now;
   if(running) step();
@@ -876,7 +880,7 @@ document.querySelectorAll('.seg').forEach(seg => {
     if(seg.id === 'line' || seg.id === 'blob') buildTiles();
     // ⚠️ 交点の柄は build() の中で「どのドットを差し替えるか」を決めている。
     //    buildTiles() だけだとタイル画像は焼き直されるが割り当てが古いまま＝「なし」が効かない。
-    if(seg.id === 'blob') build();
+    if(seg.id === 'blob'){ build(); syncBlobUI(); }
     if(seg.id === 'pal'){ syncColorInputs(); buildTiles(); }
     if(seg.id === 'mode'){ running = false; build(); stat(); }
   }));
@@ -903,6 +907,10 @@ function syncWrapMax(){
     const v = w.parentElement.querySelector('.val'); if(v) v.textContent = n;
   }
 }
+// ⭐ 面のときは球色と大きさが効かない（面は地と同じ帯を直交させたもので、球色を使わない）。
+//   触れるのに何も起きない項目を画面に出さない。
+function syncBlobUI(){ document.body.classList.toggle('only-men', P.blob === 5); }
+syncBlobUI();
 document.getElementById('helpBtn').addEventListener('click', () => {
   document.body.classList.toggle('help');
 });
