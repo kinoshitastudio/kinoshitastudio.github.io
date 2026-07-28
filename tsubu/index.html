@@ -24,6 +24,8 @@
   /* メインだけ全画面。#gz や #warpcv まで巻き込まないよう限定する */
   #cv{display:block;position:fixed;inset:0;width:100%;height:100%;image-rendering:pixelated;}
   #gz,#warpcv{image-rendering:auto;}
+  /* ⭐ カーブを触るとページがスクロールしてしまうのを止める（#gz には入っていた） */
+  #warpcv{touch-action:none;}
 
   #panel{position:fixed;top:16px;right:16px;z-index:20;width:228px;
     background:rgba(244,242,238,.9);backdrop-filter:blur(12px);border:1px solid var(--line);
@@ -97,6 +99,7 @@
     input[type=color]{ width:34px; height:26px; }
     h2{ font-size:11.5px; margin-top:16px; padding-top:20px; }
     #helpBtn{ width:26px; height:26px; font-size:11px; top:8px; right:10px; }
+    #warpcv{ height:96px; }
   }
 /* 説明は見出しより必ず小さく・淡く。太字は要点1〜2語だけに効かせる */
 /* 説明は既定で畳む（詳細はマニュアル側に書く）。右上の ? で出せる */
@@ -217,8 +220,8 @@
   </div>
   <div class="row"><label>流れ</label><input type="range" id="gflow" min="0" max="300" step="1" value="0"><span class="val"></span></div>
   <div class="hint"><b>0＝静止</b>。上げると帯が流れ出す。⚠️動きの正体はFPSではなくこれ</div>
-  <div class="row"><label>落ち代</label><input type="range" id="fall" min="0" max="600" step="5" value="40"><span class="val"></span></div>
-  <div class="hint">「積もる」で字が崩れ落ちる先の余白。⚠️崩さないあいだは見た目が変わらない</div>
+  <div class="row"><label>落ち代</label><input type="range" id="fall" min="0" max="600" step="5" value="0"><span class="val"></span></div>
+  <div class="hint"><b>0＝その場で崩れる</b>（既定）→ 上げると<b>その分だけ下へ落ちる先ができる</b>。⚠️崩さないあいだは見た目が変わらない</div>
   <div class="row"><label>重力</label><input type="range" id="grav" min="0" max="200" step="1" value="60"><span class="val"></span></div>
   <div class="row"><label>FPS</label><input type="range" id="fps" min="1" max="60" step="1" value="30"><span class="val"></span></div>
 
@@ -240,7 +243,7 @@
 const cv = document.getElementById('cv'), g = cv.getContext('2d', { alpha:false });
 const P = { mode:0, res:16, cell:7, pal:1, steps:4, dith:100, gdir:90, gflow:0, fps:30, grav:60, font:0,
             tex:1, wav:0.1, bead:55, beadk:1, line:0, blob:5, ar:100, shine:60, valley:0, grad:0, shift:0, spread:0, dir:0, follow:100, grid:0, depth:0, fat:1,
-            lay:0, wrap:7, gapx:2, gapy:2, fall:40 };
+            lay:0, wrap:7, gapx:2, gapy:2, fall:0 };
 
 /* ── 見え ── 世界は画面と切り離す。引いて全体を見渡せるように ── */
 const cam = { s:1, x:0, y:0, rx:0, ry:0 };   // rx,ry = 擬似3Dの傾き
@@ -262,8 +265,13 @@ function fit(){
   //   これを含めて中央を取ると、空白のぶん字が上へ押し上げられ、
   //   さらにフォント読み込みで組み直すたびに位置が変わって見えていた。
   const Hc = Math.max(1, H - Math.round(P.fall));
-  cam.s = Math.min(VW / (W * C + 40), VH / (Hc * C + 40));
-  cam.x = (VW - W * C * cam.s) / 2;
+  // ⭐ 右のパネルは板に重なっている。画面全体で中央を取ると、その幅ぶん右へ寄って見える。
+  //   実際に見えている範囲（パネルを除いた左側）の中心に置く。
+  //   ⚠️ モバイルはパネルが下に来る（#cv が 58vh）ので横は引かない。
+  const PW = innerWidth > 760 ? 228 + 32 : 0;
+  const VWv = Math.max(80, VW - PW);
+  cam.s = Math.min(VWv / (W * C + 40), VH / (Hc * C + 40));
+  cam.x = (VWv - W * C * cam.s) / 2;
   cam.y = (VH - Hc * C * cam.s) / 2;
 }
 
@@ -997,23 +1005,29 @@ function resetAnchors(humps){                // 山数からカーブを作り�
   for(let i=0;i<=seg;i++) ANCHORS.push({ t:i/seg, v: 1 + Math.cos(i/seg*Math.PI*humps)*0.6 });
 }
 const wc = document.getElementById('warpcv'), wcg = wc.getContext('2d');
+// ⭐ 指で操作する端末では、点の大きさと当たり判定を広げる。
+//   幅の6%（約12px）はマウス前提の値で、指だと掴めずスクロールに逃げられていた。
+const COARSE = matchMedia('(pointer:coarse)').matches;
+const WC_HIT = COARSE ? 0.11 : 0.06, WC_DOT = COARSE ? 6 : 3.5;
+if(COARSE){ wc.width = 408; wc.height = 192; }   // CSSで拡大する前提で内部解像度も上げる
 function drawWarpCurve(){
   const W2=wc.width, H2=wc.height; wcg.clearRect(0,0,W2,H2);
   wcg.strokeStyle='rgba(10,10,10,.12)'; wcg.beginPath();
   wcg.moveTo(0,H2/2); wcg.lineTo(W2,H2/2); wcg.stroke();     // 等倍ライン
   const y = v => H2 - (v/2.2)*H2;
-  wcg.strokeStyle='rgba(10,10,10,.7)'; wcg.lineWidth=1.4; wcg.beginPath();
+  wcg.strokeStyle='rgba(10,10,10,.7)'; wcg.lineWidth=COARSE ? 2.8 : 1.4; wcg.beginPath();
   for(let x=0;x<=W2;x+=3){ const v=anchorAt(x/W2); x?wcg.lineTo(x,y(v)):wcg.moveTo(x,y(v)); }
   wcg.stroke();
   wcg.fillStyle='#0a0a0a';
-  for(const a of ANCHORS){ wcg.beginPath(); wcg.arc(a.t*W2, y(a.v), 3.5, 0, 7); wcg.fill(); }
+  const dot = COARSE ? WC_DOT * (W2/204) : WC_DOT;
+  for(const a of ANCHORS){ wcg.beginPath(); wcg.arc(a.t*W2, y(a.v), dot, 0, 7); wcg.fill(); }
 }
 let wcDrag=-1;
 function wcPt(e){ const r=wc.getBoundingClientRect();
   return { t:(e.clientX-r.left)/r.width, v:(1-(e.clientY-r.top)/r.height)*2.2 }; }
 wc.addEventListener('pointerdown',e=>{
   const p=wcPt(e); let best=-1,bd=1;
-  ANCHORS.forEach((a,i)=>{ const d=Math.abs(a.t-p.t); if(d<0.06&&d<bd){bd=d;best=i;} });
+  ANCHORS.forEach((a,i)=>{ const d=Math.abs(a.t-p.t); if(d<WC_HIT&&d<bd){bd=d;best=i;} });
   if(best<0){ ANCHORS.push({t:Math.max(0,Math.min(1,p.t)),v:Math.max(0.1,Math.min(2.2,p.v))});
     ANCHORS.sort((a,b)=>a.t-b.t); best=ANCHORS.findIndex(a=>a.t===p.t); }
   wcDrag=best; wc.setPointerCapture(e.pointerId); drawWarpCurve();
@@ -1024,7 +1038,7 @@ wc.addEventListener('pointermove',e=>{ if(wcDrag<0)return; const p=wcPt(e);
   a.v=Math.max(0.1,Math.min(2.2,p.v)); ANCHORS.sort((x,y)=>x.t-y.t); drawWarpCurve(); });
 wc.addEventListener('pointerup',()=>wcDrag=-1);
 wc.addEventListener('dblclick',e=>{ const p=wcPt(e);
-  const i=ANCHORS.findIndex(a=>Math.abs(a.t-p.t)<0.06);
+  const i=ANCHORS.findIndex(a=>Math.abs(a.t-p.t)<WC_HIT);
   if(i>0&&i<ANCHORS.length-1){ ANCHORS.splice(i,1); drawWarpCurve(); } });
 
 /* ── 角度ギズモ ── Spline 風のオービット球。緯線経線の回転で視点が見える ── */
