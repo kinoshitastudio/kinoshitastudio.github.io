@@ -129,11 +129,11 @@
   <div class="hint" style="margin:9px 0 2px;color:#111"><b>交点の柄</b></div>
   <div class="seg" id="blob">
     <button data-v="0" class="on">球</button><button data-v="1">輪</button>
-    <button data-v="2">錐</button><button data-v="3">花</button><button data-v="4">渦</button><button data-v="5">なし</button>
+    <button data-v="2">錐</button><button data-v="3">花</button><button data-v="4">渦</button><button data-v="5">面</button><button data-v="6">なし</button>
   </div>
   <div class="row"><label>玉</label><input type="range" id="bead" min="0" max="100" step="1" value="45"><span class="val"></span></div>
   <div class="row"><label>大きさ</label><input type="range" id="beadk" min="1" max="8" step="1" value="1"><span class="val"></span></div>
-  <div class="hint"><b>1＝1マスに1つ</b>（数が増減するだけ）→ <b>上げると数マスにまたがる大きな塊</b>になる。線の「細かさ」と同じ考え方</div>
+  <div class="hint"><b>1＝粒ひとつが塊ひとつ</b>／<b>2＝2×2の4粒をまとめて1つ</b>／<b>3＝9粒で1つ</b>…。中の粒をまとめるので<b>穴もはみ出しも出ない</b>。⚠️中がスカスカのマスはまとめない（細い画が太らないように）</div>
 
   <h2>グラデの断面 — 線と塊 両方に効く</h2>
   <div class="row"><label>谷</label><input type="range" id="valley" min="0" max="100" step="1" value="0"><span class="val"></span></div>
@@ -473,32 +473,52 @@ function build(){
   //    密度の絶対しきい値だと、太字で密度が二極化したとき中間で反応しなかった。
   //    順位で上位を選ぶので、密度が偏っていても 0→100 まで滑らかに増減する。
   const order = raw.map((_, i) => i).sort((a, b) => raw[b].dens - raw[a].dens);   // 密度の高い順
-  const sphereN = P.blob === 5 ? 0 : Math.round(raw.length * P.bead / 100);   // ⭐「なし」＝交点を差し替えない
+  const sphereN = P.blob === 6 ? 0 : Math.round(raw.length * P.bead / 100);   // ⭐「なし」＝交点を差し替えない
   const isSphere = new Uint8Array(raw.length);
   const BK = Math.max(1, Math.round(P.beadk));
+  const absorbed = new Uint8Array(raw.length);          // 塊にのみ込まれて描かれない粒
   if(BK <= 1){
     for(let k = 0; k < sphereN; k++) isSphere[order[k]] = 1;
   } else {
-    // ⭐ K×K のマスにつき球は1個だけ。数が 1/K² に減り、描画側で K 倍に拡大する＝
-    //   「数が増減するだけ」だったのを「粒度が変わる」に変える（線の細かさと同じ考え方）。
-    const used = new Set(), lim = Math.ceil(sphereN / (BK * BK));
-    let placed = 0;
-    for(const i of order){
-      if(placed >= lim) break;
-      const key = Math.floor(raw[i].gx / BK) + ',' + Math.floor(raw[i].gy / BK);
-      if(used.has(key)) continue;
-      used.add(key); isSphere[i] = 1; placed++;
+    // ⭐ K×K のマスの「中の粒をまとめて1つの塊にする」。
+    //   ⚠️ 以前は1個だけ残して K 倍に拡大していた＝残り(K²-1)個が消えて穴が空き、
+    //     拡大した塊が字の外へはみ出して破綻していた。まとめれば穴もはみ出しも出ない。
+    //   ⚠️ 中がスカスカのマスは塊にしない（字の細い所が勝手に太って形が壊れるため）。
+    const blocks = new Map();
+    raw.forEach((r, i) => {
+      const key = Math.floor(r.gx / BK) + ',' + Math.floor(r.gy / BK);
+      let b = blocks.get(key); if(!b) blocks.set(key, b = []); b.push(i);
+    });
+    const need = BK * BK * 0.6;                          // 6割以上 埋まっているマスだけ
+    const cand = [...blocks.values()].filter(b => b.length >= need)
+                                     .sort((a, b) => b.length - a.length);
+    const lim = Math.round(cand.length * P.bead / 100);  // 玉＝まとめるマスの割合
+    for(let k = 0; k < lim; k++){
+      const b = cand[k];
+      const bx = Math.floor(raw[b[0]].gx / BK) * BK, by = Math.floor(raw[b[0]].gy / BK) * BK;
+      const cx = bx + (BK - 1) / 2, cy = by + (BK - 1) / 2;
+      let best = b[0], bd = Infinity;                    // 代表＝マスの中心にいちばん近い粒
+      for(const i of b){
+        const d2 = (raw[i].gx - cx) ** 2 + (raw[i].gy - cy) ** 2;
+        if(d2 < bd){ bd = d2; best = i; }
+      }
+      isSphere[best] = 1;
+      for(const i of b) if(i !== best) absorbed[i] = 1;  // 残りは塊に含まれるので描かない
     }
   }
   dots = raw.map((r, i) => {
-    const t = isSphere[i] ? SPHERE   // 画が交わって塊になっている所に球
-            : (Math.round(((r.ang % Math.PI) + Math.PI) % Math.PI / Math.PI * TILE_ANGLES)) % TILE_ANGLES;
+    const base = (Math.round(((r.ang % Math.PI) + Math.PI) % Math.PI / Math.PI * TILE_ANGLES)) % TILE_ANGLES;
+    // ⭐ 交点の柄「面」＝地と同じ帯を、向きだけ直交させる（同じグラデを角度だけ変えて複製する型）。
+    //    球のように別物を置くのではないので、地と質感が揃ったまま交点だけ流れが変わる。
+    const t = !isSphere[i] ? base
+            : (P.blob === 5 ? (base + (TILE_ANGLES >> 1)) % TILE_ANGLES : SPHERE);
     return {
       x:r.gx, y:r.gy,        // いまの居場所（格子）
       hx:r.gx, hy:r.gy,      // 字だったときの居場所（＝戻る先）
       gx0:r.gx, gy0:r.gy,    // 伸ばしの基準（元位置）
       vy:0, live:false, seed:Math.random(),
       ci:r.ci, t, ang:r.ang, dens:r.dens,
+      big: isSphere[i] === 1, hide: absorbed[i] === 1,
     };
   });
   settled = 0;
@@ -674,15 +694,15 @@ function draw(){
     const BK = Math.max(1, Math.round(P.beadk));
     const put = d => {
       const w = CW*scw(d), h = CH*sch(d);
-      if(d.t === SPHERE && BK > 1){
+      if(d.big && BK > 1){
         const W2 = w*BK, H2 = h*BK;                       // 中心を保ったまま K 倍に広げる
         g.drawImage(tiles[d.t][phaseOf(d)], px(d)-(W2-w)/2, py(d)-(H2-h)/2, W2, H2);
       } else {
         g.drawImage(tiles[d.t][phaseOf(d)], px(d), py(d), w, h);
       }
     };
-    for(const d of dots) if(d.t !== SPHERE) put(d);       // 線を先に
-    for(const d of dots) if(d.t === SPHERE) put(d);       // 大きい塊を上に
+    for(const d of dots) if(!d.big && !d.hide) put(d);    // 地の柄を先に
+    for(const d of dots) if(d.big  && !d.hide) put(d);    // まとめた塊を上に
     return;
   }
 
