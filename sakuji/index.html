@@ -656,6 +656,30 @@
   <div class="row"><label>字なり</label><input type="range" id="tzFollow" min="0" max="100" step="1" value="100"><span class="val"></span></div>
   <div class="row"><label>ずれ</label><input type="range" id="tzShift" min="0" max="100" step="1" value="0"><span class="val"></span></div>
   <div class="row"><label>粒の隙間</label><input type="range" id="tzGap" min="0" max="40" step="1" value="0"><span class="val"></span></div>
+
+  <div class="note" style="margin:8px 0 4px"><b>グラデの断面</b> — 粒だけに効く（金属・グラデ塗りには触らない）</div>
+  <div class="row"><label>谷</label><input type="range" id="tzValley" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+  <div class="hint">暗い部分の色。<b>0＝同じ色の暗い版</b>（色が濁らない）→ <b>100＝黒</b>（締まって縁が立つ）</div>
+  <div class="row"><label>階調</label><input type="range" id="tzGrad" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+  <div class="hint">面の丸み。<b>0＝2色ぶん</b>（平らに見える）→ <b>100＝中間色が増える</b>（曲面・金属に見える）</div>
+  <div class="row"><label>照り</label><input type="range" id="tzShine" min="0" max="100" step="1" value="60"><span class="val"></span></div>
+
+  <div class="note" style="margin:8px 0 4px"><b>グラデ（ディザ）</b> — 粒 TSUBU と同じ組み立て。
+    <b>グラデ塗りのストップとは別に持つ</b>（黒が混ざって濁らないように）</div>
+  <div class="seg" id="tzPal">
+    <button data-v="0">墨</button><button data-v="1" class="on">奇抜</button><button data-v="2">琵琶湖</button>
+    <button data-v="3">蛍光</button><button data-v="4">毒</button><button data-v="5">熱</button>
+    <button data-v="6">赤青</button><button data-v="7">FC</button><button data-v="90">自作</button>
+  </div>
+  <div class="row"><label>波色</label><input type="color" id="tzCa" value="#e9201c">
+    <label style="width:auto">球色</label><input type="color" id="tzCb" value="#2434ff">
+    <label style="width:auto">地</label><input type="color" id="tzCbg" value="#000000"></div>
+  <div class="row"><label>階調</label><input type="range" id="tzSteps" min="2" max="32" step="1" value="4"><span class="val"></span></div>
+  <div class="row"><label>網</label><input type="range" id="tzDith" min="0" max="100" step="1" value="100"><span class="val"></span></div>
+  <div class="row"><label>網の向き</label><input type="range" id="tzGdir" min="0" max="360" step="1" value="90"><span class="val"></span></div>
+  <div class="hint">⭐<b>グラデ塊</b>＝波色から 谷→波色→白 のランプを引く（谷は<b>黒でなく波色の暗い版</b>＝濁らない）。
+    <b>ドット</b>＝地→波色→球色のパレットを<b>網（ディザ）</b>で階調を偽装する。断面の <b>谷・階調・照り</b> もそのまま効く</div>
+
   <label class="row" style="gap:7px;cursor:pointer;margin-top:4px"><input type="checkbox" id="tzPv" style="width:auto;flex:none"><span style="font-size:10.5px;opacity:.75">preview</span></label>
   <button class="btn" id="bTsubuize" style="margin-top:4px">粒にする</button>
   <div class="note">⚠️解像を上げるほど粒が増えて重い。⭐<b>字なり</b>＝図形の輪郭に沿って帯の向きが変わる<br>
@@ -4671,8 +4695,103 @@ document.querySelectorAll('#alongDir button').forEach(b =>
    ここでは「1粒＝1つの小さな矩形」にするので、ベクターのまま外に出せる。
    ⭐ 帯の向きは、輪郭の近さから求めた勾配（＝図形の"画の向き"）に沿わせられる。
       TSUBU が字形から Sobel で取っていたものを、パスとの距離から取る。 */
+/* ══ 粒の色 ── 粒 TSUBU からそのまま持ち込む ══
+   ⚠️ これまでは「グラデ塗りのストップ」から色を拾っていた。
+      そこに黒が入っていると谷が黒に潰れて濁り、TSUBU の見え方にならなかった。
+   ⭐ TSUBU の谷は「黒」ではなく「波色の暗い版」。色相が残るから濁らない。
+      粒は粒で色を持つ（グラデ塗りのプリセットには手を触れない）。 */
+const TZ_PALS = [
+  { name:'墨',     bg:'#000000', a:[236,233,226], b:[255,255,255],
+    cols:['#0a0a0a','#4a4a46','#8f8d86','#c9c6bd','#f4f2ee'] },
+  { name:'奇抜',   bg:'#000000', a:[233,32,28],  b:[36,52,255],
+    cols:['#ff2d6f','#ffd400','#00e5ff','#7cff3f','#8a2be2','#ffffff'] },
+  { name:'琵琶湖', bg:'#000000', a:[127,174,158], b:[223,231,226],
+    cols:['#0d1417','#1b3a42','#2f6b6b','#7fae9e','#dfe7e2'] },
+  { name:'蛍光',   bg:'#08001a', a:[255,32,140], b:[64,255,208],
+    cols:['#08001a','#ff2094','#ff00e5','#40ffd0','#c0ff2a','#ffffff'] },
+  { name:'毒',     bg:'#001005', a:[124,255,63], b:[150,40,255],
+    cols:['#001005','#7cff3f','#00e5a0','#40b0ff','#9628ff','#ffffff'] },
+  { name:'熱',     bg:'#0d0000', a:[255,60,0],   b:[255,214,0],
+    cols:['#0d0000','#ff3c00','#ff7a00','#ffb400','#ffe64d','#fff7cc'] },
+  { name:'赤青',   bg:'#000010', a:[214,30,20],  b:[36,52,235],
+    cols:['#000010','#e01e14','#ff5a3c','#5a4cff','#2020e0','#ffffff'] },
+  { name:'FC',     bg:'#000000', a:[92,148,252], b:[248,56,0],
+    cols:['#000000','#5c94fc','#00a800','#fcd800','#f83800','#bcbcbc'] },
+];
+const TZ_CUSTOM_IDX = 90;                        // 自作＝色UIの3色をそのまま使う
+/* ディザ（8bitがグラデーションを偽装した方法） */
+const TZ_BAYER = [[0,8,2,10],[12,4,14,6],[3,11,1,9],[15,7,13,5]].flat().map(v => v/16);
+function tzHexToRgb(h){ h = String(h).replace('#',''); return [0,2,4].map(i => parseInt(h.slice(i,i+2),16)); }
+function tzRgbHex(c){ return '#' + c.map(v => Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join(''); }
+/* いま選んでいるパレット。自作なら色UIの3色から作る（地→波色→球色を補間） */
+function tzPalNow(){
+  const sel = +(document.querySelector('#tzPal button.on')?.dataset.v ?? 1);
+  const ca  = document.getElementById('tzCa')?.value  || '#e9201c';
+  const cb  = document.getElementById('tzCb')?.value  || '#2434ff';
+  const bg  = document.getElementById('tzCbg')?.value || '#000000';
+  if(sel !== TZ_CUSTOM_IDX){
+    const p = TZ_PALS[sel] || TZ_PALS[1];
+    return { bg:p.bg, a:p.a, b:p.b, cols:p.cols };
+  }
+  const stops = [tzHexToRgb(bg), tzHexToRgb(ca), tzHexToRgb(cb)];
+  const lerp = (c1,c2,t) => c1.map((v,i) => Math.round(v + (c2[i]-v)*t));
+  const cols = [];
+  for(let i=0;i<6;i++){ const u = i/5*2, s = Math.min(1, Math.floor(u)), f = u - s;
+    cols.push(tzRgbHex(lerp(stops[s], stops[s+1] || stops[s], f))); }
+  return { bg, a:tzHexToRgb(ca), b:tzHexToRgb(cb), cols };
+}
+/* ⭐ 波色から「谷→中間→波色→明→白」のランプを 256 段に焼く（TSUBU と同じ式）。
+   谷スライダーで谷を黒へ寄せられる。0＝色が残った暗部（濁らない）／100＝純黒（締まる） */
+function tzRamp(pal){
+  const g = id => +(document.getElementById(id)?.value || 0);
+  const VAL = g('tzValley')/100, GRD = g('tzGrad')/100;
+  const A = pal.a, WHITE = [255,255,255];
+  const mixc = (c1,c2,t) => [0,1,2].map(i => c1[i] + (c2[i]-c1[i])*t);
+  const valleyC = A.map(v => v * 0.55 * (1 - VAL));
+  const STOPS = [
+    [0.00, valleyC],
+    [0.28, mixc(valleyC, A, 0.45 + 0.15*GRD)],
+    [0.58, A],
+    [0.80, mixc(A, WHITE, 0.35*GRD)],
+    [1.00, mixc(A, WHITE, 0.10 + 0.55*GRD)],
+  ];
+  const LUT = new Float32Array(256*3);
+  for(let q=0;q<256;q++){
+    const v = q/255;
+    let c = STOPS[STOPS.length-1][1];
+    for(let s=1;s<STOPS.length;s++){
+      if(v <= STOPS[s][0]){
+        const p0 = STOPS[s-1][0], p1 = STOPS[s][0];
+        c = mixc(STOPS[s-1][1], STOPS[s][1], (v-p0)/((p1-p0)||1));
+        break;
+      }
+    }
+    LUT[q*3]=c[0]; LUT[q*3+1]=c[1]; LUT[q*3+2]=c[2];
+  }
+  return LUT;
+}
+/* ランプを引いて、稜線の照り返しを足す（照りスライダー） */
+function tzRampColor(v, LUT, shine){
+  const k  = Math.pow(Math.max(0,v), 1.8);                 // 0=谷 1=山
+  const hi = Math.pow(Math.max(0,v), 6.0) * shine;         // 稜線の照り返し
+  const q  = (k < 0 ? 0 : k > 1 ? 255 : Math.round(k*255)) * 3;
+  return tzRgbHex([LUT[q] + 255*hi, LUT[q+1] + 255*hi, LUT[q+2] + 255*hi]);
+}
+/* ドット＝場のグラデを網（ディザ）で階調に落として、パレットから色を選ぶ */
+function tzDitherColor(i, j, N, o){
+  const { cols, steps, dith, gca, gsa } = o;
+  let v = (i/N * gca + j/N * gsa) * 0.5 + 0.5;
+  v = v - Math.floor(v);
+  const bq = TZ_BAYER[(j % 4) * 4 + (i % 4)];
+  const q  = Math.floor(v * (steps-1) + (bq-0.5) * dith + 0.5);
+  const ci = Math.max(0, Math.min(cols.length-1,
+    Math.round(Math.max(0, Math.min(steps-1, q)) / ((steps-1)||1) * (cols.length-1))));
+  return cols[ci];
+}
 function tzOpt(){
   const g = id => document.getElementById(id);
+  const pal = tzPalNow();
+  const gd  = +(g('tzGdir')?.value || 90) * Math.PI/180;
   return {
     tex   : document.querySelector('#tzTex button.on')?.dataset.v || 'blob',
     res   : +(g('tzRes')?.value || 24),
@@ -4682,6 +4801,12 @@ function tzOpt(){
     follow: +(g('tzFollow')?.value || 100) / 100,
     shift : +(g('tzShift')?.value || 0) / 100,
     gap   : +(g('tzGap')?.value || 0) / 100,
+    // ⭐ 色は粒じぶんで持つ（グラデ塗りのストップは見ない）
+    pal, cols: pal.cols, LUT: tzRamp(pal),
+    shine : +(g('tzShine')?.value ?? 60) / 100,
+    steps : +(g('tzSteps')?.value || 4),
+    dith  : +(g('tzDith')?.value || 100) / 100,
+    gca   : Math.cos(gd), gsa : Math.sin(gd),
   };
 }
 /* 図形の内側かどうか。Group ならどれか1つに入っていればよい */
@@ -4713,7 +4838,6 @@ function tsubuize(item, o){
   const cw = b.width / N, ch = b.height / N;
   const pad = Math.min(cw, ch) * o.gap * 0.5;
   const kids = [];
-  const stops = S.stops.slice().sort((a,x)=>a.t-x.t).map(x => [x.c, x.t]);
   for(let j = 0; j < N; j++){
     for(let i = 0; i < N; i++){
       const cx = b.x + (i + 0.5) * cw, cy = b.y + (j + 0.5) * ch;
@@ -4754,15 +4878,16 @@ function tsubuize(item, o){
         for(let k = 0; k <= K; k++){
           const t = k / K;                              // 粒内 0〜1（画に沿う軸）
           const v = patAt(t, 0.5);
-          const kk = Math.max(0, Math.min(1, Math.pow(Math.max(0, v), 1.8)));
-          st.push([sampleStopColor(kk), t]);
+          // ⭐ 色は波色から引いたランプ＋照り（TSUBU と同じ）。
+          //   ⚠️ 階調は「段に落とす」＝ここを連続で繋ぐと粒が溶けてただのグラデになる。
+          const vq = (o.steps > 1) ? Math.round(v * (o.steps-1)) / (o.steps-1) : v;
+          st.push([tzRampColor(vq, o.LUT, o.shine), t]);
         }
         cell.fillColor = { gradient:{ stops: st },
                            origin: mid.subtract(dir), destination: mid.add(dir) };
       } else {
-        // ドット ── 1粒1色。粒の真ん中の明暗を拾う
-        const v = patAt(0.5, 0.5);
-        cell.fillColor = sampleStopColor(Math.max(0, Math.min(1, Math.pow(Math.max(0, v), 1.8))));
+        // ドット ── 1粒1色。TSUBU と同じく、場のグラデを網（ディザ）で階調に落とす
+        cell.fillColor = tzDitherColor(i, j, N, o);
       }
       cell.strokeColor = null; cell.strokeWidth = 0;
       kids.push(cell);
@@ -4772,6 +4897,32 @@ function tsubuize(item, o){
   const g = new Group(kids);
   g.__tsubu = { d: item.pathData || null, json: item.exportJSON() };
   return g;
+}
+/* ⭐ 文字は「字の形」でなく四角い箱として粒が乗ってしまう。
+   PointText は中身（塗りの内側）の判定を持たないので、bounds 全体が内側と見なされるため。
+   ⚠️ だから粒にする前にパスへ変えておく（イラレのアウトライン化と同じ）。
+   一度パスにすれば以後は速いので、下見のたびに変換しなくてよい。 */
+function tzHasText(items){
+  const t = [];
+  items.forEach(it => collectTexts(it, t));
+  return t.length;
+}
+async function tzOutlineFirst(items){
+  if(!tzHasText(items)) return items;
+  // ⚠️ アウトライン化は元の文字を「別のオブジェクトに差し替える」。
+  //   元を持ったままだと親を失って対象が空になり、粒が何も乗らなくなる。
+  //   前後の差分を取って、出来たパスを掴み直す。
+  const before = artLayer.children.slice();
+  const n = await outlineTextsIn(items);
+  const kept  = items.filter(it => it && it.parent);                  // 生き残ったもの（束など）
+  const added = artLayer.children.filter(c => !before.includes(c));   // 差し替わって出来たもの
+  const out = kept.concat(added.filter(c => !kept.includes(c)));
+  if(!out.length) return items.filter(it => it && it.parent);
+  artLayer.children.forEach(c => c.selected = false);
+  out.forEach(it => it.selected = true);
+  _tzLast = out;                                   // 置き換わったので覚え直す
+  stat('文字をパスにしてから粒にします（' + n + '字）');
+  return out;
 }
 /* ⭐ 線を選んでいるときは、線をいったん面に変えてから粒にする。
    線のままでは中身が無いので粒を置けない（イラレの「アウトライン化」と同じ考え方）。 */
@@ -4798,18 +4949,23 @@ function tzSourceOf(it){
   }
   return { src: it, temp: false };
 }
-document.getElementById('bTsubuize')?.addEventListener('click', () => {
-  const sel = selected();
+document.getElementById('bTsubuize')?.addEventListener('click', async () => {
+  let sel = tzTargets();
   if(!sel.length){ stat('図形か文字を選んでください'); return; }
   snapshot();
+  sel = await tzOutlineFirst(sel);                 // 文字が混ざっていたら先にパスへ
+  if(!sel.length){ stat('できませんでした'); return; }
   const o = tzOpt();
   let made = 0;
+  const done = [];
   sel.forEach(it => {
     const { src, temp } = tzSourceOf(it);
     const g = tsubuize(src, o);
     if(temp) src.remove();
-    if(g){ g.insertAbove(it); it.remove(); g.selected = true; made++; }
+    if(g){ g.insertAbove(it); it.remove(); g.selected = true; made++; done.push(g); }
   });
+  // ⭐ かけたものを覚える＝選択を外しても、そのままスライダーで作り直せる
+  if(done.length) _tzLast = done;
   guides();
   stat(made ? '粒にした（' + o.res + '×' + o.res + '・' + (o.tex === 'blob' ? 'グラデ塊' : 'ドット') + '・'
             + (S.target === 'stroke' ? '線' : '塗り') + '）' : 'できませんでした');
@@ -4817,20 +4973,58 @@ document.getElementById('bTsubuize')?.addEventListener('click', () => {
 document.querySelectorAll('#tzTex button, #tzLine button').forEach(b =>
   b.addEventListener('click', () => b.parentElement.querySelectorAll('button')
     .forEach(x => x.classList.toggle('on', x === b))));
-['tzRes','tzWav','tzDir','tzFollow','tzShift','tzGap'].forEach(id => {
+const TZ_SLIDERS = ['tzRes','tzWav','tzDir','tzFollow','tzShift','tzGap',
+                    'tzValley','tzGrad','tzShine','tzSteps','tzDith','tzGdir'];
+TZ_SLIDERS.forEach(id => {
   const r = document.getElementById(id); if(!r) return;
   const v = r.parentElement.querySelector('.val');
   const sync = () => { if(v) v.textContent = r.value; };
   r.addEventListener('input', sync); sync();
 });
+/* ⭐ パレット＝粒 TSUBU の8種＋自作。選ぶと3色を映す（そのあと色を触れば「自作」になる） */
+document.querySelectorAll('#tzPal button').forEach(b =>
+  b.addEventListener('click', () => {
+    b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    const v = +b.dataset.v;
+    if(v !== TZ_CUSTOM_IDX){
+      const p = TZ_PALS[v] || TZ_PALS[1];
+      const set = (id, val) => { const el = document.getElementById(id); if(el) el.value = val; };
+      set('tzCa', tzRgbHex(p.a)); set('tzCb', tzRgbHex(p.b)); set('tzCbg', p.bg);
+    }
+    tzChanged();
+  }));
+/* 色を触ったら「自作」へ（TSUBU と同じ感触） */
+['tzCa','tzCb','tzCbg'].forEach(id =>
+  document.getElementById(id)?.addEventListener('input', () => {
+    document.querySelectorAll('#tzPal button')
+      .forEach(x => x.classList.toggle('on', +x.dataset.v === TZ_CUSTOM_IDX));
+    tzChanged();
+  }));
+/* 粒の設定を触ったとき＝かけたものを作り直し、下見も作り直す */
+function tzChanged(){
+  if(typeof retsubuSoon === 'function') retsubuSoon();
+  if(typeof tzPvSoon === 'function') tzPvSoon();
+}
+TZ_SLIDERS.forEach(id => document.getElementById(id)?.addEventListener('input', tzChanged));
 
 
 /* ⭐ 粒にしたあとも、スライダーを動かせば作り直す。
    ⚠️ 押してみないと分からない状態だと調整できない。元の図形を覚えさせてあるので戻して掛け直す。
    解像を上げると粒が数千になるので、連続操作はまとめてから1回だけ。 */
 let _tzTimer = null;
+/* ⭐ 「いま粒を触っている対象」を1箇所で持つ。
+   ⚠️ 選択だけを見ていたので、カーソルを外した（選択が外れた）とたんに
+      下見も作り直しも止まり、元の姿に戻って見えていた。
+      選んでいればそれを覚え、選んでいなければ最後に触ったものを使い続ける。 */
+let _tzLast = [];
+function tzTargets(){
+  const sel = selected().filter(it => it && it.parent);
+  if(sel.length){ _tzLast = sel; return sel; }
+  _tzLast = _tzLast.filter(it => it && it.parent);      // 消えたものは落とす
+  return _tzLast;
+}
 function retsubu(silent){
-  const sel = selected().filter(it => it.__tsubu && it.__tsubu.json);
+  const sel = tzTargets().filter(it => it.__tsubu && it.__tsubu.json);
   if(!sel.length) return false;
   if(!silent) snapshot();
   const o = tzOpt();
@@ -4842,7 +5036,9 @@ function retsubu(silent){
     const g = tsubuize(src, o);
     src.remove();
     if(g){
-      g.insertAbove(old); g.selected = true;
+      g.insertAbove(old); g.selected = old.selected;
+      // ⭐ 作り直すと別のオブジェクトになるので、覚えている対象も差し替える
+      const k = _tzLast.indexOf(old); if(k >= 0) _tzLast[k] = g;
       total += g.children ? g.children.length : 1;
     }
     old.remove();
@@ -4854,7 +5050,7 @@ function retsubu(silent){
   return true;
 }
 function retsubuSoon(){
-  if(!selected().some(it => it.__tsubu)) return;
+  if(!tzTargets().some(it => it.__tsubu)) return;
   clearTimeout(_tzTimer);
   _tzTimer = setTimeout(() => retsubu(true), 220);
 }
@@ -4897,8 +5093,13 @@ function tzPvSafety(){
 }
 function tzPvBuild(){
   tzPvClear();
-  const sel = selected().filter(it => !it.__tsubu);
-  if(!sel.length) return;
+  const all = tzTargets();
+  const sel = all.filter(it => !it.__tsubu);
+  if(!sel.length){
+    // かけ終わったものは下見でなく、そのままスライダーで作り直せる
+    if(all.length) stat('かけた粒は、そのままスライダーを動かせば作り直します');
+    return;
+  }
   const o = tzOpt();
   let total = 0;
   sel.forEach(it => {
@@ -4923,9 +5124,14 @@ function tzPvSoon(){
   clearTimeout(_tzPvTimer);
   _tzPvTimer = setTimeout(tzPvBuild, 200);
 }
-document.getElementById('tzPv')?.addEventListener('change', e => {
+document.getElementById('tzPv')?.addEventListener('change', async e => {
   tzPv.on = e.target.checked;
-  if(tzPv.on) tzPvBuild();
+  if(tzPv.on){
+    // ⭐ 下見の前に文字はパスへ（四角い箱に粒が乗るのを防ぐ）
+    const sel = tzTargets();
+    if(sel.length) await tzOutlineFirst(sel);
+    tzPvBuild();
+  }
   else { tzPvClear(); tzPvSafety(); guides(); stat('下見をやめた'); }
 });
 /* 塗りモードを離れたら下見も畳む（粒以外では意味がないので） */
