@@ -438,6 +438,7 @@
     <i>ずれ</i><span>明暗の位置を送る</span>
     <i>粒の隙間</i><span>粒どうしの間隔</span>
     <i>玉</i><span>⭐<b>画が交わって太くなっている所に球が出る</b>（粒 TSUBU の塊）。太い順にこの割合ぶんを球へ。0＝球なし。グラデ塊のときだけ</span>
+    <i>玉の間隔</i><span>玉どうしを何マス空けるか。⚠️<b>これが無いと、面や太い画では中がぜんぶ玉で埋まる</b>（粒 TSUBU が「まとめる方式」に作り直したのと同じ理由）</span>
     <i>preview</i><span>⭐<b>粒のいちばん上</b>。押す前に画面で見える。外せば元に戻る。<b>これが入っていないと、下の設定を触っても画面は変わらない</b></span>
   </div>
   <p>⚠️<b>線にも効く</b>（線をいったん面に変えてから粒にする）。かけたあとも、色・断面・解像を変えれば作り直す。
@@ -691,7 +692,9 @@
   <div class="row"><label>ずれ</label><input type="range" id="tzShift" min="0" max="100" step="1" value="0"><span class="val"></span></div>
   <div class="row"><label>粒の隙間</label><input type="range" id="tzGap" min="0" max="40" step="1" value="0"><span class="val"></span></div>
   <div class="row"><label>玉</label><input type="range" id="tzBead" min="0" max="100" step="1" value="55"><span class="val"></span></div>
-  <div class="hint">⭐<b>画が交わって太くなっている所に球が出る</b>（粒 TSUBU の塊）。太い順に、この割合ぶんを球へ差し替える。<b>0＝球なし</b>。球の色は<b>球色</b>／グラデ塊のときだけ効く</div>
+  <div class="row"><label>玉の間隔</label><input type="range" id="tzBeadK" min="1" max="6" step="1" value="2"><span class="val"></span></div>
+  <div class="hint">⭐<b>画が交わって太くなっている所に球が出る</b>（粒 TSUBU の塊）。太い順に、この割合ぶんを球へ。<b>0＝球なし</b>。球の色は<b>球色</b>／グラデ塊のときだけ効く。
+    ⚠️<b>玉の間隔</b>＝玉どうしを何マス空けるか。<b>これが無いと、面や太い画では中がぜんぶ玉で埋まる</b></div>
 
   <div class="note" style="margin:8px 0 4px"><b>グラデの断面</b> — 粒だけに効く（金属・グラデ塗りには触らない）</div>
   <div class="row"><label>谷</label><input type="range" id="tzValley" min="0" max="100" step="1" value="0"><span class="val"></span></div>
@@ -4842,6 +4845,7 @@ function tzOpt(){
     val   : +(g('tzValley')?.value || 0) / 100,
     grd   : +(g('tzGrad')?.value || 0) / 100,
     bead  : +(g('tzBead')?.value ?? 55),
+    beadK : +(g('tzBeadK')?.value ?? 2),
     steps : +(g('tzSteps')?.value || 4),
     dith  : +(g('tzDith')?.value || 100) / 100,
     gca   : Math.cos(gd), gsa : Math.sin(gd),
@@ -4918,11 +4922,28 @@ function tsubuize(item, o){
     cells.push({ i, j, dens, sob });
   }
   if(!cells.length) return null;
-  // ⭐ 玉 ── 太い所（画の芯・交わり）から順に、割合ぶんを球へ差し替える
+  // ⭐ 玉 ── 太い所（画の芯・交わり）に出す。
+  //   ⚠️⚠️ 「太い順に上位◯%」だけで選ぶと、面や太い画では内部が一様に最大密度になり
+  //     中がぜんぶ玉で埋まる。粒 TSUBU が「まとめる方式」に作り直す前と同じ破綻。
+  //     字は画が細いので上位＝交点になるが、SAKUJI は面を扱うので同じ手が通らない。
+  //   → 玉どうしに最小の間隔（玉の間隔）を持たせ、太い順に置いていく。
+  //     間隔で頭打ちになるので、割合を上げても中が埋まらない。
   const bead = new Set();
   if(o.bead > 0 && o.tex === 'blob'){
+    const BK = Math.max(1, o.beadK);
+    const taken = new Uint8Array(N*N);
     const order = cells.map((_, k) => k).sort((a, x) => cells[x].dens - cells[a].dens);
-    order.slice(0, Math.round(cells.length * o.bead / 100)).forEach(k => bead.add(k));
+    const limit = Math.round(cells.length * o.bead / 100);
+    for(const k of order){
+      if(bead.size >= limit) break;
+      const { i, j } = cells[k];
+      if(taken[j*N + i]) continue;
+      bead.add(k);
+      for(let dj = -BK; dj <= BK; dj++) for(let di = -BK; di <= BK; di++){
+        const x = i + di, y = j + dj;
+        if(x >= 0 && y >= 0 && x < N && y < N) taken[y*N + x] = 1;
+      }
+    }
   }
   for(let ci = 0; ci < cells.length; ci++){
     {
@@ -5061,10 +5082,14 @@ document.getElementById('bTsubuize')?.addEventListener('click', async () => {
   stat(made ? '粒にした（' + o.res + '×' + o.res + '・' + (o.tex === 'blob' ? 'グラデ塊' : 'ドット') + '・'
             + (S.target === 'stroke' ? '線' : '塗り') + '）' : 'できませんでした');
 });
+/* ⚠️ 柄（波・縞・斜・格子・環）は .on を付け替えるだけで作り直していなかった＝
+   押しても何も変わらない状態だった。ここで作り直しまで繋ぐ。 */
 document.querySelectorAll('#tzTex button, #tzLine button').forEach(b =>
-  b.addEventListener('click', () => b.parentElement.querySelectorAll('button')
-    .forEach(x => x.classList.toggle('on', x === b))));
-const TZ_SLIDERS = ['tzRes','tzWav','tzDir','tzFollow','tzShift','tzGap','tzBead',
+  b.addEventListener('click', () => {
+    b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    setTimeout(tzChanged, 0);
+  }));
+const TZ_SLIDERS = ['tzRes','tzWav','tzDir','tzFollow','tzShift','tzGap','tzBead','tzBeadK',
                     'tzValley','tzGrad','tzShine','tzSteps','tzDith','tzGdir'];
 TZ_SLIDERS.forEach(id => {
   const r = document.getElementById(id); if(!r) return;
