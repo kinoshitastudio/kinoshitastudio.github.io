@@ -211,6 +211,13 @@
   <div class="row"><label>網</label><input type="range" id="dith" min="0" max="100" step="1" value="100"><span class="val"></span></div>
   <div class="row"><label>網の向き</label><input type="range" id="gdir" min="0" max="360" step="1" value="90"><span class="val"></span></div>
 
+  <h2>出す</h2>
+  <div class="seg" id="exSc"><button data-v="1" class="on">1x</button><button data-v="2">2x</button><button data-v="4">4x</button></div>
+  <button class="big" id="exPng" style="margin-top:6px">PNG を出す</button>
+  <button class="big" id="exJpg" style="margin-top:4px">JPG を出す</button>
+  <button class="big" id="exSvg" style="margin-top:4px">SVG を出す（ドット）</button>
+  <div class="hint">⚠️<b>SVGはドットのときだけ</b>。グラデ塊・連続はピクセルで作っているのでベクターにできない</div>
+
   <h2>アニメーション</h2>
   <div class="hint" style="margin-bottom:5px">動きの設定はここだけ。<b>作り込むときは「流れ」を0のまま</b>にしておく（静止して軽くなる）</div>
   <div class="seg" id="mode">
@@ -606,7 +613,9 @@ function build(){
     };
   });
   settled = 0;
-  fit();
+  // ⚠️ ここで fit() を呼んでいたため、字なり・ずれ・向きを触るたびに視点が中央へ戻り、
+  //   寄って見ながら調整できなかった。組み直しても視点は動かさない。
+  //   ⭐ 大きさが変わる操作（解像・粒・折返し・字間・行間・落ち代）のときだけ、呼び出し側で fit する。
   stat();
   dirtyUntil = performance.now() + 400;   // 組み直したら描き直す
 }
@@ -926,7 +935,9 @@ document.querySelectorAll('.seg').forEach(seg => {
     if(id==='warpn' && fromUser){ resetAnchors(+r.value); drawWarpCurve(); }
     if(['res','cell','bead','beadk','wrap','gapx','gapy','fall','fat','dir','follow'].includes(id)) build();
     if(id==='shine' || id==='valley' || id==='grad') buildTiles();
-    if(id === 'cell') fit(); };
+    // ⭐ 字の並びそのものが変わるものだけ、視点を合わせ直す。
+    //   字なり・ずれ・玉・大きさは見え方が変わるだけなので、視点は動かさない。
+    if(['res','cell','wrap','gapx','gapy','fall'].includes(id) && fromUser) fit(); };
   r.addEventListener('input', () => sync(true)); sync();
 });
 // ⭐ 折返しは「文字数」を超えると意味がない（全部1行になるだけ）。
@@ -949,7 +960,7 @@ document.getElementById('helpBtn').addEventListener('click', () => {
   document.body.classList.toggle('help');
 });
 document.getElementById('txt').addEventListener('input', () => {
-  running = false; syncWrapMax(); build();
+  running = false; syncWrapMax(); build(); fit();   // 字が変わると大きさも変わるので合わせ直す
 });
 syncWrapMax();
 [['ca','a'],['cb','b']].forEach(([id,key])=>{
@@ -1126,7 +1137,7 @@ cv.addEventListener('touchmove', e => {
 cv.addEventListener('touchend', () => pinch = 0);
 
 document.getElementById('go').onclick = () => { for(const d of dots) d.live = true; running = true; t = 0; };
-document.getElementById('reset').onclick = () => { running = false; build(); };
+document.getElementById('reset').onclick = () => { running = false; build(); fit(); };
 
 // ループは即開始する（fonts.ready 待ちに人質を取らせない）。
 // フォントが後から乗ったら字を焼き直す。
@@ -1135,10 +1146,80 @@ drawWarpCurve();
 syncColorInputs();
 requestAnimationFrame(loop);
 if(document.fonts && document.fonts.ready){
-  document.fonts.ready.then(() => { build(); }).catch(() => {});
-  document.fonts.load('700 24px "Zen Kaku Gothic New"').then(() => build()).catch(() => {});
-  document.fonts.load('600 24px "Zen Old Mincho"').then(() => build()).catch(() => {});
+  document.fonts.ready.then(() => { build(); fit(); }).catch(() => {});
+  document.fonts.load('700 24px "Zen Kaku Gothic New"').then(() => { build(); fit(); }).catch(() => {});
+  document.fonts.load('600 24px "Zen Old Mincho"').then(() => { build(); fit(); }).catch(() => {});
 }
+
+/* ══ 書き出し ══
+   ⭐ いま見えているものを、そのまま出す。倍率は画面の解像度を上げて撮り直す。
+   ⚠️ SVG はドットのときだけ。グラデ塊・連続はピクセルで作っているのでベクターにできない。 */
+function exSc(){ const b = document.querySelector('#exSc button.on'); return b ? +b.dataset.v : 1; }
+document.querySelectorAll('#exSc button').forEach(b =>
+  b.addEventListener('click', () => b.parentElement.querySelectorAll('button')
+    .forEach(x => x.classList.toggle('on', x === b))));
+function dlBlob(b, name){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(b); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+function shoot(mime, ext, q){
+  const sc = exSc();
+  const bw = cv.width, bh = cv.height;
+  const dpr = Math.min(devicePixelRatio, 2);
+  // 一時的に解像度を上げて描き直す
+  cv.width = Math.round(bw / dpr * sc * dpr);
+  cv.height = Math.round(bh / dpr * sc * dpr);
+  g.imageSmoothingEnabled = false;
+  const bs = cam.s; cam.s = bs * sc;
+  const bx = cam.x, by = cam.y; cam.x = bx * sc; cam.y = by * sc;
+  draw();
+  const out = document.createElement('canvas');
+  out.width = cv.width; out.height = cv.height;
+  const o = out.getContext('2d');
+  if(mime === 'image/jpeg'){ o.fillStyle = '#000'; o.fillRect(0,0,out.width,out.height); }
+  o.drawImage(cv, 0, 0);
+  const W = out.width, H = out.height;
+  out.toBlob(b => {
+    dlBlob(b, 'tsubu.' + ext);
+    cv.width = bw; cv.height = bh; cam.s = bs; cam.x = bx; cam.y = by;
+    g.imageSmoothingEnabled = false;
+    draw(); drawGizmo();
+    stat2(ext.toUpperCase() + ' を出した — ' + W + ' × ' + H);
+  }, mime, q);
+}
+function stat2(m){ const el = document.getElementById('stat'); if(el) el.textContent = m; }
+document.getElementById('exPng')?.addEventListener('click', () => shoot('image/png','png'));
+document.getElementById('exJpg')?.addEventListener('click', () => shoot('image/jpeg','jpg',0.92));
+document.getElementById('exSvg')?.addEventListener('click', () => {
+  if(P.tex !== 0){ stat2('SVG は「ドット」のときだけ — 質感をドットにしてください'); return; }
+  // ドットは1粒＝1つの矩形なので、そのままベクターにできる
+  const C = P.cell, pal = P.pal===CUSTOM_IDX ? CUSTOM : PALS[P.pal], cols = pal.cols;
+  const ang = P.gdir * Math.PI/180, ca = Math.cos(ang), sa = Math.sin(ang);
+  const steps = P.steps, dith = P.dith/100;
+  let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+  const rects = [];
+  for(const d of dots){
+    if(d.hide) continue;
+    let v = (d.x / W * ca + d.y / H * sa) * 0.5 + 0.5;
+    v = v - Math.floor(v);
+    const b = BAYER[(d.y % 4) * 4 + (d.x % 4)];
+    const q = Math.floor(v * (steps - 1) + (b - 0.5) * dith + 0.5);
+    const ci = Math.max(0, Math.min(cols.length - 1,
+      Math.round(Math.max(0, Math.min(steps - 1, q)) / (steps - 1) * (cols.length - 1))));
+    const x = d.x * C, y = d.y * C;
+    rects.push('<rect x="'+x+'" y="'+y+'" width="'+C+'" height="'+C+'" fill="'+cols[ci]+'"/>');
+    if(x<minX)minX=x; if(y<minY)minY=y; if(x+C>maxX)maxX=x+C; if(y+C>maxY)maxY=y+C;
+  }
+  if(!rects.length){ stat2('出すものがありません'); return; }
+  const w = maxX-minX, h = maxY-minY;
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+h+'" viewBox="'+minX+' '+minY+' '+w+' '+h+'">'
+    + '<rect x="'+minX+'" y="'+minY+'" width="'+w+'" height="'+h+'" fill="'+(typeof pal.bg==='string'?pal.bg:'#000')+'"/>'
+    + rects.join('') + '</svg>';
+  dlBlob(new Blob([svg], {type:'image/svg+xml'}), 'tsubu.svg');
+  stat2('SVG を出した — ' + rects.length + ' 粒');
+});
+
 </script>
 </body>
 </html>
