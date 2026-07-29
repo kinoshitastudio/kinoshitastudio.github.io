@@ -539,7 +539,7 @@
     <button data-v="solid" class="on">単色</button>
     <button data-v="linear">グラデ</button>
     <button data-v="radial">放射</button>
-    <button data-v="metal">金属</button>
+    <button data-v="metal">金属</button><button data-v="tsubu">粒</button>
   </div>
   <div id="gradUI" style="display:none">
     <canvas id="stopBar" width="420" height="26" style="width:100%;height:26px;display:block;
@@ -569,6 +569,21 @@
   </div>
   <input type="color" id="gA" value="#ffffff" style="display:none">
   <input type="color" id="gB" value="#0a0a0a" style="display:none">
+  <div id="tsubuUI" style="display:none">
+  <div class="note" style="margin-bottom:6px">選んだ図形・文字を<b>格子に割って、粒ごとに帯を乗せる</b>。
+    粒＝小さな矩形なので<b>ベクターのまま</b>（SVGに出せる）</div>
+  <div class="seg" id="tzTex"><button data-v="blob" class="on">グラデ塊</button><button data-v="dot">ドット</button></div>
+  <div class="row"><label>解像</label><input type="range" id="tzRes" min="6" max="96" step="1" value="24"><span class="val"></span></div>
+  <div class="row"><label>細かさ</label><input type="range" id="tzWav" min="0.02" max="2.4" step="0.02" value="0.1"><span class="val"></span></div>
+  <div class="row"><label>向き</label><input type="range" id="tzDir" min="0" max="180" step="1" value="0"><span class="val"></span></div>
+  <div class="row"><label>字なり</label><input type="range" id="tzFollow" min="0" max="100" step="1" value="100"><span class="val"></span></div>
+  <div class="row"><label>ずれ</label><input type="range" id="tzShift" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+  <div class="row"><label>粒の隙間</label><input type="range" id="tzGap" min="0" max="40" step="1" value="0"><span class="val"></span></div>
+  <button class="btn" id="bTsubuize" style="margin-top:6px">粒にする</button>
+  <div class="note">⚠️解像を上げるほど粒が増えて重い。⭐<b>字なり</b>＝図形の輪郭に沿って帯の向きが変わる<br>
+    かけたあとも、色・断面・解像を変えれば作り直す</div>
+
+  </div>
   <div id="metalUI" style="display:none">
     <div class="row"><label>縞の数</label><input type="range" id="mBand" min="1" max="24" value="6"><span class="val"></span></div>
     <div class="row"><label>角度</label><input type="range" id="mAng" min="-180" max="180" value="90"><span class="val"></span></div>
@@ -2050,10 +2065,12 @@ document.querySelectorAll('#fillmode button').forEach(b =>
     document.querySelectorAll('#fillmode button').forEach(x => x.classList.toggle('on', x===b));
     document.getElementById('gradUI').style.display  = (S.fillMode==='linear'||S.fillMode==='radial') ? '' : 'none';
     document.getElementById('metalUI').style.display = (S.fillMode==='metal') ? '' : 'none';
+    const tu = document.getElementById('tsubuUI'); if(tu) tu.style.display = (S.fillMode==='tsubu') ? '' : 'none';
     // ⚠️ ここで target を fill に戻していたため、線を選んでいても塗り側へ飛んでいた。
     //   いま編集している側（塗り／線）を保ったままモードだけ変える。
     syncFS(); applyPaint();
-    stat({solid:'単色', linear:'グラデーション', radial:'放射グラデーション', metal:'金属（膜MAKU）'}[S.fillMode]);
+    stat({solid:'単色', linear:'グラデーション', radial:'放射グラデーション', metal:'金属',
+          tsubu:'粒 — 図形を格子に割って粒ごとに帯を乗せる。「粒にする」で確定'}[S.fillMode]);
   }));
 ['gA','gB','mTint'].forEach(id =>
   document.getElementById(id).addEventListener('input', applyPaint));
@@ -4551,6 +4568,146 @@ document.querySelectorAll('#alongDir button').forEach(b =>
   b.addEventListener('click', () => setTimeout(reflowAlong, 0)));
 /* ⚠️ ストップを触るたびに流し直すと、束を選んでいる間ずっと作り直しが走って重く、
    しかも他の反映まで巻き添えで止まった。流し直しは明示の操作（分割・向きの変更）だけにする。 */
+
+
+/* ══ 粒にする ── 粒 TSUBU の質感を、ベクターのまま持ち込む ══
+   ⭐ TSUBU は Canvas でピクセルを塗るので画像で終わる。
+   ここでは「1粒＝1つの小さな矩形」にするので、ベクターのまま外に出せる。
+   ⭐ 帯の向きは、輪郭の近さから求めた勾配（＝図形の"画の向き"）に沿わせられる。
+      TSUBU が字形から Sobel で取っていたものを、パスとの距離から取る。 */
+function tzOpt(){
+  const g = id => document.getElementById(id);
+  return {
+    tex   : document.querySelector('#tzTex button.on')?.dataset.v || 'blob',
+    res   : +(g('tzRes')?.value || 24),
+    wav   : +(g('tzWav')?.value || 0.1),
+    dir   : +(g('tzDir')?.value || 0) * Math.PI/180,
+    follow: +(g('tzFollow')?.value || 100) / 100,
+    shift : +(g('tzShift')?.value || 0) / 100,
+    gap   : +(g('tzGap')?.value || 0) / 100,
+  };
+}
+/* 図形の内側かどうか。Group ならどれか1つに入っていればよい */
+function tzInside(item, pt){
+  if(item.children && item.children.length)
+    return item.children.some(c => tzInside(c, pt));
+  if(item.contains) { try { return item.contains(pt); } catch(e){ return false; } }
+  return false;
+}
+/* その場所の「画の向き」＝いちばん近い輪郭の接線。TSUBU の Sobel に当たるもの */
+function tzAngleAt(item, pt, fallback){
+  const paths = [];
+  (function walk(o){ if(o.children && o.children.length) o.children.forEach(walk);
+                     else if(o.getNearestLocation) paths.push(o); })(item);
+  let best = null, bd = Infinity;
+  for(const pa of paths){
+    const loc = pa.getNearestLocation(pt);
+    if(!loc) continue;
+    const d = loc.point.getDistance(pt);
+    if(d < bd){ bd = d; best = loc; }
+  }
+  if(!best || !best.tangent) return fallback;
+  return Math.atan2(best.tangent.y, best.tangent.x);
+}
+function tsubuize(item, o){
+  const b = item.bounds;
+  if(!b || !b.width || !b.height) return null;
+  const N = o.res;
+  const cw = b.width / N, ch = b.height / N;
+  const pad = Math.min(cw, ch) * o.gap * 0.5;
+  const kids = [];
+  const stops = S.stops.slice().sort((a,x)=>a.t-x.t).map(x => [x.c, x.t]);
+  for(let j = 0; j < N; j++){
+    for(let i = 0; i < N; i++){
+      const cx = b.x + (i + 0.5) * cw, cy = b.y + (j + 0.5) * ch;
+      const c = new Point(cx, cy);
+      if(!tzInside(item, c)) continue;
+      // ⭐ 帯の向き：字なり100＝輪郭に沿う／0＝ぜんぶ同じ向き
+      let ang = o.dir;
+      if(o.follow > 0.001){
+        const t = tzAngleAt(item, c, o.dir);
+        ang = t * o.follow + o.dir;
+      }
+      const ca = Math.cos(ang), sa = Math.sin(ang);
+      const cell = new Path.Rectangle(
+        new Rectangle(b.x + i*cw + pad, b.y + j*ch + pad,
+                      Math.max(0.2, cw - pad*2), Math.max(0.2, ch - pad*2)));
+      if(o.tex === 'blob'){
+        // ⭐ 粒ごとに小さなグラデ＝TSUBU の「グラデ塊」に当たる
+        const u = (i / N) * ca + (j / N) * sa;
+        const ph = (u * o.wav * N + o.shift);          // 位置で位相を送る＝隣と繋がる
+        const t0 = ph - Math.floor(ph);
+        const nrm = new Point(-sa, ca).multiply(Math.max(cw, ch) * 0.5);
+        const mid = new Point(cx, cy);
+        // ストップ全体をこの粒に割り当て、位相ぶんだけ回す
+        const rolled = stops.map(([col, t]) => [col, (t + t0) % 1]).sort((a,x)=>a[1]-x[1]);
+        cell.fillColor = { gradient:{ stops: rolled },
+                           origin: mid.subtract(nrm), destination: mid.add(nrm) };
+      } else {
+        // ドット＝1粒1色。位置から帯の明暗を求めて、断面から色を拾う
+        const u = (i / N) * ca + (j / N) * sa;
+        const v = 0.5 + 0.5 * Math.cos((u * o.wav * N + o.shift) * Math.PI * 2);
+        cell.fillColor = sampleStopColor(Math.max(0, Math.min(1, Math.pow(v, 1.8))));
+      }
+      cell.strokeColor = null; cell.strokeWidth = 0;
+      kids.push(cell);
+    }
+  }
+  if(!kids.length) return null;
+  const g = new Group(kids);
+  g.__tsubu = { d: item.pathData || null, json: item.exportJSON() };
+  return g;
+}
+/* ⭐ 線を選んでいるときは、線をいったん面に変えてから粒にする。
+   線のままでは中身が無いので粒を置けない（イラレの「アウトライン化」と同じ考え方）。 */
+function tzSourceOf(it){
+  if(S.target === 'stroke' && it.strokeColor && it instanceof paper.Path){
+    const w = it.strokeWidth || S.sw || 40;
+    const out = (typeof it.strokeBounds !== 'undefined') ? null : null;
+    // 線を太らせて面にする
+    const half = Math.max(0.5, w/2);
+    const len = it.length;
+    if(len){
+      const N = Math.max(8, Math.round(len / Math.max(2, half)));
+      const L = [], R = [];
+      for(let i = 0; i <= N; i++){
+        const off = Math.min(len * i / N, len - 1e-6);
+        const p = it.getPointAt(off), nn = it.getNormalAt(off).multiply(half);
+        L.push(p.add(nn)); R.unshift(p.subtract(nn));
+      }
+      const face = new Path(L.concat(R));
+      face.closed = true; face.fillColor = it.strokeColor; face.strokeColor = null;
+      face.insertAbove(it);
+      return { src: face, temp: true };
+    }
+  }
+  return { src: it, temp: false };
+}
+document.getElementById('bTsubuize')?.addEventListener('click', () => {
+  const sel = selected();
+  if(!sel.length){ stat('図形か文字を選んでください'); return; }
+  snapshot();
+  const o = tzOpt();
+  let made = 0;
+  sel.forEach(it => {
+    const { src, temp } = tzSourceOf(it);
+    const g = tsubuize(src, o);
+    if(temp) src.remove();
+    if(g){ g.insertAbove(it); it.remove(); g.selected = true; made++; }
+  });
+  guides();
+  stat(made ? '粒にした（' + o.res + '×' + o.res + '・' + (o.tex === 'blob' ? 'グラデ塊' : 'ドット') + '・'
+            + (S.target === 'stroke' ? '線' : '塗り') + '）' : 'できませんでした');
+});
+document.querySelectorAll('#tzTex button').forEach(b =>
+  b.addEventListener('click', () => b.parentElement.querySelectorAll('button')
+    .forEach(x => x.classList.toggle('on', x === b))));
+['tzRes','tzWav','tzDir','tzFollow','tzShift','tzGap'].forEach(id => {
+  const r = document.getElementById(id); if(!r) return;
+  const v = r.parentElement.querySelector('.val');
+  const sync = () => { if(v) v.textContent = r.value; };
+  r.addEventListener('input', sync); sync();
+});
 
 </script>
 </body>
