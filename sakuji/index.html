@@ -970,6 +970,30 @@
    paper.js を土台に、ペン／アンカー編集／ブーリアン／
    作字グリッドを載せる。出力は塗りパスの SVG。
    ══════════════════════════════════════════════════ */
+/* ══ 入口の台帳 ══
+   ⭐ あとから機能を足すとき、関数を上書きせずに ここへ登録する（hook(...) を呼ぶ）。
+      掴む系（down / drag / up）＝番号の小さい順に試して、掴んだ（true を返した）ら止まる。
+      あと処理系（guides / stops / grid / snap）＝元を必ず通してから、登録順に全部呼ぶ。
+   ⚠️ 上書き（const _guides = guides; guides = function(){...}）を積むと、
+      途中の一段が壊れたときに下が丸ごと死ぬ。それで 2026-07-29 に機能が3回止まった。
+      いま誰が割り込んでいるかは、ページを開いて hookList() と打てば出る。
+   ⚠️ 割り振り本体（selDown / guides など）は下の「入口の割り振り」にまとめてある。
+
+   掴む順（小さいほど先に試す・変えたければこの数字だけ動かす）
+     10  グラデのハンドル
+     20  枠（アートボード）のラベル
+     30  拡大縮小のハンドル
+     ──  通常の選択（台帳を全部すり抜けたときの受け皿） */
+const HOOK = { down:[], drag:[], up:[], guides:[], stops:[], grid:[], snap:[] };
+function hook(where, name, fn, order = 50){
+  HOOK[where].push({ name, fn, order });
+  HOOK[where].sort((a, b) => a.order - b.order);
+}
+function hookList(){                              // 割り込みの一覧（開発用）
+  Object.keys(HOOK).forEach(k =>
+    console.log(k, HOOK[k].map(h => `${h.order} ${h.name}`)));
+}
+
 const cv = document.getElementById('cv');
 paper.setup(cv);
 const { Path, Point, Group, Color, Rectangle, Size } = paper;
@@ -1002,7 +1026,7 @@ artLayer.activate();
 
 /* ── 編集ガイドの描画（アンカー／ハンドル／次の点までの線）── */
 let mousePt = null;
-function guides(){
+function guidesBase(){                            // ⚠️ 呼ぶのは台帳の guides から（直接呼ばない）
   uiLayer.activate(); uiLayer.removeChildren();
   const Z = paper.view.zoom, r = 3.6/Z, lw = 1/Z;
 
@@ -1072,7 +1096,7 @@ function guides(){
 /* ── 作字グリッド ──
    和文（仮想ボディ・字面・三分割）／欧文（ベースライン等）／方眼 を切り替える。
    Glyphs のようにボディ寸法と分割数を数値で決められる。 */
-function drawGrid(){
+function drawGridBase(){                          // ⚠️ 呼ぶのは台帳の drawGrid から（直接呼ばない）
   gridLayer.activate(); gridLayer.removeChildren();
   if(!S.grid){ artLayer.activate(); return; }
 
@@ -1224,7 +1248,7 @@ function drawGrid(){
    ⚠️ snapshot() は「変更する直前」に呼ぶこと。
    あとから呼ぶと、変更後の状態が積まれて戻しても何も起きない。 */
 const HIST = { past:[], future:[] };
-function snapshot(){
+function snapshotBase(){                          // ⚠️ 呼ぶのは台帳の snapshot から（直接呼ばない）
   const json = artLayer.exportJSON({ asString:true });
   if(HIST.past[HIST.past.length-1] === json) return;   // 同じ状態は積まない
   HIST.past.push(json);
@@ -1653,7 +1677,7 @@ function hit(point){
 }
 let marquee = null, marqueeStart = null;      // ドラッグの範囲選択（点線の矩形）
 let clip = [];                                // コピー／カットしたオブジェクト（切り離した複製を保持）
-function selDown(e){
+function selDownBase(e){                          // ⚠️ 呼ぶのは台帳の selDown から（直接呼ばない）
   snapshot();                                     // 動かす前の状態を保存
   let h = hit(e.point);
   // 塗りの内側なら、線に当たらなくても掴めるようにする
@@ -1677,7 +1701,7 @@ function selDown(e){
     item.selected = true; dragItem = item; dragStart = e.point;
   }
 }
-function selDrag(e){
+function selDragBase(e){                          // ⚠️ 呼ぶのは台帳の selDrag から（直接呼ばない）
   // 範囲選択：ドラッグ中は点線の矩形を出し、触れた図形を選ぶ
   if(marqueeStart){
     if(marquee) marquee.remove();
@@ -1754,7 +1778,7 @@ tool.onMouseDown = e => {
     case 'pen': penDown(e); break;
     case 'shape': shapeDown(e); break;
     case 'stroke': brushDown(e); break;
-    case 'text': placeText(e.point); break;      // クリックした場所に文字を置く
+    case 'text': openInlineText(e.point); break; // クリックした場所でそのまま打ち込む
     case 'grad': gradDown(e); break;
     default: selDown(e);
   }
@@ -1772,7 +1796,7 @@ tool.onMouseDrag = e => {
     default: selDrag(e);
   }
 };
-tool.onMouseUp = e => {
+function toolUpBase(e){                           // ⚠️ 呼ぶのは台帳の tool.onMouseUp から
   S.panning = null;
   switch(S.tool){
     case 'shape': shapeUp(); break;
@@ -1782,8 +1806,39 @@ tool.onMouseUp = e => {
     default: selUp();
   }
   guides();
-};
+}
 tool.onMouseMove = e => { mousePt = e.point; if(pen) guides(); };
+
+/* ══ 入口の割り振り（台帳の中身は先頭にある）══ */
+function selDown(e){
+  for(const h of HOOK.down) if(h.fn(e)) return;
+  selDownBase(e);
+}
+function selDrag(e){
+  for(const h of HOOK.drag) if(h.fn(e)) return;
+  selDragBase(e);
+}
+tool.onMouseUp = e => {
+  for(const h of HOOK.up) if(h.fn(e)) return;
+  toolUpBase(e);
+};
+/* あと処理系＝元を必ず通してから、登録した順に全部呼ぶ（条件で元を飛ばさない） */
+function guides(){
+  guidesBase();
+  for(const h of HOOK.guides) h.fn();
+}
+function refreshStops(){
+  refreshStopsBase();
+  for(const h of HOOK.stops) h.fn();
+}
+function drawGrid(){
+  drawGridBase();
+  for(const h of HOOK.grid) h.fn();
+}
+function snapshot(){
+  snapshotBase();
+  for(const h of HOOK.snap) h.fn();
+}
 // ダブルクリックでもパスを確定できる（イラレと同じ逃げ道）
 cv.addEventListener('dblclick', () => { if(pen) finishPen(); });
 
@@ -2096,6 +2151,11 @@ function applyColor(c){                              // 選択中があればそ
     }
   });
   syncFS();
+  // 文字などの束には、中の一枚ずつに配り直す（単色以外はここを通らないと乗らない）
+  if(c && S.fillMode !== 'solid'){
+    const groups = sel.filter(it => it.children && it.children.length && !it.__along);
+    if(groups.length){ groups.forEach(it => paintInto(it, S.target)); guides(); }
+  }
   // 何も選んでいないと画面に変化が出ないので、次に描く図形へ効くことを伝える
   if(!sel.length && c)
     stat(S.target === 'stroke' ? '線の色をセット — 図形を選ぶか、これから描くと反映' : '塗りの色をセット');
@@ -2103,6 +2163,10 @@ function applyColor(c){                              // 選択中があればそ
 /* ── 塗りの種類（単色／グラデ／放射／金属）── */
 function applyPaint(){                       // 選択中の図形に、いま編集している側を塗り直す
   const sel = selected();
+  // ⭐ 文字などの束は、中の一枚ずつに配る（paintInto）。⚠️ 束だけを選んでいるときに
+  //   ここで打ち切ると、プリセットも色も丸ごと効かなくなる。下の通常処理は必ず通す。
+  sel.filter(it => it.children && it.children.length && !it.__along)
+     .forEach(it => paintInto(it, S.target));
   sel.forEach(it => {
     // ⭐ 塗りと線のどちらに乗せるかは「塗り / 線」で選んでいる側に従う。
     //   線にもグラデ・金属が乗る（これまで線は単色だけだった）。
@@ -3267,10 +3331,8 @@ document.getElementById('layDup').onclick  = () => { document.getElementById('bD
 document.getElementById('layDel').onclick  = () => { snapshot(); selected().forEach(it=>it.remove()); guides(); renderLayers(); };
 
 /* 選択・追加・削除のたびにレイヤー表示を更新する */
-const _snapshot = snapshot;
-snapshot = function(){ _snapshot(); setTimeout(renderLayers, 0); };
-const _guides = guides;
-guides = function(){ _guides(); renderLayers(); };
+hook('snap', 'レイヤー一覧を描き直す', () => setTimeout(renderLayers, 0));
+hook('guides', 'レイヤー一覧を描き直す', () => renderLayers());
 
 /* ══ 折りたたみ（実験機能は畳んでおく）══
    本体の作字機能を邪魔しないよう、実験系は初期状態で閉じる。 */
@@ -3327,8 +3389,7 @@ function showZoom(){
   const el = document.getElementById('zoomv');
   if(el) el.textContent = Math.round(paper.view.zoom * 100) + '%';
 }
-const _drawGrid = drawGrid;
-drawGrid = function(){ _drawGrid(); showZoom(); };
+hook('grid', 'ズーム率を出す', () => showZoom());
 
 // 字組み・共通パーツ・下敷き・スナップの配線
 document.getElementById('bMakeGlyph').onclick = makeGlyph;
@@ -3440,7 +3501,7 @@ function renderStopList(){
     stopListEl.appendChild(row);
   });
 }
-function refreshStops(){ drawStopBar(); renderStopList(); applyPaint(); }
+function refreshStopsBase(){ drawStopBar(); renderStopList(); applyPaint(); }  // ⚠️ 呼ぶのは台帳の refreshStops から
 
 if(stopBar){
   let dragI = -1;
@@ -3683,8 +3744,7 @@ function autoSave(){
   }, 800);
 }
 /* guides() に相乗りさせる */
-const _guidesForSave = guides;              // ⚠️ _guides は既に上で使われている
-guides = function(){ _guidesForSave.apply(null, arguments); autoSave(); };
+hook('guides', '自動保存', () => autoSave());
 
 function autoLoad(){
   try{
@@ -3743,8 +3803,7 @@ function drawArtboard(){
   });
   artLayer.activate();
 }
-const _drawGridForAB = drawGrid;
-drawGrid = function(){ _drawGridForAB.apply(null, arguments); drawArtboard(); };
+hook('grid', '枠（アートボード）を描く', () => drawArtboard());
 
 /* 一覧 */
 function renderAbList(){
@@ -4029,8 +4088,7 @@ function drawBBoxHandles(){
   });
   artLayer.activate();
 }
-const _guidesForBBox = guides;
-guides = function(){ _guidesForBBox.apply(null, arguments); if(S.tool === 'select') drawBBoxHandles(); };
+hook('guides', '拡大縮小のハンドルを描く', () => { if(S.tool === 'select') drawBBoxHandles(); });
 
 /* 掴んだか判定 */
 let bhDrag = null;
@@ -4043,50 +4101,41 @@ function hitBH(pt){
   }
   return null;
 }
-/* 選択ツールの処理に割り込む（掴んでいたら移動ではなく拡大縮小） */
-const _selDown = selDown, _selDrag = (typeof selDrag === 'function') ? selDrag : null;
-selDown = function(e){
+/* 選択ツールに割り込む（掴んでいたら移動ではなく拡大縮小）＝台帳に登録する */
+hook('down', '拡大縮小のハンドル', e => {
   const h = hitBH(e.point);
-  if(h){ snapshot(); bhDrag = h; return; }
-  return _selDown.apply(null, arguments);
-};
-if(_selDrag){
-  selDrag = function(e){
-    if(bhDrag){
-      const { k, b, items } = bhDrag;
-      const a = e.modifiers.alt ? b.center : bhAnchor(b, k);
-      const wSign = (k.includes('w') ? -1 : 1), hSign = (k.includes('n') ? -1 : 1);
-      const horiz = k !== 'n' && k !== 's', vert = k !== 'e' && k !== 'w';
-      let sx = horiz ? Math.abs(e.point.x - a.x) / (Math.abs(b.width)  * (e.modifiers.alt ? .5 : 1) || 1) : 1;
-      let sy = vert  ? Math.abs(e.point.y - a.y) / (Math.abs(b.height) * (e.modifiers.alt ? .5 : 1) || 1) : 1;
-      if(e.modifiers.shift){                    // ⭐ 比を保つ
-        const m = horiz && vert ? Math.max(sx, sy) : (horiz ? sx : sy);
-        sx = sy = m;
-      }
-      sx = Math.max(0.02, sx); sy = Math.max(0.02, sy);
-      // いつも元の大きさから掛け直す（累積で歪まないように）
-      items.forEach(it => {
-        if(!it.__bhBase) it.__bhBase = it.bounds.clone();
-      });
-      const cur = selBounds();
-      const kx = horiz ? (b.width  * sx) / (cur.width  || 1) : 1;
-      const ky = vert  ? (b.height * sy) / (cur.height || 1) : 1;
-      items.forEach(it => it.scale(kx, ky, a));
-      guides();
-      stat('拡大縮小 — Shiftで比を保つ／Altで中心から');
-      return;
-    }
-    return _selDrag.apply(null, arguments);
-  };
-}
-const _tUp = tool.onMouseUp;
-tool.onMouseUp = function(e){
-  if(bhDrag){
-    bhDrag.items.forEach(it => delete it.__bhBase);
-    bhDrag = null; guides(); return;
+  if(!h) return false;
+  snapshot(); bhDrag = h; return true;
+}, 30);
+hook('drag', '拡大縮小のハンドル', e => {
+  if(!bhDrag) return false;
+  const { k, b, items } = bhDrag;
+  const a = e.modifiers.alt ? b.center : bhAnchor(b, k);
+  const horiz = k !== 'n' && k !== 's', vert = k !== 'e' && k !== 'w';
+  let sx = horiz ? Math.abs(e.point.x - a.x) / (Math.abs(b.width)  * (e.modifiers.alt ? .5 : 1) || 1) : 1;
+  let sy = vert  ? Math.abs(e.point.y - a.y) / (Math.abs(b.height) * (e.modifiers.alt ? .5 : 1) || 1) : 1;
+  if(e.modifiers.shift){                    // ⭐ 比を保つ
+    const m = horiz && vert ? Math.max(sx, sy) : (horiz ? sx : sy);
+    sx = sy = m;
   }
-  return _tUp.apply(this, arguments);
-};
+  sx = Math.max(0.02, sx); sy = Math.max(0.02, sy);
+  // いつも元の大きさから掛け直す（累積で歪まないように）
+  items.forEach(it => {
+    if(!it.__bhBase) it.__bhBase = it.bounds.clone();
+  });
+  const cur = selBounds();
+  const kx = horiz ? (b.width  * sx) / (cur.width  || 1) : 1;
+  const ky = vert  ? (b.height * sy) / (cur.height || 1) : 1;
+  items.forEach(it => it.scale(kx, ky, a));
+  guides();
+  stat('拡大縮小 — Shiftで比を保つ／Altで中心から');
+  return true;
+}, 30);
+hook('up', '拡大縮小のハンドル', () => {
+  if(!bhDrag) return false;
+  bhDrag.items.forEach(it => delete it.__bhBase);
+  bhDrag = null; guides(); return true;
+}, 30);
 
 
 /* ══ T でクリック → その場で打ち込む ══
@@ -4110,8 +4159,36 @@ function openInlineText(pt){
   setTimeout(() => inlineT.focus(), 0);
   stat('打ち込んで Enter で確定／Esc で取消');
 }
+/* その場の打ち込みを閉じる。入口は2つ＝①新しく打つ（T でクリック）②打ち直す（ダブルクリック）
+   ⚠️ 以前は②を後から上書きで足していたため、どちらが動くのか読めなかった。1本に並べる。 */
 function closeInlineText(commit){
-  if(!inlineT || inlineT.style.display === 'none') return;
+  if(!inlineT || inlineT.style.display === 'none'){
+    if(editTarget && !commit) editTarget.opacity = 1;   // 取消：薄くした元を戻す
+    editTarget = null;
+    return;
+  }
+  // ② 打ち直し（ダブルクリックで開いた＝元の文字がある）
+  if(editTarget){
+    const t = editTarget; editTarget = null;
+    const txt = inlineT.value;
+    inlineT.style.display = 'none'; inlineT.value = '';
+    if(commit && txt){
+      snapshot();
+      const at = t.position.clone();
+      const box = document.getElementById('tinput');
+      const bak = box.value; box.value = txt;
+      t.remove();
+      const g = placeText(at);
+      box.value = bak;
+      if(g) g.selected = true;
+      guides(); stat('打ち直した');
+    } else {
+      t.opacity = 1;                          // 取消：薄くした元を戻す
+    }
+    inlinePt = null;
+    return;
+  }
+  // ① 新しく打つ
   const txt = inlineT.value;
   inlineT.style.display = 'none'; inlineT.value = '';
   if(commit && txt && inlinePt){
@@ -4129,12 +4206,7 @@ inlineT?.addEventListener('keydown', e => {
   if(e.key === 'Escape'){ e.preventDefault(); closeInlineText(false); }
 });
 inlineT?.addEventListener('blur', () => closeInlineText(true));
-/* T ツールのクリックを差し替え */
-const _toolDownForText = tool.onMouseDown;
-tool.onMouseDown = function(e){
-  if(S.tool === 'text' && !S.spaceDown){ openInlineText(e.point); return; }
-  return _toolDownForText.apply(this, arguments);
-};
+/* T ツールのクリック＝入口の switch（case 'text'）で openInlineText に繋いである */
 
 
 /* 文字の組版まわりの配線 */
@@ -4204,34 +4276,27 @@ function abLabelHit(pt){
   }
   return -1;
 }
-const _selDownForAB = selDown;
-selDown = function(e){
+hook('down', '枠のラベル', e => {
   const i = abLabelHit(e.point);
-  if(i >= 0){
-    S.abSel = i;
-    abDrag = { i, dx: S.abs[i].x - e.point.x, dy: S.abs[i].y - e.point.y };
-    abSync();
-    stat('枠を動かす — 離すと確定');
-    return;
-  }
-  return _selDownForAB.apply(null, arguments);
-};
-const _selDragForAB = selDrag;
-selDrag = function(e){
-  if(abDrag){
-    const a = S.abs[abDrag.i];
-    a.x = Math.round(e.point.x + abDrag.dx);
-    a.y = Math.round(e.point.y + abDrag.dy);
-    drawGrid();
-    return;
-  }
-  return _selDragForAB.apply(null, arguments);
-};
-const _upForAB = tool.onMouseUp;
-tool.onMouseUp = function(e){
-  if(abDrag){ abDrag = null; renderAbList(); drawGrid(); return; }
-  return _upForAB.apply(this, arguments);
-};
+  if(i < 0) return false;
+  S.abSel = i;
+  abDrag = { i, dx: S.abs[i].x - e.point.x, dy: S.abs[i].y - e.point.y };
+  abSync();
+  stat('枠を動かす — 離すと確定');
+  return true;
+}, 20);
+hook('drag', '枠のラベル', e => {
+  if(!abDrag) return false;
+  const a = S.abs[abDrag.i];
+  a.x = Math.round(e.point.x + abDrag.dx);
+  a.y = Math.round(e.point.y + abDrag.dy);
+  drawGrid();
+  return true;
+}, 20);
+hook('up', '枠のラベル', () => {
+  if(!abDrag) return false;
+  abDrag = null; renderAbList(); drawGrid(); return true;
+}, 20);
 /* 枠を画面の中央へ呼び戻す（見失ったとき） */
 addEventListener('keydown', e => {
   if(e.key === '0' && (e.metaKey || e.ctrlKey)){
@@ -4340,25 +4405,7 @@ function paintInto(it, target){
   if(it.children && it.children.length) it.children.forEach(c => c.children ? paintInto(c, target) : set(c));
   else set(it);
 }
-const _applyColorForText = applyColor;
-applyColor = function(c){
-  // ⚠️ 条件で元の処理を飛ばす形にしていたため、単色に戻せない・色が効かない状態を作っていた。
-  //   元は必ず先に通し、そのあとで束（文字など）に配り直す。
-  _applyColorForText.apply(null, arguments);
-  if(c && S.fillMode !== 'solid'){
-    const groups = selected().filter(it => it.children && it.children.length && !it.__along);
-    if(groups.length){ groups.forEach(it => paintInto(it, S.target)); guides(); }
-  }
-};
-const _applyPaintForText = applyPaint;
-applyPaint = function(){
-  // ⚠️ 以前は「束だけを選んでいるとき」「選択が空のとき」に元の処理を呼んでいなかったため、
-  //   プリセットや色の変更が丸ごと効かなくなっていた。元は常に通す（二重に塗っても結果は同じ）。
-  const sel = selected();
-  sel.filter(it => it.children && it.children.length && !it.__along)
-     .forEach(it => paintInto(it, S.target));
-  _applyPaintForText.apply(null, arguments);
-};
+/* 束（文字など）への配り直しは applyColor / applyPaint 本体に統合した */
 
 /* ⭐ ボードでダブルクリック＝その文字を打ち直す（パネルへ行かなくていい） */
 function textRootOf(item){
@@ -4387,29 +4434,7 @@ cv.addEventListener('dblclick', e => {
   setTimeout(() => { inlineT?.select(); }, 0);
   stat('打ち直して Enter — Esc で取消');
 });
-/* 打ち直しの確定：元を消して、同じ位置に置き直す */
-const _closeInline = closeInlineText;
-closeInlineText = function(commit){
-  if(editTarget && inlineT && inlineT.style.display !== 'none'){
-    const txt = inlineT.value;
-    inlineT.style.display = 'none'; inlineT.value = '';
-    const t = editTarget; editTarget = null;
-    if(commit && txt){
-      snapshot();
-      const at = t.position.clone();
-      const box = document.getElementById('tinput');
-      const bak = box.value; box.value = txt;
-      t.remove();
-      const g = placeText(at);
-      box.value = bak;
-      if(g) g.selected = true;
-      guides(); stat('打ち直した');
-    }
-    inlinePt = null;
-    return;
-  }
-  return _closeInline.apply(null, arguments);
-};
+/* 打ち直しの確定・取消は closeInlineText に統合した（②の枝） */
 
 
 /* ⭐ ダブルクリックの編集を「その場に重なる」形にする（Figma の感触に寄せる）。
@@ -4432,8 +4457,7 @@ function openInlineOver(t){
   t.opacity = 0.18;                       // 元は薄く残して、位置の手がかりにする
   setTimeout(() => { inlineT.focus(); inlineT.select(); }, 0);
 }
-/* dblclick を差し替え */
-const _oldDbl = cv.ondblclick;
+/* ダブルクリック＝文字なら打ち直しに入る（先に走らせて、パス確定より優先する） */
 cv.addEventListener('dblclick', e => {
   const r = cv.getBoundingClientRect();
   const pt = paper.view.viewToProject(new Point(e.clientX - r.left, e.clientY - r.top));
@@ -4447,13 +4471,6 @@ cv.addEventListener('dblclick', e => {
   openInlineOver(t);
   stat('打ち直して Enter — Esc で取消');
 }, true);
-/* 取消したときに元の濃さへ戻す */
-const _closeInline2 = closeInlineText;
-closeInlineText = function(commit){
-  const t = editTarget;
-  if(t && !commit) t.opacity = 1;
-  return _closeInline2.apply(null, arguments);
-};
 
 
 /* ══ キャンバスの上でグラデを触る（Figma のあれ）══
@@ -4501,8 +4518,7 @@ function drawGradHandles(){
   });
   artLayer.activate();
 }
-const _guidesForGrad = guides;
-guides = function(){ _guidesForGrad.apply(null, arguments); drawGradHandles(); };
+hook('guides', 'グラデのハンドルを描く', () => drawGradHandles());
 
 function hitGH(pt){
   const it = ghItem(); if(!it) return null;
@@ -4520,14 +4536,12 @@ function hitGH(pt){
   return null;
 }
 /* 選択ツール／グラデツールのどちらでも掴めるようにする */
-const _selDownForGH = selDown;
-selDown = function(e){
+hook('down', 'グラデのハンドル', e => {
   const h = hitGH(e.point);
-  if(h){ snapshot(); ghDrag = h; stat('グラデを直接動かす'); return; }
-  return _selDownForGH.apply(null, arguments);
-};
-const _selDragForGH = selDrag;
-selDrag = function(e){
+  if(!h) return false;
+  snapshot(); ghDrag = h; stat('グラデを直接動かす'); return true;
+}, 10);
+hook('drag', 'グラデのハンドル', e => {
   if(ghDrag){
     const { kind, it, L } = ghDrag;
     const col = (S.target === 'fill') ? it.fillColor : it.strokeColor;
@@ -4547,18 +4561,17 @@ selDrag = function(e){
       const v = L.d.subtract(L.o);
       const t = Math.max(0.01, Math.min(0.99, e.point.subtract(L.o).dot(v) / (v.dot(v) || 1)));
       ghDrag.ref.t = t;
-      if(typeof refreshStops === 'function') refreshStops();
+      refreshStops();
     }
     guides();
-    return;
+    return true;
   }
-  return _selDragForGH.apply(null, arguments);
-};
-const _upForGH = tool.onMouseUp;
-tool.onMouseUp = function(e){
-  if(ghDrag){ ghDrag = null; guides(); return; }
-  return _upForGH.apply(this, arguments);
-};
+  return false;
+}, 10);
+hook('up', 'グラデのハンドル', () => {
+  if(!ghDrag) return false;
+  ghDrag = null; guides(); return true;
+}, 10);
 
 
 /* ══ 角度ダイヤル ══
@@ -4642,10 +4655,7 @@ function reflowAlongSoon(){
 }
 document.getElementById('alongN')?.addEventListener('change', () => reflowAlong());
 /* ストップ（バー・一覧・プリセット）と、断面のスライダーに追従させる */
-const _refreshStopsForFlow = (typeof refreshStops === 'function') ? refreshStops : null;
-if(_refreshStopsForFlow){
-  refreshStops = function(){ _refreshStopsForFlow.apply(null, arguments); reflowAlongSoon(); };
-}
+hook('stops', 'パスに沿って流し直す', () => reflowAlongSoon());
 ['gAng','mAng','mBand','mCon','mValley','mGrad','mShine','mShift','gA','gB','mTint']
   .forEach(id => document.getElementById(id)?.addEventListener('input', reflowAlongSoon));
 document.querySelectorAll('#fillmode button, #stopList, #stopBar')
@@ -4855,10 +4865,7 @@ document.querySelectorAll('#tzTex button').forEach(b =>
 /* 色・断面を変えたときも追いかける */
 ['gA','gB','mTint','mBand','mCon','mValley','mGrad','mShine','mShift']
   .forEach(id => document.getElementById(id)?.addEventListener('input', retsubuSoon));
-const _refreshStopsForTsubu = (typeof refreshStops === 'function') ? refreshStops : null;
-if(_refreshStopsForTsubu){
-  refreshStops = function(){ _refreshStopsForTsubu.apply(null, arguments); retsubuSoon(); };
-}
+hook('stops', '粒を作り直す', () => retsubuSoon());
 
 
 /* ⭐ 粒の下見。押す前に見えないと調整できない。
@@ -4938,10 +4945,7 @@ addEventListener('pointerup', () => setTimeout(tzPvSafety, 0), true);
   .forEach(id => document.getElementById(id)?.addEventListener('input', tzPvSoon));
 document.querySelectorAll('#tzTex button').forEach(b =>
   b.addEventListener('click', () => setTimeout(tzPvSoon, 0)));
-const _refreshStopsForPv = (typeof refreshStops === 'function') ? refreshStops : null;
-if(_refreshStopsForPv){
-  refreshStops = function(){ _refreshStopsForPv.apply(null, arguments); tzPvSoon(); };
-}
+hook('stops', '粒の下見を作り直す', () => tzPvSoon());
 /* ⚠️ 確定より先に下見を片付ける。残ったままだと二重に置かれる。
    capture フェーズで走らせて、本処理（bubble）より前に消す。 */
 document.getElementById('bTsubuize')?.addEventListener('click', () => {
