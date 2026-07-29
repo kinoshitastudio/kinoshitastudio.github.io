@@ -4946,21 +4946,24 @@ function tsubuize(item, o){
       const cell = new Path.Rectangle(
         new Rectangle(b.x + i*cw + pad, b.y + j*ch + pad,
                       Math.max(0.2, cw - pad*2), Math.max(0.2, ch - pad*2)));
-      // ⭐ 粒 TSUBU の式をそのまま使う。
-      //   ・粒の中は 0〜1 に正規化した座標で、細かさ(W2)ぶんの周期が走る
-      //   ・位相 ph は「格子上の位置 × 細かさ」で決まる＝粒をまたいで波が繋がる
-      //   ⚠️ 粒の入口〜出口を滑らかに繋ぐと粒が消えて、ただのグラデになる。
-      //     粒の中で波が完結し、境界で位相が切り替わることが8bitらしさそのもの。
-      const W2 = o.wav;
-      const ph = ((i * ca + j * sa) * W2 + o.shift) * Math.PI * 2;
-      const TAU = 6.2831853;
-      // 粒内の正規化座標 (0〜1) から、TSUBU と同じ式で明暗を出す
-      const patAt = (uu, ww) => {
-        if(o.line === 0) return 0.5 + 0.5 * Math.cos(uu * TAU * W2 + ph);
-        if(o.line === 1) return (Math.floor(uu * W2 * 2 + ph/TAU) % 2) ? 1 : 0.12;
-        if(o.line === 2) return 0.5 + 0.5 * Math.cos((uu + ww) * TAU * W2 + ph);
-        if(o.line === 3) return (0.5+0.5*Math.cos(uu*TAU*W2+ph)) * (0.5+0.5*Math.cos(ww*TAU*W2));
-        return 0.5 + 0.5 * Math.cos(Math.hypot(uu, ww) * TAU * W2 - ph);
+      // ⭐⭐ 波は【粒をまたいで繋がる】。粒 TSUBU の
+      //   「1タイル進むと wav 周期ぶん位相がずれる＝タイル境界で波が連続する」と同じにする。
+      //   ⚠️ これまでは位相の基準が粒の【左上】で、粒の中は中心±0.5 を走っていた。
+      //     そのズレは向き（ca,sa）で変わるので、字なりを効かせるほど＝粒ごとに向きが
+      //     変わるほど、境界で波が途切れていた。基準を【粒の中心をワールドで射影した値】にする。
+      //   ⚠️「粒の中で波が完結する」のではない。8bit に見えるのは、粒ごとに向きと色が
+      //     切り替わるからであって、波を断ち切ることではない。
+      const W2 = o.wav, TAU = 6.2831853;
+      const uc = (i + 0.5) * ca + (j + 0.5) * sa;     // 粒の中心（格子座標）を帯の向きへ射影
+      // 粒内 t（0〜1）＝中心から ±0.5 セル。ずれ(shift)は細かさに関わらず全体を送る（TSUBU と同じ）
+      const uAt = t => (uc + (t - 0.5)) * W2 + o.shift;
+      const patAt = (t, ww) => {
+        const u = uAt(t);
+        if(o.line === 0) return 0.5 + 0.5 * Math.cos(u * TAU);
+        if(o.line === 1) return (Math.floor(u * 2) % 2) ? 1 : 0.12;
+        if(o.line === 2) return 0.5 + 0.5 * Math.cos((u + ww * W2) * TAU);
+        if(o.line === 3) return (0.5+0.5*Math.cos(u*TAU)) * (0.5+0.5*Math.cos(ww*TAU*W2));
+        return 0.5 + 0.5 * Math.cos(Math.hypot(u, ww * W2) * TAU);
       };
       if(o.tex === 'blob'){
         // グラデ塊 ── 粒の中を「画に沿う軸」で刻んで、TSUBU のタイル1枚ぶんを再現する
