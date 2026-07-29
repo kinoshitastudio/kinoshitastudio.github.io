@@ -656,6 +656,8 @@
   <div class="row"><label>字なり</label><input type="range" id="tzFollow" min="0" max="100" step="1" value="100"><span class="val"></span></div>
   <div class="row"><label>ずれ</label><input type="range" id="tzShift" min="0" max="100" step="1" value="0"><span class="val"></span></div>
   <div class="row"><label>粒の隙間</label><input type="range" id="tzGap" min="0" max="40" step="1" value="0"><span class="val"></span></div>
+  <div class="row"><label>玉</label><input type="range" id="tzBead" min="0" max="100" step="1" value="55"><span class="val"></span></div>
+  <div class="hint">⭐<b>画が交わって太くなっている所に球が出る</b>（粒 TSUBU の塊）。太い順に、この割合ぶんを球へ差し替える。<b>0＝球なし</b>。球の色は<b>球色</b>／グラデ塊のときだけ効く</div>
 
   <div class="note" style="margin:8px 0 4px"><b>グラデの断面</b> — 粒だけに効く（金属・グラデ塗りには触らない）</div>
   <div class="row"><label>谷</label><input type="range" id="tzValley" min="0" max="100" step="1" value="0"><span class="val"></span></div>
@@ -4804,6 +4806,9 @@ function tzOpt(){
     // ⭐ 色は粒じぶんで持つ（グラデ塗りのストップは見ない）
     pal, cols: pal.cols, LUT: tzRamp(pal),
     shine : +(g('tzShine')?.value ?? 60) / 100,
+    val   : +(g('tzValley')?.value || 0) / 100,
+    grd   : +(g('tzGrad')?.value || 0) / 100,
+    bead  : +(g('tzBead')?.value ?? 55),
     steps : +(g('tzSteps')?.value || 4),
     dith  : +(g('tzDith')?.value || 100) / 100,
     gca   : Math.cos(gd), gsa : Math.sin(gd),
@@ -4831,6 +4836,26 @@ function tzAngleAt(item, pt, fallback){
   if(!best || !best.tangent) return fallback;
   return Math.atan2(best.tangent.y, best.tangent.x);
 }
+/* ⭐ 球（塊）── 画が交わって太くなっている所に出る。粒 TSUBU の式をそのまま。
+   球色から「照り→球色→谷→透明」の放射グラデを引く。角が透明なので地が透ける。 */
+function tzSphere(cx, cy, r, o, ph){
+  const B = o.pal.b, WHITE = [255,255,255];
+  const mixc = (c1,c2,t) => [0,1,2].map(i => c1[i] + (c2[i]-c1[i])*t);
+  const bHi  = mixc(B, WHITE, 0.10 + 0.50 * o.grd);     // 中心の照り（階調で白へ寄る＝丸く見える）
+  const bLow = B.map(v => v * 0.60 * (1 - o.val));      // 谷：色が残った暗部 → 純黒
+  const c = new Path.Circle(new Point(cx, cy), r);
+  c.fillColor = {
+    gradient: { radial:true, stops: [
+      [tzRgbHex(bHi), 0], [tzRgbHex(B), 0.30], [tzRgbHex(bLow), 0.62],
+      ['rgba(' + B.map(v=>Math.round(v)).join(',') + ',0)', 1] ] },
+    origin: new Point(cx, cy),
+    destination: new Point(cx + r, cy),
+    // 照りの位置をずらす＝球が転がって見える（TSUBU の hx,hy に当たる）
+    highlight: new Point(cx + Math.cos(ph)*r*0.28, cy - r*0.16 + Math.sin(ph*0.7)*r*0.20)
+  };
+  c.strokeColor = null; c.strokeWidth = 0;
+  return c;
+}
 function tsubuize(item, o){
   const b = item.bounds;
   if(!b || !b.width || !b.height) return null;
@@ -4838,18 +4863,46 @@ function tsubuize(item, o){
   const cw = b.width / N, ch = b.height / N;
   const pad = Math.min(cw, ch) * o.gap * 0.5;
   const kids = [];
-  for(let j = 0; j < N; j++){
-    for(let i = 0; i < N; i++){
+  // ⭐ まず「どのマスが内側か」の地図を作る。TSUBU が字を格子に落としたのと同じ。
+  //   ここから 向き（Sobel）と 太さ（5×5の埋まり）を取る。
+  //   ⚠️ これまでは1マスごとに最も近い輪郭を探していた（重いうえ、TSUBU と別の向きになる）。
+  const mask = new Uint8Array(N*N);
+  for(let j = 0; j < N; j++) for(let i = 0; i < N; i++){
+    if(tzInside(item, new Point(b.x + (i+0.5)*cw, b.y + (j+0.5)*ch))) mask[j*N+i] = 1;
+  }
+  const on = (x, y) => (x < 0 || y < 0 || x >= N || y >= N) ? 0 : mask[y*N + x];
+  // 内側のマスを集めて、向きと太さを出す
+  const cells = [];
+  for(let j = 0; j < N; j++) for(let i = 0; i < N; i++){
+    if(!on(i, j)) continue;
+    // 太さ — 5×5(0..24) が何個埋まっているか。多いほど画の芯／交わり
+    let dens = 0;
+    for(let q = -2; q <= 2; q++) for(let pI = -2; pI <= 2; pI++) dens += on(i+pI, j+q);
+    // 画の向き — Sobel で輪郭の法線を出し、90°回して画に沿わせる（TSUBU と同じ式）
+    const gx = (on(i+1,j-1) + 2*on(i+1,j) + on(i+1,j+1)) - (on(i-1,j-1) + 2*on(i-1,j) + on(i-1,j+1));
+    const gy = (on(i-1,j+1) + 2*on(i,j+1) + on(i+1,j+1)) - (on(i-1,j-1) + 2*on(i,j-1) + on(i+1,j-1));
+    const sob = (gx || gy) ? Math.atan2(gy, gx) + Math.PI/2 : 0;
+    cells.push({ i, j, dens, sob });
+  }
+  if(!cells.length) return null;
+  // ⭐ 玉 ── 太い所（画の芯・交わり）から順に、割合ぶんを球へ差し替える
+  const bead = new Set();
+  if(o.bead > 0 && o.tex === 'blob'){
+    const order = cells.map((_, k) => k).sort((a, x) => cells[x].dens - cells[a].dens);
+    order.slice(0, Math.round(cells.length * o.bead / 100)).forEach(k => bead.add(k));
+  }
+  for(let ci = 0; ci < cells.length; ci++){
+    {
+      const { i, j, sob } = cells[ci];
       const cx = b.x + (i + 0.5) * cw, cy = b.y + (j + 0.5) * ch;
-      const c = new Point(cx, cy);
-      if(!tzInside(item, c)) continue;
-      // ⭐ 帯の向き：字なり100＝輪郭に沿う／0＝ぜんぶ同じ向き
-      let ang = o.dir;
-      if(o.follow > 0.001){
-        const t = tzAngleAt(item, c, o.dir);
-        ang = t * o.follow + o.dir;
-      }
+      // ⭐ 帯の向き：字なり100＝画に沿う（Sobel）／0＝ぜんぶ同じ向き
+      const ang = sob * o.follow + o.dir;
       const ca = Math.cos(ang), sa = Math.sin(ang);
+      if(bead.has(ci)){
+        const ph = ((i * ca + j * sa) * o.wav + o.shift) * Math.PI * 2;
+        kids.push(tzSphere(cx, cy, Math.max(cw, ch) * 0.5 - pad, o, ph));
+        continue;
+      }
       const cell = new Path.Rectangle(
         new Rectangle(b.x + i*cw + pad, b.y + j*ch + pad,
                       Math.max(0.2, cw - pad*2), Math.max(0.2, ch - pad*2)));
@@ -4901,7 +4954,7 @@ function tsubuize(item, o){
 /* ⭐ 文字は「字の形」でなく四角い箱として粒が乗ってしまう。
    PointText は中身（塗りの内側）の判定を持たないので、bounds 全体が内側と見なされるため。
    ⚠️ だから粒にする前にパスへ変えておく（イラレのアウトライン化と同じ）。
-   一度パスにすれば以後は速いので、下見のたびに変換しなくてよい。 */
+   一度パスにすれば以後は速いので、previewのたびに変換しなくてよい。 */
 function tzHasText(items){
   const t = [];
   items.forEach(it => collectTexts(it, t));
@@ -4973,7 +5026,7 @@ document.getElementById('bTsubuize')?.addEventListener('click', async () => {
 document.querySelectorAll('#tzTex button, #tzLine button').forEach(b =>
   b.addEventListener('click', () => b.parentElement.querySelectorAll('button')
     .forEach(x => x.classList.toggle('on', x === b))));
-const TZ_SLIDERS = ['tzRes','tzWav','tzDir','tzFollow','tzShift','tzGap',
+const TZ_SLIDERS = ['tzRes','tzWav','tzDir','tzFollow','tzShift','tzGap','tzBead',
                     'tzValley','tzGrad','tzShine','tzSteps','tzDith','tzGdir'];
 TZ_SLIDERS.forEach(id => {
   const r = document.getElementById(id); if(!r) return;
@@ -5000,10 +5053,16 @@ document.querySelectorAll('#tzPal button').forEach(b =>
       .forEach(x => x.classList.toggle('on', +x.dataset.v === TZ_CUSTOM_IDX));
     tzChanged();
   }));
-/* 粒の設定を触ったとき＝かけたものを作り直し、下見も作り直す */
+/* 粒の設定を触ったとき＝かけたものを作り直し、previewも作り直す。
+   ⚠️ 何も起きないときは、なぜ起きないかを必ず出す（黙っていると「効かない」に見える）。 */
 function tzChanged(){
-  if(typeof retsubuSoon === 'function') retsubuSoon();
-  if(typeof tzPvSoon === 'function') tzPvSoon();
+  const t = tzTargets();
+  if(!t.length){ stat('図形か文字を選ぶと、粒の設定がそのまま見えます'); return; }
+  if(!tzPv.on && !t.some(it => it.__tsubu)){
+    stat('preview を入れると、「粒にする」を押す前に見えます');
+  }
+  retsubuSoon();
+  tzPvSoon();
 }
 TZ_SLIDERS.forEach(id => document.getElementById(id)?.addEventListener('input', tzChanged));
 
@@ -5014,7 +5073,7 @@ TZ_SLIDERS.forEach(id => document.getElementById(id)?.addEventListener('input', 
 let _tzTimer = null;
 /* ⭐ 「いま粒を触っている対象」を1箇所で持つ。
    ⚠️ 選択だけを見ていたので、カーソルを外した（選択が外れた）とたんに
-      下見も作り直しも止まり、元の姿に戻って見えていた。
+      previewも作り直しも止まり、元の姿に戻って見えていた。
       選んでいればそれを覚え、選んでいなければ最後に触ったものを使い続ける。 */
 let _tzLast = [];
 function tzTargets(){
@@ -5064,10 +5123,10 @@ document.querySelectorAll('#tzTex button').forEach(b =>
 hook('stops', '粒を作り直す', () => retsubuSoon());
 
 
-/* ⭐ 粒の下見。押す前に見えないと調整できない。
+/* ⭐ 粒のpreview。押す前に見えないと調整できない。
    元は隠すだけで消さないので、チェックを外せばそのまま戻る。 */
 let tzPv = { on:false, base:[], temp:[] };
-/* ⚠️ 下見の後始末は2回取りこぼした（元の図形が隠れたまま残る）。
+/* ⚠️ previewの後始末は2回取りこぼした（元の図形が隠れたまま残る）。
    直下だけ・参照だけでは足りないので、レイヤー全体を再帰でたどって必ず戻す。 */
 function tzPvClear(){
   const walk = o => {
@@ -5078,7 +5137,7 @@ function tzPvClear(){
   artLayer.children.slice().forEach(walk);
   tzPv.temp = []; tzPv.base = [];
 }
-/* ⭐ 保険 ── 下見が動いていないのに隠れたままのものがあれば、必ず戻す。
+/* ⭐ 保険 ── previewが動いていないのに隠れたままのものがあれば、必ず戻す。
    「どこかで取りこぼす」前提で、戻す側を毎回通す。 */
 function tzPvSafety(){
   if(tzPv.on) return;
@@ -5096,7 +5155,7 @@ function tzPvBuild(){
   const all = tzTargets();
   const sel = all.filter(it => !it.__tsubu);
   if(!sel.length){
-    // かけ終わったものは下見でなく、そのままスライダーで作り直せる
+    // かけ終わったものはpreviewでなく、そのままスライダーで作り直せる
     if(all.length) stat('かけた粒は、そのままスライダーを動かせば作り直します');
     return;
   }
@@ -5115,7 +5174,7 @@ function tzPvBuild(){
     }
   });
   const el = document.getElementById('stat');
-  if(el) el.textContent = '下見：粒 ' + total + ' 個 — 「粒にする」で確定';
+  if(el) el.textContent = 'preview：粒 ' + total + ' 個 — 「粒にする」で確定';
   paper.view.update();
 }
 let _tzPvTimer = null;
@@ -5127,32 +5186,43 @@ function tzPvSoon(){
 document.getElementById('tzPv')?.addEventListener('change', async e => {
   tzPv.on = e.target.checked;
   if(tzPv.on){
-    // ⭐ 下見の前に文字はパスへ（四角い箱に粒が乗るのを防ぐ）
+    // ⭐ previewの前に文字はパスへ（四角い箱に粒が乗るのを防ぐ）
     const sel = tzTargets();
     if(sel.length) await tzOutlineFirst(sel);
     tzPvBuild();
   }
-  else { tzPvClear(); tzPvSafety(); guides(); stat('下見をやめた'); }
+  else { tzPvClear(); tzPvSafety(); guides(); stat('preview をやめた'); }
 });
-/* 塗りモードを離れたら下見も畳む（粒以外では意味がないので） */
+/* 粒に入ったらpreviewを出す／離れたら畳む
+   ⚠️⚠️ previewが出ていないと、パレットも照りも「触っても画面が変わらない」＝効かないように見える。
+   かける前に触るのがふつうなので、粒に入った時点で見えている状態にしておく。 */
 document.querySelectorAll('#fillmode button').forEach(b =>
-  b.addEventListener('click', () => {
+  b.addEventListener('click', async () => {
+    const c = document.getElementById('tzPv');
     if(b.dataset.v !== 'tsubu'){
-      const c = document.getElementById('tzPv');
       if(c && c.checked){ c.checked = false; tzPv.on = false; tzPvClear(); }
       tzPvSafety(); guides();
+      return;
+    }
+    const sel = tzTargets();
+    if(!sel.length){ stat('図形か文字を選ぶと、粒の設定がそのまま見えます'); return; }
+    if(sel.some(it => it.__tsubu)) return;            // かけ終わったものは直接作り直す
+    if(c && !c.checked){
+      c.checked = true; tzPv.on = true;
+      await tzOutlineFirst(sel);
+      tzPvBuild();
     }
   }));
 /* 何か操作したときに、隠れたままのものが無いか毎回みる */
 addEventListener('pointerup', () => setTimeout(tzPvSafety, 0), true);
-/* パラメータを触ったら下見を作り直す */
+/* パラメータを触ったらpreviewを作り直す */
 ['tzRes','tzWav','tzDir','tzFollow','tzShift','tzGap','gA','gB','mTint',
  'mBand','mCon','mValley','mGrad','mShine','mShift']
   .forEach(id => document.getElementById(id)?.addEventListener('input', tzPvSoon));
 document.querySelectorAll('#tzTex button').forEach(b =>
   b.addEventListener('click', () => setTimeout(tzPvSoon, 0)));
-hook('stops', '粒の下見を作り直す', () => tzPvSoon());
-/* ⚠️ 確定より先に下見を片付ける。残ったままだと二重に置かれる。
+hook('stops', '粒のpreviewを作り直す', () => tzPvSoon());
+/* ⚠️ 確定より先にpreviewを片付ける。残ったままだと二重に置かれる。
    capture フェーズで走らせて、本処理（bubble）より前に消す。 */
 document.getElementById('bTsubuize')?.addEventListener('click', () => {
   const c = document.getElementById('tzPv');
