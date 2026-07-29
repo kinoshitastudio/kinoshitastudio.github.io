@@ -4758,7 +4758,7 @@ function tsubuize(item, o){
       kids.push(cell);
     }
   }
-  if(!kids.length) return null;
+  if(!kids.length) return null;   // ⚠️ 解像が低すぎて粒が置けないときは何も作らない
   const g = new Group(kids);
   g.__tsubu = { d: item.pathData || null, json: item.exportJSON() };
   return g;
@@ -4864,14 +4864,29 @@ if(_refreshStopsForTsubu){
 /* ⭐ 粒の下見。押す前に見えないと調整できない。
    元は隠すだけで消さないので、チェックを外せばそのまま戻る。 */
 let tzPv = { on:false, base:[], temp:[] };
+/* ⚠️ 下見の後始末は2回取りこぼした（元の図形が隠れたまま残る）。
+   直下だけ・参照だけでは足りないので、レイヤー全体を再帰でたどって必ず戻す。 */
 function tzPvClear(){
-  // ⚠️ 参照だけで管理すると取りこぼして、元が隠れたまま残った。
-  //   印を付けておいて、レイヤー全体から拾って片付ける。
-  artLayer.children.slice().forEach(c => {
-    if(c.__isPv){ try{ c.remove(); }catch(e){} }
-    if(c.__pvHidden){ c.visible = true; delete c.__pvHidden; }
-  });
+  const walk = o => {
+    if(o.__isPv){ try{ o.remove(); }catch(e){} return; }
+    if(o.__pvHidden){ o.visible = true; delete o.__pvHidden; }
+    if(o.children) o.children.slice().forEach(walk);
+  };
+  artLayer.children.slice().forEach(walk);
   tzPv.temp = []; tzPv.base = [];
+}
+/* ⭐ 保険 ── 下見が動いていないのに隠れたままのものがあれば、必ず戻す。
+   「どこかで取りこぼす」前提で、戻す側を毎回通す。 */
+function tzPvSafety(){
+  if(tzPv.on) return;
+  let fixed = 0;
+  const walk = o => {
+    if(o.__isPv){ try{ o.remove(); }catch(e){} fixed++; return; }
+    if(o.__pvHidden){ o.visible = true; delete o.__pvHidden; fixed++; }
+    if(o.children) o.children.slice().forEach(walk);
+  };
+  artLayer.children.slice().forEach(walk);
+  if(fixed) paper.view.update();
 }
 function tzPvBuild(){
   tzPvClear();
@@ -4904,8 +4919,19 @@ function tzPvSoon(){
 document.getElementById('tzPv')?.addEventListener('change', e => {
   tzPv.on = e.target.checked;
   if(tzPv.on) tzPvBuild();
-  else { tzPvClear(); guides(); stat('下見をやめた'); }
+  else { tzPvClear(); tzPvSafety(); guides(); stat('下見をやめた'); }
 });
+/* 塗りモードを離れたら下見も畳む（粒以外では意味がないので） */
+document.querySelectorAll('#fillmode button').forEach(b =>
+  b.addEventListener('click', () => {
+    if(b.dataset.v !== 'tsubu'){
+      const c = document.getElementById('tzPv');
+      if(c && c.checked){ c.checked = false; tzPv.on = false; tzPvClear(); }
+      tzPvSafety(); guides();
+    }
+  }));
+/* 何か操作したときに、隠れたままのものが無いか毎回みる */
+addEventListener('pointerup', () => setTimeout(tzPvSafety, 0), true);
 /* パラメータを触ったら下見を作り直す */
 ['tzRes','tzWav','tzDir','tzFollow','tzShift','tzGap','gA','gB','mTint',
  'mBand','mCon','mValley','mGrad','mShine','mShift']
