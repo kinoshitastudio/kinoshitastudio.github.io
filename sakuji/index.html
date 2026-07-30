@@ -3793,6 +3793,33 @@ function makePaint(p, item){
   const { origin, destination } = gradLine(item, p.ang);
   return { gradient:{ stops: p.stops.map(o=>[o.c, o.t]), radial: p.radial }, origin, destination };
 }
+/* ⭐⭐ 粒の設定をまるごと持ち出す／戻す。
+   ⚠️ 粒は Group（数百の矩形）なので fillColor すら無い。塗り・線だけを写す作りでは
+     【粒をコピーしても何も持ち出せなかった】（木下＝「確実にコピーできるようにはしてほしい」）。 */
+const TZ_SEGS = ['tzTex','tzLine','tzCross','tzSeam','tzPal'];
+const TZ_COLS = ['tzCa','tzCb','tzCbg'];
+function tzSettingsSnapshot(){
+  const out = { ranges:{}, segs:{}, cols:{} };
+  TZ_SLIDERS.forEach(id => { const el = document.getElementById(id); if(el) out.ranges[id] = el.value; });
+  TZ_SEGS.forEach(id => { const b = document.querySelector('#' + id + ' button.on'); if(b) out.segs[id] = b.dataset.v; });
+  TZ_COLS.forEach(id => { const el = document.getElementById(id); if(el) out.cols[id] = el.value; });
+  return out;
+}
+function tzSettingsRestore(sn){
+  if(!sn) return false;
+  Object.entries(sn.ranges || {}).forEach(([id, v]) => {
+    const el = document.getElementById(id); if(!el) return;
+    el.value = v;
+    const lab = el.parentElement?.querySelector('.val'); if(lab) lab.textContent = v;
+  });
+  Object.entries(sn.segs || {}).forEach(([id, v]) => {
+    document.querySelectorAll('#' + id + ' button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  });
+  Object.entries(sn.cols || {}).forEach(([id, v]) => {
+    const el = document.getElementById(id); if(el) el.value = v;
+  });
+  return true;
+}
 function copyStyle(){
   const it = selected()[0];
   if(!it){ stat('図形を選んでからコピー'); return; }
@@ -3800,8 +3827,10 @@ function copyStyle(){
     fill:   readPaint(it.fillColor),
     stroke: readPaint(it.strokeColor),
     sw: it.strokeWidth, cap: it.strokeCap, join: it.strokeJoin,
+    grain: it.__tsubu ? tzSettingsSnapshot() : null,   // ⭐ 粒なら設定もまるごと
   };
-  stat('設定をコピー — 別の図形で右クリック→ペースト');
+  stat(it.__tsubu ? '粒の設定ごとコピー — 別の図形で右クリック→ペースト'
+                  : '設定をコピー — 別の図形で右クリック→ペースト');
 }
 function pasteStyle(what){                    // what: 'both' | 'fill' | 'stroke'
   if(!styleClip){ stat('先に設定をコピーしてください'); return; }
@@ -3819,8 +3848,17 @@ function pasteStyle(what){                    // what: 'both' | 'fill' | 'stroke
       if(p){ it.strokeWidth = styleClip.sw || S.sw; it.strokeCap = styleClip.cap || 'round'; it.strokeJoin = styleClip.join || 'round'; }
     }
   });
+  // ⭐ 粒の設定があれば戻す。対象が粒ならその場で作り直し、粒でなければ
+  //   「粒にする」を押せば同じ質感になる（設定はもう入っている）。
+  let grained = false;
+  if(styleClip.grain && what !== 'stroke'){
+    tzSettingsRestore(styleClip.grain);
+    if(sel.some(it => it.__tsubu)){ retsubu(true); grained = true; }
+  }
   guides();
-  stat({both:'設定をペースト', fill:'塗りをペースト', stroke:'線をペースト'}[what]);
+  if(grained) stat('粒の設定ごとペースト — 同じ質感で作り直した');
+  else if(styleClip.grain) stat('粒の設定を入れた — 「粒にする」で同じ質感になる');
+  else stat({both:'設定をペースト', fill:'塗りをペースト', stroke:'線をペースト'}[what]);
 }
 
 /* 右クリックメニュー */
