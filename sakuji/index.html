@@ -5042,6 +5042,36 @@ function tzHasText(items){
   items.forEach(it => collectTexts(it, t));
   return t.length;
 }
+/* ⭐⭐ preview では【形だけ借りる】。元の文字は壊さない（打ち直せるまま残す）。
+   ⚠️ これまでは preview のために元をパスへ置き換えていたので、粒をやめても
+     文字に戻れなかった＝木下の「粒で作業中にボードを触ると必然的にアウトライン化がかかる」。
+   ⭐ 複製をパス化して、その JSON だけ覚える。元には指一本触れない。
+     確定（「粒にする」）したときに初めて元を置き換える。 */
+async function tzEnsureShape(items){
+  for(const it of items){
+    if(!it || !it.parent || it.__tzShape) continue;
+    if(!tzHasText([it])) continue;                 // 文字を含まないならそのままの形で置ける
+    let box = null;
+    try {
+      // ⚠️ パス化は元を「別のオブジェクトに差し替える」ので、複製をそのまま渡すと
+      //   差し替わった先が掴めず board に残る。Group に包んで、包みごと捨てる。
+      box = new Group([ it.clone({ insert:true }) ]);
+      await outlineTextsIn([box]);
+      it.__tzShape = box.exportJSON();
+    } catch(e){ /* 失敗したら形を借りない（そのままの形で置く） */ }
+    if(box){ try { box.remove(); } catch(e){} }
+  }
+}
+/* 粒を置くための「形」を返す。⚠️ 借りた形は一時物なので、使ったら消す（temp:true） */
+function tzShapeOf(it){
+  if(it.__tzShape){
+    try {
+      const src = artLayer.importJSON(it.__tzShape);
+      if(src){ src.visible = false; return { src, temp:true }; }
+    } catch(e){}
+  }
+  return tzSourceOf(it);
+}
 async function tzOutlineFirst(items){
   if(!tzHasText(items)) return items;
   // ⚠️ アウトライン化は元の文字を「別のオブジェクトに差し替える」。
@@ -5093,13 +5123,14 @@ document.getElementById('bTsubuize')?.addEventListener('click', async () => {
   if(pend.length) sel = sel.concat(pend);
   if(!sel.length){ stat('図形か文字を選んでください'); return; }
   snapshot();
-  sel = await tzOutlineFirst(sel);                 // 文字が混ざっていたら先にパスへ
+  await tzEnsureShape(sel);                        // ⭐ 形だけ借りる（元は壊さない）
+  sel = sel.filter(it => it && it.parent);
   if(!sel.length){ stat('できませんでした'); return; }
   const o = tzOpt();
   let made = 0;
   const done = [];
   sel.forEach(it => {
-    const { src, temp } = tzSourceOf(it);
+    const { src, temp } = tzShapeOf(it);
     const g = tsubuize(src, o);
     if(temp) src.remove();
     if(g){ g.insertAbove(it); it.remove(); g.selected = true; made++; done.push(g); }
@@ -5271,7 +5302,7 @@ function tzPvBuild(){
   }
   tzPvClear();
   sel.forEach(it => {
-    const { src, temp } = tzSourceOf(it);
+    const { src, temp } = tzShapeOf(it);
     const g = tsubuize(src, o);
     if(temp) src.remove();
     if(g){
@@ -5298,7 +5329,7 @@ document.getElementById('tzPv')?.addEventListener('change', async e => {
   if(tzPv.on){
     // ⭐ previewの前に文字はパスへ（四角い箱に粒が乗るのを防ぐ）
     const sel = tzTargets();
-    if(sel.length) await tzOutlineFirst(sel);
+    if(sel.length) await tzEnsureShape(sel);   // ⭐ 元の文字は壊さない
     tzPvBuild();
   }
   else { tzPvClear(); tzPvSafety(); guides(); stat('preview をやめた'); }
@@ -5340,7 +5371,7 @@ document.querySelectorAll('#fillmode button').forEach(b =>
     const sel = tzTargets();
     if(!sel.length){ stat('図形か文字を選ぶと、粒の設定がそのまま見えます'); return; }
     if(sel.some(it => it.__tsubu)) return;            // かけ終わったものは直接作り直す
-    await tzOutlineFirst(sel);
+    await tzEnsureShape(sel);                  // ⭐ 元の文字は壊さない
     tzPvBuild();
   }));
 /* 何か操作したときに、隠れたままのものが無いか毎回みる */
