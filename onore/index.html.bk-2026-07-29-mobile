@@ -1,0 +1,744 @@
+<!doctype html><meta charset="utf-8">
+<!--
+  Onore — 99letters synth. Figma plugin UI.
+  ⭐ Engines emit DESCRIPTORS (図形の記述). The same descriptor list draws the SVG
+     preview here AND is posted to code.js, which turns it into native Figma nodes.
+     One source of truth → preview and plugin cannot diverge. No sync.js needed.
+  ⚠ No 汚し here. Grit / blur-as-texture / misregistration is downstream (Kaibou).
+  ⭐ Add an engine: push one entry to ENGINES. Selector, panel, preview, output follow.
+  Layout: fixed top bar (logo + engine selector + JP/EN) · full-width preview ·
+          the selected engine's sliders · footer. Mixer (levels + S/M) comes later.
+-->
+<style>
+  :root{--bg:#0b0b0c;--fg:#f2f2f3;--dim:#a6a6ab;--dim2:#7c7c81;--line:#2c2c2f;--panel:#161617;--hot:#ff9445}
+  html,body{margin:0;background:var(--bg);color:var(--fg);font:400 12.5px/1.6 "Inter","Helvetica Neue",-apple-system,ui-sans-serif,sans-serif;height:100%}
+  body{display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:12px;padding:9px 12px 8px;border-bottom:1px solid var(--line);flex:none}
+  .wm{display:flex;flex-direction:column;align-items:flex-start;min-width:0;flex:none}
+  .wmr{display:flex;align-items:baseline;gap:7px}
+  h1{font-family:"Haettenschweiler","Impact","Arial Narrow Bold",sans-serif;font-size:19px;letter-spacing:.06em;text-transform:uppercase;margin:0;font-weight:400;cursor:pointer;line-height:1.05;color:#fff}
+  h1 .jp{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic",-apple-system,sans-serif;font-weight:800;font-size:15px;letter-spacing:.02em;margin-left:7px;display:inline-block;transform:scaleX(.86);transform-origin:left center;vertical-align:baseline}
+  .ver{font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.12em;color:var(--dim2)}
+  .by{font-size:7px;letter-spacing:.11em;text-transform:uppercase;color:var(--dim2);white-space:nowrap;margin-top:2px}
+  .esel{position:relative;flex:1;min-width:0}
+  #engBtn{width:100%;text-align:left;border:1px solid var(--line);background:var(--panel);color:#fff;border-radius:6px;padding:7px 10px;font-size:12px;cursor:pointer}
+  #engBtn .ar{float:right;color:var(--dim)}
+  .emenu{position:absolute;top:calc(100% + 4px);left:0;right:0;background:#181818;border:1px solid var(--line);border-radius:7px;padding:4px;z-index:20;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+  .emenu[hidden]{display:none}
+  .emenu button{display:block;width:100%;text-align:left;border:none;border-radius:5px;padding:8px 9px;font-size:11.5px;background:none;color:var(--fg);cursor:pointer}
+  .emenu button:hover{background:#242424}
+  .emenu button.on{background:#fff;color:#000}
+  .lang{display:flex;flex:none}
+  .lang button{border:1px solid var(--line);background:var(--panel);color:var(--dim);border-radius:0;padding:5px 10px;font-size:11px;cursor:pointer}
+  .lang button.on{background:#fff;color:#000;border-color:#fff}
+  .lang button:first-child{border-radius:5px 0 0 5px}
+  .lang button:last-child{border-radius:0 5px 5px 0;margin-left:-1px}
+  #body{flex:1;display:flex;flex-direction:column;gap:10px;padding:12px;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;min-height:0}
+  small{color:var(--dim2);line-height:1.5}
+  .presets{display:flex;gap:5px;flex-wrap:wrap}
+  .presets button{font-size:10.5px;padding:5px 11px;border:1px solid var(--line);border-radius:20px;background:var(--panel);color:#bbb;cursor:pointer}
+  .presets button:hover{background:var(--line);color:#fff;border-color:var(--dim2)}
+  #stage{flex:none;margin:12px 12px 0;background:#000;border:1px solid var(--line);border-radius:6px;display:flex;justify-content:center;align-items:center;padding:6px 0}.sec{border:1px solid var(--line);border-radius:6px;padding:10px 12px}.sectitle{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim2);margin-bottom:9px}.gbtn{border:1px solid var(--line);background:var(--panel);color:var(--dim);border-radius:5px;padding:5px 9px;font-size:13px;cursor:pointer;margin-right:6px;flex:none}.gbtn:hover{color:#fff;border-color:var(--dim)}#engList{display:flex;flex-direction:column;gap:3px;margin-bottom:12px}.engrow{display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border:1px solid #2a2a2a;border-radius:7px;cursor:pointer;color:var(--fg);font-size:12px}.engrow:hover{border-color:var(--dim2)}.engrow.on{background:#fff;color:#000;border-color:#fff}.engrow.full{opacity:.4;cursor:not-allowed}.enghead{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim2);margin:12px 2px 5px;padding-top:2px}.enghead:first-child{margin-top:0;padding-top:0}
+  svg{display:block;width:100%;height:212px}#rart{display:none;width:212px;height:212px;border-radius:3px;margin:0 auto}
+  .mix{display:grid;grid-template-columns:repeat(7,1fr) 7px repeat(2,1fr);gap:4px}
+  .gap2{border-left:1px solid var(--line);height:30px;justify-self:center}
+  .ch{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:0}
+  .ch .fader{writing-mode:vertical-lr;direction:rtl;-webkit-appearance:slider-vertical;appearance:slider-vertical;width:16px;height:72px;accent-color:#fff;cursor:pointer;padding:0}
+  .ch.dim .fader{accent-color:var(--dim2)}
+  .sm2{display:flex;gap:2px}
+  .sm2 button{font-size:8px;font-weight:600;padding:2px 4px;border-radius:3px;border:1px solid var(--line);background:var(--panel);color:var(--dim);cursor:pointer}
+  .sm2 .s.on{background:#ff9445;color:#000;border-color:#ff9445}
+  .sm2 .m.on{background:#7a4a4a;color:#fff;border-color:#7a4a4a}
+  .nm2{font-size:8.5px;color:var(--dim2);cursor:pointer;text-align:center;line-height:1.15;letter-spacing:.02em}
+  .ch.sel .nm2{color:#fff}
+  .ch.dim .nm2{color:#4a4a4a}
+  .wthead{display:flex;align-items:center;gap:7px;margin-bottom:5px}
+  .wtplay{font-size:10px;padding:2px 9px;border:1px solid var(--line);border-radius:4px;background:var(--panel);color:var(--fg);cursor:pointer;flex:none;line-height:1.2}
+  .wtl{font-size:10px;color:var(--dim);letter-spacing:.03em}
+  svg.wt{width:100%;height:58px;background:#000;border:1px solid var(--line);border-radius:5px;display:block;touch-action:none;cursor:crosshair}
+  .wtp{display:flex;gap:4px;margin-top:5px}
+  .wtp button{flex:1;font-size:9px;padding:4px;border:1px solid var(--line);border-radius:3px;background:var(--panel);color:var(--dim);cursor:pointer}
+  .wtp button:hover{background:var(--line);color:var(--fg)}
+  .wtwrap{margin-bottom:4px}
+  .knobs{display:flex;flex-direction:column;gap:7px}
+  label{display:flex;justify-content:space-between;gap:10px;font-size:11px;color:var(--dim);align-items:center}
+  label span.k{flex:none;width:96px}
+  label b{color:var(--fg);min-width:40px;text-align:right}
+  input[type=range]{flex:1;accent-color:#fff}
+  footer{flex:none;border-top:1px solid var(--line);padding:9px 12px;display:flex;gap:8px;align-items:center}
+  footer .fl{color:var(--dim);font-size:11px;flex:none}
+  #seed{width:92px;flex:none}
+  #seedv{color:var(--fg);min-width:20px;font-size:11px}
+  .sp{flex:1}
+  #msg{color:var(--dim);font-size:10.5px;max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
+  button.act{font-size:11px;padding:7px 12px;border-radius:4px;border:1px solid var(--line);background:var(--panel);color:var(--fg);cursor:pointer;flex:none}
+  #out{background:#fff;color:#000;border-color:#fff;font-weight:600}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;z-index:30;padding:16px}
+  .modal[hidden]{display:none}
+  .sheet{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px 20px 16px;width:100%;max-width:420px;max-height:88vh;overflow-y:auto}
+  .mt{font-family:"Haettenschweiler","Impact",sans-serif;text-transform:uppercase;letter-spacing:.06em;font-size:24px;margin:0 0 8px;font-weight:400;color:#fff}
+  .ms{font-size:11.5px;color:var(--dim);margin:0 0 14px;line-height:1.75}
+  .ms b{color:var(--fg);font-weight:500}
+  .mlink{display:flex;justify-content:space-between;padding:10px 12px;border:1px solid var(--line);border-radius:7px;margin-bottom:7px;color:var(--fg);text-decoration:none;font-size:11.5px}
+  .mlink small{color:var(--dim);margin-left:5px}
+  .mcl{width:100%;margin-top:8px;padding:8px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:5px;cursor:pointer}
+</style>
+
+<div id="modal" class="modal" hidden>
+  <div class="sheet">
+    <p class="mt">ONORE 己</p>
+    <p class="ms" id="mSub"></p>
+    <p class="ms" id="mBody"></p>
+    <a class="mlink" href="https://kinoshita.studio" target="_blank" rel="noopener"><span>kinoshita studio</span><span>↗</span></a>
+    <a class="mlink" href="https://99letters.bandcamp.com/album/kaibou-zukan" target="_blank" rel="noopener"><span>99LETTERS — Kaibou Zukan <small>Bandcamp</small></span><span>↗</span></a>
+    <button id="mClose" class="mcl"></button>
+  </div>
+</div>
+
+<div id="engModal" class="modal" hidden><div class="sheet"><p class="mt">Engines</p><p class="ms" id="engModalSub"></p><div id="engList"></div><button id="engClose" class="mcl">Close</button></div></div>
+
+<header>
+  <div class="wm">
+    <div class="wmr"><h1 id="title">ONORE<span class="jp">己</span></h1><span class="ver">V1</span></div>
+    <span class="by">by Kinoshita Studio</span>
+  </div>
+  <div class="esel">
+    <button id="engBtn"></button>
+    <div id="engMenu" class="emenu" hidden></div>
+  </div>
+  <button id="rmode" class="gbtn" title="書き出し形式" hidden>画像</button><button id="gear" class="gbtn" title="mixer engines">⚙</button><div class="lang"><button id="langJa" class="on">JP</button><button id="langEn">EN</button></div>
+</header>
+
+<div id="stage"><svg id="art" viewBox="0 0 720 900"></svg><canvas id="rart" width="480" height="480" hidden></canvas></div>
+
+<div id="body">
+  <div class="sec"><div class="sectitle">Preset</div><div class="presets" id="presets"></div></div>
+  <div class="sec"><div class="sectitle">Mixer</div><div class="mix" id="mix"></div></div>
+  <div class="sec"><div class="sectitle" id="knobTitle">Wave</div><div class="knobs" id="knobs"></div></div>
+</div>
+<footer>
+  <span class="fl">seed</span><input id="seed" type="range" min="0" max="60" step="1" value="7"><b id="seedv">7</b>
+  <span class="sp"></span>
+  <span id="msg"></span>
+  <button class="act" id="rnd">⟳</button>
+  <button class="act" id="out"></button>
+</footer>
+<script>
+'use strict'
+const NS='http://www.w3.org/2000/svg', art=document.getElementById('art')
+const W=720, H=900, TAU=Math.PI*2
+let wavePhase=0   // ⭐ the transport scrolls the wave when Play is running
+const mb=s=>{let a=s>>>0;return()=>{a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296}}
+const osc=(a,k)=>{const s=Math.sin(a);if(k<=0)return s;const saw=2*(a/TAU-Math.floor(a/TAU+0.5));if(k<=1)return s*(1-k)+saw*k;const sq=Math.sign(s)||1;return saw*(2-k)+sq*(k-1)}
+const D={poly:(S,pts,o)=>S.push(Object.assign({t:'poly',pts},o)),line:(S,a,b,o)=>S.push(Object.assign({t:'line',a,b},o)),
+  circle:(S,c,r,fill,blend)=>S.push({t:'circle',c,r,fill,blend}),rect:(S,x,y,w,h,rx,fill)=>S.push({t:'rect',x,y,w,h,rx,fill}),
+  /* a filled quad whose colour runs as a linear gradient from a to b (absolute
+     coords). One shape → no internal seam, and far fewer nodes than a tile of quads. */
+  grad:(S,pts,a,b,stops)=>S.push({t:'grad',pts,a,b,stops})}
+/* ⭐ Figma anti-aliases every vector node on its own, so thousands of quads that
+   only TOUCH show a hairline grid where their edges meet — even with no blending
+   (the SVG preview merges them and stays smooth; Figma does not). Grow each quad
+   outward from its centre by ~1px so neighbours OVERLAP: the later opaque quad
+   covers the seam. Same colours, so the overlap is invisible; the grid is gone. */
+const inflate=(pts,m)=>{let cx=0,cy=0;for(const p of pts){cx+=p[0];cy+=p[1]}cx/=pts.length;cy/=pts.length
+  return pts.map(p=>{const dx=p[0]-cx,dy=p[1]-cy,d=Math.hypot(dx,dy)||1;return[p[0]+dx/d*m,p[1]+dy/d*m]})}
+
+/* ---- sends act on the whole mix. A send is the MASTER descriptors re-drawn,
+   offset (and for tape, recoloured to one channel). Still vector — blur is Kaibou. */
+const lumOf=c=>{const s=c[1]/100,l=c[2]/100;if(s===0)return l;const q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q,h=c[0]/360
+  const f=t=>{t=(t+1)%1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p}
+  return 0.2126*f(h+1/3)+0.7152*f(h)+0.0722*f(h-1/3)}
+const CHAN={r:0,g:120,b:240,c:180,m:300,y:60}
+const tintCol=(c,ch)=>[CHAN[ch],100,lumOf(c)*55]     // one channel, black→that hue by luminance
+function xform(S,dx,dy,ch){return S.map(d=>{const o=Object.assign({},d)
+  if(d.t==='rect'){o.x=d.x+dx;o.y=d.y+dy}
+  else if(d.t==='circle'){o.c=[d.c[0]+dx,d.c[1]+dy]}
+  else if(d.t==='line'){o.a=[d.a[0]+dx,d.a[1]+dy];o.b=[d.b[0]+dx,d.b[1]+dy]}
+  else if(d.t==='poly'){o.pts=d.pts.map(p=>[p[0]+dx,p[1]+dy])}
+  else if(d.t==='grad'){o.pts=d.pts.map(p=>[p[0]+dx,p[1]+dy]);o.a=[d.a[0]+dx,d.a[1]+dy];o.b=[d.b[0]+dx,d.b[1]+dy]}
+  if(ch){if(d.fill)o.fill=tintCol(d.fill,ch);if(d.stroke)o.stroke=tintCol(d.stroke,ch);if(d.stops)o.stops=d.stops.map(st=>({p:st.p,c:tintCol(st.c,ch)}))}
+  return o})}
+
+/* ⭐ Wavetable — the step sequencer, translated to a sustained tone. A held note
+   has no attack to trigger, but it has a SHAPE: the 16 steps ARE the waveform, and
+   Wave sweeps them. Same 16-step idea as Siren, different meaning. wtSample reads
+   the table at a phase, wrapping and interpolating. */
+const wtSample=(wt,ph)=>{const n=wt.length,x=((((ph/TAU)%1)+1)%1)*n,i=Math.floor(x),f=x-i;return wt[i%n]*(1-f)+wt[(i+1)%n]*f}
+const dfltWT=()=>Array.from({length:16},(_,i)=>{const a=i/16*TAU;return (Math.sin(a)+0.28*Math.sin(2*a)+0.14*Math.sin(3*a))/1.42})
+
+/* ⭐ Every engine keeps a colour knob first, so every synth is recolourable and the
+   control is always in the same place. label/knob labels carry both languages. */
+const ENGINES=[
+{ key:'wave', label:{ja:'Wave — 波が面になる',en:'Wave — a wave becomes a surface'}, seedOff:0,
+  params:{hue:20,spread:0.7,step:16,wt:dfltWT(),amp:190,turns:2.2,width:150,twist:2,spec:1.4},
+  knobs:[['hue',{ja:'基音の色',en:'root colour'},0,360,1],['spread',{ja:'倍音の広がり',en:'harmonic spread'},0,1.5,0.01],['step',{ja:'階調（0=滑らか）',en:'steps (0=smooth)'},0,28,1],['amp',{ja:'振幅',en:'amplitude'},0,300,1],['turns',{ja:'sustain',en:'sustain'},0.5,6,0.05],['width',{ja:'面の幅',en:'surface width'},20,240,1],['twist',{ja:'LFO',en:'LFO'},0,6,0.05],['spec',{ja:'倍音の鋭さ',en:'harmonic edge'},0.4,4,0.05]],
+  /* ⭐ One gradient strip per length-step, not a tile of quads. The cross-section
+     shading (dark edge → bright ridge → dark edge, the ridge moving with the LFO)
+     is a linear gradient sampled across the width. ~240 nodes instead of ~3600, no
+     internal grid, and Figma never has thousands of touching quads to seam. */
+  emit(P,R){const S=[],N=240,ds=1/N,ph0=R()*TAU,ph1=R()*TAU,centre=s=>{const a=TAU*P.turns*s+0.6+ph0+wavePhase;return{x:W/2+P.amp*wtSample(P.wt,a),y:H*s}}
+    let pv=null;for(let i=0;i<=N;i++){const s=i/N,c=centre(s),a=centre(s-ds*0.6),b=centre(s+ds*0.6);let tx=b.x-a.x,ty=b.y-a.y;const tl=Math.hypot(tx,ty)||1;tx/=tl;ty/=tl;const nx=-ty,ny=tx,hw=P.width*0.5,la=1.15*Math.sin(TAU*P.twist*s+ph1)
+      const el=[c.x-hw*nx,c.y-hw*ny],er=[c.x+hw*nx,c.y+hw*ny]
+      if(pv){
+        /* ⭐ colour across the width. `step` decides the texture: 0 = a smooth
+           gradient (Fons-chrome), higher = that many HARD bands (a pair of stops
+           at each edge) — the scale/snake look, more 木下 than Fons. */
+        const fe=Math.min(1,s/0.14,(1-s)/0.14),env=fe*fe*(3-2*fe);const col=u=>{const g=Math.pow(Math.max(0,Math.cos(u*1.3-la)),1+P.spec);return[(P.hue+P.spread*s*300+40*g)%360,58+18*g,(6+90*Math.pow(g,1.35))*env]}   /* ⭐ 端で音のエンベロープ的に0へフェード（ブツ切り解消・中心は不変） */
+        const stops=[]
+        if(P.step>=1){const B=Math.round(P.step);for(let bd=0;bd<B;bd++){const c2=col(((bd+0.5)/B)*2-1);stops.push({p:bd/B,c:c2});stops.push({p:(bd+1)/B,c:c2})}}
+        else{for(let q=0;q<9;q++)stops.push({p:q/8,c:col((q/8)*2-1)})}
+        D.grad(S,inflate([pv.l,pv.r,er,el],1.5),[(pv.l[0]+el[0])/2,(pv.l[1]+el[1])/2],[(pv.r[0]+er[0])/2,(pv.r[1]+er[1])/2],stops)}
+      pv={l:el,r:er}}return S}},
+{ key:'partials', label:{ja:'Partials — 倍音の束',en:'Partials — a bundle of harmonics'}, seedOff:11,
+  params:{hue:200,spread:1,rays:150,partials:6,aim:-1.2,len:0.42,cy:0.5,weight:1},
+  knobs:[['hue',{ja:'基音の色',en:'root colour'},0,360,1],['spread',{ja:'倍音の広がり',en:'harmonic spread'},0,2,0.02],['rays',{ja:'倍音の本数',en:'partials'},20,360,2],['partials',{ja:'倍音の次数',en:'harmonic n'},1,16,1],['aim',{ja:'片寄り',en:'bias'},-3.14,3.14,0.05],['len',{ja:'伸び',en:'length'},0.2,0.6,0.01],['cy',{ja:'高さ',en:'height'},0.15,0.85,0.01],['weight',{ja:'太さ',en:'weight'},0.2,4,0.1]],
+  emit(P,R){const S=[],cx=W/2,cy=H*P.cy,n=Math.round(P.rays);for(let i=0;i<n;i++){const a=(i/n)*TAU+R()*0.01,len=W*P.len*(0.5+0.5*Math.pow(R(),0.4)),k=1+Math.floor(R()*P.partials),op=Math.pow(0.5+0.5*Math.cos(a-P.aim),1.4)*0.85/Math.sqrt(k);D.line(S,[cx,cy],[cx+Math.cos(a)*len,cy+Math.sin(a)*len],{stroke:[(P.hue+k*P.spread*40)%360,85,55],w:(0.6+R()*1.1)*P.weight,op})}return S}},
+{ key:'field', label:{ja:'Field — 持続＝面積',en:'Field — sustain is area'}, seedOff:23,
+  params:{hue:285,spread:0.7,notes:6,hold:1,soft:1.7},
+  knobs:[['hue',{ja:'基音の色',en:'root colour'},0,360,1],['spread',{ja:'色の広がり',en:'colour spread'},0,1.5,0.02],['notes',{ja:'音数',en:'notes'},1,24,1],['hold',{ja:'持続の長さ',en:'hold'},0.1,2,0.02],['soft',{ja:'ぼけ',en:'softness'},0.5,6,0.05]],
+  emit(P,R){const S=[],blobs=[];for(let i=0;i<Math.round(P.notes);i++)blobs.push({x:R()*W,y:R()*H,r:60+R()*P.hold*180,h:(P.hue+R()*P.spread*120)%360});for(const b of blobs)for(let k=22;k>=1;k--){const t=k/22;D.circle(S,[b.x,b.y],b.r*t,[b.h,60,8+70*Math.pow(1-t,P.soft)],'screen')}return S}},
+{ key:'rings', label:{ja:'Rings — FM / リング変調',en:'Rings — FM / ring mod'}, seedOff:31,
+  params:{hue:205,spread:1.1,rings:14,spacing:26,modfreq:5,moddepth:14,cx:0.5,cy:0.5,weight:1},
+  knobs:[['hue',{ja:'基音の色',en:'root colour'},0,360,1],['spread',{ja:'分光',en:'dispersion'},0,2,0.02],['rings',{ja:'倍音の輪',en:'rings'},3,44,1],['spacing',{ja:'間隔',en:'spacing'},8,60,1],['modfreq',{ja:'変調周波数',en:'mod freq'},0,16,1],['moddepth',{ja:'変調の深さ',en:'mod depth'},0,42,1],['cx',{ja:'中心X',en:'centre X'},0.2,0.8,0.01],['cy',{ja:'中心Y',en:'centre Y'},0.2,0.8,0.01],['weight',{ja:'太さ',en:'weight'},0.4,6,0.1]],
+  emit(P,R){const S=[],cx=W*P.cx,cy=H*P.cy,seg=170,ph=R()*TAU;for(let k=1;k<=Math.round(P.rings);k++){const rr=k*P.spacing,pts=[];for(let i=0;i<=seg;i++){const th=i/seg*TAU,r=rr+P.moddepth*Math.sin(P.modfreq*th+k*0.6+ph);pts.push([cx+Math.cos(th)*r,cy+Math.sin(th)*r])}D.poly(S,pts,{stroke:[(P.hue+k*P.spread*30)%360,90,58],w:1.2*P.weight,close:true})}return S}},
+{ key:'beat', label:{ja:'Beat — デチューン / うなり',en:'Beat — detune / beating'}, seedOff:43,
+  params:{hue:32,lines:40,angle:0.1,detune:0.16,spacing:17,len:1,weight:1},
+  knobs:[['hue',{ja:'色',en:'colour'},0,360,1],['lines',{ja:'本数',en:'lines'},8,120,1],['angle',{ja:'角度',en:'angle'},-1.5,1.5,0.02],['detune',{ja:'デチューン',en:'detune'},0,0.6,0.01],['spacing',{ja:'間隔',en:'spacing'},6,40,1],['len',{ja:'長さ',en:'length'},0.3,1.2,0.02],['weight',{ja:'太さ',en:'weight'},0.3,5,0.1]],
+  emit(P,R){const S=[],j0=R()*TAU,j1=R()*TAU,fam=(ang,hs,jf)=>{const n=Math.round(P.lines),dx=Math.cos(ang+Math.PI/2),dy=Math.sin(ang+Math.PI/2),nx=Math.cos(ang),ny=Math.sin(ang),L=H*P.len;for(let i=0;i<n;i++){const off=(i-n/2)*P.spacing+Math.sin(i*0.7+jf)*P.spacing*0.35,cx=W/2+nx*off,cy=H/2+ny*off;D.line(S,[cx-dx*L/2,cy-dy*L/2],[cx+dx*L/2,cy+dy*L/2],{stroke:[(P.hue+hs)%360,85,60],w:1.1*P.weight,op:0.62})}};fam(P.angle,0,j0);fam(P.angle+P.detune,90,j1);return S}},
+{ key:'pulse', label:{ja:'Pulse — PWM / パルス幅',en:'Pulse — PWM / pulse width'}, seedOff:57,
+  params:{hue:14,rows:9,duty:0.55,pwm:0.32,pwmfreq:2,radius:26},
+  knobs:[['hue',{ja:'色',en:'colour'},0,360,1],['rows',{ja:'段',en:'rows'},3,22,1],['duty',{ja:'基準幅',en:'duty'},0.1,1,0.02],['pwm',{ja:'PWM',en:'PWM'},0,0.5,0.02],['pwmfreq',{ja:'PWM周期',en:'PWM freq'},0.5,6,0.1],['radius',{ja:'丸み',en:'radius'},2,44,1]],
+  emit(P,R){const S=[],rows=Math.round(P.rows),rh=H/rows;for(let i=0;i<rows;i++){const cy=(i+0.5)*rh,d=Math.max(0.05,Math.min(1,P.duty+P.pwm*Math.sin(P.pwmfreq*(i/rows)*TAU+R()*0.3))),w=W*0.86*d,x=W*0.07;for(let s=6;s>=0;s--){const t=s/6,ins=t*rh*0.42;D.rect(S,x+ins,cy-rh*0.34+ins,Math.max(1,w-ins*2),Math.max(1,rh*0.68-ins*2),Math.max(1,P.radius-ins),[P.hue,72,14+70*(1-t)])}}return S}},
+{ key:'grid', label:{ja:'Grid — サンプル&ホールド',en:'Grid — sample & hold'}, seedOff:71,
+  params:{hue:200,spread:0.5,grid:16,freq:2.4,gap:0.12},
+  knobs:[['hue',{ja:'色',en:'colour'},0,360,1],['spread',{ja:'色広がり',en:'colour spread'},0,1.5,0.02],['grid',{ja:'格子',en:'grid'},6,44,1],['freq',{ja:'周波数',en:'freq'},0.5,6,0.1],['gap',{ja:'隙間',en:'gap'},0,0.45,0.02]],
+  emit(P,R){const S=[],G=Math.round(P.grid),cw=W/G,ch=H/G,p1=R()*TAU,p2=R()*TAU;for(let gy=0;gy<G;gy++)for(let gx=0;gx<G;gx++){const u=gx/G,v=gy/G;let f=0.5+0.5*Math.sin(TAU*P.freq*u+p1)*Math.cos(TAU*P.freq*v+p2);f=Math.pow(f,1.4);const size=Math.min(cw,ch)*(1-P.gap)*(0.28+0.72*f),cx=(gx+0.5)*cw,cy=(gy+0.5)*ch;D.rect(S,cx-size/2,cy-size/2,size,size,0,[(P.hue+f*P.spread*120)%360,60,10+70*f])}return S}}
+]
+
+/* ---- sends: they act on the MASTER (all engines), staying vector. Reverb = a
+   fading offset tail; Tape = an RGB or CMY channel split. Blur is Kaibou's. ---- */
+const SENDS=[
+{ key:'reverb', label:{ja:'Reverb — にじみ（尾）',en:'Reverb — bleed (tail)'},
+  params:{taps:4,spread:32,decay:0.6},
+  knobs:[['taps',{ja:'タップ',en:'taps'},1,8,1],['spread',{ja:'広がり',en:'spread'},4,90,1],['decay',{ja:'減衰',en:'decay'},0.3,0.9,0.01]] },
+{ key:'tape', label:{ja:'Tape — 色ズレ',en:'Tape — misregistration'}, modes:['rgb','cmy'], mode:'rgb',
+  params:{offset:9},
+  knobs:[['offset',{ja:'ズレ幅',en:'offset'},1,32,0.5]] }
+]
+const engOf=k=>ENGINES.find(e=>e.key===k)
+const sendOf=k=>SENDS.find(s=>s.key===k)
+const isSend=k=>!!sendOf(k)
+const allOf=k=>engOf(k)||sendOf(k)||stdOf(k)||rasterOf(k)
+/* ⭐ v2 raster engines — standalone material pieces (canvas). Pick one → the whole
+   1200² piece, no mixing. Renders pixels to #rart; export wraps the PNG into a Figma
+   image (code.js buildRaster). Vector engines stay descriptors→nodes and mix as before. */
+const rcv=document.getElementById('rart')
+const renv=(r,c)=>{const s=0.5+0.5*Math.sin(r*TAU);return Math.pow(s,c)}
+const rhsl=(h,s,l)=>{h=((h%360)+360)%360/360;s/=100;l/=100;if(s===0){const v=l;return[v,v,v]}const q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q,f=t=>{t=(t+1)%1;if(t<1/6)return p+(q-p)*6*t;if(t<0.5)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p};return[f(h+1/3),f(h),f(h-1/3)]}
+const rhash=(x,y)=>{let h=(x*374761393+y*668265263)>>>0;h=(h^(h>>>13))*1274126177>>>0;return((h^(h>>>16))>>>0)/4294967296}
+const rhsl255=(h,s,l)=>{const c=rhsl(h,s,l);return[c[0]*255,c[1]*255,c[2]*255]}
+/* ⭐ 3D raster = GPUレイマーチ。専用の非表示gl canvasに2×解像度で描き、2Dのターゲットへ縮小blit（＝AA）。
+   プレビュー用#rartは既に2Dコンテキストを持つのでglはここに置けない → 自前canvasで隔離。 */
+const FS3D=`precision highp float;
+uniform vec2 uRes; uniform float uShape,uRotX,uRotY,uSize,uTube,uRound,uLiquid,uCrush,uKeyX,uKeyY,uPolish,uHolo,uHueShift,uBright,uTime;
+vec3 rotp(vec3 p){
+  float cy=cos(uRotY),sy=sin(uRotY); float x1=cy*p.x+sy*p.z, z1=-sy*p.x+cy*p.z;
+  float cx=cos(uRotX),sx=sin(uRotX); float y1=cx*p.y-sx*z1, z2=sx*p.y+cx*z1;
+  return vec3(x1,y1,z2);
+}
+float sdf(vec3 p){
+  if(uLiquid>0.0){p.x+=uLiquid*sin(p.y*4.0+p.z*3.0+uTime);p.y+=uLiquid*sin(p.z*4.0+p.x*3.0+uTime);}
+  int s=int(uShape+0.5);
+  if(s==0){vec2 q=vec2(length(p.xz)-uSize*0.7,p.y);return length(q)-uTube;}
+  if(s==1){return length(p)-uSize;}
+  if(s==2){vec3 d=abs(p)-uSize*0.75;return length(max(d,0.0))+min(max(d.x,max(d.y,d.z)),0.0);}
+  if(s==3){float b=uSize*0.75-uRound;vec3 d=abs(p)-b;return length(max(d,0.0))+min(max(d.x,max(d.y,d.z)),0.0)-uRound;}
+  if(s==4){vec3 a=abs(p);return (a.x+a.y+a.z-uSize)*0.5773;}
+  float yy=p.y-clamp(p.y,-uSize*0.6,uSize*0.6);return length(vec3(p.x,yy,p.z))-uTube;
+}
+float scene(vec3 p){
+  vec3 q=rotp(p);
+  if(uCrush>0.0){float a=uCrush*2.8*q.y;float c=cos(a),s=sin(a);q=vec3(c*q.x-s*q.z,q.y,s*q.x+c*q.z);}
+  float d=sdf(q);
+  if(uCrush>0.0){d+=uCrush*0.14*sin(q.x*6.3+2.0)*sin(q.y*6.3)*sin(q.z*6.3);d*=0.62;}
+  return d;
+}
+vec3 nrm(vec3 p){vec2 e=vec2(0.0016,0.0);
+  return normalize(vec3(scene(p+e.xyy)-scene(p-e.xyy),scene(p+e.yxy)-scene(p-e.yxy),scene(p+e.yyx)-scene(p-e.yyx)));}
+vec3 hsl2rgb(float h,float s,float l){h=fract(h/360.0);s=clamp(s/100.0,0.0,1.0);l=clamp(l/100.0,0.0,1.0);
+  vec3 rgb=clamp(abs(mod(h*6.0+vec3(0.0,4.0,2.0),6.0)-3.0)-1.0,0.0,1.0);
+  return l+s*(rgb-0.5)*(1.0-abs(2.0*l-1.0));}
+float matcap(vec3 n){
+  float L=0.26+0.5*max(0.0,n.y)*max(0.0,n.y)+0.3*pow(max(0.0,-n.y),1.6);
+  float d1=(n.x-uKeyX)*(n.x-uKeyX)+(n.y-uKeyY)*(n.y-uKeyY);L+=1.0*exp(-d1*uPolish);
+  float d2=(n.x+0.4)*(n.x+0.4)+(n.y+0.3)*(n.y+0.3);L+=0.30*exp(-d2*uPolish*2.2);
+  float d3=(n.x-0.2)*(n.x-0.2)+(n.y-0.1)*(n.y-0.1);L+=0.5*exp(-d3*2.0);
+  L+=0.2*pow(1.0-n.z,3.0);return L;
+}
+vec3 render(vec2 uv){
+  vec3 ro=vec3(uv,-2.6), rd=vec3(0.0,0.0,1.0);
+  float t=0.0; bool hit=false; vec3 pos=ro;
+  for(int i=0;i<110;i++){pos=ro+rd*t;float d=scene(pos);if(d<0.0015){hit=true;break;}t+=d;if(t>5.6)break;}
+  if(!hit)return vec3(0.0);
+  vec3 n=nrm(pos);
+  vec3 vn=vec3(n.x,n.y,-n.z);
+  float L=matcap(vec3(vn.x,vn.y,max(0.0,vn.z)))*uBright;
+  float light=clamp(L,0.0,1.0);
+  float dn=n.z; vec3 rr=vec3(-2.0*dn*n.x,-2.0*dn*n.y,1.0-2.0*dn*n.z);
+  float hue=atan(rr.y,rr.x)*57.2958 + rr.z*160.0 + uHueShift;
+  float mid=1.0-abs(light-0.5)*2.0;
+  float sat=min(96.0,96.0*uHolo*max(0.0,mid));
+  return hsl2rgb(hue,sat,light*100.0);
+}
+void main(){
+  vec2 uv=(gl_FragCoord.xy/uRes*2.0-1.0); uv.x*=uRes.x/uRes.y; uv*=1.35;
+  gl_FragColor=vec4(render(uv),1.0);
+}`
+let glc3=null,gl3=null,prog3=null,uni3=null
+function ensureGL3(){
+  if(prog3)return true
+  if(!glc3){glc3=document.createElement('canvas');gl3=glc3.getContext('webgl')||glc3.getContext('experimental-webgl')}
+  if(!gl3)return false
+  const comp=(t,src)=>{const s=gl3.createShader(t);gl3.shaderSource(s,src);gl3.compileShader(s);if(!gl3.getShaderParameter(s,gl3.COMPILE_STATUS))throw gl3.getShaderInfoLog(s);return s}
+  const vs=comp(gl3.VERTEX_SHADER,'attribute vec2 p;void main(){gl_Position=vec4(p,0.0,1.0);}'),fs=comp(gl3.FRAGMENT_SHADER,FS3D)
+  prog3=gl3.createProgram();gl3.attachShader(prog3,vs);gl3.attachShader(prog3,fs);gl3.linkProgram(prog3)
+  if(!gl3.getProgramParameter(prog3,gl3.LINK_STATUS)){prog3=null;return false}
+  gl3.useProgram(prog3)
+  const buf=gl3.createBuffer();gl3.bindBuffer(gl3.ARRAY_BUFFER,buf);gl3.bufferData(gl3.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl3.STATIC_DRAW)
+  const loc=gl3.getAttribLocation(prog3,'p');gl3.enableVertexAttribArray(loc);gl3.vertexAttribPointer(loc,2,gl3.FLOAT,false,0,0)
+  uni3={};for(const u of ['uRes','uShape','uRotX','uRotY','uSize','uTube','uRound','uLiquid','uCrush','uKeyX','uKeyY','uPolish','uHolo','uHueShift','uBright','uTime'])uni3[u]=gl3.getUniformLocation(prog3,u)
+  return true
+}
+const RASTER=[
+ {key:'pinwheelR',label:{ja:'Pinwheel — 風車の入れ子',en:'Pinwheel — nested vanes'},raster:true,
+  params:{arms:4,spin:0.2,pattern:0.35,rings:3,scale:0.7,size:0.86,around:0,spread:0.32,contrast:1.6,texture:0.5,grain:2,blade:1,bgHue:36,bgSat:20,bgLit:80,inkHue:30,inkSat:20,inkLit:7,invert:0},
+  knobs:[['arms',{ja:'羽根',en:'arms'},2,8,1],['spin',{ja:'回転',en:'spin'},0,1.57,0.01],['pattern',{ja:'組み方',en:'pattern'},0,1.5,0.01],['rings',{ja:'入れ子',en:'rings'},1,5,1],['scale',{ja:'縮小比',en:'scale'},0.45,0.9,0.01],['size',{ja:'大きさ',en:'size'},0.4,1.15,0.01],['around',{ja:'周りに増やす',en:'around'},0,8,1],['spread',{ja:'周りの距離',en:'spread'},0.1,0.55,0.01],['contrast',{ja:'階調',en:'contrast'},0.4,4,0.05],['texture',{ja:'グラデ↔粒',en:'texture'},0,1,0.02],['grain',{ja:'粒の粗さ',en:'grain'},1,5,1],['blade',{ja:'羽の形',en:'blade'},0.3,1.6,0.02],['bgHue',{ja:'地の色',en:'bg hue'},0,360,1],['bgSat',{ja:'地の彩度',en:'bg sat'},0,60,1],['bgLit',{ja:'地の明るさ',en:'bg lit'},4,92,1],['inkHue',{ja:'墨の色',en:'ink hue'},0,360,1],['inkSat',{ja:'墨の彩度',en:'ink sat'},0,80,1],['inkLit',{ja:'墨の明るさ',en:'ink lit'},2,40,1],['invert',{ja:'反転',en:'invert'},0,1,1]],
+  draw(cv,P,sd){const ctx=cv.getContext('2d'),W=cv.width,H=cv.height,sc=W/1040,R=mb(sd*7919+13),cx=W/2,cy=H/2,base=Math.min(W,H)*0.5*P.size
+   const tris=[]
+   const pinwheel=(px,py,L0)=>{const arms=Math.round(P.arms);let L=L0,ang=P.spin+R()*0.3;for(let r=0;r<Math.round(P.rings);r++){for(let k=0;k<arms;k++){const a=ang+k*TAU/arms,a2=a+(TAU/arms)*P.blade,A=[px,py],B=[px+Math.cos(a)*L,py+Math.sin(a)*L],C=[px+Math.cos(a2)*L,py+Math.sin(a2)*L];tris.push({p:[A,B,C],dark:(r+k)%2})}L*=P.scale;ang+=P.pattern}}
+   const inTri=(px,py,a,b,c)=>{const d=(b[1]-c[1])*(a[0]-c[0])+(c[0]-b[0])*(a[1]-c[1]),s=((b[1]-c[1])*(px-c[0])+(c[0]-b[0])*(py-c[1]))/d,t=((c[1]-a[1])*(px-c[0])+(a[0]-c[0])*(py-c[1]))/d;return s>=0&&t>=0&&s+t<=1}
+   pinwheel(cx,cy,base)
+   const around=Math.round(P.around),rad=Math.min(W,H)*P.spread
+   for(let i=0;i<around;i++){const a=i*TAU/around+R()*0.4;pinwheel(cx+Math.cos(a)*rad,cy+Math.sin(a)*rad,base*0.6)}
+   const F=new Float32Array(W*H)
+   for(const T of tris){const A=T.p[0],B=T.p[1],C=T.p[2],dp=T.dark?A:[(B[0]+C[0])/2,(B[1]+C[1])/2],fp=T.dark?[(B[0]+C[0])/2,(B[1]+C[1])/2]:A,ax=fp[0]-dp[0],ay=fp[1]-dp[1],al=ax*ax+ay*ay||1
+    const minx=Math.max(0,Math.floor(Math.min(A[0],B[0],C[0]))),maxx=Math.min(W-1,Math.ceil(Math.max(A[0],B[0],C[0]))),miny=Math.max(0,Math.floor(Math.min(A[1],B[1],C[1]))),maxy=Math.min(H-1,Math.ceil(Math.max(A[1],B[1],C[1])))
+    for(let y=miny;y<=maxy;y++)for(let x=minx;x<=maxx;x++){if(!inTri(x+0.5,y+0.5,A,B,C))continue;const t=Math.max(0,Math.min(1,((x-dp[0])*ax+(y-dp[1])*ay)/al)),d=Math.pow(1-t,P.contrast),o=y*W+x;F[o]=1-(1-F[o])*(1-d)}}
+   const img=ctx.createImageData(W,H),D=img.data,gnd=rhsl255(P.bgHue,P.bgSat,P.bgLit),ink=rhsl255(P.inkHue,P.inkSat,P.inkLit),gr=gnd[0],gg=gnd[1],gb=gnd[2],ir=ink[0],ig=ink[1],ib=ink[2],gs=Math.max(1,Math.round(P.grain*sc))
+   for(let y=0;y<H;y++)for(let x=0;x<W;x++){const o=y*W+x;let d=F[o];if(d>0.008){const nn=rhash((x/gs)|0,(y/gs)|0);d=Math.max(0,Math.min(1,d+(nn-0.5)*P.texture))}const p=o*4;let cr=gr+(ir-gr)*d,cg=gg+(ig-gg)*d,cb=gb+(ib-gb)*d;if(P.invert){cr=255-cr;cg=255-cg;cb=255-cb}D[p]=cr;D[p+1]=cg;D[p+2]=cb;D[p+3]=255}
+   ctx.putImageData(img,0,0)},
+  vecEmit(P,R){const W=720,H=900,cx=W/2,cy=H/2,base=Math.min(W,H)*0.5*P.size
+   const ground=[P.bgHue,P.bgSat,P.bgLit],ink=[P.inkHue,P.inkSat,P.inkLit],darkC=P.invert?ground:ink,lightC=P.invert?ink:ground
+   const S=[{t:'rect',x:0,y:0,w:W,h:H,fill:lightC}],tris=[]
+   const spin=(px,py,L0)=>{const arms=Math.round(P.arms);let L=L0,ang=P.spin+R()*0.3;for(let r=0;r<Math.round(P.rings);r++){for(let k=0;k<arms;k++){const a=ang+k*TAU/arms,a2=a+(TAU/arms)*P.blade;tris.push({A:[px,py],B:[px+Math.cos(a)*L,py+Math.sin(a)*L],C:[px+Math.cos(a2)*L,py+Math.sin(a2)*L],dark:(r+k)%2})}L*=P.scale;ang+=P.pattern}}
+   spin(cx,cy,base)
+   const around=Math.round(P.around),rad=Math.min(W,H)*P.spread
+   for(let i=0;i<around;i++){const a=i*TAU/around+R()*0.4;spin(cx+Math.cos(a)*rad,cy+Math.sin(a)*rad,base*0.6)}
+   const ps=[0,0.25,0.5,0.75,1]
+   for(const t of tris){const mid=[(t.B[0]+t.C[0])/2,(t.B[1]+t.C[1])/2],dp=t.dark?t.A:mid,fp=t.dark?mid:t.A
+    const stops=ps.map(p=>{const d=Math.pow(1-p,P.contrast);return {p,c:_mixc(lightC,darkC,d)}})
+    S.push({t:'grad',pts:[t.A,t.B,t.C],a:dp,b:fp,stops})}
+   return S}},
+ {key:'metalR',label:{ja:'Metal — 液体金属',en:'Metal — liquid metal'},raster:true,
+  params:{Ro:0.3,tube:0.16,wob:0.2,liquid:0.3,crush:0,keyX:-0.35,keyY:0.5,polish:7,disp:0.03,tintHue:210,tintAmt:0.1,bright:1},
+  knobs:[['Ro',{ja:'輪の半径',en:'radius'},0.2,0.42,0.005],['tube',{ja:'太さ',en:'tube'},0.06,0.3,0.005],['wob',{ja:'歪み',en:'wobble'},0,0.5,0.01],['liquid',{ja:'法線の揺れ',en:'liquid'},0,1.2,0.02],['crush',{ja:'形が折れる',en:'crush(fold)'},0,1,0.01],['keyX',{ja:'光X',en:'key X'},-0.8,0.8,0.02],['keyY',{ja:'光Y',en:'key Y'},-0.8,0.8,0.02],['polish',{ja:'艶',en:'polish'},2,16,0.2],['disp',{ja:'虹の縁',en:'disp'},0,0.25,0.005],['tintHue',{ja:'色味',en:'tint hue'},0,360,1],['tintAmt',{ja:'色味量',en:'tint amt'},0,0.5,0.02],['bright',{ja:'明るさ',en:'bright'},0.6,1.6,0.02]],
+  draw(cv,P,sd){const ctx=cv.getContext('2d'),W=cv.width,H=cv.height,R=mb(sd*7919+13),cx=W/2,cy=H/2,mn=Math.min(W,H)
+   const ph=[R()*TAU,R()*TAU,R()*TAU,R()*TAU,R()*TAU,R()*TAU],Ro=mn*P.Ro,tube=mn*P.tube,tint=rhsl(P.tintHue,80,55)
+   const mc=(nx,ny,nz)=>{let L=0.28+0.5*Math.max(0,ny)*Math.max(0,ny)+0.3*Math.pow(Math.max(0,-ny),1.6);const d1=(nx-P.keyX)*(nx-P.keyX)+(ny-P.keyY)*(ny-P.keyY);L+=1*Math.exp(-d1*P.polish);const d2=(nx+0.4)*(nx+0.4)+(ny+0.3)*(ny+0.3);L+=0.32*Math.exp(-d2*P.polish*2.2);L+=0.22*Math.pow(1-nz,3);return L}
+   const img=ctx.createImageData(W,H),D=img.data
+   for(let y=0;y<H;y++)for(let x=0;x<W;x++){const p=(y*W+x)*4,dx=x-cx,dy=y-cy,d=Math.hypot(dx,dy),th=Math.atan2(dy,dx)
+    const Rmid=Ro*(1+P.wob*(0.5*Math.sin(th*3+ph[0])+0.3*Math.sin(th*5+ph[1])+0.2*Math.sin(th*2-ph[2]))),Rt=tube*(1+P.wob*0.6*Math.sin(th*4+ph[3])),s=(d-Rmid)/Rt
+    if(s<-1||s>1){D[p]=0;D[p+1]=0;D[p+2]=0;D[p+3]=255;continue}
+    let nx=s*Math.cos(th),ny=s*Math.sin(th),nz=Math.sqrt(Math.max(0,1-s*s))
+    nx+=P.liquid*0.5*Math.sin(th*6+s*5+ph[4]);ny+=P.liquid*0.5*Math.cos(th*8-s*4+ph[5])
+    if(P.crush>0){nx+=P.crush*1.4*Math.sin(th*4+s*8+ph[0]);ny+=P.crush*1.4*Math.cos(th*7-s*6+ph[1])}
+    let nl=Math.hypot(nx,ny);if(nl>1){nx/=nl;ny/=nl}nz=Math.sqrt(Math.max(0,1-nx*nx-ny*ny))
+    let r=mc(nx+P.disp,ny,nz),g=mc(nx,ny,nz),b=mc(nx-P.disp,ny,nz)
+    r=(r+tint[0]*P.tintAmt)/(1+P.tintAmt)*P.bright;g=(g+tint[1]*P.tintAmt)/(1+P.tintAmt)*P.bright;b=(b+tint[2]*P.tintAmt)/(1+P.tintAmt)*P.bright
+    D[p]=Math.min(255,r*255);D[p+1]=Math.min(255,g*255);D[p+2]=Math.min(255,b*255);D[p+3]=255}
+   ctx.putImageData(img,0,0)}},
+ {key:'chromeR',label:{ja:'Chrome — 液体クローム',en:'Chrome — liquid chrome'},raster:true,
+  params:{Ro:0.3,tube:0.15,wob:0.22,density:1.6,contrast:6.4,ring:1.2,liquid:0.9,mirror:0.62,disp:0.055,tintHue:210,tintAmt:0.06,bright:1.05},
+  knobs:[['Ro',{ja:'輪の半径',en:'radius'},0.2,0.42,0.005],['tube',{ja:'太さ',en:'tube'},0.05,0.28,0.005],['wob',{ja:'歪み',en:'wobble'},0,0.5,0.01],['density',{ja:'ストライプ',en:'density'},1,10,0.1],['contrast',{ja:'クリスプ',en:'contrast'},1,12,0.2],['ring',{ja:'角の影響',en:'ring'},0,4,0.05],['liquid',{ja:'液体',en:'liquid'},0,3,0.05],['mirror',{ja:'水銀度',en:'mirror'},0,1,0.02],['disp',{ja:'虹の縁',en:'disp'},0,0.4,0.01],['tintHue',{ja:'色味',en:'tint hue'},0,360,1],['tintAmt',{ja:'色味量',en:'tint amt'},0,0.6,0.02],['bright',{ja:'明るさ',en:'bright'},0.6,1.6,0.02]],
+  draw(cv,P,sd){const ctx=cv.getContext('2d'),W=cv.width,H=cv.height,R=mb(sd*7919+13),cx=W/2,cy=H/2,mn=Math.min(W,H)
+   const ph=[R()*TAU,R()*TAU,R()*TAU,R()*TAU,R()*TAU,R()*TAU],Ro=mn*P.Ro,tube=mn*P.tube,tint=rhsl(P.tintHue,80,55)
+   const img=ctx.createImageData(W,H),D=img.data
+   for(let y=0;y<H;y++)for(let x=0;x<W;x++){const p=(y*W+x)*4,dx=x-cx,dy=y-cy,d=Math.hypot(dx,dy),th=Math.atan2(dy,dx)
+    const Rmid=Ro*(1+P.wob*(0.5*Math.sin(th*3+ph[0])+0.3*Math.sin(th*5+ph[1])+0.2*Math.sin(th*2-ph[2]))),Rt=tube*(1+P.wob*0.6*Math.sin(th*4+ph[3])),s=(d-Rmid)/Rt
+    if(s<-1||s>1){D[p]=0;D[p+1]=0;D[p+2]=0;D[p+3]=255;continue}
+    const phi=Math.asin(s),liquid=P.liquid*(Math.sin(th*6+phi*3+ph[4])+0.5*Math.sin(th*11-phi*2+ph[5])),flow=Math.sin(th*2+phi*1.5+ph[0])+0.6*Math.sin(th*3-phi+ph[1])
+    const refl=phi*P.density+th*P.ring+liquid,up=Math.max(-1,Math.min(1,s*Math.sin(th)+0.45*Math.cos(th)+P.mirror*0.6*flow)),sky=Math.pow(0.5+0.5*up,1.5),edge=Math.pow(1-Math.abs(s),0.4),mw=P.mirror
+    const chrome=o=>Math.min(1,sky*(0.35+0.6*mw)+renv(refl+o,P.contrast)*(0.9-0.5*mw))
+    let r=chrome(P.disp),g=chrome(0),b=chrome(-P.disp)
+    r=(r+tint[0]*P.tintAmt)/(1+P.tintAmt)*P.bright*edge;g=(g+tint[1]*P.tintAmt)/(1+P.tintAmt)*P.bright*edge;b=(b+tint[2]*P.tintAmt)/(1+P.tintAmt)*P.bright*edge
+    D[p]=Math.min(255,r*255);D[p+1]=Math.min(255,g*255);D[p+2]=Math.min(255,b*255);D[p+3]=255}
+   ctx.putImageData(img,0,0)}},
+ {key:'metal2R',label:{ja:'Metal2 — 形いろいろ金属',en:'Metal2 — shaped metal'},raster:true,
+  params:{shape:2,size:0.24,count:5,relief:1.2,tube:0.16,wob:0.2,liquid:0.25,crush:0,keyX:-0.35,keyY:0.5,polish:7,tintHue:210,holo:0.7,bright:1},
+  knobs:[['shape',{ja:'形',en:'shape'},0,4,1],['size',{ja:'大きさ',en:'size'},0.12,0.42,0.005],['count',{ja:'粒/面の数',en:'count'},1,9,1],['relief',{ja:'膨らみ',en:'relief'},0.4,2.4,0.05],['tube',{ja:'太さ',en:'tube'},0.06,0.3,0.005],['wob',{ja:'歪み',en:'wobble'},0,0.5,0.01],['liquid',{ja:'法線の揺れ',en:'liquid'},0,1.2,0.02],['crush',{ja:'形が折れる',en:'crush(fold)'},0,1,0.01],['keyX',{ja:'光X',en:'key X'},-0.8,0.8,0.02],['keyY',{ja:'光Y',en:'key Y'},-0.8,0.8,0.02],['polish',{ja:'艶',en:'polish'},2,16,0.2],['tintHue',{ja:'虹の基点',en:'hue'},0,360,1],['holo',{ja:'虹/ホログラ',en:'holo'},0,1,0.02],['bright',{ja:'明るさ',en:'bright'},0.6,1.6,0.02]],
+  draw(cv,P,sd){const ctx=cv.getContext('2d'),W=cv.width,H=cv.height,R=mb(sd*7919+13),cx=W/2,cy=H/2,mn=Math.min(W,H),ph=[R()*TAU,R()*TAU,R()*TAU,R()*TAU,R()*TAU,R()*TAU],shp=Math.round(P.shape),Ro=mn*P.size,tube=mn*P.tube,fk=1200/W
+   const mc=(nx,ny,nz)=>{let L=0.28+0.5*Math.max(0,ny)*Math.max(0,ny)+0.3*Math.pow(Math.max(0,-ny),1.6);const d1=(nx-P.keyX)*(nx-P.keyX)+(ny-P.keyY)*(ny-P.keyY);L+=1*Math.exp(-d1*P.polish);const d2=(nx+0.4)*(nx+0.4)+(ny+0.3)*(ny+0.3);L+=0.32*Math.exp(-d2*P.polish*2.2);L+=0.22*Math.pow(1-nz,3);return L}
+   let bl=null,K=1;if(shp===0){bl=[];const n=Math.round(P.count);for(let i=0;i<n;i++)bl.push({x:cx+(R()-0.5)*Ro*1.9,y:cy+(R()-0.5)*Ro*1.9,r:Ro*(0.5+0.6*R())});K=Ro*P.relief}
+   const img=ctx.createImageData(W,H),D=img.data
+   for(let y=0;y<H;y++)for(let x=0;x<W;x++){const p=(y*W+x)*4,sx=x,sy=y;let inside=false,nx=0,ny=0,nz=1
+    if(shp===1){const dx=sx-cx,dy=sy-cy,d=Math.hypot(dx,dy),th=Math.atan2(dy,dx),Rmid=Ro*(1+P.wob*(0.5*Math.sin(th*3+ph[0])+0.3*Math.sin(th*5+ph[1])+0.2*Math.sin(th*2-ph[2]))),Rt=tube*(1+P.wob*0.6*Math.sin(th*4+ph[3])),s=(d-Rmid)/Rt;if(s>=-1&&s<=1){inside=true;nx=s*Math.cos(th);ny=s*Math.sin(th);nz=Math.sqrt(Math.max(0,1-s*s))}}
+    else if(shp===2){const dx=(sx-cx)/Ro,dy=(sy-cy)/Ro,r2=dx*dx+dy*dy;if(r2<=1){inside=true;nx=dx;ny=dy;nz=Math.sqrt(Math.max(0,1-r2))}}
+    else if(shp===3){const dx=(sx-cx)/Ro,dy=(sy-cy)/Ro,r2=dx*dx+dy*dy;if(r2<=1){inside=true;let ax=dx,ay=dy;const F=Math.max(2,Math.round(P.count));ax=Math.round(ax*F)/F;ay=Math.round(ay*F)/F;const rr=Math.hypot(ax,ay);if(rr>1){ax/=rr;ay/=rr}nx=ax;ny=ay;nz=Math.sqrt(Math.max(0,1-nx*nx-ny*ny))}}
+    else if(shp===4){const Lc=Ro*0.85,rc=Ro*0.5,ay=sy-cy,cyc=Math.max(-Lc,Math.min(Lc,ay)),ddx=sx-cx,ddy=ay-cyc,dist=Math.hypot(ddx,ddy);if(dist<=rc){inside=true;nx=ddx/rc;ny=ddy/rc;nz=Math.sqrt(Math.max(0,1-nx*nx-ny*ny))}}
+    else{let f=0,fx=0,fy=0;for(const b of bl){const ddx=sx-b.x,ddy=sy-b.y,r2=b.r*b.r,e=Math.exp(-(ddx*ddx+ddy*ddy)/(2*r2));f+=e;fx+=e*ddx/r2;fy+=e*ddy/r2}if(f>=0.6){inside=true;let ax=fx*K,ay=fy*K;const al=Math.hypot(ax,ay);if(al>0.997){ax=ax/al*0.997;ay=ay/al*0.997}nx=ax;ny=ay;nz=Math.sqrt(Math.max(0,1-nx*nx-ny*ny))}}
+    if(!inside){D[p]=0;D[p+1]=0;D[p+2]=0;D[p+3]=255;continue}
+    nx+=P.liquid*0.5*Math.sin(sx*0.03*fk+sy*0.02*fk+ph[4]);ny+=P.liquid*0.5*Math.cos(sx*0.025*fk-sy*0.03*fk+ph[5])
+    if(P.crush>0){nx+=P.crush*1.4*Math.sin(sx*0.02*fk+sy*0.03*fk+ph[0]);ny+=P.crush*1.4*Math.cos(sx*0.025*fk-sy*0.02*fk+ph[1])}
+    let nl=Math.hypot(nx,ny);if(nl>1){nx/=nl;ny/=nl}nz=Math.sqrt(Math.max(0,1-nx*nx-ny*ny))
+    const L=mc(nx,ny,nz),light=Math.max(0,Math.min(1,L*P.bright)),hue=Math.atan2(ny,nx)*57.2958+nz*130+P.tintHue,mid=1-Math.abs(light-0.5)*2,sat=Math.min(96,96*P.holo*Math.max(0,mid)),col=rhsl(hue,sat,light*100)
+    D[p]=Math.min(255,col[0]*255);D[p+1]=Math.min(255,col[1]*255);D[p+2]=Math.min(255,col[2]*255);D[p+3]=255}
+   ctx.putImageData(img,0,0)}},
+ {key:'d3R',label:{ja:'3D — レイマーチ金属',en:'3D — raymarched metal'},raster:true,gl:true,
+  params:{shape:0,rotX:0.5,rotY:0.6,size:0.95,tube:0.32,round:0.12,liquid:0,crush:0,keyX:-0.4,keyY:0.55,polish:7,holo:0.7,hueShift:200,bright:1},
+  knobs:[['shape',{ja:'形',en:'shape'},0,5,1],['rotX',{ja:'縦回転',en:'rot X'},-1.57,1.57,0.01],['rotY',{ja:'横回転',en:'rot Y'},-3.14,3.14,0.01],['size',{ja:'大きさ',en:'size'},0.5,1.3,0.01],['tube',{ja:'太さ',en:'tube'},0.1,0.5,0.01],['round',{ja:'角丸',en:'round'},0,0.4,0.01],['liquid',{ja:'うねり',en:'liquid'},0,0.4,0.01],['crush',{ja:'形が折れる',en:'crush(fold)'},0,1,0.01],['keyX',{ja:'光X',en:'key X'},-0.8,0.8,0.02],['keyY',{ja:'光Y',en:'key Y'},-0.8,0.8,0.02],['polish',{ja:'艶',en:'polish'},2,16,0.2],['holo',{ja:'虹/ホログラ',en:'holo'},0,1,0.02],['hueShift',{ja:'虹の位相',en:'hue phase'},0,360,1],['bright',{ja:'明るさ',en:'bright'},0.6,1.6,0.02]],
+  draw(cv,P,sd){const oc=cv.getContext('2d')
+   if(!ensureGL3()){oc.fillStyle='#000';oc.fillRect(0,0,cv.width,cv.height);oc.fillStyle='#f55';oc.font='14px sans-serif';oc.fillText('WebGL 使えず',12,24);return}
+   const SS=2,w=cv.width*SS,h=cv.height*SS;if(glc3.width!==w||glc3.height!==h){glc3.width=w;glc3.height=h}
+   gl3.viewport(0,0,w,h);gl3.uniform2f(uni3.uRes,w,h)
+   gl3.uniform1f(uni3.uShape,P.shape);gl3.uniform1f(uni3.uRotX,P.rotX);gl3.uniform1f(uni3.uRotY,P.rotY);gl3.uniform1f(uni3.uSize,P.size);gl3.uniform1f(uni3.uTube,P.tube);gl3.uniform1f(uni3.uRound,P.round);gl3.uniform1f(uni3.uLiquid,P.liquid);gl3.uniform1f(uni3.uCrush,P.crush);gl3.uniform1f(uni3.uKeyX,P.keyX);gl3.uniform1f(uni3.uKeyY,P.keyY);gl3.uniform1f(uni3.uPolish,P.polish);gl3.uniform1f(uni3.uHolo,P.holo);gl3.uniform1f(uni3.uHueShift,P.hueShift);gl3.uniform1f(uni3.uBright,P.bright);gl3.uniform1f(uni3.uTime,0)
+   gl3.drawArrays(gl3.TRIANGLES,0,3)
+   oc.imageSmoothingEnabled=true;oc.imageSmoothingQuality='high';oc.clearRect(0,0,cv.width,cv.height);oc.drawImage(glc3,0,0,cv.width,cv.height)}}
+]
+const rasterOf=k=>RASTER.find(e=>e.key===k)
+let rasterActive=null
+let ssc=null
+/* ⭐ 全raster共通の2×スーパーサンプリング。各engineは渡されたcanvasの解像度で描くだけ。
+   ここで2倍offscreenに描いて縮小合成＝端のがびがびを一掃（metal/chrome/discs/pinwheel/metal2 全部）。 */
+function ssDraw(target,eng){if(!ssc)ssc=document.createElement('canvas');const SS=2;ssc.width=target.width*SS;ssc.height=target.height*SS;eng.draw(ssc,eng.params,seed);const oc=target.getContext('2d');oc.imageSmoothingEnabled=true;oc.imageSmoothingQuality='high';oc.clearRect(0,0,target.width,target.height);oc.drawImage(ssc,0,0,target.width,target.height)}
+function drawRaster(){if(rasterActive)rasterActive.draw(rcv,rasterActive.params,seed)}   /* ⭐ プレビューは1×で軽量（書き出しは別途高品質） */
+/* ⭐ 素材(matcap/レイマーチ)は per-pixel。パス書き出しは"輝度の等高線"を線パスにして表現＝金属を解剖した線画。
+   ラスターを内部レンダ→marching squares→線分を1本のポリラインに繋ぐ→'poly'(stroke)descriptor。preview(SVG)=Figma出力。 */
+let _coff=null
+const _rgb2hsl=(r,g,b)=>{r/=255;g/=255;b/=255;const mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2,dd=mx-mn;let h=0,sa=0;if(dd){sa=l>0.5?dd/(2-mx-mn):dd/(mx+mn);if(mx===r)h=(g-b)/dd+(g<b?6:0);else if(mx===g)h=(b-r)/dd+2;else h=(r-g)/dd+4;h*=60}return [h,sa*100,l*100]}
+function _msSeg(field,W,H,level){const segs=[];const ip=(x1,y1,v1,x2,y2,v2)=>{const t=(level-v1)/((v2-v1)||1e-6);return [x1+(x2-x1)*t,y1+(y2-y1)*t]},V=(x,y)=>field[y*W+x];
+ for(let y=0;y<H-1;y++)for(let x=0;x<W-1;x++){const tl=V(x,y),tr=V(x+1,y),br=V(x+1,y+1),bl=V(x,y+1);let i=0;if(tl>level)i|=8;if(tr>level)i|=4;if(br>level)i|=2;if(bl>level)i|=1;if(i===0||i===15)continue;
+  const T=()=>ip(x,y,tl,x+1,y,tr),Rt=()=>ip(x+1,y,tr,x+1,y+1,br),B=()=>ip(x+1,y+1,br,x,y+1,bl),Lf=()=>ip(x,y+1,bl,x,y,tl),pu=(a,b)=>segs.push([a,b]);
+  switch(i){case 1:pu(Lf(),B());break;case 2:pu(B(),Rt());break;case 3:pu(Lf(),Rt());break;case 4:pu(Rt(),T());break;case 5:pu(Lf(),T());pu(B(),Rt());break;case 6:pu(B(),T());break;case 7:pu(Lf(),T());break;case 8:pu(T(),Lf());break;case 9:pu(T(),B());break;case 10:pu(Rt(),B());pu(T(),Lf());break;case 11:pu(T(),Rt());break;case 12:pu(Rt(),Lf());break;case 13:pu(Rt(),B());break;case 14:pu(B(),Lf());break;}}
+ return segs}
+function _stitch(segs){const key=p=>Math.round(p[0]*16)+','+Math.round(p[1]*16),inc=new Map();
+ segs.forEach((sg,i)=>{for(const p of sg){const k=key(p);let a=inc.get(k);if(!a){a=[];inc.set(k,a)}a.push(i)}});
+ const used=new Array(segs.length).fill(false),lines=[];
+ for(let i=0;i<segs.length;i++){if(used[i])continue;used[i]=true;const lp=[segs[i][0],segs[i][1]];let cur=segs[i][1],guard=0;
+  while(guard++<100000){const k=key(cur),cand=inc.get(k)||[];let nx=-1;for(const j of cand){if(!used[j]){nx=j;break}}if(nx<0)break;used[nx]=true;const sg=segs[nx];cur=(key(sg[0])===k)?sg[1]:sg[0];lp.push(cur);if(key(cur)===key(lp[0]))break}
+  lines.push(lp)}
+ return lines}
+function contourVec(eng,sd){const N=14,Fr=300,side=720,y0=(900-side)/2,sc=side/Fr,MINLEN=14
+ if(!_coff){_coff=document.createElement('canvas');_coff.width=_coff.height=Fr}
+ eng.draw(_coff,eng.params,sd)
+ const im=_coff.getContext('2d').getImageData(0,0,Fr,Fr).data,field=new Float32Array(Fr*Fr)
+ for(let i=0;i<Fr*Fr;i++)field[i]=(0.299*im[i*4]+0.587*im[i*4+1]+0.114*im[i*4+2])/255
+ const S=[{t:'rect',x:0,y:0,w:720,h:900,fill:[0,0,0]}]
+ const sample=(fx,fy)=>{const px=Math.max(0,Math.min(Fr-1,Math.round(fx))),py=Math.max(0,Math.min(Fr-1,Math.round(fy))),oi=(py*Fr+px)*4,c=_rgb2hsl(im[oi],im[oi+1],im[oi+2]);return [c[0],Math.min(100,c[1]*2),Math.max(30,Math.min(76,c[2]))]}
+ for(let k=1;k<N;k++){const lv=k/N
+  const lines=_stitch(_msSeg(field,Fr,Fr,lv))
+  for(const lp of lines){if(lp.length<2)continue;const mp=lp[lp.length>>1],col=sample(mp[0],mp[1]);const pts=[];for(let j=0;j<lp.length;j++){if(j%2&&j!==lp.length-1)continue;pts.push([+(lp[j][0]*sc).toFixed(1),+(y0+lp[j][1]*sc).toFixed(1)])}if(pts.length<3)continue;let ln=0;for(let j=1;j<pts.length;j++)ln+=Math.hypot(pts[j][0]-pts[j-1][0],pts[j][1]-pts[j-1][1]);if(ln<MINLEN)continue;S.push({t:'poly',pts,stroke:col,w:1.6,close:false})}}
+ return S}
+function drawRasterVec(){if(!rasterActive)return;while(art.firstChild)art.removeChild(art.firstChild);gcount=0
+ const S=rasterActive.vecEmit?rasterActive.vecEmit(rasterActive.params,mb(seed*7919+13)):contourVec(rasterActive,seed);lastLayers=[{key:rasterActive.key,descriptors:S,level:1,blend:null}]
+ const g=document.createElementNS(NS,'g');toSVG(S,g);art.append(g)}
+/* ⭐ 作り方が見えるベクター（standalone）。Wave と同じ descriptor を吐き、SVGプレビュー＝出力。
+   幾何的に組めるもの（三角形/円+グラデ）は image でなく本物のパス/レイヤーで出す。単独（重ねない）。 */
+const _mixc=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t]
+const VECSTD=[
+ {key:'discsV',label:{ja:'Discs — 玉虫の連なり',en:'Discs — holographic stack'},std:true,
+  params:{layout:0,shape:0,round:0.12,count:5,size:0.82,flatten:0.72,overlap:0.84,taper:0.4,blobs:6,blur:84,hueBase:289,hueSpan:300,sat:90,light:65,sheen:0.34,bgHue:250,bgSat:33,bg:55},
+  knobs:[['layout',{ja:'並べ方',en:'layout'},0,2,1],['shape',{ja:'形',en:'shape'},0,2,1],['round',{ja:'角の丸み',en:'round'},0,1,0.02],['count',{ja:'数',en:'count'},1,16,1],['size',{ja:'大きさ',en:'size'},0.3,0.98,0.01],['flatten',{ja:'平たさ',en:'flatten'},0.1,0.9,0.02],['overlap',{ja:'重なり',en:'overlap'},0.2,0.85,0.02],['taper',{ja:'先細り',en:'taper'},0,0.4,0.01],['blobs',{ja:'色の数',en:'blobs'},3,9,1],['blur',{ja:'溶かし',en:'blur'},8,120,2],['hueBase',{ja:'基音の色',en:'hue'},0,360,1],['hueSpan',{ja:'玉虫の幅',en:'hue span'},120,360,5],['sat',{ja:'彩度',en:'sat'},30,90,1],['light',{ja:'明るさ',en:'light'},60,86,1],['sheen',{ja:'色味の艶',en:'sheen'},0,0.7,0.02],['bgHue',{ja:'地の色',en:'bg hue'},0,360,1],['bgSat',{ja:'地の彩度',en:'bg sat'},0,50,1],['bg',{ja:'地の明るさ',en:'bg'},4,94,1]],
+  emit(P,R){const W=720,H=900,n=Math.round(P.count),L=Math.round(P.layout),bl=P.blur*0.7
+   const S=[{t:'rect',x:0,y:0,w:W,h:H,fill:[P.bgHue,P.bgSat,P.bg]}],cells=[]
+   if(L===0){const rx0=W*0.5*P.size,gg=[];for(let i=0;i<n;i++){const t=i/(n-1||1),rx=rx0*(1-P.taper*t),ry=Math.max(9,rx*(0.9*(1-t)+(0.9-P.flatten)*t));gg.push({rx,ry})}
+     let cy=gg[0].ry+H*0.05;for(let i=0;i<n;i++){if(i>0)cy+=gg[i-1].ry*(1-P.overlap)+gg[i].ry*(1-P.overlap);cells.push({cx:W/2,cy,w:gg[i].rx*2,h:gg[i].ry*2,h0:P.hueBase+i*(P.hueSpan/n)+R()*50})}}
+   else if(L===1){const cols=Math.max(1,Math.round(Math.sqrt(n))),cw=W/cols,ch=H/Math.ceil(n/cols),sz=Math.min(cw,ch)*P.size;for(let i=0;i<n;i++){const gx=i%cols,gy=(i/cols)|0;cells.push({cx:(gx+0.5)*cw,cy:(gy+0.5)*ch,w:sz,h:sz,h0:P.hueBase+i*(P.hueSpan/n)+R()*50})}}
+   else{for(let i=0;i<n;i++){const sz=W*P.size*(0.3+0.55*R());cells.push({cx:R()*W,cy:R()*H,w:sz,h:sz*(0.7+0.6*R()),h0:P.hueBase+P.hueSpan*R()})}}
+   const shp=Math.round(P.shape)
+   for(const c of cells){let rx=c.w/2,ry=c.h/2;if(shp===2){rx=ry=Math.min(c.w,c.h)/2}
+    const nb=Math.round(P.blobs),blobs=[]
+    for(let k=0;k<nb;k++){const hue=(c.h0+P.hueSpan*(k/nb)+(R()-0.5)*30)%360,bx=c.cx+(R()-0.5)*c.w*0.8,by=c.cy+(R()-0.5)*c.h*0.85,br=Math.max(c.w,c.h)*(0.22+0.28*R());blobs.push({cx:bx,cy:by,r:br,c:[hue,Math.min(92,P.sat+16),Math.max(4,Math.min(96,P.light+(R()-0.5)*14))]})}
+    S.push({t:'disc',cx:c.cx,cy:c.cy,rx,ry,shape:shp,round:P.round,blur:bl,base:[((c.h0%360)+360)%360,P.sat,P.light],blobs,sheen:{cx:c.cx-c.w*0.06,cy:c.cy-c.h*0.28,r:Math.max(c.w,c.h)*0.5,c:[(c.h0+30)%360,40,96],a:P.sheen},edge:0.24})}
+   return S}}
+]
+const stdOf=k=>VECSTD.find(e=>e.key===k)
+let stdActive=null
+function drawStd(){if(!stdActive)return;while(art.firstChild)art.removeChild(art.firstChild);gcount=0
+  const S=stdActive.emit(stdActive.params,mb(seed*7919+13));lastLayers=[{key:stdActive.key,descriptors:S,level:1,blend:null}]
+  const g=document.createElementNS(NS,'g');toSVG(S,g);art.append(g)}
+
+/* ⭐ Presets — a whole mixer state in one press: which engines are up and how
+   loud, a few signature knobs each, the sends, the seed. Captured against the
+   engines' original defaults so a preset always lands the same, whatever you have
+   been dialling. Add one by pushing to PRESETS. */
+const DEFAULTS={};for(const e of ENGINES)DEFAULTS[e.key]=JSON.parse(JSON.stringify(e.params))
+const SDEF={};for(const s of SENDS)SDEF[s.key]={params:JSON.parse(JSON.stringify(s.params)),mode:s.mode}
+const PRESETS=[
+{ name:'Ribbon',  level:{wave:1},            p:{wave:{step:16,hue:20,twist:2}},                                            seed:7 },
+{ name:'Chrome',  level:{wave:1,reverb:0.3}, p:{wave:{step:0,hue:210,spread:0.2,spec:2.6,twist:2.6}},                       seed:3 },
+{ name:'Aurora',  level:{wave:1,field:0.6},  p:{wave:{hue:120,step:14},field:{hue:285,notes:5,soft:2.1}},                   seed:11 },
+{ name:'Spectra', level:{partials:1,rings:0.8}, p:{partials:{hue:200,spread:1.4,rays:220},rings:{hue:20,spread:1.6,rings:20}}, seed:5 },
+{ name:'Moiré',   level:{beat:1,grid:0.55},  p:{beat:{hue:32,detune:0.22,lines:52},grid:{hue:200,freq:3.2,spread:0.8}},      seed:9 },
+{ name:'Bloom',   level:{field:1},           p:{field:{notes:9,hold:1.4,soft:2.3,hue:300,spread:1}},                        seed:13 },
+{ name:'Split',   level:{wave:1,tape:0.7},   p:{wave:{step:12,hue:180}}, sp:{tape:{offset:15}}, mode:{tape:'rgb'},          seed:19 },
+]
+function applyPreset(pr){
+  stopPlay()
+  for(const e of ENGINES){e.params=JSON.parse(JSON.stringify(DEFAULTS[e.key]));if(pr.p&&pr.p[e.key])Object.assign(e.params,pr.p[e.key]);level[e.key]=pr.level[e.key]||0}
+  for(const s of SENDS){s.params=JSON.parse(JSON.stringify(SDEF[s.key].params));s.mode=SDEF[s.key].mode;if(pr.sp&&pr.sp[s.key])Object.assign(s.params,pr.sp[s.key]);if(pr.mode&&pr.mode[s.key])s.mode=pr.mode[s.key];level[s.key]=pr.level[s.key]||0}
+  solo.clear();mute.clear();if(pr.seed!=null)seed=pr.seed
+  const used=ENGINES.filter(e=>level[e.key]>0).map(e=>e.key),fill=[...shown].filter(k=>!used.includes(k));shown.clear();[...used,...fill].slice(0,MAXSHOWN).forEach(k=>shown.add(k));if(!shown.size)shown.add('wave');let best='wave',bv=-1;for(const e of ENGINES)if(shown.has(e.key)&&level[e.key]>bv){bv=level[e.key];best=e.key}
+  active=best
+  document.getElementById('seed').value=seed;document.getElementById('seedv').textContent=seed
+  paintSel();buildMix();buildKnobs();draw()
+}
+
+const T={
+  ja:{ intro:'99letters のシンセ。上のセレクタでエンジンを選ぶ。<br>出るのは全部パス。汚しは Kaibou / Siren。',
+       out:'Figma に出す', close:'閉じる',
+       mSub:'<b>己（おのれ）</b>＝ シンセ。持続音の楽器。Siren が打楽器（点）なら、Onore は面。',
+       mBody:'<b>波は止まらない。波は線、持続する線は面。</b>7つのエンジンはオシレータ — 波形・倍音・持続・FM・デチューン・PWM・サンプル&ホールド。<b>いずれミキサーで重ねる。</b><br><br><b>出てくるのは全部ベクター。</b>色は後から変えられる。<b>汚し（ぼかし・粒・版ズレ）は下流の Kaibou / Siren。</b>' },
+  en:{ intro:'The 99letters synth. Pick an engine in the bar above.<br>Output is all vector. Grit is Kaibou / Siren.',
+       out:'Send to Figma', close:'Close',
+       mSub:'<b>己 (onore)</b> — the synth. A sustained-tone instrument. If Siren is percussion (points), Onore is the surface.',
+       mBody:'<b>A wave never stops. A wave is a line; a line that holds is a surface.</b> Seven engines, all oscillators — waveform, partials, sustain, FM, detune, PWM, sample &amp; hold. <b>A mixer will layer them.</b><br><br><b>Everything it makes is vector.</b> Recolour it later. <b>Grit — blur, grain, misregistration — is downstream, in Kaibou / Siren.</b>' }
+}
+let lang='ja'
+
+/* ---- preview: the SAME descriptors, drawn as SVG ---- */
+const hsl=c=>`hsl(${c[0].toFixed(0)} ${c[1].toFixed(0)}% ${c[2].toFixed(0)}%)`
+let gcount=0
+function svgDisc(d,g,getDefs){
+  const cid='dc'+(gcount++),fid='df'+(gcount++),eid='de'+(gcount++),defs=getDefs(),mk=t=>document.createElementNS(NS,t)
+  const cp=mk('clipPath');cp.setAttribute('id',cid)
+  if(d.shape===1){const r=mk('rect');r.setAttribute('x',(d.cx-d.rx).toFixed(1));r.setAttribute('y',(d.cy-d.ry).toFixed(1));r.setAttribute('width',(d.rx*2).toFixed(1));r.setAttribute('height',(d.ry*2).toFixed(1));r.setAttribute('rx',(Math.min(d.rx,d.ry)*d.round).toFixed(1));cp.append(r)}
+  else{const e=mk('ellipse');e.setAttribute('cx',d.cx.toFixed(1));e.setAttribute('cy',d.cy.toFixed(1));e.setAttribute('rx',d.rx.toFixed(1));e.setAttribute('ry',d.ry.toFixed(1));cp.append(e)}
+  defs.append(cp)
+  const flt=mk('filter');flt.setAttribute('id',fid);flt.setAttribute('x','-50%');flt.setAttribute('y','-50%');flt.setAttribute('width','200%');flt.setAttribute('height','200%')
+  const fe=mk('feGaussianBlur');fe.setAttribute('stdDeviation',d.blur.toFixed(1));flt.append(fe);defs.append(flt)
+  const rg=mk('radialGradient');rg.setAttribute('id',eid);rg.setAttribute('gradientUnits','userSpaceOnUse');rg.setAttribute('cx',d.cx.toFixed(1));rg.setAttribute('cy',d.cy.toFixed(1));rg.setAttribute('r',Math.max(d.rx,d.ry).toFixed(1))
+  const s1=mk('stop');s1.setAttribute('offset','0.62');s1.setAttribute('stop-color','#000');s1.setAttribute('stop-opacity','0')
+  const s2=mk('stop');s2.setAttribute('offset','1');s2.setAttribute('stop-color','#000');s2.setAttribute('stop-opacity',d.edge.toFixed(2))
+  rg.append(s1,s2);defs.append(rg)
+  const g2=mk('g');g2.setAttribute('clip-path','url(#'+cid+')')
+  const base=mk('rect');base.setAttribute('x',(d.cx-d.rx).toFixed(1));base.setAttribute('y',(d.cy-d.ry).toFixed(1));base.setAttribute('width',(d.rx*2).toFixed(1));base.setAttribute('height',(d.ry*2).toFixed(1));base.setAttribute('fill',hsl(d.base));g2.append(base)
+  const bg=mk('g');bg.setAttribute('filter','url(#'+fid+')')
+  for(const b of d.blobs){const c=mk('circle');c.setAttribute('cx',b.cx.toFixed(1));c.setAttribute('cy',b.cy.toFixed(1));c.setAttribute('r',b.r.toFixed(1));c.setAttribute('fill',hsl(b.c));bg.append(c)}
+  const sh=mk('circle');sh.setAttribute('cx',d.sheen.cx.toFixed(1));sh.setAttribute('cy',d.sheen.cy.toFixed(1));sh.setAttribute('r',d.sheen.r.toFixed(1));sh.setAttribute('fill',hsl(d.sheen.c));sh.setAttribute('opacity',d.sheen.a.toFixed(2));bg.append(sh)
+  g2.append(bg)
+  const ed=mk('ellipse');ed.setAttribute('cx',d.cx.toFixed(1));ed.setAttribute('cy',d.cy.toFixed(1));ed.setAttribute('rx',d.rx.toFixed(1));ed.setAttribute('ry',d.ry.toFixed(1));ed.setAttribute('fill','url(#'+eid+')');g2.append(ed)
+  g.append(g2)
+}
+function toSVG(S,g){
+  let defs=null;const getDefs=()=>{if(!defs){defs=document.createElementNS(NS,'defs');g.append(defs)}return defs}
+  for(const d of S){let el
+    if(d.t==='disc'){svgDisc(d,g,getDefs);continue}
+    if(d.t==='grad'){const id='og'+(gcount++);const lg=document.createElementNS(NS,'linearGradient');lg.setAttribute('id',id);lg.setAttribute('gradientUnits','userSpaceOnUse');lg.setAttribute('x1',d.a[0].toFixed(1));lg.setAttribute('y1',d.a[1].toFixed(1));lg.setAttribute('x2',d.b[0].toFixed(1));lg.setAttribute('y2',d.b[1].toFixed(1))
+      for(const st of d.stops){const s=document.createElementNS(NS,'stop');s.setAttribute('offset',st.p.toFixed(3));s.setAttribute('stop-color',hsl(st.c));lg.append(s)}getDefs().append(lg)
+      el=document.createElementNS(NS,'path');el.setAttribute('d','M'+d.pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L')+'Z');el.setAttribute('fill','url(#'+id+')')}
+    else if(d.t==='rect'){el=document.createElementNS(NS,'rect');el.setAttribute('x',d.x.toFixed(1));el.setAttribute('y',d.y.toFixed(1));el.setAttribute('width',d.w.toFixed(1));el.setAttribute('height',d.h.toFixed(1));if(d.rx)el.setAttribute('rx',d.rx.toFixed(1));el.setAttribute('fill',hsl(d.fill))}
+    else if(d.t==='circle'){el=document.createElementNS(NS,'circle');el.setAttribute('cx',d.c[0].toFixed(1));el.setAttribute('cy',d.c[1].toFixed(1));el.setAttribute('r',d.r.toFixed(1));el.setAttribute('fill',hsl(d.fill));if(d.blend)el.setAttribute('style','mix-blend-mode:'+d.blend)}
+    else if(d.t==='line'){el=document.createElementNS(NS,'path');el.setAttribute('d',`M${d.a[0].toFixed(1)} ${d.a[1].toFixed(1)}L${d.b[0].toFixed(1)} ${d.b[1].toFixed(1)}`);el.setAttribute('stroke',hsl(d.stroke));el.setAttribute('stroke-width',d.w.toFixed(2));el.setAttribute('fill','none');if(d.op!=null)el.setAttribute('opacity',d.op.toFixed(2))}
+    else if(d.t==='poly'){el=document.createElementNS(NS,'path');el.setAttribute('d','M'+d.pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L')+(d.close?'Z':''));if(d.fill){el.setAttribute('fill',hsl(d.fill))}else{el.setAttribute('fill','none');el.setAttribute('stroke',hsl(d.stroke));el.setAttribute('stroke-width',d.w.toFixed(2))}}
+    g.append(el)}
+}
+
+/* ---- state: a mixer. each engine has a LEVEL; the mix layers them (SCREEN).
+   The selector / mixer name picks which engine the knobs edit. ---- */
+const cap=s=>s[0].toUpperCase()+s.slice(1)
+const level={};for(const e of ENGINES)level[e.key]=0;for(const s of SENDS)level[s.key]=0;level.wave=1
+const shown=new Set(['wave','partials','field','rings','beat'])   // engines shown in the mixer (max 5); Reverb/Tape always on
+const MAXSHOWN=5
+const shownR=new Set(['pinwheelR','metalR','d3R'])   // ⭐ raster engines shown in the selector（ミキサー無し・上限無し。⚙で増減）。初期は主役2つ。
+const solo=new Set(),mute=new Set()
+let active='wave', seed=7, lastLayers=[]
+/* solo works WITHIN a kind — soloing an engine leaves the sends, and a send with
+   nothing to act on is silence, not a quiet effect (the whole point of a send). */
+const audible=k=>{const kin=isSend(k)?SENDS.map(s=>s.key):ENGINES.map(e=>e.key)
+  const soloed=kin.some(x=>solo.has(x));return (soloed?solo.has(k):true)&&!mute.has(k)}
+
+function draw(){
+  while(art.firstChild)art.removeChild(art.firstChild)
+  gcount=0; lastLayers=[]
+  const eng=[]
+  for(const e of ENGINES){if(!shown.has(e.key)||!(level[e.key]>0)||!audible(e.key))continue;eng.push({key:e.key,S:e.emit(e.params,mb((seed+e.seedOff)*7919+13))})}
+  const master=[].concat(...eng.map(x=>x.S))
+  // reverb: fading offset copies, BEHIND the dry mix
+  const rv=sendOf('reverb')
+  if(level.reverb>0&&audible('reverb')&&master.length){const dx=Math.cos(0.5),dy=Math.sin(0.5)
+    for(let t=Math.round(rv.params.taps);t>=1;t--){const op=level.reverb*Math.pow(rv.params.decay,t);if(op<0.03)continue
+      lastLayers.push({key:'reverb',descriptors:xform(master,dx*rv.params.spread*t,dy*rv.params.spread*t),level:op,blend:'screen'})}}
+  // dry engines
+  for(const x of eng)lastLayers.push({key:x.key,descriptors:x.S,level:level[x.key],blend:'screen'})
+  // tape: channel split copies, ON TOP
+  const tp=sendOf('tape')
+  if(level.tape>0&&audible('tape')&&master.length){const chs=tp.mode==='cmy'?['c','m','y']:['r','g','b'],dirs=[[-1,-0.4],[0,0.5],[1,-0.2]]
+    chs.forEach((cch,i)=>lastLayers.push({key:'tape',descriptors:xform(master,dirs[i][0]*tp.params.offset,dirs[i][1]*tp.params.offset,cch),level:level.tape,blend:tp.mode==='cmy'?'multiply':'screen'}))}
+  for(const L of lastLayers){const g=document.createElementNS(NS,'g');g.setAttribute('style','mix-blend-mode:'+(L.blend||'screen'));g.setAttribute('opacity',(L.level!=null?L.level:1).toFixed(2));toSVG(L.descriptors,g);art.append(g)}
+}
+/* ⭐ Dragging a fader fires far faster than a redraw of a few thousand nodes (the
+   sends copy the whole master), so coalesce onto the frame — one draw per frame,
+   and the faders move smoothly. */
+let rafPending=0
+function render(){if(rafPending)return;rafPending=requestAnimationFrame(()=>{rafPending=0;draw()})}
+let _prp=0
+function previewRaf(){if(_prp)return;_prp=requestAnimationFrame(()=>{_prp=0;if(rasterActive){rasterVecMode?drawRasterVec():drawRaster()}else if(stdActive){drawStd()}else{draw()}})}
+
+/* ⭐ Transport — same idea as Siren's ▶. A playhead sweeps the wavetable left to
+   right; as it goes the wave scrolls, so the ribbon flows (a sustained tone, alive),
+   and each time the head wraps the seed steps — the next variation flows in like the
+   next note. The output stays a still: press "Figma に出す" to keep the frame you like. */
+let playing=false, playT=0, playLast=0, wtLine=null
+function movePlayhead(){if(wtLine){const x=(playT*16).toFixed(2);wtLine.setAttribute('x1',x);wtLine.setAttribute('x2',x);wtLine.setAttribute('opacity',playing?0.9:0)}}
+function playTick(ts){
+  if(!playing){playLast=0;return}
+  const dt=playLast?Math.min(0.05,(ts-playLast)/1000):0;playLast=ts
+  const prev=playT
+  playT=(playT+dt/4)%1                    // one sweep ≈ 4s
+  wavePhase=(wavePhase+dt*1.1)%TAU        // the ribbon flows
+  if(playT<prev){seed=(seed+1)%61;seedEl.value=seed;seedB.textContent=seed}  // a new note each loop
+  movePlayhead();draw()
+  requestAnimationFrame(playTick)
+}
+function setPlay(on,btn){playing=on;if(btn)btn.textContent=on?'■':'▶'
+  if(on){playLast=0;requestAnimationFrame(playTick)}else{wavePhase=0;playT=0;movePlayhead();draw()}}
+function stopPlay(){if(playing)setPlay(false,document.getElementById('wtPlay'))}
+
+/* pick which engine the knobs edit; raise its fader if it was silent, so you
+   always see what you are editing */
+/* ⭐ Like Siren: choosing from the selector (or a fader's name) SOLOS that one —
+   the mixer follows (its S lights), and the preview shows just it, so you edit in
+   isolation. Click the lit S off to hear the whole mix again. (Presets don't solo
+   — they show the layered scene.) Solo is within a kind, so soloing a send leaves
+   the instruments playing, which is the only way a send has anything to act on. */
+let rasterVecMode=false   // ⭐ 金属の書き出し: false=画像(滑らか) / true=線画ベクター(パス)。既定は画像
+function selectEngine(k){stopPlay();active=k;const ra=rasterOf(k),st=stdOf(k),svg=document.getElementById('art'),mixSec=document.getElementById('mix').closest('.sec'),rm=document.getElementById('rmode')
+  if(ra){rasterActive=ra;stdActive=null;rm.hidden=false;rm.textContent=rasterVecMode?(lang==='ja'?'線画':'lines'):(lang==='ja'?'画像':'image');if(mixSec)mixSec.hidden=true;paintSel();buildKnobs()
+    if(rasterVecMode){svg.style.display='';rcv.style.display='none';drawRasterVec()}else{svg.style.display='none';rcv.style.display='block';drawRaster()}}
+  else if(st){stdActive=st;rasterActive=null;rm.hidden=true;svg.style.display='';rcv.style.display='none';if(mixSec)mixSec.hidden=true;paintSel();buildKnobs();drawStd()}
+  else{rasterActive=null;stdActive=null;rm.hidden=true;svg.style.display='';rcv.style.display='none';if(mixSec)mixSec.hidden=false;solo.clear();solo.add(k);mute.delete(k);if(!(level[k]>0))level[k]=1;paintSel();buildMix();buildKnobs();draw()}}
+document.getElementById('rmode').onclick=()=>{rasterVecMode=!rasterVecMode;if(rasterActive)selectEngine(active)}
+
+/* ---- engine selector (in the fixed bar, next to the logo) ---- */
+const engBtn=document.getElementById('engBtn'),engMenu=document.getElementById('engMenu')
+function buildMenu(){engMenu.innerHTML=''
+  for(const e of [...ENGINES.filter(x=>shown.has(x.key)),...VECSTD,...SENDS,...RASTER.filter(x=>shownR.has(x.key))]){const b=document.createElement('button');b.textContent=e.label[lang].split(' — ')[0];b.classList.toggle('on',e.key===active)
+    b.onclick=()=>{engMenu.hidden=true;selectEngine(e.key)};engMenu.append(b)}}
+function paintSel(){const e=allOf(active);engBtn.innerHTML=`${e.label[lang].split(' — ')[0]}<span class="ar">▾</span>`
+  for(const b of engMenu.children)b.classList.toggle('on',b.textContent===e.label[lang].split(' — ')[0])}
+engBtn.onclick=ev=>{ev.stopPropagation();engMenu.hidden=!engMenu.hidden}
+addEventListener('click',()=>{engMenu.hidden=true})
+
+/* ---- the mixer: a fader per engine (level) with S / M, Siren-style ---- */
+const mixEl=document.getElementById('mix')
+function mixCh(k){const ch=document.createElement('div');ch.className='ch';ch.dataset.k=k
+  ch.innerHTML=`<input class="fader" type="range" min="0" max="1" step="0.002" orient="vertical"><div class="sm2"><button class="s">S</button><button class="m">M</button></div><span class="nm2">${cap(k)}</span>`
+  const f=ch.querySelector('.fader');f.value=level[k]
+  f.oninput=()=>{level[k]=+f.value;paintMix();render()}
+  ch.querySelector('.s').onclick=()=>{solo.has(k)?solo.delete(k):solo.add(k);paintMix();draw()}
+  ch.querySelector('.m').onclick=()=>{mute.has(k)?mute.delete(k):mute.add(k);paintMix();draw()}
+  ch.querySelector('.nm2').onclick=()=>selectEngine(k)
+  return ch}
+function buildMix(){mixEl.innerHTML=''
+  mixEl.style.gridTemplateColumns='repeat('+shown.size+',1fr) 7px repeat(2,1fr)'
+  for(const e of ENGINES)if(shown.has(e.key))mixEl.append(mixCh(e.key))
+  const gp=document.createElement('div');gp.className='gap2';mixEl.append(gp)   // instruments | sends
+  for(const s of SENDS)mixEl.append(mixCh(s.key))
+  paintMix()}
+function paintMix(){for(const ch of mixEl.children){const k=ch.dataset.k;if(!k)continue
+    ch.classList.toggle('sel',k===active);ch.classList.toggle('dim',!(level[k]>0)||!audible(k))
+    ch.querySelector('.s').classList.toggle('on',solo.has(k));ch.querySelector('.m').classList.toggle('on',mute.has(k))}}
+
+const knobEl=document.getElementById('knobs')
+function buildKnobs(){const e=allOf(active);document.getElementById('knobTitle').textContent=e.label[lang].split(' — ')[0];knobEl.innerHTML=''
+  if(active==='wave')knobEl.append(buildWavetable())     // ⭐ the step sequencer, for Wave
+  if(e.modes){const l=document.createElement('label');l.innerHTML=`<span class="k">mode</span><span style="flex:1;display:flex;gap:4px">${e.modes.map(m=>`<button class="tmode" data-m="${m}" style="flex:1;padding:5px;border:1px solid #444;border-radius:4px;background:${m===e.mode?'#fff':'#111'};color:${m===e.mode?'#000':'#888'};cursor:pointer">${m.toUpperCase()}</button>`).join('')}</span>`
+    for(const b of l.querySelectorAll('.tmode'))b.onclick=()=>{e.mode=b.dataset.m;buildKnobs();draw()}
+    knobEl.append(l)}
+  for(const[id,lbl,min,max,step]of e.knobs){const l=document.createElement('label');l.innerHTML=`<span class="k">${lbl[lang]}</span><input type="range" min="${min}" max="${max}" step="${step}" value="${e.params[id]}"><b>${(+e.params[id]).toFixed(step<1?2:0)}</b>`
+    const inp=l.querySelector('input'),b=l.querySelector('b');inp.oninput=()=>{e.params[id]=+inp.value;b.textContent=(+inp.value).toFixed(step<1?2:0);previewRaf()};knobEl.append(l)}}
+
+/* ⭐ the wavetable editor: draw the wave by dragging across 16 steps. It edits
+   Wave's `wt` array; the descriptor pipeline does the rest, so code.js is untouched. */
+const WT_PRESETS={sine:i=>Math.sin(i/16*TAU),saw:i=>1-2*(i/16),square:i=>i<8?1:-1,tri:i=>1-4*Math.abs(i/16-0.5)}
+function buildWavetable(){
+  const e=engOf('wave'),wrap=document.createElement('div');wrap.className='wtwrap'
+  const head=document.createElement('div');head.className='wthead'
+  const play=document.createElement('button');play.id='wtPlay';play.className='wtplay';play.textContent=playing?'■':'▶'
+  play.onclick=()=>setPlay(!playing,play)
+  const lab=document.createElement('span');lab.className='wtl';lab.textContent=lang==='ja'?'ウェーブテーブル — 描く／▶で流す':'Wavetable — draw it, ▶ plays it'
+  head.append(play,lab);wrap.append(head)
+  const svg=document.createElementNS(NS,'svg');svg.setAttribute('class','wt');svg.setAttribute('viewBox','0 0 16 2');svg.setAttribute('preserveAspectRatio','none');wrap.append(svg)
+  const mk=(t,at)=>{const el=document.createElementNS(NS,t);for(const k in at)el.setAttribute(k,at[k]);svg.append(el);return el}
+  const redraw=()=>{svg.textContent=''
+    mk('line',{x1:0,y1:1,x2:16,y2:1,stroke:'#333','stroke-width':1,'vector-effect':'non-scaling-stroke'})
+    mk('polyline',{points:e.params.wt.map((v,i)=>`${i+0.5},${(1-v).toFixed(3)}`).join(' '),fill:'none',stroke:'#fff','stroke-width':1.5,'vector-effect':'non-scaling-stroke'})
+    e.params.wt.forEach((v,i)=>mk('circle',{cx:i+0.5,cy:(1-v).toFixed(3),r:0.11,fill:'#8ad'}))
+    wtLine=mk('line',{x1:(playT*16).toFixed(2),y1:0,x2:(playT*16).toFixed(2),y2:2,stroke:'#ff9445','stroke-width':1.4,'vector-effect':'non-scaling-stroke',opacity:playing?0.9:0})}
+  const setAt=ev=>{const r=svg.getBoundingClientRect(),i=Math.max(0,Math.min(15,Math.floor((ev.clientX-r.left)/r.width*16))),v=Math.max(-1,Math.min(1,1-((ev.clientY-r.top)/r.height)*2));e.params.wt[i]=Math.round(v*50)/50;redraw();render()}
+  let paint=false
+  svg.onpointerdown=ev=>{paint=true;try{svg.setPointerCapture(ev.pointerId)}catch(_){}setAt(ev)}
+  svg.onpointermove=ev=>{if(paint)setAt(ev)}
+  svg.onpointerup=svg.onpointerleave=()=>{paint=false}
+  redraw()
+  const pr=document.createElement('div');pr.className='wtp'
+  for(const nm of ['sine','saw','square','tri','random']){const b=document.createElement('button');b.textContent=nm
+    b.onclick=()=>{e.params.wt=nm==='random'?Array.from({length:16},()=>Math.round((Math.random()*2-1)*50)/50):Array.from({length:16},(_,i)=>WT_PRESETS[nm](i));redraw();draw()};pr.append(b)}
+  wrap.append(pr);return wrap
+}
+
+function applyLang(){
+  document.getElementById('langJa').classList.toggle('on',lang==='ja')
+  document.getElementById('langEn').classList.toggle('on',lang==='en')
+  document.getElementById('out').textContent=T[lang].out
+  document.getElementById('mSub').innerHTML=T[lang].mSub
+  document.getElementById('mBody').innerHTML=T[lang].mBody
+  document.getElementById('mClose').textContent=T[lang].close
+  buildMenu();paintSel();buildMix();buildKnobs()
+}
+document.getElementById('langJa').onclick=()=>{lang='ja';applyLang()}
+document.getElementById('langEn').onclick=()=>{lang='en';applyLang()}
+const modal=document.getElementById('modal')
+document.getElementById('title').onclick=()=>{modal.hidden=false}
+document.getElementById('mClose').onclick=()=>{modal.hidden=true}
+modal.onclick=e=>{if(e.target===modal)modal.hidden=true}
+addEventListener('keydown',e=>{if(e.key==='Escape')modal.hidden=true})
+
+const seedEl=document.getElementById('seed'),seedB=document.getElementById('seedv')
+seedEl.oninput=()=>{seed=+seedEl.value;seedB.textContent=seed;render()}
+document.getElementById('rnd').onclick=()=>{seed=(seed*7+13)%61;seedEl.value=seed;seedB.textContent=seed;draw()}
+const msg=document.getElementById('msg')
+document.getElementById('out').onclick=()=>{
+  if(rasterActive&&!rasterVecMode){const ex=document.createElement('canvas');ex.width=ex.height=1200;if(rasterActive.gl)rasterActive.draw(ex,rasterActive.params,seed);else ssDraw(ex,rasterActive);msg.textContent=lang==='ja'?'出しています…':'sending…';ex.toBlob(bl=>bl.arrayBuffer().then(ab=>parent.postMessage({pluginMessage:{type:'generateRaster',bytes:new Uint8Array(ab),seed,name:rasterActive.key}},'*')),'image/png');return}
+  if(!lastLayers.length){return}
+  msg.textContent=lang==='ja'?'出しています…':'sending…'
+  parent.postMessage({pluginMessage:{type:'generate',layers:lastLayers,seed}},'*')
+}
+onmessage=e=>{const m=e.data.pluginMessage;if(!m)return;if(m.type==='made')msg.textContent=lang==='ja'?`${m.nodes} ノードを出しました`:`${m.nodes} nodes sent`}
+
+const presetsEl=document.getElementById('presets')
+for(const pr of PRESETS){const b=document.createElement('button');b.textContent=pr.name;b.onclick=()=>applyPreset(pr);presetsEl.append(b)}
+function nmOf(e){return e.label[lang].split(' — ')[0]}
+function buildEngModal(){const el=document.getElementById('engList');el.innerHTML=''
+  document.getElementById('engModalSub').textContent=lang==='ja'?('セレクタに出すエンジンを選ぶ（ベクターは重ねられる・最大'+MAXSHOWN+'／Reverb・Tapeは常時）'):('Choose engines for the selector (vectors mix, max '+MAXSHOWN+'; Reverb / Tape always on)')
+  const head=t=>{const h=document.createElement('div');h.className='enghead';h.textContent=t;el.append(h)}
+  head(lang==='ja'?'ベクター（重ねられる）':'Vector (mixable)')
+  for(const e of ENGINES){const on=shown.has(e.key),full=shown.size>=MAXSHOWN&&!on
+    const row=document.createElement('div');row.className='engrow'+(on?' on':'')+(full?' full':'')
+    row.innerHTML='<span>'+nmOf(e)+'</span><span>'+(on?'●':'○')+'</span>'
+    row.onclick=()=>{if(on){if(shown.size>1)shown.delete(e.key)}else{if(shown.size<MAXSHOWN)shown.add(e.key)}
+      if(!isSend(active)&&!rasterOf(active)&&!shown.has(active))active=[...shown][0]||'wave'
+      buildEngModal();buildMenu();paintSel();buildMix();buildKnobs();draw()}
+    el.append(row)}
+  head(lang==='ja'?'素材（等高線ベクター・単独）':'Material (contour vector · standalone)')
+  for(const e of RASTER){const on=shownR.has(e.key)
+    const row=document.createElement('div');row.className='engrow'+(on?' on':'')
+    row.innerHTML='<span>'+nmOf(e)+'</span><span>'+(on?'●':'○')+'</span>'
+    row.onclick=()=>{if(on){shownR.delete(e.key);if(active===e.key)selectEngine([...shown][0]||'wave')}else{shownR.add(e.key)}
+      buildEngModal();buildMenu();paintSel()}
+    el.append(row)}}
+document.getElementById('gear').onclick=()=>{buildEngModal();document.getElementById('engModal').hidden=false}
+document.getElementById('engClose').onclick=()=>{document.getElementById('engModal').hidden=true}
+document.getElementById('engModal').onclick=ev=>{if(ev.target.id==='engModal')document.getElementById('engModal').hidden=true}
+applyLang();draw()
+</script>

@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>写 UTSU — SPIKE / 木下スタジオ</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;overflow:hidden;background:#000;}
+  body{
+    font-family:"Space Mono",ui-monospace,monospace;
+    -webkit-tap-highlight-color:transparent;touch-action:none;color:#fff;
+  }
+  canvas{display:block;position:fixed;inset:0;width:100%;height:100%;}
+
+  /* boot */
+  #boot{
+    position:fixed;inset:0;z-index:50;background:#f4f2ee;color:#0a0a0a;
+    display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:16px;transition:opacity .4s;
+  }
+  #boot.gone{opacity:0;pointer-events:none;}
+  #boot .k{font-size:44px;font-weight:300;letter-spacing:.3em;text-indent:.3em;}
+  #boot .s{font-size:9px;letter-spacing:.3em;opacity:.4;}
+  #start{
+    margin-top:8px;font-size:9.5px;letter-spacing:.2em;padding:12px 22px;
+    background:none;border:1px solid rgba(10,10,10,.2);color:#0a0a0a;cursor:pointer;
+    transition:background .15s,color .15s;
+  }
+  #start:hover{background:#0a0a0a;color:#f4f2ee;}
+  #boot .e{font-size:8.5px;letter-spacing:.12em;color:#b4241e;min-height:1em;}
+
+  /* minimal controls */
+  #ctl{
+    position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:10;
+    display:flex;gap:18px;align-items:center;
+    background:rgba(0,0,0,.4);backdrop-filter:blur(10px);
+    padding:10px 18px;border:1px solid rgba(255,255,255,.14);border-radius:2px;
+  }
+  #ctl .row{display:flex;gap:8px;align-items:center;}
+  #ctl label{font-size:8.5px;letter-spacing:.14em;opacity:.6;}
+  #ctl input[type=range]{
+    -webkit-appearance:none;appearance:none;width:96px;height:1px;
+    background:rgba(255,255,255,.3);outline:none;cursor:pointer;
+  }
+  #ctl input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:9px;height:9px;border-radius:50%;background:#fff;cursor:pointer;
+  }
+  #ctl input[type=range]::-moz-range-thumb{
+    width:9px;height:9px;border:none;border-radius:50%;background:#fff;cursor:pointer;
+  }
+  #ctl .val{font-size:8px;opacity:.5;width:22px;text-align:right;}
+  #tag{
+    position:fixed;top:16px;left:18px;z-index:10;font-size:8.5px;
+    letter-spacing:.24em;opacity:.5;mix-blend-mode:difference;
+  }
+</style>
+</head>
+<body>
+
+<div id="boot">
+  <div class="k">写</div>
+  <div class="s">UTSU / SPIKE</div>
+  <button id="start">カメラを許可して始める</button>
+  <div class="e" id="boot-err"></div>
+</div>
+
+<div id="tag">写 UTSU — SPIKE</div>
+
+<div id="ctl">
+  <div class="row"><label>AMOUNT</label><input id="s-amp" type="range" min="0" max="100" value="55"><span class="val" id="v-amp"></span></div>
+  <div class="row"><label>SPIKES</label><input id="s-cnt" type="range" min="8" max="120" value="52"><span class="val" id="v-cnt"></span></div>
+  <div class="row"><label>SHARP</label><input id="s-shp" type="range" min="0" max="100" value="55"><span class="val" id="v-shp"></span></div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ═══════════════════════════════════════════════════════════
+   写 UTSU — SPIKE
+   生カメラに、顔の中心から放射状の「棘」歪みを一枚かける。
+   ランダムな長さの三角の棘へ画像を引き伸ばす（放射ディスプレイス）。
+   足場（音・ラック・切り抜き）は無し。この歪みだけ。
+   ═══════════════════════════════════════════════════════════ */
+
+const P = { amp:55, count:52, sharp:55 };
+
+const renderer = new THREE.WebGLRenderer({ antialias:false, preserveDrawingBuffer:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+const uniforms = {
+  tVideo:{ value:null },
+  uCover:{ value:new THREE.Vector2(1,1) },
+  uAspect:{ value:new THREE.Vector2(1,1) },
+  uMirror:{ value:1 },
+  uAmp:{ value:0.55 }, uCount:{ value:52 }, uSharp:{ value:2.0 },
+};
+
+const mat = new THREE.ShaderMaterial({
+  uniforms,
+  vertexShader:`
+    varying vec2 vUv;
+    void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+  fragmentShader:`
+    precision highp float;
+    uniform sampler2D tVideo;
+    uniform vec2 uCover, uAspect;
+    uniform float uMirror, uAmp, uCount, uSharp;
+    varying vec2 vUv;
+
+    float hash(float n){ return fract(sin(n * 127.1) * 43758.5453); }
+
+    void main(){
+      // cover-fit + mirror（顔を画面中央に置いて使う）
+      vec2 uv = (vUv - 0.5) * uCover + 0.5;
+      if(uMirror > 0.5) uv.x = 1.0 - uv.x;
+
+      // アスペクト補正して放射を円に
+      vec2 c = (uv - 0.5) * uAspect;
+      float r = length(c);
+      float a = atan(c.y, c.x);
+
+      // 角度をセクターに割る。セクターごとに棘の長さ・向きをランダムに
+      float N     = uCount;
+      float s     = a / 6.2831853 * N;
+      float sect  = floor(s);
+      float rnd   = hash(sect);
+      float rnd2  = hash(sect + 37.0);
+      float local = fract(s + (rnd2 - 0.5) * 0.6);      // 少し角度をゆらす
+
+      // 三角の棘。中心で長く、縁で0。SHARP で尖り具合
+      float tri = 1.0 - abs(local - 0.5) * 2.0;
+      tri = pow(max(tri, 0.0), uSharp);
+      float len = 0.35 + rnd * 0.9;                     // 棘ごとにばらつく長さ
+
+      // 外側ほど強く引く → 画像が棘に沿って外へ伸びる
+      float pull = tri * len * uAmp * (0.12 + r * 1.15);
+
+      vec2 dir = c / max(r, 1e-4);
+      vec2 duv = dir / uAspect;                         // uv 空間へ戻す
+      vec2 suv = uv - duv * pull;                       // 中心へ引いて外へ伸ばす
+
+      vec3 col = texture2D(tVideo, suv).rgb;
+      gl_FragColor = vec4(col, 1.0);
+    }`
+});
+
+scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
+
+/* ── VIDEO ──────────────────────────────────────────────── */
+let video = null, videoTex = null, started = false;
+
+function updateCover(){
+  const vw = (video && video.videoWidth)  || 16;
+  const vh = (video && video.videoHeight) || 9;
+  const va = vw / vh, sa = innerWidth / innerHeight;
+  let cx = 1, cy = 1;
+  if(sa > va) cy = va / sa; else cx = sa / va;
+  uniforms.uCover.value.set(cx, cy);
+  uniforms.uAspect.value.set(sa, 1);
+}
+function resize(){
+  renderer.setSize(innerWidth, innerHeight);
+  updateCover();
+}
+addEventListener('resize', resize);
+
+async function start(){
+  const err = document.getElementById('boot-err');
+  err.textContent = '';
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ width:{ ideal:1280 }, height:{ ideal:720 }, facingMode:'user' }, audio:false,
+    });
+  } catch(e){
+    err.textContent = {
+      NotAllowedError:'カメラ拒否 — 設定から許可してください',
+      NotFoundError:'カメラが見つかりません',
+      NotReadableError:'カメラが他アプリで使用中',
+      SecurityError:'HTTPS または localhost が必要です',
+    }[e.name] || e.name || 'CAMERA ERROR';
+    return;
+  }
+  video = document.createElement('video');
+  video.srcObject = stream;
+  video.muted = true; video.playsInline = true; video.autoplay = true;
+  await video.play().catch(() => {});
+  videoTex = new THREE.VideoTexture(video);
+  videoTex.minFilter = THREE.LinearFilter;
+  videoTex.magFilter = THREE.LinearFilter;
+  uniforms.tVideo.value = videoTex;
+  updateCover();
+  started = true;
+  document.getElementById('boot').classList.add('gone');
+}
+
+function frame(){
+  requestAnimationFrame(frame);
+  if(!started) return;
+  uniforms.uAmp.value   = P.amp / 100 * 0.9;
+  uniforms.uCount.value = P.count;
+  uniforms.uSharp.value = 0.6 + P.sharp / 100 * 4.0;
+  renderer.render(scene, cam);
+}
+requestAnimationFrame(frame);
+resize();
+
+/* ── CONTROLS ───────────────────────────────────────────── */
+function bind(id, key, vid){
+  const el = document.getElementById(id), v = document.getElementById(vid);
+  const sync = () => { P[key] = +el.value; v.textContent = el.value; };
+  el.addEventListener('input', sync); sync();
+}
+bind('s-amp', 'amp',   'v-amp');
+bind('s-cnt', 'count', 'v-cnt');
+bind('s-shp', 'sharp', 'v-shp');
+
+document.getElementById('start').onclick = start;
+if(location.search.includes('auto')) addEventListener('load', start);
+</script>
+</body>
+</html>

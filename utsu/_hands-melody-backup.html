@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>写 UTSU — FACE INSTRUMENT / 木下スタジオ</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;overflow:hidden;background:#000;}
+  body{
+    font-family:"Space Mono",ui-monospace,monospace;color:#fff;
+    -webkit-tap-highlight-color:transparent;touch-action:none;
+  }
+  canvas{display:block;position:fixed;inset:0;width:100%;height:100%;}
+  #overlay{z-index:5;pointer-events:none;}
+
+  #boot{
+    position:fixed;inset:0;z-index:50;background:#f4f2ee;color:#0a0a0a;
+    display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:16px;transition:opacity .4s;
+  }
+  #boot.gone{opacity:0;pointer-events:none;}
+  #boot .k{font-size:44px;font-weight:300;letter-spacing:.3em;text-indent:.3em;}
+  #boot .s{font-size:9px;letter-spacing:.3em;opacity:.4;}
+  #boot .d{font-size:11px;opacity:.55;letter-spacing:.06em;line-height:1.9;text-align:center;}
+  #start{
+    margin-top:8px;font-size:9.5px;letter-spacing:.2em;padding:12px 22px;
+    background:none;border:1px solid rgba(10,10,10,.2);color:#0a0a0a;cursor:pointer;
+    transition:background .15s,color .15s;
+  }
+  #start:hover{background:#0a0a0a;color:#f4f2ee;}
+  #start[disabled]{opacity:.4;cursor:default;}
+  #boot .e{font-size:8.5px;letter-spacing:.12em;color:#b4241e;min-height:1em;text-align:center;}
+
+  #ctl{
+    position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:10;
+    display:flex;gap:14px;align-items:center;flex-wrap:wrap;justify-content:center;
+    background:rgba(0,0,0,.42);backdrop-filter:blur(10px);
+    padding:10px 18px;border:1px solid rgba(255,255,255,.14);border-radius:2px;max-width:94vw;
+  }
+  #ctl .row{display:flex;gap:8px;align-items:center;}
+  #ctl label{font-size:8.5px;letter-spacing:.14em;opacity:.6;}
+  #ctl input[type=range]{
+    -webkit-appearance:none;appearance:none;width:74px;height:1px;
+    background:rgba(255,255,255,.3);outline:none;cursor:pointer;
+  }
+  #ctl input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:9px;height:9px;border-radius:50%;background:#fff;cursor:pointer;
+  }
+  #ctl input[type=range]::-moz-range-thumb{
+    width:9px;height:9px;border:none;border-radius:50%;background:#fff;cursor:pointer;
+  }
+  #ctl .val{font-size:8px;opacity:.5;width:22px;text-align:right;}
+  #ctl .seg{display:flex;border:1px solid rgba(255,255,255,.2);}
+  #ctl .seg button{background:none;border:none;color:#fff;opacity:.4;cursor:pointer;
+    font:inherit;font-size:8px;letter-spacing:.12em;padding:4px 8px;border-right:1px solid rgba(255,255,255,.2);}
+  #ctl .seg button:last-child{border-right:none;}
+  #ctl .seg button.on{opacity:1;background:rgba(255,255,255,.9);color:#000;}
+
+  #hud{
+    position:fixed;top:16px;left:18px;z-index:10;font-size:8.5px;
+    letter-spacing:.16em;opacity:.75;mix-blend-mode:difference;line-height:1.9;
+  }
+</style>
+</head>
+<body>
+
+<div id="boot">
+  <div class="k">写</div>
+  <div class="s">UTSU / FACE INSTRUMENT</div>
+  <div class="d">
+    顔と手が楽器になります。<br>
+    口・まばたき・眉、そして両手の高さと開きで音が鳴る。<br>
+    トリガーの場所は □ とスケルトンで見えます。
+  </div>
+  <button id="start" disabled>顔認識モデル読み込み中…</button>
+  <div class="e" id="boot-err"></div>
+</div>
+
+<div id="hud">
+  写 UTSU — FACE INSTRUMENT<br>
+  <span id="face-state">顔：—</span>
+</div>
+
+<div id="ctl">
+  <div class="row"><label>DOTS</label><div class="seg" id="seg-dots">
+    <button data-v="1" class="on">ON</button><button data-v="0">OFF</button></div></div>
+  <div class="row"><label>HANDS</label><div class="seg" id="seg-hands">
+    <button data-v="1" class="on">ON</button><button data-v="0">OFF</button></div></div>
+  <div class="row"><label>MOUTH↯</label><input id="s-mouth" type="range" min="0" max="100" value="70"><span class="val" id="v-mouth"></span></div>
+  <div class="row"><label>SPIKES</label><input id="s-cnt" type="range" min="8" max="120" value="54"><span class="val" id="v-cnt"></span></div>
+  <div class="row"><label>SHARP</label><input id="s-shp" type="range" min="0" max="100" value="55"><span class="val" id="v-shp"></span></div>
+  <div class="row"><label>VOL</label><input id="s-vol" type="range" min="0" max="100" value="60"><span class="val" id="v-vol"></span></div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { FaceLandmarker, HandLandmarker, FilesetResolver }
+  from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.20/vision_bundle.mjs';
+
+/* ═══════════════════════════════════════════════════════════
+   写 UTSU — FACE INSTRUMENT
+   顔を楽器にする。真鍋大度《electric stimulus to face》の
+   「顔を入出力の可逆デバイス＝楽器として扱う」の最小版。
+   (1) 人を認識 = MediaPipe Face Landmarker（478点＋blendshape）
+   (2) 点を全部描く（Holistic 風の赤ドット）＋ 目・口を □ で囲う
+   (3) 動作＝トリガー：口を開ける/まばたき で音が鳴り □ が光る
+       口の開き jawOpen で棘も出る（顔にアンカー）
+   ═══════════════════════════════════════════════════════════ */
+
+const P = { mouth:70, count:54, sharp:55, vol:60, dots:1, mirror:1, hands:1 };
+
+function smoothstep(e0, e1, x){
+  const t = Math.min(Math.max((x - e0) / (e1 - e0), 0), 1);
+  return t * t * (3 - 2 * t);
+}
+const clamp = (x,a,b) => Math.min(Math.max(x,a),b);
+
+/* ── RENDERER（棘の映像）─────────────────────────────────── */
+const renderer = new THREE.WebGLRenderer({ antialias:false, preserveDrawingBuffer:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const oc = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+const uniforms = {
+  tVideo:{ value:null },
+  uCover:{ value:new THREE.Vector2(1,1) },
+  uAspect:{ value:new THREE.Vector2(1,1) },
+  uMirror:{ value:1 },
+  uAmp:{ value:0.0 }, uCount:{ value:54 }, uSharp:{ value:2.0 },
+  uCenter:{ value:new THREE.Vector2(0.5,0.5) },
+  uFaceR:{ value:0.28 },
+};
+const mat = new THREE.ShaderMaterial({
+  uniforms,
+  vertexShader:`
+    varying vec2 vUv;
+    void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+  fragmentShader:`
+    precision highp float;
+    uniform sampler2D tVideo;
+    uniform vec2 uCover, uAspect, uCenter;
+    uniform float uMirror, uAmp, uCount, uSharp, uFaceR;
+    varying vec2 vUv;
+    float hash(float n){ return fract(sin(n * 127.1) * 43758.5453); }
+    void main(){
+      vec2 c = (vUv - uCenter) * uAspect;
+      float r = length(c);
+      float a = atan(c.y, c.x);
+      float N = uCount;
+      float s = a / 6.2831853 * N;
+      float sect = floor(s);
+      float rnd = hash(sect), rnd2 = hash(sect + 37.0);
+      float local = fract(s + (rnd2 - 0.5) * 0.6);
+      float tri = 1.0 - abs(local - 0.5) * 2.0;
+      tri = pow(max(tri, 0.0), uSharp);
+      float len = 0.35 + rnd * 0.9;
+      float ring = smoothstep(uFaceR * 0.35, uFaceR * 1.05, r);
+      float pull = tri * len * uAmp * ring * (0.12 + r * 1.1);
+      vec2 dir = (c / max(r, 1e-4)) / uAspect;
+      vec2 sv  = vUv - dir * pull;
+      vec2 uv = (sv - 0.5) * uCover + 0.5;
+      if(uMirror > 0.5) uv.x = 1.0 - uv.x;
+      gl_FragColor = vec4(texture2D(tVideo, uv).rgb, 1.0);
+    }`
+});
+scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
+
+/* ── OVERLAY（点＋□トリガー）────────────────────────────── */
+const ov = document.createElement('canvas');
+ov.id = 'overlay';
+ov.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;';
+document.body.appendChild(ov);
+const octx = ov.getContext('2d');
+function sizeOverlay(){
+  const dpr = Math.min(devicePixelRatio, 2);
+  ov.width = innerWidth * dpr; ov.height = innerHeight * dpr;
+  octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+/* ── VIDEO + COVER ──────────────────────────────────────── */
+let video = null, videoTex = null, started = false;
+function updateCover(){
+  const vw = (video && video.videoWidth)  || 16;
+  const vh = (video && video.videoHeight) || 9;
+  const va = vw / vh, sa = innerWidth / innerHeight;
+  let cx = 1, cy = 1;
+  if(sa > va) cy = va / sa; else cx = sa / va;
+  uniforms.uCover.value.set(cx, cy);
+  uniforms.uAspect.value.set(sa, 1);
+}
+function resize(){ renderer.setSize(innerWidth, innerHeight); sizeOverlay(); updateCover(); }
+addEventListener('resize', resize);
+
+// landmark(0..1,左上,未ミラー) → 画面ピクセル（overlay/CSS px）
+function lmPx(p){
+  const cover = uniforms.uCover.value, mir = P.mirror !== 0;
+  let vx = mir ? (1 - p.x) : p.x;   // シェーダーの x ミラーに合わせる
+  let vy = 1 - p.y;
+  const sx = (vx - 0.5) / cover.x + 0.5;
+  const sy = (vy - 0.5) / cover.y + 0.5;
+  return { x: sx * innerWidth, y: (1 - sy) * innerHeight };
+}
+
+/* ── AUDIO（顔＝楽器）───────────────────────────────────── */
+let actx = null, master = null;
+// A マイナー・ペンタトニック（常に良い音）
+const SCALE = [220.00, 261.63, 293.66, 329.63, 392.00, 440.00, 523.25, 587.33, 659.25];
+// 手の高さ→音程用（2オクターブ強のペンタトニック）
+const SCALE2 = [164.81, 196.00, 220.00, 261.63, 293.66, 329.63, 392.00, 440.00,
+                523.25, 587.33, 659.25, 783.99, 880.00];
+function initAudio(){
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+  master = actx.createGain();
+  master.gain.value = P.vol / 100 * 0.6;
+  master.connect(actx.destination);
+}
+let mouthVoice = null;
+function mouthPitch(){
+  const idx = Math.floor(clamp(center.x, 0, 1) * SCALE.length);
+  return SCALE[Math.min(idx, SCALE.length - 1)];
+}
+function mouthOn(){
+  if(!actx || mouthVoice) return;
+  const o = actx.createOscillator(); o.type = 'sawtooth';
+  const o2 = actx.createOscillator(); o2.type = 'sawtooth'; o2.detune.value = 8;
+  const f = actx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 900;
+  const g = actx.createGain(); g.gain.value = 0;
+  o.connect(f); o2.connect(f); f.connect(g); g.connect(master);
+  const p = mouthPitch(); o.frequency.value = p; o2.frequency.value = p;
+  o.start(); o2.start();
+  g.gain.linearRampToValueAtTime(0.28, actx.currentTime + 0.03);
+  mouthVoice = { o, o2, f, g };
+}
+function mouthUpdate(){
+  if(!mouthVoice) return;
+  const p = mouthPitch();
+  mouthVoice.o.frequency.setTargetAtTime(p, actx.currentTime, 0.05);
+  mouthVoice.o2.frequency.setTargetAtTime(p, actx.currentTime, 0.05);
+  mouthVoice.f.frequency.setTargetAtTime(700 + jaw * 2600, actx.currentTime, 0.05); // 開くほど明るく
+}
+function mouthOff(){
+  if(!mouthVoice) return;
+  const { o, o2, g } = mouthVoice;
+  g.gain.cancelScheduledValues(actx.currentTime);
+  g.gain.setValueAtTime(g.gain.value, actx.currentTime);
+  g.gain.linearRampToValueAtTime(0, actx.currentTime + 0.14);
+  o.stop(actx.currentTime + 0.16); o2.stop(actx.currentTime + 0.16);
+  mouthVoice = null;
+}
+function bell(freq, dur, vol, type){
+  if(!actx) return;
+  const o = actx.createOscillator(); o.type = type || 'sine'; o.frequency.value = freq;
+  const g = actx.createGain(); g.gain.value = 0;
+  o.connect(g); g.connect(master); o.start();
+  g.gain.linearRampToValueAtTime(vol, actx.currentTime + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
+  o.stop(actx.currentTime + dur + 0.02);
+}
+
+// 手＝連続の声（LH+RH の各1本）。高さ→音程、開き→音量。
+const handVoices = {};   // key 'Left'/'Right'
+function handVoiceEnsure(key){
+  if(handVoices[key] || !actx) return;
+  const o = actx.createOscillator(); o.type = 'triangle';
+  const o2 = actx.createOscillator(); o2.type = 'sine'; o2.detune.value = 6;
+  const f = actx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1400;
+  const g = actx.createGain(); g.gain.value = 0;
+  o.connect(f); o2.connect(f); f.connect(g); g.connect(master);
+  o.start(); o2.start();
+  handVoices[key] = { o, o2, f, g };
+}
+function handVoiceSet(key, freq, vol, bright){
+  const v = handVoices[key]; if(!v) return;
+  const t = actx.currentTime;
+  v.o.frequency.setTargetAtTime(freq, t, 0.06);
+  v.o2.frequency.setTargetAtTime(freq, t, 0.06);
+  v.f.frequency.setTargetAtTime(bright, t, 0.06);
+  v.g.gain.setTargetAtTime(vol, t, 0.05);
+}
+function handVoiceOff(key){
+  const v = handVoices[key]; if(!v) return;
+  const t = actx.currentTime;
+  v.g.gain.setTargetAtTime(0, t, 0.12);
+  v.o.stop(t + 0.5); v.o2.stop(t + 0.5);
+  delete handVoices[key];
+}
+
+/* ── FACE — MediaPipe Face Landmarker ───────────────────── */
+let landmarker = null, handMarker = null, lastVideoTime = -1;
+let LMK = null, faceOn = false;
+let HANDS = [];   // [{ lm:[21], key:'Left'/'Right' }]
+let jaw = 0;
+const center = { x:0.5, y:0.5 };
+let faceR = 0.28;
+const B = {};                        // blendshape 名→値
+// トリガー状態機械（ヒステリシス＋立ち上がり検出）
+const st = { mouth:false, blinkL:false, blinkR:false, brow:false };
+const flash = { mouth:0, eyeL:0, eyeR:0, brow:0 };  // □を光らせる残光
+
+async function initLandmarker(){
+  const fileset = await FilesetResolver.forVisionTasks(
+    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.20/wasm');
+  landmarker = await FaceLandmarker.createFromOptions(fileset, {
+    baseOptions: {
+      modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+      delegate: 'GPU',
+    },
+    outputFaceBlendshapes: true,
+    runningMode: 'VIDEO',
+    numFaces: 1,
+  });
+  handMarker = await HandLandmarker.createFromOptions(fileset, {
+    baseOptions: {
+      modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+      delegate: 'GPU',
+    },
+    runningMode: 'VIDEO',
+    numHands: 2,
+  });
+  const btn = document.getElementById('start');
+  btn.disabled = false;
+  btn.textContent = 'カメラを許可して始める';
+}
+
+function readHands(res){
+  HANDS = [];
+  if(!res || !res.landmarks) return;
+  for(let i = 0; i < res.landmarks.length; i++){
+    const hd = res.handedness && res.handedness[i] && res.handedness[i][0];
+    HANDS.push({ lm: res.landmarks[i], key: hd ? hd.categoryName : ('H'+i) });
+  }
+}
+// 手の開き（握り0〜開き1）。指先の広がり／手の大きさで正規化
+function handOpenness(lm){
+  const wrist = lm[0], mcp = lm[9];
+  const size = Math.hypot(wrist.x-mcp.x, wrist.y-mcp.y) + 1e-4;
+  const tips = [4,8,12,16,20];
+  let s = 0;
+  for(const t of tips) s += Math.hypot(lm[t].x-wrist.x, lm[t].y-wrist.y);
+  const avg = (s / tips.length) / size;   // ~1.3(握) 〜 ~2.6(開)
+  return clamp((avg - 1.3) / 1.2, 0, 1);
+}
+
+function readFace(res){
+  if(!res || !res.faceLandmarks || !res.faceLandmarks.length){ faceOn = false; LMK = null; return; }
+  faceOn = true;
+  LMK = res.faceLandmarks[0];
+
+  let minx=1, miny=1, maxx=0, maxy=0;
+  for(const p of LMK){
+    if(p.x<minx)minx=p.x; if(p.x>maxx)maxx=p.x;
+    if(p.y<miny)miny=p.y; if(p.y>maxy)maxy=p.y;
+  }
+  const cx=(minx+maxx)/2, cy=(miny+maxy)/2;
+  // 顔中心を画面uvへ（棘の中心用）
+  const mir = P.mirror !== 0, cover = uniforms.uCover.value;
+  const scx = ((mir?1-cx:cx) - 0.5)/cover.x + 0.5;
+  const scy = ((1-cy) - 0.5)/cover.y + 0.5;
+  center.x += (scx - center.x) * 0.4;
+  center.y += (scy - center.y) * 0.4;
+  faceR += ((maxy-miny)/cover.y*0.62 - faceR) * 0.4;
+
+  const bs = res.faceBlendshapes && res.faceBlendshapes[0];
+  if(bs){ for(const c of bs.categories) B[c.categoryName] = c.score; }
+  jaw += ((B.jawOpen||0) - jaw) * 0.4;
+}
+
+/* ── トリガー判定＆発音 ─────────────────────────────────── */
+function triggers(){
+  if(!actx || !faceOn) return;
+  // 口：開いて音（開いている間ドローン）
+  if(!st.mouth && jaw > 0.42){ st.mouth = true; mouthOn(); flash.mouth = 1; }
+  if(st.mouth && jaw < 0.22){ st.mouth = false; mouthOff(); }
+  if(st.mouth) mouthUpdate();
+
+  // まばたき：立ち上がりでベル（左右で別の音）
+  const bl = B.eyeBlinkLeft || 0, br = B.eyeBlinkRight || 0;
+  if(!st.blinkL && bl > 0.5){ st.blinkL = true; bell(659.25, 0.4, 0.24, 'triangle'); flash.eyeL = 1; }
+  if(st.blinkL && bl < 0.3) st.blinkL = false;
+  if(!st.blinkR && br > 0.5){ st.blinkR = true; bell(880.0, 0.4, 0.24, 'triangle'); flash.eyeR = 1; }
+  if(st.blinkR && br < 0.3) st.blinkR = false;
+
+  // 眉上げ：立ち上がりでシマー（5度）
+  const brow = ((B.browOuterUpLeft||0)+(B.browOuterUpRight||0))*0.5;
+  if(!st.brow && brow > 0.45){ st.brow = true; bell(392, 0.6, 0.16, 'sine'); bell(587.33, 0.6, 0.12, 'sine'); flash.brow = 1; }
+  if(st.brow && brow < 0.25) st.brow = false;
+}
+
+// 手＝連続演奏（高さ→音程、開き→音量）。LH+RH の各1本。
+function updateHands(){
+  if(!actx) return;
+  const active = {};
+  for(const h of HANDS){
+    active[h.key] = true;
+    handVoiceEnsure(h.key);
+    const palm = h.lm[9];
+    const idx = Math.floor(clamp(1 - palm.y, 0, 1) * SCALE2.length);
+    const freq = SCALE2[Math.min(idx, SCALE2.length - 1)];
+    const op = handOpenness(h.lm);
+    handVoiceSet(h.key, freq, op * 0.2, 700 + op * 2800);
+  }
+  for(const key of Object.keys(handVoices)){
+    if(!active[key]) handVoiceOff(key);
+  }
+}
+
+/* ── START ──────────────────────────────────────────────── */
+async function start(){
+  const err = document.getElementById('boot-err');
+  err.textContent = '';
+  if(!landmarker){ err.textContent = 'モデル読み込み中…'; return; }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ width:{ ideal:1280 }, height:{ ideal:720 }, facingMode:'user' }, audio:false,
+    });
+  } catch(e){
+    err.textContent = {
+      NotAllowedError:'カメラ拒否 — 設定から許可してください',
+      NotFoundError:'カメラが見つかりません',
+      NotReadableError:'カメラが他アプリで使用中',
+      SecurityError:'HTTPS または localhost が必要です',
+    }[e.name] || e.name || 'CAMERA ERROR';
+    return;
+  }
+  video = document.createElement('video');
+  video.srcObject = stream;
+  video.muted = true; video.playsInline = true; video.autoplay = true;
+  await video.play().catch(() => {});
+  videoTex = new THREE.VideoTexture(video);
+  videoTex.minFilter = THREE.LinearFilter;
+  videoTex.magFilter = THREE.LinearFilter;
+  uniforms.tVideo.value = videoTex;
+  updateCover();
+  initAudio();
+  started = true;
+  document.getElementById('boot').classList.add('gone');
+}
+
+/* ── OVERLAY 描画 ───────────────────────────────────────── */
+// 目・口の領域を囲むランドマーク群
+const IDX = {
+  eyeL:  [33,133,159,145,158,153,468],
+  eyeR:  [362,263,386,374,385,380,473],
+  mouth: [61,291,0,17,13,14,40,270],
+};
+function boxOf(indices, pad){
+  let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9;
+  for(const i of indices){ const q=lmPx(LMK[i]); minx=Math.min(minx,q.x);maxx=Math.max(maxx,q.x);miny=Math.min(miny,q.y);maxy=Math.max(maxy,q.y); }
+  return { x:minx-pad, y:miny-pad, w:(maxx-minx)+pad*2, h:(maxy-miny)+pad*2 };
+}
+function drawBox(b, label, lit){
+  const a = 0.35 + lit * 0.65;
+  octx.lineWidth = 1 + lit * 2;
+  octx.strokeStyle = lit > 0.5 ? `rgba(255,225,90,${a})` : `rgba(255,255,255,${a})`;
+  octx.strokeRect(b.x, b.y, b.w, b.h);
+  octx.font = '9px "Space Mono", monospace';
+  octx.fillStyle = octx.strokeStyle;
+  octx.fillText(label, b.x, b.y - 4);
+}
+const HAND_CONN = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],
+  [13,17],[17,18],[18,19],[19,20],[0,17],
+];
+function drawHand(h){
+  const op = handOpenness(h.lm);
+  const a = 0.4 + op * 0.6;
+  // 骨格
+  octx.lineWidth = 2;
+  octx.strokeStyle = `rgba(120,220,255,${a})`;
+  octx.beginPath();
+  for(const [i,j] of HAND_CONN){
+    const p = lmPx(h.lm[i]), q = lmPx(h.lm[j]);
+    octx.moveTo(p.x, p.y); octx.lineTo(q.x, q.y);
+  }
+  octx.stroke();
+  // 関節点
+  octx.fillStyle = `rgba(255,255,255,${a})`;
+  for(const p0 of h.lm){ const p = lmPx(p0); octx.beginPath(); octx.arc(p.x, p.y, 2.2, 0, 6.2831853); octx.fill(); }
+  // ラベル（手首の上）
+  const w = lmPx(h.lm[0]);
+  octx.font = '9px "Space Mono", monospace';
+  octx.fillStyle = `rgba(120,220,255,${a})`;
+  octx.fillText((h.key||'') + ' · 高さ=音程 開き=音量', w.x + 6, w.y + 4);
+}
+
+function drawOverlay(){
+  octx.clearRect(0, 0, innerWidth, innerHeight);
+
+  // 手のスケルトン（LH+RH）
+  if(P.hands){ for(const h of HANDS) drawHand(h); }
+
+  if(!faceOn || !LMK) return;
+
+  // 478点（Holistic 風の赤ドット）
+  if(P.dots){
+    octx.fillStyle = 'rgba(255,60,60,0.85)';
+    for(let i=0;i<LMK.length;i++){
+      const q = lmPx(LMK[i]);
+      octx.beginPath(); octx.arc(q.x, q.y, 1.3, 0, 6.2831853); octx.fill();
+    }
+  }
+
+  // トリガーの □（発火で黄色く光る）
+  drawBox(boxOf(IDX.eyeL, 6),  'EYE L · E5 ベル', flash.eyeL);
+  drawBox(boxOf(IDX.eyeR, 6),  'EYE R · A5 ベル', flash.eyeR);
+  drawBox(boxOf(IDX.mouth, 8), 'MOUTH · 開くと鳴る／棘', flash.mouth || (st.mouth?1:0));
+}
+
+/* ── LOOP ───────────────────────────────────────────────── */
+const faceState = document.getElementById('face-state');
+function frame(){
+  requestAnimationFrame(frame);
+  if(!started) return;
+
+  if(video.readyState >= 2 && video.currentTime !== lastVideoTime){
+    lastVideoTime = video.currentTime;
+    const ts = performance.now();
+    if(landmarker){ try { readFace(landmarker.detectForVideo(video, ts)); } catch(e){} }
+    if(handMarker && P.hands){ try { readHands(handMarker.detectForVideo(video, ts)); } catch(e){} }
+    if(!P.hands) HANDS = [];
+  }
+  if(!faceOn){
+    jaw += (0 - jaw) * 0.2;
+    center.x += (0.5 - center.x) * 0.05;
+    center.y += (0.5 - center.y) * 0.05;
+    if(st.mouth){ st.mouth = false; mouthOff(); }
+  }
+
+  triggers();
+  updateHands();
+
+  // 棘（口を開けた分だけ）
+  const open = smoothstep(0.14, 0.55, jaw);
+  uniforms.uAmp.value    = open * (P.mouth / 100) * 1.6;
+  uniforms.uCount.value  = P.count;
+  uniforms.uSharp.value  = 0.6 + P.sharp / 100 * 4.0;
+  uniforms.uCenter.value.set(center.x, center.y);
+  uniforms.uFaceR.value  = faceR;
+  uniforms.uMirror.value = P.mirror;
+  if(master) master.gain.value = P.vol / 100 * 0.6;
+
+  renderer.render(scene, oc);
+
+  // □の残光を減衰
+  flash.mouth *= 0.86; flash.eyeL *= 0.86; flash.eyeR *= 0.86; flash.brow *= 0.86;
+  drawOverlay();
+
+  faceState.textContent = faceOn
+    ? '顔：認識中 ／ 口=鳴らす+棘  まばたき=ベル  眉上げ=シマー'
+    : '顔：—（中央に顔を）';
+}
+requestAnimationFrame(frame);
+resize();
+
+/* ── CONTROLS ───────────────────────────────────────────── */
+function bind(id, key, vid){
+  const el = document.getElementById(id), v = document.getElementById(vid);
+  const sync = () => { P[key] = +el.value; v.textContent = el.value; };
+  el.addEventListener('input', sync); sync();
+}
+bind('s-mouth', 'mouth', 'v-mouth');
+bind('s-cnt',   'count', 'v-cnt');
+bind('s-shp',   'sharp', 'v-shp');
+bind('s-vol',   'vol',   'v-vol');
+document.querySelectorAll('#seg-dots button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('#seg-dots button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on'); P.dots = +b.dataset.v;
+  };
+});
+document.querySelectorAll('#seg-hands button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('#seg-hands button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on'); P.hands = +b.dataset.v;
+    if(!P.hands){ for(const k of Object.keys(handVoices)) handVoiceOff(k); HANDS = []; }
+  };
+});
+
+document.getElementById('start').onclick = start;
+
+initLandmarker().catch(e => {
+  document.getElementById('boot-err').textContent = 'モデル読込失敗：ネット接続を確認（' + (e.message || e.name || e) + '）';
+  console.error('[UTSU] landmarker init:', e);
+});
+</script>
+</body>
+</html>
