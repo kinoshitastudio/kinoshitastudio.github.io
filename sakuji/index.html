@@ -152,7 +152,8 @@
 
     /* レイヤーはボードの右上に重ねる（ツールバーと重ならない位置） */
     #layers{ right:10px; left:auto; top:64px; bottom:auto; width:min(200px, 56vw); max-height:30vh; z-index:9 }
-    #layOpen{ right:10px; left:auto; top:64px; bottom:auto; z-index:9 }
+    /* ⚠️ ボードの上に重ねると、そこだけ図形を掴めない死角になる。右端に寄せて小さくする */
+    #layOpen{ right:4px; left:auto; top:64px; bottom:auto; z-index:9; width:28px; height:28px }
 
     /* シェイプのフライアウトは画面中央に */
     #shapeMenu{ left:50%; top:auto; bottom:calc(46vh + 56px);
@@ -226,6 +227,16 @@
     border:1px solid var(--line); color:var(--dim); border-radius:8px; cursor:pointer; z-index:6;
     font-size:14px; font-family:inherit }
   #layOpen:hover{ color:var(--ink); border-color:#3a3a3a }
+  /* ⚠️⚠️ ここから下は「あとに書いたほうが勝つ」。上のモバイル指定（@media）より後に
+     デスクトップの right:288px / bottom:20px を書いていたため、モバイルでも
+     デスクトップの位置が採用され、【ボードの真ん中あたりに開くボタンが乗っていた】。
+     そこだけ図形を掴めない死角になり、パネルを閉じているときだけ動かせなかった
+     （開くとボタンが消えるので死角も消える＝木下の症状そのもの）。
+     ⭐ モバイルの指定をここへ持ってきて、確実に勝たせる。 */
+  @media (max-width: 820px), (pointer: coarse) and (max-width: 1024px){
+    #layers{ right:10px; left:auto; top:64px; bottom:auto; width:min(200px, 56vw); max-height:30vh; z-index:9 }
+    #layOpen{ right:6px; left:auto; top:64px; bottom:auto; z-index:9; width:30px; height:30px }
+  }
   /* 字リスト・共通パーツ */
   #glyphList, #partList{ display:flex; flex-wrap:wrap; gap:5px; margin:8px 0 10px }
   .gchip{ display:flex; align-items:center; gap:5px; background:var(--btn); border:1px solid var(--line);
@@ -1694,6 +1705,13 @@ function brushUp(){
 
 /* ══ 選択／ダイレクト選択 ══ */
 let dragItem = null, dragSeg = null, dragHandle = null, dragStart = null;
+/* ⭐⭐ 指はマウスより太い。触る道具のときは当たり判定を広げる。
+   ⚠️ マウスと同じ幅（11px）だったので、モバイルでは狙った図形を掴めず
+     「選択できない → だから動かせない」状態になっていた
+     （木下＝レイヤーパネルから選ぶと触れた＝キャンバス直接タップだけが効いていなかった）。
+   ⭐ 指のときは約2倍。ハンドルやグラデの点も同じ考え方で広げる。 */
+const TOUCHY = matchMedia('(pointer: coarse)').matches;
+function tzTol(base){ return (TOUCHY ? base * 2 : base) / paper.view.zoom; }
 /* ⭐ 粒グループの中の粒に当たったら、そのグループを返す（粒は1個ずつ触るものではない） */
 function tzRootOf(item){
   let n = item;
@@ -1704,7 +1722,7 @@ function tzRootOf(item){
   return item;
 }
 function hit(point){
-  const tol = 11/paper.view.zoom;
+  const tol = tzTol(11);          // ⭐ 指なら広く
   // ロック・非表示の図形は掴めないようにする
   const skip = it => { while(it){ if(it.locked || !it.visible) return true; it = it.parent; } return false; };
   // ハンドル → アンカー → 線 → 塗り の順で優先して拾う（イラレの掴み心地）
@@ -4210,7 +4228,7 @@ let bhDrag = null;
 function hitBH(pt){
   if(S.tool !== 'select') return null;
   const b = selBounds(); if(!b) return null;
-  const tol = 8/paper.view.zoom;
+  const tol = tzTol(8);           // ⭐ 指なら広く（拡大縮小ハンドル）
   for(const k of BH){
     if(pt.getDistance(bhPoint(b, k)) < tol) return { k, b: b.clone(), items: selected().slice() };
   }
@@ -4638,7 +4656,7 @@ hook('guides', 'グラデのハンドルを描く', () => drawGradHandles());
 function hitGH(pt){
   const it = ghItem(); if(!it) return null;
   const L = ghLine(it); if(!L || !L.o || !L.d) return null;
-  const tol = 9/paper.view.zoom;
+  const tol = tzTol(9);           // ⭐ 指なら広く（グラデのハンドル）
   if(pt.getDistance(L.o) < tol) return { kind:'o', it, L };
   if(pt.getDistance(L.d) < tol) return { kind:'d', it, L };
   const st = S.stops.slice().sort((a,b)=>a.t-b.t);
