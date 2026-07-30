@@ -790,6 +790,11 @@
   </div>
   <div class="note">複数選択（Shift+クリック）してから合体／削る</div>
 
+  <h2>OBJECT</h2>
+  <!-- ⭐ 選んだものを消す。⚠️ モバイルには Delete キーが無いので、画面から消せる道が要る -->
+  <button class="btn" id="bDelSel" style="min-height:44px">🗑　選択したものを削除</button>
+  <div class="hint">Delete キーと同じ。⚠️<b>枠（アートボード）ではなく図形・文字を消す</b></div>
+
   <h2>ARTBOARD</h2>
   <div class="seg" id="abOn"><button data-v="1" class="on">枠を出す</button><button data-v="0">出さない</button></div>
   <div id="abList" style="margin:4px 0 8px"></div>
@@ -3456,7 +3461,27 @@ document.getElementById('layUp').onclick   = () => { snapshot(); selected().forE
 document.getElementById('layDown').onclick = () => { snapshot(); selected().forEach(it=>{
   const i = it.index; if(i > 0) it.insertBelow(artLayer.children[i-1]); }); renderLayers(); };
 document.getElementById('layDup').onclick  = () => { document.getElementById('bDup').click(); renderLayers(); };
-document.getElementById('layDel').onclick  = () => { snapshot(); selected().forEach(it=>it.remove()); guides(); renderLayers(); };
+document.getElementById('layDel').onclick  = () => delSelected();
+/* ⭐ 選んだものを消す。⚠️ 何も選んでいないときは黙って終わらせず、理由を出す */
+function delSelected(){
+  const sel = selected();
+  if(!sel.length){ stat('消すものを選んでください'); return; }
+  snapshot();
+  const n = sel.length;
+  sel.forEach(it => {
+    // ⭐ preview の下見を消すときは、隠れている元の形も一緒に消す（元だけ残らないように）
+    const k = tzPv.temp.indexOf(it);
+    if(k >= 0){
+      const src = tzPv.base[k];
+      if(src && src.parent){ delete src.__pvHidden; try { src.remove(); } catch(e){} }
+      tzPv.base.splice(k, 1); tzPv.temp.splice(k, 1);
+    }
+    it.remove();
+  });
+  guides(); renderLayers();
+  stat(n + ' 個を削除した');
+}
+document.getElementById('bDelSel')?.addEventListener('click', delSelected);
 
 /* 選択・追加・削除のたびにレイヤー表示を更新する */
 hook('snap', 'レイヤー一覧を描き直す', () => setTimeout(renderLayers, 0));
@@ -3919,9 +3944,20 @@ function abRectOf(a){ return new Rectangle(a.x - a.w/2, a.y - a.h/2, a.w, a.h); 
 function abRect(){ return abRectOf(abCur()); }
 
 function drawArtboard(){
-  if(!S.abOn) return;
   gridLayer.activate();
   const Z = paper.view.zoom;
+  // ⭐ 枠を「出さない」ときは、画面ぜんぶを地の色で塗る＝どこまでが作業する面か分かる。
+  //   ⚠️ 以前は何も描かず、板の地（暗い色）がそのまま出ていた。
+  if(!S.abOn){
+    const a = abCur();
+    if(!a || a.bgOn !== false){
+      const bg = new Path.Rectangle(paper.view.bounds.expand(80/Z));
+      bg.fillColor = (a && a.bg) ? a.bg : '#ffffff';
+      bg.sendToBack();
+    }
+    artLayer.activate();
+    return;
+  }
   S.abs.forEach((a, i) => {
     const R = abRectOf(a), cur = (i === S.abSel);
     if(a.bgOn){ const bg = new Path.Rectangle(R); bg.fillColor = a.bg; bg.sendToBack(); }
