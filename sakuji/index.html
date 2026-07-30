@@ -4878,13 +4878,43 @@ function tzAngleAt(item, pt, fallback){
   if(!best || !best.tangent) return fallback;
   return Math.atan2(best.tangent.y, best.tangent.x);
 }
-function tsubuize(item, o){
+/* ⭐ 交点の柄「面」── 画が交わって太くなっている所で、同じ帯を向きだけ直交させる。
+   ⚠️ 球のように「別物」を置くと質感が揃わない。粒 TSUBU は球をやめて面にしている
+     （UI に残っているのは「面」と「なし」だけ）。ここもそれに合わせる。
+   ⚠️ まとめ方も TSUBU 準拠＝K×K のマスの粒を【全部そのまま】直交させる。
+     1つに拡大すると穴が空き、字の外へはみ出して破綻する。
+   ⚠️ 中がスカスカのマスはまとめない（細い画が勝手に太って形が壊れるため）。 */
+function tzCrossOf(cells, N, o){
+  const cross = new Set();
+  if(!(o.bead > 0 && o.cross === 'face' && o.tex === 'blob')) return cross;
+  const BK = Math.max(1, o.beadK);
+  if(BK <= 1){
+    // 粒ひとつが単位。太い順に割合ぶん
+    const order = cells.map((_, k) => k).sort((a, x) => cells[x].dens - cells[a].dens);
+    order.slice(0, Math.round(cells.length * o.bead / 100)).forEach(k => cross.add(k));
+  } else {
+    const blocks = new Map();
+    cells.forEach((c, k) => {
+      const key = Math.floor(c.i / BK) + ',' + Math.floor(c.j / BK);
+      let b = blocks.get(key); if(!b) blocks.set(key, b = []); b.push(k);
+    });
+    const need = BK * BK * 0.75;              // ⚠️ 3/4以上 埋まっているマスだけ
+    const cand = [...blocks.values()].filter(b => b.length >= need)
+                                     .sort((a, x) => x.length - a.length);
+    const lim = Math.round(cand.length * o.bead / 100);
+    for(let k = 0; k < lim; k++) cand[k].forEach(idx => cross.add(idx));
+  }
+  return cross;
+}
+/* ⭐ 格子（どのマスが内側か・向き・太さ）＝【形の側】。
+   解像と隙間が同じなら色をいくら変えても作り直す必要がない。
+   ⚠️ ここが重い（内外判定 N×N ＋ 5×5の数え上げ）ので、作った結果を粒に持たせて使い回す。 */
+function tzGeom(item, o){
   const b = item.bounds;
   if(!b || !b.width || !b.height) return null;
   const N = o.res;
   const cw = b.width / N, ch = b.height / N;
   const pad = Math.min(cw, ch) * o.gap * 0.5;
-  const kids = [];
   // ⭐ まず「どのマスが内側か」の地図を作る。TSUBU が字を格子に落としたのと同じ。
   //   ここから 向き（Sobel）と 太さ（5×5の埋まり）を取る。
   //   ⚠️ これまでは1マスごとに最も近い輪郭を探していた（重いうえ、TSUBU と別の向きになる）。
@@ -4907,45 +4937,45 @@ function tsubuize(item, o){
     cells.push({ i, j, dens, sob });
   }
   if(!cells.length) return null;
-  // ⭐ 交点の柄「面」── 画が交わって太くなっている所で、同じ帯を向きだけ直交させる。
-  //   ⚠️ 球のように「別物」を置くと質感が揃わない。粒 TSUBU は球をやめて面にしている
-  //     （UI に残っているのは「面」と「なし」だけ）。ここもそれに合わせる。
-  //   ⚠️ まとめ方も TSUBU 準拠＝K×K のマスの粒を【全部そのまま】直交させる。
-  //     1つに拡大すると穴が空き、字の外へはみ出して破綻する。
-  //   ⚠️ 中がスカスカのマスはまとめない（細い画が勝手に太って形が壊れるため）。
-  const cross = new Set();
-  if(o.bead > 0 && o.cross === 'face' && o.tex === 'blob'){
-    const BK = Math.max(1, o.beadK);
-    const at = new Map();                       // マスの位置 → cells の添字
-    cells.forEach((c, k) => at.set(c.j*N + c.i, k));
-    if(BK <= 1){
-      // 粒ひとつが単位。太い順に割合ぶん
-      const order = cells.map((_, k) => k).sort((a, x) => cells[x].dens - cells[a].dens);
-      order.slice(0, Math.round(cells.length * o.bead / 100)).forEach(k => cross.add(k));
-    } else {
-      const blocks = new Map();
-      cells.forEach((c, k) => {
-        const key = Math.floor(c.i / BK) + ',' + Math.floor(c.j / BK);
-        let b = blocks.get(key); if(!b) blocks.set(key, b = []); b.push(k);
-      });
-      const need = BK * BK * 0.75;              // ⚠️ 3/4以上 埋まっているマスだけ
-      const cand = [...blocks.values()].filter(b => b.length >= need)
-                                       .sort((a, x) => x.length - a.length);
-      const lim = Math.round(cand.length * o.bead / 100);
-      for(let k = 0; k < lim; k++) cand[k].forEach(idx => cross.add(idx));
-    }
-  }
+  return { N, cells, res:o.res, gap:o.gap,
+           b:{x:b.x, y:b.y, width:b.width, height:b.height}, cw, ch, pad };
+}
+function tsubuize(item, o, geom){
+  const g0 = geom || tzGeom(item, o);
+  if(!g0) return null;
+  const { N, cells, cw, ch, pad } = g0;
+  const b = g0.b;
+  const kids = [];
+  const cross = tzCrossOf(cells, N, o);
   for(let ci = 0; ci < cells.length; ci++){
     {
-      const { i, j, sob } = cells[ci];
+      const cell = new Path.Rectangle(
+        new Rectangle(b.x + cells[ci].i*cw + pad, b.y + cells[ci].j*ch + pad,
+                      Math.max(0.2, cw - pad*2), Math.max(0.2, ch - pad*2)));
+      cell.fillColor = tzFillOf(cells[ci], ci, cross, g0, o);
+      cell.strokeColor = null; cell.strokeWidth = 0;
+      kids.push(cell);
+    }
+  }
+  if(!kids.length) return null;   // ⚠️ 解像が低すぎて粒が置けないときは何も作らない
+  const g = new Group(kids);
+  g.__tsubu = { d: item ? (item.pathData || null) : null, json: item ? item.exportJSON() : (geom ? null : null) };
+  g.__tzGeom = g0;                // ⭐ 形の側を持たせる＝色だけの変更で作り直さない
+  return g;
+}
+/* ⭐ 粒ひとつぶんの塗りを決める。⚠️ 作り直しと再塗りで同じ式を通すため、ここ1箇所にまとめる
+   （2箇所に書くと、片方だけ直して見え方がずれる）。 */
+function tzFillOf(cellData, ci, cross, g0, o){
+  const { N, cw, ch } = g0;
+  const b = g0.b;
+  {
+    {
+      const { i, j, sob } = cellData;
       const cx = b.x + (i + 0.5) * cw, cy = b.y + (j + 0.5) * ch;
       // ⭐ 帯の向き：字なり100＝画に沿う（Sobel）／0＝ぜんぶ同じ向き
       //   交点の柄「面」＝同じ帯を 90°だけ回す（別物を置かない＝質感が揃う）
       const ang = sob * o.follow + o.dir + (cross.has(ci) ? Math.PI/2 : 0);
       const ca = Math.cos(ang), sa = Math.sin(ang);
-      const cell = new Path.Rectangle(
-        new Rectangle(b.x + i*cw + pad, b.y + j*ch + pad,
-                      Math.max(0.2, cw - pad*2), Math.max(0.2, ch - pad*2)));
       // ⭐ 粒 TSUBU の式をそのまま使う。
       //   ・粒の中は 0〜1 に正規化した座標で、細かさ(W2)ぶんの周期が走る
       //   ・位相 ph は「格子上の位置 × 細かさ」で決まる＝粒をまたいで波が繋がる
@@ -4981,20 +5011,27 @@ function tsubuize(item, o){
           //     粒の中の色を量子化することではない。
           st.push([tzRampColor(v, o.LUT, o.shine), t]);
         }
-        cell.fillColor = { gradient:{ stops: st },
-                           origin: mid.subtract(dir), destination: mid.add(dir) };
-      } else {
-        // ドット ── 1粒1色。TSUBU と同じく、場のグラデを網（ディザ）で階調に落とす
-        cell.fillColor = tzDitherColor(i, j, N, o);
+        return { gradient:{ stops: st },
+                 origin: mid.subtract(dir), destination: mid.add(dir) };
       }
-      cell.strokeColor = null; cell.strokeWidth = 0;
-      kids.push(cell);
+      // ドット ── 1粒1色。TSUBU と同じく、場のグラデを網（ディザ）で階調に落とす
+      return tzDitherColor(i, j, N, o);
     }
   }
-  if(!kids.length) return null;   // ⚠️ 解像が低すぎて粒が置けないときは何も作らない
-  const g = new Group(kids);
-  g.__tsubu = { d: item.pathData || null, json: item.exportJSON() };
-  return g;
+}
+/* ⭐ 色だけ差し替える（作り直さない）。
+   ⚠️ スライダーを動かすたびに粒を全部作り直していたので重かった。
+     位置が変わるのは【解像】と【粒の隙間】だけなので、それ以外は塗りの差し替えで足りる。 */
+function tzRepaint(g, o){
+  const g0 = g && g.__tzGeom;
+  if(!g0 || g0.res !== o.res || g0.gap !== o.gap) return false;   // 形が変わる＝作り直しへ
+  const cells = g0.cells;
+  if(!g.children || g.children.length !== cells.length) return false;
+  const cross = tzCrossOf(cells, g0.N, o);
+  for(let ci = 0; ci < cells.length; ci++){
+    g.children[ci].fillColor = tzFillOf(cells[ci], ci, cross, g0, o);
+  }
+  return true;
 }
 /* ⭐ 文字は「字の形」でなく四角い箱として粒が乗ってしまう。
    PointText は中身（塗りの内側）の判定を持たないので、bounds 全体が内側と見なされるため。
@@ -5138,6 +5175,12 @@ function retsubu(silent){
   const o = tzOpt();
   let total = 0;
   sel.forEach(old => {
+    // ⭐ 色・向き・細かさ・ずれ・断面だけの変更なら、粒を作り直さず塗りを差し替える。
+    //   ⚠️ 作り直しは粒ぶんのパスを毎回捨てて作るので重く、スライダーが飛んで見えていた。
+    if(tzRepaint(old, o)){
+      total += old.children ? old.children.length : 1;
+      return;
+    }
     let src = null;
     try { src = artLayer.importJSON(old.__tsubu.json); } catch(e){ return; }
     if(!src) return;
@@ -5157,10 +5200,14 @@ function retsubu(silent){
     + (o.tex === 'blob' ? 'グラデ塊' : 'ドット') + '）';
   return true;
 }
+/* ⭐ スライダーに追いつかせる。⚠️ 220ms 待ってから作り直していたので、
+   動かしても飛び飛びに見えていた（TSUBU は待たずに描いている）。
+   次の描画フレームで1回だけ走らせる＝入力を取りこぼさず、二重に走らせない。 */
+let _tzRaf = 0;
 function retsubuSoon(){
   if(!tzTargets().some(it => it.__tsubu)) return;
-  clearTimeout(_tzTimer);
-  _tzTimer = setTimeout(() => retsubu(true), 220);
+  if(_tzRaf) return;
+  _tzRaf = requestAnimationFrame(() => { _tzRaf = 0; retsubu(true); });
 }
 ['tzRes','tzWav','tzDir','tzFollow','tzShift','tzGap'].forEach(id =>
   document.getElementById(id)?.addEventListener('input', retsubuSoon));
@@ -5200,7 +5247,6 @@ function tzPvSafety(){
   if(fixed) paper.view.update();
 }
 function tzPvBuild(){
-  tzPvClear();
   const all = tzTargets();
   const sel = all.filter(it => !it.__tsubu);
   if(!sel.length){
@@ -5210,6 +5256,15 @@ function tzPvBuild(){
   }
   const o = tzOpt();
   let total = 0;
+  // ⭐ すでに出ている下見が同じ形なら、塗りを差し替えるだけで済む（作り直さない）
+  if(tzPv.temp.length === sel.length && tzPv.temp.every((g, k) => g && g.parent && tzRepaint(g, o))){
+    tzPv.temp.forEach(g => total += g.children ? g.children.length : 1);
+    const el0 = document.getElementById('stat');
+    if(el0) el0.textContent = 'preview：粒 ' + total + ' 個 — 「粒にする」で確定';
+    paper.view.update();
+    return;
+  }
+  tzPvClear();
   sel.forEach(it => {
     const { src, temp } = tzSourceOf(it);
     const g = tsubuize(src, o);
@@ -5227,10 +5282,11 @@ function tzPvBuild(){
   paper.view.update();
 }
 let _tzPvTimer = null;
+let _tzPvRaf = 0;
 function tzPvSoon(){
   if(!tzPv.on) return;
-  clearTimeout(_tzPvTimer);
-  _tzPvTimer = setTimeout(tzPvBuild, 200);
+  if(_tzPvRaf) return;
+  _tzPvRaf = requestAnimationFrame(() => { _tzPvRaf = 0; tzPvBuild(); });
 }
 document.getElementById('tzPv')?.addEventListener('change', async e => {
   tzPv.on = e.target.checked;
