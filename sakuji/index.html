@@ -1459,6 +1459,7 @@ function snapAngle(from, to){
 let pen = null;                      // 作画中のパス
 let shiftDown = false;               // Shift＝45°に拘束
 function penDown(e){
+  if(!pen) tzOnNewObject();                          // ⭐ 引き始めだけ：新しいものは単色から
   let p = e.point;
   // Shift＝直前の点から水平・垂直・45°に固定して打つ
   if(e.modifiers.shift && pen && pen.lastSegment) p = snapAngle(pen.lastSegment.point, p);
@@ -1574,7 +1575,7 @@ function cancelPen(){ if(pen){ pen.remove(); pen = null; guides(); stat('取消'
    ドラッグした矩形に内接させる形で各シェイプを作る。
    Shift＝正方形/正円に固定、Alt＝始点を中心にして広げる（イラレと同じ） */
 let shape = null, shapeStart = null;
-function shapeDown(e){ snapshot(); shapeStart = e.point; }
+function shapeDown(e){ snapshot(); tzOnNewObject(); shapeStart = e.point; }   // ⭐ 新しいものは単色から
 function shapeDrag(e){
   if(!shapeStart) return;
   if(shape) shape.remove();
@@ -1666,7 +1667,8 @@ function makeShape(kind, r){
 /* ══ ストローク（太い線）ツール ══ */
 let brush = null;
 function brushDown(e){
-  snapshot();                                     // 引き始める前の状態を保存
+  snapshot();
+  tzOnNewObject();                                   // ⭐ 新しいものは単色から                                     // 引き始める前の状態を保存
   // 線色が「なし」なら塗り色で描く（描いたのに見えない、を防ぐ）
   brush = new Path({
     strokeColor: S.stroke || S.fill || '#0a0a0a',
@@ -2397,6 +2399,7 @@ function roundCorner(seg, r){
    欧文も詰まらないよう、送りは「その字の実寸 ＋ 字間」で測る。 */
 function placeText(pt){
   snapshot();
+  tzOnNewObject();                                    // ⭐ 新しいものは単色から（グラデ・粒を引き継がない）
   const txt = document.getElementById('tinput').value || '永';
   const fam = document.getElementById('tfont').value;
   const wt  = document.getElementById('tweight').value;
@@ -5282,6 +5285,45 @@ function tzPvSafety(){
   artLayer.children.slice().forEach(walk);
   if(fixed) paper.view.update();
 }
+/* ⭐ 下見をそのまま「粒」として確定する（元の形を消して、見えているものを残す）。
+   ⚠️ 下見グループは tsubuize が作っているので、もう粒として完成している。
+     __isPv の印を外して、元の形を消せば確定になる。 */
+function tzCommitPreview(){
+  let n = 0;
+  tzPv.base.forEach((it, k) => {
+    const g = tzPv.temp[k];
+    if(!g || !g.parent) return;
+    delete g.__isPv;
+    g.selected = false;
+    if(it && it.parent){ delete it.__pvHidden; try { it.remove(); } catch(e){} }
+    const q = _tzLast.indexOf(it); if(q >= 0) _tzLast[q] = g;
+    n++;
+  });
+  tzPv.base = []; tzPv.temp = [];
+  return n;
+}
+/* ⭐⭐ 新しいものを置いたら、塗りは【単色（既定）】に戻す。
+   ⚠️ 前に粒やグラデを使っていると、新規のものにも勝手にかかっていた
+     （木下＝「テキストで打ち込みすると必ずグラデになっている」
+       「新規でオブジェクトを立てた時はデフォルトにもどった方がよい」）。
+   ⚠️ ただし【見えていた下見は先に確定する】。黙って捨てると、
+     さっきまで画面に出ていた粒が消える＝木下が困っていた挙動そのものになる。 */
+function tzOnNewObject(){
+  if(tzPv.on && tzPv.temp.length){
+    const n = tzCommitPreview();
+    if(n) stat('見えていた粒を確定しました（' + n + '個）— 新しいものは単色から');
+  }
+  const c = document.getElementById('tzPv');
+  if(c && c.checked){ c.checked = false; tzPv.on = false; tzPvSyncUI(); }
+  if(S.fillMode !== 'solid'){
+    S.fillMode = 'solid';
+    document.querySelectorAll('#fillmode button')
+      .forEach(x => x.classList.toggle('on', x.dataset.v === 'solid'));
+    ['gradUI','metalUI','tsubuUI'].forEach(id => {
+      const el = document.getElementById(id); if(el) el.style.display = 'none';
+    });
+  }
+}
 function tzPvBuild(){
   const all = tzTargets();
   const sel = all.filter(it => !it.__tsubu);
@@ -5291,30 +5333,46 @@ function tzPvBuild(){
     return;
   }
   const o = tzOpt();
-  let total = 0;
-  // ⭐ すでに出ている下見が同じ形なら、塗りを差し替えるだけで済む（作り直さない）
-  if(tzPv.temp.length === sel.length && tzPv.temp.every((g, k) => g && g.parent && tzRepaint(g, o))){
-    tzPv.temp.forEach(g => total += g.children ? g.children.length : 1);
-    const el0 = document.getElementById('stat');
-    if(el0) el0.textContent = 'preview：粒 ' + total + ' 個 — 「粒にする」で確定';
-    paper.view.update();
-    return;
+  // ⭐⭐ 下見は【対象ごとに持つ】。
+  //   ⚠️ これまでは対象が変わるたびに全部消して作り直していたので、
+  //     新しい図形を作った瞬間に前の図形の下見が消え、「粒にする」でも救えなかった
+  //     ＝木下の「B には粒ができるが A の粒はなくなる」。
+  //   ⭐ 選び直しても、前に見えていた下見はそのまま残す。消えるのは preview を外したときだけ。
+  //   ⚠️ 死んだ参照（消された図形）は先に落とす。
+  for(let k = tzPv.base.length - 1; k >= 0; k--){
+    const bad = !tzPv.base[k] || !tzPv.base[k].parent;
+    if(bad){
+      const g = tzPv.temp[k];
+      if(g && g.parent){ try { g.remove(); } catch(e){} }
+      tzPv.base.splice(k, 1); tzPv.temp.splice(k, 1);
+    }
   }
-  tzPvClear();
   sel.forEach(it => {
+    let k = tzPv.base.indexOf(it);
+    let g = k >= 0 ? tzPv.temp[k] : null;
+    if(g && g.parent){
+      // すでに出ている＝塗りの差し替えで済むならそれで済ませる
+      if(tzRepaint(g, o)) return;
+      const { src, temp } = tzShapeOf(it);
+      const ng = tsubuize(src, o);
+      if(temp) src.remove();
+      if(ng){ ng.insertAbove(g); ng.__isPv = true; g.remove(); tzPv.temp[k] = ng; }
+      return;
+    }
     const { src, temp } = tzShapeOf(it);
-    const g = tsubuize(src, o);
+    const ng = tsubuize(src, o);
     if(temp) src.remove();
-    if(g){
-      g.insertAbove(it);
-      g.__isPv = true;
+    if(ng){
+      ng.insertAbove(it);
+      ng.__isPv = true;
       it.visible = false; it.__pvHidden = true;
-      tzPv.base.push(it); tzPv.temp.push(g);
-      total += g.children ? g.children.length : 1;
+      if(k >= 0) tzPv.temp[k] = ng; else { tzPv.base.push(it); tzPv.temp.push(ng); }
     }
   });
+  let total = 0;
+  tzPv.temp.forEach(g => { if(g && g.parent) total += g.children ? g.children.length : 1; });
   const el = document.getElementById('stat');
-  if(el) el.textContent = 'preview：粒 ' + total + ' 個 — 「粒にする」で確定';
+  if(el) el.textContent = 'preview：粒 ' + total + ' 個（' + tzPv.temp.length + '個の形）— 「粒にする」で確定';
   paper.view.update();
 }
 let _tzPvTimer = null;
