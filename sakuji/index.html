@@ -4419,20 +4419,51 @@ document.querySelectorAll('#tvert button').forEach(b =>
 });
 /* ⚠️ 置いたあとの字間・行間・組み方向は、置き直しでしか変えられない。
    選択中のものがあれば、その場で組み直す（位置と選択は保つ）。 */
-function reflowSelectedText(){
-  const sel = selected().filter(it => it.__isText);
-  if(!sel.length) return;
+let _tzReflowing = false;        // ⭐ 組み直し中＝「新しいものを置いた」ではない
+async function reflowSelectedText(){
+  // ⭐⭐ preview 中は【下見】が選ばれていて、元の文字は隠れている。
+  //   隠れている元を対象にすれば、粒を見ながら字間・行間・縦組を決められる。
+  //   ⚠️ 確定したあとの粒は、もう文字ではないので組み直せない（イラレのアウトライン化と同じ）。
+  const targets = [];
+  selected().forEach(it => {
+    const k = tzPv.temp.indexOf(it);
+    const src = (k >= 0) ? tzPv.base[k] : it;
+    if(src && src.parent && src.__isText && !targets.includes(src)) targets.push(src);
+  });
+  if(!targets.length){
+    if(selected().some(it => it.__tsubu))
+      stat('粒にしたあとは組み直せません（preview のうちに字間・行間・縦組を決めてください）');
+    return;
+  }
+  const wasPv = tzPv.on;
+  // ⭐ いったん preview を畳んで、元の文字が見える状態に戻してから組み直す。
+  //   ⚠️ 下見を残したまま差し替えようとすると、対応がずれて下見が消える（前にそれで失敗した）。
+  if(wasPv){ tzPvClear(); tzPvSafety(); }
   snapshot();
-  sel.forEach(old => {
+  _tzReflowing = true;
+  const made = [];
+  targets.forEach(old => {
     const at = old.position.clone();
     const box = document.getElementById('tinput');
     const bak = box.value; box.value = old.__txt || box.value;
     old.remove();
     const g = placeText(at);
     box.value = bak;
-    if(g) g.selected = true;
+    if(g) made.push(g);
   });
+  _tzReflowing = false;
+  artLayer.children.forEach(c => c.selected = false);
+  made.forEach(g => g.selected = true);
+  _tzLast = made;
   guides();
+  // ⭐ 組み直したら preview を作り直す（既存の仕組みをそのまま使う＝差分更新の複雑さを避ける）
+  if(wasPv){
+    tzPv.on = true;
+    const c = document.getElementById('tzPv');
+    if(c){ c.checked = true; tzPvSyncUI(); }
+    await tzEnsureShape(made);
+    tzPvBuild();
+  }
 }
 ['ttrack','tlead'].forEach(id =>
   document.getElementById(id)?.addEventListener('change', reflowSelectedText));
@@ -5453,6 +5484,9 @@ function tzCommitPreview(){
    ⚠️ ただし【見えていた下見は先に確定する】。黙って捨てると、
      さっきまで画面に出ていた粒が消える＝木下が困っていた挙動そのものになる。 */
 function tzOnNewObject(){
+  // ⚠️ 組み直し（字間・行間・縦組）は placeText を通るが、新規作成ではない。
+  //   ここで preview を畳むと、粒を見ながら組めない（実際そうなっていた）。
+  if(_tzReflowing) return;
   if(tzPv.on && tzPv.temp.length){
     const n = tzCommitPreview();
     if(n) stat('見えていた粒を確定しました（' + n + '個）— 新しいものは単色から');
