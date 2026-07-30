@@ -1,0 +1,1291 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>粒 TSUBU — 日本語をビットに落として組む / 木下スタジオ</title>
+<meta name="description" content="日本語の字を8bitのドットに落とし、1タイル=1つのグラデーションの塊として組み直すインタラクティブ組版ツール。画の向きが波になり、交点に球が出る。木下スタジオ（木下貴博 / 滋賀・琵琶湖）制作。">
+<link rel="canonical" href="https://kinoshita.studio/tsubu/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="粒 TSUBU — 日本語をビットに落として組む">
+<meta property="og:description" content="字を8bitのドットに落とし、グラデーションの塊で組み直す。画の向きが波に、交点に球。">
+<meta property="og:url" content="https://kinoshita.studio/tsubu/">
+<meta property="og:image" content="https://kinoshita.studio/assets/img/img-ui-tsubu.webp">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="粒 TSUBU — 日本語をビットに落として組む">
+<meta name="twitter:image" content="https://kinoshita.studio/assets/img/img-ui-tsubu.webp">
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700&family=Zen+Old+Mincho:wght@600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#0a0a0a;--paper:#f4f2ee;--line:rgba(10,10,10,.14);}
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;overflow:hidden;background:#111;}
+  body{font-family:"Zen Kaku Gothic New",sans-serif;font-weight:500;color:var(--ink);
+    -webkit-font-smoothing:antialiased;touch-action:none;}
+  /* メインだけ全画面。#gz や #warpcv まで巻き込まないよう限定する */
+  #cv{display:block;position:fixed;inset:0;width:100%;height:100%;image-rendering:pixelated;}
+  #gz,#warpcv{image-rendering:auto;}
+  /* ⭐ カーブを触るとページがスクロールしてしまうのを止める（#gz には入っていた） */
+  #warpcv{touch-action:none;}
+
+  #panel{position:fixed;top:16px;right:16px;z-index:20;width:228px;
+    background:rgba(244,242,238,.9);backdrop-filter:blur(12px);border:1px solid var(--line);
+    max-height:calc(100vh - 32px);overflow-y:auto;padding:12px;}
+  /* セクションの切れ目を見えるようにする。説明文が増えて、どこからどこまでが
+     ひとまとまりか分からなくなっていた（＝上に線＋余白で区切る） */
+  h2{font-family:"Space Mono",monospace;font-size:10.5px;letter-spacing:.2em;font-weight:700;
+    opacity:.88;margin:14px -12px 10px;padding:18px 12px 0;
+    border-top:1px solid rgba(10,10,10,.16);}
+  h2 + h2{border-top:none;padding-top:0;}
+  h2:first-child{margin-top:0;padding-top:0;border-top:none;}
+  #panel{padding-bottom:22px;}
+  .seg{display:flex;border:1px solid var(--line);margin:4px 0 9px;}
+  .seg button{flex:1;background:none;border:none;cursor:pointer;padding:6px 0;
+    font-family:"Space Mono",monospace;font-size:7.5px;letter-spacing:.06em;
+    color:var(--ink);opacity:.4;border-right:1px solid var(--line);}
+  .seg button:last-child{border-right:none;}
+  .seg button.on{opacity:1;background:var(--ink);color:var(--paper);}
+  #pal{flex-wrap:wrap;}
+  #pal button{flex:1 1 30%;}
+  .row{display:flex;align-items:center;gap:9px;padding:4px 0;}
+  /* 説明が続く行は下の余白を説明側に預ける（間が二重に空くのを防ぐ） */
+  .row:has(+ .hint){padding-bottom:1px;}
+  .row label{font-family:"Space Mono",monospace;font-size:8px;opacity:.5;width:46px;flex:none;letter-spacing:.06em;}
+  /* ⭐ 入力欄そのものに高さを持たせて「掴める帯」を広くする。
+     線は track として細く描くので見た目は変わらない。
+     以前は入力欄が 1px しかなく、点(つまみ)にしか当たらなかった。 */
+  .row input[type=range]{-webkit-appearance:none;flex:1;height:24px;background:none;
+    outline:none;cursor:pointer;margin:0;}
+  .row input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--line);border-radius:1px;}
+  .row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;
+    margin-top:-5px;border-radius:50%;background:var(--ink);cursor:pointer;}
+  .row input[type=range]::-moz-range-track{height:2px;background:var(--line);border-radius:1px;}
+  .row input[type=range]::-moz-range-thumb{width:12px;height:12px;border:none;
+    border-radius:50%;background:var(--ink);cursor:pointer;}
+  input[type=color]{-webkit-appearance:none;width:22px;height:16px;border:1px solid var(--line);
+    padding:0;background:none;cursor:pointer;flex:none;}
+  input[type=color]::-webkit-color-swatch-wrapper{padding:1px;}
+  input[type=color]::-webkit-color-swatch{border:none;}
+  #cc label{width:auto;margin-left:2px;}
+  .val{font-family:"Space Mono",monospace;font-size:8px;opacity:.4;width:24px;text-align:right;flex:none;}
+  textarea{width:100%;height:52px;margin-bottom:6px;background:rgba(255,255,255,.5);border:1px solid var(--line);
+    padding:6px;font-family:"Zen Kaku Gothic New",sans-serif;font-size:10px;outline:none;resize:none;}
+  .big{width:100%;padding:9px 0;margin-top:8px;background:var(--ink);color:var(--paper);
+    border:none;cursor:pointer;font-family:"Space Mono",monospace;font-size:9px;letter-spacing:.2em;}
+  .note{font-family:"Space Mono",monospace;font-size:7px;line-height:1.8;opacity:.32;margin-top:6px;}
+  #gizmo{position:fixed;left:16px;bottom:16px;z-index:20;text-align:center;}
+  #gz{border:1px solid rgba(255,255,255,.14);cursor:grab;background:rgba(0,0,0,.35);touch-action:none;}
+  #gz:active{cursor:grabbing;}
+  #gztext{font-family:"Space Mono",monospace;font-size:8px;letter-spacing:.1em;color:#fff;opacity:.5;margin-top:5px;}
+  #hud{position:fixed;left:16px;top:16px;z-index:20;font-family:"Space Mono",monospace;
+    font-size:8.5px;letter-spacing:.14em;color:#fff;opacity:.5;line-height:2;}
+  @media(max-width:760px){
+    #cv{ top:0; height:58vh; height:58dvh; bottom:auto; inset:auto; left:0; right:0; }
+    #panel{ top:58vh; top:58dvh; bottom:0; left:0; right:0; width:auto;
+            max-height:42vh; max-height:42dvh; overflow-y:auto;
+            border-left:none; border-top:1px solid var(--line);
+            background:rgba(244,242,238,.97); }
+    #hud{ top:10px; left:12px; }
+    #gizmo{ display:none; }
+    /* 指で掴めるサイズにする。9px のつまみはタッチだとほぼ当たらない */
+    .row{ padding:6px 0; }
+    .row label{ font-size:9.5px; width:54px; }
+    .row input[type=range]{ height:42px; }          /* 指で押せる帯 */
+    .row input[type=range]::-webkit-slider-runnable-track{ height:3px; }
+    .row input[type=range]::-webkit-slider-thumb{ width:22px; height:22px; margin-top:-9.5px; }
+    .row input[type=range]::-moz-range-track{ height:3px; }
+    .row input[type=range]::-moz-range-thumb{ width:22px; height:22px; }
+    .val{ font-size:9.5px; width:30px; }
+    .seg button{ padding:12px 0; font-size:9.5px; }
+    input[type=color]{ width:34px; height:26px; }
+    h2{ font-size:11.5px; margin-top:16px; padding-top:20px; }
+    #helpBtn{ width:26px; height:26px; font-size:11px; top:8px; right:10px; }
+    #warpcv{ height:96px; }
+  }
+/* 説明は見出しより必ず小さく・淡く。太字は要点1〜2語だけに効かせる */
+/* 説明は既定で畳む（詳細はマニュアル側に書く）。右上の ? で出せる */
+  /* 交点の柄によって意味を持たない項目は畳む（触れるのに効かない状態を作らない） */
+  body.only-men .men-off{display:none;}
+  .hint{display:none;}
+  body.help .hint{display:block;}
+  #helpBtn{position:absolute;top:9px;right:10px;width:17px;height:17px;padding:0;line-height:1;
+    border:1px solid var(--line);background:none;cursor:pointer;border-radius:50%;
+    font-family:'Space Mono',monospace;font-size:9px;color:var(--ink);opacity:.35;}
+  #helpBtn:hover{opacity:.8;}
+  body.help #helpBtn{background:var(--ink);color:var(--paper);opacity:1;border-color:var(--ink);}
+  .hint{font-size:8.5px;line-height:1.65;color:#96938e;margin:1px 0 12px 0;padding-left:2px;letter-spacing:.01em}
+.hint b{color:#4a4744;font-weight:600}
+  #langBtn{position:absolute;top:9px;right:32px;height:17px;padding:0 5px;line-height:1;
+    border:1px solid var(--line);background:none;cursor:pointer;border-radius:9px;
+    font-family:'Space Mono',monospace;font-size:8.5px;color:var(--ink);opacity:.35;}
+  #langBtn:hover{opacity:.8;}
+  @media(max-width:760px){ #langBtn{height:26px;font-size:10px;padding:0 9px;top:8px;right:44px;} }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="hud">粒 TSUBU / KINOSHITA STUDIO<br><span id="stat"></span></div>
+<a href="/interaction-design.html" style="position:fixed;left:16px;top:44px;z-index:20;font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.18em;color:#fff;opacity:.4;text-decoration:none;">← KINOSHITA STUDIO</a>
+<div id="gizmo"><canvas id="gz" width="120" height="120"></canvas>
+  <div id="gztext">ANGLE 0°, 0°</div></div>
+
+<div id="panel">
+  <button id="helpBtn" title="説明の表示／非表示">?</button><button id="langBtn" title="日本語 / English">JP</button>
+  <h2>字</h2>
+  <textarea id="txt">HELLO</textarea>
+  <div class="seg" id="font">
+    <button data-v="0" class="on">角ゴ</button>
+    <button data-v="1">明朝</button>
+  </div>
+  <div class="seg" id="lay">
+    <button data-v="0" class="on">横組</button>
+    <button data-v="1">縦組</button>
+  </div>
+  <div class="row"><label>折返し</label><input type="range" id="wrap" min="1" max="80" step="1" value="7"><span class="val"></span></div>
+  <div class="row"><label>字間</label><input type="range" id="gapx" min="-40" max="40" step="1" value="2"><span class="val"></span></div>
+  <div class="row"><label>行間</label><input type="range" id="gapy" min="-40" max="40" step="1" value="2"><span class="val"></span></div>
+  <div class="row"><label>解像</label><input type="range" id="res" min="8" max="96" step="4" value="16"><span class="val"></span></div>
+  <div class="row"><label>粒</label><input type="range" id="cell" min="1" max="80" step="1" value="7"><span class="val"></span></div>
+  <div class="row"><label>太さ</label><input type="range" id="fat" min="0" max="30" step="1" value="1"><span class="val"></span></div>
+
+  <h2>質感</h2>
+  <div class="hint" style="margin-bottom:5px"><b>グラデ塊</b>＝焼いたタイルを敷く（速い・位相が段になる）／<b>連続</b>＝ピクセルごとに直接計算（モアレが出ない・重い）</div>
+  <div class="seg" id="tex">
+    <button data-v="1" class="on">グラデ塊</button>
+    <button data-v="2">連続</button>
+    <button data-v="0">ドット</button>
+  </div>
+  <h2>塗り</h2>
+  <div class="hint" style="margin-bottom:5px">タイルに何を焼くか。<b>地の柄</b>が全面、<b>交点の柄</b>は画が交わって太い所だけ差し替える</div>
+  <div class="hint" style="margin:6px 0 2px;color:#111"><b>地の柄</b></div>
+  <div class="seg" id="line">
+    <button data-v="0" class="on">波</button><button data-v="1">縞</button>
+    <button data-v="2">斜</button><button data-v="3">格子</button><button data-v="4">環</button>
+  </div>
+  <div class="row"><label>細かさ</label><input type="range" id="wav" min="0.02" max="2.4" step="0.02" value="0.1"><span class="val"></span></div>
+  <div class="row"><label>向き</label><input type="range" id="dir" min="0" max="180" step="1" value="0"><span class="val"></span></div>
+  <div class="row"><label>字なり</label><input type="range" id="follow" min="0" max="100" step="1" value="100"><span class="val"></span></div>
+  <div class="hint"><b>向き</b>＝帯の角度をずらす。<b>字なり</b>＝<b>100は字の画に沿う</b>（漢字の骨格が流れになる）／<b>0は全部同じ向き</b>（面を並べた見え方）</div>
+  <div class="row"><label>ずれ</label><input type="range" id="shift" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+  <div class="hint">グラデの位置を送る。<b>帯の明暗がどこに来るか</b>が変わる</div>
+  <div class="row"><label>字ごと</label><input type="range" id="spread" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+  <div class="hint"><b>字ごとに位置をずらす</b>。同じ柄を複製して配置だけ変えた見え方になる</div>
+  <div class="row"><label>照り</label><input type="range" id="shine" min="0" max="200" step="1" value="60"><span class="val"></span></div>
+
+  <div class="hint" style="margin:9px 0 2px;color:#111"><b>交点の柄</b></div>
+  <div class="seg" id="blob">
+    <button data-v="5" class="on">面</button><button data-v="6">なし</button>
+  </div>
+  <div class="row"><label>玉</label><input type="range" id="bead" min="0" max="100" step="1" value="45"><span class="val"></span></div>
+  <div class="row men-off"><label>大きさ</label><input type="range" id="beadk" min="1" max="4" step="1" value="1"><span class="val"></span></div>
+  <div class="hint"><b>1＝粒ひとつが塊ひとつ</b>／<b>2＝2×2の4粒をまとめて1つ</b>／<b>3＝9粒で1つ</b>…。中の粒をまとめるので<b>穴もはみ出しも出ない</b>。⭐<b>解像度を変えても塊の見た目は保たれる</b>（解像に対する比で持っているため）。⚠️中がスカスカのマスはまとめない（細い画が太らないように）</div>
+
+  <h2>グラデの断面 — 線と塊 両方に効く</h2>
+  <div class="row"><label>谷</label><input type="range" id="valley" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+  <div class="hint">暗い部分の色。<b>0＝同じ色の暗い版</b>（色が濁らない）→ <b>100＝黒</b>（締まって縁が立つ）</div>
+  <div class="row"><label>階調</label><input type="range" id="grad" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+  <div class="hint">面の丸み。<b>0＝2色ぶん</b>（平らに見える）→ <b>100＝中間色が増える</b>（曲面・金属に見える）</div>
+
+  <h2>かたち</h2>
+  <div class="row"><label>格子</label><input type="range" id="grid" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+  <div class="hint">タイルの継ぎ目。<b>0＝消す</b>（面が繋がって1枚に見える）→ <b>上げると線が立つ</b>（マス目が意図として見える）</div>
+  <div class="row"><label>縦横比</label><input type="range" id="ar" min="10" max="800" step="5" value="100"><span class="val"></span></div>
+  <div class="row"><label>厚み</label><input type="range" id="depth" min="0" max="80" step="1" value="0"><span class="val"></span></div>
+  <div class="seg" id="warpax"><button data-v="0" class="on">縦ワープ</button><button data-v="1">横ワープ</button></div>
+  <div class="row"><label>ワープ</label><input type="range" id="warp" min="0" max="90" step="1" value="0"><span class="val"></span></div>
+  <canvas id="warpcv" width="204" height="52" style="width:100%;border:1px solid var(--line);cursor:crosshair;display:block;margin:3px 0;background:rgba(255,255,255,.35);"></canvas>
+  <div class="row"><label>山数</label><input type="range" id="warpn" min="1" max="8" step="1" value="2"><span class="val"></span></div>
+  <div class="note" style="margin-top:2px">カーブに点を打つ＝伸縮プロファイル<br>ドラッグで動かす／ダブルクリックで消す<br>山数を動かすとカーブを作り直す</div>
+  <div class="note">上＝画に沿う線／下＝交点に出る塊<br>玉を上げるほど塊（球）が増える</div>
+
+  <h2>グラデ（ディザ）</h2>
+  <div class="seg" id="pal">
+    <button data-v="0">墨</button>
+    <button data-v="1" class="on">奇抜</button>
+    <button data-v="2">琵琶湖</button>
+    <button data-v="3">蛍光</button>
+    <button data-v="4">毒</button>
+    <button data-v="5">熱</button>
+    <button data-v="6">赤青</button>
+    <button data-v="7">FC</button>
+    <button data-v="90">自作</button>
+  </div>
+  <div class="row" id="cc"><label>波色</label><input type="color" id="ca" value="#e9201c">
+    <span class="men-off" style="display:contents"><label style="width:auto">球色</label><input type="color" id="cb" value="#2434ff"></span>
+    <label style="width:auto">地</label><input type="color" id="cbg" value="#000000"></div>
+  <div class="row"><label>階調</label><input type="range" id="steps" min="2" max="32" step="1" value="4"><span class="val"></span></div>
+  <div class="row"><label>網</label><input type="range" id="dith" min="0" max="100" step="1" value="100"><span class="val"></span></div>
+  <div class="row"><label>網の向き</label><input type="range" id="gdir" min="0" max="360" step="1" value="90"><span class="val"></span></div>
+
+  <h2>出す</h2>
+  <div class="seg" id="exSc"><button data-v="1" class="on">1x</button><button data-v="2">2x</button><button data-v="4">4x</button></div>
+  <button class="big" id="exPng" style="margin-top:6px">PNG を出す</button>
+  <button class="big" id="exJpg" style="margin-top:4px">JPG を出す</button>
+  <button class="big" id="exSvg" style="margin-top:4px">SVG を出す（ドット）</button>
+  <div class="hint">⚠️<b>SVGはドットのときだけ</b>。グラデ塊・連続はピクセルで作っているのでベクターにできない</div>
+
+  <h2>アニメーション</h2>
+  <div class="hint" style="margin-bottom:5px">動きの設定はここだけ。<b>作り込むときは「流れ」を0のまま</b>にしておく（静止して軽くなる）</div>
+  <div class="seg" id="mode">
+    <button data-v="0" class="on">積もる</button>
+    <button data-v="1">集まる</button>
+    <button data-v="2">漂う</button>
+  </div>
+  <div class="row"><label>流れ</label><input type="range" id="gflow" min="0" max="300" step="1" value="0"><span class="val"></span></div>
+  <div class="hint"><b>0＝静止</b>。上げると帯が流れ出す。⚠️動きの正体はFPSではなくこれ</div>
+  <div class="row"><label>落ち代</label><input type="range" id="fall" min="0" max="600" step="5" value="0"><span class="val"></span></div>
+  <div class="hint"><b>0＝その場で崩れる</b>（既定）→ 上げると<b>その分だけ下へ落ちる先ができる</b>。⚠️崩さないあいだは見た目が変わらない</div>
+  <div class="row"><label>重力</label><input type="range" id="grav" min="0" max="200" step="1" value="60"><span class="val"></span></div>
+  <div class="row"><label>FPS</label><input type="range" id="fps" min="1" max="60" step="1" value="30"><span class="val"></span></div>
+
+  <button class="big" id="fitb" style="background:none;color:var(--ink);border:1px solid var(--line);">全体を見る</button>
+  <button class="big" id="go">崩す</button>
+  <button class="big" id="reset" style="background:none;color:var(--ink);border:1px solid var(--line);">戻す</button>
+  <div class="note">崩す＝素材になる／戻す＝字に帰る<br>左ドラッグ＝動かす／右ドラッグ＝角度<br>ホイール＝寄る・引く<br>FPSを下げるほどゲームの時間になる</div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   粒 TSUBU — 日本語の字を8bitのドットに落とし、グラデーションの塊で組み直す。
+
+   ・日本語の字を N×N のドットに落とす（16×16＝漢字が潰された事件の解像度）
+   ・グラデーションはディザ（網）で作る＝8bitがやった階調の偽装
+   ・時間も量子化する（FPSを落とす）＝ゲームの時間
+   ═══════════════════════════════════════════════════════════ */
+
+const cv = document.getElementById('cv'), g = cv.getContext('2d', { alpha:false });
+const P = { mode:0, res:16, cell:7, pal:1, steps:4, dith:100, gdir:90, gflow:0, fps:30, grav:60, font:0,
+            tex:1, wav:0.1, bead:55, beadk:1, line:0, blob:5, ar:100, shine:60, valley:0, grad:0, shift:0, spread:0, dir:0, follow:100, grid:0, depth:0, fat:1,
+            lay:0, wrap:7, gapx:2, gapy:2, fall:0 };
+
+/* ── 見え ── 世界は画面と切り離す。引いて全体を見渡せるように ── */
+const cam = { s:1, x:0, y:0, rx:0, ry:0 };   // rx,ry = 擬似3Dの傾き
+const CUSTOM_IDX = 90;               // 自作パレットの pal 番号（PALS を増やしても index がずれない固定値）
+const CUSTOM = { name:'自作', bg:'#000000', a:[233,32,28], b:[36,52,255],
+  get cols(){                        // ⭐ 地→波色→球色 を補間＝自作の色をドットモードにも効かせる
+    const bg = hexToRgb(this.bg), stops = [bg, this.a, this.b];
+    const lerp = (c1,c2,t) => c1.map((v,i)=>Math.round(v+(c2[i]-v)*t));
+    const out = [];
+    for(let i=0;i<6;i++){ const u=i/5*2, s=Math.min(1,Math.floor(u)), f=u-s;
+      out.push('rgb('+lerp(stops[s], stops[s+1]||stops[s], f).join(',')+')'); }
+    return out;
+  } };
+function hexToRgb(h){ h = h.replace('#',''); return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16)); }
+function fit(){
+  const C = P.cell;
+  const VW = cv.clientWidth || innerWidth, VH = cv.clientHeight || innerHeight;
+  // ⭐ 落ち代は「積もる時に落ちる先の空白」であって字ではない。
+  //   これを含めて中央を取ると、空白のぶん字が上へ押し上げられ、
+  //   さらにフォント読み込みで組み直すたびに位置が変わって見えていた。
+  const Hc = Math.max(1, H - Math.round(P.fall));
+  // ⭐ 右のパネルは板に重なっている。画面全体で中央を取ると、その幅ぶん右へ寄って見える。
+  //   実際に見えている範囲（パネルを除いた左側）の中心に置く。
+  //   ⚠️ モバイルはパネルが下に来る（#cv が 58vh）ので横は引かない。
+  const PW = innerWidth > 760 ? 228 + 32 : 0;
+  const VWv = Math.max(80, VW - PW);
+  cam.s = Math.min(VWv / (W * C + 40), VH / (Hc * C + 40));
+  cam.x = (VWv - W * C * cam.s) / 2;
+  cam.y = (VH - Hc * C * cam.s) / 2;
+}
+
+/* ── パレット（色数が少ない＝8bitの制約。だからディザが要る） ── */
+const PALS = [
+  { name:'墨',     bg:'#000000', a:[236,233,226], b:[255,255,255],
+    cols:['#0a0a0a','#4a4a46','#8f8d86','#c9c6bd','#f4f2ee'] },
+  { name:'奇抜',   bg:'#000000', a:[233,32,28],  b:[36,52,255],
+    cols:['#ff2d6f','#ffd400','#00e5ff','#7cff3f','#8a2be2','#ffffff'] },
+  { name:'琵琶湖', bg:'#000000', a:[127,174,158], b:[223,231,226],
+    cols:['#0d1417','#1b3a42','#2f6b6b','#7fae9e','#dfe7e2'] },
+  { name:'蛍光',   bg:'#08001a', a:[255,32,140], b:[64,255,208],
+    cols:['#08001a','#ff2094','#ff00e5','#40ffd0','#c0ff2a','#ffffff'] },
+  { name:'毒',     bg:'#001005', a:[124,255,63], b:[150,40,255],
+    cols:['#001005','#7cff3f','#00e5a0','#40b0ff','#9628ff','#ffffff'] },
+  { name:'熱',     bg:'#0d0000', a:[255,60,0],   b:[255,214,0],
+    cols:['#0d0000','#ff3c00','#ff7a00','#ffb400','#ffe64d','#fff7cc'] },
+  { name:'赤青',   bg:'#000010', a:[214,30,20],  b:[36,52,235],
+    cols:['#000010','#e01e14','#ff5a3c','#5a4cff','#2020e0','#ffffff'] },
+  { name:'FC',     bg:'#000000', a:[92,148,252], b:[248,56,0],
+    cols:['#000000','#5c94fc','#00a800','#fcd800','#f83800','#bcbcbc'] },
+];
+
+/* ── 字 → ドット（ここが「日本語をビットに落とす」） ──
+   ⭐ ドットの座標だけでなく、その場所の「画の向き」と「太さ」も一緒に取る。
+      向き → タイルの波の向きになる（＝字の骨格がグラデーションの流れになる）
+      太さ → 画が交わって塊になっている所。そこに球が出る
+   ──────────────────────────────────────────────────────── */
+const oc = document.createElement('canvas'), og = oc.getContext('2d', { willReadFrequently:true });
+function glyphDots(ch, N, fontIdx){
+  oc.width = oc.height = N;
+  og.fillStyle = '#000'; og.fillRect(0, 0, N, N);
+  og.fillStyle = '#fff';
+  og.textAlign = 'center'; og.textBaseline = 'middle';
+  og.font = fontIdx ? '600 ' + Math.round(N*0.98) + 'px "Zen Old Mincho"'
+                    : '700 ' + Math.round(N*0.94) + 'px "Zen Kaku Gothic New"';
+  og.fillText(ch, N/2, N/2 + N*0.03);
+  const raw = og.getImageData(0, 0, N, N).data;
+
+  // ── 太らせ（膨張） ── 画を太くする＝画が交わる所（青玉）が増える。
+  //    日本語は非ボールドだと細く、玉が出にくい。ここで太字を作る。
+  let grd = new Uint8Array(N*N);
+  for(let i=0;i<N*N;i++) grd[i] = raw[i*4] > 110 ? 1 : 0;
+  const fatN = Math.round(P.fat * Math.max(1, N / 32));   // ⭐ 太さを解像度比例に＝高解像度でも同じだけ太る
+  for(let s=0; s<fatN; s++){
+    const nx = new Uint8Array(N*N);
+    for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+      let v = grd[y*N+x];
+      if(!v){ if((x&&grd[y*N+x-1])||(x<N-1&&grd[y*N+x+1])||(y&&grd[(y-1)*N+x])||(y<N-1&&grd[(y+1)*N+x])) v=1; }
+      nx[y*N+x] = v;
+    }
+    grd = nx;
+  }
+  const on = (x, y) => (x < 0 || y < 0 || x >= N || y >= N) ? 0 : grd[y*N + x];
+
+  const out = [];
+  for(let y = 0; y < N; y++) for(let x = 0; x < N; x++){
+    if(!on(x, y)) continue;   // しきい値で二値化＝ドットに殺す。中間調はここで消える
+
+    // 太さ — 5×5(0..24) が何個埋まっているか。多いほど画の芯/交点。
+    //   3×3(9段)だと閾値1で大量が一斉に切り替わる。25段にして滑らかにする。
+    let dens = 0;
+    for(let j = -2; j <= 2; j++) for(let i = -2; i <= 2; i++) dens += on(x+i, y+j);
+
+    // 画の向き — Sobel で輪郭の法線を出し、90°回して画に沿わせる
+    const gx = (on(x+1,y-1) + 2*on(x+1,y) + on(x+1,y+1)) - (on(x-1,y-1) + 2*on(x-1,y) + on(x-1,y+1));
+    const gy = (on(x-1,y+1) + 2*on(x,y+1) + on(x+1,y+1)) - (on(x-1,y-1) + 2*on(x,y-1) + on(x+1,y-1));
+    const ang = (gx || gy) ? Math.atan2(gy, gx) + Math.PI/2 : 0;
+
+    out.push([x, y, ang, dens]);
+  }
+  return out;
+}
+
+/* ── タイル ── 8bit機がVRAMにパターンを持って敷き詰めたのと同じ。
+   1タイル＝1つのグラデーションの塊。焼くのは一度だけ。 */
+// ⚠️ PHASES＝波の位相を何段に量子化するか。8段（＝45°刻み）だと細かさを上げたとき
+//    1タイルあたりの位相の進みが刻みを超え、丸め誤差でパターンが壊れる（＝一部だけ
+//    位相が揃って太い帯に見える＝モアレ）。32段に上げて分解能を1/4にする。
+const TILE_ANGLES = 12, PHASES = 32;
+let tiles = [], tileC = 0, tilePal = -1, tileWav = -1, tileKey='';
+let flowT = 0;
+let offc = null, offg = null;
+let dirtyUntil = 1e9;   // ⭐ ここまでは描き続ける（静止中の再描画スキップ用）      // ⭐ 連続モードの描画先（世界サイズ）
+
+function buildTiles(){
+  const C = P.cell, pal = P.pal===CUSTOM_IDX ? CUSTOM : PALS[P.pal];
+  tiles = [];
+  // ⭐ タイルの谷（暗い部分）は黒固定ではなく「地の色」にする。
+  //    黒に落とすと何色を選んでも濁る。地に混ぜると選んだ色がそのまま出る。
+  const BG = (typeof pal.bg === 'string') ? hexToRgb(pal.bg.slice(1)) : (pal.bg || [0,0,0]);
+  const bgHex = `rgb(${BG.join(',')})`;
+  const mk = (fn) => {
+    const c = document.createElement('canvas'); c.width = c.height = C;
+    fn(c.getContext('2d'), C); return c;
+  };
+  // ⭐ 多ストップのランプ（対称な断面構造）。
+  //   いままでは「波色 × 明るさ」の実質2色だった＝中間色が無く、面が折れて見えた。
+  //   曲面の陰影は連続階調なので、中間色の数がそのまま「丸さ」になる。
+  //   波は cos で 0→1→0 と往復するので、空間的には 谷→山→谷→山＝クロムの周期が立つ。
+  const VAL = P.valley / 100;                       // 0=同色の暗い版（色相を守る）／1=純黒（締まる）
+  const GRD = P.grad / 100;                         // 中間色の豊かさ 0=従来 1=5ストップ
+  const A = pal.a, WHITE = [255, 255, 255];
+  const mixc = (c1, c2, t) => [0,1,2].map(i => c1[i] + (c2[i] - c1[i]) * t);
+  // ⭐ 谷のレンジ。0.14→0 では「ほぼ黒→黒」で差が見えなかったので 0.55→0 に広げた。
+  //   0 = 色が残った暗部（濁らない・木下の元の設計）／100 = 純黒（締まって縁が立つ）
+  const valleyC = A.map(v => v * 0.55 * (1 - VAL));
+  const STOPS = [
+    [0.00, valleyC],
+    [0.28, mixc(valleyC, A, 0.45 + 0.15 * GRD)],
+    [0.58, A],
+    [0.80, mixc(A, WHITE, 0.35 * GRD)],
+    [1.00, mixc(A, WHITE, 0.10 + 0.55 * GRD)],
+  ];
+  // ⚡ 毎ピクセル補間すると重いので 256 段の LUT に焼く（連続モードからも使う）
+  const LUT = RAMP_LUT;
+  for(let q = 0; q < 256; q++){
+    const v = q / 255;
+    let c = STOPS[STOPS.length - 1][1];
+    for(let s = 1; s < STOPS.length; s++){
+      if(v <= STOPS[s][0]){
+        const p0 = STOPS[s-1][0], p1 = STOPS[s][0];
+        c = mixc(STOPS[s-1][1], STOPS[s][1], (v - p0) / (p1 - p0 || 1));
+        break;
+      }
+    }
+    LUT[q*3] = c[0]; LUT[q*3+1] = c[1]; LUT[q*3+2] = c[2];
+  }
+  // 波 — 向きごとに、位相 phase 段ずつ焼く。
+  //   phase をタイルのワールド座標に対応させると、隣のタイルと波が連続する
+  //   ＝塊が字をまたいで繋がり、1つの流れになる。
+  const LINE = P.line;
+  for(let a = 0; a < TILE_ANGLES; a++){
+    const th = a / TILE_ANGLES * Math.PI, ca = Math.cos(th), sa = Math.sin(th);
+    const set = [];
+    for(let p = 0; p < PHASES; p++){
+      set.push(mk((x, C) => {
+        const img = x.createImageData(C, C), D = img.data;
+        const ph = p / PHASES * Math.PI * 2, W2 = P.wav;
+        for(let j = 0; j < C; j++) for(let i = 0; i < C; i++){
+          const u = ((i + 0.5) * ca + (j + 0.5) * sa) / C;   // 画に沿う軸
+          const w = (-(i + 0.5) * sa + (j + 0.5) * ca) / C;  // 画に直交する軸
+          let v;
+          if(LINE === 0)      v = 0.5 + 0.5 * Math.cos(u * 6.2831853 * W2 + ph);            // 波
+          else if(LINE === 1) v = (Math.floor(u * W2 * 2 + ph/6.283) % 2) ? 1 : 0.12;       // 縞（矩形）
+          else if(LINE === 2) v = 0.5 + 0.5 * Math.cos((u + w) * 6.2831853 * W2 + ph);      // 斜線
+          else if(LINE === 3) v = (0.5+0.5*Math.cos(u*6.283*W2+ph)) * (0.5+0.5*Math.cos(w*6.283*W2)); // チェック
+          else                v = 0.5 + 0.5 * Math.cos(Math.hypot(u,w) * 6.2831853 * W2 - ph); // 同心
+          const sh = P.shine / 100;
+          const k = Math.pow(Math.max(0,v), 1.8);                   // 0=谷 1=山
+          const hi = Math.pow(Math.max(0,v), 6.0) * sh;             // 稜線の照り返し
+          const o = (j*C + i)*4;
+          // ⭐ ランプを引く（谷→中間→波色→明→白）。谷スライダーで谷を黒へ寄せられる。
+          const q = (k < 0 ? 0 : k > 1 ? 255 : Math.round(k * 255)) * 3;
+          D[o]   = Math.min(255, LUT[q]   + 255*hi);
+          D[o+1] = Math.min(255, LUT[q+1] + 255*hi);
+          D[o+2] = Math.min(255, LUT[q+2] + 255*hi); D[o+3] = 255;
+        }
+        x.putImageData(img, 0, 0);
+      }));
+    }
+    tiles.push(set);
+  }
+  // 塊 — 画が交わって塊になっている所に出る。息をする。
+  // 塊は角を透明にして地を透かす（黒角を出さない）。谷は同じ色の暗い版。
+  const BLOB = P.blob;
+  // ⭐ 塊にも線と同じランプを効かせる。
+  //   これが無いと「谷」が線にしか効かず、画面の大半が塊のときに動かしても何も変わらない。
+  const rgbs  = c => `rgb(${c.map(v => Math.round(v)).join(',')})`;
+  const bHi   = mixc(pal.b, WHITE, 0.10 + 0.50 * GRD);        // 中心の照り（階調で白へ寄る＝丸く見える）
+  const bLow  = pal.b.map(v => v * 0.60 * (1 - VAL));         // 谷：色が残った暗部 → 純黒（差が見えるレンジ）
+  const bc    = rgbs(pal.b);
+  const bdark = t => `rgba(${bLow.map(v => Math.round(v)).join(',')},${t})`;
+  const btrans = `rgba(${pal.b.join(',')},0)`;
+  const sph = [];
+  for(let p = 0; p < PHASES; p++){
+    sph.push(mk((x, C) => {
+      const ph = p / PHASES * Math.PI * 2;
+      x.clearRect(0, 0, C, C);                          // 角は透明＝地が透ける
+      if(BLOB === 0){                                   // 球
+        const hx = C*0.5+Math.cos(ph)*C*0.14, hy = C*0.42+Math.sin(ph*0.7)*C*0.10;
+        const g2 = x.createRadialGradient(hx, hy, C*0.02, C/2, C/2, C*0.6);
+        g2.addColorStop(0, rgbs(bHi));      // 照り（中心＝白へ）
+        g2.addColorStop(0.30, bc);          // 素の色
+        g2.addColorStop(0.62, bdark(1));    // 谷（谷スライダーで黒へ）
+        g2.addColorStop(1, btrans);
+        x.fillStyle = g2; x.beginPath(); x.arc(C/2, C/2, C*0.5, 0, 7); x.fill();
+      } else if(BLOB === 1){                            // リング
+        x.strokeStyle = bc; x.lineWidth = C*0.14;
+        x.beginPath(); x.arc(C/2, C/2, C*0.30 + Math.sin(ph)*C*0.06, 0, 7); x.stroke();
+      } else if(BLOB === 2){                            // 角錐（対角シェード）
+        const g2 = x.createLinearGradient(0,0,C,C);
+        g2.addColorStop(0, bc); g2.addColorStop(0.5+0.3*Math.sin(ph), bdark(1)); g2.addColorStop(1, bc);
+        x.fillStyle = g2; x.fillRect(0,0,C,C);
+      } else if(BLOB === 3){                            // 花（4方向）
+        x.fillStyle = bc; x.translate(C/2,C/2); x.rotate(ph*0.3);
+        for(let k=0;k<4;k++){ x.rotate(Math.PI/2); x.beginPath();
+          x.ellipse(0, -C*0.26, C*0.12, C*0.22, 0, 0, 7); x.fill(); }
+      } else {                                          // 渦
+        const g2 = x.createRadialGradient(C/2,C/2,C*0.05,C/2,C/2,C*0.6);
+        g2.addColorStop(0, bc); g2.addColorStop(1, btrans);
+        x.fillStyle = g2; x.fillRect(0,0,C,C);
+        x.strokeStyle = bdark(1); x.lineWidth = C*0.08; x.beginPath();
+        for(let t=0;t<6.28;t+=0.3){ const r=t*C*0.05;
+          x.lineTo(C/2+Math.cos(t+ph)*r, C/2+Math.sin(t+ph)*r); } x.stroke();
+      }
+    }));
+  }
+  tiles.push(sph);
+  tileC = C; tilePal = P.pal; tileWav = P.wav; tileKey = customKey();
+  // ⭐ タイルを焼き直したのに画面を描き直さないと、色を変えても反映されない。
+  //   静止中は再描画をスキップしているので、ここで明示的に描画を要求する。
+  dirtyUntil = performance.now() + 400;
+}
+const RAMP_LUT = new Uint8ClampedArray(768);   // ⭐ 断面のランプ。タイル焼きと連続モードで共有
+const SPHERE = TILE_ANGLES;
+// ⭐ 塊の大きさは「解像度に対する比」で決める。
+//   マス単位のままだと、解像を16→48にした瞬間に塊が1/3になり、
+//   せっかく合わせた他の調整まで全部やり直しになる（＝解像を上げられない）。
+//   基準を16に取り、解像を上げたぶんだけマス数も増やして見た目を保つ。
+const bkOf = () => Math.max(1, Math.round(P.beadk * Math.max(1, P.res / 16)));
+function cellWk(){ return P.ar<100 ? 200/(P.ar+100)*1 : 1; }
+function cellHk(){ return P.ar>100 ? P.ar/100 : 1; }
+function customKey(){ return CUSTOM.bg + CUSTOM.a.join() + CUSTOM.b.join(); }
+
+/* ── 粒 ── */
+let dots = [], W = 0, H = 0, grid = null, settled = 0;
+function idx(x, y){ return y * W + x; }
+
+function build(){
+  const text = [...document.getElementById('txt').value].filter(c => c.trim());
+  const N = P.res;
+  const vert = P.lay === 1;
+  const per = Math.max(1, P.wrap);                       // 何字で折り返すか
+  const AX = Math.max(N + P.gapx, 2), AY = Math.max(N + P.gapy, 2);   // 字送り/行送り（重なり可）
+
+  // 世界の大きさは中身から決める（画面サイズに縛られない）。
+  // ⚠️ 字1個分の幅 N を必ず足す。行間を詰めて行送り<Nでも端が切れないように。
+  const lines = Math.ceil(text.length / per);
+  const cols  = Math.min(text.length, per);
+  const charAdv = vert ? AY : AX;                        // 行内の字送り
+  const lineAdv = vert ? AY : AY;                        // 行の送り
+  const along  = (cols  - 1) * charAdv + N;              // 行方向の広がり
+  const across = (lines - 1) * lineAdv + N;              // 行をまたぐ広がり
+  const lw = vert ? across : along;                      // x 方向
+  const lh = vert ? along  : across;                     // y 方向
+  W = Math.max(Math.ceil(lw) + 4, 8);
+  H = Math.ceil(lh) + 4 + Math.round(P.fall);            // 積もるぶんの空
+  grid = new Int32Array(W * H).fill(-1);
+  dots = [];
+
+  const ox = Math.floor((W - lw) / 2), oy = 2;
+
+  // パス1：まず全ドットを集める（球か波かは後でまとめて決める）
+  const raw = [];
+  text.forEach((ch, i) => {
+    const li = Math.floor(i / per), ci2 = i % per;
+    // 横組＝右へ流れて下へ折り返す／縦組＝下へ流れて左へ折り返す（日本語の作法）
+    const bx = vert ? (lw - N - li * lineAdv) : ci2 * charAdv;
+    const by = vert ? ci2 * charAdv : li * lineAdv;
+    for(const [x, y, ang, dens] of glyphDots(ch, N, P.font)){
+      const gx = Math.round(ox + bx + x), gy = Math.round(oy + by + y);
+      if(gx < 0 || gx >= W || gy < 0 || gy >= H) continue;
+      raw.push({ gx, gy, ci:i, ang, dens });
+    }
+  });
+  // ⭐ 玉＝「密度の高い順に、上位 玉% を球にする」＝スライダーが球の"割合"に直結。
+  //    密度の絶対しきい値だと、太字で密度が二極化したとき中間で反応しなかった。
+  //    順位で上位を選ぶので、密度が偏っていても 0→100 まで滑らかに増減する。
+  const order = raw.map((_, i) => i).sort((a, b) => raw[b].dens - raw[a].dens);   // 密度の高い順
+  const sphereN = P.blob === 6 ? 0 : Math.round(raw.length * P.bead / 100);   // ⭐「なし」＝交点を差し替えない
+  const isSphere = new Uint8Array(raw.length);
+  const BK = bkOf();
+  const absorbed = new Uint8Array(raw.length);          // 塊にのみ込まれて描かれない粒
+  const memberOf = new Array(raw.length).fill(null);    // 代表 → まとめた粒の並び（切り抜きに使う）
+  if(BK <= 1){
+    for(let k = 0; k < sphereN; k++) isSphere[order[k]] = 1;
+  } else {
+    // ⭐ K×K のマスの「中の粒をまとめて1つの塊にする」。
+    //   ⚠️ 以前は1個だけ残して K 倍に拡大していた＝残り(K²-1)個が消えて穴が空き、
+    //     拡大した塊が字の外へはみ出して破綻していた。まとめれば穴もはみ出しも出ない。
+    //   ⚠️ 中がスカスカのマスは塊にしない（字の細い所が勝手に太って形が壊れるため）。
+    const blocks = new Map();
+    raw.forEach((r, i) => {
+      const key = Math.floor(r.gx / BK) + ',' + Math.floor(r.gy / BK);
+      let b = blocks.get(key); if(!b) blocks.set(key, b = []); b.push(i);
+    });
+    const need = BK * BK * 0.75;                         // ⚠️ 3/4以上 埋まっているマスだけ。
+    //   6割だと L や E の細い画で「半分しか無いマス」まで塊になり、字の外へ張り出していた。
+    const cand = [...blocks.values()].filter(b => b.length >= need)
+                                     .sort((a, b) => b.length - a.length);
+    const lim = Math.round(cand.length * P.bead / 100);  // 玉＝まとめるマスの割合
+    for(let k = 0; k < lim; k++){
+      const b = cand[k];
+      const bx = Math.floor(raw[b[0]].gx / BK) * BK, by = Math.floor(raw[b[0]].gy / BK) * BK;
+      const cx = bx + (BK - 1) / 2, cy = by + (BK - 1) / 2;
+      let best = b[0], bd = Infinity;                    // 代表＝マスの中心にいちばん近い粒
+      for(const i of b){
+        const d2 = (raw[i].gx - cx) ** 2 + (raw[i].gy - cy) ** 2;
+        if(d2 < bd){ bd = d2; best = i; }
+      }
+      if(P.blob === 5){
+        // ⭐ 面＝1つの立体ではなく「連続する帯の範囲」。
+        //   まとめた粒を全部そのまま直交の帯にする。拡大しないので はみ出しが起きない。
+        //   隣のマスと位相が繋がっているので、結果として1枚の大きな面に見える。
+        for(const i of b) isSphere[i] = 1;
+      } else {
+        isSphere[best] = 1;
+        memberOf[best] = b.slice();                      // この塊が占めてよい範囲
+        for(const i of b) if(i !== best) absorbed[i] = 1; // 残りは塊にのみ込まれる
+      }
+    }
+  }
+  const FOL = P.follow / 100, DIR = P.dir / 180 * Math.PI;
+  dots = raw.map((r, i) => {
+    // ⭐ 向き＝字形から取った角度を、どれだけ使うか（字なり）＋どれだけ回すか（向き）。
+    //   字なり100＝画の骨格がそのまま流れになる（TSUBUの元の設計）
+    //   字なり0  ＝全部同じ向き＝面を並べた見え方（手で角度を決める側）
+    const angE = r.ang * FOL + DIR;
+    const base = (Math.round(((angE % Math.PI) + Math.PI) % Math.PI / Math.PI * TILE_ANGLES)) % TILE_ANGLES;
+    // ⭐ 交点の柄「面」＝地と同じ帯を、向きだけ直交させる（同じグラデを角度だけ変えて複製する型）。
+    //    球のように別物を置くのではないので、地と質感が揃ったまま交点だけ流れが変わる。
+    const t = !isSphere[i] ? base
+            : (P.blob === 5 ? (base + (TILE_ANGLES >> 1)) % TILE_ANGLES : SPHERE);
+    return {
+      x:r.gx, y:r.gy,        // いまの居場所（格子）
+      hx:r.gx, hy:r.gy,      // 字だったときの居場所（＝戻る先）
+      gx0:r.gx, gy0:r.gy,    // 伸ばしの基準（元位置）
+      vy:0, live:false, seed:Math.random(),
+      ci:r.ci, t, ang:angE, dens:r.dens,
+      big: isSphere[i] === 1, hide: absorbed[i] === 1, members: memberOf[i],
+    };
+  });
+  settled = 0;
+  // ⚠️ ここで fit() を呼んでいたため、字なり・ずれ・向きを触るたびに視点が中央へ戻り、
+  //   寄って見ながら調整できなかった。組み直しても視点は動かさない。
+  //   ⭐ 大きさが変わる操作（解像・粒・折返し・字間・行間・落ち代）のときだけ、呼び出し側で fit する。
+  stat();
+  dirtyUntil = performance.now() + 400;   // 組み直したら描き直す
+}
+
+function stat(){
+  document.getElementById('stat').textContent =
+    `${dots.length} DOTS / ${P.res}×${P.res} / ${['積もる','集まる','漂う'][P.mode]}`;
+}
+
+/* ── 壊れ方 3種 ── */
+let running = false, t = 0;
+
+function step(){
+  const G = P.grav / 100;
+  if(P.mode === 0){
+    // ── 積もる ── 砂。⚠️ 落下中の粒も格子に入れないと、
+    //    全員が素通しで落ちて最下段に重なるだけで「積もらない」
+    grid.fill(-1);
+    for(let i = 0; i < dots.length; i++){ const d = dots[i]; grid[idx(d.x, d.y)] = i; }
+    // 下にいる粒から動かす（上から動かすと1フレームで落ちきる）
+    const order = dots.map((_, i) => i).sort((a, b) => dots[b].y - dots[a].y);
+    for(const i of order){
+      const d = dots[i];
+      if(!d.live) continue;
+      const ny = d.y + 1;
+      if(ny >= H){ d.live = false; continue; }                 // 底に着いた
+      if(grid[idx(d.x, ny)] < 0){                              // 真下が空 → 落ちる
+        grid[idx(d.x, d.y)] = -1; d.y = ny; grid[idx(d.x, ny)] = i; continue;
+      }
+      // 詰まった → 斜めに逃げる。これが山をつくる
+      const dir = Math.random() < 0.5 ? -1 : 1;
+      let moved = false;
+      for(const s of [dir, -dir]){
+        const nx = d.x + s;
+        if(nx >= 0 && nx < W && grid[idx(nx, ny)] < 0){
+          grid[idx(d.x, d.y)] = -1; d.x = nx; d.y = ny; grid[idx(nx, ny)] = i;
+          moved = true; break;
+        }
+      }
+      if(!moved) d.live = false;                               // 逃げ場なし → 静止
+    }
+  } else if(P.mode === 1){
+    // ── 集まる ── 字を離れて、別の像に集まり直す（渦）
+    for(const d of dots){
+      if(!d.live) continue;
+      const cx = W/2, cy = H/2;
+      const a = Math.atan2(d.y - cy, d.x - cx), r = Math.hypot(d.x - cx, d.y - cy);
+      const tr = 6 + (d.ci % 5) * 5 + Math.sin(t * 0.03 + d.seed * 6.28) * 3;  // 文字ごとの環
+      const na = a + 0.10 * G, nr = r + (tr - r) * 0.06 * (0.4 + G);
+      d.x = Math.max(0, Math.min(W-1, Math.round(cx + Math.cos(na) * nr)));
+      d.y = Math.max(0, Math.min(H-1, Math.round(cy + Math.sin(na) * nr)));
+    }
+  } else {
+    // ── 漂う ── 積みも集まりもしない。残骸だけが場に浮く
+    for(const d of dots){
+      if(!d.live) continue;
+      d.x = Math.max(0, Math.min(W-1, Math.round(d.hx + Math.sin(t*0.02 + d.seed*6.28) * 6 * G)));
+      d.y = Math.max(0, Math.min(H-1, Math.round(d.hy + Math.cos(t*0.017 + d.seed*9.1) * 6 * G)));
+    }
+  }
+  t++;
+}
+
+/* ── ディザ（8bitがグラデーションを偽装した方法） ── */
+const BAYER = [
+  [ 0, 8, 2,10],[12, 4,14, 6],
+  [ 3,11, 1, 9],[15, 7,13, 5]
+].flat().map(v => v / 16);
+
+function draw(){
+  const pal = P.pal===CUSTOM_IDX ? CUSTOM : PALS[P.pal], cols = pal.cols, C = P.cell;
+  const dpr = Math.min(devicePixelRatio, 2);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.fillStyle = pal.bg; g.fillRect(0, 0, cv.clientWidth||innerWidth, cv.clientHeight||innerHeight);
+  // 擬似3D — せん断＋縦横圧縮で板を寝かせる。右ドラッグで角度がつく
+  const shx = Math.sin(cam.ry) * 0.9, shy = Math.sin(cam.rx) * 0.9;
+  const sx = Math.cos(cam.ry) * 0.6 + 0.4, sy = Math.cos(cam.rx) * 0.6 + 0.4;
+  const cx = W*P.cell/2, cy = H*P.cell/2;
+  g.setTransform(dpr*cam.s, 0, 0, dpr*cam.s, dpr*cam.x, dpr*cam.y);
+  g.transform(sx, shy, shx, sy, cx*(1-sx)-cy*shx, cy*(1-sy)-cx*shy);
+
+  // ── グラデ塊 ── 焼いたタイルを敷き詰める。8bit機がVRAMでやっていたこと。
+  //   位相を「画の流れ方向のワールド座標 + 時間」で選ぶ＝塊が連結して流れる。
+  if(P.tex >= 1){
+    if(tileC !== C || tilePal !== P.pal || tileWav !== P.wav || tileKey !== customKey()) buildTiles();
+    flowT += P.gflow / 100 * 0.5;
+    const CW = C * cellWk(), CH = C * cellHk();
+    const kw = cellWk() - 1, kh = cellHk() - 1;
+    // ── ワープ ── 行/列ごとに伸縮率が変わり、全体がうねる（砂時計/樽/波）。
+    //   累積マッピングで、隣のタイルとぴったり接する（隙間が出ない）。
+    const wAmt = P.warp / 100, wAx = P.warpax;
+    // アンカーカーブ（自分で打った点）から伸縮率を引く。v=1 が等倍
+    const scaleAt = (t) => Math.max(0.05, 1 + (anchorAt(t) - 1) * wAmt);
+    // 各グリッド線の累積位置と、そのセルの伸縮率を事前計算
+    const buildMap = (n) => {
+      const cum = new Float32Array(n + 1), sc = new Float32Array(n + 1);
+      let acc = 0;
+      for(let i = 0; i <= n; i++){ cum[i] = acc; const s = scaleAt(i / n); sc[i] = s; acc += s * C; }
+      const shift = (n * C - acc) / 2;            // 中央に寄せる
+      return { cum, sc, shift };
+    };
+    const px0 = d => (d.x - d.gx0*kw) * C;
+    const py0 = d => (d.y - d.gy0*kh) * C;
+    // ⭐ ワープはテキストの実範囲で正規化する（落ち代の空白込みの世界高で
+    //    やると1行が profile の一部しか通らず「移動だけ」に見える）
+    let rmin=Infinity,rmax=-Infinity,cmin=Infinity,cmax=-Infinity;
+    if(wAmt) for(const d of dots){ const ry=py0(d)/C, cx=px0(d)/C;
+      if(ry<rmin)rmin=ry; if(ry>rmax)rmax=ry; if(cx<cmin)cmin=cx; if(cx>cmax)cmax=cx; }
+    const buildMapC = (lo, hi) => {                       // lo..hi セル範囲で累積
+      const n = Math.max(1, Math.ceil(hi - lo));
+      const cum = new Float32Array(n + 1), sc = new Float32Array(n + 1);
+      let acc = 0;
+      for(let i=0;i<=n;i++){ cum[i]=acc; const s=scaleAt(i/n); sc[i]=s; acc += s*C; }
+      const base = lo * C, shift = ((hi-lo)*C - acc) / 2;
+      return { cum, sc, lo, base, shift };
+    };
+    const mapY = wAmt && wAx === 0 && isFinite(rmin) ? buildMapC(rmin, rmax+1) : null;
+    const mapX = wAmt && wAx === 1 && isFinite(cmin) ? buildMapC(cmin, cmax+1) : null;
+    const remap = (map, cellPos) => {
+      const local = cellPos - map.lo, r = Math.floor(local), f = local - r;
+      const i = Math.max(0, Math.min(map.cum.length - 2, r));
+      return { p: map.base + map.cum[i] + f * map.sc[i] * C + map.shift, s: map.sc[i] };
+    };
+    // ⚡ ワープ座標はdotごとに1回だけ解いてキャッシュする。
+    //    以前は px/py/scw/sch を呼ぶたび remap していて、厚み層(dep)×全dot分
+    //    毎フレーム何十万回も走って重かった。ここで一度だけ解いて使い回す。
+    for(const d of dots){
+      const X0 = px0(d), Y0 = py0(d);
+      if(mapX){ const r = remap(mapX, X0 / C); d._px = r.p; d._sw = r.s; } else { d._px = X0; d._sw = 1; }
+      if(mapY){ const r = remap(mapY, Y0 / C); d._py = r.p; d._sh = r.s; } else { d._py = Y0; d._sh = 1; }
+    }
+    const px = d => d._px, py = d => d._py, scw = d => d._sw, sch = d => d._sh;
+    const phaseOf = d => d.t === SPHERE
+      ? (Math.floor(flowT + d.seed * PHASES)) % PHASES
+      : (() => {   // ⭐ 1タイル進むと wav 周期ぶん位相がずれる＝タイル境界で波が連続する。
+          //    以前は1タイル=1位相ぶんしかずれず、細かさ<1のとき帯が途切れていた。
+          const u = d.x*Math.cos(d.ang) + d.y*Math.sin(d.ang);
+          // ⭐ ずれ＝全体を送る／字ごと＝字インデックスで位相を散らす。
+          //   （手で複製して配置だけ変える作業を、字が自動でやる）
+          const jit = P.spread > 0 ? ((((d.ci + 1) * 0.6180339887) % 1) * (P.spread / 100)) : 0;
+          const ph = Math.round((u * P.wav + jit + P.shift / 100) * PHASES + flowT);
+          return ((ph % PHASES) + PHASES) % PHASES;
+        })();
+
+    // 厚み — 側面を先に全部積む。向きは角度に連動（回すと厚みの見え方が変わる）
+    const dep = P.depth;
+    const ddir = C * 0.4;                                        // 押し出し1層ぶんの幅（＝奥行きの深さ）
+    const ox = Math.sin(cam.ry) * 1.6 * ddir;                   // ヨーで左右＝傾けたぶんだけ厚みが出る
+    const oy = -Math.sin(cam.rx) * 1.6 * ddir;                  // ピッチで上下
+    // ⭐ 厚み（側面）は傾いている時だけ描く。真正面(ox=oy=0)では側面が天面の真裏に来て、
+    //    球タイルの透明な角から側面色が透け、天面の見え方が変わってしまう＝それを防ぐ。
+    if(dep > 0 && (Math.abs(ox) > 0.01 || Math.abs(oy) > 0.01)){
+      // ⭐ 側面は「地色の明暗」で作る＝天面（波・球）の色は一切使わない。
+      //    こうすれば球の透明な角や隙間から側面が透けても、天面の色が変わらない。
+      const SIDE = typeof pal.bg === 'string' ? hexToRgb(pal.bg) : (pal.bg || [0,0,0]);
+      const layer = [];
+      for(let k = dep; k >= 1; k--){
+        const t = k / dep;                                  // 1=奥 0=手前
+        const band = 0.5 + 0.5 * Math.cos(k * 1.15);        // 8bitの側面の段
+        const lift = 26 + (1 - t) * 46 + band * 26;         // 地色に足す明るさ＝板の横の陰（手前ほど明るい）
+        layer.push(`rgb(${SIDE.map(v => Math.min(255, v + lift)|0).join(',')})`);
+      }
+      for(let li = 0, k = dep; k >= 1; k--, li++){
+        g.fillStyle = layer[li];
+        // ⚠️ のみ込まれた粒(hide)は天面を描かないので、側面だけ描くと
+        //   天面のない板が字から離れて伸びる。ここでも同じ条件で外す。
+        for(const d of dots){ if(d.hide) continue; g.fillRect(px(d) + ox*k, py(d) + oy*k, CW, CH); }
+      }
+    }
+
+    // 天面 — タイル寸法もワープの伸縮率で伸ばす（隣とぴったり接する）
+    const BK = bkOf();
+
+    // ⭐ 連続モード ── タイル画像を貼らず、ピクセルのワールド座標から波を直に解く。
+    //   位相を段に量子化しないので、細かさをどこに置いてもモアレの節が出ない。
+    //   同時に「グラデが世界に1枚」も成立する（タイルという単位が無くなるため）。
+    if(P.tex === 2){
+      const OW = Math.max(1, Math.ceil(W * C) + 2), OH = Math.max(1, Math.ceil(H * C) + 2);
+      if(!offc){ offc = document.createElement('canvas'); offg = offc.getContext('2d'); }
+      if(offc.width !== OW || offc.height !== OH){ offc.width = OW; offc.height = OH; }
+      const im = offg.createImageData(OW, OH), DD = im.data;
+      const BGc = (typeof pal.bg === 'string') ? hexToRgb(pal.bg.slice(1)) : (pal.bg || [0,0,0]);
+      for(let k = 0; k < DD.length; k += 4){
+        DD[k] = BGc[0]; DD[k+1] = BGc[1]; DD[k+2] = BGc[2]; DD[k+3] = 255;
+      }
+      const SH = P.shine / 100, WV = P.wav, SFT = P.shift / 100;
+      for(const d of dots){
+        if(d.hide) continue;
+        const x0 = Math.round(px(d)), y0 = Math.round(py(d));
+        const w = Math.max(1, Math.round(CW * scw(d))), h = Math.max(1, Math.round(CH * sch(d)));
+        const ang = d.t === SPHERE ? d.ang : d.ang;              // 向きは字形から
+        const ca2 = Math.cos(ang), sa2 = Math.sin(ang);
+        const jit = P.spread > 0 ? ((((d.ci + 1) * 0.6180339887) % 1) * (P.spread / 100)) : 0;
+        for(let j = 0; j < h; j++){
+          const Y = y0 + j; if(Y < 0 || Y >= OH) continue;
+          for(let i = 0; i < w; i++){
+            const X = x0 + i; if(X < 0 || X >= OW) continue;
+            // ⭐ ここが肝：タイル内座標ではなく「世界の格子座標」で解く＝境界で切れない
+            const u = (d.x + i / w) * ca2 + (d.y + j / h) * sa2;
+            const v = 0.5 + 0.5 * Math.cos((u * WV + jit + SFT) * 6.2831853 + flowT * 0.1);
+            const k1 = Math.pow(v < 0 ? 0 : v, 1.8);
+            const hi = Math.pow(v < 0 ? 0 : v, 6.0) * SH * 255;
+            const q = (k1 < 0 ? 0 : k1 > 1 ? 255 : Math.round(k1 * 255)) * 3;
+            const o = (Y * OW + X) * 4;
+            DD[o]   = Math.min(255, RAMP_LUT[q]   + hi);
+            DD[o+1] = Math.min(255, RAMP_LUT[q+1] + hi);
+            DD[o+2] = Math.min(255, RAMP_LUT[q+2] + hi);
+            DD[o+3] = 255;
+          }
+        }
+      }
+      offg.putImageData(im, 0, 0);
+      g.drawImage(offc, 0, 0);
+      return;
+    }
+
+    // ⭐ 格子＝継ぎ目の出し方。0で少し広げて隙間を潰し、上げると縮めて線を立てる。
+    //   小数サイズで貼っているため既定では 0.x px の隙間ができ、そこが灰色の線に見えていた。
+    const GRID = (P.grid / 100) * 1.2 - 0.6;
+    const put = d => {
+      const w = CW*scw(d) - GRID, h = CH*sch(d) - GRID;
+      if(d.big && BK > 1 && P.blob !== 5){   // ⭐ 面は拡大しない（隣と繋がって面に見える）
+        const W2 = w*BK, H2 = h*BK;                       // 中心を保ったまま K 倍に広げる
+        g.drawImage(tiles[d.t][phaseOf(d)], px(d)-(W2-w)/2, py(d)-(H2-h)/2, W2, H2);
+      } else {
+        g.drawImage(tiles[d.t][phaseOf(d)], px(d), py(d), w, h);
+      }
+    };
+    for(const d of dots) if(!d.big && !d.hide) put(d);    // 地の柄を先に
+    // ⭐ 塊は「自分がまとめた粒の範囲」だけで切り抜いて描く。
+    //   ⚠️ 字全体で切るだけでは足りない。K倍に広げた塊は代表粒を中心に置くので、
+    //     代表がマスの端にいると"字の中の隣のマス"（地の柄がある所）まで覆ってしまう。
+    //   上にレイヤーとして重ねるのではなく、担当した粒のぶんだけに切る＝線を飛び越えない。
+    for(const d of dots){
+      if(!d.big || d.hide) continue;
+      const mem = d.members;
+      if(P.blob === 5 || !mem || mem.length < 2){ put(d); continue; }   // 面／単独はそのまま
+      g.save();
+      g.beginPath();
+      for(const mi of mem){
+        const m = dots[mi];
+        g.rect(px(m) - 0.3, py(m) - 0.3, CW*scw(m) + 0.6, CH*sch(m) + 0.6);
+      }
+      g.clip();
+      put(d);
+      g.restore();
+    }
+    return;
+  }
+
+  const ang = P.gdir * Math.PI / 180, ca = Math.cos(ang), sa = Math.sin(ang);
+  const flow = P.gflow / 100 * t * 0.01;
+  const steps = P.steps, dith = P.dith / 100;
+
+  for(const d of dots){
+    // 場のグラデーション（＝全部の粒を貫くテープ）
+    let v = (d.x / W * ca + d.y / H * sa) * 0.5 + 0.5 + flow;
+    v = v - Math.floor(v);
+    // ディザ — 色数が足りないぶんを網で騙す
+    const b = BAYER[(d.y % 4) * 4 + (d.x % 4)];
+    const q = Math.floor(v * (steps - 1) + (b - 0.5) * dith + 0.5);
+    const ci = Math.max(0, Math.min(cols.length - 1,
+      Math.round(Math.max(0, Math.min(steps - 1, q)) / (steps - 1) * (cols.length - 1))));
+    g.fillStyle = cols[ci];
+    g.fillRect(d.x * C, d.y * C, C, C);
+  }
+}
+
+/* ── ループ（時間も量子化する＝ゲームの時間） ── */
+let last = 0;
+const touch = () => dirtyUntil = performance.now() + 1200;
+['pointerdown','pointermove','pointerup','wheel','input','change','click','keydown']
+  .forEach(ev => addEventListener(ev, touch, {passive:true, capture:true}));
+
+function loop(now){
+  requestAnimationFrame(loop);
+  // ⭐ 静止しているあいだは「描かない」のではなく「頻度を落とす」。
+  //   ⚠️ 以前は完全に止めていたが、再描画を要求し忘れた項目（縦横比・厚み・格子・ワープ）が
+  //     そのまま「動かない機能」になった。漏れたら即バグになる設計だったのが誤り。
+  //     頻度を落とすだけなら、どこで何を変えても必ず反映される。
+  if(P.gflow === 0 && !running && now > dirtyUntil && now - last < 90) return;
+  if(now - last < 1000 / P.fps) return;
+  last = now;
+  if(running) step();
+  draw();
+  drawGizmo();
+}
+
+function resize(){
+  const dpr = Math.min(devicePixelRatio, 2);
+  const VW = cv.clientWidth || innerWidth, VH = cv.clientHeight || innerHeight;
+  cv.width = VW * dpr; cv.height = VH * dpr;
+  g.imageSmoothingEnabled = false;
+  if(!dots.length) build(); else fit();
+}
+addEventListener('resize', resize);
+
+/* ── UI ── */
+document.querySelectorAll('.seg').forEach(seg => {
+  seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    seg.querySelectorAll('button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    P[seg.id] = +b.dataset.v;
+    if(seg.id === 'font' || seg.id === 'lay') build();
+    if(seg.id === 'line' || seg.id === 'blob') buildTiles();
+    // ⚠️ 交点の柄は build() の中で「どのドットを差し替えるか」を決めている。
+    //    buildTiles() だけだとタイル画像は焼き直されるが割り当てが古いまま＝「なし」が効かない。
+    if(seg.id === 'blob'){ build(); syncBlobUI(); }
+    if(seg.id === 'pal'){ syncColorInputs(); buildTiles(); }
+    if(seg.id === 'mode'){ running = false; build(); stat(); }
+  }));
+});
+['res','cell','pal','steps','dith','gdir','gflow','fps','grav','wav','bead','beadk','wrap','gapx','gapy','fall','fat','ar','shine','shift','spread','dir','follow','valley','grad','grid','depth','warp','warpn'].forEach(id => {
+  const r = document.getElementById(id); if(r.type !== 'range') return;
+  const v = r.parentElement.querySelector('.val');
+  const sync = (fromUser) => { P[id] = +r.value; if(v) v.textContent = r.value;
+    if(id==='warpn' && fromUser){ resetAnchors(+r.value); drawWarpCurve(); }
+    if(['res','cell','bead','beadk','wrap','gapx','gapy','fall','fat','dir','follow'].includes(id)) build();
+    if(id==='shine' || id==='valley' || id==='grad') buildTiles();
+    // ⭐ 字の並びそのものが変わるものだけ、視点を合わせ直す。
+    //   字なり・ずれ・玉・大きさは見え方が変わるだけなので、視点は動かさない。
+    if(['res','cell','wrap','gapx','gapy','fall'].includes(id) && fromUser) fit(); };
+  r.addEventListener('input', () => sync(true)); sync();
+});
+// ⭐ 折返しは「文字数」を超えると意味がない（全部1行になるだけ）。
+//   1〜80 のまま置くと、触っても何も変わらない範囲がスライダーの大半を占める。
+//   文字数に上限を合わせて、動かせる範囲を全部使えるようにする。
+function syncWrapMax(){
+  const n = [...document.getElementById('txt').value].filter(c => c.trim()).length || 1;
+  const w = document.getElementById('wrap');
+  w.max = n;
+  if(+w.value > n){
+    w.value = n; P.wrap = n;
+    const v = w.parentElement.querySelector('.val'); if(v) v.textContent = n;
+  }
+}
+// ⭐ 面のときは球色と大きさが効かない（面は地と同じ帯を直交させたもので、球色を使わない）。
+//   触れるのに何も起きない項目を画面に出さない。
+function syncBlobUI(){ document.body.classList.toggle('only-men', P.blob === 5); }
+syncBlobUI();
+document.getElementById('helpBtn').addEventListener('click', () => {
+  document.body.classList.toggle('help');
+});
+document.getElementById('txt').addEventListener('input', () => {
+  running = false; syncWrapMax(); build(); fit();   // 字が変わると大きさも変わるので合わせ直す
+});
+syncWrapMax();
+[['ca','a'],['cb','b']].forEach(([id,key])=>{
+  document.getElementById(id).addEventListener('input', e => {
+    adoptCurrentToCustom();
+    CUSTOM[key] = hexToRgb(e.target.value.slice(1));
+    setPal3(); syncColorInputs();
+  });
+});
+document.getElementById('cbg').addEventListener('input', e => {
+  adoptCurrentToCustom(); CUSTOM.bg = e.target.value; setPal3(); syncColorInputs();
+});
+function setPal3(){
+  P.pal = CUSTOM_IDX;
+  document.querySelectorAll('#pal button').forEach(b=>b.classList.toggle('on', b.dataset.v===String(CUSTOM_IDX)));
+}
+const toHex = c => '#'+c.map(v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join('');
+// プリセット中に色をいじったら、そのプリセットの色を丸ごと自作に引き継ぐ
+// （引き継がないと、いじってない色が自作の古い値へ飛ぶ＝背景を変えると中の色も変わるバグ）
+function adoptCurrentToCustom(){
+  if(P.pal===CUSTOM_IDX) return;
+  const pal = PALS[P.pal];
+  CUSTOM.a = pal.a.slice(); CUSTOM.b = pal.b.slice();
+  CUSTOM.bg = typeof pal.bg==='string' ? pal.bg : toHex(pal.bg);
+}
+// いま選んでいるパレットの色を、3つのカラーピッカーに反映
+function syncColorInputs(){
+  const pal = P.pal===CUSTOM_IDX ? CUSTOM : PALS[P.pal];
+  document.getElementById('ca').value  = toHex(pal.a);
+  document.getElementById('cb').value  = toHex(pal.b);
+  document.getElementById('cbg').value = typeof pal.bg==='string' ? pal.bg : toHex(pal.bg);
+}
+document.getElementById('fitb').onclick = () => { cam.rx = cam.ry = 0; fit(); };
+
+/* ── ワープのアンカーカーブ ── 点を打って伸縮プロファイルを描く ── */
+let ANCHORS = [{t:0,v:1.6},{t:0.5,v:0.4},{t:1,v:1.6}];   // 既定＝砂時計
+function anchorAt(t){
+  t = Math.max(0, Math.min(1, t));
+  const A = ANCHORS;
+  if(t <= A[0].t) return A[0].v;
+  for(let i=0;i<A.length-1;i++){
+    if(t <= A[i+1].t){
+      const f = (t - A[i].t) / (A[i+1].t - A[i].t || 1);
+      const s = f*f*(3-2*f);                 // なめらかに
+      return A[i].v + (A[i+1].v - A[i].v) * s;
+    }
+  }
+  return A[A.length-1].v;
+}
+function resetAnchors(humps){                // 山数からカーブを作り直す
+  ANCHORS = [];
+  const seg = humps * 2;
+  for(let i=0;i<=seg;i++) ANCHORS.push({ t:i/seg, v: 1 + Math.cos(i/seg*Math.PI*humps)*0.6 });
+}
+const wc = document.getElementById('warpcv'), wcg = wc.getContext('2d');
+// ⭐ 指で操作する端末では、点の大きさと当たり判定を広げる。
+//   幅の6%（約12px）はマウス前提の値で、指だと掴めずスクロールに逃げられていた。
+const COARSE = matchMedia('(pointer:coarse)').matches;
+const WC_HIT = COARSE ? 0.11 : 0.06, WC_DOT = COARSE ? 6 : 3.5;
+if(COARSE){ wc.width = 408; wc.height = 192; }   // CSSで拡大する前提で内部解像度も上げる
+function drawWarpCurve(){
+  const W2=wc.width, H2=wc.height; wcg.clearRect(0,0,W2,H2);
+  wcg.strokeStyle='rgba(10,10,10,.12)'; wcg.beginPath();
+  wcg.moveTo(0,H2/2); wcg.lineTo(W2,H2/2); wcg.stroke();     // 等倍ライン
+  const y = v => H2 - (v/2.2)*H2;
+  wcg.strokeStyle='rgba(10,10,10,.7)'; wcg.lineWidth=COARSE ? 2.8 : 1.4; wcg.beginPath();
+  for(let x=0;x<=W2;x+=3){ const v=anchorAt(x/W2); x?wcg.lineTo(x,y(v)):wcg.moveTo(x,y(v)); }
+  wcg.stroke();
+  wcg.fillStyle='#0a0a0a';
+  const dot = COARSE ? WC_DOT * (W2/204) : WC_DOT;
+  for(const a of ANCHORS){ wcg.beginPath(); wcg.arc(a.t*W2, y(a.v), dot, 0, 7); wcg.fill(); }
+}
+let wcDrag=-1;
+function wcPt(e){ const r=wc.getBoundingClientRect();
+  return { t:(e.clientX-r.left)/r.width, v:(1-(e.clientY-r.top)/r.height)*2.2 }; }
+wc.addEventListener('pointerdown',e=>{
+  const p=wcPt(e); let best=-1,bd=1;
+  ANCHORS.forEach((a,i)=>{ const d=Math.abs(a.t-p.t); if(d<WC_HIT&&d<bd){bd=d;best=i;} });
+  if(best<0){ ANCHORS.push({t:Math.max(0,Math.min(1,p.t)),v:Math.max(0.1,Math.min(2.2,p.v))});
+    ANCHORS.sort((a,b)=>a.t-b.t); best=ANCHORS.findIndex(a=>a.t===p.t); }
+  wcDrag=best; wc.setPointerCapture(e.pointerId); drawWarpCurve();
+});
+wc.addEventListener('pointermove',e=>{ if(wcDrag<0)return; const p=wcPt(e);
+  const a=ANCHORS[wcDrag];
+  if(wcDrag>0&&wcDrag<ANCHORS.length-1) a.t=Math.max(0.01,Math.min(0.99,p.t));  // 端は固定
+  a.v=Math.max(0.1,Math.min(2.2,p.v)); ANCHORS.sort((x,y)=>x.t-y.t); drawWarpCurve(); });
+wc.addEventListener('pointerup',()=>wcDrag=-1);
+wc.addEventListener('dblclick',e=>{ const p=wcPt(e);
+  const i=ANCHORS.findIndex(a=>Math.abs(a.t-p.t)<WC_HIT);
+  if(i>0&&i<ANCHORS.length-1){ ANCHORS.splice(i,1); drawWarpCurve(); } });
+
+/* ── 角度ギズモ ── Spline 風のオービット球。緯線経線の回転で視点が見える ── */
+const gz = document.getElementById('gz'), gzg = gz.getContext('2d');
+function drawGizmo(){
+  const S = 120, cx = S/2, cy = S/2, r = 42;
+  gzg.clearRect(0,0,S,S);
+  const cp=Math.cos(cam.rx), sp=Math.sin(cam.rx), cyw=Math.cos(cam.ry), syw=Math.sin(cam.ry);
+  const rot = (x,y,z)=>{ let X=x*cyw+z*syw, Z=-x*syw+z*cyw;
+    let Y=y*cp-Z*sp; Z=y*sp+Z*cp; return [X,Y,Z]; };
+  const P2 = p => [cx+p[0]*r, cy+p[1]*r, p[2]];
+
+  gzg.beginPath(); gzg.arc(cx,cy,r,0,7);
+  gzg.fillStyle='rgba(0,0,0,.4)'; gzg.fill();
+  gzg.strokeStyle='rgba(255,255,255,.22)'; gzg.lineWidth=1; gzg.stroke();
+
+  const ring = (axis)=>{
+    const pts=[];
+    for(let a=0;a<=48;a++){ const t=a/48*6.2831853, c=Math.cos(t), s=Math.sin(t);
+      pts.push(P2(rot(axis===0?0:c, axis===2?0:(axis===0?c:s), axis===1?0:s))); }
+    for(let front=0;front<2;front++){
+      gzg.beginPath(); let started=false;
+      for(const p of pts){ const vis=(p[2]>0)===(front===1);
+        if(vis){ started?gzg.lineTo(p[0],p[1]):(gzg.moveTo(p[0],p[1]),started=true); } else started=false; }
+      gzg.strokeStyle= front?'rgba(36,52,255,.9)':'rgba(255,255,255,.12)';
+      gzg.lineWidth= front?1.4:1; gzg.stroke();
+    }
+  };
+  ring(0); ring(1); ring(2);
+
+  const pole=P2(rot(0,0,1));
+  gzg.beginPath(); gzg.arc(pole[0],pole[1],4,0,7);
+  gzg.fillStyle= pole[2]>0?'rgba(233,32,28,1)':'rgba(233,32,28,.3)'; gzg.fill();
+
+  document.getElementById('gztext').textContent =
+    `YAW ${Math.round(cam.ry*57)}°  PITCH ${Math.round(cam.rx*57)}°`;
+}
+let gzdrag=null;
+gz.addEventListener('pointerdown',e=>{gzdrag={x:e.clientX,y:e.clientY};gz.setPointerCapture(e.pointerId);});
+gz.addEventListener('pointermove',e=>{ if(!gzdrag)return;
+  cam.ry=Math.max(-1.3,Math.min(1.3,cam.ry+(e.clientX-gzdrag.x)*0.02));
+  cam.rx=Math.max(-1.3,Math.min(1.3,cam.rx-(e.clientY-gzdrag.y)*0.02));
+  gzdrag={x:e.clientX,y:e.clientY}; });
+gz.addEventListener('pointerup',()=>gzdrag=null);
+gz.addEventListener('dblclick',()=>{cam.rx=cam.ry=0;});
+
+let drag = null, dragR = false;
+cv.addEventListener('contextmenu', e => e.preventDefault());
+cv.addEventListener('pointerdown', e => {
+  drag = { x:e.clientX, y:e.clientY };
+  dragR = (e.button === 2 || e.shiftKey);     // 右 or Shift ＝ 角度
+  cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointermove', e => {
+  if(!drag) return;
+  if(dragR){
+    cam.ry = Math.max(-1.2, Math.min(1.2, cam.ry + (e.clientX - drag.x) * 0.006));
+    cam.rx = Math.max(-1.2, Math.min(1.2, cam.rx - (e.clientY - drag.y) * 0.006));
+  } else {
+    cam.x += e.clientX - drag.x; cam.y += e.clientY - drag.y;
+  }
+  drag = { x:e.clientX, y:e.clientY };
+});
+cv.addEventListener('pointerup', () => { drag = null; dragR = false; });
+cv.addEventListener('pointercancel', () => drag = null);
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  const k = Math.exp(-e.deltaY * 0.0016);
+  const ns = Math.max(0.02, Math.min(40, cam.s * k));
+  // カーソルの下にあるものが動かないように寄る
+  cam.x = e.clientX - (e.clientX - cam.x) * (ns / cam.s);
+  cam.y = e.clientY - (e.clientY - cam.y) * (ns / cam.s);
+  cam.s = ns;
+}, { passive:false });
+
+let pinch = 0;
+cv.addEventListener('touchmove', e => {
+  if(e.touches.length !== 2) return;
+  e.preventDefault();
+  const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                       e.touches[0].clientY - e.touches[1].clientY);
+  if(pinch) cam.s = Math.max(0.02, Math.min(40, cam.s * (d / pinch)));
+  pinch = d;
+}, { passive:false });
+cv.addEventListener('touchend', () => pinch = 0);
+
+document.getElementById('go').onclick = () => { for(const d of dots) d.live = true; running = true; t = 0; };
+document.getElementById('reset').onclick = () => { running = false; build(); fit(); };
+
+// ループは即開始する（fonts.ready 待ちに人質を取らせない）。
+// フォントが後から乗ったら字を焼き直す。
+resize();
+drawWarpCurve();
+syncColorInputs();
+requestAnimationFrame(loop);
+if(document.fonts && document.fonts.ready){
+  document.fonts.ready.then(() => { build(); fit(); }).catch(() => {});
+  document.fonts.load('700 24px "Zen Kaku Gothic New"').then(() => { build(); fit(); }).catch(() => {});
+  document.fonts.load('600 24px "Zen Old Mincho"').then(() => { build(); fit(); }).catch(() => {});
+}
+
+/* ══ 書き出し ══
+   ⭐ いま見えているものを、そのまま出す。倍率は画面の解像度を上げて撮り直す。
+   ⚠️ SVG はドットのときだけ。グラデ塊・連続はピクセルで作っているのでベクターにできない。 */
+function exSc(){ const b = document.querySelector('#exSc button.on'); return b ? +b.dataset.v : 1; }
+document.querySelectorAll('#exSc button').forEach(b =>
+  b.addEventListener('click', () => b.parentElement.querySelectorAll('button')
+    .forEach(x => x.classList.toggle('on', x === b))));
+function dlBlob(b, name){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(b); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+function shoot(mime, ext, q){
+  const sc = exSc();
+  const bw = cv.width, bh = cv.height;
+  const dpr = Math.min(devicePixelRatio, 2);
+  // 一時的に解像度を上げて描き直す
+  cv.width = Math.round(bw / dpr * sc * dpr);
+  cv.height = Math.round(bh / dpr * sc * dpr);
+  g.imageSmoothingEnabled = false;
+  const bs = cam.s; cam.s = bs * sc;
+  const bx = cam.x, by = cam.y; cam.x = bx * sc; cam.y = by * sc;
+  draw();
+  const out = document.createElement('canvas');
+  out.width = cv.width; out.height = cv.height;
+  const o = out.getContext('2d');
+  if(mime === 'image/jpeg'){ o.fillStyle = '#000'; o.fillRect(0,0,out.width,out.height); }
+  o.drawImage(cv, 0, 0);
+  const W = out.width, H = out.height;
+  out.toBlob(b => {
+    dlBlob(b, 'tsubu.' + ext);
+    cv.width = bw; cv.height = bh; cam.s = bs; cam.x = bx; cam.y = by;
+    g.imageSmoothingEnabled = false;
+    draw(); drawGizmo();
+    stat2(ext.toUpperCase() + ' を出した — ' + W + ' × ' + H);
+  }, mime, q);
+}
+function stat2(m){ const el = document.getElementById('stat'); if(el) el.textContent = m; }
+document.getElementById('exPng')?.addEventListener('click', () => shoot('image/png','png'));
+document.getElementById('exJpg')?.addEventListener('click', () => shoot('image/jpeg','jpg',0.92));
+document.getElementById('exSvg')?.addEventListener('click', () => {
+  if(P.tex !== 0){ stat2('SVG は「ドット」のときだけ — 質感をドットにしてください'); return; }
+  // ドットは1粒＝1つの矩形なので、そのままベクターにできる
+  const C = P.cell, pal = P.pal===CUSTOM_IDX ? CUSTOM : PALS[P.pal], cols = pal.cols;
+  const ang = P.gdir * Math.PI/180, ca = Math.cos(ang), sa = Math.sin(ang);
+  const steps = P.steps, dith = P.dith/100;
+  let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+  const rects = [];
+  for(const d of dots){
+    if(d.hide) continue;
+    let v = (d.x / W * ca + d.y / H * sa) * 0.5 + 0.5;
+    v = v - Math.floor(v);
+    const b = BAYER[(d.y % 4) * 4 + (d.x % 4)];
+    const q = Math.floor(v * (steps - 1) + (b - 0.5) * dith + 0.5);
+    const ci = Math.max(0, Math.min(cols.length - 1,
+      Math.round(Math.max(0, Math.min(steps - 1, q)) / (steps - 1) * (cols.length - 1))));
+    const x = d.x * C, y = d.y * C;
+    rects.push('<rect x="'+x+'" y="'+y+'" width="'+C+'" height="'+C+'" fill="'+cols[ci]+'"/>');
+    if(x<minX)minX=x; if(y<minY)minY=y; if(x+C>maxX)maxX=x+C; if(y+C>maxY)maxY=y+C;
+  }
+  if(!rects.length){ stat2('出すものがありません'); return; }
+  const w = maxX-minX, h = maxY-minY;
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+h+'" viewBox="'+minX+' '+minY+' '+w+' '+h+'">'
+    + '<rect x="'+minX+'" y="'+minY+'" width="'+w+'" height="'+h+'" fill="'+(typeof pal.bg==='string'?pal.bg:'#000')+'"/>'
+    + rects.join('') + '</svg>';
+  dlBlob(new Blob([svg], {type:'image/svg+xml'}), 'tsubu.svg');
+  stat2('SVG を出した — ' + rects.length + ' 粒');
+});
+
+
+/* ══ 日本語 / English ══
+   ⭐ 画面のテキストを一度走査して覚え、辞書で入れ替える。辞書に無いものは日本語のまま残す。 */
+const I18N = {
+  '字':'Text','質感':'Texture','塗り':'Pattern','グラデの断面 — 線と塊 両方に効く':'Ramp — line & mass',
+  'かたち':'Shape','グラデ（ディザ）':'Dither','出す':'Export','アニメーション':'Motion',
+  '角ゴ':'Gothic','明朝':'Mincho','横組':'Horizontal','縦組':'Vertical',
+  '折返し':'Wrap','字間':'Tracking','行間':'Leading','解像':'Resolution','粒':'Cell','太さ':'Weight',
+  'グラデ塊':'Blob','連続':'Continuous','ドット':'Dot',
+  '地の柄':'Base','交点の柄':'Joint',
+  '波':'Wave','縞':'Stripe','斜':'Diagonal','格子':'Grid','環':'Ring',
+  '球':'Sphere','輪':'Ring','錐':'Cone','花':'Flower','渦':'Swirl','面':'Face','なし':'None',
+  '細かさ':'Frequency','向き':'Direction','字なり':'Follow','ずれ':'Offset','照り':'Shine',
+  '玉':'Amount','大きさ':'Size','谷':'Valley','階調':'Steps',
+  '格子':'Grid','縦横比':'Ratio','厚み':'Depth',
+  '網':'Dither','網の向き':'Dither angle','波色':'Wave','球色':'Mass','地':'Ground',
+  '墨':'Sumi','奇抜':'Vivid','琵琶湖':'Biwako','蛍光':'Neon','毒':'Toxic','熱':'Heat','赤青':'Red/Blue','自作':'Custom',
+  '積もる':'Pile','集まる':'Gather','漂う':'Drift','流れ':'Flow','落ち代':'Fall','重力':'Gravity',
+  '全体を見る':'Fit','崩す':'Break','戻す':'Restore',
+  'PNG を出す':'Export PNG','JPG を出す':'Export JPG','SVG を出す（ドット）':'Export SVG (dot)',
+  '縦ワープ':'Warp V','横ワープ':'Warp H','ワープ':'Warp','山数':'Peaks',
+};
+(function(){
+  const KEY = 'bit_tk_lang';
+  const nodes = [], attrs = [];
+  const walk = el => {
+    for(const n of el.childNodes){
+      if(n.nodeType === 3){
+        const t = n.nodeValue.trim();
+        if(t && I18N[t] !== undefined) nodes.push({ n, jp:n.nodeValue, en:n.nodeValue.replace(t, I18N[t]) });
+      } else if(n.nodeType === 1 && !/^(SCRIPT|STYLE)$/.test(n.tagName)) walk(n);
+    }
+  };
+  function collect(){
+    nodes.length = 0; attrs.length = 0;
+    const panel = document.getElementById('panel');
+    if(panel) walk(panel);
+    document.querySelectorAll('[title]').forEach(el => {
+      const v = el.getAttribute('title');
+      if(v && I18N[v.trim()] !== undefined) attrs.push({ el, jp:v, en:I18N[v.trim()] });
+    });
+  }
+  let cur = 'jp';
+  function apply(lang){
+    cur = lang;
+    nodes.forEach(o => o.n.nodeValue = (lang === 'en') ? o.en : o.jp);
+    attrs.forEach(o => o.el.setAttribute('title', (lang === 'en') ? o.en : o.jp));
+    const b = document.getElementById('langBtn');
+    if(b) b.textContent = (lang === 'en') ? 'EN' : 'JP';
+    try{ localStorage.setItem(KEY, lang); }catch(e){}
+  }
+  collect();
+  let saved = 'jp';
+  try{ saved = localStorage.getItem(KEY) || 'jp'; }catch(e){}
+  apply(saved);
+  document.getElementById('langBtn')?.addEventListener('click', () => {
+    const next = (cur === 'en') ? 'jp' : 'en';
+    apply('jp'); collect(); apply(next);
+  });
+})();
+
+</script>
+</body>
+</html>

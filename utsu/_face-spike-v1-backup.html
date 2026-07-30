@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>写 UTSU — FACE SPIKE / 木下スタジオ</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;overflow:hidden;background:#000;}
+  body{
+    font-family:"Space Mono",ui-monospace,monospace;color:#fff;
+    -webkit-tap-highlight-color:transparent;touch-action:none;
+  }
+  canvas{display:block;position:fixed;inset:0;width:100%;height:100%;}
+
+  #boot{
+    position:fixed;inset:0;z-index:50;background:#f4f2ee;color:#0a0a0a;
+    display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:16px;transition:opacity .4s;
+  }
+  #boot.gone{opacity:0;pointer-events:none;}
+  #boot .k{font-size:44px;font-weight:300;letter-spacing:.3em;text-indent:.3em;}
+  #boot .s{font-size:9px;letter-spacing:.3em;opacity:.4;}
+  #start{
+    margin-top:8px;font-size:9.5px;letter-spacing:.2em;padding:12px 22px;
+    background:none;border:1px solid rgba(10,10,10,.2);color:#0a0a0a;cursor:pointer;
+    transition:background .15s,color .15s;
+  }
+  #start:hover{background:#0a0a0a;color:#f4f2ee;}
+  #start[disabled]{opacity:.4;cursor:default;}
+  #boot .e{font-size:8.5px;letter-spacing:.12em;color:#b4241e;min-height:1em;text-align:center;}
+
+  #ctl{
+    position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:10;
+    display:flex;gap:16px;align-items:center;flex-wrap:wrap;justify-content:center;
+    background:rgba(0,0,0,.42);backdrop-filter:blur(10px);
+    padding:10px 18px;border:1px solid rgba(255,255,255,.14);border-radius:2px;max-width:94vw;
+  }
+  #ctl .row{display:flex;gap:8px;align-items:center;}
+  #ctl label{font-size:8.5px;letter-spacing:.14em;opacity:.6;}
+  #ctl input[type=range]{
+    -webkit-appearance:none;appearance:none;width:84px;height:1px;
+    background:rgba(255,255,255,.3);outline:none;cursor:pointer;
+  }
+  #ctl input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:9px;height:9px;border-radius:50%;background:#fff;cursor:pointer;
+  }
+  #ctl input[type=range]::-moz-range-thumb{
+    width:9px;height:9px;border:none;border-radius:50%;background:#fff;cursor:pointer;
+  }
+  #ctl .val{font-size:8px;opacity:.5;width:22px;text-align:right;}
+
+  #hud{
+    position:fixed;top:16px;left:18px;z-index:10;font-size:8.5px;
+    letter-spacing:.18em;opacity:.7;mix-blend-mode:difference;line-height:1.8;
+  }
+  #hud b{font-weight:700;}
+  #mouth{display:inline-block;width:60px;height:3px;background:rgba(255,255,255,.25);vertical-align:middle;margin-left:6px;}
+  #mouth i{display:block;height:100%;width:0;background:#fff;}
+</style>
+</head>
+<body>
+
+<div id="boot">
+  <div class="k">写</div>
+  <div class="s">UTSU / FACE SPIKE</div>
+  <button id="start" disabled>顔認識モデル読み込み中…</button>
+  <div class="e" id="boot-err"></div>
+</div>
+
+<div id="hud">
+  写 UTSU — FACE SPIKE<br>
+  <span>MOUTH</span><span id="mouth"><i id="mouth-fill"></i></span><br>
+  <span id="face-state">顔：—</span>
+</div>
+
+<div id="ctl">
+  <div class="row"><label>BASE</label><input id="s-base" type="range" min="0" max="100" value="0"><span class="val" id="v-base"></span></div>
+  <div class="row"><label>MOUTH</label><input id="s-mouth" type="range" min="0" max="100" value="80"><span class="val" id="v-mouth"></span></div>
+  <div class="row"><label>SPIKES</label><input id="s-cnt" type="range" min="8" max="120" value="54"><span class="val" id="v-cnt"></span></div>
+  <div class="row"><label>SHARP</label><input id="s-shp" type="range" min="0" max="100" value="55"><span class="val" id="v-shp"></span></div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { FaceLandmarker, FilesetResolver }
+  from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.20/vision_bundle.mjs';
+
+/* ═══════════════════════════════════════════════════════════
+   写 UTSU — FACE SPIKE
+   TikTok/Effect House の作りをブラウザ最小再現：
+   (1) 人を認識 = MediaPipe Face Landmarker（478点＋blendshape）
+   (2) 顔にアンカー = 棘の中心を検出した顔の中心に置く（顔が動くと追従）
+   (3) 表情で起動 = jawOpen（口の開き）で棘の量を駆動（口を開けると爆発）
+   足場（音・ラック）は無し。この3段だけ。
+   ═══════════════════════════════════════════════════════════ */
+
+const P = { base:0, mouth:80, count:54, sharp:55 };
+
+// GLSL と同じ smoothstep（閾値のあそび用）
+function smoothstep(e0, e1, x){
+  const t = Math.min(Math.max((x - e0) / (e1 - e0), 0), 1);
+  return t * t * (3 - 2 * t);
+}
+
+/* ── RENDERER ───────────────────────────────────────────── */
+const renderer = new THREE.WebGLRenderer({ antialias:false, preserveDrawingBuffer:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const oc = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+const uniforms = {
+  tVideo:{ value:null },
+  uCover:{ value:new THREE.Vector2(1,1) },
+  uAspect:{ value:new THREE.Vector2(1,1) },
+  uMirror:{ value:1 },
+  uAmp:{ value:0.12 }, uCount:{ value:54 }, uSharp:{ value:2.0 },
+  uCenter:{ value:new THREE.Vector2(0.5,0.5) },   // 顔の中心（vUv 空間）
+  uFaceR:{ value:0.28 },                          // 顔の大きさ（半径・vUv）
+};
+
+const mat = new THREE.ShaderMaterial({
+  uniforms,
+  vertexShader:`
+    varying vec2 vUv;
+    void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+  fragmentShader:`
+    precision highp float;
+    uniform sampler2D tVideo;
+    uniform vec2 uCover, uAspect, uCenter;
+    uniform float uMirror, uAmp, uCount, uSharp, uFaceR;
+    varying vec2 vUv;
+
+    float hash(float n){ return fract(sin(n * 127.1) * 43758.5453); }
+
+    void main(){
+      // 顔の中心を基点に、放射状の棘を作る（screen=vUv 空間で計算）
+      vec2 c = (vUv - uCenter) * uAspect;
+      float r = length(c);
+      float a = atan(c.y, c.x);
+
+      float N     = uCount;
+      float s     = a / 6.2831853 * N;
+      float sect  = floor(s);
+      float rnd   = hash(sect);
+      float rnd2  = hash(sect + 37.0);
+      float local = fract(s + (rnd2 - 0.5) * 0.6);
+
+      float tri = 1.0 - abs(local - 0.5) * 2.0;
+      tri = pow(max(tri, 0.0), uSharp);
+      float len = 0.35 + rnd * 0.9;
+
+      // 顔まわり（顔半径付近）から外へ棘が伸びる。顔の内側は弱く
+      float ring = smoothstep(uFaceR * 0.35, uFaceR * 1.05, r);
+      float pull = tri * len * uAmp * ring * (0.12 + r * 1.1);
+
+      vec2 dir = (c / max(r, 1e-4)) / uAspect;   // vUv 空間の放射方向
+      vec2 sv  = vUv - dir * pull;               // 画面座標を歪める
+
+      // 歪めた画面座標を、cover+mirror を通して映像 UV に変換して採る
+      vec2 uv = (sv - 0.5) * uCover + 0.5;
+      if(uMirror > 0.5) uv.x = 1.0 - uv.x;
+
+      gl_FragColor = vec4(texture2D(tVideo, uv).rgb, 1.0);
+    }`
+});
+scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
+
+/* ── VIDEO + COVER ──────────────────────────────────────── */
+let video = null, videoTex = null, started = false;
+
+function updateCover(){
+  const vw = (video && video.videoWidth)  || 16;
+  const vh = (video && video.videoHeight) || 9;
+  const va = vw / vh, sa = innerWidth / innerHeight;
+  let cx = 1, cy = 1;
+  if(sa > va) cy = va / sa; else cx = sa / va;
+  uniforms.uCover.value.set(cx, cy);
+  uniforms.uAspect.value.set(sa, 1);
+}
+function resize(){ renderer.setSize(innerWidth, innerHeight); updateCover(); }
+addEventListener('resize', resize);
+
+/* ── FACE — MediaPipe Face Landmarker ───────────────────── */
+let landmarker = null, lastVideoTime = -1;
+let jaw = 0;                      // 平滑化した口の開き
+let faceOn = false;
+const center = { x:0.5, y:0.5 };  // 平滑化した顔中心（vUv）
+let faceR = 0.28;
+
+async function initLandmarker(){
+  const fileset = await FilesetResolver.forVisionTasks(
+    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.20/wasm');
+  landmarker = await FaceLandmarker.createFromOptions(fileset, {
+    baseOptions: {
+      modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+      delegate: 'GPU',
+    },
+    outputFaceBlendshapes: true,
+    outputFacialTransformationMatrixes: false,
+    runningMode: 'VIDEO',
+    numFaces: 1,
+  });
+  const btn = document.getElementById('start');
+  btn.disabled = false;
+  btn.textContent = 'カメラを許可して始める';
+}
+
+// landmark(0..1, 左上原点, 未ミラー) → 画面 vUv(左下原点) に変換
+function toScreenUv(lx, ly){
+  const cover = uniforms.uCover.value, mir = P.mirror !== 0;
+  let vx = mir ? (1 - lx) : lx;   // シェーダーが x をミラーするぶんを逆算
+  let vy = 1 - ly;                // y を上向きに
+  return {
+    x: (vx - 0.5) / cover.x + 0.5,
+    y: (vy - 0.5) / cover.y + 0.5,
+  };
+}
+P.mirror = 1;
+
+function readFace(res){
+  if(!res || !res.faceLandmarks || !res.faceLandmarks.length){
+    faceOn = false;
+    return;
+  }
+  faceOn = true;
+  const lm = res.faceLandmarks[0];
+
+  // 顔の bbox 中心と大きさ（vUv 空間）
+  let minx=1, miny=1, maxx=0, maxy=0;
+  for(const p of lm){
+    if(p.x<minx)minx=p.x; if(p.x>maxx)maxx=p.x;
+    if(p.y<miny)miny=p.y; if(p.y>maxy)maxy=p.y;
+  }
+  const cx = (minx+maxx)/2, cy = (miny+maxy)/2;
+  const sc = toScreenUv(cx, cy);
+  center.x += (sc.x - center.x) * 0.4;
+  center.y += (sc.y - center.y) * 0.4;
+  // 顔の高さを半径の目安に（vUv 縦幅）
+  const rr = (maxy - miny) / uniforms.uCover.value.y * 0.62;
+  faceR += (rr - faceR) * 0.4;
+
+  // jawOpen（口の開き）を blendshape から
+  let jo = 0;
+  const bs = res.faceBlendshapes && res.faceBlendshapes[0];
+  if(bs){
+    for(const c of bs.categories){ if(c.categoryName === 'jawOpen'){ jo = c.score; break; } }
+  }
+  jaw += (jo - jaw) * 0.35;   // 平滑化
+}
+
+/* ── START ──────────────────────────────────────────────── */
+async function start(){
+  const err = document.getElementById('boot-err');
+  err.textContent = '';
+  if(!landmarker){ err.textContent = 'モデル読み込み中…'; return; }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ width:{ ideal:1280 }, height:{ ideal:720 }, facingMode:'user' }, audio:false,
+    });
+  } catch(e){
+    err.textContent = {
+      NotAllowedError:'カメラ拒否 — 設定から許可してください',
+      NotFoundError:'カメラが見つかりません',
+      NotReadableError:'カメラが他アプリで使用中',
+      SecurityError:'HTTPS または localhost が必要です',
+    }[e.name] || e.name || 'CAMERA ERROR';
+    return;
+  }
+  video = document.createElement('video');
+  video.srcObject = stream;
+  video.muted = true; video.playsInline = true; video.autoplay = true;
+  await video.play().catch(() => {});
+  videoTex = new THREE.VideoTexture(video);
+  videoTex.minFilter = THREE.LinearFilter;
+  videoTex.magFilter = THREE.LinearFilter;
+  uniforms.tVideo.value = videoTex;
+  updateCover();
+  started = true;
+  document.getElementById('boot').classList.add('gone');
+}
+
+/* ── LOOP ───────────────────────────────────────────────── */
+const mouthFill = document.getElementById('mouth-fill');
+const faceState = document.getElementById('face-state');
+
+function frame(){
+  requestAnimationFrame(frame);
+  if(!started) return;
+
+  // 顔認識（同じ時刻では呼ばない）
+  if(landmarker && video.readyState >= 2 && video.currentTime !== lastVideoTime){
+    lastVideoTime = video.currentTime;
+    try { readFace(landmarker.detectForVideo(video, performance.now())); }
+    catch(e){ /* 検出の一時失敗は無視 */ }
+  }
+
+  // 顔が無ければ棘は静まり、中心は画面中央へ戻る
+  if(!faceOn){
+    jaw += (0 - jaw) * 0.2;
+    center.x += (0.5 - center.x) * 0.05;
+    center.y += (0.5 - center.y) * 0.05;
+  }
+
+  // 口の開きにあそび（デッドゾーン）を入れる。閉じている間は完全に素、
+  // 0.14 を超えてから 0.55 に向けて棘が立ち上がる（＝動作がトリガー）。
+  const open = smoothstep(0.14, 0.55, jaw);
+  // BASE（任意の常時棘・既定0）＋ MOUTH（口を開けた分だけ棘が爆発）
+  const amp = P.base / 100 * 0.5 + open * (P.mouth / 100) * 1.6;
+  uniforms.uAmp.value    = amp;
+  uniforms.uCount.value  = P.count;
+  uniforms.uSharp.value  = 0.6 + P.sharp / 100 * 4.0;
+  uniforms.uCenter.value.set(center.x, center.y);
+  uniforms.uFaceR.value  = faceR;
+  uniforms.uMirror.value = P.mirror;
+
+  mouthFill.style.width = Math.min(jaw * 140, 100) + '%';
+  faceState.textContent = faceOn ? '顔：認識中' : '顔：—（中央に顔を）';
+
+  renderer.render(scene, oc);
+}
+requestAnimationFrame(frame);
+resize();
+
+/* ── CONTROLS ───────────────────────────────────────────── */
+function bind(id, key, vid){
+  const el = document.getElementById(id), v = document.getElementById(vid);
+  const sync = () => { P[key] = +el.value; v.textContent = el.value; };
+  el.addEventListener('input', sync); sync();
+}
+bind('s-base',  'base',  'v-base');
+bind('s-mouth', 'mouth', 'v-mouth');
+bind('s-cnt',   'count', 'v-cnt');
+bind('s-shp',   'sharp', 'v-shp');
+
+document.getElementById('start').onclick = start;
+
+/* ── モデル読み込み ─────────────────────────────────────── */
+initLandmarker().catch(e => {
+  document.getElementById('boot-err').textContent = 'モデル読込失敗：ネット接続を確認（' + (e.message || e.name || e) + '）';
+  console.error('[UTSU] landmarker init:', e);
+});
+</script>
+</body>
+</html>
