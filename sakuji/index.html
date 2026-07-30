@@ -1694,11 +1694,52 @@ function brushDown(e){
   brush.add(e.point);
   stat('フリーハンド — 離すと整う／「線→塗り」で輪郭が確定');
 }
-function brushDrag(e){ if(brush) brush.add(e.point); }
+/* ⭐⭐ 引き終わりが始点の近くなら【吸着して閉じる】。BMBoard と同じ考え方。
+   ⚠️ これまでは閉じる判定が無く、手で始点に戻しても開いたままだった＝塗りが乗らない。
+   ⭐ BMBoard から持ち込んだ勘どころ：
+     ・指なら広く、マウスなら狭く（指は太い）
+     ・画面の px を【世界座標に直す】＝ズームしても同じ感覚で閉じる
+     ・引き始めてすぐは閉じない（少し引いてから＝一瞬で閉じる事故を防ぐ）
+     ・吸着圏に入ったら【予告】を出す（始点に丸＋そこまでの破線）。押す前に分かるように */
+let brushSnap = false;
+function brushSnapDist(){ return (TOUCHY ? 32 : 22) / paper.view.zoom; }
+function brushNearStart(pt){
+  if(!brush || !brush.segments || brush.segments.length < 12) return false;   // 少し引いてから
+  return pt.getDistance(brush.firstSegment.point) < brushSnapDist();
+}
+function brushDrag(e){
+  if(!brush) return;
+  brush.add(e.point);
+  const now = brushNearStart(e.point);
+  if(now !== brushSnap){ brushSnap = now; stat(now ? '離すと閉じる' : 'フリーハンド'); }
+  if(brushSnap) guides();                            // 予告を描き直す
+}
+/* 吸着の予告＝始点の丸と、そこまでの破線（台帳に登録して guides から描く） */
+hook('guides', 'フリーハンドの閉じる予告', () => {
+  if(!brush || !brushSnap || !brush.segments.length) return;
+  uiLayer.activate();
+  const Z = paper.view.zoom;
+  const first = brush.firstSegment.point, last = brush.lastSegment.point;
+  const ring = new Path.Circle(first, 10/Z);
+  ring.strokeColor = ACC; ring.strokeWidth = 1.5/Z;
+  ring.fillColor = new Color(0.12, 0.43, 0.88, 0.12);
+  const line = new Path.Line(last, first);
+  line.strokeColor = ACC; line.strokeWidth = 1.4/Z; line.dashArray = [4/Z, 3/Z];
+  artLayer.activate();
+});
 function brushUp(){
   if(!brush) return;
+  // ⭐ 吸着圏で離した＝閉じる。最後の点を始点にぴたりと寄せてから閉じる
+  if(brushSnap){
+    brush.lastSegment.point = brush.firstSegment.point.clone();
+    brush.closed = true;
+    if(!brush.fillColor && S.fill) brush.fillColor = paintOf(brush);   // 閉じたら塗りが乗る
+  }
+  brushSnap = false;
   brush.simplify(6);                                  // 手ブレを整理して滑らかに
-  brush.selected = true; brush = null; guides(); stat('フリーハンド確定 — 「線→塗り」で輪郭に');
+  const closed = brush.closed;
+  brush.selected = true; brush = null; guides();
+  stat(closed ? '閉じた — 塗りが乗る' : 'フリーハンド確定 — 「線→塗り」で輪郭に');
 }
 
 /* ══ グラデーションツール ══
