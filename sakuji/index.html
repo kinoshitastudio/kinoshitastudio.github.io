@@ -1821,6 +1821,10 @@ function selDownBase(e){                          // ⚠️ 呼ぶのは台帳�
     if(!e.modifiers.shift) artLayer.children.forEach(c=>c.selected=false);
     item.selected = true; dragItem = item; dragStart = e.point;
   }
+  // ⭐ 粒を選んだら、その粒が覚えている作り方を TEXT パネルへ戻す。
+  //   ⚠️ これが無いと、あとで別の字を打ったあとに古い粒を組み直したとき、
+  //     書体や大きさが勝手に変わって驚く。
+  if(item.__tzText) tzRecipeToPanel(item.__tzText);
   // ⭐ 選んだ直後にガイドを描き直す。
   //   ⚠️ 粒グループを選ぶと paper が子全部に選択を配るので、ここを通さないと
   //     粒の数だけ青い点が出て中身が見えなくなる（台帳の hook がその掃除をしている）。
@@ -4424,6 +4428,52 @@ async function reflowSelectedText(){
   // ⭐⭐ preview 中は【下見】が選ばれていて、元の文字は隠れている。
   //   隠れている元を対象にすれば、粒を見ながら字間・行間・縦組を決められる。
   //   ⚠️ 確定したあとの粒は、もう文字ではないので組み直せない（イラレのアウトライン化と同じ）。
+  // ⭐⭐ 確定したあとの粒でも、作り方を覚えていれば組み直せる。
+  //   「文字を組み直す → 粒をかけ直す」を1回でやる。
+  const grains = selected().filter(it => it.__tsubu && it.__tzText);
+  if(grains.length){
+    snapshot();
+    for(const old of grains){
+      const r = old.__tzText, at = old.__tzAt || old.position.clone();
+      const box = document.getElementById('tinput');
+      const bak = box.value;
+      // ⚠️ 書体・大きさは【その粒が作られたときのもの】を使う。
+      //   いまパネルに出ている値は、あとで別の字を打ったときの値かもしれない。
+      const keep = {
+        fam: document.getElementById('tfont').value,
+        wt:  document.getElementById('tweight').value,
+        sz:  document.getElementById('tsize').value,
+      };
+      box.value = r.txt;
+      document.getElementById('tfont').value   = r.fam;
+      document.getElementById('tweight').value = r.wt;
+      document.getElementById('tsize').value   = r.size;
+      _tzReflowing = true;
+      const txtObj = placeText(at);            // いまの字間・行間・縦組で組み直す
+      _tzReflowing = false;
+      box.value = bak;
+      document.getElementById('tfont').value   = keep.fam;
+      document.getElementById('tweight').value = keep.wt;
+      document.getElementById('tsize').value   = keep.sz;
+      if(!txtObj) continue;
+      await tzEnsureShape([txtObj]);
+      const { src, temp } = tzShapeOf(txtObj);
+      const g = tsubuize(src, tzOpt());
+      if(temp) src.remove();
+      if(g){
+        g.__tzText = tzTextRecipeOf(txtObj) || r;   // 新しい組みで覚え直す
+        g.__tzAt = txtObj.position.clone();
+        g.insertAbove(old);
+        const k = _tzLast.indexOf(old); if(k >= 0) _tzLast[k] = g;
+        old.remove();
+        g.selected = true;
+      }
+      txtObj.remove();
+    }
+    guides();
+    stat('粒のまま組み直した');
+    return;
+  }
   const targets = [];
   selected().forEach(it => {
     const k = tzPv.temp.indexOf(it);
@@ -4432,7 +4482,7 @@ async function reflowSelectedText(){
   });
   if(!targets.length){
     if(selected().some(it => it.__tsubu))
-      stat('粒にしたあとは組み直せません（preview のうちに字間・行間・縦組を決めてください）');
+      stat('この粒は組み直せません（文字から作ったものだけ組み直せます）');
     return;
   }
   const wasPv = tzPv.on;
@@ -5039,6 +5089,37 @@ function tzAngleAt(item, pt, fallback){
   if(!best || !best.tangent) return fallback;
   return Math.atan2(best.tangent.y, best.tangent.x);
 }
+/* ⭐⭐ 粒に【組み直せる情報】を持たせる。
+   ⚠️ 粒は矩形の集まりで、もう文字ではない。だから確定したあとは字間も縦組も触れなかった。
+   ⭐ 木下＝「そこ（粒にしたあと）でないと見えない部分や、翌日にそうなる可能性もある」
+     ＝あとから判断が変わる。だから【元の文字の作り方】を粒が覚えておいて、
+     触られたら「文字を組み直す → 粒をかけ直す」をやる。
+   ⚠️ `__tsubu.json` はパス化した後の形なので文字には戻れない。だから別に持つ。 */
+function tzTextRecipeOf(item){
+  if(!item || !item.__isText) return null;
+  return {
+    txt:  item.__txt || '',
+    fam:  item.__fam || document.getElementById('tfont').value,
+    wt:   item.__wt  || document.getElementById('tweight').value,
+    size: item.__size || +document.getElementById('tsize').value,
+    track: +(document.getElementById('ttrack')?.value || 0),
+    lead:  +(document.getElementById('tlead')?.value  || 0),
+    vert:  document.querySelector('#tvert button.on')?.dataset.v === '1',
+  };
+}
+/* 粒が覚えている作り方を TEXT パネルへ戻す（選んだらその字の設定になる＝イラレと同じ感触） */
+function tzRecipeToPanel(r){
+  if(!r) return;
+  const set = (id, v) => { const el = document.getElementById(id); if(el && v != null) el.value = v; };
+  set('tinput', r.txt); set('tfont', r.fam); set('tweight', r.wt); set('tsize', r.size);
+  set('ttrack', r.track); set('tlead', r.lead);
+  document.querySelectorAll('#tvert button').forEach(b =>
+    b.classList.toggle('on', (b.dataset.v === '1') === !!r.vert));
+  ['tsize','ttrack','tlead'].forEach(id => {
+    const el = document.getElementById(id); const v = el?.parentElement?.querySelector('.val');
+    if(el && v) v.textContent = el.value;
+  });
+}
 /* ⭐ 交点の柄「面」── 画が交わって太くなっている所で、同じ帯を向きだけ直交させる。
    ⚠️ 球のように「別物」を置くと質感が揃わない。粒 TSUBU は球をやめて面にしている
      （UI に残っているのは「面」と「なし」だけ）。ここもそれに合わせる。
@@ -5291,10 +5372,14 @@ document.getElementById('bTsubuize')?.addEventListener('click', async () => {
   let made = 0;
   const done = [];
   sel.forEach(it => {
+    const recipe = tzTextRecipeOf(it);        // ⭐ 文字なら作り方を覚えておく
     const { src, temp } = tzShapeOf(it);
     const g = tsubuize(src, o);
     if(temp) src.remove();
-    if(g){ g.insertAbove(it); it.remove(); g.selected = true; made++; done.push(g); }
+    if(g){
+      if(recipe){ g.__tzText = recipe; g.__tzAt = it.position.clone(); }
+      g.insertAbove(it); it.remove(); g.selected = true; made++; done.push(g);
+    }
   });
   // ⭐ かけたものを覚える＝選択を外しても、そのままスライダーで作り直せる
   if(done.length) _tzLast = done;
@@ -5385,6 +5470,7 @@ function retsubu(silent){
     src.remove();
     if(g){
       g.insertAbove(old); g.selected = old.selected;
+      if(old.__tzText){ g.__tzText = old.__tzText; g.__tzAt = old.__tzAt; }   // ⭐ 作り方は引き継ぐ
       // ⭐ 作り直すと別のオブジェクトになるので、覚えている対象も差し替える
       const k = _tzLast.indexOf(old); if(k >= 0) _tzLast[k] = g;
       total += g.children ? g.children.length : 1;
@@ -5468,6 +5554,8 @@ function tzCommitPreview(){
   tzPv.base.forEach((it, k) => {
     const g = tzPv.temp[k];
     if(!g || !g.parent) return;
+    const recipe = tzTextRecipeOf(it);        // ⭐ 文字なら作り方を覚えておく
+    if(recipe){ g.__tzText = recipe; g.__tzAt = it.position.clone(); }
     delete g.__isPv;
     g.selected = false;
     if(it && it.parent){ delete it.__pvHidden; try { it.remove(); } catch(e){} }
