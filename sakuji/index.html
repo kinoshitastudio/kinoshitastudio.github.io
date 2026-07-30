@@ -2126,6 +2126,18 @@ let dragItem = null, dragSeg = null, dragHandle = null, dragStart = null;
    ⭐ 指のときは約2倍。ハンドルやグラデの点も同じ考え方で広げる。 */
 const TOUCHY = matchMedia('(pointer: coarse)').matches;
 function tzTol(base){ return (TOUCHY ? base * 2 : base) / paper.view.zoom; }
+/* ⭐⭐ 黒矢印で掴む単位＝【artLayer の直下】まで持ち上げる（イラレと同じ＝束ねは丸ごと掴む）。
+   ⚠️⚠️ 文字は1字ずつ作って束ねているので、hitTest が返すのは常に1字（Group の子）。
+      selected() は artLayer の直下しか見ないため、1字を selected にしても【選択に数えられない】。
+      それで木下＝「テキストが1クリックで選択できずに、ダブルクリックで編集になり、
+      ボードを押すとそれで選択された状態になる」という状態になっていた
+      （＝1字に付いた選択が、あとから guides を通ったときに見えるため）。
+   ⚠️ 白矢印（ダイレクト）は中のアンカーを直接掴むので、こちらは通さない。 */
+function pickRootOf(item){
+  let n = item;
+  while(n && n.parent && n.parent !== artLayer) n = n.parent;
+  return n || item;
+}
 /* ⭐ 粒グループの中の粒に当たったら、そのグループを返す（粒は1個ずつ触るものではない） */
 function tzRootOf(item){
   let n = item;
@@ -2173,7 +2185,9 @@ function selDownBase(e){                          // ⚠️ 呼ぶのは台帳�
     else { dragItem = item; dragStart = e.point; }
   } else {
     if(!e.modifiers.shift) artLayer.children.forEach(c=>c.selected=false);
-    item.selected = true; dragItem = item; dragStart = e.point;
+    // ⭐ 束ね（文字・グループ）は丸ごと掴む。1字だけ掴むと選択に数えられない
+    const pick = pickRootOf(item);
+    pick.selected = true; dragItem = pick; dragStart = e.point;
   }
   // ⭐ 粒を選んだら、その粒が覚えている作り方を TEXT パネルへ戻す。
   //   ⚠️ これが無いと、あとで別の字を打ったあとに古い粒を組み直したとき、
@@ -4296,9 +4310,7 @@ if(ctx){
     const r = cv.getBoundingClientRect();
     const pt = paper.view.viewToProject(new Point(e.clientX - r.left, e.clientY - r.top));
     const hitRes = hit(pt);            // ⚠️ h は後ろで ctx.offsetHeight に使っている。名前を分ける
-    const it = hitRes && hitRes.item ? tzRootOf(textRootOf(hitRes.item) || hitRes.item) : null;
-    // artLayer の直下まで持ち上げる（選択は直下の子で見ているため）
-    let top = it; while(top && top.parent && top.parent !== artLayer) top = top.parent;
+    const top = hitRes && hitRes.item ? pickRootOf(hitRes.item) : null;
     if(top && !top.selected){
       artLayer.children.forEach(c => c.selected = false);
       top.selected = true;
@@ -4859,6 +4871,15 @@ inlineT?.addEventListener('keydown', e => {
   if(e.key === 'Escape'){ e.preventDefault(); closeInlineText(false); }
 });
 inlineT?.addEventListener('blur', () => closeInlineText(true));
+/* ⭐ 打ち込み中にボードを押したら、そこで確定して抜ける（イラレ・Figma と同じ）。
+   ⚠️ canvas はフォーカスを取らないので input の blur が起きず、
+      ボードを押しても編集が続いたままだった（木下＝「編集になってもボードを押せば
+      それが解除できるようにしてほしい」）。
+   ⚠️ capture で走らせて、キャンバス側の選択処理より【先に】閉じる。
+      あとだと、閉じるときの組み直しで選択が入れ替わってしまう。 */
+cv.addEventListener('pointerdown', () => {
+  if(inlineT && inlineT.style.display !== 'none') closeInlineText(true);
+}, true);
 /* T ツールのクリック＝入口の switch（case 'text'）で openInlineText に繋いである */
 
 
@@ -5845,6 +5866,14 @@ document.getElementById('bTsubuize')?.addEventListener('click', async () => {
   });
   // ⭐ かけたものを覚える＝選択を外しても、そのままスライダーで作り直せる
   if(done.length) _tzLast = done;
+  // ⭐ かけ終わったらパネルも「粒」にそろえる。
+  //   ⚠️ 実態は粒なのにパネルが「単色」のままだと、状態と表示が食い違う
+  //     （木下＝「設定をペーストできたが、パネルも粒にはなっていない。
+  //       ここで粒に変更しても設定ペーストの意味がない」）。
+  //   ⚠️ この時点で選択は __tsubu を持つので、粒モードに入っても preview は作られない
+  //     （fillmode のハンドラが「かけ終わったものは直接作り直す」で抜ける）。
+  if(made && S.fillMode !== 'tsubu')
+    document.querySelector('#fillmode button[data-v="tsubu"]')?.click();
   guides();
   stat(made ? '粒にした（' + o.res + '×' + o.res + '・' + (o.tex === 'blob' ? 'グラデ塊' : 'ドット') + '・'
             + (S.target === 'stroke' ? '線' : '塗り') + '）' : 'できませんでした');
