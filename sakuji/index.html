@@ -593,6 +593,18 @@
   #hud{ font-family:ui-monospace,"SF Mono",Menlo,monospace }
   #hud a{ border-bottom:.5px solid var(--line) }
 
+  /* ⭐ 開いたときに「何のパネルか」が分かるようにする。
+     ⚠️ 説明は .note / .hint に入っていて「?」のときしか出ないので、
+        折りたたみを開いてもボタンが2つ並ぶだけ＝何の道具か読めなかった
+        （木下＝「なんか開けたパネルも」・共通パーツを開いて「選択を登録／全消去」だけ）。
+     ⭐ 見出しのすぐ下にある説明【1つだけ】を常に出す（iOS 設定の Section 説明と同じ）。
+        残りは今まで通り「?」の中。全部出すとパネルが伸びて操作が遠くなる。 */
+  #panel h2 + .note, #panel h2 + .hint,
+  #panel .foldbox > .note:first-child, #panel .foldbox > .hint:first-child{
+    display:block; margin:-1px 0 12px; font-size:11px; line-height:1.65;
+    color:var(--dim); opacity:.9;
+  }
+
   /* ── ストップのバー ── */
   #stopBar, #metalBar{ border:.5px solid var(--line); border-radius:7px }
   #angDial{ border:.5px solid var(--line) !important; background:var(--btn) !important }
@@ -3298,7 +3310,11 @@ document.getElementById('bSave').onclick = () => {
                face:S.face, div:S.div, body:S.body, bg:S.bg,
                fillMode:S.fillMode, stops:S.stops, target:S.target,
                cap:S.cap, join:S.join, shape:S.shape,
-               abs:S.abs, abSel:S.abSel, abOn:S.abOn },
+               abs:S.abs, abSel:S.abSel, abOn:S.abOn,
+               // ⭐ 粒のつまみ（スライダー14＋柄＋パレット＋色）も保存する。
+               //   ⚠️ 入れていなかったので、開き直すと粒パネルが既定に戻っていた
+               //     （かけた粒そのものは図形として残るが、続きの調整ができない）。
+               tz: (typeof tzSettingsSnapshot === 'function') ? tzSettingsSnapshot() : null },
     art: artLayer.exportJSON()
   };
   artLayer.children.forEach((c,i) => c.selected = keep[i]);
@@ -4245,9 +4261,19 @@ function pasteStyle(what){                    // what: 'both' | 'fill' | 'stroke
   if(styleClip.grain && what !== 'stroke'){
     tzSettingsRestore(styleClip.grain);
     if(sel.some(it => it.__tsubu)){ retsubu(true); grained = true; }
+    else {
+      // ⭐ 粒でないもの（文字・図形）には、その場で粒をかける。
+      //   ⚠️ 設定を入れるだけだと画面が何も変わらず、
+      //     木下＝「設定をペーストしても何も起こらない」になる。ペーストは結果まで出す。
+      //   ⭐ 処理は書かず、既存の「粒にする」をそのまま押す（同じ処理を2つ持たない）。
+      //   ⚠️ preview へ寄せると当たり判定が preview に移って選択が壊れる（前に踏んだ）。
+      //     確定まで一気にやる方が事故が少ない。戻すのは ⌘Z。
+      document.getElementById('bTsubuize')?.click();
+      grained = true;
+    }
   }
   guides();
-  if(grained) stat('粒の設定ごとペースト — 同じ質感で作り直した');
+  if(grained) stat('粒の設定ごとペースト — 同じ質感でかけ直した（⌘Zで戻せる）');
   else if(styleClip.grain) stat('粒の設定を入れた — 「粒にする」で同じ質感になる');
   else stat({both:'設定をペースト', fill:'塗りをペースト', stroke:'線をペースト'}[what]);
 }
@@ -4258,6 +4284,24 @@ function hideCtx(){ if(ctx) ctx.style.display = 'none'; }
 if(ctx){
   cv.addEventListener('contextmenu', e => {
     e.preventDefault();
+    /* ⭐ 右クリックした対象を、その場で選ぶ（イラレ・Figma と同じ）。
+       ⚠️ これが無いので、粒をコピーしたあと文字の上で右クリックしても
+         【何も選択されていない】ままで、メニューが4つとも灰色になっていた
+         （木下＝「設定をペースト 粒からテキストに」ができない）。
+       ⚠️ すでに選ばれているものを右クリックしたときは選択を組み替えない
+         ＝複数選んでまとめてペースト、ができなくなるため。 */
+    const r = cv.getBoundingClientRect();
+    const pt = paper.view.viewToProject(new Point(e.clientX - r.left, e.clientY - r.top));
+    const hitRes = hit(pt);            // ⚠️ h は後ろで ctx.offsetHeight に使っている。名前を分ける
+    const it = hitRes && hitRes.item ? tzRootOf(textRootOf(hitRes.item) || hitRes.item) : null;
+    // artLayer の直下まで持ち上げる（選択は直下の子で見ているため）
+    let top = it; while(top && top.parent && top.parent !== artLayer) top = top.parent;
+    if(top && !top.selected){
+      artLayer.children.forEach(c => c.selected = false);
+      top.selected = true;
+      if(typeof tzHideInnerSelection === 'function') tzHideInnerSelection();
+      guides();
+    }
     const has = selected().length > 0;
     document.getElementById('ctxCopy').disabled = !has;
     ['ctxPaste','ctxPasteFill','ctxPasteStroke'].forEach(id =>
@@ -4351,7 +4395,11 @@ function pvApply(kind){
    ⭐ リロードで作業が消えるのは致命的なので、変更のたびに localStorage へ書く。
    guides() は描画が変わるたびに呼ばれるので、そこに乗せれば取りこぼしがない。
    ⚠️ 書き込みは重いので 800ms まとめてから1回だけ。 */
-const AUTOKEY = 'sakuji_grad_tk_autosave_v1';
+/* ⚠️ キーの名前が研究版（sakuji_grad_tk）のままだった＝本ちゃんなのに研究版の名前で保存していた。
+   ⭐ 本ちゃんの名前に変える。⚠️ ただし名前を変えるだけだと【いま保存されている作業が読めなくなる】。
+      古い名前も読みに行き、読めたら次の保存から新しい名前で書く（古い方は消さない）。 */
+const AUTOKEY = 'sakuji_autosave_v1';
+const AUTOKEY_OLD = 'sakuji_grad_tk_autosave_v1';
 let _saveTimer = null;
 function autoSave(){
   clearTimeout(_saveTimer);
@@ -4365,7 +4413,11 @@ function autoSave(){
                    face:S.face, div:S.div, body:S.body, bg:S.bg,
                    fillMode:S.fillMode, stops:S.stops, target:S.target,
                    cap:S.cap, join:S.join, shape:S.shape,
-                   abs:S.abs, abSel:S.abSel, abOn:S.abOn },
+                   abs:S.abs, abSel:S.abSel, abOn:S.abOn,
+               // ⭐ 粒のつまみ（スライダー14＋柄＋パレット＋色）も保存する。
+               //   ⚠️ 入れていなかったので、開き直すと粒パネルが既定に戻っていた
+               //     （かけた粒そのものは図形として残るが、続きの調整ができない）。
+               tz: (typeof tzSettingsSnapshot === 'function') ? tzSettingsSnapshot() : null },
         art: artLayer.exportJSON({ asString:true }),
       };
       artLayer.children.forEach((c,i) => c.selected = keep[i]);
@@ -4381,7 +4433,9 @@ hook('guides', '自動保存', () => autoSave());
 
 function autoLoad(){
   try{
-    const raw = localStorage.getItem(AUTOKEY);
+    // ⭐ 新しい名前で読む。無ければ古い名前（研究版と同じ名前だったもの）から読む。
+    //   ⚠️ 名前を変えただけだと、いま入っている作業が読めなくなる。次の保存で新しい方に移る。
+    const raw = localStorage.getItem(AUTOKEY) || localStorage.getItem(AUTOKEY_OLD);
     if(!raw) return false;
     const d = JSON.parse(raw);
     if(!d || !d.art) return false;
@@ -4390,6 +4444,9 @@ function autoLoad(){
     artLayer.children.forEach(c => c.selected = false);
     if(d.settings){
       Object.keys(d.settings).forEach(k => { if(d.settings[k] !== undefined) S[k] = d.settings[k]; });
+      // ⭐ 粒のつまみも戻す。⚠️ S に混ざらないよう、tz は S へ入れずここで消して使う
+      const tz = d.settings.tz; delete S.tz;
+      if(tz && typeof tzSettingsRestore === 'function') tzSettingsRestore(tz);
       if(S.stops && S.stops.length) { if(typeof refreshStops === 'function') refreshStops(); }
       if(typeof syncFS === 'function') syncFS();
       if(typeof setBG === 'function') { const b = S.bg; S.bg = null; setBG(b || 'light'); }
