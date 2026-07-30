@@ -1713,7 +1713,15 @@ function brushNearStart(pt){
 }
 function brushDrag(e){
   if(!brush) return;
+  // ⭐ 近すぎる点は足さない。⚠️ 同じ場所の点が積もると、それ自体が手ブレになる
+  //   （BMBoard は消しゴムで同じ考え方＝一定距離ごとに1回だけ効かせている）。
+  const lastSeg = brush.lastSegment;
+  if(lastSeg && e.point.getDistance(lastSeg.point) < 1.6/paper.view.zoom) return;
   brush.add(e.point);
+  // ⭐ 引いている最中も滑らかに見せる。⚠️ paper は点を直線で繋ぐので、
+  //   ゆっくり引くとカクカクして「引いている感じ」が出ない。末尾だけ均す＝軽い。
+  const n = brush.segments.length;
+  if(n > 3) brush.smooth({ type:'continuous', from: n-4, to: n-1 });
   const now = brushNearStart(e.point);
   if(now !== brushSnap){ brushSnap = now; stat(now ? '離すと閉じる' : 'フリーハンド'); }
   if(brushSnap) guides();                            // 予告を描き直す
@@ -1740,7 +1748,10 @@ function brushUp(){
     if(!brush.fillColor && S.fill) brush.fillColor = paintOf(brush);   // 閉じたら塗りが乗る
   }
   brushSnap = false;
-  brush.simplify(6);                                  // 手ブレを整理して滑らかに
+  // ⭐ 整えすぎない。⚠️ これまでは simplify(6) で 121点→11点（9%）まで削っていて、
+  //   手ブレと一緒に【引いた線の表情】まで消えていた。
+  //   引いた通りを残す側に寄せる（BMBoard は点を残して描画側で滑らかにしている）。
+  brush.simplify(2.5);
   const closed = brush.closed;
   brush.selected = true; brush = null; guides();
   stat(closed ? '閉じた — 塗りが乗る' : 'フリーハンド確定 — 「線→塗り」で輪郭に');
