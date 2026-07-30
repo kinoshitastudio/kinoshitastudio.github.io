@@ -3948,13 +3948,18 @@ function tzSettingsRestore(sn){
 function copyStyle(){
   const it = selected()[0];
   if(!it){ stat('図形を選んでからコピー'); return; }
+  // ⚠️⚠️ 粒は Group で、色は数百個の子が1つずつ持っている。Group 自身に fillColor は無い。
+  //   readPaint(undefined) は null＝「なし」を返すので、貼り先の塗りを黙って消していた。
+  //   ⭐ 粒のときは塗り・線を undefined＝【触らない】印にして、粒の設定だけを運ぶ。
+  //   （null＝「なし」を貼る、undefined＝そこは触らない、を区別する）
+  const isGrain = !!it.__tsubu;
   styleClip = {
-    fill:   readPaint(it.fillColor),
-    stroke: readPaint(it.strokeColor),
+    fill:   isGrain ? undefined : readPaint(it.fillColor),
+    stroke: isGrain ? undefined : readPaint(it.strokeColor),
     sw: it.strokeWidth, cap: it.strokeCap, join: it.strokeJoin,
-    grain: it.__tsubu ? tzSettingsSnapshot() : null,   // ⭐ 粒なら設定もまるごと
+    grain: isGrain ? tzSettingsSnapshot() : null,   // ⭐ 粒なら設定もまるごと
   };
-  stat(it.__tsubu ? '粒の設定ごとコピー — 別の図形で右クリック→ペースト'
+  stat(it.__tsubu ? '粒の設定ごとコピー — 別の図形や文字を選んで右クリック→ペースト'
                   : '設定をコピー — 別の図形で右クリック→ペースト');
 }
 function pasteStyle(what){                    // what: 'both' | 'fill' | 'stroke'
@@ -3963,26 +3968,35 @@ function pasteStyle(what){                    // what: 'both' | 'fill' | 'stroke
   if(!sel.length){ stat('貼り付ける図形を選んでください'); return; }
   snapshot();
   sel.forEach(it => {
-    if(what !== 'stroke'){
+    // ⚠️ undefined＝コピー元が持っていなかった（粒）＝そこは触らない。null＝「なし」を貼る。
+    if(what !== 'stroke' && styleClip.fill !== undefined){
       const p = makePaint(styleClip.fill, it);
       it.fillColor = (p && p.gradient) ? new paper.Color(p) : (p || null);
     }
-    if(what !== 'fill'){
+    if(what !== 'fill' && styleClip.stroke !== undefined){
       const p = makePaint(styleClip.stroke, it);
       it.strokeColor = (p && p.gradient) ? new paper.Color(p) : (p || null);
       if(p){ it.strokeWidth = styleClip.sw || S.sw; it.strokeCap = styleClip.cap || 'round'; it.strokeJoin = styleClip.join || 'round'; }
     }
   });
-  // ⭐ 粒の設定があれば戻す。対象が粒ならその場で作り直し、粒でなければ
-  //   「粒にする」を押せば同じ質感になる（設定はもう入っている）。
-  let grained = false;
+  // ⭐ 粒の設定があれば戻す。
+  //   対象が粒 → その場で作り直す。
+  //   対象が粒でない（文字・図形）→ ⭐粒モードへ移して【下見を出す】。
+  //   ⚠️ 前は設定を入れるだけだったので画面が何も変わらず、
+  //     木下＝「粒の設定をテキストにコピーしようとしたけどできなかった」になっていた。
+  let grained = false, previewed = false;
   if(styleClip.grain && what !== 'stroke'){
     tzSettingsRestore(styleClip.grain);
     if(sel.some(it => it.__tsubu)){ retsubu(true); grained = true; }
+    else {
+      // ⚠️ 設定を戻した【あと】に切り替える。先に切り替えると古い設定で下見が作られる。
+      document.querySelector('#fillmode button[data-v="tsubu"]')?.click();
+      previewed = true;
+    }
   }
   guides();
   if(grained) stat('粒の設定ごとペースト — 同じ質感で作り直した');
-  else if(styleClip.grain) stat('粒の設定を入れた — 「粒にする」で同じ質感になる');
+  else if(previewed) stat('粒の設定をペースト — そのまま見えています。「粒にする」で確定');
   else stat({both:'設定をペースト', fill:'塗りをペースト', stroke:'線をペースト'}[what]);
 }
 
