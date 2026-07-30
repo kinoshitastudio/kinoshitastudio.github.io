@@ -2214,8 +2214,8 @@ function selDragBase(e){                          // ⚠️ 呼ぶのは台帳�
     guides(); return;
   }
   if(dragItem){
-    // ⭐ 下見を動かしたら、隠れている【元の形】も同じだけ動かす。
-    //   ⚠️ 下見だけ動かすと、preview を外したときに元が置いていかれて位置が戻る。
+    // ⭐ previewを動かしたら、隠れている【元の形】も同じだけ動かす。
+    //   ⚠️ previewだけ動かすと、preview を外したときに元が置いていかれて位置が戻る。
     selected().forEach(it => {
       it.position = it.position.add(d);
       const k = tzPv.temp.indexOf(it);
@@ -3278,23 +3278,11 @@ document.getElementById('bReset').onclick  = () => {
 document.getElementById('bFront').onclick = () => { snapshot(); selected().forEach(it => it.bringToFront()); };
 document.getElementById('bBack').onclick  = () => { snapshot(); selected().forEach(it => it.sendToBack()); };
 
-/* ══ 書き出し ══ */
-document.getElementById('bSVG').onclick = () => {
-  const keep = artLayer.children.map(c => c.selected);
-  artLayer.children.forEach(c => c.selected = false);
-  const svg = artLayer.exportSVG({ asString:true, bounds:'content', matchShapes:true });
-  artLayer.children.forEach((c,i) => c.selected = keep[i]);
-  dl(new Blob([svg], {type:'image/svg+xml'}), 'sakuji.svg');
-  stat('SVG 書き出し');
-};
-document.getElementById('bPNG').onclick = () => {
-  const keep = artLayer.children.map(c => c.selected);
-  artLayer.children.forEach(c => c.selected = false);
-  paper.view.update();
-  cv.toBlob(b => { dl(b, 'sakuji.png');
-    artLayer.children.forEach((c,i) => c.selected = keep[i]); });
-  stat('PNG 書き出し');
-};
+/* ⚠️ ここに【いちばん古い書き出し】があった（2026-07-31 に削除）。
+   枠もアートボードも無く artLayer を丸ごと出すだけのもので、
+   onclick は後に書いた方が勝つため一度も動いていなかった。
+   ⭐ 書き出しの本体は下の1本だけ（複数の枠・枠ごとの地色・文字の自動アウトライン化）。
+   ⚠️ 書き出しは【3セット】あった。足す前に同じ名前を探すこと。 */
 document.getElementById('bClear').onclick = () => { snapshot(); artLayer.removeChildren(); guides(); stat('CLEAR'); };
 
 /* ══ 保存・読み込み（続きから編集できる形）══ */
@@ -3303,8 +3291,14 @@ document.getElementById('bSave').onclick = () => {
   artLayer.children.forEach(c => c.selected = false);
   const data = {
     app:'sakuji', version:1, saved:new Date().toISOString(),
+    // ⚠️ ここが自動保存より欠けていた。枠（S.abs）もグラデのストップも保存していないので、
+    //   JSON に保存して読み込むと【枠が初期値に戻り、組んだグラデも失われる】。
+    //   ⭐ 自動保存（AUTOKEY）と同じ中身にそろえる。増やすときは両方に足すこと。
     settings:{ fill:S.fill, stroke:S.stroke, sw:S.sw, grid:S.grid, gtype:S.gtype,
-               face:S.face, div:S.div, body:S.body, bg:S.bg },
+               face:S.face, div:S.div, body:S.body, bg:S.bg,
+               fillMode:S.fillMode, stops:S.stops, target:S.target,
+               cap:S.cap, join:S.join, shape:S.shape,
+               abs:S.abs, abSel:S.abSel, abOn:S.abOn },
     art: artLayer.exportJSON()
   };
   artLayer.children.forEach((c,i) => c.selected = keep[i]);
@@ -3331,7 +3325,13 @@ document.getElementById('fileJSON').addEventListener('change', e => {
       });
       const gt = document.getElementById('gtype');
       if(s.gtype){ gt.value = s.gtype; gt.dispatchEvent(new Event('change')); }
-      setBG(s.bg || 'dark'); syncFS(); drawGrid(); guides();
+      // ⚠️ 既定を 'dark' にしていたので、板の色を保存していない古いファイルを読むと
+      //   いきなり黒い板になっていた。S の既定（light）と自動保存にそろえる。
+      setBG(s.bg || 'light'); syncFS();
+      // ⭐ 枠とストップも戻す（保存側に足したぶん）。
+      if(typeof abSync === 'function') abSync();
+      if(typeof refreshStops === 'function') refreshStops();
+      drawGrid(); guides();
       stat('読み込みました');
     }catch(err){ stat('読み込めませんでした：' + err.message); }
   };
@@ -3849,7 +3849,7 @@ function delSelected(){
   snapshot();
   const n = sel.length;
   sel.forEach(it => {
-    // ⭐ preview の下見を消すときは、隠れている元の形も一緒に消す（元だけ残らないように）
+    // ⭐ preview のpreviewを消すときは、隠れている元の形も一緒に消す（元だけ残らないように）
     const k = tzPv.temp.indexOf(it);
     if(k >= 0){
       const src = tzPv.base[k];
@@ -4237,8 +4237,8 @@ function pasteStyle(what){                    // what: 'both' | 'fill' | 'stroke
   });
   // ⭐ 粒の設定があれば戻す。対象が粒ならその場で作り直し、粒でなければ
   //   「粒にする」を押せば同じ質感になる（設定はもう入っている）。
-  // ⚠️⚠️ ここで【勝手に粒モードへ切り替えて下見を出す】ことを一度やったが、撤回した。
-  //   下見が出ている間はキャンバスの当たり判定が下見に移るので、
+  // ⚠️⚠️ ここで【勝手に粒モードへ切り替えてpreviewを出す】ことを一度やったが、撤回した。
+  //   previewが出ている間はキャンバスの当たり判定がpreviewに移るので、
   //   木下＝「テキストが選択されない・右クリックのペーストがグレーになる」になった。
   //   ⭐ ペーストは設定を運ぶところまで。かけるかどうかは木下が決める。
   let grained = false;
@@ -4617,85 +4617,18 @@ document.getElementById('bSVG').onclick = async () => {
   });
 };
 abSync();
-document.querySelectorAll('#abBgOn button').forEach(b =>
-  b.addEventListener('click', () => { S.ab.bgOn = b.dataset.v === '1'; abSync(); }));
-document.querySelectorAll('[data-ab]').forEach(b =>
-  b.addEventListener('click', () => {
-    const [w,h] = b.dataset.ab.split(',').map(Number);
-    S.ab.w = w; S.ab.h = h; abSync(); stat('枠を ' + w + ' × ' + h + ' に');
-  }));
-
-/* ══ 書き出し ══ */
-function exWhat(){ const b = document.querySelector('#exWhat button.on'); return b ? b.dataset.v : 'board'; }
-function exScale(){ const b = document.querySelector('#exScale button.on'); return b ? +b.dataset.v : 1; }
-document.querySelectorAll('#exWhat button, #exScale button').forEach(b =>
-  b.addEventListener('click', () => {
-    b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
-  }));
-
-function withCleanView(fn){                 // 選択の枠・ガイド・枡を外して撮る
-  const keep = artLayer.children.map(c => c.selected);
-  artLayer.children.forEach(c => c.selected = false);
-  const gv = gridLayer.visible, uv = uiLayer.visible;
-  gridLayer.visible = false; uiLayer.visible = false;
-  const done = () => {
-    gridLayer.visible = gv; uiLayer.visible = uv;
-    artLayer.children.forEach((c,i) => c.selected = keep[i]);
-    paper.view.update();
-  };
-  fn(done);
-}
-function exportRaster(mime, ext, quality){
-  const scale = exScale(), sel = exWhat() === 'sel';
-  const items = sel ? selected() : artLayer.children;
-  if(sel && !items.length){ stat('図形を選んでください'); return; }
-  const R = sel
-    ? items.reduce((a,it) => a ? a.unite(it.bounds) : it.bounds.clone(), null)
-    : abRect();
-  withCleanView(done => {
-    const bak = { size: paper.view.viewSize.clone(), zoom: paper.view.zoom, center: paper.view.center.clone() };
-    // ⚠️ view.center を動かすと枡も動くが、いま非表示なので影響しない
-    paper.view.viewSize = new paper.Size(Math.max(1, Math.round(R.width*scale)), Math.max(1, Math.round(R.height*scale)));
-    paper.view.zoom = scale;
-    paper.view.center = R.center;
-    paper.view.update();
-    const out = document.createElement('canvas');
-    out.width = cv.width; out.height = cv.height;
-    const g2 = out.getContext('2d');
-    if(S.ab.bgOn || mime === 'image/jpeg'){    // JPGは透明を持てないので必ず地を塗る
-      g2.fillStyle = S.ab.bgOn ? S.ab.bg : '#ffffff';
-      g2.fillRect(0, 0, out.width, out.height);
-    }
-    g2.drawImage(cv, 0, 0);
-    out.toBlob(b => {
-      dl(b, 'sakuji.' + ext);
-      paper.view.viewSize = bak.size; paper.view.zoom = bak.zoom; paper.view.center = bak.center;
-      done(); drawGrid();
-      stat(ext.toUpperCase() + ' を書き出し — ' + out.width + ' × ' + out.height);
-    }, mime, quality);
-  });
-}
-document.getElementById('bPNG').onclick = () => exportRaster('image/png', 'png');
-document.getElementById('bJPG')?.addEventListener('click', () => exportRaster('image/jpeg', 'jpg', 0.92));
-document.getElementById('bSVG').onclick = () => {
-  const sel = exWhat() === 'sel';
-  const items = sel ? selected() : null;
-  if(sel && (!items || !items.length)){ stat('図形を選んでください'); return; }
-  withCleanView(done => {
-    let svg;
-    if(sel){
-      const g = new Group(items.map(i => i.clone()));
-      svg = g.exportSVG({ asString:true, bounds:'content', matchShapes:true });
-      g.remove();
-    } else {
-      svg = artLayer.exportSVG({ asString:true, bounds:'content', matchShapes:true });
-    }
-    dl(new Blob([svg], {type:'image/svg+xml'}), 'sakuji.svg');
-    done();
-    stat('SVG を書き出し — グラデはベクターのまま入っています');
-  });
-};
-abSync();
+/* ⚠️⚠️ ここに【書き出しがもう1セット】あった（2026-07-31 に削除）。
+   exWhat / exScale / withCleanView / exportRaster / bPNG / bJPG / bSVG が二重にあり、
+   関数宣言も onclick 代入も【後に書いた方が勝つ】ので、下の古い方だけが動いていた。
+   🔴 その古い方は S.ab を読んでいたが、S にあるのは S.abs（枠は複数持てる）＝ S.ab は undefined。
+      → PNG / JPG は書き出しの途中で例外になって【落ちていた】。
+   🔴 SVG も古い方が勝っていたため
+      ・文字を一時アウトライン化する処理を通らず、文字のグラデが黒に落ちる
+      ・枠を見ずに artLayer 全部を出す（枠の外のものが入り、枠の大きさにならない）
+      ・「枠ぜんぶ」が効かず常に1枚だった
+   ⭐ 残したのは上の実装（複数の枠・枠ごとの地色・文字の自動アウトライン化）。
+   ⚠️ 同じ型を今日3つ踏んだ（dblclick の打ち直し・書き出し・1字と束ねの取り違え）。
+      足す前に同じ名前が無いか探すこと。 */
 
 
 /* ══ 選択したものを掴んで拡大・縮小する ══
@@ -4885,7 +4818,7 @@ document.querySelectorAll('#tvert button').forEach(b =>
    選択中のものがあれば、その場で組み直す（位置と選択は保つ）。 */
 let _tzReflowing = false;        // ⭐ 組み直し中＝「新しいものを置いた」ではない
 async function reflowSelectedText(changed){   // changed＝いま触ったスライダー/選択の id
-  // ⭐⭐ preview 中は【下見】が選ばれていて、元の文字は隠れている。
+  // ⭐⭐ preview 中は【preview】が選ばれていて、元の文字は隠れている。
   //   隠れている元を対象にすれば、粒を見ながら字間・行間・縦組を決められる。
   //   ⚠️ 確定したあとの粒は、もう文字ではないので組み直せない（イラレのアウトライン化と同じ）。
   // ⭐⭐ 確定したあとの粒でも、作り方を覚えていれば組み直せる。
@@ -4949,7 +4882,7 @@ async function reflowSelectedText(changed){   // changed＝いま触ったスラ
   }
   const wasPv = tzPv.on;
   // ⭐ いったん preview を畳んで、元の文字が見える状態に戻してから組み直す。
-  //   ⚠️ 下見を残したまま差し替えようとすると、対応がずれて下見が消える（前にそれで失敗した）。
+  //   ⚠️ previewを残したまま差し替えようとすると、対応がずれてpreviewが消える（前にそれで失敗した）。
   if(wasPv){ tzPvClear(); tzPvSafety(); }
   snapshot();
   _tzReflowing = true;
@@ -6020,8 +5953,8 @@ function tzHideInnerSelection(){
   artLayer.children.forEach(walk);
 }
 hook('guides', '粒の中のアンカーは出さない', () => tzHideInnerSelection());
-/* ⭐ 下見をそのまま「粒」として確定する（元の形を消して、見えているものを残す）。
-   ⚠️ 下見グループは tsubuize が作っているので、もう粒として完成している。
+/* ⭐ previewをそのまま「粒」として確定する（元の形を消して、見えているものを残す）。
+   ⚠️ previewグループは tsubuize が作っているので、もう粒として完成している。
      __isPv の印を外して、元の形を消せば確定になる。 */
 function tzCommitPreview(){
   let n = 0;
@@ -6043,7 +5976,7 @@ function tzCommitPreview(){
    ⚠️ 前に粒やグラデを使っていると、新規のものにも勝手にかかっていた
      （木下＝「テキストで打ち込みすると必ずグラデになっている」
        「新規でオブジェクトを立てた時はデフォルトにもどった方がよい」）。
-   ⚠️ ただし【見えていた下見は先に確定する】。黙って捨てると、
+   ⚠️ ただし【見えていたpreviewは先に確定する】。黙って捨てると、
      さっきまで画面に出ていた粒が消える＝木下が困っていた挙動そのものになる。 */
 function tzOnNewObject(){
   // ⚠️ 組み直し（字間・行間・縦組）は placeText を通るが、新規作成ではない。
@@ -6095,11 +6028,11 @@ function tzPvBuild(){
     return;
   }
   const o = tzOpt();
-  // ⭐⭐ 下見は【対象ごとに持つ】。
+  // ⭐⭐ previewは【対象ごとに持つ】。
   //   ⚠️ これまでは対象が変わるたびに全部消して作り直していたので、
-  //     新しい図形を作った瞬間に前の図形の下見が消え、「粒にする」でも救えなかった
+  //     新しい図形を作った瞬間に前の図形のpreviewが消え、「粒にする」でも救えなかった
   //     ＝木下の「B には粒ができるが A の粒はなくなる」。
-  //   ⭐ 選び直しても、前に見えていた下見はそのまま残す。消えるのは preview を外したときだけ。
+  //   ⭐ 選び直しても、前に見えていたpreviewはそのまま残す。消えるのは preview を外したときだけ。
   //   ⚠️ 死んだ参照（消された図形）は先に落とす。
   for(let k = tzPv.base.length - 1; k >= 0; k--){
     const bad = !tzPv.base[k] || !tzPv.base[k].parent;
@@ -6127,7 +6060,7 @@ function tzPvBuild(){
     if(ng){
       ng.insertAbove(it);
       ng.__isPv = true;
-      ng.selected = false;                       // ⭐ 下見に選択の点を出さない（粒が見えなくなる）
+      ng.selected = false;                       // ⭐ previewに選択の点を出さない（粒が見えなくなる）
       it.visible = false; it.__pvHidden = true;
       if(k >= 0) tzPv.temp[k] = ng; else { tzPv.base.push(it); tzPv.temp.push(ng); }
     }
