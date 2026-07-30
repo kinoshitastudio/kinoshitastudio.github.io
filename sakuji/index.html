@@ -1732,6 +1732,15 @@ function gradUp(){ gradTargets = null; gradFrom = null; guides(); }
 
 /* ══ 選択／ダイレクト選択 ══ */
 let dragItem = null, dragSeg = null, dragHandle = null, dragStart = null;
+/* ⭐ 粒グループの中の粒に当たったら、そのグループを返す（粒は1個ずつ触るものではない） */
+function tzRootOf(item){
+  let n = item;
+  while(n && n !== artLayer){
+    if(n.__tsubu) return n;
+    n = n.parent;
+  }
+  return item;
+}
 function hit(point){
   const tol = 11/paper.view.zoom;
   // ロック・非表示の図形は掴めないようにする
@@ -1758,7 +1767,11 @@ function selDownBase(e){                          // ⚠️ 呼ぶのは台帳�
     if(!e.modifiers.shift) artLayer.children.forEach(c=>c.selected=false);
     marqueeStart = e.point; guides(); return;
   }
-  const item = h.item;
+  // ⭐ 粒に当たったら【グループごと】掴む。
+  //   ⚠️ hitTest はいちばん奥のもの（粒1個の矩形）を返すので、そのままだと
+  //     粒1個だけが選ばれて1個だけ動いていた＝「選択できない」「移動が少ししかできない」。
+  //     さらに guides が粒の中の選択を落とすので、選択そのものが消えて見えていた。
+  const item = tzRootOf(h.item);
   if(S.tool === 'direct'){
     item.selected = true;
     if(h.type === 'segment'){ dragSeg = h.segment; dragSeg.__from = h.segment.point.clone(); }
@@ -1768,6 +1781,10 @@ function selDownBase(e){                          // ⚠️ 呼ぶのは台帳�
     if(!e.modifiers.shift) artLayer.children.forEach(c=>c.selected=false);
     item.selected = true; dragItem = item; dragStart = e.point;
   }
+  // ⭐ 選んだ直後にガイドを描き直す。
+  //   ⚠️ 粒グループを選ぶと paper が子全部に選択を配るので、ここを通さないと
+  //     粒の数だけ青い点が出て中身が見えなくなる（台帳の hook がその掃除をしている）。
+  guides();
 }
 function selDragBase(e){                          // ⚠️ 呼ぶのは台帳の selDrag から（直接呼ばない）
   // 範囲選択：ドラッグ中は点線の矩形を出し、触れた図形を選ぶ
@@ -1813,7 +1830,16 @@ function selDragBase(e){                          // ⚠️ 呼ぶのは台帳�
     }
     guides(); return;
   }
-  if(dragItem){ selected().forEach(it => it.position = it.position.add(d)); guides(); }
+  if(dragItem){
+    // ⭐ 下見を動かしたら、隠れている【元の形】も同じだけ動かす。
+    //   ⚠️ 下見だけ動かすと、preview を外したときに元が置いていかれて位置が戻る。
+    selected().forEach(it => {
+      it.position = it.position.add(d);
+      const k = tzPv.temp.indexOf(it);
+      if(k >= 0 && tzPv.base[k] && tzPv.base[k].parent) tzPv.base[k].position = tzPv.base[k].position.add(d);
+    });
+    guides();
+  }
 }
 function selUp(){
   if(marqueeStart){
@@ -3841,6 +3867,9 @@ function autoSave(){
         art: artLayer.exportJSON({ asString:true }),
       };
       artLayer.children.forEach((c,i) => c.selected = keep[i]);
+      // ⚠️ 選択を戻すと、粒グループから【子全部へ選択が再伝播】する（paper.js の仕様）。
+      //   放っておくと粒の数だけ青い点が出て中身が見えなくなる。戻した直後に掃除する。
+      if(typeof tzHideInnerSelection === 'function') tzHideInnerSelection();
       localStorage.setItem(AUTOKEY, JSON.stringify(data));
     }catch(e){ /* 容量超過などは黙って諦める（作業は止めない） */ }
   }, 800);
