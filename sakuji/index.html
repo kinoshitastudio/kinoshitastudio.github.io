@@ -2202,6 +2202,18 @@ function selDownBase(e){                          // ⚠️ 呼ぶのは台帳�
   //   ⚠️ これが無いと、あとで別の字を打ったあとに古い粒を組み直したとき、
   //     書体や大きさが勝手に変わって驚く。
   if(item.__tzText) tzRecipeToPanel(item.__tzText);
+  /* ⭐⭐ 粒を選んだら、パネルも【その粒の状態】にする。
+     ⚠️ 塗りモードが「単色」のままだと、続きを調整しようとして「粒」を押すことになるが、
+       それは【新しくかけ直す】操作なので作り直しになる
+       （木下＝「パネルが粒になっていないから、もう一度粒をおすとあらためて作り直しされる状態」）。
+     ⚠️ この時点で選択は __tsubu を持つので、粒モードに入っても preview は作られない。
+     ⚠️ かけたときの設定（__tzOpt）も戻す＝スライダーがその粒の値になる。
+       これが無いと、触った瞬間に別の質感へ飛ぶ。 */
+  if(item.__tsubu){
+    if(item.__tzOpt && typeof tzSettingsRestore === 'function') tzSettingsRestore(item.__tzOpt);
+    if(S.fillMode !== 'tsubu')
+      document.querySelector('#fillmode button[data-v="tsubu"]')?.click();
+  }
   // ⭐ 選んだ直後にガイドを描き直す。
   //   ⚠️ 粒グループを選ぶと paper が子全部に選択を配るので、ここを通さないと
   //     粒の数だけ青い点が出て中身が見えなくなる（台帳の hook がその掃除をしている）。
@@ -4443,6 +4455,17 @@ let _saveWarned = false;      // 自動保存の失敗を知らせたか（毎�
    ⚠️⚠️ 粒を一時的に artLayer から外して JSON を取り、【必ず元の位置へ戻す】。
       戻し損ねると画面から粒が消えるので、finally で戻す。 */
 function exportArtWithoutGrains(){
+  /* ⚠️⚠️ preview の最中は、見えている粒は【まだ仮】で、元の形は隠してある。
+     その印（__isPv / __pvHidden）は独自プロパティなので保存されない。
+     そのまま保存すると、開いたときに【仮の粒】と【非表示のまま戻せない元】が両方残る
+     （木下のスクショ＝レイヤーに『文字「粒」』が非表示・ロックで居座っていた）。
+     ⭐ 保存には preview を含めない。仮の粒は外し、隠した元は表示を戻して書き出す。
+     ⚠️ 先に preview を片付ける＝仮の粒が下の「粒抜き」に混ざらないように。 */
+  const pv = [];
+  artLayer.children.slice().forEach(c => {
+    if(c.__isPv){ pv.push({ kind:'temp', item:c, z:c.index }); c.remove(); }
+    else if(c.__pvHidden){ pv.push({ kind:'hidden', item:c }); c.visible = true; }
+  });
   const pulled = [];
   artLayer.children.slice().forEach(c => {
     if(!c.__tsubu) return;
@@ -4467,6 +4490,11 @@ function exportArtWithoutGrains(){
     // ⚠️ 重ね順を保って戻す（z の小さい順に入れ直す）
     pulled.slice().sort((a,b) => a.z - b.z)
       .forEach(p => artLayer.insertChild(Math.min(p.z, artLayer.children.length), p.item));
+    // ⚠️ preview も画面上の見え方へ戻す（保存に含めなかっただけで、作業は続いている）
+    pv.forEach(p => {
+      if(p.kind === 'hidden') p.item.visible = false;
+      else artLayer.insertChild(Math.min(p.z, artLayer.children.length), p.item);
+    });
   }
   return { art, grains: pulled.map(({ item, z, ...rest }) => ({ z, ...rest })) };
 }
@@ -4585,6 +4613,19 @@ abSync();
     // ⭐ 粒は【作り方】から作り直す。⚠️ 古い保存（粒が art に入っている形）には grains が
     //   無いので、その場合は何もしない＝今まで通り実体がそのまま出る（後方互換）。
     if(d.grains && d.grains.length) rebuildGrains(d.grains);
+    /* ⭐ 取り残しの救済。preview 中に保存された古いデータには、
+       【非表示・ロックのまま戻せない元の形】が入っている（印が保存されないため）。
+       ⚠️ 勝手に消すと作った字が消えるので、消さずに【触れる状態に戻す】だけにする。
+       ⚠️ 条件は【非表示 かつ ロック】の両方。下敷き（トレース）はロックするが
+          見せるものなので表示されており、ここには引っかからない。 */
+    let freed = 0;
+    artLayer.children.forEach(c => {
+      if(c.visible === false && c.locked){ c.visible = true; c.locked = false; freed++; }
+    });
+    if(freed){
+      renderLayers && renderLayers();
+      stat('隠れたまま取り残されていた ' + freed + '個を、触れる状態に戻した');
+    }
     return true;
   }catch(e){ return false; }
 }
