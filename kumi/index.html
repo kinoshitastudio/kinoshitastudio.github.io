@@ -385,9 +385,12 @@
     <div class="unit-body">
       <div class="row"><label>マス</label><input type="range" data-p="kumiCols" min="3" max="40" step="1" value="12"><span class="val"></span></div>
       <div class="row"><label>詰め</label><input type="range" data-p="kumiFit" min="30" max="130" step="1" value="88"><span class="val"></span></div>
+      <div class="row"><label>図形へ</label><input type="range" data-p="kumiShape" min="0" max="100" step="1" value="0"><span class="val"></span></div>
       <div class="mod">⭐字が<b>格子に嵌まる</b>（浮遊の対）<br>
         ⭐<b>漢字は2マス</b>、かな・カナは1マス＝日本語の3層が組版のリズムになる<br>
-        マス = 1行のマス数／詰め = マスに対する字の大きさ</div>
+        マス = 1行のマス数／詰め = マスに対する字の大きさ<br>
+        ⭐<b>図形へ</b> = 字が図形に崩れる。<b>漢字は四角・かなは丸・カナは三角</b><br>
+        ⚠️途中で止めると<b>字でも図形でもないもの</b>になる</div>
     </div>
   </div>
 
@@ -606,7 +609,7 @@ const P = {
   nTrack:40, nAudio:35, nNoise:0, nGrain:2,
   paper:0xf4f2ee,
   /* ⭐ KUMI（組む）＝字を格子に嵌める。浮遊の対 */
-  kumi:0, kumiCols:12, kumiFit:88,
+  kumi:0, kumiCols:12, kumiFit:88, kumiShape:0,
 };
 /* ⭐⭐ 刷り ── 紙とインクを【組】で持つ。
    ⚠️ 地と図の色がバラバラだと、字が地の上に浮いて見える
@@ -671,8 +674,10 @@ const ENGINES = [
 
   /* ⭐ KUMI（組む）── 格子に嵌める。⚠️ 配置なので layout() を通す（毎フレームではない） */
   { id:'kumi', jp:'組む',
-    apply(){ if(P.kumi !== 1){ P.kumi = 1; layout(); } },
-    bypass(){ if(P.kumi !== 0){ P.kumi = 0; layout(); } } },
+    apply(U){ if(P.kumi !== 1){ P.kumi = 1; layout(); }
+              U.ink.uShape.value = P.kumiShape / 100; },
+    bypass(U){ if(P.kumi !== 0){ P.kumi = 0; layout(); }
+              U.ink.uShape.value = 0; } },
 
   { id:'sort', jp:'分ける',
     apply(U){ for(let i=0;i<4;i++) U.ink.uMute.value[i] = MUTE[i] ? 1 : 0; },
@@ -807,7 +812,11 @@ function placeCamera(){
 const FONTS = ['"Zen Kaku Gothic New"', '"Shippori Mincho"', '"Zen Old Mincho"',
                '"Zen Maru Gothic"', '"Zen Antique"'];
 const FONT_W = [500, 600, 600, 900, 400];   // 書体ごとの太さ
-const CELL = 96;
+/* ⭐ 字を焼くマスの大きさ。⚠️ 96 だと拡大したときにぼける
+   （木下＝「ズームにすると字がぼけている」）。字はここに焼いた絵なので、
+   焼いた解像度より大きく出すと必ず甘くなる。
+   ⚠️ 上げるほどテクスチャが重くなる（字数×CELL²）。192 で4倍の面積。 */
+const CELL = 192;
 let atlasTex = null, atlasMap = new Map(), atlasCols = 0;
 
 function buildAtlas(chars){
@@ -831,9 +840,13 @@ function buildAtlas(chars){
 
   if(atlasTex) atlasTex.dispose();
   atlasTex = new THREE.CanvasTexture(cv);
-  atlasTex.minFilter = THREE.LinearFilter;
+  /* ⭐ 拡大時は線形、縮小時はミップマップ＝ぼけとちらつきの両方を抑える。
+     ⚠️ ここは元から minFilter/generateMipmaps を指定していた。あとから足すと
+        【後の行が勝って効かない】ので、1箇所にまとめる（同じ設定を2度書かない）。 */
+  atlasTex.minFilter = THREE.LinearMipmapLinearFilter;
   atlasTex.magFilter = THREE.LinearFilter;
-  atlasTex.generateMipmaps = false;
+  atlasTex.generateMipmaps = true;
+  atlasTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   atlasTex.flipY = false;              // ⚠️ これを切らないと別の字が貼られる
   inkUniforms.tAtlas.value = atlasTex;
   inkUniforms.uAtlasGrid.value.set(atlasCols, rows);
@@ -857,6 +870,7 @@ const inkUniforms = {
   uLean:      { value:0 },
   uSpeed:     { value:[1,1,1,1] },
   uMute:      { value:[0,0,0,0] },
+  uShape:     { value:0 },     // ⭐ 字を図形へ崩す量
 };
 
 const inkMaterial = new THREE.ShaderMaterial({
@@ -878,6 +892,7 @@ const inkMaterial = new THREE.ShaderMaterial({
 
     varying vec2  vUv;
     varying float vTrack;
+    varying vec2  vCell;
     varying float vMute;
 
     float hash(float n){ return fract(sin(n * 78.233) * 43758.5453); }
@@ -964,18 +979,33 @@ const inkMaterial = new THREE.ShaderMaterial({
       // aCorner.y は上が +。テクスチャの V は上から下なので反転して数える
       vUv = vec2(aCell.x + aCorner.x + 0.5,
                  aCell.y + (0.5 - aCorner.y)) / uAtlasGrid;
+      vCell = aCorner;                 // ⭐ マスの中の座標（-0.5〜0.5）。図形を描くのに使う
       gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
     }
   `,
   fragmentShader:`
     precision highp float;
     uniform sampler2D tAtlas;
+    uniform float uShape;
     varying vec2  vUv;
     varying float vTrack;
+    varying vec2  vCell;
     varying float vMute;
     void main(){
       if(vMute > 0.5) discard;
       float ink = texture2D(tAtlas, vUv).r;
+      /* ⭐⭐ 字を【図形へ崩す】。⚠️ 字と別に図形を置くのではなく、同じマスの中で
+         字と図形を混ぜる＝行き来できる。参考画像の「字でも図形でもないもの」に近づく。
+         ⚠️ 層ごとに図形を変える＝漢字は四角、かなは丸、カナは三角（3層＝3つの形）。 */
+      if(uShape > 0.001){
+        vec2 c = vCell;                       // マスの中（-0.5〜0.5）
+        float g;
+        if(vTrack < 0.5)      g = step(max(abs(c.x), abs(c.y)), 0.42);          // 漢字＝四角
+        else if(vTrack < 1.5) g = step(length(c), 0.44);                        // かな＝丸
+        else if(vTrack < 2.5) g = step(c.y * 0.9 + abs(c.x) * 1.6, 0.30);       // カナ＝三角
+        else                  g = step(abs(c.x) + abs(c.y), 0.40);              // 約物＝菱形
+        ink = mix(ink, g, uShape);
+      }
       if(ink < 0.04) discard;
       // ⭐ 版の契約：R = インク量 / GB = 法線xy / A = トラックID
       gl_FragColor = vec4(ink, 0.5, 0.5, (vTrack + 0.5) / 4.0);
@@ -1637,7 +1667,10 @@ shiftRows.forEach(r => r.addEventListener('input', () => {
 
 document.querySelectorAll('#tracks .tk').forEach(tk => {
   const i = +tk.dataset.tk;
-  tk.addEventListener('click', () => {
+  /* ⚠️ タッチでは click が dblclick の判定待ちで遅れる／握り潰されることがある
+     （木下＝「モバイルで sort それぞれ押す、選択にはならない」）。
+     ⭐ pointerdown で即座に選ぶ。⚠️ ダブルタップのミュートは残す。 */
+  tk.addEventListener('pointerdown', () => {
     SEL = i;
     document.querySelectorAll('#tracks .tk').forEach(x => x.classList.remove('sel'));
     tk.classList.add('sel');
