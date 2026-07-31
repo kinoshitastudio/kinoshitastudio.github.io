@@ -488,9 +488,10 @@
       <div class="seg" data-seg="nuriMode">
         <button data-v="1">グラデ</button>
         <button data-v="2" class="on">粒</button>
+        <button data-v="3">リソ</button>
       </div>
-      <div class="row"><label>波色</label><input type="color" data-c="nuriA" value="#e9201c"></div>
-      <div class="row"><label>球色</label><input type="color" data-c="nuriB" value="#2434ff"></div>
+      <div class="row"><label>1色目</label><input type="color" data-c="nuriA" value="#e9201c"></div>
+      <div class="row"><label>2色目</label><input type="color" data-c="nuriB" value="#2434ff"></div>
       <div class="row"><label>RES</label><input type="range" data-p="nRes" min="6" max="96" step="1" value="28"><span class="val"></span></div>
       <div class="row"><label>WAVE</label><input type="range" data-p="nWav" min="2" max="240" step="1" value="60"><span class="val"></span></div>
       <div class="row"><label>BANDS</label><input type="range" data-p="nBands" min="1" max="24" step="1" value="6"><span class="val"></span></div>
@@ -500,9 +501,13 @@
       <div class="row"><label>SHINE</label><input type="range" data-p="nShine" min="0" max="100" step="1" value="60"><span class="val"></span></div>
       <div class="row"><label>TRACK</label><input type="range" data-p="nTrack" min="0" max="100" step="1" value="40"><span class="val"></span></div>
       <div class="row"><label>AUDIO</label><input type="range" data-p="nAudio" min="0" max="100" step="1" value="35"><span class="val"></span></div>
-      <div class="mod">⭐TRACK = 漢字・かな・カナに<b>別々の粒</b>がかかる<br>
-        ⭐AUDIO = その3層が<b>低音・中音・高音で揺れる</b>（01 AUDIO を点ける）<br>
-        VALLEY 0 = 谷が波色の暗い版（濁らない）／SHINE = 稜線の照り</div>
+      <div class="row"><label>NOISE</label><input type="range" data-p="nNoise" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+      <div class="row"><label>GRAIN</label><input type="range" data-p="nGrain" min="1" max="8" step="1" value="2"><span class="val"></span></div>
+      <div class="mod">⭐3つは<b>同じ土台の3段階</b>。土台＝位置に沿って引いた断面<br>
+        グラデ＝そのまま／粒＝格子で<b>マスごとに一色</b>（8bit）／リソ＝<b>インクの粒</b>で刷る<br>
+        ⭐TRACK = 漢字・かな・カナで<b>版がずれる</b>（3層＝3版＝多色刷り）<br>
+        ⭐AUDIO = その3版が<b>低音・中音・高音で揺れる</b>（01 AUDIO を点ける）<br>
+        波色→球色 = 断面が渡る2色／NOISE = 紙にインクが乗った粒／GRAIN = その粗さ</div>
     </div>
   </div>
 </div>
@@ -555,7 +560,7 @@ const P = {
      ⚠️ 色は TSUBU の既定（波色 #e9201c ／ 球色 #2434ff）と揃える＝道具をまたいで同じ音。 */
   nuriMode:2, nuriA:0xe9201c, nuriB:0x2434ff,
   nValley:0, nGrad:0, nShine:60, nRes:28, nWav:60, nDir:0, nBands:6,
-  nTrack:40, nAudio:35,
+  nTrack:40, nAudio:35, nNoise:0, nGrain:2,
 };
 const ON = { audio:false, text:true, sort:true, shift:true, iki:true,
              bleed:false, tape:true, tint:false, nuri:false };
@@ -699,6 +704,8 @@ const ENGINES = [
       U.post.uNBands.value  = P.nBands;
       U.post.uNTrack.value  = P.nTrack / 100;
       U.post.uNAudio.value  = P.nAudio / 100;
+      U.post.uNNoise.value  = P.nNoise / 100;
+      U.post.uNGrain.value  = P.nGrain;
       U.post.uTk.value.set(M.tk[0], M.tk[1], M.tk[2], M.tk[3]);
     },
     bypass(U){ U.post.uNuri.value = 0; } },
@@ -1047,6 +1054,7 @@ const postUniforms = {
   uNB:{value:new THREE.Color(0x2434ff)},   // 球色
   uNValley:{value:0}, uNGrad:{value:0}, uNShine:{value:.6},
   uNRes:{value:28}, uNWav:{value:.6}, uNDir:{value:0}, uNBands:{value:6},
+  uNNoise:{value:0}, uNGrain:{value:2.0},   // ⭐ インクの粒（リソグラフ）と、その粗さ
   uNTrack:{value:0},               // 層ごとに変える量（0=同じ）
   uNAudio:{value:0},               // 音で揺れる量
   uTk:{value:new THREE.Vector4(0,0,0,0)},  // 低音・中音・高音・キック
@@ -1064,6 +1072,7 @@ postScene.add(new THREE.Mesh(fsQuad, new THREE.ShaderMaterial({
        ここに宣言が無いとフラグメントシェーダがコンパイルできず【画面が真っ黒】になる。
        ⚠️ WebGL は黙って落ちるので、書いたら必ずコンパイルを実測すること。 */
     uniform float uNuri, uNValley, uNGrad, uNShine, uNRes, uNWav, uNDir, uNBands, uNTrack, uNAudio;
+    uniform float uNNoise, uNGrain;
     uniform vec3  uNA, uNB;
     uniform vec4  uTk;
     varying vec2 vUv;
@@ -1138,38 +1147,49 @@ postScene.add(new THREE.Mesh(fsQuad, new THREE.ShaderMaterial({
         bg = mix(bg, hsv2rgb(vec3(fract(uBg), uBgSat, uInvert > 0.5 ? 0.30 : 0.94)), uBgSat);
       }
 
-      /* ⭐⭐ NURI（塗る）── 字の中を、グラデか粒で塗る。
-         ⭐ ここが KUMI にしかない所＝【層ごとに別々】で、しかも【音で揺れる】。
-            tk は 漢字＝低音／かな＝中音／カナ＝高音 で既にそう作られている。
-         ⚠️ 字のある所（v）だけに乗せる。地には出さない。 */
+      /* ⭐⭐ NURI（塗る）── 字の中を塗る。
+         ⭐⭐ 3つのモードは【同じ土台の上の3段階】。
+            土台＝位置に沿って引いたグラデ（t）。それを
+              グラデ … そのまま滑らかに
+              粒     … 格子で量子化＝マスごとに一色（8bit）
+              リソ   … インクの粒でばらけさせる（孔版・多色刷り）
+         🔴 前は【字の濃さ v】でランプを引いていた。字の内側は v がほぼ一定なので
+            べた塗りになり、木下＝「グラデはグラデじゃないしね」。位置で引くのが正しい。
+         ⭐ KUMI にしかない所＝層（漢字・かな・カナ）ごとに【版がずれる】。
+            ⚠️ 3層＝3版＝リソグラフの多色刷りそのもの。ここが SAKUJI と別物になる理由。 */
       if(uNuri > 0.5 && v > 0.004){
-        int ti = int(floor(track + 0.5));
+        int   ti  = int(floor(track + 0.5));
         float lvl = ti == 0 ? uTk.x : ti == 1 ? uTk.y : ti == 2 ? uTk.z : uTk.w;
-        // ⭐ 層ごとにずらす（TRACK 0 なら全部同じ）＋ 音で揺れる
-        float tOff = float(ti) * uNTrack;
-        float wav  = max(0.02, uNWav * (1.0 + tOff * 0.6) + lvl * uNAudio * 1.2);
-        float ph   = tOff * 2.0 + lvl * uNAudio * 6.2831853;
-        float ang  = radians(uNDir) + tOff * 0.6;
-        vec2  d    = vec2(cos(ang), sin(ang));
-        vec3  A    = mix(uNA, uNB, clamp(tOff * 0.5, 0.0, 1.0));
-        float contrast = 1.0;
+        float tf  = float(ti);
 
-        vec3 col;
-        if(uNuri > 1.5){
-          /* 粒 ── 画面を格子に割り、粒の中で波が完結する。
-             ⚠️ 粒の入口〜出口を滑らかに繋ぐと粒が消えてただのグラデになる。
-                【粒の中で完結し、境界で位相が切り替わる】ことが 8bit らしさそのもの。 */
-          vec2 g  = vUv * uRes / max(uRes.y, 1.0) * uNRes;   // 正方の格子
-          vec2 ij = floor(g);
-          vec2 f  = fract(g);
-          float cell = dot(ij, d) * wav + ph;                // 粒ごとの位相
-          float u    = dot(f - 0.5, d) + 0.5;                // 粒の中の座標
-          float w    = 0.5 + 0.5 * cos((u * wav + cell) * 6.2831853);
-          col = nBand(w, A, uNValley, uNGrad, uNShine, contrast);
-        } else {
-          /* グラデ ── 字の濃さ（v）に沿って断面を引く。帯の数＝BANDS */
-          float w = 0.5 + 0.5 * cos((v * uNBands + ph) * 6.2831853);
-          col = nBand(w, A, uNValley, uNGrad, uNShine, contrast);
+        // ⭐ 版ずれ＝層ごとに向きと位相をずらす。音でさらに揺れる
+        float ang = radians(uNDir) + tf * uNTrack * 1.2;
+        vec2  d   = vec2(cos(ang), sin(ang));
+        float ph  = tf * uNTrack * 2.0 + lvl * uNAudio * 6.2831853;
+
+        // ⭐ 土台＝位置に沿った 0〜1（画面を横切る）。ここが「グラデ」の実体
+        vec2  q = (vUv - 0.5) * vec2(uRes.x / max(uRes.y,1.0), 1.0);
+        float t = dot(q, d) + 0.5;
+        // ⭐ 版ずれ＝層ごとに位置そのものをずらす（リソの刷りずれ）
+        t += tf * uNTrack * 0.08 + lvl * uNAudio * 0.12;
+
+        if(uNuri > 1.5 && uNuri < 2.5){
+          // 粒 ── 格子で量子化＝マスごとに一色。⚠️ 粒の中で色が変わると粒に見えない
+          vec2 cell = floor(vUv * uRes / max(uRes.y,1.0) * uNRes);
+          t = dot(cell / uNRes, d) + 0.5 + tf * uNTrack * 0.08;
+        }
+
+        // ⭐ 帯の数だけ波が走る＝断面（TSUBU / MAKU / SAKUJI と同じ式）
+        float w = 0.5 + 0.5 * cos((t * uNBands + ph) * 6.2831853);
+        vec3  A = mix(uNA, uNB, clamp(w * 0.5 + tf * uNTrack * 0.35, 0.0, 1.0));
+        vec3  col = nBand(w, A, uNValley, uNGrad, uNShine, 1.0);
+
+        // ⭐ リソ ── インクの粒。⚠️ 版ごとに種を変える＝2版が別々に粒立つ
+        if(uNNoise > 0.001){
+          float n = hash(floor(vUv * uRes / max(uNGrain, 0.5)) + tf * 37.0);
+          col = mix(col, col * (0.55 + n * 0.9), uNNoise);
+          // 紙目＝粒が薄い所ではインクが乗らない（孔版の抜け）
+          if(n < uNNoise * 0.30) col = mix(col, bg, (uNNoise - n) * 1.6);
         }
         fg = col;
       }
