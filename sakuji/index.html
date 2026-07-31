@@ -3341,7 +3341,8 @@ document.getElementById('bSave').onclick = () => {
                //   ⚠️ 入れていなかったので、開き直すと粒パネルが既定に戻っていた
                //     （かけた粒そのものは図形として残るが、続きの調整ができない）。
                tz: (typeof tzSettingsSnapshot === 'function') ? tzSettingsSnapshot() : null },
-    art: artLayer.exportJSON()
+    // ⭐ 自動保存と同じく【粒抜き＋作り方】で書き出す。増やすときは両方に足すこと。
+    ...(() => { const r = exportArtWithoutGrains(); return { art: r.art, grains: r.grains }; })(),
   };
   artLayer.children.forEach((c,i) => c.selected = keep[i]);
   dl(new Blob([JSON.stringify(data)], {type:'application/json'}), 'sakuji.json');
@@ -3373,8 +3374,11 @@ document.getElementById('fileJSON').addEventListener('change', e => {
       // ⭐ 枠とストップも戻す（保存側に足したぶん）。
       if(typeof abSync === 'function') abSync();
       if(typeof refreshStops === 'function') refreshStops();
+      if(s.tz && typeof tzSettingsRestore === 'function') tzSettingsRestore(s.tz);
       drawGrid(); guides();
       stat('読み込みました');
+      // ⭐ 粒は【作り方】から作り直す。古いファイル（grains が無い）はそのまま実体が入っている
+      if(d.grains && d.grains.length) rebuildGrains(d.grains);
     }catch(err){ stat('読み込めませんでした：' + err.message); }
   };
   rd.readAsText(f);
@@ -4426,6 +4430,47 @@ const AUTOKEY = 'sakuji_autosave_v1';
 const AUTOKEY_OLD = 'sakuji_grad_tk_autosave_v1';
 let _saveTimer = null;
 let _saveWarned = false;      // 自動保存の失敗を知らせたか（毎回出すと邪魔なので1回だけ）
+
+/* ⭐⭐ 保存用に、artLayer を【粒抜き】で書き出す。
+   ⚠️ 粒は 1粒＝1つのパスなので、解像56 の字ひとつで JSON が約1MB になる。
+      localStorage は 5MB 程度しかないので、数文字置いただけで保存できなくなる
+      （今までは失敗を握り潰していたので、保存されているように見えていた）。
+   ⚠️ それに paper.js の exportJSON は独自プロパティ（__tzText など）を保存しないので、
+      どのみち【作り方】は別に持ち出す必要がある。リロードすると粒は見えても
+      「ただのパスの集まり」になり、打ち直しも組み直しもできなくなっていた。
+   ⭐ だから粒は実体を保存せず、作り方（元の形・組み方・粒の設定）だけを残して、
+      開くときに作り直す。
+   ⚠️⚠️ 粒を一時的に artLayer から外して JSON を取り、【必ず元の位置へ戻す】。
+      戻し損ねると画面から粒が消えるので、finally で戻す。 */
+function exportArtWithoutGrains(){
+  const pulled = [];
+  artLayer.children.slice().forEach(c => {
+    if(!c.__tsubu) return;
+    // ⚠️⚠️ 元の形を覚えていない粒は【作り直せない】。外して保存すると開いたときに消える。
+    //   そういう粒は今まで通り実体のまま保存する（重くなるが、消えるよりずっといい）。
+    if(!c.__tsubu.json) return;
+    pulled.push({
+      z: c.index,
+      at: [c.position.x, c.position.y],
+      src:  c.__tsubu.json || null,     // 粒をかける前の形
+      text: c.__tzText || null,         // 文字から作ったなら、その組み方
+      at2:  c.__tzAt ? [c.__tzAt.x, c.__tzAt.y] : null,
+      opt:  c.__tzOpt || null,          // かけたときの粒の設定
+      item: c,
+    });
+  });
+  let art;
+  try{
+    pulled.forEach(p => p.item.remove());
+    art = artLayer.exportJSON({ asString:true });
+  } finally {
+    // ⚠️ 重ね順を保って戻す（z の小さい順に入れ直す）
+    pulled.slice().sort((a,b) => a.z - b.z)
+      .forEach(p => artLayer.insertChild(Math.min(p.z, artLayer.children.length), p.item));
+  }
+  return { art, grains: pulled.map(({ item, z, ...rest }) => ({ z, ...rest })) };
+}
+
 function autoSave(){
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(() => {
@@ -4443,7 +4488,7 @@ function autoSave(){
                //   ⚠️ 入れていなかったので、開き直すと粒パネルが既定に戻っていた
                //     （かけた粒そのものは図形として残るが、続きの調整ができない）。
                tz: (typeof tzSettingsSnapshot === 'function') ? tzSettingsSnapshot() : null },
-        art: artLayer.exportJSON({ asString:true }),
+        ...(() => { const r = exportArtWithoutGrains(); return { art: r.art, grains: r.grains }; })(),
       };
       artLayer.children.forEach((c,i) => c.selected = keep[i]);
       // ⚠️ 選択を戻すと、粒グループから【子全部へ選択が再伝播】する（paper.js の仕様）。
@@ -4464,6 +4509,51 @@ function autoSave(){
 }
 /* guides() に相乗りさせる */
 hook('guides', '自動保存', () => autoSave());
+
+/* ⭐⭐ 保存してあった【作り方】から粒を作り直す。
+   ⚠️ 実体を保存しないぶん、開くときにここで時間がかかる（解像を上げているほど）。
+      粒の数だけパスを作るので、待っている間に触られないよう先に知らせる。
+   ⚠️ かけたときの設定（opt）でかけ直す。いまパネルに出ている値ではない
+      ＝開いただけで質感が変わってしまわないように。終わったらパネルは元へ戻す。 */
+function rebuildGrains(list){
+  const bak = (typeof tzSettingsSnapshot === 'function') ? tzSettingsSnapshot() : null;
+  let made = 0, failed = 0;
+  if(list.length > 1) stat('粒を組み立て直しています…（' + list.length + '個）');
+  list.slice().sort((a,b) => (a.z||0) - (b.z||0)).forEach(gr => {
+    if(!gr.src) return;
+    let src = null;
+    try{ src = artLayer.importJSON(gr.src); }catch(e){ return; }
+    if(!src) return;
+    let g = null;
+    try{
+      if(gr.opt && bak) tzSettingsRestore(gr.opt);
+      g = tsubuize(src, tzOpt());
+      if(g){
+        if(gr.text) g.__tzText = gr.text;
+        if(gr.at2)  g.__tzAt = new Point(gr.at2[0], gr.at2[1]);
+        if(gr.at)   g.position = new Point(gr.at[0], gr.at[1]);
+        g.__tzOpt = gr.opt || g.__tzOpt;
+        // ⚠️ 作り直した粒は最後に積まれるので、重ね順が保存時と変わってしまう。
+        //   覚えておいた z に入れ直す（前後関係は作字で効く）。
+        if(gr.z != null && gr.z < artLayer.children.length) artLayer.insertChild(gr.z, g);
+        made++;
+      }
+    }catch(e){ g = null; }
+    /* ⚠️⚠️ 元の形を消すのは【粒ができたときだけ】。
+       finally で必ず消していたので、組み立てに失敗すると粒も元の形も両方無くなり、
+       その字が丸ごと消えるところだった。失敗したら元の形をそのまま画面に残す
+       （粒には戻せなくても、字は手元に残る）。 */
+    if(g) src.remove();
+    else  { src.position = gr.at ? new Point(gr.at[0], gr.at[1]) : src.position; failed++; }
+  });
+  if(bak) tzSettingsRestore(bak);      // ⚠️ パネルは開く前の状態へ戻す
+  if(made || failed){
+    guides();
+    stat(failed
+      ? '粒 ' + made + '個を組み立て直した（' + failed + '個は戻せず、粒をかける前の形で置いてある）'
+      : '前回の続きから復元 — 粒 ' + made + '個を組み立て直した');
+  }
+}
 
 function autoLoad(){
   try{
@@ -4492,6 +4582,9 @@ abSync();
     }
     const min = Math.round((Date.now() - (d.at||Date.now()))/60000);
     stat('前回の続きから復元' + (min > 0 ? '（' + min + '分前）' : ''));
+    // ⭐ 粒は【作り方】から作り直す。⚠️ 古い保存（粒が art に入っている形）には grains が
+    //   無いので、その場合は何もしない＝今まで通り実体がそのまま出る（後方互換）。
+    if(d.grains && d.grains.length) rebuildGrains(d.grains);
     return true;
   }catch(e){ return false; }
 }
@@ -5723,6 +5816,10 @@ function tsubuize(item, o, geom){
   const g = new Group(kids);
   g.__tsubu = { d: item ? (item.pathData || null) : null, json: item ? item.exportJSON() : (geom ? null : null) };
   g.__tzGeom = g0;                // ⭐ 形の側を持たせる＝色だけの変更で作り直さない
+  // ⭐ かけたときの粒の設定を、粒じしんに持たせる。
+  //   ⚠️ ここ（作る場所）で持たせる。呼び出しが5箇所あるので、外で足すと必ずどこかで漏れる。
+  //   これがあるので、保存では【粒の実体を持たずに作り方だけ】残せる。
+  if(typeof tzSettingsSnapshot === 'function') g.__tzOpt = tzSettingsSnapshot();
   return g;
 }
 /* ⭐ 粒ひとつぶんの塗りを決める。⚠️ 作り直しと再塗りで同じ式を通すため、ここ1箇所にまとめる
