@@ -309,6 +309,8 @@
   <div class="grp mode-diff"><label>育つ</label><div class="seg" id="seg-grow"><button data-v="0" class="on">切</button><button data-v="1">入</button></div></div>
   <!-- ⭐ 1フレームに何ステップ進めるか。v0.2 は 12 だった（1だと遅すぎて動いて見えない） -->
   <div class="grp mode-diff"><label>速さ</label><input id="s-steps" type="range" min="1" max="24" value="12"><span class="val" id="v-steps"></span></div>
+  <!-- ⭐ 何秒で元の字に巻き戻すか。育つ＝再生、周期＝一巡の長さ -->
+  <div class="grp mode-diff"><label>周期</label><input id="s-cycle" type="range" min="2" max="30" value="8"><span class="val" id="v-cycle"></span></div>
   <div class="grp mode-diff"><div class="seg" id="seg-draw"><button data-v="0" class="on">塗り</button><button data-v="1">線</button></div></div>
   <div class="grp mode-diff"><label>筆</label><input id="s-brush" type="range" min="6" max="180" value="45"><span class="val" id="v-brush"></span></div>
   <div class="grp mode-diff"><label>滲み</label><input id="s-bleed" type="range" min="0" max="16" value="8"><span class="val" id="v-bleed"></span></div>
@@ -381,7 +383,7 @@ const TONES = {
 const P = {
   mode:'diff', preset:0, facet:0, cells:7,
   thr:0.24, noise:0.34, dust:0, grain:0.82, warp:0.18,
-  invert:0, tone:'sumi', bleed:8, outline:0, grow:0, steps:12, mask:0,
+  invert:0, tone:'sumi', bleed:8, outline:0, grow:0, steps:12, cycle:8, mask:0,
   grad:0, gAng:2.2, gfollow:0, gA:[0.14,0.14,1.0], gB:[1,1,1], ink:[1,1,1], bg:[0,0,0],
 };
 const SIM = 640;
@@ -592,6 +594,14 @@ const snapTex = tex8f(SIM);
    ⚠️ snapTex は場の復元に使うので共用しない（上書きし合って型が消える）。 */
 const maskTex = tex8f(SIM);
 let maskReady = false;
+/* ⭐ 育つ＝再生。回すと字は溶けていくので、【溶ける前の字】を覚えておいて
+     ・周期ごとに巻き戻す＝ループ
+     ・切にしたら戻す＝元の字に帰る
+   ⚠️ 覚えるのは「育つを入にした瞬間」と「育てながら描き足した時」。
+      これが無いと、一度回した字は二度と戻ってこない。 */
+let growOrigin = null, growT0 = 0;
+function growStart(){ growOrigin = snapshotField(); growT0 = performance.now(); }
+function growStop(){ if(growOrigin) restoreField(growOrigin); growOrigin = null; computeGradCoords(); }
 function uploadMask(){                       // 白紙／拡散で描いたものを型として取り込む
   const px = fieldCache.blank || fieldCache.diff;
   if(!px){ maskReady = false; return; }
@@ -684,7 +694,11 @@ function loop(){ if(!running) return; requestAnimationFrame(loop);
           ＝2026-07-18 に「珊瑚が中身を食い白い輪郭が残る」として却下された現象そのもの。
        ⭐ 既定（育つ＝切）では回さない＝描いた線はそのまま固定される。これが作字の土台。
        ⚠️ 1フレーム1ステップだと遅すぎて動いて見えない。v0.2 は 12ステップ/フレームだった。 */
-    if(P.grow > 0.5) for(let i=0;i<P.steps;i++) simStep();
+    if(P.grow > 0.5){
+      // 一巡したら、溶ける前の字に戻してまた育て直す
+      if(growOrigin && now - growT0 > P.cycle*1000){ restoreField(growOrigin); growT0 = now; }
+      for(let i=0;i<P.steps;i++) simStep();
+    }
   }
   display(null,cvs.width);
 }
@@ -707,7 +721,9 @@ function toUv(e){ const r=cvs.getBoundingClientRect(); const px=(e.clientX-r.lef
 cvs.addEventListener('pointerdown',e=>{ cvs.setPointerCapture(e.pointerId); const p=toUv(e);
   if(mode==='wave'){ addSource(p.x,p.y); } else { brush.x=p.x; brush.y=p.y; brush.down=true; } });
 cvs.addEventListener('pointermove',e=>{ if(mode==='wave'||!brush.down) return; const p=toUv(e); brush.x=p.x; brush.y=p.y; });
-addEventListener('pointerup',()=>{ if(brush.down){ brush.down=false; if(mode!=='wave') computeGradCoords(); saveSoon(); } });
+addEventListener('pointerup',()=>{ if(brush.down){ brush.down=false; if(mode!=='wave') computeGradCoords();
+  if(P.grow>0.5) growStart();   // ⭐育てながら描き足した分も「元の字」に含める
+  saveSoon(); } });
 
 /* ── 書き出し ── */
 function exportPNG(){
@@ -758,13 +774,18 @@ seg('seg-facet','facet',()=>{ bake(); refreshStat(); });
 /* ⭐「育つ」＝手を止めても反応拡散を回し続ける（木下「ぬるっと、それを動かすスイッチがあってもいい」）。
    ⚠️ 回しっぱなしは 2026-07-18 に「珊瑚が中身を食って白い輪郭だけ残る」として一度却下された挙動。
       既定は【切】にして、欲しい時だけ自分で入れる形にしてある。 */
-seg('seg-grow','grow',()=>{ refreshStat(); saveSoon(); });
+seg('seg-grow','grow',()=>{
+  if(P.grow > 0.5) growStart();      // いまの字を覚えてから回し始める
+  else growStop();                    // 止めて、覚えていた字に戻す
+  refreshStat(); saveSoon();
+});
 seg('seg-mask','mask',()=>{ uploadMask(); refreshStat(); saveSoon(); });
 seg('seg-inv','invert');
 seg('seg-draw','outline');
 seg('seg-grad','grad');
 seg('seg-gfollow','gfollow');
 bindRange('s-steps','steps','v-steps',1);
+bindRange('s-cycle','cycle','v-cycle',1);
 bindRange('s-gang','gAng','v-gang',Math.PI/180);
 /* 🔴「向きを変えても何の反応もない」（木下・2026-07-31）の正体：
      ⭐ 向きは画面に直接効かず、gradTex に【焼き込む】もの（computeGradCoords）。
@@ -886,7 +907,7 @@ const nowStamp = () => new Date().toLocaleString('ja-JP',{month:'numeric',day:'n
 async function saveCur(){
   if(!db || !curId || !gl || !extCBF) return;
   const b = boards.find(x=>x.id===curId); if(!b) return;
-  const px = snapshotField();
+  const px = (P.grow>0.5 && growOrigin) ? growOrigin : snapshotField();   // ⚠️育てている最中は溶けかけでなく元の字を保存する
   b.mode = mode; b.P = JSON.parse(JSON.stringify(P)); b.seed = seed;
   b.sources = JSON.parse(JSON.stringify(sources));
   if(px) b.field = await fieldToBlob(px);
@@ -917,7 +938,7 @@ function applyBoardParams(b){
   setRange('s-noise','v-noise',Math.round(P.noise*100)); setRange('s-dust','v-dust',Math.round(P.dust*100));
   setRange('s-grain','v-grain',Math.round(P.grain*100)); setRange('s-gang','v-gang',Math.round(P.gAng*180/Math.PI));
   setRange('s-bleed','v-bleed',P.bleed); setRange('s-warp','v-warp',Math.round(P.warp*100));
-  setRange('s-steps','v-steps',P.steps);
+  setRange('s-steps','v-steps',P.steps); setRange('s-cycle','v-cycle',P.cycle);
   applyModeUI();
 }
 async function loadBoard(id){
