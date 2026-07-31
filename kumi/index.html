@@ -368,6 +368,23 @@
   </div>
 
   <!-- 03 SORT -->
+  <!-- ⭐⭐ KUMI（組む）── 字を正方の格子に嵌める。いまの流し込み（浮遊）の対。
+       ⭐ マスの大きさが層で変わる＝漢字は2マス、かな・カナは1マス。
+          日本語の3層がそのまま組版のリズムになる（KUMI にしかできない）。 -->
+  <div class="unit off" data-unit="kumi">
+    <div class="unit-head">
+      <span class="led"></span><span class="unit-idx">03</span>
+      <span class="unit-name">KUMI</span><span class="unit-jp">組む</span>
+    </div>
+    <div class="unit-body">
+      <div class="row"><label>マス</label><input type="range" data-p="kumiCols" min="3" max="40" step="1" value="12"><span class="val"></span></div>
+      <div class="row"><label>詰め</label><input type="range" data-p="kumiFit" min="30" max="130" step="1" value="88"><span class="val"></span></div>
+      <div class="mod">⭐字が<b>格子に嵌まる</b>（浮遊の対）<br>
+        ⭐<b>漢字は2マス</b>、かな・カナは1マス＝日本語の3層が組版のリズムになる<br>
+        マス = 1行のマス数／詰め = マスに対する字の大きさ</div>
+    </div>
+  </div>
+
   <div class="unit" data-unit="sort">
     <div class="unit-head">
       <span class="led"></span><span class="unit-idx">03</span>
@@ -582,6 +599,8 @@ const P = {
   nValley:0, nGrad:0, nShine:60, nRes:28, nWav:60, nDir:0, nBands:6,
   nTrack:40, nAudio:35, nNoise:0, nGrain:2,
   paper:0xf4f2ee,
+  /* ⭐ KUMI（組む）＝字を格子に嵌める。浮遊の対 */
+  kumi:0, kumiCols:12, kumiFit:88,
 };
 /* ⭐⭐ 刷り ── 紙とインクを【組】で持つ。
    ⚠️ 地と図の色がバラバラだと、字が地の上に浮いて見える
@@ -598,7 +617,7 @@ const SURI = [
 ];
 
 const ON = { audio:false, text:true, sort:true, shift:true, iki:true,
-             bleed:false, tape:true, tint:false, nuri:false, board:true };
+             bleed:false, tape:true, tint:false, nuri:false, board:true, kumi:false };
 
 /* ── TRACKS — 日本語の層。ここがこのプロダクトの本体 ────────
    漢字=意味を運ぶ / かな=文法を繋ぐ / カナ=外から来た異物 / その他=約物・英数
@@ -643,6 +662,11 @@ const ENGINES = [
   { id:'text', jp:'流す',
     apply(){ /* レイアウト時に読まれる（geometry 側） */ },
     bypass(){} },
+
+  /* ⭐ KUMI（組む）── 格子に嵌める。⚠️ 配置なので layout() を通す（毎フレームではない） */
+  { id:'kumi', jp:'組む',
+    apply(){ if(P.kumi !== 1){ P.kumi = 1; layout(); } },
+    bypass(){ if(P.kumi !== 0){ P.kumi = 0; layout(); } } },
 
   { id:'sort', jp:'分ける',
     apply(U){ for(let i=0;i<4;i++) U.ink.uMute.value[i] = MUTE[i] ? 1 : 0; },
@@ -969,22 +993,48 @@ function layout(){
   const cen=[], cor=[], siz=[], trk=[], idx=[], cel=[], ind=[];
   let n = 0, col = 0, line = 0;
 
+  /* ⭐⭐ KUMI（組む）── 字を【正方の格子】に嵌める。
+     ⚠️ いまの流し込みは字が浮遊する。これはその対＝紙に組まれる方。
+     ⭐ マスの大きさを層で変える＝漢字は2マス、かなは1マス、カナは小。
+        日本語の3層が、そのまま組版のリズムになる（KUMI にしかできない）。
+     ⚠️ 格子は【1行に何マス】で決まる。字送り（tracking）ではなくマスの数で組む。 */
+  const gridOn = P.kumi > 0.5;
+  const gCols  = Math.max(2, Math.round(P.kumiCols));
+  const gCell  = 1100 / gCols;                    // 1マスの大きさ
+  const GW = [2, 1, 1, 1];                        // 漢字＝2マス、かな＝1、カナ＝1、約物＝1
+  const GS = [1.0, 0.62, 0.44, 0.34];             // 層ごとの字の大きさ（マスに対する割合）
+  let gx = 0, gy = 0;                             // 格子の現在位置（マス単位）
+
   for(const ch of text){
-    if(ch === '\n'){ line++; col = 0; continue; }
-    if(!ch.trim()){ col++; continue; }
+    if(ch === '\n'){ line++; col = 0; if(gridOn){ gx = 0; gy++; } continue; }
+    if(!ch.trim()){ col++; if(gridOn) gx++; continue; }
     const ai = atlasMap.get(ch); if(ai === undefined) continue;
 
     if(col >= perLine){ line++; col = 0; }
     // 横組は右へ流れて下へ折り返す。縦組は下へ流れて左へ折り返す（日本語の作法）
-    const x = vert ? -line * lead : (col * adv - perLine * adv / 2);
-    const y = vert ? (perLine * adv / 2 - col * adv) : -line * lead;
+    let x = vert ? -line * lead : (col * adv - perLine * adv / 2);
+    let y = vert ? (perLine * adv / 2 - col * adv) : -line * lead;
+
+    // ⭐ 格子に嵌める（層でマスの幅と字の大きさが変わる）
+    let gSize = size;
+    if(gridOn){
+      const tk = trackOf(ch);
+      const w  = GW[tk] || 1;
+      if(gx + w > gCols){ gx = 0; gy++; }         // 入らなければ次の行へ
+      const cx = (gx + w * 0.5) * gCell - gCols * gCell / 2;
+      const cy = -(gy + 0.5) * gCell;
+      x = vert ? cy : cx;                          // 縦組は格子を90°回して使う
+      y = vert ? -cx : cy;
+      gSize = gCell * (GS[tk] || 0.6) * (P.kumiFit / 100) * w;
+      gx += w;
+    }
 
     const base = cen.length / 3;
     const C = [[-0.5,0.5],[0.5,0.5],[0.5,-0.5],[-0.5,-0.5]];
     for(const [ox, oy] of C){
       cen.push(x, y, 0);
       cor.push(ox, oy);
-      siz.push(size);
+      siz.push(gSize);        // ⭐ 格子のときは層ごとのマスの大きさ
       trk.push(trackOf(ch));
       idx.push(n);
       cel.push(ai % atlasCols, Math.floor(ai / atlasCols));
@@ -1528,7 +1578,7 @@ document.querySelectorAll('input[data-p]').forEach(r => {
   const val = r.parentElement.querySelector('.val');
   const sync = () => {
     P[r.dataset.p] = +r.value; val.textContent = r.value;
-    if(['size','tracking','leading'].includes(r.dataset.p)) layout();
+    if(['size','tracking','leading','kumiCols','kumiFit'].includes(r.dataset.p)) layout();
   };
   r.addEventListener('input', sync); sync();
 });
