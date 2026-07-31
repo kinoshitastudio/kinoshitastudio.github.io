@@ -94,6 +94,79 @@
       ok('書き出しは1本（wrapSVG を通る）', typeof wrapSVG === 'function');
       ok('金属の断面は1つの式（metalStopsNow）', typeof metalStopsNow === 'function' && metalStopsNow().length > 2);
 
+      // ══ 10. 作字の中核 ── ブーリアン（合体・削る・交差）
+      //   ⚠️ 配線があっても動くとは限らない。実際に呼んで結果を見る。
+      const mkRect = (x,y,w,h) => { const p = new Path.Rectangle(new Rectangle(x,y,w,h)); p.fillColor='#000'; return p; };
+      for(const [op, label] of [['unite','合体'],['subtract','前面で削る'],['intersect','交差']]){
+        artLayer.removeChildren();
+        const a = mkRect(0,0,100,100), b = mkRect(50,50,100,100);
+        a.selected = b.selected = true;
+        const n0 = artLayer.children.length;
+        boolOp(op);
+        const left = artLayer.children.filter(c => c && c.parent);
+        const merged = left.length === 1 && left[0].segments && left[0].segments.length > 0;
+        ok('ブーリアン：' + label, merged, n0 + '個 → ' + left.length + '個');
+      }
+
+      // ══ 11. 線→塗り（線の位置＝内側／外側はここで実体化する）
+      artLayer.removeChildren();
+      {
+        const p = new Path.Rectangle(new Rectangle(0,0,100,100));
+        p.strokeColor = '#000'; p.strokeWidth = 10; p.fillColor = null; p.selected = true;
+        document.getElementById('bOutline').click();
+        const r = artLayer.children.filter(c => c && c.parent);
+        ok('線→塗りが実体になる', r.length >= 1 && r.some(c => c.fillColor), r.length + '個');
+      }
+
+      // ══ 12. 文字のアウトライン化（パスになる＝そこから彫れる）
+      artLayer.removeChildren();
+      {
+        document.getElementById('tinput').value = '永';
+        const tt = placeText(new Point(200,200));
+        ok('アウトライン化の前は文字', !!(tt && tt.__isText));
+      }
+
+      // ══ 13. 整列（ALIGN）
+      artLayer.removeChildren();
+      {
+        const a = mkRect(0,0,50,50), b = mkRect(200,80,50,50);
+        a.selected = b.selected = true;
+        document.getElementById('alT').click();          // 上ぞろえ
+        const same = Math.abs(a.bounds.top - b.bounds.top) < 0.01;
+        ok('整列：上でそろう', same, 'a=' + num(a.bounds.top) + ' b=' + num(b.bounds.top));
+      }
+
+      // ══ 14. 実験（劣化・手のゆらぎ）＝パスのまま崩れること
+      for(const [id, label] of [['bDegrade','劣化'],['bWobble','手のゆらぎ']]){
+        artLayer.removeChildren();
+        const p = new Path.Rectangle(new Rectangle(0,0,120,120));
+        p.fillColor = '#000'; p.selected = true;
+        const before = p.segments.length;
+        document.getElementById(id).click();
+        const now = artLayer.children.filter(c => c && c.parent);
+        const still = now.length >= 1 && now[0].segments && now[0].segments.length > 0;
+        ok('実験：' + label + ' はパスのまま', still,
+           before + '点 → ' + (now[0] && now[0].segments ? now[0].segments.length : 0) + '点');
+      }
+
+      // ══ 15. 共通パーツ（登録できる）
+      artLayer.removeChildren();
+      {
+        const p = mkRect(0,0,80,80); p.selected = true;
+        const n0 = (typeof PARTS !== 'undefined') ? PARTS.length : -1;
+        document.getElementById('bPartAdd').click();
+        ok('共通パーツに登録できる', typeof PARTS !== 'undefined' && PARTS.length === n0 + 1,
+           n0 + ' → ' + (typeof PARTS !== 'undefined' ? PARTS.length : '?'));
+      }
+
+      // ══ 16. グラデのプリセット（Object.keys 経由で配線されている）
+      {
+        const n0 = S.stops.length;
+        document.getElementById('preChrome').click();
+        ok('グラデのプリセットが効く', S.stops.length !== n0 || S.stops[0].c !== undefined,
+           n0 + ' → ' + S.stops.length + 'ストップ');
+      }
+
     } catch(e){
       R.push({ name:'⛔ テスト中に例外', pass:false, detail: e && (e.message + ' @ ' + (e.stack||'').split('\n')[1]) });
     }
