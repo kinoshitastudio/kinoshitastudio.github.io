@@ -305,6 +305,8 @@
     <button data-p="0" class="on">珊瑚</button><button data-p="1">迷路</button><button data-p="2">指紋</button><button data-p="3">斑</button><button data-p="4">孔</button>
   </div></div>
   <div class="grp mode-diff"><label>FACET</label><div class="seg" id="seg-facet"><button data-v="0" class="on">OFF</button><button data-v="1">ON</button></div></div>
+  <!-- ⭐ 手を止めても反応拡散を回し続けるか。入＝ぬるっと育ち続ける／切＝描いた形で止まる -->
+  <div class="grp mode-diff"><label>育つ</label><div class="seg" id="seg-grow"><button data-v="0" class="on">切</button><button data-v="1">入</button></div></div>
   <div class="grp mode-diff"><div class="seg" id="seg-draw"><button data-v="0" class="on">塗り</button><button data-v="1">線</button></div></div>
   <div class="grp mode-diff"><label>筆</label><input id="s-brush" type="range" min="6" max="180" value="45"><span class="val" id="v-brush"></span></div>
   <div class="grp mode-diff"><label>滲み</label><input id="s-bleed" type="range" min="0" max="16" value="8"><span class="val" id="v-bleed"></span></div>
@@ -375,7 +377,7 @@ const TONES = {
 const P = {
   mode:'diff', preset:0, facet:0, cells:7,
   thr:0.24, noise:0.34, dust:0, grain:0.82, warp:0.18,
-  invert:0, tone:'sumi', bleed:8, outline:0,
+  invert:0, tone:'sumi', bleed:8, outline:0, grow:0,
   grad:0, gAng:2.2, gfollow:0, gA:[0.14,0.14,1.0], gB:[1,1,1], ink:[1,1,1], bg:[0,0,0],
 };
 const SIM = 640;
@@ -645,7 +647,16 @@ let running=false;
 function loop(){ if(!running) return; requestAnimationFrame(loop);
   const now=performance.now();
   if(mode==='wave'){ computeWave(now,curFbo(),SIM); }
-  else { if(brush.down) paintStep(brush.x,brush.y,brush.r,0.5); }   // 描いた塗りはそのまま固定（RDで輪郭化しない）
+  else if(brush.down || P.grow > 0.5){
+    if(brush.down) paintStep(brush.x,brush.y,brush.r,0.5);
+    /* 🔴 ここに simStep() が【一度も無かった】（2026-07-31 に発見・木下「拡散って動かなかったっけ？」）。
+       そのため反応拡散が一切走らず、珊瑚/迷路/指紋/斑/孔・FACET・面数 の5つが
+       触れるのに何も起きないつまみになっていた（それらは pSim 用のパラメータ）。
+       ⭐ 2026-07-18 のノートの意図どおり【描いている間だけ】回す。
+       ⚠️ 回しっぱなしにはしない＝珊瑚が中身を食って白い輪郭だけが残る（07-18 に却下済み）。
+          ペンを離せば止まるので、描いた形はそこで固定される。 */
+    simStep();
+  }
   display(null,cvs.width);
 }
 
@@ -693,7 +704,7 @@ function exportPNG(){
 const statEl=document.getElementById('stat');
 function refreshStat(){ statEl.textContent = mode==='wave'
   ? '干渉 '+sources.length+'源 ／ ドラッグで波源を置く'
-  : (mode==='blank'?'白紙 ':'')+(P.outline?'線 ':'塗り ')+'／ ドラッグで描く'; }
+  : (mode==='blank'?'白紙 ':'')+(P.outline?'線 ':'塗り ')+(P.grow>0.5?'／ 育つ':'／ ドラッグで描く'); }
 
 function bindRange(id,key,vid,scale){ const el=document.getElementById(id),v=document.getElementById(vid);
   const f=()=>{ P[key]=(+el.value)*scale; if(v) v.textContent=el.value; }; el.addEventListener('input',f);
@@ -715,6 +726,10 @@ function seg(id,key,after){ document.querySelectorAll('#'+id+' button').forEach(
   P[key]= isNaN(+raw)? raw : +raw; if(after)after(); }; }); }
 seg('seg-preset','preset',()=>{ bake(); refreshStat(); });
 seg('seg-facet','facet',()=>{ bake(); refreshStat(); });
+/* ⭐「育つ」＝手を止めても反応拡散を回し続ける（木下「ぬるっと、それを動かすスイッチがあってもいい」）。
+   ⚠️ 回しっぱなしは 2026-07-18 に「珊瑚が中身を食って白い輪郭だけ残る」として一度却下された挙動。
+      既定は【切】にして、欲しい時だけ自分で入れる形にしてある。 */
+seg('seg-grow','grow',()=>{ refreshStat(); saveSoon(); });
 seg('seg-inv','invert');
 seg('seg-draw','outline');
 seg('seg-grad','grad');
@@ -851,7 +866,7 @@ function applyBoardParams(b){
   // つまみ・セグメントを保存された値に合わせ直す
   document.querySelectorAll('#ctl .seg').forEach(sg=>{
     const key = ({'seg-mode':'mode','seg-preset':'preset','seg-facet':'facet','seg-draw':'outline',
-                  'seg-tone':'tone','seg-grad':'grad','seg-gfollow':'gfollow','seg-inv':'invert'})[sg.id];
+                  'seg-tone':'tone','seg-grad':'grad','seg-gfollow':'gfollow','seg-inv':'invert','seg-grow':'grow'})[sg.id];
     if(key===undefined) return;
     sg.querySelectorAll('button').forEach(bt=>{
       const raw = bt.dataset.p!==undefined? bt.dataset.p : bt.dataset.v;
