@@ -205,6 +205,44 @@
     /* 見出し（HUD）はパネルに被らせない */
     #hud{ left:16px; }
   }
+
+  /* ── 盤の置き場（ボード） ───────────────────────────
+     ⭐ パネルの手前に重ねる小さな棚。盤を選ぶ・増やす・複製する・捨てる。 */
+  #boards{
+    position:fixed; z-index:30; right:calc(var(--panel) + 12px); top:12px;
+    width:270px; max-height:calc(100dvh - 24px); display:flex; flex-direction:column;
+    background:rgba(28,28,30,.97); border:.5px solid var(--uline); border-radius:14px;
+    box-shadow:var(--ushadow); overflow:hidden;
+    -webkit-backdrop-filter:blur(30px) saturate(180%); backdrop-filter:blur(30px) saturate(180%);
+  }
+  #boards[hidden]{ display:none; }
+  .bd-head{ display:flex; align-items:center; justify-content:space-between;
+    padding:12px 14px 10px; border-bottom:.5px solid var(--uline);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans",sans-serif;
+    font-size:12.5px; font-weight:590; }
+  .bd-x{ background:none; border:none; color:#fff; opacity:.5; cursor:pointer;
+    font-size:17px; line-height:1; padding:2px 4px; }
+  .bd-x:hover{ opacity:1 }
+  .bd-list{ overflow-y:auto; padding:6px; display:flex; flex-direction:column; gap:4px; min-height:60px; }
+  .bd-item{ display:flex; align-items:center; gap:10px; padding:7px 8px; border-radius:9px;
+    cursor:pointer; border:none; background:none; width:100%; text-align:left; color:#fff;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans",sans-serif; }
+  .bd-item:hover{ background:rgba(255,255,255,.07) }
+  .bd-item.on{ background:rgba(255,255,255,.14) }
+  .bd-thumb{ width:42px; height:42px; border-radius:7px; flex:none; background:#000;
+    object-fit:cover; box-shadow:0 0 0 .5px var(--uline) }
+  .bd-meta{ min-width:0; flex:1 }
+  .bd-name{ font-size:12px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .bd-sub{ font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:10px; opacity:.5; margin-top:2px }
+  .bd-foot{ display:flex; gap:6px; padding:8px; border-top:.5px solid var(--uline) }
+  .bd-foot .btn{ flex:1; padding:8px 6px; font-size:11px }
+  .bd-note{ padding:0 12px 10px; font-family:ui-monospace,"SF Mono",Menlo,monospace;
+    font-size:9.5px; opacity:.42 }
+
+  @media(max-width:760px){
+    /* モバイルはパネルが下なので、置き場は画面中央に出す */
+    #boards{ right:12px; left:12px; width:auto; top:12px; max-height:70dvh; }
+  }
 </style>
 </head>
 <body>
@@ -217,7 +255,11 @@
 <div id="boot-err"></div>
 
 <div id="ctl">
-  <div class="grp"><div class="seg" id="seg-mode"><button data-v="diff" class="on">拡散</button><button data-v="wave">干渉</button></div></div>
+  <div class="grp">
+    <!-- ⭐ ボードは「モード」ではなく【盤の置き場】を開くボタン。拡散/干渉の左に並べる -->
+    <button class="btn" id="b-boards">ボード</button>
+    <div class="seg" id="seg-mode"><button data-v="diff" class="on">拡散</button><button data-v="wave">干渉</button></div>
+  </div>
   <div class="sep"></div>
   <div class="grp mode-diff" id="g-preset"><div class="seg" id="seg-preset">
     <button data-p="0" class="on">珊瑚</button><button data-p="1">迷路</button><button data-p="2">指紋</button><button data-p="3">斑</button><button data-p="4">孔</button>
@@ -246,6 +288,21 @@
   <button class="btn" id="b-clear">リセット</button>
   <button class="btn" id="b-reroll">替</button>
   <button class="btn" id="b-export">PNG</button>
+</div>
+
+<!-- ⭐ 盤の置き場。閉じても中身が残るよう、盤ごと（描いた場＋設定）ブラウザに保存する -->
+<div id="boards" hidden>
+  <div class="bd-head">
+    <span>ボード</span>
+    <button class="bd-x" id="bd-close" aria-label="閉じる">×</button>
+  </div>
+  <div class="bd-list" id="bd-list"></div>
+  <div class="bd-foot">
+    <button class="btn" id="bd-new">＋新しい盤</button>
+    <button class="btn" id="bd-dup">複製</button>
+    <button class="btn" id="bd-del">削除</button>
+  </div>
+  <div class="bd-note" id="bd-note">自動で保存されます</div>
 </div>
 
 <script type="module">
@@ -433,7 +490,14 @@ const F_MASK=`#version 300 es
 precision highp float; in vec2 vUv; out vec4 o; uniform sampler2D uSim;
 void main(){ o=vec4(vec3(texture(uSim,vUv).y),1.0); }`;
 
-const pInit=prog(F_INIT), pBake=prog(F_BAKE), pSim=prog(F_SIM), pPaint=prog(F_PAINT), pWave=prog(F_WAVE), pDisp=prog(F_DISP), pMask=prog(F_MASK);
+/* ⭐ 盤の保存・復元用。場（U,V）をそのまま写すだけの通し。
+   ⚠️ 場は RGBA16F なので readPixels で直接は読めない。いったん RGBA8 に写して読む＝
+      U,V が 8bit に丸まる。描いたものを取り戻すには十分だが、完全な同一ではない。 */
+const F_COPY=`#version 300 es
+precision highp float; in vec2 vUv; out vec4 o; uniform sampler2D uSrc;
+void main(){ o = vec4(clamp(texture(uSrc,vUv).xy, 0.0, 1.0), 0.0, 1.0); }`;
+
+const pInit=prog(F_INIT), pBake=prog(F_BAKE), pSim=prog(F_SIM), pPaint=prog(F_PAINT), pWave=prog(F_WAVE), pDisp=prog(F_DISP), pMask=prog(F_MASK), pCopy=prog(F_COPY);
 
 /* ── リソース ── */
 let texA,texB,texParam,fboA,fboB,fboParam,read=0;
@@ -468,6 +532,26 @@ function computeGradCoords(){ if(!extCBF) return; try{
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
 }catch(e){ console.warn('gradCoords',e); } }
 function allocSim(){ texA=tex(SIM); texB=tex(SIM); texParam=tex(SIM); fboA=fbo(texA); fboB=fbo(texB); fboParam=fbo(texParam); }
+
+/* ── 場の畳み方／戻し方（ボードと、モード切替の保持に使う） ── */
+const snapTex = tex8f(SIM);
+function snapshotField(){          // 場 → Uint8Array（R=U, G=V）
+  if(!gl || !extCBF) return null;
+  gl.useProgram(pCopy); gl.bindFramebuffer(gl.FRAMEBUFFER,fMask8); gl.viewport(0,0,SIM,SIM);
+  samp(pCopy,'uSrc',0,curTex()); draw();
+  const px=new Uint8Array(SIM*SIM*4); gl.readPixels(0,0,SIM,SIM,gl.RGBA,gl.UNSIGNED_BYTE,px);
+  return px;
+}
+function restoreField(px){         // Uint8Array → 場（ping-pong の両方に入れる）
+  if(!gl || !extCBF || !px) return;
+  gl.bindTexture(gl.TEXTURE_2D,snapTex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,SIM,SIM,0,gl.RGBA,gl.UNSIGNED_BYTE,px);
+  gl.useProgram(pCopy);
+  for(const fb of [fboA,fboB]){
+    gl.bindFramebuffer(gl.FRAMEBUFFER,fb); gl.viewport(0,0,SIM,SIM);
+    samp(pCopy,'uSrc',0,snapTex); draw();
+  }
+}
 function curTex(){ return read?texB:texA; } function curFbo(){ return read?fboB:fboA; }
 function otherTex(){ return read?texA:texB; } function otherFbo(){ return read?fboA:fboB; }
 function swap(){ read=read?0:1; }
@@ -543,7 +627,7 @@ function toUv(e){ const r=cvs.getBoundingClientRect(); const px=(e.clientX-r.lef
 cvs.addEventListener('pointerdown',e=>{ cvs.setPointerCapture(e.pointerId); const p=toUv(e);
   if(mode==='wave'){ addSource(p.x,p.y); } else { brush.x=p.x; brush.y=p.y; brush.down=true; } });
 cvs.addEventListener('pointermove',e=>{ if(mode==='wave'||!brush.down) return; const p=toUv(e); brush.x=p.x; brush.y=p.y; });
-addEventListener('pointerup',()=>{ if(brush.down){ brush.down=false; if(mode!=='wave') computeGradCoords(); } });
+addEventListener('pointerup',()=>{ if(brush.down){ brush.down=false; if(mode!=='wave') computeGradCoords(); saveSoon(); } });
 
 /* ── 書き出し ── */
 function exportPNG(){
@@ -572,7 +656,8 @@ function refreshStat(){ statEl.textContent = mode==='wave'
   : (P.outline?'線 ':'塗り ')+'／ ドラッグで描く'; }
 
 function bindRange(id,key,vid,scale){ const el=document.getElementById(id),v=document.getElementById(vid);
-  const f=()=>{ P[key]=(+el.value)*scale; if(v) v.textContent=el.value; }; el.addEventListener('input',f); f(); }
+  const f=()=>{ P[key]=(+el.value)*scale; if(v) v.textContent=el.value; }; el.addEventListener('input',f);
+  el.addEventListener('change', ()=>saveSoon()); f(); }
 bindRange('s-thr','thr','v-thr',0.01);
 bindRange('s-noise','noise','v-noise',0.01);
 bindRange('s-dust','dust','v-dust',0.01);
@@ -614,10 +699,23 @@ function applyModeUI(){
 }
 function setThr(val){ P.thr=val*0.01; const el=document.getElementById('s-thr'); el.value=val; document.getElementById('v-thr').textContent=val; }
 function setNoise(val){ P.noise=val*0.01; const el=document.getElementById('s-noise'); el.value=val; document.getElementById('v-noise').textContent=val; }
-seg('seg-mode','mode',()=>{ mode=P.mode; applyModeUI();
-  if(mode==='wave'){ setThr(50); setNoise(50); genSources(); }
-  else { setThr(24); setNoise(34); bake(); seedField(); }
-  refreshStat();
+/* 🔴 モードを切り替えると描いたものが消えていた（2026-07-31 修正）。原因は2つ。
+     ① 干渉は拡散と同じ場に書き込む＝出た瞬間に拡散の場が潰れる
+     ② 拡散に戻る時に必ず seedField() を呼んでいた＝戻った瞬間にランダムな種で塗り直す
+   ⭐ 出る前にその場を畳んで持っておき、戻る時に戻す。初めて入る時だけ種をまく。 */
+const fieldCache = {};
+seg('seg-mode','mode',()=>{
+  const from = mode, to = P.mode;
+  if(from === 'diff'){ const s = snapshotField(); if(s) fieldCache.diff = s; }
+  mode = to; applyModeUI();
+  if(to==='wave'){ setThr(50); setNoise(50); if(!sources.length) genSources(); }
+  else {
+    setThr(24); setNoise(34); bake();
+    if(fieldCache.diff) restoreField(fieldCache.diff);   // ⭐ 描いたものが戻る
+    else seedField();                                     // 初回だけ種をまく
+    computeGradCoords();
+  }
+  refreshStat(); saveSoon();
 });
 
 document.getElementById('b-seed').onclick=()=>{ if(mode==='wave') genSources(); else seedField(); refreshStat(); };
@@ -629,8 +727,156 @@ document.getElementById('b-export').onclick=()=>{ exportPNG(); };
 /* ⚠️ 起動画面（はじめる）は 2026-07-31 に廃止。開いた時点で回し始める。
    ⭐ WebGL2 が無い時は回さない＝#boot-err に理由だけ出る。 */
 
+/* ══════════════════════════════════════════════════════════════
+   盤の置き場（ボード）                                2026-07-31
+   木下＝「既存のものに書いてもそれを干渉にしてしまうと戻した時に
+           書いていたのがなくなる」「パソコンローカル保存もお願い」
+
+   ⭐ 盤＝【描いた場 ＋ その時の設定】をひとまとめにしたもの。
+      切り替えても・閉じても残る。判断を後回しにできる＝捨てなくていい。
+   ⚠️ 保存先は IndexedDB。localStorage には入らない（場が 640×640＝1.6MB あり、
+      localStorage の上限 5MB をすぐ超えるため）。場は PNG に畳んで持つ。
+   ⚠️ 8bit に丸めて保存している（上の snapshotField 参照）。描いたものは戻るが、
+      浮動小数の場が寸分違わず戻るわけではない。戻した直後から再び育っていく。
+   ══════════════════════════════════════════════════════════════ */
+const DB_NAME='nijimi', DB_STORE='boards';
+let db=null, boards=[], curId=null, saveTimer=null;
+
+function openDB(){ return new Promise((res,rej)=>{
+  const r=indexedDB.open(DB_NAME,1);
+  r.onupgradeneeded=()=>{ const d=r.result; if(!d.objectStoreNames.contains(DB_STORE)) d.createObjectStore(DB_STORE,{keyPath:'id'}); };
+  r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+function dbAll(){ return new Promise((res,rej)=>{ const t=db.transaction(DB_STORE,'readonly').objectStore(DB_STORE).getAll();
+  t.onsuccess=()=>res(t.result||[]); t.onerror=()=>rej(t.error); }); }
+function dbPut(v){ return new Promise((res,rej)=>{ const t=db.transaction(DB_STORE,'readwrite').objectStore(DB_STORE).put(v);
+  t.onsuccess=()=>res(); t.onerror=()=>rej(t.error); }); }
+function dbDel(id){ return new Promise((res,rej)=>{ const t=db.transaction(DB_STORE,'readwrite').objectStore(DB_STORE).delete(id);
+  t.onsuccess=()=>res(); t.onerror=()=>rej(t.error); }); }
+
+/* 場（Uint8Array）↔ PNG。生のまま持つと1盤1.6MBなので畳む */
+function fieldToBlob(px){ const cv=document.createElement('canvas'); cv.width=cv.height=SIM;
+  const cx=cv.getContext('2d'); const im=cx.createImageData(SIM,SIM);
+  im.data.set(px); cx.putImageData(im,0,0);
+  return new Promise(r=>cv.toBlob(r,'image/png')); }
+async function blobToField(b){ const bmp=await createImageBitmap(b);
+  const cv=document.createElement('canvas'); cv.width=cv.height=SIM;
+  const cx=cv.getContext('2d'); cx.drawImage(bmp,0,0);
+  return new Uint8Array(cx.getImageData(0,0,SIM,SIM).data.buffer); }
+/* 一覧に出す小さい絵＝いま見えている盤をそのまま縮める */
+function thumbURL(){ const cv=document.createElement('canvas'); cv.width=cv.height=84;
+  cv.getContext('2d').drawImage(cvs,0,0,84,84); return cv.toDataURL('image/jpeg',0.72); }
+
+const nowStamp = () => new Date().toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
+
+async function saveCur(){
+  if(!db || !curId || !gl || !extCBF) return;
+  const b = boards.find(x=>x.id===curId); if(!b) return;
+  const px = snapshotField();
+  b.mode = mode; b.P = JSON.parse(JSON.stringify(P)); b.seed = seed;
+  b.sources = JSON.parse(JSON.stringify(sources));
+  if(px) b.field = await fieldToBlob(px);
+  try{ b.thumb = thumbURL(); }catch(e){}
+  b.updatedAt = Date.now(); b.stamp = nowStamp();
+  await dbPut(b); renderBoards();
+}
+/* ⚠️ 描くたびに書き込むと重い。少し待ってからまとめて1回だけ保存する */
+function saveSoon(){ clearTimeout(saveTimer); saveTimer=setTimeout(()=>saveCur().catch(e=>console.warn('save',e)), 1200); }
+
+function applyBoardParams(b){
+  Object.assign(P, b.P||{}); mode = P.mode || 'diff'; seed = b.seed ?? seed;
+  sources = b.sources ? JSON.parse(JSON.stringify(b.sources)) : [];
+  // つまみ・セグメントを保存された値に合わせ直す
+  document.querySelectorAll('#ctl .seg').forEach(sg=>{
+    const key = ({'seg-mode':'mode','seg-preset':'preset','seg-facet':'facet','seg-draw':'outline',
+                  'seg-tone':'tone','seg-grad':'grad','seg-gfollow':'gfollow','seg-inv':'invert'})[sg.id];
+    if(key===undefined) return;
+    sg.querySelectorAll('button').forEach(bt=>{
+      const raw = bt.dataset.p!==undefined? bt.dataset.p : bt.dataset.v;
+      const v = isNaN(+raw)? raw : +raw;
+      bt.classList.toggle('on', v === P[key]);
+    });
+  });
+  const setRange=(id,vid,val)=>{ const e=document.getElementById(id); if(!e) return;
+    e.value=val; const v=document.getElementById(vid); if(v) v.textContent=Math.round(val); };
+  setRange('s-cells','v-cells',P.cells); setRange('s-thr','v-thr',Math.round(P.thr*100));
+  setRange('s-noise','v-noise',Math.round(P.noise*100)); setRange('s-dust','v-dust',Math.round(P.dust*100));
+  setRange('s-grain','v-grain',Math.round(P.grain*100)); setRange('s-gang','v-gang',Math.round(P.gAng*180/Math.PI));
+  setRange('s-bleed','v-bleed',P.bleed); setRange('s-warp','v-warp',Math.round(P.warp*100));
+  applyModeUI();
+}
+async function loadBoard(id){
+  const b = boards.find(x=>x.id===id); if(!b) return;
+  curId = id; localStorage.setItem('nijimi.cur', id);
+  applyBoardParams(b); bake();
+  if(b.field){ restoreField(await blobToField(b.field)); } else { clearField(); }
+  computeGradCoords(); refreshStat(); renderBoards();
+}
+async function newBoard(from){
+  const id = 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+  const n = boards.length + 1;
+  const b = from
+    ? { ...from, id, name: from.name + ' の複製', updatedAt: Date.now(), stamp: nowStamp() }
+    : { id, name: '盤 ' + String(n).padStart(2,'0'), mode:'diff', P:JSON.parse(JSON.stringify(P)),
+        seed, sources:[], field:null, thumb:null, updatedAt:Date.now(), stamp:nowStamp() };
+  boards.push(b); await dbPut(b);
+  curId = id; localStorage.setItem('nijimi.cur', id);
+  if(!from){ clearField(); seedField(); computeGradCoords(); }
+  else { await loadBoard(id); }
+  renderBoards();
+}
+function renderBoards(){
+  const list = document.getElementById('bd-list'); if(!list) return;
+  boards.sort((a,b)=>b.updatedAt-a.updatedAt);
+  list.innerHTML = '';
+  boards.forEach(b=>{
+    const el = document.createElement('button');
+    el.className = 'bd-item' + (b.id===curId?' on':'');
+    el.innerHTML = `<img class="bd-thumb" alt="" src="${b.thumb||''}">`
+      + `<span class="bd-meta"><span class="bd-name"></span>`
+      + `<span class="bd-sub">${b.mode==='wave'?'干渉':'拡散'} · ${b.stamp||''}</span></span>`;
+    el.querySelector('.bd-name').textContent = b.name;
+    el.onclick = ()=>{ if(b.id!==curId) saveCur().then(()=>loadBoard(b.id)); };
+    el.ondblclick = ()=>{ const v = prompt('盤の名前', b.name); if(v){ b.name=v; dbPut(b).then(renderBoards); } };
+    list.appendChild(el);
+  });
+}
+document.getElementById('b-boards').onclick = ()=>{
+  const p = document.getElementById('boards');
+  p.hidden = !p.hidden; if(!p.hidden){ saveCur(); renderBoards(); }
+};
+document.getElementById('bd-close').onclick = ()=>{ document.getElementById('boards').hidden = true; };
+document.getElementById('bd-new').onclick = ()=> saveCur().then(()=>newBoard(null));
+document.getElementById('bd-dup').onclick = async ()=>{ await saveCur();
+  const b = boards.find(x=>x.id===curId); if(b) await newBoard(b); };
+document.getElementById('bd-del').onclick = async ()=>{
+  if(boards.length<=1){ alert('最後の1枚は消せません'); return; }
+  const b = boards.find(x=>x.id===curId); if(!b) return;
+  if(!confirm(`「${b.name}」を削除します。戻せません。`)) return;
+  await dbDel(b.id); boards = boards.filter(x=>x.id!==b.id);
+  await loadBoard(boards[0].id);
+};
+/* 閉じる直前にも書き込む（自動保存の待ち時間ぶんを取りこぼさない） */
+addEventListener('visibilitychange', ()=>{ if(document.hidden) saveCur(); });
+addEventListener('pagehide', ()=>{ saveCur(); });
+
+async function initBoards(){
+  try{
+    db = await openDB(); boards = await dbAll();
+    if(!boards.length){ await newBoard(null); }
+    else {
+      const want = localStorage.getItem('nijimi.cur');
+      const pick = boards.find(x=>x.id===want) || boards.sort((a,b)=>b.updatedAt-a.updatedAt)[0];
+      await loadBoard(pick.id);
+    }
+  }catch(e){
+    console.warn('boards', e);
+    document.getElementById('bd-note').textContent = 'このブラウザでは保存できません';
+  }
+  renderBoards();
+}
+
 if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); genSources(); computeGradCoords(); refreshStat();
-  running=true; loop(); }
+  running=true; loop(); initBoards(); }
 </script>
 </body>
 </html>
