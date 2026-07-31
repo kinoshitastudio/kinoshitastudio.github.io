@@ -1030,6 +1030,11 @@
        画面が変わらず「効かない」に見える。⚠️ 小さくして下に置いていて見つけられなかった。 -->
   <label id="tzPvRow" for="tzPv">
     <input type="checkbox" id="tzPv"><span id="tzPvLabel">preview — 押す前に見る</span></label>
+  <!-- ⭐ 木下の指示でここへ移した（前は粒パネルのいちばん下＝preview と対なのに遠かった）。
+       ⚠️ button なので div の開閉数は変わらない。所属も tsubuUI の中のまま。
+       ⭐ 押し忘れても消えないようにしてある（preview のまま閉じても保存され、
+          ボードを触った時点でも確定する）。このボタンは「いますぐ確定したい」ときのもの。 -->
+  <button class="btn" id="bTsubuize" style="margin:2px 0 10px">粒にする（確定）</button>
   <h2>色 ── 粒の色を組む</h2>
   <div class="seg" id="tzPal">
     <button data-v="0">墨</button><button data-v="1" class="on">奇抜</button><button data-v="2">琵琶湖</button>
@@ -1078,7 +1083,6 @@
        ⚠️ 木下が驚いた「勝手に粒になる」は tzOnNewObject（塗りモードを単色に戻す）で解決済み。
        戻したいときのために、ここに1つだけ置く。 -->
   <button class="mini" id="tzReset" style="width:100%;margin-top:6px">粒の設定を既定に戻す</button>
-  <button class="btn" id="bTsubuize" style="margin-top:4px">粒にする</button>
   <div class="note">⚠️解像を上げるほど粒が増えて重い。⭐<b>字なり</b>＝図形の輪郭に沿って帯の向きが変わる<br>
     かけたあとも、色・断面・解像を変えれば作り直す</div>
 
@@ -2180,6 +2184,12 @@ function selDownBase(e){                          // ⚠️ 呼ぶのは台帳�
   // 何も無いところからのドラッグ＝範囲選択の開始
   if(!h){
     if(!e.modifiers.shift) artLayer.children.forEach(c=>c.selected=false);
+    /* ⭐ 何もないところ（ボード）を触ったら、見えていた粒はそこで確定する。
+       木下＝「ボードを触ったり他に移動すると確定となる」。
+       ⚠️ 押し忘れて消える事故を無くすためで、確定しても失うものは無い
+         （元の形も組み方も粒じしんが覚えている）。 */
+    if(typeof tzPv !== 'undefined' && tzPv.on && tzPv.temp.length &&
+       typeof tzCommitPreview === 'function') tzCommitPreview();
     marqueeStart = e.point; guides(); return;
   }
   // ⭐ 粒に当たったら【グループごと】掴む。
@@ -4456,25 +4466,21 @@ let _pvSaveNoted = false;     // preview は保存されない、と知らせた
    ⚠️⚠️ 粒を一時的に artLayer から外して JSON を取り、【必ず元の位置へ戻す】。
       戻し損ねると画面から粒が消えるので、finally で戻す。 */
 function exportArtWithoutGrains(){
-  /* ⚠️⚠️ preview の最中は、見えている粒は【まだ仮】で、元の形は隠してある。
-     その印（__isPv / __pvHidden）は独自プロパティなので保存されない。
-     そのまま保存すると、開いたときに【仮の粒】と【非表示のまま戻せない元】が両方残る
-     （木下のスクショ＝レイヤーに『文字「粒」』が非表示・ロックで居座っていた）。
-     ⭐ 保存には preview を含めない。仮の粒は外し、隠した元は表示を戻して書き出す。
-     ⚠️ 先に preview を片付ける＝仮の粒が下の「粒抜き」に混ざらないように。 */
+  /* ⭐⭐ preview の粒も【確定したものと同じように保存する】。
+     木下＝「確定の概念はなくし、ボードを触ったり他に移動すると確定となる。
+             オブジェクト自体にメモリーが保有している感じ」。
+     ⚠️ preview と確定は、見た目も重さも同じ（どちらも本当に粒を作っている）。
+        違いは「元の形を隠して持つか、消したか」だけで、しかも元の形は粒じしんが
+        __tsubu.json に覚えている＝確定で失うものが無い。
+        段階を分けているせいで【押し忘れると消える】事故だけが起きていた。
+     ⭐ だから保存では preview を確定扱いにする。粒は grains（作り方）として書き出し、
+        隠れている元は保存しない（粒が覚えているので、開けば作り直せる）。
+     ⚠️ 隠れた元をそのまま保存してはいけない。印（__pvHidden）は保存されないので、
+        開いたときに「非表示のまま戻せない形」として居座る（木下のスクショの状態）。 */
   const pv = [];
   artLayer.children.slice().forEach(c => {
-    if(c.__isPv){ pv.push({ kind:'temp', item:c, z:c.index }); c.remove(); }
-    else if(c.__pvHidden){ pv.push({ kind:'hidden', item:c }); c.visible = true; }
+    if(c.__pvHidden){ pv.push({ kind:'hidden', item:c, z:c.index }); c.remove(); }
   });
-  /* ⚠️ preview は保存されない＝そのまま閉じると、開いたときに粒は出ない（元の形は残る）。
-     ⭐ 黙っていると「消えた」と受け取られるので、preview のまま保存が走ったら1回だけ知らせる。
-       木下＝「これは粒にするをした方がよい？ それともこのままリロードしていい？」 */
-  if(pv.length && !_pvSaveNoted){
-    _pvSaveNoted = true;
-    stat('preview はまだ仮なので保存されません — 「粒にする」で確定すると残ります');
-  }
-  if(!pv.length) _pvSaveNoted = false;
   const pulled = [];
   artLayer.children.slice().forEach(c => {
     if(!c.__tsubu) return;
@@ -4499,11 +4505,9 @@ function exportArtWithoutGrains(){
     // ⚠️ 重ね順を保って戻す（z の小さい順に入れ直す）
     pulled.slice().sort((a,b) => a.z - b.z)
       .forEach(p => artLayer.insertChild(Math.min(p.z, artLayer.children.length), p.item));
-    // ⚠️ preview も画面上の見え方へ戻す（保存に含めなかっただけで、作業は続いている）
-    pv.forEach(p => {
-      if(p.kind === 'hidden') p.item.visible = false;
-      else artLayer.insertChild(Math.min(p.z, artLayer.children.length), p.item);
-    });
+    // ⚠️ 隠れていた元も画面へ戻す（保存に含めなかっただけで、preview 作業は続いている）
+    pv.slice().sort((a,b) => a.z - b.z)
+      .forEach(p => artLayer.insertChild(Math.min(p.z, artLayer.children.length), p.item));
   }
   return { art, grains: pulled.map(({ item, z, ...rest }) => ({ z, ...rest })) };
 }
