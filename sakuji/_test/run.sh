@@ -1,0 +1,58 @@
+#!/bin/bash
+# SAKUJI 回帰テスト ── 本体を触らず、コピーにテストを差し込んで headless Chrome で読む
+#   使い方:  bash run_test.sh
+#   ⚠️ 本体 index.html は1行も変えない。テスト用のコピーは毎回作り直して最後に消す。
+set -u
+SRC="/Users/kinoshitatakahiro/Desktop/GitHub-clone/名称未設定/sakuji/index.html"
+DIR="$(dirname "$SRC")"
+SP="$DIR/_test"
+TMP="$DIR/__test.html"
+CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+# 1) コピーを作り、</body> の直前にテストを差し込む
+python3 - "$SRC" "$DIR/_test/regression.js" "$TMP" <<'PY'
+import sys
+src, test, out = sys.argv[1], sys.argv[2], sys.argv[3]
+s = open(src, encoding='utf-8').read()
+t = open(test, encoding='utf-8').read()
+i = s.rfind('</body>')
+if i < 0: i = s.rfind('</html>')
+open(out, 'w', encoding='utf-8').write(s[:i] + '\n<script>\n' + t + '\n</script>\n' + s[i:])
+PY
+
+# 2) 配信中のサーバ経由で読む（file:// だと CDN と localStorage が使えない）
+PORT=8090
+curl -s -o /dev/null "http://localhost:$PORT/__test.html" || { echo "🔴 localhost:$PORT が動いていない"; rm -f "$TMP"; exit 1; }
+
+rm -rf /tmp/_chrtest && mkdir -p /tmp/_chrtest
+"$CHROME" --headless=new --disable-gpu --no-sandbox --user-data-dir=/tmp/_chrtest \
+  --virtual-time-budget=6000 --dump-dom "http://localhost:$PORT/__test.html" \
+  > /tmp/_test_dom.html 2>/tmp/_test_err.txt &
+CHPID=$!
+# --virtual-time-budget が効かない場合に備えて自前で待つ
+for i in $(seq 1 30); do
+  sleep 1
+  grep -q "__ALL_PASS__\|__HAS_FAIL__" /tmp/_test_dom.html 2>/dev/null && break
+  kill -0 $CHPID 2>/dev/null || break
+done
+kill $CHPID 2>/dev/null; wait $CHPID 2>/dev/null
+
+# 3) 結果を取り出す
+python3 - <<'PY'
+import re, html
+try:
+    s = open('/tmp/_test_dom.html', encoding='utf-8').read()
+except Exception:
+    print('🔴 DOM が取れなかった'); raise SystemExit(1)
+m = re.search(r'<pre id="__RESULT">(.*?)</pre>', s, re.S)
+if not m:
+    print('🔴 テスト結果が見つからない（起動時に落ちた可能性）')
+    for pat in ('Uncaught', 'ReferenceError', 'TypeError'):
+        for h in re.findall(pat + r'[^<\n]{0,120}', s)[:3]: print('   ', h)
+    raise SystemExit(1)
+print(html.unescape(m.group(1)).strip())
+PY
+RC=$?
+
+rm -f "$TMP"           # ⚠️ 公開フォルダなので必ず消す
+exit $RC
