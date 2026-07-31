@@ -293,7 +293,7 @@
   <div class="grp">
     <!-- ⭐ ボードは「モード」ではなく【盤の置き場】を開くボタン。拡散/干渉の左に並べる -->
     <button class="btn" id="b-boards">ボード</button>
-    <div class="seg" id="seg-mode"><button data-v="diff" class="on">拡散</button><button data-v="wave">干渉</button></div>
+    <div class="seg" id="seg-mode"><button data-v="blank">白紙</button><button data-v="diff" class="on">拡散</button><button data-v="wave">干渉</button></div>
   </div>
   <div class="sep"></div>
   <div class="grp mode-diff" id="g-preset"><div class="seg" id="seg-preset">
@@ -319,7 +319,7 @@
   <div class="grp"><label>向き</label><input id="s-gang" type="range" min="0" max="360" value="126"><span class="val" id="v-gang"></span></div>
   <div class="grp"><div class="seg" id="seg-inv"><button data-v="0" class="on">正</button><button data-v="1">反</button></div></div>
   <div class="sep"></div>
-  <button class="btn" id="b-seed">まく</button>
+  <button class="btn mode-seed" id="b-seed">まく</button>
   <button class="btn" id="b-clear">リセット</button>
   <button class="btn" id="b-reroll">替</button>
   <button class="btn" id="b-export">PNG</button>
@@ -688,7 +688,7 @@ function exportPNG(){
 const statEl=document.getElementById('stat');
 function refreshStat(){ statEl.textContent = mode==='wave'
   ? '干渉 '+sources.length+'源 ／ ドラッグで波源を置く'
-  : (P.outline?'線 ':'塗り ')+'／ ドラッグで描く'; }
+  : (mode==='blank'?'白紙 ':'')+(P.outline?'線 ':'塗り ')+'／ ドラッグで描く'; }
 
 function bindRange(id,key,vid,scale){ const el=document.getElementById(id),v=document.getElementById(vid);
   const f=()=>{ P[key]=(+el.value)*scale; if(v) v.textContent=el.value; }; el.addEventListener('input',f);
@@ -728,8 +728,11 @@ document.querySelectorAll('#seg-tone button').forEach(b=>{ b.onclick=()=>{
   document.getElementById('bg').value=rgb2hex(P.bg); document.getElementById('ink').value=rgb2hex(P.ink); }; });
 
 function applyModeUI(){
-  document.querySelectorAll('.mode-diff').forEach(e=>e.classList.toggle('hide', mode!=='diff'));
+  // ⭐ 白紙は拡散と同じ道具立て（筆・滲み・塗り/線）を使う。違いは「種をまかない」ことだけ。
+  document.querySelectorAll('.mode-diff').forEach(e=>e.classList.toggle('hide', mode==='wave'));
   document.querySelectorAll('.mode-wave').forEach(e=>e.classList.toggle('hide', mode!=='wave'));
+  // ⚠️ 白紙で「まく」を出すと全面が埋まって、まっさらの意味が消える
+  document.querySelectorAll('.mode-seed').forEach(e=>e.classList.toggle('hide', mode==='blank'));
   document.getElementById('l-cells').textContent = mode==='wave'?'波源':'面数';
 }
 function setThr(val){ P.thr=val*0.01; const el=document.getElementById('s-thr'); el.value=val; document.getElementById('v-thr').textContent=val; }
@@ -741,13 +744,15 @@ function setNoise(val){ P.noise=val*0.01; const el=document.getElementById('s-no
 const fieldCache = {};
 seg('seg-mode','mode',()=>{
   const from = mode, to = P.mode;
-  if(from === 'diff'){ const s = snapshotField(); if(s) fieldCache.diff = s; }
+  // ⭐ 出る前にその場を畳んで持っておく（拡散と白紙は別々の場として覚える）
+  if(from !== 'wave'){ const snap = snapshotField(); if(snap) fieldCache[from] = snap; }
   mode = to; applyModeUI();
   if(to==='wave'){ setThr(50); setNoise(50); if(!sources.length) genSources(); }
   else {
     setThr(24); setNoise(34); bake();
-    if(fieldCache.diff) restoreField(fieldCache.diff);   // ⭐ 描いたものが戻る
-    else seedField();                                     // 初回だけ種をまく
+    if(fieldCache[to]) restoreField(fieldCache[to]);      // ⭐ 描いたものが戻る
+    else if(to === 'blank') clearField();                 // ⭐ 白紙＝空から。種をまかない
+    else seedField();                                     // 拡散は初回だけ種をまく
     computeGradCoords();
   }
   refreshStat(); saveSoon();
