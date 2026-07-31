@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>滲 NIJIMI — 作字 / 木下スタジオ</title>
+<meta name="description" content="滲 NIJIMI は、黒い紙に手で描いた線を反応拡散で滲ませ、粒立った作字にするブラウザの道具。塗りと線・滲み・字色と地色・囲みごとのグラデーションを調整して、2048pxのPNGで書き出せる。木下スタジオ（滋賀・木下貴博）制作。">
+<link rel="canonical" href="https://kinoshita.studio/nijimi/">
+<meta property="og:title" content="滲 NIJIMI — 作字">
+<meta property="og:description" content="手で描いた線を反応拡散で滲ませ、粒立った作字にする。塗りと線・滲み・字色と地色を追い込んで2048pxで書き出す。">
+<meta property="og:image" content="https://kinoshita.studio/assets/img/img-ui-nijimi.jpg">
+<meta property="og:url" content="https://kinoshita.studio/nijimi/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="木下スタジオ">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://kinoshita.studio/assets/img/img-ui-nijimi.jpg">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;overflow:hidden;background:#0a0a0a;}
+  body{
+    font-family:"Space Mono",ui-monospace,monospace;color:#fff;
+    -webkit-tap-highlight-color:transparent;touch-action:none;
+    display:flex;align-items:center;justify-content:center;
+  }
+  #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;}
+  canvas{display:block;background:#000;
+    box-shadow:0 0 0 1px rgba(255,255,255,.08), 0 30px 90px rgba(0,0,0,.6);
+    touch-action:none;cursor:crosshair;}
+
+  #boot{
+    position:fixed;inset:0;z-index:50;background:#f4f2ee;color:#0a0a0a;
+    display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;
+    transition:opacity .4s;padding:24px;text-align:center;
+  }
+  #boot.gone{opacity:0;pointer-events:none;}
+  #boot .k{font-size:46px;font-weight:300;letter-spacing:.3em;text-indent:.3em;}
+  #boot .s{font-size:9px;letter-spacing:.34em;opacity:.4;}
+  #boot .d{font-size:11px;opacity:.55;letter-spacing:.05em;line-height:1.95;max-width:32em;}
+  #start{margin-top:6px;font-size:9.5px;letter-spacing:.2em;padding:12px 24px;
+    background:none;border:1px solid rgba(10,10,10,.25);color:#0a0a0a;cursor:pointer;transition:background .15s,color .15s;}
+  #start:hover{background:#0a0a0a;color:#f4f2ee;}
+  #boot .e{font-size:8.5px;letter-spacing:.1em;color:#b4241e;min-height:1em;}
+
+  #ctl{
+    position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:10;
+    display:flex;gap:12px;align-items:center;flex-wrap:wrap;justify-content:center;
+    background:rgba(10,10,10,.5);backdrop-filter:blur(12px);
+    padding:10px 15px;border:1px solid rgba(255,255,255,.12);border-radius:2px;max-width:97vw;
+  }
+  #ctl .grp{display:flex;gap:7px;align-items:center;}
+  #ctl .grp.hide{display:none;}
+  #ctl .sep{width:1px;height:20px;background:rgba(255,255,255,.14);}
+  #ctl label{font-size:8px;letter-spacing:.1em;opacity:.55;white-space:nowrap;}
+  #ctl input[type=range]{-webkit-appearance:none;appearance:none;width:58px;height:1px;background:rgba(255,255,255,.28);outline:none;cursor:pointer;}
+  #ctl input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:9px;height:9px;border-radius:50%;background:#fff;cursor:pointer;}
+  #ctl input[type=range]::-moz-range-thumb{width:9px;height:9px;border:none;border-radius:50%;background:#fff;cursor:pointer;}
+  #ctl .val{font-size:8px;opacity:.45;width:24px;text-align:right;}
+  .seg{display:flex;border:1px solid rgba(255,255,255,.18);}
+  .seg button{background:none;border:none;color:#fff;opacity:.4;cursor:pointer;
+    font:inherit;font-size:8px;letter-spacing:.06em;padding:5px 7px;border-right:1px solid rgba(255,255,255,.18);white-space:nowrap;}
+  .seg button:last-child{border-right:none;}
+  .seg button.on{opacity:1;background:rgba(255,255,255,.92);color:#000;}
+  .btn{background:none;border:1px solid rgba(255,255,255,.22);color:#fff;opacity:.75;cursor:pointer;
+    font:inherit;font-size:8px;letter-spacing:.1em;padding:6px 10px;transition:background .12s,color .12s;}
+  .btn:hover{background:#fff;color:#000;opacity:1;}
+  input[type=color]{-webkit-appearance:none;appearance:none;width:20px;height:20px;padding:0;border:1px solid rgba(255,255,255,.25);background:none;cursor:pointer;border-radius:2px;}
+  input[type=color]::-webkit-color-swatch-wrapper{padding:2px;}
+  input[type=color]::-webkit-color-swatch{border:none;border-radius:1px;}
+
+  #hud{position:fixed;top:14px;left:16px;z-index:10;font-size:8px;letter-spacing:.14em;
+    opacity:.5;line-height:1.9;mix-blend-mode:difference;pointer-events:none;}
+  /* ── モバイル：上=描画 / 下=スクロールするコントロールパネル（縦1列・HORI/KUMI/TSUBUと統一） ── */
+  @media(max-width:760px){
+    #wrap{ top:0; bottom:auto; height:54dvh; }
+    #ctl{
+      left:0; right:0; bottom:0; top:auto; transform:none; max-width:none;
+      max-height:46dvh; overflow-y:auto; overflow-x:hidden;
+      flex-direction:column; flex-wrap:nowrap; align-items:stretch; gap:11px;
+      padding:12px 12px calc(12px + env(safe-area-inset-bottom));
+      border-radius:0; border-left:none; border-right:none;
+      background:rgba(10,10,10,.94); backdrop-filter:none;
+    }
+    #ctl .grp{ flex-wrap:wrap; justify-content:flex-start; gap:8px; width:100%; }
+    #ctl .sep{ display:none; }
+    #ctl input[type=range]{ flex:1 1 120px; height:22px; }
+    #ctl label{ font-size:9px; }
+    #ctl .val{ width:auto; }
+    .seg{ flex-wrap:wrap; }
+    .seg button{ padding:8px 11px; font-size:9px; }
+    .btn{ width:100%; padding:12px; font-size:9.5px; }
+    #boot{ padding:22px 18px; }
+    #boot .k{ font-size:40px; }
+    #boot .d{ align-self:stretch; min-width:0; max-width:100%; font-size:10px; line-height:2; padding:0 6px; }
+    #boot .d br{ display:none; }
+  }
+</style>
+</head>
+<body>
+
+<div id="wrap"><canvas id="c"></canvas></div>
+<div id="hud">滲 NIJIMI — 作字<br><span id="stat">—</span></div>
+
+<div id="boot">
+  <div class="k">滲</div>
+  <div class="s">NIJIMI / 作字</div>
+  <div class="d">
+    真っ黒の紙に、自分でひと筆ずつ描いて<b>作字</b>する道具。<br>
+    描いた線は粒立ち、<b>塗り</b>にも<b>線</b>にもなる。滲み・筆の太さは自在。<br>
+    字色・地色を選び、<b>グラデーション</b>を纏わせて、高解像度 PNG で書き出せる。<br>
+    ドラッグで描く。リセットで白紙に戻る。
+  </div>
+  <button id="start">はじめる</button>
+  <div class="e" id="boot-err"></div>
+</div>
+
+<div id="ctl">
+  <div class="grp"><div class="seg" id="seg-mode"><button data-v="diff" class="on">拡散</button><button data-v="wave">干渉</button></div></div>
+  <div class="sep"></div>
+  <div class="grp mode-diff" id="g-preset"><div class="seg" id="seg-preset">
+    <button data-p="0" class="on">珊瑚</button><button data-p="1">迷路</button><button data-p="2">指紋</button><button data-p="3">斑</button><button data-p="4">孔</button>
+  </div></div>
+  <div class="grp mode-diff"><label>FACET</label><div class="seg" id="seg-facet"><button data-v="0" class="on">OFF</button><button data-v="1">ON</button></div></div>
+  <div class="grp mode-diff"><div class="seg" id="seg-draw"><button data-v="0" class="on">塗り</button><button data-v="1">線</button></div></div>
+  <div class="grp mode-diff"><label>筆</label><input id="s-brush" type="range" min="6" max="180" value="45"><span class="val" id="v-brush"></span></div>
+  <div class="grp mode-diff"><label>滲み</label><input id="s-bleed" type="range" min="0" max="16" value="8"><span class="val" id="v-bleed"></span></div>
+  <div class="grp"><label id="l-cells">面数</label><input id="s-cells" type="range" min="2" max="12" value="7"><span class="val" id="v-cells"></span></div>
+  <div class="grp mode-wave hide"><label>歪み</label><input id="s-warp" type="range" min="0" max="100" value="18"><span class="val" id="v-warp"></span></div>
+  <div class="sep"></div>
+  <div class="grp"><label>しきい</label><input id="s-thr" type="range" min="5" max="90" value="24"><span class="val" id="v-thr"></span></div>
+  <div class="grp"><label>粒</label><input id="s-noise" type="range" min="0" max="120" value="34"><span class="val" id="v-noise"></span></div>
+  <div class="grp"><label>塵</label><input id="s-dust" type="range" min="0" max="100" value="0"><span class="val" id="v-dust"></span></div>
+  <div class="grp"><label>細かさ</label><input id="s-grain" type="range" min="60" max="100" value="82"><span class="val" id="v-grain"></span></div>
+  <div class="sep"></div>
+  <div class="grp"><label>字</label><input type="color" id="ink" value="#ffffff"><label>地</label><input type="color" id="bg" value="#000000">
+    <div class="seg" id="seg-tone"><button data-v="sumi" class="on">墨</button><button data-v="kinari">生成</button><button data-v="ai">藍</button></div></div>
+  <div class="grp"><label>グラデ</label><div class="seg" id="seg-grad"><button data-v="0" class="on">切</button><button data-v="1">入</button></div>
+    <input type="color" id="gA" value="#2323ff"><input type="color" id="gB" value="#ffffff">
+    <div class="seg" id="seg-gfollow"><button data-v="0" class="on">直線</button><button data-v="1">沿う</button></div></div>
+  <div class="grp"><label>向き</label><input id="s-gang" type="range" min="0" max="360" value="126"><span class="val" id="v-gang"></span></div>
+  <div class="grp"><div class="seg" id="seg-inv"><button data-v="0" class="on">正</button><button data-v="1">反</button></div></div>
+  <div class="sep"></div>
+  <button class="btn" id="b-seed">まく</button>
+  <button class="btn" id="b-clear">リセット</button>
+  <button class="btn" id="b-reroll">替</button>
+  <button class="btn" id="b-export">PNG</button>
+</div>
+
+<script type="module">
+/* ═══════════════════════════════════════════════════════════
+   滲 NIJIMI — GPU 生成テクスチャ（拡散／干渉）
+   ・拡散 = Gray-Scott 反応拡散（Du0.16 Dv0.08, 9点ラプラシアン, FACETでボロノイ面ごとに質感）
+   ・干渉 = 複数波源の円形波＋花弁(角度項)の重ね合わせ → 花/星/レンズ縞
+   仕上げ = ノイズ摂動しきい値（縁が散る）＋塵（ピクセル反転）＋色味の2値マッピング。
+   ═══════════════════════════════════════════════════════════ */
+
+const cvs = document.getElementById('c');
+const gl = cvs.getContext('webgl2', { antialias:false, preserveDrawingBuffer:false });
+const bootErr = document.getElementById('boot-err');
+if(!gl){ bootErr.textContent='WebGL2 に未対応のブラウザです'; }
+const extCBF = gl && gl.getExtension('EXT_color_buffer_float');
+if(gl && !extCBF){ bootErr.textContent='float フレームバッファに未対応（EXT_color_buffer_float）'; }
+
+const PRESETS = [
+  [0.0545, 0.0620],  // 珊瑚
+  [0.0290, 0.0570],  // 迷路
+  [0.0580, 0.0650],  // 指紋
+  [0.0367, 0.0649],  // 斑
+  [0.0300, 0.0550],  // 孔（Pearson δ）
+];
+const TONES = {
+  sumi:   [[0,0,0],[1,1,1]],
+  kinari: [[0.078,0.067,0.051],[0.941,0.918,0.855]],   // 墨インク / 生成り紙
+  ai:     [[0.035,0.086,0.161],[0.898,0.925,0.945]],   // 藍 / 白
+};
+const P = {
+  mode:'diff', preset:0, facet:0, cells:7,
+  thr:0.24, noise:0.34, dust:0, grain:0.82, warp:0.18,
+  invert:0, tone:'sumi', bleed:8, outline:0,
+  grad:0, gAng:2.2, gfollow:0, gA:[0.14,0.14,1.0], gB:[1,1,1], ink:[1,1,1], bg:[0,0,0],
+};
+const SIM = 640;
+const EXPORT_RES = 2048;
+const MAXSRC = 12;
+let seed = Math.random()*1000;
+let mode = 'diff';
+
+/* ── GL ヘルパ ── */
+function sh(type,src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){ console.error(gl.getShaderInfoLog(s),src); throw new Error('shader'); } return s; }
+const VERT = `#version 300 es
+out vec2 vUv;
+void main(){ vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2)); vUv=p; gl_Position=vec4(p*2.0-1.0,0.0,1.0); }`;
+function prog(fsrc){ const p=gl.createProgram(); gl.attachShader(p,sh(gl.VERTEX_SHADER,VERT)); gl.attachShader(p,sh(gl.FRAGMENT_SHADER,fsrc));
+  gl.linkProgram(p); if(!gl.getProgramParameter(p,gl.LINK_STATUS)){ console.error(gl.getProgramInfoLog(p)); throw new Error('link'); } return p; }
+function tex(res){ const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA16F,res,res,0,gl.RGBA,gl.HALF_FLOAT,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT); return t; }
+function fbo(t){ const f=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,f);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0); return f; }
+
+const HASH = `
+  float hash(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
+  vec2 hash2(vec2 p){ return vec2(hash(p),hash(p+19.19)); }
+  float vnoise(vec2 p){ vec2 i=floor(p),f=fract(p); f=f*f*(3.0-2.0*f);
+    float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));
+    return mix(mix(a,b,f.x),mix(c,d,f.x),f.y); }`;
+
+/* ── シェーダ ── */
+const F_INIT = `#version 300 es
+precision highp float; in vec2 vUv; out vec4 o; uniform float uSeed;
+${HASH}
+void main(){ float v=0.0; vec2 g=floor(vUv*70.0); if(hash(g+uSeed)>0.86) v=1.0; o=vec4(1.0,v,0.0,1.0); }`;
+
+const F_BAKE = `#version 300 es
+precision highp float; in vec2 vUv; out vec4 o;
+uniform float uSeed,uCells,uFacet,uF,uK;
+${HASH}
+const int NP=5;
+vec2 preset(int i){
+  if(i==0) return vec2(0.0545,0.0620);
+  if(i==1) return vec2(0.0290,0.0570);
+  if(i==2) return vec2(0.0580,0.0650);
+  if(i==3) return vec2(0.0367,0.0649);
+  return vec2(0.0300,0.0550);
+}
+void main(){
+  if(uFacet<0.5){ o=vec4(uF,uK,0.0,1.0); return; }
+  float best=1e9; int id=0; int n=int(uCells);
+  for(int i=0;i<24;i++){ if(i>=n) break;
+    vec2 pt=hash2(vec2(float(i)*7.1+uSeed,float(i)*3.3+uSeed*0.7));
+    float d=distance(vUv,pt); if(d<best){ best=d; id=i; } }
+  int pi=int(hash(vec2(float(id)*2.7+uSeed,5.0))*float(NP)); pi=pi>=NP?NP-1:pi;
+  vec2 fk=preset(pi); fk+=(hash2(vec2(float(id),uSeed))-0.5)*vec2(0.0025,0.0020);
+  o=vec4(fk,0.0,1.0);
+}`;
+
+const F_SIM = `#version 300 es
+precision highp float; in vec2 vUv; out vec4 o;
+uniform sampler2D uPrev,uParam; uniform vec2 uTexel;
+const float Du=0.16,Dv=0.08,dt=1.0;
+void main(){
+  vec2 c=texture(uPrev,vUv).xy; vec2 lap=c*(-1.0);
+  lap+=texture(uPrev,vUv+vec2( uTexel.x,0.0)).xy*0.2;
+  lap+=texture(uPrev,vUv+vec2(-uTexel.x,0.0)).xy*0.2;
+  lap+=texture(uPrev,vUv+vec2(0.0, uTexel.y)).xy*0.2;
+  lap+=texture(uPrev,vUv+vec2(0.0,-uTexel.y)).xy*0.2;
+  lap+=texture(uPrev,vUv+uTexel).xy*0.05;
+  lap+=texture(uPrev,vUv-uTexel).xy*0.05;
+  lap+=texture(uPrev,vUv+vec2(uTexel.x,-uTexel.y)).xy*0.05;
+  lap+=texture(uPrev,vUv+vec2(-uTexel.x,uTexel.y)).xy*0.05;
+  vec2 fk=texture(uParam,vUv).xy; float u=c.x,v=c.y,uvv=u*v*v;
+  float du=Du*lap.x-uvv+fk.x*(1.0-u);
+  float dv=Dv*lap.y+uvv-(fk.x+fk.y)*v;
+  o=vec4(clamp(u+du*dt,0.0,1.0),clamp(v+dv*dt,0.0,1.0),0.0,1.0);
+}`;
+
+const F_PAINT = `#version 300 es
+precision highp float; in vec2 vUv; out vec4 o;
+uniform sampler2D uPrev; uniform vec2 uBrush; uniform float uR,uAdd;
+void main(){ vec2 c=texture(uPrev,vUv).xy; float d=distance(vUv,uBrush);
+  float m=smoothstep(uR,uR*0.35,d)*uAdd; c.y=min(1.0,c.y+m); c.x=mix(c.x,0.5,m); o=vec4(c,0.0,1.0); }`;
+
+// 干渉: 複数波源の重ね合わせ（円形波＋花弁の角度項）→ .y に 0..1 の場
+const F_WAVE = `#version 300 es
+precision highp float; in vec2 vUv; out vec4 o;
+uniform vec4 uSrc[${MAXSRC}];   // xy=位置, z=周波数, w=花弁数
+uniform float uPh[${MAXSRC}];   // 位相
+uniform int uN; uniform float uWarp,uSeed;
+${HASH}
+void main(){
+  vec2 uv=vUv;
+  vec2 w=uv+uWarp*vec2(vnoise(uv*3.0+uSeed)-0.5, vnoise(uv*3.0+uSeed+7.3)-0.5);
+  float s=0.0;
+  for(int i=0;i<${MAXSRC};i++){ if(i>=uN) break;
+    vec2 rel=w-uSrc[i].xy; float d=length(rel); float a=atan(rel.y,rel.x);
+    s+=cos(uSrc[i].z*d + uSrc[i].w*a + uPh[i]);
+  }
+  s/=max(float(uN),1.0);
+  o=vec4(0.0, s*0.5+0.5, 0.0, 1.0);
+}`;
+
+// 表示: ノイズ摂動しきい値 → 塵 → 色味の2値マッピング
+const F_DISP = `#version 300 es
+precision highp float; in vec2 vUv; out vec4 o;
+uniform sampler2D uSim,uGradTex; uniform float uThr,uNoise,uDust,uGrainRes,uInvert,uBleed,uOutline,uGrad,uGAng,uGFollow;
+uniform vec2 uTexel; uniform vec3 uLo,uHi,uGA,uGB;
+${HASH}
+void main(){
+  vec2 gp=vUv*uGrainRes;
+  float n1=hash(gp),n2=hash(gp*0.41+13.0);
+  float noise=n1*0.72+n2*0.28;
+  float t;
+  if(uOutline>0.5){               // 線モード：塗りの境界だけを描く（滲み=線の太さ）
+    float R=max(uBleed,1.0); float mn=1.0,mx=0.0;
+    for(int i=0;i<12;i++){ float a=float(i)/12.0*6.2831853; vec2 d=vec2(cos(a),sin(a))*R*uTexel;
+      float s=texture(uSim,vUv+d).y; mn=min(mn,s); mx=max(mx,s); }
+    float th=uThr+(noise-0.5)*uNoise;
+    t=step(th,mx)*(1.0-step(th,mn));
+  } else {                        // 塗りモード：中身は塗りのまま、縁だけ滲む
+    float v;
+    if(uBleed>0.5){ float s=texture(uSim,vUv).y,w=1.0;
+      for(int i=0;i<16;i++){ float a=float(i)/16.0*6.2831853; vec2 d=vec2(cos(a),sin(a))*uBleed*uTexel;
+        s+=texture(uSim,vUv+d).y+texture(uSim,vUv+d*0.5).y; w+=2.0; } v=s/w; }
+    else { v=texture(uSim,vUv).y; }
+    t=step(uThr, v+(noise-0.5)*uNoise);
+  }
+  float sp=hash(gp*1.93+7.0);
+  if(sp>1.0-uDust*0.06) t=1.0-t;
+  if(uInvert>0.5) t=1.0-t;
+  vec3 inkc=uHi;                            // 塗り/線の色
+  if(uGrad>0.5){
+    float gg;
+    if(uGFollow>0.5){                        // 沿う：線の太さ→中心が明るい立体チューブ状
+      float th2=texture(uSim,vUv).y, w2=1.0;
+      for(int i=0;i<16;i++){ float a=float(i)/16.0*6.2831853; vec2 d=vec2(cos(a),sin(a))*28.0*uTexel;
+        th2+=texture(uSim,vUv+d).y; w2+=1.0; }
+      gg=clamp(th2/w2*1.7,0.0,1.0);
+    } else {                                 // 囲みごと：連結成分ごとに A→B を正規化（各字が全色域を持つ）
+      gg=texture(uGradTex,vUv).r;
+    }
+    inkc=mix(uGA,uGB,gg);
+  }
+  vec3 col=mix(uLo,inkc,t);
+  col*=1.0-(hash(gp*0.83+3.0)-0.5)*0.05;   // 紙のかすかな粒
+  o=vec4(col,1.0);
+}`;
+
+const F_MASK=`#version 300 es
+precision highp float; in vec2 vUv; out vec4 o; uniform sampler2D uSim;
+void main(){ o=vec4(vec3(texture(uSim,vUv).y),1.0); }`;
+
+const pInit=prog(F_INIT), pBake=prog(F_BAKE), pSim=prog(F_SIM), pPaint=prog(F_PAINT), pWave=prog(F_WAVE), pDisp=prog(F_DISP), pMask=prog(F_MASK);
+
+/* ── リソース ── */
+let texA,texB,texParam,fboA,fboB,fboParam,read=0;
+function tex8f(res){ const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,res,res,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE); return t; }
+const maskTex8=tex8f(SIM), fMask8=fbo(maskTex8), gradTex=tex8f(SIM);
+// ペンを離した時に描画を連結成分でラベル付けし、各成分内で向き方向に A→B を正規化した座標を gradTex に焼く
+function computeGradCoords(){ if(!extCBF) return; try{
+  gl.useProgram(pMask); gl.bindFramebuffer(gl.FRAMEBUFFER,fMask8); gl.viewport(0,0,SIM,SIM);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,curTex()); gl.uniform1i(gl.getUniformLocation(pMask,'uSim'),0); draw();
+  const px=new Uint8Array(SIM*SIM*4); gl.readPixels(0,0,SIM,SIM,gl.RGBA,gl.UNSIGNED_BYTE,px);
+  const N=SIM*SIM, bin=new Uint8Array(N), label=new Int32Array(N).fill(-1), stack=new Int32Array(N);
+  for(let i=0;i<N;i++) bin[i]= px[i*4]>64?1:0;
+  const ca=Math.cos(P.gAng), sa=Math.sin(P.gAng), cmin=[], cmax=[]; let comp=0;
+  for(let s=0;s<N;s++){ if(!bin[s]||label[s]!==-1) continue;
+    let sp=0; stack[sp++]=s; label[s]=comp; let mn=1e9,mx=-1e9;
+    while(sp>0){ const idx=stack[--sp], x=idx%SIM, y=(idx/SIM)|0, p=(x/SIM)*ca+(y/SIM)*sa;
+      if(p<mn)mn=p; if(p>mx)mx=p;
+      if(x>0){const n=idx-1; if(bin[n]&&label[n]<0){label[n]=comp;stack[sp++]=n;}}
+      if(x<SIM-1){const n=idx+1; if(bin[n]&&label[n]<0){label[n]=comp;stack[sp++]=n;}}
+      if(y>0){const n=idx-SIM; if(bin[n]&&label[n]<0){label[n]=comp;stack[sp++]=n;}}
+      if(y<SIM-1){const n=idx+SIM; if(bin[n]&&label[n]<0){label[n]=comp;stack[sp++]=n;}} }
+    cmin[comp]=mn; cmax[comp]=mx; comp++; }
+  const out=new Uint8Array(N*4);
+  for(let i=0;i<N;i++){ const l=label[i]; let g=0;
+    if(l>=0){ const x=i%SIM, y=(i/SIM)|0, p=(x/SIM)*ca+(y/SIM)*sa, rng=cmax[l]-cmin[l]; g=rng>1e-5?(p-cmin[l])/rng:0.5; }
+    const v=(g*255)|0; out[i*4]=v; out[i*4+1]=v; out[i*4+2]=v; out[i*4+3]=255; }
+  gl.bindTexture(gl.TEXTURE_2D,gradTex); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,SIM,SIM,0,gl.RGBA,gl.UNSIGNED_BYTE,out);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+}catch(e){ console.warn('gradCoords',e); } }
+function allocSim(){ texA=tex(SIM); texB=tex(SIM); texParam=tex(SIM); fboA=fbo(texA); fboB=fbo(texB); fboParam=fbo(texParam); }
+function curTex(){ return read?texB:texA; } function curFbo(){ return read?fboB:fboA; }
+function otherTex(){ return read?texA:texB; } function otherFbo(){ return read?fboA:fboB; }
+function swap(){ read=read?0:1; }
+function draw(){ gl.drawArrays(gl.TRIANGLES,0,3); }
+function u1(p,n,v){ gl.uniform1f(gl.getUniformLocation(p,n),v); }
+function u2(p,n,a,b){ gl.uniform2f(gl.getUniformLocation(p,n),a,b); }
+function u3(p,n,a,b,c){ gl.uniform3f(gl.getUniformLocation(p,n),a,b,c); }
+function samp(p,n,unit,t){ gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D,t); gl.uniform1i(gl.getUniformLocation(p,n),unit); }
+
+/* ── 拡散 ── */
+function bake(){ gl.useProgram(pBake); gl.bindFramebuffer(gl.FRAMEBUFFER,fboParam); gl.viewport(0,0,SIM,SIM);
+  u1(pBake,'uSeed',seed); u1(pBake,'uCells',P.cells); u1(pBake,'uFacet',P.facet);
+  u1(pBake,'uF',PRESETS[P.preset][0]); u1(pBake,'uK',PRESETS[P.preset][1]); draw(); }
+function seedField(){ seed=Math.random()*1000; gl.useProgram(pInit); gl.bindFramebuffer(gl.FRAMEBUFFER,curFbo()); gl.viewport(0,0,SIM,SIM); u1(pInit,'uSeed',seed); draw(); }
+function clearField(){ // 真の空（U=1, V=0）＝完全な黒画面。RDは空では何も生まない
+  gl.bindFramebuffer(gl.FRAMEBUFFER,curFbo()); gl.viewport(0,0,SIM,SIM);
+  gl.clearColor(1,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
+  read=read?0:1; gl.bindFramebuffer(gl.FRAMEBUFFER,curFbo());
+  gl.clearColor(1,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT); read=read?0:1; }
+function simStep(){ gl.useProgram(pSim); gl.bindFramebuffer(gl.FRAMEBUFFER,otherFbo()); gl.viewport(0,0,SIM,SIM);
+  samp(pSim,'uPrev',0,curTex()); samp(pSim,'uParam',1,texParam); u2(pSim,'uTexel',1/SIM,1/SIM); draw(); swap(); }
+function paintStep(bx,by,r,add){ gl.useProgram(pPaint); gl.bindFramebuffer(gl.FRAMEBUFFER,otherFbo()); gl.viewport(0,0,SIM,SIM);
+  samp(pPaint,'uPrev',0,curTex()); u2(pPaint,'uBrush',bx,by); u1(pPaint,'uR',r); u1(pPaint,'uAdd',add); draw(); swap(); }
+
+/* ── 干渉 ── */
+let sources=[];
+function genSources(){ seed=Math.random()*1000; const n=Math.max(2,Math.min(MAXSRC,Math.round(P.cells))); sources=[];
+  for(let i=0;i<n;i++) sources.push(newSource(Math.random(),Math.random())); }
+function newSource(x,y){ return { x, y, freq:20+Math.random()*95, petals:Math.floor(Math.random()*7), phase:Math.random()*6.283, drift:(Math.random()-0.5)*0.5 }; }
+function addSource(x,y){ sources.push(newSource(x,y)); if(sources.length>MAXSRC) sources.shift(); }
+function computeWave(now,fb,res){ gl.useProgram(pWave); gl.bindFramebuffer(gl.FRAMEBUFFER,fb); gl.viewport(0,0,res,res);
+  const n=sources.length; const src=new Float32Array(MAXSRC*4), ph=new Float32Array(MAXSRC);
+  for(let i=0;i<n;i++){ const s=sources[i]; src[i*4]=s.x; src[i*4+1]=s.y; src[i*4+2]=s.freq; src[i*4+3]=s.petals; ph[i]=s.phase+now*0.00016*s.drift; }
+  gl.uniform4fv(gl.getUniformLocation(pWave,'uSrc'),src);
+  gl.uniform1fv(gl.getUniformLocation(pWave,'uPh'),ph);
+  gl.uniform1i(gl.getUniformLocation(pWave,'uN'),n);
+  u1(pWave,'uWarp',P.warp); u1(pWave,'uSeed',seed); draw(); }
+
+/* ── 表示 ── */
+function display(fb,res,src){ gl.useProgram(pDisp); gl.bindFramebuffer(gl.FRAMEBUFFER,fb); gl.viewport(0,0,res,res);
+  samp(pDisp,'uSim',0,src||curTex()); samp(pDisp,'uGradTex',1,gradTex);
+  u1(pDisp,'uThr',P.thr); u1(pDisp,'uNoise',P.noise); u1(pDisp,'uDust',P.dust);
+  u1(pDisp,'uGrainRes',300+P.grain*1700); u1(pDisp,'uInvert',P.invert);
+  u1(pDisp,'uBleed',P.bleed); u2(pDisp,'uTexel',1/SIM,1/SIM); u1(pDisp,'uOutline',P.outline);
+  u1(pDisp,'uGrad',P.grad); u1(pDisp,'uGAng',P.gAng); u1(pDisp,'uGFollow',P.gfollow);
+  u3(pDisp,'uGA',P.gA[0],P.gA[1],P.gA[2]); u3(pDisp,'uGB',P.gB[0],P.gB[1],P.gB[2]);
+  u3(pDisp,'uLo',P.bg[0],P.bg[1],P.bg[2]); u3(pDisp,'uHi',P.ink[0],P.ink[1],P.ink[2]); draw(); }
+
+/* ── ループ ── */
+let running=false;
+function loop(){ if(!running) return; requestAnimationFrame(loop);
+  const now=performance.now();
+  if(mode==='wave'){ computeWave(now,curFbo(),SIM); }
+  else { if(brush.down) paintStep(brush.x,brush.y,brush.r,0.5); }   // 描いた塗りはそのまま固定（RDで輪郭化しない）
+  display(null,cvs.width);
+}
+
+/* ── リサイズ ── */
+function resize(){ const s=Math.floor(Math.min(innerWidth,innerHeight)*0.92); const dpr=Math.min(devicePixelRatio,2);
+  cvs.style.width=s+'px'; cvs.style.height=s+'px'; cvs.width=Math.floor(s*dpr); cvs.height=Math.floor(s*dpr); }
+addEventListener('resize',resize);
+
+/* ── ポインタ ── */
+const brush={ down:false, x:0.5, y:0.5, r:0.045 };
+function toUv(e){ const r=cvs.getBoundingClientRect(); const px=(e.clientX-r.left)/r.width, py=(e.clientY-r.top)/r.height;
+  return { x:Math.min(Math.max(px,0),1), y:1-Math.min(Math.max(py,0),1) }; }
+cvs.addEventListener('pointerdown',e=>{ cvs.setPointerCapture(e.pointerId); const p=toUv(e);
+  if(mode==='wave'){ addSource(p.x,p.y); } else { brush.x=p.x; brush.y=p.y; brush.down=true; } });
+cvs.addEventListener('pointermove',e=>{ if(mode==='wave'||!brush.down) return; const p=toUv(e); brush.x=p.x; brush.y=p.y; });
+addEventListener('pointerup',()=>{ if(brush.down){ brush.down=false; if(mode!=='wave') computeGradCoords(); } });
+
+/* ── 書き出し ── */
+function exportPNG(){
+  const R=EXPORT_RES;
+  let fieldTex=curTex(), tmpF=null,tmpT=null;
+  if(mode==='wave'){ tmpT=tex(R); tmpF=fbo(tmpT); computeWave(performance.now(),tmpF,R); fieldTex=tmpT; }
+  const et=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,et);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,R,R,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+  const ef=fbo(et); display(ef,R,fieldTex);
+  const px=new Uint8Array(R*R*4); gl.readPixels(0,0,R,R,gl.RGBA,gl.UNSIGNED_BYTE,px);
+  const oc=document.createElement('canvas'); oc.width=R; oc.height=R; const octx=oc.getContext('2d');
+  const img=octx.createImageData(R,R);
+  for(let y=0;y<R;y++){ const s=(R-1-y)*R*4, d=y*R*4; img.data.set(px.subarray(s,s+R*4),d); }
+  octx.putImageData(img,0,0);
+  oc.toBlob(b=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='nijimi_'+P.mode+'_'+Date.now()+'.png'; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),1000); },'image/png');
+  gl.deleteFramebuffer(ef); gl.deleteTexture(et);
+  if(tmpF){ gl.deleteFramebuffer(tmpF); gl.deleteTexture(tmpT); }
+}
+
+/* ── UI ── */
+const statEl=document.getElementById('stat');
+function refreshStat(){ statEl.textContent = mode==='wave'
+  ? '干渉 '+sources.length+'源 ／ ドラッグで波源を置く'
+  : (P.outline?'線 ':'塗り ')+'／ ドラッグで描く'; }
+
+function bindRange(id,key,vid,scale){ const el=document.getElementById(id),v=document.getElementById(vid);
+  const f=()=>{ P[key]=(+el.value)*scale; if(v) v.textContent=el.value; }; el.addEventListener('input',f); f(); }
+bindRange('s-thr','thr','v-thr',0.01);
+bindRange('s-noise','noise','v-noise',0.01);
+bindRange('s-dust','dust','v-dust',0.01);
+bindRange('s-grain','grain','v-grain',0.01);
+bindRange('s-warp','warp','v-warp',0.01);
+bindRange('s-cells','cells','v-cells',1);
+bindRange('s-bleed','bleed','v-bleed',1);
+{ const el=document.getElementById('s-brush'),v=document.getElementById('v-brush');
+  const f=()=>{ brush.r=(+el.value)/1000; v.textContent=el.value; }; el.addEventListener('input',f); f(); }
+document.getElementById('s-cells').addEventListener('change',()=>{ if(mode==='wave') genSources(); else bake(); refreshStat(); });
+
+function seg(id,key,after){ document.querySelectorAll('#'+id+' button').forEach(b=>{ b.onclick=()=>{
+  document.querySelectorAll('#'+id+' button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+  const raw = b.dataset.p!==undefined? b.dataset.p : b.dataset.v;
+  P[key]= isNaN(+raw)? raw : +raw; if(after)after(); }; }); }
+seg('seg-preset','preset',()=>{ bake(); refreshStat(); });
+seg('seg-facet','facet',()=>{ bake(); refreshStat(); });
+seg('seg-inv','invert');
+seg('seg-draw','outline');
+seg('seg-grad','grad');
+seg('seg-gfollow','gfollow');
+bindRange('s-gang','gAng','v-gang',Math.PI/180);
+document.getElementById('s-gang').addEventListener('change',()=>{ if(mode!=='wave') computeGradCoords(); });
+const hex2rgb=h=>{ h=h.replace('#',''); return [parseInt(h.slice(0,2),16)/255,parseInt(h.slice(2,4),16)/255,parseInt(h.slice(4,6),16)/255]; };
+const rgb2hex=c=>'#'+c.map(v=>('0'+Math.round(Math.min(Math.max(v,0),1)*255).toString(16)).slice(-2)).join('');
+{ const gA=document.getElementById('gA'), gB=document.getElementById('gB'), ink=document.getElementById('ink'), bg=document.getElementById('bg');
+  gA.addEventListener('input',()=>P.gA=hex2rgb(gA.value)); gB.addEventListener('input',()=>P.gB=hex2rgb(gB.value));
+  ink.addEventListener('input',()=>P.ink=hex2rgb(ink.value)); bg.addEventListener('input',()=>P.bg=hex2rgb(bg.value)); }
+// 色プリセット（墨/生成/藍）は字色・地色を一括セット
+document.querySelectorAll('#seg-tone button').forEach(b=>{ b.onclick=()=>{
+  document.querySelectorAll('#seg-tone button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+  const T=TONES[b.dataset.v]; P.bg=T[0].slice(); P.ink=T[1].slice();
+  document.getElementById('bg').value=rgb2hex(P.bg); document.getElementById('ink').value=rgb2hex(P.ink); }; });
+
+function applyModeUI(){
+  document.querySelectorAll('.mode-diff').forEach(e=>e.classList.toggle('hide', mode!=='diff'));
+  document.querySelectorAll('.mode-wave').forEach(e=>e.classList.toggle('hide', mode!=='wave'));
+  document.getElementById('l-cells').textContent = mode==='wave'?'波源':'面数';
+}
+function setThr(val){ P.thr=val*0.01; const el=document.getElementById('s-thr'); el.value=val; document.getElementById('v-thr').textContent=val; }
+function setNoise(val){ P.noise=val*0.01; const el=document.getElementById('s-noise'); el.value=val; document.getElementById('v-noise').textContent=val; }
+seg('seg-mode','mode',()=>{ mode=P.mode; applyModeUI();
+  if(mode==='wave'){ setThr(50); setNoise(50); genSources(); }
+  else { setThr(24); setNoise(34); bake(); seedField(); }
+  refreshStat();
+});
+
+document.getElementById('b-seed').onclick=()=>{ if(mode==='wave') genSources(); else seedField(); refreshStat(); };
+document.getElementById('b-clear').onclick=()=>{ if(mode==='wave'){ sources=[]; } else { clearField(); computeGradCoords(); } refreshStat(); };
+document.getElementById('b-reroll').onclick=()=>{ if(mode==='wave') genSources(); else { seed=Math.random()*1000; bake(); } refreshStat(); };
+document.getElementById('b-export').onclick=()=>{ exportPNG(); };
+
+/* ── 起動 ── */
+document.getElementById('start').onclick=()=>{ if(!gl||!extCBF) return;
+  document.getElementById('boot').classList.add('gone'); running=true; loop(); };
+
+if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); genSources(); computeGradCoords(); refreshStat(); }
+</script>
+</body>
+</html>

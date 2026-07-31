@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>写 UTSU — BODY BEAT / 木下スタジオ</title>
+<meta name="description" content="写 UTSU（BODY BEAT）は、カメラに写った顔と体をそのまま楽器にするブラウザの実験。口がエフェクトを開き、こぶしと肘が打面を叩き、首の傾きがベースを鳴らす。木下スタジオ（滋賀・木下貴博）制作。">
+<link rel="canonical" href="https://kinoshita.studio/utsu/">
+<meta property="og:title" content="写 UTSU — BODY BEAT">
+<meta property="og:description" content="カメラに写った顔と体を、そのまま楽器にする。口でエフェクト、こぶしと肘で打面、首の傾きでベース。">
+<meta property="og:image" content="https://kinoshita.studio/assets/img/img-ui-utsu.jpg">
+<meta property="og:url" content="https://kinoshita.studio/utsu/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="木下スタジオ">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://kinoshita.studio/assets/img/img-ui-utsu.jpg">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;overflow:hidden;background:#000;}
+  body{
+    font-family:"Space Mono",ui-monospace,monospace;color:#fff;
+    -webkit-tap-highlight-color:transparent;touch-action:none;
+  }
+  canvas{display:block;position:fixed;inset:0;width:100%;height:100%;}
+  #overlay{z-index:5;pointer-events:none;}
+
+  #boot{
+    position:fixed;inset:0;z-index:50;background:#f4f2ee;color:#0a0a0a;
+    display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:16px;transition:opacity .4s;
+  }
+  #boot.gone{opacity:0;pointer-events:none;}
+  #boot .k{font-size:44px;font-weight:300;letter-spacing:.3em;text-indent:.3em;}
+  #boot .s{font-size:9px;letter-spacing:.3em;opacity:.4;}
+  #boot .d{font-size:11px;opacity:.55;letter-spacing:.06em;line-height:1.9;text-align:center;}
+  #start{
+    margin-top:8px;font-size:9.5px;letter-spacing:.2em;padding:12px 22px;
+    background:none;border:1px solid rgba(10,10,10,.2);color:#0a0a0a;cursor:pointer;
+    transition:background .15s,color .15s;
+  }
+  #start:hover{background:#0a0a0a;color:#f4f2ee;}
+  #start[disabled]{opacity:.4;cursor:default;}
+  #boot .e{font-size:8.5px;letter-spacing:.12em;color:#b4241e;min-height:1em;text-align:center;}
+
+  #ctl{
+    position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:10;
+    display:flex;gap:12px;align-items:center;flex-wrap:wrap;justify-content:center;
+    background:rgba(0,0,0,.44);backdrop-filter:blur(10px);
+    padding:9px 16px;border:1px solid rgba(255,255,255,.14);border-radius:2px;max-width:96vw;
+  }
+  #ctl .row{display:flex;gap:7px;align-items:center;}
+  #ctl label{font-size:8px;letter-spacing:.12em;opacity:.6;}
+  #ctl input[type=range]{
+    -webkit-appearance:none;appearance:none;width:66px;height:1px;
+    background:rgba(255,255,255,.3);outline:none;cursor:pointer;
+  }
+  #ctl input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:9px;height:9px;border-radius:50%;background:#fff;cursor:pointer;
+  }
+  #ctl input[type=range]::-moz-range-thumb{
+    width:9px;height:9px;border:none;border-radius:50%;background:#fff;cursor:pointer;
+  }
+  #ctl .val{font-size:8px;opacity:.5;width:22px;text-align:right;}
+  #ctl .seg{display:flex;border:1px solid rgba(255,255,255,.2);}
+  #ctl .seg button{background:none;border:none;color:#fff;opacity:.4;cursor:pointer;
+    font:inherit;font-size:8px;letter-spacing:.1em;padding:4px 7px;border-right:1px solid rgba(255,255,255,.2);}
+  #ctl .seg button:last-child{border-right:none;}
+  #ctl .seg button.on{opacity:1;background:rgba(255,255,255,.9);color:#000;}
+
+  #hud{
+    position:fixed;top:16px;left:18px;z-index:10;font-size:8.5px;
+    letter-spacing:.14em;opacity:.78;mix-blend-mode:difference;line-height:1.9;max-width:60vw;
+  }
+
+  /* ── モバイル：カメラ全画面は維持 ＋ 下部に横スクロールするコントロールバー ── */
+  @media(max-width:760px){
+    #ctl{
+      left:0; right:0; bottom:0; transform:none; max-width:none;
+      flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden; justify-content:flex-start;
+      border-radius:0; border-left:none; border-right:none;
+      padding:9px 12px calc(9px + env(safe-area-inset-bottom));
+      gap:13px; -webkit-overflow-scrolling:touch;
+    }
+    #ctl .row{ flex:none; }
+    #ctl input[type=range]{ width:74px; height:22px; }
+    #ctl .seg button{ padding:7px 9px; }
+    #boot{ padding:22px 18px; }
+    #boot .k{ font-size:38px; }
+    #boot{ padding:22px 20px; }
+    #boot .d{ width:100%; min-width:0; word-break:break-word; overflow-wrap:anywhere; font-size:9.5px; line-height:1.95; }
+    #boot .d br{ display:none; }
+    #hud{ max-width:70vw; }
+  }
+</style>
+</head>
+<body>
+
+<div id="boot">
+  <div class="k">写</div>
+  <div class="s">UTSU / BODY BEAT</div>
+  <div class="d">
+    体と顔で演奏します。<br>
+    こぶし・肘を振り下ろすとドラム（キック/スネア/ハット/クラップ）。<br>
+    口を開けるとFXライザー（サビ前）、閉じるとドロップ。まばたき・眉も鳴る。<br>
+    BEAT を押すと下地のビートが回ります。
+  </div>
+  <button id="start" disabled>認識モデル読み込み中…</button>
+  <div class="e" id="boot-err"></div>
+</div>
+
+<div id="hud">
+  写 UTSU — BODY BEAT<br>
+  <span id="state">認識：—</span>
+</div>
+
+<div id="ctl">
+  <div class="row"><label>BEAT</label><div class="seg" id="seg-beat">
+    <button data-v="1">ON</button><button data-v="0" class="on">OFF</button></div></div>
+  <div class="row"><label>BASS</label><div class="seg" id="seg-bass">
+    <button data-v="1" class="on">ON</button><button data-v="0">OFF</button></div></div>
+  <div class="row"><label>TEMPO</label><input id="s-tempo" type="range" min="70" max="160" value="100"><span class="val" id="v-tempo"></span></div>
+  <div class="row"><label>DRUMS</label><div class="seg" id="seg-pose">
+    <button data-v="1" class="on">ON</button><button data-v="0">OFF</button></div></div>
+  <div class="row"><label>HITS</label><div class="seg" id="seg-synth">
+    <button data-v="0" class="on">DRUM</button><button data-v="1">SYNTH</button></div></div>
+  <div class="row"><label>HANDS</label><div class="seg" id="seg-hands">
+    <button data-v="1" class="on">ON</button><button data-v="0">OFF</button></div></div>
+  <div class="row"><label>SPIKE</label><div class="seg" id="seg-burst">
+    <button data-v="0" class="on">口だけ</button><button data-v="1">＋叩き</button></div></div>
+  <div class="row"><label>DOTS</label><div class="seg" id="seg-dots">
+    <button data-v="1" class="on">ON</button><button data-v="0">OFF</button></div></div>
+  <div class="row"><label>VOL</label><input id="s-vol" type="range" min="0" max="100" value="65"><span class="val" id="v-vol"></span></div>
+  <div class="row"><label>SPIKES</label><input id="s-cnt" type="range" min="8" max="120" value="54"><span class="val" id="v-cnt"></span></div>
+  <div class="row"><label>SHARP</label><input id="s-shp" type="range" min="0" max="100" value="55"><span class="val" id="v-shp"></span></div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { FaceLandmarker, PoseLandmarker, HandLandmarker, FilesetResolver }
+  from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.20/vision_bundle.mjs';
+
+/* ═══════════════════════════════════════════════════════════
+   写 UTSU — BODY BEAT
+   体と顔で演奏する。真鍋大度／木下自身の 2021 motionkit の系譜。
+   ・こぶし/肘の振り下ろし = ドラム（キック/スネア/ハット/クラップ）
+   ・口を開ける = FXライザー（サビ前）＋棘、閉じる = ドロップ
+   ・まばたき = ハット、眉上げ = クラッシュ
+   ・BEAT = 下地の4つ打ちグルーヴ（テンポ可変）
+   認識 = MediaPipe Face Landmarker ＋ Pose Landmarker。
+   ═══════════════════════════════════════════════════════════ */
+
+const P = { count:54, sharp:55, vol:65, dots:1, pose:1, hands:1, beat:0, bass:1, synth:0, spikeHit:0, tempo:100, mirror:1 };
+
+function smoothstep(e0,e1,x){ const t=Math.min(Math.max((x-e0)/(e1-e0),0),1); return t*t*(3-2*t); }
+const clamp=(x,a,b)=>Math.min(Math.max(x,a),b);
+
+/* ── RENDERER（棘）─────────────────────────────────────── */
+const renderer = new THREE.WebGLRenderer({ antialias:false, preserveDrawingBuffer:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const oc = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const uniforms = {
+  tVideo:{ value:null }, uCover:{ value:new THREE.Vector2(1,1) }, uAspect:{ value:new THREE.Vector2(1,1) },
+  uMirror:{ value:1 }, uAmp:{ value:0.0 }, uCount:{ value:54 }, uSharp:{ value:2.0 },
+  uCenter:{ value:new THREE.Vector2(0.5,0.5) }, uFaceR:{ value:0.28 },
+};
+const mat = new THREE.ShaderMaterial({
+  uniforms,
+  vertexShader:`varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.,1.); }`,
+  fragmentShader:`
+    precision highp float;
+    uniform sampler2D tVideo; uniform vec2 uCover,uAspect,uCenter;
+    uniform float uMirror,uAmp,uCount,uSharp,uFaceR; varying vec2 vUv;
+    float hash(float n){ return fract(sin(n*127.1)*43758.5453); }
+    void main(){
+      vec2 c=(vUv-uCenter)*uAspect; float r=length(c); float a=atan(c.y,c.x);
+      float N=uCount; float s=a/6.2831853*N; float sect=floor(s);
+      float rnd=hash(sect),rnd2=hash(sect+37.0); float local=fract(s+(rnd2-0.5)*0.6);
+      float tri=pow(max(1.0-abs(local-0.5)*2.0,0.0),uSharp); float len=0.35+rnd*0.9;
+      float ring=smoothstep(uFaceR*0.35,uFaceR*1.05,r);
+      float pull=tri*len*uAmp*ring*(0.12+r*1.1);
+      vec2 dir=(c/max(r,1e-4))/uAspect; vec2 sv=vUv-dir*pull;
+      vec2 uv=(sv-0.5)*uCover+0.5; if(uMirror>0.5) uv.x=1.0-uv.x;
+      gl_FragColor=vec4(texture2D(tVideo,uv).rgb,1.0);
+    }`
+});
+scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2), mat));
+
+/* ── OVERLAY ────────────────────────────────────────────── */
+const ov=document.createElement('canvas'); ov.id='overlay';
+ov.style.cssText='position:fixed;inset:0;width:100%;height:100%;';
+document.body.appendChild(ov);
+const octx=ov.getContext('2d');
+function sizeOverlay(){ const dpr=Math.min(devicePixelRatio,2); ov.width=innerWidth*dpr; ov.height=innerHeight*dpr; octx.setTransform(dpr,0,0,dpr,0,0); }
+
+/* ── VIDEO ──────────────────────────────────────────────── */
+let video=null, videoTex=null, started=false;
+function updateCover(){
+  const vw=(video&&video.videoWidth)||16, vh=(video&&video.videoHeight)||9;
+  const va=vw/vh, sa=innerWidth/innerHeight; let cx=1,cy=1;
+  if(sa>va) cy=va/sa; else cx=sa/va;
+  uniforms.uCover.value.set(cx,cy); uniforms.uAspect.value.set(sa,1);
+}
+function resize(){ renderer.setSize(innerWidth,innerHeight); sizeOverlay(); updateCover(); }
+addEventListener('resize', resize);
+function lmPx(p){
+  const cover=uniforms.uCover.value, mir=P.mirror!==0;
+  let vx=mir?(1-p.x):p.x, vy=1-p.y;
+  const sx=(vx-0.5)/cover.x+0.5, sy=(vy-0.5)/cover.y+0.5;
+  return { x:sx*innerWidth, y:(1-sy)*innerHeight };
+}
+
+/* ── AUDIO ──────────────────────────────────────────────── */
+let actx=null, master=null, noiseBuf=null;
+function initAudio(){
+  actx=new (window.AudioContext||window.webkitAudioContext)();
+  master=actx.createGain(); master.gain.value=P.vol/100*0.7; master.connect(actx.destination);
+  const len=actx.sampleRate*2; noiseBuf=actx.createBuffer(1,len,actx.sampleRate);
+  const d=noiseBuf.getChannelData(0); for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+}
+function noise(){ const s=actx.createBufferSource(); s.buffer=noiseBuf; s.loop=true; return s; }
+
+// ── ドラム（すべて when で予約可能）──
+function kick(when, vol){ when=when||actx.currentTime; vol=vol||0.9;
+  const o=actx.createOscillator(), g=actx.createGain();
+  o.frequency.setValueAtTime(150,when); o.frequency.exponentialRampToValueAtTime(48,when+0.12);
+  g.gain.setValueAtTime(vol,when); g.gain.exponentialRampToValueAtTime(0.001,when+0.2);
+  o.connect(g); g.connect(master); o.start(when); o.stop(when+0.22);
+}
+function snare(when, vol){ when=when||actx.currentTime; vol=vol||0.8;
+  const n=noise(), nf=actx.createBiquadFilter(); nf.type='highpass'; nf.frequency.value=1400;
+  const ng=actx.createGain(); n.connect(nf); nf.connect(ng); ng.connect(master);
+  ng.gain.setValueAtTime(vol*0.7,when); ng.gain.exponentialRampToValueAtTime(0.001,when+0.14);
+  n.start(when); n.stop(when+0.16);
+  const o=actx.createOscillator(); o.type='triangle'; o.frequency.value=180;
+  const og=actx.createGain(); o.connect(og); og.connect(master);
+  og.gain.setValueAtTime(vol*0.5,when); og.gain.exponentialRampToValueAtTime(0.001,when+0.1);
+  o.start(when); o.stop(when+0.12);
+}
+function hihat(when, vol){ when=when||actx.currentTime; vol=vol||0.5;
+  const n=noise(), f=actx.createBiquadFilter(); f.type='highpass'; f.frequency.value=7000;
+  const g=actx.createGain(); n.connect(f); f.connect(g); g.connect(master);
+  g.gain.setValueAtTime(vol*0.4,when); g.gain.exponentialRampToValueAtTime(0.001,when+0.05);
+  n.start(when); n.stop(when+0.06);
+}
+function clap(when, vol){ when=when||actx.currentTime; vol=vol||0.7;
+  const f=actx.createBiquadFilter(); f.type='bandpass'; f.frequency.value=1500; f.Q.value=1.3;
+  const g=actx.createGain(); f.connect(g); g.connect(master);
+  for(const d of [0,0.012,0.024,0.036]){ const n=noise(); n.connect(f); n.start(when+d); n.stop(when+d+0.05); }
+  g.gain.setValueAtTime(0.0001,when); g.gain.linearRampToValueAtTime(vol*0.6,when+0.006);
+  g.gain.exponentialRampToValueAtTime(0.001,when+0.16);
+}
+function crash(vol){ const when=actx.currentTime; vol=vol||0.5;
+  const n=noise(), f=actx.createBiquadFilter(); f.type='highpass'; f.frequency.value=5000;
+  const g=actx.createGain(); n.connect(f); f.connect(g); g.connect(master);
+  g.gain.setValueAtTime(vol*0.5,when); g.gain.exponentialRampToValueAtTime(0.001,when+0.8);
+  n.start(when); n.stop(when+0.85);
+}
+const DRUM = { kick, snare, hihat, clap };
+
+// 体をシンセにする（BEAT のドラムと重ならないように）。プラッキーな stab
+function synthStab(freq, vol){ if(!actx) return; const t=actx.currentTime; vol=vol||0.5;
+  const o=actx.createOscillator(); o.type='sawtooth'; o.frequency.value=freq;
+  const o2=actx.createOscillator(); o2.type='square'; o2.frequency.value=freq*1.006;
+  const f=actx.createBiquadFilter(); f.type='lowpass'; f.Q.value=9;
+  f.frequency.setValueAtTime(freq*9+500,t); f.frequency.exponentialRampToValueAtTime(freq*2+180,t+0.24);
+  const g=actx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(vol*0.5,t+0.008);
+  g.gain.exponentialRampToValueAtTime(0.001,t+0.35);
+  o.connect(f); o2.connect(f); f.connect(g); g.connect(master);
+  o.start(t); o2.start(t); o.stop(t+0.38); o2.stop(t+0.38);
+}
+
+// ── シンセ・ベース（首の傾きで音程を選ぶ）──
+const BASS_SCALE = [55.00, 65.41, 73.42, 82.41, 98.00, 110.00]; // A1 C2 D2 E2 G2 A2
+function bassNote(when, freq, vol){ when=when||actx.currentTime; vol=vol||0.5;
+  const o=actx.createOscillator(); o.type='sawtooth'; o.frequency.value=freq;
+  const o2=actx.createOscillator(); o2.type='sine'; o2.frequency.value=freq*0.5; // サブ
+  const f=actx.createBiquadFilter(); f.type='lowpass'; f.Q.value=6;
+  f.frequency.setValueAtTime(freq*7+300,when); f.frequency.exponentialRampToValueAtTime(freq*2+80,when+0.2);
+  const g=actx.createGain(); g.gain.setValueAtTime(0.0001,when); g.gain.linearRampToValueAtTime(vol,when+0.012);
+  g.gain.exponentialRampToValueAtTime(0.001,when+0.3);
+  o.connect(f); o2.connect(f); f.connect(g); g.connect(master);
+  o.start(when); o2.start(when); o.stop(when+0.32); o2.stop(when+0.32);
+}
+
+// ── 口＝FXライザー（サビ前）→ ドロップ ──
+let riser=null;
+function riserOn(){
+  if(!actx || riser) return; const t=actx.currentTime;
+  const n=noise(), f=actx.createBiquadFilter(); f.type='bandpass'; f.Q.value=1.4;
+  f.frequency.setValueAtTime(300,t); f.frequency.exponentialRampToValueAtTime(6500,t+3.6);
+  const g=actx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(0.2,t+1.3);
+  n.connect(f); f.connect(g); g.connect(master); n.start();
+  const o=actx.createOscillator(); o.type='sawtooth';
+  o.frequency.setValueAtTime(220,t); o.frequency.exponentialRampToValueAtTime(1500,t+3.6);
+  const og=actx.createGain(); og.gain.setValueAtTime(0.0001,t); og.gain.linearRampToValueAtTime(0.09,t+1.6);
+  o.connect(og); og.connect(master); o.start();
+  riser={n,f,g,o,og};
+}
+function riserOff(drop){
+  if(!riser) return; const {n,g,o,og}=riser, t=actx.currentTime;
+  g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(g.gain.value,t); g.gain.linearRampToValueAtTime(0,t+0.15);
+  og.gain.cancelScheduledValues(t); og.gain.setValueAtTime(og.gain.value,t); og.gain.linearRampToValueAtTime(0,t+0.15);
+  n.stop(t+0.2); o.stop(t+0.2); riser=null;
+  if(drop) impact();
+}
+function impact(){ const t=actx.currentTime;
+  const o=actx.createOscillator(), g=actx.createGain();
+  o.frequency.setValueAtTime(120,t); o.frequency.exponentialRampToValueAtTime(38,t+0.5);
+  g.gain.setValueAtTime(0.6,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.6);
+  o.connect(g); g.connect(master); o.start(); o.stop(t+0.65);
+  const n=noise(), f=actx.createBiquadFilter(); f.type='lowpass';
+  f.frequency.setValueAtTime(8000,t); f.frequency.exponentialRampToValueAtTime(200,t+0.5);
+  const ng=actx.createGain(); ng.gain.setValueAtTime(0.28,t); ng.gain.exponentialRampToValueAtTime(0.001,t+0.5);
+  n.connect(f); f.connect(ng); ng.connect(master); n.start(); n.stop(t+0.55);
+}
+
+// ── 目＝澄んだベル（ping）──
+function ping(freq, vol){ if(!actx) return; const t=actx.currentTime;
+  const o=actx.createOscillator(); o.type='sine'; o.frequency.value=freq;
+  const o2=actx.createOscillator(); o2.type='sine'; o2.frequency.value=freq*2.01;
+  const g=actx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(vol,t+0.005);
+  g.gain.exponentialRampToValueAtTime(0.001,t+0.6);
+  const g2=actx.createGain(); g2.gain.value=0.3;
+  o.connect(g); o2.connect(g2); g2.connect(g); g.connect(master);
+  o.start(t); o2.start(t); o.stop(t+0.62); o2.stop(t+0.62);
+}
+
+// ── 手のひら＝メロディのパッド（開き=音量、高さ=音程）──
+const SCALE2 = [164.81,196.00,220.00,261.63,293.66,329.63,392.00,440.00,523.25,587.33,659.25,783.99,880.00];
+const handVoices = {};
+function handOpenness(lm){ const wrist=lm[0],mcp=lm[9]; const size=Math.hypot(wrist.x-mcp.x,wrist.y-mcp.y)+1e-4;
+  const tips=[4,8,12,16,20]; let s=0; for(const t of tips) s+=Math.hypot(lm[t].x-wrist.x,lm[t].y-wrist.y);
+  return clamp(((s/tips.length)/size-1.3)/1.2, 0, 1); }
+function handVoiceEnsure(key){ if(handVoices[key]||!actx) return;
+  const o=actx.createOscillator(); o.type='triangle';
+  const o2=actx.createOscillator(); o2.type='sine'; o2.detune.value=5;
+  const f=actx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=1400;
+  const g=actx.createGain(); g.gain.value=0;
+  o.connect(f); o2.connect(f); f.connect(g); g.connect(master); o.start(); o2.start();
+  handVoices[key]={o,o2,f,g};
+}
+function handVoiceSet(key,freq,vol,bright){ const v=handVoices[key]; if(!v) return; const t=actx.currentTime;
+  v.o.frequency.setTargetAtTime(freq,t,0.07); v.o2.frequency.setTargetAtTime(freq,t,0.07);
+  v.f.frequency.setTargetAtTime(bright,t,0.07); v.g.gain.setTargetAtTime(vol,t,0.06); }
+function handVoiceOff(key){ const v=handVoices[key]; if(!v) return; const t=actx.currentTime;
+  v.g.gain.setTargetAtTime(0,t,0.12); v.o.stop(t+0.5); v.o2.stop(t+0.5); delete handVoices[key]; }
+
+// ── BEAT シーケンサ（16分・ルックアヘッド）──
+const PAT = {
+  kick:  [1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,1,0],
+  snare: [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
+  hihat: [1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,1],
+  bass:  [1,0,0,0, 0,0,1,0, 1,0,0,1, 0,0,1,0],
+};
+let seqStep=0, seqNext=0, seqTimer=null;
+function stepDur(){ return 60/P.tempo/4; }
+function scheduler(){
+  if(!actx) return;
+  while(seqNext < actx.currentTime + 0.12){
+    const s=seqStep%16;
+    if(PAT.kick[s])  kick(seqNext, 0.9);
+    if(PAT.snare[s]) snare(seqNext, 0.7);
+    if(PAT.hihat[s]) hihat(seqNext, 0.35);
+    if(P.bass && PAT.bass[s]) bassNote(seqNext, bassFreq, 0.5);
+    seqNext += stepDur(); seqStep++;
+  }
+}
+function beatStart(){ if(!actx||seqTimer) return; seqStep=0; seqNext=actx.currentTime+0.06; seqTimer=setInterval(scheduler,25); }
+function beatStop(){ if(seqTimer){ clearInterval(seqTimer); seqTimer=null; } }
+
+/* ── FACE + POSE ────────────────────────────────────────── */
+let faceMarker=null, poseMarker=null, handMarker=null, lastVideoTime=-1, detTick=0;
+let LMK=null, faceOn=false, jaw=0, faceR=0.28;
+let HANDS=[];
+let headRoll=0, bassFreq=55;
+const center={x:0.5,y:0.5};
+const B={};
+const st={ mouth:false, blinkL:false, blinkR:false, brow:false };
+const flash={ mouth:0, eyeL:0, eyeR:0, brow:0 };
+let hitBurst=0;   // 体で叩くと棘が一瞬爆発（派手に）
+let POSE=null;   // 33 landmarks
+const flashP={};  // idx -> 残光
+
+async function initModels(){
+  const fileset=await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.20/wasm');
+  faceMarker=await FaceLandmarker.createFromOptions(fileset,{
+    baseOptions:{ modelAssetPath:'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task', delegate:'GPU' },
+    outputFaceBlendshapes:true, runningMode:'VIDEO', numFaces:1,
+  });
+  poseMarker=await PoseLandmarker.createFromOptions(fileset,{
+    baseOptions:{ modelAssetPath:'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task', delegate:'GPU' },
+    runningMode:'VIDEO', numPoses:1,
+  });
+  handMarker=await HandLandmarker.createFromOptions(fileset,{
+    baseOptions:{ modelAssetPath:'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task', delegate:'GPU' },
+    runningMode:'VIDEO', numHands:2,
+  });
+  const btn=document.getElementById('start'); btn.disabled=false; btn.textContent='カメラを許可して始める';
+}
+
+function readFace(res){
+  if(!res||!res.faceLandmarks||!res.faceLandmarks.length){ faceOn=false; LMK=null; return; }
+  faceOn=true; LMK=res.faceLandmarks[0];
+  let minx=1,miny=1,maxx=0,maxy=0;
+  for(const p of LMK){ if(p.x<minx)minx=p.x; if(p.x>maxx)maxx=p.x; if(p.y<miny)miny=p.y; if(p.y>maxy)maxy=p.y; }
+  const cx=(minx+maxx)/2, cy=(miny+maxy)/2, cover=uniforms.uCover.value, mir=P.mirror!==0;
+  center.x += (((mir?1-cx:cx)-0.5)/cover.x+0.5 - center.x)*0.4;
+  center.y += (((1-cy)-0.5)/cover.y+0.5 - center.y)*0.4;
+  faceR += ((maxy-miny)/cover.y*0.62 - faceR)*0.4;
+  // 首の傾き（両目の外側を結ぶ線の角度）→ ベースの音程を選ぶ
+  const eL=LMK[33], eR=LMK[263];
+  headRoll += (Math.atan2(eR.y-eL.y, eR.x-eL.x) - headRoll)*0.4;
+  const tt=clamp((headRoll+0.42)/0.84, 0, 1);
+  bassFreq = BASS_SCALE[Math.min(Math.floor(tt*BASS_SCALE.length), BASS_SCALE.length-1)];
+
+  const bs=res.faceBlendshapes&&res.faceBlendshapes[0];
+  if(bs){ for(const c of bs.categories) B[c.categoryName]=c.score; }
+  jaw += ((B.jawOpen||0)-jaw)*0.4;
+}
+function readPose(res){
+  POSE = (res && res.landmarks && res.landmarks.length) ? res.landmarks[0] : null;
+}
+function readHands(res){
+  HANDS=[]; if(!res||!res.landmarks) return;
+  for(let i=0;i<res.landmarks.length;i++){
+    const hd=res.handedness&&res.handedness[i]&&res.handedness[i][0];
+    HANDS.push({ lm:res.landmarks[i], key:hd?hd.categoryName:('H'+i) });
+  }
+}
+// 手を開くとパッドが鳴る（高さ=音程、開き=音量）。握ると無音＝こぶしで叩ける
+function updateHands(){
+  if(!actx) return; const active={};
+  if(P.hands){ for(const h of HANDS){
+    const op=handOpenness(h.lm);
+    if(op>0.28){ active[h.key]=true; handVoiceEnsure(h.key);
+      const palm=h.lm[9]; const idx=Math.floor(clamp(1-palm.y,0,1)*SCALE2.length);
+      handVoiceSet(h.key, SCALE2[Math.min(idx,SCALE2.length-1)], (op-0.28)*0.26, 700+op*2600);
+    }
+  } }
+  for(const k of Object.keys(handVoices)){ if(!active[k]) handVoiceOff(k); }
+}
+
+// ドラム点（Pose idx → ドラム）。16=右手首,15=左手首,14=右肘,13=左肘
+const HIT = [
+  { idx:16, drum:'kick',  note:220.00, label:'KICK'  },
+  { idx:15, drum:'snare', note:293.66, label:'SNARE' },
+  { idx:14, drum:'hihat', note:392.00, label:'HAT'   },
+  { idx:13, drum:'clap',  note:523.25, label:'CLAP'  },
+];
+const prevY={}, lastHit={};
+function poseDrums(now){
+  if(!actx || !P.pose || !POSE) return;
+  for(const h of HIT){
+    const p=POSE[h.idx]; if(!p || (p.visibility!==undefined && p.visibility<0.3)) continue;
+    const py=prevY[h.idx]; prevY[h.idx]=p.y;
+    if(py===undefined) continue;
+    const vy=p.y-py;                        // +で下方向（叩き下ろし）
+    if(vy>0.018 && (now-(lastHit[h.idx]||0))>140){
+      lastHit[h.idx]=now;
+      const vol=clamp((vy-0.018)*14+0.4, 0.4, 1);
+      if(P.synth) synthStab(h.note, vol);   // シンセ（BEATと重ならない）
+      else        DRUM[h.drum](undefined, vol);
+      flashP[h.idx]=1;
+      hitBurst=Math.max(hitBurst, vol);     // 叩くと棘が爆発
+    }
+  }
+}
+
+function faceTriggers(){
+  if(!actx || !faceOn) return;
+  if(!st.mouth && jaw>0.42){ st.mouth=true; riserOn(); flash.mouth=1; }
+  if(st.mouth && jaw<0.20){ st.mouth=false; riserOff(true); }   // 閉じる＝ドロップ
+  const bl=B.eyeBlinkLeft||0, br=B.eyeBlinkRight||0;
+  if(!st.blinkL && bl>0.45){ st.blinkL=true; ping(659.25,0.32); flash.eyeL=1; }  // 目＝澄んだベル
+  if(st.blinkL && bl<0.28) st.blinkL=false;
+  if(!st.blinkR && br>0.45){ st.blinkR=true; ping(880.00,0.32); flash.eyeR=1; }
+  if(st.blinkR && br<0.28) st.blinkR=false;
+  const brow=((B.browOuterUpLeft||0)+(B.browOuterUpRight||0))*0.5;
+  if(!st.brow && brow>0.45){ st.brow=true; crash(0.5); flash.brow=1; }
+  if(st.brow && brow<0.25) st.brow=false;
+}
+
+/* ── START ──────────────────────────────────────────────── */
+async function start(){
+  const err=document.getElementById('boot-err'); err.textContent='';
+  if(!faceMarker){ err.textContent='モデル読み込み中…'; return; }
+  let stream;
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({ video:{ width:{ideal:640}, height:{ideal:480}, frameRate:{ideal:30}, facingMode:'user' }, audio:false });
+  }catch(e){
+    err.textContent={ NotAllowedError:'カメラ拒否 — 設定から許可してください', NotFoundError:'カメラが見つかりません',
+      NotReadableError:'カメラが他アプリで使用中', SecurityError:'HTTPS または localhost が必要です' }[e.name]||e.name||'CAMERA ERROR';
+    return;
+  }
+  video=document.createElement('video'); video.srcObject=stream;
+  video.muted=true; video.playsInline=true; video.autoplay=true;
+  await video.play().catch(()=>{});
+  videoTex=new THREE.VideoTexture(video); videoTex.minFilter=THREE.LinearFilter; videoTex.magFilter=THREE.LinearFilter;
+  uniforms.tVideo.value=videoTex; updateCover(); initAudio();
+  if(P.beat) beatStart();
+  started=true; document.getElementById('boot').classList.add('gone');
+}
+
+/* ── OVERLAY 描画 ───────────────────────────────────────── */
+const IDX={ eyeL:[33,133,159,145,158,153,468], eyeR:[362,263,386,374,385,380,473], mouth:[61,291,0,17,13,14,40,270] };
+function boxOf(ix,pad){ let a=1e9,b=1e9,c=-1e9,d=-1e9; for(const i of ix){ const q=lmPx(LMK[i]); a=Math.min(a,q.x);c=Math.max(c,q.x);b=Math.min(b,q.y);d=Math.max(d,q.y);} return {x:a-pad,y:b-pad,w:(c-a)+pad*2,h:(d-b)+pad*2}; }
+function drawBox(bx,label,lit){
+  const al=0.35+lit*0.65; octx.lineWidth=1+lit*2;
+  octx.strokeStyle=lit>0.5?`rgba(255,225,90,${al})`:`rgba(255,255,255,${al})`;
+  octx.strokeRect(bx.x,bx.y,bx.w,bx.h);
+  octx.font='9px "Space Mono",monospace'; octx.fillStyle=octx.strokeStyle; octx.fillText(label,bx.x,bx.y-4);
+}
+const POSE_CONN=[[11,12],[11,13],[13,15],[12,14],[14,16]];
+function drawPose(){
+  if(!POSE) return;
+  octx.lineWidth=3; octx.strokeStyle='rgba(120,220,255,0.5)'; octx.beginPath();
+  for(const [i,j] of POSE_CONN){ const p=POSE[i],q=POSE[j]; if(!p||!q)continue; const a=lmPx(p),b=lmPx(q); octx.moveTo(a.x,a.y); octx.lineTo(b.x,b.y); }
+  octx.stroke();
+  for(const h of HIT){
+    const p=POSE[h.idx]; if(!p||(p.visibility!==undefined&&p.visibility<0.5)) continue;
+    const q=lmPx(p), f=flashP[h.idx]||0;
+    octx.beginPath(); octx.arc(q.x,q.y, 14+f*16, 0, 6.2831853);
+    octx.strokeStyle=f>0.4?`rgba(255,225,90,${0.5+f*0.5})`:'rgba(120,220,255,0.65)'; octx.lineWidth=2+f*3; octx.stroke();
+    octx.font='10px "Space Mono",monospace'; octx.fillStyle=octx.strokeStyle; octx.fillText(h.label, q.x+18, q.y+4);
+  }
+}
+const HAND_CONN=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+function drawHands(){
+  for(const h of HANDS){
+    const op=handOpenness(h.lm), a=0.4+op*0.6;
+    octx.lineWidth=2; octx.strokeStyle=`rgba(120,255,190,${a})`; octx.beginPath();
+    for(const [i,j] of HAND_CONN){ const p=lmPx(h.lm[i]),q=lmPx(h.lm[j]); octx.moveTo(p.x,p.y); octx.lineTo(q.x,q.y); }
+    octx.stroke();
+    octx.fillStyle=`rgba(255,255,255,${a})`;
+    for(const p0 of h.lm){ const p=lmPx(p0); octx.beginPath(); octx.arc(p.x,p.y,2,0,6.2831853); octx.fill(); }
+    const w=lmPx(h.lm[0]); octx.font='9px "Space Mono",monospace'; octx.fillStyle=`rgba(120,255,190,${a})`;
+    octx.fillText('PALM · 開=メロ 握=無音', w.x+6, w.y+4);
+  }
+}
+function drawOverlay(){
+  octx.clearRect(0,0,innerWidth,innerHeight);
+  if(P.pose) drawPose();
+  if(P.hands) drawHands();
+  if(!faceOn||!LMK) return;
+  if(P.dots){ octx.fillStyle='rgba(255,60,60,0.85)'; for(let i=0;i<LMK.length;i++){ const q=lmPx(LMK[i]); octx.beginPath(); octx.arc(q.x,q.y,1.3,0,6.2831853); octx.fill(); } }
+  drawBox(boxOf(IDX.eyeL,6),'EYE L · HAT', flash.eyeL);
+  drawBox(boxOf(IDX.eyeR,6),'EYE R · HAT', flash.eyeR);
+  drawBox(boxOf(IDX.mouth,8),'MOUTH · 開=ライザー 閉=ドロップ', flash.mouth||(st.mouth?1:0));
+}
+
+/* ── LOOP ───────────────────────────────────────────────── */
+const stateEl=document.getElementById('state');
+function frame(){
+  requestAnimationFrame(frame);
+  if(!started) return;
+  if(video.readyState>=2 && video.currentTime!==lastVideoTime){
+    lastVideoTime=video.currentTime; const ts=performance.now();
+    if(faceMarker){ try{ readFace(faceMarker.detectForVideo(video,ts)); }catch(e){} }
+    // 体は1フレームおき（重いので）。顔は毎回＝まばたき維持
+    detTick++;
+    // 体と手は1フレームずつ交互（同時に走るのは常に2モデルまで＝軽い）
+    if(detTick&1){ if(poseMarker && P.pose){ try{ readPose(poseMarker.detectForVideo(video,ts+0.5)); }catch(e){} } }
+    else         { if(handMarker && P.hands){ try{ readHands(handMarker.detectForVideo(video,ts+0.5)); }catch(e){} } }
+    if(!P.pose) POSE=null;
+    if(!P.hands) HANDS=[];
+  }
+  if(!faceOn){ jaw+=(0-jaw)*0.2; center.x+=(0.5-center.x)*0.05; center.y+=(0.5-center.y)*0.05; if(st.mouth){ st.mouth=false; riserOff(false); } }
+
+  faceTriggers();
+  poseDrums(performance.now());
+  updateHands();
+
+  const open=smoothstep(0.14,0.55,jaw);
+  // 棘は口だけ（既定）。BURST ON で叩き（ヒット）でも変動する
+  uniforms.uAmp.value=open*1.5 + (P.spikeHit?hitBurst*1.4:0); hitBurst*=0.85;
+  uniforms.uCount.value=P.count; uniforms.uSharp.value=0.6+P.sharp/100*4.0;
+  uniforms.uCenter.value.set(center.x,center.y); uniforms.uFaceR.value=faceR; uniforms.uMirror.value=P.mirror;
+  if(master) master.gain.value=P.vol/100*0.7;
+
+  renderer.render(scene, oc);
+
+  flash.mouth*=0.86; flash.eyeL*=0.86; flash.eyeR*=0.86; flash.brow*=0.86;
+  for(const k in flashP) flashP[k]*=0.82;
+  drawOverlay();
+
+  stateEl.textContent = faceOn
+    ? '認識：顔'+(POSE?'＋体':'')+' ／ こぶし肘=ドラム  口=ライザー/ドロップ'
+    : '認識：—（正面に顔・体を）';
+}
+requestAnimationFrame(frame); resize();
+
+/* ── CONTROLS ───────────────────────────────────────────── */
+function bind(id,key,vid,after){ const el=document.getElementById(id),v=document.getElementById(vid);
+  const s=()=>{ P[key]=+el.value; v.textContent=el.value; if(after)after(); }; el.addEventListener('input',s); s(); }
+bind('s-tempo','tempo','v-tempo');
+bind('s-vol','vol','v-vol');
+bind('s-cnt','count','v-cnt');
+bind('s-shp','sharp','v-shp');
+function seg(id,key,cb){ document.querySelectorAll('#'+id+' button').forEach(b=>{ b.onclick=()=>{
+  document.querySelectorAll('#'+id+' button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); P[key]=+b.dataset.v; if(cb)cb(); }; }); }
+seg('seg-dots','dots');
+seg('seg-pose','pose',()=>{ if(!P.pose) POSE=null; });
+seg('seg-hands','hands',()=>{ if(!P.hands){ for(const k of Object.keys(handVoices)) handVoiceOff(k); HANDS=[]; } });
+seg('seg-beat','beat',()=>{ if(P.beat) beatStart(); else beatStop(); });
+seg('seg-bass','bass');
+seg('seg-synth','synth');
+seg('seg-burst','spikeHit');
+
+document.getElementById('start').onclick=start;
+initModels().catch(e=>{ document.getElementById('boot-err').textContent='モデル読込失敗：ネット接続を確認（'+(e.message||e.name||e)+'）'; console.error('[UTSU] init:',e); });
+</script>
+</body>
+</html>
