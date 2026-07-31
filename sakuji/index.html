@@ -4826,6 +4826,20 @@ function closeInlineText(commit){
     const t = editTarget; editTarget = null;
     const txt = inlineT.value;
     inlineT.style.display = 'none'; inlineT.value = '';
+    // ⭐ 粒は【文字を組み直して粒をかけ直す】道を通す。
+    //   ⚠️ もう文字ではないので placeText で置き換えることはできない。
+    //     覚えている txt を書き替えて、書体・字間を変えたときと同じ道（reflowSelectedText）へ渡す。
+    if(commit && txt && t.__tzText){
+      t.opacity = 1;                          // 打ち直し中に薄くしていたぶんを戻す
+      if(txt !== t.__tzText.txt){
+        t.__tzText.txt = txt;
+        artLayer.children.forEach(c => c.selected = false);
+        t.selected = true;
+        reflowSelectedText('txt');            // 中で snapshot する（粒のまま組み直す）
+      }
+      inlinePt = null;
+      return;
+    }
     if(commit && txt){
       snapshot();
       const at = t.position.clone();
@@ -5174,13 +5188,17 @@ function textRootOf(item){
   let n = item, single = null;
   while(n && n !== artLayer){
     if(n.__isText) return n;                                  // 束ね＝ひとまとまりの文字（優先）
+    // ⭐ 粒でも【作り方を覚えていれば】打ち直せる。
+    //   書体・大きさ・字間・行間・縦組は組み直せるのに、文字そのものだけ変えられなかった
+    //   （木下＝「粒後のテキスト修正やフォント変更、字間とかそのあたりもまだだったよね？」）。
+    if(n.__tzText) return n;
     if(!single && n instanceof paper.PointText) single = n;    // 束ねていない単体の文字
     n = n.parent;
   }
   return single;
 }
-/* 打ち直しの欄に入れる文字＝束ねなら __txt、単体なら content */
-function textOf(t){ return (t && (t.__txt ?? t.content)) || ''; }
+/* 打ち直しの欄に入れる文字＝束ねなら __txt、粒なら覚えている txt、単体なら content */
+function textOf(t){ return (t && (t.__txt ?? t.__tzText?.txt ?? t.content)) || ''; }
 let editTarget = null;
 /* ⚠️⚠️ ここに dblclick の打ち直しがもう1本あった（openInlineText で開く古い方）。
    下の openInlineOver 版が capture フェーズで stopImmediatePropagation しているので、
@@ -5195,15 +5213,16 @@ function openInlineOver(t){
   const b = t.bounds;
   const tl = paper.view.projectToView(b.topLeft);
   const Z  = paper.view.zoom;
-  const size = (t.__size || +document.getElementById('tsize').value) * Z;
+  // ⚠️ 粒は __size を持たない（覚えているのは __tzText.size）。ここを見ないと箱の字だけ既定サイズになる
+  const size = (t.__size || +(t.__tzText?.size) || +document.getElementById('tsize').value) * Z;
   inlineT.style.display   = 'block';
   inlineT.style.left      = Math.round(tl.x - 4) + 'px';
   inlineT.style.top       = Math.round(tl.y - 3) + 'px';
   inlineT.style.height    = Math.max(18, Math.round(b.height * Z + 6)) + 'px';
   inlineT.style.width     = Math.max(60, Math.round(b.width  * Z + 28)) + 'px';
   inlineT.style.fontSize  = Math.max(11, Math.round(size * 0.92)) + 'px';
-  inlineT.style.fontFamily = t.__fam || document.getElementById('tfont').value;
-  inlineT.style.fontWeight = t.__wt  || document.getElementById('tweight').value;
+  inlineT.style.fontFamily = t.__fam || t.__tzText?.fam || document.getElementById('tfont').value;
+  inlineT.style.fontWeight = t.__wt  || t.__tzText?.wt  || document.getElementById('tweight').value;
   // ⚠️ 色を入れていなかったので、直前に開いたときの色が残っていた。
   //   白い箱に白い字＝何も見えない（木下＝「打ち直しするときのUIもなんか変」）。
   inlineT.style.color = '#111';
@@ -6294,6 +6313,41 @@ const I18N = {
   '最前面':'To front','最背面':'To back','角度リセット':'Reset angle',
   '1字にまとめる':'Merge to one','枡に合わせる':'Fit to cell',
   'レイヤー':'Layers','ボディ':'Body','字面枠':'Face','分割数':'Divisions',
+  /* ── 2026-07-31 追加。⭐画面に出るのに辞書に無く、EN にしても日本語のまま残っていた62語。
+     ⚠️ 既存の訳語に揃える（粒=Grain／グラデ塊=Blob／字なり=Follow／谷=Valley／照り=Shine）。
+     ⚠️ 書体名は固有名詞なので、訳さず英語表記にするだけ。 */
+  // 塗り・線
+  '開いたパス＝線':'Open path = stroke','塗る':'Fill it','クロム':'Chrome',
+  '面取り':'Bevel','切り落とし':'Butt','なし':'None','大きさ':'Size',
+  // 粒
+  'preview — 押す前に見る':'preview — see it before you commit',
+  '色 ── 粒の色を組む':'Color — build the grain’s color',
+  '奇抜':'Loud','琵琶湖':'Biwako','蛍光':'Neon','赤青':'Red / Blue','自作':'Custom',
+  '波色':'Wave','球色':'Bead','網の向き':'Dither angle',
+  '継ぎ目':'Seam','消す':'Hide','出す':'Show','交点の柄':'Crossing',
+  'グラデの断面':'Gradient section','粒の設定を既定に戻す':'Reset grain settings',
+  // 書体（固有名詞）
+  'Zen 角ゴ':'Zen Gothic','Zen 明朝':'Zen Mincho','Zen 丸ゴ':'Zen Maru Gothic',
+  'ヒラギノ角ゴ':'Hiragino Sans','ヒラギノ明朝':'Hiragino Mincho',
+  // グリッド
+  '和文 ─ 連続マス（並べて組む）':'JP — cells in a row (set them together)',
+  '方眼紙':'Graph paper','方眼＋対角':'Graph + diagonal',
+  'アイソメ（立体をとる斜め）':'Isometric (for solids)',
+  '斜め二点（奥行きをとる）':'Two-point perspective (for depth)','枠だけ':'Frame only',
+  '横に並べる':'Set across','縦に並べる':'Set down',
+  // 共通パーツ・画像・下敷き
+  '選択を登録':'Register selection','画像を置く':'Place image','選択パスで抜く':'Clip with path',
+  '画像を敷く':'Place underlay','濃さ':'Opacity','位置を固定':'Lock position','外す':'Unlock',
+  // 採取
+  '採取（写真から字を拾う）':'Capture (lift letters from a photo)',
+  'しきい値':'Threshold','なめらかさ':'Smoothing','細部を捨てる':'Drop detail',
+  '白黒で見る':'View in B/W','明暗を反転':'Invert','この下敷きから採取':'Capture from this underlay',
+  // 実験
+  '実験 ／ 劣化（コピー機を通す）':'Experiment / Degrade (through a copier)',
+  '荒れ':'Noise','太らせ':'Grow','かける':'Apply','もう一度通す':'Run it again',
+  '実験 ／ 手のゆらぎ（利き手を捨てる）':'Experiment / Hand wobble (drop your good hand)',
+  '震え':'Tremor','筆圧':'Pressure','傾き':'Slant','速さ':'Speed',
+  '手で書き直す':'Redraw by hand','もう一度':'Again',
 };
 (function(){
   const KEY = 'sakuji_grad_tk_lang';
