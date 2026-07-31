@@ -158,6 +158,7 @@
   <div class="mod">⭐ <b>明るい写真ほど帯が生きる</b>。暗い写真は先にここで持ち上げる</div>
 
   <h2>音</h2>
+  <button class="btn" id="bDemo">音を鳴らす</button>
   <div class="grid2">
     <button class="btn" id="bMic">マイク</button>
     <button class="btn" id="bSnd">音を読む</button>
@@ -410,8 +411,9 @@ function band(c, m){
   const nb = neighbor(c);                    // 隣のマス＝渡る先の色
   const b = quant(nb ? nb.c : c.c, m.steps);
 
-  const g = horiz ? ctx.createLinearGradient(x, 0, x+bw, 0)
-                  : ctx.createLinearGradient(0, y, 0, y+bh);
+  // ⚠️ グラデの軸は帯の長い方向へ。よこ＝x に沿って、たて＝y に沿って渡る
+  const g = horiz ? ctx.createLinearGradient(x, 0, x + bw, 0)
+                  : ctx.createLinearGradient(0, y, 0, y + bh);
   const s = P.soft / 100;                    // にじみ＝端をどれだけ溶かすか
   g.addColorStop(0, css(a));
   g.addColorStop(Math.max(0.001, 0.5 - s*0.5), css(a));
@@ -421,9 +423,12 @@ function band(c, m){
   ctx.fillRect(x, y, bw, bh);
 }
 function neighbor(c){
-  // ⭐ 隣＝同じ行の次の帯。行ごとに本数が違うので、行の中で探す
-  if(P.dir === 'x') return cells.find(o => o.row === c.row && o.i === c.i + 1) || null;
-  return cells.find(o => o.row === c.row + 1 && o.x0 <= c.x0 && o.x1 > c.x0) || null;
+  /* ⭐ 渡る先＝【同じ段の次の帯】。
+     🔴 たてのとき別の段（隣の列）を見ていたので、渡る先が見つからず自分と同じ色になり、
+        グラデにならず【べた塗りの短冊】が並んでいた
+        （木下＝「というかたてはグラデーションになってないな」「よこはなっているが」）。
+     ⭐ よこ＝段の中で左から右へ／たて＝段（列）の中で上から下へ。どちらも i+1 で正しい。 */
+  return cells.find(o => o.row === c.row && o.i === c.i + 1) || null;
 }
 
 /* ── つまみ ───────────────────────────────────────────── */
@@ -637,9 +642,84 @@ function tick(){
   // ⚠️ 音が鳴っている間だけ描き直す（止まっていれば描かない＝無駄に回さない）
   if(P.amount > 0 && (M.low + M.mid + M.high) > 0.01) invalidate(1);
 }
+/* ⭐ 同梱の音 ── 木下＝「音と連動に既存の音なにか入れておいて」。
+   ⚠️ 音源ファイルは入れない（著作権とサイズ）。⭐コードで作る＝0バイトで著作権も無い。
+   ⭐ この道具に合わせた音にした。KUMI のビート（キック・ハット・ベース）とは別で、
+     写真を眺めながら触るものなので【ゆっくり寄せては引く波】＋【遠い points】。
+     ⚠️ 低音＝進み／中音＝のび／高音＝色数 に効くので、3つの帯域が動くように作る。 */
+let demoTimer = null, demoGain = null;
+function startDemo(){
+  audioReady(); actx.resume();
+  stopDemo();
+  demoGain = actx.createGain(); demoGain.gain.value = 0.9;
+  demoGain.connect(analyser); demoGain.connect(actx.destination);
+
+  // 低音＝ゆっくりうねる（進みが押し引きされる）
+  const lo = actx.createOscillator(), lg = actx.createGain();
+  lo.type = 'sine'; lo.frequency.value = 48;
+  const lfo = actx.createOscillator(), lfoG = actx.createGain();
+  lfo.type = 'sine'; lfo.frequency.value = 0.07;      // 14秒でひと巡り
+  lfoG.gain.value = 0.5;
+  lg.gain.value = 0.5;
+  lfo.connect(lfoG); lfoG.connect(lg.gain);
+  lo.connect(lg); lg.connect(demoGain);
+  lo.start(); lfo.start();
+
+  // 中音＝薄い持続音（のびが揺れる）
+  const md = actx.createOscillator(), mg = actx.createGain(), mf = actx.createBiquadFilter();
+  md.type = 'sawtooth'; md.frequency.value = 146.8;
+  mf.type = 'lowpass'; mf.frequency.value = 700; mf.Q.value = 6;
+  const mlfo = actx.createOscillator(), mlg = actx.createGain();
+  mlfo.type = 'sine'; mlfo.frequency.value = 0.11; mlg.gain.value = 380;
+  mlfo.connect(mlg); mlg.connect(mf.frequency);
+  mg.gain.value = 0.13;
+  md.connect(mf); mf.connect(mg); mg.connect(demoGain);
+  md.start(); mlfo.start();
+
+  // 高音＝ときどき落ちる粒（色数が動く）
+  const noise = (() => {
+    const b = actx.createBuffer(1, actx.sampleRate * 0.4, actx.sampleRate);
+    const d = b.getChannelData(0);
+    for(let i=0;i<d.length;i++) d[i] = Math.random()*2-1;
+    return b;
+  })();
+  const grain = t => {
+    const srcN = actx.createBufferSource(); srcN.buffer = noise;
+    const hp = actx.createBiquadFilter(); hp.type='bandpass';
+    hp.frequency.value = 2200 + Math.random()*5000; hp.Q.value = 8;
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.16, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+    srcN.connect(hp); hp.connect(g); g.connect(demoGain);
+    srcN.start(t); srcN.stop(t + 0.55);
+  };
+  let next = actx.currentTime + 0.1;
+  demoTimer = setInterval(() => {
+    if(!actx) return;
+    while(next < actx.currentTime + 0.4){
+      grain(next);
+      next += 0.25 + Math.random() * 0.55;      // ⚠️ 等間隔にしない（機械に聞こえる）
+    }
+  }, 60);
+  document.getElementById('sndnote').innerHTML =
+    '⭐ 鳴っている。<b>効き</b>を上げると帯が揺れる（もう一度押すと止まる）';
+  document.getElementById('bDemo').textContent = '音を止める';
+}
+function stopDemo(){
+  if(demoTimer){ clearInterval(demoTimer); demoTimer = null; }
+  if(demoGain){ try{ demoGain.disconnect(); }catch(e){} demoGain = null; }
+  document.getElementById('bDemo').textContent = '音を鳴らす';
+}
+document.getElementById('bDemo').onclick = () => {
+  if(demoTimer) { stopDemo(); document.getElementById('sndnote').innerHTML =
+    '⭐ 止めた。⚠️ 設定は書き換えていないので<b>元の見え方に戻る</b>'; }
+  else startDemo();
+};
+
 document.getElementById('bMic').onclick = async () => {
   try{
-    audioReady();
+    audioReady(); stopDemo();
     const st = await navigator.mediaDevices.getUserMedia({ audio:true });
     actx.createMediaStreamSource(st).connect(analyser);
     document.getElementById('sndnote').innerHTML = '⭐ マイクが入った。音を出すと帯が揺れる';
@@ -648,7 +728,7 @@ document.getElementById('bMic').onclick = async () => {
 document.getElementById('bSnd').onclick = () => document.getElementById('sfile').click();
 document.getElementById('sfile').addEventListener('change', e => {
   const f = e.target.files[0]; if(!f) return;
-  audioReady();
+  audioReady(); stopDemo();
   if(playing) playing.pause();
   playing = new Audio(URL.createObjectURL(f));
   playing.loop = true;
