@@ -24,7 +24,9 @@
   }
   #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;}
   canvas{display:block;background:#000;
-    box-shadow:0 0 0 1px rgba(255,255,255,.08), 0 30px 90px rgba(0,0,0,.6);
+    /* ⚠️ 盤の枠。8% だと黒地に溶けて「どこまでが盤か」が分からない（木下・2026-07-31）。
+       ⭐ 描いたものより目立たせないため、太さは 1px のまま濃さだけ上げる。 */
+    box-shadow:0 0 0 1px rgba(255,255,255,.26), 0 30px 90px rgba(0,0,0,.6);
     touch-action:none;cursor:crosshair;}
 
   /* WebGL2 が使えない時だけ出る一行（普段は空＝場所も取らない） */
@@ -216,6 +218,9 @@
     --uglass:rgba(242,242,247,.92);
     --ushadow:0 10px 30px rgba(0,0,0,.13), 0 1px 2px rgba(0,0,0,.07);
   }
+  /* ⚠️ 枠は盤の【外】に出るので、対比する相手は盤の地色でなくページの地。
+     明るい道具モードでは白線が見えないので、暗い線に差し替える。 */
+  body.ui-light canvas{ box-shadow:0 0 0 1px rgba(10,10,10,.28), 0 20px 60px rgba(0,0,0,.16); }
   body.ui-light #ctl{ background:rgba(242,242,247,.94); }
   body.ui-light #ctl label,
   body.ui-light #ctl .val{ color:#1c1c1e }
@@ -715,7 +720,25 @@ seg('seg-draw','outline');
 seg('seg-grad','grad');
 seg('seg-gfollow','gfollow');
 bindRange('s-gang','gAng','v-gang',Math.PI/180);
-document.getElementById('s-gang').addEventListener('change',()=>{ if(mode!=='wave') computeGradCoords(); });
+/* 🔴「向きを変えても何の反応もない」（木下・2026-07-31）の正体：
+     ⭐ 向きは画面に直接効かず、gradTex に【焼き込む】もの（computeGradCoords）。
+        それを change＝スライダーを離した時にしか呼んでいなかったので、
+        ドラッグしながら見ている間はまったく変わらなかった。
+     ⚠️ 焼き直しは連結成分のラベリング（640×640 を JS で走査）で重いので、
+        毎フレームは回さない。⭐入力中は間引いて追従させ、離した時に必ず1回決める。
+     ⚠️「沿う」は線の太さから作るので向きは元から効かない（仕様）。 */
+(function(){
+  const el = document.getElementById('s-gang');
+  let last = 0, pending = null;
+  const bakeGrad = () => { if(mode!=='wave') computeGradCoords(); last = performance.now(); };
+  el.addEventListener('input', () => {
+    if(mode==='wave' || P.gfollow > 0.5) return;      // 沿う／干渉では焼く意味がない
+    const now = performance.now();
+    if(now - last > 120){ bakeGrad(); }
+    else if(!pending){ pending = setTimeout(()=>{ pending=null; bakeGrad(); }, 120); }
+  });
+  el.addEventListener('change', () => { if(pending){ clearTimeout(pending); pending=null; } bakeGrad(); });
+})();
 const hex2rgb=h=>{ h=h.replace('#',''); return [parseInt(h.slice(0,2),16)/255,parseInt(h.slice(2,4),16)/255,parseInt(h.slice(4,6),16)/255]; };
 const rgb2hex=c=>'#'+c.map(v=>('0'+Math.round(Math.min(Math.max(v,0),1)*255).toString(16)).slice(-2)).join('');
 { const gA=document.getElementById('gA'), gB=document.getElementById('gB'), ink=document.getElementById('ink'), bg=document.getElementById('bg');
