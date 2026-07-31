@@ -3791,7 +3791,9 @@ function addPart(){
   cv2.width = cv2.height = 92;
   const ctx = cv2.getContext('2d');
   const b = g.bounds, k = Math.min(80/b.width, 80/b.height);
-  const svg = g.exportSVG({ asString:true, bounds:'content' });
+  // ⚠️ ここも同じ＝Group を渡すと <g> しか返らない。<g> のままの data URL は
+  //   画像として読めないので、サムネが出ないままだった。器を被せる。
+  const svg = wrapSVG(g.exportSVG({ asString:true, bounds:'content' }), b);
   const img = new Image();
   img.onload = () => {
     ctx.clearRect(0,0,92,92);
@@ -4771,6 +4773,28 @@ document.querySelectorAll('#exWhat button, #exScale button').forEach(b =>
     b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
   }));
 
+/* 🔴🔴 paper.js の exportSVG は【Group を渡すと <g> しか返さない】＝SVGファイルとして不正。
+   Illustrator は寛容なので開けるが、ブラウザと Figma は正しく扱えない。
+   ⚠️ Layer / Project を渡せば <svg> になるが、それだと「枠ごと」「枠ぜんぶ」
+     「文字を自動アウトライン化」が使えない（そこが今の書き出しの本体）。
+   ⭐ だから器は自分で被せる。
+   ⭐ ついでに viewBox / width / height も入れる。これまで入っておらず、
+     Illustrator では開けてもブラウザや Figma では崩れていた（memory に残っていた既知の不具合）。
+   ⚠️ 座標は【絶対のまま】出てくる（bounds:'content' でも原点に寄せてくれない）。
+     だから viewBox は "x y w h" をそのまま渡す。"0 0 w h" にすると内容が枠の外へ飛ぶ。
+   ⚠️ 実測（~/Downloads の書き出し）＝7/19 のものは <g>、7/29・7/30 のものは <svg>。
+     器を出していたのは artLayer.exportSVG（Layer 経由）の方で、
+     2026-07-31 に「死んでいる」と判断して消したのがそれだった。 */
+function wrapSVG(inner, r){
+  if(/^\s*<svg/i.test(inner)) return inner;        // すでに器がある（Layer を渡したとき）
+  const n = v => +(+v).toFixed(2);
+  const x = n(r.x), y = n(r.y), w = n(r.width), h = n(r.height);
+  return '<?xml version="1.0" encoding="UTF-8"?>\n'
+    + '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+    + `width="${w}" height="${h}" viewBox="${x} ${y} ${w} ${h}">`
+    + inner + '</svg>';
+}
+
 function withCleanView(fn){
   const keep = artLayer.children.map(c => c.selected);
   artLayer.children.forEach(c => c.selected = false);
@@ -4849,7 +4873,9 @@ document.getElementById('bSVG').onclick = async () => {
       const items = selected();
       if(!items.length){ stat('図形を選んでください'); done(); return; }
       const g = new Group(items.map(i => i.clone()));
-      const svg = g.exportSVG({ asString:true, bounds:'content', matchShapes:true });
+      // ⚠️ 器を被せる前に大きさを取る（remove したあとの bounds は当てにならない）
+      const R = g.bounds.clone();
+      const svg = wrapSVG(g.exportSVG({ asString:true, bounds:'content', matchShapes:true }), R);
       g.remove();
       dl(new Blob([svg], {type:'image/svg+xml'}), 'sakuji.svg');
     } else {
@@ -4871,7 +4897,8 @@ document.getElementById('bSVG').onclick = async () => {
           box.fillColor = new Color(0,0,0,0);
           g.insertChild(0, box);
         }
-        const svg = g.exportSVG({ asString:true, bounds:'content', matchShapes:true });
+        // ⭐ viewBox は枠そのもの＝配置しても位置がずれない
+        const svg = wrapSVG(g.exportSVG({ asString:true, bounds:'content', matchShapes:true }), R);
         g.remove();
         dl(new Blob([svg], {type:'image/svg+xml'}), 'sakuji_' + a.name + '.svg');
       });
