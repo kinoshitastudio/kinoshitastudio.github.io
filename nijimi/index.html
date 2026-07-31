@@ -314,6 +314,8 @@
   <div class="grp mode-diff"><label>滲み</label><input id="s-bleed" type="range" min="0" max="16" value="8"><span class="val" id="v-bleed"></span></div>
   <div class="grp"><label id="l-cells">面数</label><input id="s-cells" type="range" min="2" max="12" value="7"><span class="val" id="v-cells"></span></div>
   <div class="grp mode-wave hide"><label>歪み</label><input id="s-warp" type="range" min="0" max="100" value="18"><span class="val" id="v-warp"></span></div>
+  <!-- ⭐ 白紙／拡散で描いた字を型にして、その中だけ干渉の縞を出す -->
+  <div class="grp mode-wave hide"><label>字で抜く</label><div class="seg" id="seg-mask"><button data-v="0" class="on">切</button><button data-v="1">入</button></div></div>
   <div class="sep"></div>
   <div class="grp"><label>しきい</label><input id="s-thr" type="range" min="5" max="90" value="24"><span class="val" id="v-thr"></span></div>
   <div class="grp"><label>粒</label><input id="s-noise" type="range" min="0" max="120" value="34"><span class="val" id="v-noise"></span></div>
@@ -379,7 +381,7 @@ const TONES = {
 const P = {
   mode:'diff', preset:0, facet:0, cells:7,
   thr:0.24, noise:0.34, dust:0, grain:0.82, warp:0.18,
-  invert:0, tone:'sumi', bleed:8, outline:0, grow:0, steps:12,
+  invert:0, tone:'sumi', bleed:8, outline:0, grow:0, steps:12, mask:0,
   grad:0, gAng:2.2, gfollow:0, gA:[0.14,0.14,1.0], gB:[1,1,1], ink:[1,1,1], bg:[0,0,0],
 };
 const SIM = 640;
@@ -487,7 +489,7 @@ void main(){
 // 表示: ノイズ摂動しきい値 → 塵 → 色味の2値マッピング
 const F_DISP = `#version 300 es
 precision highp float; in vec2 vUv; out vec4 o;
-uniform sampler2D uSim,uGradTex; uniform float uThr,uNoise,uDust,uGrainRes,uInvert,uBleed,uOutline,uGrad,uGAng,uGFollow;
+uniform sampler2D uSim,uGradTex,uMask; uniform float uThr,uNoise,uDust,uGrainRes,uInvert,uBleed,uOutline,uGrad,uGAng,uGFollow,uMaskOn;
 uniform vec2 uTexel; uniform vec3 uLo,uHi,uGA,uGB;
 ${HASH}
 void main(){
@@ -512,6 +514,13 @@ void main(){
   float sp=hash(gp*1.93+7.0);
   if(sp>1.0-uDust*0.06) t=1.0-t;
   if(uInvert>0.5) t=1.0-t;
+  /* ⭐「字で抜く」＝手で描いた字を型にして、その中だけに模様を出す（2026-07-31）。
+     ⚠️ 干渉は自分の手が入らないモードなので、これが唯一「手」と繋がる道になる。
+     型は別テクスチャ（uMask）＝干渉の場を壊さないので、抜くのを切れば元どおり。 */
+  if(uMaskOn>0.5){
+    float m=texture(uMask,vUv).g;           // 描いた場の V（塗った所が高い）
+    t *= smoothstep(0.20,0.30,m);           // 字の外は地色のまま
+  }
   vec3 inkc=uHi;                            // 塗り/線の色
   if(uGrad>0.5){
     float gg;
@@ -579,6 +588,17 @@ function allocSim(){ texA=tex(SIM); texB=tex(SIM); texParam=tex(SIM); fboA=fbo(t
 
 /* ── 場の畳み方／戻し方（ボードと、モード切替の保持に使う） ── */
 const snapTex = tex8f(SIM);
+/* ⭐「字で抜く」の型。描いた場をここに写しておき、干渉の表示時に掛ける。
+   ⚠️ snapTex は場の復元に使うので共用しない（上書きし合って型が消える）。 */
+const maskTex = tex8f(SIM);
+let maskReady = false;
+function uploadMask(){                       // 白紙／拡散で描いたものを型として取り込む
+  const px = fieldCache.blank || fieldCache.diff;
+  if(!px){ maskReady = false; return; }
+  gl.bindTexture(gl.TEXTURE_2D,maskTex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,SIM,SIM,0,gl.RGBA,gl.UNSIGNED_BYTE,px);
+  maskReady = true;
+}
 function snapshotField(){          // 場 → Uint8Array（R=U, G=V）
   if(!gl || !extCBF) return null;
   gl.useProgram(pCopy); gl.bindFramebuffer(gl.FRAMEBUFFER,fMask8); gl.viewport(0,0,SIM,SIM);
@@ -636,7 +656,8 @@ function computeWave(now,fb,res){ gl.useProgram(pWave); gl.bindFramebuffer(gl.FR
 
 /* ── 表示 ── */
 function display(fb,res,src){ gl.useProgram(pDisp); gl.bindFramebuffer(gl.FRAMEBUFFER,fb); gl.viewport(0,0,res,res);
-  samp(pDisp,'uSim',0,src||curTex()); samp(pDisp,'uGradTex',1,gradTex);
+  samp(pDisp,'uSim',0,src||curTex()); samp(pDisp,'uGradTex',1,gradTex); samp(pDisp,'uMask',2,maskTex);
+  u1(pDisp,'uMaskOn',(mode==='wave' && P.mask>0.5 && maskReady)?1:0);
   u1(pDisp,'uThr',P.thr); u1(pDisp,'uNoise',P.noise); u1(pDisp,'uDust',P.dust);
   u1(pDisp,'uGrainRes',300+P.grain*1700); u1(pDisp,'uInvert',P.invert);
   u1(pDisp,'uBleed',P.bleed); u2(pDisp,'uTexel',1/SIM,1/SIM); u1(pDisp,'uOutline',P.outline);
@@ -738,6 +759,7 @@ seg('seg-facet','facet',()=>{ bake(); refreshStat(); });
    ⚠️ 回しっぱなしは 2026-07-18 に「珊瑚が中身を食って白い輪郭だけ残る」として一度却下された挙動。
       既定は【切】にして、欲しい時だけ自分で入れる形にしてある。 */
 seg('seg-grow','grow',()=>{ refreshStat(); saveSoon(); });
+seg('seg-mask','mask',()=>{ uploadMask(); refreshStat(); saveSoon(); });
 seg('seg-inv','invert');
 seg('seg-draw','outline');
 seg('seg-grad','grad');
@@ -794,7 +816,7 @@ seg('seg-mode','mode',()=>{
   // ⭐ 出る前にその場を畳んで持っておく（拡散と白紙は別々の場として覚える）
   if(from !== 'wave'){ const snap = snapshotField(); if(snap) fieldCache[from] = snap; }
   mode = to; applyModeUI();
-  if(to==='wave'){ setThr(50); setNoise(50); if(!sources.length) genSources(); }
+  if(to==='wave'){ setThr(50); setNoise(50); if(!sources.length) genSources(); uploadMask(); }
   else {
     setThr(24); setNoise(34); bake();
     if(fieldCache[to]) restoreField(fieldCache[to]);      // ⭐ 描いたものが戻る
@@ -881,7 +903,7 @@ function applyBoardParams(b){
   // つまみ・セグメントを保存された値に合わせ直す
   document.querySelectorAll('#ctl .seg').forEach(sg=>{
     const key = ({'seg-mode':'mode','seg-preset':'preset','seg-facet':'facet','seg-draw':'outline',
-                  'seg-tone':'tone','seg-grad':'grad','seg-gfollow':'gfollow','seg-inv':'invert','seg-grow':'grow'})[sg.id];
+                  'seg-tone':'tone','seg-grad':'grad','seg-gfollow':'gfollow','seg-inv':'invert','seg-grow':'grow','seg-mask':'mask'})[sg.id];
     if(key===undefined) return;
     sg.querySelectorAll('button').forEach(bt=>{
       const raw = bt.dataset.p!==undefined? bt.dataset.p : bt.dataset.v;
