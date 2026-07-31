@@ -307,6 +307,8 @@
   <div class="grp mode-diff"><label>FACET</label><div class="seg" id="seg-facet"><button data-v="0" class="on">OFF</button><button data-v="1">ON</button></div></div>
   <!-- ⭐ 手を止めても反応拡散を回し続けるか。入＝ぬるっと育ち続ける／切＝描いた形で止まる -->
   <div class="grp mode-diff"><label>育つ</label><div class="seg" id="seg-grow"><button data-v="0" class="on">切</button><button data-v="1">入</button></div></div>
+  <!-- ⭐ 1フレームに何ステップ進めるか。v0.2 は 12 だった（1だと遅すぎて動いて見えない） -->
+  <div class="grp mode-diff"><label>速さ</label><input id="s-steps" type="range" min="1" max="24" value="12"><span class="val" id="v-steps"></span></div>
   <div class="grp mode-diff"><div class="seg" id="seg-draw"><button data-v="0" class="on">塗り</button><button data-v="1">線</button></div></div>
   <div class="grp mode-diff"><label>筆</label><input id="s-brush" type="range" min="6" max="180" value="45"><span class="val" id="v-brush"></span></div>
   <div class="grp mode-diff"><label>滲み</label><input id="s-bleed" type="range" min="0" max="16" value="8"><span class="val" id="v-bleed"></span></div>
@@ -377,7 +379,7 @@ const TONES = {
 const P = {
   mode:'diff', preset:0, facet:0, cells:7,
   thr:0.24, noise:0.34, dust:0, grain:0.82, warp:0.18,
-  invert:0, tone:'sumi', bleed:8, outline:0, grow:0,
+  invert:0, tone:'sumi', bleed:8, outline:0, grow:0, steps:12,
   grad:0, gAng:2.2, gfollow:0, gA:[0.14,0.14,1.0], gB:[1,1,1], ink:[1,1,1], bg:[0,0,0],
 };
 const SIM = 640;
@@ -655,7 +657,9 @@ function loop(){ if(!running) return; requestAnimationFrame(loop);
        ⭐ 2026-07-18 のノートの意図どおり【描いている間だけ】回す。
        ⚠️ 回しっぱなしにはしない＝珊瑚が中身を食って白い輪郭だけが残る（07-18 に却下済み）。
           ペンを離せば止まるので、描いた形はそこで固定される。 */
-    simStep();
+    /* ⚠️ 1フレーム1ステップだと遅すぎて「動いていない」ように見える。
+       v0.2（退避版）は常時 12ステップ/フレーム 回していた＝それが木下の記憶にある速さ。 */
+    for(let i=0;i<P.steps;i++) simStep();
   }
   display(null,cvs.width);
 }
@@ -734,6 +738,7 @@ seg('seg-inv','invert');
 seg('seg-draw','outline');
 seg('seg-grad','grad');
 seg('seg-gfollow','gfollow');
+bindRange('s-steps','steps','v-steps',1);
 bindRange('s-gang','gAng','v-gang',Math.PI/180);
 /* 🔴「向きを変えても何の反応もない」（木下・2026-07-31）の正体：
      ⭐ 向きは画面に直接効かず、gradTex に【焼き込む】もの（computeGradCoords）。
@@ -796,9 +801,15 @@ seg('seg-mode','mode',()=>{
   refreshStat(); saveSoon();
 });
 
-document.getElementById('b-seed').onclick=()=>{ if(mode==='wave') genSources(); else seedField(); refreshStat(); };
-document.getElementById('b-clear').onclick=()=>{ if(mode==='wave'){ sources=[]; } else { clearField(); computeGradCoords(); } refreshStat(); };
-document.getElementById('b-reroll').onclick=()=>{ if(mode==='wave') genSources(); else { seed=Math.random()*1000; bake(); } refreshStat(); };
+/* 🔴 場を作り替えるボタンは【畳んで持っている控えも捨てる】＋【盤にも保存する】。
+     そうしないと、リセットしても
+       ・モードを行き来すると控え(fieldCache)から古い絵が戻ってくる
+       ・リロードすると盤に残った古い絵が戻ってくる
+     ＝「リセットしたのに消えない」になる（木下・2026-07-31）。 */
+function fieldChanged(){ delete fieldCache[mode]; refreshStat(); saveSoon(); }
+document.getElementById('b-seed').onclick=()=>{ if(mode==='wave') genSources(); else seedField(); fieldChanged(); };
+document.getElementById('b-clear').onclick=()=>{ if(mode==='wave'){ sources=[]; } else { clearField(); computeGradCoords(); } fieldChanged(); };
+document.getElementById('b-reroll').onclick=()=>{ if(mode==='wave') genSources(); else { seed=Math.random()*1000; bake(); } fieldChanged(); };
 document.getElementById('b-export').onclick=()=>{ exportPNG(); };
 
 /* ── 起動 ── */
@@ -880,6 +891,7 @@ function applyBoardParams(b){
   setRange('s-noise','v-noise',Math.round(P.noise*100)); setRange('s-dust','v-dust',Math.round(P.dust*100));
   setRange('s-grain','v-grain',Math.round(P.grain*100)); setRange('s-gang','v-gang',Math.round(P.gAng*180/Math.PI));
   setRange('s-bleed','v-bleed',P.bleed); setRange('s-warp','v-warp',Math.round(P.warp*100));
+  setRange('s-steps','v-steps',P.steps);
   applyModeUI();
 }
 async function loadBoard(id){
