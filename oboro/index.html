@@ -36,9 +36,14 @@
   #stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:40px;}
   /* ⭐ 板は「見る枠」。canvas はこの中で拡大・移動する。
      ⚠️ image-rendering は既定（滑らか）のまま＝帯のグラデを拡大しても段にならない。 */
-  #view{position:relative;overflow:hidden;width:100%;height:100%;display:grid;place-items:center;}
-  #cv{box-shadow:0 20px 60px rgba(0,0,0,.35);cursor:grab;touch-action:none;background:#fff;
-      transform-origin:0 0;will-change:transform;}
+  /* ⚠️⚠️ grid の中央寄せと transform を【併用しない】。
+     grid が中央に置いた上から translate が乗って【位置が二重にずれる】。
+     画面が狭いモバイルほど大きくずれ、画像の一部しか見えなくなる
+     （木下＝「モバイルではやはり画像全体を覆ってない」）。
+     ⭐ 置き場所は transform だけで決める。 */
+  #view{position:relative;overflow:hidden;width:100%;height:100%;}
+  #cv{position:absolute;left:0;top:0;box-shadow:0 20px 60px rgba(0,0,0,.35);cursor:grab;
+      touch-action:none;background:#fff;transform-origin:0 0;will-change:transform;}
   #cv.drag{cursor:grabbing;}
   #zoomhud{position:absolute;left:12px;bottom:12px;z-index:5;display:flex;gap:6px;align-items:center;
     font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:10px;color:#fff;opacity:.75;}
@@ -232,7 +237,9 @@ function loadImage(srcUrl){
        （700x390 を 4.20 倍しても 1638 で、1640 に 2px 届かない）。 */
     SX = cv.width / smW; SY = cv.height / smH;
     makeBase();
-    fit();          // ⭐ 読み込んだら画面に合わせる
+    /* ⚠️ 読み込み直後は、まだ枠の大きさが確定していないことがある
+       （モバイルはパネルの高さが決まってから枠が決まる）。次のフレームでも合わせ直す。 */
+    fit(); requestAnimationFrame(fit);
     build(); draw();
   };
   im.src = srcUrl;
@@ -598,7 +605,9 @@ document.getElementById('zIn').onclick  = () => { const r=view.getBoundingClient
 document.getElementById('zOut').onclick = () => { const r=view.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, 1/1.35); };
 document.getElementById('zFit').onclick = fit;
 cv.addEventListener('dblclick', () => { const r=view.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, Z > fitZ*1.2 ? fitZ/Z : 2.2); });
-addEventListener('resize', () => { const wasFit = Math.abs(Z - fitZ) < 0.001; const f = fitZ; fit(); if(!wasFit){ Z = Z; } });
+/* ⚠️ 画面の向きが変わったら合わせ直す。⚠️ 前の書き方は何もしていなかった（Z = Z）。 */
+let _rt = 0;
+addEventListener('resize', () => { clearTimeout(_rt); _rt = setTimeout(fit, 120); });
 
 /* ── 音 ────────────────────────────────────────────────
    ⭐ KUMI と同じ作り（AnalyserNode で低音・中音・高音を採る）。
