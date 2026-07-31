@@ -130,6 +130,26 @@
   <div class="row"><label>のび</label><input type="range" id="reach" min="100" max="400" value="160"><span class="val"></span></div>
   <div class="mod">⭐ <b>のび</b>＝帯がマスを越えて伸びる。参考にした手作業の帯は横に長い</div>
 
+  <h2>引く</h2>
+  <div class="row"><label>抜き</label><input type="range" id="drop" min="0" max="90" value="0"><span class="val"></span></div>
+  <div class="mod">⭐ 帯を<b>消して</b>、下の写真を覗かせる。⚠️ 上にノイズを足すのではなく<b>引く</b><br>
+    ⭐ 音が鳴っていると、どの帯が消えるかが揺れる</div>
+
+  <h2>光</h2>
+  <div class="row"><label>明るさ</label><input type="range" id="expo" min="-60" max="90" value="0"><span class="val"></span></div>
+  <div class="row"><label>濃さ</label><input type="range" id="sat" min="0" max="200" value="100"><span class="val"></span></div>
+  <div class="mod">⭐ <b>明るい写真ほど帯が生きる</b>。暗い写真は先にここで持ち上げる</div>
+
+  <h2>音</h2>
+  <div class="grid2">
+    <button class="btn" id="bMic">マイク</button>
+    <button class="btn" id="bSnd">音を読む</button>
+  </div>
+  <input type="file" id="sfile" accept="audio/*" style="display:none">
+  <div class="row"><label>効き</label><input type="range" id="amount" min="0" max="100" value="60"><span class="val"></span></div>
+  <div class="mod" id="sndnote">⭐ 低音＝どこまで進むか／中音＝帯ののび／高音＝色数<br>
+    ⚠️ 設定そのものは書き換えない＝<b>音を止めれば元に戻る</b></div>
+
   <h2>どこまで</h2>
   <div class="row"><label>進み</label><input type="range" id="fill" min="0" max="100" value="100"><span class="val"></span></div>
   <div class="seg" id="order">
@@ -163,7 +183,11 @@ let img = null;          // 元の写真
 let src = null;          // 元の画素（読み取り用）
 let cells = [];          // 割ったマス（色つき）
 
-const P = { rows:14, minx:2, maxx:44, vary:60, seed:7, steps:16, bias:0, dir:'x', soft:55, reach:160, fill:100, order:'rand' };
+const P = { rows:14, minx:2, maxx:44, vary:60, seed:7, steps:16, bias:0, dir:'x', soft:55, reach:160,
+            fill:100, order:'rand',
+            /* ⭐ 引き算＝帯を消して写真を覗かせる。⭐ 音＝どの帯が消えるかが揺れる */
+            drop:0, expo:0, sat:100, amount:60 };
+const M = { low:0, mid:0, high:0, kick:0 };   // 音の量（0〜1）
 
 /* ── 写真を読む ────────────────────────────────────────── */
 function loadImage(srcUrl){
@@ -177,6 +201,7 @@ function loadImage(srcUrl){
     cv.height = Math.round(im.height * k);
     ctx.drawImage(im, 0, 0, cv.width, cv.height);
     src = ctx.getImageData(0, 0, cv.width, cv.height);
+    makeBase();
     build(); draw();
   };
   im.src = srcUrl;
@@ -217,7 +242,14 @@ function build(){
         const q = (yy*W+xx)*4; r+=d[q]; g+=d[q+1]; b+=d[q+2]; n++;
       }
       if(!n) n = 1;
-      const c = [r/n, g/n, b/n];
+      let c = [r/n, g/n, b/n];
+      /* ⭐ 光 ── 木下＝「明るい方が生えるね」。暗い写真でも帯が立つように、
+         採った色の側で持ち上げる。⚠️ 写真そのものは変えない（下に覗く写真は元のまま）。 */
+      if(P.expo !== 0 || P.sat !== 100){
+        const e = 1 + P.expo/100, sa = P.sat/100;
+        const l = (c[0]*.299 + c[1]*.587 + c[2]*.114);
+        c = c.map(v => Math.max(0, Math.min(255, (l + (v - l) * sa) * e)));
+      }
       cells.push({ i, j, x0, y0, x1, y1, c, row:j, lum:(c[0]*.299+c[1]*.587+c[2]*.114) });
     }
   }
@@ -228,8 +260,8 @@ function build(){
 function rnd(n){ const x = Math.sin(n * 127.1 + P.seed * 311.7) * 43758.5453; return x - Math.floor(x); }
 
 /* ── 色を絞る ── 写真から抜き出した色だけを残す ───────── */
-function quant(c){
-  const s = Math.max(2, P.steps);
+function quant(c, st){
+  const s = Math.max(2, st || P.steps);
   const b = P.bias / 100;
   return c.map(v => {
     let t = v / 255;
@@ -243,14 +275,36 @@ const css = c => `rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;
 
 /* ── 描く ── 写真の上に帯を重ねる ───────────────────────
    ⭐ ここが芯。全部塗らない＝写真と帯が同居する。 */
+/* ⭐ 写真は【一度だけ】別の canvas に描いておく。
+   ⚠️ つまみを動かすたびに元画像を drawImage すると、大きな写真でそこが重い。 */
+let base = null;
+function makeBase(){
+  base = document.createElement('canvas');
+  base.width = cv.width; base.height = cv.height;
+  base.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+}
+
+/* ⭐ 音で揺れる量。⚠️ P そのものは書き換えない＝音を止めれば元の設定に戻る
+   （書き換えると、鳴らしたあと設定が変わってしまって戻せない）。 */
+function mod(){
+  const a = P.amount / 100;
+  return {
+    fill:  Math.max(0, Math.min(100, P.fill  + M.low  * a * 45)),
+    steps: Math.max(2, Math.round(P.steps - M.high * a * P.steps * 0.6)),
+    reach: P.reach + M.mid * a * 160,
+  };
+}
+
 function draw(){
   if(!img) return;
+  if(!base || base.width !== cv.width) makeBase();
   ctx.clearRect(0,0,cv.width,cv.height);
-  ctx.drawImage(img, 0, 0, cv.width, cv.height);     // まず写真
+  ctx.drawImage(base, 0, 0);                          // まず写真（焼いてあるもの）
 
+  const m = mod();
   const list = order(cells);
-  const upto = Math.round(list.length * P.fill / 100);
-  for(let k=0;k<upto;k++) band(list[k]);
+  const upto = Math.round(list.length * m.fill / 100);
+  for(let k=0;k<upto;k++) band(list[k], m);
 }
 
 function order(cs){
@@ -262,10 +316,19 @@ function order(cs){
 }
 
 /* 帯ひとつ ── そのマスの色から、隣の色へ渡るグラデを引く */
-function band(c){
+function band(c, m){
   if(!c) return;
+  m = m || mod();
+  /* ⭐⭐ 引き算 ── 帯を消して、下の写真を覗かせる（木下＝「ここから引き算として
+     ノイズを入れることになる」）。⚠️ 上にノイズを足すのではなく【帯を抜く】。
+     ⭐ 音が鳴っていると、どの帯が消えるかが揺れる＝同じ設定でも毎回ちがう。 */
+  if(P.drop > 0){
+    const n = rnd(c.x0 * 0.37 + c.y0 * 0.11 + c.row * 2.3);
+    const shake = (M.low + M.mid + M.high) / 3 * (P.amount/100);
+    if(n < P.drop/100 * (1 + shake * 0.8)) return;      // この帯は刷らない
+  }
   const horiz = P.dir === 'x';
-  const reach = P.reach / 100;
+  const reach = m.reach / 100;
   const w = (c.x1 - c.x0), h = (c.y1 - c.y0);
   // ⭐ のび＝マスを越えて伸びる。手作業の帯が横に長かったのを効かせる
   const bw = horiz ? w * reach : w;
@@ -273,9 +336,9 @@ function band(c){
   const x = horiz ? c.x0 - (bw - w)/2 : c.x0;
   const y = horiz ? c.y0 : c.y0 - (bh - h)/2;
 
-  const a = quant(c.c);
+  const a = quant(c.c, m.steps);
   const nb = neighbor(c);                    // 隣のマス＝渡る先の色
-  const b = quant(nb ? nb.c : c.c);
+  const b = quant(nb ? nb.c : c.c, m.steps);
 
   const g = horiz ? ctx.createLinearGradient(x, 0, x+bw, 0)
                   : ctx.createLinearGradient(0, y, 0, y+bh);
@@ -294,23 +357,50 @@ function neighbor(c){
 }
 
 /* ── つまみ ───────────────────────────────────────────── */
-function bind(id, key, after){
+/* ⭐⭐ つまみを滑らかにする。
+   🔴 前は input のたびに【全マスを作り直して即描画】していたので、
+      大きな写真ではスライダーが飛び飛びになった（木下＝「なめらかに調整できるように」）。
+   ⭐ 直し方は2つ
+     ① 割り直しが要るのは【段・粗い・細かい・ばらつき・ひき直す】だけ。
+        色や帯や進みは【割り直さず塗り直すだけ】で足りる。
+     ② 描画は次のフレームに1回だけまとめる（input は1操作で何度も飛んでくる）。
+   ⚠️ SAKUJI で粒を軽くしたときと同じ手（42ms→12ms になった）。 */
+let _need = 0, _raf = 0;          // _need: 1=塗り直し 2=割り直し
+function invalidate(level){
+  _need = Math.max(_need, level);
+  if(_raf) return;
+  _raf = requestAnimationFrame(() => {
+    _raf = 0;
+    if(_need >= 2) build();
+    _need = 0;
+    draw();
+  });
+}
+function bind(id, key, heavy){
   const r = document.getElementById(id);
   const v = r.parentElement.querySelector('.val');
-  const sync = () => { P[key] = +r.value; if(v) v.textContent = r.value; if(after) after(); draw(); };
-  r.addEventListener('input', sync); sync();
+  const sync = () => {
+    P[key] = +r.value;
+    if(v) v.textContent = r.value;
+    invalidate(heavy ? 2 : 1);
+  };
+  r.addEventListener('input', sync);
+  P[key] = +r.value; if(v) v.textContent = r.value;   // ⚠️ 初期表示だけ。ここでは描かない
 }
-bind('rows','rows',build); bind('minx','minx',build); bind('maxx','maxx',build);
-bind('vary','vary',build); bind('seed','seed',build);
+bind('rows','rows',true); bind('minx','minx',true); bind('maxx','maxx',true);
+bind('vary','vary',true); bind('seed','seed',true);
 bind('steps','steps'); bind('bias','bias');
 bind('soft','soft');   bind('reach','reach'); bind('fill','fill');
+bind('drop','drop');   bind('amount','amount');
+bind('expo','expo',true); bind('sat','sat',true);   // ⚠️ 光は色を採り直すので割り直し
+
 document.querySelectorAll('.seg').forEach(seg => {
   seg.querySelectorAll('button').forEach(b => {
     b.addEventListener('click', () => {
       seg.querySelectorAll('button').forEach(x => x.classList.remove('on'));
       b.classList.add('on');
       P[seg.id === 'dir' ? 'dir' : 'order'] = b.dataset.v;
-      draw();
+      invalidate(1);
     });
   });
 });
@@ -366,6 +456,56 @@ document.getElementById('bSVG').onclick = () => {
     + `viewBox="0 0 ${cv.width} ${cv.height}"><defs>${defs}</defs>${body}</svg>`;
   dl(new Blob([svg], {type:'image/svg+xml'}), `oboro_${Date.now()}.svg`);
 };
+
+/* ── 音 ────────────────────────────────────────────────
+   ⭐ KUMI と同じ作り（AnalyserNode で低音・中音・高音を採る）。
+   ⚠️ P は書き換えず M（音の量）だけ動かす＝音を止めれば元の設定に戻る。 */
+let actx=null, analyser=null, freq=null, playing=null;
+function audioReady(){
+  if(actx) return;
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+  analyser = actx.createAnalyser();
+  analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0.6;
+  freq = new Uint8Array(analyser.frequencyBinCount);
+  tick();
+}
+function bandAvg(a, b){
+  const n = freq.length, i0 = Math.floor(n*a), i1 = Math.max(i0+1, Math.floor(n*b));
+  let s = 0; for(let i=i0;i<i1;i++) s += freq[i];
+  return s / (i1-i0) / 255;
+}
+function tick(){
+  requestAnimationFrame(tick);
+  if(!analyser) return;
+  analyser.getByteFrequencyData(freq);
+  const k = 0.25;
+  M.low  += (bandAvg(0,.07)  - M.low ) * k;
+  M.mid  += (bandAvg(.07,.34) - M.mid ) * k;
+  M.high += (bandAvg(.34,1)   - M.high) * k;
+  // ⚠️ 音が鳴っている間だけ描き直す（止まっていれば描かない＝無駄に回さない）
+  if(P.amount > 0 && (M.low + M.mid + M.high) > 0.01) invalidate(1);
+}
+document.getElementById('bMic').onclick = async () => {
+  try{
+    audioReady();
+    const st = await navigator.mediaDevices.getUserMedia({ audio:true });
+    actx.createMediaStreamSource(st).connect(analyser);
+    document.getElementById('sndnote').innerHTML = '⭐ マイクが入った。音を出すと帯が揺れる';
+  }catch(e){ document.getElementById('sndnote').textContent = 'マイクが使えなかった：' + e.message; }
+};
+document.getElementById('bSnd').onclick = () => document.getElementById('sfile').click();
+document.getElementById('sfile').addEventListener('change', e => {
+  const f = e.target.files[0]; if(!f) return;
+  audioReady();
+  if(playing) playing.pause();
+  playing = new Audio(URL.createObjectURL(f));
+  playing.loop = true;
+  const srcNode = actx.createMediaElementSource(playing);
+  srcNode.connect(analyser); srcNode.connect(actx.destination);
+  playing.play();
+  document.getElementById('sndnote').innerHTML = '⭐ 鳴っている（もう一度押すと別の音に差し替え）';
+  e.target.value = '';
+});
 
 /* ── 最初の1枚（同梱の写真）────────────────────────────── */
 loadImage('5.jpg');
