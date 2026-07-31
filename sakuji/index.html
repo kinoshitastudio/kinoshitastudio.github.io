@@ -1681,6 +1681,15 @@ function snapshotBase(){                          // ⚠️ 呼ぶのは台帳�
   if(HIST.past[HIST.past.length-1] === json) return;   // 同じ状態は積まない
   HIST.past.push(json);
   if(HIST.past.length > 200) HIST.past.shift();
+  /* ⚠️⭐ 件数だけで切ると危ない。粒は【1粒＝1つのパス】なので、解像を上げると
+     exportJSON が1回で数MBになる。200件そのまま持つと数百MB〜GBになり、
+     ブラウザが重くなって最後は落ちる（＝作業が飛ぶ）。
+     ⭐ 直近から数えて【合計の重さ】でも切る。戻せる回数は減るが、落ちるよりずっといい。 */
+  let sum = 0;
+  for(let i = HIST.past.length - 1; i >= 0; i--){
+    sum += HIST.past[i].length;
+    if(sum > 60e6){ HIST.past.splice(0, i + 1); break; }   // 直近から 60M 文字ぶんまで
+  }
   HIST.future.length = 0;
 }
 function restore(json){
@@ -4416,6 +4425,7 @@ function pvApply(kind){
 const AUTOKEY = 'sakuji_autosave_v1';
 const AUTOKEY_OLD = 'sakuji_grad_tk_autosave_v1';
 let _saveTimer = null;
+let _saveWarned = false;      // 自動保存の失敗を知らせたか（毎回出すと邪魔なので1回だけ）
 function autoSave(){
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(() => {
@@ -4440,7 +4450,16 @@ function autoSave(){
       //   放っておくと粒の数だけ青い点が出て中身が見えなくなる。戻した直後に掃除する。
       if(typeof tzHideInnerSelection === 'function') tzHideInnerSelection();
       localStorage.setItem(AUTOKEY, JSON.stringify(data));
-    }catch(e){ /* 容量超過などは黙って諦める（作業は止めない） */ }
+      _saveWarned = false;                 // 保存できたら、また知らせられる状態に戻す
+    }catch(e){
+      /* ⚠️⭐ 黙って諦めてはいけない。「自動保存されているつもり」で閉じると作業が消える。
+         ⚠️ 容量超過は粒を増やすと必ず来る（1粒＝1つのパスなので JSON が一気に膨らむ）。
+         ⭐ ただし毎回出すと邪魔なので、失敗し始めた最初の1回だけ知らせる。 */
+      if(!_saveWarned){
+        _saveWarned = true;
+        stat('⚠️ 自動保存できませんでした（粒が多く容量を超えています）— SAVE で JSON に書き出してください');
+      }
+    }
   }, 800);
 }
 /* guides() に相乗りさせる */
