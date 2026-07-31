@@ -107,14 +107,10 @@
   <div class="mod">ドラッグ＆ドロップでも置ける</div>
 
   <h2>割る</h2>
-  <div class="row"><label>段</label><input type="range" id="rows" min="1" max="60" value="14"><span class="val"></span></div>
-  <div class="row"><label>粗い</label><input type="range" id="minx" min="1" max="60" value="2"><span class="val"></span></div>
-  <div class="row"><label>細かい</label><input type="range" id="maxx" min="2" max="80" value="44"><span class="val"></span></div>
-  <div class="row"><label>ばらつき</label><input type="range" id="vary" min="0" max="100" value="60"><span class="val"></span></div>
-  <div class="row"><label>ひき直す</label><input type="range" id="seed" min="1" max="99" value="7"><span class="val"></span></div>
-  <div class="mod">⭐⭐ <b>行ごとに割る数が変わる</b>（粗い〜細かいの間）＝参考の「グリッド 2-44」。<br>
-    ⚠️ 全部同じ数で割ると<b>格子がそのまま見えて</b>ただのモザイクになる。ここが芯<br>
-    ばらつき＝帯の幅と高さを揃えない／ひき直す＝別の引き方を出す</div>
+  <div class="row"><label>よこ</label><input type="range" id="gx" min="1" max="80" value="18"><span class="val"></span></div>
+  <div class="row"><label>たて</label><input type="range" id="gy" min="1" max="80" value="10"><span class="val"></span></div>
+  <div class="mod">⭐ たてとよこで割り方を変えると、写真が<b>帯に潰れる</b><br>
+    よこ 44 × たて 2 のように極端にすると、色だけが残る</div>
 
   <h2>色</h2>
   <div class="row"><label>色数</label><input type="range" id="steps" min="2" max="64" value="16"><span class="val"></span></div>
@@ -163,7 +159,7 @@ let img = null;          // 元の写真
 let src = null;          // 元の画素（読み取り用）
 let cells = [];          // 割ったマス（色つき）
 
-const P = { rows:14, minx:2, maxx:44, vary:60, seed:7, steps:16, bias:0, dir:'x', soft:55, reach:160, fill:100, order:'rand' };
+const P = { gx:18, gy:10, steps:16, bias:0, dir:'x', soft:55, reach:160, fill:100, order:'rand' };
 
 /* ── 写真を読む ────────────────────────────────────────── */
 function loadImage(srcUrl){
@@ -187,45 +183,26 @@ function loadImage(srcUrl){
 function build(){
   if(!src) return;
   const { width:W, height:H, data:d } = src;
+  const nx = P.gx, ny = P.gy;
   cells = [];
-  // ⭐⭐ 行ごとに【分割数を変える】。参考の「グリッド 2-44」＝粗い行と細かい行が混ざる。
-  //   ⚠️ 全体を同じ数で割ると【格子がそのまま見える】＝ただのモザイクになり、
-  //     参考画像の「帯に潰れた」状態にならない。ここが芯。
-  const rows = Math.max(1, P.rows);
-  let y = 0;
-  for(let j=0;j<rows;j++){
-    // 行の高さもばらす（帯の太さが揃わない＝手で置いたように見える）
-    const hj = rnd(j*7.1) ;
-    const rh = Math.max(2, Math.round(H/rows * (1 - P.vary/100*0.6 + hj * P.vary/100*1.2)));
-    const y0 = y, y1 = Math.min(H, y + rh);
-    y = y1;
-    if(y0 >= H) break;
-    // ⭐ この行を何本の帯に割るか＝粗い〜細かいの間で行ごとに変わる
-    const t  = rnd(j*3.3);
-    const nx = Math.round(P.minx + (P.maxx - P.minx) * t);
-    let x = 0;
+  for(let j=0;j<ny;j++){
     for(let i=0;i<nx;i++){
-      // 帯の幅もばらす＝等分にしない（等分だと格子に見える）
-      const wj = rnd(j*11.7 + i*5.3);
-      const bw = Math.max(2, Math.round(W/nx * (1 - P.vary/100*0.5 + wj * P.vary/100)));
-      const x0 = x, x1 = Math.min(W, x + bw);
-      x = x1;
-      if(x0 >= W) break;
+      const x0 = Math.floor(i*W/nx), x1 = Math.floor((i+1)*W/nx);
+      const y0 = Math.floor(j*H/ny), y1 = Math.floor((j+1)*H/ny);
       let r=0,g=0,b=0,n=0;
-      const sx = Math.max(1, Math.floor((x1-x0)/10)), sy = Math.max(1, Math.floor((y1-y0)/10));
-      for(let yy=y0;yy<y1;yy+=sy) for(let xx=x0;xx<x1;xx+=sx){
-        const q = (yy*W+xx)*4; r+=d[q]; g+=d[q+1]; b+=d[q+2]; n++;
+      // ⚠️ 全画素を足すと重い。マスの中を間引いて読む（見た目は変わらない）
+      const sx = Math.max(1, Math.floor((x1-x0)/12)), sy = Math.max(1, Math.floor((y1-y0)/12));
+      for(let y=y0;y<y1;y+=sy) for(let x=x0;x<x1;x+=sx){
+        const p = (y*W+x)*4; r+=d[p]; g+=d[p+1]; b+=d[p+2]; n++;
       }
       if(!n) n = 1;
       const c = [r/n, g/n, b/n];
-      cells.push({ i, j, x0, y0, x1, y1, c, row:j, lum:(c[0]*.299+c[1]*.587+c[2]*.114) });
+      cells.push({ i, j, x0, y0, x1, y1, c, lum: (c[0]*.299 + c[1]*.587 + c[2]*.114) });
     }
   }
-  cells.forEach((c,k) => { c.seed = rnd(k*1.37); });
+  // ⭐ 塗る順番。⚠️ 毎回変わると「進み」を動かすたびに別物になるので、種を固定して混ぜる
+  cells.forEach((c,k) => { c.seed = ((k*2654435761) % 4294967296) / 4294967296; });
 }
-/* ⚠️ 乱数は種を固定する。毎回変わると、つまみを動かすたびに別物になって
-   「さっきの方がよかった」に戻せない（偶然の装置でも、戻れることは要る）。 */
-function rnd(n){ const x = Math.sin(n * 127.1 + P.seed * 311.7) * 43758.5453; return x - Math.floor(x); }
 
 /* ── 色を絞る ── 写真から抜き出した色だけを残す ───────── */
 function quant(c){
@@ -288,9 +265,9 @@ function band(c){
   ctx.fillRect(x, y, bw, bh);
 }
 function neighbor(c){
-  // ⭐ 隣＝同じ行の次の帯。行ごとに本数が違うので、行の中で探す
-  if(P.dir === 'x') return cells.find(o => o.row === c.row && o.i === c.i + 1) || null;
-  return cells.find(o => o.row === c.row + 1 && o.x0 <= c.x0 && o.x1 > c.x0) || null;
+  const i = P.dir === 'x' ? c.i + 1 : c.i;
+  const j = P.dir === 'x' ? c.j : c.j + 1;
+  return cells.find(o => o.i === i && o.j === j) || null;
 }
 
 /* ── つまみ ───────────────────────────────────────────── */
@@ -300,8 +277,7 @@ function bind(id, key, after){
   const sync = () => { P[key] = +r.value; if(v) v.textContent = r.value; if(after) after(); draw(); };
   r.addEventListener('input', sync); sync();
 }
-bind('rows','rows',build); bind('minx','minx',build); bind('maxx','maxx',build);
-bind('vary','vary',build); bind('seed','seed',build);
+bind('gx','gx',build); bind('gy','gy',build);
 bind('steps','steps'); bind('bias','bias');
 bind('soft','soft');   bind('reach','reach'); bind('fill','fill');
 document.querySelectorAll('.seg').forEach(seg => {
