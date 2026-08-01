@@ -629,6 +629,8 @@
      「触れるのに何も起きない」を作らない（木下＝「階調などの色は変更できない」）。
      ⚠️ 消さずに残す＝ドットに切り替えれば戻るし、そこに何があるかは見えていた方がいい。 */
   body.tex-blob .dot-only{ opacity:.32; pointer-events:none; }
+  /* ⭐ 帯が「なし」のときは太さを触らせない＝触れるのに効かない状態を作らない */
+  body:not(.flow-band) .band-only{ opacity:.32; pointer-events:none; }
   .dot-only-why{ display:none; }
   body.tex-blob .dot-only-why{
     display:block; font-size:10.5px; line-height:1.6; color:var(--dim); opacity:.9;
@@ -1098,7 +1100,11 @@
        ⭐ このボタンは 字なり=0 にしたうえで 向き を 0／90 に置く＝一発で揃う。 -->
   <div class="row"><label>帯</label>
     <div class="seg" id="tzFlow" style="flex:1;margin:0">
-      <button data-v="x">よこに流す</button><button data-v="y">たてに流す</button></div></div>
+      <button data-v="none" class="on">なし</button><button data-v="x">よこに流す</button><button data-v="y">たてに流す</button></div></div>
+  <!-- ⚠️⚠️ 太さは【本数】でなく【px】で持つ。木下＝「オブジェクトの大きさによって違う」。
+       本数で決めると、大きい図形ほど帯が太くなって【並べたとき揃わない】。
+       px なら図形の大小に関係なく同じ太さになる。 -->
+  <div class="row band-only"><label>帯の太さ</label><input type="range" id="tzBandW" min="4" max="240" step="1" value="24"><span class="val"></span></div>
   <div class="row"><label>向き</label><input type="range" id="tzDir" min="0" max="180" step="1" value="0"><span class="val"></span></div>
   <div class="row"><label>字なり</label><input type="range" id="tzFollow" min="0" max="100" step="1" value="100"><span class="val"></span></div>
   <div class="hint">⭐<b>よこ／たて</b>＝帯を全部おなじ向きに流す（字なりを 0 にして向きを 0／90 に置く）。
@@ -4331,6 +4337,7 @@ function tzSettingsRestore(sn){
   // ⚠️ 柄（グラデ塊／ドット）も戻るので、「効かない項目を薄くする」も合わせ直す。
   //   ここを通さないと、保存から開いたときや粒を選んだときに表示が食い違う。
   if(typeof tzTexSync === 'function') tzTexSync();
+  if(typeof tzFlowSync === 'function') tzFlowSync();   // ⚠️ 帯の太さの薄さも合わせ直す
   return true;
 }
 function copyStyle(){
@@ -5815,9 +5822,10 @@ function tzRampColor(v, LUT, shine){
   return tzRgbHex([LUT[q] + 255*hi, LUT[q+1] + 255*hi, LUT[q+2] + 255*hi]);
 }
 /* ドット＝場のグラデを網（ディザ）で階調に落として、パレットから色を選ぶ */
-function tzDitherColor(i, j, N, o){
+function tzDitherColor(i, j, NX, NY, o){
   const { cols, steps, dith, gca, gsa } = o;
-  let v = (i/N * gca + j/N * gsa) * 0.5 + 0.5;
+  // ⚠️ 帯にすると縦横のマス数が違うので、それぞれの数で割る（片方だけだと網が転ぶ）
+  let v = (i/NX * gca + j/NY * gsa) * 0.5 + 0.5;
   v = v - Math.floor(v);
   const bq = TZ_BAYER[(j % 4) * 4 + (i % 4)];
   const q  = Math.floor(v * (steps-1) + (bq-0.5) * dith + 0.5);
@@ -5836,6 +5844,9 @@ function tzOpt(){
     wav   : +(g('tzWav')?.value || 0.1),
     dir   : +(g('tzDir')?.value || 0) * Math.PI/180,
     follow: +(g('tzFollow')?.value || 100) / 100,
+    // ⭐ 帯＝格子そのものを細長くする。none＝いままで通りの正方格子
+    flow  : document.querySelector('#tzFlow button.on')?.dataset.v || 'none',
+    bandw : +(g('tzBandW')?.value || 24),
     shift : +(g('tzShift')?.value || 0) / 100,
     gap   : +(g('tzGap')?.value || 0) / 100,
     // ⭐ 継ぎ目。⚠️ 粒をぴったり並べると、境目でアンチエイリアスによって下地が透け、
@@ -5943,20 +5954,31 @@ function tzCrossOf(cells, N, o){
 function tzGeom(item, o){
   const b = item.bounds;
   if(!b || !b.width || !b.height) return null;
-  const N = o.res;
-  const cw = b.width / N, ch = b.height / N;
+  /* ⭐⭐ 帯 ── 縦と横で【分割数を分ける】。
+     🔴 ここが1つの数（解像）しかなかったので格子は必ず正方形で、向きを変えても
+        変わるのは【正方形の中の陰影の角度】だけ＝帯という細長い形が作られていなかった
+        （木下＝「なってないよね。向きもてかりが変わるだけ」）。
+     ⭐ 朧 OBORO が同じ罠を踏んで直した所と同型＝「段の向きを帯の向きと揃える」。
+     ⚠️ 太さは【px】で決める。本数で決めると大きい図形ほど帯が太くなって並べたとき揃わない。
+     ⚠️ none のときは NX=NY=解像＝いままでと1ピクセルも変わらない。 */
+  const NR = o.res;
+  const cnt = px => Math.max(2, Math.min(400, Math.round(px / Math.max(1, o.bandw))));
+  const NX = o.flow === 'y' ? cnt(b.width)  : NR;   // たて＝縦長の粒を横に並べる
+  const NY = o.flow === 'x' ? cnt(b.height) : NR;   // よこ＝横長の粒を縦に積む
+  const N = NX;                                     // ⚠️ 既存の受け渡し用（tzCrossOf は使っていない）
+  const cw = b.width / NX, ch = b.height / NY;
   const pad = Math.min(cw, ch) * o.gap * 0.5;
   // ⭐ まず「どのマスが内側か」の地図を作る。TSUBU が字を格子に落としたのと同じ。
   //   ここから 向き（Sobel）と 太さ（5×5の埋まり）を取る。
   //   ⚠️ これまでは1マスごとに最も近い輪郭を探していた（重いうえ、TSUBU と別の向きになる）。
-  const mask = new Uint8Array(N*N);
-  for(let j = 0; j < N; j++) for(let i = 0; i < N; i++){
-    if(tzInside(item, new Point(b.x + (i+0.5)*cw, b.y + (j+0.5)*ch))) mask[j*N+i] = 1;
+  const mask = new Uint8Array(NX*NY);
+  for(let j = 0; j < NY; j++) for(let i = 0; i < NX; i++){
+    if(tzInside(item, new Point(b.x + (i+0.5)*cw, b.y + (j+0.5)*ch))) mask[j*NX+i] = 1;
   }
-  const on = (x, y) => (x < 0 || y < 0 || x >= N || y >= N) ? 0 : mask[y*N + x];
+  const on = (x, y) => (x < 0 || y < 0 || x >= NX || y >= NY) ? 0 : mask[y*NX + x];
   // 内側のマスを集めて、向きと太さを出す
   const cells = [];
-  for(let j = 0; j < N; j++) for(let i = 0; i < N; i++){
+  for(let j = 0; j < NY; j++) for(let i = 0; i < NX; i++){
     if(!on(i, j)) continue;
     // 太さ — 5×5(0..24) が何個埋まっているか。多いほど画の芯／交わり
     let dens = 0;
@@ -5968,7 +5990,8 @@ function tzGeom(item, o){
     cells.push({ i, j, dens, sob });
   }
   if(!cells.length) return null;
-  return { N, cells, res:o.res, gap:o.gap, bleed:o.bleed,
+  return { N, NX, NY, cells, res:o.res, gap:o.gap, bleed:o.bleed,
+           flow:o.flow, bandw:o.bandw,
            b:{x:b.x, y:b.y, width:b.width, height:b.height}, cw, ch, pad };
 }
 function tsubuize(item, o, geom){
@@ -6001,7 +6024,8 @@ function tsubuize(item, o, geom){
 /* ⭐ 粒ひとつぶんの塗りを決める。⚠️ 作り直しと再塗りで同じ式を通すため、ここ1箇所にまとめる
    （2箇所に書くと、片方だけ直して見え方がずれる）。 */
 function tzFillOf(cellData, ci, cross, g0, o){
-  const { N, cw, ch } = g0;
+  const { cw, ch } = g0;
+  const NX = g0.NX || g0.N, NY = g0.NY || g0.N;   // ⚠️ 古い粒（NX/NYを持たない）も開ける
   const b = g0.b;
   {
     {
@@ -6017,7 +6041,11 @@ function tzFillOf(cellData, ci, cross, g0, o){
       //   ⚠️ 粒の入口〜出口を滑らかに繋ぐと粒が消えて、ただのグラデになる。
       //     粒の中で波が完結し、境界で位相が切り替わることが8bitらしさそのもの。
       const W2 = o.wav;
-      const ph = ((i * ca + j * sa) * W2 + o.shift) * Math.PI * 2;
+      /* ⚠️ 帯にすると1マスの縦横が違うので、格子の番号（i,j）のままでは
+         波の進み方が縦横でズレる。⭐【実寸】で測って、短い辺を1として数える。
+         ⚠️ 正方格子（cw===ch）のときは i*ca+j*sa と完全に同じ値＝既存の絵は変わらない。 */
+      const uu0 = (i * cw * ca + j * ch * sa) / Math.min(cw, ch);
+      const ph = (uu0 * W2 + o.shift) * Math.PI * 2;
       const TAU = 6.2831853;
       // 粒内の正規化座標 (0〜1) から、TSUBU と同じ式で明暗を出す
       const patAt = (uu, ww) => {
@@ -6050,7 +6078,7 @@ function tzFillOf(cellData, ci, cross, g0, o){
                  origin: mid.subtract(dir), destination: mid.add(dir) };
       }
       // ドット ── 1粒1色。TSUBU と同じく、場のグラデを網（ディザ）で階調に落とす
-      return tzDitherColor(i, j, N, o);
+      return tzDitherColor(i, j, NX, NY, o);
     }
   }
 }
@@ -6060,7 +6088,9 @@ function tzFillOf(cellData, ci, cross, g0, o){
 function tzRepaint(g, o){
   const g0 = g && g.__tzGeom;
   // ⚠️ bleed（継ぎ目）は粒の【大きさ】を変えるので、塗りの差し替えでは直らない
-  if(!g0 || g0.res !== o.res || g0.gap !== o.gap || g0.bleed !== o.bleed) return false;
+  // ⚠️ 帯（流れ・太さ）は格子そのものを作り直すので、塗りの差し替えでは直らない
+  if(!g0 || g0.res !== o.res || g0.gap !== o.gap || g0.bleed !== o.bleed
+        || g0.flow !== o.flow || g0.bandw !== o.bandw) return false;
   const cells = g0.cells;
   if(!g.children || g.children.length !== cells.length) return false;
   const cross = tzCrossOf(cells, g0.N, o);
@@ -6215,17 +6245,26 @@ function tzSetRange(id, v){
   r.value = v;
   const lab = r.parentElement?.querySelector('.val'); if(lab) lab.textContent = r.value;
 }
+function tzFlowSync(){
+  const v = document.querySelector('#tzFlow button.on')?.dataset.v || 'none';
+  document.body.classList.toggle('flow-band', v !== 'none');
+}
 document.querySelectorAll('#tzFlow button').forEach(b =>
   b.addEventListener('click', () => {
     b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
-    tzSetRange('tzDir', b.dataset.v === 'y' ? 90 : 0);
-    tzSetRange('tzFollow', 0);
+    tzFlowSync();
+    // ⚠️ 「なし」は今までの状態に戻すだけ＝向き・字なりは触らない（勝手に絵を変えない）
+    if(b.dataset.v !== 'none'){
+      tzSetRange('tzDir', b.dataset.v === 'y' ? 90 : 0);
+      tzSetRange('tzFollow', 0);
+    }
     setTimeout(tzChanged, 0);
   }));
-['tzDir','tzFollow'].forEach(id =>
-  document.getElementById(id)?.addEventListener('input', () =>
-    document.querySelectorAll('#tzFlow button').forEach(x => x.classList.remove('on'))));
-const TZ_SLIDERS = ['tzRes','tzWav','tzDir','tzFollow','tzShift','tzGap','tzBead','tzBeadK',
+tzFlowSync();
+/* ⚠️ 向き・字なりを動かしても【帯の選択は外さない】。
+   帯は格子の形（細長いかどうか）の話で、向きは帯の中の流れの話＝別のもの。
+   最初は外していたが、それだと帯にしたまま向きを微調整できなかった。 */
+const TZ_SLIDERS = ['tzRes','tzWav','tzBandW','tzDir','tzFollow','tzShift','tzGap','tzBead','tzBeadK',
                     'tzValley','tzGrad','tzShine','tzSteps','tzDith','tzGdir'];
 TZ_SLIDERS.forEach(id => {
   const r = document.getElementById(id); if(!r) return;
@@ -6323,7 +6362,7 @@ function retsubuSoon(){
   if(_tzRaf) return;
   _tzRaf = requestAnimationFrame(() => { _tzRaf = 0; retsubu(true); });
 }
-['tzRes','tzWav','tzDir','tzFollow','tzShift','tzGap'].forEach(id =>
+['tzRes','tzWav','tzBandW','tzDir','tzFollow','tzShift','tzGap'].forEach(id =>
   document.getElementById(id)?.addEventListener('input', retsubuSoon));
 document.querySelectorAll('#tzTex button').forEach(b =>
   b.addEventListener('click', () => setTimeout(retsubuSoon, 0)));
