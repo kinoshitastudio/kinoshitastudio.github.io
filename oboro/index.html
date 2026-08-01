@@ -515,13 +515,33 @@ function makeBase(){
 }
 
 /* ⭐ 音で揺れる量。⚠️ P そのものは書き換えない＝音を止めれば元の設定に戻る
-   （書き換えると、鳴らしたあと設定が変わってしまって戻せない）。 */
+   （書き換えると、鳴らしたあと設定が変わってしまって戻せない）。
+   ⭐⭐ 木下＝「ビートに合わせて動くだが**変化があまりにも少ない**」。
+   🔴 原因＝音を【足す】向きに効かせていた。`進み` の既定は **100** なので
+      `min(100, 100 + 低音*45)` は **いつも 100**＝キックの効果がまるごと消えていた。
+      （のび・色数も、足し幅が元の値に対して小さすぎた）
+   ⭐ 直し方＝音を【削って戻す】向きにする。
+      静かなとき＝設定より下げた所／鳴った瞬間＝設定の値、に戻る。
+      ＝**キックのたびに帯が現れて、また引く**。上限で頭打ちにならない。
+   ⚠️⚠️ 削るのは【音が鳴っている間だけ】。鳴っていないのに削ると
+      「音を止めれば元に戻る」が嘘になる（＝止めても絵が変わったままになる）。 */
+let sndActive = false;
 function mod(){
   const a = P.amount / 100;
+  if(!sndActive || a <= 0) return { fill:P.fill, steps:P.steps, reach:P.reach };
+  /* ⚠️ 帯域の値は 0.5 くらいまでしか上がらないので、そのまま使うと振り幅が足りない。
+     ⭐ 1 に届くように伸ばしてから使う（ここを測らずに書いたのが今回の失敗）。 */
+  const lo = Math.min(1, M.low  * 1.9);      // キック
+  const mi = Math.min(1, M.mid  * 2.6);
+  const hi = Math.min(1, M.high * 2.2);
+  const d  = Math.min(0.9, a);               // 効き＝どれだけ削るか
   return {
-    fill:  Math.max(0, Math.min(100, P.fill  + M.low  * a * 45)),
-    steps: Math.max(2, Math.round(P.steps - M.high * a * P.steps * 0.6)),
-    reach: P.reach + M.mid * a * 160,
+    // 進み＝静かなら (1-d) 倍まで引き、鳴ると設定値まで戻る＝拍で帯が現れる
+    fill:  Math.max(0, Math.min(100, P.fill * (1 - d + d * lo))),
+    // 色数＝高音で絞る（版画に寄る）
+    steps: Math.max(2, Math.round(P.steps * (1 - 0.75 * d * hi))),
+    // のび＝中音で伸びる
+    reach: P.reach * (1 + 1.3 * d * mi),
   };
 }
 
@@ -865,7 +885,9 @@ function audioReady(){
   if(actx) return;
   actx = new (window.AudioContext || window.webkitAudioContext)();
   analyser = actx.createAnalyser();
-  analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0.6;
+  /* ⚠️ 平滑を強くすると analyser 側で山がならされて、キックが「打点」でなく
+     「うねり」になる。⭐ 打点を残したいので下げる（残りはこちらで整える）。 */
+  analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0.35;
   freq = new Uint8Array(analyser.frequencyBinCount);
   tick();
 }
@@ -878,10 +900,15 @@ function tick(){
   requestAnimationFrame(tick);
   if(!analyser) return;
   analyser.getByteFrequencyData(freq);
-  const k = 0.25;
-  M.low  += (bandAvg(0,.07)  - M.low ) * k;
-  M.mid  += (bandAvg(.07,.34) - M.mid ) * k;
-  M.high += (bandAvg(.34,1)   - M.high) * k;
+  /* ⭐⭐ 立ち上がりは速く・戻りはゆっくり（打点を残して、余韻で引く）。
+     🔴 前は上げも下げも同じ 0.25 だったので、キックが【なまって】山にならなかった。
+     ⚠️ 楽器の作りと同じ＝アタックとリリースを分ける。 */
+  const env = (cur, v) => v > cur ? cur + (v - cur) * 0.65 : cur + (v - cur) * 0.14;
+  /* ⚠️⭐ 低音の幅が広すぎた。0〜7% は 0〜1.7kHz ＝キック以外もごっそり入るので、
+     キックが鳴っても平均が動かない。⭐ キックの居る所（〜500Hz）まで狭める。 */
+  M.low  = env(M.low , bandAvg(0,   .022));
+  M.mid  = env(M.mid , bandAvg(.022,.30));
+  M.high = env(M.high, bandAvg(.30, 1));
   // ⚠️ 音が鳴っている間だけ描き直す（止まっていれば描かない＝無駄に回さない）
   if(P.amount > 0 && (M.low + M.mid + M.high) > 0.01) invalidate(1);
 }
@@ -906,6 +933,7 @@ let demoTimers = [], demoGain = null, demoNodes = [];
 function startDemo(){
   audioReady(); actx.resume();
   stopDemo();
+  sndActive = true;      // ⭐ ここから「音で削る」が効く
   demoGain = actx.createGain(); demoGain.gain.value = 0.9;
   demoGain.connect(analyser); demoGain.connect(actx.destination);
   const beat = P.sndkind !== 'wave';
@@ -1022,6 +1050,7 @@ function stopDemo(){
         止まらなくなる（＝音が消えないまま残る）。
      ⚠️ 音を切る側（demoGain）を外すだけでは【オシレータは回り続ける】ので、
         鳴らしたものは明示的に止める。 */
+  sndActive = false;     // ⚠️ 止めたら削るのをやめる＝元の設定の見え方に戻る
   demoTimers.forEach(clearInterval); demoTimers = [];
   demoNodes.forEach(n => { try{ n.stop(); }catch(e){} }); demoNodes = [];
   if(demoGain){ try{ demoGain.disconnect(); }catch(e){} demoGain = null; }
@@ -1044,6 +1073,7 @@ document.getElementById('bMic').onclick = async () => {
     audioReady(); stopDemo();
     const st = await navigator.mediaDevices.getUserMedia({ audio:true });
     actx.createMediaStreamSource(st).connect(analyser);
+    sndActive = true;
     document.getElementById('sndnote').innerHTML = '⭐ マイクが入った。音を出すと帯が揺れる';
   }catch(e){ document.getElementById('sndnote').textContent = 'マイクが使えなかった：' + e.message; }
 };
@@ -1056,6 +1086,7 @@ document.getElementById('sfile').addEventListener('change', e => {
   playing.loop = true;
   const srcNode = actx.createMediaElementSource(playing);
   srcNode.connect(analyser); srcNode.connect(actx.destination);
+  sndActive = true;
   playing.play();
   document.getElementById('sndnote').innerHTML = '⭐ 鳴っている（もう一度押すと別の音に差し替え）';
   e.target.value = '';
