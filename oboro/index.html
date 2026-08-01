@@ -162,7 +162,14 @@
 
   <h2>引く</h2>
   <div class="row"><label>抜き</label><input type="range" id="drop" min="0" max="90" value="0"><span class="val"></span></div>
+  <div class="seg" id="dropdir">
+    <button data-v="rand" class="on">ばらばら</button>
+    <button data-v="light">明るい</button>
+    <button data-v="dark">暗い</button>
+    <button data-v="down">下から</button>
+  </div>
   <div class="mod">⭐ 帯を<b>消して</b>、下の写真を覗かせる。⚠️ 上にノイズを足すのではなく<b>引く</b><br>
+    ⭐⭐ <b>どこから抜けるか</b>を選べる＝ばらばら／明るい所から／暗い所から／<b>下から</b>（上に向かって消える）<br>
     ⭐ 音が鳴っていると、どの帯が消えるかが揺れる</div>
 
   <h2>光</h2>
@@ -218,7 +225,7 @@ let cells = [];          // 割ったマス（色つき）
 const P = { rows:14, minx:2, maxx:44, vary:60, seed:7, steps:16, bias:0, dir:'x', soft:55, reach:160,
             fill:100, order:'rand',
             /* ⭐ 引き算＝帯を消して写真を覗かせる。⭐ 音＝どの帯が消えるかが揺れる */
-            drop:0, expo:0, sat:100, amount:60,
+            drop:0, dropdir:'rand', expo:0, sat:100, amount:60,
             /* ⭐⭐ 形＝被写体の輪郭の中だけに帯を刷る（効き 0 ＝いままで通り全面） */
             shape:0, thr:128, inv:0, lump:30 };
 const M = { low:0, mid:0, high:0, kick:0 };   // 音の量（0〜1）
@@ -549,9 +556,8 @@ function band(c, m){
      ノイズを入れることになる」）。⚠️ 上にノイズを足すのではなく【帯を抜く】。
      ⭐ 音が鳴っていると、どの帯が消えるかが揺れる＝同じ設定でも毎回ちがう。 */
   if(P.drop > 0){
-    const n = rnd(c.x0 * 0.37 + c.y0 * 0.11 + c.row * 2.3);
     const shake = (M.low + M.mid + M.high) / 3 * (P.amount/100);
-    if(n < P.drop/100 * (1 + shake * 0.8)) return;      // この帯は刷らない
+    if(dropKey(c) < P.drop/100 * (1 + shake * 0.8)) return;   // この帯は刷らない
   }
   const horiz = P.dir === 'x';
   const reach = m.reach / 100;
@@ -576,6 +582,21 @@ function band(c, m){
   g.addColorStop(1, css(b));
   ctx.fillStyle = g;
   ctx.fillRect(x, y, bw, bh);
+}
+/* ⭐⭐ どこから抜けるか ── 帯ごとに「残りやすさ」を出す（小さいほど先に抜ける）。
+   🔴 前はランダムだけだった＝抜きを上げると【均一に虫食い】になり、抜けに向きが無かった。
+   ⭐ 木下「引き算としてノイズを入れる」の続き＝ノイズにも【向き】を持たせる。
+   ⚠️ 順番そのままにすると【きれいな線でスパッと切れる】ので、
+      1/4 だけ乱数を混ぜる（向きは読めるまま、切り口が有機的になる）。
+   ⚠️ 乱数の種は固定のまま＝「さっきの方がよかった」に戻せる。 */
+function dropKey(c){
+  const r = rnd(c.x0 * 0.37 + c.y0 * 0.11 + c.row * 2.3);
+  if(P.dropdir === 'rand') return r;
+  let k;
+  if(P.dropdir === 'light')      k = 1 - c.lum/255;                       // 明るい帯から抜ける
+  else if(P.dropdir === 'dark')  k = c.lum/255;                           // 暗い帯から抜ける
+  else                           k = 1 - (c.y0 + c.y1)/2 / cv.height;     // 下から抜けて上へ
+  return k * 0.75 + r * 0.25;
 }
 function neighbor(c){
   /* ⭐ 渡る先＝【同じ段の次の帯】。
@@ -647,7 +668,10 @@ document.querySelectorAll('.seg').forEach(seg => {
     b.addEventListener('click', () => {
       seg.querySelectorAll('button').forEach(x => x.classList.remove('on'));
       b.classList.add('on');
-      P[seg.id === 'dir' ? 'dir' : 'order'] = b.dataset.v;
+      /* ⚠️⭐ 前は「dir でなければ order」と書いていた＝**3つ目のセグを足した瞬間に
+         それも order を書き換えて黙って壊れる**（memory「足す前に既存の同名を探す」）。
+         ⭐ セグの id と P の名前を揃えて、そのまま入れる。 */
+      P[seg.id] = b.dataset.v;
       // ⚠️ 向きを変えると段の組み方そのものが変わる＝割り直しが要る
       invalidate(seg.id === 'dir' ? 2 : 1);
     });
@@ -688,6 +712,12 @@ document.getElementById('bSVG').onclick = () => {
   let defs = '', body = '';
   for(let k=0;k<upto;k++){
     const c = list[k]; if(!c) continue;
+    /* 🔴 抜いた帯が SVG に出てしまっていた（画面では消えているのに書き出すと戻る）。
+       ⭐ 画面と同じ判定をここでも通す＝見えているものがそのまま出る。 */
+    if(P.drop > 0){
+      const shake = (M.low + M.mid + M.high) / 3 * (P.amount/100);
+      if(dropKey(c) < P.drop/100 * (1 + shake * 0.8)) continue;
+    }
     const w = c.x1-c.x0, h = c.y1-c.y0;
     const bw = horiz ? w*reach : w, bh = horiz ? h : h*reach;
     const x = horiz ? c.x0-(bw-w)/2 : c.x0, y = horiz ? c.y0 : c.y0-(bh-h)/2;
