@@ -1518,6 +1518,7 @@ function clearBleed(){
 
 /* ── LOOP ───────────────────────────────────────────────── */
 let spin = false;
+let exporting = false;   // PNG書き出し中はループを止める
 let projA = 1;
 function applyProj(){   // 正投影の範囲。cam.px/py で上下左右にパンできる
   const s2 = VIEW.size / 2, a = projA;
@@ -1538,17 +1539,8 @@ function resize(){
 addEventListener('resize', resize);
 resize();
 
-function frame(t){
-  requestAnimationFrame(frame);
-  runChain();
-  if(spin) cam.tAz += 0.0028 + M.spin;
-  placeCamera();
-  inkUniforms.uTime.value  = t * 0.001;
-  postUniforms.uT.value    = t * 0.001;
-  postUniforms.uTime.value = Math.floor(t * 0.024);
-  // ⭐ 地の色は【段に関係なく】常に効くもの。ここで毎回入れる
-  postUniforms.uPaper.value.set(P.paper);
-
+// 1枚描く。⭐ 画面もPNG書き出しも【同じ道】を通す＝見えている絵がそのまま出る
+function drawOnce(){
   renderer.setRenderTarget(rt); renderer.clear(); renderer.render(scene, camera);
 
   if(ON.bleed){
@@ -1560,6 +1552,21 @@ function frame(t){
     postUniforms.tSrc.value = rt.texture;
   }
   renderer.setRenderTarget(null); renderer.render(postScene, postCam());
+}
+
+function frame(t){
+  requestAnimationFrame(frame);
+  if(exporting) return;          // 書き出し中は画面を触らない（焼いた絵を上書きしないため）
+  runChain();
+  if(spin) cam.tAz += 0.0028 + M.spin;
+  placeCamera();
+  inkUniforms.uTime.value  = t * 0.001;
+  postUniforms.uT.value    = t * 0.001;
+  postUniforms.uTime.value = Math.floor(t * 0.024);
+  // ⭐ 地の色は【段に関係なく】常に効くもの。ここで毎回入れる
+  postUniforms.uPaper.value.set(P.paper);
+
+  drawOnce();
 }
 const postCam = () => fsCam;
 
@@ -1724,11 +1731,82 @@ document.getElementById('btn-spin').onclick = e => {
   e.target.style.background = spin ? '#0a0a0a' : '';
   e.target.style.color = spin ? '#f4f2ee' : '';
 };
-document.getElementById('btn-png').onclick = () => {
-  const a = document.createElement('a');
-  a.download = `kumi_${Date.now()}.png`;
-  a.href = renderer.domElement.toDataURL('image/png'); a.click();
-};
+/* ── PNG 書き出し ─────────────────────────────────────────
+   ⚠️ 画面のドットをそのまま吸うと、モニタの解像度＝作品の解像度に
+      なってしまう（しかもスマホは canvas が 58vh で縦が切れる）。
+   ⭐ そうではなく【長辺 EXPORT_PX で焼き直す】。
+      ・見えている画角・地の色・段（ENGINES）はそのまま
+      ・にじみ BLEED は何枚も重ねて溜まるものなので、
+        焼く前に溜まりを作り直してから1枚落とす
+   ⭐ 印刷を名乗る道具なので、書き出しも「刷る」＝原寸で焼く      */
+const EXPORT_PX = innerWidth <= 760 ? 2048 : 4096;   // 端末のメモリに合わせる
+
+function exportSize(){
+  const el = renderer.domElement;
+  const w = el.clientWidth || innerWidth, h = el.clientHeight || innerHeight;
+  const long = Math.min(EXPORT_PX, renderer.capabilities.maxTextureSize);
+  const k = long / Math.max(w, h);
+  return { W: Math.max(1, Math.round(w * k)), H: Math.max(1, Math.round(h * k)) };
+}
+
+async function exportPNG(){
+  if(exporting) return;
+  if(rec) return;              // ⚠️ REC中は版の大きさを変えられない（録画が壊れる）
+  exporting = true;
+  const btn = document.getElementById('btn-png');
+  btn.disabled = true; btn.textContent = '…';
+
+  const dpr0 = renderer.getPixelRatio();
+  const { W, H } = exportSize();
+  try {
+    // 画面と同じ縦横のまま、大きい版に張り替える
+    renderer.setPixelRatio(1);
+    renderer.setSize(W, H, false);        // false＝CSSの見た目は触らない
+    rt.setSize(W, H); rtA.setSize(W, H); rtB.setSize(W, H);
+    postUniforms.uRes.value.set(W, H);
+    bleedUniforms.uRes.value.set(W, H);
+    projA = W / H; applyProj();
+    clearBleed();                          // 版を張り替えたので溜まりは一度捨てる
+
+    // にじみの溜まりを作り直す。時間を少し巻き戻して、今の瞬間まで進める
+    const t0 = inkUniforms.uTime.value;
+    const N  = ON.bleed ? 24 : 1;
+    for(let i = N - 1; i >= 0; i--){
+      const t = t0 - i / 60;
+      inkUniforms.uTime.value = t; postUniforms.uT.value = t;
+      drawOnce();
+    }
+    inkUniforms.uTime.value = t0; postUniforms.uT.value = t0;
+
+    const blob = await new Promise(res => renderer.domElement.toBlob(res, 'image/png'));
+    if(!blob) throw new Error('toBlob failed');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.download = `kumi_${stamp()}_${W}x${H}.png`;
+    a.href = url; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch(err){
+    console.error('[KUMI] png:', err);
+    btn.textContent = 'ERR';
+    setTimeout(() => { btn.textContent = 'PNG'; }, 1600);
+    exporting = false; btn.disabled = false;
+    renderer.setPixelRatio(dpr0); resize();
+    return;
+  }
+
+  // 画面用の大きさに戻す
+  renderer.setPixelRatio(dpr0);
+  resize();
+  exporting = false;
+  btn.disabled = false; btn.textContent = 'PNG';
+}
+
+function stamp(){
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+document.getElementById('btn-png').onclick = exportPNG;
 let rec = null;
 document.getElementById('btn-rec').onclick = e => {
   if(rec){ rec.stop(); rec = null; e.target.classList.remove('on'); e.target.textContent = 'REC'; return; }
