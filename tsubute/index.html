@@ -1,0 +1,1257 @@
+<meta charset="utf-8">
+<!-- 🔴⭐ 木下＝「モバイルはまだ右側が切れてるぞ」。
+     正体＝拡大が効いていた。TSUBU / HORI には入っている maximum-scale / user-scalable が
+     礫だけ抜けていた。iOS は ①ピンチで拡大できる ②16px 未満の入力欄をタップすると
+     自動で拡大する（＝字を打とうとした瞬間に拡大され、戻らないので右が切れる）。
+     ⚠️ 動いているプロダクトと meta を突き合わせれば最初に見つかった。
+     🔴 さらに viewport-fit=cover も外した＝TSUBU に【入っていない】。
+        cover は画面の端（丸角の外）まで版面を広げるので、固定配置と組むと
+        実機で右がはみ出す。⭐ 凝らずに、実機で動いているものと同じにする。 -->
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>礫 TSUBUTE — 粒を積んで立体にする</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Zen+Kaku+Gothic+New:wght@400;700;900&family=Zen+Old+Mincho:wght@600;900&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --paper:#f4f2ee; --ink:#0a0a0a; --line:rgba(0,0,0,.12);
+    --fill:rgba(0,0,0,.05); --fill2:rgba(0,0,0,.08);
+    --glass:rgba(244,242,238,.82); --capsule:#fff; --r:11px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;overflow:hidden;background:var(--paper);color:var(--ink);
+    font-family:"Space Mono",monospace;
+    /* ⚠️ iOS の引っぱり（ゴムバンド）で画面ごと動くのを止める */
+    overscroll-behavior:none;
+    /* 🔴⭐ 何かが横に押し広げると、固定配置の right:0 が【その広い幅】を基準にしてしまい、
+       パネルが画面より広くなって右が切れる（実機だけで出た）。
+       ⭐ 犯人を探すより、そもそも横に広がれないようにする。 */
+    width:100%;max-width:100%;overflow-x:hidden;}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;}
+
+  /* ── ラック（機材の並び。HORI と同じ性格にする） ── */
+  #rack{
+    position:fixed;top:0;right:0;bottom:0;width:290px;z-index:10;
+    /* 🔴⭐ 木下＝「左右にぶれる」＝iOS はここを横にも引っぱれてしまう。
+       ⭐ 縦だけ動かす（pan-y）＋横は出さない。 */
+    overflow-y:auto;overflow-x:hidden;touch-action:pan-y;overscroll-behavior:contain;
+    background:var(--glass);backdrop-filter:blur(22px);
+    -webkit-backdrop-filter:blur(22px);border-left:1px solid var(--line);
+    /* ⚠️⭐ ここは flex にしない（TSUBU と同じ普通の縦積み）。
+       flex にしたせいで ①子が縮んでスクロールできない ②中身が溢れる
+       という別々の不具合を2回出した。動いているプロダクトの作りに合わせる。 */
+    padding:10px;
+  }
+  /* 🔴⭐ 木下＝「モバイルでツールパネルが動かない」。
+     原因＝ラックが flex の縦並びで、子（段）が既定で【縮む】ため、
+     全部が高さに押し込まれて **はみ出さない＝スクロールする余地が無い** 状態だった
+     （実測 scrollHeight 353 = clientHeight 353）。
+     ⭐ 段は縮ませない。そうすると初めて溢れて、スクロールできるようになる。 */
+  .unit{margin-bottom:8px;max-width:100%;background:var(--capsule);border-radius:var(--r);overflow:hidden;
+    box-shadow:0 1px 3px rgba(0,0,0,.06),0 0 0 .5px rgba(0,0,0,.05);}
+  .unit-head{display:flex;align-items:center;gap:7px;padding:11px 12px;cursor:pointer;user-select:none;}
+  .led{width:6px;height:6px;border-radius:50%;background:var(--ink);flex:none;}
+  .unit.off .led{background:rgba(0,0,0,.18);}
+  .unit.off .unit-body{display:none;}
+  .unit.off .unit-name,.unit.off .unit-jp{opacity:.4;}
+  .unit-idx{font-size:9px;opacity:.35;letter-spacing:.1em;}
+  .unit-name{font-size:11px;letter-spacing:.14em;font-weight:700;}
+  .unit-jp{font-size:10px;opacity:.5;letter-spacing:.08em;margin-left:auto;
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;}
+  .tag{font-size:9px;letter-spacing:.06em;padding:1px 5px;border-radius:5px;margin-left:6px;
+    background:rgba(0,0,0,.07);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;}
+  .unit-body{padding:2px 12px 12px;}
+
+  /* 🔴⭐ 木下＝「モバイル横幅サイズに収まってないな」。
+     原因＝flex の子は既定で【中身より縮まない】（min-width:auto）。
+     スライダーは自分の既定幅を主張するので、ラベル＋数値＋隙間と足すと画面を超える。
+     ⚠️ Chrome の headless では出ず、Safari の既定幅で出た＝ブラウザ差。
+     ⭐ 縮んでよいと明示する（min-width:0）＋どの箱も画面幅を超えないようにする。 */
+  .row{display:flex;align-items:center;gap:9px;padding:3px 0;min-width:0;max-width:100%;}
+  .row label{font-family:"Space Mono",monospace;font-size:8.5px;letter-spacing:.1em;
+    /* 🔴⚠️ ここに overflow:hidden を入れていたのが【文字が途切れる】の正体。
+       幅を直すつもりで、日本語のラベルを切っていた。切らない。 */
+    opacity:.5;width:62px;flex:none;}
+  /* ⭐ つまみの日本語 ── 英語は機材ラックの意匠なので消さずに添える（HORI で決めた型） */
+  .row label i{display:block;font-style:normal;letter-spacing:0;font-size:9.5px;opacity:.95;
+    margin-top:1px;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;}
+  /* 🔴⭐ 木下＝「スライダーやボタンが反応しない」「スライド調整がスムーズじゃない」。
+     原因＝iOS は指を置いた瞬間「これはスクロールか操作か」を迷う。迷っている間は動かない。
+     ⭐ つまみの上では【スクロールしない】と宣言する＝迷いが消えて、その場から動く。 */
+  input[type=range]{flex:1 1 0;min-width:0;-webkit-appearance:none;height:26px;background:none;touch-action:none;}
+  button,.btn,.seg button{touch-action:manipulation;}
+  input[type=range]::-webkit-slider-runnable-track{height:3px;background:currentColor;opacity:.22;border-radius:2px;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;
+    margin-top:-6px;border-radius:50%;background:currentColor;}
+  .val{font-size:9px;opacity:.45;width:30px;text-align:right;flex:none;}
+
+  .seg{display:flex;background:var(--fill2);border-radius:9px;padding:2px;gap:2px;margin:6px 0 8px;
+    min-width:0;max-width:100%;}
+  .seg button{flex:1 1 auto;white-space:nowrap;border:none;border-radius:7px;background:none;cursor:pointer;
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;
+    font-size:11px;color:var(--ink);opacity:.5;padding:7px 0;transition:.16s;}
+  .seg button.on{opacity:1;background:var(--capsule);font-weight:700;
+    box-shadow:0 1px 4px rgba(0,0,0,.18);}
+  .btn{width:100%;background:var(--fill);border:none;border-radius:var(--r);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;font-size:12px;
+    padding:10px 0;cursor:pointer;margin-top:4px;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+  /* ⭐ TSUBU と同じ＝行ごとの説明は数が多いので【既定は隠す】。「?」で出す
+     ⚠️ 隠す指定は【中身の指定より後ろ】に置く（同じ強さだと後ろが勝つため）。 */
+  .mod{font-size:9.5px;line-height:1.75;opacity:.62;margin:6px 0 2px;
+    word-break:break-word;overflow-wrap:anywhere;
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;
+    display:none;}
+  body.help .mod{display:block;}
+  /* ⚠️ 16px 未満だと iOS が焦点を当てた瞬間に画面を拡大する（＝右が切れる）。16px 以上にする */
+  #txt,#fnt{width:100%;margin:6px 0;padding:9px 10px;border-radius:9px;
+    border:1px solid var(--line);background:var(--fill2);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;font-size:16px;}
+
+  #title{position:fixed;left:22px;top:18px;z-index:11;mix-blend-mode:difference;color:#fff;pointer-events:none;}
+  #title h1{font-family:"Zen Kaku Gothic New",sans-serif;font-weight:900;font-size:26px;line-height:1;}
+  #title p{font-size:8.5px;letter-spacing:.16em;opacity:.5;margin-top:5px;}
+  #bar{position:fixed;left:16px;bottom:16px;z-index:11;display:flex;gap:6px;flex-wrap:wrap;
+    max-width:calc(100vw - 32px);}
+  #bar button{background:var(--glass);backdrop-filter:blur(18px);border:1px solid var(--line);
+    border-radius:9px;padding:9px 13px;font-family:"Space Mono",monospace;font-size:10px;
+    letter-spacing:.1em;cursor:pointer;color:var(--ink);}
+  #bar button.on{background:#0a0a0a;color:#f4f2ee;}
+  /* ⭐ 版面のガイド＝何が書き出されるかを見せる（つまみだけでは版面にならない） */
+  #guide{position:fixed;z-index:9;pointer-events:none;display:none;
+    outline:1px solid rgba(255,255,255,.9);box-shadow:0 0 0 9999px rgba(0,0,0,.3);}
+  #guide.on{display:block;}
+
+  @media(max-width:760px){
+    canvas{top:0;height:58dvh;bottom:auto;}
+    /* ⚠️ right:0 に頼らない。左から数えて【画面幅ぴったり】に固定する
+       （right:0 は横に広がった版面を基準にすることがある） */
+    #rack{top:58dvh;bottom:0;left:0;right:auto;width:100vw;max-width:100vw;
+      border-left:none;border-top:1px solid var(--line);}
+    canvas{width:100vw;max-width:100vw;}
+    /* ⚠️ 中のどの箱も、親からはみ出さない */
+    #rack *{max-width:100%;}
+    #bar{bottom:auto;top:calc(58dvh - 46px);left:8px;}
+    input[type=range]{height:42px;}
+    input[type=range]::-webkit-slider-thumb{width:22px;height:22px;margin-top:-9.5px;}
+    /* ⚠️ 日本語は英語より場所を食う。モバイルではラベルを広げ、セグは字を落として【切らずに】収める */
+    .row label{width:72px;}
+    /* ⭐ HORI と同じ「掴める大きさ」を確保する（実機で動いているものに合わせる）。
+       🔴 木下＝「上の中央へや移動ボタンはうまく反応しない」＝
+          9px の字に薄い余白だけで、指の当たる面が小さすぎた。 */
+    button,.btn,.seg button{min-height:38px;}
+    .seg button{padding:11px 2px;font-size:10px;letter-spacing:0;}
+    #bar button{padding:11px 14px;min-height:38px;font-size:10px;}
+    .unit-body{padding:2px 10px 12px;}
+  }
+  #helpBtn{position:fixed;top:14px;right:14px;z-index:30;width:30px;height:30px;
+    border-radius:50%;border:1px solid var(--line);background:var(--glass);
+    -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+    color:var(--ink);cursor:pointer;font-size:13px;line-height:1;}
+  body.help #helpBtn{background:var(--ink);color:var(--paper);}
+  #manual{position:fixed;inset:0;z-index:40;display:none;background:rgba(0,0,0,.45);
+    padding:24px;overflow-y:auto;}
+  #manual.on{display:block;}
+  #manual .sheet{max-width:560px;margin:0 auto;background:var(--capsule);border-radius:16px;
+    padding:22px 22px 28px;position:relative;
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;}
+  #manual h2{font-size:16px;margin-bottom:10px;}
+  #manual h3{font-size:12px;margin:16px 0 4px;letter-spacing:.06em;}
+  #manual p{font-size:12px;line-height:1.85;opacity:.78;}
+  #manual .x{position:absolute;top:12px;right:14px;border:none;background:none;
+    font-size:20px;cursor:pointer;color:var(--ink);line-height:1;}
+  @media(max-width:760px){ #helpBtn{top:10px;right:10px;} #manual{padding:12px;} }
+</style>
+
+<div id="title"><h1>礫</h1><p>TSUBUTE / KINOSHITA STUDIO</p></div>
+<div id="guide"></div>
+
+<button id="helpBtn" title="使い方">?</button>
+<div id="manual"><div class="sheet">
+  <button class="x" id="manualX">×</button>
+  <h2>礫 TSUBUTE の使い方</h2>
+  <p><b>日本語の字を8bitのドットに落とし、その粒を積んで立体にする道具。</b>
+     粒は座標だけでなく<b>画の向き</b>と<b>太さ（交点らしさ）</b>を持ち、
+     向きは粒を倒す向きに、太さはそのまま<b>盛り上がり</b>になる。</p>
+
+  <h3>01 字</h3>
+  <p>横組／縦組・折返し・字間・行間・太さ。<b>太さ</b>を上げると画が交わる所が増える＝盛り上がる場所が増える。</p>
+
+  <h3>02 積む</h3>
+  <p><b>盛り</b>＝交点がどれだけ高くなるか（TSUBU の「交点に球が出る」の立体版）。
+     <b>底の厚み</b>＝全体の厚み。<b>立体感</b>＝0 で光を入れない＝塗りがそのまま出る。
+     <b>ならす量</b>＝隣の粒と高さ・向きを混ぜる。上げるほど線が1本の帯になる。
+     <b>玉</b>＝画が交わって太い所で、同じ帯の向きだけを直交させる割合。</p>
+
+  <h3>03 塗り</h3>
+  <p><b>解像</b>＝粒の格子の細かさ。下げるとビット、上げると画（線）が引き立つ。
+     <b>細かさ</b>＝1マスあたり何周するか（0.10 なら10マスで1周＝帯が長く流れる）。
+     <b>字なり</b>＝画の骨格をそのまま流れにする。<b>ずれ／字ごと</b>＝位相をずらす。
+     <b>版数</b>＝色を何段に落とすか（0＝連続／2〜16＝ビット感）。
+     <b>網</b>＝粒ごとに4×4の網を足して足りない階調を騙す（8bitのやり方）。
+     <b>谷</b>＝暗い側を黒へ寄せる。<b>階調</b>＝中間色の豊かさ＝丸さ。</p>
+
+  <h3>04 地</h3>
+  <p>中央の粒と<b>同じ版</b>を地にも流す段。<b>流れ</b>を右で360度そとへ、左で中心へ。
+     <b>地の色</b>はカラーピッカーで選べる。</p>
+
+  <h3>05 回す／06 書き出す大きさ</h3>
+  <p><b>速さ</b>はマイナスで逆回り。<b>書き出す大きさ</b>を点けると、
+     画面の大きさに関係なく決めた大きさで PNG が出る（白い枠がその範囲）。</p>
+
+  <h3>07 控える</h3>
+  <p><b>ひとつ戻す</b>＝触るたびに直前を控えているので、おかしくしても帰れる。
+     <b>控えを出す</b>＝設定を文字にして持ち出す。良い状態はここで控えを取っておく。</p>
+
+  <button class="btn" id="bHints" style="margin-top:14px">パネルに細かい説明を出す／消す</button>
+</div></div>
+
+<div id="rack">
+  <div class="unit" data-unit="type">
+    <div class="unit-head"><span class="led"></span><span class="unit-idx">01</span>
+      <span class="unit-name">TYPE</span><span class="unit-jp">字</span><span class="tag">字</span></div>
+    <div class="unit-body">
+      <div class="mod">⭐ 日本語を <b>8bit のドット</b>に落とす。粒は座標だけでなく
+        <b>画の向き</b>と<b>太さ（交点らしさ）</b>を持つ（TSUBU と同じ）</div>
+      <input type="text" id="txt" value="礫">
+      <select id="fnt"><option value="0">角ゴ</option><option value="1">明朝</option></select>
+      <div class="seg" data-seg="vert">
+        <button data-v="0" class="on">横組</button><button data-v="1">縦組</button>
+      </div>
+      <div class="row"><label>WRAP<i>折返し</i></label><input type="range" data-p="wrap" min="1" max="16" step="1" value="8"><span class="val"></span></div>
+      <div class="row"><label>GAP X<i>字間</i></label><input type="range" data-p="gapx" min="0" max="12" step="1" value="2"><span class="val"></span></div>
+      <div class="row"><label>GAP Y<i>行間</i></label><input type="range" data-p="gapy" min="0" max="12" step="1" value="2"><span class="val"></span></div>
+      <div class="row"><label>GAP<i>粒の隙間</i></label><input type="range" data-p="gapd" min="0" max="40" step="1" value="0"><span class="val"></span></div>
+      <div class="seg" data-seg="seam">
+        <button data-v="0" class="on">継ぎ目 消す</button><button data-v="1">出す</button>
+      </div>
+      <div class="row"><label>FAT<i>太さ</i></label><input type="range" data-p="fat" min="0" max="4" step="1" value="0"><span class="val"></span></div>
+      <div class="mod">⭐ <b>粒の隙間</b> 0 ＝粒がぴったり並ぶ／⭐ <b>継ぎ目</b>＝拡大したとき粒の境目に出る
+        <b>格子の線</b>。<b>消す</b>＝粒をわずかに重ねて繋げる（SAKUJI と同じ）<br>
+        ⚠️ <b>画数の多い字は解像を上げる</b>（低いと潰れて塊になる。礫は 44 くらいから）<br>
+        ⚠️ <b>太さ</b>を上げると画が交わる所が増える＝<b>盛り上がる場所が増える</b></div>
+    </div>
+  </div>
+
+  <div class="unit" data-unit="build">
+    <div class="unit-head"><span class="led"></span><span class="unit-idx">02</span>
+      <span class="unit-name">STACK</span><span class="unit-jp">積む</span><span class="tag">字</span></div>
+    <div class="unit-body">
+      <div class="mod">⭐⭐ ここが<b>礫だけ</b>の段。TSUBU では<b>交点に球が出た</b>。
+        立体では<b>交点が盛り上がる</b>＝その翻訳</div>
+      <div class="row"><label>RISE<i>盛り</i></label><input type="range" data-p="rise" min="0" max="100" step="1" value="25"><span class="val"></span></div>
+      <div class="row"><label>BASE<i>底の厚み</i></label><input type="range" data-p="base" min="2" max="100" step="1" value="45"><span class="val"></span></div>
+      <div class="row"><label>SMOOTH<i>ならす量</i></label><input type="range" data-p="smoothK" min="0" max="100" step="1" value="97"><span class="val"></span></div>
+      <div class="mod">⭐ <b>ならす量</b>＝隣の粒と高さ・向きを混ぜる。上げるほど線が1本の帯になる</div>
+      <div class="row"><label>TURN<i>画の向き</i></label><input type="range" data-p="turn" min="0" max="100" step="1" value="100"><span class="val"></span></div>
+      <div class="mod">⭐ <b>交点の柄</b>（SAKUJI と同じ）</div>
+      <div class="seg" data-seg="cross">
+        <button data-v="1" class="on">面</button><button data-v="0">なし</button>
+      </div>
+      <div class="row"><label>BEAD<i>玉</i></label><input type="range" data-p="bead" min="0" max="100" step="1" value="45"><span class="val"></span></div>
+      <div class="row"><label>SIZE<i>大きさ</i></label><input type="range" data-p="beadK" min="1" max="4" step="1" value="1"><span class="val"></span></div>
+      <div class="mod">⭐⭐ <b>面</b>＝画が交わって太い所で、<b>同じ帯を向きだけ直交させる</b><br>
+        ⚠️⚠️ <b>まとめない・拡大しない</b>＝粒はそのまま残る。だから<b>字からはみ出さない</b><br>
+        （隣と位相が繋がっているので、結果として1枚の大きな面に見える）<br>
+        <b>玉</b>＝そうするマスの割合／<b>大きさ</b>＝1＝粒ひとつ／2＝2×2／3＝9粒<br>
+        ⚠️ 中がスカスカのマスは選ばない＝細い画が勝手に太らない</div>
+    </div>
+  </div>
+
+  <div class="unit" data-unit="ink">
+    <div class="unit-head"><span class="led"></span><span class="unit-idx">03</span>
+      <span class="unit-name">INK</span><span class="unit-jp">塗り</span><span class="tag">字</span></div>
+    <div class="unit-body">
+      <div class="mod">⭐ <b>字だけ</b>を決める段（地の段とは切り離してある）。TSUBU の塗りをそのまま</div>
+      <div class="seg" data-seg="pal">
+        <button data-v="0">墨</button><button data-v="1" class="on">奇抜</button>
+        <button data-v="2">琵琶湖</button><button data-v="3">熱</button>
+      </div>
+      <div class="seg" data-seg="line">
+        <button data-v="0" class="on">波</button><button data-v="1">縞</button>
+        <button data-v="2">斜</button><button data-v="3">格子</button><button data-v="4">環</button>
+      </div>
+      <div class="row"><label>RES<i>解像</i></label><input type="range" data-p="res" min="8" max="72" step="1" value="44"><span class="val"></span></div>
+      <div class="row"><label>WAV<i>細かさ</i></label><input type="range" data-p="wav" min="1" max="60" step="1" value="10"><span class="val"></span></div>
+      <div class="row"><label>DIR<i>向き</i></label><input type="range" data-p="dir" min="0" max="180" step="1" value="0"><span class="val"></span></div>
+      <div class="row"><label>FOLLOW<i>字なり</i></label><input type="range" data-p="follow" min="0" max="100" step="1" value="100"><span class="val"></span></div>
+      <div class="row"><label>SHIFT<i>ずれ</i></label><input type="range" data-p="shift" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+      <div class="row"><label>PER CH<i>字ごと</i></label><input type="range" data-p="charJit" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+      <div class="row"><label>SHINE<i>照り</i></label><input type="range" data-p="shine" min="0" max="100" step="1" value="60"><span class="val"></span></div>
+      <div class="row"><label>VALLEY<i>谷</i></label><input type="range" data-p="valley" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+      <div class="row"><label>GRAD<i>階調</i></label><input type="range" data-p="grad" min="0" max="100" step="1" value="50"><span class="val"></span></div>
+      <div class="row"><label>STEPS<i>版数</i></label><input type="range" data-p="steps" min="0" max="16" step="1" value="0"><span class="val"></span></div>
+      <div class="row"><label>DITHER<i>網</i></label><input type="range" data-p="dith" min="0" max="200" step="1" value="100"><span class="val"></span></div>
+      <div class="row"><label>BAND<i>効き</i></label><input type="range" data-p="band" min="0" max="100" step="1" value="100"><span class="val"></span></div>
+      <div class="mod">⭐⭐ <b>版数</b>＝色を何段に落とすか。<b>0＝連続（今まで）／2〜16＝ビット感</b><br>
+        ⭐ <b>網</b>＝粒ごとに 4×4 の網を足して<b>足りない階調を騙す</b>（8bit がやったこと）。
+        これで<b>隣と必ず差が出て、ベタに見えなくなる</b><br>
+        ⭐ <b>細かさ</b>＝<b>1マスあたり何周するか</b>。0.10 なら<b>10マスかけて1周</b>＝
+        帯が長く流れる（SAKUJI / TSUBU と同じ持ち方。小さいほど大きなグラデになる）<br>
+        ⭐ <b>字なり</b>＝画の骨格をそのまま流れにする（0 で全部同じ向き）<br>
+        ⭐ <b>谷</b>＝暗い側を黒へ寄せる。⚠️ 0 のままだと<b>色が残った暗部</b>＝濁らない<br>
+        ⭐ <b>階調</b>＝中間色の豊かさ。上げるほど<b>丸く</b>見える<br>
+        ⭐ 交点（塊）だけ帯の向きが直交する＝別物を置くのでなく、同じ帯を90°回す</div>
+    </div>
+  </div>
+
+  <div class="unit" data-unit="ground">
+    <div class="unit-head"><span class="led"></span><span class="unit-idx">04</span>
+      <span class="unit-name">GROUND</span><span class="unit-jp">地</span><span class="tag">地</span></div>
+    <div class="unit-body">
+      <div class="mod">⭐⭐ 地に<b>同じ版</b>を流す段。中央の粒と同じ材料なので<b>馴染む</b><br>
+        （HORI で作った波紋をそのまま持ってきた）</div>
+      <div class="seg" data-seg="gmat">
+        <button data-v="0">縞</button><button data-v="1" class="on">粒</button>
+      </div>
+      <div class="seg" data-seg="gshape">
+        <button data-v="0" class="on">同心円</button><button data-v="1">渦</button><button data-v="2">直線</button>
+      </div>
+      <div class="row"><label>FREQ<i>細かさ</i></label><input type="range" data-p="gfreq" min="2" max="120" step="1" value="24"><span class="val"></span></div>
+      <div class="row"><label>CELL<i>粒の大きさ</i></label><input type="range" data-p="gcell" min="4" max="120" step="1" value="34"><span class="val"></span></div>
+      <div class="row"><label>SPEED<i>流れ</i></label><input type="range" data-p="gspeed" min="-60" max="60" step="1" value="16"><span class="val"></span></div>
+      <div class="row"><label>SWIRL<i>ねじれ</i></label><input type="range" data-p="gswirl" min="0" max="100" step="1" value="30"><span class="val"></span></div>
+      <div class="row"><label>DEPTH<i>起こす</i></label><input type="range" data-p="gdepth" min="0" max="100" step="1" value="38"><span class="val"></span></div>
+      <div class="row"><label>PAPER<i>地の色</i></label><input type="color" id="gBg" value="#f4f2ee"></div>
+      <div class="mod">⭐ <b>地の色</b>＝いちばん下の色。TSUBU は<b>黒</b>が既定（黒にすると粒の色がそのまま出る）</div>
+      <div class="row"><label>HUE<i>色</i></label><input type="range" data-p="ghue" min="0" max="360" step="1" value="212"><span class="val"></span></div>
+      <div class="row"><label>SAT<i>鮮やかさ</i></label><input type="range" data-p="gsat" min="0" max="100" step="1" value="80"><span class="val"></span></div>
+      <div class="row"><label>VIVID<i>明るさ</i></label><input type="range" data-p="gval" min="0" max="100" step="1" value="88"><span class="val"></span></div>
+      <div class="row"><label>CTR X<i>中心よこ</i></label><input type="range" data-p="gcx" min="0" max="100" step="1" value="50"><span class="val"></span></div>
+      <div class="row"><label>CTR Y<i>中心たて</i></label><input type="range" data-p="gcy" min="0" max="100" step="1" value="50"><span class="val"></span></div>
+      <div class="mod"><b>流れ</b>＝右で<b>360度そとへ放たれる</b>／左で中心へ吸い込まれる<br>
+        <b>ねじれ</b>＝渦のとき効く（まわりながら外へ）</div>
+    </div>
+  </div>
+
+  <div class="unit off" data-unit="spin">
+    <div class="unit-head"><span class="led"></span><span class="unit-idx">05</span>
+      <span class="unit-name">SPIN</span><span class="unit-jp">回す</span><span class="tag">見る</span></div>
+    <div class="unit-body">
+      <div class="row"><label>SPEED<i>速さ</i></label><input type="range" data-p="spin" min="-1200" max="1200" step="1" value="120"><span class="val"></span></div>
+      <div class="row"><label>TILT<i>傾き</i></label><input type="range" data-p="tilt" min="-70" max="70" step="1" value="14"><span class="val"></span></div>
+      <div class="mod"><b>速さ</b>＝0 で止まる。マイナスで逆に回る</div>
+    </div>
+  </div>
+
+  <div class="unit off" data-unit="keep">
+    <div class="unit-head"><span class="led"></span><span class="unit-idx">07</span>
+      <span class="unit-name">KEEP</span><span class="unit-jp">控える</span><span class="tag">保存</span></div>
+    <div class="unit-body">
+      <div class="mod">⭐⭐ <b>良い状態を守る段</b>。⚠️ コミットは<b>コードしか守らない</b>ので、
+        ここで<b>文字にして持ち出せば</b> Obsidian やコミットに置いて<b>必ず戻せる</b><br>
+        ⭐ <b>ひとつ戻す</b>＝触るたびに直前を控えている（20回ぶん）</div>
+      <div class="grid2">
+        <button class="btn" id="bUndo">ひとつ戻す</button>
+        <button class="btn" id="bCopy">控えを出す</button>
+      </div>
+      <textarea id="keepBox" rows="4" placeholder="ここに控えが出ます／貼り付けて「読み込む」"></textarea>
+      <button class="btn" id="bLoadState">この控えを読み込む</button>
+      <div class="mod" id="keepNote"></div>
+    </div>
+  </div>
+
+  <div class="unit off" data-unit="frame">
+    <div class="unit-head"><span class="led"></span><span class="unit-idx">06</span>
+      <span class="unit-name">FRAME</span><span class="unit-jp">書き出す大きさ</span><span class="tag">PNG</span></div>
+    <div class="unit-body">
+      <div class="mod">⭐ <b>PNG がどの大きさで出るか</b>を決める段。ここだけ。<br>
+        ⚠️ <b>切っていると</b>＝そのときの<b>画面の大きさそのまま</b>で出る
+        （モバイルだと縦長になって、あとでリサイズが要る）<br>
+        ⭐ <b>点けると</b>＝端末に関係なく、決めた大きさで出る。
+        画面に出る<b>白い枠がそのまま書き出される範囲</b></div>
+      <div class="seg" data-seg="fshape">
+        <button data-v="0">正方形</button><button data-v="1" class="on">たて 9:16</button><button data-v="2">よこ 16:9</button>
+      </div>
+      <div class="row"><label>LONG<i>長辺</i></label><input type="range" data-p="flong" min="720" max="2560" step="40" value="1440"><span class="val"></span></div>
+      <div class="seg" data-seg="fscale">
+        <button data-v="1">×1</button><button data-v="2" class="on">×2</button>
+        <button data-v="3">×3</button><button data-v="4">×4</button>
+      </div>
+      <div class="mod" id="fout">出る大きさ ＝ —</div>
+      <button class="btn" id="bPNG2">この大きさで PNG を出す</button>
+    </div>
+  </div>
+</div>
+
+<div id="bar">
+  <button id="bSpin">SPIN</button>
+  <button id="bPan">移動</button>
+  <button id="bCenter">中央へ</button>
+  <button id="bPNG">PNG</button>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ═══════════════════════════════════════════════════════════
+   礫 TSUBUTE — 粒を積んで立体にする
+   ⭐⭐ 芯＝【TSUBU の粒を、そのまま立体にする】。
+     TSUBU は日本語を 8bit のドットに落とし、粒に「画の向き」と「太さ」を持たせた。
+     ここではその粒を【箱】にして積む。
+       画の向き → 粒が画に沿って倒れる
+       太さ（交点らしさ） → 盛り上がる  ＝ TSUBU の「交点に球が出る」の立体翻訳
+   ⭐⭐ もう一本の芯＝【一本の版を、中央と地の両方に流す】。
+     参考（Palace のリール）を構造で読んで出たもの。同じ版だから馴染む。
+   ⚠️ HORI とは別に立てた（木下＝「Hori のプロダクトとは別にやった方がよいかもね」）。
+      HORI は「インク量ひとつ」で全部を表す作りなので、粒がマスごとに色を持てない。
+      それは HORI の DNA なので、作り替えずに別の道具にした。
+   ═══════════════════════════════════════════════════════════ */
+
+const P = {
+  /* 字（組み方）── TSUBU と同じ並び */
+  vert:0, wrap:8, gapx:2, gapy:2, res:44, gapd:0, fat:0,
+  /* 積む（礫だけの立体） */
+  rise:25, base:45, turn:100, smooth:2, smoothK:97,
+  cross:1, bead:45, beadK:1, seam:0,
+  /* 字の色（塗り）── TSUBU の塗りをそのまま */
+  pal:1, line:0, wav:10, dir:0, follow:100, shift:0, charJit:0,
+  shine:60, valley:0, grad:50, band:100, steps:0, dith:100,
+  /* 地 */
+  gmat:1, gshape:0, gfreq:24, gcell:34, gspeed:16, gswirl:30, gdepth:38,
+  ghue:212, gsat:80, gval:88, gcx:50, gcy:50, gbg:'#f4f2ee',
+  spin:120, tilt:14,
+  fshape:1, flong:1440, fscale:2,
+};
+const ON = { type:true, build:true, ink:true, ground:true, spin:false, frame:false };
+
+/* ── パレット（TSUBU から。地→波色→球色 の3点を補間する） ── */
+const PALS = [
+  { name:'墨',     bg:[0x0a,0x0a,0x0a], a:[0xec,0xe9,0xe2], b:[0xff,0xff,0xff] },
+  { name:'奇抜',   bg:[0x0a,0x0a,0x0a], a:[0xe9,0x20,0x1c], b:[0x24,0x34,0xff] },
+  { name:'琵琶湖', bg:[0x0d,0x14,0x17], a:[0x7f,0xae,0x9e], b:[0xdf,0xe7,0xe2] },
+  { name:'熱',     bg:[0x0d,0x00,0x00], a:[0xff,0x3c,0x00], b:[0xff,0xd6,0x00] },
+];
+/* ══ 字 → ドット ══════════════════════════════════════════
+   ⭐ TSUBU の glyphDots をそのまま持ってきた。
+     粒の座標だけでなく【画の向き】と【太さ】を一緒に採るのが肝。
+   ⚠️ 太らせは解像度に比例させる（高解像度でも同じだけ太る）＝TSUBU で直した所。 */
+const oc = document.createElement('canvas'), og = oc.getContext('2d', { willReadFrequently:true });
+function glyphDots(ch, N, fontIdx){
+  oc.width = oc.height = N;
+  og.fillStyle = '#000'; og.fillRect(0,0,N,N);
+  og.fillStyle = '#fff'; og.textAlign = 'center'; og.textBaseline = 'middle';
+  og.font = fontIdx ? '900 ' + Math.round(N*0.98) + 'px "Zen Old Mincho"'
+                    : '900 ' + Math.round(N*0.94) + 'px "Zen Kaku Gothic New"';
+  og.fillText(ch, N/2, N/2 + N*0.03);
+  const raw = og.getImageData(0,0,N,N).data;
+
+  let grd = new Uint8Array(N*N);
+  for(let i=0;i<N*N;i++) grd[i] = raw[i*4] > 110 ? 1 : 0;
+  const fatN = Math.round(P.fat * Math.max(1, N/32));
+  for(let s=0;s<fatN;s++){
+    const nx = new Uint8Array(N*N);
+    for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+      let v = grd[y*N+x];
+      if(!v){ if((x&&grd[y*N+x-1])||(x<N-1&&grd[y*N+x+1])||(y&&grd[(y-1)*N+x])||(y<N-1&&grd[(y+1)*N+x])) v=1; }
+      nx[y*N+x] = v;
+    }
+    grd = nx;
+  }
+  const on = (x,y) => (x<0||y<0||x>=N||y>=N) ? 0 : grd[y*N+x];
+
+  const out = [];
+  for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+    if(!on(x,y)) continue;
+    // 太さ＝5×5 が何個埋まっているか（0..24）。多いほど画の芯／交点
+    let dens = 0;
+    for(let j=-2;j<=2;j++) for(let i=-2;i<=2;i++) dens += on(x+i, y+j);
+    // 画の向き＝Sobel の法線を90°回して画に沿わせる
+    const gx = (on(x+1,y-1)+2*on(x+1,y)+on(x+1,y+1)) - (on(x-1,y-1)+2*on(x-1,y)+on(x-1,y+1));
+    const gy = (on(x-1,y+1)+2*on(x,y+1)+on(x+1,y+1)) - (on(x-1,y-1)+2*on(x,y-1)+on(x+1,y-1));
+    const ang = (gx||gy) ? Math.atan2(gy,gx) + Math.PI/2 : 0;
+    out.push([x, y, ang, dens/24]);
+  }
+  return out;
+}
+
+/* ══ 三次元 ══════════════════════════════════════════════ */
+const renderer = new THREE.WebGLRenderer({ antialias:true, preserveDrawingBuffer:true });
+/* ⚠️ モバイルは画素密度3のこともある。3倍で刷ると描く画素が9倍になって重い。
+   ⭐ 見た目はほぼ変わらないので上限を下げる（書き出しは版面で別に決めるので影響しない）。 */
+renderer.setPixelRatio(Math.min(devicePixelRatio, innerWidth < 760 ? 1.5 : 2));
+document.body.appendChild(renderer.domElement);
+renderer.autoClear = false;
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(42, 1, 1, 12000);
+const group  = new THREE.Group(); scene.add(group);
+scene.add(new THREE.AmbientLight(0xffffff, 0.62));
+const key = new THREE.DirectionalLight(0xffffff, 0.95); key.position.set(-0.6, 1.1, 0.9); scene.add(key);
+const rim = new THREE.DirectionalLight(0xffffff, 0.35); rim.position.set(0.8, -0.4, -0.7); scene.add(rim);
+
+const cam = { dist:900, tDist:900, az:0, tAz:0, el:0.24, tEl:0.24, px:0, py:0, tpx:0, tpy:0 };
+
+/* ── 地 ── 画面いっぱいの版。⭐ HORI で作った波紋をそのまま持ってきた ── */
+const bgScene = new THREE.Scene();
+const bgCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+const G = {
+  uRes:{value:new THREE.Vector2(1,1)}, uT:{value:0},
+  uMat:{value:1}, uShape:{value:0}, uFreq:{value:24}, uCell:{value:34},
+  uSpeed:{value:16}, uSwirl:{value:0.9}, uDepth:{value:0.38},
+  uHue:{value:212/360}, uSat:{value:0.8}, uVal:{value:0.88},
+  uCx:{value:0.5}, uCy:{value:0.5}, uPaper:{value:new THREE.Color(0xf4f2ee)},
+};
+bgScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2), new THREE.ShaderMaterial({
+  uniforms:G, depthTest:false, depthWrite:false,
+  vertexShader:`varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+  fragmentShader:`
+    varying vec2 vUv;
+    uniform vec2  uRes; uniform vec3 uPaper;
+    uniform float uT, uMat, uShape, uFreq, uCell, uSpeed, uSwirl, uDepth, uHue, uSat, uVal, uCx, uCy;
+    vec3 hsv2rgb(vec3 c){
+      vec3 p = abs(fract(c.xxx + vec3(0.0,0.6666667,0.3333333)) * 6.0 - 3.0);
+      return c.z * mix(vec3(1.0), clamp(p-1.0, 0.0, 1.0), c.y);
+    }
+    void main(){
+      /* ⚠️ 中心はつまみ。画面の真ん中に決め打ちすると、モバイルでずれて見える */
+      vec2  q = (vUv - vec2(uCx, uCy)) * vec2(uRes.x / max(uRes.y, 1.0), 1.0);
+      float r = length(q);
+      float ang = atan(q.y, q.x) / 6.2831853;
+      /* ⚠️ 渦は継ぎ目が出る（角度が±πで折り返す）。
+         1周ぶんの位相を整数に丸めると、巻き終わりと巻き始めが必ず合う */
+      float sw = floor(uSwirl * uFreq + 0.5) / max(uFreq, 0.001);
+      float co = uShape < 0.5 ? r : (uShape < 1.5 ? r + ang * sw : q.y + 0.5);
+      float ph = co * uFreq - uT * uSpeed * 0.1;
+      float g  = 0.5 + 0.5 * sin(ph * 6.2831853);
+      /* ⭐ 材料＝縞 か 粒 か。別模様を作らない＝同じ波の【出し方】を替えるだけ */
+      float amt = g;
+      if(uMat > 0.5){
+        vec2  cel = (vUv * uRes) / max(uCell, 2.0);
+        vec2  f   = fract(cel) - 0.5;
+        float d   = length(f) * 2.0;
+        float rad = mix(0.06, 1.20, g);
+        amt = smoothstep(rad, rad - 0.14, d);
+      }
+      float sh = 1.0 + cos(ph * 6.2831853) * uDepth;
+      vec3  rc = hsv2rgb(vec3(fract(uHue), uSat, uVal));
+      /* ⚠️ 粒の隙間を暗い同色にすると粒に見えず縞に戻る。粒は【地の上に乗る】 */
+      vec3 col = (uMat > 0.5) ? mix(uPaper, clamp(rc*sh,0.0,1.0), amt)
+                              : clamp(rc * mix(0.30,1.10,amt) * sh, 0.0, 1.0);
+      gl_FragColor = vec4(mix(uPaper, col, uSat), 1.0);
+    }`
+})));
+
+/* ══ 粒の材質 ── 塊の中に帯を流す（TSUBU のグラデ塊）════════════
+   ⭐⭐ TSUBU は「1タイル＝1つのグラデーションの塊」だった。
+     ・帯の向き … 画の向き（字の骨格がそのまま流れになる）
+     ・交点だけ … 向きを【直交】させる（別物を置くのでなく、同じ帯を90°回す）
+   ⭐ 立体でも同じにする＝粒の面に、その粒の向きの帯を流す。
+     無地の箱を並べると「ドット絵の立体」だが、帯が流れると TSUBU の顔になる。
+   ⚠️ 粒ごとに違う向き・違う位相なので、材質は1つで【粒ごとの値】を渡す（instanced）。
+   ⚠️ 光は自分で入れる（既製の材質をやめたので）。3つの光は前と同じ配分にする。 */
+function grainMaterial(){
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uA:{value:new THREE.Color()}, uB:{value:new THREE.Color()}, uBG:{value:new THREE.Color()},
+      uWav:{value:0.6}, uShift:{value:0}, uShine:{value:0.6},
+      uValley:{value:0}, uGrad:{value:0.5}, uLine:{value:0}, uBand:{value:1},
+      uSteps:{value:0}, uDith:{value:1},
+    },
+    vertexShader:`
+      attribute float aAng, aDens, aBig, aJit;
+      attribute vec2  aPos;
+      varying vec3  vN;
+      varying vec2  vUv, vPos;
+      varying float vAng, vDens, vBig, vJit;
+      void main(){
+        vUv = uv; vPos = aPos; vAng = aAng; vDens = aDens; vBig = aBig; vJit = aJit;
+        #ifdef USE_INSTANCING
+          vN = normalize(normalMatrix * mat3(instanceMatrix) * normal);
+          vec4 mv = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+        #else
+          vN = normalize(normalMatrix * normal);
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        #endif
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader:`
+      precision highp float;
+      uniform vec3  uA, uB, uBG;
+      uniform float uWav, uShift, uShine, uValley, uGrad, uLine, uBand;
+      uniform float uSteps, uDith;
+      varying vec3  vN;
+      varying vec2  vUv, vPos;
+      varying float vAng, vDens, vBig, vJit;
+
+      /* ⭐⭐ TSUBU のランプ（5点）をそのまま持ってきた。
+         ⚠️ 谷を【黒】にすると何色を選んでも濁る。⭐ 谷は【波色の暗い版】にする。
+            これが「濁らない・丸く見える」の正体。谷つまみで黒へ寄せられる。
+         ⭐ 中間色の数がそのまま【丸さ】になる（曲面の陰影は連続階調なので）。 */
+      vec3 ramp(float k, vec3 A){
+        vec3 W = vec3(1.0);
+        vec3 valley = A * 0.55 * (1.0 - uValley);
+        vec3 s1 = mix(valley, A, 0.45 + 0.15 * uGrad);
+        vec3 s3 = mix(A, W, 0.35 * uGrad);
+        vec3 s4 = mix(A, W, 0.10 + 0.55 * uGrad);
+        if(k < 0.28) return mix(valley, s1, k / 0.28);
+        if(k < 0.58) return mix(s1, A,  (k - 0.28) / 0.30);
+        if(k < 0.80) return mix(A,  s3, (k - 0.58) / 0.22);
+        return mix(s3, s4, (k - 0.80) / 0.20);
+      }
+      void main(){
+        /* ⭐ 交点（塊）だけ帯の向きを直交させる＝同じ帯を90°回す（TSUBU の「面」） */
+        float ang = vAng + (vBig > 0.5 ? 1.5707963 : 0.0);
+        vec2  d   = vec2(cos(ang), sin(ang));
+        vec2  e   = vec2(-sin(ang), cos(ang));
+        /* ⚠️ 位相は【粒の居場所】から出す＝隣と繋がって1枚の面に見える（TSUBU の肝） */
+        vec2  q   = vPos + vUv - 0.5;
+        float u   = dot(q, d);
+        float w   = dot(q, e);
+        float ph  = (uShift + vJit) * 6.2831853;
+        float W2  = max(uWav, 0.02);
+        float v;
+        if(uLine < 0.5)      v = 0.5 + 0.5 * cos(u * 6.2831853 * W2 + ph);                 // 波
+        else if(uLine < 1.5) v = mod(floor(u * W2 * 2.0 + ph/6.2831853), 2.0) > 0.5 ? 1.0 : 0.12; // 縞
+        else if(uLine < 2.5) v = 0.5 + 0.5 * cos((u + w) * 6.2831853 * W2 + ph);           // 斜
+        else if(uLine < 3.5) v = (0.5+0.5*cos(u*6.2831853*W2+ph)) * (0.5+0.5*cos(w*6.2831853*W2)); // 格子
+        else                 v = 0.5 + 0.5 * cos(length(vec2(u,w)) * 6.2831853 * W2 - ph); // 環
+        /* ⭐⭐ ビット感の正体（TSUBU の実装そのまま）
+           🔴 木下＝「線として表示されている四角の箱が全部ベタ塗りのように見えて、
+              TSUBU と違いビット感が薄く雑」。その通りで、礫は【連続階調のまま】だった。
+           ⭐ TSUBU＝粒ごとに 4×4 のベイヤー網を足してから【少ない版数に落とす】
+              ＝8bit がやった「階調の偽装」。だから隣と必ず差が出てビット感が残る。
+           ⚠️ 網は【粒の位置】で決まる。vPos がすでに粒の位置なので新しい属性は要らない
+              （前回ここで余計な属性を足して字が出なくなった）。
+           ⚠️ 版数 0 のときは何もしない＝今までと完全に同じ。 */
+        if(uSteps >= 2.0){
+          vec2 cell = floor(vPos + 0.5);
+          float bx = mod(cell.x, 4.0), by = mod(cell.y, 4.0);
+          /* ⚠️🔴 式で引こうとしたら【並びが違って効かなかった】（16.6→16.5 で変化なし）。
+             ⭐ TSUBU の並びをそのまま書く。凝らずに、動いている実装と同じにする。
+                [ 0, 8, 2,10 / 12, 4,14, 6 / 3,11, 1, 9 / 15, 7,13, 5 ] / 16 */
+          float b = 0.0;
+          if(by < 1.0){      b = bx < 1.0 ?  0.0 : bx < 2.0 ?  8.0 : bx < 3.0 ?  2.0 : 10.0; }
+          else if(by < 2.0){ b = bx < 1.0 ? 12.0 : bx < 2.0 ?  4.0 : bx < 3.0 ? 14.0 :  6.0; }
+          else if(by < 3.0){ b = bx < 1.0 ?  3.0 : bx < 2.0 ? 11.0 : bx < 3.0 ?  1.0 :  9.0; }
+          else {             b = bx < 1.0 ? 15.0 : bx < 2.0 ?  7.0 : bx < 3.0 ? 13.0 :  5.0; }
+          b = b / 16.0;
+          float q = floor(v * (uSteps - 1.0) + (b - 0.5) * uDith + 0.5);
+          v = clamp(q, 0.0, uSteps - 1.0) / (uSteps - 1.0);
+        }
+        float k  = pow(max(v, 0.0), 1.8);
+        float hi = pow(max(v, 0.0), 6.0) * uShine;
+        /* 🔴⭐ 塊にも【同じ波色】を使う。
+           前は塊に別の色（塊色）を当てていたので、赤と青の市松になり TSUBU に見えなかった。
+           ⭐ TSUBU は塊も同じ波のタイルで、向きだけ90°回す。
+              別の色を使うのは【玉】だけ（玉はまだ入れていない）。 */
+        vec3 base = ramp(k, uA) + hi;
+        vec3 flat0 = mix(uBG, uA, 0.55);
+        vec3 col = mix(flat0, base, uBand);
+        /* 光＝立体を読ませるぶんだけ（塗りを潰さないよう控えめに） */
+        vec3 n = normalize(vN);
+        float L = 0.80
+                + max(dot(n, normalize(vec3(-0.6, 1.1, 0.9))), 0.0) * 0.30
+                + max(dot(n, normalize(vec3(0.8, -0.4, -0.7))), 0.0) * 0.12;
+        gl_FragColor = vec4(clamp(col * L, 0.0, 1.0), 1.0);
+      }`
+  });
+}
+
+/* ══ 粒を積む ══════════════════════════════════════════════ */
+let mesh = null, LIVE = null;
+const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
+const _pos = new THREE.Vector3(), _scl = new THREE.Vector3(), _col = new THREE.Color();
+
+/* ⭐⭐ 字を追うのは【重い】ので、結果を覚えておく。
+   🔴 木下＝「スライド調整がスムーズじゃない」。
+      つまみを動かすたびに、字を焼き直して輪郭を追い直していた。
+      でも【粒の大きさ・盛り・底・向き・色】は、粒の並びが変わらない＝追い直す必要が無い。
+   ⭐ 追い直しが要るのは【字・書体・解像・太らせ・字間】だけ。
+      それ以外は覚えた粒の並びから、置き方だけ作り直す。
+   ⚠️ OBORO でも SAKUJI でも同じ手を使った＝重い所を後ろへ回す。 */
+let DOTS = null, DOTKEY = '';
+function traceDots(){
+  const str = document.getElementById('txt').value.trim();
+  const fontIdx = +document.getElementById('fnt').value;
+  const N = Math.max(6, Math.round(P.res));
+  const key = [str, fontIdx, N, P.fat, P.vert, P.wrap, P.gapx, P.gapy].join('|');
+  if(DOTKEY === key && DOTS) return DOTS;
+  if(!str){ DOTS = null; DOTKEY = key; return null; }
+  /* ⭐ 組み方は TSUBU と同じ作法＝横組は右へ流れて下へ折り返す／縦組は下へ流れて左へ */
+  const chars = [...str];
+  const per = Math.max(1, Math.round(P.wrap));
+  const advX = N + P.gapx, advY = N + P.gapy;
+  const lines = Math.ceil(chars.length / per);
+  const all = [];
+  chars.forEach((ch, i) => {
+    const li = Math.floor(i / per), ci = i % per;
+    const bx = P.vert ? (lines - 1 - li) * advX : ci * advX;
+    const by = P.vert ? ci * advY : li * advY;
+    glyphDots(ch, N, fontIdx).forEach(d => all.push([d[0] + bx, d[1] + by, d[2], d[3], i]));
+  });
+  const cols = P.vert ? lines : Math.min(chars.length, per);
+  const rows = P.vert ? Math.min(chars.length, per) : lines;
+  DOTS = all.length ? { all, N,
+    totalW: cols * N + (cols - 1) * P.gapx,
+    totalH: rows * N + (rows - 1) * P.gapy } : null;
+  DOTKEY = key;
+  return DOTS;
+}
+
+function build(){
+  if(mesh){ group.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); mesh = null; }
+  const src = traceDots();
+  if(!src) return;
+  const N = src.N, totalW = src.totalW, totalH = src.totalH;
+  /* ⚠️ 塊まとめは元の並びを書き換える（代表をマスの真ん中へ動かす）ので、
+     覚えてある並びを壊さないように【毎回コピーしてから】まとめる。 */
+  const all = src.all.map(d => d.slice());
+  const unit = 620 / Math.max(totalW, totalH);      // 世界の大きさに合わせる
+  /* 🔴⭐ 木下＝「四角の粒に隙間が空いているのも問題かも？」「SAKUJI の粒の隙間だね」。
+     ⭐ 既定は【隙間なし】＝粒がぴったり並ぶ。TSUBU も隣と繋がって1枚の面に見えるのが前提。
+        隙間はわざと空けたいときだけ開ける（SAKUJI に同じつまみがある）。 */
+  /* ⭐ SAKUJI と同じ＝粒の隙間で縮め、継ぎ目「消す」なら【わずかに重ねて】格子の線を消す。
+     ⚠️ 隙間を開けているときは重ねない（重ねたら隙間の意味が無い）＝SAKUJI の条件も同じ。 */
+  const bleed = (P.seam === 0 && P.gapd === 0) ? 0.35 / Math.max(N, 1) : 0;
+  const cellS = unit * (1 - P.gapd/100 + bleed * 2);
+  const baseH = unit * (P.base/100) * 2.2;
+  const riseH = unit * (P.rise/100) * 5.0;
+
+  /* ══ 交点の柄（面）── SAKUJI / TSUBU をちゃんと読んで直した ═══════
+     🔴🔴 私は【まとめて1つの大きな粒にして拡大】していた。だから塊が線を超えた
+        （木下＝「塊の大きさが線を超えてしまうやつね。これも前にあったね」）。
+     ⭐⭐ SAKUJI も TSUBU の「面」も、**まとめない・拡大しない**。
+        `cand[k].forEach(idx => cross.add(idx))` ＝**全部の粒をそのまま残し、
+        その範囲だけ帯の向きを直交させる**だけ。
+        TSUBU の但し書き：「面＝1つの立体ではなく【連続する帯の範囲】。
+        拡大しないので はみ出しが起きない。隣のマスと位相が繋がっているので、
+        結果として1枚の大きな面に見える」。
+     ⭐ だから【はみ出しは原理的に起きない】。私は反対側の分岐を実装していた。
+     ⚠️ 中がスカスカのマスは選ばない（3/4 以上）＝細い画が勝手に太らない。 */
+  const BK = Math.max(1, Math.round(P.beadK * Math.max(1, N/16)));
+  const big = new Uint8Array(all.length);
+  if(P.cross === 1 && P.bead > 0){
+    if(BK <= 1){
+      const order = all.map((_, k) => k).sort((x, y) => all[y][3] - all[x][3]);
+      order.slice(0, Math.round(all.length * P.bead / 100)).forEach(k => big[k] = 1);
+    }else{
+      const blocks = new Map();
+      all.forEach((d, i) => {
+        const k = Math.floor(d[0]/BK) + ',' + Math.floor(d[1]/BK);
+        let b2 = blocks.get(k); if(!b2) blocks.set(k, b2 = []); b2.push(i);
+      });
+      const need = BK * BK * 0.75;
+      const cand = [...blocks.values()].filter(b2 => b2.length >= need)
+                                       .sort((x, y) => y.length - x.length);
+      const lim = Math.round(cand.length * P.bead / 100);
+      for(let k = 0; k < lim; k++) cand[k].forEach(idx => big[idx] = 1);
+    }
+  }
+  /* ⭐⭐ 線の見え方 ── 隣の粒と【混ぜる】。
+     🔴 木下＝「どこか四角の塊がくっついているようにしか見えない」。
+        原因＝粒ごとに 太さ→高さ／向き を【独立に】決めているので、隣と段差ができる。
+     ⭐ 隣を見てならすと、段差が消えて【線が1本の帯として流れる】。
+     ⚠️ 元の値は壊さない（ならしは別の配列に作る）＝切り替えて見比べられる。 */
+  if(P.smooth > 0 && P.smoothK > 0){
+    const k = P.smoothK / 100;
+    const at = new Map();
+    all.forEach((d, i) => at.set(d[0] + ',' + d[1], i));
+    const nd = new Float32Array(all.length), nx = new Float32Array(all.length), ny = new Float32Array(all.length);
+    all.forEach((d, i) => {
+      let sd = 0, sx = 0, sy = 0, n = 0;
+      for(let dy = -1; dy <= 1; dy++) for(let dx = -1; dx <= 1; dx++){
+        const j = at.get((d[0]+dx) + ',' + (d[1]+dy));
+        if(j === undefined) continue;
+        sd += all[j][3];
+        /* ⚠️ 角度は数として平均できない（0°と179°の平均が90°になる）。
+           ⭐ 向きなので2倍角のベクトルで足してから戻す。 */
+        sx += Math.cos(all[j][2]*2); sy += Math.sin(all[j][2]*2); n++;
+      }
+      nd[i] = n ? sd/n : all[i][3];
+      nx[i] = n ? sx/n : Math.cos(all[i][2]*2);
+      ny[i] = n ? sy/n : Math.sin(all[i][2]*2);
+    });
+    all.forEach((d, i) => {
+      d[3] = d[3] + (nd[i] - d[3]) * k;                       // 高さ（太さ）をならす
+      if(P.smooth > 1){
+        const a = Math.atan2(ny[i], nx[i]) / 2;
+        let diff = a - d[2];
+        while(diff >  Math.PI/2) diff -= Math.PI;              // 近い方へ回す
+        while(diff < -Math.PI/2) diff += Math.PI;
+        d[2] = d[2] + diff * k;                               // 向きもならす
+      }
+    });
+  }
+  const live = all.map((d, i) => [d, big[i]]);
+  LIVE = live;   // ⭐ 塗り直しで粒ごとの値を引けるように持っておく
+  if(!live.length) return;
+
+  /* ⚠️ 粒の実体は【まとめ終わってから】作る（数が確定しないと器が作れない） */
+  const geo = new THREE.BoxGeometry(1,1,1);
+  const mat = grainMaterial();
+  mesh = new THREE.InstancedMesh(geo, mat, live.length);
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+  /* ⚠️ 粒ごとに【画の向き・太さ・塊か】を渡す。材質は1つ、値は粒ごと */
+  const aAng = new Float32Array(live.length);
+  const aDens = new Float32Array(live.length);
+  const aBig = new Float32Array(live.length);
+  const aPos = new Float32Array(live.length * 2);   // その粒がどのマスに居るか（位相を繋ぐ）
+  const aJit = new Float32Array(live.length);      // 字ごとのずれ（TSUBU の「字ごと」）
+
+  const cx = totalW/2, cy = totalH/2;
+  const turn = P.turn/100, spread = P.spread/100;
+  live.forEach(([[x, y, ang, dens, ci], isBig], i) => {
+    /* ⭐⭐ 太さ（交点らしさ）→ 高さ。TSUBU の「交点に球が出る」の立体翻訳 */
+    const h = baseH + riseH * dens;
+    _pos.set((x - cx + 0.5) * unit, -(y - cy + 0.5) * unit, h/2);
+    /* ⭐ 画の向き → 粒を画に沿って倒す（TSUBU では波の向きになっていたもの） */
+    _e.set(0, 0, ang * turn);
+    _q.setFromEuler(_e);
+    /* ⚠️ 面（交点）でも【拡大しない】＝粒は1マスのまま。だからはみ出さない */
+    _scl.set(cellS, cellS, h);
+    _m.compose(_pos, _q, _scl);
+    mesh.setMatrixAt(i, _m);
+    /* ⭐ 色は材質の中で「太さ＋帯」から決める（TSUBU の 地→波→球 と同じ持ち方） */
+    /* ⭐ 字なり＝画の骨格をどれだけ使うか／向き＝そこに足す回転（TSUBU と同じ） */
+    aAng[i] = ang * (P.follow/100) + P.dir * Math.PI / 180;
+    aDens[i] = dens; aBig[i] = isBig ? 1 : 0;
+    aPos[i*2] = x - cx; aPos[i*2+1] = -(y - cy);
+    /* ⭐ 字ごと＝黄金比で字ごとに位相をずらす（TSUBU と同じ作法） */
+    aJit[i] = P.charJit > 0 ? (((ci + 1) * 0.6180339887) % 1) * (P.charJit/100) : 0;
+  });
+  mesh.geometry.setAttribute('aAng',  new THREE.InstancedBufferAttribute(aAng, 1));
+  mesh.geometry.setAttribute('aDens', new THREE.InstancedBufferAttribute(aDens, 1));
+  mesh.geometry.setAttribute('aBig',  new THREE.InstancedBufferAttribute(aBig, 1));
+  mesh.geometry.setAttribute('aPos',  new THREE.InstancedBufferAttribute(aPos, 2));
+  mesh.geometry.setAttribute('aJit',  new THREE.InstancedBufferAttribute(aJit, 1));
+  const pl = PALS[P.pal] || PALS[0];
+  const set = (u, c) => mat.uniforms[u].value.setRGB(c[0]/255, c[1]/255, c[2]/255);
+  /* 🔴 段を切ったら墨・塗りなしに戻す＝段を消せば元に戻る、を守る */
+  const on = ON.ink, q = on ? pl : PALS[0];
+  set('uA', q.a); set('uB', q.b); set('uBG', q.bg);
+  mat.uniforms.uWav.value    = P.wav / 100;
+  mat.uniforms.uShift.value  = P.shift / 100;
+  mat.uniforms.uShine.value  = P.shine / 100;
+  mat.uniforms.uValley.value = P.valley / 100;
+  mat.uniforms.uGrad.value   = P.grad / 100;
+  mat.uniforms.uLine.value   = P.line;
+  mat.uniforms.uBand.value   = on ? P.band / 100 : 0;
+  mat.uniforms.uSteps.value  = on ? P.steps : 0;
+  mat.uniforms.uDith.value   = P.dith / 100;
+  mesh.instanceMatrix.needsUpdate = true;
+  group.add(mesh);
+  /* ⭐ 組んだら画面に合わせる。⚠️ 合わせないと字が画面からはみ出して読めない
+     （実際そうなった）。⚠️ 横に長い字は【幅】で決まるので、縦横比を見る。 */
+  fitView(totalW * unit, totalH * unit);
+  save();
+}
+
+/* ══ 見る ══════════════════════════════════════════════════ */
+/* ⭐ 世界の大きさ（幅・高さ）が画面に収まる距離を出す。
+   ⚠️ 右のラックに隠れるぶんは見えないので、少し余裕をとる。 */
+function fitView(w, h){
+  const el = renderer.domElement;
+  const aspect = (el.clientWidth||innerWidth) / (el.clientHeight||innerHeight);
+  const vFov = camera.fov * Math.PI / 180;
+  const dH = (h * 1.45) / (2 * Math.tan(vFov/2));
+  const dW = (w * 1.45) / (2 * Math.tan(vFov/2) * aspect);
+  cam.tDist = Math.max(dH, dW, 120);
+  /* ⚠️ 盤は画面いっぱいだが、右のラックがその上に乗っている（横並びのとき）。
+     ⭐ そのぶん字を左へ寄せて【見えている所の真ん中】に置く。
+        寄せないと、開いた瞬間に字が右に隠れて見える。 */
+  const rack = innerWidth > 760 ? (document.getElementById('rack')?.offsetWidth || 0) : 0;
+  if(rack){
+    const perPx = (2 * cam.tDist * Math.tan(vFov/2)) / (el.clientHeight || innerHeight);
+    /* ⚠️ 符号に注意＝カメラを右へ動かすと、字は左へ寄る。逆にすると余計に隠れる */
+    cam.tpx = (rack/2) * perPx;
+  }else{
+    /* ⚠️ 縦並び（モバイル）はラックが横に無いので寄せない。
+       🔴 戻し忘れると、横並びで寄せた値が残ったまま【中央がずれる】。 */
+    cam.tpx = 0;
+  }
+  cam.tpy = 0;
+}
+const _right = new THREE.Vector3(), _up = new THREE.Vector3(), _off = new THREE.Vector3();
+function placeCamera(){
+  cam.az += (cam.tAz - cam.az) * 0.12;
+  cam.el += (cam.tEl - cam.el) * 0.12;
+  cam.dist += (cam.tDist - cam.dist) * 0.12;
+  cam.px += (cam.tpx - cam.px) * 0.18;
+  cam.py += (cam.tpy - cam.py) * 0.18;
+  const x = cam.dist * Math.cos(cam.el) * Math.sin(cam.az);
+  const y = cam.dist * Math.sin(cam.el);
+  const z = cam.dist * Math.cos(cam.el) * Math.cos(cam.az);
+  camera.position.set(x, y, z);
+  /* 🔴⭐ 木下＝「左右上下逆になってるね」。
+     原因＝カメラの【上】を Z 軸にしていたのに、字は XY 平面に置いて
+     Z 方向へ積んでいる。＝上の向きと視線がほぼ平行になり、向きが破綻していた。
+     ⭐ 字が XY 平面にあるなら、上は Y。カメラの回り方（y = d sin(el)）とも揃う。
+     ⚠️ 積む向き（Z）と、上の向き（Y）を取り違えない。 */
+  camera.lookAt(0,0,0);
+  if(cam.px || cam.py){
+    camera.updateMatrixWorld();
+    _right.setFromMatrixColumn(camera.matrixWorld, 0);
+    _up.setFromMatrixColumn(camera.matrixWorld, 1);
+    _off.copy(_right).multiplyScalar(cam.px).addScaledVector(_up, cam.py);
+    camera.position.set(x+_off.x, y+_off.y, z+_off.z);
+    camera.lookAt(_off.x, _off.y, _off.z);
+  }
+}
+function panScale(){
+  const h = renderer.domElement.clientHeight || innerHeight;
+  return (2 * cam.dist * Math.tan(camera.fov * Math.PI / 360)) / Math.max(h, 1);
+}
+
+function resize(){
+  const el = renderer.domElement;
+  const w = el.clientWidth || innerWidth, h = el.clientHeight || innerHeight;
+  /* ⚠️ style は触らせない＝大きさの持ち主を CSS ひとつに（モバイルの dvh に追随させる） */
+  renderer.setSize(w, h, false);
+  camera.aspect = w/h; camera.updateProjectionMatrix();
+  const pr = renderer.getPixelRatio();
+  G.uRes.value.set(w*pr, h*pr);
+}
+addEventListener('resize', resize);
+visualViewport?.addEventListener('resize', resize);
+addEventListener('orientationchange', () => setTimeout(resize, 120));
+
+/* ══ 版面 ══════════════════════════════════════════════════ */
+function frameSize(){
+  const L = Math.round(P.flong);
+  let w, h;
+  if(P.fshape === 0){ w = L; h = L; }
+  else if(P.fshape === 2){ w = L; h = Math.round(L*9/16); }
+  else { w = Math.round(L*9/16); h = L; }
+  return capped(w, h, P.fscale);
+}
+/* ⚠️ 倍率を上げると GPU の上限に当たる。スマホは 4096 が多く、超えると何も出ない。
+   ⭐ 黙って壊れず、上限まで下げて、当たったことをパネルに出す。 */
+function capped(w, h, scale){
+  const lim = Math.min(renderer.capabilities.maxTextureSize || 4096, 8192);
+  let k = Math.max(1, scale|0);
+  while(k > 1 && (w*k > lim || h*k > lim)) k--;
+  return { w:Math.min(Math.round(w*k), lim), h:Math.min(Math.round(h*k), lim), k, cap: k < Math.max(1, scale|0) };
+}
+function updateGuide(){
+  const g = document.getElementById('guide');
+  if(!ON.frame){ g.classList.remove('on'); return; }
+  const r = renderer.domElement.getBoundingClientRect();
+  const f = frameSize();
+  const k = Math.min(r.width/f.w, r.height/f.h) * 0.92;
+  g.style.left = (r.left + (r.width - f.w*k)/2) + 'px';
+  g.style.top  = (r.top  + (r.height - f.h*k)/2) + 'px';
+  g.style.width = f.w*k + 'px'; g.style.height = f.h*k + 'px';
+  g.classList.add('on');
+}
+function updateOut(){
+  const n = document.getElementById('fout'); if(!n) return;
+  const el = renderer.domElement;
+  const f = ON.frame ? frameSize() : capped(el.clientWidth||innerWidth, el.clientHeight||innerHeight, P.fscale);
+  n.innerHTML = (ON.frame ? '出る大きさ ＝ ' : '版面 <b>切</b> ＝ 画面のまま ')
+    + `<b>${f.w} × ${f.h} px</b>（×${f.k}）` + (f.cap ? '<br>⚠️ この端末の上限に当たったので下げた' : '');
+}
+
+/* ══ 描く ══════════════════════════════════════════════════ */
+function drawOnce(){
+  renderer.clear();
+  renderer.render(bgScene, bgCam);          // 地
+  renderer.render(scene, camera);           // 粒
+}
+function frame(t){
+  requestAnimationFrame(frame);
+  G.uT.value = t * 0.001;
+  G.uMat.value = P.gmat; G.uShape.value = P.gshape;
+  G.uFreq.value = P.gfreq; G.uCell.value = P.gcell;
+  G.uSpeed.value = P.gspeed; G.uSwirl.value = P.gswirl/100*3; G.uDepth.value = P.gdepth/100;
+  G.uHue.value = P.ghue/360; G.uSat.value = ON.ground ? P.gsat/100 : 0; G.uVal.value = 0.34 + P.gval/100*0.66;
+  G.uCx.value = P.gcx/100; G.uCy.value = P.gcy/100;
+  /* ⭐ 地の色（TSUBU と同じく色で持つ）。⚠️ 毎フレーム文字列を解くのは無駄なので、
+     変わったときだけ入れ直す。 */
+  if(G._bg !== P.gbg){ G._bg = P.gbg; G.uPaper.value.set(P.gbg); }
+  if(ON.spin) cam.tAz += P.spin / 10000;
+  cam.tEl = P.tilt * Math.PI / 180;
+  placeCamera();
+  updateGuide(); updateOut();
+  drawOnce();
+}
+
+/* ⭐ 版面の大きさで刷る。⚠️ 終わったら必ず元へ戻す */
+function renderToBlob(cb){
+  const el = renderer.domElement;
+  const f = ON.frame ? frameSize()
+                     : capped(el.clientWidth||innerWidth, el.clientHeight||innerHeight, P.fscale);
+  if(!ON.frame && f.k === 1){ el.toBlob(cb, 'image/png'); return; }
+  const keep = { w: el.clientWidth||innerWidth, h: el.clientHeight||innerHeight, pr: renderer.getPixelRatio() };
+  try{
+    /* ⚠️ 端末の画素密度が混ざると、同じ設定でもモバイルだけ倍で出る。書き出しの間は 1 に固定 */
+    renderer.setPixelRatio(1);
+    renderer.setSize(f.w, f.h, false);
+    camera.aspect = f.w/f.h; camera.updateProjectionMatrix();
+    G.uRes.value.set(f.w, f.h);
+    placeCamera(); drawOnce();
+    el.toBlob(cb, 'image/png');
+  } finally {
+    renderer.setPixelRatio(keep.pr);
+    renderer.setSize(keep.w, keep.h, false);
+    camera.aspect = keep.w/keep.h; camera.updateProjectionMatrix();
+    resize();
+  }
+}
+
+/* ══ 自動保存 ══ ⭐ モバイルは簡単にリロードが起きる。消える道具は触る気にならない */
+const KEY = 'tsubute_tk', VER = 1;
+let _sT = 0, _loaded = false;
+/* ⭐⭐ 触る前に【戻せる】状態を作る。木下＝「てかさいしにやっとけよ」
+   ⚠️ コミットはコードしか守らない。良い状態は道具の中にあるので、
+      道具の中に「戻す」と「持ち出す」が要る。 */
+const HKEY = KEY + '_hist';
+function stateJSON(){
+  return JSON.stringify({ v:VER, P, ON,
+    text: document.getElementById('txt').value, font: document.getElementById('fnt').value });
+}
+function pushHistory(){
+  try{
+    const cur = localStorage.getItem(KEY); if(!cur) return;
+    const h = JSON.parse(localStorage.getItem(HKEY) || '[]');
+    if(h[h.length-1] === cur) return;
+    h.push(cur); while(h.length > 20) h.shift();
+    localStorage.setItem(HKEY, JSON.stringify(h));
+  }catch(e){}
+}
+function save(){
+  if(!_loaded) return;
+  clearTimeout(_sT);
+  _sT = setTimeout(() => { try{ pushHistory(); localStorage.setItem(KEY, stateJSON()); }catch(e){} }, 400);
+}
+function applyState(d){
+  if(!d) return;
+  Object.assign(P, d.P || {}); Object.assign(ON, d.ON || {});
+  if(d.text !== undefined) document.getElementById('txt').value = d.text;
+  if(d.font !== undefined) document.getElementById('fnt').value = d.font;
+  if(P.gbg) document.getElementById('gBg').value = P.gbg;
+  syncUI(); DOTKEY = ''; build();
+  /* ⚠️ 当てた直後の遅れた保存が控えを潰すので、待っている保存を取り消して自分で書く */
+  clearTimeout(_sT);
+  try{ localStorage.setItem(KEY, stateJSON()); }catch(e){}
+}
+function undoState(){
+  try{
+    const h = JSON.parse(localStorage.getItem(HKEY) || '[]');
+    if(!h.length) return false;
+    const prev = h.pop(); localStorage.setItem(HKEY, JSON.stringify(h));
+    applyState(JSON.parse(prev)); return true;
+  }catch(e){ return false; }
+}
+function syncUI(){
+  document.querySelectorAll('input[type=range][data-p]').forEach(r => {
+    if(P[r.dataset.p] === undefined) return;
+    r.value = P[r.dataset.p];
+    const v = r.parentElement.querySelector('.val');
+    if(v) v.textContent = (r.dataset.p === 'wav') ? (+r.value/100).toFixed(2) : r.value;
+  });
+  document.querySelectorAll('.seg[data-seg]').forEach(seg => {
+    const cur = String(P[seg.dataset.seg]);
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === cur));
+  });
+  document.querySelectorAll('.unit[data-unit]').forEach(u => {
+    if(ON[u.dataset.unit] !== undefined) u.classList.toggle('off', !ON[u.dataset.unit]);
+  });
+  syncSpin();
+}
+function load(){
+  try{
+    const raw = localStorage.getItem(KEY); if(!raw) return;
+    const d = JSON.parse(raw); if(!d || d.v !== VER) return;
+    Object.assign(P, d.P||{}); Object.assign(ON, d.ON||{});
+    if(d.text !== undefined) document.getElementById('txt').value = d.text;
+    if(d.font !== undefined) document.getElementById('fnt').value = d.font;
+    if(P.gbg) document.getElementById('gBg').value = P.gbg;
+    syncUI();
+  }catch(e){}
+}
+
+/* ══ つまみ ══════════════════════════════════════════════ */
+/* ⭐⭐ 木下＝「字なりやずれもそうだが、もっとスムーズにして」「絵の変わり方が段々しい」
+   🔴 原因＝【塗りのつまみでも立体を丸ごと作り直していた】。
+      作り直しは重いうえ 80ms まとめているので、ドラッグが飛び飛びになる。
+   ⭐ 塗りは【材質の値を書き換えるだけ】で足りる＝立体はそのまま。毎フレーム追いつく。
+   ⚠️ 作り直しが要るのは【形が変わるもの】だけ＝解像・太さ・組み方・粒の隙間・盛り・底・玉。
+   ⚠️ 向き／字なり は粒ごとの角度なので、属性だけ書き換える（作り直さない）。 */
+const HEAVY = ['res','fat','gapd','rise','base','turn','bead','beadK','wrap','gapx','gapy','smoothK'];
+const PAINT = ['wav','dir','follow','shift','charJit','shine','valley','grad','band','lit','steps','dith'];
+let _bT = 0;
+function rebuildSoon(){ clearTimeout(_bT); _bT = setTimeout(build, 80); }
+/* 塗りだけ塗り直す＝立体は触らない */
+function repaint(){
+  if(!mesh) return;
+  const m = mesh.material, pl = PALS[P.pal] || PALS[0], on = ON.ink, q = on ? pl : PALS[0];
+  const set = (u, c) => m.uniforms[u].value.setRGB(c[0]/255, c[1]/255, c[2]/255);
+  set('uA', q.a); set('uB', q.b); set('uBG', q.bg);
+  m.uniforms.uWav.value    = P.wav / 100;
+  m.uniforms.uShift.value  = P.shift / 100;
+  m.uniforms.uShine.value  = P.shine / 100;
+  m.uniforms.uValley.value = P.valley / 100;
+  m.uniforms.uGrad.value   = P.grad / 100;
+  m.uniforms.uLine.value   = P.line;
+  m.uniforms.uBand.value   = on ? P.band / 100 : 0;
+  m.uniforms.uSteps.value  = on ? P.steps : 0;
+  m.uniforms.uDith.value   = P.dith / 100;
+  if(m.uniforms.uLit) m.uniforms.uLit.value = P.lit / 100;
+  /* 向き・字なり・字ごと は粒ごとの値なので、属性だけ書き換える */
+  const aAng = mesh.geometry.getAttribute('aAng'), aJit = mesh.geometry.getAttribute('aJit');
+  if(aAng && LIVE){
+    for(let i = 0; i < LIVE.length; i++){
+      const ang = LIVE[i][0][2], ci = LIVE[i][0][4];
+      aAng.array[i] = ang * (P.follow/100) + P.dir * Math.PI / 180;
+      if(aJit) aJit.array[i] = P.charJit > 0 ? (((ci+1)*0.6180339887) % 1) * (P.charJit/100) : 0;
+    }
+    aAng.needsUpdate = true; if(aJit) aJit.needsUpdate = true;
+  }
+  save();
+}
+document.querySelectorAll('input[type=range][data-p]').forEach(r => {
+  const v = r.parentElement.querySelector('.val');
+  const sync = () => {
+    P[r.dataset.p] = +r.value;
+    /* ⚠️ 細かさは【1マスあたり何周】。SAKUJI も 0.04 のように小数で見せている。
+       整数で見せると「2」が何なのか読めない。 */
+    if(v) v.textContent = (r.dataset.p === 'wav') ? (+r.value/100).toFixed(2) : r.value;
+    if(HEAVY.includes(r.dataset.p)) rebuildSoon();
+    else if(PAINT.includes(r.dataset.p)) repaint();      // ⭐ 立体は作り直さない
+    else save();
+  };
+  r.addEventListener('input', sync); sync();
+});
+document.querySelectorAll('.seg[data-seg]').forEach(seg => {
+  seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    seg.querySelectorAll('button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    P[seg.dataset.seg] = +b.dataset.v;
+    /* 🔴 木下＝「これら（波/縞/斜/格子/環）が全然反応しない」。
+       材質の値は【組み直しのとき】にしか入れていなかったので、
+       型を変えても何も起きなかった（＝押しても死んでいる）。
+       ⭐ セグは全部その場で組み直す。字の追跡は覚えてあるので安い。 */
+    rebuildSoon();
+    save();
+  }));
+});
+document.querySelectorAll('.unit-head').forEach(h => h.addEventListener('click', () => {
+  const u = h.parentElement;
+  u.classList.toggle('off');
+  ON[u.dataset.unit] = !u.classList.contains('off');
+  if(u.dataset.unit === 'spin') syncSpin();
+  if(['type','build','ink'].includes(u.dataset.unit)) rebuildSoon();
+  save();
+}));
+/* ⭐ 地の色 ── TSUBU に同じものがある（波色／球色／地）。
+   ⚠️ 色は【毎フレーム触るもの】なので input で即反映。組み直さない。 */
+const note = t => { const n=document.getElementById('keepNote'); if(n) n.textContent = t; };
+document.getElementById('bUndo').onclick = () => note(undoState() ? 'ひとつ戻した' : 'これ以上戻せない');
+document.getElementById('bCopy').onclick = () => {
+  const b = document.getElementById('keepBox');
+  b.value = stateJSON(); b.select();
+  try{ document.execCommand('copy'); note('控えを出した（コピーもした）'); }
+  catch(e){ note('控えを出した。長押しでコピーしてください'); }
+};
+document.getElementById('bLoadState').onclick = () => {
+  const b = document.getElementById('keepBox');
+  try{
+    const d = JSON.parse(b.value);
+    if(!d || d.v !== VER){ note('この控えは版が違う'); return; }
+    pushHistory(); applyState(d); note('読み込んだ（ひとつ戻す で元に戻せる）');
+  }catch(e){ note('読めなかった'); }
+};
+
+/* ⭐ 使い方＝モーダル。⭐ 「?」の長押しでなく、まずモーダルを出す（木下の指示）
+   ⚠️ 行ごとの細かい説明は既定で隠し、モーダルの中から出せるようにする */
+const manual = document.getElementById('manual');
+document.getElementById('helpBtn').onclick = () => manual.classList.add('on');
+document.getElementById('manualX').onclick = () => manual.classList.remove('on');
+manual.onclick = e => { if(e.target === manual) manual.classList.remove('on'); };
+document.getElementById('bHints').onclick = () => {
+  document.body.classList.toggle('help');
+  save();
+};
+
+const gBg = document.getElementById('gBg');
+gBg.addEventListener('input', () => { P.gbg = gBg.value; save(); });
+
+document.getElementById('txt').addEventListener('input', rebuildSoon);
+document.getElementById('fnt').addEventListener('change', rebuildSoon);
+
+/* ══ 触る ══════════════════════════════════════════════════ */
+const el = renderer.domElement;
+let mode = null, prev = null, pinch = 0, panMode = false;
+el.addEventListener('contextmenu', e => e.preventDefault());
+el.addEventListener('pointerdown', e => {
+  try{ el.setPointerCapture(e.pointerId); }catch(_){}
+  mode = panMode ? 'pan' : 'orbit';
+  prev = { x:e.clientX, y:e.clientY };
+});
+el.addEventListener('pointermove', e => {
+  if(!prev) return;
+  if(mode === 'pan'){
+    const k = panScale();
+    cam.tpx -= (e.clientX - prev.x) * k;
+    cam.tpy += (e.clientY - prev.y) * k;
+  }else{
+    cam.tAz -= (e.clientX - prev.x) * 0.006;
+    cam.tEl = THREE.MathUtils.clamp(cam.tEl + (e.clientY - prev.y) * 0.006, -1.35, 1.35);
+  }
+  prev = { x:e.clientX, y:e.clientY };
+});
+const up = () => { mode = null; prev = null; };
+el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+el.addEventListener('wheel', e => {
+  e.preventDefault();
+  cam.tDist = THREE.MathUtils.clamp(cam.tDist * (1 + e.deltaY * 0.0018), 60, 9000);
+}, { passive:false });
+el.addEventListener('touchmove', e => {
+  if(e.touches.length === 2){
+    e.preventDefault();
+    const d = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+    if(pinch) cam.tDist = THREE.MathUtils.clamp(cam.tDist * (pinch/d), 60, 9000);
+    pinch = d;
+  }
+}, { passive:false });
+el.addEventListener('touchend', () => { pinch = 0; });
+
+/* ══ ボタン ══════════════════════════════════════════════ */
+function syncSpin(){
+  const b = document.getElementById('bSpin');
+  b.classList.toggle('on', !!ON.spin);
+  const u = document.querySelector('[data-unit="spin"]');
+  if(u) u.classList.toggle('off', !ON.spin);
+}
+document.getElementById('bSpin').onclick = () => { ON.spin = !ON.spin; syncSpin(); save(); };
+document.getElementById('bPan').onclick = e => {
+  panMode = !panMode; e.target.classList.toggle('on', panMode);
+};
+/* ⚠️ 前は「寄せを 0 に戻す」だけだったので、動かしていないと押しても【何も起きない】
+   ＝効いていないように見えた。⭐ 見る所ぜんぶを組んだ直後の状態へ戻す。 */
+document.getElementById('bCenter').onclick = () => {
+  cam.tpx = 0; cam.tpy = 0; cam.tAz = 0;
+  const src = DOTS;
+  if(src) fitView(src.totalW * (620 / Math.max(src.totalW, src.N)), src.N * (620 / Math.max(src.totalW, src.N)));
+};
+/* ⚠️ iOS は DOM に入れていない <a> の click を無視する／巨大な dataURL で落ちる */
+const savePNG = () => {
+  renderToBlob(blob => {
+    if(!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `tsubute_${Date.now()}.png`;
+    document.body.appendChild(a); a.click(); a.remove();
+    if(/iP(hone|ad|od)/.test(navigator.userAgent)) window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 8000);
+  });
+};
+document.getElementById('bPNG').onclick = savePNG;
+document.getElementById('bPNG2').onclick = savePNG;
+
+/* ══ 起動 ══ ⚠️ 字が焼ける前に組むと、字が出ないまま固まる（フォント待ち） */
+resize();
+load();
+_loaded = true;
+(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => { build(); resize(); });
+requestAnimationFrame(frame);
+
+</script>
