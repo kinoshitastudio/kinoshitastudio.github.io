@@ -178,6 +178,10 @@
   <div class="mod">⭐ <b>明るい写真ほど帯が生きる</b>。暗い写真は先にここで持ち上げる</div>
 
   <h2>音</h2>
+  <div class="seg" id="sndkind">
+    <button data-v="beat" class="on">ビート</button>
+    <button data-v="wave">波</button>
+  </div>
   <button class="btn" id="bDemo">音を鳴らす</button>
   <div class="grid2">
     <button class="btn" id="bMic">マイク</button>
@@ -186,6 +190,7 @@
   <input type="file" id="sfile" accept="audio/*" style="display:none">
   <div class="row"><label>効き</label><input type="range" id="amount" min="0" max="100" value="60"><span class="val"></span></div>
   <div class="mod" id="sndnote">⭐ 低音＝どこまで進むか／中音＝帯ののび／高音＝色数<br>
+    ⭐⭐ <b>ビート</b>＝キックで<b>進みが脈打つ</b>＝帯が拍で現れて消える。<b>波</b>＝ゆっくり寄せては引く<br>
     ⚠️ 設定そのものは書き換えない＝<b>音を止めれば元に戻る</b></div>
 
   <h2>どこまで</h2>
@@ -227,7 +232,7 @@ const P = { rows:14, minx:2, maxx:44, vary:60, seed:7, steps:16, bias:0, dir:'x'
             /* ⭐ 引き算＝帯を消して写真を覗かせる。⭐ 音＝どの帯が消えるかが揺れる */
             drop:0, dropdir:'rand', expo:0, sat:100, amount:60,
             /* ⭐⭐ 形＝被写体の輪郭の中だけに帯を刷る（効き 0 ＝いままで通り全面） */
-            shape:0, thr:128, inv:0, lump:30 };
+            shape:0, thr:128, inv:0, lump:30, sndkind:'both' };
 const M = { low:0, mid:0, high:0, kick:0 };   // 音の量（0〜1）
 
 /* ── 写真を読む ────────────────────────────────────────── */
@@ -415,12 +420,22 @@ function traceBitmap(im, W, H, minLen){
   return out;
 }
 
-function buildShape(){
+/* ⭐⭐ 引くのは【2段】。
+   🔴 木下＝「調整スライダーがスムーズでない　モバイル」。
+     しきい／まとめるを動かすたびに 1400px で二値化＋輪郭追跡していたので、
+     モバイル相当で **1操作 151〜166ms**（＝6fps）になっていた。
+   ⭐ つまみを動かしている間は【粗く速く】（520px）引いて、
+     手が止まってから【細かく】（1400px）引き直す。
+   ⚠️ 形は解像度を上げても大きくは変わらないので、動かしている間は粗いままで足りる。
+     ⚠️ SAKUJI で粒を軽くしたとき・写真を焼いておいたときと同じ手（重い所を後ろへ回す）。 */
+let shapeIsQuick = false, _fineT = 0;
+function buildShape(quick){
   shapePath = null; shapeCont = [];
+  shapeIsQuick = !!quick;
   if(!img) return;
   /* ⚠️ 輪郭を採るのは 1400px まで。実寸（3000px）で追うと点が数万になって
      SVG が肥る・引き直しが重い。形は解像度を上げても変わらない。 */
-  const MW = 1400, k = Math.min(1, MW / Math.max(img.width, img.height));
+  const MW = quick ? 520 : 1400, k = Math.min(1, MW / Math.max(img.width, img.height));
   const W = Math.max(1, Math.round(img.width * k)), H = Math.max(1, Math.round(img.height * k));
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const x = c.getContext('2d', { willReadFrequently:true });
@@ -525,7 +540,11 @@ function draw(){
   if(k > 0 && shapePath){
     /* ⭐ 効きの途中＝外側は薄く残す。0 と 1 の間で【滲んで形が現れる】。
        ⚠️ 外を完全に消してから中を刷るのではなく、外を薄く刷ってから中を上に刷る
-          （こうすると中は必ず不透明になる＝効きを上げても中の見え方が変わらない）。 */
+          （こうすると中は必ず不透明になる＝効きを上げても中の見え方が変わらない）。
+       🔴⭐ ここを「帯を1回だけ濃く刷って、外に写真を刷り戻す」に変えて軽くしようとしたが、
+          **絵が変わった**（効き100 で 50% の画素がはっきり違った）ので戻した。
+          理由＝帯は【のび】で重なるので、薄く重ねたものと、濃く塗ってから薄めたものは別物。
+          ⚠️ 「同じ絵になるはず」と思っても、**並べて画素で突き合わせるまで信じない**。 */
     if(k < 0.995){ ctx.globalAlpha = 1 - k; paint(); ctx.globalAlpha = 1; }
     ctx.save(); ctx.clip(shapePath, SHAPE_RULE); paint(); ctx.restore();
   }else{
@@ -625,10 +644,16 @@ function invalidate(level){
   _raf = requestAnimationFrame(() => {
     _raf = 0;
     // ⭐ 効きを 0 から上げた最初の1回だけは、ここで引く（まだ輪郭が無いので）
-    if(_need >= 3 || (P.shape > 0 && !shapePath)) buildShape();
+    if(_need >= 3 || (P.shape > 0 && !shapePath)) buildShape(true);
     if(_need >= 2) build();
     _need = 0;
     draw();
+    /* ⭐ 手が止まったら細かく引き直す。⚠️ 動かしている間は毎回この予約を取り消す
+       ＝止まるまで重い方は一度も走らない。 */
+    if(shapeIsQuick){
+      clearTimeout(_fineT);
+      _fineT = setTimeout(() => { buildShape(false); draw(); }, 220);
+    }
   });
 }
 function bind(id, key, heavy){
@@ -862,16 +887,86 @@ function tick(){
 }
 /* ⭐ 同梱の音 ── 木下＝「音と連動に既存の音なにか入れておいて」。
    ⚠️ 音源ファイルは入れない（著作権とサイズ）。⭐コードで作る＝0バイトで著作権も無い。
-   ⭐ この道具に合わせた音にした。KUMI のビート（キック・ハット・ベース）とは別で、
-     写真を眺めながら触るものなので【ゆっくり寄せては引く波】＋【遠い points】。
-     ⚠️ 低音＝進み／中音＝のび／高音＝色数 に効くので、3つの帯域が動くように作る。 */
-let demoTimer = null, demoGain = null;
+   ⭐ この道具に合わせた音にした。写真を眺めながら触るものなので
+     【ゆっくり寄せては引く波】＋【遠い粒】。
+     ⚠️ 低音＝進み／中音＝のび／高音＝色数 に効くので、3つの帯域が動くように作る。
+   ⭐⭐ あとから木下＝「音を鳴らすに**ビートを追加**」→ ビートを足した。
+     ⚠️ 波を【置き換えない】＝波には「そう作った理由」がある（眺めながら触る）。
+       選べるようにして、前の判断を残したまま増やす。
+     ⭐ ビートの狙い＝**キックで低音が立つ＝進みが脈打つ＝帯が拍で現れて消える**。
+       波は「押し引き」・ビートは「刻み」＝同じ絵が別の動き方をする。
+   🔴⭐ 最初は「両方」も作ったが【落とした】。
+     analyser は **dB で読む**ので、持続音が1つ鳴っているだけで低音帯が底上げされる
+     （両方＝低音 0.55〜0.67 で**動いた幅 0.1 しかない**／ビート単体は 0〜0.51）。
+     ＝重ねるとキックの脈が埋もれて、ビートを足した意味そのものが消える。
+     ⚠️ 波の低音を下げても・ドローンを外しても floor は動かなかった（**中音の漏れ**が原因）。
+     ⭐ **耳で「鳴っている」ことと、絵が動くことは別**。帯域の幅を測らないと分からない。 */
+let demoTimers = [], demoGain = null, demoNodes = [];
+
 function startDemo(){
   audioReady(); actx.resume();
   stopDemo();
   demoGain = actx.createGain(); demoGain.gain.value = 0.9;
   demoGain.connect(analyser); demoGain.connect(actx.destination);
+  const beat = P.sndkind !== 'wave';
+  if(beat) makeBeat(); else makeWave();
 
+  document.getElementById('sndnote').innerHTML =
+    (beat ? '⭐ 鳴っている（<b>ビート</b>）。キックで<b>進みが脈打つ</b>＝帯が拍で現れて消える'
+          : '⭐ 鳴っている（<b>波</b>）。ゆっくり寄せては引く')
+    + '。<b>効き</b>を上げると帯が揺れる（もう一度押すと止まる）';
+  document.getElementById('bDemo').textContent = '音を止める';
+}
+
+/* ── ビート ── KUMI の作り（キック・ハット・ベース）から持ってきて、この道具に合わせた。
+   ⚠️ KUMI は 122BPM の刻み。OBORO は写真を眺めながら触るので【遅く・疎に】した。
+   ⭐ キックは 0 と 6 ＝拍が均等に割れないようにする（等分だと機械に聞こえる。
+      帯の割り方で「等分にすると格子に見える」と言ったのと同じ話）。 */
+function makeBeat(){
+  const bpm = 84, step = 60 / bpm / 2;                  // 8分音符
+  const noise = actx.createBuffer(1, actx.sampleRate*0.2, actx.sampleRate);
+  { const d = noise.getChannelData(0); for(let i=0;i<d.length;i++) d[i] = Math.random()*2-1; }
+
+  /* キック＝低音が立つ＝進みが脈打つ。⭐ 減衰を長めにして低音の山を作る
+     （短いと analyser が拾いきる前に消えて、絵が動かない） */
+  const kick = t => {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(42, t+0.13);
+    g.gain.setValueAtTime(1, t); g.gain.exponentialRampToValueAtTime(0.001, t+0.34);
+    o.connect(g); g.connect(demoGain); o.start(t); o.stop(t+0.36); demoNodes.push(o);
+  };
+  /* ハット＝高音＝色数が動く。⚠️ 硬いと写真に合わないので高めに薄く */
+  const hat = t => {
+    const s = actx.createBufferSource(); s.buffer = noise;
+    const hp = actx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value = 8200;
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.22, t); g.gain.exponentialRampToValueAtTime(0.001, t+0.06);
+    s.connect(hp); hp.connect(g); g.connect(demoGain); s.start(t); s.stop(t+0.08); demoNodes.push(s);
+  };
+  /* ベース＝中音＝のびが揺れる */
+  const bass = (t, f) => {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = 'sawtooth'; o.frequency.value = f;
+    const lp = actx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value = 480; lp.Q.value = 4;
+    g.gain.setValueAtTime(0.22, t); g.gain.exponentialRampToValueAtTime(0.001, t+step*0.95);
+    o.connect(lp); lp.connect(g); g.connect(demoGain); o.start(t); o.stop(t+step); demoNodes.push(o);
+  };
+  const line = [58.3, 0, 0, 87.3, 0, 65.4, 0, 49];      // ベースの音程（0＝鳴らさない）
+  let next = actx.currentTime + 0.08, s = 0;
+  demoTimers.push(setInterval(() => {
+    if(!actx || !demoGain) return;
+    while(next < actx.currentTime + 0.15){
+      const b = s % 8;
+      if(b === 0 || b === 6) kick(next);
+      if(b === 2 || b === 5 || b === 7) hat(next);
+      if(line[b]) bass(next, line[b]);
+      next += step; s++;
+    }
+  }, 25));
+}
+
+/* ── 波 ── 前からある方（眺めながら触るための、寄せては引く音）── */
+function makeWave(){
   // 低音＝ゆっくりうねる（進みが押し引きされる）
   const lo = actx.createOscillator(), lg = actx.createGain();
   lo.type = 'sine'; lo.frequency.value = 48;
@@ -881,7 +976,7 @@ function startDemo(){
   lg.gain.value = 0.5;
   lfo.connect(lfoG); lfoG.connect(lg.gain);
   lo.connect(lg); lg.connect(demoGain);
-  lo.start(); lfo.start();
+  lo.start(); lfo.start(); demoNodes.push(lo, lfo);
 
   // 中音＝薄い持続音（のびが揺れる）
   const md = actx.createOscillator(), mg = actx.createGain(), mf = actx.createBiquadFilter();
@@ -892,7 +987,7 @@ function startDemo(){
   mlfo.connect(mlg); mlg.connect(mf.frequency);
   mg.gain.value = 0.13;
   md.connect(mf); mf.connect(mg); mg.connect(demoGain);
-  md.start(); mlfo.start();
+  md.start(); mlfo.start(); demoNodes.push(md, mlfo);
 
   // 高音＝ときどき落ちる粒（色数が動く）
   const noise = (() => {
@@ -910,30 +1005,39 @@ function startDemo(){
     g.gain.exponentialRampToValueAtTime(0.16, t + 0.02);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
     srcN.connect(hp); hp.connect(g); g.connect(demoGain);
-    srcN.start(t); srcN.stop(t + 0.55);
+    srcN.start(t); srcN.stop(t + 0.55); demoNodes.push(srcN);
   };
   let next = actx.currentTime + 0.1;
-  demoTimer = setInterval(() => {
-    if(!actx) return;
+  demoTimers.push(setInterval(() => {
+    if(!actx || !demoGain) return;
     while(next < actx.currentTime + 0.4){
       grain(next);
       next += 0.25 + Math.random() * 0.55;      // ⚠️ 等間隔にしない（機械に聞こえる）
     }
-  }, 60);
-  document.getElementById('sndnote').innerHTML =
-    '⭐ 鳴っている。<b>効き</b>を上げると帯が揺れる（もう一度押すと止まる）';
-  document.getElementById('bDemo').textContent = '音を止める';
+  }, 60));
 }
 function stopDemo(){
-  if(demoTimer){ clearInterval(demoTimer); demoTimer = null; }
+  /* ⚠️⭐ 波とビートで刻みが2つ走る＝タイマーは【まとめて】止める。
+     🔴 前は demoTimer が1本だけで、両方鳴らすと後から作った方が前の方を上書きして
+        止まらなくなる（＝音が消えないまま残る）。
+     ⚠️ 音を切る側（demoGain）を外すだけでは【オシレータは回り続ける】ので、
+        鳴らしたものは明示的に止める。 */
+  demoTimers.forEach(clearInterval); demoTimers = [];
+  demoNodes.forEach(n => { try{ n.stop(); }catch(e){} }); demoNodes = [];
   if(demoGain){ try{ demoGain.disconnect(); }catch(e){} demoGain = null; }
   document.getElementById('bDemo').textContent = '音を鳴らす';
 }
+const demoOn = () => demoTimers.length > 0;
 document.getElementById('bDemo').onclick = () => {
-  if(demoTimer) { stopDemo(); document.getElementById('sndnote').innerHTML =
+  if(demoOn()) { stopDemo(); document.getElementById('sndnote').innerHTML =
     '⭐ 止めた。⚠️ 設定は書き換えていないので<b>元の見え方に戻る</b>'; }
   else startDemo();
 };
+/* ⭐ 鳴らしている最中に種を変えたら、その場で鳴らし直す
+   （⚠️ 押しても何も起きないと「効いていない」と読める＝到達できない機能になる）。 */
+document.querySelectorAll('#sndkind button').forEach(b => {
+  b.addEventListener('click', () => { if(demoOn()) startDemo(); });
+});
 
 document.getElementById('bMic').onclick = async () => {
   try{
