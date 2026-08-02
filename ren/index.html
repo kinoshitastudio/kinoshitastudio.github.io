@@ -1,0 +1,1086 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>連 REN — 作品を1本にする</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Zen+Kaku+Gothic+New:wght@400;700;900&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --paper:#f4f2ee; --ink:#0a0a0a; --line:rgba(0,0,0,.12);
+    --fill:rgba(0,0,0,.05); --fill2:rgba(0,0,0,.08);
+    --glass:rgba(244,242,238,.82); --capsule:#fff; --r:11px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;overflow:hidden;background:var(--paper);color:var(--ink);
+    font-family:"Space Mono",monospace;overscroll-behavior:none;
+    width:100%;max-width:100%;overflow-x:hidden;}
+
+  #stage{position:fixed;left:0;top:0;right:290px;bottom:var(--tlh);display:flex;
+    align-items:center;justify-content:center;padding:24px;}
+  #view{max-width:100%;max-height:100%;box-shadow:0 2px 24px rgba(0,0,0,.14);background:#000;}
+
+  #rack{position:fixed;top:0;right:0;bottom:var(--tlh);width:290px;z-index:10;
+    overflow-y:auto;overflow-x:hidden;touch-action:pan-y;overscroll-behavior:contain;
+    background:var(--glass);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
+    border-left:1px solid var(--line);padding:10px;}
+  .unit{margin-bottom:8px;max-width:100%;background:var(--capsule);border-radius:var(--r);
+    overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06),0 0 0 .5px rgba(0,0,0,.05);}
+  .unit-head{display:flex;align-items:center;gap:7px;padding:11px 12px;cursor:pointer;user-select:none;}
+  .led{width:6px;height:6px;border-radius:50%;background:var(--ink);flex:none;}
+  .unit.off .led{background:rgba(0,0,0,.18);}
+  .unit.off .unit-body{display:none;}
+  .unit-idx{font-size:9px;opacity:.35;letter-spacing:.1em;}
+  .unit-name{font-size:11px;letter-spacing:.14em;font-weight:700;}
+  .unit-jp{font-size:10px;opacity:.5;letter-spacing:.08em;margin-left:auto;
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;}
+  .unit-body{padding:2px 12px 12px;}
+
+  .row{display:flex;align-items:center;gap:9px;padding:3px 0;min-width:0;max-width:100%;}
+  .row label{font-family:"Space Mono",monospace;font-size:8.5px;letter-spacing:.1em;
+    opacity:.5;width:62px;flex:none;}
+  .row label i{display:block;font-style:normal;letter-spacing:0;font-size:9.5px;opacity:.95;
+    margin-top:1px;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;}
+  input[type=range]{flex:1 1 0;min-width:0;-webkit-appearance:none;height:26px;
+    background:none;touch-action:none;}
+  input[type=range]::-webkit-slider-runnable-track{height:3px;background:currentColor;opacity:.22;border-radius:2px;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;
+    margin-top:-6px;border-radius:50%;background:currentColor;}
+  .val{font-size:9px;opacity:.45;width:34px;text-align:right;flex:none;}
+
+  .seg{display:flex;background:var(--fill2);border-radius:9px;padding:2px;gap:2px;
+    margin:6px 0 8px;min-width:0;max-width:100%;}
+  .seg button{flex:1 1 auto;white-space:nowrap;border:none;border-radius:7px;background:none;
+    cursor:pointer;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;
+    font-size:11px;color:var(--ink);opacity:.5;padding:7px 0;transition:.16s;touch-action:manipulation;}
+  .seg button.on{opacity:1;background:var(--capsule);font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.18);}
+  .btn{width:100%;background:var(--fill);border:none;border-radius:var(--r);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;font-size:12px;
+    padding:10px 0;cursor:pointer;margin-top:4px;touch-action:manipulation;}
+  .btn.on{background:#0a0a0a;color:#f4f2ee;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+  .mod{font-size:9.5px;line-height:1.75;opacity:.62;margin:6px 0 2px;
+    word-break:break-word;overflow-wrap:anywhere;
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;display:none;}
+  body.help .mod{display:block;}
+  /* ⚠️ .mod は help の時しか出ない。押した結果は【いつでも見えないと無反応に見える】ので別にする */
+  /* ⚠️ 版下になっていない間は、つまみを触っても何も起きない＝薄くして触れなくする */
+  body:not(.has-tilt) .tilt-only{opacity:.32;pointer-events:none;}
+  .note{font-size:10px;line-height:1.7;opacity:.7;margin:8px 0 2px;min-height:14px;
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;}
+
+  /* ⭐⭐⭐ タイムライン ── 下に固定して、Premiere と同じ思想でいく（木下 2026-08-02）。
+     🔴 前は「クリップの四角（#track）」と「尺の帯（#tl）」が右パネルに【別々に】あり、
+        時間軸が繋がっていなかった＝木下「CLIPSは下にタイムラインとして。わかりにくい」。
+     ⭐ 直し方＝両方をやめて【下に1本の時間軸】にする。レーンを縦に積み、
+        再生ヘッドが全レーンを貫く。参考＝木下自身の Karuma（kamera_tk）の .timeline/.lane/.playhead。
+     ⚠️ 以前のノートには「Premiere に近づけない／多段レイヤーにしない」と書いてあったが、
+        2026-08-02 に木下が方針変更＝「このあたりは Premiere と同じ思想でいこう」。
+     ⭐ 見た目は SwiftUI 準拠（白いカード・角丸・すりガラス・ヘアライン）。⚠️ 絵文字は使わない。 */
+  :root{ --tlh:212px; --gut:56px; }   /* gut＝レーン名の幅＝時間軸の原点 */
+
+  #tlwrap{position:fixed;left:0;right:0;bottom:0;height:var(--tlh);z-index:12;
+    background:var(--glass);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
+    border-top:1px solid var(--line);display:flex;flex-direction:column;}
+  #tlbar{display:flex;align-items:center;gap:6px;padding:0 12px;height:42px;flex:none;
+    border-bottom:1px solid var(--line);}
+  #tlbar button{background:var(--capsule);border:none;border-radius:8px;padding:7px 12px;
+    font-family:"Space Mono",monospace;font-size:10px;letter-spacing:.08em;cursor:pointer;
+    color:var(--ink);touch-action:manipulation;box-shadow:0 1px 3px rgba(0,0,0,.08),0 0 0 .5px rgba(0,0,0,.05);}
+  #tlbar button.on{background:#0a0a0a;color:#f4f2ee;}
+  #tlbar .sp{flex:1;}
+  #tclock{font-family:"Space Mono",monospace;font-size:10.5px;opacity:.55;
+    font-variant-numeric:tabular-nums;letter-spacing:.04em;}
+  #zLbl{font-family:"Space Mono",monospace;font-size:9.5px;opacity:.45;width:26px;text-align:center;}
+
+  #lanes{flex:1;overflow-x:auto;overflow-y:hidden;position:relative;padding:8px 16px 12px;
+    touch-action:pan-x;}
+  #tlcontent{position:relative;min-width:100%;height:100%;}
+  /* 目盛り＝クリックでその時間へ飛ぶ */
+  #ruler{position:relative;height:15px;margin-left:var(--gut);cursor:pointer;}
+  #ruler span{position:absolute;top:0;transform:translateX(-50%);font-size:9px;opacity:.42;
+    font-family:"Space Mono",monospace;font-variant-numeric:tabular-nums;pointer-events:none;}
+  #ruler i{position:absolute;top:11px;width:1px;height:4px;background:currentColor;opacity:.2;}
+
+  .lane{display:flex;align-items:stretch;margin-top:7px;}
+  .laneLabel{width:var(--gut);flex:none;display:flex;align-items:center;font-size:10px;opacity:.45;
+    letter-spacing:.06em;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;}
+  .laneBody{position:relative;flex:1;}
+  #clipLane{position:relative;height:58px;background:var(--fill2);border-radius:9px;}
+  #sndLane{position:relative;height:46px;background:var(--fill2);border-radius:9px;overflow:hidden;}
+  #clipLane.empty::after{content:'ここに画像や動画を放り込む';position:absolute;left:12px;top:0;bottom:0;
+    display:flex;align-items:center;opacity:.38;font-size:10.5px;
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;}
+  #sndLane.empty::after{content:'ここに音源を放り込む';position:absolute;left:12px;top:0;bottom:0;
+    display:flex;align-items:center;opacity:.38;font-size:10.5px;
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;}
+  #wave{position:absolute;left:0;top:0;height:100%;display:block;}
+
+  /* クリップ＝尺の長さの帯。⭐ 幅がそのまま秒数＝どれが長いか目で分かる
+     ⚠️ クラス名は .clipseg。.seg は【ラックのセグメンテッドコントロールが先に使っている】ので、
+        同じ名前にすると後勝ちで版面の切替が壊れる（Karuma も .clipseg と呼んでいる） */
+  .clipseg{position:absolute;top:0;bottom:0;border-radius:7px;overflow:hidden;background:#000;
+    cursor:grab;box-shadow:0 0 0 .5px rgba(0,0,0,.18);}
+  .clipseg.sel{box-shadow:0 0 0 2px var(--ink);}
+  .clipseg img,.clipseg video{width:100%;height:100%;object-fit:cover;opacity:.86;pointer-events:none;}
+  .clipseg .n{position:absolute;left:5px;top:3px;font-size:8.5px;color:#fff;
+    text-shadow:0 1px 2px #000;pointer-events:none;font-family:"Space Mono",monospace;}
+  .clipseg .t{position:absolute;left:5px;bottom:3px;font-size:8.5px;color:#fff;
+    text-shadow:0 1px 2px #000;pointer-events:none;font-family:"Space Mono",monospace;}
+  .clipseg .x{position:absolute;right:3px;top:2px;width:17px;height:17px;border:none;
+    background:rgba(0,0,0,.5);color:#fff;border-radius:50%;font-size:11px;line-height:1;cursor:pointer;}
+  .clipseg .h{position:absolute;top:0;bottom:0;right:0;width:10px;cursor:ew-resize;z-index:2;
+    background:linear-gradient(90deg,rgba(255,255,255,0),rgba(255,255,255,.28));}
+  /* ⚠️ 左のトリムは動画だけ出す（画像は素材の中に時間が無いので出さない） */
+  .clipseg .h.l{left:0;right:auto;background:linear-gradient(270deg,rgba(255,255,255,0),rgba(255,255,255,.28));}
+  .clipseg .h::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:2px;height:38%;background:rgba(255,255,255,.65);border-radius:1px;}
+
+  /* 再生ヘッド＝全レーンを縦に貫く（Karuma と同じ） */
+  #playhead{position:absolute;top:0;bottom:0;width:1.5px;background:#e0322a;z-index:5;
+    pointer-events:none;left:var(--gut);}
+  #phgrab{position:absolute;top:-3px;left:-7px;width:16px;height:16px;border-radius:50%;
+    background:#e0322a;pointer-events:auto;cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,.3);}
+  #phgrab:active{cursor:grabbing;}
+
+  #drop{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;
+    background:rgba(10,10,10,.7);color:#f4f2ee;font-size:15px;
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;}
+  #drop.on{display:flex;}
+
+  #title{position:fixed;left:22px;top:18px;z-index:11;mix-blend-mode:difference;color:#fff;pointer-events:none;}
+  #title h1{font-family:"Zen Kaku Gothic New",sans-serif;font-weight:900;font-size:24px;line-height:1;}
+  #title p{font-size:8.5px;letter-spacing:.16em;opacity:.5;margin-top:5px;}
+
+  #helpBtn{position:fixed;top:14px;right:14px;z-index:30;width:30px;height:30px;
+    border-radius:50%;border:1px solid var(--line);background:var(--glass);
+    -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+    color:var(--ink);cursor:pointer;font-size:13px;line-height:1;}
+  body.help #helpBtn{background:var(--ink);color:var(--paper);}
+  #manual{position:fixed;inset:0;z-index:40;display:none;background:rgba(0,0,0,.45);
+    padding:24px;overflow-y:auto;}
+  #manual.on{display:block;}
+  #manual .sheet{max-width:560px;margin:0 auto;background:var(--capsule);border-radius:16px;
+    padding:22px 22px 28px;position:relative;
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;}
+  #manual h2{font-size:16px;margin-bottom:10px;}
+  #manual h3{font-size:12px;margin:16px 0 4px;letter-spacing:.06em;}
+  #manual p{font-size:12px;line-height:1.85;opacity:.78;}
+  #manual .x{position:absolute;top:12px;right:14px;border:none;background:none;
+    font-size:20px;cursor:pointer;color:var(--ink);line-height:1;}
+
+  @media(max-width:760px){
+    /* ⚠️ 縦に3段（画面／タイムライン／設定）。タイムラインは真ん中に置く＝
+       画を見ながら尺を触れる。⚠️ ここは @media を1ブロックだけにする（後勝ちで壊れるため） */
+    :root{ --tlh:168px; --gut:44px; }
+    #stage{right:0;top:0;height:34dvh;bottom:auto;padding:12px;}
+    #tlwrap{top:34dvh;bottom:auto;}
+    #rack{top:calc(34dvh + var(--tlh));bottom:0;left:0;right:auto;width:100vw;max-width:100vw;
+      border-left:none;border-top:1px solid var(--line);}
+    #rack *{max-width:100%;}
+    #clipLane{height:48px;} #sndLane{height:38px;}
+    input[type=range]{height:42px;}
+    input[type=range]::-webkit-slider-thumb{width:22px;height:22px;margin-top:-9.5px;}
+    button,.btn,.seg button{min-height:38px;}
+    #tlbar button{padding:9px 12px;min-height:34px;font-size:10px;}
+    #helpBtn{top:10px;right:10px;}
+    #manual{padding:12px;}
+  }
+</style>
+
+<div id="title"><h1>連</h1><p>REN / KINOSHITA STUDIO</p></div>
+<button id="helpBtn" title="使い方">?</button>
+<div id="drop">ここに落とす</div>
+
+<div id="manual"><div class="sheet">
+  <button class="x" id="manualX">×</button>
+  <h2>連 REN の使い方</h2>
+  <p><b>作った画像や動画を放り込んで、1本の動画にする道具。</b>
+     Premiere を立ち上げずに、SNS に上げるところまでを1画面で終わらせる。</p>
+  <h3>入れる</h3>
+  <p>画面のどこにでも <b>ドラッグ＆ドロップ</b>（PNG / JPG / WebP / mp4 / webm）。
+     並びは<b>クリップをドラッグ</b>して入れ替え。<b>×</b>で外す。</p>
+  <h3>繋ぐ</h3>
+  <p><b>1枚の尺</b>＝画像1枚を何秒映すか。動画はその長さのまま流れる。
+     <b>済し</b>＝カットの間をどれだけ溶かすか（0 でパッと切り替え）。</p>
+  <h3>版面</h3>
+  <p>出る大きさ。<b>たて 9:16</b>＝リール／<b>正方形</b>＝フィード／<b>よこ 16:9</b>。
+     素材は版面に<b>収める</b>か<b>埋める</b>かを選べる。</p>
+  <h3>出す</h3>
+  <p><b>動画</b>＝mp4（使えないブラウザは webm）。<b>GIF</b>＝軽いが色数が減る。
+     ⚠️ 書き出しは<b>実時間かかる</b>（10秒の動画なら10秒）。</p>
+</div></div>
+
+<div id="stage"><canvas id="view"></canvas></div>
+
+<div id="rack">
+  <div class="unit" data-unit="src">
+    <div class="unit-head"><span class="led"></span><span class="unit-idx">01</span>
+      <span class="unit-name">CLIPS</span><span class="unit-jp">素材</span></div>
+    <div class="unit-body">
+      <div class="mod">⭐ 画面のどこにでも<b>ドラッグ＆ドロップ</b>（画像・動画・音源）。
+        並びと尺は<b>下のタイムライン</b>で触る＝掴んで入れ替え／右端で伸縮／<b>×</b>で外す</div>
+      <button class="btn" id="bAdd">素材を選ぶ</button>
+      <input type="file" id="file" accept="image/*,video/*" multiple style="display:none">
+      <div class="mod" id="srcNote"></div>
+    </div>
+  </div>
+
+  <div class="unit" data-unit="snd">
+    <div class="unit-head"><span class="led"></span><span class="unit-idx">02</span>
+      <span class="unit-name">SOUND</span><span class="unit-jp">音</span></div>
+    <div class="unit-body">
+      <div class="mod">⭐ 音源を入れると<b>下のタイムラインに波形</b>が出る。映像と<b>同じ時間軸</b>なので、
+        音の切れ目に合わせて尺を伸縮できる<br>
+        ⚠️ 書き出した動画に<b>音は入らない</b>（canvas を録っているため）。合わせるための目印</div>
+      <button class="btn" id="bSnd">音源を入れる</button>
+      <input type="file" id="sfile" accept="audio/*" style="display:none">
+      <div class="mod" id="sndNote"></div>
+    </div>
+  </div>
+
+  <div class="unit" data-unit="cut">
+    <div class="unit-head"><span class="led"></span><span class="unit-idx">03</span>
+      <span class="unit-name">CUT</span><span class="unit-jp">繋ぐ</span></div>
+    <div class="unit-body">
+      <div class="row"><label>HOLD<i>1枚の尺</i></label><input type="range" data-p="hold" min="2" max="60" step="1" value="12"><span class="val"></span></div>
+      <div class="row"><label>FADE<i>済し</i></label><input type="range" data-p="fade" min="0" max="20" step="1" value="0"><span class="val"></span></div>
+      <div class="mod">⭐ <b>1枚の尺</b>＝画像1枚を何秒映すか（動画はその長さのまま流れる）<br>
+        <b>済し</b>＝カットの間をどれだけ溶かすか。<b>0 でパッと切り替え</b></div>
+    </div>
+  </div>
+
+  <div class="unit" data-unit="frame">
+    <div class="unit-head"><span class="led"></span><span class="unit-idx">04</span>
+      <span class="unit-name">FRAME</span><span class="unit-jp">版面</span></div>
+    <div class="unit-body">
+      <div class="seg" data-seg="shape">
+        <button data-v="1" class="on">たて 9:16</button>
+        <button data-v="0">正方形</button>
+        <button data-v="2">よこ 16:9</button>
+      </div>
+      <div class="seg" data-seg="fitMode">
+        <button data-v="0" class="on">収める</button>
+        <button data-v="1">埋める</button>
+      </div>
+      <div class="row"><label>LONG<i>長辺</i></label><input type="range" data-p="long" min="480" max="1920" step="40" value="1280"><span class="val"></span></div>
+      <div class="row"><label>BG<i>地の色</i></label><input type="color" id="bg" value="#0a0a0a"></div>
+      <div class="mod" id="frameOut"></div>
+    </div>
+  </div>
+
+  <!-- ⭐⭐ 傾け（TILT）── 1枚の絵を、そのまま回して奥へ倒す。
+       🔴 最初は「同じ絵を何枚も撒く」ものを作ったが【やりたいことが違った】。
+          木下＝「二枚に増やしたいわけではなく、その一枚の画像を角度を変えたり
+          奥ゆきをつけたりしたい。散らばらせるつもりはない。
+          俺が他ツールで作成して一枚の画像として作成した意味がなくなるじゃん」。
+       ⭐ つまり【完成した1枚を壊さずに、置き方だけ変える】。増やさない。 -->
+  <div class="unit" data-unit="tilt">
+    <div class="unit-head"><span class="led"></span><span class="unit-idx">05</span>
+      <span class="unit-name">TILT</span><span class="unit-jp">傾け</span></div>
+    <div class="unit-body">
+      <div class="mod">⭐ 選んだ画像を<b>1枚のまま</b>、回して奥へ倒す。増やさない<br>
+        ⭐ <b>ステージの上でドラッグ</b>すると位置を動かせる</div>
+      <button class="btn" id="bTilt">傾ける</button>
+      <div class="row tilt-only"><label>TURN<i>回す</i></label><input type="range" id="tlRz" min="-180" max="180" step="1" value="-8"><span class="val"></span></div>
+      <div class="row tilt-only"><label>PITCH<i>上下に倒す</i></label><input type="range" id="tlRx" min="-70" max="70" step="1" value="24"><span class="val"></span></div>
+      <div class="row tilt-only"><label>YAW<i>左右に倒す</i></label><input type="range" id="tlRy" min="-70" max="70" step="1" value="-18"><span class="val"></span></div>
+      <div class="row tilt-only"><label>DEPTH<i>奥ゆき</i></label><input type="range" id="tlPs" min="0" max="100" step="1" value="55"><span class="val"></span></div>
+      <div class="row tilt-only"><label>SIZE<i>大きさ</i></label><input type="range" id="tlSc" min="10" max="200" step="1" value="80"><span class="val"></span></div>
+      <button class="btn tilt-only" id="bTiltReset">まっすぐに戻す</button>
+      <div class="mod">⭐ <b>奥ゆき</b>＝0 で平面のまま傾く（歪まない）／上げるほど<b>紙が奥へ倒れて台形になる</b>。
+        参照の版下はここが効いている</div>
+      <div class="note" id="tlNote"></div>
+    </div>
+  </div>
+
+  <div class="unit" data-unit="out">
+    <div class="unit-head"><span class="led"></span><span class="unit-idx">06</span>
+      <span class="unit-name">EXPORT</span><span class="unit-jp">出す</span></div>
+    <div class="unit-body">
+      <div class="row"><label>FPS<i>こま</i></label><input type="range" data-p="fps" min="12" max="30" step="1" value="30"><span class="val"></span></div>
+      <div class="grid2">
+        <button class="btn" id="bMovie">動画で出す</button>
+        <button class="btn" id="bGif">GIF で出す</button>
+      </div>
+      <div class="mod">⚠️ 書き出しは<b>実時間かかる</b>（10秒の動画なら10秒）<br>
+        ⭐ 動画＝mp4（使えないブラウザは webm）／GIF＝軽いが色数が減る</div>
+      <div class="mod" id="outNote"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ⭐⭐ 下のタイムライン。レーンを縦に積んで、再生ヘッドが全部を貫く -->
+<div id="tlwrap">
+  <div id="tlbar">
+    <button id="bPlay">▶ 再生</button>
+    <button id="bLoop" class="on">↻ ループ</button>
+    <button id="bSplit" title="再生ヘッドの所で切る">分割</button>
+    <span id="tclock">0.0 / 0.0s</span>
+    <span class="sp"></span>
+    <button id="zOut" title="縮める">−</button><span id="zLbl">1x</span><button id="zIn" title="広げる">＋</button>
+  </div>
+  <div id="lanes">
+    <div id="tlcontent">
+      <div id="ruler"></div>
+      <div class="lane"><div class="laneLabel">映像</div>
+        <div class="laneBody"><div id="clipLane" class="empty"></div></div></div>
+      <div class="lane"><div class="laneLabel">音</div>
+        <div class="laneBody"><div id="sndLane" class="empty"><canvas id="wave"></canvas></div></div></div>
+      <div id="playhead"><div id="phgrab"></div></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+/* ═══════════════════════════════════════════════════════════
+   連 REN ── 作った画像や動画を放り込んで1本にする
+   ⭐ 名前は木下が決定＝【連】。木下が SNS でやっている「連作」と同じ字。
+      道具と発信が同じ名前で繋がる。⚠️「繋ぐ」は礫（粒を繋いで面にする）と被るのでやめた
+   ⭐ 木下＝「出来上がった動画や画像を組み立てるツールが必要。
+      これがあれば作品をひとつの動画やgifとして公開できる」
+      「Premiere とか立ち上げるのめんどくさい」
+   ⭐ 繋ぎ方と録画の考え方は siren/_lookbook/play.html から持ち出した
+      （あちらは Siren 専用＝SVG を読んで繋ぐ。ここは【何でも入る】側）
+   ⚠️ 凝らない。切り替えと尺だけ＝Premiere に近づけない（木下の指示）
+   ═══════════════════════════════════════════════════════════ */
+const P = { hold:12, fade:0, shape:1, fitMode:0, long:1280, fps:30, bg:'#0a0a0a' };
+const clips = [];           // { type:'img'|'vid', el, name, url }
+let sel = -1, playing = false, loop = true, t0 = 0, raf = 0;
+
+const cv = document.getElementById('view');
+const g  = cv.getContext('2d');
+
+/* ── 版面 ── */
+function frameSize(){
+  const L = Math.round(P.long);
+  if(P.shape === 0) return { w:L, h:L };
+  if(P.shape === 2) return { w:L, h:Math.round(L*9/16) };
+  return { w:Math.round(L*9/16), h:L };
+}
+function resize(){
+  const f = frameSize();
+  if(cv.width !== f.w || cv.height !== f.h){ cv.width = f.w; cv.height = f.h; }
+  /* ⚠️ canvas の大きさは版面。画面に収めるのは CSS 側でやる（中身を触らない） */
+  const st = document.getElementById('stage').getBoundingClientRect();
+  const k = Math.min((st.width-24)/f.w, (st.height-24)/f.h);
+  cv.style.width = Math.max(1, f.w*k) + 'px';
+  cv.style.height = Math.max(1, f.h*k) + 'px';
+  const n = document.getElementById('frameOut');
+  if(n) n.innerHTML = `出る大きさ ＝ <b>${f.w} × ${f.h} px</b>`;
+}
+addEventListener('resize', resize);
+visualViewport?.addEventListener('resize', resize);
+
+/* ── 尺 ── */
+/* ⭐ クリップごとの尺。⚠️ 個別に決めていなければ全体の「1枚の尺」を使う
+   （前は全部同じだった＝木下がタイムラインを欲しがった理由のひとつ） */
+/* ⭐⭐ トリム＝Karuma（kamera_tk）から持ってきた考え方。
+   クリップは【素材のどこからどこまでを使うか】を in / out で持つ。
+   ⚠️ 画像には素材の中の時間が無いので、in/out ではなく尺そのもの（dur）を持つ。
+      ここを一緒くたにすると、画像の右端を引いたときに動画の式で壊れる。 */
+const srcLen = c => c.type === 'vid' ? Math.max(0.1, c.el.duration || 2) : Infinity;
+const inOf  = c => c.type === 'vid' ? (c.in || 0) : 0;
+const outOf = c => c.type === 'vid' ? (c.out != null ? c.out : srcLen(c)) : 0;
+const durOf = c => c.type === 'vid' ? Math.max(0.1, outOf(c) - inOf(c))
+                                    : (c.dur != null ? c.dur : P.hold / 10);
+const total = () => clips.reduce((s,c) => s + durOf(c), 0);
+/* 音を含めた「タイムライン全体の長さ」＝映像と音の長い方。⭐ どこまで音が余っているかが見える */
+const span  = () => Math.max(total(), sndBuf ? sndBuf.duration : 0, 1);
+/* いま何秒目か（止まっている時も覚えておく＝ヘッドを掴んで動かせるように） */
+let cur = 0;
+
+/* ── 描く ── */
+function drawOne(c, alpha){
+  /* ⭐ 傾けている絵は、格子に割って貼り直す（遠近をつけるため）。
+     ⚠️ 位置は【版面に対する割合】で持つ＝長辺を変えても書き出しても同じ絵になる */
+  if(c.tilt){ drawTilt(c, alpha); return; }
+  const el = c.el;
+  const iw = c.type === 'vid' ? el.videoWidth : el.naturalWidth;
+  const ih = c.type === 'vid' ? el.videoHeight : el.naturalHeight;
+  if(!iw || !ih) return;
+  /* ⭐ 収める＝全部入る／埋める＝版面いっぱい（はみ出しは切る） */
+  const k = P.fitMode ? Math.max(cv.width/iw, cv.height/ih)
+                      : Math.min(cv.width/iw, cv.height/ih);
+  const w = iw*k, h = ih*k;
+  g.globalAlpha = alpha;
+  g.drawImage(el, (cv.width-w)/2, (cv.height-h)/2, w, h);
+  g.globalAlpha = 1;
+}
+/* ══ 傾け TILT ═══════════════════════════════════════════
+   ⭐ 1枚の絵を【増やさずに】回して奥へ倒す。完成した絵を壊さない＝置き方だけ変える。
+   ⭐⭐ 遠近（台形の歪み）は canvas に直接は無いので、絵を細かい格子に割って
+      1マスずつ三角形2枚で貼る＝【テクスチャを貼る】やり方で作る。
+      ⚠️ 割りが粗いと歪みが折れ線になる。24分割で足りている。
+   ⚠️ マス目の継ぎ目に髪の毛のような線が出るので、三角形を重心から少しだけ広げて貼る。 */
+const TILT0 = { rz:-8, rx:24, ry:-18, ps:55, sc:80, x:0.5, y:0.5 };
+const TILT_IDS = { tlRz:'rz', tlRx:'rx', tlRy:'ry', tlPs:'ps', tlSc:'sc' };
+
+function tiltRead(){
+  const t = {};
+  Object.entries(TILT_IDS).forEach(([id,k]) => {
+    const e = document.getElementById(id);
+    t[k] = e ? +e.value : TILT0[k];
+  });
+  return t;
+}
+/* 絵の面の1点（u,v は -0.5〜0.5）を、回して倒して、遠近をかけて画面の座標にする */
+function tiltProject(u, v, t, iw, ih){
+  const W = cv.width, H = cv.height;
+  const base = Math.min(W/iw, H/ih) * (t.sc/100);
+  const rz = t.rz*Math.PI/180, rx = t.rx*Math.PI/180, ry = t.ry*Math.PI/180;
+  let x = u*iw*base, y = v*ih*base, z = 0;
+  const c1 = Math.cos(rz), s1 = Math.sin(rz);
+  let X = x*c1 - y*s1, Y = x*s1 + y*c1, Z = z;
+  const c2 = Math.cos(rx), s2 = Math.sin(rx);           // 上下に倒す
+  let Y2 = Y*c2 - Z*s2, Z2 = Y*s2 + Z*c2;
+  const c3 = Math.cos(ry), s3 = Math.sin(ry);           // 左右に倒す
+  let X3 = X*c3 + Z2*s3, Z3 = -X*s3 + Z2*c3;
+  /* ⭐ 奥ゆき0＝遠近なし（平面のまま傾くだけ）。上げるほど焦点が近づいて台形が強くなる */
+  let k = 1;
+  if(t.ps > 0){
+    const f = Math.max(W,H) * (0.55 + (100 - t.ps)/100 * 6);
+    k = f / Math.max(f*0.15, f - Z3);
+  }
+  return [ (t.x ?? 0.5)*W + X3*k, (t.y ?? 0.5)*H + Y2*k ];
+}
+/* 三角形1枚ぶん、元画像を貼る（アフィン変換を解いて置く） */
+function tiltTri(img, s0,s1,s2, d0,d1,d2){
+  /* 継ぎ目消し＝重心から 0.6px だけ外へ広げる */
+  const cx = (d0[0]+d1[0]+d2[0])/3, cy = (d0[1]+d1[1]+d2[1])/3;
+  const ex = pt => { const dx = pt[0]-cx, dy = pt[1]-cy, L = Math.hypot(dx,dy) || 1;
+                     return [pt[0] + dx/L*0.6, pt[1] + dy/L*0.6]; };
+  const e0 = ex(d0), e1 = ex(d1), e2 = ex(d2);
+  g.save();
+  g.beginPath(); g.moveTo(e0[0],e0[1]); g.lineTo(e1[0],e1[1]); g.lineTo(e2[0],e2[1]); g.closePath(); g.clip();
+  const [x0,y0]=s0,[x1,y1]=s1,[x2,y2]=s2, [u0,v0]=d0,[u1,v1]=d1,[u2,v2]=d2;
+  const det = (x1-x0)*(y2-y0) - (x2-x0)*(y1-y0);
+  if(det){
+    const a = ((u1-u0)*(y2-y0) - (u2-u0)*(y1-y0)) / det;
+    const b = ((u2-u0)*(x1-x0) - (u1-u0)*(x2-x0)) / det;
+    const c = ((v1-v0)*(y2-y0) - (v2-v0)*(y1-y0)) / det;
+    const d = ((v2-v0)*(x1-x0) - (v1-v0)*(x2-x0)) / det;
+    g.transform(a, c, b, d, u0 - a*x0 - b*y0, v0 - c*x0 - d*y0);
+    g.drawImage(img, 0, 0);
+  }
+  g.restore();
+}
+function drawTilt(c, alpha){
+  const el = c.el;
+  const iw = el.naturalWidth || el.videoWidth, ih = el.naturalHeight || el.videoHeight;
+  if(!iw || !ih) return;
+  const t = c.tilt, N = 24;
+  const pts = [];
+  for(let j = 0; j <= N; j++){
+    const row = [];
+    for(let i = 0; i <= N; i++) row.push(tiltProject(i/N - 0.5, j/N - 0.5, t, iw, ih));
+    pts.push(row);
+  }
+  g.globalAlpha = alpha;
+  for(let j = 0; j < N; j++) for(let i = 0; i < N; i++){
+    const su = i/N*iw, sv = j/N*ih, su2 = (i+1)/N*iw, sv2 = (j+1)/N*ih;
+    const p00 = pts[j][i], p10 = pts[j][i+1], p01 = pts[j+1][i], p11 = pts[j+1][i+1];
+    tiltTri(el, [su,sv],[su2,sv],[su,sv2],  p00,p10,p01);
+    tiltTri(el, [su2,sv],[su2,sv2],[su,sv2], p10,p11,p01);
+  }
+  g.globalAlpha = 1;
+}
+
+function tiltNote(){
+  const n = document.getElementById('tlNote'), b = document.getElementById('bTilt');
+  const c = clips[sel], on = !!(c && c.tilt);
+  document.body.classList.toggle('has-tilt', on);
+  if(b){ b.classList.toggle('on', on); b.textContent = on ? '傾けをやめる' : '傾ける'; }
+  if(!n) return;
+  n.innerHTML = on ? '傾けている。<b>ステージの上でドラッグして動かせる</b>'
+    : (clips.length ? 'クリップを選んで押す' : '素材を入れてから押す');
+}
+document.getElementById('bTilt').onclick = () => {
+  let c = clips[sel];
+  if(c && c.tilt){ c.tilt = null; tiltNote(); if(!playing) frameAt(cur); return; }
+  if(!c){ if(!clips.length){ tiltNote(); return; } sel = 0; c = clips[0]; buildClips(); }
+  const t = tiltRead(); t.x = 0.5; t.y = 0.5;
+  c.tilt = t; tiltNote(); if(!playing) frameAt(cur);
+};
+document.getElementById('bTiltReset').onclick = () => {
+  const c = clips[sel]; if(!c || !c.tilt) return;
+  Object.entries(TILT_IDS).forEach(([id,k]) => {
+    const e = document.getElementById(id); if(!e) return;
+    e.value = (k === 'sc') ? 100 : 0;
+    const v = e.parentElement.querySelector('.val'); if(v) v.textContent = e.value;
+  });
+  Object.assign(c.tilt, tiltRead(), { x:0.5, y:0.5 });
+  if(!playing) frameAt(cur);
+};
+Object.keys(TILT_IDS).forEach(id => {
+  const r = document.getElementById(id); if(!r) return;
+  const v = r.parentElement.querySelector('.val');
+  const sync = () => { if(v) v.textContent = r.value; };
+  r.addEventListener('input', () => {
+    sync();
+    const c = clips[sel];
+    if(c && c.tilt){ Object.assign(c.tilt, tiltRead()); if(!playing) frameAt(cur); }
+  });
+  sync();
+});
+/* ⭐ ステージの上でドラッグして位置を動かす。
+   ⚠️ canvas は縮めて表示しているので、クリック座標を版面の割合に直してから使う */
+cv.addEventListener('pointerdown', e => {
+  const c = clips[sel];
+  if(!c || !c.tilt) return;
+  e.preventDefault();
+  const r = cv.getBoundingClientRect();
+  const ox = c.tilt.x - (e.clientX - r.left) / r.width;
+  const oy = c.tilt.y - (e.clientY - r.top)  / r.height;
+  const move = e2 => {
+    c.tilt.x = (e2.clientX - r.left) / r.width + ox;
+    c.tilt.y = (e2.clientY - r.top)  / r.height + oy;
+    if(!playing) frameAt(cur);
+  };
+  const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
+  addEventListener('pointermove', move); addEventListener('pointerup', up);
+});
+cv.style.touchAction = 'none';
+
+function frameAt(t){
+  g.fillStyle = P.bg; g.fillRect(0,0,cv.width,cv.height);
+  if(!clips.length) return;
+  let acc = 0, i = 0;
+  for(; i < clips.length; i++){
+    const d = durOf(clips[i]);
+    if(t < acc + d) break;
+    acc += d;
+  }
+  if(i >= clips.length) i = clips.length - 1;
+  const c = clips[i], local = t - acc, d = durOf(c);
+  if(c.type === 'vid'){
+    /* ⚠️ 動画は「いま何秒目か」を自分で合わせる（再生任せにすると繋ぎでずれる）
+       ⭐ トリムしているので【素材の中の時刻＝in + local】を見る */
+    const want = inOf(c) + Math.min(local, d - 0.02);
+    if(Math.abs(c.el.currentTime - want) > 0.12) c.el.currentTime = want;
+  }
+  const fade = P.fade / 10;
+  if(fade > 0 && i < clips.length-1 && local > d - fade){
+    const u = (local - (d - fade)) / fade;
+    drawOne(c, 1);
+    const nx = clips[i+1];
+    if(nx.type === 'vid' && Math.abs(nx.el.currentTime - inOf(nx)) > 0.12) nx.el.currentTime = inOf(nx);
+    drawOne(nx, u);
+  }else{
+    drawOne(c, 1);
+  }
+}
+function tick(){
+  raf = requestAnimationFrame(tick);
+  if(!playing) return;
+  const T = total();
+  if(T <= 0) return;
+  let t = (performance.now() - t0) / 1000;
+  if(t >= T){
+    if(loop){ t0 = performance.now(); t = 0; }
+    else { playing = false; document.getElementById('bPlay').textContent = '▶ 再生'; t = T - 0.001; }
+  }
+  cur = t;
+  frameAt(t);
+  setHead(t);          /* ⭐ 再生ヘッドが全レーンを貫いて動く */
+}
+requestAnimationFrame(tick);
+
+/* ── 素材 ── */
+function addFiles(list){
+  /* ⭐ 落としたものを【種類で振り分ける】。木下＝「画像や音源はドラッグで入れれるように」。
+     🔴 前は image/video だけ通していたので、音源を落としても【黙って捨てられていた】。 */
+  const all = [...list];
+  const au = all.find(f => f.type.startsWith('audio/'));
+  if(au) loadSound(au);
+  const files = all.filter(f => f.type.startsWith('image/') || f.type.startsWith('video/'));
+  let left = files.length;
+  if(!left){ if(au) afterAdd(); return; }
+  files.forEach(f => {
+    const url = URL.createObjectURL(f);
+    if(f.type.startsWith('video/')){
+      const v = document.createElement('video');
+      v.src = url; v.muted = true; v.playsInline = true; v.preload = 'auto';
+      v.onloadedmetadata = () => { clips.push({ type:'vid', el:v, name:f.name, url }); if(!--left) afterAdd(); };
+      v.onerror = () => { if(!--left) afterAdd(); };
+    }else{
+      const im = new Image();
+      im.onload = () => { clips.push({ type:'img', el:im, name:f.name, url }); if(!--left) afterAdd(); };
+      im.onerror = () => { if(!--left) afterAdd(); };
+      im.src = url;
+    }
+  });
+}
+function afterAdd(){ layout(); if(!playing) frameAt(cur); note(); }
+function note(){
+  const n = document.getElementById('srcNote');
+  if(n) n.innerHTML = clips.length ? `${clips.length}本 ／ 全体 <b>${total().toFixed(1)}秒</b>` : '';
+}
+/* ══ タイムライン ═════════════════════════════════════════
+   ⭐⭐ 下に固定した【1本の時間軸】。映像レーンと音レーンが同じ尺で並び、
+      再生ヘッドが両方を貫く（木下 2026-08-02＝「Premiere と同じ思想でいこう」）。
+   🔴 前は「クリップの四角」と「尺の帯」が右パネルに別々にあり、時間軸が繋がっていなかった。
+   ⭐ トリム（左右で素材のどこを使うか）と分割は Karuma（kamera_tk）から考え方を持ってきた。 */
+const lanesEl  = document.getElementById('lanes');
+const contEl   = document.getElementById('tlcontent');
+const rulerEl  = document.getElementById('ruler');
+const clipLane = document.getElementById('clipLane');
+const sndLane  = document.getElementById('sndLane');
+const headEl   = document.getElementById('playhead');
+let zoom = 1;
+const GUT = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--gut')) || 56;
+
+/* ⭐ 1秒が何px か。拡大1x＝【全体がちょうど収まる】を基準にする＝開いた瞬間に全部見える */
+function pps(){
+  const avail = Math.max(120, lanesEl.clientWidth - GUT() - 32);
+  return avail / span() * zoom;
+}
+function fmt(t){ return t.toFixed(1); }
+function setHead(t){
+  headEl.style.left = (GUT() + t * pps()) + 'px';
+  const cl = document.getElementById('tclock');
+  if(cl) cl.textContent = fmt(t) + ' / ' + fmt(total()) + 's';
+}
+/* 目盛り。⭐ 1目盛りが50px以上になる刻みを選ぶ＝拡大しても混まない */
+function buildRuler(){
+  rulerEl.innerHTML = '';
+  const p = pps(), S = span();
+  const step = [0.5,1,2,5,10,15,30,60,120,300].find(v => v * p >= 50) || 600;
+  for(let t = 0; t <= S + 1e-6; t += step){
+    const x = t * p;
+    const sp = document.createElement('span'); sp.style.left = x + 'px';
+    sp.textContent = step < 1 ? t.toFixed(1) : String(Math.round(t)); rulerEl.append(sp);
+    const ti = document.createElement('i'); ti.style.left = x + 'px'; rulerEl.append(ti);
+  }
+}
+function layout(){
+  contEl.style.width = (GUT() + span() * pps() + 16) + 'px';
+  buildRuler(); buildClips(); drawWave(); setHead(cur);
+  const z = document.getElementById('zLbl');
+  if(z) z.textContent = (zoom < 10 ? zoom.toFixed(1).replace(/\.0$/,'') : String(Math.round(zoom))) + 'x';
+}
+addEventListener('resize', layout);
+
+function buildClips(){
+  clipLane.innerHTML = '';
+  clipLane.classList.toggle('empty', !clips.length);
+  const p = pps();
+  let acc = 0;
+  clips.forEach((c, i) => {
+    const d = durOf(c);
+    const el = document.createElement('div');
+    el.className = 'clipseg' + (i === sel ? ' sel' : '');
+    el.style.left = (acc * p) + 'px';
+    el.style.width = Math.max(12, d * p) + 'px';
+    el.draggable = true;
+    const th = c.type === 'vid' ? document.createElement('video') : document.createElement('img');
+    th.src = c.url; if(c.type === 'vid'){ th.muted = true; th.playsInline = true; }
+    el.append(th);
+    const n = document.createElement('span'); n.className = 'n'; n.textContent = i+1; el.append(n);
+    const tt = document.createElement('span'); tt.className = 't'; tt.textContent = d.toFixed(1)+'s'; el.append(tt);
+    const x = document.createElement('button'); x.className = 'x'; x.textContent = '×';
+    x.onclick = e => { e.stopPropagation(); clips.splice(i,1); sel = -1; afterAdd(); };
+    el.append(x);
+    el.onclick = e => { e.stopPropagation(); sel = i; buildClips(); if(typeof tiltNote === 'function') tiltNote(); };
+    /* 並び替え＝掴んで入れ替えるだけ（凝らない） */
+    el.ondragstart = e => e.dataTransfer.setData('text/plain', String(i));
+    el.ondragover  = e => e.preventDefault();
+    el.ondrop = e => {
+      e.preventDefault(); e.stopPropagation();
+      const from = +e.dataTransfer.getData('text/plain');
+      if(isNaN(from) || from === i) return;
+      const [m] = clips.splice(from,1); clips.splice(i,0,m);
+      sel = i; afterAdd();
+    };
+    /* ⭐ 端を掴んで伸縮。⚠️ 動画は【素材のどこまで使うか(out)】／画像は【尺そのもの】＝式が違う */
+    const grab = (side) => ev => {
+      ev.stopPropagation(); ev.preventDefault();
+      const x0 = ev.clientX, pp = pps();
+      const in0 = inOf(c), out0 = outOf(c), d0 = d;
+      const move = e2 => {
+        const dt = (e2.clientX - x0) / pp;
+        if(c.type === 'vid'){
+          if(side === 'l') c.in  = Math.max(0, Math.min(out0 - 0.1, in0 + dt));
+          else             c.out = Math.min(srcLen(c), Math.max(in0 + 0.1, out0 + dt));
+        }else{
+          c.dur = Math.max(0.2, Math.round((d0 + (side === 'l' ? -dt : dt)) * 10) / 10);
+        }
+        layout(); note(); if(!playing) frameAt(cur);
+      };
+      const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
+      addEventListener('pointermove', move); addEventListener('pointerup', up);
+    };
+    /* ⚠️ 左のトリムは動画だけ（画像は素材の中に時間が無い） */
+    if(c.type === 'vid'){
+      const hl = document.createElement('div'); hl.className = 'h l';
+      hl.onpointerdown = grab('l'); el.append(hl);
+    }
+    const hr = document.createElement('div'); hr.className = 'h'; hr.onpointerdown = grab('r'); el.append(hr);
+    acc += d;
+    clipLane.append(el);
+  });
+}
+
+/* ⭐ 分割＝再生ヘッドの所で2つに切る（Karuma の splitClip と同じ考え方）。
+   ⚠️ 端すぎる所では切らない＝長さ0のクリップを作らない */
+function splitAt(t){
+  if(!clips.length) return;
+  let acc = 0, i = 0;
+  for(; i < clips.length; i++){ const d = durOf(clips[i]); if(t < acc + d) break; acc += d; }
+  if(i >= clips.length) return;
+  const c = clips[i], local = t - acc, d = durOf(c);
+  if(local < 0.1 || local > d - 0.1) return;
+  if(c.type === 'vid'){
+    const cut = inOf(c) + local;
+    const v = document.createElement('video');
+    v.src = c.url; v.muted = true; v.playsInline = true; v.preload = 'auto';
+    clips.splice(i+1, 0, { type:'vid', el:v, name:c.name, url:c.url, in:cut, out:outOf(c) });
+    c.out = cut;
+  }else{
+    const im = new Image(); im.src = c.url;
+    clips.splice(i+1, 0, { type:'img', el:im, name:c.name, url:c.url, dur:Math.round((d-local)*10)/10 });
+    c.dur = Math.round(local*10)/10;
+  }
+  sel = i + 1; afterAdd();
+}
+
+/* ── ヘッドを動かす（目盛り・レーンをクリック／掴んでスクラブ）── */
+function seekTo(t){
+  const S = span();
+  cur = Math.max(0, Math.min(S, t));
+  if(playing) t0 = performance.now() - cur * 1000;
+  frameAt(cur); setHead(cur);
+}
+function tFromEvent(e){
+  const r = contEl.getBoundingClientRect();
+  return (e.clientX - r.left - GUT()) / pps();
+}
+function scrub(e){
+  e.preventDefault();
+  seekTo(tFromEvent(e));
+  const move = e2 => seekTo(tFromEvent(e2));
+  const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
+  addEventListener('pointermove', move); addEventListener('pointerup', up);
+}
+rulerEl.addEventListener('pointerdown', scrub);
+document.getElementById('phgrab').addEventListener('pointerdown', e => { e.stopPropagation(); scrub(e); });
+/* ⚠️ レーンの地（クリップの無い所）を押したときもシークする。クリップ自体は選択が優先 */
+[clipLane, sndLane].forEach(el => el.addEventListener('pointerdown', e => { if(e.target === el) scrub(e); }));
+
+document.getElementById('zIn').onclick  = () => { zoom = Math.min(24, zoom * 1.6); layout(); };
+document.getElementById('zOut').onclick = () => { zoom = Math.max(1, zoom / 1.6); layout(); };
+document.getElementById('bSplit').onclick = () => splitAt(cur);
+
+document.getElementById('bAdd').onclick = () => document.getElementById('file').click();
+document.getElementById('file').addEventListener('change', e => { addFiles(e.target.files); e.target.value=''; });
+const dropEl = document.getElementById('drop');
+addEventListener('dragover', e => { e.preventDefault(); dropEl.classList.add('on'); });
+addEventListener('dragleave', e => { if(e.relatedTarget === null) dropEl.classList.remove('on'); });
+addEventListener('drop', e => { e.preventDefault(); dropEl.classList.remove('on'); addFiles(e.dataTransfer.files); });
+
+/* ══ 音 ══════════════════════════════════════════════════
+   ⭐ 木下＝「音源が可視化して見えるように波形は出しておいて」。
+     ⚠️ 書き出した動画に音は入らない（canvas を録っているので）。
+        ここは【尺を音に合わせるための目印】として出す。
+   ⚠️ 波形は毎フレーム描かない＝読み込んだときに一度だけ描く（重いので）。 */
+let snd = null, sndBuf = null;
+const waveCv = document.getElementById('wave');
+function drawWave(){
+  /* ⭐⭐ 音は【映像と同じ時間軸】で描く。ここが揃っていないと、音の切れ目に尺を合わせられない。
+     ⚠️ 音が映像より長ければ、その分だけ右にはみ出す＝どれだけ余っているかが目で分かる。
+     ⚠️ 毎フレームは描かない（重い）。尺・拡大・読み込みが変わったときだけ。 */
+  const c = waveCv, g2 = c.getContext('2d');
+  if(!g2) return;
+  sndLane.classList.toggle('empty', !sndBuf);
+  const p = pps();
+  const w = Math.max(1, Math.round(span() * p));
+  const h = sndLane.clientHeight || 46;
+  c.style.width = w + 'px'; c.style.height = h + 'px';
+  if(c.width !== w*2 || c.height !== h*2){ c.width = w*2; c.height = h*2; }
+  g2.setTransform(2,0,0,2,0,0);
+  g2.clearRect(0,0,w,h);
+  if(!sndBuf) return;
+  const aw = Math.max(1, Math.round(sndBuf.duration * p));   // 音そのものが占める幅
+  const d = sndBuf.getChannelData(0), step = Math.max(1, Math.floor(d.length / aw));
+  g2.strokeStyle = getComputedStyle(document.body).color; g2.globalAlpha = .5;
+  g2.beginPath();
+  for(let x = 0; x < aw; x++){
+    let mn = 1, mx = -1;
+    for(let i = 0; i < step; i++){ const v = d[x*step+i] || 0; if(v<mn)mn=v; if(v>mx)mx=v; }
+    g2.moveTo(x+.5, h/2 + mn*h/2*.92);
+    g2.lineTo(x+.5, h/2 + mx*h/2*.92);
+  }
+  g2.stroke(); g2.globalAlpha = 1;
+  /* ⭐ 映像の終わりから先＝音が余っている所を沈める（どこまで届いているかが見える） */
+  const T = total();
+  if(sndBuf.duration > T){
+    g2.fillStyle = getComputedStyle(document.body).backgroundColor;
+    g2.globalAlpha = .55; g2.fillRect(T*p, 0, w - T*p, h); g2.globalAlpha = 1;
+  }
+}
+/* 音源を読む（ボタンからでもドロップからでも同じ道を通す） */
+async function loadSound(f){
+  const url = URL.createObjectURL(f);
+  snd = new Audio(url); snd.loop = false;
+  try{
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    sndBuf = await ac.decodeAudioData(await f.arrayBuffer());
+    const n = document.getElementById('sndNote');
+    if(n) n.innerHTML = `${f.name} ／ <b>${sndBuf.duration.toFixed(1)}秒</b>`;
+  }catch(err){
+    const n = document.getElementById('sndNote');
+    if(n) n.textContent = '波形が読めなかった（再生はできる）';
+  }
+  layout();
+}
+document.getElementById('bSnd').onclick = () => document.getElementById('sfile').click();
+document.getElementById('sfile').addEventListener('change', e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if(f) loadSound(f);
+});
+
+/* ── 再生 ── */
+document.getElementById('bPlay').onclick = e => {
+  if(!clips.length) return;
+  playing = !playing;
+  if(playing){ t0 = performance.now(); clips.forEach(c => c.type==='vid' && c.el.play().catch(()=>{}));
+    if(snd){ snd.currentTime = 0; snd.play().catch(()=>{}); } }
+  else { clips.forEach(c => c.type==='vid' && c.el.pause()); if(snd) snd.pause(); }
+  e.target.textContent = playing ? '‖ 止める' : '▶ 再生';
+};
+document.getElementById('bLoop').onclick = e => { loop = !loop; e.target.classList.toggle('on', loop); };
+
+/* ══ 出す ══════════════════════════════════════════════════
+   ⚠️ 書き出しは【実時間かかる】＝10秒の動画なら10秒。
+      canvas を録るしかないので、早送りできない（そこは正直に出す）。 */
+const dl = (blob, name) => {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  if(/iP(hone|ad|od)/.test(navigator.userAgent)) window.open(url, '_blank');
+  setTimeout(() => URL.revokeObjectURL(url), 8000);
+};
+const outNote = t => { const n=document.getElementById('outNote'); if(n) n.textContent = t; };
+
+document.getElementById('bMovie').onclick = () => {
+  const T = total();
+  if(!clips.length || T <= 0) return;
+  /* ⭐ mp4 が使えるなら mp4（SNS にそのまま上げられる）。駄目なら webm */
+  const types = ['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm'];
+  const mime = types.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || 'video/webm';
+  const rec = new MediaRecorder(cv.captureStream(P.fps), { mimeType: mime });
+  const chunks = [];
+  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  rec.onstop = () => {
+    dl(new Blob(chunks, {type:mime}), 'ren_' + Date.now() + (mime.includes('mp4') ? '.mp4' : '.webm'));
+    outNote('出した（' + (mime.includes('mp4') ? 'mp4' : 'webm') + '）');
+  };
+  outNote('書き出し中… ' + T.toFixed(1) + '秒');
+  playing = true; t0 = performance.now();
+  clips.forEach(c => c.type==='vid' && c.el.play().catch(()=>{}));
+  rec.start();
+  setTimeout(() => { rec.stop(); playing = false;
+    document.getElementById('bPlay').textContent = '▶ 再生'; }, T*1000 + 120);
+};
+
+/* ⭐ GIF ── 外の道具を使わずに自分で作る（1ファイルで完結させるため）。
+   ⚠️ GIF は256色まで。⭐ 色は毎回【その絵から作る】（固定パレットだと濁る）。 */
+document.getElementById('bGif').onclick = async () => {
+  const T = total();
+  if(!clips.length || T <= 0) return;
+  const fps = Math.min(P.fps, 20);            // ⚠️ GIF は重いのでこま数を抑える
+  const n = Math.max(2, Math.round(T * fps));
+  outNote('GIF を作っている… 0/' + n);
+  const was = playing; playing = false;
+  const frames = [];
+  for(let i = 0; i < n; i++){
+    frameAt(T * i / n);
+    frames.push(g.getImageData(0,0,cv.width,cv.height));
+    if(i % 5 === 0){ outNote('GIF を作っている… ' + i + '/' + n); await new Promise(r => setTimeout(r)); }
+  }
+  outNote('まとめている…');
+  await new Promise(r => setTimeout(r, 30));
+  const blob = encodeGif(frames, cv.width, cv.height, Math.round(100/fps));
+  dl(blob, 'ren_' + Date.now() + '.gif');
+  outNote('出した（GIF）');
+  playing = was;
+};
+
+/* ── GIF を書く（GIF89a・フレームごとに色を作る） ── */
+function encodeGif(frames, W, H, delay){
+  const out = [];
+  const b  = v => out.push(v & 255);
+  const s  = v => { b(v); b(v >> 8); };
+  const str = t => { for(const ch of t) b(ch.charCodeAt(0)); };
+  str('GIF89a'); s(W); s(H); b(0x70); b(0); b(0);      // 全体パレットは持たない
+  str('!'); b(255); b(11); str('NETSCAPE2.0'); b(3); b(1); s(0); b(0);   // 無限ループ
+  frames.forEach(f => {
+    const { pal, idx } = quantize(f.data, W*H);
+    str('!'); b(0xF9); b(4); b(0x04); s(delay); b(0); b(0);              // 待ち時間
+    str(','); s(0); s(0); s(W); s(H); b(0x87);                           // 局所パレット 256
+    for(let i = 0; i < 256; i++){ const c = pal[i] || [0,0,0]; b(c[0]); b(c[1]); b(c[2]); }
+    lzw(idx, 8, out);
+  });
+  b(0x3B);
+  return new Blob([new Uint8Array(out)], { type:'image/gif' });
+}
+/* ⚠️ 中央値分割まではやらない。⭐ よく出る色を数えて上位256色（8bitの発想と同じ） */
+function quantize(d, n){
+  const cnt = new Map();
+  for(let i = 0; i < n; i++){
+    const k = ((d[i*4] >> 3) << 10) | ((d[i*4+1] >> 3) << 5) | (d[i*4+2] >> 3);
+    cnt.set(k, (cnt.get(k) || 0) + 1);
+  }
+  const top = [...cnt.entries()].sort((a,x) => x[1]-a[1]).slice(0,256).map(e => e[0]);
+  const pal = top.map(k => [((k>>10)&31)<<3, ((k>>5)&31)<<3, (k&31)<<3]);
+  const map = new Map(); top.forEach((k,i) => map.set(k,i));
+  const idx = new Uint8Array(n);
+  for(let i = 0; i < n; i++){
+    const k = ((d[i*4] >> 3) << 10) | ((d[i*4+1] >> 3) << 5) | (d[i*4+2] >> 3);
+    let v = map.get(k);
+    if(v === undefined){                                  // 無い色は一番近いものへ
+      const r=(k>>10)&31, gg=(k>>5)&31, bb=k&31;
+      let best=0, bd=1e9;
+      for(let j=0;j<pal.length;j++){
+        const dr=(pal[j][0]>>3)-r, dg=(pal[j][1]>>3)-gg, db=(pal[j][2]>>3)-bb;
+        const q=dr*dr+dg*dg+db*db; if(q<bd){bd=q;best=j;}
+      }
+      v = best; map.set(k, v);
+    }
+    idx[i] = v;
+  }
+  return { pal, idx };
+}
+function lzw(idx, minCode, out){
+  const clear = 1 << minCode, eoi = clear + 1;
+  let size = minCode + 1, next = eoi + 1;
+  let dict = new Map(), cur = -1, bits = 0, acc = 0;
+  const buf = [];
+  const flush = () => { while(buf.length){ const n = Math.min(255, buf.length); out.push(n); for(let i=0;i<n;i++) out.push(buf.shift()); } };
+  const put = code => {
+    acc |= code << bits; bits += size;
+    while(bits >= 8){ buf.push(acc & 255); acc >>= 8; bits -= 8; }
+    if(buf.length >= 255){ out.push(255); for(let i=0;i<255;i++) out.push(buf.shift()); }
+  };
+  out.push(minCode);
+  put(clear);
+  for(let i = 0; i < idx.length; i++){
+    const k = idx[i];
+    if(cur < 0){ cur = k; continue; }
+    const key = cur * 4096 + k;
+    if(dict.has(key)) cur = dict.get(key);
+    else{
+      put(cur);
+      if(next < 4096){ dict.set(key, next++); if(next > (1<<size) && size < 12) size++; }
+      else { put(clear); dict = new Map(); size = minCode+1; next = eoi+1; }
+      cur = k;
+    }
+  }
+  if(cur >= 0) put(cur);
+  put(eoi);
+  if(bits > 0) buf.push(acc & 255);
+  flush();
+  out.push(0);
+}
+
+/* ── つまみ ── */
+document.querySelectorAll('input[type=range][data-p]').forEach(r => {
+  const v = r.parentElement.querySelector('.val');
+  const sync = () => {
+    P[r.dataset.p] = +r.value;
+    if(v) v.textContent = (r.dataset.p === 'hold' || r.dataset.p === 'fade')
+      ? (+r.value/10).toFixed(1) + '秒' : r.value;
+    if(r.dataset.p === 'long') resize();
+    note(); drawWave(); if(!playing) frameAt(0);
+  };
+  r.addEventListener('input', sync); sync();
+});
+document.querySelectorAll('.seg[data-seg]').forEach(seg => {
+  seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    seg.querySelectorAll('button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    P[seg.dataset.seg] = +b.dataset.v;
+    resize(); if(!playing) frameAt(0);
+  }));
+});
+document.getElementById('bg').addEventListener('input', e => {
+  P.bg = e.target.value; if(!playing) frameAt(0);
+});
+document.querySelectorAll('.unit-head').forEach(h => h.addEventListener('click', () => {
+  h.parentElement.classList.toggle('off');
+}));
+const manual = document.getElementById('manual');
+document.getElementById('helpBtn').onclick = () => manual.classList.add('on');
+document.getElementById('manualX').onclick = () => manual.classList.remove('on');
+manual.onclick = e => { if(e.target === manual) manual.classList.remove('on'); };
+
+/* ══ キーボード ═══════════════════════════════════════════
+   ⭐ 木下＝「エンターで再生とかではないの？」。編集ソフトはスペースが標準なので【両方】効かせる。
+   ⚠️ 入力欄に触っている時は横取りしない（数値を打てなくなる）。 */
+addEventListener('keydown', e => {
+  const t = e.target;
+  if(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  if(e.key === ' ' || e.key === 'Enter'){ e.preventDefault(); document.getElementById('bPlay').click(); }
+  else if(e.key === 's' || e.key === 'S'){ e.preventDefault(); splitAt(cur); }
+  else if(e.key === 'ArrowRight'){ e.preventDefault(); seekTo(cur + (e.shiftKey ? 1 : 0.1)); }
+  else if(e.key === 'ArrowLeft'){  e.preventDefault(); seekTo(cur - (e.shiftKey ? 1 : 0.1)); }
+  else if(e.key === 'Home'){ e.preventDefault(); seekTo(0); }
+});
+
+/* ══ 控える（設定を覚えておく）═══════════════════════════
+   ⭐ 木下＝「ローカルにメモリーは入れておいて。リロードで毎回消えるのだるい」。
+   ⚠️ 覚えるのは【設定だけ】。素材（画像・動画・音源）は Blob の URL なので
+      リロードで寿命が切れる＝残すには IndexedDB に中身ごと入れる必要がある（別作業）。
+      できないことを覚えたふりにしない＝開いた時に「素材はもう一度入れる」とだけ言う。 */
+const MEM = 'ren_tk_v1';
+let memT = 0;
+function memSave(){
+  clearTimeout(memT);
+  memT = setTimeout(() => {
+    try{
+      const bd = {};
+      Object.keys(TILT_IDS).forEach(id => { const e = document.getElementById(id); if(e) bd[id] = e.value; });
+      localStorage.setItem(MEM, JSON.stringify({ P, bd, loop, zoom, help: document.body.classList.contains('help') }));
+    }catch(_){}
+  }, 250);
+}
+function memLoad(){
+  let d = null;
+  try{ d = JSON.parse(localStorage.getItem(MEM) || 'null'); }catch(_){}
+  if(!d) return;
+  Object.assign(P, d.P || {});
+  /* つまみ・セグメント・色を、覚えている値に合わせ直す */
+  document.querySelectorAll('input[type=range][data-p]').forEach(r => {
+    if(P[r.dataset.p] == null) return;
+    r.value = P[r.dataset.p];
+    const v = r.parentElement.querySelector('.val'); if(v) v.textContent = r.value;
+  });
+  document.querySelectorAll('.seg[data-seg]').forEach(seg => {
+    const k = seg.dataset.seg;
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', +b.dataset.v === +P[k]));
+  });
+  const bgEl = document.getElementById('bg'); if(bgEl && P.bg) bgEl.value = P.bg;
+  Object.entries(d.bd || {}).forEach(([id, v]) => {
+    const e = document.getElementById(id); if(!e) return;
+    e.value = v;
+    const lab = e.parentElement.querySelector('.val'); if(lab) lab.textContent = v;
+  });
+  if(d.loop != null){
+    loop = d.loop;
+    document.getElementById('bLoop').classList.toggle('on', loop);
+  }
+  if(d.zoom) zoom = d.zoom;
+  if(d.help) document.body.classList.add('help');
+}
+/* ⭐ 触ったものは全部おぼえる（1箇所にまとめる＝拾い漏れを作らない） */
+addEventListener('input',  memSave, true);
+addEventListener('change', memSave, true);
+addEventListener('click',  memSave, true);
+memLoad();
+
+tiltNote();    /* ⚠️ 起動時にもボタンの状態を合わせる */
+resize();
+layout();      /* ⭐ 起動時にタイムラインの目盛り・レーン・ヘッドを一度作る */
+frameAt(0);
+</script>
