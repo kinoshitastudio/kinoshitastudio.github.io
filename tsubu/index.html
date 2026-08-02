@@ -17,6 +17,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700&family=Zen+Old+Mincho:wght@600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root{--ink:#0a0a0a;--paper:#f4f2ee;--line:rgba(10,10,10,.14);}
+  /* ⭐ 地のグラデ＝使う色数のぶんだけ出す（要らないつまみを出さない） */
+  body:not(.pgrad) .pap-grad,body:not(.pgrad3) .pap3,body:not(.pgrad4) .pap4,
+  body:not(.pgrad5) .pap5,body:not(.pgrad6) .pap6{display:none;}
   *{margin:0;padding:0;box-sizing:border-box;}
   html,body{height:100%;overflow:hidden;background:#111;}
   body{font-family:"Zen Kaku Gothic New",sans-serif;font-weight:500;color:var(--ink);
@@ -378,6 +381,18 @@
   <div class="row" id="cc"><label>波色</label><input type="color" id="ca" value="#e9201c">
     <span class="men-off" style="display:contents"><label style="width:auto">球色</label><input type="color" id="cb" value="#2434ff"></span>
     <label style="width:auto">地</label><input type="color" id="cbg" value="#000000"></div>
+  <div class="row"><label>地の色数</label><input type="range" id="papN" min="1" max="6" step="1" value="1"><span class="val"></span></div>
+  <div class="pap-grad">
+    <div class="row"><label>地 1</label><input type="color" id="papC1" value="#f2d16b">
+      <label style="width:auto">地 2</label><input type="color" id="papC2" value="#c8d4de"></div>
+    <div class="row pap3"><label>地 3</label><input type="color" id="papC3" value="#7f95ab">
+      <span class="pap4" style="display:contents"><label style="width:auto">地 4</label><input type="color" id="papC4" value="#1d2733"></span></div>
+    <div class="row pap5"><label>地 5</label><input type="color" id="papC5" value="#8a6f4e">
+      <span class="pap6" style="display:contents"><label style="width:auto">地 6</label><input type="color" id="papC6" value="#e9201c"></span></div>
+    <div class="seg" id="papMode"><button data-v="0" class="on">流す</button><button data-v="1">中心</button><button data-v="2">渦</button><button data-v="3">まわり</button></div>
+    <div class="row"><label>地の向き</label><input type="range" id="papAng" min="0" max="360" step="1" value="90"><span class="val"></span></div>
+    <div class="row"><label>地の版数</label><input type="range" id="papSteps" min="0" max="16" step="1" value="0"><span class="val"></span></div>
+  </div>
   <div class="row"><label>階調</label><input type="range" id="steps" min="2" max="32" step="1" value="4"><span class="val"></span></div>
   <div class="row"><label>網</label><input type="range" id="dith" min="0" max="100" step="1" value="100"><span class="val"></span></div>
   <div class="row"><label>網の向き</label><input type="range" id="gdir" min="0" max="360" step="1" value="90"><span class="val"></span></div>
@@ -421,7 +436,10 @@
 const cv = document.getElementById('cv'), g = cv.getContext('2d', { alpha:false });
 const P = { mode:0, res:16, cell:7, pal:1, steps:4, dith:100, gdir:90, gflow:0, fps:30, grav:60, font:0,
             tex:1, wav:0.1, bead:55, beadk:1, line:0, blob:5, ar:100, shine:60, valley:0, grad:0, shift:0, spread:0, dir:0, follow:100, grid:0, depth:0, fat:1,
-            lay:0, wrap:7, gapx:2, gapy:2, fall:0 };
+            lay:0, wrap:7, gapx:2, gapy:2, fall:0,
+            /* 地のグラデ（TSUBUTE / HORI 2 と同じ作り）── 色数 1 ＝単色＝今までと同じ */
+            papN:1, papMode:0, papAng:90, papSteps:0,
+            papC1:'#f2d16b', papC2:'#c8d4de', papC3:'#7f95ab', papC4:'#1d2733', papC5:'#8a6f4e', papC6:'#e9201c' };
 
 /* ── 見え ── 世界は画面と切り離す。引いて全体を見渡せるように ── */
 const cam = { s:1, x:0, y:0, rx:0, ry:0 };   // rx,ry = 擬似3Dの傾き
@@ -856,11 +874,98 @@ const BAYER = [
   [ 3,11, 1, 9],[15, 7,13, 5]
 ].flat().map(v => v / 16);
 
+
+/* ══ 地のグラデ ══════════════════════════════════════════════
+   ⭐⭐ TSUBUTE / HORI 2 で作ったものを、そのまま 2D に翻訳した。
+     あちらは WebGL のシェーダだったが、ここは 2D の canvas なので
+     【一度オフスクリーンに焼いて貼る】。そうすれば式は同じものが使える
+     （渦も網も、標準のグラデーションでは作れない）。
+   ⚠️ 焼き直すのは【設定か画面の大きさが変わったとき】だけ。毎フレームは焼かない。
+   ⚠️ 網（4×4）を使うときは等倍で焼く。使わないときは 1/3 で焼いて引き伸ばす
+      （グラデは滑らかなので差が出ない＝速い）。 */
+const _pap = { cv:null, key:'' };
+function hexToRgb(h){
+  h = String(h).replace('#','');
+  if(h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  const n = parseInt(h, 16);
+  return [(n>>16)&255, (n>>8)&255, n&255];
+}
+const PAP_BAYER = [0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5];
+function paperCanvas(w, h, baseBg){
+  const n = Math.max(1, Math.round(P.papN));
+  if(n < 2) return null;                        // 単色＝今まで通り（焼かない）
+  const cols = [P.papC1, P.papC2, P.papC3, P.papC4, P.papC5, P.papC6]
+                 .slice(0, n).map(hexToRgb);
+  const key = [w, h, n, P.papMode, P.papAng, P.papSteps, baseBg, cols.join()].join('|');
+  if(_pap.key === key && _pap.cv) return _pap.cv;
+
+  const steps = Math.round(P.papSteps);
+  const sc = steps > 1 ? 1 : 3;                 // 網を使うときは等倍
+  const bw = Math.max(1, Math.ceil(w / sc)), bh = Math.max(1, Math.ceil(h / sc));
+  const c = _pap.cv && _pap.cv.width === bw && _pap.cv.height === bh
+          ? _pap.cv : Object.assign(document.createElement('canvas'), { width:bw, height:bh });
+  const cx2 = c.getContext('2d');
+  const img = cx2.createImageData(bw, bh), d = img.data;
+  const asp = bw / Math.max(bh, 1);
+  const a = P.papAng * Math.PI / 180, dx = Math.cos(a), dy = Math.sin(a);
+  const pw = 0.5 * (Math.abs(dx) * asp + Math.abs(dy));
+  const ring = P.papMode > 1.5 ? 1 : 0;         // 渦・まわりは一周する＝色を環にする
+  const span = ring ? n : n - 1;
+
+  for(let y = 0; y < bh; y++){
+    const v = (y + 0.5) / bh;
+    for(let x = 0; x < bw; x++){
+      const u = (x + 0.5) / bw;
+      const qx = (u - 0.5) * asp, qy = (v - 0.5);
+      let t;
+      if(P.papMode === 0){
+        t = (qx * dx + qy * dy) / Math.max(pw, 0.0001) * 0.5 + 0.5;
+      }else if(P.papMode === 1){
+        t = Math.sqrt(qx*qx + qy*qy) / 0.72;
+      }else if(P.papMode === 2){
+        /* 渦＝半径に角度を混ぜる。混ぜる量は 向き のつまみを使い回す */
+        const r = Math.sqrt(qx*qx + qy*qy) / 0.72;
+        const an = Math.atan2(qy, qx) / (Math.PI * 2);
+        t = (r + an * (P.papAng / 90)) % 1; if(t < 0) t += 1;
+      }else{
+        const an = Math.atan2(qy, qx) / (Math.PI * 2);
+        t = (an + 0.5 + P.papAng / 360) % 1; if(t < 0) t += 1;
+      }
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      /* 版数＝少ない段に落とす。網を足してから落とすので段の境目が縞にならない */
+      if(steps > 1){
+        const b = PAP_BAYER[(y & 3) * 4 + (x & 3)] / 16;
+        t = Math.floor(t * (steps - 1) + (b - 0.5) + 0.5) / (steps - 1);
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+      }
+      const scp = t * span;
+      let i0 = Math.floor(scp), f = scp - i0;
+      let i1 = i0 + 1;
+      if(ring){ i0 = ((i0 % n) + n) % n; i1 = ((i1 % n) + n) % n; }
+      else    { i0 = Math.min(i0, n - 1); i1 = Math.min(i1, n - 1); }
+      const A = cols[i0], B = cols[i1], o = (y * bw + x) * 4;
+      d[o]   = A[0] + (B[0] - A[0]) * f;
+      d[o+1] = A[1] + (B[1] - A[1]) * f;
+      d[o+2] = A[2] + (B[2] - A[2]) * f;
+      d[o+3] = 255;
+    }
+  }
+  cx2.putImageData(img, 0, 0);
+  _pap.cv = c; _pap.key = key;
+  return c;
+}
+
 function draw(){
   const pal = P.pal===CUSTOM_IDX ? CUSTOM : PALS[P.pal], cols = pal.cols, C = P.cell;
   const dpr = Math.min(devicePixelRatio, 2);
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  g.fillStyle = pal.bg; g.fillRect(0, 0, cv.clientWidth||innerWidth, cv.clientHeight||innerHeight);
+  /* ⭐ 地＝色数 1 なら今まで通りの単色。2 以上なら焼いたグラデを貼る */
+  {
+    const _w = cv.clientWidth||innerWidth, _h = cv.clientHeight||innerHeight;
+    const _pc = paperCanvas(_w, _h, pal.bg);
+    if(_pc) g.drawImage(_pc, 0, 0, _w, _h);
+    else { g.fillStyle = pal.bg; g.fillRect(0, 0, _w, _h); }
+  }
   // 擬似3D — せん断＋縦横圧縮で板を寝かせる。右ドラッグで角度がつく
   const shx = Math.sin(cam.ry) * 0.9, shy = Math.sin(cam.rx) * 0.9;
   const sx = Math.cos(cam.ry) * 0.6 + 0.4, sy = Math.cos(cam.rx) * 0.6 + 0.4;
@@ -1099,7 +1204,7 @@ document.querySelectorAll('.seg').forEach(seg => {
     if(seg.id === 'mode'){ running = false; build(); stat(); }
   }));
 });
-['res','cell','pal','steps','dith','gdir','gflow','fps','grav','wav','bead','beadk','wrap','gapx','gapy','fall','fat','ar','shine','shift','spread','dir','follow','valley','grad','grid','depth','warp','warpn'].forEach(id => {
+['res','cell','pal','steps','dith','gdir','gflow','fps','grav','wav','bead','beadk','wrap','gapx','gapy','fall','fat','ar','shine','shift','spread','dir','follow','valley','grad','grid','depth','warp','warpn','papN','papAng','papSteps'].forEach(id => {
   const r = document.getElementById(id); if(r.type !== 'range') return;
   const v = r.parentElement.querySelector('.val');
   const sync = (fromUser) => { P[id] = +r.value; if(v) v.textContent = r.value;
@@ -1108,7 +1213,8 @@ document.querySelectorAll('.seg').forEach(seg => {
     if(id==='shine' || id==='valley' || id==='grad') buildTiles();
     // ⭐ 字の並びそのものが変わるものだけ、視点を合わせ直す。
     //   字なり・ずれ・玉・大きさは見え方が変わるだけなので、視点は動かさない。
-    if(['res','cell','wrap','gapx','gapy','fall'].includes(id) && fromUser) fit(); };
+    if(['res','cell','wrap','gapx','gapy','fall'].includes(id) && fromUser) fit();
+    if(id === 'papN') syncPapGrad(); };
   r.addEventListener('input', () => sync(true)); sync();
 });
 // ⭐ 折返しは「文字数」を超えると意味がない（全部1行になるだけ）。
@@ -1141,6 +1247,28 @@ syncWrapMax();
     setPal3(); syncColorInputs();
   });
 });
+/* ══ 地のグラデ ── つまみの結線 ═══════════════════════════
+   ⭐ 地は毎フレーム描き直しているので、値を入れるだけでいい（焼き直しは中で判断する） */
+function syncPapGrad(){
+  const n = Math.max(1, Math.round(P.papN));
+  document.body.classList.toggle('pgrad',  n > 1);
+  document.body.classList.toggle('pgrad3', n > 2);
+  document.body.classList.toggle('pgrad4', n > 3);
+  document.body.classList.toggle('pgrad5', n > 4);
+  document.body.classList.toggle('pgrad6', n > 5);
+}
+['papC1','papC2','papC3','papC4','papC5','papC6'].forEach(id => {
+  const e = document.getElementById(id);
+  if(e) e.addEventListener('input', () => { P[id] = e.value; });
+});
+document.querySelectorAll('#papMode button').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#papMode button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on'); P.papMode = +b.dataset.v;
+  });
+});
+syncPapGrad();
+
 document.getElementById('cbg').addEventListener('input', e => {
   adoptCurrentToCustom(); CUSTOM.bg = e.target.value; setPal3(); syncColorInputs();
 });
