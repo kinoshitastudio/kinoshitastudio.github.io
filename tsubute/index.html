@@ -495,8 +495,17 @@ function glyphDots(ch, N, fontIdx){
 /* ══ 三次元 ══════════════════════════════════════════════ */
 const renderer = new THREE.WebGLRenderer({ antialias:true, preserveDrawingBuffer:true });
 /* ⚠️ モバイルは画素密度3のこともある。3倍で刷ると描く画素が9倍になって重い。
-   ⭐ 見た目はほぼ変わらないので上限を下げる（書き出しは版面で別に決めるので影響しない）。 */
-renderer.setPixelRatio(Math.min(devicePixelRatio, innerWidth < 760 ? 1.5 : 2));
+   🔴 だが 1.5 に落としていたせいで【画数の多い字がモバイルで潰れて読めなかった】
+      （木下＝「礎が解像度をマックスにしても見えかけていない」）。
+      実測＝モバイルの実描画は 585×735、PC は 2880×1800 ＝【PC の 20%】しかない。
+      解像を上げても、1マスに割ける画素が足りないので潰れる。
+   ⭐ だから上限を 2 に上げる。⚠️ ただし粒が多いときは重くなるので、そのときだけ下げる。 */
+function fitPixelRatio(count){
+  const heavy = count > 42000;                       // 粒がこれ以上あると描く量が増えて重い
+  const pr = Math.min(devicePixelRatio, heavy ? 1.5 : 2);
+  if(Math.abs(renderer.getPixelRatio() - pr) > 0.01) renderer.setPixelRatio(pr);
+}
+fitPixelRatio(0);
 document.body.appendChild(renderer.domElement);
 renderer.autoClear = false;
 
@@ -911,6 +920,9 @@ function build(){
   mat.uniforms.uDith.value   = P.dith / 100;
   mesh.instanceMatrix.needsUpdate = true;
   group.add(mesh);
+  /* ⭐ 粒の数が決まったので、そのぶんに見合う画素密度にする。
+     ⚠️ 変わるのは【描く細かさ】だけ＝形も大きさも構図も変わらない。 */
+  fitPixelRatio(live.length);
   /* ⭐ 組んだら画面に合わせる。⚠️ 合わせないと字が画面からはみ出して読めない
      （実際そうなった）。⚠️ 横に長い字は【幅】で決まるので、縦横比を見る。 */
   fitView(totalW * unit, totalH * unit);
@@ -1287,11 +1299,24 @@ el.addEventListener('pointermove', e => {
     cam.tpy += (e.clientY - prev.y) * k;
   }else{
     cam.tAz -= (e.clientX - prev.x) * 0.006;
-    cam.tEl = THREE.MathUtils.clamp(cam.tEl + (e.clientY - prev.y) * 0.006, -1.35, 1.35);
+    /* 🔴 上下が効かなかった＝ここで傾きを変えても、毎フレーム tick が
+       `cam.tEl = P.tilt` で【つまみの値に戻していた】（PC のドラッグでも同じ）。
+       ⭐ だから【つまみの値ごと動かす】＝ドラッグでもつまみでも同じ一つの値を触る。
+       ⚠️ つまみの幅（±70度）に合わせる。0.35度/px ＝ 前の 0.006rad/px と同じ感触。 */
+    const t = THREE.MathUtils.clamp(P.tilt + (e.clientY - prev.y) * 0.35, -70, 70);
+    P.tilt = t;
+    cam.tEl = t * Math.PI / 180;
+    const r = document.querySelector('input[data-p="tilt"]');
+    if(r){
+      r.value = Math.round(t);
+      const v = r.parentElement.querySelector('.val');
+      if(v) v.textContent = Math.round(t);
+    }
   }
   prev = { x:e.clientX, y:e.clientY };
 });
-const up = () => { mode = null; prev = null; };
+/* ⚠️ 触っている間は保存しない（重い）。指を離したときに1回だけ控える */
+const up = () => { if(mode) save(); mode = null; prev = null; };
 el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
 el.addEventListener('wheel', e => {
   e.preventDefault();
