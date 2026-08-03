@@ -256,6 +256,7 @@
     <div class="unit-body">
       <div class="seg" data-seg="shape">
         <button data-v="1" class="on">たて 9:16</button>
+        <button data-v="3">たて 4:5</button>
         <button data-v="0">正方形</button>
         <button data-v="2">よこ 16:9</button>
       </div>
@@ -265,7 +266,7 @@
       </div>
       <div class="row"><label>LONG<i>長辺</i></label><input type="range" data-p="long" min="480" max="1920" step="40" value="1280"><span class="val"></span></div>
       <div class="row"><label>BG<i>地の色</i></label><input type="color" id="bg" value="#0a0a0a"></div>
-      <div class="mod" id="frameOut"></div>
+      <div class="note" id="frameOut"></div>
     </div>
   </div>
 
@@ -316,6 +317,8 @@
     <button id="bPlay">▶ 再生</button>
     <button id="bLoop" class="on">↻ ループ</button>
     <button id="bSplit" title="再生ヘッドの所で切る">分割</button>
+    <button id="bUndo" title="戻す（⌘Z）">戻す</button>
+    <button id="bRedo" title="やり直す（⇧⌘Z）">やり直す</button>
     <span id="tclock">0.0 / 0.0s</span>
     <span class="sp"></span>
     <button id="zOut" title="縮める">−</button><span id="zLbl">1x</span><button id="zIn" title="広げる">＋</button>
@@ -356,6 +359,8 @@ function frameSize(){
   const L = Math.round(P.long);
   if(P.shape === 0) return { w:L, h:L };
   if(P.shape === 2) return { w:L, h:Math.round(L*9/16) };
+  /* ⭐ 4:5＝SNSの連作でいちばん使う比（縦長だが 9:16 ほど細くない） */
+  if(P.shape === 3) return { w:Math.round(L*4/5), h:L };
   return { w:Math.round(L*9/16), h:L };
 }
 function resize(){
@@ -497,6 +502,7 @@ function tiltNote(){
 }
 document.getElementById('bTilt').onclick = () => {
   let c = clips[sel];
+  if(c) pushUndo();
   if(c && c.tilt){ c.tilt = null; tiltNote(); if(!playing) frameAt(cur); return; }
   if(!c){ if(!clips.length){ tiltNote(); return; } sel = 0; c = clips[0]; buildClips(); }
   const t = tiltRead(); t.x = 0.5; t.y = 0.5;
@@ -504,6 +510,7 @@ document.getElementById('bTilt').onclick = () => {
 };
 document.getElementById('bTiltReset').onclick = () => {
   const c = clips[sel]; if(!c || !c.tilt) return;
+  pushUndo();
   Object.entries(TILT_IDS).forEach(([id,k]) => {
     const e = document.getElementById(id); if(!e) return;
     e.value = (k === 'sc') ? 100 : 0;
@@ -594,6 +601,7 @@ function addFiles(list){
   const au = all.find(f => f.type.startsWith('audio/'));
   if(au) loadSound(au);
   const files = all.filter(f => f.type.startsWith('image/') || f.type.startsWith('video/'));
+  if(files.length) pushUndo();
   let left = files.length;
   if(!left){ if(au) afterAdd(); return; }
   files.forEach(f => {
@@ -679,7 +687,7 @@ function buildClips(){
     const n = document.createElement('span'); n.className = 'n'; n.textContent = i+1; el.append(n);
     const tt = document.createElement('span'); tt.className = 't'; tt.textContent = d.toFixed(1)+'s'; el.append(tt);
     const x = document.createElement('button'); x.className = 'x'; x.textContent = '×';
-    x.onclick = e => { e.stopPropagation(); clips.splice(i,1); sel = -1; afterAdd(); };
+    x.onclick = e => { e.stopPropagation(); pushUndo(); clips.splice(i,1); sel = -1; afterAdd(); };
     el.append(x);
     el.onclick = e => { e.stopPropagation(); sel = i; buildClips(); if(typeof tiltNote === 'function') tiltNote(); };
     /* 並び替え＝掴んで入れ替えるだけ（凝らない） */
@@ -689,12 +697,14 @@ function buildClips(){
       e.preventDefault(); e.stopPropagation();
       const from = +e.dataTransfer.getData('text/plain');
       if(isNaN(from) || from === i) return;
+      pushUndo();
       const [m] = clips.splice(from,1); clips.splice(i,0,m);
       sel = i; afterAdd();
     };
     /* ⭐ 端を掴んで伸縮。⚠️ 動画は【素材のどこまで使うか(out)】／画像は【尺そのもの】＝式が違う */
     const grab = (side) => ev => {
       ev.stopPropagation(); ev.preventDefault();
+      pushUndo();                       /* ⭐ 伸縮は掴んだ時点で1回だけ控える（動かすたびではない） */
       const x0 = ev.clientX, pp = pps();
       const in0 = inOf(c), out0 = outOf(c), d0 = d;
       const move = e2 => {
@@ -730,6 +740,7 @@ function splitAt(t){
   if(i >= clips.length) return;
   const c = clips[i], local = t - acc, d = durOf(c);
   if(local < 0.1 || local > d - 0.1) return;
+  pushUndo();
   if(c.type === 'vid'){
     const cut = inOf(c) + local;
     const v = document.createElement('video');
@@ -1021,6 +1032,10 @@ manual.onclick = e => { if(e.target === manual) manual.classList.remove('on'); }
 addEventListener('keydown', e => {
   const t = e.target;
   if(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  /* ⭐ ⌘Z で戻す／⇧⌘Z でやり直す（Ctrl でも同じ） */
+  if((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z')){
+    e.preventDefault(); if(e.shiftKey) redo(); else undo(); return;
+  }
   if(e.key === ' ' || e.key === 'Enter'){ e.preventDefault(); document.getElementById('bPlay').click(); }
   else if(e.key === 's' || e.key === 'S'){ e.preventDefault(); splitAt(cur); }
   else if(e.key === 'ArrowRight'){ e.preventDefault(); seekTo(cur + (e.shiftKey ? 1 : 0.1)); }
@@ -1078,6 +1093,41 @@ addEventListener('input',  memSave, true);
 addEventListener('change', memSave, true);
 addEventListener('click',  memSave, true);
 memLoad();
+
+/* ══ 控える（戻す・やり直す）═══════════════════════════════
+   ⚠️⚠️ 「まず読む」に【次に必ず入れる】と書いたまま2回先送りしていたもの。
+   ⭐ 素材そのもの（el / url）は重いので写さない。写すのは【並び方と尺と傾け】＝
+      クリップの配列と、その中の数値だけ。素材は参照のまま持つ。
+   ⚠️ tilt は入れ子の object なので、浅い写しだと【過去の控えまで書き換わる】。ここだけ複製する。 */
+const UNDO = [], REDO = [], UNDO_MAX = 60;
+function snapClips(){
+  return clips.map(c => Object.assign({}, c, { tilt: c.tilt ? Object.assign({}, c.tilt) : null }));
+}
+function pushUndo(){
+  UNDO.push(snapClips());
+  if(UNDO.length > UNDO_MAX) UNDO.shift();
+  REDO.length = 0;              /* 新しく触ったら「やり直す」は捨てる（枝分かれを持たない） */
+  undoSync();
+}
+function applySnap(a){
+  clips.length = 0;
+  a.forEach(c => clips.push(c));
+  if(sel >= clips.length) sel = clips.length - 1;
+  afterAdd();
+  if(typeof tiltNote === 'function') tiltNote();
+  undoSync();
+}
+function undo(){ if(!UNDO.length) return; REDO.push(snapClips()); applySnap(UNDO.pop()); }
+function redo(){ if(!REDO.length) return; UNDO.push(snapClips()); applySnap(REDO.pop()); }
+function undoSync(){
+  const u = document.getElementById('bUndo'), r = document.getElementById('bRedo');
+  /* ⭐ 効かないボタンは薄くする＝触れるのに何も起きない状態を作らない */
+  if(u) u.style.opacity = UNDO.length ? '1' : '.3';
+  if(r) r.style.opacity = REDO.length ? '1' : '.3';
+}
+document.getElementById('bUndo').onclick = undo;
+document.getElementById('bRedo').onclick = redo;
+undoSync();
 
 tiltNote();    /* ⚠️ 起動時にもボタンの状態を合わせる */
 resize();
