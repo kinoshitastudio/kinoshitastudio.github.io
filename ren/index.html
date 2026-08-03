@@ -479,7 +479,13 @@ function drawTilt(c, alpha){
   const el = c.el;
   const iw = el.naturalWidth || el.videoWidth, ih = el.naturalHeight || el.videoHeight;
   if(!iw || !ih) return;
-  const t = c.tilt, N = 24;
+  /* ⚠️ 傾けは絵を格子に割って三角形2枚ずつ貼る＝1コマにつき N×N×2 回描く。
+     24 だと 1152 回。静止画なら平気だが、動くもの（動画・GIF）は毎コマなので重い。
+     ⭐ 歪みが小さいほど粗くてよい（まっすぐなら格子は要らない）＝傾き量で決める。 */
+  const t = c.tilt;
+  const bend = Math.max(Math.abs(t.rx), Math.abs(t.ry)) * (t.ps > 0 ? 1 : 0.4);
+  const moving = (c.type === 'vid') || /\.gif($|\?)/i.test(c.name || '');
+  const N = Math.max(2, Math.min(24, Math.round((moving ? 6 : 16) * (0.4 + bend / 45))));
   const pts = [];
   for(let j = 0; j <= N; j++){
     const row = [];
@@ -631,6 +637,15 @@ function addFiles(list){
       im.onload = () => { clips.push({ type:'img', el:im, name:f.name, url }); if(!--left) afterAdd(); };
       im.onerror = () => { if(!--left) afterAdd(); };
       im.src = url;
+      /* ⭐⭐ GIF を動かすための一手。木下＝「下のタイムラインでは gif 動いているのに
+         なぜ上のパネルでは動かない？」
+         🔴 canvas の drawImage は【その瞬間の1コマ】を焼くだけ。しかも
+            DOM に置いていない Image はコマが進まないので、ずっと1コマ目だった。
+         ⭐ 画面の外に置いて【ブラウザに再生させる】と、drawImage が進んだコマを拾う。
+         ⚠️ display:none / visibility:hidden にすると再生が止まるので、
+            1px・ほぼ透明で【描画はされている】状態にする。 */
+      im.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:.01;pointer-events:none;';
+      document.body.appendChild(im);
     }
   });
 }
@@ -702,7 +717,12 @@ function buildClips(){
     const n = document.createElement('span'); n.className = 'n'; n.textContent = i+1; el.append(n);
     const tt = document.createElement('span'); tt.className = 't'; tt.textContent = d.toFixed(1)+'s'; el.append(tt);
     const x = document.createElement('button'); x.className = 'x'; x.textContent = '×';
-    x.onclick = e => { e.stopPropagation(); pushUndo(); clips.splice(i,1); sel = -1; afterAdd(); };
+    x.onclick = e => {
+      e.stopPropagation(); pushUndo();
+      /* ⚠️ 画面外に置いた img は自分で片付ける（残すと増え続ける） */
+      try{ if(c.el && c.el.parentNode) c.el.parentNode.removeChild(c.el); }catch(_){}
+      clips.splice(i,1); sel = -1; afterAdd();
+    };
     el.append(x);
     el.onclick = e => { e.stopPropagation(); sel = i; buildClips(); if(typeof tiltNote === 'function') tiltNote(); };
     /* 並び替え＝掴んで入れ替えるだけ（凝らない） */
@@ -764,6 +784,9 @@ function splitAt(t){
     c.out = cut;
   }else{
     const im = new Image(); im.src = c.url;
+    /* ⚠️ 分割で増えた側も、置いておかないと GIF が止まる */
+    im.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:.01;pointer-events:none;';
+    document.body.appendChild(im);
     clips.splice(i+1, 0, { type:'img', el:im, name:c.name, url:c.url, dur:Math.round((d-local)*10)/10 });
     c.dur = Math.round(local*10)/10;
   }
