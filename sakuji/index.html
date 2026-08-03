@@ -857,6 +857,9 @@
   <hr>
   <button id="ctxPasteFill">塗りだけペースト</button>
   <button id="ctxPasteStroke">線だけペースト</button>
+  <hr>
+  <button id="ctxBake">画像に焼く — 軽くする</button>
+  <button id="ctxUnbake">焼く前に戻す</button>
 </div>
 <canvas id="cv" resize></canvas></div>
 
@@ -3939,6 +3942,8 @@ function renderParts(){
    paper の子要素をそのまま並べる。上ほど前面（イラレ／Figma と同じ並び）。 */
 const layersEl = document.getElementById('layers'), layList = document.getElementById('layList');
 function itemName(it){
+  // ⭐ 焼いた画像は、レイヤーで「元が何だったか」が分かるようにしておく
+  if(it.data && it.data.baked) return '焼いた画像' + (it.data.baked.label ? '（' + it.data.baked.label + '）' : '');
   if(it instanceof paper.PointText) return '文字「' + (it.content||'').slice(0,6) + '」';
   // ⭐ 文字は1字ずつ作って束ねているので、そのままだと「グループ（7）」と出て
   //   何なのか分からない（木下＝「なんでこれ一つ一つに分かれてるの？」）。打った字で呼ぶ。
@@ -4452,6 +4457,76 @@ function pasteStyle(what){                    // what: 'both' | 'fill' | 'stroke
   else stat({both:'設定をペースト', fill:'塗りをペースト', stroke:'線をペースト'}[what]);
 }
 
+/* ══ 焼く（1枚の画像にして軽くする） ══
+   ⭐ 重さの正体は【点の多さ】ではなく【図形の個数】。
+     粒は1粒＝1つのパスなので、撒くほど個数が増える（実測＝パス3,422本／1本あたり4点だけ）。
+     Paper.js は個数ぶんだけ描画と当たり判定を回すので、動かすたび・選ぶたびに全部を舐める。
+     1枚の Raster に焼くと、それが【画像1枚の描画1回】になる。
+   ⭐ グループ化では軽くならない。Group は入れ物なだけで中身は全部残るため（1段増えるだけ）。
+   ⭐ 焼く前の形は data.baked に持たせる。
+     ⚠️ __tsubu のような独自プロパティは exportJSON に乗らないが、Paper.js は data を保存に含める。
+       だから data に入れておくと ⌘Z でも、保存して開き直しても「焼く前に戻す」ができる。
+   ⚠️ 焼いたあとは点をいじれない・拡大するとぼける（アウトライン化と同じ考え方）。
+   ⚠️ 軽くなるのは【動作】。元の形も一緒に持つので、保存ファイルは小さくならない。 */
+const BAKE_MAX = 4096;                          // 焼く大きさの上限（長辺px・書き出しと同じ考え方）
+function bakeItems(items){
+  const made = [];
+  items.forEach(it => {
+    if(!it || !it.parent) return;
+    if(it instanceof paper.Raster) return;      // すでに画像
+    const b = it.strokeBounds;
+    if(!b || !(b.width > 0) || !(b.height > 0)) return;
+    const scale = Math.max(1, Math.min(3, BAKE_MAX / Math.max(b.width, b.height)));
+    const wasSel = it.selected;
+    it.selected = false;                        // ⚠️ 選択の枠を焼き込まないため、いったん外す
+    let r = null;
+    try { r = it.rasterize({ resolution: 72 * scale, insert:false }); }
+    catch(e){ it.selected = wasSel; return; }
+    if(!r){ it.selected = wasSel; return; }
+    r.data = Object.assign({}, r.data, {
+      baked: { json: it.exportJSON({ asString:true }), label: itemName(it) }
+    });
+    r.insertAbove(it);
+    it.remove();
+    r.selected = true;
+    made.push(r);
+  });
+  return made;
+}
+function unbakeItems(items){
+  const back = [];
+  items.forEach(r => {
+    const b = r && r.data && r.data.baked;
+    if(!b || !b.json) return;
+    let src = null;
+    try { src = artLayer.importJSON(b.json); } catch(e){ return; }
+    if(!src) return;
+    src.insertAbove(r);
+    src.selected = true;
+    r.remove();
+    back.push(src);
+  });
+  return back;
+}
+function bakedInSel(){ return selected().filter(it => it.data && it.data.baked); }
+function bakeSelection(){
+  const sel = selected().filter(it => !(it.data && it.data.baked));
+  if(!sel.length){ stat('焼くものを選んでください'); return; }
+  snapshot();
+  const made = bakeItems(sel);
+  guides(); renderLayers(); reportSel();
+  stat(made.length ? made.length + '枚の画像に焼いた — 右クリック「焼く前に戻す」で戻せる'
+                   : '焼けるものがありませんでした');
+}
+function unbakeSelection(){
+  const sel = bakedInSel();
+  if(!sel.length){ stat('焼いた画像を選んでください'); return; }
+  snapshot();
+  const back = unbakeItems(sel);
+  guides(); renderLayers(); reportSel();
+  stat(back.length ? '焼く前の形に戻した' : '戻せませんでした');
+}
+
 /* 右クリックメニュー */
 const ctx = document.getElementById('ctx');
 function hideCtx(){ if(ctx) ctx.style.display = 'none'; }
@@ -4478,6 +4553,10 @@ if(ctx){
     document.getElementById('ctxCopy').disabled = !has;
     ['ctxPaste','ctxPasteFill','ctxPasteStroke'].forEach(id =>
       document.getElementById(id).disabled = !has || !styleClip);
+    // ⭐ 焼く／戻すは、いま選んでいるものの中身で出し分ける（押せないものは薄く）
+    const nBaked = bakedInSel().length;
+    document.getElementById('ctxBake').disabled   = !has || nBaked === selected().length;
+    document.getElementById('ctxUnbake').disabled = nBaked === 0;
     ctx.style.display = 'block';
     const w = ctx.offsetWidth, h = ctx.offsetHeight;
     ctx.style.left = Math.min(e.clientX, innerWidth - w - 8) + 'px';
@@ -4489,6 +4568,8 @@ if(ctx){
   document.getElementById('ctxPaste').addEventListener('click', () => { pasteStyle('both'); hideCtx(); });
   document.getElementById('ctxPasteFill').addEventListener('click', () => { pasteStyle('fill'); hideCtx(); });
   document.getElementById('ctxPasteStroke').addEventListener('click', () => { pasteStyle('stroke'); hideCtx(); });
+  document.getElementById('ctxBake').addEventListener('click', () => { bakeSelection(); hideCtx(); });
+  document.getElementById('ctxUnbake').addEventListener('click', () => { unbakeSelection(); hideCtx(); });
 }
 /* ショートカット（イラレと同じ ⌥⌘C / ⌥⌘V） */
 addEventListener('keydown', e => {
