@@ -2291,7 +2291,6 @@ function selDownBase(e){                          // ⚠️ 呼ぶのは台帳�
       if(n) stat('見えていた粒を確定しました（' + n + '個）— preview は切りました');
     }
   }
-  if(typeof abSetFocus === 'function') abSetFocus(false);   /* 図形を触ったら枠の選択は外す */
   // ⭐ 粒に当たったら【グループごと】掴む。
   //   ⚠️ hitTest はいちばん奥のもの（粒1個の矩形）を返すので、そのままだと
   //     粒1個だけが選ばれて1個だけ動いていた＝「選択できない」「移動が少ししかできない」。
@@ -2850,31 +2849,6 @@ function applyPaint(){                       // 選択中の図形に、いま�
       }
     }
   });
-  /* ⭐⭐ 枠を選んでいるときは【枠の地】に効かせる。
-     木下＝「ボード自体にも背景色を。このボードを選択すると色を塗れるように、
-     そこでグラデーションも入れれるようにしたい」。
-     ⚠️ 図形と同じ paintOf を通すので、単色・グラデ・放射がそのまま使える＝2箇所に書かない。 */
-  if(!sel.length && typeof abFocus !== 'undefined' && abFocus){
-    const a = abCur();
-    if(a){
-      /* ⚠️ 枠に乗せられるのは【単色・グラデ・放射】まで。
-         金属と粒は「図形1つずつに焼く」作りなので枠の地には使わない。 */
-      const md = (S.fillMode === 'linear' || S.fillMode === 'radial') ? S.fillMode : 'solid';
-      a.bg = S.fill || a.bg;
-      a.fill = (md === 'solid') ? null : {
-        mode: md,
-        stops: (S.stops || []).map(o => ({ c:o.c, t:o.t })),
-        ang: +(document.getElementById('gAng')?.value ?? 90),
-      };
-      if(S.fillMode !== md) stat('枠の地は 単色・グラデ・放射 まで（金属と粒は図形用）');
-      a.bgOn = true;                       /* 塗った以上は地を出す（触れるのに効かない、を作らない） */
-      const bgBtn = document.querySelector('#abBgOn button[data-v="1"]');
-      if(bgBtn) document.querySelectorAll('#abBgOn button').forEach(b => b.classList.toggle('on', b === bgBtn));
-      drawGrid(); guides();
-      stat('枠の地を塗った');
-      return;
-    }
-  }
   guides();
   if(!sel.length) stat('図形を選んでから、塗り／線を切り替えて色を当てる');
 }
@@ -4844,23 +4818,6 @@ function abCur(){ return S.abs[S.abSel] || S.abs[0]; }
 function abRectOf(a){ return new Rectangle(a.x - a.w/2, a.y - a.h/2, a.w, a.h); }
 function abRect(){ return abRectOf(abCur()); }
 
-/* ⭐ 枠の地の塗り。⚠️ 図形の paintOf と【同じ式】を使う（gradLine を共用）。
-   ⚠️ 枠は「いま選んでいる図形」ではないので paintOf をそのまま呼べない
-      （paintOf は S＝画面のいまの設定を見る）。枠は自分の設定を持っているので、
-      そちらから作る＝別の枠を選んでも混ざらない。 */
-function abPaintOf(a, rect){
-  if(!a || !a.fill) return (a && a.bg) ? a.bg : '#ffffff';
-  const stops = (a.fill.stops || []).map(o => [o.c, o.t]);
-  if(!stops.length) return a.bg || '#ffffff';
-  if(a.fill.mode === 'radial'){
-    const b = rect.bounds;
-    return { gradient:{ stops, radial:true },
-             origin: b.center,
-             destination: b.center.add(new Point(Math.max(b.width, b.height)/2, 0)) };
-  }
-  const { origin, destination } = gradLine(rect, +(a.fill.ang ?? 90));
-  return { gradient:{ stops }, origin, destination };
-}
 function drawArtboard(){
   gridLayer.activate();
   const Z = paper.view.zoom;
@@ -4870,7 +4827,7 @@ function drawArtboard(){
     const a = abCur();
     if(!a || a.bgOn !== false){
       const bg = new Path.Rectangle(paper.view.bounds.expand(80/Z));
-      bg.fillColor = a ? abPaintOf(a, bg) : '#ffffff';
+      bg.fillColor = (a && a.bg) ? a.bg : '#ffffff';
       bg.sendToBack();
     }
     artLayer.activate();
@@ -4878,7 +4835,7 @@ function drawArtboard(){
   }
   S.abs.forEach((a, i) => {
     const R = abRectOf(a), cur = (i === S.abSel);
-    if(a.bgOn){ const bg = new Path.Rectangle(R); bg.fillColor = abPaintOf(a, bg); bg.sendToBack(); }
+    if(a.bgOn){ const bg = new Path.Rectangle(R); bg.fillColor = a.bg; bg.sendToBack(); }
     const f = new Path.Rectangle(R);
     f.strokeColor = cur ? ACC : ((S.bg === 'light') ? 'rgba(10,10,10,.28)' : 'rgba(255,255,255,.24)');
     f.strokeWidth = (cur ? 1.8 : 1)/Z; f.fillColor = null;
@@ -5465,23 +5422,9 @@ function abLabelHit(pt){
   }
   return -1;
 }
-/* ⭐ 枠線の上を掴んだら「枠を選ぶ」。⚠️ 中は素通し＝図形の操作を邪魔しない */
-hook('down', '枠を選ぶ', e => {
-  if(S.tool !== 'select' || !S.abOn) return false;
-  const tol = tzTol(6) , R = abRect();
-  const nearEdge =
-    (Math.abs(e.point.x - R.left) < tol || Math.abs(e.point.x - R.right) < tol) && e.point.y > R.top - tol && e.point.y < R.bottom + tol ||
-    (Math.abs(e.point.y - R.top) < tol || Math.abs(e.point.y - R.bottom) < tol) && e.point.x > R.left - tol && e.point.x < R.right + tol;
-  if(!nearEdge) return false;
-  artLayer.children.forEach(c => c.selected = false);
-  abSetFocus(true);
-  stat('枠を選んだ — 塗り／グラデがこの枠の地に効く');
-  return true;
-}, 18);
 hook('down', '枠のラベル', e => {
   const i = abLabelHit(e.point);
   if(i < 0) return false;
-  abSetFocus(true);
   S.abSel = i;
   abDrag = { i, dx: S.abs[i].x - e.point.x, dy: S.abs[i].y - e.point.y };
   abSync();
@@ -5511,17 +5454,8 @@ hook('up', '枠のラベル', () => {
         ② 枠を「出さない」設定のときは掴めない
         ③ ハンドルは【角と辺の上だけ】＝枠の中は今まで通り素通しする
    ⚠️ 台帳（hook）に登録する。上書きしない。順番は 15＝グラデ(10)の後、枠のラベル(20)の前。 */
-/* ⭐ 枠を「選んでいる」状態。⚠️ 何も選んでいないだけで出すと、
-   図形を外したつもりが枠の操作に化ける（木下＝「どれだ？」）。
-   枠線かラベルをクリックしたときだけ選ぶ＝はっきり狙って触れる。 */
-let abFocus = false;
-function abSetFocus(on){
-  if(abFocus === on) return;
-  abFocus = on;
-  if(typeof guides === 'function') guides();
-}
 function abHandlesOn(){
-  return S.tool === 'select' && S.abOn && abFocus && selected().length === 0 && !!abCur();
+  return S.tool === 'select' && S.abOn && selected().length === 0 && !!abCur();
 }
 function drawAbHandles(){
   if(!abHandlesOn()) return;
