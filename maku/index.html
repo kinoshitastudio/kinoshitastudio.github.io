@@ -324,7 +324,9 @@
   <div class="chips" id="chips"></div>
   <div class="row"><label>幅</label><input type="range" id="cw" min="20" max="300" value="100" disabled><span class="val"></span></div>
   <div class="row"><label>高さ</label><input type="range" id="ch" min="20" max="300" value="100" disabled><span class="val"></span></div>
-  <div class="note">文字を選ぶ＝その字だけ伸縮（セル中心まわり）</div>
+  <div class="row"><label>角度</label><input type="range" id="cr" min="-180" max="180" value="0" disabled><span class="val"></span></div>
+  <div class="note">文字を選ぶ＝その字だけ伸縮／回す（セル中心まわり）<br>
+    ⚠️ 大きく回すと隣の字に重なる → 字間で空ける</div>
 
   <h2>見え</h2>
   <div class="only-text">
@@ -422,6 +424,7 @@ const ANCHORS = [];   // {u,v, du,dv} 面を押す点（テクスチャ座標と
 let COLS = 1, ROWS = 1;
 let CHARS = [];         // {ch, gi} gi=グリッド番号（左上=0, 行優先）
 const CHARSCALE = [];   // gi ごとの [sx, sy]（1文字だけ伸縮）
+const CHARROT = [];     // gi ごとの角度（度・1文字だけ回す）
 const CHARTYPE = [];    // gi ごとの層（0漢字/1かな/2カナ/3他）
 let selChar = -1;
 const VIEW = { zoom:1, panx:0, pany:0, rotx:0, roty:0 };   // ビュー：ズーム＋パン＋傾き（正投影で3層を保つ）
@@ -468,9 +471,9 @@ function bakeText(){
   // 文字ごと制御用：グリッド・文字リスト・層を更新（既存の伸縮値は番号ごとに引き継ぐ）
   CHARS = []; CHARTYPE.length = 0;
   cells.forEach(({ch,col,row})=>{ const gi = row*cols + col; CHARS.push({ ch, gi }); CHARTYPE[gi] = classify(ch); });
-  const keep = CHARSCALE.slice();
-  CHARSCALE.length = 0;
-  for(let i=0;i<Math.min(cols*rows,32);i++) CHARSCALE.push(keep[i] || [1,1]);
+  const keep = CHARSCALE.slice(), keepR = CHARROT.slice();
+  CHARSCALE.length = 0; CHARROT.length = 0;
+  for(let i=0;i<Math.min(cols*rows,32);i++){ CHARSCALE.push(keep[i] || [1,1]); CHARROT.push(keepR[i] || 0); }
   selChar = -1;
   // 字間・行間＝セルの寸法そのものを伸縮する（字の大きさは変えない）
   // 横組みは 字間→横／行間→縦、縦組みは逆にかかる
@@ -575,6 +578,7 @@ const VERT = `
   uniform float uAnchorR;
   uniform int uAnchorN;
   uniform vec2 uCharScale[32];        // 文字ごとの [sx, sy]
+  uniform float uCharRot[32];         // 文字ごとの角度（rad・セル中心まわり）
   uniform float uCharType[32];        // 文字ごとの層（0漢字/1かな/2カナ/3他）
   uniform float uGridCols, uGridRows; // テクスチャの文字グリッド
   uniform int uCharN;
@@ -593,8 +597,9 @@ const VERT = `
     float crowB = floor(aUV.y * uGridRows);                        // 0=下
     int cidx = int((uGridRows - 1.0 - crowB) * uGridCols + ccol);  // 読み順（左上=0, 行優先）
     vec2 scl = vec2(1.0);
+    float crot = 0.0;                                              // 文字ごとの角度
     int ctype = 3;
-    for(int i=0;i<32;i++){ if(i>=uCharN) break; if(i==cidx){ scl = uCharScale[i]; ctype = int(uCharType[i]); break; } }
+    for(int i=0;i<32;i++){ if(i>=uCharN) break; if(i==cidx){ scl = uCharScale[i]; crot = uCharRot[i]; ctype = int(uCharType[i]); break; } }
     // 層のエンジン値を取り出す
     float lw=0.0, lh=0.0, lrot=0.0, lwarp=0.0, ldens=0.0, lsang=0.0, lsoff=0.0;
     for(int i=0;i<4;i++){ if(i==ctype){ lw=uLW[i]; lh=uLH[i]; lrot=uLRot[i]; lwarp=uLWarp[i]; ldens=uLDens[i]; lsang=uLSAng[i]; lsoff=uLSOff[i]; break; } }
@@ -605,8 +610,14 @@ const VERT = `
     vec2 rel = (aUV - cc) * scl * vec2(1.0 + lw, 1.0 + lh);   // 文字ごと伸縮 × 層の太らせ/縦のび
     float fy = (aUV.y - cc.y) * uGridRows;                    // セル内 縦位置 -0.5..0.5
     rel.x += cos(fy * 6.2831853) * lwarp;                     // 層のうねり（字の中でS字に）
-    float rc = cos(lrot), rs = sin(lrot);                     // 層の傾ぎ（セル中心まわり回転）
-    rel = vec2(rel.x*rc - rel.y*rs, rel.x*rs + rel.y*rc);
+    // 層の傾ぎ ＋ その字だけの角度（どちらもセル中心まわり）
+    // ⚠️ UV 空間のまま回すと、セルが正方でないぶん字が潰れる（1行6列なら 6:1 に歪む）。
+    //    ⭐ セル内の正方座標に直してから回して、戻す＝その場でまっすぐ回る。
+    float rc = cos(lrot + crot), rs = sin(lrot + crot);
+    vec2 cn = vec2(uGridCols, uGridRows);
+    vec2 rn = rel * cn;
+    rn  = vec2(rn.x*rc - rn.y*rs, rn.x*rs + rn.y*rc);
+    rel = rn / cn;
     vec2 puv = cc + rel;
 
     vec2 p = puv * 2.0 - 1.0;             // -1..1
@@ -793,6 +804,7 @@ loc.aUV = gl.getAttribLocation(prog,'aUV');
 loc.uAnchorUV = gl.getUniformLocation(prog,'uAnchorUV');
 loc.uAnchorD  = gl.getUniformLocation(prog,'uAnchorD');
 loc.uCharScale = gl.getUniformLocation(prog,'uCharScale');
+loc.uCharRot   = gl.getUniformLocation(prog,'uCharRot');
 loc.uCharType  = gl.getUniformLocation(prog,'uCharType');
 ['uLW','uLH','uLRot','uLWarp','uLDens','uLSAng','uLSOff'].forEach(n=>loc[n]=gl.getUniformLocation(prog,n));
 
@@ -868,9 +880,10 @@ function render(t){
   gl.uniform1f(loc.uGridRows, IMG.on ? 1 : ROWS);
   const cn = IMG.on ? 0 : Math.min(COLS*ROWS, 32);
   gl.uniform1i(loc.uCharN, cn);
-  { const cs = new Float32Array(64);
-    for(let i=0;i<32;i++){ const s = CHARSCALE[i] || [1,1]; cs[i*2]=s[0]; cs[i*2+1]=s[1]; }
-    gl.uniform2fv(loc.uCharScale, cs); }
+  { const cs = new Float32Array(64), cr = new Float32Array(32);
+    for(let i=0;i<32;i++){ const s = CHARSCALE[i] || [1,1]; cs[i*2]=s[0]; cs[i*2+1]=s[1];
+      cr[i] = (CHARROT[i] || 0) * Math.PI/180; }        // 度 → rad
+    gl.uniform2fv(loc.uCharScale, cs); gl.uniform1fv(loc.uCharRot, cr); }
   // 3層：各セルの層と、層ごとのエンジン値（UI生値 -100..100 を実効レンジへ）
   { const ct = new Float32Array(32);
     for(let i=0;i<32;i++) ct[i] = (CHARTYPE[i] === undefined ? 3 : CHARTYPE[i]);
@@ -1042,7 +1055,8 @@ syncLayerUI();
 let reflow; document.getElementById('txt').addEventListener('input',()=>{
   clearTimeout(reflow); reflow=setTimeout(bakeText, 200); });
 /* ── 文字ごと（伸ばす/すぼめる）── */
-const cwEl = document.getElementById('cw'), chEl = document.getElementById('ch');
+const cwEl = document.getElementById('cw'), chEl = document.getElementById('ch'),
+      crEl = document.getElementById('cr');
 function refreshChars(){                       // bakeText のたびに呼ぶ
   const box = document.getElementById('chips');
   box.innerHTML = '';
@@ -1054,18 +1068,22 @@ function refreshChars(){                       // bakeText のたびに呼ぶ
     if(gi===selChar) b.classList.add('on');
     box.appendChild(b);
   });
-  cwEl.disabled = chEl.disabled = true;
-  cwEl.value = chEl.value = 100;
+  cwEl.disabled = chEl.disabled = crEl.disabled = true;
+  cwEl.value = chEl.value = 100; crEl.value = 0;
   cwEl.parentElement.querySelector('.val').textContent = '';
   chEl.parentElement.querySelector('.val').textContent = '';
+  crEl.parentElement.querySelector('.val').textContent = '';
 }
 function selectChar(gi){
   selChar = gi;
   const s = CHARSCALE[gi] || (CHARSCALE[gi]=[1,1]);
-  cwEl.disabled = chEl.disabled = false;
+  if(CHARROT[gi] === undefined) CHARROT[gi] = 0;
+  cwEl.disabled = chEl.disabled = crEl.disabled = false;
   cwEl.value = Math.round(s[0]*100); chEl.value = Math.round(s[1]*100);
+  crEl.value = Math.round(CHARROT[gi]);
   cwEl.parentElement.querySelector('.val').textContent = cwEl.value;
   chEl.parentElement.querySelector('.val').textContent = chEl.value;
+  crEl.parentElement.querySelector('.val').textContent = crEl.value;
   document.querySelectorAll('#chips button').forEach((b,i)=>
     b.classList.toggle('on', CHARS[i] && CHARS[i].gi===gi));
 }
@@ -1077,12 +1095,19 @@ function selectChar(gi){
     el.parentElement.querySelector('.val').textContent = el.value;
   });
 });
+/* その字だけ回す（度で持つ）。⚠️ 層の「傾ぎ」と足し算になる＝どちらも生きる */
+crEl.addEventListener('input', ()=>{
+  if(selChar<0) return;
+  CHARROT[selChar] = +crEl.value;
+  crEl.parentElement.querySelector('.val').textContent = crEl.value;
+});
 
 /* ── 全リセット：全パラメータ＋アンカー＋文字ごと伸縮を初期値へ（字はそのまま）── */
 function resetAll(){
   Object.assign(P, DEFAULTS);
   ANCHORS.length = 0;
   for(let i=0;i<CHARSCALE.length;i++) CHARSCALE[i] = [1,1];
+  for(let i=0;i<CHARROT.length;i++) CHARROT[i] = 0;
   LAYERS = newLayers();
   VIEW.zoom=1; VIEW.panx=0; VIEW.pany=0; VIEW.rotx=0; VIEW.roty=0;
   selChar = -1;
