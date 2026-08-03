@@ -1,0 +1,1461 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>膜 MAKU — 連続面メッシュ変形 / 木下スタジオ</title>
+<meta name="description" content="膜 MAKU は、文字を一枚の連続した面として掴んで流体のように変形させるブラウザの道具。金属光沢をまとった面が結び目のようにねじれ、書き出しはそのまま作字の素材になる。木下スタジオ（滋賀・木下貴博）制作。">
+<link rel="canonical" href="https://kinoshita.studio/maku/">
+<meta property="og:title" content="膜 MAKU — 連続面メッシュ変形">
+<meta property="og:description" content="文字を一枚の連続した面として掴み、流体のように変形させる。金属光沢の面がねじれ、そのまま作字の素材になる。">
+<meta property="og:image" content="https://kinoshita.studio/assets/img/img-ui-maku.jpg">
+<meta property="og:url" content="https://kinoshita.studio/maku/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="木下スタジオ">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://kinoshita.studio/assets/img/img-ui-maku.jpg">
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700;900&family=Zen+Old+Mincho:wght@600;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#0a0a0a;--paper:#f4f2ee;--line:rgba(10,10,10,.14);}
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;overflow:hidden;background:#111;}
+  body{font-family:"Zen Kaku Gothic New",sans-serif;font-weight:300;color:var(--ink);
+    -webkit-font-smoothing:antialiased;}
+  /* touch-action:none はキャンバスだけ＝描画/アンカー用。パネルのスライダーやスクロールは殺さない */
+  #gl{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none;}
+
+  #panel{position:fixed;top:16px;right:16px;z-index:20;width:230px;
+    background:rgba(244,242,238,.9);backdrop-filter:blur(12px);border:1px solid var(--line);
+    max-height:calc(100vh - 32px);overflow-y:auto;padding:12px;}
+  h2{font-family:"Space Mono",monospace;font-size:9px;letter-spacing:.24em;opacity:.45;margin:12px 0 6px;}
+  h2:first-child{margin-top:0;}
+  textarea{width:100%;height:48px;background:rgba(255,255,255,.5);border:1px solid var(--line);
+    padding:6px;font-family:"Zen Kaku Gothic New",sans-serif;font-size:11px;outline:none;resize:none;}
+  .seg{display:flex;border:1px solid var(--line);margin:5px 0;}
+  .seg button{flex:1;background:none;border:none;cursor:pointer;padding:6px 0;
+    font-family:"Space Mono",monospace;font-size:8px;letter-spacing:.08em;color:var(--ink);
+    opacity:.4;border-right:1px solid var(--line);}
+  .seg button:last-child{border-right:none;}
+  .seg button.on{opacity:1;background:var(--ink);color:var(--paper);}
+  .row{display:flex;align-items:center;gap:8px;padding:2px 0;}
+  .row label{font-family:"Space Mono",monospace;font-size:8px;opacity:.5;width:52px;flex:none;letter-spacing:.06em;}
+  .row input[type=range]{-webkit-appearance:none;flex:1;height:1px;background:var(--line);outline:none;cursor:pointer;}
+  .row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:9px;height:9px;border-radius:50%;background:var(--ink);cursor:pointer;}
+  .val{font-family:"Space Mono",monospace;font-size:8px;opacity:.4;width:26px;text-align:right;flex:none;}
+  .note{font-family:"Space Mono",monospace;font-size:7px;line-height:1.8;opacity:.32;margin-top:6px;}
+  .chips{display:flex;flex-wrap:wrap;gap:4px;margin:5px 0;}
+  .chips button{min-width:22px;height:24px;padding:0 5px;background:rgba(255,255,255,.5);
+    border:1px solid var(--line);font-family:"Zen Kaku Gothic New",sans-serif;font-size:13px;
+    cursor:pointer;color:var(--ink);opacity:.55;}
+  .chips button.on{opacity:1;background:var(--ink);color:var(--paper);}
+  input[type=range]:disabled{opacity:.3;cursor:not-allowed;}
+  .big{width:100%;padding:8px 0;margin-top:8px;background:none;color:var(--ink);border:1px solid var(--line);
+    cursor:pointer;font-family:"Space Mono",monospace;font-size:8.5px;letter-spacing:.18em;}
+  #hud{position:fixed;left:16px;top:16px;z-index:20;font-family:"Space Mono",monospace;
+    font-size:8.5px;letter-spacing:.14em;color:#fff;opacity:.5;line-height:2;}
+
+  /* ── モバイル：二分割（canvas上58dvh / パネル下42dvh 全幅）＝HORI/KUMI/TSUBUと統一 ── */
+  @media(max-width:760px){
+    #gl{ top:0; height:58vh; height:58dvh; bottom:auto; }
+    #panel{ top:58vh; top:58dvh; left:0; right:0; bottom:0; width:auto;
+      max-height:42vh; max-height:42dvh; overflow-y:auto;
+      border:none; border-top:1px solid var(--line);
+      background:rgba(244,242,238,.97); backdrop-filter:none;
+      padding:12px 14px calc(12px + env(safe-area-inset-bottom)); }
+    #hud{ top:10px; left:12px; }
+    /* 指で掴めるようスライダーのタッチ標的を拡大（見た目の細線は runnable-track で維持） */
+    .row{ padding:5px 0; }
+    .row input[type=range]{ height:26px; background:transparent; touch-action:pan-x; }
+    .row input[type=range]::-webkit-slider-runnable-track{ height:1px; background:var(--line); }
+    .row input[type=range]::-webkit-slider-thumb{ width:18px; height:18px; margin-top:-8.5px; }
+    .seg button{ padding:10px 0; }
+  }
+
+  /* ⭐ モバイル ── 見た目の大きさより「掴める領域」を先に確保する。
+     ⚠️ range は入力欄そのものの高さが 1px 前後だと、線のどこを押しても効かず
+     点（つまみ）にしか当たらない。要素に高さを持たせ、線は track として細く描く。 */
+  @media(max-width:760px){
+    input[type=range]{ -webkit-appearance:none; height:40px; background:none; margin:0; }
+    input[type=range]::-webkit-slider-runnable-track{ height:3px; background:currentColor; opacity:.28; border-radius:2px; }
+    input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; width:22px; height:22px;
+      margin-top:-9.5px; border-radius:50%; background:currentColor; }
+    input[type=range]::-moz-range-track{ height:3px; background:currentColor; opacity:.28; }
+    input[type=range]::-moz-range-thumb{ width:22px; height:22px; border:none; border-radius:50%; background:currentColor; }
+    button, .btn, .seg button{ min-height:38px; }
+    select{ min-height:36px; }
+    input[type=color]{ min-height:32px; }
+    label{ font-size:10.5px; }
+  }
+  /* ⚠️ ドラッグする要素はスクロールに取られないようにする */
+  canvas{ touch-action:none; }
+  /* ⓜモバイル調整済 */
+  #langBtn{position:absolute;top:8px;right:10px;height:17px;padding:0 6px;line-height:1;
+    border:1px solid var(--line);background:none;cursor:pointer;border-radius:9px;
+    font-family:ui-monospace,Menlo,monospace;font-size:8.5px;color:inherit;opacity:.4;z-index:5;}
+  #langBtn:hover{opacity:.9;}
+  @media(max-width:760px){ #langBtn{height:26px;font-size:10px;padding:0 10px;} }
+
+  /* ══════════════════════════════════════════════════════════════
+     見た目 ── SwiftUI（Apple）の作法に寄せる          2026-07-31
+     木下＝「MAKU も SAKUJI に合わせて同じように swift ui 統一は可能？」
+
+     ⭐ ここは【いちばん最後に書いた上書きブロック】。上のCSSは1行も触っていない。
+        気に入らなければ、このブロックごと消せば完全に元へ戻る。
+     ⭐ HTML の構造・並び・id も触っていない＝機能は同じ。見た目だけ。
+     ⚠️ SAKUJI のブロックをそのまま移すことはできない（MAKU は --btn / ui-light を持たず、
+        ボタンが .btn でなく .big、独自に .chips と textarea がある）。
+        【同じ設計方針で、MAKU のクラス名に合わせて書き直したもの】。
+     ⚠️ モバイルの「掴める領域」（入力欄そのものに高さ・つまみ22px）は上の @media で
+        確保してある。ここでも同じ大きさを守ること（書かないと上書きして点に戻る）。
+     ── 方針（SAKUJI と同じ）──
+     材質（半透明＋背面ぼかし）／fill 階調で階層／角丸を大きく／
+     セグメンテッドは選んだところに白いカプセルが浮く／太いトラックと大きな白いつまみ／
+     見出しは SF・小さいグレー／色は白黒のまま（Apple 青は入れない）
+     ══════════════════════════════════════════════════════════════ */
+  :root{
+    --line:rgba(60,60,67,.16);           /* separator */
+    --fill:rgba(120,120,128,.13);        /* systemFill */
+    --fill2:rgba(120,120,128,.10);       /* セグメンテッドの受け皿 */
+    --capsule:#ffffff;                   /* 選択カプセル */
+    --glass:rgba(242,242,247,.82);       /* パネル */
+    --dim:rgba(60,60,67,.62);            /* secondaryLabel */
+    --shadow:0 10px 30px rgba(0,0,0,.13), 0 1px 2px rgba(0,0,0,.07);
+    --r:10px;
+  }
+  body{ font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans",
+    "Zen Kaku Gothic New",sans-serif; font-weight:400; }
+
+  #panel{
+    background:var(--glass); border:.5px solid var(--line); border-radius:16px;
+    box-shadow:var(--shadow); padding:14px 14px 18px;
+    -webkit-backdrop-filter:blur(30px) saturate(180%);
+            backdrop-filter:blur(30px) saturate(180%);
+  }
+  /* 見出し＝帯にせず、小さいグレー。sticky でスクロールしても居場所が分かる */
+  #panel h2{
+    position:sticky; top:-14px; z-index:3;
+    margin:20px -14px 8px; padding:7px 14px 6px;
+    background:var(--glass);
+    -webkit-backdrop-filter:blur(30px) saturate(180%);
+            backdrop-filter:blur(30px) saturate(180%);
+    border-bottom:.5px solid var(--line);
+    font-family:inherit; font-size:11px; font-weight:590;
+    letter-spacing:.06em; opacity:1; color:var(--dim);
+  }
+  #panel h2:first-child{ margin-top:-14px }
+
+  /* 行・ラベル・数値 */
+  .row{ gap:10px; padding:3px 0 }
+  .row label{ font-family:inherit; font-size:11.5px; opacity:1; color:var(--ink);
+    letter-spacing:0; width:58px }
+  .val{ font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:11px;
+    opacity:1; color:var(--dim); width:30px; font-variant-numeric:tabular-nums }
+
+  /* スライダー＝太いトラック＋大きな白いつまみ */
+  .row input[type=range], input[type=range]{
+    -webkit-appearance:none; appearance:none; background:none; height:26px;
+  }
+  .row input[type=range]::-webkit-slider-runnable-track,
+  input[type=range]::-webkit-slider-runnable-track{
+    height:4px; border-radius:2px; background:var(--fill); opacity:1;
+  }
+  .row input[type=range]::-webkit-slider-thumb,
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; appearance:none; width:20px; height:20px; margin-top:-8px;
+    border-radius:50%; background:var(--ink); border:none; cursor:pointer;
+    box-shadow:0 1px 3px rgba(0,0,0,.32), 0 0 0 .5px rgba(0,0,0,.05);
+  }
+  input[type=range]::-moz-range-track{ height:4px; border-radius:2px; background:var(--fill); opacity:1 }
+  input[type=range]::-moz-range-thumb{ width:20px; height:20px; border:none; border-radius:50%;
+    background:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.32) }
+
+  /* セグメンテッド＝選んだところに白いカプセルが浮く */
+  .seg{ background:var(--fill2); border:none; border-radius:9px; padding:2px; gap:2px; margin:6px 0 10px }
+  .seg button{ border:none; border-right:none; border-radius:7px; background:none;
+    font-family:inherit; font-size:11.5px; letter-spacing:0; font-weight:450;
+    color:var(--ink); opacity:.72; padding:6px 0; transition:.16s }
+  .seg button:hover{ opacity:1; background:rgba(120,120,128,.10) }
+  .seg button.on{ opacity:1; background:var(--capsule); color:var(--ink); font-weight:590;
+    box-shadow:0 1px 3px rgba(0,0,0,.16), 0 0 0 .5px rgba(0,0,0,.04) }
+
+  /* ボタン */
+  .big{ background:var(--fill); border:none; border-radius:var(--r); color:var(--ink);
+    font-family:inherit; font-size:12px; font-weight:500; letter-spacing:.02em;
+    padding:11px 0; transition:.14s }
+  .big:hover{ background:rgba(120,120,128,.22) }
+  .big:active{ transform:scale(.985); opacity:.8 }
+
+  /* 字のチップ */
+  .chips button{ background:var(--fill); border:none; border-radius:8px; opacity:.8;
+    min-width:30px; height:30px; transition:.14s }
+  .chips button:hover{ opacity:1; background:rgba(120,120,128,.22) }
+  .chips button.on{ opacity:1; background:var(--ink); color:var(--paper) }
+
+  /* 打ち込み欄 */
+  textarea{ background:var(--fill); border:none; border-radius:var(--r);
+    font-family:inherit; font-size:12.5px; padding:9px 10px; }
+  textarea:focus{ box-shadow:0 0 0 3px rgba(120,120,128,.22) }
+
+  /* 説明・HUD・言語切替 */
+  .note{ font-family:inherit; font-size:10.5px; line-height:1.65; opacity:.55; color:var(--ink) }
+  #hud{ font-family:ui-monospace,"SF Mono",Menlo,monospace; opacity:.55 }
+  #langBtn{ border:.5px solid var(--line); border-radius:9px; background:rgba(255,255,255,.6);
+    font-family:inherit; font-size:9.5px; font-weight:500; opacity:.6;
+    -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px) }
+  #langBtn:hover{ opacity:1 }
+
+  /* ⚠️ モバイル＝上の @media と同じだけ「掴める領域」を確保し直す。
+     書かないと、この上書きブロックが勝ってつまみが小さいまま＝点にしか当たらない。 */
+  @media(max-width:760px){
+    #panel{ border-radius:16px 16px 0 0; border:none; border-top:.5px solid var(--line);
+      background:rgba(242,242,247,.94) }
+    #panel h2{ top:-12px; margin:18px -14px 8px }
+    .row{ padding:5px 0 }
+    input[type=range]{ height:40px }
+    input[type=range]::-webkit-slider-runnable-track{ height:4px }
+    input[type=range]::-webkit-slider-thumb{ width:24px; height:24px; margin-top:-10px }
+    input[type=range]::-moz-range-thumb{ width:24px; height:24px }
+    .seg button{ padding:11px 0; min-height:38px }
+    .big{ padding:13px 0; min-height:38px }
+    input[type=color]{ height:34px }
+    .chips button{ min-width:36px; height:36px }
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     地のグラデ／画像を元にする                        2026-08-03
+     ⭐ ここも【いちばん最後に足したブロック】。消せば元の見た目に戻る。
+     ⭐ 使わないつまみは出さない（色数 1 のときグラデの設定は畳む）。
+     ══════════════════════════════════════════════════════════════ */
+  input[type=color]{ -webkit-appearance:none; appearance:none; flex:1; height:26px;
+    background:none; border:none; border-radius:8px; padding:0; cursor:pointer; }
+  input[type=color]::-webkit-color-swatch-wrapper{ padding:0 }
+  input[type=color]::-webkit-color-swatch{ border:.5px solid var(--line); border-radius:8px }
+
+  .only-grad{ display:none }
+  body.grad .only-grad{ display:block }
+  .grad3,.grad4,.grad5,.grad6{ display:none }
+  body.grad-3 .grad3{ display:block }
+  body.grad-4 .grad4{ display:block }
+  body.grad-5 .grad5{ display:block }
+  body.grad-6 .grad6{ display:block }
+
+  /* ⚠️ 画像のときは「見え（縞）」が効かない＝触れるのに何も起きない範囲を残さない */
+  body.img-mode .only-text{ display:none }
+  #imgBtn{ margin-top:0 }
+
+  /* ⚠️ 地が明るいと、白い HUD が地に溶けて読めなくなる（地のグラデを入れて起きた）。
+     ⭐ 差分合成＝地が暗ければ白く、明るければ暗く出る＝どんな地でも必ず読める。 */
+  #hud{ color:#fff; opacity:1; mix-blend-mode:difference; }
+
+  /* 刷り ── 字のインク。使う色数のぶんだけ出す */
+  .only-ink{ display:none }
+  body.look-ink .only-ink{ display:block }
+  .ink2,.ink3,.ink4,.ink5,.ink6{ display:none }
+  body.ink-2 .ink2{ display:block }
+  body.ink-3 .ink3{ display:block }
+  body.ink-4 .ink4{ display:block }
+  body.ink-5 .ink5{ display:block }
+  body.ink-6 .ink6{ display:block }
+  /* ⚠️ 密度は縞（金属・線）のつまみ。墨と刷りでは何も起きないので出さない */
+  .only-stripe{ display:none }
+  body.look-stripe .only-stripe{ display:block }
+
+  /* 版面 ── 「画面のまま」のときは形と長辺のつまみを出さない */
+  .only-frame{ display:none }
+  body.framed .only-frame{ display:block }
+  /* ⭐ 版面のときは canvas が紙そのもの＝外に地が続かないよう、まわりを暗く落として境を見せる */
+  body.framed #gl{ box-shadow:0 0 0 1px rgba(255,255,255,.16), 0 24px 60px rgba(0,0,0,.5) }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hud">膜 MAKU / KINOSHITA STUDIO<br><span id="stat"></span></div>
+
+<div id="panel"><button id="langBtn" title="日本語 / English">JP</button>
+  <!-- ⭐ 版（重ねる）── 1枚の膜の上に、字や画像を何枚でも重ねる。
+       ワープ・アンカー・地・版面は面のもの＝どの版にも同じくかかる。 -->
+  <h2>版（重ねる）</h2>
+  <div class="chips" id="sheets"></div>
+  <div class="seg" id="addSeg"><button data-add="text">＋ 字</button><button data-add="image">＋ 画像</button></div>
+  <input type="file" id="imgFile" accept="image/*" hidden>
+  <div class="row"><label>横位置</label><input type="range" id="sx" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>縦位置</label><input type="range" id="sy" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>大きさ</label><input type="range" id="ss" min="5" max="300" value="100"><span class="val"></span></div>
+  <div class="row"><label>角度</label><input type="range" id="sr" min="-180" max="180" value="0"><span class="val"></span></div>
+  <button class="big" id="delSheet">この版を消す</button>
+  <div class="note">版を押す＝その版を選ぶ（下の「字」「3層」「文字ごと」は選んだ版に効く）<br>
+    画面に<b>ドラッグ＆ドロップ</b>すると画像の版が増える。粒 TSUBU・礫 TSUBUTE・彫 HORI で出した絵を重ねられる<br>
+    ⚠️ うねり・アンカー・地・版面は<b>面ぜんぶ</b>にかかる（重ねても1枚の膜）</div>
+
+  <h2>字</h2>
+  <textarea id="txt">文字のカタチ</textarea>
+  <div class="seg" id="font"><button data-v="0" class="on">角ゴ</button><button data-v="1">明朝</button></div>
+  <div class="seg" id="dir"><button data-v="0" class="on">横組み</button><button data-v="1">縦組み</button></div>
+  <div class="row"><label>字間</label><input type="range" id="track" min="-60" max="120" value="0"><span class="val"></span></div>
+  <div class="row"><label>行間</label><input type="range" id="leading" min="-60" max="120" value="0"><span class="val"></span></div>
+  <div class="note">マイナス＝詰める（重なる）／プラス＝空ける</div>
+
+  <h2>ワープ（連続面）</h2>
+  <div class="row"><label>縦うねり</label><input type="range" id="vwarp" min="-100" max="100" value="30"><span class="val"></span></div>
+  <div class="row"><label>横うねり</label><input type="range" id="hwarp" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>山数</label><input type="range" id="freq" min="1" max="8" value="2"><span class="val"></span></div>
+  <div class="row"><label>厚み</label><input type="range" id="thick" min="0" max="100" value="0"><span class="val"></span></div>
+  <div class="note">砂時計＝縦うねり＋（山数2）<br>厚み＝面に奥行き（傾けると立体に見える）</div>
+
+  <h2>3層（漢字・かな・カナ）</h2>
+  <div class="seg" id="layer"><button data-v="0" class="on">漢字</button><button data-v="1">かな</button><button data-v="2">カナ</button></div>
+  <div class="row"><label>太らせ</label><input type="range" id="L_w" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>縦のび</label><input type="range" id="L_h" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>傾ぎ</label><input type="range" id="L_rot" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>うねり</label><input type="range" id="L_warp" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>縞密度</label><input type="range" id="L_dens" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>縞角度</label><input type="range" id="L_sang" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>縞位置</label><input type="range" id="L_soff" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="note">層を選ぶ＝その字種だけに効く<br>漢字/かな/カナが別の速度で流れる<br>縞角度＝ハイライトを斜めに（±90°）／縞位置＝流し位置をずらす</div>
+
+  <h2>変形（辺ごと）</h2>
+  <div class="row"><label>上幅</label><input type="range" id="wtop" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>下幅</label><input type="range" id="wbot" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>左高</label><input type="range" id="hleft" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>右高</label><input type="range" id="hright" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>せん断X</label><input type="range" id="shearx" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>せん断Y</label><input type="range" id="sheary" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>上ねじれ</label><input type="range" id="twtop" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>下ねじれ</label><input type="range" id="twbot" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="note">上下・左右を独立して広げる/ねじる<br>面が連続して歪む（タイル単位でない）</div>
+
+  <h2>アンカー（面を押す）</h2>
+  <div class="note">左ドラッグ＝面を引っぱる／Alt+クリック＝消す<br>右ドラッグ＝傾ける・ホイール/ピンチ＝ズーム<br><b>スペース+ドラッグ＝ボードを動かす</b>（Shift/中ボタンも可）<br><b>H キー＝手のひらモード</b>（左ドラッグで動かせる）<br>ダブルクリック＝正面に戻す</div>
+  <div class="row"><label>効き幅</label><input type="range" id="radius" min="5" max="80" value="30"><span class="val"></span></div>
+  <div class="row"><label>強さ</label><input type="range" id="strength" min="0" max="100" value="55"><span class="val"></span></div>
+
+  <h2>文字ごと（伸ばす／すぼめる）</h2>
+  <div class="chips" id="chips"></div>
+  <div class="row"><label>幅</label><input type="range" id="cw" min="20" max="300" value="100" disabled><span class="val"></span></div>
+  <div class="row"><label>高さ</label><input type="range" id="ch" min="20" max="300" value="100" disabled><span class="val"></span></div>
+  <div class="row"><label>角度</label><input type="range" id="cr" min="-180" max="180" value="0" disabled><span class="val"></span></div>
+  <div class="note">文字を選ぶ＝その字だけ伸縮／回す（セル中心まわり）<br>
+    ⚠️ 大きく回すと隣の字に重なる → 字間で空ける</div>
+
+  <h2>見え</h2>
+  <div class="only-text">
+    <div class="seg" id="look">
+      <button data-v="0" class="on">金属</button><button data-v="1">墨</button>
+      <button data-v="2">線</button><button data-v="3">刷り</button>
+    </div>
+    <div class="only-stripe">
+      <div class="row"><label>密度</label><input type="range" id="density" min="1" max="40" value="14"><span class="val"></span></div>
+    </div>
+    <!-- ⭐ 刷り＝字の中を、地と同じ版のグラデで塗る。色だけ字用に持つ＝多色刷り -->
+    <div class="only-ink">
+      <div class="row"><label>字の色数</label><input type="range" id="inkN" min="1" max="6" step="1" value="3"><span class="val"></span></div>
+      <div class="row"><label>字 1</label><input type="color" data-ic="0" value="#e9201c"></div>
+      <div class="ink2"><div class="row"><label>字 2</label><input type="color" data-ic="1" value="#141414"></div></div>
+      <div class="ink3"><div class="row"><label>字 3</label><input type="color" data-ic="2" value="#2b4cc9"></div></div>
+      <div class="ink4"><div class="row"><label>字 4</label><input type="color" data-ic="3" value="#f2d16b"></div></div>
+      <div class="ink5"><div class="row"><label>字 5</label><input type="color" data-ic="4" value="#1f7a4d"></div></div>
+      <div class="ink6"><div class="row"><label>字 6</label><input type="color" data-ic="5" value="#8a6f4e"></div></div>
+      <div class="note">⭐ <b>形は「地（紙）」のつまみと同じ版</b>（流す/渦・向き・版数・中心）＝紙と字が同じ流れで刷られる。色だけここで決める</div>
+    </div>
+  </div>
+  <div class="row"><label>解像</label><input type="range" id="mesh" min="16" max="160" value="90"><span class="val"></span></div>
+
+  <!-- ⭐ 地のグラデ ── TSUBUTE → HORI 2 → KUMI と同じ式を、ここにも移した。2026-08-03
+       ⭐ 考え方＝【紙そのものを画素ごとの色にする】だけ。膜（面）の式は一行も変えていない。
+          色数 1 ＝これまでと完全に同じ単色の地。 -->
+  <h2>地（紙）</h2>
+  <div class="row"><label>地の色数</label><input type="range" id="papN" min="1" max="6" step="1" value="1"><span class="val"></span></div>
+  <div class="only-grad">
+    <div class="row"><label>地 1</label><input type="color" data-pc="0" value="#f2d16b"></div>
+    <div class="row"><label>地 2</label><input type="color" data-pc="1" value="#c8d4de"></div>
+    <div class="grad3"><div class="row"><label>地 3</label><input type="color" data-pc="2" value="#7f95ab"></div></div>
+    <div class="grad4"><div class="row"><label>地 4</label><input type="color" data-pc="3" value="#1d2733"></div></div>
+    <div class="grad5"><div class="row"><label>地 5</label><input type="color" data-pc="4" value="#8a6f4e"></div></div>
+    <div class="grad6"><div class="row"><label>地 6</label><input type="color" data-pc="5" value="#e9201c"></div></div>
+    <div class="seg" id="papMode">
+      <button data-v="0" class="on">流す</button><button data-v="1">中心</button><button data-v="2">渦</button><button data-v="3">まわり</button>
+    </div>
+    <div class="row"><label>地の向き</label><input type="range" id="papAng" min="0" max="360" step="1" value="90"><span class="val"></span></div>
+    <div class="row"><label>地の版数</label><input type="range" id="papSteps" min="0" max="16" step="1" value="0"><span class="val"></span></div>
+    <div class="row"><label>中心よこ</label><input type="range" id="papCx" min="0" max="100" step="1" value="50"><span class="val"></span></div>
+    <div class="row"><label>中心たて</label><input type="range" id="papCy" min="0" max="100" step="1" value="50"><span class="val"></span></div>
+  </div>
+  <div class="note">⭐ 色数 1 ＝単色（今までどおり）／2〜6 で<b>グラデ</b>。色はひとつずつ選ぶ<br>
+    <b>向き</b>＝流すのとき向き／渦のときねじれ。<b>版数</b>＝少ない版に落として網をかける</div>
+
+  <!-- ⭐ 版面 ── 礫 TSUBUTE の「書き出す大きさ」と同じ型。
+       ⚠️ ここは【画面の canvas そのものを版面の形にする】＝見えているものがそのまま出る。
+          （枠だけ描いて中身は画面のまま、にすると書き出しと見え方がズレる） -->
+  <h2>版面（書き出す大きさ）</h2>
+  <div class="seg" id="frameOn"><button data-v="0" class="on">画面のまま</button><button data-v="1">版面で</button></div>
+  <!-- ⭐ 絵の大きさ＝膜（オブジェクト）だけを大小する。地（紙）は動かない。
+       ホイール／ピンチと同じもの＝どちらで動かしても、ここの数字は合わせてある。 -->
+  <div class="row"><label>絵の大きさ</label><input type="range" id="fitz" min="20" max="300" step="1" value="100"><span class="val"></span></div>
+  <div class="only-frame">
+    <div class="seg" id="fshape">
+      <button data-v="0" class="on">正方形</button><button data-v="1">たて 4:5</button>
+      <button data-v="2">よこ 16:9</button><button data-v="3">たて 9:16</button>
+    </div>
+    <div class="row"><label>長辺</label><input type="range" id="flong" min="720" max="4096" step="64" value="2048"><span class="val"></span></div>
+  </div>
+  <div class="note" id="fout">画面のまま ＝ —</div>
+
+  <button class="big" id="resetAll">全リセット</button>
+  <button class="big" id="reset">アンカー全消し</button>
+  <button class="big" id="png">PNG</button>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   膜 MAKU — 連続面メッシュ変形（研究サンドボックス）
+
+   TSUBU のワープは「タイルごと」＝そのまま縦長になる。
+   これは日本語を1枚のテクスチャに焼き、変形するグリッド面に貼る。
+   → 面が連続して歪む（組んだタイポ全体を1枚の連続面として歪ませる仕組み）。
+
+   ⭐ ここで「メッシュ変形」の技法を取りに行く。取れたらチェーンの
+      1エンジンとして KUMI の3層や TSUBU の画の向きと干渉させる（＝先）。
+   ═══════════════════════════════════════════════════════════ */
+
+const DEFAULTS = { font:0, dir:0, layer:0, track:0, leading:0, vwarp:30, hwarp:0, freq:2, thick:0,
+            wtop:0, wbot:0, hleft:0, hright:0,      // 辺ごとの 幅/高さ
+            shearx:0, sheary:0,                     // せん断
+            twtop:0, twbot:0,                       // 上下で別のねじれ
+            radius:30, strength:55, look:0, density:14, mesh:90, inkN:3,
+            /* 地のグラデ ── 色数 1 ＝単色＝これまでと同じ地 */
+            papN:1, papMode:0, papAng:90, papSteps:0, papCx:50, papCy:50 };
+const P = { ...DEFAULTS };
+/* 版面（書き出す大きさ）。⚠️ DEFAULTS に入れない＝全リセットで消さない（出力の設定だから） */
+Object.assign(P, { frameOn:0, fshape:0, flong:2048 });
+const ANCHORS = [];   // {u,v, du,dv} 面を押す点（面の座標と変位）
+
+/* ══ 版（重ねる）══════════════════════════════════════════════
+   ⭐ 1枚の膜の上に、字や画像を何枚でも重ねる。
+   ⭐ ワープ・アンカー・厚み・地・版面は【面のもの】＝どの版にも同じくかかる
+      ＝重ねても「1枚の膜」であり続ける（版ごとに別の膜にはしない）。
+   ⭐ 版が持つのは「何を」と「どこに・どの大きさ・どの角度で」だけ。
+   ⚠️ 3層と文字ごとは【その版が字のとき】だけ効く（セル＝1文字が前提のため）。 */
+let SHEETS = [];
+let curSheet = 0;
+const S_ = () => SHEETS[curSheet] || SHEETS[0];
+let selChar = -1;
+const VIEW = { zoom:1, panx:0, pany:0, rotx:0, roty:0 };   // ビュー：ズーム＋パン＋傾き（正投影で3層を保つ）
+
+/* ── 3層（漢字/かな/カナ/他）ごとのエンジン。値は UI 生値 -100..100 ── */
+const LAYER_KEYS = ['w','h','rot','warp','dens','sang','soff'];
+const newLayers = () => [0,1,2,3].map(()=>({w:0,h:0,rot:0,warp:0,dens:0,sang:0,soff:0}));
+let LAYERS = newLayers();
+// 開幕の絵：漢字は太く／かなは細くうねり／カナは傾ぐ（KUMI流＝開いた瞬間に3層が違って見える）
+LAYERS[0].w = 14; LAYERS[0].h = 6;
+LAYERS[1].w = -16; LAYERS[1].warp = 24;
+LAYERS[2].rot = 16;
+/* 字種を判定して層番号を返す */
+function classify(ch){
+  if(/[぀-ゟー]/.test(ch)) return 1;                     // ひらがな（長音符含む）
+  if(/[゠-・ヽ-ヿｦ-ﾟ]/.test(ch)) return 2;  // カタカナ
+  if(/[一-鿿㐀-䶿豈-﫿々〆〇ヶ]/.test(ch)) return 0; // 漢字
+  return 3;                                                           // 英数・記号など
+}
+
+/* ── 字をテクスチャに焼く（版ごと）── */
+const tc = document.createElement('canvas'), tg = tc.getContext('2d', { willReadFrequently:false });
+function bakeSheet(s){
+  if(!s || s.kind === 'image') return;
+  const lines = (s.text || ' ').split('\n');
+  // 1文字の基準px。字数が少ないほど高精細に焼く＝寄っても輪郭が壊れない
+  // （GPUの最大テクスチャに収まる範囲で 1024→512→… と自動で落とす）
+  const MAXT = gl ? gl.getParameter(gl.MAX_TEXTURE_SIZE) : 4096;
+  // 組方向でグリッド配置を決める（gi = row*cols + col）
+  let cols, rows; const cells = [];   // {ch, col, row}
+  if(s.dir === 0){                                 // 横組み：行が上→下、字が左→右
+    cols = Math.max(...lines.map(l=>[...l].length), 1);
+    rows = lines.length;
+    lines.forEach((line,r)=>{ [...line].forEach((ch,c)=> cells.push({ch, col:c, row:r})); });
+  } else {                                         // 縦組み：字が上→下、行が右→左
+    rows = Math.max(...lines.map(l=>[...l].length), 1);
+    cols = lines.length;
+    lines.forEach((line,li)=>{ const col = cols-1-li; [...line].forEach((ch,ci)=> cells.push({ch, col, row:ci})); });
+  }
+  s.cols = cols; s.rows = rows;
+  const tkS = 1 + Math.max(0, s.track/100), ldS = 1 + Math.max(0, s.leading/100);
+  let S = 1024;
+  while((cols * S * tkS > MAXT || rows * S * ldS > MAXT) && S > 128) S /= 2;
+  // 文字ごと制御用：グリッド・文字リスト・層を更新（既存の伸縮値は番号ごとに引き継ぐ）
+  s.chars = []; s.ctype = [];
+  cells.forEach(({ch,col,row})=>{ const gi = row*cols + col; s.chars.push({ ch, gi }); s.ctype[gi] = classify(ch); });
+  const keep = (s.cscale||[]).slice(), keepR = (s.crot||[]).slice();
+  s.cscale = []; s.crot = [];
+  for(let i=0;i<Math.min(cols*rows,32);i++){ s.cscale.push(keep[i] || [1,1]); s.crot.push(keepR[i] || 0); }
+  selChar = -1;
+  // 字間・行間＝セルの寸法そのものを伸縮する（字の大きさは変えない）
+  // 横組みは 字間→横／行間→縦、縦組みは逆にかかる
+  const tk = s.track/100, ld = s.leading/100;
+  const cw = S * (1 + (s.dir === 0 ? tk : ld));    // セル幅
+  const chh= S * (1 + (s.dir === 0 ? ld : tk));    // セル高
+  tc.width  = Math.max(Math.round(cols * cw), 8);
+  tc.height = Math.max(Math.round(rows * chh), 8);
+  tg.fillStyle = '#000'; tg.fillRect(0,0,tc.width,tc.height);
+  tg.fillStyle = '#fff';
+  tg.textAlign = 'center'; tg.textBaseline = 'middle';
+  const fam = s.font ? '"Zen Old Mincho"' : '"Zen Kaku Gothic New"';
+  tg.font = `900 ${S*0.86}px ${fam}, sans-serif`;
+  cells.forEach(({ch,col,row}) => tg.fillText(ch, col*cw + cw/2, row*chh + chh/2 + S*0.02));
+  s.asp = tc.width / tc.height;
+  if(gl && s.tex){
+    gl.bindTexture(gl.TEXTURE_2D, s.tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);   // canvas と WebGL の上下を合わせる
+    // ⭐ RGBA で焼く＝同じテクスチャに画像も通せる（字は黒地に白なので .r はこれまで通り読める）
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tc);
+  }
+  if(s === S_()) refreshChars();
+}
+
+/* ── WebGL ── */
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl', { antialias:true, preserveDrawingBuffer:true });
+gl.getExtension('OES_standard_derivatives');      // fwidth＝輪郭を寄っても滑らかに保つ
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+/* ⭐ グラデの式は【ひとつだけ】書いて、地（紙）と字（インク）で使い回す。
+   ⚠️ 別プログラムなので uniform は共有できないが、式が2本に割れると必ず片方だけ直す事故になる。
+   ⭐ 形（流す/中心/渦/まわり・向き・版数・中心）は地と字で【同じ版】を使う＝刷りの考え方。
+      色数と色だけ別に持つ（＝リソグラフの多色刷り）。 */
+const PAPER_GLSL = (fn, c) => `
+  vec3 ${fn}Pick(float i, vec3 c0){
+    if(i < 0.5) return ${c}0;
+    if(i < 1.5) return ${c}1;
+    if(i < 2.5) return ${c}2;
+    if(i < 3.5) return ${c}3;
+    if(i < 4.5) return ${c}4;
+    return ${c}5;
+  }
+  float ${fn}Bayer(vec2 p){
+    vec2 cc = mod(floor(p), 4.0);
+    float i = cc.y * 4.0 + cc.x;
+    float b = 0.0;
+    if(i<0.5)b=0.0;      else if(i<1.5)b=8.0;  else if(i<2.5)b=2.0;  else if(i<3.5)b=10.0;
+    else if(i<4.5)b=12.0;else if(i<5.5)b=4.0;  else if(i<6.5)b=14.0; else if(i<7.5)b=6.0;
+    else if(i<8.5)b=3.0; else if(i<9.5)b=11.0; else if(i<10.5)b=1.0; else if(i<11.5)b=9.0;
+    else if(i<12.5)b=15.0;else if(i<13.5)b=7.0;else if(i<14.5)b=13.0;else b=5.0;
+    return b / 16.0;
+  }
+  vec3 ${fn}At(vec2 uv, vec3 c0, float n, float asp){
+    if(n < 1.5) return c0;                                   // 1色＝今までと完全に同じ
+    /* ⭐ 形＝別の模様を4つ作るのではなく、同じグラデを どの座標に流すか だけ差し替える */
+    vec2  q   = (uv - vec2(uPapCx, uPapCy)) * vec2(asp, 1.0);
+    float rad = length(q) / 0.72;
+    float ang = atan(q.y, q.x) / 6.2831853;
+    float t;
+    if(uPapMode < 0.5){
+      float a = radians(uPapAng);
+      vec2  d = vec2(cos(a), sin(a));
+      vec2  pp = (uv - 0.5) * vec2(asp, 1.0);
+      float w = 0.5 * (abs(d.x) * asp + abs(d.y));
+      t = dot(pp, d) / max(w, 0.0001) * 0.5 + 0.5;
+    }else if(uPapMode < 1.5){
+      t = rad;
+    }else if(uPapMode < 2.5){
+      t = fract(rad + ang * (uPapAng / 90.0));                // 渦（ねじれは向きのつまみを使い回す）
+    }else{
+      t = fract(ang + 0.5 + uPapAng / 360.0);                 // まわり
+    }
+    t = clamp(t, 0.0, 1.0);
+    if(uPapSteps > 1.5){
+      float st = floor(uPapSteps);
+      t = clamp(floor(t * (st - 1.0) + (${fn}Bayer(uv * uRes) - 0.5) + 0.5) / (st - 1.0), 0.0, 1.0);
+    }
+    /* ⚠️ 渦・まわりは一周するので、色を環にしないと継ぎ目が1本出る */
+    float ring = (uPapMode > 1.5) ? 1.0 : 0.0;
+    float span = mix(n - 1.0, n, ring);
+    float sc = t * span;
+    float i  = floor(sc);
+    float ia = mix(i,       mod(i,       n), ring);
+    float ib = mix(i + 1.0, mod(i + 1.0, n), ring);
+    return mix(${fn}Pick(ia, c0), ${fn}Pick(ib, c0), sc - i);
+  }
+`;
+
+const VERT = `
+  attribute vec2 aUV;
+  uniform vec2 uScale;      // アスペクト補正
+  uniform float uZoom;      // ビュー：ズーム
+  uniform vec2 uPan;        // ビュー：パン（NDC単位）
+  uniform float uRotX, uRotY; // ビュー：傾き（正投影）
+  uniform float uThick;       // 面の厚み（z方向の起伏）
+  uniform vec2 uSheetSize;    // 版（重ねる1枚）の矩形＝面座標での半サイズ
+  uniform vec2 uSheetPos;     // 版の中心（面座標）
+  uniform float uSheetScale, uSheetRot;
+  uniform float uVWarp, uHWarp, uFreq, uTime;
+  uniform float uWTop, uWBot, uHLeft, uHRight, uShearX, uShearY, uTwTop, uTwBot;
+  uniform vec2 uAnchorUV[24];
+  uniform vec2 uAnchorD[24];
+  uniform float uAnchorR;
+  uniform int uAnchorN;
+  uniform vec2 uCharScale[32];        // 文字ごとの [sx, sy]
+  uniform float uCharRot[32];         // 文字ごとの角度（rad・セル中心まわり）
+  uniform float uCharType[32];        // 文字ごとの層（0漢字/1かな/2カナ/3他）
+  uniform float uGridCols, uGridRows; // テクスチャの文字グリッド
+  uniform int uCharN;
+  uniform float uLW[4], uLH[4], uLRot[4], uLWarp[4], uLDens[4]; // 層ごとのエンジン
+  uniform float uLSAng[4], uLSOff[4];          // 層ごとの縞：角度・位置
+  varying vec2 vUV;
+  varying float vDens;
+  varying float vSAng, vSOff;                   // 縞の角度・位置を面に渡す
+  void main(){
+    vUV = aUV;
+
+    // ⓪ 文字ごとの伸縮＋3層 — aUV からセル（1文字）を逆算。そのセルが
+    //    どの字種（層）かで、別々のうねり/傾ぎ/太さをセル中心まわりに効かせる。
+    //    セル内で完結するので連続面（膜全体のうねり）は壊れず、3層が別速度で流れる。
+    float ccol  = floor(aUV.x * uGridCols);
+    float crowB = floor(aUV.y * uGridRows);                        // 0=下
+    int cidx = int((uGridRows - 1.0 - crowB) * uGridCols + ccol);  // 読み順（左上=0, 行優先）
+    vec2 scl = vec2(1.0);
+    float crot = 0.0;                                              // 文字ごとの角度
+    int ctype = 3;
+    for(int i=0;i<32;i++){ if(i>=uCharN) break; if(i==cidx){ scl = uCharScale[i]; crot = uCharRot[i]; ctype = int(uCharType[i]); break; } }
+    // 層のエンジン値を取り出す
+    float lw=0.0, lh=0.0, lrot=0.0, lwarp=0.0, ldens=0.0, lsang=0.0, lsoff=0.0;
+    for(int i=0;i<4;i++){ if(i==ctype){ lw=uLW[i]; lh=uLH[i]; lrot=uLRot[i]; lwarp=uLWarp[i]; ldens=uLDens[i]; lsang=uLSAng[i]; lsoff=uLSOff[i]; break; } }
+    vDens = 1.0 + ldens;
+    vSAng = lsang; vSOff = lsoff;
+
+    vec2 cc  = (vec2(ccol, crowB) + 0.5) / vec2(uGridCols, uGridRows);
+    vec2 rel = (aUV - cc) * scl * vec2(1.0 + lw, 1.0 + lh);   // 文字ごと伸縮 × 層の太らせ/縦のび
+    float fy = (aUV.y - cc.y) * uGridRows;                    // セル内 縦位置 -0.5..0.5
+    rel.x += cos(fy * 6.2831853) * lwarp;                     // 層のうねり（字の中でS字に）
+    // 層の傾ぎ ＋ その字だけの角度（どちらもセル中心まわり）
+    // ⚠️ UV 空間のまま回すと、セルが正方でないぶん字が潰れる（1行6列なら 6:1 に歪む）。
+    //    ⭐ セル内の正方座標に直してから回して、戻す＝その場でまっすぐ回る。
+    float rc = cos(lrot + crot), rs = sin(lrot + crot);
+    vec2 cn = vec2(uGridCols, uGridRows);
+    vec2 rn = rel * cn;
+    rn  = vec2(rn.x*rc - rn.y*rs, rn.x*rs + rn.y*rc);
+    rel = rn / cn;
+    vec2 puv = cc + rel;
+
+    vec2 p = puv * 2.0 - 1.0;             // -1..1
+
+    /* ⭐ 版（重ねる）── この版を面のどこに、どの大きさ・角度で置くか。
+       ⚠️ 1枚だけのときは size=(1,1) scale=1 rot=0 pos=(0,0) ＝これまでと完全に同じ。 */
+    p *= uSheetSize * uSheetScale;
+    float shc = cos(uSheetRot), shs = sin(uSheetRot);
+    p = vec2(p.x*shc - p.y*shs, p.x*shs + p.y*shc);
+    p += uSheetPos;
+
+    /* ⭐⭐ ここから下（うねり・辺ごと・せん断・ねじれ・アンカー）は【面の座標】で効かせる。
+       ＝どの版も同じ波に乗る＝重ねても【1枚の膜】であり続ける。
+       ⚠️ 版のローカル UV（aUV）で効かせると、版ごとに別々にうねって別々の面に見える。 */
+    vec2 t2 = p * 0.5 + 0.5;
+    float tx = t2.x, ty = t2.y;   // 0..1（tyは下0上1）
+
+    // ① うねり（左右対称の波）— 砂時計はここ
+    p.x *= 1.0 + cos(ty * 6.2831853 * uFreq) * uVWarp;
+    p.y *= 1.0 + cos(tx * 6.2831853 * uFreq) * uHWarp;
+
+    // ② 辺ごとの幅/高さ — 上下・左右を独立して広げる/すぼめる
+    p.x *= mix(1.0 + uWBot, 1.0 + uWTop, ty);      // 上幅 / 下幅
+    p.y *= mix(1.0 + uHLeft, 1.0 + uHRight, tx);   // 左高 / 右高
+
+    // ③ せん断（傾け）
+    p.x += (ty - 0.5) * uShearX;
+    p.y += (tx - 0.5) * uShearY;
+
+    // ④ ねじれ — 上と下で別の角度、縦に沿って補間
+    float ang = mix(uTwBot, uTwTop, ty);
+    float c = cos(ang), s = sin(ang);
+    p = vec2(p.x*c - p.y*s, p.x*s + p.y*c);
+
+    // アンカー — 面を局所的に引っぱる（連続的に減衰）
+    for(int i=0;i<24;i++){
+      if(i>=uAnchorN) break;
+      float d = distance(t2, uAnchorUV[i]);      // ⚠️ 面座標で測る（版ごとでなく面を押す）
+      float w = exp(-d*d/(uAnchorR*uAnchorR));
+      p += uAnchorD[i] * w * 2.0;
+    }
+
+    // 厚み：面を z 方向に起伏させる（傾けると奥行きが見える＝連続面が空間で波打つ）
+    float relief = (cos(ty*6.2831853*uFreq) + cos(tx*6.2831853*uFreq)) * 0.5;
+    // ビュー：正投影のまま傾ける（遠近なし＝3層が読めたまま角度がつく）＋ズーム＋パン
+    vec3 q = vec3(p * uScale, relief * uThick);
+    float rcx = cos(uRotX), rsx = sin(uRotX), rcy = cos(uRotY), rsy = sin(uRotY);
+    q = vec3(rcy*q.x + rsy*q.z, q.y, -rsy*q.x + rcy*q.z);   // Y軸まわり
+    q = vec3(q.x, rcx*q.y - rsx*q.z, rsx*q.y + rcx*q.z);    // X軸まわり
+    gl_Position = vec4(q.xy * uZoom + uPan, 0.0, 1.0);
+  }
+`;
+const FRAG = `
+  #extension GL_OES_standard_derivatives : enable
+  precision highp float;
+  uniform sampler2D uTex;
+  uniform int uLook;
+  uniform int uSrc;                             // 0=字（形のマスク）／1=画像（色もそのまま）
+  uniform float uDensity;
+  uniform vec2 uRes;
+  /* ⭐ 字のインク＝地とまったく同じグラデの式。色数と色だけ字用に持ち、
+     形（流す/渦・向き・版数・中心）は地と【同じ版】を共有する＝多色刷り。 */
+  uniform vec3 uInk0, uInk1, uInk2, uInk3, uInk4, uInk5;
+  uniform float uInkN, uPapMode, uPapAng, uPapSteps, uPapCx, uPapCy;
+  varying vec2 vUV;
+  varying float vDens;                          // 層ごとの縞密度倍率
+  varying float vSAng, vSOff;                   // 層ごとの縞：角度・位置
+  ${PAPER_GLSL('ink','uInk')}
+  void main(){
+    vec4 t4 = texture2D(uTex, vUV);
+    // ⭐ 画像を読み込んだときは、色をそのまま出して【連続面の変形だけ】をかける。
+    //    粒 TSUBU・礫 TSUBUTE・彫 HORI で作った絵を、ここで歪ませるための道。
+    if(uSrc == 1){
+      if(t4.a < 0.004) discard;                 // 透明PNGは透明のまま（地が透ける）
+      gl_FragColor = t4;
+      return;
+    }
+    float m = t4.r;                             // 字の内側=1
+    // 輪郭のアンチエイリアス — 画面上の傾きから境界の幅を求めるので、
+    // 寄っても（ズームしても）常に 1px 相当の滑らかさになる
+    float w = fwidth(m);
+    float a = smoothstep(0.5 - w, 0.5 + w, m);
+    if(a < 0.004) discard;                      // 完全に外側だけ捨てる
+    float dens = uDensity * vDens;
+
+    // 縞の走る向きを面の中心まわりで回す（角度0＝従来どおり水平／±90°で垂直）
+    float ca = cos(vSAng), sa = sin(vSAng);
+    vec2 q = vUV - 0.5;
+    float dY = (q.x * sa + q.y * ca) + 0.5 + vSOff;   // 角度0 → vUV.y と一致
+    float dX = (q.x * ca - q.y * sa) + 0.5 + vSOff;   // 角度0 → vUV.x と一致
+
+    vec3 col;
+    if(uLook == 0){
+      // 金属 — 縞は面（vUV）に沿って流れる＝メッシュを歪めると縞も一緒にうねる
+      float g = 0.5 + 0.5 * sin(dY * dens * 6.2831853);
+      g = pow(g, 0.6);
+      col = vec3(g);
+    } else if(uLook == 1){
+      col = vec3(0.04);                         // 墨
+    } else if(uLook == 2){
+      float g = step(0.5, fract(dX * dens));     // 線も面に沿う
+      col = vec3(g);
+    } else {
+      /* ⭐ 刷り ── 字の中を、地と同じ版のグラデで塗る。色数 1 なら墨のまま。
+         ⚠️ 字の濃さ（m）でグラデを引くと、字の内側はほぼ一定なのでベタ塗りになる。
+            【位置で引く】のが正しい（組 KUMI で分かったこと）。
+         ⭐ 面の UV で引く＝膜が歪むとグラデも一緒に歪む＝字そのものに色が乗る。 */
+      col = inkAt(vUV, vec3(0.04), uInkN, 1.0);
+    }
+    gl_FragColor = vec4(col, a);
+  }
+`;
+function sh(type, src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s)); return s; }
+const prog = gl.createProgram();
+gl.attachShader(prog, sh(gl.VERTEX_SHADER, VERT));
+gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FRAG));
+gl.linkProgram(prog); gl.useProgram(prog);
+
+/* ══ 地のグラデ ══ 礫 TSUBUTE → 彫 HORI 2 → 組 KUMI と同じ式を、そのまま移した。2026-08-03
+   ⭐ 考え方＝【紙そのものを画素ごとの色にする】だけ。膜（面）の式は一行も変えていない。
+   ⚠️ ここまで背景は clearColor の単色だった。色数 1 のときは同じ色を返すので絵は変わらない。
+   ⚠️ GLSL ES 1.0 は配列を変数で引けないので、色は if で取り出す。 */
+const BG_VERT = `
+  attribute vec2 aP;
+  varying vec2 vUv;
+  void main(){ vUv = aP * 0.5 + 0.5; gl_Position = vec4(aP, 0.0, 1.0); }
+`;
+const BG_FRAG = `
+  precision highp float;
+  varying vec2 vUv;
+  uniform vec2 uRes;
+  uniform vec3 uBase;                                        // 色数1＝これまでの背景色
+  uniform vec3 uPap0, uPap1, uPap2, uPap3, uPap4, uPap5;
+  uniform float uPapN, uPapMode, uPapAng, uPapSteps, uPapCx, uPapCy;
+  ${PAPER_GLSL('pap','uPap')}
+  void main(){ gl_FragColor = vec4(papAt(vUv, uBase, uPapN, uRes.x/max(uRes.y,1.0)), 1.0); }
+`;
+const bgProg = gl.createProgram();
+gl.attachShader(bgProg, sh(gl.VERTEX_SHADER, BG_VERT));
+gl.attachShader(bgProg, sh(gl.FRAGMENT_SHADER, BG_FRAG));
+gl.linkProgram(bgProg);
+const bgLoc = {};
+['uRes','uBase','uPapN','uPapMode','uPapAng','uPapSteps','uPapCx','uPapCy',
+ 'uPap0','uPap1','uPap2','uPap3','uPap4','uPap5'].forEach(n=>bgLoc[n]=gl.getUniformLocation(bgProg,n));
+bgLoc.aP = gl.getAttribLocation(bgProg,'aP');
+const bgBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, bgBuf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+gl.useProgram(prog);
+
+/* 地の色（ひとつずつ選ぶ）。⚠️ 数値の P と混ぜない＝`+r.value` のループで NaN になるため */
+const PAPC_DEF = ['#f2d16b','#c8d4de','#7f95ab','#1d2733','#8a6f4e','#e9201c'];
+let PAPC = PAPC_DEF.slice();
+/* 字のインク（刷り）。⚠️ 地と同じ版で刷るので、色まで同じにすると字が地に溶ける＝別に持つ */
+const INKC_DEF = ['#e9201c','#141414','#2b4cc9','#f2d16b','#1f7a4d','#8a6f4e'];
+let INKC = INKC_DEF.slice();
+const hex2rgb = h => { const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(h||'');
+  return m ? [parseInt(m[1],16)/255, parseInt(m[2],16)/255, parseInt(m[3],16)/255] : [0,0,0]; };
+
+/* 版のテクスチャ（版ごとに1枚持つ） */
+function newTex(){
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return t;
+}
+function newSheet(kind, text){
+  return { kind: kind || 'text', tex:newTex(), asp:1, img:null,
+           text: text != null ? text : '文字のカタチ', font:0, dir:0, track:0, leading:0,
+           cols:1, rows:1, chars:[], cscale:[], crot:[], ctype:[],
+           x:0, y:0, scale:1, rot:0 };
+}
+SHEETS = [ newSheet('text') ];
+
+/* ── メッシュ（グリッド）を作る ── */
+let vbuf = gl.createBuffer(), ibuf = gl.createBuffer(), idxCount = 0;
+function buildMesh(){
+  const N = P.mesh;
+  const verts = [], idx = [];
+  for(let y=0;y<=N;y++) for(let x=0;x<=N;x++){ verts.push(x/N, y/N); }
+  const at = (x,y)=> y*(N+1)+x;
+  for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+    const a=at(x,y), b=at(x+1,y), c=at(x+1,y+1), d=at(x,y+1);
+    idx.push(a,b,c, a,c,d);
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibuf);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(idx), gl.STATIC_DRAW);
+  idxCount = idx.length;
+}
+const extUint = gl.getExtension('OES_element_index_uint');
+
+const loc = {};
+['uScale','uVWarp','uHWarp','uFreq','uTime','uAnchorR','uAnchorN','uLook','uDensity','uTex','uSrc',
+ 'uWTop','uWBot','uHLeft','uHRight','uShearX','uShearY','uTwTop','uTwBot',
+ 'uGridCols','uGridRows','uCharN','uZoom','uRotX','uRotY','uThick',
+ 'uRes','uInkN','uPapMode','uPapAng','uPapSteps','uPapCx','uPapCy',
+ 'uSheetSize','uSheetPos','uSheetScale','uSheetRot'].forEach(n=>loc[n]=gl.getUniformLocation(prog,n));
+for(let i=0;i<6;i++) loc['uInk'+i] = gl.getUniformLocation(prog,'uInk'+i);
+loc.uPan = gl.getUniformLocation(prog,'uPan');
+loc.aUV = gl.getAttribLocation(prog,'aUV');
+loc.uAnchorUV = gl.getUniformLocation(prog,'uAnchorUV');
+loc.uAnchorD  = gl.getUniformLocation(prog,'uAnchorD');
+loc.uCharScale = gl.getUniformLocation(prog,'uCharScale');
+loc.uCharRot   = gl.getUniformLocation(prog,'uCharRot');
+loc.uCharType  = gl.getUniformLocation(prog,'uCharType');
+['uLW','uLH','uLRot','uLWarp','uLDens','uLSAng','uLSOff'].forEach(n=>loc[n]=gl.getUniformLocation(prog,n));
+
+/* ⚠️ 描くのとループを分けてある＝書き出しのときだけ【版面の大きさで1回だけ描く】ため */
+let lastT = 0;
+function draw(t){ requestAnimationFrame(draw); lastT = t; render(t); }
+function render(t){
+  const w = canvas.width, h = canvas.height;
+  gl.viewport(0,0,w,h);
+  const bg = P.look===2 ? [0.04,0.04,0.05,1] : (P.look===1 ? [0.957,0.949,0.933,1] : [0.03,0.03,0.04,1]);
+  gl.clearColor(...bg); gl.clear(gl.COLOR_BUFFER_BIT);
+
+  /* ⭐ 地（紙）── clear の後・膜の前に、画面いっぱいの紙を刷る。
+     色数 1 なら uBase をそのまま返すので、これまでと同じ単色の地になる。 */
+  gl.useProgram(bgProg);
+  gl.uniform2f(bgLoc.uRes, w, h);
+  gl.uniform3f(bgLoc.uBase, bg[0], bg[1], bg[2]);
+  gl.uniform1f(bgLoc.uPapN,     Math.max(1, Math.round(P.papN)));
+  gl.uniform1f(bgLoc.uPapMode,  P.papMode);
+  gl.uniform1f(bgLoc.uPapAng,   P.papAng);
+  gl.uniform1f(bgLoc.uPapSteps, P.papSteps);
+  gl.uniform1f(bgLoc.uPapCx,    P.papCx/100);
+  gl.uniform1f(bgLoc.uPapCy,    P.papCy/100);
+  for(let i=0;i<6;i++) gl.uniform3fv(bgLoc['uPap'+i], hex2rgb(PAPC[i]));
+  gl.bindBuffer(gl.ARRAY_BUFFER, bgBuf);
+  gl.enableVertexAttribArray(bgLoc.aP);
+  gl.vertexAttribPointer(bgLoc.aP, 2, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  gl.useProgram(prog);                       // ⚠️ 以降の uniform は膜のプログラムに当てる
+
+  /* ⭐ 面は【常に正方】。版がそれぞれ自分の形の矩形を面の中に占める。
+     ⚠️ 前は「版1枚のときだけ面を版の形にする」分岐にしていたが、
+        2枚目を足した瞬間に1枚目の見え方（大きさもうねりの掛かり方も）が変わる。
+        規則を1つにする方が、驚きが無い。大きさは「絵の大きさ」と版の「大きさ」で合わせる。 */
+  const view = w/h;
+  const sx = 0.8 * (view > 1 ? 1/view : 1);
+  const sy = 0.8 * (view > 1 ? 1 : view);
+
+  gl.uniform2f(loc.uScale, sx, sy);
+  gl.uniform1f(loc.uZoom, VIEW.zoom);
+  gl.uniform2f(loc.uPan, VIEW.panx, VIEW.pany);
+  gl.uniform1f(loc.uRotX, VIEW.rotx);
+  gl.uniform1f(loc.uRotY, VIEW.roty);
+  gl.uniform1f(loc.uThick, P.thick/100*0.6);
+  gl.uniform1f(loc.uVWarp, P.vwarp/100*0.42);
+  gl.uniform1f(loc.uHWarp, P.hwarp/100*0.42);
+  gl.uniform1f(loc.uFreq, P.freq);
+  gl.uniform1f(loc.uWTop,   P.wtop/100*0.8);
+  gl.uniform1f(loc.uWBot,   P.wbot/100*0.8);
+  gl.uniform1f(loc.uHLeft,  P.hleft/100*0.8);
+  gl.uniform1f(loc.uHRight, P.hright/100*0.8);
+  gl.uniform1f(loc.uShearX, P.shearx/100*1.0);
+  gl.uniform1f(loc.uShearY, P.sheary/100*1.0);
+  gl.uniform1f(loc.uTwTop,  P.twtop/100*1.6);
+  gl.uniform1f(loc.uTwBot,  P.twbot/100*1.6);
+  gl.uniform1f(loc.uTime, t*0.001);
+  gl.uniform1f(loc.uAnchorR, P.radius/100);
+  gl.uniform1i(loc.uAnchorN, ANCHORS.length);
+  gl.uniform1i(loc.uLook, P.look);
+  gl.uniform1f(loc.uDensity, P.density);
+  /* 刷り（字のインク）── 形は地と同じ版を渡す。色数と色だけ字用 */
+  gl.uniform2f(loc.uRes, w, h);
+  gl.uniform1f(loc.uInkN,     Math.max(1, Math.round(P.inkN)));
+  gl.uniform1f(loc.uPapMode,  P.papMode);
+  gl.uniform1f(loc.uPapAng,   P.papAng);
+  gl.uniform1f(loc.uPapSteps, P.papSteps);
+  gl.uniform1f(loc.uPapCx,    P.papCx/100);
+  gl.uniform1f(loc.uPapCy,    P.papCy/100);
+  for(let i=0;i<6;i++) gl.uniform3fv(loc['uInk'+i], hex2rgb(INKC[i]));
+  gl.uniform1i(loc.uTex, 0);
+  // 3層：層ごとのエンジン値（UI生値 -100..100 を実効レンジへ）。⚠️ 版に依らないのでここで1回
+  { const w4=new Float32Array(4), h4=new Float32Array(4), r4=new Float32Array(4), wp4=new Float32Array(4), d4=new Float32Array(4);
+    const sa4=new Float32Array(4), so4=new Float32Array(4);
+    for(let i=0;i<4;i++){ const L=LAYERS[i]||{};
+      w4[i]=(L.w||0)/100*0.6; h4[i]=(L.h||0)/100*0.6; r4[i]=(L.rot||0)/100*0.6; wp4[i]=(L.warp||0)/100*0.15; d4[i]=(L.dens||0)/100*2;
+      sa4[i]=(L.sang||0)/100*1.5707963;                    // ±90°
+      so4[i]=(L.soff||0)/100*1.0; }                        // 縞を流す位置
+    gl.uniform1fv(loc.uLW,w4); gl.uniform1fv(loc.uLH,h4); gl.uniform1fv(loc.uLRot,r4); gl.uniform1fv(loc.uLWarp,wp4); gl.uniform1fv(loc.uLDens,d4);
+    gl.uniform1fv(loc.uLSAng,sa4); gl.uniform1fv(loc.uLSOff,so4); }
+  if(ANCHORS.length){
+    const uv = new Float32Array(48), dd = new Float32Array(48);
+    ANCHORS.forEach((a,i)=>{ uv[i*2]=a.u; uv[i*2+1]=a.v; dd[i*2]=a.du; dd[i*2+1]=a.dv; });
+    gl.uniform2fv(loc.uAnchorUV, uv);
+    gl.uniform2fv(loc.uAnchorD, dd);
+  }
+
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbuf);
+  gl.enableVertexAttribArray(loc.aUV);
+  gl.vertexAttribPointer(loc.aUV, 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibuf);
+
+  /* ⭐ 版を下から順に刷る。⚠️ 面の設定（ワープ・アンカー・厚み）は上で1回だけ入れてある
+     ＝どの版も同じ面に乗る。ここで版ごとに変えるのは【何を・どこに】だけ。 */
+  SHEETS.forEach(s=>{
+    // 版の矩形＝長辺を面の 1.0 に合わせる（枚数によらず同じ規則）
+    const size = s.asp >= 1 ? [1, 1/s.asp] : [s.asp, 1];
+    gl.uniform2f(loc.uSheetSize, size[0], size[1]);
+    gl.uniform2f(loc.uSheetPos, s.x/100, s.y/100);
+    gl.uniform1f(loc.uSheetScale, s.scale);
+    gl.uniform1f(loc.uSheetRot, s.rot*Math.PI/180);
+    const isImg = s.kind === 'image';
+    gl.uniform1i(loc.uSrc, isImg ? 1 : 0);
+    // ⚠️ 画像には「セル（1文字）」が無い。1×1 にして層のエンジンを噛ませない
+    //    （噛ませると 3層の値が画像を勝手に歪める）
+    gl.uniform1f(loc.uGridCols, isImg ? 1 : s.cols);
+    gl.uniform1f(loc.uGridRows, isImg ? 1 : s.rows);
+    gl.uniform1i(loc.uCharN, isImg ? 0 : Math.min(s.cols*s.rows, 32));
+    const cs = new Float32Array(64), cr = new Float32Array(32), ct = new Float32Array(32);
+    for(let i=0;i<32;i++){
+      const sc = (s.cscale && s.cscale[i]) || [1,1]; cs[i*2]=sc[0]; cs[i*2+1]=sc[1];
+      cr[i] = ((s.crot && s.crot[i]) || 0) * Math.PI/180;          // 度 → rad
+      ct[i] = (s.ctype && s.ctype[i] !== undefined) ? s.ctype[i] : 3;
+    }
+    gl.uniform2fv(loc.uCharScale, cs);
+    gl.uniform1fv(loc.uCharRot, cr);
+    gl.uniform1fv(loc.uCharType, ct);
+    gl.bindTexture(gl.TEXTURE_2D, s.tex);
+    gl.drawElements(gl.TRIANGLES, idxCount, gl.UNSIGNED_INT, 0);
+  });
+}
+
+/* ── アンカー操作＋ビュー（ズーム/パン/傾き） ──
+   ⚠️ 座標系：テクスチャは UNPACK_FLIP_Y で焼くので、メッシュ aUV.y=1 が画面上・
+      aUV.y=0 が画面下。ポインタ y は上が0なので v=1-y に反転して合わせる。
+      ビュー（ズーム/パン/正投影の傾き）を掛けた後にクリックが来るので、toUV では
+      逆順に外して面座標へ戻してから UV にする（既存アンカーの噛み合いを保つ）。 */
+function toUV(e){ const r=canvas.getBoundingClientRect();
+  const nx=((e.clientX-r.left)/r.width)*2-1, ny=(1-(e.clientY-r.top)/r.height)*2-1;
+  const mx=(nx-VIEW.panx)/VIEW.zoom, my=(ny-VIEW.pany)/VIEW.zoom;          // 回転後 q.xy
+  const rcx=Math.cos(VIEW.rotx), rsx=Math.sin(VIEW.rotx),
+        rcy=Math.cos(VIEW.roty), rsy=Math.sin(VIEW.roty);
+  const a=mx/(rcy||1e-4);                                                  // q.x = rcy*a
+  const b=(my - rsx*rsy*a)/(rcx||1e-4);                                    // q.y = rsx*rsy*a + rcx*b
+  return { u:(a+1)/2, v:(b+1)/2 };
+}
+function ndc(e){ const r=canvas.getBoundingClientRect();
+  return { x:((e.clientX-r.left)/r.width)*2-1, y:(1-(e.clientY-r.top)/r.height)*2-1 }; }
+let dragA=-1;
+const pointers=new Map();
+let viewMode=null, rotStart=null, panStart=null, pinch0=null;
+let spaceDown=false, handMode=false;             // Space長押し／手のひらモード＝ボードを掴んで動かす
+function applyCursor(){ canvas.style.cursor = (spaceDown||handMode) ? 'grab' : 'default'; }
+window.addEventListener('keydown', e=>{
+  if(e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+  if(e.code === 'Space'){ if(!spaceDown){ spaceDown=true; applyCursor(); } e.preventDefault(); }
+  if(e.key === 'h' || e.key === 'H'){ handMode = !handMode; applyCursor(); }
+});
+window.addEventListener('keyup', e=>{
+  if(e.code === 'Space'){ spaceDown=false; applyCursor(); }
+});
+window.addEventListener('blur', ()=>{ spaceDown=false; applyCursor(); });
+canvas.addEventListener('contextmenu', e=>e.preventDefault());
+canvas.addEventListener('pointerdown', e=>{
+  pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  canvas.setPointerCapture(e.pointerId);
+  if(pointers.size===2){                         // 指2本＝ピンチ（ズーム＋パン）
+    dragA=-1; viewMode='pinch';
+    const p=[...pointers.values()];
+    pinch0={ d:Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y),
+             cx:(p[0].x+p[1].x)/2, cy:(p[0].y+p[1].y)/2,
+             zoom:VIEW.zoom, panx:VIEW.panx, pany:VIEW.pany };
+    return;
+  }
+  if(e.button===2){                              // 右ドラッグ＝傾ける
+    viewMode='rot'; rotStart={x:e.clientX,y:e.clientY, rx:VIEW.rotx, ry:VIEW.roty}; return;
+  }
+  if(e.shiftKey || e.button===1 || spaceDown || handMode){  // Shift/中ボタン/Space長押し/手のひらモード＝パン
+    viewMode='pan'; panStart={x:e.clientX,y:e.clientY, px:VIEW.panx, py:VIEW.pany}; return;
+  }
+  viewMode=null;
+  const { u,v }=toUV(e);
+  if(e.altKey){                                  // Alt+クリック＝近くのアンカーを消す
+    let bi=-1,bd=0.06; ANCHORS.forEach((a,i)=>{const d=Math.hypot(a.u-u,a.v-v); if(d<bd){bd=d;bi=i;}});
+    if(bi>=0) ANCHORS.splice(bi,1); return;
+  }
+  let bi=-1,bd=0.06; ANCHORS.forEach((a,i)=>{const d=Math.hypot(a.u-u,a.v-v); if(d<bd){bd=d;bi=i;}});
+  if(bi<0 && ANCHORS.length<24){ ANCHORS.push({u,v,du:0,dv:0}); bi=ANCHORS.length-1; }
+  dragA=bi;
+});
+canvas.addEventListener('pointermove', e=>{
+  if(pointers.has(e.pointerId)) pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  const r=canvas.getBoundingClientRect();
+  if(viewMode==='pinch' && pinch0){
+    const p=[...pointers.values()]; if(p.length<2) return;
+    const d=Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y), cx=(p[0].x+p[1].x)/2, cy=(p[0].y+p[1].y)/2;
+    VIEW.zoom=Math.max(0.3,Math.min(30, pinch0.zoom*d/pinch0.d));
+    VIEW.panx=pinch0.panx + ((cx-pinch0.cx)/r.width)*2;
+    VIEW.pany=pinch0.pany - ((cy-pinch0.cy)/r.height)*2; syncZoomUI(); return;
+  }
+  if(viewMode==='rot' && rotStart){              // ±約63°に制限＝正投影でも読める範囲
+    VIEW.roty=Math.max(-1.1,Math.min(1.1, rotStart.ry + (e.clientX-rotStart.x)/r.width*2.4));
+    VIEW.rotx=Math.max(-1.1,Math.min(1.1, rotStart.rx - (e.clientY-rotStart.y)/r.height*2.4)); return;
+  }
+  if(viewMode==='pan' && panStart){
+    VIEW.panx=panStart.px + ((e.clientX-panStart.x)/r.width)*2;
+    VIEW.pany=panStart.py - ((e.clientY-panStart.y)/r.height)*2; return;
+  }
+  if(dragA<0) return;
+  const p=toUV(e), a=ANCHORS[dragA];
+  a.du=(p.u-a.u)*P.strength/100*2; a.dv=(p.v-a.v)*P.strength/100*2;
+});
+function endPtr(e){ pointers.delete(e.pointerId);
+  if(pointers.size<2 && viewMode==='pinch'){ viewMode=null; pinch0=null; }
+  if(pointers.size===0){ dragA=-1; viewMode=null; rotStart=panStart=null; } }
+canvas.addEventListener('pointerup', endPtr);
+canvas.addEventListener('pointercancel', endPtr);
+canvas.addEventListener('wheel', e=>{ e.preventDefault();       // ホイール＝カーソル中心ズーム
+  const f=e.deltaY<0?1.08:1/1.08, n=ndc(e), nz=Math.max(0.3,Math.min(30, VIEW.zoom*f));
+  VIEW.panx=n.x-(n.x-VIEW.panx)*(nz/VIEW.zoom);
+  VIEW.pany=n.y-(n.y-VIEW.pany)*(nz/VIEW.zoom);
+  VIEW.zoom=nz; syncZoomUI();
+},{passive:false});
+canvas.addEventListener('dblclick', ()=>{ VIEW.zoom=1; VIEW.panx=0; VIEW.pany=0; VIEW.rotx=0; VIEW.roty=0; syncZoomUI(); });
+// Safari：トラックパッドのピンチは wheel でなく gesture イベントで来る
+let gScale=1;
+canvas.addEventListener('gesturestart', e=>{ e.preventDefault(); gScale=VIEW.zoom; });
+canvas.addEventListener('gesturechange', e=>{ e.preventDefault();
+  VIEW.zoom=Math.max(0.3, Math.min(30, gScale*e.scale)); syncZoomUI(); });
+canvas.addEventListener('gestureend', e=>{ e.preventDefault(); });
+
+/* ── UI ── */
+document.querySelectorAll('#panel input[type=range]').forEach(r=>{
+  const val=r.parentElement.querySelector('.val');
+  if(r.id.startsWith('L_')){                        // 3層スライダー＝選択中の層に書く
+    const key = r.id.slice(2);
+    r.addEventListener('input', ()=>{ LAYERS[P.layer][key] = +r.value; if(val) val.textContent = r.value; });
+    return;
+  }
+  /* ⭐ 版のつまみ（位置・大きさ・角度・字間・行間）は【選んでいる版】に書く。P には入れない */
+  const SHEETKEY = { sx:'x', sy:'y', ss:'scale', sr:'rot', track:'track', leading:'leading' };
+  if(SHEETKEY[r.id]){
+    r.addEventListener('input', ()=>{
+      const s = S_(); if(!s) return;
+      s[SHEETKEY[r.id]] = (r.id === 'ss') ? +r.value/100 : +r.value;
+      if(val) val.textContent = r.value;
+      if(r.id === 'track' || r.id === 'leading') bakeSheet(s);   // セルの寸法が変わる＝焼き直す
+    });
+    return;
+  }
+  const sync=()=>{ P[r.id]=+r.value; if(val) val.textContent=r.value;
+    if(r.id==='mesh') buildMesh();
+    if(r.id==='papN') syncGrad();
+    if(r.id==='inkN') syncInk();
+    if(r.id==='fitz') VIEW.zoom = +r.value/100;      // ⭐ 膜だけを大小（地は動かない）
+    if(r.id==='flong' && typeof updateOut === 'function') updateOut(); };
+  r.addEventListener('input', sync);
+  sync();
+});
+/* ⭐ ホイール／ピンチで動かしても、パネルの「絵の大きさ」を実体に合わせる（数字と実体をズラさない）。
+   ⚠️ ホイールは 30倍まで寄れる＝スライダーの幅（20〜300%）を超える。そのときは
+      つまみだけ端に張り付き、右の数字には【実際の倍率】を出す＝嘘をつかない。 */
+function syncZoomUI(){
+  const el = document.getElementById('fitz'); if(!el) return;
+  const pct = Math.round(VIEW.zoom * 100);
+  el.value = Math.max(20, Math.min(300, pct));
+  const s = el.parentElement.querySelector('.val'); if(s) s.textContent = pct;
+}
+function syncLayerUI(){                             // 層を選び直したらスライダー表示をその層の値へ
+  LAYER_KEYS.forEach(k=>{ const el=document.getElementById('L_'+k);
+    el.value = LAYERS[P.layer][k];
+    el.parentElement.querySelector('.val').textContent = el.value; });
+}
+document.querySelectorAll('#panel .seg').forEach(seg=>{
+  seg.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+    if(b.dataset.v === undefined) return;            // ⚠️「＋字/＋画像」は値を持たない＝ここでは扱わない
+    seg.querySelectorAll('button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+    P[seg.id]=+b.dataset.v;
+    // ⭐ 書体・組方向は【選んでいる版】のもの
+    if(seg.id==='font' || seg.id==='dir'){ const s=S_(); if(s){ s[seg.id]=+b.dataset.v; bakeSheet(s); } }
+    if(seg.id==='layer') syncLayerUI();
+    if(seg.id==='look') syncInk();                   // 刷りのときだけ字の色を出す
+    if(seg.id==='frameOn' || seg.id==='fshape') layoutCanvas(); }));
+});
+syncLayerUI();
+let reflow; document.getElementById('txt').addEventListener('input',()=>{
+  const s = S_(); if(!s || s.kind !== 'text') return;
+  s.text = document.getElementById('txt').value;
+  clearTimeout(reflow); reflow=setTimeout(()=>{ bakeSheet(s); refreshSheets(); }, 200); });
+/* ── 文字ごと（伸ばす/すぼめる）── */
+const cwEl = document.getElementById('cw'), chEl = document.getElementById('ch'),
+      crEl = document.getElementById('cr');
+function refreshChars(){                       // bakeSheet のたびに呼ぶ
+  const box = document.getElementById('chips');
+  box.innerHTML = '';
+  const S = S_(), CHARS = (S && S.kind === 'text') ? S.chars : [];
+  CHARS.forEach(({ch,gi})=>{
+    if(gi >= 32) return;                        // 上限32文字まで制御可
+    const b = document.createElement('button');
+    b.textContent = ch===' ' ? '␣' : (ch==='　' ? '□' : ch);
+    b.onclick = ()=>selectChar(gi);
+    if(gi===selChar) b.classList.add('on');
+    box.appendChild(b);
+  });
+  cwEl.disabled = chEl.disabled = crEl.disabled = true;
+  cwEl.value = chEl.value = 100; crEl.value = 0;
+  cwEl.parentElement.querySelector('.val').textContent = '';
+  chEl.parentElement.querySelector('.val').textContent = '';
+  crEl.parentElement.querySelector('.val').textContent = '';
+}
+function selectChar(gi){
+  const S = S_(); if(!S || S.kind !== 'text') return;
+  selChar = gi;
+  const sc = S.cscale[gi] || (S.cscale[gi]=[1,1]);
+  if(S.crot[gi] === undefined) S.crot[gi] = 0;
+  cwEl.disabled = chEl.disabled = crEl.disabled = false;
+  cwEl.value = Math.round(sc[0]*100); chEl.value = Math.round(sc[1]*100);
+  crEl.value = Math.round(S.crot[gi]);
+  cwEl.parentElement.querySelector('.val').textContent = cwEl.value;
+  chEl.parentElement.querySelector('.val').textContent = chEl.value;
+  crEl.parentElement.querySelector('.val').textContent = crEl.value;
+  document.querySelectorAll('#chips button').forEach((b,i)=>
+    b.classList.toggle('on', S.chars[i] && S.chars[i].gi===gi));
+}
+[[cwEl,0],[chEl,1]].forEach(([el,k])=>{
+  el.addEventListener('input', ()=>{
+    const S = S_(); if(!S || selChar<0) return;
+    if(!S.cscale[selChar]) S.cscale[selChar]=[1,1];
+    S.cscale[selChar][k] = +el.value/100;
+    el.parentElement.querySelector('.val').textContent = el.value;
+  });
+});
+/* その字だけ回す（度で持つ）。⚠️ 層の「傾ぎ」と足し算になる＝どちらも生きる */
+crEl.addEventListener('input', ()=>{
+  const S = S_(); if(!S || selChar<0) return;
+  S.crot[selChar] = +crEl.value;
+  crEl.parentElement.querySelector('.val').textContent = crEl.value;
+});
+
+/* ══ 版のリスト ══ 押した版が「いま触っている版」。字の設定・3層・文字ごとはその版に効く */
+function refreshSheets(){
+  const box = document.getElementById('sheets');
+  box.innerHTML = '';
+  SHEETS.forEach((s,i)=>{
+    const b = document.createElement('button');
+    b.textContent = s.kind === 'image' ? '画' : (([...(s.text||'')][0]) || '字');
+    b.title = s.kind === 'image' ? '画像の版' : (s.text || '');
+    if(i === curSheet) b.classList.add('on');
+    b.onclick = ()=>{ curSheet = i; selChar = -1; refreshSheets(); };
+    box.appendChild(b);
+  });
+  syncSheetUI();
+}
+function syncSheetUI(){
+  const s = S_(); if(!s) return;
+  document.body.classList.toggle('sheet-image', s.kind === 'image');
+  const set = (id,v)=>{ const el=document.getElementById(id); if(!el) return;
+    el.value = v; const t = el.parentElement.querySelector('.val'); if(t) t.textContent = el.value; };
+  set('sx', s.x); set('sy', s.y); set('ss', Math.round(s.scale*100)); set('sr', s.rot);
+  if(s.kind === 'text'){
+    document.getElementById('txt').value = s.text;
+    set('track', s.track); set('leading', s.leading);
+    ['font','dir'].forEach(k=>document.querySelectorAll('#'+k+' button')
+      .forEach(b=>b.classList.toggle('on', +b.dataset.v === s[k])));
+  }
+  refreshChars();
+  if(typeof foldForKind === 'function') foldForKind(s.kind);
+  const del = document.getElementById('delSheet');
+  if(del) del.disabled = SHEETS.length <= 1;         // ⚠️ 最後の1枚は消さない（空の画面を作らない）
+}
+document.querySelectorAll('#addSeg button').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    if(b.dataset.add === 'text'){
+      const s = newSheet('text', 'あたらしい');
+      SHEETS.push(s); curSheet = SHEETS.length-1; selChar = -1;
+      bakeSheet(s); refreshSheets();
+    } else document.getElementById('imgFile').click();
+  });
+});
+document.getElementById('delSheet').onclick = ()=>{
+  if(SHEETS.length <= 1) return;
+  gl.deleteTexture(SHEETS[curSheet].tex);
+  SHEETS.splice(curSheet, 1);
+  curSheet = Math.min(curSheet, SHEETS.length-1);
+  selChar = -1;
+  refreshSheets();
+};
+
+/* ── 全リセット：全パラメータ＋アンカー＋文字ごと伸縮を初期値へ（字はそのまま）── */
+function resetAll(){
+  Object.assign(P, DEFAULTS);
+  ANCHORS.length = 0;
+  // 文字ごとの伸縮・角度は全部の版で戻す。
+  // ⚠️ 版そのもの・置き場所・読み込んだ画像は消さない（素材だから＝字を消さないのと同じ）
+  SHEETS.forEach(s=>{
+    for(let i=0;i<s.cscale.length;i++) s.cscale[i] = [1,1];
+    for(let i=0;i<s.crot.length;i++) s.crot[i] = 0;
+  });
+  LAYERS = newLayers();
+  VIEW.zoom=1; VIEW.panx=0; VIEW.pany=0; VIEW.rotx=0; VIEW.roty=0;
+  selChar = -1;
+  document.querySelectorAll('#panel input[type=range]').forEach(r=>{
+    if(r.id.startsWith('L_')) return;              // 層スライダーは syncLayerUI で戻す
+    if(P[r.id] !== undefined) r.value = P[r.id];
+    const v = r.parentElement.querySelector('.val'); if(v) v.textContent = r.value;
+  });
+  document.querySelectorAll('#panel .seg').forEach(seg=>{
+    seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on', +b.dataset.v === P[seg.id]));
+  });
+  syncLayerUI();
+  syncGrad(); syncInk();                            // 地は色数1（単色）に戻る。⚠️選んだ色は残す
+  P.fitz = 100; syncZoomUI();                       // 絵の大きさも等倍へ（VIEW を戻したので合わせる）
+  buildMesh();
+  refreshSheets();                                  // 版のつまみ表示も選んでいる版に合わせ直す
+}
+document.getElementById('resetAll').onclick = resetAll;
+document.getElementById('reset').onclick=()=>ANCHORS.length=0;
+/* ══ 版面（書き出す大きさ）══ 礫 TSUBUTE の「FRAME」と同じ型を持ってきた。
+   ⭐ ここは【画面の canvas そのものを版面の形にする】＝見えているものがそのまま出る。
+      枠だけ描いて中身は画面のまま、にすると「見えている絵」と「出る絵」がズレる。 */
+const FSHAPE = [[1,1],[4,5],[16,9],[9,16]];
+function frameRatio(){ return FSHAPE[P.fshape|0] || FSHAPE[0]; }
+function frameSize(){
+  const [rw,rh] = frameRatio();
+  const L = Math.round(P.flong);
+  let w, h;
+  if(rw >= rh){ w = L; h = Math.round(L*rh/rw); } else { h = L; w = Math.round(L*rw/rh); }
+  /* ⚠️ 端末の上限を超えると【何も出ない】。黙って壊れず、上限まで下げて、当たったことを出す */
+  const lim = Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) || 4096, 8192);
+  let cap = false;
+  if(w > lim || h > lim){ const k = Math.min(lim/w, lim/h); w = Math.floor(w*k); h = Math.floor(h*k); cap = true; }
+  return { w, h, cap };
+}
+function layoutCanvas(){
+  const on = P.frameOn === 1;
+  document.body.classList.toggle('framed', on);
+  if(!on){ canvas.removeAttribute('style'); resize(); updateOut(); return; }
+  const mobile = innerWidth <= 760;
+  const availW = mobile ? innerWidth : Math.max(innerWidth - 262, 200);   // 右のパネルを避ける
+  const availH = mobile ? innerHeight*0.58 : innerHeight;
+  const [rw,rh] = frameRatio();
+  const k = Math.min(availW*0.9/rw, availH*0.9/rh);
+  const w = Math.round(rw*k), h = Math.round(rh*k);
+  canvas.style.width = w+'px'; canvas.style.height = h+'px';
+  canvas.style.left  = Math.round((availW-w)/2)+'px';
+  canvas.style.top   = Math.round((availH-h)/2)+'px';
+  canvas.style.right = 'auto'; canvas.style.bottom = 'auto';
+  resize(); updateOut();
+}
+function updateOut(){
+  const n = document.getElementById('fout'); if(!n) return;
+  if(P.frameOn !== 1){ n.innerHTML = `画面のまま ＝ <b>${canvas.width} × ${canvas.height} px</b>`; return; }
+  const f = frameSize();
+  n.innerHTML = `出る大きさ ＝ <b>${f.w} × ${f.h} px</b>`
+    + (f.cap ? '<br>⚠️ この端末の上限に当たったので下げた' : '');
+}
+/* ⭐ 版面の大きさで刷る。⚠️ 終わったら必ず元へ戻す */
+function renderToBlob(cb){
+  if(P.frameOn !== 1){ canvas.toBlob(cb, 'image/png'); return; }
+  const f = frameSize();
+  const kw = canvas.width, kh = canvas.height;
+  try{
+    canvas.width = f.w; canvas.height = f.h;
+    render(lastT);
+    canvas.toBlob(cb, 'image/png');
+  } finally {
+    canvas.width = kw; canvas.height = kh;
+    render(lastT);
+  }
+}
+/* ⚠️ iOS は DOM に入れていない <a> の click を無視する／巨大な dataURL で落ちる（礫と同じ作法） */
+document.getElementById('png').onclick = ()=> renderToBlob(blob=>{
+  if(!blob) return;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `maku_${Date.now()}.png`;
+  document.body.appendChild(a); a.click(); a.remove();
+  if(/iP(hone|ad|od)/.test(navigator.userAgent)) window.open(url, '_blank');
+  setTimeout(()=>URL.revokeObjectURL(url), 8000);
+});
+
+/* ══ 地のグラデ ── 使う色数のぶんだけ出す（触れるのに何も起きないつまみを残さない）══ */
+function syncGrad(){
+  const n = Math.max(1, Math.round(P.papN));
+  document.body.classList.toggle('grad', n > 1);
+  for(let k=3;k<=6;k++) document.body.classList.toggle('grad-'+k, n >= k);
+}
+/* ⚠️⚠️ 色は data-pc で持つ。既存の input[data-p]/id のループは `+r.value` で数値にするので、
+   色ピッカーに id を付けると "#f2d16b" が NaN になって壊れる。 */
+document.querySelectorAll('input[type=color][data-pc]').forEach(c=>{
+  c.addEventListener('input', ()=>{ PAPC[+c.dataset.pc] = c.value; });
+});
+syncGrad();
+
+/* ══ 刷り（字のインク）══ 見えが「刷り」のときだけ字の色を出す。
+   ⚠️ 密度は縞（金属・線）のつまみ＝墨と刷りでは何も起きないので同時に畳む。 */
+function syncInk(){
+  const n = Math.max(1, Math.round(P.inkN));
+  document.body.classList.toggle('look-ink', P.look === 3);
+  document.body.classList.toggle('look-stripe', P.look === 0 || P.look === 2);
+  for(let k=2;k<=6;k++) document.body.classList.toggle('ink-'+k, n >= k);
+}
+document.querySelectorAll('input[type=color][data-ic]').forEach(c=>{
+  c.addEventListener('input', ()=>{ INKC[+c.dataset.ic] = c.value; });
+});
+syncInk();
+
+/* ══ 元 ── 画像を読み込んで、色はそのままに【連続面の変形だけ】をかける ══
+   ⭐ 粒 TSUBU・礫 TSUBUTE・彫 HORI で出した絵を、ここで歪ませる＝チェーンが繋がる。 */
+const imgFile = document.getElementById('imgFile');
+/* パネルを見出し（h2）で節に切っておく＝節ごと出し入れするため。
+   ⚠️ 見出しのテキストで引く。日本語/English の切替は要素の中身を書き換えるだけなので、
+      ここで作った参照（キーは日本語）はそのまま使える。 */
+const SECT = {};
+(function(){ let cur=null;
+  [...document.getElementById('panel').children].forEach(el=>{
+    if(el.tagName === 'H2'){ cur = el.textContent.trim(); SECT[cur] = [el]; }
+    else if(cur) SECT[cur].push(el);
+  });
+})();
+/* ⚠️ 画像の版では効かない節を畳む（3層・文字ごとは「セル＝1文字」が前提） */
+function foldForKind(kind){
+  ['字','3層（漢字・かな・カナ）','文字ごと（伸ばす／すぼめる）'].forEach(name=>{
+    (SECT[name]||[]).forEach(el=> el.style.display = (kind === 'image' ? 'none' : ''));
+  });
+}
+/* ⭐ 画像は【新しい版】として足す。字の版はそのまま残る＝重ねられる */
+function addImageSheet(img){
+  const s = newSheet('image');
+  s.img = img; s.asp = img.width / img.height;
+  gl.bindTexture(gl.TEXTURE_2D, s.tex);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);     // ⚠️ canvas と WebGL で上下が逆
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+  SHEETS.push(s); curSheet = SHEETS.length-1; selChar = -1;
+  refreshSheets();
+  const st = document.getElementById('stat');
+  if(st) st.textContent = `IMAGE ${img.width}×${img.height}`;
+}
+function loadImageFile(f){
+  if(!f) return;
+  const img = new Image();
+  img.onload = ()=> addImageSheet(img);
+  img.onerror = ()=>{ const st=document.getElementById('stat'); if(st) st.textContent='画像を読めなかった'; };
+  img.src = URL.createObjectURL(f);
+}
+imgFile.addEventListener('change', e=>{ loadImageFile(e.target.files[0]); imgFile.value=''; });
+/* 画像はドラッグ＆ドロップでも読める */
+addEventListener('dragover', e=> e.preventDefault());
+addEventListener('drop', e=>{
+  e.preventDefault();
+  const f = [...(e.dataTransfer?.files||[])].find(x=>/^image\//.test(x.type));
+  if(f) loadImageFile(f);
+});
+
+function resize(){ const dpr=Math.min(devicePixelRatio,2);
+  // 描画バッファは canvas の実表示サイズ（CSSの二分割）に合わせる＝歪み/座標ズレを防ぐ
+  canvas.width  = Math.round((canvas.clientWidth  || innerWidth ) * dpr);
+  canvas.height = Math.round((canvas.clientHeight || innerHeight) * dpr); }
+addEventListener('resize', ()=>layoutCanvas());
+addEventListener('orientationchange', ()=>setTimeout(layoutCanvas,120));
+
+(async ()=>{
+  try{ await Promise.all(['"Zen Kaku Gothic New"','"Zen Old Mincho"'].map(f=>document.fonts.load(`900 80px ${f}`,'なんだ組漢')));
+       await document.fonts.ready; }catch(_){}
+  resize(); buildMesh(); bakeSheet(SHEETS[0]); refreshSheets(); updateOut();
+  document.getElementById('stat').textContent = gl ? 'WEBGL OK' : 'NO WEBGL';
+  requestAnimationFrame(draw);
+})();
+
+/* ══ 日本語 / English ══ 画面のテキストを走査して辞書で入れ替える。無いものは日本語のまま残す。 */
+const I18N = {
+  '字':'Text','ワープ（連続面）':'Warp (continuous surface)','3層（漢字・かな・カナ）':'3 layers (Kanji/Hira/Kata)',
+  '変形（辺ごと）':'Transform (per edge)','アンカー（面を押す）':'Anchors (push the surface)',
+  '文字ごと（伸ばす／すぼめる）':'Per character (stretch / narrow)','見え':'Look',
+  '角ゴ':'Gothic','明朝':'Mincho','横':'Horizontal','縦':'Vertical',
+  '字送り':'Tracking','行間':'Leading','大きさ':'Size','折返し':'Wrap',
+  '上幅':'Top width','下幅':'Bottom width','左高':'Left height','右高':'Right height',
+  'せん断X':'Shear X','せん断Y':'Shear Y','上ねじれ':'Twist top','下ねじれ':'Twist bottom',
+  '効き幅':'Radius','強さ':'Strength','幅':'Width','高さ':'Height',
+  '金属':'Metal','墨':'Sumi','線':'Line','密度':'Density','解像':'Resolution',
+  '全リセット':'Reset all','アンカー全消し':'Clear anchors',
+  '縞角度':'Stripe angle','縞位置':'Stripe offset','厚み':'Depth','ズーム':'Zoom',
+  // 元（字／画像）
+  '元':'Source','画像':'Image','画像を読み込む':'Load image',
+  // 版（重ねる）
+  '版（重ねる）':'Sheets (stack)','＋ 字':'+ Text','＋ 画像':'+ Image',
+  '横位置':'X','縦位置':'Y','この版を消す':'Delete this sheet',
+  // 地（紙）のグラデ
+  '地（紙）':'Paper','地の色数':'Paper colors','地の向き':'Angle','地の版数':'Steps',
+  '中心よこ':'Center X','中心たて':'Center Y',
+  '地 1':'Color 1','地 2':'Color 2','地 3':'Color 3','地 4':'Color 4','地 5':'Color 5','地 6':'Color 6',
+  '流す':'Linear','中心':'Radial','渦':'Spiral','まわり':'Angular',
+  // 版面（書き出す大きさ）
+  '版面（書き出す大きさ）':'Frame (export size)','画面のまま':'Screen','版面で':'Frame',
+  '正方形':'Square','たて 4:5':'4:5 portrait','よこ 16:9':'16:9','たて 9:16':'9:16','長辺':'Long side',
+  '絵の大きさ':'Object size',
+  // 刷り（字のインク）
+  '刷り':'Print','字の色数':'Ink colors',
+  '字 1':'Ink 1','字 2':'Ink 2','字 3':'Ink 3','字 4':'Ink 4','字 5':'Ink 5','字 6':'Ink 6',
+};
+(function(){
+  const KEY='maku_lang'; const nodes=[], attrs=[];
+  const walk = el => { for(const n of el.childNodes){
+    if(n.nodeType===3){ const t=n.nodeValue.trim();
+      if(t && I18N[t]!==undefined) nodes.push({n, jp:n.nodeValue, en:n.nodeValue.replace(t, I18N[t])}); }
+    else if(n.nodeType===1 && !/^(SCRIPT|STYLE)$/.test(n.tagName)) walk(n); } };
+  function collect(){ nodes.length=0; attrs.length=0;
+    const pn=document.getElementById('panel'); if(pn) walk(pn);
+    document.querySelectorAll('[title]').forEach(el=>{ const v=el.getAttribute('title');
+      if(v && I18N[v.trim()]!==undefined) attrs.push({el, jp:v, en:I18N[v.trim()]}); }); }
+  let cur='jp';
+  function apply(l){ cur=l;
+    nodes.forEach(o=>o.n.nodeValue = l==='en'?o.en:o.jp);
+    attrs.forEach(o=>o.el.setAttribute('title', l==='en'?o.en:o.jp));
+    const b=document.getElementById('langBtn'); if(b) b.textContent = l==='en'?'EN':'JP';
+    try{ localStorage.setItem(KEY,l); }catch(e){} }
+  collect();
+  let saved='jp'; try{ saved=localStorage.getItem(KEY)||'jp'; }catch(e){}
+  apply(saved);
+  document.getElementById('langBtn')?.addEventListener('click', ()=>{
+    const nx = cur==='en'?'jp':'en'; apply('jp'); collect(); apply(nx); });
+})();
+
+</script>
+</body>
+</html>
