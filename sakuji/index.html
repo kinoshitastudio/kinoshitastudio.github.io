@@ -1255,6 +1255,16 @@
     <button class="mini" data-ab="2480,3508" style="flex:1">A4</button>
   </div>
   <div class="row"><label>地の色</label><input type="color" id="abBg" value="#ffffff" style="flex:1"></div>
+  <!-- ⭐ 枠の地を「単色／グラデ／放射」で選ぶ。
+       ⚠️ 木下＝「グラデの切り替えはどこ？」＝枠は下、塗りの切替は最上部にあって
+          パネルを行き来しないと使えなかった。ここで完結させる。
+       ⚠️ 足したのは【この1行だけ】。セクションの位置も構造も動かしていない。
+       ⭐ 押すと上の「塗り / 線」の設定をそのまま枠へ当てる＝式を二重に持たない。 -->
+  <div class="seg" id="abFillMode">
+    <button data-v="solid" class="on">単色</button>
+    <button data-v="linear">グラデ</button>
+    <button data-v="radial">放射</button>
+  </div>
   <div class="seg" id="abBgOn"><button data-v="1" class="on">地を塗る</button><button data-v="0">透明</button></div>
 
   <h2>BOARD</h2>
@@ -4927,6 +4937,9 @@ function abSync(){
   if(w) w.value = a.w; if(h) h.value = a.h; if(bg) bg.value = a.bg;
   document.querySelectorAll('#abOn button').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === !!S.abOn));
   document.querySelectorAll('#abBgOn button').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === !!a.bgOn));
+  /* ⚠️ 枠ごとに種類が違うので、選び直したらボタンも合わせる（表示が嘘にならない） */
+  const md = a.fill ? a.fill.mode : 'solid';
+  document.querySelectorAll('#abFillMode button').forEach(b => b.classList.toggle('on', b.dataset.v === md));
   /* 🔴 guides() も呼ぶ。⚠️ ハンドルは uiLayer に描いていて、掃除しているのは guides だけ。
      drawGrid だけだと【枠を「出さない」にしてもハンドルが古い位置に残る】
      （木下＝「アートボード枠を出す／出さない、バグってるね」2026-08-03）。 */
@@ -4951,6 +4964,40 @@ document.getElementById('abDel')?.addEventListener('click', () => {
 document.getElementById('abW')?.addEventListener('input', e => { abCur().w = Math.max(1, +e.target.value||1); renderAbList(); drawGrid(); guides(); });
 document.getElementById('abH')?.addEventListener('input', e => { abCur().h = Math.max(1, +e.target.value||1); renderAbList(); drawGrid(); guides(); });
 document.getElementById('abBg')?.addEventListener('input', e => { abCur().bg = e.target.value; drawGrid(); });
+/* ⭐ 枠の地の種類（単色／グラデ／放射）。
+   ⚠️ 上の「塗り / 線」と同じ設定を使う＝ストップも角度もそこで組んだものがそのまま乗る。
+      ここに別のグラデUIを作らない（2箇所に持つと必ず食い違う）。
+   ⚠️ 枠を選んでいなくても、選んでいる枠に当てる（ARTBOARD の欄なので迷いようがない）。 */
+document.querySelectorAll('#abFillMode button').forEach(b =>
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#abFillMode button').forEach(x => x.classList.toggle('on', x === b));
+    const a = abCur(); if(!a) return;
+    const md = b.dataset.v;
+    if(md === 'solid'){
+      a.fill = null;
+      a.bg = document.getElementById('abBg')?.value || a.bg;
+    }else{
+      a.fill = {
+        mode: md,
+        stops: (S.stops || []).map(o => ({ c:o.c, t:o.t })),
+        ang: +(document.getElementById('gAng')?.value ?? 90),
+      };
+      if(!a.fill.stops.length){ a.fill = null; stat('先に「塗り / 線」でグラデを組む'); }
+    }
+    a.bgOn = true;
+    document.querySelectorAll('#abBgOn button').forEach(x => x.classList.toggle('on', x.dataset.v === '1'));
+    drawGrid(); guides();
+    stat(md === 'solid' ? '枠の地＝単色' : (md === 'linear' ? '枠の地＝グラデ' : '枠の地＝放射'));
+  }));
+/* ⭐ 「塗り / 線」でストップや角度を組み直したら、グラデにしてある枠にも反映する */
+hook('stops', '枠の地のグラデも追いかける', () => {
+  const a = abCur();
+  if(!a || !a.fill) return;
+  a.fill.stops = (S.stops || []).map(o => ({ c:o.c, t:o.t }));
+  a.fill.ang = +(document.getElementById('gAng')?.value ?? a.fill.ang ?? 90);
+  drawGrid();
+});
+
 document.querySelectorAll('#abOn button').forEach(b =>
   b.addEventListener('click', () => {
     S.abOn = b.dataset.v === '1';
