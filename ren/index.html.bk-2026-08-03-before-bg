@@ -63,9 +63,6 @@
     word-break:break-word;overflow-wrap:anywhere;
     font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;display:none;}
   body.help .mod{display:block;}
-  /* ⚠️ 単色のときは2色目・向き・粒の細かさが効かない＝薄くして触らせない */
-  body:not(.bg-grad):not(.bg-grain) .bg2-only{opacity:.32;pointer-events:none;}
-  body:not(.bg-grain) .grain-only{opacity:.32;pointer-events:none;}
   /* ⚠️ .mod は help の時しか出ない。押した結果は【いつでも見えないと無反応に見える】ので別にする */
   /* ⚠️ 版下になっていない間は、つまみを触っても何も起きない＝薄くして触れなくする */
   body:not(.has-tilt) .tilt-only{opacity:.32;pointer-events:none;}
@@ -269,18 +266,6 @@
       </div>
       <div class="row"><label>LONG<i>長辺</i></label><input type="range" data-p="long" min="480" max="1920" step="40" value="1280"><span class="val"></span></div>
       <div class="row"><label>BG<i>地の色</i></label><input type="color" id="bg" value="#0a0a0a"></div>
-      <!-- ⭐ 地を「単色／グラデ／粒」から選ぶ。木下＝「また地をつけよう。単色とグラデーション、
-           そして粒など入れたらおもしろいのでは？」
-           ⚠️ 地は毎コマ描くので、一度だけ焼いて使い回す（bgBake）。 -->
-      <div class="seg" data-seg="bgMode">
-        <button data-v="0" class="on">単色</button>
-        <button data-v="1">グラデ</button>
-        <button data-v="2">粒</button>
-      </div>
-      <div class="row bg2-only"><label>BG2<i>2色目</i></label><input type="color" id="bg2" value="#e0322a"></div>
-      <div class="row bg2-only"><label>ANG<i>向き</i></label><input type="range" data-p="bgAng" min="0" max="360" step="1" value="90"><span class="val"></span></div>
-      <div class="row grain-only"><label>GRAIN<i>粒の細かさ</i></label><input type="range" data-p="bgGrain" min="4" max="80" step="1" value="24"><span class="val"></span></div>
-      <div class="mod">⭐ <b>粒</b>＝地を格子に割って、マスごとに帯を焼く（粒 TSUBU の断面と同じ考え方）</div>
       <div class="note" id="frameOut"></div>
     </div>
   </div>
@@ -362,8 +347,7 @@
       （あちらは Siren 専用＝SVG を読んで繋ぐ。ここは【何でも入る】側）
    ⚠️ 凝らない。切り替えと尺だけ＝Premiere に近づけない（木下の指示）
    ═══════════════════════════════════════════════════════════ */
-const P = { hold:12, fade:0, shape:1, fitMode:0, long:1280, fps:30, bg:'#0a0a0a',
-            bgMode:0, bg2:'#e0322a', bgAng:90, bgGrain:24 };
+const P = { hold:12, fade:0, shape:1, fitMode:0, long:1280, fps:30, bg:'#0a0a0a' };
 const clips = [];           // { type:'img'|'vid', el, name, url }
 let sel = -1, playing = false, loop = true, t0 = 0, raf = 0;
 
@@ -589,62 +573,8 @@ cv.addEventListener('pointerdown', e => {
 });
 cv.style.touchAction = 'none';
 
-
-/* ══ 地を焼く ═══════════════════════════════════════════
-   ⭐ 単色／グラデ／粒。⚠️ 地は毎コマ描くので、設定か版面が変わった時だけ焼き直して使い回す。
-   ⭐ 粒＝格子に割って、マスごとに帯（cos の断面）を焼く＝粒 TSUBU と同じ考え方の簡易版。 */
-let bgCv = null, bgKey = '';
-function bgBake(){
-  const key = [P.bgMode, P.bg, P.bg2, P.bgAng, P.bgGrain, cv.width, cv.height].join('|');
-  if(bgCv && bgKey === key) return bgCv;
-  bgKey = key;
-  if(!bgCv) bgCv = document.createElement('canvas');
-  bgCv.width = cv.width; bgCv.height = cv.height;
-  const b = bgCv.getContext('2d');
-  const W = bgCv.width, H = bgCv.height;
-  if(P.bgMode === 0){
-    b.fillStyle = P.bg; b.fillRect(0,0,W,H);
-    return bgCv;
-  }
-  const th = P.bgAng * Math.PI / 180, ca = Math.cos(th), sa = Math.sin(th);
-  if(P.bgMode === 1){
-    /* 向きに沿って端から端まで渡す */
-    const L = Math.abs(W*ca) + Math.abs(H*sa);
-    const cx = W/2, cy = H/2;
-    const gd = b.createLinearGradient(cx - ca*L/2, cy - sa*L/2, cx + ca*L/2, cy + sa*L/2);
-    gd.addColorStop(0, P.bg); gd.addColorStop(1, P.bg2);
-    b.fillStyle = gd; b.fillRect(0,0,W,H);
-    return bgCv;
-  }
-  /* 粒 ── マスごとに位相をずらした帯を焼く */
-  const n = Math.max(4, P.bgGrain|0);
-  const cw = W / n, ch = cw;                       /* 正方のマス */
-  const rows = Math.ceil(H / ch);
-  const hex = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
-  const c1 = hex(P.bg), c2 = hex(P.bg2);
-  for(let j = 0; j < rows; j++) for(let i = 0; i < n; i++){
-    /* ⚠️ 位置で位相を決める＝隣のマスと帯が繋がって、1枚の面に見える */
-    const u = (i * cw * ca + j * ch * sa) / Math.max(cw, 1);
-    const v = 0.5 + 0.5 * Math.cos(u * 0.9);
-    const k = Math.pow(v, 1.6);
-    const x0 = i*cw, y0 = j*ch;
-    const gd = b.createLinearGradient(x0, y0, x0 + cw*ca, y0 + ch*sa);
-    const mix = (t) => 'rgb(' + c1.map((q,z) => Math.round(q + (c2[z]-q)*t)).join(',') + ')';
-    gd.addColorStop(0, mix(k*0.25));
-    gd.addColorStop(0.5, mix(k));
-    gd.addColorStop(1, mix(k*0.25));
-    b.fillStyle = gd;
-    b.fillRect(x0 - 0.5, y0 - 0.5, cw + 1, ch + 1);   /* ⚠️ 継ぎ目が線にならないよう少し重ねる */
-  }
-  return bgCv;
-}
-function bgSync(){
-  document.body.classList.toggle('bg-grad',  P.bgMode === 1);
-  document.body.classList.toggle('bg-grain', P.bgMode === 2);
-}
-
 function frameAt(t){
-  g.drawImage(bgBake(), 0, 0);      /* ⭐ 焼いた地を貼る（毎コマ作り直さない） */
+  g.fillStyle = P.bg; g.fillRect(0,0,cv.width,cv.height);
   if(!clips.length) return;
   let acc = 0, i = 0;
   for(; i < clips.length; i++){
@@ -903,32 +833,6 @@ rulerEl.addEventListener('pointerdown', scrub);
 document.getElementById('phgrab').addEventListener('pointerdown', e => { e.stopPropagation(); scrub(e); });
 /* ⚠️ レーンの地（クリップの無い所）を押したときもシークする。クリップ自体は選択が優先 */
 [clipLane, sndLane].forEach(el => el.addEventListener('pointerdown', e => { if(e.target === el) scrub(e); }));
-
-
-/* ⭐ トラックパッドでタイムラインを拡大縮小する。
-   木下＝「マウスでズームできるようにしよう。MacBook Air でトラックパッド」
-   ⚠️ macOS のピンチは【ctrlKey 付きの wheel】として届く（マウスホイールと区別できる）。
-   ⭐ 二本指の横スクロールは、そのままタイムラインの横スクロールになる（何もしない）。
-   ⚠️ ページごと拡大されないように preventDefault する。 */
-lanesEl.addEventListener('wheel', e => {
-  if(e.ctrlKey){                       /* ピンチ */
-    e.preventDefault();
-    const before = tFromEvent(e);      /* 指の下にある時間を覚える */
-    const k = Math.exp(-e.deltaY * 0.01);
-    zoom = Math.max(1, Math.min(24, zoom * k));
-    layout();
-    /* ⭐ 指の下の時間が動かないように、横スクロールを合わせる＝掴んだ所を中心に寄る */
-    const after = (e.clientX - contEl.getBoundingClientRect().left - GUT()) / pps();
-    lanesEl.scrollLeft += (before - after) * pps();
-    return;
-  }
-  /* ⚠️ 縦のホイールしか無いマウスでも拡大できるように、Shift+ホイール＝拡大 */
-  if(e.shiftKey){
-    e.preventDefault();
-    zoom = Math.max(1, Math.min(24, zoom * Math.exp(-e.deltaY * 0.004)));
-    layout();
-  }
-}, { passive:false });
 
 document.getElementById('zIn').onclick  = () => { zoom = Math.min(24, zoom * 1.6); layout(); };
 document.getElementById('zOut').onclick = () => { zoom = Math.max(1, zoom / 1.6); layout(); };
@@ -1356,10 +1260,7 @@ function lzw(idx, minCode, out){
 }
 
 /* ── つまみ ── */
-/* ⚠️ 地に関わるつまみは、焼き直しのきっかけを立てる */
 document.querySelectorAll('input[type=range][data-p]').forEach(r => {
-  if(r.dataset.p === 'bgAng' || r.dataset.p === 'bgGrain')
-    r.addEventListener('input', () => { bgKey = ''; });
   const v = r.parentElement.querySelector('.val');
   const sync = () => {
     P[r.dataset.p] = +r.value;
@@ -1379,20 +1280,8 @@ document.querySelectorAll('.seg[data-seg]').forEach(seg => {
   }));
 });
 document.getElementById('bg').addEventListener('input', e => {
-  P.bg = e.target.value; bgKey = ''; if(!playing) frameAt(0);
+  P.bg = e.target.value; if(!playing) frameAt(0);
 });
-
-document.getElementById('bg2')?.addEventListener('input', e => {
-  P.bg2 = e.target.value; bgKey = ''; if(!playing) frameAt(cur);
-});
-document.querySelectorAll('.seg[data-seg="bgMode"] button').forEach(b =>
-  b.addEventListener('click', () => {
-    b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
-    P.bgMode = +b.dataset.v; bgKey = ''; bgSync();
-    if(!playing) frameAt(cur);
-  }));
-bgSync();
-
 document.querySelectorAll('.unit-head').forEach(h => h.addEventListener('click', () => {
   h.parentElement.classList.toggle('off');
 }));
@@ -1441,10 +1330,7 @@ function memLoad(){
   if(!d) return;
   Object.assign(P, d.P || {});
   /* つまみ・セグメント・色を、覚えている値に合わせ直す */
-  /* ⚠️ 地に関わるつまみは、焼き直しのきっかけを立てる */
-document.querySelectorAll('input[type=range][data-p]').forEach(r => {
-  if(r.dataset.p === 'bgAng' || r.dataset.p === 'bgGrain')
-    r.addEventListener('input', () => { bgKey = ''; });
+  document.querySelectorAll('input[type=range][data-p]').forEach(r => {
     if(P[r.dataset.p] == null) return;
     r.value = P[r.dataset.p];
     const v = r.parentElement.querySelector('.val'); if(v) v.textContent = r.value;
