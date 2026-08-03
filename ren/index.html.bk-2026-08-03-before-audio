@@ -232,7 +232,7 @@
     <div class="unit-body">
       <div class="mod">⭐ 音源を入れると<b>下のタイムラインに波形</b>が出る。映像と<b>同じ時間軸</b>なので、
         音の切れ目に合わせて尺を伸縮できる<br>
-        ⭐ 入れた音は<b>書き出しにも入る</b>（動画のみ・GIFは音を持てない）</div>
+        ⚠️ 書き出した動画に<b>音は入らない</b>（canvas を録っているため）。合わせるための目印</div>
       <button class="btn" id="bSnd">音源を入れる</button>
       <input type="file" id="sfile" accept="audio/*" style="display:none">
       <div class="mod" id="sndNote"></div>
@@ -304,7 +304,7 @@
         <button class="btn" id="bMovie">動画で出す</button>
         <button class="btn" id="bGif">GIF で出す</button>
       </div>
-      <div class="mod">⚠️ 書き出しは<b>実時間かかる</b>（10秒の動画なら10秒）<br>⭐ 音源を入れていれば<b>動画に音も入る</b>（GIFは音を持てない）<br>
+      <div class="mod">⚠️ 書き出しは<b>実時間かかる</b>（10秒の動画なら10秒）<br>
         ⭐ 動画＝mp4（使えないブラウザは webm）／GIF＝軽いが色数が減る</div>
       <div class="mod" id="outNote"></div>
     </div>
@@ -874,67 +874,25 @@ const dl = (blob, name) => {
 };
 const outNote = t => { const n=document.getElementById('outNote'); if(n) n.textContent = t; };
 
-/* ⭐⭐ 音を書き出しに入れる。
-   🔴 前は canvas の映像だけを録っていたので【書き出した動画に音が入らなかった】
-      （「まず読む」に⏸として残していた宿題）。
-   ⭐ やり方＝Web Audio で音源を【2つに分ける】。
-      ・ひとつは今まで通りスピーカーへ（書き出し中も聞こえる）
-      ・もうひとつを MediaStreamDestination へ送り、その音のトラックを
-        canvas の映像トラックと同じ MediaRecorder に混ぜる
-   ⚠️ 音源1つにつき MediaElementSource は【一度しか作れない】。作り直すと例外になるので
-      作ったものを覚えておいて使い回す（sndNode）。
-   ⚠️ 繋いだ瞬間からスピーカーへは自動で出なくなるので、必ず destination にも繋ぐ。 */
-let sndAC = null, sndNode = null, sndTap = null;
-function sndStream(){
-  if(!snd) return null;
-  try{
-    if(!sndAC) sndAC = new (window.AudioContext || window.webkitAudioContext)();
-    if(sndAC.state === 'suspended') sndAC.resume();
-    if(!sndNode){
-      sndNode = sndAC.createMediaElementSource(snd);
-      sndNode.connect(sndAC.destination);          /* ⚠️ これが無いと音が聞こえなくなる */
-      sndTap = sndAC.createMediaStreamDestination();
-      sndNode.connect(sndTap);
-    }
-    return sndTap ? sndTap.stream : null;
-  }catch(err){
-    /* ⚠️ 失敗しても書き出しそのものは続ける（音の無い動画になるだけ） */
-    return null;
-  }
-}
-
 document.getElementById('bMovie').onclick = () => {
   const T = total();
   if(!clips.length || T <= 0) return;
   /* ⭐ mp4 が使えるなら mp4（SNS にそのまま上げられる）。駄目なら webm */
   const types = ['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm'];
   const mime = types.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || 'video/webm';
-
-  /* 映像＋音をひとつの流れにまとめる */
-  const stream = cv.captureStream(P.fps);
-  const as = sndStream();
-  let withSound = false;
-  if(as) as.getAudioTracks().forEach(tr => { stream.addTrack(tr); withSound = true; });
-
-  const rec = new MediaRecorder(stream, { mimeType: mime });
+  const rec = new MediaRecorder(cv.captureStream(P.fps), { mimeType: mime });
   const chunks = [];
   rec.ondataavailable = e => e.data.size && chunks.push(e.data);
   rec.onstop = () => {
     dl(new Blob(chunks, {type:mime}), 'ren_' + Date.now() + (mime.includes('mp4') ? '.mp4' : '.webm'));
-    outNote('出した（' + (mime.includes('mp4') ? 'mp4' : 'webm') +
-            (withSound ? '・音つき' : '・音なし') + '）');
+    outNote('出した（' + (mime.includes('mp4') ? 'mp4' : 'webm') + '）');
   };
-  outNote('書き出し中… ' + T.toFixed(1) + '秒' + (withSound ? '（音つき）' : ''));
-  playing = true; t0 = performance.now(); cur = 0;
+  outNote('書き出し中… ' + T.toFixed(1) + '秒');
+  playing = true; t0 = performance.now();
   clips.forEach(c => c.type==='vid' && c.el.play().catch(()=>{}));
-  /* ⭐ 音も頭から鳴らす＝映像と頭を合わせる */
-  if(snd){ try{ snd.currentTime = 0; snd.play().catch(()=>{}); }catch(e){} }
   rec.start();
-  setTimeout(() => {
-    rec.stop(); playing = false;
-    if(snd) snd.pause();
-    document.getElementById('bPlay').textContent = '▶ 再生';
-  }, T*1000 + 120);
+  setTimeout(() => { rec.stop(); playing = false;
+    document.getElementById('bPlay').textContent = '▶ 再生'; }, T*1000 + 120);
 };
 
 /* ⭐ GIF ── 外の道具を使わずに自分で作る（1ファイルで完結させるため）。
