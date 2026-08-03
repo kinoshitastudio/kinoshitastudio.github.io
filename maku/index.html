@@ -315,14 +315,16 @@
 
   <h2>変形（辺ごと）</h2>
   <div class="row"><label>上幅</label><input type="range" id="wtop" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>中幅</label><input type="range" id="wmid" min="-100" max="100" value="0"><span class="val"></span></div>
   <div class="row"><label>下幅</label><input type="range" id="wbot" min="-100" max="100" value="0"><span class="val"></span></div>
   <div class="row"><label>左高</label><input type="range" id="hleft" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row"><label>中高</label><input type="range" id="hmid" min="-100" max="100" value="0"><span class="val"></span></div>
   <div class="row"><label>右高</label><input type="range" id="hright" min="-100" max="100" value="0"><span class="val"></span></div>
   <div class="row"><label>せん断X</label><input type="range" id="shearx" min="-100" max="100" value="0"><span class="val"></span></div>
   <div class="row"><label>せん断Y</label><input type="range" id="sheary" min="-100" max="100" value="0"><span class="val"></span></div>
   <div class="row"><label>上ねじれ</label><input type="range" id="twtop" min="-100" max="100" value="0"><span class="val"></span></div>
   <div class="row"><label>下ねじれ</label><input type="range" id="twbot" min="-100" max="100" value="0"><span class="val"></span></div>
-  <div class="note">上下・左右を独立して広げる/ねじる<br>面が連続して歪む（タイル単位でない）</div>
+  <div class="note">上下・左右を独立して広げる/ねじる<br><b>中幅・中高</b>＝真ん中だけ膨らませる（＋）／くびれさせる（−）<br>面が連続して歪む（タイル単位でない）</div>
 
   <h2>アンカー（面を押す）</h2>
   <div class="note">左ドラッグ＝面を引っぱる／Alt+クリック＝消す<br>右ドラッグ＝傾ける・ホイール/ピンチ＝ズーム<br><b>スペース+ドラッグ＝ボードを動かす</b>（Shift/中ボタンも可）<br><b>H キー＝手のひらモード</b>（左ドラッグで動かせる）<br>ダブルクリック＝正面に戻す</div>
@@ -429,6 +431,7 @@
 
 const DEFAULTS = { font:0, dir:0, layer:0, track:0, leading:0, vwarp:30, hwarp:0, freq:2, thick:0,
             wtop:0, wbot:0, hleft:0, hright:0,      // 辺ごとの 幅/高さ
+            wmid:0, hmid:0,                         // 真ん中だけの 幅/高さ（つづみ・樽）
             shearx:0, sheary:0,                     // せん断
             twtop:0, twbot:0,                       // 上下で別のねじれ
             radius:30, strength:55, look:0, density:14, mesh:90, inkN:3,
@@ -597,6 +600,7 @@ const VERT = `
   uniform float uSheetScale, uSheetRot;
   uniform float uVWarp, uHWarp, uFreq, uTime;
   uniform float uWTop, uWBot, uHLeft, uHRight, uShearX, uShearY, uTwTop, uTwBot;
+  uniform float uWMid, uHMid;         // 真ん中だけを膨らませる／くびれさせる
   uniform vec2 uAnchorUV[24];
   uniform vec2 uAnchorD[24];
   uniform float uAnchorR;
@@ -663,8 +667,13 @@ const VERT = `
     p.y *= 1.0 + cos(tx * 6.2831853 * uFreq) * uHWarp;
 
     // ② 辺ごとの幅/高さ — 上下・左右を独立して広げる/すぼめる
-    p.x *= mix(1.0 + uWBot, 1.0 + uWTop, ty);      // 上幅 / 下幅
-    p.y *= mix(1.0 + uHLeft, 1.0 + uHRight, tx);   // 左高 / 右高
+    /* ⭐ 中幅・中高＝真ん中だけを膨らませる／くびれさせる（つづみ・樽）。
+       ⚠️ 3点を曲線で結ぶ形にすると【中0でも既存の絵が変わる】。
+         直線のまま「中央で最大の山」を足す形にすれば、中0なら今までと完全に同じ。 */
+    float bumpY = 4.0 * ty * (1.0 - ty);           // 0→1→0（中央で1）
+    float bumpX = 4.0 * tx * (1.0 - tx);
+    p.x *= mix(1.0 + uWBot, 1.0 + uWTop, ty) + uWMid * bumpY;    // 上幅 / 中幅 / 下幅
+    p.y *= mix(1.0 + uHLeft, 1.0 + uHRight, tx) + uHMid * bumpX; // 左高 / 中高 / 右高
 
     // ③ せん断（傾け）
     p.x += (ty - 0.5) * uShearX;
@@ -840,7 +849,7 @@ const extUint = gl.getExtension('OES_element_index_uint');
 
 const loc = {};
 ['uScale','uVWarp','uHWarp','uFreq','uTime','uAnchorR','uAnchorN','uLook','uDensity','uTex','uSrc',
- 'uWTop','uWBot','uHLeft','uHRight','uShearX','uShearY','uTwTop','uTwBot',
+ 'uWTop','uWBot','uHLeft','uHRight','uShearX','uShearY','uTwTop','uTwBot','uWMid','uHMid',
  'uGridCols','uGridRows','uCharN','uZoom','uRotX','uRotY','uThick',
  'uRes','uInkN','uPapMode','uPapAng','uPapSteps','uPapCx','uPapCy',
  'uSheetSize','uSheetPos','uSheetScale','uSheetRot'].forEach(n=>loc[n]=gl.getUniformLocation(prog,n));
@@ -902,6 +911,8 @@ function render(t){
   gl.uniform1f(loc.uWBot,   P.wbot/100*0.8);
   gl.uniform1f(loc.uHLeft,  P.hleft/100*0.8);
   gl.uniform1f(loc.uHRight, P.hright/100*0.8);
+  gl.uniform1f(loc.uWMid,   P.wmid/100*0.8);
+  gl.uniform1f(loc.uHMid,   P.hmid/100*0.8);
   gl.uniform1f(loc.uShearX, P.shearx/100*1.0);
   gl.uniform1f(loc.uShearY, P.sheary/100*1.0);
   gl.uniform1f(loc.uTwTop,  P.twtop/100*1.6);
@@ -1626,6 +1637,7 @@ const I18N = {
   '角ゴ':'Gothic','明朝':'Mincho','横':'Horizontal','縦':'Vertical',
   '字送り':'Tracking','行間':'Leading','大きさ':'Size','折返し':'Wrap',
   '上幅':'Top width','下幅':'Bottom width','左高':'Left height','右高':'Right height',
+  '中幅':'Mid width','中高':'Mid height',
   'せん断X':'Shear X','せん断Y':'Shear Y','上ねじれ':'Twist top','下ねじれ':'Twist bottom',
   '効き幅':'Radius','強さ':'Strength','幅':'Width','高さ':'Height',
   '金属':'Metal','墨':'Sumi','線':'Line','密度':'Density','解像':'Resolution',
