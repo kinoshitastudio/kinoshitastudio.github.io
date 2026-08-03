@@ -4967,7 +4967,7 @@ function withCleanView(fn){
   };
   fn(done);
 }
-function shootRect(R, bgHex, mime, ext, quality, name){
+function shootRect(R, bgHex, mime, ext, quality, name, bgAb){
   const scale = exScale();
   const bak = { size: paper.view.viewSize.clone(), zoom: paper.view.zoom, center: paper.view.center.clone() };
   paper.view.viewSize = new paper.Size(Math.max(1, Math.round(R.width*scale)), Math.max(1, Math.round(R.height*scale)));
@@ -4977,7 +4977,44 @@ function shootRect(R, bgHex, mime, ext, quality, name){
   const out = document.createElement('canvas');
   out.width = cv.width; out.height = cv.height;
   const g2 = out.getContext('2d');
-  if(bgHex || mime === 'image/jpeg'){          // JPGは透明を持てないので必ず地を塗る
+  /* 🔴⭐ 枠の地は【グラデのこともある】ので、単色決め打ちにしない。
+     木下＝「ボードごと書き出しするにはどうしたらいい？」→ 書き出すと地が白いままだった。
+     ⚠️ 原因＝ここに単色（a.bg）しか渡していなかったので、今日入れた枠のグラデが
+        画面では見えるのに PNG に入らなかった。
+     ⭐ 直し方＝枠そのもの（bgAb）を受け取り、画面と【同じ式】で塗る（abPaintOf を共用）。
+     ⚠️ 画面の canvas を貼る【前】に塗る＝地が図形の下に来る。 */
+  if(bgAb && bgAb.fill){
+    try{
+      const rect = new Path.Rectangle(new Rectangle(0, 0, out.width, out.height));
+      const paint = abPaintOf(bgAb, rect);
+      rect.remove();
+      if(paint && paint.gradient){
+        const st = paint.gradient.stops || [];
+        let gd;
+        if(paint.gradient.radial){
+          gd = g2.createRadialGradient(out.width/2, out.height/2, 0,
+                                       out.width/2, out.height/2, Math.max(out.width, out.height)/2);
+        }else{
+          /* ⚠️ 角度から端〜端の線を作る（画面の gradLine と同じ考え方） */
+          const th = (+(bgAb.fill.ang ?? 90)) * Math.PI / 180;
+          const ca = Math.cos(th), sa = Math.sin(th);
+          const L = Math.abs(out.width*ca) + Math.abs(out.height*sa);
+          gd = g2.createLinearGradient(out.width/2 - ca*L/2, out.height/2 - sa*L/2,
+                                       out.width/2 + ca*L/2, out.height/2 + sa*L/2);
+        }
+        st.forEach(o => { try{ gd.addColorStop(Math.max(0, Math.min(1, o[1])), o[0]); }catch(_){} });
+        g2.fillStyle = gd;
+        g2.fillRect(0, 0, out.width, out.height);
+      }else{
+        g2.fillStyle = bgHex || '#ffffff';
+        g2.fillRect(0, 0, out.width, out.height);
+      }
+    }catch(err){
+      /* ⚠️ 失敗しても書き出しは続ける（地が単色になるだけ） */
+      g2.fillStyle = bgHex || '#ffffff';
+      g2.fillRect(0, 0, out.width, out.height);
+    }
+  }else if(bgHex || mime === 'image/jpeg'){    // JPGは透明を持てないので必ず地を塗る
     g2.fillStyle = bgHex || '#ffffff';
     g2.fillRect(0, 0, out.width, out.height);
   }
@@ -5004,7 +5041,8 @@ async function exportRaster(mime, ext, quality){
   const list = what === 'all' ? S.abs : [abCur()];
   withCleanView(async done => {
     for(const a of list){
-      await shootRect(abRectOf(a), a.bgOn ? a.bg : null, mime, ext, quality, 'sakuji_' + a.name);
+      await shootRect(abRectOf(a), a.bgOn ? a.bg : null, mime, ext, quality, 'sakuji_' + a.name,
+                      a.bgOn ? a : null);   /* ⭐ 枠ごと渡す＝グラデの地も書き出しに入る */
     }
     done(); drawGrid();
     stat(ext.toUpperCase() + ' を ' + list.length + ' 枚 書き出し');
@@ -5058,7 +5096,11 @@ document.getElementById('bSVG').onclick = async () => {
         //   ⭐ 地色は枠ぴったりなので、書き出しの大きさも枠と一致する。
         if(a.bgOn){
           const bg = new Path.Rectangle(R);
-          bg.fillColor = a.bg;
+          /* 🔴⭐ 画面と【同じ式】で塗る（abPaintOf を共用）。
+             ⚠️ ここも単色決め打ちだったので、枠のグラデが SVG では単色になっていた。
+                PNG と同じ入れ忘れ。⭐ SVG ならグラデはベクターのまま出るので
+                Illustrator / Figma でそのまま触れる。 */
+          bg.fillColor = abPaintOf(a, bg);
           g.insertChild(0, bg);
         } else {
           // 透明でも「枠の大きさ」で出したいので、見えない矩形で範囲を決める
