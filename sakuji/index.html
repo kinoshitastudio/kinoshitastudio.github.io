@@ -5440,6 +5440,116 @@ hook('up', '枠のハンドル', () => {
   return true;
 }, 15);
 
+
+/* ══ ARRANGE をマウスとキーボードでもできるようにする ══
+   ⭐ 木下＝「Arrange が全部イラレや Figma 同様、マウスやキーボードでできるように。
+      左右反転とか角度とか、普通イラレや Figma でこのボタンを押さなくてできるでしょ？
+      一応このパネルは残す前提で」
+   ⭐ パネルは残す。同じことを【手でもできる】ようにするだけ＝どちらを触っても同じ結果になる。
+   ⚠️ だから処理は増やさない。既にあるボタンの中身を呼ぶ（2箇所に書くと片方だけ直って食い違う）。 */
+
+/* ── ① マウスで回す ────────────────────────────────
+   ⭐ イラレ／Figma と同じ＝【角ハンドルの少し外】を掴むと回転になる。
+   ⚠️ ハンドルそのものは拡大縮小なので、そこには被せない（外側の輪だけ）。 */
+let rotDrag = null;
+function hitRotate(pt){
+  if(S.tool !== 'select') return null;
+  const b = selBounds(); if(!b) return null;
+  const tol = tzTol(8), Z = paper.view.zoom;
+  for(const k of ['nw','ne','se','sw']){
+    const d = pt.getDistance(bhPoint(b, k));
+    /* 内側＝拡大縮小、その外の輪＝回転 */
+    if(d > tol && d < tol + 14/Z) return { center: b.center.clone(), start: pt };
+  }
+  return null;
+}
+hook('down', '回転（角の外）', e => {
+  const r = hitRotate(e.point);
+  if(!r) return false;
+  snapshot();
+  rotDrag = { center: r.center, prev: e.point.subtract(r.center).angle, items: selected().slice(), acc: 0 };
+  stat('回す — Shift で15°ずつ');
+  return true;
+}, 25);
+hook('drag', '回転（角の外）', e => {
+  if(!rotDrag) return false;
+  const ang = e.point.subtract(rotDrag.center).angle;
+  let d = ang - rotDrag.prev;
+  /* ⚠️ 角度は ±180 で折り返すので、そのまま引くと1周ぶん飛ぶ */
+  if(d > 180) d -= 360; if(d < -180) d += 360;
+  rotDrag.acc += d;
+  let step = d;
+  if(e.modifiers.shift){
+    /* ⭐ Shift＝15°刻み。溜めた角度を丸めて、その差ぶんだけ回す */
+    const snapped = Math.round(rotDrag.acc / 15) * 15;
+    step = snapped - (rotDrag.applied || 0);
+    rotDrag.applied = snapped;
+  }else{
+    rotDrag.applied = rotDrag.acc;
+  }
+  if(step){
+    rotDrag.items.forEach(it => { it.rotate(step, rotDrag.center); it.__rot = (it.__rot || 0) + step; });
+    guides();
+  }
+  rotDrag.prev = ang;
+  return true;
+}, 25);
+hook('up', '回転（角の外）', () => {
+  if(!rotDrag) return false;
+  rotDrag = null; guides(); stat('回した');
+  return true;
+}, 25);
+
+/* ── ② Alt を押しながらドラッグ＝複製して動かす ──────────
+   ⭐ イラレ／Figma の標準。木下＝「複製はコピーペーストだけど」＝いまは手が2回要る。
+   ⚠️ 掴んだ瞬間に複製を作って【元をその場に残す】。動くのは複製のほう。 */
+let altDup = false;
+hook('down', 'Alt＋ドラッグで複製', e => {
+  if(S.tool !== 'select' || !e.modifiers.option) return false;
+  const sel = selected();
+  if(!sel.length) return false;
+  if(hitRotate(e.point) || (typeof hitBH === 'function' && hitBH(e.point))) return false;  /* ハンドルが先 */
+  snapshot();
+  artLayer.activate();
+  const copies = sel.map(it => { const c = it.clone(); c.selected = false; return c; });
+  /* ⭐ 複製を下に置いて、掴んでいる方（元）をそのまま動かす＝手の感触が変わらない */
+  copies.forEach(c => c.insertBelow(sel[0]));
+  altDup = true;
+  stat(`${sel.length}個を複製して動かす`);
+  return false;                    /* ⚠️ false＝この後の「通常の移動」に処理を渡す */
+}, 5);
+hook('up', 'Alt＋ドラッグで複製', () => {
+  if(!altDup) return false;
+  altDup = false; renderLayers(); return false;
+}, 5);
+
+/* ── ③ キーボード（イラレ／Figma に合わせる）──────────
+   ⚠️ 既にあるボタンを押すだけ＝処理を二重に書かない。 */
+window.addEventListener('keydown', e => {
+  const t = e.target.tagName, ty = (e.target.type || '').toLowerCase();
+  if(t === 'TEXTAREA' || (t === 'INPUT' && !/^(range|color|checkbox|radio|button|file|submit)$/.test(ty))) return;
+  const cmd = e.metaKey || e.ctrlKey;
+  const hit = id => { e.preventDefault(); document.getElementById(id)?.click(); };
+  /* 反転＝Figma と同じ ⇧H / ⇧V。⚠️ 素の V は選択ツールなので Shift 付きだけ拾う */
+  if(!cmd && e.shiftKey && e.key === 'H'){ return hit('bFlipH'); }
+  if(!cmd && e.shiftKey && e.key === 'V'){ return hit('bFlipV'); }
+  /* 重ね順＝イラレ／Figma と同じ ⌘⇧] 最前面 ／ ⌘⇧[ 最背面 ／ ⌘] ⌘[ 一段ずつ */
+  if(cmd && (e.key === ']' || e.code === 'BracketRight')){
+    e.preventDefault();
+    if(e.shiftKey) document.getElementById('bFront')?.click();
+    else { snapshot(); selected().forEach(it => it.bringToFront()); renderLayers(); }
+    return;
+  }
+  if(cmd && (e.key === '[' || e.code === 'BracketLeft')){
+    e.preventDefault();
+    if(e.shiftKey) document.getElementById('bBack')?.click();
+    else { snapshot(); selected().forEach(it => it.sendToBack()); renderLayers(); }
+    return;
+  }
+  /* 角度リセット＝⇧R（イラレにも Figma にも標準が無いので、覚えやすい方を当てる） */
+  if(!cmd && e.shiftKey && e.key === 'R'){ return hit('bReset'); }
+}, true);
+
 /* 枠を画面の中央へ呼び戻す（見失ったとき） */
 addEventListener('keydown', e => {
   if(e.key === '0' && (e.metaKey || e.ctrlKey)){
