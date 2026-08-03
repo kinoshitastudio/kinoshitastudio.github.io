@@ -834,8 +834,9 @@ async function loadSound(f){
   const url = URL.createObjectURL(f);
   snd = new Audio(url); snd.loop = false;
   try{
-    const ac = new (window.AudioContext || window.webkitAudioContext)();
-    sndBuf = await ac.decodeAudioData(await f.arrayBuffer());
+    /* ⚠️ 毎回 new すると context が増え続ける。⭐ 書き出しで使うものと同じ1つを使い回す */
+    if(!sndAC) sndAC = new (window.AudioContext || window.webkitAudioContext)();
+    sndBuf = await sndAC.decodeAudioData(await f.arrayBuffer());
     const n = document.getElementById('sndNote');
     if(n) n.innerHTML = `${f.name} ／ <b>${sndBuf.duration.toFixed(1)}秒</b>`;
   }catch(err){
@@ -854,8 +855,22 @@ document.getElementById('sfile').addEventListener('change', e => {
 document.getElementById('bPlay').onclick = e => {
   if(!clips.length) return;
   playing = !playing;
-  if(playing){ t0 = performance.now(); clips.forEach(c => c.type==='vid' && c.el.play().catch(()=>{}));
-    if(snd){ snd.currentTime = 0; snd.play().catch(()=>{}); } }
+  if(playing){
+    t0 = performance.now();
+    clips.forEach(c => c.type==='vid' && c.el.play().catch(()=>{}));
+    /* 🔴 一度でも「動画で出す」を押すと、音は AudioContext 経由になる。
+       そのとき context が眠っている（suspended）と【何も聞こえない】。必ず起こす。
+       ⚠️ ブラウザは操作が無いと context を勝手に眠らせるので、再生のたびに起こす。 */
+    if(sndAC && sndAC.state === 'suspended') sndAC.resume().catch(()=>{});
+    if(snd){
+      snd.currentTime = 0;
+      /* ⚠️ 失敗を握りつぶすと「音が聞こえない」だけが残って原因が分からない。理由を出す。 */
+      snd.play().catch(err => {
+        const n = document.getElementById('sndNote');
+        if(n) n.textContent = '音が鳴らせない：' + (err && err.name ? err.name : 'unknown');
+      });
+    }
+  }
   else { clips.forEach(c => c.type==='vid' && c.el.pause()); if(snd) snd.pause(); }
   e.target.textContent = playing ? '‖ 止める' : '▶ 再生';
 };
@@ -889,7 +904,7 @@ function sndStream(){
   if(!snd) return null;
   try{
     if(!sndAC) sndAC = new (window.AudioContext || window.webkitAudioContext)();
-    if(sndAC.state === 'suspended') sndAC.resume();
+    if(sndAC.state === 'suspended') sndAC.resume().catch(()=>{});
     if(!sndNode){
       sndNode = sndAC.createMediaElementSource(snd);
       sndNode.connect(sndAC.destination);          /* ⚠️ これが無いと音が聞こえなくなる */
