@@ -247,6 +247,19 @@
      ⭐ 差分合成＝地が暗ければ白く、明るければ暗く出る＝どんな地でも必ず読める。 */
   #hud{ color:#fff; opacity:1; mix-blend-mode:difference; }
 
+  /* 刷り ── 字のインク。使う色数のぶんだけ出す */
+  .only-ink{ display:none }
+  body.look-ink .only-ink{ display:block }
+  .ink2,.ink3,.ink4,.ink5,.ink6{ display:none }
+  body.ink-2 .ink2{ display:block }
+  body.ink-3 .ink3{ display:block }
+  body.ink-4 .ink4{ display:block }
+  body.ink-5 .ink5{ display:block }
+  body.ink-6 .ink6{ display:block }
+  /* ⚠️ 密度は縞（金属・線）のつまみ。墨と刷りでは何も起きないので出さない */
+  .only-stripe{ display:none }
+  body.look-stripe .only-stripe{ display:block }
+
   /* 版面 ── 「画面のまま」のときは形と長辺のつまみを出さない */
   .only-frame{ display:none }
   body.framed .only-frame{ display:block }
@@ -316,9 +329,23 @@
   <h2>見え</h2>
   <div class="only-text">
     <div class="seg" id="look">
-      <button data-v="0" class="on">金属</button><button data-v="1">墨</button><button data-v="2">線</button>
+      <button data-v="0" class="on">金属</button><button data-v="1">墨</button>
+      <button data-v="2">線</button><button data-v="3">刷り</button>
     </div>
-    <div class="row"><label>密度</label><input type="range" id="density" min="1" max="40" value="14"><span class="val"></span></div>
+    <div class="only-stripe">
+      <div class="row"><label>密度</label><input type="range" id="density" min="1" max="40" value="14"><span class="val"></span></div>
+    </div>
+    <!-- ⭐ 刷り＝字の中を、地と同じ版のグラデで塗る。色だけ字用に持つ＝多色刷り -->
+    <div class="only-ink">
+      <div class="row"><label>字の色数</label><input type="range" id="inkN" min="1" max="6" step="1" value="3"><span class="val"></span></div>
+      <div class="row"><label>字 1</label><input type="color" data-ic="0" value="#e9201c"></div>
+      <div class="ink2"><div class="row"><label>字 2</label><input type="color" data-ic="1" value="#141414"></div></div>
+      <div class="ink3"><div class="row"><label>字 3</label><input type="color" data-ic="2" value="#2b4cc9"></div></div>
+      <div class="ink4"><div class="row"><label>字 4</label><input type="color" data-ic="3" value="#f2d16b"></div></div>
+      <div class="ink5"><div class="row"><label>字 5</label><input type="color" data-ic="4" value="#1f7a4d"></div></div>
+      <div class="ink6"><div class="row"><label>字 6</label><input type="color" data-ic="5" value="#8a6f4e"></div></div>
+      <div class="note">⭐ <b>形は「地（紙）」のつまみと同じ版</b>（流す/渦・向き・版数・中心）＝紙と字が同じ流れで刷られる。色だけここで決める</div>
+    </div>
   </div>
   <div class="row"><label>解像</label><input type="range" id="mesh" min="16" max="160" value="90"><span class="val"></span></div>
 
@@ -383,7 +410,7 @@ const DEFAULTS = { font:0, dir:0, layer:0, track:0, leading:0, vwarp:30, hwarp:0
             wtop:0, wbot:0, hleft:0, hright:0,      // 辺ごとの 幅/高さ
             shearx:0, sheary:0,                     // せん断
             twtop:0, twbot:0,                       // 上下で別のねじれ
-            radius:30, strength:55, look:0, density:14, mesh:90,
+            radius:30, strength:55, look:0, density:14, mesh:90, inkN:3,
             /* 地のグラデ ── 色数 1 ＝単色＝これまでと同じ地 */
             papN:1, papMode:0, papAng:90, papSteps:0, papCx:50, papCy:50 };
 const P = { ...DEFAULTS };
@@ -474,6 +501,65 @@ const gl = canvas.getContext('webgl', { antialias:true, preserveDrawingBuffer:tr
 gl.getExtension('OES_standard_derivatives');      // fwidth＝輪郭を寄っても滑らかに保つ
 gl.enable(gl.BLEND);
 gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+/* ⭐ グラデの式は【ひとつだけ】書いて、地（紙）と字（インク）で使い回す。
+   ⚠️ 別プログラムなので uniform は共有できないが、式が2本に割れると必ず片方だけ直す事故になる。
+   ⭐ 形（流す/中心/渦/まわり・向き・版数・中心）は地と字で【同じ版】を使う＝刷りの考え方。
+      色数と色だけ別に持つ（＝リソグラフの多色刷り）。 */
+const PAPER_GLSL = (fn, c) => `
+  vec3 ${fn}Pick(float i, vec3 c0){
+    if(i < 0.5) return ${c}0;
+    if(i < 1.5) return ${c}1;
+    if(i < 2.5) return ${c}2;
+    if(i < 3.5) return ${c}3;
+    if(i < 4.5) return ${c}4;
+    return ${c}5;
+  }
+  float ${fn}Bayer(vec2 p){
+    vec2 cc = mod(floor(p), 4.0);
+    float i = cc.y * 4.0 + cc.x;
+    float b = 0.0;
+    if(i<0.5)b=0.0;      else if(i<1.5)b=8.0;  else if(i<2.5)b=2.0;  else if(i<3.5)b=10.0;
+    else if(i<4.5)b=12.0;else if(i<5.5)b=4.0;  else if(i<6.5)b=14.0; else if(i<7.5)b=6.0;
+    else if(i<8.5)b=3.0; else if(i<9.5)b=11.0; else if(i<10.5)b=1.0; else if(i<11.5)b=9.0;
+    else if(i<12.5)b=15.0;else if(i<13.5)b=7.0;else if(i<14.5)b=13.0;else b=5.0;
+    return b / 16.0;
+  }
+  vec3 ${fn}At(vec2 uv, vec3 c0, float n, float asp){
+    if(n < 1.5) return c0;                                   // 1色＝今までと完全に同じ
+    /* ⭐ 形＝別の模様を4つ作るのではなく、同じグラデを どの座標に流すか だけ差し替える */
+    vec2  q   = (uv - vec2(uPapCx, uPapCy)) * vec2(asp, 1.0);
+    float rad = length(q) / 0.72;
+    float ang = atan(q.y, q.x) / 6.2831853;
+    float t;
+    if(uPapMode < 0.5){
+      float a = radians(uPapAng);
+      vec2  d = vec2(cos(a), sin(a));
+      vec2  pp = (uv - 0.5) * vec2(asp, 1.0);
+      float w = 0.5 * (abs(d.x) * asp + abs(d.y));
+      t = dot(pp, d) / max(w, 0.0001) * 0.5 + 0.5;
+    }else if(uPapMode < 1.5){
+      t = rad;
+    }else if(uPapMode < 2.5){
+      t = fract(rad + ang * (uPapAng / 90.0));                // 渦（ねじれは向きのつまみを使い回す）
+    }else{
+      t = fract(ang + 0.5 + uPapAng / 360.0);                 // まわり
+    }
+    t = clamp(t, 0.0, 1.0);
+    if(uPapSteps > 1.5){
+      float st = floor(uPapSteps);
+      t = clamp(floor(t * (st - 1.0) + (${fn}Bayer(uv * uRes) - 0.5) + 0.5) / (st - 1.0), 0.0, 1.0);
+    }
+    /* ⚠️ 渦・まわりは一周するので、色を環にしないと継ぎ目が1本出る */
+    float ring = (uPapMode > 1.5) ? 1.0 : 0.0;
+    float span = mix(n - 1.0, n, ring);
+    float sc = t * span;
+    float i  = floor(sc);
+    float ia = mix(i,       mod(i,       n), ring);
+    float ib = mix(i + 1.0, mod(i + 1.0, n), ring);
+    return mix(${fn}Pick(ia, c0), ${fn}Pick(ib, c0), sc - i);
+  }
+`;
 
 const VERT = `
   attribute vec2 aUV;
@@ -569,9 +655,15 @@ const FRAG = `
   uniform int uLook;
   uniform int uSrc;                             // 0=字（形のマスク）／1=画像（色もそのまま）
   uniform float uDensity;
+  uniform vec2 uRes;
+  /* ⭐ 字のインク＝地とまったく同じグラデの式。色数と色だけ字用に持ち、
+     形（流す/渦・向き・版数・中心）は地と【同じ版】を共有する＝多色刷り。 */
+  uniform vec3 uInk0, uInk1, uInk2, uInk3, uInk4, uInk5;
+  uniform float uInkN, uPapMode, uPapAng, uPapSteps, uPapCx, uPapCy;
   varying vec2 vUV;
   varying float vDens;                          // 層ごとの縞密度倍率
   varying float vSAng, vSOff;                   // 層ごとの縞：角度・位置
+  ${PAPER_GLSL('ink','uInk')}
   void main(){
     vec4 t4 = texture2D(uTex, vUV);
     // ⭐ 画像を読み込んだときは、色をそのまま出して【連続面の変形だけ】をかける。
@@ -603,9 +695,15 @@ const FRAG = `
       col = vec3(g);
     } else if(uLook == 1){
       col = vec3(0.04);                         // 墨
-    } else {
+    } else if(uLook == 2){
       float g = step(0.5, fract(dX * dens));     // 線も面に沿う
       col = vec3(g);
+    } else {
+      /* ⭐ 刷り ── 字の中を、地と同じ版のグラデで塗る。色数 1 なら墨のまま。
+         ⚠️ 字の濃さ（m）でグラデを引くと、字の内側はほぼ一定なのでベタ塗りになる。
+            【位置で引く】のが正しい（組 KUMI で分かったこと）。
+         ⭐ 面の UV で引く＝膜が歪むとグラデも一緒に歪む＝字そのものに色が乗る。 */
+      col = inkAt(vUV, vec3(0.04), uInkN, 1.0);
     }
     gl_FragColor = vec4(col, a);
   }
@@ -633,60 +731,8 @@ const BG_FRAG = `
   uniform vec3 uBase;                                        // 色数1＝これまでの背景色
   uniform vec3 uPap0, uPap1, uPap2, uPap3, uPap4, uPap5;
   uniform float uPapN, uPapMode, uPapAng, uPapSteps, uPapCx, uPapCy;
-  vec3 papPick(float i, vec3 c0){
-    if(i < 0.5) return uPap0;
-    if(i < 1.5) return uPap1;
-    if(i < 2.5) return uPap2;
-    if(i < 3.5) return uPap3;
-    if(i < 4.5) return uPap4;
-    return uPap5;
-  }
-  float papBayer(vec2 p){
-    vec2 c = mod(floor(p), 4.0);
-    float i = c.y * 4.0 + c.x;
-    float b = 0.0;
-    if(i<0.5)b=0.0;      else if(i<1.5)b=8.0;  else if(i<2.5)b=2.0;  else if(i<3.5)b=10.0;
-    else if(i<4.5)b=12.0;else if(i<5.5)b=4.0;  else if(i<6.5)b=14.0; else if(i<7.5)b=6.0;
-    else if(i<8.5)b=3.0; else if(i<9.5)b=11.0; else if(i<10.5)b=1.0; else if(i<11.5)b=9.0;
-    else if(i<12.5)b=15.0;else if(i<13.5)b=7.0;else if(i<14.5)b=13.0;else b=5.0;
-    return b / 16.0;
-  }
-  vec3 paperAt(vec2 uv, vec3 c0){
-    if(uPapN < 1.5) return c0;                               // 1色＝今までと完全に同じ
-    float asp = uRes.x / max(uRes.y, 1.0);
-    /* ⭐ 形＝別の模様を4つ作るのではなく、同じグラデを どの座標に流すか だけ差し替える */
-    vec2  q   = (uv - vec2(uPapCx, uPapCy)) * vec2(asp, 1.0);
-    float rad = length(q) / 0.72;
-    float ang = atan(q.y, q.x) / 6.2831853;
-    float t;
-    if(uPapMode < 0.5){
-      float a = radians(uPapAng);
-      vec2  d = vec2(cos(a), sin(a));
-      vec2  pp = (uv - 0.5) * vec2(asp, 1.0);
-      float w = 0.5 * (abs(d.x) * asp + abs(d.y));
-      t = dot(pp, d) / max(w, 0.0001) * 0.5 + 0.5;
-    }else if(uPapMode < 1.5){
-      t = rad;
-    }else if(uPapMode < 2.5){
-      t = fract(rad + ang * (uPapAng / 90.0));                // 渦（ねじれは向きのつまみを使い回す）
-    }else{
-      t = fract(ang + 0.5 + uPapAng / 360.0);                 // まわり
-    }
-    t = clamp(t, 0.0, 1.0);
-    if(uPapSteps > 1.5){
-      float st = floor(uPapSteps);
-      t = clamp(floor(t * (st - 1.0) + (papBayer(uv * uRes) - 0.5) + 0.5) / (st - 1.0), 0.0, 1.0);
-    }
-    /* ⚠️ 渦・まわりは一周するので、色を環にしないと継ぎ目が1本出る */
-    float ring = (uPapMode > 1.5) ? 1.0 : 0.0;
-    float span = mix(uPapN - 1.0, uPapN, ring);
-    float sc = t * span;
-    float i  = floor(sc);
-    float ia = mix(i,       mod(i,       uPapN), ring);
-    float ib = mix(i + 1.0, mod(i + 1.0, uPapN), ring);
-    return mix(papPick(ia, c0), papPick(ib, c0), sc - i);
-  }
-  void main(){ gl_FragColor = vec4(paperAt(vUv, uBase), 1.0); }
+  ${PAPER_GLSL('pap','uPap')}
+  void main(){ gl_FragColor = vec4(papAt(vUv, uBase, uPapN, uRes.x/max(uRes.y,1.0)), 1.0); }
 `;
 const bgProg = gl.createProgram();
 gl.attachShader(bgProg, sh(gl.VERTEX_SHADER, BG_VERT));
@@ -704,6 +750,9 @@ gl.useProgram(prog);
 /* 地の色（ひとつずつ選ぶ）。⚠️ 数値の P と混ぜない＝`+r.value` のループで NaN になるため */
 const PAPC_DEF = ['#f2d16b','#c8d4de','#7f95ab','#1d2733','#8a6f4e','#e9201c'];
 let PAPC = PAPC_DEF.slice();
+/* 字のインク（刷り）。⚠️ 地と同じ版で刷るので、色まで同じにすると字が地に溶ける＝別に持つ */
+const INKC_DEF = ['#e9201c','#141414','#2b4cc9','#f2d16b','#1f7a4d','#8a6f4e'];
+let INKC = INKC_DEF.slice();
 const hex2rgb = h => { const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(h||'');
   return m ? [parseInt(m[1],16)/255, parseInt(m[2],16)/255, parseInt(m[3],16)/255] : [0,0,0]; };
 
@@ -736,7 +785,9 @@ const extUint = gl.getExtension('OES_element_index_uint');
 const loc = {};
 ['uScale','uVWarp','uHWarp','uFreq','uTime','uAnchorR','uAnchorN','uLook','uDensity','uTex','uSrc',
  'uWTop','uWBot','uHLeft','uHRight','uShearX','uShearY','uTwTop','uTwBot',
- 'uGridCols','uGridRows','uCharN','uZoom','uRotX','uRotY','uThick'].forEach(n=>loc[n]=gl.getUniformLocation(prog,n));
+ 'uGridCols','uGridRows','uCharN','uZoom','uRotX','uRotY','uThick',
+ 'uRes','uInkN','uPapMode','uPapAng','uPapSteps','uPapCx','uPapCy'].forEach(n=>loc[n]=gl.getUniformLocation(prog,n));
+for(let i=0;i<6;i++) loc['uInk'+i] = gl.getUniformLocation(prog,'uInk'+i);
 loc.uPan = gl.getUniformLocation(prog,'uPan');
 loc.aUV = gl.getAttribLocation(prog,'aUV');
 loc.uAnchorUV = gl.getUniformLocation(prog,'uAnchorUV');
@@ -799,6 +850,15 @@ function render(t){
   gl.uniform1i(loc.uAnchorN, ANCHORS.length);
   gl.uniform1i(loc.uLook, P.look);
   gl.uniform1f(loc.uDensity, P.density);
+  /* 刷り（字のインク）── 形は地と同じ版を渡す。色数と色だけ字用 */
+  gl.uniform2f(loc.uRes, w, h);
+  gl.uniform1f(loc.uInkN,     Math.max(1, Math.round(P.inkN)));
+  gl.uniform1f(loc.uPapMode,  P.papMode);
+  gl.uniform1f(loc.uPapAng,   P.papAng);
+  gl.uniform1f(loc.uPapSteps, P.papSteps);
+  gl.uniform1f(loc.uPapCx,    P.papCx/100);
+  gl.uniform1f(loc.uPapCy,    P.papCy/100);
+  for(let i=0;i<6;i++) gl.uniform3fv(loc['uInk'+i], hex2rgb(INKC[i]));
   gl.uniform1i(loc.uTex, 0);
   gl.uniform1i(loc.uSrc, IMG.on ? 1 : 0);
   // 文字ごとの伸縮
@@ -948,6 +1008,7 @@ document.querySelectorAll('#panel input[type=range]').forEach(r=>{
   const sync=()=>{ P[r.id]=+r.value; if(val) val.textContent=r.value;
     if(r.id==='mesh') buildMesh();
     if(r.id==='papN') syncGrad();
+    if(r.id==='inkN') syncInk();
     if(r.id==='fitz') VIEW.zoom = +r.value/100;      // ⭐ 膜だけを大小（地は動かない）
     if(r.id==='flong' && typeof updateOut === 'function') updateOut(); };
   // 字間・行間はテクスチャを焼き直す（初期化中に呼ぶと参照順で落ちるので input 時だけ）
@@ -974,6 +1035,7 @@ document.querySelectorAll('#panel .seg').forEach(seg=>{
     P[seg.id]=+b.dataset.v;
     if(seg.id==='font' || seg.id==='dir') bakeText();
     if(seg.id==='layer') syncLayerUI();
+    if(seg.id==='look') syncInk();                   // 刷りのときだけ字の色を出す
     if(seg.id==='frameOn' || seg.id==='fshape') layoutCanvas(); }));
 });
 syncLayerUI();
@@ -1033,7 +1095,7 @@ function resetAll(){
     seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on', +b.dataset.v === P[seg.id]));
   });
   syncLayerUI();
-  syncGrad();                                       // 地は色数1（単色）に戻る。⚠️選んだ色は残す
+  syncGrad(); syncInk();                            // 地は色数1（単色）に戻る。⚠️選んだ色は残す
   P.fitz = 100; syncZoomUI();                       // 絵の大きさも等倍へ（VIEW を戻したので合わせる）
   buildMesh();
   refreshChars();
@@ -1117,6 +1179,19 @@ document.querySelectorAll('input[type=color][data-pc]').forEach(c=>{
   c.addEventListener('input', ()=>{ PAPC[+c.dataset.pc] = c.value; });
 });
 syncGrad();
+
+/* ══ 刷り（字のインク）══ 見えが「刷り」のときだけ字の色を出す。
+   ⚠️ 密度は縞（金属・線）のつまみ＝墨と刷りでは何も起きないので同時に畳む。 */
+function syncInk(){
+  const n = Math.max(1, Math.round(P.inkN));
+  document.body.classList.toggle('look-ink', P.look === 3);
+  document.body.classList.toggle('look-stripe', P.look === 0 || P.look === 2);
+  for(let k=2;k<=6;k++) document.body.classList.toggle('ink-'+k, n >= k);
+}
+document.querySelectorAll('input[type=color][data-ic]').forEach(c=>{
+  c.addEventListener('input', ()=>{ INKC[+c.dataset.ic] = c.value; });
+});
+syncInk();
 
 /* ══ 元 ── 画像を読み込んで、色はそのままに【連続面の変形だけ】をかける ══
    ⭐ 粒 TSUBU・礫 TSUBUTE・彫 HORI で出した絵を、ここで歪ませる＝チェーンが繋がる。 */
@@ -1225,6 +1300,9 @@ const I18N = {
   '版面（書き出す大きさ）':'Frame (export size)','画面のまま':'Screen','版面で':'Frame',
   '正方形':'Square','たて 4:5':'4:5 portrait','よこ 16:9':'16:9','たて 9:16':'9:16','長辺':'Long side',
   '絵の大きさ':'Object size',
+  // 刷り（字のインク）
+  '刷り':'Print','字の色数':'Ink colors',
+  '字 1':'Ink 1','字 2':'Ink 2','字 3':'Ink 3','字 4':'Ink 4','字 5':'Ink 5','字 6':'Ink 6',
 };
 (function(){
   const KEY='maku_lang'; const nodes=[], attrs=[];
