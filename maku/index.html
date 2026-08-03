@@ -324,7 +324,7 @@
   <div class="row"><label>せん断Y</label><input type="range" id="sheary" min="-100" max="100" value="0"><span class="val"></span></div>
   <div class="row"><label>上ねじれ</label><input type="range" id="twtop" min="-100" max="100" value="0"><span class="val"></span></div>
   <div class="row"><label>下ねじれ</label><input type="range" id="twbot" min="-100" max="100" value="0"><span class="val"></span></div>
-  <div class="note">上下・左右を独立して広げる/ねじる<br><b>中幅・中高</b>＝真ん中だけ膨らませる（＋）／くびれさせる（−）<br>面が連続して歪む（タイル単位でない）</div>
+  <div class="note">上下・左右を独立して広げる/ねじる<br><b>中幅・中高</b>＝−で<b>つづみ</b>（中がくびれて上下が広がる）／＋で<b>樽</b><br>面が連続して歪む（タイル単位でない）</div>
 
   <h2>アンカー（面を押す）</h2>
   <div class="note">左ドラッグ＝面を引っぱる／Alt+クリック＝消す<br>右ドラッグ＝傾ける・ホイール/ピンチ＝ズーム<br><b>スペース+ドラッグ＝ボードを動かす</b>（Shift/中ボタンも可）<br><b>H キー＝手のひらモード</b>（左ドラッグで動かせる）<br>ダブルクリック＝正面に戻す</div>
@@ -656,31 +656,35 @@ const VERT = `
     p = vec2(p.x*shc - p.y*shs, p.x*shs + p.y*shc);
     p += uSheetPos;
 
-    /* ⭐⭐ ここから下（うねり・辺ごと・せん断・ねじれ・アンカー）は【面の座標】で効かせる。
-       ＝どの版も同じ波に乗る＝重ねても【1枚の膜】であり続ける。
-       ⚠️ 版のローカル UV（aUV）で効かせると、版ごとに別々にうねって別々の面に見える。 */
+    /* ⭐⭐ 座標の使い分け ── ここが要。
+       ・うねり／アンカー＝【面の座標 t2】＝どの版も同じ波に乗る＝重ねても1枚の膜
+       ・辺ごと（上幅・中幅…）／せん断／ねじれ＝【版の座標 lx,ly】＝その版の形を整える
+       🔴 全部を面の座標にしたら、字は面の中の薄い帯なので
+         「上下が広がる」が字に出ない（木下＝2026-08-03「中が細くなり上と下が広くなる」）。 */
     vec2 t2 = p * 0.5 + 0.5;
-    float tx = t2.x, ty = t2.y;   // 0..1（tyは下0上1）
+    float tx = t2.x, ty = t2.y;   // 面の座標（0..1）
+    float lx = aUV.x, ly = aUV.y; // 版の座標（0..1・tyは下0上1）
 
     // ① うねり（左右対称の波）— 砂時計はここ
     p.x *= 1.0 + cos(ty * 6.2831853 * uFreq) * uVWarp;
     p.y *= 1.0 + cos(tx * 6.2831853 * uFreq) * uHWarp;
 
-    // ② 辺ごとの幅/高さ — 上下・左右を独立して広げる/すぼめる
-    /* ⭐ 中幅・中高＝真ん中だけを膨らませる／くびれさせる（つづみ・樽）。
-       ⚠️ 3点を曲線で結ぶ形にすると【中0でも既存の絵が変わる】。
-         直線のまま「中央で最大の山」を足す形にすれば、中0なら今までと完全に同じ。 */
-    float bumpY = 4.0 * ty * (1.0 - ty);           // 0→1→0（中央で1）
-    float bumpX = 4.0 * tx * (1.0 - tx);
-    p.x *= mix(1.0 + uWBot, 1.0 + uWTop, ty) + uWMid * bumpY;    // 上幅 / 中幅 / 下幅
-    p.y *= mix(1.0 + uHLeft, 1.0 + uHRight, tx) + uHMid * bumpX; // 左高 / 中高 / 右高
+    // ② 辺ごとの幅/高さ — 上下・左右を独立して広げる/すぼめる（⚠️ 版の座標で効かせる）
+    /* ⭐ 中幅・中高 ── 木下＝「中が細くなり、上と下が広くなるのができないか」。
+       ⭐ 中央と端を【逆に】動かす＝−でつづみ（中がくびれて上下が広がる）／＋で樽。
+         中央だけ動かす式にすると、上下は動かないので「つづみ」に見えない。
+       ⚠️ 中0なら 0 が掛かるだけ＝これまでと完全に同じ。 */
+    float bumpY = 2.0 * (4.0 * ly * (1.0 - ly)) - 1.0;   // 端 -1 → 中央 +1
+    float bumpX = 2.0 * (4.0 * lx * (1.0 - lx)) - 1.0;
+    p.x *= mix(1.0 + uWBot, 1.0 + uWTop, ly) + uWMid * bumpY;    // 上幅 / 中幅 / 下幅
+    p.y *= mix(1.0 + uHLeft, 1.0 + uHRight, lx) + uHMid * bumpX; // 左高 / 中高 / 右高
 
     // ③ せん断（傾け）
-    p.x += (ty - 0.5) * uShearX;
-    p.y += (tx - 0.5) * uShearY;
+    p.x += (ly - 0.5) * uShearX;
+    p.y += (lx - 0.5) * uShearY;
 
     // ④ ねじれ — 上と下で別の角度、縦に沿って補間
-    float ang = mix(uTwBot, uTwTop, ty);
+    float ang = mix(uTwBot, uTwTop, ly);
     float c = cos(ang), s = sin(ang);
     p = vec2(p.x*c - p.y*s, p.x*s + p.y*c);
 
