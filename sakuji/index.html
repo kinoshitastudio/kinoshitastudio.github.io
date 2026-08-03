@@ -6299,6 +6299,11 @@ function tsubuize(item, o, geom){
   //   ⚠️ ここ（作る場所）で持たせる。呼び出しが5箇所あるので、外で足すと必ずどこかで漏れる。
   //   これがあるので、保存では【粒の実体を持たずに作り方だけ】残せる。
   if(typeof tzSettingsSnapshot === 'function') g.__tzOpt = tzSettingsSnapshot();
+  /* ⭐⭐ 作った直後の【素の大きさ】を覚える。
+     ⚠️ 粒の bounds は解像を変えるだけでも変わる（粒のはみ出しぶん）。これが無いと
+       「木下が変えた倍率」と「解像による差」を区別できず、作り直しで大きさが元へ戻る。
+     ⚠️ `data` に置く＝`__` で始まる独自プロパティは保存に乗らないが、data は乗る。 */
+  g.data.tzMade = { w: g.bounds.width, h: g.bounds.height };
   return g;
 }
 /* ⭐ 粒ひとつぶんの塗りを決める。⚠️ 作り直しと再塗りで同じ式を通すため、ここ1箇所にまとめる
@@ -6626,6 +6631,16 @@ function retsubu(silent){
     const g = tsubuize(src, o);
     src.remove();
     if(g){
+      /* ⭐⭐ 大きさも保つ。⚠️ 粒の bounds は解像で変わるので、そのまま比べると
+         「解像による差」まで倍率として拾ってしまい、触るたびにじわじわ膨らむ／縮む。
+         ⭐ 作った直後の素の大きさ（data.tzMade）からの比＝【木下が変えた倍率】だけを取り出す。
+         ⚠️⚠️ それを覚えていない粒（この直しより前に作ったもの）には【何もしない】。
+           いまの差から推すこともできるが、それは解像ぶんの差まで倍率として拾う＝
+           大きさを変えていない粒まで縮む＝【いまある粒の見え方が変わる】。
+           木下＝「これで粒が変わればば戻そう」。変えないことを優先する。 */
+      const made = old.data && old.data.tzMade;
+      const ratio = (made && made.w > 0.001) ? old.bounds.width / made.w : 1;
+      if(ratio > 0.001 && Math.abs(ratio - 1) > 0.002) g.scale(ratio, g.bounds.center);
       g.position = at;
       g.insertAbove(old); g.selected = old.selected;
       if(old.__tzText){ g.__tzText = old.__tzText; g.__tzAt = old.__tzAt; }   // ⭐ 作り方は引き継ぐ
