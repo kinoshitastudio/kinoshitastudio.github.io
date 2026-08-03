@@ -394,21 +394,8 @@ const total = () => clips.reduce((s,c) => s + durOf(c), 0);
 /* ⭐ 音は【素材のどこからどこまでを使うか】を持つ（映像のトリムと同じ考え方）。
    ⚠️ 音は1本しか持てない作りなので【分割は映像だけ】。
       音を2つに分けるには音クリップを配列で持つ必要があり、作りが変わる。 */
-/* ⭐⭐ 音は【区間の配列】で持つ。木下＝「タイムラインの音も分割できるようにしよう」。
-   ⚠️ 前は in/out ひと組だったので切り分けられなかった。
-   ⭐ 区間を順に鳴らす＝映像のクリップと同じ考え方。区間1つ＝いままで通り。 */
-let sndSegs = [];
-const sndLen = () => sndSegs.reduce((a, g) => a + Math.max(0, g.out - g.in), 0);
-/* いまの通し時間 t が、音のどこに当たるか（区間をまたいで探す） */
-function sndAt(t){
-  let acc = 0;
-  for(const g of sndSegs){
-    const d = Math.max(0, g.out - g.in);
-    if(t < acc + d) return { g, local: t - acc };
-    acc += d;
-  }
-  return null;
-}
+let sndIn = 0, sndOut = null;
+const sndLen = () => sndBuf ? Math.max(0.1, (sndOut ?? sndBuf.duration) - sndIn) : 0;
 const span  = () => Math.max(total(), sndLen(), 1);
 /* いま何秒目か（止まっている時も覚えておく＝ヘッドを掴んで動かせるように） */
 let cur = 0;
@@ -617,17 +604,12 @@ function tick(){
   /* ⭐⭐ 音は【映像がある間だけ】流す。木下＝「映像がある部分だけ音が流れるように」。
      ⚠️ 音の方が長いと、映像が終わったあとも鳴り続けていた。 */
   if(snd && !snd.paused){
-    const a = sndAt(t);
-    if(!a || t >= T - 0.02) snd.pause();                       /* 映像が終わったら止める */
-    else {
-      const want = a.g.in + a.local;
-      /* ⚠️ 区間をまたいだ瞬間は必ず飛ばす（0.25秒の遊びだと切れ目が繋がって聞こえる） */
-      if(Math.abs(snd.currentTime - want) > 0.25) snd.currentTime = want;
-    }
+    const want = sndIn + t;
+    if(t >= T - 0.02 || want >= (sndOut ?? sndBuf?.duration ?? Infinity)) snd.pause();
+    else if(Math.abs(snd.currentTime - want) > 0.25) snd.currentTime = want;   /* ずれたら合わせ直す */
   }
   if(loop && snd && snd.paused && playing && t < 0.05){
-    const a0 = sndAt(0);
-    if(a0){ snd.currentTime = a0.g.in; snd.play().catch(()=>{}); }
+    snd.currentTime = sndIn; snd.play().catch(()=>{});    /* ループの頭で鳴らし直す */
   }
 }
 requestAnimationFrame(tick);
@@ -711,7 +693,7 @@ function buildRuler(){
 }
 function layout(){
   contEl.style.width = (GUT() + span() * pps() + 16) + 'px';
-  buildRuler(); buildClips(); drawWave(); buildSndHandles(); drawSndSel(); setHead(cur);
+  buildRuler(); buildClips(); drawWave(); buildSndHandles(); setHead(cur);
   const z = document.getElementById('zLbl');
   if(z) z.textContent = (zoom < 10 ? zoom.toFixed(1).replace(/\.0$/,'') : String(Math.round(zoom))) + 'x';
 }
@@ -836,68 +818,7 @@ document.getElementById('phgrab').addEventListener('pointerdown', e => { e.stopP
 
 document.getElementById('zIn').onclick  = () => { zoom = Math.min(24, zoom * 1.6); layout(); };
 document.getElementById('zOut').onclick = () => { zoom = Math.max(1, zoom / 1.6); layout(); };
-
-/* ⭐ 音をその位置で2つに分ける（映像の splitAt と同じ考え方） */
-function splitSndAt(t){
-  if(!sndBuf || !sndSegs.length) return false;
-  let acc = 0;
-  for(let i = 0; i < sndSegs.length; i++){
-    const g = sndSegs[i], d = Math.max(0, g.out - g.in);
-    if(t < acc + d){
-      const local = t - acc;
-      if(local < 0.1 || local > d - 0.1) return false;   /* 端すぎは切らない */
-      const cut = g.in + local;
-      sndSegs.splice(i + 1, 0, { in: cut, out: g.out });
-      g.out = cut;
-      layout();
-      return true;
-    }
-    acc += d;
-  }
-  return false;
-}
-
-/* ⭐⭐ ハサミ（razor）── 押すとハサミモードになり、タイムラインを切りたい所でクリックする。
-   木下＝「分割を押すとハサミマークになってタイムラインでキレるようにするといいんじゃない？」
-   ⚠️ モードに入ったことが分からないと事故るので、ボタンを点けてカーソルも変える。 */
-let razorOn = false;
-const RAZOR_CURSOR = 'url("data:image/svg+xml;utf8,' +
-  encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">' +
-  '<g fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round"><path d="M4 3l14 16M18 3L4 19"/>' +
-  '<circle cx="5" cy="18" r="2.2"/><circle cx="17" cy="18" r="2.2"/></g>' +
-  '<g fill="none" stroke="#111" stroke-width="1.5" stroke-linecap="round"><path d="M4 3l14 16M18 3L4 19"/>' +
-  '<circle cx="5" cy="18" r="2.2"/><circle cx="17" cy="18" r="2.2"/></g></svg>') + '") 11 11, crosshair';
-function razorSync(){
-  const b = document.getElementById('bSplit');
-  if(b) b.classList.toggle('on', razorOn);
-  lanesEl.style.cursor = razorOn ? RAZOR_CURSOR : '';
-}
-function razorCut(e, laneIsSnd){
-  const t = tFromEvent(e);
-  const ok = laneIsSnd ? splitSndAt(t) : (splitAt(t), true);
-  return ok;
-}
-document.getElementById('bSplit').onclick = () => {
-  razorOn = !razorOn;
-  razorSync();
-  stat && 0;
-  const n = document.getElementById('outNote');
-  if(n) n.textContent = razorOn ? 'ハサミ ── タイムラインの切りたい所をクリック（もう一度押すと戻る）' : '';
-};
-/* ハサミモードのときは、レーンのクリックがシークでなく「切る」になる */
-clipLane.addEventListener('pointerdown', e => {
-  if(!razorOn) return;
-  e.preventDefault(); e.stopPropagation();
-  splitAt(tFromEvent(e));
-}, true);
-sndLane.addEventListener('pointerdown', e => {
-  if(!razorOn) return;
-  e.preventDefault(); e.stopPropagation();
-  splitSndAt(tFromEvent(e));
-}, true);
-addEventListener('keydown', e => {
-  if(e.key === 'Escape' && razorOn){ razorOn = false; razorSync(); }
-});
+document.getElementById('bSplit').onclick = () => splitAt(cur);
 
 document.getElementById('bAdd').onclick = () => document.getElementById('file').click();
 document.getElementById('file').addEventListener('change', e => { addFiles(e.target.files); e.target.value=''; });
@@ -928,30 +849,21 @@ function drawWave(){
   g2.setTransform(2,0,0,2,0,0);
   g2.clearRect(0,0,w,h);
   if(!sndBuf) return;
-  const d = sndBuf.getChannelData(0), sr = sndBuf.sampleRate;
-  g2.strokeStyle = getComputedStyle(document.body).color;
-  let ox = 0;
-  sndSegs.forEach((seg, si) => {
-    const segDur = Math.max(0, seg.out - seg.in);
-    const aw = Math.max(1, Math.round(segDur * p));
-    const from = Math.floor(seg.in * sr);
-    const step = Math.max(1, Math.floor(Math.max(1, Math.floor(segDur * sr)) / aw));
-    g2.globalAlpha = .5; g2.beginPath();
-    for(let x = 0; x < aw; x++){
-      let mn = 1, mx = -1;
-      for(let i = 0; i < step; i++){ const v = d[from + x*step + i] || 0; if(v<mn)mn=v; if(v>mx)mx=v; }
-      g2.moveTo(ox + x + .5, h/2 + mn*h/2*.92);
-      g2.lineTo(ox + x + .5, h/2 + mx*h/2*.92);
-    }
-    g2.stroke();
-    /* ⭐ 切れ目が見えないと、切れたのか分からない */
-    if(si > 0){
-      g2.globalAlpha = .85; g2.fillStyle = '#e0322a';
-      g2.fillRect(ox - 0.5, 0, 1.5, h);
-    }
-    ox += aw;
-  });
-  g2.globalAlpha = 1;
+  const aw = Math.max(1, Math.round(sndLen() * p));   // ⭐ 使う範囲ぶんだけ描く
+  const d = sndBuf.getChannelData(0);
+  const sr = sndBuf.sampleRate;
+  const from = Math.floor(sndIn * sr);                      /* 使い始めの位置 */
+  const len  = Math.max(1, Math.floor(sndLen() * sr));
+  const step = Math.max(1, Math.floor(len / aw));
+  g2.strokeStyle = getComputedStyle(document.body).color; g2.globalAlpha = .5;
+  g2.beginPath();
+  for(let x = 0; x < aw; x++){
+    let mn = 1, mx = -1;
+    for(let i = 0; i < step; i++){ const v = d[from + x*step + i] || 0; if(v<mn)mn=v; if(v>mx)mx=v; }
+    g2.moveTo(x+.5, h/2 + mn*h/2*.92);
+    g2.lineTo(x+.5, h/2 + mx*h/2*.92);
+  }
+  g2.stroke(); g2.globalAlpha = 1;
   /* ⭐ 映像の終わりから先＝音が余っている所を沈める（どこまで届いているかが見える） */
   const T = total();
   if(sndLen() > T){
@@ -974,12 +886,11 @@ function buildSndHandles(){
       ',rgba(0,0,0,.30),rgba(0,0,0,0));' + (side==='l' ? 'left:0;' : 'left:' + Math.max(0,w-10) + 'px;');
     h.onpointerdown = ev => {
       ev.stopPropagation(); ev.preventDefault();
-      const first = sndSegs[0], last = sndSegs[sndSegs.length-1];
-      const x0 = ev.clientX, pp = pps(), in0 = first.in, out0 = last.out;
+      const x0 = ev.clientX, pp = pps(), in0 = sndIn, out0 = (sndOut ?? sndBuf.duration);
       const move = e2 => {
         const dt = (e2.clientX - x0) / pp;
-        if(side === 'l') first.in = Math.max(0, Math.min(first.out - 0.2, in0 + dt));
-        else             last.out = Math.min(sndBuf.duration, Math.max(last.in + 0.2, out0 + dt));
+        if(side === 'l') sndIn  = Math.max(0, Math.min(out0 - 0.2, in0 + dt));
+        else             sndOut = Math.min(sndBuf.duration, Math.max(in0 + 0.2, out0 + dt));
         layout();
       };
       const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
@@ -990,51 +901,6 @@ function buildSndHandles(){
   mk('l'); mk('r');
 }
 
-
-/* ⭐ 切った音の一片を選んで消す。木下＝「分割されたやつも選択してデリートボタンで消えるように」。
-   ⚠️ 映像はクリップに × が付いているが、音は波形しか無かったので選べなかった。
-   ⭐ 音レーンをクリック＝その位置の一片を選ぶ。Delete / Backspace で消す。 */
-let sndSel = -1;
-function sndSegIndexAt(t){
-  let acc = 0;
-  for(let i = 0; i < sndSegs.length; i++){
-    const d = Math.max(0, sndSegs[i].out - sndSegs[i].in);
-    if(t < acc + d) return i;
-    acc += d;
-  }
-  return -1;
-}
-function drawSndSel(){
-  [...sndLane.querySelectorAll('.ssel')].forEach(n => n.remove());
-  if(sndSel < 0 || !sndSegs[sndSel]) return;
-  const p = pps();
-  let x = 0;
-  for(let i = 0; i < sndSel; i++) x += Math.max(0, sndSegs[i].out - sndSegs[i].in) * p;
-  const w = Math.max(2, (sndSegs[sndSel].out - sndSegs[sndSel].in) * p);
-  const d = document.createElement('div');
-  d.className = 'ssel';
-  d.style.cssText = 'position:absolute;top:0;bottom:0;left:' + x + 'px;width:' + w + 'px;' +
-    'box-shadow:inset 0 0 0 2px var(--ink);border-radius:6px;pointer-events:none;z-index:2;';
-  sndLane.append(d);
-}
-sndLane.addEventListener('pointerdown', e => {
-  if(razorOn) return;                       /* ハサミ中は切るのが先 */
-  if(!sndBuf) return;
-  sndSel = sndSegIndexAt(tFromEvent(e));
-  drawSndSel();
-});
-addEventListener('keydown', e => {
-  if(e.key !== 'Delete' && e.key !== 'Backspace') return;
-  const t = e.target.tagName;
-  if(t === 'INPUT' || t === 'TEXTAREA') return;
-  if(sndSel < 0 || !sndSegs[sndSel]) return;
-  e.preventDefault();
-  sndSegs.splice(sndSel, 1);
-  if(!sndSegs.length){ sndSel = -1; }        /* 全部消したら音は無し扱い */
-  else sndSel = Math.min(sndSel, sndSegs.length - 1);
-  layout();
-});
-
 /* 音源を読む（ボタンからでもドロップからでも同じ道を通す） */
 async function loadSound(f){
   const url = URL.createObjectURL(f);
@@ -1043,7 +909,7 @@ async function loadSound(f){
     /* ⚠️ 毎回 new すると context が増え続ける。⭐ 書き出しで使うものと同じ1つを使い回す */
     if(!sndAC) sndAC = new (window.AudioContext || window.webkitAudioContext)();
     sndBuf = await sndAC.decodeAudioData(await f.arrayBuffer());
-    sndSegs = [{ in:0, out:sndBuf.duration }];   /* 新しい音源を入れたら区間はひとつ＝全部 */
+    sndIn = 0; sndOut = sndBuf.duration;      /* 新しい音源を入れたら範囲は全部 */
     const n = document.getElementById('sndNote');
     if(n) n.innerHTML = `${f.name} ／ <b>${sndBuf.duration.toFixed(1)}秒</b>`;
   }catch(err){
@@ -1070,7 +936,7 @@ document.getElementById('bPlay').onclick = e => {
        ⚠️ ブラウザは操作が無いと context を勝手に眠らせるので、再生のたびに起こす。 */
     if(sndAC && sndAC.state === 'suspended') sndAC.resume().catch(()=>{});
     if(snd){
-      const a0 = sndAt(0); snd.currentTime = a0 ? a0.g.in : 0;   /* ⭐ 最初の区間の頭から */
+      snd.currentTime = sndIn;      /* ⭐ 使い始めの位置から鳴らす */
       /* ⚠️ 失敗を握りつぶすと「音が聞こえない」だけが残って原因が分からない。理由を出す。 */
       snd.play().catch(err => {
         const n = document.getElementById('sndNote');
@@ -1150,7 +1016,7 @@ document.getElementById('bMovie').onclick = () => {
   playing = true; t0 = performance.now(); cur = 0;
   clips.forEach(c => c.type==='vid' && c.el.play().catch(()=>{}));
   /* ⭐ 音も頭から鳴らす＝映像と頭を合わせる */
-  if(snd){ try{ const a0 = sndAt(0); snd.currentTime = a0 ? a0.g.in : 0; snd.play().catch(()=>{}); }catch(e){} }
+  if(snd){ try{ snd.currentTime = sndIn; snd.play().catch(()=>{}); }catch(e){} }
   rec.start();
   setTimeout(() => {
     rec.stop(); playing = false;
