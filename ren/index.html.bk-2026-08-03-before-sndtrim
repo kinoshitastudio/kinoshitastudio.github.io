@@ -316,7 +316,7 @@
   <div id="tlbar">
     <button id="bPlay">▶ 再生</button>
     <button id="bLoop" class="on">↻ ループ</button>
-    <button id="bSplit" title="再生ヘッドの所で切る（S）">✂ 分割</button>
+    <button id="bSplit" title="再生ヘッドの所で切る">分割</button>
     <button id="bUndo" title="戻す（⌘Z）">戻す</button>
     <button id="bRedo" title="やり直す（⇧⌘Z）">やり直す</button>
     <span id="tclock">0.0 / 0.0s</span>
@@ -391,12 +391,7 @@ const durOf = c => c.type === 'vid' ? Math.max(0.1, outOf(c) - inOf(c))
                                     : (c.dur != null ? c.dur : P.hold / 10);
 const total = () => clips.reduce((s,c) => s + durOf(c), 0);
 /* 音を含めた「タイムライン全体の長さ」＝映像と音の長い方。⭐ どこまで音が余っているかが見える */
-/* ⭐ 音は【素材のどこからどこまでを使うか】を持つ（映像のトリムと同じ考え方）。
-   ⚠️ 音は1本しか持てない作りなので【分割は映像だけ】。
-      音を2つに分けるには音クリップを配列で持つ必要があり、作りが変わる。 */
-let sndIn = 0, sndOut = null;
-const sndLen = () => sndBuf ? Math.max(0.1, (sndOut ?? sndBuf.duration) - sndIn) : 0;
-const span  = () => Math.max(total(), sndLen(), 1);
+const span  = () => Math.max(total(), sndBuf ? sndBuf.duration : 0, 1);
 /* いま何秒目か（止まっている時も覚えておく＝ヘッドを掴んで動かせるように） */
 let cur = 0;
 
@@ -595,16 +590,6 @@ function tick(){
   cur = t;
   frameAt(t);
   setHead(t);          /* ⭐ 再生ヘッドが全レーンを貫いて動く */
-  /* ⭐⭐ 音は【映像がある間だけ】流す。木下＝「映像がある部分だけ音が流れるように」。
-     ⚠️ 音の方が長いと、映像が終わったあとも鳴り続けていた。 */
-  if(snd && !snd.paused){
-    const want = sndIn + t;
-    if(t >= T - 0.02 || want >= (sndOut ?? sndBuf?.duration ?? Infinity)) snd.pause();
-    else if(Math.abs(snd.currentTime - want) > 0.25) snd.currentTime = want;   /* ずれたら合わせ直す */
-  }
-  if(loop && snd && snd.paused && playing && t < 0.05){
-    snd.currentTime = sndIn; snd.play().catch(()=>{});    /* ループの頭で鳴らし直す */
-  }
 }
 requestAnimationFrame(tick);
 
@@ -678,7 +663,7 @@ function buildRuler(){
 }
 function layout(){
   contEl.style.width = (GUT() + span() * pps() + 16) + 'px';
-  buildRuler(); buildClips(); drawWave(); buildSndHandles(); setHead(cur);
+  buildRuler(); buildClips(); drawWave(); setHead(cur);
   const z = document.getElementById('zLbl');
   if(z) z.textContent = (zoom < 10 ? zoom.toFixed(1).replace(/\.0$/,'') : String(Math.round(zoom))) + 'x';
 }
@@ -826,58 +811,24 @@ function drawWave(){
   g2.setTransform(2,0,0,2,0,0);
   g2.clearRect(0,0,w,h);
   if(!sndBuf) return;
-  const aw = Math.max(1, Math.round(sndLen() * p));   // ⭐ 使う範囲ぶんだけ描く
-  const d = sndBuf.getChannelData(0);
-  const sr = sndBuf.sampleRate;
-  const from = Math.floor(sndIn * sr);                      /* 使い始めの位置 */
-  const len  = Math.max(1, Math.floor(sndLen() * sr));
-  const step = Math.max(1, Math.floor(len / aw));
+  const aw = Math.max(1, Math.round(sndBuf.duration * p));   // 音そのものが占める幅
+  const d = sndBuf.getChannelData(0), step = Math.max(1, Math.floor(d.length / aw));
   g2.strokeStyle = getComputedStyle(document.body).color; g2.globalAlpha = .5;
   g2.beginPath();
   for(let x = 0; x < aw; x++){
     let mn = 1, mx = -1;
-    for(let i = 0; i < step; i++){ const v = d[from + x*step + i] || 0; if(v<mn)mn=v; if(v>mx)mx=v; }
+    for(let i = 0; i < step; i++){ const v = d[x*step+i] || 0; if(v<mn)mn=v; if(v>mx)mx=v; }
     g2.moveTo(x+.5, h/2 + mn*h/2*.92);
     g2.lineTo(x+.5, h/2 + mx*h/2*.92);
   }
   g2.stroke(); g2.globalAlpha = 1;
   /* ⭐ 映像の終わりから先＝音が余っている所を沈める（どこまで届いているかが見える） */
   const T = total();
-  if(sndLen() > T){
+  if(sndBuf.duration > T){
     g2.fillStyle = getComputedStyle(document.body).backgroundColor;
     g2.globalAlpha = .55; g2.fillRect(T*p, 0, w - T*p, h); g2.globalAlpha = 1;
   }
 }
-
-/* ⭐ 音の端を掴んで、使う範囲を切る（映像のトリムと同じ持ち方）。
-   ⚠️ 音レーンには帯が無かったので、掴む所だけを薄く出す。 */
-function buildSndHandles(){
-  [...sndLane.querySelectorAll('.sh')].forEach(n => n.remove());
-  if(!sndBuf) return;
-  const p = pps(), w = sndLen() * p;
-  const mk = (side) => {
-    const h = document.createElement('div');
-    h.className = 'sh';
-    h.style.cssText = 'position:absolute;top:0;bottom:0;width:10px;cursor:ew-resize;z-index:3;' +
-      'background:linear-gradient(' + (side==='l'?'90deg':'270deg') +
-      ',rgba(0,0,0,.30),rgba(0,0,0,0));' + (side==='l' ? 'left:0;' : 'left:' + Math.max(0,w-10) + 'px;');
-    h.onpointerdown = ev => {
-      ev.stopPropagation(); ev.preventDefault();
-      const x0 = ev.clientX, pp = pps(), in0 = sndIn, out0 = (sndOut ?? sndBuf.duration);
-      const move = e2 => {
-        const dt = (e2.clientX - x0) / pp;
-        if(side === 'l') sndIn  = Math.max(0, Math.min(out0 - 0.2, in0 + dt));
-        else             sndOut = Math.min(sndBuf.duration, Math.max(in0 + 0.2, out0 + dt));
-        layout();
-      };
-      const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
-      addEventListener('pointermove', move); addEventListener('pointerup', up);
-    };
-    sndLane.append(h);
-  };
-  mk('l'); mk('r');
-}
-
 /* 音源を読む（ボタンからでもドロップからでも同じ道を通す） */
 async function loadSound(f){
   const url = URL.createObjectURL(f);
@@ -886,7 +837,6 @@ async function loadSound(f){
     /* ⚠️ 毎回 new すると context が増え続ける。⭐ 書き出しで使うものと同じ1つを使い回す */
     if(!sndAC) sndAC = new (window.AudioContext || window.webkitAudioContext)();
     sndBuf = await sndAC.decodeAudioData(await f.arrayBuffer());
-    sndIn = 0; sndOut = sndBuf.duration;      /* 新しい音源を入れたら範囲は全部 */
     const n = document.getElementById('sndNote');
     if(n) n.innerHTML = `${f.name} ／ <b>${sndBuf.duration.toFixed(1)}秒</b>`;
   }catch(err){
@@ -913,7 +863,7 @@ document.getElementById('bPlay').onclick = e => {
        ⚠️ ブラウザは操作が無いと context を勝手に眠らせるので、再生のたびに起こす。 */
     if(sndAC && sndAC.state === 'suspended') sndAC.resume().catch(()=>{});
     if(snd){
-      snd.currentTime = sndIn;      /* ⭐ 使い始めの位置から鳴らす */
+      snd.currentTime = 0;
       /* ⚠️ 失敗を握りつぶすと「音が聞こえない」だけが残って原因が分からない。理由を出す。 */
       snd.play().catch(err => {
         const n = document.getElementById('sndNote');
@@ -993,7 +943,7 @@ document.getElementById('bMovie').onclick = () => {
   playing = true; t0 = performance.now(); cur = 0;
   clips.forEach(c => c.type==='vid' && c.el.play().catch(()=>{}));
   /* ⭐ 音も頭から鳴らす＝映像と頭を合わせる */
-  if(snd){ try{ snd.currentTime = sndIn; snd.play().catch(()=>{}); }catch(e){} }
+  if(snd){ try{ snd.currentTime = 0; snd.play().catch(()=>{}); }catch(e){} }
   rec.start();
   setTimeout(() => {
     rec.stop(); playing = false;
