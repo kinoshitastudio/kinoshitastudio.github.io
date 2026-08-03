@@ -1252,16 +1252,6 @@
     <button class="mini" data-ab="2480,3508" style="flex:1">A4</button>
   </div>
   <div class="row"><label>地の色</label><input type="color" id="abBg" value="#ffffff" style="flex:1"></div>
-  <!-- ⭐ 枠の地を「単色／グラデ／放射」で選ぶ。
-       ⚠️ 押すと上の「塗り / 線」で組んだストップと角度をそのまま枠へ当てる。
-          ここに別のグラデUIは作らない（2箇所に持つと必ず食い違う）。
-       ⚠️⚠️ キャンバスの掴む処理には一切触らない（枠線クリックもハンドルも入れない）。
-          2026-08-03 に、そこへ割り込んで3回壊したため。 -->
-  <div class="seg" id="abFillMode">
-    <button data-v="solid" class="on">単色</button>
-    <button data-v="linear">グラデ</button>
-    <button data-v="radial">放射</button>
-  </div>
   <div class="seg" id="abBgOn"><button data-v="1" class="on">地を塗る</button><button data-v="0">透明</button></div>
 
   <h2>BOARD</h2>
@@ -4752,26 +4742,6 @@ function abCur(){ return S.abs[S.abSel] || S.abs[0]; }
 function abRectOf(a){ return new Rectangle(a.x - a.w/2, a.y - a.h/2, a.w, a.h); }
 function abRect(){ return abRectOf(abCur()); }
 
-/* ⭐ 枠の地の塗り。⚠️ 枠は「いま選んでいる図形」ではないので paintOf をそのまま呼べない
-   （paintOf は S＝画面のいまの設定を見る）。枠は自分の設定を持つので、そちらから作る。
-   🔴⚠️ ここで例外を出すと地が描かれず【画面が真っ暗】になる（2026-08-03 に実際にやった）。
-      だから try/catch で囲み、何があっても必ず色を返す。 */
-function abPaintOf(a, rect){
-  try{
-    if(!a || !a.fill) return (a && a.bg) ? a.bg : '#ffffff';
-    const stops = (a.fill.stops || []).map(o => [o.c, o.t]);
-    if(!stops.length) return a.bg || '#ffffff';
-    if(a.fill.mode === 'radial'){
-      const b = rect.bounds;
-      return { gradient:{ stops, radial:true }, origin: b.center,
-               destination: b.center.add(new Point(Math.max(b.width, b.height)/2, 0)) };
-    }
-    const { origin, destination } = gradLine(rect, +(a.fill.ang ?? 90));
-    return { gradient:{ stops }, origin, destination };
-  }catch(err){
-    return (a && a.bg) ? a.bg : '#ffffff';
-  }
-}
 function drawArtboard(){
   gridLayer.activate();
   const Z = paper.view.zoom;
@@ -4781,7 +4751,7 @@ function drawArtboard(){
     const a = abCur();
     if(!a || a.bgOn !== false){
       const bg = new Path.Rectangle(paper.view.bounds.expand(80/Z));
-      bg.fillColor = abPaintOf(a, bg);
+      bg.fillColor = (a && a.bg) ? a.bg : '#ffffff';
       bg.sendToBack();
     }
     artLayer.activate();
@@ -4789,7 +4759,7 @@ function drawArtboard(){
   }
   S.abs.forEach((a, i) => {
     const R = abRectOf(a), cur = (i === S.abSel);
-    if(a.bgOn){ const bg = new Path.Rectangle(R); bg.fillColor = abPaintOf(a, bg); bg.sendToBack(); }
+    if(a.bgOn){ const bg = new Path.Rectangle(R); bg.fillColor = a.bg; bg.sendToBack(); }
     const f = new Path.Rectangle(R);
     f.strokeColor = cur ? ACC : ((S.bg === 'light') ? 'rgba(10,10,10,.28)' : 'rgba(255,255,255,.24)');
     f.strokeWidth = (cur ? 1.8 : 1)/Z; f.fillColor = null;
@@ -4821,9 +4791,6 @@ function abSync(){
   if(w) w.value = a.w; if(h) h.value = a.h; if(bg) bg.value = a.bg;
   document.querySelectorAll('#abOn button').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === !!S.abOn));
   document.querySelectorAll('#abBgOn button').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === !!a.bgOn));
-  /* ⚠️ 枠ごとに種類が違うので、選び直したらボタンも合わせる（表示が嘘にならない） */
-  const _md = a.fill ? a.fill.mode : 'solid';
-  document.querySelectorAll('#abFillMode button').forEach(b => b.classList.toggle('on', b.dataset.v === _md));
   renderAbList(); drawGrid();
 }
 function abName(){ return String(S.abs.length + 1).padStart(2, '0'); }
@@ -4844,35 +4811,6 @@ document.getElementById('abDel')?.addEventListener('click', () => {
 document.getElementById('abW')?.addEventListener('input', e => { abCur().w = Math.max(1, +e.target.value||1); renderAbList(); drawGrid(); });
 document.getElementById('abH')?.addEventListener('input', e => { abCur().h = Math.max(1, +e.target.value||1); renderAbList(); drawGrid(); });
 document.getElementById('abBg')?.addEventListener('input', e => { abCur().bg = e.target.value; drawGrid(); });
-/* ⭐ 枠の地の種類。⚠️ 上の「塗り / 線」で組んだストップと角度をそのまま使う。
-   ⚠️ ストップが無いのにグラデを押したら理由を出す（触れるのに効かない状態を作らない）。 */
-document.querySelectorAll('#abFillMode button').forEach(b =>
-  b.addEventListener('click', () => {
-    document.querySelectorAll('#abFillMode button').forEach(x => x.classList.toggle('on', x === b));
-    const a = abCur(); if(!a) return;
-    const md = b.dataset.v;
-    if(md === 'solid'){
-      a.fill = null;
-      a.bg = document.getElementById('abBg')?.value || a.bg;
-    }else{
-      const st = (S.stops || []).map(o => ({ c:o.c, t:o.t }));
-      if(!st.length){ stat('先に「塗り / 線」でグラデを組む'); return; }
-      a.fill = { mode: md, stops: st, ang: +(document.getElementById('gAng')?.value ?? 90) };
-    }
-    a.bgOn = true;
-    document.querySelectorAll('#abBgOn button').forEach(x => x.classList.toggle('on', x.dataset.v === '1'));
-    drawGrid();
-    stat(md === 'solid' ? '枠の地＝単色' : (md === 'linear' ? '枠の地＝グラデ' : '枠の地＝放射'));
-  }));
-/* ⭐ ストップや角度を組み直したら、グラデにしてある枠も追いかける */
-hook('stops', '枠の地のグラデも追いかける', () => {
-  const a = abCur();
-  if(!a || !a.fill) return;
-  a.fill.stops = (S.stops || []).map(o => ({ c:o.c, t:o.t }));
-  a.fill.ang = +(document.getElementById('gAng')?.value ?? a.fill.ang ?? 90);
-  drawGrid();
-});
-
 document.querySelectorAll('#abOn button').forEach(b =>
   b.addEventListener('click', () => { S.abOn = b.dataset.v === '1'; abSync(); }));
 document.querySelectorAll('#abBgOn button').forEach(b =>
