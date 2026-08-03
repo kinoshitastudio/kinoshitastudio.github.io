@@ -342,10 +342,6 @@ function buildPath(L){
   }
   if(p.corner) path.smooth({ type:'continuous' });
   path.closed = true;
-  /* ⭐ 行ごと動かした分。⚠️ 多角形は pts そのものを動かすので、ここでは足さない
-     （両方やると二重に動く）。 */
-  if((p.type === 'rect' || p.type === 'circle') && (p.dx || p.dy))
-    path.translate(new Point(p.dx, p.dy));
   return path;
 }
 
@@ -519,32 +515,14 @@ function drawHandles(){
   const pc = selPiece();
   if(pc){ pieceHandles(pc); return; }
   const L = sel();
-  if(!L || L.kind !== 'meguru') return;
+  if(!L || L.kind !== 'meguru' || L.path.type !== 'poly' || !L.path.pts) return;
   const r = 5/paper.view.zoom;
-  const mk = (pt, data) => {
-    const c = new Path.Circle(pt, r);
+  L.path.pts.forEach((a,i) => {
+    const c = new Path.Circle(new Point(a[0],a[1]), r);
     c.fillColor = '#fff'; c.strokeColor = '#2b6cf6'; c.strokeWidth = 1.4/paper.view.zoom;
-    Object.assign(c.data, data);
+    c.data.vertex = i;
     uiLayer.addChild(c);
-  };
-  if(L.path.type === 'poly' && L.path.pts){
-    L.path.pts.forEach((a,i) => mk(new Point(a[0],a[1]), { vertex:i }));
-    return;
-  }
-  /* ⭐ 矩形・円にも掴むところを出す（木下＝「追加した行には四角が表示されないので分かりにくい」）。
-     ⚠️ ただし【出すだけにしない】。触れそうなのに動かないのは、
-       触れるのに効かないのと同じくらい悪い。掴んだら【余白】が変わる
-       ＝つまみと同じものを、画の上から直に触れる。 */
-  const B = S.board, mn = Math.min(B.w, B.h), m = (L.path.inset/100) * mn;
-  const dx = L.path.dx || 0, dy = L.path.dy || 0;
-  if(L.path.type === 'rect'){
-    [[m,m],[B.w-m,m],[B.w-m,B.h-m],[m,B.h-m]]
-      .forEach(a => mk(new Point(a[0]+dx, a[1]+dy), { inset:1 }));
-  } else {
-    const c = new Point(B.w/2 + dx, B.h/2 + dy), rad = mn/2 - m;
-    [[0,-rad],[rad,0],[0,rad],[-rad,0]]
-      .forEach(a => mk(c.add(new Point(a[0], a[1])), { inset:1 }));
-  }
+  });
 }
 
 /* ⭐ 選んだ図の枠と8つのハンドル（SAKUJI と同じ持ち方）
@@ -603,9 +581,8 @@ cv.addEventListener('pointerdown', e => {
 
   // ① 頂点を掴む（いちばん優先）
   const hUI = uiLayer.hitTest(pt, { fill:true, stroke:true, tolerance:8/paper.view.zoom });
-  if(hUI && hUI.item && hUI.item.data){
-    if(hUI.item.data.vertex !== undefined){ drag = { kind:'vertex', i:hUI.item.data.vertex }; return; }
-    if(hUI.item.data.inset){ drag = { kind:'inset' }; return; }   // 矩形・円＝掴むと余白が変わる
+  if(hUI && hUI.item && hUI.item.data && hUI.item.data.vertex !== undefined){
+    drag = { kind:'vertex', i:hUI.item.data.vertex }; return;
   }
   /* ①' 図のハンドル。⭐ 角の【少し外】を掴むと回転（SAKUJI と同じ持ち方）。
      ⚠️ ハンドルそのものに当たり判定を頼ると、角の外は素通りして版面のパンになる。
@@ -635,13 +612,7 @@ cv.addEventListener('pointerdown', e => {
   }
   if(owner && owner.data.line !== undefined){
     const i = S.lines.findIndex(l => l.id === owner.data.line);
-    if(i >= 0){
-      S.sel = { kind:'line', i }; syncPanel(); render();
-      /* ⭐ 掴んだ行がそのまま動く（木下＝「いまだとボード全体が動いてしまう」）。
-         ⚠️ ここで return しないと、下の pan に落ちて版面ごと動く。 */
-      drag = { kind:'lineMove', last:pt };
-      return;
-    }
+    if(i >= 0){ S.sel = { kind:'line', i }; syncPanel(); render(); }
   }
   drag = { kind:'pan', last:pt };
 });
@@ -653,31 +624,6 @@ cv.addEventListener('pointermove', e => {
     const L = sel(); if(!L || !L.path.pts) return;
     L.path.pts[drag.i] = [pt.x, pt.y];
     render();
-  } else if(drag.kind === 'inset'){
-    /* 矩形・円の四隅を掴んで余白を変える。
-       ⚠️ 版面の【端までの距離】で測る＝どの隅を掴んでも同じ式で自然に動く。 */
-    const L = sel(); if(!L) return;
-    const B = S.board, mn = Math.min(B.w, B.h);
-    const q = pt.subtract(new Point(L.path.dx||0, L.path.dy||0));
-    const m = (L.path.type === 'circle')
-      ? mn/2 - new Point(B.w/2, B.h/2).getDistance(q)
-      : Math.min(q.x, B.w - q.x, q.y, B.h - q.y);
-    L.path.inset = Math.max(0, Math.min(45, m/mn*100));
-    setRange('inset', Math.round(L.path.inset));
-    render();
-  } else if(drag.kind === 'lineMove'){
-    /* 行ごと版面の中で動かす。
-       ⭐ 多角形は頂点そのものを動かす（掴んだ形のまま動く）。
-          矩形・円は型から作るので、ずれ（dx,dy）として覚える。 */
-    const L = sel(); if(!L) return;
-    const d = pt.subtract(drag.last);
-    if(L.path.type === 'poly' && L.path.pts){
-      L.path.pts = L.path.pts.map(a => [a[0] + d.x, a[1] + d.y]);
-    } else {
-      L.path.dx = (L.path.dx || 0) + d.x;
-      L.path.dy = (L.path.dy || 0) + d.y;
-    }
-    drag.last = pt; render();
   } else if(drag.kind === 'piece'){
     const pc = selPiece(); if(!pc) return;
     pc.x += pt.x - drag.last.x; pc.y += pt.y - drag.last.y;
