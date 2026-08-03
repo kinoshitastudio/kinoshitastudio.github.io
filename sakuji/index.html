@@ -5363,6 +5363,83 @@ hook('up', '枠のラベル', () => {
   if(!abDrag) return false;
   abDrag = null; renderAbList(); drawGrid(); return true;
 }, 20);
+
+/* ══ 枠（アートボード）をドラッグで大きさを変える ══
+   ⭐ 木下＝「アートボードもマウスでドラッグして自由にサイズ変更できるように」。
+      いままでは数値入力（幅・高さ）でしか変えられなかった。
+   ⭐ 図形の拡大縮小と【同じ持ち方】にする＝8つのハンドル・Shift で比を保つ。
+   ⚠️⚠️ いちばんの危険＝【枠を掴めるようにすると、中の図形が掴みにくくなる】。
+      潰し方は3つ：
+        ① 図形を1つでも選んでいる間は、枠のハンドルを出さない（拡大縮小ハンドルと重ならない）
+        ② 枠を「出さない」設定のときは掴めない
+        ③ ハンドルは【角と辺の上だけ】＝枠の中は今まで通り素通しする
+   ⚠️ 台帳（hook）に登録する。上書きしない。順番は 15＝グラデ(10)の後、枠のラベル(20)の前。 */
+function abHandlesOn(){
+  return S.tool === 'select' && S.abOn && selected().length === 0 && !!abCur();
+}
+function drawAbHandles(){
+  if(!abHandlesOn()) return;
+  const R = abRect();
+  uiLayer.activate();
+  const Z = paper.view.zoom, r = 4.2/Z;
+  BH.forEach(k => {
+    const pt = bhPoint(R, k);
+    const h = new Path.Rectangle(new Rectangle(pt.x-r, pt.y-r, r*2, r*2));
+    /* ⚠️ 図形の拡大縮小ハンドル（白地）と見分けが付くように、枠のほうは塗りつぶす */
+    h.fillColor = ACC; h.strokeColor = '#fff'; h.strokeWidth = 1.2/Z;
+  });
+  artLayer.activate();
+}
+hook('guides', '枠のハンドルを描く', () => drawAbHandles());
+
+let abhDrag = null;
+hook('down', '枠のハンドル', e => {
+  if(!abHandlesOn()) return false;
+  const R = abRect(), tol = tzTol(8);
+  for(const k of BH){
+    if(e.point.getDistance(bhPoint(R, k)) < tol){
+      abhDrag = { k, R: R.clone() };
+      stat('枠の大きさを変える — Shift で比を保つ');
+      return true;
+    }
+  }
+  return false;
+}, 15);
+hook('drag', '枠のハンドル', e => {
+  if(!abhDrag) return false;
+  const a = abCur(), k = abhDrag.k, R = abhDrag.R;
+  const anc = bhAnchor(R, k);                    // 掴んだ点の反対側＝動かない点
+  let x1 = anc.x, y1 = anc.y, x2 = e.point.x, y2 = e.point.y;
+  /* ⚠️ 辺のハンドルは片方向だけ動かす（もう片方は元のまま）*/
+  if(k === 'n' || k === 's'){ x1 = R.left; x2 = R.right; }
+  if(k === 'e' || k === 'w'){ y1 = R.top;  y2 = R.bottom; }
+  let w = Math.abs(x2 - x1), h = Math.abs(y2 - y1);
+  /* ⭐ Shift＝縦横の比を保つ（角のときだけ。辺は片方向なので意味が無い）*/
+  if(e.modifiers.shift && k.length === 2 && R.width > 0 && R.height > 0){
+    const kk = Math.max(w / R.width, h / R.height);
+    w = R.width * kk; h = R.height * kk;
+    x2 = x1 + Math.sign(x2 - x1 || 1) * w;
+    y2 = y1 + Math.sign(y2 - y1 || 1) * h;
+  }
+  a.w = Math.max(1, Math.round(w));
+  a.h = Math.max(1, Math.round(h));
+  a.x = Math.round((x1 + x2) / 2);
+  a.y = Math.round((y1 + y2) / 2);
+  /* ⭐ 数値の欄も一緒に動かす＝2箇所で食い違わない */
+  const wEl = document.getElementById('abW'), hEl = document.getElementById('abH');
+  if(wEl) wEl.value = a.w;
+  if(hEl) hEl.value = a.h;
+  drawGrid(); guides();
+  return true;
+}, 15);
+hook('up', '枠のハンドル', () => {
+  if(!abhDrag) return false;
+  abhDrag = null;
+  abSync();                                      /* 一覧・数値欄・描画をまとめて合わせ直す */
+  stat('枠の大きさを変えた');
+  return true;
+}, 15);
+
 /* 枠を画面の中央へ呼び戻す（見失ったとき） */
 addEventListener('keydown', e => {
   if(e.key === '0' && (e.metaKey || e.ctrlKey)){
