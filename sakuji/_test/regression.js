@@ -47,6 +47,58 @@
       ok('粒が組み方を覚える（__tzText）', !!(g && g.__tzText));
       if(g && g.__tzText) ok('粒からも打ち直せる（textRootOf）', textRootOf(g.children[0]) === g);
 
+      // ══ 3b. 動かす・大きさを変える → 解像を触っても元へ戻らない
+      //   ⚠️ 作り直しは「粒をかけた時点の形」から作るので、覚えておかないと位置も大きさも当時に戻る
+      if(g){
+        artLayer.children.forEach(c => c.selected = false);
+        g.selected = true;
+        g.position = g.position.add(new Point(120, 80));
+        g.scale(1.6, g.bounds.center);
+        const at0 = g.position.clone(), w0 = g.bounds.width;
+        const rs = document.getElementById('tzRes');
+        const keepRes = rs ? rs.value : null;
+        if(rs){ rs.value = String(Math.max(8, (+rs.value || 24) + 6)); }
+        retsubu(true);                                  // ⭐ 実際の作り直しを通す
+        const g3 = artLayer.children.find(c => c.__tsubu);
+        if(g3){
+          ok('作り直しても場所が動かない',
+             Math.abs(g3.position.x - at0.x) < 2 && Math.abs(g3.position.y - at0.y) < 2,
+             `(${Math.round(at0.x)},${Math.round(at0.y)}) → (${Math.round(g3.position.x)},${Math.round(g3.position.y)})`);
+          ok('⭐作り直しても大きさが元へ戻らない',
+             w0 > 0 && Math.abs(g3.bounds.width - w0) / w0 < 0.08,
+             `${Math.round(w0)} → ${Math.round(g3.bounds.width)}`);
+          ok('作った直後の素の大きさを覚えている（data.tzMade）', !!(g3.data && g3.data.tzMade && g3.data.tzMade.w > 0));
+        }
+        if(rs && keepRes !== null) rs.value = keepRes;
+      }
+
+      // ══ 3c. ⚠️ 大きさを変えていない粒は、解像を触っても【素の大きさのまま】＝見え方を変えない
+      //   ⚠️ 3b で拡大した粒を使い回すと当然ちがう値になる。ここは【新しい粒】で測る
+      {
+        document.getElementById('tinput').value = 'う';
+        const t2 = placeText(new Point(760, 300));
+        artLayer.children.forEach(c => c.selected = false);
+        const sh2 = t2 ? tzShapeOf(t2) : null;
+        const gk = sh2 ? tsubuize(sh2.src, tzOpt()) : null;
+        if(t2) t2.remove();
+        if(gk){
+          gk.selected = true;                             // retsubu は選んでいるものを作り直す
+          const rs2 = document.getElementById('tzRes');
+          const keep2 = rs2 ? rs2.value : null;
+          if(rs2){ rs2.value = String(Math.max(8, (+rs2.value || 24) + 4)); }
+          retsubu(true);
+          const gk2 = selected().find(c => c.__tsubu);    // ⭐ 作り直しは選択を引き継ぐ
+          // ⭐ 触っていないのだから、結果は「その解像で素直に作った粒」そのものでなければならない
+          ok('⭐大きさを触っていない粒には倍率をかけない',
+             !!(gk2 && gk2.data && gk2.data.tzMade &&
+                Math.abs(gk2.bounds.width - gk2.data.tzMade.w) < 0.5),
+             gk2 && gk2.data && gk2.data.tzMade
+               ? `素 ${Math.round(gk2.data.tzMade.w)} / いま ${Math.round(gk2.bounds.width)}` : '—');
+          if(rs2 && keep2 !== null) rs2.value = keep2;
+          if(gk2) gk2.remove();                           // 後のテストに残さない
+        }
+      }
+
       // ══ 4. 保存に粒の実体を載せず、作り方だけ持ち出す
       t.remove();
       const ex = exportArtWithoutGrains();
