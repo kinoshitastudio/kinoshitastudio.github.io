@@ -246,6 +246,12 @@
   /* ⚠️ 地が明るいと、白い HUD が地に溶けて読めなくなる（地のグラデを入れて起きた）。
      ⭐ 差分合成＝地が暗ければ白く、明るければ暗く出る＝どんな地でも必ず読める。 */
   #hud{ color:#fff; opacity:1; mix-blend-mode:difference; }
+
+  /* 版面 ── 「画面のまま」のときは形と長辺のつまみを出さない */
+  .only-frame{ display:none }
+  body.framed .only-frame{ display:block }
+  /* ⭐ 版面のときは canvas が紙そのもの＝外に地が続かないよう、まわりを暗く落として境を見せる */
+  body.framed #gl{ box-shadow:0 0 0 1px rgba(255,255,255,.16), 0 24px 60px rgba(0,0,0,.5) }
 </style>
 </head>
 <body>
@@ -339,6 +345,23 @@
   <div class="note">⭐ 色数 1 ＝単色（今までどおり）／2〜6 で<b>グラデ</b>。色はひとつずつ選ぶ<br>
     <b>向き</b>＝流すのとき向き／渦のときねじれ。<b>版数</b>＝少ない版に落として網をかける</div>
 
+  <!-- ⭐ 版面 ── 礫 TSUBUTE の「書き出す大きさ」と同じ型。
+       ⚠️ ここは【画面の canvas そのものを版面の形にする】＝見えているものがそのまま出る。
+          （枠だけ描いて中身は画面のまま、にすると書き出しと見え方がズレる） -->
+  <h2>版面（書き出す大きさ）</h2>
+  <div class="seg" id="frameOn"><button data-v="0" class="on">画面のまま</button><button data-v="1">版面で</button></div>
+  <!-- ⭐ 絵の大きさ＝膜（オブジェクト）だけを大小する。地（紙）は動かない。
+       ホイール／ピンチと同じもの＝どちらで動かしても、ここの数字は合わせてある。 -->
+  <div class="row"><label>絵の大きさ</label><input type="range" id="fitz" min="20" max="300" step="1" value="100"><span class="val"></span></div>
+  <div class="only-frame">
+    <div class="seg" id="fshape">
+      <button data-v="0" class="on">正方形</button><button data-v="1">たて 4:5</button>
+      <button data-v="2">よこ 16:9</button><button data-v="3">たて 9:16</button>
+    </div>
+    <div class="row"><label>長辺</label><input type="range" id="flong" min="720" max="4096" step="64" value="2048"><span class="val"></span></div>
+  </div>
+  <div class="note" id="fout">画面のまま ＝ —</div>
+
   <button class="big" id="resetAll">全リセット</button>
   <button class="big" id="reset">アンカー全消し</button>
   <button class="big" id="png">PNG</button>
@@ -366,6 +389,8 @@ const DEFAULTS = { font:0, dir:0, layer:0, track:0, leading:0, vwarp:30, hwarp:0
 const P = { ...DEFAULTS };
 /* 元＝字 or 画像。⚠️ 読み込んだ画像は「素材」なので全リセットでは消さない（字を消さないのと同じ） */
 const IMG = { on:false, el:null };
+/* 版面（書き出す大きさ）。⚠️ これも DEFAULTS に入れない＝全リセットで消さない（出力の設定だから） */
+Object.assign(P, { frameOn:0, fshape:0, flong:2048 });
 const ANCHORS = [];   // {u,v, du,dv} 面を押す点（テクスチャ座標と変位）
 let COLS = 1, ROWS = 1;
 let CHARS = [];         // {ch, gi} gi=グリッド番号（左上=0, 行優先）
@@ -720,8 +745,10 @@ loc.uCharScale = gl.getUniformLocation(prog,'uCharScale');
 loc.uCharType  = gl.getUniformLocation(prog,'uCharType');
 ['uLW','uLH','uLRot','uLWarp','uLDens','uLSAng','uLSOff'].forEach(n=>loc[n]=gl.getUniformLocation(prog,n));
 
-function draw(t){
-  requestAnimationFrame(draw);
+/* ⚠️ 描くのとループを分けてある＝書き出しのときだけ【版面の大きさで1回だけ描く】ため */
+let lastT = 0;
+function draw(t){ requestAnimationFrame(draw); lastT = t; render(t); }
+function render(t){
   const w = canvas.width, h = canvas.height;
   gl.viewport(0,0,w,h);
   const bg = P.look===2 ? [0.04,0.04,0.05,1] : (P.look===1 ? [0.957,0.949,0.933,1] : [0.03,0.03,0.04,1]);
@@ -877,7 +904,7 @@ canvas.addEventListener('pointermove', e=>{
     const d=Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y), cx=(p[0].x+p[1].x)/2, cy=(p[0].y+p[1].y)/2;
     VIEW.zoom=Math.max(0.3,Math.min(30, pinch0.zoom*d/pinch0.d));
     VIEW.panx=pinch0.panx + ((cx-pinch0.cx)/r.width)*2;
-    VIEW.pany=pinch0.pany - ((cy-pinch0.cy)/r.height)*2; return;
+    VIEW.pany=pinch0.pany - ((cy-pinch0.cy)/r.height)*2; syncZoomUI(); return;
   }
   if(viewMode==='rot' && rotStart){              // ±約63°に制限＝正投影でも読める範囲
     VIEW.roty=Math.max(-1.1,Math.min(1.1, rotStart.ry + (e.clientX-rotStart.x)/r.width*2.4));
@@ -900,14 +927,14 @@ canvas.addEventListener('wheel', e=>{ e.preventDefault();       // ホイール�
   const f=e.deltaY<0?1.08:1/1.08, n=ndc(e), nz=Math.max(0.3,Math.min(30, VIEW.zoom*f));
   VIEW.panx=n.x-(n.x-VIEW.panx)*(nz/VIEW.zoom);
   VIEW.pany=n.y-(n.y-VIEW.pany)*(nz/VIEW.zoom);
-  VIEW.zoom=nz;
+  VIEW.zoom=nz; syncZoomUI();
 },{passive:false});
-canvas.addEventListener('dblclick', ()=>{ VIEW.zoom=1; VIEW.panx=0; VIEW.pany=0; VIEW.rotx=0; VIEW.roty=0; });
+canvas.addEventListener('dblclick', ()=>{ VIEW.zoom=1; VIEW.panx=0; VIEW.pany=0; VIEW.rotx=0; VIEW.roty=0; syncZoomUI(); });
 // Safari：トラックパッドのピンチは wheel でなく gesture イベントで来る
 let gScale=1;
 canvas.addEventListener('gesturestart', e=>{ e.preventDefault(); gScale=VIEW.zoom; });
 canvas.addEventListener('gesturechange', e=>{ e.preventDefault();
-  VIEW.zoom=Math.max(0.3, Math.min(30, gScale*e.scale)); });
+  VIEW.zoom=Math.max(0.3, Math.min(30, gScale*e.scale)); syncZoomUI(); });
 canvas.addEventListener('gestureend', e=>{ e.preventDefault(); });
 
 /* ── UI ── */
@@ -920,11 +947,22 @@ document.querySelectorAll('#panel input[type=range]').forEach(r=>{
   }
   const sync=()=>{ P[r.id]=+r.value; if(val) val.textContent=r.value;
     if(r.id==='mesh') buildMesh();
-    if(r.id==='papN') syncGrad(); };
+    if(r.id==='papN') syncGrad();
+    if(r.id==='fitz') VIEW.zoom = +r.value/100;      // ⭐ 膜だけを大小（地は動かない）
+    if(r.id==='flong' && typeof updateOut === 'function') updateOut(); };
   // 字間・行間はテクスチャを焼き直す（初期化中に呼ぶと参照順で落ちるので input 時だけ）
   r.addEventListener('input', ()=>{ sync(); if(r.id==='track' || r.id==='leading') bakeText(); });
   sync();
 });
+/* ⭐ ホイール／ピンチで動かしても、パネルの「絵の大きさ」を実体に合わせる（数字と実体をズラさない）。
+   ⚠️ ホイールは 30倍まで寄れる＝スライダーの幅（20〜300%）を超える。そのときは
+      つまみだけ端に張り付き、右の数字には【実際の倍率】を出す＝嘘をつかない。 */
+function syncZoomUI(){
+  const el = document.getElementById('fitz'); if(!el) return;
+  const pct = Math.round(VIEW.zoom * 100);
+  el.value = Math.max(20, Math.min(300, pct));
+  const s = el.parentElement.querySelector('.val'); if(s) s.textContent = pct;
+}
 function syncLayerUI(){                             // 層を選び直したらスライダー表示をその層の値へ
   LAYER_KEYS.forEach(k=>{ const el=document.getElementById('L_'+k);
     el.value = LAYERS[P.layer][k];
@@ -935,7 +973,8 @@ document.querySelectorAll('#panel .seg').forEach(seg=>{
     seg.querySelectorAll('button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
     P[seg.id]=+b.dataset.v;
     if(seg.id==='font' || seg.id==='dir') bakeText();
-    if(seg.id==='layer') syncLayerUI(); }));
+    if(seg.id==='layer') syncLayerUI();
+    if(seg.id==='frameOn' || seg.id==='fshape') layoutCanvas(); }));
 });
 syncLayerUI();
 let reflow; document.getElementById('txt').addEventListener('input',()=>{
@@ -995,14 +1034,76 @@ function resetAll(){
   });
   syncLayerUI();
   syncGrad();                                       // 地は色数1（単色）に戻る。⚠️選んだ色は残す
+  P.fitz = 100; syncZoomUI();                       // 絵の大きさも等倍へ（VIEW を戻したので合わせる）
   buildMesh();
   refreshChars();
   if(!IMG.on) bakeText();                           // dir が戻る可能性があるので焼き直す
 }
 document.getElementById('resetAll').onclick = resetAll;
 document.getElementById('reset').onclick=()=>ANCHORS.length=0;
-document.getElementById('png').onclick=()=>{ const a=document.createElement('a');
-  a.download=`mesh_${Date.now()}.png`; a.href=canvas.toDataURL('image/png'); a.click(); };
+/* ══ 版面（書き出す大きさ）══ 礫 TSUBUTE の「FRAME」と同じ型を持ってきた。
+   ⭐ ここは【画面の canvas そのものを版面の形にする】＝見えているものがそのまま出る。
+      枠だけ描いて中身は画面のまま、にすると「見えている絵」と「出る絵」がズレる。 */
+const FSHAPE = [[1,1],[4,5],[16,9],[9,16]];
+function frameRatio(){ return FSHAPE[P.fshape|0] || FSHAPE[0]; }
+function frameSize(){
+  const [rw,rh] = frameRatio();
+  const L = Math.round(P.flong);
+  let w, h;
+  if(rw >= rh){ w = L; h = Math.round(L*rh/rw); } else { h = L; w = Math.round(L*rw/rh); }
+  /* ⚠️ 端末の上限を超えると【何も出ない】。黙って壊れず、上限まで下げて、当たったことを出す */
+  const lim = Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) || 4096, 8192);
+  let cap = false;
+  if(w > lim || h > lim){ const k = Math.min(lim/w, lim/h); w = Math.floor(w*k); h = Math.floor(h*k); cap = true; }
+  return { w, h, cap };
+}
+function layoutCanvas(){
+  const on = P.frameOn === 1;
+  document.body.classList.toggle('framed', on);
+  if(!on){ canvas.removeAttribute('style'); resize(); updateOut(); return; }
+  const mobile = innerWidth <= 760;
+  const availW = mobile ? innerWidth : Math.max(innerWidth - 262, 200);   // 右のパネルを避ける
+  const availH = mobile ? innerHeight*0.58 : innerHeight;
+  const [rw,rh] = frameRatio();
+  const k = Math.min(availW*0.9/rw, availH*0.9/rh);
+  const w = Math.round(rw*k), h = Math.round(rh*k);
+  canvas.style.width = w+'px'; canvas.style.height = h+'px';
+  canvas.style.left  = Math.round((availW-w)/2)+'px';
+  canvas.style.top   = Math.round((availH-h)/2)+'px';
+  canvas.style.right = 'auto'; canvas.style.bottom = 'auto';
+  resize(); updateOut();
+}
+function updateOut(){
+  const n = document.getElementById('fout'); if(!n) return;
+  if(P.frameOn !== 1){ n.innerHTML = `画面のまま ＝ <b>${canvas.width} × ${canvas.height} px</b>`; return; }
+  const f = frameSize();
+  n.innerHTML = `出る大きさ ＝ <b>${f.w} × ${f.h} px</b>`
+    + (f.cap ? '<br>⚠️ この端末の上限に当たったので下げた' : '');
+}
+/* ⭐ 版面の大きさで刷る。⚠️ 終わったら必ず元へ戻す */
+function renderToBlob(cb){
+  if(P.frameOn !== 1){ canvas.toBlob(cb, 'image/png'); return; }
+  const f = frameSize();
+  const kw = canvas.width, kh = canvas.height;
+  try{
+    canvas.width = f.w; canvas.height = f.h;
+    render(lastT);
+    canvas.toBlob(cb, 'image/png');
+  } finally {
+    canvas.width = kw; canvas.height = kh;
+    render(lastT);
+  }
+}
+/* ⚠️ iOS は DOM に入れていない <a> の click を無視する／巨大な dataURL で落ちる（礫と同じ作法） */
+document.getElementById('png').onclick = ()=> renderToBlob(blob=>{
+  if(!blob) return;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `maku_${Date.now()}.png`;
+  document.body.appendChild(a); a.click(); a.remove();
+  if(/iP(hone|ad|od)/.test(navigator.userAgent)) window.open(url, '_blank');
+  setTimeout(()=>URL.revokeObjectURL(url), 8000);
+});
 
 /* ══ 地のグラデ ── 使う色数のぶんだけ出す（触れるのに何も起きないつまみを残さない）══ */
 function syncGrad(){
@@ -1089,13 +1190,13 @@ function resize(){ const dpr=Math.min(devicePixelRatio,2);
   // 描画バッファは canvas の実表示サイズ（CSSの二分割）に合わせる＝歪み/座標ズレを防ぐ
   canvas.width  = Math.round((canvas.clientWidth  || innerWidth ) * dpr);
   canvas.height = Math.round((canvas.clientHeight || innerHeight) * dpr); }
-addEventListener('resize', resize);
-addEventListener('orientationchange', ()=>setTimeout(resize,120));
+addEventListener('resize', ()=>layoutCanvas());
+addEventListener('orientationchange', ()=>setTimeout(layoutCanvas,120));
 
 (async ()=>{
   try{ await Promise.all(['"Zen Kaku Gothic New"','"Zen Old Mincho"'].map(f=>document.fonts.load(`900 80px ${f}`,'なんだ組漢')));
        await document.fonts.ready; }catch(_){}
-  resize(); buildMesh(); bakeText();
+  resize(); buildMesh(); bakeText(); updateOut();
   document.getElementById('stat').textContent = gl ? 'WEBGL OK' : 'NO WEBGL';
   requestAnimationFrame(draw);
 })();
@@ -1120,6 +1221,10 @@ const I18N = {
   '中心よこ':'Center X','中心たて':'Center Y',
   '地 1':'Color 1','地 2':'Color 2','地 3':'Color 3','地 4':'Color 4','地 5':'Color 5','地 6':'Color 6',
   '流す':'Linear','中心':'Radial','渦':'Spiral','まわり':'Angular',
+  // 版面（書き出す大きさ）
+  '版面（書き出す大きさ）':'Frame (export size)','画面のまま':'Screen','版面で':'Frame',
+  '正方形':'Square','たて 4:5':'4:5 portrait','よこ 16:9':'16:9','たて 9:16':'9:16','長辺':'Long side',
+  '絵の大きさ':'Object size',
 };
 (function(){
   const KEY='maku_lang'; const nodes=[], attrs=[];
