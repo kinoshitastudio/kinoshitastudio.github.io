@@ -382,6 +382,8 @@
   <!-- ⭐ 絵の大きさ＝膜（オブジェクト）だけを大小する。地（紙）は動かない。
        ホイール／ピンチと同じもの＝どちらで動かしても、ここの数字は合わせてある。 -->
   <div class="row"><label>絵の大きさ</label><input type="range" id="fitz" min="20" max="300" step="1" value="100"><span class="val"></span></div>
+  <div class="row"><label>絵のよこ</label><input type="range" id="fitx" min="-150" max="150" step="1" value="0"><span class="val"></span></div>
+  <div class="row"><label>絵のたて</label><input type="range" id="fity" min="-150" max="150" step="1" value="0"><span class="val"></span></div>
   <div class="only-frame">
     <div class="seg" id="fshape">
       <button data-v="0" class="on">正方形</button><button data-v="1">たて 4:5</button>
@@ -390,6 +392,14 @@
     <div class="row"><label>長辺</label><input type="range" id="flong" min="720" max="4096" step="64" value="2048"><span class="val"></span></div>
   </div>
   <div class="note" id="fout">画面のまま ＝ —</div>
+
+  <!-- ⭐ 控え ── いまの状態をまるごと JSON に。⚠️ 読み込んだ画像も一緒に入れる＝そのまま開き直せる -->
+  <h2>控え（設定の保存）</h2>
+  <button class="big" id="saveJson">設定を保存（JSON）</button>
+  <button class="big" id="loadJson">設定を読み込む</button>
+  <input type="file" id="jsonFile" accept="application/json,.json" hidden>
+  <div class="note">⭐ 読み込んだ<b>画像も一緒に入る</b>＝そのまま開き直せる（そのぶんファイルは大きい）<br>
+    JSON は画面にドラッグ＆ドロップでも読める</div>
 
   <button class="big" id="resetAll">全リセット</button>
   <button class="big" id="reset">アンカー全消し</button>
@@ -977,7 +987,7 @@ canvas.addEventListener('pointermove', e=>{
     const d=Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y), cx=(p[0].x+p[1].x)/2, cy=(p[0].y+p[1].y)/2;
     VIEW.zoom=Math.max(0.3,Math.min(30, pinch0.zoom*d/pinch0.d));
     VIEW.panx=pinch0.panx + ((cx-pinch0.cx)/r.width)*2;
-    VIEW.pany=pinch0.pany - ((cy-pinch0.cy)/r.height)*2; syncZoomUI(); return;
+    VIEW.pany=pinch0.pany - ((cy-pinch0.cy)/r.height)*2; syncViewUI(); return;
   }
   if(viewMode==='rot' && rotStart){              // ±約63°に制限＝正投影でも読める範囲
     VIEW.roty=Math.max(-1.1,Math.min(1.1, rotStart.ry + (e.clientX-rotStart.x)/r.width*2.4));
@@ -985,7 +995,7 @@ canvas.addEventListener('pointermove', e=>{
   }
   if(viewMode==='pan' && panStart){
     VIEW.panx=panStart.px + ((e.clientX-panStart.x)/r.width)*2;
-    VIEW.pany=panStart.py - ((e.clientY-panStart.y)/r.height)*2; return;
+    VIEW.pany=panStart.py - ((e.clientY-panStart.y)/r.height)*2; syncViewUI(); return;
   }
   if(dragA<0) return;
   const p=toUV(e), a=ANCHORS[dragA];
@@ -1000,14 +1010,14 @@ canvas.addEventListener('wheel', e=>{ e.preventDefault();       // ホイール�
   const f=e.deltaY<0?1.08:1/1.08, n=ndc(e), nz=Math.max(0.3,Math.min(30, VIEW.zoom*f));
   VIEW.panx=n.x-(n.x-VIEW.panx)*(nz/VIEW.zoom);
   VIEW.pany=n.y-(n.y-VIEW.pany)*(nz/VIEW.zoom);
-  VIEW.zoom=nz; syncZoomUI();
+  VIEW.zoom=nz; syncViewUI();
 },{passive:false});
-canvas.addEventListener('dblclick', ()=>{ VIEW.zoom=1; VIEW.panx=0; VIEW.pany=0; VIEW.rotx=0; VIEW.roty=0; syncZoomUI(); });
+canvas.addEventListener('dblclick', ()=>{ VIEW.zoom=1; VIEW.panx=0; VIEW.pany=0; VIEW.rotx=0; VIEW.roty=0; syncViewUI(); });
 // Safari：トラックパッドのピンチは wheel でなく gesture イベントで来る
 let gScale=1;
 canvas.addEventListener('gesturestart', e=>{ e.preventDefault(); gScale=VIEW.zoom; });
 canvas.addEventListener('gesturechange', e=>{ e.preventDefault();
-  VIEW.zoom=Math.max(0.3, Math.min(30, gScale*e.scale)); syncZoomUI(); });
+  VIEW.zoom=Math.max(0.3, Math.min(30, gScale*e.scale)); syncViewUI(); });
 canvas.addEventListener('gestureend', e=>{ e.preventDefault(); });
 
 /* ── UI ── */
@@ -1022,20 +1032,28 @@ document.querySelectorAll('#panel input[type=range]').forEach(r=>{
     if(r.id==='mesh') buildMesh();
     if(r.id==='papN') syncGrad();
     if(r.id==='inkN') syncInk();
-    if(r.id==='fitz') VIEW.zoom = +r.value/100;      // ⭐ 膜だけを大小（地は動かない）
+    // ⭐ 絵（膜）だけを大小・移動。地（紙）は動かない＝版面の中で絵を置き直せる
+    if(r.id==='fitz') VIEW.zoom = +r.value/100;
+    if(r.id==='fitx') VIEW.panx = +r.value/100;
+    if(r.id==='fity') VIEW.pany = +r.value/100;
     if(r.id==='flong' && typeof updateOut === 'function') updateOut(); };
   // 字間・行間はテクスチャを焼き直す（初期化中に呼ぶと参照順で落ちるので input 時だけ）
   r.addEventListener('input', ()=>{ sync(); if(r.id==='track' || r.id==='leading') bakeText(); });
   sync();
 });
-/* ⭐ ホイール／ピンチで動かしても、パネルの「絵の大きさ」を実体に合わせる（数字と実体をズラさない）。
-   ⚠️ ホイールは 30倍まで寄れる＝スライダーの幅（20〜300%）を超える。そのときは
-      つまみだけ端に張り付き、右の数字には【実際の倍率】を出す＝嘘をつかない。 */
-function syncZoomUI(){
-  const el = document.getElementById('fitz'); if(!el) return;
-  const pct = Math.round(VIEW.zoom * 100);
-  el.value = Math.max(20, Math.min(300, pct));
-  const s = el.parentElement.querySelector('.val'); if(s) s.textContent = pct;
+/* ⭐ ドラッグ／ホイール／ピンチで動かしても、パネルの「絵の大きさ・よこ・たて」を実体に合わせる
+      （数字と実体をズラさない）。
+   ⚠️ ホイールは 30倍まで寄れる＝つまみの幅（20〜300%）を超える。そのときは
+      つまみだけ端に張り付き、右の数字には【実際の値】を出す＝嘘をつかない。 */
+function syncViewUI(){
+  const put = (id, real, lo, hi)=>{
+    const el = document.getElementById(id); if(!el) return;
+    el.value = Math.max(lo, Math.min(hi, real));
+    const s = el.parentElement.querySelector('.val'); if(s) s.textContent = real;
+  };
+  put('fitz', Math.round(VIEW.zoom * 100), 20, 300);
+  put('fitx', Math.round(VIEW.panx * 100), -150, 150);
+  put('fity', Math.round(VIEW.pany * 100), -150, 150);
 }
 function syncLayerUI(){                             // 層を選び直したらスライダー表示をその層の値へ
   LAYER_KEYS.forEach(k=>{ const el=document.getElementById('L_'+k);
@@ -1121,7 +1139,7 @@ function resetAll(){
   });
   syncLayerUI();
   syncGrad(); syncInk();                            // 地は色数1（単色）に戻る。⚠️選んだ色は残す
-  P.fitz = 100; syncZoomUI();                       // 絵の大きさも等倍へ（VIEW を戻したので合わせる）
+  P.fitz = 100; P.fitx = 0; P.fity = 0; syncViewUI();   // 絵の大きさ・位置も戻す（VIEW を戻したので合わせる）
   buildMesh();
   refreshChars();
   if(!IMG.on) bakeText();                           // dir が戻る可能性があるので焼き直す
@@ -1278,12 +1296,148 @@ document.querySelectorAll('#src button').forEach(b=>{
     } else useText();
   });
 });
-/* 画像はドラッグ＆ドロップでも読める */
+/* 画像も控え（JSON）もドラッグ＆ドロップで読める */
 addEventListener('dragover', e=> e.preventDefault());
 addEventListener('drop', e=>{
   e.preventDefault();
-  const f = [...(e.dataTransfer?.files||[])].find(x=>/^image\//.test(x.type));
+  const files = [...(e.dataTransfer?.files||[])];
+  const j = files.find(x=>/\.json$/i.test(x.name) || x.type === 'application/json');
+  if(j){ loadJSONFile(j); return; }
+  const f = files.find(x=>/^image\//.test(x.type));
   if(f) loadImageFile(f);
+});
+
+/* ══ 控え（保存・読み込み）＋ 戻す（⌘Z）══════════════════════════
+   ⭐ 道具の状態はコミットでは守れない。【戻す】と【持ち出す】は道具の側に要る。
+   ⚠️ 戻す用のスナップショットに画像は入れない（重いうえ、戻しても画像そのものは変わらないから）。
+      保存する JSON には入れる＝そのまま開き直せる。 */
+const stat = m => { const s = document.getElementById('stat'); if(s) s.textContent = m; };
+function stateToJSON(withImage){
+  const o = {
+    v: 1,
+    P: { ...P },
+    PAPC: [...PAPC], INKC: [...INKC],
+    LAYERS: LAYERS.map(L=>({ ...L })),
+    ANCHORS: ANCHORS.map(a=>({ ...a })),
+    VIEW: { ...VIEW },
+    text: document.getElementById('txt').value,
+    cscale: CHARSCALE.map(s=>[s[0], s[1]]),
+    crot: [...CHARROT],
+    img: IMG.on,
+  };
+  if(withImage && IMG.el){
+    const c = document.createElement('canvas');
+    c.width = IMG.el.naturalWidth || IMG.el.width;
+    c.height = IMG.el.naturalHeight || IMG.el.height;
+    c.getContext('2d').drawImage(IMG.el, 0, 0);
+    o.image = c.toDataURL('image/png');     // ⚠️ PNG＝透明を保つ（JPEG にすると透明が黒くなる）
+  }
+  return o;
+}
+function applyState(o, done){
+  if(!o) return;
+  Object.assign(P, o.P || {});
+  if(o.PAPC) PAPC = [...o.PAPC];
+  if(o.INKC) INKC = [...o.INKC];
+  if(o.LAYERS) LAYERS = o.LAYERS.map(L=>({ ...L }));
+  ANCHORS.length = 0; (o.ANCHORS||[]).forEach(a=>ANCHORS.push({ ...a }));
+  Object.assign(VIEW, o.VIEW || {});
+  document.getElementById('txt').value = o.text != null ? o.text : '';
+  CHARSCALE.length = 0; (o.cscale||[]).forEach(s=>CHARSCALE.push([s[0], s[1]]));
+  CHARROT.length = 0; (o.crot||[]).forEach(v=>CHARROT.push(v));
+  // つまみ・切替・色の見た目を実体に合わせる（数字と実体をズラさない）
+  document.querySelectorAll('#panel input[type=range]').forEach(r=>{
+    if(r.id.startsWith('L_')) return;                 // 層のつまみは syncLayerUI で入れ直す
+    if(P[r.id] !== undefined) r.value = P[r.id];
+    const v = r.parentElement.querySelector('.val'); if(v) v.textContent = r.value;
+  });
+  document.querySelectorAll('#panel .seg').forEach(seg=>{
+    seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on', +b.dataset.v === P[seg.id]));
+  });
+  document.querySelectorAll('input[type=color][data-pc]').forEach(c=>{ if(PAPC[+c.dataset.pc]) c.value = PAPC[+c.dataset.pc]; });
+  document.querySelectorAll('input[type=color][data-ic]').forEach(c=>{ if(INKC[+c.dataset.ic]) c.value = INKC[+c.dataset.ic]; });
+  selChar = -1;
+  syncLayerUI(); syncGrad(); syncInk(); syncViewUI(); buildMesh(); layoutCanvas();
+  const finish = ()=>{ refreshChars(); if(typeof done === 'function') done(); };
+  if(o.image){
+    const img = new Image();
+    img.onload = ()=>{ useImage(img); finish(); };
+    img.onerror = ()=>{ useText(); finish(); };
+    img.src = o.image;
+  } else if(o.img && IMG.el){ useImage(IMG.el); finish(); }
+  else { useText(); finish(); }
+}
+async function saveJSON(){
+  const data = JSON.stringify(stateToJSON(true));
+  const name = `maku_${Date.now()}.json`;
+  try{
+    if(window.showSaveFilePicker){
+      const h = await showSaveFilePicker({ suggestedName:name,
+        types:[{ description:'膜 MAKU の控え', accept:{ 'application/json':['.json'] } }] });
+      const w = await h.createWritable(); await w.write(data); await w.close();
+      stat('控えを保存した'); return;
+    }
+  }catch(err){ if(err && err.name === 'AbortError') return; }   // ⚠️ キャンセルは失敗ではない
+  const blob = new Blob([data], { type:'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 8000);
+  stat('控えを保存した');
+}
+function loadJSONFile(f){
+  if(!f) return;
+  const rd = new FileReader();
+  rd.onload = ()=>{
+    try{ snap(); applyState(JSON.parse(rd.result), ()=>stat('控えを読み込んだ')); }
+    catch(err){ stat('この JSON は読めなかった'); }
+  };
+  rd.readAsText(f);
+}
+document.getElementById('saveJson').onclick = saveJSON;
+document.getElementById('loadJson').onclick = ()=> document.getElementById('jsonFile').click();
+document.getElementById('jsonFile').addEventListener('change', e=>{
+  loadJSONFile(e.target.files[0]); e.target.value = '';
+});
+
+/* ── 戻す／やり直す ── */
+const UNDO = [], REDO = [];
+function snap(){
+  const j = JSON.stringify(stateToJSON(false));
+  if(UNDO.length && UNDO[UNDO.length-1] === j) return;   // 変わっていないなら積まない
+  UNDO.push(j); if(UNDO.length > 40) UNDO.shift();
+  REDO.length = 0;
+}
+let lastSnap = 0;
+function snapThrottled(){                                 // 打ち込み中に積み過ぎない
+  const n = performance.now(); if(n - lastSnap < 600) return; lastSnap = n; snap();
+}
+function undo(){
+  if(!UNDO.length){ stat('これ以上は戻れない'); return; }
+  REDO.push(JSON.stringify(stateToJSON(false)));
+  applyState(JSON.parse(UNDO.pop()), ()=>stat('戻した'));
+}
+function redo(){
+  if(!REDO.length){ stat('やり直すものが無い'); return; }
+  UNDO.push(JSON.stringify(stateToJSON(false)));
+  applyState(JSON.parse(REDO.pop()), ()=>stat('やり直した'));
+}
+/* ⚠️ スナップショットは【操作の直前】に取る。capture フェーズで拾えば、
+   実際の処理より先に必ず走る（＝押した瞬間の状態が残る）。 */
+document.getElementById('panel').addEventListener('pointerdown', e=>{
+  if(e.target.closest('button, input[type=range], input[type=color]')) snap();
+}, true);
+document.getElementById('panel').addEventListener('keydown', e=>{
+  if(e.target.matches('input[type=range]')) snap();
+}, true);
+canvas.addEventListener('pointerdown', snap, true);       // アンカーを置く/引っぱる前
+document.getElementById('txt').addEventListener('beforeinput', snapThrottled);
+window.addEventListener('keydown', e=>{
+  if(!(e.metaKey || e.ctrlKey) || (e.key||'').toLowerCase() !== 'z') return;
+  // ⚠️ 打ち込み欄の中は、ブラウザの取り消しに任せる（横取りすると文字が戻せなくなる）
+  if(/^(TEXTAREA|INPUT)$/.test(e.target.tagName)) return;
+  e.preventDefault();
+  if(e.shiftKey) redo(); else undo();
 });
 
 function resize(){ const dpr=Math.min(devicePixelRatio,2);
@@ -1324,7 +1478,8 @@ const I18N = {
   // 版面（書き出す大きさ）
   '版面（書き出す大きさ）':'Frame (export size)','画面のまま':'Screen','版面で':'Frame',
   '正方形':'Square','たて 4:5':'4:5 portrait','よこ 16:9':'16:9','たて 9:16':'9:16','長辺':'Long side',
-  '絵の大きさ':'Object size',
+  '絵の大きさ':'Object size','絵のよこ':'Object X','絵のたて':'Object Y',
+  '控え（設定の保存）':'Save / load','設定を保存（JSON）':'Save settings (JSON)','設定を読み込む':'Load settings',
   // 刷り（字のインク）
   '刷り':'Print','字の色数':'Ink colors',
   '字 1':'Ink 1','字 2':'Ink 2','字 3':'Ink 3','字 4':'Ink 4','字 5':'Ink 5','字 6':'Ink 6',
