@@ -29,9 +29,6 @@
   input, textarea, select{ user-select:text; -webkit-user-select:text; }
   #stage{ position:fixed; inset:0; }
   canvas{ display:block; width:100%; height:100%; cursor:crosshair; }
-  /* ⭐ 選ぶ道具のときは矢印。⚠️ 上の crosshair は【描く道具】のためのもので、
-     選択中まで＋になっていると「いま何ができるか」が読めない */
-  body.tool-select canvas{ cursor:default; }
 
   /* ── HUD ── */
   #hud{ position:fixed; left:18px; top:16px; font-family:ui-monospace,Menlo,monospace;
@@ -1255,16 +1252,6 @@
     <button class="mini" data-ab="2480,3508" style="flex:1">A4</button>
   </div>
   <div class="row"><label>地の色</label><input type="color" id="abBg" value="#ffffff" style="flex:1"></div>
-  <!-- ⭐ 枠の地を「単色／グラデ／放射」で選ぶ。
-       ⚠️ 木下＝「グラデの切り替えはどこ？」＝枠は下、塗りの切替は最上部にあって
-          パネルを行き来しないと使えなかった。ここで完結させる。
-       ⚠️ 足したのは【この1行だけ】。セクションの位置も構造も動かしていない。
-       ⭐ 押すと上の「塗り / 線」の設定をそのまま枠へ当てる＝式を二重に持たない。 -->
-  <div class="seg" id="abFillMode">
-    <button data-v="solid" class="on">単色</button>
-    <button data-v="linear">グラデ</button>
-    <button data-v="radial">放射</button>
-  </div>
   <div class="seg" id="abBgOn"><button data-v="1" class="on">地を塗る</button><button data-v="0">透明</button></div>
 
   <h2>BOARD</h2>
@@ -1512,18 +1499,6 @@ function hookList(){                              // 割り込みの一覧（開
 const cv = document.getElementById('cv');
 paper.setup(cv);
 const { Path, Point, Group, Color, Rectangle, Size } = paper;
-
-/* ⭐ 枠（アートボード）を「選んでいる」状態。
-   🔴⚠️ ここで宣言するのが要点。前に 4850行目あたりで let 宣言して、
-      2300行目あたりから typeof で参照したら【一時的死角(TDZ)】に落ちて
-      ReferenceError になり、起動時の描画が止まって画面が真っ暗になった（2026-08-03）。
-      ⚠️ typeof は var / 関数宣言なら安全だが、let / const には効かない。 */
-let abFocus = false;
-function abSetFocus(on){
-  if(abFocus === on) return;
-  abFocus = on;
-  if(typeof guides === 'function') guides();
-}
 
 const S = {
   tool:'select',                                 // ⭐ 既定は選択ツール（触ってすぐ掴める側）
@@ -2285,39 +2260,8 @@ function selDownBase(e){                          // ⚠️ 呼ぶのは台帳�
          （元の形も組み方も粒じしんが覚えている）。 */
     if(typeof tzPv !== 'undefined' && tzPv.on && tzPv.temp.length &&
        typeof tzCommitPreview === 'function') tzCommitPreview();
-    /* ⭐ ボード（何もない所）を触ったら枠の選択も外す。
-       木下＝「他ボードクリックしたら選択外れるようにしてね」。
-       ⚠️ 外さないと、図形を触っていないつもりで塗ると枠の地が変わってしまう。 */
-    abSetFocus(false);
     marqueeStart = e.point; guides(); return;
   }
-  /* 🔴⭐ 他の図形へ移ったときも、見えていた粒を確定する。
-     木下の指示は「**ボードを触ったり【他に移動】すると確定**」だったのに、
-     確定していたのは【何もない所を触ったとき】だけで、**「他に移動」の半分が抜けていた**。
-     ⚠️ そのため preview のまま別の図形を触ると、前の図形の粒は確定されずに
-        preview ごと消え、新しい図形に移っていた
-        （木下＝「左のオブジェクトを触ったあと右を触ると、粒が右に適応され左の粒がなくなる」）。
-     ⚠️ 触ったものが preview 自身なら確定しない（自分に移るだけなので畳む必要がない）。 */
-  if(typeof tzPv !== 'undefined' && tzPv.on && tzPv.temp.length &&
-     typeof tzCommitPreview === 'function'){
-    const root = tzRootOf(h.item);
-    if(!tzPv.temp.includes(root) && !tzPv.temp.includes(h.item)){
-      const n = tzCommitPreview();
-      /* 🔴⭐ 確定したら preview は【切る】。
-         ⚠️ 入れたままだと、次に触った図形にすぐ preview の粒が乗って
-            「粒がコピーされた」ように見える（木下＝「他のオブジェクトを触ると
-            その粒がそのままコピーされる」）。
-         ⭐ 新しいものを置いたとき（tzOnNewObject）と同じ扱いに揃える＝
-            粒にするのは【自分で選んだときだけ】。 */
-      const pvBox = document.getElementById('tzPv');
-      if(pvBox && pvBox.checked){ pvBox.checked = false; }
-      tzPv.on = false;
-      if(typeof tzPvSyncUI === 'function') tzPvSyncUI();
-      tzPvClear(); if(typeof tzPvSafety === 'function') tzPvSafety();
-      if(n) stat('見えていた粒を確定しました（' + n + '個）— preview は切りました');
-    }
-  }
-  abSetFocus(false);            /* 図形を触ったら枠の選択は外す */
   // ⭐ 粒に当たったら【グループごと】掴む。
   //   ⚠️ hitTest はいちばん奥のもの（粒1個の矩形）を返すので、そのままだと
   //     粒1個だけが選ばれて1個だけ動いていた＝「選択できない」「移動が少ししかできない」。
@@ -2712,12 +2656,6 @@ function toolCursor(t){ return TOOL_CURSOR[t] || 'default'; }
 function setTool(t){
   finishPen();
   S.tool = t;
-  /* ⚠️ 道具を替えたら、回転カーソルの残りを必ず消す。
-     ⭐ 選ぶ道具＝矢印（body.tool-select）／描く道具＝CSS既定の crosshair。
-     ⚠️ ボタンだけに付けるとキーボードでの切替を取りこぼす。ここ1箇所で決める。 */
-  if(typeof _rotCur !== 'undefined') _rotCur = false;
-  cv.style.cursor = '';
-  document.body.classList.toggle('tool-select', t === 'select');
   document.querySelectorAll('#tools button').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
   const help = {
     pen:'ペン：クリック＝角／ドラッグ＝曲線<br>始点をクリックで閉じる・Enterで確定',
@@ -2876,25 +2814,6 @@ function applyPaint(){                       // 選択中の図形に、いま�
       }
     }
   });
-  /* ⭐⭐ 枠を選んでいるときは【枠の地】に効かせる。
-     ⚠️ 乗せられるのは単色・グラデ・放射まで（金属と粒は図形1つずつに焼く作り）。 */
-  if(!sel.length && abFocus){
-    const a = abCur();
-    if(a){
-      const md = (S.fillMode === 'linear' || S.fillMode === 'radial') ? S.fillMode : 'solid';
-      a.bg = S.fill || a.bg;
-      a.fill = (md === 'solid') ? null : {
-        mode: md,
-        stops: (S.stops || []).map(o => ({ c:o.c, t:o.t })),
-        ang: +(document.getElementById('gAng')?.value ?? 90),
-      };
-      a.bgOn = true;                 /* 塗った以上は地を出す（触れるのに効かない、を作らない） */
-      document.querySelectorAll('#abBgOn button').forEach(b => b.classList.toggle('on', b.dataset.v === '1'));
-      drawGrid(); guides();
-      stat(md === 'solid' ? '枠の地を塗った' : '枠の地にグラデを入れた');
-      return;
-    }
-  }
   guides();
   if(!sel.length) stat('図形を選んでから、塗り／線を切り替えて色を当てる');
 }
@@ -3513,16 +3432,13 @@ document.getElementById('bSave').onclick = () => {
                // ⭐ 粒のつまみ（スライダー14＋柄＋パレット＋色）も保存する。
                //   ⚠️ 入れていなかったので、開き直すと粒パネルが既定に戻っていた
                //     （かけた粒そのものは図形として残るが、続きの調整ができない）。
-               tz: (typeof tzSettingsSnapshot === 'function') ? tzSettingsSnapshot() : null,
-               txt: (typeof txtSnapshot === 'function') ? txtSnapshot() : null },
+               tz: (typeof tzSettingsSnapshot === 'function') ? tzSettingsSnapshot() : null },
     // ⭐ 自動保存と同じく【粒抜き＋作り方】で書き出す。増やすときは両方に足すこと。
     ...(() => { const r = exportArtWithoutGrains(); return { art: r.art, grains: r.grains }; })(),
   };
   artLayer.children.forEach((c,i) => c.selected = keep[i]);
-  /* ⭐ 初期のファイル名に日付を入れる＝同じ名前で上書きして失う事故を減らす */
-  const d = new Date(), pz = n => String(n).padStart(2,'0');
-  const nm = `sakuji_${d.getFullYear()}${pz(d.getMonth()+1)}${pz(d.getDate())}-${pz(d.getHours())}${pz(d.getMinutes())}.json`;
-  dlPick(new Blob([JSON.stringify(data)], {type:'application/json'}), nm);
+  dl(new Blob([JSON.stringify(data)], {type:'application/json'}), 'sakuji.json');
+  stat('保存しました');
 };
 document.getElementById('bLoad').onclick = () => document.getElementById('fileJSON').click();
 document.getElementById('fileJSON').addEventListener('change', e => {
@@ -3551,7 +3467,6 @@ document.getElementById('fileJSON').addEventListener('change', e => {
       if(typeof abSync === 'function') abSync();
       if(typeof refreshStops === 'function') refreshStops();
       if(s.tz && typeof tzSettingsRestore === 'function') tzSettingsRestore(s.tz);
-      if(s.txt && typeof txtRestore === 'function') txtRestore(s.txt);
       drawGrid(); guides();
       stat('読み込みました');
       // ⭐ 粒は【作り方】から作り直す。古いファイル（grains が無い）はそのまま実体が入っている
@@ -3569,7 +3484,6 @@ document.getElementById('fileSVG').addEventListener('change', e => {
   rd.onload = () => {
     snapshot();
     artLayer.activate();
-    tzOnNewObject();                 /* ⭐ 取り込んだものも「新しいもの」＝単色から */
     artLayer.importSVG(rd.result, {
       expandShapes:true,
       onLoad:(item)=>{ item.position = paper.view.center; item.selected = true; guides(); stat('SVG 取り込み'); }
@@ -3578,49 +3492,10 @@ document.getElementById('fileSVG').addEventListener('change', e => {
   rd.readAsText(f);
   e.target.value = '';
 });
-/* ⭐ 保存＝Mac の保存ダイアログ（保存先とファイル名を選べる）。
-   木下＝「JSON保存時に保存先とファイル名変更できるように、mac のあのフォルダ指定の画面を入れて」。
-   ⚠️ 使えるのは File System Access API のあるブラウザだけ（Chrome / Edge）。
-      Safari には無いので、その時は【いままで通りダウンロード】へ落とす＝どの環境でも保存はできる。
-   ⚠️ ダイアログはクリックの流れの中でしか開けない（ユーザー操作が要る）。
-      ボタンの onclick から呼ぶ限り問題ない。
-   ⚠️ キャンセルは失敗ではない。AbortError は黙って何もしない（エラー表示を出さない）。 */
-/* ⚠️⚠️ dl() は【今まで通り】のダウンロード。共用なので触らない。
-   🔴 一度これをダイアログ版にしたが、次の2箇所で壊れることが分かって戻した：
-     ・枠ぜんぶの SVG 書き出し＝forEach の中で呼ぶので、ダイアログが枚数ぶん
-       同時に開こうとして全部失敗する
-     ・PNG 書き出し＝toBlob のコールバックの中なので、クリックの流れが切れていて開けない
-   ⭐ ダイアログを出すのは【1回だけ・クリック直後】に呼ぶ JSON 保存に限る → dlPick() */
 function dl(blob, name){
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = name; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
-}
-/* ⭐ 保存先とファイル名を選べる版（Mac の保存ダイアログ）。
-   ⚠️ 使えるのは File System Access API のあるブラウザだけ（Chrome / Edge）。
-      Safari には無いので dl() へ落とす＝どの環境でも保存はできる。
-   ⚠️ 取り消し（AbortError）は失敗ではない。黙って何もしない。 */
-async function dlPick(blob, name){
-  if(window.showSaveFilePicker){
-    const dot = name.lastIndexOf('.');
-    const ext = dot > 0 ? name.slice(dot) : '';
-    const mime = blob.type || 'application/octet-stream';
-    try{
-      const h = await window.showSaveFilePicker({
-        suggestedName: name,
-        types: ext ? [{ description: ext.slice(1).toUpperCase(), accept: { [mime]: [ext] } }] : undefined,
-      });
-      const w = await h.createWritable();
-      await w.write(blob);
-      await w.close();
-      if(typeof stat === 'function') stat('保存しました — ' + h.name);
-      return;
-    }catch(err){
-      if(err && err.name === 'AbortError') return;      /* 取り消しただけ */
-      /* ⚠️ 何かで失敗しても保存できないと困るので、下のダウンロードへ落ちる */
-    }
-  }
-  dl(blob, name);          /* ⭐ ダイアログが使えない／失敗したときは、いままで通り落とす */
 }
 
 /* ══ 画像を置く ══
@@ -3628,7 +3503,6 @@ async function dlPick(blob, name){
    選択パスでマスクすれば「文字の形に画像を流し込む」ことができる。 */
 document.getElementById('bImgLoad').onclick = () => document.getElementById('fileImg').click();
 document.getElementById('fileImg').addEventListener('change', e => {
-  tzOnNewObject();                   /* ⭐ 置いた画像も「新しいもの」＝単色から */
   const f = e.target.files[0]; if(!f) return;
   const rd = new FileReader();
   rd.onload = () => {
@@ -4650,30 +4524,6 @@ function pvApply(kind){
 /* ⚠️ キーの名前が研究版（sakuji_grad_tk）のままだった＝本ちゃんなのに研究版の名前で保存していた。
    ⭐ 本ちゃんの名前に変える。⚠️ ただし名前を変えるだけだと【いま保存されている作業が読めなくなる】。
       古い名前も読みに行き、読めたら次の保存から新しい名前で書く（古い方は消さない）。 */
-
-/* ⭐ TEXT（書体・ウェイト・サイズ・字間・行間・縦横組）を覚える。
-   ⚠️ ここに入れていなかったので、開き直すと 900 / 108 / 0 に戻っていた
-      （木下＝「テキストのデフォルトとか俺調整していた気がするけど」）。
-   ⚠️⚠️ 自動保存と JSON 保存の【両方】から呼ぶ。片方だけだと必ず食い違う。 */
-const TXT_IDS = ['tfont','tweight','tsize','tracking','leading'];
-function txtSnapshot(){
-  const o = {};
-  TXT_IDS.forEach(id => { const e = document.getElementById(id); if(e) o[id] = e.value; });
-  const v = document.querySelector('#tvert button.on');
-  if(v) o.tvert = v.dataset.v;
-  return o;
-}
-function txtRestore(t){
-  if(!t) return;
-  TXT_IDS.forEach(id => {
-    const e = document.getElementById(id); if(!e || t[id] === undefined) return;
-    e.value = t[id];
-    const lab = e.parentElement?.querySelector('.val'); if(lab) lab.textContent = e.value;
-  });
-  if(t.tvert !== undefined)
-    document.querySelectorAll('#tvert button').forEach(b => b.classList.toggle('on', b.dataset.v === t.tvert));
-}
-
 const AUTOKEY = 'sakuji_autosave_v1';
 const AUTOKEY_OLD = 'sakuji_grad_tk_autosave_v1';
 let _saveTimer = null;
@@ -4754,8 +4604,7 @@ function autoSave(){
                // ⭐ 粒のつまみ（スライダー14＋柄＋パレット＋色）も保存する。
                //   ⚠️ 入れていなかったので、開き直すと粒パネルが既定に戻っていた
                //     （かけた粒そのものは図形として残るが、続きの調整ができない）。
-               tz: (typeof tzSettingsSnapshot === 'function') ? tzSettingsSnapshot() : null,
-               txt: (typeof txtSnapshot === 'function') ? txtSnapshot() : null },
+               tz: (typeof tzSettingsSnapshot === 'function') ? tzSettingsSnapshot() : null },
         ...(() => { const r = exportArtWithoutGrains(); return { art: r.art, grains: r.grains }; })(),
       };
       artLayer.children.forEach((c,i) => c.selected = keep[i]);
@@ -4839,9 +4688,6 @@ function autoLoad(){
       // ⭐ 粒のつまみも戻す。⚠️ S に混ざらないよう、tz は S へ入れずここで消して使う
       const tz = d.settings.tz; delete S.tz;
       if(tz && typeof tzSettingsRestore === 'function') tzSettingsRestore(tz);
-      /* ⭐ TEXT も戻す。⚠️ S に混ざらないよう、tz と同じく S から消して使う */
-      const txt = d.settings.txt; delete S.txt;
-      if(txt && typeof txtRestore === 'function') txtRestore(txt);
       if(S.stops && S.stops.length) { if(typeof refreshStops === 'function') refreshStops(); }
       if(typeof syncFS === 'function') syncFS();
       if(typeof setBG === 'function') { const b = S.bg; S.bg = null; setBG(b || 'light'); }
@@ -4896,26 +4742,6 @@ function abCur(){ return S.abs[S.abSel] || S.abs[0]; }
 function abRectOf(a){ return new Rectangle(a.x - a.w/2, a.y - a.h/2, a.w, a.h); }
 function abRect(){ return abRectOf(abCur()); }
 
-/* ⭐ 枠の地の塗り。⚠️ 枠は「いま選んでいる図形」ではないので paintOf をそのまま呼べない
-   （paintOf は S＝画面のいまの設定を見る）。枠は自分の設定を持つので、そちらから作る
-   ＝別の枠を選んでも混ざらない。⚠️ 式は gradLine を共用＝2箇所に書かない。 */
-function abPaintOf(a, rect){
-  try{
-    if(!a || !a.fill) return (a && a.bg) ? a.bg : '#ffffff';
-    const stops = (a.fill.stops || []).map(o => [o.c, o.t]);
-    if(!stops.length) return a.bg || '#ffffff';
-    if(a.fill.mode === 'radial'){
-      const b = rect.bounds;
-      return { gradient:{ stops, radial:true }, origin: b.center,
-               destination: b.center.add(new Point(Math.max(b.width, b.height)/2, 0)) };
-    }
-    const { origin, destination } = gradLine(rect, +(a.fill.ang ?? 90));
-    return { gradient:{ stops }, origin, destination };
-  }catch(err){
-    /* ⚠️ ここで例外を出すと地が描かれず【画面が真っ暗】になる。必ず色を返す */
-    return (a && a.bg) ? a.bg : '#ffffff';
-  }
-}
 function drawArtboard(){
   gridLayer.activate();
   const Z = paper.view.zoom;
@@ -4925,7 +4751,7 @@ function drawArtboard(){
     const a = abCur();
     if(!a || a.bgOn !== false){
       const bg = new Path.Rectangle(paper.view.bounds.expand(80/Z));
-      bg.fillColor = abPaintOf(a, bg);
+      bg.fillColor = (a && a.bg) ? a.bg : '#ffffff';
       bg.sendToBack();
     }
     artLayer.activate();
@@ -4933,14 +4759,10 @@ function drawArtboard(){
   }
   S.abs.forEach((a, i) => {
     const R = abRectOf(a), cur = (i === S.abSel);
-    if(a.bgOn){ const bg = new Path.Rectangle(R); bg.fillColor = abPaintOf(a, bg); bg.sendToBack(); }
+    if(a.bgOn){ const bg = new Path.Rectangle(R); bg.fillColor = a.bg; bg.sendToBack(); }
     const f = new Path.Rectangle(R);
-    /* ⭐ 枠を「選んでいる」ことが線で分かるようにする。
-       ⚠️ 見た目が変わらないと、選べたのか分からない（木下＝「どこだろ？」）。 */
-    const picked = cur && abFocus;
     f.strokeColor = cur ? ACC : ((S.bg === 'light') ? 'rgba(10,10,10,.28)' : 'rgba(255,255,255,.24)');
-    f.strokeWidth = (picked ? 3.2 : cur ? 1.8 : 1)/Z; f.fillColor = null;
-    if(picked){ f.dashArray = null; f.shadowColor = ACC; f.shadowBlur = 8/Z; }
+    f.strokeWidth = (cur ? 1.8 : 1)/Z; f.fillColor = null;
     const t = new paper.PointText(new Point(R.x, R.y - 9/Z));
     t.content = a.name + '   ' + a.w + ' × ' + a.h;
     t.fillColor = f.strokeColor; t.fontSize = 11/Z; t.fontFamily = 'ui-monospace, monospace';
@@ -4959,7 +4781,7 @@ function renderAbList(){
     b.style.cssText = 'display:block;width:100%;text-align:left;margin:2px 0;padding:6px 8px;' +
       (i === S.abSel ? 'background:#f2f2f2;color:#111;' : '');
     b.innerHTML = '<b>' + a.name + '</b> <span style="opacity:.55;font-size:10px">' + a.w + '×' + a.h + '</span>';
-    b.addEventListener('click', () => { S.abSel = i; abSetFocus(false); abSync(); });
+    b.addEventListener('click', () => { S.abSel = i; abSync(); });
     el.appendChild(b);
   });
 }
@@ -4969,13 +4791,7 @@ function abSync(){
   if(w) w.value = a.w; if(h) h.value = a.h; if(bg) bg.value = a.bg;
   document.querySelectorAll('#abOn button').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === !!S.abOn));
   document.querySelectorAll('#abBgOn button').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === !!a.bgOn));
-  /* ⚠️ 枠ごとに種類が違うので、選び直したらボタンも合わせる（表示が嘘にならない） */
-  const md = a.fill ? a.fill.mode : 'solid';
-  document.querySelectorAll('#abFillMode button').forEach(b => b.classList.toggle('on', b.dataset.v === md));
-  /* 🔴 guides() も呼ぶ。⚠️ ハンドルは uiLayer に描いていて、掃除しているのは guides だけ。
-     drawGrid だけだと【枠を「出さない」にしてもハンドルが古い位置に残る】
-     （木下＝「アートボード枠を出す／出さない、バグってるね」2026-08-03）。 */
-  renderAbList(); drawGrid(); guides();
+  renderAbList(); drawGrid();
 }
 function abName(){ return String(S.abs.length + 1).padStart(2, '0'); }
 document.getElementById('abAdd')?.addEventListener('click', () => {
@@ -4992,50 +4808,11 @@ document.getElementById('abDel')?.addEventListener('click', () => {
   if(S.abs.length <= 1){ stat('枠は1枚以上必要'); return; }
   S.abs.splice(S.abSel, 1); S.abSel = Math.max(0, S.abSel - 1); abSync(); stat('枠を削除');
 });
-/* ⚠️ 数値で大きさを変えたときも guides を呼ぶ＝ハンドルが古い位置に取り残されない */
-document.getElementById('abW')?.addEventListener('input', e => { abCur().w = Math.max(1, +e.target.value||1); renderAbList(); drawGrid(); guides(); });
-document.getElementById('abH')?.addEventListener('input', e => { abCur().h = Math.max(1, +e.target.value||1); renderAbList(); drawGrid(); guides(); });
+document.getElementById('abW')?.addEventListener('input', e => { abCur().w = Math.max(1, +e.target.value||1); renderAbList(); drawGrid(); });
+document.getElementById('abH')?.addEventListener('input', e => { abCur().h = Math.max(1, +e.target.value||1); renderAbList(); drawGrid(); });
 document.getElementById('abBg')?.addEventListener('input', e => { abCur().bg = e.target.value; drawGrid(); });
-/* ⭐ 枠の地の種類（単色／グラデ／放射）。
-   ⚠️ 上の「塗り / 線」と同じ設定を使う＝ストップも角度もそこで組んだものがそのまま乗る。
-      ここに別のグラデUIを作らない（2箇所に持つと必ず食い違う）。
-   ⚠️ 枠を選んでいなくても、選んでいる枠に当てる（ARTBOARD の欄なので迷いようがない）。 */
-document.querySelectorAll('#abFillMode button').forEach(b =>
-  b.addEventListener('click', () => {
-    document.querySelectorAll('#abFillMode button').forEach(x => x.classList.toggle('on', x === b));
-    const a = abCur(); if(!a) return;
-    const md = b.dataset.v;
-    if(md === 'solid'){
-      a.fill = null;
-      a.bg = document.getElementById('abBg')?.value || a.bg;
-    }else{
-      a.fill = {
-        mode: md,
-        stops: (S.stops || []).map(o => ({ c:o.c, t:o.t })),
-        ang: +(document.getElementById('gAng')?.value ?? 90),
-      };
-      if(!a.fill.stops.length){ a.fill = null; stat('先に「塗り / 線」でグラデを組む'); }
-    }
-    a.bgOn = true;
-    document.querySelectorAll('#abBgOn button').forEach(x => x.classList.toggle('on', x.dataset.v === '1'));
-    drawGrid(); guides();
-    stat(md === 'solid' ? '枠の地＝単色' : (md === 'linear' ? '枠の地＝グラデ' : '枠の地＝放射'));
-  }));
-/* ⭐ 「塗り / 線」でストップや角度を組み直したら、グラデにしてある枠にも反映する */
-hook('stops', '枠の地のグラデも追いかける', () => {
-  const a = abCur();
-  if(!a || !a.fill) return;
-  a.fill.stops = (S.stops || []).map(o => ({ c:o.c, t:o.t }));
-  a.fill.ang = +(document.getElementById('gAng')?.value ?? a.fill.ang ?? 90);
-  drawGrid();
-});
-
 document.querySelectorAll('#abOn button').forEach(b =>
-  b.addEventListener('click', () => {
-    S.abOn = b.dataset.v === '1';
-    abSetFocus(false);      /* ⭐ 切り替えたら枠の選択は外す（出さない時は掴めないので残さない） */
-    abSync();
-  }));
+  b.addEventListener('click', () => { S.abOn = b.dataset.v === '1'; abSync(); }));
 document.querySelectorAll('#abBgOn button').forEach(b =>
   b.addEventListener('click', () => { abCur().bgOn = b.dataset.v === '1'; abSync(); }));
 document.querySelectorAll('[data-ab]').forEach(b =>
@@ -5565,25 +5342,9 @@ function abLabelHit(pt){
   }
   return -1;
 }
-/* ⭐ 枠線の上を掴んだら「枠を選ぶ」。⚠️ 枠の中は素通し＝図形の操作を邪魔しない */
-hook('down', '枠を選ぶ', e => {
-  if(S.tool !== 'select' || !S.abOn) return false;
-  const tol = tzTol(6), R = abRect();
-  const nearEdge =
-    ((Math.abs(e.point.x - R.left) < tol || Math.abs(e.point.x - R.right) < tol) &&
-      e.point.y > R.top - tol && e.point.y < R.bottom + tol) ||
-    ((Math.abs(e.point.y - R.top) < tol || Math.abs(e.point.y - R.bottom) < tol) &&
-      e.point.x > R.left - tol && e.point.x < R.right + tol);
-  if(!nearEdge) return false;
-  artLayer.children.forEach(c => c.selected = false);
-  abSetFocus(true);
-  stat('枠を選んだ — 塗り／グラデがこの枠の地に効く');
-  return true;
-}, 18);
 hook('down', '枠のラベル', e => {
   const i = abLabelHit(e.point);
   if(i < 0) return false;
-  abSetFocus(true);
   S.abSel = i;
   abDrag = { i, dx: S.abs[i].x - e.point.x, dy: S.abs[i].y - e.point.y };
   abSync();
@@ -5602,223 +5363,6 @@ hook('up', '枠のラベル', () => {
   if(!abDrag) return false;
   abDrag = null; renderAbList(); drawGrid(); return true;
 }, 20);
-
-/* ══ 枠（アートボード）をドラッグで大きさを変える ══
-   ⭐ 木下＝「アートボードもマウスでドラッグして自由にサイズ変更できるように」。
-      いままでは数値入力（幅・高さ）でしか変えられなかった。
-   ⭐ 図形の拡大縮小と【同じ持ち方】にする＝8つのハンドル・Shift で比を保つ。
-   ⚠️⚠️ いちばんの危険＝【枠を掴めるようにすると、中の図形が掴みにくくなる】。
-      潰し方は3つ：
-        ① 図形を1つでも選んでいる間は、枠のハンドルを出さない（拡大縮小ハンドルと重ならない）
-        ② 枠を「出さない」設定のときは掴めない
-        ③ ハンドルは【角と辺の上だけ】＝枠の中は今まで通り素通しする
-   ⚠️ 台帳（hook）に登録する。上書きしない。順番は 15＝グラデ(10)の後、枠のラベル(20)の前。 */
-function abHandlesOn(){
-  /* ⚠️ 何も選んでいないだけで出すと、図形を外したつもりが枠の操作に化ける
-     （木下＝「どれだ？」）。枠線かラベルを掴んだ時だけ出す。 */
-  return S.tool === 'select' && S.abOn && abFocus && selected().length === 0 && !!abCur();
-}
-function drawAbHandles(){
-  if(!abHandlesOn()) return;
-  const R = abRect();
-  uiLayer.activate();
-  const Z = paper.view.zoom, r = 4.2/Z;
-  BH.forEach(k => {
-    const pt = bhPoint(R, k);
-    const h = new Path.Rectangle(new Rectangle(pt.x-r, pt.y-r, r*2, r*2));
-    /* ⚠️ 図形の拡大縮小ハンドル（白地）と見分けが付くように、枠のほうは塗りつぶす */
-    h.fillColor = ACC; h.strokeColor = '#fff'; h.strokeWidth = 1.2/Z;
-  });
-  artLayer.activate();
-}
-hook('guides', '枠のハンドルを描く', () => drawAbHandles());
-
-let abhDrag = null;
-hook('down', '枠のハンドル', e => {
-  if(!abHandlesOn()) return false;
-  const R = abRect(), tol = tzTol(8);
-  for(const k of BH){
-    if(e.point.getDistance(bhPoint(R, k)) < tol){
-      abhDrag = { k, R: R.clone() };
-      stat('枠の大きさを変える — Shift で比を保つ');
-      return true;
-    }
-  }
-  return false;
-}, 15);
-hook('drag', '枠のハンドル', e => {
-  if(!abhDrag) return false;
-  const a = abCur(), k = abhDrag.k, R = abhDrag.R;
-  const anc = bhAnchor(R, k);                    // 掴んだ点の反対側＝動かない点
-  let x1 = anc.x, y1 = anc.y, x2 = e.point.x, y2 = e.point.y;
-  /* ⚠️ 辺のハンドルは片方向だけ動かす（もう片方は元のまま）*/
-  if(k === 'n' || k === 's'){ x1 = R.left; x2 = R.right; }
-  if(k === 'e' || k === 'w'){ y1 = R.top;  y2 = R.bottom; }
-  let w = Math.abs(x2 - x1), h = Math.abs(y2 - y1);
-  /* ⭐ Shift＝縦横の比を保つ（角のときだけ。辺は片方向なので意味が無い）*/
-  if(e.modifiers.shift && k.length === 2 && R.width > 0 && R.height > 0){
-    const kk = Math.max(w / R.width, h / R.height);
-    w = R.width * kk; h = R.height * kk;
-    x2 = x1 + Math.sign(x2 - x1 || 1) * w;
-    y2 = y1 + Math.sign(y2 - y1 || 1) * h;
-  }
-  a.w = Math.max(1, Math.round(w));
-  a.h = Math.max(1, Math.round(h));
-  a.x = Math.round((x1 + x2) / 2);
-  a.y = Math.round((y1 + y2) / 2);
-  /* ⭐ 数値の欄も一緒に動かす＝2箇所で食い違わない */
-  const wEl = document.getElementById('abW'), hEl = document.getElementById('abH');
-  if(wEl) wEl.value = a.w;
-  if(hEl) hEl.value = a.h;
-  drawGrid(); guides();
-  return true;
-}, 15);
-hook('up', '枠のハンドル', () => {
-  if(!abhDrag) return false;
-  abhDrag = null;
-  abSync();                                      /* 一覧・数値欄・描画をまとめて合わせ直す */
-  stat('枠の大きさを変えた');
-  return true;
-}, 15);
-
-
-/* ══ ARRANGE をマウスとキーボードでもできるようにする ══
-   ⭐ 木下＝「Arrange が全部イラレや Figma 同様、マウスやキーボードでできるように。
-      左右反転とか角度とか、普通イラレや Figma でこのボタンを押さなくてできるでしょ？
-      一応このパネルは残す前提で」
-   ⭐ パネルは残す。同じことを【手でもできる】ようにするだけ＝どちらを触っても同じ結果になる。
-   ⚠️ だから処理は増やさない。既にあるボタンの中身を呼ぶ（2箇所に書くと片方だけ直って食い違う）。 */
-
-/* ── ① マウスで回す ────────────────────────────────
-   ⭐ イラレ／Figma と同じ＝【角ハンドルの少し外】を掴むと回転になる。
-   ⚠️ ハンドルそのものは拡大縮小なので、そこには被せない（外側の輪だけ）。 */
-let rotDrag = null;
-function hitRotate(pt){
-  if(S.tool !== 'select') return null;
-  const b = selBounds(); if(!b) return null;
-  const tol = tzTol(8), Z = paper.view.zoom;
-  for(const k of ['nw','ne','se','sw']){
-    const d = pt.getDistance(bhPoint(b, k));
-    /* 内側＝拡大縮小、その外の輪＝回転 */
-    if(d > tol && d < tol + 20/Z) return { center: b.center.clone(), start: pt };
-  }
-  return null;
-}
-hook('down', '回転（角の外）', e => {
-  const r = hitRotate(e.point);
-  if(!r) return false;
-  snapshot();
-  rotDrag = { center: r.center, prev: e.point.subtract(r.center).angle, items: selected().slice(), acc: 0 };
-  stat('回す — Shift で15°ずつ');
-  return true;
-}, 25);
-hook('drag', '回転（角の外）', e => {
-  if(!rotDrag) return false;
-  const ang = e.point.subtract(rotDrag.center).angle;
-  let d = ang - rotDrag.prev;
-  /* ⚠️ 角度は ±180 で折り返すので、そのまま引くと1周ぶん飛ぶ */
-  if(d > 180) d -= 360; if(d < -180) d += 360;
-  rotDrag.acc += d;
-  let step = d;
-  if(e.modifiers.shift){
-    /* ⭐ Shift＝15°刻み。溜めた角度を丸めて、その差ぶんだけ回す */
-    const snapped = Math.round(rotDrag.acc / 15) * 15;
-    step = snapped - (rotDrag.applied || 0);
-    rotDrag.applied = snapped;
-  }else{
-    rotDrag.applied = rotDrag.acc;
-  }
-  if(step){
-    rotDrag.items.forEach(it => { it.rotate(step, rotDrag.center); it.__rot = (it.__rot || 0) + step; });
-    guides();
-  }
-  rotDrag.prev = ang;
-  return true;
-}, 25);
-hook('up', '回転（角の外）', () => {
-  if(!rotDrag) return false;
-  rotDrag = null; guides(); stat('回した');
-  return true;
-}, 25);
-
-
-/* ⭐ 回転できる所に来たら【カーソルを変える】。
-   ⚠️ 木下＝「普通 Figma とかだと回転の UI が出てそこで回転できるくない？」
-      → Figma にも専用ウィジェットは無く、**角の少し外でカーソルが曲がった矢印に変わる**だけ。
-      その【変わる】を入れていなかったので、掴める場所が見えていなかった。
-   ⚠️ スペース（手のひら）や他のツールの時は横取りしない。 */
-const ROT_CURSOR = 'url("data:image/svg+xml;utf8,' +
-  encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">' +
-    '<g fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">' +
-    '<path d="M6 13a6 6 0 1 0 2-4.5"/><path d="M8 4v4.5h4.5"/></g>' +
-    '<g fill="none" stroke="#111" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' +
-    '<path d="M6 13a6 6 0 1 0 2-4.5"/><path d="M8 4v4.5h4.5"/></g></svg>') +
-  '") 12 12, auto';
-let _rotCur = false;
-cv.addEventListener('mousemove', ev => {
-  if(S.spaceDown || S.tool !== 'select' || rotDrag){ return; }
-  const pt = paper.view.viewToProject(new paper.Point(ev.offsetX, ev.offsetY));
-  const on = !!hitRotate(pt);
-  if(on === _rotCur) return;                 /* 変わった時だけ書き換える（毎回触ると重い） */
-  _rotCur = on;
-  /* 🔴 空文字に戻すと CSS の canvas{cursor:crosshair} に落ちて【＋のまま】になっていた
-     （木下＝「角度変更に合わせた後、戻るとマウスポインタが + になってしまっている」）。
-     ⭐ 選ぶ道具のときは矢印へ戻す。他の道具は元の crosshair のままでよい。 */
-  cv.style.cursor = on ? ROT_CURSOR : '';   /* ⭐ 外したら CSS（body.tool-select で矢印）に戻る */
-});
-
-
-/* ── ② Alt を押しながらドラッグ＝複製して動かす ──────────
-   ⭐ イラレ／Figma の標準。木下＝「複製はコピーペーストだけど」＝いまは手が2回要る。
-   ⚠️ 掴んだ瞬間に複製を作って【元をその場に残す】。動くのは複製のほう。 */
-let altDup = false;
-hook('down', 'Alt＋ドラッグで複製', e => {
-  if(S.tool !== 'select' || !e.modifiers.option) return false;
-  const sel = selected();
-  if(!sel.length) return false;
-  if(hitRotate(e.point) || (typeof hitBH === 'function' && hitBH(e.point))) return false;  /* ハンドルが先 */
-  snapshot();
-  artLayer.activate();
-  const copies = sel.map(it => { const c = it.clone(); c.selected = false; return c; });
-  /* ⭐ 複製を下に置いて、掴んでいる方（元）をそのまま動かす＝手の感触が変わらない */
-  copies.forEach(c => c.insertBelow(sel[0]));
-  altDup = true;
-  stat(`${sel.length}個を複製して動かす`);
-  return false;                    /* ⚠️ false＝この後の「通常の移動」に処理を渡す */
-}, 5);
-hook('up', 'Alt＋ドラッグで複製', () => {
-  if(!altDup) return false;
-  altDup = false; renderLayers(); return false;
-}, 5);
-
-/* ── ③ キーボード（イラレ／Figma に合わせる）──────────
-   ⚠️ 既にあるボタンを押すだけ＝処理を二重に書かない。 */
-window.addEventListener('keydown', e => {
-  const t = e.target.tagName, ty = (e.target.type || '').toLowerCase();
-  if(t === 'TEXTAREA' || (t === 'INPUT' && !/^(range|color|checkbox|radio|button|file|submit)$/.test(ty))) return;
-  const cmd = e.metaKey || e.ctrlKey;
-  const hit = id => { e.preventDefault(); document.getElementById(id)?.click(); };
-  /* 反転＝Figma と同じ ⇧H / ⇧V。⚠️ 素の V は選択ツールなので Shift 付きだけ拾う */
-  if(!cmd && e.shiftKey && e.key === 'H'){ return hit('bFlipH'); }
-  if(!cmd && e.shiftKey && e.key === 'V'){ return hit('bFlipV'); }
-  /* 重ね順＝イラレ／Figma と同じ ⌘⇧] 最前面 ／ ⌘⇧[ 最背面 ／ ⌘] ⌘[ 一段ずつ */
-  if(cmd && (e.key === ']' || e.code === 'BracketRight')){
-    e.preventDefault();
-    if(e.shiftKey) document.getElementById('bFront')?.click();
-    else { snapshot(); selected().forEach(it => it.bringToFront()); renderLayers(); }
-    return;
-  }
-  if(cmd && (e.key === '[' || e.code === 'BracketLeft')){
-    e.preventDefault();
-    if(e.shiftKey) document.getElementById('bBack')?.click();
-    else { snapshot(); selected().forEach(it => it.sendToBack()); renderLayers(); }
-    return;
-  }
-  /* 角度リセット＝⇧R（イラレにも Figma にも標準が無いので、覚えやすい方を当てる） */
-  if(!cmd && e.shiftKey && e.key === 'R'){ return hit('bReset'); }
-}, true);
-
 /* 枠を画面の中央へ呼び戻す（見失ったとき） */
 addEventListener('keydown', e => {
   if(e.key === '0' && (e.metaKey || e.ctrlKey)){
@@ -6787,9 +6331,6 @@ function retsubu(silent){
     //   ⚠️ 作り直しは粒ぶんのパスを毎回捨てて作るので重く、スライダーが飛んで見えていた。
     if(tzRepaint(old, o)){
       total += old.children ? old.children.length : 1;
-      /* ⚠️ 色だけの差し替えは作り直さないので、覚えている設定が古いまま残る。
-         ⭐ ここでも覚え直す＝選び直したときに巻き戻らない。 */
-      if(typeof tzSettingsSnapshot === 'function') old.__tzOpt = tzSettingsSnapshot();
       return;
     }
     let src = null;
@@ -6890,12 +6431,6 @@ function tzCommitPreview(){
     if(!g || !g.parent) return;
     const recipe = tzTextRecipeOf(it);        // ⭐ 文字なら作り方を覚えておく
     if(recipe){ g.__tzText = recipe; g.__tzAt = it.position.clone(); }
-    /* 🔴⭐ 確定するときは【いまのパネルの値】を覚え直す。
-       ⚠️ preview の粒は作られた時点の設定を持っている。そのあと字なりなどを触っても
-          覚えている値は古いままなので、確定→選び直しで【調整前に巻き戻って見えた】
-          （木下＝「字なりを調整していたのにまた93に戻る」）。
-       ⭐ 選んだ粒の値をパネルに戻す仕組み自体は正しいので、覚える側を今の値にそろえる。 */
-    if(typeof tzSettingsSnapshot === 'function') g.__tzOpt = tzSettingsSnapshot();
     delete g.__isPv;
     g.selected = false;
     if(it && it.parent){ delete it.__pvHidden; try { it.remove(); } catch(e){} }
