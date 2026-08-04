@@ -350,7 +350,9 @@
   <button class="big" id="exPng">PNG を出す</button>
   <button class="sub" id="exPngA">PNG を出す（地なし）</button>
   <button class="sub" id="exJson">JSON を出す（控え）</button>
-  <button class="sub" id="imJson">JSON を読む</button>
+  <button class="sub" id="imJson">JSON を読む（ファイルから）</button>
+  <div class="seg" id="works" style="flex-wrap:wrap;margin-top:6px"></div>
+  <div class="hint">⭐<b>作りかけをそのまま開く</b>（素材ごと入っている）。⚠️ いま置いているものは<b>上書きされる</b>ので、必要なら先に控えを出す。⌘Z で戻せる</div>
   <input type="file" id="jfile" accept="application/json,.json" style="display:none">
   <div class="hint">⭐<b>地なし</b>＝重ねるため（HARI や MAKU に持ち込む）。⭐控えには<b>素材の画像も入る</b>ので、これ1つで戻せる</div>
 </div>
@@ -921,6 +923,38 @@ document.getElementById('exJson').addEventListener('click', () => {
   dl(new Blob([JSON.stringify(data)], { type:'application/json' }), 'masu.json');
   stat('控えを出した — ' + mats.length + ' 素材 / ' + Object.keys(S.cells).length + ' マス');
 });
+/* ⭐ 作りかけ（works/）を URL から直接開く。
+   ⚠️ ファイル選択はスマホから使えない＝触れない状態を作らないため、こちらを正にする。 */
+async function loadWork(file, label){
+  const el = document.getElementById('stat');
+  if(el) el.textContent = label + ' を読み込み中…';
+  try{
+    const d = await (await fetch('works/' + file, { cache:'no-store' })).json();
+    snap();
+    Object.assign(S, d.S);
+    mats = [];
+    for(const m of (d.mats || [])){
+      await addMat(m.url, m.name);
+      const mm = mats[mats.length - 1]; mm.tint = m.tint || null; mm.bg = m.bg || null;
+    }
+    sel = Math.min(d.sel ?? 0, mats.length - 1); rot = d.rot || 0;
+    camTouched = false; syncAll(); fitView(true); draw();
+    stat(label + ' を開いた — ' + mats.length + ' 素材 / ' + Object.keys(S.cells).length + ' マス');
+  }catch(err){ stat(label + ' を開けなかった — ' + err.message); }
+}
+async function syncWorks(){
+  const box = document.getElementById('works'); if(!box) return;
+  let list = [];
+  try{ list = await (await fetch('works/index.json', { cache:'no-store' })).json(); }catch(e){ box.style.display='none'; return; }
+  if(!list.length){ box.style.display='none'; return; }
+  box.innerHTML = '';
+  for(const w of list){
+    const btn = document.createElement('button');
+    btn.textContent = w.name;
+    btn.addEventListener('click', () => loadWork(w.file, w.name));
+    box.appendChild(btn);
+  }
+}
 document.getElementById('imJson').addEventListener('click', () => document.getElementById('jfile').click());
 document.getElementById('jfile').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = '';
@@ -1077,6 +1111,7 @@ async function loadSamples(){
     S.cells[key(c, r)] = { m:(c * 3 + r * 5 + n) % mats.length, r:(c + r) % 4 };
   }
   syncAll(); fitView(); draw();
+  syncWorks();
   stat('素材を選んで、マスを押す（ドラッグで続けて置ける）');
 })();
 </script>
