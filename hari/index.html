@@ -396,6 +396,7 @@ input[type=color]{ border-radius:8px; height:30px }
   <h2>音 ── 鳴らして動かす</h2>
   <div class="sec">
     <div class="btns">
+      <button class="btn" id="audBeat">ビート</button>
       <button class="btn" id="audMic">マイクで</button>
       <button class="btn" id="audFileBtn">音源で</button>
       <button class="btn" id="audOff">止める</button>
@@ -404,7 +405,9 @@ input[type=color]{ border-radius:8px; height:30px }
     <audio id="audEl" crossorigin="anonymous"></audio>
     <div class="row"><label>強さ</label>
       <input type="range" id="audAmt" min="0" max="200" value="60"><span class="v" id="vaudAmt">60</span></div>
-    <div class="note">⭐ <b>低音＝大きさ／中音＝字間／高音＝傾き</b>。⚠️ 行ごとに別の帯域が当たる
+    <div class="note">⭐ <b>ビート</b>＝内蔵のリズム（音源が無くてもすぐ動く）。
+      ⚠️ 偽の数字ではなく<b>本当に鳴らして解析している</b>＝マイクや音源に替えても効き方が同じ<br>
+      ⭐ <b>低音＝大きさ／中音＝字間／高音＝傾き</b>。⚠️ 行ごとに別の帯域が当たる
       （全部が同じ拍で動くと、ただ点滅して見えるので）<br>
       ⚠️ 音で動いている間も<b>作品そのものは変わらない</b>（描くときだけ掛かる）＝止めれば元の姿に戻る<br>
       ⭐ 撮るのは <b>連 REN</b>（画面を録って1本にする）</div>
@@ -1418,12 +1421,58 @@ function audLoop(){
   audLevels();
   render();
 }
+/* ⭐ 内蔵のビート（BEAT）── 組 KUMI・彫 HORI と同じ作法＝
+   【本当に鳴らして、それを解析に通す】。偽の数字を作らないので、
+   マイクや音源に切り替えても効き方が変わらない。
+   ⭐ 音源を用意しなくても、開いてすぐ動かせる。 */
+function audDemo(){
+  const c = AUD.ctx;
+  const master = c.createGain(); master.gain.value = 0.9;
+  master.connect(c.destination);
+  const bpm = 122, step = 60/bpm/2;                    // 8分音符
+  let next = c.currentTime + 0.06, i = 0;
+  const noise = (() => {
+    const b = c.createBuffer(1, c.sampleRate*0.2, c.sampleRate);
+    const d = b.getChannelData(0);
+    for(let k=0;k<d.length;k++) d[k] = Math.random()*2-1;
+    return b;
+  })();
+  const kick = t => { const o=c.createOscillator(), g=c.createGain();
+    o.frequency.setValueAtTime(150,t); o.frequency.exponentialRampToValueAtTime(45,t+0.12);
+    g.gain.setValueAtTime(1,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.2);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t+0.22); };
+  const hat = t => { const src=c.createBufferSource(); src.buffer=noise;
+    const hp=c.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=7000;
+    const g=c.createGain(); g.gain.setValueAtTime(0.35,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.05);
+    src.connect(hp); hp.connect(g); g.connect(master); src.start(t); src.stop(t+0.06); };
+  const bass = (t,f) => { const o=c.createOscillator(), g=c.createGain();
+    o.type='sawtooth'; o.frequency.value=f;
+    const lp=c.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=520;
+    g.gain.setValueAtTime(0.28,t); g.gain.exponentialRampToValueAtTime(0.001,t+step*0.9);
+    o.connect(lp); lp.connect(g); g.connect(master); o.start(t); o.stop(t+step); };
+  const line = [55,0,82.4,0,55,0,73.4,49];
+  AUD.timer = setInterval(() => {
+    if(!AUD.ctx) return;
+    /* ⚠️ 少し先まで予約する。ここで作ると音がガタつく（ブラウザのタイマーは正確でない） */
+    while(next < AUD.ctx.currentTime + 0.12){
+      const b = i % 8;
+      if(b===0 || b===3 || b===6) kick(next);
+      hat(next);
+      if(line[b]) bass(next, line[b]);
+      next += step; i++;
+    }
+  }, 25);
+  return master;
+}
 async function audStart(from){
   try{
     AUD.ctx = AUD.ctx || new (window.AudioContext || window.webkitAudioContext)();
     if(AUD.ctx.state === 'suspended') await AUD.ctx.resume();
     if(AUD.node){ try{ AUD.node.disconnect(); }catch(_){} AUD.node = null; }
-    if(from === 'mic'){
+    if(AUD.timer){ clearInterval(AUD.timer); AUD.timer = 0; }
+    if(from === 'beat'){
+      AUD.node = audDemo();
+    } else if(from === 'mic'){
       const st = await navigator.mediaDevices.getUserMedia({ audio:true });
       AUD.node = AUD.ctx.createMediaStreamSource(st);
     } else {
@@ -1438,13 +1487,15 @@ async function audStart(from){
     AUD.node.connect(AUD.an);
     AUD.on = 1;
     cancelAnimationFrame(AUD.raf); audLoop();
-    stat(from === 'mic' ? 'マイクで動いている' : '音源で動いている');
+    stat(from === 'beat' ? 'ビートで動いている' : from === 'mic' ? 'マイクで動いている' : '音源で動いている');
   }catch(err){
     AUD.on = 0; stat('音を使えなかった（許可が要る／対応していない）');
   }
 }
 function audStop(){
   AUD.on = 0; cancelAnimationFrame(AUD.raf); AUD.raf = 0;
+  if(AUD.timer){ clearInterval(AUD.timer); AUD.timer = 0; }
+  if(AUD.node){ try{ AUD.node.disconnect(); }catch(_){} AUD.node = null; }
   AUD.bass = AUD.mid = AUD.high = 0;
   const el = document.getElementById('audEl'); if(el) el.pause();
   render(); stat('音を止めた');
@@ -2045,6 +2096,7 @@ $('layFold').onclick = () => {
     e.preventDefault();
   });
 }
+$('audBeat').onclick = () => audStart('beat');
 $('audMic').onclick = () => audStart('mic');
 $('audOff').onclick = () => audStop();
 $('audFileBtn').onclick = () => $('fAud').click();
