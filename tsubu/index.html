@@ -825,7 +825,8 @@ const masuKey = () => [P.masuN, P.masuAng, P.masuWav, P.masuSteps,
 //   マス単位のままだと、解像を16→48にした瞬間に塊が1/3になり、
 //   せっかく合わせた他の調整まで全部やり直しになる（＝解像を上げられない）。
 //   基準を16に取り、解像を上げたぶんだけマス数も増やして見た目を保つ。
-const bkOf = () => Math.max(1, Math.round(P.beadk * Math.max(1, P.res / 16)));
+// ⚠️ 玉Kは版ごとになった（2026-08-04）＝引数で受ける。省略時は選んでいる版の値
+const bkOf = (bk) => Math.max(1, Math.round((bk ?? P.beadk) * Math.max(1, P.res / 16)));
 function cellWk(){ return P.ar<100 ? 200/(P.ar+100)*1 : 1; }
 function cellHk(){ return P.ar>100 ? P.ar/100 : 1; }
 function customKey(){ return CUSTOM.bg + CUSTOM.a.join() + CUSTOM.b.join(); }
@@ -844,10 +845,15 @@ function idx(x, y){ return y * W + x; }
    ⚠️ 選んでいる版の値は P に載せてある。既存のつまみは全部 P を読むので、
       そこを変えずに済む。⭐ build() の頭で必ず P → 版 に書き戻す。
    ══════════════════════════════════════════════════════════════ */
-const L_KEYS = ['txt','font','lay','wrap','gapx','gapy','masu','masufill','lx','ly','lscale','lrot'];
+/* ⭐ 版ごとに持つもの（2026-08-04 夜に「塗り」を足した）。
+   木下＝「塗りとかひとつ選択していても全部変わっちゃうね」→ 塗りを丸ごと版ごとに。
+   ⚠️ 色・粒・解像・描画方式・グラデの断面・かたち・地グラデ・マス目の色は【盤ぜんぶ】のまま。 */
+const L_KEYS = ['txt','font','lay','wrap','gapx','gapy','masu','masufill','lx','ly','lscale','lrot',
+                'follow','dir','shift','spread','bead','beadk'];
 function newLayer(txt){
   return { txt: txt ?? 'HELLO', font:0, lay:0, wrap:7, gapx:2, gapy:2,
-           masu:0, masufill:0, lx:0, ly:0, lscale:1, lrot:0 };
+           masu:0, masufill:0, lx:0, ly:0, lscale:1, lrot:0,
+           follow:100, dir:0, shift:0, spread:0, bead:55, beadk:1 };
 }
 function curLayer(){
   if(!P.layers || !P.layers.length) P.layers = [newLayer()];
@@ -998,38 +1004,47 @@ function build(){
       if(gx < 0 || gx >= W || gy < 0 || gy >= H) continue;
       const k = gy * W + gx; if(occupied.has(k)) continue; occupied.add(k);
       // ⚠️ ci は版をまたいで別番号にする（「字ごと」の位相散らしが版で混ざらない）
-      const rec = { gx, gy, ci: i * 1000 + p.ci, ang: p.ang, dens: p.dens };
+      const rec = { gx, gy, ci: i * 1000 + p.ci, ang: p.ang, dens: p.dens, li: i };
       if(p.kind === 0) raw.push(rec);
       else { rec.masu = (p.kind === 2); boxRaw.push(rec); }
     }
   }
 
-  // ⭐ 玉＝「密度の高い順に、上位 玉% を球にする」＝スライダーが球の"割合"に直結。
-  //    密度の絶対しきい値だと、太字で密度が二極化したとき中間で反応しなかった。
-  //    順位で上位を選ぶので、密度が偏っていても 0→100 まで滑らかに増減する。
-  const order = raw.map((_, i) => i).sort((a, b) => raw[b].dens - raw[a].dens);   // 密度の高い順
-  const sphereN = P.blob === 6 ? 0 : Math.round(raw.length * P.bead / 100);   // ⭐「なし」＝交点を差し替えない
+  /* ⭐ 玉＝「密度の高い順に、上位 玉% を球にする」＝スライダーが球の"割合"に直結。
+       密度の絶対しきい値だと、太字で密度が二極化したとき中間で反応しなかった。
+       順位で上位を選ぶので、密度が偏っていても 0→100 まで滑らかに増減する。
+     ⭐ 選抜は【版ごとに割る】（2026-08-04 夜）＝玉・玉Kが版ごとに効く。
+     🔴 `raw` の並びは絶対に変えない。`memberOf` は raw の添字を持ち、描画で `dots[mi]` を
+        引くので、`dots = raw.map()` の並びが一致していることが前提。
+        だから「版ごとの添字の集合」を作って、その中だけで回す。 */
   const isSphere = new Uint8Array(raw.length);
-  const BK = bkOf();
   const absorbed = new Uint8Array(raw.length);          // 塊にのみ込まれて描かれない粒
   const memberOf = new Array(raw.length).fill(null);    // 代表 → まとめた粒の並び（切り抜きに使う）
-  if(BK <= 1){
-    for(let k = 0; k < sphereN; k++) isSphere[order[k]] = 1;
-  } else {
-    // ⭐ K×K のマスの「中の粒をまとめて1つの塊にする」。
-    //   ⚠️ 以前は1個だけ残して K 倍に拡大していた＝残り(K²-1)個が消えて穴が空き、
-    //     拡大した塊が字の外へはみ出して破綻していた。まとめれば穴もはみ出しも出ない。
-    //   ⚠️ 中がスカスカのマスは塊にしない（字の細い所が勝手に太って形が壊れるため）。
+  const byLayer = new Map();
+  raw.forEach((r, i) => { let a = byLayer.get(r.li); if(!a) byLayer.set(r.li, a = []); a.push(i); });
+  for(const [li, idxs] of byLayer){
+    const L = layers[li] || layers[0];
+    const BK = bkOf(L.beadk);
+    if(BK <= 1){
+      const order = idxs.slice().sort((a, b) => raw[b].dens - raw[a].dens);   // 密度の高い順
+      const sphereN = P.blob === 6 ? 0 : Math.round(idxs.length * L.bead / 100);  // ⭐「なし」＝交点を差し替えない
+      for(let k = 0; k < sphereN; k++) isSphere[order[k]] = 1;
+      continue;
+    }
+    /* ⭐ K×K のマスの「中の粒をまとめて1つの塊にする」。
+       ⚠️ 以前は1個だけ残して K 倍に拡大していた＝残り(K²-1)個が消えて穴が空き、
+         拡大した塊が字の外へはみ出して破綻していた。まとめれば穴もはみ出しも出ない。
+       ⚠️ 中がスカスカのマスは塊にしない（字の細い所が勝手に太って形が壊れるため）。 */
     const blocks = new Map();
-    raw.forEach((r, i) => {
-      const key = Math.floor(r.gx / BK) + ',' + Math.floor(r.gy / BK);
+    for(const i of idxs){
+      const r = raw[i], key = Math.floor(r.gx / BK) + ',' + Math.floor(r.gy / BK);
       let b = blocks.get(key); if(!b) blocks.set(key, b = []); b.push(i);
-    });
+    }
     const need = BK * BK * 0.75;                         // ⚠️ 3/4以上 埋まっているマスだけ。
     //   6割だと L や E の細い画で「半分しか無いマス」まで塊になり、字の外へ張り出していた。
     const cand = [...blocks.values()].filter(b => b.length >= need)
                                      .sort((a, b) => b.length - a.length);
-    const lim = Math.round(cand.length * P.bead / 100);  // 玉＝まとめるマスの割合
+    const lim = Math.round(cand.length * L.bead / 100);  // 玉＝まとめるマスの割合
     for(let k = 0; k < lim; k++){
       const b = cand[k];
       const bx = Math.floor(raw[b[0]].gx / BK) * BK, by = Math.floor(raw[b[0]].gy / BK) * BK;
@@ -1051,12 +1066,12 @@ function build(){
       }
     }
   }
-  const FOL = P.follow / 100, DIR = P.dir / 180 * Math.PI;
   dots = raw.map((r, i) => {
+    const L = layers[r.li] || layers[0];
     // ⭐ 向き＝字形から取った角度を、どれだけ使うか（字なり）＋どれだけ回すか（向き）。
     //   字なり100＝画の骨格がそのまま流れになる（TSUBUの元の設計）
     //   字なり0  ＝全部同じ向き＝面を並べた見え方（手で角度を決める側）
-    const angE = r.ang * FOL + DIR;
+    const angE = r.ang * (L.follow / 100) + L.dir / 180 * Math.PI;
     const base = (Math.round(((angE % Math.PI) + Math.PI) % Math.PI / Math.PI * TILE_ANGLES)) % TILE_ANGLES;
     // ⭐ 交点の柄「面」＝地と同じ帯を、向きだけ直交させる（同じグラデを角度だけ変えて複製する型）。
     //    球のように別物を置くのではないので、地と質感が揃ったまま交点だけ流れが変わる。
@@ -1067,7 +1082,9 @@ function build(){
       hx:r.gx, hy:r.gy,      // 字だったときの居場所（＝戻る先）
       gx0:r.gx, gy0:r.gy,    // 伸ばしの基準（元位置）
       vy:0, live:false, seed:Math.random(),
-      ci:r.ci, t, ang:angE, dens:r.dens,
+      ci:r.ci, t, ang:angE, dens:r.dens, li:r.li,
+      // ⭐ 版ごとの値は粒に持たせる＝描画のたびに版を引き直さない（毎フレーム走るため）
+      bk: bkOf(L.beadk), sh: L.shift / 100, sp: L.spread / 100,
       big: isSphere[i] === 1, hide: absorbed[i] === 1, members: memberOf[i],
     };
   });
@@ -1077,13 +1094,16 @@ function build(){
     /* ⚠️ 枡は【字なり】を掛けない＝字がどう寝ても枡は動かない（枠が枡らしく立つ）。
        塗り・色の付いた枠は自分の向きを持つので、字の【向き】も足さない
        （つまみが2つ効くと収拾がつかない）。⭐ 枠の色数0＝いままでどおり辺に沿う。 */
+    const LL = layers[r.li] || layers[0];
     const own = r.masu || (P.frameN > 0);
-    const angE = r.masu ? masuAngle() : (P.frameN > 0 ? frameAngle() : r.ang + DIR);
+    const angE = r.masu ? masuAngle()
+               : (P.frameN > 0 ? frameAngle() : r.ang + LL.dir / 180 * Math.PI);
     const t = r.masu ? MASU_T
             : own ? FRAME_T
             : (Math.round(((angE % Math.PI) + Math.PI) % Math.PI / Math.PI * TILE_ANGLES)) % TILE_ANGLES;
     dots.push({ x:r.gx, y:r.gy, hx:r.gx, hy:r.gy, gx0:r.gx, gy0:r.gy,
-      vy:0, live:false, seed:Math.random(), ci:r.ci, t, ang:angE, dens:r.dens,
+      vy:0, live:false, seed:Math.random(), ci:r.ci, t, ang:angE, dens:r.dens, li:r.li,
+      bk:1, sh: LL.shift / 100, sp: LL.spread / 100,
       big:false, hide:false, members:null });
   });
   settled = 0;
@@ -1324,10 +1344,11 @@ function draw(){
           const u = (d.x + phaseSx)*Math.cos(d.ang) + (d.y + phaseSy)*Math.sin(d.ang);
           // ⭐ ずれ＝全体を送る／字ごと＝字インデックスで位相を散らす。
           //   （手で複製して配置だけ変える作業を、字が自動でやる）
-          const jit = P.spread > 0 ? ((((d.ci + 1) * 0.6180339887) % 1) * (P.spread / 100)) : 0;
+          // ⚠️ ずれ・字ごとは版ごと＝粒が自分の値を持っている（毎フレーム版を引き直さない）
+          const jit = d.sp > 0 ? ((((d.ci + 1) * 0.6180339887) % 1) * d.sp) : 0;
           // ⚠️ マス目は自分の細かさで焼いてある＝位相もそれで数える（違うと帯が途切れる）
           const wv = d.t === MASU_T ? P.masuWav : d.t === FRAME_T ? P.frameWav : P.wav;
-          const ph = Math.round((u * wv + jit + P.shift / 100) * PHASES + flowT);
+          const ph = Math.round((u * wv + jit + d.sh) * PHASES + flowT);
           return ((ph % PHASES) + PHASES) % PHASES;
         })();
 
@@ -1379,7 +1400,7 @@ function draw(){
         const w = Math.max(1, Math.round(CW * scw(d))), h = Math.max(1, Math.round(CH * sch(d)));
         const ang = d.t === SPHERE ? d.ang : d.ang;              // 向きは字形から
         const ca2 = Math.cos(ang), sa2 = Math.sin(ang);
-        const jit = P.spread > 0 ? ((((d.ci + 1) * 0.6180339887) % 1) * (P.spread / 100)) : 0;
+        const jit = d.sp > 0 ? ((((d.ci + 1) * 0.6180339887) % 1) * d.sp) : 0;   // ⚠️ 字ごとは版ごと
         const isM = d.t === MASU_T, isF = d.t === FRAME_T;
         const WVd = isM ? P.masuWav : isF ? P.frameWav : WV;
         const Ld = isM ? MASU_LUT : isF ? FRAME_LUT : RAMP_LUT;
@@ -1412,8 +1433,9 @@ function draw(){
     const GRID = (P.grid / 100) * 1.2 - 0.6;
     const put = d => {
       const w = CW*scw(d) - GRID, h = CH*sch(d) - GRID;
-      if(d.big && BK > 1 && P.blob !== 5){   // ⭐ 面は拡大しない（隣と繋がって面に見える）
-        const W2 = w*BK, H2 = h*BK;                       // 中心を保ったまま K 倍に広げる
+      // ⚠️ 玉Kは版ごと＝粒が自分の値（d.bk）を持っている
+      if(d.big && d.bk > 1 && P.blob !== 5){   // ⭐ 面は拡大しない（隣と繋がって面に見える）
+        const W2 = w*d.bk, H2 = h*d.bk;                   // 中心を保ったまま K 倍に広げる
         g.drawImage(tiles[d.t][phaseOf(d)], px(d)-(W2-w)/2, py(d)-(H2-h)/2, W2, H2);
       } else {
         g.drawImage(tiles[d.t][phaseOf(d)], px(d), py(d), w, h);
@@ -1515,13 +1537,15 @@ document.querySelectorAll('.seg').forEach(seg => {
   const sync = (fromUser) => { P[id] = +r.value; if(v) v.textContent = r.value;
     if(id==='warpn' && fromUser){ resetAnchors(+r.value); drawWarpCurve(); }
     if(['res','cell','bead','beadk','wrap','gapx','gapy','fall','masu','fat','dir','follow',
-        'lx','ly','lscale','lrot'].includes(id)) build();
+        'shift','spread','lx','ly','lscale','lrot'].includes(id)) build();
     if(id==='shine' || id==='valley' || id==='grad') buildTiles();
     // ⭐ 字の並びそのものが変わるものだけ、視点を合わせ直す。
     //   字なり・ずれ・玉・大きさは見え方が変わるだけなので、視点は動かさない。
     if(['res','cell','wrap','gapx','gapy','fall','masu','lscale'].includes(id) && fromUser) fit();
     if(id === 'papN') syncPapGrad();
     // ⚠️ 塗りの向きは粒の角度にも入るので組み直す。色数・細かさ・版数はタイルだけでよい
+    // ⚠️ 版ごとの値は、build を呼ばないつまみでも【版に書き戻す】（でないと版を切り替えた瞬間に捨てられる）
+    if(L_KEYS.includes(id)) pushToLayer();
     if(id === 'masuAng' || id === 'frameAng') build();   // 向きは粒の角度にも入る
     if(id === 'frameN'){ build(); syncMasuGrad(); }      // 枠の色の有無で粒の向き／タイルが変わる
     if(id === 'masuN') syncMasuGrad(); };
@@ -1630,7 +1654,9 @@ function renderChips(){
 function syncLayerUI(){
   document.getElementById('txt').value = P.txt;
   [['lx','lx'],['ly','ly'],['lscale','lscale'],['lrot','lrot'],
-   ['wrap','wrap'],['gapx','gapx'],['gapy','gapy'],['masu','masu']].forEach(([id, key]) => {
+   ['wrap','wrap'],['gapx','gapx'],['gapy','gapy'],['masu','masu'],
+   ['follow','follow'],['dir','dir'],['shift','shift'],['spread','spread'],
+   ['bead','bead'],['beadk','beadk']].forEach(([id, key]) => {
     const e = document.getElementById(id); if(!e) return;
     e.value = P[key]; const v = e.parentElement.querySelector('.val');
     if(v) v.textContent = (id === 'lscale') ? (+P[key]).toFixed(2) : Math.round(P[key]);
