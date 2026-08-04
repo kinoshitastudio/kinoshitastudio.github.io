@@ -351,11 +351,13 @@
   <div class="grp"><label>塵</label><input id="s-dust" type="range" min="0" max="100" value="0"><span class="val" id="v-dust"></span></div>
   <div class="grp"><label>細かさ</label><input id="s-grain" type="range" min="60" max="100" value="82"><span class="val" id="v-grain"></span></div>
   <div class="sep"></div>
-  <div class="grp"><span class="pair" id="ink-pair"><label>字</label><input type="color" id="ink" value="#ffffff"></span><label>地</label><input type="color" id="bg" value="#000000">
+  <div class="grp"><span class="pair" id="ink-pair"><label>字</label><input type="color" id="ink" value="#ffffff"></span><span class="pair" id="bg-pair"><label>地</label><input type="color" id="bg" value="#000000"></span>
     <div class="seg" id="seg-tone"><button data-v="sumi" class="on">墨</button><button data-v="kinari">生成</button><button data-v="ai">藍</button></div></div>
-  <div class="grp"><label>グラデ</label><div class="seg" id="seg-grad"><button data-v="0" class="on">切</button><button data-v="1">入</button></div>
+  <div class="grp"><label>字グラデ</label><div class="seg" id="seg-grad"><button data-v="0" class="on">切</button><button data-v="1">入</button></div>
     <div class="seg" id="seg-gfollow"><button data-v="0" class="on">直線</button><button data-v="1">沿う</button></div></div>
   <div class="grp" id="grp-gstops"><label>色</label><span class="gstops" id="gstops"></span><button class="mini" id="g-del" title="色を減らす">−</button><button class="mini" id="g-add" title="色を足す">＋</button></div>
+  <div class="grp"><label>地グラデ</label><div class="seg" id="seg-bggrad"><button data-v="0" class="on">切</button><button data-v="1">入</button></div></div>
+  <div class="grp" id="grp-bgstops"><label>色</label><span class="gstops" id="bgstops"></span><button class="mini" id="bg-del" title="色を減らす">−</button><button class="mini" id="bg-add" title="色を足す">＋</button></div>
   <div class="grp" id="grp-gang"><label>向き</label><input id="s-gang" type="range" min="0" max="360" value="126"><span class="val" id="v-gang"></span></div>
   <div class="grp"><div class="seg" id="seg-inv"><button data-v="0" class="on">正</button><button data-v="1">反</button></div></div>
   <div class="sep"></div>
@@ -363,6 +365,9 @@
   <button class="btn" id="b-clear">リセット</button>
   <button class="btn" id="b-reroll">替</button>
   <button class="btn" id="b-export">PNG</button>
+  <button class="btn" id="b-json">JSON書出</button>
+  <button class="btn" id="b-jsonin">JSON読込</button>
+  <input type="file" id="f-json" accept="application/json,.json" hidden>
 </div>
 
 <!-- ⭐ 盤の置き場。閉じても中身が残るよう、盤ごと（描いた場＋設定）ブラウザに保存する -->
@@ -414,6 +419,7 @@ const P = {
   /* ⭐ gStops＝グラデの色列。2色固定（旧 gA/gB）をやめて何色でも並べられるようにした（2026-08-04）。
      ⚠️ 旧い盤は gA/gB で保存されている＝読み込む時に色列へ読み替える（applyBoardParams）。 */
   grad:0, gAng:2.2, gfollow:0, gStops:[[0.14,0.14,1.0],[1,1,1]], ink:[1,1,1], bg:[0,0,0],
+  bgGrad:0, bgStops:[[0.05,0.05,0.09],[0.35,0.20,0.45]],
 };
 const SIM = 640;
 const EXPORT_RES = 2048;
@@ -520,7 +526,7 @@ void main(){
 // 表示: ノイズ摂動しきい値 → 塵 → 色味の2値マッピング
 const F_DISP = `#version 300 es
 precision highp float; in vec2 vUv; out vec4 o;
-uniform sampler2D uSim,uGradTex,uMask,uGradLUT; uniform float uThr,uNoise,uDust,uGrainRes,uInvert,uBleed,uOutline,uGrad,uGAng,uGFollow,uMaskOn;
+uniform sampler2D uSim,uGradTex,uMask,uGradLUT,uBgLUT; uniform float uThr,uNoise,uDust,uGrainRes,uInvert,uBleed,uOutline,uGrad,uGAng,uGFollow,uMaskOn,uBgGrad;
 uniform vec2 uTexel; uniform vec3 uLo,uHi;
 ${HASH}
 void main(){
@@ -568,7 +574,16 @@ void main(){
        ⚠️ テクセルの真ん中を引く＝両端の色がちゃんと端まで出る。 */
     inkc=texture(uGradLUT, vec2((clamp(gg,0.0,1.0)*255.0+0.5)/256.0, 0.5)).rgb;
   }
-  vec3 col=mix(uLo,inkc,t);
+  /* ⭐ 地のグラデ（2026-08-04）。字は【一字ごと】に色を渡すが、地は【盤ぜんたい】を
+        「向き」の方向に1回だけ渡る＝一枚の紙に光が当たっているように見える。
+     ⚠️ 向きのつまみは字グラデと共用＝どちらも同じ方角に流れる。 */
+  vec3 lo=uLo;
+  if(uBgGrad>0.5){
+    vec2 gd=vec2(cos(uGAng),sin(uGAng));
+    float bt=dot(vUv-0.5,gd)/max(abs(gd.x)+abs(gd.y),1e-4)+0.5;   // 盤の端から端で 0→1
+    lo=texture(uBgLUT, vec2((clamp(bt,0.0,1.0)*255.0+0.5)/256.0, 0.5)).rgb;
+  }
+  vec3 col=mix(lo,inkc,t);
   col*=1.0-(hash(gp*0.83+3.0)-0.5)*0.05;   // 紙のかすかな粒
   o=vec4(col,1.0);
 }`;
@@ -597,24 +612,28 @@ const maskTex8=tex8f(SIM), fMask8=fbo(maskTex8), gradTex=tex8f(SIM);
 /* ⭐ グラデの「帯」＝色列（P.gStops）を 256×1 のテクスチャに焼いたもの（2026-08-04）。
    色を2色から何色にも増やせるようにするため、色そのものを uniform で渡すのをやめた。
    ⚠️ 焼き直すのは色を触った時だけ＝毎フレームの負担はゼロ。 */
-const gradLUT = (function(){ const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
+function makeLUT(){ const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,256,1,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE); return t; })();
-const gradPx = new Uint8Array(256*4);
-function updateGradLUT(){
-  const st = (Array.isArray(P.gStops) && P.gStops.length>=2) ? P.gStops : [[0,0,0],[1,1,1]];
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE); return t; }
+const gradLUT = makeLUT();   // 字のグラデ
+const bgLUT   = makeLUT();   // 地のグラデ（2026-08-04）
+const lutPx = new Uint8Array(256*4);
+function bakeLUT(tex, stops){
+  const st = (Array.isArray(stops) && stops.length>=2) ? stops : [[0,0,0],[1,1,1]];
   const n = st.length;
   for(let i=0;i<256;i++){
     const f = i/255*(n-1), k = Math.min(Math.floor(f), n-2), m = f-k;   // 隣り合う2色の間を渡る
     for(let c=0;c<3;c++){ const v = st[k][c] + (st[k+1][c]-st[k][c])*m;
-      gradPx[i*4+c] = Math.round(Math.min(Math.max(v,0),1)*255); }
-    gradPx[i*4+3]=255;
+      lutPx[i*4+c] = Math.round(Math.min(Math.max(v,0),1)*255); }
+    lutPx[i*4+3]=255;
   }
-  gl.bindTexture(gl.TEXTURE_2D,gradLUT);
-  gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,256,1,gl.RGBA,gl.UNSIGNED_BYTE,gradPx);
+  gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,256,1,gl.RGBA,gl.UNSIGNED_BYTE,lutPx);
 }
-updateGradLUT();
+function updateGradLUT(){ bakeLUT(gradLUT, P.gStops); }
+function updateBgLUT(){   bakeLUT(bgLUT,   P.bgStops); }
+updateGradLUT(); updateBgLUT();
 // ペンを離した時に描画を連結成分でラベル付けし、各成分内で向き方向に A→B を正規化した座標を gradTex に焼く
 function computeGradCoords(){ if(!extCBF) return; try{
   gl.useProgram(pMask); gl.bindFramebuffer(gl.FRAMEBUFFER,fMask8); gl.viewport(0,0,SIM,SIM);
@@ -721,7 +740,8 @@ function computeWave(now,fb,res){ gl.useProgram(pWave); gl.bindFramebuffer(gl.FR
 /* ── 表示 ── */
 function display(fb,res,src){ gl.useProgram(pDisp); gl.bindFramebuffer(gl.FRAMEBUFFER,fb); gl.viewport(0,0,res,res);
   samp(pDisp,'uSim',0,src||curTex()); samp(pDisp,'uGradTex',1,gradTex); samp(pDisp,'uMask',2,maskTex);
-  samp(pDisp,'uGradLUT',3,gradLUT);
+  samp(pDisp,'uGradLUT',3,gradLUT); samp(pDisp,'uBgLUT',4,bgLUT);
+  u1(pDisp,'uBgGrad',P.bgGrad);
   u1(pDisp,'uMaskOn',(mode==='wave' && P.mask>0.5 && maskReady)?1:0);
   u1(pDisp,'uThr',P.thr); u1(pDisp,'uNoise',P.noise); u1(pDisp,'uDust',P.dust);
   u1(pDisp,'uGrainRes',300+P.grain*1700); u1(pDisp,'uInvert',P.invert);
@@ -839,6 +859,7 @@ seg('seg-inv','invert');
 seg('seg-draw','outline');
 seg('seg-grad','grad',()=>{ applyGradUI(); saveSoon(); });
 seg('seg-gfollow','gfollow',()=>{ applyGradUI(); saveSoon(); });
+seg('seg-bggrad','bgGrad',()=>{ applyGradUI(); saveSoon(); });
 bindRange('s-steps','steps','v-steps',1);
 bindRange('s-cycle','cycle','v-cycle',1);
 bindRange('s-gang','gAng','v-gang',Math.PI/180);
@@ -871,35 +892,43 @@ const rgb2hex=c=>'#'+c.map(v=>('0'+Math.round(Math.min(Math.max(v,0),1)*255).toS
    ⭐ 2色固定をやめ、色を足して並べられるようにした。並びの左から右が gg=0→1。
    ⚠️ 色を触ったら updateGradLUT で帯を焼き直す。焼き直さないと画面は前の色のまま。 */
 const GMIN=2, GMAX=6;
-function normStops(){
-  if(!Array.isArray(P.gStops) || P.gStops.length<GMIN){
-    // 旧い盤（gA/gB の2色）から読み替える
-    P.gStops = [ (P.gA||[0.14,0.14,1.0]).slice(), (P.gB||[1,1,1]).slice() ];
-  }
-  if(P.gStops.length>GMAX) P.gStops.length=GMAX;
+/* ⭐ 字と地は【同じ仕組み】の色列にしてある（2026-08-04）。違いは渡り方だけ＝
+      字は一字ごとに 0→1、地は盤ぜんたいで 0→1。だから作り方も1つで済ませる。 */
+const STOPS = {
+  ink: { key:'gStops',  host:'gstops',  add:'g-add',  del:'g-del',  bake:()=>updateGradLUT(),
+         fallback:()=>[ (P.gA||[0.14,0.14,1.0]).slice(), (P.gB||[1,1,1]).slice() ] },   // 旧い盤の gA/gB から読み替え
+  bg:  { key:'bgStops', host:'bgstops', add:'bg-add', del:'bg-del', bake:()=>updateBgLUT(),
+         fallback:()=>[ (P.bg||[0,0,0]).slice(), [0.35,0.20,0.45] ] },                  // 地グラデが無い盤は地色から始める
+};
+function normStops(s){
+  if(!Array.isArray(P[s.key]) || P[s.key].length<GMIN) P[s.key] = s.fallback();
+  if(P[s.key].length>GMAX) P[s.key].length=GMAX;
 }
-function renderGStops(){
-  normStops();
-  const host=document.getElementById('gstops'); host.textContent='';
-  P.gStops.forEach((c,i)=>{
+function renderStops(s){
+  normStops(s);
+  const host=document.getElementById(s.host); host.textContent='';
+  P[s.key].forEach((c,i)=>{
     const el=document.createElement('input'); el.type='color'; el.value=rgb2hex(c);
     el.title='色 '+(i+1);
-    el.addEventListener('input',()=>{ P.gStops[i]=hex2rgb(el.value); updateGradLUT(); saveSoon(); });
+    el.addEventListener('input',()=>{ P[s.key][i]=hex2rgb(el.value); s.bake(); saveSoon(); });
     host.appendChild(el);
   });
-  document.getElementById('g-add').disabled = P.gStops.length>=GMAX;
-  document.getElementById('g-del').disabled = P.gStops.length<=GMIN;
-  updateGradLUT();
+  document.getElementById(s.add).disabled = P[s.key].length>=GMAX;
+  document.getElementById(s.del).disabled = P[s.key].length<=GMIN;
+  s.bake();
 }
+function renderGStops(){ renderStops(STOPS.ink); renderStops(STOPS.bg); }
 /* ⭐ 足す色は【最後の色の反転】＝押した瞬間に見た目が変わる。
       同じ色を足すと「押しても何も起きない」ように見えるので、そうしていない。 */
-document.getElementById('g-add').onclick=()=>{
-  normStops(); if(P.gStops.length>=GMAX) return;
-  const last=P.gStops[P.gStops.length-1];
-  P.gStops.push([1-last[0],1-last[1],1-last[2]]); renderGStops(); saveSoon(); };
-document.getElementById('g-del').onclick=()=>{
-  normStops(); if(P.gStops.length<=GMIN) return;
-  P.gStops.pop(); renderGStops(); saveSoon(); };
+Object.values(STOPS).forEach(s=>{
+  document.getElementById(s.add).onclick=()=>{
+    normStops(s); if(P[s.key].length>=GMAX) return;
+    const last=P[s.key][P[s.key].length-1];
+    P[s.key].push([1-last[0],1-last[1],1-last[2]]); renderStops(s); saveSoon(); };
+  document.getElementById(s.del).onclick=()=>{
+    normStops(s); if(P[s.key].length<=GMIN) return;
+    P[s.key].pop(); renderStops(s); saveSoon(); };
+});
 
 /* 🔴「字と地はちゃんと反映してる？」（木下・2026-08-04）への答え：
      ⭐ 地は【いつも】効く。字は【グラデが切の時だけ】効く＝入の間はグラデが字の色を置き換える。
@@ -908,10 +937,13 @@ document.getElementById('g-del').onclick=()=>{
         ・グラデ切 → 「色」の列を薄く
         ・「沿う」は線の太さから作るので【向き】は元から効かない（仕様）→ 薄く */
 function applyGradUI(){
-  const on = P.grad>0.5;
+  const on = P.grad>0.5, bgOn = P.bgGrad>0.5;
   document.getElementById('ink-pair').classList.toggle('dim', on);
   document.getElementById('grp-gstops').classList.toggle('dim', !on);
-  document.getElementById('grp-gang').classList.toggle('dim', !on || P.gfollow>0.5);
+  document.getElementById('bg-pair').classList.toggle('dim', bgOn);      // 地グラデ入なら地色は使われない
+  document.getElementById('grp-bgstops').classList.toggle('dim', !bgOn);
+  // ⚠️ 向きは【字グラデの直線】か【地グラデ】のどちらかが要るときだけ効く
+  document.getElementById('grp-gang').classList.toggle('dim', !((on && P.gfollow<0.5) || bgOn));
 }
 renderGStops(); applyGradUI();
 // 色プリセット（墨/生成/藍）は字色・地色を一括セット
@@ -966,6 +998,46 @@ document.getElementById('b-seed').onclick=()=>{ if(mode==='wave') genSources(); 
 document.getElementById('b-clear').onclick=()=>{ if(mode==='wave'){ sources=[]; } else { clearField(); computeGradCoords(); } fieldChanged(); };
 document.getElementById('b-reroll').onclick=()=>{ if(mode==='wave') genSources(); else { seed=Math.random()*1000; bake(); } fieldChanged(); };
 document.getElementById('b-export').onclick=()=>{ exportPNG(); };
+
+/* ══════════════════════════════════════════════════════════════
+   JSON＝【設定の持ち運び】                              2026-08-04
+   ⭐ 中身は「つまみ・色・グラデの色列・波源」＝もう一度この見え方を出すための一式。
+      SAKUJI と同じ考え方で、プリセット代わりに使える。
+   ⚠️ 描いた場（手で描いた字）は入れていない。あれは 640×640 の絵で、
+      JSON に入れると桁が変わって持ち運べなくなる＝場はボード（IndexedDB）が持つ。
+      なので【読み込んでも描いた字は消えない】。見え方だけが乗り換わる。
+   ══════════════════════════════════════════════════════════════ */
+function exportJSON(){
+  const data = { tool:'nijimi', v:1, mode, seed, sources:JSON.parse(JSON.stringify(sources)),
+                 P:JSON.parse(JSON.stringify(P)) };
+  const b = new Blob([JSON.stringify(data,null,1)], {type:'application/json'});
+  const a = document.createElement('a'); a.href=URL.createObjectURL(b);
+  a.download = 'nijimi_'+P.mode+'_'+Date.now()+'.json'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function applyJSON(data){
+  if(!data || data.tool!=='nijimi') throw new Error('NIJIMI の JSON ではありません');
+  const from = mode;
+  // ⭐ モードが変わる時は、出る前にいまの場を畳んでおく（モード切替と同じ作法）
+  if(from!=='wave'){ const snap=snapshotField(); if(snap) fieldCache[from]=snap; }
+  applyBoardParams({ P:data.P||{}, seed:data.seed, sources:data.sources });
+  if(mode!==from){
+    if(mode==='wave'){ if(!sources.length) genSources(); uploadMask(); }
+    else { bake();
+      if(fieldCache[mode]) restoreField(fieldCache[mode]);
+      else if(mode==='blank') clearField();
+      else seedField(); }
+  } else if(mode==='wave'){ uploadMask(); } else { bake(); }
+  computeGradCoords(); refreshStat(); saveSoon();
+}
+document.getElementById('b-json').onclick=()=>{ exportJSON(); };
+document.getElementById('b-jsonin').onclick=()=>{ document.getElementById('f-json').click(); };
+document.getElementById('f-json').onchange=async (e)=>{
+  const f=e.target.files&&e.target.files[0]; if(!f) return;
+  try{ applyJSON(JSON.parse(await f.text())); }
+  catch(err){ console.warn('JSON読込',err); alert('読み込めませんでした：'+err.message); }
+  e.target.value='';   // ⚠️ 同じファイルをもう一度選べるように空にしておく
+};
 
 /* ── 起動 ── */
 /* ⚠️ 起動画面（はじめる）は 2026-07-31 に廃止。開いた時点で回し始める。
@@ -1032,7 +1104,8 @@ function applyBoardParams(b){
   // つまみ・セグメントを保存された値に合わせ直す
   document.querySelectorAll('#ctl .seg').forEach(sg=>{
     const key = ({'seg-mode':'mode','seg-preset':'preset','seg-facet':'facet','seg-draw':'outline',
-                  'seg-tone':'tone','seg-grad':'grad','seg-gfollow':'gfollow','seg-inv':'invert','seg-grow':'grow','seg-mask':'mask'})[sg.id];
+                  'seg-tone':'tone','seg-grad':'grad','seg-gfollow':'gfollow','seg-bggrad':'bgGrad',
+                  'seg-inv':'invert','seg-grow':'grow','seg-mask':'mask'})[sg.id];
     if(key===undefined) return;
     sg.querySelectorAll('button').forEach(bt=>{
       const raw = bt.dataset.p!==undefined? bt.dataset.p : bt.dataset.v;
