@@ -24,6 +24,14 @@
   body:not(.mgrad) .masu-grad,body:not(.mgrad3) .masu3,body:not(.mgrad4) .masu4,
   body:not(.mgrad5) .masu5,body:not(.mgrad6) .masu6{display:none;}
   body:not(.mfill) .masu-fill{display:none;}
+  /* 版の一覧（2026-08-04） */
+  .chips{display:flex;flex-wrap:wrap;gap:5px;}
+  .chips button{background:var(--ufill);border:none;border-radius:8px;color:inherit;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans",sans-serif;
+    font-size:13px;min-width:34px;height:34px;padding:0 8px;cursor:pointer;opacity:.55;transition:.14s;}
+  .chips button:hover{opacity:.85}
+  .chips button.on{opacity:1;background:#1c1c1e;color:#fff}
+  body.ui-dark .chips button.on{background:#fff;color:#000}
   /* 枠の色（0＝字と同じ色＝いままで） */
   body:not(.fgrad) .frame-grad,body:not(.fgrad2) .fr2,body:not(.fgrad3) .fr3,
   body:not(.fgrad4) .fr4,body:not(.fgrad5) .fr5,body:not(.fgrad6) .fr6{display:none;}
@@ -306,6 +314,17 @@
 
 <div id="panel">
   <button id="themeBtn" title="道具の明るさ">◐</button><button id="helpBtn" title="説明の表示／非表示">?</button><button id="langBtn" title="日本語 / English">JP</button>
+  <h2>版（重ねる）</h2>
+  <div id="layerChips" class="chips"></div>
+  <button class="big" id="addLayer" style="margin:6px 0">＋ 字</button>
+  <div class="row"><label>横位置</label><input type="range" id="lx" min="-200" max="200" step="1" value="0"><span class="val"></span></div>
+  <div class="row"><label>縦位置</label><input type="range" id="ly" min="-200" max="200" step="1" value="0"><span class="val"></span></div>
+  <div class="row"><label>大きさ</label><input type="range" id="lscale" min="0.2" max="3" step="0.05" value="1"><span class="val"></span></div>
+  <div class="row"><label>角度</label><input type="range" id="lrot" min="0" max="360" step="1" value="0"><span class="val"></span></div>
+  <button class="big" id="delLayer">この版を消す</button>
+  <div class="hint">版を押す＝その版を選ぶ（下の<b>字</b>と<b>マス目</b>は選んだ版に効く）。重なったマスは<b>後の版が上</b><br>
+    ⚠️ 質感・色・壊れ方・ワープは<b>盤ぜんぶ</b>にかかる（重ねても1枚の作品）</div>
+
   <h2>字</h2>
   <textarea id="txt">HELLO</textarea>
   <div class="seg" id="font">
@@ -482,6 +501,8 @@
 const cv = document.getElementById('cv'), g = cv.getContext('2d', { alpha:true });
 const P = { mode:0, res:16, cell:7, pal:1, steps:4, dith:100, gdir:90, gflow:0, fps:30, grav:60, font:0,
             tex:1, wav:0.1, bead:55, beadk:1, line:0, blob:5, ar:100, shine:60, valley:0, grad:0, shift:0, spread:0, dir:0, follow:100, grid:0, depth:0, fat:1,
+            /* 版（重ねる）。P には【選んでいる版】の値を載せる＝既存のつまみは全部そのまま動く */
+            layers:null, cur:0, txt:'HELLO', lx:0, ly:0, lscale:1, lrot:0,
             lay:0, wrap:7, gapx:2, gapy:2, fall:0, masu:0, masufill:0,
             /* マス目の塗り＝字とは別の色・向き・細かさ・版数を持つ。色数 1 ＝1色の陰影（いままで） */
             masuN:1, masuAng:90, masuWav:0.1, masuSteps:0,
@@ -809,104 +830,154 @@ function customKey(){ return CUSTOM.bg + CUSTOM.a.join() + CUSTOM.b.join(); }
 let dots = [], W = 0, H = 0, grid = null, settled = 0;
 function idx(x, y){ return y * W + x; }
 
-function build(){
-  const text = [...document.getElementById('txt').value].filter(c => c.trim());
-  const N = P.res;
-  const vert = P.lay === 1;
-  const per = Math.max(1, P.wrap);                       // 何字で折り返すか
-  const AX = Math.max(N + P.gapx, 2), AY = Math.max(N + P.gapy, 2);   // 字送り/行送り（重なり可）
+/* ══════════════════════════════════════════════════════════════
+   版（重ねる）                                         2026-08-04
+   木下＝「MAKU のように字を複数追加できるか」→ **MAKU と同じ線引き**にした。
+   ⭐ 版ごと ＝ 字・書体・縦横組・折返し・字間行間・マス目・位置・大きさ・角度
+   ⭐ 盤ぜんぶ＝ 解像・粒・太さ・質感・柄・色・壊れ方・ワープ・地のグラデ
+      （MAKU の「うねり・アンカー・地・版面は面ぜんぶにかかる」と同じ考え方）
+   ⚠️ 重なったマスは【後の版が上】＝リストの後ろほど手前。
+   ⚠️ 選んでいる版の値は P に載せてある。既存のつまみは全部 P を読むので、
+      そこを変えずに済む。⭐ build() の頭で必ず P → 版 に書き戻す。
+   ══════════════════════════════════════════════════════════════ */
+const L_KEYS = ['txt','font','lay','wrap','gapx','gapy','masu','masufill','lx','ly','lscale','lrot'];
+function newLayer(txt){
+  return { txt: txt ?? 'HELLO', font:0, lay:0, wrap:7, gapx:2, gapy:2,
+           masu:0, masufill:0, lx:0, ly:0, lscale:1, lrot:0 };
+}
+function curLayer(){
+  if(!P.layers || !P.layers.length) P.layers = [newLayer()];
+  P.cur = Math.max(0, Math.min(P.layers.length - 1, P.cur | 0));
+  return P.layers[P.cur];
+}
+function pushToLayer(){ const L = curLayer(); L_KEYS.forEach(k => L[k] = P[k]); }
+function pullFromLayer(){ const L = curLayer(); L_KEYS.forEach(k => P[k] = L[k]); }
 
-  // 世界の大きさは中身から決める（画面サイズに縛られない）。
-  // ⚠️ 字1個分の幅 N を必ず足す。行間を詰めて行送り<Nでも端が切れないように。
-  const lines = Math.ceil(text.length / per);
-  const cols  = Math.min(text.length, per);
-  const charAdv = vert ? AY : AX;                        // 行内の字送り
-  const lineAdv = vert ? AY : AY;                        // 行の送り
-  const along  = (cols  - 1) * charAdv + N;              // 行方向の広がり
-  const across = (lines - 1) * lineAdv + N;              // 行をまたぐ広がり
-  const lw = vert ? across : along;                      // x 方向
-  const lh = vert ? along  : across;                     // y 方向
-  /* ⭐ マス目（2026-08-04）＝字を1文字ずつ枡に入れて、並べて一枚にする。
-     ⭐ 枡の大きさは【送りそのもの】＝隣の枡と境目を共有する。だから線が二重に太らない。
-     ⚠️ 枠は字の外（送りの余りぶん）まで出るので、世界を【枠のぶんだけ広げる】。
-        広げないと右端と下端の線が切り落とされる（字間・行間を大きくするほど目立つ）。
-     ⚠️ マス目が切のときは 0＝いままでと1ドットも変わらない。 */
+/* 1つの版ぶんの粒を、版ローカルの整数格子に作る（0起点）。
+   ⚠️ 角度は【拾う側を倍にしてから】回して丸める＝回したときに穴が空くのを防ぐ。
+      単位格子を回して丸めると数％のマスが取り残されて、点々が抜けたように見える。 */
+function layerPack(L){
+  const text = [...(L.txt || '')].filter(c => c.trim());
+  if(!text.length) return { pts: [], w: 1, h: 1 };
+  const rot = ((L.lrot || 0) % 360) * Math.PI / 180;
+  const SS  = rot ? 2 : 1;                                  // 回すときだけ倍で拾う
+  const sc  = Math.max(0.2, L.lscale || 1);
+  const N   = Math.max(4, Math.min(256, Math.round(P.res * sc * SS)));
+  const gx0 = Math.round((L.gapx || 0) * sc * SS), gy0 = Math.round((L.gapy || 0) * sc * SS);
+  const vert = L.lay === 1;
+  const per  = Math.max(1, Math.round(L.wrap || 1));
+  const AX = Math.max(N + gx0, 2), AY = Math.max(N + gy0, 2);
+  const lines = Math.ceil(text.length / per), cols = Math.min(text.length, per);
+  const charAdv = vert ? AY : AX, lineAdv = AY;
+  const along = (cols - 1) * charAdv + N, across = (lines - 1) * lineAdv + N;
+  const lw = vert ? across : along, lh = vert ? along : across;
+  /* ⭐ マス目＝字を1文字ずつ枡に入れる。枡の大きさは【送りそのもの】＝
+     隣の枡と境目を共有する（線が二重に太らない）。⚠️ 枠は字の外まで出るので版を広げる。 */
   const cellW = vert ? lineAdv : charAdv, cellH = vert ? charAdv : lineAdv;
-  const mOn = P.masu > 0 || P.masufill > 0;
-  const mpx = mOn ? Math.max(0, Math.floor((cellW - N) / 2)) : 0;   // 字の左に出る量
-  const mpy = mOn ? Math.max(0, Math.floor((cellH - N) / 2)) : 0;   // 字の上に出る量
-  const mqx = mOn ? Math.max(0, cellW - N - mpx) : 0;               // 右に出る量
-  const mqy = mOn ? Math.max(0, cellH - N - mpy) : 0;               // 下に出る量
-  W = Math.max(Math.ceil(lw) + mpx + mqx + 4, 8);
-  H = Math.ceil(lh) + mpy + mqy + 4 + Math.round(P.fall);           // 積もるぶんの空
+  const mOn = L.masu > 0 || L.masufill > 0;
+  const mpx = mOn ? Math.max(0, Math.floor((cellW - N) / 2)) : 0;
+  const mpy = mOn ? Math.max(0, Math.floor((cellH - N) / 2)) : 0;
+  const mqx = mOn ? Math.max(0, cellW - N - mpx) : 0;
+  const mqy = mOn ? Math.max(0, cellH - N - mpy) : 0;
+  const LW = lw + mpx + mqx, LH = lh + mpy + mqy;
+  const kk = (x, y) => y * (LW + 4) + x;
+
+  /* ⭐ 字が占めている所を覚えておく。マス目の塗りで使う＝
+       敷く＝そこは塗らない（重ねない）／抜く＝そこを空ける（字が彫った溝に見える）。 */
+  const inkAt = new Set(), glyph = [], carve = L.masufill === 2;
+  const at = (i) => { const li = Math.floor(i / per), ci2 = i % per;
+    // 横組＝右へ流れて下へ折り返す／縦組＝下へ流れて左へ折り返す（日本語の作法）
+    return { bx: vert ? (lw - N - li * lineAdv) : ci2 * charAdv,
+             by: vert ? ci2 * charAdv : li * lineAdv }; };
+  text.forEach((ch, i) => {
+    const { bx, by } = at(i);
+    for(const [x, y, ang, dens] of glyphDots(ch, N, L.font)){
+      const X = mpx + bx + x, Y = mpy + by + y;
+      inkAt.add(kk(X, Y));
+      // ⚠️ 抜くときは字の粒を【作らない】。隠すだけにすると、見えない粒が
+      //    「積もる」で壁になって、何かに引っかかったように見える。
+      if(!carve) glyph.push({ x:X, y:Y, ang, dens, ci:i, kind:0 });
+    }
+  });
+  /* ⚠️ 置き場は1つの Set で管理する＝【字・枠・塗り】が同じ所に重ならない。
+     重ねると同じマスに粒が2つ入り、積もるが壊れて描画も二重になる。 */
+  const box = [], taken = new Set(inkAt);
+  if(mOn){
+    const put = (x, y, ang, ci, kind) => {
+      if(x < 0 || y < 0 || x > LW || y > LH) return;
+      const k = kk(x, y); if(taken.has(k)) return; taken.add(k);
+      box.push({ x, y, ang, dens:1, ci, kind });
+    };
+    const cells = text.map((ch, i) => { const { bx, by } = at(i);
+      return { i, L: bx, T: by, R: bx + cellW, B: by + cellH }; });   // 右端＝隣の枡の左端（共有）
+    // ⭐ 枠を先に置く＝境目は枠の線が勝つ（塗りに埋もれない）
+    if(L.masu > 0){
+      const wgt = Math.min(L.masu * SS, Math.max(1, Math.floor(Math.min(cellW, cellH) / 2)));
+      const vAng = L.masufill > 0 ? 0 : Math.PI / 2;    // 縦の辺の向き
+      for(const c of cells) for(let k = 0; k < wgt; k++){
+        for(let x = c.L; x <= c.R; x++){ put(x, c.T + k, 0, c.i, 1); put(x, c.B - k, 0, c.i, 1); }
+        for(let y = c.T; y <= c.B; y++){ put(c.L + k, y, vAng, c.i, 1); put(c.R - k, y, vAng, c.i, 1); }
+      }
+    }
+    // ⭐ 塗り＝枡の中を埋める（向きは push 側で masuAngle() に差し替わる）
+    if(L.masufill > 0){
+      for(const c of cells) for(let y = c.T; y <= c.B; y++) for(let x = c.L; x <= c.R; x++)
+        put(x, y, 0, c.i, 2);
+    }
+  }
+
+  // 版の真ん中を軸に回して、超サンプルを畳んで整数格子へ
+  const cx = LW / 2, cy = LH / 2, ca = Math.cos(rot), sa = Math.sin(rot);
+  const seen = new Set(), pts = [];
+  let mnx = 1e9, mny = 1e9, mxx = -1e9, mxy = -1e9;
+  const add = (p) => {
+    let X = p.x - cx, Y = p.y - cy;
+    if(rot){ const t = X * ca - Y * sa; Y = X * sa + Y * ca; X = t; }
+    const gx = Math.round(X / SS), gy = Math.round(Y / SS);
+    const k = gx + ',' + gy; if(seen.has(k)) return; seen.add(k);
+    pts.push({ x:gx, y:gy, ang: p.ang + rot, dens: p.dens, ci: p.ci, kind: p.kind });
+    if(gx < mnx) mnx = gx; if(gx > mxx) mxx = gx;
+    if(gy < mny) mny = gy; if(gy > mxy) mxy = gy;
+  };
+  glyph.forEach(add); box.forEach(add);          // ⚠️ 字を先に＝枡は字を避ける／抜くは空く
+  if(!pts.length) return { pts: [], w: 1, h: 1 };
+  for(const p of pts){ p.x -= mnx; p.y -= mny; }
+  return { pts, w: mxx - mnx + 1, h: mxy - mny + 1 };
+}
+
+function build(){
+  pushToLayer();                                  // ⭐ いま触っている値を、選んでいる版に必ず書き戻す
+  const layers = curLayer() && P.layers;
+  const packs = layers.map(L => layerPack(L));
+  const off = layers.map(L => ({ x: Math.round(L.lx || 0), y: Math.round(L.ly || 0) }));
+
+  // 世界の大きさ＝全部の版を包む矩形（画面サイズに縛られない）
+  let mnx = 1e9, mny = 1e9, mxx = -1e9, mxy = -1e9;
+  packs.forEach((pk, i) => { if(!pk.pts.length) return;
+    mnx = Math.min(mnx, off[i].x); mny = Math.min(mny, off[i].y);
+    mxx = Math.max(mxx, off[i].x + pk.w - 1); mxy = Math.max(mxy, off[i].y + pk.h - 1); });
+  if(mnx > mxx){ mnx = mny = 0; mxx = mxy = 7; }
+  const PAD = 2;
+  W = Math.max(mxx - mnx + 1 + PAD * 2, 8);
+  H = mxy - mny + 1 + PAD * 2 + Math.round(P.fall);   // 積もるぶんの空
   grid = new Int32Array(W * H).fill(-1);
   dots = [];
 
-  const ox = Math.floor((W - lw) / 2), oy = 2 + mpy;
-
-  // パス1：まず全ドットを集める（球か波かは後でまとめて決める）
-  const raw = [];
-  /* ⭐ 字が占めている所を覚えておく（2026-08-04）。マス目の塗りで使う＝
-       敷く＝そこは塗らない（重ねない）／抜く＝そこを空ける（字が彫った溝に見える）。 */
-  const inkAt = new Set();
-  const carve = P.masufill === 2;        // 抜く＝字の粒そのものを作らない
-  text.forEach((ch, i) => {
-    const li = Math.floor(i / per), ci2 = i % per;
-    // 横組＝右へ流れて下へ折り返す／縦組＝下へ流れて左へ折り返す（日本語の作法）
-    const bx = vert ? (lw - N - li * lineAdv) : ci2 * charAdv;
-    const by = vert ? ci2 * charAdv : li * lineAdv;
-    for(const [x, y, ang, dens] of glyphDots(ch, N, P.font)){
-      const gx = Math.round(ox + bx + x), gy = Math.round(oy + by + y);
+  /* パス1：全ドットを集める（球か波かは後でまとめて決める）。
+     ⭐ マス目（枠・塗り）は raw に入れない＝【玉／塊の選抜に混ぜない】ため。
+        混ぜると枠が太った塊に化けて枡が潰れる。選抜が終わったあとで足す。 */
+  const raw = [], boxRaw = [], occupied = new Set();
+  // ⚠️ 後ろの版から先に置く＝リストの後ろほど手前（重なったマスは後の版が勝つ）
+  for(let i = packs.length - 1; i >= 0; i--){
+    const dx = off[i].x - mnx + PAD, dy = off[i].y - mny + PAD;
+    for(const p of packs[i].pts){
+      const gx = p.x + dx, gy = p.y + dy;
       if(gx < 0 || gx >= W || gy < 0 || gy >= H) continue;
-      inkAt.add(gy * W + gx);
-      // ⚠️ 抜くときは字の粒を【作らない】。隠すだけにすると、見えない粒が
-      //    「積もる」で壁になって、何かに引っかかったように見える。
-      if(!carve) raw.push({ gx, gy, ci:i, ang, dens });
-    }
-  });
-  /* ⭐ マス目の枠を集める。⚠️ raw には入れない＝【玉／塊の選抜に枠を混ぜない】ため。
-     混ぜると枠が太った塊に化けて枡が潰れる。枠は選抜が終わったあとで足す。
-     ⭐ 枠も同じ粒なので、色・積もる・傾き・書き出しは何も足さずにそのまま効く。 */
-  const boxRaw = [];
-  if(mOn){
-    /* ⚠️ 置き場は1つの Set で管理する＝【字・枠・塗り】が同じ所に重ならない。
-       重ねると同じマスに粒が2つ入り、積もるが壊れて描画も二重になる。
-       ⭐ 最初から字の居場所を入れておく＝敷くは字を避け、抜くは字が空く。 */
-    const taken = new Set(inkAt);
-    const put = (gx, gy, ang, ci, masu) => {
-      if(gx < 0 || gx >= W || gy < 0 || gy >= H) return;
-      const k = gy * W + gx; if(taken.has(k)) return; taken.add(k);
-      boxRaw.push({ gx, gy, ci, ang, dens:1, masu:!!masu });
-    };
-    const cells = [];
-    text.forEach((ch, i) => {
-      const li = Math.floor(i / per), ci2 = i % per;
-      const bx = vert ? (lw - N - li * lineAdv) : ci2 * charAdv;
-      const by = vert ? ci2 * charAdv : li * lineAdv;
-      const L = Math.round(ox + bx) - mpx, T = Math.round(oy + by) - mpy;
-      cells.push({ i, L, T, R:L + cellW, B:T + cellH });   // ⭐ 右端＝隣の枡の左端（共有）
-    });
-    /* ⭐ 枠を先に置く＝境目は枠の線が勝つ（塗りに埋もれない）。
-       ⚠️ 塗りがある時は【枠を一律で塗りと直交】させる。辺に沿わせたままだと
-          縦の枠が塗りと同じ帯になって、枠が消えたように見える。 */
-    // ⚠️ 塗りの向きは push 側で masuAngle() に差し替わるので、ここの値は使われない。
-    const fillAng = 0;
-    if(P.masu > 0){
-      const wgt = Math.min(P.masu, Math.max(1, Math.floor(Math.min(cellW, cellH) / 2)));  // 線の太さ
-      const vAng = P.masufill > 0 ? 0 : Math.PI / 2;    // 縦の辺の向き
-      for(const c of cells){
-        for(let k = 0; k < wgt; k++){
-          for(let x = c.L; x <= c.R; x++){ put(x, c.T + k, 0, c.i); put(x, c.B - k, 0, c.i); }
-          for(let y = c.T; y <= c.B; y++){ put(c.L + k, y, vAng, c.i); put(c.R - k, y, vAng, c.i); }
-        }
-      }
-    }
-    /* ⭐ 塗り＝枡の中を埋める。⚠️ 字と【直交】させる（字なりの効かない一定の向き）＝
-       そうしないと塗りと字が同じ帯になって、敷いたとたん字が沈んで読めなくなる。 */
-    if(P.masufill > 0){
-      for(const c of cells)
-        for(let y = c.T; y <= c.B; y++)
-          for(let x = c.L; x <= c.R; x++) put(x, y, fillAng, c.i, true);
+      const k = gy * W + gx; if(occupied.has(k)) continue; occupied.add(k);
+      // ⚠️ ci は版をまたいで別番号にする（「字ごと」の位相散らしが版で混ざらない）
+      const rec = { gx, gy, ci: i * 1000 + p.ci, ang: p.ang, dens: p.dens };
+      if(p.kind === 0) raw.push(rec);
+      else { rec.masu = (p.kind === 2); boxRaw.push(rec); }
     }
   }
 
@@ -1415,16 +1486,17 @@ document.querySelectorAll('.seg').forEach(seg => {
     if(seg.id === 'mode'){ running = false; build(); stat(); }
   }));
 });
-['res','cell','pal','steps','dith','gdir','gflow','fps','grav','wav','bead','beadk','wrap','gapx','gapy','fall','masu','masuN','masuAng','masuWav','masuSteps','frameN','frameAng','frameWav','frameSteps','fat','ar','shine','shift','spread','dir','follow','valley','grad','grid','depth','warp','warpn','papN','papAng','papSteps'].forEach(id => {
+['res','cell','pal','steps','dith','gdir','gflow','fps','grav','wav','bead','beadk','wrap','gapx','gapy','fall','lx','ly','lscale','lrot','masu','masuN','masuAng','masuWav','masuSteps','frameN','frameAng','frameWav','frameSteps','fat','ar','shine','shift','spread','dir','follow','valley','grad','grid','depth','warp','warpn','papN','papAng','papSteps'].forEach(id => {
   const r = document.getElementById(id); if(r.type !== 'range') return;
   const v = r.parentElement.querySelector('.val');
   const sync = (fromUser) => { P[id] = +r.value; if(v) v.textContent = r.value;
     if(id==='warpn' && fromUser){ resetAnchors(+r.value); drawWarpCurve(); }
-    if(['res','cell','bead','beadk','wrap','gapx','gapy','fall','masu','fat','dir','follow'].includes(id)) build();
+    if(['res','cell','bead','beadk','wrap','gapx','gapy','fall','masu','fat','dir','follow',
+        'lx','ly','lscale','lrot'].includes(id)) build();
     if(id==='shine' || id==='valley' || id==='grad') buildTiles();
     // ⭐ 字の並びそのものが変わるものだけ、視点を合わせ直す。
     //   字なり・ずれ・玉・大きさは見え方が変わるだけなので、視点は動かさない。
-    if(['res','cell','wrap','gapx','gapy','fall','masu'].includes(id) && fromUser) fit();
+    if(['res','cell','wrap','gapx','gapy','fall','masu','lscale'].includes(id) && fromUser) fit();
     if(id === 'papN') syncPapGrad();
     // ⚠️ 塗りの向きは粒の角度にも入るので組み直す。色数・細かさ・版数はタイルだけでよい
     if(id === 'masuAng' || id === 'frameAng') build();   // 向きは粒の角度にも入る
@@ -1453,9 +1525,56 @@ document.getElementById('helpBtn').addEventListener('click', () => {
   document.body.classList.toggle('help');
 });
 document.getElementById('txt').addEventListener('input', () => {
-  running = false; syncWrapMax(); build(); fit();   // 字が変わると大きさも変わるので合わせ直す
+  P.txt = document.getElementById('txt').value;
+  running = false; syncWrapMax(); build(); fit(); renderChips();   // 字が変わると大きさも変わる
 });
 syncWrapMax();
+
+/* ══ 版（重ねる）── 結線 ═══════════════════════════════════════
+   ⭐ 版を選ぶ＝その版の値を P に載せ直して、つまみの見た目を合わせる。
+   ⚠️ 選ぶ前に必ず pushToLayer で今の値を保存する（しないと編集が捨てられる）。 */
+function renderChips(){
+  const host = document.getElementById('layerChips'); host.textContent = '';
+  (P.layers || []).forEach((L, i) => {
+    const b = document.createElement('button');
+    b.textContent = ([...(L.txt || '')].filter(c => c.trim())[0]) || '字';
+    b.title = L.txt || '';
+    b.className = i === P.cur ? 'on' : '';
+    b.onclick = () => { pushToLayer(); P.cur = i; pullFromLayer(); syncLayerUI(); build(); fit(); renderChips(); };
+    host.appendChild(b);
+  });
+  document.getElementById('delLayer').disabled = (P.layers || []).length < 2;
+}
+// 版の値 → つまみの見た目
+function syncLayerUI(){
+  document.getElementById('txt').value = P.txt;
+  [['lx','lx'],['ly','ly'],['lscale','lscale'],['lrot','lrot'],
+   ['wrap','wrap'],['gapx','gapx'],['gapy','gapy'],['masu','masu']].forEach(([id, key]) => {
+    const e = document.getElementById(id); if(!e) return;
+    e.value = P[key]; const v = e.parentElement.querySelector('.val');
+    if(v) v.textContent = (id === 'lscale') ? (+P[key]).toFixed(2) : Math.round(P[key]);
+  });
+  [['font','font'],['lay','lay'],['masufill','masufill']].forEach(([sid, key]) => {
+    document.querySelectorAll('#' + sid + ' button').forEach(b => {
+      b.classList.toggle('on', +b.dataset.v === P[key]); });
+  });
+  syncWrapMax(); syncMasuGrad();
+}
+document.getElementById('addLayer').onclick = () => {
+  pushToLayer();
+  // ⭐ 足す版は「いまの版の写し」＝作り込んだ設定をもう一度やらずに済む。少しずらして置く
+  const L = JSON.parse(JSON.stringify(curLayer()));
+  L.lx = (L.lx || 0) + 8; L.ly = (L.ly || 0) + 8;
+  P.layers.push(L); P.cur = P.layers.length - 1;
+  pullFromLayer(); syncLayerUI(); build(); fit(); renderChips();
+};
+document.getElementById('delLayer').onclick = () => {
+  if(!P.layers || P.layers.length < 2) return;
+  P.layers.splice(P.cur, 1); P.cur = Math.min(P.cur, P.layers.length - 1);
+  pullFromLayer(); syncLayerUI(); build(); fit(); renderChips();
+};
+// 起動時＝1枚目の版を作って、いまの P の値をそこへ入れる
+P.layers = [newLayer(P.txt)]; P.cur = 0; pushToLayer(); renderChips();
 /* ⭐ マス目の塗りの色・色数（2026-08-04）。地のグラデと同じ作法＝色数1でいままでどおり。
    ⚠️ 色や版数はタイルを焼き直すだけで済む＝組み直し（build）は要らない。
       向きだけは粒の角度にも入るので build も回す。 */
@@ -1769,6 +1888,7 @@ const I18N = {
   'かたち':'Shape','グラデ（ディザ）':'Dither','出す':'Export','アニメーション':'Motion',
   '角ゴ':'Gothic','明朝':'Mincho','横組':'Horizontal','縦組':'Vertical',
   '折返し':'Wrap','字間':'Tracking','行間':'Leading','マス目':'Cells','枠':'Rule','解像':'Resolution','粒':'Cell','太さ':'Weight',
+  '版（重ねる）':'Layers','＋ 字':'+ Text','この版を消す':'Delete layer','横位置':'X','縦位置':'Y','大きさ':'Size','角度':'Angle',
   '敷く':'Fill','抜く':'Knock out','色数':'Colors','版数':'Steps','枠の色数':'Rule colors',
   'グラデ塊':'Blob','連続':'Continuous','ドット':'Dot',
   '地の柄':'Base','交点の柄':'Joint',
