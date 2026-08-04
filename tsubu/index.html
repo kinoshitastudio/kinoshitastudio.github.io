@@ -312,6 +312,8 @@
   <div class="row"><label>折返し</label><input type="range" id="wrap" min="1" max="80" step="1" value="7"><span class="val"></span></div>
   <div class="row"><label>字間</label><input type="range" id="gapx" min="-40" max="40" step="1" value="2"><span class="val"></span></div>
   <div class="row"><label>行間</label><input type="range" id="gapy" min="-40" max="40" step="1" value="2"><span class="val"></span></div>
+  <div class="row"><label>マス目</label><input type="range" id="masu" min="0" max="4" step="1" value="0"><span class="val"></span></div>
+  <div class="hint"><b>マス目</b>＝字を1文字ずつ枡に入れて並べる。0で切。枡の大きさは<b>字間・行間</b>で決まる（枠は隣と境目を共有する）</div>
   <div class="row"><label>解像</label><input type="range" id="res" min="8" max="96" step="4" value="16"><span class="val"></span></div>
   <div class="row"><label>粒</label><input type="range" id="cell" min="1" max="80" step="1" value="7"><span class="val"></span></div>
   <div class="row"><label>太さ</label><input type="range" id="fat" min="0" max="30" step="1" value="1"><span class="val"></span></div>
@@ -440,7 +442,7 @@
 const cv = document.getElementById('cv'), g = cv.getContext('2d', { alpha:true });
 const P = { mode:0, res:16, cell:7, pal:1, steps:4, dith:100, gdir:90, gflow:0, fps:30, grav:60, font:0,
             tex:1, wav:0.1, bead:55, beadk:1, line:0, blob:5, ar:100, shine:60, valley:0, grad:0, shift:0, spread:0, dir:0, follow:100, grid:0, depth:0, fat:1,
-            lay:0, wrap:7, gapx:2, gapy:2, fall:0,
+            lay:0, wrap:7, gapx:2, gapy:2, fall:0, masu:0,
             /* 地のグラデ（TSUBUTE / HORI 2 と同じ作り）── 色数 1 ＝単色＝今までと同じ */
             papN:1, papMode:0, papAng:90, papSteps:0,
             papC1:'#f2d16b', papC2:'#c8d4de', papC3:'#7f95ab', papC4:'#1d2733', papC5:'#8a6f4e', papC6:'#e9201c' };
@@ -718,12 +720,23 @@ function build(){
   const across = (lines - 1) * lineAdv + N;              // 行をまたぐ広がり
   const lw = vert ? across : along;                      // x 方向
   const lh = vert ? along  : across;                     // y 方向
-  W = Math.max(Math.ceil(lw) + 4, 8);
-  H = Math.ceil(lh) + 4 + Math.round(P.fall);            // 積もるぶんの空
+  /* ⭐ マス目（2026-08-04）＝字を1文字ずつ枡に入れて、並べて一枚にする。
+     ⭐ 枡の大きさは【送りそのもの】＝隣の枡と境目を共有する。だから線が二重に太らない。
+     ⚠️ 枠は字の外（送りの余りぶん）まで出るので、世界を【枠のぶんだけ広げる】。
+        広げないと右端と下端の線が切り落とされる（字間・行間を大きくするほど目立つ）。
+     ⚠️ マス目が切のときは 0＝いままでと1ドットも変わらない。 */
+  const cellW = vert ? lineAdv : charAdv, cellH = vert ? charAdv : lineAdv;
+  const mOn = P.masu > 0;
+  const mpx = mOn ? Math.max(0, Math.floor((cellW - N) / 2)) : 0;   // 字の左に出る量
+  const mpy = mOn ? Math.max(0, Math.floor((cellH - N) / 2)) : 0;   // 字の上に出る量
+  const mqx = mOn ? Math.max(0, cellW - N - mpx) : 0;               // 右に出る量
+  const mqy = mOn ? Math.max(0, cellH - N - mpy) : 0;               // 下に出る量
+  W = Math.max(Math.ceil(lw) + mpx + mqx + 4, 8);
+  H = Math.ceil(lh) + mpy + mqy + 4 + Math.round(P.fall);           // 積もるぶんの空
   grid = new Int32Array(W * H).fill(-1);
   dots = [];
 
-  const ox = Math.floor((W - lw) / 2), oy = 2;
+  const ox = Math.floor((W - lw) / 2), oy = 2 + mpy;
 
   // パス1：まず全ドットを集める（球か波かは後でまとめて決める）
   const raw = [];
@@ -738,6 +751,31 @@ function build(){
       raw.push({ gx, gy, ci:i, ang, dens });
     }
   });
+  /* ⭐ マス目の枠を集める。⚠️ raw には入れない＝【玉／塊の選抜に枠を混ぜない】ため。
+     混ぜると枠が太った塊に化けて枡が潰れる。枠は選抜が終わったあとで足す。
+     ⭐ 枠も同じ粒なので、色・積もる・傾き・書き出しは何も足さずにそのまま効く。 */
+  const frameRaw = [];
+  if(mOn){
+    const seen = new Set();                              // ⚠️ 境目は隣と共有＝同じ所を二度置かない
+    const put = (gx, gy, ang, ci) => {
+      if(gx < 0 || gx >= W || gy < 0 || gy >= H) return;
+      const k = gy * W + gx; if(seen.has(k)) return; seen.add(k);
+      frameRaw.push({ gx, gy, ci, ang, dens:1 });
+    };
+    const wgt = Math.min(P.masu, Math.max(1, Math.floor(Math.min(cellW, cellH) / 2)));  // 線の太さ
+    text.forEach((ch, i) => {
+      const li = Math.floor(i / per), ci2 = i % per;
+      const bx = vert ? (lw - N - li * lineAdv) : ci2 * charAdv;
+      const by = vert ? ci2 * charAdv : li * lineAdv;
+      const L = Math.round(ox + bx) - mpx, T = Math.round(oy + by) - mpy;
+      const R = L + cellW, B = T + cellH;                 // ⭐ 右端＝隣の枡の左端（共有）
+      for(let k = 0; k < wgt; k++){
+        for(let x = L; x <= R; x++){ put(x, T + k, 0, i); put(x, B - k, 0, i); }
+        for(let y = T; y <= B; y++){ put(L + k, y, Math.PI / 2, i); put(R - k, y, Math.PI / 2, i); }
+      }
+    });
+  }
+
   // ⭐ 玉＝「密度の高い順に、上位 玉% を球にする」＝スライダーが球の"割合"に直結。
   //    密度の絶対しきい値だと、太字で密度が二極化したとき中間で反応しなかった。
   //    順位で上位を選ぶので、密度が偏っていても 0→100 まで滑らかに増減する。
@@ -804,6 +842,15 @@ function build(){
       ci:r.ci, t, ang:angE, dens:r.dens,
       big: isSphere[i] === 1, hide: absorbed[i] === 1, members: memberOf[i],
     };
+  });
+  // ⭐ マス目の枠を足す。選抜（玉／塊）が済んだあとなので、枠は必ず細いまま。
+  //   ⚠️ ci は自分の字の番号を持たせる＝「集まる」で字と一緒に動く（枠だけ取り残されない）。
+  frameRaw.forEach(r => {
+    const angE = r.ang * FOL + DIR;
+    const t = (Math.round(((angE % Math.PI) + Math.PI) % Math.PI / Math.PI * TILE_ANGLES)) % TILE_ANGLES;
+    dots.push({ x:r.gx, y:r.gy, hx:r.gx, hy:r.gy, gx0:r.gx, gy0:r.gy,
+      vy:0, live:false, seed:Math.random(), ci:r.ci, t, ang:angE, dens:r.dens,
+      big:false, hide:false, members:null });
   });
   settled = 0;
   // ⚠️ ここで fit() を呼んでいたため、字なり・ずれ・向きを触るたびに視点が中央へ戻り、
@@ -1214,16 +1261,16 @@ document.querySelectorAll('.seg').forEach(seg => {
     if(seg.id === 'mode'){ running = false; build(); stat(); }
   }));
 });
-['res','cell','pal','steps','dith','gdir','gflow','fps','grav','wav','bead','beadk','wrap','gapx','gapy','fall','fat','ar','shine','shift','spread','dir','follow','valley','grad','grid','depth','warp','warpn','papN','papAng','papSteps'].forEach(id => {
+['res','cell','pal','steps','dith','gdir','gflow','fps','grav','wav','bead','beadk','wrap','gapx','gapy','fall','masu','fat','ar','shine','shift','spread','dir','follow','valley','grad','grid','depth','warp','warpn','papN','papAng','papSteps'].forEach(id => {
   const r = document.getElementById(id); if(r.type !== 'range') return;
   const v = r.parentElement.querySelector('.val');
   const sync = (fromUser) => { P[id] = +r.value; if(v) v.textContent = r.value;
     if(id==='warpn' && fromUser){ resetAnchors(+r.value); drawWarpCurve(); }
-    if(['res','cell','bead','beadk','wrap','gapx','gapy','fall','fat','dir','follow'].includes(id)) build();
+    if(['res','cell','bead','beadk','wrap','gapx','gapy','fall','masu','fat','dir','follow'].includes(id)) build();
     if(id==='shine' || id==='valley' || id==='grad') buildTiles();
     // ⭐ 字の並びそのものが変わるものだけ、視点を合わせ直す。
     //   字なり・ずれ・玉・大きさは見え方が変わるだけなので、視点は動かさない。
-    if(['res','cell','wrap','gapx','gapy','fall'].includes(id) && fromUser) fit();
+    if(['res','cell','wrap','gapx','gapy','fall','masu'].includes(id) && fromUser) fit();
     if(id === 'papN') syncPapGrad(); };
   r.addEventListener('input', () => sync(true)); sync();
 });
@@ -1541,7 +1588,7 @@ const I18N = {
   '字':'Text','質感':'Texture','塗り':'Pattern','グラデの断面 — 線と塊 両方に効く':'Ramp — line & mass',
   'かたち':'Shape','グラデ（ディザ）':'Dither','出す':'Export','アニメーション':'Motion',
   '角ゴ':'Gothic','明朝':'Mincho','横組':'Horizontal','縦組':'Vertical',
-  '折返し':'Wrap','字間':'Tracking','行間':'Leading','解像':'Resolution','粒':'Cell','太さ':'Weight',
+  '折返し':'Wrap','字間':'Tracking','行間':'Leading','マス目':'Cells','解像':'Resolution','粒':'Cell','太さ':'Weight',
   'グラデ塊':'Blob','連続':'Continuous','ドット':'Dot',
   '地の柄':'Base','交点の柄':'Joint',
   '波':'Wave','縞':'Stripe','斜':'Diagonal','格子':'Grid','環':'Ring',
