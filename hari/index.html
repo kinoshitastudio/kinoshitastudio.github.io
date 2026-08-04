@@ -109,6 +109,15 @@ input[type=color]{ width:32px; height:28px; padding:0; border:.5px solid var(--l
       【浮かせるのは min-width:761px の中だけ】。外に書くと下段が壊れる。
    ⚠️ 掴める領域はモバイルで確保し直す（このブロックが後に来て勝ってしまうため）。
    ══════════════════════════════════════════════════════════════ */
+/* ⭐ レイヤー（行と図の一覧）。高さを自分で変えられる・畳める */
+#lineList{ overflow-y:auto; max-height:190px; }
+#lineList.fold{ display:none }
+#layGrip{ height:10px; margin:2px 0 0; border-radius:5px; cursor:ns-resize;
+  background:linear-gradient(var(--line),var(--line)) center/28px 2px no-repeat }
+#layGrip:hover{ background:linear-gradient(var(--dim),var(--dim)) center/28px 2px no-repeat }
+.li .k{ flex:none }
+.li.pc .k{ opacity:.55 }
+
 /* 版面の上で打ち直す欄。⚠️ 版面と同じ場所に浮かせる＝どこを直しているか分かる */
 #inlineText{ display:none; position:fixed; z-index:30; margin:0; padding:8px 10px;
   border:none; border-radius:10px; outline:2px solid var(--sel); resize:none;
@@ -226,7 +235,13 @@ input[type=color]{ border-radius:8px; height:30px }
 
   <h2>行 ── 文字の帯</h2>
   <div class="sec">
+    <div class="row" style="margin:0 0 6px">
+      <button class="btn" id="layFold" style="padding:4px 9px">畳む</button>
+      <span class="v" id="layCount" style="margin-left:auto"></span>
+    </div>
     <div id="lineList"></div>
+    <!-- ⭐ 右下を掴んで高さを変えられる（木下＝「パネルはユーザーで自由に広げたり」） -->
+    <div id="layGrip" title="ドラッグで高さを変える"></div>
     <div class="btns">
       <button class="btn" id="addLine">行を足す</button>
       <button class="btn" id="dupLine">複製</button>
@@ -1495,6 +1510,17 @@ function shake(what){
 function renderList(){
   const el = document.getElementById('lineList');
   el.innerHTML = '';
+  /* ⭐ 置いた図も同じ一覧に出す＝【レイヤー】。
+     ⚠️ 図が一覧に無いと、重なって隠れた図を選べない（版面をクリックするしかなかった）。 */
+  S.pieces.forEach((pc,i) => {
+    const d = document.createElement('div');
+    d.className = 'li pc' + (S.sel.kind === 'piece' && S.sel.i === i ? ' on' : '');
+    d.innerHTML = `<span class="k">図</span><span class="t">${pc.src ? '画像' : 'SVG'}</span>`
+                + `<span class="lk${pc.lock ? ' on' : ''}" title="固定すると振らない">${pc.lock ? '固定中' : '固定'}</span>`;
+    d.onclick = () => { S.sel = { kind:'piece', i }; syncPanel(); render(); };
+    d.querySelector('.lk').onclick = ev => { ev.stopPropagation(); pc.lock = !pc.lock; renderList(); };
+    el.appendChild(d);
+  });
   S.lines.forEach((L,i) => {
     const d = document.createElement('div');
     d.className = 'li' + (S.sel.kind === 'line' && S.sel.i === i ? ' on' : '');
@@ -1506,6 +1532,8 @@ function renderList(){
     d.querySelector('.lk').onclick = ev => { ev.stopPropagation(); L.lock = !L.lock; renderList(); };
     el.appendChild(d);
   });
+  const c = document.getElementById('layCount');
+  if(c) c.textContent = `${S.lines.length} 行 ／ ${S.pieces.length} 図`;
 }
 const $ = id => document.getElementById(id);
 function syncPanel(){
@@ -1748,6 +1776,23 @@ $('sColOff').onclick = () => { const L = sel(); if(!L) return; setSort(L, { col:
   });
 });
 
+/* レイヤーを畳む／高さを変える。⚠️ 高さは覚えない（作品ではなく画面の都合なので） */
+$('layFold').onclick = () => {
+  const l = $('lineList'), on = l.classList.toggle('fold');
+  $('layFold').textContent = on ? '出す' : '畳む';
+  $('layGrip').style.display = on ? 'none' : '';
+};
+{
+  const grip = $('layGrip'); let gy = 0, h0 = 0;
+  const move = e => { const h = Math.max(60, Math.min(560, h0 + (e.clientY - gy)));
+    $('lineList').style.maxHeight = h + 'px'; };
+  const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
+  grip.addEventListener('pointerdown', e => {
+    gy = e.clientY; h0 = $('lineList').getBoundingClientRect().height;
+    addEventListener('pointermove', move); addEventListener('pointerup', up);
+    e.preventDefault();
+  });
+}
 $('preTsumu').onclick  = () => applyPreset('tsumu');
 $('preMeguru').onclick = () => applyPreset('meguru');
 $('preShita').onclick  = () => applyPreset('shita');
