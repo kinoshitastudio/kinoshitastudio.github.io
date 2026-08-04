@@ -921,6 +921,7 @@ cv.addEventListener('pointerdown', e => {
   cv.setPointerCapture(e.pointerId);
 
   if(e.button === 1 || e.shiftKey){ drag = { kind:'pan', last:pt }; return; }
+  /* ⌥ を押している間は「大きさを変える」持ち方。⚠️ 掴む前から押しておく（掴んでからでは遅い） */
 
   // ① 頂点を掴む（いちばん優先）
   const hUI = uiLayer.hitTest(pt, { fill:true, stroke:true, tolerance:8/paper.view.zoom });
@@ -960,8 +961,17 @@ cv.addEventListener('pointerdown', e => {
     if(i >= 0){
       S.sel = { kind:'line', i }; syncPanel(); render();
       /* ⭐ 掴んだ行がそのまま動く（木下＝「いまだとボード全体が動いてしまう」）。
-         ⚠️ ここで return しないと、下の pan に落ちて版面ごと動く。 */
-      drag = { kind:'lineMove', last:pt };
+         ⚠️ ここで return しないと、下の pan に落ちて版面ごと動く。
+         ⭐⭐ 修飾キーで【掴む意味】を変える（木下＝「毎回パネルにいくのが面倒」）。
+            ⌥＝大きさと字間（上下＝大きさ／左右＝字間）
+            ⇧ は版面のパンに使っているので使わない。 */
+      const L2 = S.lines[i];
+      if(e.altKey){
+        drag = { kind:'lineSize', last:pt, size0:L2.size, track0:L2.track };
+        cv.style.cursor = 'nwse-resize';
+      } else {
+        drag = { kind:'lineMove', last:pt };
+      }
       return;
     }
   }
@@ -997,6 +1007,15 @@ cv.addEventListener('pointermove', e => {
       const nr = Math.max(bx + 20, Math.min(B.w, pt.x));
       L.box.w = (nr - bx)/B.w*100;
     }
+    render();
+  } else if(drag.kind === 'lineSize'){
+    /* ⌥ ドラッグ＝上下で大きさ・左右で字間。
+       ⚠️ 画面の見た目でなく【版面の座標】で測る＝ズームしても効き方が変わらない。 */
+    const L = sel(); if(!L) return;
+    const d = pt.subtract(drag.last);
+    L.size  = Math.max(6, Math.min(400, drag.size0  - d.y * 0.35));
+    L.track = Math.max(-20, Math.min(200, drag.track0 + d.x * 0.12));
+    setRange('tSize', Math.round(L.size)); setRange('tTrack', Math.round(L.track));
     render();
   } else if(drag.kind === 'lineMove'){
     /* 行ごと版面の中で動かす。
@@ -1649,5 +1668,5 @@ S.sel = { kind:'line', i:0 };
 paper.view.onResize = () => { fitView(); render(); };
 document.fonts.ready.then(() => render());      // ⚠️ Webフォントが来る前に測ると送りがずれる
 syncPanel(); fitView(); render();
-stat('READY — 文字を打つ／頂点をドラッグ／版面の外は書き出されない');
+stat('READY — 文字を打つ／掴んで動かす／⌥ドラッグで大きさと字間／版面の外は書き出されない');
 </script>
