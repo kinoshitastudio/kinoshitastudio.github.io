@@ -220,6 +220,26 @@ input[type=color]{ width:32px; height:28px; padding:0; border:.5px solid var(--l
       <button class="btn" id="showPath">経路を見せる</button></div>
   </div>
 
+  <h2 id="sortHead">分ける ── 漢字・かな・カナ</h2>
+  <div class="sec" id="sortUI">
+    <div class="row"><label>使う</label>
+      <div class="seg" id="segSort"><button data-v="0" class="on">切</button><button data-v="1">入</button></div></div>
+    <div id="sortBody">
+      <div class="row"><label>層</label>
+        <div class="seg" id="segSortG">
+          <button data-v="k" class="on">漢字</button><button data-v="h">かな</button><button data-v="t">カナ</button>
+        </div></div>
+      <div class="row"><label>大きさ</label>
+        <input type="range" id="sSize" min="30" max="220" value="100"><span class="v" id="vsSize">100</span></div>
+      <div class="row"><label>色</label><input type="color" id="sCol" value="#111111">
+        <button class="btn" id="sColOff">素に戻す</button></div>
+      <div class="row"><label>ウェイト</label>
+        <select id="sWt"><option value="">素のまま</option><option>900</option><option>700</option><option>500</option><option>400</option><option>300</option></select></div>
+      <div class="note">⭐ 層を選んで、その層だけに効かせる（大きさ・色・ウェイト）<br>
+        ⚠️ <b>切</b>のときは何も掛からない＝これまでと同じ／札には効かない（札は塊なので字ごとに分けない）</div>
+    </div>
+  </div>
+
   <h2>枡 ── 文字の地</h2>
   <div class="sec">
     <div class="row"><label>形</label>
@@ -329,6 +349,8 @@ function newLine(text){
     path:{ type:'poly', n:6, inset:12, corner:0, pts:null },   // pts=null なら型から作る
     /* ⭐ 張る用の箱（版面に対する％）。⚠️ path と両方持たせる＝置き方を切り替えても値が残る */
     box:{ x:10, y:88, w:80 },
+    /* ⭐ 分ける（漢字/かな/カナ）。切なら何も掛からない */
+    sort: JSON.parse(JSON.stringify(SORT_DEF)),
     /* ⭐ 札用。sub＝下に置く小さい行（日英併記）。地・罫線もここが持つ */
     fuda:{ sub:'POSTER TYPESETTING', bg:'#c8322a', fg:'#ffffff', pad:18, gap:8, rule:1, sub2:60 },
     fam:'"Zen Kaku Gothic New", sans-serif', wt:'500',
@@ -340,12 +362,51 @@ function newLine(text){
 /* 枡の既定。⚠️ 古い JSON には cell が無いので、読み込みでここが埋まる */
 const CELL_DEF = { shape:'none', col:'#111111', h:135, pad:4, r:8 };
 
+/* ══ 分ける ── 漢字／かな／カナで別々に効かせる ══
+   ⭐ これは【置き方でなく、どの置き方にも効く属性】。だから LAYOUTS ではなく
+     「字を1つ作る」ところに置く＝沿う・張る・札のどれでも同じように効く。
+   ⚠️ 切（off）のときは何も掛けない＝これまでと1ピクセルも変わらない。 */
+const SORT_DEF = { on:0,
+  k:{ size:100, col:'', wt:'' },     // 漢字
+  h:{ size:100, col:'', wt:'' },     // かな
+  t:{ size:100, col:'', wt:'' } };   // カナ
+function sortOf(ch){
+  if(/[぀-ゟー]/.test(ch)) return 'h';
+  if(/[゠-・ヽ-ヿｦ-ﾟ]/.test(ch)) return 't';
+  if(/[一-鿿㐀-䶿豈-﫿々〆〇ヶ]/.test(ch)) return 'k';
+  return null;                                    // 英数・記号は素のまま
+}
+/* ⭐ 字を1つ作る所を1本にまとめた（沿う・張る・札が同じ道を通る）。
+   ⚠️ 2箇所に書くと、片方だけ直して層が効かない字が出る。 */
+function charStyle(ch, L){
+  const S3 = Object.assign({}, SORT_DEF, L.sort || {});
+  const base = { size:L.size, col:L.col, wt:L.wt };
+  if(!S3.on) return base;
+  const g = sortOf(ch); if(!g) return base;
+  const o = Object.assign({}, SORT_DEF[g], S3[g] || {});
+  return { size: L.size * ((o.size ?? 100)/100),
+           col : o.col || L.col,
+           wt  : o.wt  || L.wt };
+}
+function makeChar(ch, L, extraCol){
+  const st = charStyle(ch, L);
+  const t = new paper.PointText({
+    point:[0,0], content:ch, justification:'center',
+    fillColor: extraCol || st.col, fontFamily:L.fam, fontWeight:st.wt, fontSize:st.size,
+  });
+  if(L.wx !== 100 || L.wy !== 100) t.scaling = new Point((L.wx||100)/100, (L.wy||100)/100);
+  t.data.line = L.id;
+  return t;
+}
+
 /* ══ 字送りを測る ══
    ⚠️ paper の bounds は空白で 0 になるので送りに使えない。
      画面と同じ書体設定で canvas に測らせる＝見えている通りの送りになる。 */
 const _mctx = document.createElement('canvas').getContext('2d');
 function advance(ch, L){
-  _mctx.font = `${L.wt} ${L.size}px ${L.fam}`;
+  // ⚠️ 層で大きさを変えたら、送りも同じだけ変える（変えないと重なる／空く）
+  const st = (typeof charStyle === 'function') ? charStyle(ch, L) : { size:L.size, wt:L.wt };
+  _mctx.font = `${st.wt} ${st.size}px ${L.fam}`;
   // ⚠️ 長体（字幅）を掛け忘れると、細くしたのに送りだけ元のままで隙間が空く
   return _mctx.measureText(ch).width * ((L.wx || 100)/100);
 }
@@ -470,16 +531,12 @@ const LAYOUTS = {
 
       /* ── ③ 字 ── */
       place.forEach(p => {
-        const t = new paper.PointText({
-          point:[0,0], content:p.ch, justification:'center',
-          fillColor:L.col, fontFamily:L.fam, fontWeight:L.wt, fontSize:L.size,
-        });
         /* ⚠️ 順番が要る＝伸ばす → 回す → 置く。
-             回してから伸ばすと、伸びる向きが画面の縦横になって字が歪む。 */
-        if(L.wx !== 100 || L.wy !== 100) t.scaling = new Point((L.wx||100)/100, (L.wy||100)/100);
+             回してから伸ばすと、伸びる向きが画面の縦横になって字が歪む。
+             （伸ばすのは makeChar の中でやっている） */
+        const t = makeChar(p.ch, L);
         t.rotation = p.ang;
         t.position = p.pos;       // ⚠️ ベースラインでなく字の真ん中を経路に載せている
-        t.data.line = L.id;
         into.addChild(t);
       });
       if(S.showPath || (sel() === L)){
@@ -533,13 +590,8 @@ const LAYOUTS = {
       /* 字 */
       let x = bx;
       chars.forEach((ch,i) => {
-        const t = new paper.PointText({
-          point:[0,0], content:ch, justification:'center',
-          fillColor:L.col, fontFamily:L.fam, fontWeight:L.wt, fontSize:L.size,
-        });
-        if(L.wx !== 100 || L.wy !== 100) t.scaling = new Point((L.wx||100)/100, (L.wy||100)/100);
+        const t = makeChar(ch, L);
         t.position = new Point(x + adv[i]/2, by);
-        t.data.line = L.id;
         into.addChild(t);
         x += step(i);
       });
@@ -942,6 +994,16 @@ function syncPanel(){
   $('rowN').style.display = (isMeg && L.path.type === 'poly') ? '' : 'none';
   $('polyNote').style.display = (isMeg && L.path.type === 'poly') ? '' : 'none';
   $('lineHead').textContent = (isFuda ? '札' : isHaru ? '張る' : '沿う') + ' ── 選んだ行';
+  /* 分ける（漢字・かな・カナ）。⚠️ 札は塊なので字ごとに分けられない＝節ごと畳む */
+  const S3 = Object.assign({}, SORT_DEF, L.sort || {});
+  $('sortHead').style.display = isFuda ? 'none' : '';
+  $('sortUI').style.display   = isFuda ? 'none' : '';
+  $('sortBody').style.display = S3.on ? '' : 'none';
+  segOn('segSort', S3.on); segOn('segSortG', sortG);
+  const so = Object.assign({}, SORT_DEF[sortG], S3[sortG] || {});
+  setRange('sSize', so.size ?? 100);
+  $('sCol').value = so.col || L.col;
+  $('sWt').value  = so.wt  || '';
   const F = Object.assign({}, FUDA_DEF, L.fuda || {});
   $('fSub').value = F.sub; $('fBg').value = F.bg; $('fFg').value = F.fg;
   $('fPad').value = F.pad;   $('vfPad').textContent = F.pad;
@@ -1012,6 +1074,23 @@ segBind('segKind',   (L,v) => { L.kind = v;
   if(!L.box)  L.box  = { x:10, y:88, w:80 };
   if(!L.fuda) L.fuda = Object.assign({}, FUDA_DEF); });
 segBind('segRule',   (L,v) => { L.fuda = Object.assign({}, FUDA_DEF, L.fuda||{}, { rule:Number(v) }); });
+/* 分ける。⭐ いま編集している層は【画面の状態】＝作品には保存しない */
+let sortG = 'k';
+function setSort(L, patch){
+  const S3 = JSON.parse(JSON.stringify(Object.assign({}, SORT_DEF, L.sort || {})));
+  S3[sortG] = Object.assign({}, SORT_DEF[sortG], S3[sortG] || {}, patch);
+  L.sort = S3;
+}
+segBind('segSort',  (L,v) => { L.sort = Object.assign({}, SORT_DEF, L.sort||{}, { on:Number(v) }); syncPanel(); });
+segBind2('segSortG', v => { sortG = v; syncPanel(); });
+$('sSize').addEventListener('input', () => { const L = sel(); if(!L) return;
+  setSort(L, { size:Number($('sSize').value) }); $('vsSize').textContent = $('sSize').value; render(); });
+$('sCol').addEventListener('input',  () => { const L = sel(); if(!L) return;
+  setSort(L, { col:$('sCol').value }); render(); });
+$('sWt').addEventListener('change',  () => { const L = sel(); if(!L) return;
+  setSort(L, { wt:$('sWt').value }); render(); });
+/* ⚠️ 色は「素のまま（行の色に従う）」に戻せないと、一度触ったら層の色から抜けられない */
+$('sColOff').onclick = () => { const L = sel(); if(!L) return; setSort(L, { col:'' }); syncPanel(); render(); };
 /* 札のつまみ。⚠️ L の直下でなく L.fuda の中なので、BIND とは別に配線する */
 [['fSub','sub',v=>v],['fBg','bg',v=>v],['fFg','fg',v=>v],
  ['fPad','pad',Number],['fGap','gap',Number],['fSub2','sub2',Number]].forEach(([id,key,cast]) => {
