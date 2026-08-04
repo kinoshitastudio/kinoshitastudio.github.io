@@ -252,6 +252,8 @@ input[type=color]{ border-radius:8px; height:30px }
       <input type="range" id="boxX" min="0" max="95" value="10"><span class="v" id="vboxX">10</span></div>
     <div class="row" id="rowBoxY"><label>上下</label>
       <input type="range" id="boxY" min="0" max="100" value="88"><span class="v" id="vboxY">88</span></div>
+    <div class="row" id="rowBoxR"><label>角度</label>
+      <input type="range" id="boxR" min="-180" max="180" value="0"><span class="v" id="vboxR">0</span></div>
     <div class="row" id="rowBoxW"><label>幅</label>
       <input type="range" id="boxW" min="5" max="100" value="80"><span class="v" id="vboxW">80</span></div>
 
@@ -315,6 +317,12 @@ input[type=color]{ border-radius:8px; height:30px }
       <div class="seg" id="segDir"><button data-v="1" class="on">順</button><button data-v="-1">逆</button></div></div>
     <div class="row" id="rowSide"><label>面</label>
       <div class="seg" id="segSide"><button data-v="0" class="on">外</button><button data-v="1">内</button></div></div>
+    <div class="row"><label>字のグラデ</label>
+      <div class="seg" id="segTGrad"><button data-v="0" class="on">切</button>
+        <button data-v="linear">直線</button><button data-v="radial">放射</button></div></div>
+    <div class="row" id="rowTG"><label>グラデ色</label>
+      <input type="color" id="tg0" value="#111111"><input type="color" id="tg1" value="#c8322a">
+      <input type="range" id="tgAng" min="0" max="360" value="90" style="flex:1"><span class="v" id="vtgAng">90</span></div>
     <div class="row"><label>色</label><input type="color" id="tCol" value="#111111">
       <button class="btn" id="showPath">経路を見せる</button></div>
   </div>
@@ -383,6 +391,12 @@ input[type=color]{ border-radius:8px; height:30px }
       </div></div>
     <div class="row"><label>地の色</label><input type="color" id="cCol" value="#111111">
       <button class="btn" id="cInv">字を白く</button></div>
+    <div class="row"><label>枡のグラデ</label>
+      <div class="seg" id="segCGrad"><button data-v="0" class="on">切</button>
+        <button data-v="linear">直線</button><button data-v="radial">放射</button></div></div>
+    <div class="row" id="rowCG"><label>グラデ色</label>
+      <input type="color" id="cg0" value="#111111"><input type="color" id="cg1" value="#c8322a">
+      <input type="range" id="cgAng" min="0" max="360" value="90" style="flex:1"><span class="v" id="vcgAng">90</span></div>
     <div class="row"><label>高さ</label>
       <input type="range" id="cH" min="60" max="300" value="135"><span class="v" id="vcH">135</span></div>
     <div class="row" id="rowPad"><label>横の余白</label>
@@ -479,8 +493,9 @@ function newLine(text){
     text: text || '貼 HARI ── 版面に文字を張り巡らせる',
     path:{ type:'poly', n:6, inset:12, corner:0, pts:null },   // pts=null なら型から作る
     /* ⭐ 張る用の箱（版面に対する％）。⚠️ path と両方持たせる＝置き方を切り替えても値が残る */
-    box:{ x:10, y:88, w:80 },
+    box:{ x:10, y:88, w:80, rot:0 },
     fit:0,                                   // ⭐ 張るのとき＝箱の幅に字の大きさを合わせる
+    grad: JSON.parse(JSON.stringify(GRAD_DEF)),   // ⭐ 字のグラデ（切なら単色）
     /* ⭐ 分ける（漢字/かな/カナ）。切なら何も掛からない */
     sort: JSON.parse(JSON.stringify(SORT_DEF)),
     /* ⭐ 札用。sub＝下に置く小さい行（日英併記）。地・罫線もここが持つ */
@@ -492,7 +507,8 @@ function newLine(text){
   };
 }
 /* 枡の既定。⚠️ 古い JSON には cell が無いので、読み込みでここが埋まる */
-const CELL_DEF = { shape:'none', col:'#111111', h:135, pad:4, r:8 };
+const CELL_DEF = { shape:'none', col:'#111111', h:135, pad:4, r:8,
+  grad:{ on:0, mode:'linear', ang:90, cols:['#111111','#c8322a'] } };   // ⭐ 枡のグラデ
 
 /* ══ 分ける ── 漢字／かな／カナで別々に効かせる ══
    ⭐ これは【置き方でなく、どの置き方にも効く属性】。だから LAYOUTS ではなく
@@ -541,6 +557,39 @@ function advance(ch, L){
   _mctx.font = `${st.wt} ${st.size}px ${L.fam}`;
   // ⚠️ 長体（字幅）を掛け忘れると、細くしたのに送りだけ元のままで隙間が空く
   return _mctx.measureText(ch).width * ((L.wx || 100)/100);
+}
+
+/* ══ 字と枡のグラデ ══
+   ⭐ 木下＝「テキストの色にもグラデを、またマスの色にもグラデを」。
+   ⭐⭐ 【行ぜんぶで1本のグラデ】にする。1字ずつに掛けると字の中で完結して、
+     字の数だけグラデが切れる（＝ただの色違いに見える）。
+     だから字を全部作ったあとに、行の外形（bounds）を基準にまとめて塗る。
+   ⭐ paper.js の gradient なので SVG に <linearGradient> でそのまま出る。 */
+const GRAD_DEF = { on:0, mode:'linear', ang:90, cols:['#111111','#c8322a'] };
+function paintGrad(items, G, bounds){
+  if(!items.length || !G || !G.on) return;
+  const cols = (G.cols && G.cols.length >= 2) ? G.cols : GRAD_DEF.cols;
+  const c = bounds.center, R = Math.max(bounds.width, bounds.height)/2 || 1;
+  let o, d, radial = (G.mode === 'radial');
+  if(radial){
+    o = c; d = c.add(new Point(R, 0));
+  } else {
+    const a = (G.ang||0) * Math.PI/180;
+    const v = new Point(Math.cos(a), Math.sin(a)).multiply(R);
+    o = c.subtract(v); d = c.add(v);
+  }
+  /* ⚠️⚠️ item ごとに【作り直して】渡す。1つの色を使い回すと paper が実体を共有して、
+     回っている字で向きが引きずられる。
+     🔴 ここを JSON でコピーしたら Point がただの {x,y} になり、SVG の x1/x2 が NaN になった
+     （paper の Point は clone で渡す）。 */
+  items.forEach(it => {
+    it.fillColor = { gradient:{ stops:cols.slice(), radial }, origin:o.clone(), destination:d.clone() };
+  });
+}
+function boundsOf(items){
+  let r = null;
+  items.forEach(it => { r = r ? r.unite(it.bounds) : it.bounds.clone(); });
+  return r;
 }
 
 /* ══ 経路を作る ══ */
@@ -639,13 +688,14 @@ const LAYOUTS = {
         d += dir*step;
       }
 
+      const cellItems = [], charItems = [];
       /* ── ② 枡（文字の地）── */
       const C = Object.assign({}, CELL_DEF, L.cell || {});
       const ch2 = L.size * (C.h/100) * ((L.wy || 100)/100);   // ⭐ 平体にすれば枡も一緒に伸びる
       if(C.shape === 'band' && place.length){
         /* 帯＝経路そのものを太らせて通す。⭐ これだけが【角で繋がる】 */
         const b = bandShape(path, d0, d, oAmt, ch2);
-        if(b){ b.fillColor = C.col; b.strokeColor = null; into.addChild(b); }
+        if(b){ b.fillColor = C.col; b.strokeColor = null; into.addChild(b); cellItems.push(b); }
       } else if(C.shape !== 'none'){
         place.forEach(p => {
           const w = Math.abs(p.step) + C.pad;
@@ -657,7 +707,7 @@ const LAYOUTS = {
           cell.fillColor = C.col;
           cell.position = p.pos;
           cell.rotation = p.ang;                            // ⭐ 枡も字と一緒に回る（角で枡が回る）
-          into.addChild(cell);
+          into.addChild(cell); cellItems.push(cell);
         });
       }
 
@@ -669,8 +719,11 @@ const LAYOUTS = {
         const t = makeChar(p.ch, L);
         t.rotation = p.ang;
         t.position = p.pos;       // ⚠️ ベースラインでなく字の真ん中を経路に載せている
-        into.addChild(t);
+        into.addChild(t); charItems.push(t);
       });
+      /* ⭐ 集め終わってから、行ぜんぶを1本のグラデで塗る */
+      paintGrad(cellItems, Object.assign({}, GRAD_DEF, (L.cell||{}).grad || {}), boundsOf(cellItems) || new Rectangle(0,0,1,1));
+      paintGrad(charItems, Object.assign({}, GRAD_DEF, L.grad || {}), boundsOf(charItems) || new Rectangle(0,0,1,1));
       if(S.showPath || (sel() === L)){
         // 経路そのものは【道具のしるし】＝別の層。書き出しには入らない
         const g = path.clone({ insert:false });
@@ -712,9 +765,10 @@ const LAYOUTS = {
       /* 枡（文字の地）。⭐ 帯＝箱いっぱいの1本＝ここでも「繋がる」側 */
       const C = Object.assign({}, CELL_DEF, L.cell || {});
       const ch2 = L.size * (C.h/100) * ((L.wy || 100)/100);
+      const cellItems = [], charItems = [];
       if(C.shape === 'band'){
         const cell = new Path.Rectangle(new Rectangle(bx, by - ch2/2, bw, ch2));
-        cell.fillColor = C.col; into.addChild(cell);
+        cell.fillColor = C.col; into.addChild(cell); cellItems.push(cell);
       } else if(C.shape !== 'none'){
         let x = bx;
         chars.forEach((ch,i) => {
@@ -725,7 +779,7 @@ const LAYOUTS = {
           else cell = new Path.Rectangle(r);
           cell.fillColor = C.col;
           cell.position = new Point(x + adv[i]/2, by);
-          into.addChild(cell);
+          into.addChild(cell); cellItems.push(cell);
           x += step(i);
         });
       }
@@ -734,12 +788,23 @@ const LAYOUTS = {
       chars.forEach((ch,i) => {
         const t = makeChar(ch, L);
         t.position = new Point(x + adv[i]/2, by);
-        into.addChild(t);
+        into.addChild(t); charItems.push(t);
         x += step(i);
       });
+      /* ⭐ 行ごと傾ける（木下＝「角度変えられないよね」）。
+         ⚠️ 箱の【中心】を軸に回す。左端を軸にすると、角度を変えるたびに行が遠くへ飛ぶ。
+         ⚠️ 回してから塗る＝グラデの向きが行に付いてくる。 */
+      const rot = (L.box && L.box.rot) || 0;
+      if(rot){
+        const c = new Point(bx + bw/2, by);
+        cellItems.concat(charItems).forEach(it => it.rotate(rot, c));
+      }
+      paintGrad(cellItems, Object.assign({}, GRAD_DEF, (L.cell||{}).grad || {}), boundsOf(cellItems) || new Rectangle(0,0,1,1));
+      paintGrad(charItems, Object.assign({}, GRAD_DEF, L.grad || {}), boundsOf(charItems) || new Rectangle(0,0,1,1));
       /* 箱のしるし＝道具の層（書き出しには入らない） */
       if(S.showPath || sel() === L){
         const g = new Path.Line(new Point(bx, by), new Point(bx + bw, by));
+        if(rot) g.rotate(rot, new Point(bx + bw/2, by));
         g.strokeColor = new paper.Color(0.17, 0.42, 0.96, S.showPath ? 0.9 : 0.35);
         g.strokeWidth = 1/paper.view.zoom;
         uiLayer.addChild(g);
@@ -772,6 +837,7 @@ const LAYOUTS = {
 
       const bg = new Path.Rectangle(new Rectangle(x0, y0, bw, bh));
       bg.fillColor = F.bg; into.addChild(bg);
+      const fudaRot = (L.box && L.box.rot) || 0, fudaC = new Point(x0 + bw/2, y0 + bh/2);
 
       main.position = new Point(x0 + F.pad + main.bounds.width/2,
                                 y0 + F.pad + main.bounds.height/2);
@@ -787,8 +853,10 @@ const LAYOUTS = {
                                  y0 + F.pad + main.bounds.height + F.gap + sub.bounds.height/2);
         sub.data.line = L.id; into.addChild(sub);
       }
+      if(fudaRot) into.children.forEach(it => it.rotate(fudaRot, fudaC));
       if(S.showPath || sel() === L){
         const g = new Path.Rectangle(new Rectangle(x0, y0, bw, bh));
+        if(fudaRot) g.rotate(fudaRot, fudaC);
         g.strokeColor = new paper.Color(0.17, 0.42, 0.96, S.showPath ? 0.9 : 0.35);
         g.strokeWidth = 1/paper.view.zoom; g.fillColor = null;
         uiLayer.addChild(g);
@@ -918,8 +986,9 @@ function drawHandles(){
     const bx = ((L.box && L.box.x) ?? 10)/100 * B.w;
     const by = ((L.box && L.box.y) ?? 88)/100 * B.h;
     const bw = ((L.box && L.box.w) ?? 80)/100 * B.w;
-    mk(new Point(bx, by),      { boxEnd:0 });
-    mk(new Point(bx + bw, by), { boxEnd:1 });
+    const rot = (L.box && L.box.rot) || 0, c = new Point(bx + bw/2, by);
+    mk(new Point(bx, by).rotate(rot, c),      { boxEnd:0 });
+    mk(new Point(bx + bw, by).rotate(rot, c), { boxEnd:1 });
     return;
   }
   if(L.path.type === 'poly' && L.path.pts){
@@ -1133,6 +1202,10 @@ cv.addEventListener('pointermove', e => {
   } else if(drag.kind === 'boxEnd'){
     const L = sel(); if(!L || !L.box) return;
     const B = S.board, bx = (L.box.x/100)*B.w, bw = (L.box.w/100)*B.w;
+    /* ⚠️ 傾けているときは、掴んだ点を【逆に回して】水平に直してから測る。
+       そうしないと、斜めの行の端を掴んだ瞬間に幅が飛ぶ。 */
+    const rot0 = L.box.rot || 0;
+    if(rot0) pt = pt.rotate(-rot0, new Point(bx + bw/2, (L.box.y/100)*B.h));
     if(drag.e === 0){                                   // 左端＝始まりが動く（右端は動かさない）
       const nx = Math.max(0, Math.min(bx + bw - 20, pt.x));
       L.box.w = (bx + bw - nx)/B.w*100; L.box.x = nx/B.w*100;
@@ -1309,6 +1382,8 @@ function shake(what){
         if(L.fit){ L.box.x = 4 + rnd(6); L.box.w = 100 - L.box.x*2; }
         else { L.box.x = 6 + (88/cols) * c0; L.box.w = Math.max(12, (88/cols) * (c1 - c0)); }
         L.box.y = bandY(nextRow());
+        /* ⭐ たまに傾ける。毎回だと読めないので3回に1回 */
+        L.box.rot = rnd(3) === 0 ? pick([-90, 90, -12, 12, -30, 30]) : 0;
       } else if(L.kind === 'fuda'){
         L.box = L.box || { x:10, y:88, w:80 };
         L.box.x = pick([6, 10, 52, 58]);
@@ -1422,6 +1497,17 @@ function syncPanel(){
   $('cR').value = C.r;   $('vcR').textContent = C.r;
   $('rowR').style.display   = C.shape === 'round' ? '' : 'none';
   $('rowPad').style.display = (C.shape === 'none' || C.shape === 'band') ? 'none' : '';
+  /* 字と枡のグラデ。⚠️ 切のときは色のつまみを出さない（触れるのに効かない、を残さない） */
+  const TG = Object.assign({}, GRAD_DEF, L.grad || {});
+  segOn('segTGrad', TG.on ? TG.mode : 0);
+  $('rowTG').style.display = TG.on ? '' : 'none';
+  $('tg0').value = TG.cols[0]; $('tg1').value = TG.cols[1];
+  $('tgAng').value = TG.ang; $('vtgAng').textContent = TG.ang;
+  const CG = Object.assign({}, GRAD_DEF, (C && C.grad) || {});
+  segOn('segCGrad', CG.on ? CG.mode : 0);
+  $('rowCG').style.display = CG.on ? '' : 'none';
+  $('cg0').value = CG.cols[0]; $('cg1').value = CG.cols[1];
+  $('cgAng').value = CG.ang; $('vcgAng').textContent = CG.ang;
   $('tCol').value = L.col;
   segOn('segPath', L.path.type); segOn('segCorner', L.path.corner);
   segOn('segDir', L.dir); segOn('segSide', L.side);
@@ -1432,6 +1518,7 @@ function syncPanel(){
   $('rowBoxX').style.display = (isHaru || isFuda) ? '' : 'none';     // 札も左上を数字で置ける
   $('rowBoxY').style.display = (isHaru || isFuda) ? '' : 'none';
   $('rowBoxW').style.display = isHaru ? '' : 'none';                 // ⚠️ 札の幅は中身が決める
+  $('rowBoxR').style.display = (isHaru || isFuda) ? '' : 'none';     // 角度は張る・札の両方
   $('fudaUI').style.display  = isFuda ? '' : 'none';
   $('rowFit').style.display  = isHaru ? '' : 'none';    // 合わせるは「張る」のときだけ
   $('fitNote').style.display = isHaru ? '' : 'none';
@@ -1459,6 +1546,7 @@ function syncPanel(){
   segOn('segRule', F.rule);
   const bx = L.box || { x:10, y:88, w:80 };
   setRange('boxX', Math.round(bx.x)); setRange('boxY', Math.round(bx.y)); setRange('boxW', Math.round(bx.w));
+  setRange('boxR', Math.round(bx.rot || 0));
   const pc = selPiece();
   setRange('pcScale', pc ? pc.sc : 100); setRange('pcRot', pc ? pc.rot : 0);
 }
@@ -1539,6 +1627,38 @@ segBind('segKind',   (L,v) => { L.kind = v;
   if(!L.box)  L.box  = { x:10, y:88, w:80 };
   if(!L.fuda) L.fuda = Object.assign({}, FUDA_DEF); });
 segBind('segFit',    (L,v) => { L.fit = Number(v); });
+/* 字のグラデ。⚠️ 切／直線／放射を1つのつまみにまとめた（入切と種類を別々に持たせない） */
+segBind('segTGrad',  (L,v) => {
+  L.grad = Object.assign({}, GRAD_DEF, L.grad || {},
+    v === '0' ? { on:0 } : { on:1, mode:v });
+  syncPanel();
+});
+segBind('segCGrad',  (L,v) => {
+  const C0 = Object.assign({}, CELL_DEF, L.cell || {});
+  L.cell = Object.assign({}, C0, { grad: Object.assign({}, GRAD_DEF, C0.grad || {},
+    v === '0' ? { on:0 } : { on:1, mode:v }) });
+  syncPanel();
+});
+[['tg0',0],['tg1',1]].forEach(([id,i]) => $(id).addEventListener('input', () => {
+  const L = sel(); if(!L) return;
+  const G = Object.assign({}, GRAD_DEF, L.grad || {});
+  G.cols = G.cols.slice(); G.cols[i] = $(id).value; L.grad = G; render();
+}));
+$('tgAng').addEventListener('input', () => { const L = sel(); if(!L) return;
+  L.grad = Object.assign({}, GRAD_DEF, L.grad || {}, { ang:Number($('tgAng').value) });
+  $('vtgAng').textContent = $('tgAng').value; render(); });
+[['cg0',0],['cg1',1]].forEach(([id,i]) => $(id).addEventListener('input', () => {
+  const L = sel(); if(!L) return;
+  const C0 = Object.assign({}, CELL_DEF, L.cell || {});
+  const G = Object.assign({}, GRAD_DEF, C0.grad || {});
+  G.cols = G.cols.slice(); G.cols[i] = $(id).value;
+  L.cell = Object.assign({}, C0, { grad:G }); render();
+}));
+$('cgAng').addEventListener('input', () => { const L = sel(); if(!L) return;
+  const C0 = Object.assign({}, CELL_DEF, L.cell || {});
+  L.cell = Object.assign({}, C0, { grad: Object.assign({}, GRAD_DEF, C0.grad || {},
+    { ang:Number($('cgAng').value) }) });
+  $('vcgAng').textContent = $('cgAng').value; render(); });
 segBind('segRule',   (L,v) => { L.fuda = Object.assign({}, FUDA_DEF, L.fuda||{}, { rule:Number(v) }); });
 /* 分ける。⭐ いま編集している層は【画面の状態】＝作品には保存しない */
 let sortG = 'k';
@@ -1569,7 +1689,7 @@ $('sColOff').onclick = () => { const L = sel(); if(!L) return; setSort(L, { col:
   });
 });
 /* 張るの箱。⚠️ BIND（L の直下に書くもの）と形が違うので個別に配線する */
-[['boxX','x'],['boxY','y'],['boxW','w']].forEach(([id,key]) => {
+[['boxX','x'],['boxY','y'],['boxW','w'],['boxR','rot']].forEach(([id,key]) => {
   const e = $(id); if(!e) return;
   e.addEventListener('input', () => {
     const L = sel(); if(!L) return;
