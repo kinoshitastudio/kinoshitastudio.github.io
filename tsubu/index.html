@@ -464,6 +464,10 @@
   <button class="big" id="exPngA" style="margin-top:6px">PNG を出す（地なし）</button>
   <button class="big" id="exJpg" style="margin-top:4px">JPG を出す</button>
   <button class="big" id="exSvg" style="margin-top:4px">SVG を出す（ドット）</button>
+  <button class="big" id="exJson" style="margin-top:10px">JSON を出す（設定の持ち運び）</button>
+  <button class="big" id="inJson" style="margin-top:4px">JSON を読む</button>
+  <input type="file" id="fJson" accept="application/json,.json" hidden>
+  <div class="hint"><b>JSON</b>＝いまの設定ぜんぶ（版・マス目・色・質感・ワープ）。もう一度この見え方を出すための一式＝プリセット代わり</div>
   <div class="hint">⚠️<b>SVGはドットのときだけ</b>。グラデ塊・連続はピクセルで作っているのでベクターにできない</div>
 
   <h2>アニメーション</h2>
@@ -1542,6 +1546,64 @@ document.getElementById('txt').addEventListener('input', () => {
 });
 syncWrapMax();
 
+/* ══════════════════════════════════════════════════════════════
+   JSON＝【設定の持ち運び】                              2026-08-04
+   ⭐ TSUBU は状態が全部 P に入っている（版も P.layers）＝丸ごと持ち運べる。
+      NIJIMI と違って「描いた場」のような重い実体が無いので、欠けるものが無い。
+   ⚠️ ワープのアンカー（手で打った点）は P の外にあるので、別で入れて別で戻す。
+   ══════════════════════════════════════════════════════════════ */
+function exportJSON(){
+  const data = { tool:'tsubu', v:1, P: JSON.parse(JSON.stringify(P)),
+                 anchors: JSON.parse(JSON.stringify(ANCHORS)) };
+  const b = new Blob([JSON.stringify(data, null, 1)], { type:'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(b);
+  a.download = 'tsubu_' + Date.now() + '.json'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function applyJSON(data){
+  if(!data || data.tool !== 'tsubu') throw new Error('TSUBU の JSON ではありません');
+  Object.assign(P, data.P || {});
+  if(!P.layers || !P.layers.length) P.layers = [newLayer(P.txt)];
+  P.cur = Math.max(0, Math.min(P.layers.length - 1, P.cur | 0));
+  if(Array.isArray(data.anchors) && data.anchors.length >= 2){
+    ANCHORS.length = 0; data.anchors.forEach(a => ANCHORS.push({ t:a.t, v:a.v }));
+  }
+  pullFromLayer();
+  // ⚠️ P を入れ替えただけではつまみの見た目が古いまま＝【P → UI】を必ず通す
+  syncAllUI(); syncLayerUI(); renderChips();
+  buildTiles(); build(); fit(); drawWarpCurve(); stat();
+}
+/* ⭐ P → つまみ の総ざらい。値は入っているのに見た目が古い、を作らないため。
+   （NIJIMI で踏んだ「盤を読み込んでも色スウォッチだけ前のまま」と同じ穴） */
+function syncAllUI(){
+  document.querySelectorAll('#panel input[type=range]').forEach(r => {
+    if(!(r.id in P)) return;
+    r.value = P[r.id];
+    const v = r.parentElement.querySelector('.val');
+    if(v) v.textContent = (r.step && +r.step < 1) ? (+P[r.id]).toFixed(2) : Math.round(P[r.id]);
+  });
+  document.querySelectorAll('#panel .seg').forEach(sg => {
+    if(!(sg.id in P)) return;
+    sg.querySelectorAll('button').forEach(b => {
+      const raw = b.dataset.v, val = isNaN(+raw) ? raw : +raw;
+      b.classList.toggle('on', val === P[sg.id]);
+    });
+  });
+  ['masuC1','masuC2','masuC3','masuC4','masuC5','masuC6',
+   'frameC1','frameC2','frameC3','frameC4','frameC5','frameC6'].forEach(id => {
+    const e = document.getElementById(id); if(e && P[id]) e.value = P[id];
+  });
+  syncMasuGrad(); syncPapGrad(); syncBlobUI(); syncColorInputs();
+}
+document.getElementById('exJson').onclick = () => { pushToLayer(); exportJSON(); };
+document.getElementById('inJson').onclick = () => document.getElementById('fJson').click();
+document.getElementById('fJson').onchange = async (e) => {
+  const f = e.target.files && e.target.files[0]; if(!f) return;
+  try { applyJSON(JSON.parse(await f.text())); }
+  catch(err){ console.warn('JSON読込', err); alert('読み込めませんでした：' + err.message); }
+  e.target.value = '';   // ⚠️ 同じファイルをもう一度選べるように空にしておく
+};
+
 /* ══ 版（重ねる）── 結線 ═══════════════════════════════════════
    ⭐ 版を選ぶ＝その版の値を P に載せ直して、つまみの見た目を合わせる。
    ⚠️ 選ぶ前に必ず pushToLayer で今の値を保存する（しないと編集が捨てられる）。 */
@@ -1901,6 +1963,7 @@ const I18N = {
   '角ゴ':'Gothic','明朝':'Mincho','横組':'Horizontal','縦組':'Vertical',
   '折返し':'Wrap','字間':'Tracking','行間':'Leading','マス目':'Cells','枠':'Rule','解像':'Resolution','粒':'Cell','太さ':'Weight',
   '版（重ねる）':'Layers','＋ 字':'+ Text','この版を消す':'Delete layer','横位置':'X','縦位置':'Y','大きさ':'Size','角度':'Angle',
+  'JSON を出す（設定の持ち運び）':'Export JSON (settings)','JSON を読む':'Import JSON',
   '敷く':'Fill','抜く':'Knock out','色数':'Colors','版数':'Steps','枠の色数':'Rule colors',
   'グラデ塊':'Blob','連続':'Continuous','ドット':'Dot',
   '地の柄':'Base','交点の柄':'Joint',
