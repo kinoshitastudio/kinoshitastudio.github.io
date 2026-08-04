@@ -1506,6 +1506,101 @@ function shake(what){
   stat(what === 'place' ? '置き場所を振った' : what === 'style' ? '効かせ方を振った' : '振った');
 }
 
+/* ══ 戻す・やり直す・コピー（Figma と同じ手つき）══
+   ⭐ 木下＝「cmand C コピー Comand Z 戻る など通常の Figma の入れておいて」。
+   ⚠️⚠️ 図の中身（paper の Item）は控えに入れない（重い・作り直せない）。
+     控えるのは【行ぜんぶ】と【図の置き場所】だけ＝図そのものは消さない操作しか戻さない。
+   ⚠️⚠️ キーの入口で INPUT/TEXTAREA を全部弾くと、つまみを触った直後にフォーカスが残って
+     Delete も ⌘Z も ⌘C も全部死ぬ（作字ツールで実際に起きた）。
+     ⭐【文字を打つ欄のときだけ】止める。range/color/button では止めない。 */
+const UNDO = [], REDO = [];
+function stateNow(){
+  return JSON.stringify({
+    board: S.board, sel: S.sel,
+    lines: S.lines,
+    pieces: S.pieces.map(p => ({ id:p.id, x:p.x, y:p.y, sc:p.sc, rot:p.rot, lock:p.lock })),
+  });
+}
+function pushUndo(){
+  const j = stateNow();
+  if(UNDO.length && UNDO[UNDO.length-1] === j) return;   // 変わっていないなら積まない
+  UNDO.push(j); if(UNDO.length > 60) UNDO.shift();
+  REDO.length = 0;
+}
+function applyStateStr(j){
+  const o = JSON.parse(j);
+  S.board = o.board; S.sel = o.sel;
+  S.lines = o.lines;
+  /* ⚠️ 図は実体（item）を持っているので、置き場所だけ書き戻す（作り直さない） */
+  o.pieces.forEach(v => { const pc = S.pieces.find(x => x.id === v.id);
+    if(pc) Object.assign(pc, { x:v.x, y:v.y, sc:v.sc, rot:v.rot, lock:v.lock }); });
+  syncPanel(); render();
+}
+function undo(){
+  if(!UNDO.length){ stat('これ以上は戻れない'); return; }
+  REDO.push(stateNow());
+  applyStateStr(UNDO.pop()); stat('戻した');
+}
+function redo(){
+  if(!REDO.length){ stat('やり直すものが無い'); return; }
+  UNDO.push(stateNow());
+  applyStateStr(REDO.pop()); stat('やり直した');
+}
+let clip = null;                                   // コピーした行
+function typing(el){
+  /* ⭐ 文字を打っている最中だけ true。つまみやボタンでは false */
+  if(!el) return false;
+  const t = (el.tagName || '').toUpperCase();
+  if(t === 'TEXTAREA') return true;
+  if(t === 'INPUT') return !/^(range|color|checkbox|radio|button|file|submit)$/i.test(el.type || 'text');
+  return el.isContentEditable === true;
+}
+addEventListener('keydown', e => {
+  if(typing(e.target)) return;                     // ⚠️ 打っている最中は横取りしない
+  const m = e.metaKey || e.ctrlKey;
+  const k = (e.key || '').toLowerCase();
+  if(m && k === 'z'){ e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if(m && k === 'c'){ const L = sel(); if(L){ clip = JSON.parse(JSON.stringify(L)); stat('コピーした'); } return; }
+  if(m && k === 'v'){
+    if(!clip) return;
+    e.preventDefault(); pushUndo();
+    const c = JSON.parse(JSON.stringify(clip)); c.id = uid();
+    /* ⚠️ 同じ場所に貼ると重なって見えない＝少しずらす（Figma と同じ） */
+    if(c.box){ c.box.x = Math.min(95, (c.box.x||10) + 3); c.box.y = Math.min(98, (c.box.y||88) + 3); }
+    if(c.path && c.path.pts) c.path.pts = c.path.pts.map(a => [a[0]+24, a[1]+24]);
+    S.lines.push(c); S.sel = { kind:'line', i:S.lines.length-1 };
+    syncPanel(); render(); stat('貼った'); return;
+  }
+  if(m && k === 'd'){                              // ⌘D＝複製（Figma と同じ）
+    const L = sel(); if(!L) return;
+    e.preventDefault(); pushUndo();
+    const c = JSON.parse(JSON.stringify(L)); c.id = uid();
+    if(c.box){ c.box.x = Math.min(95, (c.box.x||10) + 3); c.box.y = Math.min(98, (c.box.y||88) + 3); }
+    if(c.path && c.path.pts) c.path.pts = c.path.pts.map(a => [a[0]+24, a[1]+24]);
+    S.lines.splice(S.sel.i + 1, 0, c); S.sel.i++;
+    syncPanel(); render(); stat('複製した'); return;
+  }
+  if(k === 'backspace' || k === 'delete'){
+    if(S.sel.kind === 'piece'){
+      const pc = selPiece(); if(!pc) return;
+      e.preventDefault(); pushUndo();
+      if(pc.item) pc.item.remove();
+      S.pieces.splice(S.sel.i, 1); S.sel = { kind:'line', i:0 };
+      syncPanel(); render(); stat('図を消した'); return;
+    }
+    if(S.lines.length > 1){
+      e.preventDefault(); pushUndo();
+      S.lines.splice(S.sel.i, 1); S.sel.i = Math.max(0, S.sel.i - 1);
+      syncPanel(); render(); stat('行を消した'); return;
+    }
+  }
+});
+/* ⭐ 控えは【操作の直前】に積む。掴んだ瞬間・つまみに触れた瞬間に取る
+   （後で積むと、変わったあとの姿が残って戻らない）。 */
+document.addEventListener('pointerdown', e => {
+  if(e.target && (e.target.closest('#panel') || e.target === document.getElementById('cv'))) pushUndo();
+}, true);
+
 /* ══ パネル ══ */
 function renderList(){
   const el = document.getElementById('lineList');
