@@ -209,9 +209,6 @@ input[type=color]{ width:32px; height:28px; padding:0; border:.5px solid var(--l
       <input type="range" id="tSize" min="8" max="180" value="46"><span class="v" id="vSize">46</span></div>
     <div class="row"><label>字間</label>
       <input type="range" id="tTrack" min="-20" max="80" value="2"><span class="v" id="vTrack">2</span></div>
-    <div class="row" id="rowFit"><label>合わせる</label>
-      <div class="seg" id="segFit"><button data-v="0" class="on">字間で</button><button data-v="1">字の大きさで</button></div></div>
-    <div class="note" id="fitNote">⭐ <b>字間で</b>＝大きさそのままで隙間を伸ばす／<b>字の大きさで</b>＝箱の幅に字を合わせる（版面いっぱいの面になる）</div>
     <div class="row"><label>字幅</label>
       <input type="range" id="tWx" min="30" max="220" value="100"><span class="v" id="vWx">100</span></div>
     <div class="row"><label>字高</label>
@@ -246,22 +243,6 @@ input[type=color]{ width:32px; height:28px; padding:0; border:.5px solid var(--l
       <div class="note">⭐ 層を選んで、その層だけに効かせる（大きさ・色・ウェイト）<br>
         ⚠️ <b>切</b>のときは何も掛からない＝これまでと同じ／札には効かない（札は塊なので字ごとに分けない）</div>
     </div>
-  </div>
-
-  <h2>型 ── 組み方を選ぶ</h2>
-  <div class="sec">
-    <div class="btns">
-      <button class="btn" id="preTsumu">積む</button>
-      <button class="btn" id="preMeguru">巡る</button>
-    </div>
-    <div class="btns">
-      <button class="btn" id="preShita">下部</button>
-      <button class="btn" id="preObi">帯</button>
-    </div>
-    <div class="note">⭐ <b>打った字はそのまま</b>、並べ方だけ変わる（書体・色も引き継ぐ）<br>
-      <b>積む</b>＝版面いっぱいに段で積む（字が面になる）／<b>巡る</b>＝外周を巡らせて中を空ける<br>
-      <b>下部</b>＝上を空けて下に寄せる／<b>帯</b>＝太い帯を版面に渡す<br>
-      ⭐ 型で骨格を決めて、下の<b>振る</b>でその中を揺らす＝<b>型と振るは表裏</b></div>
   </div>
 
   <h2>振る ── 偶然に組む</h2>
@@ -389,7 +370,6 @@ function newLine(text){
     path:{ type:'poly', n:6, inset:12, corner:0, pts:null },   // pts=null なら型から作る
     /* ⭐ 張る用の箱（版面に対する％）。⚠️ path と両方持たせる＝置き方を切り替えても値が残る */
     box:{ x:10, y:88, w:80 },
-    fit:0,                                   // ⭐ 張るのとき＝箱の幅に字の大きさを合わせる
     /* ⭐ 分ける（漢字/かな/カナ）。切なら何も掛からない */
     sort: JSON.parse(JSON.stringify(SORT_DEF)),
     /* ⭐ 札用。sub＝下に置く小さい行（日英併記）。地・罫線もここが持つ */
@@ -602,16 +582,6 @@ const LAYOUTS = {
       const bw = ((L.box && L.box.w) ?? 80)/100 * B.w;
       const chars = [...L.text].filter(c => c !== '\n');
       if(!chars.length || !(bw > 0)) return;
-      /* ⭐⭐ 合わせる（fit）＝箱の幅に【字の大きさ】を合わせる。
-         これが Lena 型（版面いっぱいに字を積む）の核心。
-         ⚠️ 字間を伸ばして届かせるのが「張る」、字を大きくして届かせるのが「合わせる」。
-           前者は隙間だらけになりやすく、後者は詰まって面になる。 */
-      if(L.fit){
-        const probe = Object.assign({}, L, { size:100 });
-        const unit = chars.reduce((a,c) => a + advance(c, probe), 0);
-        if(unit > 0) L = Object.assign({}, L, {
-          size: Math.max(6, (bw - L.track*(chars.length-1)) / unit * 100) });
-      }
       const adv = chars.map(c => advance(c, L));
       const sum = adv.reduce((a,b) => a+b, 0);
       /* ⭐ 両端に届かせる＝余りを字と字のあいだで等分する */
@@ -987,68 +957,6 @@ addEventListener('keydown', e => { if(e.key === 'Shift') shiftDown = true; });
 addEventListener('keyup',   e => { if(e.key === 'Shift') shiftDown = false; });
 function rootOf(it){ let n = it; while(n && n.parent && n.parent !== artLayer) n = n.parent; return n; }
 
-/* ══ 型 ── 組み上がった状態を先に作る ══
-   ⭐⭐ 木下＝「いまのままでは振るあんま使わないかも」。
-     原因は【振る前に組み上がった状態が無い】こと。行が2本では振っても寂しい。
-     ⭐ 型と振るは表裏＝型で骨格を決めて、その中で振る。だから型を先に作る。
-   ⚠️ 打った字は捨てない。型は【並べ方】だけを変える（言葉は木下のものなので）。 */
-const PRESETS = {
-  tsumu:{ jp:'積む', note:'版面いっぱいに段で積む（字が面になる）',
-    build(texts){
-      /* ⚠️ 2段だと寂しい。⭐ 字が足りなければ同じ字を繰り返す
-         （Lena の EON / EON / EON がまさにそれ＝繰り返しそのものが絵になる）。 */
-      const n = Math.max(3, Math.min(4, texts.length));
-      return Array.from({length:n}, (_,i) => ({
-        kind:'haru', text:texts[i % texts.length], fit:1, track:0,
-        box:{ x:6, y:(100/(n+1))*(i+1), w:88 },
-        cell:{ shape:'none' }, wy:100 + (i%2 ? 10 : 0),
-      }));
-    }},
-  meguru:{ jp:'巡る', note:'外周を巡らせて中を空ける（三沢型）',
-    build(texts){
-      return texts.slice(0, 3).map((t,i) => ({
-        kind:'meguru', text:t, fit:0,
-        path:{ type: i===0 ? 'rect' : 'poly', n:5+i, inset:6+i*7, corner:i%2, pts:null, dx:0, dy:0 },
-        size: i===0 ? 34 : 26, start:i*17, side:i%2, cell:{ shape:'none' },
-      }));
-    }},
-  shita:{ jp:'下部', note:'上を空けて、下にだけ情報を寄せる',
-    build(texts){
-      return texts.slice(0, 3).map((t,i) => ({
-        kind:'haru', text:t, fit:i===0 ? 1 : 0, track:i===0 ? 0 : 6,
-        box:{ x:8, y:80 + i*6, w:84 }, size:i===0 ? 60 : 15,
-        cell:{ shape:'none' },
-      }));
-    }},
-  obi:{ jp:'帯', note:'太い帯を版面に渡す（枡＝帯）',
-    build(texts){
-      return texts.slice(0, 3).map((t,i) => ({
-        kind: i===1 ? 'meguru' : 'haru', text:t, fit:i!==1,
-        box:{ x:5, y:[26,0,74][i] || 50, w:90 },
-        path:{ type:'circle', n:6, inset:14, corner:1, pts:null, dx:0, dy:0 },
-        size:30, col:'#ffffff',
-        cell:{ shape:'band', col:'#111111', h:150, pad:4, r:8 },
-      }));
-    }},
-};
-function applyPreset(key){
-  const P = PRESETS[key]; if(!P) return;
-  snapForShake();                                  // ⭐ 型も「振る前に戻す」で戻せる
-  const texts = S.lines.map(L => L.text).filter(t => t && t.trim());
-  const base  = texts.length ? texts : ['貼 HARI', 'POSTER TYPESETTING'];
-  const keep  = S.lines[0] || newLine('');
-  S.lines = P.build(base).map(spec => {
-    const L = newLine(spec.text);
-    /* ⭐ 書体・色・字の設定は【いま使っているもの】を引き継ぐ＝型を変えても自分の字のまま */
-    L.fam = keep.fam; L.wt = keep.wt; L.col = spec.col || keep.col;
-    Object.assign(L, spec);
-    L.cell = Object.assign({}, CELL_DEF, spec.cell || {});
-    return L;
-  });
-  S.sel = { kind:'line', i:0 };
-  syncPanel(); render(); stat(P.jp + 'で組んだ');
-}
-
 /* ══ 振る ── 並べるところに偶然を入れる ══
    ⭐ 木下＝「ただおくだけではなく偶然できあがるものを作りたい」「偶然的にできれば直感でできる」。
    ⭐⭐ ランダムに散らすのではない。【版面の骨格（段と列）に沿って振る】＝毎回ポスターになる。
@@ -1091,12 +999,11 @@ function shake(what){
     if(L.lock) return;                          // ⭐ 固定は触らない
     if(what !== 'style'){
       if(L.kind === 'haru'){
-        /* 張る＝段に置いて、幅は列の倍数（＝端が揃う）。
-           ⚠️ 合わせる（fit）の行は【幅いっぱい】を保つ＝細くすると Lena 型が崩れる。 */
+        /* 張る＝段に置いて、幅は列の倍数（＝端が揃う） */
         const c0 = rnd(cols), c1 = c0 + 1 + rnd(cols - c0);
         L.box = L.box || { x:10, y:88, w:80 };
-        if(L.fit){ L.box.x = 4 + rnd(6); L.box.w = 100 - L.box.x*2; }
-        else { L.box.x = 6 + (88/cols) * c0; L.box.w = Math.max(12, (88/cols) * (c1 - c0)); }
+        L.box.x = 6 + (88/cols) * c0;
+        L.box.w = Math.max(12, (88/cols) * (c1 - c0));
         L.box.y = bandY(nextRow());
       } else if(L.kind === 'fuda'){
         L.box = L.box || { x:10, y:88, w:80 };
@@ -1203,9 +1110,6 @@ function syncPanel(){
   $('rowBoxY').style.display = (isHaru || isFuda) ? '' : 'none';
   $('rowBoxW').style.display = isHaru ? '' : 'none';                 // ⚠️ 札の幅は中身が決める
   $('fudaUI').style.display  = isFuda ? '' : 'none';
-  $('rowFit').style.display  = isHaru ? '' : 'none';    // 合わせるは「張る」のときだけ
-  $('fitNote').style.display = isHaru ? '' : 'none';
-  segOn('segFit', L.fit ? 1 : 0);
   ['rowPathSeg','rowInset','rowCorner','rowStart','rowOff','rowDir','rowSide']
     .forEach(id => { const e = $(id); if(e) e.style.display = isMeg ? '' : 'none'; });
   $('rowN').style.display = (isMeg && L.path.type === 'poly') ? '' : 'none';
@@ -1290,7 +1194,6 @@ segBind('segSide',   (L,v) => { L.side = Number(v); });
 segBind('segKind',   (L,v) => { L.kind = v;
   if(!L.box)  L.box  = { x:10, y:88, w:80 };
   if(!L.fuda) L.fuda = Object.assign({}, FUDA_DEF); });
-segBind('segFit',    (L,v) => { L.fit = Number(v); });
 segBind('segRule',   (L,v) => { L.fuda = Object.assign({}, FUDA_DEF, L.fuda||{}, { rule:Number(v) }); });
 /* 分ける。⭐ いま編集している層は【画面の状態】＝作品には保存しない */
 let sortG = 'k';
@@ -1332,10 +1235,6 @@ $('sColOff').onclick = () => { const L = sel(); if(!L) return; setSort(L, { col:
   });
 });
 
-$('preTsumu').onclick  = () => applyPreset('tsumu');
-$('preMeguru').onclick = () => applyPreset('meguru');
-$('preShita').onclick  = () => applyPreset('shita');
-$('preObi').onclick    = () => applyPreset('obi');
 $('shufAll').onclick   = () => shake('all');
 $('shufPlace').onclick = () => shake('place');
 $('shufStyle').onclick = () => shake('style');
