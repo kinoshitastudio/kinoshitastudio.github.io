@@ -974,8 +974,9 @@ function drawHandles(){
     Object.assign(c.data, data);
     uiLayer.addChild(c);
   };
+  lineFrame(L);        // ⭐ どの置き方でも、外形の四隅で大きさを変えられる
   if(L.kind === 'fuda'){
-    /* 札＝左上の1点だけ掴む（大きさは中身が決めるので、引き伸ばすつまみは作らない） */
+    /* 札＝左上の1点も掴める（動かす用） */
     const B = S.board;
     mk(new Point(((L.box && L.box.x) ?? 10)/100 * B.w, ((L.box && L.box.y) ?? 88)/100 * B.h), { fudaAt:1 });
     return;
@@ -1009,6 +1010,30 @@ function drawHandles(){
     [[0,-rad],[rad,0],[0,rad],[-rad,0]]
       .forEach(a => mk(c.add(new Point(a[0], a[1])), { inset:1 }));
   }
+}
+
+/* ⭐ 選んだ行の外形にも枠と4隅を出す（木下＝「他も含めマウスで大きさも変えれないと自由に」）。
+   ⭐ 図と同じ持ち方＝隅で大きさ・角の少し外で回す。覚えることを増やさない。
+   ⚠️ 経路の頂点／箱の端とは別物なので、隅ハンドルは【外形の四隅】に置く（重ならない）。 */
+function lineCorners(L){
+  const g = artLayer.children.find(c => c.data && c.data.line === L.id);
+  if(!g || !g.bounds || !g.bounds.width) return null;
+  const b = g.bounds;
+  return [b.topLeft, b.topRight, b.bottomRight, b.bottomLeft];
+}
+function lineFrame(L){
+  const cs = lineCorners(L); if(!cs) return;
+  const r = new Path({ segments:cs, closed:true });
+  r.strokeColor = new paper.Color(0.17,0.42,0.96,0.5);
+  r.strokeWidth = 1/paper.view.zoom; r.fillColor = null;
+  uiLayer.addChild(r);
+  const rr = 4.5/paper.view.zoom;
+  cs.forEach((p,i) => {
+    const c = new Path.Rectangle(new Rectangle(p.x-rr, p.y-rr, rr*2, rr*2));
+    c.fillColor = '#fff'; c.strokeColor = '#2b6cf6'; c.strokeWidth = 1.2/paper.view.zoom;
+    c.data.lineCorner = i;
+    uiLayer.addChild(c);
+  });
 }
 
 /* ⭐ 選んだ図の枠と8つのハンドル（SAKUJI と同じ持ち方）
@@ -1072,6 +1097,16 @@ cv.addEventListener('pointerdown', e => {
     if(hUI.item.data.vertex !== undefined){ drag = { kind:'vertex', i:hUI.item.data.vertex }; return; }
     if(hUI.item.data.inset){ drag = { kind:'inset' }; return; }   // 矩形・円＝掴むと余白が変わる
     if(hUI.item.data.boxEnd !== undefined){ drag = { kind:'boxEnd', e:hUI.item.data.boxEnd }; return; }
+    if(hUI.item.data.lineCorner !== undefined){
+      const L = sel();
+      const cs = L ? lineCorners(L) : null;
+      if(cs){
+        const c = cs[0].add(cs[2]).divide(2);            // 外形の中心
+        drag = { kind:'lineScale', c, d0:Math.max(1, c.getDistance(pt)), size0:L.size,
+                 w0:(L.box && L.box.w) || 80, fit:!!L.fit };
+        cv.style.cursor = 'nwse-resize'; return;
+      }
+    }
   }
   /* ①' 図のハンドル。⭐ 角の【少し外】を掴むと回転（SAKUJI と同じ持ち方）。
      ⚠️ ハンドルそのものに当たり判定を頼ると、角の外は素通りして版面のパンになる。
@@ -1212,6 +1247,19 @@ cv.addEventListener('pointermove', e => {
     } else {                                            // 右端＝幅だけ変わる
       const nr = Math.max(bx + 20, Math.min(B.w, pt.x));
       L.box.w = (nr - bx)/B.w*100;
+    }
+    render();
+  } else if(drag.kind === 'lineScale'){
+    /* 隅を掴んで大きさ。⭐ 中心からの距離の比で決める＝どの隅を掴んでも同じ手触り。
+       ⚠️ 「合わせる」の行は字の大きさが箱から決まるので、箱の幅を変える（でないと効かない）。 */
+    const L = sel(); if(!L) return;
+    const k = Math.max(0.15, Math.min(8, drag.c.getDistance(pt) / drag.d0));
+    if(drag.fit && L.box){
+      L.box.w = Math.max(5, Math.min(100, drag.w0 * k));
+      setRange('boxW', Math.round(L.box.w));
+    } else {
+      L.size = Math.max(6, Math.min(400, drag.size0 * k));
+      setRange('tSize', Math.round(L.size));
     }
     render();
   } else if(drag.kind === 'lineSize'){
