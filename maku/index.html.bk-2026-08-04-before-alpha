@@ -415,9 +415,6 @@
   <button class="big" id="resetAll">全リセット</button>
   <button class="big" id="reset">アンカー全消し</button>
   <button class="big" id="png">PNG</button>
-  <button class="big" id="pngA">PNG（地なし）</button>
-  <div class="note">⭐ <b>地なし</b>＝背景を入れずに透明のまま出す。
-    貼 HARI などに<b>重ねて置くとき</b>はこちら（地が入っていると四角い板になる）</div>
 </div>
 
 <script>
@@ -873,19 +870,14 @@ loc.uCharType  = gl.getUniformLocation(prog,'uCharType');
 /* ⚠️ 描くのとループを分けてある＝書き出しのときだけ【版面の大きさで1回だけ描く】ため */
 let lastT = 0;
 function draw(t){ requestAnimationFrame(draw); lastT = t; render(t); }
-/* ⭐ 地なし（透明）で描く。⚠️ 貼 HARI など【他の道具に持ち込むため】。
-   地が入っていると、重ねたときに四角い板になって下が隠れる。 */
-let noBgOnce = false;
 function render(t){
   const w = canvas.width, h = canvas.height;
   gl.viewport(0,0,w,h);
   const bg = P.look===2 ? [0.04,0.04,0.05,1] : (P.look===1 ? [0.957,0.949,0.933,1] : [0.03,0.03,0.04,1]);
-  if(noBgOnce) gl.clearColor(0,0,0,0); else gl.clearColor(...bg);
-  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.clearColor(...bg); gl.clear(gl.COLOR_BUFFER_BIT);
 
   /* ⭐ 地（紙）── clear の後・膜の前に、画面いっぱいの紙を刷る。
      色数 1 なら uBase をそのまま返すので、これまでと同じ単色の地になる。 */
-  if(!noBgOnce){
   gl.useProgram(bgProg);
   gl.uniform2f(bgLoc.uRes, w, h);
   gl.uniform3f(bgLoc.uBase, bg[0], bg[1], bg[2]);
@@ -900,7 +892,6 @@ function render(t){
   gl.enableVertexAttribArray(bgLoc.aP);
   gl.vertexAttribPointer(bgLoc.aP, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-  }
   gl.useProgram(prog);                       // ⚠️ 以降の uniform は膜のプログラムに当てる
 
   /* ⭐ 面は【常に正方】。版がそれぞれ自分の形の矩形を面の中に占める。
@@ -1343,27 +1334,21 @@ function updateOut(){
     + (f.cap ? '<br>⚠️ この端末の上限に当たったので下げた' : '');
 }
 /* ⭐ 版面の大きさで刷る。⚠️ 終わったら必ず元へ戻す */
-function renderToBlob(cb, noBg){
-  /* ⚠️ 地なしのときも【一度描き直してから】撮る。撮ってから消しても手遅れ */
-  if(P.frameOn !== 1){
-    if(noBg){ noBgOnce = true; render(lastT); }
-    canvas.toBlob(b => { noBgOnce = false; render(lastT); cb(b); }, 'image/png');
-    return;
-  }
+function renderToBlob(cb){
+  if(P.frameOn !== 1){ canvas.toBlob(cb, 'image/png'); return; }
   const f = frameSize();
   const kw = canvas.width, kh = canvas.height;
   try{
     canvas.width = f.w; canvas.height = f.h;
-    noBgOnce = !!noBg; render(lastT);
-    canvas.toBlob(b => { noBgOnce = false; cb(b); }, 'image/png');
+    render(lastT);
+    canvas.toBlob(cb, 'image/png');
   } finally {
-    noBgOnce = false;
     canvas.width = kw; canvas.height = kh;
     render(lastT);
   }
 }
 /* ⚠️ iOS は DOM に入れていない <a> の click を無視する／巨大な dataURL で落ちる（礫と同じ作法） */
-function savePNG(noBg){ renderToBlob(blob=>{
+document.getElementById('png').onclick = ()=> renderToBlob(blob=>{
   if(!blob) return;
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1371,9 +1356,7 @@ function savePNG(noBg){ renderToBlob(blob=>{
   document.body.appendChild(a); a.click(); a.remove();
   if(/iP(hone|ad|od)/.test(navigator.userAgent)) window.open(url, '_blank');
   setTimeout(()=>URL.revokeObjectURL(url), 8000);
-}, noBg); }
-document.getElementById('png').onclick     = ()=> savePNG(false);
-document.getElementById('pngA').onclick    = ()=> { savePNG(true); stat('地なしで出した（重ねられる）'); };
+});
 
 /* ══ 地のグラデ ── 使う色数のぶんだけ出す（触れるのに何も起きないつまみを残さない）══ */
 function syncGrad(){
