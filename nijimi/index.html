@@ -857,8 +857,9 @@ seg('seg-grow','grow',()=>{
 seg('seg-mask','mask',()=>{ uploadMask(); refreshStat(); saveSoon(); });
 seg('seg-inv','invert');
 seg('seg-draw','outline');
-seg('seg-grad','grad',()=>{ applyGradUI(); saveSoon(); });
-seg('seg-gfollow','gfollow',()=>{ applyGradUI(); saveSoon(); });
+// ⭐ 入にした時に1回焼く＝切の間に向きを動かしていても、入れた瞬間その向きになる
+seg('seg-grad','grad',()=>{ if(P.grad>0.5 && P.gfollow<0.5 && mode!=='wave') computeGradCoords(); applyGradUI(); saveSoon(); });
+seg('seg-gfollow','gfollow',()=>{ if(P.grad>0.5 && P.gfollow<0.5 && mode!=='wave') computeGradCoords(); applyGradUI(); saveSoon(); });
 seg('seg-bggrad','bgGrad',()=>{ applyGradUI(); saveSoon(); });
 bindRange('s-steps','steps','v-steps',1);
 bindRange('s-cycle','cycle','v-cycle',1);
@@ -869,13 +870,17 @@ bindRange('s-gang','gAng','v-gang',Math.PI/180);
         ドラッグしながら見ている間はまったく変わらなかった。
      ⚠️ 焼き直しは連結成分のラベリング（640×640 を JS で走査）で重いので、
         毎フレームは回さない。⭐入力中は間引いて追従させ、離した時に必ず1回決める。
-     ⚠️「沿う」は線の太さから作るので向きは元から効かない（仕様）。 */
+     ⚠️「沿う」は線の太さから作るので向きは元から効かない（仕様）。
+     ⚠️ 地グラデ（2026-08-04）は向きを【シェーダで直に】使う＝焼き直しは要らない。
+        なので字グラデが切の間は焼かない。⭐その代わり、字グラデを入にした時に1回焼く
+        （切の間に向きを動かしていても、入にした瞬間ちゃんと今の向きになる）。 */
 (function(){
   const el = document.getElementById('s-gang');
   let last = 0, pending = null;
-  const bakeGrad = () => { if(mode!=='wave') computeGradCoords(); last = performance.now(); };
+  const needBake = () => mode!=='wave' && P.grad>0.5 && P.gfollow<0.5;
+  const bakeGrad = () => { if(needBake()) computeGradCoords(); last = performance.now(); };
   el.addEventListener('input', () => {
-    if(mode==='wave' || P.gfollow > 0.5) return;      // 沿う／干渉では焼く意味がない
+    if(!needBake()) return;                            // 沿う／干渉／字グラデ切では焼く意味がない
     const now = performance.now();
     if(now - last > 120){ bakeGrad(); }
     else if(!pending){ pending = setTimeout(()=>{ pending=null; bakeGrad(); }, 120); }
@@ -933,9 +938,11 @@ Object.values(STOPS).forEach(s=>{
 /* 🔴「字と地はちゃんと反映してる？」（木下・2026-08-04）への答え：
      ⭐ 地は【いつも】効く。字は【グラデが切の時だけ】効く＝入の間はグラデが字の色を置き換える。
      ⚠️ 見た目では区別がつかなかったので、効かない項目を薄くして分かるようにした。
-        ・グラデ入 → 「字」を薄く（色列がその代わり）
-        ・グラデ切 → 「色」の列を薄く
-        ・「沿う」は線の太さから作るので【向き】は元から効かない（仕様）→ 薄く */
+        ・字グラデ入 → 「字」を薄く（字の色列がその代わり）
+        ・字グラデ切 → 字の「色」の列を薄く
+        ・地グラデ入 → 「地」を薄く（地の色列がその代わり）／切 → 地の「色」の列を薄く
+        ・【向き】は字グラデ(直線)か地グラデのどちらかが要る時だけ効く
+          （「沿う」は線の太さから作るので向きは元から効かない＝仕様） */
 function applyGradUI(){
   const on = P.grad>0.5, bgOn = P.bgGrad>0.5;
   document.getElementById('ink-pair').classList.toggle('dim', on);
