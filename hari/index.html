@@ -1186,6 +1186,28 @@ cv.addEventListener('pointerdown', e => {
       }
     }
   }
+  /* ⭐ 角の【少し外】を掴むと回す（図と同じ持ち方＝覚えることを増やさない）。
+     ⚠️ ハンドルそのものに当たり判定を頼ると、角の外は素通りして版面のパンになる。
+       距離で見る＝ハンドルの外側にも掴みしろを作る。 */
+  {
+    const L = sel();
+    const cs = L ? lineCorners(L) : null;
+    if(cs){
+      /* ⚠️ 掴みしろは【画面で見た大きさ】で決める。プロジェクト単位のままだと、
+         版面を縮めて見ているとき（zoom が小さい）に範囲が広がりすぎて、
+         角そのものまで「外」と判定されて回ってしまう／逆に届かない。 */
+      const tol = 9/paper.view.zoom;
+      let near = -1, nd = 1e9;
+      cs.forEach((q,i) => { const d = q.getDistance(pt); if(d < nd){ nd = d; near = i; } });
+      const c = cs[0].add(cs[2]).divide(2);
+      if(near >= 0 && nd > tol*0.9 && nd < tol*3.4){
+        drag = { kind:'lineRot', c, a0:pt.subtract(c).angle,
+                 r0:(L.box && L.box.rot) || 0,
+                 pts0:(L.path && L.path.pts) ? L.path.pts.map(a => [a[0], a[1]]) : null };
+        cv.style.cursor = 'grabbing'; return;
+      }
+    }
+  }
   /* ①' 図のハンドル。⭐ 角の【少し外】を掴むと回転（SAKUJI と同じ持ち方）。
      ⚠️ ハンドルそのものに当たり判定を頼ると、角の外は素通りして版面のパンになる。
        距離で見る＝ハンドルの外側にも掴みしろを作る。 */
@@ -1325,6 +1347,21 @@ cv.addEventListener('pointermove', e => {
     } else {                                            // 右端＝幅だけ変わる
       const nr = Math.max(bx + 20, Math.min(B.w, pt.x));
       L.box.w = (nr - bx)/B.w*100;
+    }
+    render();
+  } else if(drag.kind === 'lineRot'){
+    /* 行ごと回す。⭐ 張る・札は角度を持っているのでそれを動かす。
+       ⭐ 沿うは経路そのものを回す（角度を別に持たせると、頂点を動かしたとき噛み合わなくなる）。 */
+    const L = sel(); if(!L) return;
+    let a = pt.subtract(drag.c).angle - drag.a0;
+    if(shiftDown) a = Math.round(a/15)*15;                  // ⇧＝15°ずつ（図と同じ）
+    if(drag.pts0 && L.kind === 'meguru'){
+      L.path.pts = drag.pts0.map(([x,y]) => {
+        const q = new Point(x,y).rotate(a, drag.c); return [q.x, q.y];
+      });
+    } else if(L.box){
+      L.box.rot = ((drag.r0 + a + 180) % 360 + 360) % 360 - 180;
+      setRange('boxR', Math.round(L.box.rot));
     }
     render();
   } else if(drag.kind === 'lineScale'){
@@ -2347,5 +2384,5 @@ S.sel = { kind:'line', i:0 };
 paper.view.onResize = () => { fitView(); render(); };
 document.fonts.ready.then(() => render());      // ⚠️ Webフォントが来る前に測ると送りがずれる
 syncPanel(); fitView(); render();
-stat('READY — 文字を打つ／掴んで動かす／⌥ドラッグで大きさと字間／版面の外は書き出されない');
+stat('READY — 掴んで動かす／角で大きさ・角の少し外で回す／⌥ドラッグで大きさと字間／ダブルクリックで打ち直し');
 </script>
