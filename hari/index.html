@@ -985,9 +985,14 @@ function render(into, opt){
   S.pieces.forEach(pc => {
     if(!pc.item) return;
     const c = pc.item.clone({ insert:false });
+    /* 🔴 `scaling` に【代入】してはいけない。画像（Raster）は applyMatrix が効かないので、
+       置いたときに掛けた「版面に収める倍率」が上書きされて消える
+       ＝実物だけ原寸に戻り、選択の枠（収めたあとの大きさで計算）とズレる
+       （木下＝「画像に関しては範囲がその大きさで四角で囲って」）。
+       ⭐ 相対の scale() を使う＝元の倍率の上に積む。順は 大きさ → 回す → 置く。 */
+    c.scale(pc.sc/100);
+    c.rotate(pc.rot);
     c.position = new Point(pc.x, pc.y);
-    c.rotation = pc.rot;
-    c.scaling  = new Point(pc.sc/100, pc.sc/100);
     c.data.piece = pc.id;
     target.addChild(c);
   });
@@ -2032,6 +2037,22 @@ cv.addEventListener('drop', e => {
   const r = cv.getBoundingClientRect();
   const at = paper.view.viewToProject(new Point(e.clientX - r.left, e.clientY - r.top));
   [...(e.dataTransfer.files||[])].forEach(f => takeFile(f, at));
+});
+/* ⭐ 画面のどこに落としても入る（木下＝「画像はドロップで入れれるようにできる？」）。
+   ⚠️ 版面の上だけで受けていたので、パネルや余白に落とすとブラウザが画像を開いていた
+     ＝「入らない」に見える。落とした先が版面の外なら、版面の中央に置く。 */
+['dragenter','dragover'].forEach(t => addEventListener(t, e => { e.preventDefault(); }));
+addEventListener('drop', e => {
+  if(cv.contains(e.target)) return;                 // 版面の上は上の処理に任せる
+  const files = [...(e.dataTransfer && e.dataTransfer.files || [])];
+  if(!files.length) return;
+  e.preventDefault();
+  const r = cv.getBoundingClientRect();
+  const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+  const at = inside
+    ? paper.view.viewToProject(new Point(e.clientX - r.left, e.clientY - r.top))
+    : new Point(S.board.w/2, S.board.h/2);
+  files.forEach(f => takeFile(f, at));
 });
 $('delPiece').onclick = () => { const pc = selPiece(); if(!pc) return;
   S.pieces.splice(S.sel.i,1); S.sel = { kind:'line', i:0 }; syncPanel(); render(); stat('図を消した'); };
