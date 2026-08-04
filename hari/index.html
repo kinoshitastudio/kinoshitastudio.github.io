@@ -147,6 +147,7 @@ input[type=color]{ width:32px; height:28px; padding:0; border:.5px solid var(--l
       <div class="seg" id="segKind">
         <button data-v="meguru" class="on">沿う</button>
         <button data-v="haru">張る</button>
+        <button data-v="fuda">札</button>
       </div></div>
     <div class="note" id="kindNote">⭐ <b>沿う</b>＝経路に載せる（巡る）／<b>張る</b>＝箱の幅にぴったり届かせる（両端揃え・下部のクレジット）<br>
       同じ行のまま切り替えられる＝<b>同じ文字が別の顔になる</b></div>
@@ -157,6 +158,22 @@ input[type=color]{ width:32px; height:28px; padding:0; border:.5px solid var(--l
       <input type="range" id="boxY" min="0" max="100" value="88"><span class="v" id="vboxY">88</span></div>
     <div class="row" id="rowBoxW"><label>幅</label>
       <input type="range" id="boxW" min="5" max="100" value="80"><span class="v" id="vboxW">80</span></div>
+
+    <div id="fudaUI">
+      <textarea id="fSub" placeholder="下の行（英字など）" style="height:44px"></textarea>
+      <div class="row"><label>地の色</label><input type="color" id="fBg" value="#c8322a">
+        <input type="color" id="fFg" value="#ffffff"></div>
+      <div class="row"><label>余白</label>
+        <input type="range" id="fPad" min="0" max="60" value="18"><span class="v" id="vfPad">18</span></div>
+      <div class="row"><label>行間</label>
+        <input type="range" id="fGap" min="0" max="40" value="8"><span class="v" id="vfGap">8</span></div>
+      <div class="row"><label>下の大きさ</label>
+        <input type="range" id="fSub2" min="20" max="120" value="60"><span class="v" id="vfSub2">60</span></div>
+      <div class="row"><label>罫線</label>
+        <div class="seg" id="segRule"><button data-v="1" class="on">引く</button><button data-v="0">なし</button></div></div>
+      <div class="note">⭐ 札の大きさは<b>中身が決める</b>（先に箱を決めると、字がはみ出るか余る）<br>
+        罫線は<b>2行のあいだ</b>に引く（縁に引くと枠になって札に見えない）</div>
+    </div>
 
     <div class="row" id="rowPathSeg"><label>経路</label>
       <div class="seg" id="segPath">
@@ -312,6 +329,8 @@ function newLine(text){
     path:{ type:'poly', n:6, inset:12, corner:0, pts:null },   // pts=null なら型から作る
     /* ⭐ 張る用の箱（版面に対する％）。⚠️ path と両方持たせる＝置き方を切り替えても値が残る */
     box:{ x:10, y:88, w:80 },
+    /* ⭐ 札用。sub＝下に置く小さい行（日英併記）。地・罫線もここが持つ */
+    fuda:{ sub:'POSTER TYPESETTING', bg:'#c8322a', fg:'#ffffff', pad:18, gap:8, rule:1, sub2:60 },
     fam:'"Zen Kaku Gothic New", sans-serif', wt:'500',
     size:46, track:2, start:0, off:0, dir:1, side:0, col:'#111111',
     wx:100, wy:100,                          // ⭐ 長体・平体（字の幅と高さを別々に伸ばす）
@@ -533,9 +552,58 @@ const LAYOUTS = {
       }
     }
   },
-  /* ⏸ 札（情報の塊）はここに足す。
-     build の約束（L と Group を受け取る）が同じなら、下の描き直しは一切触らなくていい。 */
+  /* 札 ── 日英を2行で重ねた、色地のラベル（三沢の朱色／水色の札）。
+     ⭐ 沿う・張るが「行」なのに対して、これは【塊】。版面の隅に置いて情報を締める。
+     ⚠️ 地の大きさは中身から決める（先に箱を決めて字を入れると、字がはみ出るか余る）。 */
+  fuda:{
+    jp:'札',
+    build(L, into){
+      const B = S.board, F = Object.assign({}, FUDA_DEF, L.fuda || {});
+      const cx = ((L.box && L.box.x) ?? 10)/100 * B.w;
+      const cy = ((L.box && L.box.y) ?? 88)/100 * B.h;
+      const mk = (txt, size, col) => new paper.PointText({
+        point:[0,0], content:txt, justification:'left',
+        fillColor:col, fontFamily:L.fam, fontWeight:L.wt, fontSize:size,
+      });
+      const main = mk((L.text || '').replace(/\n/g,' '), L.size, F.fg);
+      if(L.wx !== 100 || L.wy !== 100) main.scaling = new Point((L.wx||100)/100, (L.wy||100)/100);
+      const subSize = L.size * (F.sub2/100);
+      const sub = F.sub ? mk(F.sub, subSize, F.fg) : null;
+
+      /* ⭐ 中身の大きさから地を決める（はみ出さない・余らない） */
+      const wIn = Math.max(main.bounds.width, sub ? sub.bounds.width : 0);
+      const hIn = main.bounds.height + (sub ? F.gap + sub.bounds.height : 0);
+      const bw = wIn + F.pad*2, bh = hIn + F.pad*2;
+      const x0 = cx, y0 = cy - bh/2;
+
+      const bg = new Path.Rectangle(new Rectangle(x0, y0, bw, bh));
+      bg.fillColor = F.bg; into.addChild(bg);
+
+      main.position = new Point(x0 + F.pad + main.bounds.width/2,
+                                y0 + F.pad + main.bounds.height/2);
+      main.data.line = L.id; into.addChild(main);
+      if(sub){
+        /* ⚠️ 罫線は【2行のあいだ】に引く。地の縁に引くと枠になって札に見えない */
+        if(F.rule){
+          const ry = y0 + F.pad + main.bounds.height + F.gap/2;
+          const r = new Path.Line(new Point(x0 + F.pad, ry), new Point(x0 + bw - F.pad, ry));
+          r.strokeColor = F.fg; r.strokeWidth = 1; r.opacity = .7; into.addChild(r);
+        }
+        sub.position = new Point(x0 + F.pad + sub.bounds.width/2,
+                                 y0 + F.pad + main.bounds.height + F.gap + sub.bounds.height/2);
+        sub.data.line = L.id; into.addChild(sub);
+      }
+      if(S.showPath || sel() === L){
+        const g = new Path.Rectangle(new Rectangle(x0, y0, bw, bh));
+        g.strokeColor = new paper.Color(0.17, 0.42, 0.96, S.showPath ? 0.9 : 0.35);
+        g.strokeWidth = 1/paper.view.zoom; g.fillColor = null;
+        uiLayer.addChild(g);
+      }
+    }
+  },
 };
+/* 札の既定。⚠️ 古い JSON には fuda が無いので、ここが埋める */
+const FUDA_DEF = { sub:'POSTER TYPESETTING', bg:'#c8322a', fg:'#ffffff', pad:18, gap:8, rule:1, sub2:60 };
 
 /* ══ 版面の地（単色／グラデ／放射）══
    ⚠️ グラデの origin/destination は【版面の座標】で置く。画面の座標で置くと
@@ -598,7 +666,7 @@ function drawHandles(){
   const L = sel();
   /* ⚠️ ここで置き方を絞る。'meguru' だけにしていたら、張るの箱ハンドルが出なかった。
      置き方を足したら【ここにも足す】＝掴むところが無い＝触れないのと同じ。 */
-  if(!L || (L.kind !== 'meguru' && L.kind !== 'haru')) return;
+  if(!L || (L.kind !== 'meguru' && L.kind !== 'haru' && L.kind !== 'fuda')) return;
   const r = 5/paper.view.zoom;
   const mk = (pt, data) => {
     const c = new Path.Circle(pt, r);
@@ -606,6 +674,12 @@ function drawHandles(){
     Object.assign(c.data, data);
     uiLayer.addChild(c);
   };
+  if(L.kind === 'fuda'){
+    /* 札＝左上の1点だけ掴む（大きさは中身が決めるので、引き伸ばすつまみは作らない） */
+    const B = S.board;
+    mk(new Point(((L.box && L.box.x) ?? 10)/100 * B.w, ((L.box && L.box.y) ?? 88)/100 * B.h), { fudaAt:1 });
+    return;
+  }
   if(L.kind === 'haru'){
     /* 張る＝箱の【両端】を掴む。左を引けば始まりが、右を引けば幅が変わる */
     const B = S.board;
@@ -772,7 +846,7 @@ cv.addEventListener('pointermove', e => {
           矩形・円は型から作るので、ずれ（dx,dy）として覚える。 */
     const L = sel(); if(!L) return;
     const d = pt.subtract(drag.last);
-    if(L.kind === 'haru' && L.box){
+    if((L.kind === 'haru' || L.kind === 'fuda') && L.box){
       L.box.x += d.x / S.board.w * 100;
       L.box.y += d.y / S.board.h * 100;
     } else if(L.path.type === 'poly' && L.path.pts){
@@ -858,13 +932,22 @@ function syncPanel(){
   segOn('segKind', L.kind);
   /* ⭐ 置き方で出し分ける＝触れるのに何も起きないつまみを残さない。
      張る＝箱（左・上下・幅）／沿う＝経路（型・頂点・余白・角・始まり・離れ・向き・面） */
-  const isHaru = L.kind === 'haru';
-  ['rowBoxX','rowBoxY','rowBoxW'].forEach(id => $(id).style.display = isHaru ? '' : 'none');
+  const isHaru = L.kind === 'haru', isFuda = L.kind === 'fuda', isMeg = L.kind === 'meguru';
+  $('rowBoxX').style.display = (isHaru || isFuda) ? '' : 'none';     // 札も左上を数字で置ける
+  $('rowBoxY').style.display = (isHaru || isFuda) ? '' : 'none';
+  $('rowBoxW').style.display = isHaru ? '' : 'none';                 // ⚠️ 札の幅は中身が決める
+  $('fudaUI').style.display  = isFuda ? '' : 'none';
   ['rowPathSeg','rowInset','rowCorner','rowStart','rowOff','rowDir','rowSide']
-    .forEach(id => { const e = $(id); if(e) e.style.display = isHaru ? 'none' : ''; });
-  $('rowN').style.display = (!isHaru && L.path.type === 'poly') ? '' : 'none';
-  $('polyNote').style.display = (!isHaru && L.path.type === 'poly') ? '' : 'none';
-  $('lineHead').textContent = (isHaru ? '張る' : '沿う') + ' ── 選んだ行';
+    .forEach(id => { const e = $(id); if(e) e.style.display = isMeg ? '' : 'none'; });
+  $('rowN').style.display = (isMeg && L.path.type === 'poly') ? '' : 'none';
+  $('polyNote').style.display = (isMeg && L.path.type === 'poly') ? '' : 'none';
+  $('lineHead').textContent = (isFuda ? '札' : isHaru ? '張る' : '沿う') + ' ── 選んだ行';
+  const F = Object.assign({}, FUDA_DEF, L.fuda || {});
+  $('fSub').value = F.sub; $('fBg').value = F.bg; $('fFg').value = F.fg;
+  $('fPad').value = F.pad;   $('vfPad').textContent = F.pad;
+  $('fGap').value = F.gap;   $('vfGap').textContent = F.gap;
+  $('fSub2').value = F.sub2; $('vfSub2').textContent = F.sub2;
+  segOn('segRule', F.rule);
   const bx = L.box || { x:10, y:88, w:80 };
   setRange('boxX', Math.round(bx.x)); setRange('boxY', Math.round(bx.y)); setRange('boxW', Math.round(bx.w));
   const pc = selPiece();
@@ -925,7 +1008,21 @@ segBind('segCorner', (L,v) => { L.path.corner = Number(v); });
 segBind('segDir',    (L,v) => { L.dir = Number(v); });
 segBind('segSide',   (L,v) => { L.side = Number(v); });
 /* ⭐ 置き方＝沿う／張る。同じ行のまま切り替わる（path も box も両方持っている） */
-segBind('segKind',   (L,v) => { L.kind = v; if(!L.box) L.box = { x:10, y:88, w:80 }; });
+segBind('segKind',   (L,v) => { L.kind = v;
+  if(!L.box)  L.box  = { x:10, y:88, w:80 };
+  if(!L.fuda) L.fuda = Object.assign({}, FUDA_DEF); });
+segBind('segRule',   (L,v) => { L.fuda = Object.assign({}, FUDA_DEF, L.fuda||{}, { rule:Number(v) }); });
+/* 札のつまみ。⚠️ L の直下でなく L.fuda の中なので、BIND とは別に配線する */
+[['fSub','sub',v=>v],['fBg','bg',v=>v],['fFg','fg',v=>v],
+ ['fPad','pad',Number],['fGap','gap',Number],['fSub2','sub2',Number]].forEach(([id,key,cast]) => {
+  const e = $(id); if(!e) return;
+  e.addEventListener('input', () => {
+    const L = sel(); if(!L) return;
+    L.fuda = Object.assign({}, FUDA_DEF, L.fuda||{}, { [key]: cast(e.value) });
+    const v = $('v' + id); if(v) v.textContent = e.value;
+    render();
+  });
+});
 /* 張るの箱。⚠️ BIND（L の直下に書くもの）と形が違うので個別に配線する */
 [['boxX','x'],['boxY','y'],['boxW','w']].forEach(([id,key]) => {
   const e = $(id); if(!e) return;
