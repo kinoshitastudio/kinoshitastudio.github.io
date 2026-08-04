@@ -403,9 +403,6 @@
       </div>
       <div class="mod" id="fout">出る大きさ ＝ —</div>
       <button class="btn" id="bPNG2">この大きさで PNG を出す</button>
-      <button class="btn" id="bPNGA">地なしで PNG を出す</button>
-      <div class="mod">⭐ <b>地なし</b>＝背景を入れずに透明のまま出す。
-        貼 HARI などに<b>重ねて置くとき</b>はこちら（地が入っていると四角い板になる）</div>
     </div>
   </div>
 </div>
@@ -509,7 +506,7 @@ function glyphDots(ch, N, fontIdx){
 }
 
 /* ══ 三次元 ══════════════════════════════════════════════ */
-const renderer = new THREE.WebGLRenderer({ antialias:true, preserveDrawingBuffer:true, alpha:true });
+const renderer = new THREE.WebGLRenderer({ antialias:true, preserveDrawingBuffer:true });
 /* ⚠️ モバイルは画素密度3のこともある。3倍で刷ると描く画素が9倍になって重い。
    🔴 だが 1.5 に落としていたせいで【画数の多い字がモバイルで潰れて読めなかった】
       （木下＝「礎が解像度をマックスにしても見えかけていない」）。
@@ -1051,14 +1048,10 @@ function updateOut(){
 }
 
 /* ══ 描く ══════════════════════════════════════════════════ */
-/* ⭐ 地なし（透明）で描く。⚠️ 貼 HARI など【他の道具に持ち込むため】。
-   地が入っていると、重ねたときに四角い板になって下が隠れる。 */
-let noBgOnce = false;
 function drawOnce(){
-  renderer.setClearAlpha(noBgOnce ? 0 : 1);
   renderer.clear();
-  if(!noBgOnce) renderer.render(bgScene, bgCam);   // 地
-  renderer.render(scene, camera);                  // 粒
+  renderer.render(bgScene, bgCam);          // 地
+  renderer.render(scene, camera);           // 粒
 }
 function frame(t){
   requestAnimationFrame(frame);
@@ -1094,17 +1087,11 @@ function frame(t){
 }
 
 /* ⭐ 版面の大きさで刷る。⚠️ 終わったら必ず元へ戻す */
-function renderToBlob(cb, noBg){
-  noBgOnce = !!noBg;
+function renderToBlob(cb){
   const el = renderer.domElement;
   const f = ON.frame ? frameSize()
                      : capped(el.clientWidth||innerWidth, el.clientHeight||innerHeight, P.fscale);
-  /* ⚠️ 地なしのときも【一度描き直してから】撮る。撮ってから消しても手遅れ */
-  if(!ON.frame && f.k === 1){
-    if(noBgOnce) drawOnce();
-    el.toBlob(b => { noBgOnce = false; drawOnce(); cb(b); }, 'image/png');
-    return;
-  }
+  if(!ON.frame && f.k === 1){ el.toBlob(cb, 'image/png'); return; }
   const keep = { w: el.clientWidth||innerWidth, h: el.clientHeight||innerHeight, pr: renderer.getPixelRatio() };
   try{
     /* ⚠️ 端末の画素密度が混ざると、同じ設定でもモバイルだけ倍で出る。書き出しの間は 1 に固定 */
@@ -1113,9 +1100,8 @@ function renderToBlob(cb, noBg){
     camera.aspect = f.w/f.h; camera.updateProjectionMatrix();
     G.uRes.value.set(f.w, f.h);
     placeCamera(); drawOnce();
-    el.toBlob(b => { noBgOnce = false; cb(b); }, 'image/png');
+    el.toBlob(cb, 'image/png');
   } finally {
-    noBgOnce = false;
     renderer.setPixelRatio(keep.pr);
     renderer.setSize(keep.w, keep.h, false);
     camera.aspect = keep.w/keep.h; camera.updateProjectionMatrix();
@@ -1392,7 +1378,7 @@ document.getElementById('bCenter').onclick = () => {
   if(src) fitView(src.totalW * (620 / Math.max(src.totalW, src.N)), src.N * (620 / Math.max(src.totalW, src.N)));
 };
 /* ⚠️ iOS は DOM に入れていない <a> の click を無視する／巨大な dataURL で落ちる */
-const savePNG = (noBg) => {
+const savePNG = () => {
   renderToBlob(blob => {
     if(!blob) return;
     const url = URL.createObjectURL(blob);
@@ -1401,12 +1387,9 @@ const savePNG = (noBg) => {
     document.body.appendChild(a); a.click(); a.remove();
     if(/iP(hone|ad|od)/.test(navigator.userAgent)) window.open(url, '_blank');
     setTimeout(() => URL.revokeObjectURL(url), 8000);
-  }, noBg);
+  });
 };
-document.getElementById('bPNG').onclick = () => savePNG(false);
-/* ⚠️ この道具には状態を出す関数（stat）が無い。呼ぶとエラーになるので出さない
-   （知らせは note の常時表示で足りている）。 */
-document.getElementById('bPNGA') && (document.getElementById('bPNGA').onclick = () => savePNG(true));
+document.getElementById('bPNG').onclick = savePNG;
 document.getElementById('bPNG2').onclick = savePNG;
 
 /* ══ 起動 ══ ⚠️ 字が焼ける前に組むと、字が出ないまま固まる（フォント待ち） */
