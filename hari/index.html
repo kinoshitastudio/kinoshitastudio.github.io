@@ -109,6 +109,12 @@ input[type=color]{ width:32px; height:28px; padding:0; border:.5px solid var(--l
       【浮かせるのは min-width:761px の中だけ】。外に書くと下段が壊れる。
    ⚠️ 掴める領域はモバイルで確保し直す（このブロックが後に来て勝ってしまうため）。
    ══════════════════════════════════════════════════════════════ */
+/* 版面の上で打ち直す欄。⚠️ 版面と同じ場所に浮かせる＝どこを直しているか分かる */
+#inlineText{ display:none; position:fixed; z-index:30; margin:0; padding:8px 10px;
+  border:none; border-radius:10px; outline:2px solid var(--sel); resize:none;
+  background:rgba(255,255,255,.97); color:#111; font-family:inherit; font-size:13px;
+  line-height:1.5; box-shadow:0 10px 30px rgba(0,0,0,.18); -webkit-user-select:text; user-select:text }
+
 @media(min-width:761px){
   /* パネル＝壁でなく、浮いた1枚 */
   #panel{
@@ -174,6 +180,8 @@ input[type=color]{ border-radius:8px; height:30px }
 </div>
 <button id="theme" title="明るさ">◐</button>
 
+<!-- ⭐ 版面の上でそのまま打ち直す（ダブルクリック）。⚠️ 画面の上に重ねるだけで、作品には出ない -->
+<textarea id="inlineText" spellcheck="false"></textarea>
 <div id="panel">
   <h2>版面</h2>
   <div class="sec">
@@ -1043,6 +1051,65 @@ cv.addEventListener('pointerdown', e => {
   }
   drag = { kind:'pan', last:pt };
 });
+/* ══ 版面の上で打ち直す ══
+   ⭐ 木下＝「テキストはダブルクリックでテキスト編集できるように」。
+   ⚠️ 拾うのは【行の束ね】。1字の PointText を拾うと、その字だけを直すことになる
+     （作字ツールで踏んだ型）。rootOf が artLayer 直下まで持ち上げてくれる。 */
+let inlineL = null;
+/* ⚠️ ここで `$` は使えない（定義はパネルの節＝この下）。使うと TDZ で【起動ごと止まる】。
+   ⭐ 短縮を使う前に、それがどこで定義されているかを見る（2026-08-04 にここで1回止めた）。 */
+const elIn = () => document.getElementById('inlineText');
+function openInline(L, group){
+  const el = elIn(); if(!el) return;
+  inlineL = L;
+  const r = cv.getBoundingClientRect();
+  const tl = paper.view.projectToView(group.bounds.topLeft);
+  const br = paper.view.projectToView(group.bounds.bottomRight);
+  el.style.display = 'block';
+  el.style.left   = Math.round(r.left + Math.min(tl.x, br.x)) + 'px';
+  el.style.top    = Math.round(r.top  + Math.min(tl.y, br.y)) + 'px';
+  el.style.width  = Math.max(180, Math.abs(br.x - tl.x)) + 'px';
+  el.style.height = Math.max(46,  Math.abs(br.y - tl.y)) + 'px';
+  el.value = L.text;
+  el.focus(); el.select();
+  stat('打ち直し中 ── Esc か外を押すと閉じる');
+}
+function closeInline(){
+  const el = elIn(); if(!el) return;
+  el.style.display = 'none'; inlineL = null;
+}
+cv.addEventListener('dblclick', e => {
+  const r = cv.getBoundingClientRect();
+  const pt = paper.view.viewToProject(new Point(e.clientX - r.left, e.clientY - r.top));
+  const hit = artLayer.hitTest(pt, { fill:true, stroke:true, tolerance:6/paper.view.zoom });
+  const owner = hit && hit.item ? rootOf(hit.item) : null;
+  if(!(owner && owner.data && owner.data.line !== undefined)) return;
+  const i = S.lines.findIndex(l => l.id === owner.data.line);
+  if(i < 0) return;
+  S.sel = { kind:'line', i }; syncPanel(); render();
+  /* ⚠️ render で描き直すので、位置は【描き直したあとの束ね】から取る */
+  const g = artLayer.children.find(c => c.data && c.data.line === S.lines[i].id);
+  openInline(S.lines[i], g || owner);
+});
+{
+  const el = elIn();
+  if(el){
+    el.addEventListener('input', () => {
+      if(!inlineL) return;
+      inlineL.text = el.value;
+      const tt = document.getElementById('tText'); if(tt) tt.value = el.value;   // パネル側も映す
+      renderList(); render();
+    });
+    /* ⚠️ Enter は改行として残す（行の中で改行したいことがある）。閉じるのは Esc と外。 */
+    el.addEventListener('keydown', ev => {
+      if(ev.key === 'Escape'){ ev.preventDefault(); closeInline(); cv.focus(); }
+      ev.stopPropagation();                 // ⚠️ 版面のキー操作に取られない
+    });
+    el.addEventListener('blur', closeInline);
+  }
+}
+cv.addEventListener('pointerdown', () => { if(inlineL) closeInline(); }, true);
+
 cv.addEventListener('pointermove', e => {
   if(!drag) return;
   const r = cv.getBoundingClientRect();
