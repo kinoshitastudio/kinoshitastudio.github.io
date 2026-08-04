@@ -367,7 +367,9 @@
   </div>
   <div class="row" id="cc"><label>波色</label><input type="color" id="ca" value="#e9201c">
     <span class="men-off" style="display:none"><label style="width:auto">球色</label><input type="color" id="cb" value="#2434ff"></span>
-    <label style="width:auto">地</label><input type="color" id="cbg" value="#000000"></div>
+    <label style="width:auto">地</label><input type="color" id="cbg" value="#000000">
+    <button id="bgNone" style="flex:1;padding:5px 0;font:inherit;font-size:11px;cursor:pointer;background:none;border:1px solid var(--line);border-radius:8px;">なし</button></div>
+  <div class="hint">⭐<b>「なし」＝地を透明にする</b>。画面は市松で透けて見え、<b>タイルもそのまま地なしで焼かれる</b>（上に重ねる用）。もう一度押すと戻る</div>
   <div class="row"><label>階調</label><input type="range" id="steps" min="2" max="32" step="1" value="4"><span class="val"></span></div>
   <div class="row"><label>網</label><input type="range" id="dith" min="0" max="100" step="1" value="100"><span class="val"></span></div>
   <div class="row"><label>網の向き</label><input type="range" id="gdir" min="0" max="360" step="1" value="90"><span class="val"></span></div>
@@ -541,6 +543,7 @@ const TILE_ANGLES = 12, PHASES = 32;
 let tiles = [], tileC = 0, tilePal = -1, tileWav = -1, tileKey='';
 let fillTiles = null;          // ⭐ 埋めた側（地）専用のバンク。色だけ違う
 let SHOOT_NOBG = false;
+let BG_NONE = false;          // ⭐ 地を透明にして作る（画面は市松で見せる）
 let flowT = 0;
 let offc = null, offg = null;
 let dirtyUntil = 1e9;   // ⭐ ここまでは描き続ける（静止中の再描画スキップ用）      // ⭐ 連続モードの描画先（世界サイズ）
@@ -938,8 +941,18 @@ function draw(){
   const dpr = Math.min(devicePixelRatio, 2);
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   // ⭐ 地なしで焼くときは塗らない（枡 MASU で「地」の上に重ねるため）
-  if(SHOOT_NOBG) g.clearRect(0, 0, cv.clientWidth||innerWidth, cv.clientHeight||innerHeight);
-  else { g.fillStyle = pal.bg; g.fillRect(0, 0, cv.clientWidth||innerWidth, cv.clientHeight||innerHeight); }
+  const VW0 = cv.clientWidth || innerWidth, VH0 = cv.clientHeight || innerHeight;
+  if(SHOOT_NOBG || BG_NONE){
+    g.clearRect(0, 0, VW0, VH0);
+    // ⚠️ 市松は「透けている」ことを見せるための画面だけの目印。焼くときは描かない
+    if(!SHOOT_NOBG){
+      const K = 12;
+      for(let y = 0; y < VH0; y += K) for(let x = 0; x < VW0; x += K){
+        g.fillStyle = ((x / K | 0) + (y / K | 0)) % 2 ? 'rgba(255,255,255,.055)' : 'rgba(255,255,255,.02)';
+        g.fillRect(x, y, K, K);
+      }
+    }
+  } else { g.fillStyle = pal.bg; g.fillRect(0, 0, VW0, VH0); }
   // 擬似3D — せん断＋縦横圧縮で板を寝かせる。右ドラッグで角度がつく
   const shx = Math.sin(cam.ry) * 0.9, shy = Math.sin(cam.rx) * 0.9;
   const sx = Math.cos(cam.ry) * 0.6 + 0.4, sy = Math.cos(cam.rx) * 0.6 + 0.4;
@@ -1238,6 +1251,27 @@ let fillColTimer = 0;
     fillColTimer = setTimeout(() => { buildBanks(); dirtyUntil = performance.now() + 400; }, 140); };
   r.addEventListener('input', sync); P[key] = +r.value; if(v) v.textContent = r.value;
 });
+/* ⭐ 地の「なし」── 画面を透明にし、タイルの書き出しも地なしへ揃える。
+   ⚠️ 同じことを決めるつまみが2か所にあると、片方だけ効いて事故になる。必ず連動させる。 */
+function syncBgNone(){
+  const btn = document.getElementById('bgNone'); if(!btn) return;
+  btn.style.background = BG_NONE ? 'var(--ink)' : 'none';
+  btn.style.color = BG_NONE ? 'var(--paper)' : 'var(--ink)';
+  const seg = document.querySelector('#tlBg button[data-v="' + (BG_NONE ? 1 : 0) + '"]');
+  if(seg) seg.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === seg));
+  const cbg = document.getElementById('cbg');
+  if(cbg){ cbg.style.opacity = BG_NONE ? .35 : 1; cbg.style.pointerEvents = BG_NONE ? 'none' : 'auto'; }
+}
+document.getElementById('bgNone')?.addEventListener('click', () => {
+  BG_NONE = !BG_NONE; syncBgNone(); dirtyUntil = performance.now() + 400;
+  stat2(BG_NONE ? '地を透明にした（焼くときも地なし）' : '地を戻した');
+});
+// 書き出し側を触ったときも、地の「なし」に合わせる
+document.querySelectorAll('#tlBg button').forEach(b2 => b2.addEventListener('click', () => {
+  BG_NONE = +b2.dataset.v === 1; syncBgNone(); dirtyUntil = performance.now() + 400;
+}));
+syncBgNone();
+
 document.getElementById('fillCol').addEventListener('input', e => {
   P.fillCol = e.target.value;
   clearTimeout(fillColTimer);
