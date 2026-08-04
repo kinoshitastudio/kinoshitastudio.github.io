@@ -312,11 +312,18 @@
   <div class="row"><label>折返し</label><input type="range" id="wrap" min="1" max="80" step="1" value="7"><span class="val"></span></div>
   <div class="row"><label>字間</label><input type="range" id="gapx" min="-40" max="40" step="1" value="2"><span class="val"></span></div>
   <div class="row"><label>行間</label><input type="range" id="gapy" min="-40" max="40" step="1" value="2"><span class="val"></span></div>
-  <div class="row"><label>マス目</label><input type="range" id="masu" min="0" max="4" step="1" value="0"><span class="val"></span></div>
-  <div class="hint"><b>マス目</b>＝字を1文字ずつ枡に入れて並べる。0で切。枡の大きさは<b>字間・行間</b>で決まる（枠は隣と境目を共有する）</div>
   <div class="row"><label>解像</label><input type="range" id="res" min="8" max="96" step="4" value="16"><span class="val"></span></div>
   <div class="row"><label>粒</label><input type="range" id="cell" min="1" max="80" step="1" value="7"><span class="val"></span></div>
   <div class="row"><label>太さ</label><input type="range" id="fat" min="0" max="30" step="1" value="1"><span class="val"></span></div>
+
+  <h2>マス目</h2>
+  <div class="hint" style="margin-bottom:5px">字を1文字ずつ枡に入れて並べ、一枚にする。枡の大きさは<b>字間・行間</b>で決まる（枠は隣の枡と境目を共有する）</div>
+  <div class="row"><label>枠</label><input type="range" id="masu" min="0" max="4" step="1" value="0"><span class="val"></span></div>
+  <div class="hint" style="margin:6px 0 2px;color:#111"><b>塗り</b></div>
+  <div class="seg" id="masufill">
+    <button data-v="0" class="on">なし</button><button data-v="1">敷く</button><button data-v="2">抜く</button>
+  </div>
+  <div class="hint"><b>敷く</b>＝枡の中を埋めて字を上に乗せる／<b>抜く</b>＝枡を塗って<b>字を空ける</b>（字が彫った溝に見える）</div>
 
   <h2>質感</h2>
   <div class="hint" style="margin-bottom:5px"><b>グラデ塊</b>＝焼いたタイルを敷く（速い・位相が段になる）／<b>連続</b>＝ピクセルごとに直接計算（モアレが出ない・重い）</div>
@@ -442,7 +449,7 @@
 const cv = document.getElementById('cv'), g = cv.getContext('2d', { alpha:true });
 const P = { mode:0, res:16, cell:7, pal:1, steps:4, dith:100, gdir:90, gflow:0, fps:30, grav:60, font:0,
             tex:1, wav:0.1, bead:55, beadk:1, line:0, blob:5, ar:100, shine:60, valley:0, grad:0, shift:0, spread:0, dir:0, follow:100, grid:0, depth:0, fat:1,
-            lay:0, wrap:7, gapx:2, gapy:2, fall:0, masu:0,
+            lay:0, wrap:7, gapx:2, gapy:2, fall:0, masu:0, masufill:0,
             /* 地のグラデ（TSUBUTE / HORI 2 と同じ作り）── 色数 1 ＝単色＝今までと同じ */
             papN:1, papMode:0, papAng:90, papSteps:0,
             papC1:'#f2d16b', papC2:'#c8d4de', papC3:'#7f95ab', papC4:'#1d2733', papC5:'#8a6f4e', papC6:'#e9201c' };
@@ -726,7 +733,7 @@ function build(){
         広げないと右端と下端の線が切り落とされる（字間・行間を大きくするほど目立つ）。
      ⚠️ マス目が切のときは 0＝いままでと1ドットも変わらない。 */
   const cellW = vert ? lineAdv : charAdv, cellH = vert ? charAdv : lineAdv;
-  const mOn = P.masu > 0;
+  const mOn = P.masu > 0 || P.masufill > 0;
   const mpx = mOn ? Math.max(0, Math.floor((cellW - N) / 2)) : 0;   // 字の左に出る量
   const mpy = mOn ? Math.max(0, Math.floor((cellH - N) / 2)) : 0;   // 字の上に出る量
   const mqx = mOn ? Math.max(0, cellW - N - mpx) : 0;               // 右に出る量
@@ -740,6 +747,10 @@ function build(){
 
   // パス1：まず全ドットを集める（球か波かは後でまとめて決める）
   const raw = [];
+  /* ⭐ 字が占めている所を覚えておく（2026-08-04）。マス目の塗りで使う＝
+       敷く＝そこは塗らない（重ねない）／抜く＝そこを空ける（字が彫った溝に見える）。 */
+  const inkAt = new Set();
+  const carve = P.masufill === 2;        // 抜く＝字の粒そのものを作らない
   text.forEach((ch, i) => {
     const li = Math.floor(i / per), ci2 = i % per;
     // 横組＝右へ流れて下へ折り返す／縦組＝下へ流れて左へ折り返す（日本語の作法）
@@ -748,32 +759,55 @@ function build(){
     for(const [x, y, ang, dens] of glyphDots(ch, N, P.font)){
       const gx = Math.round(ox + bx + x), gy = Math.round(oy + by + y);
       if(gx < 0 || gx >= W || gy < 0 || gy >= H) continue;
-      raw.push({ gx, gy, ci:i, ang, dens });
+      inkAt.add(gy * W + gx);
+      // ⚠️ 抜くときは字の粒を【作らない】。隠すだけにすると、見えない粒が
+      //    「積もる」で壁になって、何かに引っかかったように見える。
+      if(!carve) raw.push({ gx, gy, ci:i, ang, dens });
     }
   });
   /* ⭐ マス目の枠を集める。⚠️ raw には入れない＝【玉／塊の選抜に枠を混ぜない】ため。
      混ぜると枠が太った塊に化けて枡が潰れる。枠は選抜が終わったあとで足す。
      ⭐ 枠も同じ粒なので、色・積もる・傾き・書き出しは何も足さずにそのまま効く。 */
-  const frameRaw = [];
+  const boxRaw = [];
   if(mOn){
-    const seen = new Set();                              // ⚠️ 境目は隣と共有＝同じ所を二度置かない
+    /* ⚠️ 置き場は1つの Set で管理する＝【字・枠・塗り】が同じ所に重ならない。
+       重ねると同じマスに粒が2つ入り、積もるが壊れて描画も二重になる。
+       ⭐ 最初から字の居場所を入れておく＝敷くは字を避け、抜くは字が空く。 */
+    const taken = new Set(inkAt);
     const put = (gx, gy, ang, ci) => {
       if(gx < 0 || gx >= W || gy < 0 || gy >= H) return;
-      const k = gy * W + gx; if(seen.has(k)) return; seen.add(k);
-      frameRaw.push({ gx, gy, ci, ang, dens:1 });
+      const k = gy * W + gx; if(taken.has(k)) return; taken.add(k);
+      boxRaw.push({ gx, gy, ci, ang, dens:1 });
     };
-    const wgt = Math.min(P.masu, Math.max(1, Math.floor(Math.min(cellW, cellH) / 2)));  // 線の太さ
+    const cells = [];
     text.forEach((ch, i) => {
       const li = Math.floor(i / per), ci2 = i % per;
       const bx = vert ? (lw - N - li * lineAdv) : ci2 * charAdv;
       const by = vert ? ci2 * charAdv : li * lineAdv;
       const L = Math.round(ox + bx) - mpx, T = Math.round(oy + by) - mpy;
-      const R = L + cellW, B = T + cellH;                 // ⭐ 右端＝隣の枡の左端（共有）
-      for(let k = 0; k < wgt; k++){
-        for(let x = L; x <= R; x++){ put(x, T + k, 0, i); put(x, B - k, 0, i); }
-        for(let y = T; y <= B; y++){ put(L + k, y, Math.PI / 2, i); put(R - k, y, Math.PI / 2, i); }
-      }
+      cells.push({ i, L, T, R:L + cellW, B:T + cellH });   // ⭐ 右端＝隣の枡の左端（共有）
     });
+    /* ⭐ 枠を先に置く＝境目は枠の線が勝つ（塗りに埋もれない）。
+       ⚠️ 塗りがある時は【枠を一律で塗りと直交】させる。辺に沿わせたままだと
+          縦の枠が塗りと同じ帯になって、枠が消えたように見える。 */
+    const fillAng = Math.PI / 2;
+    if(P.masu > 0){
+      const wgt = Math.min(P.masu, Math.max(1, Math.floor(Math.min(cellW, cellH) / 2)));  // 線の太さ
+      const vAng = P.masufill > 0 ? 0 : Math.PI / 2;    // 縦の辺の向き
+      for(const c of cells){
+        for(let k = 0; k < wgt; k++){
+          for(let x = c.L; x <= c.R; x++){ put(x, c.T + k, 0, c.i); put(x, c.B - k, 0, c.i); }
+          for(let y = c.T; y <= c.B; y++){ put(c.L + k, y, vAng, c.i); put(c.R - k, y, vAng, c.i); }
+        }
+      }
+    }
+    /* ⭐ 塗り＝枡の中を埋める。⚠️ 字と【直交】させる（字なりの効かない一定の向き）＝
+       そうしないと塗りと字が同じ帯になって、敷いたとたん字が沈んで読めなくなる。 */
+    if(P.masufill > 0){
+      for(const c of cells)
+        for(let y = c.T; y <= c.B; y++)
+          for(let x = c.L; x <= c.R; x++) put(x, y, fillAng, c.i);
+    }
   }
 
   // ⭐ 玉＝「密度の高い順に、上位 玉% を球にする」＝スライダーが球の"割合"に直結。
@@ -843,9 +877,9 @@ function build(){
       big: isSphere[i] === 1, hide: absorbed[i] === 1, members: memberOf[i],
     };
   });
-  // ⭐ マス目の枠を足す。選抜（玉／塊）が済んだあとなので、枠は必ず細いまま。
-  //   ⚠️ ci は自分の字の番号を持たせる＝「集まる」で字と一緒に動く（枠だけ取り残されない）。
-  frameRaw.forEach(r => {
+  // ⭐ マス目（枠・塗り）を足す。選抜（玉／塊）が済んだあとなので、枠は必ず細いまま。
+  //   ⚠️ ci は自分の字の番号を持たせる＝「集まる」で字と一緒に動く（枡だけ取り残されない）。
+  boxRaw.forEach(r => {
     const angE = r.ang * FOL + DIR;
     const t = (Math.round(((angE % Math.PI) + Math.PI) % Math.PI / Math.PI * TILE_ANGLES)) % TILE_ANGLES;
     dots.push({ x:r.gx, y:r.gy, hx:r.gx, hy:r.gy, gx0:r.gx, gy0:r.gy,
@@ -1253,6 +1287,7 @@ document.querySelectorAll('.seg').forEach(seg => {
     b.classList.add('on');
     P[seg.id] = +b.dataset.v;
     if(seg.id === 'font' || seg.id === 'lay') build();
+    if(seg.id === 'masufill'){ build(); fit(); }   // 塗りで世界の大きさが変わる
     if(seg.id === 'line' || seg.id === 'blob') buildTiles();
     // ⚠️ 交点の柄は build() の中で「どのドットを差し替えるか」を決めている。
     //    buildTiles() だけだとタイル画像は焼き直されるが割り当てが古いまま＝「なし」が効かない。
@@ -1588,7 +1623,8 @@ const I18N = {
   '字':'Text','質感':'Texture','塗り':'Pattern','グラデの断面 — 線と塊 両方に効く':'Ramp — line & mass',
   'かたち':'Shape','グラデ（ディザ）':'Dither','出す':'Export','アニメーション':'Motion',
   '角ゴ':'Gothic','明朝':'Mincho','横組':'Horizontal','縦組':'Vertical',
-  '折返し':'Wrap','字間':'Tracking','行間':'Leading','マス目':'Cells','解像':'Resolution','粒':'Cell','太さ':'Weight',
+  '折返し':'Wrap','字間':'Tracking','行間':'Leading','マス目':'Cells','枠':'Rule','解像':'Resolution','粒':'Cell','太さ':'Weight',
+  '敷く':'Fill','抜く':'Knock out',
   'グラデ塊':'Blob','連続':'Continuous','ドット':'Dot',
   '地の柄':'Base','交点の柄':'Joint',
   '波':'Wave','縞':'Stripe','斜':'Diagonal','格子':'Grid','環':'Ring',
