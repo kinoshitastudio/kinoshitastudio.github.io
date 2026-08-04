@@ -636,9 +636,20 @@ let flowT = 0;
 let offc = null, offg = null;
 let dirtyUntil = 1e9;   // ⭐ ここまでは描き続ける（静止中の再描画スキップ用）      // ⭐ 連続モードの描画先（世界サイズ）
 
-function buildTiles(){
+/* ⭐ タイルは【版ごとのバンク】にした（2026-08-04 夜）。
+   柄・細かさ・照り・交点の柄はタイルに焼き込まれているので、版ごとに変えるには焼き分けが要る。
+   ⭐ 焼いた結果は設定のハッシュでキャッシュする＝版で柄を変えていないうちは1組を使い回す（重くならない）。
+   ⚠️ 色・粒・グラデの断面・マス目の色は【盤ぜんぶ】＝変わったらバンクを全部捨てて焼き直す。 */
+const texKey = (L) => [L.line, L.wav, L.shine, L.blob].join('/');
+let tileBanks = new Map();
+function bankFor(L){
+  const k = texKey(L); let t = tileBanks.get(k);
+  if(!t){ t = bakeTiles(L); tileBanks.set(k, t); }
+  return t;
+}
+function bakeTiles(cfg){
   const C = P.cell, pal = P.pal===CUSTOM_IDX ? CUSTOM : PALS[P.pal];
-  tiles = [];
+  const tiles = [];
   // ⭐ タイルの谷（暗い部分）は黒固定ではなく「地の色」にする。
   //    黒に落とすと何色を選んでも濁る。地に混ぜると選んだ色がそのまま出る。
   const BG = (typeof pal.bg === 'string') ? hexToRgb(pal.bg.slice(1)) : (pal.bg || [0,0,0]);
@@ -712,7 +723,7 @@ function buildTiles(){
   // 波 — 向きごとに、位相 phase 段ずつ焼く。
   //   phase をタイルのワールド座標に対応させると、隣のタイルと波が連続する
   //   ＝塊が字をまたいで繋がり、1つの流れになる。
-  const LINE = P.line;
+  const LINE = cfg.line;
   // ⭐ 向きとランプを渡せば1組（位相ぶん）焼ける。字も枠もマス目の塗りも、これ1つで作る。
   const waveSet = (th, LUT, wav) => {
     const ca = Math.cos(th), sa = Math.sin(th);
@@ -730,7 +741,7 @@ function buildTiles(){
           else if(LINE === 2) v = 0.5 + 0.5 * Math.cos((u + w) * 6.2831853 * W2 + ph);      // 斜線
           else if(LINE === 3) v = (0.5+0.5*Math.cos(u*6.283*W2+ph)) * (0.5+0.5*Math.cos(w*6.283*W2)); // チェック
           else                v = 0.5 + 0.5 * Math.cos(Math.hypot(u,w) * 6.2831853 * W2 - ph); // 同心
-          const sh = P.shine / 100;
+          const sh = cfg.shine / 100;
           const k = Math.pow(Math.max(0,v), 1.8);                   // 0=谷 1=山
           const hi = Math.pow(Math.max(0,v), 6.0) * sh;             // 稜線の照り返し
           const o = (j*C + i)*4;
@@ -745,10 +756,10 @@ function buildTiles(){
     }
     return set;
   };
-  for(let a = 0; a < TILE_ANGLES; a++) tiles.push(waveSet(a / TILE_ANGLES * Math.PI, RAMP_LUT, P.wav));
+  for(let a = 0; a < TILE_ANGLES; a++) tiles.push(waveSet(a / TILE_ANGLES * Math.PI, RAMP_LUT, cfg.wav));
   // 塊 — 画が交わって塊になっている所に出る。息をする。
   // 塊は角を透明にして地を透かす（黒角を出さない）。谷は同じ色の暗い版。
-  const BLOB = P.blob;
+  const BLOB = cfg.blob;
   // ⭐ 塊にも線と同じランプを効かせる。
   //   これが無いと「谷」が線にしか効かず、画面の大半が塊のときに動かしても何も変わらない。
   const rgbs  = c => `rgb(${c.map(v => Math.round(v)).join(',')})`;
@@ -796,7 +807,13 @@ function buildTiles(){
      ⚠️ 塗りの向きは build() と【同じ式】で出す。ずれると位相が合わず帯が途切れる。 */
   tiles.push(waveSet(masuAngle(), MASU_LUT, P.masuWav));
   tiles.push(waveSet(frameAngle(), FRAME_LUT, P.frameWav));
-  tileC = C; tilePal = P.pal; tileWav = P.wav; tileKey = customKey(); tileMasu = masuKey();
+  return tiles;
+}
+/* 盤ぜんぶの設定（色・粒・グラデの断面・マス目の色）が変わったとき＝バンクを全部捨てて焼き直す */
+function buildTiles(){
+  tileBanks.clear();
+  tiles = bankFor(curLayer());     // 既定のバンク（版が1枚のときはこれだけ）
+  tileC = P.cell; tilePal = P.pal; tileWav = P.wav; tileKey = customKey(); tileMasu = masuKey();
   // ⭐ タイルを焼き直したのに画面を描き直さないと、色を変えても反映されない。
   //   静止中は再描画をスキップしているので、ここで明示的に描画を要求する。
   dirtyUntil = performance.now() + 400;
@@ -852,11 +869,12 @@ function idx(x, y){ return y * W + x; }
    木下＝「塗りとかひとつ選択していても全部変わっちゃうね」→ 塗りを丸ごと版ごとに。
    ⚠️ 色・粒・解像・描画方式・グラデの断面・かたち・地グラデ・マス目の色は【盤ぜんぶ】のまま。 */
 const L_KEYS = ['txt','font','lay','wrap','gapx','gapy','masu','masufill','lx','ly','lscale','lrot',
-                'follow','dir','shift','spread','bead','beadk'];
+                'follow','dir','shift','spread','bead','beadk','line','wav','shine','blob'];
 function newLayer(txt){
   return { txt: txt ?? 'HELLO', font:0, lay:0, wrap:7, gapx:2, gapy:2,
            masu:0, masufill:0, lx:0, ly:0, lscale:1, lrot:0,
-           follow:100, dir:0, shift:0, spread:0, bead:55, beadk:1 };
+           follow:100, dir:0, shift:0, spread:0, bead:55, beadk:1,
+           line:0, wav:0.1, shine:60, blob:5 };
 }
 function curLayer(){
   if(!P.layers || !P.layers.length) P.layers = [newLayer()];
@@ -1030,7 +1048,7 @@ function build(){
     const BK = bkOf(L.beadk);
     if(BK <= 1){
       const order = idxs.slice().sort((a, b) => raw[b].dens - raw[a].dens);   // 密度の高い順
-      const sphereN = P.blob === 6 ? 0 : Math.round(idxs.length * L.bead / 100);  // ⭐「なし」＝交点を差し替えない
+      const sphereN = L.blob === 6 ? 0 : Math.round(idxs.length * L.bead / 100);  // ⭐「なし」＝交点を差し替えない
       for(let k = 0; k < sphereN; k++) isSphere[order[k]] = 1;
       continue;
     }
@@ -1057,7 +1075,7 @@ function build(){
         const d2 = (raw[i].gx - cx) ** 2 + (raw[i].gy - cy) ** 2;
         if(d2 < bd){ bd = d2; best = i; }
       }
-      if(P.blob === 5){
+      if(L.blob === 5){
         // ⭐ 面＝1つの立体ではなく「連続する帯の範囲」。
         //   まとめた粒を全部そのまま直交の帯にする。拡大しないので はみ出しが起きない。
         //   隣のマスと位相が繋がっているので、結果として1枚の大きな面に見える。
@@ -1079,7 +1097,7 @@ function build(){
     // ⭐ 交点の柄「面」＝地と同じ帯を、向きだけ直交させる（同じグラデを角度だけ変えて複製する型）。
     //    球のように別物を置くのではないので、地と質感が揃ったまま交点だけ流れが変わる。
     const t = !isSphere[i] ? base
-            : (P.blob === 5 ? (base + (TILE_ANGLES >> 1)) % TILE_ANGLES : SPHERE);
+            : (L.blob === 5 ? (base + (TILE_ANGLES >> 1)) % TILE_ANGLES : SPHERE);
     return {
       x:r.gx, y:r.gy,        // いまの居場所（格子）
       hx:r.gx, hy:r.gy,      // 字だったときの居場所（＝戻る先）
@@ -1088,6 +1106,7 @@ function build(){
       ci:r.ci, t, ang:angE, dens:r.dens, li:r.li,
       // ⭐ 版ごとの値は粒に持たせる＝描画のたびに版を引き直さない（毎フレーム走るため）
       bk: bkOf(L.beadk), sh: L.shift / 100, sp: L.spread / 100,
+      wv: L.wav, men: L.blob === 5, shn: L.shine / 100,
       big: isSphere[i] === 1, hide: absorbed[i] === 1, members: memberOf[i],
     };
   });
@@ -1107,6 +1126,7 @@ function build(){
     dots.push({ x:r.gx, y:r.gy, hx:r.gx, hy:r.gy, gx0:r.gx, gy0:r.gy,
       vy:0, live:false, seed:Math.random(), ci:r.ci, t, ang:angE, dens:r.dens, li:r.li,
       bk:1, sh: LL.shift / 100, sp: LL.spread / 100,
+      wv: LL.wav, men: LL.blob === 5, shn: LL.shine / 100,
       big:false, hide:false, members:null });
   });
   settled = 0;
@@ -1290,8 +1310,10 @@ function draw(){
   // ── グラデ塊 ── 焼いたタイルを敷き詰める。8bit機がVRAMでやっていたこと。
   //   位相を「画の流れ方向のワールド座標 + 時間」で選ぶ＝塊が連結して流れる。
   if(P.tex >= 1){
-    // ⚠️ マス目の色・向きが変わってもタイルは焼き直す（焼き直さないと色が前のまま）
-    if(tileC !== C || tilePal !== P.pal || tileWav !== P.wav || tileKey !== customKey()
+    /* ⚠️ ここで見張るのは【盤ぜんぶ】の設定だけ（色・粒・自作色・マス目の色）。
+       細かさ・柄・照り・交点の柄は版ごとになったので、ここでは見ない
+       （その版のバンクが無ければ bankFor が焼く）。 */
+    if(tileC !== C || tilePal !== P.pal || tileKey !== customKey()
        || tileMasu !== masuKey()) buildTiles();
     flowT += P.gflow / 100 * 0.5;
     const CW = C * cellWk(), CH = C * cellHk();
@@ -1350,7 +1372,7 @@ function draw(){
           // ⚠️ ずれ・字ごとは版ごと＝粒が自分の値を持っている（毎フレーム版を引き直さない）
           const jit = d.sp > 0 ? ((((d.ci + 1) * 0.6180339887) % 1) * d.sp) : 0;
           // ⚠️ マス目は自分の細かさで焼いてある＝位相もそれで数える（違うと帯が途切れる）
-          const wv = d.t === MASU_T ? P.masuWav : d.t === FRAME_T ? P.frameWav : P.wav;
+          const wv = d.t === MASU_T ? P.masuWav : d.t === FRAME_T ? P.frameWav : d.wv;
           const ph = Math.round((u * wv + jit + d.sh) * PHASES + flowT);
           return ((ph % PHASES) + PHASES) % PHASES;
         })();
@@ -1382,7 +1404,17 @@ function draw(){
     }
 
     // 天面 — タイル寸法もワープの伸縮率で伸ばす（隣とぴったり接する）
-    const BK = bkOf();
+    /* ⭐ 版ごとのタイルバンクを先に引いておく（毎粒 Map を引かない）。
+       ⚠️ 版の柄が同じならバンクは同じ実体＝焼き直しも起きない。 */
+    const LYS = P.layers || [];
+    const BANKS = LYS.map(L => bankFor(L));
+    /* ⚠️ 使っていないバンクは捨てる。細かさや照りはスライダーなので、
+       これが無いとドラッグのたびに焼いた古いバンクが溜まり続ける（メモリも時間も食う）。 */
+    if(tileBanks.size > LYS.length){
+      const alive = new Set(LYS.map(texKey));
+      for(const k of [...tileBanks.keys()]) if(!alive.has(k)) tileBanks.delete(k);
+    }
+    const bankOf = d => BANKS[d.li] || tiles;
 
     // ⭐ 連続モード ── タイル画像を貼らず、ピクセルのワールド座標から波を直に解く。
     //   位相を段に量子化しないので、細かさをどこに置いてもモアレの節が出ない。
@@ -1396,7 +1428,7 @@ function draw(){
       for(let k = 0; k < DD.length; k += 4){
         DD[k] = BGc[0]; DD[k+1] = BGc[1]; DD[k+2] = BGc[2]; DD[k+3] = 255;
       }
-      const SH = P.shine / 100, WV = P.wav, SFT = P.shift / 100;
+      // ⚠️ ずれ・照り・細かさは版ごと＝粒が自分の値（d.sh / d.shn / d.wv）を持っている
       for(const d of dots){
         if(d.hide) continue;
         const x0 = Math.round(px(d)), y0 = Math.round(py(d));
@@ -1405,15 +1437,16 @@ function draw(){
         const ca2 = Math.cos(ang), sa2 = Math.sin(ang);
         const jit = d.sp > 0 ? ((((d.ci + 1) * 0.6180339887) % 1) * d.sp) : 0;   // ⚠️ 字ごとは版ごと
         const isM = d.t === MASU_T, isF = d.t === FRAME_T;
-        const WVd = isM ? P.masuWav : isF ? P.frameWav : WV;
+        const WVd = isM ? P.masuWav : isF ? P.frameWav : d.wv;
         const Ld = isM ? MASU_LUT : isF ? FRAME_LUT : RAMP_LUT;
+        const SH = d.shn;                      // ⚠️ 照りも版ごと
         for(let j = 0; j < h; j++){
           const Y = y0 + j; if(Y < 0 || Y >= OH) continue;
           for(let i = 0; i < w; i++){
             const X = x0 + i; if(X < 0 || X >= OW) continue;
             // ⭐ ここが肝：タイル内座標ではなく「世界の格子座標」で解く＝境界で切れない
             const u = (d.x + phaseSx + i / w) * ca2 + (d.y + phaseSy + j / h) * sa2;
-            const v = 0.5 + 0.5 * Math.cos((u * WVd + jit + SFT) * 6.2831853 + flowT * 0.1);
+            const v = 0.5 + 0.5 * Math.cos((u * WVd + jit + d.sh) * 6.2831853 + flowT * 0.1);
             const k1 = Math.pow(v < 0 ? 0 : v, 1.8);
             const hi = Math.pow(v < 0 ? 0 : v, 6.0) * SH * 255;
             const q = (k1 < 0 ? 0 : k1 > 1 ? 255 : Math.round(k1 * 255)) * 3;
@@ -1437,11 +1470,11 @@ function draw(){
     const put = d => {
       const w = CW*scw(d) - GRID, h = CH*sch(d) - GRID;
       // ⚠️ 玉Kは版ごと＝粒が自分の値（d.bk）を持っている
-      if(d.big && d.bk > 1 && P.blob !== 5){   // ⭐ 面は拡大しない（隣と繋がって面に見える）
+      if(d.big && d.bk > 1 && !d.men){   // ⭐ 面は拡大しない（隣と繋がって面に見える）
         const W2 = w*d.bk, H2 = h*d.bk;                   // 中心を保ったまま K 倍に広げる
-        g.drawImage(tiles[d.t][phaseOf(d)], px(d)-(W2-w)/2, py(d)-(H2-h)/2, W2, H2);
+        g.drawImage(bankOf(d)[d.t][phaseOf(d)], px(d)-(W2-w)/2, py(d)-(H2-h)/2, W2, H2);
       } else {
-        g.drawImage(tiles[d.t][phaseOf(d)], px(d), py(d), w, h);
+        g.drawImage(bankOf(d)[d.t][phaseOf(d)], px(d), py(d), w, h);
       }
     };
     for(const d of dots) if(!d.big && !d.hide) put(d);    // 地の柄を先に
@@ -1452,7 +1485,7 @@ function draw(){
     for(const d of dots){
       if(!d.big || d.hide) continue;
       const mem = d.members;
-      if(P.blob === 5 || !mem || mem.length < 2){ put(d); continue; }   // 面／単独はそのまま
+      if(d.men || !mem || mem.length < 2){ put(d); continue; }   // 面／単独はそのまま
       g.save();
       g.beginPath();
       for(const mi of mem){
@@ -1524,9 +1557,12 @@ document.querySelectorAll('.seg').forEach(seg => {
     seg.querySelectorAll('button').forEach(x => x.classList.remove('on'));
     b.classList.add('on');
     P[seg.id] = +b.dataset.v;
+    // ⚠️ 版ごとの値は、まず版に書き戻す（でないと版を切り替えた瞬間に捨てられる）
+    if(L_KEYS.includes(seg.id)) pushToLayer();
     if(seg.id === 'font' || seg.id === 'lay') build();
     if(seg.id === 'masufill'){ build(); fit(); syncMasuGrad(); }   // 塗りで世界の大きさが変わる
-    if(seg.id === 'line' || seg.id === 'blob') buildTiles();
+    // ⭐ 柄は版ごと＝バンクを焼き直すのではなく、その版のバンクが無ければ次の描画で焼かれる
+    if(seg.id === 'line') dirtyUntil = performance.now() + 400;
     // ⚠️ 交点の柄は build() の中で「どのドットを差し替えるか」を決めている。
     //    buildTiles() だけだとタイル画像は焼き直されるが割り当てが古いまま＝「なし」が効かない。
     if(seg.id === 'blob'){ build(); syncBlobUI(); }
@@ -1541,7 +1577,9 @@ document.querySelectorAll('.seg').forEach(seg => {
     if(id==='warpn' && fromUser){ resetAnchors(+r.value); drawWarpCurve(); }
     if(['res','cell','bead','beadk','wrap','gapx','gapy','fall','masu','fat','dir','follow',
         'shift','spread','lx','ly','lscale','lrot'].includes(id)) build();
-    if(id==='shine' || id==='valley' || id==='grad') buildTiles();
+    // ⚠️ 谷・階調は盤ぜんぶ＝全バンクを焼き直す／照り・細かさは版ごと＝その版のバンクだけ次の描画で焼かれる
+    if(id==='valley' || id==='grad') buildTiles();
+    if(id==='shine' || id==='wav'){ build(); dirtyUntil = performance.now() + 400; }
     // ⭐ 字の並びそのものが変わるものだけ、視点を合わせ直す。
     //   字なり・ずれ・玉・大きさは見え方が変わるだけなので、視点は動かさない。
     if(['res','cell','wrap','gapx','gapy','fall','masu','lscale'].includes(id) && fromUser) fit();
@@ -1659,12 +1697,12 @@ function syncLayerUI(){
   [['lx','lx'],['ly','ly'],['lscale','lscale'],['lrot','lrot'],
    ['wrap','wrap'],['gapx','gapx'],['gapy','gapy'],['masu','masu'],
    ['follow','follow'],['dir','dir'],['shift','shift'],['spread','spread'],
-   ['bead','bead'],['beadk','beadk']].forEach(([id, key]) => {
+   ['bead','bead'],['beadk','beadk'],['wav','wav'],['shine','shine']].forEach(([id, key]) => {
     const e = document.getElementById(id); if(!e) return;
     e.value = P[key]; const v = e.parentElement.querySelector('.val');
     if(v) v.textContent = (id === 'lscale') ? (+P[key]).toFixed(2) : Math.round(P[key]);
   });
-  [['font','font'],['lay','lay'],['masufill','masufill']].forEach(([sid, key]) => {
+  [['font','font'],['lay','lay'],['masufill','masufill'],['line','line'],['blob','blob']].forEach(([sid, key]) => {
     document.querySelectorAll('#' + sid + ' button').forEach(b => {
       b.classList.toggle('on', +b.dataset.v === P[key]); });
   });
