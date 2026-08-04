@@ -1108,7 +1108,7 @@ function build(){
       ci:r.ci, t, ang:angE, dens:r.dens, li:r.li,
       // ⭐ 版ごとの値は粒に持たせる＝描画のたびに版を引き直さない（毎フレーム走るため）
       bk: bkOf(L.beadk), sh: L.shift / 100, sp: L.spread / 100,
-      wv: L.wav, men: L.blob === 5, shn: L.shine / 100,
+      wv: L.wav, men: L.blob === 5, shn: L.shine / 100, box: false,
       big: isSphere[i] === 1, hide: absorbed[i] === 1, members: memberOf[i],
     };
   });
@@ -1128,7 +1128,7 @@ function build(){
     dots.push({ x:r.gx, y:r.gy, hx:r.gx, hy:r.gy, gx0:r.gx, gy0:r.gy,
       vy:0, live:false, seed:Math.random(), ci:r.ci, t, ang:angE, dens:r.dens, li:r.li,
       bk:1, sh: LL.shift / 100, sp: LL.spread / 100,
-      wv: LL.wav, men: LL.blob === 5, shn: LL.shine / 100,
+      wv: LL.wav, men: LL.blob === 5, shn: LL.shine / 100, box: true,
       big:false, hide:false, members:null });
   });
   settled = 0;
@@ -1153,7 +1153,9 @@ function step(){
     // ── 積もる ── 砂。⚠️ 落下中の粒も格子に入れないと、
     //    全員が素通しで落ちて最下段に重なるだけで「積もらない」
     grid.fill(-1);
-    for(let i = 0; i < dots.length; i++){ const d = dots[i]; grid[idx(d.x, d.y)] = i; }
+    /* ⚠️ 枡（枠・塗り）は当たり判定に入れない＝字は枡を貫いて落ちる。
+       入れると盤が隙間なく埋まっていて【誰も落ちられない】＝崩したのに何も起きない。 */
+    for(let i = 0; i < dots.length; i++){ const d = dots[i]; if(d.box) continue; grid[idx(d.x, d.y)] = i; }
     // 下にいる粒から動かす（上から動かすと1フレームで落ちきる）
     const order = dots.map((_, i) => i).sort((a, b) => dots[b].y - dots[a].y);
     for(const i of order){
@@ -1479,7 +1481,12 @@ function draw(){
         g.drawImage(bankOf(d)[d.t][phaseOf(d)], px(d), py(d), w, h);
       }
     };
-    for(const d of dots) if(!d.big && !d.hide) put(d);    // 地の柄を先に
+    /* ⚠️ 枡（枠・塗り）を先に敷く＝字より【下】に来る。
+       崩すと字が動いて枡と同じマスに重なるので、順番が逆だと
+       落ちた字が枡の下敷きになって消えたように見える（2026-08-04）。
+       ⚠️ 崩す前は1マス1粒なので重ならず、順番を変えても見た目は同じ。 */
+    for(const d of dots) if(d.box && !d.big && !d.hide) put(d);
+    for(const d of dots) if(!d.box && !d.big && !d.hide) put(d);   // 地の柄を先に
     // ⭐ 塊は「自分がまとめた粒の範囲」だけで切り抜いて描く。
     //   ⚠️ 字全体で切るだけでは足りない。K倍に広げた塊は代表粒を中心に置くので、
     //     代表がマスの端にいると"字の中の隣のマス"（地の柄がある所）まで覆ってしまう。
@@ -1949,7 +1956,24 @@ cv.addEventListener('touchmove', e => {
 }, { passive:false });
 cv.addEventListener('touchend', () => pinch = 0);
 
-document.getElementById('go').onclick = () => { for(const d of dots) d.live = true; running = true; t = 0; };
+/* 🔴「マス目を入れると積もるが壊れない（崩れない）」（木下・2026-08-04）の正体：
+     マス目は盤を隙間なく埋めるので、真下も斜め下も空かず【誰も落ちられない】。
+   ⭐ 枡は【額縁として残し、字だけが枡を貫いて崩れる】ようにした。
+      枠や塗りごと崩れると、何が起きたのか分からない絵になる。
+      ⭐ 字が下に溜まって、枡が器のように見える＝マス目と「積もる」が噛み合う。 */
+document.getElementById('go').onclick = () => {
+  /* ⚠️ 落ち代が0だと落ちる余地が無く、崩しても何も起きない＝「触れるのに効かない」。
+     ⭐ 崩すときに余地が無ければ、その場で作ってから崩す（つまみも動かして見えるようにする）。 */
+  if(P.fall < 8){
+    P.fall = 8;
+    const f = document.getElementById('fall');
+    if(f){ f.value = 8; const v = f.parentElement.querySelector('.val'); if(v) v.textContent = 8; }
+    build();
+  }
+  for(const d of dots) if(!d.box) d.live = true;
+  running = true; t = 0;
+  fit();   // ⭐ 落ちた先が画面の外だと「消えた」ように見える＝崩す時は全体を映す
+};
 document.getElementById('reset').onclick = () => { running = false; build(); fit(); };
 
 // ループは即開始する（fonts.ready 待ちに人質を取らせない）。
