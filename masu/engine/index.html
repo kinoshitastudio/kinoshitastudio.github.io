@@ -5,12 +5,12 @@
 <meta name="robots" content="noindex">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>粒のエンジン — 枡 MASU の素材を焼く / 木下スタジオ</title>
-<meta name="description" content="枡 MASU に置くタイルを焼くための道具。粒 TSUBU のエンジンを素材づくり用に取り出したもの。">
-
+<meta name="description" content="日本語の字を8bitのドットに落とし、1タイル=1つのグラデーションの塊として組み直すインタラクティブ組版ツール。画の向きが波になり、交点に球が出る。木下スタジオ（木下貴博 / 滋賀・琵琶湖）制作。">
+<link rel="canonical" href="https://kinoshita.studio/tsubu/">
 <meta property="og:type" content="website">
 <meta property="og:title" content="粒 TSUBU — 日本語をビットに落として組む">
 <meta property="og:description" content="字を8bitのドットに落とし、グラデーションの塊で組み直す。画の向きが波に、交点に球。">
-
+<meta property="og:url" content="https://kinoshita.studio/tsubu/">
 <meta property="og:image" content="https://kinoshita.studio/assets/img/img-ui-tsubu.webp">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="粒 TSUBU — 日本語をビットに落として組む">
@@ -378,6 +378,13 @@
   <button class="big" id="exJpg" style="margin-top:4px">JPG を出す</button>
   <button class="big" id="exSvg" style="margin-top:4px">SVG を出す（ドット）</button>
   <div class="hint">⚠️<b>SVGはドットのときだけ</b>。グラデ塊・連続はピクセルで作っているのでベクターにできない</div>
+
+  <h2>設定の持ち運び</h2>
+  <button class="sub" id="exCfg">設定を出す（JSON）</button>
+  <button class="sub" id="imCfg">設定を読む（ファイル）</button>
+  <input type="file" id="cfgFile" accept="application/json,.json" style="display:none">
+  <div class="seg" id="cfgs" style="flex-wrap:wrap;margin-top:6px"></div>
+  <div class="hint">⭐<b>つまみを丸ごと持ち運ぶ</b>。⚠️ 焼いたタイル画像には設定が入らないので、<b>あとで色を変えたいならこれを控えておく</b>。下のボタンは用意してある設定（押すと全部合う）</div>
 
   <h2>タイルを出す</h2>
   <div class="seg" id="tlN"><button data-v="256">256</button><button data-v="512" class="on">512</button><button data-v="1024">1024</button></div>
@@ -1479,6 +1486,76 @@ function stat2(m){
   //    （中のパネルは長くて、モバイルだと知らせが見えない）
   if(window.parent !== window) parent.postMessage({ type:'masu-say', text:m }, '*');
 }
+
+/* ⭐ 設定の持ち運び ── つまみを丸ごと JSON にする。
+   ⚠️ 焼いたタイル画像には設定が入らない＝あとで色や質感を変えたいならこれが要る。
+   ⚠️ 読み込みは【P → つまみ】を総ざらいで合わせ直す（値は入っているのに見た目が古い、を作らない）。 */
+function engineCfg(){
+  const P2 = JSON.parse(JSON.stringify(P));
+  delete P2.wrap;              // ⚠️ 折返しは字数に合わせて自動で決まる＝持たせると必ずズレる
+  return { v:1, P:P2,
+    txt: document.getElementById('txt').value,
+    custom: { bg:CUSTOM.bg, a:CUSTOM.a.slice(), b:CUSTOM.b.slice() },
+    anchors: JSON.parse(JSON.stringify(ANCHORS)) };
+}
+function applyEngineCfg(d){
+  if(!d || !d.P) throw new Error('設定が入っていない');
+  Object.assign(P, d.P);
+  if(d.custom){ CUSTOM.bg = d.custom.bg; CUSTOM.a = d.custom.a.slice(); CUSTOM.b = d.custom.b.slice(); }
+  if(d.anchors){ ANCHORS = d.anchors; drawWarpCurve(); }
+  // ① つまみ（range）を総ざらい
+  document.querySelectorAll('#panel input[type=range]').forEach(el => {
+    if(P[el.id] == null) return;
+    el.value = P[el.id];
+    const v = el.parentElement.querySelector('.val'); if(v) v.textContent = el.value;
+  });
+  // ② セグメント（P と同じ id のものだけ）
+  ['font','lay','tex','line','blob','mode','warpax','pal'].forEach(id => {
+    const seg = document.getElementById(id); if(!seg || P[id] == null) return;
+    seg.querySelectorAll('button').forEach(b2 => b2.classList.toggle('on', +b2.dataset.v === P[id]));
+  });
+  // ③ 色の見た目
+  if(typeof syncColorInputs === 'function') syncColorInputs();
+  const fc = document.getElementById('fillCol'); if(fc && P.fillCol) fc.value = P.fillCol;
+  // ④ 字（最後に組み直す）
+  const tx = document.getElementById('txt');
+  if(tx && d.txt != null){ tx.value = d.txt; }
+  build(); buildBanks(); fit(); draw();
+  stat2('設定を読み込んだ');
+}
+document.getElementById('exCfg')?.addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(engineCfg())], { type:'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'engine.json'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  stat2('設定を出した');
+});
+document.getElementById('imCfg')?.addEventListener('click', () => document.getElementById('cfgFile').click());
+document.getElementById('cfgFile')?.addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if(!f) return;
+  try{ applyEngineCfg(JSON.parse(await f.text())); }        // ⚠️ atob は使わない（日本語が壊れる）
+  catch(err){ stat2('読めなかった — ' + err.message); }
+});
+/* ⭐ 用意してある設定を URL から直接開く（ファイル選択はスマホから使えない） */
+async function syncCfgs(){
+  const box = document.getElementById('cfgs'); if(!box) return;
+  let list = [];
+  try{ list = await (await fetch('cfg/index.json', { cache:'no-store' })).json(); }
+  catch(e){ box.style.display = 'none'; return; }
+  if(!list.length){ box.style.display = 'none'; return; }
+  box.innerHTML = '';
+  for(const c of list){
+    const btn = document.createElement('button');
+    btn.textContent = c.name;
+    btn.addEventListener('click', async () => {
+      try{ applyEngineCfg(await (await fetch('cfg/' + c.file, { cache:'no-store' })).json()); stat2(c.name + ' を開いた'); }
+      catch(err){ stat2(c.name + ' を開けなかった — ' + err.message); }
+    });
+    box.appendChild(btn);
+  }
+}
+syncCfgs();
 
 /* ⭐ プリセット ── つまみを一括で合わせる。
    ⚠️ 毎回つまみを揃えるのが手間だった（＝使いづらさの正体）。
