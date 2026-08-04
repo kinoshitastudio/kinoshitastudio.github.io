@@ -324,6 +324,7 @@
     <button data-v="0" class="on">なし</button><button data-v="1">敷く</button><button data-v="2">抜く</button>
   </div>
   <div class="hint"><b>敷く</b>＝枡の中を埋めて字を上に乗せる／<b>抜く</b>＝枡を塗って<b>字を空ける</b>（字が彫った溝に見える）</div>
+  <div class="row"><label>塗りの色</label><input type="color" id="cmasu" value="#3a3a3a"><span class="val"></span></div>
 
   <h2>質感</h2>
   <div class="hint" style="margin-bottom:5px"><b>グラデ塊</b>＝焼いたタイルを敷く（速い・位相が段になる）／<b>連続</b>＝ピクセルごとに直接計算（モアレが出ない・重い）</div>
@@ -449,7 +450,7 @@
 const cv = document.getElementById('cv'), g = cv.getContext('2d', { alpha:true });
 const P = { mode:0, res:16, cell:7, pal:1, steps:4, dith:100, gdir:90, gflow:0, fps:30, grav:60, font:0,
             tex:1, wav:0.1, bead:55, beadk:1, line:0, blob:5, ar:100, shine:60, valley:0, grad:0, shift:0, spread:0, dir:0, follow:100, grid:0, depth:0, fat:1,
-            lay:0, wrap:7, gapx:2, gapy:2, fall:0, masu:0, masufill:0,
+            lay:0, wrap:7, gapx:2, gapy:2, fall:0, masu:0, masufill:0, masuCol:'#3a3a3a',
             /* 地のグラデ（TSUBUTE / HORI 2 と同じ作り）── 色数 1 ＝単色＝今までと同じ */
             papN:1, papMode:0, papAng:90, papSteps:0,
             papC1:'#f2d16b', papC2:'#c8d4de', papC3:'#7f95ab', papC4:'#1d2733', papC5:'#8a6f4e', papC6:'#e9201c' };
@@ -561,7 +562,7 @@ function glyphDots(ch, N, fontIdx){
 //    1タイルあたりの位相の進みが刻みを超え、丸め誤差でパターンが壊れる（＝一部だけ
 //    位相が揃って太い帯に見える＝モアレ）。32段に上げて分解能を1/4にする。
 const TILE_ANGLES = 12, PHASES = 32;
-let tiles = [], tileC = 0, tilePal = -1, tileWav = -1, tileKey='';
+let tiles = [], tileC = 0, tilePal = -1, tileWav = -1, tileKey='', tileMasu='';
 let flowT = 0;
 let offc = null, offg = null;
 let dirtyUntil = 1e9;   // ⭐ ここまでは描き続ける（静止中の再描画スキップ用）      // ⭐ 連続モードの描画先（世界サイズ）
@@ -587,34 +588,39 @@ function buildTiles(){
   const mixc = (c1, c2, t) => [0,1,2].map(i => c1[i] + (c2[i] - c1[i]) * t);
   // ⭐ 谷のレンジ。0.14→0 では「ほぼ黒→黒」で差が見えなかったので 0.55→0 に広げた。
   //   0 = 色が残った暗部（濁らない・木下の元の設計）／100 = 純黒（締まって縁が立つ）
-  const valleyC = A.map(v => v * 0.55 * (1 - VAL));
-  const STOPS = [
-    [0.00, valleyC],
-    [0.28, mixc(valleyC, A, 0.45 + 0.15 * GRD)],
-    [0.58, A],
-    [0.80, mixc(A, WHITE, 0.35 * GRD)],
-    [1.00, mixc(A, WHITE, 0.10 + 0.55 * GRD)],
-  ];
-  // ⚡ 毎ピクセル補間すると重いので 256 段の LUT に焼く（連続モードからも使う）
-  const LUT = RAMP_LUT;
-  for(let q = 0; q < 256; q++){
-    const v = q / 255;
-    let c = STOPS[STOPS.length - 1][1];
-    for(let s = 1; s < STOPS.length; s++){
-      if(v <= STOPS[s][0]){
-        const p0 = STOPS[s-1][0], p1 = STOPS[s][0];
-        c = mixc(STOPS[s-1][1], STOPS[s][1], (v - p0) / (p1 - p0 || 1));
-        break;
+  /* ⚡ 毎ピクセル補間すると重いので 256 段の LUT に焼く（連続モードからも使う）。
+     ⭐ 色を差し替えて焼き直せるように関数にした（2026-08-04）＝マス目の塗りが自分の色を持てる。 */
+  const ramp = (base, out) => {
+    const valleyC = base.map(v => v * 0.55 * (1 - VAL));
+    const STOPS = [
+      [0.00, valleyC],
+      [0.28, mixc(valleyC, base, 0.45 + 0.15 * GRD)],
+      [0.58, base],
+      [0.80, mixc(base, WHITE, 0.35 * GRD)],
+      [1.00, mixc(base, WHITE, 0.10 + 0.55 * GRD)],
+    ];
+    for(let q = 0; q < 256; q++){
+      const v = q / 255;
+      let c = STOPS[STOPS.length - 1][1];
+      for(let s = 1; s < STOPS.length; s++){
+        if(v <= STOPS[s][0]){
+          const p0 = STOPS[s-1][0], p1 = STOPS[s][0];
+          c = mixc(STOPS[s-1][1], STOPS[s][1], (v - p0) / (p1 - p0 || 1));
+          break;
+        }
       }
+      out[q*3] = c[0]; out[q*3+1] = c[1]; out[q*3+2] = c[2];
     }
-    LUT[q*3] = c[0]; LUT[q*3+1] = c[1]; LUT[q*3+2] = c[2];
-  }
+  };
+  ramp(A, RAMP_LUT);
+  ramp(hexToRgb(P.masuCol), MASU_LUT);
   // 波 — 向きごとに、位相 phase 段ずつ焼く。
   //   phase をタイルのワールド座標に対応させると、隣のタイルと波が連続する
   //   ＝塊が字をまたいで繋がり、1つの流れになる。
   const LINE = P.line;
-  for(let a = 0; a < TILE_ANGLES; a++){
-    const th = a / TILE_ANGLES * Math.PI, ca = Math.cos(th), sa = Math.sin(th);
+  // ⭐ 向きとランプを渡せば1組（位相ぶん）焼ける。字も枠もマス目の塗りも、これ1つで作る。
+  const waveSet = (th, LUT) => {
+    const ca = Math.cos(th), sa = Math.sin(th);
     const set = [];
     for(let p = 0; p < PHASES; p++){
       set.push(mk((x, C) => {
@@ -642,8 +648,9 @@ function buildTiles(){
         x.putImageData(img, 0, 0);
       }));
     }
-    tiles.push(set);
-  }
+    return set;
+  };
+  for(let a = 0; a < TILE_ANGLES; a++) tiles.push(waveSet(a / TILE_ANGLES * Math.PI, RAMP_LUT));
   // 塊 — 画が交わって塊になっている所に出る。息をする。
   // 塊は角を透明にして地を透かす（黒角を出さない）。谷は同じ色の暗い版。
   const BLOB = P.blob;
@@ -690,13 +697,23 @@ function buildTiles(){
     }));
   }
   tiles.push(sph);
-  tileC = C; tilePal = P.pal; tileWav = P.wav; tileKey = customKey();
+  /* ⭐ マス目の塗り＝柄はそのまま、色だけ自分のものにする（2026-08-04）。
+     ⚠️ 塗りの向きは build() と【同じ式】で出す。ずれると位相が合わず帯が途切れる。 */
+  tiles.push(waveSet(masuAngle(), MASU_LUT));
+  tileC = C; tilePal = P.pal; tileWav = P.wav; tileKey = customKey(); tileMasu = P.masuCol + '/' + P.dir;
   // ⭐ タイルを焼き直したのに画面を描き直さないと、色を変えても反映されない。
   //   静止中は再描画をスキップしているので、ここで明示的に描画を要求する。
   dirtyUntil = performance.now() + 400;
 }
 const RAMP_LUT = new Uint8ClampedArray(768);   // ⭐ 断面のランプ。タイル焼きと連続モードで共有
+const MASU_LUT = new Uint8ClampedArray(768);   // ⭐ マス目の塗り専用のランプ（色だけ違う・柄は同じ）
 const SPHERE = TILE_ANGLES;
+/* ⭐ マス目の塗りは【タイルの通し番号を1つ増やす】かたちで持つ（2026-08-04）。
+   こうすると位相・厚み・ワープ・書き出しは何も知らないまま、色だけが分かれる。
+   ⚠️ 塗りが使う向きは1つだけなので、12方向ぶん焼き直す必要はない（位相ぶんだけ）。 */
+const MASU_T = TILE_ANGLES + 1;
+// ⚠️ 塗りの向き。タイルを焼く側（buildTiles）と粒を作る側（build）で必ず同じ式を使う。
+const masuAngle = () => Math.PI / 2 + P.dir / 180 * Math.PI;
 // ⭐ 塊の大きさは「解像度に対する比」で決める。
 //   マス単位のままだと、解像を16→48にした瞬間に塊が1/3になり、
 //   せっかく合わせた他の調整まで全部やり直しになる（＝解像を上げられない）。
@@ -774,10 +791,10 @@ function build(){
        重ねると同じマスに粒が2つ入り、積もるが壊れて描画も二重になる。
        ⭐ 最初から字の居場所を入れておく＝敷くは字を避け、抜くは字が空く。 */
     const taken = new Set(inkAt);
-    const put = (gx, gy, ang, ci) => {
+    const put = (gx, gy, ang, ci, masu) => {
       if(gx < 0 || gx >= W || gy < 0 || gy >= H) return;
       const k = gy * W + gx; if(taken.has(k)) return; taken.add(k);
-      boxRaw.push({ gx, gy, ci, ang, dens:1 });
+      boxRaw.push({ gx, gy, ci, ang, dens:1, masu:!!masu });
     };
     const cells = [];
     text.forEach((ch, i) => {
@@ -790,6 +807,8 @@ function build(){
     /* ⭐ 枠を先に置く＝境目は枠の線が勝つ（塗りに埋もれない）。
        ⚠️ 塗りがある時は【枠を一律で塗りと直交】させる。辺に沿わせたままだと
           縦の枠が塗りと同じ帯になって、枠が消えたように見える。 */
+    // ⚠️ 下の push で DIR を足すので、ここは向きを含めない素の角度。
+    //    足した結果が masuAngle()（＝タイルを焼いた向き）と一致していないと帯が途切れる。
     const fillAng = Math.PI / 2;
     if(P.masu > 0){
       const wgt = Math.min(P.masu, Math.max(1, Math.floor(Math.min(cellW, cellH) / 2)));  // 線の太さ
@@ -806,7 +825,7 @@ function build(){
     if(P.masufill > 0){
       for(const c of cells)
         for(let y = c.T; y <= c.B; y++)
-          for(let x = c.L; x <= c.R; x++) put(x, y, fillAng, c.i);
+          for(let x = c.L; x <= c.R; x++) put(x, y, fillAng, c.i, true);
     }
   }
 
@@ -880,8 +899,10 @@ function build(){
   // ⭐ マス目（枠・塗り）を足す。選抜（玉／塊）が済んだあとなので、枠は必ず細いまま。
   //   ⚠️ ci は自分の字の番号を持たせる＝「集まる」で字と一緒に動く（枡だけ取り残されない）。
   boxRaw.forEach(r => {
-    const angE = r.ang * FOL + DIR;
-    const t = (Math.round(((angE % Math.PI) + Math.PI) % Math.PI / Math.PI * TILE_ANGLES)) % TILE_ANGLES;
+    // ⚠️ 枡は【字なり】を掛けない＝字がどう寝ても枡は動かない（枠が枡らしく立つ）
+    const angE = r.ang + DIR;
+    const t = r.masu ? MASU_T
+            : (Math.round(((angE % Math.PI) + Math.PI) % Math.PI / Math.PI * TILE_ANGLES)) % TILE_ANGLES;
     dots.push({ x:r.gx, y:r.gy, hx:r.gx, hy:r.gy, gx0:r.gx, gy0:r.gy,
       vy:0, live:false, seed:Math.random(), ci:r.ci, t, ang:angE, dens:r.dens,
       big:false, hide:false, members:null });
@@ -1067,7 +1088,9 @@ function draw(){
   // ── グラデ塊 ── 焼いたタイルを敷き詰める。8bit機がVRAMでやっていたこと。
   //   位相を「画の流れ方向のワールド座標 + 時間」で選ぶ＝塊が連結して流れる。
   if(P.tex >= 1){
-    if(tileC !== C || tilePal !== P.pal || tileWav !== P.wav || tileKey !== customKey()) buildTiles();
+    // ⚠️ マス目の色・向きが変わってもタイルは焼き直す（焼き直さないと色が前のまま）
+    if(tileC !== C || tilePal !== P.pal || tileWav !== P.wav || tileKey !== customKey()
+       || tileMasu !== P.masuCol + '/' + P.dir) buildTiles();
     flowT += P.gflow / 100 * 0.5;
     const CW = C * cellWk(), CH = C * cellHk();
     const kw = cellWk() - 1, kh = cellHk() - 1;
@@ -1187,9 +1210,11 @@ function draw(){
             const hi = Math.pow(v < 0 ? 0 : v, 6.0) * SH * 255;
             const q = (k1 < 0 ? 0 : k1 > 1 ? 255 : Math.round(k1 * 255)) * 3;
             const o = (Y * OW + X) * 4;
-            DD[o]   = Math.min(255, RAMP_LUT[q]   + hi);
-            DD[o+1] = Math.min(255, RAMP_LUT[q+1] + hi);
-            DD[o+2] = Math.min(255, RAMP_LUT[q+2] + hi);
+            // ⭐ マス目の塗りは自分のランプを引く（連続モードでも色が分かれる）
+            const L = d.t === MASU_T ? MASU_LUT : RAMP_LUT;
+            DD[o]   = Math.min(255, L[q]   + hi);
+            DD[o+1] = Math.min(255, L[q+1] + hi);
+            DD[o+2] = Math.min(255, L[q+2] + hi);
             DD[o+3] = 255;
           }
         }
@@ -1246,7 +1271,8 @@ function draw(){
     const q = Math.floor(v * (steps - 1) + (b - 0.5) * dith + 0.5);
     const ci = Math.max(0, Math.min(cols.length - 1,
       Math.round(Math.max(0, Math.min(steps - 1, q)) / (steps - 1) * (cols.length - 1))));
-    g.fillStyle = cols[ci];
+    // ⭐ ドット（8bit）でもマス目の塗りは自分の色＝どの質感でも色が効く
+    g.fillStyle = d.t === MASU_T ? P.masuCol : cols[ci];
     g.fillRect(d.x * C, d.y * C, C, C);
   }
 }
@@ -1332,6 +1358,10 @@ document.getElementById('txt').addEventListener('input', () => {
   running = false; syncWrapMax(); build(); fit();   // 字が変わると大きさも変わるので合わせ直す
 });
 syncWrapMax();
+// ⭐ マス目の塗りの色。タイルを焼き直すだけ＝組み直し（build）は要らない
+document.getElementById('cmasu').addEventListener('input', e => {
+  P.masuCol = e.target.value; buildTiles();
+});
 [['ca','a'],['cb','b']].forEach(([id,key])=>{
   document.getElementById(id).addEventListener('input', e => {
     adoptCurrentToCustom();
