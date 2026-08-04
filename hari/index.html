@@ -393,6 +393,23 @@ input[type=color]{ border-radius:8px; height:30px }
     </div>
   </div>
 
+  <h2>音 ── 鳴らして動かす</h2>
+  <div class="sec">
+    <div class="btns">
+      <button class="btn" id="audMic">マイクで</button>
+      <button class="btn" id="audFileBtn">音源で</button>
+      <button class="btn" id="audOff">止める</button>
+    </div>
+    <input type="file" id="fAud" accept="audio/*" hidden>
+    <audio id="audEl" crossorigin="anonymous"></audio>
+    <div class="row"><label>強さ</label>
+      <input type="range" id="audAmt" min="0" max="200" value="60"><span class="v" id="vaudAmt">60</span></div>
+    <div class="note">⭐ <b>低音＝大きさ／中音＝字間／高音＝傾き</b>。⚠️ 行ごとに別の帯域が当たる
+      （全部が同じ拍で動くと、ただ点滅して見えるので）<br>
+      ⚠️ 音で動いている間も<b>作品そのものは変わらない</b>（描くときだけ掛かる）＝止めれば元の姿に戻る<br>
+      ⭐ 撮るのは <b>連 REN</b>（画面を録って1本にする）</div>
+  </div>
+
   <h2>型 ── 組み方を選ぶ</h2>
   <div class="sec">
     <div class="btns">
@@ -704,6 +721,9 @@ const LAYOUTS = {
   meguru:{
     jp:'沿う',
     build(L, into){
+      const A = audOf(L);
+      if(A.size !== 1 || A.track) L = Object.assign({}, L, {
+        size: L.size * A.size, track: L.track + A.track });
       const path = buildPath(L);
       const len = path.length;
       if(!(len > 0)){ path.remove(); return; }
@@ -792,6 +812,9 @@ const LAYOUTS = {
       const bw = ((L.box && L.box.w) ?? 80)/100 * B.w;
       const chars = [...L.text].filter(c => c !== '\n');
       if(!chars.length || !(bw > 0)) return;
+      const A = audOf(L);
+      if(A.size !== 1 || A.track) L = Object.assign({}, L, {
+        size: L.size * A.size, track: L.track + A.track });
       /* ⭐⭐ 合わせる（fit）＝箱の幅に【字の大きさ】を合わせる。
          これが Lena 型（版面いっぱいに字を積む）の核心。
          ⚠️ 字間を伸ばして届かせるのが「張る」、字を大きくして届かせるのが「合わせる」。
@@ -840,7 +863,7 @@ const LAYOUTS = {
       /* ⭐ 行ごと傾ける（木下＝「角度変えられないよね」）。
          ⚠️ 箱の【中心】を軸に回す。左端を軸にすると、角度を変えるたびに行が遠くへ飛ぶ。
          ⚠️ 回してから塗る＝グラデの向きが行に付いてくる。 */
-      const rot = (L.box && L.box.rot) || 0;
+      const rot = ((L.box && L.box.rot) || 0) + A.rot;    // ⭐ 高音で行が揺れる
       if(rot){
         const c = new Point(bx + bw/2, by);
         cellItems.concat(charItems).forEach(it => it.rotate(rot, c));
@@ -998,7 +1021,8 @@ function render(into, opt){
   });
 
   // 文字の帯
-  S.lines.forEach(L => {
+  S.lines.forEach((L,i) => {
+    L._i = i;                                   // ⚠️ 音の帯域を行ごとに散らすための番号（保存には出ない）
     const g = new Group(); g.data.line = L.id;
     (LAYOUTS[L.kind] || LAYOUTS.meguru).build(L, g);
     target.addChild(g);
@@ -1365,6 +1389,66 @@ let shiftDown = false;
 addEventListener('keydown', e => { if(e.key === 'Shift') shiftDown = true; });
 addEventListener('keyup',   e => { if(e.key === 'Shift') shiftDown = false; });
 function rootOf(it){ let n = it; while(n && n.parent && n.parent !== artLayer) n = n.parent; return n; }
+
+/* ══ 音で動かす ══
+   ⭐ 木下＝「音に合わせてポスター動くように」。他の道具（朧・彫）と同じ考え方＝
+     低音・中音・高音の3つに分けて、別々のものに効かせる。
+   ⚠️⚠️ 音の値で【状態（S）を書き換えない】。描くときにだけ掛ける。
+     書き換えると、止めた瞬間に変な形で固まるし、保存にも音の残骸が入る。
+   ⚠️ 行ごとに別の帯域を当てる＝全部が同じ拍で動くと、ただ点滅して見える。 */
+const AUD = { on:0, amt:60, bass:0, mid:0, high:0, ctx:null, an:null, buf:null, raf:0, node:null };
+function audLevels(){
+  if(!AUD.an) return;
+  AUD.an.getByteFrequencyData(AUD.buf);
+  const band = (a,b) => { let s = 0; for(let i=a;i<b;i++) s += AUD.buf[i]; return s/((b-a)*255); };
+  /* ⚠️ 生の値はガタつくので、前の値に寄せて滑らかにする（そうしないと字が痙攣する） */
+  const sm = (o,n) => o*0.72 + n*0.28;
+  AUD.bass = sm(AUD.bass, band(1,8));
+  AUD.mid  = sm(AUD.mid,  band(8,40));
+  AUD.high = sm(AUD.high, band(40,120));
+}
+function audOf(L){
+  if(!AUD.on) return { size:1, track:0, rot:0 };
+  const a = AUD.amt/100;
+  const b = [AUD.bass, AUD.mid, AUD.high][(L._i || 0) % 3];
+  return { size: 1 + b*a*0.9, track: AUD.mid*a*26, rot: (AUD.high - 0.18)*a*44 };
+}
+function audLoop(){
+  AUD.raf = requestAnimationFrame(audLoop);
+  audLevels();
+  render();
+}
+async function audStart(from){
+  try{
+    AUD.ctx = AUD.ctx || new (window.AudioContext || window.webkitAudioContext)();
+    if(AUD.ctx.state === 'suspended') await AUD.ctx.resume();
+    if(AUD.node){ try{ AUD.node.disconnect(); }catch(_){} AUD.node = null; }
+    if(from === 'mic'){
+      const st = await navigator.mediaDevices.getUserMedia({ audio:true });
+      AUD.node = AUD.ctx.createMediaStreamSource(st);
+    } else {
+      const el = document.getElementById('audEl');
+      AUD.node = AUD.ctx.createMediaElementSource(el);
+      AUD.node.connect(AUD.ctx.destination);       // ⚠️ 音源は聞こえないと合わせられない
+      el.play();
+    }
+    AUD.an = AUD.ctx.createAnalyser();
+    AUD.an.fftSize = 512; AUD.an.smoothingTimeConstant = 0.75;
+    AUD.buf = new Uint8Array(AUD.an.frequencyBinCount);
+    AUD.node.connect(AUD.an);
+    AUD.on = 1;
+    cancelAnimationFrame(AUD.raf); audLoop();
+    stat(from === 'mic' ? 'マイクで動いている' : '音源で動いている');
+  }catch(err){
+    AUD.on = 0; stat('音を使えなかった（許可が要る／対応していない）');
+  }
+}
+function audStop(){
+  AUD.on = 0; cancelAnimationFrame(AUD.raf); AUD.raf = 0;
+  AUD.bass = AUD.mid = AUD.high = 0;
+  const el = document.getElementById('audEl'); if(el) el.pause();
+  render(); stat('音を止めた');
+}
 
 /* ══ 型 ── 組み上がった状態を先に作る ══
    ⭐⭐ 木下＝「いまのままでは振るあんま使わないかも」。
@@ -1961,6 +2045,19 @@ $('layFold').onclick = () => {
     e.preventDefault();
   });
 }
+$('audMic').onclick = () => audStart('mic');
+$('audOff').onclick = () => audStop();
+$('audFileBtn').onclick = () => $('fAud').click();
+$('fAud').addEventListener('change', e => {
+  const f = e.target.files[0]; if(!f) return;
+  const el = $('audEl');
+  el.src = URL.createObjectURL(f); el.loop = true;
+  audStart('file');
+});
+$('audAmt').addEventListener('input', () => {
+  AUD.amt = Number($('audAmt').value); $('vaudAmt').textContent = $('audAmt').value;
+  if(!AUD.on) render();
+});
 $('preTsumu').onclick  = () => applyPreset('tsumu');
 $('preMeguru').onclick = () => applyPreset('meguru');
 $('preShita').onclick  = () => applyPreset('shita');
