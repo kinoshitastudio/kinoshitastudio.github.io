@@ -495,6 +495,20 @@ input[type=color]{ border-radius:8px; height:30px }
       <input type="range" id="pcScale" min="5" max="400" value="100"><span class="v" id="vScale">100</span></div>
     <div class="row"><label>角度</label>
       <input type="range" id="pcRot" min="-180" max="180" value="0"><span class="v" id="vRot">0</span></div>
+
+    <div class="row" style="margin-top:11px"><label style="font-weight:700">切り抜く</label>
+      <button class="btn" id="pcCropOff" style="padding:4px 9px">切り抜きを消す</button></div>
+    <div class="row"><label>上を切る</label>
+      <input type="range" id="pcCropT" min="0" max="45" value="0"><span class="v" id="vCropT">0</span></div>
+    <div class="row"><label>下を切る</label>
+      <input type="range" id="pcCropB" min="0" max="45" value="0"><span class="v" id="vCropB">0</span></div>
+    <div class="row"><label>左を切る</label>
+      <input type="range" id="pcCropL" min="0" max="45" value="0"><span class="v" id="vCropL">0</span></div>
+    <div class="row"><label>右を切る</label>
+      <input type="range" id="pcCropR" min="0" max="45" value="0"><span class="v" id="vCropR">0</span></div>
+    <div class="note">⭐ <b>画像の端を切り落とす</b>（写真のトリミング）。数字は<b>元の大きさに対する%</b>なので、<b>あとから大きさを変えても切り口は崩れない</b>。<br>
+      ⚠️ 切ったぶん<b>選択の枠も小さくなる</b>＝実物と枠がずれない</div>
+
     <div class="note">MAKU・NIJIMI・SAKUJI の書き出しをそのまま置く。<br>⚠️ PNG の地が<b>透明でない</b>と四角い板になる</div>
   </div>
 
@@ -1036,10 +1050,27 @@ function render(into, opt){
        （木下＝「画像に関しては範囲がその大きさで四角で囲って」）。
        ⭐ 相対の scale() を使う＝元の倍率の上に積む。順は 大きさ → 回す → 置く。 */
     c.scale(pc.sc/100);
-    c.rotate(pc.rot);
-    c.position = new Point(pc.x, pc.y);
-    c.data.piece = pc.id;
-    inner.addChild(c);
+    /* ⭐ 切り抜き（木下＝「画像をクロップしたい」）。
+       ⚠️ 順は 大きさ → 切る → 回す → 置く。回してから切ると、切り口が画面の縦横になって斜めにズレる
+          （＝「伸ばす→回す→置く」と同じ理由）。
+       ⭐ 数字は【元の大きさに対する%】で持つ＝あとから大きさを変えても切り口が崩れない。 */
+    let node = c;
+    const cr = cropOf(pc);
+    if(cr){
+      const b = c.bounds;
+      const m = new Path.Rectangle(new Rectangle(
+        b.x + b.width  * cr.l/100,
+        b.y + b.height * cr.t/100,
+        b.width  * (100 - cr.l - cr.r)/100,
+        b.height * (100 - cr.t - cr.b)/100
+      ));
+      m.clipMask = true;
+      node = new Group([m, c]);
+    }
+    node.rotate(pc.rot);
+    node.position = new Point(pc.x, pc.y);
+    node.data.piece = pc.id;
+    inner.addChild(node);
   });
 
   // 文字の帯
@@ -1150,11 +1181,27 @@ function pieceHandles(pc){
     uiLayer.addChild(h);
   });
 }
+/* ⭐ 切り抜きの数字を1か所で作る（式を2箇所に書かない）。
+   ぜんぶ0なら null ＝切らない＝入れ物も作らない。
+   ⚠️ 上下・左右の合計が大きすぎると幅が0や負になって図が消えるので、上限を掛ける。 */
+function cropOf(pc){
+  const c = pc && pc.crop; if(!c) return null;
+  const t = +c.t||0, r = +c.r||0, b = +c.b||0, l = +c.l||0;
+  if(!(t||r||b||l)) return null;
+  const K = 95;
+  return { t, b: Math.min(b, K - t), l, r: Math.min(r, K - l) };
+}
 /* 角4つ＋辺の中央4つ（0,2,4,6 が角） */
 function pieceCorners(pc){
   if(!pc || !pc.item) return [];
   const b = pc.item.bounds, k = (pc.sc||100)/100;
-  const hw = b.width*k/2, hh = b.height*k/2, c = new Point(pc.x, pc.y);
+  /* ⭐ 切り抜いたら【枠も小さくする】＝実物と選択の枠がずれない
+     （🔴 過去に「倍率を scaling に代入して枠だけズレた」のと同じ型の事故を防ぐ）。
+     ⚠️ 置くときは切り抜いたあとの中心を pc.x,pc.y に合わせているので、枠も中心基準でよい。 */
+  const cr = cropOf(pc);
+  const w = b.width  * k * (cr ? (100 - cr.l - cr.r)/100 : 1);
+  const h = b.height * k * (cr ? (100 - cr.t - cr.b)/100 : 1);
+  const hw = w/2, hh = h/2, c = new Point(pc.x, pc.y);
   const raw = [[-hw,-hh],[0,-hh],[hw,-hh],[hw,0],[hw,hh],[0,hh],[-hw,hh],[-hw,0]];
   return raw.map(([x,y]) => c.add(new Point(x,y).rotate(pc.rot||0)));
 }
@@ -1901,6 +1948,10 @@ function syncPanel(){
   const pc0 = selPiece();
   setRange('pcScale', pc0 ? Math.round(pc0.sc) : 100);
   setRange('pcRot',   pc0 ? Math.round(pc0.rot) : 0);
+  /* ⭐ 切り抜きのつまみも合わせる。⚠️ 図を選び替えたときに前の図の値が残らないように、無ければ0に戻す */
+  { const cr0 = (pc0 && pc0.crop) || { t:0, r:0, b:0, l:0 };
+    setRange('pcCropT', Math.round(cr0.t||0)); setRange('pcCropB', Math.round(cr0.b||0));
+    setRange('pcCropL', Math.round(cr0.l||0)); setRange('pcCropR', Math.round(cr0.r||0)); }
   if(!L) return;
   $('tText').value = L.text;
   $('tFam').value = L.fam; $('tWt').value = L.wt;
@@ -2281,6 +2332,23 @@ $('delPiece').onclick = () => { const pc = selPiece(); if(!pc) return;
   $('v' + (id === 'pcScale' ? 'Scale' : 'Rot')).textContent = e.target.value;
   render();
 }));
+
+/* ⭐ 切り抜き（上下左右を%で落とす）。
+   ⚠️ 4つを1つのまとまり（pc.crop）で持つ＝JSONにそのまま入る／古い作品には無いので使うときに作る。 */
+[['pcCropT','t','CropT'],['pcCropB','b','CropB'],['pcCropL','l','CropL'],['pcCropR','r','CropR']]
+.forEach(([id, key, vid]) => $(id).addEventListener('input', e => {
+  const pc = selPiece(); if(!pc) return;
+  if(!pc.crop) pc.crop = { t:0, r:0, b:0, l:0 };
+  pc.crop[key] = Number(e.target.value);
+  $('v' + vid).textContent = e.target.value;
+  render();
+}));
+$('pcCropOff').onclick = () => {
+  const pc = selPiece(); if(!pc) return;
+  pc.crop = null;
+  ['pcCropT','pcCropB','pcCropL','pcCropR'].forEach(id => setRange(id, 0));
+  render(); stat('切り抜きを消した（元の画像に戻る）');
+};
 
 /* ══ 書体を足す（SAKUJI から持ち出し）══
    ⭐ FontFace に登録して【画面でもその書体で出る】ようにする。
