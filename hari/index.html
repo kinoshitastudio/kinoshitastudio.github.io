@@ -288,11 +288,16 @@ input[type=color]{ border-radius:8px; height:30px }
     <!-- ⭐ 右下を掴んで高さを変えられる（木下＝「パネルはユーザーで自由に広げたり」） -->
     <div id="layGrip" title="ドラッグで高さを変える"></div>
     <div class="btns">
+      <button class="btn" id="zUp" title="一覧で1つ上へ＝版面で手前へ">▲ 手前へ</button>
+      <button class="btn" id="zDown" title="一覧で1つ下へ＝版面で奥へ">▼ 奥へ</button>
+    </div>
+    <div class="btns">
       <button class="btn" id="addLine">行を足す</button>
       <button class="btn" id="dupLine">複製</button>
       <button class="btn" id="delLine">削除</button>
     </div>
     <div class="note">⭐ ここが<b>レイヤー</b>＝いま版面に置いてある<b>行と図</b>がぜんぶ並ぶ。<br>
+      ⭐ <b>一覧のいちばん上が、版面のいちばん手前</b>（Figma と同じ）。<b>▲手前へ／▼奥へ</b>で重なりを入れ替える<br>
       押して選ぶ／右の<b>固定</b>で振っても動かなくなる／<b>畳む</b>と隠れる／<b>下の帯を掴む</b>と高さが変わる<br>
       版面をクリックしても選べる</div>
   </div>
@@ -1054,8 +1059,11 @@ function render(into, opt){
   inner.data.inner = true;      // ⚠️ 掴む処理がここを目印に1段もぐる（rootOf / artItems）
   target.addChild(inner);
 
-  // 置いた図（版面の下でも上でもなく、入れた順）
-  S.pieces.forEach(pc => {
+  /* ⭐ 重なりの順に描く（奥→手前）。図と行を1本の並びで扱う＝レイヤーの上下が動かせる。
+     ⚠️ 以前は「図をぜんぶ → 行をぜんぶ」の2周だったので、図を行より手前に出せなかった。 */
+  stack().forEach(e => {
+  if(e.kind === 'piece'){
+    const pc = e.o;
     if(!pc.item) return;
     const c = pc.item.clone({ insert:false });
     /* 🔴 `scaling` に【代入】してはいけない。画像（Raster）は applyMatrix が効かないので、
@@ -1085,14 +1093,14 @@ function render(into, opt){
     node.position = new Point(pc.x, pc.y);
     node.data.piece = pc.id;
     inner.addChild(node);
-  });
-
-  // 文字の帯
-  S.lines.forEach((L,i) => {
-    L._i = i;                                   // ⚠️ 音の帯域を行ごとに散らすための番号（保存には出ない）
+  } else {
+    // 文字の帯
+    const L = e.o;
+    L._i = e.i;                                 // ⚠️ 音の帯域を行ごとに散らすための番号（保存には出ない）
     const g = new Group(); g.data.line = L.id;
     (LAYOUTS[L.kind] || LAYOUTS.meguru).build(L, g);
     inner.addChild(g);
+  }
   });
 
   /* ⭐ 版面の外を【薄く】見せる（木下＝はみ出しは隠したい／でも作業中は見たい）。
@@ -1254,6 +1262,31 @@ function pieceCorners(pc){
 }
 const sel      = () => S.sel.kind === 'line'  ? S.lines[S.sel.i]  : null;
 const selPiece = () => S.sel.kind === 'piece' ? S.pieces[S.sel.i] : null;
+
+/* ⭐ 版面に置いてある物を【重なりの順】に1本で並べる（前が奥・後ろが手前）。
+   ⚠️ 図と行は別の配列のまま。並びだけ z（番号）で持つ＝既存の作りを壊さない。
+   ⚠️ 古い作品は z を持たない＝これまでの描き順（図が奥・行が手前）で起こす。
+   ⭐ Figma と同じ「上が手前」に見せるため、パネル側はこれを【逆順】で並べる（fillList）。 */
+function stack(){
+  const a = [];
+  S.pieces.forEach((pc, i) => a.push({ kind:'piece', i, o:pc, z: pc.z ?? i }));
+  S.lines .forEach((L,  i) => a.push({ kind:'line',  i, o:L,  z: L.z  ?? (1000 + i) }));
+  return a.sort((x, y) => x.z - y.z);
+}
+/* ⭐ いまの並びを z として全部に焼き付ける。
+   ⚠️ 一部だけ z を持っていると、持たない物との順が決まらない＝動かす前に1回そろえる。 */
+function fixZ(){ stack().forEach((e, i) => { e.o.z = i; }); }
+/* ⭐ 選んでいる物を1つ手前／奥へ。dir: +1 手前 / -1 奥 */
+function moveZ(dir){
+  const cur = S.sel; if(!cur || cur.i == null) return false;
+  fixZ();
+  const a  = stack();
+  const at = a.findIndex(e => e.kind === cur.kind && e.i === cur.i);
+  const to = at + dir;
+  if(at < 0 || to < 0 || to >= a.length) return false;
+  const t = a[at].o.z; a[at].o.z = a[to].o.z; a[to].o.z = t;   // 隣と入れ替える
+  return true;
+}
 
 /* ══ 画面の見え方（ズーム・パン）══ */
 function fitView(){
@@ -1555,7 +1588,10 @@ function rootOf(it){
 function artItems(){
   /* ⚠️ 影（版面の外を薄く見せる層）は data.ghost。本体だけを返す。 */
   const inner = artLayer.children.find(c => c.data && c.data.inner && !c.data.ghost);
-  return inner ? inner.children : artLayer.children;
+  const cs = inner ? inner.children : artLayer.children;
+  /* ⚠️ 入れ物の先頭には【クリップ用の矩形】が居る。これは「置いてある物」ではないので除く。
+     ＝この関数は "版面に置いてある行と図" だけを返す、という約束にする。 */
+  return cs.filter(c => c.data && (c.data.piece !== undefined || c.data.line !== undefined));
 }
 
 /* ══ 音で動かす ══
@@ -1950,25 +1986,23 @@ function renderList(){
 function fillList(el){
   el.innerHTML = '';
   /* ⭐ 置いた図も同じ一覧に出す＝【レイヤー】。
-     ⚠️ 図が一覧に無いと、重なって隠れた図を選べない（版面をクリックするしかなかった）。 */
-  S.pieces.forEach((pc,i) => {
+     ⚠️ 図が一覧に無いと、重なって隠れた図を選べない（版面をクリックするしかなかった）。
+
+     ⭐⭐ 2026-08-05：木下＝「Figmaのように一番上が上のレイヤーという概念に」。
+     paper.js は【後ろほど手前】に描く＝そのまま並べると上下が逆に見え、
+     ⚠️「上に動かしたのに奥へ行く」という一番まずい間違え方をする。
+     → 重なりの並び（stack）を【逆順】にして出す＝一覧のいちばん上が、版面のいちばん手前。 */
+  stack().reverse().forEach(e => {
+    const isP = e.kind === 'piece', o = e.o, i = e.i;
     const d = document.createElement('div');
-    d.className = 'li pc' + (S.sel.kind === 'piece' && S.sel.i === i ? ' on' : '');
-    d.innerHTML = `<span class="k">図</span><span class="t">${pc.src ? '画像' : 'SVG'}</span>`
-                + `<span class="lk${pc.lock ? ' on' : ''}" title="固定すると振らない">${pc.lock ? '固定中' : '固定'}</span>`;
-    d.onclick = () => { S.sel = { kind:'piece', i }; syncPanel(); render(); };
-    d.querySelector('.lk').onclick = ev => { ev.stopPropagation(); pc.lock = !pc.lock; renderList(); };
-    el.appendChild(d);
-  });
-  S.lines.forEach((L,i) => {
-    const d = document.createElement('div');
-    d.className = 'li' + (S.sel.kind === 'line' && S.sel.i === i ? ' on' : '');
-    d.innerHTML = `<span class="k">${(LAYOUTS[L.kind]||LAYOUTS.meguru).jp}</span>`
-                + `<span class="t">${(L.text||'（空）').slice(0,18)}</span>`
-                + `<span class="lk${L.lock ? ' on' : ''}" title="固定すると振らない">${L.lock ? '固定中' : '固定'}</span>`;
-    d.onclick = () => { S.sel = { kind:'line', i }; syncPanel(); render(); };
-    /* ⚠️ 錠は行の選択とは別の操作＝親のクリックまで伝えない */
-    d.querySelector('.lk').onclick = ev => { ev.stopPropagation(); L.lock = !L.lock; renderList(); };
+    d.className = 'li' + (isP ? ' pc' : '') + (S.sel.kind === e.kind && S.sel.i === i ? ' on' : '');
+    d.innerHTML = (isP
+        ? `<span class="k">図</span><span class="t">${o.src ? '画像' : 'SVG'}</span>`
+        : `<span class="k">${(LAYOUTS[o.kind]||LAYOUTS.meguru).jp}</span><span class="t">${(o.text||'（空）').slice(0,18)}</span>`)
+      + `<span class="lk${o.lock ? ' on' : ''}" title="固定すると振らない">${o.lock ? '固定中' : '固定'}</span>`;
+    d.onclick = () => { S.sel = { kind:e.kind, i }; syncPanel(); render(); };
+    /* ⚠️ 錠は選択とは別の操作＝親のクリックまで伝えない */
+    d.querySelector('.lk').onclick = ev => { ev.stopPropagation(); o.lock = !o.lock; renderList(); };
     el.appendChild(d);
   });
 }
@@ -2132,6 +2166,11 @@ document.querySelectorAll('[data-bgp]').forEach(btn => {
 segBind2('segBg', v => { S.board.mode = v; $('rowAng').style.display = v === 'linear' ? '' : 'none'; });
 /* ⭐ 版面の外を薄く見せるか隠すか。⚠️ 画面の見え方だけ＝書き出しには関係しない */
 segBind2('segGhost', v => { S.ghost = (v === '1'); });
+
+/* ⭐ 重なりを1つ入れ替える（木下＝「Figmaのように一番上が上のレイヤー」）。
+   ⚠️ 一覧は【上が手前】に出しているので、▲は stack の後ろ側へ動かす＝ +1。 */
+$('zUp').onclick   = () => { if(moveZ(+1)){ renderList(); render(); stat('1つ手前へ'); } else stat('もういちばん手前'); };
+$('zDown').onclick = () => { if(moveZ(-1)){ renderList(); render(); stat('1つ奥へ'); }   else stat('もういちばん奥'); };
 /* ⚠️ 旧 id（bbg/bbg2）の配線はここにあった。色を「何色でも」にしたとき HTML から
    消したのに配線だけ残り、null.addEventListener で【起動ごと止まっていた】。
    ⭐ 入れ物を消したら、触っている所も同じコミットで消す。 */
