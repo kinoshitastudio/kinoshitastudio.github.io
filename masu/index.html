@@ -343,6 +343,12 @@
   <button class="sub" id="undoBtn">戻す（⌘Z）</button>
   <div class="hint">⚠️<b>全部消す・ばらまくも戻せる</b>。押す直前の状態を控えている</div>
 
+  <h2>アニメーション</h2>
+  <div class="row"><label>流れ</label><input type="range" id="flow" min="0" max="300" step="1" value="0"><span class="val"></span></div>
+  <div class="hint"><b>0＝静止</b>（いままでと1ドットも変わらず、重くもならない）。上げると<b>マスの中の絵が送られて帯が流れる</b>。⚠️動きの正体はFPSではなくこれ</div>
+  <div class="row"><label>FPS</label><input type="range" id="fps" min="1" max="60" step="1" value="30"><span class="val"></span></div>
+  <div class="hint">⭐<b>下げるほどゲームの時間になる</b>。⭐流れる向きは<b>そのマスの向き</b>（0°/90°/180°/270°）に従う＝向きを混ぜると流れが交わる<br>⚠️素材の上下は繋がっていないので<b>鏡で折り返して</b>送っている（継ぎ目の線が出ない代わり、折り返しが周期で通る）</div>
+
   <h2>出す</h2>
   <div class="seg" id="exSc"><button data-v="1">1x</button><button data-v="2">2x</button><button data-v="4" class="on">4x</button><button data-v="8">8x</button><button data-v="16">16x</button></div>
   <div class="hint">⭐<b>素材は 512px で焼かれている</b>のに、マスの大きさが 72px なら 1/7 に縮む＝ドットが潰れる。<b>マスの大きさ × 倍率 ≧ 512</b> になる倍率を選ぶと、焼いたままの粒が出る（下に目安）</div>
@@ -374,12 +380,14 @@ const S = {
   bg:'#e8619b',          // ボード（台紙）の色
   board:1, bw:1100, bh:1400,   // ⭐ ボード＝作品の版面。格子はこの上に乗る
   fit:0, guide:1, topScale:100, topMode:0,               // 0=覆う（はみ出しは切る） 1=収める（形の中に全部入れる）
+  flow:0, fps:30,      // ⭐ アニメーション。流れ0＝完全に静止（rAF も回さない）
   cells:{},            // "c,r" → { m:素材index, r:回転0-3 }
 };
 let mats = [];         // { name, img, url }  url は控えに焼くため保持
 let sel = 0;           // 選んでいる素材の番号（-1 = 消しゴム）
 let rot = 0;           // 置くときの向き
 const cam = { x:0, y:0, s:1 };
+let flowT = 0;         // ⭐ 流れの位相。1＝素材1枚ぶん送った状態（2で1周＝鏡で折り返すため）
 
 /* ── 戻す ── ⭐ 道具を作る時点で入れる。後から足すと間に合わない ── */
 const undoStack = [];
@@ -516,6 +524,32 @@ const TOP_MODE = [null, 'lighten', 'multiply', 'screen', 'overlay'];
    参考（UNLOCKT）は「マスの地がグラデ、その上に字が載る」＝1枚では出せない。
    ⭐ 地に面タイル（黒地に帯）、上に地なしの字を置くと、そのまま同じ構造になる。
    ⚠️ 地と上で回転を別に持つ（地の帯の向きだけ変えたいことがある）。 */
+/* ══ 流れ ══
+   ⭐ TSUBU は焼いたタイルの【位相】を時間で進めて帯を流すが（flowT += gflow/100）、
+      MASU の素材は焼いた1枚なので位相が無い。かわりに
+      【マスの中で絵そのものを送る】ことで同じ見え方にする。
+   🔴 素材の上端と下端は繋がっていない（実測：tile-slash は縦の継ぎ目 180.5 に対して
+      ふつうの隣り合う行は 1.4 ＝130倍）。素直に巻き戻すと1周ごとに線が横切る。
+   ⭐⭐ そこで【鏡で折り返して】繋ぐ＝隣り合う端の値が必ず一致するので、
+      継ぎ目の線が【原理的に出ない】。継ぎ目は消すのではなく、出ようがない作りにする。
+   ⚠️ 先に d の箱で切る。切らないと「収める」のとき、送ったぶんが箱の外へはみ出す。
+   ⚠️ 送るのは回転をかけたあとの局所の縦方向＝そのマスの向きに従って流れる。 */
+function drawFlowing(ctx, img, d){
+  const sh = (((flowT % 2) + 2) % 2) * d;          // 0〜2d で1周（鏡なので2枚で1周）
+  ctx.beginPath(); ctx.rect(-d / 2, -d / 2, d, d); ctx.clip();
+  const m0 = Math.floor(sh / d);
+  for(let m = m0 - 1; m <= m0 + 1; m++){
+    const y = -d / 2 + sh - m * d;
+    if(y > d / 2 || y + d < -d / 2) continue;      // 箱に掛からない枚は描かない
+    if(((m % 2) + 2) % 2 === 0){
+      ctx.drawImage(img, -d / 2, y, d, d);
+    }else{
+      ctx.save(); ctx.translate(0, y + d); ctx.scale(1, -1);   // 上下を返して繋ぐ
+      ctx.drawImage(img, -d / 2, 0, d, d);
+      ctx.restore();
+    }
+  }
+}
 function drawOne(ctx, c, r, mi, rot, scale, mode){
   const p = center(c, r), s = S.cell;
   const m = mats[mi];
@@ -529,7 +563,8 @@ function drawOne(ctx, c, r, mi, rot, scale, mode){
                 : s * (S.shape === 3 ? 1.25 : 1.02);     // 覆うときは必ずマスを超える大きさで
   if(scale) d *= scale;                                  // ⭐ 上の絵だけ小さくして地を見せる
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(img, -d / 2, -d / 2, d, d);
+  if(S.flow) drawFlowing(ctx, img, d);
+  else       ctx.drawImage(img, -d / 2, -d / 2, d, d);
   ctx.restore();
 }
 function drawTile(ctx, c, r, cell){
@@ -931,7 +966,11 @@ async function loadWork(file, label){
   try{
     const d = await (await fetch('works/' + file, { cache:'no-store' })).json();
     snap();
+    /* ⚠️ 流れ・FPS が無い控え（アニメーションを入れる前のもの）を読んだら既定へ戻す。
+       Object.assign は欠けたキーを触らないので、前の盤の流れを引きずってしまう。 */
     Object.assign(S, d.S);
+    if(d.S.flow == null) S.flow = 0;
+    if(!S.fps) S.fps = 30;
     mats = [];
     for(const m of (d.mats || [])){
       await addMat(m.url, m.name);
@@ -962,7 +1001,11 @@ document.getElementById('jfile').addEventListener('change', async e => {
   try{
     const d = JSON.parse(await f.text());          // ⚠️ atob は使わない（日本語が壊れる）
     snap();
+    /* ⚠️ 流れ・FPS が無い控え（アニメーションを入れる前のもの）を読んだら既定へ戻す。
+       Object.assign は欠けたキーを触らないので、前の盤の流れを引きずってしまう。 */
     Object.assign(S, d.S);
+    if(d.S.flow == null) S.flow = 0;
+    if(!S.fps) S.fps = 30;
     mats = [];
     for(const m of (d.mats || [])){ await addMat(m.url, m.name); const mm = mats[mats.length-1]; mm.tint = m.tint || null; mm.bg = m.bg || null; }
     sel = Math.min(d.sel ?? 0, mats.length - 1); rot = d.rot || 0;
@@ -981,6 +1024,11 @@ function syncAll(){
     const v = el.parentElement.querySelector('.val'); if(v) v.textContent = S[k];
   });
   document.getElementById('bg').value = S.bg;
+  [['flow','flow'],['fps','fps']].forEach(([id, k]) => {   // ⚠️ RANGES とは別（fitView を呼ばせない）
+    const el = document.getElementById(id); if(!el) return;
+    el.value = S[k];
+    const v = el.parentElement.querySelector('.val'); if(v) v.textContent = S[k];
+  });
   document.querySelectorAll('#shape button').forEach(b => b.classList.toggle('on', +b.dataset.v === S.shape));
   document.querySelectorAll('#board button').forEach(b => b.classList.toggle('on', +b.dataset.v === S.board));
   document.querySelectorAll('#guide button').forEach(b => b.classList.toggle('on', +b.dataset.v === S.guide));
@@ -1062,6 +1110,29 @@ RANGES.forEach(([id, k]) => {
   });
 });
 document.getElementById('bg').addEventListener('input', e => { S.bg = e.target.value; draw(); });
+/* ══ アニメーション ══
+   ⚠️ RANGES に入れない。あれは fitView（盤の大きさが変わる操作）を呼ぶので、
+      流れ・FPS で勝手にカメラが戻ってしまう。 */
+[['flow','flow'],['fps','fps']].forEach(([id, k]) => {
+  document.getElementById(id).addEventListener('input', e => {
+    S[k] = +e.target.value;
+    const v = e.target.parentElement.querySelector('.val'); if(v) v.textContent = S[k];
+    draw();                                   // ⭐ 0 に戻したその場で静止した絵に戻す
+  });
+});
+/* ⭐ 流れが 0 のあいだは1フレームも描き直さない（いままでと同じ重さのまま）。
+   ⚠️ 時間の刻みは【描いたフレーム】ごとに進める＝TSUBU と同じで、
+      FPS を下げると粗くなるだけでなく送りもゆっくりになる（＝ゲームの時間）。 */
+let lastFrame = 0;
+function tick(now){
+  requestAnimationFrame(tick);
+  if(!S.flow) return;
+  if(now - lastFrame < 1000 / S.fps) return;
+  lastFrame = now;
+  flowT += S.flow / 100 * 0.02;
+  draw();
+}
+requestAnimationFrame(tick);
 document.querySelectorAll('#shape button').forEach(b => b.addEventListener('click', () => {
   S.shape = +b.dataset.v;
   document.querySelectorAll('#shape button').forEach(x => x.classList.toggle('on', x === b));
