@@ -1305,8 +1305,52 @@ cv.addEventListener('wheel', e => {
   render();
 }, { passive:false });
 
-/* ══ 掴む ══ */
+/* ══ 指2本で 動かす＋大きさを変える（モバイル）══
+   ⭐ 木下＝「モバイルで版面が動くのがだるい」「ズームアウトもズームインもできない」。
+   ⚠️ 大きさを変えるのは wheel だけだった＝【指には wheel が無い】ので、スマホでは一切ズームできなかった。
+   ⭐ 1本指＝物を掴む／2本指＝版面を動かす＋大きさ、に分けた（Figma・Miro と同じ）。
+   ⚠️ つまんだ指の【真ん中】を軸にする＝つまんだ所が動かない（画面の中心を軸にすると狙った所が逃げる）。 */
+/* ⚠️ drag はこの節（touchstart）で触るので、宣言を先に置く。
+   後ろで let すると、読み込みの順によっては TDZ で起動ごと止まる（過去に3回踏んだ）。 */
 let drag = null;
+let pinch = null;
+const twoPt = e => {
+  const r = cv.getBoundingClientRect();
+  const a = e.touches[0], b = e.touches[1];
+  const ax = a.clientX - r.left, ay = a.clientY - r.top;
+  const bx = b.clientX - r.left, by = b.clientY - r.top;
+  return { c: new Point((ax+bx)/2, (ay+by)/2), d: Math.hypot(bx-ax, by-ay) };
+};
+cv.addEventListener('touchstart', e => {
+  if(e.touches.length === 2){
+    e.preventDefault();
+    drag = null;                 // ⚠️ 1本目で始まった掴みは取り消す（2本目が来たら版面の操作に切り替わる）
+    pinch = twoPt(e);
+  }
+}, { passive:false });
+cv.addEventListener('touchmove', e => {
+  if(e.touches.length !== 2 || !pinch) return;
+  e.preventDefault();
+  const now = twoPt(e);
+  /* 大きさ＝2本指の距離の比。⚠️ 0除算を避ける */
+  if(pinch.d > 8 && now.d > 8){
+    const nz = Math.max(0.04, Math.min(20, paper.view.zoom * (now.d / pinch.d)));
+    const mp = paper.view.viewToProject(now.c);          // ⭐ 指の真ん中を軸に
+    paper.view.center = mp.add(paper.view.center.subtract(mp).multiply(paper.view.zoom / nz));
+    paper.view.zoom = nz;
+  }
+  /* 動かす＝指の真ん中のずれ。⚠️ 画面の距離なので zoom で割って版面の距離に直す */
+  const dx = (now.c.x - pinch.c.x) / paper.view.zoom;
+  const dy = (now.c.y - pinch.c.y) / paper.view.zoom;
+  paper.view.center = paper.view.center.subtract(new Point(dx, dy));
+  pinch = now;
+  render();
+}, { passive:false });
+const endPinch = e => { if(!e.touches || e.touches.length < 2) pinch = null; };
+cv.addEventListener('touchend', endPinch);
+cv.addEventListener('touchcancel', endPinch);
+
+/* ══ 掴む ══ */
 cv.addEventListener('pointerdown', e => {
   const r = cv.getBoundingClientRect();
   const pt = paper.view.viewToProject(new Point(e.clientX - r.left, e.clientY - r.top));
@@ -1399,6 +1443,10 @@ cv.addEventListener('pointerdown', e => {
       return;
     }
   }
+  /* ⭐ 指のときは、何もない所を引いても版面を動かさない（木下＝「モバイルで版面が動くのがだるい」）。
+     ⚠️ 指は太いので狙いを外しやすい＝外すたびに版面がずれると使い物にならない。
+     ⭐ 版面を動かす／大きさを変えるのは【2本指】に寄せた（Figma・Miro と同じ）。 */
+  if(e.pointerType === 'touch'){ S.sel = { kind:null, i:null }; syncPanel(); render(); return; }
   drag = { kind:'pan', last:pt };
 });
 /* ══ 版面の上で打ち直す ══
@@ -2587,5 +2635,10 @@ S.sel = { kind:'line', i:0 };
 paper.view.onResize = () => { fitView(); render(); };
 document.fonts.ready.then(() => render());      // ⚠️ Webフォントが来る前に測ると送りがずれる
 syncPanel(); fitView(); render();
-stat('READY — 掴んで動かす／角で大きさ・角の少し外で回す／⌥ドラッグで大きさと字間／ダブルクリックで打ち直し');
+/* ⭐ 指の端末では案内を変える。⌥ドラッグや「角の少し外で回す」は指では通じない。
+   ⚠️ 木下＝到達できないUIを3回作った＝【知らない人が読んで分かる言葉】にする。
+      とくに「指2本で版面を動かす」は、書いておかないと一生見つからない。 */
+stat(matchMedia('(pointer:coarse)').matches
+  ? 'READY — 指1本で掴んで動かす／⭐指2本で版面を動かす・大きさを変える／ダブルタップで打ち直し'
+  : 'READY — 掴んで動かす／角で大きさ・角の少し外で回す／⌥ドラッグで大きさと字間／ダブルクリックで打ち直し');
 </script>
