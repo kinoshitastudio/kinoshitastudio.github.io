@@ -377,6 +377,8 @@
   <div class="hint">⭐<b>作りかけをそのまま開く</b>（素材ごと入っている）。⚠️ いま置いているものは<b>上書きされる</b>ので、必要なら先に控えを出す。⌘Z で戻せる</div>
   <input type="file" id="jfile" accept="application/json,.json" style="display:none">
   <div class="hint">⭐<b>地なし</b>＝重ねるため（HARI や MAKU に持ち込む）。⭐控えには<b>素材の画像も入る</b>ので、これ1つで戻せる</div>
+  <button class="sub" id="keepClr">このブラウザに残したものを消す</button>
+  <div class="hint">⭐<b>置いたものと素材は、このブラウザに勝手に残る</b>（閉じても次に開くと続きから）。⚠️残るのは<b>このブラウザの、この場所だけ</b>＝別の端末や localhost とは別勘定。持ち歩くなら控え（JSON）を出す</div>
 </div>
 
 <script>
@@ -1292,6 +1294,98 @@ document.querySelectorAll('#exSc button').forEach(b => b.addEventListener('click
 document.getElementById('helpBtn').addEventListener('click', () => document.body.classList.toggle('help'));
 addEventListener('resize', () => { fitView(); draw(); });
 
+/* ══ このブラウザに残す ══
+   木下＝「素材いれたけど保存されていないんだね。リロードすると消える」
+   🔴 localStorage は 5MB 上限＝素材は data URL で1枚 20〜56KB、22枚＋盤で足りない。
+      ⭐ IndexedDB にする（画像ごと入れても余裕がある）。
+   ⭐⭐ 保存の呼び出しを操作のたびに散らさない。散らすと【付け忘れた操作だけ残らない】が必ず起きる。
+      かわりに「状態が変わったか」を見て残す＝どの操作でも同じように残る。
+   ⚠️ 流れ（アニメーション）は S を変えないので、動かしっぱなしでも書き込みは起きない。 */
+const KEEP_DB = 'masu', KEEP_ST = 'state', KEEP_SLOT = 'now', KEEP_WAIT = 1500;
+/* 🔴🔴 起動を外の応答に【無条件で預けない】。
+   プライベートモードや保存が止められた環境では `indexedDB.open` が
+   **成功も失敗もせず黙る**（headless で実際に踏んだ＝3秒後も pending）。
+   そのまま await すると起動がそこで止まり、**道具が開かなくなる**。
+   ⭐ 必ず時間で切り上げる＝残せない時は「残らない」だけで、道具は開く。 */
+function keepOpen(){
+  return new Promise((res, rej) => {
+    let done = false;
+    const fin = (ok, v) => { if(done) return; done = true; clearTimeout(t); (ok ? res : rej)(v); };
+    const t = setTimeout(() => fin(false, new Error('保存の入口が開かない')), KEEP_WAIT);
+    let r;
+    try{ r = indexedDB.open(KEEP_DB, 1); }catch(e){ return fin(false, e); }
+    r.onupgradeneeded = () => r.result.createObjectStore(KEEP_ST);
+    r.onsuccess = () => fin(true, r.result);
+    r.onerror   = () => fin(false, r.error || new Error('開けない'));
+    r.onblocked = () => fin(false, new Error('別のタブが掴んでいる'));
+  });
+}
+function keepTx(mode, fn){
+  return keepOpen().then(db => new Promise((res, rej) => {
+    let done = false;
+    const fin = (ok, v) => { if(done) return; done = true; clearTimeout(t); (ok ? res : rej)(v); };
+    const t = setTimeout(() => fin(false, new Error('保存が返ってこない')), KEEP_WAIT * 2);
+    let tx, q;
+    try{ tx = db.transaction(KEEP_ST, mode); q = fn(tx.objectStore(KEEP_ST)); }
+    catch(e){ return fin(false, e); }
+    tx.oncomplete = () => fin(true, q ? q.result : true);
+    tx.onerror = tx.onabort = () => fin(false, tx.error || new Error('保存に失敗'));
+  }));
+}
+/* ⚠️ mats の img（画像そのもの）は複製できない＝素直な値だけにして渡す。 */
+function keepPayload(){
+  return { app:'masu', kind:'board', v:1, S,
+    mats: mats.map(m => ({ name:m.name, url:m.url, tint:m.tint || null, bg:m.bg || null })),
+    sel, rot };
+}
+function keepSig(){
+  try{
+    return JSON.stringify(S) + '|' +
+      mats.map(m => m.name + ':' + (m.url ? m.url.length : 0) + ':' +
+        (m.tint ? m.tint.a + m.tint.b : '') + ':' + (m.bg || '')).join(',');
+  }catch(e){ return null; }
+}
+let _sig = '', _busy = false, _miss = 0;
+function keepTick(){
+  if(_busy || _miss >= 3) return;                     // ⚠️ 残せない環境で永久に試し続けない
+  const s = keepSig();
+  if(s == null || s === _sig) return;                 // 変わっていなければ書かない
+  _sig = s; _busy = true;
+  keepTx('readwrite', st => st.put(keepPayload(), KEEP_SLOT))
+    .then(() => { _miss = 0; })
+    .catch(() => {
+      _sig = '';                                      // 失敗したら次の周で入れ直す
+      if(++_miss >= 3) stat('このブラウザには残せない（保存が止められている）— 控え（JSON）で持ち歩いてください');
+    })
+    .then(() => { _busy = false; });
+}
+setInterval(keepTick, 2000);
+async function keepRestore(){
+  let d;
+  try{ d = await keepTx('readonly', st => st.get(KEEP_SLOT)); }catch(e){ return false; }
+  if(!d || !d.S || !d.mats || !d.mats.length) return false;
+  Object.assign(S, d.S);
+  if(d.S.flow == null) S.flow = 0;
+  if(!S.fps) S.fps = 30;
+  mats = [];
+  for(const m of d.mats){
+    await addMat(m.url, m.name);
+    const mm = mats[mats.length - 1];
+    if(mm){ mm.tint = m.tint || null; mm.bg = m.bg || null; }
+  }
+  sel = Math.min(d.sel ?? 0, mats.length - 1); rot = d.rot || 0;
+  return mats.length > 0;
+}
+/* ⚠️ 逃げ道。消せない状態を作らない。 */
+document.getElementById('keepClr').addEventListener('click', async () => {
+  /* 🔴 ここで _sig を空にしてはいけない＝「未保存」の印になって、次の周（2秒後）に
+     消したはずのものが書き戻る（実測で踏んだ）。⭐ いまの姿を「保存済み」として覚える
+     ＝何か触るまでは書かない＝押した通り消えたままになる。 */
+  try{ await keepTx('readwrite', st => st.delete(KEEP_SLOT)); _sig = keepSig() || '';
+       stat('このブラウザに残したものを消した — いま画面にあるものはそのまま（触ると また残る）'); }
+  catch(e){ stat('消せなかった — ' + e.message); }
+});
+
 /* ══ 起動 ══
    ⭐ 素材は bit_tk（TSUBU の研究版）で焼いたタイルを同梱している（samples/）。
       読めなかったときだけ、その場で焼いた簡単な見本に落とす（触れない状態を作らない）。
@@ -1304,6 +1398,12 @@ async function loadSamples(){
   }catch(e){ return false; }
 }
 (async () => {
+  /* ⭐ 前のつづきがあれば、そこから開く。⚠️ 黙って出すと驚くので、必ず言う。 */
+  if(await keepRestore()){
+    syncAll(); fitView(); draw(); syncWorks(); _sig = keepSig();
+    stat('前のつづきを開いた — ' + mats.length + ' 素材 / ' + Object.keys(S.cells).length + ' マス');
+    return;
+  }
   if(!await loadSamples()){
     for(let i = 0; i < 3; i++) await addMat(bakeSample(i), ['帯','網','段'][i]);
   }
