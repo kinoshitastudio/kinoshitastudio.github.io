@@ -268,6 +268,13 @@ input[type=color]{ border-radius:8px; height:30px }
       （暗い地なら白い字）。気に入らなければ「振る前に戻す」で戻る</div>
     <div class="row" id="rowAng"><label>角度</label>
       <input type="range" id="bang" min="0" max="360" value="90"><span class="v" id="vbang">90</span></div>
+
+    <div class="row" style="margin-top:11px"><label>版面の外</label>
+      <div class="seg" id="segGhost" style="flex:1">
+        <button data-v="1">薄く見せる</button><button data-v="0">隠す</button>
+      </div></div>
+    <div class="note">⭐ 版面から<b>はみ出た分</b>をどうするか。<b>薄く見せる</b>＝作っている間だけ透けて見える（動かせる）／<b>隠す</b>＝仕上がりのまま見る。<br>
+      ⚠️ <b>どちらでも書き出しは版面の中だけ</b>。外にはみ出た分は焼かれない</div>
   </div>
 
   <h2>レイヤー ── 行と図</h2>
@@ -1081,6 +1088,19 @@ function render(into, opt){
     inner.addChild(g);
   });
 
+  /* ⭐ 版面の外を【薄く】見せる（木下＝はみ出しは隠したい／でも作業中は見たい）。
+     ⚠️ クリップだけだと、外に出した図が完全に消えて【見えないものは動かせない】。
+     ⭐ 中身は1回しか作らない＝出来上がった入れ物を clone して、クリップだけ外す。
+     ⚠️ 書き出しには出さない（forExport では作らない）＝焼いた絵は必ず版面の中だけ。 */
+  if(!forExport && S.ghost !== false){
+    const gh = inner.clone({ insert:false });
+    if(gh.children[0] && gh.children[0].clipMask) gh.children[0].remove();  // クリップを外す＝外まで見える
+    gh.locked = true;            // ⚠️ 影は掴めない・選べない（本体だけを掴む）
+    gh.opacity = 0.16;
+    gh.data.inner = false; gh.data.ghost = true;
+    target.insertChild(1, gh);   // 版面の地のすぐ上・本体の下
+  }
+
   if(!forExport){
     drawHandles();
     paper.view.update();
@@ -1506,7 +1526,8 @@ function rootOf(it){
 /* ⭐ 版面に置いてある物の一覧。入れ物があればその中、無ければ直下（古い作りでも動く）。
    ⚠️ 探す所を2箇所に書かない＝片方だけ直して食い違うのを防ぐ。 */
 function artItems(){
-  const inner = artLayer.children.find(c => c.data && c.data.inner);
+  /* ⚠️ 影（版面の外を薄く見せる層）は data.ghost。本体だけを返す。 */
+  const inner = artLayer.children.find(c => c.data && c.data.inner && !c.data.ghost);
   return inner ? inner.children : artLayer.children;
 }
 
@@ -1933,6 +1954,8 @@ function syncPanel(){
   /* ⚠️ 版面と図のつまみは【行を選んでいなくても】合わせる。
      行が無いところで return していたので、図を選んだ瞬間に大きさ・角度が古い値のままだった。 */
   segOn('segBg', S.board.mode); $('bw').value = S.board.w; $('bh').value = S.board.h;
+  /* ⚠️ 古い作品は ghost を持たない＝既定は「薄く見せる」（＝はみ出した物を見失わない） */
+  segOn('segGhost', S.ghost === false ? '0' : '1');
   /* 地の色（何色でも）。⚠️ 古い作品は cols を持たないので bg/bg2 から起こす */
   if(!S.board.cols) S.board.cols = [S.board.bg, S.board.bg2 || '#ffffff'];
   if(!S.board.n) S.board.n = S.board.cols.length;
@@ -2080,6 +2103,8 @@ document.querySelectorAll('[data-bgp]').forEach(btn => {
   btn.addEventListener('click', () => applyBgPreset(btn.dataset.bgp));
 });
 segBind2('segBg', v => { S.board.mode = v; $('rowAng').style.display = v === 'linear' ? '' : 'none'; });
+/* ⭐ 版面の外を薄く見せるか隠すか。⚠️ 画面の見え方だけ＝書き出しには関係しない */
+segBind2('segGhost', v => { S.ghost = (v === '1'); });
 /* ⚠️ 旧 id（bbg/bbg2）の配線はここにあった。色を「何色でも」にしたとき HTML から
    消したのに配線だけ残り、null.addEventListener で【起動ごと止まっていた】。
    ⭐ 入れ物を消したら、触っている所も同じコミットで消す。 */
