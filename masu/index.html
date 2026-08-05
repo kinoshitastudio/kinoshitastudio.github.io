@@ -335,6 +335,14 @@
   <div class="hint">置くときの向き。<b>R キー</b>でも回る</div>
 
   <h2>置く</h2>
+  <div class="seg" id="tool"><button data-v="0" class="on">置く</button><button data-v="1">選ぶ</button></div>
+  <div class="hint">⭐<b>選ぶ</b>＝マスを押して選び、<b>そのまま引っぱると動かせる</b>（先に何か入っていれば入れ替わる）。選んだマスだけ下のボタンで裏返せる<br>⚠️効く先は<b>「上に置く／地に置く」</b>に従う＝上の絵だけ／地の絵だけ裏返る</div>
+  <div style="display:flex;gap:5px">
+    <button class="sub" id="flipX" style="margin-top:5px">左右反転</button>
+    <button class="sub" id="flipY" style="margin-top:5px">上下反転</button>
+    <button class="sub" id="rotOne" style="margin-top:5px">回す</button>
+  </div>
+  <div class="hint">⭐<b>素材を作り足さずに向きを増やせる</b>（裏返しは焼き直しではなく描くときに返している）。キーは <b>H＝左右／V＝上下／R＝回す</b>。⌘Z で戻せる</div>
   <button class="sub" id="fitBtn">全体を見る</button>
   <div class="hint">⭐<b>ホイールで拡大</b>／<b>右ドラッグ（またはスペース＋ドラッグ）で動かす</b>。手で動かしたあとは、つまみを触っても勝手に戻りません</div>
   <button class="sub" id="fillBtn">全部に置く</button>
@@ -550,7 +558,11 @@ function drawFlowing(ctx, img, d){
     }
   }
 }
-function drawOne(ctx, c, r, mi, rot, scale, mode){
+/* ⭐ 裏返し（fx/fy）── 素材を焼き足さずに向きを増やすための道具。
+   ⚠️ 順番が要。translate → scale → rotate と書くと、絵には【回してから返す】が効く＝
+      画面の左右／上下で返る（＝押した通りに見える）。逆に書くと、回した向きで返って
+      「左右反転を押したのに上下が返る」ことが起きる。 */
+function drawOne(ctx, c, r, mi, rot, scale, mode, fx, fy){
   const p = center(c, r), s = S.cell;
   const m = mats[mi];
   const img = tintOf(m);
@@ -558,6 +570,7 @@ function drawOne(ctx, c, r, mi, rot, scale, mode){
   ctx.save();
   if(mode) ctx.globalCompositeOperation = mode;
   ctx.translate(p.x, p.y);
+  if(fx || fy) ctx.scale(fx ? -1 : 1, fy ? -1 : 1);
   ctx.rotate((rot || 0) * Math.PI / 2);
   let d = S.fit ? s * FIT_IN[S.shape]
                 : s * (S.shape === 3 ? 1.25 : 1.02);     // 覆うときは必ずマスを超える大きさで
@@ -577,8 +590,8 @@ function drawTile(ctx, c, r, cell){
   const solid = (base && base.bg) || (top && top.bg);
   if(solid){ ctx.fillStyle = solid; cellPath(ctx, c, r, S.gap / 2); ctx.fill(); }
   // ② 地の絵 → ③ 上の絵
-  if(cell.bm != null) drawOne(ctx, c, r, cell.bm, cell.br);
-  if(cell.m != null)  drawOne(ctx, c, r, cell.m, cell.r, S.topScale / 100, TOP_MODE[S.topMode]);
+  if(cell.bm != null) drawOne(ctx, c, r, cell.bm, cell.br, 1, null, cell.bfx, cell.bfy);
+  if(cell.m != null)  drawOne(ctx, c, r, cell.m, cell.r, S.topScale / 100, TOP_MODE[S.topMode], cell.fx, cell.fy);
   ctx.restore();
 }
 function paint(ctx, opt){
@@ -615,6 +628,20 @@ function draw(){
       cellPath(g, c, r, S.gap / 2); g.stroke();
     }
   }
+  /* 選んでいるマスと、引っぱっている行き先。⚠️ これも画面だけ（paint＝書き出しには入らない）。
+     🔴 白1本だと白い柄の上で沈んで見えない（実測で描けてはいるのに目では追えなかった）。
+        ⭐ 黒を下に敷いた二重線にする＝どんな地でも必ず見える。 */
+  const mark = (c, r, dash) => {
+    g.save();
+    if(dash) g.setLineDash([7 / cam.s, 5 / cam.s]);
+    g.strokeStyle = 'rgba(0,0,0,.85)'; g.lineWidth = 4.5 / cam.s;
+    cellPath(g, c, r, S.gap / 2); g.stroke();
+    g.strokeStyle = '#fff'; g.lineWidth = 1.8 / cam.s;
+    cellPath(g, c, r, S.gap / 2); g.stroke();
+    g.restore();
+  };
+  if(tool === 1 && selCell) mark(selCell.c, selCell.r, false);
+  if(moveTo) mark(moveTo.c, moveTo.r, true);
 }
 
 /* ══ 置く ══
@@ -696,6 +723,13 @@ addEventListener('touchend', e => { if(!e.touches || e.touches.length < 2) pinch
 
 let dragging = false, painted = null;
 let layer = 0;                                     // 0=上に置く 1=地に置く
+/* ══ 選ぶ ══
+   ⭐ 木下＝「それぞれで粒の素材を作るのが面倒」＝置いたあとに1マス単位で向きを作れるようにする。
+   ⚠️ 左ドラッグは「置く」に取られているので、道具を分ける（置く／選ぶ）。
+      修飾キーにすると触る画面（スマホ）で触れなくなる。 */
+let tool = 0;                                      // 0=置く 1=選ぶ
+let selCell = null;                                // 選んでいるマス {c,r}
+let moveFrom = null, moveTo = null;                // 引っぱって動かしている最中
 function put(c, r){
   const k = key(c, r);
   const cur = S.cells[k];
@@ -719,6 +753,16 @@ function onDown(e){
   const t = e.touches ? e.touches[0] : e;
   const h = hit(t.clientX, t.clientY);
   if(!h) return;
+  /* ── 選ぶ ──
+     ⚠️ ここでは盤を1つも書き換えない。押した時点で控えると「選んだだけ」で⌘Zが1回無駄になる。
+        中身が動くのは離したとき（onUp）。 */
+  if(tool === 1){
+    selCell = { c:h.c, r:h.r };
+    moveFrom = S.cells[key(h.c, h.r)] ? { c:h.c, r:h.r } : null;   // 空マスは動かしようがない
+    moveTo = null; draw(); e.preventDefault();
+    stat(moveFrom ? '選んだ — 引っぱると動く／裏返せる' : '空のマス');
+    return;
+  }
   snap();                                    // ⭐ 操作の直前に控える
   dragging = true; painted = new Set();
   put(h.c, h.r); painted.add(key(h.c, h.r));
@@ -726,15 +770,41 @@ function onDown(e){
 }
 function onMove(e){
   if(e.touches && e.touches.length > 1) return;
-  if(!dragging) return;
   const t = e.touches ? e.touches[0] : e;
+  if(tool === 1){
+    if(!moveFrom) return;
+    const h = hit(t.clientX, t.clientY);
+    const now = (h && (h.c !== moveFrom.c || h.r !== moveFrom.r)) ? { c:h.c, r:h.r } : null;
+    // 行き先が変わっていないなら描き直さない（引っぱっている間ずっと再描画しない）
+    if(!now && !moveTo) return;
+    if(now && moveTo && now.c === moveTo.c && now.r === moveTo.r) return;
+    moveTo = now; draw(); e.preventDefault();
+    return;
+  }
+  if(!dragging) return;
   const h = hit(t.clientX, t.clientY);
   if(!h) return;
   const k = key(h.c, h.r);
   if(painted.has(k)) return;                 // 同じマスを何度も塗り直さない
   painted.add(k); put(h.c, h.r); draw(); e.preventDefault();
 }
-function onUp(){ if(dragging){ dragging = false; stat('置いた ' + Object.keys(S.cells).length + ' マス'); } }
+function onUp(){
+  if(tool === 1){
+    if(moveFrom && moveTo){
+      snap();
+      const a = key(moveFrom.c, moveFrom.r), b = key(moveTo.c, moveTo.r);
+      const av = S.cells[a], bv = S.cells[b];
+      /* ⭐ 空へ動かす＝移す／入っている所へ動かす＝【入れ替える】。
+         ⚠️ 上書きにすると、動かしただけで元の絵が消える＝取り返しがつかない見え方になる。 */
+      if(bv) S.cells[a] = bv; else delete S.cells[a];
+      S.cells[b] = av;
+      selCell = { c:moveTo.c, r:moveTo.r };
+      stat(bv ? '入れ替えた' : '動かした');
+    }
+    moveFrom = moveTo = null; draw(); return;
+  }
+  if(dragging){ dragging = false; stat('置いた ' + Object.keys(S.cells).length + ' マス'); }
+}
 cv.addEventListener('mousedown', onDown);
 addEventListener('mousemove', onMove);
 addEventListener('mouseup', onUp);
@@ -1033,6 +1103,7 @@ function syncAll(){
   document.querySelectorAll('#board button').forEach(b => b.classList.toggle('on', +b.dataset.v === S.board));
   document.querySelectorAll('#guide button').forEach(b => b.classList.toggle('on', +b.dataset.v === S.guide));
   document.querySelectorAll('#layer button').forEach(b => b.classList.toggle('on', +b.dataset.v === layer));
+  document.querySelectorAll('#tool button').forEach(b => b.classList.toggle('on', +b.dataset.v === tool));
   document.querySelectorAll('#topMode button').forEach(b => b.classList.toggle('on', +b.dataset.v === S.topMode));
   document.querySelectorAll('#fit button').forEach(b => b.classList.toggle('on', +b.dataset.v === S.fit));
   document.querySelectorAll('#rot button').forEach(b => b.classList.toggle('on', +b.dataset.v === rot));
@@ -1079,6 +1150,45 @@ document.querySelectorAll('#layer button').forEach(b => b.addEventListener('clic
   document.querySelectorAll('#layer button').forEach(x => x.classList.toggle('on', x === b));
   stat(layer ? '地に置く（下の層）' : '上に置く');
 }));
+/* ══ 選ぶ・裏返す ══ */
+document.querySelectorAll('#tool button').forEach(b => b.addEventListener('click', () => {
+  tool = +b.dataset.v;
+  document.querySelectorAll('#tool button').forEach(x => x.classList.toggle('on', x === b));
+  if(tool === 0){ selCell = null; moveFrom = moveTo = null; }   // 置くに戻したら枠を消す（残ると迷う）
+  cv.style.cursor = tool === 1 ? 'default' : 'crosshair';
+  draw(); stat(tool ? '選ぶ — マスを押す／引っぱると動く' : '置く');
+}));
+/* ⭐ 裏返しは焼き直しではなく【描くときに返している】＝素材は1枚のまま増えない。
+   ⚠️ 効く先は「上に置く／地に置く」に従う。その層に絵が無いときは黙って何もしないのでなく言う
+      （＝「触れるのに効かない」を作らない）。 */
+function flipSel(k){
+  if(tool !== 1 || !selCell) return stat('先に「選ぶ」にしてマスを押す');
+  const cur = S.cells[key(selCell.c, selCell.r)];
+  const has = cur && (layer === 1 ? cur.bm != null : cur.m != null);
+  if(!has) return stat(layer === 1 ? 'このマスに地の絵が無い' : 'このマスに上の絵が無い');
+  snap();
+  if(k === 'r'){
+    if(layer === 1) cur.br = ((cur.br || 0) + 1) % 4;
+    else            cur.r  = ((cur.r  || 0) + 1) % 4;
+  }else{
+    const p = (layer === 1 ? 'b' : '') + k;        // fx / fy / bfx / bfy
+    cur[p] = cur[p] ? 0 : 1;
+  }
+  draw();
+  stat((layer === 1 ? '地' : '上') + 'の絵を ' + ({ fx:'左右反転した', fy:'上下反転した', r:'回した' })[k]);
+}
+document.getElementById('flipX').addEventListener('click', () => flipSel('fx'));
+document.getElementById('flipY').addEventListener('click', () => flipSel('fy'));
+document.getElementById('rotOne').addEventListener('click', () => flipSel('r'));
+addEventListener('keydown', e => {
+  if(e.metaKey || e.ctrlKey || e.altKey) return;
+  const el = document.activeElement;
+  if(el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;   // つまみを触っている最中は拾わない
+  const k = e.key.toLowerCase();
+  if(k === 'h') flipSel('fx');
+  else if(k === 'v') flipSel('fy');
+  else if(k === 'r') flipSel('r');
+});
 document.querySelectorAll('#guide button').forEach(b => b.addEventListener('click', () => {
   S.guide = +b.dataset.v;
   document.querySelectorAll('#guide button').forEach(x => x.classList.toggle('on', x === b));
