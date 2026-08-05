@@ -1016,6 +1016,16 @@ function render(into, opt){
   if(!forExport){ bg.shadowColor = new paper.Color(0,0,0,0.18); bg.shadowBlur = 24; }
   target.addChild(bg);
 
+  /* ⭐ 版面からはみ出た分を隠す入れ物（木下＝「ボードからはみ出てる分は自動的に非表示に」）。
+     ⚠️ 版面の地（bg）は【この外】に置く＝地に掛けた影まで切られないようにする。
+     ⚠️ 掴む枠は uiLayer（別の層）なので、はみ出て見えなくなった図も選べるまま。
+     ⭐ 書き出しも同じ render() を流すので、画面と焼いた絵が必ず一致する。 */
+  const clipRect = new Path.Rectangle(new Rectangle(0,0,S.board.w,S.board.h));
+  clipRect.clipMask = true;
+  const inner = new Group([clipRect]);
+  inner.data.inner = true;      // ⚠️ 掴む処理がここを目印に1段もぐる（rootOf / artItems）
+  target.addChild(inner);
+
   // 置いた図（版面の下でも上でもなく、入れた順）
   S.pieces.forEach(pc => {
     if(!pc.item) return;
@@ -1029,7 +1039,7 @@ function render(into, opt){
     c.rotate(pc.rot);
     c.position = new Point(pc.x, pc.y);
     c.data.piece = pc.id;
-    target.addChild(c);
+    inner.addChild(c);
   });
 
   // 文字の帯
@@ -1037,7 +1047,7 @@ function render(into, opt){
     L._i = i;                                   // ⚠️ 音の帯域を行ごとに散らすための番号（保存には出ない）
     const g = new Group(); g.data.line = L.id;
     (LAYOUTS[L.kind] || LAYOUTS.meguru).build(L, g);
-    target.addChild(g);
+    inner.addChild(g);
   });
 
   if(!forExport){
@@ -1103,7 +1113,7 @@ function drawHandles(){
    ⭐ 図と同じ持ち方＝隅で大きさ・角の少し外で回す。覚えることを増やさない。
    ⚠️ 経路の頂点／箱の端とは別物なので、隅ハンドルは【外形の四隅】に置く（重ならない）。 */
 function lineCorners(L){
-  const g = artLayer.children.find(c => c.data && c.data.line === L.id);
+  const g = artItems().find(c => c.data && c.data.line === L.id);
   if(!g || !g.bounds || !g.bounds.width) return null;
   const b = g.bounds;
   return [b.topLeft, b.topRight, b.bottomRight, b.bottomLeft];
@@ -1301,7 +1311,7 @@ cv.addEventListener('dblclick', e => {
   if(i < 0) return;
   S.sel = { kind:'line', i }; syncPanel(); render();
   /* ⚠️ render で描き直すので、位置は【描き直したあとの束ね】から取る */
-  const g = artLayer.children.find(c => c.data && c.data.line === S.lines[i].id);
+  const g = artItems().find(c => c.data && c.data.line === S.lines[i].id);
   openInline(S.lines[i], g || owner);
 });
 {
@@ -1437,7 +1447,21 @@ addEventListener('pointerup', () => { drag = null; cv.style.cursor = ''; });
 let shiftDown = false;
 addEventListener('keydown', e => { if(e.key === 'Shift') shiftDown = true; });
 addEventListener('keyup',   e => { if(e.key === 'Shift') shiftDown = false; });
-function rootOf(it){ let n = it; while(n && n.parent && n.parent !== artLayer) n = n.parent; return n; }
+/* ⭐ 掴んだ物から【行や図のかたまり】まで遡る。
+   ⚠️ 2026-08-05：版面の外を隠すため、中身を clip の入れ物（inner）に入れた。
+      artLayer まで遡ると入れ物そのものを返してしまい【何も選べなくなる】。
+      ＝入れ物の直下で止める。 */
+function rootOf(it){
+  let n = it;
+  while(n && n.parent && n.parent !== artLayer && !(n.parent.data && n.parent.data.inner)) n = n.parent;
+  return n;
+}
+/* ⭐ 版面に置いてある物の一覧。入れ物があればその中、無ければ直下（古い作りでも動く）。
+   ⚠️ 探す所を2箇所に書かない＝片方だけ直して食い違うのを防ぐ。 */
+function artItems(){
+  const inner = artLayer.children.find(c => c.data && c.data.inner);
+  return inner ? inner.children : artLayer.children;
+}
 
 /* ══ 音で動かす ══
    ⭐ 木下＝「音に合わせてポスター動くように」。他の道具（朧・彫）と同じ考え方＝
