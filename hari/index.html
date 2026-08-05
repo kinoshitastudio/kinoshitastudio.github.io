@@ -503,6 +503,13 @@ input[type=color]{ border-radius:8px; height:30px }
     <div class="row"><label>角度</label>
       <input type="range" id="pcRot" min="-180" max="180" value="0"><span class="v" id="vRot">0</span></div>
 
+    <div class="row" style="margin-top:9px"><label>版面に</label>
+      <button class="btn" id="pcCover" style="flex:1">敷く</button>
+      <button class="btn" id="pcContain" style="flex:1">収める</button></div>
+    <div class="note">⭐ <b>敷く</b>＝版面いっぱいに広げる（はみ出た分は自動で隠れる）＝<b>写真を地に使うとき</b>。<br>
+      <b>収める</b>＝画像が全部見える大きさに戻す。<br>
+      ⚠️ どちらも<b>版面の中央に置き直す</b>／⭐<b>切り抜いた分と角度も見て</b>合わせる</div>
+
     <div class="row" style="margin-top:11px"><label style="font-weight:700">切り抜く</label>
       <button class="btn" id="pcCropOff" style="padding:4px 9px">切り抜きを消す</button></div>
     <div class="row"><label>上を切る</label>
@@ -1210,6 +1217,26 @@ function cropOf(pc){
   if(!(t||r||b||l)) return null;
   const K = 95;
   return { t, b: Math.min(b, K - t), l, r: Math.min(r, K - l) };
+}
+/* ⭐ 図を版面に合わせる（木下＝「版面いっぱいに敷く」）。
+     cover ＝版面を【覆う】最小の大きさ（写真を地に使う。はみ出た分はクリップで隠れる）
+     contain＝版面に【収まる】最大の大きさ（画像を全部見せる）
+   ⚠️ 切り抜いた分を引いて測る＝見えている物が版面を覆う。
+   ⚠️ 回してあると覆うのに要る大きさが変わる＝【回したあとの外接】で測る。
+      これを見ないと、斜めにした写真の角が空く。 */
+function fitPiece(pc, mode){
+  if(!pc || !pc.item) return false;
+  const b = pc.item.bounds, cr = cropOf(pc), B = S.board;
+  const iw = b.width  * (cr ? (100 - cr.l - cr.r)/100 : 1);
+  const ih = b.height * (cr ? (100 - cr.t - cr.b)/100 : 1);
+  if(!(iw > 0 && ih > 0)) return false;
+  const a = (pc.rot||0) * Math.PI/180, ca = Math.abs(Math.cos(a)), sa = Math.abs(Math.sin(a));
+  const ow = iw*ca + ih*sa, oh = iw*sa + ih*ca;
+  const want = mode === 'cover' ? Math.max(B.w/ow, B.h/oh) : Math.min(B.w/ow, B.h/oh);
+  const k = Math.max(3, Math.min(600, want*100));
+  pc.sc = k;
+  pc.x = B.w/2; pc.y = B.h/2;                 // ⭐ 版面の中央へ（端に寄ったままだと覆えない）
+  return k >= 600 && want*100 > 600 ? 'over' : true;   // ⚠️ 上限で止まったら呼び元に知らせる
 }
 /* 角4つ＋辺の中央4つ（0,2,4,6 が角） */
 function pieceCorners(pc){
@@ -2368,6 +2395,17 @@ $('delPiece').onclick = () => { const pc = selPiece(); if(!pc) return;
   $('v' + vid).textContent = e.target.value;
   render();
 }));
+/* ⭐ 版面に敷く／収める。⚠️ 大きさと位置が変わるのでパネルも合わせ直す */
+[['pcCover','cover','版面いっぱいに敷いた（はみ出た分は隠れる）'],
+ ['pcContain','contain','版面に収めた（画像が全部見える）']]
+.forEach(([id, mode, msg]) => $(id).onclick = () => {
+  const pc = selPiece();
+  if(!pc){ stat('先に図を選ぶ（レイヤーか版面をクリック）'); return; }
+  const r = fitPiece(pc, mode);
+  if(!r){ stat('この図は測れなかった'); return; }
+  syncPanel(); render();
+  stat(r === 'over' ? '大きさの上限（600%）で止まった＝もっと大きい元の画像が要る' : msg);
+});
 $('pcCropOff').onclick = () => {
   const pc = selPiece(); if(!pc) return;
   pc.crop = null;
