@@ -383,7 +383,8 @@
   <button class="sub" id="exJson">JSON を出す（盤の控え）</button>
   <button class="sub" id="imJson">JSON を読む（盤の控え）</button>
   <div class="seg" id="works" style="flex-wrap:wrap;margin-top:6px"></div>
-  <div class="hint">⭐<b>作りかけをそのまま開く</b>（素材ごと入っている）。⚠️ いま置いているものは<b>上書きされる</b>ので、必要なら先に控えを出す。⌘Z で戻せる</div>
+  <button class="sub" id="myMatsBtn" style="display:none">素材を自分のに戻す</button>
+  <div class="hint">⭐<b>作りかけをそのまま開く</b>（素材ごと入っている）。⚠️ いま置いているものは<b>上書きされる</b>ので、必要なら先に控えを出す。⌘Z で戻せる<br>⭐<b>作りかけを開くと棚の素材も入れ替わる</b>。入れ替わる直前の<b>自分の素材を1組だけ取っておく</b>ので、いくつ見比べても<b>「素材を自分のに戻す」でいつでも戻せる</b>（閉じても残る）<br>⚠️ 戻すのは<b>棚だけ</b>＝盤はそのまま。置いてある絵の当たり先が変わるので組み方は変わる（⌘Zで取り消せる）</div>
   <input type="file" id="jfile" accept="application/json,.json" style="display:none">
   <div class="hint">⭐<b>地なし</b>＝重ねるため（HARI や MAKU に持ち込む）。⭐控えには<b>素材の画像も入る</b>ので、これ1つで戻せる</div>
   <button class="sub" id="keepClr">このブラウザに残したものを消す</button>
@@ -426,9 +427,15 @@ function snapshot(){
   for(const k of UNDO_KEYS) o[k] = S[k];
   return JSON.stringify(o);
 }
+/* ⭐ 素材を「そのまま持ち運べる形」にする1本。控え・保存・書き出しで同じものを使う
+      ＝片方だけ直す事故が起きない。 */
+const dumpMats = () => mats.map(m => ({ url:m.url, name:m.name, tint:m.tint || null, bg:m.bg || null }));
 function snap(){                                   // ⚠️ 操作の「直前」に呼ぶ
   undoStack.push(snapshot());
-  if(undoStack.length > 120) undoStack.shift();
+  /* 🔴 古いのを捨てると、下から1つ詰まって【全部の位置が1つずれる】。
+        matsUndo は「何手目か」で紐づけているので、ここを直さないと
+        素材ごとの控えが別の一手に当たる（120手を超えた時だけ出る＝見つけにくい）。 */
+  if(undoStack.length > 120){ undoStack.shift(); for(const u of matsUndo) u.at--; }
 }
 /* 🔴 控えに入っているのは S だけ＝【素材は戻らない】。
       作りかけ（白黒／多色…）を開くと mats を丸ごと入れ替えるので、⌘Z しても
@@ -437,9 +444,51 @@ function snap(){                                   // ⚠️ 操作の「直前�
    ⚠️ 素材は画像そのもの（1本で1MB超になる）＝毎回積むと重い。だから【直近2本まで】。 */
 let matsUndo = [];
 function snapMats(){
+  keepMy();                                        // ⭐ 先に「自分の素材」を確保する（下）
   snap();                                          // S 側はいつもの控えに積む
-  matsUndo.push({ at:undoStack.length, mats:mats.map(m => ({ url:m.url, name:m.name, tint:m.tint || null, bg:m.bg || null })), sel });
+  /* ⚠️ 「作りかけ由来かどうか」も一緒に覚える。⌘Z で戻したとき無条件に「自分の棚」に
+        してしまうと、作りかけの棚を自分のものと取り違えて確保し直す（実測で踏んだ）。 */
+  matsUndo.push({ at:undoStack.length, mats:dumpMats(), sel, fromWork:matsFromWork });
   if(matsUndo.length > 2) matsUndo.shift();
+}
+/* 🔴🔴 ⌘Z の控えは【直近2本まで】＝作りかけを 白黒→多色→夜 と3つ押した時点で、
+        いちばん古い控え＝【自分の素材が入っていたもの】が捨てられる。
+        作りかけボタンは6つ並んでいて見比べたくなる作りなので、ここは必ず踏む。
+   ⭐ だから ⌘Z とは別に、自分の素材を【1組だけ】取っておく。
+      これは作りかけを何度開いても上書きしない＝いつでも戻れる。
+   ⚠️ 「自分の」の見分け方＝棚を最後に変えたのが木下自身か（matsFromWork）。
+      作りかけ由来の棚を、次の作りかけで上書きして確保しても意味がない。 */
+let myMats = null;                                 // {mats, sel} — 自分の素材（1組だけ）
+let matsFromWork = false;                          // いまの棚が作りかけ／控え由来か
+function keepMy(){
+  if(matsFromWork || !mats.length) return;         // 作りかけ由来なら確保しない（上書きしない）
+  myMats = { mats:dumpMats(), sel };
+  syncMyBtn();
+}
+function syncMyBtn(){
+  const b = document.getElementById('myMatsBtn');
+  if(b) b.style.display = myMats && myMats.mats.length ? 'block' : 'none';
+}
+/* ⭐ 棚を木下自身が触ったら「これが自分の素材」に戻す（次の作りかけで確保される）。 */
+function matsTouched(){ matsFromWork = false; }
+async function restoreMy(){
+  if(!myMats || !myMats.mats.length){ stat('取っておいた素材が無い'); return; }
+  /* 🔴 先に掴んでおく。snapMats() の中の keepMy() が myMats を書き換えうるので、
+        掴まずに参照すると【いま棚にあるもの】を戻すだけの空振りになる。 */
+  const want = myMats;
+  snapMats();                                      // ⚠️ この戻しも ⌘Z で取り消せるようにする
+  mats = [];
+  for(const m of want.mats){
+    await addMat(m.url, m.name);
+    const mm = mats[mats.length - 1];
+    if(mm){ mm.tint = m.tint || null; mm.bg = m.bg || null; }
+  }
+  sel = Math.min(want.sel ?? 0, mats.length - 1);
+  myMats = want; matsFromWork = false;             // 取っておいたものは減らさない
+  syncAll(); draw();
+  /* ⚠️ 盤は触らない＝置いてある絵の【当たり先】が変わって見た目が組み変わる。
+        黙って変わると壊れたように見えるので必ず言う。 */
+  stat('素材を自分のに戻した（' + mats.length + ' 枚）— ⚠️盤はそのままなので絵の当たり先が変わる／⌘Zで取り消せる');
 }
 function undo(){
   if(!undoStack.length){ stat('戻せる先が無い'); return; }
@@ -455,6 +504,7 @@ function undo(){
         const mm = mats[mats.length - 1]; mm.tint = m.tint; mm.bg = m.bg;
       }
       sel = Math.min(mu.sel ?? 0, mats.length - 1);
+      matsFromWork = !!mu.fromWork;                // 控えた時点の姿に戻す（決めつけない）
       syncAll(); fitView(); draw();
       stat('戻した — 素材も元に戻した（' + mats.length + ' 枚）');
     })();
@@ -1062,6 +1112,7 @@ function syncMats(){
         if(v.m == null && v.bm == null) delete S.cells[k];
       }
       if(sel >= mats.length) sel = mats.length - 1;
+      matsTouched();                               // ⭐ 外したのも「自分の棚」の形
       syncMats(); draw();
     });
     d.appendChild(x);
@@ -1075,7 +1126,7 @@ async function loadFiles(files){
     const url = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(f); });
     if(await addMat(url, f.name)) n++;
   }
-  if(n){ sel = mats.length - 1; syncMats(); stat(n + ' 枚読み込んだ'); }
+  if(n){ sel = mats.length - 1; matsTouched(); syncMats(); stat(n + ' 枚読み込んだ'); }
 }
 /* ⭐ 入れ子 ── いま組んでいる盤を、そのまま1マスぶんの素材にする。
    ⚠️ 地は入れない（透明で取り込む＝置いた先の地が透ける・重ねられる）。
@@ -1095,7 +1146,7 @@ async function grabAsMat(){
   o.setTransform(sc, 0, 0, sc, (side - ws.w) / 2 * sc, (side - ws.h) / 2 * sc);   // 正方形の中央へ
   paint(o, { noBg:true });
   await addMat(out.toDataURL('image/png'), '組み' + (mats.length + 1));
-  sel = mats.length - 1; syncMats();
+  sel = mats.length - 1; matsTouched(); syncMats();
   stat('いまの盤を素材にした — ' + n + ' × ' + n);
 }
 /* ⭐ 素材を焼く場所 ── 粒のエンジン（bit_tk）を中に開く。
@@ -1143,7 +1194,7 @@ addEventListener('message', async e => {
   }
   if(!d || d.type !== 'masu-tile' || !d.url) return;
   await addMat(d.url, (d.name || 'tile').replace(/^tile_|\.png$/g, ''));
-  sel = mats.length - 1; forgeGot++;
+  sel = mats.length - 1; forgeGot++; matsTouched();
   syncMats(); syncTint(); draw();
   document.getElementById('forgeMsg').textContent = forgeGot + ' 枚 棚に入れた（閉じると盤に戻る）';
 });
@@ -1220,7 +1271,7 @@ document.getElementById('exJson').addEventListener('click', () => {
   // ⭐ 素材の画像も入れる＝これ1つで戻せる（別ファイルを探させない）
   const data = { app:'masu', kind:'board',
     note:'枡 MASU — 盤の控え（マスの並び＋素材）。粒のエンジンの設定ではない',
-    v:1, S, mats:mats.map(m => ({ name:m.name, url:m.url, tint:m.tint || null, bg:m.bg || null })), sel, rot };
+    v:1, S, mats:dumpMats(), sel, rot };
   dl(new Blob([JSON.stringify(data)], { type:'application/json' }), 'masu-board-' + stamp() + '.json');
   stat('盤の控えを出した — ' + mats.length + ' 素材 / ' + Object.keys(S.cells).length + ' マス');
 });
@@ -1243,8 +1294,10 @@ async function loadWork(file, label){
       const mm = mats[mats.length - 1]; mm.tint = m.tint || null; mm.bg = m.bg || null;
     }
     sel = Math.min(d.sel ?? 0, mats.length - 1); rot = d.rot || 0;
+    matsFromWork = true;                           // ⭐ この棚は作りかけ由来＝次の作りかけで確保し直さない
     camTouched = false; syncAll(); fitView(true); draw();
-    stat(label + ' を開いた — ' + mats.length + ' 素材 / ' + Object.keys(S.cells).length + ' マス（⌘Zで素材ごと戻せる）');
+    stat(label + ' を開いた — ' + mats.length + ' 素材 / ' + Object.keys(S.cells).length + ' マス'
+         + (myMats ? '（⌘Zで戻せる／棚だけなら「素材を自分のに戻す」）' : '（⌘Zで素材ごと戻せる）'));
   }catch(err){ stat(label + ' を開けなかった — ' + err.message); }
 }
 async function syncWorks(){
@@ -1261,6 +1314,7 @@ async function syncWorks(){
   }
 }
 document.getElementById('imJson').addEventListener('click', () => document.getElementById('jfile').click());
+document.getElementById('myMatsBtn').addEventListener('click', restoreMy);
 document.getElementById('jfile').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = '';
   if(!f) return;
@@ -1279,8 +1333,10 @@ document.getElementById('jfile').addEventListener('change', async e => {
     mats = [];
     for(const m of (d.mats || [])){ await addMat(m.url, m.name); const mm = mats[mats.length-1]; mm.tint = m.tint || null; mm.bg = m.bg || null; }
     sel = Math.min(d.sel ?? 0, mats.length - 1); rot = d.rot || 0;
+    matsFromWork = true;                           // ⭐ 控え由来の棚
     syncAll(); fitView(); draw();
-    stat('読み込んだ — ' + mats.length + ' 素材 / ' + Object.keys(S.cells).length + ' マス（⌘Zで素材ごと戻せる）');
+    stat('読み込んだ — ' + mats.length + ' 素材 / ' + Object.keys(S.cells).length + ' マス'
+         + (myMats ? '（⌘Zで戻せる／棚だけなら「素材を自分のに戻す」）' : '（⌘Zで素材ごと戻せる）'));
   }catch(err){ stat('読めなかった — ' + err.message); }
 });
 
@@ -1528,15 +1584,19 @@ function keepTx(mode, fn){
 }
 /* ⚠️ mats の img（画像そのもの）は複製できない＝素直な値だけにして渡す。 */
 function keepPayload(){
+  /* ⭐ 自分の素材も一緒に残す＝閉じて開き直しても「素材を自分のに戻す」が効く。
+     ⚠️ 素材の画像がもう1組ぶん増えるが、IndexedDB なので入る（localStorage の 5MB とは別）。 */
   return { app:'masu', kind:'board', v:1, S,
-    mats: mats.map(m => ({ name:m.name, url:m.url, tint:m.tint || null, bg:m.bg || null })),
-    sel, rot };
+    mats: dumpMats(), sel, rot, myMats, matsFromWork };
 }
 function keepSig(){
   try{
     return JSON.stringify(S) + '|' +
       mats.map(m => m.name + ':' + (m.url ? m.url.length : 0) + ':' +
-        (m.tint ? m.tint.a + m.tint.b : '') + ':' + (m.bg || '')).join(',');
+        (m.tint ? m.tint.a + m.tint.b : '') + ':' + (m.bg || '')).join(',') +
+      /* ⚠️ 自分の素材を確保しただけでは mats も S も変わらない＝ここを見ないと書き込まれない */
+      '|my:' + (myMats ? myMats.mats.length + ':' + myMats.mats.reduce((n, m) => n + (m.url ? m.url.length : 0), 0) : 0) +
+      '|fw:' + (matsFromWork ? 1 : 0);
   }catch(e){ return null; }
 }
 let _sig = '', _busy = false, _miss = 0;
@@ -1568,6 +1628,10 @@ async function keepRestore(){
     if(mm){ mm.tint = m.tint || null; mm.bg = m.bg || null; }
   }
   sel = Math.min(d.sel ?? 0, mats.length - 1); rot = d.rot || 0;
+  /* ⭐ 自分の素材も戻す。⚠️ 古い控え（この仕組みより前に残したもの）には入っていないので、
+        その時は「まだ確保していない」＝ボタンを出さないだけにする（壊さない）。 */
+  myMats = d.myMats && d.myMats.mats && d.myMats.mats.length ? d.myMats : null;
+  matsFromWork = !!d.matsFromWork;
   return mats.length > 0;
 }
 /* ⚠️ 逃げ道。消せない状態を作らない。 */
@@ -1594,7 +1658,7 @@ async function loadSamples(){
 (async () => {
   /* ⭐ 前のつづきがあれば、そこから開く。⚠️ 黙って出すと驚くので、必ず言う。 */
   if(await keepRestore()){
-    syncAll(); fitView(); draw(); syncWorks(); _sig = keepSig();
+    syncAll(); fitView(); draw(); syncWorks(); syncMyBtn(); _sig = keepSig();
     stat('前のつづきを開いた — ' + mats.length + ' 素材 / ' + Object.keys(S.cells).length + ' マス');
     return;
   }
@@ -1611,7 +1675,7 @@ async function loadSamples(){
     S.cells[key(c, r)] = { m:(c * 3 + r * 5 + n) % mats.length, r:(c + r) % 4 };
   }
   syncAll(); fitView(); draw();
-  syncWorks();
+  syncWorks(); syncMyBtn();
   stat('素材を選んで、マスを押す（ドラッグで続けて置ける）');
 })();
 </script>
