@@ -66,6 +66,12 @@
   #mats .m{width:44px;height:44px;border:1px solid var(--line);cursor:pointer;position:relative;
     background:#1a1a1a center/contain no-repeat;image-rendering:pixelated;}
   #mats .m.on{outline:2px solid var(--ink);outline-offset:1px;}
+  /* ⭐ 道具のチップ。見た目は「消」と同じだが .m ではない
+        （.m にすると "素材が何枚あるか" の数に混ざる＝実際に既存テストが3件落ちた） */
+  #mats .mchip{width:44px;height:44px;border:1px solid var(--line);cursor:pointer;
+    background:#eef1f6;display:flex;align-items:center;justify-content:center;
+    font-size:12px;color:#5b6674;user-select:none;}
+  #mats .mchip.on{outline:2px solid var(--ink);outline-offset:1px;background:#dfe7f4;color:#12325c;font-weight:700;}
   #mats .m.era{background:#f4f2ee;display:flex;align-items:center;justify-content:center;
     font-family:'Space Mono',monospace;font-size:8px;opacity:.6;}
   #mats .m .x{position:absolute;top:-5px;right:-5px;width:14px;height:14px;border-radius:50%;
@@ -115,6 +121,7 @@
     input[type=color]{width:34px;height:26px;}
     h2{font-size:11.5px;margin-top:16px;padding-top:20px;}
     #mats .m{width:52px;height:52px;}
+    #mats .mchip{width:52px;height:52px;}
     #helpBtn{width:26px;height:26px;font-size:11px;top:8px;right:10px;}
   }
 
@@ -250,6 +257,8 @@
   #mats .m{ border:.5px solid var(--line); border-radius:8px; }
   #mats .m.on{ outline:2.5px solid var(--ink); outline-offset:1.5px }
   #mats .m.era{ background:var(--fill2); font-family:inherit; font-size:11px; opacity:.8; border-radius:8px }
+  #mats .mchip{ border:.5px solid var(--line); border-radius:8px; font-family:inherit; font-size:11px }
+  #mats .mchip.on{ outline:2.5px solid var(--ink); outline-offset:1.5px }
   #mats .m .x{ border-radius:50%; font-family:inherit }
   #tintOff,#matBgOff,#boardFit,#tlAllBtn,#tlNoneBtn{
     background:var(--fill2)!important; border:none!important; border-radius:8px!important;
@@ -344,7 +353,7 @@
 
   <h2>置く</h2>
   <div class="seg" id="tool"><button data-v="0" class="on">置く</button><button data-v="1">選ぶ</button></div>
-  <div class="hint">⭐<b>選ぶ</b>＝マスを押して選び、<b>そのまま引っぱると動かせる</b>（先に何か入っていれば入れ替わる）。選んだマスだけ下のボタンで裏返せる<br>⚠️効く先は<b>「上に置く／地に置く」</b>に従う＝上の絵だけ／地の絵だけ裏返る</div>
+  <div class="hint">⭐<b>素材の棚のいちばん左「選」</b>からでも切り替わる（手が近い方）。素材を押すと<b>「置く」に戻る</b><br>⭐<b>選ぶ</b>＝マスを押して選び、<b>そのまま引っぱると動かせる</b>（1マスなら入れ替わる）。<br>⭐<b>まとめて選ぶ</b>＝<b>Shift＋引っぱって囲う</b>（どこからでも／囲うたびに<b>足される</b>）。<b>Shift＋押す</b>で1マスずつ足す・外す。空のマスからは Shift なしでも囲える<br>⭐<b>まとめて動かす</b>＝選んだ集まりの<b>上から引っぱる</b>と全部動く（⚠️複数のときは先に入っていた絵に<b>上書き</b>＝⌘Zで戻せる／盤からはみ出すときは動かさない）。<b>Esc</b>で選び直し<br>⚠️下の3つのボタンは<b>選んだマス全部</b>に効く。効く先は<b>「上に置く／地に置く」</b>に従う</div>
   <div style="display:flex;gap:5px">
     <button class="sub" id="flipX" style="margin-top:5px">左右反転</button>
     <button class="sub" id="flipY" style="margin-top:5px">上下反転</button>
@@ -421,9 +430,36 @@ function snap(){                                   // ⚠️ 操作の「直前�
   undoStack.push(snapshot());
   if(undoStack.length > 120) undoStack.shift();
 }
+/* 🔴 控えに入っているのは S だけ＝【素材は戻らない】。
+      作りかけ（白黒／多色…）を開くと mats を丸ごと入れ替えるので、⌘Z しても
+      前の素材には戻れなかった（木下＝「元の素材に戻ることができない」2026-08-06）。
+   ⭐ 素材ごと戻すのは「素材を入れ替える操作」のときだけ控える。
+   ⚠️ 素材は画像そのもの（1本で1MB超になる）＝毎回積むと重い。だから【直近2本まで】。 */
+let matsUndo = [];
+function snapMats(){
+  snap();                                          // S 側はいつもの控えに積む
+  matsUndo.push({ at:undoStack.length, mats:mats.map(m => ({ url:m.url, name:m.name, tint:m.tint || null, bg:m.bg || null })), sel });
+  if(matsUndo.length > 2) matsUndo.shift();
+}
 function undo(){
   if(!undoStack.length){ stat('戻せる先が無い'); return; }
+  const at = undoStack.length;                     // これから戻す一手の位置
   Object.assign(S, JSON.parse(undoStack.pop()));
+  // ⭐ その一手が「素材ごと入れ替えた」ものなら、素材も一緒に戻す
+  const mu = matsUndo.length && matsUndo[matsUndo.length - 1].at === at ? matsUndo.pop() : null;
+  if(mu){
+    (async () => {
+      mats = [];
+      for(const m of mu.mats){
+        await addMat(m.url, m.name);
+        const mm = mats[mats.length - 1]; mm.tint = m.tint; mm.bg = m.bg;
+      }
+      sel = Math.min(mu.sel ?? 0, mats.length - 1);
+      syncAll(); fitView(); draw();
+      stat('戻した — 素材も元に戻した（' + mats.length + ' 枚）');
+    })();
+    return;
+  }
   syncAll(); fitView(); draw();
   stat('戻した（残り ' + undoStack.length + '）');
 }
@@ -650,8 +686,26 @@ function draw(){
     cellPath(g, c, r, S.gap / 2); g.stroke();
     g.restore();
   };
-  if(tool === 1 && selCell) mark(selCell.c, selCell.r, false);
-  if(moveTo) mark(moveTo.c, moveTo.r, true);
+  if(tool === 1){
+    // 選んでいるマス＝実線。引っぱっている最中は、その行き先を破線で同じ数だけ出す
+    const d = (moveFrom && moveTo) ? { c:moveTo.c - moveFrom.c, r:moveTo.r - moveFrom.r } : null;
+    for(const k of selSet){
+      const [c, r] = k.split(',').map(Number);
+      mark(c, r, false);
+      if(d && (d.c || d.r)) mark(c + d.c, r + d.r, true);
+    }
+    /* 囲っている枠。⚠️ これも画面だけ（書き出しには入らない）。
+       🔴 選ぶ枠と同じ理由で、白1本だと白い柄の上で沈む＝黒を下に敷く。 */
+    if(band){
+      const x = Math.min(band.x0, band.x1), y = Math.min(band.y0, band.y1);
+      const w = Math.abs(band.x1 - band.x0), h = Math.abs(band.y1 - band.y0);
+      g.save();
+      g.setLineDash([6 / cam.s, 4 / cam.s]);
+      g.strokeStyle = 'rgba(0,0,0,.85)'; g.lineWidth = 3.5 / cam.s; g.strokeRect(x, y, w, h);
+      g.strokeStyle = '#fff';            g.lineWidth = 1.4 / cam.s; g.strokeRect(x, y, w, h);
+      g.restore();
+    }
+  }
 }
 
 /* ══ 置く ══
@@ -738,8 +792,31 @@ let layer = 0;                                     // 0=上に置く 1=地に置
    ⚠️ 左ドラッグは「置く」に取られているので、道具を分ける（置く／選ぶ）。
       修飾キーにすると触る画面（スマホ）で触れなくなる。 */
 let tool = 0;                                      // 0=置く 1=選ぶ
-let selCell = null;                                // 選んでいるマス {c,r}
+/* ⭐ 選んでいるマスは【集合】。1マスだけ選ぶのは「1個入った集合」という扱いにする。
+   ⚠️ ここを {c,r} 1個のままにして「複数のときだけ別の変数」にすると、
+      裏返す・動かす・枠を描くの3か所で毎回「1個か複数か」を見ることになる＝分岐が3本増える。 */
+let selSet = new Set();                            // 選んでいるマスの key の集合
 let moveFrom = null, moveTo = null;                // 引っぱって動かしている最中
+let band = null;                                   // 囲って選んでいる最中の枠（world 座標）
+const selKeys = () => [...selSet];
+function selAnchor(){                              // 集合の代表（stat 用）
+  const k = selKeys()[0]; if(!k) return null;
+  const [c, r] = k.split(',').map(Number); return { c, r };
+}
+function toWorld(px, py){ return { x:(px - cam.x) / cam.s, y:(py - cam.y) / cam.s }; }
+/* 囲った枠の中に【中心が入っている】マスを選ぶ。
+   ⭐ 中心で見るので、六角・三角の千鳥でもそのまま効く（行と列で数えると崩れる）。 */
+function pickBand(){
+  if(!band) return;
+  const x0 = Math.min(band.x0, band.x1), x1 = Math.max(band.x0, band.x1);
+  const y0 = Math.min(band.y0, band.y1), y1 = Math.max(band.y0, band.y1);
+  // Shift で囲ったときは【前の選択に足す】。囲い直すたびに消えると、離れた塊を2つ選べない
+  selSet = band.add ? new Set(band.base) : new Set();
+  for(let r = 0; r < S.rows; r++) for(let c = 0; c < S.cols; c++){
+    const p = center(c, r);
+    if(p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) selSet.add(key(c, r));
+  }
+}
 function put(c, r){
   const k = key(c, r);
   const cur = S.cells[k];
@@ -767,10 +844,45 @@ function onDown(e){
      ⚠️ ここでは盤を1つも書き換えない。押した時点で控えると「選んだだけ」で⌘Zが1回無駄になる。
         中身が動くのは離したとき（onUp）。 */
   if(tool === 1){
-    selCell = { c:h.c, r:h.r };
-    moveFrom = S.cells[key(h.c, h.r)] ? { c:h.c, r:h.r } : null;   // 空マスは動かしようがない
-    moveTo = null; draw(); e.preventDefault();
-    stat(moveFrom ? '選んだ — 引っぱると動く／裏返せる' : '空のマス');
+    const k = key(h.c, h.r);
+    /* ⭐ 触り方はイラレ／Figma と同じにする（覚え直さなくていい）
+       ①Shift ＝ 1マスずつ足す・外す
+       ②選んであるマスの上から引っぱる ＝ まとめて動かす
+       ③それ以外から引っぱる ＝ 囲って選ぶ */
+    /* 🔴 盤は起動した時点で埋まっている＝「空のマス」がどこにも無いことがある。
+          そのとき囲い始める場所が無くて、まとめて選べなくなる（画面で確かめて出た）。
+       ⭐ Shift を押している間は【どこからでも囲える】。押しただけなら1マスの足す／外す。 */
+    if(e.shiftKey){
+      const w = toWorld(t.clientX, t.clientY);
+      moveFrom = moveTo = null;
+      band = { x0:w.x, y0:w.y, x1:w.x, y1:w.y, live:false, sx:t.clientX, sy:t.clientY,
+               add:true, base:new Set(selSet), tap:k };
+      draw(); e.preventDefault();
+      stat('Shift — 押すと1マス足す・外す／引っぱると囲って足す');
+      return;
+    }
+    if(selSet.has(k)){
+      moveFrom = { c:h.c, r:h.r }; moveTo = null; band = null;
+      draw(); e.preventDefault();
+      stat(selSet.size > 1 ? selSet.size + ' マスを引っぱって動かす' : '選んだ — 引っぱると動く／裏返せる');
+      return;
+    }
+    /* ⚠️ 盤は一面マスなので「何もない所」が無い。だから
+         絵の入っているマス ＝ 選ぶ（引っぱると動く）
+         空のマス           ＝ 囲って選ぶ（動かすものが無い）
+       で分ける。これは前からの「空マスは動かしようがない」と同じ線。 */
+    selSet.clear(); selSet.add(k);
+    moveTo = null;
+    if(S.cells[k]){
+      moveFrom = { c:h.c, r:h.r }; band = null;
+      stat('選んだ — 引っぱると動く／裏返せる');
+    }else{
+      const w = toWorld(t.clientX, t.clientY);
+      moveFrom = null;
+      band = { x0:w.x, y0:w.y, x1:w.x, y1:w.y, live:false, sx:t.clientX, sy:t.clientY };
+      stat('空のマス — 引っぱると囲って選べる');
+    }
+    draw(); e.preventDefault();
     return;
   }
   snap();                                    // ⭐ 操作の直前に控える
@@ -782,6 +894,15 @@ function onMove(e){
   if(e.touches && e.touches.length > 1) return;
   const t = e.touches ? e.touches[0] : e;
   if(tool === 1){
+    if(band){
+      // ⚠️ 数px の震えで「囲う」に化けないように、動いてから効かせる
+      if(!band.live && Math.hypot(t.clientX - band.sx, t.clientY - band.sy) < 4) return;
+      band.live = true;
+      const w = toWorld(t.clientX, t.clientY);
+      band.x1 = w.x; band.y1 = w.y;
+      pickBand(); draw(); e.preventDefault();
+      return;
+    }
     if(!moveFrom) return;
     const h = hit(t.clientX, t.clientY);
     const now = (h && (h.c !== moveFrom.c || h.r !== moveFrom.r)) ? { c:h.c, r:h.r } : null;
@@ -800,16 +921,60 @@ function onMove(e){
 }
 function onUp(){
   if(tool === 1){
+    if(band){
+      const live = band.live, tap = band.tap; band = null;
+      // 引っぱらずに離した＝ただ押した。Shift のときはその1マスを足す／外す
+      if(!live && tap != null){
+        selSet.has(tap) ? selSet.delete(tap) : selSet.add(tap);
+      }
+      draw();
+      stat(selSet.size ? selSet.size + ' マス選んでいる' : '選んでいない');
+      return;
+    }
     if(moveFrom && moveTo){
-      snap();
-      const a = key(moveFrom.c, moveFrom.r), b = key(moveTo.c, moveTo.r);
-      const av = S.cells[a], bv = S.cells[b];
-      /* ⭐ 空へ動かす＝移す／入っている所へ動かす＝【入れ替える】。
-         ⚠️ 上書きにすると、動かしただけで元の絵が消える＝取り返しがつかない見え方になる。 */
-      if(bv) S.cells[a] = bv; else delete S.cells[a];
-      S.cells[b] = av;
-      selCell = { c:moveTo.c, r:moveTo.r };
-      stat(bv ? '入れ替えた' : '動かした');
+      const dc = moveTo.c - moveFrom.c, dr = moveTo.r - moveFrom.r;
+      const ks = selKeys();
+      if(ks.length === 1){
+        snap();
+        const a = ks[0], b = key(moveTo.c, moveTo.r);
+        const av = S.cells[a], bv = S.cells[b];
+        /* ⭐ 1マス＝空へ動かす＝移す／入っている所へ動かす＝【入れ替える】。
+           ⚠️ 上書きにすると、動かしただけで元の絵が消える＝取り返しがつかない見え方になる。 */
+        if(bv) S.cells[a] = bv; else delete S.cells[a];
+        if(av) S.cells[b] = av; else delete S.cells[b];
+        selSet = new Set([b]);
+        stat(bv ? '入れ替えた' : '動かした');
+      }else{
+        /* ⭐ 複数＝【持ち上げて置く】（元は空になり、先は上書き）。
+           🔴 入れ替えにはできない：1マスずらすと元の集合と先の集合が重なり、
+              同じマスへ2つ書き込むことになって決まらない。ここは仕方なく規則が分かれる。
+           ⚠️ そのぶん「何マスに上書きしたか」を必ず言う。戻すのは ⌘Z。 */
+        let out = false;
+        for(const k of ks){
+          const [c, r] = k.split(',').map(Number);
+          const c2 = c + dc, r2 = r + dr;
+          if(c2 < 0 || r2 < 0 || c2 >= S.cols || r2 >= S.rows){ out = true; break; }
+        }
+        if(out){
+          // ⚠️ はみ出す分だけ捨てると、黙って絵が消える。丸ごと断る方が事故がない
+          stat('盤からはみ出すので動かさなかった');
+        }else{
+          snap();
+          const lift = new Map();
+          for(const k of ks){ if(S.cells[k]) lift.set(k, S.cells[k]); delete S.cells[k]; }
+          let over = 0; const next = new Set();
+          for(const k of ks){
+            const [c, r] = k.split(',').map(Number);
+            const b = key(c + dc, r + dr);
+            if(S.cells[b]) over++;
+            const v = lift.get(k);
+            if(v) S.cells[b] = v; else delete S.cells[b];
+            next.add(b);
+          }
+          selSet = next;
+          stat(ks.length + ' マス動かした' + (over ? '（' + over + ' マスに上書き・⌘Zで戻せる）' : ''));
+        }
+      }
     }
     moveFrom = moveTo = null; draw(); return;
   }
@@ -859,10 +1024,21 @@ function addMat(url, name){
 function syncMats(){
   const box = document.getElementById('mats');
   box.innerHTML = '';
+  /* ⭐ 「選ぶ」は手が置いてある棚の先頭に出す。
+        🔴 下のセグメントだけだと、素材を触っている手からいちばん遠い所にあって
+           「まとめて選ぶ」に辿り着けない（木下の指摘・2026-08-06）。 */
+  const pick = document.createElement('div');
+  pick.id = 'pickChip';
+  pick.className = 'mchip' + (tool === 1 ? ' on' : '');   // ⚠️ .m にしない＝素材の数に混ざらない
+  pick.textContent = '選'; pick.title = '選ぶ — マスを押す／Shift＋引っぱって囲う';
+  pick.addEventListener('click', () => setTool(tool === 1 ? 0 : 1));
+  box.appendChild(pick);
   const era = document.createElement('div');
   era.className = 'm era' + (sel < 0 ? ' on' : '');
   era.textContent = '消'; era.title = '消しゴム';
-  era.addEventListener('click', () => { sel = -1; syncMats(); syncTint(); });
+  /* ⚠️ 選ぶの最中に素材や消を押しても何も起きないと「触れるのに効かない」になる。
+     ⭐ 押したら置くに戻す＝棚はいつでも意味を持つ。 */
+  era.addEventListener('click', () => { sel = -1; if(tool === 1) setTool(0, true); syncMats(); syncTint(); });
   box.appendChild(era);
   mats.forEach((m, i) => {
     const d = document.createElement('div');
@@ -871,7 +1047,7 @@ function syncMats(){
     d.style.backgroundImage = 'url(' + (m.tint ? tintOf(m).toDataURL('image/png') : m.url) + ')';
     d.style.backgroundColor = m.bg || '#1a1a1a';
     d.title = m.name;
-    d.addEventListener('click', () => { sel = i; syncMats(); syncTint(); });
+    d.addEventListener('click', () => { sel = i; if(tool === 1) setTool(0, true); syncMats(); syncTint(); });
     const x = document.createElement('div');
     x.className = 'x'; x.textContent = '×'; x.title = 'この素材を外す';
     x.addEventListener('click', ev => {
@@ -1055,7 +1231,7 @@ async function loadWork(file, label){
   if(el) el.textContent = label + ' を読み込み中…';
   try{
     const d = await (await fetch('works/' + file, { cache:'no-store' })).json();
-    snap();
+    snapMats();                                    // ⭐ 素材ごと入れ替わるので、素材も控える
     /* ⚠️ 流れ・FPS が無い控え（アニメーションを入れる前のもの）を読んだら既定へ戻す。
        Object.assign は欠けたキーを触らないので、前の盤の流れを引きずってしまう。 */
     Object.assign(S, d.S);
@@ -1068,7 +1244,7 @@ async function loadWork(file, label){
     }
     sel = Math.min(d.sel ?? 0, mats.length - 1); rot = d.rot || 0;
     camTouched = false; syncAll(); fitView(true); draw();
-    stat(label + ' を開いた — ' + mats.length + ' 素材 / ' + Object.keys(S.cells).length + ' マス');
+    stat(label + ' を開いた — ' + mats.length + ' 素材 / ' + Object.keys(S.cells).length + ' マス（⌘Zで素材ごと戻せる）');
   }catch(err){ stat(label + ' を開けなかった — ' + err.message); }
 }
 async function syncWorks(){
@@ -1094,7 +1270,7 @@ document.getElementById('jfile').addEventListener('change', async e => {
     if(d && (d.kind === 'engine' || (!d.S && d.P)))
       throw new Error('これは【粒のエンジンの設定】です。素材を作る（粒のエンジン）を開いて、その中の「設定を読む」で読んでください');
     if(!d || !d.S) throw new Error('盤の控えではない');
-    snap();
+    snapMats();                                    // ⭐ ここも素材ごと入れ替わる
     /* ⚠️ 流れ・FPS が無い控え（アニメーションを入れる前のもの）を読んだら既定へ戻す。
        Object.assign は欠けたキーを触らないので、前の盤の流れを引きずってしまう。 */
     Object.assign(S, d.S);
@@ -1104,7 +1280,7 @@ document.getElementById('jfile').addEventListener('change', async e => {
     for(const m of (d.mats || [])){ await addMat(m.url, m.name); const mm = mats[mats.length-1]; mm.tint = m.tint || null; mm.bg = m.bg || null; }
     sel = Math.min(d.sel ?? 0, mats.length - 1); rot = d.rot || 0;
     syncAll(); fitView(); draw();
-    stat('読み込んだ — ' + mats.length + ' 素材 / ' + Object.keys(S.cells).length + ' マス');
+    stat('読み込んだ — ' + mats.length + ' 素材 / ' + Object.keys(S.cells).length + ' マス（⌘Zで素材ごと戻せる）');
   }catch(err){ stat('読めなかった — ' + err.message); }
 });
 
@@ -1176,33 +1352,46 @@ document.querySelectorAll('#layer button').forEach(b => b.addEventListener('clic
   stat(layer ? '地に置く（下の層）' : '上に置く');
 }));
 /* ══ 選ぶ・裏返す ══ */
-document.querySelectorAll('#tool button').forEach(b => b.addEventListener('click', () => {
-  tool = +b.dataset.v;
-  document.querySelectorAll('#tool button').forEach(x => x.classList.toggle('on', x === b));
-  if(tool === 0){ selCell = null; moveFrom = moveTo = null; }   // 置くに戻したら枠を消す（残ると迷う）
+/* ⭐ 道具の切り替えは【この関数1本だけ】。
+   ⚠️ 切り替える所が2か所（下のセグメントと、素材の棚の「選」）あるので、
+      それぞれで tool を書き換えると片方だけ効かなくなる（色ピッカーで踏んだ穴と同じ型）。 */
+function setTool(v, quiet){
+  tool = v;
+  document.querySelectorAll('#tool button').forEach(x => x.classList.toggle('on', +x.dataset.v === v));
+  if(tool === 0){ selSet.clear(); moveFrom = moveTo = null; band = null; }   // 置くに戻したら枠を消す（残ると迷う）
   cv.style.cursor = tool === 1 ? 'default' : 'crosshair';
   document.body.classList.toggle('picking', tool === 1);        // ⭐ 素材の棚を触っていても見える印
-
-  draw(); stat(tool ? '選ぶ — マスを押す／引っぱると動く' : '置く');
-}));
+  const chip = document.getElementById('pickChip');
+  if(chip) chip.classList.toggle('on', tool === 1);
+  draw();
+  if(!quiet) stat(tool ? '選ぶ — マスを押す／Shift＋引っぱって囲う' : '置く');
+}
+document.querySelectorAll('#tool button').forEach(b => b.addEventListener('click', () => setTool(+b.dataset.v)));
 /* ⭐ 裏返しは焼き直しではなく【描くときに返している】＝素材は1枚のまま増えない。
    ⚠️ 効く先は「上に置く／地に置く」に従う。その層に絵が無いときは黙って何もしないのでなく言う
       （＝「触れるのに効かない」を作らない）。 */
 function flipSel(k){
-  if(tool !== 1 || !selCell) return stat('先に「選ぶ」にしてマスを押す');
-  const cur = S.cells[key(selCell.c, selCell.r)];
-  const has = cur && (layer === 1 ? cur.bm != null : cur.m != null);
-  if(!has) return stat(layer === 1 ? 'このマスに地の絵が無い' : 'このマスに上の絵が無い');
+  if(tool !== 1 || !selSet.size) return stat('先に「選ぶ」にしてマスを押す');
+  // ⭐ 選んでいるマス全部に効く。その層に絵が無いマスは黙って飛ばす（数は最後に言う）
+  const ks = selKeys().filter(x => {
+    const cur = S.cells[x];
+    return cur && (layer === 1 ? cur.bm != null : cur.m != null);
+  });
+  if(!ks.length) return stat(layer === 1 ? '選んだマスに地の絵が無い' : '選んだマスに上の絵が無い');
   snap();
-  if(k === 'r'){
-    if(layer === 1) cur.br = ((cur.br || 0) + 1) % 4;
-    else            cur.r  = ((cur.r  || 0) + 1) % 4;
-  }else{
-    const p = (layer === 1 ? 'b' : '') + k;        // fx / fy / bfx / bfy
-    cur[p] = cur[p] ? 0 : 1;
+  for(const x of ks){
+    const cur = S.cells[x];
+    if(k === 'r'){
+      if(layer === 1) cur.br = ((cur.br || 0) + 1) % 4;
+      else            cur.r  = ((cur.r  || 0) + 1) % 4;
+    }else{
+      const p = (layer === 1 ? 'b' : '') + k;      // fx / fy / bfx / bfy
+      cur[p] = cur[p] ? 0 : 1;
+    }
   }
   draw();
-  stat((layer === 1 ? '地' : '上') + 'の絵を ' + ({ fx:'左右反転した', fy:'上下反転した', r:'回した' })[k]);
+  stat((layer === 1 ? '地' : '上') + 'の絵を ' + ({ fx:'左右反転した', fy:'上下反転した', r:'回した' })[k]
+       + '（' + ks.length + ' マス）');
 }
 document.getElementById('flipX').addEventListener('click', () => flipSel('fx'));
 document.getElementById('flipY').addEventListener('click', () => flipSel('fy'));
@@ -1215,6 +1404,11 @@ addEventListener('keydown', e => {
   if(k === 'h') flipSel('fx');
   else if(k === 'v') flipSel('fy');
   else if(k === 'r') flipSel('r');
+  // ⭐ 選び直しの逃げ道。選んだ枠が残っていると「なぜ効くのか」が分からなくなる
+  else if(k === 'escape' && tool === 1 && (selSet.size || band)){
+    selSet.clear(); moveFrom = moveTo = null; band = null;
+    draw(); stat('選ぶのをやめた');
+  }
 });
 document.querySelectorAll('#guide button').forEach(b => b.addEventListener('click', () => {
   S.guide = +b.dataset.v;
