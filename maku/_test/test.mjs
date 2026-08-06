@@ -255,7 +255,56 @@ ok('隙間を入れても両方の色は消えない', stripe.cg.blue > 30 && st
    `青=${stripe.cg.blue} 黄=${stripe.cg.yellow}`);
 ok('丸みで帯に明暗がつく', stripe.round > 100, JSON.stringify(stripe));
 
-console.log('\n[12] 描き終わりまでJSエラーが出ていない');
+console.log('\n[12] 粒（マス目に落とす）');
+/* ⭐ 粒 TSUBU の効きを膜の上で出す。0＝なしで【これまでどおりなめらかな字】。
+   🔴 いちばん見たいのは「字を焼き直すのでなく面の上で落としている」こと＝
+      画像の版にも同じくかかる。字だけで測ると、そこが抜けても通ってしまう。 */
+const grain = await page.evaluate(async ()=>{
+  const c = document.getElementById('gl');
+  const gl2 = c.getContext('webgl') || c.getContext('experimental-webgl');
+  const w = c.width, h = c.height;
+  const grab = async ()=>{ await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const px = new Uint8Array(w*h*4); gl2.readPixels(0,0,w,h,gl2.RGBA,gl2.UNSIGNED_BYTE,px); return px; };
+  const count = (A,B)=>{ let n=0;
+    for(let y=0;y<h;y+=2) for(let x=0;x<w;x+=2){ const i=(y*w+x)*4;
+      if(Math.abs(A[i]-B[i])>8 || Math.abs(A[i+1]-B[i+1])>8 || Math.abs(A[i+2]-B[i+2])>8) n++; }
+    return n; };
+
+  resetAll();
+  const s = SHEETS[0]; s.text = 'あ'; bakeSheet(s);
+  SHEETS.length = 1; curSheet = 0; refreshSheets();
+  P.look = 0; P.grain = 0; P.grainInk = 0; syncInk();
+  const off = await grab();
+  P.grain = 40;                    const on   = await grab();
+  P.grainInk = 1;                  const bit  = await grab();
+  P.grain = 0; P.grainInk = 0;     const back = await grab();
+
+  /* 画像の版でも粒がかかるか＝面の上で落としている証拠。
+     ⚠️ 画像は uSrc==1 で早い段階に return する道を通るので、そこを通していないと効かない。 */
+  /* ⚠️ 測る画像は【細かく強い模様】にする。なめらかな板だと、マスの中心で拾い直しても
+     隣のマスとの色差が小さく、効いていても閾値に届かない＝テストが嘘をつく。 */
+  const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+  const g2d = cv.getContext('2d');
+  for(let y=0;y<64;y++) for(let x=0;x<64;x++){
+    g2d.fillStyle = ((x + y) % 2) ? '#ff2020' : '#2040ff';    // 1pxごとの市松
+    g2d.fillRect(x,y,1,1);
+  }
+  const img = new Image();
+  await new Promise(r=>{ img.onload = r; img.src = cv.toDataURL(); });
+  addImageSheet(img);
+  await new Promise(r=>setTimeout(r,150));
+  P.grain = 0;                     const imgOff = await grab();
+  P.grain = 30;                    const imgOn  = await grab();
+  P.grain = 0;
+  return { on: count(off,on), bit: count(on,bit), back: count(off,back), img: count(imgOff,imgOn) };
+});
+ok('粒を上げると絵が変わる', grain.on > 100, JSON.stringify(grain));
+ok('「色もマスごと」で絵が変わる', grain.bit > 50, JSON.stringify(grain));
+ok('⭐ 粒を0に戻すと元の絵に戻る（既定＝これまでのなめらかな字）', grain.back === 0, `違う画素=${grain.back}`);
+ok('🔴 粒は【画像の版】にもかかる（面の上で落としている）', grain.img > 100,
+   `画像の変化画素=${grain.img} ← 0なら字だけに効いている＝焼き直しになっている`);
+
+console.log('\n[13] 描き終わりまでJSエラーが出ていない');
 ok('通しでJSエラーなし', errors.length === 0, errors.slice(0,3).join(' | '));
 
 // ⚠️ パスに日本語が入る＝import.meta.url は %E5.. になっている。decode してから渡す
