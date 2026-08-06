@@ -198,7 +198,64 @@ const undo = await page.evaluate(async ()=>{
 ok('⌘Z で歪みが戻る（版の中に入っているので控えに乗る）', undo.after === undo.before,
    JSON.stringify(undo));
 
-console.log('\n[11] 描き終わりまでJSエラーが出ていない');
+console.log('\n[11] 縞（金属）── 段・隙間・色数・丸み');
+/* ⭐ ここは「刷った帯」に寄せるための4つ。既定（0/0/1/0）では【これまでと同じなめらかな金属】。
+   🔴 いちばん見たいのは隙間：明暗で抜くと【暗いほうの色が丸ごと消えて2色刷りが1色になる】。
+      色数2で隙間を入れたとき、青も黄も残っていることを画素で確かめる。 */
+const stripe = await page.evaluate(async ()=>{
+  const c = document.getElementById('gl');
+  const gl2 = c.getContext('webgl') || c.getContext('experimental-webgl');
+  const w = c.width, h = c.height;
+  const grab = async ()=>{ await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const px = new Uint8Array(w*h*4); gl2.readPixels(0,0,w,h,gl2.RGBA,gl2.UNSIGNED_BYTE,px); return px; };
+  const count = (A,B)=>{ let n=0;
+    for(let y=0;y<h;y+=2) for(let x=0;x<w;x+=2){ const i=(y*w+x)*4;
+      if(Math.abs(A[i]-B[i])>8 || Math.abs(A[i+1]-B[i+1])>8 || Math.abs(A[i+2]-B[i+2])>8) n++; }
+    return n; };
+  const inks = px=>{ let blue=0, yellow=0;
+    for(let y=0;y<h;y+=2) for(let x=0;x<w;x+=2){ const i=(y*w+x)*4;
+      if(px[i+2] > 90 && px[i+2] > px[i] + 40) blue++;                       // 青の帯
+      if(px[i] > 90 && px[i+1] > 90 && px[i+2] < px[i] - 40) yellow++; }     // 黄の帯
+    return { blue, yellow }; };
+
+  resetAll();
+  const s = SHEETS[0]; s.text = 'あいう'; bakeSheet(s);
+  SHEETS.length = 1; curSheet = 0; refreshSheets();
+  P.look = 0; P.density = 20; syncInk();
+  const base = await grab();
+
+  P.stSteps = 5;                        const steps = await grab();
+  P.stSteps = 0;                        const back  = await grab();
+  P.stInkN = 2; INKC[0] = '#1e56d6'; INKC[1] = '#e8e02a'; syncInk();
+  const twoColor = await grab();
+  const c2 = inks(twoColor);
+  P.stGap = 30;                         const gap = await grab();
+  const cg = inks(gap);
+  P.stGap = 0; P.stRound = 90;          const round = await grab();
+
+  return { steps: count(base, steps), back: count(base, back),
+           color: count(base, twoColor), gap: count(twoColor, gap), round: count(twoColor, round),
+           c2, cg };
+});
+console.log(`   隙間の前後：青 ${stripe.c2.blue}→${stripe.cg.blue} ／ 黄 ${stripe.c2.yellow}→${stripe.cg.yellow}`);
+ok('段を上げると絵が変わる', stripe.steps > 100, JSON.stringify(stripe));
+ok('⭐ 段を0に戻すと元の絵に戻る（既定＝これまでの金属）', stripe.back === 0, `違う画素=${stripe.back}`);
+ok('色数2で色がつく', stripe.color > 100, JSON.stringify(stripe));
+ok('色数2＝青と黄が両方出ている', stripe.c2.blue > 50 && stripe.c2.yellow > 50, JSON.stringify(stripe.c2));
+ok('隙間を入れると絵が変わる', stripe.gap > 100, JSON.stringify(stripe));
+/* 🔴 ここが番人。明暗（g）で抜く実装だと【明るい色は1画素も減らない】。
+   「どちらの色も残っている」だけでは通ってしまう（青は半分残るので）。
+   ⭐ 見るのは「両方の色が削れているか」＝隙間は帯と帯のあいだに入るもの。 */
+const keepB = stripe.cg.blue / Math.max(stripe.c2.blue, 1);
+const keepY = stripe.cg.yellow / Math.max(stripe.c2.yellow, 1);
+ok('🔴 隙間は【どちらの色も】削る（明暗で抜くと明るい色が無傷で残る）',
+   keepB < 0.95 && keepY < 0.95,
+   `青の残り=${(keepB*100).toFixed(0)}% 黄の残り=${(keepY*100).toFixed(0)}% ← 片方が100%なら明暗で抜いている`);
+ok('隙間を入れても両方の色は消えない', stripe.cg.blue > 30 && stripe.cg.yellow > 30,
+   `青=${stripe.cg.blue} 黄=${stripe.cg.yellow}`);
+ok('丸みで帯に明暗がつく', stripe.round > 100, JSON.stringify(stripe));
+
+console.log('\n[12] 描き終わりまでJSエラーが出ていない');
 ok('通しでJSエラーなし', errors.length === 0, errors.slice(0,3).join(' | '));
 
 // ⚠️ パスに日本語が入る＝import.meta.url は %E5.. になっている。decode してから渡す
