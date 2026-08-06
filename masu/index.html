@@ -76,7 +76,12 @@
     font-family:'Space Mono',monospace;font-size:8px;opacity:.6;}
   #mats .m .x{position:absolute;top:-5px;right:-5px;width:14px;height:14px;border-radius:50%;
     background:var(--ink);color:var(--paper);font-size:9px;line-height:14px;text-align:center;display:none;}
-  #mats .m:hover .x{display:block;}
+  /* 🔴🔴 :hover で中身の見え方を変える要素は、タッチ端末では
+        【1回目のタップが hover に食われて、2回目でやっと押せる】になる。
+        木下＝「モバイルで素材を変更する際に、二度タップしないと選択できない」2026-08-06。
+     ⭐ 指の端末では最初から出しておく＝1回で選べる。 */
+  @media (hover: hover){ #mats .m:hover .x{display:block;} }
+  @media (hover: none){  #mats .m .x{display:block;} }
   #hud{position:fixed;left:16px;top:16px;z-index:20;font-family:"Space Mono",monospace;
     font-size:8.5px;letter-spacing:.14em;color:#fff;opacity:.55;line-height:2;}
   /* ⭐ いま「選ぶ」なのを、素材の棚を触っている間も見えるようにする印。
@@ -383,8 +388,8 @@
   <button class="sub" id="exJson">JSON を出す（盤の控え）</button>
   <button class="sub" id="imJson">JSON を読む（盤の控え）</button>
   <div class="seg" id="works" style="flex-wrap:wrap;margin-top:6px"></div>
-  <button class="sub" id="myMatsBtn" style="display:none">素材を自分のに戻す</button>
-  <div class="hint">⭐<b>作りかけをそのまま開く</b>（素材ごと入っている）。⚠️ いま置いているものは<b>上書きされる</b>ので、必要なら先に控えを出す。⌘Z で戻せる<br>⭐<b>作りかけを開くと棚の素材も入れ替わる</b>。入れ替わる直前の<b>自分の素材を1組だけ取っておく</b>ので、いくつ見比べても<b>「素材を自分のに戻す」でいつでも戻せる</b>（閉じても残る）<br>⚠️ 戻すのは<b>棚だけ</b>＝盤はそのまま。置いてある絵の当たり先が変わるので組み方は変わる（⌘Zで取り消せる）</div>
+  <button class="sub" id="myMatsBtn" style="display:none">自分のに戻す（盤ごと）</button>
+  <div class="hint">⭐<b>作りかけをそのまま開く</b>（素材ごと入っている）。<b>開いている間はボタンが点く</b>ので、<b>もう一度押せば自分の盤と棚に丸ごと戻る</b>（⌘Zの無いスマホでも戻れる）<br>⭐<b>作りかけを開くと棚の素材も入れ替わる</b>。入れ替わる直前の<b>自分の素材を1組だけ取っておく</b>ので、いくつ見比べても<b>「素材を自分のに戻す」でいつでも戻せる</b>（閉じても残る）<br>⚠️ 戻すのは<b>棚だけ</b>＝盤はそのまま。置いてある絵の当たり先が変わるので組み方は変わる（⌘Zで取り消せる）</div>
   <input type="file" id="jfile" accept="application/json,.json" style="display:none">
   <div class="hint">⭐<b>地なし</b>＝重ねるため（HARI や MAKU に持ち込む）。⭐控えには<b>素材の画像も入る</b>ので、これ1つで戻せる</div>
   <button class="sub" id="keepClr">このブラウザに残したものを消す</button>
@@ -460,10 +465,40 @@ function snapMats(){
       作りかけ由来の棚を、次の作りかけで上書きして確保しても意味がない。 */
 let myMats = null;                                 // {mats, sel} — 自分の素材（1組だけ）
 let matsFromWork = false;                          // いまの棚が作りかけ／控え由来か
+/* ⭐ 棚だけでなく【盤ごと】取っておく。
+      🔴 モバイルには ⌘Z が無い（木下＝「モバイルだとコマンドzはつかえない」2026-08-06）。
+         戻り道がキーボードにしか無い道具は、触る画面では戻れない道具と同じ。
+      ⭐ だから作りかけボタン自体を「点いている間は開いている」印にして、
+         もう一度押す＝出る（自分の盤と棚に丸ごと戻る）にする。 */
 function keepMy(){
   if(matsFromWork || !mats.length) return;         // 作りかけ由来なら確保しない（上書きしない）
-  myMats = { mats:dumpMats(), sel };
+  myMats = { mats:dumpMats(), sel, board:snapshot(), flow:S.flow, fps:S.fps, rot };
   syncMyBtn();
+}
+/* いま開いている作りかけ（ファイル名）。null＝自分の盤 */
+let workOn = null;
+function setWorkOn(f){
+  workOn = f;
+  document.querySelectorAll('#works button').forEach(b => b.classList.toggle('on', b.dataset.file === f));
+}
+/* ⭐ 作りかけから出る＝盤も棚も自分のに戻す。 */
+async function returnFromWork(){
+  const want = myMats;                             // 🔴 snapMats() の中の keepMy() が書き換えうるので先に掴む
+  if(!want || !want.mats.length){ setWorkOn(null); stat('戻る先が無い'); return; }
+  snapMats();                                      // ⚠️ 出る操作も「戻す（⌘Z）」で取り消せる
+  if(want.board) Object.assign(S, JSON.parse(want.board));
+  if(want.flow != null) S.flow = want.flow;
+  if(want.fps != null) S.fps = want.fps;
+  mats = [];
+  for(const m of want.mats){
+    await addMat(m.url, m.name);
+    const mm = mats[mats.length - 1];
+    if(mm){ mm.tint = m.tint || null; mm.bg = m.bg || null; }
+  }
+  sel = Math.min(want.sel ?? 0, mats.length - 1); rot = want.rot || 0;
+  myMats = want; matsFromWork = false; setWorkOn(null);
+  camTouched = false; syncAll(); fitView(true); draw();
+  stat('自分のに戻した — ' + mats.length + ' 素材 / ' + Object.keys(S.cells).length + ' マス（「戻す」で取り消せる）');
 }
 function syncMyBtn(){
   const b = document.getElementById('myMatsBtn');
@@ -471,25 +506,10 @@ function syncMyBtn(){
 }
 /* ⭐ 棚を木下自身が触ったら「これが自分の素材」に戻す（次の作りかけで確保される）。 */
 function matsTouched(){ matsFromWork = false; }
-async function restoreMy(){
-  if(!myMats || !myMats.mats.length){ stat('取っておいた素材が無い'); return; }
-  /* 🔴 先に掴んでおく。snapMats() の中の keepMy() が myMats を書き換えうるので、
-        掴まずに参照すると【いま棚にあるもの】を戻すだけの空振りになる。 */
-  const want = myMats;
-  snapMats();                                      // ⚠️ この戻しも ⌘Z で取り消せるようにする
-  mats = [];
-  for(const m of want.mats){
-    await addMat(m.url, m.name);
-    const mm = mats[mats.length - 1];
-    if(mm){ mm.tint = m.tint || null; mm.bg = m.bg || null; }
-  }
-  sel = Math.min(want.sel ?? 0, mats.length - 1);
-  myMats = want; matsFromWork = false;             // 取っておいたものは減らさない
-  syncAll(); draw();
-  /* ⚠️ 盤は触らない＝置いてある絵の【当たり先】が変わって見た目が組み変わる。
-        黙って変わると壊れたように見えるので必ず言う。 */
-  stat('素材を自分のに戻した（' + mats.length + ' 枚）— ⚠️盤はそのままなので絵の当たり先が変わる／⌘Zで取り消せる');
-}
+/* 🔴🔴 かつて「棚だけ戻す」を作ったが、これは【間違い】だった。
+      棚だけ差し替えると、置いてある絵の当たり先だけが変わって盤がバラバラになり、
+      地の色は作りかけのまま残る＝木下＝「素材配置はバラバラで、背景色も選択したのになっている」
+      （2026-08-06）。⭐ 戻るときは【盤ごと】が正しい。戻り道は returnFromWork() 1本だけにする。 */
 function undo(){
   if(!undoStack.length){ stat('戻せる先が無い'); return; }
   const at = undoStack.length;                     // これから戻す一手の位置
@@ -1278,6 +1298,8 @@ document.getElementById('exJson').addEventListener('click', () => {
 /* ⭐ 作りかけ（works/）を URL から直接開く。
    ⚠️ ファイル選択はスマホから使えない＝触れない状態を作らないため、こちらを正にする。 */
 async function loadWork(file, label){
+  // ⭐ 点いているものをもう一度押す＝出る（自分の盤と棚に戻る）
+  if(workOn === file) return returnFromWork();
   const el = document.getElementById('stat');
   if(el) el.textContent = label + ' を読み込み中…';
   try{
@@ -1295,9 +1317,10 @@ async function loadWork(file, label){
     }
     sel = Math.min(d.sel ?? 0, mats.length - 1); rot = d.rot || 0;
     matsFromWork = true;                           // ⭐ この棚は作りかけ由来＝次の作りかけで確保し直さない
+    setWorkOn(file);                               // ⭐ 点ける＝もう一度押せば出られる印
     camTouched = false; syncAll(); fitView(true); draw();
     stat(label + ' を開いた — ' + mats.length + ' 素材 / ' + Object.keys(S.cells).length + ' マス'
-         + (myMats ? '（⌘Zで戻せる／棚だけなら「素材を自分のに戻す」）' : '（⌘Zで素材ごと戻せる）'));
+         + (myMats ? '（もう一度【' + label + '】を押すと自分のに戻る）' : '（⌘Zで素材ごと戻せる）'));
   }catch(err){ stat(label + ' を開けなかった — ' + err.message); }
 }
 async function syncWorks(){
@@ -1309,12 +1332,15 @@ async function syncWorks(){
   for(const w of list){
     const btn = document.createElement('button');
     btn.textContent = w.name;
+    btn.dataset.file = w.file;                     // ⭐ 点いているのがどれかを見る目印
+    btn.title = w.name + ' を開く（開いている間は点く／もう一度押すと自分のに戻る）';
     btn.addEventListener('click', () => loadWork(w.file, w.name));
     box.appendChild(btn);
   }
+  setWorkOn(workOn);                               // 開き直したときも点いたままにする
 }
 document.getElementById('imJson').addEventListener('click', () => document.getElementById('jfile').click());
-document.getElementById('myMatsBtn').addEventListener('click', restoreMy);
+document.getElementById('myMatsBtn').addEventListener('click', returnFromWork);
 document.getElementById('jfile').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = '';
   if(!f) return;
@@ -1587,7 +1613,7 @@ function keepPayload(){
   /* ⭐ 自分の素材も一緒に残す＝閉じて開き直しても「素材を自分のに戻す」が効く。
      ⚠️ 素材の画像がもう1組ぶん増えるが、IndexedDB なので入る（localStorage の 5MB とは別）。 */
   return { app:'masu', kind:'board', v:1, S,
-    mats: dumpMats(), sel, rot, myMats, matsFromWork };
+    mats: dumpMats(), sel, rot, myMats, matsFromWork, workOn };
 }
 function keepSig(){
   try{
@@ -1632,6 +1658,7 @@ async function keepRestore(){
         その時は「まだ確保していない」＝ボタンを出さないだけにする（壊さない）。 */
   myMats = d.myMats && d.myMats.mats && d.myMats.mats.length ? d.myMats : null;
   matsFromWork = !!d.matsFromWork;
+  workOn = myMats ? (d.workOn || null) : null;     // ⚠️ 戻る先が無いのに点けない（押しても出られない）
   return mats.length > 0;
 }
 /* ⚠️ 逃げ道。消せない状態を作らない。 */
