@@ -514,9 +514,9 @@ const WARP_DEF = { vwarp:30, hwarp:0, freq:2, thick:0,
             twtop:0, twbot:0 };                     // 上下で別のねじれ
 const WARP_KEYS = Object.keys(WARP_DEF);
 const DEFAULTS = { font:0, dir:0, layer:0, track:0, leading:0, grab:0,
-            radius:30, strength:55, look:0, density:14, mesh:90, cut:0,
+            radius:30, strength:55, look:0, density:14, mesh:90, inkN:3, cut:0,
             /* 縞（金属）── 0／1 ＝これまでと同じなめらかな白黒の金属 */
-            stSteps:0, stGap:0, stRound:0, stFit:0, stAng:0,
+            stSteps:0, stGap:0, stInkN:1, stRound:0, stFit:0, stAng:0,
             /* 粒（マス目に落とす）── 0 ＝なし＝これまでどおりなめらかな字 */
             grain:0, grainInk:0, grainJit:0,
             /* 地のグラデ ── 色数 1 ＝単色＝これまでと同じ地 */
@@ -1009,8 +1009,7 @@ const PAPC_DEF = ['#f2d16b','#c8d4de','#7f95ab','#1d2733','#8a6f4e','#e9201c'];
 let PAPC = PAPC_DEF.slice();
 /* 字のインク（刷り）。⚠️ 地と同じ版で刷るので、色まで同じにすると字が地に溶ける＝別に持つ */
 const INKC_DEF = ['#e9201c','#141414','#2b4cc9','#f2d16b','#1f7a4d','#8a6f4e'];
-/* ⚠️ 字の色は【版の持ち物】になった（2026-08-07）＝面に置かない。
-   ここは既定値だけを持ち、版が生まれるときに配る（INKC_DEF）。 */
+let INKC = INKC_DEF.slice();
 const hex2rgb = h => { const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(h||'');
   return m ? [parseInt(m[1],16)/255, parseInt(m[2],16)/255, parseInt(m[3],16)/255] : [0,0,0]; };
 
@@ -1030,26 +1029,18 @@ function newSheet(kind, text){
            cols:1, rows:1, chars:[], cscale:[], crot:[], ctype:[],
            x:0, y:0, scale:1, rot:0,
            /* ⭐ 歪みは版の持ち物（ワープ・辺ごと・3層）＝版ごとに別の歪み方ができる */
-           warp:{ ...WARP_DEF }, layers:newLayers(),
-           /* ⭐ 2026-08-07 字の色も版の持ち物にした。参考は【上が青黄・下が赤】＝
-              重ねた版ごとに違う色で刷る。地（紙）は1枚のままなので面に置く。 */
-           inkc: INKC_DEF.slice(), inkN: 3, stInkN: 1 };
+           warp:{ ...WARP_DEF }, layers:newLayers() };
 }
-/* ⭐ 新しい版は【いま触っている版】の歪みと色を受け継ぐ。
+/* ⭐ 新しい版は【いま触っている版】の歪みを受け継ぐ。
    ＝足した瞬間に見え方が飛ばない（面にひとつだった頃の手ざわりを残す）。
-   受け継いだあとは別々に動かせる＝これが目的。 */
+   受け継いだあとは別々に動かせる＝これが今回の目的。 */
 function inheritWarp(s, src){
   const from = src || SHEETS[curSheet];
   if(!from) return s;
   if(from.warp)   s.warp   = { ...from.warp };
   if(from.layers) s.layers = from.layers.map(L=>({ ...L }));
-  if(from.inkc)   s.inkc   = from.inkc.slice();
-  if(from.inkN  != null) s.inkN   = from.inkN;
-  if(from.stInkN!= null) s.stInkN = from.stInkN;
   return s;
 }
-/* いま触っている版の色（無ければ既定を返す＝参照で落ちない） */
-const INK_ = () => (S_() && S_().inkc) || INKC_DEF;
 SHEETS = [ newSheet('text') ];
 SHEETS[0].layers = startLayers();          // 開幕の絵は1枚目だけに入れる
 
@@ -1185,11 +1176,11 @@ function render(t){
   gl.uniform1f(loc.uDensity, P.density);
   /* 刷り（字のインク）── 形は地と同じ版を渡す。色数と色だけ字用 */
   gl.uniform2f(loc.uRes, w, h);
-  /* ⚠️ 字の色と色数は【版ごと】＝下の版ループの中で入れる（ここで入れると全版が同じ色になる） */
+  gl.uniform1f(loc.uInkN,     Math.max(1, Math.round(P.inkN)));
   /* ⭐ 縞（金属）── 段・隙間・色数。0／1 が既定＝これまでと同じなめらかな金属 */
   gl.uniform1f(loc.uStSteps,  P.stSteps);
   gl.uniform1f(loc.uStGap,    P.stGap/100);           // つまみは 0〜90 ＝ 谷を抜く高さ
-
+  gl.uniform1f(loc.uStInkN,   Math.max(1, Math.round(P.stInkN)));
   gl.uniform1f(loc.uStRound,  P.stRound/100);
   gl.uniform1f(loc.uStFit,    P.stFit);
   gl.uniform1f(loc.uStAng,    P.stAng/100*1.5707963);   // ±90°
@@ -1203,7 +1194,7 @@ function render(t){
   gl.uniform1f(loc.uPapSteps, P.papSteps);
   gl.uniform1f(loc.uPapCx,    P.papCx/100);
   gl.uniform1f(loc.uPapCy,    P.papCy/100);
-
+  for(let i=0;i<6;i++) gl.uniform3fv(loc['uInk'+i], hex2rgb(INKC[i]));
   gl.uniform1i(loc.uTex, 0);
   if(ANCHORS.length){
     const uv = new Float32Array(48), dd = new Float32Array(48);
@@ -1223,12 +1214,6 @@ function render(t){
   SHEETS.forEach(s=>{
     putWarp(s.warp);                       // ⭐ この版のワープ・辺ごと
     putLayers(s.layers);                   // ⭐ この版の3層
-    /* ⭐ この版の色 ── 参考は上が青黄・下が赤＝版ごとに違う色で刷る。
-       ⚠️ 地（紙）は1枚のままなので面に置いてある（刷りの形も地と共有）。 */
-    const ic = s.inkc || INKC_DEF;
-    for(let i=0;i<6;i++) gl.uniform3fv(loc['uInk'+i], hex2rgb(ic[i] || INKC_DEF[i]));
-    gl.uniform1f(loc.uInkN,   Math.max(1, Math.round(s.inkN   != null ? s.inkN   : 3)));
-    gl.uniform1f(loc.uStInkN, Math.max(1, Math.round(s.stInkN != null ? s.stInkN : 1)));
     // 版の矩形＝長辺を面の 1.0 に合わせる（枚数によらず同じ規則）
     const size = s.asp >= 1 ? [1, 1/s.asp] : [s.asp, 1];
     gl.uniform2f(loc.uSheetSize, size[0], size[1]);
@@ -1406,16 +1391,6 @@ document.querySelectorAll('#panel input[type=range]').forEach(r=>{
       s.layers[P.layer][key] = +r.value; if(val) val.textContent = r.value; });
     return;
   }
-  /* ⭐ 色数は【選んでいる版】に書く（字の色も版の持ち物にしたので） */
-  if(r.id === 'inkN' || r.id === 'stInkN'){
-    r.addEventListener('input', ()=>{
-      const sh = S_(); if(!sh) return;
-      sh[r.id] = +r.value;
-      if(val) val.textContent = r.value;
-      syncInk();
-    });
-    return;
-  }
   if(r.id === 'grain'){                             // ⭐ 目盛り→実マス数に写してから入れる
     r.addEventListener('input', ()=>{
       P.grain = grainFromSlider(+r.value);
@@ -1585,8 +1560,8 @@ function syncSheetUI(){
   const set = (id,v)=>{ const el=document.getElementById(id); if(!el) return;
     el.value = v; const t = el.parentElement.querySelector('.val'); if(t) t.textContent = el.value; };
   set('sx', s.x); set('sy', s.y); set('ss', Math.round(s.scale*100)); set('sr', s.rot);
-  /* ⭐ 歪み（ワープ・辺ごと・3層）と色も版の持ち物＝版を押したらつまみをその版の値に入れ替える */
-  syncWarpUI(); syncLayerUI(); syncInkUI(); syncInk();
+  /* ⭐ 歪み（ワープ・辺ごと・3層）も版の持ち物＝版を押したらつまみをその版の値に入れ替える */
+  syncWarpUI(); syncLayerUI();
   if(s.kind === 'text'){
     document.getElementById('txt').value = s.text;
     set('track', s.track); set('leading', s.leading);
@@ -1663,8 +1638,6 @@ function resetAll(){
     // ⭐ 歪みは版の持ち物になったので【全部の版】で初期値に戻す（3層はゼロ＝これまでと同じ）
     s.warp = { ...WARP_DEF };
     s.layers = newLayers();
-    // ⚠️ 色数は戻すが【選んだ色そのものは残す】（素材だから＝字を消さないのと同じ）
-    s.inkN = 3; s.stInkN = 1;
   });
   VIEW.zoom=1; VIEW.panx=0; VIEW.pany=0; VIEW.rotx=0; VIEW.roty=0;
   selChar = -1;
@@ -1678,7 +1651,7 @@ function resetAll(){
   document.querySelectorAll('#panel .seg').forEach(seg=>{
     seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on', +b.dataset.v === P[seg.id]));
   });
-  syncLayerUI(); syncWarpUI(); syncGrainUI(); syncInkUI();
+  syncLayerUI(); syncWarpUI(); syncGrainUI();
   syncGrad(); syncInk();                            // 地は色数1（単色）に戻る。⚠️選んだ色は残す
   P.fitz = 100; P.fitx = 0; P.fity = 0; syncViewUI();   // 絵の大きさ・位置も戻す（VIEW を戻したので合わせる）
   buildMesh();
@@ -1808,16 +1781,13 @@ syncGrad();
 function syncInk(){
   const metal = P.look === 0;
   /* ⭐ 見ている色数は「いま何を刷っているか」で変わる＝金属なら縞の色数・刷りなら字の色数。
-     ⚠️ 色も色数も【選んでいる版】の持ち物（2026-08-07）。 */
-  const sh = S_();
-  const inkN   = (sh && sh.inkN   != null) ? sh.inkN   : 3;
-  const stInkN = (sh && sh.stInkN != null) ? sh.stInkN : 1;
-  const n = Math.max(1, Math.round(metal ? stInkN : inkN));
+     色そのもの（字1〜6）は1組しか持たないので、出す数だけをここで決める。 */
+  const n = Math.max(1, Math.round(metal ? P.stInkN : P.inkN));
   document.body.classList.toggle('look-ink', P.look === 3);
   document.body.classList.toggle('look-stripe', metal || P.look === 2);
   document.body.classList.toggle('look-metal', metal);
   // 色見本は【刷り】と【縞に色をつけたとき】に出す
-  document.body.classList.toggle('look-color', P.look === 3 || (metal && stInkN >= 2));
+  document.body.classList.toggle('look-color', P.look === 3 || (metal && P.stInkN >= 2));
   for(let k=2;k<=6;k++) document.body.classList.toggle('ink-'+k, n >= k);
 }
 /* ══ 色のプリセット ══ 粒 TSUBU と同じ色群を持ってきた＝道具のあいだで色が揃う。
@@ -1835,22 +1805,11 @@ const PALS = [
 ];
 function applyPal(i){
   const p = PALS[i]; if(!p) return;
-  const sh = S_(); if(!sh) return;
-  sh.inkc = p.ink.slice();                 // ⭐ 色は版の持ち物＝選んでいる版だけ変わる
-  syncInkUI();
-  syncInk();
-}
-/* ⭐ 色見本と色数のつまみを【選んでいる版】の値に合わせる（版を押したら入れ替わる） */
-function syncInkUI(){
-  const sh = S_(); if(!sh) return;
-  const ic = sh.inkc || INKC_DEF;
+  INKC = p.ink.slice();
   document.querySelectorAll('input[type=color][data-ic]').forEach(c=>{
-    if(ic[+c.dataset.ic]) c.value = ic[+c.dataset.ic];
+    if(INKC[+c.dataset.ic]) c.value = INKC[+c.dataset.ic];
   });
-  [['inkN', sh.inkN != null ? sh.inkN : 3], ['stInkN', sh.stInkN != null ? sh.stInkN : 1]].forEach(([id,v])=>{
-    const el = document.getElementById(id); if(!el) return;
-    el.value = v; const t = el.parentElement.querySelector('.val'); if(t) t.textContent = v;
-  });
+  syncInk();
 }
 document.querySelectorAll('#pal button').forEach(b=>{
   b.addEventListener('click', ()=>{
@@ -1862,7 +1821,7 @@ document.querySelectorAll('#pal button').forEach(b=>{
 });
 document.querySelectorAll('input[type=color][data-ic]').forEach(c=>{
   c.addEventListener('input', ()=>{
-    const sh = S_(); if(sh && sh.inkc) sh.inkc[+c.dataset.ic] = c.value;
+    INKC[+c.dataset.ic] = c.value;
     /* ⭐ 手で色をいじったら、どのプリセットでもない状態にする
        ＝押した覚えのないプリセットが点いたままだと、いま何の色なのか嘘になる。 */
     P.pal = -1;
@@ -1933,10 +1892,8 @@ function sheetToJSON(s, withImage){
   const o = { kind:s.kind, text:s.text, font:s.font, dir:s.dir, track:s.track, leading:s.leading,
               x:s.x, y:s.y, scale:s.scale, rot:s.rot, asp:s.asp,
               cscale:(s.cscale||[]).map(a=>[a[0], a[1]]), crot:[...(s.crot||[])],
-              /* ⭐ 歪みと色は版の持ち物＝控えも版の中に入る（2026-08-06／07） */
-              warp:{ ...(s.warp || WARP_DEF) }, layers:(s.layers || newLayers()).map(L=>({ ...L })),
-              inkc:[...(s.inkc || INKC_DEF)], inkN:(s.inkN != null ? s.inkN : 3),
-              stInkN:(s.stInkN != null ? s.stInkN : 1) };
+              /* ⭐ 歪みは版の持ち物＝控えも版の中に入る（2026-08-06） */
+              warp:{ ...(s.warp || WARP_DEF) }, layers:(s.layers || newLayers()).map(L=>({ ...L })) };
   if(withImage && s.kind === 'image' && s.img){
     const c = document.createElement('canvas');
     c.width  = s.img.naturalWidth  || s.img.width;
@@ -1951,7 +1908,7 @@ function stateToJSON(withImage){
     /* v3＝歪み（ワープ・辺ごと・3層）が版の中に入った形。v2 以前は面にひとつだった＝読むときに全版へ配る */
     v: 3,
     P: { ...P },
-    PAPC: [...PAPC],
+    PAPC: [...PAPC], INKC: [...INKC],
     ANCHORS: ANCHORS.map(a=>({ ...a })),
     VIEW: { ...VIEW },
     cur: curSheet,
@@ -1973,12 +1930,8 @@ function applyState(o, done, imgs){
   const oldWarp = {};
   WARP_KEYS.forEach(k=>{ if(P[k] !== undefined){ oldWarp[k] = P[k]; delete P[k]; } });
   const oldLayers = o.LAYERS ? o.LAYERS.map(L=>({ ...L })) : null;
-  /* ⚠️ 古い控えは字の色が面にひとつ（o.INKC / P.inkN / P.stInkN）。版に配ってから P から落とす。 */
-  const oldInk    = o.INKC ? [...o.INKC] : INKC_DEF.slice();
-  const oldInkN   = (P.inkN   != null) ? P.inkN   : 3;
-  const oldStInkN = (P.stInkN != null) ? P.stInkN : 1;
-  delete P.inkN; delete P.stInkN;
   if(o.PAPC) PAPC = [...o.PAPC];
+  if(o.INKC) INKC = [...o.INKC];
   ANCHORS.length = 0; (o.ANCHORS||[]).forEach(a=>ANCHORS.push({ ...a }));
   Object.assign(VIEW, o.VIEW || {});
   // つまみ・切替・色の見た目を実体に合わせる（数字と実体をズラさない）
@@ -1996,6 +1949,7 @@ function applyState(o, done, imgs){
     });
   });
   document.querySelectorAll('input[type=color][data-pc]').forEach(c=>{ if(PAPC[+c.dataset.pc]) c.value = PAPC[+c.dataset.pc]; });
+  document.querySelectorAll('input[type=color][data-ic]').forEach(c=>{ if(INKC[+c.dataset.ic]) c.value = INKC[+c.dataset.ic]; });
   selChar = -1;
   syncLayerUI(); syncGrad(); syncInk(); syncViewUI(); syncGrainUI(); buildMesh(); layoutCanvas();
 
@@ -2023,11 +1977,6 @@ function applyState(o, done, imgs){
       x:d.x||0, y:d.y||0, scale:(d.scale != null ? d.scale : 1), rot:d.rot||0,
       cscale:(d.cscale||[]).map(a=>[a[0], a[1]]), crot:[...(d.crot||[])],
     });
-    /* ⭐ 色：新しい控えは版の中から。古い控えは【面にひとつだった色】を全版に配る
-       ＝開き直しても見え方が変わらない。 */
-    s.inkc   = [...(d.inkc || oldInk)];
-    s.inkN   = (d.inkN   != null) ? d.inkN   : oldInkN;
-    s.stInkN = (d.stInkN != null) ? d.stInkN : oldStInkN;
     /* ⭐ 歪み：新しい控え（v3）は版の中から。古い控えは【面にひとつだった値】を全版に配る
        ＝開き直しても見え方が変わらない。以降は版ごとに別々に動かせる。 */
     s.warp   = { ...WARP_DEF, ...oldWarp, ...(d.warp || {}) };

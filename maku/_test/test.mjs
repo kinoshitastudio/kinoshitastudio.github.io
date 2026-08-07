@@ -226,7 +226,7 @@ const stripe = await page.evaluate(async ()=>{
 
   P.stSteps = 5;                        const steps = await grab();
   P.stSteps = 0;                        const back  = await grab();
-  P.stInkN = 2; INKC[0] = '#1e56d6'; INKC[1] = '#e8e02a'; syncInk();
+  SHEETS[0].stInkN = 2; SHEETS[0].inkc[0] = '#1e56d6'; SHEETS[0].inkc[1] = '#e8e02a'; syncInk();
   const twoColor = await grab();
   const c2 = inks(twoColor);
   P.stGap = 30;                         const gap = await grab();
@@ -323,7 +323,7 @@ const square = await page.evaluate(async ()=>{
   s.text = '■■■■'; s.track = -10; bakeSheet(s);
   SHEETS.length = 1; curSheet = 0; refreshSheets();
   s.scale = 1.0; s.x = 0; s.y = 0;
-  P.look = 3; P.inkN = 2; INKC[0] = '#101010'; INKC[1] = '#f0f0f0';
+  P.look = 3; SHEETS[0].inkN = 2; SHEETS[0].inkc[0] = '#101010'; SHEETS[0].inkc[1] = '#f0f0f0';
   P.papSteps = 0; P.papN = 1;
   P.grain = 40; P.grainInk = 1; P.grainJit = 100;    // マスごとに2色がランダムに出る
   syncInk(); syncGrad();
@@ -375,12 +375,12 @@ console.log('\n[13] 色のプリセット');
    ⚠️ 「字の色が変わった」だけ見ると、地も変えてしまう実装でも通る＝地も必ず見る。 */
 const pal = await page.evaluate(()=>{
   resetAll();
-  P.look = 0; P.stInkN = 2; syncInk();
+  P.look = 0; SHEETS[0].stInkN = 2; syncInk();
   const papBefore = PAPC.slice();
-  const inkBefore = INKC.slice();
+  const inkBefore = SHEETS[0].inkc.slice();
   const btns = document.querySelectorAll('#pal button');
   btns[2].click();                                   // 熱
-  const inkAfter = INKC.slice(), papAfter = PAPC.slice();
+  const inkAfter = SHEETS[0].inkc.slice(), papAfter = PAPC.slice();
   const swatch = document.querySelector('input[data-ic="0"]').value;
   const lit = document.querySelectorAll('#pal button.on').length;
   // 手で色をいじったら、どのプリセットでもない状態に戻る
@@ -389,7 +389,7 @@ const pal = await page.evaluate(()=>{
   return { n: btns.length, changed: inkAfter[0] !== inkBefore[0],
            papSame: papAfter.every((v,i)=> v === papBefore[i]),
            swatch, lit, ink0: inkAfter[0],
-           afterHand: { ink: INKC[0], lit: document.querySelectorAll('#pal button.on').length } };
+           afterHand: { ink: SHEETS[0].inkc[0], lit: document.querySelectorAll('#pal button.on').length } };
 });
 ok('プリセットが6つある', pal.n === 6, JSON.stringify(pal));
 ok('押すと字の色が変わる', pal.changed && pal.ink0 === '#0d0000', JSON.stringify(pal));
@@ -458,7 +458,7 @@ const pipe = await page.evaluate(async ()=>{
   const s = SHEETS[0]; s.text = '■■■■\n■■■■'; bakeSheet(s);
   SHEETS.length = 1; curSheet = 0; refreshSheets();
   s.scale = 1.0; s.warp.vwarp = 0;
-  P.look = 0; P.stFit = 1; P.stInkN = 1; P.stRound = 0; P.grainInk = 0; P.grainJit = 0;
+  P.look = 0; P.stFit = 1; SHEETS[0].stInkN = 1; P.stRound = 0; P.grainInk = 0; P.grainJit = 0;
   P.grain = 20; syncGrainUI();  const n20 = await stripes();
   P.grain = 40; syncGrainUI();  const n40 = await stripes();
   P.grain = 20; syncGrainUI(); P.grainInk = 1;  const nBit = await stripes();
@@ -537,7 +537,7 @@ const cut = await page.evaluate(async ()=>{
   const s = SHEETS[0]; s.text = '文字'; bakeSheet(s);
   SHEETS.length = 1; curSheet = 0; refreshSheets();
   s.scale = 1.0; s.warp.vwarp = 0;
-  P.look = 0; P.grain = 0; P.stInkN = 1; P.cut = 0; syncInk();
+  P.look = 0; P.grain = 0; SHEETS[0].stInkN = 1; P.cut = 0; syncInk();
   const A = await grab();
   P.cut = 1;
   const B = await grab();
@@ -630,7 +630,7 @@ const gm = await page.evaluate(async ()=>{
   const s = SHEETS[0]; s.text = '文字'; bakeSheet(s);
   SHEETS.length = 1; curSheet = 0; refreshSheets();
   s.warp.vwarp = 0; s.scale = 1.2;
-  P.look = 3; P.inkN = 2; INKC[0] = '#ff8000'; INKC[1] = '#ffd080';
+  P.look = 3; SHEETS[0].inkN = 2; SHEETS[0].inkc[0] = '#ff8000'; SHEETS[0].inkc[1] = '#ffd080';
   P.cut = 0; P.grain = 30; P.grainJit = 0;
   P.grainInk = 0; const shape = await edge();      // 形だけ＝輪郭は階段
   P.grainInk = 2; const inkOnly = await edge();    // 色だけ＝輪郭はなめらか
@@ -678,7 +678,60 @@ ok('🔴 角度100＝縞が縦に流れる（よこに走査すると山が多�
    ang.tate.よこ走査 > ang.tate.たて走査 * 1.8,
    JSON.stringify(ang.tate) + ' ← 入れ替わらないなら角度が効いていない');
 
-console.log('\n[20] 描き終わりまでJSエラーが出ていない');
+console.log('\n[20] 字の色が版ごと（参考の「上が青黄・下が赤」）');
+const inks = await page.evaluate(async ()=>{
+  const c = document.getElementById('gl');
+  const gl2 = c.getContext('webgl') || c.getContext('experimental-webgl');
+  const w = c.width, h = c.height;
+  const grab = async ()=>{ await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const px = new Uint8Array(w*h*4); gl2.readPixels(0,0,w,h,gl2.RGBA,gl2.UNSIGNED_BYTE,px); return px; };
+  const hue = px => { let r=0,g=0,b=0,n=0;                 // 塗られている画素の平均色
+    for(let y=0;y<h;y+=2) for(let x=0;x<w;x+=2){ const i=(y*w+x)*4;
+      if(px[i]>50||px[i+1]>50||px[i+2]>50){ r+=px[i]; g+=px[i+1]; b+=px[i+2]; n++; } }
+    return n ? [Math.round(r/n), Math.round(g/n), Math.round(b/n)] : [0,0,0]; };
+  resetAll();
+  SHEETS.length = 1; curSheet = 0; refreshSheets();
+  const s1 = SHEETS[0]; s1.text = '文'; bakeSheet(s1); s1.warp.vwarp = 0; s1.x = -50;
+  /* ⚠️ 色数1は【墨】＝地のグラデと同じ規則（色数1なら今までと同じ）。色を見るなら2以上にする。 */
+  P.look = 3; s1.inkN = 2; s1.inkc[0] = '#2050ff'; s1.inkc[1] = '#80b0ff';   // 版1＝青
+  document.querySelector('#addSeg button[data-add="text"]').click();
+  const s2 = SHEETS[1]; s2.text = '字'; bakeSheet(s2); s2.x = 50;
+  s2.inkN = 2; s2.inkc[0] = '#ff3020'; s2.inkc[1] = '#ff9070';               // 版2＝赤
+  syncInk();
+  const all = SHEETS.slice();
+  SHEETS.length = 0; SHEETS.push(all[0]); const only1 = hue(await grab());
+  SHEETS.length = 0; SHEETS.push(all[1]); const only2 = hue(await grab());
+  SHEETS.length = 0; all.forEach(x=>SHEETS.push(x));
+  // 版を押し替えたとき色見本が入れ替わるか
+  document.querySelectorAll('#sheets button')[0].click();
+  const sw1 = document.querySelector('input[data-ic="0"]').value;
+  document.querySelectorAll('#sheets button')[1].click();
+  const sw2 = document.querySelector('input[data-ic="0"]').value;
+  return { only1, only2, sw1, sw2, 別々: all[0].inkc !== all[1].inkc };
+});
+ok('版ごとに色の入れ物が別（片方を変えても双子が動かない）', inks.別々, JSON.stringify(inks));
+ok('🔴 版1は青で刷られている', inks.only1[2] > inks.only1[0] + 40, JSON.stringify(inks.only1));
+ok('🔴 版2は赤で刷られている', inks.only2[0] > inks.only2[2] + 40,
+   JSON.stringify(inks.only2) + ' ← 版1と同じ色なら、色が面ぜんぶのまま');
+ok('版を押し替えると色見本も入れ替わる', inks.sw1 === '#2050ff' && inks.sw2 === '#ff3020',
+   `${inks.sw1} / ${inks.sw2}`);
+
+/* 古い控え（色が面にひとつだった頃）を読むと、その色が全部の版に配られる */
+const oldInk = await page.evaluate(async ()=>{
+  const old = { v:3, P:{ look:3, inkN:2 }, PAPC:[...PAPC], INKC:['#00cc66','#111111','#222222','#333333','#444444','#555555'],
+    ANCHORS:[], VIEW:{zoom:1,panx:0,pany:0,rotx:0,roty:0}, cur:0,
+    sheets:[ {kind:'text',text:'あ',x:-40,y:0,scale:1,rot:0,asp:1,cscale:[],crot:[]},
+             {kind:'text',text:'い',x:40,y:0,scale:1,rot:0,asp:1,cscale:[],crot:[]} ] };
+  await new Promise(r=> applyState(old, r));
+  return { n: SHEETS.length, c0: SHEETS[0].inkc[0], c1: SHEETS[1].inkc[0],
+           n0: SHEETS[0].inkN, pLeft: (P.inkN !== undefined) || (P.stInkN !== undefined) };
+});
+ok('古い控えの色が【全部の版】に配られる', oldInk.c0 === '#00cc66' && oldInk.c1 === '#00cc66',
+   JSON.stringify(oldInk));
+ok('古い控えの色数も版に入る', oldInk.n0 === 2, JSON.stringify(oldInk));
+ok('読んだあと P に色数が残らない（二重管理をしない）', !oldInk.pLeft, JSON.stringify(oldInk));
+
+console.log('\n[21] 描き終わりまでJSエラーが出ていない');
 ok('通しでJSエラーなし', errors.length === 0, errors.slice(0,3).join(' | '));
 
 // ⚠️ パスに日本語が入る＝import.meta.url は %E5.. になっている。decode してから渡す
