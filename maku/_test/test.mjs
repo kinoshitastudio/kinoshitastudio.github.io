@@ -641,7 +641,44 @@ ok('「形だけ」は輪郭が階段（中間色がほとんど出ない）',
 ok('🔴 「色だけ」は字の輪郭がなめらか（中間色が出る）',
    gm.inkOnly.mid > gm.shape.mid * 1.8, JSON.stringify(gm));
 
-console.log('\n[19] 描き終わりまでJSエラーが出ていない');
+console.log('\n[19] 縞の角度（面ぜんぶ）');
+/* 🔴 「絵が変わったか」では向きが変わったか分からない。
+   横に走査したときの山の数と、縦に走査したときの山の数を比べる＝向きが入れ替わるはず。 */
+const ang = await page.evaluate(async ()=>{
+  const c = document.getElementById('gl');
+  const gl2 = c.getContext('webgl') || c.getContext('experimental-webgl');
+  const w = c.width, h = c.height;
+  const peaks = async ()=>{
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const px = new Uint8Array(w*h*4); gl2.readPixels(0,0,w,h,gl2.RGBA,gl2.UNSIGNED_BYTE,px);
+    const at=(x,y)=>px[((y*w+x)*4)], lit=(x,y)=>{const i=(y*w+x)*4; return px[i]>40||px[i+1]>40||px[i+2]>40;};
+    const run = (fixed, horiz)=>{ let n=0, up=false, prev=-1;
+      const N = horiz ? w : h;
+      for(let i=0;i<N;i++){ const x = horiz ? i : fixed, y = horiz ? fixed : i;
+        if(!lit(x,y)) continue; const v = at(x,y);
+        if(prev>=0){ if(v>prev+6 && !up){ up=true; n++; } if(v<prev-6) up=false; } prev=v; }
+      return n; };
+    let by=0, bv=-1; for(let y=0;y<h;y+=2){ let n=0; for(let x=0;x<w;x+=2) if(lit(x,y)) n++; if(n>bv){bv=n;by=y;} }
+    let bx=0, bw=-1; for(let x=0;x<w;x+=2){ let n=0; for(let y=0;y<h;y+=2) if(lit(x,y)) n++; if(n>bw){bw=n;bx=x;} }
+    return { よこ走査: run(by, true), たて走査: run(bx, false) };
+  };
+  resetAll();
+  const s = SHEETS[0]; s.text = '■■\n■■'; bakeSheet(s);
+  SHEETS.length = 1; curSheet = 0; refreshSheets();
+  s.warp.vwarp = 0; s.scale = 1.0;
+  P.look = 0; P.density = 20; P.grain = 0; P.stAng = 0; syncInk();
+  const yoko = await peaks();               // 角度0＝横に流れる縞
+  P.stAng = 100;
+  const tate = await peaks();               // 角度100＝縦に流れる縞
+  return { yoko, tate };
+});
+ok('角度0＝縞は横に流れる（たてに走査すると山が多い）',
+   ang.yoko.たて走査 > ang.yoko.よこ走査 * 1.8, JSON.stringify(ang.yoko));
+ok('🔴 角度100＝縞が縦に流れる（よこに走査すると山が多い）',
+   ang.tate.よこ走査 > ang.tate.たて走査 * 1.8,
+   JSON.stringify(ang.tate) + ' ← 入れ替わらないなら角度が効いていない');
+
+console.log('\n[20] 描き終わりまでJSエラーが出ていない');
 ok('通しでJSエラーなし', errors.length === 0, errors.slice(0,3).join(' | '));
 
 // ⚠️ パスに日本語が入る＝import.meta.url は %E5.. になっている。decode してから渡す
