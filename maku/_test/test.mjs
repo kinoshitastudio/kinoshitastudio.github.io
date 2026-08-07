@@ -731,7 +731,51 @@ ok('古い控えの色が【全部の版】に配られる', oldInk.c0 === '#00c
 ok('古い控えの色数も版に入る', oldInk.n0 === 2, JSON.stringify(oldInk));
 ok('読んだあと P に色数が残らない（二重管理をしない）', !oldInk.pLeft, JSON.stringify(oldInk));
 
-console.log('\n[21] 描き終わりまでJSエラーが出ていない');
+console.log('\n[21] 縞の色の混ざり／可動域');
+/* 🔴 参考の帯は【帯の中で青→黄に連続して変わる】（間に緑が出る）。
+   段で選ぶだけでは青と黄しか出ない＝そこが塗りの本質的な差だった。
+   ⚠️ 「絵が変わったか」では測れない。青でも黄でもない【中間色】の画素を数える。 */
+const mix = await page.evaluate(async ()=>{
+  const c = document.getElementById('gl');
+  const gl2 = c.getContext('webgl') || c.getContext('experimental-webgl');
+  const w = c.width, h = c.height;
+  const mids = async ()=>{
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const px = new Uint8Array(w*h*4); gl2.readPixels(0,0,w,h,gl2.RGBA,gl2.UNSIGNED_BYTE,px);
+    let mid = 0, lit = 0;
+    for(let y=0;y<h;y+=2) for(let x=0;x<w;x+=2){ const i=(y*w+x)*4;
+      const r=px[i], g=px[i+1], bl=px[i+2];
+      if(Math.max(r,g,bl) < 70) continue;            // 地
+      lit++;
+      const blue = bl > r + 40, yellow = r > bl + 40;
+      if(!blue && !yellow) mid++;                    // 青でも黄でもない＝混ざった色
+    }
+    return { mid, lit };
+  };
+  resetAll();
+  const s = SHEETS[0]; s.text = '文'; bakeSheet(s);
+  SHEETS.length = 1; curSheet = 0; refreshSheets();
+  s.warp.vwarp = 0; s.scale = 1.4;
+  P.look = 0; P.density = 30; P.stGap = 0; P.stRound = 0; P.grain = 0;
+  s.stInkN = 2; s.inkc[0] = '#1e56d6'; s.inkc[1] = '#e8e02a'; syncInk();
+  P.stMix = 0;   const hard = await mids();
+  P.stMix = 100; const soft = await mids();
+  return { hard, soft };
+});
+ok('段でくっきり＝中間色がほとんど出ない', mix.hard.mid < mix.hard.lit * 0.25, JSON.stringify(mix.hard));
+ok('🔴 混ざり100＝帯の中で色が連続して変わる（中間色が出る）',
+   mix.soft.mid > mix.hard.mid * 1.8,
+   JSON.stringify(mix) + ' ← 増えないなら段で選んだままで、参考の塗りにならない');
+
+const range = await page.evaluate(()=>({
+  密度上限: +document.getElementById('density').max,
+  字間下限: +document.getElementById('track').min,
+  行間下限: +document.getElementById('leading').min,
+}));
+ok('帯を細くできる（密度の上限が上がっている）', range.密度上限 >= 100, JSON.stringify(range));
+ok('字をもっと詰められる（字間・行間の下限）', range.字間下限 <= -90 && range.行間下限 <= -90, JSON.stringify(range));
+
+console.log('\n[22] 描き終わりまでJSエラーが出ていない');
 ok('通しでJSエラーなし', errors.length === 0, errors.slice(0,3).join(' | '));
 
 // ⚠️ パスに日本語が入る＝import.meta.url は %E5.. になっている。decode してから渡す
