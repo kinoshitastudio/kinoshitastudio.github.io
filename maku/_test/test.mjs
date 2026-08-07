@@ -818,7 +818,45 @@ ok('🔴 光沢を上げると、塗られていた所が黒まで落ちる（�
    gloss.fallen < gloss.self * 0.5,
    `同じ場所のいちばん暗い所：光沢0=${gloss.self} → 光沢100=${gloss.fallen} ← 下がらないなら効いていない`);
 
-console.log('\n[23] 描き終わりまでJSエラーが出ていない');
+console.log('\n[23] マスごとのずれ／帯の中の黒');
+const blk = await page.evaluate(async ()=>{
+  const c = document.getElementById('gl');
+  const gl2 = c.getContext('webgl') || c.getContext('experimental-webgl');
+  const w = c.width, h = c.height;
+  const grab = async ()=>{ await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const px = new Uint8Array(w*h*4); gl2.readPixels(0,0,w,h,gl2.RGBA,gl2.UNSIGNED_BYTE,px); return px; };
+  const count = (A,B)=>{ let n=0;
+    for(let y=0;y<h;y+=2) for(let x=0;x<w;x+=2){ const i=(y*w+x)*4;
+      if(Math.abs(A[i]-B[i])>8 || Math.abs(A[i+1]-B[i+1])>8 || Math.abs(A[i+2]-B[i+2])>8) n++; }
+    return n; };
+  /* 🔴 黒の帯は【抜く】のでなく【黒く塗る】。地を赤にして、黒い画素が増えるかを見る
+     ＝抜いているだけなら地の赤が出るので、黒は増えない。 */
+  const black = px => { let n=0;
+    for(let y=0;y<h;y+=2) for(let x=0;x<w;x+=2){ const i=(y*w+x)*4;
+      if(px[i] < 40 && px[i+1] < 40 && px[i+2] < 40) n++; }
+    return n; };
+  resetAll();
+  const s = SHEETS[0]; s.text = '文'; bakeSheet(s);
+  SHEETS.length = 1; curSheet = 0; refreshSheets();
+  s.warp.vwarp = 0; s.scale = 1.5;
+  P.look = 0; P.density = 16; P.grain = 40; P.grainInk = 0; P.stFit = 1;
+  P.stRound = 100; P.stGloss = 0; P.grainAng = 0; P.grainPhase = 0; P.stBlack = 0;
+  s.stInkN = 2; s.inkc[0] = '#c08040'; s.inkc[1] = '#ffe0a0';
+  PAPC[0] = '#e0301e'; PAPC[1] = '#e0301e'; P.papN = 2;      // 地を赤にする
+  syncInk(); syncGrad();
+  const base = await grab(), blk0 = black(base);
+  P.grainPhase = 80; const phaseOn = await grab();
+  P.grainPhase = 0;  const phaseBack = await grab();
+  P.stBlack = 40;    const blackOn = await grab(); const blk1 = black(blackOn);
+  return { phase: count(base, phaseOn), phaseBack: count(base, phaseBack), blk0, blk1 };
+});
+ok('マスごとのずれで絵が変わる', blk.phase > 100, JSON.stringify(blk));
+ok('0に戻すと元の絵に戻る', blk.phaseBack === 0, `違う画素=${blk.phaseBack}`);
+ok('🔴 帯の中の黒は【黒く塗る】（地が赤でも黒が出る＝抜いていない）',
+   blk.blk1 > blk.blk0 + 100,
+   `黒い画素 ${blk.blk0} → ${blk.blk1} ← 増えないなら塗れていない（抜いているだけ）`);
+
+console.log('\n[24] 描き終わりまでJSエラーが出ていない');
 ok('通しでJSエラーなし', errors.length === 0, errors.slice(0,3).join(' | '));
 
 // ⚠️ パスに日本語が入る＝import.meta.url は %E5.. になっている。decode してから渡す
