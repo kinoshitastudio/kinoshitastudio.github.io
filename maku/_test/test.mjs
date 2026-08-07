@@ -277,7 +277,9 @@ const grain = await page.evaluate(async ()=>{
   const off = await grab();
   P.grain = 40;                    const on   = await grab();
   P.grainInk = 1;                  const bit  = await grab();
-  P.grain = 0; P.grainInk = 0;     const back = await grab();
+  P.grainJit = 70;                 const jit  = await grab();   // ⭐ マスごとのばらつき
+  P.grainJit = 0; P.grain = 0; P.grainInk = 0;
+  const back = await grab();
 
   /* 画像の版でも粒がかかるか＝面の上で落としている証拠。
      ⚠️ 画像は uSrc==1 で早い段階に return する道を通るので、そこを通していないと効かない。 */
@@ -296,13 +298,58 @@ const grain = await page.evaluate(async ()=>{
   P.grain = 0;                     const imgOff = await grab();
   P.grain = 30;                    const imgOn  = await grab();
   P.grain = 0;
-  return { on: count(off,on), bit: count(on,bit), back: count(off,back), img: count(imgOff,imgOn) };
+  return { on: count(off,on), bit: count(on,bit), jit: count(bit,jit), back: count(off,back), img: count(imgOff,imgOn) };
 });
 ok('粒を上げると絵が変わる', grain.on > 100, JSON.stringify(grain));
 ok('「色もマスごと」で絵が変わる', grain.bit > 50, JSON.stringify(grain));
+ok('⭐ ばらつきでマスごとに色が散る', grain.jit > 100, JSON.stringify(grain));
 ok('⭐ 粒を0に戻すと元の絵に戻る（既定＝これまでのなめらかな字）', grain.back === 0, `違う画素=${grain.back}`);
 ok('🔴 粒は【画像の版】にもかかる（面の上で落としている）', grain.img > 100,
    `画像の変化画素=${grain.img} ← 0なら字だけに効いている＝焼き直しになっている`);
+
+/* 🔴 マスが【正方形】か。vUV は版ローカルの 0..1 なので、版の実寸比で割り振らないと
+   横長の版では横に伸びた矩形になって粒に見えない（2026-08-07 に踏んだ）。
+   横長（4:1）の板を貼って、横のマス数が縦のマス数のおよそ4倍あるかを数える。 */
+const square = await page.evaluate(async ()=>{
+  const c = document.getElementById('gl');
+  const gl2 = c.getContext('webgl') || c.getContext('experimental-webgl');
+  const w = c.width, h = c.height;
+  resetAll();
+  /* ⚠️ 測るのは【字の版】。画像で測ろうとしたが、テクスチャの線形補間で
+     細かい模様が平均化されて潰れ、境目を数えられなかった。
+     字なら「粒のばらつき」が効く＝マスごとに色が変わるので、境目がそのまま数えられる。
+     ■ を4つ＝版が 4:1 の横長になり、中身はベタで走査線が通しやすい。 */
+  const s = SHEETS[0];
+  s.text = '■■■■'; s.track = -10; bakeSheet(s);
+  SHEETS.length = 1; curSheet = 0; refreshSheets();
+  s.scale = 1.0; s.x = 0; s.y = 0;
+  P.look = 3; P.inkN = 2; INKC[0] = '#101010'; INKC[1] = '#f0f0f0';
+  P.papSteps = 0; P.papN = 1;
+  P.grain = 40; P.grainInk = 1; P.grainJit = 100;    // マスごとに2色がランダムに出る
+  syncInk(); syncGrad();
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  const px = new Uint8Array(w*h*4); gl2.readPixels(0,0,w,h,gl2.RGBA,gl2.UNSIGNED_BYTE,px);
+  const at = (x,y)=> px[((y*w+x)*4)];
+  const lit = (x,y)=> { const i=(y*w+x)*4; return px[i]>60 || px[i+1]>60 || px[i+2]>60; };
+  // 字の中だけを走って「色が変わった回数」＝マスの切れ目を数える
+  const runX = (y)=>{ let n=0, prev=-999;
+    for(let x=0;x<w;x++){ if(!lit(x,y)) continue; const v=at(x,y);
+      if(prev>-999 && Math.abs(v-prev)>60) n++; prev=v; } return n; };
+  const runY = (x)=>{ let n=0, prev=-999;
+    for(let y=0;y<h;y++){ if(!lit(x,y)) continue; const v=at(x,y);
+      if(prev>-999 && Math.abs(v-prev)>60) n++; prev=v; } return n; };
+  /* ⚠️ 走査線は【いちばん字が詰まっている行／列】を通す。
+     字の外接の真ん中を通すと、■と■の字間（何も無い所）を走って 0 になる。 */
+  const best = (n, cnt)=>{ let bi=0, bv=-1;
+    for(let i=0;i<n;i++){ const v=cnt(i); if(v>bv){ bv=v; bi=i; } } return bi; };
+  const rowLit = y=>{ let n=0; for(let x=0;x<w;x+=2) if(lit(x,y)) n++; return n; };
+  const colLit = x=>{ let n=0; for(let y=0;y<h;y+=2) if(lit(x,y)) n++; return n; };
+  const by = best(h, rowLit), bx = best(w, colLit);
+  return { x: runX(by), y: runY(bx), line:[bx,by] };
+});
+const ratio = square.x / Math.max(square.y, 1);
+ok('🔴 マスが正方形（横長4:1の版でも粒が伸びない）', ratio > 2.5 && ratio < 6,
+   `横のマス数=${square.x} 縦のマス数=${square.y} 比=${ratio.toFixed(2)} ← 1前後なら版の形を見ずに切っている`);
 
 console.log('\n[13] 描き終わりまでJSエラーが出ていない');
 ok('通しでJSエラーなし', errors.length === 0, errors.slice(0,3).join(' | '));
