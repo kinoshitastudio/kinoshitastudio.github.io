@@ -818,7 +818,22 @@ function bakeTiles(cfg){
   return tiles;
 }
 /* 盤ぜんぶの設定（色・粒・グラデの断面・マス目の色）が変わったとき＝バンクを全部捨てて焼き直す */
+/* 🔴🔴 色ピッカーは【掴んでいるあいだ input が連射される】（1秒に数十回）。
+      そのたびにタイルを全部焼くと 1回 150ms かかり、画面が固まって真っ暗になる
+      （木下＝「カラーピッカーがあるところをいじると重く、真っ暗になってボードに
+       何も表示されなくなる」2026-08-07。実測 40回で 6.3秒＝1回 158ms）。
+   ⭐ 値はすぐ P に入れる（＝いまの色は嘘をつかない）。焼くのは【手を止めてから1回だけ】。
+   ⚠️ 焼くのを遅らせるだけでは足りない。地の色（ca/cb/cbg）は P.pal を変えるので、
+      draw() 側の見張りが毎フレーム焼き直す＝同じことになる。
+      だから待っているあいだは【見張りも黙らせる】。 */
+let tileHold = false, tileTimer = 0;
+function bakeSoon(ms = 120){
+  tileHold = true;
+  clearTimeout(tileTimer);
+  tileTimer = setTimeout(() => { tileHold = false; buildTiles(); }, ms);
+}
 function buildTiles(){
+  tileHold = false; clearTimeout(tileTimer);   // 直に焼いたら待ちは要らない
   tileBanks.clear();
   tiles = bankFor(curLayer());     // 既定のバンク（版が1枚のときはこれだけ）
   tileC = P.cell; tilePal = P.pal; tileWav = P.wav; tileKey = customKey(); tileMasu = masuKey();
@@ -1323,8 +1338,9 @@ function draw(){
     /* ⚠️ ここで見張るのは【盤ぜんぶ】の設定だけ（色・粒・自作色・マス目の色）。
        細かさ・柄・照り・交点の柄は版ごとになったので、ここでは見ない
        （その版のバンクが無ければ bankFor が焼く）。 */
-    if(tileC !== C || tilePal !== P.pal || tileKey !== customKey()
-       || tileMasu !== masuKey()) buildTiles();
+    // ⚠️ 色を掴んでいるあいだは焼かない（bakeSoon が手を止めてから1回だけ焼く）
+    if(!tileHold && (tileC !== C || tilePal !== P.pal || tileKey !== customKey()
+       || tileMasu !== masuKey())) buildTiles();
     flowT += P.gflow / 100 * 0.5;
     const CW = C * cellWk(), CH = C * cellHk();
     const kw = cellWk() - 1, kh = cellHk() - 1;
@@ -1752,7 +1768,10 @@ P.layers = [newLayer(P.txt)]; P.cur = 0; pushToLayer(); renderChips();
 ['masuC1','masuC2','masuC3','masuC4','masuC5','masuC6',
  'frameC1','frameC2','frameC3','frameC4','frameC5','frameC6'].forEach(id => {
   const e = document.getElementById(id);
-  if(e) e.addEventListener('input', () => { P[id] = e.value; buildTiles(); });
+  if(!e) return;
+  // ⭐ 値はすぐ入れて、焼くのは手を止めてから。離した瞬間（change）は待たない
+  e.addEventListener('input',  () => { P[id] = e.value; bakeSoon(); });
+  e.addEventListener('change', () => { P[id] = e.value; bakeSoon(0); });
 });
 function syncMasuGrad(){
   const n = Math.max(1, Math.round(P.masuN));
@@ -1772,7 +1791,9 @@ function syncMasuGrad(){
     adoptCurrentToCustom();
     CUSTOM[key] = hexToRgb(e.target.value.slice(1));
     setPal3(); syncColorInputs();
+    bakeSoon();                       // ⚠️ 見張りに焼かせない（連射で固まるため）
   });
+  document.getElementById(id).addEventListener('change', () => bakeSoon(0));
 });
 /* ══ 地のグラデ ── つまみの結線 ═══════════════════════════
    ⭐ 地は毎フレーム描き直しているので、値を入れるだけでいい（焼き直しは中で判断する） */
@@ -1798,7 +1819,9 @@ syncPapGrad();
 
 document.getElementById('cbg').addEventListener('input', e => {
   adoptCurrentToCustom(); CUSTOM.bg = e.target.value; setPal3(); syncColorInputs();
+  bakeSoon();
 });
+document.getElementById('cbg').addEventListener('change', () => bakeSoon(0));
 function setPal3(){
   P.pal = CUSTOM_IDX;
   document.querySelectorAll('#pal button').forEach(b=>b.classList.toggle('on', b.dataset.v===String(CUSTOM_IDX)));
