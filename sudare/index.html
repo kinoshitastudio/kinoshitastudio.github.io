@@ -43,6 +43,10 @@
     color:var(--ink); opacity:.55; cursor:pointer }
   .chips button.on{ opacity:1; background:var(--ink); color:var(--paper); border-color:var(--ink) }
   .big:disabled{ opacity:.35; cursor:not-allowed }
+  /* 分け方が「輪郭から」のときだけ出すつまみ（触れるのに効かないものを出さない） */
+  .only-dist{ display:none }
+  body.dist .only-dist{ display:block }
+  body.dist .only-slat{ display:none }
   .cols{ display:flex; gap:6px; margin:6px 0 }
   .cols input[type=color]{ flex:1; height:30px; border:none; border-radius:8px; background:none; padding:0; cursor:pointer }
   #helpBtn{ position:absolute; top:8px; right:12px; width:18px; height:18px; padding:0; line-height:1;
@@ -101,10 +105,23 @@
   <div class="row"><label>字間</label><input type="range" id="track" min="-40" max="60" value="0"><span class="val"></span></div>
 
   <h2>分ける（字を板に）</h2>
-  <div class="seg" id="dir"><button data-v="0" class="on">縦の板</button><button data-v="1">横の板</button><button data-v="2">両方</button></div>
+  <div class="seg" id="dir"><button data-v="0" class="on">縦の板</button><button data-v="1">横の板</button><button data-v="2">両方</button><button data-v="3">輪郭から</button></div>
+  <div class="only-dist">
+    <div class="row"><label>縞の細かさ</label><input type="range" id="dScale" min="1" max="200" value="40"><span class="val"></span></div>
+    <div class="row"><label>櫛の歯</label><input type="range" id="dComb" min="0" max="100" value="0"><span class="val"></span></div>
+    <div class="row"><label>歯の細かさ</label><input type="range" id="dCombN" min="1" max="120" value="30"><span class="val"></span></div>
+    <div class="row"><label>縞の丸み</label><input type="range" id="dRound" min="0" max="100" value="0"><span class="val"></span></div>
+    <div class="row"><label>光沢</label><input type="range" id="dGloss" min="0" max="100" value="0"><span class="val"></span></div>
+    <div class="row"><label>解像</label><input type="range" id="dRes" min="200" max="2400" step="20" value="700"><span class="val"></span></div>
+    <div class="note">⭐ 字の輪郭から【等しい距離】のところを縞にする＝字の形に沿って縞が流れ、
+      隣の字とぶつかると<b>稜線</b>が立つ（等高線と同じ原理）。板に分けるのとは別の分け方<br>
+      ⚠️ 解像を上げるほど細かくなるが、計算が重くなる</div>
+  </div>
+  <div class="only-slat">
   <div class="row"><label>刻みの数</label><input type="range" id="slices" min="4" max="800" value="26"><span class="val"></span></div>
   <div class="row"><label>すき間</label><input type="range" id="gap" min="0" max="40" value="6"><span class="val"></span></div>
   <div class="row"><label>短いのを捨てる</label><input type="range" id="minLen" min="0" max="60" value="4"><span class="val"></span></div>
+  </div>
   <div class="note">⭐ 字を【縦（横）に細く切って】、字がある区間をそのまま<b>1枚の板</b>にする。
     小さい正方形を敷き詰めるのではなく、<b>ストローク1本が1枚の板</b>になる<br>
     <b>刻みの数</b>＝細く切る本数（少ないほど1枚が太い）</div>
@@ -180,11 +197,11 @@ const stat = m => { const s = document.getElementById('stat'); if(s) s.textConte
    ⭐ 面のもの＝地（紙）とビュー（ズーム・パン）＝どの版にも同じくかかる。
    ⚠️ P に残すのは【面のもの】だけ。版のものを P に置くと、重ねたとき全部同じになる。 */
 const COL_DEF = ['#cb66ef','#8266ef','#5845a2','#8266ef','#cb66ef','#ffffff','#a06ce8','#3a2a6a','#e0b0ff','#ffffff'];
-const SHEET_KEYS = ['txt','font','tdir','weight','bold','size','track','dir','slices','gap','minLen',
+const SHEET_KEYS = ['txt','font','tdir','weight','bold','size','track','dir','slices','gap','minLen','dScale','dRes','dRound','dGloss','dComb','dCombN',
                     'colN','kcol','kpos','kw','jit','rep','gdir','x','y','scale','rot'];
 function newSheet(txt){
   return { txt: txt != null ? txt : 'あたらしい', font:0, tdir:0, weight:900, bold:0, size:70, track:0,
-           dir:0, slices:26, gap:6, minLen:4,
+           dir:0, slices:26, gap:6, minLen:4, dScale:40, dRes:700, dRound:0, dGloss:0, dComb:0, dCombN:30,
            cols: COL_DEF.slice(), colN:3, kcol:'#000000',
            kpos:49, kw:16, jit:0, rep:1, gdir:0,
            x:0, y:0, scale:100, rot:0,
@@ -206,12 +223,140 @@ const P = { bg:'#0a0a0a' };
 /* ⚠️ RECTS と noBgOnce は build()/draw() が触る。UI の初期化より【前】に宣言する
    ── let は巻き上がらないので、後ろに置くと初期化のときに TDZ で静かに死ぬ（2026-08-07 に踏んだ）。 */
 let noBgOnce = false;
+/* ⭐ 距離場を縞で刷る ── 輪郭からの距離を、色の並び（色→黒→色）で塗り分ける。
+   ⚠️ 画素ごとなので ImageData に直接書く（矩形を塗るより速い）。
+   ⚠️ 焼いた結果は使い回す（色を変えたときだけ塗り直す）。 */
+const distCache = new WeakMap();
+function paintDist(sh){
+  const SD = sh.SD, w = SD.w, h = SD.h;
+  const key = [sh.dScale, sh.colN, sh.kcol, sh.kpos, sh.kw, sh.rep, sh.dRound, sh.dGloss, sh.dComb, sh.dCombN, sh.cols.join(',')].join('|');
+  let img = distCache.get(sh);
+  if(!img || img.key !== key){
+    const id = new ImageData(w, h), px = id.data;
+    const n = Math.max(2, Math.round(sh.colN));
+    const rep = Math.max(1, Math.round(sh.rep));
+    const kpos = sh.kpos / 100, kw = sh.kw / 200;
+    /* 色の表を先に作る（画素ごとに混ぜ直すと重い） */
+    const N = 512, tbl = new Uint8Array(N * 3);
+    const round = sh.dRound / 100, gloss = sh.dGloss / 100;
+    for(let i = 0; i < N; i++){
+      let t = i / (N - 1);
+      let c;
+      if(kw > 0.002 && Math.abs(t - kpos) < kw){
+        const f = 1 - Math.abs(t - kpos) / kw;
+        c = mixHex(colAt(sh, t), sh.kcol, f);
+      } else c = colAt(sh, t);
+      let [r2, g2, b2] = hex2rgb(c);
+      /* ⭐ 縞の丸み ── 縞1本の中で明暗をつける＝平らな色帯が【管】に見える。
+         ⭐ 光沢 ── 真ん中から離してコントラストを立てる（黒まで落ちて白が立つ）。
+         🔴 累乗で持ち上げると全体が明るくなるだけで黒が落ちない（膜 MAKU で踏んだ）。 */
+      if(round > 0.001){
+        let wv = Math.sin(t * Math.PI);
+        wv = Math.max(0, Math.min(1, (wv - 0.5) * (1 + gloss * 3) + 0.5));
+        const lo = 0.28 * (1 - gloss);
+        const k3 = 1 + (lo + (1 - lo) * wv - 1) * round;
+        r2 = Math.round(r2 * k3); g2 = Math.round(g2 * k3); b2 = Math.round(b2 * k3);
+      }
+      tbl[i*3] = r2; tbl[i*3+1] = g2; tbl[i*3+2] = b2;
+    }
+    const scale = Math.max(1, sh.dScale) / 100 * rep;
+    /* ⭐ 櫛の歯 ── 【縞に直交して走る細かい明暗】。距離だけでは出ない（参考の拡大で分かった）。
+       最も近い輪郭点が輪郭に沿って動くと値が動く＝歯が並ぶ。 */
+    const comb = sh.dComb / 100, combN = Math.max(1, sh.dCombN);
+    const along = SD.along;
+    for(let i = 0, q = 0; i < w * h; i++, q += 4){
+      let t = SD.d[i] * scale * 0.06;
+      t = t - Math.floor(t);                       // 0..1 でくり返す＝等高線
+      const j = (t * (N - 1)) | 0;
+      let r2 = tbl[j*3], g2 = tbl[j*3+1], b2 = tbl[j*3+2];
+      if(comb > 0.001 && along){
+        let u = along[i] * combN * 0.05;
+        u = u - Math.floor(u);
+        const k4 = 1 - comb * (0.5 - 0.5 * Math.cos(u * 6.2831853));
+        r2 = r2 * k4; g2 = g2 * k4; b2 = b2 * k4;
+      }
+      px[q] = r2; px[q+1] = g2; px[q+2] = b2; px[q+3] = 255;
+    }
+    const c2 = document.createElement('canvas'); c2.width = w; c2.height = h;
+    c2.getContext('2d').putImageData(id, 0, 0);
+    img = { key, canvas: c2 }; distCache.set(sh, img);
+  }
+  g.imageSmoothingEnabled = true;
+  g.drawImage(img.canvas, 0, 0, sh.ART.w, sh.ART.h);
+}
 /* ⭐ 見るためのビュー（ズーム・パン）。⚠️ 書き出しは【見えているとおり】に出す
    ＝寄って撮れば寄った絵が出る（膜 MAKU の版面と同じ考え）。 */
 const VIEW = { zoom:1, x:0, y:0 };
 
 /* ── 字を裏の canvas に焼く（形を読むためだけに使う） ── */
 const tc = document.createElement('canvas'), tg = tc.getContext('2d', { willReadFrequently:true });
+
+/* ⭐ 距離場 ── 各画素から【字の輪郭までの距離】を出す（Felzenszwalb の分離アルゴリズム／O(n)）。
+   ⭐ これで参考の「字の形に沿って縞が流れ、隣の字とぶつかると稜線が立つ」が作れる。
+      板に分けるのとは別の【分け方】＝輪郭からの距離で分ける。
+   ⚠️ 内と外の両方を出して符号をつける＝縞が字をまたいで連続する（等高線と同じ）。 */
+function edt1d(f, n, d, v, z, srcOut){
+  let k = 0; v[0] = 0; z[0] = -1e20; z[1] = 1e20;
+  for(let q = 1; q < n; q++){
+    let s = ((f[q] + q*q) - (f[v[k]] + v[k]*v[k])) / (2*q - 2*v[k]);
+    while(s <= z[k]){ k--; s = ((f[q] + q*q) - (f[v[k]] + v[k]*v[k])) / (2*q - 2*v[k]); }
+    k++; v[k] = q; z[k] = s; z[k+1] = 1e20;
+  }
+  k = 0;
+  for(let q = 0; q < n; q++){
+    while(z[k+1] < q) k++;
+    d[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
+    if(srcOut) srcOut[q] = v[k];        // ⭐ どこから来たか＝最も近い点
+  }
+}
+function edt2d(bin, W, H, near){
+  const INF = 1e20, m = Math.max(W, H);
+  const f = new Float64Array(m), d = new Float64Array(m);
+  const v = new Int32Array(m + 1), z = new Float64Array(m + 1);
+  const src = new Int32Array(m);
+  const out = new Float64Array(W * H);
+  /* ⭐ 最近点も一緒に取る（参考の「縞に直交する細かいギザギザ」は、
+     距離だけでは出ない。どこの輪郭から来たかが要る）。 */
+  const colY = near ? new Int32Array(W * H) : null;
+  for(let x = 0; x < W; x++){
+    for(let y = 0; y < H; y++) f[y] = bin[y * W + x] ? INF : 0;
+    edt1d(f, H, d, v, z, src);
+    for(let y = 0; y < H; y++){ out[y * W + x] = d[y]; if(colY) colY[y * W + x] = src[y]; }
+  }
+  for(let y = 0; y < H; y++){
+    for(let x = 0; x < W; x++) f[x] = out[y * W + x];
+    edt1d(f, W, d, v, z, src);
+    for(let x = 0; x < W; x++){
+      out[y * W + x] = Math.sqrt(d[x]);
+      if(near){ const nx2 = src[x];
+        near.x[y * W + x] = nx2;
+        near.y[y * W + x] = colY[y * W + nx2];
+      }
+    }
+  }
+  return out;
+}
+/* ⭐ 符号つき距離＝【字の中は＋・外は−】。輪郭で 0 になるので、縞が字をまたいで続く。 */
+function signedDist(mask, W, H){
+  const inv = new Uint8Array(W * H);
+  for(let i = 0; i < W * H; i++) inv[i] = mask[i] ? 0 : 1;
+  const nIn = { x:new Int32Array(W*H), y:new Int32Array(W*H) };
+  const nOut = { x:new Int32Array(W*H), y:new Int32Array(W*H) };
+  const dIn = edt2d(mask, W, H, nIn), dOut = edt2d(inv, W, H, nOut);
+  const sd = new Float32Array(W * H);
+  /* ⭐ 最近点の「輪郭に沿った位置」＝縞に直交する細かい縞のもと。
+     ⚠️ 輪郭のパラメータを厳密に出すのは重いので、最近点の座標そのものを使う
+        （輪郭に沿って動けば値も動く＝櫛の歯が並ぶ）。 */
+  const along = new Float32Array(W * H);
+  for(let i = 0; i < W * H; i++){
+    const inside = mask[i];
+    sd[i] = inside ? dIn[i] : -dOut[i];
+    const px = inside ? nIn.x[i] : nOut.x[i];
+    const py = inside ? nIn.y[i] : nOut.y[i];
+    along[i] = px + py * 0.7071;
+  }
+  return { sd, along };
+}
 
 /* ⭐ ここが核心 ── 字を細く切って、字がある区間を【1枚の板】として拾う。
    ⚠️ 小さい正方形を敷き詰めるのではない。区間の長さがそのまま矩形の長さになる
@@ -375,6 +520,24 @@ function buildSheet(sh){
   const d = tg.getImageData(0, 0, W2, H2).data;
   const mask = new Uint8Array(W2 * H2);
   for(let i = 0, q = 0; i < d.length; i += 4, q++) mask[q] = d[i] > 110 ? 1 : 0;
+  /* ⭐ 分け方が【輪郭から】のときは、板に切らずに距離場を作って画素ごとに刷る。
+     ⚠️ 距離の計算は重いので、決めた解像に落としてから計算する（そのぶん縞は粗くなる）。 */
+  if(sh.dir === 3){
+    const res = Math.max(100, Math.round(sh.dRes));
+    const k2 = Math.min(1, res / Math.max(W2, H2));
+    const w3 = Math.max(16, Math.round(W2 * k2)), h3 = Math.max(16, Math.round(H2 * k2));
+    const sc2 = document.createElement('canvas'); sc2.width = w3; sc2.height = h3;
+    const s2 = sc2.getContext('2d', { willReadFrequently:true });
+    s2.drawImage(tc, 0, 0, w3, h3);
+    const dd = s2.getImageData(0, 0, w3, h3).data;
+    const m2 = new Uint8Array(w3 * h3);
+    for(let i = 0, q = 0; i < dd.length; i += 4, q++) m2[q] = dd[i] > 110 ? 1 : 0;
+    const sdr = signedDist(m2, w3, h3);
+    sh.SD = { d: sdr.sd, along: sdr.along, w: w3, h: h3 };
+    sh.RECTS = []; sh.ART = { w: W2, h: H2 };
+    return;
+  }
+  sh.SD = null;
   let R = [];
   if(sh.dir === 0 || sh.dir === 2) R = R.concat(sliceToRects(sh, mask, W2, H2, false));
   if(sh.dir === 1 || sh.dir === 2) R = R.concat(sliceToRects(sh, mask, W2, H2, true));
@@ -414,6 +577,7 @@ function draw(){
     g.rotate((sh.rot || 0) * Math.PI / 180);
     g.scale(sc, sc);
     g.translate(-sh.ART.w / 2, -sh.ART.h / 2);
+    if(sh.SD){ paintDist(sh); return; }
     sh.RECTS.forEach((r, i) => paintRect(sh, r, i));
   });
   g.setTransform(1, 0, 0, 1, 0, 0);
@@ -428,7 +592,7 @@ document.querySelectorAll('#panel input[type=range]').forEach(r=>{
     if(FACE_KEYS.includes(r.id)) P[r.id] = +r.value; else sh[r.id] = +r.value;
     if(val) val.textContent = r.value;
     if(r.id === 'colN') syncCols();
-    if(['size','track','slices','minLen','dir','weight','bold'].includes(r.id)) build(); else draw(); };
+    if(['size','track','slices','minLen','dir','weight','bold','dRes'].includes(r.id)) build(); else draw(); };
   r.addEventListener('input', sync);
   sync();
 });
@@ -550,6 +714,7 @@ function syncUI(){
   syncCols();
   document.getElementById('txt').value = sh.txt;
   const del = document.getElementById('delSheet'); if(del) del.disabled = SHEETS.length <= 1;
+  document.body.classList.toggle('dist', sh.dir === 3);
 }
 /* ⭐ スナップショットは【操作の直前に1回だけ】。capture で拾えば実際の処理より先に走る。
    🔴 input のたびに積むと、1回のドラッグで何十回も積まれて ⌘Z が1段ずつしか戻らない
