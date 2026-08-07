@@ -298,9 +298,6 @@
   <!-- ⭐ 2026-08-06 可動域を広げた。位置は ±100（＝版1枚ぶん）だと画面の外まで押し出せず、
        大きさも 300% で頭打ちだった。値の意味は変えていない（x/y は /100・大きさは倍率）ので
        古い控えはそのまま読める。 -->
-  <!-- ⭐ 2026-08-07 つまみでなく【画面で直接つかんで動かす】。既存のアンカー（面を押す）は
-       そのまま残し、モードで切り替える＝今までの操作を奪わない。 -->
-  <div class="seg" id="grab"><button data-v="0" class="on">面を押す</button><button data-v="1">版をつかむ</button></div>
   <div class="row"><label>横位置</label><input type="range" id="sx" min="-300" max="300" value="0"><span class="val"></span></div>
   <div class="row"><label>縦位置</label><input type="range" id="sy" min="-300" max="300" value="0"><span class="val"></span></div>
   <div class="row"><label>大きさ</label><input type="range" id="ss" min="1" max="800" value="100"><span class="val"></span></div>
@@ -502,7 +499,7 @@ const WARP_DEF = { vwarp:30, hwarp:0, freq:2, thick:0,
             shearx:0, sheary:0,                     // せん断
             twtop:0, twbot:0 };                     // 上下で別のねじれ
 const WARP_KEYS = Object.keys(WARP_DEF);
-const DEFAULTS = { font:0, dir:0, layer:0, track:0, leading:0, grab:0,
+const DEFAULTS = { font:0, dir:0, layer:0, track:0, leading:0,
             radius:30, strength:55, look:0, density:14, mesh:90, inkN:3,
             /* 縞（金属）── 0／1 ＝これまでと同じなめらかな白黒の金属 */
             stSteps:0, stGap:0, stInkN:1, stRound:0, stFit:0,
@@ -1085,13 +1082,6 @@ function putLayers(LS){
   gl.uniform1fv(loc.uLSAng,L4.sang); gl.uniform1fv(loc.uLSOff,L4.soff);
 }
 
-/* ⭐ 面が画面のどれだけを占めるか。⚠️ この式は【1箇所だけ】に書く
-   ── 描くときと「版をつかんで動かす」ときで別々に書くと、掴んだ点と絵がズレる。 */
-function faceScale(){
-  const view = canvas.width / Math.max(canvas.height, 1);
-  return { x: 0.8 * (view > 1 ? 1/view : 1), y: 0.8 * (view > 1 ? 1 : view) };
-}
-
 /* ⚠️ 描くのとループを分けてある＝書き出しのときだけ【版面の大きさで1回だけ描く】ため */
 let lastT = 0;
 function draw(t){ requestAnimationFrame(draw); lastT = t; render(t); }
@@ -1129,8 +1119,9 @@ function render(t){
      ⚠️ 「版1枚のときだけ面を版の形にする」分岐にすると、2枚目を足した瞬間に
         1枚目の見え方（大きさもうねりの掛かり方も）が変わる。規則は1つにする。
      ⚠️ 開幕の絵は起動時に1枚目の大きさを合わせて、これまでと同じ見え方にしてある。 */
-  const fs = faceScale();
-  const sx = fs.x, sy = fs.y;
+  const view = w/h;
+  const sx = 0.8 * (view > 1 ? 1/view : 1);
+  const sy = 0.8 * (view > 1 ? 1 : view);
 
   gl.uniform2f(loc.uScale, sx, sy);
   gl.uniform1f(loc.uZoom, VIEW.zoom);
@@ -1225,7 +1216,6 @@ function toUV(e){ const r=canvas.getBoundingClientRect();
 function ndc(e){ const r=canvas.getBoundingClientRect();
   return { x:((e.clientX-r.left)/r.width)*2-1, y:(1-(e.clientY-r.top)/r.height)*2-1 }; }
 let dragA=-1;
-let grabS = null;                 // ⭐ 版をつかんで動かしている最中の控え（掴んだ場所と版の位置）
 const pointers=new Map();
 let viewMode=null, rotStart=null, panStart=null, pinch0=null;
 let spaceDown=false, handMode=false;             // Space長押し／手のひらモード＝ボードを掴んで動かす
@@ -1259,14 +1249,6 @@ canvas.addEventListener('pointerdown', e=>{
   }
   viewMode=null;
   const { u,v }=toUV(e);
-  /* ⭐ 版をつかむ ── 選んでいる版を画面の上で直接動かす。
-     ⚠️ toUV はビュー（ズーム/パン/傾き）を外して面座標に戻すので、寄っていても正しくついてくる。
-     ⚠️ 面座標 -1..1 に対して版の位置は /100 で入る＝面 UV の差を 200 倍して足す。 */
-  if(P.grab === 1){
-    const sh = S_();
-    if(sh) grabS = { u, v, x:sh.x, y:sh.y };
-    return;
-  }
   if(e.altKey){                                  // Alt+クリック＝近くのアンカーを消す
     let bi=-1,bd=0.06; ANCHORS.forEach((a,i)=>{const d=Math.hypot(a.u-u,a.v-v); if(d<bd){bd=d;bi=i;}});
     if(bi>=0) ANCHORS.splice(bi,1); return;
@@ -1277,17 +1259,6 @@ canvas.addEventListener('pointerdown', e=>{
 });
 canvas.addEventListener('pointermove', e=>{
   if(pointers.has(e.pointerId)) pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
-  if(grabS){                                     // ⭐ 版をつかんで動かしている最中
-    const sh = S_(); if(!sh){ grabS = null; return; }
-    const q = toUV(e), fs = faceScale();
-    /* 🔴 toUV は【面のスケールを外していない】（画面 NDC からビューだけを外した値）。
-       面座標に直してから版の位置に足さないと、掴んだ点より絵が遅れてついてくる。
-       ⚠️ 版の位置は /100 で面座標 -1..1 に入る＝UV差 ×2 ×100 ÷ 面スケール。 */
-    sh.x = Math.round(grabS.x + (q.u - grabS.u) * 200 / Math.max(fs.x, 0.0001));
-    sh.y = Math.round(grabS.y + (q.v - grabS.v) * 200 / Math.max(fs.y, 0.0001));
-    syncGrabUI();                                // つまみの数字を実体に合わせる（ズラさない）
-    return;
-  }
   const r=canvas.getBoundingClientRect();
   if(viewMode==='pinch' && pinch0){
     const p=[...pointers.values()]; if(p.length<2) return;
@@ -1309,7 +1280,6 @@ canvas.addEventListener('pointermove', e=>{
   a.du=(p.u-a.u)*P.strength/100*2; a.dv=(p.v-a.v)*P.strength/100*2;
 });
 function endPtr(e){ pointers.delete(e.pointerId);
-  grabS = null;
   if(pointers.size<2 && viewMode==='pinch'){ viewMode=null; pinch0=null; }
   if(pointers.size===0){ dragA=-1; viewMode=null; rotStart=panStart=null; } }
 canvas.addEventListener('pointerup', endPtr);
@@ -1478,16 +1448,6 @@ function refreshSheets(){
     box.appendChild(b);
   });
   syncSheetUI();
-}
-/* ⭐ 版をつかんで動かしている最中は、位置のつまみだけを実体に合わせる。
-   ⚠️ syncSheetUI は文字チップの作り直しまで走るので、ドラッグ中に毎回呼ぶと重い。 */
-function syncGrabUI(){
-  const sh = S_(); if(!sh) return;
-  [['sx', sh.x], ['sy', sh.y]].forEach(([id, v])=>{
-    const el = document.getElementById(id); if(!el) return;
-    el.value = Math.max(+el.min, Math.min(+el.max, v));
-    const t = el.parentElement.querySelector('.val'); if(t) t.textContent = v;
-  });
 }
 function syncSheetUI(){
   const s = S_(); if(!s) return;
