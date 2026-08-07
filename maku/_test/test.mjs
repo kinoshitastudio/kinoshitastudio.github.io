@@ -380,7 +380,48 @@ ok('🔴 地（紙）の色は動かない（字と同じ色にすると字が�
 ok('手で色をいじるとプリセットの選択が外れる',
    pal.afterHand.ink === '#123456' && pal.afterHand.lit === 0, JSON.stringify(pal.afterHand));
 
-console.log('\n[14] 描き終わりまでJSエラーが出ていない');
+console.log('\n[14] 縞をマスに合わせる／地なしPNGの切り詰め');
+const out = await page.evaluate(async ()=>{
+  resetAll();
+  const s = SHEETS[0]; s.text = '文'; bakeSheet(s);
+  SHEETS.length = 1; curSheet = 0; refreshSheets();
+  const c = document.getElementById('gl');
+  const gl2 = c.getContext('webgl') || c.getContext('experimental-webgl');
+  const w = c.width, h = c.height;
+  const grab = async ()=>{ await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const px = new Uint8Array(w*h*4); gl2.readPixels(0,0,w,h,gl2.RGBA,gl2.UNSIGNED_BYTE,px); return px; };
+  const count = (A,B)=>{ let n=0;
+    for(let y=0;y<h;y+=2) for(let x=0;x<w;x+=2){ const i=(y*w+x)*4;
+      if(Math.abs(A[i]-B[i])>8 || Math.abs(A[i+1]-B[i+1])>8 || Math.abs(A[i+2]-B[i+2])>8) n++; }
+    return n; };
+  // 縞をマスに合わせる＝1マス1本のパイプ（参考の金のパイプ）
+  P.look = 0; P.grain = 40; P.density = 6; P.stFit = 0; syncInk();
+  const free = await grab();
+  P.stFit = 1;                      const fit = await grab();
+  P.stFit = 0;                      const back = await grab();
+
+  /* 🔴 地なしPNGは【絵のあるところだけ】に切り詰める。
+     ⚠️ 透明の余白が残っていると、他の道具で選んだとき画面いっぱいの箱になる。 */
+  const blob = await new Promise(r=> renderToBlob(r, true));
+  const bmp = await createImageBitmap(blob);
+  const oc = document.createElement('canvas'); oc.width = bmp.width; oc.height = bmp.height;
+  const o2 = oc.getContext('2d'); o2.drawImage(bmp, 0, 0);
+  const d = o2.getImageData(0, 0, bmp.width, bmp.height).data;
+  const edge = (px)=>{ let n=0;                       // 端の4辺に不透明画素があるか
+    for(let x=0;x<bmp.width;x++){ if(d[(0*bmp.width+x)*4+3]>2) n++; if(d[((bmp.height-1)*bmp.width+x)*4+3]>2) n++; }
+    for(let y=0;y<bmp.height;y++){ if(d[(y*bmp.width+0)*4+3]>2) n++; if(d[(y*bmp.width+bmp.width-1)*4+3]>2) n++; }
+    return n; };
+  return { fit: count(free, fit), back: count(free, back),
+           png: { w: bmp.width, h: bmp.height, canvas: [w, h], edge: edge() } };
+});
+ok('「縞をマスに合わせる」で絵が変わる', out.fit > 100, JSON.stringify(out));
+ok('戻すと元の絵に戻る', out.back === 0, `違う画素=${out.back}`);
+ok('🔴 地なしPNGが画面より小さい（余白を切り詰めている）',
+   out.png.w < out.png.canvas[0] && out.png.h < out.png.canvas[1], JSON.stringify(out.png));
+ok('🔴 切り詰めた端に絵が接している（余白が残っていない）', out.png.edge > 0,
+   `端の不透明画素=${out.png.edge} ← 0なら切り足りない`);
+
+console.log('\n[15] 描き終わりまでJSエラーが出ていない');
 ok('通しでJSエラーなし', errors.length === 0, errors.slice(0,3).join(' | '));
 
 // ⚠️ パスに日本語が入る＝import.meta.url は %E5.. になっている。decode してから渡す
