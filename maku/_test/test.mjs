@@ -523,7 +523,41 @@ ok('🔴 引いた分だけ絵が横に動く（掴んだ点についてくる�
 ok('🔴 引いた分だけ絵が縦に動く', Math.abs(movedY - DY) < 14,
    `引いた=${DY} 動いた=${movedY.toFixed(1)}`);
 
-console.log('\n[16] 描き終わりまでJSエラーが出ていない');
+console.log('\n[16] 字を抜く（面を刷って字を彫る）');
+/* 🔴 見るのは「絵が変わったか」でなく【地と図が入れ替わっているか】。
+   刷ったとき塗られている画素と、抜いたとき塗られている画素は、重ならないはず
+   （重なるなら反転しきれていない）。 */
+const cut = await page.evaluate(async ()=>{
+  const c = document.getElementById('gl');
+  const gl2 = c.getContext('webgl') || c.getContext('experimental-webgl');
+  const w = c.width, h = c.height;
+  const grab = async ()=>{ await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const px = new Uint8Array(w*h*4); gl2.readPixels(0,0,w,h,gl2.RGBA,gl2.UNSIGNED_BYTE,px); return px; };
+  resetAll();
+  const s = SHEETS[0]; s.text = '文字'; bakeSheet(s);
+  SHEETS.length = 1; curSheet = 0; refreshSheets();
+  s.scale = 1.0; s.warp.vwarp = 0;
+  P.look = 0; P.grain = 0; P.stInkN = 1; P.cut = 0; syncInk();
+  const A = await grab();
+  P.cut = 1;
+  const B = await grab();
+  // 塗られている＝地（ほぼ黒）より明るい
+  const ink = px => { let n = 0;
+    for(let y=0;y<h;y+=2) for(let x=0;x<w;x+=2){ const i=(y*w+x)*4; if(px[i]>60||px[i+1]>60||px[i+2]>60) n++; }
+    return n; };
+  let both = 0;
+  for(let y=0;y<h;y+=2) for(let x=0;x<w;x+=2){ const i=(y*w+x)*4;
+    const a = A[i]>60||A[i+1]>60||A[i+2]>60, b = B[i]>60||B[i+1]>60||B[i+2]>60;
+    if(a && b) both++; }
+  return { print: ink(A), carve: ink(B), both };
+});
+ok('字を刷ったときに絵が出ている', cut.print > 200, JSON.stringify(cut));
+ok('⭐ 字を抜くと【面のほうが】刷られる（字より広い）', cut.carve > cut.print, JSON.stringify(cut));
+ok('🔴 刷った所と抜いた所が入れ替わっている（重なりは輪郭ぶんだけ）',
+   cut.both < cut.print * 0.12,
+   `重なり=${cut.both} 刷り=${cut.print} ← 重なりが多いなら反転しきれていない`);
+
+console.log('\n[17] 描き終わりまでJSエラーが出ていない');
 ok('通しでJSエラーなし', errors.length === 0, errors.slice(0,3).join(' | '));
 
 // ⚠️ パスに日本語が入る＝import.meta.url は %E5.. になっている。decode してから渡す
