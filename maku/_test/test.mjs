@@ -347,6 +347,25 @@ const square = await page.evaluate(async ()=>{
   const by = best(h, rowLit), bx = best(w, colLit);
   return { x: runX(by), y: runY(bx), line:[bx,by] };
 });
+/* ⭐ 粒のつまみは【目盛り】と【実マス数】が別。粗い側（4〜30）が触れることと、
+   控えを読んだときに目盛りが実マス数から逆算されて数字と実体がズレないことを見る。 */
+const gs = await page.evaluate(()=>{
+  const el = document.getElementById('grain');
+  const set = t => { el.value = t; el.dispatchEvent(new Event('input',{bubbles:true}));
+    return { g: P.grain, txt: el.parentElement.querySelector('.val').textContent }; };
+  const zero = set(0), half = set(50), full = set(100);
+  P.grain = 28; syncGrainUI();                       // 控えから戻したときの噛み合い
+  return { zero, half, full, backSlider: +el.value,
+           backTxt: el.parentElement.querySelector('.val').textContent };
+});
+ok('目盛り0＝粒なし', gs.zero.g === 0 && gs.zero.txt === 'なし', JSON.stringify(gs.zero));
+ok('⭐ 目盛りの真ん中が粗い側（マス数30以下）＝粗い側が触れる', gs.half.g > 4 && gs.half.g <= 30,
+   `目盛り50 → ${gs.half.g}マス`);
+ok('目盛り100が一番細かい（200マス）', gs.full.g === 200, JSON.stringify(gs.full));
+ok('表示は実マス数（目盛りの数字を出さない）', gs.half.txt === String(gs.half.g), gs.half.txt);
+ok('🔴 実マス数から目盛りが逆算される（控えを読んでもズレない）',
+   gs.backSlider === 50 && gs.backTxt === '28', `目盛り=${gs.backSlider} 表示=${gs.backTxt}`);
+
 const ratio = square.x / Math.max(square.y, 1);
 ok('🔴 マスが正方形（横長4:1の版でも粒が伸びない）', ratio > 2.5 && ratio < 6,
    `横のマス数=${square.x} 縦のマス数=${square.y} 比=${ratio.toFixed(2)} ← 1前後なら版の形を見ずに切っている`);
