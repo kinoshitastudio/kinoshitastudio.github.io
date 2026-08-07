@@ -775,7 +775,50 @@ const range = await page.evaluate(()=>({
 ok('帯を細くできる（密度の上限が上がっている）', range.密度上限 >= 100, JSON.stringify(range));
 ok('字をもっと詰められる（字間・行間の下限）', range.字間下限 <= -90 && range.行間下限 <= -90, JSON.stringify(range));
 
-console.log('\n[22] 描き終わりまでJSエラーが出ていない');
+console.log('\n[22] マスごとの向き／光沢');
+const gloss = await page.evaluate(async ()=>{
+  const c = document.getElementById('gl');
+  const gl2 = c.getContext('webgl') || c.getContext('experimental-webgl');
+  const w = c.width, h = c.height;
+  const grab = async ()=>{ await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const px = new Uint8Array(w*h*4); gl2.readPixels(0,0,w,h,gl2.RGBA,gl2.UNSIGNED_BYTE,px); return px; };
+  const count = (A,B)=>{ let n=0;
+    for(let y=0;y<h;y+=2) for(let x=0;x<w;x+=2){ const i=(y*w+x)*4;
+      if(Math.abs(A[i]-B[i])>8 || Math.abs(A[i+1]-B[i+1])>8 || Math.abs(A[i+2]-B[i+2])>8) n++; }
+    return n; };
+  /* 光沢＝【黒まで落ちるか】。
+     🔴 「いちばん暗い画素」でも「輝度のばらつき」でも測れなかった
+        （輪郭のアンチエイリアスが必ず暗く出る／暗部が落ちるぶんハイライトも広がって相殺される）。
+     ⭐ 光沢0で【明るかった場所】が、光沢100でどれだけ黒く落ちたかを数える。 */
+  const fell = (A, B) => { let lo = 999;
+    for(let y=0;y<h;y+=2) for(let x=0;x<w;x+=2){ const i=(y*w+x)*4;
+      if(Math.max(A[i],A[i+1],A[i+2]) > 100){          // 光沢0で【はっきり塗られていた】場所だけ見る
+        const v = Math.max(B[i],B[i+1],B[i+2]);
+        if(v < lo) lo = v; } }
+    return lo === 999 ? -1 : lo; };
+  resetAll();
+  const s = SHEETS[0]; s.text = '文'; bakeSheet(s);
+  SHEETS.length = 1; curSheet = 0; refreshSheets();
+  s.warp.vwarp = 0; s.scale = 1.5;
+  P.look = 0; P.density = 14; P.grain = 40; P.grainInk = 0; P.stFit = 1;
+  /* ⚠️ 色数1だと縞そのものの明暗と丸みが同じ位相で重なって、光沢を上げても分布が
+     あまり動かない。色を置いた状態（色数2）で測る＝丸みだけが明暗を作るので効きが見える。 */
+  P.stRound = 100; P.stGloss = 0; P.grainAng = 0;
+  s.stInkN = 2; s.inkc[0] = '#c08040'; s.inkc[1] = '#ffe0a0'; syncInk();
+  const base = await grab();
+  P.grainAng = 80;  const angOn = await grab();
+  P.grainAng = 0;   const angBack = await grab();
+  P.stGloss = 100;  const glossOn = await grab();
+  const fallen = fell(base, glossOn), self = fell(base, base);   // self＝光沢0どうし（比較の基準）
+  return { ang: count(base, angOn), angBack: count(base, angBack), fallen, self };
+});
+ok('マスごとの向きで絵が変わる', gloss.ang > 100, JSON.stringify(gloss));
+ok('0に戻すと元の絵に戻る', gloss.angBack === 0, `違う画素=${gloss.angBack}`);
+ok('🔴 光沢を上げると、塗られていた所が黒まで落ちる（コントラストが立つ）',
+   gloss.fallen < gloss.self * 0.5,
+   `同じ場所のいちばん暗い所：光沢0=${gloss.self} → 光沢100=${gloss.fallen} ← 下がらないなら効いていない`);
+
+console.log('\n[23] 描き終わりまでJSエラーが出ていない');
 ok('通しでJSエラーなし', errors.length === 0, errors.slice(0,3).join(' | '));
 
 // ⚠️ パスに日本語が入る＝import.meta.url は %E5.. になっている。decode してから渡す
