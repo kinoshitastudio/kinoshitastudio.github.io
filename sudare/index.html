@@ -270,7 +270,7 @@ function paintDist(sh){
       const j = (t * (N - 1)) | 0;
       let r2 = tbl[j*3], g2 = tbl[j*3+1], b2 = tbl[j*3+2];
       if(comb > 0.001 && along){
-        let u = along[i] * combN * 0.05;
+        let u = along[i] * combN * 0.5;   // ⚠️ along は角度（-π..π）＝刻みの掛け率が違う
         u = u - Math.floor(u);
         const k4 = 1 - comb * (0.5 - 0.5 * Math.cos(u * 6.2831853));
         r2 = r2 * k4; g2 = g2 * k4; b2 = b2 * k4;
@@ -348,12 +348,19 @@ function signedDist(mask, W, H){
      ⚠️ 輪郭のパラメータを厳密に出すのは重いので、最近点の座標そのものを使う
         （輪郭に沿って動けば値も動く＝櫛の歯が並ぶ）。 */
   const along = new Float32Array(W * H);
+  /* 字の重心（角度を測る中心）。⚠️ 字が無ければ画面の中心 */
+  let cx = W / 2, cy = H / 2, n0 = 0, sx0 = 0, sy0 = 0;
+  for(let y = 0; y < H; y++) for(let x = 0; x < W; x++) if(mask[y * W + x]){ n0++; sx0 += x; sy0 += y; }
+  if(n0){ cx = sx0 / n0; cy = sy0 / n0; }
   for(let i = 0; i < W * H; i++){
     const inside = mask[i];
     sd[i] = inside ? dIn[i] : -dOut[i];
     const px = inside ? nIn.x[i] : nOut.x[i];
     const py = inside ? nIn.y[i] : nOut.y[i];
-    along[i] = px + py * 0.7071;
+    /* 🔴 最近点の座標をそのまま足すと【格子模様】になる（x+y が縦横に等高線を作るため）。
+       ⭐ 欲しいのは「輪郭に沿ってどこか」＝輪郭の重心まわりの【角度】。
+          角度なら輪郭を一周するあいだ単調に増えるので、歯が輪郭に沿って並ぶ。 */
+    along[i] = Math.atan2(py - cy, px - cx);
   }
   return { sd, along };
 }
@@ -613,7 +620,12 @@ document.querySelectorAll('#panel .seg').forEach(seg=>{
   seg.querySelectorAll('button').forEach(b=> b.addEventListener('click', ()=>{
     seg.querySelectorAll('button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
     S_()[seg.id] = +b.dataset.v;
-    if(seg.id === 'dir' || seg.id === 'font' || seg.id === 'tdir') build(); else draw();
+    /* 🔴 分け方を変えたら UI も切り替える。ここで syncUI を呼ばないと body.dist が付かず、
+       【距離場のつまみ（縞の細かさ・櫛の歯・丸み・光沢・解像）が出ないまま】になる。
+       絵は距離場で描かれているのに、つまみは板用のまま＝触れない（2026-08-07 木下）。 */
+    if(seg.id === 'dir'){ syncUI(); build(); }
+    else if(seg.id === 'font' || seg.id === 'tdir') build();
+    else draw();
   }));
 });
 for(let i = 0; i < 10; i++){
