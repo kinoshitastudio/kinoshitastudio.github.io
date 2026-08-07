@@ -270,7 +270,7 @@ function paintDist(sh){
       const j = (t * (N - 1)) | 0;
       let r2 = tbl[j*3], g2 = tbl[j*3+1], b2 = tbl[j*3+2];
       if(comb > 0.001 && along){
-        let u = along[i] * combN * 0.5;   // ⚠️ along は角度（-π..π）＝刻みの掛け率が違う
+        let u = along[i] * combN * 0.004;   // ⚠️ along は弧長（画素数）
         u = u - Math.floor(u);
         const k4 = 1 - comb * (0.5 - 0.5 * Math.cos(u * 6.2831853));
         r2 = r2 * k4; g2 = g2 * k4; b2 = b2 * k4;
@@ -336,31 +336,61 @@ function edt2d(bin, W, H, near){
   }
   return out;
 }
+/* ⭐ 輪郭をたどって【弧長】を振る ── 参考の櫛の歯は「輪郭に沿って一定間隔で並ぶ」。
+   🔴 最近点の座標をそのまま使うと格子になり、重心まわりの角度だと字の凹みや細い棒に追従しない
+      （2026-08-07 に両方踏んだ）。輪郭を実際にたどった順番＝弧長でないと歯は並ばない。
+   ⚠️ Moore の境界追跡。輪郭は字ごと・穴ごとに複数あるので、成分ごとに 0 から振り直す。 */
+function contourArc(edge, W, H){
+  const arc = new Float32Array(W * H).fill(-1);
+  const seen = new Uint8Array(W * H);
+  const D = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+  for(let y = 0; y < H; y++) for(let x = 0; x < W; x++){
+    const i0 = y * W + x;
+    if(!edge[i0] || seen[i0]) continue;
+    let cx = x, cy = y, dir = 0;
+    const path = [];
+    for(let step = 0; step < W * H; step++){       // ⚠️ 上限＝万一たどり切れなくても止まる
+      const ci = cy * W + cx;
+      if(!seen[ci]){ seen[ci] = 1; path.push(ci); }
+      let found = false;
+      for(let k = 0; k < 8; k++){
+        const dd = (dir + 6 + k) % 8;              // 前に来た方向の右手から探す
+        const nx2 = cx + D[dd][0], ny2 = cy + D[dd][1];
+        if(nx2 < 0 || ny2 < 0 || nx2 >= W || ny2 >= H) continue;
+        if(edge[ny2 * W + nx2]){ cx = nx2; cy = ny2; dir = dd; found = true; break; }
+      }
+      if(!found) break;
+      if(cx === x && cy === y) break;               // 一周した
+    }
+    for(let k = 0; k < path.length; k++) arc[path[k]] = k;   // 画素数＝弧長
+  }
+  return arc;
+}
+
 /* ⭐ 符号つき距離＝【字の中は＋・外は−】。輪郭で 0 になるので、縞が字をまたいで続く。 */
 function signedDist(mask, W, H){
-  const inv = new Uint8Array(W * H);
-  for(let i = 0; i < W * H; i++) inv[i] = mask[i] ? 0 : 1;
-  const nIn = { x:new Int32Array(W*H), y:new Int32Array(W*H) };
-  const nOut = { x:new Int32Array(W*H), y:new Int32Array(W*H) };
-  const dIn = edt2d(mask, W, H, nIn), dOut = edt2d(inv, W, H, nOut);
+  /* ⭐ 種は【輪郭の画素】（字の側で、隣に外がある画素）。
+     ⭐ こうすると EDT が1回で済み、最近点が必ず輪郭画素になる＝弧長をそのまま引ける。
+     ⚠️ 前は内と外で2回まわしていた（重いうえに最近点が輪郭の画素とは限らなかった）。 */
+  const edge = new Uint8Array(W * H);
+  for(let y = 0; y < H; y++) for(let x = 0; x < W; x++){
+    const i = y * W + x; if(!mask[i]) continue;
+    if(x === 0 || y === 0 || x === W-1 || y === H-1 ||
+       !mask[i-1] || !mask[i+1] || !mask[i-W] || !mask[i+W]) edge[i] = 1;
+  }
+  const arc = contourArc(edge, W, H);
+  const bin = new Uint8Array(W * H);
+  for(let i = 0; i < W * H; i++) bin[i] = edge[i] ? 0 : 1;
+  const near = { x:new Int32Array(W*H), y:new Int32Array(W*H) };
+  const dAll = edt2d(bin, W, H, near);
   const sd = new Float32Array(W * H);
   /* ⭐ 最近点の「輪郭に沿った位置」＝縞に直交する細かい縞のもと。
      ⚠️ 輪郭のパラメータを厳密に出すのは重いので、最近点の座標そのものを使う
         （輪郭に沿って動けば値も動く＝櫛の歯が並ぶ）。 */
   const along = new Float32Array(W * H);
-  /* 字の重心（角度を測る中心）。⚠️ 字が無ければ画面の中心 */
-  let cx = W / 2, cy = H / 2, n0 = 0, sx0 = 0, sy0 = 0;
-  for(let y = 0; y < H; y++) for(let x = 0; x < W; x++) if(mask[y * W + x]){ n0++; sx0 += x; sy0 += y; }
-  if(n0){ cx = sx0 / n0; cy = sy0 / n0; }
   for(let i = 0; i < W * H; i++){
-    const inside = mask[i];
-    sd[i] = inside ? dIn[i] : -dOut[i];
-    const px = inside ? nIn.x[i] : nOut.x[i];
-    const py = inside ? nIn.y[i] : nOut.y[i];
-    /* 🔴 最近点の座標をそのまま足すと【格子模様】になる（x+y が縦横に等高線を作るため）。
-       ⭐ 欲しいのは「輪郭に沿ってどこか」＝輪郭の重心まわりの【角度】。
-          角度なら輪郭を一周するあいだ単調に増えるので、歯が輪郭に沿って並ぶ。 */
-    along[i] = Math.atan2(py - cy, px - cx);
+    sd[i] = mask[i] ? dAll[i] : -dAll[i];          // 字の中は＋・外は−（輪郭で0）
+    along[i] = arc[near.y[i] * W + near.x[i]];     // ⭐ 最も近い輪郭点の【弧長】
   }
   return { sd, along };
 }
