@@ -856,7 +856,46 @@ ok('🔴 帯の中の黒は【黒く塗る】（地が赤でも黒が出る＝�
    blk.blk1 > blk.blk0 + 100,
    `黒い画素 ${blk.blk0} → ${blk.blk1} ← 増えないなら塗れていない（抜いているだけ）`);
 
-console.log('\n[24] 描き終わりまでJSエラーが出ていない');
+console.log('\n[24] 帯のうねり（帯そのものを曲げる）');
+/* 🔴 参考の管は【帯そのものが弧を描いて曲がって】いる。平行な直線のままでは「ただの線」
+   にしかならない（木下 2026-08-07）。
+   ⚠️ 「絵が変わったか」では測れない。縞に沿って走査したときの明暗の山を数える
+      ＝まっすぐな帯なら山は出ない（同じ帯の上をなぞるだけ）。曲がっていれば山が出る。 */
+const wave = await page.evaluate(async ()=>{
+  const c = document.getElementById('gl');
+  const gl2 = c.getContext('webgl') || c.getContext('experimental-webgl');
+  const w = c.width, h = c.height;
+  const along = async ()=>{
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const px = new Uint8Array(w*h*4); gl2.readPixels(0,0,w,h,gl2.RGBA,gl2.UNSIGNED_BYTE,px);
+    const at=(x,y)=>px[((y*w+x)*4)], lit=(x,y)=>{const i=(y*w+x)*4; return px[i]>40||px[i+1]>40||px[i+2]>40;};
+    let by=0, bv=-1;
+    for(let y=0;y<h;y+=2){ let n=0; for(let x=0;x<w;x+=2) if(lit(x,y)) n++; if(n>bv){bv=n;by=y;} }
+    let peaks=0, up=false, prev=-1;                 // 縞に【沿って】横に走る
+    for(let x=0;x<w;x++){ if(!lit(x,by)) continue; const v=at(x,by);
+      if(prev>=0){ if(v>prev+8 && !up){ up=true; peaks++; } if(v<prev-8) up=false; } prev=v; }
+    return peaks;
+  };
+  resetAll();
+  const s = SHEETS[0]; s.text = '■■'; bakeSheet(s);
+  SHEETS.length = 1; curSheet = 0; refreshSheets();
+  s.warp.vwarp = 0; s.scale = 1.2;
+  P.look = 0; P.density = 20; P.grain = 0; P.stAng = 0; P.stWave = 0;
+  s.stInkN = 1; syncInk();
+  const straight = await along();                   // まっすぐな帯＝沿って走っても山は出にくい
+  P.stWave = 60; P.stWaveFreq = 20;
+  const curved = await along();                     // 曲がった帯＝沿って走ると山が出る
+  P.stWave = 0;
+  const back = await along();
+  return { straight, curved, back };
+});
+ok('🔴 帯が曲がる（縞に沿って走ると明暗が出る＝まっすぐではない）',
+   wave.curved > wave.straight + 5,
+   `まっすぐ=${wave.straight}山 → うねり=${wave.curved}山 ← 増えないなら帯は直線のまま`);
+ok('0に戻すとまっすぐな帯に戻る', Math.abs(wave.back - wave.straight) <= 2,
+   `${wave.straight} → ${wave.back}`);
+
+console.log('\n[25] 描き終わりまでJSエラーが出ていない');
 ok('通しでJSエラーなし', errors.length === 0, errors.slice(0,3).join(' | '));
 
 // ⚠️ パスに日本語が入る＝import.meta.url は %E5.. になっている。decode してから渡す
