@@ -421,7 +421,54 @@ ok('🔴 地なしPNGが画面より小さい（余白を切り詰めている�
 ok('🔴 切り詰めた端に絵が接している（余白が残っていない）', out.png.edge > 0,
    `端の不透明画素=${out.png.edge} ← 0なら切り足りない`);
 
-console.log('\n[15] 描き終わりまでJSエラーが出ていない');
+console.log('\n[15] 版をつかむ（画面で直接動かす）');
+/* 🔴 見るのは「掴んだ点に絵がついてくるか」＝引いた画素数と絵が動いた画素数が一致するか。
+   ⚠️ 版の x が増えただけでは、ズレていても通る（実際 toUV が面のスケールを外しておらず、
+      半分しか動いていないのに「動いた」で通っていた）。 */
+const centroid = async ()=> page.evaluate(async ()=>{
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  const c = document.getElementById('gl');
+  const gl2 = c.getContext('webgl') || c.getContext('experimental-webgl');
+  const w = c.width, h = c.height, px = new Uint8Array(w*h*4);
+  gl2.readPixels(0,0,w,h,gl2.RGBA,gl2.UNSIGNED_BYTE,px);
+  let n=0, sx=0, sy=0;
+  for(let y=0;y<h;y++) for(let x=0;x<w;x++){ const i=(y*w+x)*4;
+    if(px[i]>150 || px[i+1]>150 || px[i+2]>150){ n++; sx+=x; sy+=y; } }
+  return { n, cx: n?sx/n:0, cy: n?sy/n:0, dpr: w/c.clientWidth };
+});
+await page.evaluate(()=>{
+  resetAll();
+  SHEETS.length = 1; curSheet = 0; refreshSheets();
+  ANCHORS.length = 0; SHEETS[0].x = 0; SHEETS[0].y = 0; SHEETS[0].warp.vwarp = 0;
+  P.grab = 0;
+});
+// 既定＝面を押す（今までどおりアンカーが増え、版は動かない）
+await page.mouse.move(500,400); await page.mouse.down();
+await page.mouse.move(560,430,{steps:5}); await page.mouse.up();
+const pushMode = await page.evaluate(()=>({ anchors: ANCHORS.length, x: SHEETS[0].x }));
+ok('既定は「面を押す」＝アンカーが増え、版は動かない', pushMode.anchors === 1 && pushMode.x === 0,
+   JSON.stringify(pushMode));
+
+await page.evaluate(()=>{ ANCHORS.length = 0; SHEETS[0].x = 0; SHEETS[0].y = 0;
+  document.querySelectorAll('#grab button')[1].click(); });
+const before = await centroid();
+const DX = 200, DY = -120;
+await page.mouse.move(600,450); await page.mouse.down();
+await page.mouse.move(600+DX, 450+DY, {steps:10}); await page.mouse.up();
+const after = await centroid();
+const grabbed = await page.evaluate(()=>({ anchors: ANCHORS.length, x: SHEETS[0].x,
+  つまみ: +document.getElementById('sx').value }));
+/* ⚠️ readPixels の y は【下から】数える＝画面で上に動くと値が増える。画面の向きに直して比べる。 */
+const movedX = (after.cx - before.cx) / before.dpr;
+const movedY = -(after.cy - before.cy) / before.dpr;
+ok('つかむモードではアンカーが増えない', grabbed.anchors === 0, JSON.stringify(grabbed));
+ok('つまみの数字も実体に合う', grabbed.つまみ === grabbed.x, JSON.stringify(grabbed));
+ok('🔴 引いた分だけ絵が横に動く（掴んだ点についてくる）', Math.abs(movedX - DX) < 14,
+   `引いた=${DX} 動いた=${movedX.toFixed(1)} ← 半分なら面のスケールを外していない`);
+ok('🔴 引いた分だけ絵が縦に動く', Math.abs(movedY - DY) < 14,
+   `引いた=${DY} 動いた=${movedY.toFixed(1)}`);
+
+console.log('\n[16] 描き終わりまでJSエラーが出ていない');
 ok('通しでJSエラーなし', errors.length === 0, errors.slice(0,3).join(' | '));
 
 // ⚠️ パスに日本語が入る＝import.meta.url は %E5.. になっている。decode してから渡す
