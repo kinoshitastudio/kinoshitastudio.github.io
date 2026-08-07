@@ -351,7 +351,36 @@ const ratio = square.x / Math.max(square.y, 1);
 ok('🔴 マスが正方形（横長4:1の版でも粒が伸びない）', ratio > 2.5 && ratio < 6,
    `横のマス数=${square.x} 縦のマス数=${square.y} 比=${ratio.toFixed(2)} ← 1前後なら版の形を見ずに切っている`);
 
-console.log('\n[13] 描き終わりまでJSエラーが出ていない');
+console.log('\n[13] 色のプリセット');
+/* 🔴 変えるのは【字の色だけ】。地まで同じ色にすると字が地に沈む。
+   ⚠️ 「字の色が変わった」だけ見ると、地も変えてしまう実装でも通る＝地も必ず見る。 */
+const pal = await page.evaluate(()=>{
+  resetAll();
+  P.look = 0; P.stInkN = 2; syncInk();
+  const papBefore = PAPC.slice();
+  const inkBefore = INKC.slice();
+  const btns = document.querySelectorAll('#pal button');
+  btns[2].click();                                   // 熱
+  const inkAfter = INKC.slice(), papAfter = PAPC.slice();
+  const swatch = document.querySelector('input[data-ic="0"]').value;
+  const lit = document.querySelectorAll('#pal button.on').length;
+  // 手で色をいじったら、どのプリセットでもない状態に戻る
+  const c = document.querySelector('input[data-ic="0"]');
+  c.value = '#123456'; c.dispatchEvent(new Event('input', { bubbles:true }));
+  return { n: btns.length, changed: inkAfter[0] !== inkBefore[0],
+           papSame: papAfter.every((v,i)=> v === papBefore[i]),
+           swatch, lit, ink0: inkAfter[0],
+           afterHand: { ink: INKC[0], lit: document.querySelectorAll('#pal button.on').length } };
+});
+ok('プリセットが6つある', pal.n === 6, JSON.stringify(pal));
+ok('押すと字の色が変わる', pal.changed && pal.ink0 === '#0d0000', JSON.stringify(pal));
+ok('色見本にも反映される（数字と実体をズラさない）', pal.swatch === '#0d0000', pal.swatch);
+ok('押したプリセットだけが点く', pal.lit === 1, String(pal.lit));
+ok('🔴 地（紙）の色は動かない（字と同じ色にすると字が地に沈む）', pal.papSame, JSON.stringify(pal));
+ok('手で色をいじるとプリセットの選択が外れる',
+   pal.afterHand.ink === '#123456' && pal.afterHand.lit === 0, JSON.stringify(pal.afterHand));
+
+console.log('\n[14] 描き終わりまでJSエラーが出ていない');
 ok('通しでJSエラーなし', errors.length === 0, errors.slice(0,3).join(' | '));
 
 // ⚠️ パスに日本語が入る＝import.meta.url は %E5.. になっている。decode してから渡す
