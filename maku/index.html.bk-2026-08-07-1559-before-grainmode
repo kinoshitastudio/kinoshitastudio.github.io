@@ -420,11 +420,10 @@
   <h2>粒（マス目に落とす）</h2>
   <div class="row"><label>粒の細かさ</label><input type="range" id="grain" min="0" max="100" step="1" value="0"><span class="val"></span></div>
   <div class="row"><label>粒のばらつき</label><input type="range" id="grainJit" min="0" max="100" step="1" value="0"><span class="val"></span></div>
-  <div class="seg" id="grainInk"><button data-v="0" class="on">形だけ</button><button data-v="1">形も色も</button><button data-v="2">色だけ</button></div>
+  <div class="seg" id="grainInk"><button data-v="0" class="on">色はなめらか</button><button data-v="1">色もマスごと</button></div>
   <div class="note">⭐ 0＝なし。上げるほど細かいマスに落ちる（<b>字にも画像にも</b>効く）<br>
     ⭐ <b>面が歪めば粒も一緒に歪む</b>＝粒 TSUBU（タイルごと）と違うところ<br>
-    <b>形だけ</b>＝字の形をマスに落とす（輪郭が階段になる）／<b>形も色も</b>＝1マスを1色で塗る（ビット感）／
-    ⭐<b>色だけ</b>＝<b>字の輪郭はなめらかなまま、塗りだけ粒</b>（参考の2色の帯はこれ）<br>
+    <b>色もマスごと</b>＝1マスを1色で塗る（ビット感）／<b>なめらか</b>＝マスの中でグラデが流れる<br>
     ⚠️「解像」はメッシュの細かさ＝別のもの</div>
 
   <div class="row"><label>解像</label><input type="range" id="mesh" min="16" max="160" value="90"><span class="val"></span></div>
@@ -846,18 +845,13 @@ const FRAG = `
          横長の版でそのまま切ると横に伸びた矩形になる。版の実寸比でマス数を割り振る。 */
       cellN = max(uGrain * uSheetSize / max(max(uSheetSize.x, uSheetSize.y), 0.0001), vec2(1.0));
       vec2 cell = floor(vUV * cellN);
-      vec2 q = (cell + 0.5) / cellN;
-      /* ⭐ 粒を【字の形】にかけるか【塗り】にかけるかを分ける。2026-08-07
-         0=形だけ ／ 1=形も色も ／ 2=色だけ（字の輪郭はなめらかのまま）
-         🔴 形にかけると字の輪郭が階段になる。参考（2色の帯）は
-            【輪郭はなめらかで、塗りだけが構造を持つ】＝そこを選べないと届かない。 */
-      if(uGrainInk < 1.5) sUV = q;               // 形にかける（0＝形だけ／1＝形も色も）
-      /* ⚠️「色にマス」と「縞をマスに合わせる」は喧嘩する。
+      sUV = (cell + 0.5) / cellN;
+      /* ⚠️「色もマスごと」と「縞をマスに合わせる」は喧嘩する。
          マスに合わせた帯は【マスの中でグラデが流れて】はじめてパイプに見えるのに、
          色までマスごとに1つにすると、その流れが消えて平らな色ブロックになる。
          ⭐ パイプを選んでいるあいだは、色はなめらかのまま通す（触れるのに効かない、を作らない）。 */
       bool pipe = (uStFit > 0.5 && uLook == 0);
-      if(uGrainInk > 0.5 && !pipe) gUV = q;      // 色にかける（1＝形も色も／2＝色だけ）
+      if(uGrainInk > 0.5 && !pipe) gUV = sUV;   // 色もマスごとに1つ＝ビット感が立つ
       /* ⭐ ばらつき ── マス1つごとに、色を引く位置をずらす＝隣のマスと違う色が出る。
          ⚠️ グラデの向きに沿った段（版数）だけでは【縞】にしかならない。
             あのドット感は「マスごとに散る」＝向きと関係なく散らす必要がある。 */
@@ -876,10 +870,9 @@ const FRAG = `
        ⚠️ ここを反転するだけで、下流（縞・粒・刷り）はそのまま効く（式を増やさない）。 */
     float m = uCut > 0.5 ? (1.0 - t4.r) : t4.r;  // 字の内側=1（抜くときは外側=1）
     float a;
-    if(uGrain >= 4.0 && uGrainInk < 1.5){
-      /* ⚠️ 形に粒をかけているときは輪郭をぼかさない。マスの中で m は一定なので、
-         fwidth はマスの境目でだけ跳ねる＝ぼかすと角が丸まって粒に見えない。階段のまま出す。
-         ⚠️「色だけ」のときはここを通さない＝字の輪郭はなめらかに保つ。 */
+    if(uGrain >= 4.0){
+      /* ⚠️ 粒のときは輪郭をぼかさない。マスの中で m は一定なので、fwidth はマスの境目
+         でだけ跳ねる＝ぼかすと角が丸まって粒に見えない。階段のまま出す。 */
       a = step(0.5, m);
     } else {
       // 輪郭のアンチエイリアス — 画面上の傾きから境界の幅を求めるので、

@@ -606,7 +606,42 @@ await page.keyboard.press('KeyH');
 ok('H キーで手のひらモードになる', await page.evaluate(()=> handMode === true));
 await page.keyboard.press('KeyH');
 
-console.log('\n[18] 描き終わりまでJSエラーが出ていない');
+console.log('\n[18] 粒を【形】にかけるか【塗り】にかけるか');
+/* 🔴 参考（2色の帯）は【字の輪郭はなめらかで、塗りだけが構造を持つ】。
+   形に粒をかけると輪郭が階段になる＝そこを選べないと参考に届かない。
+   ⚠️ 「絵が変わったか」では測れない。輪郭の【中間色の画素】を数える
+      （なめらかな輪郭にはアンチエイリアスの中間色が出る／階段には出ない）。 */
+const gm = await page.evaluate(async ()=>{
+  const c = document.getElementById('gl');
+  const gl2 = c.getContext('webgl') || c.getContext('experimental-webgl');
+  const w = c.width, h = c.height;
+  const edge = async ()=>{
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const px = new Uint8Array(w*h*4); gl2.readPixels(0,0,w,h,gl2.RGBA,gl2.UNSIGNED_BYTE,px);
+    let mid = 0, lit = 0;
+    for(let y=0;y<h;y+=2) for(let x=0;x<w;x+=2){ const i=(y*w+x)*4;
+      const v = Math.max(px[i], px[i+1], px[i+2]);
+      if(v > 200) lit++;
+      else if(v > 40) mid++;                       // 地でも塗りでもない＝輪郭のなめらかさ
+    }
+    return { mid, lit };
+  };
+  resetAll();
+  const s = SHEETS[0]; s.text = '文字'; bakeSheet(s);
+  SHEETS.length = 1; curSheet = 0; refreshSheets();
+  s.warp.vwarp = 0; s.scale = 1.2;
+  P.look = 3; P.inkN = 2; INKC[0] = '#ff8000'; INKC[1] = '#ffd080';
+  P.cut = 0; P.grain = 30; P.grainJit = 0;
+  P.grainInk = 0; const shape = await edge();      // 形だけ＝輪郭は階段
+  P.grainInk = 2; const inkOnly = await edge();    // 色だけ＝輪郭はなめらか
+  return { shape, inkOnly };
+});
+ok('「形だけ」は輪郭が階段（中間色がほとんど出ない）',
+   gm.shape.mid < gm.shape.lit * 0.2, JSON.stringify(gm.shape));
+ok('🔴 「色だけ」は字の輪郭がなめらか（中間色が出る）',
+   gm.inkOnly.mid > gm.shape.mid * 1.8, JSON.stringify(gm));
+
+console.log('\n[19] 描き終わりまでJSエラーが出ていない');
 ok('通しでJSエラーなし', errors.length === 0, errors.slice(0,3).join(' | '));
 
 // ⚠️ パスに日本語が入る＝import.meta.url は %E5.. になっている。decode してから渡す
