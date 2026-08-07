@@ -155,8 +155,13 @@
   .row{ gap:10px; padding:3px 0 }
   .row label{ font-family:inherit; font-size:11.5px; opacity:1; color:var(--ink);
     letter-spacing:0; width:58px }
+  /* 🔴 数字はつまみの右に【必ず収まる】こと。つまみに幅を渡さないと、
+     ラベル58＋つまみ＋数字30＋隙間 がパネルの内側幅を超えて、数字が画面の外に出る
+     （2026-08-07 木下「パネルに数字がない」＝出ていたが 22px はみ出していた）。 */
   .val{ font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:11px;
-    opacity:1; color:var(--dim); width:30px; font-variant-numeric:tabular-nums }
+    opacity:1; color:var(--dim); width:30px; flex:0 0 30px; text-align:right;
+    font-variant-numeric:tabular-nums }
+  .row input[type=range]{ flex:1 1 auto; min-width:0 }
 
   /* スライダー＝太いトラック＋大きな白いつまみ */
   .row input[type=range], input[type=range]{
@@ -1243,8 +1248,17 @@ const pointers=new Map();
 let viewMode=null, rotStart=null, panStart=null, pinch0=null;
 let spaceDown=false, handMode=false;             // Space長押し／手のひらモード＝ボードを掴んで動かす
 function applyCursor(){ canvas.style.cursor = (spaceDown||handMode) ? 'grab' : 'default'; }
+/* ⭐ キー操作を横取りしてはいけない場所＝【文字を打つ欄】だけ。
+   🔴 つまみ（input[type=range]）や色見本まで含めると、つまみを触った直後は
+      そこにフォーカスが残っているので ⌘Z も H も丸ごと効かなくなる。
+   ⚠️ この判定は1箇所だけに書く（2箇所に書くと必ず片方だけ直す）。 */
+function isTyping(t){
+  if(!t) return false;
+  if(t.tagName === 'TEXTAREA') return true;
+  return t.tagName === 'INPUT' && /^(|text|search|url|email|number|tel|password)$/.test(t.type);
+}
 window.addEventListener('keydown', e=>{
-  if(e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+  if(isTyping(e.target)) return;
   if(e.code === 'Space'){ if(!spaceDown){ spaceDown=true; applyCursor(); } e.preventDefault(); }
   if(e.key === 'h' || e.key === 'H'){ handMode = !handMode; applyCursor(); }
 });
@@ -1442,11 +1456,16 @@ document.querySelectorAll('#panel .seg').forEach(seg=>{
     if(seg.id==='frameOn' || seg.id==='fshape') layoutCanvas(); }));
 });
 syncLayerUI();
+syncGrainUI();                                    // ⚠️ 粒は目盛りと実マス数が別＝起動時に自分で数字を出す
 let reflow; document.getElementById('txt').addEventListener('input',()=>{
   const s = S_(); if(!s || s.kind !== 'text') return;
   s.text = document.getElementById('txt').value;
   clearTimeout(reflow); reflow=setTimeout(()=>{ bakeSheet(s); refreshSheets(); }, 200); });
 /* ── 文字ごと（伸ばす/すぼめる）── */
+/* ⚠️ 字を選んでいないあいだ、文字ごとのつまみは触れない。数字の欄に「—」を置いて
+   「壊れて空」でなく「いまは効かない」と分かるようにする。 */
+['cw','ch','cr'].forEach(id=>{ const el=document.getElementById(id); if(!el) return;
+  const v=el.parentElement.querySelector('.val'); if(v && !v.textContent.trim()) v.textContent='—'; });
 const cwEl = document.getElementById('cw'), chEl = document.getElementById('ch'),
       crEl = document.getElementById('cr');
 function refreshChars(){                       // bakeSheet のたびに呼ぶ
@@ -2032,14 +2051,21 @@ document.getElementById('panel').addEventListener('pointerdown', e=>{
   if(e.target.closest('button, input[type=range], input[type=color]')) snap();
 }, true);
 document.getElementById('panel').addEventListener('keydown', e=>{
+  /* 🔴 ⌘/Ctrl つきのキーでは積まない。つまみにフォーカスがあるまま ⌘Z を押すと、
+     ここで【いまの状態】が積まれ、そのすぐ後の undo がそれを取り出す＝何も戻らない
+     （HUD だけ「戻した」と出る。2026-08-07 木下「コマンドzが効かない」の正体）。 */
+  if(e.metaKey || e.ctrlKey) return;
   if(e.target.matches('input[type=range]')) snap();
 }, true);
 canvas.addEventListener('pointerdown', snap, true);       // アンカーを置く/引っぱる前
 document.getElementById('txt').addEventListener('beforeinput', snapThrottled);
 window.addEventListener('keydown', e=>{
   if(!(e.metaKey || e.ctrlKey) || (e.key||'').toLowerCase() !== 'z') return;
-  // ⚠️ 打ち込み欄の中は、ブラウザの取り消しに任せる（横取りすると文字が戻せなくなる）
-  if(/^(TEXTAREA|INPUT)$/.test(e.target.tagName)) return;
+  /* ⚠️ 打ち込み欄の中は、ブラウザの取り消しに任せる（横取りすると文字が戻せなくなる）。
+     🔴 ただし【文字を打つ欄だけ】。つまみ（input[type=range]）や色見本まで除くと、
+        つまみを触った直後はそこにフォーカスが残っているので ⌘Z が丸ごと効かなくなる
+        （2026-08-07 木下「コマンドzとかキーはできるようにしておいて」）。 */
+  if(isTyping(e.target)) return;
   e.preventDefault();
   if(e.shiftKey) redo(); else undo();
 });

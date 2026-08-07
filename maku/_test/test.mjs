@@ -557,7 +557,56 @@ ok('🔴 刷った所と抜いた所が入れ替わっている（重なりは�
    cut.both < cut.print * 0.12,
    `重なり=${cut.both} 刷り=${cut.print} ← 重なりが多いなら反転しきれていない`);
 
-console.log('\n[17] 描き終わりまでJSエラーが出ていない');
+console.log('\n[17] つまみの数字とキー操作');
+/* 🔴 数字はつまみの右に【収まっている】こと。文字が入っていても、パネルからはみ出していれば
+   木下の画面には無い（2026-08-07「パネルに数字がない」＝22px はみ出していた）。 */
+const vals = await page.evaluate(()=>{
+  const pr = document.getElementById('panel').getBoundingClientRect();
+  let over = 0, empty = 0, total = 0;
+  document.querySelectorAll('#panel .row .val').forEach(v=>{
+    const r = v.getBoundingClientRect();
+    if(r.width === 0 && r.height === 0) return;            // 畳まれている節は数えない
+    const inp = v.parentElement.querySelector('input');
+    if(inp && inp.disabled) return;                        // 触れないつまみは数えない
+    total++;
+    if(r.right > pr.right - 2) over++;
+    if(!v.textContent.trim()) empty++;
+  });
+  return { total, over, empty };
+});
+ok('つまみの数字がどれもパネルの中に収まっている', vals.over === 0,
+   `はみ出し=${vals.over}/${vals.total} ← 1つでも出ていれば画面の外で読めない`);
+ok('数字が空でない', vals.empty === 0, `空=${vals.empty}/${vals.total}`);
+
+/* 🔴 ⌘Z は【実際につまみを掴んで動かしてから実キーで】確かめる。
+   合成イベントでは snap が走らず、実機で効かない壊れ方を見逃す。 */
+await page.evaluate(()=>{ resetAll(); SHEETS.length = 1; curSheet = 0; refreshSheets(); });
+const v0 = await page.evaluate(()=> SHEETS[0].warp.vwarp);
+const box = await page.evaluate(()=>{ const el = document.getElementById('vwarp');
+  el.scrollIntoView({block:'center'});
+  const r = el.getBoundingClientRect(); return { x:r.x, y:r.y, w:r.width, h:r.height }; });
+await page.mouse.move(box.x + box.w*0.5, box.y + box.h/2);
+await page.mouse.down();
+await page.mouse.move(box.x + box.w*0.92, box.y + box.h/2, { steps:6 });
+await page.mouse.up();
+const v1 = await page.evaluate(()=> SHEETS[0].warp.vwarp);
+await page.keyboard.down('Meta'); await page.keyboard.press('KeyZ'); await page.keyboard.up('Meta');
+await new Promise(r=> setTimeout(r, 400));
+const v2 = await page.evaluate(()=> SHEETS[0].warp.vwarp);
+ok('つまみを掴んで動かせている', v1 !== v0, `${v0} → ${v1}`);
+ok('🔴 つまみを触った直後でも ⌘Z で戻る（実キー）', v2 === v0,
+   `${v0} → ${v1} → ⌘Z → ${v2} ← 戻らないなら ⌘Z 自身が今の状態を積んでいる`);
+await page.keyboard.down('Meta'); await page.keyboard.down('Shift');
+await page.keyboard.press('KeyZ');
+await page.keyboard.up('Shift'); await page.keyboard.up('Meta');
+await new Promise(r=> setTimeout(r, 400));
+const v3 = await page.evaluate(()=> SHEETS[0].warp.vwarp);
+ok('⌘⇧Z でやり直せる', v3 === v1, `${v2} → ⌘⇧Z → ${v3}`);
+await page.keyboard.press('KeyH');
+ok('H キーで手のひらモードになる', await page.evaluate(()=> handMode === true));
+await page.keyboard.press('KeyH');
+
+console.log('\n[18] 描き終わりまでJSエラーが出ていない');
 ok('通しでJSエラーなし', errors.length === 0, errors.slice(0,3).join(' | '));
 
 // ⚠️ パスに日本語が入る＝import.meta.url は %E5.. になっている。decode してから渡す
