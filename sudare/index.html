@@ -130,6 +130,7 @@
   <div class="seg" id="pal" style="flex-wrap:wrap">
     <button data-v="0">紫</button><button data-v="1">金</button><button data-v="2">銀</button>
     <button data-v="3">熱</button><button data-v="4">赤青</button><button data-v="5">墨</button>
+    <button data-v="6">藍黄</button><button data-v="7">青黄</button>
   </div>
   <div class="row"><label>色の数</label><input type="range" id="colN" min="2" max="10" step="1" value="3"><span class="val"></span></div>
   <div class="cols" id="cw0">
@@ -270,7 +271,7 @@ function paintDist(sh){
       const j = (t * (N - 1)) | 0;
       let r2 = tbl[j*3], g2 = tbl[j*3+1], b2 = tbl[j*3+2];
       if(comb > 0.001 && along){
-        let u = along[i] * combN * 0.004;   // ⚠️ along は弧長（画素数）
+        let u = along[i] * combN * 0.01;   // ⚠️ along は「輪郭1周＝100」に正規化した弧長
         u = u - Math.floor(u);
         const k4 = 1 - comb * (0.5 - 0.5 * Math.cos(u * 6.2831853));
         r2 = r2 * k4; g2 = g2 * k4; b2 = b2 * k4;
@@ -343,6 +344,9 @@ function edt2d(bin, W, H, near){
 function contourArc(edge, W, H){
   const arc = new Float32Array(W * H).fill(-1);
   const seen = new Uint8Array(W * H);
+  /* 輪郭1周ぶんの歯の本数（正規化の単位）。⚠️ 実際の本数は「歯の細かさ」で決まる */
+  const TEETH_PER_LOOP = 100;
+  let base = 0;
   const D = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
   for(let y = 0; y < H; y++) for(let x = 0; x < W; x++){
     const i0 = y * W + x;
@@ -362,7 +366,14 @@ function contourArc(edge, W, H){
       if(!found) break;
       if(cx === x && cy === y) break;               // 一周した
     }
-    for(let k = 0; k < path.length; k++) arc[path[k]] = k;   // 画素数＝弧長
+    /* 🔴 成分ごとに 0 から振り直すと、輪郭が切り替わるところ（B の外側と内側など）で
+       弧長が飛んで、そのまわりだけ歯が格子に見える（2026-08-07 に踏んだ）。
+       ⭐ 通し番号にして、成分の境でも値が続くようにする。
+       ⚠️ ただし通しだけだと成分の長さの差がそのまま出るので、
+          【この輪郭を一周したら歯が何本】が揃うように、成分の長さで正規化してから足す。 */
+    const L = Math.max(1, path.length);
+    for(let k = 0; k < path.length; k++) arc[path[k]] = base + (k / L) * TEETH_PER_LOOP;
+    base += TEETH_PER_LOOP;
   }
   return arc;
 }
@@ -439,6 +450,12 @@ const PALS = [
   { name:'熱',   n:5, k:'#0d0000', cols:['#ffe64d','#ff7a00','#ff3c00','#ff7a00','#ffe64d','#fff7cc'] },
   { name:'赤青', n:5, k:'#000010', cols:['#ff5a3c','#e01e14','#2020e0','#5a4cff','#ffffff','#ffffff'] },
   { name:'墨',   n:5, k:'#000000', cols:['#f4f2ee','#c9c6bd','#4a4a46','#c9c6bd','#f4f2ee','#ffffff'] },
+  /* ⭐ 参考から採った2つ（2026-08-07）。
+     藍黄＝等高線の参考（白・青・黄が細く交互に走る）／青黄＝2色の硬い帯の参考。 */
+  { name:'藍黄', n:4, k:'#000000',
+    cols:['#ffffff','#3b7fd4','#ffffff','#d8b220','#ffffff','#3b7fd4','#ffffff','#d8b220','#ffffff','#3b7fd4'] },
+  { name:'青黄', n:2, k:'#05060f',
+    cols:['#1e56d6','#e8e02a','#1e56d6','#e8e02a','#ffffff','#1e56d6','#e8e02a','#ffffff','#1e56d6','#e8e02a'] },
 ];
 function applyPal(i){
   const q = PALS[i]; if(!q) return;
