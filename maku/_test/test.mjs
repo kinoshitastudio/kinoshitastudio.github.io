@@ -434,6 +434,42 @@ const out = await page.evaluate(async ()=>{
            png: { w: bmp.width, h: bmp.height, canvas: [w, h], edge: edge() } };
 });
 ok('「縞をマスに合わせる」で絵が変わる', out.fit > 100, JSON.stringify(out));
+/* 🔴 合わせた帯が【マスに追従している】かを数える＝粒を倍にすれば縞も倍。
+   ⚠️「絵が変わった」だけでは、帯がマスと無関係に走っていても通る。
+   🔴 さらに「色もマスごと」を ON にしても縞が残ることを見る
+      ── 色までマスごとに1つにすると、マスの中のグラデが消えて平らな色ブロックになる
+         （＝パイプを選んでいるのに効かない）。 */
+const pipe = await page.evaluate(async ()=>{
+  const c = document.getElementById('gl');
+  const gl2 = c.getContext('webgl') || c.getContext('experimental-webgl');
+  const w = c.width, h = c.height;
+  const stripes = async ()=>{
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const px = new Uint8Array(w*h*4); gl2.readPixels(0,0,w,h,gl2.RGBA,gl2.UNSIGNED_BYTE,px);
+    const at=(x,y)=>px[((y*w+x)*4)], lit=(x,y)=>{const i=(y*w+x)*4; return px[i]>40||px[i+1]>40||px[i+2]>40;};
+    let bx=0, bv=-1;
+    for(let x=0;x<w;x+=2){ let n=0; for(let y=0;y<h;y+=2) if(lit(x,y)) n++; if(n>bv){bv=n;bx=x;} }
+    let peaks=0, up=false, prev=-1;
+    for(let y=0;y<h;y++){ if(!lit(bx,y)) continue; const v=at(bx,y);
+      if(prev>=0){ if(v>prev+6 && !up){ up=true; peaks++; } if(v<prev-6) up=false; } prev=v; }
+    return peaks;
+  };
+  resetAll();
+  const s = SHEETS[0]; s.text = '■■■■\n■■■■'; bakeSheet(s);
+  SHEETS.length = 1; curSheet = 0; refreshSheets();
+  s.scale = 1.0; s.warp.vwarp = 0;
+  P.look = 0; P.stFit = 1; P.stInkN = 1; P.stRound = 0; P.grainInk = 0; P.grainJit = 0;
+  P.grain = 20; syncGrainUI();  const n20 = await stripes();
+  P.grain = 40; syncGrainUI();  const n40 = await stripes();
+  P.grain = 20; syncGrainUI(); P.grainInk = 1;  const nBit = await stripes();
+  return { n20, n40, nBit };
+});
+ok('🔴 縞がマスに追従する（粒を倍にすると縞も倍）',
+   pipe.n40 > pipe.n20 * 1.6 && pipe.n40 < pipe.n20 * 2.5,
+   `粒20→${pipe.n20}本 / 粒40→${pipe.n40}本 ← 変わらないならマスと無関係に走っている`);
+ok('🔴 「色もマスごと」でもマスの中のグラデが残る（パイプが潰れない）',
+   pipe.nBit >= pipe.n20 - 1,
+   `色なめらか=${pipe.n20}本 / 色もマスごと=${pipe.nBit}本 ← 0 なら平らな色ブロックに潰れている`);
 ok('戻すと元の絵に戻る', out.back === 0, `違う画素=${out.back}`);
 ok('🔴 地なしPNGが画面より小さい（余白を切り詰めている）',
    out.png.w < out.png.canvas[0] && out.png.h < out.png.canvas[1], JSON.stringify(out.png));
