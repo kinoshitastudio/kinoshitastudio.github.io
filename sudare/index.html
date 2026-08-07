@@ -36,6 +36,13 @@
     padding:10px; font-family:inherit; font-size:12px; color:var(--ink); cursor:pointer; margin-top:6px }
   .note{ font-size:10.5px; line-height:1.65; color:var(--dim); margin-top:6px; display:none }
   body.help .note{ display:block }
+  /* 版のチップ（押した版が「いま触っている版」） */
+  .chips{ display:flex; flex-wrap:wrap; gap:5px; margin:6px 0 }
+  .chips button{ min-width:30px; height:30px; padding:0 8px; border:1px solid var(--line);
+    border-radius:8px; background:rgba(255,255,255,.6); font-family:inherit; font-size:13px;
+    color:var(--ink); opacity:.55; cursor:pointer }
+  .chips button.on{ opacity:1; background:var(--ink); color:var(--paper); border-color:var(--ink) }
+  .big:disabled{ opacity:.35; cursor:not-allowed }
   .cols{ display:flex; gap:6px; margin:6px 0 }
   .cols input[type=color]{ flex:1; height:30px; border:none; border-radius:8px; background:none; padding:0; cursor:pointer }
   #helpBtn{ position:absolute; top:8px; right:12px; width:18px; height:18px; padding:0; line-height:1;
@@ -70,6 +77,19 @@
 <canvas id="cv"></canvas>
 <div id="hud">簾 SUDARE / KINOSHITA STUDIO<br><span id="stat"></span></div>
 <div id="panel"><button id="helpBtn" title="説明の表示／非表示">?</button>
+
+  <h2>版（重ねる）</h2>
+  <div class="chips" id="sheets"></div>
+  <div class="seg" id="addSeg"><button data-add="text">＋ 字</button></div>
+  <div class="row"><label>横位置</label><input type="range" id="x" min="-200" max="200" value="0"><span class="val"></span></div>
+  <div class="row"><label>縦位置</label><input type="range" id="y" min="-200" max="200" value="0"><span class="val"></span></div>
+  <div class="row"><label>版の大きさ</label><input type="range" id="scale" min="5" max="400" value="100"><span class="val"></span></div>
+  <div class="row"><label>角度</label><input type="range" id="rot" min="-180" max="180" value="0"><span class="val"></span></div>
+  <button class="big" id="dupSheet">この版を複製</button>
+  <button class="big" id="delSheet">この版を消す</button>
+  <div class="note">⭐ 版を押す＝その版を選ぶ。<b>下のつまみは全部その版だけに効く</b>（字も分け方も色も）<br>
+    新しく足した版は、いま触っている版の設定を<b>受け継いで</b>生まれる（そこから別々に動かせる）<br>
+    ⚠️ 地（紙）とズーム・移動は<b>面ぜんぶ</b>にかかる</div>
 
   <h2>字</h2>
   <textarea id="txt">CAVOLO</textarea>
@@ -154,20 +174,41 @@
 const cv = document.getElementById('cv'), g = cv.getContext('2d');
 const stat = m => { const s = document.getElementById('stat'); if(s) s.textContent = m; };
 
-const P = { txt:'CAVOLO', font:0, tdir:0, size:70, track:0,
-            dir:0, slices:26, gap:6, minLen:4,
-            cols:['#cb66ef','#8266ef','#5845a2','#8266ef','#cb66ef','#ffffff','#a06ce8','#3a2a6a','#e0b0ff','#ffffff'],
-            colN:3, kcol:'#000000', weight:900, bold:0,
-            kpos:49, kw:16, jit:0, rep:1, gdir:0, bg:'#0a0a0a' };
+/* ══ 版（重ねる）══════════════════════════════════════════
+   ⭐ 1枚の紙の上に、字の版を何枚でも重ねる（膜 MAKU と同じ考え）。
+   ⭐ 版が持つのは「何を・どう分けて・どう刷るか」と「どこに・どの大きさ・どの角度で」。
+   ⭐ 面のもの＝地（紙）とビュー（ズーム・パン）＝どの版にも同じくかかる。
+   ⚠️ P に残すのは【面のもの】だけ。版のものを P に置くと、重ねたとき全部同じになる。 */
+const COL_DEF = ['#cb66ef','#8266ef','#5845a2','#8266ef','#cb66ef','#ffffff','#a06ce8','#3a2a6a','#e0b0ff','#ffffff'];
+const SHEET_KEYS = ['txt','font','tdir','weight','bold','size','track','dir','slices','gap','minLen',
+                    'colN','kcol','kpos','kw','jit','rep','gdir','x','y','scale','rot'];
+function newSheet(txt){
+  return { txt: txt != null ? txt : 'あたらしい', font:0, tdir:0, weight:900, bold:0, size:70, track:0,
+           dir:0, slices:26, gap:6, minLen:4,
+           cols: COL_DEF.slice(), colN:3, kcol:'#000000',
+           kpos:49, kw:16, jit:0, rep:1, gdir:0,
+           x:0, y:0, scale:100, rot:0,
+           RECTS:[], ART:{ w:1, h:1 } };
+}
+let SHEETS = [ newSheet('CAVOLO') ];
+let cur = 0;
+const S_ = () => SHEETS[cur] || SHEETS[0];
+/* ⭐ 新しい版は【いま触っている版】から受け継ぐ＝足した瞬間に見え方が飛ばない（膜 MAKU と同じ） */
+function inherit(s, src){
+  const from = src || S_(); if(!from) return s;
+  SHEET_KEYS.forEach(k => { if(k !== 'txt') s[k] = from[k]; });
+  s.cols = from.cols.slice();
+  return s;
+}
+/* 面のもの＝地だけ */
+const P = { bg:'#0a0a0a' };
 
 /* ⚠️ RECTS と noBgOnce は build()/draw() が触る。UI の初期化より【前】に宣言する
    ── let は巻き上がらないので、後ろに置くと初期化のときに TDZ で静かに死ぬ（2026-08-07 に踏んだ）。 */
-let RECTS = [];
 let noBgOnce = false;
 /* ⭐ 見るためのビュー（ズーム・パン）。⚠️ 書き出しは【見えているとおり】に出す
    ＝寄って撮れば寄った絵が出る（膜 MAKU の版面と同じ考え）。 */
 const VIEW = { zoom:1, x:0, y:0 };
-const ART = { w:1, h:1 };   // 字の実寸（板の座標はこの中）
 
 /* ── 字を裏の canvas に焼く（形を読むためだけに使う） ── */
 const tc = document.createElement('canvas'), tg = tc.getContext('2d', { willReadFrequently:true });
@@ -175,11 +216,11 @@ const tc = document.createElement('canvas'), tg = tc.getContext('2d', { willRead
 /* ⭐ ここが核心 ── 字を細く切って、字がある区間を【1枚の板】として拾う。
    ⚠️ 小さい正方形を敷き詰めるのではない。区間の長さがそのまま矩形の長さになる
       ＝「L」の縦棒は1枚の長い矩形になる。 */
-function sliceToRects(mask, W, H, horizontal){
+function sliceToRects(sh, mask, W, H, horizontal){
   const rects = [];
-  const n = Math.max(2, Math.round(P.slices));
+  const n = Math.max(2, Math.round(sh.slices));
   const step = (horizontal ? H : W) / n;
-  const minLen = (P.minLen / 100) * (horizontal ? W : H);
+  const minLen = (sh.minLen / 100) * (horizontal ? W : H);
   for(let i = 0; i < n; i++){
     const a0 = Math.floor(i * step), a1 = Math.max(a0 + 1, Math.floor((i + 1) * step));
     let run = -1;
@@ -219,11 +260,11 @@ const PALS = [
 ];
 function applyPal(i){
   const q = PALS[i]; if(!q) return;
-  q.cols.forEach((c, j) => P.cols[j] = c); P.colN = q.n; P.kcol = q.k;
+  const sh = S_(); q.cols.forEach((c, j) => sh.cols[j] = c); sh.colN = q.n; sh.kcol = q.k;
   const el = document.getElementById('colN');
   if(el){ el.value = q.n; const v = el.parentElement.querySelector('.val'); if(v) v.textContent = q.n; }
-  for(let j = 0; j < 10; j++){ const c = document.getElementById('k' + j); if(c) c.value = P.cols[j]; }
-  const kc = document.getElementById('kcol'); if(kc) kc.value = P.kcol;
+  for(let j = 0; j < 10; j++){ const c = document.getElementById('k' + j); if(c) c.value = sh.cols[j]; }
+  const kc = document.getElementById('kcol'); if(kc) kc.value = sh.kcol;
   syncCols(); draw();
 }
 
@@ -235,39 +276,39 @@ function mixHex(a, b, f){
   const c = A.map((v, i) => Math.round(v + (B[i] - v) * f));
   return '#' + c.map(v => v.toString(16).padStart(2, '0')).join('');
 }
-function colAt(t){
-  const n = Math.max(2, Math.round(P.colN));
+function colAt(sh, t){
+  const n = Math.max(2, Math.round(sh.colN));
   const x = Math.max(0, Math.min(1, t)) * (n - 1);
   const i = Math.min(n - 2, Math.floor(x));
-  return mixHex(P.cols[i], P.cols[i + 1], x - i);
+  return mixHex(sh.cols[i], sh.cols[i + 1], x - i);
 }
 
 /* ⭐ 1枚の板に、グラデを1回だけ刷る。
    参考のグラデは【1周期の中に黒のストップ】が入っている（色→暗→黒→色）。 */
-function paintRect(r, idx){
-  const gap = P.gap / 100;
+function paintRect(sh, r, idx){
+  const gap = sh.gap / 100;
   const gx = r.w * gap * 0.5, gy = r.h * gap * 0.5;
   const x = r.x + gx, y = r.y + gy, w = Math.max(1, r.w - gx * 2), h = Math.max(1, r.h - gy * 2);
   // グラデの向き：矩形に沿って（長い方向）か、直交して（短い方向）か
-  const alongLong = (P.gdir === 0);
+  const alongLong = (sh.gdir === 0);
   const vertical = alongLong ? (h >= w) : (h < w);
   const grad = vertical ? g.createLinearGradient(x, y, x, y + h) : g.createLinearGradient(x, y, x + w, y);
-  const rep = Math.max(1, Math.round(P.rep));
+  const rep = Math.max(1, Math.round(sh.rep));
   /* ⚠️ ずらす＝矩形ごとに黒の位置を食い違わせる（同じ矩形なら必ず同じ＝ちらつかない） */
   const rnd = Math.abs(Math.sin(idx * 127.1) * 43758.5453) % 1;
-  const shift = (rnd - 0.5) * (P.jit / 100);
-  const kpos = P.kpos / 100, kw = P.kw / 200;
+  const shift = (rnd - 0.5) * (sh.jit / 100);
+  const kpos = sh.kpos / 100, kw = sh.kw / 200;
   /* ⭐ 色を等間隔に並べて、その中に【黒を1つ】挟む＝木下が Figma で組んでいた形
      （明→中→暗→黒→中→明）。⚠️ 黒の前後は colAt でその位置の色を置く。 */
-  const n = Math.max(2, Math.round(P.colN));
+  const n = Math.max(2, Math.round(sh.colN));
   for(let k = 0; k < rep; k++){
     const base = k / rep, span = 1 / rep;
     const at = t => Math.max(0, Math.min(1, base + ((t + shift + 1) % 1) * span));
     const stops = [];
-    for(let i = 0; i < n; i++) stops.push([i / (n - 1), P.cols[i]]);
+    for(let i = 0; i < n; i++) stops.push([i / (n - 1), sh.cols[i]]);
     if(kw > 0.002){
       const a = Math.max(0.001, kpos - kw), b2 = Math.min(0.999, kpos + kw);
-      stops.push([a, colAt(a)], [kpos, P.kcol], [b2, colAt(b2)]);
+      stops.push([a, colAt(sh, a)], [kpos, sh.kcol], [b2, colAt(sh, b2)]);
     }
     stops.sort((x, y) => x[0] - y[0]);
     stops.forEach(([t, c]) => grad.addColorStop(at(t), c));
@@ -275,35 +316,33 @@ function paintRect(r, idx){
   g.fillStyle = grad;
   /* ⚠️ すき間0のとき、隣の板とぴったり接していても【境界にアンチエイリアスの線】が出る
      （ズームすると見える）。半画素だけ重ねて消す。すき間を空けているときは重ねない。 */
-  const ov = (P.gap <= 0) ? 0.5 / Math.max(VIEW.zoom, 0.2) : 0;
+  const ov = (sh.gap <= 0) ? 0.5 / Math.max(VIEW.zoom * sh.scale / 100, 0.2) : 0;
   g.fillRect(x - ov, y - ov, w + ov * 2, h + ov * 2);
 }
 
-function build(){
-  const dpr = Math.min(devicePixelRatio, 2);
-  cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
-  const fam = P.font ? '"Zen Old Mincho"' : '"Zen Kaku Gothic New"';
-  const lines = (P.txt || ' ').split('\n');
+function buildSheet(sh){
+  const fam = sh.font ? '"Zen Old Mincho"' : '"Zen Kaku Gothic New"';
+  const lines = (sh.txt || ' ').split('\n');
   /* ⭐ 基準の字の大きさ＝画面の高さの半分。「大きさ」はそこからの倍率。
      🔴 画面サイズの canvas に焼くと、大きくしたとき【はみ出した分が存在しない】＝
         引いても戻らない（2026-08-07 木下「大きくすると文字が切れる」）。
         字の実寸を測って、その大きさの裏 canvas に焼く。 */
   const base = cv.height * 0.5;
   let W2, H2, S, stepY = 0, maxLen = 1, cols = 1;
-  if(P.tdir === 1){
+  if(sh.tdir === 1){
     maxLen = Math.max(...lines.map(l => [...l].length), 1);
     cols = lines.length;
-    S = base * (P.size / 100) / Math.max(maxLen, 1) * 3;
-    stepY = S * (1.02 + P.track / 100);
-    W2 = Math.ceil(cols * S * 1.02 + S * 0.4 + S * (P.bold/100) * 0.4);
-    H2 = Math.ceil(maxLen * Math.abs(stepY) + S * 0.6 + S * (P.bold/100) * 0.4);
+    S = base * (sh.size / 100) / Math.max(maxLen, 1) * 3;
+    stepY = S * (1.02 + sh.track / 100);
+    W2 = Math.ceil(cols * S * 1.02 + S * 0.4 + S * (sh.bold/100) * 0.4);
+    H2 = Math.ceil(maxLen * Math.abs(stepY) + S * 0.6 + S * (sh.bold/100) * 0.4);
   } else {
-    S = base * (P.size / 100) / Math.max(lines.length, 1) * 1.6;
+    S = base * (sh.size / 100) / Math.max(lines.length, 1) * 1.6;
     tg.font = `900 ${S}px ${fam}, sans-serif`;
-    tg.letterSpacing = `${P.track / 100 * S}px`;
+    tg.letterSpacing = `${sh.track / 100 * S}px`;
     const wMax = Math.max(...lines.map(l => tg.measureText(l).width), 1);
-    W2 = Math.ceil(wMax + S * 0.4 + S * (P.bold/100) * 0.4);
-    H2 = Math.ceil(lines.length * S * 1.02 + S * 0.6 + S * (P.bold/100) * 0.4);
+    W2 = Math.ceil(wMax + S * 0.4 + S * (sh.bold/100) * 0.4);
+    H2 = Math.ceil(lines.length * S * 1.02 + S * 0.6 + S * (sh.bold/100) * 0.4);
   }
   /* ⚠️ 大きくしすぎると走査が重い＝上限で止める（黙って壊れず、止まったことは出さない） */
   const LIM = 8192;   // ⚠️ 低いと大きさのつまみが途中から効かなくなる
@@ -312,13 +351,13 @@ function build(){
   tc.width = W2; tc.height = H2;
   tg.fillStyle = '#000'; tg.fillRect(0, 0, W2, H2);
   tg.fillStyle = '#fff'; tg.textAlign = 'center'; tg.textBaseline = 'middle';
-  tg.font = `${P.weight} ${S}px ${fam}, sans-serif`;
+  tg.font = `${sh.weight} ${S}px ${fam}, sans-serif`;
   /* ⭐ 太らせ ── フォントの太さは 900 が上限。その先は【輪郭で膨らませて】作る。
      ⚠️ 塗りと同じ色で線を引く＝輪郭のぶんだけ字が太る（lineJoin:round で角を丸めない）。 */
-  const bw = S * (P.bold / 100) * 0.16;
+  const bw = S * (sh.bold / 100) * 0.16;
   tg.strokeStyle = '#fff'; tg.lineJoin = 'round'; tg.lineCap = 'round'; tg.lineWidth = bw;
   const put = (ch, x, y) => { tg.fillText(ch, x, y); if(bw > 0.5) tg.strokeText(ch, x, y); };
-  if(P.tdir === 1){
+  if(sh.tdir === 1){
     /* ⭐ 縦組み ── 字が上→下、行が右→左（膜 MAKU・組 KUMI と同じ作法）。
        ⚠️ 1文字ずつ置くので letterSpacing は効かない＝字間は【置く間隔】で作る。 */
     tg.letterSpacing = '0px';
@@ -330,18 +369,32 @@ function build(){
       });
     });
   } else {
-    tg.letterSpacing = `${P.track / 100 * S}px`;
+    tg.letterSpacing = `${sh.track / 100 * S}px`;
     lines.forEach((ln, i) => put(ln, W2 / 2, H2 / 2 + (i - (lines.length - 1) / 2) * S * 1.02));
   }
   const d = tg.getImageData(0, 0, W2, H2).data;
   const mask = new Uint8Array(W2 * H2);
   for(let i = 0, q = 0; i < d.length; i += 4, q++) mask[q] = d[i] > 110 ? 1 : 0;
-  RECTS = [];
-  if(P.dir === 0 || P.dir === 2) RECTS = RECTS.concat(sliceToRects(mask, W2, H2, false));
-  if(P.dir === 1 || P.dir === 2) RECTS = RECTS.concat(sliceToRects(mask, W2, H2, true));
-  ART.w = W2; ART.h = H2;
+  let R = [];
+  if(sh.dir === 0 || sh.dir === 2) R = R.concat(sliceToRects(sh, mask, W2, H2, false));
+  if(sh.dir === 1 || sh.dir === 2) R = R.concat(sliceToRects(sh, mask, W2, H2, true));
+  sh.RECTS = R; sh.ART = { w:W2, h:H2 };
+}
+/* ⭐ いま触っている版だけ焼き直して描く（他の版はそのまま＝重ねても崩れない） */
+function build(){
+  const dpr = Math.min(devicePixelRatio, 2);
+  cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
+  buildSheet(S_());
   draw();
-  stat(`${RECTS.length} 枚の板`);
+  stat(`${SHEETS.reduce((n, x) => n + x.RECTS.length, 0)} 枚の板 / ${SHEETS.length} 版`);
+}
+/* 画面の大きさが変わったら全部の版を焼き直す（字の実寸が画面の高さを基準にしているため） */
+function buildAll(){
+  const dpr = Math.min(devicePixelRatio, 2);
+  cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
+  SHEETS.forEach(buildSheet);
+  draw();
+  stat(`${SHEETS.reduce((n, x) => n + x.RECTS.length, 0)} 枚の板 / ${SHEETS.length} 版`);
 }
 function draw(){
   const W = cv.width, H = cv.height;
@@ -350,17 +403,30 @@ function draw(){
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, W, H);
   if(!noBgOnce){ g.fillStyle = P.bg; g.fillRect(0, 0, W, H); }
-  /* 字の実寸（ART）を画面の中央に置いてから、ビュー（ズーム・パン）を掛ける */
-  const ox = (W - ART.w) / 2, oy = (H - ART.h) / 2;
-  g.setTransform(VIEW.zoom, 0, 0, VIEW.zoom, VIEW.x + ox * VIEW.zoom, VIEW.y + oy * VIEW.zoom);
-  RECTS.forEach((r, i) => paintRect(r, i));
+  /* ⭐ 版を下から順に重ねる。版ごとに【どこに・どの大きさ・どの角度で】置く。
+     ⚠️ 字の実寸（ART）を画面の中央に置いてから、ビュー（ズーム・パン）を掛ける。 */
+  SHEETS.forEach(sh => {
+    const sc = (sh.scale || 100) / 100;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.translate(VIEW.x, VIEW.y);
+    g.scale(VIEW.zoom, VIEW.zoom);
+    g.translate(W / 2 + (sh.x / 100) * W * 0.5, H / 2 + (sh.y / 100) * H * 0.5);
+    g.rotate((sh.rot || 0) * Math.PI / 180);
+    g.scale(sc, sc);
+    g.translate(-sh.ART.w / 2, -sh.ART.h / 2);
+    sh.RECTS.forEach((r, i) => paintRect(sh, r, i));
+  });
   g.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 /* ── UI ── */
+/* ⭐ つまみは【選んでいる版】に書く。P には入れない（P に入れると重ねたとき全部同じになる） */
+const FACE_KEYS = [];                       // 面のつまみ（いまは無い。地の色は color 入力）
 document.querySelectorAll('#panel input[type=range]').forEach(r=>{
   const val = r.parentElement.querySelector('.val');
-  const sync = ()=>{ P[r.id] = +r.value; if(val) val.textContent = r.value;
+  const sync = ()=>{ const sh = S_();
+    if(FACE_KEYS.includes(r.id)) P[r.id] = +r.value; else sh[r.id] = +r.value;
+    if(val) val.textContent = r.value;
     if(r.id === 'colN') syncCols();
     if(['size','track','slices','minLen','dir','weight','bold'].includes(r.id)) build(); else draw(); };
   r.addEventListener('input', sync);
@@ -382,22 +448,21 @@ document.querySelectorAll('#panel .seg').forEach(seg=>{
   if(seg.id === 'pal') return;                    // プリセットは上で専用に繋いだ
   seg.querySelectorAll('button').forEach(b=> b.addEventListener('click', ()=>{
     seg.querySelectorAll('button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
-    P[seg.id] = +b.dataset.v;
+    S_()[seg.id] = +b.dataset.v;
     if(seg.id === 'dir' || seg.id === 'font' || seg.id === 'tdir') build(); else draw();
   }));
 });
 for(let i = 0; i < 10; i++){
   const el = document.getElementById('k' + i); if(!el) continue;
-  el.value = P.cols[i];
-  el.addEventListener('input', ()=>{ P.cols[i] = el.value; draw(); });
+  el.value = S_().cols[i];
+  el.addEventListener('input', ()=>{ S_().cols[i] = el.value; draw(); });
 }
-['kcol','bg'].forEach(id=>{
-  const el = document.getElementById(id);
-  el.addEventListener('input', ()=>{ P[id] = el.value; draw(); });
-});
+/* ⚠️ 黒の色は版のもの／地の色は面のもの（紙は1枚） */
+document.getElementById('kcol').addEventListener('input', e=>{ S_().kcol = e.target.value; draw(); });
+document.getElementById('bg').addEventListener('input', e=>{ P.bg = e.target.value; draw(); });
 /* ⚠️ 触れるのに何も起きない色見本を出さない＝使う色数のぶんだけ出す */
 function syncCols(){
-  const n = Math.max(2, Math.round(P.colN));
+  const n = Math.max(2, Math.round(S_().colN));
   for(let i = 0; i < 10; i++){
     const el = document.getElementById('k' + i); if(el) el.style.display = i < n ? '' : 'none';
   }
@@ -408,28 +473,83 @@ function syncCols(){
 }
 let reflow;
 document.getElementById('txt').addEventListener('input', ()=>{
-  P.txt = document.getElementById('txt').value;
-  clearTimeout(reflow); reflow = setTimeout(build, 200);
+  S_().txt = document.getElementById('txt').value;
+  clearTimeout(reflow); reflow = setTimeout(()=>{ build(); refreshSheets(); }, 200);
 });
 document.getElementById('helpBtn').addEventListener('click', ()=> document.body.classList.toggle('help'));
 
+/* ══ 版のリスト ══ 押した版が「いま触っている版」。下のつまみは全部その版に効く */
+function refreshSheets(){
+  const box = document.getElementById('sheets'); if(!box) return;
+  box.innerHTML = '';
+  SHEETS.forEach((sh, i) => {
+    const b = document.createElement('button');
+    b.textContent = ([...(sh.txt || '')][0]) || '字';
+    b.title = sh.txt || '';
+    if(i === cur) b.classList.add('on');
+    b.onclick = ()=>{ cur = i; refreshSheets(); draw(); };
+    box.appendChild(b);
+  });
+  syncUI();
+}
+document.querySelector('#addSeg button[data-add="text"]').addEventListener('click', ()=>{
+  snap();
+  const sh = inherit(newSheet('あたらしい'));
+  SHEETS.push(sh); cur = SHEETS.length - 1;
+  buildSheet(sh); refreshSheets(); draw();
+  stat('版を足した（今の版の設定を受け継いでいる）');
+});
+document.getElementById('dupSheet').addEventListener('click', ()=>{
+  snap();
+  const src = S_();
+  const sh = inherit(newSheet(src.txt), src);
+  SHEETS.push(sh); cur = SHEETS.length - 1;
+  buildSheet(sh); refreshSheets(); draw();
+  stat('版を複製した（重なっている＝位置や大きさで動かす）');
+});
+document.getElementById('delSheet').addEventListener('click', ()=>{
+  if(SHEETS.length <= 1) return;            // ⚠️ 最後の1枚は消さない（空の画面を作らない）
+  snap();
+  SHEETS.splice(cur, 1); cur = Math.min(cur, SHEETS.length - 1);
+  refreshSheets(); draw();
+});
+
 /* ── 戻す（⌘Z）── ⚠️ 道具を作る時点で入れる（後から足すと間に合わない） ── */
 const UNDO = [], REDO = [];
-const snapObj = ()=> JSON.stringify(P);
+/* ⚠️ RECTS と ART は焼き直せる＝控えに入れない（重くなるだけ） */
+const packSheets = ()=> SHEETS.map(sh=>{ const o = { cols: sh.cols.slice() };
+  SHEET_KEYS.forEach(k => o[k] = sh[k]); return o; });
+const snapObj = ()=> JSON.stringify({ P, cur, sheets: packSheets() });
 function snap(){ const o = snapObj();
   if(UNDO.length && UNDO[UNDO.length-1] === o) return;
   UNDO.push(o); if(UNDO.length > 40) UNDO.shift(); REDO.length = 0; }
-function applyP(j){ Object.assign(P, JSON.parse(j)); syncUI(); build(); }
+function applyP(j){
+  const o = JSON.parse(j);
+  Object.assign(P, o.P || {});
+  if(o.sheets){
+    SHEETS = o.sheets.map(d=>{ const sh = newSheet(d.txt);
+      SHEET_KEYS.forEach(k => { if(d[k] !== undefined) sh[k] = d[k]; });
+      if(d.cols) sh.cols = d.cols.slice(); return sh; });
+    cur = Math.max(0, Math.min(o.cur || 0, SHEETS.length - 1));
+  }
+  refreshSheets(); buildAll();
+}
 function syncUI(){
+  const sh = S_();
   document.querySelectorAll('#panel input[type=range]').forEach(r=>{
-    if(P[r.id] !== undefined){ r.value = P[r.id];
+    const v0 = FACE_KEYS.includes(r.id) ? P[r.id] : sh[r.id];
+    if(v0 !== undefined){ r.value = v0;
       const v = r.parentElement.querySelector('.val'); if(v) v.textContent = r.value; } });
-  document.querySelectorAll('#panel .seg').forEach(seg=>
-    seg.querySelectorAll('button').forEach(b=> b.classList.toggle('on', +b.dataset.v === P[seg.id])));
-  for(let i=0;i<10;i++){ const el=document.getElementById('k'+i); if(el) el.value = P.cols[i]; }
-  ['kcol','bg'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value = P[id]; });
+  document.querySelectorAll('#panel .seg').forEach(seg=>{
+    if(seg.id === 'pal') return;
+    seg.querySelectorAll('button').forEach(b=> b.classList.toggle('on', +b.dataset.v === sh[seg.id]));
+  });
+  for(let i=0;i<10;i++){ const el=document.getElementById('k'+i); if(el) el.value = sh.cols[i]; }
+  const kc = document.getElementById('kcol'); if(kc) kc.value = sh.kcol;
+  const bgEl = document.getElementById('bg'); if(bgEl) bgEl.value = P.bg;
   syncCols();
-  document.getElementById('txt').value = P.txt;
+  document.getElementById('txt').value = sh.txt;
+  const del = document.getElementById('delSheet'); if(del) del.disabled = SHEETS.length <= 1;
 }
 /* ⭐ スナップショットは【操作の直前に1回だけ】。capture で拾えば実際の処理より先に走る。
    🔴 input のたびに積むと、1回のドラッグで何十回も積まれて ⌘Z が1段ずつしか戻らない
@@ -471,7 +591,7 @@ function savePNG(noBg){ toBlob(noBg, b=>{ if(!b) return;
 document.getElementById('png').onclick  = ()=> savePNG(false);
 document.getElementById('pngA').onclick = ()=>{ savePNG(true); stat('地なしで出した'); };
 document.getElementById('save').onclick = ()=>{
-  const b = new Blob([JSON.stringify(P)], { type:'application/json' });
+  const b = new Blob([snapObj()], { type:'application/json' });
   const u = URL.createObjectURL(b), a = document.createElement('a');
   a.href = u; a.download = `sudare_${Date.now()}.json`;
   document.body.appendChild(a); a.click(); a.remove();
@@ -540,7 +660,8 @@ cv.addEventListener('pointerup', endPtr);
 cv.addEventListener('pointercancel', endPtr);
 cv.addEventListener('dblclick', viewFit);
 
-addEventListener('resize', build);
-document.fonts.ready.then(build);
-build();
+addEventListener('resize', buildAll);
+refreshSheets();
+document.fonts.ready.then(buildAll);
+buildAll();
 </script>
