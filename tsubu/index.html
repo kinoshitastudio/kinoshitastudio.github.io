@@ -410,6 +410,10 @@
   <div class="row"><label>字ごと</label><input type="range" id="spread" min="0" max="100" step="1" value="0"><span class="val"></span></div>
   <div class="hint"><b>字ごとに位置をずらす</b>。同じ柄を複製して配置だけ変えた見え方になる</div>
   <div class="row"><label>照り</label><input type="range" id="shine" min="0" max="200" step="1" value="60"><span class="val"></span></div>
+  <div class="row"><label>照りの本数</label><input type="range" id="shineN" min="1" max="6" step="1" value="1"><span class="val"></span></div>
+  <div class="row"><label>照りの幅</label><input type="range" id="shineW" min="10" max="200" step="1" value="60"><span class="val"></span></div>
+  <div class="row"><label>照りのゆらぎ</label><input type="range" id="shineJit" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+  <div class="hint"><b>本数</b>＝柄の何倍の細かさで光らせるか（<b>1＝柄の山と同じ＝いままで</b>）。⚠️整数倍だけなのは、半端だとタイルの境目で照りが割れるため<br><b>幅</b>＝小さいほど広いつや／大きいほど鋭い光。<b>ゆらぎ</b>＝隣の倍音を重ねて<b>山の高さと間隔を不揃い</b>にする＝等間隔の光の線でなくなる</div>
 
   <div class="hint" style="margin:9px 0 2px;color:#111"><b>交点の柄</b></div>
   <div class="seg" id="blob">
@@ -515,7 +519,7 @@
    透明を許しても見た目は変わらない（実測で確認した）。 */
 const cv = document.getElementById('cv'), g = cv.getContext('2d', { alpha:true });
 const P = { mode:0, res:16, cell:7, pal:1, steps:4, dith:100, gdir:90, gflow:0, fps:30, grav:60, font:0,
-            tex:1, wav:0.1, bead:55, beadk:1, line:0, blob:5, ar:100, shine:60, valley:0, grad:0, shift:0, spread:0, dir:0, follow:100, grid:0, depth:0, fat:1,
+            tex:1, wav:0.1, bead:55, beadk:1, line:0, blob:5, ar:100, shine:60, shineN:1, shineW:60, shineJit:0, valley:0, grad:0, shift:0, spread:0, dir:0, follow:100, grid:0, depth:0, fat:1,
             /* 版（重ねる）。P には【選んでいる版】の値を載せる＝既存のつまみは全部そのまま動く */
             layers:null, cur:0, txt:'HELLO', lx:0, ly:0, lscale:1, lrot:0,
             lay:0, wrap:7, gapx:2, gapy:2, fall:0, masu:0, masufill:0,
@@ -648,7 +652,7 @@ let dirtyUntil = 1e9;   // ⭐ ここまでは描き続ける（静止中の再�
    柄・細かさ・照り・交点の柄はタイルに焼き込まれているので、版ごとに変えるには焼き分けが要る。
    ⭐ 焼いた結果は設定のハッシュでキャッシュする＝版で柄を変えていないうちは1組を使い回す（重くならない）。
    ⚠️ 色・粒・グラデの断面・マス目の色は【盤ぜんぶ】＝変わったらバンクを全部捨てて焼き直す。 */
-const texKey = (L) => [L.line, L.wav, L.shine, L.blob].join('/');
+const texKey = (L) => [L.line, L.wav, L.shine, L.shineN, L.shineW, L.shineJit, L.blob].join('/');
 let tileBanks = new Map();
 function bankFor(L){
   const k = texKey(L); let t = tileBanks.get(k);
@@ -735,6 +739,10 @@ function bakeTiles(cfg){
   // ⭐ 向きとランプを渡せば1組（位相ぶん）焼ける。字も枠もマス目の塗りも、これ1つで作る。
   const waveSet = (th, LUT, wav) => {
     const ca = Math.cos(th), sa = Math.sin(th);
+    // ⭐ 照りのつまみは画素ごとに読まない（C×C×位相ぶん回るため）
+    const SN  = Math.max(1, Math.min(6, Math.round(cfg.shineN ?? 1)));
+    const EXP = Math.max(1, (cfg.shineW ?? 60) / 10);
+    const JIT = Math.max(0, Math.min(1, (cfg.shineJit ?? 0) / 100));
     const set = [];
     for(let p = 0; p < PHASES; p++){
       set.push(mk((x, C) => {
@@ -751,7 +759,25 @@ function bakeTiles(cfg){
           else                v = 0.5 + 0.5 * Math.cos(Math.hypot(u,w) * 6.2831853 * W2 - ph); // 同心
           const sh = cfg.shine / 100;
           const k = Math.pow(Math.max(0,v), 1.8);                   // 0=谷 1=山
-          const hi = Math.pow(Math.max(0,v), 6.0) * sh;             // 稜線の照り返し
+          /* ⭐⭐ 照りは【自分の山】で引く（2026-08-07）。
+             🔴 前は柄の v をそのまま使っていた＝柄と同じ向き・周期・位相の山にしか出ず、
+                必ず等間隔の光の線になった（木下＝「てりが均等に光の線ね、入るのであきてしまう」）。
+             ⚠️ 本数は【整数倍】に限る。位相は柄の軸に沿った世界座標から選ばれているので、
+                整数倍なら位相も整数倍で進んでタイル境界が繋がる。半端な倍率だと帯が割れる。
+             ⭐ 本数1・ゆらぎ0 のときは v をそのまま使う＝【いままでと1画素も変わらない】。 */
+          let vs = v;
+          if(SN > 1 || JIT > 0){
+            const su = (LINE === 2) ? (u + w) : (LINE === 4) ? Math.hypot(u, w) : u;
+            const sp = (LINE === 4) ? -ph : ph;                     // 同心だけ位相の向きが逆
+            vs = 0.5 + 0.5 * Math.cos(su * 6.2831853 * W2 * SN + sp * SN);
+            /* ⭐ ゆらぎ＝隣の倍音（SN+1）を重ねる。山の高さと間隔が不揃いになる。
+                  ⚠️ こちらも整数倍なので、継ぎ目は出ない。 */
+            if(JIT > 0){
+              const v2 = 0.5 + 0.5 * Math.cos(su * 6.2831853 * W2 * (SN+1) + sp * (SN+1) + 1.1);
+              vs = Math.min(1, vs * ((1 - JIT) + 2 * JIT * v2));
+            }
+          }
+          const hi = Math.pow(Math.max(0,vs), EXP) * sh;            // 稜線の照り返し
           const o = (j*C + i)*4;
           // ⭐ ランプを引く（谷→中間→波色→明→白）。谷スライダーで谷を黒へ寄せられる。
           const q = (k < 0 ? 0 : k > 1 ? 255 : Math.round(k * 255)) * 3;
@@ -892,12 +918,12 @@ function idx(x, y){ return y * W + x; }
    木下＝「塗りとかひとつ選択していても全部変わっちゃうね」→ 塗りを丸ごと版ごとに。
    ⚠️ 色・粒・解像・描画方式・グラデの断面・かたち・地グラデ・マス目の色は【盤ぜんぶ】のまま。 */
 const L_KEYS = ['txt','font','lay','wrap','gapx','gapy','masu','masufill','lx','ly','lscale','lrot',
-                'follow','dir','shift','spread','bead','beadk','line','wav','shine','blob'];
+                'follow','dir','shift','spread','bead','beadk','line','wav','shine','shineN','shineW','shineJit','blob'];
 function newLayer(txt){
   return { txt: txt ?? 'HELLO', font:0, lay:0, wrap:7, gapx:2, gapy:2,
            masu:0, masufill:0, lx:0, ly:0, lscale:1, lrot:0,
            follow:100, dir:0, shift:0, spread:0, bead:55, beadk:1,
-           line:0, wav:0.1, shine:60, blob:5 };
+           line:0, wav:0.1, shine:60, shineN:1, shineW:60, shineJit:0, blob:5 };
 }
 function curLayer(){
   if(!P.layers || !P.layers.length) P.layers = [newLayer()];
@@ -1604,7 +1630,7 @@ document.querySelectorAll('.seg').forEach(seg => {
     if(seg.id === 'mode'){ running = false; build(); stat(); }
   }));
 });
-['res','cell','pal','steps','dith','gdir','gflow','fps','grav','wav','bead','beadk','wrap','gapx','gapy','fall','lx','ly','lscale','lrot','masu','masuN','masuAng','masuWav','masuSteps','frameN','frameAng','frameWav','frameSteps','fat','ar','shine','shift','spread','dir','follow','valley','grad','grid','depth','warp','warpn','papN','papAng','papSteps'].forEach(id => {
+['res','cell','pal','steps','dith','gdir','gflow','fps','grav','wav','bead','beadk','wrap','gapx','gapy','fall','lx','ly','lscale','lrot','masu','masuN','masuAng','masuWav','masuSteps','frameN','frameAng','frameWav','frameSteps','fat','ar','shine','shineN','shineW','shineJit','shift','spread','dir','follow','valley','grad','grid','depth','warp','warpn','papN','papAng','papSteps'].forEach(id => {
   const r = document.getElementById(id); if(r.type !== 'range') return;
   const v = r.parentElement.querySelector('.val');
   const sync = (fromUser) => { P[id] = +r.value; if(v) v.textContent = r.value;
@@ -1613,7 +1639,7 @@ document.querySelectorAll('.seg').forEach(seg => {
         'shift','spread','lx','ly','lscale','lrot'].includes(id)) build();
     // ⚠️ 谷・階調は盤ぜんぶ＝全バンクを焼き直す／照り・細かさは版ごと＝その版のバンクだけ次の描画で焼かれる
     if(id==='valley' || id==='grad') buildTiles();
-    if(id==='shine' || id==='wav'){ build(); dirtyUntil = performance.now() + 400; }
+    if(['shine','shineN','shineW','shineJit','wav'].includes(id)){ build(); dirtyUntil = performance.now() + 400; }
     // ⭐ 字の並びそのものが変わるものだけ、視点を合わせ直す。
     //   字なり・ずれ・玉・大きさは見え方が変わるだけなので、視点は動かさない。
     if(['res','cell','wrap','gapx','gapy','fall','masu','lscale'].includes(id) && fromUser) fit();
@@ -1736,7 +1762,7 @@ function syncLayerUI(){
   [['lx','lx'],['ly','ly'],['lscale','lscale'],['lrot','lrot'],
    ['wrap','wrap'],['gapx','gapx'],['gapy','gapy'],['masu','masu'],
    ['follow','follow'],['dir','dir'],['shift','shift'],['spread','spread'],
-   ['bead','bead'],['beadk','beadk'],['wav','wav'],['shine','shine']].forEach(([id, key]) => {
+   ['bead','bead'],['beadk','beadk'],['wav','wav'],['shine','shine'],['shineN','shineN'],['shineW','shineW'],['shineJit','shineJit']].forEach(([id, key]) => {
     const e = document.getElementById(id); if(!e) return;
     e.value = P[key]; const v = e.parentElement.querySelector('.val');
     if(v) v.textContent = (id === 'lscale') ? (+P[key]).toFixed(2) : Math.round(P[key]);
