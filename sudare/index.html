@@ -155,7 +155,7 @@
   </div>
   <div class="row"><label>黒の色</label><input type="color" id="kcol" value="#000000" style="flex:1;height:30px;border:none;border-radius:8px;background:none;padding:0;cursor:pointer"></div>
   <div class="row"><label>黒の位置</label><input type="range" id="kpos" min="0" max="100" value="49"><span class="val"></span></div>
-  <div class="row"><label>黒の幅</label><input type="range" id="kw" min="0" max="60" value="16"><span class="val"></span></div>
+  <div class="row"><label>黒の幅</label><input type="range" id="kw" min="0" max="100" value="16"><span class="val"></span></div>
   <div class="row"><label>ずらす</label><input type="range" id="jit" min="0" max="100" value="0"><span class="val"></span></div>
   <div class="row"><label>くり返し</label><input type="range" id="rep" min="1" max="8" value="1"><span class="val"></span></div>
   <div class="seg" id="gdir"><button data-v="0" class="on">矩形に沿って</button><button data-v="1">直交して</button></div>
@@ -250,11 +250,7 @@ function paintDist(sh){
     const round = sh.dRound / 100, gloss = sh.dGloss / 100;
     for(let i = 0; i < N; i++){
       let t = i / (N - 1);
-      let c;
-      if(kw > 0.002 && Math.abs(t - kpos) < kw){
-        const f = 1 - Math.abs(t - kpos) / kw;
-        c = mixHex(colAt(sh, t), sh.kcol, f);
-      } else c = colAt(sh, t);
+      const c = inkAtT(sh, t);                     // ⭐ 板と同じ式（環）
       let [r2, g2, b2] = hex2rgb(c);
       /* ⭐ 縞の丸み ── 縞1本の中で明暗をつける＝平らな色帯が【管】に見える。
          ⭐ 光沢 ── 真ん中から離してコントラストを立てる（黒まで落ちて白が立つ）。
@@ -521,6 +517,22 @@ function colAt(sh, t){
   return mixHex(sh.cols[i], sh.cols[i + 1], x - i);
 }
 
+/* ⭐ ある位置の【最終色】＝並べた色に、黒の帯を重ねたもの。
+   🔴 黒の帯を 0..1 の中だけで組むと、位置を端に寄せたとき切り落とされて
+      【ガクッと変わる】（2026-08-08 木下）。⭐ 1周してつながる【環】として扱う
+      ＝黒の位置と黒の中心の距離を、環の上の最短距離で測る。
+   ⭐ 板でも等高線でも【この式ひとつ】を使う（式は1本・規則は1つ）。 */
+function inkAtT(sh, t){
+  t = t - Math.floor(t);                                   // 0..1 に畳む
+  const base = colAt(sh, t);
+  const kw = sh.kw / 200;
+  if(kw <= 0.002) return base;
+  const kpos = sh.kpos / 100;
+  let dk = Math.abs(((t - kpos + 0.5) % 1 + 1) % 1 - 0.5);  // 環の上の最短距離
+  if(dk >= kw) return base;
+  return mixHex(base, sh.kcol, 1 - dk / kw);               // 中心ほど黒
+}
+
 /* ⭐ 1枚の板に、グラデを1回だけ刷る。
    参考のグラデは【1周期の中に黒のストップ】が入っている（色→暗→黒→色）。 */
 function paintRect(sh, r, idx){
@@ -538,18 +550,16 @@ function paintRect(sh, r, idx){
   const kpos = sh.kpos / 100, kw = sh.kw / 200;
   /* ⭐ 色を等間隔に並べて、その中に【黒を1つ】挟む＝木下が Figma で組んでいた形
      （明→中→暗→黒→中→明）。⚠️ 黒の前後は colAt でその位置の色を置く。 */
-  const n = Math.max(2, Math.round(sh.colN));
+  /* ⭐ 環の式（inkAtT）を細かい刻みで置く＝黒がどこにあっても滑らかにつながる。
+     ⚠️ 色のストップを数点だけ置く組み方だと、黒が端に来たとき切れてガクッと変わる。 */
+  const STEPS = 96;
   for(let k = 0; k < rep; k++){
-    const base = k / rep, span = 1 / rep;
-    const at = t => Math.max(0, Math.min(1, base + ((t + shift + 1) % 1) * span));
-    const stops = [];
-    for(let i = 0; i < n; i++) stops.push([i / (n - 1), sh.cols[i]]);
-    if(kw > 0.002){
-      const a = Math.max(0.001, kpos - kw), b2 = Math.min(0.999, kpos + kw);
-      stops.push([a, colAt(sh, a)], [kpos, sh.kcol], [b2, colAt(sh, b2)]);
+    const b0 = k / rep, span = 1 / rep;
+    for(let i = 0; i <= STEPS; i++){
+      const t = i / STEPS;
+      const pos = Math.max(0, Math.min(1, b0 + t * span));
+      grad.addColorStop(pos, inkAtT(sh, t + shift));
     }
-    stops.sort((x, y) => x[0] - y[0]);
-    stops.forEach(([t, c]) => grad.addColorStop(at(t), c));
   }
   g.fillStyle = grad;
   /* ⚠️ すき間0のとき、隣の板とぴったり接していても【境界にアンチエイリアスの線】が出る
