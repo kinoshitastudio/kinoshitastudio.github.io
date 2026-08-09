@@ -22,7 +22,7 @@ const sig = () => p.evaluate(() => { const c = document.querySelector('canvas'),
    ⚠️ 歯の細かさは【櫛の歯が0だと効かなくて当たり前】なので、櫛の歯を入れた状態で測る。 */
 const SKIP = ['speed','fps'];
 const modes = [ { name:'板', set:{ dir:0, slices:60, gap:6 } },
-                { name:'輪郭から', set:{ dir:3, dScale:40, dRes:600, dComb:60, dCombN:30 } } ];
+                { name:'輪郭から', set:{ dir:3, dScale:40, dRes:600, dCombN:30, vgrad:50 } } ];
 let ng = [];
 for(const m of modes){
   const reset = async () => await p.evaluate(s => {
