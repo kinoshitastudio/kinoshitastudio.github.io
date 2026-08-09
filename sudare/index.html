@@ -118,9 +118,15 @@
   <h2>分ける（字を板に）</h2>
   <div class="seg" id="dir"><button data-v="0" class="on">縦の板</button><button data-v="1">横の板</button><button data-v="2">両方</button><button data-v="3">輪郭から</button></div>
   <div class="only-dist">
+    <div class="seg" id="dGdir"><button data-v="0" class="on">輪郭から</button><button data-v="1">輪郭に沿って</button><button data-v="2">線の太さに合わせる</button></div>
+    <div class="note">⭐ <b>グラデの向き</b>。<b>輪郭から</b>＝字から離れる方向にグラデ（等高線）。<br>
+      ⭐ <b>輪郭に沿って</b>＝<b>等高線1本を1枚の板として</b>、輪郭に沿ってグラデを刷る
+      ＝板モードと同じ組み方（1枚に1回・<b>ずらす</b>も効く）。
+      <b>1周の枚数</b>＝輪郭1周を何枚の板に分けるか<br>
+      ⭐ <b>線の太さに合わせる</b>＝距離を<b>その場所の線の太さで割る</b>＝太い線でも細い線でも
+      「輪郭→中心→輪郭」でグラデが<b>丸ごと1回</b>入る（縞の細かさは効かない・<b>くり返し</b>で増やす）</div>
     <div class="row"><label>縞の細かさ</label><input type="range" id="dScale" min="1" max="200" value="40"><span class="val"></span></div>
-    <div class="row"><label>櫛の歯</label><input type="range" id="dComb" min="0" max="100" value="0"><span class="val"></span></div>
-    <div class="row"><label>歯の細かさ</label><input type="range" id="dCombN" min="1" max="120" value="30"><span class="val"></span></div>
+    <div class="row"><label>1周の枚数</label><input type="range" id="dCombN" min="1" max="120" value="30"><span class="val"></span></div>
     <div class="row"><label>段</label><input type="range" id="dSteps" min="0" max="24" step="1" value="0"><span class="val"></span></div>
     <div class="row"><label>縞の丸み</label><input type="range" id="dRound" min="0" max="100" value="0"><span class="val"></span></div>
     <div class="row"><label>光沢</label><input type="range" id="dGloss" min="0" max="100" value="0"><span class="val"></span></div>
@@ -219,12 +225,12 @@ const stat = m => { const s = document.getElementById('stat'); if(s) s.textConte
    ⭐ 面のもの＝地（紙）とビュー（ズーム・パン）＝どの版にも同じくかかる。
    ⚠️ P に残すのは【面のもの】だけ。版のものを P に置くと、重ねたとき全部同じになる。 */
 const COL_DEF = ['#cb66ef','#8266ef','#5845a2','#8266ef','#cb66ef','#ffffff','#a06ce8','#3a2a6a','#e0b0ff','#ffffff'];
-const SHEET_KEYS = ['txt','font','tdir','weight','bold','size','vlen','track','dir','slices','gap','minLen','dScale','dRes','dRound','dGloss','dSteps','dComb','dCombN',
+const SHEET_KEYS = ['txt','font','tdir','weight','bold','size','vlen','track','dir','slices','gap','minLen','dScale','dRes','dRound','dGloss','dSteps','dCombN','dGdir',
                     'colN','kcol','kpos','kw','jit','rep','gdir','x','y','scale','rot'];
 function newSheet(txt){
   return { txt: txt != null ? txt : 'あたらしい', font:0, tdir:0, weight:900, bold:0, size:70, track:0,
            vlen:100,
-           dir:0, slices:26, gap:6, minLen:4, dScale:40, dRes:700, dRound:0, dGloss:0, dSteps:0, dComb:0, dCombN:30,
+           dir:0, slices:26, gap:6, minLen:4, dScale:40, dRes:700, dRound:0, dGloss:0, dSteps:0, dCombN:30, dGdir:0,
            cols: COL_DEF.slice(), colN:3, kcol:'#000000',
            kpos:49, kw:16, jit:0, rep:1, gdir:0,
            x:0, y:0, scale:100, rot:0,
@@ -263,7 +269,7 @@ function paintDist(sh){
   let w = Math.max(8, Math.round(sh.ART.w)), h = Math.max(8, Math.round(sh.ART.h));
   const kf = Math.min(1, OUT_MAX / Math.max(w, h));
   w = Math.max(8, Math.round(w * kf)); h = Math.max(8, Math.round(h * kf));
-  const key = [sh.dScale, sh.colN, sh.kcol, sh.kpos, sh.kw, sh.rep, sh.dRound, sh.dGloss, sh.dSteps, sh.dComb, sh.dCombN, w, h, sh.cols.join(',')].join('|');
+  const key = [sh.dScale, sh.colN, sh.kcol, sh.kpos, sh.kw, sh.rep, sh.dRound, sh.dGloss, sh.dSteps, sh.dCombN, sh.dGdir, sh.jit, w, h, sh.cols.join(',')].join('|');
   let img = distCache.get(sh);
   if(!img || img.key !== key){
     const id = new ImageData(w, h), px = id.data;
@@ -316,10 +322,14 @@ function paintDist(sh){
       tbl[i*3] = r2; tbl[i*3+1] = g2; tbl[i*3+2] = b2;
     }
     const scale = Math.max(1, sh.dScale) / 100 * rep;
-    /* ⭐ 櫛の歯 ── 【縞に直交して走る細かい明暗】。距離だけでは出ない（参考の拡大で分かった）。
-       最も近い輪郭点が輪郭に沿って動くと値が動く＝歯が並ぶ。 */
-    const comb = sh.dComb / 100, combN = Math.max(1, sh.dCombN);
+    /* 🔴 櫛の歯（縞に直交する明暗）は外した ── 上から明暗を掛けているだけで、
+          木下の言う「重ねてるだけ・ほしいのは同じグラデーション」に応えられていなかった
+          （2026-08-09「これはもうなくそう」）。弧長は【輪郭に沿ってグラデを刷る】側で使う。 */
+    const combN = Math.max(1, sh.dCombN);
     const along = SD.along, dsrc = SD.d;
+    const arcMode = (sh.dGdir === 1) && !!along;   // ⭐ 輪郭に沿ってグラデを刷る
+    const thick = SD.thick;
+    const fitMode = (sh.dGdir === 2) && !!thick;   // ⭐ 線の太さに合わせる（1本に丸ごと1回）
     /* ⭐ 出す大きさの1画素ごとに、距離場の中の位置を出して【距離を補間】してから色を引く */
     const rx = (sw - 1) / Math.max(1, w - 1), ry = (sh0 - 1) / Math.max(1, h - 1);
     for(let y = 0, q = 0; y < h; y++){
@@ -330,16 +340,40 @@ function paintDist(sh){
         const fx = x * rx, x0 = fx | 0, x1 = Math.min(sw - 1, x0 + 1), wx = fx - x0;
         const a = dsrc[r0 + x0], b = dsrc[r0 + x1], c3 = dsrc[r1 + x0], d3 = dsrc[r1 + x1];
         const dv = (a + (b - a) * wx) + ((c3 + (d3 - c3) * wx) - (a + (b - a) * wx)) * wy;
-        let t = dv * scale * 0.06;
-        t = t - Math.floor(t);                     // 0..1 でくり返す＝等高線
+        const dt = dv * scale * 0.06;
+        let t;
+        if(arcMode){
+          /* ⭐ 等高線1本を【1枚の板】として、輪郭に沿ってグラデを刷る。
+             ⚠️ 板モードとの本当の差は【グラデの走る向き】だった ── 板は板の長手方向に1回。
+                等高線は幅（距離）方向に走っていたので、同じ色でも別の素材に見えていた
+                （2026-08-09 木下「ほしいのは同じグラデーション。それぞれの輪郭に対して
+                 全部入ってる必要があるのでは、長方形のグラデが重なっているように」）。 */
+          const av = along ? along[ynr + (wx < 0.5 ? x0 : x1)] : 0;
+          const si = Math.floor(dt);                                   // 何本目の縞＝板の番号
+          t = av * 0.01 * combN + jitShift(si, sh.jit);                // 1周の枚数＝何枚に分けるか
+          t = t - Math.floor(t);
+        } else if(fitMode){
+          /* ⭐ 線の太さに合わせる ── 距離を【その場所の線の太さ】で割る。
+             輪郭で 0・中心で 1・また輪郭で 0＝どの太さの線にも、輪郭→中心→輪郭で
+             グラデが丸ごと1回入る（木下の Figma の図＝矩形ごとに1回と同じ）。
+             ⚠️ 太さは補間せずに近い方を取る（中心軸で急に変わる値なので、混ぜると滲む）。 */
+          const ii = ynr + (wx < 0.5 ? x0 : x1);
+          const th = thick[ii];
+          const av = Math.abs(dv);
+          t = th > 0.5 ? (av / th) : 0;
+          t = Math.max(0, Math.min(1, t)) * rep;
+          const si = Math.floor(t);
+          t -= si;
+          t += jitShift(si + (dv >= 0 ? 0 : 37), sh.jit); t = t - Math.floor(t);
+        } else {
+          const si = Math.floor(dt);
+          t = dt - si;                               // 0..1 でくり返す＝等高線
+          /* 🔴 板では【板ごとに黒をずらす】のに、輪郭からでは「ずらす」が何もしていなかった
+                （2026-08-09 つまみ総当たりのテストで見つけた）。⭐ 縞の番号でずらす＝板と同じ式。 */
+          t += jitShift(si, sh.jit); t = t - Math.floor(t);
+        }
         const j = (t * (N - 1)) | 0;
         let r2 = tbl[j*3], g2 = tbl[j*3+1], b2 = tbl[j*3+2];
-        if(comb > 0.001 && along){
-          let u = along[ynr + (wx < 0.5 ? x0 : x1)] * combN * 0.01;   // ⚠️ 弧長は補間しない
-          u = u - Math.floor(u);
-          const k4 = 1 - comb * (0.5 - 0.5 * Math.cos(u * 6.2831853));
-          r2 = r2 * k4; g2 = g2 * k4; b2 = b2 * k4;
-        }
         px[q] = r2; px[q+1] = g2; px[q+2] = b2; px[q+3] = 255;
       }
     }
@@ -468,7 +502,45 @@ function signedDist(mask, W, H){
     sd[i] = mask[i] ? dAll[i] : -dAll[i];          // 字の中は＋・外は−（輪郭で0）
     along[i] = arc[near.y[i] * W + near.x[i]];     // ⭐ 最も近い輪郭点の【弧長】
   }
-  return { sd, along };
+  return { sd, along, thick: thickness(sd, W, H) };
+}
+
+/* ⭐ 太さのマップ ── 各画素について【その線の中心軸までの距離】＝その場所の線の太さの半分。
+   ⭐ これで距離を割ると、太い線でも細い線でも「輪郭→中心→輪郭」でグラデが丸ごと1回入る
+      ＝木下が見せてくれた Figma の図（矩形ごとに、その矩形の長さいっぱいにグラデが1回）と同じ。
+      いままでは距離を【一定の間隔でくり返す】だけだったので、線の太さに関係なく同じ幅の帯だった
+      （2026-08-09 木下「それぞれの輪郭に対して全部入ってる必要があるのでは」）。
+   ⭐ 求め方＝各画素から距離場の【山を上って】到達する頂上の高さ。
+      距離の高い順に1回なめるだけで求まる（自分より高い隣は必ず処理済み）。
+   ⚠️ 並べ替えは距離をバケツに入れて数えるだけ（O(n)）。ふつうのソートだと解像を上げたとき重い。
+   ⚠️ 字の中と外は混ぜない（符号が違えば別の山）。 */
+function thickness(sd, W, H){
+  const n = W * H, a = new Float32Array(n);
+  let maxA = 0;
+  for(let i = 0; i < n; i++){ const v = Math.abs(sd[i]); a[i] = v; if(v > maxA) maxA = v; }
+  /* 🔴 字が1画素も無いとき、距離が初期値のまま（1e10 級）になってバケツの数が爆発し
+        `Invalid typed array length` で落ちていた（2026-08-09 つまみ総当たりのテストが拾った）。
+     ⭐ バケツの数に上限を置き、それを超える距離は一番上のバケツに入れる。 */
+  const B = Math.min(4096, Math.max(1, Math.ceil(maxA))) + 1;
+  const bin = v => { const b = Math.round(v); return b < 0 ? 0 : (b > B ? B : b); };
+  const cnt = new Int32Array(B + 1);
+  for(let i = 0; i < n; i++) cnt[bin(a[i])]++;
+  const pos = new Int32Array(B + 1);
+  let acc = 0;
+  for(let b = B; b >= 0; b--){ pos[b] = acc; acc += cnt[b]; }   // ⭐ 高い方から並べる
+  const order = new Int32Array(n);
+  for(let i = 0; i < n; i++) order[pos[bin(a[i])]++] = i;
+  const T = new Float32Array(n);
+  for(let k = 0; k < n; k++){
+    const i = order[k], x = i % W, y = (i / W) | 0, ai = a[i], si = sd[i] >= 0;
+    let t = ai;
+    if(x > 0     && a[i-1] > ai && (sd[i-1] >= 0) === si && T[i-1] > t) t = T[i-1];
+    if(x < W - 1 && a[i+1] > ai && (sd[i+1] >= 0) === si && T[i+1] > t) t = T[i+1];
+    if(y > 0     && a[i-W] > ai && (sd[i-W] >= 0) === si && T[i-W] > t) t = T[i-W];
+    if(y < H - 1 && a[i+W] > ai && (sd[i+W] >= 0) === si && T[i+W] > t) t = T[i+W];
+    T[i] = t;
+  }
+  return T;
 }
 
 /* ⭐ ここが核心 ── 字を細く切って、字がある区間を【1枚の板】として拾う。
@@ -526,10 +598,10 @@ const PALS = [
    ⚠️ つまみが多いと、値を口で伝えても木下が同じ状態に行けない（2026-08-08）。
       参考に届いた設定はここに閉じ込めて、触る入口にする。 */
 const LOOKS = [
-  { name:'等高線', set:{ dir:3, dScale:190, dComb:65, dCombN:55, dSteps:0, dRound:85, dGloss:55, dRes:1200,
+  { name:'等高線', set:{ dir:3, dScale:190, dCombN:55, dSteps:0, dRound:85, dGloss:55, dRes:1200,
       colN:4, kcol:'#000000', kpos:50, kw:10, jit:0, rep:1, size:120, vlen:100, track:0, bold:0, weight:900,
       cols:['#ffffff','#3b7fd4','#ffffff','#d8b220','#ffffff','#3b7fd4','#ffffff','#d8b220','#ffffff','#3b7fd4'] } },
-  { name:'織り',   set:{ dir:3, dScale:150, dComb:95, dCombN:90, dSteps:0, dRound:70, dGloss:70, dRes:1200,
+  { name:'織り',   set:{ dir:3, dScale:150, dCombN:90, dSteps:0, dRound:70, dGloss:70, dRes:1200,
       colN:3, kcol:'#000000', kpos:50, kw:14, jit:0, rep:1, size:120, vlen:100, track:0, bold:0, weight:900,
       cols:['#f2efe6','#2b6cc4','#e8c33a','#2b6cc4','#f2efe6','#ffffff','#a06ce8','#3a2a6a','#e0b0ff','#ffffff'] } },
   { name:'金の管', set:{ dir:0, slices:48, gap:0, minLen:0, dSteps:0, gdir:0, colN:5, kcol:'#140c00',
@@ -594,6 +666,17 @@ function inkAtT(sh, t){
   return mixHex(base, sh.kcol, 1 - dk / kw);               // 中心ほど黒
 }
 
+/* ⭐ ずらす ── 板ごとに黒の位置を食い違わせる。
+   🔴 以前は【完全にバラバラ（ハッシュ）】だったので、刻みを増やすと黒がノイズになり
+      「黒の位置が綺麗にその文字になっていない」（2026-08-09 木下・実測でも
+      ずらす0なら黒の飛びは平均0.0px、ずらす70で平均14.7px・最大296px）。
+   ⭐ なめらかな波にする＝隣の板とは近く、離れた板とは違う＝黒が字に沿って流れる。
+   ⚠️ 板でも輪郭からでも【この式ひとつ】を使う（式は1本・規則は1つ）。 */
+function jitShift(idx, jit){
+  if(!(jit > 0)) return 0;
+  const w = Math.sin(idx * 0.37) * 0.55 + Math.sin(idx * 0.113 + 1.7) * 0.45;
+  return w * 0.5 * (jit / 100);
+}
 /* ⭐ 1枚の板に、グラデを1回だけ刷る。
    参考のグラデは【1周期の中に黒のストップ】が入っている（色→暗→黒→色）。 */
 function paintRect(sh, r, idx){
@@ -606,8 +689,7 @@ function paintRect(sh, r, idx){
   const grad = vertical ? g.createLinearGradient(x, y, x, y + h) : g.createLinearGradient(x, y, x + w, y);
   const rep = Math.max(1, Math.round(sh.rep));
   /* ⚠️ ずらす＝矩形ごとに黒の位置を食い違わせる（同じ矩形なら必ず同じ＝ちらつかない） */
-  const rnd = Math.abs(Math.sin(idx * 127.1) * 43758.5453) % 1;
-  const shift = (rnd - 0.5) * (sh.jit / 100);
+  const shift = jitShift(idx, sh.jit);
   const kpos = sh.kpos / 100, kw = sh.kw / 200;
   /* ⭐ 色を等間隔に並べて、その中に【黒を1つ】挟む＝木下が Figma で組んでいた形
      （明→中→暗→黒→中→明）。⚠️ 黒の前後は colAt でその位置の色を置く。 */
@@ -746,7 +828,7 @@ function buildSheet(sh){
     const m2 = new Uint8Array(w3 * h3);
     for(let i = 0, q = 0; i < dd.length; i += 4, q++) m2[q] = dd[i] > 110 ? 1 : 0;
     const sdr = signedDist(m2, w3, h3);
-    sh.SD = { d: sdr.sd, along: sdr.along, w: w3, h: h3 };
+    sh.SD = { d: sdr.sd, along: sdr.along, thick: sdr.thick, w: w3, h: h3 };
     sh.RECTS = []; sh.ART = { w: W2, h: H2 };
     return;
   }
@@ -806,7 +888,9 @@ document.querySelectorAll('#panel input[type=range]').forEach(r=>{
     if(val) val.textContent = r.value;
     if(r.id === 'colN') syncCols();
     if(r.id === 'speed'){ if(+r.value > 0) animStart(); }
-    if(['size','track','slices','minLen','dir','weight','bold','dRes'].includes(r.id)) build(); else draw(); };
+    /* 🔴 ここに入れ忘れると【つまみは動くのに絵が変わらない】＝字を焼き直さず draw だけになる
+          （2026-08-09 木下「縦の長さが反応しない」）。⭐ 字の形に関わるつまみは必ずここに足す。 */
+    if(['size','vlen','track','slices','minLen','dir','weight','bold','dRes'].includes(r.id)) build(); else draw(); };
   r.addEventListener('input', sync);
   sync();
 });
@@ -835,7 +919,7 @@ document.querySelectorAll('#panel .seg').forEach(seg=>{
     seg.querySelectorAll('button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
     S_()[seg.id] = +b.dataset.v;
     /* 🔴 分け方を変えたら UI も切り替える。ここで syncUI を呼ばないと body.dist が付かず、
-       【距離場のつまみ（縞の細かさ・櫛の歯・丸み・光沢・解像）が出ないまま】になる。
+       【距離場のつまみ（縞の細かさ・丸み・光沢・解像）が出ないまま】になる。
        絵は距離場で描かれているのに、つまみは板用のまま＝触れない（2026-08-07 木下）。 */
     if(seg.id === 'dir'){ syncUI(); build(); }
     else if(seg.id === 'font' || seg.id === 'tdir') build();
