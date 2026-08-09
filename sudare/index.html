@@ -46,6 +46,10 @@
   /* 分け方が「輪郭から」のときだけ出すつまみ（触れるのに効かないものを出さない） */
   .only-dist{ display:none }
   .only-arc{ display:none }
+  /* ⚠️ 縦のグラデは【輪郭から】の塗りにしか効かない（板は canvas のグラデで引いている）
+     ＝触れるのに何も起きないつまみを出さない */
+  .only-d2{ display:none }
+  body.dist .only-d2{ display:flex }
   body.dist.arcg .only-arc{ display:flex }
   body.dist .only-dist{ display:block }
   body.dist .only-slat{ display:none }
@@ -120,7 +124,7 @@
   <h2>分ける（字を板に）</h2>
   <div class="seg" id="dir"><button data-v="0" class="on">縦の板</button><button data-v="1">横の板</button><button data-v="2">両方</button><button data-v="3">輪郭から</button></div>
   <div class="only-dist">
-    <div class="seg" id="dGdir"><button data-v="0" class="on">輪郭から</button><button data-v="1">輪郭に沿って</button><button data-v="2">線の太さに合わせる</button></div>
+    <div class="seg" id="dGdir"><button data-v="0" class="on">輪郭から</button><button data-v="1">輪郭に沿って</button><button data-v="2">線の太さに合わせる</button><button data-v="3">上から下へ</button></div>
     <div class="note">⭐ <b>グラデの向き</b>。<b>輪郭から</b>＝字から離れる方向にグラデ（等高線）。<br>
       ⭐ <b>輪郭に沿って</b>＝<b>等高線1本を1枚の板として</b>、輪郭に沿ってグラデを刷る
       ＝板モードと同じ組み方（1枚に1回・<b>ずらす</b>も効く）。
@@ -172,6 +176,8 @@
   <div class="row"><label>黒の位置</label><input type="range" id="kpos" min="0" max="100" value="49"><span class="val"></span></div>
   <div class="row"><label>黒の幅</label><input type="range" id="kw" min="0" max="100" value="16"><span class="val"></span></div>
   <div class="row"><label>ずらす</label><input type="range" id="jit" min="0" max="100" value="0"><span class="val"></span></div>
+  <div class="row only-d2"><label>縦のグラデ</label><input type="range" id="vgrad" min="-100" max="100" value="0"><span class="val"></span></div>
+  <div class="row only-d2"><label>縦のグラデの幅</label><input type="range" id="vgradN" min="1" max="8" value="1"><span class="val"></span></div>
   <div class="row"><label>くり返し</label><input type="range" id="rep" min="1" max="8" value="1"><span class="val"></span></div>
   <div class="seg" id="gdir"><button data-v="0" class="on">矩形に沿って</button><button data-v="1">直交して</button></div>
   <div class="note">⭐ 参考のグラデは<b>1周期の中に黒のストップ</b>が入っている（色→暗→黒→色）。
@@ -230,13 +236,13 @@ const stat = m => { const s = document.getElementById('stat'); if(s) s.textConte
    ⚠️ P に残すのは【面のもの】だけ。版のものを P に置くと、重ねたとき全部同じになる。 */
 const COL_DEF = ['#cb66ef','#8266ef','#5845a2','#8266ef','#cb66ef','#ffffff','#a06ce8','#3a2a6a','#e0b0ff','#ffffff'];
 const SHEET_KEYS = ['txt','font','tdir','weight','bold','size','vlen','track','dir','slices','gap','minLen','dScale','dRes','dRound','dGloss','dSteps','dCombN','dGdir',
-                    'colN','kcol','kpos','kw','jit','rep','gdir','x','y','scale','rot'];
+                    'colN','kcol','kpos','kw','jit','rep','vgrad','vgradN','gdir','x','y','scale','rot'];
 function newSheet(txt){
   return { txt: txt != null ? txt : 'あたらしい', font:0, tdir:0, weight:900, bold:0, size:70, track:0,
            vlen:100,
            dir:0, slices:26, gap:6, minLen:4, dScale:40, dRes:700, dRound:0, dGloss:0, dSteps:0, dCombN:30, dGdir:0,
            cols: COL_DEF.slice(), colN:3, kcol:'#000000',
-           kpos:49, kw:16, jit:0, rep:1, gdir:0,
+           kpos:49, kw:16, jit:0, rep:1, vgrad:0, vgradN:1, gdir:0,
            x:0, y:0, scale:100, rot:0,
            RECTS:[], ART:{ w:1, h:1 } };
 }
@@ -276,7 +282,7 @@ function paintDist(sh){
   /* 🔴 解像（dRes）がキーに入っていなかった＝つまみを動かしても【前に焼いた絵をそのまま使う】。
      距離場は作り直されているのに絵が変わらない＝木下「解像も変化なし」の正体（2026-08-09）。
      ⚠️ 焼いた結果を使い回すときは、【焼くのに使った値を全部】キーに入れる。 */
-  const key = [sh.dRes, sh.dScale, sh.colN, sh.kcol, sh.kpos, sh.kw, sh.rep, sh.dRound, sh.dGloss, sh.dSteps, sh.dCombN, sh.dGdir, sh.jit, w, h, sh.cols.join(',')].join('|');
+  const key = [sh.dRes, sh.dScale, sh.colN, sh.vgrad, sh.vgradN, sh.kcol, sh.kpos, sh.kw, sh.rep, sh.dRound, sh.dGloss, sh.dSteps, sh.dCombN, sh.dGdir, sh.jit, w, h, sh.cols.join(',')].join('|');
   let img = distCache.get(sh);
   if(!img || img.key !== key){
     const id = new ImageData(w, h), px = id.data;
@@ -284,7 +290,10 @@ function paintDist(sh){
     const rep = Math.max(1, Math.round(sh.rep));
     const kpos = sh.kpos / 100, kw = sh.kw / 200;
     /* 色の表を先に作る（画素ごとに混ぜ直すと重い） */
-    const N = 512, tbl = new Uint8Array(N * 3);
+    /* ⭐ 色表の刻み ── 512 だと、縞が画面上で広いとき【段】になって見えた（2026-08-09 木下
+       「グラデが綺麗じゃないなあ」）。刻みを増やすのは表を作るときだけの費用なので安い。
+       ⚠️ 色は Uint8（0-255）なので、刻みを増やしても8bitの段は残る → ディザで溶かす（下） */
+    const N = 4096, tbl = new Float32Array(N * 3);
     const round = sh.dRound / 100, gloss = sh.dGloss / 100;
     const stN = Math.round(sh.dSteps);
     for(let i = 0; i < N; i++){
@@ -337,19 +346,38 @@ function paintDist(sh){
     const arcMode = (sh.dGdir === 1) && !!along;   // ⭐ 輪郭に沿ってグラデを刷る
     const thick = SD.thick;
     const fitMode = (sh.dGdir === 2) && !!thick;   // ⭐ 線の太さに合わせる（1本に丸ごと1回）
+    const vertMode = (sh.dGdir === 3);             // ⭐ 上から下へ（板の縦グラデを等高線の形に乗せる）
     /* ⭐ 出す大きさの1画素ごとに、距離場の中の位置を出して【距離を補間】してから色を引く */
     const rx = (sw - 1) / Math.max(1, w - 1), ry = (sh0 - 1) / Math.max(1, h - 1);
+    /* ⭐ 縦のグラデ ── 等高線1本1本が【べた塗りの1色】だったのを、帯の中でも縦に流れるようにする
+       （2026-08-09 木下：O の青い帯を「白→青→濃紺」、黄の帯を「濃紺→白→黄」にしたい）。
+       ⚠️ 色を引く位置（距離）はいじらない＝【等高線の形は変えずに、明暗だけ縦に流す】。
+          距離をずらすと縞そのものが斜めに歪んでしまう。 */
+    const vg = (sh.vgrad || 0) / 100, vgN = Math.max(1, Math.round(sh.vgradN || 1));
     for(let y = 0, q = 0; y < h; y++){
       const fy = y * ry, y0 = fy | 0, y1 = Math.min(sh0 - 1, y0 + 1), wy = fy - y0;
       const r0 = y0 * sw, r1 = y1 * sw;
       const ynr = (wy < 0.5 ? y0 : y1) * sw;
+      const vy0 = y / Math.max(1, h - 1);
+      const vbase = vy0 * vgN;
       for(let x = 0; x < w; x++, q += 4){
         const fx = x * rx, x0 = fx | 0, x1 = Math.min(sw - 1, x0 + 1), wx = fx - x0;
         const a = dsrc[r0 + x0], b = dsrc[r0 + x1], c3 = dsrc[r1 + x0], d3 = dsrc[r1 + x1];
         const dv = (a + (b - a) * wx) + ((c3 + (d3 - c3) * wx) - (a + (b - a) * wx)) * wy;
         const dt = dv * scale * 0.06;
         let t;
-        if(arcMode){
+        if(vertMode){
+          /* ⭐ 上から下へ ── 色を【画面の縦位置】で引く＝板モードの縦グラデそのもの。
+             等高線は「色を食い違わせる境目」として効く（帯ごとに位相がずれる）
+             ＝木下が Figma で並べた「板の C の質感を、等高線の C に乗せたい」に当たる。
+             ⚠️ 距離は色を決めるのに使わない。だから【等高線の形はそのまま】残る。 */
+          /* 🔴 色を y だけで引くと、ずらす0のとき【ただの横縞】になって字が消えていた
+                （2026-08-09 木下「これは、、、なんだ」）。
+             ⭐ 等高線1本ごとに半周ずらす＝隣の縞と色が食い違って【字の形が出る】。 */
+          const si = Math.floor(dt);
+          t = vy0 * rep + si * 0.5 + jitShift(si, sh.jit);
+          t = t - Math.floor(t);
+        } else if(arcMode){
           /* ⭐ 等高線1本を【1枚の板】として、輪郭に沿ってグラデを刷る。
              ⚠️ 板モードとの本当の差は【グラデの走る向き】だった ── 板は板の長手方向に1回。
                 等高線は幅（距離）方向に走っていたので、同じ色でも別の素材に見えていた
@@ -365,13 +393,17 @@ function paintDist(sh){
              グラデが丸ごと1回入る（木下の Figma の図＝矩形ごとに1回と同じ）。
              ⚠️ 太さは補間せずに近い方を取る（中心軸で急に変わる値なので、混ぜると滲む）。 */
           const ii = ynr + (wx < 0.5 ? x0 : x1);
-          const th = thick[ii];
-          const av = Math.abs(dv);
-          t = th > 0.5 ? (av / th) : 0;
-          t = Math.max(0, Math.min(1, t)) * rep;
-          const si = Math.floor(t);
-          t -= si;
-          t += jitShift(si + (dv >= 0 ? 0 : 37), sh.jit); t = t - Math.floor(t);
+          /* 🔴 字の【外】には「線の太さ」が無い（背景は端まで続くので、山の行き先が場所ごとに飛ぶ）
+                ＝縦に切れた帯や垂れた筋になっていた。外はこれまでどおり一定の間隔で刷る。 */
+          if(dv < 0){ t = dt - Math.floor(dt); }
+          else {
+            const th = thick[ii];
+            t = th > 0.5 ? (dv / th) : 0;
+            t = Math.max(0, Math.min(1, t)) * rep;
+            const si = Math.floor(t);
+            t -= si;
+            t += jitShift(si, sh.jit); t = t - Math.floor(t);
+          }
         } else {
           const si = Math.floor(dt);
           t = dt - si;                               // 0..1 でくり返す＝等高線
@@ -381,7 +413,24 @@ function paintDist(sh){
         }
         const j = (t * (N - 1)) | 0;
         let r2 = tbl[j*3], g2 = tbl[j*3+1], b2 = tbl[j*3+2];
-        px[q] = r2; px[q+1] = g2; px[q+2] = b2; px[q+3] = 255;
+        if(vg !== 0){
+          /* ⭐ 帯ごとに位相をずらす ── 木下の参考では【青の帯と黄の帯でグラデの向きが逆】だった
+             （青は白が上／黄は暗が上）。版面ぜんぶで1回にすると、その食い違いが出ない。 */
+          let vy = vbase + Math.sin(Math.floor(dt) * 1.7) * 0.5;
+          vy = vy - Math.floor(vy);
+          const sv = vg * (vy - 0.5) * 2;
+          let vup = 0, vdn = 1;
+          if(sv > 0) vup = sv * 0.85; else vdn = 1 + sv * 0.85;
+          r2 = r2 * vdn; g2 = g2 * vdn; b2 = b2 * vdn;
+          if(vup > 0){ r2 += (255 - r2) * vup; g2 += (255 - g2) * vup; b2 += (255 - b2) * vup; }
+        }
+        /* ⭐ ディザ ── 8bit の階調では、近い色どうしの移り変わりが【段】に見える（バンディング）。
+           1階調に満たない揺らぎを足すと段が溶ける（印刷・映像で使う手）。
+           ⚠️ 位置だけで決まる値にする＝毎フレーム変わらない＝動かしてもチラつかない。
+           ⚠️ 2つの揺らぎの差にする（三角分布）＝ただの乱数より段が残らない。 */
+        const hz = (x * 1597 + y * 51749) & 1023, hz2 = (x * 3571 + y * 21617) & 1023;
+        const dz = (hz - hz2) / 1023 * 0.9;
+        px[q] = r2 + dz; px[q+1] = g2 + dz; px[q+2] = b2 + dz; px[q+3] = 255;
       }
     }
     const c2 = document.createElement('canvas'); c2.width = w; c2.height = h;
@@ -528,8 +577,12 @@ function thickness(sd, W, H){
   /* 🔴 字が1画素も無いとき、距離が初期値のまま（1e10 級）になってバケツの数が爆発し
         `Invalid typed array length` で落ちていた（2026-08-09 つまみ総当たりのテストが拾った）。
      ⭐ バケツの数に上限を置き、それを超える距離は一番上のバケツに入れる。 */
-  const B = Math.min(4096, Math.max(1, Math.ceil(maxA))) + 1;
-  const bin = v => { const b = Math.round(v); return b < 0 ? 0 : (b > B ? B : b); };
+  /* ⚠️ ビンが粗いと、同じビンの中で順序が乱れて山の伝播がずれる＝解像を下げたとき
+        【縦に切れた帯】として出る（2026-08-09 木下「線の太さに合わせるはなんか破綻してるな」）。
+        刻みを 1/4 にして、ビンの中の乱れを小さくする。 */
+  const SUB = 4;
+  const B = Math.min(16384, Math.max(1, Math.ceil(maxA * SUB))) + 1;
+  const bin = v => { const b = Math.round(v * SUB); return b < 0 ? 0 : (b > B ? B : b); };
   const cnt = new Int32Array(B + 1);
   for(let i = 0; i < n; i++) cnt[bin(a[i])]++;
   const pos = new Int32Array(B + 1);
@@ -541,10 +594,12 @@ function thickness(sd, W, H){
   for(let k = 0; k < n; k++){
     const i = order[k], x = i % W, y = (i / W) | 0, ai = a[i], si = sd[i] >= 0;
     let t = ai;
-    if(x > 0     && a[i-1] > ai && (sd[i-1] >= 0) === si && T[i-1] > t) t = T[i-1];
-    if(x < W - 1 && a[i+1] > ai && (sd[i+1] >= 0) === si && T[i+1] > t) t = T[i+1];
-    if(y > 0     && a[i-W] > ai && (sd[i-W] >= 0) === si && T[i-W] > t) t = T[i-W];
-    if(y < H - 1 && a[i+W] > ai && (sd[i+W] >= 0) === si && T[i+W] > t) t = T[i+W];
+    /* ⚠️ 4近傍だと斜めに伸びる山へ伝わらず、境目が縦横に切れる。8近傍にする。 */
+    const x0 = x > 0, x1 = x < W - 1, y0 = y > 0, y1 = y < H - 1;
+    const up = j => { if(a[j] > ai && (sd[j] >= 0) === si && T[j] > t) t = T[j]; };
+    if(x0) up(i-1); if(x1) up(i+1); if(y0) up(i-W); if(y1) up(i+W);
+    if(x0 && y0) up(i-W-1); if(x1 && y0) up(i-W+1);
+    if(x0 && y1) up(i+W-1); if(x1 && y1) up(i+W+1);
     T[i] = t;
   }
   return T;
@@ -706,7 +761,7 @@ function paintRect(sh, r, idx){
      （明→中→暗→黒→中→明）。⚠️ 黒の前後は colAt でその位置の色を置く。 */
   /* ⭐ 環の式（inkAtT）を細かい刻みで置く＝黒がどこにあっても滑らかにつながる。
      ⚠️ 色のストップを数点だけ置く組み方だと、黒が端に来たとき切れてガクッと変わる。 */
-  const STEPS = 96;
+  const STEPS = 256;   // ⭐ 板のグラデも刻みを増やす（96 だと近い色どうしで段が見えた）
   for(let k = 0; k < rep; k++){
     const b0 = k / rep, span = 1 / rep;
     for(let i = 0; i <= STEPS; i++){
