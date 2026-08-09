@@ -110,7 +110,10 @@
   <div class="row"><label>太さ</label><input type="range" id="weight" min="100" max="900" step="100" value="900"><span class="val"></span></div>
   <div class="row"><label>太らせ</label><input type="range" id="bold" min="0" max="100" value="0"><span class="val"></span></div>
   <div class="row"><label>大きさ</label><input type="range" id="size" min="10" max="200" value="70"><span class="val"></span></div>
+  <div class="row"><label>縦の長さ</label><input type="range" id="vlen" min="20" max="400" value="100"><span class="val"></span></div>
   <div class="row"><label>字間</label><input type="range" id="track" min="-40" max="60" value="0"><span class="val"></span></div>
+  <div class="note">⭐ <b>大きさ</b>は【横に収まる倍率】で決まるので、字数の多い語ほど<b>縦が痩せる</b>
+    （CAVOLO は横で決まりきる／MOJI なら縦も埋まる）。<b>縦の長さ</b>で縦だけ伸ばせる</div>
 
   <h2>分ける（字を板に）</h2>
   <div class="seg" id="dir"><button data-v="0" class="on">縦の板</button><button data-v="1">横の板</button><button data-v="2">両方</button><button data-v="3">輪郭から</button></div>
@@ -216,10 +219,11 @@ const stat = m => { const s = document.getElementById('stat'); if(s) s.textConte
    ⭐ 面のもの＝地（紙）とビュー（ズーム・パン）＝どの版にも同じくかかる。
    ⚠️ P に残すのは【面のもの】だけ。版のものを P に置くと、重ねたとき全部同じになる。 */
 const COL_DEF = ['#cb66ef','#8266ef','#5845a2','#8266ef','#cb66ef','#ffffff','#a06ce8','#3a2a6a','#e0b0ff','#ffffff'];
-const SHEET_KEYS = ['txt','font','tdir','weight','bold','size','track','dir','slices','gap','minLen','dScale','dRes','dRound','dGloss','dSteps','dComb','dCombN',
+const SHEET_KEYS = ['txt','font','tdir','weight','bold','size','vlen','track','dir','slices','gap','minLen','dScale','dRes','dRound','dGloss','dSteps','dComb','dCombN',
                     'colN','kcol','kpos','kw','jit','rep','gdir','x','y','scale','rot'];
 function newSheet(txt){
   return { txt: txt != null ? txt : 'あたらしい', font:0, tdir:0, weight:900, bold:0, size:70, track:0,
+           vlen:100,
            dir:0, slices:26, gap:6, minLen:4, dScale:40, dRes:700, dRound:0, dGloss:0, dSteps:0, dComb:0, dCombN:30,
            cols: COL_DEF.slice(), colN:3, kcol:'#000000',
            kpos:49, kw:16, jit:0, rep:1, gdir:0,
@@ -247,8 +251,19 @@ let noBgOnce = false;
    ⚠️ 焼いた結果は使い回す（色を変えたときだけ塗り直す）。 */
 const distCache = new WeakMap();
 function paintDist(sh){
-  const SD = sh.SD, w = SD.w, h = SD.h;
-  const key = [sh.dScale, sh.colN, sh.kcol, sh.kpos, sh.kw, sh.rep, sh.dRound, sh.dGloss, sh.dSteps, sh.dComb, sh.dCombN, sh.cols.join(',')].join('|');
+  const SD = sh.SD, sw = SD.w, sh0 = SD.h;
+  /* 🔴 【素材が板と違って見える】の正体（2026-08-08 木下「あきらかに見え方が違うよね？」）。
+     ⭐ 板は矩形＋グラデ＝ベクターなので、どれだけ拡大しても色の境目がシャープ。
+        距離場は【解像の小さい絵に色まで塗ってから拡大】していたので、
+        グラデも境目もまとめてボケていた＝ブラーがかかったように見える。
+     ⭐ 直し方＝【距離だけ低い解像で計算し、色は "出す大きさ" で引く】。
+        距離は連続した値なので、間を補間しても意味が壊れない（色を補間するのとは別物）。
+     ⚠️ 弧長（櫛の歯）は輪郭を一周すると 100→0 に飛ぶので、補間せず【近い方】を取る。 */
+  const OUT_MAX = 2000;
+  let w = Math.max(8, Math.round(sh.ART.w)), h = Math.max(8, Math.round(sh.ART.h));
+  const kf = Math.min(1, OUT_MAX / Math.max(w, h));
+  w = Math.max(8, Math.round(w * kf)); h = Math.max(8, Math.round(h * kf));
+  const key = [sh.dScale, sh.colN, sh.kcol, sh.kpos, sh.kw, sh.rep, sh.dRound, sh.dGloss, sh.dSteps, sh.dComb, sh.dCombN, w, h, sh.cols.join(',')].join('|');
   let img = distCache.get(sh);
   if(!img || img.key !== key){
     const id = new ImageData(w, h), px = id.data;
@@ -260,21 +275,43 @@ function paintDist(sh){
     const round = sh.dRound / 100, gloss = sh.dGloss / 100;
     const stN = Math.round(sh.dSteps);
     for(let i = 0; i < N; i++){
-      let t = i / (N - 1);
+      const t0 = i / (N - 1);                      // ⭐ 縞1本の中の位置（連続）
+      let t = t0;
       /* ⭐ 段 ── なめらかな色の変わり方を段に割る＝板モードのような【くっきりした縞】になる。
-         0 ＝これまでどおりなめらか（ブラーのような見え方）。 */
+         0 ＝これまでどおりなめらか（ブラーのような見え方）。
+         🔴 段は【色にだけ】掛ける。以前は段で割った t で陰影も作っていたので、
+            段を上げると丸み・光沢まで段に潰れて平らになっていた（2026-08-08 木下）。 */
       if(stN >= 2) t = Math.floor(t * stN) / Math.max(stN - 1, 1);
       const c = inkAtT(sh, t);                     // ⭐ 板と同じ式（環）
       let [r2, g2, b2] = hex2rgb(c);
-      /* ⭐ 縞の丸み ── 縞1本の中で明暗をつける＝平らな色帯が【管】に見える。
-         ⭐ 光沢 ── 真ん中から離してコントラストを立てる（黒まで落ちて白が立つ）。
-         🔴 累乗で持ち上げると全体が明るくなるだけで黒が落ちない（膜 MAKU で踏んだ）。 */
-      if(round > 0.001){
-        let wv = Math.sin(t * Math.PI);
-        wv = Math.max(0, Math.min(1, (wv - 0.5) * (1 + gloss * 3) + 0.5));
-        const lo = 0.28 * (1 - gloss);
-        const k3 = 1 + (lo + (1 - lo) * wv - 1) * round;
-        r2 = Math.round(r2 * k3); g2 = Math.round(g2 * k3); b2 = Math.round(b2 * k3);
+      /* ⭐ 縞の丸み ── 縞1本の中で【中央が持ち上がり、端が落ちる】＝色帯が【管】に見える。
+         ⭐ 光沢 ── ハイライトを細く鋭くする（金属の管に走る白い筋）。
+         🔴 以前は「暗くする」方向にしか動かず、上げるほど全体がくすむだけだった
+            （実測：丸み60・光沢60 で 明>200 が 31%→12%）。⭐ 1 を挟んで【上下】させる。
+         ⭐ 明るくする側は白に寄せる（掛け算だと白がもう飽和していて筋が出ない）。 */
+      /* 🔴 光沢が【丸みを上げないと何も起きない】作りだった（2026-08-09 木下「光沢も変化なし」）
+            ＝丸みの中でしか gloss を使っていなかった。⭐ 2つは別のものなので別々に効かせる。
+            丸み＝縞1本の陰影（中央が持ち上がり端が落ちる）／光沢＝白い筋（金属の照り返し）。 */
+      if(round > 0.001 || gloss > 0.001){
+        const wv = Math.sin(t0 * Math.PI);                 // 0..1..0（縞1本の中）
+        let up = 0, dn = 1;
+        if(round > 0.001){
+          up += round * wv * 0.35;                         // 中央を持ち上げる
+          dn -= round * Math.pow(1 - wv, 1.4) * 0.62;      // 端を落とす
+        }
+        /* ⭐ 光沢＝【細い白い筋】。上げるほど細く強くなる（管の照り返し） */
+        if(gloss > 0.001){
+          up += gloss * Math.pow(wv, 3 + gloss * 9) * 0.95;
+          dn -= gloss * Math.pow(1 - wv, 2.2) * 0.30;
+        }
+        dn = Math.max(0, dn); up = Math.min(1, up);
+        /* 🔴 黒のストップが縞の中央にあると、そこにハイライトが重なって【黒が消える】
+              （板は黒が黒のまま残るので素材が違って見えた）。
+           ⭐ 暗いところは光らせない＝照り返しは明るい面にだけ乗る（実物の金属と同じ）。 */
+        const lum = (r2 * 0.2126 + g2 * 0.7152 + b2 * 0.0722) / 255;
+        const upE = up * lum * lum;
+        const sh3 = v => { const x = v * dn; return Math.max(0, Math.min(255, Math.round(x + (255 - x) * upE))); };
+        r2 = sh3(r2); g2 = sh3(g2); b2 = sh3(b2);
       }
       tbl[i*3] = r2; tbl[i*3+1] = g2; tbl[i*3+2] = b2;
     }
@@ -282,19 +319,29 @@ function paintDist(sh){
     /* ⭐ 櫛の歯 ── 【縞に直交して走る細かい明暗】。距離だけでは出ない（参考の拡大で分かった）。
        最も近い輪郭点が輪郭に沿って動くと値が動く＝歯が並ぶ。 */
     const comb = sh.dComb / 100, combN = Math.max(1, sh.dCombN);
-    const along = SD.along;
-    for(let i = 0, q = 0; i < w * h; i++, q += 4){
-      let t = SD.d[i] * scale * 0.06;
-      t = t - Math.floor(t);                       // 0..1 でくり返す＝等高線
-      const j = (t * (N - 1)) | 0;
-      let r2 = tbl[j*3], g2 = tbl[j*3+1], b2 = tbl[j*3+2];
-      if(comb > 0.001 && along){
-        let u = along[i] * combN * 0.01;   // ⚠️ along は「輪郭1周＝100」に正規化した弧長
-        u = u - Math.floor(u);
-        const k4 = 1 - comb * (0.5 - 0.5 * Math.cos(u * 6.2831853));
-        r2 = r2 * k4; g2 = g2 * k4; b2 = b2 * k4;
+    const along = SD.along, dsrc = SD.d;
+    /* ⭐ 出す大きさの1画素ごとに、距離場の中の位置を出して【距離を補間】してから色を引く */
+    const rx = (sw - 1) / Math.max(1, w - 1), ry = (sh0 - 1) / Math.max(1, h - 1);
+    for(let y = 0, q = 0; y < h; y++){
+      const fy = y * ry, y0 = fy | 0, y1 = Math.min(sh0 - 1, y0 + 1), wy = fy - y0;
+      const r0 = y0 * sw, r1 = y1 * sw;
+      const ynr = (wy < 0.5 ? y0 : y1) * sw;
+      for(let x = 0; x < w; x++, q += 4){
+        const fx = x * rx, x0 = fx | 0, x1 = Math.min(sw - 1, x0 + 1), wx = fx - x0;
+        const a = dsrc[r0 + x0], b = dsrc[r0 + x1], c3 = dsrc[r1 + x0], d3 = dsrc[r1 + x1];
+        const dv = (a + (b - a) * wx) + ((c3 + (d3 - c3) * wx) - (a + (b - a) * wx)) * wy;
+        let t = dv * scale * 0.06;
+        t = t - Math.floor(t);                     // 0..1 でくり返す＝等高線
+        const j = (t * (N - 1)) | 0;
+        let r2 = tbl[j*3], g2 = tbl[j*3+1], b2 = tbl[j*3+2];
+        if(comb > 0.001 && along){
+          let u = along[ynr + (wx < 0.5 ? x0 : x1)] * combN * 0.01;   // ⚠️ 弧長は補間しない
+          u = u - Math.floor(u);
+          const k4 = 1 - comb * (0.5 - 0.5 * Math.cos(u * 6.2831853));
+          r2 = r2 * k4; g2 = g2 * k4; b2 = b2 * k4;
+        }
+        px[q] = r2; px[q+1] = g2; px[q+2] = b2; px[q+3] = 255;
       }
-      px[q] = r2; px[q+1] = g2; px[q+2] = b2; px[q+3] = 255;
     }
     const c2 = document.createElement('canvas'); c2.width = w; c2.height = h;
     c2.getContext('2d').putImageData(id, 0, 0);
@@ -479,20 +526,20 @@ const PALS = [
    ⚠️ つまみが多いと、値を口で伝えても木下が同じ状態に行けない（2026-08-08）。
       参考に届いた設定はここに閉じ込めて、触る入口にする。 */
 const LOOKS = [
-  { name:'等高線', set:{ dir:3, dScale:190, dComb:65, dCombN:55, dRound:85, dGloss:55, dRes:1200,
-      colN:4, kcol:'#000000', kpos:50, kw:10, jit:0, rep:1, size:120, track:0, bold:0, weight:900,
+  { name:'等高線', set:{ dir:3, dScale:190, dComb:65, dCombN:55, dSteps:0, dRound:85, dGloss:55, dRes:1200,
+      colN:4, kcol:'#000000', kpos:50, kw:10, jit:0, rep:1, size:120, vlen:100, track:0, bold:0, weight:900,
       cols:['#ffffff','#3b7fd4','#ffffff','#d8b220','#ffffff','#3b7fd4','#ffffff','#d8b220','#ffffff','#3b7fd4'] } },
-  { name:'織り',   set:{ dir:3, dScale:150, dComb:95, dCombN:90, dRound:70, dGloss:70, dRes:1200,
-      colN:3, kcol:'#000000', kpos:50, kw:14, jit:0, rep:1, size:120, track:0, bold:0, weight:900,
+  { name:'織り',   set:{ dir:3, dScale:150, dComb:95, dCombN:90, dSteps:0, dRound:70, dGloss:70, dRes:1200,
+      colN:3, kcol:'#000000', kpos:50, kw:14, jit:0, rep:1, size:120, vlen:100, track:0, bold:0, weight:900,
       cols:['#f2efe6','#2b6cc4','#e8c33a','#2b6cc4','#f2efe6','#ffffff','#a06ce8','#3a2a6a','#e0b0ff','#ffffff'] } },
-  { name:'金の管', set:{ dir:0, slices:48, gap:0, minLen:0, gdir:0, colN:5, kcol:'#140c00',
-      kpos:50, kw:18, jit:0, rep:1, size:150, track:-10, bold:0, weight:900,
+  { name:'金の管', set:{ dir:0, slices:48, gap:0, minLen:0, dSteps:0, gdir:0, colN:5, kcol:'#140c00',
+      kpos:50, kw:18, jit:0, rep:1, size:150, vlen:100, track:-10, bold:0, weight:900,
       cols:['#fff2c4','#e8b552','#8a5a10','#e8b552','#fff2c4','#ffffff','#a06ce8','#3a2a6a','#e0b0ff','#ffffff'] } },
-  { name:'2色の帯', set:{ dir:0, slices:120, gap:14, minLen:0, gdir:0, colN:2, kcol:'#05060f',
-      kpos:50, kw:22, jit:35, rep:1, size:110, track:-8, bold:0, weight:900,
+  { name:'2色の帯', set:{ dir:0, slices:120, gap:14, minLen:0, dSteps:0, gdir:0, colN:2, kcol:'#05060f',
+      kpos:50, kw:22, jit:35, rep:1, size:110, vlen:100, track:-8, bold:0, weight:900,
       cols:['#1e56d6','#e8e02a','#1e56d6','#e8e02a','#ffffff','#1e56d6','#e8e02a','#ffffff','#1e56d6','#e8e02a'] } },
-  { name:'ビット', set:{ dir:2, slices:60, gap:22, minLen:0, gdir:1, colN:3, kcol:'#000000',
-      kpos:50, kw:0, jit:70, rep:1, size:110, track:0, bold:0, weight:900,
+  { name:'ビット', set:{ dir:2, slices:60, gap:22, minLen:0, dSteps:0, gdir:1, colN:3, kcol:'#000000',
+      kpos:50, kw:0, jit:70, rep:1, size:110, vlen:100, track:0, bold:0, weight:900,
       cols:['#e9201c','#141414','#2b4cc9','#f2d16b','#1f7a4d','#8a6f4e','#a06ce8','#3a2a6a','#e0b0ff','#ffffff'] } },
 ];
 function applyLook(i){
@@ -582,8 +629,24 @@ function paintRect(sh, r, idx){
   g.fillRect(x - ov, y - ov, w + ov * 2, h + ov * 2);
 }
 
+/* 🔴 初期表示だけ【字の縦幅が短い】（2026-08-08／再発で 08-09 にも）。
+   ⚠️ `document.fonts.ready` は入っていたが足りない ── **canvas への描画はフォントの
+      読み込みを起こさない**。パネルの文字は 300/400 なので、字を描く **900 だけ来ていない**
+      まま実寸を測っていた＝フォールバックの字で測る＝縦が短い。
+      打ち直すとそのころには届いているので戻る（＝木下の見ていた症状そのもの）。
+   ⭐ 使うフォントとウェイトを【名指しで読ませ】、届いたら測り直す。
+   ⚠️ 一度頼んだ組み合わせは覚えておく（毎回 then を積むと測り直しが無限に続く）。 */
+const fontAsked = new Set();
+function ensureFont(fam, weight){
+  if(!document.fonts || !document.fonts.load) return;
+  const spec = `${weight || 400} 100px ${fam}`;
+  if(fontAsked.has(spec)) return;
+  fontAsked.add(spec);
+  document.fonts.load(spec).then(() => { buildAll(); });
+}
 function buildSheet(sh){
   const fam = sh.font ? '"Zen Old Mincho"' : '"Zen Kaku Gothic New"';
+  ensureFont(fam, sh.weight);
   const lines = (sh.txt || ' ').split('\n');
   /* ⭐ 基準の字の大きさ＝画面の高さの半分。「大きさ」はそこからの倍率。
      🔴 画面サイズの canvas に焼くと、大きくしたとき【はみ出した分が存在しない】＝
@@ -610,30 +673,41 @@ function buildSheet(sh){
   }
   const fit = Math.min(cv.width / Math.max(pw, 1), cv.height / Math.max(ph, 1)) * 0.86;
   const base = probe * fit;
-  let W2, H2, S, stepY = 0, maxLen = 1, cols = 1;
+  let W2, H2b, S, stepY = 0, maxLen = 1, cols = 1;
   if(sh.tdir === 1){
     maxLen = Math.max(...lines.map(l => [...l].length), 1);
     cols = lines.length;
     S = base * (sh.size / 100);
     stepY = S * (1.02 + sh.track / 100);
     W2 = Math.ceil(cols * S * 1.02 + S * 0.4 + S * (sh.bold/100) * 0.4);
-    H2 = Math.ceil(maxLen * Math.abs(stepY) + S * 0.6 + S * (sh.bold/100) * 0.4);
+    H2b = Math.ceil(maxLen * Math.abs(stepY) + S * 0.6 + S * (sh.bold/100) * 0.4);
   } else {
     S = base * (sh.size / 100);
     /* 🔴 測るときも【描くときと同じ太さ】にする。900 固定で測ると、細い字にしたとき
        横に余白ができて字が小さく（＝縦が短く）見える（2026-08-08 木下）。 */
+    tg.setTransform(1, 0, 0, 1, 0, 0);
     tg.font = `${sh.weight} ${S}px ${fam}, sans-serif`;
     tg.letterSpacing = `${sh.track / 100 * S}px`;
     const wMax = Math.max(...lines.map(l => tg.measureText(l).width), 1);
     W2 = Math.ceil(wMax + S * 0.4 + S * (sh.bold/100) * 0.4);
-    H2 = Math.ceil(lines.length * S * 1.02 + S * 0.6 + S * (sh.bold/100) * 0.4);
+    H2b = Math.ceil(lines.length * S * 1.02 + S * 0.6 + S * (sh.bold/100) * 0.4);
   }
+  /* ⭐ 縦の長さ ── 字の大きさは【横に収まる倍率】で決まるので、字数が多い語（CAVOLO）は
+     横で決まりきって【縦が痩せる】。短い語（MOJI）だと縦も埋まる＝木下の見ていた差はこれ
+     （2026-08-09 実機の2枚で確定）。⭐ 縦だけ伸ばせるようにする＝字数に関係なく縦を埋められる。
+     ⚠️ 大きさ（S）は触らない。触ると横幅まで動いて、収まっていたものがはみ出す。 */
+  const vl = Math.max(0.2, (sh.vlen == null ? 100 : sh.vlen) / 100);
+  let H2 = Math.ceil(H2b * vl);
   /* ⚠️ 大きくしすぎると走査が重い＝上限で止める（黙って壊れず、止まったことは出さない） */
   const LIM = 8192;   // ⚠️ 低いと大きさのつまみが途中から効かなくなる
   const k = Math.min(1, LIM / Math.max(W2, H2));
-  W2 = Math.max(8, Math.round(W2 * k)); H2 = Math.max(8, Math.round(H2 * k)); S *= k; stepY *= k;
+  W2 = Math.max(8, Math.round(W2 * k)); H2 = Math.max(8, Math.round(H2 * k));
+  S *= k; stepY *= k; H2b *= k;
   tc.width = W2; tc.height = H2;
+  tg.setTransform(1, 0, 0, 1, 0, 0);
   tg.fillStyle = '#000'; tg.fillRect(0, 0, W2, H2);
+  /* ⭐ 縦に伸ばすのは【焼くときの座標系】で。以降の y は伸ばす前（H2b）で考える */
+  tg.setTransform(1, 0, 0, vl, 0, 0);
   tg.fillStyle = '#fff'; tg.textAlign = 'center'; tg.textBaseline = 'middle';
   tg.font = `${sh.weight} ${S}px ${fam}, sans-serif`;
   /* ⭐ 太らせ ── フォントの太さは 900 が上限。その先は【輪郭で膨らませて】作る。
