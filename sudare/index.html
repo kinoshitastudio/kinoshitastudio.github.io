@@ -45,6 +45,8 @@
   .big:disabled{ opacity:.35; cursor:not-allowed }
   /* 分け方が「輪郭から」のときだけ出すつまみ（触れるのに効かないものを出さない） */
   .only-dist{ display:none }
+  .only-arc{ display:none }
+  body.dist.arcg .only-arc{ display:flex }
   body.dist .only-dist{ display:block }
   body.dist .only-slat{ display:none }
   .cols{ display:flex; gap:6px; margin:6px 0 }
@@ -126,7 +128,7 @@
       ⭐ <b>線の太さに合わせる</b>＝距離を<b>その場所の線の太さで割る</b>＝太い線でも細い線でも
       「輪郭→中心→輪郭」でグラデが<b>丸ごと1回</b>入る（縞の細かさは効かない・<b>くり返し</b>で増やす）</div>
     <div class="row"><label>縞の細かさ</label><input type="range" id="dScale" min="1" max="200" value="40"><span class="val"></span></div>
-    <div class="row"><label>1周の枚数</label><input type="range" id="dCombN" min="1" max="120" value="30"><span class="val"></span></div>
+    <div class="row only-arc"><label>1周の枚数</label><input type="range" id="dCombN" min="1" max="120" value="30"><span class="val"></span></div>
     <div class="row"><label>段</label><input type="range" id="dSteps" min="0" max="24" step="1" value="0"><span class="val"></span></div>
     <div class="row"><label>縞の丸み</label><input type="range" id="dRound" min="0" max="100" value="0"><span class="val"></span></div>
     <div class="row"><label>光沢</label><input type="range" id="dGloss" min="0" max="100" value="0"><span class="val"></span></div>
@@ -546,11 +548,15 @@ function thickness(sd, W, H){
 /* ⭐ ここが核心 ── 字を細く切って、字がある区間を【1枚の板】として拾う。
    ⚠️ 小さい正方形を敷き詰めるのではない。区間の長さがそのまま矩形の長さになる
       ＝「L」の縦棒は1枚の長い矩形になる。 */
-function sliceToRects(sh, mask, W, H, horizontal){
+function sliceToRects(sh, mask, W, H, horizontal, unit){
   const rects = [];
   const n = Math.max(2, Math.round(sh.slices));
   const step = (horizontal ? H : W) / n;
-  const minLen = (sh.minLen / 100) * (horizontal ? W : H);
+  /* 🔴 捨てる基準を【字全体の幅・高さ】にしていたので、横の板だと CAVOLO の横幅（約950px）の
+        4%＝38px＝ストロークの太さと同じくらいの板まで捨てて、字がほとんど消えていた
+        （2026-08-09 木下「今度は横が見えない」）。縦の板では基準が高さなので目立たなかった。
+     ⭐ 基準は【1文字の大きさ】＝縦でも横でも、字数が増えても同じ意味になる。 */
+  const minLen = (sh.minLen / 100) * (unit || (horizontal ? W : H));
   for(let i = 0; i < n; i++){
     const a0 = Math.floor(i * step), a1 = Math.max(a0 + 1, Math.floor((i + 1) * step));
     let run = -1;
@@ -834,8 +840,8 @@ function buildSheet(sh){
   }
   sh.SD = null;
   let R = [];
-  if(sh.dir === 0 || sh.dir === 2) R = R.concat(sliceToRects(sh, mask, W2, H2, false));
-  if(sh.dir === 1 || sh.dir === 2) R = R.concat(sliceToRects(sh, mask, W2, H2, true));
+  if(sh.dir === 0 || sh.dir === 2) R = R.concat(sliceToRects(sh, mask, W2, H2, false, S));
+  if(sh.dir === 1 || sh.dir === 2) R = R.concat(sliceToRects(sh, mask, W2, H2, true, S));
   sh.RECTS = R; sh.ART = { w:W2, h:H2 };
 }
 /* ⭐ いま触っている版だけ焼き直して描く（他の版はそのまま＝重ねても崩れない） */
@@ -922,6 +928,7 @@ document.querySelectorAll('#panel .seg').forEach(seg=>{
        【距離場のつまみ（縞の細かさ・丸み・光沢・解像）が出ないまま】になる。
        絵は距離場で描かれているのに、つまみは板用のまま＝触れない（2026-08-07 木下）。 */
     if(seg.id === 'dir'){ syncUI(); build(); }
+    else if(seg.id === 'dGdir'){ syncUI(); draw(); }
     else if(seg.id === 'font' || seg.id === 'tdir') build();
     else draw();
   }));
@@ -1025,6 +1032,8 @@ function syncUI(){
   document.getElementById('txt').value = sh.txt;
   const del = document.getElementById('delSheet'); if(del) del.disabled = SHEETS.length <= 1;
   document.body.classList.toggle('dist', sh.dir === 3);
+  /* ⚠️ 触れるのに何も起きないつまみを出さない＝1周の枚数は【輪郭に沿って】のときだけ */
+  document.body.classList.toggle('arcg', sh.dGdir === 1);
 }
 /* ⭐ スナップショットは【操作の直前に1回だけ】。capture で拾えば実際の処理より先に走る。
    🔴 input のたびに積むと、1回のドラッグで何十回も積まれて ⌘Z が1段ずつしか戻らない
