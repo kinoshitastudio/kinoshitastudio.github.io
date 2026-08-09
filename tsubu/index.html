@@ -1554,18 +1554,38 @@ function draw(){
         const w = Math.max(1, Math.round(CW * scw(d))), h = Math.max(1, Math.round(CH * sch(d)));
         const ang = d.t === SPHERE ? d.ang : d.ang;              // 向きは字形から
         const ca2 = Math.cos(ang), sa2 = Math.sin(ang);
-        const jit = d.sp > 0 ? ((((d.ci + 1) * 0.6180339887) % 1) * d.sp) : 0;   // ⚠️ 字ごとは版ごと
         const isM = d.t === MASU_T, isF = d.t === FRAME_T;
         const WVd = (isM ? P.masuWav : isF ? P.frameWav : d.wv) * wavK();
         const Ld = isM ? MASU_LUT : isF ? FRAME_LUT : RAMP_LUT;
-        const SH = d.shn;                      // ⚠️ 照りも版ごと
+        /* 🔴🔴 連続モードは面ごとの設定を【1つも見ていなかった】（2026-08-09）。
+              柄・照り・ずれ・字ごと・流れが全部 字の値のままで、マス目や枠で
+              つまみを動かしても何も起きなかった（木下＝「動かなくなった」）。
+           ⭐ グラデ塊と同じ規則をここにも通す。-1＝字と同じ。 */
+        const LB = (P.layers && P.layers[d.li]) ? P.layers[d.li].line : P.line;
+        const pick = (m, f, base) => isM ? ((m == null || m < 0) ? base : m)
+                                   : isF ? ((f == null || f < 0) ? base : f) : base;
+        const LNd = pick(P.masuLine,  P.frameLine,  LB);
+        const SH  = pick(P.masuShine, P.frameShine, d.shn * 100) / 100;
+        const SHd = pick(P.masuShift, P.frameShift, d.sh * 100) / 100;
+        const SPd = pick(P.masuSpread, P.frameSpread, d.sp * 100) / 100;
+        const FLd = isM ? flowT * (P.masuFlow ?? 100) / 100
+                  : isF ? flowT * (P.frameFlow ?? 100) / 100 : flowT;
+        const jit = SPd > 0 ? ((((d.ci + 1) * 0.6180339887) % 1) * SPd) : 0;
         for(let j = 0; j < h; j++){
           const Y = y0 + j; if(Y < 0 || Y >= OH) continue;
           for(let i = 0; i < w; i++){
             const X = x0 + i; if(X < 0 || X >= OW) continue;
             // ⭐ ここが肝：タイル内座標ではなく「世界の格子座標」で解く＝境界で切れない
             const u = (d.x + phaseSx + i / w) * ca2 + (d.y + phaseSy + j / h) * sa2;
-            const v = 0.5 + 0.5 * Math.cos((u * WVd + jit + d.sh) * 6.2831853 + flowT * 0.1);
+            // 直交軸。斜・格子・環に要る（グラデ塊と同じ形にする）
+            const w2 = (-(d.x + phaseSx + i / w) * sa2 + (d.y + phaseSy + j / h) * ca2) * WVd;
+            const uu = (u * WVd + jit + SHd) * 6.2831853 + FLd * 0.1;
+            let v;
+            if(LNd === 1)      v = (Math.floor(uu / 3.1415927) % 2) ? 1 : 0.12;   // 縞
+            else if(LNd === 2) v = 0.5 + 0.5 * Math.cos(uu + w2 * 6.2831853);     // 斜
+            else if(LNd === 3) v = (0.5 + 0.5 * Math.cos(uu)) * (0.5 + 0.5 * Math.cos(w2 * 6.2831853)); // 格子
+            else if(LNd === 4) v = 0.5 + 0.5 * Math.cos(Math.hypot(uu / 6.2831853, w2) * 6.2831853);    // 環
+            else               v = 0.5 + 0.5 * Math.cos(uu);                      // 波
             const k1 = Math.pow(v < 0 ? 0 : v, 1.8);
             const hi = Math.pow(v < 0 ? 0 : v, 6.0) * SH * 255;
             const q = (k1 < 0 ? 0 : k1 > 1 ? 255 : Math.round(k1 * 255)) * 3;
