@@ -19,10 +19,10 @@ const sig = () => p.evaluate(() => { const c = document.querySelector('canvas'),
 /* ⚠️ 1つ試すごとに【版を丸ごと元に戻す】。戻さないと前のつまみの値が残り、
       字が画面の外に出て真っ黒になり、以降ぜんぶ「変わらない」と誤検出する（最初にこれで36件出た）。 */
 /* ⚠️ アニメのつまみ（速さ・コマ）は1コマ目では差が出ない＝ここでは見ない（別で見る）。
-   ⚠️ 歯の細かさは【櫛の歯が0だと効かなくて当たり前】なので、櫛の歯を入れた状態で測る。 */
+   ⚠️ 艶の細かさは【丸みが0だと効かなくて当たり前】なので、丸みを入れた状態で測る（同種：縦のグラデの幅）。 */
 const SKIP = ['speed','fps'];
 const modes = [ { name:'板', set:{ dir:0, slices:60, gap:6 } },
-                { name:'輪郭から', set:{ dir:3, dScale:40, dRes:600, dCombN:30, vgrad:50 } } ];
+                { name:'輪郭から', set:{ dir:3, dScale:40, dRes:600, dCombN:30, vgrad:50, dRound:60 } } ];
 let ng = [];
 for(const m of modes){
   const reset = async () => await p.evaluate(s => {

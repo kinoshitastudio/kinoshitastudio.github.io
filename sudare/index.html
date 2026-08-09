@@ -136,6 +136,7 @@
     <div class="row"><label>段</label><input type="range" id="dSteps" min="0" max="24" step="1" value="0"><span class="val"></span></div>
     <div class="row"><label>縞の丸み</label><input type="range" id="dRound" min="0" max="100" value="0"><span class="val"></span></div>
     <div class="row"><label>光沢</label><input type="range" id="dGloss" min="0" max="100" value="0"><span class="val"></span></div>
+    <div class="row"><label>艶の細かさ</label><input type="range" id="dShineN" min="1" max="12" value="1"><span class="val"></span></div>
     <div class="row"><label>解像</label><input type="range" id="dRes" min="100" max="1600" step="20" value="700"><span class="val"></span></div>
     <div class="note">⭐ <b>段</b>＝色を段に割る＝板のような<b>くっきりした縞</b>になる（0でなめらか）<br>
       ⭐ 字の輪郭から【等しい距離】のところを縞にする＝字の形に沿って縞が流れ、
@@ -235,12 +236,12 @@ const stat = m => { const s = document.getElementById('stat'); if(s) s.textConte
    ⭐ 面のもの＝地（紙）とビュー（ズーム・パン）＝どの版にも同じくかかる。
    ⚠️ P に残すのは【面のもの】だけ。版のものを P に置くと、重ねたとき全部同じになる。 */
 const COL_DEF = ['#cb66ef','#8266ef','#5845a2','#8266ef','#cb66ef','#ffffff','#a06ce8','#3a2a6a','#e0b0ff','#ffffff'];
-const SHEET_KEYS = ['txt','font','tdir','weight','bold','size','vlen','track','dir','slices','gap','minLen','dScale','dRes','dRound','dGloss','dSteps','dCombN','dGdir',
+const SHEET_KEYS = ['txt','font','tdir','weight','bold','size','vlen','track','dir','slices','gap','minLen','dScale','dRes','dRound','dGloss','dShineN','dSteps','dCombN','dGdir',
                     'colN','kcol','kpos','kw','jit','rep','vgrad','vgradN','gdir','x','y','scale','rot'];
 function newSheet(txt){
   return { txt: txt != null ? txt : 'あたらしい', font:0, tdir:0, weight:900, bold:0, size:70, track:0,
            vlen:100,
-           dir:0, slices:26, gap:6, minLen:4, dScale:40, dRes:700, dRound:0, dGloss:0, dSteps:0, dCombN:30, dGdir:0,
+           dir:0, slices:26, gap:6, minLen:4, dScale:40, dRes:700, dRound:0, dGloss:0, dShineN:1, dSteps:0, dCombN:30, dGdir:0,
            cols: COL_DEF.slice(), colN:3, kcol:'#000000',
            kpos:49, kw:16, jit:0, rep:1, vgrad:0, vgradN:1, gdir:0,
            x:0, y:0, scale:100, rot:0,
@@ -282,7 +283,7 @@ function paintDist(sh){
   /* 🔴 解像（dRes）がキーに入っていなかった＝つまみを動かしても【前に焼いた絵をそのまま使う】。
      距離場は作り直されているのに絵が変わらない＝木下「解像も変化なし」の正体（2026-08-09）。
      ⚠️ 焼いた結果を使い回すときは、【焼くのに使った値を全部】キーに入れる。 */
-  const key = [sh.dRes, sh.dScale, sh.colN, sh.vgrad, sh.vgradN, sh.kcol, sh.kpos, sh.kw, sh.rep, sh.dRound, sh.dGloss, sh.dSteps, sh.dCombN, sh.dGdir, sh.jit, w, h, sh.cols.join(',')].join('|');
+  const key = [sh.dRes, sh.dScale, sh.colN, sh.vgrad, sh.vgradN, sh.kcol, sh.kpos, sh.kw, sh.rep, sh.dRound, sh.dGloss, sh.dShineN, sh.dSteps, sh.dCombN, sh.dGdir, sh.jit, w, h, sh.cols.join(',')].join('|');
   let img = distCache.get(sh);
   if(!img || img.key !== key){
     const id = new ImageData(w, h), px = id.data;
@@ -295,7 +296,7 @@ function paintDist(sh){
        ⚠️ 色は Uint8（0-255）なので、刻みを増やしても8bitの段は残る → ディザで溶かす（下） */
     const N = 4096, tbl = new Float32Array(N * 3);
     const round = sh.dRound / 100, gloss = sh.dGloss / 100;
-    const stN = Math.round(sh.dSteps);
+    const stN = Math.round(sh.dSteps), shN = Math.max(1, Math.round(sh.dShineN || 1));
     for(let i = 0; i < N; i++){
       const t0 = i / (N - 1);                      // ⭐ 縞1本の中の位置（連続）
       let t = t0;
@@ -315,7 +316,10 @@ function paintDist(sh){
             ＝丸みの中でしか gloss を使っていなかった。⭐ 2つは別のものなので別々に効かせる。
             丸み＝縞1本の陰影（中央が持ち上がり端が落ちる）／光沢＝白い筋（金属の照り返し）。 */
       if(round > 0.001 || gloss > 0.001){
-        const wv = Math.sin(t0 * Math.PI);                 // 0..1..0（縞1本の中）
+        /* ⭐ 艶の細かさ ── 波を【色ごと】に入れられるようにする。1回だけだと、色数を増やしたとき
+           1色ずつが単色のベタになる（2026-08-09 木下「単色になりすぎると俺の良さが消える」）。
+           色の数と同じにすると、どの色の中にも艶が1回ずつ入る。 */
+        const wv = Math.abs(Math.sin(t0 * Math.PI * shN));  // 0..1..0（艶の細かさぶんくり返す）
         let up = 0, dn = 1;
         if(round > 0.001){
           up += round * wv * 0.35;                         // 中央を持ち上げる
