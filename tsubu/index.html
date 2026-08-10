@@ -526,6 +526,8 @@
   <button class="big" id="exJson" style="margin-top:10px">JSON を出す（設定の持ち運び）</button>
   <button class="big" id="inJson" style="margin-top:4px">JSON を読む</button>
   <input type="file" id="fJson" accept="application/json,.json" hidden>
+  <button class="big" id="openPrev" style="margin-top:4px;display:none;background:none;color:var(--ink);border:1px solid var(--line)">前のつづきを開く</button>
+  <div class="hint" id="prevHint" style="display:none">⚠️ 起動はいつもまっさら。<b>押したときだけ</b>前の状態に戻る。<b>もう一度押すとさらに前</b>（8つまで控えてある）</div>
   <div class="hint"><b>JSON</b>＝いまの設定ぜんぶ（版・マス目・色・質感・ワープ）。もう一度この見え方を出すための一式＝プリセット代わり</div>
   <div class="hint">⚠️<b>SVGはドットのときだけ</b>。グラデ塊・連続はピクセルで作っているのでベクターにできない</div>
 
@@ -1748,6 +1750,11 @@ let last = 0;
 const touch = () => dirtyUntil = performance.now() + 1200;
 ['pointerdown','pointermove','pointerup','wheel','input','change','click','keydown']
   .forEach(ev => addEventListener(ev, touch, {passive:true, capture:true}));
+/* ⭐ 設定が変わりうる操作だけ、自動の控えを予約する。
+   ⚠️ 見ているだけ（動かす・寄る）では書かない＝起動して眺めただけで控えを1枠使わない。 */
+['input','change','click','keydown']
+  .forEach(ev => addEventListener(ev, () => { if(typeof bkSoon === 'function') bkSoon(); },
+                                  {passive:true, capture:true}));
 
 function loop(now){
   requestAnimationFrame(loop);
@@ -1851,13 +1858,20 @@ syncWrapMax();
       NIJIMI と違って「描いた場」のような重い実体が無いので、欠けるものが無い。
    ⚠️ ワープのアンカー（手で打った点）は P の外にあるので、別で入れて別で戻す。
    ══════════════════════════════════════════════════════════════ */
+/* ⭐⭐ 「TSUBU の状態」の定義は、この関数ただ1つ。
+   🔴 2026-08-10 の色が消えた不具合は、書き出しが状態の一部（CUSTOM）を知らなかったせい。
+      定義が2か所にあると必ずまた片方が置いていかれる。
+      ⚠️ 状態を足したら【ここだけ】直す。書き出しも自動の控えも、ここを通る。
+   ⚠️ 自作パレットの色は P の外（CUSTOM）にある。cols は bg/a/b から作られる getter なので3つでよい。
+   ⚠️ ワープのアンカーも P の外。 */
+function snapshot(){
+  pushToLayer();                       // ⭐ いま触っている値を、選んでいる版に必ず書き戻してから写す
+  return { tool:'tsubu', v:1, P: JSON.parse(JSON.stringify(P)),
+           custom: { bg: CUSTOM.bg, a: CUSTOM.a.slice(), b: CUSTOM.b.slice() },
+           anchors: JSON.parse(JSON.stringify(ANCHORS)) };
+}
 function exportJSON(){
-  // ⚠️ 自作パレットの色は P の外（CUSTOM）にある＝別で入れないと色だけ初期値へ戻る
-  //   （2026-08-10 木下の指摘「色を調整して保存しても開き直すと色が変わらない」）
-  //   cols は bg/a/b から作られる getter なので、この3つを入れれば足りる。
-  const data = { tool:'tsubu', v:1, P: JSON.parse(JSON.stringify(P)),
-                 custom: { bg: CUSTOM.bg, a: CUSTOM.a.slice(), b: CUSTOM.b.slice() },
-                 anchors: JSON.parse(JSON.stringify(ANCHORS)) };
+  const data = snapshot();
   const b = new Blob([JSON.stringify(data, null, 1)], { type:'application/json' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(b);
   a.download = 'tsubu_' + Date.now() + '.json'; a.click();
@@ -1904,6 +1918,64 @@ function syncAllUI(){
     const e = document.getElementById(id); if(e && P[id]) e.value = P[id];
   });
   syncMasuGrad(); syncPapGrad(); syncBlobUI(); syncColorInputs();
+}
+/* ══════════════════════════════════════════════════════════════
+   自動の控え ── 閉じても失わない                        2026-08-10
+   🔴 2026-08-07、赤いA〜Oの一枚を丸ごと失った。TSUBU には残る仕組みが無く、
+      書き出しを押し忘れた瞬間に全部消えていた。
+      ⭐「出す」は持ち運びであって、失わないための仕組みではない。
+   ⭐ ただし木下＝「まっさらからできないのはちょっとあれだよね」。
+      なので MASU の「勝手に続きから開く」は写さない。
+      ⭐⭐ 【自動で控えは取る／起動はいつもまっさら／押したときだけ戻す】
+   ⚠️ 控えは1本だと危ない。起動してつまみを触った瞬間に前の控えを上書きしてしまうと、
+      8/07 と同じ失い方をする。⭐ 起動ごとに1枠を使い、8世代ぶん残す。
+   ⚠️ 実測1.8KB・画像なし＝localStorage で足りる（IndexedDB は要らない）。
+   🔴 起動経路を2本にしない＝読み書きは全部 try/catch。壊れていたら黙ってまっさらで開く。
+   ══════════════════════════════════════════════════════════════ */
+const BK_KEY = 'tsubu_backup_v1', BK_MAX = 8;
+function bkRead(){
+  try{ const a = JSON.parse(localStorage.getItem(BK_KEY) || '[]'); return Array.isArray(a) ? a : []; }
+  catch(e){ return []; }
+}
+const BK_PREV = bkRead();          // ⭐ 起動時に読み切る＝これが「前の状態」。以後この配列は増やさない
+let bkPrevIdx = BK_PREV.length - 1;  // 押すたびに1つ古いほうへ
+let bkSlot = -1, bkTimer = 0, bkDirty = false;
+function bkWrite(){
+  bkTimer = 0;
+  if(!bkDirty) return;
+  try{
+    const list = bkRead();
+    const rec = { at: Date.now(), d: snapshot() };
+    if(bkSlot < 0 || bkSlot >= list.length){ list.push(rec); bkSlot = list.length - 1; }
+    else list[bkSlot] = rec;
+    while(list.length > BK_MAX){ list.shift(); bkSlot--; }   // 古いほうから捨てる
+    localStorage.setItem(BK_KEY, JSON.stringify(list));
+  }catch(e){ /* 容量オーバーや無効化。控えが取れないだけで、道具は動かす */ }
+}
+function bkSoon(){
+  bkDirty = true;
+  if(bkTimer) return;                       // ⚠️ つまみは連射される＝手が止まってから1回だけ書く
+  bkTimer = setTimeout(bkWrite, 1500);
+}
+// ⚠️ 閉じる・隠れるときは待たずに書く（ここを逃すと最後の操作が残らない）
+addEventListener('pagehide', bkWrite);
+addEventListener('visibilitychange', () => { if(document.visibilityState === 'hidden') bkWrite(); });
+{
+  const b = document.getElementById('openPrev'), h = document.getElementById('prevHint');
+  if(b && BK_PREV.length){
+    b.style.display = ''; if(h) h.style.display = '';
+    b.onclick = () => {
+      if(bkPrevIdx < 0) bkPrevIdx = BK_PREV.length - 1;      // 一周したら新しいほうへ戻る
+      const rec = BK_PREV[bkPrevIdx];
+      try{
+        applyJSON(rec.d);
+        const t = new Date(rec.at);
+        stat2('前のつづきを開いた — ' + t.toLocaleString('ja-JP')
+              + '（' + (BK_PREV.length - bkPrevIdx) + '/' + BK_PREV.length + '・もう一度押すとさらに前）');
+      }catch(err){ stat2('この控えは開けませんでした'); }
+      bkPrevIdx--;
+    };
+  }
 }
 document.getElementById('exJson').onclick = () => { pushToLayer(); exportJSON(); };
 document.getElementById('inJson').onclick = () => document.getElementById('fJson').click();
