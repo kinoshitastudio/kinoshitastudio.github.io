@@ -542,11 +542,13 @@
   <div class="hint"><b>0＝その場で崩れる</b>（既定）→ 上げると<b>その分だけ下へ落ちる先ができる</b>。⚠️崩さないあいだは見た目が変わらない</div>
   <div class="row"><label>重力</label><input type="range" id="grav" min="0" max="200" step="1" value="60"><span class="val"></span></div>
   <div class="row"><label>FPS</label><input type="range" id="fps" min="1" max="60" step="1" value="30"><span class="val"></span></div>
+  <div class="row"><label>溶け</label><input type="range" id="melt" min="0" max="100" step="1" value="8"><span class="val"></span></div>
+  <div class="hint"><b>0＝前の山の上に乗るだけ</b>（段になる）→ 上げると<b>その分だけ下の山に潜って境目がぼける</b>。⚠️上げすぎると全部混ざりきって層が消える。1段目（字）には効かない</div>
 
   <button class="big" id="fitb" style="background:none;color:var(--ink);border:1px solid var(--line);">全体を見る</button>
   <button class="big" id="go">崩す</button>
   <button class="big" id="reset" style="background:none;color:var(--ink);border:1px solid var(--line);">戻す</button>
-  <div class="note">崩す＝素材になる／戻す＝字に帰る<br>左ドラッグ＝動かす／右ドラッグ＝角度<br>ホイール＝寄る・引く<br>FPSを下げるほどゲームの時間になる</div>
+  <div class="note">崩す＝押すたびに1段ずつ　字 → ます → 地 → まぜる<br>戻す＝字に帰る<br>左ドラッグ＝動かす／右ドラッグ＝角度<br>ホイール＝寄る・引く<br>FPSを下げるほどゲームの時間になる</div>
 </div>
 
 <script>
@@ -566,7 +568,7 @@ const P = { mode:0, res:16, cell:7, pal:1, steps:4, dith:100, gdir:90, gflow:0, 
             tex:1, wav:0.1, bead:55, beadk:1, line:0, blob:5, ar:100, shine:60, valley:0, grad:0, shift:0, spread:0, dir:0, follow:100, grid:0, depth:0, fat:1,
             /* 版（重ねる）。P には【選んでいる版】の値を載せる＝既存のつまみは全部そのまま動く */
             layers:null, cur:0, txt:'HELLO', lx:0, ly:0, lscale:1, lrot:0,
-            lay:0, wrap:7, gapx:2, gapy:2, fall:0, masu:0, masufill:0,
+            lay:0, wrap:7, gapx:2, gapy:2, fall:0, melt:8, masu:0, masufill:0,
             /* マス目の塗り＝字とは別の色・向き・細かさ・版数を持つ。色数 1 ＝1色の陰影（いままで） */
             masuN:1, masuAng:90, masuWav:0.1, masuSteps:0,
             masuC1:'#3a3a3a', masuC2:'#c8d4de', masuC3:'#7f95ab',
@@ -937,6 +939,12 @@ function customKey(){ return CUSTOM.bg + CUSTOM.a.join() + CUSTOM.b.join(); }
 
 /* ── 粒 ── */
 let dots = [], W = 0, H = 0, grid = null, settled = 0;
+/* ⭐ 崩しの段（2026-08-10 木下＝「文字から崩れて、その後ます、その後背景」）
+     0＝まだ／1＝字が崩れた／2＝ますも崩れた／3＝地も崩れた
+   ⚠️ 押すたびに1段ずつ進む＝途中で止めれば「字だけ崩れた絵」を選べる。
+     2026-08-04 の「ますは盤を埋めるので誰も落ちられない」問題は、
+     段にすると【字が先に落ちて上が空く】ので自然に解ける。 */
+let breakStage = 0;
 function idx(x, y){ return y * W + x; }
 
 /* ══════════════════════════════════════════════════════════════
@@ -1069,6 +1077,9 @@ function layerPack(L){
 }
 
 function build(){
+  /* ⚠️ 組み直すと粒は家の位置に戻る＝崩しはそこで無かったことになる。
+     段だけ残ると「地の粒は消えたのに地も敷かれない＝真っ透明」になるので、必ず一緒に戻す。 */
+  breakStage = 0;
   pushToLayer();                                  // ⭐ いま触っている値を、選んでいる版に必ず書き戻す
   const layers = curLayer() && P.layers;
   const packs = layers.map(L => layerPack(L));
@@ -1241,8 +1252,19 @@ function step(){
     //    全員が素通しで落ちて最下段に重なるだけで「積もらない」
     grid.fill(-1);
     /* ⚠️ 枡（枠・塗り）は当たり判定に入れない＝字は枡を貫いて落ちる。
-       入れると盤が隙間なく埋まっていて【誰も落ちられない】＝崩したのに何も起きない。 */
-    for(let i = 0; i < dots.length; i++){ const d = dots[i]; if(d.box) continue; grid[idx(d.x, d.y)] = i; }
+       入れると盤が隙間なく埋まっていて【誰も落ちられない】＝崩したのに何も起きない。
+       ⭐ ただし自分の番（2段目）が来たら枡も物になる。そのときには字がもう
+          下へ落ちていて上が空いているので、埋まって動けないことにはならない。
+          地の粒も同じで、3段目から物になる。 */
+    for(let i = 0; i < dots.length; i++){
+      const d = dots[i];
+      if(d.pap ? breakStage < 3 : (d.box && breakStage < 2)) continue;
+      /* ⚠️ 量を間引いた枡・地の粒（hide）は【もう無いもの】＝当たり判定にも入れない。
+         入れると見えない壁になって、上の粒がそこで止まる。
+         ⚠️ 字の hide は「塊にのみ込まれた粒」で意味が違う＝従来どおり当たり判定に残す。 */
+      if(d.hide && d.box) continue;
+      grid[idx(d.x, d.y)] = i;
+    }
     // 下にいる粒から動かす（上から動かすと1フレームで落ちきる）
     const order = dots.map((_, i) => i).sort((a, b) => dots[b].y - dots[a].y);
     for(const i of order){
@@ -1261,6 +1283,21 @@ function step(){
         if(nx >= 0 && nx < W && grid[idx(nx, ny)] < 0){
           grid[idx(d.x, d.y)] = -1; d.x = nx; d.y = ny; grid[idx(nx, ny)] = i;
           moved = true; break;
+        }
+      }
+      /* ⭐ 溶け込み ── 逃げ場が無くても、下にいるのが【もう静止した粒】なら入れ替わって沈む。
+         🔴 これが無いと、後から崩した層は前の山の天面に乗るだけで
+            テトリスのように段になる（木下＝「その高さにあわせてる」2026-08-10）。
+         ⚠️ 無制限に沈めると新しい層が全部いちばん下へ行くだけ＝また段になる。
+            粒ごとに沈める回数（melt）を持たせ、使い切ったら止まる＝途中で混ざる。 */
+      if(!moved && d.melt > 0 && ny < d.meltY){       // ⚠️ 下の山の一番下より下へは行かせない
+        const bi = grid[idx(d.x, ny)];
+        const b = bi >= 0 ? dots[bi] : null;
+        if(b && !b.live){
+          d.melt--;
+          grid[idx(d.x, d.y)] = bi; grid[idx(d.x, ny)] = i;
+          b.x = d.x; b.y = d.y; d.y = ny;
+          moved = true;
         }
       }
       if(!moved) d.live = false;                               // 逃げ場なし → 静止
@@ -1406,7 +1443,9 @@ function draw(){
      ⭐ 地なし（noBgOnce）のときは何も敷かない＝透明のまま
        ＝貼 HARI などに【重ねて置くため】（地があると四角い板になる）。
      ⚠️ 敷かないので、前に描いたものが残らないよう先に消す。 */
-  if(noBgOnce){
+  /* ⭐ 3段目＝地そのものが粒になって落ちる。敷く地はもう無い＝透明
+       （木下の選択：地の裏は透明。貼HARI に重ねる素材として一貫する）。 */
+  if(noBgOnce || breakStage >= 3){
     g.clearRect(0, 0, cv.width, cv.height);
   } else {
     /* ⚠️ CSSサイズ（clientWidth）で敷いてはいけない。書き出し（shoot）は cv.width だけを
@@ -1424,6 +1463,21 @@ function draw(){
   const cx = W*P.cell/2, cy = H*P.cell/2;
   g.setTransform(dpr*cam.s, 0, 0, dpr*cam.s, dpr*cam.x, dpr*cam.y);
   g.transform(sx, shy, shx, sy, cx*(1-sx)-cy*shx, cy*(1-sy)-cx*shy);
+
+  /* ── 地の粒 ── 3段目で剥がれて落ちる地。
+     ⭐ 一番後ろ＝ますより先に敷く（ここが全部の質感に共通の入口なので、
+        ドット／グラデ塊／連続のどれでも同じように出る）。
+     ⭐ 色は焼いた地から拾って粒に持たせてある＝剥がれても地の柄が残る。
+     ⚠️ ワープは掛けない。地は背景なので、伸縮より【剥がれて落ちる】が読める方を取る。 */
+  if(breakStage >= 3){
+    const Cp = P.cell, kwp = cellWk() - 1, khp = cellHk() - 1;
+    const CWp = Cp * cellWk(), CHp = Cp * cellHk();
+    for(const d of dots){
+      if(!d.pap) continue;
+      g.fillStyle = d.col;
+      g.fillRect((d.x - d.gx0*kwp) * Cp, (d.y - d.gy0*khp) * Cp, CWp + 0.5, CHp + 0.5);
+    }
+  }
 
   // ── グラデ塊 ── 焼いたタイルを敷き詰める。8bit機がVRAMでやっていたこと。
   //   位相を「画の流れ方向のワールド座標 + 時間」で選ぶ＝塊が連結して流れる。
@@ -1535,7 +1589,7 @@ function draw(){
         g.fillStyle = layer[li];
         // ⚠️ のみ込まれた粒(hide)は天面を描かないので、側面だけ描くと
         //   天面のない板が字から離れて伸びる。ここでも同じ条件で外す。
-        for(const d of dots){ if(d.hide) continue; g.fillRect(px(d) + ox*k, py(d) + oy*k, CW, CH); }
+        for(const d of dots){ if(d.hide || d.pap) continue; g.fillRect(px(d) + ox*k, py(d) + oy*k, CW, CH); }   // ⚠️ 地の粒に厚みは付けない
       }
     }
 
@@ -1561,12 +1615,14 @@ function draw(){
       if(offc.width !== OW || offc.height !== OH){ offc.width = OW; offc.height = OH; }
       const im = offg.createImageData(OW, OH), DD = im.data;
       const BGc = (typeof pal.bg === 'string') ? hexToRgb(pal.bg.slice(1)) : (pal.bg || [0,0,0]);
-      for(let k = 0; k < DD.length; k += 4){
+      /* ⚠️ 連続モードの地は「この一面塗り」そのもの。3段目で地が粒になったら
+         ここを塗ってはいけない＝塗ると下に敷いた地の粒を覆い隠して透明にならない。 */
+      if(breakStage < 3) for(let k = 0; k < DD.length; k += 4){
         DD[k] = BGc[0]; DD[k+1] = BGc[1]; DD[k+2] = BGc[2]; DD[k+3] = 255;
       }
       // ⚠️ ずれ・照り・細かさは版ごと＝粒が自分の値（d.sh / d.shn / d.wv）を持っている
       for(const d of dots){
-        if(d.hide) continue;
+        if(d.hide || d.pap) continue;        // ⚠️ 地の粒は手前の入口で敷き済み
         const x0 = Math.round(px(d)), y0 = Math.round(py(d));
         const w = Math.max(1, Math.round(CW * scw(d))), h = Math.max(1, Math.round(CH * sch(d)));
         const ang = d.t === SPHERE ? d.ang : d.ang;              // 向きは字形から
@@ -1637,7 +1693,7 @@ function draw(){
        崩すと字が動いて枡と同じマスに重なるので、順番が逆だと
        落ちた字が枡の下敷きになって消えたように見える（2026-08-04）。
        ⚠️ 崩す前は1マス1粒なので重ならず、順番を変えても見た目は同じ。 */
-    for(const d of dots) if(d.box && !d.big && !d.hide) put(d);
+    for(const d of dots) if(d.box && !d.pap && !d.big && !d.hide) put(d);
     for(const d of dots) if(!d.box && !d.big && !d.hide) put(d);   // 地の柄を先に
     // ⭐ 塊は「自分がまとめた粒の範囲」だけで切り抜いて描く。
     //   ⚠️ 字全体で切るだけでは足りない。K倍に広げた塊は代表粒を中心に置くので、
@@ -1665,6 +1721,7 @@ function draw(){
   const steps = P.steps, dith = P.dith / 100;
 
   for(const d of dots){
+    if(d.pap) continue;                      // ⚠️ 地の粒は手前の入口で敷き済み
     /* 場のグラデーション（＝全部の粒を貫くテープ）
        ⚠️ 世界の原点ぶんを足し戻す＝版を動かしても、動かしていない版の色が飛ばない
           （柄の位相と同じ手当て）。⚠️ 盤の広さが変わればテープの密度は変わる＝これは仕様
@@ -2197,6 +2254,44 @@ cv.addEventListener('touchend', () => pinch = 0);
    ⭐ 枡は【額縁として残し、字だけが枡を貫いて崩れる】ようにした。
       枠や塗りごと崩れると、何が起きたのか分からない絵になる。
       ⭐ 字が下に溜まって、枡が器のように見える＝マス目と「積もる」が噛み合う。 */
+/* ⭐ 地を粒にする。焼いた地の絵から色を拾って粒に持たせる＝剥がれても地の柄が残る。
+   ⚠️ 盤ぜんぶぶん増えるので、押されたときに1回だけ作る（最初から持たない）。 */
+function makePapDots(cap){
+  const pal = P.pal === CUSTOM_IDX ? CUSTOM : PALS[P.pal];
+  const flat = typeof pal.bg === 'string' ? pal.bg : toHex(pal.bg);
+  // 焼いた地（色数2以上）があれば、そこから拾う。単色なら地の色そのまま。
+  const pc = (Math.round(P.papN) >= 2 && _pap.cv) ? _pap.cv : null;
+  let pick = () => flat;
+  if(pc){
+    const src = pc.getContext('2d').getImageData(0, 0, pc.width, pc.height).data;
+    pick = (x, y) => {
+      const sx = Math.min(pc.width  - 1, Math.floor(x / Math.max(1, W) * pc.width));
+      const sy = Math.min(pc.height - 1, Math.floor(y / Math.max(1, H) * pc.height));
+      const o = (sy * pc.width + sx) * 4;
+      return 'rgb(' + src[o] + ',' + src[o+1] + ',' + src[o+2] + ')';
+    };
+  }
+  /* ⚠️ すでに粒がいるマスには地を作らない。
+     地は一番後ろなので、字やますが乗っているマスの地はそもそも見えていない。
+     作ると同じマスに2つ重なって、落ち始めが押し合いになる（粒数も無駄に倍近くなる）。 */
+  const taken = new Set();
+  for(const d of dots) taken.add(d.y * W + d.x);
+  /* ⭐ 量は【前の段と同じくらい】に間引く。地は盤ぜんぶぶんあるので、
+     そのまま作ると字や枡が桁違いに埋もれる（2026-08-10 木下の指摘）。 */
+  let free = 0;
+  for(let y = 0; y < H; y++) for(let x = 0; x < W; x++) if(!taken.has(y * W + x)) free++;
+  const keepP = (cap > 0 && free > cap) ? cap / free : 1;
+  const out = [];
+  for(let y = 0; y < H; y++) for(let x = 0; x < W; x++){
+    if(taken.has(y * W + x)) continue;
+    if(keepP < 1 && Math.random() > keepP) continue;
+    out.push({ x, y, hx:x, hy:y, gx0:x, gy0:y, vy:0, live:false, seed:Math.random(),
+      ci:0, t:0, ang:0, dens:1, li:0, bk:1, sh:0, sp:0, wv:1, men:false, shn:0,
+      box:true, pap:true, col: pick(x, y),
+      big:false, hide:false, members:null });
+  }
+  return out;
+}
 document.getElementById('go').onclick = () => {
   /* ⚠️ 落ち代が0だと落ちる余地が無く、崩しても何も起きない＝「触れるのに効かない」。
      ⭐ 崩すときに余地が無ければ、その場で作ってから崩す（つまみも動かして見えるようにする）。 */
@@ -2206,11 +2301,95 @@ document.getElementById('go').onclick = () => {
     if(f){ f.value = 8; const v = f.parentElement.querySelector('.val'); if(v) v.textContent = 8; }
     build();
   }
-  for(const d of dots) if(!d.box) d.live = true;
+  /* ⭐ 押すたびに1段ずつ深く崩す。字 → ます → 地。
+     ⚠️ 戻すまでは段は戻らない＝同じボタンで「もう一段」を意味する。 */
+  if(breakStage >= 4){ stat2('もう崩すものがありません — 戻すで字に帰る'); return; }
+  breakStage++;
+  /* ⭐ 2段目からは【溶け込み】を持たせる。1段目の字は空の盤に落ちるので要らない。
+     🔴 盤の高さの6割も潜らせたら、層が消えて全部混ざりきった（木下＝「下にまでいっちゃってる」
+        2026-08-10）。境目をぼかすのが狙いなので、既定は盤の高さの数%だけ。
+     ⭐ どこまで潜るかは絵の好みそのものなので、つまみ（溶け）で回せるようにした。 */
+  const MELT = Math.round(P.melt / 100 * H);
+  /* ⭐ 各段の【量】は1段目（字）なりに揃える。字の粒数を基準にする。
+     ⚠️ 揃えないと、枡も地も盤を埋める側なので字より遥かに多く、
+        前の段が下敷きになって見えなくなる＝段にした意味が消える。 */
+  let LOAD = 0;
+  for(const d of dots) if(!d.box && !d.hide) LOAD++;
+  /* 🔴 粒ごとに潜る深さを散らすと、白い粒が緑の中に単独で残って【塩コショウ】になる
+        ＝混ざってはいるが汚れに見える（木下＝「きたないな」2026-08-10）。
+     ⭐ 深さは【列ごとに揃える】。同じ列の粒はまとめて同じだけ沈むので、
+        かたまりのまま入れ替わる＝深く入る列と入らない列ができて、両者が舌状にかみ合う。
+     ⭐ 舌の本数と位置は毎回変える（同じ絵にならないように）。 */
+  const meltCol = new Int32Array(Math.max(1, W));
+  if(MELT > 0){
+    const ph1 = Math.random() * 6.2831853, ph2 = Math.random() * 6.2831853;
+    const k1 = 2 + Math.floor(Math.random() * 3);          // 舌の本数
+    for(let x = 0; x < meltCol.length; x++){
+      const u = x / meltCol.length;
+      const a = 0.5 + 0.5 * Math.sin(u * 6.2831853 * k1 + ph1);
+      const b = 0.5 + 0.5 * Math.sin(u * 6.2831853 * k1 * 2.7 + ph2);
+      meltCol[x] = Math.round(MELT * Math.max(0, Math.min(1, a * 0.7 + b * 0.3)));
+    }
+  }
+  const meltOf = d => meltCol[Math.max(0, Math.min(meltCol.length - 1, d.x))] | 0;
+  /* ⭐ 潜っていい下限＝その列に【もう積もっている山の一番下】。
+     ⚠️ 山を突き抜けて下へ回り込むと、後から崩した層が一番下に来る＝また段になる
+        （木下＝「したのやまより下にいくのはなし」2026-08-10）。
+     山が薄い列では溶けつまみを上げても浅くしか入らない＝それが正しい。 */
+  const botCol = new Int32Array(Math.max(1, W));       // 0＝その列に山が無い＝潜れない
+  for(const d of dots){
+    if(d.live || d.hide) continue;                     // 静止している＝すでに山になっている粒
+    const x = Math.max(0, Math.min(botCol.length - 1, d.x));
+    if(d.y > botCol[x]) botCol[x] = d.y;               // その列で一番下にいる粒の段
+  }
+  const botOf = d => botCol[Math.max(0, Math.min(botCol.length - 1, d.x))] | 0;
+  if(breakStage === 1){
+    for(const d of dots) if(!d.box){ d.live = true; d.melt = 0; }
+    stat2('字を崩した — もう一度押すと「ます」が崩れる');
+  } else if(breakStage === 2){
+    /* 🔴 枡は盤を埋めるので、崩すと字より遥かに多い山が乗る＝1段目が埋もれる
+          （木下＝「テキストや項目が多いから」2026-08-10）。
+       ⭐ 量を1段目（字）と同じくらいに間引く。残りは【無かったこと】にする（hide）。 */
+    const keep = [];
+    for(const d of dots) if(d.box && !d.pap) keep.push(d);
+    const p2 = keep.length ? Math.min(1, LOAD / keep.length) : 1;
+    for(const d of keep){
+      if(Math.random() > p2){ d.hide = true; continue; }
+      d.live = true; d.melt = meltOf(d); d.meltY = botOf(d);
+    }
+    stat2('ますを崩した — もう一度押すと「地」が崩れる');
+  } else if(breakStage === 3){
+    // 地は押された時に初めて作る。作ってすぐ生かす。量は1段目なり。
+    const pd = makePapDots(LOAD);
+    /* ⚠️ dots.push(...pd) は使わない。地の粒は盤ぜんぶぶんあり、解像を上げると
+       引数の上限を超えて落ちる（Maximum call stack）。1つずつ入れる。 */
+    for(const d of pd){ d.live = true; d.melt = meltOf(d); d.meltY = botOf(d); dots.push(d); }
+    stat2('地を崩した — もう一度押すと全部まざる（' + pd.length + ' 粒）');
+  } else {
+    /* ⭐ 4段目＝まぜる。落ちただけだと【字の上にます、その上に地】と層に分かれ、
+       枠は柱のまま立って残る（砂は支えられていると動かないため）。
+       ⚠️ 落とし直しでは層は混ざらない＝重い順に積み直るだけ。
+       ⭐ 山の形はそのままに「どの粒がどこにいるか」だけを入れ替える＝素材だけが混ざる。 */
+    const ix = [];
+    for(let i = 0; i < dots.length; i++) if(!dots[i].hide) ix.push(i);
+    const pos = ix.map(i => ({ x: dots[i].x, y: dots[i].y }));
+    for(let i = pos.length - 1; i > 0; i--){        // フィッシャー–イェーツ
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = pos[i]; pos[i] = pos[j]; pos[j] = tmp;
+    }
+    // ⭐ 席替えのあと、溶け込みも持たせて落とし直す＝境目がさらにほぐれる
+    ix.forEach((di, k) => { dots[di].x = pos[k].x; dots[di].y = pos[k].y;
+                            dots[di].live = true;
+                            dots[di].melt = meltOf(dots[di]); dots[di].meltY = botOf(dots[di]); });
+    stat2('全部まぜた — 戻すで字に帰る');
+  }
   running = true; t = 0;
   fit();   // ⭐ 落ちた先が画面の外だと「消えた」ように見える＝崩す時は全体を映す
 };
-document.getElementById('reset').onclick = () => { running = false; build(); fit(); };
+document.getElementById('reset').onclick = () => {
+  running = false; breakStage = 0;   // ⚠️ 段も戻す（build が粒を作り直すので地の粒は消える）
+  build(); fit();
+};
 
 // ループは即開始する（fonts.ready 待ちに人質を取らせない）。
 // フォントが後から乗ったら字を焼き直す。
