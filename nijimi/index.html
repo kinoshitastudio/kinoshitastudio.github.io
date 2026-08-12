@@ -474,6 +474,14 @@ const IRO = [
   { n:'輪郭', bg:'#000000', grad:0, ink:'#2525f1', g:['#1d1d8b','#9696e5'] },
   { n:'赤輪', bg:'#bfbcd0', grad:0, ink:'#c92c1f', g:['#c92c1f','#f0eef5'] },
   { n:'青地', bg:'#2424f4', grad:0, ink:'#10101b', g:['#10101b','#8080cc'] },
+  /* ⭐ ここから下は 2026-08-12 に足した組。
+     ⚠️ 上の8つは【木下が作った実物から採ったもの】、下は性質が違う：
+        「紅水」は木下の画面（kinoshita.studio/nijimi/ 2026-08-12）から【目で採った近似】、
+        残りの3つは新しく組んだもの。だから違うと思ったら遠慮なく差し替えてください。 */
+  { n:'紅水', bg:'#0f1c33', grad:1, ink:'#f03b30', g:['#0f1c33','#f03b30','#5ee7e7','#f03b30'] },
+  { n:'黄墨', bg:'#000000', grad:1, ink:'#f5e6a3', g:['#241a00','#c9a227','#f5e6a3','#ffffff'] },
+  { n:'橙藍', bg:'#06121f', grad:1, ink:'#ffd9a0', g:['#0a2540','#1f6feb','#ff7a18','#ffd9a0'] },
+  { n:'桃灰', bg:'#e8e6e3', grad:1, ink:'#2b2b2b', g:['#2b2b2b','#b06070','#e8b4bc','#f7f2f0'] },
 ];
 const P = {
   mode:'diff', preset:0, facet:0, cells:7,
@@ -1422,15 +1430,33 @@ document.getElementById('b-rec').onclick = e => {
       JSON に入れると桁が変わって持ち運べなくなる＝場はボード（IndexedDB）が持つ。
       なので【読み込んでも描いた字は消えない】。見え方だけが乗り換わる。
    ══════════════════════════════════════════════════════════════ */
-function exportJSON(){
-  const data = { tool:'nijimi', v:1, mode, seed, sources:JSON.parse(JSON.stringify(sources)),
+/* ⭐⭐ JSON に【描いた場】も入れる（2026-08-12 木下＝「これを JSON で再現できる？」）
+   🔴 これまでは設定（色・グラデ・滲み）だけで、手で描いた線は入っていなかった。
+      ＝同じ設定は戻るが、字は描き直しになる＝作品そのものは戻せなかった。
+   ⭐ 盤（IndexedDB）が使っている畳み方をそのまま借りる（fieldToBlob → PNG）。
+      生のままだと 1盤 1.6MB なので PNG に畳む。
+   ⚠️ wave（数式でつくる模様）は場を持たない＝種と波源だけで完全に戻るので入れない。
+   ⚠️ 8bit に丸まる（盤と同じ）＝描いたものは戻るが、浮動小数の場が寸分違わず
+      戻るわけではない。戻した直後からまた育っていく。
+   ⚠️ 古い JSON（場が無いもの）もそのまま読める。 */
+function blobToDataURL(b){
+  return new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); });
+}
+async function exportJSON(){
+  const data = { tool:'nijimi', v:2, mode, seed, sources:JSON.parse(JSON.stringify(sources)),
                  P:JSON.parse(JSON.stringify(P)) };
+  if(mode !== 'wave'){
+    try{
+      const px = snapshotField();
+      if(px) data.field = await blobToDataURL(await fieldToBlob(px));
+    }catch(err){ console.warn('場を JSON に入れられなかった', err); }
+  }
   const b = new Blob([JSON.stringify(data,null,1)], {type:'application/json'});
   const a = document.createElement('a'); a.href=URL.createObjectURL(b);
   a.download = 'nijimi_'+P.mode+'_'+Date.now()+'.json'; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
-function applyJSON(data){
+async function applyJSON(data){
   if(!data || data.tool!=='nijimi') throw new Error('NIJIMI の JSON ではありません');
   const from = mode;
   // ⭐ モードが変わる時は、出る前にいまの場を畳んでおく（モード切替と同じ作法）
@@ -1443,13 +1469,21 @@ function applyJSON(data){
       else if(mode==='blank') clearField();
       else seedField(); }
   } else if(mode==='wave'){ uploadMask(); } else { bake(); }
+  /* ⭐ 描いた場を戻す。⚠️【上の初期化がぜんぶ終わってから】＝先に戻すと
+     seedField / clearField に上書きされて消える。 */
+  if(data.field && mode !== 'wave'){
+    try{
+      const blob = await (await fetch(data.field)).blob();
+      restoreField(await blobToField(blob));
+    }catch(err){ console.warn('場を戻せなかった', err); }
+  }
   computeGradCoords(); refreshStat(); saveSoon();
 }
 document.getElementById('b-json').onclick=()=>{ exportJSON(); };
 document.getElementById('b-jsonin').onclick=()=>{ document.getElementById('f-json').click(); };
 document.getElementById('f-json').onchange=async (e)=>{
   const f=e.target.files&&e.target.files[0]; if(!f) return;
-  try{ applyJSON(JSON.parse(await f.text())); }
+  try{ await applyJSON(JSON.parse(await f.text())); }
   catch(err){ console.warn('JSON読込',err); alert('読み込めませんでした：'+err.message); }
   e.target.value='';   // ⚠️ 同じファイルをもう一度選べるように空にしておく
 };
