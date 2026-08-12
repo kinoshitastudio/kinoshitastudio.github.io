@@ -5138,7 +5138,27 @@ function abSync(){
   document.querySelectorAll('#abFillMode button').forEach(b => b.classList.toggle('on', b.dataset.v === _md));
   renderAbList(); drawGrid();
 }
-function abName(){ return String(S.abs.length + 1).padStart(2, '0'); }
+/* 🔴⭐ 枚数から作ると【名前がぶつかる】（2026-08-12）。
+   枠を消してから足すと、消した番号がまた出てくる＝木下のデータに「17」が2つあった。
+   名前は書き出しのファイル名になるので、同じ名前だと後から出した方が
+   前のファイルを【上書き】する＝書き出したのに1枚しか残らない。
+   ⭐ 使われていない番号のうち、いちばん小さいものを付ける。 */
+function abName(){
+  const used = new Set(S.abs.map(a => String(a.name)));
+  let i = S.abs.length + 1;
+  while(used.has(String(i).padStart(2, '0'))) i++;
+  return String(i).padStart(2, '0');
+}
+/* ⭐ すでに同じ名前が入っているデータ（前に保存したもの）でも、書き出しは上書きしない。
+   ⚠️ 名前そのものは書き換えない（木下のデータを勝手に変えない）＝ファイル名だけ分ける。 */
+function abFileNames(list){
+  const seen = new Map();
+  return list.map(a => {
+    const base = 'sakuji_' + a.name;
+    const k = (seen.get(base) || 0) + 1; seen.set(base, k);
+    return k === 1 ? base : base + '_' + k;
+  });
+}
 /* 🔴⭐ 枠を足す・複製するときの【置き場所】。式はここ1本だけ（木下 2026-08-12）。
    ⚠️ 元は3箇所とも「右どなり（x + w + 120）」を決め打ちしていたので、
       そこに【すでに枠があっても構わず重ねて】いた ＝木下＝「ここでコピペすると、
@@ -5381,9 +5401,11 @@ async function exportRaster(mime, ext, quality){
   const list = what === 'all' ? S.abs : [abCur()];
   withCleanView(async done => {
     const bad = [];
+    const names = abFileNames(list);       // ⭐ 同じ名前の枠があっても上書きしない
     try{
-      for(const a of list){
-        const r = await shootRect(abRectOf(a), a.bgOn ? a.bg : null, mime, ext, quality, 'sakuji_' + a.name,
+      for(let li = 0; li < list.length; li++){
+        const a = list[li];
+        const r = await shootRect(abRectOf(a), a.bgOn ? a.bg : null, mime, ext, quality, names[li],
                                   a.bgOn ? a : null);   /* ⭐ 枠ごと渡す＝グラデの地も書き出しに入る */
         /* ⚠️ 1枚落ちても残りは続ける（枠ぜんぶで途中の1枚のために全部止めない） */
         if(r && r.err) bad.push(a.name + '＝' + r.err);
@@ -5479,7 +5501,9 @@ document.getElementById('bSVG').onclick = async () => {
       /* 🔴 forEach で一気に dl() を叩いていた＝ブラウザは短時間に続く保存を弾くので、
          「枠ぜんぶ」を選んでも【最初の1枚しか落ちてこない】。
          ⭐ 1枚ずつ間を空けて落とす（ラスタ側は toBlob を await していて元から間が空いていた）。 */
-      for(const a of list){
+      const names = abFileNames(list);     // ⭐ 同じ名前の枠があっても上書きしない
+      for(let li = 0; li < list.length; li++){
+        const a = list[li];
         if(list.length > 1) await new Promise(r => setTimeout(r, 250));
         const R = abRectOf(a);
         // ⭐ 枠に入っているものだけを集めて書き出す
@@ -5506,7 +5530,7 @@ document.getElementById('bSVG').onclick = async () => {
         // ⭐ viewBox は枠そのもの＝配置しても位置がずれない
         const svg = wrapSVG(g.exportSVG({ asString:true, bounds:'content', matchShapes:true }), R);
         g.remove();
-        dl(new Blob([svg], {type:'image/svg+xml'}), 'sakuji_' + a.name + '.svg');
+        dl(new Blob([svg], {type:'image/svg+xml'}), names[li] + '.svg');
       }
     }
     done(); restore();
