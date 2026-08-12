@@ -77,6 +77,8 @@
   .btn{background:none;border:1px solid rgba(255,255,255,.22);color:#fff;opacity:.75;cursor:pointer;
     font:inherit;font-size:8px;letter-spacing:.1em;padding:6px 10px;transition:background .12s,color .12s;}
   .btn:hover{background:#fff;color:#000;opacity:1;}
+  /* ⚠️ 録画中は押し直すまで止まらない＝気づけるように赤く光らせる */
+  .btn.on{background:#e0483a;color:#fff;border-color:#e0483a;opacity:1;}
   input[type=color]{-webkit-appearance:none;appearance:none;width:20px;height:20px;padding:0;border:1px solid rgba(255,255,255,.25);background:none;cursor:pointer;border-radius:2px;}
   input[type=color]::-webkit-color-swatch-wrapper{padding:2px;}
   input[type=color]::-webkit-color-swatch{border:none;border-radius:1px;}
@@ -345,7 +347,9 @@
   <div class="grp mode-diff rd" id="g-preset"><div class="seg" id="seg-preset">
     <button data-p="0" class="on">珊瑚</button><button data-p="1">迷路</button><button data-p="2">指紋</button><button data-p="3">斑</button><button data-p="4">孔</button>
   </div></div>
-  <div class="grp mode-diff rd"><label>FACET</label><div class="seg" id="seg-facet"><button data-v="0" class="on">OFF</button><button data-v="1">ON</button></div></div>
+  <!-- ⭐ FACET は英語のままだと何のことか読めない（木下＝「FACETとの違いもわかりにくいな」）。
+       中身は【面ごとに模様の種類を散らす】＝すぐ下の「面数」と対になる。data-seg は互換のため facet のまま。 -->
+  <div class="grp mode-diff rd"><label>面で割る</label><div class="seg" id="seg-facet"><button data-v="0" class="on">切</button><button data-v="1">入</button></div></div>
   <!-- ⭐ 手を止めても反応拡散を回し続けるか。入＝ぬるっと育ち続ける／切＝描いた形で止まる -->
   <div class="grp mode-diff"><label>育つ</label><div class="seg" id="seg-grow"><button data-v="0" class="on">切</button><button data-v="1">入</button></div></div>
   <!-- ⭐ 1フレームに何ステップ進めるか。v0.2 は 12 だった（1だと遅すぎて動いて見えない） -->
@@ -398,6 +402,8 @@
   <button class="btn" id="b-clear">リセット</button>
   <button class="btn" id="b-reroll">替</button>
   <button class="btn" id="b-export">PNG</button>
+  <!-- ⭐ REC ── 育つのループを動画で出す。他の道具（KUMI / HORI / TSUBU）と同じ作法 -->
+  <button class="btn" id="b-rec">REC</button>
   <button class="btn" id="b-json">JSON書出</button>
   <button class="btn" id="b-jsonin">JSON読込</button>
   <input type="file" id="f-json" accept="application/json,.json" hidden>
@@ -1011,7 +1017,11 @@ function loop(){ if(!running) return; requestAnimationFrame(loop);
 /* ⭐ 盤は「窓の大きさ」でなく【パネルを除いた残りの領域】いっぱいに取る（2026-07-31）。
    ⚠️ innerWidth/innerHeight を見ると、右のパネルのぶんだけ盤が小さくなる。#wrap の実寸を見ること。 */
 const wrapEl = document.getElementById('wrap');
+/* 🔴 rec の宣言はここ（resize より前）に置く。let は巻き上げされても TDZ なので、
+   宣言より前で参照すると ReferenceError で止まる＝起動しなくなる。 */
+let rec = null;
 function resize(){
+  if(rec) return;              // ⚠️ 録画中に版の大きさを変えると captureStream が壊れる
   const box = wrapEl.getBoundingClientRect();
   const s = Math.floor(Math.min(box.width, box.height) * 0.98);
   const dpr = Math.min(devicePixelRatio, 2);
@@ -1364,6 +1374,29 @@ document.getElementById('b-seed').onclick=()=>{ if(mode==='wave') genSources(); 
 document.getElementById('b-clear').onclick=()=>{ if(mode==='wave'){ sources=[]; } else { clearField(); computeGradCoords(); } fieldChanged(); };
 document.getElementById('b-reroll').onclick=()=>{ if(mode==='wave') genSources(); else { seed=Math.random()*1000; bake(); } fieldChanged(); };
 document.getElementById('b-export').onclick=()=>{ exportPNG(); };
+/* ⭐⭐ REC ── 画面をそのまま動画に録る（2026-08-12）。
+   ⭐ 育つ＝ゆっくり消えて現れるループを作ったので、それを作品として出せるようにする。
+      他の道具（KUMI / HORI / TSUBU）と同じ作法＝canvas.captureStream + MediaRecorder。
+   ⚠️ PNG は 2048px に焼き直すが、REC は【画面のドットをそのまま録る】＝録りたい大きさに
+      窓を広げてから押す（焼き直しながらの録画はできない）。
+   ⚠️ 録っている間は押し直すまで止まらないので、ボタンの文字を STOP に変える
+      （録りっぱなしに気づけないと巨大なファイルになる）。 */
+document.getElementById('b-rec').onclick = e => {
+  const btn = e.currentTarget;
+  if(rec){ rec.stop(); rec = null; btn.classList.remove('on'); btn.textContent = 'REC'; return; }
+  if(typeof MediaRecorder === 'undefined'){ alert('このブラウザは録画に対応していません'); return; }
+  const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+  rec = new MediaRecorder(cvs.captureStream(60), { mimeType:mime, videoBitsPerSecond:12e6 });
+  const chunks = [];
+  rec.ondataavailable = ev => ev.data.size && chunks.push(ev.data);
+  rec.onstop = () => {
+    const a = document.createElement('a');
+    a.download = `nijimi_${P.mode}_${Date.now()}.webm`;
+    a.href = URL.createObjectURL(new Blob(chunks, {type:'video/webm'}));
+    a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+  };
+  rec.start(); btn.classList.add('on'); btn.textContent = 'STOP';
+};
 
 /* ══════════════════════════════════════════════════════════════
    JSON＝【設定の持ち運び】                              2026-08-04
