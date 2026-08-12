@@ -89,6 +89,9 @@
 
   .seg{display:flex;background:var(--fill2);border-radius:9px;padding:2px;gap:2px;margin:6px 0 8px;
     min-width:0;max-width:100%;}
+  /* ⭐ 型は数が増えるので折り返す（種類を足しても崩れない） */
+  .seg.wrap{flex-wrap:wrap;}
+  .seg.wrap button{flex:1 1 27%;}
   .seg button{flex:1 1 auto;white-space:nowrap;border:none;border-radius:7px;background:none;cursor:pointer;
     font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;
     font-size:11px;color:var(--ink);opacity:.5;padding:7px 0;transition:.16s;}
@@ -307,6 +310,17 @@
     <div class="unit-body">
       <div class="mod">⭐⭐ 地に<b>同じ版</b>を流す段。中央の粒と同じ材料なので<b>馴染む</b><br>
         （HORI で作った波紋をそのまま持ってきた）</div>
+      <!-- ⭐ 地の型 ── つまみを全部合わせた「地の見え」を1押しで呼ぶ。
+           ⚠️ 触るのは【地のつまみだけ】。字・立体・塗りには一切さわらない。
+           ⚠️ 中心（CTR X／Y）も動かさない＝置き場所は木下が決めたもの。 -->
+      <div class="seg wrap" id="gpre">
+        <button data-g="0">紙</button><button data-g="1">薄明</button><button data-g="2">さざなみ</button>
+        <button data-g="3">渦</button><button data-g="4">簾</button><button data-g="5">熱</button>
+        <button data-g="6">ビット</button>
+      </div>
+      <div class="mod">⭐ <b>地の型</b>＝下のつまみを<b>まとめて合わせる</b>。ここから振って自分の地を探す<br>
+        ⚠️ <b>今の地は上書きされる</b>。戻すのは KEEP の<b>「ひとつ戻す」</b><br>
+        ⚠️ 型は<b>押した瞬間だけ</b>。あとからつまみを触れば、そこからは自分の地（型に光は点かない）</div>
       <!-- 🔴 木下＝「これらを非アクティブにできてたらいい」「まだどうやれば
            非表示にしてグラデの背景にできるか分からない」。
            ⭐ 波紋そのものの入／切をいちばん上に置く。消すと波紋のつまみは畳まれ、
@@ -318,9 +332,15 @@
       <div class="seg" data-seg="gmat">
         <button data-v="0">縞</button><button data-v="1" class="on">粒</button>
       </div>
-      <div class="seg" data-seg="gshape">
+      <div class="seg wrap" data-seg="gshape">
         <button data-v="0" class="on">同心円</button><button data-v="1">渦</button><button data-v="2">直線</button>
+        <button data-v="3">斜め</button><button data-v="4">四角</button><button data-v="5">菱</button>
+        <button data-v="6">花</button><button data-v="7">格子</button>
       </div>
+      <div class="mod">⭐ <b>形</b>＝波紋の<b>距離の測り方</b>を替えるだけ。別の模様は作らないので、
+        <b>細かさ・流れ・起こす・中心はどの形でもそのまま効く</b><br>
+        ⭐ <b>花</b>のときだけ <b>ねじれ＝花びらの数</b>（2〜14枚・整数に丸める）<br>
+        ⚠️ <b>格子</b>は縦横2本の重ねなので、<b>ねじれは効かない</b></div>
       <div class="row"><label>FREQ<i>細かさ</i></label><input type="range" data-p="gfreq" min="2" max="120" step="1" value="24"><span class="val"></span></div>
       <div class="row"><label>CELL<i>粒の大きさ</i></label><input type="range" data-p="gcell" min="4" max="120" step="1" value="34"><span class="val"></span></div>
       <div class="row"><label>SPEED<i>流れ</i></label><input type="range" data-p="gspeed" min="-60" max="60" step="1" value="16"><span class="val"></span></div>
@@ -616,8 +636,27 @@ bgScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2), new THREE.ShaderMateria
          1周ぶんの位相を整数に丸めると、巻き終わりと巻き始めが必ず合う */
       float sw = floor(uSwirl * uFreq + 0.5) / max(uFreq, 0.001);
       float co = uShape < 0.5 ? r : (uShape < 1.5 ? r + ang * sw : q.y + 0.5);
+      /* ⭐ 形を足す ── 波紋の【距離の測り方】を替えるだけ。別の模様を作らない
+         ＝細かさ・流れ・起こす・中心は、どの形でもそのまま効く。
+         🔴 上の3つ（同心円・渦・直線）の式には触らない＝今の見えは1画素も動かさない。 */
+      if(uShape > 2.5){
+        if(uShape < 3.5)      co = (q.x + q.y) * 0.7071 + 0.5;        /* 斜め＝45度の直線 */
+        else if(uShape < 4.5) co = max(abs(q.x), abs(q.y));           /* 四角＝四角い波紋 */
+        else if(uShape < 5.5) co = abs(q.x) + abs(q.y);               /* 菱＝ひし形の波紋 */
+        else if(uShape < 6.5){                                        /* 花＝円をねじれの数だけ波打たせる */
+          /* ⚠️ 花びらは整数でないと巻き終わりが合わない（±πで継ぎ目が出る） */
+          float pet = floor(2.0 + uSwirl * 4.0);
+          co = r + 0.10 * sin(ang * 6.2831853 * pet);
+        }
+      }
       float ph = co * uFreq - uT * uSpeed * 0.1;
       float g  = 0.5 + 0.5 * sin(ph * 6.2831853);
+      /* 格子＝縦と横の2本を重ねる（1本の距離では作れない形なので、ここだけ g を作り直す） */
+      if(uShape > 6.5){
+        float phx = ((q.x + 0.5) * uFreq - uT * uSpeed * 0.1) * 6.2831853;
+        float phy = ((q.y + 0.5) * uFreq - uT * uSpeed * 0.1) * 6.2831853;
+        g = max(0.5 + 0.5 * sin(phx), 0.5 + 0.5 * sin(phy));
+      }
       /* ⭐ 材料＝縞 か 粒 か。別模様を作らない＝同じ波の【出し方】を替えるだけ */
       float amt = g;
       if(uMat > 0.5){
@@ -628,6 +667,8 @@ bgScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2), new THREE.ShaderMateria
         amt = smoothstep(rad, rad - 0.14, d);
       }
       float sh = 1.0 + cos(ph * 6.2831853) * uDepth;
+      /* 格子は ph が2本あるので、起こすは重ねた明るさから作る（山で+・谷で−） */
+      if(uShape > 6.5) sh = 1.0 + (2.0 * g - 1.0) * uDepth;
       vec3  rc = hsv2rgb(vec3(fract(uHue), uSat, uVal));
       /* ⚠️ 粒の隙間を暗い同色にすると粒に見えず縞に戻る。粒は【地の上に乗る】 */
       vec3 col = (uMat > 0.5) ? mix(paper, clamp(rc*sh,0.0,1.0), amt)
@@ -1276,6 +1317,50 @@ document.querySelectorAll('.seg[data-seg]').forEach(seg => {
     rebuildSoon();
     save();
   }));
+});
+
+/* ══ 地の型（プリセット）══════════════════════════════════════
+   ⭐ つまみを全部合わせた「地の見え」を1押しで呼ぶ（簾 SUDARE の「型」と同じ考え）。
+   ⚠️ 触るのは【地のつまみだけ】。字・立体・塗り（01〜03）には一切さわらない。
+   ⚠️ 中心（gcx / gcy）は型に入れない＝置き場所は木下が決めたもの。型で動かさない。
+   🔴 どの型も【同じ19個を全部書く】（GBASE で埋めてから上書き）。
+      一部だけ書くと、前に押した型の値が残って【押すたびに違う絵】になる。
+   ⚠️ 押すと今の地は上書きされる。戻りは KEEP の「ひとつ戻す」（save が控えに積む）。
+   ⭐ 種類を足すときは GPRE に1行足して、上の #gpre にボタンを1つ足すだけ。 */
+const GBASE = { gwave:1, gmat:1, gshape:0, gfreq:24, gcell:34, gspeed:16, gswirl:30, gdepth:38,
+                ghue:212, gsat:80, gval:88, gbg:'#f4f2ee', gpn:1,
+                gbg2:'#c8d4de', gbg3:'#7f95ab', gbg4:'#1d2733', gpmode:0, gpang:90, gpsteps:0 };
+const GPRE = [
+  /* 紙 ── 波紋なしの単色。字だけを見たいとき */
+  { name:'紙',   set:{ gwave:0, gpn:1, gbg:'#f4f2ee' } },
+  /* 薄明 ── 波紋なしのグラデだけ。中心から＝字の後ろが明るい */
+  { name:'薄明', set:{ gwave:0, gpn:3, gbg:'#0b1220', gbg2:'#3b5170', gbg3:'#e8d9bb',
+                       gpmode:1, gpang:90 } },
+  /* さざなみ ── 粒・同心円の既定。いちばん馴染む */
+  { name:'さざなみ', set:{} },
+  /* 渦 ── まわりながら外へ。細かく・深く */
+  { name:'渦',   set:{ gshape:1, gfreq:44, gcell:20, gspeed:36, gswirl:85, gdepth:62,
+                       ghue:196, gsat:88, gval:82, gbg:'#08131c' } },
+  /* 簾 ── 縞の直線。流れを止めてモノクロに＝字が主役 */
+  { name:'簾',   set:{ gmat:0, gshape:2, gfreq:66, gspeed:0, gswirl:0, gdepth:24,
+                       ghue:0, gsat:0, gval:72, gbg:'#f2f0ec' } },
+  /* 熱 ── 粗い粒・逆流れ・熱い色。地も2色で焼ける */
+  { name:'熱',   set:{ gfreq:10, gcell:64, gspeed:-24, gswirl:40, gdepth:74,
+                       ghue:26, gsat:96, gval:96, gpn:2, gbg:'#2a0d05', gbg2:'#c4470f',
+                       gpmode:1 } },
+  /* ビット ── 細かい粒＋地の版数を落として網をかける＝8bit の地 */
+  { name:'ビット', set:{ gfreq:80, gcell:12, gspeed:8, gswirl:20, gdepth:40,
+                        ghue:150, gsat:70, gval:90, gpn:3, gbg:'#101418', gbg2:'#2f6f5e',
+                        gbg3:'#dfe7e2', gpmode:0, gpang:120, gpsteps:6 } },
+];
+document.querySelectorAll('#gpre button').forEach(b => {
+  b.addEventListener('click', () => {
+    const q = GPRE[+b.dataset.g]; if(!q) return;
+    Object.assign(P, GBASE, q.set);
+    const bgEl = document.getElementById('gBg'); if(bgEl) bgEl.value = P.gbg;
+    syncUI();                 /* つまみの見た目と数字を実体に合わせる（嘘をつかない） */
+    rebuildSoon(); save();
+  });
 });
 document.querySelectorAll('.unit-head').forEach(h => h.addEventListener('click', () => {
   const u = h.parentElement;
