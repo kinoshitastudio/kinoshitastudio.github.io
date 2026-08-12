@@ -412,6 +412,16 @@
       </div>
       <textarea id="keepBox" rows="4" placeholder="ここに控えが出ます／貼り付けて「読み込む」"></textarea>
       <button class="btn" id="bLoadState">この控えを読み込む</button>
+      <!-- ⭐ ファイルで持ち出す ── テキストの手貼りだけだと、ブラウザのデータを消した時に消える。
+           ⚠️ 上の「出す／読み込む」はそのまま残す（今までのやり方を取り上げない）。 -->
+      <div class="grid2">
+        <button class="btn" id="bSaveFile">控えをファイルに</button>
+        <button class="btn" id="bLoadFile">ファイルから読む</button>
+      </div>
+      <input type="file" id="keepFile" accept="application/json,.json" hidden>
+      <div class="mod">⭐ <b>ファイルに</b>＝<code>tsubute_日付.json</code> が落ちる。Obsidian やフォルダに置いておけば
+        <b>ブラウザを消しても戻せる</b><br>
+        ⭐ <b>画面にドラッグ&ドロップ</b>しても読み込めます</div>
       <div class="mod" id="keepNote"></div>
     </div>
   </div>
@@ -1419,6 +1429,45 @@ document.getElementById('bLoadState').onclick = () => {
     pushHistory(); applyState(d); note('読み込んだ（ひとつ戻す で元に戻せる）');
   }catch(e){ note('読めなかった'); }
 };
+/* ══ ファイルで持ち出す・戻す ══════════════════════════════
+   🔴 localStorage だけだと、ブラウザのデータを消した時に一緒に消える
+      （粒 TSUBU で実際に設定を失った）。手元にファイルとして残せるようにする。
+   ⚠️ 読み込みは必ず【ひとつ戻す】で戻れるように、先に控えへ積む。 */
+function keepFromText(txt, how){
+  try{
+    const d = JSON.parse(txt);
+    if(!d || d.v !== VER){ note('この控えは版が違う'); return false; }
+    pushHistory(); applyState(d);
+    document.getElementById('keepBox').value = txt;   /* 何を読んだか見えるようにする */
+    note(how + '（ひとつ戻す で元に戻せる）'); return true;
+  }catch(e){ note('読めなかった'); return false; }
+}
+document.getElementById('bSaveFile').onclick = () => {
+  const b = new Blob([stateJSON()], { type:'application/json' });
+  const u = URL.createObjectURL(b), a = document.createElement('a');
+  a.href = u; a.download = `tsubute_${Date.now()}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 8000);
+  note('控えをファイルに落とした');
+};
+document.getElementById('bLoadFile').onclick = () => document.getElementById('keepFile').click();
+document.getElementById('keepFile').addEventListener('change', e => {
+  const f = e.target.files[0]; if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => keepFromText(rd.result, 'ファイルから読んだ');
+  rd.readAsText(f);
+  e.target.value = '';                 /* ⚠️ 同じファイルを続けて読めるように空にする */
+});
+/* ⭐ 画面にドラッグ&ドロップでも読む。⚠️ dragover を止めないとブラウザがファイルを開いてしまう */
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => {
+  const f = [...(e.dataTransfer?.files || [])].find(x => /\.json$/i.test(x.name));
+  if(!f) return;
+  e.preventDefault();
+  const rd = new FileReader();
+  rd.onload = () => keepFromText(rd.result, '落として読んだ');
+  rd.readAsText(f);
+});
 
 /* ⭐ 使い方＝モーダル。⭐ 「?」の長押しでなく、まずモーダルを出す（木下の指示）
    ⚠️ 行ごとの細かい説明は既定で隠し、モーダルの中から出せるようにする */
@@ -1526,7 +1575,11 @@ document.getElementById('bPNG').onclick = () => savePNG(false);
 /* ⚠️ この道具には状態を出す関数（stat）が無い。呼ぶとエラーになるので出さない
    （知らせは note の常時表示で足りている）。 */
 document.getElementById('bPNGA') && (document.getElementById('bPNGA').onclick = () => savePNG(true));
-document.getElementById('bPNG2').onclick = savePNG;
+/* 🔴 ここは `= savePNG` と書いていた＝【クリックのイベントが noBg に入る】。
+   イベントは truthy なので、押すと必ず「地なし」で出ていた
+   （2026-08-12 木下「この大きさで PNG を出す をすると背景が書き出されていない」）。
+   ⚠️ 関数をそのままハンドラに渡さない。引数を持つ関数は必ず包む。 */
+document.getElementById('bPNG2').onclick = () => savePNG(false);
 
 /* ══ 起動 ══ ⚠️ 字が焼ける前に組むと、字が出ないまま固まる（フォント待ち） */
 resize();
