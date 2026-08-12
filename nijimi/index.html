@@ -397,6 +397,14 @@
     <button data-v="0">形だけ</button><button data-v="1" class="on">形も色も</button><button data-v="2">色だけ</button></div></div>
   <div class="grp" id="grp-celljit"><label>ばらつき</label><input id="s-celljit" type="range" min="0" max="100" value="0"><span class="val" id="v-celljit"></span></div>
   <div class="grp" id="grp-cellasp"><label>マスの形</label><input id="s-cellasp" type="range" min="-100" max="100" value="0"><span class="val" id="v-cellasp"></span></div>
+  <!-- ⭐⭐ アニメーション（2026-08-12 木下＝「グラデーションの縦を流れるようなアニメーション。
+       これはさっきの Sakuji の流れ・FPS のアニメーションと同じだね。別セクションでボタンをおすと流れていく」）
+       ⚠️ 動くのは【帯を引く位置】だけ＝字の形も滲みも1つも変わらない。書き出しにも入らない。 -->
+  <div class="sep"></div>
+  <div class="grp"><label>流れ</label><input id="s-flow" type="range" min="0" max="300" value="60"><span class="val" id="v-flow"></span></div>
+  <div class="grp"><label>FPS</label><input id="s-ffps" type="range" min="4" max="60" value="30"><span class="val" id="v-ffps"></span></div>
+  <button class="btn" id="b-flow">流す</button>
+
   <div class="sep"></div>
   <button class="btn mode-seed" id="b-seed">まく</button>
   <button class="btn" id="b-clear">リセット</button>
@@ -588,7 +596,7 @@ void main(){
 // 表示: ノイズ摂動しきい値 → 塵 → 色味の2値マッピング
 const F_DISP = `#version 300 es
 precision highp float; in vec2 vUv; out vec4 o;
-uniform sampler2D uSim,uGradTex,uMask,uGradLUT,uBgLUT; uniform float uThr,uNoise,uDust,uGrainRes,uInvert,uBleed,uOutline,uGrad,uGAng,uGFollow,uMaskOn,uBgGrad;
+uniform sampler2D uSim,uGradTex,uMask,uGradLUT,uBgLUT; uniform float uThr,uNoise,uDust,uGrainRes,uInvert,uBleed,uOutline,uGrad,uGAng,uGFollow,uMaskOn,uBgGrad,uFlow;
 uniform vec2 uTexel; uniform vec3 uLo,uHi;
 /* ⭐⭐ 育つのフェード（2026-08-12）── 1=そのまま／0=完全に消える。
    🔴 反応拡散を進めるだけでは【消えない】。連続スクショで確かめたら、指紋のようなプリセットは
@@ -668,6 +676,10 @@ void main(){
     }
     // ⭐ ばらつき＝マスごとに色を引く位置を散らす（マス目に落とすが切なら 0＝何も起きない）
     gg=clamp(gg+jit,0.0,1.0);
+    /* ⭐ 流す（2026-08-12 木下＝「グラデーションの縦を流れるようなアニメーション」）。
+       帯を引く位置を uFlow ぶんずらすだけ＝形も滲みも1つも動かない。
+       ⚠️ 端で色が飛ばないよう、流している間は帯を【環】に焼く（JS 側 updateGradLUT）。 */
+    gg=fract(gg+uFlow);
     /* ⭐ 色は2色固定をやめ、256×1 の帯（uGradLUT）を1回引くだけにした（2026-08-04）。
        色を何色に増やしてもシェーダは書き換え不要＝JS側で帯を焼き直すだけ。
        ⚠️ テクセルの真ん中を引く＝両端の色がちゃんと端まで出る。 */
@@ -680,7 +692,7 @@ void main(){
   if(uBgGrad>0.5){
     vec2 gd=vec2(cos(uGAng),sin(uGAng));
     float bt=dot(gUV-0.5,gd)/max(abs(gd.x)+abs(gd.y),1e-4)+0.5;   // 盤の端から端で 0→1
-    lo=texture(uBgLUT, vec2((clamp(bt+jit,0.0,1.0)*255.0+0.5)/256.0, 0.5)).rgb;
+    lo=texture(uBgLUT, vec2((fract(clamp(bt+jit,0.0,1.0)+uFlow)*255.0+0.5)/256.0, 0.5)).rgb;
   }
   vec3 col=mix(lo,inkc,t);
   col*=1.0-(hash(gp*0.83+3.0)-0.5)*0.05;   // 紙のかすかな粒
@@ -734,8 +746,11 @@ function bakeLUT(tex, stops, ring){
   gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,256,1,gl.RGBA,gl.UNSIGNED_BYTE,lutPx);
 }
 // ⭐ 渦（2）・まわり（3）のときだけ色を環にする
-function updateGradLUT(){ bakeLUT(gradLUT, P.gStops, P.gShape>1.5 && P.gShape<3.5); }
-function updateBgLUT(){   bakeLUT(bgLUT,   P.bgStops); }
+/* ⚠️ 流している間は【必ず環にする】。環にしないと、色列の先頭と末尾が違うぶんだけ
+   一周ごとに色が飛ぶ（SAKUJI で同じ所を踏んだ：木下＝「2秒間に1回角つきます」）。
+   ⚠️ window を見るのは、この関数が起動のごく早い時期にも呼ばれるため（const は TDZ）。 */
+function updateGradLUT(){ bakeLUT(gradLUT, P.gStops, !!window.__njFlow || (P.gShape>1.5 && P.gShape<3.5)); }
+function updateBgLUT(){   bakeLUT(bgLUT,   P.bgStops, !!window.__njFlow); }
 updateGradLUT(); updateBgLUT();
 // ペンを離した時に描画を連結成分でラベル付けし、各成分内で向き方向に A→B を正規化した座標を gradTex に焼く
 function computeGradCoords(){ if(!extCBF) return; try{
@@ -933,6 +948,7 @@ function display(fb,res,src){ gl.useProgram(pDisp); gl.bindFramebuffer(gl.FRAMEB
   u1(pDisp,'uGrainRes',300+P.grain*1700); u1(pDisp,'uInvert',P.invert);
   u1(pDisp,'uBleed',P.bleed); u2(pDisp,'uTexel',1/SIM,1/SIM); u1(pDisp,'uOutline',P.outline);
   u1(pDisp,'uGrad',P.grad); u1(pDisp,'uGAng',P.gAng); u1(pDisp,'uGFollow',P.gfollow);
+  u1(pDisp,'uFlow', window.__njPh || 0);      // ⭐ 帯を流す位相（止まっていれば 0＝今までどおり）
   u1(pDisp,'uFade',growFade);               // ⭐ 育つのフェード（1=そのまま）
   /* ⭐ マス目に落とす（膜 MAKU の粒）。⚠️ JS 側に足すだけでなく GLSL の uniform 宣言も要る */
   u1(pDisp,'uCell',P.cell); u1(pDisp,'uCellInk',P.cellInk);
@@ -1625,6 +1641,59 @@ if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); gen
   apply(cur);
   document.getElementById('themeBtn')?.addEventListener('click', () => {
     cur = (cur==='light') ? 'dark' : 'light'; apply(cur);
+  });
+})();
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ アニメーション ── 帯を流す（2026-08-12）
+   木下＝「グラデーションの縦を流れるようなアニメーション。これはさっきの
+          Sakuji の流れ・FPS のアニメーションと同じだね。別セクションでボタンをおすと流れていく」
+
+   ⭐ 動かすのは【帯（色列）を引く位置】だけ。字の形も滲みも1つも変わらない。
+      シェーダ側は gg / bt に uFlow を足して fract するだけ＝式を増やしていない。
+   ⚠️ 流している間は帯を【環】に焼く（先頭を末尾へ足す）。
+      環にしないと、色列の先頭と末尾が違うぶんだけ一周ごとに色が飛ぶ
+      ＝SAKUJI で木下に「2秒間に1回角つきます」と言われた所と同じ型。
+   ⚠️ 位相は保存しない＝開き直せば必ず元の見え方。書き出し（PNG / JSON）にも入らない。
+   ══════════════════════════════════════════════════════════════ */
+(function(){
+  const btn = document.getElementById('b-flow');
+  const sF  = document.getElementById('s-flow'), vF = document.getElementById('v-flow');
+  const sP  = document.getElementById('s-ffps'), vP = document.getElementById('v-ffps');
+  if(!btn || !sF || !sP) return;
+  const NJF = { on:false, ph:0, last:0, raf:0, timer:0 };
+  const sync = () => { if(vF) vF.textContent = sF.value; if(vP) vP.textContent = sP.value; };
+  sF.addEventListener('input', sync); sP.addEventListener('input', sync); sync();
+
+  const paint = () => { try{ display(null, cvs.width); }catch(e){} };
+  function stop(){
+    NJF.on = false; window.__njFlow = false; window.__njPh = 0;
+    clearTimeout(NJF.timer); cancelAnimationFrame(NJF.raf);
+    NJF.ph = 0;
+    updateGradLUT(); updateBgLUT();          // ⭐ 環をやめて元の帯に戻す
+    paint();
+    btn.textContent = '流す';
+  }
+  function tick(){
+    if(!NJF.on) return;
+    const flow = +sF.value, fps = Math.max(4, +sP.value);
+    /* ⭐ 進み方は【経過時間】で決める（コマが落ちても流れの速さは変わらない）。
+       SAKUJI で同じ形にしてある。 */
+    const now = performance.now();
+    const dt = Math.min(0.25, (now - (NJF.last || now)) / 1000);
+    NJF.last = now;
+    NJF.ph = (NJF.ph + flow / 100 * 0.6 * dt) % 1;
+    window.__njPh = NJF.ph;
+    paint();
+    NJF.timer = setTimeout(() => { NJF.raf = requestAnimationFrame(tick); }, 1000 / fps);
+  }
+  btn.addEventListener('click', () => {
+    if(NJF.on){ stop(); return; }
+    NJF.on = true; NJF.ph = 0; NJF.last = 0;
+    window.__njFlow = true; window.__njPh = 0;
+    updateGradLUT(); updateBgLUT();          // ⭐ 環に焼き直す＝一周しても色が飛ばない
+    btn.textContent = '止める';
+    tick();
   });
 })();
 </script>
