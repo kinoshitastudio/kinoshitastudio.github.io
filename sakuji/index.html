@@ -7530,15 +7530,29 @@ function anPrep(c){
     for(let ch = 0; ch < 3; ch++)
       lut[k*3+ch] = cols[i*3+ch] + (cols[j*3+ch] - cols[i*3+ch]) * t;
   }
-  return (c.__anKeep = { offs, cols, lut, stops: st });
+  /* ⭐ 粒ごとに速さをほんの少しだけ変える（±12%）。
+     ⚠️ 全部が同じ速さだと、折り返しが【一斉に】起きて画面全体が波打って見える。
+     ⚠️ 位置から決めるので毎回同じ（乱数にすると開くたびに変わる）。
+        phase に掛けるだけ＝止まっているとき（phase 0）の見え方は元のまま。 */
+  const bx = c.bounds.x, by = c.bounds.y;
+  const spd = 1 + ((Math.abs(Math.round(bx * 7 + by * 13)) % 11) - 5) / 5 * 0.12;
+  return (c.__anKeep = { offs, cols, lut, stops: st, spd });
 }
 function anRollOne(c, phase){
   const K = c.__anKeep || anPrep(c);
   if(!K) return false;
-  const { offs, lut, stops } = K;
+  const { offs, lut, stops, spd } = K;
+  const ph = phase * (spd || 1);
   for(let i = 0; i < stops.length; i++){
-    let u = offs[i] + phase; u -= Math.floor(u);      // 0〜1 に巻き戻す
-    const o = ((u * AN_LUT) | 0) * 3;
+    /* 🔴⭐ 端で色が飛ぶのを止める（木下＝「違和感あるループをする／かくつく」）。
+       ⚠️ 帯は【粒の中で完結】しているので、先頭と末尾の色が違う。
+          実測＝先頭と末尾の色差は平均 0.1〜0.48（最大 0.83）。
+          0〜1 で巻き戻していたので、一周するたびにその差だけ【飛んで】いた。
+       ⭐ 折り返す（0→1→0）＝色は必ず連続。TSUBU の帯は cos なので折り返しても自然。 */
+    let u = offs[i] + ph;
+    u = u - Math.floor(u / 2) * 2;                    // 0〜2 に畳む
+    if(u > 1) u = 2 - u;                              // 折り返す
+    const o = (Math.min(AN_LUT - 1, (u * AN_LUT) | 0)) * 3;
     const col = stops[i].color;
     col.red = lut[o]; col.green = lut[o+1]; col.blue = lut[o+2];
   }
