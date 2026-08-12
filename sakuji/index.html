@@ -41,6 +41,14 @@
   /* 出口。HUDは pointer-events:none なので、リンクだけ拾えるようにする */
   #hud a{ color:var(--dim); text-decoration:none; pointer-events:auto; border-bottom:1px solid #2a2a2a }
   #hud a:hover{ color:var(--ink) }
+  /* 🔴 HUD は【板の上】に乗っている。道具の明暗（ui-light）に合わせると、
+     板だけ明るく道具は暗い設定のときに【白い板に白い字】になって消える
+     （2026-08-12 木下＝「左上のテキストが消えてないかな？」）。
+     ⭐ ここだけは板の地（S.bg）に合わせる＝setBG が board-light を付け外しする。 */
+  body.board-light #hud{ color:#6f6a63 }
+  body.board-light #hud b{ color:#141414 }
+  body.board-light #hud a{ color:#6f6a63; border-bottom-color:rgba(10,10,10,.28) }
+  body.board-light #hud a:hover{ color:#141414 }
 
   /* ── ツールバー ── */
   #tools{ position:fixed; left:18px; top:50%; transform:translateY(-50%); z-index:6;
@@ -227,6 +235,13 @@
   .lay-item.on{ background:var(--layon); color:var(--ink) }
   .lay-item .sw{ width:14px; height:14px; border-radius:3px; border:1px solid var(--layedge); flex:none }
   .lay-item .nm{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  /* ⭐ どの枠に入っているか。枠が増えると名前だけでは追えないので【色で分ける】
+     （木下＝「増えてくると単色でボード外、ないがわかりにくくなる」2026-08-12）。
+     ⚠️ 枠の外は色を持たせない＝枠の中だけが色付き＝外れているものが浮いて見える。 */
+  .lay-item .abbadge{ flex:0 0 auto; margin:0 6px; padding:1px 5px; border-radius:3px;
+    font-size:9px; letter-spacing:.06em; font-family:ui-monospace,Menlo,monospace;
+    color:#fff; background:#5b6070 }
+  .lay-item .abbadge.out{ background:none; color:var(--dim); border:1px solid var(--line) }
   .lay-item .ic{ opacity:.5; font-size:10px; padding:0 1px }
   .lay-item .ic:hover{ opacity:1 }
   .lay-head{ cursor:move; user-select:none }
@@ -1548,6 +1563,10 @@ const stat = t => document.getElementById('stat').textContent = t;
 
 /* ── レイヤー構成：下=グリッド、上=作画 ── */
 const ACC = '#4a9eff';                // 編集ガイドの青（イラレ／Figma の流儀）
+/* ⭐ 盤面で選ばれている枠（-1＝選択なし）。保存しない＝開いたときは必ず選択なし。
+   ⚠️ ここで宣言する理由＝起動の途中で drawArtboard が走るので、
+      let を下に置くと「初期化前に読んだ」で落ちる。 */
+let abPick = -1;
 paper.settings.handleSize = 7;
 const gridLayer = new paper.Layer();
 gridLayer.locked = true;              // グリッドが選択のヒット判定を奪わないようにする
@@ -2493,10 +2512,13 @@ window.addEventListener('keydown', e => {
     setTool('select'); guides(); reportSel(); return;
   }
   if(cmd && e.key.toLowerCase() === 'd'){          // ⌘D＝複製
-    e.preventDefault(); document.getElementById('bDup').click(); return;
+    e.preventDefault();
+    if(abPasteBoard(abCopyBoard(true))) return;    // ⭐ 枠を選んでいるなら、枠ごと複製
+    document.getElementById('bDup').click(); return;
   }
   if(cmd && e.key.toLowerCase() === 'c'){          // ⌘C＝コピー
     e.preventDefault();
+    if(abCopyBoard()) return;                     // ⭐ 枠を選んでいるなら、枠と中身をコピー
     const sel = selected();
     if(sel.length){ clip = sel.map(it => it.clone({ insert:false })); stat(`${sel.length}個をコピー`); }
     return;
@@ -2509,6 +2531,7 @@ window.addEventListener('keydown', e => {
   }
   if(cmd && e.key.toLowerCase() === 'v'){          // ⌘V＝ペースト（少しずらして重ねる・連続可）
     e.preventDefault();
+    if(abClip && abPasteBoard(abClip)) return;    // ⭐ 枠をコピーしていたなら、枠ごと貼る
     if(!clip.length) return;
     snapshot();
     artLayer.activate();
@@ -2553,6 +2576,7 @@ window.addEventListener('keydown', e => {
   }
   if(e.key === 'Backspace' || e.key === 'Delete'){
     e.preventDefault();
+    if(abDeleteBoard()) return;                    // ⭐ 枠を選んでいるなら、枠を中身ごと消す
     snapshot();                                    // 消す前に保存（後だと戻せない）
     if(S.tool === 'direct'){                       // アンカーだけ消す
       artLayer.children.forEach(it=>{
@@ -2574,6 +2598,7 @@ window.addEventListener('keydown', e => {
     const v = { ArrowLeft:[-d,0], ArrowRight:[d,0], ArrowUp:[0,-d], ArrowDown:[0,d] }[e.key];
     if(!v) return;
     const mv = new Point(v[0], v[1]);
+    if(abNudgeBoard(mv)) return;                   // ⭐ 枠を選んでいるなら、枠を中身ごと動かす
     const sel = selected(); if(!sel.length) return;
     snapshot();
     if(S.tool === 'direct'){
@@ -2940,6 +2965,8 @@ function setBG(v){
   const light = v === 'light';
   document.documentElement.style.setProperty('--bg', light ? '#f4f4f4' : '#0a0a0a');
   document.body.style.background = light ? '#f4f4f4' : '#0a0a0a';
+  // ⭐ 板の上に乗っているもの（HUD）は、道具の明暗ではなく板の地に合わせる
+  document.body.classList.toggle('board-light', light);
   document.querySelectorAll('#bgsw button').forEach(x => x.classList.toggle('on', x.dataset.v === v));
   if(flip){
     // ⭐ 反転するのは「単色」だけ。
@@ -3991,6 +4018,10 @@ function renderLayers(){
       `<span class="ic" data-a="vis" title="表示/非表示">${it.visible ? '👁' : '🚫'}</span>` +
       `<span class="sw" style="background:${swatchOf(it)}"></span>` +
       `<span class="nm">${itemName(it)}</span>` +
+      /* ⭐ どの枠に入っているかを出す（木下＝「レイヤー上でもボードないなどは表現できた方が」）。
+         ⚠️ 行の並び順は【重なり順】そのものなので、枠でまとめ直すと上下の入れ替えが嘘になる。
+            だから並べ替えず、バッジだけ添える。枠の外なら「—」。 */
+      abBadgeOf(it) +
       `<span class="ic" data-a="lock" title="ロック">${it.locked ? '🔒' : '🔓'}</span>`;
     row.addEventListener('click', e => {
       const a = e.target.dataset.a;
@@ -4967,15 +4998,28 @@ function drawArtboard(){
     artLayer.activate();
     return;
   }
+  /* ⭐ 選んでいる枠は【ラベルを塗りつぶしのチップ】にする。
+     🔴 以前は枠線もラベルも ACC の青にしていただけで、図形の選択ハンドルと同じ青
+        ＝どれを選んでいるのか紛れていた（木下＝「まだわかりにくい」2026-08-12）。
+     ⭐ 面で塗ると、線しか使わない図形の選択と見た目が被らない。
+     ⚠️ 選んでいないときは【どの枠も強調しない】＝選択なしがそのまま絵に出る。 */
+  const dimC = (S.bg === 'light') ? 'rgba(10,10,10,.28)' : 'rgba(255,255,255,.24)';
   S.abs.forEach((a, i) => {
-    const R = abRectOf(a), cur = (i === S.abSel);
+    const R = abRectOf(a), pick = (i === abPick);
     if(a.bgOn){ const bg = new Path.Rectangle(R); bg.fillColor = abPaintOf(a, bg); bg.sendToBack(); }
     const f = new Path.Rectangle(R);
-    f.strokeColor = cur ? ACC : ((S.bg === 'light') ? 'rgba(10,10,10,.28)' : 'rgba(255,255,255,.24)');
-    f.strokeWidth = (cur ? 1.8 : 1)/Z; f.fillColor = null;
-    const t = new paper.PointText(new Point(R.x, R.y - 9/Z));
+    f.strokeColor = pick ? ACC : dimC;
+    f.strokeWidth = (pick ? 3 : 1)/Z; f.fillColor = null;
+    const t = new paper.PointText(new Point(R.x + 8/Z, R.y - 9/Z));
     t.content = a.name + '   ' + a.w + ' × ' + a.h;
-    t.fillColor = f.strokeColor; t.fontSize = 11/Z; t.fontFamily = 'ui-monospace, monospace';
+    t.fontSize = 11/Z; t.fontFamily = 'ui-monospace, monospace';
+    t.fillColor = '#ffffff';
+    /* ⭐ ラベルは常にチップ。選んでいるときは青（選択の色）、ふだんは【その枠の色】。
+       ⚠️ レイヤーのバッジと同じ色にしてある＝盤面とレイヤーを見比べて対応が取れる。 */
+    const chip = new Path.Rectangle(t.bounds.expand(14/Z, 8/Z), 3/Z);
+    chip.fillColor = pick ? ACC : abColorOf(i);
+    chip.opacity = pick ? 1 : 0.75;
+    chip.insertBelow(t);
   });
   artLayer.activate();
 }
@@ -5214,21 +5258,47 @@ document.getElementById('bSVG').onclick = async () => {
   //   ⭐ 画面のものは触らない（作業中の文字は文字のまま残す）。
   const hasText = [];
   artLayer.children.forEach(it => collectTexts(it, hasText));
+  /* 🔴🔴 ここで【元の図形を隠して】いたのが、SVGが真っ黒になる正体（2026-08-11 木下の指摘）。
+     ⚠️ 隠したのに、下の書き出しは artLayer.children をそのまま集めていた＝隠れた元まで
+        掴んで複製し、paper.js が visibility="hidden" ごと書き出していた。
+        Finder のサムネイルはこの指定を無視して描くので絵が見え、
+        仕様どおり読む Figma だけが黒い地の四角になっていた（＝Figma が正しい）。
+     🔴 さらに restore() が visible=true を全部に配っていた＝
+        レイヤーパネルで自分で隠したものまで、SVGを書き出すたびに勝手に表示へ戻っていた。
+     ⭐ 直し＝【元は一切触らない】。複製を作ったら、書き出す対象をその複製に差し替えるだけ。
+        画面の表示状態に手を出さないので、戻し忘れも起きない。 */
   let tmp = null;
+  let srcItems = artLayer.children.slice();   // ⚠️ clone は同じ親に挿さるので、先に控えを取る
   if(hasText.length){
-    tmp = artLayer.children.map(c => c.clone());
+    tmp = srcItems.map(c => c.clone());
     await outlineTextsIn(tmp);
-    artLayer.children.forEach(c => { if(!tmp.includes(c)) c.visible = false; });
+    srcItems = tmp;                           // ⭐ 書き出すのは複製のほうだけ
   }
   const restore = () => {
-    if(tmp){ tmp.forEach(c => c.remove()); artLayer.children.forEach(c => c.visible = true); }
+    if(tmp) tmp.forEach(c => { try{ c.remove(); }catch(e){} });
   };
-  withCleanView(done => {
+  /* 🔴 「以前消したはずの図形が書き出しに入り込む」（2026-08-11 木下の指摘）の正体。
+     粒プレビューは【元を隠して】複製を上に置く（it.visible=false / __pvHidden）。
+     そのあとプレビュー側を消すと、画面には何も出ないが【隠れた元だけがレイヤーに生き残る】。
+     ＝木下は消したつもり、データは健在。書き出しが表示状態を見ていなかったので、それが出ていた。
+     ⭐ 画面に出ていないものは、書き出しにも入れない。入れ子の中まで見る。
+     ⚠️ 触るのは【複製】だけ＝画面のものは1つも消さない。 */
+  const stripHidden = o => {
+    if(!o) return;
+    if(o.children) o.children.slice().forEach(stripHidden);
+    if(o.visible === false || o.__pvHidden || o.__isPv){ try{ o.remove(); }catch(e){} }
+  };
+  withCleanView(async done => {
     if(what === 'sel'){
       // ⚠️ ここで selected() を呼んではいけない（上の説明のとおり必ず空になる）
-      const items = selItems.filter(i => i && i.parent);
-      if(!items.length){ stat('図形を選んでください'); done(); return; }
+      const items = selItems.filter(i => i && i.parent && i.visible);   // ⚠️ 隠れているものは出さない
+      if(!items.length){ stat('図形を選んでください'); done(); restore(); return; }   // ⚠️ ここでも複製を片づける
       const g = new Group(items.map(i => i.clone()));
+      g.children.slice().forEach(stripHidden);
+      /* ⭐ 選択ぶんは【この複製の中で】文字をアウトライン化する。
+         ⚠️ 上の tmp（レイヤーぜんぶの複製）とは対応が取れないので、ここで別に通す。
+            通さないと、選んだ文字が paper.js の制限で黒く潰れて出る。 */
+      if(hasText.length) await outlineTextsIn([g]);
       // ⚠️ 器を被せる前に大きさを取る（remove したあとの bounds は当てにならない）
       const R = g.bounds.clone();
       const svg = wrapSVG(g.exportSVG({ asString:true, bounds:'content', matchShapes:true }), R);
@@ -5236,11 +5306,17 @@ document.getElementById('bSVG').onclick = async () => {
       dl(new Blob([svg], {type:'image/svg+xml'}), 'sakuji.svg');
     } else {
       const list = what === 'all' ? S.abs : [abCur()];
-      list.forEach(a => {
+      /* 🔴 forEach で一気に dl() を叩いていた＝ブラウザは短時間に続く保存を弾くので、
+         「枠ぜんぶ」を選んでも【最初の1枚しか落ちてこない】。
+         ⭐ 1枚ずつ間を空けて落とす（ラスタ側は toBlob を await していて元から間が空いていた）。 */
+      for(const a of list){
+        if(list.length > 1) await new Promise(r => setTimeout(r, 250));
         const R = abRectOf(a);
         // ⭐ 枠に入っているものだけを集めて書き出す
-        const inside = artLayer.children.filter(it => R.intersects(it.bounds));
+        // ⚠️ 画面に出ていないものは入れない（隠れた元・プレビューの残骸を持ち込まない）
+        const inside = srcItems.filter(it => it.visible && R.intersects(it.bounds));
         const g = new Group(inside.map(i => i.clone()));
+        g.children.slice().forEach(stripHidden);
         // ⚠️ 枠の地色は gridLayer に描いているので exportSVG には入らない。ここで足す。
         //   ⭐ 地色は枠ぴったりなので、書き出しの大きさも枠と一致する。
         if(a.bgOn){
@@ -5261,10 +5337,11 @@ document.getElementById('bSVG').onclick = async () => {
         const svg = wrapSVG(g.exportSVG({ asString:true, bounds:'content', matchShapes:true }), R);
         g.remove();
         dl(new Blob([svg], {type:'image/svg+xml'}), 'sakuji_' + a.name + '.svg');
-      });
+      }
     }
     done(); restore();
-    stat('SVG を書き出し — グラデはベクターのまま' + (hasText.length ? '（文字は自動でアウトライン化）' : ''));
+    stat('SVG を書き出し' + (what === 'all' ? '（' + list.length + ' 枚）' : '')
+         + ' — グラデはベクターのまま' + (hasText.length ? '（文字は自動でアウトライン化）' : ''));
   });
 };
 abSync();
@@ -5616,6 +5693,89 @@ document.querySelectorAll('#tvert button').forEach(b =>
    ⭐ 枠の名前（左上のラベル）をドラッグすると、その枠ごと動く。
    枡も枠に追従するので、ずれない。図形の選択とは競合しない位置に置いている。 */
 let abDrag = null;
+/* ⭐⭐ 枠に「入っている」を決める規則。
+   🔴 SAKUJI の図形は artLayer の直下に並んでいて、枠の子ではない
+      （枠は gridLayer に描いた【見た目】でしかない）。だから枠を動かしても中身は残っていた
+      （2026-08-12 木下＝「中身のものはそのまま置いていかれる」）。
+   ⚠️ Figma のように本当の親子にすると、レイヤー・書き出し・保存・取り消しの全部が変わる。
+      いま動いているものを壊す量が大きすぎるので、そこは変えない。
+   ⭐ 代わりに【重心が枠の中にあるものは、その枠のもの】と決める。
+      規則が一行で説明でき、はみ出して描いていても付いてくる。
+   ⚠️ 弱点＝2つの枠が重なっていると、重心の入っている側だけに付く。 */
+function abItemsOf(a){
+  const R = abRectOf(a);
+  return artLayer.children.filter(it => it.bounds && R.contains(it.bounds.center));
+}
+/* ⭐ 枠ごとの色。番号から作るので、枠を足しても勝手に決まる（覚えさせない）。
+   ⚠️ 選択の青（ACC）とぶつからないよう、色相の出発点をずらしてある。 */
+function abColorOf(i){ return 'hsl(' + ((i * 67 + 25) % 360) + ' 62% 46%)'; }
+/* ⭐ その図形がどの枠に入っているかを、レイヤー行のバッジにする。 */
+function abBadgeOf(it){
+  if(!it || !it.bounds) return '<span class="abbadge out">—</span>';
+  for(let i = 0; i < S.abs.length; i++){
+    if(abRectOf(S.abs[i]).contains(it.bounds.center))
+      return '<span class="abbadge" style="background:' + abColorOf(i) + '">' + S.abs[i].name + '</span>';
+  }
+  return '<span class="abbadge out">枠外</span>';   // ⚠️ どの枠にも入っていない＝書き出しに乗らない
+}
+/* ⭐ 枠のコピー＆ペースト。枠だけでなく【中身ごと】運ぶ。
+   ⚠️ 枠を選んでいないときは何もしない＝いつもの図形のコピーがそのまま効く。 */
+let abClip = null;
+function abCopyBoard(quiet){
+  if(abPick < 0) return null;
+  const a = S.abs[abPick];
+  abClip = { a: JSON.parse(JSON.stringify(a)),
+             items: abItemsOf(a).map(it => it.clone({ insert:false })) };
+  if(!quiet) stat('枠「' + a.name + '」を中身ごとコピー — ' + abClip.items.length + ' 個');
+  return abClip;
+}
+/* ⭐ 枠を消す＝【中身ごと】消す（Figma と同じ。枠だけ消えて中身が浮くほうが分かりにくい）。
+   ⚠️ 枠は1枚以上必要＝最後の1枚は消させない（消すと abCur() が undefined になって道具が止まる）。 */
+function abDeleteBoard(){
+  if(abPick < 0) return false;
+  if(S.abs.length <= 1){ stat('枠は1枚以上必要 — 中身を消すなら図形を選んでください'); return true; }
+  snapshot();
+  const a = S.abs[abPick];
+  const items = abItemsOf(a);
+  items.forEach(it => { try{ it.remove(); }catch(e){} });
+  S.abs.splice(abPick, 1);
+  abPick = -1;                                   // ⭐ 消したら選択なしに戻す
+  S.abSel = Math.max(0, Math.min(S.abs.length - 1, S.abSel > 0 ? S.abSel - 1 : 0));
+  abSync(); guides();
+  stat('枠を中身ごと削除 — ' + items.length + ' 個');
+  return true;
+}
+/* ⭐ 矢印キーでも枠を動かす（中身つき）。ドラッグと同じ規則で中身を決める。 */
+function abNudgeBoard(mv){
+  if(abPick < 0) return false;
+  snapshot();
+  const a = S.abs[abPick];
+  abItemsOf(a).forEach(it => { it.position = it.position.add(mv); });
+  a.x = Math.round(a.x + mv.x); a.y = Math.round(a.y + mv.y);
+  abSync(); guides();
+  return true;
+}
+function abPasteBoard(c){
+  if(!c) return false;
+  snapshot();
+  const src = c.a, dx = src.w + 120, dy = 0;        // 右どなりに置く（枠の追加と同じ間合い）
+  const a = { ...JSON.parse(JSON.stringify(src)), name: abName(), x: src.x + dx, y: src.y + dy };
+  S.abs.push(a);
+  artLayer.activate();
+  artLayer.children.forEach(x => x.selected = false);
+  c.items.forEach(s => {
+    const it = s.clone({ insert:false });
+    artLayer.addChild(it);
+    it.position = it.position.add(new Point(dx, dy));
+    it.selected = false;
+  });
+  /* ⭐ 貼った先を次の基準にする＝続けて押すと右へ並んでいく（図形のペーストと同じ気持ち） */
+  c.a = JSON.parse(JSON.stringify(a));
+  S.abSel = S.abs.length - 1; abPick = S.abSel;
+  abSync(); guides();
+  stat('枠を中身ごと複製 — ' + c.items.length + ' 個');
+  return true;
+}
 function abLabelHit(pt){
   if(!S.abOn) return -1;
   const Z = paper.view.zoom, w = 150/Z, h = 22/Z;
@@ -5629,10 +5789,16 @@ function abLabelHit(pt){
 hook('down', '枠のラベル', e => {
   const i = abLabelHit(e.point);
   if(i < 0) return false;
-  S.abSel = i;
-  abDrag = { i, dx: S.abs[i].x - e.point.x, dy: S.abs[i].y - e.point.y };
+  snapshot();                                  // ⚠️ 中身も動かすので、取り消せるようにしておく
+  S.abSel = i; abPick = i;
+  artLayer.children.forEach(c => c.selected = false);   // ⭐ 枠を選んだら図形の選択は外す
+  const a = S.abs[i];
+  abDrag = { i, dx: a.x - e.point.x, dy: a.y - e.point.y, ax: a.x, ay: a.y,
+             /* ⭐ 中身は【掴んだ瞬間】に決める。動かしている途中で枠から出た入ったを
+                数え直すと、端のものが付いたり外れたりして落ち着かない。 */
+             items: abItemsOf(a).map(it => ({ it, p: it.position.clone() })) };
   abSync();
-  stat('枠を動かす — 離すと確定');
+  stat('枠を動かす — 中身 ' + abDrag.items.length + ' 個も一緒に動く');
   return true;
 }, 20);
 hook('drag', '枠のラベル', e => {
@@ -5640,13 +5806,21 @@ hook('drag', '枠のラベル', e => {
   const a = S.abs[abDrag.i];
   a.x = Math.round(e.point.x + abDrag.dx);
   a.y = Math.round(e.point.y + abDrag.dy);
+  const dx = a.x - abDrag.ax, dy = a.y - abDrag.ay;
+  abDrag.items.forEach(o => { if(o.it && o.it.parent) o.it.position = o.p.add(new Point(dx, dy)); });
   drawGrid();
   return true;
 }, 20);
 hook('up', '枠のラベル', () => {
   if(!abDrag) return false;
-  abDrag = null; renderAbList(); drawGrid(); return true;
+  abDrag = null; renderAbList(); drawGrid(); guides(); return true;
 }, 20);
+/* ⭐ ラベル以外を触ったら、枠の選択は外す（木下＝「選択していないときは視覚的にも外して」）。
+   ⚠️ ここは【割り込まない】＝false を返して、いつもの選択処理をそのまま通す。 */
+hook('down', '枠の選択を外す', () => {
+  if(abPick >= 0){ abPick = -1; drawGrid(); }
+  return false;
+}, 95);
 /* 枠を画面の中央へ呼び戻す（見失ったとき） */
 addEventListener('keydown', e => {
   if(e.key === '0' && (e.metaKey || e.ctrlKey)){
