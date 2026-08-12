@@ -379,11 +379,21 @@
   <div class="hint">⚠️<b>全部消す・ばらまくも戻せる</b>。押す直前の状態を控えている</div>
 
   <h2>アニメーション</h2>
+  <!-- ⭐⭐ 変化の種類（2026-08-13 木下＝「流れしかないが？」「TSUBU やさっきやった
+       アニメーションの字なりなどの変化にして」）。TSUBU の 積もる/集まる/漂う に当たるもの。
+       ⚠️ MASU の1マスは【素材＋向き】なので、そこに素直に乗るものだけにした。 -->
+  <div class="seg" id="anim">
+    <button data-v="0" class="on">送る</button><button data-v="1">回る</button>
+    <button data-v="2">替わる</button><button data-v="3">呼吸</button>
+  </div>
+  <div class="hint">⭐<b>送る</b>＝マスの中の絵が流れる（いままでのもの）／<b>回る</b>＝マスごとに向きが変わっていく／<b>替わる</b>＝置いてある素材が次々入れ替わる（棚にある枚数だけ）／<b>呼吸</b>＝絵が大きくなったり小さくなったりする</div>
   <div class="row"><label>流れ</label><input type="range" id="flow" min="0" max="300" step="1" value="0"><span class="val"></span></div>
   <div class="hint"><b>0＝静止</b>（いままでと1ドットも変わらず、重くもならない）。上げると<b>マスの中の絵が送られて帯が流れる</b>。⚠️動きの正体はFPSではなくこれ</div>
   <div class="row"><label>FPS</label><input type="range" id="fps" min="1" max="60" step="1" value="30"><span class="val"></span></div>
+  <div class="row"><label>光</label><input type="range" id="shine" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+  <div class="hint">⭐<b>1マスの中を光が横切る</b>（木下＝「この1コマ1コマの中で光やずれ」）。絵はそのままで、上を光だけが通る。<b>0＝なし</b></div>
   <div class="row"><label>ずれ</label><input type="range" id="drift" min="0" max="100" step="1" value="0"><span class="val"></span></div>
-  <div class="hint">⭐<b>マスごとに送る時間をずらす</b>＝折り返しが一斉に来ない（波のように順に動いて見える）。<b>0＝いままでと同じ</b>（全部そろって送る）</div>
+  <div class="hint">⭐<b>マスごとに送る時間をずらす</b>（＝マスとマスの間の話。1マスの中の動きは上の「流れ」「光」）。<b>0＝いままでと同じ</b>（全部そろって動く）</div>
   <div class="hint">⭐<b>下げるほどゲームの時間になる</b>。⭐流れる向きは<b>そのマスの向き</b>（0°/90°/180°/270°）に従う＝向きを混ぜると流れが交わる<br>⚠️素材の上下は繋がっていないので<b>鏡で折り返して</b>送っている（継ぎ目の線が出ない代わり、折り返しが周期で通る）</div>
 
   <h2>出す</h2>
@@ -420,7 +430,8 @@ const S = {
   bg:'#e8619b',          // ボード（台紙）の色
   board:1, bw:1100, bh:1400,   // ⭐ ボード＝作品の版面。格子はこの上に乗る
   fit:0, guide:1, topScale:100, topMode:0,               // 0=覆う（はみ出しは切る） 1=収める（形の中に全部入れる）
-  flow:0, fps:30, drift:0,   // ⭐ アニメーション。流れ0＝完全に静止（rAF も回さない）／drift＝マスごとの時間差
+  flow:0, fps:30, drift:0, anim:0, shine:0,   // ⭐ アニメーション。流れ0＝完全に静止（rAF も回さない）
+                                     //   drift＝マスごとの時間差／anim＝変化の種類（0送る 1回る 2替わる 3呼吸）
   cells:{},            // "c,r" → { m:素材index, r:回転0-3 }
 };
 let mats = [];         // { name, img, url }  url は控えに焼くため保持
@@ -695,6 +706,43 @@ function cellPhase(c, r){
   if(!S.drift) return 0;
   return ((c * 7 + r * 13) % 16) / 16 * (S.drift / 100) * 2;
 }
+/* ⭐ 変化の種類（2026-08-13）。⚠️ どれも【元の値からの差】として作る＝
+   流れを 0 に戻せば必ず元の絵に帰る（盤のデータは1つも書き換えない）。
+   ⚠️ 進み方は送るときと同じ flowT ＝つまみ「流れ」と「FPS」がそのまま効く。 */
+function animT(c, r){ return flowT + cellPhase(c, r); }
+function animRot(c, r, base){
+  if(!S.flow || S.anim !== 1) return base;
+  return ((base || 0) + Math.floor(animT(c, r))) % 4;        // 1歩で 90°
+}
+function animMat(c, r, base){
+  if(!S.flow || S.anim !== 2 || mats.length < 2) return base;
+  return ((base || 0) + Math.floor(animT(c, r))) % mats.length;   // 1歩で次の素材へ
+}
+function animScale(c, r){
+  if(!S.flow || S.anim !== 3) return 1;
+  return 1 + Math.sin(animT(c, r) * Math.PI) * 0.18;         // 大きく／小さく（±18%）
+}
+/* ⭐⭐ 1マスの中を光が横切る（2026-08-13）
+   木下＝「俺がいっているのはこの1コマ1コマの中で光やずれなどだ。
+           だから中のコマがずれていくということではない」
+   ＝ 変化は【マスの中】で起きるもの。SAKUJI / NIJIMI の「帯が流れる」に当たる。
+   ⚠️ 素材は焼いた画像なので帯の位相を持たない。かわりに【光そのものを上に通す】。
+   ⚠️ 絵は1ドットも書き換えない＝光を切れば元のまま。 */
+function drawShine(ctx, d, ph){
+  const a = S.shine / 100;
+  if(!a) return;
+  const t = (((ph % 2) + 2) % 2) / 2;            // 0〜1 で1周（左から右へ）
+  const x = (-0.7 + 1.4 * t) * d;
+  const g = ctx.createLinearGradient(x - d * 0.35, 0, x + d * 0.35, 0);
+  g.addColorStop(0,   'rgba(255,255,255,0)');
+  g.addColorStop(0.5, 'rgba(255,255,255,' + (a * 0.85) + ')');
+  g.addColorStop(1,   'rgba(255,255,255,0)');
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';       // ⭐ 明るい所だけが増える（黒は黒のまま）
+  ctx.fillStyle = g;
+  ctx.fillRect(-d / 2, -d / 2, d, d);
+  ctx.restore();
+}
 function drawOne(ctx, c, r, mi, rot, scale, mode, fx, fy){
   const p = center(c, r), s = S.cell;
   const m = mats[mi];
@@ -708,9 +756,14 @@ function drawOne(ctx, c, r, mi, rot, scale, mode, fx, fy){
   let d = S.fit ? s * FIT_IN[S.shape]
                 : s * (S.shape === 3 ? 1.25 : 1.02);     // 覆うときは必ずマスを超える大きさで
   if(scale) d *= scale;                                  // ⭐ 上の絵だけ小さくして地を見せる
+  d *= animScale(c, r);                                  // ⭐ 呼吸（種類3のときだけ 1 以外になる）
   ctx.imageSmoothingEnabled = false;
-  if(S.flow) drawFlowing(ctx, img, d, cellPhase(c, r));
-  else       ctx.drawImage(img, -d / 2, -d / 2, d, d);
+  /* ⭐ 絵そのものを送るのは【送る】のときだけ。回る・替わる・呼吸は普通に置く
+     （送りと重ねると何が起きているか読めなくなる）。 */
+  if(S.flow && S.anim === 0) drawFlowing(ctx, img, d, cellPhase(c, r));
+  else                       ctx.drawImage(img, -d / 2, -d / 2, d, d);
+  /* ⭐ 光は【どの種類でも】通す＝送る・回る・替わる・呼吸のどれと重ねてもよい */
+  if(S.flow && S.shine) drawShine(ctx, d, animT(c, r));
   ctx.restore();
 }
 function drawTile(ctx, c, r, cell){
@@ -723,8 +776,8 @@ function drawTile(ctx, c, r, cell){
   const solid = (base && base.bg) || (top && top.bg);
   if(solid){ ctx.fillStyle = solid; cellPath(ctx, c, r, S.gap / 2); ctx.fill(); }
   // ② 地の絵 → ③ 上の絵
-  if(cell.bm != null) drawOne(ctx, c, r, cell.bm, cell.br, 1, null, cell.bfx, cell.bfy);
-  if(cell.m != null)  drawOne(ctx, c, r, cell.m, cell.r, S.topScale / 100, TOP_MODE[S.topMode], cell.fx, cell.fy);
+  if(cell.bm != null) drawOne(ctx, c, r, animMat(c, r, cell.bm), animRot(c, r, cell.br), 1, null, cell.bfx, cell.bfy);
+  if(cell.m != null)  drawOne(ctx, c, r, animMat(c, r, cell.m), animRot(c, r, cell.r), S.topScale / 100, TOP_MODE[S.topMode], cell.fx, cell.fy);
   ctx.restore();
 }
 function paint(ctx, opt){
@@ -1321,6 +1374,8 @@ async function loadWork(file, label){
     if(d.S.flow == null) S.flow = 0;
     if(!S.fps) S.fps = 30;
     if(d.S.drift == null) S.drift = 0;   // ⚠️ 欠けたキーは Object.assign が触らない
+    if(d.S.anim == null) S.anim = 0;
+    if(d.S.shine == null) S.shine = 0;
     mats = [];
     for(const m of (d.mats || [])){
       await addMat(m.url, m.name);
@@ -1368,6 +1423,8 @@ document.getElementById('jfile').addEventListener('change', async e => {
     if(d.S.flow == null) S.flow = 0;
     if(!S.fps) S.fps = 30;
     if(d.S.drift == null) S.drift = 0;   // ⚠️ 欠けたキーは Object.assign が触らない
+    if(d.S.anim == null) S.anim = 0;
+    if(d.S.shine == null) S.shine = 0;
     mats = [];
     for(const m of (d.mats || [])){ await addMat(m.url, m.name); const mm = mats[mats.length-1]; mm.tint = m.tint || null; mm.bg = m.bg || null; }
     sel = Math.min(d.sel ?? 0, mats.length - 1); rot = d.rot || 0;
@@ -1388,12 +1445,13 @@ function syncAll(){
     const v = el.parentElement.querySelector('.val'); if(v) v.textContent = S[k];
   });
   document.getElementById('bg').value = S.bg;
-  [['flow','flow'],['fps','fps'],['drift','drift']].forEach(([id, k]) => {   // ⚠️ RANGES とは別（fitView を呼ばせない）
+  [['flow','flow'],['fps','fps'],['drift','drift'],['shine','shine']].forEach(([id, k]) => {   // ⚠️ RANGES とは別（fitView を呼ばせない）
     const el = document.getElementById(id); if(!el) return;
     el.value = S[k];
     const v = el.parentElement.querySelector('.val'); if(v) v.textContent = S[k];
   });
   document.querySelectorAll('#shape button').forEach(b => b.classList.toggle('on', +b.dataset.v === S.shape));
+  document.querySelectorAll('#anim button').forEach(b => b.classList.toggle('on', +b.dataset.v === (S.anim || 0)));
   document.querySelectorAll('#board button').forEach(b => b.classList.toggle('on', +b.dataset.v === S.board));
   document.querySelectorAll('#guide button').forEach(b => b.classList.toggle('on', +b.dataset.v === S.guide));
   document.querySelectorAll('#tool button').forEach(b => b.classList.toggle('on', +b.dataset.v === tool));
@@ -1531,7 +1589,7 @@ document.getElementById('bg').addEventListener('input', e => { S.bg = e.target.v
 /* ══ アニメーション ══
    ⚠️ RANGES に入れない。あれは fitView（盤の大きさが変わる操作）を呼ぶので、
       流れ・FPS で勝手にカメラが戻ってしまう。 */
-[['flow','flow'],['fps','fps'],['drift','drift']].forEach(([id, k]) => {
+[['flow','flow'],['fps','fps'],['drift','drift'],['shine','shine']].forEach(([id, k]) => {
   document.getElementById(id).addEventListener('input', e => {
     S[k] = +e.target.value;
     const v = e.target.parentElement.querySelector('.val'); if(v) v.textContent = S[k];
@@ -1556,6 +1614,11 @@ function tick(now){
   draw();
 }
 requestAnimationFrame(tick);
+document.querySelectorAll('#anim button').forEach(b => b.addEventListener('click', () => {
+  S.anim = +b.dataset.v;
+  document.querySelectorAll('#anim button').forEach(x => x.classList.toggle('on', x === b));
+  draw();                                    // ⭐ 止まっていても押した種類がその場で分かる
+}));
 document.querySelectorAll('#shape button').forEach(b => b.addEventListener('click', () => {
   S.shape = +b.dataset.v;
   document.querySelectorAll('#shape button').forEach(x => x.classList.toggle('on', x === b));
