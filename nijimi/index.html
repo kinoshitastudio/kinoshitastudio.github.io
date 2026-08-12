@@ -584,6 +584,13 @@ const F_DISP = `#version 300 es
 precision highp float; in vec2 vUv; out vec4 o;
 uniform sampler2D uSim,uGradTex,uMask,uGradLUT,uBgLUT; uniform float uThr,uNoise,uDust,uGrainRes,uInvert,uBleed,uOutline,uGrad,uGAng,uGFollow,uMaskOn,uBgGrad;
 uniform vec2 uTexel; uniform vec3 uLo,uHi;
+/* ⭐⭐ 育つのフェード（2026-08-12）── 1=そのまま／0=完全に消える。
+   🔴 反応拡散を進めるだけでは【消えない】。連続スクショで確かめたら、指紋のようなプリセットは
+      字がザラつくだけで形はそのまま残っていた（平均の明るさは下がるので数値だけ見ると
+      「溶けた」と誤判定する）。木下＝「ループでゆっくり消え、ゆっくりまた表示される」。
+   ⭐ だから【字の濃さそのもの】を時間で上げ下げする。溶け方（模様）は反応拡散が受け持ち、
+      消える／現れるはここが受け持つ＝2つが同時に効く。 */
+uniform float uFade;
 /* ⭐⭐ マス目に落とす（2026-08-12）── 膜 MAKU の「粒」をそのまま持ってきたもの。
    ⭐ やっていることは【拾う場所をマス目の中心に丸める】だけ。ここを1回通せば、
       下流（滲み・しきい・グラデ・地）はぜんぶそのまま粒になる＝式を増やさない。
@@ -640,6 +647,8 @@ void main(){
     float m=texture(uMask,sUV).g;           // 描いた場の V（塗った所が高い）
     t *= smoothstep(0.20,0.30,m);           // 字の外は地色のまま
   }
+  // ⭐ 育つのフェード＝字の濃さそのものを上げ下げする（1でこれまでどおり）
+  t *= uFade;
   vec3 inkc=uHi;                            // 塗り/線の色
   if(uGrad>0.5){
     float gg;
@@ -788,7 +797,42 @@ let maskReady = false;
    ⚠️ 覚えるのは「育つを入にした瞬間」と「育てながら描き足した時」。
       これが無いと、一度回した字は二度と戻ってこない。 */
 let growOrigin = null, growT0 = 0, growAcc = 0;
-function growStart(){ growOrigin = snapshotField(); growT0 = performance.now(); growAcc = 0; }
+/* ⭐⭐ 育つ＝【すーっと消えて、すーっと現れて、また消える】のループ（2026-08-12）。
+   木下＝「ONにするとすーっと消えていく。そしてさらにすーっと表示される。またすーっと消える。これがループ」。
+   ⚠️ 反応拡散は【巻き戻せない】＝「現れる」側は元の字から必要な回数だけ焼き直すしかない。
+      そのために元の字を GPU にも置く（Uint8Array からの復元は毎フレームには重い）。
+   ⚠️ 消えきるまでの回数は【字・プリセット・モードで数倍違う】（白紙の迷路は約50、拡散はもっと少ない）。
+      ⭐ だから決め打ちにせず、1往復目に【実際に消えるまで進めて回数を測り】、それから往復に入る。 */
+const originTex = tex(SIM), originFbo = fbo(originTex);
+const probeTex = tex8f(16), probeFbo = fbo(probeTex), probePx = new Uint8Array(16*16*4);
+let growN = 0, growMax = 0, growStall = 0, growLastB = -1, growLastP = 0, growB0 = -1;
+let growFade = 1;   // ⭐ 1=そのまま／0=完全に消えている（育つが切なら常に1）
+/* 🔴 フェードの時計は growT0 と【別に持つ】。growT0 は「消えきる回数の測定が終わった時」に
+   リセットされるので、それを使うとフェードの位相がそこで飛ぶ
+   ＝木下「2回目の表示がかなり早く、そしてループされない状態だね」。
+   ⭐ フェードは育つを入にした瞬間から、ただ一定の周期で回り続ける。 */
+let growFadeT0 = 0;
+function growSnapGPU(){
+  gl.useProgram(pCopy); gl.bindFramebuffer(gl.FRAMEBUFFER, originFbo); gl.viewport(0,0,SIM,SIM);
+  samp(pCopy,'uSrc',0,curTex()); draw();
+}
+function growRestoreGPU(){
+  gl.useProgram(pCopy);
+  for(const fb of [fboA,fboB]){ gl.bindFramebuffer(gl.FRAMEBUFFER,fb); gl.viewport(0,0,SIM,SIM);
+    samp(pCopy,'uSrc',0,originTex); draw(); }
+}
+/* ⭐ 今の絵の明るさ（16×16 に縮めて測る＝安い）。「もう変わらない＝消えきった」の判定に使う。 */
+function fieldBright(){
+  display(probeFbo, 16);
+  gl.readPixels(0,0,16,16,gl.RGBA,gl.UNSIGNED_BYTE,probePx);
+  let s=0; for(let i=0;i<probePx.length;i+=4) s+=probePx[i]+probePx[i+1]+probePx[i+2];
+  return s/3/256;
+}
+function growStart(){
+  growOrigin = snapshotField(); growSnapGPU();
+  growT0 = performance.now(); growFadeT0 = growT0; growAcc = 0;
+  growN = 0; growMax = 0; growStall = 0; growLastB = -1; growLastP = 0; growB0 = -1;   // ⚠️ 字が変われば測り直す
+}
 function growStop(){ if(growOrigin) restoreField(growOrigin); growOrigin = null; computeGradCoords(); }
 /* ⭐⭐ 育てている最中に描き足したストロークを【元の字の側】へ足す（2026-08-12）。
    🔴 それまでは描き足すたびに growStart()＝【溶けかけの場をまるごと新しい元の字】にしていた。
@@ -805,7 +849,11 @@ function growAddStroke(rec){
   restoreField(growOrigin);             // 元の字に戻す
   for(const s of rec) paintStep(s[0], s[1], s[2], 0.5);
   growOrigin = snapshotField();         // ⭐ 元の字＋描き足し（溶けは入っていない）
+  growSnapGPU();                        // ⚠️ 往復で使う GPU 側の「元の字」も同時に更新する
   restoreField(now);                    // 見た目は溶けたまま続ける
+  /* ⚠️ 字が増えたら【消えきるまでの回数】も変わる＝測り直す（古い回数のままだと
+     消えきる前に折り返して「消えない」ように見える）。 */
+  growMax = 0; growN = 0; growStall = 0; growLastB = -1; growB0 = -1; growT0 = performance.now();
 }
 function uploadMask(){                       // 白紙／拡散で描いたものを型として取り込む
   const px = fieldCache.blank || fieldCache.diff;
@@ -879,6 +927,7 @@ function display(fb,res,src){ gl.useProgram(pDisp); gl.bindFramebuffer(gl.FRAMEB
   u1(pDisp,'uGrainRes',300+P.grain*1700); u1(pDisp,'uInvert',P.invert);
   u1(pDisp,'uBleed',P.bleed); u2(pDisp,'uTexel',1/SIM,1/SIM); u1(pDisp,'uOutline',P.outline);
   u1(pDisp,'uGrad',P.grad); u1(pDisp,'uGAng',P.gAng); u1(pDisp,'uGFollow',P.gfollow);
+  u1(pDisp,'uFade',growFade);               // ⭐ 育つのフェード（1=そのまま）
   /* ⭐ マス目に落とす（膜 MAKU の粒）。⚠️ JS 側に足すだけでなく GLSL の uniform 宣言も要る */
   u1(pDisp,'uCell',P.cell); u1(pDisp,'uCellInk',P.cellInk);
   u1(pDisp,'uCellJit',P.cellJit/100); u1(pDisp,'uCellAsp',P.cellAsp/100);
@@ -905,18 +954,54 @@ function loop(){ if(!running) return; requestAnimationFrame(loop);
           ＝2026-07-18 に「珊瑚が中身を食い白い輪郭が残る」として却下された現象そのもの。
        ⭐ 既定（育つ＝切）では回さない＝描いた線はそのまま固定される。これが作字の土台。
        ⚠️ 1フレーム1ステップだと遅すぎて動いて見えない。v0.2 は 12ステップ/フレームだった。 */
+    /* ⭐⭐ 育つのループ＝【ゆっくり消えて、ゆっくりまた現れる】（2026-08-12）。
+       🔴 反応拡散を進めるだけでは消えない（連続スクショで確認：字はザラつくだけで形は残る）。
+          だから消える／現れるは【字の濃さ】で作り、反応拡散はその間の質感（模様）を作る。
+       ⚠️ 一往復の長さ＝周期（秒）。育つが切なら常に 1（＝これまでどおり）。 */
+    growFade = 1;
     if(P.grow > 0.5){
-      // 一巡したら、溶ける前の字に戻してまた育て直す＝ループ再生
-      if(growOrigin && now - growT0 > P.cycle*1000){ restoreField(growOrigin); growT0 = now; growAcc = 0; }
+      const cycMs = Math.max(P.cycle, 1) * 1000;
+      const uu  = ((now - growFadeT0) / cycMs) % 1;
+      const tri = uu < 0.5 ? uu * 2 : (1 - uu) * 2;     // 0→1→0
+      growFade = 1 - tri;                                // 1→0→1（消えて、また現れる）
       /* 🔴 速さは【1フレームに何ステップ】だった＝どの速さでも2秒ほどで溶けきってしまい、
          木下＝「育つ入れだけだと速さをいくら変えてもほとんど変わりはないね」。
-         実測：等間隔に割り当てても 速さ 4/8/16/24 の2秒後は bright 5/2/3/3 ＝【範囲の大半が同じ絵】。
          ⭐ だから【指数】で配る（0.03 〜 12.5 ステップ/フレーム）。
-            反応拡散は少し進めるだけで一気に食うので、等間隔だと低い側に何も残らない。
             1 ＝ 30フレームに1ステップ（じわっと育つ）／24 ＝ 1フレーム12ステップ（一気に溶ける）。 */
-      growAcc += 0.03 * Math.pow(1.30, P.steps - 1);
-      let guard = 0;
-      while(growAcc >= 1 && guard++ < 64){ simStep(); growAcc -= 1; }
+      const spd = 0.03 * Math.pow(1.30, P.steps - 1);
+      if(growMax <= 0){
+        /* ⭐ 1往復目＝【消えるところまで進めて、何回で消えるかを測る】。
+           ここの消え方は公開版とまったく同じ（速さがそのまま効く）。 */
+        growAcc += spd;
+        let guard = 0;
+        while(growAcc >= 1 && guard++ < 64){ simStep(); growN++; growAcc -= 1; }
+        /* ⚠️ 「変化が止まったら」で測ると【測りすぎる】── 実測では白紙・指紋が 132、拡散が 176 と出て、
+           実際に消える回数（50前後）の倍以上だった。そのぶん往復の大半が「もう真っ黒」の区間になり、
+           消えたまま長く止まってからパッと戻る＝木下の言う「すーっ」にならない。
+           ⭐ だから【消えた瞬間】で決める＝始めの明るさの 6% まで落ちた所。測る間隔も細かく。 */
+        if(now - growLastP > 100){
+          const bnow = fieldBright();
+          if(growB0 < 0) growB0 = bnow;                       // 育て始めの明るさ
+          growLastP = now;
+          if(growB0 > 1 && bnow <= growB0 * 0.06){ growMax = growN; growT0 = now; }
+          // 保険：明るさが元から低い絵などで 6% に届かない時は、変化が止まった所で決める
+          if(growLastB >= 0 && Math.abs(bnow - growLastB) < 0.3) growStall++; else growStall = 0;
+          if(growMax <= 0 && growStall >= 3 && growN > 0){ growMax = growN; growT0 = now; }
+          growLastB = bnow;
+        }
+        // ⚠️ 保険：周期の倍まで測っても止まらないなら、そこを「消えきり」とみなす
+        if(growMax <= 0 && now - growT0 > P.cycle * 2000 && growN > 0){ growMax = growN; growT0 = now; }
+      } else {
+        /* ⭐⭐ 2往復目から＝【すーっと消えて、すーっと現れる】を周期の長さで繰り返す。
+           ⚠️ 現れる側は巻き戻せないので、元の字から必要な回数だけ焼き直す。
+           🔴 溶け具合とフェードは【同じ時計・同じ位相】で回すこと。別々に持っていたら、
+              現れきった時に溶けの方が谷に居て、元の濃さまで戻らなかった
+              （実測：開始16に対して山が9止まり）。⭐ 上で作った tri をそのまま使う。 */
+        const target = Math.round(growMax * tri);
+        if(target < growN){ growRestoreGPU(); growN = 0; }
+        let guard = 0;
+        while(growN < target && guard++ < 400){ simStep(); growN++; }
+      }
     }
   }
   display(null,cvs.width);
