@@ -22,9 +22,11 @@ const sig = () => p.evaluate(() => { const c = document.querySelector('canvas'),
    ⚠️ 艶の細かさは【丸みが0だと効かなくて当たり前】なので、丸みを入れた状態で測る（同種：縦のグラデの幅）。 */
 const SKIP = ['speed','fps'];
 const modes = [ { name:'板', set:{ dir:0, slices:60, gap:6 } },
-                /* ⭐ マス（2026-08-12 追加）＝升目に切って1マスに1回グラデ。板とは拾い方が別 */
-                { name:'マス', set:{ dir:4, slices:20, gap:6, minLen:4, mdir:3 } },
                 { name:'輪郭から', set:{ dir:3, dScale:40, dRes:600, dCombN:30, vgrad:50, dRound:60 } } ];
+/* ⭐ マスは【別セクション（masu/）】だけにある（本体の板は絶対に触らない・2026-08-12 木下）。
+   ⚠️ 本体に当てたときに dir:4 を回すと、無い分け方で全部「変わらない」と出る。あるときだけ足す。 */
+if(await p.evaluate(() => !!document.querySelector('#dir button[data-v="4"]')))
+  modes.push({ name:'マス', set:{ dir:4, slices:20, gap:6, minLen:4, mstyle:0, mdir:0 } });
 let ng = [];
 for(const m of modes){
   const reset = async () => await p.evaluate(s => {
