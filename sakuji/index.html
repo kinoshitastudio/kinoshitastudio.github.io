@@ -5121,14 +5121,39 @@ function abSync(){
   renderAbList(); drawGrid();
 }
 function abName(){ return String(S.abs.length + 1).padStart(2, '0'); }
+/* 🔴⭐ 枠を足す・複製するときの【置き場所】。式はここ1本だけ（木下 2026-08-12）。
+   ⚠️ 元は3箇所とも「右どなり（x + w + 120）」を決め打ちしていたので、
+      そこに【すでに枠があっても構わず重ねて】いた ＝木下＝「ここでコピペすると、
+      横に上書き書き出しされる」（06 の右にあった 07 の上へ 10 が乗る）。
+   ⭐ 直し＝右どなりから順に【空いている所】を探す。横が埋まっていたら下の段へ折り返す。
+   ⚠️ x / y は枠の【中心】（abRectOf が x - w/2 する）ので、重なりは中心の距離で見る。 */
+const AB_GAP = 120;
+function abFreeSpot(src, w, h){
+  const busy = (x, y) => S.abs.some(b =>
+    Math.abs(x - b.x) < (w + b.w)/2 && Math.abs(y - b.y) < (h + b.h)/2);
+  for(let i = 1; i <= 40; i++){                        // ① まず右へ
+    const x = src.x + i*(w + AB_GAP);
+    if(!busy(x, src.y)) return { x, y: src.y };
+  }
+  for(let r = 1; r <= 40; r++){                        // ② 横が埋まっていたら下の段へ
+    const y = src.y + r*(h + AB_GAP);
+    for(let i = 0; i <= 40; i++){
+      const x = src.x + i*(w + AB_GAP);
+      if(!busy(x, y)) return { x, y };
+    }
+  }
+  return { x: src.x + (w + AB_GAP), y: src.y };        // ⚠️ 見つからなくても止めない
+}
 document.getElementById('abAdd')?.addEventListener('click', () => {
   const a = abCur();
-  S.abs.push({ name: abName(), x: a.x + a.w + 120, y: a.y, w: a.w, h: a.h, bg: a.bg, bgOn: a.bgOn });
+  const p = abFreeSpot(a, a.w, a.h);
+  S.abs.push({ name: abName(), x: p.x, y: p.y, w: a.w, h: a.h, bg: a.bg, bgOn: a.bgOn });
   S.abSel = S.abs.length - 1; abSync(); stat('枠を追加');
 });
 document.getElementById('abDup')?.addEventListener('click', () => {
   const a = abCur();
-  S.abs.push({ ...a, name: abName(), x: a.x + a.w + 120 });
+  const p = abFreeSpot(a, a.w, a.h);
+  S.abs.push({ ...a, name: abName(), x: p.x, y: p.y });
   S.abSel = S.abs.length - 1; abSync(); stat('枠を複製');
 });
 document.getElementById('abDel')?.addEventListener('click', () => {
@@ -5283,11 +5308,40 @@ function shootRect(R, bgHex, mime, ext, quality, name, bgAb){
   }
   g2.drawImage(cv, 0, 0);
   const w = out.width, h = out.height;
-  return new Promise(res => out.toBlob(b => {
-    dl(b, name + '.' + ext);
-    paper.view.viewSize = bak.size; paper.view.zoom = bak.zoom; paper.view.center = bak.center;
-    res({ w, h });
-  }, mime, quality));
+  const back = () => { paper.view.viewSize = bak.size; paper.view.zoom = bak.zoom; paper.view.center = bak.center; };
+  /* 🔴⭐ 失敗しても【必ず】画面を元に戻し、【必ず】理由を返す。
+     木下＝「上の 06 07 が png 書き出しできない」＝押しても何も落ちてこない枠がある。
+     ⚠️ 元は toBlob のコールバックの中だけで view を戻していたので、
+        そこへ辿り着けない失敗（下記）だと【画面の大きさが枠のまま固まる】うえ、
+        Promise が永久に解決せず withCleanView の done() も走らなかった＝無反応。
+     ⚠️ 起こりうる失敗は2つ：
+       ① canvas が汚れている（外から来た画像＝別オリジンの URL を貼ると起きる）
+          → toBlob / getImageData が SecurityError を投げる
+       ② toBlob が null を返す（大きすぎる・メモリ不足）
+     ⭐ どちらも黙って消えないよう { err } で返し、呼ぶ側が stat に出す。 */
+  return new Promise(res => {
+    try{
+      g2.getImageData(0, 0, 1, 1);          // ①の判定（汚れていればここで投げる）
+    }catch(err){
+      back();
+      res({ w, h, err: '外から来た画像のせいで PNG / JPG が出せない（SVG は出せる・開き直すと戻る）' });
+      return;
+    }
+    try{
+      out.toBlob(b => {
+        if(!b){ back(); res({ w, h, err: '画像が作れなかった（大きすぎる可能性）' }); return; }
+        try{ dl(b, name + '.' + ext); }
+        catch(err){ back(); res({ w, h, err: '保存できなかった：' + (err && err.message || err) }); return; }
+        back();
+        res({ w, h });
+      }, mime, quality);
+    }catch(err){
+      back();
+      res({ w, h, err: (err && err.name === 'SecurityError')
+        ? '外から来た画像のせいで PNG / JPG が出せない（SVG は出せる・開き直すと戻る）'
+        : ('書き出しに失敗：' + (err && err.message || err)) });
+    }
+  });
 }
 async function exportRaster(mime, ext, quality){
   const what = exWhat();
@@ -5296,19 +5350,32 @@ async function exportRaster(mime, ext, quality){
     if(!items.length){ stat('図形を選んでください'); return; }
     const R = items.reduce((a,it) => a ? a.unite(it.bounds) : it.bounds.clone(), null);
     withCleanView(async done => {
-      const r = await shootRect(R, null, mime, ext, quality, 'sakuji');
-      done(); drawGrid(); stat(ext.toUpperCase() + ' — ' + r.w + ' × ' + r.h);
+      /* ⚠️ 何があっても done()（選択とグリッドの戻し）は通す＝失敗して画面が壊れたままにしない */
+      try{
+        const r = await shootRect(R, null, mime, ext, quality, 'sakuji');
+        stat(r.err ? ('🔴 ' + r.err) : (ext.toUpperCase() + ' — ' + r.w + ' × ' + r.h));
+      }catch(err){
+        stat('🔴 書き出しに失敗：' + (err && err.message || err));
+      }finally{ done(); drawGrid(); }
     });
     return;
   }
   const list = what === 'all' ? S.abs : [abCur()];
   withCleanView(async done => {
-    for(const a of list){
-      await shootRect(abRectOf(a), a.bgOn ? a.bg : null, mime, ext, quality, 'sakuji_' + a.name,
-                      a.bgOn ? a : null);   /* ⭐ 枠ごと渡す＝グラデの地も書き出しに入る */
-    }
-    done(); drawGrid();
-    stat(ext.toUpperCase() + ' を ' + list.length + ' 枚 書き出し');
+    const bad = [];
+    try{
+      for(const a of list){
+        const r = await shootRect(abRectOf(a), a.bgOn ? a.bg : null, mime, ext, quality, 'sakuji_' + a.name,
+                                  a.bgOn ? a : null);   /* ⭐ 枠ごと渡す＝グラデの地も書き出しに入る */
+        /* ⚠️ 1枚落ちても残りは続ける（枠ぜんぶで途中の1枚のために全部止めない） */
+        if(r && r.err) bad.push(a.name + '＝' + r.err);
+      }
+    }catch(err){
+      bad.push('書き出しに失敗：' + (err && err.message || err));
+    }finally{ done(); drawGrid(); }
+    stat(bad.length
+      ? ('🔴 枠 ' + bad.join(' ／ '))
+      : (ext.toUpperCase() + ' を ' + list.length + ' 枚 書き出し'));
   });
 }
 document.getElementById('bPNG').onclick = () => exportRaster('image/png', 'png');
@@ -5340,12 +5407,23 @@ document.getElementById('bSVG').onclick = async () => {
   let tmp = null;
   let srcItems = artLayer.children.slice();   // ⚠️ clone は同じ親に挿さるので、先に控えを取る
   if(hasText.length){
-    tmp = srcItems.map(c => c.clone());
-    await outlineTextsIn(tmp);
-    srcItems = tmp;                           // ⭐ 書き出すのは複製のほうだけ
+    /* 🔴⭐ 複製は【1つの束ねに包んでから】アウトライン化する（2026-08-12）。
+       ⚠️ アウトライン化は元の文字を【別のオブジェクトに差し替える】（replaceWith）。
+          複製をバラの配列で持っていると、差し替えられた瞬間に配列は
+          【消えた古い文字】を指したままになる。実際にこうなっていた：
+            ・1字だけ置いた文字（束ねにならず PointText がそのまま並ぶ）を書き出すと
+              その古い文字を掴んで出す ＝ SVG に <text> がそのまま残る
+              （＝Figma で書体が無いと崩れる。グラデなら黒に落ちる）
+            ・差し替えでできた新しいパスは誰も片づけないので、
+              書き出すたびに artLayer に図形が1つずつ増えていた
+       ⭐ 束ねに包めば、中で差し替えが起きても包みは生きている＝掴み直せるし、
+          片づけも包みごと1回で済む。 */
+    tmp = new Group(srcItems.map(c => c.clone()));
+    await outlineTextsIn([tmp]);
+    srcItems = tmp.children.slice();          // ⭐ 差し替えの【あと】の子を取り直す
   }
   const restore = () => {
-    if(tmp) tmp.forEach(c => { try{ c.remove(); }catch(e){} });
+    if(tmp){ try{ tmp.remove(); }catch(e){} }   // ⭐ 包みごと捨てる（残骸を残さない）
   };
   /* 🔴 「以前消したはずの図形が書き出しに入り込む」（2026-08-11 木下の指摘）の正体。
      粒プレビューは【元を隠して】複製を上に置く（it.visible=false / __pvHidden）。
@@ -5358,6 +5436,11 @@ document.getElementById('bSVG').onclick = async () => {
     if(o.children) o.children.slice().forEach(stripHidden);
     if(o.visible === false || o.__pvHidden || o.__isPv){ try{ o.remove(); }catch(e){} }
   };
+  /* 🔴 list は【下の stat でも読む】ので、if の中で作ってはいけない。
+     ⚠️ else の中に const list があり、外の stat が list.length を読んでいた
+        ＝「枠ぜんぶ」で SVG を出すと、3枚とも落ちたあと必ず ReferenceError で止まり、
+          書き出しましたの表示が出ないままだった（画面には何も出ないので気づけない）。 */
+  const list = (what === 'all') ? S.abs : (what === 'sel' ? [] : [abCur()]);
   withCleanView(async done => {
     if(what === 'sel'){
       // ⚠️ ここで selected() を呼んではいけない（上の説明のとおり必ず空になる）
@@ -5375,7 +5458,6 @@ document.getElementById('bSVG').onclick = async () => {
       g.remove();
       dl(new Blob([svg], {type:'image/svg+xml'}), 'sakuji.svg');
     } else {
-      const list = what === 'all' ? S.abs : [abCur()];
       /* 🔴 forEach で一気に dl() を叩いていた＝ブラウザは短時間に続く保存を弾くので、
          「枠ぜんぶ」を選んでも【最初の1枚しか落ちてこない】。
          ⭐ 1枚ずつ間を空けて落とす（ラスタ側は toBlob を await していて元から間が空いていた）。 */
@@ -5607,6 +5689,13 @@ function closeInlineText(commit){
 }
 inlineT?.addEventListener('keydown', e => {
   e.stopPropagation();                        // ツールのショートカットに食われないように
+  /* 🔴⭐ 日本語の変換中の Enter は【変換の確定】であって、打ち込みの確定ではない。
+     木下＝「テキストで漢字変換するとそのままエンターになってるわ、これはやめて」
+     ＝「さくじ」→ Enter で漢字を選んだだけなのに、そこで打ち込みまで終わっていた。
+     ⚠️ 変換中かどうかは isComposing で分かる（Safari 等の古い経路のために keyCode 229 も見る）。
+        Escape も同じで、変換中は【変換の取り消し】なので打ち込みを閉じない。 */
+  const composing = e.isComposing || e.keyCode === 229;
+  if(composing) return;
   if(e.key === 'Enter'){ e.preventDefault(); closeInlineText(true); }
   if(e.key === 'Escape'){ e.preventDefault(); closeInlineText(false); }
 });
@@ -5828,8 +5917,11 @@ function abNudgeBoard(mv){
 function abPasteBoard(c){
   if(!c) return false;
   snapshot();
-  const src = c.a, dx = src.w + 120, dy = 0;        // 右どなりに置く（枠の追加と同じ間合い）
-  const a = { ...JSON.parse(JSON.stringify(src)), name: abName(), x: src.x + dx, y: src.y + dy };
+  /* ⭐ 置き場所は abFreeSpot に一本化＝すでに枠がある所へは重ねない（中身も同じぶんずらす） */
+  const src = c.a;
+  const p = abFreeSpot(src, src.w, src.h);
+  const dx = p.x - src.x, dy = p.y - src.y;
+  const a = { ...JSON.parse(JSON.stringify(src)), name: abName(), x: p.x, y: p.y };
   S.abs.push(a);
   artLayer.activate();
   artLayer.children.forEach(x => x.selected = false);
