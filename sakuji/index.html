@@ -7452,12 +7452,55 @@ function anBoard(){ return S.abs[abPick >= 0 ? abPick : S.abSel] || abCur(); }
 /* ⭐ 流すもの＝【選んでいる粒】。選んでいなければ、選んでいる枠の中の粒ぜんぶ。
    ⚠️ 枠ぜんぶだと数千粒で重い（木下＝「全部がうごいちゃうとかなり重い」）。 */
 function anTargets(){
-  const isGrain = it => !!(it && it.__tzGeom);
+  /* ⭐ 流せるもの＝【帯を持っている束ね】。
+     ⚠️ 「作り方（__tzGeom）を持つ粒だけ」にしていたので、前に保存した JSON から
+        開いた粒（実体だけ）は対象にすらならず「流すものがありません」で終わっていた。
+        ＝木下「すでに作っていた JSON だと無理なのかな？」の正体。 */
+  const isGrain = it => {
+    if(!it || !it.children || !it.children.length) return false;
+    if(it.__tzGeom) return true;
+    return it.children.some(c => c.fillColor && c.fillColor.gradient);
+  };
   const sel = selected().filter(isGrain);
   if(sel.length) return { items: sel, how: '選んだ粒 ' + sel.length + ' 個' };
   const a = anBoard();
   const items = a ? abItemsOf(a).filter(isGrain) : [];
   return { items, how: a ? ('枠 ' + a.name + ' の粒 ' + items.length + ' 個') : '' };
+}
+/* ⭐⭐ 作り方を持たない粒＝【できあがった帯そのものを回す】（2026-08-12）
+   木下＝「すでに作っていた JSON だと無理なのかな？」→ そのとおりだった。
+   ⚠️ 粒は「作り方」を保存に残すようになったが、それ以前に保存されたものや、
+      元の形を覚えていない粒は【実体（矩形＋グラデ）だけ】で開かれる。
+      作り方が無いので tzFillOf を通せない＝流せなかった。
+   ⭐ ただし帯そのものは1粒ずつ持っている（linearGradient のストップ列）。
+      色を offset に沿って ずらして取り直せば、位相を進めたのと同じに見える。
+   ⚠️ 刻み（offset）は動かさない＝帯の細かさは変えない。動かすのは色だけ。
+   ⚠️ 元のストップ列は粒ごとに控える（__anKeep）＝止めたら完全に戻せる。 */
+function anRollOne(c, phase){
+  const f = c.fillColor;
+  if(!f || !f.gradient) return false;
+  let keep = c.__anKeep;
+  if(!keep){
+    const st = f.gradient.stops;
+    if(!st || st.length < 2) return false;
+    keep = c.__anKeep = st.map(s => [s.offset, s.color.toCSS(true)]);
+  }
+  const offs = keep.map(k => k[0]), cols = keep.map(k => tzHexToRgb(k[1]));
+  const at = u => {                                   // 元の列から、その位置の色を引く
+    u = ((u % 1) + 1) % 1;
+    let i = 0; while(i < offs.length - 1 && offs[i+1] < u) i++;
+    const a = offs[i], b = offs[Math.min(i+1, offs.length-1)];
+    const t = (b - a) > 1e-6 ? (u - a) / (b - a) : 0;
+    const ca = cols[i], cb = cols[Math.min(i+1, cols.length-1)];
+    return tzRgbHex([0,1,2].map(k => ca[k] + (cb[k] - ca[k]) * t));
+  };
+  f.gradient.stops = keep.map(([off]) => [at(off + phase), off]);
+  return true;
+}
+function anRoll(g, phase){
+  let hit = 0;
+  for(const c of g.children) if(anRollOne(c, phase)) hit++;
+  return hit > 0;
 }
 function anPaint(phase){
   let n = 0;
@@ -7467,9 +7510,12 @@ function anPaint(phase){
           tzRepaint に「形が違う」と断られて何も起きない（＝押しても動かない）。
           運悪く形だけ合ってしまうと、今度はその粒の色がパネルの値に化ける。 */
     const base = g.__tzO || null;
-    if(!base) continue;                       // ⚠️ 覚えていない粒は【触らない】（勝手に色を変えない）
-    const o = Object.assign({}, base, { shift: (+base.shift || 0) + phase });
-    if(tzRepaint(g, o)) n++;
+    if(base){
+      const o = Object.assign({}, base, { shift: (+base.shift || 0) + phase });
+      if(tzRepaint(g, o)){ n++; continue; }
+    }
+    /* ⭐ 作り方が無い粒（前に保存した JSON から開いたもの）も、帯を回して流す */
+    if(anRoll(g, phase)) n++;
   }
   paper.view.update();
   return n;
@@ -7479,6 +7525,16 @@ function anStop(){
   window.__anOn = false;
   clearTimeout(AN.timer); cancelAnimationFrame(AN.raf);
   anPaint(0);                                 // ⭐ つまみの値で塗り直す＝元の帯へ帰る
+  /* ⚠️ 帯を回した側は、控えておいた列そのものに戻す（補間で戻すと誤差が残る） */
+  for(const g of AN.items){
+    if(!g.children) continue;
+    for(const c of g.children){
+      if(!c.__anKeep) continue;
+      try{ if(c.fillColor && c.fillColor.gradient)
+             c.fillColor.gradient.stops = c.__anKeep.map(([off, col]) => [col, off]); }catch(e){}
+    }
+  }
+  paper.view.update();
   const b = document.getElementById('anGo'); if(b) b.textContent = '流す';
 }
 function anTick(){
@@ -7493,7 +7549,7 @@ function anStart(){
   if(AN.on){ anStop(); stat('止めた — 元の帯に戻した'); return; }
   const { items, how } = anTargets();
   if(!items.length){
-    stat('流すものがありません — 粒を選ぶか、粒のある枠を選んでください（流れるのは粒だけ）');
+    stat('流すものがありません — 帯（グラデ）を持つ粒を選ぶか、粒のある枠を選んでください');
     return;
   }
   AN.items = items; AN.t = 0; AN.on = true; window.__anOn = true;
@@ -7503,10 +7559,10 @@ function anStart(){
      この機能より前に作られた場合）。黙って無反応にせず、どうすれば流せるか出す。 */
   if(!n){
     anStop();
-    stat('この粒はまだ帯の作り方を覚えていません — ページを開き直す（⌘R）と流せます');
+    stat('この粒には流せる帯がありません（単色の粒は流れない）');
     return;
   }
-  stat('流している — ' + how + (n < items.length ? '（' + (items.length - n) + ' 個は開き直すと流せます）' : ''));
+  stat('流している — ' + how + (n < items.length ? '（' + (items.length - n) + ' 個は帯を持っていない）' : ''));
   anTick();
 }
 document.getElementById('anGo')?.addEventListener('click', anStart);
