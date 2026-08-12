@@ -386,6 +386,14 @@
   <div class="grp" id="grp-gang"><label>向き</label><input id="s-gang" type="range" min="0" max="360" value="126"><span class="val" id="v-gang"></span></div>
   <div class="grp"><div class="seg" id="seg-inv"><button data-v="0" class="on">正</button><button data-v="1">反</button></div></div>
   <div class="sep"></div>
+  <!-- ⭐⭐ マス目に落とす（膜 MAKU の粒）── 2026-08-12
+       ⚠️ 上の「粒」「細かさ」は【しきい値のゆらぎ】で別物。こちらは【拾う場所をマス目に丸める】。 -->
+  <div class="grp"><label>マス目</label><input id="s-cell" type="range" min="0" max="100" value="0"><span class="val" id="v-cell"></span></div>
+  <div class="grp" id="grp-cellink"><div class="seg" id="seg-cellink">
+    <button data-v="0">形だけ</button><button data-v="1" class="on">形も色も</button><button data-v="2">色だけ</button></div></div>
+  <div class="grp" id="grp-celljit"><label>ばらつき</label><input id="s-celljit" type="range" min="0" max="100" value="0"><span class="val" id="v-celljit"></span></div>
+  <div class="grp" id="grp-cellasp"><label>マスの形</label><input id="s-cellasp" type="range" min="-100" max="100" value="0"><span class="val" id="v-cellasp"></span></div>
+  <div class="sep"></div>
   <button class="btn mode-seed" id="b-seed">まく</button>
   <button class="btn" id="b-clear">リセット</button>
   <button class="btn" id="b-reroll">替</button>
@@ -465,6 +473,9 @@ const P = {
   grad:0, gAng:2.2, gShape:0, gCx:50, gCy:50, gfollow:0,
   gStops:[[0.14,0.14,1.0],[1,1,1]], ink:[1,1,1], bg:[0,0,0],
   bgGrad:0, bgStops:[[0.05,0.05,0.09],[0.35,0.20,0.45]],
+  /* ⭐ マス目に落とす（2026-08-12・膜 MAKU から）。0＝なし＝これまでどおり。
+     ⚠️ 上の noise（粒）／grain（細かさ）は【しきい値のゆらぎ】で別物。名前を分けてある。 */
+  cell:0, cellInk:1, cellJit:0, cellAsp:0,
 };
 const SIM = 640;
 const EXPORT_RES = 2048;
@@ -573,8 +584,34 @@ const F_DISP = `#version 300 es
 precision highp float; in vec2 vUv; out vec4 o;
 uniform sampler2D uSim,uGradTex,uMask,uGradLUT,uBgLUT; uniform float uThr,uNoise,uDust,uGrainRes,uInvert,uBleed,uOutline,uGrad,uGAng,uGFollow,uMaskOn,uBgGrad;
 uniform vec2 uTexel; uniform vec3 uLo,uHi;
+/* ⭐⭐ マス目に落とす（2026-08-12）── 膜 MAKU の「粒」をそのまま持ってきたもの。
+   ⭐ やっていることは【拾う場所をマス目の中心に丸める】だけ。ここを1回通せば、
+      下流（滲み・しきい・グラデ・地）はぜんぶそのまま粒になる＝式を増やさない。
+   ⚠️ NIJIMI に元からある「粒」「細かさ」は【しきい値のゆらぎ】で、これとは別物。
+      同じ名前で足すと違いが読めなくなるので、まとまりごと分けてある。 */
+uniform float uCell;      // マスの数（0=なし。大きいほど細かい）
+uniform float uCellInk;   // 0=形だけ 1=形も色も 2=色だけ
+uniform float uCellJit;   // ばらつき（マスごとに色を散らす＝ドット感）
+uniform float uCellAsp;   // マスの形（-1=横長 0=正方 +1=縦長）
+float cellRand(vec2 c){ return fract(sin(dot(c, vec2(127.1,311.7))) * 43758.5453); }
 ${HASH}
 void main(){
+  /* ⭐ 場を拾う場所（sUV＝形）と、色を引く場所（gUV）を分ける。
+     🔴 形にかけると字の輪郭が階段になる。輪郭はなめらかのまま塗りだけ粒にしたい時があるので、
+        MAKU と同じく「形だけ／形も色も／色だけ」を選べるようにしてある。 */
+  vec2 sUV=vUv, gUV=vUv; float jit=0.0;
+  if(uCell >= 4.0){
+    vec2 cn = vec2(uCell);
+    // ⚠️ マスの形＝縦のマス数を減らすと1マスが縦に長くなる（0なら正方）
+    if(abs(uCellAsp) > 0.001) cn.y = max(1.0, cn.y * pow(2.0, -uCellAsp*2.0));
+    vec2 cell = floor(vUv*cn);
+    vec2 q = (cell+0.5)/cn;
+    if(uCellInk < 1.5) sUV = q;                     // 0=形だけ / 1=形も色も
+    if(uCellInk > 0.5) gUV = q;                     // 1=形も色も / 2=色だけ
+    /* ⭐ ばらつき ── マス1つごとに色を引く位置をずらす＝隣のマスと違う色が出る。
+       ⚠️ 向きに沿った段だけでは【縞】にしかならない。散らすには向きと無関係に散らす。 */
+    jit = (cellRand(cell)-0.5)*uCellJit;
+  }
   vec2 gp=vUv*uGrainRes;
   float n1=hash(gp),n2=hash(gp*0.41+13.0);
   float noise=n1*0.72+n2*0.28;
@@ -582,15 +619,15 @@ void main(){
   if(uOutline>0.5){               // 線モード：塗りの境界だけを描く（滲み=線の太さ）
     float R=max(uBleed,1.0); float mn=1.0,mx=0.0;
     for(int i=0;i<12;i++){ float a=float(i)/12.0*6.2831853; vec2 d=vec2(cos(a),sin(a))*R*uTexel;
-      float s=texture(uSim,vUv+d).y; mn=min(mn,s); mx=max(mx,s); }
+      float s=texture(uSim,sUV+d).y; mn=min(mn,s); mx=max(mx,s); }
     float th=uThr+(noise-0.5)*uNoise;
     t=step(th,mx)*(1.0-step(th,mn));
   } else {                        // 塗りモード：中身は塗りのまま、縁だけ滲む
     float v;
-    if(uBleed>0.5){ float s=texture(uSim,vUv).y,w=1.0;
+    if(uBleed>0.5){ float s=texture(uSim,sUV).y,w=1.0;
       for(int i=0;i<16;i++){ float a=float(i)/16.0*6.2831853; vec2 d=vec2(cos(a),sin(a))*uBleed*uTexel;
-        s+=texture(uSim,vUv+d).y+texture(uSim,vUv+d*0.5).y; w+=2.0; } v=s/w; }
-    else { v=texture(uSim,vUv).y; }
+        s+=texture(uSim,sUV+d).y+texture(uSim,sUV+d*0.5).y; w+=2.0; } v=s/w; }
+    else { v=texture(uSim,sUV).y; }
     t=step(uThr, v+(noise-0.5)*uNoise);
   }
   float sp=hash(gp*1.93+7.0);
@@ -600,20 +637,22 @@ void main(){
      ⚠️ 干渉は自分の手が入らないモードなので、これが唯一「手」と繋がる道になる。
      型は別テクスチャ（uMask）＝干渉の場を壊さないので、抜くのを切れば元どおり。 */
   if(uMaskOn>0.5){
-    float m=texture(uMask,vUv).g;           // 描いた場の V（塗った所が高い）
+    float m=texture(uMask,sUV).g;           // 描いた場の V（塗った所が高い）
     t *= smoothstep(0.20,0.30,m);           // 字の外は地色のまま
   }
   vec3 inkc=uHi;                            // 塗り/線の色
   if(uGrad>0.5){
     float gg;
     if(uGFollow>0.5){                        // 沿う：線の太さ→中心が明るい立体チューブ状
-      float th2=texture(uSim,vUv).y, w2=1.0;
+      float th2=texture(uSim,gUV).y, w2=1.0;
       for(int i=0;i<16;i++){ float a=float(i)/16.0*6.2831853; vec2 d=vec2(cos(a),sin(a))*28.0*uTexel;
-        th2+=texture(uSim,vUv+d).y; w2+=1.0; }
+        th2+=texture(uSim,gUV+d).y; w2+=1.0; }
       gg=clamp(th2/w2*1.7,0.0,1.0);
     } else {                                 // 囲みごと：連結成分ごとに A→B を正規化（各字が全色域を持つ）
-      gg=texture(uGradTex,vUv).r;
+      gg=texture(uGradTex,gUV).r;
     }
+    // ⭐ ばらつき＝マスごとに色を引く位置を散らす（マス目に落とすが切なら 0＝何も起きない）
+    gg=clamp(gg+jit,0.0,1.0);
     /* ⭐ 色は2色固定をやめ、256×1 の帯（uGradLUT）を1回引くだけにした（2026-08-04）。
        色を何色に増やしてもシェーダは書き換え不要＝JS側で帯を焼き直すだけ。
        ⚠️ テクセルの真ん中を引く＝両端の色がちゃんと端まで出る。 */
@@ -625,8 +664,8 @@ void main(){
   vec3 lo=uLo;
   if(uBgGrad>0.5){
     vec2 gd=vec2(cos(uGAng),sin(uGAng));
-    float bt=dot(vUv-0.5,gd)/max(abs(gd.x)+abs(gd.y),1e-4)+0.5;   // 盤の端から端で 0→1
-    lo=texture(uBgLUT, vec2((clamp(bt,0.0,1.0)*255.0+0.5)/256.0, 0.5)).rgb;
+    float bt=dot(gUV-0.5,gd)/max(abs(gd.x)+abs(gd.y),1e-4)+0.5;   // 盤の端から端で 0→1
+    lo=texture(uBgLUT, vec2((clamp(bt+jit,0.0,1.0)*255.0+0.5)/256.0, 0.5)).rgb;
   }
   vec3 col=mix(lo,inkc,t);
   col*=1.0-(hash(gp*0.83+3.0)-0.5)*0.05;   // 紙のかすかな粒
@@ -840,6 +879,9 @@ function display(fb,res,src){ gl.useProgram(pDisp); gl.bindFramebuffer(gl.FRAMEB
   u1(pDisp,'uGrainRes',300+P.grain*1700); u1(pDisp,'uInvert',P.invert);
   u1(pDisp,'uBleed',P.bleed); u2(pDisp,'uTexel',1/SIM,1/SIM); u1(pDisp,'uOutline',P.outline);
   u1(pDisp,'uGrad',P.grad); u1(pDisp,'uGAng',P.gAng); u1(pDisp,'uGFollow',P.gfollow);
+  /* ⭐ マス目に落とす（膜 MAKU の粒）。⚠️ JS 側に足すだけでなく GLSL の uniform 宣言も要る */
+  u1(pDisp,'uCell',P.cell); u1(pDisp,'uCellInk',P.cellInk);
+  u1(pDisp,'uCellJit',P.cellJit/100); u1(pDisp,'uCellAsp',P.cellAsp/100);
   u3(pDisp,'uLo',P.bg[0],P.bg[1],P.bg[2]); u3(pDisp,'uHi',P.ink[0],P.ink[1],P.ink[2]); draw(); }
 
 /* ── ループ ── */
@@ -963,6 +1005,29 @@ seg('seg-grow','grow',()=>{
   refreshStat(); saveSoon();
 });
 seg('seg-mask','mask',()=>{ uploadMask(); refreshStat(); saveSoon(); });
+seg('seg-cellink','cellInk',()=>{ saveSoon(); });
+/* ⭐ マス目の細かさ ── つまみの目盛り（0-100）と実際のマス数を分ける（MAKU と同じ作法）。
+   ⚠️ 4〜200 をそのまま並べると、よく使う粗い側が左端の 15% に押し込まれて触れない。
+   ⭐ 指数で写す＝粗い側が半分を占める。表示は必ず【実マス数】（数字は嘘をつかない）。 */
+const cellFromSlider = t => t <= 0 ? 0 : Math.round(4 * Math.pow(50, t/100));
+{
+  const el=document.getElementById('s-cell'), vv=document.getElementById('v-cell');
+  const put=()=>{ P.cell = cellFromSlider(+el.value); if(vv) vv.textContent = P.cell>=4 ? P.cell : 'なし';
+    applyCellUI(); };
+  el.addEventListener('input',put); el.addEventListener('change',()=>{ put(); saveSoon(); }); put();
+}
+for(const [id,key,vid] of [['s-celljit','cellJit','v-celljit'],['s-cellasp','cellAsp','v-cellasp']]){
+  const el=document.getElementById(id), vv=document.getElementById(vid);
+  const put=()=>{ P[key]=+el.value; if(vv) vv.textContent=el.value; };
+  el.addEventListener('input',put); el.addEventListener('change',()=>{ put(); saveSoon(); }); put();
+}
+/* ⚠️ マス目が「なし」の間は、下の3つは触れるのに何も起きない＝薄くする
+   （NIJIMI で繰り返し出ている木下の原則。FACET・字の色でも同じことをしている） */
+function applyCellUI(){
+  const on = P.cell >= 4;
+  for(const id of ['grp-cellink','grp-celljit','grp-cellasp'])
+    document.getElementById(id).classList.toggle('dim', !on);
+}
 seg('seg-inv','invert');
 seg('seg-draw','outline');
 // ⭐ 入にした時に1回焼く＝切の間に向きを動かしていても、入れた瞬間その向きになる
