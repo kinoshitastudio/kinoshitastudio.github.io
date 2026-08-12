@@ -7521,14 +7521,34 @@ function anPrep(c){
     cols[i*3] = col.red; cols[i*3+1] = col.green; cols[i*3+2] = col.blue;
   }
   const lut = new Float64Array(AN_LUT * 3);
-  for(let k = 0; k < AN_LUT; k++){
-    const u = k / AN_LUT;
+  /* 🔴⭐⭐ 帯の【末尾だけ】を先頭の色へ寄せて、輪として閉じる（2026-08-12）。
+     木下＝「2秒間に1回カクつきます」＝流れ170 のとき、ちょうど一周する間隔と一致した。
+     ⚠️ 経緯：
+       ① 0〜1 で巻き戻していた → 先頭と末尾の色が違うので、一周ごとに色が【飛ぶ】
+       ② 折り返し（0→1→0）にした → 色は連続になったが、今度は【動きの向きが反転】する。
+          止まって逆流するので、やはり2秒に1回カクついて見える
+       ⭐ ③ 一方向のまま、末尾 15% を先頭の色へ寄せて閉じる。
+          ・行き止まりが無いので向きは反転しない
+          ・端で色が飛ばない（C(1) が C(0) に一致する）
+          ・変わるのは【末尾 15% だけ】＝帯の大半は元のまま
+          ⚠️ しかもこれは【流しているあいだだけ】。止めれば焼く前の数値に戻す。 */
+  const SEAM = 0.15;
+  const pick = (u) => {
     let i = 0; while(i < n - 1 && offs[i+1] < u) i++;
     const j = Math.min(i + 1, n - 1);
     const a = offs[i], b = offs[j];
     const t = (b - a) > 1e-6 ? (u - a) / (b - a) : 0;
-    for(let ch = 0; ch < 3; ch++)
-      lut[k*3+ch] = cols[i*3+ch] + (cols[j*3+ch] - cols[i*3+ch]) * t;
+    return [0,1,2].map(ch => cols[i*3+ch] + (cols[j*3+ch] - cols[i*3+ch]) * t);
+  };
+  const head = pick(0);
+  for(let k = 0; k < AN_LUT; k++){
+    const u = k / AN_LUT;
+    const c = pick(u);
+    if(u > 1 - SEAM){
+      const t = (u - (1 - SEAM)) / SEAM;            // 末尾へ行くほど先頭の色へ
+      for(let ch = 0; ch < 3; ch++) c[ch] = c[ch] + (head[ch] - c[ch]) * t;
+    }
+    for(let ch = 0; ch < 3; ch++) lut[k*3+ch] = c[ch];
   }
   /* ⭐ 粒ごとに速さをほんの少しだけ変える（±12%）。
      ⚠️ 全部が同じ速さだと、折り返しが【一斉に】起きて画面全体が波打って見える。
@@ -7544,14 +7564,9 @@ function anRollOne(c, phase){
   const { offs, lut, stops, spd } = K;
   const ph = phase * (spd || 1);
   for(let i = 0; i < stops.length; i++){
-    /* 🔴⭐ 端で色が飛ぶのを止める（木下＝「違和感あるループをする／かくつく」）。
-       ⚠️ 帯は【粒の中で完結】しているので、先頭と末尾の色が違う。
-          実測＝先頭と末尾の色差は平均 0.1〜0.48（最大 0.83）。
-          0〜1 で巻き戻していたので、一周するたびにその差だけ【飛んで】いた。
-       ⭐ 折り返す（0→1→0）＝色は必ず連続。TSUBU の帯は cos なので折り返しても自然。 */
+    /* ⭐ 一方向に流す（輪は上の LUT で閉じてある＝端で飛ばない） */
     let u = offs[i] + ph;
-    u = u - Math.floor(u / 2) * 2;                    // 0〜2 に畳む
-    if(u > 1) u = 2 - u;                              // 折り返す
+    u -= Math.floor(u);
     const o = (Math.min(AN_LUT - 1, (u * AN_LUT) | 0)) * 3;
     const col = stops[i].color;
     col.red = lut[o]; col.green = lut[o+1]; col.blue = lut[o+2];
