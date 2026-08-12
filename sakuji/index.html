@@ -241,7 +241,16 @@
   .lay-item .abbadge{ flex:0 0 auto; margin:0 6px; padding:1px 5px; border-radius:3px;
     font-size:9px; letter-spacing:.06em; font-family:ui-monospace,Menlo,monospace;
     color:#fff; background:#5b6070 }
-  .lay-item .abbadge.out{ background:none; color:var(--dim); border:1px solid var(--line) }
+  .abbadge.out{ background:none !important; color:var(--dim); border:1px solid var(--line) }
+  /* ⭐ 枠の見出し（開閉できる親）。中の行は一段下げて、どこまでが枠の中か目で追えるようにする */
+  .lay-head{ display:flex; align-items:center; gap:2px; padding:5px 6px; cursor:pointer;
+    border-radius:4px; user-select:none; opacity:.9 }
+  .lay-head:hover{ background:rgba(120,120,128,.14) }
+  .lay-head.pick{ background:rgba(74,158,255,.18) }
+  .lay-head .tw{ width:14px; text-align:center; opacity:.7; cursor:pointer }
+  .lay-head .nm{ flex:1; font-size:10px; opacity:.55; overflow:hidden; white-space:nowrap }
+  .lay-head .cnt{ font-size:10px; opacity:.5; padding-right:4px }
+  .lay-head + .lay-item, .lay-item{ margin-left:14px }
   .lay-item .ic{ opacity:.5; font-size:10px; padding:0 1px }
   .lay-item .ic:hover{ opacity:1 }
   .lay-head{ cursor:move; user-select:none }
@@ -4007,10 +4016,56 @@ function swatchOf(it){
   if(c.type === 'gradient') return 'linear-gradient(135deg,#fff,#555,#fff)';
   return c.toCSS ? c.toCSS(true) : '#888';
 }
+/* ⭐⭐ レイヤーを【枠ごとの入れ子】にする（木下＝「Figma やイラレと同じように開閉」2026-08-12）。
+   ⚠️ 行の並びは artLayer の重なり順そのものなので、枠でまとめると
+      上下の入れ替えが「隣の行と入れ替わる」に見えなくなる。
+      ⭐ だから上下ボタンも【同じ枠の中の隣】と入れ替えるように直してある（layUp / layDown）。
+   ⚠️ 枠に入っていないものは最後に「枠外」としてまとめる＝書き出しに乗らないものが埋もれない。 */
+const abOpen = {};                                  // 枠ごとの開閉。既定は開いている
+function abIndexOf(it){
+  if(!it || !it.bounds) return -1;
+  for(let i = 0; i < S.abs.length; i++) if(abRectOf(S.abs[i]).contains(it.bounds.center)) return i;
+  return -1;
+}
 function renderLayers(){
   if(!layersEl.classList.contains('open')) return;
   layList.innerHTML = '';
-  [...artLayer.children].reverse().forEach(it => {
+  /* 枠ごとに仕分ける。中の並びは【重なり順のまま】（上が前面） */
+  const all = [...artLayer.children].reverse();
+  const buckets = S.abs.map(() => []);
+  const outside = [];
+  all.forEach(it => { const i = abIndexOf(it); if(i >= 0) buckets[i].push(it); else outside.push(it); });
+  const groups = S.abs.map((a, i) => ({ key: 'ab' + i, name: a.name, sub: a.w + ' × ' + a.h,
+                                        color: abColorOf(i), items: buckets[i], i }))
+                      .concat(outside.length ? [{ key:'out', name:'枠外', sub: outside.length + ' 個',
+                                                  color:null, items: outside, i:-1 }] : []);
+  groups.forEach(g => {
+    if(abOpen[g.key] === undefined) abOpen[g.key] = true;
+    const head = document.createElement('div');
+    head.className = 'lay-head' + (abOpen[g.key] ? ' open' : '') + (g.i >= 0 && g.i === abPick ? ' pick' : '');
+    head.innerHTML =
+      `<span class="tw">${abOpen[g.key] ? '▾' : '▸'}</span>` +
+      (g.color ? `<span class="abbadge" style="background:${g.color}">${g.name}</span>`
+               : `<span class="abbadge out">${g.name}</span>`) +
+      `<span class="nm">${g.sub}</span>` +
+      `<span class="cnt">${g.items.length}</span>`;
+    head.addEventListener('click', e => {
+      if(e.target.classList.contains('tw')){ abOpen[g.key] = !abOpen[g.key]; renderLayers(); return; }
+      // ⭐ 見出しを押したら、その枠を選ぶ（盤面のラベルを押したのと同じ）
+      if(g.i >= 0){
+        abPick = g.i; S.abSel = g.i;
+        artLayer.children.forEach(c => c.selected = false);
+        abSync(); guides(); renderLayers();
+      } else { abOpen[g.key] = !abOpen[g.key]; renderLayers(); }
+    });
+    layList.appendChild(head);
+    if(!abOpen[g.key]) return;
+    g.items.forEach(it => layRow(it, layList));
+  });
+  syncLayerOpacity();
+}
+function layRow(it, host){
+  {
     const row = document.createElement('div');
     row.className = 'lay-item' + (it.selected ? ' on' : '')
       + (it.locked ? ' locked' : '') + (it.visible ? '' : ' hidden');
@@ -4021,7 +4076,7 @@ function renderLayers(){
       /* ⭐ どの枠に入っているかを出す（木下＝「レイヤー上でもボードないなどは表現できた方が」）。
          ⚠️ 行の並び順は【重なり順】そのものなので、枠でまとめ直すと上下の入れ替えが嘘になる。
             だから並べ替えず、バッジだけ添える。枠の外なら「—」。 */
-      abBadgeOf(it) +
+      /* ⚠️ 枠のバッジは見出しに移した＝行では出さない（同じことを二度言わない） */
       `<span class="ic" data-a="lock" title="ロック">${it.locked ? '🔒' : '🔓'}</span>`;
     row.addEventListener('click', e => {
       const a = e.target.dataset.a;
@@ -4033,12 +4088,12 @@ function renderLayers(){
       }
       if(it.locked){ stat('ロック中（🔓で解除）'); return; }
       if(!e.shiftKey) artLayer.children.forEach(c => c.selected = false);
+      abPick = -1;                              // ⭐ 図形を選んだら枠の選択は外す
       it.selected = true; setTool('select'); guides(); renderLayers(); reportSel();
       syncLayerOpacity();
     });
-    layList.appendChild(row);
-  });
-  syncLayerOpacity();
+    host.appendChild(row);
+  }
 }
 /* 選択中の不透明度をパネルに反映 */
 function syncLayerOpacity(){
@@ -4111,10 +4166,25 @@ function layToggle(open){
 }
 document.getElementById('layOpen').onclick  = () => layToggle(true);
 document.getElementById('layClose').onclick = () => layToggle(false);
-document.getElementById('layUp').onclick   = () => { snapshot(); selected().forEach(it=>{
-  const i = it.index; if(i < artLayer.children.length-1) it.insertAbove(artLayer.children[i+1]); }); renderLayers(); };
-document.getElementById('layDown').onclick = () => { snapshot(); selected().forEach(it=>{
-  const i = it.index; if(i > 0) it.insertBelow(artLayer.children[i-1]); }); renderLayers(); };
+/* ⭐ 上下は【同じ枠の中の隣】と入れ替える。
+   🔴 レイヤーを枠ごとの入れ子にしたので、素直に artLayer の隣と入れ替えると
+      画面では2つ3つ飛んだり、別の枠の行を飛び越えたように見える＝表示と挙動がずれる。
+   ⚠️ 同じ枠に隣がいなければ何もしない（枠から出してしまわない）。 */
+function layMove(dir){
+  snapshot();
+  const sel = selected(); if(!sel.length){ stat('選択されていません'); return; }
+  sel.forEach(it => {
+    const my = abIndexOf(it);
+    const sib = artLayer.children.filter(c => abIndexOf(c) === my);
+    const k = sib.indexOf(it);
+    const t = sib[k + dir];
+    if(!t) return;
+    dir > 0 ? it.insertAbove(t) : it.insertBelow(t);
+  });
+  renderLayers();
+}
+document.getElementById('layUp').onclick   = () => layMove(1);
+document.getElementById('layDown').onclick = () => layMove(-1);
 document.getElementById('layDup').onclick  = () => { document.getElementById('bDup').click(); renderLayers(); };
 document.getElementById('layDel').onclick  = () => delSelected();
 /* ⭐ 選んだものを消す。⚠️ 何も選んでいないときは黙って終わらせず、理由を出す */
