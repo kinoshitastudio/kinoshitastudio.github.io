@@ -1511,19 +1511,11 @@
           止めれば必ず元の位置へ帰る。
        ⚠️ 既存のブロックは1行も動かしていない（ここに足しただけ）。 -->
   <h2>アニメーション</h2>
-  <div class="note">選んでいる枠の中だけが動く。止めると元に戻る（書き出し・保存には入らない）</div>
-  <div class="seg" id="anMode">
-    <button data-v="0" class="on">積もる</button>
-    <button data-v="1">集まる</button>
-    <button data-v="2">漂う</button>
-  </div>
-  <div class="row"><label>流れ</label><input type="range" id="anFlow" min="1" max="100" step="1" value="64"><span class="val"></span></div>
-  <div class="row"><label>重力</label><input type="range" id="anGrav" min="0" max="100" step="1" value="60"><span class="val"></span></div>
+  <div class="note">選んだ粒の帯が流れる。粒は動かない（＝形も位置も変わらない）</div>
+  <div class="row"><label>流れ</label><input type="range" id="anFlow" min="0" max="300" step="1" value="60"><span class="val"></span></div>
   <div class="row"><label>FPS</label><input type="range" id="anFps" min="4" max="60" step="1" value="30"><span class="val"></span></div>
-  <div class="row"><label>溶け</label><input type="range" id="anMelt" min="0" max="100" step="1" value="8"><span class="val"></span></div>
-  <button class="btn pri" id="anGo">崩す</button>
-  <button class="btn" id="anBack">戻す</button>
-  <div class="note">崩す＝選んだ枠の中が動きだす（もう一度押すと止まる）<br>戻す＝止めて、元の場所へ帰す<br>FPS を下げるほどゲームの時間になる</div>
+  <button class="btn pri" id="anGo">流す</button>
+  <div class="note">選んでいなければ、選んでいる枠の粒ぜんぶ<br>止めると元の帯へ帰る（書き出し・保存には入らない）<br>動きは画面録画で撮る</div>
 
   <!-- ⭐ MODE をここ（いちばん下）へ移した（2026-07-31 木下の指示）。
        ⚠️ 効くのは【ペンで閉じていないパスを確定したとき】だけで、閉じたパスには関係ない。
@@ -6665,6 +6657,13 @@ function tsubuize(item, o, geom){
   //   ⚠️ ここ（作る場所）で持たせる。呼び出しが5箇所あるので、外で足すと必ずどこかで漏れる。
   //   これがあるので、保存では【粒の実体を持たずに作り方だけ】残せる。
   if(typeof tzSettingsSnapshot === 'function') g.__tzOpt = tzSettingsSnapshot();
+  /* ⭐ かけたときの【塗りの設定そのもの】も持たせる（2026-08-12）。
+     ⚠️ 上の __tzOpt は「パネルに戻すための控え（ranges / segs / cols）」であって、
+        tzFillOf に渡せる形ではない（res も gap も入っていない）。
+        アニメーションで塗り直すときにこれを渡していて、tzRepaint に
+        「形が違う」と断られていた＝【押しても何も起きない】。
+     ⭐ こちらは o をそのまま覚えるので、同じ見え方のまま位相だけ進められる。 */
+  g.__tzO = o;
   /* ⭐⭐ 作った直後の【素の大きさ】を覚える。
      ⚠️ 粒の bounds は解像を変えるだけでも変わる（粒のはみ出しぶん）。これが無いと
        「木下が変えた倍率」と「解像による差」を区別できず、作り直しで大きさが元へ戻る。
@@ -7434,165 +7433,85 @@ const I18N = {
 setTool(S.tool);
 
 /* ══════════════════════════════════════════════════════════════
-   ⭐⭐ アニメーション（2026-08-12）
+   ⭐⭐ アニメーション ── 帯を流す（2026-08-12）
    木下＝「tsubu の流れのように選択したフレームだけアニメーション」
-        「全部がうごいちゃうとかなり重いので選択してアニメーションできたらいいね」
-        「スクリーンレコーダーで動きはとるので大丈夫」
+        「TSUBU は字なりかずれの調整でアニメーションできてるよね」
+        「溶けや重力はいらないよ。ほしいのは流れだけ」
 
-   ⭐ 動きの式は TSUBU からそのまま持ってきた（推測で書かない）。
-      積もる＝砂（真下が空なら落ちる／詰まったら斜めに逃げる＝山ができる／
-              逃げ場が無くても静止した粒とは入れ替わって沈める＝溶け）
-      集まる＝中心のまわりの環へ寄り直す（渦）
-      漂う  ＝元の場所のまわりで揺れる
-   ⚠️ TSUBU は【整数の格子】で動かしている。SAKUJI の粒は世界座標の矩形なので、
-      いったん格子（1マス＝粒の大きさ）に写して動かし、毎フレーム位置だけ書き戻す。
-   ⚠️ ここは【見せるだけ】＝崩している間は自動保存を止める（崩れた位置を作品として
-      上書きしない）。「戻す」で必ず元の場所へ帰る。崩す直前に snapshot も積むので
-      ⌘Z でも帰れる（戻す道は2本）。
+   🔴 最初は TSUBU の「崩す」（砂が積もる物理）を移したが、それは的外れだった。
+      TSUBU で【動きの正体】と書いてあるのは「流れ」＝ gflow で、粒は1つも動かない。
+      動いているのは【波の位相】＝ SAKUJI の tzFillOf にある o.shift（ずれ）。
+   ⭐ だからここは位相を進めて【塗りだけ差し替える】。
+      ・式は tzFillOf 1本のまま（アニメ用の式を別に持たない）
+      ・形（tzGeom）は作り直さないので軽い（塗りの差し替えだけ＝12ms の道）
+      ・粒の位置も大きさも1つも変わらない＝作り込んだものを崩さない
+   ⚠️ 止めたら、つまみの値でもう一度塗り直して元の帯へ帰す。
    ══════════════════════════════════════════════════════════════ */
-const AN = { on:false, dots:[], W:1, H:1, cell:1, x0:0, y0:0, t:0, grid:null, timer:0, raf:0 };
-function anParams(){
-  const g = id => +(document.getElementById(id)?.value || 0);
-  return { mode:+(document.querySelector('#anMode button.on')?.dataset.v || 0),
-           flow:g('anFlow'), grav:g('anGrav'), fps:Math.max(4, g('anFps')), melt:g('anMelt') };
-}
+const AN = { on:false, items:[], t:0, timer:0, raf:0 };
 function anBoard(){ return S.abs[abPick >= 0 ? abPick : S.abSel] || abCur(); }
-/* ⭐ 動かす対象＝【選んでいる図形】。選んでいなければ、選んでいる枠の中身。
-   ⚠️ 枠ぜんぶだと粒が数千になって重い（木下の指摘）。選べば必要なぶんだけ動く。 */
+/* ⭐ 流すもの＝【選んでいる粒】。選んでいなければ、選んでいる枠の中の粒ぜんぶ。
+   ⚠️ 枠ぜんぶだと数千粒で重い（木下＝「全部がうごいちゃうとかなり重い」）。 */
 function anTargets(){
-  const sel = selected();
-  if(sel.length) return { items: sel, how: '選んだ ' + sel.length + ' 個' };
+  const isGrain = it => !!(it && it.__tzGeom);
+  const sel = selected().filter(isGrain);
+  if(sel.length) return { items: sel, how: '選んだ粒 ' + sel.length + ' 個' };
   const a = anBoard();
-  return { items: a ? abItemsOf(a) : [], how: a ? ('枠 ' + a.name + ' の中身') : '' };
+  const items = a ? abItemsOf(a).filter(isGrain) : [];
+  return { items, how: a ? ('枠 ' + a.name + ' の粒 ' + items.length + ' 個') : '' };
 }
-function anBuild(){
-  const a = anBoard(); if(!a) return null;
-  const R = abRectOf(a);
-  const { items, how } = anTargets();
-  /* ⭐ 粒（束ね）は【1粒ずつ】動かす。粒でないものは、その図形まるごとで1粒ぶん。 */
-  const parts = [];
-  items.forEach((it, gi) => {
-    if(it.children && it.children.length) it.children.forEach(c => parts.push({ it:c, ci:gi }));
-    else parts.push({ it, ci:gi });
-  });
-  if(!parts.length) return null;
-  // 1マスの大きさ＝粒の幅の【中央値】（平均だと大きい図形1つに引きずられる）
-  const ws = parts.map(p => Math.max(1, p.it.bounds.width)).sort((x,y) => x - y);
-  const cell = Math.max(1, ws[Math.floor(ws.length/2)]);
-  const W = Math.max(1, Math.round(R.width / cell)), H = Math.max(1, Math.round(R.height / cell));
-  const P = anParams();
-  const dots = parts.map((p, i) => {
-    const c = p.it.bounds.center;
-    const x = Math.max(0, Math.min(W-1, Math.round((c.x - R.x)/cell - 0.5)));
-    const y = Math.max(0, Math.min(H-1, Math.round((c.y - R.y)/cell - 0.5)));
-    return { it:p.it, ci:p.ci, x, y, hx:x, hy:y,
-             home:p.it.position.clone(),          // ⭐ 元の場所（戻すのはこれ）
-             live:true, seed:(i % 97)/97,
-             melt: Math.round(P.melt/100 * H), meltY: H };
-  });
-  Object.assign(AN, { dots, W, H, cell, x0:R.x, y0:R.y, t:0, grid:new Int32Array(W*H) });
-  return { n: dots.length, how };
-}
-function anStep(P){
-  const G = P.grav / 100, dots = AN.dots, W = AN.W, H = AN.H, grid = AN.grid;
-  const idx = (x,y) => y*W + x;
-  if(P.mode === 0){
-    /* ── 積もる ⚠️ 落ちている途中の粒も格子に入れないと、全員が素通しで
-       いちばん下に重なるだけで「積もらない」（TSUBU で分かっていること） */
-    grid.fill(-1);
-    for(let i=0;i<dots.length;i++) grid[idx(dots[i].x, dots[i].y)] = i;
-    const order = dots.map((_,i)=>i).sort((a,b)=>dots[b].y - dots[a].y);   // 下にいる粒から
-    for(const i of order){
-      const d = dots[i]; if(!d.live) continue;
-      const ny = d.y + 1;
-      if(ny >= H){ d.live = false; continue; }                       // 底に着いた
-      if(grid[idx(d.x, ny)] < 0){                                    // 真下が空 → 落ちる
-        grid[idx(d.x, d.y)] = -1; d.y = ny; grid[idx(d.x, ny)] = i; continue;
-      }
-      const dir = Math.random() < 0.5 ? -1 : 1;                      // 詰まった → 斜めに逃げる＝山
-      let moved = false;
-      for(const s of [dir, -dir]){
-        const nx = d.x + s;
-        if(nx >= 0 && nx < W && grid[idx(nx, ny)] < 0){
-          grid[idx(d.x, d.y)] = -1; d.x = nx; d.y = ny; grid[idx(nx, ny)] = i; moved = true; break;
-        }
-      }
-      /* ⭐ 溶け＝逃げ場が無くても、下にいるのが【もう静止した粒】なら入れ替わって沈む。
-         ⚠️ 無制限に沈めると全部いちばん下へ行くだけなので、粒ごとに回数を持たせる。 */
-      if(!moved && d.melt > 0 && ny < d.meltY){
-        const bi = grid[idx(d.x, ny)], b = bi >= 0 ? dots[bi] : null;
-        if(b && !b.live){
-          d.melt--; grid[idx(d.x, d.y)] = bi; grid[idx(d.x, ny)] = i;
-          b.x = d.x; b.y = d.y; d.y = ny; moved = true;
-        }
-      }
-      if(!moved) d.live = false;                                     // 逃げ場なし → 静止
-    }
-  } else if(P.mode === 1){
-    // ── 集まる ── 中心のまわりの環へ寄り直す（束ねごとに別の環＝ci）
-    const cx = W/2, cy = H/2;
-    for(const d of dots){
-      const a = Math.atan2(d.y - cy, d.x - cx), r = Math.hypot(d.x - cx, d.y - cy);
-      const tr = 6 + (d.ci % 5) * 5 + Math.sin(AN.t * 0.03 + d.seed * 6.28) * 3;
-      const na = a + 0.10 * G, nr = r + (tr - r) * 0.06 * (0.4 + G);
-      d.x = Math.max(0, Math.min(W-1, Math.round(cx + Math.cos(na) * nr)));
-      d.y = Math.max(0, Math.min(H-1, Math.round(cy + Math.sin(na) * nr)));
-    }
-  } else {
-    // ── 漂う ── 元の場所のまわりで揺れる
-    for(const d of dots){
-      d.x = Math.max(0, Math.min(W-1, Math.round(d.hx + Math.sin(AN.t*0.02 + d.seed*6.28) * 6 * G)));
-      d.y = Math.max(0, Math.min(H-1, Math.round(d.hy + Math.cos(AN.t*0.017 + d.seed*9.1) * 6 * G)));
-    }
+function anPaint(phase){
+  let n = 0;
+  for(const g of AN.items){
+    /* 🔴⭐ 設定は【その粒がかけられたときのもの】（__tzO）を使う。
+       ⚠️ パネルにいま出ている値で塗り直すと、別の設定でかけた粒は
+          tzRepaint に「形が違う」と断られて何も起きない（＝押しても動かない）。
+          運悪く形だけ合ってしまうと、今度はその粒の色がパネルの値に化ける。 */
+    const base = g.__tzO || null;
+    if(!base) continue;                       // ⚠️ 覚えていない粒は【触らない】（勝手に色を変えない）
+    const o = Object.assign({}, base, { shift: (+base.shift || 0) + phase });
+    if(tzRepaint(g, o)) n++;
   }
-  AN.t++;
-}
-function anPaint(){
-  const { dots, cell, x0, y0 } = AN;
-  for(const d of dots) d.it.position = new Point(x0 + (d.x + 0.5)*cell, y0 + (d.y + 0.5)*cell);
   paper.view.update();
-}
-function anTick(){
-  if(!AN.on) return;
-  const P = anParams();
-  const steps = Math.max(1, Math.round(P.flow / 25));     // 流れ＝1コマで進める歩数
-  for(let i=0;i<steps;i++) anStep(P);
-  anPaint();
-  AN.timer = setTimeout(() => { AN.raf = requestAnimationFrame(anTick); }, 1000 / P.fps);
+  return n;
 }
 function anStop(){
   AN.on = false;
-  window.__anOn = false;          // ⭐ 自動保存の凍結を解く（下の autoSave が見ている）
+  window.__anOn = false;
   clearTimeout(AN.timer); cancelAnimationFrame(AN.raf);
-  const b = document.getElementById('anGo'); if(b) b.textContent = '崩す';
+  anPaint(0);                                 // ⭐ つまみの値で塗り直す＝元の帯へ帰る
+  const b = document.getElementById('anGo'); if(b) b.textContent = '流す';
+}
+function anTick(){
+  if(!AN.on) return;
+  const g = id => +(document.getElementById(id)?.value || 0);
+  const flow = g('anFlow'), fps = Math.max(4, g('anFps'));
+  AN.t += flow / 100 * 0.02;                  // ⭐ TSUBU と同じ「流れ÷100」の刻み
+  anPaint(AN.t);
+  AN.timer = setTimeout(() => { AN.raf = requestAnimationFrame(anTick); }, 1000 / fps);
 }
 function anStart(){
-  if(AN.on){ anStop(); stat('止めた — 「戻す」で元の場所へ帰る'); return; }
-  const built = anBuild();
-  if(!built){ stat('動かすものがありません — 図形を選ぶか、中身のある枠を選んでください'); return; }
-  /* ⚠️ 崩す【直前】に控える（あとで積むと崩れた形が積まれて戻らない） */
-  snapshot();
-  AN.on = true;
-  window.__anOn = true;           // ⭐ 動かしている間は自動保存を止める（崩れた位置を保存しない）
+  if(AN.on){ anStop(); stat('止めた — 元の帯に戻した'); return; }
+  const { items, how } = anTargets();
+  if(!items.length){
+    stat('流すものがありません — 粒を選ぶか、粒のある枠を選んでください（流れるのは粒だけ）');
+    return;
+  }
+  AN.items = items; AN.t = 0; AN.on = true; window.__anOn = true;
   const b = document.getElementById('anGo'); if(b) b.textContent = '止める';
-  stat('アニメーション — ' + built.how + '／' + built.n + ' 粒'
-       + (built.n > 2000 ? '（多いので重い：図形を選ぶと軽くなる）' : ''));
+  const n = anPaint(0);
+  /* ⚠️ かけたときの設定を覚えていない粒は流せない（＝いま画面にある粒が、
+     この機能より前に作られた場合）。黙って無反応にせず、どうすれば流せるか出す。 */
+  if(!n){
+    anStop();
+    stat('この粒はまだ帯の作り方を覚えていません — ページを開き直す（⌘R）と流せます');
+    return;
+  }
+  stat('流している — ' + how + (n < items.length ? '（' + (items.length - n) + ' 個は開き直すと流せます）' : ''));
   anTick();
 }
-function anBack(){
-  anStop();
-  AN.dots.forEach(d => { try{ d.it.position = d.home; }catch(e){} });
-  paper.view.update(); guides();
-  stat(AN.dots.length ? '元の場所に戻した' : '戻すものがありません');
-}
 document.getElementById('anGo')?.addEventListener('click', anStart);
-document.getElementById('anBack')?.addEventListener('click', anBack);
-document.querySelectorAll('#anMode button').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('#anMode button').forEach(x => x.classList.toggle('on', x === b));
-  if(AN.on){ anStop(); anStart(); }             // ⭐ 動かしている最中に選び直したら、その動きへ切り替える
-}));
 /* ⚠️ bindRange は登録のときに1回 sync() を呼ぶ＝ここで const を作らない（TDZ で起動が止まる） */
-['anFlow','anGrav','anFps','anMelt'].forEach(id => bindRange(id, () => {}));
+['anFlow','anFps'].forEach(id => bindRange(id, () => {}));
 
 </script>
 </body>
