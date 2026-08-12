@@ -7500,26 +7500,58 @@ function anTargets(){
       色を offset に沿って ずらして取り直せば、位相を進めたのと同じに見える。
    ⚠️ 刻み（offset）は動かさない＝帯の細かさは変えない。動かすのは色だけ。
    ⚠️ 元のストップ列は粒ごとに控える（__anKeep）＝止めたら完全に戻せる。 */
-function anRollOne(c, phase){
+const AN_LUT = 256;
+/* ⭐ 下ごしらえ（粒ごとに1回だけ）＝元の帯を 256 段の表に焼く。
+   🔴 前は毎コマ ①配列を作り直し ②色を文字列にして ③stops を丸ごと差し替え ていた。
+      実測＝枠05（5616粒）で【1コマ 122ms】＝ FPS を上げても滑らかにならない
+      （画面の描き直しは 7.6ms なので、重いのは色の作り直しの方）。
+      ＝木下「過去の json のは流れと FPS が少し重いね」
+   ⭐ 焼いた表から引いて【いまある色の数値を書き換える】だけにする。
+      stops の作り直しも、文字列の行き来も通らない。 */
+function anPrep(c){
   const f = c.fillColor;
-  if(!f || !f.gradient) return false;
-  let keep = c.__anKeep;
-  if(!keep){
-    const st = f.gradient.stops;
-    if(!st || st.length < 2) return false;
-    keep = c.__anKeep = st.map(s => [s.offset, s.color.toCSS(true)]);
+  if(!f || !f.gradient) return null;
+  const st = f.gradient.stops;
+  if(!st || st.length < 2) return null;
+  const n = st.length;
+  const offs = new Float64Array(n), cols = new Float64Array(n * 3);
+  for(let i = 0; i < n; i++){
+    offs[i] = st[i].offset;
+    const col = st[i].color;
+    cols[i*3] = col.red; cols[i*3+1] = col.green; cols[i*3+2] = col.blue;
   }
-  const offs = keep.map(k => k[0]), cols = keep.map(k => tzHexToRgb(k[1]));
-  const at = u => {                                   // 元の列から、その位置の色を引く
-    u = ((u % 1) + 1) % 1;
-    let i = 0; while(i < offs.length - 1 && offs[i+1] < u) i++;
-    const a = offs[i], b = offs[Math.min(i+1, offs.length-1)];
+  const lut = new Float64Array(AN_LUT * 3);
+  for(let k = 0; k < AN_LUT; k++){
+    const u = k / AN_LUT;
+    let i = 0; while(i < n - 1 && offs[i+1] < u) i++;
+    const j = Math.min(i + 1, n - 1);
+    const a = offs[i], b = offs[j];
     const t = (b - a) > 1e-6 ? (u - a) / (b - a) : 0;
-    const ca = cols[i], cb = cols[Math.min(i+1, cols.length-1)];
-    return tzRgbHex([0,1,2].map(k => ca[k] + (cb[k] - ca[k]) * t));
-  };
-  f.gradient.stops = keep.map(([off]) => [at(off + phase), off]);
+    for(let ch = 0; ch < 3; ch++)
+      lut[k*3+ch] = cols[i*3+ch] + (cols[j*3+ch] - cols[i*3+ch]) * t;
+  }
+  return (c.__anKeep = { offs, cols, lut, stops: st });
+}
+function anRollOne(c, phase){
+  const K = c.__anKeep || anPrep(c);
+  if(!K) return false;
+  const { offs, lut, stops } = K;
+  for(let i = 0; i < stops.length; i++){
+    let u = offs[i] + phase; u -= Math.floor(u);      // 0〜1 に巻き戻す
+    const o = ((u * AN_LUT) | 0) * 3;
+    const col = stops[i].color;
+    col.red = lut[o]; col.green = lut[o+1]; col.blue = lut[o+2];
+  }
   return true;
+}
+/* ⭐ 止めたとき用＝焼く前の数値そのものに戻す（補間で戻すと誤差が残る） */
+function anRestoreOne(c){
+  const K = c.__anKeep;
+  if(!K) return;
+  for(let i = 0; i < K.stops.length; i++){
+    const col = K.stops[i].color;
+    col.red = K.cols[i*3]; col.green = K.cols[i*3+1]; col.blue = K.cols[i*3+2];
+  }
 }
 function anRoll(g, phase){
   let hit = 0;
@@ -7549,14 +7581,10 @@ function anStop(){
   window.__anOn = false;
   clearTimeout(AN.timer); cancelAnimationFrame(AN.raf);
   anPaint(0);                                 // ⭐ つまみの値で塗り直す＝元の帯へ帰る
-  /* ⚠️ 帯を回した側は、控えておいた列そのものに戻す（補間で戻すと誤差が残る） */
+  /* ⚠️ 帯を回した側は、焼く前の数値そのものに戻す */
   for(const g of AN.items){
     if(!g.children) continue;
-    for(const c of g.children){
-      if(!c.__anKeep) continue;
-      try{ if(c.fillColor && c.fillColor.gradient)
-             c.fillColor.gradient.stops = c.__anKeep.map(([off, col]) => [col, off]); }catch(e){}
-    }
+    for(const c of g.children) anRestoreOne(c);
   }
   paper.view.update();
   const b = document.getElementById('anGo'); if(b) b.textContent = '流す';
@@ -7565,7 +7593,13 @@ function anTick(){
   if(!AN.on) return;
   const g = id => +(document.getElementById(id)?.value || 0);
   const flow = g('anFlow'), fps = Math.max(4, g('anFps'));
-  AN.t += flow / 100 * 0.02;                  // ⭐ TSUBU と同じ「流れ÷100」の刻み
+  /* ⭐ 進み方は【経過時間】で決める。
+     ⚠️ コマ数で足していたので、粒が多くてコマが落ちると【流れそのものが遅く】なった。
+        時間で決めれば、重い枠でも速さは変わらない（滑らかさだけが変わる）。 */
+  const now = performance.now();
+  const dt = Math.min(0.25, (now - (AN.last || now)) / 1000);
+  AN.last = now;
+  AN.t += flow / 100 * 0.6 * dt;
   anPaint(AN.t);
   AN.timer = setTimeout(() => { AN.raf = requestAnimationFrame(anTick); }, 1000 / fps);
 }
@@ -7576,7 +7610,7 @@ function anStart(){
     stat('流すものがありません — 帯（グラデ）を持つ粒を選ぶか、粒のある枠を選んでください');
     return;
   }
-  AN.items = items; AN.t = 0; AN.on = true; window.__anOn = true;
+  AN.items = items; AN.t = 0; AN.last = 0; AN.on = true; window.__anOn = true;
   const b = document.getElementById('anGo'); if(b) b.textContent = '止める';
   const n = anPaint(0);
   /* ⚠️ かけたときの設定を覚えていない粒は流せない（＝いま画面にある粒が、
