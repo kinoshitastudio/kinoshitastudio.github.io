@@ -231,7 +231,17 @@
   <button class="big" id="load">控えを読む</button>
   <input type="file" id="jsonFile" accept="application/json,.json" hidden>
   <div class="note">⭐ 地なしは絵のあるところだけに切り詰めて出す（他の道具に重ねるため）<br>
-    ⭐ 書き出しは<b>見えているとおり</b>＝寄って撮れば寄った絵が出る</div>
+    ⭐ 書き出しは<b>見えているとおり</b>＝寄って撮れば寄った絵が出る<br>
+    🔴 <b>画面から出ている分は入らない</b>（画面に無いものは撮れない）＝切れるときは下の「全体」で出す</div>
+
+  <h2>全体で出す（切れない）</h2>
+  <div class="seg" id="expk"><button data-k="2000">2000px</button><button data-k="4000" class="on">4000px</button><button data-k="8000">8000px</button></div>
+  <button class="big" id="pngFull">PNG（全体）</button>
+  <button class="big" id="pngFullA">PNG（全体・地なし）</button>
+  <div class="note">⭐ <b>ズーム・移動は無視して、版ぜんぶが入る大きさで出す</b>＝左右が切れない<br>
+    ⭐ 数字は<b>出来上がりの長辺</b>。拡大ではなく<b>その大きさで焼き直してから</b>出す<br>
+    ⭐ <b>絵のある画素ぴったりで切る</b>＝まわりに余白は付かない（地の色も絵の中だけ）<br>
+    ⚠️ 出したあとの画面は元に戻ります（見えは変わらない）。8000px は焼き直すので少し待つ</div>
   <div class="note" style="display:block;opacity:.45;margin-top:10px">
     ホイール／ピンチ＝寄る・引く／ドラッグ＝動かす／ダブルクリック＝正面に戻す</div>
 </div>
@@ -1151,7 +1161,8 @@ function buildAll(){
 /* ⭐ タイルの版を1枚作る ── タイルにグラデを刷り、マス目に丸めた字で抜く（または字だけ残す）。
    ⚠️ 裏 canvas は版の実寸（ART）ちょうど。使い回して、大きさが変わったときだけ取り直す。 */
 const oc = document.createElement('canvas'), og = oc.getContext('2d');
-function paintTiles(sh){
+/* ⚠️ ctx は【出すときだけ】渡す。渡さなければ今までどおり表の canvas（g）＝画面の見えは変わらない */
+function paintTiles(sh, ctx){
   const A = sh.ART;
   if(oc.width !== A.w || oc.height !== A.h){ oc.width = A.w; oc.height = A.h; }
   og.setTransform(1, 0, 0, 1, 0, 0);
@@ -1185,7 +1196,7 @@ function paintTiles(sh){
     sh.CELLS.forEach(c2 => og.fillRect(c2.x, c2.y, c2.w, c2.h));
   }
   og.globalCompositeOperation = 'source-over';
-  g.drawImage(oc, 0, 0);
+  (ctx || g).drawImage(oc, 0, 0);
 }
 function draw(){
   const W = cv.width, H = cv.height;
@@ -1412,6 +1423,129 @@ function savePNG(noBg){ toBlob(noBg, b=>{ if(!b) return;
   setTimeout(()=>URL.revokeObjectURL(u), 8000); }); }
 document.getElementById('png').onclick  = ()=> savePNG(false);
 document.getElementById('pngA').onclick = ()=>{ savePNG(true); stat('地なしで出した'); };
+
+/* ══ ⭐ 全体で出す ── 画面から出ている分まで入れて出す ══════════════════════
+   🔴 表の canvas は innerWidth×innerHeight ＝【画面から出た分はそもそも存在しない】。
+      だから今までの PNG は、画面で切れていれば必ず切れて出た
+      （2026-08-12 木下「左右が途切れているので作品として出せない」）。
+   ⭐ 直し方＝出すときだけ canvas を k 倍にして【焼き直し】、版ぜんぶを包む矩形を測って、
+      その大きさの裏 canvas に描く。⚠️ 拡大ではない＝×2 は本当に2倍の細かさで焼かれる
+      （buildSheet の基準 fit が cv.width / cv.height だから）。
+   ⚠️ この関数は【新しい経路】。draw() と savePNG() には一切触っていない＝画面の見えは動かない。
+   ⚠️ ズーム・移動（VIEW）は見るためのものなので、ここでは掛けない＝いつ押しても同じ絵が出る。
+   ⚠️ 終わったら必ず元の大きさで焼き直して draw() する。 */
+const EXP = { target:4000 };
+document.querySelectorAll('#expk button').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    document.querySelectorAll('#expk button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); EXP.target = +b.dataset.k;
+  });
+});
+/* 版1枚が置かれる矩形（回転こみ）を、その canvas の座標で出す */
+function sheetBox(sh, W, H){
+  const sc = (sh.scale || 100) / 100, rad = (sh.rot || 0) * Math.PI / 180;
+  const cx = W / 2 + (sh.x / 100) * W * 0.5, cy = H / 2 + (sh.y / 100) * H * 0.5;
+  const hw = sh.ART.w / 2 * sc, hh = sh.ART.h / 2 * sc;
+  const co = Math.cos(rad), si = Math.sin(rad);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  [[-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh]].forEach(p=>{
+    const x = cx + p[0]*co - p[1]*si, y = cy + p[0]*si + p[1]*co;
+    if(x < x0) x0 = x; if(x > x1) x1 = x;
+    if(y < y0) y0 = y; if(y > y1) y1 = y;
+  });
+  return { x0, y0, x1, y1 };
+}
+/* ⭐ 版ぜんぶを、地なしで1枚に描く（切らずに全部入れる）。
+   ⚠️ 地は塗らない＝【絵のある画素】を後で数えるため（塗ると全面が不透明になって数えられない）。 */
+function renderAll(){
+  const W = cv.width, H = cv.height;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  SHEETS.forEach(sh=>{ const b = sheetBox(sh, W, H);
+    if(b.x0 < x0) x0 = b.x0; if(b.x1 > x1) x1 = b.x1;
+    if(b.y0 < y0) y0 = b.y0; if(b.y1 > y1) y1 = b.y1; });
+  const ow = Math.max(1, Math.ceil(x1 - x0)), oh = Math.max(1, Math.ceil(y1 - y0));
+  const o = document.createElement('canvas'); o.width = ow; o.height = oh;
+  const c = o.getContext('2d');
+  /* ⭐ 置き方は draw() と同じ順・同じ式。違うのは【ビューを掛けない】ことと
+        【包む矩形のぶんだけ原点をずらす】ことの2つだけ。 */
+  SHEETS.forEach(sh=>{
+    const sc = (sh.scale || 100) / 100;
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.translate(-x0, -y0);
+    c.translate(W / 2 + (sh.x / 100) * W * 0.5, H / 2 + (sh.y / 100) * H * 0.5);
+    c.rotate((sh.rot || 0) * Math.PI / 180);
+    c.scale(sc, sc);
+    c.translate(-sh.ART.w / 2, -sh.ART.h / 2);
+    if(sh.CELLS){ paintTiles(sh, c); return; }
+    if(sh.SD){ paintDist(sh, { ctx:c }); return; }
+    sh.RECTS.forEach((r, i) => paintRect(sh, r, i, c));
+  });
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  return o;
+}
+/* 🔴 【絵のある画素】を数えて切る。版を包む箱（ART）で切ってはいけない
+   ── ART は字の周りに余白を持っている（W2 = 字幅 + S*0.4 ／ H2b = 行数*S*1.02 + S*0.6）＝
+      1行だと上下が箱の半分近く空く。それが黒い余白になって出た（2026-08-12 木下）。 */
+function inkBox(o){
+  const w = o.width, h = o.height;
+  const d = o.getContext('2d').getImageData(0, 0, w, h).data;
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for(let y = 0; y < h; y++) for(let x = 0; x < w; x++){
+    if(d[(y*w + x)*4 + 3] > 2){ if(x < x0) x0 = x; if(x > x1) x1 = x;
+                                if(y < y0) y0 = y; if(y > y1) y1 = y; } }
+  return x1 < 0 ? null : { x0, y0, w:x1 - x0 + 1, h:y1 - y0 + 1 };
+}
+/* ⭐ 出したい長辺（px）に合わせて【焼き直してから】出す。
+   ⚠️ 2回描く：1回目＝いまの大きさで絵の実寸を測る／2回目＝合う大きさで焼き直して本番。
+      倍率を勘で決めない＝「頼んだ値」ではなく「測った値」で決める。 */
+function exportFull(noBg){
+  const oldW = cv.width, oldH = cv.height;
+  const T = EXP.target;
+  stat(`長辺 ${T}px で焼き直し中…`);
+  setTimeout(()=>{
+    let out = null, note = '';
+    try{
+      /* ── 1回目：いまの大きさで、絵の実寸（ink）を測る ── */
+      const probe = renderAll();
+      const ib0 = inkBox(probe);
+      if(!ib0){ stat('絵が無い'); return; }
+      /* ── 倍率＝欲しい長辺 ÷ 測った長辺。canvas の上限（辺16384・面積2億画素）で頭を打たせる ── */
+      let k = T / Math.max(ib0.w, ib0.h);
+      const kLim = Math.min(16384 / Math.max(oldW, oldH),
+                            Math.sqrt(2.0e8 / (oldW * oldH)));
+      if(k > kLim){ k = kLim; note = '（上限で止めた）'; }
+      if(k < 0.05) k = 0.05;
+      /* ── 2回目：その大きさで焼き直して本番 ── */
+      cv.width = Math.max(8, Math.round(oldW * k));
+      cv.height = Math.max(8, Math.round(oldH * k));
+      SHEETS.forEach(buildSheet);
+      const big = renderAll();
+      const ib = inkBox(big) || ib0;
+      /* ⭐ 絵のある画素ぴったりに切る（余白は付けない）。地ありは、その大きさの紙に敷いてから重ねる */
+      const o = document.createElement('canvas'); o.width = ib.w; o.height = ib.h;
+      const c = o.getContext('2d');
+      if(!noBg){ c.fillStyle = P.bg; c.fillRect(0, 0, ib.w, ib.h); }
+      c.drawImage(big, ib.x0, ib.y0, ib.w, ib.h, 0, 0, ib.w, ib.h);
+      out = o;
+    } finally {
+      /* 🔴 何があっても画面は元に戻す（戻し忘れると【見え】が変わったまま残る） */
+      cv.width = oldW; cv.height = oldH;
+      SHEETS.forEach(buildSheet); draw();
+    }
+    if(!out) return;
+    const ow = out.width, oh = out.height;
+    out.toBlob(b=>{
+      if(!b){ stat('出せなかった（大きすぎ）。長辺を下げてください'); return; }
+      const u = URL.createObjectURL(b), a = document.createElement('a');
+      a.href = u; a.download = `sudare_zentai_${Date.now()}.png`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=> URL.revokeObjectURL(u), 8000);
+      stat(`全体で出した ${ow}×${oh}px${note}${noBg ? '・地なし' : ''}`);
+    }, 'image/png');
+  }, 30);
+}
+document.getElementById('pngFull').onclick  = ()=> exportFull(false);
+document.getElementById('pngFullA').onclick = ()=> exportFull(true);
 document.getElementById('save').onclick = ()=>{
   const b = new Blob([snapObj()], { type:'application/json' });
   const u = URL.createObjectURL(b), a = document.createElement('a');
