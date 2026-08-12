@@ -116,6 +116,8 @@
   body:not(.grad) .only-grad,body:not(.grad-3) .grad3,body:not(.grad-4) .grad4{display:none;}
   /* ⭐ 波紋を消したら、波紋のつまみは畳む（地とグラデのつまみだけ残る） */
   body.nowave .only-wave{display:none;}
+  /* ⭐ 自分の色の3本は「自分」を選んでいるときだけ出す */
+  body:not(.mypal) .only-mypal{display:none;}
 
   #title{position:fixed;left:22px;top:18px;z-index:11;mix-blend-mode:difference;color:#fff;pointer-events:none;}
   #title h1{font-family:"Zen Kaku Gothic New",sans-serif;font-weight:900;font-size:26px;line-height:1;}
@@ -272,9 +274,19 @@
       <span class="unit-name">INK</span><span class="unit-jp">塗り</span><span class="tag">字</span></div>
     <div class="unit-body">
       <div class="mod">⭐ <b>字だけ</b>を決める段（地の段とは切り離してある）。TSUBU の塗りをそのまま</div>
-      <div class="seg" data-seg="pal">
+      <div class="seg wrap" data-seg="pal">
         <button data-v="0">墨</button><button data-v="1" class="on">奇抜</button>
-        <button data-v="2">琵琶湖</button><button data-v="3">熱</button>
+        <button data-v="2">琵琶湖</button><button data-v="3">熱</button><button data-v="4">自分</button>
+      </div>
+      <!-- ⭐ 自分の色 ── 4つの型では届かない色に行くための3本。
+           ⚠️ 型（墨〜熱）を押している間は畳む＝触れるのに効かないつまみを出さない -->
+      <div class="only-mypal">
+        <div class="row"><label>INK 1<i>影（いちばん暗い）</i></label><input type="color" data-p="inkBg" value="#0a0a0a"></div>
+        <div class="row"><label>INK 2<i>中（帯の色）</i></label><input type="color" data-p="inkA" value="#e9201c"></div>
+        <div class="row"><label>INK 3<i>照り（いちばん明るい）</i></label><input type="color" data-p="inkB" value="#2434ff"></div>
+        <div class="mod">⭐ 3色＝<b>影→中→照り</b>を補間して帯になる（型と同じ作り）。
+          ⚠️ <b>照りは中より明るく</b>すると立体が立つ。逆にすると沈んで見える<br>
+          ⭐ <b>型を押すと、その型の3色がここに入る</b>＝型から少しだけずらす、ができる</div>
       </div>
       <div class="seg" data-seg="line">
         <button data-v="0" class="on">波</button><button data-v="1">縞</button>
@@ -466,6 +478,8 @@ const P = {
   cross:1, bead:45, beadK:1, seam:0,
   /* 字の色（塗り）── TSUBU の塗りをそのまま */
   pal:1, line:0, wav:10, dir:0, follow:100, shift:0, charJit:0,
+  /* ⭐ 自分の色（pal:4 のときだけ効く）。影→中→照り の3点 */
+  inkBg:'#0a0a0a', inkA:'#e9201c', inkB:'#2434ff',
   shine:60, valley:0, grad:50, band:100, steps:0, dith:100,
   /* 地 */
   gwave:1, gmat:1, gshape:0, gfreq:24, gcell:34, gspeed:16, gswirl:30, gdepth:38,
@@ -484,7 +498,17 @@ const PALS = [
   { name:'奇抜',   bg:[0x0a,0x0a,0x0a], a:[0xe9,0x20,0x1c], b:[0x24,0x34,0xff] },
   { name:'琵琶湖', bg:[0x0d,0x14,0x17], a:[0x7f,0xae,0x9e], b:[0xdf,0xe7,0xe2] },
   { name:'熱',     bg:[0x0d,0x00,0x00], a:[0xff,0x3c,0x00], b:[0xff,0xd6,0x00] },
+  /* ⚠️ 4番（自分）は PALS に置かない＝色は P（inkBg/inkA/inkB）に持つ。palNow() で作る */
 ];
+/* ⭐ 自分の色 ── 型（0〜3）はそのまま、4のときだけ P の3色から作る。
+   ⚠️ ここを通す＝型のときの値は今までと1つも変わらない。 */
+const hex2arr = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+const arr2hex = c => '#' + c.map(n => n.toString(16).padStart(2,'0')).join('');
+function palNow(){
+  if(+P.pal === 4) return { name:'自分', bg:hex2arr(P.inkBg), a:hex2arr(P.inkA), b:hex2arr(P.inkB) };
+  return PALS[P.pal] || PALS[0];
+}
+function syncMyPal(){ document.body.classList.toggle('mypal', +P.pal === 4); }
 /* ══ 字 → ドット ══════════════════════════════════════════
    ⭐ TSUBU の glyphDots をそのまま持ってきた。
      粒の座標だけでなく【画の向き】と【太さ】を一緒に採るのが肝。
@@ -961,7 +985,7 @@ function build(){
   mesh.geometry.setAttribute('aBig',  new THREE.InstancedBufferAttribute(aBig, 1));
   mesh.geometry.setAttribute('aPos',  new THREE.InstancedBufferAttribute(aPos, 2));
   mesh.geometry.setAttribute('aJit',  new THREE.InstancedBufferAttribute(aJit, 1));
-  const pl = PALS[P.pal] || PALS[0];
+  const pl = palNow();
   const set = (u, c) => mat.uniforms[u].value.setRGB(c[0]/255, c[1]/255, c[2]/255);
   /* 🔴 段を切ったら墨・塗りなしに戻す＝段を消せば元に戻る、を守る */
   const on = ON.ink, q = on ? pl : PALS[0];
@@ -1228,7 +1252,7 @@ function syncUI(){
   document.querySelectorAll('input[type=color][data-p]').forEach(c => {
     if(P[c.dataset.p] !== undefined) c.value = P[c.dataset.p];
   });
-  syncGrad(); syncWave();
+  syncGrad(); syncWave(); syncMyPal();
   document.querySelectorAll('.seg[data-seg]').forEach(seg => {
     const cur = String(P[seg.dataset.seg]);
     seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === cur));
@@ -1264,7 +1288,7 @@ function rebuildSoon(){ clearTimeout(_bT); _bT = setTimeout(build, 80); }
 /* 塗りだけ塗り直す＝立体は触らない */
 function repaint(){
   if(!mesh) return;
-  const m = mesh.material, pl = PALS[P.pal] || PALS[0], on = ON.ink, q = on ? pl : PALS[0];
+  const m = mesh.material, pl = palNow(), on = ON.ink, q = on ? pl : PALS[0];
   const set = (u, c) => m.uniforms[u].value.setRGB(c[0]/255, c[1]/255, c[2]/255);
   set('uA', q.a); set('uB', q.b); set('uBG', q.bg);
   m.uniforms.uWav.value    = P.wav / 100;
@@ -1310,6 +1334,13 @@ document.querySelectorAll('.seg[data-seg]').forEach(seg => {
     P[seg.dataset.seg] = +b.dataset.v;
     /* ⭐ 波紋を消したら、波紋のつまみは畳む（地とグラデのつまみだけ残す） */
     if(seg.dataset.seg === 'gwave') syncWave();
+    /* ⭐ 色の型を押したら、その3色を「自分」にも写す＝型から少しだけずらす、ができる。
+       ⚠️ 写すのは型（0〜3）を押したときだけ（「自分」を押しても自分の色は消さない）。 */
+    if(seg.dataset.seg === 'pal'){
+      const q = PALS[+b.dataset.v];
+      if(q){ P.inkBg = arr2hex(q.bg); P.inkA = arr2hex(q.a); P.inkB = arr2hex(q.b); }
+      syncMyPal(); syncUI();
+    }
     /* 🔴 木下＝「これら（波/縞/斜/格子/環）が全然反応しない」。
        材質の値は【組み直しのとき】にしか入れていなかったので、
        型を変えても何も起きなかった（＝押しても死んでいる）。
@@ -1402,7 +1433,10 @@ document.getElementById('bHints').onclick = () => {
 
 /* ⭐ 色は【毎フレーム流している】ので、値を入れて保存するだけでいい（組み直さない） */
 document.querySelectorAll('input[type=color][data-p]').forEach(c => {
-  c.addEventListener('input', () => { P[c.dataset.p] = c.value; save(); });
+  c.addEventListener('input', () => { P[c.dataset.p] = c.value;
+    /* ⚠️ 字の色は uniform に入れないと変わらない（地の色は毎フレーム見ているので要らない） */
+    if(c.dataset.p.indexOf('ink') === 0) repaint();
+    save(); });
 });
 
 document.getElementById('txt').addEventListener('input', rebuildSoon);
