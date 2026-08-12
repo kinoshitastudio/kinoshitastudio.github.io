@@ -1588,6 +1588,20 @@ const ACC = '#4a9eff';                // 編集ガイドの青（イラレ／Fig
    ⚠️ ここで宣言する理由＝起動の途中で drawArtboard が走るので、
       let を下に置くと「初期化前に読んだ」で落ちる。 */
 let abPick = -1;
+/* ⭐⭐ 枠は【複数選べる】（2026-08-12 木下＝「ボードを複数選択して削除」）。
+   ⚠️ abPick（最後に触った枠）は今までの処理が全部見ているので残す。
+      abPicks は必ず abPick を含む＝1枚だけ選んだときは今までと同じ動き。
+   ⭐ 足す/外すは Shift か ⌘ を押しながらラベル（またはレイヤーの見出し）を押す。 */
+const abPicks = new Set();
+function abPickSet(i, add){
+  if(add){
+    if(abPicks.has(i)){
+      abPicks.delete(i);
+      if(abPick === i) abPick = abPicks.size ? [...abPicks][abPicks.size - 1] : -1;
+    } else { abPicks.add(i); abPick = i; }
+  } else { abPicks.clear(); abPicks.add(i); abPick = i; }
+}
+function abPickClear(){ abPicks.clear(); abPick = -1; }
 paper.settings.handleSize = 7;
 const gridLayer = new paper.Layer();
 gridLayer.locked = true;              // グリッドが選択のヒット判定を奪わないようにする
@@ -2436,7 +2450,16 @@ function selUp(){
 /* いま何を選んでいるかを HUD に出す（クリック選択でも範囲選択でも） */
 function reportSel(){
   const s = selected();
-  if(!s.length){ stat('選択なし'); return; }
+  if(!s.length){
+    /* 🔴⭐ 図形を選んでいなくても【枠を選んでいる】ことがある（枠の複数選択）。
+       ⚠️ ここで「選択なし」と出していたので、枠を2枚選んだ直後に表示が嘘になっていた
+          （実際は選べているのに「選択なし」＝効いていないように見える）。
+       ⚠️ abPicks はこの下で const 宣言なので、起動のごく早い時期に呼ばれると
+          名前を見に行くだけで止まる（TDZ）。触るのは try の中だけにする。 */
+    let np = 0; try{ np = abPicks.size; }catch(e){}
+    if(np){ stat('枠を ' + np + ' 枚 選んでいる' + (np > 1 ? ' — Delete で中身ごと消す' : '')); return; }
+    stat('選択なし'); return;
+  }
   if(s.length === 1){
     const it = s[0];
     const segs = it.segments ? `・${it.segments.length}点` : '';
@@ -4054,7 +4077,7 @@ function renderLayers(){
   groups.forEach(g => {
     if(abOpen[g.key] === undefined) abOpen[g.key] = true;
     const head = document.createElement('div');
-    head.className = 'lay-head' + (abOpen[g.key] ? ' open' : '') + (g.i >= 0 && g.i === abPick ? ' pick' : '');
+    head.className = 'lay-head' + (abOpen[g.key] ? ' open' : '') + (g.i >= 0 && abPicks.has(g.i) ? ' pick' : '');
     head.innerHTML =
       `<span class="tw">${abOpen[g.key] ? '▾' : '▸'}</span>` +
       (g.color ? `<span class="abbadge" style="background:${g.color}">${g.name}</span>`
@@ -4065,7 +4088,8 @@ function renderLayers(){
       if(e.target.classList.contains('tw')){ abOpen[g.key] = !abOpen[g.key]; renderLayers(); return; }
       // ⭐ 見出しを押したら、その枠を選ぶ（盤面のラベルを押したのと同じ）
       if(g.i >= 0){
-        abPick = g.i; S.abSel = g.i;
+        abPickSet(g.i, e.shiftKey || e.metaKey);   // ⭐ Shift / ⌘ で足す・外す
+        S.abSel = g.i;
         artLayer.children.forEach(c => c.selected = false);
         abSync(); guides(); renderLayers();
       } else { abOpen[g.key] = !abOpen[g.key]; renderLayers(); }
@@ -4100,7 +4124,7 @@ function layRow(it, host){
       }
       if(it.locked){ stat('ロック中（🔓で解除）'); return; }
       if(!e.shiftKey) artLayer.children.forEach(c => c.selected = false);
-      abPick = -1;                              // ⭐ 図形を選んだら枠の選択は外す
+      abPickClear();                            // ⭐ 図形を選んだら枠の選択は外す
       it.selected = true; setTool('select'); guides(); renderLayers(); reportSel();
       syncLayerOpacity();
     });
@@ -5093,7 +5117,7 @@ function drawArtboard(){
      ⚠️ 選んでいないときは【どの枠も強調しない】＝選択なしがそのまま絵に出る。 */
   const dimC = (S.bg === 'light') ? 'rgba(10,10,10,.28)' : 'rgba(255,255,255,.24)';
   S.abs.forEach((a, i) => {
-    const R = abRectOf(a), pick = (i === abPick);
+    const R = abRectOf(a), pick = abPicks.has(i);
     if(a.bgOn){ const bg = new Path.Rectangle(R); bg.fillColor = abPaintOf(a, bg); bg.sendToBack(); }
     const f = new Path.Rectangle(R);
     f.strokeColor = pick ? ACC : dimC;
@@ -5933,26 +5957,43 @@ function abCopyBoard(quiet){
 /* ⭐ 枠を消す＝【中身ごと】消す（Figma と同じ。枠だけ消えて中身が浮くほうが分かりにくい）。
    ⚠️ 枠は1枚以上必要＝最後の1枚は消させない（消すと abCur() が undefined になって道具が止まる）。 */
 function abDeleteBoard(){
-  if(abPick < 0) return false;
-  if(S.abs.length <= 1){ stat('枠は1枚以上必要 — 中身を消すなら図形を選んでください'); return true; }
+  if(abPick < 0 && !abPicks.size) return false;
+  /* ⭐ 選んでいる枠ぜんぶを、中身ごと消す（木下＝「ボードを複数選択して削除」）。
+     ⚠️ 枠は1枚以上必要＝全部消させない（abCur() が undefined になって道具が止まる）。
+     ⚠️ 後ろから消す＝前を消すと後ろの番号がずれる。 */
+  const idx = [...abPicks].filter(i => i >= 0 && i < S.abs.length).sort((a, b) => b - a);
+  if(!idx.length) return false;
+  if(idx.length >= S.abs.length){
+    stat('枠は1枚以上必要 — ぜんぶは消せません（1枚は選択から外してください）');
+    return true;
+  }
   snapshot();
-  const a = S.abs[abPick];
-  const items = abItemsOf(a);
-  items.forEach(it => { try{ it.remove(); }catch(e){} });
-  S.abs.splice(abPick, 1);
-  abPick = -1;                                   // ⭐ 消したら選択なしに戻す
-  S.abSel = Math.max(0, Math.min(S.abs.length - 1, S.abSel > 0 ? S.abSel - 1 : 0));
+  let n = 0;
+  for(const i of idx){
+    const a = S.abs[i];
+    const items = abItemsOf(a);
+    items.forEach(it => { try{ it.remove(); }catch(e){} });
+    n += items.length;
+    S.abs.splice(i, 1);
+  }
+  abPickClear();                                 // ⭐ 消したら選択なしに戻す
+  S.abSel = Math.max(0, Math.min(S.abs.length - 1, S.abSel));
   abSync(); guides();
-  stat('枠を中身ごと削除 — ' + items.length + ' 個');
+  stat('枠を ' + idx.length + ' 枚、中身ごと削除 — 図形 ' + n + ' 個');
   return true;
 }
 /* ⭐ 矢印キーでも枠を動かす（中身つき）。ドラッグと同じ規則で中身を決める。 */
 function abNudgeBoard(mv){
-  if(abPick < 0) return false;
+  if(!abPicks.size) return false;
+  /* ⭐ 選んでいる枠ぜんぶを中身つきで動かす。
+     ⚠️ 中身は【動かす前に】全部の枠ぶんまとめて集める。1枠ずつ動かしながら
+        集め直すと、隣の枠へ入った図形を二度動かしてしまう。 */
   snapshot();
-  const a = S.abs[abPick];
-  abItemsOf(a).forEach(it => { it.position = it.position.add(mv); });
-  a.x = Math.round(a.x + mv.x); a.y = Math.round(a.y + mv.y);
+  const jobs = [...abPicks].map(i => ({ a: S.abs[i], items: abItemsOf(S.abs[i]) }));
+  jobs.forEach(({ a, items }) => {
+    items.forEach(it => { it.position = it.position.add(mv); });
+    a.x = Math.round(a.x + mv.x); a.y = Math.round(a.y + mv.y);
+  });
   abSync(); guides();
   return true;
 }
@@ -5975,7 +6016,7 @@ function abPasteBoard(c){
   });
   /* ⭐ 貼った先を次の基準にする＝続けて押すと右へ並んでいく（図形のペーストと同じ気持ち） */
   c.a = JSON.parse(JSON.stringify(a));
-  S.abSel = S.abs.length - 1; abPick = S.abSel;
+  S.abSel = S.abs.length - 1; abPickSet(S.abSel, false);
   abSync(); guides();
   stat('枠を中身ごと複製 — ' + c.items.length + ' 個');
   return true;
@@ -5993,8 +6034,19 @@ function abLabelHit(pt){
 hook('down', '枠のラベル', e => {
   const i = abLabelHit(e.point);
   if(i < 0) return false;
+  /* ⭐ Shift / ⌘ を押しながら＝【選び足す・外す】だけ（動かさない）。
+     ⚠️ ここでドラッグを始めると、足したつもりが枠を動かしてしまう。 */
+  if(e.event && (e.event.shiftKey || e.event.metaKey)){
+    abPickSet(i, true);
+    S.abSel = (abPick >= 0 ? abPick : i);
+    artLayer.children.forEach(c => c.selected = false);
+    abSync(); drawGrid();
+    stat(abPicks.size ? ('枠を ' + abPicks.size + ' 枚 選んでいる — Delete で中身ごと消す')
+                      : '枠の選択を外した');
+    return true;
+  }
   snapshot();                                  // ⚠️ 中身も動かすので、取り消せるようにしておく
-  S.abSel = i; abPick = i;
+  S.abSel = i; abPickSet(i, false);
   artLayer.children.forEach(c => c.selected = false);   // ⭐ 枠を選んだら図形の選択は外す
   const a = S.abs[i];
   abDrag = { i, dx: a.x - e.point.x, dy: a.y - e.point.y, ax: a.x, ay: a.y,
@@ -6022,7 +6074,7 @@ hook('up', '枠のラベル', () => {
 /* ⭐ ラベル以外を触ったら、枠の選択は外す（木下＝「選択していないときは視覚的にも外して」）。
    ⚠️ ここは【割り込まない】＝false を返して、いつもの選択処理をそのまま通す。 */
 hook('down', '枠の選択を外す', () => {
-  if(abPick >= 0){ abPick = -1; drawGrid(); }
+  if(abPick >= 0 || abPicks.size){ abPickClear(); drawGrid(); }
   return false;
 }, 95);
 /* 枠を画面の中央へ呼び戻す（見失ったとき） */
