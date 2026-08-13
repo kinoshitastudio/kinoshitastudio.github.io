@@ -752,6 +752,10 @@ function drawOne(ctx, c, r, mi, rot, scale, mode, fx, fy){
                 : s * (S.shape === 3 ? 1.25 : 1.02);     // 覆うときは必ずマスを超える大きさで
   if(scale) d *= scale;                                  // ⭐ 上の絵だけ小さくして地を見せる
   d *= animScale(c, r);                                  // ⭐ 呼吸（種類3のときだけ 1 以外になる）
+  /* 🔴 マスを外へ広げた（bleedOf）ぶんは、絵も同じだけ広げる。clip だけ広げると
+     広がった縁に【地】が塗られたまま絵が届かず、そこが線として出る
+     （2026-08-13 実測：広げるほど地の赤がはみ出して増えた）。 */
+  if(!S.fit) d += 2 * bleedOf(ctx);
   ctx.imageSmoothingEnabled = false;
   /* ⭐ 絵そのものを送るのは【送る】のときだけ。回る・替わる・呼吸は普通に置く
      （送りと重ねると何が起きているか読めなくなる）。 */
@@ -759,15 +763,30 @@ function drawOne(ctx, c, r, mi, rot, scale, mode, fx, fy){
   else                       ctx.drawImage(img, -d / 2, -d / 2, d, d);
   ctx.restore();
 }
+/* 🔴 マスの縁は【隣と分け合っている】── canvas は clip() の縁もアンチエイリアスするので、
+   境界の1px を左右のマスが半分ずつしか塗れず、足しても 100% にならずに下が透ける。
+   （2026-08-13 木下＝「マスの地を赤に変えるとこの線がでている」「地なしにしても1px黒の線が入る」
+     ＝透けた先が見えていただけで、線を描いているわけではない）
+   ⭐ 隙間なく敷くとき（四角・隙間0）だけ、マスを 0.5px 外へ広げて隣と重ねる＝縁が 100% 塗られる。
+   ⚠️ 隙間を空けているとき・丸/六角/三角のときは広げない（見えている隙間が痩せる）。
+   🔴 広げる量は【出したい絵の 1px】＝いまの拡大率で割って決める。マスの座標で 0.5 と決め打つと
+      画面（拡大率1.25）では足りず、逆に 0.5px ぶんだけだと縁が半端に重なって【明るい線】が出た
+      （実測：0.5px→+18.1／1px→ほぼ0）。整数の 1px 重ねるのがいちばん素直だった。 */
+function bleedOf(ctx){
+  if(S.shape !== 0 || S.gap) return 0;
+  const sc = (ctx.getTransform ? Math.abs(ctx.getTransform().a) : 1) || 1;
+  return 3 / sc;
+}
 function drawTile(ctx, c, r, cell){
   const top = mats[cell.m], base = (cell.bm != null) ? mats[cell.bm] : null;
   if(!top && !base) return;
+  const bleed = bleedOf(ctx);
   ctx.save();
-  cellPath(ctx, c, r, S.gap / 2);
+  cellPath(ctx, c, r, S.gap / 2 - bleed);
   ctx.clip();
   // ① 素材ごとの単色の地（透明のまま置くとハンコが散らばって見える）
   const solid = (base && base.bg) || (top && top.bg);
-  if(solid){ ctx.fillStyle = solid; cellPath(ctx, c, r, S.gap / 2); ctx.fill(); }
+  if(solid){ ctx.fillStyle = solid; cellPath(ctx, c, r, S.gap / 2 - bleed); ctx.fill(); }
   // ② 地の絵 → ③ 上の絵
   if(cell.bm != null) drawOne(ctx, c, r, animMat(c, r, cell.bm), animRot(c, r, cell.br), 1, null, cell.bfx, cell.bfy);
   if(cell.m != null)  drawOne(ctx, c, r, animMat(c, r, cell.m), animRot(c, r, cell.r), S.topScale / 100, TOP_MODE[S.topMode], cell.fx, cell.fy);
