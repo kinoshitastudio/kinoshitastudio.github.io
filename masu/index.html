@@ -399,8 +399,10 @@
     <button class="sub" id="flipX" style="margin-top:5px">左右反転</button>
     <button class="sub" id="flipY" style="margin-top:5px">上下反転</button>
     <button class="sub" id="rotOne" style="margin-top:5px">回す</button>
+    <button class="sub" id="copyBtn" style="margin-top:5px">コピー</button>
+    <button class="sub" id="pasteBtn" style="margin-top:5px">貼る</button>
   </div>
-  <div class="hint">⭐<b>素材を作り足さずに向きを増やせる</b>（裏返しは焼き直しではなく描くときに返している）。キーは <b>H＝左右／V＝上下／R＝回す</b>。⌘Z で戻せる</div>
+  <div class="hint">⭐<b>素材を作り足さずに向きを増やせる</b>（裏返しは焼き直しではなく描くときに返している）。キーは <b>H＝左右／V＝上下／R＝回す</b>。⭐<b>⌘C でコピー・⌘V で貼る</b>（何マスでも形のまま）。⌘Z で戻せる</div>
   <button class="sub" id="fitBtn">全体を見る</button>
   <div class="hint">⭐<b>ホイールで拡大</b>／<b>右ドラッグ（またはスペース＋ドラッグ）で動かす</b>。手で動かしたあとは、つまみを触っても勝手に戻りません</div>
   <button class="sub" id="fillBtn">全部に置く</button>
@@ -1408,8 +1410,49 @@ document.getElementById('randBtn').addEventListener('click', () => {
 });
 document.getElementById('clearBtn').addEventListener('click', () => { snap(); S.cells = {}; draw(); stat('全部消した — 戻せる'); });
 document.getElementById('undoBtn').addEventListener('click', undo);
+/* ⭐ マスのコピー＆貼り付け（2026-08-13 木下＝「マスの素材だがコピペできるようにして」）。
+   ⭐ 選んでいるマスをまとめて覚える＝【左上を基準にした相対位置】で持つので、
+      1マスでも、離れた何マスでも、形を保ったまま貼れる。
+   ⚠️ 覚えるのは中身（素材の番号・向き・裏返し・大きさ）だけ＝素材そのものは増やさない。 */
+let clipCells = null;
+function copySel(){
+  const ks = (tool === 1) ? selKeys() : [];
+  const has = ks.filter(k => S.cells[k]);
+  if(!has.length) return stat('先に「選ぶ」にしてマスを押す');
+  const cs = has.map(k => k.split(',').map(Number));
+  const c0 = Math.min(...cs.map(a => a[0])), r0 = Math.min(...cs.map(a => a[1]));
+  clipCells = has.map(k => {
+    const [c, r] = k.split(',').map(Number);
+    return { dc:c - c0, dr:r - r0, cell:JSON.parse(JSON.stringify(S.cells[k])) };
+  });
+  stat('コピーした（' + clipCells.length + ' マス）— ⌘V で貼る');
+}
+function pasteSel(){
+  if(!clipCells || !clipCells.length) return stat('先に ⌘C でコピーする');
+  const ks = (tool === 1) ? selKeys() : [];
+  if(!ks.length) return stat('貼る先のマスを選ぶ');
+  const cs = ks.map(k => k.split(',').map(Number));
+  const c0 = Math.min(...cs.map(a => a[0])), r0 = Math.min(...cs.map(a => a[1]));
+  snap();
+  let n = 0;
+  for(const it of clipCells){
+    const c = c0 + it.dc, r = r0 + it.dr;
+    if(c < 0 || r < 0 || c >= S.cols || r >= S.rows) continue;   // 盤の外へは貼らない
+    S.cells[key(c, r)] = JSON.parse(JSON.stringify(it.cell));
+    n++;
+  }
+  draw();
+  stat('貼った（' + n + ' マス）' + (n < clipCells.length ? '／盤からはみ出した分は貼っていない' : ''));
+}
 addEventListener('keydown', e => {
   if((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z'){ e.preventDefault(); undo(); return; }
+  if(e.metaKey || e.ctrlKey){
+    const el = document.activeElement;
+    if(el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;   // 数字を打っている最中は横取りしない
+    const k = e.key.toLowerCase();
+    if(k === 'c'){ e.preventDefault(); copySel(); return; }
+    if(k === 'v'){ e.preventDefault(); pasteSel(); return; }
+  }
   if(e.key.toLowerCase() === 'r' && !e.metaKey && !e.ctrlKey){
     rot = (rot + 1) % 8;
     showRot(rot);
@@ -1653,6 +1696,8 @@ function flipSel(k){
 document.getElementById('flipX').addEventListener('click', () => flipSel('fx'));
 document.getElementById('flipY').addEventListener('click', () => flipSel('fy'));
 document.getElementById('rotOne').addEventListener('click', () => flipSel('r'));
+document.getElementById('copyBtn').addEventListener('click', copySel);
+document.getElementById('pasteBtn').addEventListener('click', pasteSel);
 addEventListener('keydown', e => {
   if(e.metaKey || e.ctrlKey || e.altKey) return;
   const el = document.activeElement;
