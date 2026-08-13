@@ -55,6 +55,14 @@
   #ctl input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:9px;height:9px;border-radius:50%;background:#fff;cursor:pointer;}
   #ctl input[type=range]::-moz-range-thumb{width:9px;height:9px;border:none;border-radius:50%;background:#fff;cursor:pointer;}
   #ctl .val{font-size:8px;opacity:.45;width:24px;text-align:right;}
+  /* ⭐ 出る大きさと書き出し中の進み具合（2026-08-13）。この道具は【暗い地に白い字】。
+     ⚠️ 説明用のクラスに入れない＝いつでも見えないと、大きさも進み具合も分からない。 */
+  #tvSize{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:9px;line-height:1.6;
+    color:#fff;opacity:.82;border:1px solid rgba(255,255,255,.18);border-radius:6px;
+    padding:5px 7px;margin:2px 0;white-space:normal;}
+  #tvSize b{font-weight:600;opacity:1;}
+  #tvPx{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.22);color:#fff;
+    font:inherit;font-size:10px;width:62px;padding:3px 5px;border-radius:5px;}
   .seg{display:flex;border:1px solid rgba(255,255,255,.18);}
   .seg button{background:none;border:none;color:#fff;opacity:.4;cursor:pointer;
     font:inherit;font-size:8px;letter-spacing:.06em;padding:5px 7px;border-right:1px solid rgba(255,255,255,.18);white-space:nowrap;}
@@ -405,13 +413,30 @@
   <div class="grp"><label>FPS</label><input id="s-ffps" type="range" min="4" max="60" value="30"><span class="val" id="v-ffps"></span></div>
   <button class="btn" id="b-flow">流す</button>
 
+  <!-- ⭐⭐ 動画で出す（2026-08-13・SAKUJI/TSUBU/TSUBUTE/SUDARE と同じ作法へ置き換え）
+       🔴 古い REC（captureStream + MediaRecorder）を捨てた。あれは【実時間で画面のドットを録る】ので
+          ・重いとコマ落ち／スローモーション ・webm しか出ない ・継ぎ目のないループが作れない
+          ・出る大きさを選べない（「録りたい大きさに窓を広げてから押す」と書いてあった）
+       ⭐ 帯の位相は 0→1 でちょうど一周（流している間は帯を環に焼いてある）＝
+          位相を「i ÷ 総コマ数」で刻めば、コマ落ちゼロで【継ぎ目のないループ】が出る。
+       ⭐ 絵は exportPNG と同じ道＝オフスクリーンに任意の大きさで焼く（画面のドットではない）。 -->
+  <div class="seg" id="tvFmt"><button data-v="mp4" class="on">mp4</button><button data-v="png">PNG連番</button></div>
+  <div class="seg" id="tvQ"><button data-v="hi">きれい</button><button data-v="mid" class="on">ふつう</button><button data-v="lo">軽い</button></div>
+  <div class="seg" id="tvLoop"><button data-v="1" class="on">1周</button><button data-v="2">2周</button><button data-v="3">3周</button></div>
+  <div class="seg" id="tvSz"><button data-v="1080" class="on">1080</button><button data-v="1440">1440</button
+    ><button data-v="2048">2048</button><button data-v="px">px</button></div>
+  <div class="grp" id="tvPxRow"><label>辺</label>
+    <input id="tvPx" type="number" min="64" max="4096" step="2" value="1080"><span class="val">px</span></div>
+  <div id="tvSize"></div>
+  <button class="btn" id="tvGo">動画</button>
+
   <div class="sep"></div>
   <button class="btn mode-seed" id="b-seed">まく</button>
   <button class="btn" id="b-clear">リセット</button>
   <button class="btn" id="b-reroll">替</button>
   <button class="btn" id="b-export">PNG</button>
-  <!-- ⭐ REC ── 育つのループを動画で出す。他の道具（KUMI / HORI / TSUBU）と同じ作法 -->
-  <button class="btn" id="b-rec">REC</button>
+  <!-- 🔴 REC はここから外した（2026-08-13）。動きの段の「動画」へ置き換え済み。
+       理由＝実時間で画面のドットを録る作りなので、コマ落ち・webm 固定・ループ不可・大きさが選べない。 -->
   <button class="btn" id="b-json">JSON書出</button>
   <button class="btn" id="b-jsonin">JSON読込</button>
   <input type="file" id="f-json" accept="application/json,.json" hidden>
@@ -966,6 +991,9 @@ function display(fb,res,src){ gl.useProgram(pDisp); gl.bindFramebuffer(gl.FRAMEB
 /* ── ループ ── */
 let running=false;
 function loop(){ if(!running) return; requestAnimationFrame(loop);
+  /* ⚠️ 動画を撮っているあいだは進めない。位相も場も書き出し側が1コマずつ置くので、
+     ここが割り込むと（育つが入だと特に）場が勝手に進んでコマがつながらない。 */
+  if(TV.on) return;
   const now=performance.now();
   if(mode==='wave'){ computeWave(now,curFbo(),SIM); }
   else {
@@ -1041,11 +1069,11 @@ function loop(){ if(!running) return; requestAnimationFrame(loop);
 /* ⭐ 盤は「窓の大きさ」でなく【パネルを除いた残りの領域】いっぱいに取る（2026-07-31）。
    ⚠️ innerWidth/innerHeight を見ると、右のパネルのぶんだけ盤が小さくなる。#wrap の実寸を見ること。 */
 const wrapEl = document.getElementById('wrap');
-/* 🔴 rec の宣言はここ（resize より前）に置く。let は巻き上げされても TDZ なので、
-   宣言より前で参照すると ReferenceError で止まる＝起動しなくなる。 */
-let rec = null;
+/* 🔴 動画の入れ物の宣言はここ（resize / loop より前）に置く。let も const も巻き上げでは TDZ なので、
+   宣言より前で参照すると ReferenceError で止まる＝起動しなくなる（元の rec もこの理由でここにあった）。 */
+const TV = { on:false, stop:false };
 function resize(){
-  if(rec) return;              // ⚠️ 録画中に版の大きさを変えると captureStream が壊れる
+  if(TV.on) return;            // ⚠️ 書き出し中に盤の大きさを変えない
   const box = wrapEl.getBoundingClientRect();
   const s = Math.floor(Math.min(box.width, box.height) * 0.98);
   const dpr = Math.min(devicePixelRatio, 2);
@@ -1398,29 +1426,12 @@ document.getElementById('b-seed').onclick=()=>{ if(mode==='wave') genSources(); 
 document.getElementById('b-clear').onclick=()=>{ if(mode==='wave'){ sources=[]; } else { clearField(); computeGradCoords(); } fieldChanged(); };
 document.getElementById('b-reroll').onclick=()=>{ if(mode==='wave') genSources(); else { seed=Math.random()*1000; bake(); } fieldChanged(); };
 document.getElementById('b-export').onclick=()=>{ exportPNG(); };
-/* ⭐⭐ REC ── 画面をそのまま動画に録る（2026-08-12）。
-   ⭐ 育つ＝ゆっくり消えて現れるループを作ったので、それを作品として出せるようにする。
-      他の道具（KUMI / HORI / TSUBU）と同じ作法＝canvas.captureStream + MediaRecorder。
-   ⚠️ PNG は 2048px に焼き直すが、REC は【画面のドットをそのまま録る】＝録りたい大きさに
-      窓を広げてから押す（焼き直しながらの録画はできない）。
-   ⚠️ 録っている間は押し直すまで止まらないので、ボタンの文字を STOP に変える
-      （録りっぱなしに気づけないと巨大なファイルになる）。 */
-document.getElementById('b-rec').onclick = e => {
-  const btn = e.currentTarget;
-  if(rec){ rec.stop(); rec = null; btn.classList.remove('on'); btn.textContent = 'REC'; return; }
-  if(typeof MediaRecorder === 'undefined'){ alert('このブラウザは録画に対応していません'); return; }
-  const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
-  rec = new MediaRecorder(cvs.captureStream(60), { mimeType:mime, videoBitsPerSecond:12e6 });
-  const chunks = [];
-  rec.ondataavailable = ev => ev.data.size && chunks.push(ev.data);
-  rec.onstop = () => {
-    const a = document.createElement('a');
-    a.download = `nijimi_${P.mode}_${Date.now()}.webm`;
-    a.href = URL.createObjectURL(new Blob(chunks, {type:'video/webm'}));
-    a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
-  };
-  rec.start(); btn.classList.add('on'); btn.textContent = 'STOP';
-};
+/* 🔴 REC（captureStream + MediaRecorder）は 2026-08-13 に捨てた。
+   ⚠️ 実時間で【画面のドット】を録る作りなので、重いとコマ落ち／スローモーションになり、
+      webm しか出ず、継ぎ目のないループも作れず、出る大きさも選べなかった
+      （「録りたい大きさに窓を広げてから押す」と自分で書いてあった）。
+   ⭐ 置き換え先＝この下の「動画で出す」。位相をコマ番号で刻み、exportPNG と同じ
+      オフスクリーンの道で任意の大きさに焼く。 */
 
 /* ══════════════════════════════════════════════════════════════
    JSON＝【設定の持ち運び】                              2026-08-04
@@ -1729,6 +1740,262 @@ if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); gen
     btn.textContent = '止める';
     tick();
   });
+})();
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 動画で出す ── 古い REC の置き換え（2026-08-13・5つ目）
+
+   ⭐ 帯の位相（`__njPh`）は 0→1 でちょうど一周し、流している間は帯を【環】に焼いてある。
+      ＝整数周ぶんで撮れば、頭と尻が数値レベルで一致する【継ぎ目のないループ】。
+   ⭐ 位相は「i ÷ 総コマ数」で刻む＝時計を見ないので、機械が遅くてもコマは1枚も落ちない。
+   ⭐ 絵は `exportPNG` と同じ道＝オフスクリーンの FBO に【任意の大きさ】で焼く。
+      ＝画面のドットを録っていた古い REC と違い、窓の大きさに縛られない。
+   ⚠️ 撮るのは【帯の流れ】だけ。「育つ」は反応拡散が場そのものを進める＝位相では戻せないので、
+      これまでどおり画面で見るもの（撮ると頭と尻が合わない）。
+   ⚠️ この道具は【正方形】（`display` は一辺しか取らない）＝出るのも正方形。
+   ══════════════════════════════════════════════════════════════ */
+(function(){
+  const goBtn = document.getElementById('tvGo');
+  if(!goBtn) return;
+  const seg = (id, dflt) => { const b = document.querySelector('#'+id+' button.on'); return b ? b.dataset.v : dflt; };
+  document.querySelectorAll('#tvFmt button, #tvQ button, #tvLoop button, #tvSz button').forEach(b =>
+    b.addEventListener('click', () => {
+      b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+      syncUI(); sizeSync();
+    }));
+  const pxRow = document.getElementById('tvPxRow'), pxEl = document.getElementById('tvPx');
+  function syncUI(){ if(pxRow) pxRow.style.display = (seg('tvSz','1080') === 'px') ? '' : 'none'; }
+  pxEl?.addEventListener('input', () => sizeSync());
+
+  function side(){
+    const v = seg('tvSz','1080');
+    const n = (v === 'px') ? (+pxEl?.value || 1080) : +v;
+    return Math.max(64, Math.min(4096, Math.round(n)));
+  }
+  function plan(){
+    const sF = document.getElementById('s-flow'), sP = document.getElementById('s-ffps');
+    const flow = +(sF?.value || 60), fps = Math.max(4, +(sP?.value || 30));
+    const spd = flow / 100 * 0.6;                       // 1秒あたりに進む「周」（tick と同じ式）
+    if(spd <= 0) return { err:'「流れ」が 0 なので何も動きません' };
+    const loops = +seg('tvLoop','1') || 1;
+    const sec = loops / spd;
+    return { fps, loops, sec, total: Math.max(2, Math.round(sec * fps)) };
+  }
+  /* ⭐ 出る大きさは【押す前に】必ず出す。⚠️ H.264 の上限＝辺4096・マクロブロック36864。 */
+  function sizeSync(){
+    const el = document.getElementById('tvSize'); if(!el) return;
+    let R = side();
+    const isMp4 = seg('tvFmt','mp4') === 'mp4';
+    if(isMp4) R -= R % 2;
+    const mb = Math.ceil(R/16) * Math.ceil(R/16);
+    const ok = mb <= 36864 && R <= 4096;                 // 正方形なら 3072 まで
+    const p = plan();
+    el.innerHTML = '出力 <b>' + R + ' × ' + R + '</b> px'
+      + (isMp4 && !ok ? '<br>⚠️ mp4 の上限超え（正方形は 3072px まで）' : '')
+      + (p.err ? '<br>⚠️ ' + p.err
+          : '<br>' + p.total + ' コマ・' + p.sec.toFixed(1) + '秒・' + p.fps + 'fps・' + p.loops + '周');
+  }
+
+  /* ══ ZIP（圧縮なし＝store）══ */
+  let CRCT = null;
+  function crc32(u8){
+    if(!CRCT){ CRCT = new Uint32Array(256);
+      for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); CRCT[n]=c>>>0; } }
+    let c = 0xFFFFFFFF;
+    for(let i=0;i<u8.length;i++) c = CRCT[(c ^ u8[i]) & 0xFF] ^ (c>>>8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+  function zip(files){
+    const te = new TextEncoder(), parts = [], cent = [];
+    let off = 0;
+    for(const f of files){
+      const nm = te.encode(f.name), crc = crc32(f.data), sz = f.data.length;
+      const L = new DataView(new ArrayBuffer(30));
+      L.setUint32(0,0x04034b50,true); L.setUint16(4,20,true);
+      L.setUint32(14,crc,true); L.setUint32(18,sz,true); L.setUint32(22,sz,true);
+      L.setUint16(26,nm.length,true);
+      parts.push(new Uint8Array(L.buffer), nm, f.data);
+      const C = new DataView(new ArrayBuffer(46));
+      C.setUint32(0,0x02014b50,true); C.setUint16(4,20,true); C.setUint16(6,20,true);
+      C.setUint32(16,crc,true); C.setUint32(20,sz,true); C.setUint32(24,sz,true);
+      C.setUint16(28,nm.length,true); C.setUint32(42,off,true);
+      cent.push(new Uint8Array(C.buffer), nm);
+      off += 30 + nm.length + sz;
+    }
+    let csz = 0; for(const c of cent) csz += c.length;
+    const E = new DataView(new ArrayBuffer(22));
+    E.setUint32(0,0x06054b50,true);
+    E.setUint16(8,files.length,true); E.setUint16(10,files.length,true);
+    E.setUint32(12,csz,true); E.setUint32(16,off,true);
+    return new Blob(parts.concat(cent, [new Uint8Array(E.buffer)]), { type:'application/zip' });
+  }
+  /* ⭐ mp4 の器は押したときだけ取りに行く（この道具は外の部品を1つも使っていない） */
+  let muxP = null;
+  function loadMuxer(){
+    if(window.Mp4Muxer) return Promise.resolve(true);
+    if(!muxP) muxP = new Promise(res => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.1/build/mp4-muxer.min.js';
+      s.onload = () => res(!!window.Mp4Muxer); s.onerror = () => res(false);
+      document.head.appendChild(s);
+    });
+    return muxP;
+  }
+  const QB = { hi:0.30, mid:0.15, lo:0.06 };
+  async function pickCodec(R, fps, bitrate){
+    const cands = ['avc1.640034','avc1.640033','avc1.640032','avc1.64002a','avc1.640028','avc1.4d0034','avc1.42003c'];
+    for(const codec of cands){
+      try{ const s = await VideoEncoder.isConfigSupported({ codec, width:R, height:R, bitrate, framerate:fps });
+        if(s && s.supported) return s.config; }catch(_){}
+    }
+    return null;
+  }
+  const idle = () => new Promise(r => setTimeout(r, 0));
+  function dl(blob, name){
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 8000);
+  }
+
+  async function run(){
+    if(TV.on){ TV.stop = true; return; }
+    const p = plan();
+    const el = document.getElementById('tvSize');
+    const say = t => { if(el) el.innerHTML = t; };
+    if(p.err){ say('🔴 ' + p.err); return; }
+
+    let fmt = seg('tvFmt','mp4');
+    const q = seg('tvQ','mid');
+    let R = side();
+    if(fmt === 'mp4') R -= R % 2;
+    R = Math.max(2, R);
+
+    /* ⚠️ 画面で流していたら止める（位相を取り合わないため）。stop() は閉じの中なので押して止める。 */
+    const flowBtn = document.getElementById('b-flow');
+    const wasFlowing = !!window.__njFlow;
+    if(wasFlowing) flowBtn?.click();
+
+    const keepPh = window.__njPh || 0, keepFlow = !!window.__njFlow;
+    TV.on = true; TV.stop = false;
+    goBtn.textContent = 'やめる';
+    let msg = '', ef = null, et = null, tmpF = null, tmpT = null;
+    try{
+      /* ⭐ 帯を【環】に焼く＝一周しても色が飛ばない（画面の「流す」と同じ下ごしらえ） */
+      window.__njFlow = true;
+      updateGradLUT(); updateBgLUT();
+
+      /* ⭐ 焼き先＝exportPNG と同じ作り。⚠️ 1回だけ作って使い回す（毎コマ作ると GPU が詰まる） */
+      let fieldTex = curTex();
+      if(mode === 'wave'){
+        /* ⚠️ 干渉の場は時刻で変わる。撮る間は【1枚に止めて】帯だけ流す＝そうしないと頭と尻が合わない。 */
+        tmpT = tex(R); tmpF = fbo(tmpT); computeWave(performance.now(), tmpF, R); fieldTex = tmpT;
+      }
+      et = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, et);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, R, R, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      ef = fbo(et);
+
+      const px = new Uint8Array(R*R*4);
+      const out = document.createElement('canvas'); out.width = R; out.height = R;
+      const octx = out.getContext('2d');
+      const img = octx.createImageData(R, R);
+
+      let enc = null, muxer = null, target = null, encErr = null, why = '';
+      if(fmt === 'mp4'){
+        const bitrate = Math.min(80e6, Math.round(R * R * p.fps * (QB[q] || 0.15)));
+        const have = (typeof VideoEncoder !== 'undefined') ? await loadMuxer() : false;
+        const cfg = have ? await pickCodec(R, p.fps, bitrate) : null;
+        if(cfg){
+          target = new Mp4Muxer.ArrayBufferTarget();
+          muxer = new Mp4Muxer.Muxer({ target,
+            video:{ codec:'avc', width:R, height:R, frameRate:Math.max(1, Math.round(p.fps)) },
+            fastStart:'in-memory' });
+          enc = new VideoEncoder({
+            output:(c,m)=>{ try{ muxer.addVideoChunk(c,m); }catch(e){ encErr = e; } },
+            error: e => { encErr = e; } });
+          enc.configure(cfg);
+        }else{
+          /* 🔴 黙って別のものにしない。理由を言って PNG連番へ回す。 */
+          why = (typeof VideoEncoder === 'undefined') ? 'このブラウザは mp4 を作れない'
+              : !have ? 'mp4 の器を取りに行けなかった（つながっていない）'
+              : ('この大きさ（' + R + '×' + R + '）は mp4 の上限を超えている（正方形は 3072px まで）');
+          fmt = 'png';
+        }
+      }
+      const shots = [], pad = i => String(i).padStart(4,'0');
+      let bytes = 0, i = 0;
+
+      for(; i < p.total; i++){
+        if(TV.stop) break;
+        if(encErr) throw encErr;
+        window.__njPh = (i / p.total * p.loops) % 1;     // ⭐ 時計ではなくコマ番号
+        display(ef, R, fieldTex);
+        gl.readPixels(0, 0, R, R, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        /* ⚠️ WebGL の y は下から数える。drawImage/PNG は上から＝行を入れ替える（exportPNG と同じ） */
+        for(let y=0; y<R; y++){ const s=(R-1-y)*R*4, d=y*R*4; img.data.set(px.subarray(s,s+R*4), d); }
+        octx.putImageData(img, 0, 0);
+        if(fmt === 'mp4'){
+          const vf = new VideoFrame(out, { timestamp:Math.round(i*1e6/p.fps), duration:Math.round(1e6/p.fps) });
+          enc.encode(vf, { keyFrame:(i % (p.fps*2)) === 0 });
+          vf.close();
+          while(enc.encodeQueueSize > 8 && !encErr) await idle();
+        }else{
+          const b = await new Promise(r => out.toBlob(r, 'image/png'));
+          if(!b) throw new Error('PNG が作れなかった（大きすぎる可能性）');
+          const u8 = new Uint8Array(await b.arrayBuffer());
+          bytes += u8.length;
+          shots.push({ name:'nijimi_'+pad(i)+'.png', data:u8 });
+          if(bytes > 1.5e9) throw new Error('PNG連番が大きすぎます（'+Math.round(bytes/1e6)+'MB）— 周か大きさを下げてください');
+        }
+        if((i % 3) === 0 || i === p.total - 1){
+          say('書き出し中 <b>'+(i+1)+' / '+p.total+'</b> コマ　'+R+' × '+R
+              + (fmt === 'png' ? '（'+Math.round(bytes/1e6)+'MB）' : '')
+              + '<br>「やめる」で止められます');
+        }
+        await idle();                                    // ⚠️ 画面を返す（進み具合と「やめる」のため）
+      }
+      const shot = i;
+
+      if(fmt === 'mp4'){
+        await enc.flush();
+        if(encErr) throw encErr;
+        muxer.finalize(); enc.close();
+        if(shot > 1){
+          const blob = new Blob([target.buffer], { type:'video/mp4' });
+          dl(blob, 'nijimi_'+P.mode+'_'+Date.now()+'.mp4');
+          msg = 'mp4 — '+R+' × '+R+'・'+shot+'コマ・'+(shot/p.fps).toFixed(1)+'秒・'
+              + Math.round(blob.size/1e6)+'MB' + (TV.stop ? '（途中で止めた）' : '・継ぎ目なしループ');
+        }
+      }else if(shots.length){
+        const blob = zip(shots);
+        dl(blob, 'nijimi_'+P.mode+'_'+Date.now()+'_seq.zip');
+        msg = (why ? '⚠️ mp4 にできず PNG連番にしました — '+why+'／' : '')
+            + 'PNG連番 — '+R+' × '+R+'・'+shots.length+'枚・'
+            + Math.round(blob.size/1e6)+'MB（'+p.fps+'fps で束ねてください）';
+      }
+      if(shot <= 1) msg = '止めました（1コマも出していません）';
+    }catch(err){
+      msg = '🔴 ' + (err && err.message || err);          // 🔴 何が起きても必ず理由を出す
+    }finally{
+      /* 🔴 何が起きても必ず片づける（GPU の資源も、帯も、位相も） */
+      try{ if(ef) gl.deleteFramebuffer(ef); if(et) gl.deleteTexture(et); }catch(_){}
+      try{ if(tmpF) gl.deleteFramebuffer(tmpF); if(tmpT) gl.deleteTexture(tmpT); }catch(_){}
+      window.__njFlow = keepFlow; window.__njPh = keepPh;
+      updateGradLUT(); updateBgLUT();                     // ⭐ 環をやめて元の帯へ戻す
+      TV.on = false; TV.stop = false;
+      goBtn.textContent = '動画';
+      try{ display(null, cvs.width); }catch(_){}
+      sizeSync();
+      if(msg) setTimeout(() => say(msg), 30);
+      if(wasFlowing) flowBtn?.click();                    // ⭐ 画面で流していたなら戻す
+    }
+  }
+  goBtn.addEventListener('click', () => run());
+  /* 🔴 最初の1回はここ（かたまりの最後）で呼ぶ。上で呼ぶと、まだ宣言していないものに
+     触って TDZ で止まり、この下の登録が丸ごと走らなくなる（TSUBU で実際に踏んだ）。 */
+  syncUI(); sizeSync();
 })();
 </script>
 </body>
