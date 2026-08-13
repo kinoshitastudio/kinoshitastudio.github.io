@@ -864,7 +864,7 @@ function draw(){
   // 空のマスがどこにあるか分かるように、うっすら輪郭を出す（触れる範囲を見せる）。
   // ⚠️ これは画面だけの目印で、書き出し（paint）には入らない。
   if(S.guide){
-    g.strokeStyle = 'rgba(255,255,255,.13)'; g.lineWidth = 1 / cam.s;
+    g.strokeStyle = 'rgba(255,255,255,.42)'; g.lineWidth = 1.6 / cam.s;   // ⭐ 濃く・少し太く（木下＝「空きますの線ももう少し色を濃くわかりやすく」）
     for(let r = 0; r < S.rows; r++) for(let c = 0; c < S.cols; c++){
       if(S.cells[key(c, r)]) continue;
       cellPath(g, c, r, S.gap / 2); g.stroke();
@@ -1373,8 +1373,8 @@ addEventListener('keydown', e => {
   if((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z'){ e.preventDefault(); undo(); return; }
   if(e.key.toLowerCase() === 'r' && !e.metaKey && !e.ctrlKey){
     rot = (rot + 1) % 8;
-    { const n = document.getElementById('rotNow'); if(n) n.textContent = (rot * 45) + '°'; }
-    stat('向き ' + (rot * 45) + '°');
+    showRot(rot);
+    stat('置く向き ' + (rot * 45) + '°');
   }
 });
 
@@ -1522,7 +1522,7 @@ function syncAll(){
   document.body.classList.toggle('picking', tool === 1);
   document.querySelectorAll('#topMode button').forEach(b => b.classList.toggle('on', +b.dataset.v === S.topMode));
   document.querySelectorAll('#fit button').forEach(b => b.classList.toggle('on', +b.dataset.v === S.fit));
-  { const n = document.getElementById('rotNow'); if(n) n.textContent = ((rot || 0) * 45) + '°'; }
+  showRot(rotBase());
   syncMats(); syncTint(); exNote();
 }
 /* ⚠️ 色は「選んでいる素材」のもの。素材を選び直したら見た目も合わせる（P→UI を忘れると嘘の色が出る） */
@@ -1694,24 +1694,42 @@ document.querySelectorAll('#shape button').forEach(b => b.addEventListener('clic
      （2026-08-13 木下＝「選択したのを角度変更できない」）。
    ⚠️ 選んでいないときは今まで通り「これから置く向き」＝押しても盤は変わらない。
    ⭐「回す」ボタン（rotOne）は 90°ずつ回す道具、こちらは【その角度にする】道具。 */
-function setRot(v){
-  rot = ((v % 8) + 8) % 8;
-  v = rot;
+/* ⭐ 角度は【選んでいるマス】と【これから置く向き】で別もの。
+   🔴 一緒に動かすと、マスを回したぶんだけ「置く向き」も残り、次に置いたものが
+      いきなり斜めで入る（2026-08-13 木下＝「45度回すのよこが135になってるから
+      リセットされていないんじゃないか？」「置いたのに角度がいきなり違う」）。
+   ⭐ 選んでいれば【そのマスだけ】／選んでいなければ【置く向き】を回す。 */
+function selRotKeys(){
+  if(tool !== 1 || !selSet.size) return [];
+  return selKeys().filter(x => { const cur = S.cells[x]; return cur && (cur.m != null || cur.bm != null); });
+}
+function rotBase(){                                  // いまの角度＝押したときの起点
+  const ks = selRotKeys();
+  if(!ks.length) return rot || 0;
+  const cur = S.cells[ks[0]];
+  return (cur.m != null ? cur.r : cur.br) || 0;
+}
+function showRot(v){
   const now = document.getElementById('rotNow');
-  if(now) now.textContent = (rot * 45) + '°';
-  if(tool !== 1 || !selSet.size) return;
-  const ks = selKeys().filter(x => { const cur = S.cells[x]; return cur && (cur.m != null || cur.bm != null); });
-  if(!ks.length) return;
-  snap();
+  if(now) now.textContent = (((v % 8) + 8) % 8) * 45 + '°';
+}
+function setRot(v){
+  const nv = ((v % 8) + 8) % 8;
+  const ks = selRotKeys();
+  if(!ks.length){                                    // 選んでいない＝これから置く向きだけ
+    rot = nv; showRot(nv); stat('置く向き ' + (nv * 45) + '°');
+    return;
+  }
+  snap();                                            // ⚠️ 選んでいるときは rot（置く向き）を触らない
   for(const x of ks){
     const cur = S.cells[x];
-    if(cur.m  != null) cur.r  = v;
-    if(cur.bm != null) cur.br = v;
+    if(cur.m  != null) cur.r  = nv;
+    if(cur.bm != null) cur.br = nv;
   }
-  draw();
-  stat('向きを ' + (v * 45) + '° にした（' + ks.length + ' マス）');
+  showRot(nv); draw();
+  stat('向きを ' + (nv * 45) + '° にした（' + ks.length + ' マス）');
 }
-document.getElementById('rotStep').addEventListener('click', () => setRot(rot + 1));   // ⭐ 押すたびに45°
+document.getElementById('rotStep').addEventListener('click', () => setRot(rotBase() + 1));   // ⭐ 押すたびに45°
 function exNote(){
   const el = document.getElementById('exNote'); if(!el) return;
   const sc = +(document.querySelector('#exSc button.on') || {}).dataset?.v || 1;
