@@ -439,6 +439,21 @@
   <div class="hint" id="exNote" style="display:block;color:#7a7773"></div>
   <button class="big" id="exPng">PNG を出す</button>
   <button class="sub" id="exPngA">PNG を出す（地なし）</button>
+
+  <!-- ⭐⭐ 動画で出す（2026-08-13・6つ目）＝画面録画の代わり。
+       ⭐ 大きさは【上の倍率をそのまま使う】＝出る大きさを決める場所を2つにしない。
+       ⭐ 撮るのは盤そのもの（paint）＝画面のドットではないので、寄っていても関係ない。 -->
+  <div class="seg" id="tvFmt" style="margin-top:8px"><button data-v="mp4" class="on">mp4</button><button data-v="png">PNG連番</button></div>
+  <div class="seg" id="tvQ"><button data-v="hi">きれい</button><button data-v="mid" class="on">ふつう</button><button data-v="lo">軽い</button></div>
+  <div class="seg" id="tvLoop"><button data-v="1" class="on">1周</button><button data-v="2">2周</button><button data-v="3">3周</button></div>
+  <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="tvNoBg" style="width:auto;flex:none"><span style="font-size:10.5px;opacity:.7">地なし（PNG連番のときだけ）</span></label>
+  <!-- 🔴 .hint は「?」を押したときしか出ない。出る大きさと進み具合は常時見えないと困るので、
+       この道具が exNote でやっているのと同じ手（inline の display:block）で出す。 -->
+  <div class="hint" id="tvSize" style="display:block;font-family:ui-monospace,Menlo,monospace;color:#5a5754"></div>
+  <button class="big" id="tvGo">動画を出す</button>
+  <div class="hint">⭐ <b>1周</b>＝頭と尻がぴったり合う（継ぎ目のないループ）。1周の長さは<b>変化の種類</b>で決まる<br>
+    ⚠️ <b>流れ</b>が 0 だと何も動かない。速さは画面で見えているとおり（流れと FPS がそのまま効く）<br>
+    ⭐ <b>PNG連番</b>＝ZIP で出る。地なしは透明のまま出せる（mp4 は透明を持てない）</div>
   <button class="sub" id="exJson">JSON を出す（盤の控え）</button>
   <button class="sub" id="imJson">JSON を読む（盤の控え）</button>
   <div class="seg" id="works" style="flex-wrap:wrap;margin-top:6px"></div>
@@ -1480,6 +1495,277 @@ function shoot(noBg){
 }
 document.getElementById('exPng').addEventListener('click', () => shoot(false));
 document.getElementById('exPngA').addEventListener('click', () => shoot(true));
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 動画で出す ── 画面録画をやめる（2026-08-13・6つ目）
+
+   ⭐ この道具の動きは `flowT` 1本。⚠️ 進み方は【描いたコマごとに一定量】
+      （`flowT += S.flow/100*0.02`）＝木下が実時間補正を却下してこの形に戻した所。
+      だから書き出しも【同じ刻み】で置く＝画面で見えている速さがそのまま出る。
+   ⭐ 1周の長さは【変化の種類】で決まる。整数周ぶん撮れば頭と尻が一致する。
+        送る＝2（鏡なので2枚で1周）／回る＝8（45°単位で一周）
+        替わる＝素材の枚数／呼吸＝2（sin(πt) の周期）
+      ⚠️ マスごとの「ずれ」（cellPhase）は【定数】なので周期を変えない。
+   ⭐ 絵は `shoot()` と同じ道＝`paint()` で盤をオフスクリーンに焼く。画面のドットではないので、
+      寄っていても引いていても関係ない。大きさは【上の倍率】をそのまま使う
+      ＝「出る大きさを決めるのは 出す の段だけ」を守る。
+   ══════════════════════════════════════════════════════════════ */
+(function(){
+  const goBtn = document.getElementById('tvGo');
+  if(!goBtn) return;
+  const seg = (id, dflt) => { const b = document.querySelector('#'+id+' button.on'); return b ? b.dataset.v : dflt; };
+  document.querySelectorAll('#tvFmt button, #tvQ button, #tvLoop button').forEach(b =>
+    b.addEventListener('click', () => {
+      b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+      sizeSync();
+    }));
+  document.getElementById('tvNoBg')?.addEventListener('change', () => sizeSync());
+  /* ⚠️ 変化の種類・流れ・FPS・倍率が変われば周期も出る大きさも変わる＝数え直す */
+  document.querySelectorAll('#anim button, #exSc button').forEach(b => b.addEventListener('click', () => setTimeout(sizeSync, 0)));
+  ['flow','fps'].forEach(id => document.getElementById(id)?.addEventListener('input', () => sizeSync()));
+
+  const PERIOD_LAB = ['送る', '回る', '替わる', '呼吸'];
+  /* ⭐ 1周ぶんの flowT。⚠️ 種類ごとに違う（ここを1か所にまとめておく） */
+  function period(){
+    const a = S.anim || 0;
+    if(a === 1) return 8;                          // 45°単位＝8で一周
+    if(a === 2) return Math.max(1, mats.length);   // 棚の枚数で一周
+    return 2;                                      // 送る（鏡）／呼吸（sin(πt)）
+  }
+  function plan(){
+    const flow = +S.flow || 0, fps = Math.max(1, Math.round(+S.fps || 30));
+    if(flow <= 0) return { err:'「' + (typeof FLOW_LAB !== 'undefined' ? FLOW_LAB[S.anim||0] : '流れ') + '」が 0 なので何も動きません' };
+    if((S.anim||0) === 2 && mats.length < 2) return { err:'「替わる」は棚に素材が2枚以上要ります' };
+    const step = flow / 100 * 0.02;                // 画面と同じ刻み
+    const loops = +seg('tvLoop','1') || 1;
+    const total = Math.max(2, Math.round(loops * period() / step));
+    return { fps, loops, step, total, sec: total / fps };
+  }
+  function outSize(sc){
+    if(sc == null) sc = +(document.querySelector('#exSc button.on') || {}).dataset?.v || 1;
+    const ws = boardSize();
+    return { W: Math.max(1, Math.round(ws.w * sc)), H: Math.max(1, Math.round(ws.h * sc)), sc };
+  }
+  const mp4Fits = (W, H) => Math.ceil(W/16) * Math.ceil(H/16) <= 36864 && W <= 4096 && H <= 4096;
+  /* ⭐ いまの盤で mp4 にできる【いちばん大きい倍率】を、上の段にある選択肢の中から探す。
+     ⚠️ 「出せません」だけでは木下が次に何を押せばいいか分からない＝必ず数字で言う。 */
+  function biggestOkScale(){
+    const opts = [...document.querySelectorAll('#exSc button')]
+      .map(b => +b.dataset.v).filter(n => n > 0).sort((a,b) => b - a);
+    for(const sc of opts){
+      const o = outSize(sc);
+      if(mp4Fits(o.W - o.W % 2, o.H - o.H % 2)) return { sc, W:o.W - o.W % 2, H:o.H - o.H % 2 };
+    }
+    return null;
+  }
+  /* ⭐ 出る大きさは【押す前に】必ず出す。⚠️ H.264 の上限＝辺4096・マクロブロック36864。 */
+  function sizeSync(){
+    const el = document.getElementById('tvSize'); if(!el) return;
+    const o = outSize(), p = plan();
+    let W = o.W, H = o.H;
+    const isMp4 = seg('tvFmt','mp4') === 'mp4';
+    if(isMp4){ W -= W % 2; H -= H % 2; }
+    const ok = mp4Fits(W, H);
+    /* 🔴 「出せません」だけでは次に何を押せばいいか分からない＝使える倍率を数字で出す。 */
+    const fit = (isMp4 && !ok) ? biggestOkScale() : null;
+    el.innerHTML = '出力 <b>' + W + ' × ' + H + '</b> px（' + o.sc + 'x）'
+      + (isMp4 && !ok
+          ? '<br>⚠️ この大きさは mp4 にできません（辺4096まで）。'
+            + (fit ? '<b>' + fit.sc + 'x なら ' + fit.W + ' × ' + fit.H + '</b> で出せます'
+                   : '盤を小さくするか PNG連番にしてください')
+          : '')
+      + (p.err ? '<br>⚠️ ' + p.err
+          : '<br>' + p.total + ' コマ・' + p.sec.toFixed(1) + '秒・' + p.fps + 'fps・'
+            + p.loops + '周（' + PERIOD_LAB[S.anim||0] + 'の1周＝' + period() + '）');
+  }
+
+  /* ══ ZIP（圧縮なし＝store）══ */
+  let CRCT = null;
+  function crc32(u8){
+    if(!CRCT){ CRCT = new Uint32Array(256);
+      for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); CRCT[n]=c>>>0; } }
+    let c = 0xFFFFFFFF;
+    for(let i=0;i<u8.length;i++) c = CRCT[(c ^ u8[i]) & 0xFF] ^ (c>>>8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+  function zip(files){
+    const te = new TextEncoder(), parts = [], cent = [];
+    let off = 0;
+    for(const f of files){
+      const nm = te.encode(f.name), crc = crc32(f.data), sz = f.data.length;
+      const L = new DataView(new ArrayBuffer(30));
+      L.setUint32(0,0x04034b50,true); L.setUint16(4,20,true);
+      L.setUint32(14,crc,true); L.setUint32(18,sz,true); L.setUint32(22,sz,true);
+      L.setUint16(26,nm.length,true);
+      parts.push(new Uint8Array(L.buffer), nm, f.data);
+      const C = new DataView(new ArrayBuffer(46));
+      C.setUint32(0,0x02014b50,true); C.setUint16(4,20,true); C.setUint16(6,20,true);
+      C.setUint32(16,crc,true); C.setUint32(20,sz,true); C.setUint32(24,sz,true);
+      C.setUint16(28,nm.length,true); C.setUint32(42,off,true);
+      cent.push(new Uint8Array(C.buffer), nm);
+      off += 30 + nm.length + sz;
+    }
+    let csz = 0; for(const c of cent) csz += c.length;
+    const E = new DataView(new ArrayBuffer(22));
+    E.setUint32(0,0x06054b50,true);
+    E.setUint16(8,files.length,true); E.setUint16(10,files.length,true);
+    E.setUint32(12,csz,true); E.setUint32(16,off,true);
+    return new Blob(parts.concat(cent, [new Uint8Array(E.buffer)]), { type:'application/zip' });
+  }
+  /* ⭐ mp4 の器は押したときだけ取りに行く */
+  let muxP = null;
+  function loadMuxer(){
+    if(window.Mp4Muxer) return Promise.resolve(true);
+    if(!muxP) muxP = new Promise(res => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.1/build/mp4-muxer.min.js';
+      s.onload = () => res(!!window.Mp4Muxer); s.onerror = () => res(false);
+      document.head.appendChild(s);
+    });
+    return muxP;
+  }
+  const QB = { hi:0.30, mid:0.15, lo:0.06 };
+  async function pickCodec(W, H, fps, bitrate){
+    const cands = ['avc1.640034','avc1.640033','avc1.640032','avc1.64002a','avc1.640028','avc1.4d0034','avc1.42003c'];
+    for(const codec of cands){
+      try{ const s = await VideoEncoder.isConfigSupported({ codec, width:W, height:H, bitrate, framerate:fps });
+        if(s && s.supported) return s.config; }catch(_){}
+    }
+    return null;
+  }
+  const idle = () => new Promise(r => setTimeout(r, 0));
+
+  async function run(){
+    if(TV.on){ TV.stop = true; return; }
+    const p = plan();
+    const el = document.getElementById('tvSize');
+    const say = t => { if(el) el.innerHTML = t; };
+    if(p.err){ say('🔴 ' + p.err); return; }
+
+    let fmt = seg('tvFmt','mp4');
+    const q = seg('tvQ','mid');
+    const noBg = fmt === 'png' && !!document.getElementById('tvNoBg')?.checked;
+    const o0 = outSize();
+    let W = o0.W, H = o0.H;
+    if(fmt === 'mp4'){ W -= W % 2; H -= H % 2; }
+    W = Math.max(2, W); H = Math.max(2, H);
+
+    /* 🔴🔴 大きすぎるときは【止める】。頼んでもいない ZIP を出さない（2026-08-13）。
+       木下＝「動画を出すを押すが zip ファイルで書き出しされる？」「png書き出しになってるね」。
+       ⚠️ 既定は 盤1100×1400 × 4倍 ＝ 4400×5600 で、H.264 の上限をはるかに超えていた。
+          黙って PNG連番へ落としていたので、押した本人には【なぜか zip が出た】としか見えなかった。
+       ⭐ 直せる失敗（＝倍率を下げれば済む）は落とさずに止めて、押すべき倍率を数字で言う。
+       ⚠️ 落とすのは【直せない失敗】だけ＝このブラウザに mp4 が無い／器を取りに行けない。 */
+    if(fmt === 'mp4' && !mp4Fits(W, H)){
+      const fit = biggestOkScale();
+      say('🔴 この大きさ（' + W + ' × ' + H + '）は mp4 にできません（辺4096まで）<br>'
+        + (fit ? '⭐ 上の倍率を <b>' + fit.sc + 'x</b> にすると <b>' + fit.W + ' × ' + fit.H + '</b> で出せます'
+               : '⭐ 盤を小さくするか、PNG連番を選んでください'));
+      goBtn.textContent = '動画を出す';
+      TV.on = false;
+      return;
+    }
+
+    const keepFlowT = flowT, keepPlaying = playing;
+    TV.on = true; TV.stop = false;                  // ⭐ ここから tick は進めない
+    goBtn.textContent = 'やめる';
+    let msg = '';
+    try{
+      const out = document.createElement('canvas');
+      out.width = W; out.height = H;
+      const o = out.getContext('2d', { alpha:true });   // ⚠️ 地なしを持てるように
+      o.imageSmoothingEnabled = false;
+
+      let enc = null, muxer = null, target = null, encErr = null, why = '';
+      if(fmt === 'mp4'){
+        const bitrate = Math.min(80e6, Math.round(W * H * p.fps * (QB[q] || 0.15)));
+        const have = (typeof VideoEncoder !== 'undefined') ? await loadMuxer() : false;
+        const cfg = have ? await pickCodec(W, H, p.fps, bitrate) : null;
+        if(cfg){
+          target = new Mp4Muxer.ArrayBufferTarget();
+          muxer = new Mp4Muxer.Muxer({ target,
+            video:{ codec:'avc', width:W, height:H, frameRate:Math.max(1, Math.round(p.fps)) },
+            fastStart:'in-memory' });
+          enc = new VideoEncoder({
+            output:(c,m)=>{ try{ muxer.addVideoChunk(c,m); }catch(e){ encErr = e; } },
+            error: e => { encErr = e; } });
+          enc.configure(cfg);
+        }else{
+          /* 🔴 黙って別のものにしない。理由を言って PNG連番へ回す。 */
+          why = (typeof VideoEncoder === 'undefined') ? 'このブラウザは mp4 を作れない'
+              : !have ? 'mp4 の器を取りに行けなかった（つながっていない）'
+              : ('この大きさ（' + W + '×' + H + '）は mp4 の上限を超えている');
+          fmt = 'png';
+        }
+      }
+      const shots = [], pad = i => String(i).padStart(4,'0');
+      let bytes = 0, i = 0;
+
+      for(; i < p.total; i++){
+        if(TV.stop) break;
+        if(encErr) throw encErr;
+        flowT = i * p.step;                          // ⭐ 時計ではなくコマ番号（画面と同じ刻み）
+        o.setTransform(o0.sc, 0, 0, o0.sc, 0, 0);
+        o.clearRect(0, 0, W / o0.sc, H / o0.sc);
+        paint(o, { noBg });
+        if(fmt === 'mp4'){
+          const vf = new VideoFrame(out, { timestamp:Math.round(i*1e6/p.fps), duration:Math.round(1e6/p.fps) });
+          enc.encode(vf, { keyFrame:(i % (p.fps*2)) === 0 });
+          vf.close();
+          while(enc.encodeQueueSize > 8 && !encErr) await idle();
+        }else{
+          const b = await new Promise(r => out.toBlob(r, 'image/png'));
+          if(!b) throw new Error('PNG が作れなかった（大きすぎる可能性）');
+          const u8 = new Uint8Array(await b.arrayBuffer());
+          bytes += u8.length;
+          shots.push({ name:'masu_'+pad(i)+'.png', data:u8 });
+          if(bytes > 1.5e9) throw new Error('PNG連番が大きすぎます（'+Math.round(bytes/1e6)+'MB）— 周か倍率を下げてください');
+        }
+        if((i % 3) === 0 || i === p.total - 1){
+          say('書き出し中 <b>'+(i+1)+' / '+p.total+'</b> コマ　'+W+' × '+H
+              + (fmt === 'png' ? '（'+Math.round(bytes/1e6)+'MB）' : '')
+              + '<br>「やめる」で止められます');
+        }
+        await idle();                                // ⚠️ 画面を返す（進み具合と「やめる」のため）
+      }
+      const shot = i;
+
+      if(fmt === 'mp4'){
+        await enc.flush();
+        if(encErr) throw encErr;
+        muxer.finalize(); enc.close();
+        if(shot > 1){
+          const blob = new Blob([target.buffer], { type:'video/mp4' });
+          dl(blob, 'masu.mp4');
+          msg = 'mp4 — '+W+' × '+H+'・'+shot+'コマ・'+(shot/p.fps).toFixed(1)+'秒・'
+              + Math.round(blob.size/1e6)+'MB' + (TV.stop ? '（途中で止めた）' : '・継ぎ目なしループ');
+        }
+      }else if(shots.length){
+        const blob = zip(shots);
+        dl(blob, 'masu_seq.zip');
+        msg = (why ? '⚠️ mp4 にできず PNG連番にしました — '+why+'／' : '')
+            + 'PNG連番 — '+W+' × '+H+'・'+shots.length+'枚・'
+            + Math.round(blob.size/1e6)+'MB（'+p.fps+'fps で束ねてください）'
+            + (noBg ? '・地なし' : '');
+      }
+      if(shot <= 1) msg = '止めました（1コマも出していません）';
+    }catch(err){
+      msg = '🔴 ' + (err && err.message || err);      // 🔴 何が起きても必ず理由を出す
+    }finally{
+      /* 🔴 何が起きても必ず元へ戻す（盤のデータは1つも触っていない） */
+      flowT = keepPlaying ? keepFlowT : 0;
+      TV.on = false; TV.stop = false;
+      goBtn.textContent = '動画を出す';
+      draw();
+      sizeSync();
+      if(msg){ stat(msg.replace(/<[^>]*>/g,'')); setTimeout(() => say(msg), 30); }
+    }
+  }
+  goBtn.addEventListener('click', () => run());
+  /* 🔴 最初の1回はここ（かたまりの最後）で呼ぶ。上で呼ぶと、まだ宣言していないものに
+     触って TDZ で止まり、この下の登録が丸ごと走らなくなる（TSUBU で実際に踏んだ）。 */
+  sizeSync();
+})();
 /* ⭐⭐ MASU だけが【中に別のエンジン】を持つ＝控えが2種類ある。
    　　盤の控え（マスの並び＋素材）と、粒のエンジンの設定（つまみ）。
    🔴 どちらも .json で名前が masu.json / engine.json だったので、取り違えても
@@ -1789,6 +2075,9 @@ document.getElementById('outbg').addEventListener('input', e => { S.outbg = e.ta
       FPS を下げると粗くなるだけでなく送りもゆっくりになる（＝ゲームの時間）。 */
 let lastFrame = 0;
 let playing = false;                               // ⭐ 再生を押すまで動かない（開き直すと必ず止まっている）
+/* 🔴 動画の入れ物は tick より前で作る。下で const にすると起動の1コマ目が
+   「初期化前に読んだ」で落ちる（TSUBU で実際に踏んだ穴）。 */
+const TV = { on:false, stop:false };
 function setPlay(on){
   playing = !!on;
   const b = document.getElementById('play');
@@ -1797,6 +2086,8 @@ function setPlay(on){
 }
 function tick(now){
   requestAnimationFrame(tick);
+  /* ⚠️ 動画を撮っているあいだは進めない（位相は書き出し側が1コマずつ置く） */
+  if(TV.on) return;
   if(!playing || !S.flow) return;
   if(now - lastFrame < 1000 / S.fps) return;
   /* ⭐ 進みは【描いたコマ】ごとに一定量。FPS を下げるとゆっくりになる＝ゲームの時間。
