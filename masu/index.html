@@ -323,9 +323,13 @@
   <div class="hint">⭐<b>形を変えると並びも変わる</b>。六角は千鳥・三角は上下が交互。だから置いたものの隣り合い方が変わる</div>
   <div class="row"><label>列</label><input type="range" id="cols" min="1" max="100" step="1" value="10"><span class="val"></span></div>
   <div class="row"><label>行</label><input type="range" id="rows" min="1" max="100" step="1" value="10"><span class="val"></span></div>
-  <div class="row"><label>大きさ</label><input type="range" id="cell" min="8" max="200" step="1" value="72"><span class="val"></span></div>
+  <div class="row"><label>大きさ</label><input type="range" id="cell" min="8" max="600" step="1" value="72"><span class="val"></span></div>
   <div class="row"><label>隙間</label><input type="range" id="gap" min="0" max="40" step="1" value="0"><span class="val"></span></div>
   <div class="row"><label>枠線</label><input type="range" id="edge" min="0" max="4" step="1" value="0"><span class="val"></span></div>
+  <!-- ⭐ 置いたもの全体を動かす（2026-08-13 木下＝「おぶじぇくとの左右上下を移動できるようにして」） -->
+  <div class="row"><label>横にずらす</label><input type="range" id="ox" min="-400" max="400" step="1" value="0"><span class="val"></span></div>
+  <div class="row"><label>縦にずらす</label><input type="range" id="oy" min="-400" max="400" step="1" value="0"><span class="val"></span></div>
+  <div class="hint">⭐<b>置いたもの全体</b>が動く（盤＝地は動かない＝枠から出る）。<b>0＝元の位置</b>。マスの中身は書き換えないので、いつでも 0 に戻せる</div>
   <div class="seg" id="guide"><button data-v="1" class="on">空きマスの線を出す</button><button data-v="0">出さない</button></div>
   <div class="hint">⚠️<b>これは画面だけの目印</b>（書き出しには出ない）。<b>枠線</b>（すぐ上）は絵として引く線で、書き出しにも出る。<b>白い細い線が見えるのはこちら</b></div>
 
@@ -359,7 +363,7 @@
   <div class="seg" id="rot" style="margin-top:8px">
     <button data-v="0" class="on">0°</button><button data-v="1">90°</button>
     <button data-v="2">180°</button><button data-v="3">270°</button></div>
-  <div class="hint">置くときの向き。<b>R キー</b>でも回る</div>
+  <div class="hint">⭐マスを<b>選んでいればそのマスの向き</b>／選んでいなければ<b>これから置く向き</b>。<b>R キー</b>でも回る</div>
 
   <h2>置く</h2>
   <div class="seg" id="tool"><button data-v="0" class="on">置く</button><button data-v="1">選ぶ</button></div>
@@ -430,6 +434,7 @@ const S = {
   bg:'#e8619b',          // ボード（台紙）の色
   board:1, bw:1100, bh:1400,   // ⭐ ボード＝作品の版面。格子はこの上に乗る
   fit:0, guide:1, topScale:100, topMode:0,               // 0=覆う（はみ出しは切る） 1=収める（形の中に全部入れる）
+  ox:0, oy:0,          // ⭐ 置いたもの全体のずらし（px）。盤＝地はずらさない＝中身だけ動く
   flow:0, fps:30, drift:0, anim:0,   // ⭐ アニメーション。流れ0＝完全に静止（rAF も回さない）
                                      //   drift＝マスごとの時間差／anim＝変化の種類（0送る 1回る 2替わる 3呼吸）
   cells:{},            // "c,r" → { m:素材index, r:回転0-3 }
@@ -775,7 +780,7 @@ function drawOne(ctx, c, r, mi, rot, scale, mode, fx, fy){
 function bleedOf(ctx){
   if(S.shape !== 0 || S.gap) return 0;
   const sc = (ctx.getTransform ? Math.abs(ctx.getTransform().a) : 1) || 1;
-  return 3 / sc;
+  return 1 / sc;
 }
 function drawTile(ctx, c, r, cell){
   const top = mats[cell.m], base = (cell.bm != null) ? mats[cell.bm] : null;
@@ -792,9 +797,14 @@ function drawTile(ctx, c, r, cell){
   if(cell.m != null)  drawOne(ctx, c, r, animMat(c, r, cell.m), animRot(c, r, cell.r), S.topScale / 100, TOP_MODE[S.topMode], cell.fx, cell.fy);
   ctx.restore();
 }
+/* ⭐ 置いたもの【全体】を左右上下にずらす（2026-08-13 木下＝「おぶじぇくとの左右上下を
+     移動できるようにして」）。⚠️ 盤（地）はずらさない＝中身だけが動いて枠から出る。
+   ⭐ マスの中身は1つも書き換えない＝0 に戻せば必ず元の位置に帰る。 */
 function paint(ctx, opt){
   const ws = boardSize();
   if(!opt.noBg){ ctx.fillStyle = S.bg; ctx.fillRect(0, 0, ws.w, ws.h); }
+  ctx.save();
+  ctx.translate(S.ox || 0, S.oy || 0);
   for(let r = 0; r < S.rows; r++) for(let c = 0; c < S.cols; c++){
     const cell = S.cells[key(c, r)];
     if(cell) drawTile(ctx, c, r, cell);
@@ -805,6 +815,7 @@ function paint(ctx, opt){
       cellPath(ctx, c, r, S.gap / 2); ctx.stroke();
     }
   }
+  ctx.restore();
 }
 function draw(){
   const dpr = Math.min(devicePixelRatio, 2);
@@ -1386,6 +1397,8 @@ async function loadWork(file, label){
     if(d.S.flow == null) S.flow = 0;
     if(!S.fps) S.fps = 30;
     if(d.S.drift == null) S.drift = 0;   // ⚠️ 欠けたキーは Object.assign が触らない
+    if(d.S.ox == null) S.ox = 0;
+    if(d.S.oy == null) S.oy = 0;
     if(d.S.anim == null) S.anim = 0;
     mats = [];
     for(const m of (d.mats || [])){
@@ -1434,6 +1447,8 @@ document.getElementById('jfile').addEventListener('change', async e => {
     if(d.S.flow == null) S.flow = 0;
     if(!S.fps) S.fps = 30;
     if(d.S.drift == null) S.drift = 0;   // ⚠️ 欠けたキーは Object.assign が触らない
+    if(d.S.ox == null) S.ox = 0;
+    if(d.S.oy == null) S.oy = 0;
     if(d.S.anim == null) S.anim = 0;
     mats = [];
     for(const m of (d.mats || [])){ await addMat(m.url, m.name); const mm = mats[mats.length-1]; mm.tint = m.tint || null; mm.bg = m.bg || null; }
@@ -1455,7 +1470,7 @@ function syncAll(){
     const v = el.parentElement.querySelector('.val'); if(v) v.textContent = S[k];
   });
   document.getElementById('bg').value = S.bg;
-  [['flow','flow'],['fps','fps'],['drift','drift']].forEach(([id, k]) => {   // ⚠️ RANGES とは別（fitView を呼ばせない）
+  [['flow','flow'],['fps','fps'],['drift','drift'],['ox','ox'],['oy','oy']].forEach(([id, k]) => {   // ⚠️ RANGES とは別（fitView を呼ばせない）
     const el = document.getElementById(id); if(!el) return;
     el.value = S[k];
     const v = el.parentElement.querySelector('.val'); if(v) v.textContent = S[k];
@@ -1600,7 +1615,7 @@ document.getElementById('bg').addEventListener('input', e => { S.bg = e.target.v
 /* ══ アニメーション ══
    ⚠️ RANGES に入れない。あれは fitView（盤の大きさが変わる操作）を呼ぶので、
       流れ・FPS で勝手にカメラが戻ってしまう。 */
-[['flow','flow'],['fps','fps'],['drift','drift']].forEach(([id, k]) => {
+[['flow','flow'],['fps','fps'],['drift','drift'],['ox','ox'],['oy','oy']].forEach(([id, k]) => {
   document.getElementById(id).addEventListener('input', e => {
     S[k] = +e.target.value;
     const v = e.target.parentElement.querySelector('.val'); if(v) v.textContent = S[k];
@@ -1636,10 +1651,26 @@ document.querySelectorAll('#shape button').forEach(b => b.addEventListener('clic
   document.querySelectorAll('#shape button').forEach(x => x.classList.toggle('on', x === b));
   fitView(); draw();
 }));
-document.querySelectorAll('#rot button').forEach(b => b.addEventListener('click', () => {
-  rot = +b.dataset.v;
-  document.querySelectorAll('#rot button').forEach(x => x.classList.toggle('on', x === b));
-}));
+/* ⭐ 0°/90°/180°/270° は【選んでいるマスがあればそのマスの向き】になる
+     （2026-08-13 木下＝「選択したのを角度変更できない」）。
+   ⚠️ 選んでいないときは今まで通り「これから置く向き」＝押しても盤は変わらない。
+   ⭐「回す」ボタン（rotOne）は 90°ずつ回す道具、こちらは【その角度にする】道具。 */
+function setRot(v){
+  rot = v;
+  document.querySelectorAll('#rot button').forEach(x => x.classList.toggle('on', +x.dataset.v === v));
+  if(tool !== 1 || !selSet.size) return;
+  const ks = selKeys().filter(x => { const cur = S.cells[x]; return cur && (cur.m != null || cur.bm != null); });
+  if(!ks.length) return;
+  snap();
+  for(const x of ks){
+    const cur = S.cells[x];
+    if(cur.m  != null) cur.r  = v;
+    if(cur.bm != null) cur.br = v;
+  }
+  draw();
+  stat('向きを ' + (v * 90) + '° にした（' + ks.length + ' マス）');
+}
+document.querySelectorAll('#rot button').forEach(b => b.addEventListener('click', () => setRot(+b.dataset.v)));
 function exNote(){
   const el = document.getElementById('exNote'); if(!el) return;
   const sc = +(document.querySelector('#exSc button.on') || {}).dataset?.v || 1;
