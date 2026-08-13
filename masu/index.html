@@ -49,6 +49,11 @@
   input[type=color]::-webkit-color-swatch-wrapper{padding:1px;}
   input[type=color]::-webkit-color-swatch{border:none;}
   .val{font-family:"Space Mono",monospace;font-size:8px;opacity:.4;width:26px;text-align:right;flex:none;}
+  /* ⭐ 手で打てる数字。見た目はいままでの数字のまま（枠は触ったときだけ出す） */
+  input.num{width:42px;background:none;border:1px solid transparent;border-radius:3px;color:inherit;padding:1px 2px;opacity:.55;}
+  input.num:hover{border-color:var(--line);}
+  input.num:focus{outline:none;border-color:var(--line);opacity:1;}
+  input.num::-webkit-outer-spin-button,input.num::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
   .big{width:100%;padding:9px 0;margin-top:8px;background:var(--ink);color:var(--paper);
     border:none;cursor:pointer;font-family:"Space Mono",monospace;font-size:9px;letter-spacing:.2em;}
   .sub{width:100%;padding:7px 0;margin-top:5px;background:none;color:var(--ink);
@@ -122,6 +127,7 @@
     .row input[type=range]::-moz-range-track{height:3px;}
     .row input[type=range]::-moz-range-thumb{width:22px;height:22px;}
     .val{font-size:9.5px;width:32px;}
+    input.num{width:52px;font-size:9.5px;}
     .seg button{padding:12px 0;font-size:9.5px;}
     input[type=color]{width:34px;height:26px;}
     h2{font-size:11.5px;margin-top:16px;padding-top:20px;}
@@ -311,8 +317,10 @@
   <h2>ボード</h2>
   <div class="seg" id="board"><button data-v="1" class="on">敷く</button><button data-v="0">敷かない</button></div>
   <div class="hint">⭐<b>作品の版面</b>。マスの大きさを小さくすると、その周りにボードが見える。<b>敷かない</b>＝マス目そのものが版面（前の挙動）</div>
-  <div class="row"><label>幅</label><input type="range" id="bw" min="100" max="12000" step="10" value="1100"><span class="val"></span></div>
-  <div class="row"><label>高さ</label><input type="range" id="bh" min="100" max="12000" step="10" value="1400"><span class="val"></span></div>
+  <!-- ⭐ 幅・高さは手で打てる（2026-08-13 木下＝「1080 1350で数字入力もできるようにもしておいて」）。
+       ⚠️ つまみは10刻みなので、SNSの版（1080×1350）のような値はつまみでは出せなかった。 -->
+  <div class="row"><label>幅</label><input type="range" id="bw" min="100" max="12000" step="10" value="1100"><input type="number" class="val num" id="bwNum" min="100" max="12000" step="1"></div>
+  <div class="row"><label>高さ</label><input type="range" id="bh" min="100" max="12000" step="10" value="1400"><input type="number" class="val num" id="bhNum" min="100" max="12000" step="1"></div>
   <div class="row"><label>色</label><input type="color" id="bg" value="#e8619b">
     <button id="boardFit" style="flex:1;padding:4px 0;font:inherit;font-size:8px;cursor:pointer;background:none;border:1px solid var(--line);border-radius:3px;">マス目に合わせる</button></div>
   <!-- ⭐ ボードの外の色（2026-08-13 木下＝「黒でやる場合、その周りの色が変更できないので
@@ -370,6 +378,11 @@
   <div class="row" style="margin-top:8px">
     <button class="sub" id="rotStep" style="flex:1">45° 回す</button><span class="val" id="rotNow">0°</span></div>
   <div class="hint">⭐マスを<b>選んでいればそのマスの向き</b>／選んでいなければ<b>これから置く向き</b>。<b>R キー</b>でも回る</div>
+  <!-- ⭐ 選んだマスだけ絵を大きく（2026-08-13 木下＝「既存であるものを選択して、さらに
+       マス全体に大きくできるようにできないかな？今『覆う』もあるんだけどそれだと
+       マス全体になるからさ」）＝「覆う／収める」は盤ぜんぶの話、こちらは【そのマスだけ】。 -->
+  <div class="row"><label>このマスの絵</label><input type="range" id="cellScale" min="20" max="400" step="1" value="100"><input type="number" class="val num" id="cellScaleNum" min="20" max="400" step="1"></div>
+  <div class="hint">⭐<b>選んだマスの絵だけ</b>大きく／小さくする（100＝いままで通り）。⚠️マスを選んでいないときは効かない</div>
 
   <h2>置く</h2>
   <div class="seg" id="tool"><button data-v="0" class="on">置く</button><button data-v="1">選ぶ</button></div>
@@ -838,8 +851,10 @@ function drawTile(ctx, c, r, cell){
   const solid = (base && base.bg) || (top && top.bg);
   if(solid){ ctx.fillStyle = solid; cellPath(ctx, c, r, S.gap / 2 - bleed); ctx.fill(); }
   // ② 地の絵 → ③ 上の絵
-  if(cell.bm != null) drawOne(ctx, c, r, animMat(c, r, cell.bm), animRot(c, r, cell.br), 1, null, cell.bfx, cell.bfy);
-  if(cell.m != null)  drawOne(ctx, c, r, animMat(c, r, cell.m), animRot(c, r, cell.r), S.topScale / 100, TOP_MODE[S.topMode], cell.fx, cell.fy);
+  /* ⭐ そのマスだけの大きさ（sc）。⚠️ 無ければ 1＝いままでと1ドットも変わらない。 */
+  const cs = (cell.sc || 100) / 100;
+  if(cell.bm != null) drawOne(ctx, c, r, animMat(c, r, cell.bm), animRot(c, r, cell.br), cs, null, cell.bfx, cell.bfy);
+  if(cell.m != null)  drawOne(ctx, c, r, animMat(c, r, cell.m), animRot(c, r, cell.r), S.topScale / 100 * cs, TOP_MODE[S.topMode], cell.fx, cell.fy);
   ctx.restore();
 }
 /* ⭐ 置いたもの【全体】を左右上下にずらす（2026-08-13 木下＝「おぶじぇくとの左右上下を
@@ -1511,19 +1526,25 @@ document.getElementById('jfile').addEventListener('change', async e => {
 
 /* ══ つまみ ══
    ⚠️ P→UI も必ず合わせる。UI→P だけ結線すると、控えを読んでも見た目が古いままになる。 */
+/* ⭐ 数字の出し先は1本にする＝ span なら文字、手で打てる入力なら値。
+   ⚠️ ここを分けると「つまみを動かしたのに数字が古いまま」が起きる。 */
+function setVal(el, v){
+  if(!el) return;
+  if(el.tagName === 'INPUT') el.value = v; else el.textContent = v;
+}
 const RANGES = [['cols','cols'],['rows','rows'],['cell','cell'],['gap','gap'],['edge','edge'],['bw','bw'],['bh','bh'],['topScale','topScale']];
 function syncAll(){
   RANGES.forEach(([id, k]) => {
     const el = document.getElementById(id); if(!el) return;
     el.value = S[k];
-    const v = el.parentElement.querySelector('.val'); if(v) v.textContent = S[k];
+    setVal(el.parentElement.querySelector('.val'), S[k]);
   });
   document.getElementById('bg').value = S.bg;
   document.getElementById('outbg').value = S.outbg || '#111111';
   [['flow','flow'],['fps','fps'],['drift','drift'],['ox','ox'],['oy','oy']].forEach(([id, k]) => {   // ⚠️ RANGES とは別（fitView を呼ばせない）
     const el = document.getElementById(id); if(!el) return;
     el.value = S[k];
-    const v = el.parentElement.querySelector('.val'); if(v) v.textContent = S[k];
+    setVal(el.parentElement.querySelector('.val'), S[k]);
   });
   document.querySelectorAll('#shape button').forEach(b => b.classList.toggle('on', +b.dataset.v === S.shape));
   document.querySelectorAll('#anim button').forEach(b => b.classList.toggle('on', +b.dataset.v === (S.anim || 0)));
@@ -1535,6 +1556,9 @@ function syncAll(){
   document.querySelectorAll('#topMode button').forEach(b => b.classList.toggle('on', +b.dataset.v === S.topMode));
   document.querySelectorAll('#fit button').forEach(b => b.classList.toggle('on', +b.dataset.v === S.fit));
   showRot(rotBase());
+  { const ks = selRotKeys(), v = ks.length ? (S.cells[ks[0]].sc || 100) : 100;
+    document.getElementById('cellScale').value = v;
+    document.getElementById('cellScaleNum').value = v; }
   syncMats(); syncTint(); exNote();
 }
 /* ⚠️ 色は「選んでいる素材」のもの。素材を選び直したら見た目も合わせる（P→UI を忘れると嘘の色が出る） */
@@ -1660,6 +1684,36 @@ RANGES.forEach(([id, k]) => {
     const v = e.target.parentElement.querySelector('.val'); if(v) v.textContent = S[k];
     fitView(); draw();
   });
+});
+/* ⭐ 幅・高さの手打ち。⚠️ 打っている途中（空・1桁）で盤を壊さないよう、確定してから入れる。 */
+/* ⭐ 選んだマスの絵の大きさ。⚠️ 盤ぜんぶの「絵の大きさ」（topScale）とは別もの。 */
+function applyCellScale(v){
+  const ks = selRotKeys();
+  const now = document.getElementById('cellScaleNum');
+  if(now) now.value = v;
+  document.getElementById('cellScale').value = v;
+  if(!ks.length) return stat('先に「選ぶ」にしてマスを押す');
+  snap();
+  for(const x of ks) S.cells[x].sc = v;
+  draw();
+  stat('このマスの絵 ' + v + '%（' + ks.length + ' マス）');
+}
+document.getElementById('cellScale').addEventListener('input', e => applyCellScale(+e.target.value));
+{ const el = document.getElementById('cellScaleNum');
+  el.addEventListener('focus', () => el.select());
+  el.addEventListener('change', () => { const v = Math.round(+el.value); if(v >= 20 && v <= 400) applyCellScale(v); }); }
+[['bwNum','bw'],['bhNum','bh']].forEach(([id, k]) => {
+  const el = document.getElementById(id); if(!el) return;
+  const apply = () => {
+    const v = Math.round(+el.value);
+    if(!isFinite(v) || v < 100 || v > 12000) return;      // 範囲外は入れない（打ち終わるまで待つ）
+    S[k] = v;
+    const sl = document.getElementById(k); if(sl) sl.value = v;
+    fitView(); draw(); exNote();
+  };
+  el.addEventListener('focus', () => el.select());   // ⭐ 触ったら全部選ぶ＝前の数字の後ろに足されない
+  el.addEventListener('change', apply);
+  el.addEventListener('keydown', e => { if(e.key === 'Enter'){ apply(); el.blur(); } });
 });
 document.getElementById('bg').addEventListener('input', e => { S.bg = e.target.value; draw(); });
 document.getElementById('outbg').addEventListener('input', e => { S.outbg = e.target.value; draw(); });
