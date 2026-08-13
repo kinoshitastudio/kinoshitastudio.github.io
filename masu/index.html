@@ -361,8 +361,10 @@
   <button class="sub" id="grabBtn">いまの盤を素材にする</button>
   <div class="hint">⭐<b>入れ子</b>。組んだ一枚をそのまま1マスぶんの絵にして、また置ける。⚠️<b>地は入らない</b>（透明で取り込む＝重ねられる）／正方形に収めるので<b>歪まない</b></div>
   <div class="seg" id="rot" style="margin-top:8px">
-    <button data-v="0" class="on">0°</button><button data-v="1">90°</button>
-    <button data-v="2">180°</button><button data-v="3">270°</button></div>
+    <button data-v="0" class="on">0°</button><button data-v="1">45°</button>
+    <button data-v="2">90°</button><button data-v="3">135°</button>
+    <button data-v="4">180°</button><button data-v="5">225°</button>
+    <button data-v="6">270°</button><button data-v="7">315°</button></div>
   <div class="hint">⭐マスを<b>選んでいればそのマスの向き</b>／選んでいなければ<b>これから置く向き</b>。<b>R キー</b>でも回る</div>
 
   <h2>置く</h2>
@@ -717,7 +719,7 @@ function cellPhase(c, r){
 function animT(c, r){ return flowT + cellPhase(c, r); }
 function animRot(c, r, base){
   if(!S.flow || S.anim !== 1) return base;
-  return ((base || 0) + Math.floor(animT(c, r))) % 4;        // 1歩で 90°
+  return ((base || 0) + Math.floor(animT(c, r))) % 8;        // 1歩で 45°
 }
 function animMat(c, r, base){
   if(!S.flow || S.anim !== 2 || mats.length < 2) return base;
@@ -743,6 +745,20 @@ function syncFlowLabel(){
   if(lab) lab.textContent = FLOW_LAB[a];
   if(hint) hint.innerHTML = FLOW_HINT[a];
 }
+/* ⭐ 向きは【45°単位の 0〜7】（2026-08-13 木下＝「角度は45度も追加して」）。
+   ⚠️ それ以前の控え（v:1）は【90°単位の 0〜3】＝読んだところで1回だけ ×2 して揃える。
+      式を2本にしない（ここで直しておけば、描く側は 45°単位だけを知っていればいい）。 */
+function up45(d){
+  if(!d || !d.S || (d.v || 1) >= 2) return d;
+  for(const k in (d.S.cells || {})){
+    const c = d.S.cells[k];
+    if(c.r  != null) c.r  = (c.r  % 4) * 2;
+    if(c.br != null) c.br = (c.br % 4) * 2;
+  }
+  if(d.rot != null) d.rot = (d.rot % 4) * 2;
+  d.v = 2;                     // 🔴 直したら版を立てる＝読み込みの道が2本あっても二度は変換しない
+  return d;
+}
 function drawOne(ctx, c, r, mi, rot, scale, mode, fx, fy){
   const p = center(c, r), s = S.cell;
   const m = mats[mi];
@@ -752,9 +768,11 @@ function drawOne(ctx, c, r, mi, rot, scale, mode, fx, fy){
   if(mode) ctx.globalCompositeOperation = mode;
   ctx.translate(p.x, p.y);
   if(fx || fy) ctx.scale(fx ? -1 : 1, fy ? -1 : 1);
-  ctx.rotate((rot || 0) * Math.PI / 2);
-  let d = S.fit ? s * FIT_IN[S.shape]
-                : s * (S.shape === 3 ? 1.25 : 1.02);     // 覆うときは必ずマスを超える大きさで
+  ctx.rotate((rot || 0) * Math.PI / 4);                  // ⭐ 45°単位
+  /* ⚠️ 斜め（45°/135°/…）はマスの対角ぶん要る＝√2 倍しないと四隅が欠ける。 */
+  const diag = ((rot || 0) % 2) ? Math.SQRT2 : 1;
+  let d = S.fit ? s * FIT_IN[S.shape] / diag
+                : s * (S.shape === 3 ? 1.25 : 1.02) * diag;   // 覆うときは必ずマスを超える大きさで
   if(scale) d *= scale;                                  // ⭐ 上の絵だけ小さくして地を見せる
   d *= animScale(c, r);                                  // ⭐ 呼吸（種類3のときだけ 1 以外になる）
   /* 🔴 マスを外へ広げた（bleedOf）ぶんは、絵も同じだけ広げる。clip だけ広げると
@@ -1339,9 +1357,9 @@ document.getElementById('undoBtn').addEventListener('click', undo);
 addEventListener('keydown', e => {
   if((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z'){ e.preventDefault(); undo(); return; }
   if(e.key.toLowerCase() === 'r' && !e.metaKey && !e.ctrlKey){
-    rot = (rot + 1) % 4;
+    rot = (rot + 1) % 8;
     document.querySelectorAll('#rot button').forEach(b => b.classList.toggle('on', +b.dataset.v === rot));
-    stat('向き ' + (rot * 90) + '°');
+    stat('向き ' + (rot * 45) + '°');
   }
 });
 
@@ -1377,7 +1395,7 @@ document.getElementById('exJson').addEventListener('click', () => {
   // ⭐ 素材の画像も入れる＝これ1つで戻せる（別ファイルを探させない）
   const data = { app:'masu', kind:'board',
     note:'枡 MASU — 盤の控え（マスの並び＋素材）。粒のエンジンの設定ではない',
-    v:1, S, mats:dumpMats(), sel, rot };
+    v:2, S, mats:dumpMats(), sel, rot };
   dl(new Blob([JSON.stringify(data)], { type:'application/json' }), 'masu-board-' + stamp() + '.json');
   stat('盤の控えを出した — ' + mats.length + ' 素材 / ' + Object.keys(S.cells).length + ' マス');
 });
@@ -1393,6 +1411,7 @@ async function loadWork(file, label){
     snapMats();                                    // ⭐ 素材ごと入れ替わるので、素材も控える
     /* ⚠️ 流れ・FPS が無い控え（アニメーションを入れる前のもの）を読んだら既定へ戻す。
        Object.assign は欠けたキーを触らないので、前の盤の流れを引きずってしまう。 */
+    up45(d);                                       // ⭐ 90°単位の古い控えを 45°単位へ
     Object.assign(S, d.S);
     if(d.S.flow == null) S.flow = 0;
     if(!S.fps) S.fps = 30;
@@ -1440,9 +1459,11 @@ document.getElementById('jfile').addEventListener('change', async e => {
     if(d && (d.kind === 'engine' || (!d.S && d.P)))
       throw new Error('これは【粒のエンジンの設定】です。素材を作る（粒のエンジン）を開いて、その中の「設定を読む」で読んでください');
     if(!d || !d.S) throw new Error('盤の控えではない');
+    up45(d);                                       // ⭐ 90°単位の古い控えを 45°単位へ
     snapMats();                                    // ⭐ ここも素材ごと入れ替わる
     /* ⚠️ 流れ・FPS が無い控え（アニメーションを入れる前のもの）を読んだら既定へ戻す。
        Object.assign は欠けたキーを触らないので、前の盤の流れを引きずってしまう。 */
+    up45(d);                                       // ⭐ 90°単位の古い控えを 45°単位へ
     Object.assign(S, d.S);
     if(d.S.flow == null) S.flow = 0;
     if(!S.fps) S.fps = 30;
@@ -1554,8 +1575,8 @@ function flipSel(k){
   for(const x of ks){
     const cur = S.cells[x];
     if(k === 'r'){
-      if(cur.m  != null) cur.r  = ((cur.r  || 0) + 1) % 4;
-      if(cur.bm != null) cur.br = ((cur.br || 0) + 1) % 4;
+      if(cur.m  != null) cur.r  = ((cur.r  || 0) + 1) % 8;   // ⭐ 45°ずつ
+      if(cur.bm != null) cur.br = ((cur.br || 0) + 1) % 8;
     }else{
       if(cur.m  != null) cur[k]       = cur[k]       ? 0 : 1;   // fx / fy
       if(cur.bm != null) cur['b' + k] = cur['b' + k] ? 0 : 1;   // bfx / bfy
@@ -1668,7 +1689,7 @@ function setRot(v){
     if(cur.bm != null) cur.br = v;
   }
   draw();
-  stat('向きを ' + (v * 90) + '° にした（' + ks.length + ' マス）');
+  stat('向きを ' + (v * 45) + '° にした（' + ks.length + ' マス）');
 }
 document.querySelectorAll('#rot button').forEach(b => b.addEventListener('click', () => setRot(+b.dataset.v)));
 function exNote(){
@@ -1728,7 +1749,7 @@ function keepTx(mode, fn){
 function keepPayload(){
   /* ⭐ 自分の素材も一緒に残す＝閉じて開き直しても「素材を自分のに戻す」が効く。
      ⚠️ 素材の画像がもう1組ぶん増えるが、IndexedDB なので入る（localStorage の 5MB とは別）。 */
-  return { app:'masu', kind:'board', v:1, S,
+  return { app:'masu', kind:'board', v:2, S,
     mats: dumpMats(), sel, rot, myMats, matsFromWork, workOn };
 }
 function keepSig(){
@@ -1815,7 +1836,7 @@ async function loadSamples(){
   for(let r = 0; r < S.rows; r++) for(let c = 0; c < S.cols; c++){
     n++;
     if(n % 8 === 0) continue;                       // 空マスを混ぜる＝地が見える
-    S.cells[key(c, r)] = { m:(c * 3 + r * 5 + n) % mats.length, r:(c + r) % 4 };
+    S.cells[key(c, r)] = { m:(c * 3 + r * 5 + n) % mats.length, r:((c + r) % 4) * 2 };   // ⭐ 見本は90°刻み（45°単位で 0,2,4,6）
   }
   syncAll(); fitView(); draw();
   syncWorks(); syncMyBtn();
