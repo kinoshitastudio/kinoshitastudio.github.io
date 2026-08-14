@@ -1,0 +1,1481 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>点 TEN — 点1つを単位にした網 / 木下スタジオ</title>
+<meta name="description" content="点 TEN は、点1つを単位にして写真も文字も網（ハーフトーン）に落とすブラウザの道具。傾いた格子の一点ずつに丸い点を置き、その場所の濃さで太らせる。端は輪郭線ではなく点が消えて終わる。画像と文字を版として重ね、どれかを形に選べばその中だけに網を敷ける。網そのものがねじれ・流れ・色でグラデーションになり、SVG と継ぎ目のないループ動画で出せる。木下スタジオ（滋賀・木下貴博）制作。">
+<link rel="canonical" href="https://kinoshita.studio/ten/">
+<meta property="og:title" content="点 TEN — 点1つを単位にした網">
+<meta property="og:description" content="点1つを単位にして、写真も文字も網に落とす。端は輪郭線ではなく点が消えて終わる。文字の中に写真の素材を敷ける。SVG と継ぎ目のないループ動画で出せる。">
+<meta property="og:image" content="https://kinoshita.studio/assets/img/img-ui-ten.webp">
+<meta property="og:url" content="https://kinoshita.studio/ten/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="木下スタジオ">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://kinoshita.studio/assets/img/img-ui-ten.webp">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Zen+Kaku+Gothic+New:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  /* ⚠️ 外枠（並び方）は 網 AMI と同じ＝道具ごとに作りを変えない。色だけ紙の側に寄せている */
+  /* ⭐ 明るい地に暗い字（2026-08-14 木下「パネルもクリーム色にして」）。
+     ⚠️ 簾 SUDARE と同じ向き＝紙の色の上で作る。暗い地の指定を残すと字が沈む。 */
+  :root{
+    --bg:#e8e4dc; --paper:#f4f2ec; --panel:rgba(244,242,236,.86); --line:rgba(28,28,30,.14);
+    --fg:#1c1c1e; --fg2:rgba(28,28,30,.62); --fg3:rgba(28,28,30,.40);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--fg);
+    font-family:"Zen Kaku Gothic New",-apple-system,BlinkMacSystemFont,sans-serif;
+    font-weight:300; overflow:hidden; display:flex; align-items:stretch;
+  }
+  #stage{flex:1;display:flex;align-items:center;justify-content:center;position:relative;padding:28px 22px;min-width:0}
+  #stage::before{content:"";position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,.5), transparent 62%)}
+  /* ⚠️ AMI と違って pixelated にしない ── 点は原寸で焼いてから縮めて見せるので、
+        画素を尖らせると「にじみ」「崩れ」が消えて別物に見える */
+  canvas#cv{max-width:100%;max-height:100%;box-shadow:0 14px 44px rgba(28,28,30,.18);display:block}
+  #drop{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(244,242,236,.92);border:1px dashed rgba(28,28,30,.35);
+    font-size:13px;letter-spacing:.08em;color:var(--fg2);z-index:20;text-align:center;line-height:1.8}
+  body.dragging #drop{display:flex}
+  #stat{position:absolute;left:0;right:0;bottom:0;padding:8px 14px;font-size:11px;color:var(--fg3);
+    font-family:"Space Mono",monospace;pointer-events:none;text-align:center}
+
+  #panel{width:308px;flex:0 0 308px;height:100%;overflow-y:auto;
+    background:var(--panel);backdrop-filter:blur(24px) saturate(140%);
+    -webkit-backdrop-filter:blur(24px) saturate(140%);
+    border-left:1px solid var(--line);padding:20px 16px 80px}
+  #panel::-webkit-scrollbar{width:0}
+  h1{font-family:"Space Mono",monospace;font-weight:700;font-size:11px;letter-spacing:.22em;color:var(--fg3);margin-bottom:2px}
+  .sub{font-size:11px;color:var(--fg3);margin-bottom:18px;line-height:1.6}
+  .grp{margin-bottom:18px}
+  label.h{display:block;font-family:"Space Mono",monospace;font-size:9px;letter-spacing:.2em;
+    color:var(--fg3);margin-bottom:8px;text-transform:uppercase}
+  .row{display:flex;align-items:center;gap:10px;margin-bottom:7px}
+  .row span.n{flex:1;font-size:12px;color:var(--fg2)}
+  .row output{font-family:"Space Mono",monospace;font-size:10px;color:var(--fg3);min-width:38px;text-align:right}
+  input[type=range]{-webkit-appearance:none;width:100%;height:20px;background:transparent;cursor:pointer}
+  input[type=range]::-webkit-slider-runnable-track{height:2px;background:rgba(28,28,30,.18);border-radius:2px}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;
+    background:var(--fg);margin-top:-5.5px;box-shadow:0 1px 3px rgba(28,28,30,.35)}
+  .seg{display:flex;flex-wrap:wrap;gap:5px}
+  .seg button{flex:1 1 auto;min-width:0;padding:7px 6px;background:rgba(28,28,30,.06);
+    border:1px solid transparent;border-radius:7px;color:var(--fg2);font-family:inherit;font-size:11px;
+    font-weight:400;cursor:pointer;transition:.15s;white-space:nowrap}
+  .seg button:hover{background:rgba(28,28,30,.11)}
+  .seg button.on{background:var(--fg);color:var(--paper);font-weight:500}
+  .btn{width:100%;padding:10px;margin-top:6px;background:rgba(28,28,30,.05);
+    border:1px solid var(--line);border-radius:9px;color:var(--fg);font-family:inherit;font-size:12px;cursor:pointer;transition:.15s}
+  .btn:hover{background:rgba(28,28,30,.11)}
+  .btn.solid{background:var(--fg);color:var(--paper);border-color:transparent;font-weight:500}
+  .btns2{display:flex;gap:6px}
+  .chk{display:flex;align-items:center;gap:8px;margin-bottom:7px;cursor:pointer;font-size:12px;color:var(--fg2)}
+  .chk input{accent-color:var(--fg);width:14px;height:14px}
+  hr{border:0;border-top:1px solid var(--line);margin:16px 0}
+  .note{font-size:10.5px;color:var(--fg3);line-height:1.7;margin-top:7px}
+  .note b{color:var(--fg2);font-weight:400}
+  textarea{width:100%;padding:8px 9px;background:rgba(28,28,30,.05);
+    border:1px solid var(--line);border-radius:8px;color:var(--fg);font-family:inherit;
+    font-size:12px;font-weight:300;resize:vertical;min-height:56px;line-height:1.5}
+  input[type=color]{width:100%;height:30px;padding:0;border:1px solid var(--line);border-radius:8px;
+    background:transparent;cursor:pointer}
+  .hide{display:none!important}
+
+  /* ── 版（縦並び）── 🔴 2026-08-14：この一式を入れ忘れて、素の要素が縦積みで出た。
+        ⚠️ 中身を足すときは【見た目の分も一緒に持ってくる】（網 AMI と同じ形） */
+  #layers{display:flex;flex-direction:column;gap:5px}
+  .lay{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:9px;
+    background:rgba(28,28,30,.05);border:1px solid transparent;cursor:pointer;transition:.15s}
+  .lay:hover{background:rgba(28,28,30,.09)}
+  .lay.sel{border-color:rgba(28,28,30,.38);background:rgba(28,28,30,.10)}
+  .lay .eye{width:22px;height:22px;flex:0 0 22px;border-radius:6px;border:1px solid var(--line);
+    background:transparent;color:var(--fg3);font-size:9px;line-height:1;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;padding:0}
+  .lay .eye.on{background:var(--fg);color:var(--paper);border-color:transparent}
+  .lay .nm{flex:1;min-width:0;font-size:12px;color:var(--fg2);overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .lay.sel .nm{color:var(--fg)}
+  .lay .up{width:18px;height:18px;flex:0 0 18px;border:0;background:transparent;color:var(--fg3);
+    cursor:pointer;font-size:9px;line-height:1;padding:0}
+  .lay .up:hover{color:var(--fg)}
+
+  /* 🔴 出る大きさ・点の数は .note にしない（常時見えないと「重い」の理由が分からない） */
+  #meter{font-family:"Space Mono",monospace;font-size:10px;line-height:1.7;color:var(--fg);
+    background:rgba(28,28,30,.05);border:1px solid var(--line);border-radius:9px;padding:8px 10px;margin:8px 0}
+
+  @media (max-width:820px){
+    body{flex-direction:column;overflow:auto}
+    #stage{padding:14px 12px;min-height:52vh}
+    #panel{width:100%;flex:1 1 auto;height:auto;border-left:0;border-top:1px solid var(--line);
+      padding:18px 14px calc(80px + env(safe-area-inset-bottom))}
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     見た目 ── SwiftUI（Apple）の作法に寄せる          2026-08-14
+     木下＝「このUIださいな」「パネルもクリーム色にして」「Swift UI意識で他ツールみて」
+
+     ⭐ ここは【いちばん最後に書いた上書きブロック】。上のCSSは1行も触っていない。
+        気に入らなければ、このブロックごと消せば完全に元へ戻る（8本と同じ作法）。
+     ⭐ HTML の構造・並び・id も触っていない＝機能は同じ。見た目だけ。
+     ⚠️ MAKU のブロックをそのまま移すことはできない（TEN は h2 でなく label.h、
+        ボタンが .big でなく .btn、版の一覧 .lay がある）。
+        【同じ方針で、TEN のクラス名に合わせて書き直したもの】。
+     ── 方針（他の8本と同じ）──
+     材質（半透明＋背面ぼかし）／fill 階調で階層（枠線を減らし面と余白で分ける）／角丸を大きく／
+     セグメンテッドは選んだところに白いカプセルが浮く／太いトラックと大きな白いつまみ／
+     チェックはトグルスイッチ／見出しは SF・小さいグレー・sticky／
+     ⚠️ 色は白黒のまま（Apple 青は入れない＝木下の美学）。地はクリーム。
+     ══════════════════════════════════════════════════════════════ */
+  :root{
+    --fill:rgba(28,28,30,.10);           /* systemFill */
+    --fill2:rgba(28,28,30,.07);          /* セグメンテッドの受け皿 */
+    --capsule:#fffdf8;                   /* 選択カプセル */
+    --glass:rgba(246,244,238,.84);       /* パネル */
+    --shadow:0 10px 30px rgba(28,28,30,.10), 0 1px 2px rgba(28,28,30,.06);
+    --r:10px;
+  }
+  body{ font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans",
+    "Zen Kaku Gothic New",sans-serif; font-weight:400 }
+
+  #panel{
+    background:var(--glass); border-left:.5px solid var(--line);
+    -webkit-backdrop-filter:blur(30px) saturate(180%);
+            backdrop-filter:blur(30px) saturate(180%);
+    padding:16px 16px 80px;
+  }
+  h1{ font-family:inherit; font-size:12px; font-weight:590; letter-spacing:.12em; color:var(--fg) }
+  .sub{ font-size:11.5px; color:var(--fg2); margin-bottom:16px }
+
+  /* 見出し＝帯にせず、小さいグレー。sticky でスクロールしても居場所が分かる */
+  #panel label.h{
+    position:sticky; top:-16px; z-index:3;
+    margin:0 -16px 8px; padding:7px 16px 6px;
+    background:var(--glass);
+    -webkit-backdrop-filter:blur(30px) saturate(180%);
+            backdrop-filter:blur(30px) saturate(180%);
+    border-bottom:.5px solid var(--line);
+    font-family:inherit; font-size:11px; font-weight:590; letter-spacing:.04em;
+    text-transform:none; color:var(--fg2);
+  }
+  .grp{ margin-bottom:20px }
+  hr{ display:none }                      /* 面と余白で分けるので罫線は要らない */
+
+  /* 行・ラベル・数値 */
+  .row{ gap:10px; padding:2px 0; margin-bottom:2px }
+  .row span.n{ font-family:inherit; font-size:11.5px; color:var(--fg) }
+  .row output{ font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:11px;
+    color:var(--fg2); width:44px; flex:0 0 44px; text-align:right;
+    font-variant-numeric:tabular-nums }
+
+  /* スライダー＝太いトラック＋大きなつまみ */
+  input[type=range]{ -webkit-appearance:none; appearance:none; background:none; height:26px }
+  input[type=range]::-webkit-slider-runnable-track{ height:4px; border-radius:2px; background:var(--fill) }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; appearance:none; width:20px; height:20px; margin-top:-8px;
+    border-radius:50%; background:var(--fg); border:none; cursor:pointer;
+    box-shadow:0 1px 3px rgba(28,28,30,.30), 0 0 0 .5px rgba(28,28,30,.05) }
+
+  /* セグメンテッド＝選んだところに白いカプセルが浮く */
+  .seg{ background:var(--fill2); border-radius:9px; padding:2px; gap:2px; margin:6px 0 10px }
+  .seg button{ border:none; border-radius:7px; background:none;
+    font-family:inherit; font-size:11.5px; font-weight:450; color:var(--fg);
+    opacity:.72; padding:6px 0; transition:.16s }
+  .seg button:hover{ opacity:1; background:rgba(28,28,30,.07) }
+  .seg button.on{ opacity:1; background:var(--capsule); color:var(--fg); font-weight:590;
+    box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.04) }
+
+  /* ボタン */
+  .btn{ background:var(--fill); border:none; border-radius:var(--r); color:var(--fg);
+    font-family:inherit; font-size:12px; font-weight:500; padding:11px 0; transition:.14s }
+  .btn:hover{ background:rgba(28,28,30,.16) }
+  .btn:active{ transform:scale(.985); opacity:.8 }
+  .btn.solid{ background:var(--fg); color:var(--paper); font-weight:590 }
+  .btn.solid:hover{ background:#000 }
+
+  /* ⭐ 版の一覧＝iOS のリスト。選んだ版は白いカプセルが浮く（セグメンテッドと同じ言い方） */
+  #layers{ gap:4px }
+  .lay{ background:var(--fill2); border:none; border-radius:var(--r); padding:9px 10px; gap:10px }
+  .lay:hover{ background:rgba(28,28,30,.10) }
+  .lay.sel{ background:var(--capsule);
+    box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.06) }
+  .lay .nm{ font-family:inherit; font-size:12px; color:var(--fg2) }
+  .lay.sel .nm{ color:var(--fg); font-weight:500 }
+  .lay .eye{ width:20px; height:20px; flex:0 0 20px; border:.5px solid var(--line);
+    border-radius:6px; font-size:0; background:transparent }
+  .lay .eye.on{ background:var(--fg); border-color:transparent }
+  .lay .up{ width:20px; height:20px; flex:0 0 20px; font-size:9px; color:var(--fg3) }
+
+  /* チェック＝トグルスイッチ */
+  .chk{ font-family:inherit; font-size:11.5px; color:var(--fg); justify-content:space-between;
+    gap:10px; padding:2px 0 }
+  .chk input[type=checkbox]{ -webkit-appearance:none; appearance:none; flex:0 0 38px;
+    width:38px; height:23px; border-radius:23px; background:var(--fill);
+    position:relative; transition:.2s; cursor:pointer; order:2 }
+  .chk input[type=checkbox]::after{ content:""; position:absolute; top:2px; left:2px;
+    width:19px; height:19px; border-radius:50%; background:#fff;
+    box-shadow:0 1px 3px rgba(28,28,30,.3); transition:.2s }
+  .chk input[type=checkbox]:checked{ background:var(--fg) }
+  .chk input[type=checkbox]:checked::after{ transform:translateX(15px) }
+
+  /* 打ち込み欄・色 */
+  textarea{ background:var(--fill); border:none; border-radius:var(--r);
+    font-family:inherit; font-size:12.5px; padding:9px 10px }
+  textarea:focus{ outline:none; box-shadow:0 0 0 3px rgba(28,28,30,.12) }
+  input[type=color]{ height:32px; border:.5px solid var(--line); border-radius:var(--r) }
+
+  /* 説明・メーター */
+  .note{ font-family:inherit; font-size:10.5px; line-height:1.65; color:var(--fg2); opacity:.75 }
+  #meter{ background:var(--fill2); border:none; border-radius:var(--r); color:var(--fg2);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:10.5px; padding:9px 11px }
+  #stat{ font-family:ui-monospace,"SF Mono",Menlo,monospace; color:var(--fg3) }
+
+  /* ⚠️ モバイル＝上の @media と同じだけ「掴める領域」を確保し直す。
+     書かないと、この上書きブロックが勝ってつまみが小さいまま＝点にしか当たらない。 */
+  @media (max-width:820px){
+    #panel{ border-left:none; border-top:.5px solid var(--line); padding:16px 14px 80px }
+    #panel label.h{ top:-16px; margin:0 -14px 8px; padding:7px 14px 6px }
+    input[type=range]{ height:40px }
+    input[type=range]::-webkit-slider-thumb{ width:24px; height:24px; margin-top:-10px }
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="drop">画像 ／ 控え（JSON）をここに落とす</div>
+  <div id="stat"></div>
+</div>
+
+<div id="panel">
+  <h1>TEN</h1>
+  <div class="sub">点 — 点1つを単位にして、写真も文字も網に落とす。</div>
+
+  <!-- ══⭐ 版（重ねる）── 粒 TSUBU / 簾 SUDARE / 膜 MAKU と同じ作法 ══
+       ⭐ 版を重ねて【灰色のまま】1枚の濃さの絵を作り、最後に一度だけ点に落とす。 -->
+  <div class="grp">
+    <label class="h">版（重ねる）</label>
+    <div id="sheets"></div>
+    <div class="btns2" style="margin-top:6px">
+      <button class="btn" id="b_addImg">＋画像</button>
+      <button class="btn" id="b_addTxt">＋文字</button>
+    </div>
+    <div class="btns2">
+      <button class="btn" id="b_dup">複製</button>
+      <button class="btn" id="b_del">消す</button>
+    </div>
+    <div class="note">⭐ 版を押す＝<b>その版を選ぶ</b>。下のつまみは全部その版だけに効く<br>
+      ⭐ ▲▼で重なりの順、■で出す／消す</div>
+  </div>
+
+  <!-- ── 選んだ版のつまみ ── -->
+  <div class="grp" id="sheetBox">
+    <label class="h">選んだ版</label>
+    <div id="s_txtOnly" class="hide">
+      <textarea id="s_text">網</textarea>
+      <div class="row" style="margin-top:6px"><span class="n">太さ</span><output id="o_s_wt"></output></div>
+      <input type="range" id="r_s_wt" min="300" max="900" step="100">
+      <div class="row"><span class="n">字間</span><output id="o_s_ls"></output></div>
+      <input type="range" id="r_s_ls" min="-0.2" max="0.6" step="0.005">
+      <div class="row"><span class="n">行間</span><output id="o_s_lh"></output></div>
+      <input type="range" id="r_s_lh" min="0.8" max="2" step="0.01">
+    </div>
+    <div id="s_imgOnly" class="hide">
+      <button class="btn" id="b_pick">画像を差し替える</button>
+    </div>
+    <div class="row" style="margin-top:8px"><span class="n">大きさ</span><output id="o_s_sc"></output></div>
+    <input type="range" id="r_s_sc" min="0.05" max="4" step="0.005">
+    <div class="row"><span class="n">よこ</span><output id="o_s_x"></output></div>
+    <input type="range" id="r_s_x" min="-1" max="1" step="0.005">
+    <div class="row"><span class="n">たて</span><output id="o_s_y"></output></div>
+    <input type="range" id="r_s_y" min="-1" max="1" step="0.005">
+    <div class="row"><span class="n">回す</span><output id="o_s_rot"></output></div>
+    <input type="range" id="r_s_rot" min="-180" max="180" step="1">
+    <div class="row"><span class="n">効き</span><output id="o_s_amt"></output></div>
+    <input type="range" id="r_s_amt" min="0" max="1" step="0.01">
+    <div class="row"><span class="n">重ね方</span></div>
+    <div class="seg" id="s_mode">
+      <button data-v="rep">置き換える</button>
+      <button data-v="add">濃くする</button>
+      <button data-v="sub">薄くする</button>
+    </div>
+    <label class="chk" style="margin-top:8px"><input type="checkbox" id="c_s_inv"> この版の白黒を反転</label>
+    <div class="note">⭐ <b>濃くする</b>＝重なるほど黒に寄る／<b>薄くする</b>＝白に抜ける</div>
+  </div>
+
+  <hr>
+
+  <!-- ══ 形（どこに敷くか）══ -->
+  <div class="grp">
+    <label class="h">形（どこに敷く）</label>
+    <div class="seg" id="maskSeg"></div>
+    <div class="row" style="margin-top:8px"><span class="n">縁</span></div>
+    <div class="seg" id="edgeSeg">
+      <button data-v="fade" class="on">点が消えて終わる</button>
+      <button data-v="cut">切る</button>
+    </div>
+    <div class="note">⭐⭐ <b>点が消えて終わる</b>＝縁で点が小さくなって消える＝<b>輪郭線が無い</b>（参考と同じ縁）。
+      <b>切る</b>は点を途中で断ち切るので縁がはっきり出る<br>
+      ⭐ 形に選んだ版は<b>形としてだけ</b>使われる（濃さには入らない）</div>
+  </div>
+
+  <hr>
+
+  <!-- ══ 網 ══ -->
+  <div class="grp">
+    <label class="h">網</label>
+    <div class="row"><span class="n">点の間隔</span><output id="o_pitch"></output></div>
+    <input type="range" id="r_pitch" min="3" max="48" step="0.5">
+    <div class="row"><span class="n">角度</span><output id="o_ang"></output></div>
+    <input type="range" id="r_ang" min="0" max="90" step="1">
+    <div class="row"><span class="n">点の形</span></div>
+    <div class="seg" id="shapeSeg">
+      <button data-v="round" class="on">丸</button>
+      <button data-v="square">四角</button>
+      <button data-v="diamond">菱形</button>
+    </div>
+    <div class="note">⭐ <b>角度 45°</b>が印刷の既定（点の列が斜めに走る）。0° にすると格子が目に立つ</div>
+  </div>
+
+  <!-- ══⭐⭐ 網そのものをグラデにする ══
+       木下 2026-08-14「グラデがおもしろくないね、何がグラデなのか」
+       ＝【点の大きさ】しか変わっていなかった＝網でなくても同じ絵になる。
+       点が単位なのだから、点が持てるもの（間隔・角度・色）も場所で変える。 -->
+  <div class="grp">
+    <label class="h">網が流れる</label>
+    <div class="row"><span class="n">ねじれ</span><output id="o_twist"></output></div>
+    <input type="range" id="r_twist" min="-180" max="180" step="1">
+    <div class="row"><span class="n">粗さの流れ</span><output id="o_flow"></output></div>
+    <input type="range" id="r_flow" min="-0.8" max="0.8" step="0.01">
+    <div class="row"><span class="n">流れの向き</span></div>
+    <div class="seg" id="flowSeg">
+      <button data-v="r" class="on">中心から</button>
+      <button data-v="y">たて</button>
+      <button data-v="x">よこ</button>
+    </div>
+    <div class="note">⭐⭐ <b>ねじれ</b>＝離れるほど網が回る／<b>粗さの流れ</b>＝離れるほど網が粗く（細かく）なる。
+      <b>濃さでなく網そのものがグラデする</b>＝どこを見ても同じ目にならない</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">インク（点ごとに色を引く）</label>
+    <div class="row"><span class="n">色の引き方</span></div>
+    <div class="seg" id="colSeg">
+      <button data-v="none" class="on">1色</button>
+      <button data-v="tone">濃さ</button>
+      <button data-v="y">たて</button>
+      <button data-v="x">よこ</button>
+      <button data-v="r">中心から</button>
+    </div>
+    <div id="col2Box" class="hide">
+      <div class="row" style="margin-top:6px"><span class="n">もう1色</span></div>
+      <input type="color" id="c_ink2" value="#c8442a">
+      <div class="row" style="margin-top:6px"><span class="n">色の段</span><output id="o_colN"></output></div>
+      <input type="range" id="r_colN" min="2" max="48" step="1">
+    </div>
+    <div class="note">⭐⭐ <b>点1つが色を持つ</b>＝インクの色そのものがグラデする。
+      <b>段</b>を下げると刷り分けたように段になる（2 なら2色刷り）</div>
+  </div>
+
+  <!-- ══ 濃さ ══ -->
+  <div class="grp">
+    <label class="h">濃さ</label>
+    <div class="row"><span class="n">明るさ</span><output id="o_br"></output></div>
+    <input type="range" id="r_br" min="-0.5" max="0.5" step="0.01">
+    <div class="row"><span class="n">硬さ</span><output id="o_ct"></output></div>
+    <input type="range" id="r_ct" min="0.2" max="4" step="0.05">
+    <div class="row"><span class="n">点の太り方</span><output id="o_gam"></output></div>
+    <input type="range" id="r_gam" min="0.3" max="2.5" step="0.02">
+    <div class="row"><span class="n">底上げ</span><output id="o_base"></output></div>
+    <input type="range" id="r_base" min="0" max="1" step="0.01">
+    <label class="chk" style="margin-top:6px"><input type="checkbox" id="c_inv"> 白黒を反転</label>
+    <div class="note">⭐⭐ <b>底上げ</b>＝形の中を必ずインクで埋める。<b>文字の中に写真を入れるときはこれを上げる</b>
+      （写真の白い地まで素直に読むと、字が虫食いになって消える）</div>
+  </div>
+
+  <!-- ══ インク ══ -->
+  <div class="grp">
+    <label class="h">インク</label>
+    <div class="row"><span class="n">にじみ</span><output id="o_bleed"></output></div>
+    <input type="range" id="r_bleed" min="-1" max="3" step="0.05">
+    <div class="row"><span class="n">崩れ（位置）</span><output id="o_jit"></output></div>
+    <input type="range" id="r_jit" min="0" max="0.5" step="0.01">
+    <div class="row"><span class="n">崩れ（大きさ）</span><output id="o_rjit"></output></div>
+    <input type="range" id="r_rjit" min="0" max="0.8" step="0.01">
+    <div class="row"><span class="n">崩れ（輪郭）</span><output id="o_rough"></output></div>
+    <input type="range" id="r_rough" min="0" max="0.6" step="0.01">
+    <div class="row"><span class="n">かすれ</span><output id="o_drop"></output></div>
+    <input type="range" id="r_drop" min="0" max="0.5" step="0.01">
+    <div class="note">⭐ <b>にじみ</b>は全部の点を一律に太らせる＝濃いところで隣とくっついて<b>黒がつながる</b>（白は抜け穴として残る）<br>
+      ⭐ <b>かすれ</b>は薄い点から先に落ちる＝端がざらつく</div>
+  </div>
+
+  <hr>
+
+  <!-- ══⭐ 動かす ══
+       ⭐ 位相 u は 0→1 の【環】。1周ぶん進むと数値レベルで元に戻る＝継ぎ目のないループ。
+       🔴 動かすのは【網そのもの】＝回る・ねじれる・色が流れる・にじみが揺れる。
+          点の位置を流す（格子をずらす）のは入れていない ── 崩れ（位置）が点ごとに固定なので、
+          ずらすと1マスごとに崩れが入れ替わって【カクッと飛ぶ】（環にならない）。 -->
+  <div class="grp">
+    <label class="h">動かす</label>
+    <label class="chk"><input type="checkbox" id="c_anim"><span>動かす</span></label>
+    <div class="row"><span class="n">1周の秒数</span><output id="o_cyc"></output></div>
+    <input type="range" id="r_cyc" min="1" max="20" step="0.5">
+    <div class="row"><span class="n">網が回る（周）</span><output id="o_spinN"></output></div>
+    <input type="range" id="r_spinN" min="0" max="4" step="1">
+    <div class="row"><span class="n">ねじれが揺れる</span><output id="o_twob"></output></div>
+    <input type="range" id="r_twob" min="0" max="180" step="5">
+    <div class="row"><span class="n">色が流れる（周）</span><output id="o_cflowN"></output></div>
+    <input type="range" id="r_cflowN" min="0" max="4" step="1">
+    <div class="row"><span class="n">にじみが揺れる</span><output id="o_wob"></output></div>
+    <input type="range" id="r_wob" min="0" max="3" step="0.05">
+    <div class="note">⭐ どれも<b>1周でぴったり元に戻る</b>（継ぎ目なしループ）。<b>回る</b>は整数の周、<b>揺れる</b>は行って戻る<br>
+      ⚠️ <b>ねじれ</b>だけは「回る」にできない＝場所ごとに掛かる量が違うので360°足しても戻らない<br>
+      ⭐ <b>色が流れる</b>を上げると色の並びが<b>環</b>になる（インク→もう1色→インク）＝繋がって回る<br>
+      ⚠️ 動かしている間は<b>画面だけ軽く焼く</b>（見えは同じ・出すときは指定の大きさ）</div>
+  </div>
+
+  <!-- ══ 動画で出す ══
+       🔴 MediaRecorder（captureStream）は使わない ── 実時間で画面のドットを録るので
+          コマ落ち・webm 固定・継ぎ目なしループ不可・大きさが選べない（NIJIMI が捨てた作り）。
+       ⭐ 位相を【コマ番号】で刻んで1コマずつ焼く。SAKUJI / TSUBU / TSUBUTE / SUDARE /
+          NIJIMI / AMI に続いて7本目。 -->
+  <div class="grp">
+    <label class="h">動画で出す</label>
+    <div class="seg" id="tvFmt"><button data-v="mp4" class="on">mp4</button><button data-v="png">PNG連番</button></div>
+    <div class="row" style="margin-top:8px"><span class="n">長辺</span></div>
+    <div class="seg" id="tvSz">
+      <button data-v="1080" class="on">1080</button><button data-v="1620">1620</button>
+      <button data-v="2160">2160</button><button data-v="3240">3240</button>
+    </div>
+    <div class="row" style="margin-top:8px"><span class="n">コマ/秒</span></div>
+    <div class="seg" id="tvFps"><button data-v="12">12</button><button data-v="24" class="on">24</button><button data-v="30">30</button></div>
+    <div class="row" style="margin-top:8px"><span class="n">周</span></div>
+    <div class="seg" id="tvLoop"><button data-v="1" class="on">1</button><button data-v="2">2</button><button data-v="4">4</button></div>
+    <div class="row" style="margin-top:8px"><span class="n">きれいさ</span></div>
+    <div class="seg" id="tvQ"><button data-v="lo">軽い</button><button data-v="mid" class="on">ふつう</button><button data-v="hi">きれい</button></div>
+    <!-- 🔴 出る大きさと進み具合は .note にしない（常時見えないと困る） -->
+    <div id="tvSize"></div>
+    <button class="btn solid" id="tvGo">動画を出す</button>
+    <div class="note">⭐ 大きくしても<b>絵は同じ</b>（点の間隔もにじみも一緒に伸びる）＝きれいになるだけ<br>
+      🔴 mp4 にできないときは<b>黙って ZIP を落とさない</b>＝理由と数字を出して止める</div>
+  </div>
+
+  <!-- ══ 版面 ══ -->
+  <div class="grp">
+    <label class="h">版面</label>
+    <div class="seg" id="ratioSeg">
+      <button data-v="1:1">1:1</button>
+      <button data-v="4:5" class="on">4:5</button>
+      <button data-v="3:4">3:4</button>
+      <button data-v="9:16">9:16</button>
+      <button data-v="16:9">16:9</button>
+    </div>
+    <div class="row" style="margin-top:8px"><span class="n">長辺</span><output id="o_long"></output></div>
+    <input type="range" id="r_long" min="600" max="4000" step="20">
+    <div class="row" style="margin-top:6px"><span class="n">紙</span></div>
+    <input type="color" id="c_paper" value="#f4f2ec">
+    <div class="row" style="margin-top:6px"><span class="n">インクの色</span></div>
+    <input type="color" id="c_ink" value="#111111">
+  </div>
+
+  <div id="meter"></div>
+
+  <hr>
+
+  <div class="grp">
+    <label class="h">出す</label>
+    <button class="btn solid" id="b_png">PNG</button>
+    <button class="btn" id="b_pnga">PNG（地なし）</button>
+    <button class="btn" id="b_svg">SVG（点そのまま）</button>
+    <div class="btns2" style="margin-top:6px">
+      <button class="btn" id="b_save">控える</button>
+      <button class="btn" id="b_load">読む</button>
+    </div>
+    <button class="btn" id="b_undo">⌘Z 戻す</button>
+    <div class="note">⭐⭐ <b>SVG が出せるのは「点が単位」だから</b>＝点1つ1つが図形として出る（拡大しても粒が粗くならない）<br>
+      ⭐ 地なし PNG は他の道具に重ねるため（[[透明]]）<br>
+      ⭐ 控え（JSON）には読み込んだ画像も入る＝これ1つで開き直せる</div>
+    <input type="file" id="f_img" accept="image/*" class="hide">
+    <input type="file" id="f_json" accept="application/json,.json" class="hide">
+  </div>
+
+  <div class="note" style="display:block;opacity:.45;margin-top:10px">
+    点 TEN ／ 木下スタジオ ── 点1つを単位にした網
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   点 TEN — 点1つを単位にした網（2026-08-14・試作）
+
+   ⭐⭐ なぜ 網 AMI と別に立てたか（[[feedback_graphic_app_direction]] の量産禁止を越える理由）
+      AMI は【画素ごとに、しきい値の表と比べて白か黒か決める】（bayer / cluster / 線 …）。
+      ＝網は「場所の関数」で、点は格子に沿った四角い塊・段は表の大きさぶんしか無い・角度が持てない。
+      参考（Modes and Characters の頁）は逆で、【点1つが単位】だった ──
+        ・丸い点が濃さに応じて連続に太る
+        ・列が斜めに傾いている（45°）
+        ・濃いところで隣とくっついて黒がつながり、白が抜け穴として残る
+        ・端は点が消えて終わる＝輪郭線が無い
+      ⭐ 単位が違うので、AMI につまみを足しても届かない
+        （＝[[feedback_grad_unit_belongs_to_the_form]]「素材にしたいなら単位を形の側に持つ」）。
+
+   ⭐ 点が単位だと、ついてくるもの
+      ・字の縁で点を切らずに【点が消えて終わる】＝参考と同じ縁になる
+      ・にじみ／崩れを【点ごとに】掛けられる（画素に掛けるとただのノイズになる）
+      ・SVG で出せる（点1つ＝図形1つ）
+
+   🔴 draw は「1本の道」にする ── 画面も PNG も SVG も同じ dots() が返す点の列を使う。
+      式を2箇所に書かない（[[feedback_one_formula_one_rule]]）。
+   ═══════════════════════════════════════════════════════════════ */
+
+const el = id => document.getElementById(id);
+const cv = el('cv'), g = cv.getContext('2d');
+const stat = t => { el('stat').textContent = t; };
+
+/* ⚠️ 32bit を溢れさせない（普通の * だと値が下半分に固まる＝AMI で踏んだ） */
+function hash2(x, y, s){
+  let h = Math.imul(x|0, 374761393) + Math.imul(y|0, 668265263) + Math.imul(s|0, 2246822519) | 0;
+  h = Math.imul(h ^ (h>>>13), 1274126177);
+  h ^= h>>>16;
+  return (h>>>0) / 4294967296;
+}
+
+/* ══ つまみ ══════════════════════════════════════════════ */
+const P = {
+  mask:'none', edge:'fade',
+  pitch:9, ang:45, shape:'round',
+  twist:0, flow:0, flowDir:'r',
+  br:0, ct:1.2, gam:1, base:0, inv:false,
+  bleed:0.35, jit:0.06, rjit:0.12, rough:0.14, drop:0.04,
+  colBy:'none', colN:16,
+  anim:false, cyc:6, spinN:0, twob:0, cflowN:0, wob:0,
+  ratio:'4:5', long:1600, paper:'#f4f2ec', ink:'#111111', ink2:'#c8442a'
+};
+
+/* ══⭐ 位相と倍率 ══════════════════════════════════════════
+   ⭐ PH ＝ 位相（0→1 の環）。1周ぶん進むと数値レベルで元に戻る＝継ぎ目のないループ。
+   ⭐ RS ＝ 焼く倍率。長辺を変えても【絵が同じ】になるように、点の間隔とにじみを一緒に伸ばす
+      （大きく出す＝同じ絵をきれいに焼き直す、という意味にする）。 */
+let PH = 0, RS = 1;
+/* 🔴 動画の入れ物は【ここ＝先頭側】で作る。中身の実装はいちばん下だが、
+   kick() が TV.on を見るので、下で const にすると TDZ で起動が止まる。 */
+const TV = { on:false, stop:false };
+
+/* ══⭐ 版 ══════════════════════════════════════════════
+   ⭐ 版を重ねて【灰色のまま】1枚の濃さの絵を作り、最後に一度だけ点に落とす
+      （網 AMI と同じ作法。層ごとに白黒へ落とすと濁る）。
+   ⚠️ 画像そのもの（HTMLImageElement）は版に持たせる。控え JSON には data URL で入る。 */
+let SHEETS = [], cur = 0;
+let sheetSeq = 0;
+function newSheet(type){
+  const s = { id:++sheetSeq, type, on:true, mode:'rep', amt:1, x:0, y:0, sc:1, rot:0, inv:false };
+  if(type === 'txt') Object.assign(s, { text:'網', wt:900, ls:0, lh:1.12, sc:0.62 });
+  else Object.assign(s, { url:null, im:null });
+  return s;
+}
+const S_ = () => SHEETS[cur] || SHEETS[0];
+/* 形に選べる版（形に使った版は濃さには入れない＝二重に効かない） */
+const maskSheet = () => SHEETS.find(s => String(s.id) === String(P.mask)) || null;
+
+/* ══ 版面 ══════════════════════════════════════════════ */
+function size(){
+  const [a, b] = P.ratio.split(':').map(Number);
+  const L = Math.round(P.long);
+  return (a >= b) ? { W:L, H:Math.round(L*b/a) } : { W:Math.round(L*a/b), H:L };
+}
+
+/* ══ 濃さの絵（tone）と 形（mask）を焼く ══════════════════
+   ⚠️ どちらも【出す大きさそのまま】で焼く。小さく焼いて拡大すると、
+      点を置くときに読む濃さがボケて、参考の「端で点が消える」が鈍る。 */
+const toneCv = document.createElement('canvas'), toneG = toneCv.getContext('2d', { willReadFrequently:true });
+const maskCv = document.createElement('canvas'), maskG = maskCv.getContext('2d', { willReadFrequently:true });
+let toneData = null, maskData = null, hasMask = false;
+
+/* 版1枚を、白い紙に黒で焼く（＝濃さの絵）。white=濃さ0 */
+const layCv = document.createElement('canvas'), layG = layCv.getContext('2d');
+function bakeSheet(sh, W, H, forShape){
+  layCv.width = W; layCv.height = H;
+  layG.setTransform(1,0,0,1,0,0);
+  /* ⚠️ 形として焼くときは【透明】から始める＝字や画像の在るところだけが形になる。
+        濃さとして焼くときは【白】から始める＝重ね方（濃くする/薄くする）が効くようにする。 */
+  layG.clearRect(0, 0, W, H);
+  if(!forShape){ layG.fillStyle = '#fff'; layG.fillRect(0, 0, W, H); }
+  layG.save();
+  layG.translate(W/2 + sh.x*W*0.5, H/2 + sh.y*H*0.5);
+  layG.rotate(sh.rot * Math.PI/180);
+  if(sh.type === 'txt'){
+    const fs = Math.max(4, sh.sc * Math.min(W, H));
+    layG.fillStyle = '#000';
+    layG.textAlign = 'center'; layG.textBaseline = 'middle';
+    layG.font = `${sh.wt} ${fs}px "Zen Kaku Gothic New", sans-serif`;
+    const lines = (sh.text || '').split('\n');
+    const lh = fs * sh.lh, top = -(lines.length-1) * lh / 2;
+    lines.forEach((ln, i) => {
+      /* ⚠️ 字間は1字ずつ置く。サロゲートペアを割らないよう [...ln] で分ける */
+      const chars = [...ln], sp = sh.ls * fs;
+      const wds = chars.map(c => layG.measureText(c).width);
+      const total = wds.reduce((a,b)=>a+b, 0) + sp*Math.max(0, chars.length-1);
+      let x = -total/2;
+      chars.forEach((c, k) => { layG.fillText(c, x + wds[k]/2, top + i*lh); x += wds[k] + sp; });
+    });
+  }else if(sh.im){
+    /* 版面いっぱいに収める（cover）を基準に、大きさで前後させる */
+    const k = Math.max(W/sh.im.width, H/sh.im.height) * sh.sc;
+    const w = sh.im.width*k, h = sh.im.height*k;
+    layG.drawImage(sh.im, -w/2, -h/2, w, h);
+  }
+  layG.restore();
+  if(sh.inv && !forShape){
+    /* ⚠️ 反転は「その版だけ」。白い地ごと反転させると版全体が黒板になるので difference で抜く */
+    layG.setTransform(1,0,0,1,0,0);
+    layG.globalCompositeOperation = 'difference';
+    layG.fillStyle = '#fff'; layG.fillRect(0, 0, W, H);
+    layG.globalCompositeOperation = 'source-over';
+  }
+  return layCv;
+}
+
+/* ⭐ 版を【灰色のまま】重ねて濃さの絵にする。
+   ⭐ 重ね方は canvas の合成でそのまま書ける（濃さ＝1−明るさ なので）：
+      置き換える＝source-over ／ 濃くする＝multiply ／ 薄くする＝screen */
+const OP = { rep:'source-over', add:'multiply', sub:'screen' };
+function bakeTone(W, H){
+  toneCv.width = W; toneCv.height = H;
+  toneG.setTransform(1,0,0,1,0,0);
+  toneG.globalCompositeOperation = 'source-over';
+  toneG.globalAlpha = 1;
+  toneG.fillStyle = '#fff'; toneG.fillRect(0, 0, W, H);      /* 白＝濃さ0 */
+  const mk = maskSheet();
+  for(let i = SHEETS.length - 1; i >= 0; i--){               /* 一覧の上が手前＝後ろから重ねる */
+    const sh = SHEETS[i];
+    if(!sh.on || sh === mk) continue;                        /* 形に使った版は濃さに入れない */
+    if(sh.type === 'img' && !sh.im) continue;
+    bakeSheet(sh, W, H, false);
+    toneG.globalCompositeOperation = OP[sh.mode] || 'source-over';
+    toneG.globalAlpha = Math.max(0, Math.min(1, sh.amt));
+    toneG.drawImage(layCv, 0, 0);
+  }
+  toneG.globalCompositeOperation = 'source-over';
+  toneG.globalAlpha = 1;
+  toneData = toneG.getImageData(0, 0, W, H).data;
+}
+
+/* 形を焼く（白い形＝中）。⚠️ アルファで読む＝画像でも文字でも「在るところ」が形 */
+function bakeMask(W, H){
+  maskCv.width = W; maskCv.height = H;
+  maskG.setTransform(1,0,0,1,0,0);
+  maskG.globalCompositeOperation = 'source-over';
+  maskG.globalAlpha = 1;
+  /* 🔴 先に黒で埋めてはいけない ── 埋めると canvas 全面が「在る」ことになり、
+        次の source-in で【全面が形】になる（2026-08-14 に踏んだ）。透明から始める。 */
+  maskG.clearRect(0, 0, W, H);
+  const mk = maskSheet();
+  hasMask = !!(mk && (mk.type === 'txt' || mk.im));
+  if(hasMask){
+    bakeSheet(mk, W, H, true);
+    maskG.drawImage(layCv, 0, 0);                        /* 透明の上に、形のあるところだけ */
+    maskG.globalCompositeOperation = 'source-in';
+    maskG.fillStyle = '#fff'; maskG.fillRect(0, 0, W, H); /* 在るところを白に */
+    maskG.globalCompositeOperation = 'destination-over';
+    maskG.fillStyle = '#000'; maskG.fillRect(0, 0, W, H); /* 残りを黒に */
+    maskG.globalCompositeOperation = 'source-over';
+  }
+  maskData = maskG.getImageData(0, 0, W, H).data;
+}
+
+/* ══ 読む ══ */
+function toneAt(x, y, W, H){
+  if(x < 0 || y < 0 || x >= W || y >= H) return 0;
+  const p = ((y|0)*W + (x|0))*4, d = toneData;
+  const lum = (d[p]*0.299 + d[p+1]*0.587 + d[p+2]*0.114) / 255;
+  let v = 1 - lum;                                   /* 暗いほど濃い */
+  if(P.inv) v = 1 - v;
+  v = (v - 0.5)*P.ct + 0.5 + P.br;
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+function maskAt(x, y, W, H){
+  /* ⚠️ ここは点の数だけ呼ばれる（数十万回）。版を毎回探さない＝焼くときに決めた旗を見る */
+  if(!hasMask) return 1;
+  if(x < 0 || y < 0 || x >= W || y >= H) return 0;
+  const p = ((y|0)*W + (x|0))*4;
+  return maskData[p] / 255;
+}
+
+/* ══⭐ 点を並べる ── 画面も PNG も SVG もここが唯一の出どころ ══════════
+   ⭐ 傾いた格子の作り方＝【回した座標の中で真っ直ぐな格子】を置いて、世界へ戻す。
+      画面の四隅を逆に回して、必要な格子の範囲だけを回す（全面を舐めない）。
+   ⭐ 半径＝間隔 × √(濃さ) × 0.68。
+      隣と接するのが 0.5・角まで埋まって真っ黒になるのが 0.707。
+      🔴 いちばん濃いところで 0.68 に止めるのは【白の抜け穴を残すため】＝参考の暗部にも点の目が見える。
+         真っ黒に潰したいときは「にじみ」で足す（潰れは選ぶもので、既定にはしない）。 */
+function dots(W, H){
+  const d = Math.max(2, P.pitch * RS);
+  /* ⭐ 回るのは【角度そのもの】＝1周（360°）で必ず元の網に戻る。
+     🔴 格子を「ずらす」動かし方は入れない ── 崩れ（位置）が点ごとに固定なので、
+        1マスずれるたびに崩れが入れ替わって飛ぶ（環にならない）。 */
+  const th = (P.ang + PH * 360 * P.spinN) * Math.PI/180, co = Math.cos(th), si = Math.sin(th);
+  const cx = W/2, cy = H/2;
+  /* 四隅を逆回転して、必要な格子の範囲を出す */
+  let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+  [[0,0],[W,0],[W,H],[0,H]].forEach(c => {
+    const dx = c[0]-cx, dy = c[1]-cy;
+    const u = ( dx*co + dy*si)/d, v = (-dx*si + dy*co)/d;
+    if(u<u0)u0=u; if(u>u1)u1=u; if(v<v0)v0=v; if(v>v1)v1=v;
+  });
+  /* ⚠️ 網が流れる（間隔が場所で変わる）と、真っ直ぐな格子より内側／外側へ動く。
+        範囲を広げておいて、はみ出した分は下の枠の外判定で捨てる。 */
+  const K = 1 / Math.max(0.25, 1 - Math.abs(P.flow));
+  u0 = Math.floor(u0*K)-1; u1 = Math.ceil(u1*K)+1;
+  v0 = Math.floor(v0*K)-1; v1 = Math.ceil(v1*K)+1;
+
+  const out = [];
+  const rMax = d * 0.68;
+  const half = Math.max(W, H) / 2;
+  /* 🔴 ねじれは【場所ごとに掛かる量が違う】ので、360°足しても元に戻らない
+        （回すのは一様な回転＝角度の方だけ。2026-08-14 に実測して分かった）。
+     ⭐ だから ねじれは【振れて戻る】＝sin で1周に1往復させる＝必ず環になる。 */
+  const twist = (P.twist + (P.twob > 0 ? P.twob * Math.sin(PH * Math.PI * 2) : 0)) * Math.PI/180, flow = P.flow;
+  /* にじみが揺れる ── sin なので1周で必ず元へ戻る */
+  const bleed = P.bleed * RS + (P.wob > 0 ? P.wob * RS * Math.sin(PH * Math.PI * 2) : 0);
+  const nCol = Math.max(2, Math.round(P.colN));
+  const cshift = (P.colBy !== 'none' && P.cflowN > 0) ? PH * P.cflowN * nCol : 0;
+  const warp = (twist !== 0 || flow !== 0);
+  for(let v = v0; v <= v1; v++){
+    for(let u = u0; u <= u1; u++){
+      /* 崩れ（位置）── 格子を少しだけ壊す。⚠️ 場所だけで決まる値＝毎回同じ絵になる */
+      const jx = (hash2(u, v, 1) - 0.5) * P.jit * d;
+      const jy = (hash2(u, v, 2) - 0.5) * P.jit * d;
+      let lx = u*d + jx, ly = v*d + jy, c2 = co, s2 = si;
+      /* ══⭐⭐ 網そのものをグラデにする ══
+         🔴 木下 2026-08-14「グラデがおもしろくないね、何がグラデなのか」＝
+            【点の大きさ】しか変わっていなかった＝網でなくても同じ絵になる。
+         ⭐ 点が単位なのだから、点の【間隔】と【角度】も場所で変える。
+         ⚠️ 濃さから引くと堂々巡りになる（間隔が濃さを変え、濃さが間隔を変える）ので、
+            引くのは【場所】から。中心から／たて／よこ の3つ。 */
+      if(warp){
+        const q = P.flowDir === 'y' ? (ly / half)
+                : P.flowDir === 'x' ? (lx / half)
+                : Math.hypot(lx, ly) / half;
+        if(flow !== 0){ const s = 1 + flow*q; lx *= s; ly *= s; }
+        if(twist !== 0){ const a = th + twist*q; c2 = Math.cos(a); s2 = Math.sin(a); }
+      }
+      const x = cx + lx*c2 - ly*s2, y = cy + lx*s2 + ly*c2;
+      if(x < -d || y < -d || x > W+d || y > H+d) continue;
+
+      /* ⭐ 底上げ ── 形の中は必ずインクで埋める。素材はそこから【上に】効く。
+         🔴 これが無いと、白地の写真を字の中に入れたとき字が虫食いになって消える（実測して足した） */
+      let t = toneAt(x, y, W, H);
+      if(P.base > 0) t = P.base + (1 - P.base) * t;
+      const m = maskAt(x, y, W, H);
+      /* ⭐ 縁の作法 ── fade は【濃さに掛ける】＝点が小さくなって消える（輪郭線が出ない）。
+            cut は点をそのまま置いて、あとで形で切り落とす。 */
+      if(P.edge === 'fade'){ t *= m; if(t <= 0.002) continue; }
+      else { if(m < 0.5) continue; }
+
+      /* かすれ ── 薄い点から先に落ちる（一律に間引くと全体が薄くなるだけで端がざらつかない） */
+      if(P.drop > 0 && hash2(u, v, 3) < P.drop * (1 - t)) continue;
+
+      let r = rMax * Math.pow(t, P.gam * 0.5) ;
+      r *= 1 + (hash2(u, v, 4) - 0.5) * P.rjit;
+      r += bleed;
+      if(r <= 0.05) continue;
+      /* ⭐⭐ 点1つが色を持つ ── インクの色そのものがグラデする。
+         ⚠️ 段（colN）に丸めるのは、塗り分けを【段の数だけ】にして1回ずつ塗るため
+            （点ごとに色を変えて塗ると、数万回の塗りで固まる）。段＝刷り版の数でもある。 */
+      let ci = 0;
+      if(P.colBy !== 'none'){
+        const q = P.colBy === 'tone' ? t
+                : P.colBy === 'y' ? (y/H)
+                : P.colBy === 'x' ? (x/W)
+                : Math.min(1, Math.hypot(x-cx, y-cy)/half);
+        ci = Math.max(0, Math.min(nCol-1, Math.floor(q*nCol)));
+        /* ⭐ 色が流れる＝段を環の上で回す（色表も環にしてあるので繋がって戻る） */
+        if(cshift) ci = (((ci + Math.floor(cshift)) % nCol) + nCol) % nCol;
+      }
+      out.push({ x, y, r, u, v, ci });
+    }
+  }
+  return out;
+}
+
+/* ⚠️ 単位円は【頂点の数ごとに1回だけ】作って使い回す（点ごとに cos/sin を回さない） */
+const RING = new Map();
+function ring(n, off){
+  const key = n + '|' + off;
+  let a = RING.get(key);
+  if(!a){
+    a = new Float64Array(n*2);
+    for(let i = 0; i < n; i++){ const t = off + i/n*Math.PI*2; a[i*2] = Math.cos(t); a[i*2+1] = Math.sin(t); }
+    RING.set(key, a);
+  }
+  return a;
+}
+/* ══⭐⭐ 点の列 → 1本の「道（SVG の d）」════════════════════════════
+   🔴🔴 これが唯一の描き方。画面も PNG も SVG も、この文字列1本から作る
+        （[[feedback_one_formula_one_rule]]／SVG のためだけに書き直さない）。
+   🔴 実測（22,716点・1点12頂点）── moveTo/lineTo を1個ずつ呼ぶと **6,468ms**、
+      ctx に直接呼んでも 6,373ms、**文字列にして new Path2D(d) に一度で渡すと 126ms**。
+      ＝ 1回の呼び出しが 20µs 掛かる。**数万個の図形は、呼ばずに文字で渡す。** */
+function pathData(ds){
+  const s = [];
+  const f = v => Math.round(v*10)/10;
+  const roundDot = (P.shape === 'round' && P.rough <= 0.001);
+  for(const p of ds){
+    if(roundDot){
+      /* 円は弧2つで閉じる（SVG の定石）。⚠️ Path2D も同じ書き方をそのまま読む */
+      const x = f(p.x), y = f(p.y), r = f(p.r), dd = f(p.r*2);
+      s.push('M', x-r, ' ', y, 'a', r, ' ', r, ' 0 1 0 ', dd, ' 0a', r, ' ', r, ' 0 1 0 ', -dd, ' 0Z');
+      continue;
+    }
+    const n = (P.shape === 'square' || P.shape === 'diamond') ? 4
+            : Math.max(7, Math.min(12, Math.round(p.r*2.2)+6));
+    const off = P.shape === 'square' ? Math.PI/4 : 0;
+    const k = (P.shape === 'square') ? Math.SQRT2 : 1;   /* 四角は角まで伸ばす＝同じ面積感 */
+    const cs = ring(n, off);
+    const R = P.rough;
+    for(let i = 0; i < n; i++){
+      const rr = p.r * k * (1 + (hash2(p.u*73 + i, p.v*131, 5) - 0.5) * R * 2);
+      s.push(i ? 'L' : 'M', f(p.x + cs[i*2]*rr), ' ', f(p.y + cs[i*2+1]*rr), ' ');
+    }
+    s.push('Z');
+  }
+  return s.join('');
+}
+
+/* ══ 色 ══
+   ⭐ 段の数だけ色を作る。1色のときは段1つ＝いままでどおり。 */
+function hex2rgb(h){ const n = parseInt(h.slice(1), 16); return [n>>16 & 255, n>>8 & 255, n & 255]; }
+function inkColors(){
+  if(P.colBy === 'none') return [P.ink];
+  const n = Math.max(2, Math.round(P.colN));
+  const a = hex2rgb(P.ink), b = hex2rgb(P.ink2), out = [];
+  /* ⭐ 色が流れるときは並びを【環】にする（インク→もう1色→インク）＝回しても継ぎ目が出ない。
+     ⚠️ 環にすると止めているときの見えも変わるので、流さないときは今までどおり片道。 */
+  const ring = P.cflowN > 0;
+  for(let i = 0; i < n; i++){
+    let t = i/(n-1);
+    if(ring){ const u2 = i/n; t = u2 < 0.5 ? u2*2 : (1-u2)*2; }
+    out.push(`rgb(${Math.round(a[0]+(b[0]-a[0])*t)},${Math.round(a[1]+(b[1]-a[1])*t)},${Math.round(a[2]+(b[2]-a[2])*t)})`);
+  }
+  return out;
+}
+/* 点を色の段ごとに分ける（段の数だけ道を作って、段ごとに1回ずつ塗る） */
+function byColor(ds, nCol){
+  const b = Array.from({ length:nCol }, () => []);
+  for(const p of ds) b[Math.min(nCol-1, p.ci || 0)].push(p);
+  return b;
+}
+/* ══⭐⭐ 刷る計画 ── 「どの色で、どの道を塗るか」の一覧。
+   🔴🔴 画面も PNG も SVG も、そして回帰テストの物差しも【全部これを見る】。
+      2026-08-14 に物差しを3回作り直した ── 画素で比べる（縁の塗り方が揺れて落ちる）→
+      点の位置と半径（点の形と崩れが素通り）→ 道の文字列（色が素通り）。
+      ⭐ 出どころを1つにすれば、足したものが必ず物差しに入る。 */
+function drawPlan(ds){
+  const cols = inkColors();
+  const gs = byColor(ds, cols.length);
+  const out = [];
+  gs.forEach((gp, i) => { if(gp.length) out.push({ color:cols[i], d:pathData(gp) }); });
+  return out;
+}
+
+/* ══ 刷る ══════════════════════════════════════════════ */
+let lastDots = 0;
+function render(ctx, W, H, transparent){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0, 0, W, H);
+  if(!transparent){ ctx.fillStyle = P.paper; ctx.fillRect(0, 0, W, H); }
+  const ds = dots(W, H);
+  lastDots = ds.length;
+  const plan = drawPlan(ds);
+  /* ⭐ 点は【色の段ごとに】1本の道にまとめて塗る。
+     ⚠️ 重なりは nonzero で自然に合体する＝濃いところで黒がつながる。 */
+  const paint = tg => {
+    for(const q of plan){ tg.fillStyle = q.color; tg.fill(new Path2D(q.d)); }
+  };
+  if(P.edge === 'cut' && maskSheet()){
+    /* 切る＝形で切り落とす。⚠️ mask は焼いた絵なので、そのまま合成で抜く */
+    const tmp = document.createElement('canvas'); tmp.width = W; tmp.height = H;
+    const tg = tmp.getContext('2d');
+    paint(tg);
+    tg.globalCompositeOperation = 'destination-in';
+    tg.drawImage(maskCv, 0, 0);
+    ctx.drawImage(tmp, 0, 0);
+  }else{
+    paint(ctx);
+  }
+}
+
+let pend = null, raf = null, lastT = 0;
+/* ⭐ 画面を1枚焼く。⚠️ 動かしている間は【軽い長辺】で焼く＝倍率 RS を一緒に落とすので
+      見えは同じまま（点の間隔もにじみも比で決まっている）。書き出しは指定の大きさで焼き直す。 */
+const PREVIEW_LONG = 1000;
+function paintScreen(){
+  const full = size();
+  const L = (P.anim && P.long > PREVIEW_LONG) ? PREVIEW_LONG : P.long;
+  RS = L / P.long;
+  const W = Math.max(2, Math.round(full.W * RS)), H = Math.max(2, Math.round(full.H * RS));
+  cv.width = W; cv.height = H;
+  bakeTone(W, H); bakeMask(W, H);
+  const t0 = performance.now();
+  render(g, W, H, false);
+  const ms = performance.now() - t0;
+  RS = 1;
+  meter(full.W, full.H, ms, W !== full.W);
+}
+function loop(ts){
+  if(!P.anim){ raf = null; return; }
+  if(!lastT) lastT = ts;
+  PH = (PH + (ts - lastT)/1000/Math.max(0.2, P.cyc)) % 1;
+  lastT = ts;
+  paintScreen();
+  raf = requestAnimationFrame(loop);
+}
+function kick(){
+  if(TV.on) return;                      /* 書き出し中は画面を触らない */
+  if(P.anim){ if(!raf){ lastT = 0; raf = requestAnimationFrame(loop); } return; }
+  if(raf){ cancelAnimationFrame(raf); raf = null; }
+  if(pend) cancelAnimationFrame(pend);
+  pend = requestAnimationFrame(() => { pend = null; paintScreen(); });
+}
+function meter(W, H, ms, light){
+  el('meter').innerHTML = `${W} × ${H} px<br>点 ${lastDots.toLocaleString()} 個・${Math.round(ms)} ms`
+    + (light ? '<br>（動かしている間は画面だけ軽く焼いています）' : '')
+    + (lastDots > 400000 ? '<br>⚠️ 点が多い（間隔を広げると軽くなる）' : '');
+  if(typeof tvSizeSync === 'function') tvSizeSync();
+}
+
+/* ══ つまみをつなぐ ══════════════════════════════════════ */
+const FMT = {
+  pitch:v=>v.toFixed(1)+'px', ang:v=>v+'°', twist:v=>v+'°', flow:v=>v.toFixed(2),
+  br:v=>v.toFixed(2), ct:v=>v.toFixed(2), gam:v=>v.toFixed(2), base:v=>v.toFixed(2),
+  bleed:v=>v.toFixed(2)+'px', jit:v=>v.toFixed(2), rjit:v=>v.toFixed(2),
+  rough:v=>v.toFixed(2), drop:v=>v.toFixed(2), long:v=>v+'px', colN:v=>String(v),
+  cyc:v=>v.toFixed(1)+'秒', spinN:v=>String(v), twob:v=>'±'+v+'°', cflowN:v=>String(v), wob:v=>v.toFixed(2),
+  s_sc:v=>v.toFixed(3), s_x:v=>v.toFixed(2), s_y:v=>v.toFixed(2), s_rot:v=>v+'°',
+  s_amt:v=>v.toFixed(2), s_wt:v=>String(v), s_ls:v=>v.toFixed(3), s_lh:v=>v.toFixed(2)
+};
+/* 版面ぜんぶに効くつまみ */
+const RANGES = ['pitch','ang','twist','flow','br','ct','gam','base',
+                'bleed','jit','rjit','rough','drop','colN',
+                'cyc','spinN','twob','cflowN','wob','long'];
+/* 選んだ版だけに効くつまみ（r_s_◯ ＝ 版の ◯） */
+const SRANGES = ['sc','x','y','rot','amt','wt','ls','lh'];
+RANGES.forEach(k => {
+  const r = el('r_'+k), o = el('o_'+k);
+  if(!r) return;
+  r.value = P[k];
+  const show = () => { if(o) o.textContent = (FMT[k] || String)(+r.value); };
+  show();
+  /* ⚠️ ⌘Z は掴んだ瞬間に1回だけ積む（input のたびに積むと1段ずつしか戻らない） */
+  r.addEventListener('pointerdown', pushHist);
+  r.addEventListener('input', () => { P[k] = +r.value; show(); kick(); saveLocal(); });
+});
+SRANGES.forEach(k => {
+  const r = el('r_s_'+k), o = el('o_s_'+k);
+  if(!r) return;
+  const show = () => { if(o) o.textContent = (FMT['s_'+k] || String)(+r.value); };
+  r.addEventListener('pointerdown', pushHist);
+  r.addEventListener('input', () => { const s = S_(); if(!s) return;
+    s[k] = +r.value; show(); kick(); saveLocal(); });
+});
+function seg(id, key, after){
+  const box = el(id); if(!box) return;
+  box.querySelectorAll('button').forEach(b => {
+    b.classList.toggle('on', b.dataset.v === String(P[key]));
+    b.addEventListener('click', () => {
+      pushHist();
+      box.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+      P[key] = b.dataset.v;
+      if(after) after();
+      kick(); saveLocal();
+    });
+  });
+}
+seg('edgeSeg', 'edge');
+seg('shapeSeg', 'shape');
+seg('ratioSeg', 'ratio');
+seg('flowSeg', 'flowDir');
+seg('colSeg', 'colBy', () => el('col2Box').classList.toggle('hide', P.colBy === 'none'));
+el('c_inv').addEventListener('change', e => { pushHist(); P.inv = e.target.checked; kick(); saveLocal(); });
+el('c_anim').addEventListener('change', e => { P.anim = e.target.checked; kick(); saveLocal(); });
+['paper','ink','ink2'].forEach(k => {
+  const c = el('c_'+k); c.value = P[k];
+  c.addEventListener('input', () => { P[k] = c.value; kick(); saveLocal(); });
+  c.addEventListener('pointerdown', pushHist);
+});
+/* 選んだ版の 重ね方 / 反転 / 文字 */
+el('s_mode').querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+  pushHist(); const s = S_(); if(!s) return;
+  s.mode = b.dataset.v; syncSheetUI(); kick(); saveLocal();
+}));
+el('c_s_inv').addEventListener('change', e => { pushHist(); const s = S_(); if(!s) return;
+  s.inv = e.target.checked; kick(); saveLocal(); });
+el('s_text').addEventListener('focus', pushHist);
+el('s_text').addEventListener('input', e => { const s = S_(); if(!s || s.type !== 'txt') return;
+  s.text = e.target.value; drawSheetList(); kick(); saveLocal(); });
+
+/* ══⭐ 版の一覧 ══════════════════════════════════════════ */
+function sheetName(s){
+  if(s.type === 'txt') return '文字「' + ((s.text || '').split('\n')[0].slice(0, 6) || '　') + '」';
+  return s.im ? '画像 ' + s.im.width + '×' + s.im.height : '画像（未読み込み）';
+}
+function drawSheetList(){
+  const box = el('sheets'); box.innerHTML = '';
+  const wrap = document.createElement('div'); wrap.id = 'layers';
+  SHEETS.forEach((s, i) => {
+    const row = document.createElement('div');
+    row.className = 'lay' + (i === cur ? ' sel' : '');
+    const eye = document.createElement('button');
+    eye.className = 'eye' + (s.on ? ' on' : ''); eye.textContent = s.on ? '■' : '□';
+    eye.onclick = e => { e.stopPropagation(); pushHist(); s.on = !s.on; drawSheetList(); kick(); saveLocal(); };
+    const nm = document.createElement('div'); nm.className = 'nm';
+    nm.textContent = sheetName(s) + (maskSheet() === s ? '（形）' : '');
+    const up = document.createElement('button'); up.className = 'up'; up.textContent = '▲';
+    up.onclick = e => { e.stopPropagation(); if(i === 0) return; pushHist();
+      [SHEETS[i-1], SHEETS[i]] = [SHEETS[i], SHEETS[i-1]]; cur = i-1; drawSheetList(); kick(); saveLocal(); };
+    const dn = document.createElement('button'); dn.className = 'up'; dn.textContent = '▼';
+    dn.onclick = e => { e.stopPropagation(); if(i === SHEETS.length-1) return; pushHist();
+      [SHEETS[i+1], SHEETS[i]] = [SHEETS[i], SHEETS[i+1]]; cur = i+1; drawSheetList(); kick(); saveLocal(); };
+    row.append(eye, nm, up, dn);
+    row.onclick = () => { cur = i; drawSheetList(); syncSheetUI(); };
+    wrap.appendChild(row);
+  });
+  box.appendChild(wrap);
+  drawMaskSeg();
+}
+/* 形に使う版を選ぶ並び（版が増えたら増える） */
+function drawMaskSeg(){
+  const box = el('maskSeg'); box.innerHTML = '';
+  const mk = (v, label) => {
+    const b = document.createElement('button');
+    b.dataset.v = v; b.textContent = label;
+    b.classList.toggle('on', String(P.mask) === String(v));
+    b.onclick = () => { pushHist(); P.mask = v; drawSheetList(); kick(); saveLocal(); };
+    box.appendChild(b);
+  };
+  mk('none', '全面');
+  SHEETS.forEach(s => mk(String(s.id), sheetName(s)));
+}
+function syncSheetUI(){
+  const s = S_();
+  el('sheetBox').classList.toggle('hide', !s);
+  if(!s) return;
+  el('s_txtOnly').classList.toggle('hide', s.type !== 'txt');
+  el('s_imgOnly').classList.toggle('hide', s.type !== 'img');
+  SRANGES.forEach(k => { const r = el('r_s_'+k), o = el('o_s_'+k);
+    if(!r || s[k] === undefined) return;
+    r.value = s[k]; if(o) o.textContent = (FMT['s_'+k] || String)(+r.value); });
+  el('s_mode').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === s.mode));
+  el('c_s_inv').checked = !!s.inv;
+  if(s.type === 'txt') el('s_text').value = s.text || '';
+}
+
+/* ══ 版を足す・消す ══ */
+function addSheet(type, url){
+  pushHist();
+  const s = newSheet(type);
+  SHEETS.unshift(s); cur = 0;
+  if(type === 'img' && url) return setImgOn(s, url, true);
+  drawSheetList(); syncSheetUI(); kick(); saveLocal();
+}
+el('b_addTxt').onclick = () => addSheet('txt');
+el('b_addImg').onclick = () => { pickTarget = null; el('f_img').click(); };
+el('b_pick').onclick   = () => { pickTarget = S_(); el('f_img').click(); };
+el('b_dup').onclick = () => {
+  const s = S_(); if(!s) return;
+  pushHist();
+  const c = { ...s, id:++sheetSeq };
+  SHEETS.splice(cur, 0, c); drawSheetList(); syncSheetUI(); kick(); saveLocal();
+};
+el('b_del').onclick = () => {
+  if(SHEETS.length <= 1){ stat('版は1つ残す'); return; }
+  pushHist();
+  const gone = SHEETS.splice(cur, 1)[0];
+  if(String(P.mask) === String(gone.id)) P.mask = 'none';   /* 🔴 形に使っていた版を消したら全面へ戻す */
+  cur = Math.min(cur, SHEETS.length-1);
+  drawSheetList(); syncSheetUI(); kick(); saveLocal();
+};
+
+/* ══ 画像 ══════════════════════════════════════════════ */
+let pickTarget = null;
+el('f_img').addEventListener('change', e => { const f = e.target.files[0]; if(f) loadImgFile(f); e.target.value = ''; });
+function loadImgFile(f){
+  const rd = new FileReader();
+  rd.onload = () => {
+    if(pickTarget){ setImgOn(pickTarget, rd.result, true); pickTarget = null; }
+    else addSheet('img', rd.result);
+  };
+  rd.readAsDataURL(f);
+}
+function setImgOn(sh, url, announce){
+  const im = new Image();
+  im.onload = () => { sh.im = im; sh.url = url;
+    drawSheetList(); syncSheetUI(); kick(); saveLocal();
+    if(announce) stat('画像を読み込んだ — ' + im.width + '×' + im.height); };
+  im.onerror = () => stat('🔴 画像を読めなかった');
+  im.src = url;
+}
+
+/* ══ 戻す（⌘Z）══════════════════════════════════════════
+   ⚠️ 画像そのものは重いので【戻す】には入れない（版の並びと値だけ／控え JSON には入る）。 */
+const HIST = [];
+function sheetsPlain(withImg){
+  return SHEETS.map(s => { const o = { ...s }; delete o.im; if(!withImg) delete o.url; return o; });
+}
+function snapObj(withImg){
+  return JSON.stringify({ P:{ ...P }, S:sheetsPlain(withImg), cur });
+}
+function pushHist(){
+  const s = snapObj(false);
+  if(HIST[HIST.length-1] === s) return;
+  HIST.push(s);
+  if(HIST.length > 60) HIST.shift();
+}
+function undo(){
+  if(!HIST.length){ stat('もう戻せない'); return; }
+  applyObj(HIST.pop(), false);
+  stat('戻した');
+}
+function applyObj(txt, withImg){
+  const o = JSON.parse(txt);
+  Object.assign(P, o.P || {});
+  if(o.S){
+    /* ⚠️ 読み込み済みの画像は id で引き継ぐ（戻すたびに読み直すと画面がちらつく） */
+    const keep = new Map(SHEETS.map(s => [s.id, s.im]));
+    SHEETS = o.S.map(s => {
+      const n = { ...s };
+      n.im = keep.get(n.id) || null;
+      if(withImg && n.url && !n.im) setImgOn(n, n.url, false);
+      return n;
+    });
+    sheetSeq = Math.max(sheetSeq, ...SHEETS.map(s => s.id || 0));
+    cur = Math.min(o.cur || 0, SHEETS.length-1);
+  }
+  syncUI(); kick(); saveLocal();
+}
+function syncUI(){
+  RANGES.forEach(k => { const r = el('r_'+k), o = el('o_'+k);
+    if(!r) return; r.value = P[k]; if(o) o.textContent = (FMT[k] || String)(+r.value); });
+  [['edgeSeg','edge'],['shapeSeg','shape'],['ratioSeg','ratio'],['flowSeg','flowDir'],['colSeg','colBy']]
+    .forEach(([id, key]) => el(id).querySelectorAll('button')
+      .forEach(b => b.classList.toggle('on', b.dataset.v === String(P[key]))));
+  el('c_inv').checked = !!P.inv;
+  el('c_anim').checked = !!P.anim;
+  el('c_paper').value = P.paper; el('c_ink').value = P.ink; el('c_ink2').value = P.ink2;
+  el('col2Box').classList.toggle('hide', P.colBy === 'none');
+  drawSheetList(); syncSheetUI();
+}
+el('b_undo').onclick = undo;
+addEventListener('keydown', e => {
+  if((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z'){ e.preventDefault(); undo(); }
+});
+
+/* ══ 出す ══════════════════════════════════════════════ */
+function dl(blob, name){
+  const u = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = u; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 8000);
+}
+function savePNG(transparent){
+  const { W, H } = size();
+  RS = 1;                                          /* ⚠️ 出すときは必ず指定の大きさで焼き直す */
+  const o = document.createElement('canvas'); o.width = W; o.height = H;
+  bakeTone(W, H); bakeMask(W, H);
+  render(o.getContext('2d'), W, H, transparent);   /* ⭐ 画面と同じ道 */
+  o.toBlob(b => {
+    if(!b){ stat('🔴 出せなかった（大きすぎ）'); return; }
+    dl(b, 'ten_' + Date.now() + (transparent ? '_a' : '') + '.png');
+    stat('PNG を出した ' + W + '×' + H + (transparent ? '・地なし' : ''));
+  }, 'image/png');
+}
+el('b_png').onclick = () => savePNG(false);
+el('b_pnga').onclick = () => savePNG(true);
+
+/* ⭐⭐ SVG ── 点が単位だから出せる。
+   ⭐ 画面と【同じ文字列】をそのまま <path d> に置くだけ＝式を書き直さない。
+   ⚠️ 「切る」のときは clipPath で形に収める。形は字なので、字そのものを道にはできない
+      （焼いた絵しか無い）＝マスクを画像として埋め込んで mask で抜く。 */
+el('b_svg').onclick = () => {
+  const { W, H } = size();
+  RS = 1;
+  bakeTone(W, H); bakeMask(W, H);
+  const ds = dots(W, H);
+  if(ds.length > 400000){ stat('🔴 点が ' + ds.length.toLocaleString() + ' 個 — SVG には多すぎます（間隔を広げてください）'); return; }
+  const plan = drawPlan(ds);
+  const cut = (P.edge === 'cut' && !!maskSheet());
+  const n = [];
+  n.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`);
+  if(cut) n.push(`<defs><mask id="m"><image width="${W}" height="${H}" href="${maskCv.toDataURL('image/png')}"/></mask></defs>`);
+  n.push(`<rect width="${W}" height="${H}" fill="${P.paper}"/>`);
+  /* ⭐ 色の段ごとに1本の道＝Illustrator では「刷り版」ぶんのグループになる */
+  n.push(`<g${cut ? ' mask="url(#m)"' : ''}>`);
+  for(const q of plan) n.push(`<path fill="${q.color}" fill-rule="nonzero" d="${q.d}"/>`);
+  n.push('</g></svg>');
+  const blob = new Blob([n.join('')], { type:'image/svg+xml' });
+  dl(blob, 'ten_' + Date.now() + '.svg');
+  stat('SVG を出した — 点 ' + ds.length.toLocaleString() + ' 個・' + Math.round(blob.size/1024) + 'KB');
+};
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 動画で出す ── 画面録画をやめる（7本目）
+
+   🔴 MediaRecorder / captureStream は使わない（実時間で画面のドットを録るので
+      コマ落ち・webm 固定・継ぎ目なしループ不可・大きさが選べない）。
+   ⭐ 位相を【コマ番号】で刻む＝`phase = i / 総コマ × 周` の小数部。
+      動かすものは全部【整数の周】で回るので、頭と尻が数値レベルで一致する。
+   ⭐ 大きさは【焼き直す】＝倍率 RS を掛けて点の間隔もにじみも一緒に伸ばす。
+      ＝大きくしても絵は同じ（きれいになるだけ）。
+   🔴 mp4 にできないとき、黙って PNG連番（ZIP）を落とさない。理由と数字を出して止める。
+   ══════════════════════════════════════════════════════════════ */
+function tvSeg(id, dflt){ const b = document.querySelector('#' + id + ' button.on'); return b ? b.dataset.v : dflt; }
+const TV_MAXMB = 36864, TV_MAXSIDE = 4096;
+const TV_Q = { hi:0.30, mid:0.15, lo:0.06 };
+function tvOut(){
+  const L = Math.max(64, +tvSeg('tvSz', '1080') || 1080);
+  const [a, b] = P.ratio.split(':').map(Number);
+  let W = (a >= b) ? L : Math.round(L*a/b);
+  let H = (a >= b) ? Math.round(L*b/a) : L;
+  return { L, W:Math.max(16, W), H:Math.max(16, H) };
+}
+function tvPlan(){
+  const fps = +tvSeg('tvFps', '24'), loops = +tvSeg('tvLoop', '1');
+  const sec = loops * Math.max(0.2, P.cyc);
+  const moving = (P.spinN > 0 || P.twob > 0 || P.cflowN > 0 || P.wob > 0);
+  return { fps, loops, sec, total:Math.max(2, Math.round(sec*fps)), moving };
+}
+function tvSizeSync(){
+  const box = el('tvSize'); if(!box) return;
+  const o = tvOut(); let W = o.W, H = o.H;
+  const isMp4 = tvSeg('tvFmt', 'mp4') === 'mp4';
+  if(isMp4){ W -= W%2; H -= H%2; }
+  const mb = Math.ceil(W/16) * Math.ceil(H/16);
+  const over = isMp4 && (mb > TV_MAXMB || W > TV_MAXSIDE || H > TV_MAXSIDE);
+  const p = tvPlan();
+  box.innerHTML = '出力 <b>' + W + ' × ' + H + '</b> px'
+    + (over ? '<br>⚠️ mp4 の上限超え（辺4096まで）— 長辺を下げるか PNG連番へ' : '')
+    + '<br>' + p.total + ' コマ・' + p.sec.toFixed(1) + '秒・' + p.fps + 'コマ/秒・' + p.loops + '周'
+    + (p.moving ? '' : '<br>⚠️ <b>「動かす」の周が全部 0</b> ＝ 全コマ同じ絵になります');
+}
+document.querySelectorAll('#tvFmt button, #tvSz button, #tvFps button, #tvLoop button, #tvQ button')
+  .forEach(b => b.addEventListener('click', () => {
+    b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    tvSizeSync();
+  }));
+
+/* ══ ZIP（圧縮なし＝store）══ */
+let TV_CRCT = null;
+function tvCrc32(u8){
+  if(!TV_CRCT){
+    TV_CRCT = new Uint32Array(256);
+    for(let n = 0; n < 256; n++){ let c = n;
+      for(let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      TV_CRCT[n] = c >>> 0; }
+  }
+  let c = 0xFFFFFFFF;
+  for(let i = 0; i < u8.length; i++) c = TV_CRCT[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function tvZip(files){
+  const te = new TextEncoder(), parts = [], cent = [];
+  let off = 0;
+  for(const f of files){
+    const nm = te.encode(f.name), crc = tvCrc32(f.data), sz = f.data.length;
+    const L = new DataView(new ArrayBuffer(30));
+    L.setUint32(0, 0x04034b50, true); L.setUint16(4, 20, true);
+    L.setUint32(14, crc, true); L.setUint32(18, sz, true); L.setUint32(22, sz, true);
+    L.setUint16(26, nm.length, true);
+    parts.push(new Uint8Array(L.buffer), nm, f.data);
+    const C = new DataView(new ArrayBuffer(46));
+    C.setUint32(0, 0x02014b50, true); C.setUint16(4, 20, true); C.setUint16(6, 20, true);
+    C.setUint32(16, crc, true); C.setUint32(20, sz, true); C.setUint32(24, sz, true);
+    C.setUint16(28, nm.length, true); C.setUint32(42, off, true);
+    cent.push(new Uint8Array(C.buffer), nm);
+    off += 30 + nm.length + sz;
+  }
+  let csz = 0; for(const c of cent) csz += c.length;
+  const E = new DataView(new ArrayBuffer(22));
+  E.setUint32(0, 0x06054b50, true);
+  E.setUint16(8, files.length, true); E.setUint16(10, files.length, true);
+  E.setUint32(12, csz, true); E.setUint32(16, off, true);
+  return new Blob(parts.concat(cent, [new Uint8Array(E.buffer)]), { type:'application/zip' });
+}
+/* ⭐ mp4 の器は【押したときだけ】取りに行く（この道具は外の部品を1つも使っていない） */
+let tvMuxP = null;
+function tvLoadMuxer(){
+  if(window.Mp4Muxer) return Promise.resolve(true);
+  if(!tvMuxP){
+    tvMuxP = new Promise(res => {
+      const sc = document.createElement('script');
+      sc.src = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.1/build/mp4-muxer.min.js';
+      sc.onload = () => res(!!window.Mp4Muxer);
+      sc.onerror = () => res(false);
+      document.head.appendChild(sc);
+    });
+  }
+  return tvMuxP;
+}
+async function tvCodec(W, H, fps, bitrate){
+  for(const codec of ['avc1.640034','avc1.640033','avc1.640032','avc1.64002a','avc1.640028','avc1.4d0034','avc1.42003c']){
+    try{ const s = await VideoEncoder.isConfigSupported({ codec, width:W, height:H, bitrate, framerate:fps });
+      if(s && s.supported) return s.config; }catch(_){}
+  }
+  return null;
+}
+const tvIdle = () => new Promise(r => setTimeout(r, 0));
+
+async function tvRun(){
+  if(TV.on){ TV.stop = true; return; }
+  const say = t => { const b = el('tvSize'); if(b) b.innerHTML = t; };
+  const fmt = tvSeg('tvFmt', 'mp4'), q = tvSeg('tvQ', 'mid');
+  const plan = tvPlan(), o = tvOut();
+  let W = o.W, H = o.H;
+  if(fmt === 'mp4'){ W -= W%2; H -= H%2; }
+  W = Math.max(2, W); H = Math.max(2, H);
+
+  const btn = el('tvGo');
+  const keepPH = PH, wasAnim = P.anim;              /* ⚠️ 撮り終わったら必ず戻す */
+  P.anim = false; if(raf){ cancelAnimationFrame(raf); raf = null; }
+  TV.on = true; TV.stop = false;
+  if(btn) btn.textContent = 'やめる';
+  let msg = '';
+  try{
+    RS = o.L / P.long;                              /* ⭐ 絵は同じまま、大きさだけ変える */
+    let enc = null, muxer = null, target = null, encErr = null;
+    if(fmt === 'mp4'){
+      if(W > TV_MAXSIDE || H > TV_MAXSIDE || Math.ceil(W/16)*Math.ceil(H/16) > TV_MAXMB)
+        throw new Error('この大きさ（' + W + '×' + H + '）は mp4 の上限を超えています — 辺4096px まで。長辺を下げるか PNG連番を選んでください');
+      if(typeof VideoEncoder === 'undefined')
+        throw new Error('このブラウザは mp4 を作れません（PNG連番を選んでください）');
+      if(!await tvLoadMuxer())
+        throw new Error('mp4 の器を取りに行けませんでした（つながっていない）。PNG連番を選んでください');
+      const bitrate = Math.min(80e6, Math.round(W * H * plan.fps * (TV_Q[q] || 0.15)));
+      const cfg = await tvCodec(W, H, plan.fps, bitrate);
+      if(!cfg) throw new Error('この大きさで mp4 を作れる設定が見つかりません');
+      target = new Mp4Muxer.ArrayBufferTarget();
+      muxer = new Mp4Muxer.Muxer({ target,
+        video:{ codec:'avc', width:W, height:H, frameRate:Math.max(1, Math.round(plan.fps)) },
+        fastStart:'in-memory' });
+      enc = new VideoEncoder({
+        output:(c, m) => { try{ muxer.addVideoChunk(c, m); }catch(e){ encErr = e; } },
+        error: e => { encErr = e; } });
+      enc.configure(cfg);
+    }
+    const out = document.createElement('canvas'); out.width = W; out.height = H;
+    const oc2 = out.getContext('2d');
+    const shots = [], pad = i => String(i).padStart(4, '0');
+    let bytes = 0, i = 0;
+
+    for(; i < plan.total; i++){
+      if(TV.stop) break;
+      if(encErr) throw encErr;
+      PH = (i / plan.total * plan.loops) % 1;       /* ⭐ 時計ではなくコマ番号 */
+      bakeTone(W, H); bakeMask(W, H);
+      render(oc2, W, H, false);                     /* ⭐ 画面と同じ道 */
+      if(fmt === 'mp4'){
+        const vf = new VideoFrame(out, { timestamp:Math.round(i*1e6/plan.fps),
+                                         duration:Math.round(1e6/plan.fps) });
+        enc.encode(vf, { keyFrame:(i % (plan.fps*2)) === 0 });
+        vf.close();
+        while(enc.encodeQueueSize > 8 && !encErr) await tvIdle();
+      }else{
+        const bl = await new Promise(r => out.toBlob(r, 'image/png'));
+        if(!bl) throw new Error('PNG が作れなかった（大きすぎる可能性）');
+        const u8 = new Uint8Array(await bl.arrayBuffer());
+        bytes += u8.length;
+        shots.push({ name:'ten_' + pad(i) + '.png', data:u8 });
+        if(bytes > 1.5e9) throw new Error('PNG連番が大きすぎます（' + Math.round(bytes/1e6) + 'MB）— 長辺か周を下げてください');
+      }
+      say('書き出し中 <b>' + (i+1) + ' / ' + plan.total + '</b> コマ　' + W + ' × ' + H
+          + (fmt === 'png' ? '（' + Math.round(bytes/1e6) + 'MB）' : '')
+          + '<br>「やめる」で止められます');
+      await tvIdle();                                /* ⚠️ 画面を返す（進み具合と「やめる」のため） */
+    }
+    const shot = i;
+    if(fmt === 'mp4'){
+      await enc.flush();
+      if(encErr) throw encErr;
+      muxer.finalize(); enc.close();
+      if(shot > 1){
+        const blob = new Blob([target.buffer], { type:'video/mp4' });
+        dl(blob, 'ten_' + Date.now() + '.mp4');
+        msg = 'mp4 — ' + W + ' × ' + H + '・' + shot + 'コマ・' + (shot/plan.fps).toFixed(1) + '秒・'
+            + Math.round(blob.size/1e6) + 'MB' + (TV.stop ? '（途中で止めた）' : '・継ぎ目なしループ');
+      }
+    }else if(shots.length){
+      const blob = tvZip(shots);
+      dl(blob, 'ten_' + Date.now() + '_seq.zip');
+      msg = 'PNG連番 — ' + W + ' × ' + H + '・' + shots.length + '枚・'
+          + Math.round(blob.size/1e6) + 'MB（' + plan.fps + 'コマ/秒 で束ねてください）';
+    }
+    if(shot <= 1) msg = '止めました（1コマも出していません）';
+  }catch(err){
+    msg = '🔴 ' + (err && err.message || err);       /* 🔴 何が起きても必ず理由を出す */
+  }finally{
+    /* 🔴 何が起きても必ず元へ戻す */
+    RS = 1; PH = keepPH; P.anim = wasAnim;
+    TV.on = false; TV.stop = false;
+    if(btn) btn.textContent = '動画を出す';
+    el('c_anim').checked = wasAnim;
+    kick();
+    if(msg){ stat(msg.replace(/<[^>]*>/g, '')); setTimeout(() => say(msg), 30); }
+    else tvSizeSync();
+  }
+}
+/* ⚠️ 引数を持つ関数はハンドラに直渡ししない（イベントが引数になる） */
+el('tvGo').addEventListener('click', () => tvRun());
+
+/* ══ 控え ══════════════════════════════════════════════ */
+el('b_save').onclick = () => {
+  const b = new Blob([snapObj(true)], { type:'application/json' });
+  dl(b, 'ten_' + Date.now() + '.json');
+  stat('控えた — ' + Math.round(b.size/1024) + 'KB' + (SHEETS.some(x => x.url) ? '（画像入り）' : ''));
+};
+el('b_load').onclick = () => el('f_json').click();
+el('f_json').addEventListener('change', e => { const f = e.target.files[0]; if(f) loadJSON(f); e.target.value = ''; });
+function loadJSON(f){
+  const rd = new FileReader();
+  rd.onload = () => { try{ pushHist(); applyObj(rd.result, true); stat('控えを読み込んだ'); }
+                      catch(_){ stat('🔴 読めなかった'); } };
+  rd.readAsText(f);
+}
+
+/* ══ 落とす ══ */
+addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragging'); });
+addEventListener('dragleave', e => { if(e.relatedTarget === null) document.body.classList.remove('dragging'); });
+addEventListener('drop', e => {
+  e.preventDefault(); document.body.classList.remove('dragging');
+  const fs = [...(e.dataTransfer?.files || [])];
+  const j = fs.find(x => /\.json$/i.test(x.name)); if(j) return loadJSON(j);
+  const i = fs.find(x => /^image\//.test(x.type)); if(i) return loadImgFile(i);
+});
+
+/* ══ このブラウザに残す ══
+   ⚠️ 画像は大きいので、入りきらなければ画像なしで残す（残らないより残る方がいい） */
+function saveLocal(){
+  try{ localStorage.setItem('ten.v1', snapObj(true)); }
+  catch(_){ try{ localStorage.setItem('ten.v1', snapObj(false)); }catch(__){} }
+}
+function loadLocal(){
+  try{ const s = localStorage.getItem('ten.v1'); if(s) applyObj(s, true); }catch(_){}
+}
+
+/* ══ 起動 ══
+   🔴 かたまりの最後でまとめて呼ぶ（登録の途中で呼ぶと、まだ宣言していない物に触って下が全部死ぬ） */
+SHEETS = [ newSheet('txt') ];
+cur = 0;
+syncUI();
+loadLocal();
+tvSizeSync();
+kick();
+document.fonts.ready.then(kick);
+stat('画像を落として版を足す／＋文字で版を重ねる');
+</script>
+</body>
+</html>
