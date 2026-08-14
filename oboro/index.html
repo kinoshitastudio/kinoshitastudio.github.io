@@ -90,6 +90,9 @@
   .btn:active{transform:scale(.985);opacity:.8;}
   .btn.pri{background:var(--ink);color:var(--paper);font-weight:590;}
   .mod{font-size:10.5px;line-height:1.7;color:var(--dim);margin-top:8px;}
+  /* ⭐ 「どの線」は引き伸ばしのときだけ出す＝触れるのに何も起きないつまみを出さない */
+  .only-smear{display:none;}
+  body.smear .only-smear{display:flex;}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
   #hud{position:fixed;left:18px;top:16px;z-index:20;font-family:ui-monospace,"SF Mono",Menlo,monospace;
        font-size:8.5px;letter-spacing:.14em;color:#fff;opacity:.55;line-height:2;}
@@ -139,12 +142,23 @@
   <div class="mod">色数を絞るほど、写真から<b>抜き出した色</b>だけが残る</div>
 
   <h2>帯</h2>
+  <!-- ⭐⭐ 帯の中身（2026-08-14）＝木下が持ってきた参考（黒地に、写真を一方向へ
+       引き伸ばした筋が階段状に並ぶ絵）。⭐ 今の「2色」の道は1行も触っていない。
+       ⚠️ 違いは【中身だけ】＝2色の補間か、写真の1本の線を引き伸ばすか。
+          割る・向き・のび・にじみ・抜き・形・順は、どちらでもそのまま効く。 -->
+  <div class="seg" id="ink">
+    <button data-v="grad" class="on">2色でわたす</button>
+    <button data-v="smear">写真を引き伸ばす</button>
+  </div>
+  <div class="mod" id="inkNote"></div>
   <div class="seg" id="dir">
     <button data-v="x" class="on">よこに流す</button>
     <button data-v="y">たてに流す</button>
   </div>
   <div class="row"><label>にじみ</label><input type="range" id="soft" min="0" max="100" value="55"><span class="val"></span></div>
   <div class="row"><label>のび</label><input type="range" id="reach" min="100" max="400" value="160"><span class="val"></span></div>
+  <!-- ⭐ 引き伸ばしのときだけ効く＝マスの【どこの線】を引き伸ばすか -->
+  <div class="row only-smear"><label>どの線</label><input type="range" id="slit" min="0" max="100" value="50"><span class="val"></span></div>
   <div class="mod">⭐ <b>のび</b>＝帯がマスを越えて伸びる。参考にした手作業の帯は横に長い</div>
 
   <h2>形</h2>
@@ -227,7 +241,10 @@ let smW = 0, smH = 0, SX = 1, SY = 1;   // ⭐ 色を採る側の大きさと、
 let src = null;          // 元の画素（読み取り用）
 let cells = [];          // 割ったマス（色つき）
 
-const P = { rows:14, minx:2, maxx:44, vary:60, seed:7, steps:16, bias:0, dir:'x', soft:55, reach:160,
+/* ⭐ ink＝帯の中身。'grad'＝2色でわたす（いままで・既定）／'smear'＝写真を引き伸ばす（2026-08-14 追加）
+   ⚠️ 既定を grad にしてあるので、開いた瞬間の見え方はこれまでと1画素も変わらない。 */
+const P = { ink:'grad', slit:50,
+            rows:14, minx:2, maxx:44, vary:60, seed:7, steps:16, bias:0, dir:'x', soft:55, reach:160,
             fill:100, order:'rand',
             /* ⭐ 引き算＝帯を消して写真を覗かせる。⭐ 音＝どの帯が消えるかが揺れる */
             drop:0, dropdir:'rand', expo:0, sat:100, amount:60,
@@ -607,6 +624,10 @@ function band(c, m){
   const x = horiz ? c.x0 - (bw - w)/2 : c.x0;
   const y = horiz ? c.y0 : c.y0 - (bh - h)/2;
 
+  /* ⭐⭐ 帯の中身が【写真の引き伸ばし】のとき（2026-08-14）。
+     ⚠️ ここで return するので、この下の「2色でわたす」には一切触れていない。 */
+  if(P.ink === 'smear'){ smear(c, x, y, bw, bh, horiz); return; }
+
   const a = quant(c.c, m.steps);
   const nb = neighbor(c);                    // 隣のマス＝渡る先の色
   const b = quant(nb ? nb.c : c.c, m.steps);
@@ -621,6 +642,62 @@ function band(c, m){
   g.addColorStop(1, css(b));
   ctx.fillStyle = g;
   ctx.fillRect(x, y, bw, bh);
+}
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 写真を引き伸ばす帯（2026-08-14）
+
+   ⭐ 2色でわたす帯との違いは【中身だけ】。
+      2色＝量子化した色を2つ置いて補間する＝帯の中に色は2つしかない。
+      引き伸ばし＝写真の【1本の線】を帯いっぱいに伸ばす＝元の画素列がそのまま筋になって残る。
+      参考の絵で青い筋がはっきり残るのは、2色の補間では出ない情報だから。
+   ⭐ 取る線の向きは【流す向きと直交】させる。
+      よこに流す＝筋は横に走る＝中身は x で変わらず y で変わる → 縦1px の列を取る
+      たてに流す＝その逆 → 横1px の行を取る
+   ⚠️ 元は `base`（写真をキャンバス寸法で焼いたもの）から取る＝割る・光・彩度の
+      つまみと同じ土俵。写真そのものを読み直さない。
+   ⚠️ にじみは【端を透明へ落とす】で効かせる。触れるのに何も起きないつまみを作らない。
+      ⭐ 落とすための小さい板は1枚だけ作って使い回す（帯ごとに作ると数百枚になる）。
+   ══════════════════════════════════════════════════════════════ */
+let smearCv = null, smearX = null;
+function smear(c, x, y, bw, bh, horiz){
+  if(!base) return;
+  const W = base.width, H = base.height;
+  const t = (P.slit == null ? 50 : P.slit) / 100;
+  /* ⭐ どの線を取るか＝マスの中を 0〜100 で送る。⚠️ 端をはみ出さないよう挟む。 */
+  const sx = horiz ? Math.min(W - 1, Math.max(0, Math.round(c.x0 + (c.x1 - c.x0) * t))) : Math.round(c.x0);
+  const sy = horiz ? Math.round(c.y0) : Math.min(H - 1, Math.max(0, Math.round(c.y0 + (c.y1 - c.y0) * t)));
+  const sw = horiz ? 1 : Math.max(1, Math.round(c.x1 - c.x0));
+  const sh = horiz ? Math.max(1, Math.round(c.y1 - c.y0)) : 1;
+  if(sx + sw > W || sy + sh > H) return;
+
+  const s = P.soft / 100;
+  if(s <= 0.001){
+    /* にじみ 0 ＝そのまま伸ばす（いちばん軽い道） */
+    ctx.drawImage(base, sx, sy, sw, sh, x, y, bw, bh);
+    return;
+  }
+  /* ⭐ にじみあり＝小さい板の上で伸ばし、伸ばした向きの両端を透明へ落としてから貼る。
+     ⚠️ 落とすのは【伸ばした向き】＝よこに流したなら左右、たてなら上下。
+     ⚠️ destination-out を本画面に直接かけると、下に敷いた写真や先に刷った帯まで消える。
+        だから必ずこの板の上でやる。 */
+  const iw = Math.max(1, Math.round(bw)), ih = Math.max(1, Math.round(bh));
+  if(!smearCv){ smearCv = document.createElement('canvas'); smearX = smearCv.getContext('2d'); }
+  if(smearCv.width !== iw || smearCv.height !== ih){ smearCv.width = iw; smearCv.height = ih; }
+  else smearX.clearRect(0, 0, iw, ih);
+  smearX.globalCompositeOperation = 'source-over';
+  smearX.drawImage(base, sx, sy, sw, sh, 0, 0, iw, ih);
+  const g = horiz ? smearX.createLinearGradient(0, 0, iw, 0)
+                  : smearX.createLinearGradient(0, 0, 0, ih);
+  const e = Math.min(0.5, s * 0.5);                    // 端をどこまで溶かすか（最大で半分ずつ）
+  g.addColorStop(0, 'rgba(0,0,0,1)');
+  g.addColorStop(Math.max(0.001, e), 'rgba(0,0,0,0)');
+  g.addColorStop(Math.min(0.999, 1 - e), 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(0,0,0,1)');
+  smearX.globalCompositeOperation = 'destination-out';
+  smearX.fillStyle = g;
+  smearX.fillRect(0, 0, iw, ih);
+  smearX.globalCompositeOperation = 'source-over';
+  ctx.drawImage(smearCv, x, y);
 }
 /* ⭐⭐ どこから抜けるか ── 帯ごとに「残りやすさ」を出す（小さいほど先に抜ける）。
    🔴 前はランダムだけだった＝抜きを上げると【均一に虫食い】になり、抜けに向きが無かった。
@@ -692,6 +769,7 @@ bind('rows','rows',true); bind('minx','minx',true); bind('maxx','maxx',true);
 bind('vary','vary',true); bind('seed','seed',true);
 bind('steps','steps'); bind('bias','bias');
 bind('soft','soft');   bind('reach','reach'); bind('fill','fill');
+bind('slit','slit');   // ⭐ 引き伸ばしのとき、マスのどこの線を取るか
 bind('drop','drop');   bind('amount','amount');
 bind('expo','expo',true); bind('sat','sat',true);   // ⚠️ 光は色を採り直すので割り直し
 bind('shape','shape');    bind('thr','thr',3); bind('lump','lump',3);   // ⚠️ 形が変わる方は引き直し
@@ -717,11 +795,23 @@ document.querySelectorAll('.seg').forEach(seg => {
          それも order を書き換えて黙って壊れる**（memory「足す前に既存の同名を探す」）。
          ⭐ セグの id と P の名前を揃えて、そのまま入れる。 */
       P[seg.id] = b.dataset.v;
+      if(seg.id === 'ink') syncInk();
       // ⚠️ 向きを変えると段の組み方そのものが変わる＝割り直しが要る
       invalidate(seg.id === 'dir' ? 2 : 1);
     });
   });
 });
+/* ⭐ 帯の中身で、出すつまみと説明を入れ替える。
+   ⚠️ 触れるのに何も起きないつまみを出さない（「どの線」は引き伸ばしのときだけ効く）。 */
+function syncInk(){
+  const on = P.ink === 'smear';
+  document.body.classList.toggle('smear', on);
+  const n = document.getElementById('inkNote');
+  if(n) n.innerHTML = on
+    ? '⭐ マスの<b>1本の線</b>を帯いっぱいに引き伸ばす＝写真の筋がそのまま残る（色は2つに減らない）<br>⚠️ <b>色数・寄せる</b>は効かない（色を採り直していないため）。効くのは<b>割る・向き・のび・にじみ・抜き・形</b>'
+    : '⭐ そのマスの色から<b>隣の色へ渡す</b>＝帯の中の色は2つ。いままでの見え方';
+}
+syncInk();
 
 /* ── 読み込み（ボタン・ドロップ）─────────────────────── */
 document.getElementById('bLoad').onclick = () => document.getElementById('file').click();
