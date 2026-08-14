@@ -309,14 +309,17 @@
     <label class="h">出す・控える</label>
     <label class="chk"><input type="checkbox" id="c_alpha"> 地を抜いて出す</label>
     <div class="btns2">
-      <button class="btn" id="b_rand">ふる</button>
       <button class="btn" id="b_undo">戻す</button>
+      <button class="btn" id="b_redo">やり直す</button>
     </div>
+    <button class="btn" id="b_rand" style="margin-top:6px">ふる</button>
     <button class="btn solid" id="b_png" style="margin-top:6px">PNGで出す</button>
     <div class="btns2" style="margin-top:6px">
       <button class="btn" id="b_save">控える</button>
       <button class="btn" id="b_load">控えを開く</button>
     </div>
+    <div class="note" style="display:block">⭐ <b>ホイール／ピンチ</b>＝寄る・引く（線は痩せません）／<b>⌥＋ドラッグ</b>＝画面を動かす／<b>ダブルクリック</b>＝正面に戻す。ふつうのドラッグは今までどおり<b>芯を引っぱる</b><br>
+      ⭐ <b>キー</b>＝<b>space</b> 再生／<b>+ −</b> 寄る・引く／<b>0</b> 正面／<b>⌘Z</b> 戻す／<b>⇧⌘Z</b> やり直す／<b>⌘S</b> PNG／<b>R</b> ふる</div>
     <div class="note">⭐<b>線は最後まで線のまま</b>＝出る大きさをいくら上げても痩せない。⭐置いたものはこのブラウザに勝手に残る（閉じても続きから）。⚠️残るのは<b>このブラウザのこの場所だけ</b></div>
     <input type="file" id="f_json" accept="application/json,.json" class="hide">
   </div>
@@ -631,8 +634,32 @@ function fit(){
   cw=Math.max(2,Math.round(w*dpr)); ch=Math.max(2,Math.round(h*dpr));
   cv.width=cw; cv.height=ch;
 }
+/* ══⭐ 寄る・引く（見るためだけ）══════════════════════════
+   ⭐ 拡大ではなく【その倍率で焼き直して、見えている窓だけ切る】＝寄っても線が痩せない
+      （枡 MASU の「全体で出す」と同じ考え方）。
+   ⚠️ ズームと移動は【見るためのもの】＝PNG・動画には掛けない（paint を呼ぶ所は他に2つあるが触っていない）。
+   ⚠️ 倍率のぶん画素が増えるので上限を置く。超えたら焼き直せる所まで焼いて、残りは引き伸ばす。 */
+const VIEW = { zoom:1, x:0, y:0 };
+const VIEW_MAXPX = 2.4e7;
+const VCV = document.createElement('canvas');
+function viewFit(){ VIEW.zoom=1; VIEW.x=0; VIEW.y=0; kick(); stat('正面に戻した'); }
 function render(){
-  paint(ctx, cw, ch, P.anim?u:0, true);
+  if(VIEW.zoom === 1 && VIEW.x === 0 && VIEW.y === 0){
+    paint(ctx, cw, ch, P.anim?u:0, true);            /* ⭐ 等倍のときは今までと1バイトも変わらない道 */
+  }else{
+    const Z = VIEW.zoom;
+    let ss = Z;
+    if(cw*ch*ss*ss > VIEW_MAXPX) ss = Math.max(1, Math.sqrt(VIEW_MAXPX/(cw*ch)));
+    const W = Math.max(2, Math.round(cw*ss)), H = Math.max(2, Math.round(ch*ss));
+    VCV.width = W; VCV.height = H;
+    paint(VCV.getContext('2d'), W, H, P.anim?u:0, true);
+    /* 見えている所（版面の座標）を、焼いた絵の座標へ直して切り出す */
+    const sx = ss*(-VIEW.x)/Z, sy = ss*(-VIEW.y)/Z, sw = ss*cw/Z, sh = ss*ch/Z;
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.clearRect(0,0,cw,ch);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(VCV, sx, sy, sw, sh, 0, 0, cw, ch);
+  }
   if(performance.now()<statUntil) return;          /* 知らせが出ている間は触らない */
   const [ow,oh]=outSize();
   const n=SRC.filter(s=>s.on).length;
@@ -844,14 +871,19 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
 (function(){
   let on=false, px=0, py=0, S=1;
   cv.addEventListener('pointerdown',e=>{
+    /* ⚠️ ⌥ を押している間と、2本目の指が乗っている間は【画面を動かす】側に譲る */
+    if(e.altKey || VPTS.size >= 1){ on=false; return; }
     on=true; cv.setPointerCapture(e.pointerId); cv.classList.add('grabbing');
     const r=cv.getBoundingClientRect(); S=Math.min(r.width,r.height)/2;
     px=e.clientX; py=e.clientY; pushHist();
   });
   cv.addEventListener('pointermove',e=>{
-    if(!on) return;
+    if(!on || e.altKey || VPTS.size >= 2) return;
     const s=cur();
-    s.x+=(e.clientX-px)/S; s.y+=(e.clientY-py)/S;
+    /* ⚠️ 寄っているときは、指を1px動かしても版面では 1/倍率 しか動かない。
+          割らないと【寄るほど芯が速く飛ぶ】（見えているものと手が合わなくなる）。 */
+    const z=VIEW.zoom||1;
+    s.x+=(e.clientX-px)/S/z; s.y+=(e.clientY-py)/S/z;
     px=e.clientX; py=e.clientY;
     syncCore(); kick();
   });
@@ -859,15 +891,77 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
   cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
 })();
 
+/* ══⭐ 寄る・引く・画面を動かす ══════════════════════════
+   ⭐ ホイール／ピンチ＝カーソル（指の間）を中心に寄る・引く
+      ⌥（option）＋ドラッグ＝画面を動かす（ふつうのドラッグは【芯を引っぱる】ままにする）
+      ダブルクリック＝正面に戻す
+   ⚠️ VPTS は【芯のドラッグ側からも見る】ので、この上で宣言している（下で const にすると起動が止まる）。 */
+cv.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const dpr = cv.width / cv.clientWidth;
+  const mx = e.clientX, my = e.clientY;
+  const r = cv.getBoundingClientRect();
+  const px = (mx - r.left)*dpr, py = (my - r.top)*dpr;
+  const f = e.deltaY < 0 ? 1.08 : 1/1.08;
+  const nz = Math.max(1, Math.min(24, VIEW.zoom * f));
+  /* カーソルの下の点が動かないように寄る */
+  VIEW.x = px - (px - VIEW.x) * (nz / VIEW.zoom);
+  VIEW.y = py - (py - VIEW.y) * (nz / VIEW.zoom);
+  VIEW.zoom = nz;
+  if(nz === 1){ VIEW.x = 0; VIEW.y = 0; }          /* 等倍まで引いたら位置も戻す */
+  kick();
+}, { passive:false });
+const VPTS = new Map();
+let vPan=null, vPinch=null;
+function vPt(e){ const r=cv.getBoundingClientRect(), d=cv.width/cv.clientWidth;
+  return { x:(e.clientX-r.left)*d, y:(e.clientY-r.top)*d }; }
+cv.addEventListener('pointerdown', e=>{
+  VPTS.set(e.pointerId, { x:e.clientX, y:e.clientY });
+  if(VPTS.size === 2){
+    const [a2,b2] = [...VPTS.values()];
+    vPinch = { d:Math.hypot(a2.x-b2.x, a2.y-b2.y),
+               cx:(a2.x+b2.x)/2, cy:(a2.y+b2.y)/2,
+               zoom:VIEW.zoom, vx:VIEW.x, vy:VIEW.y };
+    vPan = null;
+  }else if(e.altKey){
+    const q = vPt(e); vPan = { x:q.x, y:q.y, vx:VIEW.x, vy:VIEW.y };
+    cv.setPointerCapture(e.pointerId);
+  }
+});
+cv.addEventListener('pointermove', e=>{
+  if(VPTS.has(e.pointerId)) VPTS.set(e.pointerId, { x:e.clientX, y:e.clientY });
+  if(vPinch && VPTS.size === 2){
+    const [a2,b2] = [...VPTS.values()];
+    const d = Math.hypot(a2.x-b2.x, a2.y-b2.y);
+    const nz = Math.max(1, Math.min(24, vPinch.zoom * (d/Math.max(1,vPinch.d))));
+    const dpr = cv.width / cv.clientWidth, r = cv.getBoundingClientRect();
+    const cx = ((a2.x+b2.x)/2 - r.left)*dpr, cy = ((a2.y+b2.y)/2 - r.top)*dpr;
+    const px = (vPinch.cx - r.left)*dpr, py = (vPinch.cy - r.top)*dpr;
+    VIEW.x = cx - (px - vPinch.vx) * (nz / vPinch.zoom);
+    VIEW.y = cy - (py - vPinch.vy) * (nz / vPinch.zoom);
+    VIEW.zoom = nz;
+    if(nz === 1){ VIEW.x = 0; VIEW.y = 0; }
+    kick(); return;
+  }
+  if(vPan){ const q = vPt(e); VIEW.x = vPan.vx + (q.x - vPan.x); VIEW.y = vPan.vy + (q.y - vPan.y); kick(); }
+});
+function vEnd(e){ VPTS.delete(e.pointerId);
+  if(VPTS.size < 2) vPinch = null;
+  if(VPTS.size === 0) vPan = null; }
+cv.addEventListener('pointerup', vEnd);
+cv.addEventListener('pointercancel', vEnd);
+cv.addEventListener('dblclick', viewFit);
+
 /* ══ ふる / 戻す ══════════════════════════════════════
    ⭐ 状態はコミットで守れない＝ふる前に必ず控えを積む。 */
-let hist=[], histLock=false;
+let hist=[], redoStack=[], histLock=false;
 const snap=()=>JSON.stringify({P,SRC,sel});
 function pushHist(){
   if(histLock) return;
   const s=snap();
   if(hist.length && hist[hist.length-1]===s) return;
   hist.push(s); if(hist.length>90) hist.shift();
+  redoStack.length=0;                 /* ⚠️ 新しく触ったら「やり直す」の先は捨てる */
 }
 function applyState(o){
   histLock=true;
@@ -879,14 +973,44 @@ function applyState(o){
 }
 function undo(){
   if(hist.length<2){ stat('これ以上は戻れない'); return; }
-  hist.pop(); applyState(JSON.parse(hist[hist.length-1])); saveLocal();
+  redoStack.push(hist.pop());                        /* ⭐ 戻したものは「やり直す」に取っておく */
+  applyState(JSON.parse(hist[hist.length-1])); saveLocal();
+}
+function redo(){
+  if(!redoStack.length){ stat('やり直すものが無い'); return; }
+  const s2=redoStack.pop();
+  hist.push(s2); applyState(JSON.parse(s2)); saveLocal();
 }
 el('b_undo').onclick=undo;
+el('b_redo').onclick=redo;
+
+/* ══⭐ キーショートカット ══════════════════════════════
+   ⚠️ 打ち込み欄にいるときは何もしない（字が消える）。
+   ⚠️ ⌘/Ctrl と一緒でないただの1文字キーは【ブラウザの機能とぶつからないもの】だけにする。 */
 addEventListener('keydown',e=>{
   const tag=(e.target.tagName||'').toLowerCase();
   if(tag==='textarea'||tag==='input'||tag==='select') return;
-  if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='z'){ e.preventDefault(); undo(); }
+  const k=e.key.toLowerCase();
+  if((e.metaKey||e.ctrlKey) && k==='z'){ e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if((e.metaKey||e.ctrlKey) && k==='y'){ e.preventDefault(); redo(); return; }         /* Windows の作法 */
+  if((e.metaKey||e.ctrlKey) && k==='s'){ e.preventDefault(); el('b_png').click(); return; }
+  if(e.metaKey||e.ctrlKey||e.altKey) return;
+  if(e.code==='Space'){ e.preventDefault(); el('anGo').click(); return; }              /* 再生／止める */
+  if(k==='0'){ e.preventDefault(); viewFit(); return; }                                 /* 正面に戻す */
+  if(k==='+'||k==='='){ e.preventDefault(); zoomStep(1.25); return; }
+  if(k==='-'||k==='_'){ e.preventDefault(); zoomStep(1/1.25); return; }
+  if(k==='r'){ e.preventDefault(); el('b_rand').click(); return; }                      /* ふる */
 });
+/* 画面の真ん中を軸に寄る・引く（キーのときはカーソルが無いので中心） */
+function zoomStep(f){
+  const nz=Math.max(1, Math.min(24, VIEW.zoom*f));
+  const px=cw/2, py=ch/2;
+  VIEW.x = px - (px - VIEW.x)*(nz/VIEW.zoom);
+  VIEW.y = py - (py - VIEW.y)*(nz/VIEW.zoom);
+  VIEW.zoom = nz;
+  if(nz===1){ VIEW.x=0; VIEW.y=0; }
+  kick();
+}
 const R=(a,b)=>a+Math.random()*(b-a);
 const RI=(a,b)=>Math.round(R(a,b));
 el('b_rand').onclick=()=>{
