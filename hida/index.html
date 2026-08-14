@@ -261,7 +261,7 @@
     <label class="chk"><input type="checkbox" id="c_anim"> 動かす</label>
     <div class="row"><span class="n">1周の秒</span><output id="o_cyc"></output></div>
     <input type="range" id="r_cyc" min="1" max="30" step="0.5">
-    <div class="note">動くのは、芯ごとの<b>送り</b>と<b>回り</b>が 0 でないときだけ。</div>
+    <div class="note">動くのは、芯ごとの<b>送り</b>と<b>回り</b>が 0 でないときだけ。全部 0 のまま入れたときは、こちらで<b>送り 1</b> を入れる。<br><b>送り</b>＝縞が外へ流れる／<b>回り</b>＝形が回る。どちらも整数なので1周で必ず元に戻る。</div>
   </div>
 
   <hr>
@@ -335,8 +335,10 @@ const cv  = document.getElementById('cv');
 const ctx = cv.getContext('2d', {alpha:true});
 const statEl = document.getElementById('stat');
 const el = id => document.getElementById(id);
-let statT=null;
-function stat(s){ statEl.textContent=s; clearTimeout(statT); statT=setTimeout(()=>{ if(statEl.textContent===s) statEl.textContent=''; },6000); }
+/* ⚠️ 知らせと「いまの大きさ」は同じ行に出る。
+      知らせが出ている間は、刷り直しで上書きしない（でないと一瞬で消える）。 */
+let statUntil=0;
+function stat(s){ statEl.textContent=s; statUntil=performance.now()+6000; }
 
 /* ══ 置いてあるもの ══════════════════════════════════ */
 const RATIO = { a:[1,1.4142], '45':[4,5], '1':[1,1], '169':[16,9] };
@@ -622,6 +624,7 @@ function fit(){
 }
 function render(){
   paint(ctx, cw, ch, P.anim?u:0, true);
+  if(performance.now()<statUntil) return;          /* 知らせが出ている間は触らない */
   const [ow,oh]=outSize();
   const n=SRC.filter(s=>s.on).length;
   statEl.textContent = ow+' × '+oh+' で出る　芯 '+n+'／'+SRC.length
@@ -744,7 +747,19 @@ el('c_bOn').onchange=e=>{ pushHist(); P.bOn=e.target.checked; kick(); saveLocal(
 el('c_bInk').onchange=e=>{ pushHist(); P.bInk=e.target.checked; kick(); saveLocal(); };
 el('c_inv').onchange=e=>{ pushHist(); P.inv=e.target.checked; kick(); saveLocal(); };
 el('c_alpha').onchange=e=>{ P.alpha=e.target.checked; saveLocal(); };
-el('c_anim').onchange=e=>{ anim(e.target.checked); szSync(); saveLocal(); };
+/* ⚠️ 「動かす」を入れても、芯の 送り・回り が全部 0 なら1コマも変わらない。
+      ＝スイッチが壊れているのと同じに見える。全部0なら、こちらで 送り 1 を入れて、
+      入れたことを知らせる（黙って動かさない・黙って直さない）。 */
+el('c_anim').onchange=e=>{
+  const on=e.target.checked;
+  if(on && !SRC.some(s=>s.on && ((s.drift||0)!==0 || (s.spin||0)!==0))){
+    pushHist();
+    SRC.forEach(s=>{ s.drift=1; });
+    syncCore(); drawList();
+    stat('どの芯も 送り・回り が 0 だったので、全部の芯に 送り 1 を入れた');
+  }
+  anim(on); szSync(); saveLocal();
+};
 el('c_bg').oninput=e=>{ P.bg=e.target.value; kick(); saveLocal(); };
 el('c_ink').oninput=e=>{ P.ink=e.target.value; kick(); saveLocal(); };
 
