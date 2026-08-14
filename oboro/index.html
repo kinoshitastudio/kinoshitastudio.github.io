@@ -259,6 +259,21 @@
     <button class="btn" id="bPNG">PNG</button>
     <button class="btn" id="bSVG">SVG</button>
   </div>
+
+  <!-- ⭐⭐ 控え（2026-08-14）＝この道具には保存が一つも無く、閉じると全部消えていた。
+       ⚠️ 木下は 2026-08-07 に TSUBU で追い込んだ設定を実際に失っている＝同じ形。
+       ⭐ 2種類出せる。設定だけ（軽い・写真は読み直す）と、写真ごと（そのまま開き直せる）。
+          読む側は【どちらも同じボタン】で受ける（取り違えて黙って壊れないように）。 -->
+  <h2>控え</h2>
+  <div class="grid2">
+    <button class="btn" id="bJson">設定だけ</button>
+    <button class="btn" id="bJsonImg">写真ごと</button>
+  </div>
+  <button class="btn" id="bJsonIn" style="width:100%;margin-top:6px">控えを読む</button>
+  <input type="file" id="fJson" accept="application/json,.json" hidden>
+  <div class="mod" id="jsonNote">⭐ <b>設定だけ</b>＝つまみ一式（数KB）。開き直すときは写真を自分で読む<br>
+    ⭐ <b>写真ごと</b>＝写真も入れて、そのまま開き直せる（数MB）<br>
+    ⚠️ 読み込むと<b>いまのつまみは全部入れ替わる</b></div>
   <div class="mod">⭐ SVG は帯が<b>矩形＋グラデ</b>で出る＝Illustrator / Figma で1枚ずつ触れる</div>
 </div>
 
@@ -290,7 +305,10 @@ const P = { ink:'grad', slit:50, anflow:0, anfps:30,
 const M = { low:0, mid:0, high:0, kick:0 };   // 音の量（0〜1）
 
 /* ── 写真を読む ────────────────────────────────────────── */
-function loadImage(srcUrl){
+/* ⚠️ done ＝読み終えたら呼ぶ（2026-08-14 追加）。控えを読むとき、ここが P.thr を
+   自動で当て直すので、【写真を読み終えてから】控えの設定をかぶせる必要がある。
+   ⚠️ 渡さなければ、これまでと1行も変わらない。 */
+function loadImage(srcUrl, done){
   const im = new Image();
   im.crossOrigin = 'anonymous';
   im.onload = () => {
@@ -330,6 +348,7 @@ function loadImage(srcUrl){
        （モバイルはパネルの高さが決まってから枠が決まる）。次のフレームでも合わせ直す。 */
     fit(); requestAnimationFrame(fit);
     build(); draw();
+    if(typeof done === 'function') done();
   };
   im.src = srcUrl;
 }
@@ -816,7 +835,11 @@ function invalidate(level){
     }
   });
 }
+/* ⭐ どのつまみがどの値かの台帳（2026-08-14）。控えを読んだとき、ここを舐めれば
+   つまみの見た目を一括で戻せる＝名前の並びを2か所に持たない。 */
+const BINDS = [];
 function bind(id, key, heavy){
+  BINDS.push({ id, key });
   const r = document.getElementById(id);
   const v = r.parentElement.querySelector('.val');
   const sync = () => {
@@ -1185,6 +1208,97 @@ const dl = (blob, name) => {
 document.getElementById('bPNG').onclick = () => {
   cv.toBlob(b => dl(b, `oboro_${Date.now()}.png`), 'image/png');
 };
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 控え（2026-08-14）── この道具には保存が一つも無かった
+
+   ⚠️ 木下は 2026-08-07 に TSUBU で追い込んだ設定を丸ごと失っている。
+      OBORO も閉じれば全部消える作りだったので、同じ形にならないうちに入れる。
+   ⭐ 状態は `P`（つまみ一式）だけ＝小さく作れる。
+   ⭐ 2種類出す。⚠️ 名前・中身・ボタンの3つに、どちらか分かるように書く
+      （取り違えても読む側が黙って壊れないように）。
+   🔴 写真を読み直すと `loadImage` が `P.thr` を自動で当て直す＝
+      控えの設定は【写真を読み終えてから】かぶせる（でないと しきい が戻らない）。
+   ══════════════════════════════════════════════════════════════ */
+const JSON_V = 1;
+function stateObj(withPhoto){
+  const o = { tool:'oboro', v:JSON_V, kind: withPhoto ? 'photo' : 'settings',
+              saved: new Date().toISOString(), P: Object.assign({}, P) };
+  if(withPhoto && img){
+    /* ⚠️ 元のままだと巨大になるので、作る側と同じ 3000px までに収めて JPEG で持つ */
+    const MX = 3000, k = Math.min(1, MX / Math.max(img.width, img.height));
+    const c = document.createElement('canvas');
+    c.width  = Math.max(1, Math.round(img.width  * k));
+    c.height = Math.max(1, Math.round(img.height * k));
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    o.photo = c.toDataURL('image/jpeg', 0.92);
+  }
+  return o;
+}
+/* ⭐ つまみ・段の見た目を P から一括で戻す。⚠️ 台帳（BINDS）を舐めるので名前を2か所に持たない。 */
+function syncUIFromP(){
+  for(const b of BINDS){
+    const r = document.getElementById(b.id);
+    if(!r || P[b.key] == null) continue;
+    r.value = P[b.key];
+    const v = r.parentElement.querySelector('.val');
+    if(v) v.textContent = r.value;
+  }
+  document.querySelectorAll('.seg').forEach(seg => {
+    const val = P[seg.id];
+    if(val == null) return;
+    seg.querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.v === String(val)));
+  });
+  const bi = document.getElementById('bInv');
+  if(bi) bi.textContent = P.inv ? '裏返し中' : '裏返す';
+  if(typeof syncInk === 'function') syncInk();
+}
+function applyState(o){
+  if(!o || typeof o !== 'object' || !o.P) throw new Error('この JSON は OBORO の控えではないみたい');
+  const keep = Object.assign({}, o.P);
+  const after = () => {
+    Object.assign(P, keep);          // 🔴 写真を読み終えてから当てる（thr が上書きされるため）
+    syncUIFromP();
+    shapePath = null;                // ⚠️ 形は引き直す（写真もつまみも変わっている）
+    invalidate(3);
+  };
+  if(o.photo) loadImage(o.photo, after);
+  else after();
+}
+function saveJson(withPhoto){
+  try{
+    const o = stateObj(withPhoto);
+    const blob = new Blob([JSON.stringify(o)], { type:'application/json' });
+    dl(blob, `oboro_${withPhoto ? 'photo' : 'settings'}_${Date.now()}.json`);
+    const n = document.getElementById('jsonNote');
+    if(n) n.innerHTML = '⭐ 出した ＝ <b>' + (withPhoto ? '写真ごと' : '設定だけ') + '</b>（'
+      + (blob.size > 1e6 ? Math.round(blob.size/1e5)/10 + 'MB' : Math.round(blob.size/1024) + 'KB') + '）';
+  }catch(e){
+    const n = document.getElementById('jsonNote');
+    if(n) n.innerHTML = '🔴 控えが作れなかった：' + (e && e.message || e);
+  }
+}
+/* ⚠️ 引数を持つ関数はハンドラに直渡ししない（イベントが第1引数に入る） */
+document.getElementById('bJson')?.addEventListener('click', () => saveJson(false));
+document.getElementById('bJsonImg')?.addEventListener('click', () => saveJson(true));
+document.getElementById('bJsonIn')?.addEventListener('click', () => document.getElementById('fJson').click());
+document.getElementById('fJson')?.addEventListener('change', e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    const n = document.getElementById('jsonNote');
+    try{
+      const o = JSON.parse(rd.result);
+      applyState(o);
+      if(n) n.innerHTML = '⭐ 読んだ ＝ <b>' + (o.photo ? '写真ごと' : '設定だけ') + '</b>'
+        + (o.photo ? '' : '（写真はいまのまま）');
+    }catch(err){
+      if(n) n.innerHTML = '🔴 読めなかった：' + (err && err.message || err);
+    }
+  };
+  rd.readAsText(f);
+});
+
 /* ⭐ SVG ── 帯は【矩形＋linearGradient】なので、そのままベクターで出せる。
    ⚠️ 元の写真は入れない（帯だけ）。写真ごと出したいときは PNG。 */
 document.getElementById('bSVG').onclick = () => {
