@@ -112,14 +112,6 @@
     <b>ホイール＝寄る・引く</b>／<b>右ドラッグ（またはスペース＋ドラッグ）＝盤を動かす</b>／
     <b>ダブルクリック＝戻す</b>／<b>⌘Z＝ひとつ戻す</b></div>
 
-  <div class="grp">
-    <label class="h">版面</label>
-    <div class="seg" id="ratio">
-      <button data-v="169">16:9</button><button data-v="43">4:3</button>
-      <button data-v="1">正方形</button><button data-v="45">4:5</button>
-    </div>
-  </div>
-
   <!-- ══ 紙 ══
        ⭐⭐ 輪郭と重なりは【同じ仕組み】から出る。
           この道具は1枚の紙を描かない。縁のちぎれた紙片を何枚か重ねる。
@@ -283,6 +275,13 @@
   <div class="grp">
     <label class="h">出る大きさ</label>
     <label class="chk"><input type="checkbox" id="c_frame"> 版面のわくで切り取る</label>
+    <div id="ratioBox" class="hide">
+      <div class="row"><span class="n">版面の比</span></div>
+      <div class="seg" id="ratio">
+        <button data-v="169">16:9</button><button data-v="43">4:3</button>
+        <button data-v="1">正方形</button><button data-v="45">4:5</button>
+      </div>
+    </div>
     <div class="note" style="margin:0 0 8px">⭐<b>切</b>＝いま見えているとおりに出る（寄り引き・位置ごと）。
       <b>入</b>＝破線のわくを出して、その中だけを出す。</div>
     <div class="seg" id="szSeg">
@@ -402,6 +401,8 @@ function mulberry32(a){
 let FW=0, FH=0;
 let NX=null, NY=null, LAY=null, MSK=null, RIM=null, FIB=null, EDG=null;
 let FKEY="";
+/* 紙のある行の範囲（ここだけ回す）と、面の向きの奥行き */
+let ROWLO=null, ROWHI=null, FW2=0, FH2=0;
 /* 版面の半分の大きさ（世界の座標。短辺が 1） */
 function halfWH(){ const [rw,rh]=RATIO[P.ratio]||RATIO["169"]; const m=Math.min(rw,rh); return [rw/m,rh/m]; }
 function camOut(W,H){ return {S:Math.min(W,H)/2, cx:W/2, cy:H/2}; }
@@ -452,7 +453,7 @@ function buildField(W,H,cam){
   const hgt=new Float32Array(n);
   LAY=new Float32Array(n); MSK=new Float32Array(n);
   NX=new Float32Array(n);  NY=new Float32Array(n);
-  RIM=new Float32Array(n); FIB=new Float32Array(n);
+  RIM=new Float32Array(n);
   /* ⭐ 盤は【窓】。世界の座標 → 画素 は カメラが決める。
      版面はガイドとして見せるだけで、絵はその外まで続く。 */
   const S=cam.S, CX=cam.cx, CY=cam.cy;
@@ -597,27 +598,35 @@ function buildField(W,H,cam){
   const soft=2.6/S;                     /* 縁の甘さ */
   const band=Math.max(soft*2.5, 0.012); /* 縁が光る帯の幅 */
   EDG=new Float32Array(n);
-  for(let y=0;y<H;y++){
-    const Y=(y-CY)/S;
-    for(let x=0;x<W;x++){
-      const X=(x-CX)/S, i=y*W+x;
-      let cov=0, mx=0, eg=0;
-      for(const s of sheets){
-        const dx=X-s.cx, dy=Y-s.cy;
-        const rr=Math.sqrt(dx*dx+dy*dy);
-        if(rr>s.r*1.7) continue;
-        let a=Math.atan2(dy,dx)+s.rot; a-=Math.floor(a/TAU)*TAU;
-        const f=a/TAU*ETN, i0=f|0, fr=f-i0;
+  /* ⭐ 紙片ごとに【その紙片のまわりだけ】回す。
+     ⚠️ 盤の全画素 × 紙片の数 を回すと、壁しかない所でも sqrt を何度も呼ぶことになる
+        （実測で、ここが場のいちばん重い所だった）。 */
+  for(const s of sheets){
+    const scx=CX+s.cx*S, scy=CY+s.cy*S, R0=s.r*1.72*S;
+    const x0=Math.max(0,Math.floor(scx-R0)), x1=Math.min(W-1,Math.ceil(scx+R0));
+    const y0=Math.max(0,Math.floor(scy-R0)), y1=Math.min(H-1,Math.ceil(scy+R0));
+    const lim=s.r*1.7, lim2=lim*lim;
+    for(let y=y0;y<=y1;y++){
+      const Y=(y-CY)/S, dy=Y-s.cy, dy2=dy*dy;
+      const row=y*W;
+      for(let x=x0;x<=x1;x++){
+        const X=(x-CX)/S, dx=X-s.cx;
+        const q=dx*dx+dy2; if(q>lim2) continue;
+        const rr=Math.sqrt(q);
+        let a2=atan2f(dy,dx)+s.rot; a2-=Math.floor(a2/TAU)*TAU;
+        const f=a2/TAU*ETN, i0=f|0, fr=f-i0;
         const v0=s.tab[i0%ETN], v1=s.tab[(i0+1)%ETN];
         const R=(v0+(v1-v0)*fr)*s.r;     /* ⭐ 間を結ぶ＝直線と角が消える */
         const c=clamp((R-rr)/soft+0.5,0,1);
-        cov+=c; if(c>mx) mx=c;
+        if(c<=0) continue;
+        const i=row+x;
+        LAY[i]+=c; if(c>MSK[i]) MSK[i]=c;
         const inside=R-rr;
-        if(inside>0&&inside<band){ const e=1-inside/band; if(e>eg) eg=e; }
+        if(inside>0&&inside<band){ const e=1-inside/band; if(e>EDG[i]) EDG[i]=e; }
       }
-      LAY[i]=cov; MSK[i]=mx; EDG[i]=eg*mx;
     }
   }
+  for(let i=0;i<n;i++) if(EDG[i]>0) EDG[i]*=MSK[i];
   /* 縁の光 ── 重なりの段差＝上に乗った紙の縁。ここだけ明るい線になる */
   for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
     const i=y*W+x;
@@ -625,7 +634,51 @@ function buildField(W,H,cam){
     const gx=LAY[i+1]-LAY[i-1], gy=LAY[i+W]-LAY[i-W];
     RIM[i]=Math.min(1,Math.sqrt(gx*gx+gy*gy)*0.9);
   }
+  /* ⚠️ RIM は行の範囲を作る前なので全面。ここは軽い（引き算2回）ので残す */
   }   /* ← かたち（紙片／文字）の分かれ ここまで */
+
+  /* ⭐⭐ ここから先は【紙のある行】だけ回す。
+     盤の半分以上は壁で、皺も法線も繊維も計算する意味が無い（実測で場が半分以下になる）。
+     ⚠️ 法線は隣の画素を見るので、少し広めに取る。 */
+  ROWLO=new Int32Array(H).fill(1); ROWHI=new Int32Array(H).fill(-1);
+  {
+    const lo=new Int32Array(H).fill(W), hi=new Int32Array(H).fill(-1);
+    for(let y=0;y<H;y++){
+      const o=y*W;
+      for(let x=0;x<W;x++) if(MSK[o+x]>0){ if(lo[y]>x) lo[y]=x; hi[y]=x; }
+    }
+    const M=4;
+    for(let y=0;y<H;y++){
+      let a2=W, b2=-1;
+      for(let k=-M;k<=M;k++){ const yy=y+k; if(yy<0||yy>=H) continue;
+        if(hi[yy]>=0){ if(lo[yy]<a2) a2=lo[yy]; if(hi[yy]>b2) b2=hi[yy]; } }
+      if(b2<0){ ROWLO[y]=1; ROWHI[y]=-1; }
+      else { ROWLO[y]=Math.max(0,a2-M); ROWHI[y]=Math.min(W-1,b2+M); }
+    }
+  }
+
+  /* ⭐ 行の中にも壁はある（紙が2つに分かれている行など）。
+     紙の近くだけを1と記した目印を作って、以降の重い所はそこだけ回す。 */
+  /* ⚠️ 1画素ごとに 7×7 を塗ると、かえって遅くなる（一度それで失敗した）。
+     行きと帰りに1回ずつなめて広げる（縦横で4回）。 */
+  const DIL=new Uint8Array(n);
+  {
+    const M2=3;
+    for(let y=0;y<H;y++){
+      const lo=ROWLO[y], hi=ROWHI[y]; if(hi<lo) continue;
+      const o=y*W;
+      let last=-1e9;
+      for(let x=lo;x<=hi;x++){ if(MSK[o+x]>0) last=x; if(x-last<=M2) DIL[o+x]=1; }
+      let next=1e9;
+      for(let x=hi;x>=lo;x--){ if(MSK[o+x]>0) next=x; if(next-x<=M2) DIL[o+x]=1; }
+    }
+    for(let x=0;x<W;x++){
+      let last=-1e9;
+      for(let y=0;y<H;y++){ const i=y*W+x; if(MSK[i]>0) last=y; if(y-last<=M2) DIL[i]=1; }
+      let next=1e9;
+      for(let y=H-1;y>=0;y--){ const i=y*W+x; if(MSK[i]>0) next=y; if(next-y<=M2) DIL[i]=1; }
+    }
+  }
 
   /* ── 2) 皺 ＝ 折り目の【網】────────────────────────
      🔴🔴 折り目を1本ずつ足す作りは捨てた。何本足しても「引っかき傷」にしかならない。
@@ -645,26 +698,41 @@ function buildField(W,H,cam){
     const A=Math.pow(P.crF,k); amp.push(A); norm+=A;
     sd.push((rnd()*1e9)|0);
   }
-  const H32=(x,y,s)=>{
-    let h=Math.imul(x,374761393)+Math.imul(y,668265263)+Math.imul(s,1274126177);
-    h=Math.imul(h^(h>>>13),1274126177);
-    return (((h^(h>>>16))>>>0)/4294967296)*2-1;
-  };
+  /* ⭐ 段ごとに【格子】を先に作って、あとは引くだけにする。
+     ⚠️ 1画素ごとにハッシュを4回計算していたのが、場のいちばん重い所だった。 */
+  const X0=(0-CX)/S, X1=((W-1)-CX)/S, Y0=(0-CY)/S, Y1=((H-1)-CY)/S;
+  const lat=[], latW=[], latOx=[], latOy=[];
+  for(let k=0;k<OCT;k++){
+    const c=rot[k][0], s2=rot[k][1], f=frq[k];
+    let mnu=Infinity,mxu=-Infinity,mnv=Infinity,mxv=-Infinity;
+    for(const [xx,yy] of [[X0,Y0],[X1,Y0],[X0,Y1],[X1,Y1]]){
+      const uu=xx*c-yy*s2, vv=xx*s2+yy*c;
+      if(uu<mnu)mnu=uu; if(uu>mxu)mxu=uu; if(vv<mnv)mnv=vv; if(vv>mxv)mxv=vv;
+    }
+    const ox=Math.floor(mnu*f)-1, oy=Math.floor(mnv*f)-1;
+    const nw=Math.ceil(mxu*f)-ox+3, nh=Math.ceil(mxv*f)-oy+3;
+    const arr=new Float32Array(nw*nh), rr2=mulberry32(sd[k]>>>0);
+    for(let i2=0;i2<arr.length;i2++) arr[i2]=rr2()*2-1;
+    lat.push(arr); latW.push(nw); latOx.push(ox); latOy.push(oy);
+  }
   const gain=P.crA/Math.max(1e-6,norm);
   for(let y=0;y<H;y++){
+    const lo=ROWLO[y], hi=ROWHI[y]; if(hi<lo) continue;
     const Y=(y-CY)/S;
-    for(let x=0;x<W;x++){
+    for(let x=lo;x<=hi;x++){
+      if(!DIL[y*W+x]) continue;
       const X=(x-CX)/S;
       let v=0;
       for(let k=0;k<OCT;k++){
         const c=rot[k][0], s2=rot[k][1], f=frq[k];
-        const px=(X*c-Y*s2)*f, py=(X*s2+Y*c)*f;
-        const xi=Math.floor(px), yi=Math.floor(py);
-        const xf=px-xi, yf=py-yi, sk=sd[k];
-        const a0=H32(xi,yi,sk), b0=H32(xi+1,yi,sk), c0=H32(xi,yi+1,sk), d0=H32(xi+1,yi+1,sk);
+        const px=(X*c-Y*s2)*f-latOx[k], py=(X*s2+Y*c)*f-latOy[k];
+        const xi=px|0, yi=py|0;
+        const xf=px-xi, yf=py-yi;
+        const A=lat[k], nw=latW[k], o=yi*nw+xi;
+        const a0=A[o], b0=A[o+1], c0=A[o+nw], d0=A[o+nw+1];
         /* ⚠️ ここを smoothstep にすると角が消えて布になる。まっすぐのまま。 */
-        const n=a0+(b0-a0)*xf+(c0-a0)*yf+(a0-b0-c0+d0)*xf*yf;
-        v+=amp[k]*Math.abs(n);
+        const n2=a0+(b0-a0)*xf+(c0-a0)*yf+(a0-b0-c0+d0)*xf*yf;
+        v+=amp[k]*(n2<0?-n2:n2);
       }
       hgt[y*W+x]=v*gain;
     }
@@ -718,22 +786,32 @@ function buildField(W,H,cam){
 
   /* ── 3) 面の向き（法線）── 明るさはここからしか出さない ── */
   const k=2.4*S/60;                      /* ⚠️ 小さいと面が平らになり、霧のようになる */
-  for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
-    const i=y*W+x;
-    const dx=(hgt[i+1]-hgt[i-1])*k, dy=(hgt[i+W]-hgt[i-W])*k;
-    const l=1/Math.sqrt(dx*dx+dy*dy+1);
-    NX[i]=-dx*l; NY[i]=-dy*l;            /* nz は 1*l で復元できる */
+  NZ=new Float32Array(n);
+  for(let y=1;y<H-1;y++){
+    const lo=Math.max(1,ROWLO[y]), hi=Math.min(W-2,ROWHI[y]); if(hi<lo) continue;
+    for(let x=lo;x<=hi;x++){
+      const i=y*W+x; if(!DIL[i]) continue;
+      const dx=(hgt[i+1]-hgt[i-1])*k, dy=(hgt[i+W]-hgt[i-W])*k;
+      const l=1/Math.sqrt(dx*dx+dy*dy+1);
+      NX[i]=-dx*l; NY[i]=-dy*l; NZ[i]=l;   /* ⭐ 奥行きも覚える（刷るたび sqrt を呼ばない） */
+    }
   }
 
   /* ── 4) 繊維 ── 和紙の点々。細かすぎる粒は出さない ── */
+  /* ⭐ 繊維は【半分の細かさ】で作って、引くときに2倍に見る。
+     ⚠️ 元の細かさで作ると、ならしの上下参照で待たされて場の2割を食っていた。
+        粒が2画素角になるが、和紙の繊維としてはむしろ近い。 */
   const fr=mulberry32((P.seed*2654435761)>>>0);
-  for(let i=0;i<n;i++) FIB[i]=fr();
-  for(let p=0;p<2;p++){                  /* 少しだけ均して「繊維」に近づける */
-    for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
-      const i=y*W+x;
-      FIB[i]=(FIB[i]*2+FIB[i-1]+FIB[i+1]+FIB[i-W]+FIB[i+W])/6;
+  FW2=(W+1)>>1; FH2=(H+1)>>1;
+  FIB=new Float32Array(FW2*FH2);
+  if(P.fib>0.004){
+    for(let i2=0;i2<FIB.length;i2++) FIB[i2]=fr();
+    const tmpF=Float32Array.from(FIB);
+    for(let y=1;y<FH2-1;y++) for(let x=1;x<FW2-1;x++){
+      const i=y*FW2+x;
+      FIB[i]=(tmpF[i]*2+tmpF[i-1]+tmpF[i+1]+tmpF[i-FW2]+tmpF[i+FW2])/6;
     }
-  }
+  } else FIB.fill(0.5);
   /* ⭐ 置いたばかりの穴・灯を【紙のある所】へ寄せる。
        ⚠️ そうしないと、紙の外＝真っ暗な壁の上に黒い円が出て「消えた」ように見える
           （数を6にしたのに2つしか見えない、が実際に起きた）。
@@ -757,6 +835,17 @@ function buildField(W,H,cam){
 
    ⭐ 場（皺・重なり・輪郭）は作り直さない。ここは掛け算と足し算だけ。
    ══════════════════════════════════════════════════════ */
+/* ⭐ atan2 は重い。輪郭では1画素ごとに呼ぶので、近似で置き換える。
+   （このあと 4096 の表を引くので、この程度の誤差は絵に出ない） */
+function atan2f(y,x){
+  const ax=x<0?-x:x, ay=y<0?-y:y;
+  const mx=ax>ay?ax:ay, mn=ax>ay?ay:ax;
+  const a=mn/(mx+1e-20), s=a*a;
+  let r=((-0.0464964749*s+0.15931422)*s-0.327622764)*s*a+a;
+  if(ay>ax) r=1.57079637-r;
+  if(x<0) r=3.14159274-r;
+  return y<0?-r:r;
+}
 const hex2rgb = h => [parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];
 const GLO = document.createElement('canvas');   /* 暈（低い解像度でぼかす） */
 
@@ -773,63 +862,108 @@ function lampsAt(t){
   return out;
 }
 
+/* ⭐⭐ 速くするための下ごしらえ
+   ① 紙のある行の範囲だけ回す（盤の半分以上は壁で、計算する意味が無い）
+   ② 透け・縁の光・繊維は【灯が動いても変わらない】ので、1回だけ掛けて覚えておく
+   ③ pow と exp は表を引く（1画素ごとに呼ぶと効く） */
+let TRN=null, trnKey="", NZ=null;
+const POWN=1024, EXPN=1024;
+let powTab=null, powSh=-1;
+function powTable(sh){
+  if(powSh===sh&&powTab) return powTab;
+  powTab=new Float32Array(POWN+1);
+  for(let i=0;i<=POWN;i++) powTab[i]=Math.pow(i/POWN,sh);
+  powSh=sh; return powTab;
+}
+const expTab=(()=>{ const t=new Float32Array(EXPN+1);
+  for(let i=0;i<=EXPN;i++) t[i]=1-Math.exp(-(i/EXPN)*9); return t; })();
+function ensureTRN(){
+  const k=P.tau+","+P.rim+","+P.fib+","+FKEY;
+  if(trnKey===k&&TRN&&TRN.length===FW*FH) return;
+  const n=FW*FH;
+  TRN=new Float32Array(n);
+  const lnT=Math.log(clamp(P.tau,0.05,0.999));
+  for(let y=0;y<FH;y++){
+    const lo=ROWLO[y], hi=ROWHI[y]; if(hi<lo) continue;
+    for(let x=lo;x<=hi;x++){
+      const i=y*FW+x; if(MSK[i]<=0.002) continue;
+      const nz=NZ[i];
+      TRN[i]=Math.exp(LAY[i]/Math.max(0.28,nz)*lnT)
+            *(1+P.rim*(RIM[i]*0.5+EDG[i]*1.6))
+            *(1-P.fib*(FIB[((y>>1)*FW2)+(x>>1)]-0.5));
+    }
+  }
+  trnKey=k;
+}
+
 function paint(octx, W, H, t, cam){
   cam=cam||camOut(W,H);
   if(FW!==W||FH!==H||FKEY!==camKey(W,H,cam)) buildField(W,H,cam);
+  ensureTRN();
   const S=cam.S, CX=cam.cx, CY=cam.cy;
-  const img=octx.createImageData(W,H), d=img.data;
 
   const pr=hex2rgb(P.paper), lr=hex2rgb(P.lamp), wr=hex2rgb(P.wall);
   const wall=[wr[0]*P.wallL, wr[1]*P.wallL, wr[2]*P.wallL];
-  /* 灯った紙の色＝紙色と灯色を混ぜたもの／影の側＝紙色を落としたもの */
   const lit=[mix(pr[0],lr[0],.45), mix(pr[1],lr[1],.45), mix(pr[2],lr[2],.45)];
   const dark=[pr[0]*0.26, pr[1]*0.26, pr[2]*0.26];
 
-  const L=lampsAt(t);
-  const lx=new Float32Array(L.length), ly=new Float32Array(L.length), li=new Float32Array(L.length);
-  for(let i=0;i<L.length;i++){ lx[i]=L[i].x; ly[i]=L[i].y; li[i]=L[i].i*P.lampI; }
+  /* ⭐ 壁は1回で塗る。紙のある所だけ画素を書く＝ImageData も紙の囲みぶんだけ */
+  octx.setTransform(1,0,0,1,0,0);
+  octx.globalAlpha=1; octx.globalCompositeOperation="source-over";
+  octx.fillStyle="rgb("+(wall[0]|0)+","+(wall[1]|0)+","+(wall[2]|0)+")";
+  octx.fillRect(0,0,W,H);
+
+  let bx0=W, bx1=-1, by0=H, by1=-1;
+  for(let y=0;y<H;y++){ if(ROWHI[y]<ROWLO[y]) continue;
+    if(y<by0) by0=y; if(y>by1) by1=y;
+    if(ROWLO[y]<bx0) bx0=ROWLO[y]; if(ROWHI[y]>bx1) bx1=ROWHI[y]; }
+  if(bx1<bx0||by1<by0){ drawGlow(octx,W,H); drawHoles(octx,S,CX,CY); return 0; }
+  const bw=bx1-bx0+1, bh=by1-by0+1;
+  const img=octx.getImageData(bx0,by0,bw,bh), d=img.data;
+
+  const L=lampsAt(t), nL=L.length;
+  const lx=new Float32Array(nL), ly=new Float32Array(nL), li=new Float32Array(nL);
+  for(let i=0;i<nL;i++){ lx[i]=L[i].x; ly[i]=L[i].y; li[i]=L[i].i*P.lampI; }
   const lz=Math.max(0.02,P.lampZ), rr=Math.max(0.05,P.lampR), inv=1/(rr*rr);
-  const amb=P.amb, sh=P.sharp, lnT=Math.log(clamp(P.tau,0.05,0.999));
-  const nL=L.length;
+  const amb=P.amb, oneAmb=1-amb;
+  const PT=powTable(P.sharp);
 
-  let p=0;
-  for(let y=0;y<H;y++){
+  for(let y=by0;y<=by1;y++){
+    const lo=ROWLO[y], hi=ROWHI[y]; if(hi<lo) continue;
     const Y=(y-CY)/S;
-    for(let x=0;x<W;x++,p+=4){
+    let p=((y-by0)*bw+(lo-bx0))*4;
+    for(let x=lo;x<=hi;x++,p+=4){
       const i=y*W+x, m=MSK[i];
-      if(m<=0.002){ d[p]=wall[0]; d[p+1]=wall[1]; d[p+2]=wall[2]; d[p+3]=255; continue; }
+      if(m<=0.002) continue;                 /* 壁はもう塗ってある */
       const X=(x-CX)/S;
-      const nx=NX[i], ny=NY[i], nz=Math.sqrt(Math.max(0,1-nx*nx-ny*ny));
-
-      /* 灯ごとに：距離で弱まる × 面の向きで受ける */
+      const nx=NX[i], ny=NY[i], nz=NZ[i];
       let E=0;
       for(let k=0;k<nL;k++){
         const dx=lx[k]-X, dy=ly[k]-Y;
         const d2=dx*dx+dy*dy+lz*lz;
-        const fall=li[k]/(1+d2*inv);
         const il=1/Math.sqrt(d2);
         let dot=(nx*dx+ny*dy)*il+nz*(lz*il);
-        if(dot<0) dot=0;
-        E+=fall*(amb+(1-amb)*Math.pow(dot,sh));
+        if(dot<0) dot=0; else if(dot>1) dot=1;
+        E+=(li[k]/(1+d2*inv))*(amb+oneAmb*PT[(dot*POWN)|0]);
       }
-      /* ⭐⭐ 透ける紙は【光が紙の中を通る道のり】で決まる。
-         傾いた面ほど、こちらへ抜けるまでに紙を長く通る＝暗い。
-         だから折り目が【細い暗い線】として出る。これが無いと石膏の塊に見える。
-         ⚠️ 面の向きだけで明暗を作ると、光が反射しているように見えて透けない。 */
-      const path=LAY[i]/Math.max(0.28,nz);
-      E*=Math.exp(path*lnT);
-      E*=1+P.rim*(RIM[i]*0.5+EDG[i]*1.6);   /* ⭐ ちぎれた縁が光る＝切り落としに見えなくなる */
-      E*=1-P.fib*(FIB[i]-0.5);
-
-      const v=1-Math.exp(-E*1.7);           /* 明るすぎを丸める（白は白のまま飛ばす） */
+      E*=TRN[i];
+      let q=E*1.7/9; if(q>1) q=1;
+      const v=expTab[(q*EXPN)|0];
       let r=dark[0]+(lit[0]-dark[0])*v, g=dark[1]+(lit[1]-dark[1])*v, b=dark[2]+(lit[2]-dark[2])*v;
-      if(m<1){ r=mix(wall[0],r,m); g=mix(wall[1],g,m); b=mix(wall[2],b,m); }
+      if(m<1){ r=wall[0]+(r-wall[0])*m; g=wall[1]+(g-wall[1])*m; b=wall[2]+(b-wall[2])*m; }
       d[p]=r; d[p+1]=g; d[p+2]=b; d[p+3]=255;
     }
   }
-  octx.putImageData(img,0,0);
+  octx.putImageData(img,bx0,by0);
 
-  /* ── 暈 ── 出た光を小さく写してぼかし、下に敷き直す ── */
+
+  drawGlow(octx,W,H);
+  drawHoles(octx,S,CX,CY);
+  return 0;
+}
+
+/* ── 暈 ── 出た光を小さく写してぼかし、下に敷き直す ── */
+function drawGlow(octx,W,H){
   if(P.gloR>0.001 && P.gloI>0.001){
     const gw=Math.max(8,Math.round(W/8)), gh=Math.max(8,Math.round(H/8));
     GLO.width=gw; GLO.height=gh;
@@ -844,7 +978,10 @@ function paint(octx, W, H, t, cam){
     octx.restore();
   }
 
-  /* ── 穴 ── 最後に、硬い縁で ── */
+}
+
+/* ── 穴 ── 最後に、硬い縁で ── */
+function drawHoles(octx,S,CX,CY){
   octx.save();
   octx.globalCompositeOperation='source-over';
   for(const h of HOLE){
@@ -904,7 +1041,7 @@ function fit(){
   /* 版面が盤に収まる大きさ（倍率1のとき） */
   fitS=Math.min(w/(2*hw), h/(2*hh))*0.86;
   const dpr=Math.min(2,window.devicePixelRatio||1);
-  const cap=(P.anim||!HI)?1250:2100;
+  const cap=(P.anim||!HI)?1150:1800;
   let W=Math.round(w*dpr), H=Math.round(h*dpr);
   const lg=Math.max(W,H);
   if(lg>cap){ W=Math.round(W*cap/lg); H=Math.round(H*cap/lg); }
@@ -1114,7 +1251,9 @@ el('anGo').onclick=()=>{
   el('c_'+k).oninput=e=>{ P[k]=e.target.value; kick(); saveLocal(); };
 });
 /* 版面のわく ── 切＝見えているとおりに出す／入＝わくの中だけ出す */
-el('c_frame').onchange=e=>{ pushHist(); P.frame=e.target.checked; touchView(); kick(); szSync(); saveLocal(); };
+el('c_frame').onchange=e=>{ pushHist(); P.frame=e.target.checked; frameSync(); touchView(); kick(); szSync(); saveLocal(); };
+/* ⭐ 版面の比は【わくを使うときだけ】要る。切のときは盤に見えているまま出るので出さない。 */
+function frameSync(){ el('ratioBox').classList.toggle('hide',!P.frame); }
 
 function syncUI(){
   R.forEach(([id,key,fmt])=>{
@@ -1125,7 +1264,7 @@ function syncUI(){
   el('t_text').value=P.text; el('t_font').value=P.font;
   segSet('ratio',P.ratio); segSet('szSeg',P.sz);
   el('r_long').classList.toggle('hide',P.sz!=='px');
-  el('c_frame').checked=P.frame;
+  el('c_frame').checked=P.frame; frameSync();
   el('c_paper').value=P.paper; el('c_lamp').value=P.lamp; el('c_wall').value=P.wall;
   szSync();
 }
