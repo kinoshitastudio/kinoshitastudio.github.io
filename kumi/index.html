@@ -331,7 +331,7 @@
   /* ⭐ パネルは指で縦スクロールできる。つまみの上だけはスクロールに取らせない
      （取られると「掴んだつもりがパネルが動く」＝スムーズでない感じの正体）。 */
   #rack{ touch-action:pan-y; }
-  .row input[type=range]{ touch-action:none; }
+  .row input[type=range]{ touch-action:pan-y; }
 </style>
 </head>
 <body>
@@ -2202,6 +2202,56 @@ addEventListener('drop', e => {
   document.getElementById('themeBtn')?.addEventListener('click', () => {
     cur = (cur==='light') ? 'dark' : 'light'; apply(cur);
   });
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════
+     モバイルの保存 ── 2026-08-15
+     🔴 木下＝「アンドロイドモバイルで試したら、ほぼ png ダウンロードなどもできなかった」
+     ⚠️ 原因になりやすい作り＝<a download> に blob: を渡す形。
+        iOS Safari は保存せず開くだけ／Android は click 直後に remove すると中断される。
+     ⭐ 触る端末のときだけ【端末の共有シート】へファイルを渡す。無ければ今までどおり落とす。
+     🔴🔴 PC は最初の1行で必ず素通りする（pointer:coarse かつ hover が無いときだけ通る）
+          ＝マウスの端末の挙動は1バイトも変えない。
+     ⚠️ 共有を断られた／使えないときは、元の click をそのまま呼ぶ＝今までの動きに戻るだけ。
+     ⭐ 消せば完全に元へ戻る（このブロックだけ）。
+     ══════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  var touchOnly = window.matchMedia
+    && matchMedia('(pointer:coarse)').matches && !matchMedia('(hover:hover)').matches;
+  if(!touchOnly) return;                       /* 🔴 PC はここで終わり */
+  if(!window.HTMLAnchorElement) return;
+  var orig = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function(){
+    var href = this.getAttribute('href') || '';
+    var name = this.getAttribute('download');
+    /* 落とすためのアンカー（blob: ＋ download）以外はそのまま */
+    if(!name || href.slice(0,5) !== 'blob:' || this.dataset.plainSave)
+      return orig.apply(this, arguments);
+    var self = this, args = arguments;
+    var plain = function(){                    /* ⚠️ 今までの動きに戻す（すぐ消さない） */
+      try{
+        var a = document.createElement('a');
+        a.href = href; a.download = name; a.dataset.plainSave = '1';
+        document.body.appendChild(a);
+        orig.apply(a, []);
+        setTimeout(function(){ if(a.parentNode) a.remove(); }, 20000);
+      }catch(_){ try{ orig.apply(self, args); }catch(__){} }
+    };
+    /* ⚠️ blob: は道具側が数秒で捨てるので【すぐ】中身を取っておく */
+    fetch(href).then(function(r){ return r.blob(); }).then(function(b){
+      var f;
+      try{ f = new File([b], name, { type: b.type || 'application/octet-stream' }); }
+      catch(_){ return plain(); }
+      if(navigator.share && navigator.canShare && navigator.canShare({ files:[f] })){
+        return navigator.share({ files:[f], title:name })
+          .catch(function(err){ if(!(err && err.name === 'AbortError')) plain(); });
+      }
+      plain();
+    }).catch(plain);
+    return undefined;
+  };
 })();
 </script>
 </body>
