@@ -154,6 +154,17 @@
     <input type="range" id="r_tls" min="-0.3" max="0.8" step="0.005">
     <div class="row"><span class="n">行間</span><output id="o_tlh"></output></div>
     <input type="range" id="r_tlh" min="0.7" max="2" step="0.01">
+    <div class="row" style="margin-top:10px"><span class="n">削れ</span><output id="o_erode"></output></div>
+    <input type="range" id="r_erode" min="0" max="1.2" step="0.01">
+    <div class="row"><span class="n">太らせ</span><output id="o_fat"></output></div>
+    <input type="range" id="r_fat" min="-0.35" max="0.35" step="0.005">
+    <div class="row"><span class="n">抜け</span><output id="o_pit"></output></div>
+    <input type="range" id="r_pit" min="0" max="0.6" step="0.005">
+    <div class="row"><span class="n">抜けの細かさ</span><output id="o_pitS"></output></div>
+    <input type="range" id="r_pitS" min="20" max="420" step="2">
+    <div class="note">🔴<b>きれいに切り取らない</b>のがこの道具の字。<b>削れ</b>＝縁が食われて瘤と欠けができ、離れた粒まで飛ぶ。
+      <b>太らせ</b>＝切る高さをずらす（上げると肥え、下げると痩せて崩れる）。<b>抜け</b>＝中に開く穴（縁の近くほど多い）。<br>
+      ⭐ 字を読ませたいときは 削れ 0.3・抜け 0.1 くらい。崩したいときは両方上げる。</div>
   </div>
 
   <div class="grp">
@@ -342,6 +353,7 @@ let P = {
   ratio:'169', sz:'1620', long:1620,
   /* かたち＝紙片を重ねる／文字に切る */
   shape:'sheet', text:'ひかり', font:'Hiragino Mincho ProN, serif', tw:600, tsize:0.95, tls:0.06, tlh:1.1,
+  erode:0.5, fat:0.10, pit:0.22, pitS:60,   /* 字を きれいに切り取らない ための3つ */
   /* 紙（重ねる紙片） */
   sheets:4, spread:0.50, size:0.80, tear:0.20, tau:0.74,
   /* 皺 */
@@ -465,6 +477,26 @@ function buildField(W,H){
     const amp=P.tear*0.10*S;      /* ⚠️ 紙片と同じ量でずらすと字が崩れる（線が細いため） */
     EDG=new Float32Array(n);
     const Mb=new Float32Array(n);
+
+    /* 🔴🔴 ここが要。字の縁は【1画素で立っている】ので、乱れを足しても縁が動く余地がない
+       （実際、削れのつまみを上げても何も起きなかった）。
+       ⭐ 先ににじませて【幅】を作る。にじみの幅が、そのまま削れの届く深さになる。
+          削れ 0 なら にじませない＝きれいに切った字に戻る。 */
+    const AL=new Float32Array(n);
+    for(let i=0;i<n;i++) AL[i]=src[i*4]/255;
+    const bl=Math.round(P.erode*0.055*S);
+    if(bl>0){
+      const tA=new Float32Array(n), dd=2*bl+1;
+      for(let y=0;y<H;y++){ let s2=0;
+        for(let x=-bl;x<=bl;x++) s2+=AL[y*W+clamp(x,0,W-1)];
+        for(let x=0;x<W;x++){ tA[y*W+x]=s2/dd;
+          s2+=AL[y*W+Math.min(W-1,x+bl+1)]-AL[y*W+Math.max(0,x-bl)]; } }
+      for(let x=0;x<W;x++){ let s2=0;
+        for(let y=-bl;y<=bl;y++) s2+=tA[clamp(y,0,H-1)*W+x];
+        for(let y=0;y<H;y++){ AL[y*W+x]=s2/dd;
+          s2+=tA[Math.min(H-1,y+bl+1)*W+x]-tA[Math.max(0,y-bl)*W+x]; } }
+    }
+
     for(let y=0;y<H;y++){
       for(let x=0;x<W;x++){
         const i=y*W+x;
@@ -474,9 +506,32 @@ function buildField(W,H){
         /* 元の絵から、ずらした場所の濃さを取り出す（線で結ぶ＝縁が滑らかに保たれる） */
         const sx=clamp(x+ox,0,W-1.001), sy=clamp(y+oy,0,H-1.001);
         const x0=sx|0, y0=sy|0, fx=sx-x0, fy=sy-y0;
-        const p00=src[(y0*W+x0)*4], p10=src[(y0*W+x0+1)*4],
-              p01=src[((y0+1)*W+x0)*4], p11=src[((y0+1)*W+x0+1)*4];
-        const m=(p00+(p10-p00)*fx+(p01-p00)*fy+(p00-p10-p01+p11)*fx*fy)/255;
+        const p00=AL[y0*W+x0], p10=AL[y0*W+x0+1],
+              p01=AL[(y0+1)*W+x0], p11=AL[(y0+1)*W+x0+1];
+        const a0=p00+(p10-p00)*fx+(p01-p00)*fy+(p00-p10-p01+p11)*fx*fy;
+
+        /* 🔴🔴 字を【きれいに切り取らない】。
+           ⭐ 縁を揺らすだけでは「字の形のまま」でしかない。
+              濃さに乱れを足してから切ると、縁が【食われて】瘤や欠けができ、
+              離れた粒まで飛ぶ＝石を刷った・判子を押したような字になる。
+           ⭐ 太らせ＝切る高さをずらすだけ。上げると字が肥え、下げると痩せて崩れる。 */
+        const nz = vn(X*22+3,Y*22,sd1)*0.50
+                 + vn(X*58,Y*58+9,sd2)*0.32
+                 + vn(X*140+7,Y*140,sd1+7)*0.18;
+        /* 🔴 乱れをそのまま足すと、字から遠い【何もない所にまで粒が湧く】。
+           ⭐ にじみが届いている所でだけ効かせる＝離れた粒は字のそばにしか飛ばない。 */
+        const w  = clamp(a0*5,0,1);
+        const v  = a0 + (nz*0.75 + P.fat)*w;   /* ⚠️ 削れの量は「にじみの幅」が持っている */
+        let m = clamp((v-0.5)*7+0.5,0,1);
+
+        /* ⭐ 抜け ── 中に開く穴。縁の近くほど多い（インクが乗りきらない所） */
+        if(P.pit>0.001&&m>0){
+          const bias=1-clamp((v-0.5)*3.2,0,1);            /* 縁で1・奥で0 */
+          const ps=Math.max(2,P.pitS);
+          const pn=vn(X*ps+21,Y*ps,sd2+13)*0.62+vn(X*ps*2.9,Y*ps*2.9+5,sd1+3)*0.38;
+          const th=1-P.pit*1.9*(0.30+0.70*bias);
+          if(pn>th) m*=clamp((th+0.05-pn)/0.05,0,1);
+        }
         MSK[i]=m; Mb[i]=m;
         /* 重なりの斑は、大きな乱れで作る（1枚の紙でも厚みは一様ではない） */
         LAY[i]=m*(0.75+0.9*(vn(X*2.1,Y*2.1,sd1)*0.5+0.5));
@@ -856,6 +911,7 @@ const F1=v=>v.toFixed(1), F2=v=>v.toFixed(2), F3=v=>v.toFixed(3), FI=v=>String(M
 /* [id, キー, 表示, 場を作り直すか] */
 const R = [
   ['tw','tw',FI,1],['tsize','tsize',F2,1],['tls','tls',F2,1],['tlh','tlh',F2,1],
+  ['erode','erode',F2,1],['fat','fat',F2,1],['pit','pit',F2,1],['pitS','pitS',FI,1],
   ['sheets','sheets',FI,1],['spread','spread',F2,1],['size','size',F2,1],['tear','tear',F3,1],
   ['tau','tau',F2,0],
   ['crN','crN',FI,1],['crW','crW',F1,1],['crF','crF',F2,1],['crA','crA',F2,1],['sharp','sharp',F2,0],
