@@ -30,9 +30,12 @@
     font-family:"Zen Kaku Gothic New",-apple-system,BlinkMacSystemFont,sans-serif;
     font-weight:300; overflow:hidden; display:flex; align-items:stretch;
   }
-  #stage{flex:1;display:flex;align-items:center;justify-content:center;position:relative;padding:28px 22px;min-width:0}
-  canvas#cv{max-width:100%;max-height:100%;box-shadow:0 14px 44px rgba(28,28,30,.22);
-    display:block;touch-action:none;cursor:crosshair}
+  #stage{flex:1;display:flex;align-items:center;justify-content:center;position:relative;
+    padding:14px;min-width:0;overflow:hidden}
+  canvas#cv{box-shadow:0 14px 44px rgba(28,28,30,.22);
+    display:block;touch-action:none;cursor:crosshair;
+    transform-origin:center center;will-change:transform}
+  body.panning canvas#cv{cursor:grabbing}
   canvas#cv.grabbing{cursor:grabbing}
   #drop{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
     background:rgba(244,242,236,.92);border:1px dashed rgba(28,28,30,.35);
@@ -105,7 +108,10 @@
 
 <div id="panel">
   <h1>KASA</h1>
-  <div class="sub">暈 — くしゃくしゃの紙を重ねて、裏から灯を入れる。<br>紙の上を引っぱると、穴と灯が動く。</div>
+  <div class="sub">暈 — くしゃくしゃの紙を重ねて、裏から灯を入れる。<br>
+    盤の上を<b>引っぱる</b>と、いちばん近い穴か灯が動く。<br>
+    <b>ホイール＝寄る・引く</b>／<b>右ドラッグ（またはスペース＋ドラッグ）＝盤を動かす</b>／
+    <b>ダブルクリック＝戻す</b>／<b>⌘Z＝ひとつ戻す</b></div>
 
   <div class="grp">
     <label class="h">版面</label>
@@ -838,19 +844,50 @@ function paint(octx, W, H, t){
 /* ══ 画面 ══════════════════════════════════════════════ */
 let cw=0, ch=0, u=0, raf=null, lastTs=0;
 const CYC_LO=0.5, CYC_HI=30;
+
+/* ══ 寄る・引く・動かす ════════════════════════════════
+   ⭐ 見え方を変えるだけ（版面は動かない）。出る絵はいつも「出る大きさ」のまま。
+   ⭐ 寄ったら【止まってから】その分だけ細かく刷り直す＝寄った先がぼやけない。
+      簾SUDARE・枡MASU と同じ作法：ホイール＝カーソル中心／スペースか右で動かす／
+      ダブルクリックで戻す。 */
+let VIEW={z:1,x:0,y:0}, spaceDown=false, shT=null;
+/* ⭐ 触っている間は粗く、止まったら細かく刷り直す。
+   ⚠️ いつも細かくすると、つまみを動かすたびに場を作り直して 1秒近く止まる。 */
+let HI=false;
+function hiLater(){ clearTimeout(shT); shT=setTimeout(()=>{ HI=true; fit(); rebuild(); },300); }
+function coarse(){ if(HI){ HI=false; fit(); } }
+function applyView(){ cv.style.transform='translate('+VIEW.x+'px,'+VIEW.y+'px) scale('+VIEW.z+')'; }
+function viewFit(){ VIEW={z:1,x:0,y:0}; applyView(); sharpenLater(); stat('見え方を戻した'); }
+function sharpenLater(){ coarse(); hiLater(); }
+cv.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const r=cv.getBoundingClientRect();
+  const mx=e.clientX-(r.left+r.width/2), my=e.clientY-(r.top+r.height/2);
+  const nz=clamp(VIEW.z*Math.exp(-e.deltaY*0.0016),0.3,10);
+  const s=nz/VIEW.z;
+  VIEW.x=VIEW.x*s+mx*(1-s); VIEW.y=VIEW.y*s+my*(1-s); VIEW.z=nz;
+  applyView(); sharpenLater();
+},{passive:false});
+cv.addEventListener('dblclick',viewFit);
+addEventListener('keydown',e=>{ if(e.code==='Space'&&!/input|textarea|select/i.test(e.target.tagName)){ spaceDown=true; e.preventDefault(); } });
+addEventListener('keyup',  e=>{ if(e.code==='Space') spaceDown=false; });
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+
 function fit(){
   const st=document.getElementById('stage');
-  const pad=44;
+  const pad=28;
   const aw=Math.max(80,st.clientWidth-pad), ah=Math.max(80,st.clientHeight-pad);
   const [rw,rh]=RATIO[P.ratio]||RATIO['169'];
   let w=aw, h=w*rh/rw;
   if(h>ah){ h=ah; w=h*rw/rh; }
-  /* ⚠️ 場を1画素ずつ回すので、画面では欲張らない（出すときだけ大きくする） */
-  const cap=980;
-  let W=Math.round(w), H=Math.round(h);
+  /* ⚠️ 場を1画素ずつ回すので、動かしている間は欲張らない（止まっているときだけ細かく） */
+  const dpr=Math.min(2,window.devicePixelRatio||1);
+  const cap=(P.anim||!HI)?1150:2000;
+  let W=Math.round(w*dpr*VIEW.z), H=Math.round(h*dpr*VIEW.z);
   const lg=Math.max(W,H);
   if(lg>cap){ W=Math.round(W*cap/lg); H=Math.round(H*cap/lg); }
   cv.style.width=w+'px'; cv.style.height=h+'px';
+  applyView();
   if(W!==cw||H!==ch){ cw=Math.max(2,W); ch=Math.max(2,H); cv.width=cw; cv.height=ch; }
 }
 function render(){
@@ -926,6 +963,7 @@ R.forEach(([id,key,fmt,re])=>{
   r.addEventListener('input',()=>{
     P[key]=+r.value;
     const o=el('o_'+id); if(o) o.textContent=fmt(+r.value);
+    if(re){ coarse(); hiLater(); }
     if(key==='holeN'||key==='lampN'){ syncCount(); rebuild(); }
     if(re) rebuild(); else kick();
     szSync(); saveLocal();
@@ -953,12 +991,14 @@ segWire('ratio',v=>{ P.ratio=v; fit(); rebuild(); szSync(); saveLocal(); });
 segWire('shape',v=>{
   P.shape=v; shapeSync();
   /* ⭐ 字は線が細いので、紙片と同じ灯だと届かず暗いままになる。切り替えたときに寄せる。 */
-  if(v==='text'&&!P.textTuned){
+  /* 🔴 一度きりの目印（textTuned）で寄せると、控えに残った古い値のまま2度目が来て
+        「文字だと動かない」になる（実際そうなった）。目印ではなく【いまの値】を見て寄せる。 */
+  if(v==='text'&&(P.lampR>0.7||P.orbit<0.15)){
     /* 🔴 広い灯にすると字が白く飛びきって【動きが見えなくなる】（実測：差1画素）。
        ⭐ 灯は絞って強く、まわり込みで下を持ち上げる＝光の溜まりが字の上を渡っていく。 */
     P.lampR=0.45; P.lampI=2.6; P.amb=0.35; P.holeN=2;
     P.orbit=Math.max(P.orbit,0.30); P.tear=Math.min(P.tear,0.26);
-    P.textTuned=true; syncCount();
+    syncCount();
     stat('文字に切り替えた ── 灯を絞って、巡りを広げた');
   }
   placeAll(); syncUI(); rebuild(); saveLocal();
@@ -967,7 +1007,7 @@ function shapeSync(){
   const t=P.shape==='text';
   el('gText').classList.toggle('hide',!t);
   /* 紙片のときだけ効くつまみを畳む */
-  for(const id of ['sheets','spread']){
+  for(const id of ['sheets','spread','size']){
     const r=el('r_'+id); if(r){ r.classList.toggle('hide',t); r.previousElementSibling.classList.toggle('hide',t); }
   }
   segSet('shape',P.shape);
@@ -978,7 +1018,16 @@ el('t_font').addEventListener('change',()=>{ pushHist(); P.font=el('t_font').val
 segWire('szSeg',v=>{ P.sz=v; el('r_long').classList.toggle('hide',v!=='px'); szSync(); saveLocal(); });
 
 el('b_crush').onclick=()=>{ pushHist(); P.seed=(Math.random()*1e9)|0; rebuild(); saveLocal(); stat('くしゃっとやり直した'); };
-el('anGo').onclick=()=>{ anim(!P.anim); animSync(); szSync(); saveLocal(); };
+el('anGo').onclick=()=>{
+  const on=!P.anim;
+  /* ⭐ 巡りも息も 0 なら、押しても1コマも変わらない＝壊れているのと同じ。
+     こちらで巡りを入れて、入れたことを知らせる（襞HIDA の「送り」と同じ作法）。 */
+  if(on&&P.orbit<0.002&&P.breath<0.002){
+    pushHist(); P.orbit=0.25; syncUI();
+    stat('灯の巡りが 0 だったので 0.25 を入れた');
+  }
+  anim(on); animSync(); szSync(); saveLocal();
+};
 ['paper','lamp','wall'].forEach(k=>{
   el('c_'+k).oninput=e=>{ P[k]=e.target.value; kick(); saveLocal(); };
 });
@@ -1020,7 +1069,14 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
     S=Math.min(r.width,r.height)/2;
     return {x:(e.clientX-r.left-r.width/2)/S, y:(e.clientY-r.top-r.height/2)/S};
   }
+  let pan=false, px=0, py=0;
   cv.addEventListener('pointerdown',e=>{
+    /* ⭐ 右ボタン か スペース＝盤を動かす。それ以外＝いちばん近い穴か灯をつかむ */
+    if(e.button===2||e.button===1||spaceDown){
+      pan=true; px=e.clientX; py=e.clientY;
+      cv.setPointerCapture(e.pointerId); document.body.classList.add('panning');
+      e.preventDefault(); return;
+    }
     const p=at(e); let best=1e9;
     tgt=null;
     for(const h of HOLE){ const d=(h.x-p.x)**2+(h.y-p.y)**2; if(d<best){best=d;tgt=h;} }
@@ -1029,10 +1085,12 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
     on=true; cv.setPointerCapture(e.pointerId); cv.classList.add('grabbing'); pushHist();
   });
   cv.addEventListener('pointermove',e=>{
+    if(pan){ VIEW.x+=e.clientX-px; VIEW.y+=e.clientY-py; px=e.clientX; py=e.clientY; applyView(); return; }
     if(!on||!tgt) return;
     const p=at(e); tgt.x=p.x; tgt.y=p.y; kick();
   });
   const end=()=>{
+    if(pan){ pan=false; document.body.classList.remove('panning'); }
     if(!on) return;
     const wasHole=HOLE.indexOf(tgt)>=0;
     on=false; tgt=null; cv.classList.remove('grabbing'); saveLocal();
@@ -1304,7 +1362,7 @@ const TV={on:false,stop:false};
 placeAll();
 fit();
 if(!loadLocal()){ /* 初回は既定のまま */ }
-syncUI(); pushHist(); render();
+syncUI(); pushHist(); render(); hiLater();
 addEventListener('resize',()=>{ if(!TV.on){ fit(); rebuild(); } });
 
 /* 試験から呼ぶ入口（画面には出さない） */
