@@ -282,6 +282,9 @@
 
   <div class="grp">
     <label class="h">出る大きさ</label>
+    <label class="chk"><input type="checkbox" id="c_frame"> 版面のわくで切り取る</label>
+    <div class="note" style="margin:0 0 8px">⭐<b>切</b>＝いま見えているとおりに出る（寄り引き・位置ごと）。
+      <b>入</b>＝破線のわくを出して、その中だけを出す。</div>
     <div class="seg" id="szSeg">
       <button data-v="1080">1080</button><button data-v="1620">1620</button>
       <button data-v="2160">2160</button><button data-v="px">指定</button>
@@ -369,6 +372,7 @@ let P = {
   holeN:4, holeR:0.030, pinD:0.85, pinR:7.0,
   /* 暈・紙の表情 */
   gloR:0.14, gloI:0.55, rim:0.35, fib:0.14,
+  frame:false,          /* 版面のわく：切＝見えているとおりに出す／入＝わくの中だけ出す */
   /* 色 */
   paper:'#f7f1e6', lamp:'#ffeccb', wall:'#3b3833', wallL:0.30,
   /* 動き */
@@ -401,6 +405,12 @@ let FKEY="";
 /* 版面の半分の大きさ（世界の座標。短辺が 1） */
 function halfWH(){ const [rw,rh]=RATIO[P.ratio]||RATIO["169"]; const m=Math.min(rw,rh); return [rw/m,rh/m]; }
 function camOut(W,H){ return {S:Math.min(W,H)/2, cx:W/2, cy:H/2}; }
+/* 出すときのカメラ ── わく 入＝版面ぴったり／わく 切＝いま見えているとおり */
+function camFor(W,H){
+  if(P.frame||!cssW) return camOut(W,H);
+  const k=W/Math.max(1,cssW);
+  return { S:fitS*VIEW.z*k, cx:(cssW/2+VIEW.x)*k, cy:(cssH/2+VIEW.y)*k };
+}
 function camKey(W,H,c){ return W+"x"+H+"@"+c.S.toFixed(3)+","+c.cx.toFixed(1)+","+c.cy.toFixed(1); }
 let fieldMs = 0;
 
@@ -861,11 +871,12 @@ let VIEW={z:1,x:0,y:0}, spaceDown=false, shT=null;
 /* ⭐ 触っている間は粗く、止まったら細かく刷り直す。
    ⚠️ いつも細かくすると、つまみを動かすたびに場を作り直して 1秒近く止まる。 */
 let HI=false;
-function hiLater(){ clearTimeout(shT); shT=setTimeout(()=>{ HI=true; fit(); rebuild(); },300); }
+function hiLater(){ clearTimeout(shT); shT=setTimeout(()=>{ HI=true; fit(); rebuild(); },180); }
 function coarse(){ if(HI){ HI=false; fit(); } }
 function applyView(){ preview(); }
 function viewFit(){ VIEW={z:1,x:0,y:0}; applyView(); sharpenLater(); stat('見え方を戻した'); }
 function sharpenLater(){ coarse(); hiLater(); }
+
 cv.addEventListener('wheel',e=>{
   e.preventDefault();
   const r=cv.getBoundingClientRect();
@@ -873,7 +884,7 @@ cv.addEventListener('wheel',e=>{
   const nz=clamp(VIEW.z*Math.exp(-e.deltaY*0.0016),0.3,10);
   const s=nz/VIEW.z;
   VIEW.x=VIEW.x*s+mx*(1-s); VIEW.y=VIEW.y*s+my*(1-s); VIEW.z=nz;
-  applyView(); sharpenLater();
+  touchView(); applyView(); sharpenLater();
 },{passive:false});
 cv.addEventListener('dblclick',viewFit);
 addEventListener('keydown',e=>{ if(e.code==='Space'&&!/input|textarea|select/i.test(e.target.tagName)){ spaceDown=true; e.preventDefault(); } });
@@ -906,21 +917,40 @@ function camScreen(){
   return { S:fitS*VIEW.z*k, cx:(cssW/2+VIEW.x)*k, cy:(cssH/2+VIEW.y)*k };
 }
 /* 版面のガイド ── 何が書き出されるか。⭐ 出す絵には描かない */
+/* 🔴 外を暗く落としていたのはやり過ぎだった（絵より枠が目立つ・寄る間に地が食い違う）。
+   ⭐ 細い破線だけ。動かした直後は濃く、しばらくすると薄く沈む。消すこともできる。 */
+let viewAt=0, gT=null;
+function guideAlpha(){
+  if(!P.frame) return 0;
+  const d=performance.now()-viewAt;
+  return d<1400 ? 0.55 : Math.max(0.14, 0.55-(d-1400)/900*0.41);
+}
 function drawGuide(octx,cam){
+  const al=guideAlpha(); if(al<=0.001) return;
   const [hw,hh]=halfWH();
   const x=cam.cx-hw*cam.S, y=cam.cy-hh*cam.S, w=2*hw*cam.S, h=2*hh*cam.S;
   octx.save();
-  octx.fillStyle='rgba(0,0,0,.34)';
-  octx.beginPath();
-  octx.rect(0,0,cw,ch);
-  octx.rect(x,y,w,h);
-  octx.fill('evenodd');
-  octx.strokeStyle='rgba(255,255,255,.55)'; octx.lineWidth=Math.max(1,cw/900);
-  octx.setLineDash([6,5]);
+  octx.globalAlpha=al;
+  octx.strokeStyle='#fff'; octx.globalCompositeOperation='difference';
+  octx.lineWidth=Math.max(1,cw/1100);
+  octx.setLineDash([7,6]);
   octx.strokeRect(x,y,w,h);
   octx.restore();
 }
-let SNAP=document.createElement('canvas'), snapCam=null;
+/* わくの濃さだけ描き直す（場は作り直さない） */
+function repaintGuide(){
+  if(!SNAP.width) return;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
+  ctx.drawImage(SNAP,0,0);
+  drawGuide(ctx,camScreen());
+}
+function touchView(){
+  viewAt=performance.now();
+  clearTimeout(gT); gT=setTimeout(()=>{ repaintGuide(); setTimeout(repaintGuide,700); },1450);
+}
+let SNAP=document.createElement('canvas'), snapCam=null, cornerC='#000';
+function cornerColor(){ return cornerC; }
 function render(){
   const t0=performance.now();
   const cam=camScreen();
@@ -929,6 +959,7 @@ function render(){
   if(SNAP.width!==cw||SNAP.height!==ch){ SNAP.width=cw; SNAP.height=ch; }
   SNAP.getContext('2d').drawImage(cv,0,0);
   snapCam=cam;
+  { const d=ctx.getImageData(1,1,1,1).data; cornerC='rgb('+d[0]+','+d[1]+','+d[2]+')'; }
   drawGuide(ctx,cam);
   const ms=Math.round(performance.now()-t0);
   if(performance.now()<statUntil) return;
@@ -942,7 +973,10 @@ function preview(){
   if(!snapCam) return;
   const cam=camScreen(), k=cam.S/snapCam.S;
   ctx.setTransform(1,0,0,1,0,0);
-  ctx.fillStyle=P.wall; ctx.globalAlpha=1; ctx.fillRect(0,0,cw,ch);
+  /* ⚠️ P.wall で埋めると、暈で暗く落ちた地と食い違って「まわりが変」に見える。
+     控えた絵の角の色＝いちばん外の地の色で埋める。 */
+  ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle=cornerColor(); ctx.fillRect(0,0,cw,ch);
   ctx.drawImage(SNAP, 0,0,cw,ch,
     cam.cx-snapCam.cx*k, cam.cy-snapCam.cy*k, cw*k, ch*k);
   drawGuide(ctx,cam);
@@ -966,7 +1000,8 @@ function animSync(){
   b.classList.toggle('solid',P.anim);
 }
 function outSize(){
-  const [rw,rh]=RATIO[P.ratio]||RATIO['169'];
+  let [rw,rh]=RATIO[P.ratio]||RATIO['169'];
+  if(!P.frame&&cssW>0){ rw=cssW; rh=cssH; }   /* ⭐ わく 切＝盤に見えているまま */
   const long=P.sz==='px'?(P.long||1620):+P.sz;
   let ow,oh;
   if(rh>=rw){ oh=long; ow=Math.round(long*rw/rh); } else { ow=long; oh=Math.round(long*rh/rw); }
@@ -1034,7 +1069,7 @@ function segWire(id,fn){
   });
 }
 function segSet(id,v){ [...el(id).children].forEach(x=>x.classList.toggle('on',x.dataset.v===String(v))); }
-segWire('ratio',v=>{ P.ratio=v; fit(); rebuild(); szSync(); saveLocal(); });
+segWire('ratio',v=>{ P.ratio=v; touchView(); fit(); rebuild(); szSync(); saveLocal(); });
 segWire('shape',v=>{
   P.shape=v; shapeSync();
   /* ⭐ 字は線が細いので、紙片と同じ灯だと届かず暗いままになる。切り替えたときに寄せる。 */
@@ -1078,6 +1113,8 @@ el('anGo').onclick=()=>{
 ['paper','lamp','wall'].forEach(k=>{
   el('c_'+k).oninput=e=>{ P[k]=e.target.value; kick(); saveLocal(); };
 });
+/* 版面のわく ── 切＝見えているとおりに出す／入＝わくの中だけ出す */
+el('c_frame').onchange=e=>{ pushHist(); P.frame=e.target.checked; touchView(); kick(); szSync(); saveLocal(); };
 
 function syncUI(){
   R.forEach(([id,key,fmt])=>{
@@ -1088,6 +1125,7 @@ function syncUI(){
   el('t_text').value=P.text; el('t_font').value=P.font;
   segSet('ratio',P.ratio); segSet('szSeg',P.sz);
   el('r_long').classList.toggle('hide',P.sz!=='px');
+  el('c_frame').checked=P.frame;
   el('c_paper').value=P.paper; el('c_lamp').value=P.lamp; el('c_wall').value=P.wall;
   szSync();
 }
@@ -1203,7 +1241,7 @@ el('b_png').onclick=async ()=>{
   await new Promise(r=>setTimeout(r,20));
   const out=document.createElement('canvas'); out.width=ow; out.height=oh;
   const keepW=FW, keepH=FH;
-  paint(out.getContext('2d'),ow,oh,P.anim?u:0,camOut(ow,oh));
+  paint(out.getContext('2d'),ow,oh,P.anim?u:0,camFor(ow,oh));
   FW=keepW; FH=keepH;                       /* ⚠️ 画面用の場に戻す */
   const b=await new Promise(r=>out.toBlob(r,'image/png'));
   if(!b){ stat('🔴 PNG が作れなかった（大きすぎる可能性）'); return; }
@@ -1358,7 +1396,7 @@ const TV={on:false,stop:false};
       for(;i<p.total;i++){
         if(TV.stop) break;
         if(encErr) throw encErr;
-        paint(octx,ow,oh,(i/p.total*p.loops)%1,camOut(ow,oh));
+        paint(octx,ow,oh,(i/p.total*p.loops)%1,camFor(ow,oh));
         if(fmt==='mp4'){
           const vf=new VideoFrame(out,{timestamp:Math.round(i*1e6/p.fps),duration:Math.round(1e6/p.fps)});
           enc.encode(vf,{keyFrame:(i%(p.fps*2))===0}); vf.close();
