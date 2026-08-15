@@ -9,16 +9,29 @@
 #     落ちることを必ず確かめてから直す（2026-08-06 に2回すり抜けた）。
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"     # 名称未設定/
-PORT="${PORT:-8093}"
 STARTED=0
 
-if ! curl -s -o /dev/null "http://localhost:$PORT/maku/index.html"; then
+# 🔴 2026-08-15 に踏んだ ── 決め打ちの 8093 は【別セッションの MASU のサーバ】で埋まっていて、
+#    そちらのページに当たり「SHEETS が無い」で落ちた（＝本体が壊れたように見える）。
+#    ⭐ 空きポートを探し、立てたあと【本当に MAKU か】を確かめてから始める。
+if [ -z "${PORT:-}" ]; then
+  for p in $(seq 8460 8500); do
+    if ! lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then PORT="$p"; break; fi
+  done
+fi
+[ -z "${PORT:-}" ] && { echo "🔴 空いているポートが無い"; exit 1; }
+
+if ! curl -sf "http://localhost:$PORT/maku/index.html" | grep -q 'id="anGo"'; then
   echo "· 確認用サーバを $PORT で立てる"
   (cd "$ROOT" && python3 -m http.server "$PORT" --bind 0.0.0.0 >/dev/null 2>&1 &)
   STARTED=1
   sleep 1
 fi
 
+if ! curl -sf "http://localhost:$PORT/maku/index.html" | grep -q 'id="anGo"'; then
+  echo "🔴 立てた画面が MAKU ではない（ポート ${PORT}）。テストを始めない"; exit 1
+fi
+echo "（${PORT} で流す）"
 PORT="$PORT" node "$ROOT/maku/_test/test.mjs"
 CODE=$?
 
