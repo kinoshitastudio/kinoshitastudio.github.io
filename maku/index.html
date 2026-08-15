@@ -493,6 +493,34 @@
   <div class="note">⭐ <b>版ぜんぶ</b>と読み込んだ<b>画像も一緒に入る</b>＝そのまま開き直せる（そのぶんファイルは大きい）<br>
     JSON は画面にドラッグ＆ドロップでも読める</div>
 
+  <!-- ══⭐ 動かす ── 2026-08-15（木下＝「他ツールにはある動画アニメーションがない。
+       粒の細かさを流れで調整できるように。FPS と、あと再生ボタンを押すと再生されるように」）
+       ⭐ 押すまで動かない（暈 KASA・襞 HIDA と同じ作法）。⚠️ 止めると元の姿に戻る。
+       ⭐ 位相は 0→1 の環。粒は【行って戻る】ので、1周でぴったり元に戻る＝継ぎ目なしループ。 -->
+  <h2>動かす</h2>
+  <button class="big" id="anGo">▶ 再生</button>
+  <div class="row"><label>粒が流れる</label><input type="range" id="anGrain" min="0" max="100" step="1" value="40"><span class="val"></span></div>
+  <div class="row"><label>1周の秒数</label><input type="range" id="anCyc" min="1" max="20" step="0.5" value="6"><span class="val"></span></div>
+  <div class="row"><label>コマ/秒</label><input type="range" id="anFps" min="8" max="60" step="1" value="24"><span class="val"></span></div>
+  <div class="note">⭐ <b>粒が流れる</b>＝<b>粒の細かさ</b>が今の値を中心に<b>行って戻る</b>（振れ幅）。0 で動かない<br>
+    ⭐ 押すまで動かない。<b>止めると元の姿に戻る</b>＝作っている絵はいつも同じ形で見られる<br>
+    ⚠️ <b>粒の細かさ</b>が 0 のままだと、振れても粒が出ないことがある（先に粒を少し入れる）</div>
+
+  <!-- ══ 動画で出す ══
+       🔴 MediaRecorder（captureStream）は使わない ── 実時間で画面のドットを録るので
+          コマ落ち・webm 固定・継ぎ目なしループ不可・大きさが選べない（NIJIMI が捨てた作り）。
+       ⭐ 位相を【コマ番号】で刻んで1コマずつ焼く。SAKUJI / TSUBU / TSUBUTE / SUDARE /
+          NIJIMI / AMI / TEN に続いて8本目。
+       ⚠️ 大きさは上の【版面】に従う（「版面で」を選べばその大きさで焼き直す）。 -->
+  <h2>動画で出す</h2>
+  <div class="seg" id="tvFmt"><button data-v="mp4" class="on">mp4</button><button data-v="png">PNG連番</button></div>
+  <div class="seg" id="tvLoop"><button data-v="1" class="on">1周</button><button data-v="2">2周</button><button data-v="4">4周</button></div>
+  <div class="seg" id="tvQ"><button data-v="lo">軽い</button><button data-v="mid" class="on">ふつう</button><button data-v="hi">きれい</button></div>
+  <div id="tvSize"></div>
+  <button class="big" id="tvGo">動画を出す</button>
+  <div class="note">⭐ <b>コマ数と秒は上の「1周の秒数」「コマ/秒」</b>を使う。頭と尻が数値レベルで一致する<br>
+    🔴 mp4 にできないときは<b>黙って ZIP を落とさない</b>＝理由と数字を出して止める</div>
+
   <button class="big" id="resetAll">全リセット</button>
   <button class="big" id="reset">アンカー全消し</button>
   <button class="big" id="png">PNG</button>
@@ -545,6 +573,12 @@ let curSheet = 0;
 const S_ = () => SHEETS[curSheet] || SHEETS[0];
 /* 版面（書き出す大きさ）。⚠️ これも DEFAULTS に入れない＝全リセットで消さない（出力の設定だから） */
 Object.assign(P, { frameOn:0, fshape:0, flong:2048 });
+/* ⭐ 動き（2026-08-15）。⚠️ DEFAULTS に入れない＝全リセットで消さない（出力の設定と同じ扱い） */
+Object.assign(P, { anim:false, anGrain:40, anCyc:6, anFps:24 });
+/* ⭐ 位相は 0→1 の環。0 のときは【何も掛かっていない＝今までの絵】になる。 */
+let PH = 0;
+/* 🔴 動画の入れ物は先頭側で作る（下の render / draw が TV.on を見るため） */
+const TV = { on:false, stop:false };
 const ANCHORS = [];   // {u,v, du,dv} 面を押す点（面の座標と変位）
 let selChar = -1;
 const VIEW = { zoom:1, panx:0, pany:0, rotx:0, roty:0 };   // ビュー：ズーム＋パン＋傾き（正投影で3層を保つ）
@@ -1202,8 +1236,18 @@ function faceScale(){
 }
 
 /* ⚠️ 描くのとループを分けてある＝書き出しのときだけ【版面の大きさで1回だけ描く】ため */
-let lastT = 0;
-function draw(t){ requestAnimationFrame(draw); lastT = t; render(t); }
+let lastT = 0, animPrev = 0;
+function draw(t){
+  requestAnimationFrame(draw);
+  /* ⚠️ 書き出しの最中は画面を触らない（位相は書き出し側が1コマずつ置く） */
+  if(!TV.on){
+    if(P.anim){
+      if(animPrev) PH = (PH + (t - animPrev)/1000/Math.max(0.2, P.anCyc)) % 1;
+      animPrev = t;
+    }else animPrev = 0;
+  }
+  lastT = t; render(t);
+}
 /* ⭐ 地なし（透明）で描く。⚠️ 貼 HARI など【他の道具に持ち込むため】。
    地が入っていると、重ねたときに四角い板になって下が隠れる。 */
 let noBgOnce = false;
@@ -1271,7 +1315,12 @@ function render(t){
   gl.uniform1f(loc.uStWaveFreq, Math.max(0.2, P.stWaveFreq/10));
   gl.uniform1f(loc.uCut,      P.cut);
   /* ⭐ 粒 ── 0＝なし。字も画像も、面のマス目に落ちる */
-  gl.uniform1f(loc.uGrain,    P.grain);
+  /* ⭐ 粒が流れる＝【行って戻る】。sin なので1周でぴったり元に戻る＝継ぎ目なしループ。
+     ⚠️ 位相 0 のときは sin(0)=0 ＝ 今までの絵と1画素も変わらない。 */
+  const grainNow = (P.anGrain > 0)
+    ? Math.max(0, Math.min(100, P.grain + P.anGrain * Math.sin(PH * Math.PI * 2)))
+    : P.grain;
+  gl.uniform1f(loc.uGrain,    grainNow);
   gl.uniform1f(loc.uGrainInk, P.grainInk);
   gl.uniform1f(loc.uGrainJit, P.grainJit/100);
   gl.uniform1f(loc.uGrainAng, P.grainAng/100);
@@ -1871,6 +1920,204 @@ function savePNG(noBg){ renderToBlob(blob=>{
   if(/iP(hone|ad|od)/.test(navigator.userAgent)) window.open(url, '_blank');
   setTimeout(()=>URL.revokeObjectURL(url), 8000);
 }, noBg); }
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 動かす／動画で出す ── 2026-08-15（8本目）
+   ⭐ 押すまで動かない。⚠️ 止めると位相を 0 に戻す＝作っている絵はいつも同じ形で見られる。
+   ⭐ 位相を【コマ番号】で刻む（時計で刻まない）＝機械が遅くても1コマも落ちない。
+   ⚠️ 大きさは【版面】に従う。版面が「画面のまま」なら画面の大きさで出る。
+   ══════════════════════════════════════════════════════════════ */
+function animSync(){
+  const b = document.getElementById('anGo');
+  b.textContent = P.anim ? '■ 止める' : '▶ 再生';
+  b.classList.toggle('on', P.anim);
+}
+document.getElementById('anGo').onclick = ()=>{
+  P.anim = !P.anim;
+  /* 🔴 止めたら元の姿へ（暈 KASA・襞 HIDA と同じ作法） */
+  if(!P.anim){ PH = 0; animPrev = 0; }
+  /* ⚠️ 「粒が流れる」が 0 だと1コマも変わらない＝スイッチが壊れて見える。黙って動かさない */
+  if(P.anim && P.anGrain <= 0){
+    P.anGrain = 40;
+    const r = document.getElementById('anGrain');
+    if(r){ r.value = 40; const v = r.parentElement.querySelector('.val'); if(v) v.textContent = '40'; }
+    stat('「粒が流れる」が 0 だったので 40 を入れた');
+  }
+  animSync(); tvSizeSync();
+};
+animSync();
+
+function tvSeg(id, d){ const b = document.querySelector('#'+id+' button.on'); return b ? b.dataset.v : d; }
+const TV_MAXMB = 36864, TV_MAXSIDE = 4096, TV_Q = { hi:0.30, mid:0.15, lo:0.06 };
+function tvOut(){
+  if(P.frameOn === 1){ const f = frameSize(); return { W:f.w, H:f.h }; }
+  return { W:canvas.width, H:canvas.height };
+}
+function tvPlan(){
+  const fps = Math.max(4, Math.round(P.anFps));
+  const loops = +tvSeg('tvLoop','1') || 1;
+  const sec = loops * Math.max(0.2, P.anCyc);
+  return { fps, loops, sec, total:Math.max(2, Math.round(sec*fps)), moving:P.anGrain > 0 };
+}
+function tvSizeSync(){
+  const box = document.getElementById('tvSize'); if(!box) return;
+  const o = tvOut(); let W = o.W, H = o.H;
+  const isMp4 = tvSeg('tvFmt','mp4') === 'mp4';
+  if(isMp4){ W -= W%2; H -= H%2; }
+  const over = isMp4 && (Math.ceil(W/16)*Math.ceil(H/16) > TV_MAXMB || W > TV_MAXSIDE || H > TV_MAXSIDE);
+  const p2 = tvPlan();
+  box.innerHTML = '出力 <b>' + W + ' × ' + H + '</b> px（' + (P.frameOn === 1 ? '版面' : '画面のまま') + '）'
+    + (over ? '<br>⚠️ mp4 の上限超え（辺4096まで）— 版面を下げるか PNG連番へ' : '')
+    + '<br>' + p2.total + ' コマ・' + p2.sec.toFixed(1) + '秒・' + p2.fps + 'コマ/秒・' + p2.loops + '周'
+    + (p2.moving ? '' : '<br>⚠️ <b>「粒が流れる」が 0</b> ＝ 全コマ同じ絵になります');
+}
+document.querySelectorAll('#tvFmt button, #tvLoop button, #tvQ button').forEach(b =>
+  b.addEventListener('click', ()=>{
+    b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    tvSizeSync();
+  }));
+
+/* ══ ZIP（圧縮なし＝store）══ */
+let TV_CRCT = null;
+function tvCrc32(u8){
+  if(!TV_CRCT){ TV_CRCT = new Uint32Array(256);
+    for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); TV_CRCT[n]=c>>>0; } }
+  let c = 0xFFFFFFFF;
+  for(let i=0;i<u8.length;i++) c = TV_CRCT[(c^u8[i])&0xFF] ^ (c>>>8);
+  return (c^0xFFFFFFFF)>>>0;
+}
+function tvZip(files){
+  const te = new TextEncoder(), parts = [], cent = []; let off = 0;
+  for(const f of files){
+    const nm = te.encode(f.name), crc = tvCrc32(f.data), sz = f.data.length;
+    const L = new DataView(new ArrayBuffer(30));
+    L.setUint32(0,0x04034b50,true); L.setUint16(4,20,true);
+    L.setUint32(14,crc,true); L.setUint32(18,sz,true); L.setUint32(22,sz,true); L.setUint16(26,nm.length,true);
+    parts.push(new Uint8Array(L.buffer), nm, f.data);
+    const C = new DataView(new ArrayBuffer(46));
+    C.setUint32(0,0x02014b50,true); C.setUint16(4,20,true); C.setUint16(6,20,true);
+    C.setUint32(16,crc,true); C.setUint32(20,sz,true); C.setUint32(24,sz,true);
+    C.setUint16(28,nm.length,true); C.setUint32(42,off,true);
+    cent.push(new Uint8Array(C.buffer), nm);
+    off += 30 + nm.length + sz;
+  }
+  let csz = 0; for(const c of cent) csz += c.length;
+  const E = new DataView(new ArrayBuffer(22));
+  E.setUint32(0,0x06054b50,true); E.setUint16(8,files.length,true); E.setUint16(10,files.length,true);
+  E.setUint32(12,csz,true); E.setUint32(16,off,true);
+  return new Blob(parts.concat(cent,[new Uint8Array(E.buffer)]), { type:'application/zip' });
+}
+let tvMuxP = null;
+function tvLoadMuxer(){
+  if(window.Mp4Muxer) return Promise.resolve(true);
+  if(!tvMuxP) tvMuxP = new Promise(res=>{
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.1/build/mp4-muxer.min.js';
+    sc.onload = ()=>res(!!window.Mp4Muxer); sc.onerror = ()=>res(false);
+    document.head.appendChild(sc);
+  });
+  return tvMuxP;
+}
+async function tvCodec(W,H,fps,br){
+  for(const codec of ['avc1.640034','avc1.640033','avc1.640032','avc1.64002a','avc1.640028','avc1.4d0034','avc1.42003c']){
+    try{ const r = await VideoEncoder.isConfigSupported({ codec, width:W, height:H, bitrate:br, framerate:fps });
+      if(r && r.supported) return r.config; }catch(_){}
+  }
+  return null;
+}
+const tvIdle = ()=> new Promise(r=>setTimeout(r,0));
+
+async function tvRun(){
+  if(TV.on){ TV.stop = true; return; }
+  const say = t => { const b = document.getElementById('tvSize'); if(b) b.innerHTML = t; };
+  const fmt = tvSeg('tvFmt','mp4'), q = tvSeg('tvQ','mid');
+  const plan = tvPlan(), o = tvOut();
+  let W = o.W, H = o.H;
+  if(fmt === 'mp4'){ W -= W%2; H -= H%2; }
+  W = Math.max(2, W); H = Math.max(2, H);
+  const btn = document.getElementById('tvGo');
+  const keepPH = PH, wasAnim = P.anim, kw = canvas.width, kh = canvas.height;
+  P.anim = false; TV.on = true; TV.stop = false;
+  if(btn) btn.textContent = 'やめる';
+  let msg = '';
+  try{
+    let enc = null, muxer = null, target = null, encErr = null;
+    if(fmt === 'mp4'){
+      if(W > TV_MAXSIDE || H > TV_MAXSIDE || Math.ceil(W/16)*Math.ceil(H/16) > TV_MAXMB)
+        throw new Error('この大きさ（'+W+'×'+H+'）は mp4 の上限を超えています — 辺4096px まで。版面を下げるか PNG連番を選んでください');
+      if(typeof VideoEncoder === 'undefined') throw new Error('このブラウザは mp4 を作れません（PNG連番を選んでください）');
+      if(!await tvLoadMuxer()) throw new Error('mp4 の器を取りに行けませんでした（つながっていない）。PNG連番を選んでください');
+      const br = Math.min(80e6, Math.round(W*H*plan.fps*(TV_Q[q]||0.15)));
+      const cfg = await tvCodec(W,H,plan.fps,br);
+      if(!cfg) throw new Error('この大きさで mp4 を作れる設定が見つかりません');
+      target = new Mp4Muxer.ArrayBufferTarget();
+      muxer = new Mp4Muxer.Muxer({ target, video:{ codec:'avc', width:W, height:H, frameRate:Math.max(1,Math.round(plan.fps)) }, fastStart:'in-memory' });
+      enc = new VideoEncoder({ output:(c,m)=>{ try{ muxer.addVideoChunk(c,m); }catch(e){ encErr = e; } }, error:e=>{ encErr = e; } });
+      enc.configure(cfg);
+    }
+    /* ⚠️ 版面のときは canvas を版面の大きさにして焼く（PNG と同じ道） */
+    if(P.frameOn === 1){ canvas.width = W; canvas.height = H; }
+    const shots = [], pad = i => String(i).padStart(4,'0');
+    let bytes = 0, i = 0;
+    for(; i < plan.total; i++){
+      if(TV.stop) break;
+      if(encErr) throw encErr;
+      PH = (i / plan.total * plan.loops) % 1;      /* ⭐ 時計ではなくコマ番号 */
+      render(lastT);
+      if(fmt === 'mp4'){
+        const vf = new VideoFrame(canvas, { timestamp:Math.round(i*1e6/plan.fps), duration:Math.round(1e6/plan.fps) });
+        enc.encode(vf, { keyFrame:(i % (plan.fps*2)) === 0 });
+        vf.close();
+        while(enc.encodeQueueSize > 8 && !encErr) await tvIdle();
+      }else{
+        const bl = await new Promise(r => canvas.toBlob(r, 'image/png'));
+        if(!bl) throw new Error('PNG が作れなかった（大きすぎる可能性）');
+        const u8 = new Uint8Array(await bl.arrayBuffer());
+        bytes += u8.length;
+        shots.push({ name:'maku_'+pad(i)+'.png', data:u8 });
+        if(bytes > 1.5e9) throw new Error('PNG連番が大きすぎます（'+Math.round(bytes/1e6)+'MB）— 版面か周を下げてください');
+      }
+      say('書き出し中 <b>'+(i+1)+' / '+plan.total+'</b> コマ　'+W+' × '+H
+          + (fmt === 'png' ? '（'+Math.round(bytes/1e6)+'MB）' : '') + '<br>「やめる」で止められます');
+      await tvIdle();
+    }
+    const shot = i;
+    if(fmt === 'mp4'){
+      await enc.flush();
+      if(encErr) throw encErr;
+      muxer.finalize(); enc.close();
+      if(shot > 1){
+        const blob = new Blob([target.buffer], { type:'video/mp4' });
+        tvDl(blob, 'maku_'+Date.now()+'.mp4');
+        msg = 'mp4 — '+W+' × '+H+'・'+shot+'コマ・'+(shot/plan.fps).toFixed(1)+'秒・'
+            + Math.round(blob.size/1e6)+'MB'+(TV.stop ? '（途中で止めた）' : '・継ぎ目なしループ');
+      }
+    }else if(shots.length){
+      const blob = tvZip(shots);
+      tvDl(blob, 'maku_'+Date.now()+'_seq.zip');
+      msg = 'PNG連番 — '+W+' × '+H+'・'+shots.length+'枚・'+Math.round(blob.size/1e6)+'MB（'+plan.fps+'コマ/秒 で束ねてください）';
+    }
+    if(shot <= 1) msg = '止めました（1コマも出していません）';
+  }catch(err){
+    msg = '🔴 ' + (err && err.message || err);
+  }finally{
+    /* 🔴 何が起きても必ず元へ戻す */
+    if(P.frameOn === 1){ canvas.width = kw; canvas.height = kh; }
+    PH = keepPH; P.anim = wasAnim; TV.on = false; TV.stop = false;
+    if(btn) btn.textContent = '動画を出す';
+    animSync(); render(lastT);
+    if(msg){ stat(msg.replace(/<[^>]*>/g,'')); setTimeout(()=>say(msg), 30); } else tvSizeSync();
+  }
+}
+function tvDl(blob, name){
+  const u = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = u; a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ a.remove(); URL.revokeObjectURL(u); }, 20000);
+}
+/* ⚠️ 引数を持つ関数はハンドラに直渡ししない */
+document.getElementById('tvGo').addEventListener('click', ()=> tvRun());
+tvSizeSync();
+
 document.getElementById('png').onclick     = ()=> savePNG(false);
 document.getElementById('pngA').onclick    = ()=> { savePNG(true); stat('地なしで出した（重ねられる）'); };
 
