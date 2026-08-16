@@ -32,11 +32,11 @@
     font-family:"Zen Kaku Gothic New",-apple-system,BlinkMacSystemFont,sans-serif;
     font-weight:300; overflow:hidden; display:flex; align-items:stretch;
   }
-  #stage{flex:1;display:flex;align-items:center;justify-content:center;position:relative;padding:28px 22px;min-width:0}
+  /* ⭐ 盤は【窓】＝canvas を盤いっぱいに置く（2026-08-16）。余白を作らない＝はみ出した絵も見える */
+  #stage{flex:1;position:relative;min-width:0;overflow:hidden}
   #stage::before{content:"";position:absolute;inset:0;pointer-events:none;
     background:radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,.5), transparent 62%)}
-  canvas#cv{max-width:100%;max-height:100%;box-shadow:0 14px 44px rgba(28,28,30,.18);
-    display:block;touch-action:none;cursor:grab}
+  canvas#cv{display:block;touch-action:none;cursor:grab}
   canvas#cv.grabbing{cursor:grabbing}
   #drop{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
     background:rgba(244,242,236,.92);border:1px dashed rgba(28,28,30,.35);
@@ -111,7 +111,7 @@
 
   @media (max-width:820px){
     body{flex-direction:column;overflow:auto}
-    #stage{padding:14px 12px;min-height:52vh}
+    #stage{min-height:52vh}
     #panel{width:100%;flex:1 1 auto;height:auto;border-left:0;border-top:1px solid var(--line);
       padding:18px 14px calc(80px + env(safe-area-inset-bottom))}
   }
@@ -312,6 +312,8 @@
       <button class="btn" id="b_undo">戻す</button>
       <button class="btn" id="b_redo">やり直す</button>
     </div>
+    <label class="chk" style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11.5px;cursor:pointer">
+      <input type="checkbox" id="c_guide" checked><span>版面のわくを見せる</span></label>
     <button class="btn" id="b_rand" style="margin-top:6px">ふる</button>
     <button class="btn solid" id="b_png" style="margin-top:6px">PNGで出す</button>
     <div class="btns2" style="margin-top:6px">
@@ -492,41 +494,54 @@ function silPath(s){                     /* 輪郭そのもの（及びの外側
   else ring(p,outlinePts(s),e);
   return p;
 }
-function setTf(g,s,W,H){
-  const S=Math.min(W,H)/2;
-  g.translate(W/2+s.x*S, H/2+s.y*S);
+/* ══⭐⭐ カメラ ── 2026-08-16（木下＝「KASAの時にもいったがボード全体を表示させるように」）
+   ⭐ 盤は【版面】ではなく【窓】。世界の座標 → 画素 はカメラが決める。
+   🔴🔴 既定のカメラ camOut(W,H) は【今までの式そのもの】＝
+      書き出し・動画は1画素も変わらない（実測で控えと突き合わせて確かめた）。
+   ⭐ 版面の半分の大きさ（世界の座標。短辺が 1）。 */
+function halfWH(){ const [rw,rh]=RATIO[P.ratio]||RATIO.a; const m=Math.min(rw,rh); return [rw/m, rh/m]; }
+/* ⚠️ 版面の大きさ（fw,fh）もカメラに持たせる。
+   書き出しは outSize() が丸めた実寸なので、そこから計算し直すと【1画素ずれる】（実測して直した）。
+   ⭐ 既定は canvas の実寸をそのまま持つ＝今までと完全に同じ数になる。 */
+function camOut(W,H){ return { S:Math.min(W,H)/2, cx:W/2, cy:H/2, fw:W, fh:H }; }
+function setTf(g,s,cam){
+  const S=cam.S;
+  g.translate(cam.cx+s.x*S, cam.cy+s.y*S);
   g.rotate(s.rot*Math.PI/180);
   g.transform(1,0,s.skew,1,0,0);
   g.scale(S*s.sc*s.asp, S*s.sc/s.asp);
 }
 /* 同じ置き方を行列で（Path2D をまとめて足すときに使う） */
-function matOf(s,W,H){
-  const S=Math.min(W,H)/2;
+function matOf(s,cam){
+  const S=cam.S;
   return new DOMMatrix()
-    .translate(W/2+s.x*S, H/2+s.y*S)
+    .translate(cam.cx+s.x*S, cam.cy+s.y*S)
     .rotate(s.rot)
     .multiply(new DOMMatrix([1,0,s.skew,1,0,0]))
     .scale(S*s.sc*s.asp, S*s.sc/s.asp);
 }
 /* ⭐ 絵のある所＝置いてある芯の輪郭の【合併】。
    輪郭はどれも同じ向きに回してあるので、既定の塗り（nonzero）でそのまま合併になる。 */
-function inkUnion(W,H,list){
+function inkUnion(cam,list){
   const p=new Path2D();
   for(const s of list){
     if(!s.on || s.mode==='hole') continue;
-    p.addPath(silPath(s), matOf(s,W,H));
+    p.addPath(silPath(s), matOf(s,cam));
   }
   return p;
 }
 
 /* 短冊の道（中心が原点・回す前） */
-function stripPath(W,H){
+function stripPath(cam){
+  /* ⚠️ 短冊の幅は【版面】で決まる（盤ではない）。カメラから版面の大きさを出す。
+     ⭐ 既定のカメラなら fw=W・fh=H ＝今までと同じ数になる。 */
+  const fw = cam.fw, fh = cam.fh;
   const p=new Path2D();
   const n=Math.max(1,Math.round(P.bN));
-  const big=Math.hypot(W,H)*1.2;
-  const pit=W/n, w=pit*Math.min(0.98,Math.max(0.02,P.bW));
+  const big=Math.hypot(fw,fh)*1.2;
+  const pit=fw/n, w=pit*Math.min(0.98,Math.max(0.02,P.bW));
   const k0=-Math.ceil(big/pit), k1=Math.ceil(big/pit);
-  for(let k=k0;k<=k1;k++) p.rect((k+P.bOff)*pit-W/2, -big/2, w, big);
+  for(let k=k0;k<=k1;k++) p.rect((k+P.bOff)*pit-fw/2, -big/2, w, big);
   return p;
 }
 
@@ -541,7 +556,8 @@ function stripPath(W,H){
 const LAY = document.createElement('canvas');
 const TMP = document.createElement('canvas');
 
-function paint(octx, W, H, t, withBg){
+function paint(octx, W, H, t, withBg, cam){
+  cam = cam || camOut(W,H);          /* 🔴 既定＝今までの式そのもの（出す絵は変わらない） */
   bandCut=false;
   const INK = P.inv ? P.bg : P.ink;
   const BG  = P.inv ? P.ink : P.bg;
@@ -563,7 +579,7 @@ function paint(octx, W, H, t, withBg){
   let nb=0;
   for(const s of NOW){
     if(!s.on) continue;
-    g.save(); setTf(g,s,W,H);
+    g.save(); setTf(g,s,cam);
     if(s.mode==='hole'){
       g.globalCompositeOperation='destination-out'; g.fillStyle='#000';
       g.fill(silPath(s));
@@ -584,18 +600,18 @@ function paint(octx, W, H, t, withBg){
 
   /* ── 短冊 ── */
   if(P.bOn){
-    const sp=stripPath(W,H);
+    const sp=stripPath(cam);
     g.save();
-    if(P.bInk) g.clip(inkUnion(W,H,NOW));   /* ⚠️ 切るのは回す前（版面の座標）で */
+    if(P.bInk) g.clip(inkUnion(cam,NOW));   /* ⚠️ 切るのは回す前（版面の座標）で */
     if(P.bFx==='shift'){
       /* ⭐ ずらす＝切って横へ貼り直す。いったん写してから、帯の中だけ入れ替える */
       TMP.width=W; TMP.height=H;
       const th=TMP.getContext('2d');
       th.setTransform(1,0,0,1,0,0); th.clearRect(0,0,W,H);
       th.drawImage(LAY,0,0);
-      const dx=P.bShift*Math.min(W,H);
+      const dx=P.bShift*Math.min(cam.fw,cam.fh);   /* ⚠️ 既定なら Math.min(W,H) と同じ数 */
       g.save();
-      g.translate(W/2,H/2); g.rotate(P.bRot*Math.PI/180);
+      g.translate(cam.cx,cam.cy); g.rotate(P.bRot*Math.PI/180);
       g.globalCompositeOperation='destination-out'; g.fillStyle='#000'; g.fill(sp);
       g.clip(sp);
       g.setTransform(1,0,0,1,0,0);
@@ -604,7 +620,7 @@ function paint(octx, W, H, t, withBg){
       g.restore();
     }else{
       g.save();
-      g.translate(W/2,H/2); g.rotate(P.bRot*Math.PI/180);
+      g.translate(cam.cx,cam.cy); g.rotate(P.bRot*Math.PI/180);
       if(P.bFx==='inv'){ g.globalCompositeOperation='xor'; g.fillStyle=INK; g.fill(sp); }
       else if(P.bFx==='hole'){ g.globalCompositeOperation='destination-out'; g.fillStyle='#000'; g.fill(sp); }
       else { g.globalCompositeOperation='source-over'; g.fillStyle=INK; g.fill(sp); }
@@ -622,44 +638,60 @@ function paint(octx, W, H, t, withBg){
 
 /* ══ 画面 ══════════════════════════════════════════════ */
 let cw=0, ch=0, u=0, raf=null;
+/* ══⭐⭐ 盤は【版面】ではなく【窓】── 2026-08-16
+   🔴 canvas を版面の形に切り取ると、盤に余白が出て、はみ出した絵が見えない
+      ＝寄る意味も無くなる（木下＝「ボード全体を表示させるように」／KASA と同じ直し）。
+   ⭐ canvas は盤いっぱいに置き、カメラで世界を覗く。版面は【ガイド】で見せるだけ。
+   ⚠️ 出す絵には版面のガイドを描かない。 */
+let cssW=0, cssH=0, fitS=1;
 function fit(){
   const st=document.getElementById('stage');
-  const pad=44;
-  const aw=Math.max(80, st.clientWidth-pad), ah=Math.max(80, st.clientHeight-pad);
-  const [rw,rh]=RATIO[P.ratio]||RATIO.a;
-  let w=aw, h=w*rh/rw;
-  if(h>ah){ h=ah; w=h*rw/rh; }
+  const w=Math.max(80, st.clientWidth), h=Math.max(80, st.clientHeight);
+  cssW=w; cssH=h;
+  const [hx,hy]=halfWH();
+  /* 版面が盤に収まる倍率（ズーム1のとき）。少し余白を残す */
+  fitS=Math.min(w/(2*hx), h/(2*hy))*0.88;
   const dpr=Math.min(2, window.devicePixelRatio||1);
   cv.style.width=w+'px'; cv.style.height=h+'px';
   cw=Math.max(2,Math.round(w*dpr)); ch=Math.max(2,Math.round(h*dpr));
   cv.width=cw; cv.height=ch;
 }
+/* 画面のカメラ（画素で持つ）。⭐ ズームと移動はここだけに効く＝出す絵には入らない */
+function camScreen(){
+  const k=cw/Math.max(1,cssW);
+  const S=fitS*VIEW.zoom*k;
+  const [hx,hy]=halfWH();
+  return { S, cx:(cssW/2)*k+VIEW.x, cy:(cssH/2)*k+VIEW.y, fw:2*hx*S, fh:2*hy*S };
+}
+/* 版面のガイド ── 何が書き出されるか。⭐ 出す絵には描かない */
+function drawGuide(octx,cam){
+  const x=cam.cx-cam.fw/2, y=cam.cy-cam.fh/2;
+  octx.save();
+  octx.setTransform(1,0,0,1,0,0);
+  /* 版面の外を少し落として、境を見せる */
+  octx.globalCompositeOperation='source-over';
+  octx.fillStyle='rgba(0,0,0,.34)';
+  octx.beginPath();
+  octx.rect(0,0,cw,ch);
+  octx.rect(x,y,cam.fw,cam.fh);
+  octx.fill('evenodd');
+  octx.strokeStyle='rgba(255,255,255,.5)';
+  octx.lineWidth=Math.max(1, cw/900);
+  octx.strokeRect(x+.5,y+.5,cam.fw-1,cam.fh-1);
+  octx.restore();
+}
 /* ══⭐ 寄る・引く（見るためだけ）══════════════════════════
-   ⭐ 拡大ではなく【その倍率で焼き直して、見えている窓だけ切る】＝寄っても線が痩せない
-      （枡 MASU の「全体で出す」と同じ考え方）。
-   ⚠️ ズームと移動は【見るためのもの】＝PNG・動画には掛けない（paint を呼ぶ所は他に2つあるが触っていない）。
-   ⚠️ 倍率のぶん画素が増えるので上限を置く。超えたら焼き直せる所まで焼いて、残りは引き伸ばす。 */
+   ⭐ 盤が【窓】になったので、拡大でも焼き直しでもなく【カメラの倍率】で寄る。
+      絵はベクターなので、寄っても線が痩せない（焼き直して窓を切る作りは要らなくなった）。
+   ⚠️ ズームと移動は【見るためのもの】＝PNG・動画には掛けない（paint の cam を既定に戻す）。 */
 const VIEW = { zoom:1, x:0, y:0 };
-const VIEW_MAXPX = 2.4e7;
-const VCV = document.createElement('canvas');
 function viewFit(){ VIEW.zoom=1; VIEW.x=0; VIEW.y=0; kick(); stat('正面に戻した'); }
 function render(){
-  if(VIEW.zoom === 1 && VIEW.x === 0 && VIEW.y === 0){
-    paint(ctx, cw, ch, P.anim?u:0, true);            /* ⭐ 等倍のときは今までと1バイトも変わらない道 */
-  }else{
-    const Z = VIEW.zoom;
-    let ss = Z;
-    if(cw*ch*ss*ss > VIEW_MAXPX) ss = Math.max(1, Math.sqrt(VIEW_MAXPX/(cw*ch)));
-    const W = Math.max(2, Math.round(cw*ss)), H = Math.max(2, Math.round(ch*ss));
-    VCV.width = W; VCV.height = H;
-    paint(VCV.getContext('2d'), W, H, P.anim?u:0, true);
-    /* 見えている所（版面の座標）を、焼いた絵の座標へ直して切り出す */
-    const sx = ss*(-VIEW.x)/Z, sy = ss*(-VIEW.y)/Z, sw = ss*cw/Z, sh = ss*ch/Z;
-    ctx.setTransform(1,0,0,1,0,0);
-    ctx.clearRect(0,0,cw,ch);
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(VCV, sx, sy, sw, sh, 0, 0, cw, ch);
-  }
+  /* ⭐ 盤いっぱいにカメラで刷る。絵はベクターなので、寄っても線が痩せない
+     （焼き直して窓を切る作りは要らなくなった＝カメラがその役をする）。 */
+  const cam = camScreen();
+  paint(ctx, cw, ch, P.anim?u:0, true, cam);
+  if(P.guide !== 0) drawGuide(ctx, cam);
   if(performance.now()<statUntil) return;          /* 知らせが出ている間は触らない */
   const [ow,oh]=outSize();
   const n=SRC.filter(s=>s.on).length;
@@ -874,16 +906,15 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
     /* ⚠️ ⌥ を押している間と、2本目の指が乗っている間は【画面を動かす】側に譲る */
     if(e.altKey || VPTS.size >= 1){ on=false; return; }
     on=true; cv.setPointerCapture(e.pointerId); cv.classList.add('grabbing');
-    const r=cv.getBoundingClientRect(); S=Math.min(r.width,r.height)/2;
     px=e.clientX; py=e.clientY; pushHist();
   });
   cv.addEventListener('pointermove',e=>{
     if(!on || e.altKey || VPTS.size >= 2) return;
     const s=cur();
-    /* ⚠️ 寄っているときは、指を1px動かしても版面では 1/倍率 しか動かない。
-          割らないと【寄るほど芯が速く飛ぶ】（見えているものと手が合わなくなる）。 */
-    const z=VIEW.zoom||1;
-    s.x+=(e.clientX-px)/S/z; s.y+=(e.clientY-py)/S/z;
+    /* ⚠️ 見えているものと手を合わせる＝【カメラの倍率】で割る（画面の画素→世界）。
+          割らないと寄るほど芯が速く飛ぶ。 */
+    const cam=camScreen(), kk=cw/Math.max(1,cv.getBoundingClientRect().width);
+    s.x+=(e.clientX-px)*kk/cam.S; s.y+=(e.clientY-py)*kk/cam.S;
     px=e.clientX; py=e.clientY;
     syncCore(); kick();
   });
@@ -896,20 +927,23 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
       ⌥（option）＋ドラッグ＝画面を動かす（ふつうのドラッグは【芯を引っぱる】ままにする）
       ダブルクリック＝正面に戻す
    ⚠️ VPTS は【芯のドラッグ側からも見る】ので、この上で宣言している（下で const にすると起動が止まる）。 */
+/* ⭐ 寄る・引くは【カメラの中心を動かす】1本の式にする。
+   ⚠️ 盤が窓になったので、1倍より引ける（版面より外まで見える）。 */
+function zoomAt(px, py, f){
+  const cam = camScreen();
+  const nz = Math.max(0.25, Math.min(24, VIEW.zoom * f));
+  const k2 = nz / VIEW.zoom;
+  const kk = cw/Math.max(1,cssW);
+  /* その点の下の世界が動かないように寄る */
+  VIEW.x = (px - (px - cam.cx)*k2) - (cssW/2)*kk;
+  VIEW.y = (py - (py - cam.cy)*k2) - (cssH/2)*kk;
+  VIEW.zoom = nz;
+  kick();
+}
 cv.addEventListener('wheel', e=>{
   e.preventDefault();
-  const dpr = cv.width / cv.clientWidth;
-  const mx = e.clientX, my = e.clientY;
-  const r = cv.getBoundingClientRect();
-  const px = (mx - r.left)*dpr, py = (my - r.top)*dpr;
-  const f = e.deltaY < 0 ? 1.08 : 1/1.08;
-  const nz = Math.max(1, Math.min(24, VIEW.zoom * f));
-  /* カーソルの下の点が動かないように寄る */
-  VIEW.x = px - (px - VIEW.x) * (nz / VIEW.zoom);
-  VIEW.y = py - (py - VIEW.y) * (nz / VIEW.zoom);
-  VIEW.zoom = nz;
-  if(nz === 1){ VIEW.x = 0; VIEW.y = 0; }          /* 等倍まで引いたら位置も戻す */
-  kick();
+  const dpr = cv.width / cv.clientWidth, r = cv.getBoundingClientRect();
+  zoomAt((e.clientX - r.left)*dpr, (e.clientY - r.top)*dpr, e.deltaY < 0 ? 1.08 : 1/1.08);
 }, { passive:false });
 const VPTS = new Map();
 let vPan=null, vPinch=null;
@@ -933,14 +967,10 @@ cv.addEventListener('pointermove', e=>{
   if(vPinch && VPTS.size === 2){
     const [a2,b2] = [...VPTS.values()];
     const d = Math.hypot(a2.x-b2.x, a2.y-b2.y);
-    const nz = Math.max(1, Math.min(24, vPinch.zoom * (d/Math.max(1,vPinch.d))));
     const dpr = cv.width / cv.clientWidth, r = cv.getBoundingClientRect();
     const cx = ((a2.x+b2.x)/2 - r.left)*dpr, cy = ((a2.y+b2.y)/2 - r.top)*dpr;
-    const px = (vPinch.cx - r.left)*dpr, py = (vPinch.cy - r.top)*dpr;
-    VIEW.x = cx - (px - vPinch.vx) * (nz / vPinch.zoom);
-    VIEW.y = cy - (py - vPinch.vy) * (nz / vPinch.zoom);
-    VIEW.zoom = nz;
-    if(nz === 1){ VIEW.x = 0; VIEW.y = 0; }
+    const want = vPinch.zoom * (d/Math.max(1,vPinch.d));
+    zoomAt(cx, cy, Math.max(0.25/VIEW.zoom, Math.min(24/VIEW.zoom, want/VIEW.zoom)));
     kick(); return;
   }
   if(vPan){ const q = vPt(e); VIEW.x = vPan.vx + (q.x - vPan.x); VIEW.y = vPan.vy + (q.y - vPan.y); kick(); }
@@ -983,6 +1013,9 @@ function redo(){
 }
 el('b_undo').onclick=undo;
 el('b_redo').onclick=redo;
+/* ⭐ 版面のわく＝何が書き出されるかの目印。画面だけに描く（出す絵には入らない） */
+P.guide = 1;
+el('c_guide').addEventListener('change', e=>{ P.guide = e.target.checked ? 1 : 0; kick(); saveLocal(); });
 
 /* ══⭐ キーショートカット ══════════════════════════════
    ⚠️ 打ち込み欄にいるときは何もしない（字が消える）。
@@ -1002,15 +1035,7 @@ addEventListener('keydown',e=>{
   if(k==='r'){ e.preventDefault(); el('b_rand').click(); return; }                      /* ふる */
 });
 /* 画面の真ん中を軸に寄る・引く（キーのときはカーソルが無いので中心） */
-function zoomStep(f){
-  const nz=Math.max(1, Math.min(24, VIEW.zoom*f));
-  const px=cw/2, py=ch/2;
-  VIEW.x = px - (px - VIEW.x)*(nz/VIEW.zoom);
-  VIEW.y = py - (py - VIEW.y)*(nz/VIEW.zoom);
-  VIEW.zoom = nz;
-  if(nz===1){ VIEW.x=0; VIEW.y=0; }
-  kick();
-}
+function zoomStep(f){ zoomAt(cw/2, ch/2, f); }
 const R=(a,b)=>a+Math.random()*(b-a);
 const RI=(a,b)=>Math.round(R(a,b));
 el('b_rand').onclick=()=>{
