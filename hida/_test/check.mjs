@@ -148,6 +148,41 @@ const outSame = await p.evaluate(() => {
 check(outSame, '寄っていても、出る絵は寄っていないものと完全に同じ');
 await p.evaluate(() => viewFit());
 
+/* ⭐ ⑥ 見本 ── 2026-08-17（4本→11本にしたときに新設）
+   🔴 見るのは「PRESETS に書いてあるか」ではなく【押して絵が出るか】。
+      ボタンの data-v と関数名がずれると、書けているのに出ない（入口が死ぬ）。
+   ⭐ 測るのは【出す絵】（書き出しと同じ道）＝画面のカメラに左右されない。 */
+console.log('\n── ⑥ 見本は全部【押して】出るか');
+const preList = await p.evaluate(() => [...document.getElementById('pre').children].map(x => ({v:x.dataset.v, t:x.textContent})));
+const preSig = () => p.evaluate(() => {
+  const [ow,oh] = outSize();
+  const o = document.createElement('canvas'); o.width = ow; o.height = oh;
+  paint(o.getContext('2d'), ow, oh, 0, true);
+  const d = o.getContext('2d').getImageData(0,0,ow,oh).data;
+  let x = 2166136261, ink = 0, n = 0;
+  for(let i = 0; i < d.length; i += 4*7){ x ^= d[i]+d[i+1]*3+d[i+2]*7; x = Math.imul(x, 16777619); if(d[i] < 128) ink++; n++; }
+  return { h:x>>>0, ink:Math.round(ink/n*100) };
+});
+const preSeen = new Map();
+for(const nm of preList){
+  await p.click(`#pre button[data-v="${nm.v}"]`); await wait(650);
+  const s = await preSig();
+  const on  = await p.evaluate(v => document.querySelector(`#pre button[data-v="${v}"]`).classList.contains('on'), nm.v);
+  const dup = preSeen.get(s.h);
+  /* ⚠️ まっ白・まっ黒は「出た」ではない（絵が無いのに落ちない＝意味のないテストになる） */
+  const live = s.ink > 2 && s.ink < 98;
+  check(on && live && !dup, `見本「${nm.t}」が押して出る`,
+        `墨 ${s.ink}%${dup ? '  🔴 ' + dup + ' と同じ絵' : ''}${on ? '' : '  🔴 選ばれない'}`);
+  preSeen.set(s.h, nm.t);
+}
+/* ⚠️ 見本のボタンは幅が不揃いになりやすい（一字だけ痩せる）＝格子で組んであるかを数で見る */
+const preW = await p.evaluate(() => {
+  const bs = [...document.getElementById('pre').children].map(x => x.getBoundingClientRect().width);
+  return { min:Math.round(Math.min(...bs)), max:Math.round(Math.max(...bs)) };
+});
+check(preW.min >= 50, '見本のボタンが痩せていない', `${preW.min}〜${preW.max}px`);
+await p.evaluate(() => { PRESETS.geijutsu(); syncAll(); kick(); });
+
 console.log(ng.length ? `\n🔴 だめだったもの ${ng.length}件: ${ng.join(' / ')}` : '\n✅ 全部通った');
 if(errs) console.log(`🔴 JSエラー ${errs}件`);
 await b.close();
