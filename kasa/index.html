@@ -57,7 +57,7 @@
   .row{display:flex;align-items:center;gap:10px;margin-bottom:7px}
   .row span.n{flex:1;font-size:12px;color:var(--fg2)}
   .row output{font-family:"Space Mono",monospace;font-size:10px;color:var(--fg3);min-width:38px;text-align:right}
-  input[type=range]{-webkit-appearance:none;width:100%;height:22px;background:transparent;cursor:pointer;touch-action:none}
+  input[type=range]{-webkit-appearance:none;width:100%;height:22px;background:transparent;cursor:pointer;touch-action:pan-y}
   input[type=range]::-webkit-slider-runnable-track{height:2px;background:rgba(28,28,30,.18);border-radius:2px}
   input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;
     background:var(--fg);margin-top:-5.5px;box-shadow:0 1px 3px rgba(28,28,30,.35)}
@@ -1594,6 +1594,56 @@ addEventListener('resize',()=>{ if(!TV.on){ fit(); rebuild(); } });
 window.KASA={ get P(){return P}, get HOLE(){return HOLE}, get LAMP(){return LAMP},
   paint, buildField, outSize, bundle, applyState, rebuild, fit, render,
   get FW(){return FW}, get FH(){return FH}, get fieldMs(){return fieldMs} };
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════
+     モバイルの保存 ── 2026-08-15
+     🔴 木下＝「アンドロイドモバイルで試したら、ほぼ png ダウンロードなどもできなかった」
+     ⚠️ 原因になりやすい作り＝<a download> に blob: を渡す形。
+        iOS Safari は保存せず開くだけ／Android は click 直後に remove すると中断される。
+     ⭐ 触る端末のときだけ【端末の共有シート】へファイルを渡す。無ければ今までどおり落とす。
+     🔴🔴 PC は最初の1行で必ず素通りする（pointer:coarse かつ hover が無いときだけ通る）
+          ＝マウスの端末の挙動は1バイトも変えない。
+     ⚠️ 共有を断られた／使えないときは、元の click をそのまま呼ぶ＝今までの動きに戻るだけ。
+     ⭐ 消せば完全に元へ戻る（このブロックだけ）。
+     ══════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  var touchOnly = window.matchMedia
+    && matchMedia('(pointer:coarse)').matches && !matchMedia('(hover:hover)').matches;
+  if(!touchOnly) return;                       /* 🔴 PC はここで終わり */
+  if(!window.HTMLAnchorElement) return;
+  var orig = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function(){
+    var href = this.getAttribute('href') || '';
+    var name = this.getAttribute('download');
+    /* 落とすためのアンカー（blob: ＋ download）以外はそのまま */
+    if(!name || href.slice(0,5) !== 'blob:' || this.dataset.plainSave)
+      return orig.apply(this, arguments);
+    var self = this, args = arguments;
+    var plain = function(){                    /* ⚠️ 今までの動きに戻す（すぐ消さない） */
+      try{
+        var a = document.createElement('a');
+        a.href = href; a.download = name; a.dataset.plainSave = '1';
+        document.body.appendChild(a);
+        orig.apply(a, []);
+        setTimeout(function(){ if(a.parentNode) a.remove(); }, 20000);
+      }catch(_){ try{ orig.apply(self, args); }catch(__){} }
+    };
+    /* ⚠️ blob: は道具側が数秒で捨てるので【すぐ】中身を取っておく */
+    fetch(href).then(function(r){ return r.blob(); }).then(function(b){
+      var f;
+      try{ f = new File([b], name, { type: b.type || 'application/octet-stream' }); }
+      catch(_){ return plain(); }
+      if(navigator.share && navigator.canShare && navigator.canShare({ files:[f] })){
+        return navigator.share({ files:[f], title:name })
+          .catch(function(err){ if(!(err && err.name === 'AbortError')) plain(); });
+      }
+      plain();
+    }).catch(plain);
+    return undefined;
+  };
+})();
 </script>
 </body>
 </html>
