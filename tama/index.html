@@ -130,6 +130,30 @@
     <b>ダブルクリック＝戻す</b>／<b>⌘Z＝ひとつ戻す</b></div>
 
   <div class="grp">
+    <label class="h">見本</label>
+    <div class="seg" id="pre">
+      <button data-v="kasane">重なり</button>
+      <button data-v="futaji">二字</button>
+      <button data-v="wa">輪</button>
+    </div>
+    <div class="note">押すと丸ごと入れ替わる。<b>戻す</b>で戻れる。</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">描く</label>
+    <label class="chk"><input type="checkbox" id="c_draw"> 盤の上で描く</label>
+    <div class="row"><span class="n">筆の太さ</span><output id="o_pen"></output></div>
+    <input type="range" id="r_pen" min="0.004" max="0.14" step="0.001">
+    <div class="btns2">
+      <button class="btn sm" id="b_undoline">1本消す</button>
+      <button class="btn sm" id="b_clear">全部消す</button>
+    </div>
+    <div class="note">⭐入れると<b>左ドラッグで描ける</b>（切ると盤の操作に戻る）。
+      線は<b>玉の連なり</b>で刷るので、間隔を詰めれば筆跡、離せば数珠になる。<br>
+      ⚠️描いている間も<b>右ドラッグ／スペース＋ドラッグ</b>で盤は動かせる。</div>
+  </div>
+
+  <div class="grp">
     <label class="h">文字</label>
     <textarea id="t_text" rows="2"></textarea>
     <div class="row" style="margin-top:8px"><span class="n">書体</span></div>
@@ -160,9 +184,9 @@
   <div class="grp">
     <label class="h">玉 — 輪郭に押す</label>
     <div class="row"><span class="n">大きさ</span><output id="o_r"></output></div>
-    <input type="range" id="r_r" min="0" max="0.12" step="0.0005">
-    <div class="row"><span class="n">間隔</span><output id="o_gap"></output></div>
-    <input type="range" id="r_gap" min="0.002" max="0.16" step="0.0005">
+    <input type="range" id="r_r" min="0" max="0.20" step="0.0005">
+    <div class="row"><span class="n">間隔（玉何個ぶん）</span><output id="o_gap"></output></div>
+    <input type="range" id="r_gap" min="0.15" max="1.8" step="0.01">
     <div class="row"><span class="n">送り</span><output id="o_phase"></output></div>
     <input type="range" id="r_phase" min="0" max="1" step="0.005">
     <div class="row"><span class="n">かたち</span></div>
@@ -171,7 +195,9 @@
       <button data-v="edge">玉だけ</button>
       <button data-v="fill">塗りだけ</button>
     </div>
-    <div class="note">⭐<b>間隔</b>を<b>大きさ</b>より詰めると玉が繋がって1本の帯になり、離すと数珠になる。<br>
+    <div class="note">⭐<b>間隔</b>は玉の直径に対する割合。<b>0.6</b>あたりで球どうしが少し食い込んで<b>球で作られた形</b>になり、
+      <b>1.0</b>を超えると離れて数珠になる。<br>
+      ⭐<b>塗り＋玉</b>のときは、塗りを<b>玉のぶん内側に削って</b>から玉を置く＝輪郭が全部球の弧になる。<br>
       ⭐<b>玉だけ</b>＝塗らずに輪郭だけ押す＝<b>玉の輪</b>になる。<br>
       ⭐<b>送り</b>＝玉が輪郭に沿って進む。1周でぴったり戻る。</div>
   </div>
@@ -214,6 +240,10 @@
     <input type="range" id="r_cyc" min="0.5" max="30" step="0.5">
     <div class="row"><span class="n">玉を流す</span><output id="o_flow"></output></div>
     <input type="range" id="r_flow" min="0" max="4" step="1">
+    <div class="row"><span class="n">玉が脈打つ</span><output id="o_beat2"></output></div>
+    <input type="range" id="r_beat2" min="0" max="0.5" step="0.01">
+    <div class="row"><span class="n">ずれが回る</span><output id="o_spin"></output></div>
+    <input type="range" id="r_spin" min="0" max="3" step="1">
     <div class="note">⭐押すまで動かない。<b>止めると元の姿に戻る</b>。<br>
       <b>玉を流す</b>＝1周で玉が何個ぶん進むか。整数なので<b>1周でぴったり戻る</b>。</div>
   </div>
@@ -306,12 +336,17 @@ const RATIO={ '1':[1,1], '169':[16,9], '43':[4,3], '45':[4,5] };
 let P = {
   ratio:'1', sz:'1620', long:1620, frame:false, alpha:false,
   text:'たま', font:'Hiragino Sans, sans-serif', tw:800, tsize:0.52, tls:0.02, tlh:1.05,
-  r:0.030, gap:0.030, phase:0, mode:'both',
+  r:0.045, gap:0.60, phase:0, mode:'both', draw:false, pen:0.045, beat:0, spin:0,
   bg:'#4a2318',
   anim:false, cyc:8, flow:1
 };
 /* 版＝色とずれを持つ刷り面 */
 let PLATE=[], sel=0;
+/* ⭐ 描いた線（世界の座標）。文字と同じ玉で刷る。
+   ⚠️ 文字は【輪郭】に玉を押すが、線は【線そのもの】を玉の連なりにする。
+      筆跡の縁がスカラップになるのは、丸を近づけて押した結果（参考1枚目がこれ）。 */
+let STROKE=[];
+const LAY=document.createElement('canvas');   /* 版ごとに彫るための紙 */
 function newPlate(o){ return Object.assign({on:true, col:'#c9cdd0', ox:0, oy:0, ph:0, fat:0}, o||{}); }
 
 /* ══ 盤は窓（版面に縛らない） ══════════════════════════ */
@@ -380,7 +415,7 @@ function layout(octx,S){
       px+=ww[ci]+ls;
     }
   }
-  return out;
+  return {list:out, font:octx.font};
 }
 
 function paint(octx, W, H, t, cam, withBg){
@@ -390,41 +425,91 @@ function paint(octx, W, H, t, cam, withBg){
   octx.clearRect(0,0,W,H);
   if(withBg!==false){ octx.fillStyle=P.bg; octx.fillRect(0,0,W,H); }
 
-  const gap=Math.max(0.0015,P.gap)*S;          /* 玉と玉の間 */
-  const rad=Math.max(0,P.r)*S;                 /* 玉の半径 */
-  const glyphs=layout(octx,S);
+  /* ⭐⭐ 間隔は【玉の直径に対する割合】で持つ。
+     ⚠️ 玉の大きさと間隔を別々の長さで持つと、片方を動かすたび見えが崩れる。
+        0.6 前後＝球どうしが少し食い込んで粒立ちが残る。1.0 を超えると数珠に離れる。 */
+  const rad=Math.max(0,P.r)*S;
+  const LY=layout(octx,S), glyphs=LY.list;
 
   for(const pl of PLATE){
     if(!pl.on) continue;
-    octx.save();
-    octx.translate(CX+pl.ox*S, CY+pl.oy*S);
-    octx.fillStyle=pl.col; octx.strokeStyle=pl.col;
-    octx.lineJoin='round'; octx.lineCap='round';
-    /* 太らせ＝線の太さを足して輪郭ごとふくらませる（玉とは別に効く） */
     const fat=pl.fat*S;
-    /* ⭐ 送り＝破線の位相。玉1個ぶん＝gap なので、gap の倍数だけ進めると
-       ぴったり同じ姿に戻る＝継ぎ目なし。 */
-    const ph=((P.phase+pl.ph+t*P.flow)%1)*gap;
+    const ph0=(P.phase+pl.ph+t*P.flow)%1;
+    /* ⭐ 脈＝玉だけが太る・痩せる（1周で戻る） */
+    const beat=1+P.beat*Math.sin(TAU*(t*Math.max(1,P.flow||1)+pl.ph));
+    const rr=Math.max(0.3, rad*beat+Math.max(0,fat));
+    const gap=Math.max(0.6, P.gap*2*rr);
+    const ph=ph0*gap;
 
-    for(const g of glyphs){
-      /* ① 塗り */
-      if(P.mode!=='edge'){
-        octx.setLineDash([]);
-        if(fat>0){ octx.lineWidth=fat*2; octx.strokeText(g.ch,g.x,g.y); }
-        octx.fillText(g.ch,g.x,g.y);
-      }
-      /* ② 輪郭に玉を押す
-         ⭐ 長さ 0 の破線＋丸い線端＝等間隔に並んだ丸。
-         ⚠️ 長さちょうど 0 だと描かない実装があるので、ごく短い値を入れる。 */
-      if(P.mode!=='fill' && rad>0.2){
-        octx.lineWidth=Math.max(0.2,(rad+Math.max(0,fat))*2);
-        octx.setLineDash([0.01, Math.max(0.05,gap)]);
-        octx.lineDashOffset=-ph;
-        octx.strokeText(g.ch,g.x,g.y);
+    /* ⭐⭐ 球で作る ── 塗りを【玉のぶん内側に削って】から、輪郭に玉を置く。
+       🔴 削らずに塗ると、玉と玉の間に【まっすぐな縁】が見えて、
+          球ではなく「さざ波」にしか見えない（木下＝「球で作られている感がすくない」）。
+       ⭐ 削るのは destination-out で輪郭を太い線でなぞるだけ＝画素を持たないまま彫れる。
+       ⚠️ そのために版ごとに別の紙（層）を用意する。地まで彫ってしまうため。 */
+    const useLayer = (P.mode==='both' && rr>0.3);
+    let g2=octx;
+    if(useLayer){
+      if(LAY.width!==W||LAY.height!==H){ LAY.width=W; LAY.height=H; }
+      g2=LAY.getContext('2d');
+      g2.setTransform(1,0,0,1,0,0);
+      g2.clearRect(0,0,W,H);
+    }
+    g2.save();
+    /* ⭐ ずれが回る＝刷りずれが円を描く。整数の回数なら1周でぴったり戻る。 */
+    let ox=pl.ox, oy=pl.oy;
+    if(P.spin){ const a2=TAU*P.spin*t, c2=Math.cos(a2), s3=Math.sin(a2);
+      ox=pl.ox*c2-pl.oy*s3; oy=pl.ox*s3+pl.oy*c2; }
+    g2.translate(CX+ox*S, CY+oy*S);
+    /* 🔴 層は別の紙なので、字の設定は引き継がれない。ここで必ず入れ直す
+       （入れ忘れて 10px の既定書体になり、字が点にしか見えなかった）。 */
+    g2.font=LY.font; g2.textAlign='center'; g2.textBaseline='middle';
+    g2.fillStyle=pl.col; g2.strokeStyle=pl.col;
+    g2.lineJoin='round'; g2.lineCap='round';
+
+    /* ① 塗り */
+    if(P.mode!=='edge'){
+      g2.setLineDash([]);
+      g2.globalCompositeOperation='source-over';
+      if(fat>0){ g2.lineWidth=fat*2; for(const g of glyphs) g2.strokeText(g.ch,g.x,g.y); }
+      for(const g of glyphs) g2.fillText(g.ch,g.x,g.y);
+      /* ② 玉のぶん内側に削る（球で作るとき） */
+      if(useLayer){
+        g2.globalCompositeOperation='destination-out';
+        /* ⚠️ 玉とちょうど同じ幅で削ると、縁に髪の毛のような隙間が残る（縁の甘さのぶん）。
+           少し浅く削って、玉に重ねて隠す。 */
+        g2.lineWidth=rr*1.78;
+        for(const g of glyphs) g2.strokeText(g.ch,g.x,g.y);
+        g2.globalCompositeOperation='source-over';
       }
     }
-    octx.setLineDash([]);
-    octx.restore();
+    /* ③ 輪郭に玉を押す
+       ⭐ 長さ 0 の破線＋丸い線端＝等間隔に並んだ丸。
+       ⚠️ 長さちょうど 0 だと描かない実装があるので、ごく短い値を入れる。 */
+    if(P.mode!=='fill' && rr>0.3){
+      g2.lineWidth=rr*2;
+      g2.setLineDash([0.01, gap]);
+      g2.lineDashOffset=-ph;
+      for(const g of glyphs) g2.strokeText(g.ch,g.x,g.y);
+    }
+    /* ④ 描いた線 ── 線そのものが玉の連なり（削る必要がない） */
+    if(STROKE.length){
+      const pr=Math.max(0.3,P.pen*S*beat+Math.max(0,fat));
+      const pgap=Math.max(0.6,P.gap*2*pr);
+      g2.lineWidth=pr*2;
+      g2.setLineDash(P.mode==='fill'?[]:[0.01,pgap]);
+      g2.lineDashOffset=-ph0*pgap;
+      for(const st of STROKE){
+        if(!st.length) continue;
+        g2.beginPath();
+        g2.moveTo(st[0][0]*S, st[0][1]*S);
+        if(st.length===1) g2.lineTo(st[0][0]*S+0.01, st[0][1]*S);
+        else for(let i=1;i<st.length;i++) g2.lineTo(st[i][0]*S, st[i][1]*S);
+        g2.stroke();
+      }
+    }
+    g2.setLineDash([]);
+    g2.restore();
+    if(useLayer){ octx.setTransform(1,0,0,1,0,0); octx.drawImage(LAY,0,0); }
   }
   return glyphs.length;
 }
@@ -511,8 +596,8 @@ function cur(){ return PLATE[sel]||PLATE[0]||(PLATE[0]=newPlate()); }
 const F2=v=>v.toFixed(2), F3=v=>v.toFixed(3), FI=v=>String(Math.round(v));
 const R=[
   ['tw','tw',FI],['tsize','tsize',F2],['tls','tls',F2],['tlh','tlh',F2],
-  ['r','r',F3],['gap','gap',F3],['phase','phase',F2],
-  ['flow','flow',FI],['long','long',v=>Math.round(v)+'px']
+  ['r','r',F3],['gap','gap',F2],['phase','phase',F2],['pen','pen',F3],
+  ['flow','flow',FI],['beat2','beat',F2],['spin','spin',FI],['long','long',v=>Math.round(v)+'px']
 ];
 R.forEach(([id,key,fmt])=>{
   const r=el('r_'+id); if(!r) return;
@@ -555,6 +640,31 @@ function segSet(id,v){ const n=el(id); if(n) [...n.children].forEach(x=>x.classL
 segWire('ratio',v=>{ P.ratio=v; touchView(); fit(); kick(); szSync(); saveLocal(); });
 segWire('szSeg',v=>{ P.sz=v; el('r_long').classList.toggle('hide',v!=='px'); kick(); szSync(); saveLocal(); });
 segWire('fillMode',v=>{ P.mode=v; kick(); saveLocal(); });
+/* ⭐ 見本 ── 参考の3枚に寄せた置き方。数字は原寸で並べて合わせたもの。 */
+const PRESET={
+  kasane(){   /* 重なり：筆記体が絡み、紫と灰がずれて重なる */
+    P.text='Tama\nTama'; P.font='Georgia, serif'; P.tw=700;
+    P.tsize=0.72; P.tls=-0.02; P.tlh=0.72;
+    P.r=0.048; P.gap=0.60; P.mode='both'; P.bg='#4a2318'; P.beat=0;
+    PLATE=[ newPlate({col:'#c9cdd0', ox:0.045, oy:0.030, ph:0.35}),
+            newPlate({col:'#8b5cf6', ox:0, oy:0, ph:0}) ];
+  },
+  futaji(){   /* 二字：太い角の字を2つ、灰と紫で並べる */
+    P.text='玉'; P.font='Hiragino Sans, sans-serif'; P.tw=900;
+    P.tsize=1.15; P.tls=0.02; P.tlh=1.0;
+    P.r=0.055; P.gap=0.62; P.mode='both'; P.bg='#4a2318'; P.beat=0;
+    PLATE=[ newPlate({col:'#c9cdd0', ox:-0.42, oy:0, ph:0.2}),
+            newPlate({col:'#8b5cf6', ox:0.42, oy:0, ph:0.7}) ];
+  },
+  wa(){       /* 輪：塗らずに輪郭だけ押す＝玉の輪が並ぶ */
+    P.text='OOO\nOOO'; P.font='Georgia, serif'; P.tw=400;
+    P.tsize=0.40; P.tls=0.10; P.tlh=1.15;
+    P.r=0.022; P.gap=0.55; P.mode='edge'; P.bg='#4a2318'; P.beat=0;
+    PLATE=[ newPlate({col:'#c9cdd0', ox:0.030, oy:0.022, ph:0.4}),
+            newPlate({col:'#8b5cf6', ox:0, oy:0, ph:0}) ];
+  }
+};
+segWire('pre',v=>{ PRESET[v](); STROKE=[]; sel=0; syncUI(); kick(); saveLocal(); stat('見本「'+v+'」を置いた'); });
 
 el('t_text').addEventListener('focus',pushHist);
 el('t_text').addEventListener('input',()=>{ P.text=el('t_text').value; kick(); saveLocal(); });
@@ -567,7 +677,9 @@ function frameSync(){ el('ratioBox').classList.toggle('hide',!P.frame); }
 el('anGo').onclick=()=>{
   const on=!P.anim;
   /* ⭐ 流しが 0 なら押しても1コマも変わらない。こちらで入れて知らせる。 */
-  if(on&&P.flow<0.5){ pushHist(); P.flow=1; syncUI(); stat('玉を流す が 0 だったので 1 を入れた'); }
+  if(on&&P.flow<0.5&&P.beat<0.005&&P.spin<0.5){
+    pushHist(); P.flow=1; syncUI(); stat('どれも 0 だったので「玉を流す」に 1 を入れた');
+  }
   anim(on); animSync(); szSync(); saveLocal();
 };
 el('b_add').onclick=()=>{ pushHist();
@@ -599,6 +711,7 @@ function syncUI(){
   segSet('ratio',P.ratio); segSet('szSeg',P.sz); segSet('fillMode',P.mode);
   el('r_long').classList.toggle('hide',P.sz!=='px');
   el('t_text').value=P.text; el('t_font').value=P.font;
+  el('c_draw').checked=P.draw;
   el('c_bg').value=P.bg; el('c_frame').checked=P.frame; el('c_alpha').checked=P.alpha;
   drawList(); syncPlate(); szSync();
 }
@@ -613,15 +726,30 @@ function szSync(){
     tv.innerHTML='出力 <b>'+a+' × '+b+'</b> px'
       +(over?'<br>⚠️ mp4 の上限超え — 出る大きさを下げてください':'')
       +'<br>'+p.total+' コマ・'+p.sec.toFixed(1)+'秒・'+p.fps+'fps'
-      +(p.moving?'':'<br>⚠️ <b>「玉を流す」が 0</b> ＝ 全コマ同じ絵になります');
+      +(p.moving?'':'<br>⚠️ <b>流す・脈・回る がどれも 0</b> ＝ 全コマ同じ絵になります');
   }
 }
 function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); return b?b.dataset.v:dflt; }
 
 /* ══ 盤を動かす ══════════════════════════════════════ */
+el('c_draw').onchange=e=>{ P.draw=e.target.checked; cv.style.cursor=P.draw?'crosshair':'default'; saveLocal(); };
+el('b_undoline').onclick=()=>{ if(!STROKE.length){ stat('描いた線はまだ無い'); return; } pushHist(); STROKE.pop(); kick(); saveLocal(); };
+el('b_clear').onclick=()=>{ if(!STROKE.length){ stat('描いた線はまだ無い'); return; } pushHist(); STROKE=[]; kick(); saveLocal(); };
+
 (function(){
-  let pan=false, px=0, py=0;
+  let pan=false, px=0, py=0, ink=null;
+  /* 盤の座標 → 世界の座標 */
+  function at(e){
+    const r=cv.getBoundingClientRect();
+    const S2=fitS*VIEW.z;
+    return [(e.clientX-r.left-(cssW/2+VIEW.x))/S2, (e.clientY-r.top-(cssH/2+VIEW.y))/S2];
+  }
   cv.addEventListener('pointerdown',e=>{
+    /* ⭐ 描くを入れているときは、左ドラッグが筆になる（盤を動かすのは右かスペース） */
+    if(P.draw && e.button===0 && !spaceDown){
+      pushHist(); ink=[at(e)]; STROKE.push(ink);
+      cv.setPointerCapture(e.pointerId); e.preventDefault(); kick(); return;
+    }
     if(e.button===2||e.button===1||spaceDown){
       pan=true; px=e.clientX; py=e.clientY;
       cv.setPointerCapture(e.pointerId); document.body.classList.add('panning');
@@ -629,17 +757,26 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
     }
   });
   cv.addEventListener('pointermove',e=>{
+    if(ink){
+      const p=at(e), q=ink[ink.length-1];
+      /* ⚠️ 点を全部拾うと控えが太る。少し動いたときだけ足す */
+      if((p[0]-q[0])**2+(p[1]-q[1])**2 > 4e-6){ ink.push(p); kick(); }
+      return;
+    }
     if(!pan) return;
     VIEW.x+=e.clientX-px; VIEW.y+=e.clientY-py; px=e.clientX; py=e.clientY;
     touchView(); kick();
   });
-  const end=()=>{ if(!pan) return; pan=false; document.body.classList.remove('panning'); };
+  const end=()=>{
+    if(ink){ ink=null; saveLocal(); }
+    if(!pan) return; pan=false; document.body.classList.remove('panning');
+  };
   cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
 })();
 
 /* ══ ふる / 戻す ══════════════════════════════════════ */
 let hist=[], histLock=false;
-const snap=()=>JSON.stringify({P,PLATE,sel});
+const snap=()=>JSON.stringify({P,PLATE,sel,STROKE});
 function pushHist(){
   if(histLock) return;
   const s=snap();
@@ -650,6 +787,7 @@ function applyState(o){
   histLock=true;
   if(o.P) Object.assign(P,o.P,{anim:false});
   if(Array.isArray(o.PLATE)&&o.PLATE.length) PLATE=o.PLATE.map(p=>newPlate(p));
+  STROKE=Array.isArray(o.STROKE)?o.STROKE.map(s=>s.map(p=>[+p[0],+p[1]])):[];
   sel=Math.min(PLATE.length-1,Math.max(0,o.sel|0));
   histLock=false;
   fit(); syncUI(); anim(false); kick();
@@ -699,7 +837,7 @@ el('b_png').onclick=async ()=>{
 };
 
 /* ══ 控え ══════════════════════════════════════════════ */
-function bundle(){ return {v:1, tool:'tama', P:{...P,anim:false}, PLATE, sel}; }
+function bundle(){ return {v:1, tool:'tama', P:{...P,anim:false}, PLATE, sel, STROKE}; }
 el('b_save').onclick=()=>{
   const b=new Blob([JSON.stringify(bundle(),null,1)],{type:'application/json'});
   dl(b,'tama_'+Date.now()+'.json'); stat('控えた');
@@ -738,7 +876,7 @@ function loadLocal(){
    ══════════════════════════════════════════════════════ */
 function plan(){
   const fps=+segVal('tvFps','24'), loops=+segVal('tvLoop','1');
-  const moving=P.flow>=1;
+  const moving=P.flow>=1||P.beat>0.005||P.spin>=1;
   const sec=loops*Math.max(0.5,P.cyc);
   return {fps,loops,sec,total:Math.max(2,Math.round(sec*fps)),moving};
 }
@@ -899,7 +1037,7 @@ addEventListener('resize',()=>{ if(!TV.on){ fit(); kick(); } });
 /* 試験から呼ぶ入口（画面には出さない） */
 window.TAMA={ get P(){return P}, get PLATE(){return PLATE}, paint, outSize, bundle,
   applyState, fit, render, camOut, camFor, camScreen, get VIEW(){return VIEW},
-  guideAlpha, layout };
+  guideAlpha, layout, get STROKE(){return STROKE} };
 </script>
 </body>
 </html>
