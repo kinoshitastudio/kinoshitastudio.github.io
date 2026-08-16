@@ -47,14 +47,24 @@ check(s1 !== s3, '寄ると絵が変わる', `${s1} → ${s3}`);
 await p.evaluate(() => viewFit()); await wait(700);
 check(await sig() === s1, '引くと等倍と完全に同じに戻る（本体を汚していない）');
 
-console.log('\n── ② 寄っても線が痩せないか');
+console.log('\n── ② 盤は【窓】か／寄っても線が痩せないか');
 /* ⚠️ ただ引き伸ばしただけなら、輪郭の画素は【増えない】（縁がぼけて薄く広がる）。
-      焼き直していれば、同じ面積の中の輪郭の数はおおよそ保たれる。 */
-check(sh3 > sh1 * 0.5, '寄った絵の輪郭が保たれている（焼き直している）', `等倍 ${sh1} → 3倍 ${sh3}`);
-const ss = await p.evaluate(() => { const Z = 3;
-  let s = Z; if(cw*ch*s*s > VIEW_MAXPX) s = Math.max(1, Math.sqrt(VIEW_MAXPX/(cw*ch)));
-  return +s.toFixed(2); });
-check(ss > 1.5, '3倍のとき、焼き直す倍率が1より大きい', `${ss} 倍で焼いている`);
+      カメラで寄っていれば、絵はベクターのまま焼かれるので輪郭は保たれる。 */
+check(sh3 > sh1 * 0.5, '寄った絵の輪郭が保たれている（カメラで寄っている）', `等倍 ${sh1} → 3倍 ${sh3}`);
+/* ⭐⭐ 盤は版面ではなく窓 ── canvas が盤いっぱいで、版面はガイドとして描くだけ */
+const board = await p.evaluate(() => { const st=document.getElementById('stage');
+  return { sw:st.clientWidth, sh:st.clientHeight, cw:cv.clientWidth, ch:cv.clientHeight }; });
+check(board.sw === board.cw && board.sh === board.ch, 'canvas が盤いっぱい（版面に切り取られていない）',
+      `盤 ${board.sw}×${board.sh} / canvas ${board.cw}×${board.ch}`);
+const zoomOut = await p.evaluate(() => { viewFit(); zoomStep(1/6); return VIEW.zoom; });
+check(zoomOut < 1, '1倍より引ける（版面の外まで見える）', `${zoomOut.toFixed(2)} 倍`);
+await p.evaluate(() => viewFit()); await wait(400);
+/* 版面のわくは【画面だけ】＝入切で画面が変わる */
+const gOn = await p.evaluate(() => { P.guide=1; kick(); return 1; });
+await wait(400); const gp1 = await sig();
+await p.evaluate(() => { P.guide=0; kick(); }); await wait(400); const gp2 = await sig();
+check(gp1 !== gp2, '版面のわくを消すと画面が変わる（画面だけの飾り）');
+await p.evaluate(() => { P.guide=1; kick(); }); await wait(300);
 
 console.log('\n── ③ ドラッグの行き先');
 await p.evaluate(() => { viewFit(); });
