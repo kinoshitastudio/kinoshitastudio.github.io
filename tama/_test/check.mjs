@@ -35,9 +35,9 @@ try{
 
   // 間隔が効く
   const g=document.getElementById('r_gap');
-  g.value=0.01; g.dispatchEvent(new Event('input'));
+  g.value=0.25; g.dispatchEvent(new Event('input'));
   const c1=shot(280,280,0);
-  g.value=0.09; g.dispatchEvent(new Event('input'));
+  g.value=1.5; g.dispatchEvent(new Event('input'));
   const c2=shot(280,280,0);
   ok('間隔が効く（'+diff(c1,c2)+'画素）', diff(c1,c2)>300);
 
@@ -51,7 +51,7 @@ try{
      【細い玉・太い字】で測る（前は太い玉で測って落ちた＝試験の誤り）。 */
   { const rz=document.getElementById('r_r'), gz=document.getElementById('r_gap'), tz=document.getElementById('r_tsize');
     rz.value=0.008; rz.dispatchEvent(new Event('input'));
-    gz.value=0.010; gz.dispatchEvent(new Event('input'));
+    gz.value=0.5; gz.dispatchEvent(new Event('input'));
     tz.value=0.9;   tz.dispatchEvent(new Event('input'));
     document.querySelector('#fillMode button[data-v="fill"]').click();
     const F=ink(shot(300,300,0));
@@ -106,7 +106,7 @@ try{
   // 動き：1周でぴったり戻る
   const fl=document.getElementById('r_flow'); fl.value=2; fl.dispatchEvent(new Event('input'));
   const rr2=document.getElementById('r_r'); rr2.value=0.03; rr2.dispatchEvent(new Event('input'));
-  const g2=document.getElementById('r_gap'); g2.value=0.03; g2.dispatchEvent(new Event('input'));
+  const g2=document.getElementById('r_gap'); g2.value=0.6; g2.dispatchEvent(new Event('input'));
   const z0=shot(260,260,0), zh=shot(260,260,0.3), z1=shot(260,260,1);
   ok('途中で動いている（'+diff(z0,zh)+'画素）', diff(z0,zh)>200);
   ok('1周でぴったり戻る（ずれ '+diff(z0,z1)+'）', diff(z0,z1)===0);
@@ -122,6 +122,31 @@ try{
   ok('ホイールで寄る（'+TAMA.VIEW.z.toFixed(2)+'）', TAMA.VIEW.z>1.05);
   cv.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
   ok('ダブルクリックで戻る', Math.abs(TAMA.VIEW.z-1)<1e-6);
+
+  // 見本3つ
+  for(const v of ['kasane','futaji','wa']){
+    document.querySelector('#pre button[data-v="'+v+'"]').click();
+    const d=shot(260,260,0);
+    ok('見本 '+v+'（描いた画素 '+ink(d)+'）', ink(d)>300);
+  }
+
+  // 描く（線を足す → 絵が変わる → 1本消す）
+  { const before=shot(240,240,0);
+    TAMA.STROKE.push([[-0.5,0],[0,0.2],[0.5,-0.1]]);
+    const after=shot(240,240,0);
+    ok('描いた線が刷られる（'+diff(before,after)+'画素）', diff(before,after)>200);
+    document.getElementById('b_undoline').click();
+    ok('1本消すで線が減る', TAMA.STROKE.length===0);
+  }
+
+  // 動き3種がどれも効く
+  for(const [id,val] of [['r_flow',2],['r_beat2',0.4],['r_spin',1]]){
+    for(const x of ['r_flow','r_beat2','r_spin']){ const e2=document.getElementById(x); e2.value=0; e2.dispatchEvent(new Event('input')); }
+    const e3=document.getElementById(id); e3.value=val; e3.dispatchEvent(new Event('input'));
+    const q0=shot(220,220,0), qh=shot(220,220,0.3), q1=shot(220,220,1);
+    ok(id+' で動く（'+diff(q0,qh)+'画素）', diff(q0,qh)>100);
+    ok(id+' も1周で戻る（ずれ '+diff(q0,q1)+'）', diff(q0,q1)===0);
+  }
 
   // 大きく出す
   const [ow,oh]=TAMA.outSize();
