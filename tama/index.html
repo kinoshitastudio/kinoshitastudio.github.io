@@ -34,6 +34,9 @@
   canvas#cv{display:block;touch-action:none;cursor:crosshair}
   body.panning canvas#cv{cursor:grabbing}
   body.inking canvas#cv{cursor:cell}
+  /* ⭐ 左ドラッグで組を動かせる＝掴める形にしておく */
+  canvas#cv{cursor:grab}
+  body.moving canvas#cv{cursor:grabbing}
   #drop{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
     background:rgba(244,242,236,.92);border:1px dashed rgba(28,28,30,.35);
     font-size:13px;letter-spacing:.08em;color:var(--fg2);z-index:20;text-align:center;line-height:1.8}
@@ -146,6 +149,7 @@
   <div class="hd"><h1>TAMA</h1><button id="b_help" title="説明を出す・しまう">?</button></div>
   <div class="sub">玉 — 輪郭に沿って丸を等間隔に押す。<b>?</b> で説明が出ます。</div>
   <div class="note" style="margin-top:-10px;margin-bottom:16px">
+    <b>左ドラッグ</b>＝選んだ組（元＋写し）を動かす（筆を構えている間は<b>Shift＋左ドラッグ</b>）／
     <b>ホイール</b>＝寄る・引く／<b>右ドラッグ（スペース＋ドラッグ）</b>＝盤を動かす／
     <b>ダブルクリック</b>＝見え方を戻す／<b>⌘Z</b>＝ひとつ戻す</div>
 
@@ -186,10 +190,12 @@
   <div class="grp" id="lyBox">
     <label class="h" id="lyH">選んだ層</label>
     <input type="color" id="c_col">
+    <div class="note" style="margin:6px 0 2px">⭐<b>盤の上を左ドラッグ</b>すると、この層は<b>写しと一緒に</b>動く
+      （ずれの差は崩さない）。下のつまみは細かく直すとき用。</div>
     <div class="row" style="margin-top:8px"><span class="n">よこのずれ</span><output id="o_ox"></output></div>
-    <input type="range" id="r_ox" min="-0.4" max="0.4" step="0.001">
+    <input type="range" id="r_ox" min="-1" max="1" step="0.001">
     <div class="row"><span class="n">たてのずれ</span><output id="o_oy"></output></div>
-    <input type="range" id="r_oy" min="-0.4" max="0.4" step="0.001">
+    <input type="range" id="r_oy" min="-1" max="1" step="0.001">
     <div class="row"><span class="n">太らせ</span><output id="o_fat"></output></div>
     <input type="range" id="r_fat" min="-0.04" max="0.06" step="0.0005">
   </div>
@@ -962,6 +968,10 @@ function partnerOf(l){
   return l.twinOf ? (LAYER.find(x=>x.id===l.twinOf)||null)
                   : (LAYER.find(x=>x.twinOf===l.id)||null);
 }
+/* ⭐ 元と写しは【ひとつの組】。盤の上で動かすときは必ず一緒に動かす
+   （木下＝「基本ふたつはひとつの組み合わせてボード上でマウスで移動できるように」）。
+   ⚠️ ずれの差は残したまま動かす＝刷りずれは崩さない。 */
+function pairLayers(l){ const p=partnerOf(l); return p?[l,p]:(l&&l.id?[l]:[]); }
 function mirror(l){
   const p=partnerOf(l); if(!p) return false;
   for(const k of MIRROR) p[k]=l[k];
@@ -995,7 +1005,7 @@ function dropTwin(l){
 
 /* ══ 盤の操作と、筆 ══════════════════════════════════ */
 (function(){
-  let pan=false, px=0, py=0, ink=null, lastT=0, lastP=null;
+  let pan=false, px=0, py=0, ink=null, lastT=0, lastP=null, mov=null;
   function at(e){
     const r=cv.getBoundingClientRect();
     const S2=fitS*VIEW.z;
@@ -1016,8 +1026,17 @@ function dropTwin(l){
     return 1+(w-1)*P.press;
   }
   cv.addEventListener('pointerdown',e=>{
+    const brush = P.draw && cur().kind==='draw';
+    /* ⭐⭐ 左ドラッグ＝【選んだ組（元＋写し）を盤の上で動かす】。
+       ⚠️ 筆を構えているときは筆が先。そのときは【Shift＋左ドラッグ】で動かす。 */
+    if(e.button===0 && !spaceDown && hasLayer() && (e.shiftKey || !brush)){
+      pushHist();
+      mov={p0:at(e), ls:pairLayers(cur()).map(l=>({l, ox:l.ox, oy:l.oy})), did:false};
+      document.body.classList.add('moving');
+      cv.setPointerCapture(e.pointerId); e.preventDefault(); return;
+    }
     /* ⭐ 描くを入れていて、線の層を選んでいるときだけ左ドラッグが筆になる */
-    if(P.draw && cur().kind==='draw' && e.button===0 && !spaceDown){
+    if(brush && e.button===0 && !spaceDown){
       pushHist();
       lastT=performance.now(); lastP=null;
       const p=at(e); ink=[[p[0],p[1],wAt(e,p)]];
@@ -1032,6 +1051,16 @@ function dropTwin(l){
     }
   });
   cv.addEventListener('pointermove',e=>{
+    if(mov){
+      const p=at(e), dx=p[0]-mov.p0[0], dy=p[1]-mov.p0[1];
+      if(!mov.did && Math.abs(dx)+Math.abs(dy)>0.004) mov.did=true;
+      for(const it of mov.ls){
+        it.l.ox=+clamp(it.ox+dx,-1,1).toFixed(3);
+        it.l.oy=+clamp(it.oy+dy,-1,1).toFixed(3);
+      }
+      syncLayer(); kick();
+      return;
+    }
     if(ink){
       const p=at(e), q=ink[ink.length-1];
       if((p[0]-q[0])**2+(p[1]-q[1])**2 > 4e-6){ ink.push([p[0],p[1],wAt(e,p)]); kick(); }
@@ -1042,6 +1071,11 @@ function dropTwin(l){
     touchView(); kick();
   });
   const end=()=>{
+    if(mov){
+      document.body.classList.remove('moving');
+      if(mov.did) stat(mov.ls.length>1?'組（元＋写し）を動かした':'この層を動かした');
+      mov=null; syncLayer(); saveLocal();
+    }
     if(ink){ ink=null; drawList(); saveLocal(); }
     if(!pan) return; pan=false; document.body.classList.remove('panning');
   };
