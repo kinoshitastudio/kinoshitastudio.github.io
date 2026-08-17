@@ -26,10 +26,16 @@ await p.evaluate(() => { window.__got = [];
   const oc = URL.createObjectURL;
   URL.createObjectURL = function(x){ window.__got.push({ size:x.size, type:x.type }); return oc.call(URL, x); }; });
 
-/* ⭐ 物差し＝画面の画素（この道具は場から刷った絵そのものが成果物）。
-   ⚠️ 縁のアンチエイリアスが揺れうるので、比べるのは【はっきり違う／同じ】だけにする。 */
-const sig = () => p.evaluate(() => { const c = document.getElementById('cv'), g = c.getContext('2d');
-  const d = g.getImageData(0, 0, c.width, c.height).data; let h = 2166136261;
+/* ⭐ 物差し＝【出す絵】（本体の render をそのまま呼ぶ）。
+   🔴 2026-08-17 に画面の画素から乗り換えた。盤を【窓】にしたので、画面では版面が小さく写り、
+      粒の角（sq）のようなつまみの効きが画面のハッシュでは見えなくなって落ちた
+      （本体は正しく効いていた＝物差しが置いていかれた・feedback_test_metric_from_the_same_function）。
+   ⭐ 出す絵で測れば、画面の倍率にも、ふちのガイド線のアンチエイリアスにも左右されない。 */
+const sig = () => p.evaluate(() => {
+  const s = size(); const c = document.createElement('canvas'); c.width = s.W; c.height = s.H;
+  const cx = c.getContext('2d');
+  render(cx, s.W, s.H);
+  const d = cx.getImageData(0, 0, s.W, s.H).data; let h = 2166136261;
   for(let i = 0; i < d.length; i += 4*11){ h ^= d[i] + d[i+1]*3 + d[i+2]*7; h = Math.imul(h, 16777619); }
   return h >>> 0; });
 /* 塗る（本体と同じ入口＝筆の関数を通す） */
@@ -157,6 +163,103 @@ for(const [long, limit] of [[1600, 2500], [2600, 6000]]){
     return Math.round(performance.now() - t); }, { long });
   check(ms < limit, `長辺 ${long} が ${limit}ms 未満`, `${ms}ms`);
 }
+
+/* ══⭐ ⑦ 盤は【窓】か・寄る引く（2026-08-17 新設）══
+   🔴 見るのは「動くか」ではなく：
+     ① canvas が盤いっぱい（版面の形に切り取られていない）／1倍より引ける
+     ② 寄ると変わり、0 で【1画素も違わずに】戻る
+     ③ 寄っても筆は版面の同じ所に当たる（寄って塗ると別の場所に乗る、が一番こわい）
+     ④ ⌥＋ドラッグは画面が動くだけ・ふつうのドラッグは塗る
+     ⑤ 出す絵にカメラが入っていない
+   ⚠️ 物差しは【本体の render】から取る。画面 canvas を読むと、版面のふちのガイド線の
+      アンチエイリアスがゆらいで落ちる（粒は完全一致なのに落ちた）。 */
+console.log('\n── ⑦ 盤は【窓】か・寄る引く');
+await p.evaluate(() => { viewFit(); P.fill = 'tama'; P.bgawa = false; kick(); }); await wait(500);
+const board = await p.evaluate(() => { const st = document.getElementById('stage');
+  return { sw:st.clientWidth, sh:st.clientHeight, cw:cv.clientWidth, ch:cv.clientHeight }; });
+check(board.sw === board.cw && board.sh === board.ch, 'canvas が盤いっぱい（版面に切り取られていない）',
+      `盤 ${board.sw}×${board.sh} / canvas ${board.cw}×${board.ch}`);
+check(await p.evaluate(() => { viewFit(); zoomStep(1/3); const z = VIEW.zoom; viewFit(); return z; }) < 1,
+      '1倍より引ける（版面の外まで見える）');
+const zres = await p.evaluate(() => {
+  const h = a => { let x = 2166136261; for(let i = 0; i < a.length; i += 4*3){ x ^= a[i]+a[i+1]*3+a[i+2]*7; x = Math.imul(x, 16777619);} return x>>>0; };
+  const bake = () => { const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height;
+    const cx = c.getContext('2d'); render(cx, cv.width, cv.height, camScreen(cv.width, cv.height));
+    return h(cx.getImageData(0, 0, cv.width, cv.height).data); };
+  viewFit(); const a = bake();
+  zoomStep(3); const z = bake();
+  viewFit(); const c2 = bake();
+  return { changed:a !== z, back:a === c2 };
+});
+check(zres.changed, '寄ると画面が変わる');
+check(zres.back, '0（正面）で1画素も違わずに戻る');
+const hit = await p.evaluate(() => {
+  const r = cv.getBoundingClientRect();
+  const at = () => { const c = CAM, px = c.ox + c.fw*c.sc/2, py = c.oy + c.fh*c.sc/2;
+    return toField({ clientX: r.left + px/(cv.width/r.width), clientY: r.top + py/(cv.height/r.height) }); };
+  viewFit(); const a = at(); zoomStep(3); const b2 = at(); viewFit();
+  return { a, b:b2, FW, FH };
+});
+check(Math.abs(hit.a.x-hit.b.x) < 1.5 && Math.abs(hit.a.y-hit.b.y) < 1.5 && Math.abs(hit.a.x-hit.FW/2) < 1.5,
+      '寄っても筆は版面の同じ所に当たる',
+      `等倍 (${hit.a.x.toFixed(1)},${hit.a.y.toFixed(1)}) / 3倍 (${hit.b.x.toFixed(1)},${hit.b.y.toFixed(1)})`);
+const inkSum = () => p.evaluate(() => { let s = 0; for(let i = 0; i < A.length; i++) s += A[i]; return +s.toFixed(1); });
+const cbox = await p.evaluate(() => { const q = cv.getBoundingClientRect(); return { x:q.x, y:q.y, w:q.width, h:q.height }; });
+const inkBefore = await inkSum();
+const view0 = await p.evaluate(() => ({ ...VIEW }));
+await p.mouse.move(cbox.x + cbox.w*0.45, cbox.y + cbox.h*0.45);
+await p.keyboard.down('Alt');
+await p.mouse.down(); await p.mouse.move(cbox.x + cbox.w*0.45 + 60, cbox.y + cbox.h*0.45 + 40, { steps:6 }); await p.mouse.up();
+await p.keyboard.up('Alt'); await wait(400);
+const view1 = await p.evaluate(() => ({ ...VIEW }));
+check(await inkSum() === inkBefore, '⌥＋ドラッグでは塗らない');
+check(view1.x !== view0.x || view1.y !== view0.y, '⌥＋ドラッグで画面が動く');
+await p.mouse.move(cbox.x + cbox.w*0.5, cbox.y + cbox.h*0.5);
+await p.mouse.down(); await p.mouse.move(cbox.x + cbox.w*0.5 + 50, cbox.y + cbox.h*0.5 + 30, { steps:6 }); await p.mouse.up();
+await wait(400);
+check(await inkSum() > inkBefore, 'ふつうのドラッグでは塗れる');
+check(await p.evaluate(() => {
+  const h = a => { let x = 2166136261; for(let i = 0; i < a.length; i += 4*7){ x ^= a[i]+a[i+1]*3+a[i+2]*7; x = Math.imul(x, 16777619);} return x>>>0; };
+  const bake = () => { const s = size(); const c = document.createElement('canvas'); c.width = s.W; c.height = s.H;
+    render(c.getContext('2d'), s.W, s.H); return h(c.getContext('2d').getImageData(0, 0, s.W, s.H).data); };
+  viewFit(); const plain = bake();
+  VIEW.zoom = 4; VIEW.x = 150; VIEW.y = 90; kick();
+  const zoomed = bake(); viewFit();
+  return plain === zoomed;
+}), '寄っていても、出る絵は寄っていないものと完全に同じ');
+
+/* ⭐⭐ ⑦b 泡の道でもカメラで色が変わらないか（2026-08-17 に実際に踏んだので新設）
+   🔴 カメラを入れたとき【泡の色を読む所だけ】画面の座標のまま場を読んでいて、場の外を読み、
+      塗った所の泡が【真っ黒】になった。粒（tama）の道だけ見ていたので、テストは通っていた。
+   ⭐ 測り方＝出す絵と、画面と同じカメラで焼いた絵の【同じ相対位置】の色を突き合わせる。 */
+console.log('\n── ⑦b 泡の道でも、カメラで色が変わらない');
+const camCol = await p.evaluate(() => {
+  document.querySelector('#kataSeg button[data-v="manga"]').click();
+  const avg = (cx2, x, y) => { const d = cx2.getImageData(Math.round(x)-3, Math.round(y)-3, 7, 7).data;
+    let r = 0, g2 = 0, b2 = 0, n = 0;
+    for(let i = 0; i < d.length; i += 4){ r += d[i]; g2 += d[i+1]; b2 += d[i+2]; n++; }
+    return [r/n, g2/n, b2/n]; };
+  const s = size();
+  const c1 = document.createElement('canvas'); c1.width = s.W; c1.height = s.H;
+  const x1 = c1.getContext('2d'); render(x1, s.W, s.H);
+  viewFit();
+  const cam = camScreen(cv.width, cv.height);
+  const c2 = document.createElement('canvas'); c2.width = cv.width; c2.height = cv.height;
+  const x2 = c2.getContext('2d'); render(x2, cv.width, cv.height, cam);
+  const pts = [[0.2,0.3],[0.8,0.35],[0.4,0.65]];      /* ＝塗った所（⑥と同じ） */
+  const out = [];
+  for(const [u, v] of pts){
+    const a = avg(x1, u*s.W, v*s.H);
+    const b2 = avg(x2, cam.ox + u*cam.fw*cam.sc, cam.oy + v*cam.fh*cam.sc);
+    out.push({ a:a.map(Math.round), b:b2.map(Math.round),
+      d:Math.max(...a.map((q, i) => Math.abs(q - b2[i]))), dark:(b2[0]+b2[1]+b2[2]) < 120 });   /* ⚠️ 60 だと、実際に壊れたとき（合計96）を素通りした */
+  }
+  return out;
+});
+check(camCol.every(o => !o.dark), '塗った所がカメラで真っ黒にならない',
+      camCol.map(o => `[${o.b}]`).join(' '));
+check(camCol.every(o => o.d < 60), 'カメラの有無で色が変わらない',
+      camCol.map(o => `差 ${Math.round(o.d)}`).join(' / '));
 
 console.log(ng.length ? `\n🔴 だめだったもの ${ng.length}件: ${ng.join(' / ')}` : '\n✅ 全部通った');
 if(errs) console.log(`🔴 JSエラー ${errs}件`);
