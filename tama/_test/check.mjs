@@ -153,7 +153,42 @@ try{
     ok('両方 2本', TAMA.cur().strokes.length===2 && tw.strokes.length===2);
     $('b_undoline').click();
     ok('1本消すと写しも減る', TAMA.cur().strokes.length===1 && tw.strokes.length===1);
+    /* ⭐ 形のつまみは連動する（木下＝「筆の太さなども同じように連動して」） */
+    const rp=$('r_pen'); rp.value='0.12'; rp.dispatchEvent(new Event('input'));
+    ok('筆の太さが写しにも効く（'+tw.pen+'）', Math.abs(tw.pen-0.12)<1e-9);
+    ok('色は連動しない', tw.col!==TAMA.cur().col);
+    /* ⚠️ 連動は両向き＝写しを選んで直しても元がついてくる */
+    const back=TAMA.LAYER.indexOf(tw); const keepSel=TAMA.sel;
+    TAMA.pick(back);
+    const rr2=$('r_r'); rr2.value='0.08'; rr2.dispatchEvent(new Event('input'));
+    ok('写し側から直すと元も合う', Math.abs(TAMA.LAYER[keepSel].r-0.08)<1e-9);
     $('c_pair').checked=false; $('c_pair').dispatchEvent(new Event('change'));
+    $('b_wipe').click();
+  }
+
+  // 字も二色で（写しがついてくる）
+  { $('b_wipe').click(); $('b_addT').click();
+    const src=TAMA.cur();
+    $('c_pairT').checked=true; $('c_pairT').dispatchEvent(new Event('change'));
+    ok('字を二色でにすると層が2つ（'+TAMA.LAYER.length+'）', TAMA.LAYER.length===2);
+    const tw2=TAMA.LAYER.find(l=>l.twinOf===src.id);
+    ok('字の写しも【字】の層', !!tw2 && tw2.kind==='text');
+    ok('字の写しは色が違う', !!tw2 && tw2.col!==src.col);
+    ok('字の写しはずれている', !!tw2 && (tw2.ox!==src.ox||tw2.oy!==src.oy));
+    /* 🔴 差し込みで選ぶ場所がずれていないこと＝元を選んだままのはず */
+    ok('元を選んだまま', TAMA.cur().id===src.id);
+    const ta=$('t_text'); ta.value='ふたいろ'; ta.dispatchEvent(new Event('input'));
+    ok('打ち直した字が写しにもつく（'+tw2.text+'）', tw2.text==='ふたいろ');
+    const rs=$('r_tsize'); rs.value='0.9'; rs.dispatchEvent(new Event('input'));
+    ok('大きさも連動（'+tw2.tsize+'）', Math.abs(tw2.tsize-0.9)<1e-9);
+    /* 写しを選んでいる間は入れっぱなしで触れない（写しの写しを作らない） */
+    TAMA.pick(TAMA.LAYER.indexOf(tw2));
+    ok('写しを選ぶと二色では触れない', $('c_pairT').disabled===true && $('c_pairT').checked===true);
+    TAMA.pick(TAMA.LAYER.indexOf(src));
+    $('c_pairT').checked=false; $('c_pairT').dispatchEvent(new Event('change'));
+    ok('切ると写しが消える（'+TAMA.LAYER.length+'）', TAMA.LAYER.length===1);
+    TAMA.undo();
+    ok('⌘Zで写しが戻る（'+TAMA.LAYER.length+'）', TAMA.LAYER.length===2);
     $('b_wipe').click();
   }
 
@@ -181,8 +216,20 @@ try{
   const before=JSON.stringify(TAMA.bundle());
   $('b_rand').click();
   ok('ふる で変わる', JSON.stringify(TAMA.bundle())!==before);
+  /* ⚠️ 前は「押しても落ちない」しか見ていなかった。中身が戻ることを見る。 */
   $('b_undo').click();
-  ok('戻す が効く', true);
+  ok('戻す で元の姿に戻る', JSON.stringify(TAMA.bundle())===before);
+  /* 🔴 1回押したら【1手ぶん】戻ること（前は1回目が効かず、2回目から2手ぶん戻っていた） */
+  { $('b_wipe').click(); $('b_addT').click();
+    const one=TAMA.LAYER.length;
+    $('b_addT').click(); $('b_addT').click();
+    ok('3枚になった（'+TAMA.LAYER.length+'）', TAMA.LAYER.length===one+2);
+    $('b_undo').click();
+    ok('⌘Z 1回で1枚だけ戻る（'+TAMA.LAYER.length+'）', TAMA.LAYER.length===one+1);
+    $('b_undo').click();
+    ok('⌘Z 2回でもう1枚戻る（'+TAMA.LAYER.length+'）', TAMA.LAYER.length===one);
+    $('b_wipe').click();
+  }
   const j=JSON.stringify(TAMA.bundle());
   $('b_rand').click();
   TAMA.applyState(JSON.parse(j));
