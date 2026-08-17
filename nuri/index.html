@@ -84,6 +84,8 @@
   #meter{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:10.5px;line-height:1.7;
     color:var(--fg2);background:var(--fill2);border-radius:var(--r);padding:9px 11px;margin:8px 0}
   input[type=color]{width:100%;height:32px;padding:0;border:.5px solid var(--line);border-radius:var(--r);background:none;cursor:pointer}
+  input[type=text]{width:100%;padding:8px 10px;border:.5px solid var(--line);border-radius:var(--r);
+    background:var(--fill2);color:var(--fg);font-family:inherit;font-size:13px;margin-top:4px}
   @media (max-width:820px){
     body{flex-direction:column;overflow:auto}
     #stage{padding:0;min-height:52vh}
@@ -112,11 +114,31 @@
     <div id="layList"></div>
     <div class="btns2" style="margin-top:6px">
       <button class="btn" id="b_layAdd">＋ 描く</button>
-      <button class="btn" id="b_layDup">この版を複製</button>
+      <button class="btn" id="b_layText">＋ 字</button>
+    </div>
+    <button class="btn" id="b_layDup" style="margin-top:6px">この版を複製</button>
+    <!-- ⭐ 版ごとの移動（2026-08-17 木下「重ねた版も指定したら移動できるように」） -->
+    <div class="row" style="margin-top:8px"><span class="n">横位置</span><output id="o_ldx"></output></div>
+    <input type="range" id="r_ldx" min="-1" max="1" step="0.004">
+    <div class="row"><span class="n">縦位置</span><output id="o_ldy"></output></div>
+    <input type="range" id="r_ldy" min="-1" max="1" step="0.004">
+    <!-- ⭐ 字の版を選んでいるときだけ出る -->
+    <div id="textBox" class="hide">
+      <div class="row" style="margin-top:8px"><span class="n">字</span></div>
+      <input type="text" id="t_text" value="あ">
+      <div class="row"><span class="n">大きさ</span><output id="o_tsz"></output></div>
+      <input type="range" id="r_tsz" min="0.05" max="1.8" step="0.01">
+      <div class="row"><span class="n">角度</span><output id="o_trot"></output></div>
+      <input type="range" id="r_trot" min="-180" max="180" step="1">
+      <div class="seg" id="tfontSeg" style="margin-top:6px">
+        <button data-v="sans">ゴシック</button><button data-v="serif">明朝</button><button data-v="mono">等幅</button>
+      </div>
+      <div class="note">⚠️ 字を変えると焼き直すので、<b>この版に筆で足した分は消える</b></div>
     </div>
     <button class="btn" id="b_layFill" style="margin-top:6px">この版を今の色にする</button>
     <button class="btn" id="b_layDel" style="margin-top:6px">この版を消す</button>
     <div class="note">⭐ 版を押すと選べる＝<b>選んだ版に描ける</b>。左の四角で<b>入切</b>／上にあるものほど手前<br>
+      ⭐ <b>横位置・縦位置</b>で版ごとに動かせる（筆を「<b>版を動かす</b>」にすると絵の上で引っぱれる）。<b>場は動かないので戻せる</b><br>
       ⭐⭐ <b>この版を今の色にする</b>＝その版で描いた所が<b>まるごと今の色になる</b>（あとから色を変えられる）<br>
       ⭐ ふつうに塗るときは<b>1枚の中に何色でも載る</b>（塗るたびに色を選んでいい）</div>
   </div>
@@ -127,6 +149,7 @@
       <button data-v="paint" class="on">塗る</button>
       <button data-v="erase">消す</button>
       <button data-v="tint">色だけ</button>
+      <button data-v="move">版を動かす</button>
     </div>
     <div class="row"><span class="n">太さ</span><output id="o_bsize"></output></div>
     <input type="range" id="r_bsize" min="8" max="360" step="2">
@@ -395,6 +418,8 @@ let LAY = [], sel = 0;
 function newLayer(o){
   const n = Math.max(1, FW*FH);
   return Object.assign({ kind:'paint', on:true, col:(typeof P !== 'undefined' ? P.ink : '#3a3ce8'),
+    dx:0, dy:0,                     /* ⭐ 版ごとの移動（版面の幅・高さに対する比） */
+    text:'あ', tsz:0.5, trot:0, tfont:'sans',   /* 字の版だけ使う */
     A:new Float32Array(n),
     C:{ CR:new Float32Array(n), CG:new Float32Array(n), CB:new Float32Array(n) } }, o || {});
 }
@@ -412,6 +437,32 @@ function ensureField(){
   if(!LAY.length){ LAY = [newLayer()]; sel = 0; }
   if(sel >= LAY.length) sel = LAY.length - 1;
 }
+/* ══⭐ 字の版 ── 文字を【場に焼く】（2026-08-17 木下「字と描くでまたレイヤー追加できるように」）
+   ⭐ 焼いたあとは描く版と同じ＝濃さの場＋色の場。だから粒・泡・地・移動が【そのまま効く】。
+   ⚠️ 文字や大きさを変えると焼き直す＝その版に筆で足した分は消える。 */
+const TFONT = { sans:'"Hiragino Sans","Zen Kaku Gothic New",sans-serif',
+                serif:'"Hiragino Mincho ProN",serif', mono:'ui-monospace,Menlo,monospace' };
+function bakeText(L){
+  const c = document.createElement('canvas'); c.width = FW; c.height = FH;
+  const t = c.getContext('2d');
+  t.save();
+  t.translate(FW/2, FH/2);
+  t.rotate((L.trot || 0)*Math.PI/180);
+  const px = Math.max(4, (L.tsz || 0.5)*FH);
+  t.font = '700 ' + px + 'px ' + (TFONT[L.tfont] || TFONT.sans);
+  t.textAlign = 'center'; t.textBaseline = 'middle';
+  t.fillStyle = '#fff';
+  (String(L.text || '').split('\n')).forEach((line, i, arr) => {
+    t.fillText(line, 0, (i - (arr.length-1)/2) * px*1.15);
+  });
+  t.restore();
+  const d = t.getImageData(0, 0, FW, FH).data;
+  const rgb = hex2rgb(L.col);
+  for(let i = 0; i < FW*FH; i++){
+    L.A[i] = d[i*4+3]/255;
+    L.C.CR[i] = rgb[0]; L.C.CG[i] = rgb[1]; L.C.CB[i] = rgb[2];
+  }
+}
 /* ⭐ 合成 ── 下から順に重ねて、刷るための場を作る。
    ⭐ 濃さで混ぜる＝筆と同じ理屈（上の版が濃いほど、その色になる）。 */
 function bake(){
@@ -421,11 +472,22 @@ function bake(){
   for(const L of LAY){
     if(!L.on) continue;
     const rgb = hex2rgb(L.col), LA = L.A, LC = L.C;
-    for(let i = 0; i < n; i++){
-      const a = LA[i]; if(a <= 0) continue;
-      A[i] = A[i] + a*(1 - A[i]);
-      const r = LC ? LC.CR[i] : rgb[0], g2 = LC ? LC.CG[i] : rgb[1], b2 = LC ? LC.CB[i] : rgb[2];
-      CR[i] += (r - CR[i])*a; CG[i] += (g2 - CG[i])*a; CB[i] += (b2 - CB[i])*a;
+    /* ⭐ 版ごとの移動（2026-08-17 木下「重ねた版も指定したら移動できるように」）
+       ⭐ 場そのものは動かさない＝【読む場所をずらすだけ】なので、戻せば元に戻る（非破壊）。
+       ⚠️ ずれて版面の外へ出た所は出ない（紙の外には刷らないのと同じ）。
+       🔴 ずれ 0 のときは今までと同じ数になる＝出す絵は1画素も変わらない。 */
+    const ox = Math.round((L.dx || 0)*FW), oy = Math.round((L.dy || 0)*FH);
+    for(let y = 0; y < FH; y++){
+      const sy = y - oy; if(sy < 0 || sy >= FH) continue;
+      const row = y*FW, srow = sy*FW;
+      for(let x = 0; x < FW; x++){
+        const sx = x - ox; if(sx < 0 || sx >= FW) continue;
+        const s2 = srow + sx, a = LA[s2]; if(a <= 0) continue;
+        const k = row + x;
+        A[k] = A[k] + a*(1 - A[k]);
+        const r = LC ? LC.CR[s2] : rgb[0], g2 = LC ? LC.CG[s2] : rgb[1], b2 = LC ? LC.CB[s2] : rgb[2];
+        CR[k] += (r - CR[k])*a; CG[k] += (g2 - CG[k])*a; CB[k] += (b2 - CB[k])*a;
+      }
     }
   }
 }
@@ -951,6 +1013,7 @@ function viewFit(){ VIEW.zoom = 1; VIEW.x = 0; VIEW.y = 0; kick(); stat('正面�
 /* 🔴 筆と画面で【同じ pointerdown を取り合う】。⌥ と 2本目の指は画面に譲る（HIDA と同じ作法） */
 const VPTS = new Map();
 let panning = false, plx = 0, ply = 0, pinD = 0;
+let movingLay = false, mlx = 0, mly = 0;   /* ⭐ 版をつかんで動かす（2026-08-17） */
 cv.addEventListener('pointerdown', e => {
   e.preventDefault();
   VPTS.set(e.pointerId, { x:e.clientX, y:e.clientY });
@@ -962,6 +1025,12 @@ cv.addEventListener('pointerdown', e => {
   }
   ensureField(); pushHist();
   cv.setPointerCapture(e.pointerId);
+  /* ⭐ 「版を動かす」＝筆でなく、選んでいる版そのものを引っぱる */
+  if(P.tool === 'move'){
+    movingLay = true;
+    const p = toCv(e); mlx = p.x; mly = p.y;
+    return;
+  }
   drawing = true;
   const q = toField(e); pfx = q.x; pfy = q.y;
   stampAt(q.x, q.y, hex2rgb(P.ink));
@@ -986,6 +1055,18 @@ cv.addEventListener('pointermove', e => {
     quickDraw();          /* ⭐ 動かしている間は刷り直さない（泡だと付いてこない） */
     return;
   }
+  if(movingLay){
+    const L = curLay();
+    if(L){
+      const p = toCv(e), cam = CAM || camScreen(cv.width, cv.height);
+      /* ⭐ 画面で動かした分を【版面に対する比】に直して足す（寄っていても指に付いてくる） */
+      L.dx += (p.x - mlx)/(cam.fw*cam.sc);
+      L.dy += (p.y - mly)/(cam.fh*cam.sc);
+      mlx = p.x; mly = p.y;
+      syncLay(); kick();
+    }
+    return;
+  }
   if(!drawing) return;
   const q = toField(e);
   strokeTo(q.x, q.y, pfx, pfy, hex2rgb(P.ink));
@@ -996,6 +1077,7 @@ const endDraw = e => {
   if(e) VPTS.delete(e.pointerId);
   if(VPTS.size < 2) pinD = 0;
   if(VPTS.size === 0 && panning){ panning = false; kick(); }   /* ⭐ 離した瞬間にちゃんと刷る */
+  if(movingLay && VPTS.size === 0){ movingLay = false; saveLocal(); }
   if(!drawing) return;
   drawing = false; saveLocal();
 };
@@ -1095,7 +1177,12 @@ el('c_paper').addEventListener('input', e => { P.paper = e.target.value; kick();
    変えると、その版で描いた所が全部その色になる＝あとから色を変えられる。 */
 function setInk(c){
   P.ink = c;
-  const L = curLay(); if(L) L.col = c;     /* ⭐ 版の代表色（並びの四角に出る）。絵は塗り替えない */
+  const L = curLay();
+  if(L){
+    L.col = c;                             /* ⭐ 版の代表色（並びの四角に出る）。絵は塗り替えない */
+    /* ⭐ 字の版だけは、色を選んだらすぐその色になる（1色でできているので） */
+    if(L.kind === 'text'){ bakeText(L); kick(); }
+  }
   el('c_pick').value = c;
   drawSwatch(); drawLayList(); saveLocal();
 }
@@ -1129,10 +1216,66 @@ function drawLayList(){
     nm.textContent = (L.kind === 'text' ? '字' : '描く') + ' ' + (i+1);
     row.append(sw, nm);
     row.onclick = () => { sel = i; P.ink = L.col; el('c_pick').value = L.col;
-      drawSwatch(); drawLayList(); stat('版「' + nm.textContent + '」を選んだ'); };
+      drawSwatch(); drawLayList(); syncLay(); syncText(); stat('版「' + nm.textContent + '」を選んだ'); };
     box.appendChild(row);
   }
 }
+/* ⭐ 版の位置のつまみ ── P ではなく【版】の値なので、専用に配線する */
+function syncLay(){
+  const L = curLay(); if(!L) return;
+  const set = (id, v) => { const r = el('r_'+id), o = el('o_'+id);
+    if(r) r.value = v; if(o) o.textContent = (+v).toFixed(3); };
+  set('ldx', L.dx || 0); set('ldy', L.dy || 0);
+}
+[['ldx','dx'], ['ldy','dy']].forEach(([id, key]) => {
+  const r = el('r_'+id), o = el('o_'+id); if(!r) return;
+  r.addEventListener('pointerdown', pushHist);
+  r.addEventListener('input', () => {
+    const L = curLay(); if(!L) return;
+    L[key] = +r.value; if(o) o.textContent = (+r.value).toFixed(3);
+    kick(); saveLocal();
+  });
+});
+/* ══⭐ 字の版のつまみ ══ */
+function syncText(){
+  const L = curLay();
+  const box = el('textBox');
+  const isT = !!L && L.kind === 'text';
+  box.classList.toggle('hide', !isT);
+  if(!isT) return;
+  el('t_text').value = L.text || '';
+  el('r_tsz').value = L.tsz; el('o_tsz').textContent = (+L.tsz).toFixed(2);
+  el('r_trot').value = L.trot; el('o_trot').textContent = L.trot + '°';
+  el('tfontSeg').querySelectorAll('button').forEach(b2 => b2.classList.toggle('on', b2.dataset.v === L.tfont));
+}
+/* ⭐ 字を焼き直して刷る（式は1本＝ここだけが焼き直す） */
+function reText(){
+  const L = curLay(); if(!L || L.kind !== 'text') return;
+  bakeText(L); drawLayList(); kick(); saveLocal();
+}
+el('t_text').addEventListener('input', e => { const L = curLay(); if(!L) return; L.text = e.target.value; reText(); });
+[['tsz','tsz'], ['trot','trot']].forEach(([id, key]) => {
+  const r = el('r_'+id), o = el('o_'+id);
+  r.addEventListener('pointerdown', pushHist);
+  r.addEventListener('input', () => { const L = curLay(); if(!L) return;
+    L[key] = +r.value;
+    o.textContent = key === 'trot' ? (r.value + '°') : (+r.value).toFixed(2);
+    reText(); });
+});
+el('tfontSeg').querySelectorAll('button').forEach(b2 => b2.addEventListener('click', () => {
+  const L = curLay(); if(!L) return;
+  pushHist(); L.tfont = b2.dataset.v;
+  el('tfontSeg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b2));
+  reText();
+}));
+el('b_layText').onclick = () => {
+  pushHist();
+  const L = newLayer({ kind:'text', col:P.ink });
+  LAY.push(L); sel = LAY.length - 1;
+  bakeText(L);
+  drawLayList(); syncLay(); syncText(); kick(); saveLocal();
+  stat('字の版を足した（上の「字」に打つと変わる）');
+};
 el('b_layAdd').onclick = () => {
   pushHist(); LAY.push(newLayer({ col:P.ink })); sel = LAY.length - 1;
   drawLayList(); kick(); saveLocal(); stat('版を足した（' + LAY.length + '枚）');
@@ -1140,7 +1283,7 @@ el('b_layAdd').onclick = () => {
 el('b_layDup').onclick = () => {
   const L = curLay(); if(!L) return;
   pushHist();
-  LAY.splice(sel+1, 0, newLayer({ kind:L.kind, on:L.on, col:L.col, A:Float32Array.from(L.A),
+  LAY.splice(sel+1, 0, newLayer({ kind:L.kind, on:L.on, col:L.col, dx:L.dx, dy:L.dy, A:Float32Array.from(L.A),
     C:{ CR:Float32Array.from(L.C.CR), CG:Float32Array.from(L.C.CG), CB:Float32Array.from(L.C.CB) } }));
   sel++; drawLayList(); kick(); saveLocal(); stat('この版を複製した（' + LAY.length + '枚）');
 };
@@ -1164,7 +1307,8 @@ el('b_layDel').onclick = () => {
 const HIST = [];
 /* ⚠️ 控えるのは【版そのもの】（版ごとの濃さの場）。合成した A/CR/CG/CB は毎回作り直せるので持たない */
 function snapField(){
-  return { FW, FH, sel, LAY:LAY.map(L => ({ kind:L.kind, on:L.on, col:L.col,
+  return { FW, FH, sel, LAY:LAY.map(L => ({ kind:L.kind, on:L.on, col:L.col, dx:L.dx || 0, dy:L.dy || 0,
+    text:L.text, tsz:L.tsz, trot:L.trot, tfont:L.tfont,
     A:Float32Array.from(L.A),
     C:L.C ? { CR:Float32Array.from(L.C.CR), CG:Float32Array.from(L.C.CG), CB:Float32Array.from(L.C.CB) } : null })) };
 }
@@ -1253,7 +1397,7 @@ function syncUI(){
   el('c_acol').value = P.acol; el('c_alcol').value = P.alcol;
   el('c_paper').value = P.paper; el('c_pick').value = P.ink;
   el('c_stagger').checked = !!P.stagger;
-  drawSwatch(); drawLayList();
+  drawSwatch(); drawLayList(); syncLay(); syncText();
 }
 
 /* ══⭐ 版の詰め方（控え／このブラウザに残す）══
@@ -1301,14 +1445,20 @@ const fromB64 = (b64, scale, len) => {
   return a;
 };
 function packLay(){
-  return LAY.map(L => ({ kind:L.kind, on:L.on, col:L.col, A:toB64(L.A, 255),
+  return LAY.map(L => ({ kind:L.kind, on:L.on, col:L.col, dx:L.dx || 0, dy:L.dy || 0,
+    text:L.text, tsz:L.tsz, trot:L.trot, tfont:L.tfont, A:toB64(L.A, 255),
     C:L.C ? { R:toB64(L.C.CR, 1), G:toB64(L.C.CG, 1), B:toB64(L.C.CB, 1) } : null }));
 }
 function unpackLay(arr){
   return arr.map(o => {
     /* ⚠️ newLayer が空の色の場を作る。控えに色があればそれで差し替える（null を代入しない） */
     const n = FW*FH;
-    const L = newLayer({ kind:o.kind || 'paint', on:o.on !== false, col:o.col || '#3a3ce8', A:fromB64(o.A, 255, n) });
+    const L = newLayer({ kind:o.kind || 'paint', on:o.on !== false, col:o.col || '#3a3ce8',
+      dx:o.dx || 0, dy:o.dy || 0, A:fromB64(o.A, 255, n) });
+    if(o.text != null) L.text = o.text;
+    if(o.tsz != null) L.tsz = o.tsz;
+    if(o.trot != null) L.trot = o.trot;
+    if(o.tfont) L.tfont = o.tfont;
     if(o.C) L.C = { CR:fromB64(o.C.R, 1, n), CG:fromB64(o.C.G, 1, n), CB:fromB64(o.C.B, 1, n) };
     return L;
   });
