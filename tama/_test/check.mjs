@@ -86,16 +86,16 @@ try{
   { const pb=document.querySelector('#pre button[data-v="kasane"]');
     const n0=TAMA.LAYER.length;
     pb.click();
-    ok('見本を置くと層が増える（'+n0+'→'+TAMA.LAYER.length+'）', TAMA.LAYER.length>n0 && TAMA.P.preset==='kasane');
+    ok('見本を置くと見本の層になる（'+n0+'→'+TAMA.LAYER.length+'）', TAMA.LAYER.length===2 && TAMA.P.preset==='kasane');
     ok('見本のボタンが光る', pb.classList.contains('on'));
     pb.click();
-    ok('もう一度で取り下げる（'+TAMA.LAYER.length+'）', TAMA.P.preset===null && TAMA.LAYER.length===n0);
+    ok('もう一度で取り下げる（'+TAMA.LAYER.length+'）', TAMA.P.preset===null && TAMA.LAYER.length===0);
     ok('ボタンの光が消える', !pb.classList.contains('on'));
   }
   // 見本を置いたまま まっさら＝全部消える
   { document.querySelector('#pre button[data-v="futaji"]').click();
     $('b_wipe').click();
-    ok('まっさらで見本ごと消える', TAMA.LAYER.length===1 && TAMA.P.preset===null && !TAMA.LAYER[0].text);
+    ok('まっさらで層が0になる', TAMA.LAYER.length===0 && TAMA.P.preset===null);
     document.querySelector('#pre button[data-v="kasane"]').click();
   }
 
@@ -109,6 +109,16 @@ try{
     $('b_undoline').click();
     ok('1本消すで減る', TAMA.cur().strokes.length===0);
     $('c_draw').checked=false; $('c_draw').dispatchEvent(new Event('change'));
+  }
+
+  // 層は全部消せる（⚠️ 前は「層は1つは要る」で最後の1枚が残った）
+  { $('b_wipe').click(); $('b_addT').click(); $('b_addD').click();
+    $('b_del').click(); $('b_del').click();
+    ok('消すで層が0になる', TAMA.LAYER.length===0);
+    const empty=ink(shot(200,200,0));
+    ok('0枚なら何も刷らない（'+empty+'画素）', empty===0);
+    $('b_addT').click();
+    ok('0枚から文字を足せる', TAMA.LAYER.length===1);
   }
 
   // 筆圧＝点ごとの太さ（⚠️ 字も数えると差が薄まるので線だけで測る）
