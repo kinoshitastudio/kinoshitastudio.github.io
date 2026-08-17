@@ -261,6 +261,78 @@ check(camCol.every(o => !o.dark), '塗った所がカメラで真っ黒になら
 check(camCol.every(o => o.d < 60), 'カメラの有無で色が変わらない',
       camCol.map(o => `差 ${Math.round(o.d)}`).join(' / '));
 
+/* ══⭐⭐ ⑧ 版（重ねる）── 2026-08-17 新設
+   🔴 見るのは：①版ごとに塗り分けられる ②あとから【この版を今の色にする】で色を変えられる
+     ③**同じ版の中に何色でも載る**（この道具の芯。版を1色にした版で一度これを壊した）
+     ④入切・複製・消す・⌘Z ⑤控えて開くと版がそのまま戻る ⑥このブラウザに残せる（溢れない） */
+console.log('\n── ⑧ 版（重ねる）');
+await base(); await p.evaluate(() => { newField(); drawLayList(); }); await wait(300);
+const paintOn = (lay, col, x) => p.evaluate(o => {
+  sel = o.lay; setInk(o.col);
+  const rgb = hex2rgb(o.col);
+  for(let i = 1; i < 40; i++) strokeTo(FW*o.x, FH*0.2 + i*5, FW*o.x, FH*0.2 + (i-1)*5, rgb);
+  kick();
+}, { lay, col, x });
+const countCols = () => p.evaluate(() => {
+  const s = size(); const c = document.createElement('canvas'); c.width = s.W; c.height = s.H;
+  render(c.getContext('2d'), s.W, s.H);
+  const d = c.getContext('2d').getImageData(0, 0, s.W, s.H).data;
+  let blue = 0, pink = 0, green = 0, yellow = 0;
+  for(let i = 0; i < d.length; i += 4*3){ const r = d[i], g2 = d[i+1], b2 = d[i+2];
+    if(b2 > r+40 && b2 > 90 && g2 < b2-30) blue++;
+    if(r > b2+40 && r > 90 && g2 < r-60) pink++;
+    if(g2 > r+40 && g2 > b2+30) green++;
+    if(r > 150 && g2 > 120 && b2 < 100) yellow++; }
+  return { blue, pink, green, yellow };
+});
+check(await p.evaluate(() => LAY.length) === 1, '版1枚で始まる');
+await paintOn(0, '#3a3ce8', 0.3); await wait(500);
+await p.evaluate(() => document.getElementById('b_layAdd').click()); await wait(300);
+await paintOn(1, '#e94b8a', 0.65); await wait(500);
+const cc1 = await countCols();
+check(await p.evaluate(() => LAY.length) === 2 && cc1.blue > 300 && cc1.pink > 300,
+      '版を足して塗り分けられる', JSON.stringify(cc1));
+await p.evaluate(() => { sel = 0; setInk('#5fc02a'); document.getElementById('b_layFill').click(); }); await wait(600);
+const cc2 = await countCols();
+check(cc2.green > 300 && cc2.blue < 100 && cc2.pink > 300,
+      '⭐「この版を今の色にする」で、その版だけ色が変わる', JSON.stringify(cc2));
+/* ⭐⭐ ここがこの道具の芯。版を1色にする作りにしたとき、これが落ちて気づいた */
+await paintOn(1, '#f5c518', 0.68); await wait(600);
+const cc3 = await countCols();
+check(cc3.pink > 150 && cc3.yellow > 150, '⭐同じ版の中に2色目も載る（NURI の芯）', JSON.stringify(cc3));
+await p.evaluate(() => { LAY[0].on = false; kick(); }); await wait(500);
+check((await countCols()).green < 100, '版を切ると消える');
+await p.evaluate(() => { LAY[0].on = true; sel = 1; document.getElementById('b_layDup').click(); }); await wait(500);
+check(await p.evaluate(() => LAY.length) === 3, 'この版を複製できる');
+await p.evaluate(() => document.getElementById('b_layDel').click()); await wait(500);
+check(await p.evaluate(() => LAY.length) === 2, 'この版を消せる');
+await p.evaluate(() => document.getElementById('b_undo').click()); await wait(600);
+check(await p.evaluate(() => LAY.length) === 3, '⌘Z で版が戻る');
+/* ⭐ 控え（JSON）の往復＝詰めた場が壊れていないか（ランレングス＋base64） */
+/* ⚠️ 濃さは 8bit に落として詰めるので、合計は【完全一致にはならない】（2026-08-17 これで落ちた）。
+   ⭐ 見るのは「版の数・色・並び」が同じで、濃さのズレが【丸め1段ぶんに収まっている】か。 */
+const trip = await p.evaluate(() => {
+  const sums = () => LAY.map(L => { let s = 0; for(let i = 0; i < L.A.length; i++) s += L.A[i]; return s; });
+  const before = { n:LAY.length, cols:LAY.map(L => L.col), sum:sums() };
+  const txt = JSON.stringify({ v:3, P, FW, FH, sel, LAY:packLay() });
+  loadState(JSON.parse(txt)); drawLayList();
+  const after = { n:LAY.length, cols:LAY.map(L => L.col), sum:sums() };
+  const rel = before.sum.map((v, i) => Math.abs(v - after.sum[i]) / Math.max(1, v));
+  return { shape:before.n === after.n && JSON.stringify(before.cols) === JSON.stringify(after.cols),
+    worst:Math.max(...rel), kb:Math.round(txt.length/1024) };
+});
+check(trip.shape && trip.worst < 0.01, '控えて開くと、版がそのまま戻る（濃さのズレは丸め1段ぶん）',
+      `${trip.kb}KB・ズレ ${(trip.worst*100).toFixed(3)}%`);
+/* 🔴 詰めないと版4枚で localStorage を超えて【リロードで絵が消える】（2026-08-17 実測） */
+const fit = await p.evaluate(() => {
+  while(LAY.length < 6){ LAY.push(newLayer({ col:'#3a3ce8' })); sel = LAY.length-1;
+    for(let i = 1; i < 30; i++) strokeTo(FW*0.5, FH*0.3+i*5, FW*0.5, FH*0.3+(i-1)*5, [58,60,232]); }
+  const txt = JSON.stringify({ v:3, P, FW, FH, sel, LAY:packLay() });
+  try{ localStorage.setItem('nuri.v3', txt); return { ok:true, mb:+(txt.length/1048576).toFixed(2) }; }
+  catch(e){ return { ok:false, mb:+(txt.length/1048576).toFixed(2) }; }
+});
+check(fit.ok, '版6枚でも このブラウザに残せる（詰めている）', `${fit.mb}MB`);
+
 console.log(ng.length ? `\n🔴 だめだったもの ${ng.length}件: ${ng.join(' / ')}` : '\n✅ 全部通った');
 if(errs) console.log(`🔴 JSエラー ${errs}件`);
 await b.close();

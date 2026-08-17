@@ -65,6 +65,14 @@
   .btn:hover{background:rgba(28,28,30,.16)}
   .btn.solid{background:var(--fg);color:var(--paper);font-weight:590}
   .btns2{display:flex;gap:6px}
+  /* ⭐ 版（重ねる）── 2026-08-17 */
+  .layrow{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:var(--r);
+    background:var(--fill2);margin-bottom:4px;cursor:pointer;font-size:11.5px;color:var(--fg);
+    border:1px solid transparent;transition:.15s}
+  .layrow:hover{background:var(--fill)}
+  .layrow.on{background:var(--fg);color:var(--paper)}
+  .laysw{width:18px;height:18px;border-radius:5px;border:1px solid rgba(28,28,30,.25);
+    cursor:pointer;padding:0;flex:0 0 18px}
   .note{font-size:10.5px;line-height:1.65;color:var(--fg2);opacity:.75;margin-top:7px}
   .note b{color:var(--fg);font-weight:500}
   hr{display:none}
@@ -95,6 +103,23 @@
 <div id="panel">
   <h1>NURI</h1>
   <div class="sub">塗 — 筆で塗ると、塗ったところが玉の粒で埋まる。</div>
+
+  <!-- ══⭐⭐ 版（重ねる）── 2026-08-17 木下
+       「字と描くでまたレイヤー追加できるようにしてほしい。
+        その描くを選択すると描いた色も変更できるような」 -->
+  <div class="grp">
+    <label class="h">版（重ねる）</label>
+    <div id="layList"></div>
+    <div class="btns2" style="margin-top:6px">
+      <button class="btn" id="b_layAdd">＋ 描く</button>
+      <button class="btn" id="b_layDup">この版を複製</button>
+    </div>
+    <button class="btn" id="b_layFill" style="margin-top:6px">この版を今の色にする</button>
+    <button class="btn" id="b_layDel" style="margin-top:6px">この版を消す</button>
+    <div class="note">⭐ 版を押すと選べる＝<b>選んだ版に描ける</b>。左の四角で<b>入切</b>／上にあるものほど手前<br>
+      ⭐⭐ <b>この版を今の色にする</b>＝その版で描いた所が<b>まるごと今の色になる</b>（あとから色を変えられる）<br>
+      ⭐ ふつうに塗るときは<b>1枚の中に何色でも載る</b>（塗るたびに色を選んでいい）</div>
+  </div>
 
   <div class="grp">
     <label class="h">筆</label>
@@ -353,21 +378,63 @@ function fieldSize(){
   const k = Math.min(1, FIELD_MAX / Math.max(W, H));
   return { w:Math.max(8, Math.round(W*k)), h:Math.max(8, Math.round(H*k)), k };
 }
+/* ══⭐⭐ 版（重ねる）── 2026-08-17
+   木下「字と描くでまたレイヤー追加できるようにしてほしい。
+        その描くを選択すると描いた色も変更できるような」
+   ⭐ **版＝1枚の「濃さの場」＋1つの色。** 版を選んで色を変えると、
+      その版で描いた所が【全部その色になる】＝あとから色を変えられる。
+   ⭐ 刷り方は今までのまま＝**全部の版を合成して A/CR/CG/CB を作り**、render はそれを見る。
+      （render・粒・泡・地を敷く には一切手を入れていない）
+   ⚠️ 昔の控え（1枚・色の場つき）も開けるように、版は色の場 C を持てる。
+      その版の色を変えた瞬間に C を捨てて1色になる＝**分岐はそこ1つだけ**。 */
+let LAY = [], sel = 0;
+/* 🔴🔴 2026-08-17 いったん「版＝1色」で作ったが、回帰テストで**この道具の芯が消える**ことが出た。
+   ＝「2色で塗ると両方が出る」が落ちた。**1枚の中に何色でも載る**のが NURI を立てた理由
+   （NIJIMI は色を部分で変えられない）。だから **版は色の場を持ったまま**にして、
+   ⭐「この版を今の色にする」を1つ足す形にした（塗り分けも、あとから色を変えるも、両方できる）。 */
+function newLayer(o){
+  const n = Math.max(1, FW*FH);
+  return Object.assign({ kind:'paint', on:true, col:(typeof P !== 'undefined' ? P.ink : '#3a3ce8'),
+    A:new Float32Array(n),
+    C:{ CR:new Float32Array(n), CG:new Float32Array(n), CB:new Float32Array(n) } }, o || {});
+}
+function curLay(){ return LAY[sel] || LAY[0]; }
 function newField(){
   const { w, h } = fieldSize();
   FW = w; FH = h;
   A = new Float32Array(w*h);
   CR = new Float32Array(w*h); CG = new Float32Array(w*h); CB = new Float32Array(w*h);
+  LAY = [newLayer()]; sel = 0;
 }
 function ensureField(){
   const { w, h } = fieldSize();
   if(w !== FW || h !== FH || !A) newField();
+  if(!LAY.length){ LAY = [newLayer()]; sel = 0; }
+  if(sel >= LAY.length) sel = LAY.length - 1;
+}
+/* ⭐ 合成 ── 下から順に重ねて、刷るための場を作る。
+   ⭐ 濃さで混ぜる＝筆と同じ理屈（上の版が濃いほど、その色になる）。 */
+function bake(){
+  ensureField();
+  const n = FW*FH;
+  A.fill(0); CR.fill(0); CG.fill(0); CB.fill(0);
+  for(const L of LAY){
+    if(!L.on) continue;
+    const rgb = hex2rgb(L.col), LA = L.A, LC = L.C;
+    for(let i = 0; i < n; i++){
+      const a = LA[i]; if(a <= 0) continue;
+      A[i] = A[i] + a*(1 - A[i]);
+      const r = LC ? LC.CR[i] : rgb[0], g2 = LC ? LC.CG[i] : rgb[1], b2 = LC ? LC.CB[i] : rgb[2];
+      CR[i] += (r - CR[i])*a; CG[i] += (g2 - CG[i])*a; CB[i] += (b2 - CB[i])*a;
+    }
+  }
 }
 
 /* ══ 筆 ══════════════════════════════════════════════
    ⭐ 1点ずつでなく【前の点から今の点まで】を埋める（速く動かしても途切れない）。 */
 const hex2rgb = h => { const n = parseInt(h.slice(1), 16); return [n>>16 & 255, n>>8 & 255, n & 255]; };
 function stampAt(fx, fy, rgb){
+  const L = curLay(); if(!L) return;
   const r = Math.max(1, P.bsize * 0.5 * (FW / size().W));
   const soft = P.bsoft, flow = P.bflow;
   const x0 = Math.max(0, Math.floor(fx-r)), x1 = Math.min(FW-1, Math.ceil(fx+r));
@@ -380,19 +447,21 @@ function stampAt(fx, fy, rgb){
       let w = 1 - d;
       w = soft <= 0 ? 1 : Math.pow(w, 0.4 + soft*3.5);
       const k = y*FW + x;
+      /* ⭐ 筆は【選んでいる版】に溜める。色は版が持つので、ここでは濃さだけでいい */
       if(P.tool === 'erase'){
-        A[k] = Math.max(0, A[k] - w*flow*1.6);
+        L.A[k] = Math.max(0, L.A[k] - w*flow*1.6);
         continue;
       }
       const add = w * flow;
       if(P.tool !== 'tint'){
-        A[k] = Math.min(1, A[k] + add);
+        L.A[k] = Math.min(1, L.A[k] + add);
       }
-      /* ⭐ 色は【濃さで重みづけして混ぜる】＝上から塗ると少しずつ置き換わる（絵具と同じ） */
+      /* ⭐ 色は【濃さで重みづけして混ぜる】＝上から塗ると少しずつ置き換わる（絵具と同じ）。
+         ⭐ これがあるから【1枚の版の中に何色でも載る】（この道具の芯）。 */
       const t = Math.min(1, add * (P.tool === 'tint' ? 1.6 : 1));
-      CR[k] += (rgb[0] - CR[k]) * t;
-      CG[k] += (rgb[1] - CG[k]) * t;
-      CB[k] += (rgb[2] - CB[k]) * t;
+      L.C.CR[k] += (rgb[0] - L.C.CR[k]) * t;
+      L.C.CG[k] += (rgb[1] - L.C.CG[k]) * t;
+      L.C.CB[k] += (rgb[2] - L.C.CB[k]) * t;
     }
   }
 }
@@ -653,6 +722,7 @@ function bedCanvas(f, shade){
 let lastDots = 0;
 function render(ctx, W, H, cam){
   ensureField();
+  bake();          /* ⭐ 版を合成してから刷る。画面も PNG もテストも、必ずここを通る（式は1本） */
   /* ══⭐⭐ カメラ ── 2026-08-17（木下「版全体とズームおねがい」）
      ⭐ 盤は【版面】ではなく【窓】。版面（fw×fh）を、どの倍率で画面のどこに置くかだけを持つ。
      🔴🔴 既定 ＝ {fw:W, fh:H, sc:1, ox:0, oy:0} ＝【今までの式そのもの】。
@@ -1021,8 +1091,16 @@ el('b_aseed').onclick = () => { pushHist(); P.aseed = 1 + ((Math.random()*9999)|
 seg('ratioSeg', 'ratio', () => { ensureField(); });
 el('c_paper').value = P.paper;
 el('c_paper').addEventListener('input', e => { P.paper = e.target.value; kick(); saveLocal(); });
+/* ⭐⭐ 色＝【選んでいる版の色】（2026-08-17）。
+   変えると、その版で描いた所が全部その色になる＝あとから色を変えられる。 */
+function setInk(c){
+  P.ink = c;
+  const L = curLay(); if(L) L.col = c;     /* ⭐ 版の代表色（並びの四角に出る）。絵は塗り替えない */
+  el('c_pick').value = c;
+  drawSwatch(); drawLayList(); saveLocal();
+}
 el('c_pick').value = P.ink;
-el('c_pick').addEventListener('input', e => { P.ink = e.target.value; drawSwatch(); saveLocal(); });
+el('c_pick').addEventListener('input', e => setInk(e.target.value));
 function drawSwatch(){
   const box = el('swatch'); box.innerHTML = '';
   SWATCH.forEach(c => {
@@ -1030,27 +1108,79 @@ function drawSwatch(){
     b.style.background = c;
     b.classList.toggle('on', c.toLowerCase() === P.ink.toLowerCase());
     b.title = c;
-    b.onclick = () => { P.ink = c; el('c_pick').value = c; drawSwatch(); saveLocal(); };
+    b.onclick = () => setInk(c);
     box.appendChild(b);
   });
 }
+/* ══⭐ 版のならび ══
+   ⭐ 上に重なるもの（配列の後ろ）を【上に】並べる＝見たままの順。 */
+function drawLayList(){
+  const box = el('layList'); if(!box) return;
+  box.innerHTML = '';
+  for(let i = LAY.length - 1; i >= 0; i--){
+    const L = LAY[i];
+    const row = document.createElement('div');
+    row.className = 'layrow' + (i === sel ? ' on' : '');
+    const sw = document.createElement('button');
+    sw.className = 'laysw'; sw.style.background = L.col; sw.style.opacity = L.on ? 1 : .25;
+    sw.title = '入切';
+    sw.onclick = e => { e.stopPropagation(); pushHist(); L.on = !L.on; drawLayList(); kick(); saveLocal(); };
+    const nm = document.createElement('span');
+    nm.textContent = (L.kind === 'text' ? '字' : '描く') + ' ' + (i+1);
+    row.append(sw, nm);
+    row.onclick = () => { sel = i; P.ink = L.col; el('c_pick').value = L.col;
+      drawSwatch(); drawLayList(); stat('版「' + nm.textContent + '」を選んだ'); };
+    box.appendChild(row);
+  }
+}
+el('b_layAdd').onclick = () => {
+  pushHist(); LAY.push(newLayer({ col:P.ink })); sel = LAY.length - 1;
+  drawLayList(); kick(); saveLocal(); stat('版を足した（' + LAY.length + '枚）');
+};
+el('b_layDup').onclick = () => {
+  const L = curLay(); if(!L) return;
+  pushHist();
+  LAY.splice(sel+1, 0, newLayer({ kind:L.kind, on:L.on, col:L.col, A:Float32Array.from(L.A),
+    C:{ CR:Float32Array.from(L.C.CR), CG:Float32Array.from(L.C.CG), CB:Float32Array.from(L.C.CB) } }));
+  sel++; drawLayList(); kick(); saveLocal(); stat('この版を複製した（' + LAY.length + '枚）');
+};
+/* ⭐⭐ あとから色を変える＝この版の色の場を、今の色でまるごと塗り替える */
+el('b_layFill').onclick = () => {
+  const L = curLay(); if(!L) return;
+  pushHist();
+  const rgb = hex2rgb(P.ink);
+  L.C.CR.fill(rgb[0]); L.C.CG.fill(rgb[1]); L.C.CB.fill(rgb[2]);
+  L.col = P.ink;
+  drawLayList(); kick(); saveLocal(); stat('この版を1色にした（⌘Z で戻せる）');
+};
+el('b_layDel').onclick = () => {
+  if(LAY.length <= 1){ stat('版は1枚は残る（全部消すなら まっさら）'); return; }
+  pushHist(); LAY.splice(sel, 1); sel = Math.max(0, sel - 1);
+  drawLayList(); kick(); saveLocal(); stat('この版を消した（⌘Z で戻せる）');
+};
 
 /* ══ 戻す ══
    ⚠️ 場そのものを控える（塗りは戻せないと使い物にならない）。⭐ 枚数は絞る（重いので） */
 const HIST = [];
+/* ⚠️ 控えるのは【版そのもの】（版ごとの濃さの場）。合成した A/CR/CG/CB は毎回作り直せるので持たない */
 function snapField(){
-  return { A:Float32Array.from(A), CR:Float32Array.from(CR), CG:Float32Array.from(CG), CB:Float32Array.from(CB), FW, FH };
+  return { FW, FH, sel, LAY:LAY.map(L => ({ kind:L.kind, on:L.on, col:L.col,
+    A:Float32Array.from(L.A),
+    C:L.C ? { CR:Float32Array.from(L.C.CR), CG:Float32Array.from(L.C.CG), CB:Float32Array.from(L.C.CB) } : null })) };
 }
 function pushHist(){
   ensureField();
   HIST.push(snapField());
-  if(HIST.length > 24) HIST.shift();
+  /* ⚠️ 版が増えると1枚あたりが重くなるので、枚数を絞る */
+  if(HIST.length > 12) HIST.shift();
 }
 function undo(){
   if(!HIST.length){ stat('もう戻せない'); return; }
   const s = HIST.pop();
-  FW = s.FW; FH = s.FH; A = s.A; CR = s.CR; CG = s.CG; CB = s.CB;
-  kick(); saveLocal(); stat('戻した');
+  FW = s.FW; FH = s.FH; LAY = s.LAY; sel = Math.min(s.sel, LAY.length-1);
+  A = new Float32Array(FW*FH);
+  CR = new Float32Array(FW*FH); CG = new Float32Array(FW*FH); CB = new Float32Array(FW*FH);
+  drawLayList(); syncUI(); kick(); saveLocal(); stat('戻した');
 }
 el('b_undo').onclick = undo;
 el('b_clear').onclick = () => {
@@ -1095,24 +1225,19 @@ el('b_png').onclick = () => {
   }, 'image/png');
 };
 el('b_save').onclick = () => {
-  const o = { P:{ ...P }, FW, FH,
-    A:Array.from(A, v => Math.round(v*255)),
-    C:Array.from({ length:FW*FH }, (_, i) => (Math.round(CR[i])<<16) | (Math.round(CG[i])<<8) | Math.round(CB[i])) };
-  dl(new Blob([JSON.stringify(o)], { type:'application/json' }), 'nuri_' + Date.now() + '.json');
-  stat('控えた');
+  const o = { v:3, tool:'nuri', P:{ ...P }, FW, FH, sel, LAY:packLay() };
+  const bl = new Blob([JSON.stringify(o)], { type:'application/json' });
+  dl(bl, 'nuri_' + Date.now() + '.json');
+  stat('控えた — ' + Math.round(bl.size/1024) + 'KB・版 ' + LAY.length + '枚');
 };
 el('b_load').onclick = () => el('f_json').click();
 el('f_json').addEventListener('change', e => {
   const f = e.target.files[0]; if(!f) return;
   const rd = new FileReader();
   rd.onload = () => { try{
-    const o = JSON.parse(rd.result);
-    Object.assign(P, o.P || {});
-    FW = o.FW; FH = o.FH;
-    A = Float32Array.from(o.A, v => v/255);
-    CR = new Float32Array(FW*FH); CG = new Float32Array(FW*FH); CB = new Float32Array(FW*FH);
-    o.C.forEach((c, i) => { CR[i] = (c>>16)&255; CG[i] = (c>>8)&255; CB[i] = c&255; });
-    syncUI(); kick(); saveLocal(); stat('控えを開いた');
+    loadState(JSON.parse(rd.result));
+    drawLayList(); syncUI(); kick(); saveLocal();
+    stat('控えを開いた — 版 ' + LAY.length + '枚');
   }catch(_){ stat('🔴 読めなかった'); } };
   rd.readAsText(f);
   e.target.value = '';
@@ -1128,27 +1253,97 @@ function syncUI(){
   el('c_acol').value = P.acol; el('c_alcol').value = P.alcol;
   el('c_paper').value = P.paper; el('c_pick').value = P.ink;
   el('c_stagger').checked = !!P.stagger;
-  drawSwatch();
+  drawSwatch(); drawLayList();
+}
+
+/* ══⭐ 版の詰め方（控え／このブラウザに残す）══
+   ⭐ 場は 27万画素ある。数の配列で持つと JSON が数MBになるので **base64**（3倍ほど軽い）。
+   ⚠️ localStorage は 5MB で頭打ち。溢れたら【黙って消える】ので、溢れたことを画面に出す。 */
+/* ⭐⭐ 塗っていない所は【0 がひたすら続く】。そこだけ詰める（ランレングス）。
+   🔴 詰めないと、版4枚で localStorage（5MB）を超えて【リロードで絵が消える】（実測した）。
+   ⚠️ 0 は必ず「0 と 続いた数（2バイト）」の形で出るので、読み違えようがない。 */
+function rleEnc(u8){
+  const out = new Uint8Array(Math.ceil(u8.length*1.6) + 8);
+  let o = 0, i = 0;
+  while(i < u8.length){
+    if(u8[i] === 0){
+      let n = 0;
+      while(i+n < u8.length && u8[i+n] === 0 && n < 65535) n++;
+      out[o++] = 0; out[o++] = (n>>8)&255; out[o++] = n&255; i += n;
+    } else { out[o++] = u8[i]; i++; }
+  }
+  return out.subarray(0, o);
+}
+function rleDec(u8, len){
+  const out = new Uint8Array(len);
+  let i = 0, o = 0;
+  while(i < u8.length && o < len){
+    const v = u8[i++];
+    if(v === 0){ const n = (u8[i++]<<8) | u8[i++]; o += n; }
+    else out[o++] = v;
+  }
+  return out;
+}
+const b64of = u8 => { let s = ''; const CH = 0x8000;
+  for(let i = 0; i < u8.length; i += CH) s += String.fromCharCode.apply(null, u8.subarray(i, i+CH));
+  return btoa(s); };
+const u8of = b64 => { const s = atob(b64), u = new Uint8Array(s.length);
+  for(let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; };
+const toB64 = (arr, scale) => {
+  const u = new Uint8Array(arr.length);
+  for(let i = 0; i < arr.length; i++) u[i] = Math.max(0, Math.min(255, Math.round(arr[i]*scale)));
+  return b64of(rleEnc(u));
+};
+const fromB64 = (b64, scale, len) => {
+  const u = rleDec(u8of(b64), len);
+  const a = new Float32Array(len);
+  for(let i = 0; i < len; i++) a[i] = u[i]/scale;
+  return a;
+};
+function packLay(){
+  return LAY.map(L => ({ kind:L.kind, on:L.on, col:L.col, A:toB64(L.A, 255),
+    C:L.C ? { R:toB64(L.C.CR, 1), G:toB64(L.C.CG, 1), B:toB64(L.C.CB, 1) } : null }));
+}
+function unpackLay(arr){
+  return arr.map(o => {
+    /* ⚠️ newLayer が空の色の場を作る。控えに色があればそれで差し替える（null を代入しない） */
+    const n = FW*FH;
+    const L = newLayer({ kind:o.kind || 'paint', on:o.on !== false, col:o.col || '#3a3ce8', A:fromB64(o.A, 255, n) });
+    if(o.C) L.C = { CR:fromB64(o.C.R, 1, n), CG:fromB64(o.C.G, 1, n), CB:fromB64(o.C.B, 1, n) };
+    return L;
+  });
+}
+/* ⚠️ 昔の形（版が無い・1枚に色の場）も開く＝木下の描きかけを捨てない。
+   ⭐ 色の場ごと1枚の版として持つので、見た目は【1画素も変わらない】。 */
+function adoptOld(o){
+  const n = o.FW*o.FH;
+  const C = { CR:new Float32Array(n), CG:new Float32Array(n), CB:new Float32Array(n) };
+  (o.C || []).forEach((c, i) => { C.CR[i] = (c>>16)&255; C.CG[i] = (c>>8)&255; C.CB[i] = c&255; });
+  return [ newLayer({ A:Float32Array.from(o.A, v => v/255), C }) ];
+}
+function loadState(o){
+  Object.assign(P, o.P || {});
+  FW = o.FW; FH = o.FH;
+  A = new Float32Array(FW*FH);
+  CR = new Float32Array(FW*FH); CG = new Float32Array(FW*FH); CB = new Float32Array(FW*FH);
+  LAY = o.LAY ? unpackLay(o.LAY) : (o.A ? adoptOld(o) : [newLayer()]);
+  sel = Math.min(o.sel || 0, LAY.length - 1);
 }
 
 /* ══ このブラウザに残す ══ */
 function saveLocal(){
   try{
-    localStorage.setItem('nuri.v1', JSON.stringify({ P, FW, FH,
-      A:Array.from(A, v => Math.round(v*255)),
-      C:Array.from({ length:FW*FH }, (_, i) => (Math.round(CR[i])<<16) | (Math.round(CG[i])<<8) | Math.round(CB[i])) }));
-  }catch(_){}
+    localStorage.setItem('nuri.v3', JSON.stringify({ v:3, P, FW, FH, sel, LAY:packLay() }));
+  }catch(_){ stat('⚠️ このブラウザに残せなかった（版が多い／大きい）。控える で JSON に出してください'); }
 }
 function loadLocal(){
   try{
-    const s = localStorage.getItem('nuri.v1'); if(!s) return;
-    const o = JSON.parse(s);
-    Object.assign(P, o.P || {});
-    FW = o.FW; FH = o.FH;
-    A = Float32Array.from(o.A, v => v/255);
-    CR = new Float32Array(FW*FH); CG = new Float32Array(FW*FH); CB = new Float32Array(FW*FH);
-    o.C.forEach((c, i) => { CR[i] = (c>>16)&255; CG[i] = (c>>8)&255; CB[i] = c&255; });
+    const s3 = localStorage.getItem('nuri.v3');
+    if(s3){ loadState(JSON.parse(s3)); return true; }
+    const s1 = localStorage.getItem('nuri.v1');   /* ⚠️ 版を入れる前の描きかけ */
+    if(s1){ loadState(JSON.parse(s1)); return true; }
   }catch(_){}
+  return false;
 }
 
 /* ══ 起動 ══ */
