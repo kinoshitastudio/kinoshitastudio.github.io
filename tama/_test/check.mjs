@@ -25,6 +25,7 @@ const ink=(A)=>{let n=0;for(let i=0;i<A.length;i+=4)if(Math.abs(A[i]-74)>12)n++;
 const $=id=>document.getElementById(id);
 const set=(id,v)=>{const r=$(id); r.value=v; r.dispatchEvent(new Event('input'));};
 /* ⚠️ 見本はトグル。すでに置いてあるのに押すと【取り下げ】になる（前はそれで空になり落ちた） */
+const use=v=>document.querySelector('#useSeg button[data-v="'+v+'"]').click();
 const ensurePre=v=>{ if(TAMA.P.preset!==v) document.querySelector('#pre button[data-v="'+v+'"]').click(); };
 try{
   ok('層が2つで始まる', TAMA.LAYER.length===2);
@@ -104,15 +105,15 @@ try{
   }
 
   // 描く＝線の層に入る
-  { $('c_draw').checked=true; $('c_draw').dispatchEvent(new Event('change'));
-    ok('描くを入れると線の層に移る', TAMA.cur().kind==='draw');
+  { use('draw');
+    ok('描くにすると線の層に移る', TAMA.cur().kind==='draw');
     const before=shot(240,240,0);
     TAMA.cur().strokes.push([[-0.5,0,1],[0,0.2,1],[0.5,-0.1,1]]);
     const after=shot(240,240,0);
     ok('描いた線が刷られる（'+diff(before,after)+'画素）', diff(before,after)>200);
     $('b_undoline').click();
     ok('1本消すで減る', TAMA.cur().strokes.length===0);
-    $('c_draw').checked=false; $('c_draw').dispatchEvent(new Event('change'));
+    use('move');
   }
 
   // 層は全部消せる（⚠️ 前は「層は1つは要る」で最後の1枚が残った）
@@ -202,21 +203,43 @@ try{
     const pe=(ty,x,y,sh)=>cv.dispatchEvent(new PointerEvent(ty,{clientX:x,clientY:y,button:0,buttons:1,
       shiftKey:!!sh,pointerId:3,pointerType:'mouse',bubbles:true,cancelable:true}));
     cv.setPointerCapture=()=>{};
-    pe('pointerdown',300,300); pe('pointermove',420,360); pe('pointerup',420,360);
-    ok('左ドラッグで動く（'+src.ox+','+src.oy+'）', src.ox!==o0x && src.oy!==o0y);
+    /* ⭐ 掴めるのは【字や線の上】だけ。真ん中は字の上 */
+    const r0=cv.getBoundingClientRect(), CX=r0.left+r0.width/2, CY=r0.top+r0.height/2;
+    ok('字の上は掴める', TAMA.layerAt([0,0])>=0);
+    ok('遠くの何も無い所は掴めない', TAMA.layerAt([0.95,0.95])<0);
+    pe('pointerdown',CX,CY); pe('pointermove',CX+120,CY+60); pe('pointerup',CX+120,CY+60);
+    ok('掴んで引くと動く（'+src.ox+','+src.oy+'）', src.ox!==o0x && src.oy!==o0y);
     ok('右下へ引いたら右下へ動く', src.ox>o0x && src.oy>o0y);
     ok('写しも一緒に動く（ずれの差は同じ）',
        Math.abs((tw.ox-src.ox)-d0x)<1e-9 && Math.abs((tw.oy-src.oy)-d0y)<1e-9);
     ok('つまみにも出る', Math.abs(+$('r_ox').value-src.ox)<1e-9);
     TAMA.undo();
     ok('⌘Zで動かす前に戻る', Math.abs(TAMA.cur().ox-o0x)<1e-9);
-    /* ⚠️ 筆を構えている間は筆が先。動かすのは Shift＋左ドラッグ */
+    /* ⭐ 何も無い所を押したら盤が動く（層は動かない） */
+    { const v0=TAMA.VIEW.x, ox0=TAMA.cur().ox;
+      pe('pointerdown',r0.left+6,r0.top+6); pe('pointermove',r0.left+80,r0.top+40); pe('pointerup',r0.left+80,r0.top+40);
+      ok('何も無い所は盤が動く', TAMA.VIEW.x!==v0 && TAMA.cur().ox===ox0);
+      cv.dispatchEvent(new MouseEvent('dblclick',{bubbles:true})); }
+    /* ⭐ 掴んだ層がそのまま選ばれる */
+    { $('b_wipe').click(); $('b_addT').click();
+      const a=TAMA.cur(); a.ox=-0.5;
+      $('b_addT').click(); const b=TAMA.cur(); b.ox=0.5; b.text='みぎ';
+      TAMA.pick(TAMA.LAYER.indexOf(b));
+      const r1=cv.getBoundingClientRect(), S=Math.min(r1.width,r1.height)/2;
+      pe('pointerdown',r1.left+r1.width/2-0.5*S,r1.top+r1.height/2);
+      pe('pointerup',r1.left+r1.width/2-0.5*S,r1.top+r1.height/2);
+      ok('掴んだ方の層が選ばれる', TAMA.cur().id===a.id);
+    }
+    /* ⚠️ 描くに切り替えたら、字の上を引いても【描く】だけ（動かない） */
     $('b_wipe').click(); $('b_addD').click();
+    use('draw');
     const dl=TAMA.cur(), dx0=dl.ox;
-    pe('pointerdown',300,300); pe('pointermove',380,340); pe('pointerup',380,340);
-    ok('筆のときは左ドラッグで描く（動かさない）', dl.ox===dx0 && dl.strokes.length===1);
-    pe('pointerdown',300,300,true); pe('pointermove',380,340,true); pe('pointerup',380,340,true);
-    ok('Shift＋左ドラッグなら描かずに動く', dl.ox!==dx0 && dl.strokes.length===1);
+    pe('pointerdown',CX,CY); pe('pointermove',CX+80,CY+40); pe('pointerup',CX+80,CY+40);
+    ok('描く側では動かない・描くだけ', dl.ox===dx0 && dl.strokes.length===1);
+    use('move');
+    /* 動かすに戻したら、いま描いた線を掴んで動かせる */
+    pe('pointerdown',CX,CY); pe('pointermove',CX+40,CY+20); pe('pointerup',CX+40,CY+20);
+    ok('動かすに戻すと線も掴める', dl.ox!==dx0 && dl.strokes.length===1);
     $('b_wipe').click();
   }
 
