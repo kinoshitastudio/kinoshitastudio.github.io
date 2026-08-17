@@ -169,6 +169,9 @@ const back = await shot();
 check(!!back && a0 && back.w === a0.w && back.h === a0.h, '自動に戻すと元の大きさに戻る',
       back ? `${back.w}×${back.h}` : '-');
 
+/* ⚠️ 「すべての版を同じように動かす」は【別ファイル（allmove.mjs）】で見る。
+   ここに入れると、前の項目で動画を焼いた後の状態（TV.on / animOn / 版面モード）に引っかかって
+   「動かない」と誤検出した（2026-08-18 に2回）。⭐ 動きの検査は素の状態から始める。 */
 console.log(ng.length ? `\n🔴 だめだったもの ${ng.length}件: ${ng.join(' / ')}` : '\n✅ 版面の形は全部通った');
 if(errs.length) console.log(`🔴 JSエラー ${errs.length}件: ${errs.slice(0,3).join(' / ')}`);
 await b.close();
