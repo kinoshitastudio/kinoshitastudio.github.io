@@ -57,10 +57,10 @@
   #ctl .val{font-size:8px;opacity:.45;width:24px;text-align:right;}
   /* ⭐ 出る大きさと書き出し中の進み具合（2026-08-13）。この道具は【暗い地に白い字】。
      ⚠️ 説明用のクラスに入れない＝いつでも見えないと、大きさも進み具合も分からない。 */
-  #tvSize{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:9px;line-height:1.6;
+  #tvSize,#pSize{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:9px;line-height:1.6;
     color:#fff;opacity:.82;border:1px solid rgba(255,255,255,.18);border-radius:6px;
     padding:5px 7px;margin:2px 0;white-space:normal;}
-  #tvSize b{font-weight:600;opacity:1;}
+  #tvSize b,#pSize b{font-weight:600;opacity:1;}
   #tvPx{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.22);color:#fff;
     font:inherit;font-size:10px;width:62px;padding:3px 5px;border-radius:5px;}
   .seg{display:flex;border:1px solid rgba(255,255,255,.18);}
@@ -430,6 +430,21 @@
   <div id="tvSize"></div>
   <button class="btn" id="tvGo">動画</button>
 
+  <!-- ══⭐⭐ 版面（2026-08-17）── 木下「書き出し時のサイズをえらべるように、正方形や縦長など。
+       さらにオブジェクトを移動できたりサイズを小さくできたりしたい」
+       「インスタは縦長になっているから、さらにここで動画サイズを決めれるのが一番よい」
+       ⭐ ここが PNG も動画も決める（長辺は下の「出る大きさ」で選ぶ）。
+       ⭐ やっているのは【場のどこを切り出すか】だけ＝反応拡散には触っていない。 -->
+  <div class="sep"></div>
+  <div class="grp"><label>版面</label><div class="seg" id="seg-pratio">
+    <button data-v="1:1" class="on">正方</button><button data-v="4:5">4:5</button
+    ><button data-v="3:4">3:4</button><button data-v="9:16">9:16</button><button data-v="16:9">16:9</button>
+  </div></div>
+  <div class="grp"><label>絵の大きさ</label><input id="s-pzoom" type="range" min="30" max="200" value="100"><span class="val" id="v-pzoom"></span></div>
+  <div class="grp"><label>よこ</label><input id="s-pox" type="range" min="-60" max="60" value="0"><span class="val" id="v-pox"></span></div>
+  <div class="grp"><label>たて</label><input id="s-poy" type="range" min="-60" max="60" value="0"><span class="val" id="v-poy"></span></div>
+  <div id="pSize"></div>
+
   <div class="sep"></div>
   <button class="btn mode-seed" id="b-seed">まく</button>
   <button class="btn" id="b-clear">リセット</button>
@@ -523,8 +538,29 @@ const P = {
   /* ⭐ マス目に落とす（2026-08-12・膜 MAKU から）。0＝なし＝これまでどおり。
      ⚠️ 上の noise（粒）／grain（細かさ）は【しきい値のゆらぎ】で別物。名前を分けてある。 */
   cell:0, cellInk:1, cellJit:0, cellAsp:0,
+  /* ⭐ 版面の形・置き方（2026-08-17）。⚠️ 既定は '1:1'・移動0・大きさ1＝これまでと1画素も変わらない。
+     ⭐ 場（反応拡散）は正方のまま。ここは【どこを切り出して刷るか】だけ。 */
+  pRatio:'1:1', pOx:0, pOy:0, pZoom:1,
 };
 const SIM = 640;
+/* ⭐ 版面の形 ── 出る絵の縦横比。長辺を EXPORT_RES に取る */
+const PRATIO = { '1:1':[1,1], '4:5':[4,5], '9:16':[9,16], '16:9':[16,9], '3:4':[3,4] };
+/* ⭐⭐ 窓 ── 場のどこを切り出すか（左下 ox,oy と 大きさ w,h・場の uv 単位）
+   ⭐ 長辺を 1 に合わせる＝縦長なら【縦いっぱい・横を狭く】切る（木下の選択＝縦長いっぱいに出る）。
+   ⭐ 大きさ（pZoom）を下げると窓が広がる＝絵が小さくなり、場の外は地の色になる。 */
+function win(){
+  const r = PRATIO[P.pRatio] || PRATIO['1:1'];
+  const m = Math.max(r[0], r[1]);
+  const z = Math.max(0.2, P.pZoom || 1);
+  const w = (r[0]/m)/z, h = (r[1]/m)/z;
+  return { ox:(1-w)/2 + (P.pOx||0), oy:(1-h)/2 + (P.pOy||0), w, h };
+}
+/* ⭐ 出る絵の大きさ（長辺 = EXPORT_RES） */
+function outWH(res){
+  const r = PRATIO[P.pRatio] || PRATIO['1:1'];
+  const m = Math.max(r[0], r[1]);
+  return [ Math.round(res*r[0]/m), Math.round(res*r[1]/m) ];
+}
 const EXPORT_RES = 2048;
 const MAXSRC = 12;
 let seed = Math.random()*1000;
@@ -647,21 +683,32 @@ uniform float uCell;      // マスの数（0=なし。大きいほど細かい�
 uniform float uCellInk;   // 0=形だけ 1=形も色も 2=色だけ
 uniform float uCellJit;   // ばらつき（マスごとに色を散らす＝ドット感）
 uniform float uCellAsp;   // マスの形（-1=横長 0=正方 +1=縦長）
+/* ══⭐⭐ 版面の形・移動・大きさ（2026-08-17 木下「書き出し時のサイズをえらべるように、正方形や縦長など。
+   さらにオブジェクトを移動できたりサイズを小さくできたりしたい」）
+   ⭐ やることは1つだけ＝【場のどこを切り出して刷るか】。反応拡散には一切触らない。
+      だから滲み・しきい・グラデ・地・マス目・育つ は全部そのまま効く。
+   🔴 既定（左下0,0・大きさ1,1）なら vUv そのまま＝今までと1画素も変わらない。
+   ⚠️ 窓が場の外へ出た所は【字なし】にする（地の色が出る）。 */
+uniform vec2 uWinO, uWinS;
 float cellRand(vec2 c){ return fract(sin(dot(c, vec2(127.1,311.7))) * 43758.5453); }
 ${HASH}
 void main(){
   /* ⭐ 場を拾う場所（sUV＝形）と、色を引く場所（gUV）を分ける。
      🔴 形にかけると字の輪郭が階段になる。輪郭はなめらかのまま塗りだけ粒にしたい時があるので、
         MAKU と同じく「形だけ／形も色も／色だけ」を選べるようにしてある。 */
-  vec2 sUV=vUv, gUV=vUv; float jit=0.0;
+  /* ⭐ 版面の uv → 場の uv。⚠️ 紙の粒（gp）は【版面】基準のままにする（拡大で粒まで太らせない） */
+  vec2 wUv = uWinO + vUv*uWinS;
+  bool oob = (wUv.x < 0.0 || wUv.x > 1.0 || wUv.y < 0.0 || wUv.y > 1.0);
+  vec2 sUV=wUv, gUV=wUv; float jit=0.0;
   if(uCell >= 4.0){
     vec2 cn = vec2(uCell);
     // ⚠️ マスの形＝縦のマス数を減らすと1マスが縦に長くなる（0なら正方）
     if(abs(uCellAsp) > 0.001) cn.y = max(1.0, cn.y * pow(2.0, -uCellAsp*2.0));
     vec2 cell = floor(vUv*cn);
     vec2 q = (cell+0.5)/cn;
-    if(uCellInk < 1.5) sUV = q;                     // 0=形だけ / 1=形も色も
-    if(uCellInk > 0.5) gUV = q;                     // 1=形も色も / 2=色だけ
+    /* ⚠️ マス目は【紙の上の格子】なので版面基準で丸めて、そのあと場に写す */
+    if(uCellInk < 1.5) sUV = uWinO + q*uWinS;       // 0=形だけ / 1=形も色も
+    if(uCellInk > 0.5) gUV = uWinO + q*uWinS;       // 1=形も色も / 2=色だけ
     /* ⭐ ばらつき ── マス1つごとに色を引く位置をずらす＝隣のマスと違う色が出る。
        ⚠️ 向きに沿った段だけでは【縞】にしかならない。散らすには向きと無関係に散らす。 */
     jit = (cellRand(cell)-0.5)*uCellJit;
@@ -694,6 +741,8 @@ void main(){
     float m=texture(uMask,sUV).g;           // 描いた場の V（塗った所が高い）
     t *= smoothstep(0.20,0.30,m);           // 字の外は地色のまま
   }
+  /* ⭐ 窓が場の外に出た所は字なし＝地の色になる（小さくしたときの周り） */
+  if(oob) t = 0.0;
   // ⭐ 育つのフェード＝字の濃さそのものを上げ下げする（1でこれまでどおり）
   t *= uFade;
   vec3 inkc=uHi;                            // 塗り/線の色
@@ -972,7 +1021,10 @@ function computeWave(now,fb,res){ gl.useProgram(pWave); gl.bindFramebuffer(gl.FR
   u1(pWave,'uWarp',P.warp); u1(pWave,'uSeed',seed); draw(); }
 
 /* ── 表示 ── */
-function display(fb,res,src){ gl.useProgram(pDisp); gl.bindFramebuffer(gl.FRAMEBUFFER,fb); gl.viewport(0,0,res,res);
+/* ⚠️ 第2・第3引数は【出す絵の幅と高さ】。高さを省くと今までどおり正方形（res×res）。 */
+function display(fb,res,src,resH){ const W=res, H=resH||res;
+  gl.useProgram(pDisp); gl.bindFramebuffer(gl.FRAMEBUFFER,fb); gl.viewport(0,0,W,H);
+  const wn = win(); u2(pDisp,'uWinO',wn.ox,wn.oy); u2(pDisp,'uWinS',wn.w,wn.h);
   samp(pDisp,'uSim',0,src||curTex()); samp(pDisp,'uGradTex',1,gradTex); samp(pDisp,'uMask',2,maskTex);
   samp(pDisp,'uGradLUT',3,gradLUT); samp(pDisp,'uBgLUT',4,bgLUT);
   u1(pDisp,'uBgGrad',P.bgGrad);
@@ -1062,7 +1114,7 @@ function loop(){ if(!running) return; requestAnimationFrame(loop);
       }
     }
   }
-  display(null,cvs.width);
+  display(null,cvs.width,null,cvs.height);
 }
 
 /* ── リサイズ ── */
@@ -1075,21 +1127,45 @@ const TV = { on:false, stop:false };
 function resize(){
   if(TV.on) return;            // ⚠️ 書き出し中に盤の大きさを変えない
   const box = wrapEl.getBoundingClientRect();
-  const s = Math.floor(Math.min(box.width, box.height) * 0.98);
+  /* ⭐ 盤も版面の形にする（2026-08-17）。長辺を1に正規化して、盤に収まる最大を取る */
+  const r = PRATIO[P.pRatio] || PRATIO['1:1'];
+  const m = Math.max(r[0], r[1]), aw = r[0]/m, ah = r[1]/m;
+  const s = Math.min(box.width/aw, box.height/ah) * 0.98;
+  const w = Math.floor(s*aw), h = Math.floor(s*ah);
   const dpr = Math.min(devicePixelRatio, 2);
-  cvs.style.width=s+'px'; cvs.style.height=s+'px'; cvs.width=Math.floor(s*dpr); cvs.height=Math.floor(s*dpr); }
+  cvs.style.width=w+'px'; cvs.style.height=h+'px';
+  cvs.width=Math.floor(w*dpr); cvs.height=Math.floor(h*dpr); }
 addEventListener('resize',resize);
 
 /* ── ポインタ ── */
 const brush={ down:false, x:0.5, y:0.5, r:0.045 };
 function toUv(e){ const r=cvs.getBoundingClientRect(); const px=(e.clientX-r.left)/r.width, py=(e.clientY-r.top)/r.height;
   return { x:Math.min(Math.max(px,0),1), y:1-Math.min(Math.max(py,0),1) }; }
-cvs.addEventListener('pointerdown',e=>{ cvs.setPointerCapture(e.pointerId); const p=toUv(e);
+/* ⭐ ⌥＋ドラッグ＝【版面を動かす】（2026-08-17）。他の道具（HIDA・NURI）と同じ作法。
+   🔴 ふつうのドラッグは筆のまま＝⌥ と2本目の指だけ譲る（筆と取り合わない）。 */
+let panP = false, plx = 0, ply = 0;
+cvs.addEventListener('pointerdown',e=>{ cvs.setPointerCapture(e.pointerId);
+  if(e.altKey){ panP = true; plx = e.clientX; ply = e.clientY; brush.down = false; return; }
+  const p=toUv(e);
   if(mode==='wave'){ addSource(p.x,p.y); }
   else { brush.x=p.x; brush.y=p.y; brush.down=true;
     if(P.grow>0.5) strokeRec = [];    // ⭐ 育てている最中は軌跡を覚える（元の字へ足すため）
   } });
-cvs.addEventListener('pointermove',e=>{ if(mode==='wave'||!brush.down) return; const p=toUv(e); brush.x=p.x; brush.y=p.y; });
+cvs.addEventListener('pointermove',e=>{
+  if(panP){
+    /* ⭐ 画面で動かした分を【場に対する比】に直して足す（窓を動かすので絵は逆に動く） */
+    const r = cvs.getBoundingClientRect();
+    const wn = win();
+    P.pOx -= (e.clientX - plx)/r.width * wn.w;
+    P.pOy += (e.clientY - ply)/r.height * wn.h;   /* ⚠️ WebGL の y は下から＝符号が逆 */
+    plx = e.clientX; ply = e.clientY;
+    const sx = document.getElementById('s-pox'), sy = document.getElementById('s-poy');
+    if(sx){ sx.value = Math.round(P.pOx*100); document.getElementById('v-pox').textContent = sx.value; }
+    if(sy){ sy.value = Math.round(P.pOy*100); document.getElementById('v-poy').textContent = sy.value; }
+    return;
+  }
+  if(mode==='wave'||!brush.down) return; const p=toUv(e); brush.x=p.x; brush.y=p.y; });
+addEventListener('pointerup',()=>{ if(panP){ panP = false; saveSoon(); } });
 addEventListener('pointerup',()=>{ if(brush.down){ brush.down=false; if(mode!=='wave') computeGradCoords();
   /* ⭐ 育てながら描き足した分は【そのストロークだけ】を元の字に足す。
      🔴 ここで growStart() を呼んでいた＝溶けかけの場が元の字になり、二度と戻らなかった。 */
@@ -1098,19 +1174,22 @@ addEventListener('pointerup',()=>{ if(brush.down){ brush.down=false; if(mode!=='
 
 /* ── 書き出し ── */
 function exportPNG(){
-  const R=EXPORT_RES;
+  /* ⭐ 出る大きさは版面の形で決まる（長辺 = EXPORT_RES）。正方なら今までと同じ 2048×2048 */
+  const [W,H] = outWH(EXPORT_RES);
+  const R = Math.max(W,H);
   let fieldTex=curTex(), tmpF=null,tmpT=null;
   if(mode==='wave'){ tmpT=tex(R); tmpF=fbo(tmpT); computeWave(performance.now(),tmpF,R); fieldTex=tmpT; }
   const et=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,et);
-  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,R,R,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,W,H,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
-  const ef=fbo(et); display(ef,R,fieldTex);
-  const px=new Uint8Array(R*R*4); gl.readPixels(0,0,R,R,gl.RGBA,gl.UNSIGNED_BYTE,px);
-  const oc=document.createElement('canvas'); oc.width=R; oc.height=R; const octx=oc.getContext('2d');
-  const img=octx.createImageData(R,R);
-  for(let y=0;y<R;y++){ const s=(R-1-y)*R*4, d=y*R*4; img.data.set(px.subarray(s,s+R*4),d); }
+  const ef=fbo(et); display(ef,W,fieldTex,H);
+  const px=new Uint8Array(W*H*4); gl.readPixels(0,0,W,H,gl.RGBA,gl.UNSIGNED_BYTE,px);
+  const oc=document.createElement('canvas'); oc.width=W; oc.height=H; const octx=oc.getContext('2d');
+  const img=octx.createImageData(W,H);
+  /* ⚠️ WebGL は下から上＝行を入れ替えて書く（正方でなくなっても同じ理屈） */
+  for(let y=0;y<H;y++){ const s=(H-1-y)*W*4, d=y*W*4; img.data.set(px.subarray(s,s+W*4),d); }
   octx.putImageData(img,0,0);
-  oc.toBlob(b=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='nijimi_'+P.mode+'_'+Date.now()+'.png'; a.click();
+  oc.toBlob(b=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='nijimi_'+P.mode+'_'+W+'x'+H+'_'+Date.now()+'.png'; a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),1000); },'image/png');
   gl.deleteFramebuffer(ef); gl.deleteTexture(et);
   if(tmpF){ gl.deleteFramebuffer(tmpF); gl.deleteTexture(tmpT); }
@@ -1140,6 +1219,16 @@ function seg(id,key,after){ document.querySelectorAll('#'+id+' button').forEach(
   document.querySelectorAll('#'+id+' button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
   const raw = b.dataset.p!==undefined? b.dataset.p : b.dataset.v;
   P[key]= isNaN(+raw)? raw : +raw; if(after)after(); }; }); }
+/* ⭐ 版面 ── 盤の形も変わるので resize を呼ぶ。⭐ 出る大きさの表示も更新する */
+function pSizeInfo(){
+  const el = document.getElementById('pSize'); if(!el) return;
+  const [W,H] = outWH(EXPORT_RES);
+  el.innerHTML = 'PNG <b>' + W + ' × ' + H + '</b>';
+}
+seg('seg-pratio','pRatio',()=>{ resize(); pSizeInfo(); if(typeof tvInfo==='function') tvInfo(); saveSoon(); });
+bindRange('s-pzoom','pZoom','v-pzoom',0.01);
+bindRange('s-pox','pOx','v-pox',0.01);
+bindRange('s-poy','pOy','v-poy',0.01);
 seg('seg-preset','preset',()=>{ bake(); refreshStat(); });
 seg('seg-facet','facet',()=>{ bake(); refreshStat(); });
 /* ⭐「育つ」＝手を止めても反応拡散を回し続ける（木下「ぬるっと、それを動かすスイッチがあってもいい」）。
@@ -1671,6 +1760,7 @@ async function initBoards(){
 }
 
 if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); genSources(); computeGradCoords(); refreshStat();
+  pSizeInfo();                                  /* ⭐ 版面の出る大きさを最初から出す */
   running=true; loop(); initBoards(); }
 /* 道具の明るさ（ライト／ダーク）。盤の地色（「地」のつまみ）とは別もの。
    ⚠️ NIJIMI は暗いのが既定＝DEF='dark'。HORI/KUMI/TSUBU とは向きが逆。 */
@@ -1710,7 +1800,7 @@ if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); gen
   const sync = () => { if(vF) vF.textContent = sF.value; if(vP) vP.textContent = sP.value; };
   sF.addEventListener('input', sync); sP.addEventListener('input', sync); sync();
 
-  const paint = () => { try{ display(null, cvs.width); }catch(e){} };
+  const paint = () => { try{ display(null, cvs.width, null, cvs.height); }catch(e){} };
   function stop(){
     NJF.on = false; window.__njFlow = false; window.__njPh = 0;
     clearTimeout(NJF.timer); cancelAnimationFrame(NJF.raf);
@@ -1781,17 +1871,21 @@ if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); gen
     const sec = loops / spd;
     return { fps, loops, sec, total: Math.max(2, Math.round(sec * fps)) };
   }
-  /* ⭐ 出る大きさは【押す前に】必ず出す。⚠️ H.264 の上限＝辺4096・マクロブロック36864。 */
+  /* ⭐ 出る大きさは【押す前に】必ず出す。⚠️ H.264 の上限＝辺4096・マクロブロック36864。
+     ⚠️ 2026-08-17 ── 版面（正方/縦長…）を変えたときも呼ばないと、表示だけ正方のまま残る
+        （実際の書き出しは版面で出ていたので、表示と食い違って一番タチが悪い）。 */
   function sizeSync(){
     const el = document.getElementById('tvSize'); if(!el) return;
-    let R = side();
+    /* ⭐ 2026-08-17 ── 出る形は【版面】が決める（長辺＝ここで選んだ大きさ）。
+       木下「インスタは縦長になっているから、さらにここで動画サイズを決めれるのが一番よい」 */
+    let [W,H] = outWH(side());
     const isMp4 = seg('tvFmt','mp4') === 'mp4';
-    if(isMp4) R -= R % 2;
-    const mb = Math.ceil(R/16) * Math.ceil(R/16);
-    const ok = mb <= 36864 && R <= 4096;                 // 正方形なら 3072 まで
+    if(isMp4){ W -= W % 2; H -= H % 2; }
+    const mb = Math.ceil(W/16) * Math.ceil(H/16);
+    const ok = mb <= 36864 && Math.max(W,H) <= 4096;      // H.264 の上限
     const p = plan();
-    el.innerHTML = '出力 <b>' + R + ' × ' + R + '</b> px'
-      + (isMp4 && !ok ? '<br>⚠️ mp4 の上限超え（正方形は 3072px まで）' : '')
+    el.innerHTML = '出力 <b>' + W + ' × ' + H + '</b> px'
+      + (isMp4 && !ok ? '<br>⚠️ mp4 の上限超え（辺4096・面36864マクロブロックまで）' : '')
       + (p.err ? '<br>⚠️ ' + p.err
           : '<br>' + p.total + ' コマ・' + p.sec.toFixed(1) + '秒・' + p.fps + 'fps・' + p.loops + '周');
   }
@@ -1842,10 +1936,11 @@ if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); gen
     return muxP;
   }
   const QB = { hi:0.30, mid:0.15, lo:0.06 };
-  async function pickCodec(R, fps, bitrate){
+  async function pickCodec(W, fps, bitrate, H){
+    const w = W, h = H || W;                 /* ⚠️ 高さを省くと正方（今までの呼び方） */
     const cands = ['avc1.640034','avc1.640033','avc1.640032','avc1.64002a','avc1.640028','avc1.4d0034','avc1.42003c'];
     for(const codec of cands){
-      try{ const s = await VideoEncoder.isConfigSupported({ codec, width:R, height:R, bitrate, framerate:fps });
+      try{ const s = await VideoEncoder.isConfigSupported({ codec, width:w, height:h, bitrate, framerate:fps });
         if(s && s.supported) return s.config; }catch(_){}
     }
     return null;
@@ -1867,9 +1962,11 @@ if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); gen
 
     let fmt = seg('tvFmt','mp4');
     const q = seg('tvQ','mid');
-    let R = side();
-    if(fmt === 'mp4') R -= R % 2;
-    R = Math.max(2, R);
+    /* ⭐ 版面の形で W,H を決める（正方なら今までと同じ） */
+    let [W,H] = outWH(side());
+    if(fmt === 'mp4'){ W -= W % 2; H -= H % 2; }
+    W = Math.max(2, W); H = Math.max(2, H);
+    const R = Math.max(W, H);          /* 干渉の場を焼くときの一辺（正方のまま） */
 
     /* ⚠️ 画面で流していたら止める（位相を取り合わないため）。stop() は閉じの中なので押して止める。 */
     const flowBtn = document.getElementById('b-flow');
@@ -1892,25 +1989,25 @@ if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); gen
         tmpT = tex(R); tmpF = fbo(tmpT); computeWave(performance.now(), tmpF, R); fieldTex = tmpT;
       }
       et = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, et);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, R, R, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       ef = fbo(et);
 
-      const px = new Uint8Array(R*R*4);
-      const out = document.createElement('canvas'); out.width = R; out.height = R;
+      const px = new Uint8Array(W*H*4);
+      const out = document.createElement('canvas'); out.width = W; out.height = H;
       const octx = out.getContext('2d');
-      const img = octx.createImageData(R, R);
+      const img = octx.createImageData(W, H);
 
       let enc = null, muxer = null, target = null, encErr = null, why = '';
       if(fmt === 'mp4'){
-        const bitrate = Math.min(80e6, Math.round(R * R * p.fps * (QB[q] || 0.15)));
+        const bitrate = Math.min(80e6, Math.round(W * H * p.fps * (QB[q] || 0.15)));   /* ⭐ 面積で決める（縦長でも同じ画質） */
         const have = (typeof VideoEncoder !== 'undefined') ? await loadMuxer() : false;
-        const cfg = have ? await pickCodec(R, p.fps, bitrate) : null;
+        const cfg = have ? await pickCodec(W, p.fps, bitrate, H) : null;
         if(cfg){
           target = new Mp4Muxer.ArrayBufferTarget();
           muxer = new Mp4Muxer.Muxer({ target,
-            video:{ codec:'avc', width:R, height:R, frameRate:Math.max(1, Math.round(p.fps)) },
+            video:{ codec:'avc', width:W, height:H, frameRate:Math.max(1, Math.round(p.fps)) },
             fastStart:'in-memory' });
           enc = new VideoEncoder({
             output:(c,m)=>{ try{ muxer.addVideoChunk(c,m); }catch(e){ encErr = e; } },
@@ -1920,7 +2017,7 @@ if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); gen
           /* 🔴 黙って別のものにしない。理由を言って PNG連番へ回す。 */
           why = (typeof VideoEncoder === 'undefined') ? 'このブラウザは mp4 を作れない'
               : !have ? 'mp4 の器を取りに行けなかった（つながっていない）'
-              : ('この大きさ（' + R + '×' + R + '）は mp4 の上限を超えている（正方形は 3072px まで）');
+              : ('この大きさ（' + W + '×' + H + '）は mp4 の上限を超えている（辺4096・面36864マクロブロックまで）');
           fmt = 'png';
         }
       }
@@ -1931,10 +2028,10 @@ if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); gen
         if(TV.stop) break;
         if(encErr) throw encErr;
         window.__njPh = (i / p.total * p.loops) % 1;     // ⭐ 時計ではなくコマ番号
-        display(ef, R, fieldTex);
-        gl.readPixels(0, 0, R, R, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        display(ef, W, fieldTex, H);
+        gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px);
         /* ⚠️ WebGL の y は下から数える。drawImage/PNG は上から＝行を入れ替える（exportPNG と同じ） */
-        for(let y=0; y<R; y++){ const s=(R-1-y)*R*4, d=y*R*4; img.data.set(px.subarray(s,s+R*4), d); }
+        for(let y=0; y<H; y++){ const s=(H-1-y)*W*4, d=y*W*4; img.data.set(px.subarray(s,s+W*4), d); }
         octx.putImageData(img, 0, 0);
         if(fmt === 'mp4'){
           const vf = new VideoFrame(out, { timestamp:Math.round(i*1e6/p.fps), duration:Math.round(1e6/p.fps) });
@@ -1950,7 +2047,7 @@ if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); gen
           if(bytes > 1.5e9) throw new Error('PNG連番が大きすぎます（'+Math.round(bytes/1e6)+'MB）— 周か大きさを下げてください');
         }
         if((i % 3) === 0 || i === p.total - 1){
-          say('書き出し中 <b>'+(i+1)+' / '+p.total+'</b> コマ　'+R+' × '+R
+          say('書き出し中 <b>'+(i+1)+' / '+p.total+'</b> コマ　'+W+' × '+H
               + (fmt === 'png' ? '（'+Math.round(bytes/1e6)+'MB）' : '')
               + '<br>「やめる」で止められます');
         }
@@ -1965,14 +2062,14 @@ if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); gen
         if(shot > 1){
           const blob = new Blob([target.buffer], { type:'video/mp4' });
           dl(blob, 'nijimi_'+P.mode+'_'+Date.now()+'.mp4');
-          msg = 'mp4 — '+R+' × '+R+'・'+shot+'コマ・'+(shot/p.fps).toFixed(1)+'秒・'
+          msg = 'mp4 — '+W+' × '+H+'・'+shot+'コマ・'+(shot/p.fps).toFixed(1)+'秒・'
               + Math.round(blob.size/1e6)+'MB' + (TV.stop ? '（途中で止めた）' : '・継ぎ目なしループ');
         }
       }else if(shots.length){
         const blob = zip(shots);
         dl(blob, 'nijimi_'+P.mode+'_'+Date.now()+'_seq.zip');
         msg = (why ? '⚠️ mp4 にできず PNG連番にしました — '+why+'／' : '')
-            + 'PNG連番 — '+R+' × '+R+'・'+shots.length+'枚・'
+            + 'PNG連番 — '+W+' × '+H+'・'+shots.length+'枚・'
             + Math.round(blob.size/1e6)+'MB（'+p.fps+'fps で束ねてください）';
       }
       if(shot <= 1) msg = '止めました（1コマも出していません）';
@@ -1986,7 +2083,7 @@ if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); gen
       updateGradLUT(); updateBgLUT();                     // ⭐ 環をやめて元の帯へ戻す
       TV.on = false; TV.stop = false;
       goBtn.textContent = '動画';
-      try{ display(null, cvs.width); }catch(_){}
+      try{ display(null, cvs.width, null, cvs.height); }catch(_){}
       sizeSync();
       if(msg) setTimeout(() => say(msg), 30);
       if(wasFlowing) flowBtn?.click();                    // ⭐ 画面で流していたなら戻す
@@ -1995,6 +2092,8 @@ if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); gen
   goBtn.addEventListener('click', () => run());
   /* 🔴 最初の1回はここ（かたまりの最後）で呼ぶ。上で呼ぶと、まだ宣言していないものに
      触って TDZ で止まり、この下の登録が丸ごと走らなくなる（TSUBU で実際に踏んだ）。 */
+  /* ⭐ 版面（正方/縦長…）を変えたら、出る大きさの表示も更新する（2026-08-17） */
+  document.querySelectorAll('#seg-pratio button').forEach(b2 => b2.addEventListener('click', () => sizeSync()));
   syncUI(); sizeSync();
 })();
 </script>
