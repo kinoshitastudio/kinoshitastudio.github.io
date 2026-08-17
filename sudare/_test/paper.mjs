@@ -104,6 +104,29 @@ const frame = await p.evaluate(async () => {
 check(!!frame && frame.h > frame.w && Math.abs(frame.h/frame.w - 16/9) < 0.12,
       '9:16 の動画のコマも縦長', frame ? `${frame.w}×${frame.h}（zip ${frame.zipKB}KB）` : '出てこない');
 
+console.log('\n── ④b 版面の中の置き方（絵の大きさ・よこ・たて）');
+const slide = (id, v) => p.evaluate(o => { const r = document.getElementById(o.id);
+  r.value = o.v; r.dispatchEvent(new Event('input', { bubbles:true })); }, { id, v });
+await setRatio('1:1'); await wait(500);
+const p0 = await shot();
+check(!!p0 && !!p0.ink, '正方で絵が入っている', p0 && p0.ink ? `絵 ${p0.ink.w}×${p0.ink.h}` : '-');
+await slide('pzoom', 60); await wait(600);
+const p1 = await shot();
+check(!!p1 && p1.ink && p1.ink.w < p0.ink.w*0.8, '絵の大きさを下げると絵が小さくなる',
+      p1 && p1.ink ? `${p0.ink.w} → ${p1.ink.w}px` : '-');
+/* ⭐ 出る大きさの表示（押す前に見える）が版面と合っているか */
+const psay = await p.evaluate(() => (document.getElementById('pSize')||{}).textContent.replace(/\s+/g,' ').trim());
+check(/2000 × 2000/.test(psay), '出る大きさが押す前に出ている', psay);
+await slide('pzoom', 100); await slide('pox', 25); await wait(600);
+const p2 = await shot();
+check(!!p2 && p2.ink && p2.ink.x0 > p0.ink.x0 + 100, 'よこで右に寄る',
+      p2 && p2.ink ? `x0 ${p0.ink.x0} → ${p2.ink.x0}` : '-');
+await slide('pox', 0); await slide('poy', 25); await wait(600);
+const p3 = await shot();
+check(!!p3 && p3.ink && p3.ink.y0 < p0.ink.y0 - 100, 'たてで上に寄る',
+      p3 && p3.ink ? `y0 ${p0.ink.y0} → ${p3.ink.y0}` : '-');
+await slide('poy', 0); await wait(500);
+
 console.log('\n── ⑤ 自動に戻す');
 await setRatio('auto'); await wait(600);
 const back = await shot();

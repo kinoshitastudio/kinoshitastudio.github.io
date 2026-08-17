@@ -52,7 +52,7 @@
   .tvchk{ display:flex; align-items:center; gap:6px; font-size:11px; color:var(--dim);
     margin:4px 0 8px; cursor:pointer }
   .tvchk input{ width:auto; flex:none }
-  #tvSize{ font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:10.5px; line-height:1.65;
+  #tvSize,#pSize{ font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:10.5px; line-height:1.65;
     color:var(--ink); background:rgba(120,120,128,.1);
     border:1px solid var(--line); border-radius:9px; padding:7px 9px; margin:6px 0 8px }
   /* 版のチップ（押した版が「いま触っている版」） */
@@ -263,8 +263,16 @@
     ><button data-v="4:5">4:5</button><button data-v="3:4">3:4</button
     ><button data-v="9:16">9:16</button><button data-v="16:9">16:9</button>
   </div>
+  <!-- ⭐ 版面の中での置き方（2026-08-17 木下「絵の大きさやよこたてで調整もしたい」） -->
+  <div class="grp"><label>絵の大きさ</label><input id="pzoom" type="range" min="30" max="150" value="100"><span class="val" id="v-pzoom">100</span></div>
+  <div class="grp"><label>よこ</label><input id="pox" type="range" min="-50" max="50" value="0"><span class="val" id="v-pox">0</span></div>
+  <div class="grp"><label>たて</label><input id="poy" type="range" min="-50" max="50" value="0"><span class="val" id="v-poy">0</span></div>
+  <div id="pSize"></div>
   <div class="note">⭐ <b>自動</b>＝絵のある画素ぴったり（今までどおり）／形を選ぶと<b>その形の紙の中央に置く</b>＝絵は切れない<br>
-    ⭐ 長辺は下の数字（PNG）と「動画で出す」の長辺で決まる＝<b>9:16 の 1080 なら 608×1080</b></div>
+    ⭐ 長辺は下の数字（PNG）と「動画で出す」の長辺で決まる＝<b>9:16 の 1080 なら 608×1080</b><br>
+    ⭐ <b>絵の大きさ</b>を 100 より上げると版面からはみ出す＝<b>そこは切れる</b>（100 までなら切れない）<br>
+    ⚠️ この3つは<b>画面の見えは変えません</b>（画面はズーム・移動が効くので元から出る絵と別）。
+    <b>出したときに効きます</b>＝上の数字で確かめてください</div>
 
   <h2>全体で出す（切れない）</h2>
   <div class="seg" id="expk"><button data-k="2000">2000px</button><button data-k="4000" class="on">4000px</button><button data-k="8000">8000px</button></div>
@@ -285,7 +293,10 @@
   <h2>動画で出す（全体・切れない）</h2>
   <div class="seg" id="tvFmt"><button data-v="mp4" class="on">mp4</button><button data-v="png">PNG連番</button></div>
   <div class="seg" id="tvQ"><button data-v="hi">きれい</button><button data-v="mid" class="on">ふつう</button><button data-v="lo">軽い</button></div>
-  <div class="seg" id="tvLoop"><button data-v="1" class="on">1往復</button><button data-v="2">2往復</button><button data-v="3">3往復</button><button data-v="sec">秒で</button></div>
+  <!-- ⭐ 2026-08-17 木下「3週以上もお願い」＝もっと長く回せるように（コマ数・秒・MB は下に出る） -->
+  <div class="seg" id="tvLoop"><button data-v="1" class="on">1往復</button><button data-v="2">2往復</button
+    ><button data-v="3">3往復</button><button data-v="4">4往復</button><button data-v="6">6往復</button
+    ><button data-v="8">8往復</button><button data-v="sec">秒で</button></div>
   <div class="row" id="tvSecRow"><label>秒</label><input type="range" id="tvSec" min="1" max="30" value="6"><span class="val">6</span></div>
   <!-- ⚠️ 「全体で出す」の expk と同じ意味（出来上がりの長辺）だが【別のつまみ】。
        同じ id を使い回すと片方を動かしたつもりでもう片方が動く。 -->
@@ -1503,7 +1514,7 @@ const EXP = { target:4000 };
    ⭐ 形を選んだら、その形の紙に【絵を等倍で中央に置く】。
       焼く倍率も版面に合わせて決めるので、縮小で甘くならない。 */
 const PRATIO = { '1:1':[1,1], '4:5':[4,5], '3:4':[3,4], '9:16':[9,16], '16:9':[16,9] };
-const PAPER = { ratio:'auto' };
+const PAPER = { ratio:'auto', zoom:1, ox:0, oy:0 };
 function paperWH(T){
   const r = PRATIO[PAPER.ratio]; if(!r) return null;      // 自動
   const m = Math.max(r[0], r[1]);
@@ -1512,19 +1523,38 @@ function paperWH(T){
 /* ⭐ 焼く倍率＝版面に絵が収まる倍率（自動なら今までどおり「長辺 T」） */
 function fitK(T, iw, ih){
   const pw = paperWH(T);
-  return pw ? Math.min(pw[0]/Math.max(iw,1), pw[1]/Math.max(ih,1)) : T/Math.max(iw, ih);
+  /* ⭐ 版面のときは【版面に収まる倍率】×【絵の大きさ】。自動は今までどおり長辺 T */
+  return pw ? Math.min(pw[0]/Math.max(iw,1), pw[1]/Math.max(ih,1)) * (PAPER.zoom || 1)
+            : T/Math.max(iw, ih);
+}
+/* ⭐ 出る大きさを【押す前に】出す（2026-08-17 木下「どれくらいで書き出しされるか見れないときつい」） */
+function pSizeInfo(){
+  const el = document.getElementById('pSize'); if(!el) return;
+  const pw = paperWH(EXP.target);
+  el.innerHTML = pw ? ('PNG <b>' + pw[0] + ' × ' + pw[1] + '</b>')
+    : 'PNG <b>絵しだい</b>（自動＝絵のある画素ぴったり。焼いてから確定）';
 }
 document.querySelectorAll('#pratio button').forEach(b => b.onclick = () => {
   document.querySelectorAll('#pratio button').forEach(x => x.classList.remove('on'));
   b.classList.add('on'); PAPER.ratio = b.dataset.v;
+  pSizeInfo();
   if(typeof tvSizeSync === 'function') tvSizeSync();
+});
+/* ⭐ 版面の中での置き方（絵の大きさ・よこ・たて） */
+[['pzoom','zoom',0.01], ['pox','ox',0.01], ['poy','oy',0.01]].forEach(([id, key, sc]) => {
+  const r = document.getElementById(id), v = document.getElementById('v-'+id);
+  if(!r) return;
+  r.addEventListener('input', () => { PAPER[key] = (+r.value)*sc; if(v) v.textContent = r.value;
+    if(typeof tvSizeSync === 'function') tvSizeSync(); });
 });
 document.querySelectorAll('#expk button').forEach(b=>{
   b.addEventListener('click', ()=>{
     document.querySelectorAll('#expk button').forEach(x=>x.classList.remove('on'));
     b.classList.add('on'); EXP.target = +b.dataset.k;
+    pSizeInfo();                                  /* ⭐ 出る大きさの表示も更新 */
   });
 });
+pSizeInfo();                                      /* ⭐ 最初から出す */
 /* 版1枚が置かれる矩形（回転こみ）を、その canvas の座標で出す */
 function sheetBox(sh, W, H){
   const sc = (sh.scale || 100) / 100, rad = (sh.rot || 0) * Math.PI / 180;
@@ -1622,12 +1652,12 @@ function exportFull(noBg){
       const c = o.getContext('2d');
       if(!noBg){ c.fillStyle = P.bg; c.fillRect(0, 0, o.width, o.height); }
       if(pw){
-        /* ⚠️ 測り直しで1〜2画素はみ出すことがあるので、はみ出す時だけ縮める */
-        const k2 = Math.min(1, o.width/ib.w, o.height/ib.h);
-        const w2 = Math.max(1, Math.round(ib.w*k2)), h2 = Math.max(1, Math.round(ib.h*k2));
+        /* ⚠️ 「絵の大きさ」で版面より大きくしたときは、はみ出したぶんが切れる（注記どおり） */
+        const w2 = ib.w, h2 = ib.h;
+        const dx = Math.round((o.width-w2)/2 + (PAPER.ox||0)*o.width);
+        const dy = Math.round((o.height-h2)/2 - (PAPER.oy||0)*o.height);   /* ⚠️ 上に動かしたら上へ */
         c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';
-        c.drawImage(big, ib.x0, ib.y0, ib.w, ib.h,
-                    Math.round((o.width-w2)/2), Math.round((o.height-h2)/2), w2, h2);
+        c.drawImage(big, ib.x0, ib.y0, ib.w, ib.h, dx, dy, w2, h2);
       }else{
         c.drawImage(big, ib.x0, ib.y0, ib.w, ib.h, 0, 0, ib.w, ib.h);
       }
@@ -1864,10 +1894,10 @@ async function tvRun(){
     let W = pwv ? pwv[0] : ib.w, H = pwv ? pwv[1] : ib.h;
     if(fmt === 'mp4'){ W -= W % 2; H -= H % 2; }          // mp4 は偶数でないと組めない
     W = Math.max(2, W); H = Math.max(2, H);
-    /* ⭐ 版面のときの置き場所（絵を等倍で中央に）。⚠️ はみ出す時だけ縮める */
-    const dk = pwv ? Math.min(1, W/ib.w, H/ib.h) : 1;
-    const dw = Math.max(1, Math.round(ib.w*dk)), dh = Math.max(1, Math.round(ib.h*dk));
-    const dx = pwv ? Math.round((W-dw)/2) : 0, dy = pwv ? Math.round((H-dh)/2) : 0;
+    /* ⭐ 版面のときの置き場所（絵を等倍で置く＋よこ・たて）。⚠️ はみ出したぶんは切れる */
+    const dw = ib.w, dh = ib.h;
+    const dx = pwv ? Math.round((W-dw)/2 + (PAPER.ox||0)*W) : 0;
+    const dy = pwv ? Math.round((H-dh)/2 - (PAPER.oy||0)*H) : 0;
 
     /* 🔴 押す前に必ず数字を出す。無理なら【止めて数字を言う】＝黙って別のものを落とさない。 */
     say('出力 <b>' + W + ' × ' + H + '</b> px' + note + '　' + plan.total + ' コマ<br>用意しています…');
