@@ -790,6 +790,34 @@ function drawGuide(ctx, cam){
   ctx.strokeRect(cam.ox + 0.5, cam.oy + 0.5, fw - 1, fh - 1);
   ctx.restore();
 }
+/* ══⭐⭐ 動かしている間は刷り直さない（2026-08-17 木下「ボード内の移動がかなり重い」）
+   🔴 泡は【詰め込みの計算】が数万回走る。動かすたびに刷ると指に付いてこない。
+   ⭐ 前に刷った絵を1枚持っておいて、カメラの差だけずらして出す（ただの drawImage＝一瞬）。
+      指を離した瞬間に、ちゃんと刷り直す。
+   ⚠️ 動かしている間だけの見せ方。出す絵はここを通らない。 */
+let SNAP = null, SNAPCAM = null;
+function keepSnap(cam){
+  if(!SNAP) SNAP = document.createElement('canvas');
+  if(SNAP.width !== cv.width || SNAP.height !== cv.height){ SNAP.width = cv.width; SNAP.height = cv.height; }
+  const s = SNAP.getContext('2d');
+  s.setTransform(1,0,0,1,0,0); s.clearRect(0, 0, SNAP.width, SNAP.height);
+  s.drawImage(cv, 0, 0);
+  SNAPCAM = { ...cam };
+}
+function quickDraw(){
+  if(!SNAP || !SNAPCAM || SNAP.width !== cv.width){ kick(); return; }
+  const cam = camScreen(cv.width, cv.height);
+  const k = cam.sc / SNAPCAM.sc;
+  g.setTransform(1,0,0,1,0,0);
+  g.clearRect(0, 0, cv.width, cv.height);
+  g.imageSmoothingEnabled = true;
+  /* 保存したときの画面 → 今の画面（相似変換） */
+  g.drawImage(SNAP, cam.ox - k*SNAPCAM.ox, cam.oy - k*SNAPCAM.oy, SNAP.width*k, SNAP.height*k);
+  drawGuide(g, cam);
+  CAM = cam;
+}
+let settleT = null;
+function kickSoon(ms){ clearTimeout(settleT); settleT = setTimeout(() => kick(), ms || 220); }
 let pend = null;
 function kick(){
   if(pend) cancelAnimationFrame(pend);
@@ -804,6 +832,7 @@ function kick(){
     CAM = camScreen(cw, ch);
     const t0 = performance.now();
     render(g, cw, ch, CAM);
+    keepSnap(CAM);            /* ⭐ 動かすときのために、刷った絵を1枚持っておく（ガイドは入れない） */
     drawGuide(g, CAM);
     el('meter').innerHTML = `${W} × ${H} px（出す大きさ）<br>粒 ${lastDots.toLocaleString()} 個・${Math.round(performance.now()-t0)} ms`
       + `<br>場 ${FW} × ${FH}・画面 ${VIEW.zoom.toFixed(2)} 倍`;
@@ -827,7 +856,7 @@ function toField(e){
 /* ══ 寄る・引く ══
    ⭐ その点を動かさずに寄る（つまんだ所が逃げない）。 */
 const ZMIN = 0.2, ZMAX = 12;
-function zoomAt(px, py, f){
+function zoomAt(px, py, f, fast){
   const cw = cv.width, ch = cv.height, { W, H } = size();
   const base = camBase(cw, ch);
   const z0 = VIEW.zoom, z1 = Math.min(ZMAX, Math.max(ZMIN, z0*f));
@@ -838,7 +867,8 @@ function zoomAt(px, py, f){
   VIEW.zoom = z1;
   VIEW.x = px - u*W*s1 - (cw - W*s1)/2;
   VIEW.y = py - v*H*s1 - (ch - H*s1)/2;
-  kick();
+  /* ⭐ つまんでいる間は前の絵をずらすだけ。手が止まったら刷り直す */
+  if(fast){ quickDraw(); kickSoon(); } else kick();
 }
 function zoomStep(f){ zoomAt(cv.width/2, cv.height/2, f); }
 function viewFit(){ VIEW.zoom = 1; VIEW.x = 0; VIEW.y = 0; kick(); stat('正面に戻した'); }
@@ -870,14 +900,15 @@ cv.addEventListener('pointermove', e => {
     const r = cv.getBoundingClientRect();
     const mx = ((a.x+b2.x)/2 - r.left) * (cv.width/r.width);
     const my = ((a.y+b2.y)/2 - r.top) * (cv.height/r.height);
-    if(pinD > 0 && d2 > 0) zoomAt(mx, my, d2/pinD);
+    if(pinD > 0 && d2 > 0) zoomAt(mx, my, d2/pinD, true);
     pinD = d2;
     return;
   }
   if(panning){
     const p = toCv(e);
     VIEW.x += p.x - plx; VIEW.y += p.y - ply;
-    plx = p.x; ply = p.y; kick();
+    plx = p.x; ply = p.y;
+    quickDraw();          /* ⭐ 動かしている間は刷り直さない（泡だと付いてこない） */
     return;
   }
   if(!drawing) return;
@@ -889,7 +920,7 @@ cv.addEventListener('pointermove', e => {
 const endDraw = e => {
   if(e) VPTS.delete(e.pointerId);
   if(VPTS.size < 2) pinD = 0;
-  if(VPTS.size === 0) panning = false;
+  if(VPTS.size === 0 && panning){ panning = false; kick(); }   /* ⭐ 離した瞬間にちゃんと刷る */
   if(!drawing) return;
   drawing = false; saveLocal();
 };
@@ -898,7 +929,7 @@ cv.addEventListener('pointercancel', endDraw);
 cv.addEventListener('wheel', e => {
   e.preventDefault();
   const p = toCv(e);
-  zoomAt(p.x, p.y, Math.exp(-e.deltaY * 0.0015));
+  zoomAt(p.x, p.y, Math.exp(-e.deltaY * 0.0015), true);
 }, { passive:false });
 cv.addEventListener('dblclick', e => { e.preventDefault(); viewFit(); });
 
