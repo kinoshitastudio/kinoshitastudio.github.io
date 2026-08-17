@@ -250,6 +250,13 @@
           道具に入っている機能が見えないのは、無いのと同じ。ここへ出した。
        ⭐ 動かす中身は帯の作りで変える（引き伸ばし＝どの線／2色でわたす＝進み）。 -->
   <h2>動かす・動画で出す</h2>
+  <!-- ⭐⭐ 動かすもの（2026-08-18 木下「グラデーションが伸び縮みしているのとかは？」）
+       ⭐ のび＝渡している色の帯が伸びて縮む＝グラデーションそのものが伸び縮みする。
+       ⚠️「どの線」は引き伸ばしのときだけ出す（触れても何も起きないつまみを出さない）。 -->
+  <div class="seg" id="anwhat">
+    <button data-v="fill" class="on">進み</button><button data-v="reach">のび</button
+    ><button data-v="soft">にじみ</button><button data-v="slit">どの線</button>
+  </div>
   <div class="row"><label>流れ</label><input type="range" id="anflow" min="0" max="300" value="0"><span class="val"></span></div>
   <div class="row"><label>FPS</label><input type="range" id="anfps" min="4" max="60" value="30"><span class="val"></span></div>
   <button class="btn" id="anGo" style="width:100%">▶ 再生</button>
@@ -317,7 +324,9 @@ const P = { ink:'grad', slit:50, anflow:0, anfps:30,
             /* ⭐⭐ 版面（2026-08-17 木下「nijimi みたいに盤面で書き出し／大きさや縦横も自分で」）
                ⭐ pratio='src' なら写真の縦横そのまま＝**これまでと1画素も変わらない**。
                ⚠️ 版面を変えると、写真は版面の中に【置かれる】ものになる（余白は地＝黒）。 */
-            pratio:'src', pzoom:100, pox:0, poy:0 };
+            pratio:'src', pzoom:100, pox:0, poy:0,
+            /* ⭐ 動かすもの（2026-08-18）＝進み／のび／にじみ／どの線 */
+            anwhat:'fill' };
 const M = { low:0, mid:0, high:0, kick:0 };   // 音の量（0〜1）
 
 /* ── 写真を読む ────────────────────────────────────────── */
@@ -1028,6 +1037,12 @@ document.querySelectorAll('.seg').forEach(seg => {
       P[seg.id] = b.dataset.v;
       if(seg.id === 'ink') syncInk();
       if(seg.id === 'pratio') pgSync();
+      /* ⚠️ 動かすものを変えたら、いま動いているぶんは止めて元へ戻す
+         （別の対象を動かしたまま切り替えると、前の対象が動いた値で固まる） */
+      if(seg.id === 'anwhat'){
+        if(anOn){ anOn = false; setPhaseVal(anKeepKey, anKeep); anSync(); }
+        anNoteSync();
+      }
       // ⚠️ 向きを変えると段の組み方そのものが変わる＝割り直しが要る
       // ⭐ 版面（pratio）は枠そのものが変わる＝4（版面から組み直す）
       invalidate(seg.id === 'pratio' ? 4 : seg.id === 'dir' ? 2 : 1);
@@ -1044,8 +1059,11 @@ function syncInk(){
     ? '⭐ マスの<b>1本の線</b>を帯いっぱいに引き伸ばす＝写真の筋がそのまま残る（色は2つに減らない）<br>⚠️ <b>色数・寄せる</b>は効かない（色を採り直していないため）。効くのは<b>割る・向き・のび・にじみ・抜き・形</b>'
     : '⭐ そのマスの色から<b>隣の色へ渡す</b>＝帯の中の色は2つ。いままでの見え方';
   /* ⚠️ 帯の作りを変えると【動かす対象】も変わる＝説明も書き替える
-     🔴 anSync ではなく anNoteSync を呼ぶ（読み込み時に呼ばれるので、状態を読ませない） */
-  anNoteSync();
+     🔴 anSync ではなく anNoteSync を呼ぶ（読み込み時に呼ばれるので、状態を読ませない）
+     🔴🔴 さらに anReady で待つ。syncInk は【読み込み時に走る】が、動かすの表（AN_LIST）は
+        この下で const 宣言している＝先に触ると「宣言前に読んだ」で**初期化がまるごと止まる**。
+        これで同じ穴を2回踏んだ。var の anReady は巻き上げられるので、ここでは必ず false。 */
+  if(anReady) anNoteSync();
 }
 syncInk();
 
@@ -1097,29 +1115,83 @@ let anOn = false, anLast = 0, anP = 0, anKeep = 50, anKeepKey = 'slit';
       （UI ごと only-smear に隠していたので、無いのと同じだった）。
    ⭐ 2色でわたす＝**進み（fill）**を往復させる＝帯が現れて、また引く。
       どちらも 0→100→0 の往復なので、頭と尻が完全に一致する（継ぎ目なしループ）。 */
-const anKey = () => (P.ink === 'smear' ? 'slit' : 'fill');
+/* ⭐⭐⭐ 動かすもの（2026-08-18 木下＝「表示されているグラデーションが伸び縮みしているのとかは？」）
+   🔴 それまでは対象が固定だった（引き伸ばし＝どの線／2色でわたす＝進み）。
+      「進み」は【帯が現れて、また消える】動きなので、**帯そのものの形は動かない**。
+   ⭐ グラデーションを伸び縮みさせたいなら動かすのは **のび（reach）**＝帯の伸びる長さ。
+      これを往復させると、渡している色の帯が伸びて、また縮む。
+   ------------------------------------------------------------------
+   ⚠️ 対象ごとに【往復する範囲】が違う。ここを 0〜100 で揃えると のび が壊れる
+      （のびは 100〜1200 のつまみなので、0 にすると帯が消える）。
+   ⭐ だから2種類に分ける：
+      ・0→100→0 で振るもの（進み・どの線）＝端まで振り切るのが意味になる
+      ・**つまみの値を下限にして、そこから伸びて戻るもの**（のび・にじみ）
+        ＝つまみが「いちばん縮んだ状態」になる＝手で決めた見え方を壊さない。 */
+/* 🔴 var で持つ＝巻き上げられて undefined になるだけ（TDZ にならない）。
+   ⚠️ const/let にすると、読み込み時に syncInk から触られて道具全体が死ぬ。 */
+var anReady = false;
+const AN_LIST = [
+  { v:'fill',  n:'進み',   only:null,    note:'帯が現れて、また消える（バラバラに消えるのはこれ）' },
+  { v:'reach', n:'のび',   only:null,    note:'渡している色の帯が<b>伸びて、また縮む</b>＝<b>グラデーションが伸び縮みする</b>' },
+  { v:'soft',  n:'にじみ', only:null,    note:'帯のふちが<b>ぼけて、また締まる</b>＝呼吸しているように見える' },
+  { v:'slit',  n:'どの線', only:'smear', note:'写真の中を線が行き来する（引き伸ばしのときだけ）' },
+];
+/* ⭐ いま動かせる対象。⚠️「どの線」は引き伸ばしのときしか無いので、外れていたら進みへ落とす。 */
+function anKey(){
+  const v = P.anwhat || 'fill';
+  const e = AN_LIST.find(x => x.v === v);
+  if(!e) return 'fill';
+  if(e.only && P.ink !== e.only) return 'fill';
+  return v;
+}
+/* ⭐ その対象が往復する範囲。base＝再生前につまみに出ていた値。 */
+function anRange(key, base){
+  const r = document.getElementById(key === 'drop' ? 'dropAmt' : key);
+  const mx = r ? +r.max : 100, mn = r ? +r.min : 0;
+  if(key === 'fill' || key === 'slit') return { lo:0, hi:100 };
+  /* ⭐ のび・にじみ＝つまみの値を下限に、そこから伸びる（上限はつまみの上限まで） */
+  const lo = Math.max(mn, base);
+  const hi = Math.min(mx, Math.max(lo + (mx - mn) * 0.18, lo * 3));
+  return { lo, hi };
+}
 function setPhaseVal(key, v){
-  const val = Math.max(0, Math.min(100, v));
+  const r = document.getElementById(key === 'drop' ? 'dropAmt' : key);
+  const mx = r ? +r.max : 100, mn = r ? +r.min : 0;
+  const val = Math.max(mn, Math.min(mx, v));
   P[key] = val;
-  const r = document.getElementById(key === 'slit' ? 'slit' : 'fill');
   if(r){ r.value = Math.round(val);
     const s = r.parentElement.querySelector('.val'); if(s) s.textContent = r.value; }
 }
-/* ⭐ 位相 u（0→1）を絵にする。往復なので u=0 と u=1 が同じ絵になる。 */
-function setPhase(u){
+/* ⭐ 位相 u（0→1）を絵にする。往復なので u=0 と u=1 が同じ絵になる＝継ぎ目なしループ。
+   ⚠️ base を渡すのは、再生中に P[key] を書き換えるから。基準を持たないと基準ごと流れていく。 */
+function setPhase(u, key, base){
+  const k = key || anKey();
+  const b = (base == null) ? P[k] : base;
   const fr = u - Math.floor(u);
-  setPhaseVal(anKey(), 100 * (1 - Math.abs(2 * fr - 1)));
+  const t = 1 - Math.abs(2 * fr - 1);        // 0 → 1 → 0
+  const { lo, hi } = anRange(k, b);
+  setPhaseVal(k, lo + (hi - lo) * t);
 }
 /* 🔴 説明の書き替えだけは【状態を読まない】関数に分けてある。
    ⚠️ ここを anSync（anOn を読む）にしていたら、読み込み時に syncInk から呼ばれて
       「まだ宣言していない anOn を読んだ」で**初期化がまるごと止まった**
       （道具全体が黙って動かなくなる＝いちばんタチが悪い落ち方）。 */
 function anNoteSync(){
+  /* ⚠️ 引き伸ばしでないときに「どの線」を出したままにしない（触れても何も起きない） */
+  document.querySelectorAll('#anwhat button').forEach(b => {
+    const e = AN_LIST.find(x => x.v === b.dataset.v);
+    b.style.display = (e && e.only && P.ink !== e.only) ? 'none' : '';
+  });
+  const k = anKey();
+  const e = AN_LIST.find(x => x.v === k) || AN_LIST[0];
+  /* ⚠️ 選んでいたものが使えなくなったら、押されている所も進みへ戻す */
+  document.querySelectorAll('#anwhat button').forEach(b => b.classList.toggle('on', b.dataset.v === k));
   const n = document.getElementById('anNote');
-  if(n) n.innerHTML = (P.ink === 'smear'
-    ? '⭐ <b>どの線</b>が 0 → 100 → 0 と往復する＝写真の中を線が行き来する'
-    : '⭐ <b>進み</b>が 0 → 100 → 0 と往復する＝帯が現れて、また引く<br>⚠️ 線を送りたいときは、帯の中身を<b>写真を引き伸ばす</b>にする')
-    + '<br>⚠️ <b>流れ</b>が 0 だと動かない。止めると元の位置（つまみの値）に戻る';
+  if(n) n.innerHTML = '⭐ <b>' + e.n + '</b>が往復する＝' + e.note
+    + '<br>⚠️ <b>流れ</b>が 0 だと動かない。止めると元の位置（つまみの値）に戻る'
+    + (k === 'reach' || k === 'soft'
+      ? '<br>⭐ <b>つまみの値がいちばん縮んだ状態</b>＝手で決めた見え方から伸びるだけ（壊れない）'
+      : '');
 }
 function anSync(){
   const b = document.getElementById('anGo');
@@ -1133,14 +1205,16 @@ function anTick(now){
   if(now - anLast < 1000 / Math.max(4, P.anfps)) return;
   anLast = now;
   anP = (anP + P.anflow / 100 * 0.01) % 1;
-  setPhase(anP);
+  setPhase(anP, anKeepKey, anKeep);
   draw();
 }
 requestAnimationFrame(anTick);
+/* ⭐ ここまでで「動かす」が全部そろった＝以降は syncInk からも触っていい */
+anReady = true; anNoteSync();
 document.getElementById('anGo')?.addEventListener('click', () => {
   /* ⚠️ 止めたら、再生する前につまみに出ていた値へ必ず戻す */
   if(anOn){ anOn = false; anSync(); setPhaseVal(anKeepKey, anKeep); draw(); return; }
-  anKeepKey = anKey(); anKeep = P[anKeepKey];
+  anKeepKey = anKey(); anKeep = P[anKeepKey];   // ⭐ 基準＝いまつまみに出ている値
   anOn = true; anP = 0; anLast = 0; anSync();
 });
 
@@ -1330,8 +1404,7 @@ document.getElementById('anGo')?.addEventListener('click', () => {
         if(TV.stop) break;
         if(encErr) throw encErr;
         const u = (i / p.total) * p.loops;
-        const fr = u - Math.floor(u);
-        setPhaseVal(phKey, 100 * (1 - Math.abs(2 * fr - 1)));   // ⭐ 往復＝頭と尻が完全に一致
+        setPhase(u, phKey, keepPh);        // ⭐ 往復＝頭と尻が完全に一致（画面と同じ関数を通す）
         draw();
         octx.clearRect(0, 0, W, H);
         octx.drawImage(cv, 0, 0, cv.width, cv.height, 0, 0, W, H);
