@@ -192,6 +192,34 @@ try{
     $('b_wipe').click();
   }
 
+  // 盤の上で組（元＋写し）を動かす
+  { $('b_wipe').click(); $('b_addT').click();
+    const src=TAMA.cur();
+    $('c_pairT').checked=true; $('c_pairT').dispatchEvent(new Event('change'));
+    const tw=TAMA.LAYER.find(l=>l.twinOf===src.id);
+    const d0x=+(tw.ox-src.ox).toFixed(3), d0y=+(tw.oy-src.oy).toFixed(3);
+    const o0x=src.ox, o0y=src.oy;
+    const pe=(ty,x,y,sh)=>cv.dispatchEvent(new PointerEvent(ty,{clientX:x,clientY:y,button:0,buttons:1,
+      shiftKey:!!sh,pointerId:3,pointerType:'mouse',bubbles:true,cancelable:true}));
+    cv.setPointerCapture=()=>{};
+    pe('pointerdown',300,300); pe('pointermove',420,360); pe('pointerup',420,360);
+    ok('左ドラッグで動く（'+src.ox+','+src.oy+'）', src.ox!==o0x && src.oy!==o0y);
+    ok('右下へ引いたら右下へ動く', src.ox>o0x && src.oy>o0y);
+    ok('写しも一緒に動く（ずれの差は同じ）',
+       Math.abs((tw.ox-src.ox)-d0x)<1e-9 && Math.abs((tw.oy-src.oy)-d0y)<1e-9);
+    ok('つまみにも出る', Math.abs(+$('r_ox').value-src.ox)<1e-9);
+    TAMA.undo();
+    ok('⌘Zで動かす前に戻る', Math.abs(TAMA.cur().ox-o0x)<1e-9);
+    /* ⚠️ 筆を構えている間は筆が先。動かすのは Shift＋左ドラッグ */
+    $('b_wipe').click(); $('b_addD').click();
+    const dl=TAMA.cur(), dx0=dl.ox;
+    pe('pointerdown',300,300); pe('pointermove',380,340); pe('pointerup',380,340);
+    ok('筆のときは左ドラッグで描く（動かさない）', dl.ox===dx0 && dl.strokes.length===1);
+    pe('pointerdown',300,300,true); pe('pointermove',380,340,true); pe('pointerup',380,340,true);
+    ok('Shift＋左ドラッグなら描かずに動く', dl.ox!==dx0 && dl.strokes.length===1);
+    $('b_wipe').click();
+  }
+
   // 版面4つ
   ensurePre('futaji');
   for(const v of ['1','169','43','45']){
