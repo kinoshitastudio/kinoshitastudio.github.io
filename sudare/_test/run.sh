@@ -50,6 +50,9 @@ node "$HERE/_test/knobs.mjs" "http://localhost:$PORT/sudare/masu/" || NG=1
 echo
 echo "── ③ 動画で出す（masu・PNG連番で実際に1本焼く）"
 node "$HERE/_test/video.mjs" "http://localhost:$PORT/sudare/masu/" || NG=1
+echo
+echo "── ④ 版面の形（masu・PNG と動画の実物を測る）"
+node "$HERE/_test/paper.mjs" "http://localhost:$PORT/sudare/masu/" || NG=1
 
 echo
 [ "$NG" = 0 ] && echo "✅ 全部通った" || echo "🔴 落ちたものがある（上を見る）"

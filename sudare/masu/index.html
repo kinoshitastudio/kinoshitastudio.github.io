@@ -253,6 +253,19 @@
     ⭐ 書き出しは<b>見えているとおり</b>＝寄って撮れば寄った絵が出る<br>
     🔴 <b>画面から出ている分は入らない</b>（画面に無いものは撮れない）＝切れるときは下の「全体」で出す</div>
 
+  <!-- ══⭐⭐ 版面の形（2026-08-17 木下「縦長やサイズで動画も書き出しできるようにするよ」／
+       インスタが縦長だから）。⭐ PNG（全体）と 動画 の【両方】に効く。
+       ⭐ 自動＝今までどおり【絵のある画素ぴったり】＝1画素も変わらない。
+       ⭐ 形を選ぶと、その形の紙の【中央に収める】＝この道具の売り「切れない」を守る。 -->
+  <h2>版面の形（PNG・動画の共通）</h2>
+  <div class="seg" id="pratio">
+    <button data-v="auto" class="on">自動</button><button data-v="1:1">正方</button
+    ><button data-v="4:5">4:5</button><button data-v="3:4">3:4</button
+    ><button data-v="9:16">9:16</button><button data-v="16:9">16:9</button>
+  </div>
+  <div class="note">⭐ <b>自動</b>＝絵のある画素ぴったり（今までどおり）／形を選ぶと<b>その形の紙の中央に置く</b>＝絵は切れない<br>
+    ⭐ 長辺は下の数字（PNG）と「動画で出す」の長辺で決まる＝<b>9:16 の 1080 なら 608×1080</b></div>
+
   <h2>全体で出す（切れない）</h2>
   <div class="seg" id="expk"><button data-k="2000">2000px</button><button data-k="4000" class="on">4000px</button><button data-k="8000">8000px</button></div>
   <button class="big" id="pngFull">PNG（全体）</button>
@@ -1485,6 +1498,27 @@ document.getElementById('pngA').onclick = ()=>{ savePNG(true); stat('地なし�
    ⚠️ ズーム・移動（VIEW）は見るためのものなので、ここでは掛けない＝いつ押しても同じ絵が出る。
    ⚠️ 終わったら必ず元の大きさで焼き直して draw() する。 */
 const EXP = { target:4000 };
+/* ══⭐⭐ 版面の形（2026-08-17）── PNG（全体）と 動画 の両方が見る。
+   ⭐ 'auto' なら【絵のある画素ぴったり】＝これまでと1画素も変わらない。
+   ⭐ 形を選んだら、その形の紙に【絵を等倍で中央に置く】。
+      焼く倍率も版面に合わせて決めるので、縮小で甘くならない。 */
+const PRATIO = { '1:1':[1,1], '4:5':[4,5], '3:4':[3,4], '9:16':[9,16], '16:9':[16,9] };
+const PAPER = { ratio:'auto' };
+function paperWH(T){
+  const r = PRATIO[PAPER.ratio]; if(!r) return null;      // 自動
+  const m = Math.max(r[0], r[1]);
+  return [ Math.max(2, Math.round(T*r[0]/m)), Math.max(2, Math.round(T*r[1]/m)) ];
+}
+/* ⭐ 焼く倍率＝版面に絵が収まる倍率（自動なら今までどおり「長辺 T」） */
+function fitK(T, iw, ih){
+  const pw = paperWH(T);
+  return pw ? Math.min(pw[0]/Math.max(iw,1), pw[1]/Math.max(ih,1)) : T/Math.max(iw, ih);
+}
+document.querySelectorAll('#pratio button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#pratio button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); PAPER.ratio = b.dataset.v;
+  if(typeof tvSizeSync === 'function') tvSizeSync();
+});
 document.querySelectorAll('#expk button').forEach(b=>{
   b.addEventListener('click', ()=>{
     document.querySelectorAll('#expk button').forEach(x=>x.classList.remove('on'));
@@ -1565,8 +1599,9 @@ function exportFull(noBg){
       const probe = renderAll();
       const ib0 = inkBox(probe);
       if(!ib0){ stat('絵が無い'); return; }
-      /* ── 倍率＝欲しい長辺 ÷ 測った長辺。canvas の上限（辺16384・面積2億画素）で頭を打たせる ── */
-      let k = T / Math.max(ib0.w, ib0.h);
+      /* ── 倍率＝版面に絵が収まる倍率（自動なら 欲しい長辺 ÷ 測った長辺）。
+             canvas の上限（辺16384・面積2億画素）で頭を打たせる ── */
+      let k = fitK(T, ib0.w, ib0.h);
       const kLim = Math.min(16384 / Math.max(oldW, oldH),
                             Math.sqrt(2.0e8 / (oldW * oldH)));
       if(k > kLim){ k = kLim; note = '（上限で止めた）'; }
@@ -1578,11 +1613,24 @@ function exportFull(noBg){
       const big = renderAll();
       const ib = inkBox(big) || ib0;
       TV.ar = ib.w / ib.h;      // ⭐ 動画の「出る大きさ」表示に使う（測った比率を覚えておく）
-      /* ⭐ 絵のある画素ぴったりに切る（余白は付けない）。地ありは、その大きさの紙に敷いてから重ねる */
-      const o = document.createElement('canvas'); o.width = ib.w; o.height = ib.h;
+      /* ⭐ 自動＝絵のある画素ぴったりに切る（余白は付けない）。
+         ⭐ 版面の形を選んでいたら、その形の紙の【中央に等倍で置く】＝絵は切れない。
+         ⚠️ 地ありは、その大きさの紙に敷いてから重ねる（順番を変えると縁が出る）。 */
+      const pw = paperWH(T);
+      const o = document.createElement('canvas');
+      o.width = pw ? pw[0] : ib.w; o.height = pw ? pw[1] : ib.h;
       const c = o.getContext('2d');
-      if(!noBg){ c.fillStyle = P.bg; c.fillRect(0, 0, ib.w, ib.h); }
-      c.drawImage(big, ib.x0, ib.y0, ib.w, ib.h, 0, 0, ib.w, ib.h);
+      if(!noBg){ c.fillStyle = P.bg; c.fillRect(0, 0, o.width, o.height); }
+      if(pw){
+        /* ⚠️ 測り直しで1〜2画素はみ出すことがあるので、はみ出す時だけ縮める */
+        const k2 = Math.min(1, o.width/ib.w, o.height/ib.h);
+        const w2 = Math.max(1, Math.round(ib.w*k2)), h2 = Math.max(1, Math.round(ib.h*k2));
+        c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';
+        c.drawImage(big, ib.x0, ib.y0, ib.w, ib.h,
+                    Math.round((o.width-w2)/2), Math.round((o.height-h2)/2), w2, h2);
+      }else{
+        c.drawImage(big, ib.x0, ib.y0, ib.w, ib.h, 0, 0, ib.w, ib.h);
+      }
       out = o;
     } finally {
       /* 🔴 何があっても画面は元に戻す（戻し忘れると【見え】が変わったまま残る） */
@@ -1656,6 +1704,9 @@ function tvPlan(){
 /* ⭐ 出る大きさ ── 【絵のある画素ぴったり】に切るので、縦横は焼いて測るまで確定しない。
    一度でも測った比率（TV.ar）があれば、それで見込みを出す。押したときに必ず実測で出し直す。 */
 function tvWH(T){
+  /* ⭐ 版面の形を選んでいたら、絵を測らなくても確定する（2026-08-17） */
+  const pw = paperWH(T);
+  if(pw) return { W:pw[0], H:pw[1] };
   const ar = TV.ar || 0;
   if(!ar) return null;
   const W = ar >= 1 ? T : Math.max(2, Math.round(T * ar));
@@ -1794,8 +1845,9 @@ async function tvRun(){
     const probe = renderAll();
     const ib0 = inkBox(probe);
     if(!ib0) throw new Error('絵が無い');
-    /* ── 倍率＝欲しい長辺 ÷ 測った長辺。canvas の上限（辺16384・面積2億画素）で頭を打たせる ── */
-    let k = T / Math.max(ib0.w, ib0.h), note = '';
+    /* ── 倍率＝版面に絵が収まる倍率（自動なら 欲しい長辺 ÷ 測った長辺）。
+           canvas の上限（辺16384・面積2億画素）で頭を打たせる ── */
+    let k = fitK(T, ib0.w, ib0.h), note = '';
     const kLim = Math.min(16384 / Math.max(oldW, oldH), Math.sqrt(2.0e8 / (oldW * oldH)));
     if(k > kLim){ k = kLim; note = '（上限で止めた）'; }
     if(k < 0.05) k = 0.05;
@@ -1807,9 +1859,15 @@ async function tvRun(){
     renderAll(frame);
     const ib = inkBox(frame) || ib0;
     TV.ar = ib.w / ib.h;
-    let W = ib.w, H = ib.h;
+    /* ⭐ 版面の形を選んでいたらその大きさ。自動なら今までどおり【絵ぴったり】 */
+    const pwv = paperWH(T);
+    let W = pwv ? pwv[0] : ib.w, H = pwv ? pwv[1] : ib.h;
     if(fmt === 'mp4'){ W -= W % 2; H -= H % 2; }          // mp4 は偶数でないと組めない
     W = Math.max(2, W); H = Math.max(2, H);
+    /* ⭐ 版面のときの置き場所（絵を等倍で中央に）。⚠️ はみ出す時だけ縮める */
+    const dk = pwv ? Math.min(1, W/ib.w, H/ib.h) : 1;
+    const dw = Math.max(1, Math.round(ib.w*dk)), dh = Math.max(1, Math.round(ib.h*dk));
+    const dx = pwv ? Math.round((W-dw)/2) : 0, dy = pwv ? Math.round((H-dh)/2) : 0;
 
     /* 🔴 押す前に必ず数字を出す。無理なら【止めて数字を言う】＝黙って別のものを落とさない。 */
     say('出力 <b>' + W + ' × ' + H + '</b> px' + note + '　' + plan.total + ' コマ<br>用意しています…');
@@ -1855,7 +1913,10 @@ async function tvRun(){
       o.clearRect(0, 0, W, H);
       /* ⭐ 地ありは、その大きさの紙に敷いてから重ねる（exportFull と同じ順） */
       if(!noBg){ o.fillStyle = P.bg; o.fillRect(0, 0, W, H); }
-      o.drawImage(frame, ib.x0, ib.y0, W, H, 0, 0, W, H);
+      /* ⭐ 自動＝コマ枠のまま切る／版面＝絵を中央に置く（式は1本＝dx,dy,dw,dh を上で決めてある） */
+      if(pwv){ o.imageSmoothingEnabled = true; o.imageSmoothingQuality = 'high';
+        o.drawImage(frame, ib.x0, ib.y0, ib.w, ib.h, dx, dy, dw, dh); }
+      else o.drawImage(frame, ib.x0, ib.y0, W, H, 0, 0, W, H);
       if(fmt === 'mp4'){
         const vf = new VideoFrame(out, { timestamp:Math.round(i * 1e6 / plan.fps),
                                          duration:Math.round(1e6 / plan.fps) });
