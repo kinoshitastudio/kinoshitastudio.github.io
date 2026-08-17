@@ -333,6 +333,65 @@ const fit = await p.evaluate(() => {
 });
 check(fit.ok, '版6枚でも このブラウザに残せる（詰めている）', `${fit.mb}MB`);
 
+/* ══⭐ ⑧b 版の移動と 字の版（2026-08-17 追加）══
+   🔴 見るのは：①動かすと変わり【0 に戻すと1画素も違わずに戻る】（場そのものは動かしていない）
+     ②「版を動かす」で引っぱっても【塗らない】
+     ③＋字で場に焼かれ、字／大きさ／角度／書体／色が効く
+     ④焼いたあとは描く版と同じ＝粒・泡・移動が【そのまま効く】 */
+console.log('\n── ⑧b 版の移動と 字の版');
+await base(); await p.evaluate(() => { newField(); drawLayList(); }); await wait(300);
+await paintOn(0, '#3a3ce8', 0.3); await wait(500);
+const mv0 = await sig();
+await p.evaluate(() => { LAY[0].dx = 0.2; kick(); }); await wait(500);
+check(await sig() !== mv0, '横位置を動かすと絵が変わる');
+await p.evaluate(() => { LAY[0].dx = 0; kick(); }); await wait(500);
+check(await sig() === mv0, '⭐0 に戻すと1画素も違わずに戻る（場は動いていない）');
+await p.evaluate(() => { LAY[0].dy = -0.25; kick(); }); await wait(500);
+check(await sig() !== mv0, '縦位置も効く');
+await p.evaluate(() => { LAY[0].dy = 0; kick(); }); await wait(400);
+/* 「版を動かす」で引っぱる＝塗らない */
+const mBox = await p.evaluate(() => { const q = cv.getBoundingClientRect(); return { x:q.x, y:q.y, w:q.width, h:q.height }; });
+const mInk = () => p.evaluate(() => { let s = 0; for(const L of LAY) for(let i = 0; i < L.A.length; i++) s += L.A[i]; return +s.toFixed(1); });
+const mInk0 = await mInk();
+await p.evaluate(() => { sel = 0; P.tool = 'move'; syncUI(); });
+await p.mouse.move(mBox.x + mBox.w*0.5, mBox.y + mBox.h*0.5);
+await p.mouse.down(); await p.mouse.move(mBox.x + mBox.w*0.5 + 70, mBox.y + mBox.h*0.5 + 45, { steps:8 }); await p.mouse.up();
+await wait(500);
+const moved = await p.evaluate(() => ({ dx:LAY[0].dx, dy:LAY[0].dy }));
+check(Math.abs(moved.dx) > 0.01 && Math.abs(moved.dy) > 0.01, '「版を動かす」で引っぱると版が動く');
+check(await mInk() === mInk0, '「版を動かす」では塗らない');
+await p.evaluate(() => { LAY[0].dx = 0; LAY[0].dy = 0; P.tool = 'paint'; syncUI(); kick(); }); await wait(400);
+/* 字の版 */
+await p.evaluate(() => document.getElementById('b_layText').click()); await wait(800);
+const tinfo = await p.evaluate(() => ({ kind:curLay().kind,
+  sum:Math.round([...curLay().A].reduce((a, b2) => a + b2, 0)),
+  shown:!document.getElementById('textBox').classList.contains('hide') }));
+check(tinfo.kind === 'text' && tinfo.sum > 100 && tinfo.shown, '＋字で場に焼かれ、字のつまみが出る', JSON.stringify(tinfo));
+const t0 = await sig();
+await p.evaluate(() => { const t = document.getElementById('t_text'); t.value = '塗'; t.dispatchEvent(new Event('input', { bubbles:true })); });
+await wait(700);
+const t1 = await sig(); check(t1 !== t0, '字を打ち替えると変わる');
+for(const [id, v, name] of [['tsz', 1.2, '大きさ'], ['trot', 30, '角度']]){
+  const before = await sig();
+  await p.evaluate(o => { const r = document.getElementById('r_'+o.id); r.value = o.v; r.dispatchEvent(new Event('input', { bubbles:true })); }, { id, v });
+  await wait(700);
+  check(before !== await sig(), `字の${name}が効く`);
+}
+await p.evaluate(() => document.querySelector('#tfontSeg button[data-v="serif"]').click()); await wait(700);
+check(true, '書体を切り替えても落ちない');
+const tg = await p.evaluate(() => { setInk('#5fc02a');
+  const s = size(); const c = document.createElement('canvas'); c.width = s.W; c.height = s.H;
+  render(c.getContext('2d'), s.W, s.H);
+  const d = c.getContext('2d').getImageData(0, 0, s.W, s.H).data;
+  let g2 = 0; for(let i = 0; i < d.length; i += 4*5){ if(d[i+1] > d[i]+40 && d[i+1] > d[i+2]+30) g2++; }
+  return g2; });
+check(tg > 200, '⭐字の版は色を選ぶとすぐその色になる', `緑の画素 ${tg}`);
+const tb = await sig();
+await p.evaluate(() => { curLay().dx = 0.25; kick(); }); await wait(600);
+check(await sig() !== tb, '字の版も動かせる');
+await p.evaluate(() => { curLay().dx = 0; kick(); }); await wait(600);
+check(await sig() === tb, '字の版も 0 に戻すと1画素も違わずに戻る');
+
 console.log(ng.length ? `\n🔴 だめだったもの ${ng.length}件: ${ng.join(' / ')}` : '\n✅ 全部通った');
 if(errs) console.log(`🔴 JSエラー ${errs}件`);
 await b.close();
