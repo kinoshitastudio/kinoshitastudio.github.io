@@ -24,6 +24,9 @@ const sig = () => p.evaluate(() => { const c = document.querySelector('canvas'),
    speed/fps＝動きの速さ（絵そのものは変わらない）
    pzoom/pox/poy＝版面の中の置き方＝【書き出したときだけ】効く（2026-08-17 追加）
    🔴 効くかどうかは paper.mjs の④bが【出した実物】で見ている＝ここで抜いても守りは減らない。 */
+/* ⚠️ pzoom/pox/poy は【版面の形を選んでいるときだけ】効く（自動では囲みが無い＝効かなくて当たり前）。
+   ここは自動のまま総当たりするので抜く。効くことは paper.mjs の④b が
+   【版面を選んだ状態の画面と実物】で見ている（2026-08-17）。 */
 const SKIP = ['speed','fps','pzoom','pox','poy'];
 const modes = [ { name:'板', set:{ dir:0, slices:60, gap:6 } },
                 { name:'輪郭から', set:{ dir:3, dScale:40, dRes:600, dCombN:30, vgrad:50, dRound:60 } } ];

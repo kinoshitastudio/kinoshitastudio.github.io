@@ -127,6 +127,44 @@ check(!!p3 && p3.ink && p3.ink.y0 < p0.ink.y0 - 100, 'たてで上に寄る',
       p3 && p3.ink ? `y0 ${p0.ink.y0} → ${p3.ink.y0}` : '-');
 await slide('poy', 0); await wait(500);
 
+/* ⭐⭐ 囲み（2026-08-17 木下「囲みがないとどれくらいできりだされるかわからん」）
+   画面に破線の囲みが出て、絵の大きさ・よこ・たてで動くか。⚠️ 画面の画素で測る（2D canvas なので読める） */
+console.log('\n── ④c 画面の囲み');
+/* ⭐ 囲みは【外が暗い】ので、明るさの段差で境目を探す（絵の色に左右されない）。
+   ⚠️ 白っぽい画素で測ると絵の明るい所を拾って比が合わない（2026-08-17 これで2回落ちた）。 */
+const frameBox = () => p.evaluate(() => {
+  const c = cv, cx = c.getContext('2d');   /* ⚠️ この道具の canvas は id="cv"（変数 cv） */
+  const W = c.width, H = c.height, d = cx.getImageData(0,0,W,H).data;
+  const lum = (x,y) => { const i=(y*W+x)*4; return d[i]*0.3 + d[i+1]*0.59 + d[i+2]*0.11; };
+  /* 外が暗い＝地の色より暗い所が「外」。地の色は四隅の平均から取る */
+  const corner = (lum(1,1) + lum(W-2,1) + lum(1,H-2) + lum(W-2,H-2)) / 4;
+  /* ⭐ 外は【地の反対の色で覆われている】＝四隅の明るさと違えば囲みの中 */
+  const inside = (x,y) => Math.abs(lum(x,y) - corner) > 6;
+  let x0=-1, x1=-1, y0=-1, y1=-1;
+  const my = Math.floor(H/2), mx = Math.floor(W/2);
+  for(let x=0;x<W;x++){ if(inside(x,my)){ x0=x; break; } }
+  for(let x=W-1;x>=0;x--){ if(inside(x,my)){ x1=x; break; } }
+  for(let y=0;y<H;y++){ if(inside(mx,y)){ y0=y; break; } }
+  for(let y=H-1;y>=0;y--){ if(inside(mx,y)){ y1=y; break; } }
+  if(x1<0 || y1<0) return null;
+  return { x0, y0, w:x1-x0+1, h:y1-y0+1 };
+});
+await setRatio('auto'); await wait(700);
+const f0 = await frameBox();
+await setRatio('9:16'); await wait(900);
+const f1 = await frameBox();
+check(!!f1 && (!f0 || f1.h > (f0.h||0)*1.2 || f1.w !== (f0?f0.w:0)), '版面を選ぶと画面に囲みが出る',
+      `自動 ${f0?f0.w+'×'+f0.h:'なし'} → 9:16 ${f1?f1.w+'×'+f1.h:'なし'}`);
+check(!!f1 && Math.abs((f1.h/f1.w) - 16/9) < 0.25, '囲みの形が版面と合っている',
+      f1 ? `比 ${(f1.h/f1.w).toFixed(2)}（狙い 1.78）` : '-');
+/* ⚠️ 「絵の大きさ」が効くことは ④b が【出した実物】で見ている（2000→1198px）。
+   ここ（画面）では測らない＝囲みの外は半透明で覆っているだけなので、
+   画面の画素だけでは「覆い」と「絵」を切り分けられず、測ろうとして2回落ちた。 */
+await slide('pzoom', 100); await slide('pox', 25); await wait(900);
+const f3 = await frameBox();
+check(!!f3 && Math.abs(f3.x0 - f1.x0) > 20, 'よこで囲みが動く', f3?`x0 ${f1.x0} → ${f3.x0}`:'-');
+await slide('pox', 0); await wait(600);
+
 console.log('\n── ⑤ 自動に戻す');
 await setRatio('auto'); await wait(600);
 const back = await shot();
