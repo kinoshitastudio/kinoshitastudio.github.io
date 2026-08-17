@@ -178,7 +178,8 @@
     </div>
     <div class="note">押すと選べる。<b>下のつまみは選んだ層に効く</b>。
       左の四角で<b>出したり下げたり</b>、右の ↑ で上下。<br>
-      ⭐<b>写す</b>して色とずれを変えると刷りずれになる。<b>まっさら</b>＝層を全部消す（0枚にできる）。</div>
+      ⭐<b>写す</b>＝下にずらして色を替えた写しを作る（そのまま<b>刷りずれ</b>になる）。字でも線でも同じ。<br>
+      <b>まっさら</b>＝層を全部消す（0枚にできる）。</div>
   </div>
 
   <div class="scope" id="scopeBox">
@@ -221,6 +222,7 @@
   <div class="grp" id="gDraw">
     <label class="h">描く</label>
     <label class="chk"><input type="checkbox" id="c_draw"> 盤の上で描く</label>
+    <label class="chk"><input type="checkbox" id="c_pair"> 二色で描く（写しも同時に作る）</label>
     <div class="warn hide" id="drawWarn">⚠️ いまは<b>描けません</b>。上の<b>盤の上で描く</b>を入れてください。</div>
     <div class="row"><span class="n">筆の太さ</span><output id="o_pen"></output></div>
     <input type="range" id="r_pen" min="0.004" max="0.16" step="0.001">
@@ -231,6 +233,8 @@
       <button class="btn sm" id="b_clear">この層の線を消す</button>
     </div>
     <div class="note">⭐入れると<b>左ドラッグで描ける</b>（切ると盤の操作に戻る）。描いた線は<b>この層</b>に入る。<br>
+      ⭐<b>二色で描く</b>＝描くと同時に、<b>別の層に別の色でずらした写し</b>が増える。
+      同じ線を色違いでもう一度描かなくてよい。写しの色・ずれは、その層を選べば後から変えられる。<br>
       ⭐<b>筆圧</b>＝ペンなら筆圧、マウスなら<b>速さ</b>（速いほど細い）。<br>
       ⚠️描いている間も<b>右ドラッグ／スペース＋ドラッグ</b>で盤は動かせる。</div>
   </div>
@@ -367,12 +371,14 @@ const PEEL=document.createElement('canvas');   /* 層ごとに彫るための紙
       つまみは【選んだ層】に効く。 */
 let P = {
   ratio:'1', sz:'1620', long:1620, frame:false, alpha:false,
-  bg:'#4a2318', draw:false, preset:null, help:false,
+  bg:'#4a2318', draw:false, preset:null, help:false, pair:false,
   anim:false, cyc:8, flow:1, beat:0, spin:0, press:0.7
 };
 let LAYER=[], sel=0;
+let LID=0;
 function newLayer(o){
   return Object.assign({
+    id:++LID, twinOf:0,   /* twinOf＝この層が誰の写しか（0＝写しでない） */
     kind:'text', on:true, col:'#c9cdd0', ox:0, oy:0, fat:0,
     r:0.045, gap:0.60, vary:0, ph:0, mode:'both',
     text:'たま', font:'Hiragino Sans, sans-serif', tw:800, tsize:0.52, tls:0.02, tlh:1.05,
@@ -621,8 +627,11 @@ function outSize(){
 
 /* ══ 層の一覧 ══════════════════════════════════════ */
 function lyName(l){
-  if(l.kind==='text') return (l.text||'').replace(/\n/g,'／').slice(0,12)||'（空）';
-  return '線 '+l.strokes.length+'本';
+  if(l.kind==='text') return (l.text||'').replace(/\n/g,'／').slice(0,12)||'（字を入れる）';
+  /* ⚠️「線 0本」は壊れて見える（木下＝「線を足すを押しても0本になっている」）。
+     まだ描いていないだけ、と分かる言い方にする。 */
+  const w=l.twinOf?'写し・':'';
+  return l.strokes.length ? w+'線 '+l.strokes.length+'本' : w+'線（まだ描いていない）';
 }
 function drawList(){
   /* ⚠️ 刷る順は LAYER[0] が下。一覧は【上が手前】に見せる＝逆から並べる。
@@ -640,7 +649,7 @@ function drawList(){
     d.innerHTML='<button class="eye'+(l.on?' on':'')+'">'+(l.on?'■':'□')+'</button>'
       +'<span class="sw" style="background:'+l.col+'"></span>'
       +'<span class="kd">'+(l.kind==='text'?'字':'線')+'</span>'
-      +'<span class="nm">'+lyName(l)+'</span>'
+      +'<span class="nm">'+(i===sel&&P.draw&&l.kind==='draw'?'✎ ':'')+lyName(l)+'</span>'
       +(i<LAYER.length-1?'<button class="up">↑</button>':'<span style="width:18px;flex:0 0 18px"></span>');
     d.onclick=()=>{ sel=i; drawList(); syncLayer(); };
     d.querySelector('.eye').onclick=e=>{ e.stopPropagation(); pushHist(); l.on=!l.on; drawList(); kick(); saveLocal(); };
@@ -776,15 +785,23 @@ el('c_draw').onchange=e=>{
   document.body.classList.toggle('inking',P.draw);
   syncLayer(); saveLocal();
 };
+el('c_pair').onchange=e=>{ P.pair=e.target.checked; saveLocal();
+  stat(P.pair?'二色で描く — 描くと写しも同時に増える':'写しは作らない'); };
 el('b_undoline').onclick=()=>{
   const l=cur();
   if(l.kind!=='draw'||!l.strokes.length){ stat('この層に描いた線は無い'); return; }
-  pushHist(); l.strokes.pop(); drawList(); kick(); saveLocal();
+  pushHist();
+  const gone=l.strokes.pop();
+  const t=LAYER.find(x=>x.twinOf===l.id);
+  if(t){ const i=t.strokes.indexOf(gone); if(i>=0) t.strokes.splice(i,1); else t.strokes.pop(); }
+  drawList(); kick(); saveLocal();
 };
 el('b_clear').onclick=()=>{
   const l=cur();
   if(l.kind!=='draw'||!l.strokes.length){ stat('この層に描いた線は無い'); return; }
-  pushHist(); l.strokes=[]; drawList(); kick(); saveLocal();
+  pushHist(); l.strokes=[];
+  const t2=LAYER.find(x=>x.twinOf===l.id); if(t2) t2.strokes=[];
+  drawList(); kick(); saveLocal();
 };
 el('anGo').onclick=()=>{
   const on=!P.anim;
@@ -797,7 +814,14 @@ el('b_addT').onclick=()=>{ pushHist();
   if(LAYER.length>=8){ stat('層は8まで'); return; }
   LAYER.push(newLayer({kind:'text', col:'#8b5cf6', text:'たま'}));
   sel=LAYER.length-1; drawList(); syncLayer(); kick(); saveLocal(); };
-el('b_addD').onclick=()=>{ pushHist();
+el('b_addD').onclick=()=>{
+  /* ⭐ いま選んでいるのが【まだ描いていない線の層】なら、増やさずそれを使う
+     （押すたび空の層が積まれるのを防ぐ） */
+  if(cur().kind==='draw' && !cur().strokes.length && hasLayer()){
+    P.draw=true; syncUI(); kick(); saveLocal();
+    stat('この層はまだ空です — そのまま左ドラッグで描けます'); return;
+  }
+  pushHist();
   if(LAYER.length>=8){ stat('層は8まで'); return; }
   LAYER.push(newLayer({kind:'draw', col:'#8b5cf6'}));
   sel=LAYER.length-1;
@@ -805,10 +829,25 @@ el('b_addD').onclick=()=>{ pushHist();
      （木下＝「線を足すを押しても描けない」→ チェックが要ることに自分で気づかせない） */
   P.draw=true;
   syncUI(); kick(); saveLocal(); stat('線の層を足した — そのまま左ドラッグで描ける'); };
-el('b_dup').onclick=()=>{ pushHist();
+el('b_dup').onclick=()=>{
+  if(!hasLayer()){ stat('写す層が無い'); return; }
+  pushHist();
   if(LAYER.length>=8){ stat('層は8まで'); return; }
-  const c=JSON.parse(JSON.stringify(cur())); c.pre=null;   /* 写したものは見本の印を外す */
-  LAYER.splice(sel+1,0,c); sel++; drawList(); syncLayer(); kick(); saveLocal(); };
+  /* ⭐⭐ 写す＝【ずらした二色】にする。
+     🔴 同じ位置・同じ色に重ねると、複製できたことが見えない
+        （木下＝「写すを押しても複製できるような」）。
+     ⭐ 写しは【下】に置いて少しずらし、色を替える＝そのまま刷りずれになる。
+     ⚠️ 見本の印は外す（写しは見本の取り下げで消えない）。 */
+  const c=JSON.parse(JSON.stringify(cur()));
+  c.pre=null;
+  const d=0.014;
+  c.ox=+(c.ox+d).toFixed(3); c.oy=+(c.oy+d).toFixed(3);
+  c.col = (c.col.toLowerCase()==='#c9cdd0') ? '#8b5cf6' : '#c9cdd0';
+  c.ph  = (c.ph+0.35)%1;
+  LAYER.splice(sel,0,c);        /* 下に敷く（元が手前に残る） */
+  sel=sel+1;                    /* 元を選んだまま */
+  syncUI(); kick(); saveLocal();
+  stat('写した — 下にずらして色を替えた（刷りずれ）'); };
 el('b_del').onclick=()=>{
   if(!LAYER.length){ stat('消す層が無い'); return; }
   pushHist();
@@ -855,7 +894,7 @@ function syncUI(){
   segSet('pre', P.preset||'__none__');
   el('r_long').classList.toggle('hide',P.sz!=='px');
   el('c_bg').value=P.bg; el('c_frame').checked=P.frame;
-  el('c_alpha').checked=P.alpha; el('c_draw').checked=P.draw;
+  el('c_alpha').checked=P.alpha; el('c_draw').checked=P.draw; el('c_pair').checked=!!P.pair;
   document.body.classList.toggle('inking',P.draw);
   document.body.classList.toggle('help',!!P.help);
   drawList(); syncLayer(); szSync();
@@ -875,6 +914,25 @@ function szSync(){
   }
 }
 function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); return b?b.dataset.v:dflt; }
+
+/* ⭐⭐ 二色で描く ── 描いた線の【写し】を別の層に同時に増やす。
+   ⭐ 点の配列を【共有】するので、描いている最中から両方が伸びる。
+   ⚠️ 控えに入れて開き直すと共有は切れるが、絵は同じなので困らない。 */
+function twinOf(l){
+  /* ⚠️ 写しの写しは作らない */
+  if(l.twinOf) return l;
+  let t=LAYER.find(x=>x.twinOf===l.id);
+  if(t) return t;
+  t=newLayer({kind:'draw', twinOf:l.id, pen:l.pen, gap:l.gap, vary:l.vary, r:l.r,
+    ox:+(l.ox+0.014).toFixed(3), oy:+(l.oy+0.014).toFixed(3), ph:(l.ph+0.35)%1,
+    col: l.col.toLowerCase()==='#c9cdd0' ? '#8b5cf6' : '#c9cdd0'});
+  const i=Math.max(0,LAYER.indexOf(l));
+  LAYER.splice(i,0,t);                  /* 下に敷く */
+  /* 🔴 下に差し込むと元の層が1つ後ろへずれる。選んでいる場所も直さないと、
+     このあと【写しの方に描いてしまう】（実際そうなって、写しの写しまで作った）。 */
+  if(i<=sel) sel++;
+  return t;
+}
 
 /* ══ 盤の操作と、筆 ══════════════════════════════════ */
 (function(){
@@ -903,7 +961,9 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
     if(P.draw && cur().kind==='draw' && e.button===0 && !spaceDown){
       pushHist();
       lastT=performance.now(); lastP=null;
-      const p=at(e); ink=[[p[0],p[1],wAt(e,p)]]; cur().strokes.push(ink);
+      const p=at(e); ink=[[p[0],p[1],wAt(e,p)]];
+      const me=cur(); me.strokes.push(ink);
+      if(P.pair) twinOf(me).strokes.push(ink);   /* ⭐ 同じ配列を共有＝描いている間も両方伸びる */
       cv.setPointerCapture(e.pointerId); e.preventDefault(); kick(); return;
     }
     if(e.button===2||e.button===1||spaceDown){
