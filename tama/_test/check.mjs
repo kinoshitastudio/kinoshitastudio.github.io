@@ -78,6 +78,10 @@ try{
     ok('文字と線を足せる', TAMA.LAYER.length===n0+2 && TAMA.LAYER[TAMA.LAYER.length-1].kind==='draw');
     $('b_dup').click();
     ok('写せる', TAMA.LAYER.length===n0+3);
+    /* ⭐ 写しは下にずれて色が変わる＝複製できたことが見える */
+    { const me=TAMA.LAYER[TAMA.sel], under=TAMA.LAYER[TAMA.sel-1];
+      ok('写しはずれる', Math.abs(under.ox-me.ox)>0.005);
+      ok('写しは色が変わる', under.col!==me.col); }
     $('b_del').click(); $('b_del').click(); $('b_del').click();
     ok('消せる', TAMA.LAYER.length===n0);
   }
@@ -129,6 +133,27 @@ try{
     TAMA.cur().strokes=[[[-0.6,0,1.5],[0,0,1.5],[0.6,0,1.5]]];
     const thick=ink(shot(260,260,0));
     ok('点ごとの太さが効く（細 '+thin+' < 太 '+thick+'）', thin<thick*0.7);
+    $('b_wipe').click();
+  }
+
+  // 二色で描く＝写しが別の層に別の色で同時に増える
+  { $('b_wipe').click(); $('b_addD').click();
+    $('c_pair').checked=true; $('c_pair').dispatchEvent(new Event('change'));
+    const pe=(ty,x,y)=>cv.dispatchEvent(new PointerEvent(ty,{clientX:x,clientY:y,button:0,buttons:1,
+      pointerId:1,pointerType:'mouse',bubbles:true,cancelable:true}));
+    cv.setPointerCapture=()=>{};
+    pe('pointerdown',300,300); pe('pointermove',400,380); pe('pointerup',400,380);
+    ok('二色で描くと層が2つになる（'+TAMA.LAYER.length+'）', TAMA.LAYER.length===2);
+    const me=TAMA.cur(), tw=TAMA.LAYER.find(l=>l.twinOf===me.id);
+    ok('写しができる', !!tw && tw.strokes.length===1);
+    ok('写しは色が違う', tw.col!==me.col);
+    /* 🔴 下に差し込むと選ぶ場所がずれて、写しの方に描いてしまう前例あり */
+    pe('pointerdown',320,420); pe('pointermove',520,460); pe('pointerup',520,460);
+    ok('2本目も同じ2層のまま（'+TAMA.LAYER.length+'）', TAMA.LAYER.length===2);
+    ok('両方 2本', TAMA.cur().strokes.length===2 && tw.strokes.length===2);
+    $('b_undoline').click();
+    ok('1本消すと写しも減る', TAMA.cur().strokes.length===1 && tw.strokes.length===1);
+    $('c_pair').checked=false; $('c_pair').dispatchEvent(new Event('change'));
     $('b_wipe').click();
   }
 
