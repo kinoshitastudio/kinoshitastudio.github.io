@@ -383,6 +383,12 @@ let noBgOnce = false;
    下で let にすると TDZ（Cannot access 'PFRAME' before initialization）で起動が止まる。
    ⚠️ すぐ上の TV と同じ理由＝2026-08-17 に実際に踏んだ。 */
 let PFRAME = null, pfT = null;
+/* 🔴 版面プレビューの入れ物も先頭側で宣言する（draw が参照する＝後方 let は TDZ） */
+let PPREV = null, ppT = null, IBC = null, ppDrawing = false;
+/* 🔴🔴 draw() から【後方の const（EXP・PAPER）を触ってはいけない】＝TDZ で起動が止まる。
+   同じ轍を3回踏んだので、判定は先頭のこのフラグだけを見る。
+   ⭐ 版面の形を選んだら true／自動なら false（seg-pratio と起動時に入れる）。 */
+let PMODE = false;
 /* 🔴 動きの入れ物も先頭側で宣言する（同じ TDZ を踏んだ＝速さのつまみの初期化が animLabel を呼ぶため） */
 let animOn = false, animLast = 0, animAcc = 0, animDir = 1;
 const TV = { on:false, stop:false, box:null };
@@ -1282,6 +1288,26 @@ function paintTiles(sh, ctx){
 }
 function draw(){
   const W = cv.width, H = cv.height;
+  /* ══⭐⭐ 版面モードの画面＝【出る絵そのもの】（2026-08-17 木下「書き出し盤面はこんな感じで
+     見せてくれたらいいけど無理そう？」）。
+     ⭐ 書き出し（exportFull）と同じ道を画面の大きさで1回焼いたものを、そのまま出す。
+        だから画面で見ている絵が、そのまま出る絵になる（ズーム・移動は自動のときだけ効く）。
+     ⚠️ 焼くのは ppBake（つまみが止まってから／動かしている間は1コマずつ）。 */
+  /* ⭐ 何か変わって draw が呼ばれた＝焼き直しを予約（ppBake 自身からの draw では予約しない） */
+  if(!ppDrawing && PMODE) ppSoon();
+  if(PPREV){
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, W, H);
+    const px = Math.round((W - PPREV.width)/2), py = Math.round((H - PPREV.height)/2);
+    g.drawImage(PPREV, px, py);
+    /* 版面のふち（画面だけの目印） */
+    g.save();
+    g.lineWidth = Math.max(1, W/1200);
+    g.strokeStyle = 'rgba(255,255,255,.28)';
+    g.strokeRect(px + 0.5, py + 0.5, PPREV.width - 1, PPREV.height - 1);
+    g.restore();
+    return;
+  }
   /* ⚠️ 地は【画面いっぱい】に塗る＝ズームしても地は動かない（紙は動かない）。
      板だけをビュー（ズーム・パン）の中で描く。 */
   g.setTransform(1, 0, 0, 1, 0, 0);
@@ -1308,7 +1334,7 @@ function draw(){
   });
   g.setTransform(1, 0, 0, 1, 0, 0);
   /* ⭐ 版面の囲み（画面だけの目印。出す絵には入らない） */
-  if(PFRAME){
+  if(false && PFRAME){
     /* ⭐ 囲みの【外を暗くする】＝どこが切り出されるか一目で分かる（2026-08-17 木下
        「囲みがないとどれくらいできりだされるかわからん」）。⚠️ 出す絵には入らない */
     g.save();
@@ -1561,7 +1587,39 @@ function fitK(T, iw, ih){
    ⚠️ 出す絵には入らない＝画面だけの目印。
    ⚠️ 画面の絵の外接は【地の色と違う画素】で測る（地を塗ってあるので alpha では測れない）。
       測る前に囲みを消して1回描く＝囲み自体を絵として測ってしまわないため。 */
-function pframeSoon(){ clearTimeout(pfT); pfT = setTimeout(() => pframeCalc(0), 140); }
+/* ══⭐ 版面モードのプレビュー ══
+   ⭐ exportFull と同じ道＝renderAll（ビューを掛けない版ぜんぶ）→ 絵の外接 → 版面に収める。
+   ⚠️ 絵の外接（inkBox）は getImageData で重いので、形が変わらないうちは使い回す。
+      黒の位置が動くだけの「流す」では測り直さない。 */
+function ppDrop(){ IBC = null; }
+/* ⚠️ つまみを触ったら絵の形が変わりうる＝外接のキャッシュを捨てる。
+   ⭐ 「流す」（黒の位置だけ動く）では捨てない＝毎コマ測り直さないので軽い。 */
+function ppSoon(){ clearTimeout(ppT); IBC = null; ppT = setTimeout(() => ppBake(), 120); }
+function ppBake(){
+  const pw = paperWH(EXP.target);
+  if(!pw){ if(PPREV){ PPREV = null; ppDrawing = true; draw(); ppDrawing = false; } return; }
+  const big = renderAll();
+  const ib = IBC || (IBC = inkBox(big));
+  if(!ib){ PPREV = null; draw(); return; }
+  const W = cv.width, H = cv.height;
+  const k = Math.min(W*0.96/pw[0], H*0.96/pw[1]);
+  const PW = Math.max(2, Math.round(pw[0]*k)), PH = Math.max(2, Math.round(pw[1]*k));
+  if(!PPREV) PPREV = document.createElement('canvas');
+  if(PPREV.width !== PW || PPREV.height !== PH){ PPREV.width = PW; PPREV.height = PH; }
+  const c = PPREV.getContext('2d');
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.clearRect(0, 0, PW, PH);
+  c.fillStyle = P.bg; c.fillRect(0, 0, PW, PH);
+  /* ⭐ 絵の倍率＝版面に収まる倍率×絵の大きさ（exportFull と同じ式） */
+  const kk = Math.min(PW/ib.w, PH/ib.h) * (PAPER.zoom || 1);
+  const dw = Math.max(1, Math.round(ib.w*kk)), dh = Math.max(1, Math.round(ib.h*kk));
+  const dx = Math.round((PW - dw)/2 + (PAPER.ox || 0)*PW);
+  const dy = Math.round((PH - dh)/2 - (PAPER.oy || 0)*PH);
+  c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';
+  c.drawImage(big, ib.x0, ib.y0, ib.w, ib.h, dx, dy, dw, dh);
+  ppDrawing = true; draw(); ppDrawing = false;
+}
+function pframeSoon(){ ppSoon(); }
 /* ⭐ 囲みが画面からはみ出していたら【入るまで引く】（2026-08-17）。
    🔴 この道具の「全体で出す」は画面のズーム・移動を無視して焼くので、
       囲みは画面より大きくなりがち＝見えないと木下の役に立たない。
@@ -1615,6 +1673,7 @@ function pSizeInfo(){
 document.querySelectorAll('#pratio button').forEach(b => b.onclick = () => {
   document.querySelectorAll('#pratio button').forEach(x => x.classList.remove('on'));
   b.classList.add('on'); PAPER.ratio = b.dataset.v;
+  PMODE = (PAPER.ratio !== 'auto');
   pSizeInfo(); pframeSoon();
   if(typeof tvSizeSync === 'function') tvSizeSync();
 });
@@ -2133,7 +2192,9 @@ function animTick(now){
   const el = document.getElementById('kpos');
   if(el){ el.value = Math.round(sh.kpos);
     const v = el.parentElement.querySelector('.val'); if(v) v.textContent = el.value; }
-  draw();
+  /* ⭐ 版面モードは【1コマずつ焼き直す】（外接は測り直さないので現実的な速さ） */
+  if(PMODE) ppBake();
+  else draw();
 }
 function animStart(){
   if(animOn || P.speed <= 0) return;
