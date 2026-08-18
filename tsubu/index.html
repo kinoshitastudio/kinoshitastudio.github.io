@@ -30,6 +30,10 @@
     font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans",sans-serif;
     font-size:13px;min-width:34px;height:34px;padding:0 8px;cursor:pointer;opacity:.55;transition:.14s;}
   .chips button:hover{opacity:.85}
+  /* ⭐ 版の重なりはチップを横にドラッグして変える（2026-08-18）。
+     ⚠️ touch-action は pan-y ＝縦スクロールは殺さない（道具はモバイルでここが必ず壊れる） */
+  .chips button{touch-action:pan-y;}
+  .chips button.drag{opacity:.5;transform:scale(1.08);}
   .chips button.on{opacity:1;background:#1c1c1e;color:#fff}
   body:not(.multilayer) .multi{display:none;}
   body.ui-dark .chips button.on{background:#fff;color:#000}
@@ -400,7 +404,8 @@
   <div class="row"><label>大きさ</label><input type="range" id="lscale" min="0.2" max="3" step="0.05" value="1"><span class="val"></span></div>
   <div class="row"><label>角度</label><input type="range" id="lrot" min="0" max="360" step="1" value="0"><span class="val"></span></div>
   <button class="big" id="delLayer">この版を消す</button>
-  <div class="hint">版を押す＝その版を選ぶ（下の<b>字</b>と<b>マス目</b>は選んだ版に効く）。重なったマスは<b>後の版が上</b><br>
+  <div class="hint">版を押す＝その版を選ぶ（下の<b>字</b>と<b>マス目</b>は選んだ版に効く）。<br>
+    ⭐ <b>版を横にドラッグ＝重なりの順を変える</b>（<b>右にあるほど上</b>／足した版は右＝上に付く）<br>
     ⚠️ 質感・色・壊れ方・ワープは<b>盤ぜんぶ</b>にかかる（重ねても1枚の作品）</div>
 
   <h2>字</h2>
@@ -1114,7 +1119,12 @@ function pullFromLayer(){ const L = curLayer(); L_KEYS.forEach(k => P[k] = L[k])
    ⚠️ 角度は【拾う側を倍にしてから】回して丸める＝回したときに穴が空くのを防ぐ。
       単位格子を回して丸めると数％のマスが取り残されて、点々が抜けたように見える。 */
 function layerPack(L){
-  const text = [...(L.txt || '')].filter(c => c.trim());
+  /* ⭐⭐ 2026-08-18 ── 空白も【1マスぶんの場所】として数える。
+     木下＝「文字を入れないと表示されないので、スペースでも入れ込みできるように。
+             理由として文字を入れないでもグラフィックで追加したいから」
+     ＝字は無いがマス目（枡・塗り）だけを置きたい、という使い方。
+     ⚠️ 改行だけは捨てる（折り返しは【折返し】のつまみが決める＝規則を2つ持たない）。 */
+  const text = [...(L.txt || '')].filter(c => c !== '\n' && c !== '\r');
   if(!text.length) return { pts: [], w: 1, h: 1 };
   const rot = ((L.lrot || 0) % 360) * Math.PI / 180;
   const SS  = rot ? 2 : 1;                                  // 回すときだけ倍で拾う
@@ -2211,9 +2221,11 @@ function renderChips(){
   (P.layers || []).forEach((L, i) => {
     const b = document.createElement('button');
     b.textContent = ([...(L.txt || '')].filter(c => c.trim())[0]) || '字';
-    b.title = L.txt || '';
+    b.title = (L.txt || '') + '（ドラッグで重なりを変える）';
     b.className = i === P.cur ? 'on' : '';
-    b.onclick = () => { pushToLayer(); P.cur = i; pullFromLayer(); syncLayerUI(); build(); fit(); renderChips(); };
+    b.dataset.i = i;
+    b.onclick = () => { if(chipMoved) return;      // ⚠️ 並び替えたときは選び直さない
+      pushToLayer(); P.cur = i; pullFromLayer(); syncLayerUI(); build(); fit(); renderChips(); };
     host.appendChild(b);
   });
   const n = (P.layers || []).length;
@@ -2223,6 +2235,62 @@ function renderChips(){
      ⭐ 木下の原則「触れるのに効かない状態を作らない」。 */
   document.body.classList.toggle('multilayer', n > 1);
 }
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 版の重なりをドラッグで入れ替える（2026-08-18）
+   木下＝「重なりを変更できるように。いまだと想定だと追加したのが上になってる」
+   ⭐ 並びの意味＝【右にあるほど上】（draw が P.layers の順に重ねるので、後ろの版が上）。
+   ⚠️ HTML5 の drag&drop は使わない（指で動かない）。pointer で拾って、
+      並べ替えるのは【見た目（DOM）だけ】。離した瞬間に DOM の並びから P.layers を作り直す。
+   ⚠️ 6px 動くまではドラッグにしない＝いままでの「押して版を選ぶ」を殺さない。
+   ══════════════════════════════════════════════════════════════ */
+let chipMoved = false;
+(() => {
+  const host = document.getElementById('layerChips');
+  if(!host) return;
+  let st = null;
+  host.addEventListener('pointerdown', e => {
+    const b = e.target.closest('button');
+    if(!b || (P.layers || []).length < 2) return;
+    st = { b, x:e.clientX, on:false };
+    chipMoved = false;
+    try{ b.setPointerCapture(e.pointerId); }catch(_){}
+  });
+  host.addEventListener('pointermove', e => {
+    if(!st) return;
+    if(!st.on){
+      if(Math.abs(e.clientX - st.x) < 6) return;      // まだ「押した」の範囲
+      st.on = true; chipMoved = true; st.b.classList.add('drag');
+    }
+    /* いま指がどのチップの上にあるかで、見た目の並びを入れ替える */
+    const kids = [...host.children];
+    const over = kids.find(k => {
+      if(k === st.b) return false;
+      const r = k.getBoundingClientRect();
+      return e.clientX >= r.left && e.clientX <= r.right;
+    });
+    if(over){
+      const ri = kids.indexOf(over), mi = kids.indexOf(st.b);
+      host.insertBefore(st.b, ri > mi ? over.nextSibling : over);
+    }
+  });
+  const end = () => {
+    if(!st) return;
+    const moved = st.on;
+    st.b.classList.remove('drag');
+    st = null;
+    if(!moved){ chipMoved = false; return; }
+    /* ⭐ 見た目の並び → 中身の並び。いま選んでいる版は【中身を追いかける】 */
+    pushToLayer();
+    const order = [...host.children].map(k => +k.dataset.i);
+    const curL = P.layers[P.cur];
+    P.layers = order.map(i => P.layers[i]);
+    P.cur = Math.max(0, P.layers.indexOf(curL));
+    pullFromLayer(); syncLayerUI(); build(); fit(); renderChips();
+    setTimeout(() => { chipMoved = false; }, 0);      // ⚠️ この直後の click だけ捨てる
+  };
+  host.addEventListener('pointerup', end);
+  host.addEventListener('pointercancel', end);
+})();
 // 版の値 → つまみの見た目
 function syncLayerUI(){
   document.getElementById('txt').value = P.txt;

@@ -54,8 +54,11 @@ echo "（${PORT} で立てた・${WORK}）"
 
 NG=0
 echo
-echo "── 版面・大きさ（PNG と動画の共通）"
+echo "── ① 版面・大きさ（PNG と動画の共通）"
 node "$HERE/_test/paper.mjs" "http://localhost:$PORT" "/tsubu/" "$PREV" || NG=1
+echo
+echo "── ② 版（重ねる）＝空白の版・ドラッグで重なりを変える"
+node "$HERE/_test/layer.mjs" "http://localhost:$PORT/tsubu/" || NG=1
 
 echo
 [ "$NG" = 0 ] && echo "✅ 全部通った" || echo "🔴 落ちたものがある（上を見る）"
