@@ -48,7 +48,26 @@ async function shot(p, id = 'exPng'){
     return { w:bmp.width, h:bmp.height, hash:hex, kb:Math.round(bl.size/1024) };
   });
 }
-const asp = (p, v) => p.evaluate(x => document.querySelector(`#tvAsp button[data-v="${x}"]`).click(), v);
+/* ⭐ 版面はパネル（#tvRatio）から押す＝木下が普段触るところ。'all' が画面ぜんぶ */
+const asp = (p, v) => p.evaluate(x => document.querySelector(`#tvRatio button[data-v="${x === 'free' ? 'all' : x}"]`).click(), v);
+const slide = (p, id, v) => p.evaluate(o => { const r = document.getElementById(o.id);
+  r.value = o.v; r.dispatchEvent(new Event('input', { bubbles:true })); }, { id, v });
+/* 出した PNG の中で【絵が入っている範囲】を測る（地の色と違う画素の外接） */
+const inkOf = p => p.evaluate(async () => {
+  const bl = window.__got.find(x => /png/.test(x.type)); if(!bl) return null;
+  const bmp = await createImageBitmap(bl);
+  const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+  const cx = c.getContext('2d'); cx.drawImage(bmp, 0, 0);
+  const d = cx.getImageData(0, 0, c.width, c.height).data;
+  const r0 = d[0], g0 = d[1], b0 = d[2];
+  let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+  for(let y = 0; y < c.height; y += 2) for(let x = 0; x < c.width; x += 2){
+    const i = (y*c.width + x)*4;
+    if(Math.abs(d[i]-r0) + Math.abs(d[i+1]-g0) + Math.abs(d[i+2]-b0) > 24){
+      if(x < x0) x0 = x; if(x > x1) x1 = x; if(y < y0) y0 = y; if(y > y1) y1 = y; }
+  }
+  return x1 < 0 ? null : { w:x1-x0+2, h:y1-y0+2, x0, y0, W:c.width, H:c.height };
+});
 const pre = (p, v) => p.evaluate(x => document.querySelector(`#tvPre button[data-v="${x}"]`).click(), v);
 const sc  = (p, v) => p.evaluate(x => document.querySelector(`#exSc button[data-v="${x}"]`).click(), v);
 
@@ -89,6 +108,44 @@ for(const [v, r] of [['1:1',1], ['4:5',4/5], ['3:4',3/4], ['9:16',9/16], ['16:9'
   check(!!s && (Math.abs(s.w - 5760) < 8 || Math.abs(s.h - 3600) < 8),
         `${v} が画面いっぱいに入る（押すたびに縮まない）`, s ? `${s.w}×${s.h}` : '-');
 }
+
+console.log('\n── ②b 版面の中で絵を動かす（大きさ・よこ・たて）');
+await asp(N, '4:5'); await wait(600);
+await N.evaluate(() => document.getElementById('tvFitPic').click()); await wait(500);
+await shot(N); const q0 = await inkOf(N);
+check(!!q0, '版面に絵が入っている', q0 ? `絵 ${q0.w}×${q0.h} / 紙 ${q0.W}×${q0.H}` : '-');
+check(!!q0 && (Math.abs(q0.w - q0.W) < q0.W*0.12 || Math.abs(q0.h - q0.H) < q0.H*0.12),
+      '「絵を版面に合わせる」で版面いっぱいに入る', q0 ? `絵 ${q0.w}×${q0.h} / 紙 ${q0.W}×${q0.H}` : '-');
+await slide(N, 'tvZoom', 55); await wait(500);
+await shot(N); const q1 = await inkOf(N);
+check(!!q1 && !!q0 && q1.w < q0.w * 0.75, '絵の大きさを下げると絵が小さくなる', q1 && q0 ? `${q0.w} → ${q1.w}px` : '-');
+check(!!q1 && !!q0 && q1.W === q0.W && q1.H === q0.H, '紙（版面）の大きさは変わらない', q1 ? `${q1.W}×${q1.H}` : '-');
+await slide(N, 'tvOx', 40); await wait(500);
+await shot(N); const q2 = await inkOf(N);
+check(!!q2 && !!q1 && q2.x0 > q1.x0 + q1.W*0.08, 'よこで右に寄る', q2 && q1 ? `x0 ${q1.x0} → ${q2.x0}` : '-');
+await slide(N, 'tvOx', 0); await slide(N, 'tvOy', -40); await wait(500);
+await shot(N); const q3 = await inkOf(N);
+check(!!q3 && !!q1 && q3.y0 < q1.y0 - q1.H*0.08, 'たてで上に寄る', q3 && q1 ? `y0 ${q1.y0} → ${q3.y0}` : '-');
+
+console.log('\n── ②c 盤で動かしてもつまみが追いかける（食い違わせない）');
+const chased = await N.evaluate(() => {
+  const before = +document.getElementById('tvZoom').value;
+  cam.s *= 1.6;                                   // 盤でホイールしたのと同じこと
+  tvPlaceSync();
+  return { before, after:+document.getElementById('tvZoom').value };
+});
+check(chased.after > chased.before * 1.4, 'カメラを動かすと「絵の大きさ」も動く', `${chased.before} → ${chased.after}`);
+
+console.log('\n── ②d 囲みは出る絵に焼き込まれない');
+const framed = await N.evaluate(() => ({ crop: !!TV.crop, exporting }));
+check(framed.crop && framed.exporting === false, '画面には囲みが出ている状態', JSON.stringify(framed));
+await N.evaluate(() => { document.getElementById('tvFitPic').click(); });
+await wait(400);
+await shot(N); const q4 = await inkOf(N);
+/* 囲みが焼き込まれていれば、紙の四隅（＝外側の覆い）が地の色と違って外接が紙いっぱいになる */
+check(!!q4 && (q4.w < q4.W - 4 || q4.h < q4.H - 4), '出た PNG に囲みの覆いが入っていない',
+      q4 ? `絵 ${q4.w}×${q4.h} / 紙 ${q4.W}×${q4.H}` : '-');
+await slide(N, 'tvOy', 0);
 
 console.log('\n── ③ 長辺 px はその px ちょうど（倍率は使わない）');
 await asp(N, '9:16'); await pre(N, 1080); await wait(400);
@@ -145,6 +202,8 @@ console.log('\n── ⑤ 画面ぜんぶに戻す');
 /* ⭐ ④ で動かした「流れ」と位相を素に戻してから測る（中身のハッシュを突き合わせるため） */
 await N.evaluate(v => { P.gflow = v; flowT = 0; draw(); }, bGflow);
 await N.evaluate(() => document.getElementById('tvReset').click());
+/* ⭐ 絵の置き方も素（版面いっぱい）に戻す＝②b で動かしたぶんを戻してから中身を突き合わせる */
+await N.evaluate(() => document.getElementById('tvFitPic').click());
 await pre(N, 'fit'); await wait(600);
 const back = await shot(N);
 check(!!back && !!n0 && back.w === n0.w && back.h === n0.h, '元の大きさに戻る', back ? `${back.w}×${back.h}（元 ${n0.w}×${n0.h}）` : '-');
