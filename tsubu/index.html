@@ -763,7 +763,7 @@ const PALS = [
       太さ → 画が交わって塊になっている所。そこに球が出る
    ──────────────────────────────────────────────────────── */
 const oc = document.createElement('canvas'), og = oc.getContext('2d', { willReadFrequently:true });
-function glyphDots(ch, N, fontIdx){
+function glyphDots(ch, N, fontIdx, fat){
   oc.width = oc.height = N;
   og.fillStyle = '#000'; og.fillRect(0, 0, N, N);
   og.fillStyle = '#fff';
@@ -777,7 +777,7 @@ function glyphDots(ch, N, fontIdx){
   //    日本語は非ボールドだと細く、玉が出にくい。ここで太字を作る。
   let grd = new Uint8Array(N*N);
   for(let i=0;i<N*N;i++) grd[i] = raw[i*4] > 110 ? 1 : 0;
-  const fatN = Math.round(P.fat * Math.max(1, N / 32));   // ⭐ 太さを解像度比例に＝高解像度でも同じだけ太る
+  const fatN = Math.round((fat != null ? fat : P.fat) * Math.max(1, N / 32));   // ⭐ 太さを解像度比例に＝高解像度でも同じだけ太る
   for(let s=0; s<fatN; s++){
     const nx = new Uint8Array(N*N);
     for(let y=0;y<N;y++) for(let x=0;x<N;x++){
@@ -1107,15 +1107,21 @@ const M_KEYS = ['masuN','masuAng','masuWav','masuSteps','masuLine','masuShine','
                 'masuC1','masuC2','masuC3','masuC4','masuC5','masuC6',
                 'frameOwn','frameN','frameAng','frameWav','frameSteps','frameLine','frameShine','frameShift','frameSpread','frameFlow',
                 'frameC1','frameC2','frameC3','frameC4','frameC5','frameC6'];
+/* ⭐ 2026-08-18 ── 解像（1文字の粒数）と太さも版ごと。木下「解像や粒、大きさは相変わらず両方に効く」
+   ⚠️ 粒（cell）は【盤ぜんぶ】のまま＝全部の版が同じ格子に乗っているのが TSUBU の芯
+      （重なった粒をまとめる・積もる・マス目の枡が成り立たなくなる）。
+      版ごとに粒を細かくしたいときは【版の「大きさ」】を使う＝1文字の粒数が増える。
+   ⚠️ 細かさの解像補正（wavFit）と玉の基準は盤ぜんぶの P.res のまま。 */
 const L_KEYS = ['txt','font','lay','wrap','gapx','gapy','masu','masufill','lx','ly','lscale','lrot',
-                'follow','dir','shift','spread','bead','beadk','line','wav','shine','blob', ...M_KEYS];
+                'follow','dir','shift','spread','bead','beadk','line','wav','shine','blob',
+                'res','fat', ...M_KEYS];
 /* ⭐ 粒 → その粒が乗っている版。⚠️ 版にそのキーが無い古い状態では P に落ちる（互換） */
 const layerOfDot = d => (P.layers && P.layers[d.li]) || P;
 function newLayer(txt){
   return { txt: txt ?? 'HELLO', font:0, lay:0, wrap:7, gapx:2, gapy:2,
            masu:0, masufill:0, lx:0, ly:0, lscale:1, lrot:0,
            follow:100, dir:0, shift:0, spread:0, bead:55, beadk:1,
-           line:0, wav:0.1, shine:60, blob:5,
+           line:0, wav:0.1, shine:60, blob:5, res:28, fat:1,
            masuN:1, masuAng:90, masuWav:0.1, masuSteps:0, masuLine:-1, masuShine:-1,
            masuShift:-1, masuSpread:-1, masuFlow:100,
            masuC1:'#3a3a3a', masuC2:'#c8d4de', masuC3:'#7f95ab', masuC4:'#1d2733',
@@ -1159,7 +1165,7 @@ function layerPack(L){
   const rot = ((L.lrot || 0) % 360) * Math.PI / 180;
   const SS  = rot ? 2 : 1;                                  // 回すときだけ倍で拾う
   const sc  = Math.max(0.2, L.lscale || 1);
-  const N   = Math.max(4, Math.min(256, Math.round(P.res * sc * SS)));
+  const N   = Math.max(4, Math.min(256, Math.round(mv(L,'res') * sc * SS)));
   const gx0 = Math.round((L.gapx || 0) * sc * SS), gy0 = Math.round((L.gapy || 0) * sc * SS);
   const vert = L.lay === 1;
   const per  = Math.max(1, Math.round(L.wrap || 1));
@@ -1188,7 +1194,7 @@ function layerPack(L){
              by: vert ? ci2 * charAdv : li * lineAdv }; };
   text.forEach((ch, i) => {
     const { bx, by } = at(i);
-    for(const [x, y, ang, dens] of glyphDots(ch, N, L.font)){
+    for(const [x, y, ang, dens] of glyphDots(ch, N, L.font, mv(L,'fat'))){
       const X = mpx + bx + x, Y = mpy + by + y;
       inkAt.add(kk(X, Y));
       // ⚠️ 抜くときは字の粒を【作らない】。隠すだけにすると、見えない粒が
@@ -1209,7 +1215,11 @@ function layerPack(L){
       return { i, L: bx, T: by, R: bx + cellW, B: by + cellH }; });   // 右端＝隣の枡の左端（共有）
     // ⭐ 枠を先に置く＝境目は枠の線が勝つ（塗りに埋もれない）
     if(L.masu > 0){
-      const wgt = Math.min(L.masu * SS, Math.max(1, Math.floor(Math.min(cellW, cellH) / 2)));
+      /* 🔴 2026-08-18 ── 上限が floor(辺/2) だったので、枠を目いっぱい太らせても
+         枡の【まん中に1〜2列】必ず残った（木下＝「最後に少しだけ穴ができて完全には防げない」）。
+         ⭐ 上下（左右）から k 段ずつ埋めるので、埋め切るには ceil((辺+1)/2) 段が要る。
+         ⚠️ 上限に届いていないときの太さは1画素も変わらない。 */
+      const wgt = Math.min(L.masu * SS, Math.max(1, Math.ceil((Math.min(cellW, cellH) + 1) / 2)));
       const vAng = L.masufill > 0 ? 0 : Math.PI / 2;    // 縦の辺の向き
       for(const c of cells) for(let k = 0; k < wgt; k++){
         for(let x = c.L; x <= c.R; x++){ put(x, c.T + k, 0, c.i, 1); put(x, c.B - k, 0, c.i, 1); }
@@ -2094,7 +2104,7 @@ function applyJSON(data){
   if(!P.layers || !P.layers.length) P.layers = [newLayer(P.txt)];
   /* ⭐ 2026-08-18 ── マス目が版ごとになる前の JSON は、版がその設定を持っていない。
      読んだ時点で【P の値を全部の版へ配る】＝いままでの絵がそのまま出る（互換）。 */
-  P.layers.forEach(L => M_KEYS.forEach(k => { if(L[k] == null && P[k] != null) L[k] = P[k]; }));
+  P.layers.forEach(L => [...M_KEYS, 'res', 'fat'].forEach(k => { if(L[k] == null && P[k] != null) L[k] = P[k]; }));
   P.cur = Math.max(0, Math.min(P.layers.length - 1, P.cur | 0));
   if(Array.isArray(data.anchors) && data.anchors.length >= 2){
     ANCHORS.length = 0; data.anchors.forEach(a => ANCHORS.push({ t:a.t, v:a.v }));
@@ -2352,7 +2362,7 @@ function syncLayerUI(){
   });
   /* ⭐ 2026-08-18 ── マス目（塗り・枠）は版ごとになった＝つまみと色も版の値に戻す。
      ⚠️ ここに入れ忘れると「版を選び直したのに前の版の数字が出たまま」＝表示だけ古い。 */
-  M_KEYS.forEach(k => {
+  [...M_KEYS, 'res', 'fat'].forEach(k => {
     const e = document.getElementById(k); if(!e) return;
     if(e.type === 'color'){ if(P[k]) e.value = P[k]; return; }
     if(e.type !== 'range') return;

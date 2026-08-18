@@ -108,6 +108,33 @@ check(JSON.stringify(bk0.lut0) === JSON.stringify(bk1.lut0), '触っていない
 check(JSON.stringify(bk1.lut1) === JSON.stringify(bk0.lut1), '版2のランプも色は保たれる（向きを変えただけ）',
       JSON.stringify(bk1.lut1));
 
+console.log('\n── 枠を太らせると枡が完全に塞がる');
+/* ⚠️ ここは【版1枚】で測る。版が2枚離れていると、その間の地まで「穴」に数えてしまう
+   （2026-08-18 にこれで1回誤検出した） */
+await p.evaluate(() => { while(P.layers.length > 1) document.getElementById('delLayer').click(); });
+await wait(1200);
+/* 🔴 上限が floor(辺/2) だったので、枠を目いっぱいにしても【まん中に1〜2列】残っていた
+   （木下＝「最後に少しだけ穴ができて完全には防げない」）。直す前は最大でも 48画素 残った。
+   ⚠️ 上限に届いていないときの見え方は1画素も変わらない＝枠が細いうちは穴があるのが正しい。 */
+await p.evaluate(() => document.querySelector('#masufill button[data-v="0"]').click());
+const holes = async m => { await slide('masu', m); await wait(1500);
+  return p.evaluate(() => {
+    const cx = cv.getContext('2d'), W = cv.width, H = cv.height;
+    const d = cx.getImageData(0, 0, W, H).data;
+    let x0=1e9,y0=1e9,x1=-1,y1=-1;
+    for(let y=0;y<H;y+=2) for(let x=0;x<W;x+=2){ const i=(y*W+x)*4;
+      if(d[i]+d[i+1]+d[i+2] > 40){ if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } }
+    if(x1<0) return null;
+    const mx = Math.round((x1-x0)*0.06), my = Math.round((y1-y0)*0.06);
+    let dark = 0, tot = 0;
+    for(let y=y0+my;y<=y1-my;y+=2) for(let x=x0+mx;x<=x1-mx;x+=2){ const i=(y*W+x)*4;
+      tot++; if(d[i]+d[i+1]+d[i+2] <= 40) dark++; }
+    return { dark, tot };
+  }); };
+const h3 = await holes(3), h40 = await holes(40);
+check(!!h3 && h3.dark > h3.tot * 0.05, '枠が細いうちは枡に地が見えている（正しい）', JSON.stringify(h3));
+check(!!h40 && h40.dark === 0, '⭐枠を目いっぱいにすると穴が1つも残らない', JSON.stringify(h40));
+
 console.log(ng.length ? `\n🔴 だめだったもの ${ng.length}件: ${ng.join(' / ')}` : '\n✅ マス目の版ごとは全部通った');
 if(errs.length) console.log(`🔴 JSエラー ${errs.length}件: ${errs.slice(0,3).join(' / ')}`);
 await b.close();

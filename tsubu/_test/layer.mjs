@@ -15,6 +15,8 @@ await p.goto(URL0 + '?v=' + Date.now(), { waitUntil:'networkidle0' });
 await new Promise(r => setTimeout(r, 2200));
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const ng = [];
+const slide = (id, v) => p.evaluate(o => { const r = document.getElementById(o.id);
+  r.value = o.v; r.dispatchEvent(new Event('input', { bubbles:true })); }, { id, v });
 const check = (ok, name, note) => { console.log(`  ${ok ? '✅' : '🔴'} ${name}${note ? '  ' + note : ''}`); if(!ok) ng.push(name); };
 
 /* ⭐ 素の状態から始める（JSON に依存しない）。マス目を出しておく＝空白の版でも粒が出る形に */
@@ -97,6 +99,22 @@ check(q1.camX === q0.camX && q1.camY === q0.camY, '⭐画面（カメラ）は�
       `${q0.camX},${q0.camY} → ${q1.camX},${q1.camY}`);
 check(!same(q0.mine, q1.mine), '選んでいる版は画面の上で動いた', `${JSON.stringify(q0.mine)} → ${JSON.stringify(q1.mine)}`);
 check(same(q0.other, q1.other), '⭐選んでいない版は画面の上で動かない', `${JSON.stringify(q0.other)} → ${JSON.stringify(q1.other)}`);
+
+console.log('\n── ⑤ 解像・太さも版ごと');
+await p.evaluate(() => { const c = document.getElementById('layerChips').children; c[c.length-1].click(); });
+await wait(800);
+const rf = () => p.evaluate(() => ({ res:+document.getElementById('res').value, fat:+document.getElementById('fat').value,
+  layers:P.layers.map(l => [l.res, l.fat]) }));
+const r0 = await rf();
+await slide('res', 12); await slide('fat', 6); await wait(1500);
+const r1 = await rf();
+check(r1.res === 12 && r1.fat === 6, '選んでいる版の解像・太さが変わる', JSON.stringify(r1.layers));
+check(r1.layers[0][0] !== 12 || r1.layers[0][1] !== 6, '⭐もう片方の版は変わらない', JSON.stringify(r1.layers));
+await p.evaluate(() => document.getElementById('layerChips').children[0].click());
+await wait(900);
+const r2 = await rf();
+check(r2.res === r1.layers[0][0] && r2.fat === r1.layers[0][1], '版を選び直すとつまみもその版の値に戻る',
+      `${r2.res},${r2.fat}`);
 
 await b.close();
 console.log(ng.length ? `\n🔴 だめだったもの ${ng.length}件: ${ng.join(' / ')}` : '\n✅ 版まわりは全部通った');
