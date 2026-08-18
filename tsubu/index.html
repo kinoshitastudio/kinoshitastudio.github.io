@@ -829,7 +829,10 @@ let dirtyUntil = 1e9;   // ⭐ ここまでは描き続ける（静止中の再�
    柄・細かさ・照り・交点の柄はタイルに焼き込まれているので、版ごとに変えるには焼き分けが要る。
    ⭐ 焼いた結果は設定のハッシュでキャッシュする＝版で柄を変えていないうちは1組を使い回す（重くならない）。
    ⚠️ 色・粒・グラデの断面・マス目の色は【盤ぜんぶ】＝変わったらバンクを全部捨てて焼き直す。 */
-const texKey = (L) => [L.line, L.wav * wavK(), L.shine, L.blob].join('/');
+/* ⚠️ 2026-08-18 ── マス目（塗り・枠）も版ごとになったので、見張りに全部入れる。
+   ⭐ ここに入れ忘れると「色を変えたのに焼き直されない」＝表示だけ古い、になる。 */
+const texKey = (L) => [L.line, L.wav * wavK(), L.shine, L.blob,
+  ...M_KEYS.map(k => (L[k] != null ? L[k] : P[k]))].join('/');
 let tileBanks = new Map();
 function bankFor(L){
   const k = texKey(L); let t = tileBanks.get(k);
@@ -906,9 +909,12 @@ function bakeTiles(cfg){
       }
     }
   };
-  cellRamp(masuStops(), MASU_LUT, Math.round(P.masuSteps));
+  /* ⭐ 2026-08-18 ── ランプは【この版のぶん】を焼く。焼いた実体はこの関数の戻りに添えて返す
+     （バンクと一緒に持つ＝焼き直しの見張りが texKey 1本で済む）。 */
+  const LUT_M = new Uint8ClampedArray(768), LUT_F = new Uint8ClampedArray(768);
+  cellRamp(masuStops(cfg), LUT_M, Math.round(mv(cfg, 'masuSteps')));
   // ⚠️ 枠の色数0＝字と同じ色＝枠は普通のタイルを使う（ここは焼いても使われない）
-  cellRamp(P.frameN > 0 ? frameStops() : [A], FRAME_LUT, Math.round(P.frameSteps));
+  cellRamp(mv(cfg, 'frameN') > 0 ? frameStops(cfg) : [A], LUT_F, Math.round(mv(cfg, 'frameSteps')));
   // 波 — 向きごとに、位相 phase 段ずつ焼く。
   //   phase をタイルのワールド座標に対応させると、隣のタイルと波が連続する
   //   ＝塊が字をまたいで繋がり、1つの流れになる。
@@ -999,8 +1005,10 @@ function bakeTiles(cfg){
   tiles.push(sph);
   /* ⭐ マス目の塗り＝柄はそのまま、色だけ自分のものにする（2026-08-04）。
      ⚠️ 塗りの向きは build() と【同じ式】で出す。ずれると位相が合わず帯が途切れる。 */
-  tiles.push(waveSet(masuAngle(),  MASU_LUT,  P.masuWav  * wavK(), P.masuLine,  P.masuShine));
-  tiles.push(waveSet(frameAngle(), FRAME_LUT, P.frameWav * wavK(), P.frameLine, P.frameShine));
+  tiles.push(waveSet(masuAngle(cfg),  LUT_M, mv(cfg,'masuWav')  * wavK(), mv(cfg,'masuLine'),  mv(cfg,'masuShine')));
+  tiles.push(waveSet(frameAngle(cfg), LUT_F, mv(cfg,'frameWav') * wavK(), mv(cfg,'frameLine'), mv(cfg,'frameShine')));
+  /* ⭐ 焼いたランプをバンクに添える＝描く側は「その粒の版のバンク」から色を引ける */
+  tiles.masuLut = LUT_M; tiles.frameLut = LUT_F;
   return tiles;
 }
 /* 盤ぜんぶの設定（色・粒・グラデの断面・マス目の色）が変わったとき＝バンクを全部捨てて焼き直す */
@@ -1037,12 +1045,14 @@ const SPHERE = TILE_ANGLES;
 const MASU_T = TILE_ANGLES + 1;
 const FRAME_T = TILE_ANGLES + 2;               // ⭐ 枠も自分の色を持てる（2026-08-04）
 // ⚠️ 塗りの向き。タイルを焼く側（buildTiles）と粒を作る側（build）と位相（phaseOf）で必ず同じ式を使う。
-const masuAngle = () => P.masuAng / 180 * Math.PI;
+/* ⚠️ 2026-08-18 ── どれも【版】を受け取る。省略時は選んでいる版（＝いままでの P と同じ値）。 */
+const mv = (L, k) => { const o = L || curLayer(); return (o && o[k] != null) ? o[k] : P[k]; };
+const masuAngle = (L) => mv(L, 'masuAng') / 180 * Math.PI;
 // ⭐ 枠は自分の向きを持つ（塗りと連動させない）。既定0＝塗りの既定90と直角＝線が溶けない
-const frameAngle = () => P.frameAng / 180 * Math.PI;
+const frameAngle = (L) => mv(L, 'frameAng') / 180 * Math.PI;
 // 色列（色数ぶんだけ取る）
-const stopsOf = (pfx, n) => Array.from({length: Math.max(1, Math.min(6, Math.round(n)))},
-  (_, i) => hexToRgb(P[pfx + (i+1)]));
+const stopsOf = (pfx, n, L) => Array.from({length: Math.max(1, Math.min(6, Math.round(n)))},
+  (_, i) => hexToRgb(mv(L, pfx + (i+1))));
 /* ⭐⭐ 細かさは【何マスで1周するか】＝マス単位の値（2026-08-09）。
       🔴 だから解像を 48→12 にすると字1つのマス数が1/4になり、同じ細かさでも
          縞が4倍太くなる（木下＝「解像だけを調整した」画像で出た）。
@@ -1050,14 +1060,11 @@ const stopsOf = (pfx, n) => Array.from({length: Math.max(1, Math.min(6, Math.rou
       ⭐ 玉は同じ問題を既に解いてある（bkOf ＝ 基準16に対する比で持つ）。
          細かさにも同じ補正を入れられるようにする。⚠️ 既定は切＝いままでどおり。 */
 const wavK = () => P.wavFit === 1 ? 16 / Math.max(1, P.res) : 1;
-const masuStops  = () => stopsOf('masuC', P.masuN);
-const frameStops = () => stopsOf('frameC', P.frameN);
-// タイルを焼き直す必要があるかの見張り（色・向き・細かさ・版数・色数）
-const masuKey = () => [wavK(), P.masuLine, P.masuShine, P.frameLine, P.frameShine,
-  P.masuN, P.masuAng, P.masuWav, P.masuSteps,
-  P.masuC1, P.masuC2, P.masuC3, P.masuC4, P.masuC5, P.masuC6,
-  P.frameN, P.frameAng, P.frameWav, P.frameSteps,
-  P.frameC1, P.frameC2, P.frameC3, P.frameC4, P.frameC5, P.frameC6].join('/');
+const masuStops  = (L) => stopsOf('masuC', mv(L, 'masuN'), L);
+const frameStops = (L) => stopsOf('frameC', mv(L, 'frameN'), L);
+/* ⚠️ 版ごとの見張りは texKey(L) が持つ（下）。ここは【盤ぜんぶ】に効くものだけ＝
+   細かさの解像補正（wavFit）が変わったら全部のバンクを捨てる。 */
+const masuKey = () => String(wavK());
 // ⭐ 塊の大きさは「解像度に対する比」で決める。
 //   マス単位のままだと、解像を16→48にした瞬間に塊が1/3になり、
 //   せっかく合わせた他の調整まで全部やり直しになる（＝解像を上げられない）。
@@ -1091,13 +1098,31 @@ function idx(x, y){ return y * W + x; }
 /* ⭐ 版ごとに持つもの（2026-08-04 夜に「塗り」を足した）。
    木下＝「塗りとかひとつ選択していても全部変わっちゃうね」→ 塗りを丸ごと版ごとに。
    ⚠️ 色・粒・解像・描画方式・グラデの断面・かたち・地グラデ・マス目の色は【盤ぜんぶ】のまま。 */
+/* ⭐⭐ 2026-08-18 ── マス目（枡の塗りと枠）も丸ごと版ごとにした。
+   木下＝「ます目とかは全部のレイヤーにかかっちゃってるね。選択しているレイヤーで調整できるように」
+   ⚠️ 色まで版ごとになる＝色のランプ（MASU_LUT / FRAME_LUT）も版ごとに焼く。
+      ランプはタイルのバンク（bankFor）に一緒に持たせる＝焼き直しの見張りが1本で済む。 */
+const M_KEYS = ['masuN','masuAng','masuWav','masuSteps','masuLine','masuShine','masuShift','masuSpread','masuFlow',
+                'masuC1','masuC2','masuC3','masuC4','masuC5','masuC6',
+                'frameOwn','frameN','frameAng','frameWav','frameSteps','frameLine','frameShine','frameShift','frameSpread','frameFlow',
+                'frameC1','frameC2','frameC3','frameC4','frameC5','frameC6'];
 const L_KEYS = ['txt','font','lay','wrap','gapx','gapy','masu','masufill','lx','ly','lscale','lrot',
-                'follow','dir','shift','spread','bead','beadk','line','wav','shine','blob'];
+                'follow','dir','shift','spread','bead','beadk','line','wav','shine','blob', ...M_KEYS];
+/* ⭐ 粒 → その粒が乗っている版。⚠️ 版にそのキーが無い古い状態では P に落ちる（互換） */
+const layerOfDot = d => (P.layers && P.layers[d.li]) || P;
 function newLayer(txt){
   return { txt: txt ?? 'HELLO', font:0, lay:0, wrap:7, gapx:2, gapy:2,
            masu:0, masufill:0, lx:0, ly:0, lscale:1, lrot:0,
            follow:100, dir:0, shift:0, spread:0, bead:55, beadk:1,
-           line:0, wav:0.1, shine:60, blob:5 };
+           line:0, wav:0.1, shine:60, blob:5,
+           masuN:1, masuAng:90, masuWav:0.1, masuSteps:0, masuLine:-1, masuShine:-1,
+           masuShift:-1, masuSpread:-1, masuFlow:100,
+           masuC1:'#3a3a3a', masuC2:'#c8d4de', masuC3:'#7f95ab', masuC4:'#1d2733',
+           masuC5:'#8a6f4e', masuC6:'#e9201c',
+           frameOwn:0, frameN:0, frameAng:0, frameWav:0.1, frameSteps:0, frameLine:-1, frameShine:-1,
+           frameShift:-1, frameSpread:-1, frameFlow:100,
+           frameC1:'#e9201c', frameC2:'#ffffff', frameC3:'#7f95ab', frameC4:'#1d2733',
+           frameC5:'#8a6f4e', frameC6:'#f2d16b' };
 }
 function curLayer(){
   if(!P.layers || !P.layers.length) P.layers = [newLayer()];
@@ -1353,9 +1378,10 @@ function build(){
           一緒に動く」2026-08-09。実測＝枠の粒がタイル番号1,7＝字の角度タイルを引いていた）。
        ⭐ 「別」にすると枠は自分のタイル（FRAME_T）を引く。
           ⚠️ 色数0のときのランプは元から【字と同じ色】なので、色は変わらず柄だけ独立する。 */
-    const own = r.masu || (P.frameN > 0) || (P.frameOwn === 1);
-    const angE = r.masu ? masuAngle()
-               : (P.frameN > 0 ? frameAngle() : r.ang + LL.dir / 180 * Math.PI);
+    /* ⚠️ 2026-08-18 ── 枠を自分の色で持つかも【その版】が決める */
+    const own = r.masu || (mv(LL,'frameN') > 0) || (mv(LL,'frameOwn') === 1);
+    const angE = r.masu ? masuAngle(LL)
+               : (mv(LL,'frameN') > 0 ? frameAngle(LL) : r.ang + LL.dir / 180 * Math.PI);
     const t = r.masu ? MASU_T
             : own ? FRAME_T
             : (Math.round(((angE % Math.PI) + Math.PI) % Math.PI / Math.PI * TILE_ANGLES)) % TILE_ANGLES;
@@ -1692,21 +1718,23 @@ function drawScene(){
                 一緒に動いている」2026-08-09）。タイルは独立なのに、どの位相を引くかを
                 字の値で決めていたので、後ろの面が字と一緒にずれた。
              ⭐ マス目・枠は自分の値を持てる。-1＝字と同じ（既定＝いままでどおり）。 */
-          const ownSp = d.t === MASU_T ? P.masuSpread : d.t === FRAME_T ? P.frameSpread : -1;
-          const ownSh = d.t === MASU_T ? P.masuShift  : d.t === FRAME_T ? P.frameShift  : -1;
+          /* ⚠️ 2026-08-18 ── マス目は版ごと。その粒が乗っている版から引く */
+          const LMd = layerOfDot(d);
+          const ownSp = d.t === MASU_T ? mv(LMd,'masuSpread') : d.t === FRAME_T ? mv(LMd,'frameSpread') : -1;
+          const ownSh = d.t === MASU_T ? mv(LMd,'masuShift')  : d.t === FRAME_T ? mv(LMd,'frameShift')  : -1;
           const spN = (ownSp == null || ownSp < 0) ? d.sp : ownSp / 100;
           const shN = (ownSh == null || ownSh < 0) ? d.sh : ownSh / 100;
           const jit = spN > 0 ? ((((d.ci + 1) * 0.6180339887) % 1) * spN) : 0;
           // ⚠️ マス目は自分の細かさで焼いてある＝位相もそれで数える（違うと帯が途切れる）
-          const wv = (d.t === MASU_T ? P.masuWav : d.t === FRAME_T ? P.frameWav : d.wv) * wavK();
+          const wv = (d.t === MASU_T ? mv(LMd,'masuWav') : d.t === FRAME_T ? mv(LMd,'frameWav') : d.wv) * wavK();
           /* ⭐⭐ 流れは面ごとに分ける（2026-08-09）。
                 🔴 前は flowT を字・マス目・枠に【同じだけ】足していたので、3つが必ず
                    同じタイミングで光った（木下＝「一番後ろの色と一番前の文字が
                    一緒にきらきらがうごく」）。
                 ⭐ 倍率で持つ＝100 で字と同じ・0 で止まる・200 で倍。
                    既定 100 なので、いままでと1コマも変わらない。 */
-          const fl = d.t === MASU_T  ? flowT * (P.masuFlow  ?? 100) / 100
-                   : d.t === FRAME_T ? flowT * (P.frameFlow ?? 100) / 100
+          const fl = d.t === MASU_T  ? flowT * (mv(LMd,'masuFlow')  ?? 100) / 100
+                   : d.t === FRAME_T ? flowT * (mv(LMd,'frameFlow') ?? 100) / 100
                    : flowT;
           const ph = Math.round((u * wv + jit + shN) * PHASES + fl);
           return ((ph % PHASES) + PHASES) % PHASES;
@@ -1773,21 +1801,23 @@ function drawScene(){
         const ang = d.t === SPHERE ? d.ang : d.ang;              // 向きは字形から
         const ca2 = Math.cos(ang), sa2 = Math.sin(ang);
         const isM = d.t === MASU_T, isF = d.t === FRAME_T;
-        const WVd = (isM ? P.masuWav : isF ? P.frameWav : d.wv) * wavK();
-        const Ld = isM ? MASU_LUT : isF ? FRAME_LUT : RAMP_LUT;
+        /* ⚠️ 2026-08-18 ── マス目は版ごと＝その粒の版と、その版のバンク（ランプ）から引く */
+        const LMd = layerOfDot(d), BK = bankOf(d);
+        const WVd = (isM ? mv(LMd,'masuWav') : isF ? mv(LMd,'frameWav') : d.wv) * wavK();
+        const Ld = isM ? (BK.masuLut || MASU_LUT) : isF ? (BK.frameLut || FRAME_LUT) : RAMP_LUT;
         /* 🔴🔴 連続モードは面ごとの設定を【1つも見ていなかった】（2026-08-09）。
               柄・照り・ずれ・字ごと・流れが全部 字の値のままで、マス目や枠で
               つまみを動かしても何も起きなかった（木下＝「動かなくなった」）。
            ⭐ グラデ塊と同じ規則をここにも通す。-1＝字と同じ。 */
-        const LB = (P.layers && P.layers[d.li]) ? P.layers[d.li].line : P.line;
+        const LB = LMd.line != null ? LMd.line : P.line;
         const pick = (m, f, base) => isM ? ((m == null || m < 0) ? base : m)
                                    : isF ? ((f == null || f < 0) ? base : f) : base;
-        const LNd = pick(P.masuLine,  P.frameLine,  LB);
-        const SH  = pick(P.masuShine, P.frameShine, d.shn * 100) / 100;
-        const SHd = pick(P.masuShift, P.frameShift, d.sh * 100) / 100;
-        const SPd = pick(P.masuSpread, P.frameSpread, d.sp * 100) / 100;
-        const FLd = isM ? flowT * (P.masuFlow ?? 100) / 100
-                  : isF ? flowT * (P.frameFlow ?? 100) / 100 : flowT;
+        const LNd = pick(mv(LMd,'masuLine'),  mv(LMd,'frameLine'),  LB);
+        const SH  = pick(mv(LMd,'masuShine'), mv(LMd,'frameShine'), d.shn * 100) / 100;
+        const SHd = pick(mv(LMd,'masuShift'), mv(LMd,'frameShift'), d.sh * 100) / 100;
+        const SPd = pick(mv(LMd,'masuSpread'), mv(LMd,'frameSpread'), d.sp * 100) / 100;
+        const FLd = isM ? flowT * (mv(LMd,'masuFlow') ?? 100) / 100
+                  : isF ? flowT * (mv(LMd,'frameFlow') ?? 100) / 100 : flowT;
         const jit = SPd > 0 ? ((((d.ci + 1) * 0.6180339887) % 1) * SPd) : 0;
         for(let j = 0; j < h; j++){
           const Y = y0 + j; if(Y < 0 || Y >= OH) continue;
@@ -1864,6 +1894,9 @@ function drawScene(){
   const ang = P.gdir * Math.PI / 180, ca = Math.cos(ang), sa = Math.sin(ang);
   const flow = P.gflow / 100 * t * 0.01;
   const steps = P.steps, dith = P.dith / 100;
+  /* ⚠️ 2026-08-18 ── 版ごとのランプはここで【1回だけ】引く。
+     🔴 粒ごとに bankFor を呼ぶと texKey を数万回組み直すことになる（確実に落ちる）。 */
+  const DOT_BANKS = (P.layers || []).map(L => bankFor(L));
 
   for(const d of dots){
     if(d.pap) continue;                      // ⚠️ 地の粒は手前の入口で敷き済み
@@ -1880,7 +1913,9 @@ function drawScene(){
       Math.round(Math.max(0, Math.min(steps - 1, q)) / (steps - 1) * (cols.length - 1))));
     // ⭐ ドット（8bit）でもマス目は自分のランプを引く＝どの質感でも色とグラデが効く
     if(d.t === MASU_T || d.t === FRAME_T){
-      const LU = d.t === MASU_T ? MASU_LUT : FRAME_LUT;
+      /* ⚠️ 2026-08-18 ── ドットでも版ごとのランプを引く（上でまとめて焼いてある） */
+      const BKd = DOT_BANKS[d.li] || tiles;
+      const LU = d.t === MASU_T ? (BKd.masuLut || MASU_LUT) : (BKd.frameLut || FRAME_LUT);
       const tq = Math.round(Math.max(0, Math.min(steps - 1, q)) / (steps - 1) * 255) * 3;
       g.fillStyle = `rgb(${LU[tq]},${LU[tq+1]},${LU[tq+2]})`;
     } else g.fillStyle = cols[ci];
@@ -2302,9 +2337,20 @@ function syncLayerUI(){
     e.value = P[key]; const v = e.parentElement.querySelector('.val');
     if(v) v.textContent = (id === 'lscale') ? (+P[key]).toFixed(2) : Math.round(P[key]);
   });
-  [['font','font'],['lay','lay'],['masufill','masufill'],['line','line'],['blob','blob']].forEach(([sid, key]) => {
+  [['font','font'],['lay','lay'],['masufill','masufill'],['line','line'],['blob','blob'],
+   ['masuLine','masuLine'],['frameLine','frameLine'],['frameOwn','frameOwn']].forEach(([sid, key]) => {
     document.querySelectorAll('#' + sid + ' button').forEach(b => {
       b.classList.toggle('on', +b.dataset.v === P[key]); });
+  });
+  /* ⭐ 2026-08-18 ── マス目（塗り・枠）は版ごとになった＝つまみと色も版の値に戻す。
+     ⚠️ ここに入れ忘れると「版を選び直したのに前の版の数字が出たまま」＝表示だけ古い。 */
+  M_KEYS.forEach(k => {
+    const e = document.getElementById(k); if(!e) return;
+    if(e.type === 'color'){ if(P[k]) e.value = P[k]; return; }
+    if(e.type !== 'range') return;
+    e.value = P[k];
+    const v = e.parentElement.querySelector('.val');
+    if(v) v.textContent = (['masuShine','masuShift','masuSpread','frameShine','frameShift'].includes(k) && +e.value < 0) ? '字' : e.value;
   });
   syncWrapMax(); syncMasuGrad();
 }
@@ -2331,8 +2377,10 @@ P.layers = [newLayer(P.txt)]; P.cur = 0; pushToLayer(); renderChips();
   const e = document.getElementById(id);
   if(!e) return;
   // ⭐ 値はすぐ入れて、焼くのは手を止めてから。離した瞬間（change）は待たない
-  e.addEventListener('input',  () => { P[id] = e.value; bakeSoon(); });
-  e.addEventListener('change', () => { P[id] = e.value; bakeSoon(0); });
+  /* ⚠️ 2026-08-18 ── マス目・枠の色は版ごと＝選んでいる版へ必ず書き戻す
+     （書き戻さないと、版を切り替えた瞬間に色が捨てられる） */
+  e.addEventListener('input',  () => { P[id] = e.value; pushToLayer(); bakeSoon(); });
+  e.addEventListener('change', () => { P[id] = e.value; pushToLayer(); bakeSoon(0); });
 });
 function syncMasuGrad(){
   const n = Math.max(1, Math.round(P.masuN));
