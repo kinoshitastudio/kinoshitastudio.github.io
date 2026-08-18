@@ -731,6 +731,21 @@ function bubbles(W, H, f, shade, ox, oy){
   return out;
 }
 /* 泡1つの輪郭（真円にしない＝押し合って歪んだ形） */
+/* ══⭐⭐ 粗く刷っている間だけ、泡を使い回す（2026-08-19）
+   🔴 泡は【最大6万回の詰め込み】で作る＝これが毎フレーム走るのが重さの正体だった
+      （半分の解像にしても 170→110ms にしか下がらず、画素数の話ではないと分かった）。
+   ⭐ つまみを動かしている間（DRAFT）だけ前回の泡を使い回す。
+   ⚠️ 手を離したら必ず作り直す＝【表示だけ古い】が残るのは動かしている最中だけ。
+   ⚠️ ox,oy は破壊的に足されるので、控えは【足す前】を持ち、使うときに写して足す。 */
+let BUBSAVE = null;
+function bubblesFor(W, H, f, shade, ox, oy){
+  const shift = out => (ox || oy)
+    ? out.map(b => ({ x:b.x+ox, y:b.y+oy, r:b.r, t:b.t, i:b.i })) : out;
+  if(DRAFT && BUBSAVE && BUBSAVE.W === W && BUBSAVE.H === H) return shift(BUBSAVE.out);
+  const out = bubbles(W, H, f, shade, 0, 0);
+  BUBSAVE = { W, H, out };
+  return shift(out);
+}
 function bubblePath(ctx, b){
   const w = P.awarp, rd = P.around || 0;
   if(w <= 0.005 && rd <= 0.005){ ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI*2); return; }
@@ -837,7 +852,7 @@ function render(ctx, W, H, cam){
   /* ⭐ 泡は【粒として全面】にも、【地だけ】にも使える（木下 2026-08-15） */
   const awaAll = (P.fill === 'awa');
   if(awaAll || P.bgawa){
-    const bs = bubbles(fw, fh, f, shade, ox, oy);
+    const bs = bubblesFor(fw, fh, f, shade, ox, oy);
     /* ⭐ 泡の地の色（2026-08-17）── 「紙と同じ」なら今までどおり輪郭線だけで見える。
        「選ぶ」にすると、紙とは別に泡そのものへ色が載る（参考の緑をベタで作れる）。 */
     const paperRGB = P.abase === 'col' ? hex2rgb(P.acol) : hex2rgb(P.paper);
@@ -955,6 +970,14 @@ function quickDraw(){
 }
 let settleT = null;
 function kickSoon(ms){ clearTimeout(settleT); settleT = setTimeout(() => kick(), ms || 220); }
+/* ══⭐⭐ つまみを動かしている間は【粗く刷る】（2026-08-19）
+   木下＝「下部のスライダーが重くてタイムラグがかなりある」「とりあえず重すぎるや」
+   実測＝型「参考の緑」で刷り1回 220ms（粒2,988個＋地の泡）。つまみは動かすたびにこれが走る。
+   ⭐ 半分の解像で刷って拡大して見せる＝画素も粒も 1/4。手を離した瞬間に本番で刷り直す。
+   ⚠️ 出す絵（PNG・動画）は【本番の道】しか通らない＝1画素も変わらない。 */
+let DRAFT = 0, DCV = null, DG = null;
+function draftOn(){ DRAFT = 1; }
+function draftOff(){ if(!DRAFT) return; DRAFT = 0; BUBSAVE = null; kick(); }
 let pend = null;
 function kick(){
   if(pend) cancelAnimationFrame(pend);
@@ -968,6 +991,21 @@ function kick(){
     if(cv.width !== cw || cv.height !== ch){ cv.width = cw; cv.height = ch; }
     CAM = camScreen(cw, ch);
     const t0 = performance.now();
+    if(DRAFT){
+      /* ⭐ 粗い刷り＝小さい canvas に刷って、そのまま拡大して貼る */
+      const sc = 0.5;
+      const dw = Math.max(2, Math.round(cw*sc)), dh = Math.max(2, Math.round(ch*sc));
+      if(!DCV){ DCV = document.createElement('canvas'); DG = DCV.getContext('2d'); }
+      if(DCV.width !== dw || DCV.height !== dh){ DCV.width = dw; DCV.height = dh; }
+      render(DG, dw, dh, camScreen(dw, dh));
+      g.setTransform(1,0,0,1,0,0); g.clearRect(0, 0, cw, ch);
+      g.imageSmoothingEnabled = true;
+      g.drawImage(DCV, 0, 0, cw, ch);
+      drawGuide(g, CAM);
+      el('meter').innerHTML = `${W} × ${H} px（出す大きさ）<br>粗く刷っている（手を離すと本番）・${Math.round(performance.now()-t0)} ms`
+        + `<br>場 ${FW} × ${FH}・画面 ${VIEW.zoom.toFixed(2)} 倍`;
+      return;
+    }
     render(g, cw, ch, CAM);
     keepSnap(CAM);            /* ⭐ 動かすときのために、刷った絵を1枚持っておく（ガイドは入れない） */
     drawGuide(g, CAM);
@@ -1107,10 +1145,14 @@ RANGES.forEach(k => {
   r.value = P[k];
   const show = () => { if(o) o.textContent = (FMT[k] || String)(+r.value); };
   show();
-  r.addEventListener('pointerdown', pushHist);
+  r.addEventListener('pointerdown', () => { pushHist(); draftOn(); });
   r.addEventListener('input', () => { P[k] = +r.value; show();
     if(k === 'long') ensureField();
     kick(); saveLocal(); });
+  /* ⭐ 手を離した瞬間に本番で刷り直す（キーボードで動かしたときは change で戻る） */
+  r.addEventListener('pointerup', draftOff);
+  r.addEventListener('pointercancel', draftOff);
+  r.addEventListener('change', draftOff);
 });
 function seg(id, key, after){
   const box = el(id); if(!box) return;
