@@ -66,6 +66,38 @@ await wait(900);
 const order2 = await p.evaluate(() => P.layers.map(l => (l.txt || '').trim().slice(0,3) || '空'));
 check(JSON.stringify(order1) === JSON.stringify(order2), '押しただけなら並びは変わらない', `${order2}`);
 check(await p.evaluate(() => P.cur) === 0, '押した版が選ばれる');
+console.log('\n── ④ ⌥＋ドラッグ＝選んでいる版だけが動く');
+/* ⚠️ 前の項目で並び替えているので、ここで版を1枚足して【素の状態】から測る
+   （前の状態を引きずったまま測って1回誤検出した 2026-08-18） */
+await p.evaluate(() => document.getElementById('addLayer').click());
+await wait(1200);
+/* ⭐ 測るのは【画面の上での位置】。世界の座標は版を動かすと原点ごとずれるので使えない */
+const pos = () => p.evaluate(() => {
+  const scr = li => { const a = dots.filter(d => d.li === li);
+    if(!a.length) return null;
+    const x = Math.min(...a.map(d => d.x)), y = Math.min(...a.map(d => d.y));
+    return [Math.round(cam.s*x*P.cell + cam.x), Math.round(cam.s*y*P.cell + cam.y)]; };
+  return { cur:P.cur, lx:+document.getElementById('lx').value, ly:+document.getElementById('ly').value,
+           camX:Math.round(cam.x), camY:Math.round(cam.y),
+           mine:scr(P.cur), other:scr(P.cur === 0 ? 1 : 0) };
+});
+const q0 = await pos();
+await p.mouse.move(400, 400);
+await p.keyboard.down('Alt');
+await p.mouse.down();
+await p.mouse.move(520, 470, { steps:6 });
+await p.mouse.up();
+await p.keyboard.up('Alt');
+await wait(1200);
+const q1 = await pos();
+const same = (a2, b2) => JSON.stringify(a2) === JSON.stringify(b2);
+check(q1.lx !== q0.lx || q1.ly !== q0.ly, '⌥ドラッグで選んでいる版の位置つまみが動く',
+      `${q0.lx},${q0.ly} → ${q1.lx},${q1.ly}`);
+check(q1.camX === q0.camX && q1.camY === q0.camY, '⭐画面（カメラ）は動かない',
+      `${q0.camX},${q0.camY} → ${q1.camX},${q1.camY}`);
+check(!same(q0.mine, q1.mine), '選んでいる版は画面の上で動いた', `${JSON.stringify(q0.mine)} → ${JSON.stringify(q1.mine)}`);
+check(same(q0.other, q1.other), '⭐選んでいない版は画面の上で動かない', `${JSON.stringify(q0.other)} → ${JSON.stringify(q1.other)}`);
+
 await b.close();
 console.log(ng.length ? `\n🔴 だめだったもの ${ng.length}件: ${ng.join(' / ')}` : '\n✅ 版まわりは全部通った');
 process.exit(ng.length ? 1 : 0);
