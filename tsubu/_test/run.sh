@@ -59,6 +59,9 @@ node "$HERE/_test/paper.mjs" "http://localhost:$PORT" "/tsubu/" "$PREV" || NG=1
 echo
 echo "── ② 版（重ねる）＝空白の版・ドラッグで重なりを変える"
 node "$HERE/_test/layer.mjs" "http://localhost:$PORT/tsubu/" || NG=1
+echo
+echo "── ③ マス目（塗り・枠）が版ごとに効く"
+node "$HERE/_test/masu.mjs" "http://localhost:$PORT/tsubu/" || NG=1
 
 echo
 [ "$NG" = 0 ] && echo "✅ 全部通った" || echo "🔴 落ちたものがある（上を見る）"
