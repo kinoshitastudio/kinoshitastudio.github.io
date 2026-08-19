@@ -161,6 +161,13 @@
     <input type="range" id="r_bsoft" min="0" max="1" step="0.02">
     <div class="row"><span class="n">のり（1回の濃さ）</span><output id="o_bflow"></output></div>
     <input type="range" id="r_bflow" min="0.02" max="1" step="0.02">
+    <!-- 🔴🔴 2026-08-19 ── 木下「書いた筆の太さなどを変更できるようにしてって言わなかったっけ」
+         入れてはあったが、ボタンが【版の欄の上の方】にあって、太さを触っている場所から見えなかった。
+         ⭐ 触っている所の【すぐ下】に置く。同じ処理を呼ぶ（機能は増やさない）。 -->
+    <button class="btn solid" id="b_brushNow" style="margin-top:8px">いま描いた版に この太さを効かせる</button>
+    <div class="note">⭐⭐ <b>もう描いた線</b>を、いまの<b>太さ・やわらかさ・のり</b>で<b>引き直す</b>。
+      一度書いてから太さを決められる（⌘Z で戻せる）<br>
+      ⚠️ 色は<b>線ごとの色のまま</b>＝1枚の中の塗り分けは消えない</div>
     <div class="note">⭐⭐ 筆は<b>画素に色を塗らない</b>。<b>「濃さの場」と「色の場」の2枚に溜める</b>だけで、
       粒に刷るのは最後。だから<b>塗った所ごとに色が載る</b>し、あとから粒だけ変えられる<br>
       ⭐ <b>色だけ</b>＝形は変えずに、その場所の色を塗り替える</div>
@@ -230,6 +237,14 @@
     <input type="range" id="r_gloss" min="0" max="1" step="0.02">
     <div class="row"><span class="n">ふくらみ</span><output id="o_bulge"></output></div>
     <input type="range" id="r_bulge" min="0" max="1" step="0.02">
+    <!-- ⭐⭐ 起伏（2026-08-19 木下「参考は淵がしろかったり抑揚がある。山のように」） -->
+    <div class="row"><span class="n">起伏（山のような抑揚）</span><output id="o_relief"></output></div>
+    <input type="range" id="r_relief" min="0" max="1.5" step="0.02">
+    <div class="row"><span class="n">起伏の幅</span><output id="o_reliefW"></output></div>
+    <input type="range" id="r_reliefW" min="0.4" max="4" step="0.1">
+    <div class="note">⭐ <b>起伏</b>＝塗った所の<b>傾き</b>で粒を照らす。粒が「点」から<b>面</b>になる＝
+      縁が白く光り、内側が濃くなる（山のような抑揚）。<b>0 でいままでどおり</b><br>
+      ⭐ <b>幅</b>＝どれだけ離れた所と比べるか。小さいと細かい凹凸、大きいとゆるい山</div>
     <div class="note">⭐⭐ <b>粒間</b>＝隣との<b>すきま</b>そのもの。<b>0 でちょうど接する</b>／マイナスで食い込む<br>
       ⭐⭐ <b>濃さで大きさを変える</b>を <b>0</b> にすると、塗った所は<b>どこも同じ大きさの粒でびっしり</b>になる
       （参考の1枚目）。上げると<b>薄い所ほど粒が小さくなる</b>（参考の2枚目）<br>
@@ -446,6 +461,10 @@ const P = {
   /* ⭐ 地（塗っていない所）のかたち（2026-08-19 木下「あわだけでなく、たとえばもっと他の形なども」）。
      既定 'awa' ＝いままでどおり。⚠️ 地の向きは粒の網とは別に持つ（＝別々にコントロールできる） */
   bgkind:'awa', bgang:27,
+  /* ⭐⭐ 起伏（2026-08-19 木下「参考は淵がしろかったり抑揚がある。山のように」）
+     ＝【場の傾き】で粒を照らす。粒が「濃さで大きさが変わる点」から
+       「場の起伏を映す面」になる＝山のような抑揚が出る。既定 0＝いままでどおり。 */
+  relief:0, reliefW:1,
   lang:315, gloss:0.9, bulge:0.7,
   blur:0.18, cut:0.1, hard:0.92,
   /* ⚠️ 2026-08-19 既定の長辺を 1400→1000 に下げた。場が 394×700→281×500＝画素が半分＝全部軽い。
@@ -729,13 +748,19 @@ function sampleC(fx, fy){
 const TAMA = new Map();
 const mixc = (a, b, t) => [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
 const rgbs = c => `rgb(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])})`;
-function tamaSprite(rgb){
-  /* ⚠️ 色は 16 段に丸めてスプライトを使い回す（塗りは連続なので、丸めないと毎粒 焼き直しになる） */
+function tamaSprite(rgb, lit){
+  /* ⚠️ 色は 16 段に丸めてスプライトを使い回す（塗りは連続なので、丸めないと毎粒 焼き直しになる）
+     ⭐ 起伏（lit）も 8 段に丸めて鍵に入れる＝焼き直しが増えすぎない（2026-08-19） */
   const q = v => Math.round(v/16)*16;
-  const key = q(rgb[0])+','+q(rgb[1])+','+q(rgb[2])+'|'+P.lang+'|'+P.gloss+'|'+P.bulge+'|'+P.fill+'|'+P.sq;
+  const L8 = Math.max(-8, Math.min(8, Math.round((lit || 0) * 8)));
+  const key = q(rgb[0])+','+q(rgb[1])+','+q(rgb[2])+'|'+P.lang+'|'+P.gloss+'|'+P.bulge+'|'+P.fill+'|'+P.sq+'|'+L8;
   let c = TAMA.get(key);
   if(c) return c;
-  const S = 96, R = S/2, base = [q(rgb[0]), q(rgb[1]), q(rgb[2])];
+  const S = 96, R = S/2;
+  /* ⭐ 起伏＝場の傾き。光の側は白へ、影の側は暗く。粒1つの中の陰影（つや）とは別の段。 */
+  const k8 = L8/8;
+  const mixTo = k8 >= 0 ? 255 : 0, amt = Math.abs(k8);
+  const base = [q(rgb[0]), q(rgb[1]), q(rgb[2])].map(v => Math.round(v + (mixTo - v) * amt));
   c = document.createElement('canvas'); c.width = S; c.height = S;
   const t = c.getContext('2d');
   /* ⭐ 粒の形＝超楕円（|x|^n + |y|^n = 1）。n=2 で円、上げるほど四角に近づく＝隙間が消える */
@@ -1096,7 +1121,20 @@ function render(ctx, W, H, cam){
       const r = rMax * (1 - P.tsize + P.tsize * Math.sqrt(t));
       if(r <= 0.25) continue;
       const c2 = sampleC(fpx(x), fpy(y));
-      const sp = tamaSprite(c2);
+      /* ⭐⭐ 起伏 ── 場の傾き（勾配）で粒を照らす（2026-08-19）
+         ⚠️ 見るのは【しきいを通したあとの濃さ】＝塗った所の中の起伏だけが出る。
+         ⭐ これで「縁が白く光って、内側が濃い」＝山のような抑揚になる。 */
+      let lit = 0;
+      if(P.relief > 0){
+        const e = d * (P.reliefW || 1);
+        const gx = shade(sampleA(f, fpx(x+e), fpy(y))) - shade(sampleA(f, fpx(x-e), fpy(y)));
+        const gy = shade(sampleA(f, fpx(x), fpy(y+e))) - shade(sampleA(f, fpx(x), fpy(y-e)));
+        /* 🔴 la は泡のブロックの中だけの変数＝ここでは見えない（2026-08-19 に踏んだ）。
+           ⭐ 光の向きは P.lang から作る＝つや（粒の中の陰影）と同じ向きになる。 */
+        const la2 = P.lang * Math.PI / 180;
+        lit = (gx*Math.cos(la2) + gy*Math.sin(la2)) * P.relief * 2.5;
+      }
+      const sp = tamaSprite(c2, lit);
       ctx.drawImage(sp, x - r, y - r*asp, r*2, r*2*asp);
       n++;
     }
@@ -1365,10 +1403,11 @@ const FMT = {
   around:v=>v.toFixed(2), alop:v=>v.toFixed(2), bgang:v=>v+'°',
   lang:v=>v+'°', gloss:v=>v.toFixed(2), bulge:v=>v.toFixed(2),
   blur:v=>v.toFixed(2), cut:v=>v.toFixed(2), hard:v=>v.toFixed(2), long:v=>v+'px',
+  relief:v=>v.toFixed(2), reliefW:v=>v.toFixed(1),
   flow:v=>String(v), fps:v=>v+'fps'
 };
 const RANGES = ['bsize','bsoft','bflow','pitch','gap','sq','bed','tsize','ang','asp','lang','gloss','bulge','blur','cut','hard','long',
-                'abig','asml','apack','aline','awarp','around','alop','flow','fps','bgang'];
+                'abig','asml','apack','aline','awarp','around','alop','flow','fps','bgang','relief','reliefW'];
 RANGES.forEach(k => {
   const r = el('r_'+k); if(!r) return;
   const o = el('o_'+(k === 'asp' ? 'agh' : k));
@@ -1660,7 +1699,7 @@ el('b_can').onclick = () => { const x = el('canBox');
   el('b_can').textContent = open ? '× 閉じる' : '? この道具でできること'; };
 
 /* ⭐ この版を今の筆にする＝控えから、いまの太さ・やわらかさ・のりで焼き直す */
-el('b_layBrush').onclick = () => {
+function applyBrushToLayer(){
   const L = curLay();
   if(!L){ stat('版がない'); return; }
   if(L.kind === 'text'){ stat('字の版は筆で引いていない（太さは「字」のつまみで）'); return; }
@@ -1673,7 +1712,10 @@ el('b_layBrush').onclick = () => {
   rebakeLayer(L, { size:P.bsize, soft:P.bsoft, flow:P.bflow });
   kick(); saveLocal();
   stat(`この版の線 ${L.S.length} 本を 太さ${P.bsize}px・やわらかさ${P.bsoft.toFixed(2)}・のり${P.bflow.toFixed(2)} で引き直した（⌘Z で戻せる）`);
-};
+}
+/* ⭐ 入口は2つ、中身は1つ（筆の欄と版の欄・どちらからでも同じことが起きる） */
+el('b_layBrush').onclick = applyBrushToLayer;
+el('b_brushNow').onclick = applyBrushToLayer;
 
 /* ══════════════════════════════════════════════════════════════
    ⭐⭐ 動画で出す（2026-08-19）── 画面録画をやめる
