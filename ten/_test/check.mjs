@@ -217,6 +217,44 @@ const after6 = await p.evaluate(() => ({ PH, RS, on:TV.on }));
 check(after6.RS === 1 && after6.PH === 0 && !after6.on, '撮ったあと 位相・倍率が元に戻る', JSON.stringify(after6));
 check(await sig() === before6, '撮ったあと絵が元に戻る');
 
+/* ⭐ ⑧ 版0枚 ── 2026-08-20：立ち上げは版なし・1枚でも消せる・ぜんぶ消せる。
+   🔴 見るのは「消せたか」だけでなく【0枚で描いても落ちないか（白紙になるか）】。 */
+console.log('\n── ⑧ 版0枚（立ち上げ・消す・ぜんぶ消す）');
+const errsBefore = errs;
+await p.evaluate(() => { try{ localStorage.clear(); }catch(_){} });
+await p.reload({ waitUntil:'networkidle0' });
+await new Promise(r => setTimeout(r, 1200));
+/* ⚠️ 読み直したので、落ちてくるものの横取りを入れ直す */
+await p.evaluate(() => { window.__got = [];
+  const oc = URL.createObjectURL;
+  URL.createObjectURL = function(x){ window.__got.push({ size:x.size, type:x.type }); return oc.call(URL, x); }; });
+check(await p.evaluate(() => SHEETS.length) === 0, '立ち上げ直後は版0枚');
+check(await p.evaluate(() => { const s = size(); bakeTone(s.W, s.H); bakeMask(s.W, s.H);
+  return dots(s.W, s.H).length; }) === 0, '版0枚なら点も0（白紙）');
+check(await p.evaluate(() => document.getElementById('sheetBox').classList.contains('hide')),
+  '版0枚なら「選んだ版」のつまみが出ていない');
+/* 1枚だけ足して、その1枚を消せるか（前は「版は1つ残す」で消せなかった） */
+await p.evaluate(() => { addSheet('txt'); });
+await new Promise(r => setTimeout(r, 400));
+check(await p.evaluate(() => SHEETS.length) === 1, '＋文字で版が1枚');
+await p.evaluate(() => document.getElementById('b_del').click());
+await new Promise(r => setTimeout(r, 400));
+check(await p.evaluate(() => SHEETS.length) === 0, '1枚しか無くても「消す」で0枚になる');
+/* ぜんぶ消す（確認のダイアログは通す） */
+p.on('dialog', async d => { try{ await d.accept(); }catch(_){} });
+await p.evaluate(() => { addSheet('txt'); addSheet('txt'); addSheet('txt'); });
+await new Promise(r => setTimeout(r, 500));
+check(await p.evaluate(() => SHEETS.length) === 3, '版を3枚にした');
+await p.evaluate(() => document.getElementById('b_clr').click());
+await new Promise(r => setTimeout(r, 600));
+check(await p.evaluate(() => SHEETS.length) === 0, '「ぜんぶ消す」で0枚になる');
+check(await p.evaluate(() => String(P.mask)) === 'none', 'ぜんぶ消したら形も「全面」に戻る');
+/* 0枚のまま PNG を出しても落ちないか（白紙が1枚出る） */
+await p.evaluate(() => { window.__got.length = 0; document.getElementById('b_png').click(); });
+await new Promise(r => setTimeout(r, 1500));
+check((await p.evaluate(() => window.__got)).some(x => /png/.test(x.type)), '版0枚でも PNG が落ちる（白紙）');
+check(errs === errsBefore, '版0枚で JSエラーが出ない', `${errs - errsBefore}件`);
+
 console.log(ng.length ? `\n🔴 だめだったもの ${ng.length}件: ${ng.join(' / ')}` : '\n✅ 全部通った');
 if(errs) console.log(`🔴 JSエラー ${errs}件`);
 await b.close();
