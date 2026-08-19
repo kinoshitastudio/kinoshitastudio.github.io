@@ -108,7 +108,8 @@
 <div id="panel">
   <h1>KASA</h1>
   <div class="sub">暈 — くしゃくしゃの紙を重ねて、裏から灯を入れる。<br>
-    盤の上を<b>引っぱる</b>と、いちばん近い穴か灯が動く。<br>
+    盤の上を<b>引っぱる</b>と、近くの<b>穴か灯</b>が動く。<b>何も無い所</b>を引っぱると<b>絵そのもの</b>が動く。<br>
+    <b>⌥＋引っぱる</b>＝絵の大きさ。<br>
     <b>ホイール＝寄る・引く</b>／<b>右ドラッグ（またはスペース＋ドラッグ）＝盤を動かす</b>／
     <b>ダブルクリック＝戻す</b>／<b>⌘Z＝ひとつ戻す</b></div>
 
@@ -360,6 +361,10 @@ let P = {
   ratio:'169', sz:'1620', long:1620,
   /* かたち＝紙片を重ねる／文字に切る */
   shape:'sheet', text:'ひかり', font:'Hiragino Mincho ProN, serif', tw:600, tsize:0.95, tls:0.06, tlh:1.1,
+  /* ⭐ 絵そのものの置き所。盤の上でつかんで動かす／⌥ドラッグで大きさ。
+     ⚠️ 皺は【世界】に貼りついたまま動かさない ＝「紙は動かさず、切る場所を変える」。
+        そうしないと、動かすたびに紙の表情まで一緒に付いてきて“紙に見えなく”なる。 */
+  ox:0, oy:0,
   erode:0.5, fat:0.10, pit:0.22, pitS:60,   /* 字を きれいに切り取らない ための3つ */
   /* 紙（重ねる紙片） */
   sheets:4, spread:0.50, size:0.80, tear:0.20, tau:0.74,
@@ -477,7 +482,7 @@ function buildField(W,H,cam){
       const ln=lines[li];
       const ww=[...ln].map(ch=>g.measureText(ch).width);
       let total=ww.reduce((a,b)=>a+b,0)+ls*Math.max(0,ln.length-1);
-      let px=CX-total/2, py=CY+(li-(lines.length-1)/2)*lh;
+      let px=CX+P.ox*S-total/2, py=CY+P.oy*S+(li-(lines.length-1)/2)*lh;
       for(let ci=0;ci<[...ln].length;ci++){
         const ch=[...ln][ci];
         g.fillText(ch, px+ww[ci]/2, py);
@@ -506,22 +511,36 @@ function buildField(W,H,cam){
        ⭐ 先ににじませて【幅】を作る。にじみの幅が、そのまま削れの届く深さになる。
           削れ 0 なら にじませない＝きれいに切った字に戻る。 */
     const AL=new Float32Array(n);
-    for(let i=0;i<n;i++) AL[i]=src[i*4]/255;
+    /* ⭐⭐ 字のある所だけ回す。
+       🔴 いままで【盤の全画素】で乱れを計いていた。字が乗っているのは1〜2割しかないのに。
+          実測（1800×1013）＝場 980ms のうち この下のループが 661ms、にじませが 185ms。
+       ⭐ 字を描いた時点で【どこに墨があるか】は分かっている。そこに縁のにじみ(bl)と
+          ちぎれの振れ幅(amp)ぶんの余白を足した窓だけを回せば、外は 0 のままで結果は変わらない。 */
+    let bx0=W, bx1=-1, by0=H, by1=-1;
+    for(let y=0;y<H;y++){ const o=y*W;
+      for(let x=0;x<W;x++){ const v=src[(o+x)*4]/255; AL[o+x]=v;
+        if(v>0){ if(x<bx0)bx0=x; if(x>bx1)bx1=x; if(y<by0)by0=y; if(y>by1)by1=y; } } }
     const bl=Math.round(P.erode*0.055*S);
-    if(bl>0){
+    const mg = bl + Math.ceil(Math.abs(amp)) + 4;      /* 窓のはみ出し代 */
+    const has = bx1>=0;                                 /* 字が1画素も無いとき（空欄）は丸ごと飛ばす */
+    const AX0=has?Math.max(0,bx0-mg):0,  AX1=has?Math.min(W-1,bx1+mg):-1;
+    const AY0=has?Math.max(0,by0-mg):0,  AY1=has?Math.min(H-1,by1+mg):-1;
+
+    if(bl>0&&has){
+      /* ⚠️ 窓の外の AL は 0 なので、窓の外を読んでも 0＝結果は全画素で回したときと同じ */
       const tA=new Float32Array(n), dd=2*bl+1;
-      for(let y=0;y<H;y++){ let s2=0;
-        for(let x=-bl;x<=bl;x++) s2+=AL[y*W+clamp(x,0,W-1)];
-        for(let x=0;x<W;x++){ tA[y*W+x]=s2/dd;
-          s2+=AL[y*W+Math.min(W-1,x+bl+1)]-AL[y*W+Math.max(0,x-bl)]; } }
-      for(let x=0;x<W;x++){ let s2=0;
-        for(let y=-bl;y<=bl;y++) s2+=tA[clamp(y,0,H-1)*W+x];
-        for(let y=0;y<H;y++){ AL[y*W+x]=s2/dd;
-          s2+=tA[Math.min(H-1,y+bl+1)*W+x]-tA[Math.max(0,y-bl)*W+x]; } }
+      for(let y=AY0;y<=AY1;y++){ let s2=0;
+        for(let k=AX0-bl;k<=AX0+bl;k++) s2+=AL[y*W+clamp(k,0,W-1)];
+        for(let x=AX0;x<=AX1;x++){ tA[y*W+x]=s2/dd;
+          s2+=AL[y*W+clamp(x+bl+1,0,W-1)]-AL[y*W+clamp(x-bl,0,W-1)]; } }
+      for(let x=AX0;x<=AX1;x++){ let s2=0;
+        for(let k=AY0-bl;k<=AY0+bl;k++) s2+=tA[clamp(k,0,H-1)*W+x];
+        for(let y=AY0;y<=AY1;y++){ AL[y*W+x]=s2/dd;
+          s2+=tA[clamp(y+bl+1,0,H-1)*W+x]-tA[clamp(y-bl,0,H-1)*W+x]; } }
     }
 
-    for(let y=0;y<H;y++){
-      for(let x=0;x<W;x++){
+    for(let y=AY0;y<=AY1;y++){
+      for(let x=AX0;x<=AX1;x++){
         const i=y*W+x;
         const X=(x-CX)/S, Y=(y-CY)/S;
         const ox=(vn(X*7+11,Y*7,sd1)*0.7+vn(X*23,Y*23,sd2)*0.3)*amp;
@@ -532,6 +551,9 @@ function buildField(W,H,cam){
         const p00=AL[y0*W+x0], p10=AL[y0*W+x0+1],
               p01=AL[(y0+1)*W+x0], p11=AL[(y0+1)*W+x0+1];
         const a0=p00+(p10-p00)*fx+(p01-p00)*fy+(p00-p10-p01+p11)*fx*fy;
+        /* ⭐ 墨が1粒も届いていない画素は、この先どれだけ乱れを足しても 0 にしかならない
+           （下の w＝clamp(a0*5,0,1) が 0 になるため）。乱れ3〜5回ぶんを丸ごと省ける。 */
+        if(a0<=0) continue;
 
         /* 🔴🔴 字を【きれいに切り取らない】。
            ⭐ 縁を揺らすだけでは「字の形のまま」でしかない。
@@ -543,7 +565,14 @@ function buildField(W,H,cam){
                  + vn(X*140+7,Y*140,sd1+7)*0.18;
         /* 🔴 乱れをそのまま足すと、字から遠い【何もない所にまで粒が湧く】。
            ⭐ にじみが届いている所でだけ効かせる＝離れた粒は字のそばにしか飛ばない。 */
-        const w  = clamp(a0*5,0,1);
+        /* 🔴🔴 ここが「イメージと違う」の正体だった。
+           いままで w は【墨があるか】＝字の中まで ずっと 1 だった。
+           だから乱れ(±0.75)が【線のまん中まで食い込んで】、線がちぎれて島になり、
+           字が読めなくなっていた（＝苔・錆に見える。紙を切ったようには見えない）。
+           ⭐ 紙を切るなら、乱れるのは【縁】だけ。中は紙のまま残る。
+              4*a0*(1-a0) は にじみの半ばで最大・奥（a0→1）で 0 ＝ 縁の帯そのもの。
+           ⚠️ にじみ(削れ)が 0 だと帯が無い＝きれいに切った字。そこは今までどおり。 */
+        const w  = 4*a0*(1-a0);
         const v  = a0 + (nz*0.75 + P.fat)*w;   /* ⚠️ 削れの量は「にじみの幅」が持っている */
         let m = clamp((v-0.5)*7+0.5,0,1);
 
@@ -562,20 +591,27 @@ function buildField(W,H,cam){
     }
     /* 縁の帯 ── ぼかしたものとの差＝内側の細い帯（ここが光る） */
     const br=Math.max(1,Math.round(Math.min(W,H)*0.006));
-    const tmp=new Float32Array(n);
-    for(let y=0;y<H;y++){ let s=0;
-      for(let x=-br;x<=br;x++) s+=Mb[y*W+clamp(x,0,W-1)];
-      for(let x=0;x<W;x++){ tmp[y*W+x]=s/(2*br+1);
-        s+=Mb[y*W+Math.min(W-1,x+br+1)]-Mb[y*W+Math.max(0,x-br)]; } }
-    for(let x=0;x<W;x++){ let s=0;
-      for(let y=-br;y<=br;y++) s+=tmp[clamp(y,0,H-1)*W+x];
-      for(let y=0;y<H;y++){ const b=s/(2*br+1);
-        EDG[y*W+x]=clamp((MSK[y*W+x]-b)*2.6,0,1);
-        s+=tmp[Math.min(H-1,y+br+1)*W+x]-tmp[Math.max(0,y-br)*W+x]; } }
-    for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
-      const i=y*W+x; if(MSK[i]<=0) continue;
-      const gx=LAY[i+1]-LAY[i-1], gy=LAY[i+W]-LAY[i-W];
-      RIM[i]=Math.min(1,Math.sqrt(gx*gx+gy*gy)*0.9);
+    /* ⚠️ ここも窓の中だけ。窓の外は Mb も MSK も 0 なので EDG は 0＝作った配列のまま */
+    const EX0=Math.max(0,AX0-br), EX1=Math.min(W-1,AX1+br);
+    const EY0=Math.max(0,AY0-br), EY1=Math.min(H-1,AY1+br);
+    if(has){
+      const tmp=new Float32Array(n);
+      for(let y=EY0;y<=EY1;y++){ let s=0;
+        for(let k=EX0-br;k<=EX0+br;k++) s+=Mb[y*W+clamp(k,0,W-1)];
+        for(let x=EX0;x<=EX1;x++){ tmp[y*W+x]=s/(2*br+1);
+          s+=Mb[y*W+clamp(x+br+1,0,W-1)]-Mb[y*W+clamp(x-br,0,W-1)]; } }
+      for(let x=EX0;x<=EX1;x++){ let s=0;
+        for(let k=EY0-br;k<=EY0+br;k++) s+=tmp[clamp(k,0,H-1)*W+x];
+        for(let y=EY0;y<=EY1;y++){ const b=s/(2*br+1);
+          EDG[y*W+x]=clamp((MSK[y*W+x]-b)*2.6,0,1);
+          s+=tmp[clamp(y+br+1,0,H-1)*W+x]-tmp[clamp(y-br,0,H-1)*W+x]; } }
+      const RY0=Math.max(1,AY0), RY1=Math.min(H-2,AY1);
+      const RX0=Math.max(1,AX0), RX1=Math.min(W-2,AX1);
+      for(let y=RY0;y<=RY1;y++) for(let x=RX0;x<=RX1;x++){
+        const i=y*W+x; if(MSK[i]<=0) continue;
+        const gx=LAY[i+1]-LAY[i-1], gy=LAY[i+W]-LAY[i-W];
+        RIM[i]=Math.min(1,Math.sqrt(gx*gx+gy*gy)*0.9);
+      }
     }
   } else {
 
@@ -585,8 +621,8 @@ function buildField(W,H,cam){
   for(let k=0;k<N;k++){
     const a=rnd()*TAU, d=(N===1?0:P.spread*(0.35+0.65*rnd()));
     sheets.push({
-      cx:Math.cos(a)*d*(RATIO[P.ratio][0]/RATIO[P.ratio][1]>1.2?1.5:1),
-      cy:Math.sin(a)*d*0.7,
+      cx:Math.cos(a)*d*(RATIO[P.ratio][0]/RATIO[P.ratio][1]>1.2?1.5:1)+P.ox,
+      cy:Math.sin(a)*d*0.7+P.oy,
       r:P.size*(0.62+0.5*rnd()),
       rot:rnd()*TAU,
       tab:edgeTable(rnd,P.tear)
@@ -1008,10 +1044,22 @@ let VIEW={z:1,x:0,y:0}, spaceDown=false, shT=null;
 /* ⭐ 触っている間は粗く、止まったら細かく刷り直す。
    ⚠️ いつも細かくすると、つまみを動かすたびに場を作り直して 1秒近く止まる。 */
 let HI=false;
+/* ⭐ 解像度は3段。【引いている間】＝いちばん粗い。
+   🔴 2段（粗1150／細1800）だと、つまみを引いている最中もずっと 1150 で作り直していた。
+      画素は面積で効くので、780 に落とすだけで作り直しが 2.2倍 速くなる＝手に追いつく。
+   ⚠️ 指を離したら必ず戻す（DRAG を消し忘れると、ずっと粗いままになる）。 */
+let DRAG=false;
 function hiLater(){ clearTimeout(shT); shT=setTimeout(()=>{ HI=true; fit(); rebuild(); },180); }
 function coarse(){ if(HI){ HI=false; fit(); } }
+function dragOn(){ if(!DRAG){ DRAG=true; HI=false; fit(); } }
+function dragOff(){ if(DRAG){ DRAG=false; sharpenLater(); } }
+addEventListener('pointerup',dragOff);
+addEventListener('pointercancel',dragOff);
 function applyView(){ preview(); }
-function viewFit(){ VIEW={z:1,x:0,y:0}; applyView(); sharpenLater(); stat('見え方を戻した'); }
+/* ⭐ 絵を盤の外まで動かすと戻せなくなるので、ここで置き所も真ん中に戻す */
+function viewFit(){ VIEW={z:1,x:0,y:0}; const moved=(P.ox||P.oy); P.ox=0; P.oy=0;
+  applyView(); if(moved) rebuild(); sharpenLater();
+  stat(moved?'見え方と 絵の置き所を 戻した':'見え方を戻した'); }
 function sharpenLater(){ coarse(); hiLater(); }
 
 cv.addEventListener('wheel',e=>{
@@ -1041,7 +1089,7 @@ function fit(){
   /* 版面が盤に収まる大きさ（倍率1のとき） */
   fitS=Math.min(w/(2*hw), h/(2*hh))*0.86;
   const dpr=Math.min(2,window.devicePixelRatio||1);
-  const cap=(P.anim||!HI)?1150:1800;
+  const cap=DRAG?780:((P.anim||!HI)?1150:1800);
   let W=Math.round(w*dpr), H=Math.round(h*dpr);
   const lg=Math.max(W,H);
   if(lg>cap){ W=Math.round(W*cap/lg); H=Math.round(H*cap/lg); }
@@ -1178,7 +1226,7 @@ const R = [
 ];
 R.forEach(([id,key,fmt,re])=>{
   const r=el('r_'+id); if(!r) return;
-  r.addEventListener('pointerdown',pushHist);
+  r.addEventListener('pointerdown',()=>{ pushHist(); if(re) dragOn(); });
   r.addEventListener('input',()=>{
     P[key]=+r.value;
     const o=el('o_'+id); if(o) o.textContent=fmt(+r.value);
@@ -1285,9 +1333,23 @@ function szSync(){
 function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); return b?b.dataset.v:dflt; }
 
 /* ══ 引っぱって動かす ══════════════════════════════════
-   ⭐ 押した所にいちばん近いもの（穴か灯）をつかむ＝選ぶ操作を作らない。 */
+   ⭐ 押した所にいちばん近いもの（穴か灯）をつかむ＝選ぶ操作を作らない。
+   ⭐⭐ 2026-08-19 ── 絵そのものも つかめるようにした。
+      🔴 いままで【穴と灯だけ】が動かせて、紙と字は盤の真ん中に固定だった
+         （寄る・引くはカメラの話なので、紙を左に寄せる／小さく置く、ができなかった）。
+      ⭐ 何も無い所をつかむ＝絵が動く。⌥を押しながら＝大きさ。
+      ⚠️ 近さで拾う作りのままだと、遠くの穴まで拾って絵がつかめない。
+         【つかめる近さ】を決める（画面で26px相当）。 */
 (function(){
   let on=false, tgt=null, S=1;
+  let mode=null, sx=0, sy=0, ax=0, ay=0, base=1;
+  const sizeKey=()=>P.shape==='text'?'tsize':'size';
+  const sizeLim=()=>P.shape==='text'?[0.1,1.6]:[0.3,1.5];
+  function sizeSync(){
+    const k=sizeKey(), r=el('r_'+k), o=el('o_'+k);
+    if(r) r.value=P[k];
+    if(o) o.textContent=P[k].toFixed(2);
+  }
   function at(e){
     /* ⚠️ 盤は窓なので、版面の中心ではなく【カメラ】から世界の座標へ戻す */
     const r=cv.getBoundingClientRect();
@@ -1306,21 +1368,43 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
     tgt=null;
     for(const h of HOLE){ const d=(h.x-p.x)**2+(h.y-p.y)**2; if(d<best){best=d;tgt=h;} }
     for(const l of LAMP){ const d=(l.x-p.x)**2+(l.y-p.y)**2; if(d<best){best=d;tgt=l;} }
-    if(!tgt) return;
-    on=true; cv.setPointerCapture(e.pointerId); cv.classList.add('grabbing'); pushHist();
+    /* つかめる近さ ── 画面で26px ぶん。これより遠ければ「何も無い所」とみなす */
+    const lim=Math.max(0.05, 26/Math.max(1e-6, fitS*VIEW.z));
+    const near = tgt && Math.sqrt(best)<=lim;
+    pushHist();
+    if(e.altKey){                       /* ⌥ ＝ 絵の大きさ */
+      mode='scale'; tgt=null; sy=e.clientY; base=P[sizeKey()];
+      stat('⌥ドラッグ ── 上下で 絵の大きさ');
+    }else if(near){                     /* 近くの穴か灯 */
+      mode='obj';
+    }else{                              /* 何も無い所 ＝ 絵そのもの */
+      mode='move'; tgt=null; sx=p.x; sy=p.y; ax=P.ox; ay=P.oy;
+      stat('絵をつかんだ ── ⌥を押しながらで 大きさ');
+    }
+    on=true; cv.setPointerCapture(e.pointerId); cv.classList.add('grabbing');
+    if(mode!=='obj') dragOn();
   });
   cv.addEventListener('pointermove',e=>{
     if(pan){ VIEW.x+=e.clientX-px; VIEW.y+=e.clientY-py; px=e.clientX; py=e.clientY; preview(); sharpenLater(); return; }
-    if(!on||!tgt) return;
-    const p=at(e); tgt.x=p.x; tgt.y=p.y; kick();
+    if(!on) return;
+    if(mode==='obj'){ const p=at(e); tgt.x=p.x; tgt.y=p.y; kick(); return; }
+    if(mode==='move'){
+      const p=at(e); P.ox=ax+(p.x-sx); P.oy=ay+(p.y-sy); rebuild(); return;
+    }
+    if(mode==='scale'){
+      const k=sizeKey(), [lo,hi]=sizeLim();
+      P[k]=clamp(base*Math.exp(-(e.clientY-sy)*0.005), lo, hi);
+      sizeSync(); rebuild(); return;
+    }
   });
   const end=()=>{
     if(pan){ pan=false; document.body.classList.remove('panning'); }
     if(!on) return;
-    const wasHole=HOLE.indexOf(tgt)>=0;
-    on=false; tgt=null; cv.classList.remove('grabbing'); saveLocal();
+    const wasHole=mode==='obj'&&HOLE.indexOf(tgt)>=0, wasArt=mode!=='obj';
+    on=false; tgt=null; mode=null; cv.classList.remove('grabbing'); saveLocal();
     /* ⭐ 穴は紙を留めているので、離したときに紙が寄り直す（引っぱっている間は作り直さない） */
     if(wasHole&&P.pinD>0.001){ rebuild(); stat('紙が寄り直した'); }
+    if(wasArt){ dragOff(); }            /* ⚠️ 粗いまま置き去りにしない */
   };
   cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
 })();
