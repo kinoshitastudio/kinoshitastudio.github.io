@@ -490,7 +490,9 @@ const P = {
      ＝太さ・やわらかさ・のりを動かした【その場で】選んでいる版を引き直す。既定オン。 */
   live:1,
   lang:315, gloss:0.9, bulge:0.7,
-  blur:0.18, cut:0.1, hard:0.92,
+  /* ⭐ 2026-08-19 木下「デフォルトのにじみはきたないのでなしにしている」＝既定 0。
+     ⚠️ にじみは【塗り跡をぼかす】もの＝上げると縁がぬるっとする。要るときだけ上げる。 */
+  blur:0, cut:0.1, hard:0.92,
   /* ⚠️ 2026-08-19 既定の長辺を 1400→1000 に下げた。場が 394×700→281×500＝画素が半分＝全部軽い。
      大きく出したいときは「出す大きさ（長辺）」を上げる（4096px まで）。 */
   paper:'#0a0a0a', long:1000, ratio:'9:16',
@@ -783,10 +785,14 @@ function tamaSprite(rgb, lit, glk){
   let c = TAMA.get(key);
   if(c) return c;
   const S = 96, R = S/2;
-  /* ⭐ 起伏＝場の傾き。光の側は白へ、影の側は暗く。粒1つの中の陰影（つや）とは別の段。 */
+  /* ⭐ 起伏＝場の傾き。粒1つの中の陰影（つや）とは別の段。
+     🔴 2026-08-19 ── 白(255)と黒(0)へ【混ぜて】いたので、明るい側が白へ寄って
+        色が抜け、縁が灰色に濁っていた（木下＝「白の粒で色味を囲みすぎて色が見えない」の残り）。
+     ⭐ 混ぜるのをやめて【明るさだけ】上げ下げする＝色相と鮮やかさが残る。 */
   const k8 = L8/8, GL = P.gloss * (G8/8);
-  const mixTo = k8 >= 0 ? 255 : 0, amt = Math.abs(k8);
-  const base = [q(rgb[0]), q(rgb[1]), q(rgb[2])].map(v => Math.round(v + (mixTo - v) * amt));
+  const amt = Math.abs(k8);
+  const kk2 = k8 >= 0 ? (1 + amt*1.7) : (1 - amt*0.72);
+  const base = [q(rgb[0]), q(rgb[1]), q(rgb[2])].map(v => Math.max(0, Math.min(255, Math.round(v * kk2))));
   c = document.createElement('canvas'); c.width = S; c.height = S;
   const t = c.getContext('2d');
   /* ⭐ 粒の形＝超楕円（|x|^n + |y|^n = 1）。n=2 で円、上げるほど四角に近づく＝隙間が消える */
@@ -802,30 +808,37 @@ function tamaSprite(rgb, lit, glk){
     t.closePath();
   };
   if(P.fill === 'kado'){
-    /* ══⭐⭐ 錐（2026-08-19）── 参考の粒は【球ではなく四角錐】だった。
-       原寸で並べて分かった：ハイライトが【シャープな三角】＝角錐の1面が光っている。
-       ⭐ 正方形を中心から4つの三角（上・右・下・左）に割り、光の向きとの角度で面ごとに塗る。
-          ＝面が立っているので、ぼやけた玉でなく【硬い粒】になる。
-       ⚠️ 隣とぴったり接するように、形は正方（超楕円ではなく直に四角）で描く。 */
+    /* ══⭐⭐ 錐（2026-08-19・原寸で参考と並べて作り直した）
+       🔴 最初の版は【平らな三角を4枚貼った板】だった。参考は違う：
+          ①面の中にも光が流れる（頂点＝中心が明るく、外辺へ落ちる）
+          ②粒の境目（谷）が暗い＝粒が1つずつ独立して立って見える
+          ③明るい所は白まで飛ぶ＝明暗の幅が広い
+       ⭐ だから【中心→外辺のグラデーション】で三角を1枚ずつ塗る。
+          面の向き（光との内積）で、その三角がどれだけ明るいかを決める。 */
     const a = P.lang * Math.PI/180;
     const lx = Math.cos(a), ly = Math.sin(a);
-    const faces = [[0,-1],[1,0],[0,1],[-1,0]];        /* 上・右・下・左の面の向き */
+    const faces = [[0,-1],[1,0],[0,1],[-1,0]];        /* 上・右・下・左 */
     const pts = [[0,0],[S,0],[S,S],[0,S]];
     for(let i = 0; i < 4; i++){
       const n2 = faces[i];
-      /* ⭐ 面の明るさ＝光との内積。ふくらみで「錐の高さ」＝陰影の差が決まる */
-      const dot = n2[0]*lx + n2[1]*ly;
-      const k = 0.5 + 0.5*dot;                        /* 0（陰）〜1（光） */
-      const amt = Math.max(0, Math.min(1, (k - 0.5) * 2)) * GL;
-      const dark = Math.max(0, Math.min(1, (0.5 - k) * 2)) * (0.25 + 0.55*P.bulge);
-      const col = amt > 0 ? mixc(base, [255,255,255], amt) : mixc(base, [0,0,0], dark);
+      const dot = n2[0]*lx + n2[1]*ly;                /* -1（陰）〜1（光） */
+      const k = 0.5 + 0.5*dot;
+      /* ⭐ 頂点（中心）＝面の向きで決まる明るさ。つやを上げると白まで飛ぶ */
+      const up = Math.max(0, (k - 0.35)) * 1.9 * GL;
+      const cCol = base.map(v => Math.min(255, Math.round(v * (1 + up*1.7) + 255*up*0.45)));
+      /* ⭐ 外辺（谷）＝暗い。ふくらみで谷の深さが決まる＝粒が独立して立つ */
+      const dn = (0.30 + 0.55*P.bulge) * (1 - k*0.45);
+      const eCol = base.map(v => Math.max(0, Math.round(v * (1 - dn))));
+      /* 中心 → その面の外辺の中点 へグラデーション */
+      const p1 = pts[i], p2 = pts[(i+1)%4];
+      const mx = (p1[0]+p2[0])/2, my = (p1[1]+p2[1])/2;
+      const gr2 = t.createLinearGradient(R, R, mx, my);
+      gr2.addColorStop(0,    rgbs(cCol));
+      gr2.addColorStop(0.55, rgbs(mixc(cCol, eCol, 0.45)));
+      gr2.addColorStop(1,    rgbs(eCol));
       t.beginPath();
-      t.moveTo(R, R);
-      t.lineTo(pts[i][0], pts[i][1]);
-      t.lineTo(pts[(i+1)%4][0], pts[(i+1)%4][1]);
-      t.closePath();
-      t.fillStyle = rgbs(col);
-      t.fill();
+      t.moveTo(R, R); t.lineTo(p1[0], p1[1]); t.lineTo(p2[0], p2[1]); t.closePath();
+      t.fillStyle = gr2; t.fill();
     }
   }else if(P.fill === 'flat'){
     t.fillStyle = rgbs(base);
@@ -1527,19 +1540,20 @@ const KATA = {
        ①粒が球のグラデーション＝中央が白く縁が暗い＝面積の大半が中間色になって濁る
          （参考の粒はほぼベタ＋小さいハイライト）→ つや・ふくらみを下げる
        ②粒の谷が紙の色（黒）に落ちていた（参考は谷にも青が敷かれている）→ 地を敷くを 1 に */
-  ao:     { litAmt:0, litX:-0.35, litY:-0.4, litR:0.9, fill:'tama', bgawa:false, pitch:8, gap:0.02, sq:1.7, bed:1, tsize:0, ang:0, asp:1, stagger:false,
-            relief:0.5, reliefW:1.4,
-            lang:315, gloss:0.42, bulge:0.3, blur:0.1, cut:0.03, hard:0.4, paper:'#050505',
+  ao:     { litAmt:0.95, litX:-0.45, litY:-0.5, litR:0.75,
+            fill:'kado', bgawa:false, bgkind:'awa', pitch:8, gap:0, sq:6, bed:1, tsize:0, ang:0, asp:1, stagger:false,
+            relief:0.3, reliefW:1.4,
+            lang:315, gloss:1, bulge:0.45, blur:0, cut:0.03, hard:0.4, paper:'#050505',
             abase:'paper', aflat:false, around:0, aline:1.1, alop:0.72, alcol:'#141612', awarp:0.16 },
   shinju: { litAmt:0, litX:-0.35, litY:-0.4, litR:0.9, relief:0, reliefW:1, fill:'tama', bgawa:false, pitch:13, gap:0.02, sq:2, bed:0.35, tsize:0.45, ang:0, asp:1, stagger:true,
-            lang:300, gloss:1, bulge:0.85, blur:0.3, cut:0.16, hard:0.7, paper:'#5fc02a',
+            lang:300, gloss:1, bulge:0.85, blur:0, cut:0.16, hard:0.7, paper:'#5fc02a',
             abase:'paper', aflat:false, around:0, aline:1.1, alop:0.72, alcol:'#141612', awarp:0.16 },
   hira:   { litAmt:0, litX:-0.35, litY:-0.4, litR:0.9, relief:0, reliefW:1, fill:'flat', bgawa:false, pitch:14, gap:0.12, sq:2, bed:0, tsize:0.6, ang:45, asp:1, stagger:false,
-            blur:0.25, cut:0.12, hard:0.5,
+            blur:0, cut:0.12, hard:0.5,
             abase:'paper', aflat:false, around:0, aline:1.1, alop:0.72, alcol:'#141612', awarp:0.16 },
   /* ⭐ 参考の緑＝全面が泡。塗った所が小さい白い粒、地が大きい緑の泡（輪郭線だけで見える） */
   midori: { litAmt:0, litX:-0.35, litY:-0.4, litR:0.9, relief:0, reliefW:1, fill:'awa', bgawa:false, abig:52, asml:5, apack:0.97, aline:1, awarp:0.2,
-            gloss:0.5, lang:315, blur:0.2, cut:0.12, hard:0.9, bed:0.95,
+            gloss:0.5, lang:315, blur:0, cut:0.12, hard:0.9, bed:0.95,
             paper:'#5fc02a', ink:'#eceae4',
             abase:'paper', aflat:false, around:0, alop:0.72, alcol:'#141612' },
   /* ⭐⭐ 漫画（2026-08-17 木下「漫画っぽくて好きなんだが」）──
@@ -1547,32 +1561,32 @@ const KATA = {
         紙とは別に泡へ色を載せる（abase:'col'）ので、地が塗りつぶしの面になる。 */
   manga:  { litAmt:0, litX:-0.35, litY:-0.4, litR:0.9, relief:0, reliefW:1, fill:'awa', bgawa:false, abig:170, asml:9, apack:0.97, awarp:0.22, around:0.7,
             aline:2.6, alop:0.95, alcol:'#101010', abase:'col', acol:'#7ec84a', aflat:true,
-            gloss:0, lang:315, blur:0.2, cut:0.12, hard:0.92, bed:0.95, tsize:0,
+            gloss:0, lang:315, blur:0, cut:0.12, hard:0.92, bed:0.95, tsize:0,
             paper:'#f2efe6', ink:'#3a3ce8' },
   /* ══⭐⭐ 2026-08-19 に足した4つ ── 今日入れた【起伏】【地のかたち】【谷に色】【光の場所】【錐】の組み合わせ。
      ⚠️ 型は【全部のキーを書く】（書かないキーは前の状態が残る）。 */
   /* 山＝起伏を目いっぱい。塗った塊が【立体の山】になる（粒の陰影は消して起伏に任せる） */
   yama:   { litAmt:0.55, litX:-0.35, litY:-0.45, litR:0.95,
             fill:'tama', bgawa:false, bgkind:'awa', pitch:9, gap:0.0, sq:1.5, bed:1, tsize:0, ang:0, asp:1, stagger:false,
-            relief:1.25, reliefW:2.2, lang:305, gloss:0.3, bulge:0.18, blur:0.16, cut:0.04, hard:0.3,
+            relief:1.25, reliefW:2.2, lang:305, gloss:0.3, bulge:0.18, blur:0, cut:0.04, hard:0.3,
             paper:'#050505', abase:'paper', aflat:false, around:0, aline:1.1, alop:0.72, alcol:'#141612', awarp:0.16 },
   /* 刷＝地が縞（漫画のトーン）。塗った所は錐＝地と絵が同じ言葉で刷られる */
   suri:   { litAmt:0.5, litX:0.3, litY:-0.35, litR:1.1,
             fill:'kado', bgawa:true, bgkind:'line', bgang:72, pitch:10, gap:0, sq:6, bed:1, tsize:0.2,
             ang:18, asp:1, stagger:false, relief:0.6, reliefW:1.6, lang:315, gloss:0.75, bulge:0.3,
-            blur:0.14, cut:0.05, hard:0.45, paper:'#0d0d0f', asml:7, abig:52, apack:0.92,
+            blur:0, cut:0.05, hard:0.45, paper:'#0d0d0f', asml:7, abig:52, apack:0.92,
             abase:'col', acol:'#2a2f6b', aflat:false, around:0, aline:1.4, alop:0.9, alcol:'#5b64d8', awarp:0.16 },
   /* 網＝地が点。錐を小さく密にして、画面ぜんぶが網になる（黒が残らない） */
   ami:    { litAmt:0.7, litX:-0.4, litY:-0.4, litR:0.8,
             fill:'kado', bgawa:true, bgkind:'dot', bgang:0, pitch:6, gap:0, sq:6, bed:1, tsize:0,
             ang:0, asp:1, stagger:false, relief:0.5, reliefW:1.2, lang:315, gloss:0.8, bulge:0.3,
-            blur:0.1, cut:0.03, hard:0.35, paper:'#0a0a0a', asml:5, abig:52, apack:0.92,
+            blur:0, cut:0.03, hard:0.35, paper:'#0a0a0a', asml:5, abig:52, apack:0.92,
             abase:'col', acol:'#1b1f4a', aflat:false, around:0.3, aline:1, alop:0.8, alcol:'#141612', awarp:0.16 },
   /* 罅＝地がひび（泡の輪郭だけ）。塗った所は玉、地は割れた面＝ステンドグラス */
   hibi:   { litAmt:0.6, litX:0.25, litY:-0.3, litR:1.0,
             fill:'tama', bgawa:true, bgkind:'crack', bgang:27, pitch:11, gap:0.05, sq:1.8, bed:1, tsize:0.3,
             ang:0, asp:1, stagger:true, relief:0.9, reliefW:1.8, lang:300, gloss:0.5, bulge:0.3,
-            blur:0.18, cut:0.06, hard:0.5, paper:'#07070a', abig:150, asml:14, apack:0.95,
+            blur:0, cut:0.06, hard:0.5, paper:'#07070a', abig:150, asml:14, apack:0.95,
             abase:'col', acol:'#0d1030', aflat:false, around:0.5, aline:1.6, alop:0.85, alcol:'#7f88ff', awarp:0.22 }
 };
 el('kataSeg').querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
