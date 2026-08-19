@@ -41,6 +41,7 @@
 <a class="home" href="/interaction-design.html">← KINOSHITA STUDIO</a>
 
 <div id="bar">
+  <button class="btn" id="b_print">刷る</button>
   <button class="btn on" id="b_eye">目</button>
   <button class="btn on" id="b_grain">粒</button>
   <button class="btn" id="b_hold">粒をとめる</button>
@@ -77,13 +78,13 @@ const cv = el('cv'), g = cv.getContext('2d');
 const stat = m => { el('stat').textContent = m; };
 
 /* ── 触れるもの ── */
-const P = { eye:1, grain:1, hold:0, mirror:1 };
+const P = { eye:1, grain:1, hold:0, mirror:1, print:0 };
 const toggle = (id, key, label) => {
   const b = el(id);
   b.onclick = () => { P[key] = P[key] ? 0 : 1; b.classList.toggle('on', !!P[key]);
     if(label) b.textContent = label(P[key]); };
 };
-toggle('b_eye','eye'); toggle('b_grain','grain');
+toggle('b_print','print'); toggle('b_eye','eye'); toggle('b_grain','grain');
 toggle('b_hold','hold', v => v ? '粒をうごかす' : '粒をとめる');
 toggle('b_mirror','mirror');
 el('b_mirror').classList.toggle('on', !!P.mirror);
@@ -225,6 +226,84 @@ function drawGrain(){
   g.restore();
 }
 
+/* ══⭐⭐ 刷る（2026-08-19 木下「ここからもっと派手にできることはないか」）
+   ⭐ 芯＝【カメラの映像を、木下の道具の目で刷り直す】。
+      明るさを読んで、その濃さで素材の大きさを決める＝TSUBU / NURI と同じ規則。
+      色は【場所で変わるグラデ】＝木下のスタイル（どこを見てもグラデがある）。
+   ⚠️ 毎フレーム走るので、読むのは小さい写し（160px 幅）＝画素は少なく、格子は画面で数える。
+   ⚠️ 顔の上だけ素材を大きくする＝顔が【作品の中心】になる。 */
+const SMALL = document.createElement('canvas'), SG = SMALL.getContext('2d', { willReadFrequently:true });
+let SDATA = null;
+function readSmall(){
+  const w = 160, h = Math.max(1, Math.round(w * video.videoHeight / video.videoWidth));
+  if(SMALL.width !== w || SMALL.height !== h){ SMALL.width = w; SMALL.height = h; }
+  SG.save();
+  if(P.mirror){ SG.translate(w, 0); SG.scale(-1, 1); }
+  SG.drawImage(video, 0, 0, w, h);
+  SG.restore();
+  SDATA = SG.getImageData(0, 0, w, h);
+}
+/* 場所で色が変わる（2色の間を斜めに送る）＝地のグラデ */
+function grad(u, v, t){
+  const k = (u*0.7 + v*0.5 + t*0.06) % 1;
+  const a = [58,60,232], b = [232,64,64], c = [244,244,242];
+  const x = k < 0.5 ? k*2 : (k-0.5)*2;
+  const p = k < 0.5 ? [a,b] : [b,c];
+  return [0,1,2].map(i => Math.round(p[0][i] + (p[1][i]-p[0][i]) * x));
+}
+function drawPrint(t){
+  if(!SDATA) return;
+  const w = cv.width, h = cv.height;
+  const d = SDATA.data, sw = SMALL.width, sh = SMALL.height;
+  const step = Math.max(8, Math.round(w / 78));        /* 画面の幅を約78マスで刻む */
+  const im = IMG.grain;
+  /* 顔の場所（あれば）＝そこだけ大きく刷る */
+  let fx = -1, fy = -1, fr = 0;
+  if(faceOn && LMK){
+    let minx=1,miny=1,maxx=0,maxy=0;
+    for(const q of LMK){ if(q.x<minx)minx=q.x; if(q.x>maxx)maxx=q.x; if(q.y<miny)miny=q.y; if(q.y>maxy)maxy=q.y; }
+    const c0 = toScreen({ x:(minx+maxx)/2, y:(miny+maxy)/2 });
+    fx = c0.x; fy = c0.y;
+    fr = Math.abs(toScreen({x:maxx,y:0}).x - toScreen({x:minx,y:0}).x) * 0.9;
+  }
+  g.save();
+  g.fillStyle = '#000'; g.fillRect(0, 0, w, h);        /* 地は黒＝粒が浮く */
+  g.imageSmoothingEnabled = false;
+  for(let y = step/2; y < h; y += step){
+    for(let x = step/2; x < w; x += step){
+      /* 画面の点 → 小さい写しの点（カメラは切り取って敷いてある） */
+      const u = (x - cover.ox) / (video.videoWidth * cover.s);
+      const v = (y - cover.oy) / (video.videoHeight * cover.s);
+      if(u < 0 || v < 0 || u >= 1 || v >= 1) continue;
+      const si = ((Math.min(sh-1, v*sh|0)) * sw + (Math.min(sw-1, u*sw|0))) * 4;
+      const lum = (d[si]*0.30 + d[si+1]*0.59 + d[si+2]*0.11) / 255;
+      let sz = step * (0.25 + lum * 0.95);
+      /* ⭐ 顔の上は大きく＝顔が作品の中心になる。口を開けるとさらに膨らむ */
+      if(fr > 0){
+        const nd = Math.hypot(x - fx, y - fy) / fr;
+        if(nd < 1.25) sz *= 1 + (1.25 - nd) * (0.55 + jaw*0.9);
+      }
+      if(sz < 1.2) continue;
+      const col = grad(u, v, t);
+      g.save(); g.translate(x, y);
+      g.rotate((u*2 + v*3 + t*0.4) % (Math.PI*2));
+      if(im){
+        g.globalCompositeOperation = 'source-over';
+        g.drawImage(im, -sz/2, -sz/2, sz, sz);
+        /* ⭐ 素材は白黒＝上から色を乗せて【グラデを持たせる】（単色にしない） */
+        g.globalCompositeOperation = 'source-atop';
+        g.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+        g.fillRect(-sz/2, -sz/2, sz, sz);
+      }else{
+        g.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+        g.beginPath(); g.arc(0, 0, sz/2, 0, Math.PI*2); g.fill();
+      }
+      g.restore();
+    }
+  }
+  g.restore();
+}
+
 /* ── まわす ── */
 let last = 0;
 function frame(t){
@@ -249,10 +328,15 @@ function frame(t){
 
   g.setTransform(1,0,0,1,0,0);
   g.fillStyle = '#000'; g.fillRect(0,0,w,h);
-  g.save();
-  if(P.mirror){ g.translate(w,0); g.scale(-1,1); }
-  g.drawImage(video, P.mirror ? (w - vw*s - cover.ox) : cover.ox, cover.oy, vw*s, vh*s);
-  g.restore();
+  if(P.print){
+    readSmall();
+    drawPrint(t/1000);
+  }else{
+    g.save();
+    if(P.mirror){ g.translate(w,0); g.scale(-1,1); }
+    g.drawImage(video, P.mirror ? (w - vw*s - cover.ox) : cover.ox, cover.oy, vw*s, vh*s);
+    g.restore();
+  }
 
   if(faceOn && LMK){
     if(!P.hold) spin += dt * (0.5 + jaw*2.2);
