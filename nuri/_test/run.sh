@@ -26,5 +26,12 @@ if ! curl -sf "http://localhost:$PORT/$NAME/" | grep -q 'id="b_png"'; then
   echo "🔴 立てた画面が TEN ではない（ポート ${PORT}）。テストを始めない"; exit 1
 fi
 echo "（${PORT} で立てた）"
+NG=0
+echo "── ① 版・字・色・移動（check）"
+node "$HERE/_test/check.mjs" "http://localhost:$PORT/$NAME/" || NG=1
 echo
-node "$HERE/_test/check.mjs" "http://localhost:$PORT/$NAME/"
+echo "── ② 流す・再生・動画（move）"
+node "$HERE/_test/move.mjs" "http://localhost:$PORT/$NAME/" || NG=1
+echo
+[ "$NG" = 0 ] && echo "✅ 全部通った" || echo "🔴 落ちたものがある（上を見る）"
+exit "$NG"
