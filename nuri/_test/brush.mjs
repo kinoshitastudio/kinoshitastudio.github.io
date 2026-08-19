@@ -24,6 +24,12 @@ const draw = (y) => p.evaluate(yy => {
 /* 塗った面積（濃さの合計）＝太さの目安 */
 const ink = () => p.evaluate(() => { const L=curLay(); let s=0; for(let i=0;i<L.A.length;i++) s+=L.A[i]; return Math.round(s); });
 
+/* ⚠️ 2026-08-19 ──「動かしたらすぐ効かせる」が既定オンになった。
+   このテストは【押したときだけ効く】側を見るので、まずチェックを外す。
+   ⭐ すぐ効く側は live.mjs が見る（入口が2つ・中身は1つ）。 */
+await p.evaluate(() => { const c = el('c_live'); if(c && c.checked){ c.checked = false; c.dispatchEvent(new Event('change', { bubbles:true })); } });
+await wait(400);
+
 console.log('── ① 細い筆で引く → 太い筆で引き直す');
 await set('r_bsize', 20); await wait(400);
 await draw(300); await wait(1200);
