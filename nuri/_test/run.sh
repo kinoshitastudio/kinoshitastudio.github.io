@@ -45,5 +45,8 @@ echo
 echo "── ⑥ 動かしたらすぐ効かせる（live）"
 node "$HERE/_test/live.mjs" "http://localhost:$PORT/$NAME/" || NG=1
 echo
+echo "── ⑦ モバイル（横ずれ・touch-action）"
+node "$HERE/_test/mobile.mjs" "http://localhost:$PORT/$NAME/" || NG=1
+echo
 [ "$NG" = 0 ] && echo "✅ 全部通った" || echo "🔴 落ちたものがある（上を見る）"
 exit "$NG"
