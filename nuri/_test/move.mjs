@@ -26,6 +26,19 @@ await p.evaluate(() => {
 await wait(1800);
 ck(errs.length===0, '描いてもJSエラーなし', errs.slice(0,2).join(' / '));
 
+console.log('── 粗い刷りでは泡も粗くする（ただし泡のつまみを触る間は別）');
+const co = await p.evaluate(async () => {
+  const r1 = el('r_asml'); r1.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
+  const awa = DRAFTCOARSE; r1.dispatchEvent(new PointerEvent('pointerup',{bubbles:true}));
+  await new Promise(r=>setTimeout(r,250));
+  const r2 = el('r_pitch'); r2.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
+  const tsubu = DRAFTCOARSE; r2.dispatchEvent(new PointerEvent('pointerup',{bubbles:true}));
+  return { 泡のつまみ:awa, 粒のつまみ:tsubu };
+});
+ck(co.泡のつまみ === 0, '⭐泡そのものを調整する間は泡を粗くしない（粗いと決められない）', JSON.stringify(co));
+ck(co.粒のつまみ === 1, 'それ以外は泡も粗くする（実測 204ms→103ms）', JSON.stringify(co));
+await wait(1000);
+
 console.log('── 版を消すとまっさらになる／粗く先出し');
 const cl = await p.evaluate(async () => {
   const before = LAY.length;
