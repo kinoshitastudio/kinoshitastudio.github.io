@@ -7,7 +7,7 @@ set -u
 U="${1:-http://localhost:8092/men/}"
 cd "$(dirname "$0")/.."
 ng=0
-for t in rec; do
+for t in rec masu; do
   echo "══ $t"
   node "_test/$t.mjs" "$U" || ng=1
 done
