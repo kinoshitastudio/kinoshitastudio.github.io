@@ -164,10 +164,15 @@
     <!-- 🔴🔴 2026-08-19 ── 木下「書いた筆の太さなどを変更できるようにしてって言わなかったっけ」
          入れてはあったが、ボタンが【版の欄の上の方】にあって、太さを触っている場所から見えなかった。
          ⭐ 触っている所の【すぐ下】に置く。同じ処理を呼ぶ（機能は増やさない）。 -->
-    <button class="btn solid" id="b_brushNow" style="margin-top:8px">いま描いた版に この太さを効かせる</button>
+    <label class="chk" style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--fg);margin:8px 0 4px">
+      <input type="checkbox" id="c_live" style="accent-color:var(--fg);width:14px;height:14px">
+      <span>動かしたらすぐ効かせる（もう描いた線に）</span></label>
+    <button class="btn solid" id="b_brushNow">いま描いた版に この太さを効かせる</button>
     <div class="note">⭐⭐ <b>もう描いた線</b>を、いまの<b>太さ・やわらかさ・のり</b>で<b>引き直す</b>。
       一度書いてから太さを決められる（⌘Z で戻せる）<br>
-      ⚠️ 色は<b>線ごとの色のまま</b>＝1枚の中の塗り分けは消えない</div>
+      ⭐ <b>すぐ効かせる</b>が入っていれば、つまみを動かすだけで<b>その場で</b>変わる<br>
+      ⚠️ 色は<b>線ごとの色のまま</b>＝1枚の中の塗り分けは消えない<br>
+      ⚠️ 次に引く線の太さだけ決めたいときは、チェックを外す</div>
     <div class="note">⭐⭐ 筆は<b>画素に色を塗らない</b>。<b>「濃さの場」と「色の場」の2枚に溜める</b>だけで、
       粒に刷るのは最後。だから<b>塗った所ごとに色が載る</b>し、あとから粒だけ変えられる<br>
       ⭐ <b>色だけ</b>＝形は変えずに、その場所の色を塗り替える</div>
@@ -465,6 +470,9 @@ const P = {
      ＝【場の傾き】で粒を照らす。粒が「濃さで大きさが変わる点」から
        「場の起伏を映す面」になる＝山のような抑揚が出る。既定 0＝いままでどおり。 */
   relief:0, reliefW:1,
+  /* ⭐ 2026-08-19 木下「これを押さないといけないのは調整むずかしいな、リアルタイムで調整できないと」
+     ＝太さ・やわらかさ・のりを動かした【その場で】選んでいる版を引き直す。既定オン。 */
+  live:1,
   lang:315, gloss:0.9, bulge:0.7,
   blur:0.18, cut:0.1, hard:0.92,
   /* ⚠️ 2026-08-19 既定の長辺を 1400→1000 に下げた。場が 394×700→281×500＝画素が半分＝全部軽い。
@@ -1420,6 +1428,8 @@ RANGES.forEach(k => {
   r.addEventListener('input', () => { P[k] = +r.value; show();
     if(k === 'long') ensureField();
     if(k === 'long' || k === 'flow' || k === 'fps') mvInfo();   /* ⭐ 出る大きさ・コマ数は押す前に出す */
+    /* ⭐ 筆のつまみは【その場で】もう描いた線に効かせる（チェックが入っていれば） */
+    if(k === 'bsize' || k === 'bsoft' || k === 'bflow') liveBrush();
     kick(); saveLocal(); });
   /* ⭐ 手を離した瞬間に本番で刷り直す（キーボードで動かしたときは change で戻る） */
   r.addEventListener('pointerup', draftOff);
@@ -1716,6 +1726,28 @@ function applyBrushToLayer(){
 /* ⭐ 入口は2つ、中身は1つ（筆の欄と版の欄・どちらからでも同じことが起きる） */
 el('b_layBrush').onclick = applyBrushToLayer;
 el('b_brushNow').onclick = applyBrushToLayer;
+/* ══⭐⭐ 動かしたらすぐ効かせる（2026-08-19）
+   木下＝「これを押さないといけないのは調整むずかしいな、リアルタイムで調整できないと」
+   ⚠️ 毎 input で焼き直すと重いので、rAF で1コマに1回にまとめる。
+   ⚠️ 控え（⌘Z）は つまみを掴んだとき（pointerdown）に1回だけ積む＝既存のまま。 */
+let liveRAF = 0;
+function liveBrush(){
+  if(!P.live) return;
+  const L = curLay();
+  if(!L || L.kind === 'text' || !L.S || !L.S.length) return;
+  if(liveRAF) return;
+  liveRAF = requestAnimationFrame(() => {
+    liveRAF = 0;
+    rebakeLayer(L, { size:P.bsize, soft:P.bsoft, flow:P.bflow });
+    kick();
+  });
+}
+(() => {
+  const c = el('c_live'); if(!c) return;
+  c.checked = !!P.live;
+  c.addEventListener('change', () => { P.live = c.checked ? 1 : 0; saveLocal();
+    stat(P.live ? '動かしたらすぐ効く（もう描いた線に）' : 'すぐ効かせるのを切った（押したときだけ効く）'); });
+})();
 
 /* ══════════════════════════════════════════════════════════════
    ⭐⭐ 動画で出す（2026-08-19）── 画面録画をやめる
