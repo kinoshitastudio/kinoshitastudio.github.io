@@ -430,12 +430,14 @@
     <input type="range" id="r_spinN" min="0" max="4" step="1">
     <div class="row"><span class="n">ねじれが揺れる</span><output id="o_twob"></output></div>
     <input type="range" id="r_twob" min="0" max="180" step="5">
+    <div class="row"><span class="n">粗さが揺れる</span><output id="o_flowb"></output></div>
+    <input type="range" id="r_flowb" min="0" max="0.8" step="0.05">
     <div class="row"><span class="n">色が流れる（周）</span><output id="o_cflowN"></output></div>
     <input type="range" id="r_cflowN" min="0" max="4" step="1">
     <div class="row"><span class="n">にじみが揺れる</span><output id="o_wob"></output></div>
     <input type="range" id="r_wob" min="0" max="3" step="0.05">
     <div class="note">⭐ どれも<b>1周でぴったり元に戻る</b>（継ぎ目なしループ）。<b>回る</b>は整数の周、<b>揺れる</b>は行って戻る<br>
-      ⚠️ <b>ねじれ</b>だけは「回る」にできない＝場所ごとに掛かる量が違うので360°足しても戻らない<br>
+      ⚠️ <b>ねじれ</b>と<b>粗さ</b>は「回る」にできない＝場所ごとに掛かる量が違うので足し続けても戻らない。だから<b>揺れる</b><br>
       ⭐ <b>色が流れる</b>を上げると色の並びが<b>環</b>になる（インク→もう1色→インク）＝繋がって回る<br>
       ⚠️ 動かしている間は<b>画面だけ軽く焼く</b>（見えは同じ・出すときは指定の大きさ）</div>
   </div>
@@ -554,7 +556,7 @@ const P = {
   br:0, ct:1.2, gam:1, base:0, inv:false,
   bleed:0.35, jit:0.06, rjit:0.12, rough:0.14, drop:0.04,
   colBy:'none', colN:16,
-  anim:false, cyc:6, spinN:0, twob:0, cflowN:0, wob:0,
+  anim:false, cyc:6, spinN:0, twob:0, flowb:0, cflowN:0, wob:0,
   ratio:'4:5', long:1600, paper:'#f4f2ec', ink:'#111111', ink2:'#c8442a'
 };
 
@@ -730,7 +732,8 @@ function dots(W, H){
   });
   /* ⚠️ 網が流れる（間隔が場所で変わる）と、真っ直ぐな格子より内側／外側へ動く。
         範囲を広げておいて、はみ出した分は下の枠の外判定で捨てる。 */
-  const K = 1 / Math.max(0.25, 1 - Math.abs(P.flow));
+  /* ⚠️ 揺れるぶん、いちばん流れたときの幅で取る。P.flow だけで測ると端が欠ける */
+  const K = 1 / Math.max(0.25, 1 - Math.min(0.85, Math.abs(P.flow) + (P.flowb || 0)));
   u0 = Math.floor(u0*K)-1; u1 = Math.ceil(u1*K)+1;
   v0 = Math.floor(v0*K)-1; v1 = Math.ceil(v1*K)+1;
 
@@ -740,7 +743,14 @@ function dots(W, H){
   /* 🔴 ねじれは【場所ごとに掛かる量が違う】ので、360°足しても元に戻らない
         （回すのは一様な回転＝角度の方だけ。2026-08-14 に実測して分かった）。
      ⭐ だから ねじれは【振れて戻る】＝sin で1周に1往復させる＝必ず環になる。 */
-  const twist = (P.twist + (P.twob > 0 ? P.twob * Math.sin(PH * Math.PI * 2) : 0)) * Math.PI/180, flow = P.flow;
+  const twist = (P.twist + (P.twob > 0 ? P.twob * Math.sin(PH * Math.PI * 2) : 0)) * Math.PI/180;
+  /* ⭐⭐ 粗さが揺れる ── ねじれとまったく同じ理屈。
+     🔴 粗さの流れも【場所ごとに掛かる量が違う】ので、足し続けても元に戻らない＝環にならない。
+        （中心から離れるほど間隔が変わるので、一様に送るということができない）
+     ⭐ だから【振れて戻る】＝sin で1周に1往復させる＝必ず環になる。
+     ⚠️ 1 に近づくと格子が潰れる（下の K が発散する）ので、必ず頭を押さえる。 */
+  let flow = P.flow + (P.flowb > 0 ? P.flowb * Math.sin(PH * Math.PI * 2) : 0);
+  flow = Math.max(-0.85, Math.min(0.85, flow));
   /* にじみが揺れる ── sin なので1周で必ず元へ戻る */
   const bleed = P.bleed * RS + (P.wob > 0 ? P.wob * RS * Math.sin(PH * Math.PI * 2) : 0);
   const nCol = Math.max(2, Math.round(P.colN));
@@ -956,14 +966,14 @@ const FMT = {
   br:v=>v.toFixed(2), ct:v=>v.toFixed(2), gam:v=>v.toFixed(2), base:v=>v.toFixed(2),
   bleed:v=>v.toFixed(2)+'px', jit:v=>v.toFixed(2), rjit:v=>v.toFixed(2),
   rough:v=>v.toFixed(2), drop:v=>v.toFixed(2), long:v=>v+'px', colN:v=>String(v),
-  cyc:v=>v.toFixed(1)+'秒', spinN:v=>String(v), twob:v=>'±'+v+'°', cflowN:v=>String(v), wob:v=>v.toFixed(2),
+  cyc:v=>v.toFixed(1)+'秒', spinN:v=>String(v), twob:v=>'±'+v+'°', flowb:v=>'±'+v.toFixed(2), cflowN:v=>String(v), wob:v=>v.toFixed(2),
   s_sc:v=>v.toFixed(3), s_x:v=>v.toFixed(2), s_y:v=>v.toFixed(2), s_rot:v=>v+'°',
   s_amt:v=>v.toFixed(2), s_wt:v=>String(v), s_ls:v=>v.toFixed(3), s_lh:v=>v.toFixed(2)
 };
 /* 版面ぜんぶに効くつまみ */
 const RANGES = ['pitch','ang','twist','flow','br','ct','gam','base',
                 'bleed','jit','rjit','rough','drop','colN',
-                'cyc','spinN','twob','cflowN','wob','long'];
+                'cyc','spinN','twob','flowb','cflowN','wob','long'];
 /* 選んだ版だけに効くつまみ（r_s_◯ ＝ 版の ◯） */
 const SRANGES = ['sc','x','y','rot','amt','wt','ls','lh'];
 RANGES.forEach(k => {
@@ -1247,7 +1257,7 @@ function tvOut(){
 function tvPlan(){
   const fps = +tvSeg('tvFps', '24'), loops = +tvSeg('tvLoop', '1');
   const sec = loops * Math.max(0.2, P.cyc);
-  const moving = (P.spinN > 0 || P.twob > 0 || P.cflowN > 0 || P.wob > 0);
+  const moving = (P.spinN > 0 || P.twob > 0 || P.flowb > 0 || P.cflowN > 0 || P.wob > 0);
   return { fps, loops, sec, total:Math.max(2, Math.round(sec*fps)), moving };
 }
 function tvSizeSync(){
