@@ -412,6 +412,38 @@
     .unit-head{ padding:13px 14px }
     #transport button{ padding:11px 14px; min-height:38px }
   }
+
+  /* ══════════════════════════════════════════════════════════════
+     ⭐ モバイルの直し ── 2026-08-20
+     🔴 実測（390×844）＝ボタン列が9個で横505px。画面幅390pxを超えて
+        【控え・読む・REC が画面の外＝押せない】（横スクロールもできない）。
+        HORI1 は5個で収まっていた＝HORI2 でボタンを4つ足したときに測っていない。
+     ⭐ 木下の選択＝【横にスクロールできる1列】。見た目は今の1列のまま右へ滑らせる。
+     ⚠️ 気づかれにくいのが弱点なので、右端をぼかして「まだ続く」ことを見せる。
+     🔴 touch-action は none にしない（縦スクロールが死ぬ）。横だけ取る＝pan-x。
+     ⚠️ 上下の位置も直す＝前は top:calc(58dvh - 42px) で、実測41〜43pxのボタンが
+        ラックの上端に半分潜っていた。
+     ══════════════════════════════════════════════════════════════ */
+  @media(max-width:760px){
+    #transport{
+      top:calc(58vh - 54px); top:calc(58dvh - 54px);
+      left:0; right:0; bottom:auto; z-index:11;
+      padding:0 10px; gap:6px;
+      overflow-x:auto; overflow-y:hidden;
+      -webkit-overflow-scrolling:touch;
+      touch-action:pan-x;                       /* 🔴 縦スクロールは殺さない */
+      scrollbar-width:none;
+      /* ⭐ 右端をぼかす＝まだ続くと分かる */
+      -webkit-mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 30px),transparent 100%);
+              mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 30px),transparent 100%);
+    }
+    #transport::-webkit-scrollbar{ display:none }
+    #transport button{ flex:0 0 auto; white-space:nowrap }
+    /* 掴める大きさ ── 実測 26×38 の縦長だった */
+    #themeBtn{ width:38px; height:38px; font-size:13px }
+    /* ⚠️ 字は小さいまま、押せる面だけ広げる（padding を margin で相殺＝見た目は動かない） */
+    #home{ padding:10px 12px; margin:-10px -12px }
+  }
 </style>
 </head>
 <body>
@@ -2903,7 +2935,9 @@ document.getElementById('btn-png').onclick = () => {
     a.click();
     a.remove();
     // iOS はダウンロードに落ちないことがあるので、同じものを開いておく（長押しで保存）
-    if(/iP(hone|ad|od)/.test(navigator.userAgent)) window.open(url, '_blank');
+    // ⚠️ 2026-08-20：ページの下に【共有シート】を足した。使える端末では二重に開かない。
+    if(/iP(hone|ad|od)/.test(navigator.userAgent)
+       && !(navigator.share && navigator.canShare)) window.open(url, '_blank');
     setTimeout(() => URL.revokeObjectURL(url), 8000);
   };
   if(el.toBlob) renderToBlob(save);
@@ -3326,6 +3360,55 @@ async function tvRun(){
   }
 }
 
+</script>
+<!-- ══════════════════════════════════════════════════════════════
+     モバイルの保存 ── 2026-08-15
+     🔴 木下＝「アンドロイドモバイルで試したら、ほぼ png ダウンロードなどもできなかった」
+     ⚠️ 原因になりやすい作り＝<a download> に blob: を渡す形。
+        iOS Safari は保存せず開くだけ／Android は click 直後に remove すると中断される。
+     ⭐ 触る端末のときだけ【端末の共有シート】へファイルを渡す。無ければ今までどおり落とす。
+     🔴🔴 PC は最初の1行で必ず素通りする（pointer:coarse かつ hover が無いときだけ通る）
+          ＝マウスの端末の挙動は1バイトも変えない。
+     ⚠️ 共有を断られた／使えないときは、元の click をそのまま呼ぶ＝今までの動きに戻るだけ。
+     ⭐ 消せば完全に元へ戻る（このブロックだけ）。
+     ══════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  var touchOnly = window.matchMedia
+    && matchMedia('(pointer:coarse)').matches && !matchMedia('(hover:hover)').matches;
+  if(!touchOnly) return;                       /* 🔴 PC はここで終わり */
+  if(!window.HTMLAnchorElement) return;
+  var orig = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function(){
+    var href = this.getAttribute('href') || '';
+    var name = this.getAttribute('download');
+    /* 落とすためのアンカー（blob: ＋ download）以外はそのまま */
+    if(!name || href.slice(0,5) !== 'blob:' || this.dataset.plainSave)
+      return orig.apply(this, arguments);
+    var self = this, args = arguments;
+    var plain = function(){                    /* ⚠️ 今までの動きに戻す（すぐ消さない） */
+      try{
+        var a = document.createElement('a');
+        a.href = href; a.download = name; a.dataset.plainSave = '1';
+        document.body.appendChild(a);
+        orig.apply(a, []);
+        setTimeout(function(){ if(a.parentNode) a.remove(); }, 20000);
+      }catch(_){ try{ orig.apply(self, args); }catch(__){} }
+    };
+    /* ⚠️ blob: は道具側が数秒で捨てるので【すぐ】中身を取っておく */
+    fetch(href).then(function(r){ return r.blob(); }).then(function(b){
+      var f;
+      try{ f = new File([b], name, { type: b.type || 'application/octet-stream' }); }
+      catch(_){ return plain(); }
+      if(navigator.share && navigator.canShare && navigator.canShare({ files:[f] })){
+        return navigator.share({ files:[f], title:name })
+          .catch(function(err){ if(!(err && err.name === 'AbortError')) plain(); });
+      }
+      plain();
+    }).catch(plain);
+    return undefined;
+  };
+})();
 </script>
 </body>
 </html>
