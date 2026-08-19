@@ -539,6 +539,9 @@
   <div class="hint">タイルの継ぎ目。<b>0＝消す</b>（面が繋がって1枚に見える）→ <b>上げると線が立つ</b>（マス目が意図として見える）</div>
   <div class="row"><label>縦横比</label><input type="range" id="ar" min="10" max="800" step="5" value="100"><span class="val"></span></div>
   <div class="row"><label>厚み</label><input type="range" id="depth" min="0" max="80" step="1" value="0"><span class="val"></span></div>
+  <!-- ⭐ 2026-08-19 木下＝「厚みが妙に違和感がある。同じ素材の方がよいかもしれない」。
+       側面は【地の色の明暗】で作っていた（＝板の小口が灰色）。面と同じ色で作れるようにする。 -->
+  <div class="seg" id="sidemat"><button data-v="0">地の明暗</button><button data-v="1" class="on">面と同じ</button></div>
   <div class="seg" id="warpax"><button data-v="0" class="on">縦ワープ</button><button data-v="1">横ワープ</button></div>
   <div class="row"><label>ワープ</label><input type="range" id="warp" min="0" max="90" step="1" value="0"><span class="val"></span></div>
   <canvas id="warpcv" width="204" height="52" style="width:100%;border:1px solid var(--line);cursor:crosshair;display:block;margin:3px 0;background:rgba(255,255,255,.35);"></canvas>
@@ -618,6 +621,10 @@
        ⚠️ 撮れるのは「質感＝グラデ塊／連続」のときの流れ。ドットの流れは「動かす」中しか進まない。 -->
   <h2>動画で出す</h2>
   <div class="hint">画面録画の代わり。<b>画面の見えたまま</b>を切り抜いて、コマ落ちなしで出す</div>
+  <!-- ⭐⭐ 何を撮るか（2026-08-19）── 木下＝「集まる・漂うも画面録画でなく動画で出したい」。
+       ⚠️ 流れ＝輪になる（1周でぴったり戻る）。集まる・漂う＝【秒で】決めて、
+          行って戻る（後半は逆再生）＝こちらも輪になる。崩しは最後まで自動でやる。 -->
+  <div class="seg" id="tvMove"><button data-v="flow" class="on">流れ</button><button data-v="gather">集まる</button><button data-v="drift">漂う</button></div>
   <div class="seg" id="tvFmt"><button data-v="mp4" class="on">mp4</button><button data-v="png">PNG連番</button></div>
   <div class="seg" id="tvQ"><button data-v="hi">きれい</button><button data-v="mid" class="on">ふつう</button><button data-v="lo">軽い</button></div>
   <div class="seg" id="tvLoop"><button data-v="1" class="on">1周</button><button data-v="2">2周</button><button data-v="3">3周</button><button data-v="sec">秒で</button></div>
@@ -1084,6 +1091,7 @@ let dots = [], W = 0, H = 0, grid = null, settled = 0;
      2026-08-04 の「ますは盤を埋めるので誰も落ちられない」問題は、
      段にすると【字が先に落ちて上が空く】ので自然に解ける。 */
 let breakStage = 0;
+let sideMat = 1;   /* 厚みの小口：0＝地の明暗（元の作り）／1＝面と同じ素材 */
 function idx(x, y){ return y * W + x; }
 
 /* ══════════════════════════════════════════════════════════════
@@ -1763,15 +1771,27 @@ function drawScene(){
     // ⭐ 厚み（側面）は傾いている時だけ描く。真正面(ox=oy=0)では側面が天面の真裏に来て、
     //    球タイルの透明な角から側面色が透け、天面の見え方が変わってしまう＝それを防ぐ。
     if(dep > 0 && (Math.abs(ox) > 0.01 || Math.abs(oy) > 0.01)){
-      // ⭐ 側面は「地色の明暗」で作る＝天面（波・球）の色は一切使わない。
-      //    こうすれば球の透明な角や隙間から側面が透けても、天面の色が変わらない。
+      /* ⭐ 側面の作り方は2つ。
+         ・地の明暗（元の作り）＝天面の色を一切使わない。球の透明な角から側面が透けても
+           天面の見え方が変わらない、という利点がある
+         ・面と同じ（既定・2026-08-19）＝🔴 木下「厚みが妙に違和感がある。同じ素材の方が」。
+           小口だけ灰色の板になっていたので、天面と同じ色の帯（cols）から採る。
+           ⚠️ 陰は残す＝小口が天面と同じ明るさだと、板の厚みが消えて平らに見える。 */
       const SIDE = typeof pal.bg === 'string' ? hexToRgb(pal.bg) : (pal.bg || [0,0,0]);
       const layer = [];
       for(let k = dep; k >= 1; k--){
         const t = k / dep;                                  // 1=奥 0=手前
         const band = 0.5 + 0.5 * Math.cos(k * 1.15);        // 8bitの側面の段
-        const lift = 26 + (1 - t) * 46 + band * 26;         // 地色に足す明るさ＝板の横の陰（手前ほど明るい）
-        layer.push(`rgb(${SIDE.map(v => Math.min(255, v + lift)|0).join(',')})`);
+        if(sideMat === 1 && cols && cols.length){
+          /* 面と同じ帯から採って、奥ほど暗くする（＝小口の陰） */
+          const ci2 = Math.max(0, Math.min(cols.length - 1, Math.round(band * (cols.length - 1))));
+          const c2 = hexToRgb(String(cols[ci2]).replace('#',''));
+          const sh = 0.42 + (1 - t) * 0.46;                 // 手前ほど明るい
+          layer.push(`rgb(${c2.map(v => Math.max(0, Math.min(255, v * sh))|0).join(',')})`);
+        }else{
+          const lift = 26 + (1 - t) * 46 + band * 26;       // 地色に足す明るさ＝板の横の陰
+          layer.push(`rgb(${SIDE.map(v => Math.min(255, v + lift)|0).join(',')})`);
+        }
       }
       for(let li = 0, k = dep; k >= 1; k--, li++){
         g.fillStyle = layer[li];
@@ -1866,9 +1886,14 @@ function drawScene(){
       return;
     }
 
-    // ⭐ 格子＝継ぎ目の出し方。0で少し広げて隙間を潰し、上げると縮めて線を立てる。
-    //   小数サイズで貼っているため既定では 0.x px の隙間ができ、そこが灰色の線に見えていた。
-    const GRID = (P.grid / 100) * 1.2 - 0.6;
+    /* ⭐ 格子＝継ぎ目の出し方。0で少し広げて隙間を潰し、上げると縮めて線を立てる。
+       小数サイズで貼っているため既定では 0.x px の隙間ができ、そこが灰色の線に見えていた。
+       🔴🔴 2026-08-19 木下＝「なぜ線が入っているのか。近づけると無いが、絵を大きくすると見える」。
+          原因＝ここは【世界の長さ】で引いていたのに、描くときは dpr×cam.s 倍される。
+          ＝絵を大きくするほど・書き出しの倍率を上げるほど【隙間まで一緒に太る】。
+          画面で 0.2px だったものが、4倍で 0.8px の線になって出ていた。
+       ⭐ 格子は【画面での太さ】。倍率で割って、どの大きさでも同じ細さにする。 */
+    const GRID = ((P.grid / 100) * 1.2 - 0.6) / Math.max(0.05, dpr * cam.s);
     const put = d => {
       const w = CW*scw(d) - GRID, h = CH*sch(d) - GRID;
       // ⚠️ 玉Kは版ごと＝粒が自分の値（d.bk）を持っている
@@ -2473,6 +2498,13 @@ function syncColorInputs(){
   document.getElementById('cb').value  = toHex(pal.b);
   document.getElementById('cbg').value = typeof pal.bg==='string' ? pal.bg : toHex(pal.bg);
 }
+(() => {
+  const box = document.getElementById('sidemat');
+  if(box) box.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    box.querySelectorAll('x'.length ? 'button' : 'button').forEach(x => x.classList.toggle('on', x === b));
+    sideMat = +b.dataset.v; dirtyUntil = performance.now() + 300; draw();
+  }));
+})();
 document.getElementById('fitb').onclick = () => { cam.rx = cam.ry = 0; fit(); };
 
 /* ── ワープのアンカーカーブ ── 点を打って伸縮プロファイルを描く ── */
@@ -2677,7 +2709,9 @@ function makePapDots(cap){
   }
   return out;
 }
-document.getElementById('go').onclick = () => {
+/* ⭐ 崩す本体。動画の書き出しからも同じ手順で呼ぶ（＝画面と同じ絵になる）。
+   ⚠️ refit=false のときはカメラを触らない（書き出しは自分でカメラを持っているため）。 */
+function breakNow(refit){
   /* ⚠️ 落ち代が0だと落ちる余地が無く、崩しても何も起きない＝「触れるのに効かない」。
      ⭐ 崩すときに余地が無ければ、その場で作ってから崩す（つまみも動かして見えるようにする）。 */
   if(P.fall < 8){
@@ -2769,8 +2803,15 @@ document.getElementById('go').onclick = () => {
     stat2('全部まぜた — 戻すで字に帰る');
   }
   running = true; t = 0;
-  fit();   // ⭐ 落ちた先が画面の外だと「消えた」ように見える＝崩す時は全体を映す
-};
+  /* ⭐ 落ちた先が画面の外だと「消えた」ように見えるので、積もるときは全体を映す。
+     🔴🔴 2026-08-19 木下＝「絵の大きさを上げてから 集まる／漂う をすると大きさが戻る」。
+        原因＝ここで fit() を呼んでいた。fit() は cam.s を版面ぴったり（＝絵の大きさ100）へ
+        置き直すので、決めた大きさ・よこ・たてが毎回捨てられていた。
+     ⭐ 落ちて枠外へ出るのは【積もる】だけ。集まる・漂うは その場に居るので、
+        いまの大きさ・位置をそのまま保つ（つまみの値でカメラを置き直す）。 */
+  if(refit !== false){ if(P.mode === 0) fit(); else tvPlaceApply(); }
+}
+document.getElementById('go').onclick = () => breakNow(true);
 document.getElementById('reset').onclick = () => {
   running = false; breakStage = 0;   // ⚠️ 段も戻す（build が粒を作り直すので地の粒は消える）
   build(); fit();
@@ -2910,6 +2951,14 @@ function tvCycles(){
 }
 function tvPlan(){
   const fps  = Math.max(4, Math.round(+P.fps || 30));
+  /* ⭐ 集まる・漂う ── 物理を1コマずつ進めて撮る。輪にはならないので【秒】で決める。
+     ⚠️ step() は1回＝1コマの固定ステップなので、時計に頼らず滑らかに撮れる。 */
+  const mv = tvSeg('tvMove','flow');
+  if(mv !== 'flow'){
+    const sec = Math.max(1, +(document.getElementById('tvSec')?.value || 6));
+    const total = Math.max(2, Math.round(sec * fps));
+    return { fps, total, sec: total / fps, anim: mv === 'gather' ? 1 : 2 };
+  }
   const spd  = (+P.gflow || 0) / 100 * 0.5;            // 1コマあたり flowT がどれだけ進むか
   if(spd <= 0) return { err:'「流れ」が 0 なので何も動きません（上のつまみを上げてください）' };
   if(P.tex === 0) return { err:'ドットの流れは「動かす」の中でしか進みません（質感をグラデ塊か連続にしてください）' };
@@ -2957,7 +3006,7 @@ function tvOut(mul){
 }
 /* ⭐ 出る px は【押す前に】必ず出す。SAKUJI ではこれが無くて事故った。 */
 function tvSizeSync(){
-  const o = tvOut(), plan = tvPlan();
+  const o = tvOut(), plan = tvPlan();   /* ⚠️ 集まる・漂うのときは plan.anim が立つ */
   const el = document.getElementById('tvSize');
   const out = document.getElementById('tvOut');
   const long = document.getElementById('tvLong');
@@ -3382,10 +3431,19 @@ async function tvRun(){
   const bw = cv.width, bh = cv.height;
   const bs = cam.s, bx = cam.x, by = cam.y;
   const bFlowT = flowT, bGflow = P.gflow;
+  /* ⚠️ 集まる・漂うを撮ると、モードも粒の位置も書き換わる。何があっても戻す。 */
+  const bMode = P.mode, bRun = running, bT = t;
   const back = () => {
     cv.width = bw; cv.height = bh;
     cam.s = bs; cam.x = bx; cam.y = by;
     flowT = bFlowT; P.gflow = bGflow; noBgOnce = false;
+    if(P.mode !== bMode || breakStage > 0){
+      P.mode = bMode; running = bRun; t = bT;
+      build();                                    // 粒を家へ戻す（崩しも段も無かったことに）
+      const seg = document.getElementById('mode');
+      if(seg) seg.querySelectorAll('button').forEach(b =>
+        b.classList.toggle('on', +b.dataset.v === P.mode));
+    }
     g.imageSmoothingEnabled = false;
     exporting = false;
   };
@@ -3449,12 +3507,48 @@ async function tvRun(){
     P.gflow = 0;                                  // ⚠️ draw() が自分で flowT を進めないように
     noBgOnce = !!noBg;
     /* ⚠️ step という名前は【使わない】＝物理の step() を隠してしまう */
-    const dPhase = plan.loops * PHASES / plan.total;
+    const dPhase = plan.anim ? 0 : (plan.loops * PHASES / plan.total);
+    /* ⭐⭐ 集まる・漂う ── 画面と同じ手順で崩してから、1コマずつ物理を進める。
+       ⚠️ breakNow(false) ＝カメラは触らせない（書き出しが自分で持っているため）。
+       ⚠️ P.mode を書き換えるので、撤収で必ず戻す（下の back() に足してある）。 */
+    /* ⭐⭐ 字から始めて、字に戻る。
+       🔴🔴 2026-08-19 木下＝「始まりがこれ（ぐちゃぐちゃ）で、これ（玉）で終わる。最初の字はどこいった？」
+          原因＝撮る前に【最後まで崩していた】。崩すと位置まで散らばるので、字が1コマも映らない。
+       ⭐ 動く条件は「崩れていること」ではなく【live が立っていること】だけ。
+          位置は字のまま live だけ立てれば、字がそのまま渦になり、逆再生で字へ帰る。
+          ＝崩すボタンを押す必要も無くなる（木下＝「4回ほどクリックしないといけない」）。 */
+    let SNAP = null, fwd = 0;
+    if(plan.anim){
+      P.mode = plan.anim;
+      for(const d of dots){ if(!d.hide && !d.pap) d.live = true; }
+      running = true; t = 0;
+      /* ⭐⭐ 行って戻る＝輪になる。
+         🔴 物理は【前へしか進められない】ので、逆再生は控えを取って巻き戻すしかない。
+         ⭐ 控えるのは粒の居場所だけ（x,y と 生きているか）＝軽い。絵は draw() が作り直す。
+         ⚠️ 折り返しの1コマは1回だけ使う＝頭と尻が完全に一致して、繋いでも段差が出ない。 */
+      fwd = Math.max(2, Math.ceil((plan.total + 1) / 2));
+      SNAP = [];
+    }
     let i = 0;
     for(; i < plan.total; i++){
       if(TV.stop) break;
       if(encErr) throw encErr;
-      flowT = bFlowT + i * dPhase;                // ⭐ 時計ではなくコマ番号で決める
+      if(plan.anim){
+        if(i < fwd){
+          /* ⚠️ 1コマ目は【字そのもの】。先に step() すると字が1コマも映らず、
+             輪の折り返し点も字からずれる。 */
+          if(i > 0) step();                       // ⭐ 1コマ＝1ステップ（時計に頼らない）
+          const n2 = dots.length, a2 = new Float32Array(n2 * 2), lv = new Uint8Array(n2);
+          for(let k = 0; k < n2; k++){ a2[k*2] = dots[k].x; a2[k*2+1] = dots[k].y; lv[k] = dots[k].live ? 1 : 0; }
+          SNAP.push({ a:a2, l:lv });
+        }else{
+          const q = SNAP[Math.max(0, fwd - 2 - (i - fwd))];   // 折り返しは飛ばす
+          if(q) for(let k = 0; k < dots.length; k++){
+            dots[k].x = q.a[k*2]; dots[k].y = q.a[k*2+1]; dots[k].live = !!q.l[k];
+          }
+        }
+      }
+      else flowT = bFlowT + i * dPhase;           // ⭐ 時計ではなくコマ番号で決める
       draw();
       o.clearRect(0, 0, W, H);
       o.drawImage(cv, 0, 0);                      // ⭐ cv がもう切り抜きそのもの
