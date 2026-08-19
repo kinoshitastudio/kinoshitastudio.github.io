@@ -80,7 +80,15 @@ import { FaceLandmarker, FilesetResolver }
 
 const el = id => document.getElementById(id);
 const cv = el('cv'), g = cv.getContext('2d');
-const stat = m => { el('stat').textContent = m; };
+/* ⚠️ 毎コマ「顔を写してください」で上書きされて【撮っている報せが消えていた】。
+   ⭐ 大事な報せは何秒か居座らせる（hold）。ふだんの報せはその間だけ黙る。 */
+let statHold = 0;
+const stat = (m, hold) => {
+  const now = performance.now();
+  if(hold){ statHold = now + hold; }
+  else if(now < statHold) return;
+  el('stat').textContent = m;
+};
 
 /* ── 触れるもの ── */
 const P = { eye:1, grain:1, hold:0, mirror:1, print:0, form:0, bg:0, masu:0, edge:0 };
@@ -542,7 +550,7 @@ function frame(t){
     if(P.eye){ drawEye(EYE.R); drawEye(EYE.L); }
     stat(`顔 <b>あり</b>　口 ${(jaw*100)|0}`.replace(/<[^>]+>/g,''));
   }else{
-    stat(REC.on ? el('stat').textContent : '顔を写してください');
+    stat('顔を写してください');   /* ⭐ 撮っている間は上の hold が勝つので消えない */
   }
   if(REC.on) recFrame();          /* ⭐ 画面が出来上がってから1コマ撮る */
 }
@@ -553,7 +561,7 @@ requestAnimationFrame(frame);
    ⭐ 画面をそのまま【1コマずつ VideoEncoder へ渡して mp4 に焼く】。
       ＝カメラの実時間を撮るので、TSUBU / NURI の「位相をコマ番号で刻む」とは別の道。
    ⚠️ 器を取りに行けない環境では、理由を言って PNG連番（zip）へ回す。 */
-const REC = { on:false, enc:null, muxer:null, target:null, n:0, t0:0, shots:[], fmt:'mp4', err:null };
+const REC = { on:false, enc:null, muxer:null, target:null, n:0, t0:0, last:-1e9, cv:null, shots:[], fmt:'mp4', err:null };
 async function loadMuxer(){
   if(window.Mp4Muxer) return true;
   try{ await new Promise((res, rej) => { const sc = document.createElement('script');
@@ -564,6 +572,11 @@ async function loadMuxer(){
 async function recStart(){
   const W = cv.width - (cv.width % 2), H = cv.height - (cv.height % 2);
   REC.fmt = 'mp4'; REC.err = null; REC.shots = []; REC.n = 0; REC.W = W; REC.H = H;
+  /* 🔴 盤は【2で割れない大きさ】になりうる（画面幅×画素倍率）。器は偶数しか受けない。
+     ⭐ 撮る先を1枚こしらえて、盤をそこへ写してから渡す＝撮っている間に画面の大きさが変わっても崩れない。 */
+  REC.cv = document.createElement('canvas'); REC.cv.width = W; REC.cv.height = H;
+  REC.cg = REC.cv.getContext('2d');
+  REC.last = -1e9;
   let cfg = null;
   const have = (typeof VideoEncoder !== 'undefined') ? await loadMuxer() : false;
   if(have){
@@ -576,7 +589,8 @@ async function recStart(){
   if(cfg){
     REC.target = new Mp4Muxer.ArrayBufferTarget();
     REC.muxer = new Mp4Muxer.Muxer({ target:REC.target,
-      video:{ codec:'avc', width:W, height:H, frameRate:30 }, fastStart:'in-memory' });
+      video:{ codec:'avc', width:W, height:H, frameRate:30 }, fastStart:'in-memory',
+      firstTimestampBehavior:'offset' });   /* 🔴 1コマ目が0秒でないと器が受け取らない（下の t0 と二重の備え） */
     REC.enc = new VideoEncoder({ output:(c,m) => { try{ REC.muxer.addVideoChunk(c,m); }catch(e){ REC.err = e; } },
                                  error:e => { REC.err = e; } });
     REC.enc.configure(cfg);
@@ -585,44 +599,56 @@ async function recStart(){
     stat((typeof VideoEncoder === 'undefined') ? 'このブラウザは mp4 を作れない → PNG連番で撮ります'
                                               : 'mp4 の器を用意できない → PNG連番で撮ります');
   }
-  REC.on = true; REC.t0 = performance.now();
+  /* 🔴 t0 は【0】にしておく＝1コマ目を撮った瞬間に打つ。
+     ここで打つと、器を取りに行った待ち時間（数十ms）が1コマ目の時刻に乗って器に断られる。 */
+  REC.on = true; REC.t0 = 0;
   el('b_rec').textContent = '止める'; el('b_rec').classList.add('on');
+  stat(REC.fmt === 'mp4' ? '撮っています　もう一度押すと止まる' : 'PNG連番で撮っています　もう一度押すと止まる', 2000);
 }
 async function recFrame(){
   if(!REC.on) return;
   if(REC.err){ await recStop(); return; }
-  const ts = Math.round((performance.now() - REC.t0) * 1000);
+  const now = performance.now();
+  if(now - REC.last < 30) return;      /* 30コマ/秒で足りる（画面が120で回っても倍にしない） */
+  REC.last = now;
+  if(!REC.t0) REC.t0 = now;            /* ⭐ 1コマ目＝0秒 */
+  const ts = Math.round((now - REC.t0) * 1000);
   if(REC.fmt === 'mp4'){
     try{
-      const vf = new VideoFrame(cv, { timestamp:ts, duration:33333 });
+      REC.cg.drawImage(cv, 0, 0, REC.W, REC.H);
+      const vf = new VideoFrame(REC.cv, { timestamp:ts, duration:33333 });
       REC.enc.encode(vf, { keyFrame:(REC.n % 60) === 0 });
       vf.close();
     }catch(e){ REC.err = e; }
-  }else if((REC.n % 2) === 0 && REC.shots.length < 300){
-    const b = await new Promise(r => cv.toBlob(r, 'image/png'));
+  }else if(REC.shots.length < 300){
+    REC.cg.drawImage(cv, 0, 0, REC.W, REC.H);
+    const b = await new Promise(r => REC.cv.toBlob(r, 'image/png'));
     if(b) REC.shots.push({ name:'men_'+String(REC.shots.length).padStart(4,'0')+'.png',
                            data:new Uint8Array(await b.arrayBuffer()) });
   }
   REC.n++;
-  if((REC.n % 15) === 0) stat(`撮っています ${((performance.now()-REC.t0)/1000).toFixed(1)}秒　もう一度押すと止まる`);
+  if((REC.n % 15) === 0) stat(`撮っています ${((now - REC.t0)/1000).toFixed(1)}秒　もう一度押すと止まる`, 2000);
 }
 async function recStop(){
+  const bad = REC.err;
   REC.on = false;
   el('b_rec').textContent = '動画'; el('b_rec').classList.remove('on');
   try{
-    if(REC.fmt === 'mp4' && REC.enc){
+    if(REC.fmt === 'mp4' && REC.enc && REC.n && !bad){
       await REC.enc.flush(); REC.muxer.finalize(); REC.enc.close();
       const blob = new Blob([REC.target.buffer], { type:'video/mp4' });
       dl(blob, 'men_' + Date.now() + '.mp4');
-      stat(`mp4 を出した — ${REC.W} × ${REC.H}・${REC.n}コマ`);
+      stat(`mp4 を出した — ${REC.W} × ${REC.H}・${REC.n}コマ`, 6000);
     }else if(REC.shots.length){
       dl(zip(REC.shots), 'men_seq_' + Date.now() + '.zip');
-      stat(`PNG連番を出した — ${REC.shots.length}枚（15fps で束ねてください）`);
+      stat(`PNG連番を出した — ${REC.shots.length}枚（30fps で束ねてください）`, 6000);
     }else{
-      stat('1コマも撮れていません');
+      /* ⚠️ 黙って止まらない＝止まった理由を必ず出す */
+      stat(bad ? ('🔴 撮れませんでした — ' + String(bad.message || bad).split('\n')[0]) : '1コマも撮れていません', 6000);
     }
-  }catch(e){ stat('🔴 ' + (e && e.message || e)); }
-  REC.enc = null; REC.muxer = null; REC.shots = [];
+  }catch(e){ stat('🔴 ' + (e && e.message || e), 6000); }
+  try{ if(REC.enc && REC.enc.state !== 'closed') REC.enc.close(); }catch(_){}
+  REC.enc = null; REC.muxer = null; REC.shots = []; REC.cv = null; REC.cg = null;
 }
 el('b_rec').onclick = () => { REC.on ? recStop() : recStart(); };
 window.MEN.REC = REC;   /* ⭐ 回帰テストから撮れているか読む */
