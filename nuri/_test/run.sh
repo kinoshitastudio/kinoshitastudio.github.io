@@ -42,5 +42,8 @@ echo
 echo "── ⑤ 出す大きさ・粗い刷りのずれ（size）"
 node "$HERE/_test/size.mjs" "http://localhost:$PORT/$NAME/" || NG=1
 echo
+echo "── ⑥ 動かしたらすぐ効かせる（live）"
+node "$HERE/_test/live.mjs" "http://localhost:$PORT/$NAME/" || NG=1
+echo
 [ "$NG" = 0 ] && echo "✅ 全部通った" || echo "🔴 落ちたものがある（上を見る）"
 exit "$NG"

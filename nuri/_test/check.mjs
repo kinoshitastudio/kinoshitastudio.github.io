@@ -125,9 +125,16 @@ await p.evaluate(() => { Object.assign(P, { pitch:34, gap:0.5, fill:'flat', bed:
 await wait(500);
 await p.evaluate(() => document.querySelector('#kataSeg button[data-v="ao"]').click());
 await wait(600);
-const after = await p.evaluate(() => ({ pitch:P.pitch, gap:P.gap, fill:P.fill, bed:P.bed, paper:P.paper }));
-check(after.pitch === 13 && after.fill === 'tama' && after.bed === 1,
-      '型「参考の青」でまとめて上書きされる', JSON.stringify(after));
+const after = await p.evaluate(() => {
+  /* ⭐ 期待値をテストに焼き込まない＝【型の定義そのもの】と突き合わせる
+     （2026-08-19 に型の値を参考へ寄せたら、焼き込んだ数字でテストが落ちた） */
+  const T = KATA.ao;
+  const keys = ['pitch','gap','fill','bed','paper','sq','tsize','gloss','bulge','relief'];
+  const got = {}, want = {};
+  keys.forEach(k => { if(T[k] === undefined) return; got[k] = P[k]; want[k] = T[k]; });
+  return { got, want, ok: keys.every(k => T[k] === undefined || P[k] === T[k]) };
+});
+check(after.ok, '型「参考の青」でまとめて上書きされる', JSON.stringify(after.got));
 await p.evaluate(() => document.querySelector('#kataSeg button[data-v="midori"]').click());
 await wait(1500);
 const after2 = await p.evaluate(() => ({ fill:P.fill, paper:P.paper }));
