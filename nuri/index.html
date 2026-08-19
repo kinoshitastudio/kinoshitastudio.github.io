@@ -138,7 +138,7 @@
     <button class="btn" id="b_layFill" style="margin-top:6px">この版を今の色にする</button>
     <!-- ⭐⭐ 2026-08-19 木下「すでに書いているものに対しては後からでも調整できるように」 -->
     <button class="btn" id="b_layBrush" style="margin-top:6px">この版を今の筆にする</button>
-    <button class="btn" id="b_layDel" style="margin-top:6px">この版を消す</button>
+    <button class="btn" id="b_layDel" style="margin-top:6px">この版を消す（最後の1枚はまっさらに）</button>
     <div class="note">⭐ 版を押すと選べる＝<b>選んだ版に描ける</b>。左の四角で<b>入切</b>／上にあるものほど手前<br>
       ⭐ <b>横位置・縦位置</b>で版ごとに動かせる（筆を「<b>版を動かす</b>」にすると絵の上で引っぱれる）。<b>場は動かないので戻せる</b><br>
       ⭐⭐ <b>この版を今の色にする</b>＝その版で描いた所が<b>まるごと今の色になる</b>（あとから色を変えられる）<br>
@@ -1150,6 +1150,18 @@ function kickSoon(ms){ clearTimeout(settleT); settleT = setTimeout(() => kick(),
 let DRAFT = 0, DCV = null, DG = null;
 function draftOn(){ DRAFT = 1; }
 function draftOff(){ if(!DRAFT) return; DRAFT = 0; BUBSAVE = null; BLURHOLD = null; kick(); }
+/* ══⭐⭐ まず粗く出して、手が止まったら本番で刷り直す（2026-08-19）
+   木下＝「ホンちゃん開くがめちゃくちゃ開くの遅いのと、版切り替えをするのにも5秒以上タイムラグがある」
+   🔴 実測＝泡が細かいほど重い（小さい泡 6px で 131ms → 2px で 730ms）。
+      木下の画面はもっと細かい＝本番の刷り1回が数秒＝開くのも切り替えるのも待たされる。
+   ⭐ 絵が変わる操作は【粗い刷りを即出して】から、止まったら本番。待ち時間が体感で消える。
+   ⚠️ 出す絵（PNG・動画）は本番の道しか通らない＝1画素も変わらない。 */
+let softT = null;
+function kickSoft(ms){
+  DRAFT = 1; kick();
+  clearTimeout(softT);
+  softT = setTimeout(() => { DRAFT = 0; BUBSAVE = null; BLURHOLD = null; kick(); }, ms || 450);
+}
 let pend = null;
 function kick(){
   if(pend) cancelAnimationFrame(pend);
@@ -1363,7 +1375,7 @@ function seg(id, key, after){
       box.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
       P[key] = b.dataset.v;
       if(after) after();
-      kick(); saveLocal();
+      kickSoft(); saveLocal();
     });
   });
 }
@@ -1460,7 +1472,8 @@ function drawLayList(){
     nm.textContent = (L.kind === 'text' ? '字' : '描く') + ' ' + (i+1);
     row.append(sw, nm);
     row.onclick = () => { sel = i; P.ink = L.col; el('c_pick').value = L.col;
-      drawSwatch(); drawLayList(); syncLay(); syncText(); stat('版「' + nm.textContent + '」を選んだ'); };
+      drawSwatch(); drawLayList(); syncLay(); syncText(); kickSoft();
+      stat('版「' + nm.textContent + '」を選んだ'); };
     box.appendChild(row);
   }
 }
@@ -1541,7 +1554,13 @@ el('b_layFill').onclick = () => {
   drawLayList(); kick(); saveLocal(); stat('この版を1色にした（⌘Z で戻せる）');
 };
 el('b_layDel').onclick = () => {
-  if(LAY.length <= 1){ stat('版は1枚は残る（全部消すなら まっさら）'); return; }
+  /* ⭐ 2026-08-19 木下「その版自体も消せるようにして、まっさらな状態にもできるように」
+     ⚠️ 版が 0 枚だと描けないので、最後の1枚は【空の版に置き換える】＝まっさら。⌘Z で戻せる */
+  if(LAY.length <= 1){
+    pushHist(); LAY = [newLayer()]; sel = 0;
+    drawLayList(); syncLay(); syncText(); kickSoft(); saveLocal();
+    stat('まっさらにした（⌘Z で戻せる）'); return;
+  }
   pushHist(); LAY.splice(sel, 1); sel = Math.max(0, sel - 1);
   drawLayList(); kick(); saveLocal(); stat('この版を消した（⌘Z で戻せる）');
 };
@@ -1940,7 +1959,8 @@ newField();
 loadLocal();
 ensureField();
 syncUI();
-kick();
+/* ⭐ 起動も【粗い刷りを先に出す】＝待たされない（泡が細かいと本番は数秒かかる） */
+kickSoft(600);
 stat('画面を指（マウス）でなぞって塗る。⌘Z で戻す／+ − で寄る引く・0 で正面');
 </script>
 

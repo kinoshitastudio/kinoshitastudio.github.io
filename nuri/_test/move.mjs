@@ -26,6 +26,19 @@ await p.evaluate(() => {
 await wait(1800);
 ck(errs.length===0, '描いてもJSエラーなし', errs.slice(0,2).join(' / '));
 
+console.log('── 版を消すとまっさらになる／粗く先出し');
+const cl = await p.evaluate(async () => {
+  const before = LAY.length;
+  el('b_layDel').click();
+  await new Promise(r=>setTimeout(r,200));
+  let sum=0; const L=LAY[0]; for(let i=0;i<L.A.length;i++) sum+=L.A[i];
+  return { before, after:LAY.length, 塗った量:Math.round(sum), draft:DRAFT };
+});
+ck(cl.after === 1 && cl.塗った量 === 0, '⭐最後の1枚を消すとまっさらになる（版は1枚残る）', JSON.stringify(cl));
+ck(cl.draft === 1, '⭐絵が変わる操作は粗い刷りを先に出す（待たされない）', String(cl.draft));
+await wait(1200);
+ck(await p.evaluate(() => DRAFT) === 0, '手が止まったら本番に戻る');
+
 console.log('── 引いている間は粗く刷る（軽い操作性）');
 const dr = await p.evaluate(() => {
   const rc = cv.getBoundingClientRect();
