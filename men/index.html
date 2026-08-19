@@ -44,7 +44,8 @@
   <button class="btn" id="b_print">刷る</button>
   <button class="btn" id="b_form">粒：素材</button>
   <button class="btn" id="b_bg">地：なし</button>
-  <button class="btn" id="b_masu">顔をマス目に</button>
+  <button class="btn" id="b_masu">マス目：なし</button>
+  <button class="btn" id="b_tile">柄：菱</button>
   <button class="btn" id="b_edge">輪郭に流す</button>
   <button class="btn on" id="b_eye">目</button>
   <button class="btn on" id="b_grain">粒</button>
@@ -91,9 +92,14 @@ const stat = (m, hold) => {
 };
 
 /* ── 触れるもの ── */
-const P = { eye:1, grain:1, hold:0, mirror:1, print:0, form:0, bg:0, masu:0, edge:0 };
+const P = { eye:1, grain:1, hold:0, mirror:1, print:0, form:0, bg:0, masu:0, edge:0, tile:0 };
 /* ⭐ 粒の形・地のかたち＝押すたびに送る（道具から持ってきた語彙をそのまま使う） */
 const FORMS = ['素材','錐','玉'], BGS = ['なし','縞','点','ひび'];
+/* ⭐⭐ マス目の出し方（2026-08-19 木下「今のは今ので残しておいて」）
+   色     ＝ これまでの見え（素材の形に色を焼く）
+   柄     ＝ MASU の素材を【白黒のまま】並べる＝MASU で作った版がそのまま顔に乗る
+   柄に色 ＝ 白黒の上から色を掛ける（白い所が色になる・暗い所は暗いまま＝グラデが残る） */
+const MASUS = ['なし','色','柄','柄に色'];
 const toggle = (id, key, label) => {
   const b = el(id);
   b.onclick = () => { P[key] = P[key] ? 0 : 1; b.classList.toggle('on', !!P[key]);
@@ -106,8 +112,8 @@ const cycle = (id, key, list) => {
   b.onclick = () => { P[key] = (P[key] + 1) % list.length; put(); };
   put();
 };
-cycle('b_form','form',FORMS); cycle('b_bg','bg',BGS);
-toggle('b_masu','masu'); toggle('b_edge','edge');
+cycle('b_form','form',FORMS); cycle('b_bg','bg',BGS); cycle('b_masu','masu',MASUS);
+toggle('b_edge','edge');
 toggle('b_hold','hold', v => v ? '粒をうごかす' : '粒をとめる');
 toggle('b_mirror','mirror');
 el('b_mirror').classList.toggle('on', !!P.mirror);
@@ -141,12 +147,62 @@ function innerRadius(img){
   return hits[hits.length >> 1] * 0.96;      /* 中央値。線に少し食い込ませて隙間を作らない */
 }
 
+/* ══⭐⭐ マス目の柄＝MASU の素材をそのまま持ってくる（2026-08-19）
+   ⭐ 木下「顔をマス目に関してはこの素材を使って」＝新しく描かず、MASU で作った版を持ってくる。
+   ⚠️ 22枚を最初に読むと起動が重い＝【押されたときに1枚ずつ】取りに行く（間に合うまでは前の柄のまま）。
+   ⭐ 並びの頭は【菱】＝木下が指した参考そのもの（並ぶと隣とつながって鎖になる）。 */
+const TILES = [
+  ['tile-diamond','菱'], ['tile-plus','十'], ['tile-x','×'], ['tile-slash','斜'],
+  ['tile-backslash','逆斜'], ['tile-bars','棒'], ['tile-square','角'],
+  ['tile-tri-up','山'], ['tile-tri-down','谷'], ['tile-arrow','矢'],
+  ['記号1','輪'], ['記号0','散り'], ['記号2','筋'], ['記号3','折れ'],
+  ['明るい面45','縞45'], ['明るい面135','縞135'],
+  ['暗い面0','面0'], ['暗い面45','面45'], ['暗い面90','面90'], ['暗い面135','面135'],
+  ['緑','緑'], ['黄','黄'] ];
+const TIMG = {};
+function tileNow(){                                 /* ⭐ 無ければその場で頼む＝どこから柄を変えても届く */
+  const n = TILES[P.tile][0];
+  if(TIMG[n] === undefined) tileGet(P.tile);
+  return TIMG[n] || null;
+}
+function tileGet(i){
+  const n = TILES[i][0];
+  if(TIMG[n] !== undefined) return;
+  TIMG[n] = null;                                   /* 取りに行っている印＝二重に頼まない */
+  const im = new Image();
+  im.onload = () => { TIMG[n] = im; };
+  im.src = 'parts/samples/' + encodeURIComponent(n) + '.png';
+}
+tileGet(0);
+{ const b = el('b_tile');
+  const put = () => { b.textContent = '柄：' + TILES[P.tile][1]; };
+  b.onclick = () => { P.tile = (P.tile + 1) % TILES.length; tileGet(P.tile); put();
+    if(!P.masu) stat('柄は「マス目：柄」にすると出ます', 1600); };
+  put(); }
+
 /* ⭐ 中を測れるようにする（回帰テストから読む。module はスコープが閉じているので窓を1つ開ける） */
-window.MEN = { IMG, INNER, P };   /* REC はあとで足す（下で作るので） */
+window.MEN = { IMG, INNER, P, TILES, TIMG };   /* REC はあとで足す（下で作るので） */
+/* ⭐⭐ 作りものの顔を入れる窓（回帰テスト用・2026-08-19）
+   ⚠️ 偽のカメラには顔が写らない＝目・マス目・輪郭が【一度もテストできていなかった】。
+      点列を外から入れられるようにして、顔が要る所も機械で見られるようにする。 */
+window.MEN.fakeFace = on => {
+  if(!on){ FAKE = null; return; }
+  const L = [];
+  for(let i = 0; i < 478; i++) L.push({ x:0.5, y:0.5, z:0 });
+  FACE_OVAL.forEach((idx, k) => {                    /* 輪郭＝たまごの形に置く */
+    const a = k/FACE_OVAL.length * Math.PI*2 - Math.PI/2;
+    L[idx] = { x:0.5 + Math.cos(a)*0.20, y:0.5 + Math.sin(a)*0.28, z:0 };
+  });
+  L[33]={x:0.40,y:0.43,z:0}; L[133]={x:0.46,y:0.43,z:0};   /* 右目の目頭・目尻 */
+  L[362]={x:0.54,y:0.43,z:0}; L[263]={x:0.60,y:0.43,z:0};  /* 左目 */
+  L[13]={x:0.50,y:0.62,z:0}; L[14]={x:0.50,y:0.64,z:0};
+  L[78]={x:0.46,y:0.63,z:0}; L[308]={x:0.54,y:0.63,z:0};
+  FAKE = L;
+};
 
 /* ── カメラ ── */
 let video = null, started = false, faceMarker = null;
-let LMK = null, faceOn = false, lastT = -1;
+let LMK = null, faceOn = false, lastT = -1, FAKE = null;
 
 async function initModels(){
   const fs = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.20/wasm');
@@ -433,6 +489,23 @@ function facePath(){
   g.closePath();
   return pts;
 }
+/* ⭐ 柄に色を掛ける（白い所が色になり、暗い所は暗いまま＝柄のグラデが色のまま残る）
+   ⚠️ 盤の上で直に掛けると【素材の透けている所まで色が乗って、下のカメラが染まる】。
+      なので別の紙で作って、最後に素材の形だけ残してから貼る。 */
+const TSCR = document.createElement('canvas'), TSG = TSCR.getContext('2d');
+function tintTile(tm, col, s){
+  if(TSCR.width !== s){ TSCR.width = TSCR.height = s; }
+  TSG.globalCompositeOperation = 'source-over';
+  TSG.clearRect(0, 0, s, s);
+  TSG.imageSmoothingEnabled = false;
+  TSG.drawImage(tm, 0, 0, s, s);
+  TSG.globalCompositeOperation = 'multiply';
+  TSG.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+  TSG.fillRect(0, 0, s, s);
+  TSG.globalCompositeOperation = 'destination-in';   /* ⭐ 素材の形だけ残す */
+  TSG.drawImage(tm, 0, 0, s, s);
+  return TSCR;
+}
 function drawMasu(t){
   if(!faceOn || !LMK || !SDATA) return;
   const d = SDATA.data, sw = SMALL.width, sh = SMALL.height;
@@ -454,11 +527,21 @@ function drawMasu(t){
       if(lum < 0.22) continue;
       g.save(); g.translate(x + cell/2, y + cell/2);
       g.rotate(Math.floor(lum*4) * Math.PI/2);      /* 明るさで向きが変わる＝並びが揺れる */
-      if(IMG.grain){
-        g.drawImage(IMG.grain, -cell/2, -cell/2, cell, cell);
-        g.globalCompositeOperation = 'source-atop';
-        g.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
-        g.fillRect(-cell/2, -cell/2, cell, cell);
+      /* ⚠️ マスの縁は隣と分け合う＝1画素ぶん重ねて引く（MASU と同じ。切ると白い筋が出る） */
+      const s0 = -cell/2, s1 = cell + 1;
+      if(P.masu === 1){
+        /* 色＝これまでの見え（素材の形に色を焼く）。木下「今のは今ので残しておいて」 */
+        if(IMG.grain){
+          g.drawImage(IMG.grain, s0, s0, s1, s1);
+          g.globalCompositeOperation = 'source-atop';
+          g.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+          g.fillRect(s0, s0, s1, s1);
+        }
+      }else{
+        /* 柄＝MASU の素材を【白黒のまま】並べる。並ぶと隣とつながって鎖になる（＝MASU の見え） */
+        const tm = tileNow();
+        if(tm && P.masu === 2) g.drawImage(tm, s0, s0, s1, s1);
+        else if(tm) g.drawImage(tintTile(tm, col, Math.ceil(s1)), s0, s0, s1, s1);
       }
       g.restore();
     }
@@ -522,6 +605,7 @@ function frame(t){
     lastT = video.currentTime;
     if(faceMarker){ try{ readFace(faceMarker.detectForVideo(video, performance.now())); }catch(_){} }
   }
+  if(FAKE){ LMK = FAKE; faceOn = true; }   /* ⭐ 作りものの顔（テストのときだけ） */
   if(!faceOn) jaw += (0 - jaw) * 0.15;
 
   /* カメラを画面いっぱいに敷く（切り取る＝比は崩さない） */
@@ -531,8 +615,11 @@ function frame(t){
 
   g.setTransform(1,0,0,1,0,0);
   g.fillStyle = '#000'; g.fillRect(0,0,w,h);
+  /* 🔴 小さい写しは【それを読む物が1つでもあれば】取る。
+     ⚠️ 前は「刷る」の中でしか取っておらず、マス目・地・粒は
+        刷るを一度も押していないと【押しても何も起きなかった】（2026-08-19 実測で発覚）。 */
+  if(P.print || P.masu || P.bg || P.grain) readSmall();
   if(P.print){
-    readSmall();
     drawPrint(t/1000);
   }else{
     g.save();
