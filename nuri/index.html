@@ -374,6 +374,10 @@
       <button class="btn" id="b_save">控える</button>
       <button class="btn" id="b_load">控えを開く</button>
     </div>
+    <!-- ⭐ 2026-08-19 木下「一番最初はまっさらな状態にしておいて」＝押したときだけ前に戻る -->
+    <button class="btn" id="b_prev" style="margin-top:6px;display:none">前のつづきを開く</button>
+    <div class="note">⚠️ 起動は<b>いつもまっさら</b>（前の絵が重いと開くのに何秒もかかるため）。<br>
+      <b>押したときだけ</b>前の状態に戻る。消えてはいない</div>
     <div class="note">⌘Z 戻す／⌘S PNG／[ ] 太さ／E 消す・B 塗る<br>
       <b>+ −</b> 寄る引く／<b>0</b> 正面／ホイール・2本指でも寄れる／<b>⌥＋ドラッグ</b>で画面を動かす<br>
       塗 NURI ／ 木下スタジオ ── 筆で塗ると玉の粒で埋まる</div>
@@ -444,7 +448,9 @@ const P = {
   bgkind:'awa', bgang:27,
   lang:315, gloss:0.9, bulge:0.7,
   blur:0.18, cut:0.1, hard:0.92,
-  paper:'#0a0a0a', long:1400, ratio:'9:16',
+  /* ⚠️ 2026-08-19 既定の長辺を 1400→1000 に下げた。場が 394×700→281×500＝画素が半分＝全部軽い。
+     大きく出したいときは「出す大きさ（長辺）」を上げる（4096px まで）。 */
+  paper:'#0a0a0a', long:1000, ratio:'9:16',
   /* ⭐ 流す（2026-08-19 木下「うごきがほしい、再生ボタンなどで」）。既定 0 ＝止まる＝いままでどおり */
   flow:60, fps:30
 };
@@ -464,9 +470,13 @@ function size(){
   const L = Math.round(P.long);
   return (a >= b) ? { W:L, H:Math.round(L*b/a) } : { W:Math.round(L*a/b), H:L };
 }
+/* 🔴🔴 2026-08-19 ── ここに min(1, …) があったせいで【出す大きさを下げると場の大きさが変わり】、
+   ensureField が場を作り直して【塗った絵が丸ごと消えて】いた（木下＝「出す大きさをいじると破綻する」）。
+   ⭐ 場の大きさは【版面の比】だけで決める＝出す大きさをいくつにしても場は同じ＝絵は消えない。
+   ⚠️ 比（1:1・4:5・9:16・16:9）を変えたときだけ場が変わる＝そこは今までどおり。 */
 function fieldSize(){
   const { W, H } = size();
-  const k = Math.min(1, FIELD_MAX / Math.max(W, H));
+  const k = FIELD_MAX / Math.max(W, H);
   return { w:Math.max(8, Math.round(W*k)), h:Math.max(8, Math.round(H*k)), k };
 }
 /* ══⭐⭐ 版（重ねる）── 2026-08-17
@@ -801,9 +811,11 @@ function tamaSprite(rgb){
    ⚠️ 種で決まる＝同じ種なら何度でも同じ泡（偶然だが取っておける）。 */
 /* ⚠️ ここは【版面の座標】で詰め込む（ox,oy は最後に足すだけ）。
    途中で足すと、当たり判定（隣とぶつかったか）が別の座標系になって泡が重なる。 */
-function bubbles(W, H, f, shade, ox, oy){
-  const k = W / size().W;
-  const big = Math.max(3, P.abig*k), sml = Math.max(1.2, P.asml*k);
+/* ⚠️ coarse＝粗く作る倍率（粗い刷りのときだけ 2.2）。小さい泡を大きく扱う＝詰める回数も泡の数も減る。
+   ⭐ これが効くのは【控えを作る最初の1回】＝起動と版の切り替えが速くなる（そこが待たされていた）。 */
+function bubbles(W, H, f, shade, ox, oy, coarse){
+  const k = W / size().W, cz = coarse || 1;
+  const big = Math.max(3, P.abig*k), sml = Math.max(1.2, P.asml*k*cz);
   const cell = Math.max(4, sml*1.6);
   const gw = Math.ceil(W/cell)+2, gh = Math.ceil(H/cell)+2;
   const bins = new Array(gw*gh);
@@ -862,7 +874,8 @@ function bubblesFor(W, H, f, shade, ox, oy){
   const shift = out => (ox || oy)
     ? out.map(b => ({ x:b.x+ox, y:b.y+oy, r:b.r, t:b.t, i:b.i })) : out;
   if(DRAFT && BUBSAVE && BUBSAVE.W === W && BUBSAVE.H === H) return shift(BUBSAVE.out);
-  const out = bubbles(W, H, f, shade, 0, 0);
+  /* ⚠️ 泡そのものを調整している間は粗くしない（粗いと調整にならない） */
+  const out = bubbles(W, H, f, shade, 0, 0, (DRAFT && DRAFTCOARSE) ? 2.2 : 1);
   BUBSAVE = { W, H, out };
   return shift(out);
 }
@@ -1147,8 +1160,9 @@ function kickSoon(ms){ clearTimeout(settleT); settleT = setTimeout(() => kick(),
    実測＝型「参考の緑」で刷り1回 220ms（粒2,988個＋地の泡）。つまみは動かすたびにこれが走る。
    ⭐ 半分の解像で刷って拡大して見せる＝画素も粒も 1/4。手を離した瞬間に本番で刷り直す。
    ⚠️ 出す絵（PNG・動画）は【本番の道】しか通らない＝1画素も変わらない。 */
-let DRAFT = 0, DCV = null, DG = null;
-function draftOn(){ DRAFT = 1; }
+let DRAFT = 0, DCV = null, DG = null, DRAFTCOARSE = 1;
+/* ⚠️ coarse=false ＝泡は粗くしない（泡のつまみを触っている間） */
+function draftOn(coarse){ DRAFT = 1; DRAFTCOARSE = (coarse === false) ? 0 : 1; }
 function draftOff(){ if(!DRAFT) return; DRAFT = 0; BUBSAVE = null; BLURHOLD = null; kick(); }
 /* ══⭐⭐ まず粗く出して、手が止まったら本番で刷り直す（2026-08-19）
    木下＝「ホンちゃん開くがめちゃくちゃ開くの遅いのと、版切り替えをするのにも5秒以上タイムラグがある」
@@ -1158,7 +1172,7 @@ function draftOff(){ if(!DRAFT) return; DRAFT = 0; BUBSAVE = null; BLURHOLD = nu
    ⚠️ 出す絵（PNG・動画）は本番の道しか通らない＝1画素も変わらない。 */
 let softT = null;
 function kickSoft(ms){
-  DRAFT = 1; kick();
+  DRAFT = 1; DRAFTCOARSE = 1; kick();
   clearTimeout(softT);
   softT = setTimeout(() => { DRAFT = 0; BUBSAVE = null; BLURHOLD = null; kick(); }, ms || 450);
 }
@@ -1181,7 +1195,11 @@ function kick(){
       const dw = Math.max(2, Math.round(cw*sc)), dh = Math.max(2, Math.round(ch*sc));
       if(!DCV){ DCV = document.createElement('canvas'); DG = DCV.getContext('2d'); }
       if(DCV.width !== dw || DCV.height !== dh){ DCV.width = dw; DCV.height = dh; }
-      render(DG, dw, dh, camScreen(dw, dh));
+      /* 🔴 camScreen(dw,dh) を使うと【寄り・パン（VIEW.x/y）が縮まない】＝引き伸ばしたときに
+         絵だけ右下へずれる（木下＝「スライダーを調整するたびにボードが右下にかたっとなる」）。
+         ⭐ 本番のカメラを丸ごと sc 倍する＝完全な相似＝1画素もずれない。 */
+      const cam2 = { fw:CAM.fw, fh:CAM.fh, sc:CAM.sc*sc, ox:CAM.ox*sc, oy:CAM.oy*sc };
+      render(DG, dw, dh, cam2);
       g.setTransform(1,0,0,1,0,0); g.clearRect(0, 0, cw, ch);
       g.imageSmoothingEnabled = true;
       g.drawImage(DCV, 0, 0, cw, ch);
@@ -1357,7 +1375,9 @@ RANGES.forEach(k => {
   r.value = P[k];
   const show = () => { if(o) o.textContent = (FMT[k] || String)(+r.value); };
   show();
-  r.addEventListener('pointerdown', () => { pushHist(); draftOn(); });
+  /* ⚠️ 泡そのもののつまみは【粗くしない】＝粗い泡で調整しても決められない */
+  const AWA_KNOBS = ['abig','asml','apack','aline','awarp','around','alop'];
+  r.addEventListener('pointerdown', () => { pushHist(); draftOn(!AWA_KNOBS.includes(k)); });
   r.addEventListener('input', () => { P[k] = +r.value; show();
     if(k === 'long') ensureField();
     if(k === 'long' || k === 'flow' || k === 'fps') mvInfo();   /* ⭐ 出る大きさ・コマ数は押す前に出す */
@@ -1955,12 +1975,26 @@ function loadLocal(){
 }
 
 /* ══ 起動 ══ */
+/* ══⭐⭐ 起動は【いつもまっさら】（2026-08-19）
+   木下＝「ホンちゃんもだが一番最初はまっさらな状態にしておいて　めちゃ重いわ」
+   🔴 前は開いた瞬間に前回の絵を読んでいた＝泡が細かい絵だと開くのに数秒かかっていた。
+   ⭐ 押したときだけ前の状態に戻す（TSUBU と同じ作法）。
+   ⚠️ 控えは消していない＝「前のつづきを開く」でいつでも戻せる。 */
 newField();
-loadLocal();
 ensureField();
 syncUI();
-/* ⭐ 起動も【粗い刷りを先に出す】＝待たされない（泡が細かいと本番は数秒かかる） */
 kickSoft(600);
+(() => {
+  let has = false;
+  try{ has = !!(localStorage.getItem('nuri.v3') || localStorage.getItem('nuri.v1')); }catch(_){}
+  const b2 = el('b_prev'); if(!b2) return;
+  b2.style.display = has ? '' : 'none';
+  b2.onclick = () => {
+    if(!loadLocal()){ stat('前のつづきは無い'); return; }
+    ensureField(); syncUI(); drawSwatch(); drawLayList(); syncLay(); syncText();
+    kickSoft(600); stat('前のつづきを開いた');
+  };
+})();
 stat('画面を指（マウス）でなぞって塗る。⌘Z で戻す／+ − で寄る引く・0 で正面');
 </script>
 
