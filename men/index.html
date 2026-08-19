@@ -42,6 +42,8 @@
 
 <div id="bar">
   <button class="btn" id="b_print">刷る</button>
+  <button class="btn" id="b_form">粒：素材</button>
+  <button class="btn" id="b_bg">地：なし</button>
   <button class="btn on" id="b_eye">目</button>
   <button class="btn on" id="b_grain">粒</button>
   <button class="btn" id="b_hold">粒をとめる</button>
@@ -78,13 +80,22 @@ const cv = el('cv'), g = cv.getContext('2d');
 const stat = m => { el('stat').textContent = m; };
 
 /* ── 触れるもの ── */
-const P = { eye:1, grain:1, hold:0, mirror:1, print:0 };
+const P = { eye:1, grain:1, hold:0, mirror:1, print:0, form:0, bg:0 };
+/* ⭐ 粒の形・地のかたち＝押すたびに送る（道具から持ってきた語彙をそのまま使う） */
+const FORMS = ['素材','錐','玉'], BGS = ['なし','縞','点','ひび'];
 const toggle = (id, key, label) => {
   const b = el(id);
   b.onclick = () => { P[key] = P[key] ? 0 : 1; b.classList.toggle('on', !!P[key]);
     if(label) b.textContent = label(P[key]); };
 };
 toggle('b_print','print'); toggle('b_eye','eye'); toggle('b_grain','grain');
+const cycle = (id, key, list) => {
+  const b = el(id), base = b.textContent.split('：')[0];
+  const put = () => { b.textContent = base + '：' + list[P[key]]; b.classList.toggle('on', P[key] > 0); };
+  b.onclick = () => { P[key] = (P[key] + 1) % list.length; put(); };
+  put();
+};
+cycle('b_form','form',FORMS); cycle('b_bg','bg',BGS);
 toggle('b_hold','hold', v => v ? '粒をうごかす' : '粒をとめる');
 toggle('b_mirror','mirror');
 el('b_mirror').classList.toggle('on', !!P.mirror);
@@ -243,6 +254,88 @@ function readSmall(){
   SG.restore();
   SDATA = SG.getImageData(0, 0, w, h);
 }
+/* ══⭐⭐ 錐（NURI から持ってきた・2026-08-19）
+   ⭐ 正方形を中心から4つの三角に割り、光の向きとの角度で面ごとに塗る。
+      面の中も【中心が明るく外辺へ落ちる】グラデーション＝ぼやけた玉でなく硬い粒になる。
+   ⚠️ 色ごとに焼いて使い回す（色は 32 段に丸める）＝毎粒 作り直さない。 */
+const KADO = new Map();
+function kadoSprite(col){
+  const q = v => Math.round(v/32)*32;
+  const key = q(col[0])+','+q(col[1])+','+q(col[2]);
+  let c = KADO.get(key); if(c) return c;
+  const S = 64, R = S/2, base = [q(col[0]), q(col[1]), q(col[2])];
+  c = document.createElement('canvas'); c.width = c.height = S;
+  const t = c.getContext('2d');
+  const a = -0.78, lx = Math.cos(a), ly = Math.sin(a);   /* 光は左上から */
+  const faces = [[0,-1],[1,0],[0,1],[-1,0]], pts = [[0,0],[S,0],[S,S],[0,S]];
+  const mix = (c1, c2, k) => [0,1,2].map(i => Math.round(c1[i] + (c2[i]-c1[i])*k));
+  for(let i = 0; i < 4; i++){
+    const n2 = faces[i], k = 0.5 + 0.5*(n2[0]*lx + n2[1]*ly);
+    const up = Math.max(0, k - 0.35) * 1.9;
+    const cCol = base.map(v => Math.min(255, Math.round(v*(1 + up*1.7) + 255*up*0.45)));
+    const dn = 0.45 * (1 - k*0.45);
+    const eCol = base.map(v => Math.max(0, Math.round(v*(1 - dn))));
+    const p1 = pts[i], p2 = pts[(i+1)%4];
+    const gr = t.createLinearGradient(R, R, (p1[0]+p2[0])/2, (p1[1]+p2[1])/2);
+    gr.addColorStop(0, `rgb(${cCol})`); gr.addColorStop(0.55, `rgb(${mix(cCol,eCol,0.45)})`);
+    gr.addColorStop(1, `rgb(${eCol})`);
+    t.beginPath(); t.moveTo(R,R); t.lineTo(p1[0],p1[1]); t.lineTo(p2[0],p2[1]); t.closePath();
+    t.fillStyle = gr; t.fill();
+  }
+  if(KADO.size > 400) KADO.clear();
+  KADO.set(key, c);
+  return c;
+}
+
+/* ══⭐ 地のかたち（NURI から持ってきた）── 塗っていない所（暗い所）を埋める */
+function drawBg(t){
+  const w = cv.width, h = cv.height, kind = BGS[P.bg];
+  if(kind === 'なし' || !SDATA) return;
+  const d = SDATA.data, sw = SMALL.width, sh = SMALL.height;
+  const gap = Math.max(6, cv.width/110);
+  const dark = (x, y) => {                       /* その場所が暗い（＝地）か */
+    const u = (x - cover.ox)/(video.videoWidth*cover.s), v = (y - cover.oy)/(video.videoHeight*cover.s);
+    if(u < 0 || v < 0 || u >= 1 || v >= 1) return true;
+    const i = ((Math.min(sh-1, v*sh|0))*sw + (Math.min(sw-1, u*sw|0)))*4;
+    return (d[i]*0.3 + d[i+1]*0.59 + d[i+2]*0.11)/255 < 0.34;
+  };
+  g.save();
+  const col = grad(0.5, 0.5, t*0.6);
+  g.strokeStyle = g.fillStyle = `rgba(${col[0]},${col[1]},${col[2]},.75)`;
+  g.lineWidth = Math.max(0.6, gap*0.14);
+  if(kind === '点'){
+    for(let y = 0; y < h; y += gap) for(let x = 0; x < w; x += gap){
+      if(!dark(x, y)) continue;
+      g.beginPath(); g.arc(x, y, gap*0.16, 0, Math.PI*2); g.fill();
+    }
+  }else if(kind === '縞'){
+    const th = 0.42 + Math.sin(t*0.2)*0.12, ca = Math.cos(th), sa = Math.sin(th);
+    const R = Math.hypot(w,h)/2, cx = w/2, cy = h/2, st = Math.max(2, gap*0.5);
+    for(let v = -R; v <= R; v += gap){
+      let on = false; g.beginPath();
+      for(let u = -R; u <= R; u += st){
+        const x = cx + u*ca - v*sa, y = cy + u*sa + v*ca;
+        const ok = x>=0 && y>=0 && x<=w && y<=h && dark(x, y);
+        if(ok){ if(!on){ g.moveTo(x,y); on = true; } else g.lineTo(x,y); } else on = false;
+      }
+      g.stroke();
+    }
+  }else{   /* ひび＝格子をずらして割った線 */
+    const n = Math.ceil(w/gap);
+    for(let i = 0; i <= n; i++){
+      const x = i*gap + Math.sin(i*1.7 + t*0.3)*gap*0.4;
+      let on = false; g.beginPath();
+      for(let y = 0; y < h; y += gap*0.6){
+        const xx = x + Math.sin(y*0.01 + i)*gap*0.5;
+        const ok = dark(xx, y);
+        if(ok){ if(!on){ g.moveTo(xx,y); on = true; } else g.lineTo(xx,y); } else on = false;
+      }
+      g.stroke();
+    }
+  }
+  g.restore();
+}
+
 /* 場所で色が変わる（2色の間を斜めに送る）＝地のグラデ */
 function grad(u, v, t){
   const k = (u*0.7 + v*0.5 + t*0.06) % 1;
@@ -285,9 +378,19 @@ function drawPrint(t){
       }
       if(sz < 1.2) continue;
       const col = grad(u, v, t);
+      const form = FORMS[P.form];
       g.save(); g.translate(x, y);
       g.rotate((u*2 + v*3 + t*0.4) % (Math.PI*2));
-      if(im){
+      if(form === '錐'){
+        const sp = kadoSprite(col);
+        g.drawImage(sp, -sz/2, -sz/2, sz, sz);
+      }else if(form === '玉'){
+        const gr = g.createRadialGradient(-sz*0.18, -sz*0.18, sz*0.05, 0, 0, sz*0.55);
+        gr.addColorStop(0, '#fff');
+        gr.addColorStop(0.45, `rgb(${col[0]},${col[1]},${col[2]})`);
+        gr.addColorStop(1, `rgb(${(col[0]*0.35)|0},${(col[1]*0.35)|0},${(col[2]*0.35)|0})`);
+        g.fillStyle = gr; g.beginPath(); g.arc(0, 0, sz/2, 0, Math.PI*2); g.fill();
+      }else if(im){
         g.globalCompositeOperation = 'source-over';
         g.drawImage(im, -sz/2, -sz/2, sz, sz);
         /* ⭐ 素材は白黒＝上から色を乗せて【グラデを持たせる】（単色にしない） */
@@ -302,6 +405,7 @@ function drawPrint(t){
     }
   }
   g.restore();
+  drawBg(t);                     /* ⭐ 地は粒の上から＝暗い所だけに乗る */
 }
 
 /* ── まわす ── */
