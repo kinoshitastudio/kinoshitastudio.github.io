@@ -36,5 +36,8 @@ echo
 echo "── ③ あとから筆を変える（brush）"
 node "$HERE/_test/brush.mjs" "http://localhost:$PORT/$NAME/" || NG=1
 echo
+echo "── ④ 地のかたち（bg）"
+node "$HERE/_test/bg.mjs" "http://localhost:$PORT/$NAME/" || NG=1
+echo
 [ "$NG" = 0 ] && echo "✅ 全部通った" || echo "🔴 落ちたものがある（上を見る）"
 exit "$NG"
