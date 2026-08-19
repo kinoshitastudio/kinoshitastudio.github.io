@@ -48,5 +48,8 @@ echo
 echo "── ⑦ モバイル（横ずれ・touch-action）"
 node "$HERE/_test/mobile.mjs" "http://localhost:$PORT/$NAME/" || NG=1
 echo
+echo "── ⑧ つまみが効くか（knob）"
+node "$HERE/_test/knob.mjs" "http://localhost:$PORT/$NAME/" || NG=1
+echo
 [ "$NG" = 0 ] && echo "✅ 全部通った" || echo "🔴 落ちたものがある（上を見る）"
 exit "$NG"
