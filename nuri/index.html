@@ -572,9 +572,45 @@ function newField(){
   CR = new Float32Array(w*h); CG = new Float32Array(w*h); CB = new Float32Array(w*h);
   LAY = [newLayer()]; sel = 0;
 }
+/* ══⭐⭐ 場の形が変わっても【絵を保つ】（2026-08-19）
+   🔴 木下＝「サイズを変えるとさっきまであったオブジェクトがどこかに消えた」。
+      版面の比（1:1 など）を変えると場の形が変わり、newField が作り直して絵が消えていた。
+      （出す大きさ＝長辺の方は先に直したが、比のときが残っていた）
+   ⭐ 新しい場へ【中央合わせで写す】。⚠️ 引き伸ばさない＝形が歪まない（歪むとこの道具の意味が消える）。
+   ⚠️ 線の控え（S）の点も同じだけずらす＝あとから筆を変えたときに位置がずれない。
+   ⚠️ 新しい場が小さいと、はみ出した分は切れる＝そこは正直に言う。 */
+function resizeField(w, h){
+  const oW = FW, oH = FH, oLAY = LAY;
+  const dx = Math.round((w - oW)/2), dy = Math.round((h - oH)/2);
+  const move = (src) => {
+    const dst = new Float32Array(w*h);
+    for(let y = 0; y < oH; y++){
+      const ny = y + dy; if(ny < 0 || ny >= h) continue;
+      for(let x = 0; x < oW; x++){
+        const nx = x + dx; if(nx < 0 || nx >= w) continue;
+        dst[ny*w + nx] = src[y*oW + x];
+      }
+    }
+    return dst;
+  };
+  FW = w; FH = h;
+  A = new Float32Array(w*h);
+  CR = new Float32Array(w*h); CG = new Float32Array(w*h); CB = new Float32Array(w*h);
+  LAY = oLAY.map(L => {
+    L.A = move(L.A);
+    if(L.C) L.C = { CR:move(L.C.CR), CG:move(L.C.CG), CB:move(L.C.CB) };
+    if(L.S) L.S.forEach(t => { for(let i = 0; i < t.p.length; i += 2){ t.p[i] += dx; t.p[i+1] += dy; } });
+    return L;
+  });
+}
 function ensureField(){
   const { w, h } = fieldSize();
-  if(w !== FW || h !== FH || !A) newField();
+  if(!A){ newField(); }
+  else if(w !== FW || h !== FH){
+    const cut = (w < FW || h < FH);
+    resizeField(w, h);
+    if(cut) stat('版面の形を変えた（狭くなったぶんは切れている・⌘Z で戻せる）');
+  }
   if(!LAY.length){ LAY = [newLayer()]; sel = 0; }
   if(sel >= LAY.length) sel = LAY.length - 1;
 }
