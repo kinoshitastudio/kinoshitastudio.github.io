@@ -336,6 +336,8 @@
       <div class="row"><span class="n">線の濃さ</span><output id="o_alop"></output></div>
       <input type="range" id="r_alop" min="0" max="1" step="0.02">
       <input type="color" id="c_alcol" style="margin-top:6px">
+      <label class="chk" style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--fg);margin:6px 0">
+        <input type="checkbox" id="c_alauto" style="accent-color:var(--fg);width:14px;height:14px"><span>紙の反対にする（必ず見える）</span></label>
       <button class="btn" id="b_aseed" style="margin-top:8px">別の偶然にする（種を振る）</button>
       <div class="note">⭐⭐ <b>泡</b>＝格子でなく<b>詰め込み</b>。<b>塗りの薄い所ほど大きい泡</b>、濃い所ほど小さい粒<br>
         ⭐ <b>泡の色</b>＝「紙と同じ」なら<b>輪郭線だけで見える</b>／「選ぶ」で泡そのものに色が載る<br>
@@ -507,7 +509,7 @@ const P = {
      🔴 それまで泡の色は【紙の色に固定】だった（＝地の泡は輪郭線だけで見える、が設計だった）。
         色・輪郭線の色・角の丸み・つやの入切を出す。
      ⚠️ 既定は【今までと同じ絵になる値】＝紙と同じ色／線は rgba(20,22,18,.72)／丸み0／つやあり。 */
-  abase:'paper', acol:'#5fc02a', alcol:'#141612', alop:0.72, around:0, aflat:false,
+  abase:'paper', acol:'#5fc02a', alcol:'#141612', alauto:false, alop:0.72, around:0, aflat:false,
   /* ⭐ 地（塗っていない所）のかたち（2026-08-19 木下「あわだけでなく、たとえばもっと他の形なども」）。
      既定 'awa' ＝いままでどおり。⚠️ 地の向きは粒の網とは別に持つ（＝別々にコントロールできる） */
   bgkind:'awa', bgang:27,
@@ -1279,7 +1281,19 @@ function render(ctx, W, H, cam){
       if(P.aline > 0){
         ctx.lineWidth = P.aline * (fw/size().W);
         /* ⭐ 輪郭線の色（2026-08-17）＝ 漫画の線。既定は今までと同じ rgba(20,22,18,.72) */
-        const lc = hex2rgb(P.alcol || '#141612');
+        /* ⭐⭐ 紙の反対（2026-08-19）── 色を固定すると、紙を変えるたびに見えなくなる。
+           🔴 既定の紙 #0a0a0a と線 #141612 が どちらもほぼ黒で、ひびが丸ごと消えていた。
+           ⭐ その場所の紙の明るさを見て、線を反対側へ置く＝紙をどう変えても必ず立つ。
+              （紙がグラデでも、位置ごとに引くので端まで見える） */
+        let lc;
+        if(P.alauto){
+          const pc = paperAt(b2.x, b2.y, ox, oy, fw, fh);
+          const bl = (0.299*pc[0] + 0.587*pc[1] + 0.114*pc[2]) / 255;
+          const t2 = bl > 0.5 ? 0.06 : 0.94;
+          lc = [t2*255, t2*255, t2*255];
+        } else {
+          lc = hex2rgb(P.alcol || '#141612');
+        }
         ctx.strokeStyle = 'rgba(' + lc[0] + ',' + lc[1] + ',' + lc[2] + ',' + (P.alop == null ? 0.72 : P.alop) + ')';
         ctx.stroke();
       }
@@ -1735,7 +1749,7 @@ function paperUI(){
   const hp = Math.max(lum(P.paper), P.pmode === 'grad' ? lum(P.paper2 || P.paper) : 0);
   const ll = lum(P.alcol || '#141612');
   /* 線が「いちばん近い紙」に対して差が小さい＝どこかで埋もれる */
-  const near = Math.min(Math.abs(ll - lp), Math.abs(ll - hp)) < 0.12 && (P.alop == null ? 0.72 : P.alop) > 0.05;
+  const near = !P.alauto && Math.min(Math.abs(ll - lp), Math.abs(ll - hp)) < 0.12 && (P.alop == null ? 0.72 : P.alop) > 0.05;
   w.style.display = near ? '' : 'none';
 }
 /* ⭐ 地のかたち（泡／ひび／点／縞）
@@ -1762,6 +1776,13 @@ el('c_acol').value = P.acol;
 el('c_acol').addEventListener('input', e => { P.acol = e.target.value; kick(); saveLocal(); });
 el('c_alcol').value = P.alcol;
 el('c_alcol').addEventListener('input', e => { P.alcol = e.target.value; if(typeof paperUI==='function') paperUI(); kick(); saveLocal(); });
+el('c_alauto').checked = !!P.alauto;
+el('c_alauto').addEventListener('change', e => {
+  P.alauto = e.target.checked;
+  el('c_alcol').style.opacity = P.alauto ? 0.4 : 1;   /* 自動のときは色が効かないと分かるように */
+  if(typeof paperUI === 'function') paperUI();
+  kick(); saveLocal();
+});
 el('c_aflat').addEventListener('change', e => { P.aflat = e.target.checked; kick(); saveLocal(); });
 el('b_aseed').onclick = () => { pushHist(); P.aseed = 1 + ((Math.random()*9999)|0); kick(); saveLocal(); stat('別の偶然にした'); };
 seg('ratioSeg', 'ratio', () => { ensureField(); });
@@ -2230,6 +2251,7 @@ function syncUI(){
     .forEach(b => b.classList.toggle('on', b.dataset.v === String(P.pmode || 'flat')));
   if(typeof paperUI === 'function') paperUI();
   if(typeof bgKindUI === 'function') bgKindUI();
+  if(el('c_alauto')){ el('c_alauto').checked = !!P.alauto; el('c_alcol').style.opacity = P.alauto ? 0.4 : 1; }
   el('c_stagger').checked = !!P.stagger;
   drawSwatch(); drawLayList(); syncLay(); syncText();
 }
