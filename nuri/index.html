@@ -304,8 +304,28 @@
          つまみ自体は前からあったが【「紙」の中】にあって、出すときに見つからなかった。
          ⚠️ 動かしても塗った絵は消えない（場は長辺と別に持っている）。 -->
     <div class="row"><span class="n">出す大きさ（長辺）</span><output id="o_long"></output></div>
-    <input type="range" id="r_long" min="600" max="2600" step="20">
+    <input type="range" id="r_long" min="600" max="4096" step="20">
     <button class="btn solid" id="b_png" style="margin-top:8px">PNG</button>
+
+    <!-- ══⭐⭐ 流す・動画（2026-08-19 木下「うごきがほしい、再生ボタンなどで」
+         「当然のごとく書き出しサイズ選択や動画書き出しもできるように」） -->
+    <label class="h" style="margin-top:14px">流す・動画</label>
+    <div class="row"><span class="n">速さ</span><output id="o_flow"></output></div>
+    <input type="range" id="r_flow" min="0" max="200" step="1">
+    <div class="row"><span class="n">FPS</span><output id="o_fps"></output></div>
+    <input type="range" id="r_fps" min="8" max="60" step="1">
+    <button class="btn" id="b_play" style="margin-top:8px">流す</button>
+    <div class="seg" id="mvFmt" style="margin-top:8px">
+      <button data-v="mp4" class="on">mp4</button><button data-v="png">PNG連番</button>
+    </div>
+    <div class="seg" id="mvLoop" style="margin-top:6px">
+      <button data-v="1" class="on">1周</button><button data-v="2">2周</button><button data-v="3">3周</button>
+    </div>
+    <div id="mvSize" class="note" style="margin-top:6px"></div>
+    <button class="btn solid" id="b_mv" style="margin-top:4px">動画を出す</button>
+    <div class="note">⭐ 流れるのは<b>塗ったところの網</b>（地の泡は止まったまま＝ループが閉じる）<br>
+      ⭐ <b>1周</b>＝頭と尻がぴったり合う（継ぎ目のないループ）<br>
+      ⚠️ 見ている間は<b>粗く刷って</b>回している。止めると本番で刷り直す</div>
     <!-- ⚠️ 「戻す／まっさら」は【筆】の下へ移した（ここには置かない＝同じ id を2つ作らない） -->
     <div class="btns2" style="margin-top:6px">
       <button class="btn" id="b_save">控える</button>
@@ -378,7 +398,9 @@ const P = {
   abase:'paper', acol:'#5fc02a', alcol:'#141612', alop:0.72, around:0, aflat:false,
   lang:315, gloss:0.9, bulge:0.7,
   blur:0.18, cut:0.1, hard:0.92,
-  paper:'#0a0a0a', long:1400, ratio:'9:16'
+  paper:'#0a0a0a', long:1400, ratio:'9:16',
+  /* ⭐ 流す（2026-08-19 木下「うごきがほしい、再生ボタンなどで」）。既定 0 ＝止まる＝いままでどおり */
+  flow:60, fps:30
 };
 /* ⭐ 見本の色 ── 参考の青と緑を入り口に置く（木下がすぐ触れるように） */
 const SWATCH = ['#3a3ce8','#7a5cff','#e94b8a','#e8e6e0','#5fc02a','#f5c518','#e0483a','#1c1c1e'];
@@ -797,6 +819,12 @@ function bedCanvas(f, shade){
 
 /* ══⭐ 刷る ── 場から粒を置く（画面も PNG もここだけ）══ */
 let lastDots = 0;
+/* ══⭐⭐ 流す（2026-08-19）── 塗ったところの【網】を1格子ぶん送る。
+   ⭐ 1周＝格子1つ＝位相が 1 進むと元に戻る＝【継ぎ目のないループ】が作れる。
+   ⚠️ 地（泡）は動かさない。泡の配置は周期を持たないので、動かすとループが閉じない。
+      木下の絵は「地に埋もれた線」＝地が静止して粒だけ流れる方が読める。
+   ⚠️ 出す絵は FLOWPH を【コマ番号で置く】＝時計に頼らない（動画がコマ落ちしない）。 */
+let FLOWPH = 0;
 function render(ctx, W, H, cam){
   ensureField();
   bake();          /* ⭐ 版を合成してから刷る。画面も PNG もテストも、必ずここを通る（式は1本） */
@@ -900,7 +928,7 @@ function render(ctx, W, H, cam){
   for(let v = v0; v <= v1; v++){
     for(let u = u0; u <= u1; u++){
       /* ⭐ 千鳥＝1行おきに半分ずらす。参考の「編み目」はこれで出る（正方の格子だと目が立つ） */
-      const lx = u*d + (P.stagger && (v & 1) ? d*0.5 : 0), ly = v*d*asp;
+      const lx = (u + FLOWPH)*d + (P.stagger && (v & 1) ? d*0.5 : 0), ly = v*d*asp;
       const x = cx + lx*co - ly*si, y = cy + lx*si + ly*co;
       if(x < -d || y < -d || x > W+d || y > H+d) continue;
       const t0 = sampleA(f, fpx(x), fpy(y));
@@ -1014,6 +1042,26 @@ function kick(){
   });
 }
 addEventListener('resize', () => kick());
+
+/* ══⭐⭐ 再生 ── 動きを見ながら決める（2026-08-19）
+   ⭐ 再生の間は【粗い刷り】で回す（本番165ms では止まって見える／粗く刷れば約23ms）。
+   ⚠️ 止めたら必ず本番で刷り直す＝決めるときの絵は本物。 */
+let PLAY = 0, playRAF = 0, playT0 = 0;
+function playStep(t){
+  if(!PLAY) return;
+  if(!playT0) playT0 = t;
+  const dt = Math.min(0.1, (t - playT0)/1000); playT0 = t;
+  FLOWPH = (FLOWPH + dt * (P.flow/100)) % 1;
+  DRAFT = 1;                       /* ⭐ 回している間は粗く（泡も使い回す） */
+  kick();
+  playRAF = requestAnimationFrame(playStep);
+}
+function playSet(on){
+  PLAY = on ? 1 : 0;
+  const b = el('b_play'); if(b){ b.textContent = PLAY ? '止める' : '流す'; b.classList.toggle('solid', !!PLAY); }
+  if(PLAY){ playT0 = 0; playRAF = requestAnimationFrame(playStep); }
+  else{ cancelAnimationFrame(playRAF); DRAFT = 0; BUBSAVE = null; kick(); }
+}
 
 /* ══ 描く ══════════════════════════════════════════════ */
 let drawing = false, pfx = 0, pfy = 0;
@@ -1135,10 +1183,11 @@ const FMT = {
   abig:v=>v+'px', asml:v=>v.toFixed(1)+'px', apack:v=>v.toFixed(2), aline:v=>v.toFixed(1)+'px', awarp:v=>v.toFixed(2),
   around:v=>v.toFixed(2), alop:v=>v.toFixed(2),
   lang:v=>v+'°', gloss:v=>v.toFixed(2), bulge:v=>v.toFixed(2),
-  blur:v=>v.toFixed(2), cut:v=>v.toFixed(2), hard:v=>v.toFixed(2), long:v=>v+'px'
+  blur:v=>v.toFixed(2), cut:v=>v.toFixed(2), hard:v=>v.toFixed(2), long:v=>v+'px',
+  flow:v=>String(v), fps:v=>v+'fps'
 };
 const RANGES = ['bsize','bsoft','bflow','pitch','gap','sq','bed','tsize','ang','asp','lang','gloss','bulge','blur','cut','hard','long',
-                'abig','asml','apack','aline','awarp','around','alop'];
+                'abig','asml','apack','aline','awarp','around','alop','flow','fps'];
 RANGES.forEach(k => {
   const r = el('r_'+k); if(!r) return;
   const o = el('o_'+(k === 'asp' ? 'agh' : k));
@@ -1148,6 +1197,7 @@ RANGES.forEach(k => {
   r.addEventListener('pointerdown', () => { pushHist(); draftOn(); });
   r.addEventListener('input', () => { P[k] = +r.value; show();
     if(k === 'long') ensureField();
+    if(k === 'long' || k === 'flow' || k === 'fps') mvInfo();   /* ⭐ 出る大きさ・コマ数は押す前に出す */
     kick(); saveLocal(); });
   /* ⭐ 手を離した瞬間に本番で刷り直す（キーボードで動かしたときは change で戻る） */
   r.addEventListener('pointerup', draftOff);
@@ -1410,6 +1460,176 @@ el('b_png').onclick = () => {
     stat('PNG を出した ' + W + '×' + H);
   }, 'image/png');
 };
+el('b_play').onclick = () => playSet(!PLAY);
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 動画で出す（2026-08-19）── 画面録画をやめる
+   ⭐ 位相（FLOWPH）を【コマ番号】で刻んで1コマずつ焼く＝コマ落ちゼロ・機械の速さに左右されない。
+   ⭐ 1周＝位相が 0→1＝格子1つぶん＝頭と尻がぴったり合う（継ぎ目のないループ）。
+   ⚠️ 焼くのは【本番の道】（render）＝出る絵は PNG と同じ。粗い刷りは通らない。
+   ⚠️ MediaRecorder は使わない（コマ落ち・webm固定・ループ不可・大きさが選べない）。
+   ══════════════════════════════════════════════════════════════ */
+const MV = { on:false, stop:false };
+function mvSeg(id, d){ const b = document.querySelector('#' + id + ' button.on'); return b ? b.dataset.v : d; }
+function mvPlan(){
+  const { W, H } = size();
+  const fps = Math.max(4, Math.round(P.fps || 30));
+  const loops = +(mvSeg('mvLoop','1')) || 1;
+  if((P.flow || 0) <= 0) return { err:'「速さ」が 0 なので何も動きません（上のつまみを上げてください）' };
+  /* ⭐ 画面と同じ進み方＝速さ100 で 1秒に1周 */
+  const total = Math.max(2, Math.round(loops * fps * 100 / P.flow));
+  return { W, H, fps, loops, total, sec: total/fps };
+}
+function mvInfo(){
+  const el2 = el('mvSize'); if(!el2) return;
+  const p2 = mvPlan();
+  el2.innerHTML = p2.err ? ('⚠️ ' + p2.err)
+    : `出力 <b>${p2.W} × ${p2.H}</b> px・${p2.total} コマ・${p2.sec.toFixed(1)}秒・${p2.fps}fps・${p2.loops}周`;
+}
+document.querySelectorAll('#mvFmt button, #mvLoop button').forEach(b =>
+  b.addEventListener('click', () => {
+    b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    mvInfo();
+  }));
+const mvIdle = () => new Promise(r => setTimeout(r, 0));
+async function mvLoadMuxer(){
+  if(window.Mp4Muxer) return true;
+  try{
+    await new Promise((res, rej) => { const sc = document.createElement('script');
+      sc.src = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.1/build/mp4-muxer.min.js';
+      sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); });
+    return !!window.Mp4Muxer;
+  }catch(_){ return false; }
+}
+async function mvRun(){
+  if(MV.on){ MV.stop = true; stat('やめました'); return; }
+  const plan = mvPlan();
+  if(plan.err){ stat('🔴 ' + plan.err); return; }
+  if(PLAY) playSet(false);
+  let fmt = mvSeg('mvFmt','mp4');
+  const btn = el('b_mv');
+  const bPh = FLOWPH;
+  MV.on = true; MV.stop = false;
+  if(btn) btn.textContent = 'やめる';
+  let msg = '';
+  try{
+    let W = plan.W, H = plan.H;
+    if(fmt === 'mp4'){ W -= W % 2; H -= H % 2; }     /* ⚠️ H.264 は偶数しか受け取らない */
+    const out = document.createElement('canvas'); out.width = W; out.height = H;
+    const o = out.getContext('2d');
+    let enc = null, muxer = null, target = null, encErr = null, why = '';
+    if(fmt === 'mp4'){
+      const haveMux = (typeof VideoEncoder !== 'undefined') ? await mvLoadMuxer() : false;
+      let cfg = null;
+      if(haveMux){
+        const bitrate = Math.min(80e6, Math.round(W*H*plan.fps*0.15));
+        for(const codec of ['avc1.640034','avc1.4d0034','avc1.42003e']){
+          try{ const sup = await VideoEncoder.isConfigSupported({ codec, width:W, height:H, bitrate, framerate:plan.fps });
+            if(sup && sup.supported){ cfg = { codec, width:W, height:H, bitrate, framerate:plan.fps }; break; } }catch(_){}
+        }
+      }
+      if(cfg){
+        target = new Mp4Muxer.ArrayBufferTarget();
+        muxer = new Mp4Muxer.Muxer({ target, video:{ codec:'avc', width:W, height:H, frameRate:plan.fps }, fastStart:'in-memory' });
+        enc = new VideoEncoder({ output:(c, m) => { try{ muxer.addVideoChunk(c, m); }catch(e){ encErr = e; } },
+                                 error: e => { encErr = e; } });
+        enc.configure(cfg);
+      }else{
+        /* 🔴 黙って別のものにしない。理由を言って PNG連番へ回す */
+        why = (typeof VideoEncoder === 'undefined') ? 'このブラウザは mp4 を作れない' : 'mp4 の器を用意できなかった';
+        fmt = 'png';
+      }
+    }
+    const shots = [], pad = i => String(i).padStart(4, '0');
+    let bytes = 0, i = 0;
+    for(; i < plan.total; i++){
+      if(MV.stop) break;
+      if(encErr) throw encErr;
+      FLOWPH = (bPh + plan.loops * i / plan.total) % 1;   /* ⭐ 時計でなくコマ番号で決める */
+      o.setTransform(1,0,0,1,0,0); o.clearRect(0, 0, W, H);
+      render(o, W, H);                                    /* ⭐ 本番の道（PNG と同じ） */
+      if(fmt === 'mp4'){
+        const vf = new VideoFrame(out, { timestamp:Math.round(i*1e6/plan.fps), duration:Math.round(1e6/plan.fps) });
+        enc.encode(vf, { keyFrame:(i % (plan.fps*2)) === 0 });
+        vf.close();
+        while(enc.encodeQueueSize > 8 && !encErr) await mvIdle();
+      }else{
+        const b2 = await new Promise(r => out.toBlob(r, 'image/png'));
+        if(!b2) throw new Error('PNG が作れなかった（大きすぎる可能性）');
+        const u8 = new Uint8Array(await b2.arrayBuffer());
+        bytes += u8.length; shots.push({ name:'nuri_' + pad(i) + '.png', data:u8 });
+        if(bytes > 1.5e9) throw new Error('PNG連番が大きすぎます — 周回か大きさを下げてください');
+      }
+      if((i % 2) === 0 || i === plan.total-1)
+        el('mvSize').innerHTML = `書き出し中 <b>${i+1} / ${plan.total}</b> コマ　${W} × ${H}<br>「やめる」で止められます`;
+      await mvIdle();
+    }
+    const shot = i;
+    if(fmt === 'mp4'){
+      await enc.flush();
+      if(encErr) throw encErr;
+      muxer.finalize(); enc.close();
+      if(shot > 1){
+        const blob = new Blob([target.buffer], { type:'video/mp4' });
+        dl(blob, 'nuri_' + Date.now() + '.mp4');
+        msg = `mp4 — ${W} × ${H}・${shot}コマ・${(shot/plan.fps).toFixed(1)}秒`
+            + (MV.stop ? '（途中で止めた）' : '・継ぎ目なしループ');
+      }
+    }else if(shots.length){
+      const blob = mvZip(shots);
+      dl(blob, 'nuri_seq_' + Date.now() + '.zip');
+      msg = (why ? '⚠️ mp4 にできず PNG連番にしました — ' + why + '／' : '')
+          + `PNG連番 — ${W} × ${H}・${shots.length}枚（${plan.fps}fps で束ねてください）`;
+    }
+    if(shot <= 1) msg = '止めました（1コマも出していません）';
+  }catch(err){
+    msg = '🔴 ' + (err && err.message || err);
+  }finally{
+    FLOWPH = bPh; MV.on = false; MV.stop = false;
+    if(btn) btn.textContent = '動画を出す';
+    kick(); mvInfo(); stat(msg);
+  }
+}
+el('b_mv').onclick = mvRun;
+mvInfo();   /* ⭐ 最初から出しておく */
+/* ══ ZIP（圧縮なし＝store）。PNG はもう圧縮済みなので縮まない ══ */
+let MV_CRCT = null;
+function mvCrc32(u8){
+  if(!MV_CRCT){ MV_CRCT = new Uint32Array(256);
+    for(let n = 0; n < 256; n++){ let c = n;
+      for(let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      MV_CRCT[n] = c >>> 0; } }
+  let c = 0xFFFFFFFF;
+  for(let i = 0; i < u8.length; i++) c = MV_CRCT[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function mvZip(files){
+  const enc2 = new TextEncoder(), parts = [], dirs = [];
+  let off = 0;
+  for(const f of files){
+    const name = enc2.encode(f.name), crc = mvCrc32(f.data), sz = f.data.length;
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0, true);
+    h.setUint16(8, 0, true); h.setUint16(10, 0, true); h.setUint16(12, 0, true);
+    h.setUint32(14, crc, true); h.setUint32(18, sz, true); h.setUint32(22, sz, true);
+    h.setUint16(26, name.length, true); h.setUint16(28, 0, true);
+    parts.push(new Uint8Array(h.buffer), name, f.data);
+    const d = new DataView(new ArrayBuffer(46));
+    d.setUint32(0, 0x02014b50, true); d.setUint16(4, 20, true); d.setUint16(6, 20, true);
+    d.setUint16(8, 0, true); d.setUint16(10, 0, true); d.setUint16(12, 0, true); d.setUint16(14, 0, true);
+    d.setUint32(16, crc, true); d.setUint32(20, sz, true); d.setUint32(24, sz, true);
+    d.setUint16(28, name.length, true); d.setUint16(30, 0, true); d.setUint16(32, 0, true);
+    d.setUint16(34, 0, true); d.setUint16(36, 0, true); d.setUint32(38, 0, true); d.setUint32(42, off, true);
+    dirs.push(new Uint8Array(d.buffer), name);
+    off += 30 + name.length + sz;
+  }
+  let dsz = 0; for(const d of dirs) dsz += d.length;
+  const e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true);
+  e.setUint32(12, dsz, true); e.setUint32(16, off, true);
+  return new Blob([...parts, ...dirs, new Uint8Array(e.buffer)], { type:'application/zip' });
+}
+
 el('b_save').onclick = () => {
   const o = { v:3, tool:'nuri', P:{ ...P }, FW, FH, sel, LAY:packLay() };
   const bl = new Blob([JSON.stringify(o)], { type:'application/json' });
