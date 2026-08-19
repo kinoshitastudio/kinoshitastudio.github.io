@@ -1379,9 +1379,16 @@ function toLocal(p){
            y:(p.y - (group ? group.position.y : 0)) / s,
            z:p.z };
 }
+/* ⭐ 線が実際に居る世界の奥行きで面を作る（群の中の z は 世界では z×大きさ）。
+   ⚠️ 一度これを戻したが、実測でこちらが正しかった＝全条件で ずれ 0.0px。
+      大きさ180・60、20本重ねた後、移動ありでも カーソルの真下に来る。 */
+function planeZ(localZ){
+  const s = (group && group.scale.z) || 1;
+  return localZ * s + (group ? group.position.z : 0);
+}
 function strokeStart(cx, cy){
   layerZ = strokes.length * P.layer * 0.6;
-  const p = toLocal(toPlane(cx, cy, layerZ));
+  const p = toLocal(toPlane(cx, cy, planeZ(layerZ)));
   if(!p) return;
   cur = { pts:[{ x:p.x, y:p.y, z:0, w:1 }], mesh:null, z:layerZ };
   lastT = performance.now(); lastP = p;
@@ -1389,16 +1396,22 @@ function strokeStart(cx, cy){
 
 function strokeMove(cx, cy){
   if(!cur) return;
-  const p = toLocal(toPlane(cx, cy, layerZ));
+  const p = toLocal(toPlane(cx, cy, planeZ(layerZ)));
   if(!p) return;
   const prev = cur.pts[cur.pts.length - 1];
   const d = Math.hypot(p.x - prev.x, p.y - prev.y);
-  if(d < 3.5) return;
+  /* 🔴🔴 「スムーズに描けない」の正体。
+     点を拾う間隔（3.5）は【群の中の長さ】。大きさを 180 にすると
+     画面では 6.3 相当になり、点が粗く拾われる＝線がカクつく・遅れて見える。
+     逆に小さくすると細かく拾いすぎて重くなる。
+     ⭐ 大きさで割る＝【画面での間隔】を一定に保つ。手ざわりが大きさで変わらない。 */
+  const gs = (group && group.scale.x) || 1;
+  if(d < 3.5 / gs) return;
 
   // 速度 → 太さ（速いほど細い＝筆致）
   const now = performance.now();
   const dt = Math.max(now - lastT, 1);
-  const speed = d / dt;
+  const speed = d * gs / dt;          /* ⚠️ 速さも画面基準に直す（太さが大きさで変わらない） */
   const w = THREE.MathUtils.clamp(1.35 - speed * 0.42, 0.28, 1.35);
   lastT = now; lastP = p;
 
@@ -2321,7 +2334,14 @@ postScene.add(new THREE.Mesh(
            ⭐ 色の濃さ 0 で、いままでと完全に同じ絵に戻る。 */
         if(uGridOn > 0.5 && uGridSat > 0.001 && gHit){
           float gb = uGridInv > 0.5 ? (1.0 - gBand) : gBand;   /* 反転＝帯の向きを裏返す */
-          vec3 gc = hsv2rgb(vec3(fract(uGridHue + gb * uGridSpan), uGridCsat, uGridVal));
+          /* 🔴🔴 黒・白・灰を選ぶと【色相が無い】ので、色ずらしも色幅も効かなくなる。
+             （実際そうなった。ピッカーが黒＝彩度0・明度0 で、何を回しても黒のまま）
+             ⭐ 色味を持たない色を選んだときだけ、彩度と明るさを使える値に置き換える。
+                ＝つまみが必ず効く。色味のある色を選んだときは、選んだとおりのまま。 */
+          float hasC = step(0.06, uGridCsat) * step(0.06, uGridVal);
+          float csat = mix(0.85, uGridCsat, hasC);
+          float cval = mix(0.85, uGridVal,  hasC);
+          vec3 gc = hsv2rgb(vec3(fract(uGridHue + gb * uGridSpan), csat, cval));
           fg = mix(fg, gc, uGridSat);
         }
 
