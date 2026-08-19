@@ -44,11 +44,14 @@
   <button class="btn" id="b_print">刷る</button>
   <button class="btn" id="b_form">粒：素材</button>
   <button class="btn" id="b_bg">地：なし</button>
+  <button class="btn" id="b_masu">顔をマス目に</button>
+  <button class="btn" id="b_edge">輪郭に流す</button>
   <button class="btn on" id="b_eye">目</button>
   <button class="btn on" id="b_grain">粒</button>
   <button class="btn" id="b_hold">粒をとめる</button>
   <button class="btn" id="b_mirror">鏡</button>
   <button class="btn" id="b_shot">写真</button>
+  <button class="btn" id="b_rec">動画</button>
 </div>
 
 <div id="gate">
@@ -80,7 +83,7 @@ const cv = el('cv'), g = cv.getContext('2d');
 const stat = m => { el('stat').textContent = m; };
 
 /* ── 触れるもの ── */
-const P = { eye:1, grain:1, hold:0, mirror:1, print:0, form:0, bg:0 };
+const P = { eye:1, grain:1, hold:0, mirror:1, print:0, form:0, bg:0, masu:0, edge:0 };
 /* ⭐ 粒の形・地のかたち＝押すたびに送る（道具から持ってきた語彙をそのまま使う） */
 const FORMS = ['素材','錐','玉'], BGS = ['なし','縞','点','ひび'];
 const toggle = (id, key, label) => {
@@ -96,6 +99,7 @@ const cycle = (id, key, list) => {
   put();
 };
 cycle('b_form','form',FORMS); cycle('b_bg','bg',BGS);
+toggle('b_masu','masu'); toggle('b_edge','edge');
 toggle('b_hold','hold', v => v ? '粒をうごかす' : '粒をとめる');
 toggle('b_mirror','mirror');
 el('b_mirror').classList.toggle('on', !!P.mirror);
@@ -130,7 +134,7 @@ function innerRadius(img){
 }
 
 /* ⭐ 中を測れるようにする（回帰テストから読む。module はスコープが閉じているので窓を1つ開ける） */
-window.MEN = { IMG, INNER, P };
+window.MEN = { IMG, INNER, P };   /* REC はあとで足す（下で作るので） */
 
 /* ── カメラ ── */
 let video = null, started = false, faceMarker = null;
@@ -408,6 +412,93 @@ function drawPrint(t){
   drawBg(t);                     /* ⭐ 地は粒の上から＝暗い所だけに乗る */
 }
 
+/* ══⭐⭐ 顔をマス目に（MASU から・2026-08-19）
+   ⭐ MASU の芯＝【マス目が先。一マスずつ中身を選ぶ】。
+      だから濃さで大きさを変えない＝マスいっぱいに敷き詰める。明るさは【どの素材か】に効かせる。
+   ⚠️ 顔の中だけ＝顔が版面になる。 */
+const FACE_OVAL = [10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,
+                   148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
+function facePath(){
+  const pts = FACE_OVAL.map(i => toScreen(LMK[i]));
+  g.beginPath();
+  pts.forEach((q, i) => i ? g.lineTo(q.x, q.y) : g.moveTo(q.x, q.y));
+  g.closePath();
+  return pts;
+}
+function drawMasu(t){
+  if(!faceOn || !LMK || !SDATA) return;
+  const d = SDATA.data, sw = SMALL.width, sh = SMALL.height;
+  g.save();
+  const pts = facePath(); g.clip();                 /* ⭐ 顔の形に切る＝顔が版面 */
+  let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9;
+  for(const q of pts){ if(q.x<minx)minx=q.x; if(q.x>maxx)maxx=q.x; if(q.y<miny)miny=q.y; if(q.y>maxy)maxy=q.y; }
+  const cell = Math.max(10, (maxx-minx)/11);        /* 顔の幅を11マスで割る */
+  g.imageSmoothingEnabled = false;
+  for(let y = miny; y < maxy; y += cell){
+    for(let x = minx; x < maxx; x += cell){
+      const u = (x + cell/2 - cover.ox)/(video.videoWidth*cover.s);
+      const v = (y + cell/2 - cover.oy)/(video.videoHeight*cover.s);
+      if(u < 0 || v < 0 || u >= 1 || v >= 1) continue;
+      const si = ((Math.min(sh-1, v*sh|0))*sw + (Math.min(sw-1, u*sw|0)))*4;
+      const lum = (d[si]*0.30 + d[si+1]*0.59 + d[si+2]*0.11)/255;
+      const col = grad(u, v, t*0.5);
+      /* ⭐ 明るさで【中身を選ぶ】＝暗いマスは空ける（MASU の消しゴム）、明るいほど素材が乗る */
+      if(lum < 0.22) continue;
+      g.save(); g.translate(x + cell/2, y + cell/2);
+      g.rotate(Math.floor(lum*4) * Math.PI/2);      /* 明るさで向きが変わる＝並びが揺れる */
+      if(IMG.grain){
+        g.drawImage(IMG.grain, -cell/2, -cell/2, cell, cell);
+        g.globalCompositeOperation = 'source-atop';
+        g.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+        g.fillRect(-cell/2, -cell/2, cell, cell);
+      }
+      g.restore();
+    }
+  }
+  g.restore();
+}
+
+/* ══⭐⭐ 輪郭に沿って流す（SUDARE / HIDA から・2026-08-19）
+   ⭐ 輪郭の点列を一定の間隔で歩いて、そこへ素材を並べる。位相で流す＝簾が回る。
+   ⚠️ 顔が動いても点列は毎フレーム取り直す＝輪郭に貼り付いたまま流れる。 */
+function drawEdge(t){
+  if(!faceOn || !LMK) return;
+  const pts = FACE_OVAL.map(i => toScreen(LMK[i]));
+  /* 周の長さを測って、等間隔に置く */
+  const seg = [];
+  let total = 0;
+  for(let i = 0; i < pts.length; i++){
+    const a = pts[i], b2 = pts[(i+1)%pts.length];
+    const len = Math.hypot(b2.x-a.x, b2.y-a.y);
+    seg.push({ a, b:b2, len }); total += len;
+  }
+  const fw = Math.max(...pts.map(q=>q.x)) - Math.min(...pts.map(q=>q.x));
+  const sz = Math.max(8, fw*0.11);
+  const n = Math.max(12, Math.round(total / (sz*0.72)));
+  g.save();
+  g.imageSmoothingEnabled = false;
+  for(let k = 0; k < n; k++){
+    let dist = ((k/n + spin*0.12) % 1) * total;     /* ⭐ 位相で流す */
+    let i = 0;
+    while(i < seg.length && dist > seg[i].len){ dist -= seg[i].len; i++; }
+    if(i >= seg.length) i = seg.length-1;
+    const sgm = seg[i], f = sgm.len ? dist/sgm.len : 0;
+    const x = sgm.a.x + (sgm.b.x-sgm.a.x)*f, y = sgm.a.y + (sgm.b.y-sgm.a.y)*f;
+    const ang = Math.atan2(sgm.b.y-sgm.a.y, sgm.b.x-sgm.a.x);
+    const col = grad(k/n, 0.5, t*0.8);
+    const s2 = sz * (0.75 + 0.45*Math.sin(spin*2 + k*0.7) + jaw*0.5);
+    g.save(); g.translate(x, y); g.rotate(ang);
+    if(IMG.eye){
+      g.drawImage(IMG.eye, -s2/2, -s2/2, s2, s2);
+      g.globalCompositeOperation = 'source-atop';
+      g.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+      g.fillRect(-s2/2, -s2/2, s2, s2);
+    }
+    g.restore();
+  }
+  g.restore();
+}
+
 /* ── まわす ── */
 let last = 0;
 function frame(t){
@@ -445,24 +536,138 @@ function frame(t){
   if(faceOn && LMK){
     if(!P.hold) spin += dt * (0.5 + jaw*2.2);
     burst += ((jaw > 0.5 ? 1 : 0) - burst) * 0.12;
+    if(P.masu) drawMasu(t/1000);
     if(P.grain) drawGrain();
+    if(P.edge) drawEdge(t/1000);
     if(P.eye){ drawEye(EYE.R); drawEye(EYE.L); }
     stat(`顔 <b>あり</b>　口 ${(jaw*100)|0}`.replace(/<[^>]+>/g,''));
   }else{
-    stat('顔を写してください');
+    stat(REC.on ? el('stat').textContent : '顔を写してください');
   }
+  if(REC.on) recFrame();          /* ⭐ 画面が出来上がってから1コマ撮る */
 }
 requestAnimationFrame(frame);
 
+/* ══⭐⭐ 動画で出す（2026-08-19）
+   ⚠️ MediaRecorder は使わない（コマ落ち・webm固定・大きさが選べない）。
+   ⭐ 画面をそのまま【1コマずつ VideoEncoder へ渡して mp4 に焼く】。
+      ＝カメラの実時間を撮るので、TSUBU / NURI の「位相をコマ番号で刻む」とは別の道。
+   ⚠️ 器を取りに行けない環境では、理由を言って PNG連番（zip）へ回す。 */
+const REC = { on:false, enc:null, muxer:null, target:null, n:0, t0:0, shots:[], fmt:'mp4', err:null };
+async function loadMuxer(){
+  if(window.Mp4Muxer) return true;
+  try{ await new Promise((res, rej) => { const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.1/build/mp4-muxer.min.js';
+    sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); });
+    return !!window.Mp4Muxer; }catch(_){ return false; }
+}
+async function recStart(){
+  const W = cv.width - (cv.width % 2), H = cv.height - (cv.height % 2);
+  REC.fmt = 'mp4'; REC.err = null; REC.shots = []; REC.n = 0; REC.W = W; REC.H = H;
+  let cfg = null;
+  const have = (typeof VideoEncoder !== 'undefined') ? await loadMuxer() : false;
+  if(have){
+    const bitrate = Math.min(60e6, Math.round(W*H*30*0.16));
+    for(const codec of ['avc1.640034','avc1.4d0034','avc1.42003e']){
+      try{ const sup = await VideoEncoder.isConfigSupported({ codec, width:W, height:H, bitrate, framerate:30 });
+        if(sup && sup.supported){ cfg = { codec, width:W, height:H, bitrate, framerate:30 }; break; } }catch(_){}
+    }
+  }
+  if(cfg){
+    REC.target = new Mp4Muxer.ArrayBufferTarget();
+    REC.muxer = new Mp4Muxer.Muxer({ target:REC.target,
+      video:{ codec:'avc', width:W, height:H, frameRate:30 }, fastStart:'in-memory' });
+    REC.enc = new VideoEncoder({ output:(c,m) => { try{ REC.muxer.addVideoChunk(c,m); }catch(e){ REC.err = e; } },
+                                 error:e => { REC.err = e; } });
+    REC.enc.configure(cfg);
+  }else{
+    REC.fmt = 'png';
+    stat((typeof VideoEncoder === 'undefined') ? 'このブラウザは mp4 を作れない → PNG連番で撮ります'
+                                              : 'mp4 の器を用意できない → PNG連番で撮ります');
+  }
+  REC.on = true; REC.t0 = performance.now();
+  el('b_rec').textContent = '止める'; el('b_rec').classList.add('on');
+}
+async function recFrame(){
+  if(!REC.on) return;
+  if(REC.err){ await recStop(); return; }
+  const ts = Math.round((performance.now() - REC.t0) * 1000);
+  if(REC.fmt === 'mp4'){
+    try{
+      const vf = new VideoFrame(cv, { timestamp:ts, duration:33333 });
+      REC.enc.encode(vf, { keyFrame:(REC.n % 60) === 0 });
+      vf.close();
+    }catch(e){ REC.err = e; }
+  }else if((REC.n % 2) === 0 && REC.shots.length < 300){
+    const b = await new Promise(r => cv.toBlob(r, 'image/png'));
+    if(b) REC.shots.push({ name:'men_'+String(REC.shots.length).padStart(4,'0')+'.png',
+                           data:new Uint8Array(await b.arrayBuffer()) });
+  }
+  REC.n++;
+  if((REC.n % 15) === 0) stat(`撮っています ${((performance.now()-REC.t0)/1000).toFixed(1)}秒　もう一度押すと止まる`);
+}
+async function recStop(){
+  REC.on = false;
+  el('b_rec').textContent = '動画'; el('b_rec').classList.remove('on');
+  try{
+    if(REC.fmt === 'mp4' && REC.enc){
+      await REC.enc.flush(); REC.muxer.finalize(); REC.enc.close();
+      const blob = new Blob([REC.target.buffer], { type:'video/mp4' });
+      dl(blob, 'men_' + Date.now() + '.mp4');
+      stat(`mp4 を出した — ${REC.W} × ${REC.H}・${REC.n}コマ`);
+    }else if(REC.shots.length){
+      dl(zip(REC.shots), 'men_seq_' + Date.now() + '.zip');
+      stat(`PNG連番を出した — ${REC.shots.length}枚（15fps で束ねてください）`);
+    }else{
+      stat('1コマも撮れていません');
+    }
+  }catch(e){ stat('🔴 ' + (e && e.message || e)); }
+  REC.enc = null; REC.muxer = null; REC.shots = [];
+}
+el('b_rec').onclick = () => { REC.on ? recStop() : recStart(); };
+window.MEN.REC = REC;   /* ⭐ 回帰テストから撮れているか読む */
+
+function dl(b, name){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(b); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 8000);
+}
+/* ZIP（圧縮なし＝store）。PNG はもう圧縮済みなので縮まない */
+let CRCT = null;
+function crc32(u8){
+  if(!CRCT){ CRCT = new Uint32Array(256);
+    for(let n = 0; n < 256; n++){ let c = n;
+      for(let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); CRCT[n] = c >>> 0; } }
+  let c = 0xFFFFFFFF;
+  for(let i = 0; i < u8.length; i++) c = CRCT[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function zip(files){
+  const enc = new TextEncoder(), parts = [], dirs = []; let off = 0;
+  for(const f of files){
+    const name = enc.encode(f.name), crc = crc32(f.data), sz = f.data.length;
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0,0x04034b50,true); h.setUint16(4,20,true);
+    h.setUint32(14,crc,true); h.setUint32(18,sz,true); h.setUint32(22,sz,true);
+    h.setUint16(26,name.length,true);
+    parts.push(new Uint8Array(h.buffer), name, f.data);
+    const d = new DataView(new ArrayBuffer(46));
+    d.setUint32(0,0x02014b50,true); d.setUint16(4,20,true); d.setUint16(6,20,true);
+    d.setUint32(16,crc,true); d.setUint32(20,sz,true); d.setUint32(24,sz,true);
+    d.setUint16(28,name.length,true); d.setUint32(42,off,true);
+    dirs.push(new Uint8Array(d.buffer), name);
+    off += 30 + name.length + sz;
+  }
+  let dsz = 0; for(const d of dirs) dsz += d.length;
+  const e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0,0x06054b50,true); e.setUint16(8,files.length,true); e.setUint16(10,files.length,true);
+  e.setUint32(12,dsz,true); e.setUint32(16,off,true);
+  return new Blob([...parts, ...dirs, new Uint8Array(e.buffer)], { type:'application/zip' });
+}
+
 /* ── 写真 ── */
 el('b_shot').onclick = () => {
-  cv.toBlob(b => {
-    if(!b) return;
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(b); a.download = 'men_' + Date.now() + '.png';
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 8000);
-    stat('写真を出した');
-  }, 'image/png');
+  cv.toBlob(b => { if(!b) return; dl(b, 'men_' + Date.now() + '.png'); stat('写真を出した'); }, 'image/png');
 };
 </script>
