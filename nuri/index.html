@@ -312,6 +312,35 @@
 
   <div id="meter"></div>
 
+  <!-- ══⭐⭐ できること（2026-08-19 木下「何ができて何ができないのかがまだこのツールはわからない」）
+       ⚠️ 既定は閉じておく＝ふだんの画面をうるさくしない。 -->
+  <div class="grp">
+    <button class="btn" id="b_can">? この道具でできること</button>
+    <div id="canBox" style="display:none;font-size:11.5px;line-height:1.75;color:var(--fg);margin-top:8px">
+      <b>芯</b>：筆は画素に色を塗らない。<b>濃さの場</b>と<b>色の場</b>に溜めるだけで、粒に刷るのは最後。<br>
+      だから <b>あとから全部変えられる</b>（粒の形も、色も、太さも）。
+      <div style="margin-top:8px"><b>できること</b></div>
+      ・<b>筆</b>＝塗る／消す／色だけ（形は変えず色を塗り替える）／版を動かす<br>
+      ・<b>色</b>＝1枚の中に<b>何色でも載る</b>（塗るたびに変えていい）<br>
+      ・<b>版</b>＝何枚でも重ねる。描く版と字の版。版ごとに動かす・隠す<br>
+      　└ <b>この版を今の色にする</b>＝まるごと色を変える<br>
+      　└ <b>この版を今の筆にする</b>＝引いた線を今の太さで<b>引き直す</b><br>
+      ・<b>粒（塗ったところ）</b>＝玉／平ら／泡。間隔・すきま・千鳥・網の角度・つや<br>
+      ・<b>地（塗っていない所）</b>＝泡／ひび／点／縞。<b>向きは粒と別</b><br>
+      ・<b>型</b>＝1押しでその見えに（塗った絵は消えない）<br>
+      ・<b>流す</b>＝網が流れる。<b>動画</b>＝mp4／PNG連番・1周で継ぎ目なし<br>
+      ・<b>出す</b>＝PNG・版面（1:1/4:5/9:16/16:9）・長辺 4096px まで<br>
+      ・<b>戻す</b>＝⌘Z（12手）・まっさら・控える／控えを開く
+      <div style="margin-top:8px"><b>できないこと</b></div>
+      ・粒の大きさを<b>版ごと</b>に変える（全部の版が同じ格子に乗るのが芯）<br>
+      ・<b>地を動かす</b>（泡は周期を持たないのでループが閉じない）<br>
+      ・控えを持つ前に描いた版の筆を変える（新しく引いた線から効く）
+      <div style="margin-top:8px"><b>軽さ</b></div>
+      ・引いている間・つまみを動かしている間は<b>粗く刷る</b>（約23ms）。<br>
+      　手を離した瞬間に<b>本番で刷り直す</b>＝決めるときの絵は本物
+    </div>
+  </div>
+
   <div class="grp">
     <label class="h">出す</label>
     <!-- ⭐ 2026-08-17 木下「png書き出し時にサイズは調整できるように」──
@@ -821,7 +850,14 @@ function bubbles(W, H, f, shade, ox, oy){
    ⭐ つまみを動かしている間（DRAFT）だけ前回の泡を使い回す。
    ⚠️ 手を離したら必ず作り直す＝【表示だけ古い】が残るのは動かしている最中だけ。
    ⚠️ ox,oy は破壊的に足されるので、控えは【足す前】を持ち、使うときに写して足す。 */
-let BUBSAVE = null;
+let BUBSAVE = null, BLURHOLD = null;
+/* ⭐ にじみ（場のぼかし）も、粗く刷っている間だけ使い回す（2026-08-19 実測 毎回16ms）。
+   ⚠️ 引いている間は「いま塗った所のにじみ」が一瞬古い。手を離せば必ず作り直す。 */
+function blurredFor(){
+  if(DRAFT && BLURHOLD) return BLURHOLD;
+  BLURHOLD = blurred();
+  return BLURHOLD;
+}
 function bubblesFor(W, H, f, shade, ox, oy){
   const shift = out => (ox || oy)
     ? out.map(b => ({ x:b.x+ox, y:b.y+oy, r:b.r, t:b.t, i:b.i })) : out;
@@ -904,7 +940,7 @@ function render(ctx, W, H, cam){
   ctx.beginPath(); ctx.rect(ox, oy, fw, fh); ctx.clip();
   ctx.fillStyle = P.paper; ctx.fillRect(ox, oy, fw, fh);
 
-  const f = blurred();
+  const f = blurredFor();
   const d = Math.max(3, P.pitch * (fw / size().W));
   const th = P.ang * Math.PI/180, co = Math.cos(th), si = Math.sin(th);
   const asp = P.asp;                       /* 縦横比＝格子も粒も一緒に伸ばす */
@@ -1113,7 +1149,7 @@ function kickSoon(ms){ clearTimeout(settleT); settleT = setTimeout(() => kick(),
    ⚠️ 出す絵（PNG・動画）は【本番の道】しか通らない＝1画素も変わらない。 */
 let DRAFT = 0, DCV = null, DG = null;
 function draftOn(){ DRAFT = 1; }
-function draftOff(){ if(!DRAFT) return; DRAFT = 0; BUBSAVE = null; kick(); }
+function draftOff(){ if(!DRAFT) return; DRAFT = 0; BUBSAVE = null; BLURHOLD = null; kick(); }
 let pend = null;
 function kick(){
   if(pend) cancelAnimationFrame(pend);
@@ -1221,11 +1257,16 @@ cv.addEventListener('pointerdown', e => {
   cv.setPointerCapture(e.pointerId);
   /* ⭐ 「版を動かす」＝筆でなく、選んでいる版そのものを引っぱる */
   if(P.tool === 'move'){
-    movingLay = true;
+    movingLay = true; draftOn();
     const p = toCv(e); mlx = p.x; mly = p.y;
     return;
   }
   drawing = true;
+  /* ⭐⭐ 2026-08-19 ── 引いている間も【粗く刷る】。
+     🔴 実測＝筆が一番重かった（1コマ 227〜322ms／型「参考の緑」）。つまみだけ軽くしても
+        描き心地は変わらない。⭐ 粗く刷れば約23ms＝指に付いてくる。
+     ⚠️ 手を離した瞬間に本番で刷り直す＝決めるときの絵は本物。 */
+  draftOn();
   const q = toField(e); pfx = q.x; pfy = q.y;
   strokeBegin(curLay()); strokePt(q.x, q.y);      /* ⭐ あとから焼き直せるように控える */
   stampAt(q.x, q.y, hex2rgb(P.ink));
@@ -1273,9 +1314,9 @@ const endDraw = e => {
   if(e) VPTS.delete(e.pointerId);
   if(VPTS.size < 2) pinD = 0;
   if(VPTS.size === 0 && panning){ panning = false; kick(); }   /* ⭐ 離した瞬間にちゃんと刷る */
-  if(movingLay && VPTS.size === 0){ movingLay = false; saveLocal(); }
+  if(movingLay && VPTS.size === 0){ movingLay = false; draftOff(); saveLocal(); }
   if(!drawing) return;
-  drawing = false; strokeEnd(); saveLocal();
+  drawing = false; strokeEnd(); draftOff(); saveLocal();
 };
 cv.addEventListener('pointerup', endDraw);
 cv.addEventListener('pointercancel', endDraw);
@@ -1574,6 +1615,10 @@ el('b_png').onclick = () => {
   }, 'image/png');
 };
 el('b_play').onclick = () => playSet(!PLAY);
+el('b_can').onclick = () => { const x = el('canBox');
+  const open = x.style.display === 'none';
+  x.style.display = open ? 'block' : 'none';
+  el('b_can').textContent = open ? '× 閉じる' : '? この道具でできること'; };
 
 /* ⭐ この版を今の筆にする＝控えから、いまの太さ・やわらかさ・のりで焼き直す */
 el('b_layBrush').onclick = () => {

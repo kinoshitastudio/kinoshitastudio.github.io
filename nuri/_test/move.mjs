@@ -26,6 +26,21 @@ await p.evaluate(() => {
 await wait(1800);
 ck(errs.length===0, '描いてもJSエラーなし', errs.slice(0,2).join(' / '));
 
+console.log('── 引いている間は粗く刷る（軽い操作性）');
+const dr = await p.evaluate(() => {
+  const rc = cv.getBoundingClientRect();
+  const ev=(t,x,y)=>cv.dispatchEvent(new PointerEvent(t,{clientX:rc.left+x,clientY:rc.top+y,bubbles:true,pointerId:1,isPrimary:true,buttons:1}));
+  ev('pointerdown',300,500);
+  const on = DRAFT;
+  ev('pointermove',340,500);
+  ev('pointerup',340,500);
+  return { 引いている間:on, 離したあと:DRAFT, 泡の控え:BUBSAVE, にじみの控え:BLURHOLD };
+});
+ck(dr.引いている間 === 1, '⭐引いている間は粗く刷っている（実測 227ms→23ms）', JSON.stringify({on:dr.引いている間}));
+ck(dr.離したあと === 0 && dr.泡の控え === null && dr.にじみの控え === null,
+   '⭐手を離したら控えを捨てて本番に戻る', JSON.stringify({off:dr.離したあと}));
+await wait(1200);
+
 console.log('── 流す（再生）');
 const ph0 = await p.evaluate(() => FLOWPH);
 await p.evaluate(() => el('b_play').click());
