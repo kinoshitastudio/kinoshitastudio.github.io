@@ -33,5 +33,8 @@ echo
 echo "── ② 流す・再生・動画（move）"
 node "$HERE/_test/move.mjs" "http://localhost:$PORT/$NAME/" || NG=1
 echo
+echo "── ③ あとから筆を変える（brush）"
+node "$HERE/_test/brush.mjs" "http://localhost:$PORT/$NAME/" || NG=1
+echo
 [ "$NG" = 0 ] && echo "✅ 全部通った" || echo "🔴 落ちたものがある（上を見る）"
 exit "$NG"
