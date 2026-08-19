@@ -89,12 +89,36 @@ toggle('b_mirror','mirror');
 el('b_mirror').classList.toggle('on', !!P.mirror);
 
 /* ── 素材（作った道具から持ってきたもの） ── */
-const IMG = {};
+const IMG = {}, INNER = {};
 function loadImg(name, src){
   return new Promise(res => { const i = new Image();
-    i.onload = () => { IMG[name] = i; res(i); };
+    i.onload = () => { IMG[name] = i; INNER[name] = innerRadius(i); res(i); };
     i.onerror = () => res(null); i.src = src; });
 }
+/* ⭐⭐ 素材の【輪の内側の半径】を測る（2026-08-19 木下「枠の中は黒く塗りつぶしてくれ」）
+   ⚠️ 数字を決め打ちにしない＝素材を差し替えても自動で合う。
+   ⭐ 中心から外へ走査して、最初に不透明になった所が内径。8方向の中央値を取る（欠けに強い）。 */
+function innerRadius(img){
+  const S = 128;
+  const c = document.createElement('canvas'); c.width = c.height = S;
+  const q = c.getContext('2d'); q.drawImage(img, 0, 0, S, S);
+  const d = q.getImageData(0, 0, S, S).data;
+  const R = S/2, hits = [];
+  for(let k = 0; k < 8; k++){
+    const a = k/8 * Math.PI*2, ca = Math.cos(a), sa = Math.sin(a);
+    for(let r = 2; r < R; r++){
+      const x = Math.round(R + ca*r), y = Math.round(R + sa*r);
+      if(x < 0 || y < 0 || x >= S || y >= S) break;
+      if(d[(y*S + x)*4 + 3] > 90){ hits.push(r/R); break; }
+    }
+  }
+  if(!hits.length) return 0;
+  hits.sort((a,b) => a-b);
+  return hits[hits.length >> 1] * 0.96;      /* 中央値。線に少し食い込ませて隙間を作らない */
+}
+
+/* ⭐ 中を測れるようにする（回帰テストから読む。module はスコープが閉じているので窓を1つ開ける） */
+window.MEN = { IMG, INNER, P };
 
 /* ── カメラ ── */
 let video = null, started = false, faceMarker = null;
@@ -163,6 +187,9 @@ function drawEye(pair){
   const im = IMG.eye; if(!im) return;
   g.save();
   g.translate(cx, cy); g.rotate(th);
+  /* ⭐ 輪の内側を黒く塗ってから素材を乗せる＝目が隠れて【面になる】（木下の注文） */
+  const ri = (INNER.eye || 0.38) * s/2;
+  if(ri > 0){ g.fillStyle = '#000'; g.beginPath(); g.arc(0, 0, ri, 0, Math.PI*2); g.fill(); }
   g.imageSmoothingEnabled = false;              /* ⚠️ 素材はドット絵＝ぼかさない */
   g.drawImage(im, -s/2, -s/2, s, s);
   g.restore();
