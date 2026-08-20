@@ -924,6 +924,10 @@ const anim = await page.evaluate(async ()=>{
   /* ── ① 山数の振れ幅を入れて位相を真ん中（PH=0.5）まで進める＝振れ切った所 ── */
   P.anFreq = 3; PH = 0.5;
   const freqMoved = count(base, await grab());
+  /* ── ①' マイナスにも振れる（符号が向き。2026-08-20 に3つとも符号つきにした） ── */
+  P.anFreq = -1; PH = 0.5;
+  const freqMinus = count(base, await grab());
+  P.anFreq = 3;
   /* ── ② 位相 0 に戻す＝ swing()=0 ＝ 振れ幅が入っていても元の絵 ── */
   PH = 0;
   const freqAtZero = count(base, await grab());
@@ -934,18 +938,27 @@ const anim = await page.evaluate(async ()=>{
   P.anFreq = 0; PH = 0.5;
   const freqOff = count(base, await grab());
 
-  /* ── 🔴🔴 木下の指摘（2026-08-20）── 1周のどこを切っても【0秒の絵より痩せない】か。
-     ⚠️ 前は上下に振っていた＝1周の 2/3 あたりで粒が 0 に落ちて「粒もないつるつるの絵」になった。
-     ⭐ 測り方＝粒の細かさを 30（0 に落ちやすい）にして振れ幅を大きく取り、
-        1周を 12 等分して【実際に GL へ渡している粒の細かさ】が 1度も 30 を下回らないこと。
-     ⚠️ 物差しは本体と同じ式から取る（画面の見た目でなく swing() を通した値そのもの）。 */
-  P.anFreq = 0; PH = 0; P.grain = 30; P.anGrain = 100;
-  const lows = [];
-  for(let i=0;i<12;i++){ PH = i/12;
-    lows.push(Math.max(0, Math.min(GRAIN_MAX, P.grain + P.anGrain * swing()))); }
-  const grainFloor = Math.min(...lows), grainPeak = Math.max(...lows);
+  /* ── 🔴🔴 木下の指摘2つ（2026-08-20）──
+     ①「粒もないつるつるの絵に化ける」＝下へ振り切って粒が 0 に落ちた
+     ②「前の動きの方がよかった」＝上へ振り切って粒が細かくなりすぎ、やはり粒が消えた
+     ⭐ どちらも【本体つまみの端で止める】ことで防ぐ。粒は 4〜200 の外へ出ない。
+     ⚠️ 物差しは本体と同じ定数・同じ式から取る（画面の見た目でなく swing() を通した値そのもの）。 */
+  P.anFreq = 0; PH = 0; P.grain = 30;
+  const sweep = amp => { P.anGrain = amp; const v = [];
+    for(let i=0;i<12;i++){ PH = i/12;
+      v.push(Math.max(GRAIN_MIN, Math.min(GRAIN_MAX, P.grain + P.anGrain * swing()))); }
+    return { lo: Math.min(...v), hi: Math.max(...v) }; };
+  const up = sweep(300), down = sweep(-300);       // わざと端を大きく超える振れ幅で試す
+  const grainFloor = Math.min(up.lo, down.lo), grainCeil = Math.max(up.hi, down.hi);
+  const grainPeak = up.hi;
 
-  /* ── 🔴 粒の細かさ 200（100 超え）で振っても粗くならないか ──
+  /* ── マイナス側（粗い方）へ振ったとき、ちゃんと絵が変わるか ── */
+  P.anGrain = 0; PH = 0; P.grain = 60;
+  const g60 = await grab();
+  P.anGrain = -40; PH = 0.5;
+  const grainMinus = count(g60, await grab());
+
+  /* ── 🔴 粒の細かさ 200（上限）で＋へ振っても粗くならないか ──
      ⚠️ 前は上限を 100 で切っていた＝位相を進めた瞬間に 200→100 に落ちて【粗くなった】。
         200 + 100×swing は常に 200 で頭打ち＝1周ぜんぶ【止めている絵と同じ】が正しい。 */
   PH = 0; P.grain = 200; P.anGrain = 0;
@@ -1001,8 +1014,8 @@ const anim = await page.evaluate(async ()=>{
   /* 後片付け（次の測定に持ち越さない） */
   P.anGrain = 40; P.anFreq = 0; P.anAsp = 0; P.grain = 0; PH = 0; P.anim = false;
   resetAll();
-  return { freqMoved, freqAtZero, freqAtOne, freqOff, grainHiClamped,
-           grainFloor, grainPeak,
+  return { freqMoved, freqMinus, freqAtZero, freqAtOne, freqOff, grainHiClamped,
+           grainFloor, grainCeil, grainPeak, grainMinus, GRAIN_MIN, GRAIN_MAX,
            aspPlus, aspMinus, aspAtZero, aspAtOne, aspOff, aspMax, aspMin,
            aspUiMax, aspUiBody, ASP_MAX,
            grainAfterGo, movingOnlyFreq, grainAfterGoAsp, movingOnlyAsp, grainAfterGoBoth0,
@@ -1018,18 +1031,25 @@ ok('🔴 1周した所（位相1）も元の絵に戻る＝継ぎ目なしルー
    anim.freqAtOne === 0, `変わった画素=${anim.freqAtOne}`);
 ok('🔴 振れ幅 0 なら位相を進めても1画素も変わらない',
    anim.freqOff === 0, `変わった画素=${anim.freqOff}`);
-ok('🔴🔴 1周のどこを切っても、いまの絵より痩せない（粒が 0 に落ちない）',
-   anim.grainFloor >= 30,
-   `1周の底=${anim.grainFloor}（いまの値=30）← 30 を下回るなら下へ振り切っている＝「粒もない絵」が出る`);
-ok('⭐ 片側にはちゃんと振れている（振れ幅ぶん増える）',
+ok('🔴🔴 下へ振り切っても粒が消えない（粒として見える最小で止まる）',
+   anim.grainFloor >= anim.GRAIN_MIN,
+   `1周の底=${anim.grainFloor}（端=${anim.GRAIN_MIN}）← 下回るなら「粒もない絵」が出る`);
+ok('🔴🔴 上へ振り切っても粒が消えない（細かすぎて見えなくなる手前で止まる）',
+   anim.grainCeil <= anim.GRAIN_MAX,
+   `1周の天井=${anim.grainCeil}（端=${anim.GRAIN_MAX}）← 超えるなら粒が画素に溶ける`);
+ok('⭐ ＋側にはちゃんと振れている（振れ幅ぶん細かくなる）',
    anim.grainPeak >= 120, `1周の頂点=${anim.grainPeak}`);
+ok('⭐ 粒の細かさは−側（粗い方）にも振れる（符号が向き）',
+   anim.grainMinus > 100, `変わった画素=${anim.grainMinus} ← 0なら符号を捨てている`);
+ok('⭐ 山数も−側に振れる（符号が向き）',
+   anim.freqMinus > 100, `変わった画素=${anim.freqMinus}`);
 ok('🔴 粒の細かさ200＋振れ幅100で振っても粗くならない（上限が実マス数200）',
    anim.grainHiClamped === 0,
    `変わった画素=${anim.grainHiClamped} ← 0でなければ上限100で切っている（200→100に落ちて粗くなる）`);
 ok('「マスの形が流れる」のつまみがある', anim.uiHasAsp);
 ok('⭐ マスの形を＋側（縦長へ）に振ると絵が変わる',
    anim.aspPlus > 100, `変わった画素=${anim.aspPlus} ← 0なら uGrainAsp に届いていない`);
-ok('⭐ マスの形は−側（横長へ）にも振れる（ここだけ符号つき）',
+ok('⭐ マスの形は−側（横長へ）にも振れる（符号が向き）',
    anim.aspMinus > 100, `変わった画素=${anim.aspMinus}`);
 ok('🔴 位相 0 では1画素も変わらない', anim.aspAtZero === 0, `変わった画素=${anim.aspAtZero}`);
 ok('🔴 1周した所も元の絵に戻る＝継ぎ目なしループ', anim.aspAtOne === 0, `変わった画素=${anim.aspAtOne}`);
