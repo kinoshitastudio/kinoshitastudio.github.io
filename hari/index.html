@@ -109,6 +109,45 @@ input[type=color]{ width:32px; height:28px; padding:0; border:.5px solid var(--l
 }
 
 /* ══════════════════════════════════════════════════════════════
+   ⭐⭐ モバイル／iPad のパネル（2026-08-20・作字 SAKUJI / 朦 OBORO と同じ作法）
+   ⭐ 高さは CSS 変数 --panelH ひとつ。盤・パネル・#theme が一緒に動く。
+   ⭐ この2ブロック（CSS と末尾の <script>）を消せば完全に元へ戻る。
+   ⚠️ 上の @media が 42dvh を直に書いているので、ここで変数に置き換える。
+   ══════════════════════════════════════════════════════════════ */
+:root{ --panelH:42dvh; --sheetGrip:22px }
+@media (max-width:760px){
+  :root{ --panelH:32dvh }                   /* 既定を下げて版面を広くする */
+  #stage{ inset:0 0 var(--panelH) 0 }
+  #panel{ height:var(--panelH) }
+  #theme{ bottom:calc(var(--panelH) + 12px) }
+
+  #sheetGrip{ position:fixed; left:0; right:0; z-index:60;
+    bottom:calc(var(--panelH) - 1px); height:var(--sheetGrip);
+    display:flex; align-items:center; justify-content:center;
+    touch-action:none; cursor:ns-resize; user-select:none; -webkit-user-select:none }
+  #sheetGrip::before{ content:""; width:44px; height:5px; border-radius:5px;
+    background:currentColor; opacity:.40 }
+  #sheetGrip.dragging::before{ opacity:.9 }
+
+  /* ⭐ 中を密着させる。⚠️ 詰めるのは隙間であって、つまみではない */
+  #panel{ padding:10px 12px 22px }
+  #panel h2,#panel .h{ margin:12px 0 6px }
+  .row{ margin-bottom:4px }
+  .seg{ gap:2px; margin:4px 0 6px }
+  .btn{ margin-top:4px }
+  .note,.hint{ margin-top:4px; line-height:1.5 }
+}
+/* ⭐ iPad（指だが画面は広い）＝一回り小さくしてスクロールを減らす */
+@media (pointer:coarse) and (min-width:700px) and (max-width:1024px){
+  :root{ --panelH:36dvh }
+  input[type=range]{ height:30px }
+  input[type=range]::-webkit-slider-thumb{ width:20px; height:20px; margin-top:-8px }
+  .seg button{ padding:8px 0; min-height:32px }
+  .btn{ padding:9px 0; min-height:34px }
+  .row{ margin-bottom:3px }
+}
+
+/* ══════════════════════════════════════════════════════════════
    見た目 ── SwiftUI（Apple）に揃える                       2026-08-04
    木下＝「いま UI が Swift UI にもなってないからその辺りも調整して」
 
@@ -2690,5 +2729,92 @@ stat(matchMedia('(pointer:coarse)').matches
     }).catch(plain);
     return undefined;
   };
+})();
+</script>
+<!-- ══════════════════════════════════════════════════════════════
+     ⭐⭐ パネルの高さを掴んで変える（2026-08-20・作字 SAKUJI と同じもの）
+     ⭐ HTML の並びは1行も触っていない（掴み手はこの JS が作って足す）。
+        この <script> と上の CSS ブロックを消せば完全に元へ戻る。
+     ⭐⭐ ツールごとにブレークポイントを書き分けない ──
+        【パネルが画面下いっぱいに固定されているか】を実行時に見て決める。
+        写し間違いが起きないし、道具ごとに 760/820px と違っても同じものが使える。
+     ══════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  'use strict';
+  const KEY = location.pathname.replace(/\W+/g,'_') + '.panelH.v1';
+  const SNAP = [26, 42, 78];
+  let grip = null;
+
+  const panel = () => document.getElementById('panel');
+  /* ⭐ 下段になっているか＝position:fixed で bottom:0、幅が画面いっぱい */
+  const isSheet = () => {
+    const p = panel(); if(!p) return false;
+    const cs = getComputedStyle(p);
+    return cs.position === 'fixed'
+        && Math.abs(parseFloat(cs.bottom) || 0) < 2
+        && p.getBoundingClientRect().width >= innerWidth - 3;
+  };
+  /* ⭐ 端で止める。⚠️ 横向き（高さ500px未満）で目一杯引くと盤が潰れる */
+  const clamp = v => Math.max(18, Math.min(innerHeight < 500 ? 62 : 86, v));
+  const setH = vh => {
+    document.documentElement.style.setProperty('--panelH', clamp(vh).toFixed(1) + 'vh');
+    try{ window.dispatchEvent(new Event('resize')); }catch(_){}
+  };
+  const curH = () => {
+    const p = panel(); if(!p) return 0;
+    return p.getBoundingClientRect().height / innerHeight * 100;
+  };
+
+  function build(){
+    if(grip) return;
+    grip = document.createElement('div');
+    grip.id = 'sheetGrip';
+    grip.title = 'ドラッグで高さを変える／タップで段を切り替える';
+    document.body.appendChild(grip);
+    let drag = null;
+    grip.addEventListener('pointerdown', e => {
+      e.preventDefault(); grip.setPointerCapture(e.pointerId);
+      grip.classList.add('dragging');
+      drag = { y:e.clientY, h:curH(), moved:false };
+    });
+    grip.addEventListener('pointermove', e => {
+      if(!drag) return;
+      const d = (drag.y - e.clientY) / innerHeight * 100;
+      if(Math.abs(d) > 1) drag.moved = true;
+      setH(drag.h + d);
+    });
+    const end = () => {
+      if(!drag) return;
+      grip.classList.remove('dragging');
+      if(!drag.moved){
+        /* ⚠️ 上限で止まっている段を指しても何も起きない＝無反応に見える。
+           実際に届く高さかで判断し、届かないなら一番小さい段へ折り返す。 */
+        const h = curH();
+        const next = SNAP.find(v => clamp(v) > h + 2);
+        setH(next === undefined ? SNAP[0] : next);
+      }
+      try{ localStorage.setItem(KEY, String(Math.round(curH()*10)/10)); }catch(_){}
+      drag = null;
+    };
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
+  }
+  function drop(){
+    if(!grip) return;
+    grip.remove(); grip = null;
+    document.documentElement.style.removeProperty('--panelH');
+  }
+  function sync(){
+    if(isSheet()){
+      build();
+      let v = null; try{ v = parseFloat(localStorage.getItem(KEY)); }catch(_){}
+      if(v > 0) setH(v);
+    }else drop();
+  }
+  addEventListener('resize', () => { if(!grip) sync(); });
+  addEventListener('orientationchange', () => setTimeout(sync, 200));
+  if(document.readyState === 'loading') addEventListener('DOMContentLoaded', sync);
+  else sync();
 })();
 </script>
