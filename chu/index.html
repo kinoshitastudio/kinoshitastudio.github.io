@@ -256,13 +256,16 @@ TYPE</textarea>
     <label class="h">鋳る字</label>
     <textarea id="t_chars">ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789</textarea>
     <div class="seg" id="setSeg">
-      <button data-v="upper">A–Z</button>
       <button data-v="alnum">A–Z 0–9</button>
       <button data-v="full">英数記号</button>
       <button data-v="kana">かな</button>
+      <button data-v="all">かな＋欧文</button>
     </div>
     <div class="note">⭐ ここに打った字が<b>そのまま文字セット</b>になる。重複は自動で1つにまとめる<br>
-      ⚠️ 打っていない字は<b>その字だけ元の書体で出る</b>（フォントに無いので）</div>
+      ⚠️ 打っていない字は<b>その字だけ元の書体で出る</b>（フォントに無いので）<br>
+      ⭐⭐ <b>かな</b>＝ひらがな・カタカナ・濁音半濁音・小書き・約物の<b>176字</b>。
+      🔴 かなは升目が粗いと穴が埋まる ── 下の<b>控え</b>の〔かな〕を押すと升目ごと合う<br>
+      ⚠️ <b>漢字は使う字だけ貼る。</b>常用漢字を全部入れると数十MBになる</div>
   </div>
 
   <!-- ══ 見本帳 ══ -->
@@ -286,6 +289,23 @@ TYPE</textarea>
   <div id="meter"></div>
 
   <hr>
+
+  <!-- ══⭐ 控え ── 押すとその姿がそのまま出る ══
+       ⭐ 説明で埋め合わせない。押した瞬間に【読める字】が出るところまで作る。
+       🔴 かなは升目が粗いと穴が埋まるので、文字セットだけでなく【升目と元の字ごと】替える。 -->
+  <div class="grp">
+    <label class="h">控え</label>
+    <div class="seg" id="preSeg">
+      <button data-v="latin">欧文</button>
+      <button data-v="kana">かな</button>
+      <button data-v="mix">かな＋欧文</button>
+      <button data-v="light">四角で軽く</button>
+    </div>
+    <div class="note">⭐ 押すと<b>升目・元の字・粒・文字セット</b>までまとめて替わる（つまみを5つ動かさなくていい）<br>
+      ⭐ <b>四角で軽く</b>＝粒を四角にして升目ぴったりに置く。点が減って<b>ファイルが1/4</b>になる
+      （かな＋欧文260字：円 1.2MB → 四角 346KB）<br>
+      ⭐ いまの状態は⌘Zで戻せる</div>
+  </div>
 
   <!-- ══⭐ 鋳る ══ -->
   <div class="grp">
@@ -360,12 +380,17 @@ const SHAPES = [
   { v:'diamond', n:'菱形',  sides:4, off:0  },
   { v:'hex',     n:'六角',  sides:6, off:30 },
 ];
+const HIRA = 'あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわゐゑをん'
+           + 'がぎぐげござじずぜぞだぢづでどばびぶべぼぱぴぷぺぽぁぃぅぇぉっゃゅょゎー';
+const KATA = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヰヱヲン'
+           + 'ガギグゲゴザジズゼゾダヂヅデドバビブベボパピプペポァィゥェォッャュョヮヴ';
+const YAKU = '、。「」・〜！？';
 const SETS = {
-  upper:'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
   alnum:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
   full :'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,:;!?-–—+=/()[]&@#*"\'',
-  kana :'あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん',
+  kana : HIRA + KATA + YAKU,
 };
+SETS.all = SETS.full + SETS.kana;
 
 let P = {
   up:12, dn:4,                                 /* 升目：ベースラインの上・下（em＝16升） */
@@ -481,7 +506,10 @@ function buildPlan(){
       if(c.i < i0) i0 = c.i; if(c.i > i1) i1 = c.i;
       if(c.j < j0) j0 = c.j; if(c.j > j1) j1 = c.j;
     }
-    const box = (i1 - i0 + 1) * (j1 - j0 + 1);
+    const w = i1 - i0 + 1, h = j1 - j0 + 1, box = w * h;
+    /* ⚠️ ダッシュ・長音・句読点は【元からベタ】なので潰れではない。
+       字の背丈（4升以上）と幅（3升以上）がある物だけを見る。 */
+    if(w < 3 || h < 4) return false;
     return box >= 9 && gl.on.length / box >= 0.92;
   });
   PLAN = { glyphs, rows, cu, solid, empty:glyphs.filter(x => !x.on.length && x.ch !== ' ') };
@@ -930,6 +958,30 @@ seg('fontSeg', 'font');
 seg('advSeg', 'adv', advSync);
 seg('gridSeg', 'grid');
 /* 文字セットの早見。⚠️ 選んだ瞬間に打ち込み欄も差し替える（押しても何も起きないのを防ぐ） */
+/* ⭐⭐ 控え ── 文字セットだけでなく【升目・元の字・粒】ごと替える。
+   🔴 「かな」を字だけ差し替えると、欧文向けの粗い升目のままで穴が埋まる＝押しても読めない。
+      控えは「読んで何か出る」まで作る（[[feedback-hikaeru-nara-hitotsu-de-hiraku]]）。
+   ⭐ 数字は実測から（em24＋和ゴ500 がかなでいちばん素直・2026-08-20）。 */
+const PRESETS = {
+  latin:{ up:12, dn:4,  font:'mono', weight:700, fs:0.95, grow:-0.10, thr:0.46,
+          shape:'circle', rad:1.42, chars:SETS.full,  family:'CHU Modular' },
+  kana :{ up:18, dn:6,  font:'zen',  weight:500, fs:0.92, grow:-0.10, thr:0.46,
+          shape:'circle', rad:1.42, chars:SETS.kana,  family:'CHU Modular Kana' },
+  mix  :{ up:18, dn:6,  font:'zen',  weight:500, fs:0.92, grow:-0.10, thr:0.46,
+          shape:'circle', rad:1.42, chars:SETS.all,   family:'CHU Modular JP' },
+  light:{ up:18, dn:6,  font:'zen',  weight:500, fs:0.92, grow:-0.10, thr:0.46,
+          shape:'square', rad:1.414, chars:SETS.all,  family:'CHU Modular JP Square' },
+};
+el('preSeg').querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+  pushHist();
+  const q = PRESETS[b.dataset.v]; if(!q) return;
+  Object.assign(P, q);
+  el('preSeg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  syncUI(); kick(); saveLocal();
+  const n = charList().length;
+  stat('控えを開いた — ' + b.textContent + '（' + n + '字）／〔試し打ちに入れる〕で下の欄に流れる');
+}));
+
 el('setSeg').querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
   pushHist(); P.chars = SETS[b.dataset.v] || P.chars;
   el('t_chars').value = P.chars; kick(); saveLocal();
