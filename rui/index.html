@@ -1,0 +1,1726 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>累 RUI — 円を升目からはみ出させて重ねる / 木下スタジオ（試作）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Bodoni+Moda:wght@700;900&family=Space+Mono:wght@400;700&family=Zen+Kaku+Gothic+New:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  /* ⚠️ 外枠（並び方・見た目）は 点 TEN / 網 AMI と同じ＝道具ごとに作りを変えない。
+     ⭐ 明るい地に暗い字。パネルもクリーム色（8本と揃えた SwiftUI の作法）。 */
+  :root{
+    --bg:#e8e4dc; --paper:#f4f2ec; --line:rgba(28,28,30,.14);
+    --fg:#1c1c1e; --fg2:rgba(28,28,30,.62); --fg3:rgba(28,28,30,.40);
+    --fill:rgba(28,28,30,.10); --fill2:rgba(28,28,30,.07);
+    --capsule:#fffdf8; --glass:rgba(246,244,238,.84); --r:10px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans","Zen Kaku Gothic New",sans-serif;
+    font-weight:400;overflow:hidden;display:flex;align-items:stretch}
+  /* ⭐ 盤＝窓。中の紙は動かさず、見る側（拡大・位置）だけを CSS の transform で動かす。
+     ⚠️ 刷る側には一切さわらない＝出る絵は 1画素も変わらない。 */
+  #stage{flex:1;position:relative;min-width:0;overflow:hidden;cursor:grab}
+  #stage.grabbing{cursor:grabbing}
+  #stage::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
+    background:radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,.5), transparent 62%)}
+  canvas#cv{position:absolute;left:0;top:0;transform-origin:0 0;
+    box-shadow:0 14px 44px rgba(28,28,30,.18);display:block;image-rendering:auto}
+  /* ⭐ 画面が広いときだけ盤の上でつまむ／掴む。
+     🔴 モバイルで none にすると【縦スクロールが止まる】ので触らない（＋−で拡大する） */
+  @media (min-width:821px){ #stage{touch-action:none} }
+
+  #zoom{position:absolute;left:14px;bottom:12px;z-index:5;display:flex;align-items:center;gap:2px;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border:.5px solid var(--line);border-radius:11px;padding:3px;
+    box-shadow:0 4px 14px rgba(28,28,30,.10)}
+  #zoom button{border:none;background:none;border-radius:8px;color:var(--fg);cursor:pointer;
+    font-family:inherit;font-size:11.5px;font-weight:500;padding:6px 9px;opacity:.75;transition:.14s}
+  #zoom button:hover{opacity:1;background:rgba(28,28,30,.09)}
+  #zoom .z{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg2);
+    min-width:52px;text-align:center;font-variant-numeric:tabular-nums;pointer-events:none}
+  #drop{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(244,242,236,.92);border:1px dashed rgba(28,28,30,.35);
+    font-size:13px;letter-spacing:.08em;color:var(--fg2);z-index:20;text-align:center;line-height:1.8}
+  body.dragging #drop{display:flex}
+  #stat{position:absolute;left:0;right:0;bottom:0;padding:8px 14px;font-size:11px;color:var(--fg3);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;pointer-events:none;text-align:center}
+
+  #panel{width:308px;flex:0 0 308px;height:100%;overflow-y:auto;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border-left:.5px solid var(--line);padding:16px 16px 80px}
+  #panel::-webkit-scrollbar{width:0}
+  h1{font-size:12px;font-weight:590;letter-spacing:.12em;color:var(--fg);margin-bottom:2px}
+  .sub{font-size:11.5px;color:var(--fg2);margin-bottom:16px;line-height:1.6}
+  .grp{margin-bottom:20px}
+  label.h{position:sticky;top:-16px;z-index:3;display:block;
+    margin:0 -16px 8px;padding:7px 16px 6px;background:var(--glass);
+    -webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border-bottom:.5px solid var(--line);
+    font-size:11px;font-weight:590;letter-spacing:.04em;color:var(--fg2)}
+  .row{display:flex;align-items:center;gap:10px;padding:2px 0;margin-bottom:2px}
+  .row span.n{flex:1;font-size:11.5px;color:var(--fg)}
+  .row output{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg2);
+    width:46px;flex:0 0 46px;text-align:right;font-variant-numeric:tabular-nums}
+  /* 🔴 touch-action:none にすると【縦スクロールが止まる】（礫で踏んだ）→ pan-y */
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;background:none;height:26px;
+    cursor:pointer;touch-action:pan-y}
+  input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--fill)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;
+    margin-top:-8px;border-radius:50%;background:var(--fg);border:none;
+    box-shadow:0 1px 3px rgba(28,28,30,.30), 0 0 0 .5px rgba(28,28,30,.05)}
+  .seg{display:flex;flex-wrap:wrap;background:var(--fill2);border-radius:9px;padding:2px;gap:2px;margin:6px 0 10px}
+  .seg button{flex:1 1 auto;min-width:0;border:none;border-radius:7px;background:none;
+    font-family:inherit;font-size:11.5px;font-weight:450;color:var(--fg);opacity:.72;
+    padding:6px 4px;cursor:pointer;transition:.16s;white-space:nowrap}
+  .seg button:hover{opacity:1;background:rgba(28,28,30,.07)}
+  .seg button.on{opacity:1;background:var(--capsule);font-weight:590;
+    box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.04)}
+  .btn{width:100%;background:var(--fill);border:none;border-radius:var(--r);color:var(--fg);
+    font-family:inherit;font-size:12px;font-weight:500;padding:11px 0;margin-top:6px;cursor:pointer;transition:.14s}
+  .btn:hover{background:rgba(28,28,30,.16)}
+  .btn:active{transform:scale(.985);opacity:.8}
+  .btn.solid{background:var(--fg);color:var(--paper);font-weight:590}
+  .btn.solid:hover{background:#000}
+  .btns2{display:flex;gap:6px}
+  .note{font-size:10.5px;line-height:1.65;color:var(--fg2);opacity:.75;margin-top:7px}
+  .note b{font-weight:590;opacity:1}
+  textarea{width:100%;background:var(--fill);border:none;border-radius:var(--r);color:var(--fg);
+    font-family:inherit;font-size:13px;padding:9px 10px;resize:vertical;min-height:52px;line-height:1.4}
+  textarea:focus{outline:none;box-shadow:0 0 0 3px rgba(28,28,30,.12)}
+  input[type=color]{width:100%;height:32px;padding:0;border:.5px solid var(--line);border-radius:var(--r);
+    background:transparent;cursor:pointer}
+  .chk{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 0;
+    font-size:11.5px;color:var(--fg);cursor:pointer;margin-bottom:5px}
+  .chk input[type=checkbox]{-webkit-appearance:none;appearance:none;flex:0 0 38px;width:38px;height:23px;
+    border-radius:23px;background:var(--fill);position:relative;transition:.2s;cursor:pointer;order:2}
+  .chk input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;
+    border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(28,28,30,.3);transition:.2s}
+  .chk input[type=checkbox]:checked{background:var(--fg)}
+  .chk input[type=checkbox]:checked::after{transform:translateX(15px)}
+  #meter,#pMeter,#gridMeter{background:var(--fill2);border:none;border-radius:var(--r);color:var(--fg2);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:10.5px;line-height:1.7;padding:9px 11px;margin:8px 0}
+  #pMeter.warn,#gridMeter.warn,#meter.warn{background:rgba(200,60,40,.10);color:#8d2b1c}
+  .hide{display:none!important}
+
+  /* ⭐ 版の一覧＝iOS のリスト。選んだ版は白いカプセルが浮く */
+  #plates{display:flex;flex-direction:column;gap:4px}
+  .lay{display:flex;align-items:center;gap:10px;background:var(--fill2);border:none;border-radius:var(--r);
+    padding:9px 10px;cursor:pointer;transition:.15s}
+  .lay:hover{background:rgba(28,28,30,.10)}
+  .lay.sel{background:var(--capsule);box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.06)}
+  .lay .eye{width:20px;height:20px;flex:0 0 20px;border:.5px solid var(--line);border-radius:6px;
+    background:transparent;font-size:0;cursor:pointer;padding:0}
+  .lay .eye.on{border-color:transparent}
+  .lay .sw{width:16px;height:16px;flex:0 0 16px;border-radius:5px;border:.5px solid rgba(28,28,30,.2)}
+  .lay .nm{flex:1;min-width:0;font-size:12px;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lay.sel .nm{color:var(--fg);font-weight:500}
+  .lay .up{width:20px;height:20px;flex:0 0 20px;border:0;background:transparent;color:var(--fg3);
+    cursor:pointer;font-size:9px;line-height:1;padding:0}
+  .lay .up:hover{color:var(--fg)}
+
+  @media (max-width:820px){
+    body{flex-direction:column;overflow:auto}
+    #stage{padding:14px 12px;min-height:50vh}
+    #panel{width:100%;flex:1 1 auto;height:auto;border-left:0;border-top:.5px solid var(--line);
+      padding:16px 14px calc(80px + env(safe-area-inset-bottom))}
+    label.h{top:-16px;margin:0 -14px 8px;padding:7px 14px 6px}
+    /* ⚠️ 実機は掴める領域を確保し直す（書かないと点にしか当たらない） */
+    input[type=range]{height:40px}
+    input[type=range]::-webkit-slider-thumb{width:24px;height:24px;margin-top:-10px}
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="drop">画像を落とす＝選んだ版の素材になる<br>控え（JSON）を落とす＝その姿に戻る</div>
+  <div id="stat"></div>
+  <!-- ⭐ 盤を見る側のつまみ。刷る側には効かない -->
+  <div id="zoom">
+    <button id="z_out">−</button>
+    <span class="z" id="z_lab">100%</span>
+    <button id="z_in">＋</button>
+    <button id="z_fit">ぴったり</button>
+    <button id="z_one">原寸</button>
+  </div>
+</div>
+
+<div id="panel">
+  <h1>RUI</h1>
+  <div class="sub">累 — 字を升目に落とし、升目より<b>大きい円</b>を置く。<br>はみ出して重なったところが絵になる。</div>
+
+  <!-- ══ 見本（型）══ ⭐ 既定値を変えても前に触った状態が勝つので、必ず「型」を置く -->
+  <div class="grp">
+    <label class="h">見本</label>
+    <div class="seg" id="preSeg"></div>
+    <div class="note">⭐ 押すと<b>全部まとめて</b>その型になる（版も入れ替わる）</div>
+  </div>
+
+  <!-- ══ 字 ══ -->
+  <div class="grp">
+    <label class="h">字</label>
+    <textarea id="t_text">orr
+on</textarea>
+    <div class="seg" id="fontSeg"></div>
+    <div class="row"><span class="n">太さ</span><output id="o_weight"></output></div>
+    <input type="range" id="r_weight" min="100" max="900" step="100">
+    <div class="row"><span class="n">字間</span><output id="o_track"></output></div>
+    <input type="range" id="r_track" min="-0.25" max="0.6" step="0.005">
+    <div class="row"><span class="n">行間</span><output id="o_lh"></output></div>
+    <input type="range" id="r_lh" min="0.6" max="2" step="0.01">
+    <div class="row"><span class="n">余白</span><output id="o_margin"></output></div>
+    <input type="range" id="r_margin" min="0" max="0.3" step="0.005">
+  </div>
+
+  <!-- ══ 升目 ══ -->
+  <div class="grp">
+    <label class="h">升目</label>
+    <div class="row"><span class="n">細かさ</span><output id="o_cols"></output></div>
+    <input type="range" id="r_cols" min="6" max="180" step="1">
+    <div class="row"><span class="n">拾い方</span><output id="o_thr"></output></div>
+    <input type="range" id="r_thr" min="0.02" max="0.95" step="0.01">
+    <!-- 🔴 日本語は画数が多く、かなの隙間が円のはみ出し（片側 0.27 升）より狭い。
+         ⭐ 升目を細かくするだけでなく【字そのものを先に細らせる】と隙間が残る。 -->
+    <div class="row"><span class="n">字を太らせる</span><output id="o_grow"></output></div>
+    <input type="range" id="r_grow" min="-0.6" max="0.6" step="0.01">
+    <div id="gridMeter"></div>
+    <div class="note">⭐ <b>拾い方</b>＝どれだけ塗られていたら升目をオンにするか<br>
+      ⭐ <b>字を太らせる</b>＝マイナスにすると升目に落とす前に字が細る。<b>日本語はここをマイナスに</b></div>
+  </div>
+
+  <!-- ══⭐ 円 ══ この道具の芯。1.0 で隣と接する／それより大きいと必ず重なる -->
+  <div class="grp">
+    <label class="h">円（升目に対する大きさ）</label>
+    <div class="row"><span class="n">大きさ</span><output id="o_rad"></output></div>
+    <input type="range" id="r_rad" min="0.5" max="3" step="0.01">
+    <div class="note">🔴 <b>1.00 で隣とちょうど接する</b>。1 より大きいところから重なりが始まる＝ここが芯</div>
+  </div>
+
+  <!-- ══⭐ 版（重ねる）══ -->
+  <div class="grp">
+    <label class="h">版（重ねる）</label>
+    <div id="plates"></div>
+    <div class="btns2">
+      <button class="btn" id="b_add">＋版</button>
+      <button class="btn" id="b_dup">複製</button>
+      <button class="btn" id="b_del">消す</button>
+    </div>
+    <div class="note">⭐ 版を押す＝<b>その版を選ぶ</b>。下のつまみは全部その版だけに効く<br>⭐ ▲▼で刷る順、□で出す／消す</div>
+  </div>
+
+  <div class="grp" id="plateBox">
+    <label class="h">選んだ版</label>
+
+    <!-- ⭐ 粒の形 ── 形が変わると【重なりの形】が変わる＝中の形の変化 -->
+    <div class="row"><span class="n">粒の形</span></div>
+    <div class="seg" id="shapeSeg"></div>
+    <div class="row"><span class="n">粒を回す</span><output id="o_p_rot"></output></div>
+    <input type="range" id="r_p_rot" min="0" max="180" step="1">
+
+    <!-- ⭐⭐ 中身＝色／縞グラデ／素材。形の作り方はどれでも同じ -->
+    <div class="row" style="margin-top:8px"><span class="n">中身</span></div>
+    <div class="seg" id="fillSeg">
+      <button data-v="color">色</button>
+      <button data-v="grad">縞グラデ</button>
+      <button data-v="mat">素材</button>
+    </div>
+
+    <div id="colorBox">
+      <input type="color" id="p_color">
+    </div>
+
+    <div id="gradBox" class="hide">
+      <div class="btns2">
+        <input type="color" id="g_c1"><input type="color" id="g_c2">
+      </div>
+      <div class="row" style="margin-top:8px"><span class="n">縞の数</span><output id="o_g_n"></output></div>
+      <input type="range" id="r_g_n" min="1" max="40" step="1">
+      <div class="row"><span class="n">向き</span><output id="o_g_ang"></output></div>
+      <input type="range" id="r_g_ang" min="0" max="180" step="1">
+      <div class="row"><span class="n">上がり方</span><output id="o_g_ramp"></output></div>
+      <input type="range" id="r_g_ramp" min="0.05" max="1" step="0.01">
+      <label class="chk" style="margin-top:6px"><span>行って戻る（簾の板）</span><input type="checkbox" id="g_sym"></label>
+      <div class="note" style="margin-top:-2px">⭐ 既定は<b>片側</b>＝端でぱたっと戻る。管が並んで見えるのはこれ<br>
+        ⭐ <b>行って戻る</b>＝色1→色2→色1（簾 SUDARE の板と同じ）</div>
+    </div>
+
+    <div id="matBox" class="hide">
+      <button class="btn" id="b_mat">画像を選ぶ</button>
+    </div>
+
+    <div id="unitBox" class="hide">
+      <div class="row" style="margin-top:8px"><span class="n">中身の単位</span></div>
+      <div class="seg" id="matSeg">
+        <button data-v="sheet">版面いっぱい</button>
+        <button data-v="circle">粒1つ</button>
+      </div>
+      <div class="note" style="margin-top:-4px">⭐⭐ ここが見え方を決める<br>
+        <b>版面いっぱい</b>＝紙に流したものを粒の形で切り抜く（窓）<br>
+        <b>粒1つ</b>＝粒ひとつが素材そのもの（枡 MASU・粒 TSUBU と同じ持ち方）</div>
+    </div>
+    <div class="row" style="margin-top:8px"><span class="n">ずれ よこ</span><output id="o_p_dx"></output></div>
+    <input type="range" id="r_p_dx" min="-1" max="1" step="0.05">
+    <div class="row"><span class="n">ずれ たて</span><output id="o_p_dy"></output></div>
+    <input type="range" id="r_p_dy" min="-1" max="1" step="0.05">
+    <div class="row"><span class="n">円の倍率</span><output id="o_p_rs"></output></div>
+    <input type="range" id="r_p_rs" min="0.15" max="1.8" step="0.01">
+    <!-- 🔴 「重なりだけ」は円が重ならないと【黙って何も出ない】。数字を常に出す -->
+    <div id="pMeter"></div>
+    <div class="row"><span class="n">濃さ</span><output id="o_p_al"></output></div>
+    <input type="range" id="r_p_al" min="0" max="1" step="0.01">
+    <div class="row"><span class="n">この版の中の重なり</span></div>
+    <div class="seg" id="innerSeg">
+      <button data-v="over">塗る</button>
+      <button data-v="xor">抜く</button>
+      <button data-v="inter">重なりだけ</button>
+    </div>
+    <div class="row"><span class="n">下の版との重ね方</span></div>
+    <div class="seg" id="blendSeg"></div>
+    <div class="note">⭐ <b>抜く</b>＝円どうしが重なったところが穴になり、下の版が見える<br>
+      ⭐ <b>重なりだけ</b>＝重なったところだけ残る（レンズ形）。⚠️ 3枚重なった芯は抜ける＝これが花形の正体</div>
+  </div>
+
+  <!-- ══ 版下（薄い輪郭円）══ -->
+  <div class="grp">
+    <label class="h">版下（薄い輪郭円）</label>
+    <div class="seg" id="guideSeg">
+      <button data-v="none">なし</button>
+      <button data-v="near">字のまわり</button>
+      <button data-v="all">全面</button>
+    </div>
+    <div class="row"><span class="n">濃さ</span><output id="o_gopa"></output></div>
+    <input type="range" id="r_gopa" min="0" max="1" step="0.01">
+    <div class="row"><span class="n">太さ</span><output id="o_gw"></output></div>
+    <input type="range" id="r_gw" min="0.3" max="4" step="0.1">
+    <label class="chk"><span>版下を字の上に出す</span><input type="checkbox" id="c_gtop"></label>
+  </div>
+
+  <!-- ══ 紙 ══ -->
+  <div class="grp">
+    <label class="h">紙</label>
+    <input type="color" id="c_paper">
+    <div class="row" style="margin-top:8px"><span class="n">版面</span></div>
+    <div class="seg" id="ratioSeg"></div>
+    <div class="row"><span class="n">長辺</span><output id="o_long"></output></div>
+    <input type="range" id="r_long" min="600" max="2400" step="100">
+    <div id="meter"></div>
+  </div>
+
+  <!-- ══⭐ 動かす ══ 動くのは【重なり】だけ。字も升目も動かさない＝この道具の芯を動かす -->
+  <div class="grp">
+    <label class="h">動かす</label>
+    <label class="chk"><span>画面で動かす</span><input type="checkbox" id="c_anim"></label>
+    <div class="row" style="margin-top:6px"><span class="n">1周の秒数</span><output id="o_cyc"></output></div>
+    <input type="range" id="r_cyc" min="0.5" max="12" step="0.1">
+    <div class="row"><span class="n">版が回る（周）</span><output id="o_spinN"></output></div>
+    <input type="range" id="r_spinN" min="0" max="4" step="1">
+    <div class="row"><span class="n">回る幅</span><output id="o_spinR"></output></div>
+    <input type="range" id="r_spinR" min="0" max="0.7" step="0.01">
+    <div class="row"><span class="n">版どうしをずらす</span><output id="o_spinS"></output></div>
+    <input type="range" id="r_spinS" min="0" max="1" step="0.01">
+    <div class="row"><span class="n">円が呼吸（周）</span><output id="o_brN"></output></div>
+    <input type="range" id="r_brN" min="0" max="4" step="1">
+    <div class="row"><span class="n">呼吸の振れ</span><output id="o_brA"></output></div>
+    <input type="range" id="r_brA" min="0" max="0.8" step="0.01">
+    <div class="note">⭐ <b>周は整数</b>だから頭と尻が数値で一致する＝継ぎ目なしループ<br>
+      ⭐⭐ 振れは<b>いまの絵を端</b>にして片側だけ動く（動かしても今の絵を見失わない）<br>
+      ⚠️ 周が全部 0 だと動画は全コマ同じ絵になる</div>
+  </div>
+
+  <!-- ══ 出す ══ -->
+  <div class="grp">
+    <label class="h">出す</label>
+    <div class="row"><span class="n">出す大きさ（長辺）</span></div>
+    <div class="seg" id="outSeg"></div>
+    <div id="outMeter"></div>
+    <button class="btn solid" id="b_png">PNG</button>
+    <button class="btn" id="b_pnga">PNG（地なし）</button>
+    <button class="btn" id="b_svg">SVG（円のままベクター）</button>
+    <div class="btns2">
+      <button class="btn" id="b_save">控えを出す</button>
+      <button class="btn" id="b_load">控えを読む</button>
+    </div>
+    <button class="btn" id="b_undo">⌘Z 戻す</button>
+    <div class="note">⭐ <b>地なし</b>＝他の道具に持ち込む用（透明PNG）<br>⭐ SVG は円がそのままベクター＝Illustrator で開ける</div>
+  </div>
+
+  <!-- ══⭐⭐ 動画 ══ 🔴 画面録画（MediaRecorder）は使わない。1コマずつ焼く -->
+  <div class="grp">
+    <label class="h">動画で出す</label>
+    <div class="row"><span class="n">形式</span></div>
+    <div class="seg" id="vFmt">
+      <button data-v="mp4">mp4</button>
+      <button data-v="png">PNG連番（zip）</button>
+    </div>
+    <div class="row"><span class="n">コマ/秒</span></div>
+    <div class="seg" id="vFps">
+      <button data-v="12">12</button><button data-v="24">24</button>
+      <button data-v="30">30</button><button data-v="60">60</button>
+    </div>
+    <div class="row"><span class="n">周</span></div>
+    <div class="seg" id="vLoop">
+      <button data-v="1">1</button><button data-v="2">2</button>
+      <button data-v="3">3</button><button data-v="4">4</button>
+    </div>
+    <div class="row"><span class="n">きれいさ</span></div>
+    <div class="seg" id="vQ">
+      <button data-v="lo">軽い</button><button data-v="mid">ふつう</button><button data-v="hi">きれい</button>
+    </div>
+    <div id="vMeter"></div>
+    <button class="btn solid" id="b_video">動画を出す</button>
+    <div class="note">⭐ 大きさは上の<b>「出す大きさ」</b>と同じ<br>
+      🔴 画面を録るのではなく<b>コマ番号で位相を刻んで1コマずつ焼く</b>＝コマ落ちしない・ぴったりループする</div>
+  </div>
+</div>
+
+<input type="file" id="fileIn" accept="application/json,.json" style="display:none">
+<input type="file" id="imgIn" accept="image/*" style="display:none">
+
+<script>
+"use strict";
+const el = id => document.getElementById(id);
+let statT = 0;
+function stat(s){ el('stat').textContent = s; clearTimeout(statT); statT = setTimeout(() => el('stat').textContent = '', 4000); }
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐ この道具が作っているもの ＝【刷る計画 buildPlan()】
+   画面・PNG・SVG・回帰テストは【全部それを見る】。
+   ⚠️ 物差しを本体と別に持つと、つまみを足したとき必ず置いていかれる（TEN で1日3回踏んだ）。
+   ══════════════════════════════════════════════════════════════ */
+
+const FONTS = [
+  { v:'anton',  n:'太ゴシック', css:'"Anton",Impact,sans-serif',                         fixedW:true },
+  { v:'bodoni', n:'セリフ',     css:'"Bodoni Moda",Georgia,"Times New Roman",serif',      fixedW:false },
+  { v:'zen',    n:'和ゴシック', css:'"Zen Kaku Gothic New",-apple-system,sans-serif',     fixedW:false },
+  { v:'mincho', n:'明朝',       css:'"Hiragino Mincho ProN","Yu Mincho",serif',           fixedW:false },
+  { v:'mono',   n:'等幅',       css:'"Space Mono",ui-monospace,Menlo,monospace',          fixedW:false },
+];
+/* ⚠️ Anton は太さが1つしか無い＝「太さ」のつまみが効かない。効かないつまみは黙って置かない */
+const BLENDS = [
+  { v:'source-over', n:'そのまま', svg:'normal' },
+  { v:'multiply',    n:'掛ける',   svg:'multiply' },
+  { v:'difference',  n:'差',       svg:'difference' },
+  { v:'exclusion',   n:'除',       svg:'exclusion' },
+  { v:'darken',      n:'暗い方',   svg:'darken' },
+  { v:'lighten',     n:'明るい方', svg:'lighten' },
+];
+const RATIOS = [
+  { v:'1:1',  n:'1:1',  w:1,  h:1  },
+  { v:'4:5',  n:'4:5',  w:4,  h:5  },
+  { v:'9:16', n:'9:16', w:9,  h:16 },
+  { v:'3:4',  n:'3:4',  w:3,  h:4  },
+  { v:'16:9', n:'16:9', w:16, h:9  },
+];
+
+let P = {
+  text:'orr\non', font:'bodoni', weight:900, track:0.02, lh:1.0, margin:0.07,
+  cols:26, thr:0.34, grow:0, rad:1.55,
+  guide:'near', gopa:0.30, gw:1.0, gtop:false,
+  paper:'#d3d3d3', ratio:'1:1', long:1400,
+  preset:0,                     /* いまどの見本の姿か（つまみを触ったら null） */
+  /* ── 動かす ── ⭐ 動くのは【重なり】だけ。字も升目も動かさない */
+  anim:false, cyc:3, spinN:0, spinR:0.25, spinS:0, brN:0, brA:0.25,
+  /* ── 出す・動画 ── */
+  outLong:'same', vFmt:'mp4', vFps:'24', vLoop:'1', vQ:'mid',
+};
+let PH = 0;                     /* 位相 0..1。⭐ 動画では時計でなくコマ番号で刻む */
+/* ⚠️ つまみを足したあと、前に保存された控え／localStorage にはその値が無い。
+   埋めずに読むとスライダーが NaN になる（＝前の状態が壊れて見える）。 */
+const DEF = { ...P };
+let PLATES = [], cur = 0, seq = 0;
+
+/* ⭐⭐ 素材（版に画像を入れる）── 2026-08-20 木下「これまでの粒も入れれるようにしよう。
+      文字の中に masu のような素材を入れれたらいい」
+   ⭐ 版は「色」でも「素材」でもいい。形（円の重なり）はそのまま、中身だけ差し替える。
+   ⭐⭐ 単位を2つ持つ ── ここが見え方を決める（同じ画像でも全然ちがう絵になる）：
+        版面いっぱい＝紙に敷いた素材を、円の形で【切り抜く窓】
+        円1つ　　　＝【粒1つが素材】そのもの（枡 MASU / 粒 TSUBU と同じ持ち方）
+   ⚠️ 画像そのものは重いので版の値と分けて持つ（戻す履歴には入れない）。 */
+const IMG = new Map();          /* 版 id → Image */
+/* ⭐ 粒の形 ── 円だけでなく多角形も置ける。
+   ⚠️ 芯（升目からはみ出して重なる）は同じ。形が変わると【重なりの形】が変わる
+      ＝レンズが菱形や星形になる＝中の形の変化。 */
+const SHAPES = [
+  { v:'circle',  n:'円' },
+  { v:'square',  n:'四角',  sides:4, off:45 },
+  { v:'diamond', n:'菱形',  sides:4, off:0 },
+  { v:'hex',     n:'六角',  sides:6, off:30 },
+  { v:'tri',     n:'三角',  sides:3, off:-90 },
+];
+function newPlate(o){
+  return Object.assign({
+    id:++seq, on:true, color:'#111111', dx:0, dy:0, rs:1, al:1,
+    inner:'over', blend:'source-over',
+    shape:'circle', rot:0,
+    /* ⭐ 中身は【色／縞グラデ／素材】の3つ。形の作り方は1行も変わらない */
+    fill:'color', mat:null, matUnit:'sheet',
+    g:{ c1:'#1b2a6b', c2:'#f4f2ec', n:6, ang:90, ramp:1, sym:false },
+  }, o || {});
+}
+function setMat(pl, url, announce){
+  const im = new Image();
+  im.onload = () => {
+    /* ⚠️ 入れたのに中身が「色」のままだと、読み込めているのに【何も変わらない】。
+       素材を入れる＝その版の中身は素材、で揃える。 */
+    IMG.set(pl.id, im); pl.mat = url; pl.fill = 'mat';
+    drawPlateList(); syncUI(); kick(); saveLocal();
+    if(announce) stat(`素材を入れた — ${im.naturalWidth}×${im.naturalHeight}`);
+  };
+  im.onerror = () => stat('🔴 画像を読めなかった');
+  im.src = url;
+}
+function clearMat(pl){ IMG.delete(pl.id); pl.mat = null; }
+/* 画像を枠いっぱいに（はみ出す側を切る）＝SVG の preserveAspectRatio="slice" と同じ意味。
+   ⚠️ 引き伸ばしにすると素材の形が歪む。canvas と SVG で違う入れ方をしない。 */
+function coverBox(im, x, y, w, h){
+  const s = Math.max(w / im.naturalWidth, h / im.naturalHeight);
+  const iw = im.naturalWidth * s, ih = im.naturalHeight * s;
+  return [x + (w - iw) / 2, y + (h - ih) / 2, iw, ih];
+}
+function drawCover(ctx, im, x, y, w, h){ ctx.drawImage(im, ...coverBox(im, x, y, w, h)); }
+function matURLof(id){ const pl = PLATES.find(p => p.id === id); return pl ? pl.mat : null; }
+
+/* ══════════════════════════════════════════════
+   ⭐⭐ 縞グラデ（粒 TSUBU / 簾 SUDARE の刷り）
+   2026-08-20 木下「中の色に Tsubu のあのグラデーションを入れられないか」
+
+   ⭐ 一段ぶん（1本の縞）の色の並びは【1つの式】。canvas も SVG も同じ数を使う。
+      片側 ＝ 色1 から 色2 へ上がって、端でぱたっと 色1 に戻る（＝管が並んで見える）
+      対称 ＝ 色1 → 色2 → 色1（簾 SUDARE の板と同じ）
+   ⭐⭐ 単位が見え方を決める（素材と同じ考え方）：
+      版面いっぱい ＝ 紙に流した縞を、粒の形で切り抜く【窓】
+      粒1つ　　　 ＝ 粒ひとつが縞そのもの＝素材（TSUBU の「1タイル＝1つの塊」）
+   ══════════════════════════════════════════════ */
+function gradStops(g){
+  /* 一段ぶん（0..1）の止め位置と色。⚠️ ここを両方から呼ぶので式が割れない */
+  const ramp = Math.min(1, Math.max(0.05, g.ramp));
+  return g.sym
+    ? [[0, g.c1], [0.5 * ramp, g.c2], [1 - 0.5 * ramp, g.c2], [1, g.c1]]
+    : [[0, g.c1], [ramp, g.c2], [0.999, g.c2], [1, g.c1]];
+}
+/* 縞の軸（中心を通り、角度どおりに端まで伸ばす） */
+function gradAxis(g, W, H){
+  const a = (g.ang || 0) * Math.PI / 180, co = Math.cos(a), si = Math.sin(a);
+  const L = Math.abs(W * co) + Math.abs(H * si);       /* この向きでの版面の差し渡し */
+  return { x1:W/2 - co*L/2, y1:H/2 - si*L/2, x2:W/2 + co*L/2, y2:H/2 + si*L/2,
+           n:Math.max(1, Math.round(g.n)) };
+}
+function gradCanvas(g, W, H){
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(W)); c.height = Math.max(1, Math.round(H));
+  const x = c.getContext('2d');
+  const ax = gradAxis(g, c.width, c.height);
+  const lg = x.createLinearGradient(ax.x1, ax.y1, ax.x2, ax.y2);
+  const st = gradStops(g);
+  for(let i = 0; i < ax.n; i++)
+    for(const [t, col] of st) lg.addColorStop(Math.min(1, (i + t) / ax.n), col);
+  x.fillStyle = lg; x.fillRect(0, 0, c.width, c.height);
+  return c;
+}
+/* ⭐⭐ 参考（円が升目からはみ出して重なる版画）を6枚並べて目で選んだ組み合わせ。
+   ⚠️ 色を1個ずつ塗っているのではない ── 版をずらして刷り、重なりが色を作っている。
+      だから芯のつまみは【版のずれ】と【円の倍率】の2つ。
+   ⭐ 並びの読み方：
+      下2枚（緑・黄）は少しずらして刷った下敷き＝黒からはみ出した分だけが縁に出る。
+      黒が本体。その上の3枚は「重なりだけ」＝黒の上に細いレンズだけが乗る。
+   🔴 「重なりだけ」は 大きさ × 円の倍率 が 1.00 を超えないと【何も出ない】（円が重ならない）。 */
+function basePlates(){
+  return [
+    newPlate({ color:'#1c5b3a', dx:0,    dy:-0.45, rs:1.00, inner:'over',  blend:'source-over' }),
+    newPlate({ color:'#e6c020', dx:0,    dy: 0.45, rs:1.00, inner:'over',  blend:'source-over' }),
+    newPlate({ color:'#141414', dx:0,    dy: 0,    rs:1.00, inner:'over',  blend:'source-over' }),
+    newPlate({ color:'#3f5ed2', dx:0.5,  dy: 0,    rs:0.86, inner:'inter', blend:'source-over' }),
+    newPlate({ color:'#fbf8f0', dx:0,    dy: 0.5,  rs:0.86, inner:'inter', blend:'source-over' }),
+    newPlate({ color:'#e5aade', dx:0,    dy: 0,    rs:0.70, inner:'inter', blend:'source-over' }),
+  ];
+}
+PLATES = basePlates();
+
+/* ── 見本（型）── ⭐ 既定値を直しても木下の画面には届かないので、型を押せる形で置く。
+   🔴🔴 2026-08-20：見本の粗さを【紙に何マス】で持っていたのが間違いだった。
+        日本語5文字のまま「粗」を押すと 1文字2マス＝ただの黒丸になり、何の型か見えない。
+   ⭐ だから見本は【1文字に何マス】(per) で持ち、いま入っている字から細かさを決め直す。
+      字を変えても見本を変えても、必ず絵になるところで止まる。
+   ⚠️ 見本は【字と書体は変えない】（木下が打ったものを消さない）。「和」だけは書体も型のうち。 */
+const PRESETS = [
+  { n:'花', per:9,  P:{ thr:0.34, grow:0,     rad:1.55, guide:'near', gopa:0.30, gtop:false, paper:'#d3d3d3' }, PL:basePlates },
+  { n:'粗', per:5,  P:{ thr:0.40, grow:0,     rad:1.85, guide:'all',  gopa:0.22, gtop:false, paper:'#e6e3dc' },
+    PL:() => [
+      newPlate({ color:'#111111', dx:0,    dy:0,    rs:1.00, inner:'over',  blend:'source-over' }),
+      newPlate({ color:'#d94f2a', dx:0.35, dy:0.35, rs:0.92, inner:'inter', blend:'source-over' }),
+      newPlate({ color:'#f2e6c8', dx:0,    dy:0,    rs:0.70, inner:'inter', blend:'source-over' }),
+    ] },
+  { n:'細', per:16, P:{ thr:0.30, grow:-0.10, rad:1.45, guide:'none', gopa:0.2,  gtop:false, paper:'#101014' },
+    PL:() => [
+      newPlate({ color:'#f4f2ec', dx:0,   dy:0,   rs:1.00, inner:'over',  blend:'source-over' }),
+      newPlate({ color:'#5fd0c8', dx:0.5, dy:0,   rs:0.86, inner:'inter', blend:'source-over' }),
+      newPlate({ color:'#d75f9a', dx:0,   dy:0.5, rs:0.86, inner:'inter', blend:'source-over' }),
+      newPlate({ color:'#101014', dx:0,   dy:0,   rs:0.72, inner:'inter', blend:'source-over' }),
+    ] },
+  { n:'刷', per:8,  P:{ thr:0.32, grow:0,     rad:1.55, guide:'near', gopa:0.35, gtop:true,  paper:'#efece3' },
+    PL:() => [
+      newPlate({ color:'#2b6fd6', dx:-0.3, dy:-0.3, rs:1.00, inner:'over', blend:'multiply' }),
+      newPlate({ color:'#e0b52a', dx:0.3,  dy:0,    rs:1.00, inner:'over', blend:'multiply' }),
+      newPlate({ color:'#d0426a', dx:0,    dy:0.3,  rs:1.00, inner:'over', blend:'multiply' }),
+    ] },
+  /* ⭐ 日本語の型。かなの隙間は円のはみ出しより狭いので【字を先に細らせて】升目を細かく取る */
+  { n:'和', per:14, P:{ thr:0.42, grow:-0.28, rad:1.30, guide:'near', gopa:0.22, gtop:false,
+                        paper:'#e8e4da', font:'zen', weight:900 },
+    PL:() => [
+      newPlate({ color:'#161616', dx:0,    dy:0,    rs:1.00, inner:'over',  blend:'source-over' }),
+      newPlate({ color:'#c8452f', dx:0.5,  dy:0,    rs:0.90, inner:'inter', blend:'source-over' }),
+      newPlate({ color:'#e8e4da', dx:0,    dy:0.5,  rs:0.90, inner:'inter', blend:'source-over' }),
+    ] },
+];
+
+/* ⭐ 見本の粗さは【1文字に何マス】。いま入っている字から紙の細かさに直す。
+   ⚠️ 漢字・かなは画数が多いのでラテンより多くのマスが要る（実測して 1.9 倍にした）。 */
+const CJK = /[　-ヿ㐀-鿿＀-￯]/;
+/* いちばん長い行が【ラテン1文字ぶん】いくつ分か。
+   ⚠️ 漢字・かなは幅も画数もラテンの倍以上。1文字を 2.4 と数える
+      （2026-08-20 実測：これ未満だと「粗」を押した日本語が塊になって何か分からなくなる）。 */
+function charUnits(){
+  const lines = (P.text || '').split('\n');
+  let wide = 1;
+  for(const L of lines){
+    let w = 0;
+    for(const ch of L) w += CJK.test(ch) ? 2.4 : 1;
+    if(w > wide) wide = w;
+  }
+  return wide;
+}
+function colsFor(per){ return Math.max(6, Math.min(180, Math.round(per * charUnits()))); }
+/* いちばん長い行の字数（＝1文字に何マス使えているかを出すため。重みをかけない実数） */
+function maxChars(){
+  return Math.max(1, ...(P.text || '').split('\n').map(L => [...L].length));
+}
+
+/* ══ 版面の大きさ ══ */
+function sizeOf(L){
+  const r = RATIOS.find(x => x.v === P.ratio) || RATIOS[0];
+  return r.w >= r.h
+    ? { W:L, H:Math.round(L * r.h / r.w) }
+    : { W:Math.round(L * r.w / r.h), H:L };
+}
+function size(){ return sizeOf(P.long); }
+/* ⭐ 出す大きさ ── 拡大ではなく【焼き直す】。升目も円も版下も全部その大きさで組み直すので、
+   絵は同じまま解像度だけ上がる（引き伸ばしのボケが出ない）。 */
+const OUTS = [
+  { v:'same', n:'版面のまま' }, { v:'1080', n:'1080' }, { v:'2048', n:'2048' },
+  { v:'3000', n:'3000' }, { v:'4096', n:'4096' },
+];
+function outSize(){
+  return P.outLong === 'same' ? size() : sizeOf(Math.max(64, +P.outLong || P.long));
+}
+
+/* ══════════════════════════════════════════════
+   ① 字 → 升目
+   ⚠️ 升目は【紙の横幅を cols で割る】だけ。縦は同じ間隔で並べ、
+      余りは上下に均等に振る（縦横で間隔が違うと円が楕円に見える）。
+   ══════════════════════════════════════════════ */
+const maskCv = document.createElement('canvas');
+const smCv   = document.createElement('canvas');
+
+function bakeMask(W, H){
+  maskCv.width = W; maskCv.height = H;
+  const c = maskCv.getContext('2d');
+  c.clearRect(0, 0, W, H);
+  const lines = (P.text || '').split('\n');
+  if(!lines.some(s => s.length)) return;
+  const f = FONTS.find(x => x.v === P.font) || FONTS[0];
+  const S = 200;                                   /* 測るときの基準の大きさ */
+  c.textBaseline = 'alphabetic';
+  c.font = `${f.fixedW ? 400 : P.weight} ${S}px ${f.css}`;
+  const track = P.track * S;
+  const widthOf = L => {
+    let w = 0;
+    for(const ch of L) w += c.measureText(ch).width + track;
+    return Math.max(0, w - track);
+  };
+  const ws = lines.map(widthOf);
+  const maxW = Math.max(...ws, 1);
+  const mTop = c.measureText(lines[0] || 'H');
+  const mBot = c.measureText(lines[lines.length-1] || 'H');
+  const asc  = mTop.actualBoundingBoxAscent  || S * 0.72;
+  const desc = mBot.actualBoundingBoxDescent || S * 0.20;
+  const step = P.lh * S;
+  const blockH = (lines.length - 1) * step + asc + desc;
+  const m = P.margin;
+  const sc = Math.min((W * (1 - 2*m)) / maxW, (H * (1 - 2*m)) / blockH);
+  const top = (H - blockH * sc) / 2;
+
+  c.save();
+  c.fillStyle = '#000';
+  c.font = `${f.fixedW ? 400 : P.weight} ${S * sc}px ${f.css}`;
+  /* ⭐ 字を太らせる／細らせる ── 升目に落とす【前】に字そのものを膨らませる／削る。
+     🔴 日本語で潰れる正体はここ。円は升目より 0.27 升ぶんはみ出すので、
+        かなの隙間（1升より狭い）は両側から埋まる。先に字を細らせれば隙間が残る。
+     ⭐ 太らせ＝輪郭を線でなぞって足す／細らせ＝同じ線で削る（幅 2k で ±k 動く）。
+     ⚠️ 削るのは【全部の字を置いたあと】。字ごとに削ると次の字の塗りで戻ってしまう。 */
+  const pitch = W / Math.max(2, Math.round(P.cols));
+  const k = (P.grow || 0) * pitch;
+  const eachGlyph = fn => lines.forEach((L, i) => {
+    let x = (W - ws[i] * sc) / 2;
+    const y = top + (asc + i * step) * sc;
+    for(const ch of L){ fn(ch, x, y); x += (c.measureText(ch).width + track * sc); }
+  });
+  eachGlyph((ch, x, y) => c.fillText(ch, x, y));
+  if(k !== 0){
+    c.lineJoin = 'round'; c.lineCap = 'round';
+    c.lineWidth = Math.abs(k) * 2;
+    c.strokeStyle = '#000';
+    if(k < 0) c.globalCompositeOperation = 'destination-out';
+    eachGlyph((ch, x, y) => c.strokeText(ch, x, y));
+    c.globalCompositeOperation = 'source-over';
+  }
+  c.restore();
+}
+
+/* ⭐ 拾い方＝紙の絵を cols×rows まで縮めて、1マスの「塗られ具合」を1画素で読む。
+   ⚠️ 1マスぶんを毎回なめると重いし、縮めるほうがブラウザの箱フィルタで正確 */
+function gridOf(W, H){
+  const cols  = Math.max(2, Math.round(P.cols));
+  const pitch = W / cols;
+  const rows  = Math.max(2, Math.round(H / pitch));
+  const gh    = rows * pitch;
+  const oy    = (H - gh) / 2;                      /* 余りは上下に均等 */
+
+  smCv.width = cols; smCv.height = rows;
+  const s = smCv.getContext('2d', { willReadFrequently:true });
+  s.clearRect(0, 0, cols, rows);
+  s.imageSmoothingEnabled = true;
+  s.imageSmoothingQuality = 'high';
+  s.drawImage(maskCv, 0, oy, W, gh, 0, 0, cols, rows);
+  const d = s.getImageData(0, 0, cols, rows).data;
+
+  const on = [];
+  let minI = 1e9, maxI = -1, minJ = 1e9, maxJ = -1;
+  const thr = P.thr * 255;
+  for(let j = 0; j < rows; j++){
+    for(let i = 0; i < cols; i++){
+      if(d[(j*cols + i)*4 + 3] >= thr){
+        on.push({ i, j });
+        if(i < minI) minI = i; if(i > maxI) maxI = i;
+        if(j < minJ) minJ = j; if(j > maxJ) maxJ = j;
+      }
+    }
+  }
+  return { cols, rows, pitch, oy, on, box: maxI < 0 ? null : { minI, maxI, minJ, maxJ } };
+}
+
+/* ══════════════════════════════════════════════
+   ② 円 → 道（文字列）
+   ⭐ 円は1個ずつ arc() で呼ばない。SVG の道の文字列を1本にして Path2D に渡す。
+      ⚠️ 1個ずつ呼ぶと数千個で目に見えて遅くなる（TEN で 50倍の差を実測している）。
+   ⭐ そして【同じ文字列】がそのまま SVG の <path d> になる＝式は1本。
+   ══════════════════════════════════════════════ */
+function circlePath(pts, r){
+  const R = +r.toFixed(3), D = +(r*2).toFixed(3);
+  const a = [];
+  for(const p of pts){
+    a.push('M', +(p.x - r).toFixed(2), +p.y.toFixed(2),
+           'a', R, R, 0, 1, 0, D, 0,
+           'a', R, R, 0, 1, 0, -D, 0, 'Z');
+  }
+  return a.join(' ');
+}
+/* ⭐ 粒の形。円は弧、それ以外は【半径 r の円に内接する多角形】。
+   ⚠️ どの形でも「外径 = 2r」で揃える＝形を変えても重なり具合の数字が同じ意味を持つ。 */
+function unitPath(pts, r, shape, rot){
+  const s = SHAPES.find(x => x.v === shape);
+  if(!s || !s.sides) return circlePath(pts, r);
+  const a = [], cs = [];
+  for(let i = 0; i < s.sides; i++){
+    const t = ((s.off + (rot || 0)) + i * 360 / s.sides) * Math.PI / 180;
+    cs.push([r * Math.cos(t), r * Math.sin(t)]);
+  }
+  for(const p of pts){
+    for(let i = 0; i < cs.length; i++)
+      a.push(i ? 'L' : 'M', +(p.x + cs[i][0]).toFixed(2), +(p.y + cs[i][1]).toFixed(2));
+    a.push('Z');
+  }
+  return a.join(' ');
+}
+
+/* ⭐⭐ 刷る計画 ── 画面も PNG も SVG もテストもここだけを見る */
+function buildPlan(W, H){
+  bakeMask(W, H);
+  const g = gridOf(W, H);
+  const half = g.pitch / 2;
+  const plates = [];
+  /* ══⭐ 動かす ══════════════════════════════════════
+     ⭐⭐ 振れは【いまの絵を端】にして片側だけ動かす（MAKU で決めた作法）。
+        位相 0 ＝ つまみで作った絵そのもの＝動かしても今の絵を見失わない。
+     ⭐ 周を整数にすると、位相 0 と 1 が数値で完全に一致する＝継ぎ目なしループ。 */
+  const TAU = Math.PI * 2;
+  const spinOn = P.spinN > 0 && P.spinR > 0;
+  const nP = Math.max(1, PLATES.filter(p => p.on).length);
+  /* 呼吸＝円の大きさ。0→1 の片側だけ（1-cos)/2 */
+  const breathe = P.brN > 0 ? 1 + P.brA * (1 - Math.cos(TAU * PH * P.brN)) / 2 : 1;
+  let cut = false;                 /* 紙から食み出しているか */
+  let k = -1;
+  for(const pl of PLATES){
+    if(!pl.on) continue;
+    k++;
+    /* 版が回る＝いまの位置を通る円をなぞる（位相0で ddx=ddy=0） */
+    let ddx = 0, ddy = 0;
+    if(spinOn){
+      const ph = TAU * (PH * P.spinN + P.spinS * k / nP);
+      const ph0 = TAU * (P.spinS * k / nP);
+      ddx = P.spinR * (Math.sin(ph) - Math.sin(ph0));
+      ddy = P.spinR * (Math.cos(ph) - Math.cos(ph0));
+    }
+    const r = half * P.rad * breathe * pl.rs;
+    const pts = g.on.map(c => ({
+      x: (c.i + 0.5 + pl.dx + ddx) * g.pitch,
+      y: g.oy + (c.j + 0.5 + pl.dy + ddy) * g.pitch
+    }));
+    /* ⭐ 中身が何であっても【形の作り方は同じ】。ここが1本の式であることが大事。 */
+    const hasMat = pl.fill === 'mat' && !!(pl.mat && IMG.get(pl.id));
+    const hasGrad = pl.fill === 'grad';
+    const q = {
+      id:pl.id, color:pl.color, blend:pl.blend, alpha:pl.al,
+      inner:pl.inner, r:+r.toFixed(3), n:pts.length,
+      shape:pl.shape || 'circle', rot:+(pl.rot || 0),
+      d:unitPath(pts, r, pl.shape || 'circle', pl.rot || 0),
+      fill:hasMat ? 'mat' : (hasGrad ? 'grad' : 'color'),
+      unit:pl.matUnit || 'sheet',
+      g:hasGrad ? { ...pl.g } : null
+    };
+    q.mat = hasMat;                                   /* 昔の呼び方も残す（控えの読み込み用） */
+    /* ⚠️ 粒ごとに中身を貼るときだけ中心が要る（毎回持つと計画が2倍に膨らむ） */
+    if((hasMat || hasGrad) && q.unit === 'circle')
+      q.pts = pts.map(p => [+p.x.toFixed(2), +p.y.toFixed(2)]);
+    /* ⭐ この版が触る範囲。「重なりだけ」の後始末を紙いっぱいでやると重い（実測 263ms → 数ms） */
+    if(pts.length){
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      for(const p of pts){
+        if(p.x < x0) x0 = p.x; if(p.x > x1) x1 = p.x;
+        if(p.y < y0) y0 = p.y; if(p.y > y1) y1 = p.y;
+      }
+      /* ⚠️ 紙からはみ出していないか（＝端が切れていないか）を先に見る。
+         ⭐ 動かすと字ごと寄っていくので、回る幅を上げると黙って端が欠ける。
+            向きは縛らず【切れていることを数字で出す】（枡・膜と同じ作法）。 */
+      if(x0 - r < 0 || y0 - r < 0 || x1 + r > W || y1 + r > H) cut = true;
+      q.box = [Math.max(0, Math.floor(x0 - r - 2)), Math.max(0, Math.floor(y0 - r - 2)),
+               Math.min(W, Math.ceil(x1 + r + 2)),  Math.min(H, Math.ceil(y1 + r + 2))];
+    }else q.box = [0, 0, 0, 0];
+    plates.push(q);
+  }
+  /* ── 版下（薄い輪郭円）── ⭐ 作為の跡。参考でも消していない ── */
+  let guide = null;
+  if(P.guide !== 'none' && P.gopa > 0){
+    let i0 = 0, i1 = g.cols - 1, j0 = 0, j1 = g.rows - 1;
+    if(P.guide === 'near'){
+      if(!g.box) { i1 = -1; }
+      else { i0 = g.box.minI - 1; i1 = g.box.maxI + 1; j0 = g.box.minJ - 1; j1 = g.box.maxJ + 1; }
+    }
+    const pts = [];
+    for(let j = j0; j <= j1; j++) for(let i = i0; i <= i1; i++)
+      pts.push({ x:(i + 0.5) * g.pitch, y:g.oy + (j + 0.5) * g.pitch });
+    const gr = half * P.rad * breathe;
+    /* ⚠️ 版下の線の太さだけは px で持っている。大きく出すときは一緒に太らせないと
+       「大きくすると線だけ細くなる」＝別の絵になる。 */
+    const usc = Math.max(W, H) / P.long;
+    guide = { d:circlePath(pts, gr), n:pts.length, w:+(P.gw * usc).toFixed(3), opa:P.gopa, top:!!P.gtop };
+  }
+  return { W, H, pitch:+g.pitch.toFixed(3), cols:g.cols, rows:g.rows,
+           cells:g.on.length, paper:P.paper, plates, guide, cut };
+}
+
+/* ══════════════════════════════════════════════
+   ③ 刷る
+   ⭐ 版は1枚ずつ透明な板に刷ってから、紙に重ねる。
+      「版の中の重なり」と「下の版との重ね方」は別のつまみ＝別の段でかける。
+   ⭐ 塗る＝nonzero（全部くっつく）／抜く＝evenodd（重なりが穴）
+      ⚠️ evenodd は canvas の fill() と SVG の fill-rule で【同じ意味】。だから式を書き分けない。
+   ══════════════════════════════════════════════ */
+const layA = document.createElement('canvas');
+const layB = document.createElement('canvas');
+const layC = document.createElement('canvas');
+
+/* ⭐ 版の「中身」だけを1枚に組む（形はまだ関係ない）。
+   ⭐⭐ 単位で組み方が変わる ── ここが見え方を決めるところ：
+      版面いっぱい ＝ 紙いっぱいに1回流す（窓から覗く）
+      粒1つ　　　 ＝ 粒の箱ごとに押す（粒ひとつが素材そのもの） */
+function fillCanvas(q, W, H){
+  layC.width = W; layC.height = H;
+  const c = layC.getContext('2d');
+  const d = q.r * 2;
+  if(q.fill === 'mat'){
+    const im = IMG.get(q.id);
+    if(!im || !im.naturalWidth) return null;
+    if(q.unit === 'circle' && q.pts){
+      for(const [x, y] of q.pts) drawCover(c, im, x - q.r, y - q.r, d, d);
+    }else drawCover(c, im, 0, 0, W, H);
+  }else if(q.fill === 'grad'){
+    if(q.unit === 'circle' && q.pts){
+      /* 同じ型を1枚焼いて全部の粒に押す（粒ごとに作り直さない） */
+      const tile = gradCanvas(q.g, d, d);
+      for(const [x, y] of q.pts) c.drawImage(tile, x - q.r, y - q.r, d, d);
+    }else c.drawImage(gradCanvas(q.g, W, H), 0, 0);
+  }else return null;
+  return layC;
+}
+
+function paintPlate(q, W, H){
+  layA.width = W; layA.height = H;
+  const a = layA.getContext('2d');
+  const path = new Path2D(q.d);
+  a.fillStyle = q.color;
+  if(q.inner === 'xor'){
+    a.fill(path, 'evenodd');
+  }else{
+    a.fill(path, 'nonzero');
+    if(q.inner === 'inter'){
+      /* ⭐ 重なりだけ残す＝全部 − 奇数回のところ。
+         ⚠️ 3枚重なった芯も奇数なので抜ける ── これが花形（レンズが輪になる）の正体。
+         🔴 引き算をそのままやると【円の縁に薄い輪郭が残る】。
+            縁の画素は全部側も奇数側も半透明（α=.5）で、destination-out は
+            α×(1−α)=.25 を残すから。重ならない設定でも幽霊が出て、
+            「何も出ないはず」が出ていた（回帰テストで 15,446 画素あった）。
+         ⭐ 直し方＝引く側を【自分の上に何度も重ねて縁を固くする】。
+            0 は 0 のまま・0 でないところは 1 に寄る ＝ ぴったり抜ける。 */
+      layB.width = W; layB.height = H;
+      const b = layB.getContext('2d');
+      b.fillStyle = q.color;
+      b.fill(path, 'evenodd');
+      /* ⚠️ 縁を固める作業は【この版が触る範囲】だけでやる。紙いっぱいだと 263ms かかった */
+      const [bx, by, bx1, by1] = q.box, bw = bx1 - bx, bh = by1 - by;
+      if(bw > 0 && bh > 0){
+        for(let k = 0; k < 3; k++) b.drawImage(layB, bx, by, bw, bh, bx, by, bw, bh); /* α → 1-(1-α)^8 */
+        a.globalCompositeOperation = 'destination-out';
+        a.drawImage(layB, bx, by, bw, bh, bx, by, bw, bh);
+        a.globalCompositeOperation = 'source-over';
+      }
+    }
+  }
+  /* ⭐ いま作った形を【型】にして、中身を差し替える。
+     ⚠️ 形の作り方は1行も変えない＝色でも縞グラデでも素材でも同じ重なりになる。
+     🔴 source-in は【キャンバス全体】に効く。粒ごとに1回ずつ呼ぶと、
+        直前に置いた粒まで消える（2026-08-20：縞グラデが1枚も出なかった原因）。
+        ⭐ 中身は先に1枚に組んでから、型で【1回だけ】抜く。 */
+  if(q.fill !== 'color'){
+    const fill = fillCanvas(q, W, H);
+    if(fill){
+      a.globalCompositeOperation = 'source-in';
+      a.drawImage(fill, 0, 0);
+      a.globalCompositeOperation = 'source-over';
+    }
+  }
+  return layA;
+}
+
+function drawGuide(ctx, g, W, H){
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = g.opa;
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = g.w;
+  ctx.stroke(new Path2D(g.d));
+  ctx.restore();
+}
+
+function render(ctx, plan, transparent){
+  const { W, H } = plan;
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.clearRect(0, 0, W, H);
+  if(!transparent){ ctx.fillStyle = plan.paper; ctx.fillRect(0, 0, W, H); }
+  ctx.restore();
+
+  if(plan.guide && !plan.guide.top) drawGuide(ctx, plan.guide, W, H);
+
+  for(const q of plan.plates){
+    const lay = paintPlate(q, W, H);
+    ctx.save();
+    ctx.globalAlpha = q.alpha;
+    ctx.globalCompositeOperation = q.blend;
+    ctx.drawImage(lay, 0, 0);
+    ctx.restore();
+  }
+
+  if(plan.guide && plan.guide.top) drawGuide(ctx, plan.guide, W, H);
+}
+
+/* ══════════════════════════════════════════════
+   ⭐ 盤（見る側）── 拡大・位置。刷る側には一切さわらない。
+   ⚠️ canvas の中身は原寸のまま。CSS の transform で見せ方だけ変える
+      ＝出す絵は1画素も変わらない。
+   ══════════════════════════════════════════════ */
+const stage = el('stage');
+const V = { fit:1, z:1, x:0, y:0 };
+function applyView(){
+  const s = V.fit * V.z;
+  cv.style.transform = `translate(${V.x.toFixed(1)}px,${V.y.toFixed(1)}px) scale(${s})`;
+  el('z_lab').textContent = Math.round(s * 100) + '%';
+}
+function fitView(){
+  const r = stage.getBoundingClientRect();
+  const pad = r.width < 560 ? 16 : 30;
+  V.fit = Math.min((r.width - pad*2) / cv.width, (r.height - pad*2) / cv.height) || 1;
+  V.z = 1;
+  V.x = (r.width - cv.width * V.fit) / 2;
+  V.y = (r.height - cv.height * V.fit) / 2;
+  applyView();
+}
+/* 拡大は【いま見ている点】を動かさずに寄る（画面の真ん中に寄せると迷子になる） */
+function zoomAt(px, py, factor){
+  const old = V.fit * V.z;
+  const z = Math.min(30, Math.max(0.1, V.z * factor));
+  const nw = V.fit * z;
+  V.x = px - (px - V.x) * (nw / old);
+  V.y = py - (py - V.y) * (nw / old);
+  V.z = z; applyView();
+}
+function zoomCenter(factor){
+  const r = stage.getBoundingClientRect();
+  zoomAt(r.width / 2, r.height / 2, factor);
+}
+stage.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = stage.getBoundingClientRect();
+  /* トラックパッドのつまむ（ctrl+ホイール）も普通のホイールも同じ扱い */
+  zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * (e.ctrlKey ? 0.010 : 0.0022)));
+}, { passive:false });
+let grab = null;
+stage.addEventListener('pointerdown', e => {
+  if(e.button !== 0 || e.target.closest('#zoom')) return;   /* ⚠️ ＋−を押すのと掴むのを混ぜない */
+  grab = { px:e.clientX, py:e.clientY, x:V.x, y:V.y };
+  stage.classList.add('grabbing');
+  try{ stage.setPointerCapture(e.pointerId); }catch(_){}
+});
+stage.addEventListener('pointermove', e => {
+  if(!grab) return;
+  V.x = grab.x + (e.clientX - grab.px); V.y = grab.y + (e.clientY - grab.py); applyView();
+});
+const dropGrab = () => { grab = null; stage.classList.remove('grabbing'); };
+stage.addEventListener('pointerup', dropGrab);
+stage.addEventListener('pointercancel', dropGrab);
+stage.addEventListener('dblclick', fitView);
+el('z_in').onclick  = () => zoomCenter(1.25);
+el('z_out').onclick = () => zoomCenter(1/1.25);
+el('z_fit').onclick = fitView;
+/* 原寸＝紙の1画素を画面の1点で見る（⭐ 参考の質感は原寸で見ないと逆に振れる） */
+el('z_one').onclick = () => { const r = stage.getBoundingClientRect();
+  const f = 1 / V.fit;
+  zoomAt(r.width / 2, r.height / 2, f / V.z); };
+addEventListener('resize', () => { if(V.z === 1) fitView(); else applyView(); });
+
+/* ══ 画面 ══ */
+const cv = el('cv'), cx = cv.getContext('2d');
+let raf = 0, lastPlan = null;
+function kick(){ if(raf) return; raf = requestAnimationFrame(() => { raf = 0; draw(); }); }
+function draw(){
+  const { W, H } = size();
+  let resized = false;
+  if(cv.width !== W || cv.height !== H){ cv.width = W; cv.height = H; resized = true; }
+  const t0 = performance.now();
+  const plan = buildPlan(W, H);
+  render(cx, plan, false);
+  lastPlan = plan;
+  const ms = Math.round(performance.now() - t0);
+  const circles = plan.plates.reduce((a, q) => a + q.n, 0);
+  el('meter').textContent =
+    `${W}×${H}  升目 ${plan.cols}×${plan.rows}  ピッチ ${plan.pitch.toFixed(1)}px\n` +
+    `オンの升目 ${plan.cells}  円 ${circles}  版 ${plan.plates.length}  ${ms}ms` +
+    (plan.cut ? '\n⚠️ 紙の端で切れている（余白を増やす／回る幅を下げる）' : '');
+  el('meter').classList.toggle('warn', !!plan.cut);
+  /* ⭐ 1文字に何マス使えているか＝日本語が潰れるかどうかはこれで決まる。
+     ⚠️ かな・漢字はラテンの倍の升目が要る（画数が多く、隙間が狭い）ので目安も別。 */
+  const per = plan.cols / maxChars();
+  const jp = CJK.test(P.text || '');
+  const lo = jp ? 12 : 6, hi = jp ? 18 : 10;
+  const gm = el('gridMeter');
+  gm.textContent = `1文字あたり ${per.toFixed(1)} マス${jp ? '（かな・漢字）' : ''}\n` +
+    (per < lo ? '🔴 少なすぎる。字が塊になる（細かさを上げる／字を細らせる）'
+     : per < hi ? '荒い。太い字なら成立する'
+     : '字の形が残る');
+  gm.classList.toggle('warn', per < lo);
+  if(resized) fitView();
+  if(plan.cells === 0) stat('🔴 升目が1つもオンにならない — 「拾い方」を下げるか字を入れる');
+}
+
+/* ══ 画面で動かす ══
+   ⚠️ 既定は止める（動かしっぱなしは電池と発熱を食う／Windows で重い）。
+   ⭐ 画面の動きは【時計】でよい。動画だけは【コマ番号】で刻む（そこが継ぎ目の要）。 */
+let animRaf = 0, animT0 = 0;
+function tick(){
+  if(animRaf){ cancelAnimationFrame(animRaf); animRaf = 0; }
+  if(!P.anim || TV.on) return;
+  animT0 = performance.now() - PH * P.cyc * 1000;
+  const step = t => {
+    if(!P.anim || TV.on){ animRaf = 0; return; }
+    PH = (((t - animT0) / 1000) / Math.max(0.2, P.cyc)) % 1;
+    draw();
+    animRaf = requestAnimationFrame(step);
+  };
+  animRaf = requestAnimationFrame(step);
+}
+el('c_anim').addEventListener('change', () => {
+  P.anim = el('c_anim').checked;
+  if(!P.anim){ PH = 0; kick(); }                 /* ⭐ 止めたら「つまみで作った絵」に戻る */
+  tick(); saveLocal();
+});
+
+/* ══════════════════════════════════════════════
+   ④ SVG ── 円が単位だから、そのままベクターで出せる
+   ⭐ 画面と【同じ道の文字列】を <path d> に置くだけ。fill-rule も同じ言葉。
+   ⚠️ 「重なりだけ」は引き算なので mask で書く（白＝残す・黒＝抜く）。
+   ══════════════════════════════════════════════ */
+function toSVG(plan, transparent){
+  const { W, H } = plan;
+  const n = [];
+  n.push(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`);
+  const esc = s => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  const defs = [];
+  plan.plates.forEach((q, k) => {
+    if(q.inner === 'inter') defs.push(
+      `<mask id="m${k}" maskUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}">` +
+      `<path fill="#fff" fill-rule="nonzero" d="${q.d}"/>` +
+      `<path fill="#000" fill-rule="evenodd" d="${q.d}"/></mask>`);
+    /* 中身は「切り抜く型」として置く。塗る／抜く は fill-rule のちがいだけ */
+    if(q.fill !== 'color' && q.unit !== 'circle' && q.inner !== 'inter') defs.push(
+      `<clipPath id="cp${k}" clipPathUnits="userSpaceOnUse">` +
+      `<path clip-rule="${q.inner === 'xor' ? 'evenodd' : 'nonzero'}" d="${q.d}"/></clipPath>`);
+    if(q.fill === 'mat'){
+      const url = matURLof(q.id);
+      if(q.unit === 'circle'){
+        defs.push(`<clipPath id="cc${k}"><circle r="${q.r}"/></clipPath>` +
+          `<image id="mi${k}" x="${-q.r}" y="${-q.r}" width="${q.r*2}" height="${q.r*2}" ` +
+          `preserveAspectRatio="xMidYMid slice" href="${esc(url)}"/>`);
+      }else{
+        defs.push(`<image id="mi${k}" x="0" y="0" width="${W}" height="${H}" ` +
+          `preserveAspectRatio="xMidYMid slice" href="${esc(url)}"/>`);
+      }
+    }
+    /* ⭐ 縞グラデは SVG の linearGradient そのままで出せる（画像に焼かない）。
+       ⭐ 一段ぶんだけ書いて spreadMethod="repeat" ＝ canvas で n 回並べたのと同じ数。 */
+    if(q.fill === 'grad'){
+      const st = gradStops(q.g).map(([t, c]) =>
+        `<stop offset="${(t*100).toFixed(3)}%" stop-color="${c}"/>`).join('');
+      if(q.unit === 'circle'){
+        /* 粒1つの箱（2r 角）に対する割合で置く＝どの粒でも同じ縞になる */
+        const D = q.r * 2, ax = gradAxis(q.g, D, D);
+        const px = ax.x1 / D, py = ax.y1 / D;
+        const dx = (ax.x2 - ax.x1) / ax.n / D, dy = (ax.y2 - ax.y1) / ax.n / D;
+        defs.push(`<linearGradient id="gr${k}" gradientUnits="objectBoundingBox" spreadMethod="repeat" ` +
+          `x1="${px.toFixed(5)}" y1="${py.toFixed(5)}" x2="${(px+dx).toFixed(5)}" y2="${(py+dy).toFixed(5)}">${st}</linearGradient>`);
+      }else{
+        const ax = gradAxis(q.g, W, H);
+        const dx = (ax.x2 - ax.x1) / ax.n, dy = (ax.y2 - ax.y1) / ax.n;
+        defs.push(`<linearGradient id="gr${k}" gradientUnits="userSpaceOnUse" spreadMethod="repeat" ` +
+          `x1="${ax.x1.toFixed(2)}" y1="${ax.y1.toFixed(2)}" ` +
+          `x2="${(ax.x1+dx).toFixed(2)}" y2="${(ax.y1+dy).toFixed(2)}">${st}</linearGradient>`);
+      }
+    }
+  });
+  if(defs.length) n.push(`<defs>${defs.join('')}</defs>`);
+  if(!transparent) n.push(`<rect width="${W}" height="${H}" fill="${plan.paper}"/>`);
+
+  const guideEl = plan.guide
+    ? `<path fill="none" stroke="#000" stroke-width="${plan.guide.w}" opacity="${plan.guide.opa}" d="${plan.guide.d}"/>`
+    : '';
+  if(guideEl && !plan.guide.top) n.push(guideEl);
+
+  plan.plates.forEach((q, k) => {
+    const bl = (BLENDS.find(b => b.v === q.blend) || BLENDS[0]).svg;
+    const st = `style="mix-blend-mode:${bl}" opacity="${+q.alpha.toFixed(3)}"`;
+    if(q.fill === 'mat' && q.unit === 'circle'){
+      /* ⭐ 粒1つが素材＝粒の数だけ置く。画像そのものは defs に1回だけ（use で呼ぶ） */
+      const g = [`<g ${st}>`];
+      for(const [x, y] of q.pts)
+        g.push(`<g transform="translate(${x} ${y})" clip-path="url(#cc${k})"><use href="#mi${k}"/></g>`);
+      g.push('</g>');
+      n.push(g.join(''));
+    }else if(q.fill === 'grad' && q.unit === 'circle'){
+      /* ⭐ 粒1つが縞そのもの＝粒ごとに道を1本ずつ出す
+         （objectBoundingBox は「その要素の箱」に効くので、まとめると1本の縞になってしまう） */
+      const g = [`<g ${st}>`];
+      for(const [x, y] of q.pts)
+        g.push(`<path fill="url(#gr${k})" d="${unitPath([{ x, y }], q.r, q.shape, q.rot)}"/>`);
+      g.push('</g>');
+      n.push(g.join(''));
+    }else if(q.fill !== 'color'){
+      const paint = q.fill === 'grad' ? `<rect width="${W}" height="${H}" fill="url(#gr${k})"/>` : `<use href="#mi${k}"/>`;
+      const hold = q.inner === 'inter' ? `mask="url(#m${k})"` : `clip-path="url(#cp${k})"`;
+      n.push(`<g ${st} ${hold}>${paint}</g>`);
+    }else if(q.inner === 'inter'){
+      n.push(`<g ${st}><rect width="${W}" height="${H}" fill="${q.color}" mask="url(#m${k})"/></g>`);
+    }else{
+      n.push(`<path ${st} fill="${q.color}" fill-rule="${q.inner === 'xor' ? 'evenodd' : 'nonzero'}" d="${q.d}"/>`);
+    }
+  });
+
+  if(guideEl && plan.guide.top) n.push(guideEl);
+  n.push('</svg>');
+  return n.join('');
+}
+
+/* ══ 出す ══════════════════════════════════════
+   🔴 実機（iPhone）は <a download> で落ちない。共有シートに回す。 */
+async function put(blob, name, msg){
+  try{
+    const f = new File([blob], name, { type:blob.type });
+    if(navigator.canShare && navigator.canShare({ files:[f] })
+       && /iPhone|iPad|iPod|Android/.test(navigator.userAgent)){
+      await navigator.share({ files:[f] });
+      stat(msg + '（共有シート）');
+      return;
+    }
+  }catch(e){
+    if(e && e.name === 'AbortError'){ stat('やめた'); return; }
+  }
+  const u = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = u; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 8000);
+  stat(msg);
+}
+function stamp(){ return new Date().toISOString().slice(0,19).replace(/[-:T]/g,''); }
+
+function savePNG(transparent){
+  const { W, H } = outSize();
+  const o = document.createElement('canvas'); o.width = W; o.height = H;
+  const plan = buildPlan(W, H);                     /* ⭐ 画面と同じ道・大きさだけ焼き直す */
+  render(o.getContext('2d'), plan, transparent);
+  o.toBlob(b => {
+    if(!b){ stat('🔴 出せなかった（大きすぎ）'); return; }
+    put(b, `rui_${stamp()}${transparent ? '_a' : ''}.png`,
+        `PNG を出した ${W}×${H}${transparent ? '・地なし' : ''}`);
+  }, 'image/png');
+}
+el('b_png').onclick  = () => savePNG(false);
+el('b_pnga').onclick = () => savePNG(true);
+el('b_svg').onclick  = () => {
+  const { W, H } = outSize();
+  const plan = buildPlan(W, H);
+  const circles = plan.plates.reduce((a, q) => a + q.n, 0) + (plan.guide ? plan.guide.n : 0);
+  if(circles > 120000){ stat('🔴 円が ' + circles.toLocaleString() + ' 個 — SVG には多すぎる'); return; }
+  const s = toSVG(plan, false);
+  put(new Blob([s], { type:'image/svg+xml' }), `rui_${stamp()}.svg`,
+      `SVG を出した — 円 ${circles.toLocaleString()} 個・${Math.round(s.length/1024)}KB`);
+};
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 動画で出す ── 画面録画をやめる
+   🔴 MediaRecorder / captureStream は使わない（実時間で画面を録るのでコマ落ち・
+      webm 固定・継ぎ目なしループ不可・大きさが選べない）。TEN で作り直した側を移す。
+   ⭐ 位相を【コマ番号】で刻む＝`PH = i / 総コマ × 周` の小数部。
+      動かすものは全部【整数の周】で回るので、頭と尻が数値レベルで一致する。
+   🔴 1コマ目は必ず 0 秒／mp4 に渡す盤は偶数。
+   🔴 mp4 にできないとき、黙って PNG連番を落とさない。理由と数字を出して止める。
+   ══════════════════════════════════════════════════════════════ */
+const TV = { on:false, stop:false };
+const TV_MAXMB = 36864, TV_MAXSIDE = 4096;
+const TV_Q = { hi:0.30, mid:0.15, lo:0.06 };
+const tvIdle = () => new Promise(r => setTimeout(r, 0));
+function tvPlan(){
+  const fps = +P.vFps || 24, loops = +P.vLoop || 1;
+  const sec = loops * Math.max(0.2, P.cyc);
+  const moving = (P.spinN > 0 && P.spinR > 0) || (P.brN > 0 && P.brA > 0);
+  return { fps, loops, sec, total:Math.max(2, Math.round(sec * fps)), moving };
+}
+function tvSizeSync(){
+  const o = outSize(); let W = o.W, H = o.H;
+  const isMp4 = P.vFmt === 'mp4';
+  if(isMp4){ W -= W % 2; H -= H % 2; }              /* 🔴 mp4 に渡す盤は偶数 */
+  const over = isMp4 && (Math.ceil(W/16) * Math.ceil(H/16) > TV_MAXMB || W > TV_MAXSIDE || H > TV_MAXSIDE);
+  const p = tvPlan();
+  el('outMeter').textContent = `出す大きさ ${o.W} × ${o.H} px`
+    + (P.outLong === 'same' ? '' : `（版面 ${size().W}×${size().H} を焼き直す）`);
+  el('vMeter').innerHTML = `${W} × ${H} px<br>${p.total} コマ・${p.sec.toFixed(1)}秒・${p.fps}コマ/秒・${p.loops}周`
+    + (over ? '<br>⚠️ mp4 の上限超え（辺4096まで）— 大きさを下げるか PNG連番へ' : '')
+    + (p.moving ? '' : '<br>⚠️ <b>「動かす」の周が全部 0</b> ＝ 全コマ同じ絵になります');
+}
+/* ⭐ mp4 の器は【押したときだけ】取りに行く（この道具は外の部品を1つも使っていない） */
+let tvMuxP = null;
+function tvLoadMuxer(){
+  if(window.Mp4Muxer) return Promise.resolve(true);
+  if(!tvMuxP) tvMuxP = new Promise(res => {
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.1/build/mp4-muxer.min.js';
+    sc.onload = () => res(!!window.Mp4Muxer);
+    sc.onerror = () => res(false);
+    document.head.appendChild(sc);
+  });
+  return tvMuxP;
+}
+async function tvCodec(W, H, fps, bitrate){
+  for(const codec of ['avc1.640034','avc1.640033','avc1.640032','avc1.64002a','avc1.640028','avc1.4d0034','avc1.42003c']){
+    try{ const s = await VideoEncoder.isConfigSupported({ codec, width:W, height:H, bitrate, framerate:fps });
+      if(s && s.supported) return s.config; }catch(_){}
+  }
+  return null;
+}
+/* ══ ZIP（圧縮なし＝store）── PNG連番用 ══ */
+let TV_CRCT = null;
+function tvCrc32(u8){
+  if(!TV_CRCT){
+    TV_CRCT = new Uint32Array(256);
+    for(let n = 0; n < 256; n++){ let c = n;
+      for(let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      TV_CRCT[n] = c >>> 0; }
+  }
+  let c = 0xFFFFFFFF;
+  for(let i = 0; i < u8.length; i++) c = TV_CRCT[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function tvZip(files){
+  const te = new TextEncoder(), parts = [], cent = [];
+  let off = 0;
+  for(const f of files){
+    const nm = te.encode(f.name), crc = tvCrc32(f.data), sz = f.data.length;
+    const L = new DataView(new ArrayBuffer(30));
+    L.setUint32(0, 0x04034b50, true); L.setUint16(4, 20, true);
+    L.setUint32(14, crc, true); L.setUint32(18, sz, true); L.setUint32(22, sz, true);
+    L.setUint16(26, nm.length, true);
+    parts.push(new Uint8Array(L.buffer), nm, f.data);
+    const C = new DataView(new ArrayBuffer(46));
+    C.setUint32(0, 0x02014b50, true); C.setUint16(4, 20, true); C.setUint16(6, 20, true);
+    C.setUint32(16, crc, true); C.setUint32(20, sz, true); C.setUint32(24, sz, true);
+    C.setUint16(28, nm.length, true); C.setUint32(42, off, true);
+    cent.push(new Uint8Array(C.buffer), nm);
+    off += 30 + nm.length + sz;
+  }
+  let csz = 0; for(const c of cent) csz += c.length;
+  const E = new DataView(new ArrayBuffer(22));
+  E.setUint32(0, 0x06054b50, true);
+  E.setUint16(8, files.length, true); E.setUint16(10, files.length, true);
+  E.setUint32(12, csz, true); E.setUint32(16, off, true);
+  return new Blob(parts.concat(cent, [new Uint8Array(E.buffer)]), { type:'application/zip' });
+}
+
+async function tvRun(){
+  if(TV.on){ TV.stop = true; return; }
+  const say = t => { el('vMeter').innerHTML = t; };
+  const plan = tvPlan(), o = outSize();
+  let W = o.W, H = o.H;
+  if(P.vFmt === 'mp4'){ W -= W % 2; H -= H % 2; }
+  W = Math.max(2, W); H = Math.max(2, H);
+
+  const btn = el('b_video');
+  const keepPH = PH, wasAnim = P.anim;               /* ⚠️ 撮り終わったら必ず戻す */
+  P.anim = false; if(raf){ cancelAnimationFrame(raf); raf = 0; }
+  TV.on = true; TV.stop = false;
+  btn.textContent = 'やめる';
+  let msg = '';
+  try{
+    let enc = null, muxer = null, target = null, encErr = null;
+    if(P.vFmt === 'mp4'){
+      if(W > TV_MAXSIDE || H > TV_MAXSIDE || Math.ceil(W/16) * Math.ceil(H/16) > TV_MAXMB)
+        throw new Error(`この大きさ（${W}×${H}）は mp4 の上限を超えています — 辺4096px まで。大きさを下げるか PNG連番を選んでください`);
+      if(typeof VideoEncoder === 'undefined')
+        throw new Error('このブラウザは mp4 を作れません（PNG連番を選んでください）');
+      if(!await tvLoadMuxer())
+        throw new Error('mp4 の器を取りに行けませんでした（つながっていない）。PNG連番を選んでください');
+      const bitrate = Math.min(80e6, Math.round(W * H * plan.fps * (TV_Q[P.vQ] || 0.15)));
+      const cfg = await tvCodec(W, H, plan.fps, bitrate);
+      if(!cfg) throw new Error('この大きさで mp4 を作れる設定が見つかりません');
+      target = new Mp4Muxer.ArrayBufferTarget();
+      muxer = new Mp4Muxer.Muxer({ target,
+        video:{ codec:'avc', width:W, height:H, frameRate:Math.max(1, Math.round(plan.fps)) },
+        fastStart:'in-memory' });
+      enc = new VideoEncoder({
+        output:(c, m) => { try{ muxer.addVideoChunk(c, m); }catch(e){ encErr = e; } },
+        error: e => { encErr = e; } });
+      enc.configure(cfg);
+    }
+    const out = document.createElement('canvas'); out.width = W; out.height = H;
+    const oc = out.getContext('2d');
+    const shots = [], pad = i => String(i).padStart(4, '0');
+    let bytes = 0, i = 0;
+
+    for(; i < plan.total; i++){
+      if(TV.stop) break;
+      if(encErr) throw encErr;
+      PH = (i / plan.total * plan.loops) % 1;        /* ⭐ 時計ではなくコマ番号（1コマ目は 0） */
+      render(oc, buildPlan(W, H), false);            /* ⭐ 画面と同じ道 */
+      if(P.vFmt === 'mp4'){
+        const vf = new VideoFrame(out, { timestamp:Math.round(i * 1e6 / plan.fps),
+                                         duration:Math.round(1e6 / plan.fps) });
+        enc.encode(vf, { keyFrame:(i % (plan.fps * 2)) === 0 });
+        vf.close();
+        while(enc.encodeQueueSize > 8 && !encErr) await tvIdle();
+      }else{
+        const bl = await new Promise(r => out.toBlob(r, 'image/png'));
+        if(!bl) throw new Error('PNG が作れなかった（大きすぎる可能性）');
+        const u8 = new Uint8Array(await bl.arrayBuffer());
+        bytes += u8.length;
+        shots.push({ name:`rui_${pad(i)}.png`, data:u8 });
+        if(bytes > 1.5e9) throw new Error(`PNG連番が大きすぎます（${Math.round(bytes/1e6)}MB）— 大きさか周を下げてください`);
+      }
+      say(`書き出し中 <b>${i+1} / ${plan.total}</b> コマ　${W} × ${H}`
+        + (P.vFmt === 'png' ? `（${Math.round(bytes/1e6)}MB）` : '')
+        + '<br>「やめる」で止められます');
+      await tvIdle();                                 /* ⚠️ 画面を返す（進み具合と「やめる」のため） */
+    }
+    const shot = i;
+    if(P.vFmt === 'mp4'){
+      await enc.flush();
+      if(encErr) throw encErr;
+      muxer.finalize(); enc.close();
+      if(shot > 1){
+        const blob = new Blob([target.buffer], { type:'video/mp4' });
+        await put(blob, `rui_${stamp()}.mp4`, 'mp4 を出した');
+        msg = `mp4 — ${W} × ${H}・${shot}コマ・${(shot/plan.fps).toFixed(1)}秒・`
+            + `${Math.round(blob.size/1e6)}MB` + (TV.stop ? '（途中で止めた）' : '・継ぎ目なしループ');
+      }
+    }else if(shots.length){
+      const blob = tvZip(shots);
+      await put(blob, `rui_${stamp()}_seq.zip`, 'PNG連番を出した');
+      msg = `PNG連番 — ${W} × ${H}・${shots.length}枚・${Math.round(blob.size/1e6)}MB`
+          + `（${plan.fps}コマ/秒 で束ねてください）`;
+    }
+    if(shot <= 1) msg = '止めました（1コマも出していません）';
+  }catch(err){
+    msg = '🔴 ' + ((err && err.message) || err);       /* 🔴 何が起きても必ず理由を出す */
+  }finally{
+    /* 🔴 何が起きても必ず元へ戻す */
+    PH = keepPH; P.anim = wasAnim;
+    TV.on = false; TV.stop = false;
+    btn.textContent = '動画を出す';
+    el('c_anim').checked = wasAnim;
+    kick(); tick();
+    el('vMeter').innerHTML = msg || '';
+    setTimeout(tvSizeSync, 4000);
+  }
+}
+el('b_video').onclick = tvRun;
+
+/* ══ 控え（JSON）══
+   ⚠️ 素材（画像）は重い。控えには入れる／戻す履歴と localStorage には入れない。 */
+function platesPlain(withMat){
+  return PLATES.map(p => { const o = { ...p }; if(!withMat) delete o.mat; return o; });
+}
+function snapObj(withMat){ return JSON.stringify({ v:1, P:{ ...P }, PL:platesPlain(withMat !== false), cur }); }
+el('b_save').onclick = () =>
+  put(new Blob([snapObj()], { type:'application/json' }), `rui_${stamp()}.json`, '控えを出した');
+el('b_load').onclick = () => el('fileIn').click();
+el('fileIn').onchange = e => { const f = e.target.files[0]; if(f) readJSON(f); e.target.value = ''; };
+function readJSON(f){
+  const rd = new FileReader();
+  rd.onload = () => { try{ applyObj(rd.result); stat('控えを読んだ — ' + f.name); }
+                      catch(_){ stat('🔴 控えとして読めなかった'); } };
+  rd.readAsText(f);
+}
+addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragging'); });
+addEventListener('dragleave', e => { if(e.relatedTarget) return; document.body.classList.remove('dragging'); });
+addEventListener('drop', e => {
+  e.preventDefault(); document.body.classList.remove('dragging');
+  const f = e.dataTransfer.files[0]; if(!f) return;
+  /* ⭐ 画像＝選んでいる版の素材／JSON＝その姿に戻る */
+  if(/^image\//.test(f.type)) readImage(f); else readJSON(f);
+});
+
+/* ══ 戻す（⌘Z）══ ⭐ 新しい道具を作る時点で入れる（礫で作り込みを消した） */
+const HIST = [];
+function pushHist(){
+  const s = snapObj(false);
+  if(HIST[HIST.length-1] === s) return;
+  HIST.push(s);
+  if(HIST.length > 80) HIST.shift();
+}
+function undo(){
+  if(HIST.length < 2){ stat('もう戻せない'); return; }
+  HIST.pop();                                        /* いまの姿を捨てて */
+  applyObj(HIST[HIST.length-1], true);               /* 一つ前に戻す */
+  stat('戻した');
+}
+el('b_undo').onclick = undo;
+addEventListener('keydown', e => {
+  if((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z'){ e.preventDefault(); undo(); }
+});
+function applyObj(txt, noHist){
+  const o = typeof txt === 'string' ? JSON.parse(txt) : txt;
+  Object.assign(P, DEF, o.P || {});      /* ⚠️ 古い控えに無いつまみは既定で埋める */
+  if(Array.isArray(o.PL) && o.PL.length){
+    /* ⚠️ 読み込み済みの素材は id で引き継ぐ（戻すたびに読み直すと画面がちらつく）。
+       ⭐ 戻す履歴には素材が入っていないので、控えから来たときだけ読み直す。 */
+    const keep = new Map(PLATES.map(p => [p.id, p.mat]));
+    PLATES = o.PL.map(x => {
+      const n = newPlate({ ...x });
+      if(!n.mat) n.mat = keep.get(n.id) || null;
+      if(n.mat && !IMG.get(n.id)) setMat(n, n.mat, false);
+      if(!n.mat) IMG.delete(n.id);
+      return n;
+    });
+    seq = Math.max(seq, ...PLATES.map(x => x.id || 0));
+  }
+  cur = Math.min(Math.max(0, o.cur || 0), PLATES.length - 1);
+  syncUI(); kick(); saveLocal();
+  if(!noHist) pushHist();
+}
+
+/* ══ つまみを繋ぐ ══════════════════════════════ */
+const RANGES = ['weight','track','lh','margin','cols','thr','grow','rad','gopa','gw','long',
+                'cyc','spinN','spinR','spinS','brN','brA'];
+const FMT = {
+  weight:v => v, track:v => v.toFixed(3), lh:v => v.toFixed(2), margin:v => (v*100).toFixed(1)+'%',
+  cols:v => v, thr:v => v.toFixed(2), grow:v => (v > 0 ? '+' : '') + v.toFixed(2), rad:v => v.toFixed(2),
+  gopa:v => v.toFixed(2), gw:v => v.toFixed(1), long:v => v + 'px',
+  cyc:v => v.toFixed(1)+'秒', spinN:v => v ? v+'周' : '止', spinR:v => v.toFixed(2),
+  spinS:v => v.toFixed(2), brN:v => v ? v+'周' : '止', brA:v => v.toFixed(2),
+  p_dx:v => v.toFixed(2), p_dy:v => v.toFixed(2), p_rs:v => v.toFixed(2), p_al:v => v.toFixed(2),
+  p_rot:v => v + '°', g_n:v => v + '本', g_ang:v => v + '°', g_ramp:v => v.toFixed(2),
+};
+/* ⭐ つまみを1つでも触ったら、もう「その見本そのもの」ではない＝光を消す。
+   ⚠️ 選んでいるものが分からないと、何を見ているのか分からなくなる（2026-08-20 木下） */
+function touched(){ P.preset = null; }
+RANGES.forEach(k => {
+  const r = el('r_' + k);
+  r.addEventListener('input', () => {
+    P[k] = +r.value; el('o_' + k).textContent = FMT[k](+r.value); touched();
+    /* ⚠️「大きさ」は全部の版の重なり具合を変える＝版の一覧の数字も一緒に動かす */
+    if(k === 'rad' || k === 'cols') syncUI();
+    if(k === 'long' || k === 'cyc') tvSizeSync();
+    kick(); saveLocal();
+  });
+  r.addEventListener('change', pushHist);
+});
+['dx','dy','rs','al','rot'].forEach(k => {
+  const r = el('r_p_' + k);
+  r.addEventListener('input', () => {
+    const pl = PLATES[cur]; if(!pl) return;
+    pl[k] = +r.value; el('o_p_' + k).textContent = FMT['p_' + k](+r.value); touched();
+    if(k === 'rs') syncUI();
+    kick(); saveLocal();
+  });
+  r.addEventListener('change', pushHist);
+});
+/* ── 縞グラデのつまみ（版ごとに持つ） ── */
+['n','ang','ramp'].forEach(k => {
+  const r = el('r_g_' + k);
+  r.addEventListener('input', () => {
+    const pl = PLATES[cur]; if(!pl) return;
+    pl.g[k] = +r.value; el('o_g_' + k).textContent = FMT['g_' + k](+r.value);
+    touched(); drawPlateList(); kick(); saveLocal();
+  });
+  r.addEventListener('change', pushHist);
+});
+['c1','c2'].forEach(k => {
+  const c = el('g_' + k);
+  c.addEventListener('input', () => {
+    const pl = PLATES[cur]; if(!pl) return;
+    pl.g[k] = c.value; touched(); drawPlateList(); kick(); saveLocal();
+  });
+  c.addEventListener('change', pushHist);
+});
+el('g_sym').addEventListener('change', () => {
+  const pl = PLATES[cur]; if(!pl) return;
+  pl.g.sym = el('g_sym').checked; touched(); kick(); saveLocal(); pushHist();
+});
+el('t_text').addEventListener('input', () => { P.text = el('t_text').value; touched(); syncUI(); kick(); saveLocal(); });
+el('t_text').addEventListener('change', pushHist);
+el('c_paper').addEventListener('input', () => { P.paper = el('c_paper').value; touched(); kick(); saveLocal(); });
+el('c_paper').addEventListener('change', pushHist);
+el('p_color').addEventListener('input', () => {
+  const pl = PLATES[cur]; if(!pl) return;
+  pl.color = el('p_color').value; touched(); drawPlateList(); kick(); saveLocal();
+});
+el('p_color').addEventListener('change', pushHist);
+el('c_gtop').addEventListener('change', () => {
+  P.gtop = el('c_gtop').checked; touched(); kick(); saveLocal(); pushHist(); });
+
+function buildSeg(id, items, get, set){
+  const box = el(id);
+  box.innerHTML = items.map(x => `<button data-v="${x.v}">${x.n}</button>`).join('');
+  box.querySelectorAll('button').forEach(b => b.onclick = () => {
+    set(b.dataset.v); touched(); syncUI(); kick(); saveLocal(); pushHist();
+  });
+  box.__get = get;
+}
+buildSeg('fontSeg',  FONTS,   () => P.font,  v => P.font = v);
+buildSeg('ratioSeg', RATIOS,  () => P.ratio, v => P.ratio = v);
+buildSeg('blendSeg', BLENDS,  () => (PLATES[cur] || {}).blend, v => { if(PLATES[cur]) PLATES[cur].blend = v; });
+buildSeg('guideSeg', [{v:'none',n:'なし'},{v:'near',n:'字のまわり'},{v:'all',n:'全面'}],
+         () => P.guide, v => P.guide = v);
+buildSeg('innerSeg', [{v:'over',n:'塗る'},{v:'xor',n:'抜く'},{v:'inter',n:'重なりだけ'}],
+         () => (PLATES[cur] || {}).inner, v => { if(PLATES[cur]) PLATES[cur].inner = v; });
+buildSeg('matSeg', [{v:'sheet',n:'版面いっぱい'},{v:'circle',n:'粒1つ'}],
+         () => (PLATES[cur] || {}).matUnit, v => { if(PLATES[cur]) PLATES[cur].matUnit = v; });
+buildSeg('shapeSeg', SHAPES, () => (PLATES[cur] || {}).shape,
+         v => { if(PLATES[cur]) PLATES[cur].shape = v; });
+buildSeg('fillSeg', [{v:'color',n:'色'},{v:'grad',n:'縞グラデ'},{v:'mat',n:'素材'}],
+         () => (PLATES[cur] || {}).fill, v => {
+  const pl = PLATES[cur]; if(!pl) return;
+  pl.fill = v;
+  /* ⚠️「素材」に切り替えたのに画像が無いと【何も起きない】ように見える。すぐ選ばせる */
+  if(v === 'mat' && !pl.mat) setTimeout(() => el('imgIn').click(), 0);
+});
+buildSeg('outSeg', OUTS, () => P.outLong, v => P.outLong = v);
+/* 動画のつまみは絵を変えないので、押しても刷り直さない（数字だけ更新する） */
+[['vFmt','vFmt'],['vFps','vFps'],['vLoop','vLoop'],['vQ','vQ']].forEach(([id, key]) => {
+  el(id).querySelectorAll('button').forEach(b => b.onclick = () => {
+    P[key] = b.dataset.v; syncUI(); saveLocal();
+  });
+});
+
+el('preSeg').innerHTML = PRESETS.map((x, i) => `<button data-v="${i}">${x.n}</button>`).join('');
+el('preSeg').querySelectorAll('button').forEach(b => b.onclick = () => {
+  const i = +b.dataset.v, pr = PRESETS[i];
+  Object.assign(P, pr.P);
+  /* ⭐ 粗さは【1文字に何マス】。いま入っている字から細かさを決め直す
+     ＝日本語を打ったまま「粗」を押しても、ただの黒丸にならない。 */
+  P.cols = colsFor(pr.per);
+  PLATES.forEach(clearMat);
+  PLATES = pr.PL(); cur = 0;
+  P.preset = i;
+  syncUI(); kick(); saveLocal(); pushHist();
+  stat(`見本「${pr.n}」にした — 1文字 ${pr.per} マス → 細かさ ${P.cols}`);
+});
+
+/* ══ 版の一覧 ══ */
+function drawPlateList(){
+  const box = el('plates');
+  box.innerHTML = '';
+  PLATES.forEach((pl, i) => {
+    const d = document.createElement('div');
+    d.className = 'lay' + (i === cur ? ' sel' : '');
+    const inn = { over:'塗る', xor:'抜く', inter:'重なり' }[pl.inner];
+    /* ⭐ 円の直径が升目の何倍か＝この道具の芯。一覧に出しておく（1.00 以下＝重ならない） */
+    const ov = P.rad * pl.rs;
+    const bad = (pl.inner !== 'over') && ov <= 1.001;
+    const sw = (pl.fill === 'mat' && pl.mat)
+      ? `background-image:url(${pl.mat});background-size:cover;background-position:center`
+      : pl.fill === 'grad'
+        ? `background:linear-gradient(${90 - pl.g.ang}deg,${pl.g.c1},${pl.g.c2})`
+        : `background:${pl.color}`;
+    const shp = (SHAPES.find(s => s.v === pl.shape) || SHAPES[0]).n;
+    const tag = pl.fill === 'color' ? inn
+      : (pl.fill === 'grad' ? '縞' : '素材') + (pl.matUnit === 'circle' ? '･粒' : '');
+    d.innerHTML =
+      `<button class="eye${pl.on ? ' on' : ''}" style="${pl.on ? sw : ''}"></button>` +
+      `<span class="sw" style="${sw}"></span>` +
+      `<span class="nm">${i+1}　${shp}　${tag}　<span style="opacity:.55">×${ov.toFixed(2)}${bad ? ' 🔴' : ''}</span></span>` +
+      `<button class="up" data-d="-1">▲</button><button class="up" data-d="1">▼</button>`;
+    d.onclick = () => { cur = i; syncUI(); };
+    d.querySelector('.eye').onclick = e => {
+      e.stopPropagation(); pl.on = !pl.on; drawPlateList(); kick(); saveLocal(); pushHist();
+    };
+    d.querySelectorAll('.up').forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      const to = i + (+b.dataset.d);
+      if(to < 0 || to >= PLATES.length) return;
+      PLATES.splice(to, 0, PLATES.splice(i, 1)[0]);
+      cur = to; syncUI(); kick(); saveLocal(); pushHist();
+    });
+    box.appendChild(d);
+  });
+}
+el('b_add').onclick = () => { PLATES.push(newPlate({ color:'#3f5ed2', inner:'inter' })); cur = PLATES.length-1;
+  touched(); syncUI(); kick(); saveLocal(); pushHist(); };
+el('b_dup').onclick = () => { const pl = PLATES[cur]; if(!pl) return;
+  const n = newPlate({ ...pl });
+  PLATES.splice(cur+1, 0, n); cur++;
+  if(pl.mat) setMat(n, pl.mat, false);            /* ⚠️ 素材も一緒に複製する */
+  touched(); syncUI(); kick(); saveLocal(); pushHist(); };
+el('b_del').onclick = () => {
+  if(PLATES.length <= 1){ stat('版は1枚は残す'); return; }
+  clearMat(PLATES[cur]);
+  PLATES.splice(cur, 1); cur = Math.min(cur, PLATES.length-1);
+  touched(); syncUI(); kick(); saveLocal(); pushHist();
+};
+
+/* ══⭐ 素材を入れる ══ */
+el('b_mat').onclick = () => el('imgIn').click();
+el('imgIn').onchange = e => { const f = e.target.files[0]; if(f) readImage(f); e.target.value = ''; };
+function readImage(f){
+  const pl = PLATES[cur];
+  if(!pl){ stat('🔴 版が無い'); return; }
+  const rd = new FileReader();
+  rd.onload = () => { pl.fill = 'mat'; setMat(pl, rd.result, true); touched(); pushHist(); };
+  rd.readAsDataURL(f);
+}
+
+/* ══ 画面を状態に合わせる ══ */
+function syncUI(){
+  RANGES.forEach(k => { el('r_' + k).value = P[k]; el('o_' + k).textContent = FMT[k](+P[k]); });
+  el('t_text').value = P.text;
+  el('c_paper').value = P.paper;
+  el('c_gtop').checked = !!P.gtop;
+  const pl = PLATES[cur];
+  if(pl){
+    el('p_color').value = pl.color;
+    ['dx','dy','rs','al','rot'].forEach(k => {
+      el('r_p_' + k).value = pl[k]; el('o_p_' + k).textContent = FMT['p_' + k](+pl[k]);
+    });
+    ['n','ang','ramp'].forEach(k => {
+      el('r_g_' + k).value = pl.g[k]; el('o_g_' + k).textContent = FMT['g_' + k](+pl.g[k]);
+    });
+    el('g_c1').value = pl.g.c1; el('g_c2').value = pl.g.c2; el('g_sym').checked = !!pl.g.sym;
+    el('colorBox').classList.toggle('hide', pl.fill !== 'color');
+    el('gradBox').classList.toggle('hide',  pl.fill !== 'grad');
+    el('matBox').classList.toggle('hide',   pl.fill !== 'mat');
+    el('unitBox').classList.toggle('hide',  pl.fill === 'color');
+    /* 🔴 円が重ならないと「抜く」も「重なりだけ」も何も出ない。
+       ⚠️ 見た目が変わらないのを「バグ」と思わせない ── 理由を数字で出す。 */
+    const ov = P.rad * pl.rs;
+    const pm = el('pMeter');
+    const bad = (pl.inner !== 'over') && ov <= 1.001;
+    pm.classList.toggle('warn', bad);
+    pm.textContent = `この版の円の直径 = 升目の ×${ov.toFixed(2)}\n`
+      + (pl.inner === 'over'
+          ? (ov > 1 ? 'となりと重なる' : 'となりと重ならない（升目に収まる＝枡 MASU の側）')
+          : (bad ? '🔴 1.00 以下なので円が重ならない＝この版は何も出ない'
+                 : 'レンズの太さはこの数字で決まる（1.00 に近いほど細い）'));
+  }
+  ['fontSeg','ratioSeg','blendSeg','guideSeg','innerSeg','matSeg','outSeg','shapeSeg','fillSeg']
+    .forEach(id => {
+      const box = el(id), v = String(box.__get());
+      box.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+    });
+  [['vFmt','vFmt'],['vFps','vFps'],['vLoop','vLoop'],['vQ','vQ']].forEach(([id, key]) =>
+    el(id).querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === String(P[key]))));
+  el('c_anim').checked = !!P.anim;
+  tvSizeSync();
+  /* ⭐ いまどの見本の姿かを光らせる。つまみを触ったら消える */
+  el('preSeg').querySelectorAll('button')
+    .forEach(b => b.classList.toggle('on', +b.dataset.v === P.preset));
+  /* 素材を入れている版だけ「素材の単位」を出す（入っていないのに出すと迷う） */
+  /* ⚠️ Anton は太さが1つ＝つまみが効かない。効かないつまみは薄くして理由を出す */
+  const f = FONTS.find(x => x.v === P.font) || FONTS[0];
+  el('r_weight').disabled = !!f.fixedW;
+  el('r_weight').style.opacity = f.fixedW ? .35 : 1;
+  el('o_weight').textContent = f.fixedW ? '—' : P.weight;
+  drawPlateList();
+}
+
+/* ══ 前の続きから ══ */
+/* ⚠️ 素材を入れると localStorage の上限（数MB）を超える。超えたら素材抜きで残す
+   ＝次に開いたとき「版の並びは残っているが素材だけ無い」で済む（全部消えない）。 */
+function saveLocal(){
+  try{ localStorage.setItem('rui.v1', snapObj(true)); }
+  catch(_){ try{ localStorage.setItem('rui.v1', snapObj(false)); }catch(__){} }
+}
+(function boot(){
+  let ok = false;
+  try{ const s = localStorage.getItem('rui.v1'); if(s){ applyObj(s, true); ok = true; } }catch(_){}
+  if(!ok){ syncUI(); kick(); }
+  pushHist(); tick();
+  /* ⚠️ webfont が来る前に焼くと別の字で升目が決まる。来てからもう一度焼く */
+  if(document.fonts && document.fonts.ready) document.fonts.ready.then(() => kick());
+  setTimeout(kick, 1200);
+})();
+
+/* ⭐ 回帰テストから触るために出しておく（本体と同じ出どころを見せる） */
+window.P = P; window.size = size; window.outSize = outSize;
+window.buildPlan = buildPlan; window.toSVG = toSVG; window.tvPlan = tvPlan;
+Object.defineProperty(window, 'PH', { get:() => PH, set:v => { PH = v; } });
+window.render = render; window.syncUI = syncUI; window.kick = kick;
+window.undo = undo; window.pushHist = pushHist;
+/* ⚠️ テストが「版1枚の刷り上がり」を見るための出どころ。
+   ⭐ テスト側で同じ式を書き直すと、本体を直したときに物差しが置いていかれる。 */
+window.paintPlate = paintPlate;
+Object.defineProperty(window, 'PLATES', { get:() => PLATES, set:v => { PLATES = v; } });
+Object.defineProperty(window, 'cur',    { get:() => cur,    set:v => { cur = v; } });
+window.newPlate = newPlate;
+</script>
+</body>
+</html>

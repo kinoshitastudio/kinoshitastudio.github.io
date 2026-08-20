@@ -1,0 +1,1215 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>擦 SURE — 引いた線を距離で読み、粗い升目で段にする / 木下スタジオ（試作）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  /* ⚠️ 外枠（並び方・見た目）は 累 RUI / 点 TEN と同じ＝道具ごとに作りを変えない */
+  :root{
+    --bg:#e8e4dc; --paper:#f4f2ec; --line:rgba(28,28,30,.14);
+    --fg:#1c1c1e; --fg2:rgba(28,28,30,.62); --fg3:rgba(28,28,30,.40);
+    --fill:rgba(28,28,30,.10); --fill2:rgba(28,28,30,.07);
+    --capsule:#fffdf8; --glass:rgba(246,244,238,.84); --r:10px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans","Zen Kaku Gothic New",sans-serif;
+    font-weight:400;overflow:hidden;display:flex;align-items:stretch}
+
+  /* ⭐ 盤＝窓。中の紙は動かさず、見る側だけ transform で動かす（出る絵は1画素も変わらない） */
+  #stage{flex:1;position:relative;min-width:0;overflow:hidden;cursor:crosshair}
+  #stage.panning{cursor:grabbing}
+  #stage::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
+    background:radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,.5), transparent 62%)}
+  canvas#cv{position:absolute;left:0;top:0;transform-origin:0 0;
+    box-shadow:0 14px 44px rgba(28,28,30,.18);display:block}
+  /* ⭐ 選んだ印は【刷る絵に混ぜない】。別の板を同じ倍率で重ねる
+     （混ぜると PNG にも選択枠が出てしまう） */
+  canvas#ov{position:absolute;left:0;top:0;transform-origin:0 0;display:block;
+    pointer-events:none;z-index:2}
+  /* 🔴 モバイルで none にすると縦スクロールが止まる。広い画面のときだけ盤で掴む */
+  @media (min-width:821px){ #stage{touch-action:none} }
+
+  #zoom{position:absolute;left:14px;bottom:12px;z-index:5;display:flex;align-items:center;gap:2px;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border:.5px solid var(--line);border-radius:11px;padding:3px;box-shadow:0 4px 14px rgba(28,28,30,.10)}
+  #zoom button{border:none;background:none;border-radius:8px;color:var(--fg);cursor:pointer;
+    font-family:inherit;font-size:11.5px;font-weight:500;padding:6px 9px;opacity:.75;transition:.14s}
+  #zoom button:hover{opacity:1;background:rgba(28,28,30,.09)}
+  #zoom .z{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg2);
+    min-width:52px;text-align:center;font-variant-numeric:tabular-nums;pointer-events:none}
+  #stat{position:absolute;left:0;right:0;bottom:0;padding:8px 14px;font-size:11px;color:var(--fg3);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;pointer-events:none;text-align:center;z-index:4}
+  #drop{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(244,242,236,.92);border:1px dashed rgba(28,28,30,.35);
+    font-size:13px;letter-spacing:.08em;color:var(--fg2);z-index:20;text-align:center;line-height:1.8}
+  body.dragging #drop{display:flex}
+
+  #panel{width:308px;flex:0 0 308px;height:100%;overflow-y:auto;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border-left:.5px solid var(--line);padding:16px 16px 80px}
+  #panel::-webkit-scrollbar{width:0}
+  h1{font-size:12px;font-weight:590;letter-spacing:.12em;color:var(--fg);margin-bottom:2px}
+  .sub{font-size:11.5px;color:var(--fg2);margin-bottom:16px;line-height:1.6}
+  .grp{margin-bottom:20px}
+  label.h{position:sticky;top:-16px;z-index:3;display:block;margin:0 -16px 8px;padding:7px 16px 6px;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border-bottom:.5px solid var(--line);font-size:11px;font-weight:590;letter-spacing:.04em;color:var(--fg2)}
+  .row{display:flex;align-items:center;gap:10px;padding:2px 0;margin-bottom:2px}
+  .row span.n{flex:1;font-size:11.5px;color:var(--fg)}
+  .row output{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg2);
+    width:46px;flex:0 0 46px;text-align:right;font-variant-numeric:tabular-nums}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;background:none;height:26px;
+    cursor:pointer;touch-action:pan-y}
+  input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--fill)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;
+    margin-top:-8px;border-radius:50%;background:var(--fg);border:none;
+    box-shadow:0 1px 3px rgba(28,28,30,.30), 0 0 0 .5px rgba(28,28,30,.05)}
+  .seg{display:flex;flex-wrap:wrap;background:var(--fill2);border-radius:9px;padding:2px;gap:2px;margin:6px 0 10px}
+  .seg button{flex:1 1 auto;min-width:0;border:none;border-radius:7px;background:none;
+    font-family:inherit;font-size:11.5px;font-weight:450;color:var(--fg);opacity:.72;
+    padding:6px 4px;cursor:pointer;transition:.16s;white-space:nowrap}
+  .seg button:hover{opacity:1;background:rgba(28,28,30,.07)}
+  .seg button.on{opacity:1;background:var(--capsule);font-weight:590;
+    box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.04)}
+  .btn{width:100%;background:var(--fill);border:none;border-radius:var(--r);color:var(--fg);
+    font-family:inherit;font-size:12px;font-weight:500;padding:11px 0;margin-top:6px;cursor:pointer;transition:.14s}
+  .btn:hover{background:rgba(28,28,30,.16)}
+  .btn:active{transform:scale(.985);opacity:.8}
+  .btn.solid{background:var(--fg);color:var(--paper);font-weight:590}
+  .btns2{display:flex;gap:6px}
+  .note{font-size:10.5px;line-height:1.65;color:var(--fg2);opacity:.75;margin-top:7px}
+  .note b{font-weight:590;opacity:1}
+  input[type=color]{width:100%;height:32px;padding:0;border:.5px solid var(--line);border-radius:var(--r);
+    background:transparent;cursor:pointer}
+  .chk{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 0;
+    font-size:11.5px;color:var(--fg);cursor:pointer;margin-bottom:5px}
+  .chk input[type=checkbox]{-webkit-appearance:none;appearance:none;flex:0 0 38px;width:38px;height:23px;
+    border-radius:23px;background:var(--fill);position:relative;transition:.2s;cursor:pointer;order:2}
+  .chk input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;
+    border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(28,28,30,.3);transition:.2s}
+  .chk input[type=checkbox]:checked{background:var(--fg)}
+  .chk input[type=checkbox]:checked::after{transform:translateX(15px)}
+  #meter{background:var(--fill2);border:none;border-radius:var(--r);color:var(--fg2);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:10.5px;line-height:1.7;padding:9px 11px;margin:8px 0;
+    white-space:pre-line}
+  .hide{display:none!important}
+
+  /* ⭐ 段の一覧＝iOS のリスト（累 RUI の版の一覧と同じ言い方） */
+  #bands{display:flex;flex-direction:column;gap:4px}
+  .bd{display:flex;align-items:center;gap:10px;background:var(--fill2);border:none;border-radius:var(--r);
+    padding:9px 10px;cursor:pointer;transition:.15s}
+  .bd:hover{background:rgba(28,28,30,.10)}
+  .bd.sel{background:var(--capsule);box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.06)}
+  .bd .sw{width:18px;height:18px;flex:0 0 18px;border-radius:5px;border:.5px solid rgba(28,28,30,.2)}
+  .bd .nm{flex:1;min-width:0;font-size:12px;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bd.sel .nm{color:var(--fg);font-weight:500}
+  .bd .up{width:20px;height:20px;flex:0 0 20px;border:0;background:transparent;color:var(--fg3);
+    cursor:pointer;font-size:9px;line-height:1;padding:0}
+  .bd .up:hover{color:var(--fg)}
+
+  @media (max-width:820px){
+    body{flex-direction:column;overflow:auto}
+    #stage{padding:0;min-height:50vh}
+    #panel{width:100%;flex:1 1 auto;height:auto;border-left:0;border-top:.5px solid var(--line);
+      padding:16px 14px calc(80px + env(safe-area-inset-bottom))}
+    label.h{top:-16px;margin:0 -14px 8px;padding:7px 14px 6px}
+    input[type=range]{height:40px}
+    input[type=range]::-webkit-slider-thumb{width:24px;height:24px;margin-top:-10px}
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <canvas id="ov"></canvas>
+  <div id="drop">控え（JSON）をここに落とす</div>
+  <div id="stat"></div>
+  <div id="zoom">
+    <button id="z_out">−</button><span class="z" id="z_lab">100%</span><button id="z_in">＋</button>
+    <button id="z_fit">ぴったり</button><button id="z_one">原寸</button>
+  </div>
+</div>
+
+<div id="panel">
+  <h1>SURE</h1>
+  <div class="sub">擦 — 引いた線を<b>距離</b>で読み、粗い升目で段にする。<br>段が階段状にずれ、そこに粒がのる。</div>
+
+  <div class="grp">
+    <label class="h">見本</label>
+    <div class="seg" id="preSeg"></div>
+    <div class="note">⭐ 押すと<b>段も紙もまとめて</b>その型になる（描いた線は消えない）</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">描く</label>
+    <div class="seg" id="toolSeg">
+      <button data-v="draw">線</button>
+      <button data-v="erase">消す</button>
+      <button data-v="pick">選ぶ</button>
+      <button data-v="pan">盤</button>
+    </div>
+    <div class="row"><span class="n">筆の太さ</span><output id="o_bw"></output></div>
+    <input type="range" id="r_bw" min="0.2" max="16" step="0.1">
+    <div class="btns2">
+      <button class="btn" id="b_undoStroke">1本消す</button>
+      <button class="btn" id="b_clear">ぜんぶ消す</button>
+    </div>
+    <div class="note">⭐ 太さは<b>版面の%</b>。⭐だから<b>「細かさ」を動かしても線の太さは変わらない</b>（階段だけ変わる）<br>
+      ⭐ <b>選ぶ</b>＝1本を掴んで盤の中で動かす／<b>盤</b>＝紙ごと動かす（<kbd>shift</kbd>ドラッグでもできる）</div>
+  </div>
+
+  <!-- ⭐ 選んだもの ── 木下「選択したレイヤーのオブジェクトもボード内で動かせるように」 -->
+  <div class="grp hide" id="selBox">
+    <label class="h">選んだもの</label>
+    <div id="selInfo" style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--fg2);margin-bottom:6px"></div>
+    <div class="row"><span class="n">この1本の太さ</span><output id="o_sel_w"></output></div>
+    <input type="range" id="r_sel_w" min="0.2" max="16" step="0.1">
+    <div class="btns2">
+      <button class="btn" id="b_selUp">▲ 前へ</button>
+      <button class="btn" id="b_selDown">▼ 後ろへ</button>
+    </div>
+    <div class="btns2">
+      <button class="btn" id="b_selDup">複製</button>
+      <button class="btn" id="b_selDel">これを消す</button>
+    </div>
+    <div class="note">⭐ 掴んで動かす／<b>矢印キー</b>で1升ずつ・<kbd>shift</kbd>で5升<br>
+      ⚠️ 順番は<b>消す線</b>のときだけ効く（後ろの線を消すので）</div>
+  </div>
+
+  <!-- ══⭐⭐ 芯 ══ 距離を粗い升目で読むから、輪郭が階段になる -->
+  <div class="grp">
+    <label class="h">升目（ここで階段が決まる）</label>
+    <div class="row"><span class="n">細かさ</span><output id="o_cols"></output></div>
+    <input type="range" id="r_cols" min="16" max="260" step="1">
+    <div id="meter"></div>
+    <div class="note">🔴 <b>粗いほど階段が大きくなる</b>。参考のギザギザはこれ<br>
+      ⭐ 線そのものではなく<b>線からの距離</b>を升目で読んでいる</div>
+  </div>
+
+  <!-- ══⭐ 段（線から離れるほど外側） ══ -->
+  <div class="grp">
+    <label class="h">段（線から外へ）</label>
+    <div id="bands"></div>
+    <div class="btns2">
+      <button class="btn" id="b_addBand">＋段</button>
+      <button class="btn" id="b_delBand">消す</button>
+    </div>
+    <div class="note">⭐ 上から順に<b>線の中 → 外へ</b>。最後の段より外は紙</div>
+  </div>
+
+  <div class="grp" id="bandBox">
+    <label class="h">選んだ段</label>
+    <input type="color" id="bd_color">
+    <div class="row" style="margin-top:8px"><span class="n">幅</span><output id="o_bd_w"></output></div>
+    <input type="range" id="r_bd_w" min="0.1" max="16" step="0.1">
+    <div class="note">⭐ 幅も<b>版面の%</b>（升目を変えても段の太さは変わらない）</div>
+  </div>
+
+  <!-- ══⭐⭐ 質感 ══ 木下「質感含め」 -->
+  <div class="grp">
+    <label class="h">質感</label>
+    <div class="row"><span class="n">縁の荒れ</span><output id="o_rough"></output></div>
+    <input type="range" id="r_rough" min="0" max="3" step="0.02">
+    <div class="row"><span class="n">荒れの粗さ</span><output id="o_rgrain"></output></div>
+    <input type="range" id="r_rgrain" min="1" max="16" step="0.5">
+    <div class="row"><span class="n">粒子</span><output id="o_grain"></output></div>
+    <input type="range" id="r_grain" min="0" max="0.7" step="0.005">
+    <div class="row"><span class="n">粒子の大きさ</span><output id="o_gsize"></output></div>
+    <input type="range" id="r_gsize" min="1" max="6" step="1">
+    <div class="row"><span class="n">色の荒れ</span><output id="o_chroma"></output></div>
+    <input type="range" id="r_chroma" min="0" max="1" step="0.01">
+    <div class="row"><span class="n">暗いほど粒が立つ</span><output id="o_gdark"></output></div>
+    <input type="range" id="r_gdark" min="0" max="1" step="0.01">
+    <div class="row"><span class="n">種</span><output id="o_seed"></output></div>
+    <input type="range" id="r_seed" min="1" max="200" step="1">
+    <div class="note">⭐ <b>縁の荒れ</b>＝距離にゆらぎを足してから段に丸める。だから階段が食われる<br>
+      ⭐ <b>粒子</b>＝最後に一度だけ全体へ。⚠️種を変えると粒の並びが変わる</div>
+  </div>
+
+  <!-- ══⭐ 動かす（アニメーション）══ 動くのは【縁の荒れ】と【段】。線そのものは動かさない -->
+  <div class="grp">
+    <label class="h">動かす</label>
+    <label class="chk"><span>画面で動かす</span><input type="checkbox" id="c_anim"></label>
+    <div class="row" style="margin-top:6px"><span class="n">1周の秒数</span><output id="o_cyc"></output></div>
+    <input type="range" id="r_cyc" min="0.5" max="12" step="0.1">
+    <div class="row"><span class="n">縁が沸く（周）</span><output id="o_boilN"></output></div>
+    <input type="range" id="r_boilN" min="0" max="4" step="1">
+    <div class="row"><span class="n">沸く幅</span><output id="o_boilR"></output></div>
+    <input type="range" id="r_boilR" min="0" max="3" step="0.05">
+    <div class="row"><span class="n">段が呼吸（周）</span><output id="o_brN"></output></div>
+    <input type="range" id="r_brN" min="0" max="4" step="1">
+    <div class="row"><span class="n">呼吸の振れ</span><output id="o_brA"></output></div>
+    <input type="range" id="r_brA" min="0" max="1" step="0.01">
+    <div class="row"><span class="n">粒が踊る（コマ）</span><output id="o_gflick"></output></div>
+    <input type="range" id="r_gflick" min="0" max="24" step="1">
+    <div class="note">⭐⭐ <b>縁が沸く</b>＝手描きアニメの線のボイル。この道具の芯がそのまま動く<br>
+      ⭐ 周は整数・沸きは輪をなぞるので<b>頭と尻が数値で一致</b>＝継ぎ目なしループ<br>
+      ⭐⭐ 呼吸は<b>いまの絵を端</b>にして片側だけ（動かしても今の絵を見失わない）</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">紙</label>
+    <input type="color" id="c_paper">
+    <div class="row" style="margin-top:8px"><span class="n">版面</span></div>
+    <div class="seg" id="ratioSeg"></div>
+    <div class="row"><span class="n">長辺</span><output id="o_long"></output></div>
+    <input type="range" id="r_long" min="600" max="2400" step="100">
+  </div>
+
+  <div class="grp">
+    <label class="h">出す</label>
+    <div class="row"><span class="n">出す大きさ（長辺）</span></div>
+    <div class="seg" id="outSeg"></div>
+    <div id="outMeter" style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--fg2);margin:6px 0"></div>
+    <button class="btn solid" id="b_png">PNG</button>
+    <button class="btn" id="b_pnga">PNG（地なし）</button>
+    <button class="btn" id="b_svg">SVG（段を矩形で・粒なし）</button>
+    <div class="btns2">
+      <button class="btn" id="b_save">控えを出す</button>
+      <button class="btn" id="b_load">控えを読む</button>
+    </div>
+    <button class="btn" id="b_undo">⌘Z 戻す</button>
+    <div class="note">⭐ <b>地なし</b>＝他の道具に持ち込む用（透明PNG）<br>
+      ⚠️ SVG は段が矩形＝ベクター。<b>粒子は入らない</b>（粒は画素のものなので）</div>
+  </div>
+
+  <!-- ══⭐⭐ 動画 ══ 🔴 画面録画は使わない。コマ番号で位相を刻んで1コマずつ焼く -->
+  <div class="grp">
+    <label class="h">動画で出す</label>
+    <div class="row"><span class="n">形式</span></div>
+    <div class="seg" id="vFmt">
+      <button data-v="mp4">mp4</button><button data-v="png">PNG連番（zip）</button>
+    </div>
+    <div class="row"><span class="n">コマ/秒</span></div>
+    <div class="seg" id="vFps">
+      <button data-v="12">12</button><button data-v="24">24</button>
+      <button data-v="30">30</button><button data-v="60">60</button>
+    </div>
+    <div class="row"><span class="n">周</span></div>
+    <div class="seg" id="vLoop">
+      <button data-v="1">1</button><button data-v="2">2</button>
+      <button data-v="3">3</button><button data-v="4">4</button>
+    </div>
+    <div class="row"><span class="n">きれいさ</span></div>
+    <div class="seg" id="vQ">
+      <button data-v="lo">軽い</button><button data-v="mid">ふつう</button><button data-v="hi">きれい</button>
+    </div>
+    <div id="vMeter" style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px;line-height:1.7;color:var(--fg2);background:var(--fill2);border-radius:var(--r);padding:9px 11px;margin:8px 0"></div>
+    <button class="btn solid" id="b_video">動画を出す</button>
+    <div class="note">⭐ 大きさは上の<b>「出す大きさ」</b>と同じ<br>
+      🔴 画面を録るのではなく<b>コマ番号で位相を刻んで1コマずつ焼く</b>＝コマ落ちしない・ぴったりループする</div>
+  </div>
+</div>
+
+<input type="file" id="fileIn" accept="application/json,.json" style="display:none">
+
+<script>
+"use strict";
+const el = id => document.getElementById(id);
+let statT = 0;
+function stat(s){ el('stat').textContent = s; clearTimeout(statT); statT = setTimeout(() => el('stat').textContent = '', 4000); }
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ この道具の芯 ── 2026-08-20 木下が参考2枚（ZIJN APPELMOES / 版面をパネルに割った版画）を出して
+      「このようなテイストを作れるツールが作りたい。質感含め」
+
+   参考を構造で読むと、輪郭は【なめらかでなく階段状に量子化されている】。
+   ⭐ これは線を太らせているのではなく、
+      【線からの距離】を【粗い升目】で読んで、距離を段に丸めている ── 式は1本。
+      ・粗い升目で読む → 階段になる（参考のギザギザ）
+      ・距離を段に丸める → 入れ子の輪郭が何重にも出る
+      ・距離にゆらぎを足してから丸める → 階段の縁が食われる（擦れ）
+   ⭐ 最後に一度だけ粒子を全体へ。段ごとに掛けると濁る（網 AMI と同じ作法）。
+   ══════════════════════════════════════════════════════════════ */
+
+const RATIOS = [
+  { v:'1:1', n:'1:1', w:1, h:1 }, { v:'4:5', n:'4:5', w:4, h:5 },
+  { v:'3:4', n:'3:4', w:3, h:4 }, { v:'9:16', n:'9:16', w:9, h:16 },
+  { v:'16:9', n:'16:9', w:16, h:9 },
+];
+const OUTS = [
+  { v:'same', n:'版面のまま' }, { v:'1080', n:'1080' }, { v:'2048', n:'2048' },
+  { v:'3000', n:'3000' }, { v:'4096', n:'4096' },
+];
+
+let P = {
+  tool:'draw', bw:3.3, cols:96,
+  rough:0.9, rgrain:5, grain:0.26, gsize:1, chroma:0.18, gdark:0.55, seed:7,
+  paper:'#efe7dc', ratio:'4:5', long:1400, outLong:'same', preset:0,
+  /* ── 動かす ── ⭐ 動くのは【縁の荒れ】と【段】。線そのものは動かさない */
+  anim:false, cyc:3, boilN:0, boilR:1.0, brN:0, brA:0.35, gflick:0,
+  vFmt:'mp4', vFps:'24', vLoop:'1', vQ:'mid',
+};
+let PH = 0;                 /* 位相 0..1。⭐ 動画では時計でなくコマ番号で刻む */
+let sel = -1;               /* 選んでいる線（-1＝なし） */
+const DEF = { ...P };
+/* ⭐ 段＝線の中から外へ。最後の段より外は紙。 */
+let BANDS = [], bcur = 0, bseq = 0;
+function newBand(o){ return Object.assign({ id:++bseq, color:'#141414', w:3 }, o || {}); }
+/* 🔴 段0の幅は【縁の荒れより大きく】取る。小さいと荒れが線の中まで食って、
+      線の芯が抜けて見える（＝わざとやるなら良いが、既定でそれは分かりにくい）。 */
+function baseBands(){
+  return [ newBand({ color:'#141414', w:1.7 }),   /* 線の中 */
+           newBand({ color:'#fbf9f4', w:2.3 }),
+           newBand({ color:'#141414', w:1.5 }) ];
+}
+BANDS = baseBands();
+
+/* ⭐ 描いたもの＝【正規化した点の列】。画素で持たないので、どの大きさでも焼き直せる */
+let ITEMS = [];      /* {t:'draw'|'erase', w:太さ(升目), pts:[[x,y],...] 0..1 } */
+
+const PRESETS = [
+  { n:'刷', P:{ cols:96,  rough:0.9, rgrain:5, grain:0.26, gsize:1, chroma:0.18, gdark:0.55, paper:'#efe7dc' },
+    B:baseBands },
+  { n:'札', P:{ cols:64,  rough:1.2, rgrain:6, grain:0.30, gsize:1, chroma:0.10, gdark:0.70, paper:'#efc9e6' },
+    B:() => [ newBand({ color:'#fbf9f4', w:3.1 }), newBand({ color:'#141414', w:2.5 }) ] },
+  { n:'蛍', P:{ cols:80,  rough:1.1, rgrain:5, grain:0.24, gsize:1, chroma:0.22, gdark:0.60, paper:'#5fb0e8' },
+    B:() => [ newBand({ color:'#141414', w:2.0 }), newBand({ color:'#3ee06a', w:2.5 }),
+              newBand({ color:'#141414', w:1.5 }) ] },
+  { n:'厚', P:{ cols:44,  rough:1.4, rgrain:8, grain:0.34, gsize:2, chroma:0.06, gdark:0.80, paper:'#f6ee56' },
+    B:() => [ newBand({ color:'#141414', w:4.1 }), newBand({ color:'#fbf9f4', w:3.2 }),
+              newBand({ color:'#141414', w:2.3 }), newBand({ color:'#e8402c', w:3.6 }) ] },
+];
+
+/* ══ 版面 ══ */
+function sizeOf(L){
+  const r = RATIOS.find(x => x.v === P.ratio) || RATIOS[0];
+  return r.w >= r.h ? { W:L, H:Math.round(L * r.h / r.w) } : { W:Math.round(L * r.w / r.h), H:L };
+}
+function size(){ return sizeOf(P.long); }
+function outSize(){ return P.outLong === 'same' ? size() : sizeOf(Math.max(64, +P.outLong || P.long)); }
+
+/* ══ ゆらぎ（種で決まる＝毎回同じ絵になる） ══
+   ⚠️ Math.random は使わない。控えから戻したときに違う絵になってしまう。 */
+function hash2(x, y, s){
+  let h = (x * 374761393 + y * 668265263 + s * 2147483647) | 0;
+  h = (h ^ (h >>> 13)) * 1274126177;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+/* なめらかなゆらぎ（縁を食うのに使う。点々でなく塊で食われてほしい） */
+function vnoise(x, y, s){
+  const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+  const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+  const a = hash2(ix, iy, s),       b = hash2(ix + 1, iy, s);
+  const c = hash2(ix, iy + 1, s),   d = hash2(ix + 1, iy + 1, s);
+  return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+}
+
+/* ══════════════════════════════════════════════
+   ⭐ 距離の場（EDT）── 線から何升離れているか
+   ⚠️ 画素でなく【升目】で測る。だから粗くすると階段になる。
+   Felzenszwalb の1次元EDTを縦横に掛ける（正確なユークリッド距離）。
+   ══════════════════════════════════════════════ */
+const INF = 1e20;
+function edt1d(f, n, d, v, z){
+  let k = 0; v[0] = 0; z[0] = -INF; z[1] = INF;
+  for(let q = 1; q < n; q++){
+    let s = ((f[q] + q*q) - (f[v[k]] + v[k]*v[k])) / (2*q - 2*v[k]);
+    while(s <= z[k]){ k--; s = ((f[q] + q*q) - (f[v[k]] + v[k]*v[k])) / (2*q - 2*v[k]); }
+    k++; v[k] = q; z[k] = s; z[k+1] = INF;
+  }
+  k = 0;
+  for(let q = 0; q < n; q++){
+    while(z[k+1] < q) k++;
+    d[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
+  }
+}
+function edt2d(g, W, H){
+  const n = Math.max(W, H);
+  const f = new Float64Array(n), d = new Float64Array(n);
+  const v = new Int32Array(n + 1), z = new Float64Array(n + 2);
+  for(let x = 0; x < W; x++){
+    for(let y = 0; y < H; y++) f[y] = g[y*W + x];
+    edt1d(f, H, d, v, z);
+    for(let y = 0; y < H; y++) g[y*W + x] = d[y];
+  }
+  for(let y = 0; y < H; y++){
+    const o = y*W;
+    for(let x = 0; x < W; x++) f[x] = g[o + x];
+    edt1d(f, W, d, v, z);
+    for(let x = 0; x < W; x++) g[o + x] = d[x];
+  }
+  return g;
+}
+
+/* ══ 線を升目に落とす ══
+   ⚠️ 太さも升目いくつ分で持つ＝細かさを変えても線の太さが変わらない。 */
+const mCv = document.createElement('canvas');
+function bakeCells(cols, rows){
+  mCv.width = cols; mCv.height = rows;
+  const c = mCv.getContext('2d', { willReadFrequently:true });
+  c.clearRect(0, 0, cols, rows);
+  c.lineCap = 'round'; c.lineJoin = 'round';
+  for(const it of ITEMS){
+    if(!it.pts.length) continue;
+    c.globalCompositeOperation = it.t === 'erase' ? 'destination-out' : 'source-over';
+    c.strokeStyle = '#000'; c.fillStyle = '#000';
+    /* 🔴 太さは【版面の%】で持ち、ここで升目に直す。
+       ⚠️ 升目単位で持つと「細かさ」を動かしたときに線の太さまで変わる
+          ＝つまみが2つの意味を持つ（2026-08-20 実測で発覚：60升→120升で太さが半分になっていた）。
+       ⭐「細かさ」が動かすのは【階段の大きさ】だけ、にする。 */
+    c.lineWidth = Math.max(0.6, it.w / 100 * cols);
+    c.beginPath();
+    const p0 = it.pts[0];
+    c.moveTo(p0[0] * cols, p0[1] * rows);
+    for(let i = 1; i < it.pts.length; i++) c.lineTo(it.pts[i][0] * cols, it.pts[i][1] * rows);
+    if(it.pts.length === 1) c.lineTo(p0[0] * cols + 0.01, p0[1] * rows);
+    c.stroke();
+  }
+  c.globalCompositeOperation = 'source-over';
+  return c.getImageData(0, 0, cols, rows).data;
+}
+
+/* ⭐⭐ 刷る計画 ── 画面も PNG も SVG もテストもここだけを見る */
+function buildPlan(W, H){
+  const cols = Math.max(4, Math.round(P.cols));
+  const cell = W / cols;
+  const rows = Math.max(4, Math.round(H / cell));
+  const a = bakeCells(cols, rows);
+
+  /* 線の中＝距離0。それ以外は無限大から始める */
+  const g = new Float64Array(cols * rows);
+  let inside = 0;
+  for(let i = 0, n = cols * rows; i < n; i++){
+    const on = a[i*4 + 3] > 127;
+    if(on) inside++;
+    g[i] = on ? 0 : INF;
+  }
+  edt2d(g, cols, rows);
+
+  /* ⭐ 段が呼吸＝いまの絵を端にして片側だけ（位相0でちょうど今の絵） */
+  const TAU = Math.PI * 2;
+  const breathe = P.brN > 0 ? 1 + P.brA * (1 - Math.cos(TAU * PH * P.brN)) / 2 : 1;
+  /* 段の境目（累積）。⭐ 幅も【版面の%】＝細かさを変えても段の太さは変わらない */
+  const edge = [];
+  let acc = 0;
+  for(const b of BANDS){ acc += Math.max(0.02, b.w / 100 * cols) * breathe; edge.push(acc); }
+
+  /* ⭐⭐ 縁が沸く＝ゆらぎを読む場所を【輪でなぞる】。1周で必ず元に戻る＝継ぎ目なし。
+     ⚠️ 位相で種を進めると戻らない（頭と尻が繋がらない）。動かすのは読む場所。 */
+  const boil = (P.boilN > 0 && P.boilR > 0) ? P.boilR : 0;
+  const bx = boil * Math.sin(TAU * PH * P.boilN), by = boil * (Math.cos(TAU * PH * P.boilN) - 1);
+
+  /* 升目 → 段の番号（-1 は紙）。⭐ 距離にゆらぎを足してから丸めるので階段の縁が食われる */
+  const idx = new Int8Array(cols * rows);
+  const rough = P.rough, rg = Math.max(1, P.rgrain);
+  for(let y = 0; y < rows; y++){
+    for(let x = 0; x < cols; x++){
+      const i = y*cols + x;
+      let d = Math.sqrt(g[i]);
+      if(rough > 0) d += (vnoise(x / rg + bx, y / rg + by, P.seed) - 0.5) * 2 * rough;
+      let b = -1;
+      for(let k = 0; k < edge.length; k++){ if(d < edge[k]){ b = k; break; } }
+      idx[i] = b;
+    }
+  }
+  /* ⭐ 粒が踊る＝コマごとに粒の種を1つ進める。決めたコマ数で一巡するので繰り返しても揃う */
+  const gf = Math.round(P.gflick);
+  const gseed = gf > 0 ? P.seed + (Math.floor(PH * gf) % gf) : P.seed;
+  return { W, H, cols, rows, cell:+cell.toFixed(4), idx, inside,
+           colors:BANDS.map(b => b.color), paper:P.paper,
+           grain:P.grain, gsize:Math.max(1, Math.round(P.gsize)),
+           chroma:P.chroma, gdark:P.gdark, seed:gseed };
+}
+
+/* ══ 段を矩形にまとめる（横に続く同じ段は1本にする） ══
+   ⭐ 画面・SVG が同じここを見る＝式は1本。 */
+function runs(plan){
+  const { cols, rows, idx } = plan, out = [];
+  for(let y = 0; y < rows; y++){
+    let x = 0;
+    while(x < cols){
+      const b = idx[y*cols + x];
+      let x2 = x + 1;
+      while(x2 < cols && idx[y*cols + x2] === b) x2++;
+      if(b >= 0) out.push([x, y, x2 - x, b]);
+      x = x2;
+    }
+  }
+  return out;
+}
+
+/* ══ 刷る ══ */
+function paint(ctx, plan, transparent){
+  const { W, H, cell } = plan;
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  ctx.clearRect(0, 0, W, H);
+  if(!transparent){ ctx.fillStyle = plan.paper; ctx.fillRect(0, 0, W, H); }
+  ctx.restore();
+  /* ⚠️ 升目の境に髪の毛の隙間が出る。ぴったり並べるため少しだけ広げて描く */
+  const pad = 0.75;
+  for(const [x, y, w, b] of runs(plan)){
+    ctx.fillStyle = plan.colors[b];
+    ctx.fillRect(x*cell - pad, y*cell - pad, w*cell + pad*2, cell + pad*2);
+  }
+}
+
+/* ⭐⭐ 質感 ── 最後に一度だけ全体へ。
+   ⚠️ 段ごとに掛けると濁る（網 AMI と同じ理由）。
+   ⭐ 暗いほど粒が立つ＝参考の黒い所がいちばんザラついているのを式にした。 */
+function grainPass(ctx, plan, transparent){
+  if(plan.grain <= 0 && plan.chroma <= 0) return;
+  const { W, H, gsize, seed } = plan;
+  const im = ctx.getImageData(0, 0, W, H), d = im.data;
+  const amt = plan.grain * 255, chr = plan.chroma * 255, dk = plan.gdark;
+  for(let y = 0; y < H; y++){
+    const gy = (y / gsize) | 0, o = y * W * 4;
+    for(let x = 0; x < W; x++){
+      const i = o + x*4;
+      if(transparent && d[i+3] === 0) continue;
+      const gx = (x / gsize) | 0;
+      const lum = (d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114) / 255;
+      /* 暗いところほど強く（dk=0 なら一様） */
+      const k = amt * (1 - dk * lum);
+      const n = hash2(gx, gy, seed) - 0.5;
+      const v = n * 2 * k;
+      const cr = chr * (hash2(gx, gy, seed + 91) - 0.5) * 2;
+      const cg = chr * (hash2(gx, gy, seed + 173) - 0.5) * 2;
+      const cb = chr * (hash2(gx, gy, seed + 257) - 0.5) * 2;
+      d[i]   = d[i]   + v + cr < 0 ? 0 : d[i]   + v + cr > 255 ? 255 : d[i]   + v + cr;
+      d[i+1] = d[i+1] + v + cg < 0 ? 0 : d[i+1] + v + cg > 255 ? 255 : d[i+1] + v + cg;
+      d[i+2] = d[i+2] + v + cb < 0 ? 0 : d[i+2] + v + cb > 255 ? 255 : d[i+2] + v + cb;
+    }
+  }
+  ctx.putImageData(im, 0, 0);
+}
+function render(ctx, plan, transparent){
+  paint(ctx, plan, transparent);
+  grainPass(ctx, plan, transparent);
+}
+
+/* ══ SVG ══ ⭐ 段が矩形なのでそのままベクター。⚠️ 粒子は画素のものなので入らない */
+function toSVG(plan, transparent){
+  const { W, H, cell } = plan, n = [];
+  n.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" shape-rendering="crispEdges">`);
+  if(!transparent) n.push(`<rect width="${W}" height="${H}" fill="${plan.paper}"/>`);
+  const by = plan.colors.map(() => []);
+  for(const [x, y, w, b] of runs(plan))
+    by[b].push(`M${(x*cell).toFixed(2)} ${(y*cell).toFixed(2)}h${(w*cell).toFixed(2)}v${cell.toFixed(2)}h${(-w*cell).toFixed(2)}Z`);
+  by.forEach((ds, b) => { if(ds.length) n.push(`<path fill="${plan.colors[b]}" d="${ds.join('')}"/>`); });
+  n.push('</svg>');
+  return n.join('');
+}
+
+/* ══════════════════════════════════════════════ 盤 ══ */
+const stage = el('stage'), cv = el('cv'), cx = cv.getContext('2d', { willReadFrequently:true });
+const ov = el('ov'), ox = ov.getContext('2d');
+const V = { fit:1, z:1, x:0, y:0 };
+function applyView(){
+  const s = V.fit * V.z;
+  const t = `translate(${V.x.toFixed(1)}px,${V.y.toFixed(1)}px) scale(${s})`;
+  cv.style.transform = t; ov.style.transform = t;   /* ⚠️ 印の板も同じ倍率で動かす */
+  el('z_lab').textContent = Math.round(s * 100) + '%';
+}
+function fitView(){
+  const r = stage.getBoundingClientRect(), pad = r.width < 560 ? 16 : 30;
+  V.fit = Math.min((r.width - pad*2) / cv.width, (r.height - pad*2) / cv.height) || 1;
+  V.z = 1;
+  V.x = (r.width - cv.width * V.fit) / 2;
+  V.y = (r.height - cv.height * V.fit) / 2;
+  applyView();
+}
+function zoomAt(px, py, f){
+  const old = V.fit * V.z, z = Math.min(30, Math.max(0.1, V.z * f)), nw = V.fit * z;
+  V.x = px - (px - V.x) * (nw / old);
+  V.y = py - (py - V.y) * (nw / old);
+  V.z = z; applyView();
+}
+function zoomCenter(f){ const r = stage.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, f); }
+stage.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = stage.getBoundingClientRect();
+  zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * (e.ctrlKey ? 0.010 : 0.0022)));
+}, { passive:false });
+el('z_in').onclick = () => zoomCenter(1.25);
+el('z_out').onclick = () => zoomCenter(1/1.25);
+el('z_fit').onclick = fitView;
+el('z_one').onclick = () => { const r = stage.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, (1/V.fit)/V.z); };
+addEventListener('resize', () => { if(V.z === 1) fitView(); else applyView(); });
+
+/* ══ 描く ══
+   ⭐ 盤の座標 → 版面の 0..1 に直してから溜める（画素で持たない＝焼き直せる） */
+function toPaper(e){
+  const r = stage.getBoundingClientRect();
+  const s = V.fit * V.z;
+  return [ ((e.clientX - r.left) - V.x) / s / cv.width,
+           ((e.clientY - r.top)  - V.y) / s / cv.height ];
+}
+/* ══⭐ 選ぶ ── 木下「選択したレイヤーのオブジェクトもボード内で動かせるように」
+   ⚠️ 当たり判定は【紙の画素】で測る（0..1 のままだと縦横で歪む）。
+   ⭐ 掴む幅は線の太さ＋少しの余裕。細い線でも掴めるように下限を置く。 */
+function hitTest(px, py){
+  const { W, H } = size();
+  const x = px * W, y = py * H;
+  for(let i = ITEMS.length - 1; i >= 0; i--){
+    const it = ITEMS[i];
+    const r = Math.max(it.w / 100 * W / 2 + W * 0.008, W * 0.012);
+    const r2 = r * r;
+    for(let k = 0; k < it.pts.length; k++){
+      const ax = it.pts[k][0]*W, ay = it.pts[k][1]*H;
+      if(k === it.pts.length - 1){ if((x-ax)**2 + (y-ay)**2 <= r2) return i; break; }
+      const bx = it.pts[k+1][0]*W, by = it.pts[k+1][1]*H;
+      const vx = bx-ax, vy = by-ay, L2 = vx*vx + vy*vy;
+      let t = L2 ? ((x-ax)*vx + (y-ay)*vy) / L2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const dx = x - (ax + vx*t), dy = y - (ay + vy*t);
+      if(dx*dx + dy*dy <= r2) return i;
+    }
+  }
+  return -1;
+}
+function drawOverlay(){
+  const { W, H } = size();
+  if(ov.width !== W || ov.height !== H){ ov.width = W; ov.height = H; }
+  ox.clearRect(0, 0, W, H);
+  const it = ITEMS[sel]; if(!it) return;
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for(const [a, b] of it.pts){
+    if(a*W < x0) x0 = a*W; if(a*W > x1) x1 = a*W;
+    if(b*H < y0) y0 = b*H; if(b*H > y1) y1 = b*H;
+  }
+  const m = it.w / 100 * W / 2 + W * 0.008;
+  const s = Math.max(1, 1 / (V.fit * V.z));            /* どの倍率でも同じ細さに見せる */
+  ox.save();
+  ox.strokeStyle = 'rgba(0,120,255,.95)'; ox.lineWidth = 1.6 * s;
+  ox.setLineDash([7*s, 5*s]);
+  ox.strokeRect(x0 - m, y0 - m, (x1-x0) + m*2, (y1-y0) + m*2);
+  ox.restore();
+}
+
+let drawing = null, panning = null, moving = null;
+stage.addEventListener('pointerdown', e => {
+  if(e.button !== 0 || e.target.closest('#zoom')) return;
+  try{ stage.setPointerCapture(e.pointerId); }catch(_){}
+  if(P.tool === 'pan' || e.shiftKey || e.button === 1){
+    panning = { px:e.clientX, py:e.clientY, x:V.x, y:V.y };
+    stage.classList.add('panning'); return;
+  }
+  if(P.tool === 'pick'){
+    const p = toPaper(e);
+    const hit = hitTest(p[0], p[1]);
+    sel = hit;
+    if(hit >= 0) moving = { px:p[0], py:p[1], base:ITEMS[hit].pts.map(q => [q[0], q[1]]) };
+    syncUI(); drawOverlay();
+    stat(hit >= 0 ? `${hit+1}本目を選んだ（掴んで動かす／矢印キー）` : '何も選んでいない');
+    return;
+  }
+  drawing = { t:P.tool === 'erase' ? 'erase' : 'draw', w:P.bw, pts:[toPaper(e)] };
+  ITEMS.push(drawing); sel = -1; drawOverlay(); kick();
+});
+stage.addEventListener('pointermove', e => {
+  if(panning){ V.x = panning.x + (e.clientX - panning.px); V.y = panning.y + (e.clientY - panning.py); applyView(); return; }
+  if(moving){
+    const p = toPaper(e), dx = p[0] - moving.px, dy = p[1] - moving.py;
+    ITEMS[sel].pts = moving.base.map(q => [q[0] + dx, q[1] + dy]);
+    kick(); drawOverlay(); return;
+  }
+  if(!drawing) return;
+  const p = toPaper(e), last = drawing.pts[drawing.pts.length-1];
+  if(Math.abs(p[0]-last[0]) + Math.abs(p[1]-last[1]) < 0.0016) return;   /* 点を間引く */
+  drawing.pts.push(p); kick();
+});
+const endDraw = () => {
+  if(panning){ panning = null; stage.classList.remove('panning'); }
+  if(moving){ moving = null; pushHist(); saveLocal(); }
+  if(drawing){ drawing = null; pushHist(); saveLocal(); }
+};
+stage.addEventListener('pointerup', endDraw);
+stage.addEventListener('pointercancel', endDraw);
+stage.addEventListener('dblclick', fitView);
+
+/* ⭐ 矢印キーで1升ずつ動かす（細かく合わせるとき指では無理） */
+addEventListener('keydown', e => {
+  if(sel < 0 || !ITEMS[sel]) return;
+  const d = { ArrowLeft:[-1,0], ArrowRight:[1,0], ArrowUp:[0,-1], ArrowDown:[0,1] }[e.key];
+  if(!d) return;
+  if(document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  e.preventDefault();
+  const step = (e.shiftKey ? 5 : 1) / Math.max(4, Math.round(P.cols));
+  const { W, H } = size(), asp = W / H;
+  ITEMS[sel].pts = ITEMS[sel].pts.map(q => [q[0] + d[0]*step, q[1] + d[1]*step*asp]);
+  kick(); drawOverlay(); saveLocal(); pushHist();
+});
+
+/* 選んだものの操作 */
+function selMove(dir){
+  if(sel < 0) return;
+  const to = sel + dir;
+  if(to < 0 || to >= ITEMS.length) return;
+  ITEMS.splice(to, 0, ITEMS.splice(sel, 1)[0]);
+  sel = to; syncUI(); drawOverlay(); kick(); saveLocal(); pushHist();
+}
+el('b_selUp').onclick = () => selMove(1);
+el('b_selDown').onclick = () => selMove(-1);
+el('b_selDup').onclick = () => {
+  if(sel < 0) return;
+  const it = ITEMS[sel];
+  const off = 2 / Math.max(4, Math.round(P.cols));
+  ITEMS.splice(sel + 1, 0, { t:it.t, w:it.w, pts:it.pts.map(q => [q[0] + off, q[1] + off]) });
+  sel = sel + 1; syncUI(); drawOverlay(); kick(); saveLocal(); pushHist(); stat('複製した');
+};
+el('b_selDel').onclick = () => {
+  if(sel < 0) return;
+  ITEMS.splice(sel, 1); sel = -1;
+  syncUI(); drawOverlay(); kick(); saveLocal(); pushHist(); stat('消した');
+};
+el('r_sel_w').addEventListener('input', () => {
+  if(sel < 0) return;
+  ITEMS[sel].w = +el('r_sel_w').value;
+  el('o_sel_w').textContent = FMT.bw(ITEMS[sel].w);
+  kick(); drawOverlay(); saveLocal();
+});
+el('r_sel_w').addEventListener('change', pushHist);
+
+el('b_undoStroke').onclick = () => {
+  if(!ITEMS.length){ stat('線が無い'); return; }
+  ITEMS.pop(); kick(); saveLocal(); pushHist(); stat('1本消した');
+};
+el('b_clear').onclick = () => {
+  if(!ITEMS.length){ stat('もう空'); return; }
+  /* ⚠️ 消えたら戻せないものは一度きく（礫で作り込みを消した） */
+  if(!confirm('描いた線をぜんぶ消します。よろしいですか？（⌘Z で戻せます）')) return;
+  ITEMS = []; kick(); saveLocal(); pushHist(); stat('ぜんぶ消した');
+};
+
+/* ══ 画面 ══ */
+let raf = 0;
+function kick(){ if(raf) return; raf = requestAnimationFrame(() => { raf = 0; draw(); }); }
+function draw(){
+  const { W, H } = size();
+  let resized = false;
+  if(cv.width !== W || cv.height !== H){ cv.width = W; cv.height = H; resized = true; }
+  const t0 = performance.now();
+  const plan = buildPlan(W, H);
+  /* ⚠️ 描いている最中は粒子を飛ばす（1画素ずつ触るので指が止まって見える） */
+  paint(cx, plan, false);
+  if(!drawing) grainPass(cx, plan, false);
+  const ms = Math.round(performance.now() - t0);
+  el('meter').textContent =
+    `${W}×${H}  升目 ${plan.cols}×${plan.rows}  1升 ${plan.cell.toFixed(1)}px\n`
+  + `線の升目 ${plan.inside}  段 ${BANDS.length}  線 ${ITEMS.length}本  ${ms}ms`
+  + (drawing ? '\n（描いている間は粒子を止めています）' : '');
+  el('outMeter').textContent = `出す大きさ ${outSize().W} × ${outSize().H} px`;
+  if(resized){ fitView(); drawOverlay(); }
+  tvSizeSync();
+}
+
+/* ══ 画面で動かす ══
+   ⚠️ 既定は止める（動かしっぱなしは電池と発熱を食う）。
+   ⭐ 画面は【時計】でよい。動画だけ【コマ番号】で刻む（そこが継ぎ目の要）。 */
+let animRaf = 0, animT0 = 0;
+function tick(){
+  if(animRaf){ cancelAnimationFrame(animRaf); animRaf = 0; }
+  if(!P.anim || TV.on) return;
+  animT0 = performance.now() - PH * P.cyc * 1000;
+  const step = t => {
+    if(!P.anim || TV.on){ animRaf = 0; return; }
+    PH = (((t - animT0) / 1000) / Math.max(0.2, P.cyc)) % 1;
+    draw();
+    animRaf = requestAnimationFrame(step);
+  };
+  animRaf = requestAnimationFrame(step);
+}
+el('c_anim').addEventListener('change', () => {
+  P.anim = el('c_anim').checked;
+  if(!P.anim){ PH = 0; kick(); }          /* ⭐ 止めたら「つまみで作った絵」に戻る */
+  tick(); saveLocal();
+});
+
+/* ══ 出す ══ */
+async function put(blob, name, msg){
+  try{
+    const f = new File([blob], name, { type:blob.type });
+    if(navigator.canShare && navigator.canShare({ files:[f] })
+       && /iPhone|iPad|iPod|Android/.test(navigator.userAgent)){
+      await navigator.share({ files:[f] }); stat(msg + '（共有シート）'); return;
+    }
+  }catch(e){ if(e && e.name === 'AbortError'){ stat('やめた'); return; } }
+  const u = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 8000);
+  stat(msg);
+}
+const stamp = () => new Date().toISOString().slice(0,19).replace(/[-:T]/g,'');
+function savePNG(transparent){
+  const { W, H } = outSize();
+  const o = document.createElement('canvas'); o.width = W; o.height = H;
+  render(o.getContext('2d', { willReadFrequently:true }), buildPlan(W, H), transparent);
+  o.toBlob(b => {
+    if(!b){ stat('🔴 出せなかった（大きすぎ）'); return; }
+    put(b, `sure_${stamp()}${transparent ? '_a' : ''}.png`,
+        `PNG を出した ${W}×${H}${transparent ? '・地なし' : ''}`);
+  }, 'image/png');
+}
+el('b_png').onclick = () => savePNG(false);
+el('b_pnga').onclick = () => savePNG(true);
+el('b_svg').onclick = () => {
+  const { W, H } = outSize();
+  const s = toSVG(buildPlan(W, H), false);
+  put(new Blob([s], { type:'image/svg+xml' }), `sure_${stamp()}.svg`,
+      `SVG を出した — ${Math.round(s.length/1024)}KB・粒子は入っていません`);
+};
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 動画で出す ── 画面録画をやめる
+   🔴 MediaRecorder / captureStream は使わない（実時間で録るのでコマ落ち・webm固定・
+      継ぎ目なしループ不可・大きさが選べない）。累 RUI / 点 TEN と同じ作り。
+   ⭐ 位相を【コマ番号】で刻む＝`PH = i / 総コマ × 周` の小数部。1コマ目は必ず 0 秒。
+   🔴 mp4 に渡す盤は偶数。できないときは黙って別形式に落とさず理由を出して止める。
+   ══════════════════════════════════════════════════════════════ */
+const TV = { on:false, stop:false };
+const TV_MAXMB = 36864, TV_MAXSIDE = 4096;
+const TV_Q = { hi:0.30, mid:0.15, lo:0.06 };
+const tvIdle = () => new Promise(r => setTimeout(r, 0));
+function tvPlan(){
+  const fps = +P.vFps || 24, loops = +P.vLoop || 1;
+  const sec = loops * Math.max(0.2, P.cyc);
+  const moving = (P.boilN > 0 && P.boilR > 0) || (P.brN > 0 && P.brA > 0) || P.gflick > 0;
+  return { fps, loops, sec, total:Math.max(2, Math.round(sec * fps)), moving };
+}
+function tvSizeSync(){
+  const o = outSize(); let W = o.W, H = o.H;
+  if(P.vFmt === 'mp4'){ W -= W % 2; H -= H % 2; }
+  const over = P.vFmt === 'mp4' &&
+    (Math.ceil(W/16) * Math.ceil(H/16) > TV_MAXMB || W > TV_MAXSIDE || H > TV_MAXSIDE);
+  const t = tvPlan();
+  const m = el('vMeter'); if(!m) return;
+  m.innerHTML = `${W} × ${H} px<br>${t.total} コマ・${t.sec.toFixed(1)}秒・${t.fps}コマ/秒・${t.loops}周`
+    + (over ? '<br>⚠️ mp4 の上限超え（辺4096まで）— 大きさを下げるか PNG連番へ' : '')
+    + (t.moving ? '' : '<br>⚠️ <b>「動かす」が全部 0</b> ＝ 全コマ同じ絵になります');
+}
+let tvMuxP = null;
+function tvLoadMuxer(){
+  if(window.Mp4Muxer) return Promise.resolve(true);
+  if(!tvMuxP) tvMuxP = new Promise(res => {
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.1/build/mp4-muxer.min.js';
+    sc.onload = () => res(!!window.Mp4Muxer); sc.onerror = () => res(false);
+    document.head.appendChild(sc);
+  });
+  return tvMuxP;
+}
+async function tvCodec(W, H, fps, bitrate){
+  for(const codec of ['avc1.640034','avc1.640033','avc1.640032','avc1.64002a','avc1.640028','avc1.4d0034','avc1.42003c']){
+    try{ const s = await VideoEncoder.isConfigSupported({ codec, width:W, height:H, bitrate, framerate:fps });
+      if(s && s.supported) return s.config; }catch(_){}
+  }
+  return null;
+}
+let TV_CRCT = null;
+function tvCrc32(u8){
+  if(!TV_CRCT){ TV_CRCT = new Uint32Array(256);
+    for(let n = 0; n < 256; n++){ let c = n;
+      for(let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      TV_CRCT[n] = c >>> 0; } }
+  let c = 0xFFFFFFFF;
+  for(let i = 0; i < u8.length; i++) c = TV_CRCT[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function tvZip(files){
+  const te = new TextEncoder(), parts = [], cent = []; let off = 0;
+  for(const f of files){
+    const nm = te.encode(f.name), crc = tvCrc32(f.data), sz = f.data.length;
+    const L = new DataView(new ArrayBuffer(30));
+    L.setUint32(0, 0x04034b50, true); L.setUint16(4, 20, true);
+    L.setUint32(14, crc, true); L.setUint32(18, sz, true); L.setUint32(22, sz, true);
+    L.setUint16(26, nm.length, true);
+    parts.push(new Uint8Array(L.buffer), nm, f.data);
+    const C = new DataView(new ArrayBuffer(46));
+    C.setUint32(0, 0x02014b50, true); C.setUint16(4, 20, true); C.setUint16(6, 20, true);
+    C.setUint32(16, crc, true); C.setUint32(20, sz, true); C.setUint32(24, sz, true);
+    C.setUint16(28, nm.length, true); C.setUint32(42, off, true);
+    cent.push(new Uint8Array(C.buffer), nm);
+    off += 30 + nm.length + sz;
+  }
+  let csz = 0; for(const c of cent) csz += c.length;
+  const E = new DataView(new ArrayBuffer(22));
+  E.setUint32(0, 0x06054b50, true);
+  E.setUint16(8, files.length, true); E.setUint16(10, files.length, true);
+  E.setUint32(12, csz, true); E.setUint32(16, off, true);
+  return new Blob(parts.concat(cent, [new Uint8Array(E.buffer)]), { type:'application/zip' });
+}
+async function tvRun(){
+  if(TV.on){ TV.stop = true; return; }
+  const say = t => { el('vMeter').innerHTML = t; };
+  const plan = tvPlan(), o = outSize();
+  let W = o.W, H = o.H;
+  if(P.vFmt === 'mp4'){ W -= W % 2; H -= H % 2; }
+  W = Math.max(2, W); H = Math.max(2, H);
+  const btn = el('b_video');
+  const keepPH = PH, wasAnim = P.anim;
+  P.anim = false; if(animRaf){ cancelAnimationFrame(animRaf); animRaf = 0; }
+  TV.on = true; TV.stop = false; btn.textContent = 'やめる';
+  let msg = '';
+  try{
+    let enc = null, muxer = null, target = null, encErr = null;
+    if(P.vFmt === 'mp4'){
+      if(W > TV_MAXSIDE || H > TV_MAXSIDE || Math.ceil(W/16)*Math.ceil(H/16) > TV_MAXMB)
+        throw new Error(`この大きさ（${W}×${H}）は mp4 の上限を超えています — 辺4096px まで`);
+      if(typeof VideoEncoder === 'undefined')
+        throw new Error('このブラウザは mp4 を作れません（PNG連番を選んでください）');
+      if(!await tvLoadMuxer())
+        throw new Error('mp4 の器を取りに行けませんでした（つながっていない）。PNG連番を選んでください');
+      const bitrate = Math.min(80e6, Math.round(W * H * plan.fps * (TV_Q[P.vQ] || 0.15)));
+      const cfg = await tvCodec(W, H, plan.fps, bitrate);
+      if(!cfg) throw new Error('この大きさで mp4 を作れる設定が見つかりません');
+      target = new Mp4Muxer.ArrayBufferTarget();
+      muxer = new Mp4Muxer.Muxer({ target,
+        video:{ codec:'avc', width:W, height:H, frameRate:Math.max(1, Math.round(plan.fps)) },
+        fastStart:'in-memory' });
+      enc = new VideoEncoder({ output:(c, m) => { try{ muxer.addVideoChunk(c, m); }catch(e){ encErr = e; } },
+        error:e => { encErr = e; } });
+      enc.configure(cfg);
+    }
+    const out = document.createElement('canvas'); out.width = W; out.height = H;
+    const oc = out.getContext('2d', { willReadFrequently:true });
+    const shots = [], pad = i => String(i).padStart(4, '0');
+    let bytes = 0, i = 0;
+    for(; i < plan.total; i++){
+      if(TV.stop) break;
+      if(encErr) throw encErr;
+      PH = (i / plan.total * plan.loops) % 1;      /* ⭐ 時計でなくコマ番号（1コマ目は 0） */
+      render(oc, buildPlan(W, H), false);          /* ⭐ 画面と同じ道 */
+      if(P.vFmt === 'mp4'){
+        const vf = new VideoFrame(out, { timestamp:Math.round(i*1e6/plan.fps), duration:Math.round(1e6/plan.fps) });
+        enc.encode(vf, { keyFrame:(i % (plan.fps*2)) === 0 }); vf.close();
+        while(enc.encodeQueueSize > 8 && !encErr) await tvIdle();
+      }else{
+        const bl = await new Promise(r => out.toBlob(r, 'image/png'));
+        if(!bl) throw new Error('PNG が作れなかった（大きすぎる可能性）');
+        const u8 = new Uint8Array(await bl.arrayBuffer());
+        bytes += u8.length; shots.push({ name:`sure_${pad(i)}.png`, data:u8 });
+        if(bytes > 1.5e9) throw new Error(`PNG連番が大きすぎます（${Math.round(bytes/1e6)}MB）`);
+      }
+      say(`書き出し中 <b>${i+1} / ${plan.total}</b> コマ　${W} × ${H}`
+        + (P.vFmt === 'png' ? `（${Math.round(bytes/1e6)}MB）` : '') + '<br>「やめる」で止められます');
+      await tvIdle();
+    }
+    const shot = i;
+    if(P.vFmt === 'mp4'){
+      await enc.flush(); if(encErr) throw encErr;
+      muxer.finalize(); enc.close();
+      if(shot > 1){
+        const blob = new Blob([target.buffer], { type:'video/mp4' });
+        await put(blob, `sure_${stamp()}.mp4`, 'mp4 を出した');
+        msg = `mp4 — ${W} × ${H}・${shot}コマ・${(shot/plan.fps).toFixed(1)}秒・`
+            + `${Math.round(blob.size/1e6)}MB` + (TV.stop ? '（途中で止めた）' : '・継ぎ目なしループ');
+      }
+    }else if(shots.length){
+      const blob = tvZip(shots);
+      await put(blob, `sure_${stamp()}_seq.zip`, 'PNG連番を出した');
+      msg = `PNG連番 — ${W} × ${H}・${shots.length}枚・${Math.round(blob.size/1e6)}MB`;
+    }
+    if(shot <= 1) msg = '止めました（1コマも出していません）';
+  }catch(err){
+    msg = '🔴 ' + ((err && err.message) || err);
+  }finally{
+    PH = keepPH; P.anim = wasAnim; TV.on = false; TV.stop = false;
+    btn.textContent = '動画を出す'; el('c_anim').checked = wasAnim;
+    kick(); tick();
+    el('vMeter').innerHTML = msg || '';
+    setTimeout(tvSizeSync, 4000);
+  }
+}
+el('b_video').onclick = tvRun;
+
+/* ══ 控え・戻す ══ ⭐ 新しい道具を作る時点で入れる */
+function snapObj(){ return JSON.stringify({ v:1, P:{ ...P }, B:BANDS, I:ITEMS, bcur, sel }); }
+el('b_save').onclick = () => put(new Blob([snapObj()], { type:'application/json' }),
+  `sure_${stamp()}.json`, '控えを出した');
+el('b_load').onclick = () => el('fileIn').click();
+el('fileIn').onchange = e => { const f = e.target.files[0]; if(f) readJSON(f); e.target.value = ''; };
+function readJSON(f){
+  const rd = new FileReader();
+  rd.onload = () => { try{ applyObj(rd.result); stat('控えを読んだ — ' + f.name); }
+                      catch(_){ stat('🔴 控えとして読めなかった'); } };
+  rd.readAsText(f);
+}
+addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragging'); });
+addEventListener('dragleave', e => { if(e.relatedTarget) return; document.body.classList.remove('dragging'); });
+addEventListener('drop', e => {
+  e.preventDefault(); document.body.classList.remove('dragging');
+  const f = e.dataTransfer.files[0]; if(f) readJSON(f);
+});
+const HIST = [];
+function pushHist(){
+  const s = snapObj();
+  if(HIST[HIST.length-1] === s) return;
+  HIST.push(s); if(HIST.length > 60) HIST.shift();
+}
+function undo(){
+  if(HIST.length < 2){ stat('もう戻せない'); return; }
+  HIST.pop(); applyObj(HIST[HIST.length-1], true); stat('戻した');
+}
+el('b_undo').onclick = undo;
+addEventListener('keydown', e => {
+  if((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z'){ e.preventDefault(); undo(); }
+});
+function applyObj(txt, noHist){
+  const o = typeof txt === 'string' ? JSON.parse(txt) : txt;
+  Object.assign(P, DEF, o.P || {});          /* ⚠️ 古い控えに無いつまみは既定で埋める */
+  if(Array.isArray(o.B) && o.B.length){
+    BANDS = o.B.map(x => newBand({ ...x }));
+    bseq = Math.max(bseq, ...BANDS.map(x => x.id || 0));
+  }
+  if(Array.isArray(o.I)) ITEMS = o.I.map(x => ({ t:x.t, w:x.w, pts:x.pts.map(p => [p[0], p[1]]) }));
+  bcur = Math.min(Math.max(0, o.bcur || 0), BANDS.length - 1);
+  sel = (typeof o.sel === 'number' && o.sel < ITEMS.length) ? o.sel : -1;
+  syncUI(); kick(); drawOverlay(); saveLocal();
+  if(!noHist) pushHist();
+}
+
+/* ══ つまみ ══ */
+const RANGES = ['bw','cols','rough','rgrain','grain','gsize','chroma','gdark','seed','long',
+                'cyc','boilN','boilR','brN','brA','gflick'];
+const FMT = {
+  bw:v => v.toFixed(1) + '%', cols:v => v, rough:v => v.toFixed(2), rgrain:v => v.toFixed(1),
+  grain:v => v.toFixed(3), gsize:v => v + 'px', chroma:v => v.toFixed(2), gdark:v => v.toFixed(2),
+  seed:v => v, long:v => v + 'px', bd_w:v => v.toFixed(1) + '%',
+  cyc:v => v.toFixed(1) + '秒', boilN:v => v ? v + '周' : '止', boilR:v => v.toFixed(2),
+  brN:v => v ? v + '周' : '止', brA:v => v.toFixed(2), gflick:v => v ? v + 'コマ' : '止',
+};
+function touched(){ P.preset = null; }
+RANGES.forEach(k => {
+  const r = el('r_' + k);
+  r.addEventListener('input', () => {
+    P[k] = +r.value; el('o_' + k).textContent = FMT[k](+r.value);
+    if(k !== 'bw') touched();
+    kick(); saveLocal();
+  });
+  r.addEventListener('change', () => { syncUI(); pushHist(); });
+});
+el('r_bd_w').addEventListener('input', () => {
+  const b = BANDS[bcur]; if(!b) return;
+  b.w = +el('r_bd_w').value; el('o_bd_w').textContent = FMT.bd_w(b.w);
+  touched(); drawBandList(); kick(); saveLocal();
+});
+el('r_bd_w').addEventListener('change', pushHist);
+el('bd_color').addEventListener('input', () => {
+  const b = BANDS[bcur]; if(!b) return;
+  b.color = el('bd_color').value; touched(); drawBandList(); kick(); saveLocal();
+});
+el('bd_color').addEventListener('change', pushHist);
+el('c_paper').addEventListener('input', () => { P.paper = el('c_paper').value; touched(); kick(); saveLocal(); });
+el('c_paper').addEventListener('change', pushHist);
+
+function buildSeg(id, items, get, set, quiet){
+  const box = el(id);
+  box.innerHTML = items.map(x => `<button data-v="${x.v}">${x.n}</button>`).join('');
+  box.querySelectorAll('button').forEach(b => b.onclick = () => {
+    set(b.dataset.v); if(!quiet) touched(); syncUI(); kick(); saveLocal(); pushHist();
+  });
+  box.__get = get;
+}
+buildSeg('toolSeg', [{v:'draw',n:'線'},{v:'erase',n:'消す'},{v:'pick',n:'選ぶ'},{v:'pan',n:'盤'}],
+         () => P.tool, v => { P.tool = v; if(v !== 'pick'){ sel = -1; drawOverlay(); } }, true);
+buildSeg('ratioSeg', RATIOS, () => P.ratio, v => P.ratio = v);
+buildSeg('outSeg', OUTS, () => P.outLong, v => P.outLong = v, true);
+/* 動画のつまみは絵を変えないので、押しても刷り直さない（数字だけ更新） */
+[['vFmt','vFmt'],['vFps','vFps'],['vLoop','vLoop'],['vQ','vQ']].forEach(([id, key]) => {
+  el(id).querySelectorAll('button').forEach(b => b.onclick = () => {
+    P[key] = b.dataset.v; syncUI(); saveLocal();
+  });
+});
+
+el('preSeg').innerHTML = PRESETS.map((x, i) => `<button data-v="${i}">${x.n}</button>`).join('');
+el('preSeg').querySelectorAll('button').forEach(b => b.onclick = () => {
+  const i = +b.dataset.v, pr = PRESETS[i];
+  Object.assign(P, pr.P); BANDS = pr.B(); bcur = 0; P.preset = i;
+  syncUI(); kick(); saveLocal(); pushHist(); stat(`見本「${pr.n}」にした`);
+});
+
+/* ══ 段の一覧 ══ */
+function drawBandList(){
+  const box = el('bands'); box.innerHTML = '';
+  let acc = 0;
+  BANDS.forEach((b, i) => {
+    const from = acc; acc += Math.max(0.02, b.w);
+    const d = document.createElement('div');
+    d.className = 'bd' + (i === bcur ? ' sel' : '');
+    d.innerHTML = `<span class="sw" style="background:${b.color}"></span>` +
+      `<span class="nm">${i === 0 ? `線の中 +${b.w.toFixed(1)}%` : `${from.toFixed(1)}〜${acc.toFixed(1)}%`}</span>` +
+      `<button class="up" data-d="-1">▲</button><button class="up" data-d="1">▼</button>`;
+    d.onclick = () => { bcur = i; syncUI(); };
+    d.querySelectorAll('.up').forEach(bt => bt.onclick = e => {
+      e.stopPropagation();
+      const to = i + (+bt.dataset.d);
+      if(to < 0 || to >= BANDS.length) return;
+      BANDS.splice(to, 0, BANDS.splice(i, 1)[0]);
+      bcur = to; touched(); syncUI(); kick(); saveLocal(); pushHist();
+    });
+    box.appendChild(d);
+  });
+}
+el('b_addBand').onclick = () => {
+  BANDS.push(newBand({ color:'#fbf9f4', w:1.5 })); bcur = BANDS.length - 1;
+  touched(); syncUI(); kick(); saveLocal(); pushHist();
+};
+el('b_delBand').onclick = () => {
+  if(BANDS.length <= 1){ stat('段は1つは残す'); return; }
+  BANDS.splice(bcur, 1); bcur = Math.min(bcur, BANDS.length - 1);
+  touched(); syncUI(); kick(); saveLocal(); pushHist();
+};
+
+function syncUI(){
+  RANGES.forEach(k => { el('r_' + k).value = P[k]; el('o_' + k).textContent = FMT[k](+P[k]); });
+  el('c_paper').value = P.paper;
+  const b = BANDS[bcur];
+  if(b){ el('bd_color').value = b.color; el('r_bd_w').value = b.w; el('o_bd_w').textContent = FMT.bd_w(b.w); }
+  ['toolSeg','ratioSeg','outSeg'].forEach(id => {
+    const box = el(id), v = String(box.__get());
+    box.querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.v === v));
+  });
+  el('preSeg').querySelectorAll('button')
+    .forEach(x => x.classList.toggle('on', +x.dataset.v === P.preset));
+  [['vFmt','vFmt'],['vFps','vFps'],['vLoop','vLoop'],['vQ','vQ']].forEach(([id, key]) =>
+    el(id).querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.v === String(P[key]))));
+  el('c_anim').checked = !!P.anim;
+  stage.style.cursor = P.tool === 'pan' ? 'grab' : P.tool === 'pick' ? 'default' : 'crosshair';
+  /* 選んだものの箱 */
+  if(sel >= ITEMS.length) sel = -1;
+  const it = ITEMS[sel];
+  el('selBox').classList.toggle('hide', !it);
+  if(it){
+    el('selInfo').textContent = `${sel+1} / ${ITEMS.length} 本目・${it.t === 'erase' ? '消す線' : '線'}・点 ${it.pts.length}`;
+    el('r_sel_w').value = it.w; el('o_sel_w').textContent = FMT.bw(it.w);
+  }
+  drawBandList();
+  tvSizeSync();
+}
+
+function saveLocal(){ try{ localStorage.setItem('sure.v1', snapObj()); }catch(_){} }
+(function boot(){
+  let ok = false;
+  try{ const s = localStorage.getItem('sure.v1'); if(s){ applyObj(s, true); ok = true; } }catch(_){}
+  if(!ok){
+    /* ⭐ まっさらだと何の道具か分からない。最初の一筆だけ置いておく（消せる） */
+    ITEMS = [{ t:'draw', w:3.3, pts:[[.22,.30],[.38,.52],[.28,.66],[.52,.44],[.72,.62],[.60,.34],[.78,.28]] }];
+    syncUI(); kick();
+  }
+  pushHist(); tick(); drawOverlay();
+})();
+
+/* ⭐ 回帰テストから触るために出しておく（本体と同じ出どころを見せる） */
+window.P = P; window.size = size; window.outSize = outSize;
+window.buildPlan = buildPlan; window.runs = runs; window.toSVG = toSVG;
+window.render = render; window.paint = paint; window.grainPass = grainPass;
+window.syncUI = syncUI; window.kick = kick; window.undo = undo; window.pushHist = pushHist;
+window.newBand = newBand; window.hitTest = hitTest; window.tvPlan = tvPlan;
+window.drawOverlay = drawOverlay;
+Object.defineProperty(window, 'PH',  { get:() => PH,  set:v => { PH = v; } });
+Object.defineProperty(window, 'sel', { get:() => sel, set:v => { sel = v; } });
+Object.defineProperty(window, 'BANDS', { get:() => BANDS, set:v => { BANDS = v; } });
+Object.defineProperty(window, 'ITEMS', { get:() => ITEMS, set:v => { ITEMS = v; } });
+Object.defineProperty(window, 'bcur',  { get:() => bcur,  set:v => { bcur = v; } });
+</script>
+</body>
+</html>
