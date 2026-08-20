@@ -43,6 +43,8 @@
 <div id="bar">
   <button class="btn" id="b_print">刷る</button>
   <button class="btn" id="b_form">粒：素材</button>
+  <button class="btn" id="b_grid">粗さ：中</button>
+  <button class="btn" id="b_mot">動きで崩す</button>
   <button class="btn" id="b_bg">地：なし</button>
   <button class="btn" id="b_masu">マス目：なし</button>
   <button class="btn" id="b_tile">柄：菱</button>
@@ -92,9 +94,15 @@ const stat = (m, hold) => {
 };
 
 /* ── 触れるもの ── */
-const P = { eye:1, grain:1, hold:0, mirror:1, print:0, form:0, bg:0, masu:0, edge:0, tile:0 };
+const P = { eye:1, grain:1, hold:0, mirror:1, print:0, form:0, bg:0, masu:0, edge:0, tile:0,
+            grid:1, mot:1 };
 /* ⭐ 粒の形・地のかたち＝押すたびに送る（道具から持ってきた語彙をそのまま使う） */
-const FORMS = ['素材','錐','玉'], BGS = ['なし','縞','点','ひび'];
+/* ⭐⭐ 2026-08-20 木下「画面全体にこういったビット感のあるものを大きく入れれるように」
+   ＝ TSUBU の粒（8bit）を1つの形として足した。下の drawBitCol に理屈を書いた。 */
+const FORMS = ['素材','錐','玉','ビット'], BGS = ['なし','縞','点','ひび'];
+/* ⭐ 粗さ＝画面の幅を何マスで刻むか。【大きく入れる】ための物差し。
+   ⚠️ ここを小さくするほど1粒が大きくなる（数字は「マスの数」）。 */
+const GRIDS = [['細',110],['中',78],['粗',44],['大',26],['特大',15]];
 /* ⭐⭐ マス目の出し方（2026-08-19 木下「今のは今ので残しておいて」）
    色     ＝ これまでの見え（素材の形に色を焼く）
    柄     ＝ MASU の素材を【白黒のまま】並べる＝MASU で作った版がそのまま顔に乗る
@@ -113,7 +121,18 @@ const cycle = (id, key, list) => {
   put();
 };
 cycle('b_form','form',FORMS); cycle('b_bg','bg',BGS); cycle('b_masu','masu',MASUS);
+cycle('b_grid','grid',GRIDS.map(x => x[0]));
+toggle('b_mot','mot'); el('b_mot').classList.toggle('on', !!P.mot);
 toggle('b_edge','edge');
+/* ⭐ ビット・粗さは【刷るの中】の話＝押しても何も起きない状態を作らない。
+   ⚠️ 同じ型の見落としを 2026-08-19 に踏んでいる（小さい写しを刷るの中でしか取っていなかった）。 */
+const needPrint = why => {
+  if(P.print) return;
+  P.print = 1; el('b_print').classList.add('on');
+  stat(why + '＝「刷る」を点けました', 1800);
+};
+el('b_form').addEventListener('click', () => { if(FORMS[P.form] === 'ビット') needPrint('ビット'); });
+el('b_grid').addEventListener('click', () => needPrint('粗さ'));
 toggle('b_hold','hold', v => v ? '粒をうごかす' : '粒をとめる');
 toggle('b_mirror','mirror');
 el('b_mirror').classList.toggle('on', !!P.mirror);
@@ -181,7 +200,9 @@ tileGet(0);
   put(); }
 
 /* ⭐ 中を測れるようにする（回帰テストから読む。module はスコープが閉じているので窓を1つ開ける） */
-window.MEN = { IMG, INNER, P, TILES, TIMG };   /* REC はあとで足す（下で作るので） */
+window.MEN = { IMG, INNER, P, TILES, TIMG, FORMS, GRIDS,
+               mot:() => motMax };            /* ⭐ 動きの場の強さ（テストから読む） */
+                                              /* REC はあとで足す（下で作るので） */
 /* ⭐⭐ 作りものの顔を入れる窓（回帰テスト用・2026-08-19）
    ⚠️ 偽のカメラには顔が写らない＝目・マス目・輪郭が【一度もテストできていなかった】。
       点列を外から入れられるようにして、顔が要る所も機械で見られるようにする。 */
@@ -321,6 +342,66 @@ function readSmall(){
   SG.drawImage(video, 0, 0, w, h);
   SG.restore();
   SDATA = SG.getImageData(0, 0, w, h);
+  readMotion();
+}
+
+/* ══⭐⭐ 体の動き（2026-08-20）
+   木下＝「画面全体にグラフィックが表示されるが、写っている私の体の動きで
+           それらになんらかのビジュアルに違和感やアクションを行うようにして」
+
+   ⭐ 芯＝【顔だけでなく、体そのものが入口になる】。
+      顔の点列（MediaPipe）は顔しか見ていない。体は【前のコマとの差】で取る＝
+      写っている物が何であっても、動いた場所だけが立ち上がる。
+   ⚠️ 読むのは既にある小さい写し（160px 幅）＝毎コマでも軽い（画素は約 1.4 万）。
+   ⭐ 動いた量は【減らしながら残す】＝手を振ると尾を引く。
+      毎コマ捨てると、止まった瞬間に絵が戻って「効いていない」ように見える。
+   ⚠️ しきい値（0.05）は要る＝カメラの粒子ノイズで画面全体が常に揺れてしまう。 */
+let PREV = null, MOT = null, motMax = 0;
+function readMotion(){
+  const w = SMALL.width, h = SMALL.height, n = w*h, d = SDATA.data;
+  if(!MOT || MOT.length !== n){ MOT = new Float32Array(n); PREV = new Float32Array(n); PREV.fill(-1); }
+  let mx = 0;
+  for(let i = 0; i < n; i++){
+    const j = i*4;
+    const lum = (d[j]*0.30 + d[j+1]*0.59 + d[j+2]*0.11)/255;
+    const p = PREV[i];
+    PREV[i] = lum;
+    if(p < 0) continue;                       /* 1コマ目は差を取らない（全面が動いたことになる） */
+    const df = Math.abs(lum - p);
+    const v = df > 0.05 ? Math.min(1, (df - 0.05) * 5) : 0;
+    const keep = MOT[i] * 0.86;               /* 尾を引く */
+    MOT[i] = v > keep ? v : keep;
+    if(MOT[i] > mx) mx = MOT[i];
+  }
+  motMax = mx;
+}
+/* その場所がどれだけ動いたか（0〜1）。⚠️ 画面の座標→小さい写しの座標へ直してから読む */
+function motAt(u, v){
+  if(!P.mot || !MOT) return 0;
+  const w = SMALL.width, h = SMALL.height;
+  if(u < 0 || v < 0 || u >= 1 || v >= 1) return 0;
+  return MOT[(Math.min(h-1, v*h|0))*w + (Math.min(w-1, u*w|0))];
+}
+/* ⚠️ 乱れは【毎コマ違う乱数】にしない＝画面全体がちらついて何が動いたか分からなくなる。
+   場所で決まる値にする（同じ場所は同じだけずれる＝形が崩れて見える）。 */
+function hash2(x, y){
+  const s = Math.sin(x*12.9898 + y*78.233) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+/* ══⭐⭐ ビット（粒 TSUBU から・2026-08-20）
+   木下が指した参考＝TSUBU を撮った動画（黒地に青い粒が塊で溜まる）。
+   ⭐⭐ 【ビット感の正体は「粒の形」ではなく「色数が少ないこと」】。
+      連続したグラデで塗ると、どれだけ粒を四角くしても 8bit には見えない。
+      TSUBU が書いているとおり ── 色数が少ない → 足りない中間を【網（ディザ）で偽装する】。
+   ⭐ だからここは①色を段に丸め ②落ちた端数を市松の網で上下に振り分ける。
+   ⚠️ 粒は回さない・にじませない（格子に揃った正方形のまま）＝回すと途端に「絵」になる。 */
+const BAYER = [[0,8,2,10],[12,4,14,6],[3,11,1,9],[15,7,13,5]];
+function bitOf(v, bx, by, levels){
+  const t = (BAYER[by & 3][bx & 3] + 0.5) / 16;
+  const s = v * (levels - 1), f = Math.floor(s);
+  const q = Math.min(levels - 1, f + ((s - f) > t ? 1 : 0));
+  return q / (levels - 1);
 }
 /* ══⭐⭐ 錐（NURI から持ってきた・2026-08-19）
    ⭐ 正方形を中心から4つの三角に割り、光の向きとの角度で面ごとに塗る。
@@ -416,7 +497,8 @@ function drawPrint(t){
   if(!SDATA) return;
   const w = cv.width, h = cv.height;
   const d = SDATA.data, sw = SMALL.width, sh = SMALL.height;
-  const step = Math.max(8, Math.round(w / 78));        /* 画面の幅を約78マスで刻む */
+  /* ⭐ 粗さ＝画面の幅を何マスで刻むか（木下「大きく入れれるように」＝ここを選べるようにした） */
+  const step = Math.max(6, Math.round(w / GRIDS[P.grid][1]));
   const im = IMG.grain;
   /* 顔の場所（あれば）＝そこだけ大きく刷る */
   let fx = -1, fy = -1, fr = 0;
@@ -438,18 +520,39 @@ function drawPrint(t){
       if(u < 0 || v < 0 || u >= 1 || v >= 1) continue;
       const si = ((Math.min(sh-1, v*sh|0)) * sw + (Math.min(sw-1, u*sw|0))) * 4;
       const lum = (d[si]*0.30 + d[si+1]*0.59 + d[si+2]*0.11) / 255;
+      /* ⭐⭐ この場所がどれだけ動いたか（体の動き）。粒はこれで【膨らんで・ずれて・色が送られる】 */
+      const mot = motAt(u, v);
       let sz = step * (0.25 + lum * 0.95);
       /* ⭐ 顔の上は大きく＝顔が作品の中心になる。口を開けるとさらに膨らむ */
       if(fr > 0){
         const nd = Math.hypot(x - fx, y - fy) / fr;
         if(nd < 1.25) sz *= 1 + (1.25 - nd) * (0.55 + jaw*0.9);
       }
+      /* ⭐ 動いた所は【その場から外れる】＝整った格子が体の形に崩れる＝いちばん強い違和感。
+         ⚠️ ずれは場所で決まる値（hash2）＝毎コマ乱数にすると全面がちらついて何が動いたか消える。 */
+      let dx = 0, dy = 0;
+      if(mot > 0.02){
+        sz *= 1 + mot * 0.85;
+        const a = hash2(x, y) * Math.PI * 2, r = mot * step * 1.5;
+        dx = Math.cos(a) * r; dy = Math.sin(a) * r;
+      }
       if(sz < 1.2) continue;
-      const col = grad(u, v, t);
+      const col = grad(u + mot*0.45, v, t);        /* ⭐ 動いた所は色が先へ送られる */
       const form = FORMS[P.form];
-      g.save(); g.translate(x, y);
-      g.rotate((u*2 + v*3 + t*0.4) % (Math.PI*2));
-      if(form === '錐'){
+      g.save(); g.translate(x + dx, y + dy);
+      /* ⚠️ ビットだけは回さない（格子に揃った正方形のまま＝回すと途端に「絵」になる） */
+      if(form !== 'ビット') g.rotate((u*2 + v*3 + t*0.4) % (Math.PI*2));
+      if(form === 'ビット'){
+        /* ⭐⭐ 置くか置かないかの1ビット＝濃さは【粒の密度】で作る（大きさを変えない）。
+           色は各成分を4段に落として、落ちた端数を網で振り分ける＝色数の少なさがビット感になる。
+           ⭐ 動いた所は濃さを引く＝体の形に【穴が空く】。 */
+        const bx = Math.round(x/step), by = Math.round(y/step);
+        if(bitOf(Math.max(0, lum - mot*0.5), bx, by, 2) < 0.5){ g.restore(); continue; }
+        const c2 = [0,1,2].map(i2 => Math.round(bitOf(col[i2]/255, bx + i2*5, by + i2*3, 4) * 255));
+        g.fillStyle = `rgb(${c2[0]},${c2[1]},${c2[2]})`;
+        const s3 = step * 0.9;
+        g.fillRect(-s3/2, -s3/2, s3, s3);
+      }else if(form === '錐'){
         const sp = kadoSprite(col);
         g.drawImage(sp, -sz/2, -sz/2, sz, sz);
       }else if(form === '玉'){
