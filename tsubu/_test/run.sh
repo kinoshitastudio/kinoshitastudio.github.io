@@ -65,6 +65,12 @@ node "$HERE/_test/masu.mjs" "http://localhost:$PORT/tsubu/" || NG=1
 echo
 echo "── ④ JSON を読む／読んだあと書き出せる"
 node "$HERE/_test/json.mjs" "http://localhost:$PORT/tsubu/" || NG=1
+echo
+echo "── ⑤ 漂う＝秒を伸ばすほど先へ進む・粒の見え方は壊れない"
+node "$HERE/_test/drift.mjs" "http://localhost:$PORT/tsubu/" || NG=1
+echo
+echo "── ⑥ 動画（集まる・漂う）＝押して落ちてくる実物で確かめる"
+node "$HERE/_test/anivideo.mjs" "http://localhost:$PORT/tsubu/" || NG=1
 
 echo
 [ "$NG" = 0 ] && echo "✅ 全部通った" || echo "🔴 落ちたものがある（上を見る）"
