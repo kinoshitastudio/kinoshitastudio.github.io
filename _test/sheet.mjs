@@ -6,11 +6,14 @@
    ⭐ パネルの id は道具ごとに違う（#panel / #rack / #ctl）＝名前で決め打ちにしない。
    ⭐ PC で掴み手が出ないこと（＝PCは無傷）も毎回見る。
 
-   使い方: node _test/sheet.mjs <ポート> <道具> [道具...]
+   使い方: node _test/sheet.mjs <ポート|公開URL> <道具> [道具...]
+   ⭐ 公開したあとは【届いているか】も同じテストで見る（配信されていることと動くことは別）
+      例: node _test/sheet.mjs https://kinoshita.studio tsubute
    ⚠️ 大きさを変えたら【開き直す】。実機の向き変更は orientationchange で作り直されるが、
       setViewport では飛ばないので、変えっぱなしで測ると嘘の結果になる（1回それで誤検出した）。 */
 import puppeteer from '/Users/kinoshitatakahiro/.npm/_npx/1ade4bf2e2bf80fd/node_modules/puppeteer-core/lib/puppeteer/puppeteer-core.js';
-const PORT = process.argv[2] || '8390';
+const ARG = process.argv[2] || '8390';
+const BASE = /^https?:/.test(ARG) ? ARG.replace(/\/+$/,'') : `http://localhost:${ARG}`;
 const TOOLS = process.argv.slice(3);
 if(!TOOLS.length){ console.log('🔴 道具が指定されていない'); process.exit(1); }
 
@@ -27,7 +30,7 @@ for(const t of TOOLS){
   p.on('pageerror', e=>errs.push(e.message));
   await p.setViewport({ width:390, height:844, deviceScaleFactor:2, isMobile:true, hasTouch:true });
   try{
-    await p.goto(`http://localhost:${PORT}/${t}/?v=${Date.now()}`, { waitUntil:'networkidle0', timeout:40000 });
+    await p.goto(`${BASE}/${t}/?v=${Date.now()}`, { waitUntil:'networkidle0', timeout:40000 });
   }catch(e){ line(false, t, `開けない: ${e.message}`); await p.close(); continue; }
   await new Promise(r=>setTimeout(r,2400));
   await p.evaluate(()=>{ try{ localStorage.clear(); }catch(_){} });
@@ -78,7 +81,7 @@ for(const t of TOOLS){
   const q = await b.newPage(); const errs2 = [];
   q.on('pageerror', e=>errs2.push(e.message));
   await q.setViewport({ width:1440, height:900, deviceScaleFactor:1 });
-  await q.goto(`http://localhost:${PORT}/${t}/?v=${Date.now()}`, { waitUntil:'networkidle0' });
+  await q.goto(`${BASE}/${t}/?v=${Date.now()}`, { waitUntil:'networkidle0' });
   await new Promise(r=>setTimeout(r,2000));
   const pc = await q.evaluate(`(()=>{ const pn = ${PICK};
     return { grip: !!document.getElementById('sheetGrip'),
