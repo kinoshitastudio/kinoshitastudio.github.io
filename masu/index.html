@@ -301,6 +301,63 @@
     #forgeShoot,#forgeClose{ font-size:13px; padding:12px 16px }
   }
 
+
+  /* ══════════════════════════════════════════════════════════════
+     ⭐⭐ モバイル／iPad のパネル（2026-08-20・作字 SAKUJI と同じ作法）
+     木下「半分より下がパネル。少しパネルは下にしたい」「中を横も縦も密着したい」
+
+     ⭐ この道具は #stage が無く【canvas そのものが盤】（fixed・上58%）。
+        だから高さの変数は canvas と #panel の両方が見る。
+     ⭐ 高さは CSS 変数 --panelH ひとつ（2箇所に書かない）。
+     ⭐ このブロックと末尾の <script> を消せば完全に元へ戻る。
+     ══════════════════════════════════════════════════════════════ */
+  :root{ --panelH:42vh; --sheetGrip:22px }
+  @supports (height:1dvh){ :root{ --panelH:42dvh } }
+  @media (max-width:760px){
+    :root{ --panelH:32vh }
+    #cv{ top:0; bottom:auto; height:calc(100vh - var(--panelH));
+      height:calc(100dvh - var(--panelH)) }
+    #panel{ top:auto; bottom:0; height:var(--panelH); max-height:var(--panelH) }
+
+    #sheetGrip{ position:fixed; left:0; right:0; z-index:60;
+      bottom:calc(var(--panelH) - 1px); height:var(--sheetGrip);
+      display:flex; align-items:center; justify-content:center;
+      touch-action:none; cursor:ns-resize; user-select:none; -webkit-user-select:none }
+    #sheetGrip::before{ content:""; width:44px; height:5px; border-radius:5px;
+      background:currentColor; opacity:.40 }
+    #sheetGrip.dragging::before{ opacity:.9 }
+
+    /* ⭐ 中を密着させる（詰めるのは【隙間】であって【つまみ】ではない） */
+    #panel{ padding-left:12px; padding-right:12px }
+    #panel h2,label.h{ top:-10px; margin:12px -12px 6px; padding:6px 12px 5px }
+    .grp{ margin-bottom:12px }
+    .row{ padding:0; margin-bottom:1px }
+    .seg{ margin:4px 0 6px }
+    .note,.hint{ margin-top:5px; line-height:1.5 }
+
+    /* 🔴 指で狙える大きさ（memory：主因は入力欄が点にしか当たらないこと） */
+    /* ⚠️⚠️ 詳細度に負けないこと。道具によっては `.row input[type=range]` で
+       26px と書いてあり、素の `input[type=range]` では【勝てない】
+       （2026-08-20 膜MAKU で実際に効かず 59個が 26px のまま残った）。 */
+    input[type=range],
+    .row input[type=range],
+    #panel input[type=range]{ height:36px }
+    input[type=range]::-webkit-slider-runnable-track,
+    .row input[type=range]::-webkit-slider-runnable-track{ height:4px }
+    input[type=range]::-webkit-slider-thumb,
+    .row input[type=range]::-webkit-slider-thumb{ width:22px; height:22px; margin-top:-9px }
+    input[type=range]::-moz-range-thumb,
+    .row input[type=range]::-moz-range-thumb{ width:22px; height:22px; border:none }
+    .chk input[type=checkbox]{ width:22px; height:22px }
+    .seg button{ padding:9px 4px; min-height:36px }
+    .btn{ padding:10px 0; min-height:38px; margin-top:4px }
+    input[type=color]{ height:34px }
+    .lay .eye,.lay .up,.core .eye,.core .up,.ly .eye,.ly .up,.laysw{
+      min-width:30px; min-height:30px }
+  }
+  @supports (height:1dvh){
+    @media (max-width:760px){ :root{ --panelH:32dvh } }
+  }
 </style>
 </head>
 <body>
@@ -2362,6 +2419,96 @@ async function loadSamples(){
     }).catch(plain);
     return undefined;
   };
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════
+     ⭐⭐ パネルの高さを掴んで変える（2026-08-20・作字 SAKUJI と同じもの）
+     ⭐ HTML の並びは1行も触っていない（掴み手はこの JS が作って足す）。
+        この <script> と上の CSS ブロックを消せば完全に元へ戻る。
+     ⭐⭐ ツールごとにブレークポイントを書き分けない ──
+        【パネルが画面下いっぱいに固定されているか】を実行時に見て決める。
+        写し間違いが起きないし、道具ごとに 760/820px と違っても同じものが使える。
+     ══════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  'use strict';
+  const KEY = location.pathname.replace(/\W+/g,'_') + '.panelH.v1';
+  const SNAP = [26, 42, 78];
+  let grip = null;
+
+  const panel = () => document.getElementById('panel');
+  /* ⭐ 下段になっているか＝【画面いっぱいの幅で、下端が画面の底にある】。
+     ⚠️ position:fixed で判定してはいけない。道具によっては縦積み(static)のまま
+        同じ2段レイアウトになっている（2026-08-20 実測。fixed で見ていて取りこぼした）。 */
+  const isSheet = () => {
+    const p = panel(); if(!p) return false;
+    const b = p.getBoundingClientRect();
+    return b.width >= innerWidth - 3
+        && b.bottom >= innerHeight - 3
+        && b.top > 8;                       /* 上に盤がある＝全画面パネルではない */
+  };
+  /* ⭐ 端で止める。⚠️ 横向き（高さ500px未満）で目一杯引くと盤が潰れる */
+  const clamp = v => Math.max(18, Math.min(innerHeight < 500 ? 62 : 86, v));
+  const setH = vh => {
+    document.documentElement.style.setProperty('--panelH', clamp(vh).toFixed(1) + 'vh');
+    try{ window.dispatchEvent(new Event('resize')); }catch(_){}
+  };
+  const curH = () => {
+    const p = panel(); if(!p) return 0;
+    return p.getBoundingClientRect().height / innerHeight * 100;
+  };
+
+  function build(){
+    if(grip) return;
+    grip = document.createElement('div');
+    grip.id = 'sheetGrip';
+    grip.title = 'ドラッグで高さを変える／タップで段を切り替える';
+    document.body.appendChild(grip);
+    let drag = null;
+    grip.addEventListener('pointerdown', e => {
+      e.preventDefault(); grip.setPointerCapture(e.pointerId);
+      grip.classList.add('dragging');
+      drag = { y:e.clientY, h:curH(), moved:false };
+    });
+    grip.addEventListener('pointermove', e => {
+      if(!drag) return;
+      const d = (drag.y - e.clientY) / innerHeight * 100;
+      if(Math.abs(d) > 1) drag.moved = true;
+      setH(drag.h + d);
+    });
+    const end = () => {
+      if(!drag) return;
+      grip.classList.remove('dragging');
+      if(!drag.moved){
+        /* ⚠️ 上限で止まっている段を指しても何も起きない＝無反応に見える。
+           実際に届く高さかで判断し、届かないなら一番小さい段へ折り返す。 */
+        const h = curH();
+        const next = SNAP.find(v => clamp(v) > h + 2);
+        setH(next === undefined ? SNAP[0] : next);
+      }
+      try{ localStorage.setItem(KEY, String(Math.round(curH()*10)/10)); }catch(_){}
+      drag = null;
+    };
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
+  }
+  function drop(){
+    if(!grip) return;
+    grip.remove(); grip = null;
+    document.documentElement.style.removeProperty('--panelH');
+  }
+  function sync(){
+    if(isSheet()){
+      build();
+      let v = null; try{ v = parseFloat(localStorage.getItem(KEY)); }catch(_){}
+      if(v > 0) setH(v);
+    }else drop();
+  }
+  addEventListener('resize', () => { if(!grip) sync(); });
+  addEventListener('orientationchange', () => setTimeout(sync, 200));
+  if(document.readyState === 'loading') addEventListener('DOMContentLoaded', sync);
+  else sync();
 })();
 </script>
 </body>
