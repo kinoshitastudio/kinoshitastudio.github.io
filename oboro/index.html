@@ -305,12 +305,19 @@
 
   <div class="seg" id="tvFmt"><button data-v="mp4" class="on">mp4</button><button data-v="png">PNG連番</button></div>
   <div class="seg" id="tvQ"><button data-v="hi">きれい</button><button data-v="mid" class="on">ふつう</button><button data-v="lo">軽い</button></div>
-  <div class="seg" id="tvLoop"><button data-v="1" class="on">1往復</button><button data-v="2">2往復</button><button data-v="3">3往復</button></div>
+  <!-- ⭐ 2026-08-20 木下「3往復までしかなく、他ツール同様秒数まで決めれるようにして」
+       ＝簾［マス］と同じ作法（`秒で` を選ぶと下に秒のつまみが出る）。
+       ⭐ 秒はそのまま使わず【いちばん近い整数の往復】に寄せる＝頭と尻が合う（継ぎ目のないループ）を守る。 -->
+  <div class="seg" id="tvLoop"><button data-v="1" class="on">1往復</button><button data-v="2">2往復</button
+    ><button data-v="3">3往復</button><button data-v="sec">秒で</button></div>
+  <div class="row" id="tvSecRow" style="display:none"><label>秒</label><input type="range" id="tvSec" min="1" max="30" value="6"><span class="val">6</span></div>
   <div class="seg" id="tvSz"><button data-v="fit" class="on">そのまま</button><button data-v="1080">1080</button
     ><button data-v="1350">1350</button><button data-v="2160">2160</button></div>
   <div id="tvSize"></div>
   <button class="btn" id="tvGo" style="width:100%">動画を出す</button>
   <div class="mod">⭐ <b>1往復</b>＝頭と尻がぴったり合う（継ぎ目のないループ）<br>
+    ⭐ <b>秒で</b>＝欲しい長さを決める。<b>いちばん近い整数の往復に寄せる</b>ので継ぎ目は合ったまま<br>
+    　（1往復にかかる秒は<b>流れ</b>で決まる＝流れを上げるほど、同じ秒でも往復の数が増える）<br>
     ⭐ 大きさは<b>版面</b>がそのまま出る。数字を選ぶと<b>その長辺へ</b>して出す<br>
     ⭐ <b>PNG連番</b>＝ZIP で出る（mp4 は透明を持てない）</div>
 
@@ -1301,9 +1308,15 @@ document.getElementById('anGo')?.addEventListener('click', () => {
   document.querySelectorAll('#tvFmt button, #tvQ button, #tvLoop button, #tvSz button').forEach(b =>
     b.addEventListener('click', () => {
       b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
-      sizeSync();
+      loopUI(); sizeSync();
     }));
   ['anflow','anfps'].forEach(id => document.getElementById(id)?.addEventListener('input', () => sizeSync()));
+  /* ⚠️ 秒のつまみは P に入れない（動画の書き出しだけの値）＝数字は自分で出す */
+  document.getElementById('tvSec')?.addEventListener('input', e => {
+    const v = e.target.parentElement.querySelector('.val'); if(v) v.textContent = e.target.value;
+    sizeSync();
+  });
+  loopUI();
 
   /* 🔴⭐ 大きさは【組み直して】作る（2026-08-14 木下＝「今は全部376×376。大きくできないか」）。
      ⚠️ 最初は「元より大きくしない」で作ったが、それだと小さい写真だと数字を選んでも
@@ -1338,9 +1351,23 @@ document.getElementById('anGo')?.addEventListener('click', () => {
     const flow = +P.anflow || 0, fps = Math.max(4, Math.round(+P.anfps || 30));
     if(flow <= 0) return { err:'「流れ」が 0 なので何も動きません' };
     const step = flow / 100 * 0.01;                  // 画面と同じ刻み（1往復＝1.0）
-    const loops = +seg('tvLoop','1') || 1;
+    /* ⭐ 1往復にかかる秒。刻みと FPS だけで決まる＝画面で見ている速さと同じ */
+    const one = 1 / (step * fps);
+    const mode = seg('tvLoop','1');
+    let loops;
+    if(mode === 'sec'){
+      /* ⚠️ 欲しい秒をそのまま使うと途中で切れて頭と尻が合わない。
+         ⭐【いちばん近い整数の往復】に寄せる＝継ぎ目のないループを守る（簾［マス］と同じ式）。 */
+      const want = Math.max(1, +(document.getElementById('tvSec')?.value || 6));
+      loops = Math.max(1, Math.round(want / one));
+    } else loops = +mode || 1;
     const total = Math.max(2, Math.round(loops / step));
-    return { fps, loops, step, total, sec: total / fps };
+    return { fps, loops, step, total, sec: total / fps, one };
+  }
+  /* ⭐ 触れるのに何も起きないつまみを出さない＝秒のつまみは「秒で」のときだけ */
+  function loopUI(){
+    const r = document.getElementById('tvSecRow');
+    if(r) r.style.display = (seg('tvLoop','1') === 'sec') ? '' : 'none';
   }
   /* ⭐ 出る大きさは【押す前に】必ず出す */
   function sizeSync(){
