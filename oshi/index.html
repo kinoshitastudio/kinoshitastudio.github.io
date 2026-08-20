@@ -295,6 +295,33 @@
 
   <hr>
 
+  <!-- ══⭐⭐ 粒（粒 TSUBU の質感）══ 2026-08-20 木下「Tsubu の粒感も入れたい」
+       ⭐ TSUBU のビット感の正体は【粒の形】ではなく【色数が少ないこと】＋【粗い升目に落ちること】。
+          だから最後に一度だけ ①粗い升目で読み直し ②色を少ない段に丸め ③粒として置き直す。 -->
+  <div class="grp">
+    <label class="h">粒（TSUBU）</label>
+    <div class="seg" id="dotSeg">
+      <button data-v="none">かけない</button>
+      <button data-v="kaku">角</button>
+      <button data-v="maru">丸</button>
+      <button data-v="tama">玉</button>
+    </div>
+    <div id="dotBox">
+      <div class="row"><span class="n">細かさ（長辺）</span><output id="o_dotN"></output></div>
+      <input type="range" id="r_dotN" min="16" max="320" step="1">
+      <div class="row"><span class="n">粒の大きさ</span><output id="o_dotF"></output></div>
+      <input type="range" id="r_dotF" min="0.2" max="1.6" step="0.01">
+      <div class="row"><span class="n">色の段数</span><output id="o_dotQ"></output></div>
+      <input type="range" id="r_dotQ" min="2" max="24" step="1">
+      <div id="dotMeter"></div>
+      <div class="note">⭐⭐ 効くのは<b>色の段数</b>。少ないほど 8bit に寄る（粒の形ではない）<br>
+        ⭐ 細かさは<b>長辺いくつ</b>＝大きく出しても同じ絵になる<br>
+        ⭐ 粒を 1.00 より小さくすると<b>谷から地の色が出る</b></div>
+    </div>
+  </div>
+
+  <hr>
+
   <!-- ══⭐ 動かす ── ▶再生 / ■止める（チェックボックスにしない）══
        ⭐ 位相 u は 0→1 の【環】。1周ぶん進むと数値レベルで元に戻る＝継ぎ目のないループ。
        ⚠️ 位相を「時刻÷周期」で出すと速さを変えた瞬間に絵が飛ぶ。経った分を積み上げる。 -->
@@ -372,6 +399,14 @@
       <button data-v="maki">巻き</button>
       <button data-v="obi">帯</button>
       <button data-v="tsuno">角</button>
+      <button data-v="tsubu">粒</button>
+      <button data-v="bit">8bit</button>
+      <button data-v="tama">玉</button>
+      <button data-v="hashira">柱</button>
+      <button data-v="uzu">渦</button>
+      <button data-v="kage">影</button>
+      <button data-v="nagare">流れ</button>
+      <button data-v="usu">薄</button>
     </div>
     <div class="note">⭐ 押すと<b>その姿がそのまま出る</b>（説明ではなく絵で置いてある）。
       いまの状態は⌘Zで戻せる</div>
@@ -429,7 +464,9 @@ const P = {
   ramp:'netsu', cshift:0, sat:1, shade:0.55, light:-108, c1:'#2233dd', c2:'#e8541a',
   face:'ink', lip:0.012, ink:'#3a3a3f', paper:'#9a9a9a',
   ratio:'9:16', long:1400, bg:'#9a9a9a',
-  spd:1, flowN:0, twN:0, dirN:0, turnA:0, lenA:0
+  spd:1, flowN:0, twN:0, dirN:0, turnA:0, lenA:0,
+  /* ⭐ 粒（粒 TSUBU の質感）── 最後に一度だけかける一段 */
+  dot:'none', dotN:120, dotF:0.94, dotQ:6
 };
 
 let PH = 0;                 /* 位相（0→1 の環） */
@@ -644,6 +681,87 @@ function render(ctx, W, H, transparent){
     stamp(ctx, m);
     ctx.restore();
   }
+
+  dotPass(ctx, W, H, transparent);          /* ⭐ 最後に一度だけ（画面も PNG も動画も同じ道） */
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 粒 ── 粒 TSUBU の質感を一段だけ借りる（2026-08-20 木下「Tsubuの粒感も入れたい」）
+
+   ⭐⭐ ビット感の正体は【粒の形】ではなく【色数が少ないこと】。だから芯は「色の段数」。
+   ⭐ 順番は ①粗い升目で読み直す ②色を段に丸める ③粒として置き直す。
+      重ねた1枚ずつに掛けない＝最後に一度だけ（網 AMI と同じ作法。段ごとに掛けると濁る）。
+   ⭐ 細かさは【長辺いくつ】で持つ＝大きく出しても同じ絵になる（引き伸ばしではなく焼き直し）。
+   🔴 数万個の粒を1個ずつ arc() で呼ぶと遅い（点 TEN で50倍の差を実測）。
+      ⭐ 色を段に丸めてあるので【同じ色の粒を1本の道の文字列にまとめて】一度で塗れる。
+   ══════════════════════════════════════════════════════════════ */
+let DOTN = 0;
+function dotPass(ctx, W, H, transparent){
+  if(!P.dot || P.dot === 'none'){ DOTN = 0; return; }
+  const L = Math.max(W, H);
+  const n = Math.max(8, Math.round(P.dotN));
+  const cell = L / n;
+  const cols = Math.max(1, Math.ceil(W / cell)), rows = Math.max(1, Math.ceil(H / cell));
+
+  /* ① 粗い升目で読み直す（縮めるとブラウザが1升ぶんを平均してくれる） */
+  const sm = document.createElement('canvas'); sm.width = cols; sm.height = rows;
+  const sx = sm.getContext('2d', { willReadFrequently:true });
+  sx.imageSmoothingEnabled = true; sx.imageSmoothingQuality = 'high';
+  sx.drawImage(ctx.canvas, 0, 0, W, H, 0, 0, cols, rows);
+  const d = sx.getImageData(0, 0, cols, rows).data;
+
+  /* ② 色を段に丸める（ここが 8bit に見せている当のもの） */
+  const q = Math.max(2, Math.round(P.dotQ)), qm = q - 1;
+  const snap = v => Math.round(Math.round(v / 255 * qm) / qm * 255);
+
+  /* ③ 段ごとに1本の道へ */
+  const r = cell * 0.5 * Math.max(0.05, P.dotF);
+  const R = +r.toFixed(3), D = +(r * 2).toFixed(3);
+  /* ⭐ 玉のつやは【粒ごとに小さい道をもう1本】作る。
+     ⚠️ 道ごと縮めると粒が原点に寄ってしまう（拡大の基点は紙の左上なので）。 */
+  const tama = P.dot === 'tama';
+  const hr = r * 0.44, HR = +hr.toFixed(3), HD = +(hr*2).toFixed(3);
+  const hoff = r * 0.30;
+  const by = new Map(), hi = new Map();
+  let count = 0;
+  for(let y = 0; y < rows; y++){
+    for(let x = 0; x < cols; x++){
+      const i = (y * cols + x) * 4;
+      if(d[i+3] < 8) continue;                       /* 地なしのときの空きは空きのまま */
+      const key = (snap(d[i]) << 16) | (snap(d[i+1]) << 8) | snap(d[i+2]);
+      let a = by.get(key); if(!a){ a = []; by.set(key, a); }
+      const px = (x + 0.5) * cell, py = (y + 0.5) * cell;
+      if(P.dot === 'kaku'){
+        a.push('M', +(px-r).toFixed(2), +(py-r).toFixed(2), 'h', D, 'v', D, 'h', -D, 'Z');
+      }else{
+        a.push('M', +(px-r).toFixed(2), +py.toFixed(2),
+               'a', R, R, 0, 1, 0, D, 0, 'a', R, R, 0, 1, 0, -D, 0, 'Z');
+        if(tama){
+          let b = hi.get(key); if(!b){ b = []; hi.set(key, b); }
+          const hx = px - hoff, hy = py - hoff;
+          b.push('M', +(hx-hr).toFixed(2), +hy.toFixed(2),
+                 'a', HR, HR, 0, 1, 0, HD, 0, 'a', HR, HR, 0, 1, 0, -HD, 0, 'Z');
+        }
+      }
+      count++;
+    }
+  }
+  DOTN = count;
+
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.clearRect(0, 0, W, H);
+  if(!transparent){ ctx.fillStyle = P.bg; ctx.fillRect(0, 0, W, H); }
+  for(const [key, a] of by){
+    const cr = (key >> 16) & 255, cg = (key >> 8) & 255, cb = key & 255;
+    ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
+    ctx.fill(new Path2D(a.join(' ')));
+  }
+  if(tama) for(const [key, b] of hi){
+    const cr = (key >> 16) & 255, cg = (key >> 8) & 255, cb = key & 255;
+    ctx.fillStyle = `rgb(${Math.min(255, cr+62)},${Math.min(255, cg+62)},${Math.min(255, cb+62)})`;
+    ctx.fill(new Path2D(b.join(' ')));
+  }
 }
 
 /* ══ 画面 ══
@@ -689,6 +807,10 @@ function meter(W, H, light){
     + (playing ? `いま ${fps ? fps.toFixed(0) : '—'} コマ/秒` : `1枚 ${Math.round(lastMs)} ms`)
     + (light ? '<br>（動かしている間は画面だけ軽く焼いています）' : '')
     + (slow ? '<br>⚠️ 重い ── <b>枚数</b>を下げると軽くなる（絵の形は変わらない）' : '');
+  const dm = el('dotMeter');
+  if(dm) dm.textContent = (P.dot === 'none') ? '' :
+    `粒 ${DOTN.toLocaleString()} 個・色 ${Math.max(2, Math.round(P.dotQ))} 段`;
+  const db = el('dotBox'); if(db) db.classList.toggle('hide', P.dot === 'none');
   if(typeof tvSizeSync === 'function') tvSizeSync();
 }
 
@@ -701,12 +823,14 @@ const FMT = {
   cshift:v=>v.toFixed(2), sat:v=>v.toFixed(2), shade:v=>v.toFixed(2), light:v=>v+'°',
   lip:v=>v.toFixed(3),
   spd:v=>v.toFixed(2)+'×', flowN:v=>String(v), twN:v=>String(v), dirN:v=>String(v),
-  turnA:v=>'±'+v+'°', lenA:v=>'±'+v.toFixed(2), long:v=>v+'px'
+  turnA:v=>'±'+v+'°', lenA:v=>'±'+v.toFixed(2), long:v=>v+'px',
+  dotN:v=>v+'升', dotF:v=>v.toFixed(2), dotQ:v=>v+'段'
 };
 const RANGES = ['wt','sc','ls','lh','x','y','rot',
                 'len','dir','turn','bias','wobA','wobN','twist','grow','n',
                 'cshift','sat','shade','light','lip',
-                'spd','flowN','twN','dirN','turnA','lenA','long'];
+                'spd','flowN','twN','dirN','turnA','lenA','long',
+                'dotN','dotF','dotQ'];
 RANGES.forEach(k => {
   const r = el('r_'+k), o = el('o_'+k);
   if(!r) return;
@@ -739,6 +863,7 @@ seg('fontSeg', 'font', () => { MEAS_KEY = ''; });
 seg('rampSeg', 'ramp', () => { twoColSync(); drawRampBar(); });
 seg('faceSeg', 'face');
 seg('ratioSeg', 'ratio');
+seg('dotSeg', 'dot');
 el('t_text').addEventListener('focus', pushHist);
 el('t_text').addEventListener('input', e => { P.text = e.target.value; MEAS_KEY = ''; kick(); saveLocal(); });
 ['c1','c2','ink','paper','bg'].forEach(k => {
@@ -784,12 +909,57 @@ const PRESETS = {
   tsuno: { text:'角', font:'min', wt:900, sc:0.40, ls:0, lh:1, x:0.02, y:0.10, rot:0,
            len:0.80, dir:-70, turn:240, bias:0.7, wobA:0, wobN:0, twist:360, grow:-0.55, n:420,
            ramp:'sumi', cshift:0, sat:1, shade:0.8, light:-60,
-           face:'road', lip:0, bg:'#f4f2ec', ratio:'4:5' }
+           face:'road', lip:0, bg:'#f4f2ec', ratio:'4:5' },
+
+  /* ══⭐ ここから下は 粒（粒 TSUBU の質感）を通した控え ══
+     ⭐ 効いているのは【色の段数】。粒の形より先にそこを見てほしいので、段数の違う型を並べた。 */
+  /* ⚠️ 置き場所は【押し出す向きの逆】へ寄せる。dir が上へ向くほど字は下に置く。
+     でないと積み上がった先が版面から出て切れる（2026-08-20 実測で2つ切れていた）。 */
+  tsubu: { text:'粒', font:'go', wt:900, sc:0.30, ls:0, lh:1, x:-0.22, y:0.34, rot:0,
+           len:0.62, dir:-72, turn:180, bias:0.55, wobA:0, wobN:0, twist:0, grow:0.10, n:300,
+           ramp:'netsu', cshift:0.06, sat:1, shade:0.55, light:-100,
+           face:'road', lip:0.010, bg:'#1c1c1e', ratio:'1:1',
+           dot:'maru', dotN:96, dotF:0.92, dotQ:8 },
+  bit:   { text:'8BIT', font:'mono', wt:700, sc:0.115, ls:0.06, lh:1.2, x:-0.14, y:0.30, rot:0,
+           len:0.34, dir:-60, turn:0, bias:0.4, wobA:0, wobN:0, twist:0, grow:0.18, n:260,
+           ramp:'futa', c1:'#2233dd', c2:'#e8541a', cshift:0, sat:1, shade:0.5, light:-120,
+           face:'road', lip:0.008, bg:'#0e0e12', ratio:'16:9',
+           dot:'kaku', dotN:112, dotF:1.00, dotQ:4 },
+  tama:  { text:'玉', font:'go', wt:900, sc:0.30, ls:0, lh:1, x:0, y:0.22, rot:0,
+           len:0.26, dir:-84, turn:120, bias:0.35, wobA:0, wobN:0, twist:0, grow:0.10, n:200,
+           ramp:'niji', cshift:0.35, sat:0.9, shade:0.45, light:-115,
+           face:'road', lip:0.010, bg:'#f4f2ec', ratio:'4:5',
+           dot:'tama', dotN:56, dotF:1.00, dotQ:10 },
+
+  /* ══ 粒をかけない側の幅も広げる ══ */
+  hashira:{ text:'柱', font:'min', wt:900, sc:0.46, ls:0, lh:1, x:0, y:-0.06, rot:0,
+           len:1.30, dir:-90, turn:0, bias:0.86, wobA:0, wobN:0, twist:0, grow:0.02, n:600,
+           ramp:'sumi', cshift:0, sat:1, shade:0.85, light:-70,
+           face:'ink', lip:0.006, ink:'#111114', bg:'#c8c3b8', ratio:'9:16', dot:'none' },
+  uzu:   { text:'渦', font:'go', wt:900, sc:0.30, ls:0, lh:1, x:0, y:0, rot:0,
+           len:1.40, dir:-90, turn:2600, bias:0.15, wobA:0, wobN:0, twist:720, grow:-0.20, n:640,
+           ramp:'niji', cshift:0, sat:1, shade:0.55, light:-90,
+           face:'road', lip:0.006, bg:'#141418', ratio:'1:1', dot:'none' },
+  kage:  { text:'KAGE', font:'go', wt:900, sc:0.155, ls:0.01, lh:1.05, x:-0.10, y:0.06, rot:-4,
+           len:0.42, dir:38, turn:0, bias:0, wobA:0, wobN:0, twist:0, grow:0, n:180,
+           ramp:'hito', c1:'#1c1c1e', cshift:0, sat:1, shade:0.9, light:145,
+           face:'paper', lip:0.010, paper:'#f6f3ec', bg:'#e2542c', ratio:'4:5', dot:'none' },
+  nagare:{ text:'流', font:'min', wt:900, sc:0.40, ls:0, lh:1, x:0, y:0.04, rot:0,
+           len:1.05, dir:-58, turn:520, bias:0.5, wobA:52, wobN:3.5, twist:120, grow:0.06, n:520,
+           ramp:'netsu', cshift:0.5, sat:1, shade:0.5, light:-100,
+           face:'road', lip:0.008, bg:'#0f1418', ratio:'9:16', dot:'none' },
+  usu:   { text:'薄', font:'min', wt:300, sc:0.44, ls:0, lh:1, x:0, y:0.02, rot:0,
+           len:0.30, dir:-84, turn:60, bias:0.2, wobA:0, wobN:0, twist:0, grow:0.04, n:140,
+           ramp:'futa', c1:'#8fb8c8', c2:'#efe7dc', cshift:0, sat:1, shade:0.25, light:-100,
+           face:'road', lip:0.004, bg:'#efe7dc', ratio:'3:4', dot:'none' }
 };
+/* 🔴 控えが言っていない粒は【既定に戻す】。
+   でないと「粒」を押したあと「巻き」を押しても粒が残る＝前に触った状態が勝つ。 */
+const DOTDEF = { dot:'none', dotN:120, dotF:0.94, dotQ:6 };
 el('preSeg').querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
   pushHist();
   const p = PRESETS[b.dataset.v]; if(!p) return;
-  Object.assign(P, p);
+  Object.assign(P, DOTDEF, p);
   MEAS_KEY = '';
   syncUI(); kick(); saveLocal();
   stat('控えを開いた — ' + b.textContent);
@@ -818,7 +988,7 @@ function applyObj(txt){
 function syncUI(){
   RANGES.forEach(k => { const r = el('r_'+k), o = el('o_'+k);
     if(!r) return; r.value = P[k]; if(o) o.textContent = (FMT[k] || String)(+r.value); });
-  [['fontSeg','font'],['rampSeg','ramp'],['faceSeg','face'],['ratioSeg','ratio']]
+  [['fontSeg','font'],['rampSeg','ramp'],['faceSeg','face'],['ratioSeg','ratio'],['dotSeg','dot']]
     .forEach(([id, key]) => el(id).querySelectorAll('button')
       .forEach(b => b.classList.toggle('on', b.dataset.v === String(P[key]))));
   ['c1','c2','ink','paper','bg'].forEach(k => { const c = el('c_'+k); if(c) c.value = P[k]; });
