@@ -52,7 +52,7 @@
   .tvchk{ display:flex; align-items:center; gap:6px; font-size:11px; color:var(--dim);
     margin:4px 0 8px; cursor:pointer }
   .tvchk input{ width:auto; flex:none }
-  #tvSize,#pSize{ font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:10.5px; line-height:1.65;
+  #tvSize,#pSize,#slicesCap{ font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:10.5px; line-height:1.65;
     color:var(--ink); background:rgba(120,120,128,.1);
     border:1px solid var(--line); border-radius:9px; padding:7px 9px; margin:6px 0 8px }
   /* 版のチップ（押した版が「いま触っている版」） */
@@ -180,6 +180,12 @@
   </div>
   <div class="only-slat">
   <div class="row"><label>刻みの数</label><input type="range" id="slices" min="4" max="800" value="26"><span class="val"></span></div>
+  <!-- 🔴 2026-08-20 木下「800まで数字があるけど、実際130ぐらいまでしか動きがない」
+       ＝マスのときは升目を 2px より細かくしない（gridToRects の下限）ので、
+       min(字の幅,字の高さ)÷2 から先はどこに動かしても【同じ絵】になる。
+       ⭐ 絵は1画素も変えない。つまみの方を【本当に効く範囲】に合わせて、上限をここに出す。
+       ⚠️ .note は「?」を押したときしか出ない＝常時見えるところに置く（#tvSize と同じ作法）。 -->
+  <div id="slicesCap" style="display:none"></div>
   <div class="row"><label>すき間</label><input type="range" id="gap" min="0" max="40" value="6"><span class="val"></span></div>
   <div class="row"><label>短いのを捨てる</label><input type="range" id="minLen" min="0" max="60" value="4"><span class="val"></span></div>
   </div>
@@ -239,6 +245,13 @@
        だから既定も動く値（30）にする＝押した瞬間に数字が飛ばない。 -->
   <div class="row"><label>速さ</label><input type="range" id="speed" min="0" max="60" value="30"><span class="val"></span></div>
   <div class="row"><label>コマ</label><input type="range" id="fps" min="2" max="60" value="30"><span class="val"></span></div>
+  <!-- ⭐⭐ 2026-08-20 木下「刻みの数がゆいいつビット感からアニメーションとして追加できそう。動かすに追加できる？」
+       ＝流している間に【マス目の粗さ】も一緒に動く＝ビットが粗くなって戻る。
+       ⭐ 0 で今までどおり（1画素も変わらない）。⭐ 粗い方へ【片側だけ】動かす
+          ＝細かい側は上の上限で頭打ちになっていて効きが死んでいるため。 -->
+  <!-- ⚠️ 分け方が「輪郭から」のときは刻みを使わない＝触れるのに効かないつまみになるので出さない
+       （.only-slat＝刻みのつまみと同じ出し分け。つまみ総当たりのテストがこれを見つけた） -->
+  <div class="row only-slat"><label>刻みも動かす</label><input type="range" id="grain" min="0" max="100" value="0"><span class="val"></span></div>
   <!-- ⭐ 2026-08-18 木下「字を追加した際に、すべての字を動かすなどのボタンをチェックすれば
        アニメーションがすべて同じように動くことは可能か？」＝版が何枚でも同じ位相で動かす -->
   <label class="tvchk"><input type="checkbox" id="animAll"><span>すべての版を同じように動かす</span></label>
@@ -248,6 +261,9 @@
     ⭐ 動きの入切は<b>「流す」だけ</b>。<b>速さ</b>は速さしか決めない（0 にするとその場で止まり、上げると続く）<br>
     ⭐ <b>ずらす</b>を 0 と 78 などで変えると、板ごとに黒が食い違って流れ方が変わる<br>
     ⭐ <b>コマ</b>＝1秒あたりの描き直し回数。下げるとカクカクした送りになる（それも画）<br>
+    ⭐⭐ <b>刻みも動かす</b>＝黒が流れるのに合わせて<b>マス目（刻みの数）も粗くなって戻る</b>＝ビットが呼吸する。<br>
+    　<b>0 で今までどおり</b>（1画素も変わらない）。<b>いまの絵が片方の端</b>＝そこから<b>粗い方へだけ</b>動く<br>
+    　100 で<b>マス目が4倍の粗さ</b>まで行く。⚠️「輪郭から」（板でない等高線）のときは刻みを使わないので効かない<br>
     ⚠️ 分け方が「輪郭から」のときは1コマの計算が重い。解像を下げるか、速さは低めで</div>
 
   <h2>地</h2>
@@ -380,8 +396,9 @@ function inherit(s, src){
   return s;
 }
 /* 面のもの＝地だけ */
-/* ⭐ speed の既定は【動く値】（HTML の value="30" と必ず揃える）＝「流す」が数字を書き換えない */
-const P = { bg:'#0a0a0a', speed:30, fps:30 };
+/* ⭐ speed の既定は【動く値】（HTML の value="30" と必ず揃える）＝「流す」が数字を書き換えない
+   ⭐ grain＝「刻みも動かす」の振れ。0 で今までどおり（1画素も変わらない） */
+const P = { bg:'#0a0a0a', speed:30, fps:30, grain:0 };
 
 /* ⚠️ RECTS と noBgOnce は build()/draw() が触る。UI の初期化より【前】に宣言する
    ── let は巻き上がらないので、後ろに置くと初期化のときに TDZ で静かに死ぬ（2026-08-07 に踏んだ）。 */
@@ -779,12 +796,61 @@ function makeSD(sh, W2, H2){
   return { d: sdr.sd, along: sdr.along, thick: sdr.thick, w: w3, h: h3 };
 }
 
+/* ══⭐⭐ 刻みも動かす（2026-08-20）── 木下「刻みの数がゆいいつビット感からアニメーションとして
+   追加できそう。動かすに追加できる？」
+
+   ⭐⭐ 芯＝**盤のデータ（sh.slices）は1つも書き換えない**。位相からその場で【いまの刻みの数】を作る。
+      だから振れを0に戻せば必ず元の絵に帰る（枡 MASU の「動きは元の値からの差で作る」と同じ作法）。
+   ⭐ 位相は **kpos ひとつ**＝黒の位置がそのまま刻みの位相になる。画面も動画も同じ式を通るので、
+      動画側に位相を別に持たせなくていい（[[feedback_one_formula_one_rule]]）。
+   ⭐ **粗い方へ片側だけ**動かす＝細かい側は升目 2px で頭打ち（＝木下の「130までしか動かない」）で
+      効きが死んでいる。つまみは効きが濃い側に取る。
+   ⚠️ 割る値でなく **掛ける倍率**で振る＝刻み26 でも刻み300 でも同じだけ粗くなる
+      （刻みの数は「升目の大きさ＝短辺÷n」の逆数なので、引き算だと効きが端で変わる）。 */
+function grainU(sh){
+  /* 位相（0〜100 の整数）。振れ0／輪郭からのときは null＝つまみそのままの刻みを使う */
+  if(!(+P.grain > 0)) return null;
+  if(!sh || sh.dir === 3) return null;
+  return Math.round(Math.max(0, Math.min(100, sh.kpos || 0)));
+}
+/* ⭐ その版の【いまの刻みの数】。build も切り直しも必ずここを通る＝式は1本 */
+function grainN(sh){
+  const u = grainU(sh);
+  if(u == null) return sh.slices;
+  return Math.max(4, sh.slices / (1 + (+P.grain / 100) * 3 * (u / 100)));
+}
+/* ⭐ 刻みだけ切り直す（字は焼き直さない・距離場もタイルも作り直さない）＝1コマぶんが軽い。
+   ⚠️ タイル（1文字＝1枚）と距離場は刻みに関係しないので、焼いたものをそのまま使う。 */
+function reslice(sh){
+  const md = sh && sh.MASKD; if(!md || sh.dir === 3) return;
+  if(sh.dir === 4){
+    const C = gridToRects(sh, md.m, md.W, md.H, md.S);
+    if((sh.mstyle | 0) === 2){ sh.RECTS = C; sh.CELLS = null; }
+    else { sh.CELLS = C; if(sh.TILES) sh.RECTS = sh.TILES; }
+  } else {
+    let R = [];
+    if(sh.dir === 0 || sh.dir === 2) R = R.concat(sliceToRects(sh, md.m, md.W, md.H, false, md.S));
+    if(sh.dir === 1 || sh.dir === 2) R = R.concat(sliceToRects(sh, md.m, md.W, md.H, true, md.S));
+    sh.RECTS = R;
+  }
+}
+/* ⭐⭐ 位相と絵を合わせる。画面（draw）と書き出し・動画（renderAll）の【入口2つ】で必ず通るので、
+   どこから描いても絵と位相が食い違わない。
+   ⭐ 振れ0のときは【元の刻みへ帰してから】即戻る＝1画素も変わらない状態に必ず戻る。 */
+function phaseSync(){
+  for(const sh of SHEETS){
+    const u = grainU(sh);
+    if(sh.GPH === u) continue;
+    sh.GPH = u; reslice(sh);
+  }
+}
+
 /* ⭐ ここが核心 ── 字を細く切って、字がある区間を【1枚の板】として拾う。
    ⚠️ 小さい正方形を敷き詰めるのではない。区間の長さがそのまま矩形の長さになる
       ＝「L」の縦棒は1枚の長い矩形になる。 */
 function sliceToRects(sh, mask, W, H, horizontal, unit){
   const rects = [];
-  const n = Math.max(2, Math.round(sh.slices));
+  const n = Math.max(2, Math.round(grainN(sh)));   // ⭐ 刻みは grainN 1本から取る（振れ0なら sh.slices そのもの）
   const step = (horizontal ? H : W) / n;
   /* 🔴 捨てる基準を【字全体の幅・高さ】にしていたので、横の板だと CAVOLO の横幅（約950px）の
         4%＝38px＝ストロークの太さと同じくらいの板まで捨てて、字がほとんど消えていた
@@ -824,7 +890,10 @@ function sliceToRects(sh, mask, W, H, horizontal, unit){
       ＝長い方はマスの数が自動で増える（CAVOLO のような横長の語でも升目が正方形のまま）。 */
 function gridToRects(sh, mask, W, H, unit){
   const rects = [];
-  const n = Math.max(2, Math.round(sh.slices));
+  const n = Math.max(2, Math.round(grainN(sh)));   // ⭐ 刻みは grainN 1本から取る（振れ0なら sh.slices そのもの）
+  /* 🔴 ここの下限 2 が「800まであるのに130ぐらいから先が同じ絵」の正体（2026-08-20 木下）。
+     ⚠️ 1 に下げると升目が1画素＝マスの見えが消えるうえ、既存の絵まで変わる。下限は動かさず、
+        つまみの側を【本当に効く上限】に合わせる（slicesCapSync）。 */
   const step = Math.max(2, Math.min(W, H) / n);
   sh.CELLSTEP = step;                                  // マス目の大きさ＝丸める粗さ
   const nx = Math.ceil(W / step), ny = Math.ceil(H / step);
@@ -1209,6 +1278,11 @@ function buildSheet(sh){
   const d = tg.getImageData(0, 0, W2, H2).data;
   const mask = new Uint8Array(W2 * H2);
   for(let i = 0, q = 0; i < d.length; i += 4, q++) mask[q] = d[i] > 110 ? 1 : 0;
+  /* ⭐ 焼いた字（マスク）を控えておく＝「刻みも動かす」で1コマごとに切り直すとき、
+     字を焼き直さずに済む（[[feedback_many_shapes_pass_as_string]] と同じ気持ち＝重い方を一度だけ）。
+     ⚠️ 控え JSON には入らない（SHEET_KEYS に無い）＝ファイルは太らない。 */
+  sh.MASKD = { m:mask, W:W2, H:H2, S };
+  sh.GPH = grainU(sh);                              // いま焼いた絵がどの位相のものか
   /* ⭐ 分け方が【輪郭から】のときは、板に切らずに距離場を作って画素ごとに刷る。
      ⚠️ 距離の計算は重いので、決めた解像に落としてから計算する（そのぶん縞は粗くなる）。 */
   if(sh.dir === 3){
@@ -1223,25 +1297,53 @@ function buildSheet(sh){
      ⚠️ 字の形は【マス目に丸める】＝カクカクがそのまま画になる（刻みの数＝マス目の細かさ）。 */
   if(sh.dir === 4){
     sh.CELLS = gridToRects(sh, mask, W2, H2, S);     // マス目に丸めた字（抜くための形）
-    if((sh.mstyle | 0) === 2){ R = sh.CELLS; sh.CELLS = null; }   // 「1マスに1回」＝マスそのものに刷る
+    if((sh.mstyle | 0) === 2){ R = sh.CELLS; sh.CELLS = null; sh.TILES = null; }   // 「1マスに1回」＝マスそのものに刷る
     else {
       R = charTiles(sh, { W2, H2b, S, vl, lines, stepY, cols, maxLen, fam });
+      sh.TILES = R;                                  // ⭐ タイルは刻みに関係しない＝切り直しでは使い回す
       /* ⭐ タイルの中身を【輪郭から】にするときだけ距離場が要る（縦・横は矩形のグラデで足りる） */
       if((sh.mdir | 0) === 2) sh.SD = makeSD(sh, W2, H2);
     }
   }
   else {
-    sh.CELLS = null;
+    sh.CELLS = null; sh.TILES = null;
     if(sh.dir === 0 || sh.dir === 2) R = R.concat(sliceToRects(sh, mask, W2, H2, false, S));
     if(sh.dir === 1 || sh.dir === 2) R = R.concat(sliceToRects(sh, mask, W2, H2, true, S));
   }
   sh.RECTS = R; sh.ART = { w:W2, h:H2 };
+}
+/* ══🔴 刻みの数の【本当の上限】（2026-08-20 木下「800まで数字があるけど、実際130ぐらいまでしか動きがない」）
+   ⭐ 正体＝マスは升目を 2px より細かくしない（gridToRects の下限）ので、
+      **min(字の幅, 字の高さ) ÷ 2** から先はどこへ動かしても同じ絵になる。
+      実測（1440×900・CAVOLO 6行）＝字の実寸 380×595 → 上限 190。木下の画面が130なのは字が小さいから。
+   ⭐ **絵は1画素も変えない**。つまみの上限を本当に効くところに合わせて、その数字を常時出す。
+      （下限2を1に下げれば倍まで伸びるが、既存の絵が変わるのでやらない）
+   ⚠️ 板（縦・横・両方）には下限が無い＝800 まで効く。実測 800 で 5628 枚。だから上限はマスのときだけ。 */
+function slicesCapSync(){
+  const sh = S_(); const r = document.getElementById('slices');
+  if(!sh || !r) return;
+  const md = sh.MASKD;
+  let cap = 800, why = '';
+  if(sh.dir === 4 && md){
+    /* ⚠️ ceil＝【頭打ちに届く一番小さい数】。floor にすると短辺が奇数のとき升目が 2.003px になり、
+       上限に置いた絵と 800 の絵がわずかにズレる（実測で落ちた）。 */
+    cap = Math.max(4, Math.min(800, Math.ceil(Math.min(md.W, md.H) / 2)));
+    if(cap < 800) why = `刻みの数は <b>${cap}</b> まで効きます`
+      + `（升目が 2px で頭打ち＝これより上は同じ絵）。細かくしたいときは<b>大きさ</b>を上げる`;
+  }
+  /* ⚠️ 上限を上げ下げしたら値を置き直す＝syncUI が【古い上限】で丸めた値のまま残るのを防ぐ。
+     ⭐ 丸められても絵は変わらない（上限より上はどこでも同じ絵）＝数字が本当のことを言う。 */
+  if(+r.max !== cap){ r.max = cap; r.value = sh.slices; }
+  const v = r.parentElement.querySelector('.val'); if(v) v.textContent = r.value;
+  const el = document.getElementById('slicesCap');
+  if(el){ el.innerHTML = why; el.style.display = why ? 'block' : 'none'; }
 }
 /* ⭐ いま触っている版だけ焼き直して描く（他の版はそのまま＝重ねても崩れない） */
 function build(){
   const dpr = Math.min(devicePixelRatio, 2);
   cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
   buildSheet(S_());
+  slicesCapSync();                 // ⭐ 焼いたあとで刻みの上限を合わせる（字の実寸が決まってから）
   draw();
   stat(`${SHEETS.reduce((n, x) => n + ((x.CELLS || x.RECTS).length), 0)} ${S_().dir === 4 ? 'マス' : '枚の板'} / ${SHEETS.length} 版`);
 }
@@ -1252,6 +1354,7 @@ function buildAll(){
   const dpr = Math.min(devicePixelRatio, 2);
   cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
   SHEETS.forEach(buildSheet);
+  slicesCapSync();
   draw();
   stat(`${SHEETS.reduce((n, x) => n + ((x.CELLS || x.RECTS).length), 0)} ${S_().dir === 4 ? 'マス' : '枚の板'} / ${SHEETS.length} 版`);
 }
@@ -1297,6 +1400,7 @@ function paintTiles(sh, ctx){
 }
 function draw(){
   const W = cv.width, H = cv.height;
+  phaseSync();                        // ⭐ 絵を出す前に「刻みも動かす」の位相と合わせる（振れ0なら即戻る）
   /* ══⭐⭐ 版面モードの画面＝【出る絵そのもの】（2026-08-17 木下「書き出し盤面はこんな感じで
      見せてくれたらいいけど無理そう？」）。
      ⭐ 書き出し（exportFull）と同じ道を画面の大きさで1回焼いたものを、そのまま出す。
@@ -1367,7 +1471,7 @@ function draw(){
 
 /* ── UI ── */
 /* ⭐ つまみは【選んでいる版】に書く。P には入れない（P に入れると重ねたとき全部同じになる） */
-const FACE_KEYS = ['speed','fps'];          // 面のつまみ＝どの版にも同じ（動かす速さ）
+const FACE_KEYS = ['speed','fps','grain'];  // 面のつまみ＝どの版にも同じ（動かす速さ・刻みの振れ）
 document.querySelectorAll('#panel input[type=range]').forEach(r=>{
   const val = r.parentElement.querySelector('.val');
   const sync = ()=>{ const sh = S_();
@@ -1526,6 +1630,7 @@ function syncUI(){
   document.body.classList.toggle('mcell', sh.dir === 4 && (sh.mstyle | 0) === 2);
   /* ⚠️ 触れるのに何も起きないつまみを出さない＝1周の枚数は【輪郭に沿って】のときだけ */
   document.body.classList.toggle('arcg', sh.dGdir === 1);
+  slicesCapSync();                 // ⭐ 版を切り替えても・控えを読んでも刻みの上限を合わせる
 }
 /* ⭐ スナップショットは【操作の直前に1回だけ】。capture で拾えば実際の処理より先に走る。
    🔴 input のたびに積むと、1回のドラッグで何十回も積まれて ⌘Z が1段ずつしか戻らない
@@ -1730,6 +1835,7 @@ function sheetBox(sh, W, H){
    ⚠️ 包む矩形の大きさは版の置き方だけで決まる（kpos では動かない）＝コマ間で大きさは揺れない。 */
 function renderAll(reuse){
   const W = cv.width, H = cv.height;
+  phaseSync();                        // ⭐ 書き出し・動画もここを通る＝画面と同じ絵が出る
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   SHEETS.forEach(sh=>{ const b = sheetBox(sh, W, H);
     if(b.x0 < x0) x0 = b.x0; if(b.x1 > x1) x1 = b.x1;
@@ -2028,6 +2134,11 @@ async function tvRun(){
   try{
     say('長辺 ' + T + 'px で大きさを測っています…');
     await tvIdle();
+    /* 🔴 「刻みも動かす」が入っていると、粗いコマの方が絵が【一回り大きい】（升目1つぶん外へ丸まる）。
+       ⚠️ 切る箱は最初に1回だけ測って固定する決まりなので、測る前に**いちばん粗いコマ**に置く。
+       ⭐ 黒の位置は色の位置でしかない＝形は動かないので、測るあいだ 100 に置いても箱は正しい。
+       ⚠️ 置くのは【動画で動かす版】だけ（動かさない版まで動かすと、撮ったあと戻し忘れる）。 */
+    if(+P.grain > 0) (P.animAll ? SHEETS : [sh]).forEach(s2 => { s2.kpos = 100; });
     /* ── ここは exportFull と同じ道。1回目＝いまの大きさで絵の実寸を測る ── */
     const probe = renderAll();
     const ib0 = inkBox(probe);
@@ -2147,8 +2258,10 @@ async function tvRun(){
   }catch(err){
     msg = '🔴 ' + (err && err.message || err);      // 🔴 何が起きても必ず理由を出す
   }finally{
-    /* 🔴 何が起きても必ず元へ戻す（板の見えを1画素も変えない） */
+    /* 🔴 何が起きても必ず元へ戻す（板の見えを1画素も変えない）
+       ⚠️「すべての版を同じように動かす」が入なら全部の版に位相を置いていた＝全部戻す */
     sh.kpos = keepKpos;
+    if(P.animAll) SHEETS.forEach(s2 => { s2.kpos = keepKpos; });
     cv.width = oldW; cv.height = oldH;
     SHEETS.forEach(buildSheet);
     TV.on = false; TV.stop = false;
