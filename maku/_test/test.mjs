@@ -969,12 +969,15 @@ const anim = await page.evaluate(async ()=>{
   const aspAtOne = count(aspBase, await grab());
   P.anAsp = 0; PH = 0.5;                           // 振れ幅0＝動かない
   const aspOff = count(aspBase, await grab());
-  /* ⚠️ つまみの端（±100）を超えて出ていかないか＝本体と同じ式から取る */
-  P.grainAsp = 80; P.anAsp = 100;
+  /* ⚠️ つまみの端（±ASP_MAX）を超えて出ていかないか＝本体と同じ定数・同じ式から取る */
+  P.grainAsp = 150; P.anAsp = 200;
   const aspClamp = [];
   for(let i=0;i<12;i++){ PH = i/12;
-    aspClamp.push(Math.max(-100, Math.min(100, P.grainAsp + P.anAsp * swing()))); }
+    aspClamp.push(Math.max(-ASP_MAX, Math.min(ASP_MAX, P.grainAsp + P.anAsp * swing()))); }
   const aspMax = Math.max(...aspClamp), aspMin = Math.min(...aspClamp);
+  /* ⚠️ HTML のつまみの端と、コードが使う端が食い違っていないか（数字と実体をズラさない） */
+  const aspUiMax = +document.getElementById('anAsp').max,
+        aspUiBody = +document.getElementById('grainAsp').max;
   P.anAsp = 0; P.grainAsp = 0; P.grain = 0; PH = 0;
 
   /* ── 再生ボタン：山数だけ入れて押したとき、粒を勝手に動かさないか ── */
@@ -1001,6 +1004,7 @@ const anim = await page.evaluate(async ()=>{
   return { freqMoved, freqAtZero, freqAtOne, freqOff, grainHiClamped,
            grainFloor, grainPeak,
            aspPlus, aspMinus, aspAtZero, aspAtOne, aspOff, aspMax, aspMin,
+           aspUiMax, aspUiBody, ASP_MAX,
            grainAfterGo, movingOnlyFreq, grainAfterGoAsp, movingOnlyAsp, grainAfterGoBoth0,
            uiHas: !!document.getElementById('anFreq'),
            uiHasAsp: !!document.getElementById('anAsp') };
@@ -1030,8 +1034,14 @@ ok('⭐ マスの形は−側（横長へ）にも振れる（ここだけ符号
 ok('🔴 位相 0 では1画素も変わらない', anim.aspAtZero === 0, `変わった画素=${anim.aspAtZero}`);
 ok('🔴 1周した所も元の絵に戻る＝継ぎ目なしループ', anim.aspAtOne === 0, `変わった画素=${anim.aspAtOne}`);
 ok('🔴 振れ幅 0 なら位相を進めても1画素も変わらない', anim.aspOff === 0, `変わった画素=${anim.aspOff}`);
-ok('🔴 つまみの端（±100）から出ていかない', anim.aspMax <= 100 && anim.aspMin >= -100,
-   `1周の幅=${anim.aspMin}〜${anim.aspMax}`);
+ok('🔴 つまみの端（±ASP_MAX）から出ていかない',
+   anim.aspMax <= anim.ASP_MAX && anim.aspMin >= -anim.ASP_MAX,
+   `1周の幅=${anim.aspMin}〜${anim.aspMax}（端=${anim.ASP_MAX}）`);
+ok('🔴 つまみの端とコードが使う端が一致している（数字と実体をズラさない）',
+   anim.aspUiMax === anim.ASP_MAX && anim.aspUiBody === anim.ASP_MAX,
+   `振れ幅=${anim.aspUiMax} / 本体=${anim.aspUiBody} / コード=${anim.ASP_MAX}`);
+ok('⭐ 端まで振れている（頭打ちが手前に来ていない）', anim.aspMax >= anim.ASP_MAX,
+   `1周の頂点=${anim.aspMax}（端=${anim.ASP_MAX}）`);
 ok('🔴 山数だけ入れて再生しても、粒を勝手に動かさない',
    anim.grainAfterGo === 0, `再生後の「粒の細かさが流れる」=${anim.grainAfterGo} ← 40 なら勝手に入れている`);
 ok('🔴 マスの形だけ入れて再生しても、粒を勝手に動かさない',
