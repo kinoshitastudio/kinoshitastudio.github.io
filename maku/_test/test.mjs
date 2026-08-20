@@ -953,25 +953,57 @@ const anim = await page.evaluate(async ()=>{
   P.anGrain = 100; PH = 0.5;
   const grainHiClamped = count(grain200, await grab());
 
+  /* ── 🔴 マスの形が流れる ── 粒を出したうえで、形だけを振る。
+     ⚠️ マスの形は粒が無いと見えない＝先に粒を入れてから測る。
+     ⭐ 符号つき＝【−でも＋でも】絵が変わり、位相 0 では1画素も変わらないこと。 */
+  P.anGrain = 0; P.anFreq = 0; P.anAsp = 0; PH = 0;
+  P.grain = 40; P.grainAsp = -58;                  // 木下の画面と同じ形（横長）
+  const aspBase = await grab();
+  P.anAsp = 60; PH = 0.5;                          // ＋側（縦長へ）
+  const aspPlus = count(aspBase, await grab());
+  P.anAsp = -40; PH = 0.5;                         // −側（もっと横長へ）
+  const aspMinus = count(aspBase, await grab());
+  P.anAsp = 60; PH = 0;                            // 位相0＝元の絵
+  const aspAtZero = count(aspBase, await grab());
+  P.anAsp = 60; PH = 1;                            // 1周した所＝元の絵
+  const aspAtOne = count(aspBase, await grab());
+  P.anAsp = 0; PH = 0.5;                           // 振れ幅0＝動かない
+  const aspOff = count(aspBase, await grab());
+  /* ⚠️ つまみの端（±100）を超えて出ていかないか＝本体と同じ式から取る */
+  P.grainAsp = 80; P.anAsp = 100;
+  const aspClamp = [];
+  for(let i=0;i<12;i++){ PH = i/12;
+    aspClamp.push(Math.max(-100, Math.min(100, P.grainAsp + P.anAsp * swing()))); }
+  const aspMax = Math.max(...aspClamp), aspMin = Math.min(...aspClamp);
+  P.anAsp = 0; P.grainAsp = 0; P.grain = 0; PH = 0;
+
   /* ── 再生ボタン：山数だけ入れて押したとき、粒を勝手に動かさないか ── */
   P.grain = 0; P.anGrain = 0; P.anFreq = 2; P.anim = false; PH = 0;
   document.getElementById('anGo').click();
   const grainAfterGo = P.anGrain, movingOnlyFreq = tvPlan().moving;
   document.getElementById('anGo').click();          // 止める（PH も 0 に戻る）
 
-  /* ── 両方 0 のときだけ、入口として粒に 40 が入る ── */
-  P.anGrain = 0; P.anFreq = 0;
+  /* ── マスの形だけ入れて押したときも、粒を勝手に動かさないか ── */
+  P.anGrain = 0; P.anFreq = 0; P.anAsp = -30; PH = 0;
+  document.getElementById('anGo').click();
+  const grainAfterGoAsp = P.anGrain, movingOnlyAsp = tvPlan().moving;
+  document.getElementById('anGo').click();
+
+  /* ── 3つとも 0 のときだけ、入口として粒に 40 が入る ── */
+  P.anGrain = 0; P.anFreq = 0; P.anAsp = 0;
   document.getElementById('anGo').click();
   const grainAfterGoBoth0 = P.anGrain;
   document.getElementById('anGo').click();
 
   /* 後片付け（次の測定に持ち越さない） */
-  P.anGrain = 40; P.anFreq = 0; P.grain = 0; PH = 0; P.anim = false;
+  P.anGrain = 40; P.anFreq = 0; P.anAsp = 0; P.grain = 0; PH = 0; P.anim = false;
   resetAll();
   return { freqMoved, freqAtZero, freqAtOne, freqOff, grainHiClamped,
            grainFloor, grainPeak,
-           grainAfterGo, movingOnlyFreq, grainAfterGoBoth0,
-           uiHas: !!document.getElementById('anFreq') };
+           aspPlus, aspMinus, aspAtZero, aspAtOne, aspOff, aspMax, aspMin,
+           grainAfterGo, movingOnlyFreq, grainAfterGoAsp, movingOnlyAsp, grainAfterGoBoth0,
+           uiHas: !!document.getElementById('anFreq'),
+           uiHasAsp: !!document.getElementById('anAsp') };
 });
 ok('「山数が流れる」のつまみがある', anim.uiHas);
 ok('⭐ 山数の振れ幅を入れて位相を進めると絵が変わる（GLまで届いている）',
@@ -990,10 +1022,23 @@ ok('⭐ 片側にはちゃんと振れている（振れ幅ぶん増える）',
 ok('🔴 粒の細かさ200＋振れ幅100で振っても粗くならない（上限が実マス数200）',
    anim.grainHiClamped === 0,
    `変わった画素=${anim.grainHiClamped} ← 0でなければ上限100で切っている（200→100に落ちて粗くなる）`);
+ok('「マスの形が流れる」のつまみがある', anim.uiHasAsp);
+ok('⭐ マスの形を＋側（縦長へ）に振ると絵が変わる',
+   anim.aspPlus > 100, `変わった画素=${anim.aspPlus} ← 0なら uGrainAsp に届いていない`);
+ok('⭐ マスの形は−側（横長へ）にも振れる（ここだけ符号つき）',
+   anim.aspMinus > 100, `変わった画素=${anim.aspMinus}`);
+ok('🔴 位相 0 では1画素も変わらない', anim.aspAtZero === 0, `変わった画素=${anim.aspAtZero}`);
+ok('🔴 1周した所も元の絵に戻る＝継ぎ目なしループ', anim.aspAtOne === 0, `変わった画素=${anim.aspAtOne}`);
+ok('🔴 振れ幅 0 なら位相を進めても1画素も変わらない', anim.aspOff === 0, `変わった画素=${anim.aspOff}`);
+ok('🔴 つまみの端（±100）から出ていかない', anim.aspMax <= 100 && anim.aspMin >= -100,
+   `1周の幅=${anim.aspMin}〜${anim.aspMax}`);
 ok('🔴 山数だけ入れて再生しても、粒を勝手に動かさない',
    anim.grainAfterGo === 0, `再生後の「粒の細かさが流れる」=${anim.grainAfterGo} ← 40 なら勝手に入れている`);
+ok('🔴 マスの形だけ入れて再生しても、粒を勝手に動かさない',
+   anim.grainAfterGoAsp === 0, `再生後の「粒の細かさが流れる」=${anim.grainAfterGoAsp}`);
 ok('山数だけでも「動く」と判定される（動画で出すが全コマ同じ絵と言わない）', anim.movingOnlyFreq === true);
-ok('両方 0 のときだけ入口として粒に 40 が入る', anim.grainAfterGoBoth0 === 40,
+ok('マスの形だけでも「動く」と判定される', anim.movingOnlyAsp === true);
+ok('3つとも 0 のときだけ入口として粒に 40 が入る', anim.grainAfterGoBoth0 === 40,
    String(anim.grainAfterGoBoth0));
 
 console.log('\n[25] 描き終わりまでJSエラーが出ていない');
