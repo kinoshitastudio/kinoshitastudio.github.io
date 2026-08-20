@@ -333,6 +333,33 @@
      （取られると「掴んだつもりがパネルが動く」＝スムーズでない感じの正体）。 */
   #ctl{ touch-action:pan-y; }
   #ctl input[type=range]{ touch-action:pan-y; }
+
+  /* ══════════════════════════════════════════════════════════════
+     ⭐⭐ モバイル／iPad のパネルを掴んで伸ばす（2026-08-21・他18本と同じ作法）
+     木下「モバイルで道具を見ていたら、いくつかはパネルを掴んで伸ばしたりできない」
+
+     ⭐ この道具の骨格＝#wrap＋#ctl。パネルの id が #panel ではないだけで、
+        出来上がりは他と同じ【上が盤・下がパネル】。だから同じものが使える。
+     ⭐ 高さは CSS 変数 --panelH ひとつ。盤とパネルが一緒に動く（2箇所に書かない）。
+     ⚠️ 既定は今までと同じ 46vh ＝【開いた見た目は変えない】。掴んで初めて変わる。
+        触った高さは localStorage に残るので、次からはその高さで開く。
+     ⭐ このブロックと末尾の <script> を消せば完全に元へ戻る（上の並びは1行も触っていない）。
+     ══════════════════════════════════════════════════════════════ */
+  :root{ --panelH:46vh; --sheetGrip:22px }
+  @supports (height:1dvh){ :root{ --panelH:46dvh } }
+  @media(max-width:760px){
+    #wrap{ top:0; bottom:auto; height:calc(100vh - var(--panelH));
+      height:calc(100dvh - var(--panelH)) }
+    #ctl{ top:auto; bottom:0; height:var(--panelH); max-height:var(--panelH) }
+
+    #sheetGrip{ position:fixed; left:0; right:0; z-index:60;
+      bottom:calc(var(--panelH) - 1px); height:var(--sheetGrip);
+      display:flex; align-items:center; justify-content:center;
+      touch-action:none; cursor:ns-resize; user-select:none; -webkit-user-select:none }
+    #sheetGrip::before{ content:""; width:44px; height:5px; border-radius:5px;
+      background:currentColor; opacity:.40 }
+    #sheetGrip.dragging::before{ opacity:.9 }
+  }
 </style>
 </head>
 <body>
@@ -2148,6 +2175,96 @@ if(gl && extCBF){ resize(); allocSim(); applyModeUI(); bake(); clearField(); gen
     }).catch(plain);
     return undefined;
   };
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════
+     ⭐⭐ パネルの高さを掴んで変える（2026-08-21・他18本と同じもの）
+     ⭐ HTML の並びは1行も触っていない（掴み手はこの JS が作って足す）。
+        この <script> と上の CSS ブロックを消せば完全に元へ戻る。
+     ⭐⭐ ブレークポイントを道具ごとに書き分けない ──
+        【パネルが画面下いっぱいに固定されているか】を実行時に見て決める。
+     ⚠️ パネルの id は道具ごとに違う（#panel / #rack / #ctl）＝名前で決め打ちにしない。
+     ══════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  'use strict';
+  const KEY = location.pathname.replace(/\W+/g,'_') + '.panelH.v1';
+  const SNAP = [26, 42, 78];
+  const IDS = ['panel','rack','ctl'];
+  let grip = null;
+
+  const panel = () => { for(const id of IDS){ const el = document.getElementById(id); if(el) return el; } return null; };
+  /* ⭐ 下段になっているか＝【画面いっぱいの幅で、下端が画面の底にある】。
+     ⚠️ position:fixed で判定してはいけない（縦積みでも同じ2段になる道具がある）。 */
+  const isSheet = () => {
+    const p = panel(); if(!p) return false;
+    const b = p.getBoundingClientRect();
+    return b.width >= innerWidth - 3
+        && b.bottom >= innerHeight - 3
+        && b.top > 8;                       /* 上に盤がある＝全画面パネルではない */
+  };
+  /* ⭐ 端で止める。⚠️ 横向き（高さ500px未満）で目一杯引くと盤が潰れる */
+  const clamp = v => Math.max(18, Math.min(innerHeight < 500 ? 62 : 86, v));
+  const setH = vh => {
+    document.documentElement.style.setProperty('--panelH', clamp(vh).toFixed(1) + 'vh');
+    try{ window.dispatchEvent(new Event('resize')); }catch(_){}
+  };
+  const curH = () => {
+    const p = panel(); if(!p) return 0;
+    return p.getBoundingClientRect().height / innerHeight * 100;
+  };
+
+  function build(){
+    if(grip) return;
+    grip = document.createElement('div');
+    grip.id = 'sheetGrip';
+    grip.title = 'ドラッグで高さを変える／タップで段を切り替える';
+    document.body.appendChild(grip);
+    let drag = null;
+    grip.addEventListener('pointerdown', e => {
+      e.preventDefault(); grip.setPointerCapture(e.pointerId);
+      grip.classList.add('dragging');
+      drag = { y:e.clientY, h:curH(), moved:false };
+    });
+    grip.addEventListener('pointermove', e => {
+      if(!drag) return;
+      const d = (drag.y - e.clientY) / innerHeight * 100;
+      if(Math.abs(d) > 1) drag.moved = true;
+      setH(drag.h + d);
+    });
+    const end = () => {
+      if(!drag) return;
+      grip.classList.remove('dragging');
+      if(!drag.moved){
+        /* ⚠️ 上限で止まっている段を指しても何も起きない＝無反応に見える。
+           実際に届く高さかで判断し、届かないなら一番小さい段へ折り返す。 */
+        const h = curH();
+        const next = SNAP.find(v => clamp(v) > h + 2);
+        setH(next === undefined ? SNAP[0] : next);
+      }
+      try{ localStorage.setItem(KEY, String(Math.round(curH()*10)/10)); }catch(_){}
+      drag = null;
+    };
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
+  }
+  function drop(){
+    if(!grip) return;
+    grip.remove(); grip = null;
+    document.documentElement.style.removeProperty('--panelH');
+  }
+  function sync(){
+    if(isSheet()){
+      build();
+      let v = null; try{ v = parseFloat(localStorage.getItem(KEY)); }catch(_){}
+      if(v > 0) setH(v);
+    }else drop();
+  }
+  addEventListener('resize', () => { if(!grip) sync(); });
+  addEventListener('orientationchange', () => setTimeout(sync, 200));
+  if(document.readyState === 'loading') addEventListener('DOMContentLoaded', sync);
+  else sync();
 })();
 </script>
 </body>
