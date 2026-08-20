@@ -1499,11 +1499,106 @@ function step(){
       d.y = Math.max(0, Math.min(H-1, Math.round(cy + Math.sin(na) * nr)));
     }
   } else {
-    // ── 漂う ── 積みも集まりもしない。残骸だけが場に浮く
+    /* ── 漂う ── 家を出て、ゆっくりした流れに乗って場をさまよう
+       🔴🔴 2026-08-20 木下＝「漂うは秒数を増やしても、最初のから次へのステップが
+          うまく表現されていない」。
+          原因＝前の式は【家の位置 ＋ 半径6マスの円】だった（d.hx + sin(t)*6*G）。
+          家から離れないので、何秒撮っても同じチラつきが続くだけ＝進まない。
+          実測（13秒の書き出し）＝コマ間の変化量が40コマ目から最後まで 8.2±0.4 で一定。
+          しかも t=0 でも sin(seed) が0ではないので、崩した瞬間に全員がいきなり跳んでいた。
+
+       ⭐ 直した考え方＝【位置を毎コマ足し込む】。歩幅を積むので、
+          秒を増やすほど遠くまで漂う＝集まると同じで「秒で決める」が効く。
+
+       ⭐⭐ 流れの作り方＝渦だけでできた場（curl）。
+          ψ（流れの関数）を決めて  vx = ∂ψ/∂y ／ vy = −∂ψ/∂x  で向きを取る。
+          こうすると場の【湧き出しも吸い込みも 0】＝どこにも溜まらず、どこも薄くならない。
+          🔴 これが肝。向きを直接ばらまく式（角度の場）にすると粒が細い筋へ吸い込まれて、
+             出ている粒の密度＝見え方そのものが壊れる（木下＝「出ているオブジェクトの
+             見え方が壊れないように」2026-08-20）。渦だけの場なら【運ばれるだけ】で、
+             粒の数も混み具合も1つも変わらない。字はマーブルのようにほどけていく。
+
+       ⭐ うねりは5つ。どれも波数を盤ちょうどに合わせてある（nx 波／盤の幅）ので
+          ψ が四辺で 0 ＝【流れが縁を越えない】。だから端で潰れも、外へ消えもしない。
+       ⭐ うねりの強さを時間でゆっくり入れ替える＝川筋そのものが動く＝混ざり続ける。
+       ⭐⭐ sin/cos は【表に焼いて引く】。位置で決まる値なので、マスごとに1回作れば足りる。
+          🔴 粒ごとに毎コマ5組の sin/cos を計算すると、3万粒×176コマ＝2800万回になる。
+             表なら1コマ (幅＋高さ)×5 回で済み、粒側は引き算と掛け算だけになる。
+          ⚠️ 表は【丸めたマス】で引く＝同じマスの粒は同じ向きに流れる。
+             どうせ同じマスに描かれるので、見えるものは1画素も変わらない。 */
+    /* ⭐ 速さは【盤なり】。解像を上げても下げても同じ漂い方に見えるように、
+       1コマに進む量を盤の対角の割合で決める（マス数で固定すると、細かい盤では
+       ちょっとの移動で字が消え、粗い盤ではほとんど動かない）。 */
+    const S = 0.0016 * G * Math.hypot(W, H);
+    /* 🔴🔴 波数は π·n/幅。2π·n/幅 にしていたので nx=1 でも渦が【2×2に割れて】、
+       どのうねりも盤の真ん中に節を持ち、足しても左右対称のマンダラにしかならなかった
+       （2026-08-20 実測）。縁で ψ=0 になる条件は π·n/幅 で足りる。
+       ⭐ π にすると nx=1 は【盤いっぱいの渦1つ】。奇数と偶数のうねりを混ぜれば
+          真ん中に節を持つものと持たないものが混ざる＝対称が崩れて雲になる。 */
+    const PI = Math.PI;
+    /* ⚠️ うねりの強さを入れ替える速さは【撮る長さなり】。
+       🔴 遅すぎる（周期1000コマ超）と場が止まっているのと同じで、粒は同じ輪を
+          ぐるっと回って元へ戻る＝どれだけ秒を伸ばしても行き先が増えない
+          （実測：120コマで 18.2マス、175コマでも 19.2マス＝頭打ち）。
+       ⭐ 周期を 300〜500コマにすると、川筋が撮っている最中に組み替わる＝
+          粒は前と違う所へ運ばれ続ける（＝混ざり続ける）。 */
+    /* ⭐ 大きいうねりを主にして、細かいうねりは薄く添える。
+       🔴 細かいうねりを強くすると、字がその場でずたずたに裂けて1秒で読めなくなる
+          （＝「最初の字」が映らない。木下の指摘そのもの）。
+       ⭐ 大きいうねりは【字を丸ごと運ぶ】ので、字は読めたまま流れていき、
+          細かいうねりがそれをゆっくりマーブルにほどく＝最初から次への道のりが出る。 */
+    /* ⚠️ うねりが3つだと節が揃って【左右対称のマンダラ】に見える（2026-08-20 実測）。
+       ⭐ 5つにして、周期も位相もばらばらにする＝揃わない＝雲のように見える。 */
+    const M = [
+      { nx:1, ny:1, a: 1.00 + 0.25 * Math.sin(t * 0.0200) },
+      { nx:2, ny:1, a: 0.55 * Math.sin(t * 0.0170 + 0.6) },
+      { nx:1, ny:2, a: 0.55 * Math.sin(t * 0.0145 + 2.4) },
+      { nx:3, ny:2, a: 0.30 * Math.sin(t * 0.0160 + 1.7) },
+      { nx:2, ny:3, a: 0.30 * Math.sin(t * 0.0130 + 3.9) }
+    ];
+    const NM = M.length;
+    /* ⭐ 表を焼く。SX[m][x]=sin(kx·x)／CX[m][x]=cos(kx·x)（y も同じ） */
+    const SX = [], CX = [], SY = [], CY = [], AA = new Float64Array(NM), RR = new Float64Array(NM);
+    for(let m = 0; m < NM; m++){
+      const q = M[m], kx = PI * q.nx / W, ky = PI * q.ny / H;
+      AA[m] = q.a; RR[m] = kx / ky;
+      const sx = new Float64Array(W), cx2 = new Float64Array(W);
+      for(let x = 0; x < W; x++){ const u = kx * x; sx[x] = Math.sin(u); cx2[x] = Math.cos(u); }
+      const sy = new Float64Array(H), cy2 = new Float64Array(H);
+      for(let y = 0; y < H; y++){ const u = ky * y; sy[y] = Math.sin(u); cy2[y] = Math.cos(u); }
+      SX.push(sx); CX.push(cx2); SY.push(sy); CY.push(cy2);
+    }
     for(const d of dots){
       if(!d.live) continue;
-      d.x = Math.max(0, Math.min(W-1, Math.round(d.hx + Math.sin(t*0.02 + d.seed*6.28) * 6 * G)));
-      d.y = Math.max(0, Math.min(H-1, Math.round(d.hy + Math.cos(t*0.017 + d.seed*9.1) * 6 * G)));
+      /* ⚠️ 出だしは家の位置ちょうど（跳ねさせない）。
+         ⭐ 別の壊れ方（積もる・集まる）で動かされたあとに漂うへ来たときも、
+            ずれていたら拾い直す＝勝手に元居た所へワープしない。 */
+      if(d.fx === undefined || Math.abs(d.fx - d.x) > 1.5 || Math.abs(d.fy - d.y) > 1.5){
+        d.fx = d.x; d.fy = d.y;
+      }
+      const ix = d.x, iy = d.y;
+      let vx = 0, vy = 0;
+      for(let m = 0; m < NM; m++){
+        const a = AA[m];
+        vx += a * SX[m][ix] * CY[m][iy];
+        vy -= a * CX[m][ix] * SY[m][iy] * RR[m];
+      }
+      /* 粒ごとの気まぐれ＝同じ川筋でも少しずつ違う道を行く（向きはばらばら＝溜まらない）
+         🔴🔴 ここは【速さ】に足すので、位置に効く量は amp ÷ 振れの速さ になる。
+            0.16 だと 0.16×2.4÷0.021 ＝ ±18マス ＝ これだけで字が粉々になっていた
+            （前の式は位置に6マス足すだけだったので、そのつもりで書くと桁を間違える）。
+         ⭐ 位置で ±1.5マスほどに収まる大きさにする。 */
+      vx += Math.sin(t * 0.021 + d.seed * 6.28) * 0.012;
+      vy += Math.cos(t * 0.018 + d.seed * 9.10) * 0.012;
+      /* ⚠️ うねりは掛け算の山なので、そのままだと平均の速さが式の見た目の 4割ほどしか出ない
+         （実測 0.17マス/コマ＝13秒撮っても字がほとんど動かなかった）。
+         ⭐ 底上げしてから【上限で頭を押さえる】＝ふだんは S マスくらい、山でも 2.2S で止まる。 */
+      vx *= 2.4; vy *= 2.4;
+      const len = Math.hypot(vx, vy);
+      if(len > 2.2){ vx = vx / len * 2.2; vy = vy / len * 2.2; }
+      d.fx = Math.max(0, Math.min(W - 1, d.fx + vx * S));
+      d.fy = Math.max(0, Math.min(H - 1, d.fy + vy * S));
+      d.x = Math.round(d.fx); d.y = Math.round(d.fy);
     }
   }
   t++;
@@ -3451,11 +3546,17 @@ async function tvRun(){
   if(TV.on){ TV.stop = true; stat2('やめました（書き出しを止めています）'); return; }
   const plan = tvPlan();
   if(plan.err){ stat2('🔴 ' + plan.err); return; }
-  /* ⭐ 落ちるのとき、落ち代が無ければ【ここで作る】。崩すボタンと同じ手順。
+  /* ⭐ 落ち代が無ければ【ここで作る】。崩すボタンと同じ手順。
      ⚠️ 落ち代を変えると盤の高さが変わる＝組み直して、絵の置き方も入れ直す。
-        カメラを控える【前】にやる（あとだと控えた値と食い違う）。 */
+        カメラを控える【前】にやる（あとだと控えた値と食い違う）。
+     🔴🔴 2026-08-20 ここは plan.anim === 0（落ちる）のときだけやっていた。
+        だが崩す（breakNow）は【どの動きでも】落ち代が無ければ自分で 8 にして build() する。
+        ＝集まる・漂うで落ち代が8未満だと、1コマ目の崩すが撮影の【最中に】粒を作り直し、
+          直前に立てた live が全部消え、盤の高さまで変わる（絵が1コマ目で跳ぶ）。
+        ⭐ 崩すを使う動き（isAnim）なら、どれも先にここで用意しておく。
+           そうすれば breakNow の中の門は撮影中に一度も開かない。 */
   const bFall = P.fall;
-  if(plan.isAnim && plan.anim === 0 && P.fall < 8){
+  if(plan.isAnim && P.fall < 8){
     P.fall = 8;
     const fe = document.getElementById('fall');
     if(fe){ fe.value = 8; const v = fe.parentElement.querySelector('.val'); if(v) v.textContent = 8; }
@@ -3483,7 +3584,11 @@ async function tvRun(){
     cv.width = bw; cv.height = bh;
     cam.s = bs; cam.x = bx; cam.y = by;
     flowT = bFlowT; P.gflow = bGflow; noBgOnce = false;
-    if(P.mode !== bMode || breakStage > 0 || P.fall !== bFall){
+    /* 🔴 「崩れているか（breakStage>0）」で判断してはいけない。
+       逆再生で段そのものを巻き戻すようにしたので、撮り終わりの段は 0 まで戻り得る。
+       ＝崩して散らかしたのに「何も起きていない」と見なして、粒が散ったまま画面に残る。
+       ⭐ 撮ったかどうか（isAnim）で決める。撮ったなら必ず組み直す。 */
+    if(plan.isAnim || P.mode !== bMode || breakStage > 0 || P.fall !== bFall){
       P.mode = bMode; running = bRun; t = bT; P.fall = bFall;
       const fe2 = document.getElementById('fall');
       if(fe2){ fe2.value = bFall; const v2 = fe2.parentElement.querySelector('.val'); if(v2) v2.textContent = bFall; }
@@ -3597,11 +3702,25 @@ async function tvRun(){
           if(i > 0) step();                       // ⭐ 1コマ＝1ステップ（時計に頼らない）
           const n2 = dots.length, a2 = new Float32Array(n2 * 2), lv = new Uint8Array(n2);
           for(let k = 0; k < n2; k++){ a2[k*2] = dots[k].x; a2[k*2+1] = dots[k].y; lv[k] = dots[k].live ? 1 : 0; }
-          SNAP.push({ a:a2, l:lv });
+          /* ⭐ 段（breakStage）も一緒に控える。位置だけ戻しても絵は戻らない
+             ── 段は【描き方】も決めている（地を敷くのは段3から・厚みの付け方も変わる）。 */
+          SNAP.push({ a:a2, l:lv, bs:breakStage });
         }else{
           const q = SNAP[Math.max(0, fwd - 2 - (i - fwd))];   // 折り返しは飛ばす
-          if(q) for(let k = 0; k < dots.length; k++){
-            dots[k].x = q.a[k*2]; dots[k].y = q.a[k*2+1]; dots[k].live = !!q.l[k];
+          if(q){
+            /* 🔴🔴 2026-08-20 ここは dots.length ぶん回していた。
+               地の粒は段3で【後から増える】ので、前半の若いコマの控えは短い。
+               短い控えを長い dots で読むと、はみ出した粒は x が undefined になり、
+               NaN のまま draw() へ渡っていた（描かれないので気づけない・たまたま助かっていただけ）。
+               ⭐ 控えに入っている数までだけ戻し、それより後ろの粒は【まだ居なかった】として伏せる。 */
+            const n3 = q.l.length;
+            for(let k = 0; k < dots.length; k++){
+              if(k < n3){ dots[k].x = q.a[k*2]; dots[k].y = q.a[k*2+1]; dots[k].live = !!q.l[k]; }
+              else { dots[k].live = false; }
+            }
+            /* 🔴 段を戻さないと、頭（段0の字）と尻（同じ位置を段4で描いたもの）が違う絵になる
+               ＝繋いだ所で見た目が飛ぶ（2026-08-20 実測：集まるで頭と尻の隔たり 0.0195）。 */
+            breakStage = q.bs;
           }
         }
       }
