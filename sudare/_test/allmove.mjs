@@ -22,8 +22,10 @@ const n = await p.evaluate(()=>SHEETS.length);
 check(n>=2, `版が2枚以上になった`, `${n}枚`);
 const kposes = () => p.evaluate(()=>SHEETS.map(s=>Math.round(s.kpos)));
 /* 切のとき＝選んでいる版だけ動く */
+/* 🔴 2026-08-20 速さを上げただけでは動き出さない（動きの入切は「流す」だけ）＝必ず押す */
 await p.evaluate(()=>{ const c=document.getElementById('animAll'); c.checked=false; c.dispatchEvent(new Event('change',{bubbles:true}));
-  SHEETS.forEach(s=>s.kpos=50); const r=document.getElementById('speed'); r.value=40; r.dispatchEvent(new Event('input',{bubbles:true})); });
+  SHEETS.forEach(s=>s.kpos=50); const r=document.getElementById('speed'); r.value=40; r.dispatchEvent(new Event('input',{bubbles:true}));
+  if(!animOn) document.getElementById('animGo').click(); });
 await wait(1500);
 const off = await kposes();
 check(new Set(off).size > 1, '切＝選んだ版だけ動く（値がばらける）', JSON.stringify(off));
