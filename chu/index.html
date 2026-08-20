@@ -90,6 +90,8 @@
   input[type=color]{width:100%;height:30px;padding:0;border:1px solid var(--line);border-radius:8px;
     background:transparent;cursor:pointer}
   .hide{display:none!important}
+  /* ⚠️ 効かないつまみは【効かないと分かる姿】にする。黙って置かない（網AMI の作法） */
+  .dead{opacity:.34}
   .cols2{display:flex;gap:6px}.cols2>*{flex:1}
   #meter{font-family:"Space Mono",monospace;font-size:10px;line-height:1.7;color:var(--fg);
     background:rgba(28,28,30,.05);border:1px solid var(--line);border-radius:9px;padding:8px 10px;margin:8px 0}
@@ -327,8 +329,10 @@ GRAPHY</textarea>
     </div>
     <div class="row" style="margin-top:8px"><span class="n">速さ</span><output id="o_spd"></output></div>
     <input type="range" id="r_spd" min="0.1" max="4" step="0.05">
-    <div class="row"><span class="n">粒が回る（周）</span><output id="o_rotN"></output></div>
+    <div class="row" id="rotNRow"><span class="n">粒が回る（周）</span><output id="o_rotN"></output></div>
     <input type="range" id="r_rotN" min="0" max="4" step="1">
+    <div id="rotNNote" class="note hide">🔴 <b>いまは円なので、回しても絵は変わりません</b>
+      ── 円は回転で形が変わらない。<b>四角・菱形・六角</b>にすると効きます</div>
     <div class="row"><span class="n">はみ出しが揺れる</span><output id="o_radA"></output></div>
     <input type="range" id="r_radA" min="0" max="1" step="0.02">
     <div class="row"><span class="n">字が出て、消える（周）</span><output id="o_revN"></output></div>
@@ -1145,6 +1149,8 @@ const FMT = {
 };
 const RANGES = ['up','dn','rad','rot','weight','fs','grow','thr','side','monoW','perRow','long',
                 'margin','spd','rotN','radA','revN'];
+/* 動かす系のつまみ（止まっていると効かないもの） */
+const MOVE_KEYS = new Set(['rotN','radA','revN','spd']);
 RANGES.forEach(k => {
   const r = el('r_'+k), o = el('o_'+k);
   if(!r) return;
@@ -1152,7 +1158,15 @@ RANGES.forEach(k => {
   const show = () => { if(o) o.textContent = (FMT[k] || String)(+r.value); };
   show();
   r.addEventListener('pointerdown', pushHist);   /* ⚠️ ⌘Z は掴んだ瞬間に1回だけ積む */
-  r.addEventListener('input', () => { P[k] = +r.value; show(); kick(); saveLocal(); });
+  r.addEventListener('input', () => {
+    P[k] = +r.value; show();
+    /* ⭐⭐ 動かす系のつまみは【止まっていると何も起きない】。
+       位相 0 では 回り＝0周ぶん・揺れ＝sin(0)＝0 なので、絵が1画素も変わらない。
+       🔴 これは「効いていない」に見える（＝道具の負け）。触ったら勝手に再生を始める。
+       ⚠️ 起動時に勝手に動き出すのとは別（控えに再生中は入れていない）。 */
+    if(MOVE_KEYS.has(k) && !playing && (k === 'spd' || +r.value !== 0)) el('b_play').click();
+    kick(); saveLocal();
+  });
 });
 function seg(id, key, after){
   const box = el(id); if(!box) return;
@@ -1175,7 +1189,14 @@ function modeSync(){
   el('perRowRow').classList.toggle('hide', w);
   el('r_perRow').classList.toggle('hide', w);
 }
-seg('shapeSeg', 'shape');
+/* ⭐ 円のときは「粒が回る」が効かない＝そう見える姿にして、理由を出す */
+function rotSync(){
+  const dead = P.shape === 'circle';
+  el('rotNRow').classList.toggle('dead', dead);
+  el('r_rotN').classList.toggle('dead', dead);
+  el('rotNNote').classList.toggle('hide', !dead);
+}
+seg('shapeSeg', 'shape', rotSync);
 seg('fontSeg', 'font');
 seg('advSeg', 'adv', advSync);
 seg('gridSeg', 'grid');
@@ -1268,7 +1289,7 @@ function syncUI(){
   modeSync();
   el('t_family').value = P.family;
   el('c_paper').value = P.paper; el('c_ink').value = P.ink;
-  advSync();
+  advSync(); rotSync();
 }
 el('b_undo').onclick = undo;
 addEventListener('keydown', e => {
