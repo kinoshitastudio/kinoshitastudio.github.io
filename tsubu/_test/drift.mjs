@@ -21,8 +21,9 @@ await new Promise(r => setTimeout(r, 2200));
 const ng = [];
 const check = (ok, name, note) => { console.log(`  ${ok ? '✅' : '🔴'} ${name}${note ? '  ' + note : ''}`); if(!ok) ng.push(name); };
 
-/* ⭐ 書き出し（tvRun）と同じ立ち上げ方＝崩さずに live だけ立てて、コマ数ぶん step する。
-   ⚠️ 崩すの段（BRK）も書き出しと同じ割合で入れる＝出る動画そのものを測っている。 */
+/* ⭐ ここで測るのは【漂うの物理】そのもの。粒を生かして、コマ数ぶん step するだけ。
+   ⚠️ 崩すの段の入れ方（間の置き方・少しずつ入れる仕掛け）は書き出し側の話なので、
+      ここでは簡単な等間隔で回す。実物の書き出しは anivideo.mjs が見ている。 */
 const runAnim = (mode, total, at, noBreak) => p.evaluate(o => {
   P.mode = o.mode;
   /* ⚠️ 落ち代は【始める前に】用意する。tvRun と同じ手順。

@@ -1763,6 +1763,10 @@ function drawScene(){
     const CWp = Cp * cellWk(), CHp = Cp * cellHk();
     for(const d of dots){
       if(!d.pap) continue;
+      /* ⚠️ 伏せた粒（hide）は【まだ居ないもの】。ここだけ見ていなかったので、
+         書き出しで地を少しずつ出そうとしても一斉に出てしまっていた（2026-08-20）。
+         ⭐ 当たり判定も間引きも hide を見ている＝ここも揃える。 */
+      if(d.hide) continue;
       g.fillStyle = d.col;
       g.fillRect((d.x - d.gx0*kwp) * Cp, (d.y - d.gy0*khp) * Cp, CWp + 0.5, CHp + 0.5);
     }
@@ -3670,26 +3674,98 @@ async function tvRun(){
        ⭐ 動く条件は「崩れていること」ではなく【live が立っていること】だけ。
           位置は字のまま live だけ立てれば、字がそのまま渦になり、逆再生で字へ帰る。
           ＝崩すボタンを押す必要も無くなる（木下＝「4回ほどクリックしないといけない」）。 */
-    let SNAP = null, fwd = 0, BRK = [];
+    let SNAP = null, fwd = 0, BRK = [], stageN = 0, feed = null, easeN = 8;
     if(plan.isAnim){
       P.mode = plan.anim;
-      for(const d of dots){ if(!d.hide && !d.pap) d.live = true; }
       running = true; t = 0;
       /* ⭐⭐ 崩すの【段】も通しで入れる。2026-08-19
          木下＝「そのクリックのも含めて、動画は全部をスムーズに、そしてまた戻る」。
          画面の崩すボタンは1回1段（字→ます→地→まぜる）＝手で4回押す必要があった。
-         ⭐ 書き出しでは、前半のあいだに4段を等間隔で自動で入れる。
-            段と段のあいだは物理が動くので、押して見ているのと同じ流れが通しで出る。
-         ⚠️ 1コマ目は字のまま（段は2コマ目から入れる）＝輪の折り返し点が字になる。 */
+         ⭐ 書き出しでは、前半のあいだに4段を自動で入れる。 */
       /* ⭐⭐ 行って戻る＝輪になる。
          🔴 物理は【前へしか進められない】ので、逆再生は控えを取って巻き戻すしかない。
-         ⭐ 控えるのは粒の居場所だけ（x,y と 生きているか）＝軽い。絵は draw() が作り直す。
+         ⭐ 控えるのは粒の居場所だけ（x,y と 生き死に・居る居ない）＝軽い。絵は draw() が作り直す。
          ⚠️ 折り返しの1コマは1回だけ使う＝頭と尻が完全に一致して、繋いでも段差が出ない。 */
       fwd = Math.max(2, Math.ceil((plan.total + 1) / 2));
-      /* 4段を前半の 0〜70% に散らす（残りは崩れたものが動く時間） */
-      BRK = [1, 2, 3, 4].map(k => Math.max(1, Math.round(fwd * 0.7 * (k - 1) / 4) + 1));
+      /* 🔴🔴 2026-08-20 木下＝「落ちるも書き出すとアニメーションの最初などがない」
+              「もうすこしスムーズだったらいいね、流れが」。
+         実測（前半176コマ・10コマごとの勢い／3＝ならしなり）：
+           落ちる 887643211920000000 ── 頭が乱暴・4段目で9.9倍の跳ね・最後の60コマが完全に止まり
+           集まる 963222112222223333 ── 1コマ目が6.6倍の跳ね（いきなり全部が渦に入る）
+         原因は3つ：
+           ① 1段目を【コマ1】に入れていた＝最初の字が 1/27秒しか映らない＝「最初がない」
+           ② 段を【1コマで一斉に】入れていた＝そこだけ絵が飛ぶ
+              （4段目のまぜるは全席をフィッシャー–イェーツで入れ替える＝丸ごと瞬間移動）
+           ③ 段を 0〜70% に詰めていた＝落ちるは早々に積み終わり、残り3分の1が静止画
+         ⭐ 直し：まず【字を見せる間】を置く。段は締め切りを後ろへ広げる。
+            そして段は少しずつ入れる（下の stageIn / feedStep）。 */
+      const hold = Math.max(2, Math.round(fwd * 0.10));    // 最初の字を見せる間
+      const lastAt = Math.round(fwd * 0.78);               // 遅くともここまでに4段目を入れ始める
+      BRK = [0, 1, 2, 3].map(k => Math.round(hold + (lastAt - hold) * k / 3));
+      easeN = Math.max(3, Math.round(fwd * 0.10));         // 1段を入れきるのに使うコマ数
       SNAP = [];
     }
+    /* ⭐⭐ 段を【少しずつ】入れる仕掛け。やり方は1つしかない：
+       崩す前後の「居場所・生き死に・居る居ない」を控えて、いったん前の姿に戻し、
+       コマごとに何粒かずつ【後の姿】へ移す。
+       ⭐ これ1つで、手放す（1〜3段目）も、席替え（4段目のまぜる）も、地が生まれるのも賄える。
+       ⚠️ 移す順はばらばらにする。並び順のまま移すと帯状に切り替わって、かえって目につく。 */
+    const stageIn = () => {
+      const n0 = dots.length;
+      const bx = new Float32Array(n0 * 2), bf = new Uint8Array(n0);
+      for(let k = 0; k < n0; k++){
+        bx[k*2] = dots[k].x; bx[k*2+1] = dots[k].y;
+        bf[k] = (dots[k].live ? 1 : 0) | (dots[k].hide ? 2 : 0);
+      }
+      const bt = t;                                  // ⚠️ 崩すは t を 0 に戻す。漂う・集まるは
+      breakNow(false);                               //    それが流れの位相の飛びになるので戻す
+      t = bt;
+      const q = [];
+      for(let k = 0; k < dots.length; k++){
+        const d = dots[k];
+        const to = { d, x:d.x, y:d.y, live:d.live, hide:d.hide };
+        if(k < n0){
+          const same = d.x === bx[k*2] && d.y === bx[k*2+1]
+                    && (d.live ? 1 : 0) === (bf[k] & 1) && (d.hide ? 2 : 0) === (bf[k] & 2);
+          if(same) continue;                         // 何も変わらない粒は放っておく
+          d.x = bx[k*2]; d.y = bx[k*2+1]; d.live = !!(bf[k] & 1); d.hide = !!(bf[k] & 2);
+        }else{
+          d.hide = true;                             // 後から生まれた粒（地）は出番まで居ないことにする
+        }
+        q.push(to);
+      }
+      for(let k = q.length - 1; k > 0; k--){
+        const j = Math.floor(Math.random() * (k + 1));
+        const tmp = q[k]; q[k] = q[j]; q[j] = tmp;
+      }
+      feed = { q, i:0, per: Math.max(1, Math.ceil(q.length / easeN)) };
+      peakLive = 0;                                  // ⚠️ 山は段ごとに取り直す
+    };
+    const feedStep = () => {
+      if(!feed) return;
+      const e = Math.min(feed.q.length, feed.i + feed.per);
+      for(; feed.i < e; feed.i++){
+        const s = feed.q[feed.i];
+        s.d.x = s.x; s.d.y = s.y; s.d.live = s.live; s.d.hide = s.hide;
+      }
+      if(feed.i >= feed.q.length) feed = null;
+    };
+    /* ⭐ まだ動いているか＝止まった絵を見せないための見張り（次の段を前倒しする合図）。
+       🔴 「1粒でも生きていれば動いている」では厳しすぎる。砂は最後の数粒がいつまでも
+          こぼれ続けるので、絵はほぼ静止しているのに合図が出ない
+          （実測：落ちるのコマ120〜136 が ならしの 0.1倍＝17コマぶん静止画だった）。
+       🔴 「見えている粒の何%」でも駄目。盤の広さや段によって動く粒の数が桁で違うので、
+          同じ割合が、ある段では静止・別の段では大盛りを意味してしまう。
+       ⭐ 見るのは【その段で動いていた粒の、何割が残っているか】。
+          山の 5% を切ったら、その段はもう終わったとみなす（尺度に依らない）。
+          ⚠️ 集まる・漂うは誰も止まらないので山のまま＝ここは一度も鳴らない＝締め切り任せ。 */
+    let peakLive = 0;
+    const liveNow = () => { let n = 0; for(const d of dots) if(d.live && !d.hide) n++; return n; };
+    const stillMoving = () => {
+      const lv = liveNow();
+      if(lv > peakLive) peakLive = lv;
+      return peakLive <= 0 || lv > Math.max(4, peakLive * 0.05);
+    };
     let i = 0;
     for(; i < plan.total; i++){
       if(TV.stop) break;
@@ -3698,10 +3774,23 @@ async function tvRun(){
         if(i < fwd){
           /* ⚠️ 1コマ目は【字そのもの】。先に step() すると字が1コマも映らず、
              輪の折り返し点も字からずれる。 */
-          if(i > 0 && BRK.indexOf(i) >= 0) breakNow(false);   // ⭐ ここで1段くずす
-          if(i > 0) step();                       // ⭐ 1コマ＝1ステップ（時計に頼らない）
+          if(i > 0){
+            /* ⭐ 次の段を入れる合図は2つ。
+                 ・締め切りが来た
+                 ・誰も動いていない（＝入れる前に静止画になる。止まった絵は見せない） */
+            /* ⚠️ 前倒しは【1段目を入れたあと】だけ。でないと、まだ誰も生きていない
+               「字を見せている間」がそのまま合図になって、待たずに崩れてしまう。 */
+            if(stageN < 4 && !feed && (i >= BRK[stageN] || (stageN > 0 && !stillMoving()))){
+              stageIn(); stageN++;
+            }
+            feedStep();                           // ⭐ 入れかけの段を、少しずつ進める
+            step();                               // ⭐ 1コマ＝1ステップ（時計に頼らない）
+          }
           const n2 = dots.length, a2 = new Float32Array(n2 * 2), lv = new Uint8Array(n2);
-          for(let k = 0; k < n2; k++){ a2[k*2] = dots[k].x; a2[k*2+1] = dots[k].y; lv[k] = dots[k].live ? 1 : 0; }
+          for(let k = 0; k < n2; k++){ a2[k*2] = dots[k].x; a2[k*2+1] = dots[k].y;
+            /* ⚠️ 居る居ない（hide）も控える。段を少しずつ入れるようになったので、
+               これが無いと逆再生で地が最初から全部出てしまう。 */
+            lv[k] = (dots[k].live ? 1 : 0) | (dots[k].hide ? 2 : 0); }
           /* ⭐ 段（breakStage）も一緒に控える。位置だけ戻しても絵は戻らない
              ── 段は【描き方】も決めている（地を敷くのは段3から・厚みの付け方も変わる）。 */
           SNAP.push({ a:a2, l:lv, bs:breakStage });
@@ -3715,8 +3804,9 @@ async function tvRun(){
                ⭐ 控えに入っている数までだけ戻し、それより後ろの粒は【まだ居なかった】として伏せる。 */
             const n3 = q.l.length;
             for(let k = 0; k < dots.length; k++){
-              if(k < n3){ dots[k].x = q.a[k*2]; dots[k].y = q.a[k*2+1]; dots[k].live = !!q.l[k]; }
-              else { dots[k].live = false; }
+              if(k < n3){ dots[k].x = q.a[k*2]; dots[k].y = q.a[k*2+1];
+                          dots[k].live = !!(q.l[k] & 1); dots[k].hide = !!(q.l[k] & 2); }
+              else { dots[k].live = false; dots[k].hide = true; }
             }
             /* 🔴 段を戻さないと、頭（段0の字）と尻（同じ位置を段4で描いたもの）が違う絵になる
                ＝繋いだ所で見た目が飛ぶ（2026-08-20 実測：集まるで頭と尻の隔たり 0.0195）。 */

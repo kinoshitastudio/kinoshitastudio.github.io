@@ -69,7 +69,7 @@ echo
 echo "── ⑤ 漂う＝秒を伸ばすほど先へ進む・粒の見え方は壊れない"
 node "$HERE/_test/drift.mjs" "http://localhost:$PORT/tsubu/" || NG=1
 echo
-echo "── ⑥ 動画（集まる・漂う）＝押して落ちてくる実物で確かめる"
+echo "── ⑥ 動画（落ちる・集まる・漂う）＝最初の字・なめらかさ・撤収まで"
 node "$HERE/_test/anivideo.mjs" "http://localhost:$PORT/tsubu/" || NG=1
 
 echo
