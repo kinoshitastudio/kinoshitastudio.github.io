@@ -1,4 +1,4 @@
-/* ⭐ 動画（集まる・漂う・落ちる）を【押して落ちてくる実物】で確かめる（2026-08-20 新設）
+/* ⭐ 動画（落ちる・集まる・漂う）を【押して落ちてくる実物】で確かめる（2026-08-20 新設）
    🔴 見るのは：
      ① 落ち代が 0 でも書き出せる（1コマ目で盤を作り直さない）
         木下の設定に依らず踏む所。tvRun は落ち代の用意を【落ちる】のときだけしていたので、
@@ -6,7 +6,10 @@
         直前に立てた live を全部消し、盤の高さまで変えていた。
      ② 秒で指定したコマ数がちゃんと出る（8秒が2秒になる、をまた作らない）
      ③ 頭と尻が字（行って戻る＝繋いでも段差が出ない）
-     ④ 途中が止まっていない（漂うが「何も変化しない動画」にならない） */
+     ④ 途中が止まっていない（漂うが「何も変化しない動画」にならない）
+     ⑤ 最初の字がちゃんと映る（木下＝「アニメーションの最初などがない状態だね」2026-08-20）
+     ⑥ 流れがなめらか（木下＝「もうすこしスムーズだったらいいね、流れが」）
+        ＝1コマで勢いが飛ばない／途中に長い静止が無い */
 import puppeteer from '/Users/kinoshitatakahiro/.npm/_npx/1ade4bf2e2bf80fd/node_modules/puppeteer-core/lib/puppeteer/puppeteer-core.js';
 const URL0 = process.argv[2] || 'http://localhost:8450/tsubu/';
 const b = await puppeteer.launch({ executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -28,7 +31,12 @@ const run = (mv, sec, fall) => p.evaluate(async o => {
   set('fall', o.fall);
   seg('tvMove', o.mv); seg('tvFmt', 'png'); seg('tvQ', 'lo'); seg('tvLoop', 'sec');
   set('tvSec', o.sec);
-  set('res', 12);                                     // ⚠️ 小さくして速く回す（見るのは動きなので足りる）
+  /* ⚠️ 盤が小さすぎると粒が数百しかなく、コマ間の差が【ばらつき】に埋もれて
+     止まり・跳びの判定が当てにならない（2026-08-20 res12・HELLO で誤検出した）。
+     ⭐ 実際に使う形（何行かの字・そこそこの解像）で回す。 */
+  const ta = document.getElementById('txt');
+  ta.value = 'アイウエオ\nカキクケコ\nサシスセソ'; ta.dispatchEvent(new Event('input', { bubbles:true }));
+  set('wrap', 5); set('res', 20);
   await new Promise(r => setTimeout(r, 700));
 
   /* ⭐ コマを掴む。draw() のあとの canvas を粗い指紋にして持つ。 */
@@ -38,8 +46,8 @@ const run = (mv, sec, fall) => p.evaluate(async o => {
     try{
       const cx = this.getContext('2d'), W2 = this.width, H2 = this.height;
       const d = cx.getImageData(0, 0, W2, H2).data;
-      const N = 24, f = new Float32Array(N * N);
-      for(let y = 0; y < H2; y += 3) for(let x = 0; x < W2; x += 3){
+      const N = 48, f = new Float32Array(N * N);
+      for(let y = 0; y < H2; y += 2) for(let x = 0; x < W2; x += 2){
         const i = (y * W2 + x) * 4;
         f[Math.min(N-1,(y/H2*N)|0) * N + Math.min(N-1,(x/W2*N)|0)] += (d[i]+d[i+1]+d[i+2])/3;
       }
@@ -69,8 +77,8 @@ const run = (mv, sec, fall) => p.evaluate(async o => {
 
 const diff = (a, b) => { let s = 0; for(let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; };
 
-for(const mv of ['drift','gather']){
-  const name = mv === 'drift' ? '漂う' : '集まる';
+for(const mv of ['fall','drift','gather']){
+  const name = { fall:'落ちる', drift:'漂う', gather:'集まる' }[mv];
   console.log(`\n── ${name}（落ち代 0 から・6秒）`);
   const r = await run(mv, 6, 0);
   const hset = [...new Set(r.hs)];
@@ -94,6 +102,30 @@ for(const mv of ['drift','gather']){
     const mid = diff(q(0.30), q(0.48));
     console.log(`    途中（3割→5割）の隔たり ${mid.toFixed(4)}`);
     check(mid > 0.012, `${name}：途中で絵が進んでいる（止まった動画にならない）`, mid.toFixed(4));
+
+    /* 🔴🔴 2026-08-20 木下＝「落ちるも書き出すとアニメーションの最初などがない」
+       ＝1段目をコマ1に入れていたので、最初の字が 1コマ（1/27秒）しか映っていなかった。
+       ⭐ 前半の1割ほどは字のまま止めておく。「動いていないコマが頭に何コマあるか」で見る。 */
+    const fwd = Math.ceil((r.n + 1) / 2);
+    const ds = [];
+    for(let k = 1; k < fwd; k++) ds.push(diff(r.fps[k-1], r.fps[k]));
+    const mean = ds.reduce((a,c) => a + c, 0) / ds.length;
+    let hold = 0; while(hold < ds.length && ds[hold] < mean * 0.05) hold++;
+    console.log(`    頭で字が止まっているコマ ${hold} ／ 前半 ${fwd}コマ`);
+    check(hold >= 3 && hold < fwd * 0.3, `${name}：最初の字がちゃんと映る`, `${hold}コマ（前半の${(hold/fwd*100).toFixed(0)}%）`);
+
+    /* ⭐ なめらかさ＝【勢いが1コマでどれだけ変わるか】。山が高いこと自体は跳びではない。
+       🔴 前は4段目のまぜるが全席を1コマで入れ替えていて、ならしの9.9倍まで跳ねていた。 */
+    let jmax = 0, jAt = 0;
+    for(let k = 1; k < ds.length; k++){ const j = Math.abs(ds[k] - ds[k-1]); if(j > jmax){ jmax = j; jAt = k + 1; } }
+    console.log(`    1コマで勢いが変わる最大 ${(jmax/mean).toFixed(2)}倍（コマ${jAt}）`);
+    check(jmax < mean * 2.0, `${name}：段が入る所で絵が飛ばない`, `${(jmax/mean).toFixed(2)}倍`);
+
+    /* ⭐ 頭の「字を見せる間」より後ろに、長い静止が残っていないか */
+    let run2 = 0, worst = 0;
+    for(let k = hold + 2; k < ds.length; k++){ if(ds[k] < mean * 0.10){ run2++; if(run2 > worst) worst = run2; } else run2 = 0; }
+    console.log(`    途中でいちばん長い静止 ${worst}コマ`);
+    check(worst < fwd * 0.15, `${name}：途中に長い静止が無い`, `${worst}コマ（前半の${(worst/fwd*100).toFixed(0)}%）`);
   }
   /* 🔴 撮ったあと画面に散らかりが残らないか。段を巻き戻すようにしたので、
      「崩れているか」で組み直しを決めていると、ここをすり抜けて粒が散ったまま残る。 */
@@ -102,5 +134,5 @@ for(const mv of ['drift','gather']){
 }
 check(errs.length === 0, '例外が出ていない', errs.join(' / '));
 await b.close();
-console.log(ng.length ? '\n🔴 落ちた: ' + ng.join(' / ') : '\n✅ 動画（集まる・漂う）は全部通った');
+console.log(ng.length ? '\n🔴 落ちた: ' + ng.join(' / ') : '\n✅ 動画（落ちる・集まる・漂う）は全部通った');
 process.exit(ng.length ? 1 : 0);
