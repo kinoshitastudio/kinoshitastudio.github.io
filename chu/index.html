@@ -314,7 +314,9 @@ TYPE</textarea>
     <input type="text" id="t_family" value="CHU Modular">
     <button class="btn solid" id="b_ttf">.ttf を出す</button>
     <button class="btn" id="b_try">試し打ちに入れる</button>
-    <div class="note">⭐⭐ <b>試し打ちに入れる</b>＝出来た活字をこのページに読ませて、下の欄で打てるようにする。
+    <div class="note">⭐⭐ <b>つまみを動かすと、下の試し打ちは自動で鋳直る</b>（手が止まって 0.45秒後）。
+      このボタンは<b>字が多くて自動を止めたとき</b>と、いま鋳直したいときに押す<br>
+      ⭐ 試し打ち＝出来た活字をこのページに読ませて、下の欄で打てるようにする。
       板の絵ではなく<b>ブラウザが字として組んだもの</b>が出る＝ここが唯一の証拠<br>
       ⭐ .ttf は普通のフォント。Mac なら開いてインストールできる<br>
       ⚠️ 粒は<b>重なったまま</b>入れてある（輪郭の重なりを削っていない）。表示は正しいが、
@@ -641,7 +643,27 @@ function paint(){
   meter(S);
 }
 let raf = 0;
-function kick(){ if(raf) return; raf = requestAnimationFrame(() => { raf = 0; paint(); }); }
+function kick(){ if(raf) return; raf = requestAnimationFrame(() => { raf = 0; paint(); autoLive(); }); }
+
+/* ⭐⭐ つまみを動かしたら、試し打ちも自動で鋳直す。
+   🔴 「〔試し打ちに入れる〕を押さないと変わらない」＝押すまで結果が見えない＝道具として遅い。
+   ⚠️ ただし鋳るのは重い（260字で 1MB 超）。動かしている最中に毎回やると固まるので、
+      手が止まって 0.45秒 たってから1回だけ鋳る。
+   ⚠️ 字数が多すぎるときは自動でやらない＝【やらない理由を出す】。黙って止めない。 */
+let liveT = 0, lastCastMs = 0;
+/* ⭐ 待つ長さは【前に鋳るのにかかった時間】から決める。字数で決めるより正確
+   （実測：欧文84字 28ms／かな176字 250ms／かな＋欧文260字 560ms・四角なら360ms）。
+   🔴 1.5秒を超えるようになったら自動をやめて【やめた理由と数字を出す】。黙って止めない。 */
+function autoLive(){
+  clearTimeout(liveT);
+  if(lastCastMs > 1500){
+    el('tryNote').textContent = '1回 ' + (lastCastMs/1000).toFixed(1) + '秒かかるので自動では鋳ていない'
+      + '（〔試し打ちに入れる〕で流す／字を減らすか〔四角で軽く〕で速くなる）';
+    return;
+  }
+  el('tryNote').textContent = '鋳直している…';
+  liveT = setTimeout(() => toLive(), Math.max(450, Math.round(lastCastMs)));
+}
 function meter(S){
   const pl = PLAN;
   const units = pl.glyphs.reduce((a, x) => a + x.on.length, 0);
@@ -880,6 +902,7 @@ function dl(blob, name){
 let liveFace = null, liveN = 0;
 async function toLive(){
   try{
+    const t0 = performance.now();
     const r = buildTTF();
     if(liveFace){ try{ document.fonts.delete(liveFace); }catch(_){} }
     /* ⚠️ 同じ名前で入れ直すと古いほうが残ることがある＝毎回ちがう名前で入れて、CSS 側を差し替える */
@@ -888,7 +911,8 @@ async function toLive(){
     await liveFace.load();
     document.fonts.add(liveFace);
     el('try').style.fontFamily = '"' + nm + '", monospace';
-    el('tryNote').textContent = `${r.nG} 字ぶん・${Math.round(r.bytes/1024)}KB を読ませた`;
+    lastCastMs = performance.now() - t0;
+    el('tryNote').textContent = `${r.nG} 字ぶん・${Math.round(r.bytes/1024)}KB・${(lastCastMs/1000).toFixed(2)}秒で鋳た`;
     stat('試し打ちに入れた — ' + r.codes + ' 字が引ける');
     return r;
   }catch(e){
@@ -1058,7 +1082,7 @@ addEventListener('resize', kick);
 syncUI();
 loadLocal();
 kick();
-document.fonts.ready.then(() => { kick(); setTimeout(toLive, 60); });
+document.fonts.ready.then(() => { MEAS_KEY = ''; kick(); });
 stat('升目を変えると骨格が変わる。〔試し打ちに入れる〕で下の欄に流れる');
 </script>
 
