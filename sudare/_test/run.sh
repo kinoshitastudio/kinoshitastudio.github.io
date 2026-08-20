@@ -59,6 +59,9 @@ node "$HERE/_test/allmove.mjs" "http://localhost:$PORT/sudare/masu/" || NG=1
 echo
 echo "── ⑥ 流すと速さ（masu・押しても速さの数字が飛ばない）"
 node "$HERE/_test/anim.mjs" "http://localhost:$PORT/sudare/masu/" || NG=1
+echo
+echo "── ⑦ 刻みも動かす／刻みの数の本当の上限（masu）"
+node "$HERE/_test/grain.mjs" "http://localhost:$PORT/sudare/masu/" || NG=1
 
 echo
 [ "$NG" = 0 ] && echo "✅ 全部通った" || echo "🔴 落ちたものがある（上を見る）"
