@@ -908,10 +908,21 @@ function smear(c, x, y, bw, bh, horiz){
   const sh = horiz ? Math.max(1, Math.round(c.y1 - c.y0)) : 1;
   if(sx + sw > W || sy + sh > H) return;
 
+  /* ⭐ 継ぎ目を消す ── 帯を【積む向きにだけ】わずかに重ねる（2026-08-20 木下
+     「写真を引き伸ばすをアップにしてみるとマス目の線も見える」）。
+     🔴 帯の縁は小数の画素に落ちるので、隣と隣の間に地の色が細い線として残る。
+     ⭐ 伸ばす向きには広げない（そこは端を溶かしているので、広げると溶けがずれる）。
+     ⚠️ 大きさは【実測で決めた】。0.5px＝継ぎ目の画素 3403→2106・飛び出し 37.5→13.4。
+        1.0px にすると **かえって悪くなる**（2281・18）＝重ねすぎると隣の端が二重に乗る。
+        ⭐ 見た目で決めず、数えて選ぶこと。 */
+  const SEAM = 0.5;
+  const oy = horiz ? SEAM : 0, ox = horiz ? 0 : SEAM;
+  const dx = x - ox, dy = y - oy, dw = bw + ox*2, dh = bh + oy*2;
+
   const s = P.soft / 100;
   if(s <= 0.001){
     /* にじみ 0 ＝そのまま伸ばす（いちばん軽い道） */
-    ctx.drawImage(base, sx, sy, sw, sh, x, y, bw, bh);
+    ctx.drawImage(base, sx, sy, sw, sh, dx, dy, dw, dh);
     return;
   }
   const e = Math.min(0.5, s * 0.5);                    // 端をどこまで溶かすか（100 で真ん中まで＝天井）
@@ -961,7 +972,8 @@ function smear(c, x, y, bw, bh, horiz){
   smearX.fillStyle = g;
   smearX.fillRect(0, 0, pw, ph);
   smearX.globalCompositeOperation = 'source-over';
-  ctx.drawImage(smearCv, 0, 0, pw, ph, x, y, iw, ih);   // ⭐ 細い板を帯の大きさへ引き伸ばして貼る
+  /* ⭐ 細い板を帯の大きさへ引き伸ばして貼る。⚠️ 積む向きだけ継ぎ目ぶん広げる */
+  ctx.drawImage(smearCv, 0, 0, pw, ph, dx, dy, iw + ox*2, ih + oy*2);
 }
 /* ⭐⭐ どこから抜けるか ── 帯ごとに「残りやすさ」を出す（小さいほど先に抜ける）。
    🔴 前はランダムだけだった＝抜きを上げると【均一に虫食い】になり、抜けに向きが無かった。
@@ -1150,6 +1162,10 @@ addEventListener('drop', e => {
    ══════════════════════════════════════════════════════════════ */
 const TV = { on:false, stop:false };
 let anOn = false, anLast = 0, anP = 0, anKeep = 50, anKeepKey = 'slit';
+/* 🔴 位相を【描けたコマ数】で進めていたので、絵が重いほど遅く・不均一になっていた
+   （2026-08-20 実測＝1コマ 74〜91ms＝設定30コマ/秒に対し実測12コマ/秒）。
+   ⭐ 経った時間で進める。重くてもコマが飛ぶだけで、速さは変わらない。 */
+let anPrev = 0;
 /* ⭐⭐ 動かす対象（2026-08-17）── 帯の作りで変える。
    🔴 前は「どの線（slit）」だけで、それは引き伸ばしのときしか無い。
       だから既定の「2色でわたす」では**動かすも動画も何も起きなかった**
@@ -1190,7 +1206,18 @@ function anRange(key, base){
   const r = document.getElementById(key === 'drop' ? 'dropAmt' : key);
   const mx = r ? +r.max : 100, mn = r ? +r.min : 0;
   if(key === 'fill' || key === 'slit') return { lo:0, hi:100 };
-  /* ⭐ のび・にじみ＝つまみの値を下限に、そこから伸びる（上限はつまみの上限まで） */
+  /* 🔴🔴 にじみは【低い値ほど絵が変わる】（2026-08-20 実測・引き伸ばし＝
+     0→100 の各区間が 12〜14.6／140→200 は 5〜6）。
+     ⚠️ 上へ伸ばす作りだと、つまみを高くするほど【いちばん動かない区間】を使うことになる
+     （木下の 139 で実測＝コマ間の変化 3.1＝のびの1/3・進みの1/40）。
+     ⭐ にじみだけ【つまみの値を上限にして、下へ薄れて戻る】。
+        つまみで決めた見え方が「いちばん強い状態」＝位相0のまま（down で向きを伝える）。 */
+  if(key === 'soft'){
+    const hi = Math.min(mx, Math.max(mn, base));
+    const lo = Math.max(mn, hi - (mx - mn) * 0.5);
+    return { lo, hi, down:true };
+  }
+  /* ⭐ のび＝つまみの値を下限に、そこから伸びる（こちらは上へ伸ばす方がよく動く） */
   const lo = Math.max(mn, base);
   const hi = Math.min(mx, Math.max(lo + (mx - mn) * 0.18, lo * 3));
   return { lo, hi };
@@ -1210,8 +1237,10 @@ function setPhase(u, key, base){
   const b = (base == null) ? P[k] : base;
   const fr = u - Math.floor(u);
   const t = 1 - Math.abs(2 * fr - 1);        // 0 → 1 → 0
-  const { lo, hi } = anRange(k, b);
-  setPhaseVal(k, lo + (hi - lo) * t);
+  const { lo, hi, down } = anRange(k, b);
+  /* ⭐ down＝つまみの値が上限（にじみ）。位相0でつまみの値になるよう、上から下へ振る。
+     ⚠️ どちらの向きでも u=0 と u=1 が同じ絵＝継ぎ目なしループは変わらない。 */
+  setPhaseVal(k, down ? hi - (hi - lo) * t : lo + (hi - lo) * t);
 }
 /* 🔴 説明の書き替えだけは【状態を読まない】関数に分けてある。
    ⚠️ ここを anSync（anOn を読む）にしていたら、読み込み時に syncInk から呼ばれて
@@ -1242,10 +1271,13 @@ function anSync(){
 function anTick(now){
   requestAnimationFrame(anTick);
   if(TV.on) return;                       // ⚠️ 撮っている間は自分で進めない
-  if(!anOn || !P.anflow) return;
-  if(now - anLast < 1000 / Math.max(4, P.anfps)) return;
-  anLast = now;
-  anP = (anP + P.anflow / 100 * 0.01) % 1;
+  if(!anOn || !P.anflow){ anPrev = now; return; }
+  if(now - anLast < 1000 / Math.max(4, P.anfps)){ return; }
+  /* ⭐ 経った時間で進める。⚠️ 0.25秒より大きく飛ばさない（タブを戻したとき一気に飛ぶ） */
+  const dt = Math.min(0.25, (now - (anPrev || now)) / 1000);
+  anPrev = now; anLast = now;
+  /* ⭐ 0.30 ＝ これまでの速さと同じ（30コマ/秒 × 1コマ 0.01）。速さの感じは変えない */
+  anP = (anP + dt * (P.anflow / 100) * 0.30) % 1;
   setPhase(anP, anKeepKey, anKeep);
   draw();
 }
