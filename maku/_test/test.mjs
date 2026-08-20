@@ -895,6 +895,107 @@ ok('🔴 帯が曲がる（縞に沿って走ると明暗が出る＝まっす�
 ok('0に戻すとまっすぐな帯に戻る', Math.abs(wave.back - wave.straight) <= 2,
    `${wave.straight} → ${wave.back}`);
 
+/* ══ [26] 動かす ── 山数が流れる／粒の細かさが流れる（2026-08-20）══════════════
+   ⭐ 見ているのは3つ。
+     ① 振れ幅を入れて位相を進めると【絵が変わる】（＝GLまで届いている）
+     ② 位相 0 では【1画素も変わらない】（＝既定のままの絵を壊していない）
+     ③ 振れ幅 0 なら位相を進めても【1画素も変わらない】（＝入れるまで何も起きない）
+   ⚠️ 「AだけがBに影響しない」は、Bを単独で描いて突き合わせて測る。 */
+console.log('\n[26] 動かす（山数が流れる／粒の細かさが流れる）');
+const anim = await page.evaluate(async ()=>{
+  const c = document.getElementById('gl');
+  const gl2 = c.getContext('webgl') || c.getContext('experimental-webgl');
+  const w = c.width, h = c.height;
+  const grab = async ()=>{ await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const px = new Uint8Array(w*h*4); gl2.readPixels(0,0,w,h,gl2.RGBA,gl2.UNSIGNED_BYTE,px); return px; };
+  const count = (A,B)=>{ let n=0;
+    for(let y=0;y<h;y+=2) for(let x=0;x<w;x+=2){ const i=(y*w+x)*4;
+      if(Math.abs(A[i]-B[i]) > 8 || Math.abs(A[i+1]-B[i+1]) > 8 || Math.abs(A[i+2]-B[i+2]) > 8) n++; }
+    return n; };
+
+  resetAll();
+  const s = SHEETS[0]; s.text = '■■'; bakeSheet(s);
+  SHEETS.length = 1; curSheet = 0; refreshSheets();
+  /* ⚠️ 山数は【曲げる量】が無いと効かない＝縦うねりを入れてから測る */
+  s.warp.vwarp = 100; s.warp.freq = 2;
+  P.grain = 0; P.anGrain = 0; P.anFreq = 0; P.anim = false; PH = 0;
+  const base = await grab();
+
+  /* ── ① 山数の振れ幅を入れて位相を真ん中（PH=0.5）まで進める＝振れ切った所 ── */
+  P.anFreq = 3; PH = 0.5;
+  const freqMoved = count(base, await grab());
+  /* ── ② 位相 0 に戻す＝ swing()=0 ＝ 振れ幅が入っていても元の絵 ── */
+  PH = 0;
+  const freqAtZero = count(base, await grab());
+  /* ── ③ 位相 1（＝1周した所）も元の絵＝継ぎ目なしループ ── */
+  PH = 1;
+  const freqAtOne = count(base, await grab());
+  /* ── ④ 振れ幅 0 なら位相を進めても動かない ── */
+  P.anFreq = 0; PH = 0.5;
+  const freqOff = count(base, await grab());
+
+  /* ── 🔴🔴 木下の指摘（2026-08-20）── 1周のどこを切っても【0秒の絵より痩せない】か。
+     ⚠️ 前は上下に振っていた＝1周の 2/3 あたりで粒が 0 に落ちて「粒もないつるつるの絵」になった。
+     ⭐ 測り方＝粒の細かさを 30（0 に落ちやすい）にして振れ幅を大きく取り、
+        1周を 12 等分して【実際に GL へ渡している粒の細かさ】が 1度も 30 を下回らないこと。
+     ⚠️ 物差しは本体と同じ式から取る（画面の見た目でなく swing() を通した値そのもの）。 */
+  P.anFreq = 0; PH = 0; P.grain = 30; P.anGrain = 100;
+  const lows = [];
+  for(let i=0;i<12;i++){ PH = i/12;
+    lows.push(Math.max(0, Math.min(GRAIN_MAX, P.grain + P.anGrain * swing()))); }
+  const grainFloor = Math.min(...lows), grainPeak = Math.max(...lows);
+
+  /* ── 🔴 粒の細かさ 200（100 超え）で振っても粗くならないか ──
+     ⚠️ 前は上限を 100 で切っていた＝位相を進めた瞬間に 200→100 に落ちて【粗くなった】。
+        200 + 100×swing は常に 200 で頭打ち＝1周ぜんぶ【止めている絵と同じ】が正しい。 */
+  PH = 0; P.grain = 200; P.anGrain = 0;
+  const grain200 = await grab();
+  P.anGrain = 100; PH = 0.5;
+  const grainHiClamped = count(grain200, await grab());
+
+  /* ── 再生ボタン：山数だけ入れて押したとき、粒を勝手に動かさないか ── */
+  P.grain = 0; P.anGrain = 0; P.anFreq = 2; P.anim = false; PH = 0;
+  document.getElementById('anGo').click();
+  const grainAfterGo = P.anGrain, movingOnlyFreq = tvPlan().moving;
+  document.getElementById('anGo').click();          // 止める（PH も 0 に戻る）
+
+  /* ── 両方 0 のときだけ、入口として粒に 40 が入る ── */
+  P.anGrain = 0; P.anFreq = 0;
+  document.getElementById('anGo').click();
+  const grainAfterGoBoth0 = P.anGrain;
+  document.getElementById('anGo').click();
+
+  /* 後片付け（次の測定に持ち越さない） */
+  P.anGrain = 40; P.anFreq = 0; P.grain = 0; PH = 0; P.anim = false;
+  resetAll();
+  return { freqMoved, freqAtZero, freqAtOne, freqOff, grainHiClamped,
+           grainFloor, grainPeak,
+           grainAfterGo, movingOnlyFreq, grainAfterGoBoth0,
+           uiHas: !!document.getElementById('anFreq') };
+});
+ok('「山数が流れる」のつまみがある', anim.uiHas);
+ok('⭐ 山数の振れ幅を入れて位相を進めると絵が変わる（GLまで届いている）',
+   anim.freqMoved > 100, `変わった画素=${anim.freqMoved} ← 0なら uFreq に届いていない`);
+ok('🔴 位相 0 では1画素も変わらない（既定の絵を壊していない）',
+   anim.freqAtZero === 0, `変わった画素=${anim.freqAtZero}`);
+ok('🔴 1周した所（位相1）も元の絵に戻る＝継ぎ目なしループ',
+   anim.freqAtOne === 0, `変わった画素=${anim.freqAtOne}`);
+ok('🔴 振れ幅 0 なら位相を進めても1画素も変わらない',
+   anim.freqOff === 0, `変わった画素=${anim.freqOff}`);
+ok('🔴🔴 1周のどこを切っても、いまの絵より痩せない（粒が 0 に落ちない）',
+   anim.grainFloor >= 30,
+   `1周の底=${anim.grainFloor}（いまの値=30）← 30 を下回るなら下へ振り切っている＝「粒もない絵」が出る`);
+ok('⭐ 片側にはちゃんと振れている（振れ幅ぶん増える）',
+   anim.grainPeak >= 120, `1周の頂点=${anim.grainPeak}`);
+ok('🔴 粒の細かさ200＋振れ幅100で振っても粗くならない（上限が実マス数200）',
+   anim.grainHiClamped === 0,
+   `変わった画素=${anim.grainHiClamped} ← 0でなければ上限100で切っている（200→100に落ちて粗くなる）`);
+ok('🔴 山数だけ入れて再生しても、粒を勝手に動かさない',
+   anim.grainAfterGo === 0, `再生後の「粒の細かさが流れる」=${anim.grainAfterGo} ← 40 なら勝手に入れている`);
+ok('山数だけでも「動く」と判定される（動画で出すが全コマ同じ絵と言わない）', anim.movingOnlyFreq === true);
+ok('両方 0 のときだけ入口として粒に 40 が入る', anim.grainAfterGoBoth0 === 40,
+   String(anim.grainAfterGoBoth0));
+
 console.log('\n[25] 描き終わりまでJSエラーが出ていない');
 ok('通しでJSエラーなし', errors.length === 0, errors.slice(0,3).join(' | '));
 
