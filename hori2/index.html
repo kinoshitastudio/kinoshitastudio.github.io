@@ -586,6 +586,14 @@
               06 TAPE の 紙／墨、07 TINT の BG。どれが効くのか画面から分からない。
            ⭐ いちばん上に【地はここ】を1つ作る。中身は 09 PAPER と同じつまみなので、
               どちらを動かしても必ず一致する（別の値を持たせない）。 -->
+      <!-- 🔴 木下＝「オブジェクト自体の明るさというのを追加した方がよいかも」
+           ⭐ 絵（インク）だけを明るく／暗くする。地には触らない。50 で今までと同じ絵。 -->
+      <div class="tone-sec">絵<i>え ── オブジェクトの明るさ</i></div>
+      <div class="row"><label>絵の明るさ<i>OBJECT</i></label><input type="range" data-p="objLight" min="0" max="100" step="1" value="50"><span class="val"></span></div>
+      <div class="mod">⭐ <b>絵だけ</b>が明るくなる（地は動かない）。<b>50 でそのまま</b>／上げると白へ寄る<br>
+        ⚠️ 似ているが別物 ── <b>TAPE の 底上げ</b>は<b>画面ぜんぶ</b>にインクが乗るので地まで濁る。
+        <b>TINT の 明るさ</b>は<b>差すを点けていないと効かない</b></div>
+
       <div class="tone-sec">地<i>じ ── 背景の色</i></div>
       <div class="row"><label>地の色<i>いろ</i></label><input type="color" data-bg="1" id="toneBgC" value="#0d1420"></div>
       <div class="row"><label>地の明るさ<i>VAL</i></label><input type="range" data-p="paperVal" min="0" max="100" step="1" value="94"><span class="val"></span></div>
@@ -1067,6 +1075,8 @@ const P = {
      ⭐ 色は【ピッカーで選ぶ】。濃さ（暗さ）も彩度もピッカーが持つので、
         「もっと濃く」は暗い色を選べば出る。gridHue はそこからの【ずらし】。 */
   gridC:'#2a5bd7', gridHue:0, gridSpan:40, gridSat:0, gridInv:0,
+  /* ⭐ 絵の明るさ。50＝そのまま。上げると絵だけ白へ寄る（地は動かない）*/
+  objLight:50,
   /* ⭐ 粒をどの面に掛けるか。2＝両方＝いままでと同じ（既定） */
   gridFace:2, gridWall:100,
   paperHue:40, paperSat:6, paperVal:94,
@@ -1083,7 +1093,7 @@ const P = {
   /* 動画で出す */
   tvFmt:'mp4', tvQ:'mid', tvLoop:'1', tvFps:30, tvLen:1920, tvSec:6,
   frameShape:1, frameLong:1440, frameScale:2,
-  inkAuto:1, inkHue:48, inkSat:0, inkVal:10, inkAmt:100,
+  inkAuto:1, inkHue:48, inkSat:0, inkVal:98, inkAmt:100,
   tintMode:1, hue:196, sat:76, vivid:72, shift:50, ring:0, hue2:196, bg:40, bgsat:0,
 };
 const ON = { audio:false, sampler:true, extrude:true, hatch:true,
@@ -2126,6 +2136,7 @@ const postUniforms = {
   uGridGap:{ value:0.12 }, uGridFollow:{ value:1 },
   uGridHue:{ value:0.617 }, uGridSpan:{ value:0.111 }, uGridSat:{ value:0 },
   uGridCsat:{ value:0.80 }, uGridVal:{ value:0.84 }, uGridInv:{ value:0 },
+  uObjLight:{ value:0 },
   uGridFace:{ value:2 }, uGridWall:{ value:1 },
   uLevels: { value: 7 },
   uGrain:  { value: 0.3 },
@@ -2183,6 +2194,7 @@ postScene.add(new THREE.Mesh(
       uniform float uLevels, uGrain, uBias, uInvert, uFlip, uTime;
       uniform float uGridOn, uGridRes, uGridFine, uGridGap, uGridFollow;
       uniform float uGridHue, uGridSpan, uGridSat, uGridCsat, uGridVal, uGridInv, uGridFace, uGridWall;
+      uniform float uObjLight;
       uniform float uPaperOn, uPaperHue, uPaperSat, uPaperVal;
       uniform vec3  uPap0, uPap1, uPap2, uPap3, uPap4, uPap5;
       uniform float uPapN, uPapMode, uPapAng, uPapSteps, uPapBlend, uPap1On;
@@ -2606,6 +2618,17 @@ postScene.add(new THREE.Mesh(
           fg = mix(fg, gc, uGridSat);
         }
 
+        /* ⭐⭐ 絵の明るさ ── 2026-08-21
+           🔴 木下＝「オブジェクト自体の明るさというのを追加した方がよいかも」
+           ⚠️ いままで明るさを動かせる所は3つあったが、どれも【絵だけ】ではなかった：
+              ・TAPE の 底上げ(BIAS) ＝ 画面ぜんぶにインクが乗る（地まで濁る）
+              ・TINT の 明るさ(VIVID) ＝ 差すを点けていないと効かない
+              ・INK の 明るさ ＝「手で決める」のときだけ効く
+           ⭐ ここは fg（絵の色）だけを動かす。地（bg）には一切触らない。
+              上げる＝白へ寄せる／下げる＝そのまま暗くする。50 で今までと同じ絵。 */
+        if(uObjLight > 0.001)      fg = mix(fg, vec3(1.0), uObjLight);
+        else if(uObjLight < -0.001) fg = fg * (1.0 + uObjLight);
+
         gl_FragColor = vec4(mix(bg, fg, v), 1.0);
       }
     `
@@ -3026,6 +3049,9 @@ function frame(t){
   inkUniforms.uTime.value  = t * 0.001;
   postUniforms.uTime.value = Math.floor(t * 0.024);
   postUniforms.uT.value    = t * 0.001;
+  /* ⭐ 絵の明るさは【どの段が消えていても】効く必要があるので、ここで毎コマ流す。
+     ⚠️ GRID の段の中に置くと、GRID を消した瞬間につまみが死ぬ。 */
+  postUniforms.uObjLight.value = (P.objLight - 50) / 50;   // −1〜+1。0＝そのまま
   if(ON.audio) drawProgress();
 
   // 版を焼く
@@ -3175,7 +3201,8 @@ const TONE_KEYS = [
   'inkAuto','inkHue','inkSat','inkVal','inkAmt',
   'tintMode','hue','sat','vivid','shift','ring','hue2','bg','bgsat',
   'ripHue','ripSat','ripVal',
-  'levels','grain','bias','invert'
+  'levels','grain','bias','invert',
+  'objLight'
 ];
 /* 色を持つ段だけ点け外しする。形の段（引く・彫る・刻む・回す・版面）は触らない */
 const TONE_UNITS = ['tint','ink','grid','paper','wash'];
@@ -3192,11 +3219,11 @@ const TONES = [
         papC1:'#0d1420', papC2:'#c8d4de', papC3:'#7f95ab', papC4:'#1d2733', papC5:'#8a6f4e', papC6:'#e9201c',
         paperHue:216, paperSat:38, paperVal:11,
         washHue:196, washHue2:324, washSat:70, washVal:90, washAng:45, washSoft:100, washOnBg:0,
-        gridC:'#ff1f1f', gridHue:-180, gridSpan:24, gridSat:92, gridInv:0,
-        inkAuto:1, inkHue:200, inkSat:10, inkVal:94, inkAmt:100,
+        gridC:'#7cc8ff', gridHue:0, gridSpan:18, gridSat:90, gridInv:0,
+        inkAuto:1, inkHue:200, inkSat:10, inkVal:98, inkAmt:100,
         tintMode:1, hue:212, sat:78, vivid:94, shift:50, ring:0, hue2:190, bg:216, bgsat:6,
         ripHue:212, ripSat:82, ripVal:88,
-        levels:9, grain:24, bias:50, invert:0 } },
+        levels:9, grain:0, bias:50, invert:0, objLight:62 } },
 
   { key:'ginkuro', name:'銀黒', en:'GINKURO', sw:['#0b0b0c','#4a4a48','#b9b9b6','#f0f0ee'],
     /* 色をぜんぶ抜いた素の姿。金属の縞がいちばん素直に出る */
@@ -3205,11 +3232,11 @@ const TONES = [
         papC1:'#0b0b0c', papC2:'#c8d4de', papC3:'#7f95ab', papC4:'#1d2733', papC5:'#8a6f4e', papC6:'#e9201c',
         paperHue:40, paperSat:4, paperVal:7,
         washHue:196, washHue2:324, washSat:0, washVal:90, washAng:45, washSoft:100, washOnBg:0,
-        gridC:'#0a0a0a', gridHue:0, gridSpan:0, gridSat:0, gridInv:0,
-        inkAuto:1, inkHue:40, inkSat:0, inkVal:96, inkAmt:100,
+        gridC:'#ffffff', gridHue:0, gridSpan:0, gridSat:94, gridInv:0,
+        inkAuto:1, inkHue:40, inkSat:0, inkVal:98, inkAmt:100,
         tintMode:1, hue:196, sat:0, vivid:60, shift:50, ring:0, hue2:196, bg:40, bgsat:0,
         ripHue:212, ripSat:0, ripVal:88,
-        levels:9, grain:22, bias:50, invert:0 } },
+        levels:9, grain:0, bias:50, invert:0, objLight:62 } },
 
   { key:'ni', name:'丹', en:'NI', sw:['#170805','#e0341f','#ff8a3d','#ffe6cf'],
     /* 朱と墨。日本の刷り物の側 */
@@ -3218,11 +3245,11 @@ const TONES = [
         papC1:'#170805', papC2:'#e8d7bd', papC3:'#c08a52', papC4:'#2a1108', papC5:'#8a6f4e', papC6:'#e9201c',
         paperHue:14, paperSat:52, paperVal:9,
         washHue:22, washHue2:352, washSat:56, washVal:88, washAng:60, washSoft:100, washOnBg:0,
-        gridC:'#d8351f', gridHue:0, gridSpan:16, gridSat:44, gridInv:0,
-        inkAuto:1, inkHue:24, inkSat:14, inkVal:96, inkAmt:100,
+        gridC:'#ff9a4d', gridHue:0, gridSpan:16, gridSat:90, gridInv:0,
+        inkAuto:1, inkHue:24, inkSat:14, inkVal:98, inkAmt:100,
         tintMode:1, hue:6, sat:90, vivid:82, shift:44, ring:0, hue2:26, bg:14, bgsat:8,
         ripHue:18, ripSat:70, ripVal:88,
-        levels:9, grain:28, bias:50, invert:0 } },
+        levels:9, grain:0, bias:50, invert:0, objLight:62 } },
 
   { key:'seiboku', name:'青墨', en:'SEIBOKU', sw:['#080d16','#2c4a7a','#8fb2d6','#e8f0f8'],
     /* 藍と墨。青銀より落ち着いていて、刷り物寄り */
@@ -3231,11 +3258,11 @@ const TONES = [
         papC1:'#080d16', papC2:'#c8d4de', papC3:'#7f95ab', papC4:'#0d1622', papC5:'#8a6f4e', papC6:'#e9201c',
         paperHue:218, paperSat:46, paperVal:8,
         washHue:214, washHue2:186, washSat:44, washVal:86, washAng:30, washSoft:100, washOnBg:0,
-        gridC:'#2c4a7a', gridHue:0, gridSpan:14, gridSat:44, gridInv:0,
-        inkAuto:1, inkHue:214, inkSat:12, inkVal:94, inkAmt:100,
+        gridC:'#9dc4ea', gridHue:0, gridSpan:12, gridSat:88, gridInv:0,
+        inkAuto:1, inkHue:214, inkSat:12, inkVal:98, inkAmt:100,
         tintMode:1, hue:216, sat:74, vivid:78, shift:56, ring:0, hue2:200, bg:214, bgsat:6,
         ripHue:214, ripSat:60, ripVal:86,
-        levels:9, grain:20, bias:50, invert:0 } },
+        levels:9, grain:0, bias:50, invert:0, objLight:62 } },
 
   { key:'yakou', name:'夜光', en:'YAKOU', sw:['#0e1014','#00e0a8','#7cf7ff','#f2f2f2'],
     /* 暗い地に光る。字の色は【地の反対】が自動で効くので ink を点ける */
@@ -3244,24 +3271,24 @@ const TONES = [
         papC1:'#0e1014', papC2:'#1d2733', papC3:'#28323f', papC4:'#000000', papC5:'#8a6f4e', papC6:'#e9201c',
         paperHue:210, paperSat:14, paperVal:7,
         washHue:166, washHue2:196, washSat:66, washVal:82, washAng:45, washSoft:100, washOnBg:0,
-        gridC:'#00e0a8', gridHue:0, gridSpan:22, gridSat:80, gridInv:0,
-        inkAuto:1, inkHue:166, inkSat:24, inkVal:96, inkAmt:100,
+        gridC:'#4dffcf', gridHue:0, gridSpan:18, gridSat:92, gridInv:0,
+        inkAuto:1, inkHue:166, inkSat:24, inkVal:98, inkAmt:100,
         tintMode:2, hue:150, sat:78, vivid:92, shift:30, ring:10, hue2:176, bg:210, bgsat:20,
         ripHue:166, ripSat:80, ripVal:88,
-        levels:9, grain:18, bias:54, invert:0 } },
+        levels:9, grain:0, bias:54, invert:0, objLight:60 } },
 
-  { key:'momo', name:'桃緑', en:'MOMO', sw:['#180a12','#ff4d8d','#00c48a','#ffe4ef'],
+  { key:'momo', name:'桃緑', en:'MOMO', sw:['#08160f','#ff7ab8','#00c48a','#ffe4ef'],
     /* 補色をぶつける側 */
     on:{ tint:true, ink:true, grid:true, paper:true, wash:false },
     P:{ papN:1, papMode:0, papAng:90, papSteps:0, papBlend:0, papC1On:1,
-        papC1:'#180a12', papC2:'#ffd9e5', papC3:'#ff4d8d', papC4:'#221018', papC5:'#8a6f4e', papC6:'#e9201c',
-        paperHue:328, paperSat:44, paperVal:9,
+        papC1:'#08160f', papC2:'#ffd9e5', papC3:'#ff4d8d', papC4:'#221018', papC5:'#8a6f4e', papC6:'#e9201c',
+        paperHue:156, paperSat:46, paperVal:8,
         washHue:334, washHue2:158, washSat:72, washVal:92, washAng:75, washSoft:100, washOnBg:0,
-        gridC:'#00c48a', gridHue:0, gridSpan:26, gridSat:66, gridInv:0,
-        inkAuto:1, inkHue:334, inkSat:14, inkVal:96, inkAmt:100,
+        gridC:'#ff7ab8', gridHue:0, gridSpan:20, gridSat:90, gridInv:0,
+        inkAuto:1, inkHue:334, inkSat:14, inkVal:98, inkAmt:100,
         tintMode:1, hue:336, sat:88, vivid:86, shift:50, ring:0, hue2:150, bg:330, bgsat:8,
         ripHue:334, ripSat:78, ripVal:90,
-        levels:9, grain:30, bias:50, invert:0 } }
+        levels:9, grain:0, bias:50, invert:0, objLight:62 } }
 ];
 
 let toneBefore = null;                       /* 押す直前の色。1回だけ戻せる */
