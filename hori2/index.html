@@ -762,9 +762,11 @@
       <div class="row" id="gridHueRow"><label>色ずらし<i>HUE SHIFT</i></label><input type="range" data-p="gridHue" min="-180" max="180" step="1" value="0"><span class="val"></span></div>
       <div class="row" id="gridSpanRow"><label>色幅<i>SPAN</i></label><input type="range" data-p="gridSpan" min="0" max="180" step="1" value="40"><span class="val"></span></div>
       <div class="mod" id="gridGrayNote" style="display:none"></div>
-      <div class="row"><label>色の濃さ<i>AMOUNT</i></label><input type="range" data-p="gridSat" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+      <div class="row"><label>色の濃さ<i>AMOUNT</i></label><input type="range" data-p="gridSat" min="0" max="200" step="1" value="0"><span class="val"></span></div>
       <div class="mod">RES＝いくつに割るか／FINE＝粒の中で何周期／GAP＝粒どうしの隙間<br>面に沿う＝帯の向きを彫りの面から取る。深さが帯の位相を送る<br>
-      ⭐<b>色の濃さ</b>＝帯そのものに色を差す。<b>0 で今までどおりモノクローム</b>。<br>
+      ⭐<b>色の濃さ</b>＝帯そのものに色を差す。<b>0 で今までどおりモノクローム</b>。
+      <b>100 までが「どれだけ置き換えるか」／100 から先は「選んだ色の彩度そのものを上げる」</b>
+      （100 で置き換えは切り上がるので、そこから先は別の効き）。⚠️ 灰・黒・白は 100 から先が効かない<br>
       <b>色幅</b>＝1本の帯の中で色相がどれだけ回るか（0＝1色／大きいほど帯の中で色が転ぶ）<br>
       ⚠️ <b>灰・黒・白を選ぶと、色ずらし／色幅は効かない</b>（色相を持たないので回すものが無い）。
       選んだとおりの灰・黒・白が出る。色を転がしたいときは<b>色のついた色</b>を選ぶ<br>
@@ -1716,7 +1718,16 @@ function gridGraySync(){
   }else if(gray){
     n.style.display = '';
     n.innerHTML = '🔴 いまは<b>色相を持たない色</b>（灰・黒・白）なので、'
-                + '<b>色ずらし・色幅は効きません</b>。選んだとおりの色が出ます。色を転がすなら色のついた色を選ぶ';
+                + '<b>色ずらし・色幅は効きません</b>。選んだとおりの色が出ます。色を転がすなら色のついた色を選ぶ'
+                + ((+P.gridSat || 0) > 100
+                   ? '<br>⚠️ <b>色の濃さ 100 から先も効きません</b>（上げるべき彩度を持っていない色です）' : '');
+  }else if((+P.gridSat || 0) > 100 && hsv[1] > 0.985){
+    /* ⭐ 100 から先は【選んだ色の彩度を上げる】段。もう振り切っている色では何も起きない。
+       🔴 「上げたのに変わらない」を黙って起こさない（効かないつまみは効かないと言う）。 */
+    n.style.display = '';
+    n.innerHTML = '⚠️ <b>色の濃さ 100 から先</b>は、選んだ色の<b>彩度を上げていく</b>段です。'
+                + 'いまの色は<b>すでに振り切っている</b>ので、100 より先は変わりません。'
+                + 'もっと転がすなら<b>色幅</b>を、明暗を変えるなら<b>絵の明るさ</b>を';
   }else{
     n.style.display = 'none';
   }
@@ -2614,8 +2625,19 @@ postScene.add(new THREE.Mesh(
                 選んだ色がそのまま出るのが先。効かないつまみは「効かない」と画面で言う。
              ⭐ いまは選んだ色の彩度・明るさをそのまま使う。
                 灰・黒・白は色相を持たないので色ずらし／色幅が効かない ── それが正しい。 */
-          vec3 gc = hsv2rgb(vec3(fract(uGridHue + gb * uGridSpan), uGridCsat, uGridVal));
-          fg = mix(fg, gc, uGridSat);
+          /* ⭐⭐ 色の濃さは【2段】── 2026-08-21（木下＝「色の濃さの上限をあげて」）
+             🔴 100 で置き換えは【すでに切り上がっている】（fg が gc に完全に入れ替わる）。
+                だから目盛りだけ伸ばしても、そこから先は1画素も変わらない。
+             ⭐ 100 まで＝どれだけ置き換えるか（いままでどおり・1画素も変えていない）
+                100 から先＝置き換えたうえで【選んだ色そのものの彩度】を上げていく。
+             ⚠️ 明るさは触らない（帯の濃淡は v が持っているので、ここで動かすと二重になる）。 */
+          float gmix = min(uGridSat, 1.0);
+          float gex  = clamp(uGridSat - 1.0, 0.0, 1.0);      /* 100 を超えたぶん */
+          /* 🔴 灰・黒・白（色相を持たない色）は【上げない】。
+             上げると「灰を選んだのに色が出る」＝2026-08-21 に直したばかりの不具合が戻る。 */
+          float gcs  = mix(uGridCsat, 1.0, gex * step(0.02, uGridCsat));
+          vec3 gc = hsv2rgb(vec3(fract(uGridHue + gb * uGridSpan), gcs, uGridVal));
+          fg = mix(fg, gc, gmix);
         }
 
         /* ⭐⭐ 絵の明るさ ── 2026-08-21
