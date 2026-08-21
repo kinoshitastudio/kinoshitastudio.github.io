@@ -418,7 +418,19 @@
     letter-spacing:.12em;padding:7px 12px;cursor:pointer;border-bottom:2px solid transparent}
   #glyTabs button.on{color:#1a1a18;border-bottom-color:#a89060}
   #glyRight{display:flex;align-items:center;gap:12px}
-  #glyCount{font-size:10.5px;color:#7a7770;letter-spacing:.08em}
+  #glyCount{font-size:10.5px;color:#7a7770;letter-spacing:.08em;white-space:nowrap}
+  /* 🔴 つまみがパネル側だけだと、蓋を開けている間は触れない＝「反映しない」に見える。
+     ⭐ 出口の隣に置く。値は #fnBold と同じものを見る（式は1本・持ち主はパネル側） */
+  #glyBoldWrap{display:flex;align-items:center;gap:7px;font-size:10.5px;color:#3a3a34;
+    letter-spacing:.08em;white-space:nowrap}
+  #glyBoldWrap input[type=range]{-webkit-appearance:none;appearance:none;width:96px;height:2px;
+    background:rgba(26,26,24,.24);border-radius:2px;outline:none;cursor:ew-resize}
+  #glyBoldWrap input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;
+    border-radius:50%;background:#1a1a18;border:none;cursor:ew-resize}
+  #glyBoldWrap b{font-weight:400;color:#7a7770;min-width:1.6em;text-align:right}
+  /* 🔴 知らせは【蓋の中】に出す。stat() は盤の上なので、開いている間は見えない */
+  #glyMsg{font-size:10.5px;letter-spacing:.06em;color:#8a6b2f;max-width:38vw;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #glyClose{background:none;border:1px solid rgba(26,26,24,.22);color:#3a3a34;width:26px;height:26px;
     border-radius:4px;cursor:pointer;font-size:13px;line-height:1}
   /* 🔴 ここに置かないと【一覧を閉じてパネルまで戻る】ことになる＝出来ているのに出口が無い */
@@ -905,6 +917,9 @@
   <div id="glyHead">
     <div id="glyTabs"></div>
     <div id="glyRight">
+      <span id="glyMsg"></span>
+      <label id="glyBoldWrap" title="可変・細い＋太いに要る">太い端
+        <input type="range" id="glyBold" min="0" max="90" value="0"><b id="glyBoldV">0</b></label>
       <span id="glyCount"></span>
       <button id="glyExport" title="いま割り当ててある字を .otf に鋳る">.otf を書き出す</button>
       <button id="glyExport2" title="細い端と太い端を2本出す（可変の材料）">細い＋太い</button>
@@ -9207,6 +9222,15 @@ function fnCollect(it, out, trash){
       そうすると穴（内側の輪郭）は自動で縮む＝字が太る。
    ⚠️ 太らせすぎると細い所で輪郭が裏返る。止めない（木下＝「それも味」）。
    ══════════════════════════════════════════════════════════════ */
+
+/* ⭐ 白っぽい塗り＝「抜き」のつもりで置いたもの。フォントでは抜けないので名指しする */
+function fnLooksWhite(q){
+  try{
+    const c = q.fillColor || (q.parent && q.parent.fillColor);
+    if(!c) return false;
+    return (c.red + c.green + c.blue) / 3 > 0.86;
+  }catch(e){ return false; }
+}
 function fnBoldAmt(){ const e = document.getElementById('fnBold'); return e ? +e.value : 0; }
 
 /* パスを1本、法線の向きへ d だけずらした複製を返す（点の数は変えない） */
@@ -9666,7 +9690,7 @@ async function fnBuildOTF(bold){
   const glyphs = [ new opentype.Glyph({ name:'.notdef', unicode:0, advanceWidth:Math.round(FN_UPM*0.5),
                                         path:new opentype.Path() }) ];
   const seen = new Set();
-  let made = 0, skipped = [];
+  let made = 0, skipped = [], whiteish = [];
 
   for(const { a, i } of marked){
     const ch = (a.ch || '').trim()[0];
@@ -9709,6 +9733,10 @@ async function fnBuildOTF(bold){
     tmp.remove(); trash.forEach(t => { try{ t.remove(); }catch(e){} });
 
     if(!p.commands.length){ skipped.push(ch + '（線だけ）'); continue; }
+    /* 🔴 白で塗った図形は【フォントでは抜けない】。重ねて置いた「抜き」はただの塗りになる。
+       ⚠️ 出来上がりを見るまで気づけないので、鋳るときに名指しする。
+       ⭐ 直し＝〔前面で削る〕で本当の穴にする。 */
+    if(out.some(q => fnLooksWhite(q))) whiteish.push(ch);
     seen.add(code); made++;
     glyphs.push(new opentype.Glyph({ name:'u' + code.toString(16).toUpperCase().padStart(4,'0'),
                                      unicode:code, advanceWidth:adv, path:p }));
@@ -9724,8 +9752,13 @@ async function fnBuildOTF(bold){
     new opentype.Font({ familyName:fam, styleName:'Regular', unitsPerEm:FN_UPM,
                         ascender:ASC, descender:DESC, glyphs })
       .download(fam.replace(/\s+/g, '-') + '.otf');
-    stat('.otf を書き出した — ' + made + ' 字' +
-         (skipped.length ? '／出せなかった ' + skipped.slice(0,6).join('・') : ''));
+    const msg = '.otf を書き出した — ' + made + ' 字'
+      + (skipped.length ? '／出せなかった ' + skipped.slice(0,6).join('・') : '')
+      + (whiteish.length ? '／🔴 白で塗った所は抜けません（' + whiteish.slice(0,6).join('') +
+         '）〔前面で削る〕で本当の穴にしてください' : '');
+    stat(msg);
+    if(typeof glySay === 'function' && document.getElementById('glyphs')?.classList.contains('open'))
+      glySay(msg, whiteish.length > 0);
   }catch(e){ stat('🔴 フォントにできない: ' + e.message); }
 }
 
@@ -9863,27 +9896,47 @@ document.getElementById('glyBtn')?.addEventListener('click', () => {
   on ? closeGlyphs() : openGlyphs();
 });
 document.getElementById('glyExport2')?.addEventListener('click', async () => {
-  const c = document.getElementById('glyCount'); const bak = c ? c.textContent : '';
-  if(c) c.textContent = '2本ぶん鋳ています…';
+  if(!fnBoldAmt()){ glySay('🔴 〔太い端〕が 0 です — 右のつまみを上げてください', true); return; }
+  glySay('2本ぶん鋳ています…');
   await fnBuildPair();
-  if(c) c.textContent = bak;
+  glySay('細い端と太い端を出した（2本）');
 });
 document.getElementById('glyExport3')?.addEventListener('click', async () => {
-  const c = document.getElementById('glyCount'); const bak = c ? c.textContent : '';
-  if(c) c.textContent = '可変で鋳ています…';
-  await svBuildVF();
-  if(c) c.textContent = bak;
+  if(!fnBoldAmt()){ glySay('🔴 〔太い端〕が 0 です — 右のつまみを上げてください', true); return; }
+  glySay('可変で鋳ています…');
+  const f = await svBuildVF();
+  glySay(f ? '可変フォントを出した（太さ 400〜900）' : '🔴 鋳れませんでした', !f);
 });
 document.getElementById('glyClose')?.addEventListener('click', closeGlyphs);
 /* ⭐ 一覧のまま鋳る。⚠️ 出来上がりの知らせは一覧の上に出す（下の盤は見えていないので） */
+/* 🔴 stat() は盤の上に出る＝蓋を開けている間は見えない。知らせは【蓋の中】へ出す。
+   ⭐ 出口を押して何も起きないように見えるのが、いちばん困る（木下＝「反映しない」）。 */
+function glySay(msg, warn){
+  const el = document.getElementById('glyMsg'); if(!el) return;
+  el.textContent = msg || '';
+  el.style.color = warn ? '#a03323' : '#8a6b2f';
+  if(msg) stat(msg);
+}
+/* ⭐ 太い端のつまみは【パネルのものと同じ値】を見る（持ち主は #fnBold・こちらは写し） */
+(function(){
+  const a = document.getElementById('glyBold'), b = document.getElementById('fnBold');
+  const v = document.getElementById('glyBoldV');
+  if(!a || !b) return;
+  const pull = () => { a.value = b.value; if(v) v.textContent = b.value; };
+  a.addEventListener('input', () => {
+    b.value = a.value;
+    if(v) v.textContent = a.value;
+    b.dispatchEvent(new Event('input', { bubbles:true }));   /* 盤の薄い輪郭も追う */
+  });
+  b.addEventListener('input', pull);
+  pull();
+})();
 document.getElementById('glyExport')?.addEventListener('click', async () => {
   const n = S.abs.filter(a => (a.ch || '').trim()).length;
-  if(!n){ alert('枠に字が1つも割り当たっていません'); return; }
-  const c = document.getElementById('glyCount');
-  const bak = c ? c.textContent : '';
-  if(c) c.textContent = '鋳ています…';
+  if(!n){ glySay('枠に字が1つも割り当たっていません', true); return; }
+  glySay('鋳ています…');
   await fnBuildOTF();
-  if(c) c.textContent = bak;
+  glySay('.otf を出した（' + n + ' 字ぶん）');
   renderGlyGrid();
 });
 addEventListener('keydown', e => {
