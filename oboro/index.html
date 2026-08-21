@@ -358,7 +358,11 @@
     ⭐⭐ <b>秒で</b>＝<b>行って戻るのをやめて「ゆらぐ」</b>。動く対象も範囲も同じまま、
     <b>折り返す場所だけ</b>を乱す<br>
     　⭐⭐ <b>速さは画面の再生とまったく同じ</b>。遅くならない<br>
-    　⭐ <b>秒を伸ばすほど【折り返しが増える】</b>（およそ 1.6 秒にひとつ）＝同じ動きは繰り返さない<br>
+    　⭐ <b>秒を伸ばすほど【折り返しが増える】</b>（およそ 1.6 秒にひとつ）<br>
+    　⭐⭐ さらに<b>もう1本を、ゆっくり1往復だけ</b>動かす。
+    つまみが1本だけだと<b>同じ値＝必ず同じ絵</b>になるので、どう乱しても繰り返して見える。
+    遅い方が別の場所にいるので、速い方が同じ値を通っても<b>同じ絵にならない</b><br>
+    　（2本目は「動かすもの」で選んでいないほうから自動で選ぶ。幅は控えめ＝主役を食わない）<br>
     　⭐ 頭と尻は一致したまま＝<b>継ぎ目のないループ</b>は守られる<br>
     　⚠️ <b>画面の再生は今までどおりの往復</b>（ゆらぐのは書き出しの中だけ）。
     　きっちり往復させたいときは <b>1往復・2往復・3往復</b> を選ぶ<br>
@@ -1678,7 +1682,7 @@ document.getElementById('anGo')?.addEventListener('click', () => {
     if(flow <= 0) return { err:'「流れ」が 0 なので何も動きません' };
     let step = flow / 100 * 0.01;                    // 画面と同じ刻み（1往復＝1.0）
     const mode = seg('tvLoop','1');
-    let loops, total, wob = 0, span = 1;
+    let loops, total, wob = 0, span = 1, slow = null;
     if(mode === 'sec'){
       /* 🔴🔴 2026-08-21 ── ここを作り直した。
          木下＝「同じうごきが繰り返され秒数がながくなっているだけ。
@@ -1710,6 +1714,24 @@ document.getElementById('anGo')?.addEventListener('click', () => {
       /* ⭐ 速さを画面と同じにした以上、**どこまで振れるかは 速さ×秒 で決まる**。
          足りないなら黙って小さく動かすのでなく、画面で言う（流れを上げれば大きく振れる）。 */
       span = Math.min(1, total * v / 2);      // 片道ぶん
+      /* ⭐⭐ もうひとつ、ゆっくり動かす ── 2026-08-22
+         🔴 木下＝「これのループもおなじうごきだけど、これはもう仕方ない？」
+         ⚠️ 仕方なくない。ただし【道の作り】の問題ではない。
+            動かすつまみが1本だけだと、絵はその値だけで決まる
+            ＝同じ値を通れば必ず同じ絵になる。だから何度通っても同じに見える。
+            ＝どんなに道を乱しても、1本のままでは繰り返しから逃げられない。
+         ⭐ もう1本を【ゆっくり1往復だけ】動かす。速い方が同じ値を通っても、
+            遅い方が別の場所にいるので**同じ絵にならない**。
+         ⚠️ 遅い方は cos で1往復＝頭と尻が必ず一致（継ぎ目のないループは守る）。
+         ⚠️ 幅は控えめ（その対象が振れる幅の 55%）＝主役を食わない。 */
+      const mainK = anKey();
+      const slowK = ['soft','reach','fill','slit'].find(k => k !== mainK);
+      if(slowK){
+        const b = +P[slowK] || 0, r = anRange(slowK, b);
+        const half = (r.hi - r.lo) * 0.55 / 2;
+        slow = { key:slowK, lo:Math.max(r.lo, b - half), hi:Math.min(r.hi, b + half), base:b };
+        if(slow.hi - slow.lo < 1e-6) slow = null;
+      }
     } else {
       loops = +mode || 1;
       /* ⭐ 1往復にかかる秒は【画面の再生】で決まる＝(流れ/100)×0.30 進むので 1/それ。
@@ -1721,7 +1743,7 @@ document.getElementById('anGo')?.addEventListener('click', () => {
     }
     /* ⭐ 1往復にかかる秒（画面に出す用） */
     const one = total / loops / fps;
-    return { fps, loops, step, total, sec: total / fps, one, wob, span };
+    return { fps, loops, step, total, sec: total / fps, one, wob, span, slow };
   }
   /* ⭐ 触れるのに何も起きないつまみを出さない＝秒のつまみは「秒で」のときだけ */
   function loopUI(){
@@ -1827,6 +1849,8 @@ document.getElementById('anGo')?.addEventListener('click', () => {
     /* ⭐ 動かす対象は帯の作りで変わる（引き伸ばし＝どの線／2色でわたす＝進み） */
     const phKey = anOn ? anKeepKey : anKey();
     const wasAnim = anOn, keepPh = anOn ? anKeep : P[phKey];
+    /* ⚠️ ゆっくり動かす2本目も【撮る前の値】を控える。戻し忘れると、撮り終わりに絵が変わる */
+    const slowKeep = (p.slow && p.slow.key) ? P[p.slow.key] : null;
     if(anOn){ anOn = false; anSync(); }              // ⚠️ 画面で動かしたまま撮らない
     /* 🔴 再生の間は版面を粗くしてある＝【先に元の大きさへ戻してから】でないと、
        撮り終わりに粗い方へ戻してしまう（出るものは変えない、が崩れる） */
@@ -1872,6 +1896,10 @@ document.getElementById('anGo')?.addEventListener('click', () => {
         if(encErr) throw encErr;
         const u = (i / p.total) * p.loops;
         setPhase(u, phKey, keepPh, p.wob);  // ⭐ 頭と尻は一致（ゆらぎでも往復でも）
+        /* ⭐ もう1本を【ゆっくり1往復】動かす＝速い方が同じ値を通っても同じ絵にならない。
+           ⚠️ cos なので u=0 と u=1 で必ず同じ値＝継ぎ目は保たれる。 */
+        if(p.slow) setPhaseVal(p.slow.key,
+          p.slow.lo + (p.slow.hi - p.slow.lo) * (0.5 - 0.5 * Math.cos(u * 6.2831853)));
         draw();
         octx.clearRect(0, 0, W, H);
         octx.drawImage(cv, 0, 0, cv.width, cv.height, 0, 0, W, H);
@@ -1922,7 +1950,9 @@ document.getElementById('anGo')?.addEventListener('click', () => {
       TV.on = false; TV.stop = false;
       goBtn.textContent = '動画を出す';
       try{ if(cv.width !== keepW || cv.height !== keepH){ rebuildAt(keepW, keepH); fit(); } }catch(_){}
-      setPhaseVal(phKey, keepPh); draw();
+      setPhaseVal(phKey, keepPh);
+      if(p.slow && slowKeep != null) setPhaseVal(p.slow.key, slowKeep);
+      draw();
       if(wasAnim){ anOn = true; anP = 0; anLast = 0; anSync(); }
       sizeSync();
       if(msg) setTimeout(() => say(msg), 30);
