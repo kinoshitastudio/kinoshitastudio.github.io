@@ -276,6 +276,34 @@ TYPE</textarea>
       ⭐ 1.0 未満＝粒が離れて点の列になる</div>
   </div>
 
+  <!-- ══⭐ 色（カラーフォント）══
+       ⭐ Lena の Gradial は「形ではなく明暗の移り変わりで読ませる」＝段になったグラデ。
+          だから COLR v1 の本物のグラデでなく【COLR v0 ＋ CPAL】＝段で色を分ける形で作る。
+          見た目は同じで、対応するブラウザ・アプリがずっと広い。 -->
+  <div class="grp">
+    <label class="h">色（カラーフォント）</label>
+    <div class="seg" id="colSeg">
+      <button data-v="off">1色</button>
+      <button data-v="on">グラデ</button>
+    </div>
+    <div id="colBox" class="hide">
+      <div class="cols2">
+        <input type="color" id="c_c1" value="#2233dd">
+        <input type="color" id="c_c2" value="#e8541a">
+      </div>
+      <div class="row" style="margin-top:8px"><span class="n">段の数</span><output id="o_colN"></output></div>
+      <input type="range" id="r_colN" min="2" max="24" step="1">
+      <div class="row"><span class="n">流れる向き</span></div>
+      <div class="seg" id="colDirSeg">
+        <button data-v="x">よこ</button>
+        <button data-v="y">たて</button>
+      </div>
+    </div>
+    <div class="note">⭐⭐ <b>グラデ</b>にすると、板の絵も <b>.ttf も</b>色つきになる（板だけ色をつけない）<br>
+      ⭐ 段の数＝色を何段に分けるか。多いほどなめらか、そのぶん<b>字の数が段の数だけ増える</b><br>
+      ⚠️ カラーフォントが出ないところ（古いアプリ）では<b>1色の字として出る</b>（＝壊れない）</div>
+  </div>
+
   <!-- ══ もとの字 ══ -->
   <div class="grp">
     <label class="h">もとの字</label>
@@ -460,6 +488,7 @@ GRAPHY</textarea>
     <input type="text" id="t_family" value="CHU Modular">
     <button class="btn solid" id="b_ttf">.ttf を出す</button>
     <button class="btn" id="b_vf">可変フォントで出す（.ttf）</button>
+    <button class="btn" id="b_color">カラーフォントで出す（.ttf）</button>
     <button class="btn" id="b_try">試し打ちに入れる</button>
     <div class="note">⭐⭐ <b>可変フォント</b>＝1つのファイルの中で<b>はみ出しが 0.80〜2.00 まで連続で変わる</b>。
       ⭐ 点の座標が半径に比例するので、補間が<b>数学的にぴったり合う</b>（軸にできる理由）<br>
@@ -572,6 +601,7 @@ SETS.all = SETS.full + SETS.kana;
 let P = {
   up:12, dn:4,                                 /* 升目：ベースラインの上・下（em＝16升） */
   shape:'circle', rad:1.42, rot:0, fill:'solid', link:'off', linkR:1,
+  colOn:'off', c1:'#2233dd', c2:'#e8541a', colDir:'x', colN:8,
   /* ⭐ 既定は【等幅＋升目を細かめ＋少し細らせる】。
      🔴 太い書体をそのまま粗い升目に落とすと、円のはみ出しで【字の中の穴が埋まって読めなくなる】
         （＝RUI が日本語で潰れた理由と同じ）。細らせ −0.10 と拾い方 0.42 がその逃がし。 */
@@ -877,6 +907,23 @@ function layout(W, H){
   });
   return { units, guides, u, nG:place.length };
 }
+/* ⭐⭐ 段の色 ── 板の絵も .ttf も【この式だけ】を見る。片方だけ色を変えない。
+   ⭐ 段は「粒の位置」で決める（よこ／たて）。0〜段数−1 を返す。 */
+function bandOf(un, box){
+  const n = Math.max(2, Math.round(P.colN));
+  const t = P.colDir === 'y'
+    ? (un.y - box.y0) / Math.max(1, box.y1 - box.y0)
+    : (un.x - box.x0) / Math.max(1, box.x1 - box.x0);
+  return Math.max(0, Math.min(n-1, Math.floor(t * n)));
+}
+function bandColor(k){
+  const n = Math.max(2, Math.round(P.colN));
+  const t = n > 1 ? k/(n-1) : 0;
+  const a = hex2rgb(P.c1), b = hex2rgb(P.c2);
+  return 'rgb(' + Math.round(a[0]+(b[0]-a[0])*t) + ',' + Math.round(a[1]+(b[1]-a[1])*t)
+       + ',' + Math.round(a[2]+(b[2]-a[2])*t) + ')';
+}
+function hex2rgb(h){ const n = parseInt(h.slice(1), 16); return [n>>16 & 255, n>>8 & 255, n & 255]; }
 function unitD(cx, cy, r, shape, rot){
   const s = SHAPES.find(x => x.v === shape);
   if(!s || (!s.sides && !s.pts)){
@@ -927,7 +974,24 @@ function render(ctx, W, H, transparent){
     }
     ctx.restore();
   }
-  if(d){ ctx.fillStyle = P.ink; ctx.fill(new Path2D(d)); }
+  if(P.colOn === 'on'){
+    /* ⭐ 段ごとにまとめて塗る（1粒ずつ塗ると段の境が汚れる） */
+    const L = layout(W, H), r = L.u/2 * nowRad(), rot = nowRot();
+    const f = nowRev();
+    let keep;
+    if(f >= 1) keep = () => true;
+    else if(P.revBy === 'unit'){ const k = Math.round(L.units.length*f); keep = un => un.ui < k; }
+    else { const k = Math.round(L.nG*f); keep = un => un.gi < k; }
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for(const un of L.units){ if(un.x<x0)x0=un.x; if(un.x>x1)x1=un.x;
+                              if(un.y<y0)y0=un.y; if(un.y>y1)y1=un.y; }
+    const box = { x0, x1, y0, y1 };
+    const n = Math.max(2, Math.round(P.colN));
+    const bins = Array.from({length:n}, () => []);
+    for(const un of L.units) if(keep(un)) bins[bandOf(un, box)].push(unitD(un.x, un.y, r, P.shape, rot));
+    bins.forEach((arr, k) => { if(!arr.length) return;
+      ctx.fillStyle = bandColor(k); ctx.fill(new Path2D(arr.join(' '))); });
+  }else if(d){ ctx.fillStyle = P.ink; ctx.fill(new Path2D(d)); }
 }
 let lastMs = 0, fps = 0;
 /* ⚠️ 動かしている間は【画面だけ】小さく焼く。絵は同じ・軽くなるだけ */
@@ -1112,6 +1176,10 @@ function buildTTF(opt){
   for(const gl of pl.glyphs)
     glyphs.push({ code:gl.code, adv:Math.round(gl.adv), cont:glyphContours(gl, opt.rad),
                   src:gl });
+  const nBase = glyphs.length;
+  /* ⭐ 層の字（カラーフォント用）。cmap に載せない＝直接は打てない字 */
+  if(opt.extra) for(const ex of opt.extra)
+    glyphs.push({ code:null, adv:ex.adv, cont:ex.cont });
 
   const built = glyphs.map(x => {
     const r = glyfOf(x.cont, x.adv);
@@ -1139,7 +1207,9 @@ function buildTTF(opt){
   const maxCts = Math.max(1, ...glyphs.map(x => x.cont.length));
 
   const hmtx = new BW();
-  for(const b of built) hmtx.u16(b.adv).i16(0);
+  /* 🔴 lsb は 0 ではなく【その字の xMin】。head.flags で「lsb は x=0」と宣言しているので、
+     0 のままだと font が嘘をつく＝合成で描くとき（カラーフォントの層）にずれる。 */
+  for(const b of built) hmtx.u16(b.adv).i16(b.data.length ? b.xMin : 0);
 
   const now = Math.floor(Date.now()/1000) + 2082844800;   /* 1904年からの秒 */
   const head = new BW();
@@ -1189,7 +1259,27 @@ function buildTTF(opt){
     ['OS/2', os2.out], ['cmap', cmap], ['glyf', glyf], ['head', head.out],
     ['hhea', hhea.out], ['hmtx', hmtx.out], ['loca', locaW.out],
     ['maxp', maxp.out], ['name', name], ['post', post.out],
-  ].sort((a, b) => a[0] < b[0] ? -1 : 1);
+  ];
+  /* ══ COLR v0 ＋ CPAL v0 ══ */
+  if(opt.colr && opt.colr.length){
+    const cw = new BW();
+    cw.u16(0).u16(opt.colr.length).u32(14).u32(14 + opt.colr.length*6)
+      .u16(opt.extra.length);
+    for(const b of opt.colr) cw.u16(b.gid).u16(b.first).u16(b.count);
+    opt.extra.forEach((ex, i) => cw.u16(nBase + i).u16(ex.pal));
+    const pn = Math.max(2, opt.palette || 2);
+    const pw = new BW();
+    pw.u16(0).u16(pn).u16(1).u16(pn).u32(12 + 2).u16(0);
+    for(let k = 0; k < pn; k++){
+      const t = pn > 1 ? k/(pn-1) : 0;
+      const a = hex2rgb(P.c1), b2 = hex2rgb(P.c2);
+      const R = Math.round(a[0]+(b2[0]-a[0])*t), G = Math.round(a[1]+(b2[1]-a[1])*t),
+            B = Math.round(a[2]+(b2[2]-a[2])*t);
+      pw.u8(B).u8(G).u8(R).u8(255);                  /* ⚠️ CPAL は BGRA の順 */
+    }
+    tabs.push(['COLR', cw.out], ['CPAL', pw.out]);
+  }
+  tabs.sort((a, b) => a[0] < b[0] ? -1 : 1);
 
   const n = tabs.length;
   const sr2 = 16 * Math.pow(2, Math.floor(Math.log2(n)));
@@ -1224,6 +1314,65 @@ function buildTTF(opt){
 }
 
 /* ══ 出す ══ */
+/* ══════════════════════════════════════════════════════════════
+   カラーフォント（COLR v0 + CPAL）
+   ⭐ Lena の Gradial は「形ではなく明暗の移り変わりで読ませる」＝【段になったグラデ】。
+      だから COLR v1 の本物のグラデではなく、v0（段ごとに色）で同じ絵が作れる。
+      v0 のほうが対応がずっと広い（v1 は Chrome と Firefox だけ）。
+   ⭐ 仕組み：字を段の数だけ【層の字】に分けて足し、
+      COLR が「この字は、この層をこの色で重ねたもの」と言う。
+   ⚠️ 層の字は cmap に載せない（直接は打てない字）。
+      カラーが出ないところでは【元の1色の字】がそのまま出る＝壊れない。
+   ══════════════════════════════════════════════════════════════ */
+function buildColorParts(pl){
+  /* 字ごとに、粒を段へ振り分ける。⭐ 板と同じ bandOf を使う（式は1本） */
+  const cu = cellU(), n = Math.max(2, Math.round(P.colN));
+  const out = [];
+  for(const gl of pl.glyphs){
+    const pts = gl.on.map(c => ({
+      x:(c.i + 0.5) * cu,
+      y:(P.up - c.j - 0.5) * cu,
+      c
+    }));
+    if(!pts.length){ out.push(null); continue; }
+    let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
+    for(const p of pts){ if(p.x<x0)x0=p.x; if(p.x>x1)x1=p.x; if(p.y<y0)y0=p.y; if(p.y>y1)y1=p.y; }
+    /* ⚠️ フォント座標は y が上向き。板は下向き。たての向きを合わせるため上下を入れ替える */
+    const box = { x0, x1, y0:y1, y1:y0 };
+    const bins = Array.from({length:n}, () => []);
+    for(const p of pts) bins[bandOf(p, box)].push(p.c);
+    out.push(bins);
+  }
+  return out;
+}
+function buildColorFont(){
+  const n = Math.max(2, Math.round(P.colN));
+  const base = buildTTF();                    /* まず普通の字を組む（＝色が出ないときの姿） */
+  const pl = base.pl;
+  const bins = buildColorParts(pl);
+  const cu = cellU(), r = cu/2 * P.rad;
+
+  /* 層の字を作る */
+  const layers = [], colr = [];
+  let gid = base.glyphs.length;               /* .notdef ＋ 本文の字のあと */
+  pl.glyphs.forEach((gl, i) => {
+    const b = bins[i]; if(!b) return;
+    const first = layers.length, recs = [];
+    b.forEach((cells, k) => {
+      if(!cells.length) return;
+      const cont = cells.map(c => unitContour((c.i+0.5)*cu, (P.up - c.j - 0.5)*cu, r, P.shape, P.rot));
+      layers.push({ cont, adv:Math.round(gl.adv), pal:k });
+      recs.push(k);
+    });
+    if(recs.length) colr.push({ gid:i + 1, first, count:recs.length });
+  });
+  if(!layers.length) throw new Error('色をつける粒がありません');
+
+  /* もう一度、層の字ごと組み直す */
+  const r2 = buildTTF({ extra:layers, colr, palette:n });
+  return { file:r2.file, nG:r2.nG, bytes:r2.bytes, layers:layers.length, bands:n };
+}
+
 /* ══════════════════════════════════════════════════════════════
    可変フォント（fvar + gvar + STAT）
    ⭐⭐ なぜ鋳CHUで作れるか ── 可変は【軸を動かしても点の数と並びが変わらない】ときだけ作れる。
@@ -1428,6 +1577,16 @@ el('addMiss').onclick = () => {
 };
 el('try').addEventListener('input', missSync);
 el('b_try').onclick = () => toLive();
+el('b_color').onclick = () => {
+  try{
+    if(P.colOn !== 'on'){ stat('🔴 まず〔色〕を「グラデ」にしてください（1色のままでは段が作れない）'); return; }
+    const r = buildColorFont();
+    const nm = (P.family || 'CHU').replace(/[^A-Za-z0-9]/g, '') || 'CHU';
+    dl(new Blob([r.file], { type:'font/ttf' }), nm + '-Color.ttf');
+    stat('カラーフォントを出した — ' + r.bands + '段・層の字 ' + r.layers + '・'
+      + Math.round(r.bytes/1024) + 'KB');
+  }catch(e){ stat('🔴 カラーで鋳られなかった — ' + (e && e.message || e)); }
+};
 el('b_vf').onclick = () => {
   try{
     const r = buildVF();
@@ -1467,11 +1626,11 @@ const FMT = {
   up:v=>v+'升', dn:v=>v+'升', rad:v=>v.toFixed(3)+'×', rot:v=>v+'°',
   weight:v=>String(v), fs:v=>v.toFixed(3), grow:v=>v.toFixed(2), thr:v=>v.toFixed(2),
   side:v=>v+'升', monoW:v=>v+'升', perRow:v=>v+'字', long:v=>v+'px',
-  margin:v=>(v*100).toFixed(1)+'%', linkR:v=>v+'升',
+  margin:v=>(v*100).toFixed(1)+'%', linkR:v=>v+'升', colN:v=>v+'段',
   spd:v=>v.toFixed(2)+'×', rotN:v=>String(v), radA:v=>'±'+v.toFixed(2), revN:v=>String(v),
 };
 const RANGES = ['up','dn','rad','rot','weight','fs','grow','thr','side','monoW','perRow','long',
-                'margin','spd','rotN','radA','revN','linkR'];
+                'margin','spd','rotN','radA','revN','linkR','colN'];
 /* 動かす系のつまみ（止まっていると効かないもの） */
 const MOVE_KEYS = new Set(['rotN','radA','revN','spd']);
 RANGES.forEach(k => {
@@ -1504,6 +1663,7 @@ function seg(id, key, after){
     });
   });
 }
+function colSync(){ el('colBox').classList.toggle('hide', P.colOn !== 'on'); }
 function linkSync(){
   const off = P.link !== 'on';
   el('linkRRow').classList.toggle('hide', off);
@@ -1527,6 +1687,8 @@ function rotSync(){
 seg('shapeSeg', 'shape', rotSync);
 seg('fillSeg', 'fill');
 seg('linkSeg', 'link', linkSync);
+seg('colSeg', 'colOn', colSync);
+seg('colDirSeg', 'colDir');
 seg('fontSeg', 'font');
 seg('advSeg', 'adv', advSync);
 seg('gridSeg', 'grid');
@@ -1586,7 +1748,7 @@ el('t_chars').addEventListener('focus', pushHist);
 el('t_chars').addEventListener('input', e => { P.chars = e.target.value; kick(); saveLocal(); });
 el('t_family').addEventListener('focus', pushHist);
 el('t_family').addEventListener('input', e => { P.family = e.target.value; saveLocal(); });
-['paper','ink'].forEach(k => {
+['paper','ink','c1','c2'].forEach(k => {
   const c = el('c_'+k); c.value = P[k];
   c.addEventListener('pointerdown', pushHist);
   c.addEventListener('input', () => { P[k] = c.value; kick(); saveLocal(); });
@@ -1612,7 +1774,7 @@ function syncUI(){
     if(!r) return; r.value = P[k]; if(o) o.textContent = (FMT[k] || String)(+r.value); });
   [['shapeSeg','shape'],['fontSeg','font'],['advSeg','adv'],['gridSeg','grid'],
    ['modeSeg','mode'],['tateSeg','tate'],['ratioSeg','ratio'],['revBySeg','revBy'],
-   ['fillSeg','fill'],['linkSeg','link']]
+   ['fillSeg','fill'],['linkSeg','link'],['colSeg','colOn'],['colDirSeg','colDir']]
     .forEach(([id, key]) => el(id).querySelectorAll('button')
       .forEach(b => b.classList.toggle('on', b.dataset.v === String(P[key]))));
   el('t_chars').value = P.chars;
@@ -1620,7 +1782,7 @@ function syncUI(){
   modeSync();
   el('t_family').value = P.family;
   el('c_paper').value = P.paper; el('c_ink').value = P.ink;
-  advSync(); rotSync(); linkSync();
+  advSync(); rotSync(); linkSync(); colSync();
 }
 el('b_undo').onclick = undo;
 addEventListener('keydown', e => {
