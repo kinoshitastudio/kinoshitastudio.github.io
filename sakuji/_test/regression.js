@@ -302,6 +302,29 @@
         if(fat) try{ fat.remove(); }catch(err){}
       }
 
+      // ══ 19. 〔前面で削る〕で開けた本物の穴が、鋳るときに残ること
+      //   🔴 2026-08-22 に自分で塞いだ＝合体が「外の輪」と「穴の輪」をただ足していた。
+      //      ばらして渡すと穴が塗りに溶ける。束ねは【束ねたまま】渡す。
+      artLayer.removeChildren();
+      {
+        const a = S.abs[0]; a.ch = 'O';
+        const Rc = abRectOf(a), cx = Rc.center.x, cy = Rc.center.y;
+        const body = new Path.Rectangle({ point:[cx-180, cy-240], size:[360, 480], radius:30 });
+        const hole = new Path.Rectangle({ point:[cx-60, cy-160], size:[170, 130], radius:16 });
+        const cut = body.subtract(hole);         // ＝〔前面で削る〕と同じもの
+        cut.fillColor = 'black'; artLayer.addChild(cut);
+        try{ body.remove(); }catch(err){} try{ hole.remove(); }catch(err){}
+        const e = fnEnds(Rc, artLayer.children.slice(), Rc.height * 90 / 1000);
+        const kids = x => (x && x.className === 'CompoundPath') ? x.children : (x ? [x] : []);
+        const th = kids(e.thin), ft = kids(e.fat);
+        ok('前面で削った穴が鋳るときに残る', th.length >= 2, th.length + '本');
+        ok('穴があっても両端で輪の数がそろう', th.length === ft.length, th.length + ' → ' + ft.length);
+        ok('太い端で穴が縮む（広がらない）',
+           th.length >= 2 && ft.length >= 2 && Math.abs(ft[1].area) < Math.abs(th[1].area),
+           (th[1] ? Math.abs(th[1].area)|0 : 0) + ' → ' + (ft[1] ? Math.abs(ft[1].area)|0 : 0));
+        if(e.fat) try{ e.fat.remove(); }catch(err){}
+      }
+
     } catch(e){
       R.push({ name:'⛔ テスト中に例外', pass:false, detail: e && (e.message + ' @ ' + (e.stack||'').split('\n')[1]) });
     }
