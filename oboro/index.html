@@ -313,7 +313,7 @@
   <div class="row"><label>中のたて</label><input type="range" id="maty" min="-50" max="50" value="0"><span class="val"></span></div>
   <div class="mod">⭐ <b>余白</b>＝縁に取る帯の幅（版面の辺に対する％）。
     上に被せるのではなく<b>中の絵が縮む</b>＝帯も写真も一緒に小さくなる<br>
-    ⭐ 縦横の比は保ったまま縮むので<b>絵は歪まない</b>（辺の長さに比例した余白になる）<br>
+    ⭐ <b>四辺とも同じ太さ</b>（短い辺が基準）。中の絵は窓を覆うので<b>歪まない</b><br>
     ⭐⭐ <b>余白は上のレイヤー</b>＝<b>中の絵は余白の下に潜る</b>。だから
     <b>中の大きさ</b>を上げても寄せても<b>縁は必ず残る</b>（はみ出したぶんは余白の下に隠れる）<br>
     ⭐ <b>中の大きさ・中のよこ・中のたて</b>＝額に入れたあと、<b>中の絵ごと</b>大きくしたり寄せたりする。
@@ -379,7 +379,9 @@
   <input type="file" id="fJson" accept="application/json,.json" hidden>
   <div class="mod" id="jsonNote">⭐ <b>設定だけ</b>＝つまみ一式（数KB）。開き直すときは写真を自分で読む<br>
     ⭐ <b>写真ごと</b>＝写真も入れて、そのまま開き直せる（数MB）<br>
-    ⚠️ 読み込むと<b>いまのつまみは全部入れ替わる</b></div>
+    ⚠️ 読み込むと<b>いまのつまみは全部入れ替わる</b><br>
+    ⭐ 入るもの＝つまみ一式・<b>版面</b>・<b>余白（色・中の大きさ・中の位置）</b>・
+    <b>動画の設定（形式・きれいさ・往復／秒・大きさ）</b>。写真は「写真ごと」のときだけ</div>
   <div class="mod">⭐ SVG は帯が<b>矩形＋グラデ</b>で出る＝Illustrator / Figma で1枚ずつ触れる</div>
 </div>
 
@@ -415,7 +417,16 @@ const P = { ink:'grad', slit:50, anflow:0, anfps:30,
             /* ⭐ 余白（額）2026-08-21 ── 0 で今までどおり。上げると【中の絵が縮んで】縁が空く */
             mat:0, matcol:'#f2efe6', matzoom:100, matx:0, maty:0,
             /* ⭐ 動かすもの（2026-08-18）＝進み／のび／にじみ／どの線 */
-            anwhat:'fill' };
+            anwhat:'fill',
+            /* 🔴⭐ 動画の設定 ── 2026-08-21 木下「書き出しのJSON保存には余白の色や設定も
+               含まれているか？含まれていない場合は含まれるようにしてほしい」
+               ⚠️ 余白（mat/matcol/matzoom/matx/maty）は元から入っていた。
+                  入っていなかったのは【動画の設定】のほう：
+                    ・秒（tvSec）は「書き出しだけの値だから」とわざと P から外していた
+                    ・形式・きれいさ・往復・大きさ は【押した時だけ】P に入る作りだったので、
+                      既定のまま使っている人の控えには1つも残らなかった
+               ⭐ 既定をここに置く＝一度も押していなくても控えに必ず入る。 */
+            tvFmt:'mp4', tvQ:'mid', tvLoop:'1', tvSz:'fit', tvSec:6 };
 const M = { low:0, mid:0, high:0, kick:0 };   // 音の量（0〜1）
 
 /* ── 写真を読む ────────────────────────────────────────── */
@@ -869,7 +880,7 @@ function mod(){
 /* ⭐⭐ 余白（額）── 縁に帯を取り、その分だけ【中の絵を縮める】。
    ⭐ 版面（cv）の大きさは変えない＝PNG も動画も枠は今までどおり。変わるのは中の置き方だけ。
    ⭐ 縮めるのは【描くときの座標系】＝帯は矩形のまま小さく描かれる（＝縮小してぼけない）。
-   ⚠️ 縦横の比を保つ＝辺の長さに比例した余白にする（等幅にすると絵が歪む）。
+   ⭐ 四辺とも【同じ画素数】の帯を取る（短い辺が基準）。中の絵は窓を覆うので歪まない。
    ⚠️ 0 のときは何も通さない＝今までの絵が1画素も変わらない。 */
 function matOf(W, H){
   const p  = (+P.mat || 0) / 100;
@@ -881,8 +892,18 @@ function matOf(W, H){
      なので、ズームすると余白自体は上にあってかわりはない。中のよこ、中のたても」）。
      ⭐ だから【窓】は余白だけで決まる。中の大きさ・中のよこ・中のたては窓を動かさない
         ＝寄せても大きくしても、はみ出したぶんは**余白の下に隠れる**（縁は必ず残る）。 */
-  const win = { x:W * p, y:H * p, w:W * (1 - p * 2), h:H * (1 - p * 2) };
-  const s = Math.max(0.05, (1 - p * 2) * z);
+  /* 🔴🔴 2026-08-21 ── 四辺の画素数を揃えた。
+     木下＝「ふちのせん基本左右上下均等にピクセルが入ると思っていた。
+     　　　余白7でこれあきらかに上下左右大きさ違う？？よね？」
+     ⚠️ もとは 左右＝W×7%／上下＝H×7% と【それぞれの辺】から取っていた。
+        だから縦長の版面では上下だけ太くなる（502×628 なら 35px と 44px）。
+        「辺に比例」は理屈は通るが、**額縁として見ると作り損ないに見える**。
+     ⭐ 短い辺を基準にして、四辺とも同じ画素数にする。
+     ⚠️ 窓の縦横比は版面と変わるので、中の絵は【窓を覆う】ように寄せる（cover）。
+        はみ出したぶんは余白の下に隠れるので、**歪まず・切れも最小**で収まる。 */
+  const m = Math.min(W, H) * p;
+  const win = { x:m, y:m, w:W - m * 2, h:H - m * 2 };
+  const s = Math.max(0.05, Math.max(win.w / W, win.h / H) * z);
   return { s, mx:(W - W * s) / 2 + ox * W, my:(H - H * s) / 2 + oy * H, win };
 }
 function draw(){
@@ -1560,11 +1581,18 @@ document.getElementById('anGo')?.addEventListener('click', () => {
       loopUI(); sizeSync();
     }));
   ['anflow','anfps'].forEach(id => document.getElementById(id)?.addEventListener('input', () => sizeSync()));
-  /* ⚠️ 秒のつまみは P に入れない（動画の書き出しだけの値）＝数字は自分で出す */
+  /* 🔴 2026-08-21 ── 前は「書き出しだけの値だから」と P に入れていなかった。
+     ⚠️ そのせいで、控えを読み直しても秒だけ戻らない＝同じ動画がもう一度作れない。
+     ⭐ 控えは「同じものをもう一度出せる」ためにあるので、書き出しの設定こそ入れる。 */
   document.getElementById('tvSec')?.addEventListener('input', e => {
+    P.tvSec = +e.target.value;
     const v = e.target.parentElement.querySelector('.val'); if(v) v.textContent = e.target.value;
     sizeSync();
   });
+  BINDS.push({ id:'tvSec', key:'tvSec' });     // ⭐ 控えを読んだとき、つまみの位置も戻す
+  /* ⭐ 控えを読んだあとに呼ぶ入口。秒の行の出し入れと、大きさの註を作り直す。
+     ⚠️ ここは IIFE の中なので、外から呼べるように名前を出しておく。 */
+  window.tvUISync = () => { loopUI(); sizeSync(); };
   loopUI();
 
   /* 🔴⭐ 大きさは【組み直して】作る（2026-08-14 木下＝「今は全部376×376。大きくできないか」）。
@@ -1872,6 +1900,9 @@ function syncUIFromP(){
   const bi = document.getElementById('bInv');
   if(bi) bi.textContent = P.inv ? '裏返し中' : '裏返す';
   if(typeof syncInk === 'function') syncInk();
+  /* ⚠️ 段の見た目を戻しただけでは、秒の行が出たままだったり大きさの註が古いままになる。
+     ⭐ 動画側は自前の入口を持っているので、そこも一緒に呼ぶ。 */
+  if(typeof tvUISync === 'function') tvUISync();
 }
 function applyState(o){
   if(!o || typeof o !== 'object' || !o.P) throw new Error('この JSON は OBORO の控えではないみたい');
