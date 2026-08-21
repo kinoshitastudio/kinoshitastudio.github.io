@@ -91,6 +91,18 @@ const pw = box1.x0 / m1.w, ph = box1.y0 / m1.h2;
 check(Math.abs(pw - ph) < 0.02, '余白が四辺で釣り合っている（辺に比例）',
       `よこ ${(pw*100).toFixed(1)}% / たて ${(ph*100).toFixed(1)}%`);
 
+/* ── ④b 額の中で絵ごと大きくする・寄せる（2026-08-21）── */
+await set(A.p, 'matzoom', 150); await wait(500);
+const boxZ = await A.p.evaluate(()=>window.__box([242,239,230]));
+check(boxZ.w > box1.w * 1.3, '⭐中の大きさを上げると絵が大きくなる', `${box1.w} → ${boxZ.w}px`);
+await set(A.p, 'matzoom', 100); await set(A.p, 'matx', 20); await wait(500);
+const boxX = await A.p.evaluate(()=>window.__box([242,239,230]));
+check(boxX.x0 > box1.x0 + 40, '⭐中のよこで右へ寄る', `x ${box1.x0} → ${boxX.x0}`);
+await set(A.p, 'matx', 0); await set(A.p, 'maty', -20); await wait(500);
+const boxY = await A.p.evaluate(()=>window.__box([242,239,230]));
+check(boxY.y0 < box1.y0 - 40, '⭐中のたてで上へ寄る', `y ${box1.y0} → ${boxY.y0}`);
+await set(A.p, 'maty', 0); await wait(400);
+
 /* ── ⑤ 色を変えると縁だけ変わる ── */
 await A.p.evaluate(()=>{ const el=document.getElementById('matcol'); el.value='#c81e1e';
   el.dispatchEvent(new Event('input',{bubbles:true})); });
