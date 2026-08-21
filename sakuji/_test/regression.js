@@ -265,6 +265,43 @@
         document.getElementById('fnBold').dispatchEvent(new Event('input', { bubbles:true }));
       }
 
+      // ══ 18. 穴のある字（B の腹）── 穴が【星形のトゲ】に潰れないこと
+      //   🔴 2026-08-22 木下が見つけた。穴は太らせると縮み、縮みきると向かい合う辺が
+      //      通り抜けてトゲになる。曲がりの半径では捕まらない（局所でなく輪ぜんぶの話）。
+      artLayer.removeChildren();
+      {
+        const a = S.abs[0]; a.ch = 'B';
+        const Rc = abRectOf(a), cx = Rc.center.x, cy = Rc.center.y;
+        const mk = pts => {
+          const p = new Path({ strokeColor:'black', strokeWidth:110, strokeCap:'round', strokeJoin:'round' });
+          for(let i=0;i<pts.length-1;i++){
+            const A=pts[i], B=pts[i+1], L=Math.hypot(B[0]-A[0],B[1]-A[1]), st=Math.max(2,Math.round(L/7));
+            for(let s=0;s<st;s++){ const t=s/st; p.add(new Point(A[0]+(B[0]-A[0])*t, A[1]+(B[1]-A[1])*t)); }
+          }
+          p.add(new Point(pts[pts.length-1][0], pts[pts.length-1][1]));
+          p.simplify(2.5); artLayer.addChild(p); return p;
+        };
+        mk([[cx-120,cy-210],[cx-120,cy+210]]);
+        mk([[cx-120,cy-210],[cx+90,cy-190],[cx+110,cy-60],[cx-110,cy-30]]);
+        mk([[cx-110,cy-30],[cx+110,cy+10],[cx+95,cy+185],[cx-120,cy+210]]);
+        const e = fnEnds(Rc, artLayer.children.slice(), Rc.height * 90 / 1000);
+        const thin = e.thin, fat = e.fat;
+        const kids = x => (x && x.className === 'CompoundPath') ? x.children : (x ? [x] : []);
+        ok('太い端：穴のある字でも輪の数が同じ', kids(thin).length === kids(fat).length,
+           kids(thin).length + ' → ' + kids(fat).length);
+        ok('太い端：穴が残る（潰れて消えない）', kids(fat).length >= 2, kids(fat).length + '本');
+        let xs = -1;
+        try{ xs = fat.getCrossings ? fat.getCrossings(fat).length : -1; }catch(err){ xs = -1; }
+        ok('太い端：穴のある字でも輪が自分と交わらない', xs === 0, xs + '箇所');
+        // 🔴 星形のトゲ＝穴の面積が【負の側へ通り抜ける】。向きが変わっていないことで見る
+        const th = kids(thin), ft = kids(fat);
+        let flipped = [];
+        for(let i=0;i<Math.min(th.length, ft.length);i++)
+          if(Math.sign(th[i].area) !== Math.sign(ft[i].area)) flipped.push(i);
+        ok('太い端：どの輪も向きが裏返らない', flipped.length === 0, '裏返り ' + flipped.join(','));
+        if(fat) try{ fat.remove(); }catch(err){}
+      }
+
     } catch(e){
       R.push({ name:'⛔ テスト中に例外', pass:false, detail: e && (e.message + ' @ ' + (e.stack||'').split('\n')[1]) });
     }

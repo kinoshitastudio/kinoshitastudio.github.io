@@ -930,7 +930,7 @@
   <div id="glyGrid"></div>
   <div id="glyNote">⭐ 押すと<b>その字の枠へ寄る</b>（無ければ作る）。描き終わったら<b>右上の〔.otf を書き出す〕</b><br>
     ⚠️ 薄い字＝まだ描いていない枠／白い字＝描いてある<br>
-    ⭐ <b>太い端</b>を上げると、マスの絵に<b>赤い面</b>で「どこまで太るか」が敷かれる</div>
+    ⭐ <b>太い端</b>を上げると、マスの絵に<b>薄い影と破線</b>で「どこまで太るか」が敷かれる（作品には入らない）</div>
 </div></div>
 <div id="manual"><div id="manualIn">
   <button id="manClose">×</button>
@@ -1766,7 +1766,8 @@
     ⭐⭐ <b>太い端</b>＝同じ字を<b>太らせた版</b>を作る（可変フォントの「もう片方の端」）。
     🔴 <b>輪郭の点を法線の向きにずらすだけ＝点を増やさない</b>。増やすと両端で点が対応しなくなり、
     軸にできない。0 のときは作らない<br>
-    ⭐ 盤には<b>薄い面</b>で敷かれる（掴めない・書き出しに乗らない）＝どこまで太るかがその場で見える<br>
+    ⭐ 盤には<b>薄い影＋破線</b>で敷かれる（掴めない・書き出しに乗らない）＝どこまで太るかがその場で見える。
+    ⚠️ <b>色は付けない</b>＝この道具で色を持つのは本物の塗りだけ。破線は「実体ではない」の印<br>
     ⭐ 太らせる前に<b>重なりを合体して1つの輪郭にする</b>。⚠️ 絡んだ輪をそのまま太らせると落書きになる<br>
     ⭐ 細い所は<b>曲がりの半径まで</b>しか太らない（それ以上は必ず輪が交わる）。太さが場所で違うのはそのため<br>
     ⭐⭐ <b>ガイド</b>＝ASC / CAP / x / BASE / DESC を枠の中に引く。<b>BASE は上のベースラインと同じ値</b>を見る（式は1本）<br>
@@ -9251,7 +9252,17 @@ function fnOffsetPath(src, d){
      ⚠️ どれをやっても【点の数は変えない】＝可変フォントの軸の条件は守られる。 */
   const P0 = segs.map(sg => sg.point);
   const closed = p.closed !== false;
-  const ad = Math.abs(d), sg0 = d < 0 ? -1 : 1;
+  const sg0 = d < 0 ? -1 : 1;
+  /* ⭐⭐ 輪そのものが【入りきる幅】より先へは動かせない。
+     🔴 穴（内側の輪）は太らせると縮む。縮みきると向かい合う辺どうしが通り抜けて
+        【星形のトゲ】になる（木下＝2026-08-22「B の穴」）。
+        これは曲がりの半径では捕まえられない ── 局所でなく輪ぜんぶの話だから。
+     ⭐ その輪の短い辺の 45% で頭打ちにする。穴は【小さく残る】だけで、裏返らない。
+     ⚠️ 外側の輪は元から大きいので、ここは効かない（＝いままでの太り方は変わらない）。 */
+  const bb0 = src.bounds;
+  const room = 0.45 * Math.min(bb0.width, bb0.height);
+  const ad = Math.min(Math.abs(d), Math.max(room, 0));
+  d = sg0 * ad;
 
   /* 辺の長さ（i → i+1） */
   const L = [];
@@ -9434,9 +9445,15 @@ function drawBoldPreview(){
   const amt = fnBoldAmt(); if(!amt) return;
   if(!S.abs || !S.abs.length) return;
   /* ⭐ 面で見せる。輪郭1本だと、字の上に細い線が乗るだけで「どこまで太るか」が読めない
-     （木下＝2026-08-21「太い端にしているが何も変わらない」）。 */
-  const col = (S.bg === 'light') ? new paper.Color(0.82,0.12,0.06,0.22)
-                                 : new paper.Color(1,0.42,0.30,0.24);
+     （木下＝2026-08-21「太い端にしているが何も変わらない」）。
+     🔴 いったん赤（ピンク）で敷いたが、木下＝「ピンクこれはいいの？」
+        ＝**色を持つと「インク」に見える**。この道具で色を持ってよいのは本物の塗りだけ。
+     ⭐ 下見は【字と同じ色の薄い影】＋【破線の縁】にする。
+        破線はこの道具が元から「これは実体ではない」に使っている印（見えないパスと同じ）。 */
+  const light = (S.bg === 'light');
+  const col  = light ? new paper.Color(0, 0, 0, 0.13) : new paper.Color(1, 1, 1, 0.16);
+  const edge = light ? new paper.Color(0, 0, 0, 0.42) : new paper.Color(1, 1, 1, 0.48);
+  const Z = paper.view.zoom;
   gridLayer.activate();
   S.abs.forEach((a, ai) => {
     if(!(a.ch || '').trim()) return;
@@ -9451,7 +9468,8 @@ function drawBoldPreview(){
     }
     if(!hit.fat) return;
     const c = hit.fat.clone({ insert:false });
-    c.fillColor = col; c.strokeColor = null;
+    c.fillColor = col;
+    c.strokeColor = edge; c.strokeWidth = 1 / Z; c.dashArray = [7 / Z, 5 / Z];
     c.__fnBold = true;                            /* ⭐ 数えられるように印を付ける */
     gridLayer.addChild(c);
   });
@@ -9967,12 +9985,16 @@ function glyThumb(a){
     const amt = (typeof fnBoldAmt === 'function') ? fnBoldAmt() : 0;
     if(amt){
       /* ⭐ 面で敷く（字の下）。輪郭1本だと絵の上に細い線が乗るだけで、
-         どこまで太るかが読めない＝「何も変わらない」に見えていた。 */
+         どこまで太るかが読めない＝「何も変わらない」に見えていた。
+         🔴 色を持たせると「インク」に見える（木下＝「ピンクこれはいいの？」）。
+            盤と同じく【字と同じ色の薄い影＋破線の縁】にそろえる。⚠️ 式は1本＝盤と同じ規則。 */
       const fat = fnEnds(R, src, R.height * amt / 1000).fat;
       if(fat){
-        fat.fillColor = new paper.Color(0.63, 0.20, 0.14, 0.30);
-        fat.strokeColor = '#a03323';
-        fat.strokeWidth = Math.max(1.5, R.height / 220);
+        const w = Math.max(1.5, R.height / 260);
+        fat.fillColor = new paper.Color(0, 0, 0, 0.13);
+        fat.strokeColor = new paper.Color(0, 0, 0, 0.42);
+        fat.strokeWidth = w;
+        fat.dashArray = [w * 5, w * 3.5];
         g.insertChild(0, fat);
       }
     }
