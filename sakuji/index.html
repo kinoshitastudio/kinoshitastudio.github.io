@@ -1638,6 +1638,32 @@
   <button class="btn" id="bJPG">JPG を書き出す</button>
   <div class="note">SVGはグラデをそのまま持って出る（ベクター）。PNG/JPGは<b>枠の寸法 × 倍率</b>で書き出す</div>
 
+
+  <!-- ══════════════════════════════════════════════════════════════
+       ⭐⭐ FONT ── 枠1つを、字1つとして .otf に鋳る
+       ⭐ 「どの盤がどの字か」を持つ場所が無かった＝それが【枠の ch】。
+          枠はもともと名前も寸法も持っているので、ここに1文字足すだけで台帳になる。
+       ⚠️ 既存の節は1行も動かしていない（ここに足しただけ）。
+       ⚠️ opentype.js は【読む】ためにすでに読み込んである。書き出しも同じ物でできる。
+       ══════════════════════════════════════════════════════════════ -->
+  <h2>FONT</h2>
+  <div class="row"><label>書体名</label><input type="text" id="fnName" value="Sakuji"
+    style="flex:1;background:var(--btn);border:1px solid var(--line);color:var(--ink);font-family:inherit;font-size:11px;padding:5px 6px"></div>
+  <div class="row"><label>ベースライン</label><input type="range" id="fnBase" min="55" max="95" value="80"><span class="val"></span></div>
+  <div class="seg" id="fnAdv"><button data-v="box" class="on">送り＝枠の幅</button><button data-v="ink">字なり</button></div>
+  <div id="fnList" style="margin:6px 0 8px"></div>
+  <div class="grid2">
+    <button class="mini" id="fnScan">枠を読み直す</button>
+    <button class="mini" id="fnClear">割り当てを消す</button>
+  </div>
+  <button class="btn pri" id="fnGo" style="margin-top:6px">.otf を書き出す</button>
+  <div class="note">⭐ <b>枠ひとつ＝字ひとつ</b>。上の一覧で、枠に<b>1文字</b>だけ入れる（空の枠は出ない）<br>
+    ⭐ <b>ベースライン</b>＝枠の上からの位置。全部の枠で同じ場所を通る＝これが揃っていないと行が波打つ<br>
+    ⭐ <b>字なり</b>＝送りを字の実幅で決める（枠の幅より詰まる）。等幅にしたいなら〔枠の幅〕<br>
+    🔴 <b>線は先に〔線→塗り〕で面にする。</b>フォントは【塗りの輪郭】しか持てない<br>
+    🔴 <b>重なりは先に〔合体〕する。</b>重ねたまま出すと、穴が抜けたり潰れたりする<br>
+    ⚠️ 出るのは <b>.otf</b>（3次ベジェ＝paper の曲線がそのまま入る。CHU の .ttf とは別形式）</div>
+
   <h2>SAVE</h2>
   <div class="grid2">
     <button class="btn" id="bSave">保存（JSON）</button>
@@ -3339,6 +3365,30 @@ document.getElementById('bOutlineText').onclick = async () => {
 /* ── 読み込んだフォント（opentype.js）──
    ラスタ追跡は輪郭を「なぞる」ので曲線が近似になり、アンカーが増える。
    フォントファイルを直接読めば、グリフが持っているベジェをそのまま取り出せる。 */
+let _lastVfRange = null;
+
+/* ══⭐⭐ 可変フォントのウェイトを効かせる ══
+   🔴 new FontFace(name, buf) は、範囲を渡さないと【ウェイト＝400 に固定】される。
+      すると 300/400/500 は全部おなじ字（400の姿）が出て、700/800/900 は
+      ブラウザが勝手に太らせた【にせもののボールド】になる＝どれも同じに見える。
+      （木下＝「400 500 なんの変わりもなく 800 900 はおなじ」2026-08-21）
+   ⭐ 直し＝フォントが持っている wght 軸の端をそのまま渡す。これだけで軸が動く。
+   ⚠️ 可変でないフォントは今までどおり（範囲を渡さない）。 */
+function vfWeightRange(font){
+  try{
+    const ax = font && font.tables && font.tables.fvar && font.tables.fvar.axes;
+    const w = ax && ax.find(a => a.tag === 'wght');
+    if(w && w.maxValue > w.minValue) return Math.round(w.minValue) + ' ' + Math.round(w.maxValue);
+  }catch(e){}
+  return null;
+}
+async function addFontFace(name, buf, font){
+  const range = vfWeightRange(font);
+  const ff = range ? new FontFace(name, buf, { weight: range }) : new FontFace(name, buf);
+  await ff.load(); document.fonts.add(ff);
+  return range;
+}
+
 const FONTS = {};                                   // family名 → opentype.Font
 function famKey(css){                               // 'Zen Kaku Gothic New", sans-serif' → 最初の書体名
   return String(css||'').split(',')[0].trim().replace(/^["']|["']$/g,'');
@@ -3354,7 +3404,7 @@ document.getElementById('fontFile').addEventListener('change', async e => {
                 || f.name.replace(/\.[^.]+$/,'');
       FONTS[name] = font;
       // 画面表示にも使えるように、同じ名前で FontFace として登録する
-      try{ const ff = new FontFace(name, buf); await ff.load(); document.fonts.add(ff); }catch(err){}
+      try{ _lastVfRange = await addFontFace(name, buf, font); }catch(err){}
       const sel = document.getElementById('tfont');
       if(![...sel.options].some(o => famKey(o.value) === name)){
         const o = document.createElement('option');
@@ -3373,7 +3423,8 @@ document.getElementById('fontFile').addEventListener('change', async e => {
   document.getElementById('fontnote').innerHTML = names.length
     ? `◆ 印＝<b>グリフを直接取れる書体</b>（${names.length}）<br>` + names.join('／')
     : document.getElementById('fontnote').innerHTML;
-  if(names.length) stat('フォントを読み込んだ — アウトライン化が正確になる');
+  if(names.length) stat('フォントを読み込んだ — アウトライン化が正確になる'
+    + (_lastVfRange ? '／可変フォント：ウェイト ' + _lastVfRange + ' が効く' : ''));
   e.target.value = '';
 });
 /* opentype のパスコマンド → paper の CompoundPath（ベジェをそのまま渡す） */
@@ -5329,6 +5380,8 @@ function abSync(){
   const _md = a.fill ? a.fill.mode : 'solid';
   document.querySelectorAll('#abFillMode button').forEach(b => b.classList.toggle('on', b.dataset.v === _md));
   renderAbList(); drawGrid();
+  /* ⭐ FONT の一覧も同じときに更新する（枠が増減したら台帳もずれる） */
+  if(typeof renderFnList === 'function') renderFnList();
 }
 /* 🔴⭐ 枚数から作ると【名前がぶつかる】（2026-08-12）。
    枠を消してから足すと、消した番号がまた出てくる＝木下のデータに「17」が2つあった。
@@ -5969,6 +6022,9 @@ async function reflowSelectedText(changed){   // changed＝いま触ったスラ
   //   「文字を組み直す → 粒をかけ直す」を1回でやる。
   const grains = selected().filter(it => it.__tsubu && it.__tzText);
   if(grains.length){
+    /* 🔴 粒の組み直しは【粒をかけ直す】ので重い。引いている間はやらない
+       （指を離したときに1回だけ通す）＝ここで詰まると盤が固まる */
+    if(_liveOn) return;
     snapshot();
     for(const old of grains){
       const r = old.__tzText, at = old.__tzAt || old.position.clone();
@@ -6028,7 +6084,8 @@ async function reflowSelectedText(changed){   // changed＝いま触ったスラ
   // ⭐ いったん preview を畳んで、元の文字が見える状態に戻してから組み直す。
   //   ⚠️ previewを残したまま差し替えようとすると、対応がずれてpreviewが消える（前にそれで失敗した）。
   if(wasPv){ tzPvClear(); tzPvSafety(); }
-  snapshot();
+  /* ⭐ 引いている間は積まない（掴んだ瞬間に1回だけ積んである） */
+  if(!_liveOn) snapshot();
   _tzReflowing = true;
   const made = [];
   targets.forEach(old => {
@@ -6058,7 +6115,48 @@ async function reflowSelectedText(changed){   // changed＝いま触ったスラ
    ⚠️ 置いたあとに変えられなかった（木下＝「テキストを入れたあとにサイズ・字間・行間・
      フォントを変更できないのは痛い」）。字間を変えると詰め直しが要るので、
      どれも「文字を組み直す」で揃える＝粒にしたあとも同じ道が通る。 */
-['ttrack','tlead','tfont','tweight','tsize'].forEach(id =>
+/* ══⭐⭐ 引いている間も、盤の文字がついてくる ══
+   🔴 いままで change だけ＝【指を離すまで1画素も動かなかった】
+      （木下＝「サイズと字間を調整するときリアルタイムでもっとスムーズに」）。
+   ⚠️ 組み直しは文字を作り直すので重い。input のたびにやると盤が詰まるので：
+      ⭐ コマに1回だけ（requestAnimationFrame）にまとめる
+      ⭐ 前の1回が終わるまで次を始めない（重なると図形が二重に増える）
+      ⭐ ⌘Z は【掴んだ瞬間に1回だけ】積む（毎コマ積むと1操作で何十件も溜まる）
+   🔴 粒の組み直しだけは引いている間やらない（粒をかけ直すので桁違いに重い）。
+      指を離したときに1回だけ通す＝見た目は「離した瞬間に粒も揃う」。 */
+let _liveOn = false, _liveBusy = false, _livePend = null, _liveIdle = 0;
+async function liveReflow(id){
+  _livePend = id;
+  if(_liveBusy) return;                       /* ⭐ 走っている間は積むだけ */
+  _liveBusy = true;
+  while(_livePend){
+    const which = _livePend; _livePend = null;
+    await new Promise(r => requestAnimationFrame(r));
+    try{ await reflowSelectedText(which); }catch(e){}
+  }
+  _liveBusy = false;
+}
+function liveEnd(id){
+  clearTimeout(_liveIdle);
+  _liveIdle = setTimeout(async () => {
+    if(!_liveOn) return;
+    _liveOn = false;
+    await liveReflow(id);                     /* ⭐ 離したあと、粒も含めてもう1回だけ通す */
+  }, 90);
+}
+['ttrack','tlead','tsize'].forEach(id => {
+  const r = document.getElementById(id); if(!r) return;
+  r.addEventListener('input', () => {
+    /* ⚠️ キーの矢印でも input は来る（pointerdown は来ない）＝ここで一度だけ積む */
+    if(!_liveOn){ _liveOn = true; snapshot(); }
+    clearTimeout(_liveIdle);
+    liveReflow(id);
+  });
+  ['pointerup','pointercancel','change','blur'].forEach(ev =>
+    r.addEventListener(ev, () => liveEnd(id)));
+});
+/* 書体・ウェイトは引くものではないので、選んだそのときに1回 */
+['tfont','tweight'].forEach(id =>
   document.getElementById(id)?.addEventListener('change', () => reflowSelectedText(id)));
 document.querySelectorAll('#tvert button').forEach(b =>
   b.addEventListener('click', reflowSelectedText));
@@ -8689,6 +8787,160 @@ mvSizeSync();     // ⭐ 起動した時点で「何 px で出るのか」を出
   if(document.readyState === 'loading') addEventListener('DOMContentLoaded', sync);
   else sync();
 })();
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ FONT ── 枠を字として .otf に鋳る
+   ⭐ 芯は1行 ── 【枠の箱が em の箱】。枠の高さが 1000 単位になるよう掛けるだけ。
+      だから枠の寸法が違っても、字の大きさは揃う（枠を大きく描いても字は太らない）。
+   ⭐ ベースラインは【枠の上からの割合】で持つ。全部の枠が同じ割合を見る＝行が波打たない。
+   🔴 座標は paper（y は下向き）→ フォント（y は上向き・ベースラインが 0）。
+      ここを間違えると字が上下逆さまに入る（見れば分かるが、出るまで気づけない）。
+   ⚠️ 元の図形には一切触らない。複製を作って、複製を壊して、捨てる。
+   ══════════════════════════════════════════════════════════════ */
+const FN_UPM = 1000;
+function fnBaseFrac(){ const r = document.getElementById('fnBase'); return (r ? +r.value : 80) / 100; }
+function fnAdvMode(){ const b = document.querySelector('#fnAdv button.on'); return b ? b.dataset.v : 'box'; }
+
+/* 枠の一覧＝台帳。1枠に1文字 */
+function renderFnList(){
+  const el = document.getElementById('fnList'); if(!el) return;
+  el.innerHTML = '';
+  if(!S.abs.length){ el.innerHTML = '<div class="note" style="display:block">枠がありません</div>'; return; }
+  S.abs.forEach((a, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;margin:2px 0';
+    const nm = document.createElement('span');
+    nm.style.cssText = 'flex:1;font-size:10px;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    nm.textContent = a.name + '  ' + a.w + '×' + a.h;
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.value = a.ch || ''; inp.maxLength = 2;
+    inp.style.cssText = 'width:44px;text-align:center;background:var(--btn);border:1px solid var(--line);' +
+      'color:var(--ink);font-family:inherit;font-size:13px;padding:4px 2px';
+    /* ⚠️ 1文字だけ持つ。サロゲートペア（𠮷 など）は cmap 4 に入らないので弾く */
+    inp.addEventListener('input', () => {
+      const v = [...inp.value].filter(c => c.codePointAt(0) <= 0xFFFF)[0] || '';
+      inp.value = v; a.ch = v;
+    });
+    row.appendChild(nm); row.appendChild(inp); el.appendChild(row);
+  });
+}
+
+/* paper のパスを1本、opentype のパスへ写す。⚠️ handle は点からの相対 */
+function fnEmit(p, pth, X, Y){
+  const g = pth.segments;
+  if(!g || g.length < 2) return;
+  p.moveTo(X(g[0].point.x), Y(g[0].point.y));
+  const arc = (a, b) => {
+    const c1 = a.point.add(a.handleOut), c2 = b.point.add(b.handleIn);
+    p.curveTo(X(c1.x), Y(c1.y), X(c2.x), Y(c2.y), X(b.point.x), Y(b.point.y));
+  };
+  for(let i = 1; i < g.length; i++) arc(g[i-1], g[i]);
+  if(pth.closed){ arc(g[g.length-1], g[0]); p.close(); }
+}
+
+/* 中身を集める。⭐ 線しか無いものは【複製の上で】面に変えてから使う */
+function fnCollect(it, out, trash){
+  if(!it || it.visible === false) return;
+  if(it.className === 'Shape' && it.toPath){          /* 四角・丸などは形のまま持てない */
+    const q = it.toPath(false); trash.push(q); fnCollect(q, out, trash); return;
+  }
+  if(it.children && it.className !== 'CompoundPath'){
+    it.children.slice().forEach(c => fnCollect(c, out, trash)); return;
+  }
+  const paths = (it.className === 'CompoundPath') ? it.children.slice() : [it];
+  const bare = it.strokeColor && it.strokeWidth > 0 && !it.fillColor;
+  if(bare && typeof expandStroke === 'function'){
+    paths.forEach(q => {
+      let r = null;
+      try{ r = expandStroke(q, S.align || 'center'); }catch(e){}
+      if(r){ trash.push(r); fnCollect(r, out, trash); }
+      else out.push(q);
+    });
+    return;
+  }
+  paths.forEach(q => { if(q.segments && q.segments.length >= 2) out.push(q); });
+}
+
+async function fnBuildOTF(){
+  if(typeof opentype === 'undefined'){ stat('opentype.js が読めていない'); return; }
+  const marked = S.abs.map((a, i) => ({ a, i })).filter(x => (x.a.ch || '').trim());
+  if(!marked.length){ stat('枠に字を割り当ててください（FONT の一覧）'); return; }
+
+  const bl = fnBaseFrac(), advMode = fnAdvMode();
+  const ASC = Math.round(FN_UPM * bl), DESC = -Math.round(FN_UPM * (1 - bl));
+  const glyphs = [ new opentype.Glyph({ name:'.notdef', unicode:0, advanceWidth:Math.round(FN_UPM*0.5),
+                                        path:new opentype.Path() }) ];
+  const seen = new Set();
+  let made = 0, skipped = [];
+
+  for(const { a, i } of marked){
+    const ch = (a.ch || '').trim()[0];
+    const code = ch.codePointAt(0);
+    if(seen.has(code)){ skipped.push(ch + '（重複）'); continue; }
+    const R = abRectOf(a);
+    /* ⚠️ 枠の中にあるかは【中心】で見る（レイヤーの仕分けと同じ規則） */
+    const src = artLayer.children.filter(it => R.contains(it.bounds.center));
+    if(!src.length){ skipped.push(ch + '（空）'); continue; }
+
+    const tmp = new Group(src.map(c => c.clone()));
+    if(typeof outlineTextsIn === 'function'){
+      try{ await outlineTextsIn([tmp]); }catch(e){}
+    }
+    const out = [], trash = [];
+    tmp.children.slice().forEach(c => fnCollect(c, out, trash));
+
+    const k = FN_UPM / R.height;
+    const baseY = R.y + R.height * bl;
+    let ox = R.x, adv = Math.round(R.width * k);
+    if(advMode === 'ink' && out.length){
+      let x0 = 1e9, x1 = -1e9;
+      out.forEach(q => { const b = q.bounds; if(b.left < x0) x0 = b.left; if(b.right > x1) x1 = b.right; });
+      const side = R.width * 0.06;                    /* 左右の空き＝枠の 6% */
+      ox = x0 - side;
+      adv = Math.round((x1 - x0 + side * 2) * k);
+    }
+    const X = x => Math.round((x - ox) * k);
+    const Y = y => Math.round((baseY - y) * k);       /* 🔴 上下を返す */
+
+    const p = new opentype.Path();
+    out.forEach(q => fnEmit(p, q, X, Y));
+    tmp.remove(); trash.forEach(t => { try{ t.remove(); }catch(e){} });
+
+    if(!p.commands.length){ skipped.push(ch + '（線だけ）'); continue; }
+    seen.add(code); made++;
+    glyphs.push(new opentype.Glyph({ name:'u' + code.toString(16).toUpperCase().padStart(4,'0'),
+                                     unicode:code, advanceWidth:adv, path:p }));
+  }
+  if(!made){ stat('鋳れる字がありませんでした'); return; }
+  /* ⭐ 空白は必ず入れる（無いと単語が繋がって出る） */
+  glyphs.push(new opentype.Glyph({ name:'space', unicode:32,
+                                   advanceWidth:Math.round(FN_UPM*0.42), path:new opentype.Path() }));
+
+  const fam = (document.getElementById('fnName').value || 'Sakuji').trim() || 'Sakuji';
+  try{
+    new opentype.Font({ familyName:fam, styleName:'Regular', unitsPerEm:FN_UPM,
+                        ascender:ASC, descender:DESC, glyphs })
+      .download(fam.replace(/\s+/g, '-') + '.otf');
+    stat('.otf を書き出した — ' + made + ' 字' +
+         (skipped.length ? '／出せなかった ' + skipped.slice(0,6).join('・') : ''));
+  }catch(e){ stat('🔴 フォントにできない: ' + e.message); }
+}
+
+(function(){
+  const go = document.getElementById('fnGo'); if(!go) return;
+  go.addEventListener('click', () => fnBuildOTF());
+  const sc = document.getElementById('fnScan');
+  if(sc) sc.addEventListener('click', () => { renderFnList(); stat('枠を読み直した'); });
+  const cl = document.getElementById('fnClear');
+  if(cl) cl.addEventListener('click', () => { S.abs.forEach(a => a.ch = ''); renderFnList(); stat('割り当てを消した'); });
+  const b = document.getElementById('fnBase');
+  if(b){
+    const show = () => { const v = b.parentElement.querySelector('.val'); if(v) v.textContent = b.value + '%'; };
+    b.addEventListener('input', show); show();
+  }
+  renderFnList();
+})();
+
 </script>
 </body>
 </html>
