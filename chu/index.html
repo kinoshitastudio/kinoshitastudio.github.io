@@ -459,8 +459,12 @@ GRAPHY</textarea>
     <div class="row"><span class="n">書体名</span></div>
     <input type="text" id="t_family" value="CHU Modular">
     <button class="btn solid" id="b_ttf">.ttf を出す</button>
+    <button class="btn" id="b_vf">可変フォントで出す（.ttf）</button>
     <button class="btn" id="b_try">試し打ちに入れる</button>
-    <div class="note">⭐⭐ <b>つまみを動かすと、下の試し打ちは自動で鋳直る</b>（手が止まって 0.45秒後）。
+    <div class="note">⭐⭐ <b>可変フォント</b>＝1つのファイルの中で<b>はみ出しが 0.80〜2.00 まで連続で変わる</b>。
+      ⭐ 点の座標が半径に比例するので、補間が<b>数学的にぴったり合う</b>（軸にできる理由）<br>
+      🔴 <b>粒を回す</b>は軸にしていない ── 回転は比例しないので、補間の途中で形が痩せて嘘になる<br>
+      ⭐⭐ <b>つまみを動かすと、下の試し打ちは自動で鋳直る</b>（手が止まって 0.45秒後）。
       このボタンは<b>字が多くて自動を止めたとき</b>と、いま鋳直したいときに押す<br>
       ⭐ 試し打ち＝出来た活字をこのページに読ませて、下の欄で打てるようにする。
       板の絵ではなく<b>ブラウザが字として組んだもの</b>が出る＝ここが唯一の証拠<br>
@@ -767,8 +771,8 @@ function unitContour(cx, cy, r, shape, rot){
   return pts;
 }
 /* 1文字ぶんの輪郭（フォント座標＝y は上向き・ベースラインが 0） */
-function glyphContours(gl){
-  const cu = cellU(), r = cu/2 * P.rad;
+function glyphContours(gl, radOver){
+  const cu = cellU(), r = cu/2 * (radOver === undefined ? P.rad : radOver);
   const out = [];
   for(const c of gl.on){
     const cx = (c.i + 0.5) * cu;
@@ -1097,7 +1101,8 @@ function nameTable(rec){
   for(const b of strs) w.bytes(b);
   return w.out;
 }
-function buildTTF(){
+function buildTTF(opt){
+  opt = opt || {};
   const pl = buildPlan();
   const cu = cellU();
   const asc = Math.round(P.up * cu), desc = Math.round(-P.dn * cu);
@@ -1105,7 +1110,8 @@ function buildTTF(){
   /* glyph 0 ＝ .notdef（送りだけの空き）／以降は打った順 */
   const glyphs = [{ code:null, adv:Math.round((P.adv === 'mono' ? P.monoW : 4) * cu), cont:[] }];
   for(const gl of pl.glyphs)
-    glyphs.push({ code:gl.code, adv:Math.round(gl.adv), cont:glyphContours(gl) });
+    glyphs.push({ code:gl.code, adv:Math.round(gl.adv), cont:glyphContours(gl, opt.rad),
+                  src:gl });
 
   const built = glyphs.map(x => {
     const r = glyfOf(x.cont, x.adv);
@@ -1214,10 +1220,156 @@ function buildTTF(){
   file[hoff + 8]  = (adj >>> 24) & 255; file[hoff + 9]  = (adj >>> 16) & 255;
   file[hoff + 10] = (adj >>> 8)  & 255; file[hoff + 11] = adj & 255;
 
-  return { file, nG, codes:codes.length, bytes:file.length };
+  return { file, nG, codes:codes.length, bytes:file.length, glyphs, tabs, pl };
 }
 
 /* ══ 出す ══ */
+/* ══════════════════════════════════════════════════════════════
+   可変フォント（fvar + gvar + STAT）
+   ⭐⭐ なぜ鋳CHUで作れるか ── 可変は【軸を動かしても点の数と並びが変わらない】ときだけ作れる。
+      粒の位置と数は「升目」で決まり、はみ出し（半径 r）は【点の座標を r 倍する】だけ。
+      多角形の頂点も、円の2次ベジェの制御点も **r に比例**するので、
+      補間（min↔既定↔max の直線）が【数学的にぴったり合う】。
+   🔴 「粒を回す」は軸にしない ── 回転は r に比例しないので、
+      補間の途中で形が痩せる（正しく回らない）。数字だけ合っても絵が嘘になる。
+   ⚠️ gvar の点数は【輪郭の点 ＋ 幻の4点（phantom points）】。4点ぶんのずれは 0 を入れる。
+   ══════════════════════════════════════════════════════════════ */
+const VF_MIN = 0.80, VF_MAX = 2.00;
+function f2dot14(v){ return Math.max(-32768, Math.min(32767, Math.round(v * 16384))); }
+function fixed16(v){ return Math.round(v * 65536); }
+/* 差分の詰め方（gvar）。⚠️ 0 の連続は「0が続く」印で潰す＝ここを間違えると字が壊れる */
+function packDeltas(arr){
+  const out = [];
+  let i = 0;
+  while(i < arr.length){
+    const v = arr[i];
+    if(v === 0){
+      let n = 1; while(i+n < arr.length && arr[i+n] === 0 && n < 64) n++;
+      out.push(0x80 | (n-1)); i += n; continue;
+    }
+    const isByte = d => d >= -128 && d <= 127;
+    if(isByte(v)){
+      let n = 1; while(i+n < arr.length && arr[i+n] !== 0 && isByte(arr[i+n]) && n < 64) n++;
+      out.push(n-1);
+      for(let k = 0; k < n; k++) out.push(arr[i+k] & 255);
+      i += n;
+    }else{
+      let n = 1; while(i+n < arr.length && arr[i+n] !== 0 && !isByte(arr[i+n]) && n < 64) n++;
+      out.push(0x40 | (n-1));
+      for(let k = 0; k < n; k++){ const d = arr[i+k] & 0xFFFF; out.push(d >> 8, d & 255); }
+      i += n;
+    }
+  }
+  return out;
+}
+function buildVF(){
+  const keepRad = P.rad;
+  /* 既定＝いまのはみ出し。⚠️ min/max の外に居たら軸に入るように寄せる */
+  const def = Math.min(VF_MAX, Math.max(VF_MIN, P.rad));
+  const mid = buildTTF({ rad:def });
+  const lo  = buildTTF({ rad:VF_MIN });
+  const hi  = buildTTF({ rad:VF_MAX });
+  P.rad = keepRad;
+
+  const nG = mid.glyphs.length;
+  if(lo.glyphs.length !== nG || hi.glyphs.length !== nG)
+    throw new Error('軸の端で字数が変わりました（升目に関わるつまみが動いています）');
+
+  /* ── gvar ── */
+  const gv = new BW();
+  const perGlyph = [];
+  for(let g = 0; g < nG; g++){
+    const a = mid.glyphs[g].cont, b = lo.glyphs[g].cont, c = hi.glyphs[g].cont;
+    const flat = k => { const o = []; for(const ct of k) for(const pt of ct) o.push(pt); return o; };
+    const A = flat(a), B = flat(b), C = flat(c);
+    if(!A.length || A.length !== B.length || A.length !== C.length){ perGlyph.push(null); continue; }
+    const n = A.length;
+    const mk = (S) => {
+      const dx = [], dy = [];
+      for(let i = 0; i < n; i++){
+        dx.push(Math.round(S[i].x) - Math.round(A[i].x));
+        dy.push(Math.round(S[i].y) - Math.round(A[i].y));
+      }
+      for(let i = 0; i < 4; i++){ dx.push(0); dy.push(0); }   /* 幻の4点 */
+      return [0x00].concat(packDeltas(dx), packDeltas(dy));   /* 0x00＝全部の点 */
+    };
+    perGlyph.push({ neg:mk(B), pos:mk(C) });
+  }
+  const gdata = new BW(), goff = [];
+  for(let g = 0; g < nG; g++){
+    goff.push(gdata.a.length);
+    const q = perGlyph[g]; if(!q) continue;
+    const hdr = 4 + (4 + 2)*2;                 /* count+offset ＋ ヘッダ2本（size,index,peak1軸） */
+    const w = new BW();
+    w.u16(2);                                   /* tuple 2本 */
+    w.u16(hdr);                                 /* データの始まり */
+    /* 🔴 0x8000＝峰をこの場に書く／0x2000＝【点の番号もこの場に書く】。
+       0x2000 を立て忘れると、頭の「全部の点」の印が読まれず
+       【どの点にも掛からない＝1画素も動かない可変フォント】になる（2026-08-21 に踏んだ）。 */
+    const TUPLE = 0x8000 | 0x2000;
+    w.u16(q.neg.length).u16(TUPLE).i16(f2dot14(-1));
+    w.u16(q.pos.length).u16(TUPLE).i16(f2dot14(1));
+    w.bytes(q.neg); w.bytes(q.pos);
+    while(w.a.length % 2) w.u8(0);
+    gdata.bytes(w.out);
+  }
+  goff.push(gdata.a.length);
+  gv.u16(1).u16(0).u16(1).u16(0).u32(0).u16(nG).u16(1);   /* flags=1 ＝ 長い目次 */
+  gv.u32(4*(nG+1) + 20);                                  /* データの場所 */
+  for(const o of goff) gv.u32(o);
+  gv.bytes(gdata.out);
+
+  /* ── fvar ── name は 256 から使う ── */
+  const fv = new BW();
+  const INST = [['細',VF_MIN],['ふつう',def],['太',VF_MAX]];
+  fv.u16(1).u16(0).u16(16).u16(2).u16(1).u16(20).u16(INST.length).u16(4 + 1*4);
+  fv.tag('HAMI').u32(fixed16(VF_MIN)).u32(fixed16(def)).u32(fixed16(VF_MAX)).u16(0).u16(256);
+  INST.forEach((it, i) => { fv.u16(257 + i).u16(0).u32(fixed16(it[1])); });
+
+  /* ── STAT（最小・軸だけ）── */
+  const st = new BW();
+  st.u16(1).u16(1).u16(8).u16(1).u32(20).u16(0).u32(0).u16(2);
+  st.tag('HAMI').u16(256).u16(0);
+
+  /* ── mid の表に差し替えて組み直す ── */
+  const tabs = mid.tabs.filter(t => t[0] !== 'name');
+  /* name に 256〜 を足す */
+  const fam = (P.family || 'CHU Modular').trim() + ' VF';
+  const ps  = fam.replace(/[^A-Za-z0-9]/g, '') || 'CHUModularVF';
+  const name = nameTable([
+    [0, '鋳 CHU で作った可変活字 ／ 木下スタジオ'],
+    [1, fam], [2, 'Regular'], [3, fam + ' ' + Date.now()],
+    [4, fam + ' Regular'], [5, 'Version 1.000'], [6, ps + '-Regular'],
+    [256, 'はみ出し'], [257, '細'], [258, 'ふつう'], [259, '太'],
+  ]);
+  tabs.push(['name', name], ['fvar', fv.out], ['gvar', gv.out], ['STAT', st.out]);
+  tabs.sort((a, b) => a[0] < b[0] ? -1 : 1);
+
+  const n = tabs.length;
+  const sr2 = 16 * Math.pow(2, Math.floor(Math.log2(n)));
+  const dir = new BW();
+  dir.u32(0x00010000).u16(n).u16(sr2).u16(Math.floor(Math.log2(n))).u16(n*16 - sr2);
+  let off = 12 + n*16;
+  const padded = tabs.map(([t, d]) => [t, pad4(d)]);
+  for(let i = 0; i < n; i++){
+    dir.tag(padded[i][0]).u32(sum32(padded[i][1])).u32(off).u32(tabs[i][1].length);
+    off += padded[i][1].length;
+  }
+  const head0 = dir.out;
+  const file = new Uint8Array(off);
+  file.set(head0, 0);
+  let p2 = head0.length;
+  for(const [, d] of padded){ file.set(d, p2); p2 += d.length; }
+  let hoff = 12;
+  for(let i = 0; i < n; i++)
+    if(padded[i][0] === 'head')
+      hoff = (head0[12+i*16+8]<<24 | head0[12+i*16+9]<<16 | head0[12+i*16+10]<<8 | head0[12+i*16+11]) >>> 0;
+  const adj = (0xB1B0AFBA - sum32(file)) >>> 0;
+  file[hoff+8]=(adj>>>24)&255; file[hoff+9]=(adj>>>16)&255;
+  file[hoff+10]=(adj>>>8)&255; file[hoff+11]=adj&255;
+  return { file, nG, bytes:file.length, def, min:VF_MIN, max:VF_MAX, codes:mid.codes };
+}
+
 function dl(blob, name){
   const u = URL.createObjectURL(blob), a = document.createElement('a');
   a.href = u; a.download = name;
@@ -1276,6 +1428,15 @@ el('addMiss').onclick = () => {
 };
 el('try').addEventListener('input', missSync);
 el('b_try').onclick = () => toLive();
+el('b_vf').onclick = () => {
+  try{
+    const r = buildVF();
+    const nm = (P.family || 'CHU').replace(/[^A-Za-z0-9]/g, '') || 'CHU';
+    dl(new Blob([r.file], { type:'font/ttf' }), nm + '-VF.ttf');
+    stat('可変フォントを出した — ' + r.nG + '字・' + Math.round(r.bytes/1024) + 'KB・'
+      + 'はみ出し ' + r.min.toFixed(2) + '〜' + r.max.toFixed(2) + '（既定 ' + r.def.toFixed(2) + '）');
+  }catch(e){ stat('🔴 可変で鋳られなかった — ' + (e && e.message || e)); }
+};
 el('b_ttf').onclick = () => {
   try{
     const r = buildTTF();
