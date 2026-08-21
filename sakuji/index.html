@@ -428,6 +428,9 @@
   #glyExport2{background:none;border:1px solid rgba(26,26,24,.28);color:#3a3a34;height:26px;
     padding:0 11px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:10.5px;letter-spacing:.08em}
   #glyExport2:hover{background:rgba(26,26,24,.06)}
+  #glyExport3{background:#a89060;border:none;color:#fff;height:26px;padding:0 11px;
+    border-radius:4px;cursor:pointer;font-family:inherit;font-size:10.5px;letter-spacing:.08em}
+  #glyExport3:hover{background:#8f7a4f}
   #glyClose:hover{background:rgba(26,26,24,.06)}
   /* ⚠️ 地を線の色にすると【最後の行の余りが帯になって残る】。枠は各スロットに持たせる */
   #glyGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));
@@ -905,6 +908,7 @@
       <span id="glyCount"></span>
       <button id="glyExport" title="いま割り当ててある字を .otf に鋳る">.otf を書き出す</button>
       <button id="glyExport2" title="細い端と太い端を2本出す（可変の材料）">細い＋太い</button>
+      <button id="glyExport3" title="太さのスライダーが出る1本を出す（.ttf）">可変1本</button>
       <button id="glyClose" title="閉じる">×</button>
     </div>
   </div>
@@ -1754,9 +1758,11 @@
     🔴 <b>線は先に〔線→塗り〕で面にする。</b>フォントは【塗りの輪郭】しか持てない<br>
     🔴 <b>重なりは先に〔合体〕する。</b>重ねたまま出すと、穴が抜けたり潰れたりする<br>
     ⚠️ 出るのは <b>.otf</b>（3次ベジェ＝paper の曲線がそのまま入る。CHU の .ttf とは別形式）<br>
-    ⚠️⚠️ <b>いまは「細い」と「太い」を2本の .otf で出す。</b>1本の可変フォントにまとめるには
-    <b>TrueType の書き出し</b>が要る（.otf＝CFF には可変の表を足せない）。鋳CHU が持っている道具を
-    こちらへ持ってくれば1本にできる＝<b>次の一手</b></div>
+    ⭐⭐ <b>可変1本</b>＝GLYPHS の右上〔可変1本〕。太さ <b>400〜900</b> のスライダーが出る <b>.ttf</b>
+    （Illustrator・InDesign・Photoshop で効く）。⚠️ .otf＝CFF には可変の表を足せないので、
+    可変だけ <b>TrueType</b> で出る<br>
+    🔴 可変は<b>両端で点の数が同じ</b>ときだけ作れる。合わない字は<b>入れずに名指しする</b>
+    （黙って壊れた字を混ぜない）</div>
 
   <h2>SAVE</h2>
   <div class="grid2">
@@ -9286,6 +9292,368 @@ async function fnBuildPair(){
 }
 let fnBoldOn = false;                              /* 鋳る間だけ太らせる印 */
 
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 可変フォント（1本）を書き出す
+   🔴 .otf（CFF）には可変の表を足せない。だから【TrueType（.ttf）】で組む。
+      ここの道具は 鋳CHU が持っていたものを、そのまま持ってきたもの
+      （2026-08-21・木下＝「CHU が持っている道具をこちらへ」）。
+   ⭐ 可変は【両端で点の数と並びが同じ】ときだけ作れる。
+      細い端＝描いた字／太い端＝法線の向きにずらした版。ずらすだけなので数は変わらない。
+   ⚠️ TrueType は【2次ベジェ】。paper は3次なので直す必要がある。
+      🔴 直し方は【いつも同じ数に割る】（1つの3次 → 2つの2次）。
+         誤差で割る数を変えると、両端で点の数がずれて軸が壊れる。
+   ══════════════════════════════════════════════════════════════ */
+const SV_UPM = 1000;
+class BW {
+  constructor(){ this.a = []; }
+  u8(v){ this.a.push(v & 255); return this; }
+  u16(v){ this.a.push((v>>8)&255, v&255); return this; }
+  i16(v){ return this.u16(v < 0 ? v + 65536 : v); }
+  u32(v){ this.a.push((v>>>24)&255, (v>>>16)&255, (v>>>8)&255, v&255); return this; }
+  tag(s){ for(let i = 0; i < 4; i++) this.u8(s.charCodeAt(i)); return this; }
+  zero(n){ for(let i = 0; i < n; i++) this.u8(0); return this; }
+  utf16(s){ for(const c of s) this.u16(c.charCodeAt(0)); return this; }
+  bytes(u){ for(const b of u) this.a.push(b & 255); return this; }
+  get out(){ return new Uint8Array(this.a); }
+}
+function pad4(u){
+  const n = (4 - (u.length % 4)) % 4;
+  if(!n) return u;
+  const o = new Uint8Array(u.length + n); o.set(u); return o;
+}
+function sum32(u){
+  let s = 0;
+  for(let i = 0; i < u.length; i += 4)
+    s = (s + (((u[i]<<24) | (u[i+1]<<16) | (u[i+2]<<8) | u[i+3]) >>> 0)) >>> 0;
+  return s >>> 0;
+}
+function glyfOf(contours, adv){
+  if(!contours.length) return new Uint8Array(0);   /* 空の字＝輪郭なし（送りだけ） */
+  const cs = contours.map(c => c.map(p => ({ x:Math.round(p.x), y:Math.round(p.y), on:p.on })));
+  let xMin = 1e9, yMin = 1e9, xMax = -1e9, yMax = -1e9;
+  for(const c of cs) for(const p of c){
+    if(p.x < xMin) xMin = p.x; if(p.x > xMax) xMax = p.x;
+    if(p.y < yMin) yMin = p.y; if(p.y > yMax) yMax = p.y;
+  }
+  const w = new BW();
+  w.i16(cs.length).i16(xMin).i16(yMin).i16(xMax).i16(yMax);
+  let n = 0;
+  for(const c of cs){ n += c.length; w.u16(n - 1); }
+  w.u16(0);                                        /* 命令なし */
+  /* ⚠️ フラグは素直に1点1バイト（repeat を使わない）。大きくなるが間違えない */
+  for(const c of cs) for(const p of c) w.u8(p.on ? 1 : 0);
+  let px = 0;
+  for(const c of cs) for(const p of c){ w.i16(p.x - px); px = p.x; }
+  let py = 0;
+  for(const c of cs) for(const p of c){ w.i16(p.y - py); py = p.y; }
+  const u = w.out;
+  return { data:pad4(u), xMin, yMin, xMax, yMax };
+}
+function cmap4(pairs){                             /* pairs: [[code, gid], …] code 昇順 */
+  const segs = [];
+  for(const [c, gi] of pairs){
+    const last = segs[segs.length-1];
+    if(last && c === last.end + 1 && gi === last.gid + (c - last.start)) last.end = c;
+    else segs.push({ start:c, end:c, gid:gi });
+  }
+  segs.push({ start:0xFFFF, end:0xFFFF, gid:0, term:true });
+  const n = segs.length, sr = 2 * Math.pow(2, Math.floor(Math.log2(n)));
+  const sub = new BW();
+  sub.u16(4).u16(16 + n*8).u16(0)
+     .u16(n*2).u16(sr).u16(Math.floor(Math.log2(sr/2))).u16(n*2 - sr);
+  for(const s of segs) sub.u16(s.end);
+  sub.u16(0);
+  for(const s of segs) sub.u16(s.start);
+  for(const s of segs) sub.i16(s.term ? 1 : ((s.gid - s.start) & 0xFFFF) > 32767
+      ? ((s.gid - s.start) & 0xFFFF) - 65536 : ((s.gid - s.start) & 0xFFFF));
+  for(const s of segs) sub.u16(0);                 /* idRangeOffset は使わない */
+  const body = sub.out;
+  const w = new BW();
+  w.u16(0).u16(1).u16(3).u16(1).u32(12).bytes(body);
+  return w.out;
+}
+function nameTable(rec){
+  const strs = [], w = new BW();
+  let off = 0;
+  const items = rec.map(([id, s]) => {
+    const b = new BW().utf16(s).out;
+    const o = { id, off, len:b.length }; strs.push(b); off += b.length; return o;
+  });
+  w.u16(0).u16(items.length).u16(6 + items.length*12);
+  for(const it of items) w.u16(3).u16(1).u16(0x0409).u16(it.id).u16(it.len).u16(it.off);
+  for(const b of strs) w.bytes(b);
+  return w.out;
+}
+function f2dot14(v){ return Math.max(-32768, Math.min(32767, Math.round(v * 16384))); }
+function fixed16(v){ return Math.round(v * 65536); }
+/* 差分の詰め方（gvar）。⚠️ 0 の連続は「0が続く」印で潰す＝ここを間違えると字が壊れる */
+function packDeltas(arr){
+  const out = [];
+  let i = 0;
+  while(i < arr.length){
+    const v = arr[i];
+    if(v === 0){
+      let n = 1; while(i+n < arr.length && arr[i+n] === 0 && n < 64) n++;
+      out.push(0x80 | (n-1)); i += n; continue;
+    }
+    const isByte = d => d >= -128 && d <= 127;
+    if(isByte(v)){
+      let n = 1; while(i+n < arr.length && arr[i+n] !== 0 && isByte(arr[i+n]) && n < 64) n++;
+      out.push(n-1);
+      for(let k = 0; k < n; k++) out.push(arr[i+k] & 255);
+      i += n;
+    }else{
+      let n = 1; while(i+n < arr.length && arr[i+n] !== 0 && !isByte(arr[i+n]) && n < 64) n++;
+      out.push(0x40 | (n-1));
+      for(let k = 0; k < n; k++){ const d = arr[i+k] & 0xFFFF; out.push(d >> 8, d & 255); }
+      i += n;
+    }
+  }
+  return out;
+}
+
+/* ── 3次（paper）→ 2次（TrueType）。いつも同じ数に割る ──
+   ⭐ 1つの3次を t=0.5 で2つに割り、それぞれを1つの2次で近づける。
+      2次の制御点 ＝ (3*C1 - P0 + 3*C2 - P3) / 4（よく使われる近似）。 */
+function svCubToQuad(p0, c1, c2, p3, out){
+  const mid = (a, b) => ({ x:(a.x+b.x)/2, y:(a.y+b.y)/2 });
+  const a1 = mid(p0, c1), a2 = mid(c1, c2), a3 = mid(c2, p3);
+  const b1 = mid(a1, a2), b2 = mid(a2, a3), m = mid(b1, b2);
+  const q = (P0, C1, C2, P3) => ({
+    x:(3*C1.x - P0.x + 3*C2.x - P3.x) / 4,
+    y:(3*C1.y - P0.y + 3*C2.y - P3.y) / 4 });
+  out.push({ ...q(p0, a1, b1, m), on:false }, { ...m, on:true });
+  out.push({ ...q(m, b2, a3, p3), on:false }, { ...p3, on:true });
+}
+/* paper のパス1本 → TrueType の輪郭（点の並び）。X/Y は座標を写す関数 */
+function svContourOf(path, X, Y){
+  const g = path.segments;
+  if(!g || g.length < 2) return null;
+  const pt = sg => ({ x:X(sg.point.x), y:Y(sg.point.y) });
+  const co = sg => ({ x:X(sg.point.x + sg.handleOut.x), y:Y(sg.point.y + sg.handleOut.y) });
+  const ci = sg => ({ x:X(sg.point.x + sg.handleIn.x),  y:Y(sg.point.y + sg.handleIn.y) });
+  const out = [{ ...pt(g[0]), on:true }];
+  const link = (a, b) => {
+    const straight = !a.handleOut.length && !b.handleIn.length;
+    if(straight){ out.push({ ...pt(b), on:true }); return; }
+    svCubToQuad(pt(a), co(a), ci(b), pt(b), out);
+  };
+  for(let i = 1; i < g.length; i++) link(g[i-1], g[i]);
+  link(g[g.length-1], g[0]);
+  out.pop();                                   /* 最後は始点に戻る＝重複を落とす */
+  return out;
+}
+/* 図形1つ → 輪郭の配列（CompoundPath は子ごと） */
+function svContoursOf(it, X, Y){
+  const paths = (it.className === 'CompoundPath') ? it.children : [it];
+  return paths.map(p => svContourOf(p, X, Y)).filter(Boolean);
+}
+
+/* ⭐⭐ 可変フォントを1本組む。細い端＝いまの字／太い端＝太らせた版 */
+async function svBuildVF(){
+  const amt = fnBoldAmt();
+  if(!amt){ stat('〔太い端〕が 0 です（可変にする幅がありません）'); return; }
+  const marked = S.abs.map((a, i) => ({ a, i })).filter(x => (x.a.ch || '').trim());
+  if(!marked.length){ stat('枠に字を割り当ててください'); return; }
+
+  const bl = fnBaseFrac(), advMode = fnAdvMode();
+  const ASC = Math.round(SV_UPM * bl), DESC = -Math.round(SV_UPM * (1 - bl));
+  /* glyph 0 ＝ .notdef */
+  const thin = [{ cont:[], adv:Math.round(SV_UPM*0.5), code:null }];
+  const fat  = [{ cont:[], adv:Math.round(SV_UPM*0.5), code:null }];
+  const seen = new Set();
+  let skipped = [];
+
+  for(const { a } of marked){
+    const ch = (a.ch || '').trim()[0], code = ch.codePointAt(0);
+    if(seen.has(code) || code > 0xFFFF) continue;
+    const R = abRectOf(a);
+    const src = artLayer.children.filter(it => R.contains(it.bounds.center));
+    if(!src.length){ skipped.push(ch); continue; }
+
+    const wrap = new Group({ insert:false });
+    src.forEach(c => wrap.addChild(c.clone({ insert:false })));
+    if(typeof outlineTextsIn === 'function'){ try{ await outlineTextsIn([wrap]); }catch(e){} }
+    const out = [], trash = [];
+    wrap.children.slice().forEach(c => fnCollect(c, out, trash));
+
+    const k = SV_UPM / R.height, baseY = R.y + R.height * bl;
+    let ox = R.x, adv = Math.round(R.width * k);
+    if(advMode === 'ink' && out.length){
+      let x0 = 1e9, x1 = -1e9;
+      out.forEach(q => { const b = q.bounds; if(b.left < x0) x0 = b.left; if(b.right > x1) x1 = b.right; });
+      const side = R.width * 0.06;
+      ox = x0 - side; adv = Math.round((x1 - x0 + side*2) * k);
+    }
+    const X = x => (x - ox) * k, Y = y => (baseY - y) * k;   /* 🔴 上下を返す */
+
+    const cThin = [], cFat = [];
+    const d = R.height * amt / 1000;
+    out.forEach(q => {
+      svContoursOf(q, X, Y).forEach(c => cThin.push(c));
+      const b = fnBoldItem(q, d);
+      if(b){ svContoursOf(b, X, Y).forEach(c => cFat.push(c)); try{ b.remove(); }catch(e){} }
+    });
+    trash.forEach(t => { try{ t.remove(); }catch(e){} });
+    try{ wrap.remove(); }catch(e){}
+
+    /* 🔴 両端で点の数が合わないものは【入れない】（入れると字が壊れる） */
+    const same = cThin.length === cFat.length &&
+                 cThin.every((c, i) => c.length === cFat[i].length);
+    if(!cThin.length || !same){ skipped.push(ch + (same ? '（空）' : '（点が合わない）')); continue; }
+    seen.add(code);
+    thin.push({ cont:cThin, adv, code });
+    fat .push({ cont:cFat,  adv, code });
+  }
+  if(seen.size === 0){ stat('鋳れる字がありませんでした ' + skipped.slice(0,6).join('・')); return; }
+  thin.push({ cont:[], adv:Math.round(SV_UPM*0.42), code:32 });
+  fat .push({ cont:[], adv:Math.round(SV_UPM*0.42), code:32 });
+
+  /* ── glyf / loca ── */
+  const built = thin.map(g => {
+    const r = glyfOf(g.cont, g.adv);
+    return (r instanceof Uint8Array) ? { data:r, xMin:0, yMin:0, xMax:0, yMax:0, adv:g.adv, code:g.code }
+                                     : { ...r, adv:g.adv, code:g.code };
+  });
+  const glyfW = new BW(), loca = []; let o = 0;
+  for(const b of built){ loca.push(o); glyfW.bytes(b.data); o += b.data.length; }
+  loca.push(o);
+  const locaW = new BW(); for(const v of loca) locaW.u32(v);
+  const nG = built.length;
+  const ink = built.filter(b => b.data.length);
+  const xMin = Math.min(0, ...ink.map(b => b.xMin)), yMin = Math.min(DESC, ...ink.map(b => b.yMin));
+  const xMax = Math.max(0, ...ink.map(b => b.xMax)), yMax = Math.max(ASC,  ...ink.map(b => b.yMax));
+  const advMax = Math.max(...built.map(b => b.adv));
+  const maxPts = Math.max(4, ...thin.map(g => g.cont.reduce((a,c) => a + c.length, 0)));
+  const maxCts = Math.max(1, ...thin.map(g => g.cont.length));
+
+  const hmtx = new BW();
+  for(const b of built) hmtx.u16(b.adv).i16(b.data.length ? b.xMin : 0);
+  const now = Math.floor(Date.now()/1000) + 2082844800;
+  const head = new BW();
+  head.u32(0x00010000).u32(0x00010000).u32(0).u32(0x5F0F3CF5).u16(0x0003).u16(SV_UPM)
+      .u32(0).u32(now).u32(0).u32(now)
+      .i16(xMin).i16(yMin).i16(xMax).i16(yMax)
+      .u16(0).u16(8).i16(2).i16(1).i16(0);
+  const hhea = new BW();
+  hhea.u32(0x00010000).i16(ASC).i16(DESC).i16(0).u16(advMax)
+      .i16(0).i16(0).i16(xMax).i16(1).i16(0).i16(0).zero(8).i16(0).u16(nG);
+  const maxp = new BW();
+  maxp.u32(0x00010000).u16(nG).u16(maxPts).u16(maxCts)
+      .u16(0).u16(0).u16(2).u16(0).u16(0).u16(0).u16(0).u16(0).u16(0).u16(0).u16(0);
+  const codes = built.map((b,i) => [b.code, i]).filter(x => x[0] != null).sort((a,b) => a[0]-b[0]);
+  const cmap = cmap4(codes);
+  const os2 = new BW();
+  const avg = Math.round(built.reduce((a,b) => a + b.adv, 0) / nG);
+  os2.u16(4).i16(avg).u16(400).u16(5).u16(0)
+     .i16(Math.round(SV_UPM*0.65)).i16(Math.round(SV_UPM*0.7)).i16(0).i16(Math.round(SV_UPM*0.48))
+     .i16(Math.round(SV_UPM*0.65)).i16(Math.round(SV_UPM*0.7)).i16(0).i16(Math.round(SV_UPM*0.05))
+     .i16(Math.round(SV_UPM*0.05)).i16(Math.round(SV_UPM*0.26)).i16(0).zero(10)
+     .u32(1).u32(0).u32(0).u32(0)
+     .tag('KNST').u16(0x0040).u16(codes.length ? codes[0][0] : 32)
+     .u16(codes.length ? codes[codes.length-1][0] : 32)
+     .i16(ASC).i16(DESC).i16(0)
+     /* 🔴 usWin＊は行送りでなく【切り取る箱】。インクに合わせないと Windows で上が切れる */
+     .u16(Math.max(ASC, yMax)).u16(Math.max(Math.abs(DESC), -yMin))
+     .u32(1).u32(0).i16(Math.round(SV_UPM*0.5)).i16(Math.round(SV_UPM*0.7))
+     .u16(0).u16(32).u16(2);
+  const post = new BW();
+  post.u32(0x00030000).u32(0).i16(Math.round(-SV_UPM*0.075)).i16(Math.round(SV_UPM*0.05))
+      .u32(0).u32(0).u32(0).u32(0).u32(0);
+
+  /* ── gvar（太い端との差） ── */
+  const gv = new BW(), gdata = new BW(), goff = [];
+  for(let g = 0; g < nG; g++){
+    goff.push(gdata.a.length);
+    const A = thin[g].cont.flat(), B = fat[g].cont.flat();
+    if(!A.length || A.length !== B.length) continue;
+    const dx = [], dy = [];
+    for(let i = 0; i < A.length; i++){
+      dx.push(Math.round(B[i].x) - Math.round(A[i].x));
+      dy.push(Math.round(B[i].y) - Math.round(A[i].y));
+    }
+    for(let i = 0; i < 4; i++){ dx.push(0); dy.push(0); }      /* 幻の4点 */
+    const body = [0x00].concat(packDeltas(dx), packDeltas(dy));
+    const w = new BW();
+    /* 🔴 データの始まりは【表の頭4 ＋ 山の見出し6】＝10。
+       山の見出し＝大きさ2 ＋ 印2 ＋ 峰（軸1本ぶん）2。
+       ここを間違えると gvar が読めない（実際に踏んだ）。 */
+    w.u16(1).u16(4 + 6);
+    /* 🔴 0x8000＝峰をこの場に／0x2000＝点の番号もこの場に。忘れると1画素も動かない */
+    w.u16(body.length).u16(0x8000 | 0x2000).i16(f2dot14(1));
+    w.bytes(body);
+    while(w.a.length % 2) w.u8(0);
+    gdata.bytes(w.out);
+  }
+  goff.push(gdata.a.length);
+  gv.u16(1).u16(0).u16(1).u16(0).u32(0).u16(nG).u16(1);
+  gv.u32(4*(nG+1) + 20);
+  for(const x of goff) gv.u32(x);
+  gv.bytes(gdata.out);
+
+  /* ── fvar / STAT（軸は wght＝イラレでスライダーが出る） ── */
+  const fv = new BW();
+  const INST = [['Regular', 400], ['Bold', 900]];
+  fv.u16(1).u16(0).u16(16).u16(2).u16(1).u16(20).u16(INST.length).u16(4 + 1*4);
+  fv.tag('wght').u32(fixed16(400)).u32(fixed16(400)).u32(fixed16(900)).u16(0).u16(256);
+  INST.forEach((it, i) => { fv.u16(257 + i).u16(0).u32(fixed16(it[1])); });
+  const st = new BW();
+  st.u16(1).u16(1).u16(8).u16(1).u32(20).u16(0).u32(0).u16(2);
+  st.tag('wght').u16(256).u16(0);
+
+  const fam = ((document.getElementById('fnName').value || 'Sakuji').trim() || 'Sakuji') + ' VF';
+  const ps  = fam.replace(/[^A-Za-z0-9]/g, '') || 'SakujiVF';
+  const name = nameTable([
+    [0, '作字 SAKUJI で作った可変活字 ／ 木下スタジオ'],
+    [1, fam], [2, 'Regular'], [3, fam + ' ' + Date.now()],
+    [4, fam + ' Regular'], [5, 'Version 1.000'], [6, ps + '-Regular'],
+    [256, 'Weight'], [257, 'Regular'], [258, 'Bold'],
+  ]);
+
+  const tabs = [['OS/2', os2.out], ['cmap', cmap], ['glyf', glyfW.out], ['head', head.out],
+                ['hhea', hhea.out], ['hmtx', hmtx.out], ['loca', locaW.out], ['maxp', maxp.out],
+                ['name', name], ['post', post.out],
+                ['fvar', fv.out], ['gvar', gv.out], ['STAT', st.out]];
+  tabs.sort((a, b) => a[0] < b[0] ? -1 : 1);
+  const n = tabs.length;
+  const sr2 = 16 * Math.pow(2, Math.floor(Math.log2(n)));
+  const dir = new BW();
+  dir.u32(0x00010000).u16(n).u16(sr2).u16(Math.floor(Math.log2(n))).u16(n*16 - sr2);
+  let off = 12 + n*16;
+  const padded = tabs.map(([t, d]) => [t, pad4(d)]);
+  for(let i = 0; i < n; i++){
+    dir.tag(padded[i][0]).u32(sum32(padded[i][1])).u32(off).u32(tabs[i][1].length);
+    off += padded[i][1].length;
+  }
+  const head0 = dir.out;
+  const file = new Uint8Array(off);
+  file.set(head0, 0);
+  let p2 = head0.length;
+  for(const [, d] of padded){ file.set(d, p2); p2 += d.length; }
+  let hoff = 12;
+  for(let i = 0; i < n; i++){
+    const to = ((head0[12+i*16+8]<<24) | (head0[12+i*16+9]<<16) |
+                (head0[12+i*16+10]<<8) | head0[12+i*16+11]) >>> 0;
+    if(padded[i][0] === 'head') hoff = to;
+  }
+  const adj = (0xB1B0AFBA - sum32(file)) >>> 0;
+  file[hoff+8] = (adj>>>24)&255; file[hoff+9] = (adj>>>16)&255;
+  file[hoff+10] = (adj>>>8)&255; file[hoff+11] = adj&255;
+
+  svLast = file;
+  if(!svQuiet) svDownload(file, fam.replace(/\s+/g,'-') + '.ttf');
+  stat('可変フォントを出した — ' + seen.size + ' 字／太さ 400〜900'
+       + (skipped.length ? '／出せなかった ' + skipped.slice(0,5).join('・') : ''));
+  return file;
+}
+let svLast = null, svQuiet = false;
+function svDownload(u8, name){
+  const b = new Blob([u8], { type:'font/ttf' });
+  if(typeof dlPick === 'function') dlPick(b, name);
+  else { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; a.click(); }
+}
+
 async function fnBuildOTF(bold){
   if(typeof opentype === 'undefined'){ stat('opentype.js が読めていない'); return; }
   /* ⭐ 太い端を鋳るときは、集めたパスを太らせてから写す（点の数は変えない） */
@@ -9498,6 +9866,12 @@ document.getElementById('glyExport2')?.addEventListener('click', async () => {
   const c = document.getElementById('glyCount'); const bak = c ? c.textContent : '';
   if(c) c.textContent = '2本ぶん鋳ています…';
   await fnBuildPair();
+  if(c) c.textContent = bak;
+});
+document.getElementById('glyExport3')?.addEventListener('click', async () => {
+  const c = document.getElementById('glyCount'); const bak = c ? c.textContent : '';
+  if(c) c.textContent = '可変で鋳ています…';
+  await svBuildVF();
   if(c) c.textContent = bak;
 });
 document.getElementById('glyClose')?.addEventListener('click', closeGlyphs);
