@@ -356,9 +356,9 @@
   <button class="btn" id="tvGo" style="width:100%">動画を出す</button>
   <div class="mod">⭐ <b>1往復</b>＝頭と尻がぴったり合う（継ぎ目のないループ）<br>
     ⭐⭐ <b>秒で</b>＝<b>行って戻るのをやめて「ゆらぐ」</b>。動く対象も範囲も同じまま、
-    通る道だけ<b>なめらかな乱れ</b>に替える<br>
-    　⭐ <b>秒を伸ばすほど、遅くなるのではなく【ちがう表情が増える】</b>
-    　（およそ 1.3 秒にひとつ山ができる）。同じ動きは繰り返さない<br>
+    <b>折り返す場所だけ</b>を乱す<br>
+    　⭐⭐ <b>速さは画面の再生とまったく同じ</b>。遅くならない<br>
+    　⭐ <b>秒を伸ばすほど【折り返しが増える】</b>（およそ 1.6 秒にひとつ）＝同じ動きは繰り返さない<br>
     　⭐ 頭と尻は一致したまま＝<b>継ぎ目のないループ</b>は守られる<br>
     　⚠️ <b>画面の再生は今までどおりの往復</b>（ゆらぐのは書き出しの中だけ）。
     　きっちり往復させたいときは <b>1往復・2往復・3往復</b> を選ぶ<br>
@@ -1459,27 +1459,35 @@ function setPhaseVal(key, v){
       K 個の乱数点をなめらかに繋いだ曲線。K を秒に合わせて増やすと
       **秒が伸びるほど、ちがう表情が増える**（遅くなるのではなく、長く変わり続ける）。
    ⚠️ 乱数点は K で剰余を取るので **u=0 と u=1 が同じ値**＝継ぎ目のないループは守られる。 */
-let _wobK = -1, _wobSd = null, _wobPts = null;
-function wander(u, K, sd){
-  const n = Math.max(3, Math.round(K));
-  /* ⚠️ 乱数点をそのまま使うと、山の数が少ないとき【振れ幅が痩せる】＝往復より動きが弱くなる。
-     ⭐ K 個の点を先に作って 0〜1 に伸ばす＝どの秒でも往復と同じ強さで振れる。
-     ⭐ 点は K と種で決まるので、一度作って使い回す（毎コマ作らない）。 */
-  if(n !== _wobK || sd !== _wobSd){
-    _wobK = n; _wobSd = sd;
-    const a = [];
-    for(let i = 0; i < n; i++){
-      const x = Math.sin(i * 127.1 + (sd || 0) * 311.7) * 43758.5453;
-      a.push(x - Math.floor(x));
-    }
-    let lo = Math.min.apply(null, a), hi = Math.max.apply(null, a);
-    const d = (hi - lo) < 1e-6 ? 1 : (hi - lo);
-    _wobPts = a.map(v => (v - lo) / d);
+/* ⭐⭐ ゆらぎ ── 2026-08-21（作り直し2回目）
+   🔴 木下＝「動き自体のランダムさを長くしてほしい」→ そのあと「速度が遅くなった」
+   ⚠️ 1回目は【乱数点をなめらかに繋ぐ】作りにした。これは山の高さで速さが変わる
+      ＝隣り合う点が近いと、そこだけ這うように遅くなる。だから「遅くなった」。
+   ⭐⭐ 速さは【画面の再生と同じ】に固定して、**折り返す場所だけ**を乱す。
+   ⭐ 継ぎ目：区間を ＋L と −L の対で作るので足すと必ず 0 に戻る
+      ＝最後のコマが最初のコマと同じ絵（順番を混ぜても和は変わらない）。
+   ⭐ 端（0 と 1）では跳ね返す＝範囲は往復と同じ 0〜1 をきっちり使う。 */
+function wobblePath(total, v, hills, sd){
+  let z = ((Math.abs(sd | 0) + 1) * 2654435761) >>> 0;
+  const rnd = () => { z ^= z << 13; z ^= z >>> 17; z ^= z << 5; z >>>= 0; return z / 4294967296; };
+  const m = Math.max(1, Math.round(hills / 2));
+  const w = [];
+  for(let i = 0; i < m; i++) w.push(0.45 + rnd() * 1.1);
+  const sum = w.reduce((x, y) => x + y, 0) * 2;
+  const segs = [];
+  for(const L of w){ const f = L / sum * total; segs.push(f, -f); }
+  for(let i = segs.length - 1; i > 0; i--){
+    const j = (rnd() * (i + 1)) | 0, t = segs[i]; segs[i] = segs[j]; segs[j] = t;
   }
-  const pts = _wobPts;
-  const f = (u - Math.floor(u)) * n, i0 = Math.floor(f), t = f - i0;
-  const e = t * t * (3 - 2 * t);                 // なめらかに繋ぐ
-  return pts[i0 % n] * (1 - e) + pts[(i0 + 1) % n] * e;
+  const fold = x => { const y = ((x % 2) + 2) % 2; return 1 - Math.abs(y - 1); };
+  const out = new Float64Array(total);
+  let x = 0, si = 0, left = Math.abs(segs[0]), dir = segs[0] < 0 ? -1 : 1;
+  for(let i = 0; i < total; i++){
+    out[i] = fold(x);
+    x += v * dir;
+    if(--left <= 0 && si < segs.length - 1){ si++; left = Math.abs(segs[si]); dir = segs[si] < 0 ? -1 : 1; }
+  }
+  return out;
 }
 function setPhase(u, key, base, wob){
   const k = key || anKey();
@@ -1664,7 +1672,7 @@ document.getElementById('anGo')?.addEventListener('click', () => {
     if(flow <= 0) return { err:'「流れ」が 0 なので何も動きません' };
     let step = flow / 100 * 0.01;                    // 画面と同じ刻み（1往復＝1.0）
     const mode = seg('tvLoop','1');
-    let loops, total, wob = 0;
+    let loops, total, wob = 0, span = 1;
     if(mode === 'sec'){
       /* 🔴🔴 2026-08-21 ── ここを作り直した。
          木下＝「同じうごきが繰り返され秒数がながくなっているだけ。
@@ -1678,17 +1686,23 @@ document.getElementById('anGo')?.addEventListener('click', () => {
       const want = Math.max(1, +(document.getElementById('tvSec')?.value || 6));
       loops = 1;
       total = Math.max(2, Math.round(want * fps));
-      step  = 1 / total;
-      /* ⭐ ゆらぎの山の数＝およそ 1.6 秒に1つ。秒を伸ばすほど表情が増える
-         （遅くなるのではなく、長く変わり続ける）。 */
-      wob = Math.max(3, Math.round(want / 1.3));
+      /* 🔴 step は画面と同じまま＝【速さを変えない】。
+         ⚠️ ここを 1/total にすると「秒いっぱいに引き伸ばす」＝遅くなる。それが前回の失敗。 */
+      /* ⭐ 折り返しの間隔は【画面の1往復】を物差しにする。
+         ⚠️ 秒だけで決めると、短い区間ばかりになって【その場で細かく揺れる】＝振れ幅が痩せる。
+         1往復＝1/step コマ。その半分（片道）を1区間の目安にすると、往復と同じ大きさで振れる。 */
+      const hills = Math.max(2, Math.round(total * step * 2));
+      wob = wobblePath(total, step, hills, +P.seed || 0);
+      /* ⭐ 速さを画面と同じにした以上、**どこまで振れるかは 速さ×秒 で決まる**。
+         足りないなら黙って小さく動かすのでなく、画面で言う（流れを上げれば大きく振れる）。 */
+      span = Math.min(1, total * step / 2);   // 往きと戻りがあるので片道ぶんが目安
     } else {
       loops = +mode || 1;
       total = Math.max(2, Math.round(loops / step));
     }
     /* ⭐ 1往復にかかる秒（画面に出す用） */
     const one = total / loops / fps;
-    return { fps, loops, step, total, sec: total / fps, one, wob };
+    return { fps, loops, step, total, sec: total / fps, one, wob, span };
   }
   /* ⭐ 触れるのに何も起きないつまみを出さない＝秒のつまみは「秒で」のときだけ */
   function loopUI(){
@@ -1706,7 +1720,10 @@ document.getElementById('anGo')?.addEventListener('click', () => {
       + (p.err ? '<br>⚠️ ' + p.err
           : '<br>' + p.total + ' コマ・' + p.sec.toFixed(1) + '秒・' + p.fps + 'fps・'
             /* ⚠️ 秒モードは往復ではなく【ゆらぎ】なので、そう書く（1往復と出すと嘘になる） */
-            + (p.wob > 0 ? 'ゆらぎ 山' + p.wob : p.loops + '往復'));
+            + ((p.wob && p.wob.length) ? 'ゆらぎ（速さは画面と同じ）' : p.loops + '往復')
+            + ((p.wob && p.span < 0.9)
+               ? '<br>⚠️ この秒だと、いまの<b>流れ</b>では動く幅を<b>最大でも ' + Math.round(p.span*100)
+                 + '%</b> までしか使えません（速さを画面と同じにしているため）。<br>　大きく振らせたいなら <b>流れ</b>を上げるか、<b>秒</b>を伸ばす' : ''));
   }
 
   /* ══ ZIP（圧縮なし＝store）══ */
