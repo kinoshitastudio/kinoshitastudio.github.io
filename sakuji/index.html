@@ -929,7 +929,8 @@
   </div>
   <div id="glyGrid"></div>
   <div id="glyNote">⭐ 押すと<b>その字の枠へ寄る</b>（無ければ作る）。描き終わったら<b>右上の〔.otf を書き出す〕</b><br>
-    ⚠️ 薄い字＝まだ描いていない枠／白い字＝描いてある</div>
+    ⚠️ 薄い字＝まだ描いていない枠／白い字＝描いてある<br>
+    ⭐ <b>太い端</b>を上げると、マスの絵に<b>赤い輪郭</b>で「どこまで太るか」が重なる</div>
 </div></div>
 <div id="manual"><div id="manualIn">
   <button id="manClose">×</button>
@@ -9237,20 +9238,58 @@ function fnBoldAmt(){ const e = document.getElementById('fnBold'); return e ? +e
 function fnOffsetPath(src, d){
   const p = src.clone({ insert:false });
   const segs = p.segments;
-  if(!segs || segs.length < 2) return p;
-  const pts = segs.map(sg => {
-    /* 前後へ向かう向きを平均して接線にする（ハンドルがあればそれを使う） */
-    const prev = sg.previous ? sg.previous.point : sg.point;
-    const next = sg.next ? sg.next.point : sg.point;
-    let t = new Point(0, 0);
-    const ho = sg.handleOut, hi = sg.handleIn;
-    t = t.add(ho && ho.length ? ho.normalize() : next.subtract(sg.point).normalize());
-    t = t.add(hi && hi.length ? hi.normalize().multiply(-1) : sg.point.subtract(prev).normalize());
-    if(!t.length) t = next.subtract(prev);
-    if(!t.length) return sg.point.clone();
-    return sg.point.add(t.normalize().rotate(90).multiply(d));
+  const n = segs.length;
+  if(!segs || n < 2) return p;
+  /* ⭐⭐ 法線の出し方 ── 手描きは点が多い（44点とか）。素朴に出すと点ごとのブレが増幅して、
+     🔴 輪郭に棘が出る（木下＝2026-08-21「こうなってるわ」）。3つで抑える：
+       ① 向きは【隣の点】から取る（ハンドルから取ると、尖った所で向きが暴れる）
+       ② 隣どうしで【均す】（1点だけ跳ねているのを抑える）
+       ③ 尖った角は【伸ばす量に上限】を付ける（付けないと角から棘が飛び出す）
+     ⚠️ どれをやっても【点の数は変えない】＝軸の条件は守られる。 */
+  const P0 = segs.map(sg => sg.point);
+  const raw = [];
+  for(let i = 0; i < n; i++){
+    const a = P0[(i - 1 + n) % n], b = P0[i], c = P0[(i + 1) % n];
+    let e1 = b.subtract(a), e2 = c.subtract(b);
+    if(!e1.length) e1 = e2;
+    if(!e2.length) e2 = e1;
+    if(!e1.length && !e2.length){ raw.push(new Point(0, 0)); continue; }
+    const n1 = e1.normalize().rotate(90), n2 = e2.normalize().rotate(90);
+    let nn = n1.add(n2);
+    if(nn.length < 1e-6) nn = n2;                      /* 折り返し＝隣の向きに任せる */
+    raw.push(nn.normalize());
+  }
+  /* ② 均す（前・自分・次の平均） */
+  const sm = raw.map((v, i) => {
+    const a = raw[(i - 1 + n) % n], c = raw[(i + 1) % n];
+    const q = a.add(v.multiply(2)).add(c);
+    return q.length ? q.normalize() : v;
   });
-  pts.forEach((q, i) => { segs[i].point = q; });
+  /* ③ 角の伸ばし量に上限（1 / cos の形。cos が小さい＝尖っているほど伸びる） */
+  const pts = P0.map((b, i) => {
+    const e2 = P0[(i + 1) % n].subtract(b);
+    const face = e2.length ? e2.normalize().rotate(90) : sm[i];
+    const cos = Math.abs(sm[i].dot(face));
+    const miter = Math.min(1.8, 1 / Math.max(0.42, cos));   /* ⚠️ 1.8 で頭打ち＝棘にしない */
+    return b.add(sm[i].multiply(d * miter));
+  });
+  /* ハンドルは【動いた量に合わせて縮める／伸ばす】。
+     ⚠️ そのままだと、点だけ動いて曲線が膨らみ、輪が自分と交わる。 */
+  const hOut = segs.map(sg => sg.handleOut.clone());
+  const hIn  = segs.map(sg => sg.handleIn.clone());
+  for(let i = 0; i < n; i++){
+    const j = (i + 1) % n;
+    const before = P0[j].subtract(P0[i]).length;
+    const after  = pts[j].subtract(pts[i]).length;
+    const k = before > 1e-6 ? after / before : 1;
+    if(hOut[i].length) hOut[i] = hOut[i].multiply(k);
+    if(hIn[j].length)  hIn[j]  = hIn[j].multiply(k);
+  }
+  for(let i = 0; i < n; i++){
+    segs[i].point = pts[i];
+    segs[i].handleOut = hOut[i];
+    segs[i].handleIn  = hIn[i];
+  }
   return p;
 }
 /* 図形1つを太らせる。⭐ 向きは【いちばん大きい輪郭が太るほう】にそろえる */
@@ -9802,7 +9841,26 @@ function glyThumb(a){
   if(!src.length) return null;
   let g = null, url = null;
   try{
-    g = new Group(src.map(c => c.clone()));
+    /* 🔴 clone() は同じ親に挿さる＝盤に複製が残る。必ず insert:false で作る */
+    g = new Group({ insert:false });
+    src.forEach(c => g.addChild(c.clone({ insert:false })));
+    /* ⭐⭐ 太い端を【マスの絵にも重ねる】。
+       🔴 つまみを動かしても一覧が何も変わらないと「太くならない」に見える
+          （木下＝2026-08-21「スライダーを右に調整しても太くならない」）。
+          盤の薄い輪郭は蓋の下で見えないので、ここに出すしかない。 */
+    const amt = (typeof fnBoldAmt === 'function') ? fnBoldAmt() : 0;
+    if(amt){
+      const d = R.height * amt / 1000;
+      const out = [], trash = [];
+      g.children.slice().forEach(c => fnCollect(c, out, trash));
+      out.forEach(q => {
+        const b = fnBoldItem(q, d);
+        if(!b) return;
+        b.fillColor = null; b.strokeColor = '#a03323'; b.strokeWidth = Math.max(2, R.height/120);
+        g.addChild(b);
+      });
+      trash.forEach(t => { try{ t.remove(); }catch(e){} });
+    }
     const inner = g.exportSVG({ asString:true, precision:2 });
     url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="' +
@@ -9923,10 +9981,16 @@ function glySay(msg, warn){
   const v = document.getElementById('glyBoldV');
   if(!a || !b) return;
   const pull = () => { a.value = b.value; if(v) v.textContent = b.value; };
+  let redraw = 0;
   a.addEventListener('input', () => {
     b.value = a.value;
     if(v) v.textContent = a.value;
     b.dispatchEvent(new Event('input', { bubbles:true }));   /* 盤の薄い輪郭も追う */
+    /* ⚠️ 一覧の描き直しは重い（字の数だけ SVG を作る）＝手が止まってから1回だけ */
+    clearTimeout(redraw);
+    redraw = setTimeout(() => {
+      if(document.getElementById('glyphs')?.classList.contains('open')) renderGlyGrid();
+    }, 180);
   });
   b.addEventListener('input', pull);
   pull();
