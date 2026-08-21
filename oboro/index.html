@@ -314,8 +314,10 @@
   <div class="mod">⭐ <b>余白</b>＝縁に取る帯の幅（版面の辺に対する％）。
     上に被せるのではなく<b>中の絵が縮む</b>＝帯も写真も一緒に小さくなる<br>
     ⭐ 縦横の比は保ったまま縮むので<b>絵は歪まない</b>（辺の長さに比例した余白になる）<br>
+    ⭐⭐ <b>余白は上のレイヤー</b>＝<b>中の絵は余白の下に潜る</b>。だから
+    <b>中の大きさ</b>を上げても寄せても<b>縁は必ず残る</b>（はみ出したぶんは余白の下に隠れる）<br>
     ⭐ <b>中の大きさ・中のよこ・中のたて</b>＝額に入れたあと、<b>中の絵ごと</b>大きくしたり寄せたりする。
-    100 で余白ぴったり。上げると余白へはみ出す（そこは切れる）<br>
+    100 で余白ぴったり<br>
     ⚠️ <b>絵の大きさ・よこ・たて</b>（上）は<b>版面の中で写真を動かす</b>ほう。
     こちらは<b>額の中で絵ごと動かす</b>ほう＝別のもの<br>
     ⚠️ <b>余白0・中の大きさ100・よこたて0 で今までどおり</b>。PNG・SVG・動画のどれにも同じように入る</div>
@@ -875,9 +877,13 @@ function matOf(W, H){
   const ox = (+P.matx || 0) / 100, oy = (+P.maty || 0) / 100;
   /* ⚠️ どれも既定のままなら【何も通さない】＝今までの絵が1画素も変わらない */
   if(p <= 0 && z === 1 && !ox && !oy) return null;
-  /* ⭐ 中の大きさ＝額に収めた絵ごとの倍率。100 で余白ぴったり、上げると余白へはみ出す */
+  /* ⭐⭐ 余白は【上のレイヤー】（2026-08-21 木下「中の画像は下のレイヤーにいる状態にして。
+     なので、ズームすると余白自体は上にあってかわりはない。中のよこ、中のたても」）。
+     ⭐ だから【窓】は余白だけで決まる。中の大きさ・中のよこ・中のたては窓を動かさない
+        ＝寄せても大きくしても、はみ出したぶんは**余白の下に隠れる**（縁は必ず残る）。 */
+  const win = { x:W * p, y:H * p, w:W * (1 - p * 2), h:H * (1 - p * 2) };
   const s = Math.max(0.05, (1 - p * 2) * z);
-  return { s, mx:(W - W * s) / 2 + ox * W, my:(H - H * s) / 2 + oy * H };
+  return { s, mx:(W - W * s) / 2 + ox * W, my:(H - H * s) / 2 + oy * H, win };
 }
 function draw(){
   if(!img) return;
@@ -891,10 +897,14 @@ function draw(){
     ctx.fillStyle = P.matcol || '#f2efe6';
     ctx.fillRect(0, 0, cv.width, cv.height);
     ctx.save();
+    /* ⭐⭐ ① 額の窓で切る（余白だけで決まる・中の大きさでは動かない）
+       ＝これが「余白が上のレイヤーにある」ということ。中の絵を大きくしても縁は必ず残る。 */
+    ctx.beginPath(); ctx.rect(MT.win.x, MT.win.y, MT.win.w, MT.win.h); ctx.clip();
+    /* ② 中の絵の置き方（大きさ・よこ・たて） */
     ctx.translate(MT.mx, MT.my); ctx.scale(MT.s, MT.s);
-    /* 🔴 帯は【のび】で版面の外へはみ出す。前は canvas の縁がそれを切っていた。
+    /* 🔴 ③ 帯は【のび】で版面の外へはみ出す。前は canvas の縁がそれを切っていた。
        縮めたら切る人がいなくなり、はみ出した帯が余白へ流れ出した（実測 よこの余白 0%）。
-       ⭐ 版面そのものを切り抜きにする＝前と同じ場所で切れる。 */
+       ⭐ 版面そのものも切り抜きにする＝前と同じ場所で切れる。 */
     ctx.beginPath(); ctx.rect(0, 0, cv.width, cv.height); ctx.clip();
   }
   ctx.drawImage(base, 0, 0);                          // まず写真（焼いてあるもの）
@@ -1482,15 +1492,19 @@ function anCoarse(){
   if(k >= 0.999) return;                 // もう十分小さい＝触らない
   anFull = { W, H };
   boardTo(Math.max(2, Math.round(W * k)), Math.max(2, Math.round(H * k)));
+  /* 🔴 2026-08-21 木下「再生ボタンをおすとボードごと右下にガクッと移動される」。
+     ⚠️ #cv は `left:0; top:0; transform-origin:0 0` で、置き場所は translate(TX,TY) だけで決まる。
+        見えている左上＝(TX,TY)・見えている大きさ＝(cv.width×Z)。
+     🔴 だから版面を小さくしたとき直すのは【Z だけ】。TX/TY まで割ると左上ごと動く（＝これが原因）。 */
   const r = cv.width / W;
-  Z /= r; TX /= r; TY /= r; fitZ /= r; applyView();
+  Z /= r; fitZ /= r; applyView();
 }
 function anFine(){
   if(!anFull) return;
   const W = anFull.W, H = anFull.H; anFull = null;
   const r = cv.width / W;
   boardTo(W, H);
-  Z *= r; TX *= r; TY *= r; fitZ *= r; applyView();
+  Z *= r; fitZ *= r; applyView();              // ⚠️ ここも Z だけ（TX/TY は触らない）
   draw();
 }
 function anTick(now){
@@ -1958,12 +1972,17 @@ document.getElementById('bSVG').onclick = () => {
      ⚠️ 帯は矩形のままで、まとめて縮めるだけ＝Illustrator でも1枚ずつ触れる状態を守る。 */
   const MT = matOf(cv.width, cv.height);
   if(MT){
-    /* 🔴 画面と同じ切り抜きを入れる＝【のび】ではみ出した帯が余白へ流れ出さない */
-    defs += `<clipPath id="matclip" clipPathUnits="userSpaceOnUse">`
+    /* 🔴 画面と同じ切り抜きを2枚とも入れる＝見えているものがそのまま出る。
+       ⭐ 外＝額の窓（余白が上のレイヤー）／内＝版面（のびのはみ出しを切る）。 */
+    defs += `<clipPath id="matwin" clipPathUnits="userSpaceOnUse">`
+          + `<rect x="${MT.win.x.toFixed(1)}" y="${MT.win.y.toFixed(1)}"`
+          + ` width="${MT.win.w.toFixed(1)}" height="${MT.win.h.toFixed(1)}"/></clipPath>`
+          + `<clipPath id="matclip" clipPathUnits="userSpaceOnUse">`
           + `<rect x="0" y="0" width="${cv.width}" height="${cv.height}"/></clipPath>`;
     out = `<rect x="0" y="0" width="${cv.width}" height="${cv.height}" fill="${P.matcol || '#f2efe6'}"/>`
+        + `<g clip-path="url(#matwin)">`
         + `<g transform="translate(${MT.mx.toFixed(1)},${MT.my.toFixed(1)}) scale(${MT.s.toFixed(5)})">`
-        + `<g clip-path="url(#matclip)">${out}</g></g>`;
+        + `<g clip-path="url(#matclip)">${out}</g></g></g>`;
   }
   const svg = `<?xml version="1.0" encoding="UTF-8"?>\n`
     + `<svg xmlns="http://www.w3.org/2000/svg" width="${cv.width}" height="${cv.height}" `
