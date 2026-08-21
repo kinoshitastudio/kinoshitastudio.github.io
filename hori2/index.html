@@ -642,11 +642,10 @@
         <button data-v="1">断面</button>
         <button data-v="2" class="on">両方</button>
       </div>
-      <div class="row"><label>色<i>いろ</i></label><input type="color" data-p="gridC" value="#2a5bd7"></div>
+      <div class="row" id="gridCRow"><label>色<i>いろ</i></label><input type="color" data-p="gridC" value="#2a5bd7"></div>
       <div class="row" id="gridHueRow"><label>色ずらし</label><input type="range" data-p="gridHue" min="-180" max="180" step="1" value="0"><span class="val"></span></div>
       <div class="row" id="gridSpanRow"><label>色幅</label><input type="range" data-p="gridSpan" min="0" max="180" step="1" value="40"><span class="val"></span></div>
-      <div class="mod" id="gridGrayNote" style="display:none">🔴 いまは<b>色相を持たない色</b>（灰・黒・白）なので、
-        <b>色ずらし・色幅は効きません</b>。選んだとおりの色が出ます。色を転がすなら色のついた色を選ぶ</div>
+      <div class="mod" id="gridGrayNote" style="display:none"></div>
       <div class="row"><label>色の濃さ</label><input type="range" data-p="gridSat" min="0" max="100" step="1" value="0"><span class="val"></span></div>
       <div class="mod">RES＝いくつに割るか／FINE＝粒の中で何周期／GAP＝粒どうしの隙間<br>面に沿う＝帯の向きを彫りの面から取る。深さが帯の位相を送る<br>
       ⭐<b>色の濃さ</b>＝帯そのものに色を差す。<b>0 で今までどおりモノクローム</b>。<br>
@@ -1558,16 +1557,33 @@ function hex2hsv(hex){
   return [h, mx <= 1e-6 ? 0 : d/mx, mx];
 }
 
-/* ⭐ 効かないつまみは「効かない」と画面で言う（黙って置かない）。
-   灰・黒・白は色相を持たないので、色ずらし・色幅は回すものが無い。 */
+/* 🔴🔴 パネルに色が出ているのに盤が灰色、を起こさない。
+   ここには「効いていない」が2段ある：
+     ① 色の濃さ＝0 → 色そのものが1ミリも効いていない（既定がこれ）
+     ② 色は効くが灰・黒・白 → 色相が無いので色ずらし・色幅だけが効かない
+   ⭐ 効かない段の行は薄くして、なぜ効かないかを書く。既定の絵は変えない。 */
 function gridGraySync(){
   const n = document.getElementById('gridGrayNote'); if(!n) return;
-  const hsv = hex2hsv(P.gridC);
+  const hsv  = hex2hsv(P.gridC);
   const gray = hsv[1] < 0.06 || hsv[2] < 0.04;
-  n.style.display = gray ? '' : 'none';
-  ['gridHueRow','gridSpanRow'].forEach(id => {
-    const r = document.getElementById(id); if(r) r.style.opacity = gray ? .34 : '';
-  });
+  const off  = (+P.gridSat || 0) < 1;            // ① 色そのものが効いていない
+  const dim  = (id, on) => { const r = document.getElementById(id); if(r) r.style.opacity = on ? .34 : ''; };
+
+  dim('gridCRow',    off);
+  dim('gridHueRow',  off || gray);
+  dim('gridSpanRow', off || gray);
+
+  if(off){
+    n.style.display = '';
+    n.innerHTML = '🔴 <b>色の濃さが 0</b> なので、いま盤はモノクロームです（選んだ色は出ていません）。'
+                + '<b>色の濃さ</b>を上げるか、<b>色を選び直す</b>と効きます（選び直すと自動で 60 まで上がります）';
+  }else if(gray){
+    n.style.display = '';
+    n.innerHTML = '🔴 いまは<b>色相を持たない色</b>（灰・黒・白）なので、'
+                + '<b>色ずらし・色幅は効きません</b>。選んだとおりの色が出ます。色を転がすなら色のついた色を選ぶ';
+  }else{
+    n.style.display = 'none';
+  }
 }
 
 /* ⭐ 控えの中身は1か所で作る。localStorage も 書き出す JSON も【同じもの】。
@@ -2828,6 +2844,8 @@ document.querySelectorAll('input[type=range]').forEach(r => {
     if(['typeSize','typeDetail','typeX','typeY'].includes(r.dataset.p)) retypeSoon();
     if(['objScale','objX','objY'].includes(r.dataset.p)) syncObj();
     if(r.dataset.p === 'papN') syncGrad();      // 色数で出すつまみが変わる
+    // ⭐ 色の濃さは「他のつまみが効くかどうか」を決める。動かしたら註を出し直す
+    if(r.dataset.p === 'gridSat' && typeof gridGraySync === 'function') gridGraySync();
     saveLocal();
   };
   r.addEventListener('input', sync);
@@ -2843,7 +2861,6 @@ document.querySelectorAll('input[type=color][data-p]').forEach(c => {
        GRID の色は【色の濃さ】が 0 だと何も起きない作りにしてある（既定を変えないため）。
        ⭐ だから【色を選んだ時点で】濃さが 0 なら勝手に上げる。
           選んだのに何も起きない、が起きない。 */
-    if(c.dataset.p === 'gridC') gridGraySync();
     if(c.dataset.p === 'gridC' && P.gridSat < 5){
       P.gridSat = 60;
       const r = document.querySelector('input[data-p="gridSat"]');
@@ -2851,6 +2868,8 @@ document.querySelectorAll('input[type=color][data-p]').forEach(c => {
       if(!ON.grid){ ON.grid = true;
         const u = document.querySelector('.unit[data-unit="grid"]'); if(u) u.classList.remove('off'); }
     }
+    // ⚠️ 上げたあとに註を出し直す（先に呼ぶと「濃さ 0」の古い註が残る）
+    if(c.dataset.p === 'gridC' && typeof gridGraySync === 'function') gridGraySync();
     saveLocal();
   });
 });
