@@ -3267,6 +3267,19 @@ function roundCorner(seg, r){
 /* ⭐ 文字を置く。字間・行間・縦組に対応するため、1字ずつ置いて束ねる。
    ⚠️ paper.js の PointText には字間も縦組も無いので、こちらで積む。
    欧文も詰まらないよう、送りは「その字の実寸 ＋ 字間」で測る。 */
+
+/* ⭐ 組み直した文字へ、掴んで拡大したぶんを引き継ぐ。
+   ⚠️ 位置は【引き継いだあと】に合わせる（先に合わせると、拡大で中心がずれる）。 */
+function keepTextScale(g, old, at){
+  if(!g || !old) return g;
+  const sx = old.__sclX || 1, sy = old.__sclY || 1;
+  if(sx !== 1 || sy !== 1){
+    g.scale(sx, sy, g.bounds.center);
+    g.__sclX = sx; g.__sclY = sy;
+  }
+  if(at) g.position = at;
+  return g;
+}
 function placeText(pt){
   snapshot();
   tzOnNewObject();                                    // ⭐ 新しいものは単色から（グラデ・粒を引き継がない）
@@ -5871,6 +5884,16 @@ hook('drag', '拡大縮小のハンドル', e => {
   const kx = horiz ? (b.width  * sx) / (cur.width  || 1) : 1;
   const ky = vert  ? (b.height * sy) / (cur.height || 1) : 1;
   items.forEach(it => it.scale(kx, ky, a));
+  /* ⭐⭐ 文字は【掛けた倍率】を覚えておく。
+     🔴 打ち直し・字間の変更は、文字を【作ったときの大きさ】で組み直すので、
+        覚えていないと掴んで拡大したぶんが消える
+        （木下＝「左端でサイズを変更し、また打ち込み編集すると元のサイズに戻る」2026-08-21）。
+     ⚠️ 覚えるのは倍率だけ。fontSize は触らない（触ると次の組み直しで二重に掛かる）。 */
+  items.forEach(it => {
+    if(!(it.__isText || it instanceof paper.PointText)) return;
+    it.__sclX = (it.__sclX || 1) * kx;
+    it.__sclY = (it.__sclY || 1) * ky;
+  });
   guides();
   stat('拡大縮小 — Shiftで比を保つ／Altで中心から');
   return true;
@@ -5952,6 +5975,7 @@ function closeInlineText(commit){
       if(t.__size) s.value = t.__size;
       t.remove();
       const g = placeText(at);
+      keepTextScale(g, t, at);                       // ⭐ 掴んで拡大したぶんを引き継ぐ
       f.value = kf; w.value = kw; s.value = ks;      // パネルは元の表示へ戻す
       box.value = bak;
       if(g) g.selected = true;
@@ -6056,6 +6080,7 @@ async function reflowSelectedText(changed){   // changed＝いま触ったスラ
       const g = tsubuize(src, tzOpt());
       if(temp) src.remove();
       if(g){
+        keepTextScale(g, old, null);                 // ⭐ 粒でも、掴んで拡大したぶんは残す
         g.__tzText = tzTextRecipeOf(txtObj) || r;   // 新しい組みで覚え直す
         g.__tzAt = txtObj.position.clone();
         g.insertAbove(old);
@@ -6092,8 +6117,10 @@ async function reflowSelectedText(changed){   // changed＝いま触ったスラ
     const at = old.position.clone();
     const box = document.getElementById('tinput');
     const bak = box.value; box.value = old.__txt || box.value;
+    const scl = { __sclX: old.__sclX, __sclY: old.__sclY };
     old.remove();
     const g = placeText(at);
+    keepTextScale(g, scl, at);                       // ⭐ 掴んで拡大したぶんを引き継ぐ
     box.value = bak;
     if(g) made.push(g);
   });
