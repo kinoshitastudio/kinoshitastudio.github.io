@@ -421,6 +421,10 @@
   #glyCount{font-size:10.5px;color:#7a7770;letter-spacing:.08em}
   #glyClose{background:none;border:1px solid rgba(26,26,24,.22);color:#3a3a34;width:26px;height:26px;
     border-radius:4px;cursor:pointer;font-size:13px;line-height:1}
+  /* 🔴 ここに置かないと【一覧を閉じてパネルまで戻る】ことになる＝出来ているのに出口が無い */
+  #glyExport{background:#1a1a18;border:none;color:#EBE8E2;height:26px;padding:0 12px;
+    border-radius:4px;cursor:pointer;font-family:inherit;font-size:10.5px;letter-spacing:.1em}
+  #glyExport:hover{background:#000}
   #glyClose:hover{background:rgba(26,26,24,.06)}
   /* ⚠️ 地を線の色にすると【最後の行の余りが帯になって残る】。枠は各スロットに持たせる */
   #glyGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));
@@ -896,11 +900,12 @@
     <div id="glyTabs"></div>
     <div id="glyRight">
       <span id="glyCount"></span>
+      <button id="glyExport" title="いま割り当ててある字を .otf に鋳る">.otf を書き出す</button>
       <button id="glyClose" title="閉じる">×</button>
     </div>
   </div>
   <div id="glyGrid"></div>
-  <div id="glyNote">⭐ 押すと<b>その字の枠へ寄る</b>（無ければ作る）。描いたら〔FONT〕で .otf に鋳る<br>
+  <div id="glyNote">⭐ 押すと<b>その字の枠へ寄る</b>（無ければ作る）。描き終わったら<b>右上の〔.otf を書き出す〕</b><br>
     ⚠️ 薄い字＝まだ描いていない枠／白い字＝描いてある</div>
 </div></div>
 <div id="manual"><div id="manualIn">
@@ -1473,6 +1478,7 @@
   <div class="note">置いた文字を選んで「アウトライン化」＝<b>編集できるパス</b>になる<br>そこからブーリアンで彫っていく</div>
   <button class="btn" id="bLoadFont" style="width:100%">フォントファイルを読み込む（.ttf / .otf）</button>
   <input type="file" id="fontFile" accept=".ttf,.otf,.woff,font/ttf,font/otf" multiple style="display:none">
+  <div id="fontList" style="margin:6px 0 4px"></div>
   <div class="note" id="fontnote">読み込んだ書体は<b>グリフのベジェをそのまま</b>取り出す＝アンカーが少なく曲線が正確<br>未読込の書体はラスタ追跡になる（近似）<br>⚠️ .ttc は非対応（.otf / .ttf を選ぶ）</div>
 
   <h2>PATH</h2>
@@ -3478,6 +3484,130 @@ async function addFontFace(name, buf, font){
 }
 
 const FONTS = {};                                   // family名 → opentype.Font
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 読み込んだ書体を【残す】── リロードで消えない
+   🔴 localStorage では入らない（かな込みの可変フォントは 1.8MB。base64 にすると
+      2.4MB になり、数本で 5MB の上限を超えて【黙って保存に失敗する】）。
+      だから IndexedDB に【実体（バイト列）】をそのまま置く。
+   ⭐ 実体を持つので「ファイルを動かしたら切れる」ことは起きない。
+      切れるのは【別のブラウザ・別の端末で開いた／保存を消した】とき。
+      そのときは作品が使っている書体名だけが残るので、🔴 リンク切れとして名指しし、
+      その場で読み込み直せるようにする。
+   ⚠️ 木下のデータは触らない。書体は別の引き出しに置く。
+   ══════════════════════════════════════════════════════════════ */
+const FDB = { name:'sakuji_fonts', store:'files' };
+function fdbOpen(){
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(FDB.name, 1);
+    r.onupgradeneeded = () => { if(!r.result.objectStoreNames.contains(FDB.store)) r.result.createObjectStore(FDB.store); };
+    r.onsuccess = () => res(r.result);
+    r.onerror  = () => rej(r.error);
+  });
+}
+async function fdbPut(name, buf){
+  const db = await fdbOpen();
+  return new Promise((res, rej) => {
+    const t = db.transaction(FDB.store, 'readwrite');
+    t.objectStore(FDB.store).put(buf, name);
+    t.oncomplete = () => res(true); t.onerror = () => rej(t.error);
+  });
+}
+async function fdbAll(){
+  const db = await fdbOpen();
+  return new Promise((res) => {
+    const t = db.transaction(FDB.store, 'readonly'), o = t.objectStore(FDB.store);
+    const out = [];
+    const kr = o.getAllKeys(), vr = o.getAll();
+    t.oncomplete = () => { kr.result.forEach((k, i) => out.push([k, vr.result[i]])); res(out); };
+    t.onerror = () => res([]);
+  });
+}
+async function fdbDel(name){
+  const db = await fdbOpen();
+  return new Promise((res) => {
+    const t = db.transaction(FDB.store, 'readwrite');
+    t.objectStore(FDB.store).delete(name);
+    t.oncomplete = () => res(true); t.onerror = () => res(false);
+  });
+}
+
+/* 作品が使っている書体名（＝手元に無ければリンク切れ）。⭐ 文字と粒の両方が覚えている */
+function fontsInUse(){
+  const out = new Set();
+  const walk = it => {
+    if(!it) return;
+    if(it.__fam) out.add(famKey(it.__fam));
+    if(it.__tzText && it.__tzText.fam) out.add(famKey(it.__tzText.fam));
+    if(it.fontFamily) out.add(famKey(it.fontFamily));
+    if(it.children) it.children.forEach(walk);
+  };
+  artLayer.children.forEach(walk);
+  /* ⚠️ 元から入っている書体はリンク切れにならない */
+  const builtin = new Set([...document.querySelectorAll('#tfont option')]
+    .filter(o => !/◆/.test(o.textContent)).map(o => famKey(o.value)));
+  return [...out].filter(n => n && !builtin.has(n));
+}
+function renderFontList(){
+  const el = document.getElementById('fontList'); if(!el) return;
+  const have = Object.keys(FONTS);
+  const missing = fontsInUse().filter(n => !have.includes(n));
+  el.innerHTML = '';
+  if(!have.length && !missing.length) return;
+  have.forEach(n => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;margin:2px 0;font-size:10.5px';
+    row.innerHTML = '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">◆ ' +
+      n.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])) + '</span>';
+    const b = document.createElement('button');
+    b.className = 'mini'; b.textContent = '外す'; b.style.cssText = 'padding:3px 7px;font-size:10px';
+    b.addEventListener('click', async () => {
+      delete FONTS[n]; await fdbDel(n);
+      [...document.querySelectorAll('#tfont option')].forEach(o => { if(famKey(o.value) === n) o.remove(); });
+      renderFontList(); stat('「' + n + '」を外した（保存からも消えた）');
+    });
+    row.appendChild(b); el.appendChild(row);
+  });
+  missing.forEach(n => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;margin:2px 0;font-size:10.5px;color:#e08b7a';
+    row.innerHTML = '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🔴 ' +
+      n.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])) + ' — 見つかりません</span>';
+    const b = document.createElement('button');
+    b.className = 'mini'; b.textContent = '読み込み直す'; b.style.cssText = 'padding:3px 7px;font-size:10px';
+    b.addEventListener('click', () => { relinkFor = n; document.getElementById('fontFile').click(); });
+    row.appendChild(b); el.appendChild(row);
+  });
+}
+let relinkFor = null;                 /* リンク切れの行から呼んだときの相手 */
+
+/* ⭐ 起動時に、しまってある書体を戻す（読み込みと同じ道を通す） */
+async function restoreFonts(){
+  let list = [];
+  try{ list = await fdbAll(); }catch(e){ return; }
+  for(const [name, buf] of list){
+    try{
+      const font = opentype.parse(buf);
+      FONTS[name] = font;
+      await addFontFace(name, buf, font);
+      const sel = document.getElementById('tfont');
+      if(![...sel.options].some(o => famKey(o.value) === name)){
+        const o = document.createElement('option');
+        o.value = '"' + name + '", sans-serif'; o.textContent = name + ' ◆';
+        sel.appendChild(o);
+      }
+    }catch(e){}
+  }
+  if(list.length){
+    const names = Object.keys(FONTS);
+    const note = document.getElementById('fontnote');
+    if(note) note.innerHTML = '◆ 印＝<b>グリフを直接取れる書体</b>（' + names.length + '）<br>' + names.join('／');
+    stat('しまってあった書体を戻した（' + list.length + '）');
+  }
+  renderFontList();
+  MEAS_KEY = ''; kick();
+}
+
 function famKey(css){                               // 'Zen Kaku Gothic New", sans-serif' → 最初の書体名
   return String(css||'').split(',')[0].trim().replace(/^["']|["']$/g,'');
 }
@@ -3493,6 +3623,13 @@ document.getElementById('fontFile').addEventListener('change', async e => {
       FONTS[name] = font;
       // 画面表示にも使えるように、同じ名前で FontFace として登録する
       try{ _lastVfRange = await addFontFace(name, buf, font); }catch(err){}
+      /* ⭐ 実体をしまう＝リロードしても消えない。⚠️ 失敗しても読み込み自体は止めない */
+      try{ await fdbPut(name, buf); }catch(err){ stat('⚠️ 書体をしまえなかった（容量かも）'); }
+      /* ⭐ リンク切れの行から呼んだのに【別の書体】を選んだら、そう言う（黙って直さない） */
+      if(relinkFor && relinkFor !== name){
+        stat('🔴 「' + relinkFor + '」ではなく「' + name + '」でした — 名前が違うと繋がりません');
+      }
+      relinkFor = null;
       const sel = document.getElementById('tfont');
       if(![...sel.options].some(o => famKey(o.value) === name)){
         const o = document.createElement('option');
@@ -3511,6 +3648,7 @@ document.getElementById('fontFile').addEventListener('change', async e => {
   document.getElementById('fontnote').innerHTML = names.length
     ? `◆ 印＝<b>グリフを直接取れる書体</b>（${names.length}）<br>` + names.join('／')
     : document.getElementById('fontnote').innerHTML;
+  renderFontList();
   if(names.length) stat('フォントを読み込んだ — アウトライン化が正確になる'
     + (_lastVfRange ? '／可変フォント：ウェイト ' + _lastVfRange + ' が効く' : ''));
   e.target.value = '';
@@ -3829,6 +3967,31 @@ document.getElementById('bBack').onclick  = () => { snapshot(); selected().forEa
 document.getElementById('bClear').onclick = () => { snapshot(); artLayer.removeChildren(); guides(); stat('CLEAR'); };
 
 /* ══ 保存・読み込み（続きから編集できる形）══ */
+
+/* ══⭐⭐ FONT のつまみを保存に入れる ══
+   ⭐ どの枠がどの字か（ch）は S.abs に入っているので【もう保存されている】。
+      入っていなかったのは【FONT のつまみ】＝書体名・ベースライン・送り・CAP・x・ガイド。
+   🔴 とくに【ベースライン】は .otf の中身（ASC / DESC / 字の高さ）を決めるので、
+      これが戻らないと、同じデータから鋳ても【前と違うフォント】が出る。
+   ⚠️ 増やすときは 手動保存（bSave）と自動保存（AUTOKEY）の【両方】に足すこと。 */
+function fontSettings(){
+  const v = id => { const e = document.getElementById(id); return e ? e.value : null; };
+  const seg = id => { const b = document.querySelector('#' + id + ' button.on'); return b ? b.dataset.v : null; };
+  return { name:v('fnName'), base:v('fnBase'), cap:v('fnCap'), x:v('fnX'),
+           adv:seg('fnAdv'), guide:seg('fnGuide'), ghost:seg('fnGhost') };
+}
+function applyFontSettings(o){
+  if(!o) return;
+  const set = (id, val) => { const e = document.getElementById(id);
+    if(e && val != null){ e.value = val; e.dispatchEvent(new Event('input', { bubbles:true })); } };
+  set('fnName', o.name); set('fnBase', o.base); set('fnCap', o.cap); set('fnX', o.x);
+  [['fnAdv', o.adv], ['fnGuide', o.guide], ['fnGhost', o.ghost]].forEach(([id, val]) => {
+    if(val == null) return;
+    document.querySelectorAll('#' + id + ' button').forEach(b => b.classList.toggle('on', b.dataset.v === val));
+  });
+  if(typeof renderFnList === 'function') renderFnList();
+  if(typeof drawGrid === 'function') drawGrid();
+}
 document.getElementById('bSave').onclick = () => {
   const keep = artLayer.children.map(c => c.selected);
   artLayer.children.forEach(c => c.selected = false);
@@ -3845,7 +4008,9 @@ document.getElementById('bSave').onclick = () => {
                // ⭐ 粒のつまみ（スライダー14＋柄＋パレット＋色）も保存する。
                //   ⚠️ 入れていなかったので、開き直すと粒パネルが既定に戻っていた
                //     （かけた粒そのものは図形として残るが、続きの調整ができない）。
-               tz: (typeof tzSettingsSnapshot === 'function') ? tzSettingsSnapshot() : null },
+               tz: (typeof tzSettingsSnapshot === 'function') ? tzSettingsSnapshot() : null,
+               /* ⭐ GLYPHS ＝ 枠の ch（abs に入っている）＋ FONT のつまみ */
+               font: (typeof fontSettings === 'function') ? fontSettings() : null },
     // ⭐ 自動保存と同じく【粒抜き＋作り方】で書き出す。増やすときは両方に足すこと。
     ...(() => { const r = exportArtWithoutGrains(); return { art: r.art, grains: r.grains }; })(),
   };
@@ -3868,6 +4033,8 @@ document.getElementById('fileJSON').addEventListener('change', e => {
       artLayer.importJSON(d.art);
       const s = d.settings || {};
       Object.assign(S, s);
+      /* ⭐ FONT のつまみも戻す（ベースラインが戻らないと、鋳た .otf が前と変わる） */
+      if(typeof applyFontSettings === 'function') applyFontSettings(s.font);
       // UIを保存値に合わせ直す
       ['sw','face','div','body'].forEach(id => {
         const r = document.getElementById(id);
@@ -5244,7 +5411,9 @@ function autoSave(){
                // ⭐ 粒のつまみ（スライダー14＋柄＋パレット＋色）も保存する。
                //   ⚠️ 入れていなかったので、開き直すと粒パネルが既定に戻っていた
                //     （かけた粒そのものは図形として残るが、続きの調整ができない）。
-               tz: (typeof tzSettingsSnapshot === 'function') ? tzSettingsSnapshot() : null },
+               tz: (typeof tzSettingsSnapshot === 'function') ? tzSettingsSnapshot() : null,
+               /* ⭐ GLYPHS ＝ 枠の ch（abs に入っている）＋ FONT のつまみ */
+               font: (typeof fontSettings === 'function') ? fontSettings() : null },
         ...(() => { const r = exportArtWithoutGrains(); return { art: r.art, grains: r.grains }; })(),
       };
       artLayer.children.forEach((c,i) => c.selected = keep[i]);
@@ -5335,6 +5504,7 @@ function autoLoad(){
 if(S.abs.length === 1 && S.abs[0].x === 0 && S.abs[0].y === 0){
   S.abs[0].x = paper.view.center.x; S.abs[0].y = paper.view.center.y;
 }
+if(typeof applyFontSettings === 'function') applyFontSettings((d.settings||{}).font);
 abSync();
     }
     const min = Math.round((Date.now() - (d.at||Date.now()))/60000);
@@ -5368,6 +5538,8 @@ abSync();
 }
 /* 起動時に復元。⚠️ 復元でまた保存が走らないよう、少し待ってから繋ぐ */
 setTimeout(() => { autoLoad(); drawGrid(); }, 60);
+/* ⭐ しまってある書体を戻す（絵より後でよい＝非同期） */
+setTimeout(() => { restoreFonts(); }, 120);
 
 /* まっさらから始めたいとき */
 document.getElementById('bClear')?.addEventListener('click', () => {
@@ -9202,6 +9374,17 @@ document.getElementById('glyBtn')?.addEventListener('click', () => {
   on ? closeGlyphs() : openGlyphs();
 });
 document.getElementById('glyClose')?.addEventListener('click', closeGlyphs);
+/* ⭐ 一覧のまま鋳る。⚠️ 出来上がりの知らせは一覧の上に出す（下の盤は見えていないので） */
+document.getElementById('glyExport')?.addEventListener('click', async () => {
+  const n = S.abs.filter(a => (a.ch || '').trim()).length;
+  if(!n){ alert('枠に字が1つも割り当たっていません'); return; }
+  const c = document.getElementById('glyCount');
+  const bak = c ? c.textContent : '';
+  if(c) c.textContent = '鋳ています…';
+  await fnBuildOTF();
+  if(c) c.textContent = bak;
+  renderGlyGrid();
+});
 addEventListener('keydown', e => {
   if(e.key === 'Escape' && document.getElementById('glyphs')?.classList.contains('open')){
     e.stopPropagation(); closeGlyphs();
