@@ -6532,20 +6532,60 @@ function openInlineOver(t){
   t.opacity = 0.18;                       // 元は薄く残して、位置の手がかりにする
   setTimeout(() => { inlineT.focus(); inlineT.select(); }, 0);
 }
-/* ダブルクリック＝文字なら打ち直しに入る（先に走らせて、パス確定より優先する） */
-cv.addEventListener('dblclick', e => {
+/* ⭐⭐ 打ち直しに入る道は【この1本】── マウスの dblclick も、指の2回叩きも、ここへ来る。
+   ⚠️ 指の許容は広めに取る（画面が小さいほど狙いがずれる。マウスの 8 では当たらない）。 */
+function tryEditAt(cx, cy, touch){
   const r = cv.getBoundingClientRect();
-  const pt = paper.view.viewToProject(new Point(e.clientX - r.left, e.clientY - r.top));
-  const hit = artLayer.hitTest(pt, { fill:true, stroke:true, tolerance:8/paper.view.zoom });
+  const pt = paper.view.viewToProject(new Point(cx - r.left, cy - r.top));
+  const tol = (touch ? 22 : 8) / paper.view.zoom;
+  const hit = artLayer.hitTest(pt, { fill:true, stroke:true, tolerance:tol });
   const t = hit && textRootOf(hit.item);
-  if(!t) return;
-  e.preventDefault(); e.stopImmediatePropagation();
+  if(!t) return false;
   artLayer.children.forEach(c => c.selected = false);
   t.selected = true;
   editTarget = t;
   openInlineOver(t);
   stat('打ち直して Enter — Esc で取消');
+  return true;
+}
+/* ダブルクリック＝文字なら打ち直しに入る（先に走らせて、パス確定より優先する） */
+cv.addEventListener('dblclick', e => {
+  if(!tryEditAt(e.clientX, e.clientY, false)) return;
+  e.preventDefault(); e.stopImmediatePropagation();
 }, true);
+
+/* ══⭐⭐ 指で2回叩いても打ち直しに入る ══
+   🔴 モバイルでは dblclick が来ない（木下＝「モバイルだと選択ツールでダブルクリックしても
+      編集できない」2026-08-21）。掴む処理が pointer を押さえて preventDefault するので、
+      ブラウザが【マウスのふりをした dblclick】を作らないため。
+   ⭐ だから叩いた時刻と場所を自分で見る。2回目が【300ms 以内・24px 以内】なら打ち直しへ。
+   ⚠️ 掴んで動かしたときは入らない（押してから離すまでに 10px 以上動いたら、それは移動）。
+   ⚠️ ここは【見るだけ】＝掴む処理には一切割り込まない（capture ではなく後ろで聞く）。
+      2026-08-03 にキャンバスの掴みへ割り込んで3回壊しているので、同じ道は通らない。 */
+let _tapT = 0, _tapX = 0, _tapY = 0, _tapDown = null;
+cv.addEventListener('pointerdown', e => {
+  if(e.pointerType === 'mouse') return;
+  _tapDown = { x:e.clientX, y:e.clientY };
+}, false);
+cv.addEventListener('pointerup', e => {
+  if(e.pointerType === 'mouse') return;            /* マウスは dblclick が来るので触らない */
+  const moved = _tapDown && Math.hypot(e.clientX - _tapDown.x, e.clientY - _tapDown.y) > 10;
+  _tapDown = null;
+  if(moved){ _tapT = 0; return; }                  /* 動かした＝移動なので、叩いた数に数えない */
+  const now = Date.now();
+  const near = Math.hypot(e.clientX - _tapX, e.clientY - _tapY) < 24;
+  if(now - _tapT < 300 && near){
+    _tapT = 0;
+    if(tryEditAt(e.clientX, e.clientY, true)){
+      e.preventDefault();
+      /* 🔴 iOS は【指を離したその場】で focus しないと、キーボードが出ない。
+         openInlineOver の中の setTimeout だけでは間に合わないことがある。 */
+      try{ inlineT.focus(); }catch(err){}
+    }
+    return;
+  }
+  _tapT = now; _tapX = e.clientX; _tapY = e.clientY;
+}, false);
 
 
 /* ══ キャンバスの上でグラデを触る（Figma のあれ）══
