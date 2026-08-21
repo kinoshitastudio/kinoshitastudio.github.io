@@ -219,6 +219,52 @@
            n0 + ' → ' + S.stops.length + 'ストップ');
       }
 
+      // ══ 17. 太い端（2026-08-21 に落書きになっていた所）
+      //   ⚠️ 手描きに寄せる＝点が細かい線（間隔 7 くらい）。ここでしか出ない不具合だった
+      artLayer.removeChildren();
+      {
+        const a = S.abs[0]; a.ch = 'A';
+        const Rc = abRectOf(a);
+        const mk = (x0,y0,x1,y1,seed) => {
+          const p = new Path({ strokeColor:'black', strokeWidth:120, strokeCap:'round', strokeJoin:'round' });
+          const L = Math.hypot(x1-x0, y1-y0), st = Math.max(2, Math.round(L/7));
+          for(let s=0;s<=st;s++){ const t=s/st;
+            p.add(new Point(x0+(x1-x0)*t+Math.sin((s+seed)*1.7)*1.6,
+                            y0+(y1-y0)*t+Math.cos((s+seed)*2.3)*1.6)); }
+          p.simplify(2.5); artLayer.addChild(p); return p;
+        };
+        const cx = Rc.center.x, cy = Rc.center.y;
+        mk(cx-150,cy+200,cx-10,cy-200,0);
+        mk(cx-10,cy-200,cx+140,cy+200,11);
+        mk(cx-95,cy+60,cx+85,cy+60,23);        // ⭐ わざと重ねる＝合体していないと穴が抜ける所
+        const items = artLayer.children.slice();
+        const e = fnEnds(Rc, items, Rc.height * 90 / 1000);
+        const cnt = x => { if(!x) return []; const ps = (x.className==='CompoundPath') ? x.children : [x];
+                           return ps.map(p => p.segments.length); };
+        const tn = cnt(e.thin), ft = cnt(e.fat);
+        ok('太い端：重なりが1つの輪に合体する', tn.length === 1, tn.length + '本');
+        ok('太い端：両端で輪の数と点がそろう（可変の条件）',
+           tn.length === ft.length && tn.every((v,i) => v === ft[i]), '細'+tn.join('/')+' 太'+ft.join('/'));
+        ok('太い端：面積が増える', !!e.fat && Math.abs(e.fat.area) > Math.abs(e.thin.area),
+           (Math.abs(e.thin.area)|0) + ' → ' + (e.fat ? Math.abs(e.fat.area)|0 : 0));
+        // 🔴 落書きの正体＝輪が自分と交わること。交点が出たら落とす
+        let xs = 0;
+        try{ xs = e.fat.getCrossings ? e.fat.getCrossings(e.fat).length : 0; }catch(err){ xs = -1; }
+        ok('太い端：輪が自分と交わらない', xs === 0, xs + '箇所');
+        // 盤の下見は【作品を増やさない】
+        document.getElementById('fnBold').value = '90';
+        document.getElementById('fnBold').dispatchEvent(new Event('input', { bubbles:true }));
+        const n0 = artLayer.children.length;
+        drawGrid(); drawGrid();
+        ok('太い端：描き直しても作品の図形が増えない', artLayer.children.length === n0,
+           n0 + ' → ' + artLayer.children.length);
+        let pv = 0; gridLayer.children.forEach(c => { if(c.__fnBold) pv++; });
+        ok('太い端：盤に下見が出る', pv > 0, pv + '枚');
+        if(e.fat) try{ e.fat.remove(); }catch(err){}
+        document.getElementById('fnBold').value = '0';
+        document.getElementById('fnBold').dispatchEvent(new Event('input', { bubbles:true }));
+      }
+
     } catch(e){
       R.push({ name:'⛔ テスト中に例外', pass:false, detail: e && (e.message + ' @ ' + (e.stack||'').split('\n')[1]) });
     }
