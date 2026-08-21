@@ -51,6 +51,12 @@
     color:var(--fg);font-size:44px;line-height:1.15;letter-spacing:0;
     resize:vertical;outline:none;font-family:"CHU-live",monospace}
   #try:focus{box-shadow:0 6px 22px rgba(28,28,30,.10),0 0 0 3px rgba(28,28,30,.12)}
+  /* ⭐ 打った字がフォントに無いとき、黙って元の書体に落ちる＝「入らない」に見える。
+     何が無いかを名指しして、その場で足せるようにする */
+  #addMiss{border:none;border-radius:9999px;background:#b8402f;color:#fff;
+    font-family:inherit;font-size:10.5px;font-weight:600;letter-spacing:.02em;
+    padding:4px 11px;cursor:pointer;margin-left:auto}
+  #addMiss:hover{background:#98301f}
 
   #panel{width:308px;flex:0 0 308px;height:100%;overflow-y:auto;
     background:var(--panel);backdrop-filter:blur(24px) saturate(140%);
@@ -200,7 +206,7 @@
 <div id="stage">
   <canvas id="cv"></canvas>
   <div id="tryWrap">
-    <div id="tryHead">TYPE HERE — 出来た活字で打つ<b id="tryNote">まだ鋳ていない</b></div>
+    <div id="tryHead">TYPE HERE — 出来た活字で打つ<b id="tryNote">まだ鋳ていない</b><button id="addMiss" class="hide"></button></div>
     <textarea id="try" spellcheck="false">MODULAR
 TYPE</textarea>
   </div>
@@ -287,7 +293,7 @@ TYPE</textarea>
   <!-- ══ 文字セット ══ -->
   <div class="grp">
     <label class="h">鋳る字</label>
-    <textarea id="t_chars">ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789</textarea>
+    <textarea id="t_chars">ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,:;!?-+=/()[]&amp;@#*"'</textarea>
     <div class="seg" id="setSeg">
       <button data-v="alnum">A–Z 0–9</button>
       <button data-v="full">英数記号</button>
@@ -519,7 +525,7 @@ let P = {
         （＝RUI が日本語で潰れた理由と同じ）。細らせ −0.10 と拾い方 0.42 がその逃がし。 */
   font:'mono', weight:700, fs:0.95, grow:-0.10, thr:0.46,
   adv:'prop', side:1, monoW:8,
-  chars:SETS.alnum,
+  chars:SETS.full,     /* ⭐ 既定に a–z と約物を入れる。大文字＋数字だけだと「小文字が無い」と見える */
   /* 板 ── 何を並べるか／どう並べるか／どの版面に置くか */
   mode:'sheet', word:'TYPO\nGRAPHY', tate:'yoko',
   perRow:9, ratio:'1:1', long:1600, margin:0.08,
@@ -1136,6 +1142,7 @@ async function toLive(){
     el('try').style.fontFamily = '"' + nm + '", monospace';
     lastCastMs = performance.now() - t0;
     el('tryNote').textContent = `${r.nG} 字ぶん・${Math.round(r.bytes/1024)}KB・${(lastCastMs/1000).toFixed(2)}秒で鋳た`;
+    missSync();
     stat('試し打ちに入れた — ' + r.codes + ' 字が引ける');
     return r;
   }catch(e){
@@ -1144,6 +1151,34 @@ async function toLive(){
     return null;
   }
 }
+/* ⭐⭐ 打った字のうち、鋳っていない字を名指しする。
+   🔴 フォントに無い字は【その字だけ元の書体】で出る＝「入らない」ように見えるが、実際は打っていないだけ。
+      黙って落とさせない（＝壊れて見えるなら表示の負け）。 */
+function missingChars(){
+  const have = new Set(charList());
+  const out = [], seen = new Set();
+  for(const ch of (el('try').value || '')){
+    if(ch === '\n' || ch === '\r' || ch === ' ') continue;
+    if(ch.codePointAt(0) > 0xFFFF) continue;
+    if(have.has(ch) || seen.has(ch)) continue;
+    seen.add(ch); out.push(ch);
+  }
+  return out;
+}
+function missSync(){
+  const m = missingChars(), b = el('addMiss');
+  b.classList.toggle('hide', !m.length);
+  if(m.length) b.textContent = '「' + m.slice(0, 12).join('') + '」が入っていない — 鋳る字に足す';
+}
+el('addMiss').onclick = () => {
+  const m = missingChars(); if(!m.length) return;
+  pushHist();
+  P.chars = (P.chars || '') + m.join('');
+  el('t_chars').value = P.chars;
+  kick(); saveLocal();
+  stat(m.length + '字を鋳る字に足した — 「' + m.join('') + '」');
+};
+el('try').addEventListener('input', missSync);
 el('b_try').onclick = () => toLive();
 el('b_ttf').onclick = () => {
   try{
