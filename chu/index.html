@@ -1090,6 +1090,7 @@ function render(ctx, W, H, transparent){
 let lastMs = 0, fps = 0;
 /* ⚠️ 動かしている間は【画面だけ】小さく焼く。絵は同じ・軽くなるだけ */
 const PREVIEW_LONG = 1100;
+let lastFullW = 0, lastFullH = 0;
 function paint(){
   if(P.mode !== 'word') buildPlan();
   const full = size();
@@ -1097,16 +1098,27 @@ function paint(){
   const k = L / P.long;
   const W = Math.max(2, Math.round(full.W * k)), H = Math.max(2, Math.round(full.H * k));
   const resized = (cv.width !== W || cv.height !== H);
-  if(resized){ cv.width = W; cv.height = H; }
+  /* ⭐⭐ 版面そのものが変わったのか、【焼く画素だけ】が変わったのかを分ける。
+     🔴 再生の間は小さく焼く（PREVIEW_LONG）ので画素は変わるが、版面は変わっていない。
+        ここを一緒にすると、再生・停止のたびに「ぴったり」に戻って
+        【寄って見ていた場所が飛ぶ】。 */
+  const boardChanged = (full.W !== lastFullW || full.H !== lastFullH);
+  if(resized){
+    /* ⭐ 焼く画素が変わっても、見えの大きさは変えない ── 直すのは【倍率だけ】。
+       位置（translate）まで掛けると盤ごと飛ぶ（transform-origin は左上なので x,y はそのまま）。 */
+    if(!boardChanged && cv.width) V.fit *= cv.width / W;
+    cv.width = W; cv.height = H;
+  }
   MEAS_KEY = '';
   const t0 = performance.now();
   render(g, W, H, false);
   /* 🔴 canvas は予約制。止まっているときだけ同期の入口を作って実測する
      （動いている間にやると、測ったせいで遅くなる） */
   if(!playing){ g.getImageData(0, 0, 1, 1); lastMs = performance.now() - t0; }
-  /* ⚠️ 盤の寸法が変わったときだけ「ぴったり」に戻す。
+  /* ⚠️ 「ぴったり」に戻すのは【版面が変わったときだけ】。
      つまみを動かすたびに戻すと、寄って見ている最中に勝手に引かれる。 */
-  if(resized) fitView(); else applyView();
+  if(boardChanged) fitView(); else applyView();
+  lastFullW = full.W; lastFullH = full.H;
   meter(full, k < 1);
 }
 
