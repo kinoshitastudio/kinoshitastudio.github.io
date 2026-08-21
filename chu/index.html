@@ -240,12 +240,24 @@ TYPE</textarea>
       <button data-v="square">四角</button>
       <button data-v="diamond">菱形</button>
       <button data-v="hex">六角</button>
+      <button data-v="oct">八角</button>
+      <button data-v="cross">十字</button>
+      <button data-v="star">星</button>
+    </div>
+    <div class="row"><span class="n">粒を置く場所</span></div>
+    <div class="seg" id="fillSeg">
+      <button data-v="solid">ベタ</button>
+      <button data-v="edge">ふち</button>
+      <button data-v="inner">うち</button>
     </div>
     <div class="row"><span class="n">升目からのはみ出し</span><output id="o_rad"></output></div>
     <input type="range" id="r_rad" min="0.5" max="2.2" step="0.005">
     <div class="row"><span class="n">粒を回す</span><output id="o_rot"></output></div>
     <input type="range" id="r_rot" min="0" max="90" step="1">
-    <div class="note">⭐⭐ 升目が<b>隙間ゼロで埋まる</b>倍率（＝そこから上は面が敷き詰まる）:<br>
+    <div class="note">⭐⭐ <b>ふち</b>＝まわりに空きがある升目だけに粒を置く＝<b>輪郭に沿った字</b>になる。
+      🔴 絵をなぞって作っていない（升目の世界のままなので、そのまま .ttf に焼ける）<br>
+      ⭐ <b>うち</b>＝ふちを抜いた内側だけ。⚠️ 線が細いと<b>ほとんど残らない</b>（下の板が「入らない字」として自分で言う）<br>
+      ⭐⭐ 升目が<b>隙間ゼロで埋まる</b>倍率（＝そこから上は面が敷き詰まる）:<br>
       <b>円 1.414 ／ 四角 1.414 ／ 菱形 2.000 ／ 六角 1.577</b><br>
       ⚠️ 四角が円と同じなのは、どの形も<b>半径 r の円に内接</b>させているから
       （外径 2r で揃える＝形を変えても倍率の意味が変わらない）。四角の一辺は r√2 なので、
@@ -499,11 +511,36 @@ const FONTS = [
   { v:'mono',   n:'等幅',   css:'"Space Mono",ui-monospace,Menlo,monospace',         fixedW:false },
 ];
 /* ⭐ 粒の形。円は弧、それ以外は【半径 r の円に内接する多角形】＝外径が 2r で揃う（RUI と同じ持ち方） */
+/* ⭐ 粒の形。円は弧、多角形は【半径 r の円に内接】、
+   十字・星は自前の点の並び（＝粒 TSUBU の8bitの粒に寄せた形）。
+   ⚠️ どの形も外径が 2r で揃う＝形を変えても「はみ出し」の数字の意味が変わらない。 */
+function starPts(n, inner){
+  return (r, rot) => {
+    const a = [];
+    for(let i = 0; i < n*2; i++){
+      const t = (rot - 90 + i * 180/n) * Math.PI/180;
+      const rr = (i % 2 ? r*inner : r);
+      a.push([rr*Math.cos(t), rr*Math.sin(t)]);
+    }
+    return a;
+  };
+}
+function crossPts(w){                       /* w＝腕の太さ（半径に対する割合） */
+  return (r, rot) => {
+    const a = [], k = r*w, c = Math.cos(rot*Math.PI/180), s2 = Math.sin(rot*Math.PI/180);
+    const raw = [[k,r],[-k,r],[-k,k],[-r,k],[-r,-k],[-k,-k],[-k,-r],[k,-r],[k,-k],[r,-k],[r,k],[k,k]];
+    for(const [x,y] of raw) a.push([x*c - y*s2, x*s2 + y*c]);
+    return a;
+  };
+}
 const SHAPES = [
   { v:'circle',  n:'円' },
   { v:'square',  n:'四角',  sides:4, off:45 },
   { v:'diamond', n:'菱形',  sides:4, off:0  },
   { v:'hex',     n:'六角',  sides:6, off:30 },
+  { v:'oct',     n:'八角',  sides:8, off:22.5 },
+  { v:'cross',   n:'十字',  pts:crossPts(0.34) },
+  { v:'star',    n:'星',    pts:starPts(5, 0.46) },
 ];
 const HIRA = 'あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわゐゑをん'
            + 'がぎぐげござじずぜぞだぢづでどばびぶべぼぱぴぷぺぽぁぃぅぇぉっゃゅょゎー';
@@ -519,7 +556,7 @@ SETS.all = SETS.full + SETS.kana;
 
 let P = {
   up:12, dn:4,                                 /* 升目：ベースラインの上・下（em＝16升） */
-  shape:'circle', rad:1.42, rot:0,
+  shape:'circle', rad:1.42, rot:0, fill:'solid',
   /* ⭐ 既定は【等幅＋升目を細かめ＋少し細らせる】。
      🔴 太い書体をそのまま粗い升目に落とすと、円のはみ出しで【字の中の穴が埋まって読めなくなる】
         （＝RUI が日本語で潰れた理由と同じ）。細らせ −0.10 と拾い方 0.42 がその逃がし。 */
@@ -597,10 +634,24 @@ function cellsOf(ch){
   sCtx.imageSmoothingEnabled = true; sCtx.imageSmoothingQuality = 'high';
   sCtx.drawImage(gCv, 0, 0, W, H, 0, 0, cols, rows);
   const d = sCtx.getImageData(0, 0, cols, rows).data;
-  const on = [], thr = P.thr * 255;
+  const thr = P.thr * 255;
+  const hit = (i, j) => (i >= 0 && j >= 0 && i < cols && j < rows
+                         && d[(j*cols + i)*4 + 3] >= thr);
+  const on = [];
   for(let j = 0; j < rows; j++)
-    for(let i = 0; i < cols; i++)
-      if(d[(j*cols + i)*4 + 3] >= thr) on.push({ i, j });
+    for(let i = 0; i < cols; i++){
+      if(!hit(i, j)) continue;
+      /* ⭐⭐ 粒の置き場所。
+         🔴 「輪郭に沿って粒を置く」を、絵をなぞって作らない。
+            【まわりに空きがある升目＝ふち】と決めれば、升目の世界のまま輪郭が出る
+            ＝そのまま .ttf に焼ける（なぞると点が増えて字ごとにブレる）。 */
+      if(P.fill !== 'solid'){
+        const edge = !hit(i-1,j) || !hit(i+1,j) || !hit(i,j-1) || !hit(i,j+1);
+        if(P.fill === 'edge'  && !edge) continue;
+        if(P.fill === 'inner' &&  edge) continue;
+      }
+      on.push({ i, j });
+    }
   return { cols, rows, on, adv };
 }
 
@@ -665,6 +716,11 @@ function unitContour(cx, cy, r, shape, rot){
       pts.push({ x:cx + Math.cos(a)*r,        y:cy + Math.sin(a)*r,        on:true  });
       pts.push({ x:cx + Math.cos(am)*r*K8,    y:cy + Math.sin(am)*r*K8,    on:false });
     }
+  }else if(s.pts){
+    /* ⚠️ フォント座標は y が上向き＝画面と逆。並びも逆にして時計回りに揃える */
+    const list = s.pts(r, rot);
+    for(let i = list.length - 1; i >= 0; i--)
+      pts.push({ x:cx + list[i][0], y:cy - list[i][1], on:true });
   }else{
     for(let i = 0; i < s.sides; i++){
       const a = -rad(s.off + rot) - i * 2*Math.PI/s.sides;
@@ -782,15 +838,18 @@ function layout(W, H){
 }
 function unitD(cx, cy, r, shape, rot){
   const s = SHAPES.find(x => x.v === shape);
-  if(!s || !s.sides){
+  if(!s || (!s.sides && !s.pts)){
     const R = +r.toFixed(2), D = +(r*2).toFixed(2);
     return `M ${(cx-r).toFixed(2)} ${cy.toFixed(2)} a ${R} ${R} 0 1 0 ${D} 0 a ${R} ${R} 0 1 0 ${-D} 0 Z`;
   }
   const a = [];
-  for(let i = 0; i < s.sides; i++){
-    const t = ((s.off + rot) + i * 360/s.sides) * Math.PI/180;
-    a.push(i ? 'L' : 'M', +(cx + r*Math.cos(t)).toFixed(2), +(cy + r*Math.sin(t)).toFixed(2));
-  }
+  const list = s.pts ? s.pts(r, rot)
+    : Array.from({length:s.sides}, (_, i) => {
+        const t = ((s.off + rot) + i * 360/s.sides) * Math.PI/180;
+        return [r*Math.cos(t), r*Math.sin(t)];
+      });
+  list.forEach(([dx, dy], i) =>
+    a.push(i ? 'L' : 'M', +(cx + dx).toFixed(2), +(cy + dy).toFixed(2)));
   a.push('Z');
   return a.join(' ');
 }
@@ -1263,6 +1322,7 @@ function rotSync(){
   el('rotNNote').classList.toggle('hide', !dead);
 }
 seg('shapeSeg', 'shape', rotSync);
+seg('fillSeg', 'fill');
 seg('fontSeg', 'font');
 seg('advSeg', 'adv', advSync);
 seg('gridSeg', 'grid');
@@ -1347,7 +1407,8 @@ function syncUI(){
   RANGES.forEach(k => { const r = el('r_'+k), o = el('o_'+k);
     if(!r) return; r.value = P[k]; if(o) o.textContent = (FMT[k] || String)(+r.value); });
   [['shapeSeg','shape'],['fontSeg','font'],['advSeg','adv'],['gridSeg','grid'],
-   ['modeSeg','mode'],['tateSeg','tate'],['ratioSeg','ratio'],['revBySeg','revBy']]
+   ['modeSeg','mode'],['tateSeg','tate'],['ratioSeg','ratio'],['revBySeg','revBy'],
+   ['fillSeg','fill']]
     .forEach(([id, key]) => el(id).querySelectorAll('button')
       .forEach(b => b.classList.toggle('on', b.dataset.v === String(P[key]))));
   el('t_chars').value = P.chars;
