@@ -201,11 +201,13 @@
     <label class="h">紙片で組む</label>
     <div class="row"><span class="n">紙片の大きさ</span><output id="o_tpG"></output></div>
     <input type="range" id="r_tpG" min="0.55" max="1.8" step="0.01">
+    <div class="row"><span class="n">太らせ</span><output id="o_tpF"></output></div>
+    <input type="range" id="r_tpF" min="0" max="0.12" step="0.002">
     <div class="row"><span class="n">紙片の詰め方</span><output id="o_tpS"></output></div>
     <input type="range" id="r_tpS" min="0.45" max="0.95" step="0.01">
     <div class="note">⭐<b>大きさ</b>＝<b>線の半分の太さ</b>の何倍の紙片を置くか。<b>1.0 でちょうど線に収まる</b>。
       🔴 上げすぎると紙片が線の外へはみ出て<b>隣の線とくっつき、字の中の空きが塞がる</b>。<br>
-      ⭐<b>詰め方</b>＝紙片どうしの重なり。<b>詰めるほど滑らか</b>、空けるほど<b>数珠つなぎ</b>。<br>⚠️ <b>枚数は決められない</b>＝紙片は線の太さまでしか大きくできず、繋がるには重なる必要がある。<b>太い字なら少ない大きな塊、細い字なら小さな紙片が数珠</b>になる（それが正しい）。<br>
+      ⭐⭐<b>太らせ</b>＝紙片を置く前に<b>字そのものを太らせる</b>。🔴 明朝のような細い書体は、そのままだと紙片が小さくなって<b>紙吹雪</b>になる。太らせてから置くと大きい紙片が乗る＝<b>KASA の形になる</b>。⭐ 木下＝「<b>太くて読めないかもレベルでもいい。KASA のあの形が出ていれば</b>」<br>⭐<b>詰め方</b>＝紙片どうしの重なり。<b>詰めるほど滑らか</b>、空けるほど<b>数珠つなぎ</b>。<br>⚠️ <b>枚数は決められない</b>＝紙片は線の太さまでしか大きくできず、繋がるには重なる必要がある。<b>太い字なら少ない大きな塊、細い字なら小さな紙片が数珠</b>になる（それが正しい）。<br>
       ⚠️ 縁のちぎれ方は上の<b>紙</b>の〔ちぎれ〕が持っている（紙片と同じものだから）。</div>
   </div>
 
@@ -469,7 +471,7 @@ let P = {
   /* 紙片で字を組む：紙片の大きさ／間
      🔴 大きさは【線の半分の太さ】を超えてはいけない。超えると紙片が線の外へはみ出て、
         隣の線と繋がり、中の空きが塞がる（実際に「暈」が板になった）。1.0 が“ちょうど”。 */
-  tpG:0.95, tpS:0.62,
+  tpG:0.95, tpS:0.62, tpF:0,
   /* 紙（重ねる紙片） */
   sheets:4, spread:0.50, size:0.80, tear:0.20, tau:0.74,
   /* 皺 */
@@ -562,34 +564,67 @@ function textMask(W,H,cam){
   }
   return g.getImageData(0,0,W,H).data;
 }
+let SHEETN=0;
 function sheetsFromText(rnd, W, H, cam){
   const S=cam.S, CX=cam.cx, CY=cam.cy, n=W*H;
   const src=textMask(W,H,cam);
-  /* ① いちばん近い外までの距離（2度なめるだけの近似。字の太さが出れば十分） */
-  const BIG=1e9, D=new Float32Array(n);
-  for(let i=0;i<n;i++) D[i]= src[i*4]>127 ? BIG : 0;
-  const d1=1, d2=1.41421356;
+  /* ① いちばん近い外までの距離（2度なめるだけの近似。字の太さが出れば十分）
+     ⭐⭐ 外側も同じように測る。⭐ そうすると【太らせ】が足し算1回で書ける。
+        木下＝2026-08-22「太くて読めないかもレベルでもいい。KASA のあの形が出ていれば」
+        ＝明朝のような細い書体は、そのままだと紙片が小さくなって紙吹雪になる。
+          先に字を太らせれば、大きい紙片が置ける＝KASA の形になる。 */
+  /* 🔴 ⚠️ 盤ぜんぶを走査しない。字が乗っているのは1〜2割しかない。
+     （この道具は「文字に切る」で一度これをやって 場 980→ に落としている。同じ型） */
+  const fs0=Math.max(4,P.tsize*S);
+  const fatPx=(P.tpF||0)*fs0;                   /* 太らせる量（字の高さに対する割合） */
+  let bx0=W, bx1=-1, by0=H, by1=-1;
   for(let y=0;y<H;y++){ const o=y*W;
-    for(let x=0;x<W;x++){ const i=o+x; if(D[i]===0) continue;
-      let m=D[i];
-      if(x>0)        m=Math.min(m,D[i-1]+d1);
-      if(y>0)        m=Math.min(m,D[i-W]+d1);
-      if(x>0&&y>0)   m=Math.min(m,D[i-W-1]+d2);
-      if(x<W-1&&y>0) m=Math.min(m,D[i-W+1]+d2);
-      D[i]=m; } }
-  for(let y=H-1;y>=0;y--){ const o=y*W;
-    for(let x=W-1;x>=0;x--){ const i=o+x; if(D[i]===0) continue;
-      let m=D[i];
-      if(x<W-1)        m=Math.min(m,D[i+1]+d1);
-      if(y<H-1)        m=Math.min(m,D[i+W]+d1);
-      if(x<W-1&&y<H-1) m=Math.min(m,D[i+W+1]+d2);
-      if(x>0&&y<H-1)   m=Math.min(m,D[i+W-1]+d2);
-      D[i]=m; } }
+    for(let x=0;x<W;x++) if(src[(o+x)*4]>127){
+      if(x<bx0)bx0=x; if(x>bx1)bx1=x; if(y<by0)by0=y; if(y>by1)by1=y; } }
+  if(bx1<0) return [];                          /* 字が1画素も無い（空欄） */
+  const mg=Math.ceil(fatPx)+6;
+  const X0=Math.max(0,bx0-mg), X1=Math.min(W-1,bx1+mg);
+  const Y0=Math.max(0,by0-mg), Y1=Math.min(H-1,by1+mg);
+
+  const d1=1, d2=1.41421356;
+  const chamfer = (F) => {
+    for(let y=Y0;y<=Y1;y++){ const o=y*W;
+      for(let x=X0;x<=X1;x++){ const i=o+x; if(F[i]===0) continue;
+        let m=F[i];
+        if(x>X0)         m=Math.min(m,F[i-1]+d1);
+        if(y>Y0)         m=Math.min(m,F[i-W]+d1);
+        if(x>X0&&y>Y0)   m=Math.min(m,F[i-W-1]+d2);
+        if(x<X1&&y>Y0)   m=Math.min(m,F[i-W+1]+d2);
+        F[i]=m; } }
+    for(let y=Y1;y>=Y0;y--){ const o=y*W;
+      for(let x=X1;x>=X0;x--){ const i=o+x; if(F[i]===0) continue;
+        let m=F[i];
+        if(x<X1)         m=Math.min(m,F[i+1]+d1);
+        if(y<Y1)         m=Math.min(m,F[i+W]+d1);
+        if(x<X1&&y<Y1)   m=Math.min(m,F[i+W+1]+d2);
+        if(x>X0&&y<Y1)   m=Math.min(m,F[i+W-1]+d2);
+        F[i]=m; } }
+  };
+  const BIG=1e9, D=new Float32Array(n);
+  for(let y=Y0;y<=Y1;y++){ const o=y*W;
+    for(let x=X0;x<=X1;x++){ const i=o+x; D[i]= src[i*4]>127 ? BIG : 0; } }
+  chamfer(D);                                   /* 内側＝外までの距離 */
+  if(fatPx>0.5){
+    const O=new Float32Array(n);
+    for(let y=Y0;y<=Y1;y++){ const o=y*W;
+      for(let x=X0;x<=X1;x++){ const i=o+x; O[i]= src[i*4]>127 ? 0 : BIG; } }
+    chamfer(O);                                 /* 外側＝字までの距離 */
+    /* ⭐ 太らせる＝符号つきの距離に足すだけ。輪郭を作り直さない（式は1本） */
+    for(let y=Y0;y<=Y1;y++){ const o=y*W;
+      for(let x=X0;x<=X1;x++){ const i=o+x;
+        const v=(D[i]>0 ? D[i] : -O[i]) + fatPx;
+        D[i]= v>0 ? v : 0; } }
+  }
   /* ② 候補を拾う（間引いて拾う＝全画素を並べ替えない） */
   const step=Math.max(2,Math.round(3*S/900));
   const cand=[];
-  for(let y=0;y<H;y+=step){ const o=y*W;
-    for(let x=0;x<W;x+=step){ const d=D[o+x]; if(d>1.5) cand.push({x,y,d}); } }
+  for(let y=Y0;y<=Y1;y+=step){ const o=y*W;
+    for(let x=X0;x<=X1;x+=step){ const d=D[o+x]; if(d>1.5) cand.push({x,y,d}); } }
   if(!cand.length) return [];
   cand.sort((a,b)=>b.d-a.d);
   /* ③ 太い所から順に置く。⭐ すでに置いた紙片に近すぎるものは飛ばす＝間隔が空く */
@@ -634,13 +669,14 @@ function sheetsFromText(rnd, W, H, cam){
      ⭐ 太い字なら少ない大きな塊になり（参考の見え方）、細い字なら小さな紙片が数珠になる。
         それが正しい ── 細い線を大きな紙片で組んだら、字でなくなる。 */
   const sep=Math.min(0.95,Math.max(0.45,(P.tpS||0.62)));   /* ⚠️ 必ず重なる範囲に閉じる */
-  const out=place(sep, 2500);
+  const out=place(sep, 1500);
   /* ⭐ 大きさを少しばらす＝手で置いた感じ。⚠️ 並べ終わってから振る（間隔の判定は素の大きさで） */
   for(const s of out){
     s.r*=(0.86+0.28*rnd());
     s.rot=rnd()*TAU;
     s.tab=POOL[(rnd()*POOL.length)|0];
   }
+  SHEETN=out.length;
   return out;
 }
 
@@ -867,11 +903,21 @@ function buildField(W,H,cam){
   /* ⭐ 紙片ごとに【その紙片のまわりだけ】回す。
      ⚠️ 盤の全画素 × 紙片の数 を回すと、壁しかない所でも sqrt を何度も呼ぶことになる
         （実測で、ここが場のいちばん重い所だった）。 */
+  /* ⚠️ 紙片1枚ぶんに見る範囲は【その紙片の縁の型のいちばん外側】まででよい。
+     🔴 1.7 倍で決め打ちすると、届かない所まで sqrt と atan2 を回すことになる。
+        紙片が数百〜数千枚になる「紙片で字を組む」では、ここが一番効いた。
+     ⭐ 型ごとに最大値を1度だけ数えて覚える（型は使い回すので数えるのは24回だけ）。
+     ⚠️ 縁は soft ぶんにじむので、その分だけ余白を足す（絵は1画素も変えない）。 */
+  const tabMax = tab => {
+    if(tab.__max===undefined){ let m=0; for(let i=0;i<tab.length;i++) if(tab[i]>m) m=tab[i]; tab.__max=m; }
+    return tab.__max;
+  };
   for(const s of sheets){
-    const scx=CX+s.cx*S, scy=CY+s.cy*S, R0=s.r*1.72*S;
+    const scx=CX+s.cx*S, scy=CY+s.cy*S;
+    const lim=s.r*tabMax(s.tab)+soft*1.5, lim2=lim*lim;
+    const R0=lim*S;
     const x0=Math.max(0,Math.floor(scx-R0)), x1=Math.min(W-1,Math.ceil(scx+R0));
     const y0=Math.max(0,Math.floor(scy-R0)), y1=Math.min(H-1,Math.ceil(scy+R0));
-    const lim=s.r*1.7, lim2=lim*lim;
     for(let y=y0;y<=y1;y++){
       const Y=(y-CY)/S, dy=Y-s.cy, dy2=dy*dy;
       const row=y*W;
@@ -1409,7 +1455,7 @@ function render(){
   if(performance.now()<statUntil) return;
   const [ow,oh]=outSize();
   statEl.textContent = ow+' × '+oh+' で出る　'+Math.round(VIEW.z*100)+'%　紙 '+Math.round(P.sheets)
-    +'枚・折り目 '+Math.round(P.crN)+'本・灯 '+LAMP.length+'・穴 '+HOLE.length
+    +(P.shape==='tpiece' ? '枚（紙片 '+SHEETN+'）' : '枚')+'・折り目 '+Math.round(P.crN)+'本・灯 '+LAMP.length+'・穴 '+HOLE.length
     +'　（場 '+fieldMs+'ms／刷り '+ms+'ms）';
 }
 /* 動かしている間は、控えた絵をずらして見せる（場を作り直すと追いつかない） */
@@ -1475,7 +1521,7 @@ const F1=v=>v.toFixed(1), F2=v=>v.toFixed(2), F3=v=>v.toFixed(3), FI=v=>String(M
 const R = [
   ['tw','tw',FI,1],['tsize','tsize',F2,1],['tls','tls',F2,1],['tlh','tlh',F2,1],
   ['erode','erode',F2,1],['fat','fat',F2,1],['pit','pit',F2,1],['pitS','pitS',FI,1],
-  ['tpG','tpG',F2,1],['tpS','tpS',F2,1],
+  ['tpG','tpG',F2,1],['tpS','tpS',F2,1],['tpF','tpF',F3,1],
   ['sheets','sheets',FI,1],['spread','spread',F2,1],['size','size',F2,1],['tear','tear',F3,1],
   ['tau','tau',F2,0],
   ['crN','crN',FI,1],['crW','crW',F1,1],['crF','crF',F2,1],['crA','crA',F2,1],['sharp','sharp',F2,0],
