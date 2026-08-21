@@ -252,9 +252,20 @@ TYPE</textarea>
     </div>
     <div class="row"><span class="n">升目からのはみ出し</span><output id="o_rad"></output></div>
     <input type="range" id="r_rad" min="0.5" max="2.2" step="0.005">
+    <div class="row"><span class="n">隣とつなぐ</span></div>
+    <div class="seg" id="linkSeg">
+      <button data-v="off">つなげない</button>
+      <button data-v="on">つなぐ</button>
+    </div>
+    <div class="row" id="linkRRow"><span class="n">つなぐ段の広さ</span><output id="o_linkR"></output></div>
+    <input type="range" id="r_linkR" min="0" max="3" step="1">
     <div class="row"><span class="n">粒を回す</span><output id="o_rot"></output></div>
     <input type="range" id="r_rot" min="0" max="90" step="1">
-    <div class="note">⭐⭐ <b>ふち</b>＝まわりに空きがある升目だけに粒を置く＝<b>輪郭に沿った字</b>になる。
+    <div class="note">⭐⭐ <b>つなぐ</b>＝送りの境目ちょうどに粒を置く。次の字の左端の粒と<b>同じ場所</b>に来るので
+      重なって1つに見える＝<b>字と字が地続きになる</b>（升目が揃っているからできる）<br>
+      ⭐ <b>つなぐ段の広さ</b>＝端から何升以内まで届いていたら架けるか。⚠️ 字は送りの中で中央に置かれるので <b>0 だとほぼ架からない</b>。1 が丁度いい／上げるほど地続きになる<br>
+      ⚠️ 隣に粒が無い側にも出るので、<b>行の先頭と末尾に出っ張り</b>が残る。文脈で消すには GSUB が要る<br>
+      ⭐⭐ <b>ふち</b>＝まわりに空きがある升目だけに粒を置く＝<b>輪郭に沿った字</b>になる。
       🔴 絵をなぞって作っていない（升目の世界のままなので、そのまま .ttf に焼ける）<br>
       ⭐ <b>うち</b>＝ふちを抜いた内側だけ。⚠️ 線が細いと<b>ほとんど残らない</b>（下の板が「入らない字」として自分で言う）<br>
       ⭐⭐ 升目が<b>隙間ゼロで埋まる</b>倍率（＝そこから上は面が敷き詰まる）:<br>
@@ -556,7 +567,7 @@ SETS.all = SETS.full + SETS.kana;
 
 let P = {
   up:12, dn:4,                                 /* 升目：ベースラインの上・下（em＝16升） */
-  shape:'circle', rad:1.42, rot:0, fill:'solid',
+  shape:'circle', rad:1.42, rot:0, fill:'solid', link:'off', linkR:1,
   /* ⭐ 既定は【等幅＋升目を細かめ＋少し細らせる】。
      🔴 太い書体をそのまま粗い升目に落とすと、円のはみ出しで【字の中の穴が埋まって読めなくなる】
         （＝RUI が日本語で潰れた理由と同じ）。細らせ −0.10 と拾い方 0.42 がその逃がし。 */
@@ -652,6 +663,32 @@ function cellsOf(ch){
       }
       on.push({ i, j });
     }
+  /* ══⭐⭐ つなぐ ── 隣の字と粒がつながる（Lena の WIM R12 にあたる）══
+     ⭐ 送りが升目の整数倍なので、【送りの境目ちょうど】に粒を置けば、
+        次の字の左端に置いた粒と<b>同じ場所</b>に来る＝重なって1つに見える。
+        i＝−0.5 で x＝0、i＝cols−0.5 で x＝送り。半端な位置に置けるのはここだけ。
+     ⚠️ 隣に粒が無い側でも出るので、行の先頭と末尾に【出っ張り】が残る。
+        文脈で消すには GSUB（clig）が要る＝次の宿題。
+     🔴 板の絵とフォントで【同じ規則】にしてある（片方だけ賢くしない）。 */
+  if(P.link === 'on' && on.length){
+    /* ⚠️ 字は送りの中で【中央】に置かれるので、端の列は空いていることが多い。
+       「端ちょうどに粒がある段」だけを見ると1本も架からない（最初これで空振りした）。
+       → 端から1升以内まで届いている段を見て、【隙間も埋めながら】境目まで伸ばす。 */
+    const REACH = Math.max(0, Math.round(P.linkR ?? 0));
+    for(let j = 0; j < rows; j++){
+      const row = on.filter(c => c.j === j && c.i >= 0);
+      if(!row.length) continue;
+      const lo = Math.min(...row.map(c => c.i)), hi = Math.max(...row.map(c => c.i));
+      if(lo <= REACH){
+        for(let i = lo - 1; i >= 0; i--) on.push({ i, j, br:1 });
+        on.push({ i:-0.5, j, br:1 });
+      }
+      if(hi >= cols - 1 - REACH){
+        for(let i = hi + 1; i <= cols - 1; i++) on.push({ i, j, br:1 });
+        on.push({ i:cols - 0.5, j, br:1 });
+      }
+    }
+  }
   return { cols, rows, on, adv };
 }
 
@@ -1269,11 +1306,11 @@ const FMT = {
   up:v=>v+'升', dn:v=>v+'升', rad:v=>v.toFixed(3)+'×', rot:v=>v+'°',
   weight:v=>String(v), fs:v=>v.toFixed(3), grow:v=>v.toFixed(2), thr:v=>v.toFixed(2),
   side:v=>v+'升', monoW:v=>v+'升', perRow:v=>v+'字', long:v=>v+'px',
-  margin:v=>(v*100).toFixed(1)+'%',
+  margin:v=>(v*100).toFixed(1)+'%', linkR:v=>v+'升',
   spd:v=>v.toFixed(2)+'×', rotN:v=>String(v), radA:v=>'±'+v.toFixed(2), revN:v=>String(v),
 };
 const RANGES = ['up','dn','rad','rot','weight','fs','grow','thr','side','monoW','perRow','long',
-                'margin','spd','rotN','radA','revN'];
+                'margin','spd','rotN','radA','revN','linkR'];
 /* 動かす系のつまみ（止まっていると効かないもの） */
 const MOVE_KEYS = new Set(['rotN','radA','revN','spd']);
 RANGES.forEach(k => {
@@ -1306,6 +1343,11 @@ function seg(id, key, after){
     });
   });
 }
+function linkSync(){
+  const off = P.link !== 'on';
+  el('linkRRow').classList.toggle('hide', off);
+  el('r_linkR').classList.toggle('hide', off);
+}
 function advSync(){ el('monoWRow').classList.toggle('hide', P.adv !== 'mono');
   el('r_monoW').classList.toggle('hide', P.adv !== 'mono'); }
 function modeSync(){
@@ -1323,6 +1365,7 @@ function rotSync(){
 }
 seg('shapeSeg', 'shape', rotSync);
 seg('fillSeg', 'fill');
+seg('linkSeg', 'link', linkSync);
 seg('fontSeg', 'font');
 seg('advSeg', 'adv', advSync);
 seg('gridSeg', 'grid');
@@ -1408,7 +1451,7 @@ function syncUI(){
     if(!r) return; r.value = P[k]; if(o) o.textContent = (FMT[k] || String)(+r.value); });
   [['shapeSeg','shape'],['fontSeg','font'],['advSeg','adv'],['gridSeg','grid'],
    ['modeSeg','mode'],['tateSeg','tate'],['ratioSeg','ratio'],['revBySeg','revBy'],
-   ['fillSeg','fill']]
+   ['fillSeg','fill'],['linkSeg','link']]
     .forEach(([id, key]) => el(id).querySelectorAll('button')
       .forEach(b => b.classList.toggle('on', b.dataset.v === String(P[key]))));
   el('t_chars').value = P.chars;
@@ -1416,7 +1459,7 @@ function syncUI(){
   modeSync();
   el('t_family').value = P.family;
   el('c_paper').value = P.paper; el('c_ink').value = P.ink;
-  advSync(); rotSync();
+  advSync(); rotSync(); linkSync();
 }
 el('b_undo').onclick = undo;
 addEventListener('keydown', e => {
