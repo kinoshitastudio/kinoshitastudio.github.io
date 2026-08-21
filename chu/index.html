@@ -557,6 +557,10 @@ GRAPHY</textarea>
     <input type="text" id="t_family" value="CHU Modular">
     <button class="btn solid" id="b_ttf">.ttf を出す</button>
     <button class="btn" id="b_vf">可変フォントで出す（.ttf）</button>
+    <div class="row"><span class="n">可変の細い端（はみ出し）</span><output id="o_vfLo"></output></div>
+    <input type="range" id="r_vfLo" min="0.50" max="1.40" step="0.01">
+    <div class="row"><span class="n">可変の太い端（はみ出し）</span><output id="o_vfHi"></output></div>
+    <input type="range" id="r_vfHi" min="1.00" max="2.20" step="0.01">
     <button class="btn" id="b_color">カラーフォントで出す（.ttf）</button>
     <button class="btn" id="b_try">試し打ちに入れる</button>
     <div class="note">⭐⭐ <b>可変フォント</b>＝1つのファイルの中で<b>はみ出しが 0.80〜2.00 まで連続で変わる</b>。
@@ -573,6 +577,8 @@ GRAPHY</textarea>
       ⭐ 試し打ち＝出来た活字をこのページに読ませて、下の欄で打てるようにする。
       板の絵ではなく<b>ブラウザが字として組んだもの</b>が出る＝ここが唯一の証拠<br>
       ⭐ .ttf は普通のフォント。Mac なら開いてインストールできる<br>
+      🔴🔴 <b>かなを入れるなら、太い端を 1.42（面が埋まるところ）で止める。</b>
+      それを超えると<b>かなが溶けて、書文字・ホラーの顔</b>になる。欧文は 2.00 まで振ってよい<br>
       ⭐⭐ <b>つなぐ</b>が入のときは、字を<b>4通り（出っ張り無し／右／左／両方）</b>焼いて
       <b>GSUB（clig・calt）</b>で差し替える＝<b>行の先頭と末尾に出っ張りが出ない</b>。
       ⚠️ そのぶん<b>字の数が最大4倍</b>になる（片側しか出っ張らない字は増やしていない）<br>
@@ -725,6 +731,8 @@ let P = {
   /* ⭐ 足したつまみは【1.0＝今までの絵】。wid＝字の横幅（縦長にする）／
      gap＝行と行のあいだ（升）／fit＝送りの決め方 */
   wid:1, gap:0, fit:'box',
+  /* ⭐ 可変の軸の端。既定 0.80／2.00 ＝ 今までの絵 */
+  vfLo:0.80, vfHi:2.00,
   adv:'prop', side:1, monoW:8,
   chars:SETS.full,     /* ⭐ 既定に a–z と約物を入れる。大文字＋数字だけだと「小文字が無い」と見える */
   /* 板 ── 何を並べるか／どう並べるか／どの版面に置くか */
@@ -1800,7 +1808,12 @@ function buildColorFont(){
       補間の途中で形が痩せる（正しく回らない）。数字だけ合っても絵が嘘になる。
    ⚠️ gvar の点数は【輪郭の点 ＋ 幻の4点（phantom points）】。4点ぶんのずれは 0 を入れる。
    ══════════════════════════════════════════════════════════════ */
-const VF_MIN = 0.80, VF_MAX = 2.00;
+/* ⭐⭐ 可変の軸の端 ── つまみで持つ。
+   🔴 かなは【面が埋まる 1.414 を超えると溶けて書文字・ホラーになる】。
+      欧文は太い端まで振ってよいが、かなは端を 1.42 で止める＝そのための2つ。
+   ⭐ 既定は 0.80／2.00 ＝ 今までの絵。 */
+const VF_MIN = () => Math.min(P.vfLo, P.vfHi - 0.05);
+const VF_MAX = () => Math.max(P.vfHi, P.vfLo + 0.05);
 function f2dot14(v){ return Math.max(-32768, Math.min(32767, Math.round(v * 16384))); }
 function fixed16(v){ return Math.round(v * 65536); }
 /* 差分の詰め方（gvar）。⚠️ 0 の連続は「0が続く」印で潰す＝ここを間違えると字が壊れる */
@@ -1831,10 +1844,11 @@ function packDeltas(arr){
 function buildVF(){
   const keepRad = P.rad;
   /* 既定＝いまのはみ出し。⚠️ min/max の外に居たら軸に入るように寄せる */
-  const def = Math.min(VF_MAX, Math.max(VF_MIN, P.rad));
+  const vfLo = VF_MIN(), vfHi = VF_MAX();
+  const def = Math.min(vfHi, Math.max(vfLo, P.rad));
   const mid = buildTTF({ rad:def });
-  const lo  = buildTTF({ rad:VF_MIN });
-  const hi  = buildTTF({ rad:VF_MAX });
+  const lo  = buildTTF({ rad:vfLo });
+  const hi  = buildTTF({ rad:vfHi });
   P.rad = keepRad;
 
   const nG = mid.glyphs.length;
@@ -1894,8 +1908,8 @@ function buildVF(){
         ＝アプリのスライダーが、開いた瞬間 400 の位置に立つ。 */
   const W_MIN = 100, W_DEF = 400, W_MAX = 900;
   const toW = r => r <= def
-    ? (def > VF_MIN ? W_MIN + (r - VF_MIN) / (def - VF_MIN) * (W_DEF - W_MIN) : W_DEF)
-    : (VF_MAX > def ? W_DEF + (r - def) / (VF_MAX - def) * (W_MAX - W_DEF) : W_DEF);
+    ? (def > vfLo ? W_MIN + (r - vfLo) / (def - vfLo) * (W_DEF - W_MIN) : W_DEF)
+    : (vfHi > def ? W_DEF + (r - def) / (vfHi - def) * (W_MAX - W_DEF) : W_DEF);
   /* ⚠️ gvar の峰は −1／+1（正規化した座標）なので、軸の数え方を変えても触らなくてよい */
 
   /* ── fvar ── name は 256 から使う ── */
@@ -1948,7 +1962,7 @@ function buildVF(){
   const adj = (0xB1B0AFBA - sum32(file)) >>> 0;
   file[hoff+8]=(adj>>>24)&255; file[hoff+9]=(adj>>>16)&255;
   file[hoff+10]=(adj>>>8)&255; file[hoff+11]=adj&255;
-  return { file, nG, bytes:file.length, def, min:VF_MIN, max:VF_MAX, codes:mid.codes };
+  return { file, nG, bytes:file.length, def, min:vfLo, max:vfHi, codes:mid.codes };
 }
 
 function dl(blob, name){
@@ -2061,10 +2075,11 @@ const FMT = {
   margin:v=>(v*100).toFixed(1)+'%', linkR:v=>v+'升', colN:v=>v+'段',
   stepN:v=>v+'段', mesh:v=>v ? '±'+(v*50).toFixed(0)+'%' : '切',
   wid:v=>v.toFixed(3)+'×', gap:v=>v ? v+'升' : '無し',
+  vfLo:v=>v.toFixed(2)+'×', vfHi:v=>v.toFixed(2)+'×',
   spd:v=>v.toFixed(2)+'×', rotN:v=>String(v), radA:v=>'±'+v.toFixed(2), revN:v=>String(v),
 };
 const RANGES = ['up','dn','rad','rot','weight','fs','grow','thr','side','monoW','perRow','long',
-                'margin','spd','rotN','radA','revN','linkR','colN','stepN','mesh','wid','gap'];
+                'margin','spd','rotN','radA','revN','linkR','colN','stepN','mesh','wid','gap','vfLo','vfHi'];
 /* 動かす系のつまみ（止まっていると効かないもの） */
 const MOVE_KEYS = new Set(['rotN','radA','revN','spd']);
 RANGES.forEach(k => {
