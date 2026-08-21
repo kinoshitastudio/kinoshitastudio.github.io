@@ -91,16 +91,38 @@ const pw = box1.x0 / m1.w, ph = box1.y0 / m1.h2;
 check(Math.abs(pw - ph) < 0.02, '余白が四辺で釣り合っている（辺に比例）',
       `よこ ${(pw*100).toFixed(1)}% / たて ${(ph*100).toFixed(1)}%`);
 
-/* ── ④b 額の中で絵ごと大きくする・寄せる（2026-08-21）── */
-await set(A.p, 'matzoom', 150); await wait(500);
+/* ── ④b 額の中で絵ごと大きくする・寄せる（2026-08-21）
+   ⭐⭐ 木下「余白をつけているときは中の画像は下のレイヤーにいる状態にして。
+        なので、ズームすると余白自体は上にあってかわりはない。中のよこ、中のたても」
+   🔴 だから見るのは「絵が大きくなったか」ではなく【余白が残っているか】。 */
+const win = await A.p.evaluate(()=>{
+  const p = P.mat/100;
+  return { x:Math.round(cv.width*p), y:Math.round(cv.height*p),
+           w:Math.round(cv.width*(1-p*2)), h:Math.round(cv.height*(1-p*2)) };
+});
+const sig1 = await A.p.evaluate(()=>window.__look().h);
+await set(A.p, 'matzoom', 160); await wait(600);
+const mZ = await A.p.evaluate(()=>window.__look());
 const boxZ = await A.p.evaluate(()=>window.__box([242,239,230]));
-check(boxZ.w > box1.w * 1.3, '⭐中の大きさを上げると絵が大きくなる', `${box1.w} → ${boxZ.w}px`);
-await set(A.p, 'matzoom', 100); await set(A.p, 'matx', 20); await wait(500);
+check(near(mZ.corner, col) && near(mZ.edge, col),
+      '⭐⭐中の大きさを上げても余白は残る（絵は余白の下に潜る）', `四隅 ${mZ.corner}`);
+check(boxZ.x0 >= win.x - 2 && boxZ.x0 + boxZ.w <= win.x + win.w + 2
+   && boxZ.y0 >= win.y - 2 && boxZ.y0 + boxZ.h <= win.y + win.h + 2,
+      '⭐絵が額の窓からはみ出していない', `絵 ${boxZ.x0}〜${boxZ.x0+boxZ.w} / 窓 ${win.x}〜${win.x+win.w}`);
+check(mZ.h !== sig1, '中の大きさが効いている（絵が変わる）');
+await set(A.p, 'matzoom', 100); await set(A.p, 'matx', 20); await wait(600);
+const mX = await A.p.evaluate(()=>window.__look());
 const boxX = await A.p.evaluate(()=>window.__box([242,239,230]));
+check(near(mX.corner, col), '⭐中のよこで寄せても余白は残る', `四隅 ${mX.corner}`);
 check(boxX.x0 > box1.x0 + 40, '⭐中のよこで右へ寄る', `x ${box1.x0} → ${boxX.x0}`);
-await set(A.p, 'matx', 0); await set(A.p, 'maty', -20); await wait(500);
+await set(A.p, 'matx', 0); await set(A.p, 'maty', -20); await wait(600);
+const mY = await A.p.evaluate(()=>window.__look());
 const boxY = await A.p.evaluate(()=>window.__box([242,239,230]));
-check(boxY.y0 < box1.y0 - 40, '⭐中のたてで上へ寄る', `y ${box1.y0} → ${boxY.y0}`);
+check(near(mY.corner, col), '⭐中のたてで寄せても余白は残る', `四隅 ${mY.corner}`);
+/* ⚠️ 上へ寄せると【上は窓で切れる】ので y0 は窓の上端のまま動かない。
+   ⭐ 動くのは【下】＝下に余白が広がる。ここを見る（最初これを y0 で見て誤検出した）。 */
+check(boxY.y0 + boxY.h < box1.y0 + box1.h - 40, '⭐中のたてで上へ寄る（下に余白が広がる）',
+      `下端 ${box1.y0 + box1.h} → ${boxY.y0 + boxY.h}`);
 await set(A.p, 'maty', 0); await wait(400);
 
 /* ── ⑤ 色を変えると縁だけ変わる ── */

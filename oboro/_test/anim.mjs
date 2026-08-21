@@ -68,10 +68,14 @@ await A.p.evaluate(()=>{ const s=(id,v)=>{const r=document.getElementById(id);r.
 await wait(1400);
 await set(A.p,'rows',60); await set(A.p,'maxx',60); await set(A.p,'reach',400);
 await wait(1800);
+/* ⭐ 盤が画面のどこに、どの大きさで出ているか（押す前・押した後で比べる） */
+const seeBox = ()=> A.p.evaluate(()=>{ const r = cv.getBoundingClientRect();
+  return { x:Math.round(r.left), y:Math.round(r.top), w:Math.round(r.width), h:Math.round(r.height) }; });
 const heavy = await A.p.evaluate(()=>{
   const t=[]; for(let i=0;i<6;i++){ const s=performance.now(); P.slit=(i*13)%100; draw(); t.push(performance.now()-s); }
   t.sort((a,b)=>a-b); return { ms:+t[3].toFixed(1), cv:cv.width+'x'+cv.height, cells:cells.length };
 });
+const before = { box: await seeBox() };
 await set(A.p,'anflow',261); await set(A.p,'anfps',42);
 await A.p.evaluate(()=>document.getElementById('anGo').click());
 await wait(1600);
@@ -81,7 +85,17 @@ const playing = await A.p.evaluate(()=>{
   return { ms:+t[3].toFixed(1), cv:cv.width+'x'+cv.height,
            fps:(document.getElementById('anFps').textContent||'').replace(/\s+/g,' ').trim() };
 });
+playing.box = await seeBox();
 check(playing.cv !== heavy.cv, '⭐再生の間だけ版面が粗くなる', `${heavy.cv} → ${playing.cv}`);
+/* 🔴 2026-08-21 木下「再生ボタンをおすとボードごと右下にガクッと移動される」
+   ＝版面を小さくしたとき TX/TY まで割っていた（置き場所は translate だけで決まるのに）。
+   ⭐ 見えている【左上と大きさ】が押す前と変わらないことを数字で見る。 */
+check(Math.abs(playing.box.x - before.box.x) < 2 && Math.abs(playing.box.y - before.box.y) < 2,
+      '⭐⭐押しても盤が動かない（左上が同じ）',
+      `(${before.box.x},${before.box.y}) → (${playing.box.x},${playing.box.y})`);
+check(Math.abs(playing.box.w - before.box.w) < 3 && Math.abs(playing.box.h - before.box.h) < 3,
+      '⭐押しても盤の見えている大きさが変わらない',
+      `${before.box.w}×${before.box.h} → ${playing.box.w}×${playing.box.h}`);
 /* ⚠️ 版面を 1/5 の面積にしても、時間は 1/5 にはならない。
    ⭐ 実測で分かったこと＝重さの大半は【帯の数】（1枚ごとの描画の呼び出し回数）で、
       面積ではない。だから版面を粗くする効きは 1.6〜2.7 倍どまり。
@@ -97,7 +111,9 @@ const png = await A.p.evaluate(async ()=>{
   URL.createObjectURL = function(bb){ size = bb.size; return oc.call(URL, bb); };
   const before = cv.width;
   document.getElementById('bPNG').click();
-  await new Promise(x=>setTimeout(x,1500));
+  /* ⚠️ 2940×1640 の PNG は焼くのに時間がかかる。落ちるまで待つ（1.5秒では足りず 0KB と誤検出した） */
+  for(let i=0;i<40;i++){ if(size) break; await new Promise(x=>setTimeout(x,300)); }
+  await new Promise(x=>setTimeout(x,600));
   URL.createObjectURL = oc;
   return { size, atClick:before, now:cv.width };
 });
