@@ -643,12 +643,16 @@
         <button data-v="2" class="on">両方</button>
       </div>
       <div class="row"><label>色<i>いろ</i></label><input type="color" data-p="gridC" value="#2a5bd7"></div>
-      <div class="row"><label>色ずらし</label><input type="range" data-p="gridHue" min="-180" max="180" step="1" value="0"><span class="val"></span></div>
-      <div class="row"><label>色幅</label><input type="range" data-p="gridSpan" min="0" max="180" step="1" value="40"><span class="val"></span></div>
+      <div class="row" id="gridHueRow"><label>色ずらし</label><input type="range" data-p="gridHue" min="-180" max="180" step="1" value="0"><span class="val"></span></div>
+      <div class="row" id="gridSpanRow"><label>色幅</label><input type="range" data-p="gridSpan" min="0" max="180" step="1" value="40"><span class="val"></span></div>
+      <div class="mod" id="gridGrayNote" style="display:none">🔴 いまは<b>色相を持たない色</b>（灰・黒・白）なので、
+        <b>色ずらし・色幅は効きません</b>。選んだとおりの色が出ます。色を転がすなら色のついた色を選ぶ</div>
       <div class="row"><label>色の濃さ</label><input type="range" data-p="gridSat" min="0" max="100" step="1" value="0"><span class="val"></span></div>
       <div class="mod">RES＝いくつに割るか／FINE＝粒の中で何周期／GAP＝粒どうしの隙間<br>面に沿う＝帯の向きを彫りの面から取る。深さが帯の位相を送る<br>
       ⭐<b>色の濃さ</b>＝帯そのものに色を差す。<b>0 で今までどおりモノクローム</b>。<br>
       <b>色幅</b>＝1本の帯の中で色相がどれだけ回るか（0＝1色／大きいほど帯の中で色が転ぶ）<br>
+      ⚠️ <b>灰・黒・白を選ぶと、色ずらし／色幅は効かない</b>（色相を持たないので回すものが無い）。
+      選んだとおりの灰・黒・白が出る。色を転がしたいときは<b>色のついた色</b>を選ぶ<br>
       ⭐<b>表面／断面</b>＝粒をどの面に掛けるか。<b>断面</b>にすると彫りの側面だけが粒になる（表面はそのまま）。<b>両方</b>がいままで<br>
       ⭐<b>断面の粒</b>＝断面だけ粒の大きさを変える。<b>100 でいままでと同じ</b>。上げると断面の粒が大きくなって<b>断面が主役</b>になる。下げると表面と入れ替わる<br>
       ⭐<b>反転</b>＝帯の向きを裏返す。<b>RES</b> は大きいほど粒が大きい（400まで）</div>
@@ -1554,6 +1558,18 @@ function hex2hsv(hex){
   return [h, mx <= 1e-6 ? 0 : d/mx, mx];
 }
 
+/* ⭐ 効かないつまみは「効かない」と画面で言う（黙って置かない）。
+   灰・黒・白は色相を持たないので、色ずらし・色幅は回すものが無い。 */
+function gridGraySync(){
+  const n = document.getElementById('gridGrayNote'); if(!n) return;
+  const hsv = hex2hsv(P.gridC);
+  const gray = hsv[1] < 0.06 || hsv[2] < 0.04;
+  n.style.display = gray ? '' : 'none';
+  ['gridHueRow','gridSpanRow'].forEach(id => {
+    const r = document.getElementById(id); if(r) r.style.opacity = gray ? .34 : '';
+  });
+}
+
 /* ⭐ 控えの中身は1か所で作る。localStorage も 書き出す JSON も【同じもの】。
    ⚠️ 別々に書くと、片方につまみを足したときにもう片方が置いていかれる。 */
 function bundle(){
@@ -1637,6 +1653,7 @@ function syncUIFromP(){
     if(ON[k] !== undefined) u.classList.toggle('off', !ON[k]);
   });
   if(typeof syncSpin === 'function') syncSpin();
+  if(typeof gridGraySync === 'function') gridGraySync();
 }
 function loadLocal(){
   try{
@@ -2416,14 +2433,15 @@ postScene.add(new THREE.Mesh(
            ⭐ 色の濃さ 0 で、いままでと完全に同じ絵に戻る。 */
         if(uGridOn > 0.5 && uGridSat > 0.001 && gHit){
           float gb = uGridInv > 0.5 ? (1.0 - gBand) : gBand;   /* 反転＝帯の向きを裏返す */
-          /* 🔴🔴 黒・白・灰を選ぶと【色相が無い】ので、色ずらしも色幅も効かなくなる。
-             （実際そうなった。ピッカーが黒＝彩度0・明度0 で、何を回しても黒のまま）
-             ⭐ 色味を持たない色を選んだときだけ、彩度と明るさを使える値に置き換える。
-                ＝つまみが必ず効く。色味のある色を選んだときは、選んだとおりのまま。 */
-          float hasC = step(0.06, uGridCsat) * step(0.06, uGridVal);
-          float csat = mix(0.85, uGridCsat, hasC);
-          float cval = mix(0.85, uGridVal,  hasC);
-          vec3 gc = hsv2rgb(vec3(fract(uGridHue + gb * uGridSpan), csat, cval));
+          /* 🔴🔴 2026-08-21 に直した。ここで【選んだ色の彩度と明るさを 0.85 に置き換えて】いた。
+             理由は「灰や黒を選ぶと色ずらし・色幅が効かなくなるから」。
+             ⚠️ でもそのせいで【灰を選んでも青、黒を選んでも赤】になっていた
+                （木下＝「カラーピッカーで入れても白や黒などで青が出たりとおかしい」）。
+             🔴 つまみを効かせるために【選んだ色を無視する】のは順序が逆。
+                選んだ色がそのまま出るのが先。効かないつまみは「効かない」と画面で言う。
+             ⭐ いまは選んだ色の彩度・明るさをそのまま使う。
+                灰・黒・白は色相を持たないので色ずらし／色幅が効かない ── それが正しい。 */
+          vec3 gc = hsv2rgb(vec3(fract(uGridHue + gb * uGridSpan), uGridCsat, uGridVal));
           fg = mix(fg, gc, uGridSat);
         }
 
@@ -2825,6 +2843,7 @@ document.querySelectorAll('input[type=color][data-p]').forEach(c => {
        GRID の色は【色の濃さ】が 0 だと何も起きない作りにしてある（既定を変えないため）。
        ⭐ だから【色を選んだ時点で】濃さが 0 なら勝手に上げる。
           選んだのに何も起きない、が起きない。 */
+    if(c.dataset.p === 'gridC') gridGraySync();
     if(c.dataset.p === 'gridC' && P.gridSat < 5){
       P.gridSat = 60;
       const r = document.querySelector('input[data-p="gridSat"]');
