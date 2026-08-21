@@ -94,8 +94,10 @@
   .only-smear{display:none;}
   body.smear .row.only-smear{display:flex;}
   body.smear div.only-smear:not(.row){display:block;}
-  #tvSize{font-family:ui-monospace,Menlo,monospace;font-size:10px;line-height:1.6;
+  #tvSize,#loadMsg{font-family:ui-monospace,Menlo,monospace;font-size:10px;line-height:1.6;
     color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:6px 0;}
+  /* 🔴 空のときは場所を取らない（読み込みの知らせは、出たときだけ出る） */
+  #loadMsg:empty{display:none;}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
   #hud{position:fixed;left:18px;top:16px;z-index:20;font-family:ui-monospace,"SF Mono",Menlo,monospace;
        font-size:8.5px;letter-spacing:.14em;color:#fff;opacity:.55;line-height:2;}
@@ -172,8 +174,12 @@
 <div id="panel">
   <h2>写真</h2>
   <button class="btn pri" id="bLoad">写真を読み込む</button>
-  <input type="file" id="file" accept="image/*" style="display:none">
-  <div class="mod">ドラッグ＆ドロップでも置ける</div>
+  <!-- ⚠️ iPhone の写真は HEIC のことがある。accept に拡張子も並べないと選べない端末がある -->
+  <input type="file" id="file" accept="image/*,.heic,.HEIC,.heif,.HEIF" style="display:none">
+  <div id="loadMsg"></div>
+  <div class="mod">ドラッグ＆ドロップでも置ける。<b>HEIC（iPhone の写真）も読める</b><br>
+    ⚠️ HEIC は<b>そのまま読めるブラウザ（Safari）</b>ならすぐ。読めないブラウザのときだけ
+    変換の部品を取りに行くので、最初の1枚だけ少し待つ</div>
 
   <h2>割る</h2>
   <div class="row"><label>段</label><input type="range" id="rows" min="1" max="60" value="14"><span class="val"></span></div>
@@ -289,6 +295,16 @@
   <div class="row"><label>絵の大きさ</label><input type="range" id="pzoom" min="30" max="300" value="100"><span class="val"></span></div>
   <div class="row"><label>よこ</label><input type="range" id="pox" min="-100" max="100" value="0"><span class="val"></span></div>
   <div class="row"><label>たて</label><input type="range" id="poy" min="-100" max="100" value="0"><span class="val"></span></div>
+  <!-- ⭐⭐ 余白（額）2026-08-21 木下「ボードの縁に余白を設けたい。その余白にも色をつけたい。
+       上からつけるだけでなく、それにより今あるボードのオブジェクトが縮小される感じに」
+       ⭐ だから【上に被せる】のではなく【絵の側を縮めて、空いた縁を塗る】。
+       ⚠️ 0 なら1画素も変わらない（今までの絵をそのまま守る）。 -->
+  <div class="row"><label>余白</label><input type="range" id="mat" min="0" max="30" value="0"><span class="val"></span></div>
+  <div class="row"><label>余白の色</label><input type="color" id="matcol" value="#f2efe6" style="flex:1;height:30px;border:none;border-radius:8px;background:none;padding:0;cursor:pointer"></div>
+  <div class="mod">⭐ <b>余白</b>＝縁に取る帯の幅（版面の辺に対する％）。
+    上に被せるのではなく<b>中の絵が縮む</b>＝帯も写真も一緒に小さくなる<br>
+    ⭐ 縦横の比は保ったまま縮むので<b>絵は歪まない</b>（辺の長さに比例した余白になる）<br>
+    ⚠️ <b>0 で今までどおり</b>。PNG・SVG・動画のどれにも同じように入る</div>
   <div class="mod" id="pgNote"></div>
 
   <!-- ⭐⭐ 動画（2026-08-17 木下＝「動画の書き出しはないんだけどな」）
@@ -378,6 +394,8 @@ const P = { ink:'grad', slit:50, anflow:0, anfps:30,
                ⭐ pratio='src' なら写真の縦横そのまま＝**これまでと1画素も変わらない**。
                ⚠️ 版面を変えると、写真は版面の中に【置かれる】ものになる（余白は地＝黒）。 */
             pratio:'src', pzoom:100, pox:0, poy:0,
+            /* ⭐ 余白（額）2026-08-21 ── 0 で今までどおり。上げると【中の絵が縮んで】縁が空く */
+            mat:0, matcol:'#f2efe6',
             /* ⭐ 動かすもの（2026-08-18）＝進み／のび／にじみ／どの線 */
             anwhat:'fill' };
 const M = { low:0, mid:0, high:0, kick:0 };   // 音の量（0〜1）
@@ -810,12 +828,35 @@ function mod(){
   };
 }
 
+/* ⭐⭐ 余白（額）── 縁に帯を取り、その分だけ【中の絵を縮める】。
+   ⭐ 版面（cv）の大きさは変えない＝PNG も動画も枠は今までどおり。変わるのは中の置き方だけ。
+   ⭐ 縮めるのは【描くときの座標系】＝帯は矩形のまま小さく描かれる（＝縮小してぼけない）。
+   ⚠️ 縦横の比を保つ＝辺の長さに比例した余白にする（等幅にすると絵が歪む）。
+   ⚠️ 0 のときは何も通さない＝今までの絵が1画素も変わらない。 */
+function matOf(W, H){
+  const p = (+P.mat || 0) / 100;
+  if(p <= 0) return null;
+  const s = Math.max(0.05, 1 - p * 2);
+  return { s, mx:(W - W * s) / 2, my:(H - H * s) / 2 };
+}
 function draw(){
   if(!img) return;
   /* ⚠️ 高さも見る（2026-08-17）。版面を入れたので【幅が同じで高さだけ違う】枠がありえる
      ＝幅だけ見ていると、下地が前の版面のまま残って写真がずれる。 */
   if(!base || base.width !== cv.width || base.height !== cv.height) makeBase();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0,0,cv.width,cv.height);
+  const MT = matOf(cv.width, cv.height);
+  if(MT){
+    ctx.fillStyle = P.matcol || '#f2efe6';
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.save();
+    ctx.translate(MT.mx, MT.my); ctx.scale(MT.s, MT.s);
+    /* 🔴 帯は【のび】で版面の外へはみ出す。前は canvas の縁がそれを切っていた。
+       縮めたら切る人がいなくなり、はみ出した帯が余白へ流れ出した（実測 よこの余白 0%）。
+       ⭐ 版面そのものを切り抜きにする＝前と同じ場所で切れる。 */
+    ctx.beginPath(); ctx.rect(0, 0, cv.width, cv.height); ctx.clip();
+  }
   ctx.drawImage(base, 0, 0);                          // まず写真（焼いてあるもの）
 
   const m = mod();
@@ -844,6 +885,7 @@ function draw(){
     ctx.lineWidth = Math.max(1, cv.width/1400); ctx.strokeStyle = '#fff'; ctx.stroke(shapePath);
     ctx.restore();
   }
+  if(MT) ctx.restore();                               // ⚠️ 余白の座標系を必ず戻す
 }
 
 function order(cs){
@@ -1078,6 +1120,16 @@ bind('expo','expo',true); bind('sat','sat',true);   // ⚠️ 光は色を採り
 bind('shape','shape');    bind('thr','thr',3); bind('lump','lump',3);   // ⚠️ 形が変わる方は引き直し
 /* ⭐ 版面（4＝版面から組み直す）。⚠️ 写真の置き方が変わると下地も採取も輪郭も作り直す */
 bind('pzoom','pzoom',4);  bind('pox','pox',4); bind('poy','poy',4);
+/* ⭐ 余白は【描き方】だけの話＝割り直しも輪郭の引き直しも要らない（1＝塗り直しで足りる） */
+bind('mat','mat');
+/* ⚠️ 色は range ではないので bind に乗らない＝台帳（BINDS）にも自分で足す
+      （足さないと控えを読んだときに色だけ戻らない＝[[feedback_check_existing_before_adding]]） */
+(()=>{
+  const el = document.getElementById('matcol');
+  if(!el) return;
+  BINDS.push({ id:'matcol', key:'matcol' });
+  el.addEventListener('input', ()=>{ P.matcol = el.value; invalidate(1); });
+})();
 
 document.getElementById('bInv').onclick = () => {
   P.inv = P.inv ? 0 : 1;
@@ -1145,20 +1197,79 @@ function pgSync(){
 }
 pgSync();
 
-/* ── 読み込み（ボタン・ドロップ）─────────────────────── */
+/* ── 読み込み（ボタン・ドロップ）───────────────────────
+   ⭐⭐ HEIC（iPhone の写真）も読む（2026-08-21 木下）。
+   ⭐ 順番が大事＝
+     ① まず**そのまま**読んでみる（Safari は HEIC を素で読める＝いちばん速くて綺麗）
+     ② だめなときだけ**変換の部品を取りに行く**（普段は外の部品を1つも読まない）
+     ③ それでもだめなら**理由を出して止める**（黙って何も起きない、を作らない）
+   ⚠️ iPhone から「写真」で選ぶと iOS が JPEG に変えてくれることが多い。
+      HEIC のまま来るのは「ファイル」アプリや AirDrop 経由のとき。 */
+const loadMsg = t => { const el = document.getElementById('loadMsg'); if(el) el.innerHTML = t || ''; };
+const isHeic = f => /\.(heic|heif)$/i.test(f.name || '') || /hei[cf]/i.test(f.type || '');
+
+/* ⭐ 部品は【押したときだけ】取りに行く（動画の器と同じ作法） */
+let heicP = null;
+function loadHeicLib(){
+  if(window.heic2any) return Promise.resolve(true);
+  if(!heicP) heicP = new Promise(res => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js';
+    s.onload = () => res(!!window.heic2any);
+    s.onerror = () => res(false);
+    document.head.appendChild(s);
+  });
+  return heicP;
+}
+/* そのまま読めるか試す（Safari はここで通る） */
+function canDecode(url){
+  return new Promise(res => {
+    const im = new Image();
+    im.onload = () => res(im.naturalWidth > 0);
+    im.onerror = () => res(false);
+    im.src = url;
+  });
+}
+async function pickFile(f){
+  if(!f) return;
+  const url = URL.createObjectURL(f);
+  if(!isHeic(f)){ loadMsg(''); loadImage(url); return; }
+  loadMsg('HEIC を読んでいます…');
+  if(await canDecode(url)){                       // ① そのまま読めた（Safari）
+    loadMsg('');
+    loadImage(url);
+    return;
+  }
+  loadMsg('HEIC を変換しています…（最初の1枚だけ少し待ちます）');
+  if(!await loadHeicLib()){                       // ② 部品が取りに行けない
+    loadMsg('🔴 HEIC を変換する部品を取りに行けませんでした（つながっていない）。'
+          + 'Safari で開くか、JPEG に書き出して読み込んでください');
+    return;
+  }
+  try{
+    const out = await window.heic2any({ blob:f, toType:'image/jpeg', quality:0.94 });
+    const blob = Array.isArray(out) ? out[0] : out;
+    loadMsg('');
+    loadImage(URL.createObjectURL(blob));
+  }catch(err){                                    // ③ 理由を出して止める
+    loadMsg('🔴 この HEIC は読めませんでした（' + (err && err.message || err) + '）。'
+          + 'JPEG に書き出して読み込んでください');
+  }
+}
 document.getElementById('bLoad').onclick = () => document.getElementById('file').click();
 document.getElementById('file').addEventListener('change', e => {
-  const f = e.target.files[0]; if(!f) return;
-  loadImage(URL.createObjectURL(f));
+  const f = e.target.files[0];
   e.target.value = '';
+  pickFile(f);
 });
 const dropEl = document.getElementById('drop');
 addEventListener('dragover', e => { e.preventDefault(); dropEl.classList.add('on'); });
 addEventListener('dragleave', e => { if(e.relatedTarget === null) dropEl.classList.remove('on'); });
 addEventListener('drop', e => {
   e.preventDefault(); dropEl.classList.remove('on');
-  const f = [...e.dataTransfer.files].find(x => x.type.startsWith('image/'));
-  if(f) loadImage(URL.createObjectURL(f));
+  /* ⚠️ HEIC は type が空で来ることがある＝拡張子でも拾う（type だけ見ると落ちてくれない） */
+  const f = [...e.dataTransfer.files].find(x => x.type.startsWith('image/') || isHeic(x));
+  if(f) pickFile(f);
 });
 
 /* ══════════════════════════════════════════════════════════════
@@ -1716,6 +1827,17 @@ document.getElementById('bSVG').onclick = () => {
     // 効きの途中は、外の薄い帯も一緒に出す（画面で見えているものと同じにする）
     out = (k < 0.995 ? `<g opacity="${(1-k).toFixed(3)}">${body}</g>` : '')
         + `<g clip-path="url(#shp)">${body}</g>`;
+  }
+  /* ⭐ 余白（額）も SVG に入れる＝【見えているものがそのまま出る】。
+     ⚠️ 帯は矩形のままで、まとめて縮めるだけ＝Illustrator でも1枚ずつ触れる状態を守る。 */
+  const MT = matOf(cv.width, cv.height);
+  if(MT){
+    /* 🔴 画面と同じ切り抜きを入れる＝【のび】ではみ出した帯が余白へ流れ出さない */
+    defs += `<clipPath id="matclip" clipPathUnits="userSpaceOnUse">`
+          + `<rect x="0" y="0" width="${cv.width}" height="${cv.height}"/></clipPath>`;
+    out = `<rect x="0" y="0" width="${cv.width}" height="${cv.height}" fill="${P.matcol || '#f2efe6'}"/>`
+        + `<g transform="translate(${MT.mx.toFixed(1)},${MT.my.toFixed(1)}) scale(${MT.s.toFixed(5)})">`
+        + `<g clip-path="url(#matclip)">${out}</g></g>`;
   }
   const svg = `<?xml version="1.0" encoding="UTF-8"?>\n`
     + `<svg xmlns="http://www.w3.org/2000/svg" width="${cv.width}" height="${cv.height}" `
