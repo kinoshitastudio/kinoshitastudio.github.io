@@ -81,6 +81,18 @@
   hr{border:0;border-top:1px solid var(--line);margin:16px 0}
   .note{font-size:10.5px;color:var(--fg3);line-height:1.7;margin-top:7px}
   .note b{color:var(--fg2);font-weight:400}
+  /* ⭐ 註（⭐や🔴の説明）を丸ごと畳む。既定は畳んだ状態＝つまみだけが並ぶ。
+     ⚠️ 出す・消すの札は【いつも見えている】所に置く。隠すと機能ごと無くなる。
+     ⚠️ szNote／tvSize は説明ではなく【いま何 px で出るか】の報せなので残す。 */
+  .hrow{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .tgl{flex:none;padding:3px 9px;background:rgba(28,28,30,.06);border:1px solid transparent;
+    border-radius:6px;color:var(--fg3);font-family:inherit;font-size:10px;letter-spacing:.06em;
+    cursor:pointer;transition:.15s}
+  .tgl:hover{background:rgba(28,28,30,.13)}
+  .tgl.on{background:var(--fg);color:var(--paper)}
+  body.noNote .note:not(#szNote):not(#tvSize){display:none}
+  body.noNote .sub{display:none}
+  body.noNote h1{margin-bottom:16px}
   input[type=color]{width:100%;height:30px;padding:0;border:1px solid var(--line);border-radius:8px;
     background:transparent;cursor:pointer}
   input[type=color]::-webkit-color-swatch-wrapper{padding:3px}
@@ -184,7 +196,8 @@
 </div>
 
 <div id="panel">
-  <h1>KASA</h1>
+  <div class="hrow"><h1>KASA</h1>
+    <button class="tgl" id="noteGo" title="つまみの説明を出す・消す">註</button></div>
   <div class="sub">暈 — くしゃくしゃの紙を重ねて、裏から灯を入れる。<br>
     盤の上を<b>引っぱる</b>と、近くの<b>穴か灯</b>が動く。<b>何も無い所</b>を引っぱると<b>絵そのもの</b>が動く。<br>
     <b>⌥＋引っぱる</b>＝絵の大きさ。<br>
@@ -496,6 +509,7 @@ let P = {
   gloR:0.14, gloI:0.55, rim:0.35, fib:0.14,
   /* 刷る（階調を切る）⭐ 0 で切らない＝いままでの絵と1画素も変わらない */
   cut:0, cutS:6,
+  note:0,               /* 註（つまみの説明）を出すか。既定＝出さない（木下＝「補足説明が多すぎる」） */
   frame:false,          /* 版面のわく：切＝見えているとおりに出す／入＝わくの中だけ出す */
   /* 色 */
   paper:'#f7f1e6', lamp:'#ffeccb', wall:'#3b3833', wallL:0.30,
@@ -721,6 +735,16 @@ function edgeTable(rnd, tear){
 function buildField(W,H,cam){
   const t0=performance.now();
   FW=W; FH=H; FKEY=camKey(W,H,cam);
+  /* 🔴🔴 透け(TRN)の控えを、ここで必ず捨てる。（2026-08-22 木下＝「DEO で作っていたが
+        日本語で入れ直した。前のが地味に残っている」）
+     ⚠️ TRN の鍵は 透け・縁の光・繊維・FKEY（＝盤の大きさとカメラ）しか見ていなかった。
+        字を入れ直しても、かたちを切り替えても、紙の枚数を変えても【鍵は同じ】。
+        ＝新しい紙を【前の字の透け】で刷ることになり、前の字の外に出た紙が真っ暗に沈む
+        （実測：16.6万画素中 3.8万画素が違う。前の字の形だけが明るく浮いて見える）。
+     ⭐ TRN は LAY・MSK・RIM・EDG・NZ・FIB から作る。それを全部作り直すのがここ。
+        だから「場を作り直したら透けも作り直す」で過不足がない
+        （鍵に字や紙のつまみを足して回るより、こちらの方が数え漏れない）。 */
+  trnKey="";
   const n=W*H;
   const hgt=new Float32Array(n);
   LAY=new Float32Array(n); MSK=new Float32Array(n);
@@ -961,6 +985,32 @@ function buildField(W,H,cam){
   /* ⚠️ RIM は行の範囲を作る前なので全面。ここは軽い（引き算2回）ので残す */
   }   /* ← かたち（紙片／文字）の分かれ ここまで */
 
+  /* ⭐ 置いたばかりの穴・灯を【紙のある所】へ寄せる。
+       ⚠️ そうしないと、紙の外＝真っ暗な壁の上に黒い円が出て「消えた」ように見える
+          （数を6にしたのに2つしか見えない、が実際に起きた）。
+       ⚠️ 手で動かしたものは寄せない（置いた所に留まる）。
+     🔴🔴 これは【この位置】でなければならない（2026-08-22 に下から動かした）。
+        もとは場を作り終えた【いちばん最後】に置いてあった。ところが紙は、このずっと下で
+        穴の位置に合わせて凹ませる（＝紙を留めている点）。つまり
+        「動かす前の穴で紙を凹ませ → そのあと穴をよそへ飛ばす」順になっていて、
+        凹みだけが元の場所に残り、穴は何も無い所に乗っていた。
+        （木下＝「重ねるでリロードするとあの傘になるが、そのまま字を組むにいくとおかしくなる。
+          スライダーを少し調整すると戻る」＝つまみで作り直すと auto がもう落ちていて正しく組めた。）
+     ⭐ 寄せ先を決めるのに要るのは【紙の覆い（MSK）】だけで、それはこの行でもう出来ている。
+        だから作り直すのではなく【先に寄せてしまう】＝場を2回組まずに済む。
+     ⚠️ 乱数はここ専用の流れ（seed^0x2545f491）なので、順番を変えても他の絵柄は1画素も動かない。 */
+  {
+    const cx=[], cy=[];
+    for(let y=2;y<H-2;y+=3) for(let x=2;x<W-2;x+=3)
+      if(MSK[y*W+x]>0.7){ cx.push((x-CX)/S); cy.push((y-CY)/S); }
+    if(cx.length){
+      const r2=mulberry32((P.seed^0x2545f491)>>>0);
+      const put=o=>{ const j=(r2()*cx.length)|0; o.x=cx[j]; o.y=cy[j]; o.auto=false; };
+      for(const o of HOLE) if(o.auto) put(o);
+      for(const o of LAMP) if(o.auto) put(o);
+    }
+  }
+
   /* ⭐⭐ ここから先は【紙のある行】だけ回す。
      盤の半分以上は壁で、皺も法線も繊維も計算する意味が無い（実測で場が半分以下になる）。
      ⚠️ 法線は隣の画素を見るので、少し広めに取る。 */
@@ -1136,21 +1186,6 @@ function buildField(W,H,cam){
       FIB[i]=(tmpF[i]*2+tmpF[i-1]+tmpF[i+1]+tmpF[i-FW2]+tmpF[i+FW2])/6;
     }
   } else FIB.fill(0.5);
-  /* ⭐ 置いたばかりの穴・灯を【紙のある所】へ寄せる。
-       ⚠️ そうしないと、紙の外＝真っ暗な壁の上に黒い円が出て「消えた」ように見える
-          （数を6にしたのに2つしか見えない、が実際に起きた）。
-       ⚠️ 手で動かしたものは寄せない（置いた所に留まる）。 */
-  {
-    const cx=[], cy=[];
-    for(let y=2;y<H-2;y+=3) for(let x=2;x<W-2;x+=3)
-      if(MSK[y*W+x]>0.7){ cx.push((x-CX)/S); cy.push((y-CY)/S); }
-    if(cx.length){
-      const r2=mulberry32((P.seed^0x2545f491)>>>0);
-      const put=o=>{ const j=(r2()*cx.length)|0; o.x=cx[j]; o.y=cy[j]; o.auto=false; };
-      for(const o of HOLE) if(o.auto) put(o);
-      for(const o of LAMP) if(o.auto) put(o);
-    }
-  }
   fieldMs=Math.round(performance.now()-t0);
 }
 
@@ -1366,9 +1401,36 @@ let HI=false;
       画素は面積で効くので、780 に落とすだけで作り直しが 2.2倍 速くなる＝手に追いつく。
    ⚠️ 指を離したら必ず戻す（DRAG を消し忘れると、ずっと粗いままになる）。 */
 let DRAG=false;
+/* ⭐⭐ 掴んでいる間の粗さは【機械に測って決める】。
+   🔴 780 の決め打ちだと、速い機械では粗くしすぎ／遅い機械では 780 でも手に付いてこない。
+      実測（headless・1150×708）＝場 124ms・刷り 41ms。780 に落として 1回 44ms＝秒22コマ。
+   ⭐ 1コマ 22ms を目安に、かかった時間から次の粗さを決める。
+      画素は【面積】で効くので、戻すときは √ を掛ける（時間が4倍なら幅は半分）。
+   ⚠️ 粗さを変えると場を作り直すので、0.26秒に1回までしか動かさない（ころころ変えると逆に遅い）。 */
+let DCAP=780, dcapAt=0;
+const DCAP_LO=380, DCAP_HI=1150, MS_AIM=22;
+function tuneDrag(ms){
+  if(!DRAG) return;
+  const now=performance.now();
+  if(now-dcapAt<260) return;
+  if(ms<=MS_AIM*1.5 && ms>=MS_AIM*0.70) return;
+  /* ⭐ 上げ下げは対称にしない。遅いのは【手に付いてこない】＝すぐ落とす。
+     粗いのは見た目が少し眠いだけ＝細かい方へはゆっくり戻す。
+     🔴 対称にすると 550⇄1000 を行ったり来たりして、そのたびに場を作り直す。 */
+  const raw=Math.sqrt(MS_AIM/Math.max(1,ms));
+  const k=raw<1 ? Math.max(raw,0.72) : Math.min(raw,1.25);
+  const nx=clamp(Math.round(DCAP*k/10)*10,DCAP_LO,DCAP_HI);
+  if(nx===DCAP) return;
+  DCAP=nx; dcapAt=now;
+  fit(); preview();     /* ⚠️ 盤の大きさを変えると中身が消えるので、控えを伸ばして繋ぐ */
+}
 function hiLater(){ clearTimeout(shT); shT=setTimeout(()=>{ HI=true; fit(); rebuild(); },180); }
-function coarse(){ if(HI){ HI=false; fit(); } }
-function dragOn(){ if(!DRAG){ DRAG=true; HI=false; fit(); } }
+function coarse(){ if(HI){ HI=false; fit(); preview(); } }
+/* ⚠️ つまみごとに重さが違う（「ふぞろい」は場ごと作り直す・「巡り」は刷るだけ）。
+   🔴 落としたきりにすると、重いつまみで 380 まで落ちた粗さのまま軽いつまみも刷ってしまい、
+      ずっと眠い絵になる（実測でそうなった）。
+   ⭐ 掴み直すたびに時計を戻して、その1本ぶんの重さを最初のコマから測り直す。 */
+function dragOn(){ if(!DRAG){ DRAG=true; HI=false; dcapAt=0; fit(); preview(); } }
 function dragOff(){ if(DRAG){ DRAG=false; sharpenLater(); } }
 addEventListener('pointerup',dragOff);
 addEventListener('pointercancel',dragOff);
@@ -1406,7 +1468,7 @@ function fit(){
   /* 版面が盤に収まる大きさ（倍率1のとき） */
   fitS=Math.min(w/(2*hw), h/(2*hh))*0.86;
   const dpr=Math.min(2,window.devicePixelRatio||1);
-  const cap=DRAG?780:((P.anim||!HI)?1150:1800);
+  const cap=DRAG?DCAP:((P.anim||!HI)?1150:1800);
   let W=Math.round(w*dpr), H=Math.round(h*dpr);
   const lg=Math.max(W,H);
   if(lg>cap){ W=Math.round(W*cap/lg); H=Math.round(H*cap/lg); }
@@ -1464,11 +1526,12 @@ function render(){
   { const d=ctx.getImageData(1,1,1,1).data; cornerC='rgb('+d[0]+','+d[1]+','+d[2]+')'; }
   drawGuide(ctx,cam);
   const ms=Math.round(performance.now()-t0);
+  tuneDrag(ms);                       /* ⭐ 掴んでいる間の粗さを、いまかかった時間で決め直す */
   if(performance.now()<statUntil) return;
   const [ow,oh]=outSize();
   statEl.textContent = ow+' × '+oh+' で出る　'+Math.round(VIEW.z*100)+'%　紙 '+Math.round(P.sheets)
     +(P.shape==='tpiece' ? '枚（紙片 '+SHEETN+'）' : '枚')+'・折り目 '+Math.round(P.crN)+'本・灯 '+LAMP.length+'・穴 '+HOLE.length
-    +'　（場 '+fieldMs+'ms／刷り '+ms+'ms）';
+    +'　（場 '+fieldMs+'ms／刷り '+ms+'ms'+(DRAG?'・触っている間 '+cw+'px':'')+'）';
 }
 /* 動かしている間は、控えた絵をずらして見せる（場を作り直すと追いつかない） */
 function preview(){
@@ -1479,8 +1542,11 @@ function preview(){
      控えた絵の角の色＝いちばん外の地の色で埋める。 */
   ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
   ctx.fillStyle=cornerColor(); ctx.fillRect(0,0,cw,ch);
-  ctx.drawImage(SNAP, 0,0,cw,ch,
-    cam.cx-snapCam.cx*k, cam.cy-snapCam.cy*k, cw*k, ch*k);
+  /* 🔴 元寸は【控えの大きさ】。cw/ch（＝いまの盤）で切り出すと、粗さを切り替えた
+        瞬間だけ控えをはみ出して読む＝絵が伸びる／端が切れる。 */
+  const sw=SNAP.width, sh=SNAP.height;
+  ctx.drawImage(SNAP, 0,0,sw,sh,
+    cam.cx-snapCam.cx*k, cam.cy-snapCam.cy*k, sw*k, sh*k);
   drawGuide(ctx,cam);
 }
 let kickT=null;
@@ -1545,11 +1611,17 @@ const R = [
 ];
 R.forEach(([id,key,fmt,re])=>{
   const r=el('r_'+id); if(!r) return;
-  r.addEventListener('pointerdown',()=>{ pushHist(); if(re) dragOn(); });
+  /* 🔴🔴 いままで【場を作り直すつまみだけ】粗くしていた（if(re) dragOn()）。
+        透け・硬さ・灯・巡り は「刷るだけ」なので粗くしていなかったが、
+        刷りも画素ぶん時間がかかる。実測（1150×708）＝刷りだけで 41ms＝秒24コマ、
+        止まって 1800px まで上がっていると秒10コマを切る＝つまみに絵が付いてこない。
+     ⭐ 掴んでいる間は【どのつまみでも】粗くする。離せば 0.18秒で細かく刷り直す。 */
+  r.addEventListener('pointerdown',()=>{ pushHist(); dragOn(); });
   r.addEventListener('input',()=>{
     P[key]=+r.value;
     const o=el('o_'+id); if(o) o.textContent=fmt(+r.value);
-    if(re){ coarse(); hiLater(); }
+    /* ⚠️ 矢印キーで動かすと pointerdown が来ない＝掴んだことにならない。ここでも掛ける。 */
+    coarse(); hiLater();
     if(key==='holeN'||key==='lampN'){ syncCount(); rebuild(); }
     if(re) rebuild(); else kick();
     szSync(); saveLocal();
@@ -1635,7 +1707,7 @@ function syncUI(){
     const r=el('r_'+id), o=el('o_'+id); if(!r) return;
     r.value=P[key]; if(o) o.textContent=fmt(+r.value);
   });
-  cycSync(); animSync(); shapeSync();
+  cycSync(); animSync(); shapeSync(); noteSync();
   el('t_text').value=P.text; el('t_font').value=P.font;
   segSet('ratio',P.ratio); segSet('szSeg',P.sz);
   el('r_long').classList.toggle('hide',P.sz!=='px');
@@ -1643,6 +1715,15 @@ function syncUI(){
   el('c_paper').value=P.paper; el('c_lamp').value=P.lamp; el('c_wall').value=P.wall;
   szSync();
 }
+/* ⭐ 註の出し入れ。絵には一切さわらないので、刷り直さない（表示だけ）。 */
+function noteSync(){
+  document.body.classList.toggle('noNote', !P.note);
+  el('noteGo').classList.toggle('on', !!P.note);
+}
+el('noteGo').onclick=()=>{
+  P.note=P.note?0:1; noteSync(); saveLocal();
+  stat(P.note?'つまみの説明を出した':'つまみの説明を消した（左上の「註」で戻る）');
+};
 function szSync(){
   const [ow,oh]=outSize();
   el('szNote').innerHTML='PNG・動画とも <b>'+ow+' × '+oh+'</b> px で出ます';
@@ -2003,7 +2084,7 @@ addEventListener('resize',()=>{ if(!TV.on){ fit(); rebuild(); } });
 
 /* 試験から呼ぶ入口（画面には出さない） */
 window.KASA={ get P(){return P}, get HOLE(){return HOLE}, get LAMP(){return LAMP},
-  paint, buildField, outSize, bundle, applyState, rebuild, fit, render,
+  paint, buildField, outSize, bundle, applyState, rebuild, fit, render, camScreen,
   get FW(){return FW}, get FH(){return FH}, get fieldMs(){return fieldMs} };
 </script>
 
