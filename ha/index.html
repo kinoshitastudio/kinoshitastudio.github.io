@@ -157,8 +157,19 @@
 
     <h2>通すもの</h2>
     <div class="seg" id="penSeg">
-      <button data-v="blade" class="on">刃（字）</button>
-      <button data-v="tube">管（あしらい）</button>
+      <button data-v="blade" class="on">刃</button>
+      <button data-v="tube">管</button>
+      <button data-v="masu">升</button>
+    </div>
+    <div class="seg" id="fillSeg">
+      <button data-v="fill" class="on">中を塗る</button>
+      <button data-v="hollow">中を抜く</button>
+    </div>
+    <div class="row"><label>升の大きさ</label><input type="range" id="cell" min="4" max="80" step="1" value="22"><span class="val" id="v_cell"></span></div>
+    <div class="note">
+      ⭐ <b>升</b>＝形を<b>升目に丸める</b>＝輪郭が階段になる（解像度を落とした字）。<br>
+      ⭐ <b>中を抜く</b>＝縁だけ残る。管を抜けば<b>1本線の字</b>、升を抜けば<b>8bitの縁取り</b>になる。<br>
+      ⚠️ 升の大きさが<b>刃の幅より大きい</b>と、字が升目そのものに食われる（それも味）。
     </div>
 
     <h2>刃 — 字をつくる</h2>
@@ -276,7 +287,7 @@ let STROKES = [], cur = null, SEL = -1, MODE = 'draw';
 const VIEW = { z:1, ox:0, oy:0 };
 const P = { pen:'blade', ang:-28, wid:54, thin:2, col:'#0a0a0a',
             tw:26, to:2, tcol:'#ffffff', ocol:'#0a0a0a',
-            smooth:2.5, bg:'#d9d9d9',
+            smooth:2.5, bg:'#d9d9d9', cell:22, hollow:false,
             an:'none', anAmt:26, anSpd:14,
             exWhat:'all', exScale:'2', exFit:'ink', exPad:40, exBg:'1',
             tvFmt:'mp4', tvSec:6, tvFps:'30' };
@@ -375,9 +386,28 @@ function poseOf(s, i, ph){
   }
   return p;
 }
+/* ⭐ 刃の【縁】＝リボンの外側と内側。刃の幅も角度も一定なので、
+   骨を +e したものと −e したものを繋ぐだけで、掃いた形の輪郭になる（近似ではない）。 */
+function bladeRibbon(pts, ang, wid){
+  const th=ang*Math.PI/180, ex=Math.cos(th)*wid/2, ey=Math.sin(th)*wid/2;
+  const a = pts.map(p=>({x:p.x+ex, y:p.y+ey}));
+  const b = pts.map(p=>({x:p.x-ex, y:p.y-ey})).reverse();
+  return a.concat(b);
+}
 function paintBlade(g, s, i, ph){
   const q = poseOf(s, i, ph);
   if(q.pts.length < 2) return;
+  if(s.hollow){
+    /* ⭐ 中を抜く＝縁だけ。⚠️ 塗りの側は四角の重ねのままにする
+       （リボン1本にすると、きつく曲がった所で巻きが打ち消して穴が空く） */
+    const r = bladeRibbon(q.pts, q.ang, s.wid);
+    g.strokeStyle = s.ocol || '#0a0a0a'; g.lineWidth = s.to > 0 ? s.to : 2;
+    g.lineJoin='round'; g.lineCap='round';
+    g.beginPath(); g.moveTo(r[0].x, r[0].y);
+    for(let k=1;k<r.length;k++) g.lineTo(r[k].x, r[k].y);
+    g.closePath(); g.stroke();
+    return;
+  }
   g.fillStyle = s.col || '#0a0a0a';
   g.beginPath();
   for(const it of bladeQuads(q.pts, q.ang, s.wid)){
@@ -395,20 +425,115 @@ function paintBlade(g, s, i, ph){
     g.stroke();
   }
 }
+
+/* ══ 升 ══ 形を升目に丸める＝輪郭が階段になる（解像度を落とした字）
+   ⭐ 作り方＝いったん小さな盤に描いて、埋まった升だけを拾う。
+      ＝「どう階段にするか」を考えない。落として拾えば階段は勝手に出る。
+   ⚠️ 中を抜くときは【空いた升に面している辺だけ】を引く＝升目の内側の線が出ない。 */
+function masuCells(s, q){
+  const cell = Math.max(2, s.cell || 22);
+  /* その骨だけの囲み（升の目に合わせて切る） */
+  const pad = Math.max(s.wid, s.tw + s.to*2)/2 + cell*2;
+  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+  q.pts.forEach(p => { x0=Math.min(x0,p.x); y0=Math.min(y0,p.y);
+    x1=Math.max(x1,p.x); y1=Math.max(y1,p.y); });
+  x0-=pad; y0-=pad; x1+=pad; y1+=pad;
+  const gx0=Math.floor(x0/cell), gy0=Math.floor(y0/cell);
+  const W=Math.ceil((x1-x0)/cell)+1, H=Math.ceil((y1-y0)/cell)+1;
+  if(W*H > 400000) return null;                 /* 升が細かすぎる＝諦めて理由を出す */
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d');
+  g.setTransform(1/cell,0,0,1/cell, -gx0, -gy0);
+  /* ⭐ 拾うのは形だけなので、色は何でもよい */
+  g.fillStyle='#000'; g.strokeStyle='#000';
+  g.beginPath();
+  for(const it of bladeQuads(q.pts, q.ang, s.wid)){
+    g.moveTo(it[0].x,it[0].y);
+    for(let k=1;k<it.length;k++) g.lineTo(it[k].x,it[k].y);
+    g.closePath();
+  }
+  g.fill();
+  if(s.thin>0){ g.lineWidth=s.thin; g.lineCap='round'; g.lineJoin='round';
+    g.beginPath(); g.moveTo(q.pts[0].x,q.pts[0].y);
+    for(let k=1;k<q.pts.length;k++) g.lineTo(q.pts[k].x,q.pts[k].y);
+    g.stroke(); }
+  const d = g.getImageData(0,0,W,H).data;
+  const on = (x,y) => (x<0||y<0||x>=W||y>=H) ? false : d[(y*W+x)*4+3] > 96;
+  return { cell, gx0, gy0, W, H, on };
+}
+function paintMasu(g, s, i, ph){
+  const q = poseOf(s, i, ph);
+  if(q.pts.length < 2) return;
+  const m = masuCells(s, q);
+  if(!m){ return; }
+  const { cell, gx0, gy0, W, H, on } = m;
+  const X = gx => (gx+gx0)*cell, Y = gy => (gy+gy0)*cell;
+  if(s.hollow){
+    g.strokeStyle = s.ocol || '#0a0a0a'; g.lineWidth = s.to > 0 ? s.to : 2;
+    g.lineJoin='miter'; g.lineCap='butt';
+    g.beginPath();
+    for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+      if(!on(x,y)) continue;
+      if(!on(x,y-1)){ g.moveTo(X(x),Y(y));       g.lineTo(X(x+1),Y(y)); }
+      if(!on(x,y+1)){ g.moveTo(X(x),Y(y+1));     g.lineTo(X(x+1),Y(y+1)); }
+      if(!on(x-1,y)){ g.moveTo(X(x),Y(y));       g.lineTo(X(x),Y(y+1)); }
+      if(!on(x+1,y)){ g.moveTo(X(x+1),Y(y));     g.lineTo(X(x+1),Y(y+1)); }
+    }
+    g.stroke();
+  } else {
+    g.fillStyle = s.col || '#0a0a0a';
+    g.beginPath();
+    for(let y=0;y<H;y++) for(let x=0;x<W;x++) if(on(x,y)) g.rect(X(x),Y(y),cell,cell);
+    g.fill();
+  }
+}
 function paintTube(g, s, i, ph){
   const q = poseOf(s, i, ph);
   if(q.pts.length < 2) return;
   g.lineJoin='round'; g.lineCap='round';
   g.beginPath(); g.moveTo(q.pts[0].x, q.pts[0].y);
   for(let k=1;k<q.pts.length;k++) g.lineTo(q.pts[k].x, q.pts[k].y);
-  if(s.to>0){ g.strokeStyle = s.ocol||'#0a0a0a'; g.lineWidth = s.tw+s.to*2; g.stroke(); }
-  g.strokeStyle = s.tcol||'#ffffff'; g.lineWidth = s.tw; g.stroke();
+  if(!s.hollow){
+    if(s.to>0){ g.strokeStyle = s.ocol||'#0a0a0a'; g.lineWidth = s.tw+s.to*2; g.stroke(); }
+    g.strokeStyle = s.tcol||'#ffffff'; g.lineWidth = s.tw; g.stroke();
+    return;
+  }
+  /* ⭐⭐ 中を抜く＝【本当に透ける輪】にする（参考の、後ろが透けて見える1本線の字）。
+     🔴 外側の輪郭を太く引くだけでは【ただの太い黒線】になる（実際になった）。
+     ⭐ 別の紙に外側を引いてから内側をくり抜き、それを重ねる。
+        こうすると、後ろにある他の字を消さずに中だけが透ける。 */
+  const w = s.tw + (s.to>0 ? s.to*2 : 4);
+  const box = { x0:1e9, y0:1e9, x1:-1e9, y1:-1e9 };
+  q.pts.forEach(p => { box.x0=Math.min(box.x0,p.x); box.y0=Math.min(box.y0,p.y);
+    box.x1=Math.max(box.x1,p.x); box.y1=Math.max(box.y1,p.y); });
+  const m = w, sc = 2;                       /* 少しだけ細かく描いて縁を綺麗に */
+  const W = Math.max(2, Math.ceil((box.x1-box.x0+m*2)*sc));
+  const H = Math.max(2, Math.ceil((box.y1-box.y0+m*2)*sc));
+  if(W*H > 36e6) return;                     /* 大きすぎるときは諦める（固まらせない） */
+  const c = document.createElement('canvas'); c.width=W; c.height=H;
+  const o = c.getContext('2d');
+  o.setTransform(sc,0,0,sc, (-box.x0+m)*sc, (-box.y0+m)*sc);
+  o.lineJoin='round'; o.lineCap='round';
+  o.beginPath(); o.moveTo(q.pts[0].x, q.pts[0].y);
+  for(let k=1;k<q.pts.length;k++) o.lineTo(q.pts[k].x, q.pts[k].y);
+  o.strokeStyle = s.ocol||'#0a0a0a'; o.lineWidth = w; o.stroke();
+  o.globalCompositeOperation = 'destination-out';
+  o.lineWidth = Math.max(0.1, s.tw); o.stroke();
+  g.save(); g.setTransform(g.getTransform());
+  g.drawImage(c, box.x0-m, box.y0-m, W/sc, H/sc);
+  g.restore();
 }
-/* ⭐ 描く順は1箇所だけ＝画面も書き出しも動画も同じものを見る */
+/* ⭐ 描く順は1箇所だけ＝画面も書き出しも動画も同じものを見る
+   ⭐ 刃と升は【字】、管は【あしらい】なので、字が先・あしらいが後（参考もそう） */
+function paintOne(g, s, i, ph){
+  if(s.pen==='tube') paintTube(g,s,i,ph);
+  else if(s.pen==='masu') paintMasu(g,s,i,ph);
+  else paintBlade(g,s,i,ph);
+}
 function paintAll(g, list, ph, showSel){
   const L = list || STROKES;
-  L.forEach((s,i) => { if(s.pen==='blade') paintBlade(g, s, i, ph); });
-  if(cur && cur.pen==='blade' && !list) paintBlade(g, cur, 0, 1);
+  L.forEach((s,i) => { if(s.pen!=='tube') paintOne(g, s, i, ph); });
+  if(cur && cur.pen!=='tube' && !list) paintOne(g, cur, 0, 1);
   L.forEach((s,i) => { if(s.pen==='tube') paintTube(g, s, i, ph); });
   if(cur && cur.pen==='tube' && !list) paintTube(g, cur, 0, 1);
   if(showSel && SEL>=0 && STROKES[SEL]){
@@ -482,7 +607,7 @@ cv.addEventListener('pointerdown', e => {
   }
   down = { sp, moved:0 };
   cur = { pen:P.pen, pts:[wp], ang:P.ang, wid:P.wid, thin:P.thin, col:P.col,
-          tw:P.tw, to:P.to, tcol:P.tcol, ocol:P.ocol };
+          tw:P.tw, to:P.to, tcol:P.tcol, ocol:P.ocol, cell:P.cell, hollow:P.hollow };
 });
 cv.addEventListener('pointermove', e => {
   const sp = spos(e), wp = toWorld(sp);
@@ -534,7 +659,7 @@ function says(extra){
     : (n ? 'ぜんぶ（'+n+'本）に効く' : 'まだ骨がない — 引くと出る');
   stat((extra?extra+'　':'')+'骨 '+n+' 本'+(MODE==='pick'?'／選ぶ':'／引く'));
 }
-const KEYS = [['ang','°'],['wid',''],['thin',''],['tw',''],['to','']];
+const KEYS = [['ang','°'],['wid',''],['thin',''],['tw',''],['to',''],['cell','']];
 KEYS.forEach(([k,unit]) => {
   const r = el(k), o = el('v_'+k);
   r.addEventListener('pointerdown', push);
@@ -557,6 +682,12 @@ document.querySelectorAll('#penSeg button').forEach(b => b.addEventListener('cli
   if(STROKES.length){ push(); targets().forEach(s=>s.pen=P.pen); draw(); }
   says(P.pen==='blade'?'刃にした':'管にした');
 }));
+document.querySelectorAll('#fillSeg button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#fillSeg button').forEach(x=>x.classList.toggle('on',x===b));
+  P.hollow = b.dataset.v === 'hollow';
+  if(STROKES.length){ push(); targets().forEach(s=>s.hollow=P.hollow); draw(); }
+  says(P.hollow?'中を抜いた':'中を塗った');
+}));
 document.querySelectorAll('#anSeg button').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('#anSeg button').forEach(x=>x.classList.toggle('on',x===b));
   P.an=b.dataset.v; anSync(); says(P.an==='none'?'止めた':'動かしている');
@@ -574,8 +705,10 @@ function syncPanel(){
   KEYS.forEach(([k,unit]) => { P[k]=s[k]; const r=el(k); if(r) r.value=s[k];
     const o=el('v_'+k); if(o) o.textContent=s[k]+unit; });
   ['col','tcol','ocol'].forEach(k => { if(s[k]){ P[k]=s[k]; el(k).value=s[k]; } });
-  P.pen = s.pen;
+  P.pen = s.pen; P.hollow = !!s.hollow;
   document.querySelectorAll('#penSeg button').forEach(b=>b.classList.toggle('on', b.dataset.v===s.pen));
+  document.querySelectorAll('#fillSeg button').forEach(b=>
+    b.classList.toggle('on', (b.dataset.v==='hollow') === !!s.hollow));
   says();
 }
 el('helpBtn').onclick = () => document.body.classList.toggle('help');
@@ -614,6 +747,8 @@ el('jsonFile').addEventListener('change', async e => {
       r.value=P[k]; const o=el('v_'+k); if(o) o.textContent=P[k]; } });
     ['exWhat','exScale','exFit','exBg','tvFps','tvFmt'].forEach(k => { const s=el(k); if(s&&P[k]!=null) s.value=P[k]; });
     document.querySelectorAll('#penSeg button').forEach(b=>b.classList.toggle('on', b.dataset.v===P.pen));
+    document.querySelectorAll('#fillSeg button').forEach(b=>
+      b.classList.toggle('on', (b.dataset.v==='hollow') === !!P.hollow));
     document.querySelectorAll('#anSeg button').forEach(b=>b.classList.toggle('on', b.dataset.v===P.an));
     document.getElementById('stage').style.background = P.bg;
     SEL=-1; zSync(); anSync(); draw(); says('控えを読んだ（骨 '+STROKES.length+' 本）');
@@ -624,7 +759,7 @@ el('jsonFile').addEventListener('change', async e => {
 /* ══ 出す（静止画）══ */
 function exList(){
   const w = el('exWhat').value;
-  if(w==='blade') return STROKES.filter(s=>s.pen==='blade');
+  if(w==='blade') return STROKES.filter(s=>s.pen==='blade'||s.pen==='masu');
   if(w==='tube')  return STROKES.filter(s=>s.pen==='tube');
   if(w==='sel')   return SEL>=0 ? [STROKES[SEL]] : [];
   return STROKES;
@@ -660,17 +795,44 @@ el('bSvg').onclick = () => {
   if(el('exBg').value==='1') parts.push('<rect x="'+b.x0+'" y="'+b.y0+'" width="'+w+'" height="'+h+'" fill="'+P.bg+'"/>');
   const d2 = p => p.x.toFixed(2)+' '+p.y.toFixed(2);
   list.filter(s=>s.pen==='blade').forEach(s => {
+    if(s.hollow){
+      const r = bladeRibbon(s.pts, s.ang, s.wid);
+      parts.push('<path d="M'+r.map(d2).join('L')+'Z" fill="none" stroke="'+(s.ocol||'#0a0a0a')+
+        '" stroke-width="'+(s.to>0?s.to:2)+'" stroke-linejoin="round"/>');
+      return;
+    }
     const q = bladeQuads(s.pts, s.ang, s.wid).map(it=>'M'+it.map(d2).join('L')+'Z');
     if(q.length) parts.push('<path d="'+q.join('')+'" fill="'+(s.col||'#0a0a0a')+'"/>');
     if(s.thin>0 && s.pts.length>1)
       parts.push('<path d="M'+s.pts.map(d2).join('L')+'" fill="none" stroke="'+(s.col||'#0a0a0a')+
         '" stroke-width="'+s.thin+'" stroke-linecap="round" stroke-linejoin="round"/>');
   });
+  /* ⭐ 升は【升目そのもの】を出す＝階段がベクターのまま残る（画像に焼かない） */
+  list.filter(s=>s.pen==='masu').forEach(s => {
+    const m = masuCells(s, { pts:s.pts, ang:s.ang }); if(!m) return;
+    const { cell, gx0, gy0, W, H, on } = m;
+    const X = gx => ((gx+gx0)*cell).toFixed(2), Y = gy => ((gy+gy0)*cell).toFixed(2);
+    const d=[];
+    if(s.hollow){
+      for(let y=0;y<H;y++) for(let x=0;x<W;x++){ if(!on(x,y)) continue;
+        if(!on(x,y-1)) d.push('M'+X(x)+' '+Y(y)+'H'+X(x+1));
+        if(!on(x,y+1)) d.push('M'+X(x)+' '+Y(y+1)+'H'+X(x+1));
+        if(!on(x-1,y)) d.push('M'+X(x)+' '+Y(y)+'V'+Y(y+1));
+        if(!on(x+1,y)) d.push('M'+X(x+1)+' '+Y(y)+'V'+Y(y+1)); }
+      if(d.length) parts.push('<path d="'+d.join('')+'" fill="none" stroke="'+(s.ocol||'#0a0a0a')+
+        '" stroke-width="'+(s.to>0?s.to:2)+'"/>');
+    } else {
+      for(let y=0;y<H;y++) for(let x=0;x<W;x++) if(on(x,y))
+        d.push('M'+X(x)+' '+Y(y)+'h'+cell+'v'+cell+'h'+(-cell)+'Z');
+      if(d.length) parts.push('<path d="'+d.join('')+'" fill="'+(s.col||'#0a0a0a')+'"/>');
+    }
+  });
   list.filter(s=>s.pen==='tube').forEach(s => {
     if(s.pts.length<2) return;
     const d='M'+s.pts.map(d2).join('L');
     if(s.to>0) parts.push('<path d="'+d+'" fill="none" stroke="'+(s.ocol||'#0a0a0a')+
       '" stroke-width="'+(s.tw+s.to*2)+'" stroke-linecap="round" stroke-linejoin="round"/>');
+    if(s.hollow) return;
     parts.push('<path d="'+d+'" fill="none" stroke="'+(s.tcol||'#ffffff')+
       '" stroke-width="'+s.tw+'" stroke-linecap="round" stroke-linejoin="round"/>');
   });
