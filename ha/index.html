@@ -155,6 +155,18 @@
       ⚠️ だから<b>引いたあとから</b>、角度も太さも色も決め直せる。
     </div>
 
+    <h2>版 — 重ねる</h2>
+    <div id="layList"></div>
+    <div class="two">
+      <button class="btn" id="layAdd">版を足す</button>
+      <button class="btn" id="layDel">この版を消す</button>
+    </div>
+    <div class="note">
+      ⭐ <b>版</b>＝重ねる紙。<b>いま選んでいる版に引かれる</b>。<br>
+      ⭐ <b>上にある版が手前</b>。矢印で入れ替えると重なりが変わる（字の上にあしらいを乗せる、など）。<br>
+      ⚠️ 目のマークで<b>隠せる</b>（隠した版は書き出しにも入らない）。
+    </div>
+
     <h2>通すもの</h2>
     <div class="seg" id="penSeg">
       <button data-v="blade" class="on">刃</button>
@@ -284,6 +296,8 @@ const stat = s => el('stat').textContent = s;
 const DPR = () => Math.min(2, devicePixelRatio || 1);
 
 let STROKES = [], cur = null, SEL = -1, MODE = 'draw';
+/* ⭐ 版＝重ねる紙。一覧の上にあるものが手前（LAYERS[0] が手前） */
+let LAYERS = [{ name:'版 1', on:true }], LSEL = 0;
 const VIEW = { z:1, ox:0, oy:0 };
 const P = { pen:'blade', ang:-28, wid:54, thin:2, col:'#0a0a0a',
             tw:26, to:2, tcol:'#ffffff', ocol:'#0a0a0a',
@@ -297,9 +311,9 @@ let UNDO = [], REDO = [];
 const snap = () => JSON.stringify(STROKES);
 function push(){ UNDO.push(snap()); if(UNDO.length>120) UNDO.shift(); REDO.length=0; }
 function undo(){ if(!UNDO.length) return; REDO.push(snap());
-  STROKES = JSON.parse(UNDO.pop()); SEL=-1; syncPanel(); draw(); says('戻した'); }
+  STROKES = JSON.parse(UNDO.pop()); SEL=-1; syncPanel(); layRender(); draw(); says('戻した'); }
 function redo(){ if(!REDO.length) return; UNDO.push(snap());
-  STROKES = JSON.parse(REDO.pop()); SEL=-1; syncPanel(); draw(); says('進んだ'); }
+  STROKES = JSON.parse(REDO.pop()); SEL=-1; syncPanel(); layRender(); draw(); says('進んだ'); }
 
 /* ══ 盤＝窓 ══ */
 function fit(){ const r = cv.getBoundingClientRect(), d = DPR();
@@ -524,7 +538,9 @@ function paintTube(g, s, i, ph){
   g.restore();
 }
 /* ⭐ 描く順は1箇所だけ＝画面も書き出しも動画も同じものを見る
-   ⭐ 刃と升は【字】、管は【あしらい】なので、字が先・あしらいが後（参考もそう） */
+   ⭐⭐ 重なりは【版】が決める（2026-08-22 木下＝「tsubu のように版を重ねる」）。
+      🔴 前はペンの種類で順番を決め打ちしていた＝「字の上にあしらい」しか作れなかった。
+         版にすると、どちらを手前にするかを木下が決められる。 */
 function paintOne(g, s, i, ph){
   if(s.pen==='tube') paintTube(g,s,i,ph);
   else if(s.pen==='masu') paintMasu(g,s,i,ph);
@@ -532,10 +548,12 @@ function paintOne(g, s, i, ph){
 }
 function paintAll(g, list, ph, showSel){
   const L = list || STROKES;
-  L.forEach((s,i) => { if(s.pen!=='tube') paintOne(g, s, i, ph); });
-  if(cur && cur.pen!=='tube' && !list) paintOne(g, cur, 0, 1);
-  L.forEach((s,i) => { if(s.pen==='tube') paintTube(g, s, i, ph); });
-  if(cur && cur.pen==='tube' && !list) paintTube(g, cur, 0, 1);
+  /* 版の下から順に。⚠️ 隠した版は描かない（書き出しにも入らない） */
+  for(let li = LAYERS.length-1; li >= 0; li--){
+    if(!LAYERS[li].on) continue;
+    L.forEach((s,i) => { if((s.L|0) === li) paintOne(g, s, i, ph); });
+    if(cur && !list && (cur.L|0) === li) paintOne(g, cur, 0, 1);
+  }
   if(showSel && SEL>=0 && STROKES[SEL]){
     const s = STROKES[SEL];
     g.save(); g.strokeStyle='rgba(0,122,255,.95)'; g.lineWidth=1/VIEW.z;
@@ -607,7 +625,7 @@ cv.addEventListener('pointerdown', e => {
   }
   down = { sp, moved:0 };
   cur = { pen:P.pen, pts:[wp], ang:P.ang, wid:P.wid, thin:P.thin, col:P.col,
-          tw:P.tw, to:P.to, tcol:P.tcol, ocol:P.ocol, cell:P.cell, hollow:P.hollow };
+          tw:P.tw, to:P.to, tcol:P.tcol, ocol:P.ocol, cell:P.cell, hollow:P.hollow, L:LSEL };
 });
 cv.addEventListener('pointermove', e => {
   const sp = spos(e), wp = toWorld(sp);
@@ -634,7 +652,7 @@ function endAll(){
   push();
   cur.pts = tidy(cur.pts, P.smooth);
   if(cur.pts.length>=2) STROKES.push(cur);
-  cur=null; down=null; SEL=-1; draw(); says();
+  cur=null; down=null; SEL=-1; layRender(); draw(); says();
 }
 cv.addEventListener('pointerup', endAll);
 cv.addEventListener('pointercancel', endAll);
@@ -657,7 +675,8 @@ function says(extra){
   const n = STROKES.length;
   el('target').textContent = SEL>=0 ? '選んだ骨 1本 に効く（Esc でぜんぶへ）'
     : (n ? 'ぜんぶ（'+n+'本）に効く' : 'まだ骨がない — 引くと出る');
-  stat((extra?extra+'　':'')+'骨 '+n+' 本'+(MODE==='pick'?'／選ぶ':'／引く'));
+  stat((extra?extra+'　':'')+'骨 '+n+' 本'+(MODE==='pick'?'／選ぶ':'／引く')
+       +'／版 '+(LSEL+1)+'/'+LAYERS.length);
 }
 const KEYS = [['ang','°'],['wid',''],['thin',''],['tw',''],['to',''],['cell','']];
 KEYS.forEach(([k,unit]) => {
@@ -676,12 +695,20 @@ el('smooth').addEventListener('input', e => { P.smooth=+e.target.value; el('v_sm
 el('v_smooth').textContent = el('smooth').value;
 el('bg').addEventListener('input', e => { P.bg=e.target.value;
   document.getElementById('stage').style.background=P.bg; draw(); });
+/* 🔴🔴 2026-08-22 木下＝「刃とあしらいを切りかえるにすると、どちらもひくことができない」
+   ＝【通すもの】を切り替えたら、すでに引いた骨まで全部そのペンに変わっていた。
+      数値のつまみ（角度・太さ・色）は「調整」なのでぜんぶに効いてよいが、
+      ペンの種類を全部変えるのは調整ではなく【作り直し】＝作品が壊れる。
+   ⭐ 通すものは【これから引くもの】を決める。すでに引いた骨を変えたいときは【選んでから】。
+      （イラレと同じ感触。選んでいなければ何も書き換えない） */
 document.querySelectorAll('#penSeg button').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('#penSeg button').forEach(x=>x.classList.toggle('on',x===b));
   P.pen=b.dataset.v;
-  if(STROKES.length){ push(); targets().forEach(s=>s.pen=P.pen); draw(); }
-  says(P.pen==='blade'?'刃にした':'管にした');
+  if(SEL>=0){ push(); STROKES[SEL].pen=P.pen; draw(); says('選んだ骨を'+penName(P.pen)+'にした'); }
+  else says('つぎに引くのは'+penName(P.pen)+'（すでに引いた骨は変わらない）');
 }));
+const penName = v => v==='blade'?'刃':v==='tube'?'管':'升';
+/* ⚠️ 中を抜くは【見え方の調整】なので、つまみと同じ規則でよい（選択が無ければ ぜんぶ） */
 document.querySelectorAll('#fillSeg button').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('#fillSeg button').forEach(x=>x.classList.toggle('on',x===b));
   P.hollow = b.dataset.v === 'hollow';
@@ -711,12 +738,63 @@ function syncPanel(){
     b.classList.toggle('on', (b.dataset.v==='hollow') === !!s.hollow));
   says();
 }
+/* ══ 版 ══ */
+function layRender(){
+  const box = el('layList'); if(!box) return;
+  box.innerHTML = '';
+  LAYERS.forEach((L, i) => {
+    const n = STROKES.filter(s => (s.L|0) === i).length;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;margin:0 0 4px;background:'+
+      (i===LSEL?'rgba(255,255,255,.16)':'rgba(255,255,255,.06)')+
+      ';border-radius:8px;padding:6px 8px;cursor:pointer';
+    const eye = document.createElement('span');
+    eye.textContent = L.on ? '\u25CF' : '\u25CB';
+    eye.style.cssText = 'flex:none;width:20px;text-align:center;opacity:'+(L.on?1:.35);
+    eye.onclick = e => { e.stopPropagation(); L.on = !L.on; draw(); layRender(); };
+    const nm = document.createElement('span');
+    nm.textContent = L.name;
+    nm.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px';
+    const cnt = document.createElement('span');
+    cnt.textContent = n; cnt.style.cssText='flex:none;color:#8a8a90;font-size:10.5px';
+    const mk = (t, fn) => { const b=document.createElement('button'); b.textContent=t;
+      b.style.cssText='flex:none;width:22px;height:22px;border:none;border-radius:6px;'+
+        'background:rgba(255,255,255,.10);color:#d8d8dc;cursor:pointer;font-size:11px';
+      b.onclick = e => { e.stopPropagation(); fn(); }; return b; };
+    row.onclick = () => { LSEL = i; layRender(); says('版 '+(i+1)+' に引く'); };
+    row.appendChild(eye); row.appendChild(nm); row.appendChild(cnt);
+    row.appendChild(mk('\u2191', () => { if(i>0){ push(); layMove(i, i-1); } }));
+    row.appendChild(mk('\u2193', () => { if(i<LAYERS.length-1){ push(); layMove(i, i+1); } }));
+    box.appendChild(row);
+  });
+}
+/* ⚠️ 版を入れ替えたら、骨が指している版の番号も一緒に付け替える（ずれると絵が飛ぶ） */
+function layMove(a, b){
+  const t = LAYERS[a]; LAYERS[a] = LAYERS[b]; LAYERS[b] = t;
+  STROKES.forEach(s => { const L = s.L|0; if(L===a) s.L=b; else if(L===b) s.L=a; });
+  if(LSEL===a) LSEL=b; else if(LSEL===b) LSEL=a;
+  draw(); layRender();
+}
+el('layAdd').onclick = () => {
+  push(); LAYERS.unshift({ name:'版 '+(LAYERS.length+1), on:true });
+  STROKES.forEach(s => s.L = (s.L|0)+1);
+  LSEL = 0; layRender(); draw(); says('版を足した');
+};
+el('layDel').onclick = () => {
+  if(LAYERS.length <= 1){ stat('版は1つ残ります'); return; }
+  push();
+  const i = LSEL;
+  STROKES = STROKES.filter(s => (s.L|0) !== i);
+  STROKES.forEach(s => { if((s.L|0) > i) s.L = (s.L|0)-1; });
+  LAYERS.splice(i,1); LSEL = Math.min(i, LAYERS.length-1); SEL = -1;
+  layRender(); draw(); says('版を消した');
+};
 el('helpBtn').onclick = () => document.body.classList.toggle('help');
 el('bUndo').onclick = undo; el('bRedo').onclick = redo;
 function delSel(){ if(SEL<0){ stat('選んでから押す（V で選ぶ）'); return; }
-  push(); STROKES.splice(SEL,1); SEL=-1; syncPanel(); draw(); says('消した'); }
+  push(); STROKES.splice(SEL,1); SEL=-1; syncPanel(); layRender(); draw(); says('消した'); }
 el('bDel').onclick = delSel;
-el('bClear').onclick = () => { if(!STROKES.length) return; push(); STROKES=[]; SEL=-1; draw(); says('ぜんぶ消した'); };
+el('bClear').onclick = () => { if(!STROKES.length) return; push(); STROKES=[]; SEL=-1; layRender(); draw(); says('ぜんぶ消した'); };
 
 /* ══ 控え（JSON）══ ⭐ 同じ絵をもう一度出せるように、書き出しの設定まで入れる */
 function save(blob, name){
@@ -725,7 +803,7 @@ function save(blob, name){
   setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 400);
 }
 el('bSave').onclick = () => {
-  const d = { tool:'ha', v:1, P, VIEW, strokes:STROKES };
+  const d = { tool:'ha', v:2, P, VIEW, strokes:STROKES, layers:LAYERS, lsel:LSEL };
   save(new Blob([JSON.stringify(d)], {type:'application/json'}), 'ha.json');
   stat('控えを出した');
 };
@@ -737,6 +815,8 @@ el('jsonFile').addEventListener('change', async e => {
     if(d.tool !== 'ha') throw new Error('この道具の控えではありません');
     push();
     STROKES = d.strokes || [];
+    LAYERS = (d.layers && d.layers.length) ? d.layers : [{name:'版 1', on:true}];
+    LSEL = Math.min(d.lsel|0, LAYERS.length-1);
     Object.assign(P, d.P || {});
     if(d.VIEW) Object.assign(VIEW, d.VIEW);
     /* ⚠️ 値だけ戻しても画面は変わらない＝表示も一緒に戻す */
@@ -751,18 +831,20 @@ el('jsonFile').addEventListener('change', async e => {
       b.classList.toggle('on', (b.dataset.v==='hollow') === !!P.hollow));
     document.querySelectorAll('#anSeg button').forEach(b=>b.classList.toggle('on', b.dataset.v===P.an));
     document.getElementById('stage').style.background = P.bg;
-    SEL=-1; zSync(); anSync(); draw(); says('控えを読んだ（骨 '+STROKES.length+' 本）');
+    SEL=-1; zSync(); anSync(); layRender(); draw(); says('控えを読んだ（骨 '+STROKES.length+' 本）');
   }catch(err){ stat('🔴 読めなかった: '+err.message); }
   e.target.value='';
 });
 
 /* ══ 出す（静止画）══ */
+/* ⚠️ 隠した版は書き出しにも入れない（画面と出るものを食い違わせない） */
+const layOn = s => LAYERS[(s.L|0)] ? LAYERS[(s.L|0)].on : true;
 function exList(){
   const w = el('exWhat').value;
-  if(w==='blade') return STROKES.filter(s=>s.pen==='blade'||s.pen==='masu');
-  if(w==='tube')  return STROKES.filter(s=>s.pen==='tube');
+  if(w==='blade') return STROKES.filter(s=>layOn(s)&&(s.pen==='blade'||s.pen==='masu'));
+  if(w==='tube')  return STROKES.filter(s=>layOn(s)&&s.pen==='tube');
   if(w==='sel')   return SEL>=0 ? [STROKES[SEL]] : [];
-  return STROKES;
+  return STROKES.filter(layOn);
 }
 function exBox(list){
   if(el('exFit').value==='view'){
@@ -967,7 +1049,7 @@ el('tvGo').onclick = async () => {
 };
 
 document.getElementById('stage').style.background = P.bg;
-zSync(); fit(); says(); tvSize();
+zSync(); fit(); layRender(); says(); tvSize();
 </script>
 
 <!-- ══ モバイル：パネルの高さを掴んで変える（他の道具からそのまま移植）══
