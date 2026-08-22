@@ -427,6 +427,34 @@
         }
       }
 
+      // ══ 22c. 書体の一覧 ── ボタンが縦一列に潰れない（2026-08-22 木下「UIがきにいらない」）
+      //   🔴 .mini は 26×17 固定。字が入る前提になっていないので、この行では大きさを開ける
+      artLayer.removeChildren();
+      {
+        const mk = (nm, ch, y) => {
+          const t = new paper.PointText({ point:[0,y], content:ch, fontFamily:nm, fontSize:80 });
+          t.__fam = '"' + nm + '", sans-serif'; artLayer.addChild(t);
+        };
+        mk('CHU Modular Round Regular', 'あ', 0);
+        mk('CHU Modular JP VF Regular', 'い', 120);
+        FONTS['SakujiTest VF Regular'] = {};
+        renderFontList();
+        const el = document.getElementById('fontList');
+        const btns = [...el.querySelectorAll('button')];
+        ok('書体の一覧に行が出る', btns.length >= 3, btns.length + '個のボタン');
+        const tall = btns.filter(b => b.getBoundingClientRect().height > 30);
+        ok('ボタンが縦に潰れていない', tall.length === 0,
+           btns.map(b => b.textContent + ' ' + Math.round(b.getBoundingClientRect().width) + '×' +
+                    Math.round(b.getBoundingClientRect().height)).join('／'));
+        ok('ボタンは折り返さない（nowrap）',
+           btns.every(b => getComputedStyle(b).whiteSpace === 'nowrap'));
+        ok('ボタンは縮められない（flex-shrink 0）',
+           btns.every(b => getComputedStyle(b).flexShrink === '0'));
+        const over = [...el.children].filter(c => c.scrollWidth > c.clientWidth + 1);
+        ok('行が横にはみ出さない', over.length === 0, over.length + '行');
+        delete FONTS['SakujiTest VF Regular'];
+      }
+
       // ══ 22. 線の位置 ── 画面では変わらないので【理由を出したままにする】
       //   🔴 木下＝2026-08-22「線の位置を変更しても変わらない気がする」＝そのとおり
       {
