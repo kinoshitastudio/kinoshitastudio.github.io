@@ -325,6 +325,87 @@
         if(e.fat) try{ e.fat.remove(); }catch(err){}
       }
 
+      // ══ 20. 道具の並び（2026-08-22 木下＝「鉛筆をペンの次に」）
+      //   ⚠️ 並べ替えは【押せなくなる】ことがある型なので、並びと一緒に「押して効くか」も見る
+      {
+        const bar = document.getElementById('tools');
+        const tools = [...bar.querySelectorAll('button[data-tool]')].map(b => b.dataset.tool);
+        ok('道具は6つ（画像・削除・戻す進むは道具ではない）', tools.length === 6, tools.join('・'));
+        ok('鉛筆はペンのすぐ次', tools.indexOf('stroke') === tools.indexOf('pen') + 1,
+           tools.join(' → '));
+        bar.querySelector('button[data-tool="stroke"]').click();
+        ok('鉛筆を押すと道具が変わる', S.tool === 'stroke', String(S.tool));
+        document.dispatchEvent(new KeyboardEvent('keydown', { key:'p', bubbles:true }));
+        ok('P でペンに戻る（並べ替えでキーが死んでいない）', S.tool === 'pen', String(S.tool));
+        ok('光っている道具は1つだけ',
+           [...bar.querySelectorAll('button.on')].length === 1,
+           [...bar.querySelectorAll('button.on')].map(b => b.dataset.tool || b.id).join('・'));
+        document.dispatchEvent(new KeyboardEvent('keydown', { key:'v', bubbles:true }));
+        ok('複製ボタンはゴミ箱の次', (() => {
+          const k = [...bar.children].map(e => e.id || e.dataset.tool || 'sep');
+          return k.indexOf('bDupSel') === k.indexOf('bDelSel') + 1;
+        })());
+      }
+
+      // ══ 21. 複製（2026-08-22）── ⌘D も 道具バーの ⧉ も【同じ道】を通る
+      //   🔴 木下＝「フレームを選択した場合フレームを横に複製できる」＝何を選んでいるかで変わる
+      artLayer.removeChildren();
+      {
+        const r = makeShape('rect', new Rectangle(0, 0, 80, 80));
+        r.fillColor = 'black'; r.selected = true;
+        const n0 = artLayer.children.length;
+        document.getElementById('bDupSel').click();
+        ok('図形を複製できる', artLayer.children.length === n0 + 1,
+           n0 + ' → ' + artLayer.children.length);
+        const c = artLayer.children[artLayer.children.length - 1];
+        ok('複製はずらして置かれる（重ならない）', Math.abs(c.position.x - r.position.x) > 1,
+           Math.round(r.position.x) + ' → ' + Math.round(c.position.x));
+
+        artLayer.children.forEach(x => x.selected = false);
+        const ab0 = S.abs.length;
+        abPickSet(0);
+        document.getElementById('bDupSel').click();
+        ok('枠を選んでいると枠ごと複製される', S.abs.length === ab0 + 1,
+           ab0 + ' → ' + S.abs.length);
+        if(S.abs.length > ab0){
+          const a = S.abs[0], b = S.abs[S.abs.length - 1];
+          ok('複製した枠は【横】に置かれる', Math.abs(b.x - a.x) > Math.abs(b.y - a.y),
+             'dx=' + Math.round(b.x - a.x) + ' dy=' + Math.round(b.y - a.y));
+          S.abs.pop(); abSync();
+        }
+        abPickClear();
+
+        artLayer.removeChildren();
+        const r2 = makeShape('rect', new Rectangle(200, 200, 60, 60));
+        r2.fillColor = 'black'; r2.selected = true;
+        const m0 = artLayer.children.length;
+        document.dispatchEvent(new KeyboardEvent('keydown', { key:'d', metaKey:true, bubbles:true }));
+        ok('⌘D も同じ道を通る', artLayer.children.length === m0 + 1,
+           m0 + ' → ' + artLayer.children.length);
+      }
+
+      // ══ 22. 線の位置 ── 画面では変わらないので【理由を出したままにする】
+      //   🔴 木下＝2026-08-22「線の位置を変更しても変わらない気がする」＝そのとおり
+      {
+        const sel = document.getElementById('align'), note = document.getElementById('alignNote');
+        sel.value = 'center'; sel.dispatchEvent(new Event('change', { bubbles:true }));
+        ok('中央のときは註を出さない', note.style.display === 'none', note.style.display);
+        sel.value = 'inside'; sel.dispatchEvent(new Event('change', { bubbles:true }));
+        ok('内側にすると註が出たままになる', note.style.display !== 'none',
+           (note.textContent || '').replace(/\s+/g, ' ').slice(0, 40));
+        // ⭐ 画面は変わらないが、線→塗り では効いていること
+        artLayer.removeChildren();
+        const p = new Path.Rectangle({ point:[0,0], size:[100,100] });
+        p.strokeColor = 'black'; p.strokeWidth = 20; p.fillColor = null; p.closed = true;
+        artLayer.addChild(p);
+        const ins = expandStroke(p, 'inside'), out = expandStroke(p, 'outside');
+        ok('線→塗り では内側／外側で形が変わる',
+           !!(ins && out) && Math.abs(ins.bounds.width - out.bounds.width) > 1,
+           '内側 ' + (ins ? ins.bounds.width|0 : '-') + ' / 外側 ' + (out ? out.bounds.width|0 : '-'));
+        [ins, out].forEach(x => { try{ x && x.remove(); }catch(e){} });
+        sel.value = 'center'; sel.dispatchEvent(new Event('change', { bubbles:true }));
+      }
+
     } catch(e){
       R.push({ name:'⛔ テスト中に例外', pass:false, detail: e && (e.message + ' @ ' + (e.stack||'').split('\n')[1]) });
     }
