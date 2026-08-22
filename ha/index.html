@@ -569,7 +569,14 @@ function draw(){
   ctx.setTransform(1,0,0,1,0,0);
   ctx.fillStyle = P.bg; ctx.fillRect(0,0,cv.width,cv.height);
   ctx.setTransform(d*VIEW.z,0,0,d*VIEW.z, d*VIEW.ox, d*VIEW.oy);
-  paintAll(ctx, null, P.an==='none' ? 1 : PH, true);
+  /* 🔴🔴 2026-08-22 木下＝「刃だけなぜかきちんとボード内に描けない」
+     ＝〔書いていく〕を選んでいると、引き終わった線が【途中までしか描かれない】。
+        位相が頭（0）に居るときは「まだ書かれていない」ので、線が丸ごと消える。
+     ⭐ 直し＝【再生していないときは、必ず出来上がりの絵を出す】。
+        動きは再生の間だけ。止まっているのに絵が欠けるのは、道具として嘘。
+     ⚠️ 引いている最中（cur）も丸ごと描く（下の paintAll で ph=1 を渡している）。 */
+  const playing = !!raf && P.an !== 'none';
+  paintAll(ctx, null, playing ? PH : 1, true);
 }
 /* ⭐ 再生（止めると必ず元の絵に戻る） */
 let raf = 0, t0 = 0;
@@ -651,8 +658,30 @@ function endAll(){
   }
   push();
   cur.pts = tidy(cur.pts, P.smooth);
+  const put = cur;
   if(cur.pts.length>=2) STROKES.push(cur);
-  cur=null; down=null; SEL=-1; layRender(); draw(); says();
+  cur=null; down=null; SEL=-1; layRender(); draw();
+  /* 🔴 刃は【進む向きが刃と平行】だと自分で潰れる＝それが仕組みだが、
+     引いた本人には「描けなかった」に見える（木下＝2026-08-22）。
+     ⭐ 黙って何も出さない代わりに、なぜ細いのかと、どうすれば太るかを言う。
+     ⚠️ 向きは縛らない（潰れるのも味）。言うだけ。 */
+  if(put && put.pen === 'blade' && put.pts.length >= 2){
+    const flat = bladeFlatness(put);
+    if(flat < 0.22) says('⚠️ この向きは刃とほぼ平行なので潰れます — '
+      + '〔刃の角度〕を変えるか、〔いちばん細く〕を上げると線が残ります');
+    else says();
+  } else says();
+}
+/* その骨が刃に対してどれだけ直角か（0＝平行で潰れる／1＝直角で満量） */
+function bladeFlatness(s){
+  const th = s.ang*Math.PI/180, ex = Math.cos(th), ey = Math.sin(th);
+  let sum = 0, len = 0;
+  for(let i=0;i<s.pts.length-1;i++){
+    const dx = s.pts[i+1].x-s.pts[i].x, dy = s.pts[i+1].y-s.pts[i].y;
+    const L = Math.hypot(dx,dy); if(L < 1e-6) continue;
+    sum += Math.abs((dx*ey - dy*ex)/L) * L; len += L;
+  }
+  return len ? sum/len : 1;
 }
 cv.addEventListener('pointerup', endAll);
 cv.addEventListener('pointercancel', endAll);
