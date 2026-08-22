@@ -1214,6 +1214,15 @@
       <path d="M8.5 20.5h10a2 2 0 0 0 2-2v-10"/>
     </svg>
   </button>
+  <!-- ⭐ まとめる／外す（2026-08-22 木下）。押すたびに往復する。
+       ⚠️ 粒と文字の束ねは外さない＝外すと作り方の記憶が消えるため（理由は画面に出す）。 -->
+  <button id="bGroupSel" data-k="⌘G" data-tip="まとめる／外す — 選んだものをひとつに（束ねを選べば外す）">
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7">
+      <rect x="2.8" y="2.8" width="18.4" height="18.4" rx="2.4" stroke-dasharray="3.2 2.6" opacity=".62"/>
+      <rect x="6" y="6" width="6.4" height="6.4" rx="1.2" fill="currentColor" stroke="none"/>
+      <rect x="11.6" y="11.6" width="6.4" height="6.4" rx="1.2" fill="currentColor" stroke="none"/>
+    </svg>
+  </button>
   <div class="sep"></div>
   <button data-tool="shape" data-k="R" data-tip="シェイプ — 押すと種類を選べる" id="tShape">
     <svg id="shapeIcon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
@@ -1234,8 +1243,22 @@
     </svg>
   </button>
   <div class="sep"></div>
-  <button id="tUndo" data-k="⌘Z" data-tip="戻す">↶</button>
-  <button id="tRedo" data-k="⇧⌘Z" data-tip="進む">↷</button>
+  <!-- ⭐ 戻す／進むだけ【文字（↶ ↷）】のままで、他の道具（SVG）から浮いていた
+       （木下＝2026-08-22「このアイコンださいな」）。同じ線幅・同じ丸みの SVG にそろえる。 -->
+  <button id="tUndo" data-k="⌘Z" data-tip="戻す">
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+         stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7.4 8.4 H14.2 a4.9 4.9 0 1 1 0 9.8 H9.6"/>
+      <path d="M11.3 4.5 L7.2 8.4 L11.3 12.3"/>
+    </svg>
+  </button>
+  <button id="tRedo" data-k="⇧⌘Z" data-tip="進む">
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+         stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M16.6 8.4 H9.8 a4.9 4.9 0 1 0 0 9.8 H14.4"/>
+      <path d="M12.7 4.5 L16.8 8.4 L12.7 12.3"/>
+    </svg>
+  </button>
 </div>
 
 <!-- レイヤー（重ね順・表示・ロック） -->
@@ -2975,15 +2998,8 @@ window.addEventListener('keydown', e => {
   }
   if(cmd && e.key.toLowerCase() === 'g'){          // ⌘G＝グループ／⇧⌘G＝解除
     e.preventDefault();
-    if(e.shiftKey){
-      selected().forEach(it => { if(it instanceof Group){ const kids = it.removeChildren();
-        artLayer.addChildren(kids); kids.forEach(k=>k.selected=true); it.remove(); } });
-      stat('グループ解除');
-    } else {
-      const sel = selected(); if(sel.length < 2) return;
-      snapshot(); const g = new Group(sel); g.selected = true; stat('グループ化');
-    }
-    guides(); return;
+    e.shiftKey ? doUngroup() : doGroup();
+    return;
   }
   // Enter / Esc はどちらも「描くのをやめる」＝パスは残る（イラレと同じ）
   if(e.key === 'Enter'){ finishPen(); return; }
@@ -4849,6 +4865,56 @@ function dupSelected(){
   return true;
 }
 document.getElementById('bDupSel')?.addEventListener('click', dupSelected);
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ まとめる／外す ── ⌘G・⇧⌘G・道具バーの ⧉ が【同じ道】を通る
+   🔴🔴 外してはいけない束ねが2つある。
+      ・粒（__tsubu）… 中は数百〜数千の粒。外すと【作り方の記憶】が消えて二度と組み直せない
+      ・文字（__isText）… 1字ずつ作って束ねている。外すと「文字」でなくなり打ち直せない
+      ＝この2つは「ふつうのグループ」ではなく【意味のある束ね】なので、外さずに理由を出す。
+   ⚠️ もとの ⇧⌘G は snapshot() を呼んでいなかった＝解除したあと ⌘Z で戻せなかった。
+      ここで直した（[[feedback_state_needs_undo_and_export]]）。
+   ══════════════════════════════════════════════════════════════ */
+function plainGroups(sel){         /* 外してよい束ねだけ */
+  return sel.filter(it => it instanceof Group && !it.__tsubu && !it.__isText);
+}
+function doGroup(){
+  const sel = selected();
+  if(sel.length < 2){ stat('2つ以上えらぶと、ひとつにまとめられます'); return false; }
+  snapshot();
+  const g = new Group(sel); g.selected = true;
+  stat('まとめた（' + sel.length + '）'); guides(); renderLayers?.(); return true;
+}
+function doUngroup(){
+  const sel = selected();
+  const plain = plainGroups(sel);
+  const keep  = sel.filter(it => it instanceof Group && (it.__tsubu || it.__isText));
+  if(!plain.length){
+    stat(keep.length
+      ? '粒と文字の束ねは外しません（外すと作り方の記憶が消えます）'
+      : 'まとまっているものを選んでください');
+    return false;
+  }
+  snapshot();
+  plain.forEach(it => {
+    const kids = it.removeChildren();
+    artLayer.addChildren(kids);
+    kids.forEach(k => k.selected = true);
+    it.remove();
+  });
+  stat('外した（' + plain.length + '）' + (keep.length ? '／粒と文字の束ねはそのまま' : ''));
+  guides(); renderLayers?.(); return true;
+}
+/* ⭐ ボタンは1つで往復する。規則は1つ＝【選んだものが全部「まとまり」なら外す、そうでなければまとめる】。
+   ⚠️ ここで「ふつうの束ねだけ」を数えると、粒を1つ選んで押したときに
+      〈まとめる〉側へ落ちて「2つ以上えらぶと…」と的外れなことを言う（実際に言った）。
+      粒も文字も【まとまり】ではあるので、外す側へ送って、そこで理由を出させる。 */
+function groupToggle(){
+  const sel = selected();
+  if(!sel.length){ stat('まとめるもの（または外す束ね）を選んでください'); return; }
+  sel.every(it => it instanceof Group) ? doUngroup() : doGroup();
+}
+document.getElementById('bGroupSel')?.addEventListener('click', groupToggle);
 
 /* 選択・追加・削除のたびにレイヤー表示を更新する */
 hook('snap', 'レイヤー一覧を描き直す', () => setTimeout(renderLayers, 0));

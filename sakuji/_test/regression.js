@@ -384,6 +384,49 @@
            m0 + ' → ' + artLayer.children.length);
       }
 
+      // ══ 22b. まとめる／外す（2026-08-22）
+      //   🔴 粒と文字の束ねは【外さない】＝外すと作り方の記憶が消えて二度と組み直せない
+      artLayer.removeChildren();
+      {
+        const mk = (x, y) => { const s = makeShape('rect', new Rectangle(x, y, 60, 60));
+          s.fillColor = 'black'; return s; };
+        const bar = document.getElementById('tools');
+        const k = [...bar.children].map(e => e.id || e.dataset.tool || 'sep');
+        ok('まとめるボタンは複製の次', k.indexOf('bGroupSel') === k.indexOf('bDupSel') + 1);
+
+        const a = mk(0,0), b = mk(100,0); a.selected = b.selected = true;
+        document.getElementById('bGroupSel').click();
+        ok('2つ選んで押すとまとまる',
+           artLayer.children.length === 1 && artLayer.children[0] instanceof Group,
+           artLayer.children.length + '個');
+        artLayer.children[0].selected = true;
+        document.getElementById('bGroupSel').click();
+        ok('もう一度押すと外れる（往復する）',
+           artLayer.children.length === 2 && !(artLayer.children[0] instanceof Group),
+           artLayer.children.length + '個');
+        undo();
+        ok('外したあと ⌘Z で戻る（もとは戻せなかった）', artLayer.children.length === 1,
+           artLayer.children.length + '個');
+
+        // 🔴 粒の束ねを外そうとしても外れない
+        artLayer.removeChildren();
+        document.getElementById('tinput').value = 'あ';
+        const t = placeText(new Point(0,0));
+        let tz = null;
+        if(t){ artLayer.children.forEach(c => c.selected = false); t.selected = true;
+          try{ tz = tsubuize(tzShapeOf(t).src, tzOpt()); }catch(e){} }
+        if(tz){
+          artLayer.children.forEach(c => c.selected = false); tz.selected = true;
+          const n0 = artLayer.children.length;
+          document.getElementById('bGroupSel').click();
+          ok('🔴 粒の束ねは外さない', artLayer.children.length === n0 && !!tz.parent,
+             n0 + ' → ' + artLayer.children.length);
+          ok('  外さない理由を画面に出す',
+             /粒と文字/.test(document.getElementById('stat')?.textContent || ''),
+             (document.getElementById('stat')?.textContent || '').slice(0, 30));
+        }
+      }
+
       // ══ 22. 線の位置 ── 画面では変わらないので【理由を出したままにする】
       //   🔴 木下＝2026-08-22「線の位置を変更しても変わらない気がする」＝そのとおり
       {
