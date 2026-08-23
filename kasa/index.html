@@ -199,8 +199,9 @@
   <div class="hrow"><h1>KASA</h1>
     <button class="tgl" id="noteGo" title="つまみの説明を出す・消す">註</button></div>
   <div class="sub">暈 — くしゃくしゃの紙を重ねて、裏から灯を入れる。<br>
-    盤の上を<b>引っぱる</b>と、近くの<b>穴か灯</b>が動く。<b>何も無い所</b>を引っぱると<b>絵そのもの</b>が動く。<br>
-    <b>⌥＋引っぱる</b>＝絵の大きさ。<br>
+    絵のまわりに出る<b>四角の角</b>を引くと<b>大きさ</b>、<b>中</b>を引くと<b>左右上下</b>。指でも同じ。<br>
+    盤の上を<b>引っぱる</b>と、近くの<b>穴か灯</b>が動く。<br>
+    <b>⌥＋引っぱる</b>＝絵の大きさ（角を掴まなくてもよい近道）。<br>
     <b>ホイール＝寄る・引く</b>／<b>右ドラッグ（またはスペース＋ドラッグ）＝盤を動かす</b>／
     <b>ダブルクリック＝戻す</b>／<b>⌘Z＝ひとつ戻す</b></div>
 
@@ -1276,6 +1277,16 @@ function paint(octx, W, H, t, cam){
   for(let y=0;y<H;y++){ if(ROWHI[y]<ROWLO[y]) continue;
     if(y<by0) by0=y; if(y>by1) by1=y;
     if(ROWLO[y]<bx0) bx0=ROWLO[y]; if(ROWHI[y]>bx1) bx1=ROWHI[y]; }
+  /* ⭐⭐ 2026-08-23 木下＝「盤面でオブジェクトを大きくしたり小さくしたり、
+     左右上下に調整できるようにしたい」＝取っ手を出すために【絵の実際の広がり】が要る。
+     ⭐ ここは【紙のある所】そのもの（ROWLO/ROWHI＝刷るときに使っている物差し）。
+        別に測り直さない＝取っ手と絵が食い違わない。
+     ⚠️ 世界の座標でしまう（カメラを動かしても寄っても同じ値）。
+     ⚠️ 書き出しのときも paint は通るので、画面のときだけ覚える。 */
+  if(octx===ctx){
+    ARTBOX = (bx1<bx0||by1<by0) ? null
+      : { x0:(bx0-CX)/S, y0:(by0-CY)/S, x1:(bx1+1-CX)/S, y1:(by1+1-CY)/S };
+  }
   if(bx1<bx0||by1<by0){ drawGlow(octx,W,H); drawHoles(octx,S,CX,CY); return 0; }
   const bw=bx1-bx0+1, bh=by1-by0+1;
   const img=octx.getImageData(bx0,by0,bw,bh), d=img.data;
@@ -1490,15 +1501,59 @@ function guideAlpha(){
   return d<1400 ? 0.55 : Math.max(0.14, 0.55-(d-1400)/900*0.41);
 }
 function drawGuide(octx,cam){
-  const al=guideAlpha(); if(al<=0.001) return;
-  const [hw,hh]=halfWH();
-  const x=cam.cx-hw*cam.S, y=cam.cy-hh*cam.S, w=2*hw*cam.S, h=2*hh*cam.S;
+  const al=guideAlpha();
+  if(al>0.001){
+    const [hw,hh]=halfWH();
+    const x=cam.cx-hw*cam.S, y=cam.cy-hh*cam.S, w=2*hw*cam.S, h=2*hh*cam.S;
+    octx.save();
+    octx.globalAlpha=al;
+    octx.strokeStyle='#fff'; octx.globalCompositeOperation='difference';
+    octx.lineWidth=Math.max(1,cw/1100);
+    octx.setLineDash([7,6]);
+    octx.strokeRect(x,y,w,h);
+    octx.restore();
+  }
+  drawArtHandles(octx,cam);
+}
+/* ══⭐⭐ 絵の取っ手 ── 2026-08-23 ═══════════════════════════════
+   木下「盤面でオブジェクトを大きくしたり小さくしたり、左右上下に調整できるようにしたい」
+   🔴 動かす・大きさは前から【できた】（何も無い所をドラッグ／⌥ドラッグ）。
+      でも **どこにも見えていなかった**＝無いのと同じ。しかも ⌥ は iPad に無い。
+   ⭐ 直し＝絵のまわりに【つかめる四角】を出す。角を引くと大きさ・中を引くと位置。
+      指でも同じ（⌥に頼らない）。
+   🔴 印は白い丸＋黒い縁＋影にする。紙は白・壁は黒にもなるので、
+      currentColor や単色だと必ずどちらかで見えなくなる（他の道具で踏んだ）。 */
+let ARTBOX=null, artShowUntil=0;
+const artHandleR = () => Math.max(7, cw/128);        /* 画面での取っ手の半径（画素） */
+function artCorners(cam){
+  if(!ARTBOX) return null;
+  const sx=x=>cam.cx+x*cam.S, sy=y=>cam.cy+y*cam.S;
+  const x0=sx(ARTBOX.x0), y0=sy(ARTBOX.y0), x1=sx(ARTBOX.x1), y1=sy(ARTBOX.y1);
+  return { x0,y0,x1,y1, pts:[[x0,y0],[x1,y0],[x1,y1],[x0,y1]] };
+}
+function drawArtHandles(octx,cam){
+  const c=artCorners(cam); if(!c) return;
+  if(Math.abs(c.x1-c.x0)<6 || Math.abs(c.y1-c.y0)<6) return;   /* 小さすぎると邪魔なだけ */
+  const r=artHandleR(), lw=Math.max(1,cw/1400);
   octx.save();
-  octx.globalAlpha=al;
-  octx.strokeStyle='#fff'; octx.globalCompositeOperation='difference';
-  octx.lineWidth=Math.max(1,cw/1100);
-  octx.setLineDash([7,6]);
-  octx.strokeRect(x,y,w,h);
+  octx.setTransform(1,0,0,1,0,0);
+  octx.globalCompositeOperation='source-over';
+  /* 囲み＝細い実線。⭐ 版面の破線と見分けが付くように【実線】にする */
+  octx.globalAlpha=0.55;
+  octx.strokeStyle='rgba(0,0,0,.55)'; octx.lineWidth=lw*3;
+  octx.setLineDash([]); octx.strokeRect(c.x0,c.y0,c.x1-c.x0,c.y1-c.y0);
+  octx.strokeStyle='rgba(255,255,255,.95)'; octx.lineWidth=lw;
+  octx.strokeRect(c.x0,c.y0,c.x1-c.x0,c.y1-c.y0);
+  /* 角の玉＝白い丸＋黒い縁＋影（どんな地でも見える） */
+  octx.globalAlpha=1;
+  for(const [x,y] of c.pts){
+    octx.beginPath(); octx.arc(x,y,r,0,Math.PI*2);
+    octx.fillStyle='rgba(255,255,255,.96)';
+    octx.shadowColor='rgba(0,0,0,.45)'; octx.shadowBlur=r*0.8; octx.shadowOffsetY=lw;
+    octx.fill();
+    octx.shadowColor='transparent'; octx.shadowBlur=0; octx.shadowOffsetY=0;
+    octx.lineWidth=Math.max(1,lw*1.6); octx.strokeStyle='rgba(0,0,0,.55)'; octx.stroke();
+  }
   octx.restore();
 }
 /* わくの濃さだけ描き直す（場は作り直さない） */
@@ -1751,6 +1806,7 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
 (function(){
   let on=false, tgt=null, S=1;
   let mode=null, sx=0, sy=0, ax=0, ay=0, base=1;
+  let ac=null, ad=1;                    /* 角を引くとき＝絵の真ん中と、掴んだときの距離 */
   const sizeKey=()=>P.shape==='text'?'tsize':'size';
   const sizeLim=()=>P.shape==='text'?[0.1,1.6]:[0.3,1.5];
   function sizeSync(){
@@ -1774,13 +1830,34 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
     }
     const p=at(e); let best=1e9;
     tgt=null;
+    /* ⭐⭐ 角の取っ手を【いちばん先に】見る。穴や灯より優先＝狙って掴める。
+       ⚠️ 指は狙いが粗いので、触る道具では当たりを広く取る（26 → 30px 相当）。 */
+    const r0=cv.getBoundingClientRect();
+    const scr={ x:(e.clientX-r0.left)*(cw/Math.max(1,cssW)), y:(e.clientY-r0.top)*(ch/Math.max(1,cssH)) };
+    const c=artCorners(camScreen());
+    if(c && Math.abs(c.x1-c.x0)>=6 && Math.abs(c.y1-c.y0)>=6){
+      const grab=artHandleR()*(e.pointerType==='touch'?2.6:1.9);
+      for(const [hx,hy] of c.pts){
+        if(Math.hypot(scr.x-hx, scr.y-hy) <= grab){
+          pushHist();
+          mode='corner'; tgt=null;
+          /* 真ん中から測った距離の比で大きさを決める＝どの角を掴んでも同じ効き */
+          ac={ x:(ARTBOX.x0+ARTBOX.x1)/2, y:(ARTBOX.y0+ARTBOX.y1)/2 };
+          ad=Math.max(1e-4, Math.hypot(p.x-ac.x, p.y-ac.y));
+          base=P[sizeKey()];
+          on=true; cv.setPointerCapture(e.pointerId); cv.classList.add('grabbing'); dragOn();
+          stat('角を引く ── 絵の大きさ');
+          return;
+        }
+      }
+    }
     for(const h of HOLE){ const d=(h.x-p.x)**2+(h.y-p.y)**2; if(d<best){best=d;tgt=h;} }
     for(const l of LAMP){ const d=(l.x-p.x)**2+(l.y-p.y)**2; if(d<best){best=d;tgt=l;} }
     /* つかめる近さ ── 画面で26px ぶん。これより遠ければ「何も無い所」とみなす */
     const lim=Math.max(0.05, 26/Math.max(1e-6, fitS*VIEW.z));
     const near = tgt && Math.sqrt(best)<=lim;
     pushHist();
-    if(e.altKey){                       /* ⌥ ＝ 絵の大きさ */
+    if(e.altKey){                       /* ⌥ ＝ 絵の大きさ（角を掴まなくても使える近道） */
       mode='scale'; tgt=null; sy=e.clientY; base=P[sizeKey()];
       stat('⌥ドラッグ ── 上下で 絵の大きさ');
     }else if(near){                     /* 近くの穴か灯 */
@@ -1792,9 +1869,21 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
     on=true; cv.setPointerCapture(e.pointerId); cv.classList.add('grabbing');
     if(mode!=='obj') dragOn();
   });
+  /* ⭐ 角の上に来たら矢印を変える＝掴めることが【触る前に】分かる（マウスのときだけ） */
+  function hoverCursor(e){
+    if(on||pan) return;
+    const c=artCorners(camScreen());
+    if(!c){ cv.style.cursor=''; return; }
+    const r0=cv.getBoundingClientRect();
+    const sx2=(e.clientX-r0.left)*(cw/Math.max(1,cssW)), sy2=(e.clientY-r0.top)*(ch/Math.max(1,cssH));
+    const grab=artHandleR()*1.9;
+    let hit=-1;
+    c.pts.forEach(([hx,hy],i)=>{ if(Math.hypot(sx2-hx,sy2-hy)<=grab) hit=i; });
+    cv.style.cursor = hit<0 ? '' : (hit===0||hit===2 ? 'nwse-resize' : 'nesw-resize');
+  }
   cv.addEventListener('pointermove',e=>{
     if(pan){ VIEW.x+=e.clientX-px; VIEW.y+=e.clientY-py; px=e.clientX; py=e.clientY; preview(); sharpenLater(); return; }
-    if(!on) return;
+    if(!on){ if(e.pointerType!=='touch') hoverCursor(e); return; }
     if(mode==='obj'){ const p=at(e); tgt.x=p.x; tgt.y=p.y; kick(); return; }
     if(mode==='move'){
       const p=at(e); P.ox=ax+(p.x-sx); P.oy=ay+(p.y-sy); rebuild(); return;
@@ -1802,6 +1891,14 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
     if(mode==='scale'){
       const k=sizeKey(), [lo,hi]=sizeLim();
       P[k]=clamp(base*Math.exp(-(e.clientY-sy)*0.005), lo, hi);
+      sizeSync(); rebuild(); return;
+    }
+    /* ⭐ 角を引く＝【真ん中からの距離の比】で大きさ。どの角を掴んでも同じ効きになる。
+       ⚠️ 位置（ox/oy）は触らない＝大きさだけが変わる（動かすのは中を引く方）。 */
+    if(mode==='corner'){
+      const p=at(e), k=sizeKey(), [lo,hi]=sizeLim();
+      const d=Math.max(1e-4, Math.hypot(p.x-ac.x, p.y-ac.y));
+      P[k]=clamp(base*(d/ad), lo, hi);
       sizeSync(); rebuild(); return;
     }
   });
@@ -2085,7 +2182,9 @@ addEventListener('resize',()=>{ if(!TV.on){ fit(); rebuild(); } });
 /* 試験から呼ぶ入口（画面には出さない） */
 window.KASA={ get P(){return P}, get HOLE(){return HOLE}, get LAMP(){return LAMP},
   paint, buildField, outSize, bundle, applyState, rebuild, fit, render, camScreen,
-  get FW(){return FW}, get FH(){return FH}, get fieldMs(){return fieldMs} };
+  get FW(){return FW}, get FH(){return FH}, get fieldMs(){return fieldMs},
+  /* ⭐ 取っ手の物差し（絵の広がり・世界の座標）＝試験もここを見る。別に測り直さない */
+  get ARTBOX(){return ARTBOX}, artCorners };
 </script>
 
 <!-- ══════════════════════════════════════════════════════════════
