@@ -148,6 +148,50 @@ try{
     ok('書き出しの絵では取っ手の物差しを書き換えない', KASA.ARTBOX===before);
   }
 
+  /* 🔴🔴 2026-08-23 木下＝「これが全くうごかない」（紙片で字を組む のとき）
+     ＝ 字を使うかたちが2つ（text / tpiece）あるのに text しか見ておらず、
+        tpiece では効かない size を触っていた。 */
+  for(const sh of ['sheet','text','tpiece']){
+    document.querySelector('#shape button[data-v="'+sh+'"]').click();
+    KASA.render();
+    const key = (sh==='sheet') ? 'size' : 'tsize';
+    const b4 = KASA.P[key];
+    const rr = document.getElementById('r_artSize');
+    rr.value = Math.min(+rr.max, b4*1.25);
+    rr.dispatchEvent(new Event('input'));
+    ok('「'+sh+'」で大きさが効く（'+key+' '+b4.toFixed(2)+'→'+KASA.P[key].toFixed(2)+'）',
+       Math.abs(KASA.P[key]-b4) > 0.01);
+    rr.value = b4; rr.dispatchEvent(new Event('input'));
+  }
+  document.querySelector('#shape button[data-v="sheet"]').click();
+  KASA.render();
+
+  /* ⭐ 黒い磁石は紙を留めている＝紙と一緒に動く・一緒に縮む（木下「黒の丸もずれてしまう」） */
+  {
+    const h0 = KASA.HOLE.map(h=>({x:h.x,y:h.y}));
+    const key = 'size', b4 = KASA.P[key];
+    const rr = document.getElementById('r_artSize');
+    rr.value = b4*0.6; rr.dispatchEvent(new Event('input'));
+    const k = KASA.P[key]/b4;
+    const want = h0.map(h=>({ x:KASA.P.ox+(h.x-KASA.P.ox)*k, y:KASA.P.oy+(h.y-KASA.P.oy)*k }));
+    const same = KASA.HOLE.every((h,i)=>Math.abs(h.x-want[i].x)<1e-6 && Math.abs(h.y-want[i].y)<1e-6);
+    ok('磁石が紙と一緒に縮む（'+KASA.HOLE.length+'個・比 '+k.toFixed(2)+'）', same && Math.abs(k-1)>0.01);
+    rr.value = b4; rr.dispatchEvent(new Event('input'));
+  }
+
+  /* ⭐ わくに収める＝版面の中に入る */
+  {
+    document.getElementById('c_frame').checked = true;
+    document.getElementById('c_frame').dispatchEvent(new Event('change'));
+    KASA.render();
+    document.getElementById('b_artFit').click();
+    KASA.render();
+    const B = KASA.ARTBOX, hw = KASA.halfWH()[0], hh = KASA.halfWH()[1];
+    const inside = B && B.x0>=-hw-1e-3 && B.x1<=hw+1e-3 && B.y0>=-hh-1e-3 && B.y1<=hh+1e-3;
+    ok('わくに収める で版面の中に入る（絵 '+(B?(B.x1-B.x0).toFixed(2):'-')
+       +'×'+(B?(B.y1-B.y0).toFixed(2):'-')+' / わく '+(2*hw).toFixed(2)+'×'+(2*hh).toFixed(2)+'）', !!inside);
+  }
+
   // 大きく刷れるか
   const [ow,oh]=KASA.outSize();
   const t0=performance.now();
