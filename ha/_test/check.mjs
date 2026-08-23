@@ -93,6 +93,59 @@ for(const [nm,id,i] of PENS){
   check(await ink(i) === filled[nm], nm+'：塗るに戻すと元の絵');
 }
 
+/* 🔴 2026-08-23 木下＝「升のまま線の太さを最小にしても縦に引くと太くなる／
+   刃の線の太さを調整すると升で書いたはずなのに連動される」
+   ⭐ 連動は仕組み（升は刃で形を作ってから丸める）。直したのは【升の欄から触れないこと】。 */
+console.log('③-2 升の太さは〔刃〕が決める（升の欄からも触れる）');
+await seed();
+const mIn = () => p.evaluate(() => document.querySelectorAll('#panel [data-k]').length);
+const dup = await p.evaluate(() => ['ang','wid','thin']
+  .map(k => k + ':' + document.querySelectorAll('[data-k="' + k + '"]').length).join(' '));
+check(/ang:2/.test(dup) && /wid:2/.test(dup) && /thin:2/.test(dup),
+  '刃の3つは升の欄にも出ている（入れ物が2つ）', dup);
+/* 升の欄のつまみを動かすと、刃の欄の表示も一緒に動く＝値は1つ */
+const both = await p.evaluate(() => {
+  const rs = [...document.querySelectorAll('[data-k="wid"]')];
+  rs[1].value = 120; rs[1].dispatchEvent(new Event('input'));
+  const r = { a:+rs[0].value, b:+rs[1].value, P:P.wid,
+              o:[...document.querySelectorAll('[data-o="wid"]')].map(x=>x.textContent).join('/') };
+  rs[0].value = 60; rs[0].dispatchEvent(new Event('input'));
+  r.back = { a:+rs[0].value, b:+rs[1].value, P:P.wid };
+  return r;
+});
+check(both.a === 120 && both.b === 120 && both.P === 120 && both.o === '120/120',
+  '升の欄で動かすと刃の欄も同じ値になる（式が2本に割れていない）', `${both.o} / P=${both.P}`);
+check(both.back.a === 60 && both.back.b === 60 && both.back.P === 60,
+  '刃の欄で動かしても升の欄が同じ値になる');
+/* 升の〔線の太さ〕は縁だけ＝中身の太さは変わらない／〔刃の幅〕は中身を変える */
+const m = await p.evaluate(() => {
+  const ink = i => { const s = STROKES[i], c = shot([s], exBox([s]), 1, 1, false);
+    const d = c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+    let n=0; for(let k=0;k<d.length;k+=4) if(d[k]<128) n++; return n; };
+  const set = (k,v) => { const r = document.querySelector('[data-k="'+k+'"]');
+    r.value = v; r.dispatchEvent(new Event('input')); };
+  const line = (y,vert) => Array.from({length:16},(_,i)=>
+    vert ? {x:300, y:y+i*20} : {x:200+i*20, y:y});
+  const mk = pts => Object.assign({}, STROKES[2], { pts:pts.map(q=>({x:q.x,y:q.y})) });
+  STROKES = [mk(line(150,true)), mk(line(500,false))];
+  LAYERS=[{name:'版 1',on:true}]; SEL=-1; layRender(); draw();
+  const a = { v:ink(0), h:ink(1) };
+  set('mow', 0);          const b = { v:ink(0), h:ink(1) };
+  set('mow', 4); set('wid', 16); const c = { v:ink(0), h:ink(1) };
+  set('wid', 60);
+  return { a, b, c };
+});
+check(Math.abs(m.b.v - m.a.v) / m.a.v < 0.12,
+  '升の〔線の太さ〕を 0 にしても中身の太さは変わらない', `縦 ${m.a.v} → ${m.b.v}`);
+check(m.c.v < m.a.v * 0.6,
+  '〔刃の幅〕を下げると升も細くなる（太さを決めているのは刃）', `縦 ${m.a.v} → ${m.c.v}`);
+/* ⚠️ 縁（線）は縦にも横にも同じだけ乗るので、比べるのは【縁を 0 にした中身どうし】 */
+check(m.b.v > m.b.h * 1.35,
+  '縦が横より太いのは仕組み（刃と直角＝満量／平行＝潰れる）',
+  `縦 ${m.b.v} / 横 ${m.b.h} ＝ ${(m.b.v/m.b.h).toFixed(2)}倍`);
+/* ⚠️ ここで骨を入れ替えたので、あとの項目のために元の3本へ戻す */
+await seed();
+
 console.log('④ 塗りなし＋線 0 ＝ 本当に何も出ない');
 for(const [nm,id,i,wk] of PENS){
   await clickSeg(id,'0'); await knob(wk, 0);
