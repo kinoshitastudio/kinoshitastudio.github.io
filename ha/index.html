@@ -286,7 +286,12 @@
       <button class="btn" id="bLoad">読む</button>
     </div>
     <input type="file" id="jsonFile" accept=".json,application/json" style="display:none">
-    <div class="note">⭐ 骨とつまみを全部しまう＝<b>同じ絵をもう一度出せる</b>（書き出しの設定も入れてある）。</div>
+    <div class="note">
+      ⭐ 骨とつまみを全部しまう＝<b>同じ絵をもう一度出せる</b>（書き出しの設定も入れてある）。<br>
+      ⭐ <b>手元にも勝手に残る</b>＝リロードしても閉じても、<b>前のつづきから開く</b>。<br>
+      ⚠️ 残るのは<b>この端末のこの道具だけ</b>。人に渡す・別の端末で開くなら<b>JSONで保存</b>。<br>
+      ⚠️ まっさらから始めたいときは〔<b>ぜんぶ消す</b>〕。
+    </div>
 
     <h2>手元</h2>
     <div class="two">
@@ -916,41 +921,72 @@ function save(blob, name){
   document.body.appendChild(a); a.click();
   setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 400);
 }
+/* ⭐ 控えの中身は【1箇所だけ】で作る＝JSONで保存も・手元に残すも・読むも同じものを見る */
+const docOf = () => ({ tool:'ha', v:2, P, VIEW, strokes:STROKES, layers:LAYERS, lsel:LSEL });
+/* ⭐ 控えを画面に反映する道も1本。⚠️ 値だけ戻しても画面は変わらない＝表示も一緒に戻す */
+function applyDoc(d){
+  if(!d || d.tool !== 'ha') throw new Error('この道具の控えではありません');
+  STROKES = d.strokes || [];
+  /* ⚠️ 読んだ直後に埋める＝古い控え（中を抜く）でも【今までの絵】のまま開く */
+  STROKES.forEach(fillOld);
+  LAYERS = (d.layers && d.layers.length) ? d.layers : [{name:'版 1', on:true}];
+  LSEL = Math.min(d.lsel|0, LAYERS.length-1);
+  Object.assign(P, d.P || {});
+  if(P.fb === undefined) fillOld(P);        /* 控えの P も同じ道で翻訳する */
+  if(d.VIEW) Object.assign(VIEW, d.VIEW);
+  KEYS.forEach(([k,unit]) => { const r=el(k); if(r) r.value=P[k];
+    const o=el('v_'+k); if(o) o.textContent=P[k]+unit; });
+  ['col','tcol','ocol','bocol','mcol','mocol','bg'].forEach(k => { if(P[k]) el(k).value=P[k]; });
+  ['anAmt','anSpd','smooth','tvSec','exPad'].forEach(k => { const r=el(k); if(r&&P[k]!=null){
+    r.value=P[k]; const o=el('v_'+k); if(o) o.textContent=P[k]; } });
+  ['exWhat','exScale','exFit','exBg','tvFps','tvFmt'].forEach(k => { const s=el(k); if(s&&P[k]!=null) s.value=P[k]; });
+  document.querySelectorAll('#penSeg button').forEach(b=>b.classList.toggle('on', b.dataset.v===P.pen));
+  fillSync(P);
+  document.querySelectorAll('#anSeg button').forEach(b=>b.classList.toggle('on', b.dataset.v===P.an));
+  document.getElementById('stage').style.background = P.bg;
+  SEL=-1; zSync(); anSync(); layRender(); draw();
+}
 el('bSave').onclick = () => {
-  const d = { tool:'ha', v:2, P, VIEW, strokes:STROKES, layers:LAYERS, lsel:LSEL };
-  save(new Blob([JSON.stringify(d)], {type:'application/json'}), 'ha.json');
+  save(new Blob([JSON.stringify(docOf())], {type:'application/json'}), 'ha.json');
   stat('控えを出した');
 };
 el('bLoad').onclick = () => el('jsonFile').click();
 el('jsonFile').addEventListener('change', async e => {
   const f = e.target.files[0]; if(!f) return;
   try{
-    const d = JSON.parse(await f.text());
-    if(d.tool !== 'ha') throw new Error('この道具の控えではありません');
     push();
-    STROKES = d.strokes || [];
-    /* ⚠️ 読んだ直後に埋める＝古い控え（中を抜く）でも【今までの絵】のまま開く */
-    STROKES.forEach(fillOld);
-    LAYERS = (d.layers && d.layers.length) ? d.layers : [{name:'版 1', on:true}];
-    LSEL = Math.min(d.lsel|0, LAYERS.length-1);
-    Object.assign(P, d.P || {});
-    if(P.fb === undefined) fillOld(P);        /* 控えの P も同じ道で翻訳する */
-    if(d.VIEW) Object.assign(VIEW, d.VIEW);
-    /* ⚠️ 値だけ戻しても画面は変わらない＝表示も一緒に戻す */
-    KEYS.forEach(([k,unit]) => { const r=el(k); if(r) r.value=P[k];
-      const o=el('v_'+k); if(o) o.textContent=P[k]+unit; });
-    ['col','tcol','ocol','bocol','mcol','mocol','bg'].forEach(k => { if(P[k]) el(k).value=P[k]; });
-    ['anAmt','anSpd','smooth','tvSec','exPad'].forEach(k => { const r=el(k); if(r&&P[k]!=null){
-      r.value=P[k]; const o=el('v_'+k); if(o) o.textContent=P[k]; } });
-    ['exWhat','exScale','exFit','exBg','tvFps','tvFmt'].forEach(k => { const s=el(k); if(s&&P[k]!=null) s.value=P[k]; });
-    document.querySelectorAll('#penSeg button').forEach(b=>b.classList.toggle('on', b.dataset.v===P.pen));
-    fillSync(P);
-    document.querySelectorAll('#anSeg button').forEach(b=>b.classList.toggle('on', b.dataset.v===P.an));
-    document.getElementById('stage').style.background = P.bg;
-    SEL=-1; zSync(); anSync(); layRender(); draw(); says('控えを読んだ（骨 '+STROKES.length+' 本）');
+    applyDoc(JSON.parse(await f.text()));
+    says('控えを読んだ（骨 '+STROKES.length+' 本）');
   }catch(err){ stat('🔴 読めなかった: '+err.message); }
   e.target.value='';
 });
+
+/* ══ 手元に残す ══ 🔴 2026-08-23 木下＝「ローカルに保存されるようにして、リロードで消える」
+   ⭐ 出す形は【JSONで保存と同じもの】＝道具が1つの控えしか知らない（式は1本）。
+   ⚠️ 動画を出している間は触らない。⚠️ 保存できない所（プライベート窓・容量いっぱい）でも道具は動く。
+   ⚠️⚠️ ここから先、木下の画面は【前に触った状態】が勝つ。
+      既定値をこちらで直しても届かないので、まっさらから見たいときは〔ぜんぶ消す〕を押す。 */
+const KEEP = location.pathname.replace(/\W+/g,'_') + '.ha.v1';
+let keptSig = '', keepNG = false;
+function keep(){
+  if(TVON) return;
+  let s; try{ s = JSON.stringify(docOf()); }catch(_){ return; }
+  if(s === keptSig) return;
+  try{ localStorage.setItem(KEEP, s); keptSig = s; keepNG = false; }
+  catch(_){
+    if(!keepNG){ keepNG = true;
+      stat('⚠️ 手元に残せる量を超えました — 〔JSONで保存〕で控えを取ってください'); }
+  }
+}
+function restore(){
+  let s = null; try{ s = localStorage.getItem(KEEP); }catch(_){ return false; }
+  if(!s) return false;
+  try{ applyDoc(JSON.parse(s)); keptSig = s; return true; }
+  catch(_){ try{ localStorage.removeItem(KEEP); }catch(__){} return false; }
+}
+setInterval(keep, 1500);
+addEventListener('beforeunload', keep);
+addEventListener('pagehide', keep);          /* ⚠️ iOS は beforeunload が来ないことがある */
 
 /* ══ 出す（静止画）══ */
 /* ⚠️ 隠した版は書き出しにも入れない（画面と出るものを食い違わせない） */
@@ -1184,7 +1220,11 @@ el('tvGo').onclick = async () => {
 };
 
 document.getElementById('stage').style.background = P.bg;
-zSync(); fit(); layRender(); says(); tvSize();
+/* ⭐ 前に触ったものがあれば、そのまま開く（リロードで消えない）。
+   ⚠️ 開けなかったら黙って新しい盤を出す＝道具が立ち上がらないのがいちばん困る。 */
+const CAME = restore();
+zSync(); fit(); layRender(); tvSize();
+says(CAME ? '前のつづきを開いた' : '');
 </script>
 
 <!-- ══ モバイル：パネルの高さを掴んで変える（他の道具からそのまま移植）══
