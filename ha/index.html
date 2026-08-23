@@ -155,7 +155,8 @@
 
     <div id="target">ぜんぶに効く</div>
     <div class="note" style="margin-top:-4px">
-      ⭐ つまみは<b>選んだ骨だけ</b>に効く。<b>選んでいなければ ぜんぶ</b>。<br>
+      ⭐ つまみは<b>選んだ骨だけ</b>に効く。<b>選んでいなければ、いま選んでいる版のぜんぶ</b>。<br>
+      ⚠️ <b>他の版は変わらない</b>（版ごとに角度も太さも別に決められる）。<br>
       ⚠️ だから<b>引いたあとから</b>、角度も太さも色も決め直せる。
     </div>
 
@@ -507,10 +508,15 @@ function paintBlade(g, s, i, ph){
     g.closePath();
   }
   g.fill();
-  /* 🔴 点を並べると点線に見える（実際にそうなった）＝細い線1本で引く */
+  /* 🔴 点を並べると点線に見える（実際にそうなった）＝細い線1本で引く
+     🔴🔴 2026-08-23 木下＝「なんか最初にこの丸いのがつくようになってるやだ」
+        ＝ 芯の端を【丸い帽子】にしていたので、刃の四角より外へ半円ぶん飛び出していた。
+        骨の先が刃と平行なとき四角は潰れて消えるので、その丸だけが点として残る。
+     ⭐ 端は【切り落とす】（butt）＝骨の先で止まる＝四角の縁とぴったり合う。
+     ⚠️ 曲がり角は丸いまま（lineJoin）。角を切ると折れ線が尖って見える。 */
   if(s.thin > 0){
     g.strokeStyle = s.col || '#0a0a0a'; g.lineWidth = s.thin;
-    g.lineCap='round'; g.lineJoin='round';
+    g.lineCap='butt'; g.lineJoin='round';
     g.beginPath(); g.moveTo(q.pts[0].x, q.pts[0].y);
     for(let k=1;k<q.pts.length;k++) g.lineTo(q.pts[k].x, q.pts[k].y);
     g.stroke();
@@ -545,7 +551,8 @@ function masuCells(s, q){
     g.closePath();
   }
   g.fill();
-  if(s.thin>0){ g.lineWidth=s.thin; g.lineCap='round'; g.lineJoin='round';
+  /* ⚠️ 升も同じ芯を通る＝ここも端は切り落とす（丸いと升目を1つ余計に拾って点が出る） */
+  if(s.thin>0){ g.lineWidth=s.thin; g.lineCap='butt'; g.lineJoin='round';
     g.beginPath(); g.moveTo(q.pts[0].x,q.pts[0].y);
     for(let k=1;k<q.pts.length;k++) g.lineTo(q.pts[k].x,q.pts[k].y);
     g.stroke(); }
@@ -785,14 +792,31 @@ function pick(w){
   return -1;
 }
 
-/* ══ つまみ ══ 効く相手＝選んでいればその骨だけ、無ければ ぜんぶ */
-const targets = () => SEL>=0 ? [STROKES[SEL]] : STROKES;
+/* ══ つまみ ══ 効く相手＝選んでいればその骨だけ、無ければ【いま選んでいる版】のぜんぶ
+   🔴🔴 2026-08-23 木下＝「**版ごとに刃の角度は調整できるようにして。
+      今のままだと他の版で調整しても他のが連動される**」
+   ⭐ 版＝重ねる紙。**いま引いている紙の上だけが変わる**のが素直（イラレのレイヤーと同じ感触）。
+   ⚠️ 前は盤の骨ぜんぶに効いていた＝版を分けた意味が無かった。 */
+const layBones = () => STROKES.filter(s => (s.L|0) === LSEL);
+const targets = () => SEL>=0 ? [STROKES[SEL]] : layBones();
 function says(extra){
-  const n = STROKES.length;
-  el('target').textContent = SEL>=0 ? '選んだ骨 1本 に効く（Esc でぜんぶへ）'
-    : (n ? 'ぜんぶ（'+n+'本）に効く' : 'まだ骨がない — 引くと出る');
+  const n = STROKES.length, m = layBones().length;
+  el('target').textContent = SEL>=0 ? '選んだ骨 1本 に効く（Esc で版ぜんぶへ）'
+    : (m ? '版 '+(LSEL+1)+' の '+m+' 本に効く（他の版は変わらない）'
+         : (n ? '版 '+(LSEL+1)+' には骨がない — 引くと出る' : 'まだ骨がない — 引くと出る'));
   stat((extra?extra+'　':'')+'骨 '+n+' 本'+(MODE==='pick'?'／選ぶ':'／引く')
        +'／版 '+(LSEL+1)+'/'+LAYERS.length);
+}
+/* ⭐ 版を選び直したら、その版の骨の値をパネルに戻す＝【パネルが嘘をつかない】。
+   ⚠️ 骨によって値が違うキーは触らない（勝手にそろえない＝作品を書き換えない）。 */
+function layPanel(){
+  const list = layBones();
+  if(!list.length) return;
+  list.forEach(fillOld);
+  KEYS.forEach(([k]) => {
+    const v = list[0][k];
+    if(list.every(s => s[k] === v)) setKnob(k, v);
+  });
 }
 const KEYS = [['ang','°'],['wid',''],['thin',''],['tw',''],['to',''],['cell',''],['bow',''],['mow','']];
 const KUNIT = Object.fromEntries(KEYS);
@@ -898,7 +922,8 @@ function layRender(){
       b.style.cssText='flex:none;width:22px;height:22px;border:none;border-radius:6px;'+
         'background:rgba(255,255,255,.10);color:#d8d8dc;cursor:pointer;font-size:11px';
       b.onclick = e => { e.stopPropagation(); fn(); }; return b; };
-    row.onclick = () => { LSEL = i; layRender(); says('版 '+(i+1)+' に引く'); };
+    /* ⚠️ 版を変えたら、つまみの効き先も表示も一緒に変える（でないとパネルが嘘をつく） */
+    row.onclick = () => { LSEL = i; SEL = -1; layPanel(); layRender(); says('版 '+(i+1)+' に引く'); };
     row.appendChild(eye); row.appendChild(nm); row.appendChild(cnt);
     row.appendChild(mk('\u2191', () => { if(i>0){ push(); layMove(i, i-1); } }));
     row.appendChild(mk('\u2193', () => { if(i<LAYERS.length-1){ push(); layMove(i, i+1); } }));
@@ -935,7 +960,7 @@ el('layDel').onclick = () => {
   STROKES = STROKES.filter(s => (s.L|0) !== i);
   STROKES.forEach(s => { if((s.L|0) > i) s.L = (s.L|0)-1; });
   LAYERS.splice(i,1); LSEL = Math.min(i, LAYERS.length-1); SEL = -1;
-  layRender(); draw(); says('版を消した');
+  layPanel(); layRender(); draw(); says('版を消した');
 };
 el('helpBtn').onclick = () => document.body.classList.toggle('help');
 el('bUndo').onclick = undo; el('bRedo').onclick = redo;
@@ -1067,7 +1092,7 @@ el('bSvg').onclick = () => {
     if(q.length) parts.push('<path d="'+q.join('')+'" fill="'+(s.col||'#0a0a0a')+'"/>');
     if(s.thin>0 && s.pts.length>1)
       parts.push('<path d="M'+s.pts.map(d2).join('L')+'" fill="none" stroke="'+(s.col||'#0a0a0a')+
-        '" stroke-width="'+s.thin+'" stroke-linecap="round" stroke-linejoin="round"/>');
+        '" stroke-width="'+s.thin+'" stroke-linecap="butt" stroke-linejoin="round"/>');
     edge();
   });
   /* ⭐ 升は【升目そのもの】を出す＝階段がベクターのまま残る（画像に焼かない） */
