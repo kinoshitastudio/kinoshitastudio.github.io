@@ -153,6 +153,34 @@ for(const [nm,id,i,wk] of PENS){
   await knob(wk, 4); await clickSeg(id,'1');
 }
 
+/* 🔴 2026-08-23 木下＝「なんか最初にこの丸いのがつくようになってるやだ」
+   ＝ 芯の端が丸い帽子で、刃の四角より外へ飛び出していた。骨の先で止まるのが正しい。 */
+console.log('④-2 骨の先に丸い点が出ない');
+const dot = await p.evaluate(() => {
+  /* 刃とほぼ平行な向き＝四角が潰れる＝丸だけが残る、いちばん出やすい形で試す */
+  const th = -28 * Math.PI / 180;
+  const a = { x:260, y:300 }, L = 260;
+  const b = { x:a.x + Math.cos(th)*L, y:a.y + Math.sin(th)*L };
+  STROKES = [Object.assign({}, STROKES[0], { pen:'blade', ang:-28, wid:60, thin:10,
+    fb:true, bow:0, pts:[a, b] })];
+  LAYERS=[{name:'版 1',on:true}]; SEL=-1; layRender(); draw();
+  const s = STROKES[0], box = exBox([s]);
+  const c = shot([s], box, 1, 1, false), g = c.getContext('2d');
+  const d = g.getImageData(0,0,c.width,c.height).data;
+  const on = (x,y) => d[((y*c.width)+x)*4] < 128;
+  /* 骨の先（a）の【外側】に墨が出ていないか＝丸い帽子のはみ出し */
+  const px = x => Math.round(x - box.x0), py = y => Math.round(y - box.y0);
+  let out = 0;
+  for(let r = 2; r <= 8; r++){
+    const x = px(a.x - Math.cos(th)*r), y = py(a.y - Math.sin(th)*r);
+    if(x>=0 && y>=0 && x<c.width && y<c.height && on(x,y)) out++;
+  }
+  return { out, capB:(()=>{ const t=document.createElement('canvas').getContext('2d'); return t.lineCap; })() };
+});
+check(dot.out === 0, '骨の先の外へ墨がはみ出さない（丸い帽子が付かない）',
+  `先の外 2〜8px で墨 ${dot.out} 箇所`);
+await seed();
+
 console.log('⑤ ペンは独立している');
 await sel(-1); await clickSeg('fillB','0');
 check(await ink(1) === filled['管'] && await ink(2) === filled['升'],
@@ -184,6 +212,38 @@ check(shown === 3 && hidden === 2, '隠した版は書き出しにも入らな�
 await p.evaluate(() => { LAYERS[0].on = true; layMove(0,1); draw(); });
 check(await p.evaluate(() => STROKES.every(s => LAYERS[s.L|0] !== undefined)),
   '版を入れ替えても骨の版番号が迷子にならない');
+/* 🔴🔴 2026-08-23 木下＝「版ごとに刃の角度は調整できるようにして。
+   今のままだと他の版で調整しても他のが連動される」＝つまみは【いま選んでいる版】にだけ効く */
+const perLay = await p.evaluate(() => {
+  const line = y => Array.from({length:12},(_,i)=>({x:150+i*30, y}));
+  const mk = (y,L) => Object.assign({}, STROKES[0], { pen:'blade', ang:-28, wid:60, L,
+    pts:line(y) });
+  LAYERS = [{name:'版 1',on:true},{name:'版 2',on:true}];
+  STROKES = [mk(200,0), mk(200,0), mk(400,1)];
+  LSEL = 0; SEL = -1; layRender(); draw();
+  const set = (k,v) => { const r = document.querySelector('[data-k="'+k+'"]');
+    r.value = v; r.dispatchEvent(new Event('input')); };
+  set('ang', 55);
+  const a = STROKES.map(s => s.ang);
+  /* ⚠️ 版の行を押したときと同じ道を通す（says まで呼ばないと帯が古いまま＝誤判定する） */
+  LSEL = 1; SEL = -1; layPanel(); layRender(); says();
+  const panelAfterSwitch = +document.querySelector('[data-k="ang"]').value;
+  set('ang', -70);
+  const b = STROKES.map(s => s.ang);
+  const band = document.getElementById('target').textContent;
+  return { a, b, panelAfterSwitch, band };
+});
+check(perLay.a.join(',') === '55,55,-28',
+  '版1で角度を変えても版2は変わらない', `角度 ${perLay.a.join(' / ')}`);
+check(perLay.b.join(',') === '55,55,-70',
+  '版2で角度を変えても版1は変わらない', `角度 ${perLay.b.join(' / ')}`);
+check(perLay.panelAfterSwitch === -28,
+  '版を選び直すとその版の値がパネルに戻る（パネルが嘘をつかない）',
+  `${perLay.panelAfterSwitch}°`);
+check(/版 2 の 1 本に効く/.test(perLay.band),
+  '効き先を画面に出す', perLay.band);
+await seed();
+
 /* ⭐【この版をまっさらにする】＝版は残して骨だけ消す・⌘Z で戻る */
 const clr = await p.evaluate(() => {
   LSEL = 0; layRender();
