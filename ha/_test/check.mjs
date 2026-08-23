@@ -130,6 +130,27 @@ check(shown === 3 && hidden === 2, '隠した版は書き出しにも入らな�
 await p.evaluate(() => { LAYERS[0].on = true; layMove(0,1); draw(); });
 check(await p.evaluate(() => STROKES.every(s => LAYERS[s.L|0] !== undefined)),
   '版を入れ替えても骨の版番号が迷子にならない');
+/* ⭐【この版をまっさらにする】＝版は残して骨だけ消す・⌘Z で戻る */
+const clr = await p.evaluate(() => {
+  LSEL = 0; layRender();
+  const before = { bones:STROKES.length, layers:LAYERS.length,
+                   here:STROKES.filter(s=>(s.L|0)===0).length };
+  el('layClear').click();
+  const after = { bones:STROKES.length, layers:LAYERS.length,
+                  here:STROKES.filter(s=>(s.L|0)===0).length };
+  el('layClear').click();                       /* 空を押しても壊れない */
+  undo();
+  return { before, after, back:STROKES.length, layers:LAYERS.length };
+});
+check(clr.before.here > 0 && clr.after.here === 0
+      && clr.after.bones === clr.before.bones - clr.before.here
+      && clr.after.layers === clr.before.layers,
+  'まっさらにすると、その版の骨だけ消えて版は残る',
+  `骨 ${clr.before.bones}→${clr.after.bones} ／ 版 ${clr.before.layers}→${clr.after.layers}`);
+check(clr.back === clr.before.bones && clr.layers === clr.before.layers,
+  'まっさらにしても ⌘Z で戻る', `骨 ${clr.back} 本`);
+check(await p.evaluate(() => STROKES.every(s => LAYERS[s.L|0] !== undefined)),
+  'まっさらの後も骨の版番号が迷子にならない');
 
 console.log('⑨ 控え（JSON）');
 await seed();
