@@ -2320,6 +2320,7 @@ el.addEventListener('touchmove', e => {
 }, { passive:false });
 
 /* ── BUFFERS ────────────────────────────────────────────── */
+let SCREEN_H = 1;   /* 画面のときの盤の高さ（画素）。書き出しの倍率はここから出す */
 const rtOpts = {
   minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
   type: THREE.HalfFloatType, depthBuffer: true
@@ -2454,6 +2455,7 @@ const postUniforms = {
   uGridCsat:{ value:0.80 }, uGridVal:{ value:0.84 }, uGridInv:{ value:0 },
   uObjLight:{ value:0 },
   /* ⭐ 影＝地を暗くするだけ。インクではないので版（TAPE）は通さない */
+  uPxK:    { value:1 },     /* 画面＝1／書き出しは大きくした倍率 */
   tShade:  { value:null }, uShadeOn:{ value:0 },
   uShadeCol:{ value:new THREE.Color(0,0,0) },   /* 光が通ったあとに残る色（掛ける色） */
   uShadeGrain:{ value:0 }, uShadeGrainSz:{ value:2 },
@@ -2529,8 +2531,18 @@ postScene.add(new THREE.Mesh(
       uniform float uInkOn, uInkAuto, uInkHue, uInkSat, uInkVal, uInkAmt;
       uniform float uCycles, uPulse, uT;
       uniform vec2 uRes;
+      /* 🔴🔴 木下 2026-08-23＝「png 書き出しすると TAPE のざらつきは入ってないな」
+         ⚠️ 粒も網点も波紋も【出力の画素】で決まっていた。書き出しは盤の2〜4倍で刷るので、
+            同じ式のまま粒が 1/2〜1/4 の細かさになり、縮めて見ると消える。
+         ⭐ 「画面のとき 1、書き出しのときは大きくなった倍率」を1本渡して、
+            画素で決まるものは全部これで割る＝【どの大きさで刷っても同じ見え】になる。
+         ⚠️ 縦横比だけを見ている所（uRes.x/uRes.y）は割らない。比は変わらないので。 */
+      uniform float uPxK;
       varying vec2 vUv;
 
+      /* ⚠️ これは main の外の関数からも呼ぶので、変数ではなく関数にしておく
+         （最初 main の中で vec2 rez を作って、地の網点から見えず組み立てに失敗した） */
+      vec2 REZ(){ return uRes / max(uPxK, 0.0001); }
       float hash(vec2 p){
         return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
       }
@@ -2625,7 +2637,7 @@ postScene.add(new THREE.Mesh(
       /* ⭐ 版数＝少ない段に落とす。網を足してから落とすので段の境目が縞にならない */
       if(uPapSteps > 1.5){
         float st = floor(uPapSteps);
-        t = clamp(floor(t * (st - 1.0) + (papBayer(uv * uRes) - 0.5) + 0.5) / (st - 1.0), 0.0, 1.0);
+        t = clamp(floor(t * (st - 1.0) + (papBayer(uv * REZ()) - 0.5) + 0.5) / (st - 1.0), 0.0, 1.0);
       }
       /* 🔴 【渦】と【まわり】は角度がぐるり一周するので、色も環にしないと
          最後の色と1色目の境目に【継ぎ目が1本】出る（波紋の渦でも同じ失敗をした）。
@@ -2692,8 +2704,8 @@ postScene.add(new THREE.Mesh(
              ⚠️ 1 より小さくすると断面が細かくなる＝表面と断面が入れ替わる。 */
           float resF = mix(1.0, uGridWall, wm);
           float gr   = max(2.0, uGridRes * resF);
-          vec2 cell = floor(vUv * uRes / gr);                // どのマスか
-          vec2 f    = fract(vUv * uRes / gr);                // マスの中の位置
+          vec2 cell = floor(vUv * REZ() / gr);                // どのマスか
+          vec2 f    = fract(vUv * REZ() / gr);                // マスの中の位置
           // 帯の向き＝そのマスの法線。uGridFollow 0 なら向きを揃える
           vec2 dir  = mix(vec2(0.7071, 0.7071), normalize(n + 1e-5), uGridFollow);
           float co  = dot(f - 0.5, dir);
@@ -2717,7 +2729,7 @@ postScene.add(new THREE.Mesh(
              ⭐ 隙間は「粒が粒として並んでいるとき」だけ意味がある。
                 短い辺に3マスも入らないなら隙間を作らない（＝線が出ない）。
              ⚠️ smoothstep(0,0,x) は割り算が壊れるので、keep を 1 側へ寄せる形で書く。 */
-          float gCells = min(uRes.x, uRes.y) / gr;          // 短い辺に何マス入るか
+          float gCells = min(REZ().x, REZ().y) / gr;          // 短い辺に何マス入るか
           float gapK   = smoothstep(3.0, 9.0, gCells);      // 0＝粒が大きすぎる 1＝ふつう
           float faceM = uGridFace < 0.5 ? (1.0 - wm)   /* 表面だけ */
                       : uGridFace < 1.5 ? wm           /* 断面だけ */
@@ -2732,7 +2744,7 @@ postScene.add(new THREE.Mesh(
 
         // GRAIN — 紙の粒子（テープのヒス）
         if(uGrain > 0.001){
-          float g = hash(floor(vUv * uRes * 0.7) + uTime) - 0.5;
+          float g = hash(floor(vUv * REZ() * 0.7) + uTime) - 0.5;
           v = clamp(v + g * uGrain * 0.34, 0.0, 1.0);
         }
 
@@ -2849,7 +2861,7 @@ postScene.add(new THREE.Mesh(
                 ＝版は一本のまま、出し方だけ替える（中央の 粒にする と対になる）。 */
           float amt = g;
           if(uRipMat > 0.5){
-            vec2  cel = (vUv * uRes) / max(uRipCell, 2.0);
+            vec2  cel = (vUv * REZ()) / max(uRipCell, 2.0);
             vec2  f   = fract(cel) - 0.5;
             float d   = length(f) * 2.0;
             float rad = mix(0.06, 1.20, g);       // 波が強いところほど粒が太る
@@ -2883,7 +2895,7 @@ postScene.add(new THREE.Mesh(
              ⭐ 隠した中に敷くのは PAPER/WASH で作った地＝既にある段を使い回す。 */
           float sil = v;
           if(uRipCover > 0.001 && uRipSolid > 0.001){
-            vec2 tx = uRipSolid / uRes;
+            vec2 tx = uRipSolid / REZ();
             for(int i = 0; i < 8; i++){
               float a = float(i) * 0.7853982;
               vec2  d = vec2(cos(a), sin(a));
@@ -2998,7 +3010,7 @@ postScene.add(new THREE.Mesh(
              ⭐⭐ 埋め合わせに【影の中だけに粒を足す】。木下が言った「影のノイズ」はこれ。
              ⚠️ 粒は影の濃さに比例させる（薄い所に粒だけ残ると、そこが逆に目立つ）。 */
           if(uShadeGrain > 0.001){
-            vec2 gp = floor(gl_FragCoord.xy / max(uShadeGrainSz, 1.0));
+            vec2 gp = floor(gl_FragCoord.xy / max(uShadeGrainSz * uPxK, 1.0));
             float n = hash(gp) - 0.5;
             sh = clamp(sh + n * uShadeGrain * sh, 0.0, 1.0);
           }
@@ -3290,6 +3302,8 @@ function renderToBlob(cb){
     camera.aspect = f.w / f.h; camera.updateProjectionMatrix();
     rt.setSize(f.w, f.h); rtA.setSize(f.w, f.h); rtB.setSize(f.w, f.h);
     srtA.setSize(f.w, f.h); srtB.setSize(f.w, f.h);   /* ⚠️ 影の器も一緒に */
+    /* ⭐ 大きく刷るぶんだけ粒も大きくする＝画面で見えているとおりに出る */
+    postUniforms.uPxK.value = f.h / SCREEN_H;
     postUniforms.uRes.value.set(f.w, f.h);
     bleedUniforms.uRes.value.set(f.w, f.h);
     clearBleed();
@@ -3332,6 +3346,8 @@ function resize(){
   rtA.setSize(w * dpr, h * dpr);
   rtB.setSize(w * dpr, h * dpr);
   srtA.setSize(w * dpr, h * dpr);    /* ⚠️ 影の器も一緒に。1つ忘れると影だけ大きさがずれる */
+  SCREEN_H = Math.max(1, h * dpr);   /* ⭐ 画面のときの盤の高さ＝粒の大きさの基準 */
+  postUniforms.uPxK.value = 1;
   srtB.setSize(w * dpr, h * dpr);
   postUniforms.uRes.value.set(w * dpr, h * dpr);
   bleedUniforms.uRes.value.set(w * dpr, h * dpr);
@@ -4170,6 +4186,7 @@ async function tvRun(){
     camera.aspect = W / H; camera.updateProjectionMatrix();
     rt.setSize(W, H); rtA.setSize(W, H); rtB.setSize(W, H);
     srtA.setSize(W, H); srtB.setSize(W, H);           /* ⚠️ 影の器も一緒に */
+    postUniforms.uPxK.value = H / SCREEN_H;           /* ⭐ 動画も同じ */
     postUniforms.uRes.value.set(W, H);
     bleedUniforms.uRes.value.set(W, H);
 
