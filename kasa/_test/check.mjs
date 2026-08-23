@@ -85,6 +85,69 @@ try{
   g.click(); ok('もう一度で 再生 に戻る', g.textContent.indexOf('再生')>=0);
   ok('控えに再生中は入らない', KASA.bundle().P.anim===false);
 
+  /* ⭐⭐ 2026-08-23 木下＝「盤面でオブジェクトを大きくしたり小さくしたり、
+     左右上下に調整できるようにしたい」＝絵のまわりの取っ手。
+     🔴 見るのは「取っ手が出ている」ではなく【掴んで引いたら実際に変わったか】。 */
+  KASA.render();
+  const B0 = KASA.ARTBOX;
+  ok('絵の広がりが取れている', !!B0 && B0.x1>B0.x0 && B0.y1>B0.y0);
+  const C0 = KASA.artCorners(KASA.camScreen());
+  ok('角が4つ出る', !!C0 && C0.pts.length===4);
+
+  /* 角を掴んで外へ引く＝大きくなる（真ん中からの距離の比） */
+  const cv0 = document.getElementById('cv');
+  const rect = cv0.getBoundingClientRect();
+  const toClient = (sx,sy) => ({ x: rect.left + sx*(rect.width/cv0.width),
+                                 y: rect.top  + sy*(rect.height/cv0.height) });
+  const sizeKeyNow = () => KASA.P.shape==='text' ? 'tsize' : 'size';
+  const drag = (from, to) => {
+    const a = toClient(from[0], from[1]), b = toClient(to[0], to[1]);
+    cv0.dispatchEvent(new PointerEvent('pointerdown',
+      { clientX:a.x, clientY:a.y, button:0, bubbles:true, pointerId:1, pointerType:'mouse' }));
+    cv0.dispatchEvent(new PointerEvent('pointermove',
+      { clientX:b.x, clientY:b.y, bubbles:true, pointerId:1, pointerType:'mouse' }));
+    cv0.dispatchEvent(new PointerEvent('pointerup',
+      { clientX:b.x, clientY:b.y, bubbles:true, pointerId:1, pointerType:'mouse' }));
+  };
+  const k0 = sizeKeyNow(), sz0 = KASA.P[k0];
+  const [hx,hy] = C0.pts[2];                      /* 右下の角 */
+  const mid = [ (C0.x0+C0.x1)/2, (C0.y0+C0.y1)/2 ];
+  const far = [ mid[0] + (hx-mid[0])*1.6, mid[1] + (hy-mid[1])*1.6 ];
+  drag([hx,hy], far);
+  ok('角を外へ引くと大きくなる（'+sz0.toFixed(2)+' → '+KASA.P[k0].toFixed(2)+'）',
+     KASA.P[k0] > sz0*1.05);
+  const szUp = KASA.P[k0];
+  /* ⚠️ 大きくしたので取っ手も動いている＝【いまの角】を掴み直す
+     （前の場所を掴むと何も起きず「効かない」と誤判定する） */
+  KASA.render();
+  const Cu = KASA.artCorners(KASA.camScreen());
+  const [ux,uy] = Cu.pts[2];
+  const midU = [ (Cu.x0+Cu.x1)/2, (Cu.y0+Cu.y1)/2 ];
+  const near2 = [ midU[0] + (ux-midU[0])*0.5, midU[1] + (uy-midU[1])*0.5 ];
+  drag([ux,uy], near2);
+  ok('内へ引くと小さくなる（'+szUp.toFixed(2)+' → '+KASA.P[k0].toFixed(2)+'）',
+     KASA.P[k0] < szUp*0.95);
+
+  /* 中を引く＝左右上下に動く（ox/oy が変わる・大きさは変わらない） */
+  KASA.render();
+  const C1 = KASA.artCorners(KASA.camScreen());
+  const mid1 = [ (C1.x0+C1.x1)/2, (C1.y0+C1.y1)/2 ];
+  const ox0 = KASA.P.ox, oy0 = KASA.P.oy, szKeep = KASA.P[k0];
+  drag(mid1, [mid1[0]+90, mid1[1]-60]);
+  ok('中を引くと左右上下に動く（ox '+ox0.toFixed(2)+'→'+KASA.P.ox.toFixed(2)
+     +' / oy '+oy0.toFixed(2)+'→'+KASA.P.oy.toFixed(2)+'）',
+     Math.abs(KASA.P.ox-ox0)>0.01 && Math.abs(KASA.P.oy-oy0)>0.01);
+  ok('動かしても大きさは変わらない', Math.abs(KASA.P[k0]-szKeep)<1e-9);
+
+  /* ⚠️ 取っ手は【出す絵には描かない】（版面のわくと同じ約束） */
+  {
+    const cA=document.createElement('canvas'); cA.width=160; cA.height=100;
+    const g2=cA.getContext('2d'); KASA.paint(g2,160,100,0);
+    const before=KASA.ARTBOX;
+    KASA.paint(g2,160,100,0);
+    ok('書き出しの絵では取っ手の物差しを書き換えない', KASA.ARTBOX===before);
+  }
+
   // 大きく刷れるか
   const [ow,oh]=KASA.outSize();
   const t0=performance.now();
