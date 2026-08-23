@@ -9,7 +9,8 @@
      ⑦ 【通すもの】は「これから引くもの」＝選んでいない骨を書き換えないか
      ⑧ 版（隠した版は書き出しにも入らない・入れ替えても絵が飛ばない）
      ⑨ 控え（JSON）を読むと同じ絵に戻るか／古い控え（中を抜く）も読めるか
-     ⑩ 出す（SVG＝塗りなしの管が本当の輪／PNG／地を透明に）
+     ⑩ 手元に残るか（リロードしても骨・版・つまみ・画素が消えない／ぜんぶ消せば空に戻る）
+     ⑪ 出す（SVG＝塗りなしの管が本当の輪／PNG／地を透明に）
    ⭐ 物差しは本体の exList / exBox / shot から取る（描き方をここに書き直さない）。 */
 import puppeteer from '/Users/kinoshitatakahiro/.npm/_npx/1ade4bf2e2bf80fd/node_modules/puppeteer-core/lib/puppeteer/puppeteer-core.js';
 
@@ -178,7 +179,36 @@ const old = await p.evaluate(() => {
 check(old.every(x => x === 'false/false/false/2/2/2'),
   '古い控え（中を抜く）は「塗りなし＋線 2」に翻訳される', old[0]);
 
-console.log('⑩ 出す');
+console.log('⑩ 手元に残る（リロードで消えない）');
+await seed();
+await knob('ang', 41); await knob('wid', 88);
+await p.evaluate(() => { el('layAdd').click(); STROKES[2].L = 0; P.bg='#c8c4bc';
+  el('bg').value='#c8c4bc'; el('bg').dispatchEvent(new Event('input')); });
+const was = await p.evaluate(() => ({
+  bones:STROKES.length, layers:LAYERS.length, ang:P.ang, wid:P.wid, bg:P.bg,
+  L:STROKES.map(s=>s.L|0).join(''),
+  ink:(()=>{ const l=exList(); return shot(l, exBox(l),1,1,false).toDataURL('image/png'); })() }));
+await new Promise(r => setTimeout(r, 1800));            /* 手元に残るのを待つ */
+await p.reload({ waitUntil:'networkidle0' });           /* ← リロード */
+const now = await p.evaluate(() => ({
+  bones:STROKES.length, layers:LAYERS.length, ang:P.ang, wid:P.wid, bg:P.bg,
+  L:STROKES.map(s=>s.L|0).join(''), msg:document.getElementById('stat').textContent,
+  panelAng:+el('ang').value, panelBg:el('bg').value,
+  ink:(()=>{ const l=exList(); return shot(l, exBox(l),1,1,false).toDataURL('image/png'); })() }));
+check(now.bones === was.bones && now.layers === was.layers && now.L === was.L,
+  'リロードしても骨と版が残る', `骨 ${now.bones} 版 ${now.layers}`);
+check(now.ang === was.ang && now.wid === was.wid && now.bg === was.bg,
+  'リロードしてもつまみが残る', `角度 ${now.ang}／幅 ${now.wid}／地 ${now.bg}`);
+check(now.panelAng === was.ang && now.panelBg === was.bg,
+  'パネルの見た目も一緒に戻る（値だけ戻して画面が古いままにならない）');
+check(now.ink === was.ink, 'リロードの前と後で1画素も変わらない');
+/* ⭐ まっさらに戻せる道が残っているか＝〔ぜんぶ消す〕→ リロードで空 */
+await p.evaluate(() => el('bClear').click());
+await new Promise(r => setTimeout(r, 1800));
+await p.reload({ waitUntil:'networkidle0' });
+check(await p.evaluate(() => STROKES.length) === 0, '〔ぜんぶ消す〕のあとはリロードしても空');
+
+console.log('⑪ 出す');
 await seed();
 const svg = async () => p.evaluate(() => {
   let got=null; const oc=URL.createObjectURL;
