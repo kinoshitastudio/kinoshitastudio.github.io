@@ -329,11 +329,43 @@
       ok('1コマずつ詰める道具がある（MediaRecorder に頼らない）',
          typeof exportMovie === 'function' && typeof seekAll === 'function' && !!window.Mp4Muxer,
          window.Mp4Muxer ? 'mp4-muxer あり' : 'mp4-muxer が無い');
+      /* 🔴🔴 ここは【本番と同じ大きさ】で見ないと意味が無い。
+         前は 640×480 で見て ok にしていたが、本番の 1080×1350 は
+         avc1.42001f（水準3.1＝1280×720 まで）では通らず、押しても何も出なかった。 */
       if(window.VideoEncoder){
-        const sup = await VideoEncoder.isConfigSupported(
-          { codec:'avc1.42001f', width:640, height:480, bitrate:2e6, framerate:30 });
-        ok('  avc1 で詰められる（この Chrome で新しい道が使える）', !!sup.supported);
+        const bad = await VideoEncoder.isConfigSupported(
+          { codec:'avc1.42001f', width:1080, height:1350, bitrate:4e6, framerate:26 });
+        ok('  水準3.1 の決め打ちは 1080×1350 で通らない（決め打ちにしない理由）', !bad.supported);
+        const cfg2 = await pickCodec(1080, 1350, 26, 4e6);
+        ok('  候補を上から試すと 1080×1350 でも通る', !!cfg2, cfg2 ? cfg2.codec : '見つからない');
+        const cfg3 = await pickCodec(1080, 1920, 30, 8e6);
+        ok('  たて 9:16（1080×1920）でも通る', !!cfg3, cfg3 ? cfg3.codec : '見つからない');
       }
+      /* ⭐⭐ 本当に1本出るところまで通す（押しても何も出なかったので、ここは端まで見る）。
+         ⚠️ 大きさは小さくして速く回す。1080×1350 が通るかは上の codec の試験で見ている。 */
+      if(window.VideoEncoder && window.Mp4Muxer){
+        clips.length = 0; sel = -1;
+        const im = imgClip(240, 240, '#c33', 'e.png'); im.dur = 0.5;
+        clips.push(im);
+        seg('narabe', 1); seg('shape', 0);
+        const lr = document.querySelector('input[data-p="long"]');
+        lr.value = 480; lr.dispatchEvent(new Event('input'));
+        const fr = document.querySelector('input[data-p="fps"]');
+        const fpsBak = fr.value; fr.value = 12; fr.dispatchEvent(new Event('input'));
+        document.getElementById('bGrid').click();
+        const orig = URL.createObjectURL;
+        let got = null;
+        URL.createObjectURL = b => { if(b && b.type === 'video/mp4') got = b; return orig.call(URL, b); };
+        await exportMovie();
+        URL.createObjectURL = orig;
+        ok('⭐ 押すと mp4 が1本できる', !!got && got.size > 500,
+           got ? Math.round(got.size/1024) + 'KB / ' + got.type : '出なかった');
+        ok('  画面に「出した」と出る', /出した/.test(document.getElementById('outNote').textContent),
+           document.getElementById('outNote').textContent.slice(0, 40));
+        ok('  書き出しのあと旗が戻っている（次の再生が壊れない）', shooting === false);
+        fr.value = fpsBak; fr.dispatchEvent(new Event('input'));
+      }
+
       clips.length = 0;
       clips.push(vidClip(400, 500, 6.0, 'a.mp4'));
       clips.push(vidClip(400, 500, 2.0, 'b.mp4'));
