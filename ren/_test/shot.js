@@ -23,6 +23,12 @@
     afterAdd();
     document.querySelector('.seg[data-seg="narabe"] button[data-v="1"]').click();
     document.getElementById('bScatter').click();
+    document.getElementById('bText').click();          /* 文字も1枚置く */
+    const t = clips[clips.length-1];
+    const ta = document.getElementById('txIn');
+    ta.value = 'KINOSHITA\nSTUDIO'; ta.dispatchEvent(new Event('input'));
+    t.tilt.x = 0.62; t.tilt.y = 0.82; t.tilt.sc = 26; t.tilt.rz = -4;
+    sel = 1; tiltNote();          /* 掴み手が出ている所まで見せる */
     frameAt(0);
   }, 800);
 })();

@@ -41,7 +41,8 @@ if [ "$MODE" = "shot" ]; then
   rm -f "$TMP"; exit 0
 fi
 
-"$CHROME" --headless=new --disable-gpu --virtual-time-budget=20000 \
+# ⚠️ 窓の大きさを渡さないと盤が数十pxまで潰れる＝掴み手の位置が実機とかけ離れる
+"$CHROME" --headless=new --disable-gpu --window-size=1500,1000 --virtual-time-budget=20000 \
   --dump-dom "http://localhost:$PORT/$OUT" > /tmp/_ren_dom.html 2>/dev/null
 
 python3 - <<'PY'
