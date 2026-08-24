@@ -28,7 +28,25 @@
     return { type:'vid', el:c, name, url:'', in:0, out:dur };
   }
 
-  function run(){
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  /* canvas から本物の File を作る（落とす試験に使う） */
+  function fileOf(w, h, col, name){
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const x = c.getContext('2d'); x.fillStyle = col; x.fillRect(0,0,w,h);
+    return new Promise(r => c.toBlob(b => r(new File([b], name, { type:'image/png' })), 'image/png'));
+  }
+  function dropOn(nx, ny, files){
+    const r = cv.getBoundingClientRect();
+    const dt = new DataTransfer();
+    files.forEach(f => dt.items.add(f));
+    const ev = new DragEvent('drop', { bubbles:true, cancelable:true, dataTransfer:dt });
+    /* ⚠️ DragEvent は clientX を後から入れられないので、定義し直して投げる */
+    Object.defineProperty(ev, 'clientX', { value: r.left + nx*r.width });
+    Object.defineProperty(ev, 'clientY', { value: r.top  + ny*r.height });
+    window.dispatchEvent(ev);
+  }
+
+  async function run(){
     try{
       const seg = (k, v) => document.querySelector('.seg[data-seg="'+k+'"] button[data-v="'+v+'"]').click();
       const px = (nx, ny) => {
@@ -133,7 +151,156 @@
          clips.slice(0,3).map(c => c.tilt.x + ',' + c.tilt.y).join('|') === before);
       ok('足した1枚にも置き場が付く', !!(clips[3] && clips[3].tilt));
 
+      // ══ 盤に落とす（木下＝「ボードには落とされていない」）
+      clips.length = 0; sel = -1;
+      seg('narabe', 0);                       // 順に繋ぐの状態から始める
+      afterAdd();
+      const f1 = await fileOf(300, 400, '#c33', 'drop1.png');
+      dropOn(0.3, 0.7, [f1]);
+      for(let i = 0; i < 60 && !clips.length; i++) await wait(50);
+      ok('盤に落とすと素材が入る', clips.length === 1, clips.length + '本');
+      ok('盤に落とすと【並べる】に切り替わる', P.narabe === 1);
+      ok('  切り替えたことが画面のボタンにも出る',
+         document.querySelector('.seg[data-seg="narabe"] button[data-v="1"]').classList.contains('on'));
+      const dt = clips[0] && clips[0].tilt;
+      ok('落とした所に置かれる', !!dt && Math.abs(dt.x - 0.3) < 0.2 && Math.abs(dt.y - 0.7) < 0.2,
+         dt ? num(dt.x) + ',' + num(dt.y) : 'なし');
+      ok('落としたものが選ばれている', sel === 0, String(sel));
+
+      // ── 盤の外（下のタイムライン）に落とすと、今まで通り順に繋ぐのまま足される
+      seg('narabe', 0);
+      const f2 = await fileOf(300, 400, '#39c', 'drop2.png');
+      const r0 = cv.getBoundingClientRect();
+      const dt2 = new DataTransfer(); dt2.items.add(f2);
+      const ev2 = new DragEvent('drop', { bubbles:true, cancelable:true, dataTransfer:dt2 });
+      Object.defineProperty(ev2, 'clientX', { value: r0.left + r0.width/2 });
+      Object.defineProperty(ev2, 'clientY', { value: r0.bottom + 60 });   // 盤の下＝タイムライン側
+      window.dispatchEvent(ev2);
+      for(let i = 0; i < 60 && clips.length < 2; i++) await wait(50);
+      ok('盤の外に落としたら並べるにしない', clips.length === 2 && P.narabe === 0,
+         clips.length + '本 / narabe=' + P.narabe);
+
+      // ══ 四隅を掴んで大きさを変える（木下＝「マウスで小さくしたりもできない」）
+      seg('narabe', 1);
+      document.getElementById('bGrid').click();
+      sel = 0; tiltNote();
+      const box = document.getElementById('pkbox');
+      ok('選ぶと盤に枠と掴み手が出る', box.classList.contains('on'));
+      const bb = narabeBox(clips[0]), rr = cv.getBoundingClientRect();
+      ok('枠が絵の位置に合っている',
+         Math.abs(parseFloat(box.style.left) - (rr.left + (bb.x-bb.w/2)*rr.width)) < 1.5 &&
+         Math.abs(parseFloat(box.style.width) - bb.w*rr.width) < 1.5,
+         box.style.left + ' / ' + box.style.width);
+
+      const sc0 = clips[0].tilt.sc, x0 = clips[0].tilt.x, y0 = clips[0].tilt.y;
+      const undo0 = UNDO.length;
+      const h = box.querySelector('.pkh.se');
+      const cx = rr.left + x0*rr.width, cy = rr.top + y0*rr.height;
+      const d0 = Math.hypot(bb.w*rr.width/2, bb.h*rr.height/2);
+      h.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true, clientX:cx + bb.w*rr.width/2, clientY:cy + bb.h*rr.height/2 }));
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles:true, clientX:cx + bb.w*rr.width/4, clientY:cy + bb.h*rr.height/4 }));
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles:true }));
+      ok('四隅を内側へ引くと小さくなる', clips[0].tilt.sc < sc0, sc0 + ' → ' + clips[0].tilt.sc);
+      ok('大きさを変えても位置は動かない',
+         clips[0].tilt.x === x0 && clips[0].tilt.y === y0);
+      ok('つまみにも同じ数字が出る',
+         +document.getElementById('tlSc').value === Math.round(clips[0].tilt.sc),
+         document.getElementById('tlSc').value + ' / ' + clips[0].tilt.sc);
+      ok('掴み手のドラッグで控えが1回だけ積まれる（戻せる）',
+         UNDO.length === undo0 + 1, undo0 + ' → ' + UNDO.length);
+
+      // ── 並べていない時は掴み手を出さない
+      seg('narabe', 0); tiltNote();
+      ok('順に繋ぐでは掴み手を出さない', !box.classList.contains('on'));
+      seg('narabe', 1); sel = 0; tiltNote();
+
+      // ══ 回す掴み手（木下＝「角度調整もできるように」）
+      const rz0 = clips[0].tilt.rz || 0;
+      const rot = box.querySelector('.pkr');
+      const rc = cv.getBoundingClientRect();
+      const rx = rc.left + clips[0].tilt.x*rc.width, ry = rc.top + clips[0].tilt.y*rc.height;
+      rot.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true, clientX:rx, clientY:ry - 100 }));
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles:true, clientX:rx + 100, clientY:ry, altKey:true }));
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles:true }));
+      ok('枠の上の丸を掴むと回る', Math.abs((clips[0].tilt.rz||0) - (rz0 + 90)) < 1.5,
+         rz0 + ' → ' + clips[0].tilt.rz);
+      ok('  回しても位置と大きさは変わらない',
+         clips[0].tilt.x === x0 && clips[0].tilt.y === y0);
+      // 15度ごとに吸い付く（alt を押していない時）
+      rot.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true, clientX:rx, clientY:ry - 100 }));
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles:true, clientX:rx + 3, clientY:ry - 100 }));
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles:true }));
+      ok('  15度ごとに吸い付く', (clips[0].tilt.rz % 15) === 0, String(clips[0].tilt.rz));
+
+      // ══ 文字を盤に置く（木下＝「テキストなども別途ボードに入れれるように」）
+      clips.length = 0; sel = -1; seg('narabe', 0); afterAdd();
+      document.getElementById('bText').click();
+      const tc = clips[0];
+      ok('文字を入れると素材になる', !!tc && tc.type === 'text', tc && tc.type);
+      ok('  文字は盤の【並べる】に入る', P.narabe === 1);
+      ok('  文字にも置き場が付く', !!(tc && tc.tilt), tc && tc.tilt ? Math.round(tc.tilt.sc) : '-');
+      ok('  文字は絵として焼かれている（写真と同じ扱い）',
+         !!(tc.el && tc.el.naturalWidth > 0 && tc.el.naturalHeight > 0),
+         tc.el ? tc.el.naturalWidth + '×' + tc.el.naturalHeight : 'なし');
+      const w0 = tc.el.naturalWidth;
+      const ta = document.getElementById('txIn');
+      ta.value = 'ここに文字ここに文字'; ta.dispatchEvent(new Event('input'));
+      ok('  内容を変えると札も焼き直す', tc.el.naturalWidth > w0, w0 + ' → ' + tc.el.naturalWidth);
+      const kx = tc.tilt.x, ksc = tc.tilt.sc;
+      document.querySelector('#txW button[data-v="0"]').click();
+      ok('  焼き直しても置き場は持ち越す', tc.tilt.x === kx && tc.tilt.sc === ksc);
+      frameAt(0);
+      const tb = narabeBox(tc);
+      const tp = (nx, ny) => { const d = g.getImageData(Math.round(cv.width*nx), Math.round(cv.height*ny),1,1).data;
+                               return d[0]+','+d[1]+','+d[2]+','+d[3]; };
+      /* ⚠️ 1点だけ見ると【字と字のすきま】に当たって落ちる。線の上を何点か見る */
+      const bgpx = tp(0.01, 0.01);
+      /* ⚠️ 点を飛び飛びに見ると【線の幅より間隔が広くて】ほとんど当たらない（1/15 になった）。
+         ⭐ 札の範囲を丸ごと読んで、地と違う画素を数える。 */
+      let hits = 0;                       /* ⚠️ hit は上で使っている（同じ名前だと全部落ちる） */
+      const rx0 = Math.max(0, Math.round((tb.x - tb.w/2)*cv.width));
+      const ry0 = Math.max(0, Math.round((tb.y - tb.h/2)*cv.height));
+      const rw = Math.min(cv.width - rx0, Math.round(tb.w*cv.width));
+      const rh = Math.min(cv.height - ry0, Math.round(tb.h*cv.height));
+      const idat = g.getImageData(rx0, ry0, Math.max(1,rw), Math.max(1,rh)).data;
+      for(let p = 0; p < idat.length; p += 4) if(idat[p] > 128) hits++;   // 白い字
+      ok('  文字が盤に写る', hits > 500, hits + '画素が白い（札 ' + rw + '×' + rh + '）');
+      ok('  文字の段は文字を選んでいる時だけ出る',
+         document.body.classList.contains('has-text'));
+      sel = -1; tiltNote();
+      ok('    選んでいなければ隠れる', !document.body.classList.contains('has-text'));
+
+      // ══ 音（波形・ミュート）── 解く所は headless では通せないので、道具の側だけ見る
+      const vv = vidClip(400, 500, 3.0, 'snd.mp4');
+      vv.peaks = new Float32Array(200).map((_, i) => Math.abs(Math.sin(i/7)));
+      vv.pkMax = 1;
+      clips.length = 0; clips.push(vv); sel = 0; seg('narabe', 0); afterAdd();
+      const bar = document.querySelector('#clipLane .clipseg');
+      ok('音を持つ動画は帯に波形が出る', !!bar.querySelector('canvas.wv'));
+      ok('  帯の頭の絵は引き伸ばさない（比率どおり）',
+         parseFloat(bar.querySelector('video,img').style.width) < parseFloat(bar.style.width),
+         bar.querySelector('video,img').style.width + ' / ' + bar.style.width);
+      ok('  名前と尺が上の帯に出る', !!bar.querySelector('.cshead .nm') && !!bar.querySelector('.cshead .du'),
+         bar.querySelector('.cshead .du') && bar.querySelector('.cshead .du').textContent);
+      const mb = bar.querySelector('.mu');
+      ok('  ミュートのボタンが出る', !!mb);
+      mb.click();
+      ok('  押すと止まる', clips[0].mute === true);
+      ok('  もう一度押すと戻る（往復する）',
+         (document.querySelector('#clipLane .clipseg .mu').click(), clips[0].mute === false));
+      const noAud = vidClip(400, 500, 3.0, 'quiet.mp4');
+      clips.push(noAud); afterAdd();
+      ok('  音の無い動画には波形もミュートも出さない',
+         !document.querySelectorAll('#clipLane .clipseg')[1].querySelector('canvas.wv') &&
+         !document.querySelectorAll('#clipLane .clipseg')[1].querySelector('.mu'));
+
       // ── 順に繋ぐへ戻すと、今まで通り1本ずつ
+      clips.length = 0; sel = -1;
+      clips.push(vidClip(400, 500, 2.0, 'a.mp4'));
+      clips.push(vidClip(400, 500, 5.0, 'b.mp4'));
+      clips.push(imgClip(400, 500, '#e0322a', 'c.png'));
+      clips.push(imgClip(300, 300, '#0a0', 'd.png'));
+      seg('narabe', 1); document.getElementById('bGrid').click(); afterAdd();
       seg('narabe', 0);
       ok('戻すと尺が足し算に戻る', Math.abs(total() - (2+5+1+1)) < 0.01, num(total()));
       buildClips();
@@ -153,5 +320,5 @@
     ].join('\n');
     document.body.appendChild(pre);
   }
-  setTimeout(run, 900);
+  setTimeout(() => { run(); }, 900);
 })();
