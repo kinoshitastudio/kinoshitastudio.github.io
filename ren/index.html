@@ -2208,9 +2208,32 @@ async function mixAudio(T){
   }
   return await oc.startRendering();
 }
+/* 🔴🔴 codec は【決め打ちにしない】。avc1 の後ろ2桁は "水準"で、1080×1350 は
+   `avc1.42001f`（水準3.1＝1280×720 まで）では**受け取ってもらえない**。
+   木下＝「動画で出すボタンを押しても書き出しされない」＝ここで黙って落ちていた。
+   ⭐ 他の道具（簾SUDARE・枡MASU）と同じ＝**候補を上から試して、通ったものを使う**。 */
+async function pickCodec(W, H, fps, bitrate){
+  const cands = ['avc1.640034','avc1.640033','avc1.640032','avc1.64002a',
+                 'avc1.640028','avc1.4d0034','avc1.42003c','avc1.42001f'];
+  for(const codec of cands){
+    try{
+      const s = await VideoEncoder.isConfigSupported({ codec, width:W, height:H, bitrate, framerate:fps });
+      if(s && s.supported) return s.config;
+    }catch(_){}
+  }
+  return null;
+}
 async function exportMovie(){
+  try{ await exportMovieCore(); }
+  catch(err){
+    /* 🔴 黙って落ちない。押したのに何も起きない＝壊れていると読まれる */
+    shooting = false;
+    outNote('書き出しで止まった：' + (err && err.message ? err.message : err));
+  }
+}
+async function exportMovieCore(){
   const T = total();
-  if(!clips.length || T <= 0) return;
+  if(!clips.length || T <= 0){ outNote('出すものがありません'); return; }
   if(!(window.VideoEncoder && window.Mp4Muxer)){
     outNote('このブラウザは1コマずつ詰められないので、昔の録り方で出します（長さがずれることがあります）');
     return exportMovieRec();
@@ -2219,6 +2242,12 @@ async function exportMovie(){
   const N = Math.max(1, Math.round(T * fps));
   const W = cv.width  - (cv.width  % 2);      /* ⚠️ 偶数にそろえる */
   const H = cv.height - (cv.height % 2);
+  const bitrate = Math.min(24e6, Math.max(4e6, Math.round(W*H*fps*0.08)));
+  const cfg = await pickCodec(W, H, fps, bitrate);
+  if(!cfg){
+    outNote('この大きさ（' + W + '×' + H + '）を詰められる codec が無いので、昔の録り方で出します');
+    return exportMovieRec();
+  }
   const out = document.createElement('canvas'); out.width = W; out.height = H;
   const og = out.getContext('2d');
   const was = playing; playing = false; shooting = true;
@@ -2233,13 +2262,12 @@ async function exportMovie(){
     audio: mixed ? { codec:'aac', sampleRate:mixed.sampleRate, numberOfChannels:mixed.numberOfChannels } : undefined,
     fastStart: 'in-memory'
   });
-  let err = null;
+  let vErr = null;
   const venc = new VideoEncoder({
     output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-    error: e => { err = e; }
+    error: e => { vErr = e; outNote('詰めるところで止まった：' + (e && e.message ? e.message : e)); }
   });
-  venc.configure({ codec:'avc1.42001f', width:W, height:H,
-                   bitrate: Math.min(24e6, Math.max(4e6, W*H*fps*0.08)), framerate: fps });
+  venc.configure(cfg);                       /* ⭐ 試して通った設定をそのまま使う */
   for(let k = 0; k < N; k++){
     const t = k / fps;
     await seekAll(t);
@@ -2252,6 +2280,7 @@ async function exportMovie(){
       outNote('書き出し中… ' + (k+1) + '/' + N + ' コマ');
       await new Promise(r => setTimeout(r));      /* 画面を固めない */
     }
+    if(vErr) throw vErr;                     /* ⚠️ 止まったら黙って続けない */
     if(venc.encodeQueueSize > 12) await new Promise(r => setTimeout(r, 8));
   }
   await venc.flush();
