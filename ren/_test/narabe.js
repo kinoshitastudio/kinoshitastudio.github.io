@@ -212,6 +212,26 @@
       ok('盤の外に落としたら並べるにしない', clips.length === 2 && P.narabe === 0,
          clips.length + '本 / narabe=' + P.narabe);
 
+      // ══ 落とさずに入れても盤に置ける（木下＝「モバイルで動画をボードに入れることができない」）
+      clips.length = 0; sel = -1; seg('narabe', 1); afterAdd();
+      const fm1 = await fileOf(300, 400, '#c33', 'm1.png');
+      const fm2 = await fileOf(300, 400, '#39c', 'm2.png');
+      addFiles([fm1, fm2]);                     /* ⚠️ 落とさない＝ファイル選択と同じ道 */
+      for(let i = 0; i < 60 && clips.length < 2; i++) await wait(50);
+      ok('並べる中なら【選んで入れた】ものも盤に置かれる',
+         clips.length === 2 && clips.every(c => !!c.tilt), clips.length + '本');
+      ok('  真ん中に積み上げない（散らして置く）',
+         clips[0].tilt.x !== clips[1].tilt.x || clips[0].tilt.y !== clips[1].tilt.y,
+         clips.map(c => num(c.tilt.x)+','+num(c.tilt.y)).join(' / '));
+      ok('  入れたものが選ばれている（すぐ掴める）', sel === clips.length - 1, String(sel));
+      // 順に繋ぐのときは今までどおりタイムラインに足すだけ
+      seg('narabe', 0);
+      const fm3 = await fileOf(300, 400, '#0a0', 'm3.png');
+      addFiles([fm3]);
+      for(let i = 0; i < 60 && clips.length < 3; i++) await wait(50);
+      ok('  順に繋ぐのときは盤に置かない（今までどおり）', P.narabe === 0 && clips.length === 3);
+      seg('narabe', 1);
+
       // ══ 四隅を掴んで大きさを変える（木下＝「マウスで小さくしたりもできない」）
       seg('narabe', 1);
       document.getElementById('bGrid').click();
@@ -395,6 +415,16 @@
         ok('  画面に「出した」と出る', /出した/.test(document.getElementById('outNote').textContent),
            document.getElementById('outNote').textContent.slice(0, 40));
         ok('  書き出しのあと旗が戻っている（次の再生が壊れない）', shooting === false);
+        /* ⭐ PNG も出せる（木下＝「PNG書き出しもできるようにして」） */
+        let gotP = null;
+        URL.createObjectURL = b => { if(b && b.type === 'image/png') gotP = b; return orig.call(URL, b); };
+        await exportPng();
+        URL.createObjectURL = orig;
+        ok('⭐ PNG も1枚出せる', !!gotP && gotP.size > 200,
+           gotP ? Math.round(gotP.size/1024) + 'KB / ' + gotP.type : '出なかった');
+        ok('  PNG は版面の大きさで出る',
+           /480 × 480/.test(document.getElementById('outNote').textContent),
+           document.getElementById('outNote').textContent.slice(0, 46));
         fr.value = fpsBak; fr.dispatchEvent(new Event('input'));
       }
 

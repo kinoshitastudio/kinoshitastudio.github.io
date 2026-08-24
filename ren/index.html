@@ -439,6 +439,8 @@
   <p><b>1枚の尺</b>＝画像1枚を何秒映すか。動画はその長さのまま流れる。
      <b>済し</b>＝カットの間をどれだけ溶かすか（0 でパッと切り替え）。</p>
   <h3>並べる</h3>
+  <p>⭐ <b>スマホ・タブレットはここから</b>。<b>02 並べる →「同時に並べる」</b>にしてから
+     <b>素材を選ぶ</b>と、選んだものが<b>盤に置かれる</b>（落とす操作が要らない）。</p>
   <p><b>同時に並べる</b>に切り替えると、素材ぜんぶを<b>1つの版面に置いていっぺんに流す</b>
      （1本ずつ順に映すのをやめる）。尺は<b>いちばん長いもの</b>に合わせ、短いものは繰り返す。<br>
      置き場は<b>ステージの上でドラッグ</b>（触った絵がそのまま掴める）。
@@ -466,8 +468,9 @@
     <div class="unit-head"><span class="led"></span><span class="unit-idx">01</span>
       <span class="unit-name">CLIPS</span><span class="unit-jp">素材</span></div>
     <div class="unit-body">
-      <div class="mod">⭐ <b>盤に落とす</b>＝その場所に置く（同時に並べる）／
-        <b>それ以外に落とす</b>＝順に繋ぐ（画像・動画・音源）<br>
+      <div class="mod">⭐ <b>素材を選ぶ</b>＝<b>02 並べる</b>が「同時に並べる」なら<b>盤に置く</b>／
+        「順に繋ぐ」なら下のタイムラインに足す（画像・動画・音源）<br>
+        ⭐ パソコンなら<b>盤に落とす</b>＝その場所に置く／<b>それ以外に落とす</b>＝順に繋ぐ<br>
         並びと尺は<b>下のタイムライン</b>で触る＝掴んで入れ替え／右端で伸縮／<b>×</b>で外す</div>
       <div class="grid2">
         <button class="btn" id="bAdd">素材を選ぶ</button>
@@ -625,6 +628,8 @@
         <button class="btn" id="bMovie">動画で出す</button>
         <button class="btn" id="bGif">GIF で出す</button>
       </div>
+      <!-- ⭐ 1枚絵でも出せるように（組んだ版面はそのままポスターにもなる） -->
+      <button class="btn" id="bPng" style="width:100%;margin-top:6px">PNG で出す（いまの1コマ）</button>
       <!-- ⭐⭐ 控え＝この道具の決まり（単体HTML・外部依存なし・JSONで往復）。
            🔴 素材ごと入れる。木下＝「JSON書き出しもよろしく、動画も」。
               作り方だけ控えても、開いた時に何も出ない＝控えになっていない。 -->
@@ -1548,14 +1553,27 @@ function addFiles(list){
   const files = all.filter(f => f.type.startsWith('image/') || f.type.startsWith('video/'));
   if(files.length) pushUndo();
   /* ⭐ 落とした場所は【この1回ぶん】。読み込みは非同期なので、先に取っておく */
-  const at = pendingDrop; pendingDrop = null;
+  let at = pendingDrop; pendingDrop = null;
+  /* 🔴🔴 木下＝「モバイルで動画をボードに入れることができない」。
+     ＝盤に置く道が【ドラッグ＆ドロップだけ】だった。触る画面には落とすが無いので、
+        機能ごと無いのと同じになっていた。
+     ⭐ 落とす場所が無いときは【モードに従う】＝「同時に並べる」なら盤に置く。
+        （「順に繋ぐ」なら今までどおりタイムラインに足す） */
+  if(!at && P.narabe) at = { x:0.5, y:0.5, auto:true };
   let put = 0, bad = 0;
   const landed = c => {
     clips.push(c);
     if(at){
       narabeOn();
-      const k = put++;                              /* 何枚も落としたら少しずつずらして重ねる */
-      placeAt(c, at.x + k*0.05, at.y + k*0.05, 0.45);
+      const k = put++;                              /* 何枚も入れたら少しずつずらして重ねる */
+      if(at.auto){
+        /* ⭐ 落としていない（選んで入れた）ときは、盤の中に散らして置く。
+           ⚠️ 真ん中に積み上げると、後から入れたものしか見えない。 */
+        const m = clips.length - 1;
+        placeAt(c, 0.5 + ((m % 3) - 1) * 0.16, 0.5 + ((Math.floor(m/3) % 3) - 1) * 0.16, 0.45);
+      }else{
+        placeAt(c, at.x + k*0.05, at.y + k*0.05, 0.45);
+      }
       sel = clips.length - 1;
     }
   };
@@ -2397,6 +2415,30 @@ async function exportMovieCore(){
           + T.toFixed(1) + '秒・' + N + 'コマ' + (mixed ? '・音つき' : '・音なし') + '）');
 }
 document.getElementById('bMovie').onclick = () => exportMovie();
+/* ⭐⭐ PNG で出す＝いま見えている1コマを、版面の大きさのまま1枚に。
+   ⚠️ 掴み手は DOM で重ねてあるので、canvas には写らない（そのまま出せる）。
+   ⚠️ 動画は【頭出しが終わってから】焼く＝再生を止めた位置の絵が、そのまま出る。 */
+async function exportPng(){
+  if(!clips.length){ outNote('出すものがありません'); return; }
+  const was = playing; playing = false; shooting = true;
+  try{
+    clips.forEach(c => { if(c.type === 'vid'){ try{ c.el.pause(); }catch(_){} } });
+    outNote('1コマを焼いています…');
+    await seekAll(cur);
+    frameAt(cur);
+    const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
+    if(!blob){ outNote('PNG が作れなかった'); return; }
+    const name = 'ren_' + Date.now() + '.png';
+    dl(blob, name);
+    outNote('出した → ' + name + '（' + cv.width + ' × ' + cv.height + '・'
+            + (blob.size/1048576).toFixed(1) + ' MB）');
+  }catch(err){
+    outNote('PNG で止まった：' + (err && err.message ? err.message : err));
+  }finally{
+    shooting = false; playing = was;          /* ⚠️ 何があっても旗を戻す */
+  }
+}
+document.getElementById('bPng').onclick = () => exportPng();
 /* ⚠️ 昔の道（1コマずつ詰められないブラウザ用）。長さが当てにならないので既定にしない */
 function exportMovieRec(){
   const T = total();
