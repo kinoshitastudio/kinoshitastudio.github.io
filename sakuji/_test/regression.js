@@ -477,6 +477,95 @@
         sel.value = 'center'; sel.dispatchEvent(new Event('change', { bubbles:true }));
       }
 
+      // ══ 画像トレース（2026-08-24）── 芯だけを直に通す（写真の読み込みは待ちが要るので使わない）
+      {
+        const W = 60, H = 60;
+        const fill = (m, x0, y0, x1, y1) => { for(let y=y0;y<y1;y++) for(let x=x0;x<x1;x++) m[y*W+x] = 1; };
+
+        // ① 穴のある形は 外の輪＋穴 の2本になる（画素の縁を追っているか）
+        const donut = new Uint8Array(W*H);
+        for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+          const d = Math.hypot(x-30, y-30);
+          if(d < 24 && d > 10) donut[y*W+x] = 1;
+        }
+        const cd = trContours(donut, W, H).sort((a,b) => b.area - a.area);
+        ok('トレース：穴のある形は輪が2本になる', cd.length === 2, cd.length + '本');
+        ok('トレース：外の輪のほうが穴より広い', cd.length === 2 && cd[0].area > cd[1].area,
+           cd.map(c => Math.round(c.area)).join(' / '));
+
+        // ② ⭐ まわりと比べる（局所しきい値）── 左が明るく右が暗い紙に、同じ濃さの点を2つ置く
+        const g = new Float32Array(W*H), al = new Uint8Array(W*H).fill(255);
+        for(let y=0;y<H;y++) for(let x=0;x<W;x++) g[y*W+x] = 40 + x*3;    // 地は左40→右217
+        const mark = (cx,cy) => { for(let y=cy-4;y<=cy+4;y++) for(let x=cx-4;x<=cx+4;x++) g[y*W+x] -= 30; };
+        mark(12,30); mark(48,30);
+        const G = { W, H, g, a:al };
+        // ⚠️ 端は窓がはみ出て地の傾き自体を拾うので、【点の中】と【点の外の真ん中】で数える
+        const box = (m, cx, cy) => { let n = 0;
+          for(let y=cy-4;y<=cy+4;y++) for(let x=cx-4;x<=cx+4;x++) if(m[y*W+x]) n++; return n; };
+        const mid = m => { let n = 0;
+          for(let y=0;y<H;y++) for(let x=22;x<38;x++) if(m[y*W+x]) n++; return n; };
+        const mL = trInkMask(G, { local:true,  radius:10, offset:8, inv:false, clean:false });
+        const mG = trInkMask(G, { local:false, thr:128,   inv:false, clean:false });
+        ok('⭐まわりと比べる＝影のある紙でも両側の点を拾う',
+           box(mL,12,30) >= 60 && box(mL,48,30) >= 60,
+           '左' + box(mL,12,30) + ' 右' + box(mL,48,30) + '（点は81画素）');
+        ok('  まわりと比べる＝地は拾わない', mid(mL) === 0, mid(mL) + '画素');
+        ok('  1枚で1つ だと片側が潰れて片側が消える（＝ノートの写真では使えない）',
+           box(mG,48,30) === 0 && box(mG,12,30) === 81 && mid(mG) > 200,
+           '左' + box(mG,12,30) + ' 右' + box(mG,48,30) + ' 地' + mid(mG));
+
+        // ③ ⭐ コーナー：正方形の角が角のまま残る／0 にすると角にしない
+        const sq = new Uint8Array(W*H); fill(sq, 15, 15, 45, 45);
+        const cs = trContours(sq, W, H);
+        const toXY = p => new Point(p[0], p[1]);
+        const keep = trFitPath(cs[0].pts, 1.8, 180 - 70*1.7, toXY);   // コーナー 70
+        const soft = trFitPath(cs[0].pts, 1.8, 180 - 0*1.7,  toXY);   // コーナー 0
+        /* ⚠️ 「ハンドルが無い＝角」ではない。直線を当てはめると、その線に沿ったハンドルが付く。
+           ⭐ 角かどうかは【入りと出のハンドルが一直線に並んでいないか】で見る。 */
+        const isCorner = s => {
+          const a = s.handleIn, b = s.handleOut;
+          if(a.length < 1e-6 || b.length < 1e-6) return true;
+          return a.normalize().add(b.normalize()).length > 0.2;
+        };
+        const sharp = p => p ? p.segments.filter(isCorner).length : -1;
+        ok('⭐コーナー：正方形が4点の角で残る',
+           !!keep && keep.segments.length === 4 && sharp(keep) === 4,
+           keep ? keep.segments.length + '点 / 角' + sharp(keep) : 'なし');
+        ok('  コーナー0 なら角にしない（丸くなる）', sharp(soft) < 4, sharp(soft) + '個が角');
+        ok('  角を残しても面積は変わらない', !!keep && Math.abs(Math.abs(keep.area) - 900) < 30,
+           keep ? Math.round(Math.abs(keep.area)) : '-');
+        [keep, soft].forEach(p => { try{ p && p.remove(); }catch(e){} });
+
+        // ④ 細部を捨てる＝面積で落とせる（長さではなく面積で見ている）
+        const dust = new Uint8Array(W*H); fill(dust, 15, 15, 45, 45); dust[3*W+3] = 1;
+        const cc = trContours(dust, W, H);
+        ok('細部を捨てる：面積で落とせる',
+           cc.length === 2 && cc.filter(c => c.area >= 20).length === 1,
+           cc.map(c => Math.round(c.area)).join(' / '));
+
+        // ⑤ 色数：3色の絵が3つに分かれる（乱数を使っていないので毎回同じ）
+        const rgb = new Uint8ClampedArray(W*H*4);
+        for(let p=0;p<W*H;p++){
+          const x = p % W, c = x < 20 ? [230,30,30] : (x < 40 ? [30,200,60] : [40,60,220]);
+          rgb[p*4]=c[0]; rgb[p*4+1]=c[1]; rgb[p*4+2]=c[2]; rgb[p*4+3]=255;
+        }
+        const q = trQuantize({ W, H, rgb, a:new Uint8Array(W*H).fill(255) }, 3);
+        ok('色数：3色の絵が3つに分かれる',
+           !!q && q.area.filter(a => a > W*H*0.2).length === 3, q ? q.area.join(' / ') : 'なし');
+
+        // ⑥ ⭐ 効かないつまみは出さない（触れるのに効かない状態を作らない）
+        const hidden = id => getComputedStyle(document.getElementById(id)).display === 'none';
+        document.querySelector('#trMode button[data-v="color"]').click();
+        ok('色数にすると しきい値まわりが消える',
+           hidden('trThrRow') && hidden('trRadRow') && !hidden('trColsRow'));
+        document.querySelector('#trMode button[data-v="bw"]').click();
+        ok('白黒に戻すと 色数が消える', hidden('trColsRow') && !hidden('trRadRow'));
+        document.querySelector('#trLocal button[data-v="0"]').click();
+        ok('1枚で1つ にすると しきい値が出て 比べる広さが消える',
+           !hidden('trThrRow') && hidden('trRadRow'));
+        document.querySelector('#trLocal button[data-v="1"]').click();
+      }
+
     } catch(e){
       R.push({ name:'⛔ テスト中に例外', pass:false, detail: e && (e.message + ' @ ' + (e.stack||'').split('\n')[1]) });
     }

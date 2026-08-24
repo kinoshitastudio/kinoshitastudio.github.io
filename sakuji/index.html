@@ -1773,18 +1773,39 @@
     <div class="note">薄く敷いた画像の上からパスでなぞる<br>固定を解くとドラッグで動かせる</div>
   </div>
 
-  <h2 class="fold" data-open="0">採取（写真から字を拾う）</h2>
+  <h2 class="fold" data-open="0">画像トレース（写真からパスにする）</h2>
   <div class="foldbox">
-  <div class="note">看板・印刷物・手書きを撮った写真から、<b>字の形だけパスにして持ち帰る</b><br>まず「白黒で見る」で拾う範囲を決めてから採取する</div>
-  <div class="row"><label>しきい値</label><input type="range" id="trThr" min="1" max="254" value="128"><span class="val"></span></div>
+  <div class="note">ノートに描いたイラストや字を撮った写真を、そのまま<b>パスにする</b><br>「白黒で見る」で拾う範囲を決めてから実行する</div>
+  <button class="btn" id="bTrLoad" style="width:100%">写真を選ぶ</button>
+  <input type="file" id="fileTr" accept="image/*" hidden>
+  <div class="seg" id="trMode" style="margin:8px 0 0">
+    <button data-v="bw" class="on">白黒</button><button data-v="color">色数</button>
+  </div>
+  <div class="note" id="trModeNote">白黒＝線画・字を1色のパスにする</div>
+
+  <div class="seg" id="trLocal" style="margin:0 0 6px">
+    <button data-v="1" class="on">まわりと比べる</button><button data-v="0">1枚で1つ</button>
+  </div>
+  <div class="note" id="trLocalNote">ノートの写真は影とムラがあるので「まわりと比べる」が既定<br>印刷物・看板のように明るさが均一なら「1枚で1つ」でよい</div>
+
+  <div class="row" id="trThrRow"><label>しきい値</label><input type="range" id="trThr" min="1" max="254" value="128"><span class="val"></span></div>
+  <div class="row" id="trRadRow"><label>比べる広さ</label><input type="range" id="trRad" min="4" max="80" value="20"><span class="val"></span></div>
+  <div class="row" id="trOffRow"><label>拾う強さ</label><input type="range" id="trOff" min="1" max="60" value="10"><span class="val"></span></div>
+  <div class="row" id="trColsRow"><label>色数</label><input type="range" id="trCols" min="2" max="10" value="6"><span class="val"></span></div>
+
   <div class="row"><label>なめらかさ</label><input type="range" id="trSm" min="0" max="60" value="18"><span class="val"></span></div>
+  <div class="row"><label>コーナー</label><input type="range" id="trCor" min="0" max="100" value="45"><span class="val"></span></div>
   <div class="row"><label>細部を捨てる</label><input type="range" id="trMin" min="0" max="100" value="12"><span class="val"></span></div>
+
   <div class="grid2">
     <button class="btn" id="bTrPrev">白黒で見る</button>
     <button class="btn" id="bTrInv">明暗を反転</button>
   </div>
-  <button class="btn" id="bTrace" style="width:100%">この下敷きから採取</button>
-  <div class="note">しきい値＝どこまでを「字」と見るか（読み込み時に自動で当てる）<br>なめらかさ＝アンカーを減らす／細部を捨てる＝小さなゴミを拾わない</div>
+  <div class="seg" id="trDropBg" style="margin:6px 0 0">
+    <button data-v="1" class="on">紙を捨てる</button><button data-v="0">紙も出す</button>
+  </div>
+  <button class="btn" id="bTrace" style="width:100%;margin-top:6px">この写真をパスにする</button>
+  <div class="note">比べる広さ＝線の太さの3〜5倍が目安／拾う強さ＝薄い線まで拾うなら下げる<br>なめらかさ＝アンカーを減らす／<b>コーナー＝角を残す強さ（0で全部丸くなる）</b>／細部を捨てる＝小さなゴミを拾わない<br>色数は<b>上げるほど細かく分かれる</b>（近い色が混ざるときは上げる）。光のムラは自動でならしている</div>
   </div>
 
   <h2 class="fold" data-open="0">ALIGN</h2>
@@ -3880,27 +3901,399 @@ async function textToPaths(t){
   grp.scale(1);   // 実寸のまま
   return grp;
 }
-/* 2値画像の輪郭を追う（moore neighborhood）*/
-function traceBitmap(img, W, H, minLen){
-  const on = (x,y) => (x<0||y<0||x>=W||y>=H) ? false : img.data[(y*W+x)*4+3] > 128;
-  const seen = new Uint8Array(W*H), out = [];
-  const dirs = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
-  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
-    if(!on(x,y) || seen[y*W+x]) continue;
-    if(on(x-1,y)) continue;                       // 左が塗りなら輪郭の開始点ではない
-    const start=[x,y]; let cur=[x,y], dir=0, pts=[], guard=0;
-    do{
-      pts.push(cur); seen[cur[1]*W+cur[0]] = 1;
-      let found=false;
-      for(let i=0;i<8;i++){
-        const d=(dir+6+i)%8, nx=cur[0]+dirs[d][0], ny=cur[1]+dirs[d][1];
-        if(on(nx,ny)){ cur=[nx,ny]; dir=d; found=true; break; }
-      }
-      if(!found) break;
-    } while((cur[0]!==start[0]||cur[1]!==start[1]) && ++guard < 200000);
-    if(pts.length > (minLen || 24)) out.push(pts.filter((_,i)=> i%2===0));   // 間引いて軽くする
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 画像トレース ── 写真をパスにする（2026-08-24）
+   木下＝「イラレの画像からトレース機能を使いたい。最近はノートなどにイラストやフォントを
+          描くことが多く、イラレ同様のトレース機能でパス化させたい」
+
+   🔴 前の「採取」は【1枚に1つのしきい値】だった。看板・印刷物は明るさが均一なので
+      それで足りたが、ノートの写真は【影・紙のムラ・鉛筆の薄さ】があるので、
+      1つのしきい値だと影の側が丸ごと潰れるか、薄い線が丸ごと消える。
+   ⭐ 直し方＝【まわりと比べて暗いか】で判ける（局所しきい値）。
+      窓の平均は積分画像で出すので、窓をいくら広げても速さは変わらない。
+
+   ⭐ 輪郭は【画素の縁】を追う（crack following）。画素の中心を結ぶやり方だと
+      半画素ずれるうえ、穴の巻き方向が揃わない。縁を追えば外側と穴が必ず逆巻きになるので、
+      そのまま CompoundPath の穴になる。
+
+   ⭐ コーナーは残す。曲線あてはめ（simplify）は角も丸めてしまうので、
+      先に【曲がりの大きい点】を角と決め、角と角の間だけを別々にあてはめて繋ぐ。
+      ＝イラレの「コーナー」つまみに当たる。
+   ══════════════════════════════════════════════════════════════ */
+
+/* 画像を作業用の大きさに落として、明るさ・不透明度・色を配列で持つ */
+function trGray(img, maxW){
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+  const k = Math.min(1, maxW / Math.max(iw, ih));
+  const W = Math.max(1, Math.round(iw * k)), H = Math.max(1, Math.round(ih * k));
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d', { willReadFrequently:true });
+  x.drawImage(img, 0, 0, W, H);
+  const d = x.getImageData(0, 0, W, H).data;
+  const g = new Float32Array(W*H), al = new Uint8Array(W*H);
+  for(let i=0, p=0; p<W*H; i+=4, p++){
+    g[p]  = d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114;
+    al[p] = d[i+3];
+  }
+  return { W, H, g, a:al, rgb:d };
+}
+
+/* 窓の平均。積分画像なので窓を広げても速さが変わらない */
+function trBoxMean(g, W, H, r){
+  const V = W + 1, I = new Float64Array(V*(H+1));
+  for(let y=0;y<H;y++){ let s = 0;
+    for(let x=0;x<W;x++){ s += g[y*W+x]; I[(y+1)*V + x+1] = I[y*V + x+1] + s; } }
+  const m = new Float32Array(W*H);
+  for(let y=0;y<H;y++){
+    const y0 = Math.max(0, y-r), y1 = Math.min(H-1, y+r);
+    for(let x=0;x<W;x++){
+      const x0 = Math.max(0, x-r), x1 = Math.min(W-1, x+r);
+      const s = I[(y1+1)*V + x1+1] - I[y0*V + x1+1] - I[(y1+1)*V + x0] + I[y0*V + x0];
+      m[y*W+x] = s / ((y1-y0+1) * (x1-x0+1));
+    }
+  }
+  return m;
+}
+
+/* 3×3 の多数決。紙のざらつき・スキャンの点を1回で消す（形は変えない） */
+function trDespeckle(mask, W, H){
+  const out = new Uint8Array(mask);
+  for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
+    let n = 0;
+    for(let j=-1;j<=1;j++) for(let i=-1;i<=1;i++) n += mask[(y+j)*W + x+i];
+    out[y*W+x] = n >= 5 ? 1 : 0;
   }
   return out;
+}
+
+/* 字か地かを決める。⭐ local＝まわりの平均より暗ければ字（ノートの写真はこれでないと拾えない） */
+function trInkMask(G, o){
+  const { W, H, g, a } = G, N = W*H;
+  const out = new Uint8Array(N);
+  if(o.local){
+    const m = trBoxMean(g, W, H, Math.max(2, o.radius|0));
+    for(let i=0;i<N;i++) out[i] = (g[i] < m[i] - o.offset) ? 1 : 0;
+  }else{
+    for(let i=0;i<N;i++) out[i] = (g[i] < o.thr) ? 1 : 0;
+  }
+  if(o.inv) for(let i=0;i<N;i++) out[i] ^= 1;
+  for(let i=0;i<N;i++) if(a[i] < 8) out[i] = 0;      // 透明は地
+  return o.clean ? trDespeckle(out, W, H) : out;
+}
+
+/* ⭐ 画素の縁をたどって閉じた輪郭にする。
+   ⚠️ 斜めに触れている所は辺が2本出る。入ってきた向きから【右へ曲がる】方を選ぶ
+      ＝斜めに触れただけの2つの塊は別々の輪郭になる（1本に化けて塗りが壊れない）。 */
+function trContours(mask, W, H){
+  const V = W + 1;
+  const at = (x,y) => (x<0||y<0||x>=W||y>=H) ? 0 : mask[y*W+x];
+  const E = new Map();
+  const push = (i0,j0,i1,j1) => {
+    const k = j0*V + i0, v = j1*V + i1;
+    const arr = E.get(k); if(arr) arr.push(v); else E.set(k, [v]);
+  };
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+    if(!mask[y*W+x]) continue;
+    if(!at(x, y-1)) push(x,   y,   x+1, y  );        // 上 →
+    if(!at(x+1, y)) push(x+1, y,   x+1, y+1);        // 右 ↓
+    if(!at(x, y+1)) push(x+1, y+1, x,   y+1);        // 下 ←
+    if(!at(x-1, y)) push(x,   y+1, x,   y  );        // 左 ↑
+  }
+  const out = [], keys = Array.from(E.keys());
+  for(const k0 of keys){
+    for(;;){
+      const head = E.get(k0);
+      if(!head || !head.length) break;
+      const pts = [];
+      let cur = k0, nxt = head.shift(), guard = 0;
+      for(;;){
+        const cx = cur % V, cy = (cur / V) | 0;
+        pts.push([cx, cy]);
+        const nx = nxt % V, ny = (nxt / V) | 0;
+        const dx = nx - cx, dy = ny - cy;
+        cur = nxt;
+        if(cur === k0) break;                        // 一周した
+        const cand = E.get(cur);
+        if(!cand || !cand.length) break;
+        let pick = 0, bestT = -9;
+        for(let q=0;q<cand.length;q++){
+          const ti = cand[q] % V, tj = (cand[q] / V) | 0;
+          const ex = ti - nx, ey = tj - ny;
+          const cross = dx*ey - dy*ex;               // 画面座標（yは下）では正が右回り
+          const t = (cross > 0) ? 2 : ((dx*ex + dy*ey) > 0 ? 1 : 0);
+          if(t > bestT){ bestT = t; pick = q; }
+        }
+        nxt = cand.splice(pick, 1)[0];
+        if(++guard > 4000000) break;
+      }
+      if(pts.length >= 4){
+        let A = 0;
+        for(let i=0;i<pts.length;i++){
+          const p = pts[i], q = pts[(i+1) % pts.length];
+          A += p[0]*q[1] - q[0]*p[1];
+        }
+        out.push({ pts, area: Math.abs(A) / 2 });
+      }
+    }
+  }
+  return out;
+}
+
+/* Ramer–Douglas–Peucker。⚠️ 閉じた輪郭にそのまま掛けられないので、一番離れた2点で割ってから掛ける */
+function trRDP(pts, tol){
+  const n = pts.length;
+  if(n < 4 || tol <= 0) return pts.slice();
+  let bi = 0, best = -1;
+  for(let i=1;i<n;i++){
+    const dx = pts[i][0]-pts[0][0], dy = pts[i][1]-pts[0][1], d = dx*dx + dy*dy;
+    if(d > best){ best = d; bi = i; }
+  }
+  const half = (arr) => {
+    const m = arr.length; if(m < 3) return arr.slice();
+    const keep = new Uint8Array(m); keep[0] = keep[m-1] = 1;
+    const st = [[0, m-1]];
+    while(st.length){
+      const [s, e] = st.pop();
+      if(e - s < 2) continue;
+      const ax = arr[s][0], ay = arr[s][1], bx = arr[e][0], by = arr[e][1];
+      const vx = bx-ax, vy = by-ay, L = Math.hypot(vx, vy) || 1;
+      let far = -1, fi = -1;
+      for(let i=s+1;i<e;i++){
+        const d = Math.abs((arr[i][0]-ax)*vy - (arr[i][1]-ay)*vx) / L;
+        if(d > far){ far = d; fi = i; }
+      }
+      if(far > tol){ keep[fi] = 1; st.push([s, fi], [fi, e]); }
+    }
+    return arr.filter((_, i) => keep[i]);
+  };
+  const a = half(pts.slice(0, bi+1));
+  const b = half(pts.slice(bi).concat([pts[0]]));
+  return a.slice(0, -1).concat(b.slice(0, -1));
+}
+
+/* 曲がりが大きい点＝角。deg を上げるほど角と見なす所が減る（＝丸くなる） */
+function trCorners(pts, deg){
+  const n = pts.length, out = new Uint8Array(n);
+  if(deg >= 179) return out;
+  const cs0 = Math.cos(deg * Math.PI / 180);
+  for(let i=0;i<n;i++){
+    const a = pts[(i-1+n) % n], b = pts[i], c = pts[(i+1) % n];
+    const ux = b[0]-a[0], uy = b[1]-a[1], vx = c[0]-b[0], vy = c[1]-b[1];
+    const lu = Math.hypot(ux, uy), lv = Math.hypot(vx, vy);
+    if(lu < 1e-6 || lv < 1e-6) continue;
+    if((ux*vx + uy*vy) / (lu*lv) < cs0) out[i] = 1;
+  }
+  return out;
+}
+
+/* ⭐ 角を残したまま曲線にする＝角と角の間だけを別々にあてはめて繋ぐ */
+function trFitPath(pxPts, tol, cornerDeg, toXY){
+  const red = trRDP(pxPts, Math.max(0.4, tol * 0.35));
+  if(red.length < 3) return null;
+  const P = red.map(toXY);
+  const cor = trCorners(red, cornerDeg);
+  const idx = []; for(let i=0;i<cor.length;i++) if(cor[i]) idx.push(i);
+  const fit = (arr, closed) => {
+    const t = new Path({ segments:arr, closed, insert:false });
+    if(tol > 0) t.simplify(tol);
+    const segs = t.segments.map(s => ({ p:s.point.clone(),
+      hi:s.handleIn.clone(), ho:s.handleOut.clone() }));
+    t.remove();
+    return segs;
+  };
+  if(idx.length < 2){
+    const segs = fit(P, true);
+    const path = new Path({ insert:false, closed:true });
+    segs.forEach(s => path.add(new paper.Segment(s.p, s.hi, s.ho)));
+    path.closed = true;
+    return path;
+  }
+  const acc = [];
+  for(let k=0;k<idx.length;k++){
+    const s = idx[k], e = idx[(k+1) % idx.length];
+    const run = [];
+    for(let i=s;;i=(i+1)%P.length){ run.push(P[i]); if(i===e) break; }
+    if(run.length < 2) continue;
+    const segs = fit(run, false);
+    /* ⚠️ 角の点は【前の区間の終点】と【次の区間の始点】で2回出る。
+       前の hi と 次の ho を合わせて1つにする＝そこだけ角のまま繋がる */
+    if(acc.length && segs.length){ acc[acc.length-1].ho = segs[0].ho; segs.shift(); }
+    if(k === idx.length-1 && segs.length) segs.pop();     // 最後は先頭に戻るので落とす
+    acc.push(...segs);
+  }
+  if(acc.length < 3) return null;
+  const path = new Path({ insert:false, closed:true });
+  acc.forEach(s => path.add(new paper.Segment(s.p, s.hi, s.ho)));
+  path.closed = true;
+  return path;
+}
+
+/* ⭐ 光のムラを均す（フラットフィールド）＝大きな窓の明るさで割り戻す。
+   🔴 これが無いと、色数モードで【紙が明るい側と影の側の2色に割れて】色数を食い潰す。
+      実際に色数4で試して、黄色が赤に吸われ黒い線が丸ごと消えた。
+   ⚠️ もともとムラの無い画像では窓の平均＝全体の平均なので、何も起きない（掛けても害がない）。 */
+function trFlatField(G, nb){
+  const { W, H, g, rgb } = G, N = W*H;
+  /* 🔴 窓の【平均】で割ると、暗い図形に引っぱられて図形のまわりだけ紙が明るくなる
+        ＝紙が2色に割れて色数を食う（実際に大きな帯が出た）。
+     ⭐ 割るのは【紙の明るさ】。マスごとに明るい側の分位を取れば、図形は混ざらない。 */
+  const bx = Math.max(1, Math.min(nb, W)), by = Math.max(1, Math.min(nb, H));
+  const pap = new Float64Array(bx*by);
+  for(let j=0;j<by;j++) for(let i=0;i<bx;i++){
+    const x0 = Math.floor(i*W/bx), x1 = Math.max(x0+1, Math.floor((i+1)*W/bx));
+    const y0 = Math.floor(j*H/by), y1 = Math.max(y0+1, Math.floor((j+1)*H/by));
+    const v = [];
+    for(let y=y0;y<y1;y+=2) for(let x=x0;x<x1;x+=2) v.push(g[y*W+x]);
+    v.sort((a,b) => a-b);
+    pap[j*bx+i] = v[Math.min(v.length-1, Math.floor(v.length*0.85))] || 1;   // 明るい側＝紙
+  }
+  // マスの粗さが出ないようにならす
+  const sm = new Float64Array(bx*by);
+  for(let j=0;j<by;j++) for(let i=0;i<bx;i++){
+    let s = 0, n = 0;
+    for(let dj=-1;dj<=1;dj++) for(let di=-1;di<=1;di++){
+      const jj = j+dj, ii = i+di;
+      if(jj<0||ii<0||jj>=by||ii>=bx) continue;
+      s += pap[jj*bx+ii]; n++;
+    }
+    sm[j*bx+i] = s/n;
+  }
+  let tot = 0; for(let i=0;i<bx*by;i++) tot += sm[i];
+  const avg = tot / (bx*by) || 1;
+  const out = new Uint8ClampedArray(rgb.length);
+  for(let y=0;y<H;y++){
+    const fy = Math.min(by-1.001, y*by/H - 0.5), j0 = Math.max(0, Math.floor(fy)), tj = Math.max(0, fy-j0);
+    const j1 = Math.min(by-1, j0+1);
+    for(let x=0;x<W;x++){
+      const fx = Math.min(bx-1.001, x*bx/W - 0.5), i0 = Math.max(0, Math.floor(fx)), ti = Math.max(0, fx-i0);
+      const i1 = Math.min(bx-1, i0+1);
+      const v = sm[j0*bx+i0]*(1-ti)*(1-tj) + sm[j0*bx+i1]*ti*(1-tj)
+              + sm[j1*bx+i0]*(1-ti)*tj    + sm[j1*bx+i1]*ti*tj;
+      const p = y*W+x, k = avg / Math.max(1, v);
+      out[p*4] = rgb[p*4]*k; out[p*4+1] = rgb[p*4+1]*k;
+      out[p*4+2] = rgb[p*4+2]*k; out[p*4+3] = rgb[p*4+3];
+    }
+  }
+  return out;
+}
+/* ⭐ 3×3 の中央値。図形の縁のアンチエイリアス（地と色の中間色）を落とす。
+   🔴 これが無いと、その中間色が1つの色として立ってしまい、色数を食い潰す。
+      実際に色数5で試して、黄色が赤に吸われ黒い線が丸ごと消えた。 */
+function trMedian3(rgb, W, H){
+  const out = new Uint8ClampedArray(rgb);
+  const v = new Array(9);
+  for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
+    const p = (y*W+x)*4;
+    for(let ch=0;ch<3;ch++){
+      let n = 0;
+      for(let j=-1;j<=1;j++) for(let i=-1;i<=1;i++) v[n++] = rgb[((y+j)*W + x+i)*4 + ch];
+      for(let s=1;s<9;s++){ const t = v[s]; let q = s-1;
+        while(q >= 0 && v[q] > t){ v[q+1] = v[q]; q--; } v[q+1] = t; }
+      out[p+ch] = v[4];
+    }
+  }
+  return out;
+}
+/* 似た色をまとめる（k-means）。⚠️ 乱数を使わない＝同じ写真なら毎回同じ結果になる */
+function trQuantize(G, k, flat){
+  const { W, H, a } = G, N = W*H;
+  const rgb = (flat === false || !G.g) ? G.rgb : trMedian3(trFlatField(G, 12), W, H);
+  const step = Math.max(1, Math.round(Math.sqrt(N / 24000)));
+  const smp = [];
+  for(let y=0;y<H;y+=step) for(let x=0;x<W;x+=step){
+    const p = y*W+x; if(a[p] < 8) continue;
+    smp.push([rgb[p*4], rgb[p*4+1], rgb[p*4+2]]);
+  }
+  if(!smp.length) return null;
+  /* ⭐ 種は【粗い色の升目】に集めてから、広い色 → そこから一番遠い色 … の順に置く。
+     🔴 明るさの分位で置くと、面積の広い紙にばかり種が寄って、小さな色（黄・黒）が拾えない。
+     🔴 生の画素から「一番遠い色」を選ぶと、紙のざらつきの外れ値に種を取られる。
+        どちらも実際に試して、黄色が赤に吸われ黒い線が消えた。
+     ⭐ 升目にまとめて【数の少ない升は種にしない】でどちらも避けられる。 */
+  const BN = 16, hist = new Map();
+  for(const s of smp){
+    const b = ((s[0]*BN/256)|0)*BN*BN + ((s[1]*BN/256)|0)*BN + ((s[2]*BN/256)|0);
+    const e = hist.get(b);
+    if(e){ e[0]+=s[0]; e[1]+=s[1]; e[2]+=s[2]; e[3]++; } else hist.set(b, [s[0], s[1], s[2], 1]);
+  }
+  const toCell = e => [e[0]/e[3], e[1]/e[3], e[2]/e[3], e[3]];
+  const minN = Math.max(2, smp.length * 0.002);
+  let cells = Array.from(hist.values()).filter(e => e[3] >= minN).map(toCell);
+  if(cells.length < k) cells = Array.from(hist.values()).map(toCell);
+  cells.sort((a, b) => b[3] - a[3]);
+  const C = [cells[0].slice(0, 3)];
+  const far = new Float64Array(cells.length).fill(Infinity);
+  while(C.length < k && C.length < cells.length){
+    const c = C[C.length-1];
+    let bi = -1, bd = -1;
+    for(let s=0;s<cells.length;s++){
+      const p = cells[s];
+      const d = (p[0]-c[0])**2 + (p[1]-c[1])**2 + (p[2]-c[2])**2;
+      if(d < far[s]) far[s] = d;
+      if(far[s] > bd){ bd = far[s]; bi = s; }
+    }
+    if(bi < 0) break;
+    C.push(cells[bi].slice(0, 3));
+  }
+  while(C.length < k) C.push(cells[C.length % cells.length].slice(0, 3));
+  for(let it=0; it<10; it++){
+    const sum = C.map(() => [0,0,0,0]);
+    for(const s of smp){
+      let bi = 0, bd = Infinity;
+      for(let i=0;i<k;i++){
+        const d = (s[0]-C[i][0])**2 + (s[1]-C[i][1])**2 + (s[2]-C[i][2])**2;
+        if(d < bd){ bd = d; bi = i; }
+      }
+      const t = sum[bi]; t[0]+=s[0]; t[1]+=s[1]; t[2]+=s[2]; t[3]++;
+    }
+    for(let i=0;i<k;i++) if(sum[i][3]) for(let j=0;j<3;j++) C[i][j] = sum[i][j] / sum[i][3];
+  }
+  const lab = new Uint8Array(N);
+  for(let p=0;p<N;p++){
+    if(a[p] < 8){ lab[p] = 255; continue; }
+    let bi = 0, bd = Infinity;
+    for(let i=0;i<k;i++){
+      const d = (rgb[p*4]-C[i][0])**2 + (rgb[p*4+1]-C[i][1])**2 + (rgb[p*4+2]-C[i][2])**2;
+      if(d < bd){ bd = d; bi = i; }
+    }
+    lab[p] = bi;
+  }
+  trMergeThin(lab, W, H, k);
+  const area = new Array(k).fill(0);
+  for(let p=0;p<N;p++) if(lab[p] !== 255) area[lab[p]]++;
+  return { lab, C, area, k };
+}
+/* ⭐ 縁にしか出ない色を隣の色に混ぜる。
+   図形の縁は地と色の中間色になり、それが1つの色として立って色数を食う。
+   ⚠️ 細い線は消してはいけない。⭐ 見分けは【面積に対する縁の割合】＝
+      帯（縁だけの色）は 2/3 くらいが縁だが、細い線でも 1/8 程度にしかならない。 */
+function trMergeThin(lab, W, H, k){
+  for(let pass=0; pass<3; pass++){
+    const area = new Array(k).fill(0), edge = new Array(k).fill(0);
+    const nb = Array.from({ length:k }, () => new Array(k).fill(0));
+    for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+      const l = lab[y*W+x]; if(l === 255) continue;
+      area[l]++;
+      let e = false;
+      const chk = (xx, yy) => {
+        if(xx<0||yy<0||xx>=W||yy>=H) return;
+        const m = lab[yy*W+xx];
+        if(m !== 255 && m !== l){ e = true; nb[l][m]++; }
+      };
+      chk(x-1,y); chk(x+1,y); chk(x,y-1); chk(x,y+1);
+      if(e) edge[l]++;
+    }
+    let changed = false;
+    for(let i=0;i<k;i++){
+      if(!area[i] || edge[i] / area[i] < 0.6) continue;
+      let best = -1, bn = -1;
+      for(let j=0;j<k;j++) if(j !== i && nb[i][j] > bn){ bn = nb[i][j]; best = j; }
+      if(best < 0) continue;
+      for(let p=0;p<W*H;p++) if(lab[p] === i) lab[p] = best;
+      changed = true;
+    }
+    if(!changed) break;
+  }
 }
 document.getElementById('gtype').addEventListener('change', e => {
   S.gtype = e.target.value;
@@ -4414,46 +4807,97 @@ function otsu(data){
   // t は「そこまでを黒に入れる」位置。判定は lum < th なので 1つ上を返す
   return Math.max(1, Math.min(254, th + 1));
 }
-/* 元画像を「字＝不透明／地＝透明」の白黒に焼き直す */
-function binarize(img, th, inv, maxW){
-  const k = Math.min(1, maxW / Math.max(img.naturalWidth||img.width, img.naturalHeight||img.height));
-  const W = Math.max(1, Math.round((img.naturalWidth||img.width) * k));
-  const H = Math.max(1, Math.round((img.naturalHeight||img.height) * k));
-  const c = document.createElement('canvas'); c.width = W; c.height = H;
-  const x = c.getContext('2d'); x.drawImage(img, 0, 0, W, H);
-  const d = x.getImageData(0,0,W,H), a = d.data;
-  for(let i=0;i<a.length;i+=4){
-    const lum = a[i]*0.299 + a[i+1]*0.587 + a[i+2]*0.114;
-    let ink = lum < th;                                           // 既定は「暗いところが字」
-    if(inv) ink = !ink;
-    if(a[i+3] < 8) ink = false;
-    a[i]=a[i+1]=a[i+2]=0; a[i+3] = ink ? 255 : 0;
-  }
-  x.putImageData(d,0,0);
-  return { cvs:c, img:d, W, H };
+/* いま画面で選ばれている設定を1か所で読む（プレビューと本番が同じ道を通るように） */
+function trOpts(){
+  const seg = id => { const b = document.querySelector('#' + id + ' button.on'); return b ? b.dataset.v : null; };
+  const num = id => +document.getElementById(id).value;
+  return {
+    mode:   seg('trMode') || 'bw',
+    local:  seg('trLocal') !== '0',
+    dropBg: seg('trDropBg') !== '0',
+    thr:    num('trThr'),  radius: num('trRad'), offset: num('trOff'),
+    cols:   num('trCols'), sm:     num('trSm'),  cor:    num('trCor'),
+    min:    num('trMin'),  inv:    trInv,        clean:  true
+  };
 }
-/* 白黒プレビュー＝下敷きの見え方を焼き直したものに差し替える（元画像は持っておく）*/
+/* 元画像を「字＝不透明／地＝透明」の白黒に焼き直す */
+function binarize(img, o, maxW){
+  const G = trGray(img, maxW);
+  const m = trInkMask(G, o);
+  const c = document.createElement('canvas'); c.width = G.W; c.height = G.H;
+  const x = c.getContext('2d'), d = x.createImageData(G.W, G.H), a = d.data;
+  for(let p=0;p<G.W*G.H;p++){ a[p*4]=a[p*4+1]=a[p*4+2]=0; a[p*4+3] = m[p] ? 255 : 0; }
+  x.putImageData(d, 0, 0);
+  return { cvs:c, mask:m, G, W:G.W, H:G.H };
+}
+/* 色数モードのプレビュー＝似た色にまとめた絵 */
+function trPosterCanvas(img, o, maxW){
+  const G = trGray(img, maxW), q = trQuantize(G, o.cols);
+  const c = document.createElement('canvas'); c.width = G.W; c.height = G.H;
+  const x = c.getContext('2d'), d = x.createImageData(G.W, G.H), a = d.data;
+  for(let p=0;p<G.W*G.H;p++){
+    const l = q ? q.lab[p] : 255;
+    if(l === 255){ a[p*4+3] = 0; continue; }
+    const C = q.C[l];
+    a[p*4] = C[0]|0; a[p*4+1] = C[1]|0; a[p*4+2] = C[2]|0; a[p*4+3] = 255;
+  }
+  x.putImageData(d, 0, 0);
+  return c;
+}
+/* プレビュー＝下敷きの見え方を焼き直したものに差し替える（元画像は持っておく）*/
 function refreshRefView(){
   if(!refItem || !refSrcImg) return;
   // 画像を差し替えると Raster の大きさが素の解像度に戻るので、位置と大きさを持ち越す
   const keep = refItem.bounds.clone();
   if(trPrev){
-    const b = binarize(refSrcImg, +document.getElementById('trThr').value, trInv, 1400);
-    refItem.image = b.cvs;
+    const o = trOpts();
+    refItem.image = (o.mode === 'color')
+      ? trPosterCanvas(refSrcImg, o, 900)
+      : binarize(refSrcImg, o, 1400).cvs;
   }else{
     refItem.image = refSrcImg;
   }
   try{ refItem.bounds = keep; }catch(e){}
 }
-bindRange('trThr', () => { if(trPrev) refreshRefView(); });
+/* ⭐ 効かないつまみは出さない（木下の原則＝触れるのに効かない状態を作らない）*/
+function trSyncUI(){
+  const o = trOpts(), bw = o.mode === 'bw';
+  const show = (id, on) => { const e = document.getElementById(id); if(e) e.style.display = on ? '' : 'none'; };
+  show('trThrRow',  bw && !o.local);
+  show('trRadRow',  bw &&  o.local);
+  show('trOffRow',  bw &&  o.local);
+  show('trColsRow', !bw);
+  show('trLocal',   bw);
+  show('trLocalNote', bw);
+  show('bTrInv',    bw);
+  show('trDropBg', !bw);
+  const n = document.getElementById('trModeNote');
+  if(n) n.textContent = bw ? '白黒＝線画・字を1色のパスにする'
+                           : '色数＝色ごとにパスにする（イラスト向け）';
+}
+['trThr','trRad','trOff','trCols'].forEach(id =>
+  bindRange(id, () => { if(trPrev) refreshRefView(); }));
 bindRange('trSm',  () => {});
+bindRange('trCor', () => {});
 bindRange('trMin', () => {});
+['trMode','trLocal','trDropBg'].forEach(id =>
+  document.querySelectorAll('#' + id + ' button').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('#' + id + ' button').forEach(x => x.classList.toggle('on', x === b));
+    trSyncUI();
+    if(trPrev) refreshRefView();
+  })));
+trSyncUI();
+/* ⭐ 写真はこの節から直接選べる（別の節へ行かないと始められない、をやめる）*/
+document.getElementById('bTrLoad').onclick = () => document.getElementById('fileTr').click();
+document.getElementById('fileTr').addEventListener('change', e => {
+  const f = e.target.files[0]; if(f) loadRef(f); e.target.value = '';
+});
 document.getElementById('bTrPrev').onclick = () => {
-  if(!refItem){ stat('先に下敷きを敷いてください'); return; }
+  if(!refItem){ stat('先に写真を選んでください'); return; }
   trPrev = !trPrev;
   document.getElementById('bTrPrev').textContent = trPrev ? '写真で見る' : '白黒で見る';
   refreshRefView();
-  stat(trPrev ? '白黒＝この黒いところが採れる' : '写真に戻した');
+  stat(trPrev ? 'この見えているところがパスになる' : '写真に戻した');
 };
 document.getElementById('bTrInv').onclick = () => {
   trInv = !trInv;
@@ -4462,30 +4906,72 @@ document.getElementById('bTrInv').onclick = () => {
   stat(trInv ? '明るいところを字として拾う' : '暗いところを字として拾う');
 };
 document.getElementById('bTrace').onclick = () => {
-  if(!refItem || !refSrcImg){ stat('先に下敷きを敷いてください'); return; }
-  const th  = +document.getElementById('trThr').value;
-  const sm  = +document.getElementById('trSm').value;
-  const min = +document.getElementById('trMin').value;
-  const b = binarize(refSrcImg, th, trInv, 1400);
-  const cont = traceBitmap(b.img, b.W, b.H, 8 + min * 2);
-  if(!cont.length){ stat('拾えなかった — しきい値か反転を変えてみる'); return; }
-  snapshot();
+  if(!refItem || !refSrcImg){ stat('先に写真を選んでください'); return; }
+  const o = trOpts(), t0 = performance.now();
+  const G = trGray(refSrcImg, 1400);
   // 下敷きの画面上の位置・大きさにそのまま重ねる（なぞった結果と同じ場所に出る）
-  const R = refItem.bounds, sx = R.width / b.W, sy = R.height / b.H;
+  const R = refItem.bounds, sx = R.width / G.W, sy = R.height / G.H;
+  const toXY = ([x,y]) => new Point(R.left + x*sx, R.top + y*sy);
+  const minArea = 4 + o.min * o.min * 0.6;          // ⚠️ 長さでなく【面積】で捨てる
+  const tol = o.sm / 10;
+  const cornerDeg = 180 - o.cor * 1.7;              // つまみを上げるほど角を残す
+  const build = mask => {
+    const cont = trContours(mask, G.W, G.H).filter(c => c.area >= minArea);
+    const children = [];
+    for(const c of cont){
+      const p = trFitPath(c.pts, tol, cornerDeg, toXY);
+      if(!p) continue;
+      if(p.segments.length > 2) children.push(p); else p.remove();
+    }
+    if(!children.length) return null;
+    /* ⚠️ まだ画面に入れない。Undo は【変える前】を積むので、
+       拾えたか分かってから snapshot → それから入れる。 */
+    const cp = new paper.CompoundPath({ children, insert:false });
+    try{ cp.reorient(false, true); }catch(e){}      // 内側の輪郭を穴にする
+    return cp;
+  };
+  const made = [];
+  if(o.mode === 'bw'){
+    const cp = build(trInkMask(G, o));
+    if(cp){ cp.fillColor = paintOf(cp) || S.fill || '#0a0a0a'; made.push(cp); }
+  }else{
+    const q = trQuantize(G, o.cols);
+    if(q){
+      // 広い色から先に置く＝細かい色が上に来る（紙が全部を覆わない）
+      const order = q.C.map((_, i) => i).sort((a, b) => q.area[b] - q.area[a]);
+      /* ⚠️ 紙は光のムラで【2色以上に割れる】ことがある。いちばん広い1色だけ捨てると、
+         図形のまわりに紙色の帯が残る（実際に残った）。⭐ 紙に近い色はまとめて捨てる。 */
+      const drop = new Set();
+      if(o.dropBg && order.length){
+        const P = q.C[order[0]];
+        drop.add(order[0]);
+        for(const i of order){
+          const d = Math.hypot(q.C[i][0]-P[0], q.C[i][1]-P[1], q.C[i][2]-P[2]);
+          if(d < 70) drop.add(i);
+        }
+      }
+      for(const i of order){
+        if(drop.has(i)) continue;
+        const m = new Uint8Array(G.W * G.H);
+        for(let p=0;p<m.length;p++) m[p] = (q.lab[p] === i) ? 1 : 0;
+        const cp = build(trDespeckle(m, G.W, G.H));
+        if(cp){ cp.fillColor = new paper.Color(q.C[i][0]/255, q.C[i][1]/255, q.C[i][2]/255); made.push(cp); }
+      }
+    }
+  }
+  if(!made.length){
+    stat(o.mode === 'bw' ? '拾えなかった — 「拾う強さ」を下げるか、明暗を反転してみる'
+                         : '拾えなかった — 「細部を捨てる」を下げてみる');
+    return;
+  }
+  snapshot();
   artLayer.activate();
-  const children = cont.map(pts => {
-    const p = new Path(pts.map(([x,y]) => new Point(R.left + x*sx, R.top + y*sy)));
-    p.closed = true;
-    if(sm > 0) p.simplify(sm / 10);
-    return p;
-  }).filter(p => p.segments.length > 2);
-  if(!children.length){ stat('拾えなかった — 「細部を捨てる」を下げてみる'); return; }
-  const grp = new paper.CompoundPath({ children });
-  try{ grp.reorient(false, true); }catch(e){}                     // 内側の輪郭を穴にする
-  grp.fillColor = paintOf(grp) || S.fill || '#0a0a0a';
+  made.forEach(g => artLayer.addChild(g));
   artLayer.children.forEach(c => c.selected = false);
+  const grp = made.length > 1 ? new paper.Group(made) : made[0];
   grp.selected = true; guides();
-  stat(`採取した — ${children.length}本の輪郭（なめらかさで整える）`);
+  const n = made.reduce((s, g) => s + (g.children ? g.children.length : 1), 0);
+  stat(`パスにした — ${n}本の輪郭・${Math.round(performance.now()-t0)}ms（なめらかさとコーナーで整える）`);
 };
 document.getElementById('bRefLock').onclick = () => {
   refLocked = !refLocked;
