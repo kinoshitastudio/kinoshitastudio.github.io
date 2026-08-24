@@ -323,6 +323,41 @@ try{
     KASA.render();
   }
 
+  /* 🔴🔴 2026-08-24 木下＝「モバイルだと**常に選択されている状態になるため**ボードの
+     ズームインズームアウトできない」＝**寄る道が wheel（マウス）しか無かった**。
+     ⭐ 見るのは【2本の指を広げたら寄りが変わり、つかんでいたものは動いていない】こと。 */
+  {
+    const cvT=document.getElementById('cv');
+    const tev=(t,id,x,y)=>cvT.dispatchEvent(new PointerEvent(t,{clientX:x,clientY:y,button:0,buttons:1,
+      bubbles:true,pointerId:id,pointerType:'touch',isPrimary:id===1}));
+    const rT=cvT.getBoundingClientRect();
+    const cx=rT.left+rT.width/2, cy=rT.top+rT.height/2;
+    const z0=KASA.VIEW.z, ox0=KASA.P.ox, oy0=KASA.P.oy, sz0=KASA.P[KASA.P.shape==='sheet'?'size':'tsize'];
+    /* 1本目は【何も無い所】＝いままでならここで絵をつかんでいた */
+    tev('pointerdown',21,cx,cy);
+    tev('pointerdown',22,cx+30,cy+30);
+    for(let k=1;k<=6;k++){ tev('pointermove',21,cx-10*k,cy-10*k); tev('pointermove',22,cx+30+10*k,cy+30+10*k); }
+    tev('pointerup',21,cx-60,cy-60); tev('pointerup',22,cx+90,cy+90);
+    ok('2本の指を広げると寄る（'+Math.round(z0*100)+'% → '+Math.round(KASA.VIEW.z*100)+'%）',
+       KASA.VIEW.z > z0*1.2);
+    ok('寄っても絵は動かない', Math.abs(KASA.P.ox-ox0)<1e-9 && Math.abs(KASA.P.oy-oy0)<1e-9);
+    ok('寄っても大きさは変わらない',
+       Math.abs(KASA.P[KASA.P.shape==='sheet'?'size':'tsize']-sz0)<1e-9);
+    const z1=KASA.VIEW.z;
+    tev('pointerdown',23,cx-70,cy-70);
+    tev('pointerdown',24,cx+70,cy+70);
+    for(let k=1;k<=6;k++){ tev('pointermove',23,cx-70+9*k,cy-70+9*k); tev('pointermove',24,cx+70-9*k,cy+70-9*k); }
+    tev('pointerup',23,cx,cy); tev('pointerup',24,cx,cy);
+    ok('近づけると引く（'+Math.round(z1*100)+'% → '+Math.round(KASA.VIEW.z*100)+'%）', KASA.VIEW.z < z1*0.9);
+    /* ⚠️ 1本の指は今までどおり＝寄るのを足して壊していないか */
+    const bx0=KASA.P.ox;
+    tev('pointerdown',25,cx,cy); tev('pointermove',25,cx+50,cy+20); tev('pointerup',25,cx+50,cy+20);
+    ok('1本の指では今までどおり絵がつかめる', Math.abs(KASA.P.ox-bx0)>1e-6);
+    KASA.P.ox=ox0; KASA.P.oy=oy0;
+    cvT.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));   /* 見え方を戻す */
+    KASA.render();
+  }
+
   // 大きく刷れるか
   const [ow,oh]=KASA.outSize();
   const t0=performance.now();
