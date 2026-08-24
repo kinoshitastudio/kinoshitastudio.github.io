@@ -91,6 +91,13 @@
     <div class="tools" id="tools"></div>
     <div class="note">⭐ <b>組み合わせられる</b>。選んだ道具の字が<b>ぜんぶ1つずつ</b>題の中に入る
       （連作や、2つの道具を通したものに使う）。⚠️ 1つは残る（ぜんぶ外せない）。</div>
+    <div class="seg" id="kanji" style="margin-top:9px">
+      <button data-v="1" class="on">漢字を入れる</button>
+      <button data-v="0">入れない</button>
+    </div>
+    <div class="note">⚠️<b>入れない</b>＝題は<b>記号だけ</b>になる。読む手がかりが完全に消える。<br>
+      ⭐ そのときも<b>道具は選んだままにしておく</b>＝<b>下のタグに残る</b>ので辿れるし、
+      <b>選んだ道具によって出てくる形も変わる</b>（同じ道具・同じ種なら、やはり必ず同じ題）。</div>
   </div>
 
   <div class="grp">
@@ -177,19 +184,22 @@ function rng(a){ return function(){ a|=0; a=a+0x6D2B79F5|0;
   return ((t^t>>>14)>>>0)/4294967296; }; }
 
 /* ⭐ 道具は【いくつでも】。⚠️ 1つは必ず残す（0本だと何で作ったか辿れなくなる） */
-const S = { tools:['暈'], wild:'mid', len:11, seed:20260824 };
+const S = { tools:['暈'], wild:'mid', len:11, seed:20260824, kanji:1 };
 
 const el = id => document.getElementById(id);
 const say = t => { el('say').textContent = t; };
 
 /* ⭐ 題を組む。式はここ1本だけ（写すのも画面も同じものを見る） */
 function make(){
+  /* ⭐ 漢字を入れなくても【選んだ道具で形が変わる】＝種に混ぜてある */
   const r = rng((S.seed ^ hash(S.tools.join('')) ^ hash(S.wild) ^ (S.len*2654435761)) >>> 0);
   const pool = SET[S.wild] || SET.mid;
   /* ⭐ 長さは【出来上がりの字数】。⚠️ 隙間も道具の字も数のうち＝
      ここで引いておかないと「11字」と書いてあるのに16字出る＝つまみが嘘になる。 */
   const want = Math.max(1, Math.round(S.len));
-  const n = Math.max(1, want - S.tools.length);
+  /* ⭐ 漢字を入れないときは、その分を全部【記号】で埋める（長さの意味は変わらない） */
+  const kn = S.kanji ? S.tools.length : 0;
+  const n = Math.max(1, want - kn);
   const out = [];
   let marks = 0;
   for(let i=0;i<n;i++){
@@ -210,12 +220,14 @@ function make(){
   while(out.length && MARK.indexOf(out[out.length-1]) >= 0) out.pop();
   /* ⭐⭐ 選んだ道具の字を【ぜんぶ1つずつ】入れる。
      ⚠️ 同じ所に固まると読めてしまうので、ばらして置く（後ろから挿す＝先の位置がずれない）。 */
-  const spots = S.tools.map((_,i)=>{
-    const t0 = (i+1)/(S.tools.length+1);              /* 等間隔に置いて… */
-    const j = t0 + (r()-0.5)*0.18;                    /* …少しだけ散らす */
-    return Math.max(1, Math.min(out.length, Math.round(out.length*j)));
-  }).sort((a,b)=>b-a);
-  S.tools.forEach((k,i)=> out.splice(spots[i], 0, k));
+  if(S.kanji){
+    const spots = S.tools.map((_,i)=>{
+      const t0 = (i+1)/(S.tools.length+1);            /* 等間隔に置いて… */
+      const j = t0 + (r()-0.5)*0.18;                  /* …少しだけ散らす */
+      return Math.max(1, Math.min(out.length, Math.round(out.length*j)));
+    }).sort((a,b)=>b-a);
+    S.tools.forEach((k,i)=> out.splice(spots[i], 0, k));
+  }
   /* ⚠️ trim / 隙間つぶしで字数が減るので、最後に数えて足りなければ点字で埋める（数を嘘にしない） */
   let s = out.join('').replace(/\s{2,}/g,' ').trim();
   while([...s].length < want) s += DOTS[Math.floor(r()*DOTS.length)];
@@ -266,6 +278,15 @@ function seg(id, key){
   });
 }
 seg('wild','wild');
+/* ⚠️ 漢字の入り／切りは【数字】で持つ（'0' は文字だと真になって「入れない」が効かない） */
+{
+  const host = el('kanji');
+  host.querySelectorAll('button').forEach(b=>{
+    b.onclick = ()=>{ host.querySelectorAll('button').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on'); S.kanji = +b.dataset.v; draw(); save();
+      say(S.kanji ? '道具の漢字を入れる' : '記号だけ ── 道具はタグに残る'); };
+  });
+}
 {
   const r = el('len');
   r.addEventListener('input', ()=>{ S.len=+r.value; draw(); save(); });
@@ -306,6 +327,9 @@ try{ const o=JSON.parse(localStorage.getItem(KEY)||'null');
     if(Array.isArray(o.tools) && o.tools.length) Object.assign(S,o);
     document.querySelectorAll('#wild button').forEach(b=>
       b.classList.toggle('on', b.dataset.v===S.wild));
+    S.kanji = (S.kanji===0||S.kanji==='0') ? 0 : 1;
+    document.querySelectorAll('#kanji button').forEach(b=>
+      b.classList.toggle('on', +b.dataset.v===S.kanji));
     el('len').value = S.len;
   }
 }catch(_){}
