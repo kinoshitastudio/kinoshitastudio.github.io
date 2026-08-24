@@ -591,6 +591,71 @@
         ok('下敷きの層がある', false, 'refLayer が無い＝枡の層に敷いている');
       }
 
+      // ══ 拾い具合を【数】で言う（2026-08-24 木下＝ざらざらの点だけが出た）
+      {
+        const W = 60, H = 60;
+        const band = new Uint8Array(W*H);        // 太さ6の帯＝きれいな線
+        for(let y=20;y<26;y++) for(let x=5;x<55;x++) band[y*W+x] = 1;
+        const salt = new Uint8Array(W*H);        // 1画素ずつの点＝ざらざら
+        for(let p=0;p<W*H;p++) salt[p] = ((p*7 + ((p/W)|0)*3) % 2) ? 1 : 0;
+        const sb = trMaskStats(band, W, H), ss = trMaskStats(salt, W, H);
+        ok('太い帯は「細切れ」と見なさない', sb.rough < 1.0, 'rough=' + num(sb.rough));
+        ok('1画素の点は「細切れ」と分かる', ss.rough > 1.5, 'rough=' + num(ss.rough));
+
+        const O = { local:true, offset:5 };
+        ok('半分以上拾ったら【反転】を勧める',
+           /反転/.test(trAdvice({ ratio:0.72, rough:0.8 }, O)), trAdvice({ ratio:0.72, rough:0.8 }, O));
+        ok('ざらざらなら【拾う強さ】を名指しする',
+           /拾う強さ/.test(trAdvice({ ratio:0.45, rough:2.2 }, O)), trAdvice({ ratio:0.45, rough:2.2 }, O));
+        ok('ほとんど拾えないときも【拾う強さ】を名指しする',
+           /拾う強さ/.test(trAdvice({ ratio:0.001, rough:1.0 }, O)), trAdvice({ ratio:0.001, rough:1.0 }, O));
+        ok('ふつうに拾えているときは割合だけ言う',
+           /%/.test(trAdvice({ ratio:0.06, rough:0.7 }, O)) && !/⚠|反転/.test(trAdvice({ ratio:0.06, rough:0.7 }, O)),
+           trAdvice({ ratio:0.06, rough:0.7 }, O));
+      }
+
+      // ══ 下敷きの置き換え・見え方・外し方（木下＝「置いた写真は消せないし、使いづらい」）
+      ok('トレースの節に【写真を外す】がある', !!document.getElementById('bTrDel'));
+      {
+        // ⚠️ FileReader は待てないので、Raster に直接 canvas を渡す（trGray は canvas も読める）
+        const c = document.createElement('canvas'); c.width = 120; c.height = 90;
+        const x = c.getContext('2d');
+        // ⚠️ 真っ白（255）はしきい値の上限 254 でも「字」にならない＝地を拾う試験にならない
+        x.fillStyle = '#eee'; x.fillRect(0, 0, 120, 90);
+        x.fillStyle = '#111'; x.fillRect(20, 20, 80, 20);
+        refLayer.activate();
+        refLayer.removeChildren();
+        refItem = new paper.Raster(c);
+        refItem.position = paper.view.center;
+        refSrcImg = c;
+        refItem.opacity = 0.35;
+        artLayer.activate();
+
+        trPrev = true; refreshRefView();
+        ok('白黒で見ている間は濃さ100%（薄いままだと決められない）', refItem.opacity === 1, num(refItem.opacity));
+        ok('白黒で見ると拾い具合が測れている', !!trStats && trStats.ratio > 0, trStats && num(trStats.ratio));
+        trPrev = false; refreshRefView();
+        ok('写真に戻すと元の濃さに戻る',
+           Math.abs(refItem.opacity - (+document.getElementById('refOp').value)/100) < 0.001, num(refItem.opacity));
+
+        // 🔴 地を拾った状態で押すと、成功と言わずに次の一手を言う
+        const kids = artLayer.children.length;
+        document.querySelector('#trLocal button[data-v="0"]').click();   // 1枚で1つ
+        const thr = document.getElementById('trThr');
+        const bak = thr.value; thr.value = 250; thr.dispatchEvent(new Event('input'));
+        document.getElementById('bTrace').click();
+        const said = document.getElementById('stat').textContent;
+        ok('紙ぜんぶを拾ったら成功と言わない', /⚠/.test(said) && /反転|拾う強さ/.test(said), said.slice(0, 40));
+        while(artLayer.children.length > kids) artLayer.lastChild.remove();
+        thr.value = bak; thr.dispatchEvent(new Event('input'));
+        document.querySelector('#trLocal button[data-v="1"]').click();
+
+        removeRef();
+        ok('【写真を外す】で下敷きが消える', refItem === null && refLayer.children.length === 0,
+           refLayer.children.length + '枚');
+        ok('外すと元画像も忘れる（次の写真が前の白黒にならない）', refSrcImg === null && trPrev === false);
+      }
+
     } catch(e){
       R.push({ name:'⛔ テスト中に例外', pass:false, detail: e && (e.message + ' @ ' + (e.stack||'').split('\n')[1]) });
     }
