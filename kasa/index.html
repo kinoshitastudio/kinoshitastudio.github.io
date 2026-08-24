@@ -1669,7 +1669,7 @@ function setDragQ(v){
   P.dq=(DQ[v]?v:'mid');
 }
 function tuneDrag(ms){
-  if(!DRAG) return;
+  if(!DRAG && !P.anim) return;      /* ⭐ 再生中も測って粗さを決め直す（カクつきを自分で直す） */
   const now=performance.now();
   if(now-dcapAt<260) return;
   if(ms<=MS_AIM*1.5 && ms>=MS_AIM*0.70) return;
@@ -1727,7 +1727,12 @@ function fit(){
   /* 版面が盤に収まる大きさ（倍率1のとき） */
   fitS=Math.min(w/(2*hw), h/(2*hh))*0.86;
   const dpr=Math.min(2,window.devicePixelRatio||1);
-  const cap=DRAG?DCAP:((P.anim||!HI)?1150:1800);
+  /* ⭐⭐ 2026-08-24 ── 再生中も【触っている間】の段を使う。
+     🔴 木下＝「動かすが動いていないような気もする」。実測すると**動いてはいた**が、
+        字を13個置くと **秒13コマ**まで落ちてカクつく＝止まって見える。
+     ⭐ 再生も「見て決めている最中」なので、粗さの持ち主は同じつまみでよい
+        （速さ／ふつう／細かさ）。⚠️ 新しいつまみを増やさない。 */
+  const cap=(DRAG||P.anim)?DCAP:(HI?1800:1150);
   let W=Math.round(w*dpr), H=Math.round(h*dpr);
   const lg=Math.max(W,H);
   if(lg>cap){ W=Math.round(W*cap/lg); H=Math.round(H*cap/lg); }
@@ -1784,11 +1789,21 @@ function artCorners(cam){
        「ボード上で調整できるとなおよい」
    ⭐ 置き場所は glyphPlan 1本から出す＝盤の四角と、実際に切る字が【必ず同じ所】にある。
    ⭐ 既定は切。点けるまで盤の見え方も操作も1つも変わらない。 */
-let GMEAS=null;
+let GMEAS=null, gbKey='', gbVal=[];
+/* 🔴🔴 2026-08-24 木下＝「常にオブジェクトが選択されている状態になっているためか重い」
+      「動かすが動いていないような気もする」。
+   ⭐ 実測＝**1字ずつを点けると 秒46コマ → 13コマ**（字13個）。2つは同じ話だった。
+      正体＝**毎コマ字を測り直していた**（`measureText` は字の数だけ走る）。
+   ⭐⭐ 割り付けは【変わったときだけ】作り直す。鍵に入れるのは
+      「置き場所を決めているもの」ぜんぶ＝カメラ・字・書体・太さ・大きさ・字間行間・置き所・1字ずつの直し。
+   ⚠️ 数え漏れると【前の場所に四角が出る】ので、GLYPH は丸ごと文字にして入れる。 */
 function glyphBoxes(cam){
   if(!shapeUsesText()) return [];
   if(!GMEAS) GMEAS=document.createElement('canvas').getContext('2d');
-  return glyphPlan(GMEAS, cam.S, cam.cx, cam.cy);
+  const k=[cam.S.toFixed(3),cam.cx.toFixed(1),cam.cy.toFixed(1),P.text,P.font,P.tw,
+           P.tsize,P.tls,P.tlh,P.ox,P.oy,JSON.stringify(GLYPH)].join('|');
+  if(k!==gbKey){ gbKey=k; gbVal=glyphPlan(GMEAS, cam.S, cam.cx, cam.cy); }
+  return gbVal;
 }
 /* 選んだ字の取っ手＝右下＝大きさ／上＝角度（世界でなく画面の画素で持つ） */
 function glyphHandles(q){
@@ -1796,22 +1811,23 @@ function glyphHandles(q){
   const T=(dx,dy)=>[q.x+dx*c-dy*s, q.y+dx*s+dy*c];
   return { size:T(hw,hh), rot:T(0,-hh-Math.max(14,q.bh*0.42)), corners:[T(-hw,-hh),T(hw,-hh),T(hw,hh),T(-hw,hh)] };
 }
+/* ⭐⭐ 2026-08-24 木下＝「オブジェクトを選択した時だけ四角の線がでるように、
+      それ以外の部分では選択は外れるように」
+   🔴 前は【点けている間ぜんぶの字に四角】を出していた＝「常に選択されている」ように見えた。
+   ⭐ 出すのは【選んでいる1つだけ】。何も選んでいなければ1本も描かない。 */
 function drawGlyphFrames(octx,cam){
-  if(!P.gone || !shapeUsesText()) return;
-  const list=glyphBoxes(cam); if(!list.length) return;
+  if(!P.gone || !shapeUsesText() || GSEL===null) return;
+  const q=glyphBoxes(cam).find(x=>x.key===GSEL); if(!q) return;
   const lw=Math.max(1,cw/1400), r=artHandleR()*0.78;
   octx.save(); octx.setTransform(1,0,0,1,0,0); octx.globalCompositeOperation='source-over';
-  for(const q of list){
-    const sel=(GSEL===q.key), h=glyphHandles(q);
+  {
+    const h=glyphHandles(q);
     octx.beginPath();
     h.corners.forEach(([x,y],i)=> i?octx.lineTo(x,y):octx.moveTo(x,y));
     octx.closePath();
-    octx.setLineDash(sel?[]:[5,5]);
-    octx.strokeStyle='rgba(0,0,0,.5)'; octx.lineWidth=lw*(sel?3:2); octx.stroke();
-    octx.strokeStyle=sel?'rgba(255,255,255,.98)':'rgba(255,255,255,.6)';
-    octx.lineWidth=lw*(sel?1.4:1); octx.stroke();
-    if(!sel) continue;
     octx.setLineDash([]);
+    octx.strokeStyle='rgba(0,0,0,.5)'; octx.lineWidth=lw*3; octx.stroke();
+    octx.strokeStyle='rgba(255,255,255,.98)'; octx.lineWidth=lw*1.4; octx.stroke();
     /* 角度の玉までの棒 */
     octx.beginPath(); octx.moveTo((h.corners[0][0]+h.corners[1][0])/2,(h.corners[0][1]+h.corners[1][1])/2);
     octx.lineTo(h.rot[0],h.rot[1]);
