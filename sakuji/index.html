@@ -291,6 +291,12 @@
   .lay-opacity .v{ width:24px; text-align:right; font-family:ui-monospace,Menlo,monospace }
   .lay-item.locked{ opacity:.55 }
   .lay-item.hidden{ opacity:.35; text-decoration:line-through }
+  /* ⭐ 行をつまんで入れ替える（2026-08-24 木下＝「レイヤーパネルは入れ替えができて」）。
+     ⚠️ 掴んでいる行は薄く残す＝どこから動かしているかが分かる。 */
+  .lay-item.dragging{ opacity:.35 }
+  #layInsert{ position:absolute; left:14px; right:8px; height:0; pointer-events:none;
+    border-top:2px solid #3a9bff; box-shadow:0 0 4px rgba(58,155,255,.7); display:none; z-index:3 }
+  #layList{ position:relative }
   .lay-foot{ display:flex; gap:4px; padding:8px; border-top:1px solid var(--line) }
   .lay-foot button{ flex:1; background:var(--btn); border:1px solid var(--line); color:var(--dim);
     border-radius:5px; cursor:pointer; font-size:11px; padding:5px 0; font-family:inherit }
@@ -5376,13 +5382,15 @@ function renderLayers(){
     });
     layList.appendChild(head);
     if(!abOpen[g.key]) return;
-    g.items.forEach(it => layRow(it, layList));
+    g.items.forEach(it => layRow(it, layList, g.key));
   });
   syncLayerOpacity();
 }
-function layRow(it, host){
+function layRow(it, host, gkey){
   {
     const row = document.createElement('div');
+    row.__item = it;
+    if(gkey) row.dataset.g = gkey;              /* ⭐ 入れ替えは【同じ枠の中】だけ */
     row.className = 'lay-item' + (it.selected ? ' on' : '')
       + (it.locked ? ' locked' : '') + (it.visible ? '' : ' hidden');
     row.innerHTML =
@@ -5410,6 +5418,77 @@ function layRow(it, host){
     });
     host.appendChild(row);
   }
+}
+/* ══⭐⭐ レイヤーの行をつまんで入れ替える ── 2026-08-24 ══════════════════
+   木下＝「レイヤーパネルは入れ替えができてレイヤー上下の配置も可能に」
+   ⚠️ 上下ボタン（↑↓）は前からある。足りなかったのは【つまんで入れ替える】方。
+   🔴 行の並びは枠ごとの入れ子なので、**別の枠の行の間に落とすと嘘になる**
+      （枠は図形の【位置】で決まるので、離しても元の枠へ戻ってしまう）。
+      ⭐ だから落とせるのは【同じ枠の中】だけ。外へ出したら理由を言って戻す。
+   ⭐ 上の行ほど前面（一覧は artLayer を裏返して並べている）。 */
+{
+  const line = document.createElement('div'); line.id = 'layInsert';
+  let drag = null;                       /* {row, item, g, y0, moved} */
+  const rowsOf = g => [...layList.querySelectorAll('.lay-item')].filter(r => r.dataset.g === g);
+  function place(cy){
+    const rows = rowsOf(drag.g).filter(r => r !== drag.row);
+    const box = layList.getBoundingClientRect();
+    let before = null;                   /* この行の【上】に入れる。null なら最後尾 */
+    for(const r of rows){
+      const b = r.getBoundingClientRect();
+      if(cy < b.top + b.height/2){ before = r; break; }
+    }
+    const ref = before || rows[rows.length-1];
+    if(!ref){ line.style.display='none'; return null; }
+    const b = ref.getBoundingClientRect();
+    line.style.display = 'block';
+    line.style.top = ((before ? b.top : b.bottom) - box.top + layList.scrollTop) + 'px';
+    return { before };
+  }
+  layList.addEventListener('pointerdown', e => {
+    if(e.button) return;
+    if(e.target.dataset && e.target.dataset.a) return;      /* 👁 や 🔒 は今までどおり */
+    const row = e.target.closest('.lay-item');
+    if(!row || !row.__item || !row.dataset.g) return;
+    if(row.__item.locked) return;                            /* ロック中は動かさない */
+    drag = { row, item: row.__item, g: row.dataset.g, y0: e.clientY, moved: false, want: null };
+  });
+  addEventListener('pointermove', e => {
+    if(!drag) return;
+    if(!drag.moved){
+      if(Math.abs(e.clientY - drag.y0) < 5) return;          /* 押しただけでは動かさない */
+      drag.moved = true;
+      drag.row.classList.add('dragging');
+      layList.appendChild(line);
+    }
+    drag.want = place(e.clientY);
+    e.preventDefault();
+  }, { passive:false });
+  addEventListener('pointerup', e => {
+    if(!drag) return;
+    const d = drag; drag = null;
+    line.style.display = 'none';
+    if(!d.moved) return;                                     /* ただの click は今までどおり */
+    d.row.classList.remove('dragging');
+    /* 落とした先が同じ枠の中か（一覧の行の上か）を見る */
+    const over = document.elementFromPoint(e.clientX, e.clientY);
+    const overRow = over && over.closest ? over.closest('.lay-item') : null;
+    if(overRow && overRow.dataset.g !== d.g){
+      stat('入れ替えは【同じ枠の中】だけ ── 枠を移すには盤の上で図形を動かす');
+      return;
+    }
+    if(!d.want){ return; }
+    snapshot();
+    const b = d.want.before;
+    if(b && b.__item && b.__item.parent) d.item.insertAbove(b.__item);
+    else {
+      const rows = rowsOf(d.g).filter(r => r !== d.row);
+      const last = rows[rows.length-1];
+      if(last && last.__item && last.__item.parent) d.item.insertBelow(last.__item);
+    }
+    guides(); renderLayers();
+    stat('重ね順を入れ替えた');
+  });
 }
 /* 選択中の不透明度をパネルに反映 */
 function syncLayerOpacity(){
@@ -8815,10 +8894,16 @@ document.querySelectorAll('#fillmode button').forEach(b =>
       tzPvSafety(); guides();
       return;
     }
-    // ⭐ 粒に入ったら preview は最初から入れておく（選ぶ前でも）。
-    //   あとから図形を選んだ時点で、そのまま見えはじめる。
-    if(c && !c.checked){ c.checked = true; tzPv.on = true; tzPvSyncUI(); }
+    /* 🔴 2026-08-24 木下＝「デフォルトで preview にチェックが入っているが入らないようにして」。
+       ⚠️ 前は【粒に入った瞬間に勝手に入れて】いた（触っても画面が変わらないのを避けるため）。
+       ⭐ 勝手に入れるのはやめる。代わりに、切ったまま触ったときに【言葉で言う】。
+          ＝「効かないように見える」は残さず、つまみの状態は木下のものにする。 */
     const sel = tzTargets();
+    if(c && !c.checked){
+      stat(sel.length ? '粒 — preview を入れると、いま触っている設定がそのまま見えます'
+                      : '粒 — 図形か文字を選び、preview を入れると設定がそのまま見えます');
+      return;
+    }
     if(!sel.length){ stat('図形か文字を選ぶと、粒の設定がそのまま見えます'); return; }
     if(sel.some(it => it.__tsubu)) return;            // かけ終わったものは直接作り直す
     await tzEnsureShape(sel);                  // ⭐ 元の文字は壊さない
