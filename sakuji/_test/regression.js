@@ -566,6 +566,31 @@
         document.querySelector('#trLocal button[data-v="1"]').click();
       }
 
+      // ══ 下敷き（写真）は【専用の層】に居る（2026-08-24 木下＝「読み込んだのに出ない」）
+      //   🔴 枡と同じ層に置くと、枠の白地の下に潜る／枡を描き直すと消える。
+      //   ⚠️ 画素で見ないと分からない型なので、層の並びと生き死にで見る。
+      if(typeof refLayer !== 'undefined'){
+        const L = paper.project.layers;
+        ok('下敷きの層がある', !!refLayer);
+        ok('下敷きは枡より上・作画より下',
+           L.indexOf(refLayer) > L.indexOf(gridLayer) && L.indexOf(refLayer) < L.indexOf(artLayer),
+           '枡' + L.indexOf(gridLayer) + ' 下敷き' + L.indexOf(refLayer) + ' 作画' + L.indexOf(artLayer));
+        refLayer.activate();
+        const dummy = new Path.Rectangle(new Rectangle(0, 0, 10, 10));
+        dummy.fillColor = '#000';
+        artLayer.activate();
+        drawGrid();                                   // 枡を描き直しても消えないこと
+        ok('枡を描き直しても下敷きが消えない', !!dummy.parent, refLayer.children.length + '枚');
+        withCleanView(done => {
+          ok('書き出しの間は下敷きを隠す', refLayer.visible === false);
+          done();
+        });
+        ok('書き出しのあと下敷きが戻る', refLayer.visible === true);
+        refLayer.removeChildren();
+      } else {
+        ok('下敷きの層がある', false, 'refLayer が無い＝枡の層に敷いている');
+      }
+
     } catch(e){
       R.push({ name:'⛔ テスト中に例外', pass:false, detail: e && (e.message + ' @ ' + (e.stack||'').split('\n')[1]) });
     }
