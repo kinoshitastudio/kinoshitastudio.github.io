@@ -3231,13 +3231,31 @@ function clearBleed(){
    ⭐⭐ 道具に【版面】を持たせる。画面は"覗き窓"、版面は"刷る紙"。
       TSUBU にも HORI にも無かったもの（木下＝「ボードという概念がない」）。
    ⚠️ つまみだけでは版面があることにならない。**画面に枠を出して見せる**。 */
+/* ⭐⭐ 版面の【形】を決める式は、ここ1本だけ。長辺を渡すと縦横が返る。
+   🔴🔴 木下 2026-08-24＝「4:5の盤面にしているのに動画書き出しは違いそう」。
+      正体＝**同じ式が静止画と動画の2箇所にあった**。たて4:5 を足したとき静止画だけ直したので、
+      動画は else に落ちて **9:16 で出ていた**。⭐ 形の名前も同じ所から出す（画面に見せるため）。 */
+const FRAME_SHAPES = [
+  { name:'正方形',    wh:L => ({ w:L,                 h:L }) },
+  { name:'たて 9:16', wh:L => ({ w:Math.round(L*9/16), h:L }) },
+  { name:'よこ 16:9', wh:L => ({ w:L,                 h:Math.round(L*9/16) }) },
+  { name:'たて 4:5',  wh:L => ({ w:Math.round(L*4/5),  h:L }) }
+];
+const frameShapeNow = () => FRAME_SHAPES[P.frameShape] || FRAME_SHAPES[1];
+function frameWH(L){
+  const f = frameShapeNow().wh(Math.max(2, Math.round(L)));
+  return { w:Math.max(2, f.w), h:Math.max(2, f.h) };
+}
+/* ⭐ 版面が切のときは【画面の形】に長辺を当てる（静止画と同じ約束） */
+function screenWH(L){
+  const el = renderer.domElement;
+  const sw = el.clientWidth || innerWidth, sh = el.clientHeight || innerHeight;
+  L = Math.max(2, Math.round(L));
+  return sw >= sh ? { w:L, h:Math.max(2, Math.round(L*sh/sw)) }
+                  : { w:Math.max(2, Math.round(L*sw/sh)), h:L };
+}
 function frameSize(){
-  const L = Math.round(P.frameLong);
-  let w, h;
-  if(P.frameShape === 0){ w = L; h = L; }                           // 正方形
-  else if(P.frameShape === 2){ w = L; h = Math.round(L*9/16); }     // よこ 16:9
-  else if(P.frameShape === 3){ w = Math.round(L*4/5); h = L; }      // たて 4:5（木下 2026-08-23）
-  else { w = Math.round(L*9/16); h = L; }                           // たて 9:16
+  const { w, h } = frameWH(P.frameLong);
   return scaleToLimit(w, h, P.frameScale);
 }
 /* ⚠️⭐ 倍率をかけると GPU の上限（maxTextureSize）に当たる。
@@ -3537,7 +3555,13 @@ document.querySelectorAll('.seg[data-seg]').forEach(seg => {
          ⭐ 数字に見えるものだけ数値にする（今までの段は全部数字なので動きは変わらない）。 */
       const raw = b.dataset.v;
       P[seg.dataset.seg] = (raw !== '' && !isNaN(raw)) ? +raw : raw;
-      if(seg.dataset.seg.indexOf('tv') === 0 && typeof tvSizeSync === 'function') tvSizeSync();
+      /* 🔴 2026-08-24＝ここは `tv` で始まる段しか見ていなかった。
+         版面の形（frameShape）は `.seg` なので **click** しか来ないのに、
+         下では `input` を待っていた＝**形を変えても動画の見込みが古いまま**だった。
+         ⭐ 版面を触ったときも合わせ直す（食い違いが画面で見えるようにする）。 */
+      const sg = seg.dataset.seg;
+      if((sg.indexOf('tv') === 0 || sg.indexOf('frame') === 0) && typeof tvSizeSync === 'function') tvSizeSync();
+      if(sg.indexOf('frame') === 0 && typeof updateFrameNote === 'function') updateFrameNote();
       saveLocal();
     });
   });
@@ -3553,7 +3577,16 @@ document.querySelectorAll('.unit-head').forEach(h => {
     ON[u.dataset.unit] = !u.classList.contains('off');
     // AUDIO は LED を落としたら鳴るのも止める（バイパスだけだと鳴りっぱなし）
     if(u.dataset.unit === 'audio' && !ON.audio) stopAudio();
-    if(u.dataset.unit === 'spin') syncSpin();
+    /* ⭐ 回す を触ったら動画の見込みも合わせ直す（回るか回らないかが変わるので） */
+    if(u.dataset.unit === 'spin'){
+      syncSpin();
+      if(typeof tvSizeSync === 'function') tvSizeSync();
+    }
+    /* ⭐ 版面を点けた／消したら、動画の見込みも合わせ直す（形が切り替わるので） */
+    if(u.dataset.unit === 'frame'){
+      if(typeof updateFrameNote === 'function') updateFrameNote();
+      if(typeof tvSizeSync === 'function') tvSizeSync();
+    }
     saveLocal();
   });
 });
@@ -3571,9 +3604,10 @@ document.querySelectorAll('.unit-head').forEach(h => {
   }
   const go = document.getElementById('tvGo');
   if(go) go.addEventListener('click', () => tvRun());
-  /* 版面の形・長辺を変えたら見込みも変える */
-  ['frameShape','frameLong','frameScale'].forEach(k => {
-    const r = document.querySelector('[data-p="'+k+'"], [data-seg="'+k+'"]');
+  /* 版面の長辺（つまみ）を動かしたら見込みも変える。
+     ⚠️ 形と倍率は `.seg`＝ボタンなので **input は来ない**。あちらは click 側で呼んでいる。 */
+  ['frameLong'].forEach(k => {
+    const r = document.querySelector('[data-p="'+k+'"]');
     if(r) r.addEventListener('input', () => setTimeout(tvSizeSync, 0));
   });
   setTimeout(tvSizeSync, 400);
@@ -4101,14 +4135,15 @@ function tvDl(blob, name){
   setTimeout(() => URL.revokeObjectURL(u), 8000);
 }
 
-/* ⭐ 出る大きさ ── 版面の形（正方／16:9／9:16）に長辺を当てる。
+/* ⭐ 出る大きさ ── 版面の形に長辺を当てる。
+   🔴🔴 2026-08-24 まで【ここに同じ式を書き写していた】ので、たて4:5 を足したときに
+      動画だけ 9:16 で出ていた（木下「4:5の盤面にしているのに動画書き出しは違いそう」）。
+      ⭐ 形を決めるのは frameWH ／ screenWH の1本だけ。ここは長辺と偶数だけを見る。
    ⚠️ mp4 は偶数でないと組めない。 */
 function tvWH(){
   const T = Math.max(64, Math.round(+P.tvLen || 1920));
-  let w, h;
-  if(P.frameShape === 0){ w = T; h = T; }
-  else if(P.frameShape === 2){ w = T; h = Math.round(T * 9 / 16); }
-  else { w = Math.round(T * 9 / 16); h = T; }
+  const f = ON.frame ? frameWH(T) : screenWH(T);   /* 版面が切なら画面の形（静止画と同じ約束） */
+  let w = f.w, h = f.h;
   if(P.tvFmt === 'mp4'){ w -= w % 2; h -= h % 2; }
   return { W:Math.max(2, w), H:Math.max(2, h) };
 }
@@ -4136,10 +4171,17 @@ function tvSizeSync(){
   if(row) row.style.display = (P.tvLoop === 'sec') ? '' : 'none';
   const { W, H } = tvWH(), plan = tvPlan();
   const bad = P.tvFmt === 'mp4' && tvMp4Bad(W, H);
+  /* ⭐ どの形で出るかを名前で出す＝盤面と食い違っていたら【見て分かる】（2026-08-24） */
   el.innerHTML = '出力 <b>' + W + ' × ' + H + '</b> px　'
-    + plan.total + ' コマ・' + plan.sec.toFixed(1) + '秒・' + plan.fps + 'fps・' + plan.loops + '回転'
+    + (ON.frame ? '版面 ' + frameShapeNow().name : '画面の形（版面 切）')
+    + '<br>' + plan.total + ' コマ・' + plan.sec.toFixed(1) + '秒・' + plan.fps + 'fps'
+    + (ON.spin ? '・' + plan.loops + '回転' : '・<b>回さない</b>')
     + (bad ? '<br>⚠️ mp4 の上限超え（辺4096まで）— 長辺を下げるか PNG連番へ' : '')
-    + (ON.spin ? '' : '<br>⚠️ <b>回す（SPIN）が消えています</b> — 点けないと全コマ同じ絵になります');
+    /* 🔴 前は「点けないと全コマ同じ絵になります」と書いていたが、
+       ①回す が消えていても勝手に回っていた ②滲みや粒は時間で動くので同じ絵にはならない
+       ＝**2つとも嘘だった**（木下 2026-08-24）。 */
+    + (ON.spin ? '' : '<br>⭐ <b>回す（SPIN）が消えています</b> — 回りません'
+                    + '（滲み・粒・波紋だけが動きます／頭と尻は合いません）');
 }
 
 async function tvRun(){
@@ -4199,10 +4241,16 @@ async function tvRun(){
     for(; i < plan.total; i++){
       if(TV.stop) break;
       if(encErr) throw encErr;
-      /* ⭐ 1回転＝2π。u=0 と u=1 が同じ角度＝頭と尻が完全に一致する */
+      /* ⭐ 1回転＝2π。u=0 と u=1 が同じ角度＝頭と尻が完全に一致する
+         🔴🔴 2026-08-24 木下＝「出すを押すと SPIN させたくなくても SPIN になる」。
+            ＝ここで【回す（SPIN）が点いているかを見ずに】必ず角度を置いていた。
+            ⭐ 消えているなら角度に触らない＝**いまの向きのまま**動画になる
+               （滲み・粒・波紋は時間で動くので、止まった絵にはならない）。 */
       const u = i / plan.total;
-      const az = keepAz + u * plan.loops * Math.PI * 2;
-      cam.tAz = az; cam.az = az;          /* ⚠️ 両方置く。片方だけだと寄せ（なめらか化）で遅れる */
+      if(ON.spin){
+        const az = keepAz + u * plan.loops * Math.PI * 2;
+        cam.tAz = az; cam.az = az;        /* ⚠️ 両方置く。片方だけだと寄せ（なめらか化）で遅れる */
+      }
       placeCamera();
       inkUniforms.uTime.value  = i / plan.fps;
       postUniforms.uTime.value = Math.floor(i * 0.72);
