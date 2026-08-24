@@ -525,6 +525,28 @@
 
   <hr>
 
+  <!-- ══ 触っている間 ══
+       🔴 2026-08-24 木下＝「パネルのスライダーで**ボードを見ながら調整したくても**、
+          つまみ調整中はボードのオブジェクトがぼやける」。
+       ⭐ 実測すると【どの場合も下限の 380px に張り付いていた】（盤は約2200px＝6倍に伸ばす）。
+          目標を秒45コマに置いていたので、粗さの式が常に下限まで落ちていた。
+       ⭐⭐ 触っている間の目的は**なめらかさ**ではなく**見て決められること**。既定を振り直した。
+       ⚠️ 機械の速さは人によって違うので、逃げ道も残す（速い機械なら〔細かさ〕が使える）。 -->
+  <div class="grp">
+    <label class="h">触っている間 — 粗さと速さ</label>
+    <div class="seg" id="dq">
+      <button data-v="fast">速さ</button>
+      <button data-v="mid" class="on">ふつう</button>
+      <button data-v="fine">細かさ</button>
+    </div>
+    <div class="note">つまみを引いている間だけ、盤を粗く刷って手に付いてこさせている。<br>
+      ⭐<b>ふつう</b>＝見て決められる細かさを保つ（既定）。<b>速さ</b>＝粗いがぬるぬる動く。
+      <b>細かさ</b>＝ほぼそのまま見えるが、遅い機械ではカクつく。<br>
+      ⚠️ 指を離せば <b>0.18秒で必ず細かく刷り直す</b>（どれを選んでも出来上がりは同じ）。</div>
+  </div>
+
+  <hr>
+
   <div class="grp">
     <label class="h">出す・控える</label>
     <div class="btns2">
@@ -579,6 +601,7 @@ let P = {
   /* かたち＝紙片を重ねる／文字に切る */
   shape:'sheet', text:'ひかり', font:'Hiragino Mincho ProN, serif', tw:600, tsize:0.95, tls:0.06, tlh:1.1,
   gone:0,               /* 1字ずつ触る。⭐ 既定は切＝盤の見え方も操作もいままでどおり */
+  dq:'mid',             /* 触っている間の粗さ。⭐ 出来上がりの絵には効かない（見ている間だけ） */
   /* ⭐ 絵そのものの置き所。盤の上でつかんで動かす／⌥ドラッグで大きさ。
      ⚠️ 皺は【世界】に貼りついたまま動かさない ＝「紙は動かさず、切る場所を変える」。
         そうしないと、動かすたびに紙の表情まで一緒に付いてきて“紙に見えなく”なる。 */
@@ -1622,8 +1645,25 @@ let DRAG=false;
    ⭐ 1コマ 22ms を目安に、かかった時間から次の粗さを決める。
       画素は【面積】で効くので、戻すときは √ を掛ける（時間が4倍なら幅は半分）。
    ⚠️ 粗さを変えると場を作り直すので、0.26秒に1回までしか動かさない（ころころ変えると逆に遅い）。 */
-let DCAP=780, dcapAt=0;
-const DCAP_LO=380, DCAP_HI=1150, MS_AIM=22;
+/* 🔴🔴 2026-08-24 木下＝「パネルのスライダーで**ボードを見ながら調整したくても**、
+      つまみ調整中はボードのオブジェクトがぼやける」。
+   ⭐ 実測すると **どの場合も下限の 380px に張り付いていた**（盤は 2200px 相当＝約6倍に伸ばす）。
+      正体＝目標を 22ms（秒45コマ）に置いていたので、粗さを決める式が常に下限まで落ちていた。
+   ⭐⭐ 触っている間の目的は【なめらかさ】ではなく【見て決められること】。
+      秒45コマは要らない。**秒22コマで、判断できる細かさを保つ**方へ振り直す。
+   ⚠️ 遅い機械では下限のままコマ数が落ちる＝それでよい（ぼやけて決められない方が困る）。 */
+/* ⭐ 3段。値の持ち主はここ1つだけ（つまみもテストもこれを見る） */
+const DQ={ fast:{lo:380, hi:1150, aim:22},     /* 今までの効き＝粗いがぬるぬる */
+           mid: {lo:760, hi:1400, aim:42},     /* 既定＝見て決められる */
+           fine:{lo:1200,hi:1800, aim:90} };   /* ほぼそのまま見える */
+let DCAP=980, dcapAt=0;
+let DCAP_LO=DQ.mid.lo, DCAP_HI=DQ.mid.hi, MS_AIM=DQ.mid.aim;
+function setDragQ(v){
+  const q=DQ[v]||DQ.mid;
+  DCAP_LO=q.lo; DCAP_HI=q.hi; MS_AIM=q.aim;
+  DCAP=clamp(DCAP,DCAP_LO,DCAP_HI); dcapAt=0;
+  P.dq=(DQ[v]?v:'mid');
+}
 function tuneDrag(ms){
   if(!DRAG) return;
   const now=performance.now();
@@ -2002,6 +2042,11 @@ el('t_text').addEventListener('input',()=>{
 el('t_text').addEventListener('focus',pushHist);
 el('t_font').addEventListener('change',()=>{ pushHist(); P.font=el('t_font').value; rebuild(); saveLocal(); });
 segWire('szSeg',v=>{ P.sz=v; el('r_long').classList.toggle('hide',v!=='px'); szSync(); saveLocal(); });
+/* ⭐ 触っている間の粗さ。⚠️ 出来上がりの絵には効かない＝刷り直しはしない（見ている間だけの話） */
+segWire('dq',v=>{ setDragQ(v); saveLocal();
+  stat(v==='fast'?'触っている間は粗く・ぬるぬる'
+      :v==='fine'?'触っている間もほぼそのまま（遅い機械ではカクつく）'
+                 :'触っている間は、見て決められる細かさを保つ'); });
 
 el('b_crush').onclick=()=>{ pushHist(); P.seed=(Math.random()*1e9)|0; rebuild(); saveLocal(); stat('くしゃっとやり直した'); };
 el('anGo').onclick=()=>{
@@ -2098,6 +2143,7 @@ function syncUI(){
   cycSync(); animSync(); shapeSync(); noteSync();
   el('t_text').value=P.text; el('t_font').value=P.font;
   segSet('ratio',P.ratio); segSet('szSeg',P.sz);
+  setDragQ(P.dq||'mid'); segSet('dq',P.dq);   /* ⚠️ 控えを開いたときも粗さの設定を戻す */
   el('r_long').classList.toggle('hide',P.sz!=='px');
   el('c_frame').checked=P.frame; frameSync();
   glyphPanel();
