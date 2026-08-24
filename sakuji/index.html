@@ -2053,6 +2053,15 @@ function abPickClear(){ abPicks.clear(); abPick = -1; }
 paper.settings.handleSize = 7;
 const gridLayer = new paper.Layer();
 gridLayer.locked = true;              // グリッドが選択のヒット判定を奪わないようにする
+/* ⭐⭐ 下敷き（トレース用の写真）は【専用の層】に置く。枡と同じ層に置いてはいけない。
+   🔴 2026-08-24 木下＝「画像を読み込んだが、ボードには表示されない」。原因は2つ、どちらも層の話：
+     ⚠️ 枠の地色も枡と同じ gridLayer に描いている。下敷きを sendToBack すると
+        【白地の下】に潜る＝読み込んだ瞬間から一度も見えない。
+     ⚠️ drawGridBase が gridLayer.removeChildren() で毎回作り直す＝
+        枡・枠・ズーム率が動くたびに下敷きが丸ごと消える。
+   ⭐ 枡より上・作画より下の1層に分けると、両方いっぺんに直る。 */
+const refLayer  = new paper.Layer();
+refLayer.locked = true;               // 固定中は掴めない（枡と同じ扱い）
 const artLayer  = new paper.Layer();
 const uiLayer   = new paper.Layer();  // 最前面：アンカー・ハンドル・ラバーバンド
 uiLayer.locked  = true;
@@ -4740,7 +4749,8 @@ document.getElementById('bImgMask').onclick = () => {
 };
 
 /* ══ 下敷き（トレース用の画像）══
-   グリッド層に置くのでクリックを邪魔しない。固定を解いたときだけ動かせる。 */
+   専用の層（refLayer）に置くのでクリックを邪魔しない。固定を解いたときだけ動かせる。
+   ⚠️ ここを gridLayer に戻すと、枠の白地に隠れる／枡を描き直すたびに消える。 */
 let refItem = null, refLocked = true;
 function loadRef(file){
   const rd = new FileReader();
@@ -4748,13 +4758,17 @@ function loadRef(file){
     const img = new Image();
     img.onload = () => {
       if(refItem) refItem.remove();
-      gridLayer.activate();
+      refLayer.activate();
+      refLayer.removeChildren();                  // 下敷きは常に1枚だけ
       refItem = new paper.Raster(img);
-      refItem.position = paper.view.center;
+      /* ⭐ 枠を出しているなら、選んでいる枠の真ん中に置く（枡と同じ基準）。
+         ⚠️ 画面中央を基準にすると、枠から外れた所に敷かれて「出ていない」に見える。 */
+      const a = (S.abOn && S.abs && S.abs.length) ? abCur() : null;
+      refItem.position = a ? abRectOf(a).center : paper.view.center;
       const k = (S.body * 0.9) / Math.max(refItem.width, refItem.height);
       refItem.scale(k);
       refItem.opacity = +document.getElementById('refOp').value / 100;
-      refItem.sendToBack();
+      /* 🔴 sendToBack は使わない＝この層には下敷きしか居ない（前は枠の白地の下に潜っていた）*/
       refItem.__base = refItem.bounds.width;
       artLayer.activate();
       // 採取用：元画像を持っておき、しきい値は写真ごとに自動で当てる
@@ -4975,10 +4989,33 @@ document.getElementById('bTrace').onclick = () => {
 };
 document.getElementById('bRefLock').onclick = () => {
   refLocked = !refLocked;
-  gridLayer.locked = refLocked;                 // 解くと下敷きを掴んで動かせる
+  refLayer.locked = refLocked;                  // 解くと下敷きを掴んで動かせる
+  /* 🔴 前は gridLayer を解いていた＝枡まで掴める状態になるのに、
+        選択は artLayer しか当てていないので【何も動かなかった】（入っているのに無い機能）。
+     ⭐ 動かすのは下の hook('down'/'drag'/'up', '下敷きを動かす') が受ける。 */
   document.getElementById('bRefLock').textContent = refLocked ? '位置を固定' : '固定を解除中';
   stat(refLocked ? '下敷きを固定した' : '下敷きを動かせます（選択ツールでドラッグ）');
 };
+/* ⭐ 下敷きを掴んで動かす（固定を解いているときだけ）。
+   ⚠️ 図形の方が先＝写真の上に描いたパスを掴めなくなると、なぞる作業ができない。 */
+let refDrag = null;
+hook('down', '下敷きを動かす', e => {
+  if(refLocked || !refItem) return false;
+  if(!refItem.bounds.contains(e.point)) return false;
+  if(hit(e.point)) return false;                 // 図形に当たっているならそちらに譲る
+  refDrag = { d: refItem.position.subtract(e.point) };
+  stat('下敷きを動かしている — 離すとそこに置く');
+  return true;
+}, 15);
+hook('drag', '下敷きを動かす', e => {
+  if(!refDrag) return false;
+  refItem.position = e.point.add(refDrag.d);
+  return true;
+}, 15);
+hook('up', '下敷きを動かす', () => {
+  if(!refDrag) return false;
+  refDrag = null; stat('下敷きを置いた'); return true;
+}, 15);
 
 /* ══ 整列・分布 ══ */
 function alignItems(mode){
@@ -6548,10 +6585,11 @@ function wrapSVG(inner, r){
 function withCleanView(fn){
   const keep = artLayer.children.map(c => c.selected);
   artLayer.children.forEach(c => c.selected = false);
-  const gv = gridLayer.visible, uv = uiLayer.visible;
-  gridLayer.visible = false; uiLayer.visible = false;
+  const gv = gridLayer.visible, uv = uiLayer.visible, rv = refLayer.visible;
+  /* ⚠️ 下敷きは【見るためだけの写真】＝書き出しには絶対に入れない（枡・ガイドと同じ扱い）*/
+  gridLayer.visible = false; uiLayer.visible = false; refLayer.visible = false;
   const done = () => {
-    gridLayer.visible = gv; uiLayer.visible = uv;
+    gridLayer.visible = gv; uiLayer.visible = uv; refLayer.visible = rv;
     artLayer.children.forEach((c,i) => c.selected = keep[i]);
     paper.view.update();
   };
