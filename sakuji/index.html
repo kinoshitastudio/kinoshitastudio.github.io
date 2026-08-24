@@ -1792,6 +1792,9 @@
   <div class="row" id="trRadRow"><label>比べる広さ</label><input type="range" id="trRad" min="4" max="80" value="20"><span class="val"></span></div>
   <div class="row" id="trOffRow"><label>拾う強さ</label><input type="range" id="trOff" min="1" max="60" value="10"><span class="val"></span></div>
   <div class="row" id="trColsRow"><label>色数</label><input type="range" id="trCols" min="2" max="10" value="6"><span class="val"></span></div>
+  <!-- ⭐⭐ 2026-08-24 ── 残っていた「近い色が混ざる／上げると1色が濃淡2つに割れる」への直し。
+       1.00 が今までの絵。下げると濃淡が1色にまとまり、色味の違いだけが分かれる。 -->
+  <div class="row" id="trColWRow"><label>濃淡を分ける</label><input type="range" id="trColW" min="0.1" max="2" step="0.05" value="1"><span class="val"></span></div>
 
   <div class="row"><label>なめらかさ</label><input type="range" id="trSm" min="0" max="60" value="18"><span class="val"></span></div>
   <div class="row"><label>コーナー</label><input type="range" id="trCor" min="0" max="100" value="45"><span class="val"></span></div>
@@ -1807,7 +1810,9 @@
   <button class="btn" id="bTrace" style="width:100%;margin-top:6px">この写真をパスにする</button>
   <!-- ⭐ 始めた節で終われるようにする（外すために別の節へ行かせない）2026-08-24 木下＝「置いた写真は消せない」 -->
   <button class="btn" id="bTrDel" style="width:100%;margin-top:6px">写真を外す</button>
-  <div class="note">比べる広さ＝線の太さの3〜5倍が目安／<b>拾う強さは下げすぎない</b>（1〜5 だと約半分が字になってざらつく。ノートの線は 8〜15／写真は 20〜40）<br>なめらかさ＝アンカーを減らす／<b>コーナー＝角を残す強さ（0で全部丸くなる）</b>／細部を捨てる＝小さなゴミを拾わない<br>色数は<b>上げるほど細かく分かれる</b>（近い色が混ざるときは上げる）。光のムラは自動でならしている</div>
+  <div class="note">比べる広さ＝線の太さの3〜5倍が目安／<b>拾う強さは下げすぎない</b>（1〜5 だと約半分が字になってざらつく。ノートの線は 8〜15／写真は 20〜40）<br>なめらかさ＝アンカーを減らす／<b>コーナー＝角を残す強さ（0で全部丸くなる）</b>／細部を捨てる＝小さなゴミを拾わない<br>色数は<b>上げるほど細かく分かれる</b>。光のムラは自動でならしている<br>
+    ⭐<b>近い色が混ざる／色数を上げたら1色が濃い薄いの2つに割れた</b>ときは、<b>濃淡を分ける</b>を下げる。
+    色の近さを<b>明るさ</b>ではなく<b>色味</b>で測るようになる（<b>1.00 が今までどおり</b>／下げると同じ色の濃淡が1色にまとまる）</div>
   </div>
 
   <h2 class="fold" data-open="0">ALIGN</h2>
@@ -4205,8 +4210,30 @@ function trMedian3(rgb, W, H){
   }
   return out;
 }
+/* ══⭐⭐ 色の近さの測り方 ── 2026-08-24 ══════════════════════════
+   🔴 残っていた不具合＝**色数モードで近い色が混ざる。上げると1色が濃淡2つに割れる**。
+      正体＝色の近さを **生の RGB の距離**で測っていたこと。RGB の距離は
+      **明るさの差が支配的**なので、①色味が違っても明るさが近いと混ざり
+      ②同じ色の濃い所と薄い所は遠くなって【別の色として2つに割れる】。
+   ⭐⭐ 直し＝差を【明るさの向き】と【色味の向き】に分けて、重みを変えられるようにする。
+      (1,1,1) は灰色の軸。差をその向きと直交する向きに分けると
+        |Δ|² = |明るさ|² + |色味|²   （ぴったり分かれる＝取りこぼしが無い）
+      重み wl を掛けて   d = |色味|² + wl*|明るさ|²
+      ⭐ **wl=1 は今までの式そのもの**（分岐ごと通さないので1画素も変わらない）。
+      下げると「濃い/薄い」は1色にまとまり、**色味の違いだけが分かれる**。
+   ⭐ 距離を測る所は3つ（種を置く／寄せ直す／画素に貼る）＝式は【この1本】だけを見る。 */
+function trColDist(wl){
+  if(!(wl > 0) || Math.abs(wl - 1) < 1e-9)
+    return (dr, dg, db) => dr*dr + dg*dg + db*db;      /* 今までの道（1手も変えない） */
+  return (dr, dg, db) => {
+    const dl = (dr + dg + db) / 3;                     /* 灰色の軸に落とした成分 */
+    const par = 3 * dl * dl;                           /* |明るさ|² */
+    const all = dr*dr + dg*dg + db*db;
+    return (all - par) + wl * par;                     /* |色味|² + wl*|明るさ|² */
+  };
+}
 /* 似た色をまとめる（k-means）。⚠️ 乱数を使わない＝同じ写真なら毎回同じ結果になる */
-function trQuantize(G, k, flat){
+function trQuantize(G, k, flat, wl){
   const { W, H, a } = G, N = W*H;
   const rgb = (flat === false || !G.g) ? G.rgb : trMedian3(trFlatField(G, 12), W, H);
   const step = Math.max(1, Math.round(Math.sqrt(N / 24000)));
@@ -4232,6 +4259,7 @@ function trQuantize(G, k, flat){
   let cells = Array.from(hist.values()).filter(e => e[3] >= minN).map(toCell);
   if(cells.length < k) cells = Array.from(hist.values()).map(toCell);
   cells.sort((a, b) => b[3] - a[3]);
+  const D = trColDist(wl === undefined ? 1 : wl);      /* ⭐ 近さの測り方は1本 */
   const C = [cells[0].slice(0, 3)];
   const far = new Float64Array(cells.length).fill(Infinity);
   while(C.length < k && C.length < cells.length){
@@ -4239,7 +4267,7 @@ function trQuantize(G, k, flat){
     let bi = -1, bd = -1;
     for(let s=0;s<cells.length;s++){
       const p = cells[s];
-      const d = (p[0]-c[0])**2 + (p[1]-c[1])**2 + (p[2]-c[2])**2;
+      const d = D(p[0]-c[0], p[1]-c[1], p[2]-c[2]);
       if(d < far[s]) far[s] = d;
       if(far[s] > bd){ bd = far[s]; bi = s; }
     }
@@ -4252,7 +4280,7 @@ function trQuantize(G, k, flat){
     for(const s of smp){
       let bi = 0, bd = Infinity;
       for(let i=0;i<k;i++){
-        const d = (s[0]-C[i][0])**2 + (s[1]-C[i][1])**2 + (s[2]-C[i][2])**2;
+        const d = D(s[0]-C[i][0], s[1]-C[i][1], s[2]-C[i][2]);
         if(d < bd){ bd = d; bi = i; }
       }
       const t = sum[bi]; t[0]+=s[0]; t[1]+=s[1]; t[2]+=s[2]; t[3]++;
@@ -4264,7 +4292,7 @@ function trQuantize(G, k, flat){
     if(a[p] < 8){ lab[p] = 255; continue; }
     let bi = 0, bd = Infinity;
     for(let i=0;i<k;i++){
-      const d = (rgb[p*4]-C[i][0])**2 + (rgb[p*4+1]-C[i][1])**2 + (rgb[p*4+2]-C[i][2])**2;
+      const d = D(rgb[p*4]-C[i][0], rgb[p*4+1]-C[i][1], rgb[p*4+2]-C[i][2]);
       if(d < bd){ bd = d; bi = i; }
     }
     lab[p] = bi;
@@ -4841,6 +4869,7 @@ function trOpts(){
     dropBg: seg('trDropBg') !== '0',
     thr:    num('trThr'),  radius: num('trRad'), offset: num('trOff'),
     cols:   num('trCols'), sm:     num('trSm'),  cor:    num('trCor'),
+    colW:   num('trColW'),                       /* 濃淡をどれだけ別の色と見るか（1＝今まで） */
     min:    num('trMin'),  inv:    trInv,        clean:  true
   };
 }
@@ -4856,7 +4885,7 @@ function binarize(img, o, maxW){
 }
 /* 色数モードのプレビュー＝似た色にまとめた絵 */
 function trPosterCanvas(img, o, maxW){
-  const G = trGray(img, maxW), q = trQuantize(G, o.cols);
+  const G = trGray(img, maxW), q = trQuantize(G, o.cols, undefined, o.colW);
   const c = document.createElement('canvas'); c.width = G.W; c.height = G.H;
   const x = c.getContext('2d'), d = x.createImageData(G.W, G.H), a = d.data;
   for(let p=0;p<G.W*G.H;p++){
@@ -4932,6 +4961,7 @@ function trSyncUI(){
   show('trRadRow',  bw &&  o.local);
   show('trOffRow',  bw &&  o.local);
   show('trColsRow', !bw);
+  show('trColWRow', !bw);
   show('trLocal',   bw);
   show('trLocalNote', bw);
   show('bTrInv',    bw);
@@ -4941,7 +4971,7 @@ function trSyncUI(){
                            : '色数＝色ごとにパスにする（イラスト向け）';
 }
 /* ⭐ 動かしている間も拾い具合を出す＝つまみに数字が付いてくる（見て決められる） */
-['trThr','trRad','trOff','trCols'].forEach(id =>
+['trThr','trRad','trOff','trCols','trColW'].forEach(id =>
   bindRange(id, () => { if(trPrev){ refreshRefView(); trSay(); } }));
 function trSay(head){
   const msg = trAdvice(trStats, trOpts());
@@ -5014,7 +5044,7 @@ document.getElementById('bTrace').onclick = () => {
     const cp = build(mask);
     if(cp){ cp.fillColor = paintOf(cp) || S.fill || '#0a0a0a'; made.push(cp); }
   }else{
-    const q = trQuantize(G, o.cols);
+    const q = trQuantize(G, o.cols, undefined, o.colW);
     if(q){
       // 広い色から先に置く＝細かい色が上に来る（紙が全部を覆わない）
       const order = q.C.map((_, i) => i).sort((a, b) => q.area[b] - q.area[a]);
