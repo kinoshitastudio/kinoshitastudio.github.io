@@ -192,6 +192,69 @@ try{
        +'×'+(B?(B.y1-B.y0).toFixed(2):'-')+' / わく '+(2*hw).toFixed(2)+'×'+(2*hh).toFixed(2)+'）', !!inside);
   }
 
+  /* ⭐⭐ 2026-08-24 木下＝「この表現とは別に、しわが寄る場合もあればよさそう」
+     ＝ 穴（磁石）は【点】に寄せる。絞りは【線】に寄せる。
+     🔴🔴 物差しの罠を2つ踏んだので、その形のまま試験に残す：
+       ①「隣との差」では測れない＝灯の大きなグラデが全部を飲む → 2階差（曲がり）で見る
+       ② 8×8 でならしてから測る＝畝は粗い構造。細かい粒に埋もれる */
+  {
+    document.getElementById('c_frame').checked = false;
+    document.getElementById('c_frame').dispatchEvent(new Event('change'));
+    const SW=320, SH=200;
+    const aniso=(d)=>{
+      const BW=(SW/8)|0, BH=(SH/8)|0, B=new Float64Array(BW*BH);
+      for(let by=0;by<BH;by++) for(let bx=0;bx<BW;bx++){ let s=0;
+        for(let y=0;y<8;y++) for(let x=0;x<8;x++) s+=d[((by*8+y)*SW+bx*8+x)*4];
+        B[by*BW+bx]=s/64; }
+      let sx=0,sy=0,n=0;
+      for(let by=5;by<BH-5;by++) for(let bx=5;bx<BW-5;bx++){ const i=by*BW+bx;
+        sx+=Math.abs(B[i-1]-2*B[i]+B[i+1]);
+        sy+=Math.abs(B[i-BW]-2*B[i]+B[i+BW]); n++; }
+      return (sy/n)/(sx/n);
+    };
+    const pull=()=>{ KASA.rebuild(); return shot(SW,SH,0); };
+    const r_sqA=document.getElementById('r_sqA');
+    const set=(k,v)=>{ const r=document.getElementById('r_'+k);
+      r.value=v; r.dispatchEvent(new Event('input')); };
+
+    /* 🔴 ここまでの試験で状態が動いている（ふる・大きさ・穴の数…）。
+       ⭐ 測る前に【邪魔な物を止める】＝磁石の放射と繊維の粒は向きの偏りを汚す。 */
+    set('holeN',0); set('fib',0); set('orbit',0); set('breath',0);
+    set('crN',5); set('crW',2.4); set('crF',0.42); set('crA',1.05);
+    set('sqA',0); set('sqD',90); set('sqP',0); set('sqW',0.9);
+    const base=pull(), h0=aniso(base);
+
+    /* ① 効いていること自体は【画素の数】で見る */
+    set('sqA',1.0);
+    const yoko=pull(), h1=aniso(yoko);
+    ok('絞りで絵が変わる（'+diff(base,yoko)+'画素）', diff(base,yoko)>1500);
+
+    /* ② ⭐⭐ 本当に見たいのは「畝が【向きに沿って】走っているか」。
+       ⚠️ 切/入 の比べ方だと差が小さい（下地の皺が元から向きを持っている）。
+          90°と0°を突き合わせると、同じ下地のまま【向きだけ】が変わるので、はっきり出る。 */
+    set('sqD',0);
+    const tate=pull(), h2=aniso(tate);
+    ok('畝が向きに沿って走る（90°で 縦/横 '+h1.toFixed(2)+' / 0°で '+h2.toFixed(2)+'）',
+       h1 > h2*1.10);
+    ok('向きを変えると絵が変わる（'+diff(yoko,tate)+'画素）', diff(yoko,tate)>1500);
+
+    /* ③ 0 に戻したら【1画素も】元に戻る＝既定の絵を汚していない */
+    set('sqD',90); set('sqA',0);
+    const back=pull();
+    ok('絞りを 0 に戻すと元の絵に戻る（ずれ '+diff(base,back)+'）', diff(base,back)===0);
+
+    /* ④ 3つのかたち全部で落ちない・中身がある */
+    set('sqA',1.2);
+    for(const sh of ['sheet','text','tpiece']){
+      document.querySelector('#shape button[data-v="'+sh+'"]').click();
+      const d=pull(); let ink=0;
+      for(let i=0;i<d.length;i+=4) if(d[i]>60) ink++;
+      ok('絞りを掛けても「'+sh+'」が出る（中身 '+ink+'画素）', ink>500);
+    }
+    document.querySelector('#shape button[data-v="sheet"]').click();
+    set('sqA',0); KASA.rebuild(); KASA.render();
+  }
+
   // 大きく刷れるか
   const [ow,oh]=KASA.outSize();
   const t0=performance.now();

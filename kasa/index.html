@@ -337,6 +337,29 @@
       <b>硬さ</b>を上げると面の向きの差が強く出て紙がパリッとする。下げると布に近づく。</div>
   </div>
 
+  <!-- ══ 絞り ══
+       ⭐⭐ 穴（磁石）は【点】に寄せる。こちらは【線】に寄せる。
+          紙を横から押し縮めると、線の近くだけ皺が密に立ち、遠くは伸びて平らになる。
+       ⭐ 0 のときは1画素も変わらない（分岐ごと通さない）。 -->
+  <div class="grp">
+    <label class="h">絞り — 線に沿って寄せる</label>
+    <div class="row"><span class="n">絞り</span><output id="o_sqA"></output></div>
+    <input type="range" id="r_sqA" min="0" max="1.4" step="0.02">
+    <div class="row"><span class="n">向き</span><output id="o_sqD"></output></div>
+    <input type="range" id="r_sqD" min="0" max="180" step="1">
+    <div class="row"><span class="n">寄る所</span><output id="o_sqP"></output></div>
+    <input type="range" id="r_sqP" min="-1.2" max="1.2" step="0.02">
+    <div class="row"><span class="n">幅</span><output id="o_sqW"></output></div>
+    <input type="range" id="r_sqW" min="0.12" max="1.6" step="0.01">
+    <div class="note">⭐⭐<b>穴は点に寄せる／絞りは線に寄せる。</b>紙を横から押し縮めた形。
+      線の近くは皺が<b>密になって立ち上がり</b>、遠くは<b>伸びて平ら</b>になる。<br>
+      ⭐<b>絞り</b>＝どれだけ押し縮めるか（0 でいままでの絵）。<b>幅</b>＝寄る帯の広さ。
+      <b>寄る所</b>＝その帯を向きに沿って動かす。<br>
+      ⚠️ 遠くは歪まず<b>ただ平行移動する</b>だけなので、絞っても紙の外まで引きずられない。<br>
+      ⭐ 深さは別のつまみにしていない＝<b>縮めば立つ</b>のは同じひとつの動きだから。
+      全体の深さは〔皺 — 深さ〕で。</div>
+  </div>
+
   <!-- ══ 灯 ══ -->
   <div class="grp">
     <label class="h">灯 — 紙の裏に置く</label>
@@ -529,6 +552,8 @@ let P = {
   sheets:4, spread:0.50, size:0.80, tear:0.20, tau:0.74,
   /* 皺 */
   crN:5, crW:2.4, crF:0.42, crA:1.05, sharp:1.4,   /* crW=いちばん粗い折り crN=段数 crF=ふぞろい */
+  /* 絞り（線に沿って寄せる）⭐ sqA=0 が既定＝いままでの絵と1画素も変わらない */
+  sqA:0, sqD:60, sqP:0, sqW:0.55,
   /* 灯 */
   lampN:3, lampI:2.2, lampR:0.42, lampZ:0.16, amb:0.24,
   /* 穴 */
@@ -1100,9 +1125,39 @@ function buildField(W,H,cam){
     const A=Math.pow(P.crF,k); amp.push(A); norm+=A;
     sd.push((rnd()*1e9)|0);
   }
+  /* ── 2b) 絞り ＝【線】に沿って寄せる（2026-08-24）──────────────
+     ⭐⭐ 穴（磁石）は【点】に寄せる。こちらは【線】に寄せる。
+     🔴 まわり道を2つした（画で見て分かった）＝
+        ①押し縮めるだけ → ただの別の乱れに見える
+        ②直交する向きに伸ばす → 引き伸ばしたぼけに見える（畝にならない）
+     ⭐⭐ 効いたのは磁石と同じ手＝【1方向の乱数を、まっすぐ結んで使う】。
+        線を横切る座標だけで乱数を引き、線に沿う向きには一切依らない
+        ＝間隔の不揃いな畝が、線に沿ってまっすぐ走る。角が残るから紙の折りに見える。
+     ⭐ そこへ「押し縮め」を足す＝線の近くほど下地の皺も密になる。
+     ⚠️ S字は端で寝る＝遠くは【ただの平行移動】で歪まない（紙の外まで引きずられない）。
+     ⚠️ 0 のときは分岐ごと通さない＝1画素も変わらない。 */
+  const SQ = P.sqA>0.001;
+  const sqc=Math.cos(P.sqD*Math.PI/180), sqs=Math.sin(P.sqD*Math.PI/180);
+  const sqK=P.sqA*P.sqW;
+  /* 🔴 のりしろ＝押す向きのずれのぶんだけ（最大 sqK）。ずれた先の格子を読むので要る。 */
+  const sqPad = SQ ? sqK : 0;
+  const X0=(0-CX)/S-sqPad, X1=((W-1)-CX)/S+sqPad,
+        Y0=(0-CY)/S-sqPad, Y1=((H-1)-CY)/S+sqPad;
+  /* ⭐ 畝の1方向格子（粗い＋細かい）。⚠️ 1画素ごとにハッシュを引くと場のいちばん重い所になる */
+  let sqA1=null, sqA2=null, sqO1=0, sqO2=0, sqF1=0, sqF2=0;
+  if(SQ){
+    sqF1=Math.max(0.8,P.crW*1.05); sqF2=sqF1*3.3;
+    let mn=Infinity, mx=-Infinity;
+    for(const [xx,yy] of [[X0,Y0],[X1,Y0],[X0,Y1],[X1,Y1]]){
+      const uu=xx*sqc+yy*sqs; if(uu<mn)mn=uu; if(uu>mx)mx=uu;
+    }
+    const mk=(f,sdv)=>{ const o=Math.floor(mn*f)-1, n=Math.ceil(mx*f)-o+3;
+      const a=new Float32Array(n), r2=mulberry32(sdv>>>0);
+      for(let i2=0;i2<n;i2++) a[i2]=r2()*2-1; return [a,o]; };
+    [sqA1,sqO1]=mk(sqF1, P.seed^0x9e3779b1); [sqA2,sqO2]=mk(sqF2, P.seed^0x85ebca6b);
+  }
   /* ⭐ 段ごとに【格子】を先に作って、あとは引くだけにする。
      ⚠️ 1画素ごとにハッシュを4回計算していたのが、場のいちばん重い所だった。 */
-  const X0=(0-CX)/S, X1=((W-1)-CX)/S, Y0=(0-CY)/S, Y1=((H-1)-CY)/S;
   const lat=[], latW=[], latOx=[], latOy=[];
   for(let k=0;k<OCT;k++){
     const c=rot[k][0], s2=rot[k][1], f=frq[k];
@@ -1124,10 +1179,30 @@ function buildField(W,H,cam){
     for(let x=lo;x<=hi;x++){
       if(!DIL[y*W+x]) continue;
       const X=(x-CX)/S;
+      /* ⭐ 絞り＝①押し縮め（座標を S字でずらす）②線に沿って走る畝 */
+      let Xw=X, Yw=Y, amp2=1, ridge=0;
+      if(SQ){
+        const u=X*sqc+Y*sqs;                     /* u＝線を横切る向き */
+        const t=(u-P.sqP)/P.sqW;
+        const q=1/Math.sqrt(1+t*t), s3=t*q;      /* s3=S字 ／ q^3=その傾き */
+        const g=q*q*q*P.sqA;                     /* 効きの強さ（線の上でいちばん強い） */
+        const u2=u+sqK*s3;                       /* ① 押し縮め */
+        Xw=X+(u2-u)*sqc; Yw=Y+(u2-u)*sqs;
+        amp2=1+0.45*g;                           /* 縮んだ分だけ立ち上がる */
+        /* ② 畝 ── u だけで乱数を引く＝線に沿う向きには依らない＝まっすぐ走る折り */
+        const p1=u*sqF1-sqO1, i1=p1|0, f1=p1-i1;
+        const p2=u*sqF2-sqO2, i2=p2|0, f2=p2-i2;
+        const r1=sqA1[i1]+(sqA1[i1+1]-sqA1[i1])*f1;
+        const r2=sqA2[i2]+(sqA2[i2+1]-sqA2[i2])*f2;
+        /* 🔴🔴 なめらかな波のまま足しても【畝に見えない】（実測で向きの偏りが2%しか出なかった）。
+           ⭐⭐ 皺の網と同じ手＝【絶対値をとって 0 の所を谷にする】。
+              谷で傾きの符号が飛ぶので、浅くても折り目として見える。 */
+        ridge=((r1<0?-r1:r1)-0.5)*0.72*g + ((r2<0?-r2:r2)-0.5)*0.28*g;
+      }
       let v=0;
       for(let k=0;k<OCT;k++){
         const c=rot[k][0], s2=rot[k][1], f=frq[k];
-        const px=(X*c-Y*s2)*f-latOx[k], py=(X*s2+Y*c)*f-latOy[k];
+        const px=(Xw*c-Yw*s2)*f-latOx[k], py=(Xw*s2+Yw*c)*f-latOy[k];
         const xi=px|0, yi=py|0;
         const xf=px-xi, yf=py-yi;
         const A=lat[k], nw=latW[k], o=yi*nw+xi;
@@ -1136,7 +1211,7 @@ function buildField(W,H,cam){
         const n2=a0+(b0-a0)*xf+(c0-a0)*yf+(a0-b0-c0+d0)*xf*yf;
         v+=amp[k]*(n2<0?-n2:n2);
       }
-      hgt[y*W+x]=v*gain;
+      hgt[y*W+x]=v*gain*amp2 + ridge*P.crA*1.1;
     }
   }
 
@@ -1685,6 +1760,7 @@ const R = [
   ['sheets','sheets',FI,1],['spread','spread',F2,1],['size','size',F2,1],['tear','tear',F3,1],
   ['tau','tau',F2,0],
   ['crN','crN',FI,1],['crW','crW',F1,1],['crF','crF',F2,1],['crA','crA',F2,1],['sharp','sharp',F2,0],
+  ['sqA','sqA',F2,1],['sqD','sqD',v=>Math.round(v)+'°',1],['sqP','sqP',F2,1],['sqW','sqW',F2,1],
   ['lampN','lampN',FI,0],['lampI','lampI',F2,0],['lampR','lampR',F2,0],['lampZ','lampZ',F2,0],['amb','amb',F2,0],
   ['holeN','holeN',FI,1],['holeR','holeR',F3,1],['pinD','pinD',F2,1],['pinR','pinR',F1,1],
   ['gloR','gloR',F2,0],['gloI','gloI',F2,0],['rim','rim',F2,0],['fib','fib',F2,0],
@@ -2034,6 +2110,8 @@ el('b_rand').onclick=()=>{
   P.tau=RR(0.58,0.86);
   P.crN=Math.round(RR(3,7)); P.crW=RR(1.4,5); P.crF=RR(0.28,0.62);
   P.crA=RR(0.7,2.1); P.sharp=RR(1.2,3.6);
+  /* ⭐ 絞りは【半分は 0】にする＝ふるの手ざわりを変えないまま、たまに出会えるように */
+  P.sqA=Math.random()<0.5?0:RR(0.3,1.0); P.sqD=RR(0,180); P.sqP=RR(-0.6,0.6); P.sqW=RR(0.3,1.0);
   P.lampN=Math.round(RR(1,5)); P.lampI=RR(0.8,2.4); P.lampR=RR(0.2,0.7); P.lampZ=RR(0.06,0.4);
   P.amb=RR(0.12,0.5);
   P.holeN=Math.round(RR(1,6)); P.holeR=RR(0.018,0.05); P.pinD=RR(0.4,1.3); P.pinR=RR(4,11);
