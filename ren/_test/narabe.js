@@ -346,6 +346,70 @@
          !document.querySelectorAll('#clipLane .clipseg')[1].querySelector('canvas.wv') &&
          !document.querySelectorAll('#clipLane .clipseg')[1].querySelector('.mu'));
 
+      // ══ そろえる・吸い付く・透かし・目・目安の線（Premiere に並べる道具）
+      clips.length = 0; sel = -1; seg('narabe', 1);
+      clips.push(imgClip(200, 200, '#f00', 'p1'));
+      clips.push(imgClip(200, 200, '#0f0', 'p2'));
+      document.getElementById('bGrid').click(); sel = 0; afterAdd(); tiltNote();
+      document.querySelector('[data-al="cx"]').click();
+      ok('そろえる：左右の中央', Math.abs(clips[0].tilt.x - 0.5) < 1e-9, num(clips[0].tilt.x));
+      document.querySelector('[data-al="l"]').click();
+      const bl = narabeBox(clips[0]);
+      ok('  左にそろえると版面から出ない', Math.abs(bl.x - bl.w/2) < 0.002, num(bl.x - bl.w/2));
+      document.querySelector('[data-al="b"]').click();
+      const bb2 = narabeBox(clips[0]);
+      ok('  下にそろえても版面から出ない', Math.abs((bb2.y + bb2.h/2) - 1) < 0.002, num(bb2.y + bb2.h/2));
+
+      const [sx1, sy1] = snapXY(clips[0], 0.503, 0.504, false);
+      ok('吸い付く：中心の近くは中心に付く', sx1 === 0.5 && sy1 === 0.5, sx1 + ',' + sy1);
+      const [sx2] = snapXY(clips[0], 0.6, 0.5, false);
+      ok('  離れていれば動かさない', sx2 === 0.6, String(sx2));
+      const [sx3] = snapXY(clips[0], 0.503, 0.5, true);
+      ok('  option を押している間は吸い付かない', sx3 === 0.503, String(sx3));
+      document.querySelector('#snapSeg button[data-v="0"]').click();
+      const [sx4] = snapXY(clips[0], 0.503, 0.5, false);
+      ok('  「吸い付かない」を選べば効かない', sx4 === 0.503, String(sx4));
+      document.querySelector('#snapSeg button[data-v="1"]').click();
+
+      /* ⚠️ 2枚が重なっていると、1枚目の中心を見ても【2枚目の色】が返る。
+         薄さと目は【1枚だけ】にして見る（重なりで嘘の合格・不合格になる）。 */
+      const p2 = clips.pop();
+      sel = 0; tiltNote();
+      const opEl = document.getElementById('tlOp');
+      opEl.value = 30; opEl.dispatchEvent(new Event('input'));
+      ok('透かし：置き方の記録に入る（控え・複製に乗る）', clips[0].tilt.op === 30, String(clips[0].tilt.op));
+      frameAt(0);
+      const bOp = narabeBox(clips[0]);
+      const halfPx = px(bOp.x, bOp.y);
+      opEl.value = 100; opEl.dispatchEvent(new Event('input')); frameAt(0);
+      ok('  薄くすると絵も薄くなる', halfPx !== px(bOp.x, bOp.y),
+         halfPx + ' → ' + px(bOp.x, bOp.y));
+
+      buildClips();
+      const eye = document.querySelector('#clipLane .clipseg .ey');
+      ok('目：出す／隠すのボタンが出る', !!eye);
+      eye.click();
+      ok('  隠すと描かれない', clips[0].off === true);
+      frameAt(0);
+      ok('    盤からも消える', px(bOp.x, bOp.y) === px(0.02, 0.02),
+         px(bOp.x, bOp.y) + ' / ' + px(0.02, 0.02));
+      document.querySelector('#clipLane .clipseg .ey').click();
+      ok('  もう一度押すと戻る', clips[0].off === false);
+      clips.push(p2); afterAdd();
+
+      document.querySelector('#guideSeg button[data-v="1"]').click();
+      ok('目安の線：三分割が出る',
+         document.getElementById('guides').classList.contains('on') &&
+         document.getElementById('guides').children.length === 4,
+         String(document.getElementById('guides').children.length));
+      frameAt(0);
+      ok('  ⭐ 目安の線は【絵に焼かれない】（書き出しに入らない）',
+         px(1/3, 0.5) === px(0.02, 0.02) || px(0.334, 0.02) === px(0.02, 0.02));
+      document.querySelector('#guideSeg button[data-v="2"]').click();
+      ok('  安全域にも切り替わる', document.getElementById('guides').querySelector('.safe') !== null);
+      document.querySelector('#guideSeg button[data-v="0"]').click();
+      ok('  目安なしで消える', !document.getElementById('guides').classList.contains('on'));
+
       // ══ 縁の線（木下＝「ボードの縁に線をつけれるようにして」）
       clips.length = 0; sel = -1; seg('narabe', 1); afterAdd();
       const eR = document.querySelector('input[data-p="edge"]');
