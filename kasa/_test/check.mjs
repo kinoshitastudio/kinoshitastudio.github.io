@@ -255,6 +255,74 @@ try{
     set('sqA',0); KASA.rebuild(); KASA.render();
   }
 
+  /* ⭐⭐ 2026-08-24 木下＝「1個1個のフォントをばらばらに自分で指定してレイアウトしたい、
+     角度や大きさも変えたり」「ボード上で調整できるとなおよい」
+     🔴 見るのは「つまみがある」ではなく【盤で掴んで引いたら、その字だけが変わったか】。 */
+  {
+    document.querySelector('#shape button[data-v="text"]').click();
+    KASA.P.text='ひかり'; document.getElementById('t_text').value='ひかり';
+    document.getElementById('t_text').dispatchEvent(new Event('input'));
+    KASA.render();
+    const SW=300, SH=190;
+    const plain=(()=>{ KASA.rebuild(); return shot(SW,SH,0); })();
+
+    /* ① 既定は【切】＝盤の見え方も操作も今までどおり */
+    ok('1字ずつ は既定で切', !KASA.P.gone);
+
+    document.getElementById('c_gone').checked=true;
+    document.getElementById('c_gone').dispatchEvent(new Event('change'));
+    ok('点けても絵は変わらない（四角は盤の飾り）', diff(plain,(KASA.rebuild(),shot(SW,SH,0)))===0);
+
+    /* ② 盤で字を押すと選べる＝箱の真ん中を押す */
+    const cam=KASA.camScreen(), boxes=KASA.glyphBoxes(cam);
+    ok('字の数だけ四角が出る（'+boxes.length+'）', boxes.length===3);
+    const cv2=document.getElementById('cv'), rc=cv2.getBoundingClientRect();
+    const toClient=(sx,sy)=>({x:rc.left+sx*(rc.width/cv2.width), y:rc.top+sy*(rc.height/cv2.height)});
+    const drag=(from,to)=>{ const a=toClient(from[0],from[1]), b2=toClient(to[0],to[1]);
+      cv2.dispatchEvent(new PointerEvent('pointerdown',{clientX:a.x,clientY:a.y,button:0,bubbles:true,pointerId:9,pointerType:'mouse'}));
+      cv2.dispatchEvent(new PointerEvent('pointermove',{clientX:b2.x,clientY:b2.y,bubbles:true,pointerId:9,pointerType:'mouse'}));
+      cv2.dispatchEvent(new PointerEvent('pointerup',{clientX:b2.x,clientY:b2.y,bubbles:true,pointerId:9,pointerType:'mouse'}));
+    };
+    const mid=boxes[1];                                  /* 真ん中の「か」 */
+    drag([mid.x,mid.y],[mid.x+40,mid.y-26]);
+    const g1=KASA.GLYPH[mid.key];
+    ok('盤で字を掴むと選べる（'+KASA.GSEL+'）', KASA.GSEL===mid.key);
+    ok('引くとその字だけ動く（左右 '+(g1?g1.dx.toFixed(2):'-')+' / 上下 '+(g1?g1.dy.toFixed(2):'-')+'）',
+       !!g1 && Math.abs(g1.dx)>0.01 && Math.abs(g1.dy)>0.01);
+    ok('隣の字は動いていない', !KASA.GLYPH[boxes[0].key] && !KASA.GLYPH[boxes[2].key]);
+
+    /* ③ 大きさの玉・角度の玉 */
+    KASA.render();
+    const b2=KASA.glyphBoxes(KASA.camScreen()).find(q=>q.key===mid.key);
+    const h2=KASA.glyphHandles(b2);
+    const cxy=[b2.x,b2.y];
+    const far=[cxy[0]+(h2.size[0]-cxy[0])*1.9, cxy[1]+(h2.size[1]-cxy[1])*1.9];
+    drag(h2.size, far);
+    ok('角の玉でその字だけ大きくなる（'+(KASA.GLYPH[mid.key].s||1).toFixed(2)+'）',
+       (KASA.GLYPH[mid.key].s||1) > 1.2);
+    KASA.render();
+    const b3=KASA.glyphBoxes(KASA.camScreen()).find(q=>q.key===mid.key);
+    const h3=KASA.glyphHandles(b3);
+    drag(h3.rot, [b3.x + (b3.y-h3.rot[1])*0.9, b3.y + (h3.rot[0]-b3.x)*0.9]);
+    ok('上の玉でその字だけ回る（'+Math.round(KASA.GLYPH[mid.key].r||0)+'°）',
+       Math.abs(KASA.GLYPH[mid.key].r||0) > 20);
+
+    /* ④ 絵が実際に変わっている／控えに乗る／戻せる */
+    const moved=(KASA.rebuild(),shot(SW,SH,0));
+    ok('1字ずつ直すと絵が変わる（'+diff(plain,moved)+'画素）', diff(plain,moved)>800);
+    const j2=JSON.stringify(KASA.bundle());
+    ok('控えに1字ずつの直しが乗る', j2.indexOf('GLYPH')>0 && j2.indexOf(mid.key)>0);
+    KASA.applyState(JSON.parse(j2));
+    ok('控えの往復で直しが残る', !!KASA.GLYPH[mid.key]);
+    document.getElementById('b_gclearAll').click();
+    ok('ぜんぶ戻すと元の絵に戻る（ずれ '+diff(plain,(KASA.rebuild(),shot(SW,SH,0)))+'）',
+       diff(plain,(KASA.rebuild(),shot(SW,SH,0)))===0);
+    document.getElementById('c_gone').checked=false;
+    document.getElementById('c_gone').dispatchEvent(new Event('change'));
+    document.querySelector('#shape button[data-v="sheet"]').click();
+    KASA.render();
+  }
+
   // 大きく刷れるか
   const [ow,oh]=KASA.outSize();
   const t0=performance.now();

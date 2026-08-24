@@ -301,6 +301,45 @@
       ⭐ 字を読ませたいときは 削れ 0.3・抜け 0.1 くらい。崩したいときは両方上げる。</div>
   </div>
 
+  <!-- ══ 1字ずつ ══
+       ⭐⭐ 木下 2026-08-24＝「1個1個のフォントをばらばらに自分で指定してレイアウトしたい、
+          角度や大きさも変えたり」「ボード上で調整できるとなおよい」
+       ⭐ 既定は切＝点けるまで盤の見え方も操作も1つも変わらない。 -->
+  <div class="grp" id="gGlyph">
+    <label class="h">1字ずつ — 盤の上で組む</label>
+    <label class="chk"><input type="checkbox" id="c_gone"> 1字ずつ触る</label>
+    <div id="gPick" class="note" style="margin-top:6px">点けると盤に字ごとの四角が出ます。押して選び、そのまま引くと動きます。</div>
+    <div id="gBody" style="display:none">
+      <div class="row" style="margin-top:8px"><span class="n">この字の書体</span></div>
+      <select id="g_font" style="width:100%;padding:8px 9px;background:rgba(28,28,30,.05);
+        border:1px solid var(--line);border-radius:8px;color:var(--fg);font-family:inherit;font-size:12px">
+        <option value="">（ぜんぶと同じ）</option>
+        <option value="Hiragino Mincho ProN, serif">ヒラギノ明朝</option>
+        <option value="Hiragino Sans, sans-serif">ヒラギノ角ゴ</option>
+        <option value="Yu Mincho, serif">游明朝</option>
+        <option value="Zen Kaku Gothic New, sans-serif">Zen Kaku Gothic New</option>
+        <option value="Space Mono, monospace">Space Mono</option>
+        <option value="Georgia, serif">Georgia</option>
+        <option value="Impact, sans-serif">Impact</option>
+      </select>
+      <div class="row" style="margin-top:8px"><span class="n">この字の大きさ</span><output id="o_gs"></output></div>
+      <input type="range" id="r_gs" min="0.15" max="6" step="0.01">
+      <div class="row"><span class="n">この字の角度</span><output id="o_gr"></output></div>
+      <input type="range" id="r_gr" min="-180" max="180" step="1">
+      <div class="row"><span class="n">左右</span><output id="o_gdx"></output></div>
+      <input type="range" id="r_gdx" min="-2" max="2" step="0.005">
+      <div class="row"><span class="n">上下</span><output id="o_gdy"></output></div>
+      <input type="range" id="r_gdy" min="-2" max="2" step="0.005">
+      <button class="btn" id="b_gclear">この字を戻す</button>
+    </div>
+    <button class="btn" id="b_gclearAll" style="margin-top:6px">ぜんぶ戻す</button>
+    <div class="note">⭐<b>大きさ 1.00・角度 0</b> が「ぜんぶと同じ」＝直していない状態。
+      触った字だけが〔字〕の値から外れます。<br>
+      ⭐<b>並びは崩れません</b>＝送り幅はぜんぶ共通の大きさで測っているので、1字だけ大きくしても隣は動きません。<br>
+      ⚠️ <b>盤の玉</b>＝右下で大きさ・上で角度。四角の中を引くと位置。<br>
+      ⚠️ 字を打ち替えると番号がずれます（何文字目、で覚えているため）。</div>
+  </div>
+
   <div class="grp">
     <label class="h">紙 — 何枚重ねるか</label>
     <div class="row"><span class="n">枚数</span><output id="o_sheets"></output></div>
@@ -539,6 +578,7 @@ let P = {
   ratio:'169', sz:'1620', long:1620,
   /* かたち＝紙片を重ねる／文字に切る */
   shape:'sheet', text:'ひかり', font:'Hiragino Mincho ProN, serif', tw:600, tsize:0.95, tls:0.06, tlh:1.1,
+  gone:0,               /* 1字ずつ触る。⭐ 既定は切＝盤の見え方も操作もいままでどおり */
   /* ⭐ 絵そのものの置き所。盤の上でつかんで動かす／⌥ドラッグで大きさ。
      ⚠️ 皺は【世界】に貼りついたまま動かさない ＝「紙は動かさず、切る場所を変える」。
         そうしないと、動かすたびに紙の表情まで一緒に付いてきて“紙に見えなく”なる。 */
@@ -622,25 +662,66 @@ const ETN=4096;                          /* ⚠️ 512 だと大きく出した�
       （一定の大きさで並べると、太い所も細い所も同じ団子になって字に見えない）
    ⚠️ 紙片は【重ならないと1つの塊にならない】。だから間隔は半径より狭く取る。
    ══════════════════════════════════════════════════════ */
+/* ══ 字の割り付け ═══════════════════════════════════════════
+   ⭐⭐ 字をどこに置くかを決める式は【ここ1本だけ】。
+   🔴 2026-08-24 まで、まったく同じ並べ方が「文字に切る」と「紙片で字を組む」に
+      2つ書き写してあった。片方だけ直せば黙って食い違う（HORI2 の動画で実際に踏んだ型）。
+   ⭐ 返すのは【置き場所の一覧】。描くのは呼んだ側。
+      1字ずつの直し（GLYPH）もここで1回だけ効かせる＝どこから見ても同じ絵になる。 */
+let GLYPH = {};                 /* 1字ずつの直し  key='行,列' → {f,s,r,dx,dy} */
+let GSEL  = null;               /* いま選んでいる字（key）＝【状態】。設定ではないので控えに入れない */
+const glyphKey = (li,ci) => li+','+ci;
+const glyphOf  = (li,ci) => GLYPH[glyphKey(li,ci)] || null;
+/* ⭐ 字を置くかたちは2つある（text / tpiece）。⚠️「〜以外」で書くと仲間が増えたとき黙って外れる */
+const shapeUsesText = () => P.shape==='text' || P.shape==='tpiece';
+function glyphPlan(g, S, CX, CY){
+  const fs0=Math.max(4,P.tsize*S);
+  const lines=(P.text||'').split('\n');
+  const lh=fs0*P.tlh, ls=P.tls*fs0;
+  const out=[];
+  for(let li=0;li<lines.length;li++){
+    const chars=[...lines[li]];
+    /* 送り幅は【ぜんぶ共通の大きさ】で測る＝1字だけ大きくしても並びは崩れない */
+    g.font=P.tw+' '+fs0+'px '+P.font;
+    const ww=chars.map(ch=>g.measureText(ch).width);
+    const total=ww.reduce((a,b)=>a+b,0)+ls*Math.max(0,chars.length-1);
+    let px=CX+P.ox*S-total/2;
+    const py=CY+P.oy*S+(li-(lines.length-1)/2)*lh;
+    for(let ci=0;ci<chars.length;ci++){
+      const o=glyphOf(li,ci), k=(o&&o.s ? o.s : 1);
+      out.push({ li, ci, key:glyphKey(li,ci), ch:chars[ci],
+        x: px+ww[ci]/2 + (o&&o.dx ? o.dx*S : 0),
+        y: py          + (o&&o.dy ? o.dy*S : 0),
+        fs: fs0 * k,
+        font: (o&&o.f) || P.font,
+        w: P.tw,
+        rot: (o&&o.r ? o.r*Math.PI/180 : 0),
+        /* つかむ四角（おおよそでよい）＝送り幅 × 大きさ、高さは字の大きさ */
+        bw: Math.max(6, ww[ci]*k), bh: Math.max(6, fs0*k) });
+      px+=ww[ci]+ls;
+    }
+  }
+  return out;
+}
+/* ⭐ 割り付けどおりに描く。⚠️ 回さない字は【今までと1手も変えない】＝画素まで同じ */
+function drawGlyphs(g, plan){
+  g.textAlign='center'; g.textBaseline='middle';
+  for(const q of plan){
+    g.font=q.w+' '+q.fs+'px '+q.font;
+    if(q.rot){
+      g.save(); g.translate(q.x,q.y); g.rotate(q.rot); g.fillText(q.ch,0,0); g.restore();
+    }else{
+      g.fillText(q.ch, q.x, q.y);
+    }
+  }
+}
 function textMask(W,H,cam){
   const S=cam.S, CX=cam.cx, CY=cam.cy;
   const tc=document.createElement('canvas'); tc.width=W; tc.height=H;
   const g=tc.getContext('2d',{willReadFrequently:true});
   g.fillStyle='#000'; g.fillRect(0,0,W,H);
   g.fillStyle='#fff';
-  const fs=Math.max(4,P.tsize*S);
-  g.font=P.tw+' '+fs+'px '+P.font;
-  g.textAlign='center'; g.textBaseline='middle';
-  const lines=(P.text||'').split('\n');
-  const lh=fs*P.tlh, ls=P.tls*fs;
-  for(let li=0;li<lines.length;li++){
-    const ln=lines[li], chars=[...ln];
-    const ww=chars.map(ch=>g.measureText(ch).width);
-    const total=ww.reduce((a,b)=>a+b,0)+ls*Math.max(0,chars.length-1);
-    let px=CX+P.ox*S-total/2;
-    const py=CY+P.oy*S+(li-(lines.length-1)/2)*lh;
-    for(let ci=0;ci<chars.length;ci++){ g.fillText(chars[ci], px+ww[ci]/2, py); px+=ww[ci]+ls; }
-  }
+  drawGlyphs(g, glyphPlan(g,S,CX,CY));
   return g.getImageData(0,0,W,H).data;
 }
 let SHEETN=0;
@@ -817,22 +898,8 @@ function buildField(W,H,cam){
     const g=tc.getContext('2d',{willReadFrequently:true});
     g.fillStyle='#000'; g.fillRect(0,0,W,H);
     g.fillStyle='#fff';
-    const fs=Math.max(4,P.tsize*S);
-    g.font=P.tw+' '+fs+'px '+P.font;
-    g.textAlign='center'; g.textBaseline='middle';
-    const lines=(P.text||'').split('\n');
-    const lh=fs*P.tlh, ls=P.tls*fs;
-    for(let li=0;li<lines.length;li++){
-      const ln=lines[li];
-      const ww=[...ln].map(ch=>g.measureText(ch).width);
-      let total=ww.reduce((a,b)=>a+b,0)+ls*Math.max(0,ln.length-1);
-      let px=CX+P.ox*S-total/2, py=CY+P.oy*S+(li-(lines.length-1)/2)*lh;
-      for(let ci=0;ci<[...ln].length;ci++){
-        const ch=[...ln][ci];
-        g.fillText(ch, px+ww[ci]/2, py);
-        px+=ww[ci]+ls;
-      }
-    }
+    /* ⭐ 並べ方は glyphPlan 1本だけ（ここに書き写さない） */
+    drawGlyphs(g, glyphPlan(g,S,CX,CY));
     const src=g.getImageData(0,0,W,H).data;
     /* 縁をちぎる＝取り出す場所を、なだらかな乱れでずらす */
     const sd1=(P.seed*7919)|0, sd2=(P.seed*104729)|0;
@@ -1633,7 +1700,57 @@ function artCorners(cam){
   const x0=sx(ARTBOX.x0), y0=sy(ARTBOX.y0), x1=sx(ARTBOX.x1), y1=sy(ARTBOX.y1);
   return { x0,y0,x1,y1, pts:[[x0,y0],[x1,y0],[x1,y1],[x0,y1]] };
 }
+/* ══⭐⭐ 1字ずつ触る ── 2026-08-24 ═══════════════════════════════
+   木下「1個1個のフォントをばらばらに自分で指定してレイアウトしたい、角度や大きさも変えたり」
+       「ボード上で調整できるとなおよい」
+   ⭐ 置き場所は glyphPlan 1本から出す＝盤の四角と、実際に切る字が【必ず同じ所】にある。
+   ⭐ 既定は切。点けるまで盤の見え方も操作も1つも変わらない。 */
+let GMEAS=null;
+function glyphBoxes(cam){
+  if(!shapeUsesText()) return [];
+  if(!GMEAS) GMEAS=document.createElement('canvas').getContext('2d');
+  return glyphPlan(GMEAS, cam.S, cam.cx, cam.cy);
+}
+/* 選んだ字の取っ手＝右下＝大きさ／上＝角度（世界でなく画面の画素で持つ） */
+function glyphHandles(q){
+  const hw=q.bw/2, hh=q.bh/2, c=Math.cos(q.rot), s=Math.sin(q.rot);
+  const T=(dx,dy)=>[q.x+dx*c-dy*s, q.y+dx*s+dy*c];
+  return { size:T(hw,hh), rot:T(0,-hh-Math.max(14,q.bh*0.42)), corners:[T(-hw,-hh),T(hw,-hh),T(hw,hh),T(-hw,hh)] };
+}
+function drawGlyphFrames(octx,cam){
+  if(!P.gone || !shapeUsesText()) return;
+  const list=glyphBoxes(cam); if(!list.length) return;
+  const lw=Math.max(1,cw/1400), r=artHandleR()*0.78;
+  octx.save(); octx.setTransform(1,0,0,1,0,0); octx.globalCompositeOperation='source-over';
+  for(const q of list){
+    const sel=(GSEL===q.key), h=glyphHandles(q);
+    octx.beginPath();
+    h.corners.forEach(([x,y],i)=> i?octx.lineTo(x,y):octx.moveTo(x,y));
+    octx.closePath();
+    octx.setLineDash(sel?[]:[5,5]);
+    octx.strokeStyle='rgba(0,0,0,.5)'; octx.lineWidth=lw*(sel?3:2); octx.stroke();
+    octx.strokeStyle=sel?'rgba(255,255,255,.98)':'rgba(255,255,255,.6)';
+    octx.lineWidth=lw*(sel?1.4:1); octx.stroke();
+    if(!sel) continue;
+    octx.setLineDash([]);
+    /* 角度の玉までの棒 */
+    octx.beginPath(); octx.moveTo((h.corners[0][0]+h.corners[1][0])/2,(h.corners[0][1]+h.corners[1][1])/2);
+    octx.lineTo(h.rot[0],h.rot[1]);
+    octx.strokeStyle='rgba(0,0,0,.5)'; octx.lineWidth=lw*3; octx.stroke();
+    octx.strokeStyle='rgba(255,255,255,.95)'; octx.lineWidth=lw; octx.stroke();
+    for(const [x,y] of [h.size,h.rot]){
+      octx.beginPath(); octx.arc(x,y,r,0,Math.PI*2);
+      octx.fillStyle='rgba(255,255,255,.96)';
+      octx.shadowColor='rgba(0,0,0,.45)'; octx.shadowBlur=r*0.8; octx.shadowOffsetY=lw;
+      octx.fill();
+      octx.shadowColor='transparent'; octx.shadowBlur=0; octx.shadowOffsetY=0;
+      octx.lineWidth=Math.max(1,lw*1.6); octx.strokeStyle='rgba(0,0,0,.55)'; octx.stroke();
+    }
+  }
+  octx.restore();
+}
 function drawArtHandles(octx,cam){
+  drawGlyphFrames(octx,cam);
   const c=artCorners(cam); if(!c) return;
   if(Math.abs(c.x1-c.x0)<6 || Math.abs(c.y1-c.y0)<6) return;   /* 小さすぎると邪魔なだけ */
   const r=artHandleR(), lw=Math.max(1,cw/1400);
@@ -1838,6 +1955,8 @@ function shapeSync(){
     const r=el('r_'+id); if(r){ r.classList.toggle('hide',anyT); r.previousElementSibling.classList.toggle('hide',anyT); }
   }
   segSet('shape',P.shape);
+  /* ⭐ 1字ずつの欄も、かたちに合わせて出し入れする（つけ忘れると死んだ欄が残る） */
+  if(typeof glyphPanel==='function') glyphPanel();
 }
 el('t_text').addEventListener('input',()=>{ P.text=el('t_text').value; rebuild(); saveLocal(); });
 el('t_text').addEventListener('focus',pushHist);
@@ -1860,6 +1979,74 @@ el('anGo').onclick=()=>{
 });
 /* 版面のわく ── 切＝見えているとおりに出す／入＝わくの中だけ出す */
 el('c_frame').onchange=e=>{ pushHist(); P.frame=e.target.checked; frameSync(); touchView(); kick(); szSync(); saveLocal(); };
+
+/* ══⭐⭐ 1字ずつ ── 盤とパネルは【同じ GLYPH】を見る（値を書く道は1本）══════ */
+function glyphPanel(){
+  const body=el('gBody'), pick=el('gPick');
+  el('c_gone').checked=!!P.gone;
+  const live=P.gone&&shapeUsesText();
+  /* ⚠️ 触れるのに効かない欄を残さない＝字を置くかたちのときだけ出す（〔文字〕の欄と同じ約束） */
+  el('gGlyph').classList.toggle('hide', !shapeUsesText());
+  if(!live||GSEL===null){
+    body.style.display='none';
+    pick.textContent = P.gone ? '盤で字を押すと選べます'
+      : '点けると盤に字ごとの四角が出ます。押して選び、そのまま引くと動きます。';
+    return;
+  }
+  const [li,ci]=GSEL.split(',').map(Number);
+  const ch=([...((P.text||'').split('\n')[li]||'')][ci])||'?';
+  pick.textContent='選んでいる字：「'+ch+'」（'+(li+1)+'行目の'+(ci+1)+'文字目）';
+  body.style.display='';
+  const o=GLYPH[GSEL]||{};
+  const put=(id,v,fmt)=>{ const r=el('r_'+id), out=el('o_'+id);
+    if(r&&+r.value!==+v) r.value=v; if(out) out.textContent=fmt(v); };
+  put('gs', o.s||1, v=>(+v).toFixed(2));
+  put('gr', o.r||0, v=>Math.round(v)+'°');
+  put('gdx',o.dx||0,v=>(+v).toFixed(2));
+  put('gdy',o.dy||0,v=>(+v).toFixed(2));
+  el('g_font').value=o.f||'';
+}
+el('c_gone').onchange=e=>{
+  pushHist(); P.gone=e.target.checked?1:0;
+  if(!P.gone) GSEL=null;
+  glyphPanel(); kick(); saveLocal();
+  stat(P.gone?'1字ずつ触る ── 盤で字を押して選ぶ':'1字ずつ触るのをやめた');
+};
+{
+  const wr=(id,key,fmt)=>{
+    const r=el('r_'+id); if(!r) return;
+    r.addEventListener('pointerdown',()=>{ pushHist(); dragOn(); });
+    r.addEventListener('input',()=>{
+      if(GSEL===null) return;
+      const o=GLYPH[GSEL]||(GLYPH[GSEL]={});
+      o[key]=+r.value;
+      const out=el('o_'+id); if(out) out.textContent=fmt(+r.value);
+      coarse(); hiLater(); rebuild(); saveLocal();
+    });
+    const done=()=>{ dragOff(); saveLocal(); };
+    r.addEventListener('pointerup',done); r.addEventListener('change',done);
+  };
+  wr('gs','s', v=>(+v).toFixed(2));
+  wr('gr','r', v=>Math.round(v)+'°');
+  wr('gdx','dx',v=>(+v).toFixed(2));
+  wr('gdy','dy',v=>(+v).toFixed(2));
+  el('g_font').addEventListener('change',()=>{
+    if(GSEL===null) return;
+    pushHist();
+    const o=GLYPH[GSEL]||(GLYPH[GSEL]={});
+    const v=el('g_font').value;
+    if(v) o.f=v; else delete o.f;
+    rebuild(); saveLocal();
+  });
+  el('b_gclear').onclick=()=>{
+    if(GSEL===null) return;
+    pushHist(); delete GLYPH[GSEL]; glyphPanel(); rebuild(); saveLocal(); stat('この字を戻した');
+  };
+  el('b_gclearAll').onclick=()=>{
+    if(!Object.keys(GLYPH).length){ stat('直した字はありません'); return; }
+    pushHist(); GLYPH={}; glyphPanel(); rebuild(); saveLocal(); stat('ぜんぶ戻した');
+  };
+}
 /* ⭐ 版面の比は【わくを使うときだけ】要る。切のときは盤に見えているまま出るので出さない。 */
 function frameSync(){ el('ratioBox').classList.toggle('hide',!P.frame); }
 
@@ -1873,6 +2060,7 @@ function syncUI(){
   segSet('ratio',P.ratio); segSet('szSeg',P.sz);
   el('r_long').classList.toggle('hide',P.sz!=='px');
   el('c_frame').checked=P.frame; frameSync();
+  glyphPanel();
   el('c_paper').value=P.paper; el('c_lamp').value=P.lamp; el('c_wall').value=P.wall;
   szSync();
   /* ⚠️ 盤の上のスライダーも一緒に戻す（控えを開いた・戻したときに古い値のまま残らない） */
@@ -1914,6 +2102,10 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
 (function(){
   let on=false, tgt=null, S=1;
   let mode=null, sx=0, sy=0, ax=0, ay=0, base=1;
+  let gBase=null;                       /* 1字ずつ触るとき、掴んだ瞬間の値 */
+  /* ⭐ 掴みっぱなしにする道は1本。⚠️ 指が既に離れていると投げるので、投げても止まらないようにする
+     （試験の作り物の指でも同じ）。掴めなくても引くこと自体はできる。 */
+  const capture=(e)=>{ try{ cv.setPointerCapture(e.pointerId); }catch(_){} };
   let ac=null, ad=1;                    /* 角を引くとき＝絵の真ん中と、掴んだときの距離 */
   /* 🔴🔴 2026-08-23 木下＝「これが全くうごかない」（紙片で字を組む のとき）
      ＝ **字を使うかたちが2つある**のに、`text` だけを見て『それ以外は size』にしていた。
@@ -1922,7 +2114,7 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
      ⚠️ ⌥ドラッグも同じ道を通るので、前から動いていなかった（私が入れた不具合ではないが、
         取っ手を足したことで初めて表に出た）。
      ⭐ 規則＝**字を置くかたち（text / tpiece）は tsize、紙だけのかたち（sheet）は size**。 */
-  const usesText=()=>P.shape==='text'||P.shape==='tpiece';
+  const usesText=shapeUsesText;         /* ⭐ 式は1本（上で決めたものを使う） */
   const sizeKey=()=>usesText()?'tsize':'size';
   const sizeLim=()=>usesText()?[0.1,1.6]:[0.3,1.5];
   function sizeSync(){
@@ -1989,7 +2181,7 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
     /* ⭐ 右ボタン か スペース＝盤を動かす。それ以外＝いちばん近い穴か灯をつかむ */
     if(e.button===2||e.button===1||spaceDown){
       pan=true; px=e.clientX; py=e.clientY;
-      cv.setPointerCapture(e.pointerId); document.body.classList.add('panning');
+      capture(e); document.body.classList.add('panning');
       e.preventDefault(); return;
     }
     const p=at(e); let best=1e9;
@@ -2009,11 +2201,50 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
           ac={ x:(ARTBOX.x0+ARTBOX.x1)/2, y:(ARTBOX.y0+ARTBOX.y1)/2 };
           ad=Math.max(1e-4, Math.hypot(p.x-ac.x, p.y-ac.y));
           base=P[sizeKey()];
-          on=true; cv.setPointerCapture(e.pointerId); cv.classList.add('grabbing'); dragOn();
+          on=true; capture(e); cv.classList.add('grabbing'); dragOn();
           stat('角を引く ── 絵の大きさ');
           return;
         }
       }
+    }
+    /* ⭐⭐ 1字ずつ触る（点いているときだけ）。⚠️ 絵ぜんぶの角のほうが優先＝先に上で見ている。
+       順＝選んだ字の取っ手 → 字の四角の中 → いままでどおり（穴・灯・絵） */
+    if(P.gone && usesText()){
+      const cam=camScreen(), list=glyphBoxes(cam);
+      const grab=artHandleR()*(e.pointerType==='touch'?2.6:2.0);
+      const sel=list.find(q=>q.key===GSEL);
+      if(sel){
+        const h=glyphHandles(sel);
+        for(const [nm,pt] of [['gsize',h.size],['grot',h.rot]]){
+          if(Math.hypot(scr.x-pt[0], scr.y-pt[1])<=grab){
+            pushHist(); mode=nm; tgt=null;
+            const o=GLYPH[GSEL]||(GLYPH[GSEL]={});
+            gBase={ s:o.s||1, r:o.r||0,
+                    cx:(sel.x-cam.cx)/cam.S, cy:(sel.y-cam.cy)/cam.S,
+                    d:Math.max(1e-4,Math.hypot(p.x-(sel.x-cam.cx)/cam.S, p.y-(sel.y-cam.cy)/cam.S)),
+                    a:Math.atan2(p.y-(sel.y-cam.cy)/cam.S, p.x-(sel.x-cam.cx)/cam.S) };
+            on=true; capture(e); cv.classList.add('grabbing'); dragOn();
+            stat(nm==='gsize'?'この字の大きさ':'この字の角度');
+            return;
+          }
+        }
+      }
+      /* 四角の中を押した＝その字を選んで動かす（後ろの字が勝つように後ろから見る） */
+      for(let i=list.length-1;i>=0;i--){
+        const q=list[i], c2=Math.cos(-q.rot), s2=Math.sin(-q.rot);
+        const dx=scr.x-q.x, dy=scr.y-q.y;
+        const lx=dx*c2-dy*s2, ly=dx*s2+dy*c2;
+        if(Math.abs(lx)<=q.bw/2 && Math.abs(ly)<=q.bh/2){
+          pushHist();
+          GSEL=q.key; glyphPanel();
+          const o=GLYPH[GSEL]||(GLYPH[GSEL]={});
+          mode='gmove'; tgt=null; sx=p.x; sy=p.y; gBase={ dx:o.dx||0, dy:o.dy||0 };
+          on=true; capture(e); cv.classList.add('grabbing'); dragOn();
+          stat('「'+q.ch+'」をつかんだ ── 角の玉で大きさ・上の玉で角度');
+          return;
+        }
+      }
+      if(GSEL!==null){ GSEL=null; glyphPanel(); kick(); }   /* 外を押したら選び直し */
     }
     for(const h of HOLE){ const d=(h.x-p.x)**2+(h.y-p.y)**2; if(d<best){best=d;tgt=h;} }
     for(const l of LAMP){ const d=(l.x-p.x)**2+(l.y-p.y)**2; if(d<best){best=d;tgt=l;} }
@@ -2030,7 +2261,7 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
       mode='move'; tgt=null; sx=p.x; sy=p.y; ax=P.ox; ay=P.oy;
       stat('絵をつかんだ ── ⌥を押しながらで 大きさ');
     }
-    on=true; cv.setPointerCapture(e.pointerId); cv.classList.add('grabbing');
+    on=true; capture(e); cv.classList.add('grabbing');
     if(mode!=='obj') dragOn();
   });
   /* ⭐ 角の上に来たら矢印を変える＝掴めることが【触る前に】分かる（マウスのときだけ） */
@@ -2051,6 +2282,19 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
     if(mode==='obj'){ const p=at(e); tgt.x=p.x; tgt.y=p.y; kick(); return; }
     if(mode==='move'){
       const p=at(e); moveArt(ax+(p.x-sx), ay+(p.y-sy)); rebuild(); return;
+    }
+    /* ⭐ 1字ずつ ── 書き込む先は GLYPH[GSEL] だけ（並びの式は触らない） */
+    if(mode==='gmove'||mode==='gsize'||mode==='grot'){
+      const p=at(e), o=GLYPH[GSEL]; if(!o) return;
+      if(mode==='gmove'){ o.dx=gBase.dx+(p.x-sx); o.dy=gBase.dy+(p.y-sy); }
+      else if(mode==='gsize'){
+        const d=Math.max(1e-4,Math.hypot(p.x-gBase.cx,p.y-gBase.cy));
+        o.s=clamp(gBase.s*(d/gBase.d),0.15,6);
+      }else{
+        const a=Math.atan2(p.y-gBase.cy,p.x-gBase.cx);
+        o.r=Math.round(((gBase.r+(a-gBase.a)*180/Math.PI)%360+540)%360-180);
+      }
+      glyphPanel(); rebuild(); return;
     }
     if(mode==='scale'){
       setSize(base*Math.exp(-(e.clientY-sy)*0.005)); rebuild(); return;
@@ -2077,7 +2321,7 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
 
 /* ══ ふる / 戻す ══════════════════════════════════════ */
 let hist=[], histLock=false;
-const snap=()=>JSON.stringify({P,HOLE,LAMP});
+const snap=()=>JSON.stringify({P,HOLE,LAMP,GLYPH});
 function pushHist(){
   if(histLock) return;
   const s=snap();
@@ -2089,6 +2333,9 @@ function applyState(o){
   if(o.P) Object.assign(P,o.P,{anim:false});
   if(Array.isArray(o.HOLE)) HOLE=o.HOLE.map(h=>({x:+h.x,y:+h.y,auto:false}));
   if(Array.isArray(o.LAMP)) LAMP=o.LAMP.map(h=>({x:+h.x,y:+h.y,auto:false}));
+  /* ⚠️ 古い控えには GLYPH が無い＝そのときは【直していない】に戻す（前の直しを引きずらない） */
+  GLYPH = (o.GLYPH && typeof o.GLYPH==='object') ? JSON.parse(JSON.stringify(o.GLYPH)) : {};
+  GSEL = null;
   histLock=false;
   fit(); syncUI(); anim(false); rebuild();
 }
@@ -2142,7 +2389,10 @@ el('b_png').onclick=async ()=>{
 };
 
 /* ══ 控え ══════════════════════════════════════════════ */
-function bundle(){ return {v:1, tool:'kasa', P:{...P,anim:false}, HOLE, LAMP}; }
+/* ⭐ 控えとローカル保存は【この1本】。1字ずつの直し（GLYPH）もここに入れる
+   ＝入れ忘れると「リロードで消える」道具になる（[[道具の状態はコミットで守れない]]）。
+   ⚠️ 選んでいる字（GSEL）は【状態】であって設定ではないので入れない。 */
+function bundle(){ return {v:1, tool:'kasa', P:{...P,anim:false}, HOLE, LAMP, GLYPH}; }
 el('b_save').onclick=()=>{
   const b=new Blob([JSON.stringify(bundle(),null,1)],{type:'application/json'});
   dl(b,'kasa_'+Date.now()+'.json'); stat('控えた');
@@ -2347,7 +2597,9 @@ window.KASA={ get P(){return P}, get HOLE(){return HOLE}, get LAMP(){return LAMP
   paint, buildField, outSize, bundle, applyState, rebuild, fit, render, camScreen,
   get FW(){return FW}, get FH(){return FH}, get fieldMs(){return fieldMs},
   /* ⭐ 取っ手の物差し（絵の広がり・世界の座標）＝試験もここを見る。別に測り直さない */
-  get ARTBOX(){return ARTBOX}, artCorners, halfWH };
+  get ARTBOX(){return ARTBOX}, artCorners, halfWH,
+  /* ⭐ 1字ずつ：盤の四角と取っ手も【本体と同じ関数】から取る（試験が別に測り直さない） */
+  get GLYPH(){return GLYPH}, get GSEL(){return GSEL}, glyphBoxes, glyphHandles };
 </script>
 
 <!-- ══════════════════════════════════════════════════════════════
