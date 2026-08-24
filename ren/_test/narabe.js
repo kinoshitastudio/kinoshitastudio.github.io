@@ -114,6 +114,38 @@
       ok('触った所の絵を拾える', narabePick(b2.x, b2.y) === 2, '拾った=' + narabePick(b2.x, b2.y));
       ok('何も無い所は拾わない', narabePick(0.02, 0.02) === -1);
 
+      /* 🔴 木下＝「オブジェクト以外を触ると他が非アクティブになる」＝1枚が転ぶと以降が全部消えた */
+      {
+        const keep = clips[1].el;
+        clips[1].el = { get naturalWidth(){ throw new Error('壊れた素材'); },
+                        get videoWidth(){ throw new Error('壊れた素材'); } };
+        sel = -1; frameAt(0);
+        const b0 = narabeBox(clips[0]), b2b = narabeBox(clips[2]);
+        const bg0 = px(0.01, 0.01);
+        ok('1枚が転んでも他は描かれる（そこで止まらない）',
+           px(b0.x, b0.y) !== bg0 && px(b2b.x, b2b.y) !== bg0,
+           px(b0.x, b0.y) + ' / ' + px(b2b.x, b2b.y));
+        ok('  転んだことは画面で言う',
+           /描けなかった/.test(document.getElementById('outNote').textContent),
+           document.getElementById('outNote').textContent.slice(0, 30));
+        clips[1].el = keep; clips[1].__bad = false;
+      }
+      /* ⭐ 何も無い所を触ったら選択が外れるだけ（触っていない絵は動かない・消えない） */
+      {
+        sel = 2; tiltNote();
+        const before = clips.map(c => c.tilt.x + ',' + c.tilt.y).join('|');
+        const rr0 = cv.getBoundingClientRect();
+        cv.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true,
+          clientX: rr0.left + rr0.width*0.02, clientY: rr0.top + rr0.height*0.02 }));
+        window.dispatchEvent(new PointerEvent('pointermove', { bubbles:true,
+          clientX: rr0.left + rr0.width*0.3, clientY: rr0.top + rr0.height*0.3 }));
+        window.dispatchEvent(new PointerEvent('pointerup', { bubbles:true }));
+        ok('何も無い所を触ると選択が外れる', sel === -1, String(sel));
+        ok('  触っていない絵は動かない', clips.map(c => c.tilt.x + ',' + c.tilt.y).join('|') === before);
+        ok('  掴み手も消える', !document.getElementById('pkbox').classList.contains('on'));
+        sel = 0; tiltNote();
+      }
+
       // ── 大きさのつまみが【選んだ1枚だけ】に効く（他へ乗り移らない）
       sel = 1; tiltNote();
       const scEl = document.getElementById('tlSc');
