@@ -703,6 +703,41 @@ function glyphPlan(g, S, CX, CY){
   }
   return out;
 }
+/* ══⭐⭐ 字を打ち替えても、直した字はついてくる ── 2026-08-24 ══════════
+   🔴 直しは「何行目の何文字目」で覚えている＝**頭に1字足すと全部ずれる**。
+      「ひかり」の"か"を回してから「あひかり」にすると、回っているのは"ひ"になってしまう。
+   ⭐ 打ち替えの前後で【いちばん長い共通の並び】を取り、残った字に直しを引き継ぐ。
+      消えた字の直しは捨てる（残すと、次に同じ字を打ったとき勝手に化ける）。
+   ⚠️ 改行も1文字として数える＝行と桁がそのまま復元できる。 */
+function textCells(t){
+  const out=[], lines=(t||'').split('\n');
+  for(let li=0;li<lines.length;li++){
+    const cs=[...lines[li]];
+    for(let ci=0;ci<cs.length;ci++) out.push({ch:cs[ci], li, ci});
+    if(li<lines.length-1) out.push({ch:'\n', li:-1, ci:-1});
+  }
+  return out;
+}
+function remapGlyphs(oldT, newT){
+  if(!Object.keys(GLYPH).length){ GSEL=null; return; }
+  const A=textCells(oldT), B=textCells(newT), n=A.length, m=B.length;
+  if(n*m>400000) return;                     /* 長すぎるときは触らない（安全側） */
+  const L=Array.from({length:n+1},()=>new Uint16Array(m+1));
+  for(let i=n-1;i>=0;i--) for(let j=m-1;j>=0;j--)
+    L[i][j] = A[i].ch===B[j].ch ? L[i+1][j+1]+1 : Math.max(L[i+1][j], L[i][j+1]);
+  const G2={}; let sel=null, i=0, j=0;
+  while(i<n && j<m){
+    if(A[i].ch===B[j].ch){
+      if(A[i].li>=0 && B[j].li>=0){
+        const ka=glyphKey(A[i].li,A[i].ci), kb=glyphKey(B[j].li,B[j].ci);
+        if(GLYPH[ka]) G2[kb]=GLYPH[ka];
+        if(GSEL===ka) sel=kb;
+      }
+      i++; j++;
+    } else if(L[i+1][j]>=L[i][j+1]) i++; else j++;
+  }
+  GLYPH=G2; GSEL=sel;
+}
 /* ⭐ 割り付けどおりに描く。⚠️ 回さない字は【今までと1手も変えない】＝画素まで同じ */
 function drawGlyphs(g, plan){
   g.textAlign='center'; g.textBaseline='middle';
@@ -1958,7 +1993,12 @@ function shapeSync(){
   /* ⭐ 1字ずつの欄も、かたちに合わせて出し入れする（つけ忘れると死んだ欄が残る） */
   if(typeof glyphPanel==='function') glyphPanel();
 }
-el('t_text').addEventListener('input',()=>{ P.text=el('t_text').value; rebuild(); saveLocal(); });
+el('t_text').addEventListener('input',()=>{
+  /* ⭐ 打ち替えたら、直した字を新しい並びへ引き継ぐ（番号がずれない） */
+  const old=P.text; P.text=el('t_text').value;
+  remapGlyphs(old,P.text); glyphPanel();
+  rebuild(); saveLocal();
+});
 el('t_text').addEventListener('focus',pushHist);
 el('t_font').addEventListener('change',()=>{ pushHist(); P.font=el('t_font').value; rebuild(); saveLocal(); });
 segWire('szSeg',v=>{ P.sz=v; el('r_long').classList.toggle('hide',v!=='px'); szSync(); saveLocal(); });

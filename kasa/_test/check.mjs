@@ -128,7 +128,14 @@ try{
   ok('内へ引くと小さくなる（'+szUp.toFixed(2)+' → '+KASA.P[k0].toFixed(2)+'）',
      KASA.P[k0] < szUp*0.95);
 
-  /* 中を引く＝左右上下に動く（ox/oy が変わる・大きさは変わらない） */
+  /* 中を引く＝左右上下に動く（ox/oy が変わる・大きさは変わらない）
+     🔴 ここは前から【3回に1回落ちて】いた＝真ん中の近くに磁石や灯があると
+        「穴をつかむ」に化けて ox が動かない。⭐ 測りたいのは何も無い所をつかむ方なので先に消す。 */
+  const rhM=document.getElementById('r_holeN'), keepHM=rhM.value;
+  const rlM=document.getElementById('r_lampN'), keepLM=rlM.value;
+  rhM.value=0; rhM.dispatchEvent(new Event('input'));
+  rlM.value=1; rlM.dispatchEvent(new Event('input'));
+  if(KASA.LAMP[0]){ KASA.LAMP[0].x=9; KASA.LAMP[0].y=9; }   /* 灯も遠くへ逃がす */
   KASA.render();
   const C1 = KASA.artCorners(KASA.camScreen());
   const mid1 = [ (C1.x0+C1.x1)/2, (C1.y0+C1.y1)/2 ];
@@ -138,6 +145,8 @@ try{
      +' / oy '+oy0.toFixed(2)+'→'+KASA.P.oy.toFixed(2)+'）',
      Math.abs(KASA.P.ox-ox0)>0.01 && Math.abs(KASA.P.oy-oy0)>0.01);
   ok('動かしても大きさは変わらない', Math.abs(KASA.P[k0]-szKeep)<1e-9);
+  rhM.value=keepHM; rhM.dispatchEvent(new Event('input'));
+  rlM.value=keepLM; rlM.dispatchEvent(new Event('input'));
 
   /* ⚠️ 取っ手は【出す絵には描かない】（版面のわくと同じ約束） */
   {
@@ -219,6 +228,9 @@ try{
 
     /* 🔴 ここまでの試験で状態が動いている（ふる・大きさ・穴の数…）。
        ⭐ 測る前に【邪魔な物を止める】＝磁石の放射と繊維の粒は向きの偏りを汚す。 */
+    /* 🔴 種が前の試験（ふる・くしゃっ）で変わっていると、皺そのものが毎回違う紙になる
+       ＝比が 0.88/0.80 まで寄って 3回に1回落ちた。⭐ 種も固定する。 */
+    KASA.P.seed=20260814;
     set('holeN',0); set('fib',0); set('orbit',0); set('breath',0);
     set('crN',5); set('crW',2.4); set('crF',0.42); set('crA',1.05);
     set('sqA',0); set('sqD',90); set('sqP',0); set('sqW',0.9);
@@ -317,6 +329,39 @@ try{
     document.getElementById('b_gclearAll').click();
     ok('ぜんぶ戻すと元の絵に戻る（ずれ '+diff(plain,(KASA.rebuild(),shot(SW,SH,0)))+'）',
        diff(plain,(KASA.rebuild(),shot(SW,SH,0)))===0);
+    /* ⭐⭐ 打ち替えても直した字がついてくるか（番号でなく【字の並び】で引き継ぐ）
+       🔴 前は「何行目の何文字目」で覚えていたので、頭に1字足すと全部ずれた。 */
+    {
+      const t=document.getElementById('t_text');
+      const type=(v)=>{ t.value=v; t.dispatchEvent(new Event('input')); };
+      const mark=(k,v)=>{ KASA.GLYPH[k]=Object.assign(KASA.GLYPH[k]||{},v); };
+      const only=()=>Object.keys(KASA.GLYPH).sort().join(' ');
+
+      type('ひかり'); KASA.GLYPH['0,0']=undefined; delete KASA.GLYPH['0,0'];
+      document.getElementById('b_gclearAll').click();
+      mark('0,1',{r:30});                                  /* 真ん中の「か」を回す */
+      type('あひかり');                                     /* 頭に1字足す */
+      ok('頭に足しても直した字がついてくる（'+only()+'）', !!KASA.GLYPH['0,2'] && !KASA.GLYPH['0,1']);
+      ok('引き継いだ値も同じ（'+(KASA.GLYPH['0,2']||{}).r+'°）', (KASA.GLYPH['0,2']||{}).r===30);
+
+      type('ひかり');                                       /* 元に戻す */
+      ok('消しても戻る（'+only()+'）', !!KASA.GLYPH['0,1']);
+
+      type('ひり');                                         /* 直した字そのものを消す */
+      ok('直した字を消すと直しも消える（'+only()+'）', Object.keys(KASA.GLYPH).length===0);
+
+      /* 選んでいる字も一緒についてくる */
+      type('ひかり'); document.getElementById('b_gclearAll').click();
+      mark('0,2',{s:1.6});
+      KASA.glyphBoxes(KASA.camScreen());
+      const t2=document.getElementById('t_text'); t2.value='ひかり'; t2.dispatchEvent(new Event('input'));
+      type('ゆひかり');
+      ok('2行でもずれない',
+         (()=>{ document.getElementById('b_gclearAll').click(); type('ひか\\nり'); mark('1,0',{r:12});
+                type('ひか\\nりん'); return (KASA.GLYPH['1,0']||{}).r===12; })());
+      document.getElementById('b_gclearAll').click();
+      type('ひかり');
+    }
     document.getElementById('c_gone').checked=false;
     document.getElementById('c_gone').dispatchEvent(new Event('change'));
     document.querySelector('#shape button[data-v="sheet"]').click();
@@ -349,10 +394,15 @@ try{
     for(let k=1;k<=6;k++){ tev('pointermove',23,cx-70+9*k,cy-70+9*k); tev('pointermove',24,cx+70-9*k,cy+70-9*k); }
     tev('pointerup',23,cx,cy); tev('pointerup',24,cx,cy);
     ok('近づけると引く（'+Math.round(z1*100)+'% → '+Math.round(KASA.VIEW.z*100)+'%）', KASA.VIEW.z < z1*0.9);
-    /* ⚠️ 1本の指は今までどおり＝寄るのを足して壊していないか */
+    /* ⚠️ 1本の指は今までどおり＝寄るのを足して壊していないか
+       🔴 真ん中の近くに磁石があると「穴をつかむ」に化けて、3回に1回落ちていた。
+          ⭐ 測りたいのは【何も無い所をつかむ】方なので、先に磁石を 0 にする。 */
+    const rh2=document.getElementById('r_holeN'), keepH=rh2.value;
+    rh2.value=0; rh2.dispatchEvent(new Event('input'));
     const bx0=KASA.P.ox;
     tev('pointerdown',25,cx,cy); tev('pointermove',25,cx+50,cy+20); tev('pointerup',25,cx+50,cy+20);
     ok('1本の指では今までどおり絵がつかめる', Math.abs(KASA.P.ox-bx0)>1e-6);
+    rh2.value=keepH; rh2.dispatchEvent(new Event('input'));
     KASA.P.ox=ox0; KASA.P.oy=oy0;
     cvT.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));   /* 見え方を戻す */
     KASA.render();
