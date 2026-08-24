@@ -219,6 +219,21 @@
   #drop span{background:rgba(10,10,10,.86);color:#f4f2ee;font-size:12.5px;
     padding:9px 16px;border-radius:999px;}
   body.dragging #view{outline:3px dashed rgba(10,10,10,.5);outline-offset:7px;}
+  /* ⭐⭐ 書き出しの進み具合＝盤の上に大きく出す。
+     🔴 木下＝「押しても書き出し中とも、どれくらいかも分からない」。
+        パネルの隅の小さい註では【見えない】＝出していないのと同じ。 */
+  #prog{position:fixed;left:0;right:290px;top:0;z-index:60;display:none;
+    padding:14px 18px;background:rgba(10,10,10,.92);color:#f4f2ee;
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;}
+  #prog.on{display:block;}
+  #prog .pt{display:flex;align-items:center;gap:12px;font-size:12.5px;}
+  #prog .pt b{font-family:"Space Mono",monospace;font-size:15px;font-variant-numeric:tabular-nums;}
+  #prog .sp{flex:1;}
+  #prog button{background:#f4f2ee;color:#0a0a0a;border:none;border-radius:8px;
+    padding:7px 14px;font-size:11px;cursor:pointer;font-family:"Space Mono",monospace;}
+  #prog .bar{margin-top:9px;height:5px;border-radius:99px;background:rgba(255,255,255,.18);overflow:hidden;}
+  #prog .bar i{display:block;height:100%;width:0;background:#f4f2ee;border-radius:99px;}
+  @media (max-width:900px){ #prog{right:0;} }
 
   #title{position:fixed;left:22px;top:18px;z-index:11;mix-blend-mode:difference;color:#fff;pointer-events:none;}
   #title h1{font-family:"Zen Kaku Gothic New",sans-serif;font-weight:900;font-size:24px;line-height:1;}
@@ -405,6 +420,12 @@
 <div id="title"><h1>連</h1><p>REN / KINOSHITA STUDIO</p></div>
 <button id="helpBtn" title="使い方">?</button>
 <div id="drop"><span>盤（破線の中）に落とす＝<b>その場所に置く</b>／それ以外に落とす＝<b>順に繋ぐ</b></span></div>
+<!-- ⭐ 書き出しの進み具合（盤の上に大きく出す・やめられる） -->
+<div id="prog">
+  <div class="pt"><span id="progT">書き出し中…</span><b id="progN"></b>
+    <span class="sp"></span><button id="progX">やめる</button></div>
+  <div class="bar"><i id="progB"></i></div>
+</div>
 
 <div id="manual"><div class="sheet">
   <button class="x" id="manualX">×</button>
@@ -1000,7 +1021,11 @@ cv.addEventListener('pointerdown', e => {
   const r0 = cv.getBoundingClientRect();
   if(P.narabe){
     const i = narabePick((e.clientX - r0.left)/r0.width, (e.clientY - r0.top)/r0.height);
-    if(i >= 0 && i !== sel){ sel = i; buildClips(); tiltNote(); }
+    /* ⭐ 何も無い所を触ったら【選択を外す】だけ（イラレ／Figma と同じ）。
+       🔴 前は選択が残ったまま掴めたので、空いた所を触っただけで
+          さっき選んでいた絵が付いてきた＝触っていないものが動いた。 */
+    if(i < 0){ if(sel !== -1){ sel = -1; buildClips(); tiltNote(); } return; }
+    if(i !== sel){ sel = i; buildClips(); tiltNote(); }
   }
   const c = clips[sel];
   if(!c || !c.tilt) return;
@@ -1262,7 +1287,13 @@ function frameAt(t){
         if(!shooting && Math.abs(c.el.currentTime - want) > 0.12) c.el.currentTime = want;
         vGain(c, 1);                 /* 並べている時は全部の音が同時に鳴る */
       }
-      drawOne(c, 1);
+      /* 🔴🔴 1枚ずつ囲う。木下＝「オブジェクト以外を触ると他が非アクティブになる」
+         ＝1枚が転ぶと forEach が丸ごと止まり、【それ以降が全部消えた】。
+         ⭐ 転んだ1枚だけを飛ばして、残りは必ず描く。⚠️ 黙って飛ばさず、画面で1回言う。 */
+      try{ drawOne(c, 1); }
+      catch(err){
+        if(!c.__bad){ c.__bad = true; outNote('「' + (c.name || '素材') + '」が描けなかった（他はそのまま出ます）'); }
+      }
     });
     drawEdge();
     return;
@@ -2147,6 +2178,38 @@ function sndStream(){
       動画は【seek が終わるのを待ってから】描く。音は解いた波を混ぜ直して別に詰める。
    ⚠️ 動画の幅と高さは【偶数】でないと avc1 が受け取らないので、偶数の板に写してから渡す。 */
 let shooting = false;                       /* ⭐ 書き出し中は frameAt に頭出しをさせない */
+let shootStop = false;                      /* ⭐ 「やめる」を押したか */
+/* ⭐⭐ 進み具合は【盤の上に大きく】出す。パネルの隅の小さい註は見えない＝出していないのと同じ。
+   ⚠️ 残り時間は【実測した速さ】から出す（決め打ちの見積もりは必ず外れる）。 */
+const progEl = () => document.getElementById('prog');
+function progOn(head, n){
+  shootStop = false;
+  const p = progEl(); if(!p) return;
+  document.getElementById('progT').textContent = head;
+  document.getElementById('progN').textContent = n || '';
+  document.getElementById('progB').style.width = '0%';
+  p.classList.add('on');
+  const b = document.getElementById('bMovie'); if(b){ b.textContent = '書き出し中…'; b.style.opacity = '.5'; }
+}
+function progSet(k, N, t0ms){
+  const u = N ? k / N : 0;
+  document.getElementById('progB').style.width = Math.round(u*100) + '%';
+  let rest = '';
+  if(k > 3 && t0ms){
+    const per = (performance.now() - t0ms) / k;
+    const s = Math.max(0, Math.round((N - k) * per / 1000));
+    rest = ' ／ 残り約 ' + (s >= 60 ? Math.floor(s/60) + '分' + (s%60) + '秒' : s + '秒');
+  }
+  document.getElementById('progN').textContent = k + ' / ' + N + ' コマ（' + Math.round(u*100) + '%）' + rest;
+}
+function progOff(){
+  const p = progEl(); if(p) p.classList.remove('on');
+  const b = document.getElementById('bMovie'); if(b){ b.textContent = '動画で出す'; b.style.opacity = ''; }
+}
+document.getElementById('progX')?.addEventListener('click', () => {
+  shootStop = true;
+  document.getElementById('progT').textContent = 'やめています…';
+});
 const startOf = i => clips.slice(0, i).reduce((s, c) => s + durOf(c), 0);
 function seekOne(c, tt){
   return new Promise(res => {
@@ -2227,7 +2290,7 @@ async function exportMovie(){
   try{ await exportMovieCore(); }
   catch(err){
     /* 🔴 黙って落ちない。押したのに何も起きない＝壊れていると読まれる */
-    shooting = false;
+    shooting = false; progOff();
     outNote('書き出しで止まった：' + (err && err.message ? err.message : err));
   }
 }
@@ -2252,6 +2315,9 @@ async function exportMovieCore(){
   const og = out.getContext('2d');
   const was = playing; playing = false; shooting = true;
   clips.forEach(c => { if(c.type === 'vid'){ try{ c.el.pause(); }catch(_){} } });
+  /* ⭐ 押した直後に【何を作るか】を出す（W×H・コマ数・秒数）＝待たされている理由が分かる */
+  const nVid = clips.filter(c => c.type === 'vid').length;
+  progOn(W + ' × ' + H + '・' + T.toFixed(1) + '秒' + (nVid ? '（動画' + nVid + '本＝コマごとに頭出しするので時間がかかります）' : ''), '0 / ' + N + ' コマ');
   outNote('音をまとめている…');
   let mixed = null;
   try{ mixed = await mixAudio(T); }catch(err){ mixed = null; }
@@ -2268,7 +2334,14 @@ async function exportMovieCore(){
     error: e => { vErr = e; outNote('詰めるところで止まった：' + (e && e.message ? e.message : e)); }
   });
   venc.configure(cfg);                       /* ⭐ 試して通った設定をそのまま使う */
+  const tStart = performance.now();
   for(let k = 0; k < N; k++){
+    if(shootStop){                            /* ⭐ 途中でやめられる（長いので必要） */
+      try{ venc.close(); }catch(_){}
+      shooting = false; playing = was; progOff();
+      outNote('やめた（' + k + '/' + N + ' コマまで）');
+      return;
+    }
     const t = k / fps;
     await seekAll(t);
     frameAt(t);
@@ -2276,13 +2349,14 @@ async function exportMovieCore(){
     const vf = new VideoFrame(out, { timestamp: Math.round(k * 1e6 / fps), duration: Math.round(1e6/fps) });
     venc.encode(vf, { keyFrame: k % (fps*2) === 0 });
     vf.close();
-    if(k % 5 === 0){
-      outNote('書き出し中… ' + (k+1) + '/' + N + ' コマ');
+    if(k % 3 === 0 || k === N-1){
+      progSet(k+1, N, tStart);
       await new Promise(r => setTimeout(r));      /* 画面を固めない */
     }
     if(vErr) throw vErr;                     /* ⚠️ 止まったら黙って続けない */
     if(venc.encodeQueueSize > 12) await new Promise(r => setTimeout(r, 8));
   }
+  document.getElementById('progT').textContent = '音を詰めています…';
   await venc.flush();
   if(mixed){
     try{
@@ -2309,9 +2383,18 @@ async function exportMovieCore(){
     }catch(e2){ /* 音だけ諦める＝映像は出す */ }
   }
   muxer.finalize();
-  dl(new Blob([muxer.target.buffer], { type:'video/mp4' }), 'ren_' + Date.now() + '.mp4');
-  shooting = false; playing = was;
-  outNote('出した（mp4・' + T.toFixed(1) + '秒・' + N + 'コマ' + (mixed ? '・音つき' : '・音なし') + '）');
+  const buf = muxer.target.buffer;
+  /* ⚠️ 空っぽを落とさない（開いて初めて壊れていると分かる、が最悪） */
+  if(!buf || buf.byteLength < 1024){
+    shooting = false; playing = was; progOff();
+    outNote('中身が空でした（' + (buf ? buf.byteLength : 0) + 'B）。出していません');
+    return;
+  }
+  const name = 'ren_' + Date.now() + '.mp4';
+  dl(new Blob([buf], { type:'video/mp4' }), name);
+  shooting = false; playing = was; progOff();
+  outNote('出した → ' + name + '（' + (buf.byteLength/1048576).toFixed(1) + ' MB・'
+          + T.toFixed(1) + '秒・' + N + 'コマ' + (mixed ? '・音つき' : '・音なし') + '）');
 }
 document.getElementById('bMovie').onclick = () => exportMovie();
 /* ⚠️ 昔の道（1コマずつ詰められないブラウザ用）。長さが当てにならないので既定にしない */

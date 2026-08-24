@@ -42,8 +42,18 @@ if [ "$MODE" = "shot" ]; then
 fi
 
 # ⚠️ 窓の大きさを渡さないと盤が数十pxまで潰れる＝掴み手の位置が実機とかけ離れる
+# 🔴 書き出しの試験を入れてから【Chrome が終わらなくなった】（詰める側が生きたまま）。
+#    ⭐ 結果は先に出ているので、判定の印が出たら【こちらから止める】。
+: > /tmp/_ren_dom.html
 "$CHROME" --headless=new --disable-gpu --window-size=1500,1000 --virtual-time-budget=20000 \
-  --dump-dom "http://localhost:$PORT/$OUT" > /tmp/_ren_dom.html 2>/dev/null
+  --dump-dom "http://localhost:$PORT/$OUT" > /tmp/_ren_dom.html 2>/dev/null &
+CHPID=$!
+for i in $(seq 1 90); do
+  sleep 1
+  grep -q "__ALL_PASS__\|__HAS_FAIL__" /tmp/_ren_dom.html 2>/dev/null && break
+  kill -0 $CHPID 2>/dev/null || break
+done
+kill $CHPID 2>/dev/null; wait $CHPID 2>/dev/null
 
 python3 - <<'PY'
 import re, html
