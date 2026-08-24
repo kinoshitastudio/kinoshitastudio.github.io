@@ -1805,7 +1805,9 @@
     <button data-v="1" class="on">紙を捨てる</button><button data-v="0">紙も出す</button>
   </div>
   <button class="btn" id="bTrace" style="width:100%;margin-top:6px">この写真をパスにする</button>
-  <div class="note">比べる広さ＝線の太さの3〜5倍が目安／拾う強さ＝薄い線まで拾うなら下げる<br>なめらかさ＝アンカーを減らす／<b>コーナー＝角を残す強さ（0で全部丸くなる）</b>／細部を捨てる＝小さなゴミを拾わない<br>色数は<b>上げるほど細かく分かれる</b>（近い色が混ざるときは上げる）。光のムラは自動でならしている</div>
+  <!-- ⭐ 始めた節で終われるようにする（外すために別の節へ行かせない）2026-08-24 木下＝「置いた写真は消せない」 -->
+  <button class="btn" id="bTrDel" style="width:100%;margin-top:6px">写真を外す</button>
+  <div class="note">比べる広さ＝線の太さの3〜5倍が目安／<b>拾う強さは下げすぎない</b>（1〜5 だと約半分が字になってざらつく。ノートの線は 8〜15／写真は 20〜40）<br>なめらかさ＝アンカーを減らす／<b>コーナー＝角を残す強さ（0で全部丸くなる）</b>／細部を捨てる＝小さなゴミを拾わない<br>色数は<b>上げるほど細かく分かれる</b>（近い色が混ざるときは上げる）。光のムラは自動でならしている</div>
   </div>
 
   <h2 class="fold" data-open="0">ALIGN</h2>
@@ -4793,9 +4795,17 @@ document.getElementById('bRefLoad').onclick = () => document.getElementById('fil
 document.getElementById('fileRef').addEventListener('change', e => {
   const f = e.target.files[0]; if(f) loadRef(f); e.target.value = '';
 });
-document.getElementById('bRefDel').onclick = () => {
-  if(refItem){ refItem.remove(); refItem = null; stat('下敷きを外した'); }
-};
+/* ⭐ 外し方は1つ（節が2つあっても同じ道を通る）。⚠️ 元画像とプレビューの旗まで戻す＝
+      次に選んだ写真が「前の白黒のまま」にならない。 */
+function removeRef(){
+  if(!refItem && !refSrcImg){ stat('外す写真がありません'); return; }
+  refLayer.removeChildren();
+  refItem = null; refSrcImg = null; trPrev = false;
+  const p = document.getElementById('bTrPrev'); if(p) p.textContent = '白黒で見る';
+  stat('写真を外した');
+}
+document.getElementById('bRefDel').onclick = removeRef;
+document.getElementById('bTrDel').onclick  = removeRef;
 /* ══ 採取（写真から字を拾ってパスにする）══
    撮った看板・印刷物・手書きから「字の形だけ」持ち帰る。下敷きの次の一手。
    写真は影とムラがあるので、しきい値は読み込み時に自動で当てる（大津の二値化）。 */
@@ -4858,18 +4868,59 @@ function trPosterCanvas(img, o, maxW){
   x.putImageData(d, 0, 0);
   return c;
 }
+/* ⭐⭐ 拾えているかを【数】で見る。目で見て「ざらざら」と言う前に、道具の側が言えるようにする。
+   ratio＝字として拾った割合 ／ rough＝縁の長さ ÷ 面積（細切れほど大きい）。
+   ⚠️ 太さ w の線なら rough ≒ 2/w（3px の線で 0.7）。1画素の点だけなら 2〜4 になる。 */
+function trMaskStats(mask, W, H){
+  let ink = 0, per = 0;
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+    const p = y*W + x; if(!mask[p]) continue;
+    ink++;
+    if(x === 0   || !mask[p-1]) per++;
+    if(x === W-1 || !mask[p+1]) per++;
+    if(y === 0   || !mask[p-W]) per++;
+    if(y === H-1 || !mask[p+W]) per++;
+  }
+  return { ratio: ink / (W*H), rough: ink ? per / ink : 0, ink };
+}
+/* ⭐ 次に動かすつまみを【1本だけ】名指しで言う。
+   🔴🔴 「まわりと比べる」式は、拾う強さが小さいと【必ず約半分】が字になる
+      （まわりの平均より暗い画素は半分あるから）。写真の善し悪しではなく式の性質なので、
+      木下に「ざらざらですね」と言わせる前に道具が言う。 */
+function trAdvice(st, o){
+  if(!st) return '';
+  const pc = Math.round(st.ratio * 1000) / 10;
+  if(st.ratio > 0.55)
+    return `${pc}% を字にしている＝【紙のほうを拾っている】。「明暗を反転」を押す`;
+  if(st.rough > 1.5 && st.ratio > 0.10)
+    return o.local
+      ? `${pc}% がざらざらの点＝拾いすぎ。「拾う強さ」を上げる（今 ${o.offset} → 20〜40）`
+      : `${pc}% がざらざらの点＝「しきい値」が地に寄っている`;
+  if(st.ratio < 0.004)
+    return `${pc}% しか拾えていない＝「拾う強さ」を下げる（今 ${o.offset}）`;
+  return `${pc}% を字として拾っている`;
+}
 /* プレビュー＝下敷きの見え方を焼き直したものに差し替える（元画像は持っておく）*/
+let trStats = null;                       // 直前のプレビューで測った拾い具合
 function refreshRefView(){
   if(!refItem || !refSrcImg) return;
   // 画像を差し替えると Raster の大きさが素の解像度に戻るので、位置と大きさを持ち越す
   const keep = refItem.bounds.clone();
   if(trPrev){
     const o = trOpts();
-    refItem.image = (o.mode === 'color')
-      ? trPosterCanvas(refSrcImg, o, 900)
-      : binarize(refSrcImg, o, 1400).cvs;
+    if(o.mode === 'color'){
+      refItem.image = trPosterCanvas(refSrcImg, o, 900); trStats = null;
+    }else{
+      const b = binarize(refSrcImg, o, 1400);
+      refItem.image = b.cvs;
+      trStats = trMaskStats(b.mask, b.W, b.H);
+    }
+    /* ⭐ 見ている間は【濃さを戻さない】。薄いまま「ここがパスになる」と言っても決められない */
+    refItem.opacity = 1;
   }else{
     refItem.image = refSrcImg;
+    refItem.opacity = +document.getElementById('refOp').value / 100;
+    trStats = null;
   }
   try{ refItem.bounds = keep; }catch(e){}
 }
@@ -4889,8 +4940,13 @@ function trSyncUI(){
   if(n) n.textContent = bw ? '白黒＝線画・字を1色のパスにする'
                            : '色数＝色ごとにパスにする（イラスト向け）';
 }
+/* ⭐ 動かしている間も拾い具合を出す＝つまみに数字が付いてくる（見て決められる） */
 ['trThr','trRad','trOff','trCols'].forEach(id =>
-  bindRange(id, () => { if(trPrev) refreshRefView(); }));
+  bindRange(id, () => { if(trPrev){ refreshRefView(); trSay(); } }));
+function trSay(head){
+  const msg = trAdvice(trStats, trOpts());
+  stat((head ? head + ' — ' : '') + (msg || 'この見えているところがパスになる'));
+}
 bindRange('trSm',  () => {});
 bindRange('trCor', () => {});
 bindRange('trMin', () => {});
@@ -4911,13 +4967,14 @@ document.getElementById('bTrPrev').onclick = () => {
   trPrev = !trPrev;
   document.getElementById('bTrPrev').textContent = trPrev ? '写真で見る' : '白黒で見る';
   refreshRefView();
-  stat(trPrev ? 'この見えているところがパスになる' : '写真に戻した');
+  if(trPrev) trSay('この見えているところがパスになる'); else stat('写真に戻した');
 };
 document.getElementById('bTrInv').onclick = () => {
   trInv = !trInv;
   document.getElementById('bTrInv').textContent = trInv ? '反転中' : '明暗を反転';
   refreshRefView();
-  stat(trInv ? '明るいところを字として拾う' : '暗いところを字として拾う');
+  const head = trInv ? '明るいところを字として拾う' : '暗いところを字として拾う';
+  if(trPrev) trSay(head); else stat(head);
 };
 document.getElementById('bTrace').onclick = () => {
   if(!refItem || !refSrcImg){ stat('先に写真を選んでください'); return; }
@@ -4945,8 +5002,16 @@ document.getElementById('bTrace').onclick = () => {
     return cp;
   };
   const made = [];
+  let warn = '';                                    // ⭐ 出したうえで、何が起きたかを言う
   if(o.mode === 'bw'){
-    const cp = build(trInkMask(G, o));
+    const mask = trInkMask(G, o);
+    const st = trMaskStats(mask, G.W, G.H);
+    /* 🔴 押す前に測る。ここで黙って出すと、木下は「壊れた」と読む（実際そう読まれた）。
+       ⚠️ 勝手に捨てたり反転したりはしない＝選んだ通りに出してから、次の一手を名指しで言う。 */
+    if(st.ratio > 0.55) warn = '⚠️ 紙のほうを拾っている（' + Math.round(st.ratio*100) + '%）— 「明暗を反転」で押し直す';
+    else if(st.rough > 1.5 && st.ratio > 0.10)
+      warn = '⚠️ ざらざらの点を拾っている（' + Math.round(st.ratio*100) + '%）— 「拾う強さ」を上げる（今 ' + o.offset + '）';
+    const cp = build(mask);
     if(cp){ cp.fillColor = paintOf(cp) || S.fill || '#0a0a0a'; made.push(cp); }
   }else{
     const q = trQuantize(G, o.cols);
@@ -4985,7 +5050,14 @@ document.getElementById('bTrace').onclick = () => {
   const grp = made.length > 1 ? new paper.Group(made) : made[0];
   grp.selected = true; guides();
   const n = made.reduce((s, g) => s + (g.children ? g.children.length : 1), 0);
-  stat(`パスにした — ${n}本の輪郭・${Math.round(performance.now()-t0)}ms（なめらかさとコーナーで整える）`);
+  /* ⚠️ 1本しか出ず、それが写真ぜんぶを覆っているとき＝拾えていないのと同じ。
+     ⭐ 「出た本数」だけ言うと成功に見えるので、覆っている割合まで言う。 */
+  if(!warn && n <= 2){
+    const cover = grp.bounds.area / Math.max(1, R.width * R.height);
+    if(cover > 0.75) warn = '⚠️ 写真ぜんぶが1本の塊になっている — 「明暗を反転」か「拾う強さ」を上げる';
+  }
+  stat(warn ? `${warn}（${n}本・${Math.round(performance.now()-t0)}ms）`
+            : `パスにした — ${n}本の輪郭・${Math.round(performance.now()-t0)}ms（なめらかさとコーナーで整える）`);
 };
 document.getElementById('bRefLock').onclick = () => {
   refLocked = !refLocked;
