@@ -8,6 +8,10 @@
 <meta property="og:description" content="作った画像や動画を放り込んで、1本の動画や GIF にする道具。時間の軸に映像と音が同じ尺で並ぶ。">
 <meta property="og:url" content="https://kinoshita.studio/ren/">
 <meta property="og:image" content="https://kinoshita.studio/assets/img/img-ui-ren.webp">
+<!-- ⭐⭐ 書き出しは【コマごとに刻む】（道具の決まり）。mp4-muxer ＋ VideoEncoder。
+     🔴 MediaRecorder の実時間録りは長さが当てにならない
+        （木下＝「6秒のタイムラインなのに2秒しか書き出しされていない」）。 -->
+<script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.1/build/mp4-muxer.min.js"></script>
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="連 REN — 作品を1本にする">
 <meta name="twitter:image" content="https://kinoshita.studio/assets/img/img-ui-ren.webp">
@@ -182,6 +186,16 @@
   .clipseg .mu.off{opacity:.45;text-decoration:line-through;}
   .clipseg.thin img,.clipseg.thin video,.clipseg.thin canvas{display:none;}
   .clipseg.thin .cshead{height:100%;}
+  /* 🔴 木下＝「タイムライン上でその動画なくても見えている状態」。
+     ⚠️ 短いものは盤で繰り返しているのに、帯が【自分の尺で終わって】いた＝画面が嘘をつく。
+     ⭐ 繰り返す分まで帯を伸ばし、1周ごとに点線で区切る＝何周しているかが目で分かる。 */
+  .clipseg i.rep{position:absolute;top:0;bottom:0;width:0;z-index:1;
+    border-left:1px dashed rgba(255,255,255,.5);pointer-events:none;}
+  .clipseg.norep{background:repeating-linear-gradient(135deg,#c9d2da 0 6px,#bcc6cf 6px 12px);}
+  .clipseg .lp{position:absolute;right:38px;top:0;height:15px;border:none;z-index:2;
+    background:none;color:#fff;font-size:9px;line-height:15px;cursor:pointer;padding:0 2px;
+    font-family:"Space Mono",monospace;}
+  .clipseg .lp.off{opacity:.45;text-decoration:line-through;}
   .clipseg .h{position:absolute;top:0;bottom:0;right:0;width:10px;cursor:ew-resize;z-index:2;
     background:linear-gradient(90deg,rgba(255,255,255,0),rgba(255,255,255,.28));}
   /* ⚠️ 左のトリムは動画だけ出す（画像は素材の中に時間が無いので出さない） */
@@ -475,6 +489,17 @@
         <button class="btn" id="bScatter">ずらして並べ直す</button>
       </div>
       <div class="row narabe-only"><label>GAP<i>すきま</i></label><input type="range" data-p="gap" min="0" max="20" step="1" value="6"><span class="val"></span></div>
+      <!-- ⭐ 何枚も重ねると【前後】と【複製】が要る（重ねた時点で必ず要る道具） -->
+      <div class="grid2 narabe-only">
+        <button class="btn" id="bFront">前へ出す</button>
+        <button class="btn" id="bBack">後ろへ送る</button>
+      </div>
+      <div class="grid2 narabe-only">
+        <button class="btn" id="bDup">複製</button>
+        <button class="btn" id="bDel">外す</button>
+      </div>
+      <div class="mod narabe-only">⭐ 矢印キーで<b>細かく動かす</b>（shift で大きく）／
+        <b>delete</b> で外す／<b>⌘Z</b> で戻す</div>
       <div class="note" id="narabeOut"></div>
     </div>
   </div>
@@ -534,6 +559,12 @@
       <div class="row bg2-only"><label>ANG<i>向き</i></label><input type="range" data-p="bgAng" min="0" max="360" step="1" value="90"><span class="val"></span></div>
       <div class="row grain-only"><label>GRAIN<i>粒の細かさ</i></label><input type="range" data-p="bgGrain" min="4" max="80" step="1" value="24"><span class="val"></span></div>
       <div class="mod">⭐ <b>粒</b>＝地を格子に割って、マスごとに帯を焼く（粒 TSUBU の断面と同じ考え方）</div>
+      <!-- ⭐ 版面の縁に引く線（木下＝「ボードの縁に線をつけれるようにして」）。
+           ⚠️ これは【絵の一部】＝書き出しに入る（掴み手とは逆の扱い）。 -->
+      <div class="row"><label>EDGE<i>縁の線</i></label><input type="range" data-p="edge" min="0" max="40" step="1" value="0"><span class="val"></span></div>
+      <div class="row"><label>INSET<i>縁からの内側</i></label><input type="range" data-p="edgeIn" min="0" max="120" step="1" value="0"><span class="val"></span></div>
+      <div class="row"><label>LINE<i>線の色</i></label><input type="color" id="edgeC" value="#ffffff"></div>
+      <div class="mod">⭐ <b>縁の線</b>＝0 で無し。内側に寄せると<b>額のような余白</b>になる</div>
       <div class="note" id="frameOut"></div>
     </div>
   </div>
@@ -573,8 +604,20 @@
         <button class="btn" id="bMovie">動画で出す</button>
         <button class="btn" id="bGif">GIF で出す</button>
       </div>
-      <div class="mod">⚠️ 書き出しは<b>実時間かかる</b>（10秒の動画なら10秒）<br>⭐ 音源を入れていれば<b>動画に音も入る</b>（GIFは音を持てない）<br>
-        ⭐ 動画＝mp4（使えないブラウザは webm）／GIF＝軽いが色数が減る</div>
+      <!-- ⭐⭐ 控え＝この道具の決まり（単体HTML・外部依存なし・JSONで往復）。
+           🔴 素材ごと入れる。木下＝「JSON書き出しもよろしく、動画も」。
+              作り方だけ控えても、開いた時に何も出ない＝控えになっていない。 -->
+      <div class="grid2" style="margin-top:6px">
+        <button class="btn" id="bSave">控える（JSON）</button>
+        <button class="btn" id="bOpen">控えを開く</button>
+      </div>
+      <input type="file" id="jfile" accept=".json,application/json" style="display:none">
+      <div class="mod">⭐ <b>控える</b>＝素材（動画・画像）ごと1つの JSON にする。
+        置き方・尺・音・並べ方も入る＝開けばそのまま続きから触れる<br>
+        ⚠️ 素材を丸ごと入れるので<b>ファイルは大きくなる</b>（動画の1.4倍が目安）</div>
+      <div class="mod">⭐ <b>1コマずつ詰める</b>ので、尺どおりの長さで出る（実時間の録りではない）<br>
+        ⭐ 音は<b>混ぜ直して</b>入る＝素材の音も、02 の音源も、ミュートも効く（GIFは音を持てない）<br>
+        ⚠️ コマ数ぶん時間がかかる（動画が多いほど遅い）。進み具合は下に出る</div>
       <div class="mod" id="outNote"></div>
     </div>
   </div>
@@ -619,7 +662,9 @@
 const P = { hold:12, fade:0, shape:1, fitMode:0, long:1280, fps:30, bg:'#0a0a0a',
             bgMode:0, bg2:'#e0322a', bgAng:90, bgGrain:24,
             /* ⭐ narabe＝1 で「同時に並べる」。gap＝升目に並べたときのすきま（版面に対する%）*/
-            narabe:0, gap:6 };
+            narabe:0, gap:6,
+            /* ⭐ 版面の縁に引く線（0で無し）。edgeIn＝縁からどれだけ内側に寄せるか */
+            edge:0, edgeIn:0, edgeC:'#ffffff' };
 const clips = [];           // { type:'img'|'vid', el, name, url }
 let sel = -1, playing = false, loop = true, t0 = 0, raf = 0;
 
@@ -665,9 +710,17 @@ const durOf = c => c.type === 'vid' ? Math.max(0.1, outOf(c) - inOf(c))
 /* ⭐⭐ 通し時間。順に繋ぐなら【足し算】、同時に並べるなら【いちばん長いもの】。
    ⚠️ ここを1か所で分けないと、書き出しの長さ・目盛り・再生ヘッドが全部ずれる
       （span / setHead / bMovie / bGif が全部この1つを見ている）。 */
-const total = () => P.narabe
-  ? clips.reduce((m,c) => Math.max(m, durOf(c)), 0)
-  : clips.reduce((s,c) => s + durOf(c), 0);
+/* ⭐⭐ 並べているとき、文字と画像は【レイヤー】＝ずっと出しっぱなし。
+   木下＝「文字も映像の中にレイヤーとして入れてほしい」。
+   ⚠️ だから【尺を決めるのは動画だけ】。文字の2秒で全体が2秒になってはいけない。 */
+const isLayer = c => P.narabe && c.type !== 'vid' && c.loop !== false;
+const total = () => {
+  if(!P.narabe) return clips.reduce((s,c) => s + durOf(c), 0);
+  let m = 0;
+  clips.forEach(c => { if(!isLayer(c)) m = Math.max(m, durOf(c)); });
+  if(!m) clips.forEach(c => { m = Math.max(m, durOf(c)); });   /* 全部が「ずっと」なら自分の尺で */
+  return m;
+};
 /* 音を含めた「タイムライン全体の長さ」＝映像と音の長い方。⭐ どこまで音が余っているかが見える */
 /* ⭐ 音は【素材のどこからどこまでを使うか】を持つ（映像のトリムと同じ考え方）。
    ⚠️ 音は1本しか持てない作りなので【分割は映像だけ】。
@@ -1123,6 +1176,57 @@ document.getElementById('bSns').onclick = () => {
   if(P.narabe && clips.length){ narabeGrid(narabeKind === 1); }
   narabeSync(); if(!playing) frameAt(cur);
 };
+/* ⭐⭐ 重ねたら必ず要るもの＝【前後】【複製】【外す】【細かく動かす】。
+   ⚠️ 描く順がそのまま重なり順（後ろの要素ほど上）＝配列の並びを入れ替えるだけでよい。 */
+function zMove(front){
+  const c = clips[sel]; if(!c) return;
+  pushUndo();
+  clips.splice(sel, 1);
+  if(front){ clips.push(c); sel = clips.length - 1; }
+  else { clips.unshift(c); sel = 0; }
+  afterAdd(); outNote(front ? 'いちばん前へ出した' : 'いちばん後ろへ送った');
+}
+function dupSel(){
+  const c = clips[sel]; if(!c) return;
+  pushUndo();
+  const n = Object.assign({}, c, { tilt: c.tilt ? Object.assign({}, c.tilt) : null });
+  if(c.type === 'text') textBake(n);              /* ⚠️ 焼いた絵を共有しない（片方を直すと両方変わる） */
+  if(n.tilt){ n.tilt.x = Math.min(0.95, n.tilt.x + 0.04); n.tilt.y = Math.min(0.95, n.tilt.y + 0.04); }
+  clips.push(n); sel = clips.length - 1;
+  afterAdd(); outNote('複製した（少しずらして置いた）');
+}
+function delSel(){
+  const c = clips[sel]; if(!c) return;
+  pushUndo();
+  try{ if(c.el && c.el.parentNode) c.el.parentNode.removeChild(c.el); }catch(_){}
+  clips.splice(sel, 1); sel = -1;
+  afterAdd(); outNote('外した（⌘Z で戻せる）');
+}
+document.getElementById('bFront').onclick = () => zMove(true);
+document.getElementById('bBack').onclick  = () => zMove(false);
+document.getElementById('bDup').onclick   = () => dupSel();
+document.getElementById('bDel').onclick   = () => delSel();
+/* ⭐ 矢印キーで細かく動かす。⚠️ 文字を打っている時は横取りしない（打てなくなる） */
+addEventListener('keydown', e => {
+  const t = e.target, ty = (t.tagName || '').toLowerCase();
+  if(ty === 'input' || ty === 'textarea' || t.isContentEditable) return;
+  const c = clips[sel];
+  if(!P.narabe || !c || !c.tilt) return;
+  if(e.key === 'Backspace' || e.key === 'Delete'){ e.preventDefault(); delSel(); return; }
+  const step = (e.shiftKey ? 0.02 : 0.004);
+  let dx = 0, dy = 0;
+  if(e.key === 'ArrowLeft')  dx = -step;
+  else if(e.key === 'ArrowRight') dx = step;
+  else if(e.key === 'ArrowUp')    dy = -step;
+  else if(e.key === 'ArrowDown')  dy = step;
+  else return;
+  e.preventDefault();
+  c.tilt.x += dx; c.tilt.y += dy;
+  pickSync(); if(!playing) frameAt(cur);
+});
+document.getElementById('edgeC')?.addEventListener('input', e => {
+  P.edgeC = e.target.value; if(!playing) frameAt(cur);
+});
 /* ⭐ すきまは動かしたその場で絵が変わる（つまみに絵が付いてくる）。
    ⚠️ 直前に押した並べ方と【同じ形】で組み直す＝ずらして並べたのに升目へ戻らない */
 document.querySelector('input[data-p="gap"]')?.addEventListener('input', e => {
@@ -1131,21 +1235,36 @@ document.querySelector('input[data-p="gap"]')?.addEventListener('input', e => {
   narabeGrid(narabeKind === 1);
   if(!playing) frameAt(cur);
 });
+/* ⭐ 版面の縁に線を引く。⚠️ これは【絵の一部】なので書き出しにも入る
+   （掴み手＝DOM とは逆。混ぜないこと）。線は内側に描く＝太くしても版面から出ない。 */
+function drawEdge(){
+  const w = P.edge | 0; if(!w) return;
+  const ins = (P.edgeIn | 0) + w/2;
+  g.save();
+  g.strokeStyle = P.edgeC || '#ffffff';
+  g.lineWidth = w;
+  g.strokeRect(ins, ins, Math.max(1, cv.width - ins*2), Math.max(1, cv.height - ins*2));
+  g.restore();
+}
 function frameAt(t){
   g.drawImage(bgBake(), 0, 0);      /* ⭐ 焼いた地を貼る（毎コマ作り直さない） */
-  if(!clips.length) return;
+  if(!clips.length){ drawEdge(); return; }
   /* ⭐ 同時に並べる＝全部を毎コマ描く。⚠️ 短いものは自分の尺で【繰り返す】
      （止めて最後の1コマを出し続けると、壊れて止まったように見える） */
   if(P.narabe){
     clips.forEach(c => {
+      const d = durOf(c);
+      /* ⚠️ 「終わったら消す」を選んだものは、尺を過ぎたら出さない＝帯の見た目と合わせる */
+      if(c.loop === false && t > d){ vGain(c, 0); return; }
       if(c.type === 'vid'){
-        const d = durOf(c);
         const want = inOf(c) + (d > 0.05 ? (t % d) : 0);
-        if(Math.abs(c.el.currentTime - want) > 0.12) c.el.currentTime = want;
+        /* ⚠️ 書き出し中は【頭出しが終わってから】呼ばれるので、ここでは触らない */
+        if(!shooting && Math.abs(c.el.currentTime - want) > 0.12) c.el.currentTime = want;
         vGain(c, 1);                 /* 並べている時は全部の音が同時に鳴る */
       }
       drawOne(c, 1);
     });
+    drawEdge();
     return;
   }
   let acc = 0, i = 0;
@@ -1162,7 +1281,7 @@ function frameAt(t){
     /* ⚠️ 動画は「いま何秒目か」を自分で合わせる（再生任せにすると繋ぎでずれる）
        ⭐ トリムしているので【素材の中の時刻＝in + local】を見る */
     const want = inOf(c) + Math.min(local, d - 0.02);
-    if(Math.abs(c.el.currentTime - want) > 0.12) c.el.currentTime = want;
+    if(!shooting && Math.abs(c.el.currentTime - want) > 0.12) c.el.currentTime = want;
   }
   const fade = P.fade / 10;
   if(fade > 0 && i < clips.length-1 && local > d - fade){
@@ -1174,6 +1293,7 @@ function frameAt(t){
   }else{
     drawOne(c, 1);
   }
+  drawEdge();
 }
 function tick(){
   raf = requestAnimationFrame(tick);
@@ -1335,7 +1455,8 @@ async function clipPeaks(c){
       pk[i] = m; if(m > mx) mx = m;
     }
     if(mx < 0.001){ c.noAudio = true; }         /* 無音の動画＝波形を出さない（嘘をつかない） */
-    else { c.peaks = pk; c.pkMax = mx; c.el.muted = false; vHook(c); }
+    /* ⭐ 解いた音は捨てずに持っておく＝書き出しで【混ぜ直す】のに使う（録り直さない） */
+    else { c.peaks = pk; c.pkMax = mx; c.abuf = ab; c.el.muted = false; vHook(c); }
   }catch(err){
     c.noAudio = true;                           /* 音の無い動画／ブラウザが解けない形式 */
   }
@@ -1521,13 +1642,43 @@ function buildClips(){
       el.style.height = 'calc(' + (100 / nCl) + '% - 2px)';
       barH = laneH / nCl;
       if(barH < 34) el.classList.add('thin');    /* 細い帯では絵も波形も出さない（潰れて読めない） */
+      /* 🔴 繰り返している分まで帯を伸ばす。木下＝「その動画なくても見えている状態」
+         ＝帯は終わっているのに盤では回り続けていた（画面が嘘をついた）。 */
+      const T = Math.max(d, total());
+      if(c.loop === false){
+        el.classList.add('norep');               /* 終わったら消す＝斜線で「ここから先は出ない」 */
+      }else if(isLayer(c)){
+        el.style.width = Math.max(12, T * p) + 'px';   /* 文字・画像＝ずっと出す（区切りは要らない） */
+      }else if(T > d + 0.01){
+        el.style.width = Math.max(12, T * p) + 'px';
+        for(let k = 1; k*d < T - 0.01; k++){
+          const ln = document.createElement('i'); ln.className = 'rep';
+          ln.style.left = (k*d*p) + 'px'; el.append(ln);
+        }
+      }
+      /* ⭐ 1本ずつ「ずっと／繰り返す／終わったら消す」を選べる */
+      const lp = document.createElement('button');
+      lp.className = 'lp' + (c.loop === false ? ' off' : '');
+      lp.textContent = isLayer(c) ? '∞' : '↻';
+      lp.title = c.loop === false ? '尺の分だけ出して消す（押すと戻す）'
+               : (c.type === 'vid' ? '短ければ繰り返す（押すと終わりで消える）'
+                                   : 'ずっと出す（押すと尺の分だけになる）');
+      lp.onclick = ev => {
+        ev.stopPropagation(); pushUndo();
+        c.loop = (c.loop === false);
+        buildClips(); if(!playing) frameAt(cur);
+        outNote(c.loop === false ? 'この素材は尺の分だけ出して消える' : 'この素材は繰り返す');
+      };
+      el.append(lp);
     }
     el.draggable = true;
     /* ⭐ 上の帯＝番号・名前・尺（Premiere と同じ並び） */
     const hd = document.createElement('div'); hd.className = 'cshead';
     const nu = document.createElement('span'); nu.textContent = i+1;
     const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = c.name || '';
-    const du = document.createElement('span'); du.className = 'du'; du.textContent = d.toFixed(1)+'s';
+    const du = document.createElement('span'); du.className = 'du';
+    /* ⚠️ 「ずっと」なのに秒数を出すと、その秒で終わると読まれる（実際そう読まれた） */
+    du.textContent = (stack && isLayer(c)) ? 'ずっと' : d.toFixed(1)+'s';
     hd.append(nu, nm, du); el.append(hd);
     /* ⭐ 頭の絵は【比率どおり】に小さく1枚（引き伸ばさない） */
     const iw = c.el && (c.el.naturalWidth || c.el.videoWidth) || 16;
@@ -1773,7 +1924,7 @@ addEventListener('drop', e => {
      ⚠️ 書き出した動画に音は入らない（canvas を録っているので）。
         ここは【尺を音に合わせるための目印】として出す。
    ⚠️ 波形は毎フレーム描かない＝読み込んだときに一度だけ描く（重いので）。 */
-let snd = null, sndBuf = null;
+let snd = null, sndBuf = null, sndURL = null;
 const waveCv = document.getElementById('wave');
 function drawWave(){
   /* ⭐⭐ 音は【映像と同じ時間軸】で描く。ここが揃っていないと、音の切れ目に尺を合わせられない。
@@ -1900,7 +2051,7 @@ addEventListener('keydown', e => {
 /* 音源を読む（ボタンからでもドロップからでも同じ道を通す） */
 async function loadSound(f){
   const url = URL.createObjectURL(f);
-  snd = new Audio(url); snd.loop = false;
+  snd = new Audio(url); snd.loop = false; sndURL = url;   /* ⭐ 控えに入れるので元も覚えておく */
   try{
     /* ⚠️ 毎回 new すると context が増え続ける。⭐ 書き出しで使うものと同じ1つを使い回す */
     if(!sndAC) sndAC = new (window.AudioContext || window.webkitAudioContext)();
@@ -1985,7 +2136,157 @@ function sndStream(){
   }
 }
 
-document.getElementById('bMovie').onclick = () => {
+/* ══⭐⭐ 書き出し（コマごとに刻む）════════════════════════
+   🔴🔴 木下＝「6秒のタイムラインなのに、2秒しか書き出しされていない」。
+      原因＝**実時間で canvas を録っていた**（MediaRecorder）。録りは
+      ・こちらの都合で早くも遅くもできない
+      ・動画の【頭出しが間に合っていなくても】そのまま録る
+      ・長さの札（duration）が当てにならない
+      ＝道具の決まり（動画は MediaRecorder 禁止・位相をコマ番号で刻む）に反していた。
+   ⭐ 直し方＝**1コマずつ作って詰める**。コマ k の時刻は t = k / fps で決め打ち、
+      動画は【seek が終わるのを待ってから】描く。音は解いた波を混ぜ直して別に詰める。
+   ⚠️ 動画の幅と高さは【偶数】でないと avc1 が受け取らないので、偶数の板に写してから渡す。 */
+let shooting = false;                       /* ⭐ 書き出し中は frameAt に頭出しをさせない */
+const startOf = i => clips.slice(0, i).reduce((s, c) => s + durOf(c), 0);
+function seekOne(c, tt){
+  return new Promise(res => {
+    const el = c.el;
+    if(Math.abs(el.currentTime - tt) < 0.002) return res();
+    let done = false;
+    const on = () => { if(done) return; done = true; el.removeEventListener('seeked', on); res(); };
+    el.addEventListener('seeked', on);
+    try{ el.currentTime = tt; }catch(err){ on(); return; }
+    setTimeout(on, 500);                    /* ⚠️ 保険＝seeked が来ない形式でも止まらない */
+  });
+}
+/* そのコマで各動画がどこを映すかを決めて、頭出しが終わるまで待つ */
+async function seekAll(t){
+  const jobs = [];
+  if(P.narabe){
+    clips.forEach(c => {
+      if(c.type !== 'vid') return;
+      const d = durOf(c);
+      if(c.loop === false && t > d) return;
+      jobs.push(seekOne(c, inOf(c) + (d > 0.05 ? (t % d) : 0)));
+    });
+  }else{
+    let acc = 0, i = 0;
+    for(; i < clips.length; i++){ const d = durOf(clips[i]); if(t < acc + d) break; acc += d; }
+    if(i >= clips.length) i = clips.length - 1;
+    const c = clips[i];
+    if(c && c.type === 'vid') jobs.push(seekOne(c, inOf(c) + Math.min(t - acc, durOf(c) - 0.02)));
+  }
+  await Promise.all(jobs);
+}
+/* 音を【混ぜ直す】＝録るのではなく、解いた波をその位置に置き直して1本にする */
+async function mixAudio(T){
+  const vs = clips.filter(c => c.type === 'vid' && c.abuf && !c.mute);
+  const hasSnd = !!(sndBuf && sndSegs.length);
+  if(!vs.length && !hasSnd) return null;
+  const rate = 48000, ch = 2;
+  const oc = new OfflineAudioContext(ch, Math.max(1, Math.ceil(T * rate)), rate);
+  const put = (buf, at, from, len) => {
+    if(len <= 0 || at >= T) return;
+    const s = oc.createBufferSource(); s.buffer = buf; s.connect(oc.destination);
+    s.start(at, from, Math.min(len, T - at));
+  };
+  vs.forEach(c => {
+    const d = durOf(c);
+    if(P.narabe){
+      if(c.loop === false) put(c.abuf, 0, inOf(c), d);
+      else for(let k = 0; k * d < T; k++) put(c.abuf, k*d, inOf(c), d);
+    }else{
+      put(c.abuf, startOf(clips.indexOf(c)), inOf(c), d);
+    }
+  });
+  if(hasSnd){
+    let at = 0;
+    for(const gseg of sndSegs){
+      const d = Math.max(0, gseg.out - gseg.in);
+      put(sndBuf, at, gseg.in, d); at += d;
+    }
+  }
+  return await oc.startRendering();
+}
+async function exportMovie(){
+  const T = total();
+  if(!clips.length || T <= 0) return;
+  if(!(window.VideoEncoder && window.Mp4Muxer)){
+    outNote('このブラウザは1コマずつ詰められないので、昔の録り方で出します（長さがずれることがあります）');
+    return exportMovieRec();
+  }
+  const fps = Math.max(1, P.fps | 0);
+  const N = Math.max(1, Math.round(T * fps));
+  const W = cv.width  - (cv.width  % 2);      /* ⚠️ 偶数にそろえる */
+  const H = cv.height - (cv.height % 2);
+  const out = document.createElement('canvas'); out.width = W; out.height = H;
+  const og = out.getContext('2d');
+  const was = playing; playing = false; shooting = true;
+  clips.forEach(c => { if(c.type === 'vid'){ try{ c.el.pause(); }catch(_){} } });
+  outNote('音をまとめている…');
+  let mixed = null;
+  try{ mixed = await mixAudio(T); }catch(err){ mixed = null; }
+  const M = window.Mp4Muxer;
+  const muxer = new M.Muxer({
+    target: new M.ArrayBufferTarget(),
+    video: { codec:'avc', width:W, height:H },
+    audio: mixed ? { codec:'aac', sampleRate:mixed.sampleRate, numberOfChannels:mixed.numberOfChannels } : undefined,
+    fastStart: 'in-memory'
+  });
+  let err = null;
+  const venc = new VideoEncoder({
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    error: e => { err = e; }
+  });
+  venc.configure({ codec:'avc1.42001f', width:W, height:H,
+                   bitrate: Math.min(24e6, Math.max(4e6, W*H*fps*0.08)), framerate: fps });
+  for(let k = 0; k < N; k++){
+    const t = k / fps;
+    await seekAll(t);
+    frameAt(t);
+    og.drawImage(cv, 0, 0, W, H);
+    const vf = new VideoFrame(out, { timestamp: Math.round(k * 1e6 / fps), duration: Math.round(1e6/fps) });
+    venc.encode(vf, { keyFrame: k % (fps*2) === 0 });
+    vf.close();
+    if(k % 5 === 0){
+      outNote('書き出し中… ' + (k+1) + '/' + N + ' コマ');
+      await new Promise(r => setTimeout(r));      /* 画面を固めない */
+    }
+    if(venc.encodeQueueSize > 12) await new Promise(r => setTimeout(r, 8));
+  }
+  await venc.flush();
+  if(mixed){
+    try{
+      const aenc = new AudioEncoder({
+        output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+        error: () => {}
+      });
+      const ach = mixed.numberOfChannels, rate = mixed.sampleRate;
+      aenc.configure({ codec:'mp4a.40.2', sampleRate:rate, numberOfChannels:ach, bitrate:192000 });
+      const step = 1024;
+      for(let off = 0; off < mixed.length; off += step){
+        const n = Math.min(step, mixed.length - off);
+        const inter = new Float32Array(n * ach);
+        for(let c2 = 0; c2 < ach; c2++){
+          const dch = mixed.getChannelData(c2);
+          for(let i2 = 0; i2 < n; i2++) inter[i2*ach + c2] = dch[off + i2];
+        }
+        aenc.encode(new AudioData({
+          format:'f32', sampleRate:rate, numberOfFrames:n, numberOfChannels:ach,
+          timestamp: Math.round(off / rate * 1e6), data: inter
+        }));
+      }
+      await aenc.flush();
+    }catch(e2){ /* 音だけ諦める＝映像は出す */ }
+  }
+  muxer.finalize();
+  dl(new Blob([muxer.target.buffer], { type:'video/mp4' }), 'ren_' + Date.now() + '.mp4');
+  shooting = false; playing = was;
+  outNote('出した（mp4・' + T.toFixed(1) + '秒・' + N + 'コマ' + (mixed ? '・音つき' : '・音なし') + '）');
+}
+document.getElementById('bMovie').onclick = () => exportMovie();
+/* ⚠️ 昔の道（1コマずつ詰められないブラウザ用）。長さが当てにならないので既定にしない */
+function exportMovieRec(){
   const T = total();
   if(!clips.length || T <= 0) return;
   /* ⭐ mp4 が使えるなら mp4（SNS にそのまま上げられる）。駄目なら webm */
@@ -2019,7 +2320,106 @@ document.getElementById('bMovie').onclick = () => {
     if(snd) snd.pause();
     document.getElementById('bPlay').textContent = '▶ 再生';
   }, T*1000 + 120);
-};
+}
+
+/* ══⭐⭐ 控える（JSON）══════════════════════════════════
+   🔴 素材ごと入れる。作り方だけ控えても、開いた時に何も出ない＝控えになっていない
+      （木下＝「JSON書き出しもよろしく、動画も」）。
+   ⚠️ 動画を丸ごと入れるので大きくなる（base64 で元の約1.37倍）。それは正直に画面で言う。
+   ⚠️ 文字は【焼いた絵】ではなく【打った内容】で控える＝開いた側で焼き直せば軽いし直せる。 */
+const toDataURL = b => new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); });
+async function renSave(){
+  if(!clips.length && !snd){ outNote('控えるものがありません'); return; }
+  outNote('控えを作っている… 素材を包んでいます');
+  const out = { tool:'REN', ver:1, at:new Date().toISOString(), P:{...P}, clips:[] };
+  for(const c of clips){
+    const o = { type:c.type, name:c.name, dur:c.dur, in:c.in, out:c.out,
+                mute:!!c.mute, loop:c.loop, tilt: c.tilt ? {...c.tilt} : null };
+    if(c.type === 'text') Object.assign(o, { text:c.text, tf:c.tf, tw:c.tw, tc:c.tc });
+    else {
+      try{ o.data = await toDataURL(await (await fetch(c.url)).blob()); }
+      catch(err){ o.data = null; }
+    }
+    out.clips.push(o);
+  }
+  if(snd && sndURL){
+    try{ out.snd = await toDataURL(await (await fetch(sndURL)).blob()); out.sndSegs = sndSegs; }
+    catch(err){}
+  }
+  const s = JSON.stringify(out);
+  dl(new Blob([s], { type:'application/json' }), 'ren_' + Date.now() + '.json');
+  outNote('控えた（' + (s.length/1048576).toFixed(1) + ' MB・素材ごと）');
+}
+/* 覚えている値を画面のつまみ・切替に戻す（控えを開いた時と、起動時に使う） */
+function syncUIFromP(){
+  document.querySelectorAll('input[type=range][data-p]').forEach(r => {
+    if(P[r.dataset.p] == null) return;
+    r.value = P[r.dataset.p];
+    const v = r.parentElement.querySelector('.val'); if(v) v.textContent = r.value;
+  });
+  document.querySelectorAll('.seg[data-seg]').forEach(seg => {
+    const k = seg.dataset.seg;
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', +b.dataset.v === +P[k]));
+  });
+  const bgEl = document.getElementById('bg');  if(bgEl && P.bg)  bgEl.value = P.bg;
+  const bg2El = document.getElementById('bg2'); if(bg2El && P.bg2) bg2El.value = P.bg2;
+  const edEl = document.getElementById('edgeC'); if(edEl && P.edgeC) edEl.value = P.edgeC;
+  bgKey = ''; bgSync(); narabeSync(); resize();
+}
+async function renOpen(file){
+  let d = null;
+  try{ d = JSON.parse(await file.text()); }catch(err){ outNote('この JSON は読めなかった'); return; }
+  if(!d || d.tool !== 'REN'){ outNote('連 REN の控えではありません'); return; }
+  outNote('控えを開いている…');
+  pushUndo();
+  clips.length = 0; sel = -1;
+  Object.assign(P, d.P || {});
+  for(const o of (d.clips || [])){
+    const c = { type:o.type, name:o.name, dur:o.dur, in:o.in, out:o.out,
+                mute:!!o.mute, loop:o.loop, tilt:o.tilt || null };
+    if(o.type === 'text'){
+      Object.assign(c, { text:o.text, tf:o.tf, tw:o.tw, tc:o.tc });
+      textBake(c);
+      if(o.tilt) c.tilt = o.tilt;                 /* ⚠️ 焼き直しで置き場を落とさない */
+      clips.push(c);
+    }else if(o.data){
+      /* ⚠️ data: のままだと動画の seek が重いので blob に戻してから使う */
+      const blob = await (await fetch(o.data)).blob();
+      const url = URL.createObjectURL(blob);
+      c.url = url;
+      await new Promise(done => {
+        if(o.type === 'vid'){
+          const v = document.createElement('video');
+          v.src = url; v.muted = false; v.playsInline = true; v.preload = 'auto';
+          v.onloadedmetadata = () => { c.el = v; clips.push(c); done(); clipPeaks(c); };
+          v.onerror = () => done();
+        }else{
+          const im = new Image();
+          im.onload = () => { c.el = im; clips.push(c); done(); };
+          im.onerror = () => done();
+          im.src = url;
+          im.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:.01;pointer-events:none;';
+          document.body.appendChild(im);
+        }
+      });
+    }
+  }
+  if(d.snd){
+    try{
+      const blob = await (await fetch(d.snd)).blob();
+      await loadSound(new File([blob], 'sound', { type: blob.type || 'audio/mpeg' }));
+      if(d.sndSegs) sndSegs = d.sndSegs;
+    }catch(err){}
+  }
+  syncUIFromP();
+  afterAdd();
+  outNote('控えを開いた（' + clips.length + '本）');
+}
+document.getElementById('bSave').onclick = () => renSave();
+document.getElementById('bOpen').onclick = () => document.getElementById('jfile').click();
+document.getElementById('jfile').addEventListener('change', e => {
+  const f = e.target.files[0]; if(f) renOpen(f); e.target.value = '';
+});
 
 /* ⭐ GIF ── 外の道具を使わずに自分で作る（1ファイルで完結させるため）。
    ⚠️ GIF は256色まで。⭐ 色は毎回【その絵から作る】（固定パレットだと濁る）。 */
@@ -2029,9 +2429,12 @@ document.getElementById('bGif').onclick = async () => {
   const fps = Math.min(P.fps, 20);            // ⚠️ GIF は重いのでこま数を抑える
   const n = Math.max(2, Math.round(T * fps));
   outNote('GIF を作っている… 0/' + n);
-  const was = playing; playing = false;
+  const was = playing; playing = false; shooting = true;
+  clips.forEach(c => { if(c.type === 'vid'){ try{ c.el.pause(); }catch(_){} } });
   const frames = [];
   for(let i = 0; i < n; i++){
+    /* ⚠️ GIF も同じ＝頭出しが終わるまで待たないと、前のコマがそのまま焼ける */
+    await seekAll(T * i / n);
     frameAt(T * i / n);
     frames.push(g.getImageData(0,0,cv.width,cv.height));
     if(i % 5 === 0){ outNote('GIF を作っている… ' + i + '/' + n); await new Promise(r => setTimeout(r)); }
@@ -2040,8 +2443,8 @@ document.getElementById('bGif').onclick = async () => {
   await new Promise(r => setTimeout(r, 30));
   const blob = encodeGif(frames, cv.width, cv.height, Math.round(100/fps));
   dl(blob, 'ren_' + Date.now() + '.gif');
-  outNote('出した（GIF）');
-  playing = was;
+  outNote('出した（GIF・' + T.toFixed(1) + '秒・' + n + 'コマ）');
+  shooting = false; playing = was;
 };
 
 /* ── GIF を書く（GIF89a・フレームごとに色を作る） ── */
