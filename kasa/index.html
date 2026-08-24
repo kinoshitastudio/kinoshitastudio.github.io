@@ -2177,7 +2177,41 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
     return {x:(e.clientX-r.left-(cssW/2+VIEW.x))/S2, y:(e.clientY-r.top-(cssH/2+VIEW.y))/S2};
   }
   let pan=false, px=0, py=0;
+  /* ══⭐⭐ 2本の指で寄る・動かす ── 2026-08-24 ═══════════════════════
+     🔴 木下＝「モバイルだと**常に選択されている状態になるため**ボードのズームイン
+        ズームアウトできない」。
+     ⭐ 正体＝**寄る道が wheel（マウス）しか無かった**。指では一生できない。
+        しかも盤は `touch-action:none` なので、ブラウザ側の拡大も殺してある。
+     ⭐ 直し＝**2本目の指が降りたら、1本目でつかんだものを【元に戻して】寄る操作に切り替える**。
+        戻さないと、寄ろうとしただけで字や絵がずれる。 */
+  const PT=new Map();                 /* いま触っている指  id → {x,y} */
+  let zoom=null;                      /* 2本指のとき {d, mx, my, z, vx, vy} */
+  let objStart=null;                  /* 穴・灯をつかんだ瞬間の位置（戻す用） */
+  function abortDrag(){
+    if(!on) return;
+    /* ⭐ 掴んだ瞬間の値へ戻す＝2本目の指が降りただけで絵が動かない */
+    if(mode==='move')                      moveArt(ax,ay);
+    else if(mode==='scale'||mode==='corner') setSize(base);
+    else if(mode==='obj' && tgt && objStart){ tgt.x=objStart.x; tgt.y=objStart.y; }
+    else if(GSEL!==null && GLYPH[GSEL] && gBase){
+      const o=GLYPH[GSEL];
+      if(mode==='gmove'){ o.dx=gBase.dx; o.dy=gBase.dy; }
+      else if(mode==='gsize') o.s=gBase.s;
+      else if(mode==='grot')  o.r=gBase.r;
+    }
+    on=false; mode=null; tgt=null; objStart=null;
+    cv.classList.remove('grabbing'); dragOff();
+  }
+  function pinchStart(){
+    const [a,b]=[...PT.values()];
+    zoom={ d:Math.max(1,Math.hypot(a.x-b.x,a.y-b.y)),
+           mx:(a.x+b.x)/2, my:(a.y+b.y)/2,
+           z:VIEW.z, vx:VIEW.x, vy:VIEW.y };
+    stat('2本の指 ── 寄る・動かす');
+  }
   cv.addEventListener('pointerdown',e=>{
+    if(e.pointerType!=='mouse') PT.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(PT.size>=2){ abortDrag(); pan=false; pinchStart(); e.preventDefault(); return; }
     /* ⭐ 右ボタン か スペース＝盤を動かす。それ以外＝いちばん近い穴か灯をつかむ */
     if(e.button===2||e.button===1||spaceDown){
       pan=true; px=e.clientX; py=e.clientY;
@@ -2256,7 +2290,7 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
       mode='scale'; tgt=null; sy=e.clientY; base=P[sizeKey()];
       stat('⌥ドラッグ ── 上下で 絵の大きさ');
     }else if(near){                     /* 近くの穴か灯 */
-      mode='obj';
+      mode='obj'; objStart={x:tgt.x,y:tgt.y};
     }else{                              /* 何も無い所 ＝ 絵そのもの */
       mode='move'; tgt=null; sx=p.x; sy=p.y; ax=P.ox; ay=P.oy;
       stat('絵をつかんだ ── ⌥を押しながらで 大きさ');
@@ -2277,6 +2311,22 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
     cv.style.cursor = hit<0 ? '' : (hit===0||hit===2 ? 'nwse-resize' : 'nesw-resize');
   }
   cv.addEventListener('pointermove',e=>{
+    if(PT.has(e.pointerId)) PT.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    /* ⭐ 2本の指＝寄る（指の間の距離）＋動かす（真ん中のずれ）。
+       ⚠️ 寄る中心は【指の真ん中】＝つまんだ所がその場に留まる（画面の真ん中に寄らない）。 */
+    if(zoom && PT.size>=2){
+      const [a,b]=[...PT.values()];
+      const d=Math.max(1,Math.hypot(a.x-b.x,a.y-b.y));
+      const mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
+      const r=cv.getBoundingClientRect();
+      const nz=clamp(zoom.z*(d/zoom.d),0.3,10), s=nz/zoom.z;
+      const cx=zoom.mx-r.left-cssW/2, cy=zoom.my-r.top-cssH/2;
+      VIEW.z=nz;
+      VIEW.x=zoom.vx*s+cx*(1-s)+(mx-zoom.mx);
+      VIEW.y=zoom.vy*s+cy*(1-s)+(my-zoom.my);
+      touchView(); preview(); sharpenLater();
+      e.preventDefault(); return;
+    }
     if(pan){ VIEW.x+=e.clientX-px; VIEW.y+=e.clientY-py; px=e.clientX; py=e.clientY; preview(); sharpenLater(); return; }
     if(!on){ if(e.pointerType!=='touch') hoverCursor(e); return; }
     if(mode==='obj'){ const p=at(e); tgt.x=p.x; tgt.y=p.y; kick(); return; }
@@ -2307,7 +2357,14 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
       setSize(base*(d/ad)); rebuild(); return;
     }
   });
-  const end=()=>{
+  const end=(e)=>{
+    if(e && PT.has(e.pointerId)) PT.delete(e.pointerId);
+    if(zoom && PT.size<2){
+      zoom=null;
+      /* ⚠️ 指が1本残っていても、そのまま引くと絵が飛ぶ＝離すまで何もしない */
+      if(PT.size>=1) return;
+      sharpenLater(); saveLocal();
+    }
     if(pan){ pan=false; document.body.classList.remove('panning'); }
     if(!on) return;
     const wasHole=mode==='obj'&&HOLE.indexOf(tgt)>=0, wasArt=mode!=='obj';
@@ -2599,7 +2656,8 @@ window.KASA={ get P(){return P}, get HOLE(){return HOLE}, get LAMP(){return LAMP
   /* ⭐ 取っ手の物差し（絵の広がり・世界の座標）＝試験もここを見る。別に測り直さない */
   get ARTBOX(){return ARTBOX}, artCorners, halfWH,
   /* ⭐ 1字ずつ：盤の四角と取っ手も【本体と同じ関数】から取る（試験が別に測り直さない） */
-  get GLYPH(){return GLYPH}, get GSEL(){return GSEL}, glyphBoxes, glyphHandles };
+  get GLYPH(){return GLYPH}, get GSEL(){return GSEL}, glyphBoxes, glyphHandles,
+  get VIEW(){return VIEW} };            /* ⭐ 寄り具合。2本指の試験がここを見る */
 </script>
 
 <!-- ══════════════════════════════════════════════════════════════
