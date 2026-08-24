@@ -294,6 +294,84 @@
          !document.querySelectorAll('#clipLane .clipseg')[1].querySelector('canvas.wv') &&
          !document.querySelectorAll('#clipLane .clipseg')[1].querySelector('.mu'));
 
+      // ══ 縁の線（木下＝「ボードの縁に線をつけれるようにして」）
+      clips.length = 0; sel = -1; seg('narabe', 1); afterAdd();
+      const eR = document.querySelector('input[data-p="edge"]');
+      eR.value = 0; eR.dispatchEvent(new Event('input')); frameAt(0);
+      const noEdge = px(0.002, 0.5);
+      eR.value = 24; eR.dispatchEvent(new Event('input'));
+      document.getElementById('edgeC').value = '#ff0000';
+      document.getElementById('edgeC').dispatchEvent(new Event('input'));
+      frameAt(0);
+      ok('縁に線が引ける', px(0.004, 0.5) !== noEdge, noEdge + ' → ' + px(0.004, 0.5));
+      ok('  線は版面の内側に入る（はみ出して切れない）', px(0.5, 0.004) !== noEdge, px(0.5, 0.004));
+      eR.value = 0; eR.dispatchEvent(new Event('input')); frameAt(0);
+      ok('  0 にすると消える', px(0.004, 0.5) === noEdge);
+
+      // ══ 重ね順・複製・外す（重ねたら必ず要るもの）
+      clips.length = 0;
+      clips.push(imgClip(200,200,'#f00','a')); clips.push(imgClip(200,200,'#0f0','b'));
+      seg('narabe', 1); document.getElementById('bGrid').click(); sel = 0; afterAdd(); tiltNote();
+      document.getElementById('bFront').click();
+      ok('前へ出すと描く順がいちばん後ろになる（＝上に乗る）',
+         clips[clips.length-1].name === 'a' && sel === clips.length-1, clips.map(c=>c.name).join(','));
+      document.getElementById('bBack').click();
+      ok('  後ろへ送ると先頭に戻る', clips[0].name === 'a' && sel === 0, clips.map(c=>c.name).join(','));
+      const n0 = clips.length;
+      document.getElementById('bDup').click();
+      ok('複製できる', clips.length === n0 + 1, n0 + ' → ' + clips.length);
+      ok('  複製はずらして置かれる（真上に隠れない）',
+         clips[clips.length-1].tilt.x !== clips[0].tilt.x);
+      document.getElementById('bDel').click();
+      ok('外せる', clips.length === n0, String(clips.length));
+
+      // ══ 書き出し（木下＝「6秒のタイムラインなのに2秒しか書き出しされていない」）
+      ok('1コマずつ詰める道具がある（MediaRecorder に頼らない）',
+         typeof exportMovie === 'function' && typeof seekAll === 'function' && !!window.Mp4Muxer,
+         window.Mp4Muxer ? 'mp4-muxer あり' : 'mp4-muxer が無い');
+      if(window.VideoEncoder){
+        const sup = await VideoEncoder.isConfigSupported(
+          { codec:'avc1.42001f', width:640, height:480, bitrate:2e6, framerate:30 });
+        ok('  avc1 で詰められる（この Chrome で新しい道が使える）', !!sup.supported);
+      }
+      clips.length = 0;
+      clips.push(vidClip(400, 500, 6.0, 'a.mp4'));
+      clips.push(vidClip(400, 500, 2.0, 'b.mp4'));
+      seg('narabe', 1); afterAdd();
+      ok('尺は【いちばん長い動画】で決まる（短い文字や画像で縮まない）',
+         Math.abs(total() - 6) < 0.01, num(total()));
+      const txt = { type:'text', text:'x', name:'x', tf:'g', tw:1, tc:'#fff', dur:2 };
+      textBake(txt); clips.push(txt); placeAt(txt, .5, .5, .3); afterAdd();
+      ok('  文字（2秒）を足しても尺は 6 秒のまま', Math.abs(total() - 6) < 0.01, num(total()));
+      ok('  文字はレイヤー＝ずっと出す扱い', isLayer(txt) === true);
+      buildClips();
+      const bars3 = [...document.querySelectorAll('#clipLane .clipseg')];
+      ok('  帯も「ずっと」と出す（秒数を出すとそこで終わると読まれる）',
+         bars3[2].querySelector('.du').textContent === 'ずっと',
+         bars3[2].querySelector('.du').textContent);
+      ok('  短い動画の帯は繰り返す分まで伸びる',
+         parseFloat(bars3[1].style.width) > parseFloat(bars3[0].style.width) * 0.9,
+         bars3[0].style.width + ' / ' + bars3[1].style.width);
+      ok('  1周ごとに区切りが入る', bars3[1].querySelectorAll('i.rep').length >= 2,
+         String(bars3[1].querySelectorAll('i.rep').length));
+
+      // ══ 控え（JSON）── 素材ごと入るか
+      const saved = await (async () => {
+        const o = { tool:'REN', ver:1, P:{...P}, clips:[] };
+        for(const c of clips){
+          const e = { type:c.type, name:c.name, dur:c.dur, in:c.in, out:c.out,
+                      mute:!!c.mute, loop:c.loop, tilt:c.tilt ? {...c.tilt} : null };
+          if(c.type === 'text') Object.assign(e, { text:c.text, tf:c.tf, tw:c.tw, tc:c.tc });
+          o.clips.push(e);
+        }
+        return o;
+      })();
+      ok('控えに置き方と尺が入る',
+         saved.clips.every(c => c.tilt) && saved.clips.length === 3, String(saved.clips.length));
+      ok('  文字は【打った内容】で控える（焼いた絵ではない）',
+         saved.clips[2].text === 'x' && !saved.clips[2].data);
+      ok('  控えを開く口がある', typeof renOpen === 'function' && !!document.getElementById('bSave'));
+
       // ── 順に繋ぐへ戻すと、今まで通り1本ずつ
       clips.length = 0; sel = -1;
       clips.push(vidClip(400, 500, 2.0, 'a.mp4'));
