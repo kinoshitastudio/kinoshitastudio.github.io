@@ -21,9 +21,11 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
-/* 道具ごとの「W×H の canvas に1枚描く」式。⭐ 本体が持っている入口をそのまま呼ぶ */
+/* 道具ごとに違うのは【P の取り方】と【1枚描く呼び方】の2つだけ。ここ1箇所に表で持つ。
+   ⭐ 本体が持っている入口をそのまま呼ぶ（試験が別に描き方を作らない）。 */
 const HOW = {
-  rui: `render(c.getContext('2d'), buildPlan(W,H), false)`,
+  rui:  { P:'P',      shot:`render(c.getContext('2d'), buildPlan(W,H), false)` },
+  tama: { P:'TAMA.P', shot:`TAMA.paint(c.getContext('2d'), W, H, 0)` },
 };
 
 const tool = process.argv[2];
@@ -35,9 +37,11 @@ const T = `
 const L=[]; const ok=(n,c)=>L.push((c?'OK  ':'NG  ')+n);
 addEventListener('error',e=>L.push('NG  例外: '+e.message+' @'+e.lineno));
 try{
+  /* ⚠️ 本体の定義より先に読まれると落ちて【何も出ない】ので、必ず try の中で取る */
+  const P = ${HOW[tool].P};
   const W=400,H=520;
   const shot=()=>{const c=document.createElement('canvas');c.width=W;c.height=H;
-    ${HOW[tool]};
+    ${HOW[tool].shot};
     return c.getContext('2d').getImageData(0,0,W,H).data;};
   const diff=(A,B)=>{let n=0;for(let i=0;i<A.length;i+=4)if(Math.abs(A[i]-B[i])>8)n++;return n;};
   const isCol=(d,x,y,hex)=>{const i=(y*W+x)*4;
