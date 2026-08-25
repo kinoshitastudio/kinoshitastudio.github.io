@@ -374,6 +374,25 @@ on</textarea>
     <div id="meter"></div>
   </div>
 
+  <!-- ══⭐⭐ 余白（額）── 朦OBORO から移した（2026-08-25）
+       木下＝「oboro で枠に線をつけるようにした。付いていない道具にも付けて」
+       ⭐ 上に被せるのではなく【中の絵が縮む】＝縁に帯が空く。
+       ⭐⭐ 額は【上のレイヤー】＝中の大きさを上げても縁は必ず残る（はみ出しは額の下に隠れる）。
+       ⚠️ 余白0・中の大きさ100・よこたて0 で今までの絵と1画素も変わらない。 -->
+  <div class="grp">
+    <label class="h">余白（額）</label>
+    <div class="row"><span class="n">余白</span><output id="o_gaku"></output></div>
+    <input type="range" id="r_gaku" min="0" max="30" step="1">
+    <div class="row"><span class="n">余白の色</span></div>
+    <input type="color" id="c_gakuCol">
+    <div class="row"><span class="n">中の大きさ</span><output id="o_gakuZ"></output></div>
+    <input type="range" id="r_gakuZ" min="50" max="200" step="1">
+    <div class="row"><span class="n">中のよこ</span><output id="o_gakuX"></output></div>
+    <input type="range" id="r_gakuX" min="-50" max="50" step="1">
+    <div class="row"><span class="n">中のたて</span><output id="o_gakuY"></output></div>
+    <input type="range" id="r_gakuY" min="-50" max="50" step="1">
+  </div>
+
   <!-- ══⭐ 動かす ══ 動くのは【重なり】だけ。字も升目も動かさない＝この道具の芯を動かす -->
   <div class="grp">
     <label class="h">動かす</label>
@@ -485,6 +504,9 @@ let P = {
   cols:26, thr:0.34, grow:0, rad:1.55,
   guide:'near', gopa:0.30, gw:1.0, gtop:false,
   paper:'#d3d3d3', ratio:'1:1', long:1400,
+  /* ⭐ 余白（額）2026-08-25 ── 朦OBORO から移した。0 で今までどおり。
+     ⚠️ この道具は【素材】の意味で mat を使っている（pl.fill==='mat'）ので、額は gaku と呼ぶ */
+  gaku:0, gakuCol:'#f2efe6', gakuZ:100, gakuX:0, gakuY:0,
   preset:0,                     /* いまどの見本の姿か（つまみを触ったら null） */
   /* ── 動かす ── ⭐ 動くのは【重なり】だけ。字も升目も動かさない */
   anim:false, cyc:3, spinN:0, spinR:0.25, spinS:0, brN:0, brA:0.25,
@@ -989,12 +1011,46 @@ function drawGuide(ctx, g, W, H){
   ctx.restore();
 }
 
+/* ⭐⭐ 余白（額）── 縁に帯を取り、その分だけ【中の絵を縮める】（朦OBORO から移した）。
+   ⭐ 版面の大きさは変えない＝PNG も動画も枠は今までどおり。変わるのは中の置き方だけ。
+   ⭐ 縮めるのは【描くときの座標系】＝円は円のまま小さく描かれる（＝縮小してぼけない）。
+   ⭐ 四辺とも【同じ画素数】の帯を取る（短い辺が基準）。辺ごとに比例させると
+      縦長の版面で上下だけ太くなり、額縁として作り損ないに見える（OBORO で木下に指摘された）。
+   ⚠️ 既定のままなら null を返す＝何も通さない＝今までの絵が1画素も変わらない。 */
+function gakuOf(W, H){
+  const p  = (+P.gaku || 0) / 100;
+  const z  = (P.gakuZ == null ? 100 : +P.gakuZ) / 100;
+  const ox = (+P.gakuX || 0) / 100, oy = (+P.gakuY || 0) / 100;
+  if(p <= 0 && z === 1 && !ox && !oy) return null;
+  const m = Math.min(W, H) * p;
+  const win = { x:m, y:m, w:W - m * 2, h:H - m * 2 };
+  const s = Math.max(0.05, Math.max(win.w / W, win.h / H) * z);
+  return { s, mx:(W - W * s) / 2 + ox * W, my:(H - H * s) / 2 + oy * H, win };
+}
 function render(ctx, plan, transparent){
   const { W, H } = plan;
+  /* ⭐⭐ 額は【上のレイヤー】＝窓は余白だけで決まる。中の大きさ・よこ・たては窓を動かさない
+     ＝寄せても大きくしても、はみ出したぶんは額の下に隠れる（縁は必ず残る）。 */
+  const MT = gakuOf(W, H);
   ctx.save();
   ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1;
   ctx.clearRect(0, 0, W, H);
+  /* ⚠️ 透明で出すときは額も塗らない（地なしで渡す道を殺さない） */
+  if(!transparent && MT){ ctx.fillStyle = P.gakuCol || '#f2efe6'; ctx.fillRect(0, 0, W, H); }
+  ctx.restore();
+
+  ctx.save();
+  if(MT){
+    ctx.beginPath(); ctx.rect(MT.win.x, MT.win.y, MT.win.w, MT.win.h); ctx.clip();
+    ctx.translate(MT.mx, MT.my); ctx.scale(MT.s, MT.s);
+    /* ⚠️ 版面そのものも切り抜きにする＝縮める前と同じ場所で切れる
+       （切らないと、はみ出したものが額へ流れ出す。OBORO で踏んだ） */
+    ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
+  }
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
   if(!transparent){ ctx.fillStyle = plan.paper; ctx.fillRect(0, 0, W, H); }
   ctx.restore();
 
@@ -1010,6 +1066,7 @@ function render(ctx, plan, transparent){
   }
 
   if(plan.guide && plan.guide.top) drawGuide(ctx, plan.guide, W, H);
+  ctx.restore();          /* ⚠️ 額の座標系を必ず戻す（0 のときも save/restore は釣り合う） */
 }
 
 /* ══════════════════════════════════════════════
@@ -1523,7 +1580,8 @@ function applyObj(txt, noHist){
 
 /* ══ つまみを繋ぐ ══════════════════════════════ */
 const RANGES = ['weight','track','lh','margin','cols','thr','grow','rad','gopa','gw','long',
-                'cyc','spinN','spinR','spinS','brN','brA'];
+                'cyc','spinN','spinR','spinS','brN','brA',
+                'gaku','gakuZ','gakuX','gakuY'];   /* ⭐ 余白（額）2026-08-25 */
 const FMT = {
   weight:v => v, track:v => v.toFixed(3), lh:v => v.toFixed(2), margin:v => (v*100).toFixed(1)+'%',
   cols:v => v, thr:v => v.toFixed(2), grow:v => (v > 0 ? '+' : '') + v.toFixed(2), rad:v => v.toFixed(2),
@@ -1532,6 +1590,8 @@ const FMT = {
   spinS:v => v.toFixed(2), brN:v => v ? v+'周' : '止', brA:v => v.toFixed(2),
   p_dx:v => v.toFixed(2), p_dy:v => v.toFixed(2), p_rs:v => v.toFixed(2), p_al:v => v.toFixed(2),
   p_rot:v => v + '°', g_n:v => v + '本', g_ang:v => v + '°', g_ramp:v => v.toFixed(2),
+  gaku:v => v ? v+'%' : '無し', gakuZ:v => v+'%',
+  gakuX:v => (v>0?'+':'')+v+'%', gakuY:v => (v>0?'+':'')+v+'%',
 };
 /* ⭐ つまみを1つでも触ったら、もう「その見本そのもの」ではない＝光を消す。
    ⚠️ 選んでいるものが分からないと、何を見ているのか分からなくなる（2026-08-20 木下） */
@@ -1583,6 +1643,9 @@ el('t_text').addEventListener('input', () => { P.text = el('t_text').value; touc
 el('t_text').addEventListener('change', pushHist);
 el('c_paper').addEventListener('input', () => { P.paper = el('c_paper').value; touched(); kick(); saveLocal(); });
 el('c_paper').addEventListener('change', pushHist);
+/* ⭐ 余白（額）の色。c_paper と同じ形（式を増やさない） */
+el('c_gakuCol').addEventListener('input', () => { P.gakuCol = el('c_gakuCol').value; touched(); kick(); saveLocal(); });
+el('c_gakuCol').addEventListener('change', pushHist);
 el('p_color').addEventListener('input', () => {
   const pl = PLATES[cur]; if(!pl) return;
   pl.color = el('p_color').value; touched(); drawPlateList(); kick(); saveLocal();
@@ -1707,6 +1770,7 @@ function syncUI(){
   RANGES.forEach(k => { el('r_' + k).value = P[k]; el('o_' + k).textContent = FMT[k](+P[k]); });
   el('t_text').value = P.text;
   el('c_paper').value = P.paper;
+  el('c_gakuCol').value = P.gakuCol || '#f2efe6';
   el('c_gtop').checked = !!P.gtop;
   const pl = PLATES[cur];
   if(pl){
