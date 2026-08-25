@@ -15,6 +15,9 @@ echo
 echo "── ③ 地なしPNG（オブジェクトだけ切り抜き）"
 node nobg.mjs    || ng=1
 echo
+echo "── ④ SVG を置く（SAKUJI のパスが立体になるか）"
+node svgin.mjs   || ng=1
+echo
 [ $ng -eq 0 ] && echo "✅ ぜんぶ通った" || echo "🔴 落ちたものがある"
 # ⭐ 見えが変わっていないかは、直す前のファイルを渡して別に流す：
 #    git show HEAD:hori2/index.html > /tmp/hori2_head.html

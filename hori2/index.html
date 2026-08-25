@@ -678,6 +678,26 @@
         <button class="btn" id="btn-type">字を置く</button>
         <button class="btn" id="btn-untype">字を消す</button>
       </div>
+
+      <!-- ⭐⭐ SVG を置く（2026-08-25 木下「Sakuji のパスをそのまま Hori2 に入れ込んでも
+           同じようなエフェクトやシルエット・粒などは維持したい」）
+           ⭐ 入れ先は【字を置く】とまったく同じ strokes ＝彫る／刻む／粒がそのまま効く。
+           ⭐ 作字SAKUJI は「SVG を書き出す」でベクターのまま出せる。それをそのまま読む。 -->
+      <div class="mod" style="margin-top:12px">⭐ <b>SVG を置く</b>＝作字 SAKUJI などで描いた線を
+        <b>そのまま</b>入れる（引いた線と同じものになる）<br>
+        置いたあとは <b>彫る／刻む／粒にする</b> がそのまま効く<br>
+        ⚠️ 渡るのは<b>形だけ</b>（SAKUJI の色・グラデは入らない。色はこちらで付ける）<br>
+        ⚠️ 塗りの<b>閉じた形</b>は<b>縁取りが立体</b>になる（塗り潰しの塊にはならない）</div>
+      <input type="file" id="svgFile" accept=".svg,image/svg+xml" hidden>
+      <div class="row"><label>SVGの大きさ<i>SIZE</i></label><input type="range" data-p="svgSize" min="10" max="95" step="1" value="62"><span class="val"></span></div>
+      <div class="row"><label>SVGの左右<i>X</i></label><input type="range" data-p="svgX" min="-100" max="100" step="1" value="0"><span class="val"></span></div>
+      <div class="row"><label>SVGの上下<i>Y</i></label><input type="range" data-p="svgY" min="-100" max="100" step="1" value="0"><span class="val"></span></div>
+      <div class="row"><label>SVGの細かさ<i>DETAIL</i></label><input type="range" data-p="svgDetail" min="1" max="20" step="1" value="4"><span class="val"></span></div>
+      <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <button class="btn" id="btn-svg">SVG を置く</button>
+        <button class="btn" id="btn-unsvg">SVG を消す</button>
+      </div>
+      <div class="mod" id="svgInfo">まだ読んでいない</div>
     </div>
   </div>
 
@@ -1162,6 +1182,8 @@ const P = {
   ripCover:100, ripSolid:5, ripShape:0, ripSwirl:30, ripCx:50, ripCy:50, ripMat:0, ripCell:34,
   spinSpeed:32,
   typeSize:62, typeDetail:4,
+  /* ⭐ SVG を置く（2026-08-25）。字とは【別のつまみ】＝片方だけ動かせる */
+  svgSize:62, svgDetail:4, svgX:0, svgY:0,
   /* ⭐ 置いた字の位置。0,0 ＝ 置いたときの場所（いままでと同じ） */
   typeX:0, typeY:0,
   /* ⭐ 絵ぜんぶ（線も字も）の置き所と大きさ。100/0/0 ＝ いままでと同じ */
@@ -2012,7 +2034,7 @@ function bundle(){
     typeState, text: document.getElementById('typeText').value,
     font: document.getElementById('typeFont').value,
     strokes: strokes.map(s => ({
-      z: s.z, t: s.isType ? 1 : 0,
+      z: s.z, t: s.isType ? 1 : 0, v: s.isSvg ? 1 : 0,
       pts: s.pts.map(q => [ +q.x.toFixed(2), +q.y.toFixed(2), +(q.w ?? 1).toFixed(2) ])
     }))
   };
@@ -2032,7 +2054,7 @@ function applyBundle(d, replace){
   if(d.text !== undefined) document.getElementById('typeText').value = d.text;
   if(d.font) document.getElementById('typeFont').value = d.font;
   (d.strokes || []).forEach(s => {
-    strokes.push({ mesh:null, z:s.z, isType: !!s.t,
+    strokes.push({ mesh:null, z:s.z, isType: !!s.t, isSvg: !!s.v,
                    pts: s.pts.map(q => ({ x:q[0], y:q[1], z:0, w:q[2] })) });
   });
   syncUIFromP();
@@ -2239,6 +2261,122 @@ function placeText(){
   rebuildAll();
   saveLocal();
 }
+/* ══ SVG を置く ── 作字SAKUJI などのパスを、引いた線と同じものにする ══════════
+   2026-08-25 木下「Sakuji のパスをそのまま Hori2 に入れ込んでも
+   同じようなエフェクトやシルエット・粒などは維持したい。無理なのか？」
+   ⭐⭐ 無理ではない。入れ先は【字を置く】とまったく同じ strokes なので、
+      彫る／刻む／粒にする／滲み／波紋／地なし切り抜き が全部そのまま効く。
+   ⭐ この道具が持っている入口は「点の列」ひとつだけ＝そこへ入れれば区別が無い。
+   ⚠️ 渡るのは【形】だけ（SAKUJI の色・グラデは入らない）。
+   ⚠️ 塗りの閉じた形は【縁取りが立体】になる（塗り潰しの塊にはならない）＝字と同じ。 */
+let svgSrc = null;             // 読み込んだ SVG の中身（つまみを動かしたら引き直すため）
+
+/* SVG の中の形をぜんぶ拾って、点の列にする。
+   ⭐ 形ごとに getPointAtLength で長さに沿って刻む＝曲線もそのまま点になる。
+   ⚠️ getTotalLength / getPointAtLength は【DOM に入っていないと動かない】ので、
+      見えない所に一度置いてから測る。
+   ⚠️ 形に transform が掛かっていることがあるので getCTM を掛けてルートの座標へ直す。 */
+function svgToPolys(text, step){
+  const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
+  const root = doc.querySelector('svg');
+  if(!root) return [];
+  const holder = document.createElement('div');
+  holder.style.cssText = 'position:absolute;left:-99999px;top:0;width:2px;height:2px;overflow:hidden;opacity:0';
+  document.body.appendChild(holder);
+  holder.appendChild(document.importNode(root, true));
+  const svg = holder.querySelector('svg');
+  const polys = [];
+  try{
+    const els = svg.querySelectorAll('path,polyline,polygon,line,rect,circle,ellipse');
+    els.forEach(el => {
+      let L = 0;
+      try{ L = el.getTotalLength(); }catch(_){ return; }
+      if(!(L > 0.5)) return;
+      const m = el.getCTM();
+      const nStep = Math.max(2, Math.ceil(L / Math.max(0.5, step)));
+      const pts = [];
+      for(let i = 0; i <= nStep; i++){
+        let q;
+        try{ q = el.getPointAtLength(L * i / nStep); }catch(_){ return; }
+        const X = m ? (m.a*q.x + m.c*q.y + m.e) : q.x;
+        const Y = m ? (m.b*q.x + m.d*q.y + m.f) : q.y;
+        pts.push([X, Y]);
+      }
+      polys.push(pts);
+    });
+  } finally { holder.remove(); }
+  return polys;
+}
+
+function clearSvgStrokes(){
+  for(let i = strokes.length - 1; i >= 0; i--){
+    if(!strokes[i].isSvg) continue;
+    const m = strokes[i].mesh;
+    if(m){ group.remove(m); m.geometry.dispose(); }
+    strokes.splice(i, 1);
+  }
+}
+
+function placeSVG(){
+  clearSvgStrokes();
+  if(!svgSrc){ rebuildAll(); saveLocal(); return; }
+  const el = renderer.domElement, r = el.getBoundingClientRect();
+
+  /* ⭐ 置く基準は【字を置く】と同じものを使い回す（別に測り直さない＝2つが食い違わない） */
+  if(!typeState){
+    const p0 = toPlane(r.left + r.width/2, r.top + r.height/2, 0);
+    const p1 = toPlane(r.left + r.width/2, r.top + r.height/2 - 100, 0);
+    if(!p0 || !p1) return;
+    const q0 = toLocal(p0);
+    typeState = { ax:q0.x, ay:q0.y, per: Math.hypot(p1.x-p0.x, p1.y-p0.y) / 100 / ((group&&group.scale.x)||1) };
+  }
+
+  /* ⭐ 刻む細かさは【SVG の実寸】で決まるので、まず粗く拾って大きさを知る */
+  const rough = svgToPolys(svgSrc, 2);
+  if(!rough.length){ setSvgInfo('線が見つからなかった'); rebuildAll(); saveLocal(); return; }
+  let x0 = 1e18, y0 = 1e18, x1 = -1e18, y1 = -1e18;
+  for(const poly of rough) for(const [X,Y] of poly){
+    if(X<x0) x0=X; if(X>x1) x1=X; if(Y<y0) y0=Y; if(Y>y1) y1=Y;
+  }
+  const bw = Math.max(1e-6, x1-x0), bh = Math.max(1e-6, y1-y0);
+  /* ⚠️ viewBox に頼らず【描かれているものの外接】で合わせる＝どんな SVG でも同じ大きさで入る */
+  const worldH = r.height * (P.svgSize/100) * typeState.per;
+  const k = worldH / Math.max(bw, bh);
+  const ox = (P.svgX/100) * r.width  * 0.5 * typeState.per;
+  const oy = (P.svgY/100) * r.height * 0.5 * typeState.per;
+  const cx = (x0+x1)/2, cy = (y0+y1)/2;
+
+  /* ⭐ 本番は【世界での間隔】から逆算して刻む＝DETAIL の手ざわりが字と揃う */
+  const gapWorld = Math.max(1, P.svgDetail) * typeState.per * 1.6;
+  const polys = svgToPolys(svgSrc, Math.max(0.5, gapWorld / k));
+  let added = 0, npts = 0;
+  polys.forEach(poly => {
+    const pts = [];
+    let lx = 1e18, ly = 1e18;
+    for(const [X0,Y0] of poly){
+      const X = typeState.ax + ox + (X0 - cx) * k;
+      const Y = typeState.ay + oy - (Y0 - cy) * k;      /* ⚠️ SVG の y は下向き */
+      if(Math.abs(X-lx) + Math.abs(Y-ly) < gapWorld) continue;
+      pts.push({ x:X, y:Y, z:0, w:1 });
+      lx = X; ly = Y;
+    }
+    if(pts.length < 2) return;
+    strokes.push({ mesh:null, z:0, pts, isSvg:true });
+    added++; npts += pts.length;
+  });
+  setSvgInfo(added ? `${added} 本・${npts} 点を置いた` : '短すぎて置けなかった');
+  rebuildAll();
+  saveLocal();
+}
+function setSvgInfo(t){ const e = document.getElementById('svgInfo'); if(e) e.textContent = t; }
+/* つまみを動かしている間は作り直しをまとめる（字と同じ形） */
+let _svgT = 0;
+function resvgSoon(){
+  if(!svgSrc) return;
+  clearTimeout(_svgT);
+  _svgT = setTimeout(placeSVG, 90);
+}
+
 /* つまみを動かしている間は作り直しをまとめる（1操作で何度も飛んでくる） */
 let _typeT = 0;
 function retypeSoon(){
@@ -3542,6 +3680,7 @@ document.querySelectorAll('input[type=range]').forEach(r => {
     if(['width','taper','smooth','depth','layer','twist'].includes(r.dataset.p)) rebuildAll();
     // ⭐ 字の大きさ・細かさは【字だけ】作り直す（手で引いた線は触らない）
     if(['typeSize','typeDetail','typeX','typeY'].includes(r.dataset.p)) retypeSoon();
+    if(['svgSize','svgDetail','svgX','svgY'].includes(r.dataset.p)) resvgSoon();
     if(['objScale','objX','objY'].includes(r.dataset.p)) syncObj();
     if(r.dataset.p === 'papN') syncGrad();      // 色数で出すつまみが変わる
     // ⭐ 色の濃さは「他のつまみが効くかどうか」を決める。動かしたら註を出し直す
@@ -3870,6 +4009,23 @@ document.getElementById('typeText').addEventListener('input', retypeSoon);
 document.getElementById('typeFont').addEventListener('change', retypeSoon);
 document.getElementById('btn-untype').onclick = () => {
   clearTypeStrokes(); typeState = null; rebuildAll(); saveLocal();
+};
+
+/* ⭐ SVG を置く ── 押すたびにファイルを選ぶ（初回も置き直しも同じ道）。
+   ⚠️ 同じファイルを続けて選べるよう、読んだあと value を空にする
+      （空にしないと change が飛ばず「押しても何も起きない」になる）。 */
+document.getElementById('btn-svg').onclick = () => document.getElementById('svgFile').click();
+document.getElementById('svgFile').addEventListener('change', e => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => { svgSrc = String(rd.result || ''); setSvgInfo('読んでいる…'); placeSVG(); };
+  rd.onerror = () => setSvgInfo('🔴 読めなかった');
+  rd.readAsText(f);
+});
+document.getElementById('btn-unsvg').onclick = () => {
+  clearSvgStrokes(); svgSrc = null; setSvgInfo('まだ読んでいない'); rebuildAll(); saveLocal();
 };
 
 document.getElementById('btn-undo').onclick = () => {
