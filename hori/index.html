@@ -710,6 +710,9 @@
   <button id="btn-clear">CLEAR</button>
   <button id="btn-spin">SPIN</button>
   <button id="btn-png">PNG</button>
+  <!-- ⭐⭐ 地なし（2026-08-25 木下「オブジェクトだけを切り抜いて背景なし png」
+       ／理由＝「貼HARI でそれらでポスターを作る」）＝重ねて置くための出し方 -->
+  <button id="btn-png2">地なしPNG</button>
   <button id="btn-rec" class="rec">REC</button>
 </div>
 
@@ -912,7 +915,10 @@ const ENGINES = [
 ];
 
 /* ── RENDERER / SCENE ───────────────────────────────────── */
-const renderer = new THREE.WebGLRenderer({ antialias:true, preserveDrawingBuffer:true });
+/* ⚠️🔴 alpha:true が要る。Three.js の既定は alpha:false で、その canvas は【透明を持てない】
+   ＝地なしPNG が作れない（2026-08-25 彫HORI2 で踏んだのと同じ壁）。
+   ⭐ 画面の見えは変わらない＝いちばん下のシェーダが常に alpha=1 を出しているため。 */
+const renderer = new THREE.WebGLRenderer({ antialias:true, preserveDrawingBuffer:true, alpha:true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
@@ -1376,6 +1382,9 @@ const postUniforms = {
   uRipVal:   { value: 0.88 },
   uRipCover: { value: 1 },
   uRipSolid: { value: 5 },
+  /* ⭐⭐ 地なしで出す（2026-08-25）。画面では常に 0＝1画素も変わらない。撮る間だけ 1 */
+  uAlphaOut:  { value: 0 },
+  uAlphaWide: { value: 5 },
   uRipShape: { value: 0 },
   uRipSwirl: { value: 0.3 },
   uRipCx:    { value: 0.5 },
@@ -1410,6 +1419,7 @@ postScene.add(new THREE.Mesh(
       uniform float uWashOn, uWashHue, uWashSat, uWashVal, uWashHue2, uWashAng, uWashSoft, uWashOnBg;
       uniform float uTintMode, uHue, uSat, uVal, uShift, uRing, uHue2, uBg, uBgSat;
       uniform float uRipOn, uRipFreq, uRipSpeed, uRipSoft, uRipDepth, uRipHue, uRipSat, uRipVal;
+      uniform float uAlphaOut, uAlphaWide;   /* 地なしで出す */
       uniform float uRipCover, uRipSolid, uRipShape, uRipSwirl, uRipCx, uRipCy, uRipMat, uRipCell;
       uniform float uCycles, uPulse, uT;
       uniform vec2 uRes;
@@ -1423,6 +1433,22 @@ postScene.add(new THREE.Mesh(
         return c.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y);
       }
 
+      /* ⭐⭐ シルエット＝【物体のある所】。式はここ1本だけ。
+         COVER（波紋を隠す）と 地なしPNG が同じものを見る＝ずれない。
+         ⚠️ インク量そのものだと【刻む】の縞の隙間で 0 になり、そこに穴が開く。 */
+      float silhouette(float v0, float wide){
+        float s2 = v0;
+        if(wide > 0.001){
+          vec2 tx = wide / uRes;
+          for(int i = 0; i < 8; i++){
+            float a = float(i) * 0.7853982;
+            vec2  d = vec2(cos(a), sin(a));
+            s2 = max(s2, texture2D(tSrc, vUv + d * tx).r);
+            s2 = max(s2, texture2D(tSrc, vUv + d * tx * 0.5).r);
+          }
+        }
+        return smoothstep(0.02, 0.14, s2);
+      }
       void main(){
         vec4 s = texture2D(tSrc, vUv);
         float v = s.r;                      // インク量
@@ -1617,20 +1643,16 @@ postScene.add(new THREE.Mesh(
              ⚠️ インク量そのものを使うと縞の隙間で消えるので、
                 **少し広げて拾う**（＝シルエット）。SOLID がその広げる幅。
              ⭐ 隠した中に敷くのは PAPER/WASH で作った地＝既にある段を使い回す。 */
-          float sil = v;
-          if(uRipCover > 0.001 && uRipSolid > 0.001){
-            vec2 tx = uRipSolid / uRes;
-            for(int i = 0; i < 8; i++){
-              float a = float(i) * 0.7853982;
-              vec2  d = vec2(cos(a), sin(a));
-              sil = max(sil, texture2D(tSrc, vUv + d * tx).r);
-              sil = max(sil, texture2D(tSrc, vUv + d * tx * 0.5).r);
-            }
-          }
-          sil = smoothstep(0.02, 0.14, sil);
+          /* ⭐ 式は silhouette() 1本（⚠️ 広げる条件は今までと同じものを渡す＝絵は変わらない） */
+          float sil = silhouette(v, (uRipCover > 0.001 ? uRipSolid : 0.0));
           bg = mix(rip, flat0, sil * uRipCover);
         }
-        gl_FragColor = vec4(mix(bg, fg, v), 1.0);
+        /* ⭐⭐ 地なしで出す＝色は【見えているとおり】のまま、アルファだけ物体の形にする
+           （物体の中に敷いた地は残り、外だけが透ける）。
+           ⚠️ 画面では uAlphaOut=0＝いままでと1画素も変わらない。 */
+        float outA = 1.0;
+        if(uAlphaOut > 0.5) outA = silhouette(v, uAlphaWide);
+        gl_FragColor = vec4(mix(bg, fg, v), outA);
       }
     `
   })
@@ -1938,9 +1960,34 @@ document.getElementById('btn-spin').onclick = e => {
       （画像を長押しで保存できる＝iPhone で確実に持ち帰れる道を残す）。
    ⚠️ 逃がす窓は click の中で開く（あとから開くとポップアップが止められる）。
    ⚠️ この直し方は HORI 2 で先に解いたものをそのまま持ってきた（版面の分だけ外してある）。 */
-document.getElementById('btn-png').onclick = () => {
+/* ⭐⭐ 地なしは【絵のあるところだけに切り詰めて】出す（簾SUDARE・彫HORI2 と同じ作法）。
+   🔴 切り詰めないと、貼HARI で版面いっぱいに広げたとき【透明な余白ごと引き伸ばす】＝粗く見える。
+   ⚠️ WebGL の canvas からは直に画素を読めないので、一度 2D に写してから読む。 */
+let lastCrop = '';
+function cropToInk(el, cb){
+  const w = el.width, h = el.height;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d', { willReadFrequently:true });
+  g.drawImage(el, 0, 0);
+  let d;
+  try{ d = g.getImageData(0, 0, w, h).data; }catch(_){ c.toBlob(cb, 'image/png'); return; }
+  let x0=w, y0=h, x1=-1, y1=-1;
+  for(let y=0;y<h;y++){ const row=y*w*4;
+    for(let x=0;x<w;x++) if(d[row+x*4+3]>4){
+      if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } }
+  if(x1<x0||y1<y0){ c.toBlob(cb, 'image/png'); return; }
+  const pad=3;
+  x0=Math.max(0,x0-pad); y0=Math.max(0,y0-pad);
+  x1=Math.min(w-1,x1+pad); y1=Math.min(h-1,y1+pad);
+  const cw=x1-x0+1, ch=y1-y0+1;
+  const o=document.createElement('canvas'); o.width=cw; o.height=ch;
+  o.getContext('2d').drawImage(c,x0,y0,cw,ch,0,0,cw,ch);
+  lastCrop = cw+'×'+ch;
+  o.toBlob(cb, 'image/png');
+}
+function shootPNG(noBg){
   const el = renderer.domElement;
-  const name = `hori_${Date.now()}.png`;
+  const name = `hori_${Date.now()}${noBg ? '_nobg' : ''}.png`;
   const save = blob => {
     if(!blob){ alert('書き出せなかった'); return; }
     const url = URL.createObjectURL(blob);
@@ -1953,6 +2000,15 @@ document.getElementById('btn-png').onclick = () => {
     if(/iP(hone|ad|od)/.test(navigator.userAgent)) window.open(url, '_blank');
     setTimeout(() => URL.revokeObjectURL(url), 8000);
   };
+  if(noBg){
+    /* ⚠️ 画面に出ているコマは alpha=1 で焼かれているので、地なしは【必ず刷り直す】 */
+    postUniforms.uAlphaOut.value = 1;
+    postUniforms.uAlphaWide.value = (P.ripSolid > 0.001 ? P.ripSolid : 5);
+    renderer.setRenderTarget(null);
+    renderer.render(postScene, postCam);
+    cropToInk(el, b => { postUniforms.uAlphaOut.value = 0; save(b); });
+    return;
+  }
   if(el.toBlob) el.toBlob(save, 'image/png');
   else {
     // 古い端末向け：dataURL を Blob に戻す
@@ -1961,7 +2017,10 @@ document.getElementById('btn-png').onclick = () => {
     for(let i=0;i<b.length;i++) u[i] = b.charCodeAt(i);
     save(new Blob([u], { type:'image/png' }));
   }
-};
+}
+/* ⚠️ onclick に関数をそのまま渡すと第1引数が【イベント】になり、いつでも地なしになる。必ず包む */
+document.getElementById('btn-png').onclick  = () => shootPNG(false);
+document.getElementById('btn-png2').onclick = () => shootPNG(true);
 
 // REC — 制作過程がそのままリールになる
 let rec = null;
