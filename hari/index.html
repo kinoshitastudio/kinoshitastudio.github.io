@@ -103,6 +103,8 @@ input[type=color]{ width:32px; height:28px; padding:0; border:.5px solid var(--l
 .hd:hover{ opacity:1; }
 .hd.on{ opacity:1; background:var(--ink); color:var(--paper); border-color:var(--ink); }
 .li.hidden .t{ opacity:.4; text-decoration:line-through }
+.li.drag{ opacity:.45 }
+.li.ph{ border:1px dashed var(--ink); background:transparent; opacity:.5 }
 .lk{ flex:none; font-size:9px; letter-spacing:.04em; cursor:pointer;
   padding:2px 7px; border-radius:9px; border:1px solid var(--line); opacity:.6; }
 .lk:hover{ opacity:1; }
@@ -2447,6 +2449,58 @@ function fillList(el){
     /* ⭐ 2026-08-26 木下：「レイヤーパネルに各レイヤー非表示できるようにして」
        ⚠️ 隠したら【書き出しにも入らない】。画面と刷り上がりが違うと版下として使えない。
           描く所は render() 1本なので、そこで飛ばせば画面も PNG も SVG も同じになる。 */
+    /* ⭐ 2026-08-26：一覧を掴んで並べ替え（Figma と同じ）。
+       ⚠️ 一覧は【手前が上】の逆順で出しているので、落とした先の z をそのまま採る。
+          自分で計算し直すと必ず上下が入れ替わる。
+       ⚠️ 錠・目・本体のクリックと喧嘩しないよう、5px 動いてから掴んだことにする。 */
+    d.draggable = false;
+    d.addEventListener('pointerdown', ev => {
+      if(ev.target.closest('.lk, .hd')) return;
+      const startY = ev.clientY;
+      let moved = false, ph = null;
+      const onMove = mv => {
+        if(!moved && Math.abs(mv.clientY - startY) < 5) return;
+        if(!moved){
+          moved = true; d.classList.add('drag');
+          ph = document.createElement('div'); ph.className = 'li ph';
+          ph.style.height = d.getBoundingClientRect().height + 'px';
+          d.parentElement.insertBefore(ph, d);
+        }
+        const rows = [...d.parentElement.children].filter(x => x !== d && x !== ph);
+        let put = null;
+        for(const r of rows){
+          const b = r.getBoundingClientRect();
+          if(mv.clientY < b.top + b.height/2){ put = r; break; }
+        }
+        d.parentElement.insertBefore(ph, put);
+      };
+      const onUp = () => {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        if(!moved){ return; }
+        d.classList.remove('drag');
+        /* 落とした場所の【上下の隣】から z を決める。一覧は手前が上なので、
+           上の行ほど z が大きい。あいだに落ちたら二つの平均を採る。 */
+        const sibs = [...ph.parentElement.children].filter(x => x !== d);
+        const at = sibs.indexOf(ph);
+        const zOf = el => { const id = el.dataset && el.dataset.z; return id === undefined ? null : +id; };
+        const above = at > 0 ? zOf(sibs[at-1]) : null;
+        const below = at < sibs.length-1 ? zOf(sibs[at+1]) : null;
+        ph.remove();
+        fixZ();
+        let z;
+        if(above === null && below === null) z = o.z;
+        else if(above === null) z = below + 1;      /* いちばん上＝いちばん手前 */
+        else if(below === null) z = above - 1;      /* いちばん下＝いちばん奥 */
+        else z = (above + below) / 2;
+        pushUndo();
+        o.z = z;
+        renderList(); render(); stat('重なりを入れ替えた');
+      };
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    });
+    d.dataset.z = (e.o.z !== undefined ? e.o.z : e.z);
     d.querySelector('.hd').onclick = ev => {
       ev.stopPropagation(); o.hide = !o.hide;
       renderList(); render(); syncPanel();
