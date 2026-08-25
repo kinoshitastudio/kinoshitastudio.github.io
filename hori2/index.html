@@ -775,6 +775,12 @@
         <option value='Helvetica,Arial,sans-serif'>Helvetica</option>
         <option value='Georgia,"Times New Roman",serif'>Georgia</option>
       </select>
+      <!-- ⭐ 組み方（2026-08-26 木下「文字を横組、縦組選べるようにして」）
+           ⚠️ 既定は横組＝いままでと1文字も変わらない -->
+      <div class="seg" data-seg="typeVert">
+        <button data-v="0" class="on">横組</button>
+        <button data-v="1">縦組</button>
+      </div>
       <div class="row"><label>字の大きさ<i>SIZE</i></label><input type="range" data-p="typeSize" min="10" max="95" step="1" value="62"><span class="val"></span></div>
       <div class="row"><label>字の左右<i>X</i></label><input type="range" data-p="typeX" min="-100" max="100" step="1" value="0"><span class="val"></span></div>
       <div class="row"><label>字の上下<i>Y</i></label><input type="range" data-p="typeY" min="-100" max="100" step="1" value="0"><span class="val"></span></div>
@@ -1226,6 +1232,8 @@
   <button id="btn-undo">UNDO</button>
   <button id="btn-clear">CLEAR</button>
   <button id="btn-spin">SPIN</button>
+  <!-- ⭐ 画面で動かすか＝状態。SPIN（回すかどうか＝設定）とは別に持つ -->
+  <button id="btn-play" title="画面で回す・止める（書き出しは SPIN に従うので、止めていても回ります）">▶ 再生</button>
   <button id="btn-pan" title="1本指で盤（カメラ）を動かす">移動</button>
   <button id="btn-obj" title="引っぱると絵そのものが動く（描かない）">絵を動かす</button>
   <button id="btn-png">PNG</button>
@@ -1291,6 +1299,8 @@ const P = {
   typeSize:62, typeDetail:4,
   /* ⭐ SVG を置く（2026-08-25）。字とは【別のつまみ】＝片方だけ動かせる */
   svgSize:62, svgDetail:4, svgX:0, svgY:0,
+  /* ⭐ 字の組み方（2026-08-26 木下「文字を横組、縦組選べるようにして」）。0＝横組（今までどおり） */
+  typeVert:0,
   /* ⭐ 置いた字の位置。0,0 ＝ 置いたときの場所（いままでと同じ） */
   typeX:0, typeY:0,
   /* ⭐ 絵ぜんぶ（線も字も）の置き所と大きさ。100/0/0 ＝ いままでと同じ */
@@ -1325,6 +1335,17 @@ const ON = { audio:false, sampler:true, extrude:true, hatch:true,
 
 /* ── MOD — 音がチェーンを叩いた量。P はベース、M は offset ── */
 const M = { depth:0, spread:0, hdens:0, flip:0, hue:0, wave:0, push:0, spin:0 };
+
+/* ⭐⭐ 2026-08-26 木下＝「スピンに関しても【再生ボタンを押して初めて】うごくようにして。
+   でないと動画書き出しの最初のトリガーや位置が調整できない」
+   🔴 いままでは SPIN を点けた瞬間から画面が回り続けていたので、
+      **書き出しの始まりの角度を決められなかった**（合わせようとしても回って逃げる）。
+   ⭐⭐ 【設定】と【状態】を別のつまみに分ける（この repo で何度も出ている型）：
+      ・SPIN（段／ボタン）＝**回すかどうか＝設定**。書き出しはこれを見る
+      ・▶ 再生          ＝**画面で動かすか＝状態**。押すまで画面は回らない
+   ⭐ だから「画面は止めて角度を決め、そのまま書き出せば回る」ができる。
+   ⚠️ 状態なので控え（JSON）には入れない＝開いたときは必ず止まっている。 */
+let PLAYING = false;
 
 /* ── ENGINE DESCRIPTORS ─────────────────────────────────────
    1エントリ = 1エンジン。受け取るのは常に同じ鞄 U = {ink, bleed, post}。
@@ -2137,7 +2158,13 @@ function gridGraySync(){
 function bundle(){
   return {
     v: SAVE_V, tool:'hori2', P, ON,
-    cam: { az:cam.tAz, el:cam.tEl, dist:cam.tDist },
+    /* 🔴🔴 2026-08-26 木下＝「なぜかJSON保存して開きなおすと位置がずれてるな」。
+       ⭐ 正体＝【移動（px/py）が控えに入っていなかった】。開くと 0 に戻るので絵がずれる。
+          ⚠️ 移動は 2026-08-19 に足した段で、そのとき控えに入れ忘れていた。
+       ⭐ 角度は【1周ぶんに畳んで】から控える。SPIN で回り続けると -18026° のような値になり、
+          読めないうえに次に開いたとき何度回っているのか分からなくなる（見た目は同じ）。 */
+    cam: { az: cam.tAz % (Math.PI*2), el:cam.tEl, dist:cam.tDist,
+           px: cam.tpx || 0, py: cam.tpy || 0 },
     typeState, text: document.getElementById('typeText').value,
     font: document.getElementById('typeFont').value,
     strokes: strokes.map(s => ({
@@ -2156,7 +2183,10 @@ function applyBundle(d, replace){
   Object.assign(P, d.P || {});
   Object.assign(ON, d.ON || {});
   if(d.cam){ cam.tAz = d.cam.az; cam.tEl = d.cam.el; cam.tDist = d.cam.dist;
-             cam.az = d.cam.az; cam.el = d.cam.el; cam.dist = d.cam.dist; }
+             cam.az = d.cam.az; cam.el = d.cam.el; cam.dist = d.cam.dist;
+             /* ⚠️ 古い控えには px/py が無い＝0（＝今までどおり） */
+             cam.tpx = d.cam.px || 0; cam.tpy = d.cam.py || 0;
+             cam.px = cam.tpx; cam.py = cam.tpy; }
   typeState = d.typeState || null;
   if(d.text !== undefined) document.getElementById('typeText').value = d.text;
   if(d.font) document.getElementById('typeFont').value = d.font;
@@ -2314,16 +2344,28 @@ function placeText(){
 
   /* 1) 字を大きめに焼く。⚠️ 小さく焼くと輪郭がガタつく（あとで拡大されるので） */
   const H = 800;
+  const PX = Math.round(H*0.72);
+  const vert = +P.typeVert === 1;
+  const chars = [...str];
   const m = document.createElement('canvas').getContext('2d');
-  m.font = `700 ${Math.round(H*0.72)}px ${fam}`;
-  const w = Math.ceil(m.measureText(str).width);
+  m.font = `700 ${PX}px ${fam}`;
   const c = document.createElement('canvas');
-  c.width = Math.max(8, w + 40); c.height = H;
+  if(vert){
+    /* ⭐ 縦組＝1字ずつ下へ積む。⚠️ 字送りは【字の大きさ】で決める＝どの書体でも間隔がそろう
+       （measureText の幅で送ると、和文と欧文で間隔が変わってしまう）。 */
+    c.width  = Math.max(8, PX + 40);
+    c.height = Math.max(8, PX * Math.max(1, chars.length) + 40);
+  }else{
+    const w = Math.ceil(m.measureText(str).width);
+    c.width = Math.max(8, w + 40); c.height = H;
+  }
   const x = c.getContext('2d', { willReadFrequently:true });
-  x.font = `700 ${Math.round(H*0.72)}px ${fam}`;
+  /* ⚠️ canvas の大きさを変えると font は消える＝必ず【大きさを決めたあと】に入れる */
+  x.font = `700 ${PX}px ${fam}`;
   x.textAlign = 'center'; x.textBaseline = 'middle';
   x.fillStyle = '#000';
-  x.fillText(str, c.width/2, c.height/2);
+  if(vert) chars.forEach((ch, i) => x.fillText(ch, c.width/2, 20 + PX*(i + 0.5)));
+  else     x.fillText(str, c.width/2, c.height/2);
 
   /* 2) 輪郭を追う（SAKUJI の採取／OBORO の形と同じもの） */
   const cont = traceBitmap(x.getImageData(0,0,c.width,c.height), c.width, c.height, 40);
@@ -3830,7 +3872,8 @@ function frame(t){
   if(TV.on) return;
   runChain();
   // ⭐ 速さはつまみ。符号で向きが変わる（M.spin は音が煽る分）
-  if(ON.spin) cam.tAz += P.spinSpeed / 10000 + M.spin;
+  /* ⚠️ 再生していない間は【角度に一切触らない】＝合わせた向きがそのまま残る */
+  if(ON.spin && PLAYING) cam.tAz += P.spinSpeed / 10000 + M.spin;
   updateFrameGuide();
   updateFrameNote();
   placeCamera();
@@ -3850,8 +3893,14 @@ function frame(t){
   renderer.clear();
   renderInk();
 
-  // 滲ませる（ping-pong）— off なら版をそのまま TAPE へ
-  if(ON.bleed){
+  /* ⭐⭐ 2026-08-26 木下＝「BLEED も再生するボタンで初めて効果を発して」
+     🔴 いままでは点けた瞬間から滲みが溜まり続けていたので、
+        **書き出しの始まりの状態（どれだけ滲んでいるか）を決められなかった**。
+     ⭐ SPIN と同じ扱い＝【設定（BLEED）】と【状態（再生）】を別に持つ。
+        止めている間は素の版をそのまま通す＝滲まない。
+     ⚠️ 動画の書き出しは今までどおり ON.bleed を見て溜め直す＝画面が止まっていても滲む。 */
+  // 滲ませる（ping-pong）— off／再生していない なら版をそのまま TAPE へ
+  if(ON.bleed && PLAYING){
     bleedUniforms.tPrev.value = rtA.texture;
     renderer.setRenderTarget(rtB);
     renderer.render(bleedScene, fsCam);
@@ -3934,6 +3983,9 @@ document.querySelectorAll('.seg[data-seg]').forEach(seg => {
       const sg = seg.dataset.seg;
       if((sg.indexOf('tv') === 0 || sg.indexOf('frame') === 0) && typeof tvSizeSync === 'function') tvSizeSync();
       if(sg.indexOf('frame') === 0 && typeof updateFrameNote === 'function') updateFrameNote();
+      /* ⭐ 組み方（横組・縦組）を変えたら、置いてある字をその場で組み直す
+         ⚠️ ここに足さないと【押しても何も起きない】（つまみは動くのに絵が変わらない） */
+      if(sg === 'typeVert' && typeof retypeSoon === 'function') retypeSoon();
       saveLocal();
     });
   });
@@ -4246,6 +4298,21 @@ function syncSpin(){
   if(u) u.classList.toggle('off', !ON.spin);
 }
 document.getElementById('btn-spin').onclick = () => { ON.spin = !ON.spin; syncSpin(); };
+/* ⭐ 再生＝画面で動かすか。⚠️ SPIN が消えていると押しても何も起きないので、そのときは点ける
+   （「押したのに動かない」を作らない）。 */
+function syncPlay(){
+  const b = document.getElementById('btn-play');
+  if(!b) return;
+  b.textContent = PLAYING ? '■ 止める' : '▶ 再生';
+  b.style.background = PLAYING ? '#0a0a0a' : '';
+  b.style.color      = PLAYING ? '#f4f2ee' : '';
+}
+document.getElementById('btn-play').onclick = () => {
+  PLAYING = !PLAYING;
+  if(PLAYING && !ON.spin){ ON.spin = true; syncSpin(); }   /* ⚠️ 押して何も起きない を作らない */
+  syncPlay();
+};
+syncPlay();
 /* 🔴 木下＝「いま png ダウンロードできない」（iPhone）。
    ⚠️ 原因は2つあって、どちらも iOS で効く：
      ① <a> を DOM に入れずに click していた（iOS Safari は繋がっていない a を無視する）
