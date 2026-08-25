@@ -27,3 +27,9 @@ fi
 echo "（${PORT} で立てた）"
 
 node "$HERE/_test/check.mjs" "http://localhost:$PORT/$NAME/"
+RC=$?
+# ⭐ 指の端末で【盤を描いてもページとパネルが動かない】か（2026-08-25）
+echo
+echo "── 指の端末（390×844）──"
+node "$HERE/_test/touch.mjs" "http://localhost:$PORT/$NAME/" || RC=1
+exit $RC
