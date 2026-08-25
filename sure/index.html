@@ -306,6 +306,24 @@
       ⭐ <b>粒子</b>＝最後に一度だけ全体へ。⚠️種を変えると粒の並びが変わる</div>
   </div>
 
+  <!-- ══⭐⭐ 余白（額）── 朦OBORO から移した（2026-08-25）
+       ⭐ 上に被せるのではなく【中の絵が縮む】＝縁に帯が空く。
+       ⭐⭐ 額は【上のレイヤー】＝中を大きくしても寄せても縁は必ず残る。
+       ⚠️ 余白0・中の大きさ100・よこたて0 で今までの絵と1画素も変わらない。 -->
+  <div class="grp">
+    <label class="h">余白（額）</label>
+    <div class="row"><span class="n">余白</span><output id="o_gaku"></output></div>
+    <input type="range" id="r_gaku" min="0" max="30" step="1">
+    <div class="row"><span class="n">余白の色</span></div>
+    <input type="color" id="c_gakuCol">
+    <div class="row"><span class="n">中の大きさ</span><output id="o_gakuZ"></output></div>
+    <input type="range" id="r_gakuZ" min="50" max="200" step="1">
+    <div class="row"><span class="n">中のよこ</span><output id="o_gakuX"></output></div>
+    <input type="range" id="r_gakuX" min="-50" max="50" step="1">
+    <div class="row"><span class="n">中のたて</span><output id="o_gakuY"></output></div>
+    <input type="range" id="r_gakuY" min="-50" max="50" step="1">
+  </div>
+
   <!-- ══⭐ 動かす（アニメーション）══ 動くのは【縁の荒れ】と【段】。線そのものは動かさない -->
   <div class="grp">
     <label class="h">動かす</label>
@@ -416,6 +434,8 @@ let P = {
   tool:'draw', bw:3.3, cols:96,
   rough:0.9, rgrain:5, grain:0.26, gsize:1, chroma:0.18, gdark:0.55, seed:7,
   paper:'#efe7dc', ratio:'4:5', long:1400, outLong:'same', preset:0,
+  /* ⭐ 余白（額）2026-08-25 ── 朦OBORO から移した。0 で今までどおり */
+  gaku:0, gakuCol:'#f2efe6', gakuZ:100, gakuX:0, gakuY:0,
   /* ── 動かす ── ⭐ 動くのは【縁の荒れ】と【段】。線そのものは動かさない */
   anim:false, cyc:3, boilN:0, boilR:1.0, brN:0, brA:0.35, gflick:0,
   vFmt:'mp4', vFps:'24', vLoop:'1', vQ:'mid',
@@ -654,9 +674,48 @@ function grainPass(ctx, plan, transparent){
   }
   ctx.putImageData(im, 0, 0);
 }
+/* ⭐⭐ 余白（額）── 縁に帯を取り、その分だけ【中の絵を縮める】（朦OBORO から移した）。
+   ⭐ 四辺とも同じ画素数の帯（短い辺が基準）。辺ごとに比例させると縦長で上下だけ太くなる
+      ＝OBORO で木下に「上下左右大きさ違う？？よね？」と指摘された型を繰り返さない。
+   ⚠️ 既定のままなら null＝何も通さない＝今までの絵が1画素も変わらない。 */
+function gakuOf(W,H){
+  const p=(+P.gaku||0)/100;
+  const z=(P.gakuZ==null?100:+P.gakuZ)/100;
+  const ox=(+P.gakuX||0)/100, oy=(+P.gakuY||0)/100;
+  if(p<=0 && z===1 && !ox && !oy) return null;
+  const m=Math.min(W,H)*p;
+  const win={x:m,y:m,w:W-m*2,h:H-m*2};
+  const s=Math.max(0.05, Math.max(win.w/W, win.h/H)*z);
+  return { s, mx:(W-W*s)/2+ox*W, my:(H-H*s)/2+oy*H, win };
+}
+/* ⭐⭐ 額は【上のレイヤー】＝窓の外を最後に塗る＝中を大きくしても縁は必ず残る */
+function drawGaku(ctx,W,H,GK){
+  ctx.save();
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle=P.gakuCol||'#f2efe6';
+  const w=GK.win;
+  ctx.fillRect(0,0,W,Math.max(0,w.y));
+  ctx.fillRect(0,Math.min(H,w.y+w.h),W,Math.max(0,H-(w.y+w.h)));
+  ctx.fillRect(0,Math.max(0,w.y),Math.max(0,w.x),Math.min(w.h,H));
+  ctx.fillRect(Math.min(W,w.x+w.w),Math.max(0,w.y),Math.max(0,W-(w.x+w.w)),Math.min(w.h,H));
+  ctx.restore();
+}
 function render(ctx, plan, transparent){
+  const { W, H } = plan;
+  const GK = gakuOf(W, H);
+  if(!GK){ paint(ctx, plan, transparent); grainPass(ctx, plan, transparent); return; }
+  /* ⚠️ 段は窓の中だけに刷る（clip）。⚠️ 粒は【画素の全面】に掛かるので変換の外で掛ける
+     ＝額の上にも乗るが、最後に額を塗るので隠れる。 */
+  ctx.save();
+  ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,W,H);   /* 額の外に前の絵を残さない */
+  ctx.beginPath(); ctx.rect(GK.win.x, GK.win.y, GK.win.w, GK.win.h); ctx.clip();
+  ctx.translate(GK.mx, GK.my); ctx.scale(GK.s, GK.s);
   paint(ctx, plan, transparent);
+  ctx.restore();
   grainPass(ctx, plan, transparent);
+  /* ⚠️ 地なしで出すときは額も塗らない（地なしで渡す道を殺さない） */
+  if(!transparent) drawGaku(ctx, W, H, GK);
 }
 
 /* ══ SVG ══ ⭐ 段が矩形なのでそのままベクター。⚠️ 粒子は画素のものなので入らない */
@@ -1142,13 +1201,16 @@ function applyObj(txt, noHist){
 
 /* ══ つまみ ══ */
 const RANGES = ['bw','cols','rough','rgrain','grain','gsize','chroma','gdark','seed','long',
-                'cyc','boilN','boilR','brN','brA','gflick'];
+                'cyc','boilN','boilR','brN','brA','gflick',
+                'gaku','gakuZ','gakuX','gakuY'];   /* ⭐ 余白（額）2026-08-25 */
 const FMT = {
   bw:v => v.toFixed(1) + '%', cols:v => v, rough:v => v.toFixed(2), rgrain:v => v.toFixed(1),
   grain:v => v.toFixed(3), gsize:v => v + 'px', chroma:v => v.toFixed(2), gdark:v => v.toFixed(2),
   seed:v => v, long:v => v + 'px', bd_w:v => v.toFixed(1) + '%',
   cyc:v => v.toFixed(1) + '秒', boilN:v => v ? v + '周' : '止', boilR:v => v.toFixed(2),
   brN:v => v ? v + '周' : '止', brA:v => v.toFixed(2), gflick:v => v ? v + 'コマ' : '止',
+  gaku:v => v ? v + '%' : '無し', gakuZ:v => v + '%',
+  gakuX:v => (v>0?'+':'') + v + '%', gakuY:v => (v>0?'+':'') + v + '%',
 };
 function touched(){ P.preset = null; }
 RANGES.forEach(k => {
@@ -1173,6 +1235,9 @@ el('bd_color').addEventListener('input', () => {
 el('bd_color').addEventListener('change', pushHist);
 el('c_paper').addEventListener('input', () => { P.paper = el('c_paper').value; touched(); kick(); saveLocal(); });
 el('c_paper').addEventListener('change', pushHist);
+/* ⭐ 余白（額）の色。c_paper と同じ形（式を増やさない） */
+el('c_gakuCol').addEventListener('input', () => { P.gakuCol = el('c_gakuCol').value; touched(); kick(); saveLocal(); });
+el('c_gakuCol').addEventListener('change', pushHist);
 
 function buildSeg(id, items, get, set, quiet){
   const box = el(id);
@@ -1235,6 +1300,7 @@ el('b_delBand').onclick = () => {
 function syncUI(){
   RANGES.forEach(k => { el('r_' + k).value = P[k]; el('o_' + k).textContent = FMT[k](+P[k]); });
   el('c_paper').value = P.paper;
+  el('c_gakuCol').value = P.gakuCol || '#f2efe6';
   const b = BANDS[bcur];
   if(b){ el('bd_color').value = b.color; el('r_bd_w').value = b.w; el('o_bd_w').textContent = FMT.bd_w(b.w); }
   ['toolSeg','ratioSeg','outSeg'].forEach(id => {
