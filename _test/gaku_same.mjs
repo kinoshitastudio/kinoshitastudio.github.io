@@ -14,6 +14,7 @@ const HOW = {
   hida: { shot:`paint(c.getContext('2d'), W, H, 0, true)` },
   nuri: { shot:`render(c.getContext('2d'), W, H)` },
   sure: { shot:`render(c.getContext('2d'), buildPlan(W,H), false)` },
+  ten:  { shot:`render(c.getContext('2d'), W, H, false)` },
 };
 const tool=process.argv[2], head=process.argv[3];
 if(!tool||!HOW[tool]||!head){ console.log('使い方: node _test/gaku_same.mjs <道具名> <直す前のファイル>'); process.exit(1); }
