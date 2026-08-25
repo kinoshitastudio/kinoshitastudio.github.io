@@ -2280,6 +2280,13 @@ function svgToPolys(text, step){
   const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
   const root = doc.querySelector('svg');
   if(!root) return [];
+  /* 🔴 作字SAKUJI から出る SVG は【いちばん下に白い地の板】が入っている
+     （<rect fill="#ffffff"> が版面いっぱい）。そのまま拾うと四角い板が立体になって絵が埋まる。
+     ⭐ 版面とほぼ同じ大きさの形は【地】とみなして捨てる。
+     ⚠️ 「塗りがあって線が無いもの」で捨てると、塗りで描いた字まで消える。大きさで見る。 */
+  const vb = root.viewBox && root.viewBox.baseVal;
+  const VW = (vb && vb.width)  || parseFloat(root.getAttribute('width'))  || 0;
+  const VH = (vb && vb.height) || parseFloat(root.getAttribute('height')) || 0;
   const holder = document.createElement('div');
   holder.style.cssText = 'position:absolute;left:-99999px;top:0;width:2px;height:2px;overflow:hidden;opacity:0';
   document.body.appendChild(holder);
@@ -2305,7 +2312,15 @@ function svgToPolys(text, step){
       polys.push(pts);
     });
   } finally { holder.remove(); }
-  return polys;
+  /* ⭐ 地の板を落とす（版面の 92% 以上を覆う形） */
+  const kept = polys.filter(poly => {
+    if(!(VW > 0 && VH > 0)) return true;
+    let x0 = 1e18, y0 = 1e18, x1 = -1e18, y1 = -1e18;
+    for(const [X, Y] of poly){ if(X<x0)x0=X; if(X>x1)x1=X; if(Y<y0)y0=Y; if(Y>y1)y1=Y; }
+    return !((x1-x0) >= VW*0.92 && (y1-y0) >= VH*0.92);
+  });
+  svgToPolys.dropped = polys.length - kept.length;
+  return kept;
 }
 
 function clearSvgStrokes(){
@@ -2364,7 +2379,10 @@ function placeSVG(){
     strokes.push({ mesh:null, z:0, pts, isSvg:true });
     added++; npts += pts.length;
   });
-  setSvgInfo(added ? `${added} 本・${npts} 点を置いた` : '短すぎて置けなかった');
+  const dropped = svgToPolys.dropped || 0;
+  setSvgInfo(added ? `${added} 本・${npts} 点を置いた`
+                     + (dropped ? `（地の板 ${dropped} 枚は捨てた）` : '')
+                   : '短すぎて置けなかった');
   rebuildAll();
   saveLocal();
 }
