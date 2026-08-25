@@ -25,6 +25,22 @@ const ROOT = path.join(HERE, '..');
    「地なしが全部透明」になって不具合に見える。先に何か描いておく）。 */
 const HOW = {
   kasa: { on:'b_png', off:'b_png2' },
+  nuri: { on:'b_png', off:'b_png2', pre:`
+    /* ⚠️ この道具は起動直後【何も塗っていない】＝切り抜くものが無い。先に筆でなぞる。 */
+    const cv0 = [...document.querySelectorAll('canvas')]
+      .sort((a,b)=>b.width*b.height-a.width*a.height)[0];
+    const r = cv0.getBoundingClientRect();
+    const ev = (t,x,y) => cv0.dispatchEvent(new PointerEvent(t,
+      { clientX:x, clientY:y, button:0, buttons:1, bubbles:true, pointerId:1, pointerType:'mouse' }));
+    ev('pointerdown', r.left + r.width*0.34, r.top + r.height*0.42);
+    for(let i=1;i<=16;i++){
+      ev('pointermove', r.left + r.width*(0.34 + 0.32*i/16),
+                        r.top + r.height*(0.42 + Math.sin(i*0.4)*0.10));
+      await wait(28);
+    }
+    ev('pointerup', r.left + r.width*0.66, r.top + r.height*0.42);
+    await wait(1200);
+  ` },
   hori: { on:'btn-png', off:'btn-png2', pre:`
     /* ⚠️ この道具は起動直後に線が1本も無い（字を置く が無く、手で引くだけ）。
        ⭐ 木下と同じく【盤をなぞって】線を引いてから測る。 */
@@ -90,9 +106,12 @@ const R = await p.evaluate(async ids => {
     let clear=0,n=0; for(let i=3;i<d.length;i+=4*13){ n++; if(d[i]<8) clear++; }
     return +(clear/n*100).toFixed(1);
   };
+  /* ⚠️ 道具によっては画面の canvas がもともと透明を持っている（紙を塗らない所がある）。
+     ⭐ だから「透明か」ではなく【撮る前と後で変わっていないか】で見る。 */
+  const before = screen();
   const A = await push(ids.on); await wait(600);
   const B = await push(ids.off); await wait(900);
-  return { 地あり:A, 地なし:B, 画面:screen() };
+  return { 地あり:A, 地なし:B, 画面前:before, 画面後:screen() };
 }, HOW[tool]);
 await b.close();
 
@@ -107,5 +126,6 @@ ok(!B.無し && B.透明 > 5, '地なしで撮ると外が透ける', B.無し |
 ok(!B.無し && B.不透明 > 10, '地なしでも物体の所は残る（形が抜け落ちていない）', B.無し || `${B.不透明}%`);
 ok(!A.無し && !B.無し && (B.w < A.w || B.h < A.h), '絵のあるところだけに切り詰まっている',
    (A.無し||B.無し) || `${A.w}×${A.h} → ${B.w}×${B.h}`);
-ok(R.画面 < 1, '撮ったあと画面が地なしのまま残らない', R.画面 + '%');
+ok(Math.abs(R.画面後 - R.画面前) < 1, '撮ったあと画面が地なしのまま残らない',
+   `撮る前 ${R.画面前}% → 撮った後 ${R.画面後}%`);
 process.exit(ng ? 1 : 0);

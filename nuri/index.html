@@ -513,6 +513,8 @@
     <div class="row"><span class="n">出す大きさ（長辺）</span><output id="o_long"></output></div>
     <input type="range" id="r_long" min="600" max="4096" step="20">
     <button class="btn solid" id="b_png" style="margin-top:8px">PNG</button>
+    <!-- ⭐⭐ 地なし（2026-08-25 木下「貼HARI でポスターを作るから」）＝重ねて置くための出し方 -->
+    <button class="btn" id="b_png2" style="margin-top:6px">地なしで PNG（切り抜き）</button>
 
     <!-- ══⭐⭐ 流す・動画（2026-08-19 木下「うごきがほしい、再生ボタンなどで」
          「当然のごとく書き出しサイズ選択や動画書き出しもできるように」） -->
@@ -1269,6 +1271,11 @@ function drawGaku(ctx,W,H,GK){
   ctx.fillRect(Math.min(W,w.x+w.w),Math.max(0,w.y),Math.max(0,W-(w.x+w.w)),Math.min(w.h,H));
   ctx.restore();
 }
+/* ⭐⭐ 地なしで出す（2026-08-25）── 木下「オブジェクトだけを切り抜いて背景なし png」
+   ＝貼HARI などに【重ねて置くため】の出し方。彫HORI・簾SUDARE と同じ作法。
+   ⭐ この道具は【塗った所にだけ粒が乗る】ので、紙を塗らなければ粒だけが残る
+      ＝別に形を測り直さない。 */
+let noBgOnce = false;
 function render(ctx, W, H, cam){
   ensureField();
   bake();          /* ⭐ 版を合成してから刷る。画面も PNG もテストも、必ずここを通る（式は1本） */
@@ -1292,8 +1299,11 @@ function render(ctx, W, H, cam){
   /* ⭐⭐ 紙にグラデを敷けるようにした（2026-08-19）。
      ⭐ 紙を塗っているのは【ここ1か所】なので、直せば PNG も SVG も動画も一緒に効く。
      ⚠️ 泡の「紙と同じ」も同じ式を通す（下の paperAt）＝紙だけグラデして泡が単色、にならない。 */
-  ctx.fillStyle = paperStyle(ctx, ox, oy, fw, fh);
-  ctx.fillRect(ox, oy, fw, fh);
+  /* ⚠️ 地なしのときは紙を塗らない＝塗った所（粒）だけが残る */
+  if(!noBgOnce){
+    ctx.fillStyle = paperStyle(ctx, ox, oy, fw, fh);
+    ctx.fillRect(ox, oy, fw, fh);
+  }
 
   const f = blurredFor();
   const d = Math.max(3, P.pitch * (fw / size().W));
@@ -1497,7 +1507,8 @@ function render(ctx, W, H, cam){
   }
   lastDots = n;
   ctx.restore();
-  if(GK) drawGaku(ctx,W,H,GK);      /* ⭐ 額は最後に上から（上のレイヤー） */
+  /* ⚠️ 地なしのときは額も塗らない（重ねる素材に四角い板が入ってしまう） */
+  if(GK && !noBgOnce) drawGaku(ctx,W,H,GK);      /* ⭐ 額は最後に上から（上のレイヤー） */
 }
 
 /* ══⭐⭐ 画面のカメラ（2026-08-17）══════════════════════
@@ -2139,16 +2150,42 @@ function dl(blob, name){
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(u), 8000);
 }
-el('b_png').onclick = () => {
+/* ⭐⭐ 地なしは【絵のあるところだけに切り詰めて】出す（簾SUDARE・彫HORI と同じ作法）。
+   🔴 切り詰めないと、貼HARI で版面いっぱいに広げたとき【透明な余白ごと引き伸ばす】＝粗く見える。 */
+function cropToInk(cv0){
+  const w = cv0.width, h = cv0.height;
+  const d = cv0.getContext('2d').getImageData(0, 0, w, h).data;
+  let x0=w, y0=h, x1=-1, y1=-1;
+  for(let y=0;y<h;y++){ const row=y*w*4;
+    for(let x=0;x<w;x++) if(d[row+x*4+3]>4){
+      if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } }
+  if(x1<x0||y1<y0) return cv0;
+  const pad=3;
+  x0=Math.max(0,x0-pad); y0=Math.max(0,y0-pad);
+  x1=Math.min(w-1,x1+pad); y1=Math.min(h-1,y1+pad);
+  const cw=x1-x0+1, ch=y1-y0+1;
+  const o=document.createElement('canvas'); o.width=cw; o.height=ch;
+  o.getContext('2d').drawImage(cv0,x0,y0,cw,ch,0,0,cw,ch);
+  return o;
+}
+/* ⭐ 押す所は2つ、走る処理は1本（地あり／地なし） */
+function shootPNG(noBg){
   const { W, H } = size();
-  const o = document.createElement('canvas'); o.width = W; o.height = H;
-  render(o.getContext('2d'), W, H);          /* ⭐ 画面と同じ道 */
+  let o = document.createElement('canvas'); o.width = W; o.height = H;
+  noBgOnce = !!noBg;
+  try{ render(o.getContext('2d'), W, H); }        /* ⭐ 画面と同じ道 */
+  finally{ noBgOnce = false; }
+  if(noBg) o = cropToInk(o);
   o.toBlob(b => {
     if(!b){ stat('🔴 出せなかった'); return; }
-    dl(b, 'nuri_' + Date.now() + '.png');
-    stat('PNG を出した ' + W + '×' + H);
+    dl(b, 'nuri_' + Date.now() + (noBg ? '_nobg' : '') + '.png');
+    stat(noBg ? ('地なし PNG ' + o.width + '×' + o.height + '（切り詰めた）')
+              : ('PNG を出した ' + W + '×' + H));
   }, 'image/png');
-};
+}
+/* ⚠️ onclick に関数をそのまま渡すと第1引数が【イベント】になり、いつでも地なしになる。必ず包む */
+el('b_png').onclick  = () => shootPNG(false);
+el('b_png2').onclick = () => shootPNG(true);
 el('b_play').onclick = () => playSet(!PLAY);
 el('b_can').onclick = () => { const x = el('canBox');
   const open = x.style.display === 'none';
