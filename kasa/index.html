@@ -1714,10 +1714,30 @@ const DQ={ fast:{lo:600, hi:1150, aim:26},     /* 粗いがぬるぬる（遅い
            fine:{lo:1800,hi:1800, aim:9999} }; /* 止まっているときと同じ細かさのまま引く */
 let DCAP=980, dcapAt=0;
 let DCAP_LO=DQ.mid.lo, DCAP_HI=DQ.mid.hi, MS_AIM=DQ.mid.aim;
+/* ⭐ 触る端末か。⚠️ 式はここ1本だけ（下の「モバイルの保存」もこれを見る） */
+const TOUCH_ONLY = !!(window.matchMedia
+  && matchMedia('(pointer:coarse)').matches && !matchMedia('(hover:hover)').matches);
+/* 盤の【素の長辺】＝粗さをかける前の大きさ。fit() が入れる（式は fit の中の1本だけ） */
+let RAW_LG=0;
+/* 🔴🔴 2026-08-25 木下＝「kasa をモバイルで見ているが、アニメーションが動かない」。
+   ⭐ 実測（390×844・dpr3）＝モバイルの盤は **1000px** しかないのに、段の下限は
+      【ふつう 1150／細かさ 1800】＝どちらも盤より大きい ＝ **一度も粗くならない**。
+      ＝ 重くても軽くできず、秒数コマまで落ちて「動いていない」に見える。
+   🔴 段の 600/1150/1800 は【木下のデスクトップの盤（約2200px）】を見て決めた絶対値。
+      小さい画面ではそのまま意味を失っていた → [[feedback_raise_the_limit_means_new_effect]] の裏返し。
+   ⭐ 下限の意味は「盤の何割まで粗くしてよいか」なので、触る端末では同じ割合に直す。
+   ⚠️ マウスの端末はここを1バイトも通らない＝今までの粗さ・今までの絵のまま。 */
+const DQ_REF=2200;                 /* 段を決めたときの盤の長辺 */
+/* ⭐ 式は1本だけ。試験は【この関数】に条件を渡して確かめる（別に計算し直さない） */
+function dcapLoFrom(lo, rawLg, touch){
+  if(!touch || !rawLg) return lo;
+  return Math.min(lo, Math.max(240, Math.round(rawLg*lo/DQ_REF)));
+}
+function dcapLo(){ return dcapLoFrom(DCAP_LO, RAW_LG, TOUCH_ONLY); }
 function setDragQ(v){
   const q=DQ[v]||DQ.mid;
   DCAP_LO=q.lo; DCAP_HI=q.hi; MS_AIM=q.aim;
-  DCAP=clamp(DCAP,DCAP_LO,DCAP_HI); dcapAt=0;
+  DCAP=clamp(DCAP,dcapLo(),DCAP_HI); dcapAt=0;
   P.dq=(DQ[v]?v:'mid');
 }
 function tuneDrag(ms){
@@ -1744,7 +1764,7 @@ function tuneDrag(ms){
         ⚠️ 止めれば今までどおり 0.18秒で細かく刷り直す。⚠️ 出す絵は1画素も変わらない
         （書き出しは盤の粗さを見ていない）。 */
   if(P.anim && !DRAG && k>1) return;
-  const nx=clamp(Math.round(DCAP*k/10)*10,DCAP_LO,DCAP_HI);
+  const nx=clamp(Math.round(DCAP*k/10)*10,dcapLo(),DCAP_HI);
   if(nx===DCAP) return;
   DCAP=nx; dcapAt=now;
   fit(); preview();     /* ⚠️ 盤の大きさを変えると中身が消えるので、控えを伸ばして繋ぐ */
@@ -1801,6 +1821,7 @@ function fit(){
   const cap=(DRAG||P.anim)?DCAP:(HI?1800:1150);
   let W=Math.round(w*dpr), H=Math.round(h*dpr);
   const lg=Math.max(W,H);
+  RAW_LG=lg;            /* ⭐ 段の下限を「盤の割合」に直すのに使う（式はここ1本） */
   if(lg>cap){ W=Math.round(W*cap/lg); H=Math.round(H*cap/lg); }
   cv.style.width=w+'px'; cv.style.height=h+'px';
   if(W!==cw||H!==ch){ cw=Math.max(2,W); ch=Math.max(2,H); cv.width=cw; cv.height=ch; }
@@ -2030,9 +2051,12 @@ function anim(on){
         盤は止めたときに細かく刷り直すので、ここは持ち主（DCAP）を戻すだけでよい。 */
   if(on){ DCAP=DCAP_HI; dcapAt=0; }
   if(on&&!raf) raf=requestAnimationFrame(loop);
-  /* ⭐ 止めたら細かく刷り直す（0.18秒後）。
-     ⚠️ これが無いと、再生中に粗くした盤がそのまま残って【止めたのに眠い絵】になる。 */
-  if(!on&&raf){ cancelAnimationFrame(raf); raf=null; u=0; kick(); hiLater(); }
+  /* ⭐ 止めたら【その場で】細かい盤に戻す。
+     ⚠️ これが無いと、再生中に粗くした盤がそのまま残って【止めたのに眠い絵】になる。
+     🔴 0.18秒の遅らせ（hiLater）でやろうとして外した＝あれは「掴んでいる手が止まってから」用で、
+        止めるボタンには要らない。遅らせると【いつ戻るかがタイミング次第】になり、
+        回帰テストが3回に1回落ちるようになった（狼少年）→ [[feedback_regression_test_before_push]] */
+  if(!on&&raf){ cancelAnimationFrame(raf); raf=null; u=0; DCAP=DCAP_HI; dcapAt=0; fit(); kick(); }
 }
 function animSync(){
   const b=el('anGo');
@@ -2878,7 +2902,9 @@ window.KASA={ get P(){return P}, get HOLE(){return HOLE}, get LAMP(){return LAMP
   get ASEL(){return ASEL}, holesAt, lampsAt,  /* ⭐ 絵を選んでいるか／動かしたときの穴と灯 */
   get VIEW(){return VIEW},              /* ⭐ 寄り具合。2本指の試験がここを見る */
   /* ⭐ 再生中に盤の粗さが【往復しない】＝場を作り直さない＝絵が止まらないこと を測る入口 */
-  tuneDrag, anim, get DCAP(){return DCAP}, get DRAG(){return DRAG} };
+  tuneDrag, anim, get DCAP(){return DCAP}, get DRAG(){return DRAG},
+  /* ⭐ モバイルで「一度も粗くならない」を測る入口（本体と同じ式） */
+  dcapLoFrom, get RAW_LG(){return RAW_LG}, get TOUCH_ONLY(){return TOUCH_ONLY} };
 </script>
 
 <!-- ══════════════════════════════════════════════════════════════
@@ -2894,8 +2920,11 @@ window.KASA={ get P(){return P}, get HOLE(){return HOLE}, get LAMP(){return LAMP
      ══════════════════════════════════════════════════════════════ -->
 <script>
 (function(){
-  var touchOnly = window.matchMedia
-    && matchMedia('(pointer:coarse)').matches && !matchMedia('(hover:hover)').matches;
+  /* ⭐ 判定は本体の TOUCH_ONLY 1本だけを見る（同じ式を2箇所に置かない）。
+     ⚠️ 万一この塊だけ先に読まれても落ちないように、無いときはその場で測る */
+  var touchOnly = (typeof TOUCH_ONLY!=='undefined') ? TOUCH_ONLY
+    : (window.matchMedia
+       && matchMedia('(pointer:coarse)').matches && !matchMedia('(hover:hover)').matches);
   if(!touchOnly) return;                       /* 🔴 PC はここで終わり */
   if(!window.HTMLAnchorElement) return;
   var orig = HTMLAnchorElement.prototype.click;

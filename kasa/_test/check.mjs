@@ -509,6 +509,22 @@ try{
     KASA.anim(wasAnim);
   }
 
+  /* 🔴🔴 モバイルで【一度も粗くならない】＝重くても軽くできない＝動いていないに見える
+     （木下＝「kasa をモバイルで見ているがアニメーションが動かない」）
+     ⚠️ 段の 600/1150/1800 はデスクトップの盤（約2200px）で決めた絶対値。
+        モバイルの盤は 1000px しかないので、下限 1150 は盤より大きい＝効かない。
+     ⭐ 物差しは本体と同じ dcapLoFrom（試験が別に計算し直さない）。 */
+  {
+    const F=KASA.dcapLoFrom;
+    const mob=F(1150,1000,true), pc=F(1150,2200,false), pcT=F(1150,2200,true);
+    ok('モバイルの盤 1000px なら下限が盤より小さくなる（1150→'+mob+'px）', mob<1000);
+    ok('マウスの端末は1バイトも変わらない（'+pc+'px）', pc===1150);
+    ok('大きい盤なら触る端末でも変わらない（'+pcT+'px）', pcT===1150);
+    ok('小さすぎる画面でも粗くしすぎない（'+F(1150,300,true)+'px≧240）', F(1150,300,true)>=240);
+    ok('いまの盤の素の長辺が取れている（'+KASA.RAW_LG+'px・触る端末='+KASA.TOUCH_ONLY
+       +'・いまの下限 '+KASA.dcapLoFrom(1150,KASA.RAW_LG,KASA.TOUCH_ONLY)+'px）', KASA.RAW_LG>2);
+  }
+
   // 大きく刷れるか
   const [ow,oh]=KASA.outSize();
   const t0=performance.now();
