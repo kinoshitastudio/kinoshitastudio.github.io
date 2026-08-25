@@ -14,6 +14,9 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SVG  = path.join(HERE, 'sample.svg');
+/* ⭐ 作字SAKUJI から実際に出てきた SVG。【いちばん下に白い地の板】が入っているので、
+   それを捨てられているかの試験になる（自作の見本には板が無く、試験にならなかった）。 */
+const SVG2 = path.join(HERE, 'sample_sakuji.svg');
 const FILE = process.argv[2] || path.join(HERE, '..', 'index.html');
 
 const b = await puppeteer.launch({ executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -67,8 +70,15 @@ ok(diff(s2, s3) > yure * 3 + 500, '粒にする を動かすと変わる＝質�
 
 await p.evaluate(() => document.getElementById('btn-unsvg').click());
 await new Promise(r => setTimeout(r, 2500));
-const s4 = await big();
 ok((await info()).indexOf('まだ') >= 0, '「SVG を消す」で入れる前の表示に戻る');
+
+/* 🔴 作字SAKUJI の SVG は【白い地の板】を持っている。そのまま拾うと四角い板が立体になる。 */
+const inp2 = await p.$('#svgFile');
+await inp2.uploadFile(SVG2);
+await new Promise(r => setTimeout(r, 3500));
+const t2 = await info();
+ok(/地の板 (\d+) 枚は捨てた/.test(t2), '作字SAKUJI の SVG の【地の板】を捨てる', t2);
+ok(/(\d+) 本/.test(t2) && +t2.match(/(\d+) 本/)[1] >= 3, '地の板を捨てても線は残る', t2);
 ok(err === 0, 'JSエラーが出ない', err + '件');
 await b.close();
 process.exit(ng.length ? 1 : 0);
