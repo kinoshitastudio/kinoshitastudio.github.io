@@ -19,6 +19,11 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
+/* ⚠️ 道具によっては </body> を書いていない（簾SUDARE）。無ければ末尾に足す。
+   ⭐ ここで落ちると【何も出ない】＝「結果が取れなかった」になって原因が見えない。 */
+function inject(html, T){
+  return html.includes('</body>') ? html.replace('</body>', T+'</body>') : html + T;
+}
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 /* 道具ごとに違うのは【P の取り方】と【1枚描く呼び方】の2つだけ。ここ1箇所に表で持つ。
@@ -34,6 +39,8 @@ const HOW = {
   sure: { P:'P',      shot:`render(c.getContext('2d'), buildPlan(W,H), false)` },
   ten:  { P:'P',      pre:`PP.base=0.6;`,   /* 起動直後は版が無く【無地】なので下地の濃さを上げる */
                       shot:`render(c.getContext('2d'), W, H, false)` },
+  /* ⚠️ この道具は盤（cv）に直に描く形なので、盤を測る大きさにしてから写す */
+  sudare:{ P:'P',      shot:`cv.width=W; cv.height=H; draw(); c.getContext('2d').drawImage(cv,0,0)` },
 };
 
 const tool = process.argv[2];
@@ -94,7 +101,7 @@ document.body.appendChild(pre);
 <\/script>`;
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'gaku-'));
-fs.writeFileSync(path.join(TMP,'t.html'), fs.readFileSync(src,'utf8').replace('</body>', T+'</body>'));
+fs.writeFileSync(path.join(TMP,'t.html'), inject(fs.readFileSync(src,'utf8'), T));
 let dom='';
 try{ dom=execFileSync(CHROME,['--headless=new','--disable-gpu','--virtual-time-budget=40000',
   '--window-size=1400,900','--dump-dom','file://'+path.join(TMP,'t.html')],
