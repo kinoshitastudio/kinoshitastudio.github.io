@@ -480,12 +480,18 @@
     <!-- ⭐ 再生を押すまで動かない（2026-08-13 木下の型／朦 OBORO・枡 MASU と同じ）。 -->
     <button class="btn" id="anGo">▶ 再生</button>
     <div class="row"><span class="n">速さ</span><output id="o_cyc"></output></div>
-    <input type="range" id="r_cyc" min="0.5" max="30" step="0.5">
+    <!-- ⭐ もっと速くも回せるように下限を 0.5→0.25秒/周 に広げた（右へ引くほど速い） -->
+    <input type="range" id="r_cyc" min="0.25" max="30" step="0.25">
     <div class="row"><span class="n">灯の巡り</span><output id="o_orbit"></output></div>
-    <input type="range" id="r_orbit" min="0" max="0.8" step="0.005">
+    <input type="range" id="r_orbit" min="0" max="1.2" step="0.005">
+    <div class="row"><span class="n">穴の巡り</span><output id="o_holeOrbit"></output></div>
+    <input type="range" id="r_holeOrbit" min="0" max="0.8" step="0.005">
     <div class="row"><span class="n">息</span><output id="o_breath"></output></div>
-    <input type="range" id="r_breath" min="0" max="0.8" step="0.01">
-    <div class="note">⭐押すまで動かない。<b>止めると元の姿に戻る</b>。どちらも1周でぴったり戻る。</div>
+    <input type="range" id="r_breath" min="0" max="1.5" step="0.01">
+    <div class="note">⭐押すまで動かない。<b>止めると元の姿に戻る</b>。どれも1周でぴったり戻る。<br>
+      ⭐<b>穴の巡り</b>＝黒い穴そのものが回る。<b>物が動いて見えるのはこれ</b><br>
+      ⚠️ <b>灯の巡りは 0.8 あたりが上限の目安</b>。それ以上は灯が紙から出ていくので、
+      かえって絵が変わらなくなる（実測：巡り2.5・息0 で明るさのずれが 25.2→5.6）</div>
   </div>
 
   <hr>
@@ -630,7 +636,7 @@ let P = {
   /* 色 */
   paper:'#f7f1e6', lamp:'#ffeccb', wall:'#3b3833', wallL:0.30,
   /* 動き */
-  anim:false, cyc:14, orbit:0.05, breath:0.18,
+  anim:false, cyc:14, orbit:0.05, breath:0.18, holeOrbit:0,
   seed:20260814
 };
 let HOLE = [];   /* 穴（前に貼る黒い円）  {x,y} 正規化 */
@@ -1443,7 +1449,8 @@ function lampsAt(t){
     out.push({
       x:LAMP[i].x+Math.cos(a)*P.orbit,
       y:LAMP[i].y+Math.sin(a)*P.orbit,
-      i:1+P.breath*Math.sin(TAU*t+i*1.7)
+      /* ⚠️ 息を強くすると 1-息 が負になる＝光が裏返る。0 で止める（暗いところまで） */
+      i:Math.max(0, 1+P.breath*Math.sin(TAU*t+i*1.7))
     });
   }
   return out;
@@ -1555,7 +1562,7 @@ function paint(octx, W, H, t, cam){
 
 
   drawGlow(octx,W,H);
-  drawHoles(octx,S,CX,CY);
+  drawHoles(octx,S,CX,CY,t);
   cutTone(octx,W,H,pr,wall);
   return 0;
 }
@@ -1607,10 +1614,25 @@ function drawGlow(octx,W,H){
 }
 
 /* ── 穴 ── 最後に、硬い縁で ── */
-function drawHoles(octx,S,CX,CY){
+/* ⭐⭐ 穴の位置（動かすとき）。木下＝「動きがやはりあまりない」。
+   🔴 実測で分かったこと＝灯の巡りは【広げるほど強くなるのではない】。
+      0.8 を超えると灯が紙から出ていくので、かえって絵が変わらなくなる
+      （巡り2.5・息0 で、明るさの平均のずれが 25.2 → 5.6 まで落ちた）。
+   ⭐ 足りなかったのは幅ではなく【動くものの種類】。
+      いままで動いていたのは光だけで、**黒い穴は1画素も動いていなかった**。
+      穴が動くと「物が動いた」に見える＝木下の言う動きになる。 */
+function holesAt(t){
+  const k=P.holeOrbit||0;
+  if(!(k>0.0005)) return HOLE;
+  return HOLE.map((h,i)=>{
+    const a=TAU*(t+i/Math.max(1,HOLE.length))+i*0.9;
+    return { x:h.x+Math.cos(a)*k, y:h.y+Math.sin(a)*k };
+  });
+}
+function drawHoles(octx,S,CX,CY,t){
   octx.save();
   octx.globalCompositeOperation='source-over';
-  for(const h of HOLE){
+  for(const h of holesAt(t||0)){
     const cx=CX+h.x*S, cy=CY+h.y*S, r=P.holeR*S;
     /* 触れている所のわずかな影（浮いて見せないため） */
     octx.beginPath(); octx.arc(cx,cy,r*1.18,0,TAU);
@@ -1623,7 +1645,7 @@ function drawHoles(octx,S,CX,CY){
 
 /* ══ 画面 ══════════════════════════════════════════════ */
 let cw=0, ch=0, u=0, raf=null, lastTs=0;
-const CYC_LO=0.5, CYC_HI=30;
+const CYC_LO=0.25, CYC_HI=30;   /* ⚠️ つまみの min/max と必ず同じ値にする（逆向きに写すので） */
 
 /* ══ 寄る・引く・動かす ════════════════════════════════
    ⭐ 見え方を変えるだけ（版面は動かない）。出る絵はいつも「出る大きさ」のまま。
@@ -1798,6 +1820,13 @@ function drawGuide(octx,cam){
    🔴 印は白い丸＋黒い縁＋影にする。紙は白・壁は黒にもなるので、
       currentColor や単色だと必ずどちらかで見えなくなる（他の道具で踏んだ）。 */
 let ARTBOX=null, artShowUntil=0;
+/* ⭐⭐ 絵を【選んでいるか】。木下＝「オブジェクトを選択しなくても選択できている状態になる」。
+   🔴 前は囲みと角の玉を【いつでも】描いていたので、何も選んでいないのに選ばれて見えた。
+      しかも字の選択（GSEL）は外を押すと外れるので、片方だけ残って余計に紛らわしかった。
+   ⭐ 絵の中を押したら選ぶ／外（灰色の余白）を押したら外す。掴めるのも選んでいる間だけ。
+   ⚠️ 動かす・大きさを変える道は今までどおり（できなくなることは1つも無い）。 */
+let ASEL=false;
+const inArtBox = p => !!ARTBOX && p.x>=ARTBOX.x0 && p.x<=ARTBOX.x1 && p.y>=ARTBOX.y0 && p.y<=ARTBOX.y1;
 const artHandleR = () => Math.max(7, cw/128);        /* 画面での取っ手の半径（画素） */
 function artCorners(cam){
   if(!ARTBOX) return null;
@@ -1867,6 +1896,7 @@ function drawGlyphFrames(octx,cam){
 }
 function drawArtHandles(octx,cam){
   drawGlyphFrames(octx,cam);
+  if(!ASEL) return;                     /* ⭐ 選んでいる間だけ囲みと角の玉を出す */
   const c=artCorners(cam); if(!c) return;
   if(Math.abs(c.x1-c.x0)<6 || Math.abs(c.y1-c.y0)<6) return;   /* 小さすぎると邪魔なだけ */
   const r=artHandleR(), lw=Math.max(1,cw/1400);
@@ -1998,7 +2028,8 @@ const R = [
   ['holeN','holeN',FI,1],['holeR','holeR',F3,1],['pinD','pinD',F2,1],['pinR','pinR',F1,1],
   ['gloR','gloR',F2,0],['gloI','gloI',F2,0],['rim','rim',F2,0],['fib','fib',F2,0],
   ['cut','cut',FI,0],['cutS','cutS',FI,0],
-  ['wallL','wallL',F2,0],['orbit','orbit',F3,0],['breath','breath',F2,0],['long','long',v=>Math.round(v)+'px',0]
+  ['wallL','wallL',F2,0],['orbit','orbit',F3,0],['holeOrbit','holeOrbit',F3,0],
+  ['breath','breath',F2,0],['long','long',v=>Math.round(v)+'px',0]
 ];
 R.forEach(([id,key,fmt,re])=>{
   const r=el('r_'+id); if(!r) return;
@@ -2094,9 +2125,9 @@ el('anGo').onclick=()=>{
   const on=!P.anim;
   /* ⭐ 巡りも息も 0 なら、押しても1コマも変わらない＝壊れているのと同じ。
      こちらで巡りを入れて、入れたことを知らせる（襞HIDA の「送り」と同じ作法）。 */
-  if(on&&P.orbit<0.002&&P.breath<0.002){
-    pushHist(); P.orbit=0.25; syncUI();
-    stat('灯の巡りが 0 だったので 0.25 を入れた');
+  if(on&&P.orbit<0.002&&P.breath<0.002&&(P.holeOrbit||0)<0.002){
+    pushHist(); P.orbit=0.25; P.holeOrbit=0.12; syncUI();
+    stat('動く量が 0 だったので 灯の巡り0.25・穴の巡り0.12 を入れた');
   }
   anim(on); animSync(); szSync(); saveLocal();
 };
@@ -2352,7 +2383,8 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
     const r0=cv.getBoundingClientRect();
     const scr={ x:(e.clientX-r0.left)*(cw/Math.max(1,cssW)), y:(e.clientY-r0.top)*(ch/Math.max(1,cssH)) };
     const c=artCorners(camScreen());
-    if(c && Math.abs(c.x1-c.x0)>=6 && Math.abs(c.y1-c.y0)>=6){
+    /* ⚠️ 角の玉は【選んでいる間だけ】掴める（出ていない玉を掴めると訳が分からない） */
+    if(ASEL && c && Math.abs(c.x1-c.x0)>=6 && Math.abs(c.y1-c.y0)>=6){
       const grab=artHandleR()*(e.pointerType==='touch'?2.6:1.9);
       for(const [hx,hy] of c.pts){
         if(Math.hypot(scr.x-hx, scr.y-hy) <= grab){
@@ -2420,7 +2452,12 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
       mode='obj'; objStart={x:tgt.x,y:tgt.y};
     }else{                              /* 何も無い所 ＝ 絵そのもの */
       mode='move'; tgt=null; sx=p.x; sy=p.y; ax=P.ox; ay=P.oy;
-      stat('絵をつかんだ ── ⌥を押しながらで 大きさ');
+      /* ⭐ 絵の中を押したら【選ぶ】／外（灰色の余白）を押したら【外す】。
+         ⚠️ どちらも動かせるのは今までどおり（選び方が増えただけ）。 */
+      const wasSel=ASEL; ASEL=inArtBox(p);
+      if(wasSel!==ASEL) kick();
+      stat(ASEL ? '絵をつかんだ ── 角の玉で大きさ／⌥を押しながらでも大きさ'
+                : '選択を外した ── 絵の中を押すと選べる');
     }
     on=true; capture(e); cv.classList.add('grabbing');
     if(mode!=='obj') dragOn();
@@ -2428,7 +2465,7 @@ function segVal(id,dflt){ const b=el(id)&&el(id).querySelector('button.on'); ret
   /* ⭐ 角の上に来たら矢印を変える＝掴めることが【触る前に】分かる（マウスのときだけ） */
   function hoverCursor(e){
     if(on||pan) return;
-    const c=artCorners(camScreen());
+    const c=ASEL ? artCorners(camScreen()) : null;   /* 出ていない玉に矢印を変えない */
     if(!c){ cv.style.cursor=''; return; }
     const r0=cv.getBoundingClientRect();
     const sx2=(e.clientX-r0.left)*(cw/Math.max(1,cssW)), sy2=(e.clientY-r0.top)*(ch/Math.max(1,cssH));
@@ -2617,8 +2654,8 @@ function loadLocal(){
    ══════════════════════════════════════════════════════ */
 function plan(){
   const fps=+segVal('tvFps','24'), loops=+segVal('tvLoop','1');
-  const moving=P.orbit>0.001||P.breath>0.001;
-  const sec=loops*Math.max(0.5,P.cyc);
+  const moving=P.orbit>0.001||P.breath>0.001||(P.holeOrbit||0)>0.001;
+  const sec=loops*Math.max(CYC_LO,P.cyc);
   return {fps,loops,sec,total:Math.max(2,Math.round(sec*fps)),moving};
 }
 const TV={on:false,stop:false};
@@ -2784,6 +2821,7 @@ window.KASA={ get P(){return P}, get HOLE(){return HOLE}, get LAMP(){return LAMP
   get ARTBOX(){return ARTBOX}, artCorners, halfWH,
   /* ⭐ 1字ずつ：盤の四角と取っ手も【本体と同じ関数】から取る（試験が別に測り直さない） */
   get GLYPH(){return GLYPH}, get GSEL(){return GSEL}, glyphBoxes, glyphHandles,
+  get ASEL(){return ASEL}, holesAt, lampsAt,  /* ⭐ 絵を選んでいるか／動かしたときの穴と灯 */
   get VIEW(){return VIEW} };            /* ⭐ 寄り具合。2本指の試験がここを見る */
 </script>
 

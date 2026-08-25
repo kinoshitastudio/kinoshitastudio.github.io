@@ -8,7 +8,9 @@ import { fileURLToPath } from 'node:url';
 
 /* ⚠️ .pathname だと日本語のフォルダ名が %E5.. のまま来て開けない。必ず戻す */
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SRC  = path.join(HERE, '..', 'index.html');
+/* ⭐ 直す前と後を突き合わせられるように、見に行く本体を差し替えられる
+   （例：KASA_SRC=/tmp/head.html node kasa/_test/check.mjs） */
+const SRC  = process.env.KASA_SRC || path.join(HERE, '..', 'index.html');
 const TMP  = fs.mkdtempSync(path.join(os.tmpdir(), 'kasa-'));
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
@@ -21,7 +23,10 @@ const shot=(w,hh,t)=>{const c=document.createElement('canvas');c.width=w;c.heigh
   KASA.paint(c.getContext('2d'),w,hh,t);return c.getContext('2d').getImageData(0,0,w,hh).data;};
 const diff=(A,B)=>{let d=0;for(let i=0;i<A.length;i+=4)if(Math.abs(A[i]-B[i])>8)d++;return d;};
 try{
+  /* ⚠️ 起動した直後の値をここで取る（あとの試験が盤を触ると変わってしまう） */
+  const ASEL0 = KASA.ASEL;
   ok('場ができている', KASA.FW>2 && KASA.FH>2);
+  ok('起動した直後は絵が選ばれていない', ASEL0===false);
   ok('場を作るのが 2秒以内（'+KASA.fieldMs+'ms）', KASA.fieldMs<2000);
 
   // 版面4つ
@@ -113,6 +118,10 @@ try{
   const [hx,hy] = C0.pts[2];                      /* 右下の角 */
   const mid = [ (C0.x0+C0.x1)/2, (C0.y0+C0.y1)/2 ];
   const far = [ mid[0] + (hx-mid[0])*1.6, mid[1] + (hy-mid[1])*1.6 ];
+  /* ⚠️ 2026-08-25 から【選んでいる間だけ】角の玉が出る＝先に絵の中を押して選ぶ
+     （出ていない玉を掴めてしまう方がおかしい） */
+  drag(mid, mid);
+  ok('角を掴む前に絵を選べている', KASA.ASEL===true);
   drag([hx,hy], far);
   ok('角を外へ引くと大きくなる（'+sz0.toFixed(2)+' → '+KASA.P[k0].toFixed(2)+'）',
      KASA.P[k0] > sz0*1.05);
@@ -408,6 +417,54 @@ try{
     KASA.render();
   }
 
+  /* ⭐⭐ 選ぶ ── 木下＝「選択しなくても選択できている状態になる」（2026-08-25）
+     🔴 前は囲みと角の玉を【いつでも】描いていた＝何も選んでいないのに選ばれて見えた。 */
+  {
+    const cv3=document.getElementById('cv'), rc3=cv3.getBoundingClientRect();
+    const cam3=KASA.camScreen();
+    /* 世界の座標 → 画面の画素 → クライアント */
+    const toClient=(wx,wy)=>{
+      const sx=cam3.cx+wx*cam3.S, sy=cam3.cy+wy*cam3.S;
+      return { x:rc3.left+sx*(rc3.width/cv3.width), y:rc3.top+sy*(rc3.height/cv3.height) };
+    };
+    const tap=(wx,wy)=>{ const a=toClient(wx,wy);
+      cv3.dispatchEvent(new PointerEvent('pointerdown',{clientX:a.x,clientY:a.y,button:0,bubbles:true,pointerId:11,pointerType:'mouse'}));
+      cv3.dispatchEvent(new PointerEvent('pointerup',{clientX:a.x,clientY:a.y,bubbles:true,pointerId:11,pointerType:'mouse'}));
+    };
+    const B3=KASA.ARTBOX;
+    if(B3){
+      tap((B3.x0+B3.x1)/2, (B3.y0+B3.y1)/2);
+      ok('絵の中を押すと選べる', KASA.ASEL===true);
+      /* 絵の外（灰色の余白）＝広がりの外側へ十分に離れた所 */
+      tap(B3.x1+(B3.x1-B3.x0)*0.9, B3.y1+(B3.y1-B3.y0)*0.9);
+      ok('絵の外を押すと選択が外れる', KASA.ASEL===false);
+    }
+  }
+
+  /* ⭐⭐ 動かす ── 木下＝「動きがやはりあまりない」（2026-08-25）
+     ⭐ 足したのは【穴も巡る】＝黒い形そのものが動く（前は光だけが動いていた） */
+  {
+    const o0=KASA.P.orbit, b0=KASA.P.breath, h0=KASA.P.holeOrbit;
+    KASA.P.orbit=0; KASA.P.breath=0; KASA.P.holeOrbit=0;
+    const s0=KASA.holesAt(0), s1=KASA.holesAt(0.25);
+    ok('穴の巡り 0 なら穴は1つも動かない',
+       s0.every((h,i)=>h.x===s1[i].x && h.y===s1[i].y));
+    KASA.P.holeOrbit=0.30;
+    const m0=KASA.holesAt(0), m1=KASA.holesAt(0.25);
+    const far=m0.reduce((mx,h,i)=>Math.max(mx,Math.hypot(h.x-m1[i].x,h.y-m1[i].y)),0);
+    ok('穴の巡りを入れると穴が動く（'+far.toFixed(2)+'）', far>0.2);
+    /* 1周でぴったり戻る（動かすものは全部この約束） */
+    const w0=KASA.holesAt(0), w1=KASA.holesAt(1);
+    ok('1周でぴったり戻る',
+       w0.every((h,i)=>Math.abs(h.x-w1[i].x)<1e-9 && Math.abs(h.y-w1[i].y)<1e-9));
+    /* 息を強くしても光は裏返らない（0 で止める）＝実際にいちばん暗い所を見る */
+    KASA.P.breath=1.5;
+    let lo=9;
+    for(let k=0;k<=40;k++) KASA.lampsAt(k/40).forEach(l=>{ if(l.i<lo) lo=l.i; });
+    ok('息を強くしても光が負にならない（いちばん暗い所 '+lo.toFixed(2)+'）', lo>=0);
+    KASA.P.orbit=o0; KASA.P.breath=b0; KASA.P.holeOrbit=h0;
+  }
+
   // 大きく刷れるか
   const [ow,oh]=KASA.outSize();
   const t0=performance.now();
@@ -422,10 +479,20 @@ document.body.appendChild(pre);
 <\/script>`;
 fs.writeFileSync(path.join(TMP, 't.html'), h.replace('</body>', T + '</body>'));
 
-const dom = execFileSync(CHROME, [
-  '--headless=new', '--disable-gpu', '--virtual-time-budget=30000',
-  '--window-size=1400,900', '--dump-dom', 'file://' + path.join(TMP, 't.html')
-], { encoding: 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'ignore'] });
+/* 🔴 2026-08-25 ── Chrome が終わらずに試験が【永久に返らない】ことがあった
+   （書き出しや詰める側が生きたまま残る）。結果は先に出ているので、
+   ⭐ 待つ時間を決めて、越えたら止めて【途中まで出ている結果】を読む。 */
+let dom = '';
+try{
+  dom = execFileSync(CHROME, [
+    '--headless=new', '--disable-gpu', '--virtual-time-budget=30000',
+    '--window-size=1400,900', '--dump-dom', 'file://' + path.join(TMP, 't.html')
+  ], { encoding: 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'ignore'],
+       timeout: 240000, killSignal: 'SIGKILL' });
+}catch(e){
+  dom = (e && e.stdout) ? String(e.stdout) : '';
+  if(!dom) { console.log('NG  Chrome が返らなかった（240秒）'); process.exit(1); }
+}
 
 const m = dom.match(/<pre id="R">([\s\S]*?)<\/pre>/);
 const out = m ? m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>') : '（結果が取れなかった）';
