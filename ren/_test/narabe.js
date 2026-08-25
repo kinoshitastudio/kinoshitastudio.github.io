@@ -346,6 +346,27 @@
          !document.querySelectorAll('#clipLane .clipseg')[1].querySelector('canvas.wv') &&
          !document.querySelectorAll('#clipLane .clipseg')[1].querySelector('.mu'));
 
+      /* 🔴 木下＝「動画をドロップした後、移動させないと動画が表示されない」
+         ＝1コマ目が届く前に描いて、そのまま置き去りにしていた */
+      {
+        clips.length = 0; sel = -1; seg('narabe', 1);
+        const vk = vidClip(400, 500, 3.0, 'kick.mp4');
+        vk.el.readyState = 0;                  /* まだ絵が無い状態を作る */
+        clips.push(vk); placeAt(vk, 0.5, 0.5, 0.5); afterAdd();
+        /* ⚠️ ここで kickFrame を直に呼ばない＝【描く側が自分で気づくか】を見る */
+        frameAt(0);
+        ok('絵が届いていない動画は【頭を動かして】取りに行く',
+           vk.__kick === true && vk.el.currentTime >= 0.001, num(vk.el.currentTime));
+        /* 届いた合図で描き直すか（盤を消してから合図を投げる） */
+        g.clearRect(0, 0, cv.width, cv.height);
+        const blank = px(0.5, 0.5);
+        vk.el.readyState = 4;
+        vk.el.dispatchEvent(new Event('loadeddata'));
+        ok('  絵が届いたら描き直す（真っ黒のまま置き去りにしない）',
+           px(0.5, 0.5) !== blank, blank + ' → ' + px(0.5, 0.5));
+        ok('  合図は1回だけ（毎コマ増やさない）', vk.__kick === true);
+      }
+
       // ══ そろえる・吸い付く・透かし・目・目安の線（Premiere に並べる道具）
       clips.length = 0; sel = -1; seg('narabe', 1);
       clips.push(imgClip(200, 200, '#f00', 'p1'));

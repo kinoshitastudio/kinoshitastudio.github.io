@@ -1460,6 +1460,8 @@ function frameAt(t){
         const want = inOf(c) + (d > 0.05 ? (t % d) : 0);
         /* ⚠️ 書き出し中は【頭出しが終わってから】呼ばれるので、ここでは触らない */
         if(!shooting && Math.abs(c.el.currentTime - want) > 0.12) c.el.currentTime = want;
+        /* ⚠️ まだ絵が届いていない動画は、届いたら描き直す（真っ黒のまま置き去りにしない） */
+        if(!shooting && c.el.readyState < 2) kickFrame(c);
         vGain(c, 1);                 /* 並べている時は全部の音が同時に鳴る */
       }
       /* 🔴🔴 1枚ずつ囲う。木下＝「オブジェクト以外を触ると他が非アクティブになる」
@@ -1696,6 +1698,20 @@ function narabeOn(){
     .forEach(b => b.classList.toggle('on', +b.dataset.v === 1));
   narabeSync();
 }
+/* ⭐⭐ 動画は【1コマ目が届く前】に描くと真っ黒になる。
+   🔴 木下＝「動画をドロップした後、移動させないと動画が表示されない」。
+      `onloadedmetadata` は【大きさが分かっただけ】で、絵はまだ無い（readyState=1）。
+      その状態の video を drawImage しても【何も描かれない】。
+      動かすと描き直しが何度も走るので、そのうち絵が届いて出る＝「移動させると出る」に見えていた。
+   ⭐ 直し方＝絵が届いたら1回描き直す。届かせるために頭をほんの少し動かす（decode が始まる）。 */
+function kickFrame(c){
+  if(c.type !== 'vid' || c.__kick) return;
+  c.__kick = true;
+  const el = c.el;
+  const redraw = () => { if(!playing) frameAt(cur); };
+  ['loadeddata','canplay','seeked'].forEach(ev => el.addEventListener(ev, redraw, { once:true }));
+  try{ if(!(el.currentTime > 0.0005)) el.currentTime = Math.max(0.001, inOf(c)); }catch(_){}
+}
 /* 落とした所に、版面の frac ぶんの大きさで置く（はみ出したら内側へ寄せる） */
 function placeAt(c, nx, ny, frac){
   const t = placeOf(c), f = frameSize(), el = c.el;
@@ -1763,6 +1779,7 @@ function addFiles(list){
       v.onloadedmetadata = () => {
         const c = { type:'vid', el:v, name:f.name, url, mute:false };
         landed(c); done();
+        kickFrame(c);                 /* ⭐ 1コマ目が届いたら描き直す（真っ黒のままにしない） */
         clipPeaks(c);                 /* ⭐ 音を持っているかは、解いてみるまで分からない */
       };
       v.onerror = () => { bad++; done(); };
@@ -2726,7 +2743,7 @@ async function renOpen(file){
         if(o.type === 'vid'){
           const v = document.createElement('video');
           v.src = url; v.muted = false; v.playsInline = true; v.preload = 'auto';
-          v.onloadedmetadata = () => { c.el = v; clips.push(c); done(); clipPeaks(c); };
+          v.onloadedmetadata = () => { c.el = v; clips.push(c); done(); kickFrame(c); clipPeaks(c); };
           v.onerror = () => done();
         }else{
           const im = new Image();
