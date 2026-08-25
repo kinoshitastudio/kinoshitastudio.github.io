@@ -12,5 +12,11 @@ echo
 echo "── ② 回す を切ったら動画も回らないか"
 node tvspin.mjs  || ng=1
 echo
+echo "── ③ 地なしPNG（オブジェクトだけ切り抜き）"
+node nobg.mjs    || ng=1
+echo
 [ $ng -eq 0 ] && echo "✅ ぜんぶ通った" || echo "🔴 落ちたものがある"
+# ⭐ 見えが変わっていないかは、直す前のファイルを渡して別に流す：
+#    git show HEAD:hori2/index.html > /tmp/hori2_head.html
+#    node hori2/_test/same.mjs /tmp/hori2_head.html
 exit $ng

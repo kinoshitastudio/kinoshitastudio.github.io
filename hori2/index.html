@@ -972,6 +972,13 @@
       <button class="btn" id="btn-png2" style="width:100%;margin-top:6px">1枚を PNG で出す</button>
       <div class="mod">⭐ いま見えている絵を、上の<b>出る大きさ</b>そのままで1枚出す<br>
         （下の帯の <b>PNG</b> と同じもの）</div>
+      <!-- ⭐⭐ 地なし（2026-08-25 木下「オブジェクトだけを切り抜いて背景なし png で書き出したい」
+           ／理由＝「貼HARI でそれらでポスターを作る」）。
+           ⭐ 色は見えているとおりのまま、物体の【外】だけを透かす。 -->
+      <button class="btn" id="btn-png3" style="width:100%;margin-top:6px">地なしで PNG（切り抜き）</button>
+      <div class="mod">⭐ <b>物体だけ</b>を切り抜いて出す（地・波紋・影は入らない）<br>
+        ⚠️ 物体の<b>中</b>に敷いた地は残る＝<b>隠す COVER</b> を切ると、刻むの縞の隙間まで透ける<br>
+        ⭐ 貼 HARI などに<b>重ねて置くため</b>の出し方</div>
       <div class="mod" style="margin-top:10px">⭐ <b>絵ぜんぶ</b>（手で引いた線も 置いた字も まとめて動かす）</div>
       <div class="row"><label>絵の大きさ<i>SCALE</i></label><input type="range" data-p="objScale" min="20" max="300" step="1" value="100"><span class="val"></span></div>
       <div class="row"><label>絵の左右<i>X</i></label><input type="range" data-p="objX" min="-100" max="100" step="1" value="0"><span class="val"></span></div>
@@ -1386,7 +1393,10 @@ const ENGINES = [
 ];
 
 /* ── RENDERER / SCENE ───────────────────────────────────── */
-const renderer = new THREE.WebGLRenderer({ antialias:true, preserveDrawingBuffer:true });
+/* ⚠️🔴 alpha:true が要る。alpha:false の canvas は【透明を持てない】＝地なしPNG が作れない。
+   ⭐ 画面の見えは変わらない＝いちばん下のシェーダが常に alpha=1 を出しているため
+      （地なしのときだけ 0 を混ぜる）。 */
+const renderer = new THREE.WebGLRenderer({ antialias:true, preserveDrawingBuffer:true, alpha:true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
@@ -2477,6 +2487,10 @@ const postUniforms = {
   uRipVal:   { value: 0.88 },
   uRipCover: { value: 1 },
   uRipSolid: { value: 5 },
+  /* ⭐⭐ 地なしで出す（2026-08-25 木下「オブジェクトだけを切り抜いて背景なし png」）。
+     画面では常に 0＝1画素も変わらない。書き出しの間だけ 1 にする。 */
+  uAlphaOut:  { value: 0 },
+  uAlphaWide: { value: 5 },
   uRipShape: { value: 0 },
   uRipSwirl: { value: 0.3 },
   uRipCx:    { value: 0.5 },
@@ -2528,6 +2542,7 @@ postScene.add(new THREE.Mesh(
       uniform float uTintMode, uHue, uSat, uVal, uShift, uRing, uHue2, uBg, uBgSat;
       uniform float uRipOn, uRipFreq, uRipSpeed, uRipSoft, uRipDepth, uRipHue, uRipSat, uRipVal;
       uniform float uRipCover, uRipSolid, uRipShape, uRipSwirl, uRipCx, uRipCy, uRipMat, uRipCell;
+      uniform float uAlphaOut, uAlphaWide;   /* 地なしで出す */
       uniform float uInkOn, uInkAuto, uInkHue, uInkSat, uInkVal, uInkAmt;
       uniform float uCycles, uPulse, uT;
       uniform vec2 uRes;
@@ -2651,6 +2666,24 @@ postScene.add(new THREE.Mesh(
       float ib = mix(i + 1.0,  mod(i + 1.0, uPapN), ring);
       return papMix(papPick(ia, c0), papPick(ib, c0), sc - i);
     }
+      /* ⭐⭐ シルエット＝【物体のある所】。式はここ1本だけ。
+         COVER（波紋を隠す）と 地なしPNG が同じものを見る＝ずれない。
+         ⚠️ インク量そのものだと【刻む】の縞の隙間で 0 になり、そこに穴が開く
+            （2026-08-01 木下「中のフォントが見えない」と同じ理由）。
+            だから少し広げて拾う。wide がその広げる幅。 */
+      float silhouette(float v0, float wide){
+        float s2 = v0;
+        if(wide > 0.001){
+          vec2 tx = wide / REZ();
+          for(int i = 0; i < 8; i++){
+            float a = float(i) * 0.7853982;
+            vec2  d = vec2(cos(a), sin(a));
+            s2 = max(s2, texture2D(tSrc, vUv + d * tx).r);
+            s2 = max(s2, texture2D(tSrc, vUv + d * tx * 0.5).r);
+          }
+        }
+        return smoothstep(0.02, 0.14, s2);
+      }
       void main(){
         vec4 s = texture2D(tSrc, vUv);
         float v = s.r;                      // インク量
@@ -2893,17 +2926,8 @@ postScene.add(new THREE.Mesh(
              ⚠️ インク量そのものを使うと縞の隙間で消えるので、
                 **少し広げて拾う**（＝シルエット）。SOLID がその広げる幅。
              ⭐ 隠した中に敷くのは PAPER/WASH で作った地＝既にある段を使い回す。 */
-          float sil = v;
-          if(uRipCover > 0.001 && uRipSolid > 0.001){
-            vec2 tx = uRipSolid / REZ();
-            for(int i = 0; i < 8; i++){
-              float a = float(i) * 0.7853982;
-              vec2  d = vec2(cos(a), sin(a));
-              sil = max(sil, texture2D(tSrc, vUv + d * tx).r);
-              sil = max(sil, texture2D(tSrc, vUv + d * tx * 0.5).r);
-            }
-          }
-          sil = smoothstep(0.02, 0.14, sil);
+          /* ⭐ 式は silhouette() 1本（⚠️ 広げる条件は今までと同じものを渡す＝絵は変わらない） */
+          float sil = silhouette(v, (uRipCover > 0.001 ? uRipSolid : 0.0));
           bg = mix(rip, flat0, sil * uRipCover);
         }
 
@@ -3020,7 +3044,15 @@ postScene.add(new THREE.Mesh(
           bg *= mix(vec3(1.0), uShadeCol, sh);
         }
 
-        gl_FragColor = vec4(mix(bg, fg, v), 1.0);
+        /* ⭐⭐ 地なしで出す（2026-08-25 木下「オブジェクトだけを切り抜いて背景なし png」
+           ／理由＝「貼HARI でそれらでポスターを作る」）。
+           ⭐ 色は【見えているとおり】のまま、アルファだけを物体の形にする
+              ＝物体の中に敷いた地（COVER の紙）は残り、物体の外だけが透ける。
+           ⚠️ 中まで v で透かすと、刻むの縞の隙間がスカスカに抜けて別物になる。
+           ⚠️ uAlphaOut は画面では常に 0＝いままでと1画素も変わらない。 */
+        float outA = 1.0;
+        if(uAlphaOut > 0.5) outA = silhouette(v, uAlphaWide);
+        gl_FragColor = vec4(mix(bg, fg, v), outA);
       }
     `
   })
@@ -3302,12 +3334,16 @@ function updateFrameGuide(){
    ⚠️ BLEED は【何フレームも溜めて】できるものなので、大きさを変えた直後は空。
       そのまま撮ると滲みが消える → 溜まるぶんだけ空回ししてから撮る。
    ⚠️ 終わったら必ず元の大きさへ戻す（戻し忘れると画面が壊れる）。 */
-function renderToBlob(cb){
+function renderToBlob(cb, noBg){
   /* ⭐ 版面が切でも【解像度は上げられる】＝画面と同じ形のまま大きく刷る */
   const el0 = renderer.domElement;
   const f = ON.frame ? frameSize()
                      : scaleToLimit(el0.clientWidth||innerWidth, el0.clientHeight||innerHeight, P.frameScale);
-  if(!ON.frame && f.k === 1){ el0.toBlob(cb, 'image/png'); return; }
+  /* ⭐⭐ 地なしで出す。⚠️ 画面に出ているコマは alpha=1 で焼かれているので、
+     地なしのときは【必ず刷り直す】＝この近道は通さない。 */
+  if(!noBg && !ON.frame && f.k === 1){ el0.toBlob(cb, 'image/png'); return; }
+  postUniforms.uAlphaOut.value = noBg ? 1 : 0;
+  postUniforms.uAlphaWide.value = P.ripSolid > 0.001 ? P.ripSolid : 5;
   const el = renderer.domElement;
   const keep = { w: el.clientWidth || innerWidth, h: el.clientHeight || innerHeight };
   const keepPR = renderer.getPixelRatio();
@@ -3341,7 +3377,8 @@ function renderToBlob(cb){
     }
     el.toBlob(cb, 'image/png');
   } finally {
-    // ⚠️ 何があっても戻す
+    // ⚠️ 何があっても戻す（⭐ 画面に地なしのコマを残さないよう、いちばん先に消す）
+    postUniforms.uAlphaOut.value = 0;
     renderer.setPixelRatio(keepPR);
     renderer.setSize(keep.w, keep.h, false);
     camera.aspect = keep.w / keep.h; camera.updateProjectionMatrix();
@@ -3865,9 +3902,9 @@ document.getElementById('btn-spin').onclick = () => { ON.spin = !ON.spin; syncSp
    ⭐ それでも保存できない端末のために、最後は【新しいタブで開く】に逃がす
       （画像を長押しで保存できる＝iPhone で確実に持ち帰れる道を残す）。
    ⚠️ 逃がす窓は click の中で開く（あとから開くとポップアップが止められる）。 */
-function exportPNG(){
+function exportPNG(noBg){
   const el = renderer.domElement;
-  const name = `hori_${Date.now()}.png`;
+  const name = `hori_${Date.now()}${noBg ? '_nobg' : ''}.png`;
   const save = blob => {
     if(!blob){ alert('書き出せなかった'); return; }
     const url = URL.createObjectURL(blob);
@@ -3882,7 +3919,7 @@ function exportPNG(){
        && !(navigator.share && navigator.canShare)) window.open(url, '_blank');
     setTimeout(() => URL.revokeObjectURL(url), 8000);
   };
-  if(el.toBlob) renderToBlob(save);
+  if(el.toBlob) renderToBlob(save, noBg);
   else {
     // 古い端末向け：dataURL を Blob に戻す
     const d = el.toDataURL('image/png').split(',')[1];
@@ -3892,8 +3929,10 @@ function exportPNG(){
   }
 }
 /* ⭐ 押す所は2つ、走る処理は1つ（下の帯／書き出しの段） */
-document.getElementById('btn-png').onclick  = exportPNG;
-document.getElementById('btn-png2').onclick = exportPNG;
+/* ⚠️ onclick に渡すと第1引数が【イベント】になる＝いつでも地なしになってしまう。必ず包む */
+document.getElementById('btn-png').onclick   = () => exportPNG(false);
+document.getElementById('btn-png2').onclick  = () => exportPNG(false);
+document.getElementById('btn-png3').onclick  = () => exportPNG(true);
 
 // REC — 制作過程がそのままリールになる
 let rec = null;
