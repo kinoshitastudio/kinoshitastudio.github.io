@@ -184,6 +184,53 @@ await new Promise(r => setTimeout(r, 350));
 const b2 = (await S()).board;
 ok('版面の大きさが打った数字どおりになる', b2.w === 800 && b2.h === 600, `実測 ${b2.w}×${b2.h} / 打った 800×600`);
 
+/* ── ④b 地のグラデ ── ストップで【位置】が効くか ──
+   🔴 木下＝「グラデの色数を増やしても黄色などが反映されていない」→ 色数のつまみを
+      ストップのバーに替えた。⭐ いちばん大事なのは【位置が絵に効く】こと
+      （今までは何色置いても必ず等間隔だった）。 */
+await page.reload({ waitUntil: 'networkidle0' });
+await page.evaluate(() => document.fonts.ready);
+await new Promise(r => setTimeout(r, 700));
+const grad = await page.evaluate(async () => {
+  const cv = document.getElementById('cv'), g = cv.getContext('2d', { willReadFrequently:true });
+  const sig = () => { const d = g.getImageData(0,0,cv.width,cv.height).data; let s=0;
+    for(let i=0;i<d.length;i+=4*97) s=(s+d[i]*3+d[i+1]*5+d[i+2]*7)%2147483647; return s; };
+  const seg = t => [...document.querySelectorAll('#segBg button')].find(x => x.textContent.trim() === t).click();
+  seg('グラデ'); await new Promise(r => setTimeout(r, 400));
+  const o = { バー: !!document.getElementById('stopBar') };
+  document.getElementById('stopAdd').click(); await new Promise(r => setTimeout(r, 300));
+  o.足せる = JSON.parse(stateNow()).board.stops.length >= 3;
+  const cols = [...document.querySelectorAll('#stopList input[type=color]')];
+  const a = sig();
+  cols[1].value = '#f2f200'; cols[1].dispatchEvent(new Event('input', { bubbles:true }));
+  await new Promise(r => setTimeout(r, 300));
+  o.色が効く = sig() !== a;
+  const nums = [...document.querySelectorAll('#stopList input[type=number]')];
+  nums[1].value = '5';  nums[1].dispatchEvent(new Event('input', { bubbles:true }));
+  await new Promise(r => setTimeout(r, 300)); const at5 = sig();
+  nums[1].value = '95'; nums[1].dispatchEvent(new Event('input', { bubbles:true }));
+  await new Promise(r => setTimeout(r, 300)); const at95 = sig();
+  o.位置が効く = at5 !== at95;
+  const e1 = sig(); document.getElementById('stopEven').click();
+  await new Promise(r => setTimeout(r, 300)); o.均等 = sig() !== e1;
+  const e2 = sig(); document.getElementById('stopFlip').click();
+  await new Promise(r => setTimeout(r, 300)); o.反転 = sig() !== e2;
+  const e3 = sig(); document.querySelector('[data-bgp="yuu"]').click();
+  await new Promise(r => setTimeout(r, 400)); o.配色の型 = sig() !== e3;
+  seg('単色'); await new Promise(r => setTimeout(r, 300));
+  o.単色で隠れる = getComputedStyle(document.getElementById('bgStopUI')).display === 'none';
+  return o;
+});
+ok('地のグラデにストップのバーがある', grad.バー);
+ok('色を足せる', grad.足せる);
+ok('ストップの色が絵に効く', grad.色が効く);
+ok('🔴 ストップの【位置】が絵に効く', grad.位置が効く,
+   grad.位置が効く ? '' : '位置を 5%→95% にしても絵が同じ＝等間隔のまま＝置いた通りにならない');
+ok('「均等」で並びが変わる', grad.均等);
+ok('「⇄」で反転する', grad.反転);
+ok('配色の型を押すと地が変わる', grad.配色の型);
+ok('単色にするとバーが隠れる', grad.単色で隠れる);
+
 /* ── ⑤ 4つの型 ── */
 await page.reload({ waitUntil: 'networkidle0' });
 await page.evaluate(() => document.fonts.ready);
