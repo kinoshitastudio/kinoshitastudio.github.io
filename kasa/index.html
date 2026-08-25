@@ -488,16 +488,10 @@
     <input type="range" id="r_holeOrbit" min="0" max="0.8" step="0.005">
     <div class="row"><span class="n">揺れ</span><output id="o_sway"></output></div>
     <input type="range" id="r_sway" min="0" max="0.08" step="0.001">
-    <div class="row"><span class="n">揉む</span><output id="o_knead"></output></div>
-    <input type="range" id="r_knead" min="0" max="0.5" step="0.005">
     <div class="row"><span class="n">息</span><output id="o_breath"></output></div>
     <input type="range" id="r_breath" min="0" max="1.5" step="0.01">
     <div class="note">⭐押すまで動かない。<b>止めると元の姿に戻る</b>。どれも1周でぴったり戻る。<br>
       ⭐⭐<b>揺れ＝紙と文字そのものが動く</b>（ほかは光と穴だけが動く）。まず動かすならこれ<br>
-      ⭐⭐<b>揉む＝皺そのものが動く</b>。揺れは絵ごと平行に運ぶ（形は変わらない）が、
-      揉むは<b>面の向きが動く</b>＝紙を揉み続けているように折り目と縁の陰が入れ替わる。
-      <b>位置は1画素も動かない</b>ので揺れと重ねても喧嘩しない<br>
-      ⚠️ <b>揉んでいる間だけ刷るのが重くなる</b>（面の向きを毎コマ作り直すため）。0 に戻せば元の速さに戻る<br>
       ⭐<b>穴の巡り</b>＝黒い穴そのものが回る<br>
       ⚠️ <b>速さは右へ引くほど速い</b>（数字は1周にかかる秒数）<br>
       ⚠️ <b>灯の巡りは 0.8 あたりが上限の目安</b>。それ以上は灯が紙から出ていくので、
@@ -646,7 +640,7 @@ let P = {
   /* 色 */
   paper:'#f7f1e6', lamp:'#ffeccb', wall:'#3b3833', wallL:0.30,
   /* 動き */
-  anim:false, cyc:14, orbit:0.05, breath:0.18, holeOrbit:0, sway:0, knead:0,
+  anim:false, cyc:14, orbit:0.05, breath:0.18, holeOrbit:0, sway:0,
   seed:20260814
 };
 let HOLE = [];   /* 穴（前に貼る黒い円）  {x,y} 正規化 */
@@ -1511,27 +1505,6 @@ function paint(octx, W, H, t, cam){
   const lit=[mix(pr[0],lr[0],.45), mix(pr[1],lr[1],.45), mix(pr[2],lr[2],.45)];
   const dark=[pr[0]*0.26, pr[1]*0.26, pr[2]*0.26];
 
-  /* ══ 揉む ── 皺そのものを動かす ══
-     🔴🔴 2026-08-25、ここで2回しくじった。どちらも【速さの測り方】が足りなかったせい。
-       ① 波を足した配列を別に作り、刷るループの参照を差し替えた
-          → ループが2種類の配列を見た時点で JIT の最適化が外れ、
-            揉むを 0 に戻しても【リロードするまで】遅いまま（実測 89→111ms＝+24.7%）
-       ② 直そうとして NX 自体に書き戻したら、もっと悪くなった（89→149ms＝+67.5%）
-     ⭐ 結局いちばん素直な形が正しい ── 刷るループの中で足す。読む配列は NX/NY の1種類だけ。
-       揉んでいる間だけ重くなり、0 に戻せば【その場で】元の速さに戻る。
-     ⚠️ 測るときは「切のとき」「入のとき」だけでなく、必ず【一度使った後で切に戻したとき】も測る。
-       そこが本番の状態で、前回はそれを測っていなかった。
-     ⭐ sin(TAU*t) なので t=0→1 でぴったり1周して戻る。縦横で速さを変えるなら整数倍にする
-       （1.37 倍にしたら1周で戻らなかった＝28904 画素が違った）。 */
-  const kn = P.knead || 0;
-  let KW=null, KH=null;
-  if(kn > 0.002){
-    KW = new Float32Array(W); KH = new Float32Array(H);
-    const ph = TAU*(t||0);
-    for(let x=0;x<W;x++) KW[x] = kn*Math.sin(x*0.021 + ph);
-    for(let y=0;y<H;y++) KH[y] = Math.sin(y*0.017 - ph*2);
-  }
-
   /* ⭐ 壁は1回で塗る。紙のある所だけ画素を書く＝ImageData も紙の囲みぶんだけ */
   octx.setTransform(1,0,0,1,0,0);
   octx.globalAlpha=1; octx.globalCompositeOperation="source-over";
@@ -1566,15 +1539,12 @@ function paint(octx, W, H, t, cam){
   for(let y=by0;y<=by1;y++){
     const lo=ROWLO[y], hi=ROWHI[y]; if(hi<lo) continue;
     const Y=(y-CY)/S;
-    const kh = KW ? KH[y] : 0;               /* 揉むが切なら 0＝下の if を1度も通らない */
     let p=((y-by0)*bw+(lo-bx0))*4;
     for(let x=lo;x<=hi;x++,p+=4){
       const i=y*W+x, m=MSK[i];
       if(m<=0.002) continue;                 /* 壁はもう塗ってある */
       const X=(x-CX)/S;
-      let nx=NX[i], ny=NY[i];
-      if(kh){ const w=kh*KW[x]; nx+=w; ny+=w*0.7; }   /* 揉む＝面の向きだけ動かす */
-      const nz=NZ[i];
+      const nx=NX[i], ny=NY[i], nz=NZ[i];
       let E=0;
       for(let k=0;k<nL;k++){
         const dx=lx[k]-X, dy=ly[k]-Y;
@@ -2135,7 +2105,7 @@ const R = [
   ['gloR','gloR',F2,0],['gloI','gloI',F2,0],['rim','rim',F2,0],['fib','fib',F2,0],
   ['cut','cut',FI,0],['cutS','cutS',FI,0],
   ['wallL','wallL',F2,0],['orbit','orbit',F3,0],['holeOrbit','holeOrbit',F3,0],
-  ['sway','sway',F3,0],['knead','knead',F3,0],['breath','breath',F2,0],['long','long',v=>Math.round(v)+'px',0]
+  ['sway','sway',F3,0],['breath','breath',F2,0],['long','long',v=>Math.round(v)+'px',0]
 ];
 R.forEach(([id,key,fmt,re])=>{
   const r=el('r_'+id); if(!r) return;
@@ -2231,7 +2201,7 @@ el('anGo').onclick=()=>{
   const on=!P.anim;
   /* ⭐ 巡りも息も 0 なら、押しても1コマも変わらない＝壊れているのと同じ。
      こちらで巡りを入れて、入れたことを知らせる（襞HIDA の「送り」と同じ作法）。 */
-  if(on&&P.orbit<0.002&&P.breath<0.002&&(P.holeOrbit||0)<0.002&&(P.sway||0)<0.0005&&(P.knead||0)<0.002){
+  if(on&&P.orbit<0.002&&P.breath<0.002&&(P.holeOrbit||0)<0.002&&(P.sway||0)<0.0005){
     pushHist(); P.orbit=0.25; P.sway=0.02; syncUI();
     stat('動く量が 0 だったので 灯の巡り0.25・揺れ0.02 を入れた');
   }
@@ -2762,7 +2732,7 @@ function loadLocal(){
    ══════════════════════════════════════════════════════ */
 function plan(){
   const fps=+segVal('tvFps','24'), loops=+segVal('tvLoop','1');
-  const moving=P.orbit>0.001||P.breath>0.001||(P.holeOrbit||0)>0.001||(P.sway||0)>0.0005||(P.knead||0)>0.002;
+  const moving=P.orbit>0.001||P.breath>0.001||(P.holeOrbit||0)>0.001||(P.sway||0)>0.0005;
   const sec=loops*Math.max(CYC_LO,P.cyc);
   return {fps,loops,sec,total:Math.max(2,Math.round(sec*fps)),moving};
 }
