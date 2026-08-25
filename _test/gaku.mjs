@@ -24,9 +24,13 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 /* 道具ごとに違うのは【P の取り方】と【1枚描く呼び方】の2つだけ。ここ1箇所に表で持つ。
    ⭐ 本体が持っている入口をそのまま呼ぶ（試験が別に描き方を作らない）。 */
 const HOW = {
+  /* pre＝測る前の下ごしらえ。⚠️ 起動直後が【無地】の道具は「中を大きくしても中身が変わらない」
+     ＝道具の性質であって不具合ではないので、中身のある状態にしてから測る。 */
   rui:  { P:'P',      shot:`render(c.getContext('2d'), buildPlan(W,H), false)` },
   tama: { P:'TAMA.P', shot:`TAMA.paint(c.getContext('2d'), W, H, 0)` },
   hida: { P:'P',      shot:`paint(c.getContext('2d'), W, H, 0, true)` },
+  nuri: { P:'P',      pre:`PP.pmode='grad'; PP.paper2='#ffffff'; PP.paper='#000000';`,
+                      shot:`render(c.getContext('2d'), W, H)` },
 };
 
 const tool = process.argv[2];
@@ -43,6 +47,7 @@ try{
   /* 🔴 額の色が【その道具の地の色】と近いと、地を額と数えてしまう（hida で実際に落ちた）。
      ⭐ 測る前に、どの道具の地とも重ならない色に決め打ちする＝測りたいものだけが動く状態を作る。 */
   PP.gakuCol = '#ff00ff';
+  ${HOW[tool].pre || ''}
   const W=400,H=520;
   const shot=()=>{const c=document.createElement('canvas');c.width=W;c.height=H;
     ${HOW[tool].shot};

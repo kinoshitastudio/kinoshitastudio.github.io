@@ -487,6 +487,24 @@
     </div>
   </div>
 
+  <!-- ══⭐⭐ 余白（額）── 朦OBORO から移した（2026-08-25）
+       ⭐ 上に被せるのではなく【中の絵が縮む】＝縁に帯が空く。
+       ⭐⭐ 額は【上のレイヤー】＝中を大きくしても寄せても縁は必ず残る。
+       ⚠️ 余白0・中の大きさ100・よこたて0 で今までの絵と1画素も変わらない。 -->
+  <div class="grp">
+    <label class="h">余白（額）</label>
+    <div class="row"><span class="n">余白</span><output id="o_gaku"></output></div>
+    <input type="range" id="r_gaku" min="0" max="30" step="1">
+    <div class="row"><span class="n">余白の色</span></div>
+    <input type="color" id="c_gakuCol">
+    <div class="row"><span class="n">中の大きさ</span><output id="o_gakuZ"></output></div>
+    <input type="range" id="r_gakuZ" min="50" max="200" step="1">
+    <div class="row"><span class="n">中のよこ</span><output id="o_gakuX"></output></div>
+    <input type="range" id="r_gakuX" min="-50" max="50" step="1">
+    <div class="row"><span class="n">中のたて</span><output id="o_gakuY"></output></div>
+    <input type="range" id="r_gakuY" min="-50" max="50" step="1">
+  </div>
+
   <div class="grp">
     <label class="h">出す</label>
     <!-- ⭐ 2026-08-17 木下「png書き出し時にサイズは調整できるように」──
@@ -562,6 +580,8 @@ function hash2(x, y, s){
 }
 
 const P = {
+  /* ⭐ 余白（額）2026-08-25 ── 朦OBORO から移した。0 で今までどおり */
+  gaku:0, gakuCol:'#f2efe6', gakuZ:100, gakuX:0, gakuY:0,
   tool:'paint', bsize:170, bsoft:0.35, bflow:1,
   ink:'#3a3ce8',
   /* 🔴 既定は【塗った所がベタで埋まる】に置く（2026-08-15 木下「全然違うきがする」）。
@@ -1222,6 +1242,33 @@ let lastDots = 0;
       木下の絵は「地に埋もれた線」＝地が静止して粒だけ流れる方が読める。
    ⚠️ 出す絵は FLOWPH を【コマ番号で置く】＝時計に頼らない（動画がコマ落ちしない）。 */
 let FLOWPH = 0;
+/* ⭐⭐ 余白（額）── 縁に帯を取り、その分だけ【中の絵を縮める】（朦OBORO から移した）。
+   ⭐ 四辺とも同じ画素数の帯（短い辺が基準）。辺ごとに比例させると縦長で上下だけ太くなる
+      ＝OBORO で木下に「上下左右大きさ違う？？よね？」と指摘された型を繰り返さない。
+   ⚠️ 既定のままなら null＝何も通さない＝今までの絵が1画素も変わらない。 */
+function gakuOf(W,H){
+  const p=(+P.gaku||0)/100;
+  const z=(P.gakuZ==null?100:+P.gakuZ)/100;
+  const ox=(+P.gakuX||0)/100, oy=(+P.gakuY||0)/100;
+  if(p<=0 && z===1 && !ox && !oy) return null;
+  const m=Math.min(W,H)*p;
+  const win={x:m,y:m,w:W-m*2,h:H-m*2};
+  const s=Math.max(0.05, Math.max(win.w/W, win.h/H)*z);
+  return { s, mx:(W-W*s)/2+ox*W, my:(H-H*s)/2+oy*H, win };
+}
+/* ⭐⭐ 額は【上のレイヤー】＝窓の外を最後に塗る＝中を大きくしても縁は必ず残る */
+function drawGaku(ctx,W,H,GK){
+  ctx.save();
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle=P.gakuCol||'#f2efe6';
+  const w=GK.win;
+  ctx.fillRect(0,0,W,Math.max(0,w.y));
+  ctx.fillRect(0,Math.min(H,w.y+w.h),W,Math.max(0,H-(w.y+w.h)));
+  ctx.fillRect(0,Math.max(0,w.y),Math.max(0,w.x),Math.min(w.h,H));
+  ctx.fillRect(Math.min(W,w.x+w.w),Math.max(0,w.y),Math.max(0,W-(w.x+w.w)),Math.min(w.h,H));
+  ctx.restore();
+}
 function render(ctx, W, H, cam){
   ensureField();
   bake();          /* ⭐ 版を合成してから刷る。画面も PNG もテストも、必ずここを通る（式は1本） */
@@ -1231,6 +1278,11 @@ function render(ctx, W, H, cam){
         PNG も控えもカメラを渡さない＝出す絵は1画素も変わらない（直す前の版と突き合わせて実測した）。
      ⭐ 見るためのものを、出す絵に混ぜない。 */
   cam = cam || { fw:W, fh:H, sc:1, ox:0, oy:0 };
+  /* ⭐ 額は【カメラを縮めるだけ】で通る＝紙も泡も粒も、別々に直さなくてもまとめて窓の中へ。
+     ⚠️ fw/fh（版面の大きさ）は変えない＝倍率と置き所だけを動かす。 */
+  const GK = gakuOf(W,H);
+  if(GK) cam = { fw:cam.fw, fh:cam.fh, sc:cam.sc*GK.s,
+                 ox:GK.mx+cam.ox*GK.s, oy:GK.my+cam.oy*GK.s };
   const fw = cam.fw*cam.sc, fh = cam.fh*cam.sc, ox = cam.ox, oy = cam.oy;
   ctx.setTransform(1,0,0,1,0,0);
   ctx.clearRect(0, 0, W, H);
@@ -1445,6 +1497,7 @@ function render(ctx, W, H, cam){
   }
   lastDots = n;
   ctx.restore();
+  if(GK) drawGaku(ctx,W,H,GK);      /* ⭐ 額は最後に上から（上のレイヤー） */
 }
 
 /* ══⭐⭐ 画面のカメラ（2026-08-17）══════════════════════
@@ -1712,7 +1765,8 @@ const FMT = {
   flow:v=>String(v), fps:v=>v+'fps'
 };
 const RANGES = ['bsize','bsoft','bflow','pitch','gap','sq','bed','tsize','ang','asp','lang','gloss','bulge','blur','cut','hard','long',
-                'abig','asml','apack','aline','awarp','around','alop','flow','fps','bgang','pang','relief','reliefW','litAmt','litX','litY','litR'];
+                'abig','asml','apack','aline','awarp','around','alop','flow','fps','bgang','pang','relief','reliefW','litAmt','litX','litY','litR',
+                'gaku','gakuZ','gakuX','gakuY'];   /* ⭐ 余白（額）2026-08-25 */
 RANGES.forEach(k => {
   const r = el('r_'+k); if(!r) return;
   const o = el('o_'+(k === 'asp' ? 'agh' : k));
@@ -1877,6 +1931,9 @@ el('b_aseed').onclick = () => { pushHist(); P.aseed = 1 + ((Math.random()*9999)|
 seg('ratioSeg', 'ratio', () => { ensureField(); });
 el('c_paper').value = P.paper;
 el('c_paper').addEventListener('input', e => { P.paper = e.target.value; paperUI(); kick(); saveLocal(); });
+/* ⭐ 余白（額）の色。c_paper と同じ形（式を増やさない） */
+el('c_gakuCol').value = P.gakuCol;
+el('c_gakuCol').addEventListener('input', e => { P.gakuCol = e.target.value; kick(); saveLocal(); });
 /* ⭐⭐ 色＝【選んでいる版の色】（2026-08-17）。
    変えると、その版で描いた所が全部その色になる＝あとから色を変えられる。 */
 function setInk(c){
