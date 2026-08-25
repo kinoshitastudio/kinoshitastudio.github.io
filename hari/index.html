@@ -316,14 +316,22 @@ input[type=color]{ border-radius:8px; height:30px }
         <button data-v="linear">グラデ</button>
         <button data-v="radial">放射</button>
       </div></div>
-    <div class="row"><label>色数</label>
-      <input type="range" id="bn" min="1" max="6" value="2"><span class="v" id="vbn">2</span></div>
-    <div class="row" id="rowBc0"><label>地 1</label><input type="color" data-bc="0" value="#d9dde0"></div>
-    <div class="row" id="rowBc1"><label>地 2</label><input type="color" data-bc="1" value="#ffffff"></div>
-    <div class="row" id="rowBc2"><label>地 3</label><input type="color" data-bc="2" value="#7f95ab"></div>
-    <div class="row" id="rowBc3"><label>地 4</label><input type="color" data-bc="3" value="#1d2733"></div>
-    <div class="row" id="rowBc4"><label>地 5</label><input type="color" data-bc="4" value="#8a6f4e"></div>
-    <div class="row" id="rowBc5"><label>地 6</label><input type="color" data-bc="5" value="#e9201c"></div>
+    <!-- ⭐ 2026-08-26 木下：「Sakuji のグラデの時のように、グラデの調整をマウスで
+         自由にできるようにしてほしい」。色数＋地1〜6 のつまみを【ストップのバー】に替えた。
+         ⚠️ 位置を持てるようになった＝色の【間隔】が作れる（今までは必ず等間隔だった）。 -->
+    <div id="bgStopUI">
+      <canvas id="stopBar" width="420" height="26"
+        style="width:100%;height:26px;display:block;border-radius:7px;border:.5px solid var(--line);
+               margin:4px 0 6px;cursor:crosshair;touch-action:none"></canvas>
+      <div id="stopList"></div>
+      <div class="btns" style="margin-top:4px">
+        <button class="btn" id="stopAdd">＋ 色を足す</button>
+        <button class="btn" id="stopEven" title="位置を等間隔に割り振る">均等</button>
+        <button class="btn" id="stopFlip" title="並びを反転">⇄</button>
+      </div>
+      <div class="note">⭐ <b>バーを押す</b>＝そこに色を足す／<b>つまみを引く</b>＝位置を動かす<br>
+        ⭐ 色は<b>何色でも</b>。2つ未満にはできない（グラデにならないため）</div>
+    </div>
     <div class="btns">
       <button class="btn" data-bgp="kami">紙</button>
       <button class="btn" data-bgp="sumi">墨</button>
@@ -1257,6 +1265,28 @@ const FUDA_DEF = { sub:'POSTER TYPESETTING', bg:'#c8322a', fg:'#ffffff', pad:18,
       その色が使われないのは、画面が嘘をついているのと同じ。
    ⚠️ cols に穴（undefined）が空いたまま paper.js へ渡すと地が丸ごと落ちるので、
       穴は必ず埋めてから返す。 */
+/* ══ 版面の地のグラデ ── ストップ（位置つきの色）で持つ ══
+   ⭐ 2026-08-26。今までは「色数＋等間隔」だったので、色の【間隔】が作れなかった。
+   ⚠️ 古い控え（cols + n）も読めるようにする＝控えは cols/n も一緒に書き出す。 */
+function stopsOf(){
+  const B = S.board;
+  if(!B.stops || B.stops.length < 2){
+    const cols = (B.cols && B.cols.length) ? B.cols.slice(0, Math.max(2, Math.min(6, Math.round(B.n||B.cols.length))))
+                                           : [B.bg||'#d9dde0', B.bg2||'#ffffff'];
+    const n = Math.max(2, cols.length);
+    B.stops = cols.map((c,i) => ({ t: n>1 ? i/(n-1) : 0, c: c || '#ffffff' }));
+  }
+  B.stops.sort((a,b)=>a.t-b.t);
+  return B.stops;
+}
+/* stops → cols/n を同期（古い版で開いても近い絵になるように） */
+function syncColsFromStops(){
+  const st = stopsOf();
+  S.board.cols = st.map(o=>o.c);
+  S.board.n = st.length;
+  S.board.bg = st[0].c;
+  S.board.bg2 = st[st.length-1].c;
+}
 function bgColAt(i){
   const c = S.board.cols && S.board.cols[i];
   if(c) return c;
@@ -1269,16 +1299,14 @@ function fitCols(n){
   for(let i = 0; i < n; i++) if(!B.cols[i]) B.cols[i] = bgColAt(i);
 }
 function bgStops(){
-  const B = S.board;
-  if(!B.cols || !B.cols.length) B.cols = [B.bg, B.bg2 || '#ffffff'];
-  const n = Math.max(1, Math.min(6, Math.round(B.n || B.cols.length)));
-  fitCols(n);
-  return B.cols.slice(0, n).map((c, i) => c || bgColAt(i));
+  /* ⭐ paper.js は [色, 位置] の組を受ける＝位置がそのまま効く。
+     ⚠️ 位置を渡さないと必ず等間隔になる（今までがそれだった）。 */
+  return stopsOf().map(o => [o.c, Math.max(0, Math.min(1, o.t))]);
 }
 function paintBoard(bg){
   const B = S.board, c = new Point(B.w/2, B.h/2);
   const st = bgStops();
-  if(st.length < 2 || B.mode === 'solid'){ bg.fillColor = st[0]; return; }
+  if(st.length < 2 || B.mode === 'solid'){ bg.fillColor = Array.isArray(st[0]) ? st[0][0] : st[0]; return; }
   if(B.mode === 'radial'){
     bg.fillColor = { gradient:{ stops:st, radial:true },
                      origin:c, destination:c.add(new Point(Math.max(B.w,B.h)/2, 0)) };
@@ -1308,6 +1336,9 @@ function applyBgPreset(key){
   const P = BGP[key]; if(!P) return;
   snapForShake();
   S.board.cols = P.cols.slice(); S.board.n = P.cols.length;
+  /* ⭐ 型を押したら stops も作り直す。⚠️ ここを忘れると「押しても地が変わらない」 */
+  { const n = P.cols.length;
+    S.board.stops = P.cols.map((c,i) => ({ t: n>1 ? i/(n-1) : 0, c })); }
   S.board.mode = P.mode; S.board.ang = P.ang;
   S.board.bg = P.cols[0]; S.board.bg2 = P.cols[1] || P.cols[0];
   /* ⚠️ 地が暗いのに字も暗いと消える。地の明るさの【平均】で決める＝
@@ -2436,6 +2467,9 @@ function syncPanel(){
   /* ⚠️ 古い作品は ghost を持たない＝既定は「薄く見せる」（＝はみ出した物を見失わない） */
   segOn('segGhost', S.ghost === false ? '0' : '1');
   /* 地の色（何色でも）。⚠️ 古い作品は cols を持たないので bg/bg2 から起こす */
+  /* ⭐ 地のグラデはストップで持つ。バーと一覧を描き直す（控えを読んだ時もここを通る） */
+  stopsOf(); drawStopBar(); fillStopList();
+  $('bgStopUI').style.display = (S.board.mode === 'solid') ? 'none' : '';
   if(!S.board.cols) S.board.cols = [S.board.bg, S.board.bg2 || '#ffffff'];
   if(!S.board.n) S.board.n = S.board.cols.length;
   const bn = Math.max(1, Math.min(6, Math.round(S.board.n)));
@@ -2572,21 +2606,106 @@ $('cInv').onclick = () => { const L = sel(); if(!L) return;
 
 /* 版面の地 */
 /* 地の色数・色・配色の型 */
-$('bn').addEventListener('input', () => {
-  S.board.n = Number($('bn').value); $('vbn').textContent = $('bn').value;
-  /* ⭐ 色数を増やしたら、その場で cols を増やす。
-     ⚠️ syncPanel() より先に呼ぶ ── syncPanel は cols から入力欄へ書き戻すので、
-        cols が空のままだと「欄には色が見えているのに使われない」状態が残る。 */
-  fitCols(S.board.n);
-  syncPanel(); render();
-});
-document.querySelectorAll('input[type=color][data-bc]').forEach(c => {
-  c.addEventListener('input', () => {
-    if(!S.board.cols) S.board.cols = [];
-    S.board.cols[+c.dataset.bc] = c.value;
-    S.board.bg = S.board.cols[0]; S.board.bg2 = S.board.cols[1] || S.board.cols[0];
-    render();
+/* ══ 地のグラデ ── ストップのバー（作字SAKUJI と同じ持ち方）══
+   ⭐ バーを押す＝そこに色を足す／つまみを引く＝位置を動かす。
+   ⚠️ 2つ未満にはしない（グラデにならない）。 */
+const stopBar = $('stopBar'), stopBarG = stopBar ? stopBar.getContext('2d') : null;
+let stopSel = 0, stopDrag = -1;
+function hex01(h){ const m=/^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(h||'#000000');
+  return m ? [1,2,3].map(i=>parseInt(m[i],16)/255) : [0,0,0]; }
+/* バーの位置 t の色を、いまのストップから読む＝押した所の色で足せる */
+function sampleStop(t){
+  const st = stopsOf();
+  if(t <= st[0].t) return st[0].c;
+  if(t >= st[st.length-1].t) return st[st.length-1].c;
+  for(let i=1;i<st.length;i++){
+    if(t <= st[i].t){
+      const a=st[i-1], b=st[i], x=(t-a.t)/((b.t-a.t)||1);
+      const ca=hex01(a.c), cb=hex01(b.c);
+      return '#' + [0,1,2].map(k=>Math.round((ca[k]+(cb[k]-ca[k])*x)*255).toString(16).padStart(2,'0')).join('');
+    }
+  }
+  return st[st.length-1].c;
+}
+function drawStopBar(){
+  if(!stopBarG) return;
+  const W=stopBar.width, H=stopBar.height, pad=7;
+  stopBarG.clearRect(0,0,W,H);
+  const st = stopsOf();
+  const g = stopBarG.createLinearGradient(pad,0,W-pad,0);
+  st.forEach(o => { try{ g.addColorStop(Math.max(0,Math.min(1,o.t)), o.c); }catch(e){} });
+  stopBarG.fillStyle = g; stopBarG.fillRect(pad,0,W-pad*2,H);
+  st.forEach((o,i) => {
+    const x = pad + o.t*(W-pad*2);
+    stopBarG.fillStyle = o.c;
+    stopBarG.strokeStyle = (i===stopSel) ? '#fff' : 'rgba(0,0,0,.45)';
+    stopBarG.lineWidth = (i===stopSel) ? 2.4 : 1.4;
+    stopBarG.beginPath(); stopBarG.rect(x-5, 3, 10, H-6); stopBarG.fill(); stopBarG.stroke();
   });
+}
+function fillStopList(){
+  const el = $('stopList'); if(!el) return;
+  el.innerHTML = '';
+  const st = stopsOf();
+  st.forEach((o,i) => {
+    const row = document.createElement('div');
+    row.className = 'row' + (i===stopSel ? ' on' : '');
+    row.style.cssText = 'gap:6px;margin:3px 0';
+    /* ⚠️ 幅 52px だと「100」が「10(」と切れて読めなかった（実測）。数字は読める幅を取る */
+    row.innerHTML = `<input type="number" value="${Math.round(o.t*100)}" min="0" max="100" step="1"
+        style="width:60px;flex:none"><span style="color:var(--dim);font-size:10px">%</span>`;
+    const col = document.createElement('input'); col.type='color'; col.value=o.c; col.style.flex='1';
+    const del = document.createElement('button'); del.className='btn'; del.textContent='−';
+    del.style.cssText='flex:none;width:30px;padding:2px 0';
+    del.title = st.length<=2 ? '2つ未満にはできない' : 'この色を消す';
+    row.appendChild(col); row.appendChild(del);
+    const num = row.querySelector('input[type=number]');
+    num.addEventListener('input', () => { o.t = Math.max(0,Math.min(1,(+num.value||0)/100)); stopSel=i; afterStops(); });
+    col.addEventListener('input', () => { o.c = col.value; stopSel=i; afterStops(); });
+    del.addEventListener('click', () => {
+      if(st.length<=2){ stat('2つ未満にはできない（グラデにならない）'); return; }
+      pushUndo(); S.board.stops.splice(i,1); stopSel=Math.max(0,i-1); afterStops();
+    });
+    row.addEventListener('pointerdown', e => { if(e.target===row){ stopSel=i; afterStops(); } });
+    el.appendChild(row);
+  });
+}
+function afterStops(){ syncColsFromStops(); drawStopBar(); fillStopList(); render(); }
+if(stopBar){
+  const barT = e => {
+    const r = stopBar.getBoundingClientRect(), pad = 7*(r.width/stopBar.width);
+    return Math.max(0, Math.min(1, (e.clientX - r.left - pad) / (r.width - pad*2)));
+  };
+  stopBar.addEventListener('pointerdown', e => {
+    const t = barT(e), st = stopsOf();
+    let best=-1, bd=0.045;
+    st.forEach((o,i)=>{ const d=Math.abs(o.t-t); if(d<bd){ bd=d; best=i; } });
+    if(best < 0){ pushUndo(); st.push({ t, c: sampleStop(t) }); st.sort((a,b)=>a.t-b.t);
+      best = st.findIndex(o=>o.t===t); }
+    stopSel = best; stopDrag = best;
+    stopBar.setPointerCapture(e.pointerId); afterStops();
+  });
+  stopBar.addEventListener('pointermove', e => {
+    if(stopDrag < 0) return;
+    const st = stopsOf(), o = st[stopDrag]; if(!o) return;
+    o.t = barT(e);
+    const keep = o; st.sort((a,b)=>a.t-b.t);
+    stopDrag = st.indexOf(keep); stopSel = stopDrag;
+    afterStops();
+  });
+  const barUp = () => { stopDrag = -1; };
+  stopBar.addEventListener('pointerup', barUp);
+  stopBar.addEventListener('pointercancel', barUp);
+}
+$('stopAdd').addEventListener('click', () => {
+  pushUndo(); stopsOf().push({ t:0.5, c:sampleStop(0.5) }); stopSel = 0; afterStops();
+});
+$('stopEven').addEventListener('click', () => {
+  pushUndo(); const st = stopsOf(), n = st.length-1;
+  st.forEach((o,i) => o.t = n ? i/n : 0); afterStops(); stat('等間隔にした');
+});
+$('stopFlip').addEventListener('click', () => {
+  pushUndo(); stopsOf().forEach(o => o.t = 1-o.t); afterStops(); stat('並びを反転した');
 });
 document.querySelectorAll('#segCellPre button').forEach(btn => {
   btn.addEventListener('click', () => applyCellPreset(btn.dataset.v));
@@ -2594,7 +2713,11 @@ document.querySelectorAll('#segCellPre button').forEach(btn => {
 document.querySelectorAll('[data-bgp]').forEach(btn => {
   btn.addEventListener('click', () => applyBgPreset(btn.dataset.bgp));
 });
-segBind2('segBg', v => { S.board.mode = v; $('rowAng').style.display = v === 'linear' ? '' : 'none'; });
+segBind2('segBg', v => {
+  S.board.mode = v;
+  $('rowAng').style.display = v === 'linear' ? '' : 'none';
+  $('bgStopUI').style.display = v === 'solid' ? 'none' : '';   /* ⭐ 単色ではバーを出さない */
+});
 /* ⭐ 版面の外を薄く見せるか隠すか。⚠️ 画面の見え方だけ＝書き出しには関係しない */
 /* ⭐ 見出しの「── 」より後ろは添え字。9か所の HTML を書き換えず、ここで1回だけ包む。
    ⚠️ #lineHead は選ぶたびに書き換わるので、そちら側でも同じ形にする（下の subHead）。 */
@@ -2970,6 +3093,7 @@ $('eSVG').onclick = () => {
 $('eJSON').onclick = () => {
   /* ⭐ 図（画像・SVG）も中身ごと入れる＝開き直せばポスターが丸ごと戻る。
      ⚠️ そのぶんファイルは大きくなる（画像は data URL で入るため）。 */
+  syncColsFromStops();      /* ⭐ 古い版で開いても近い絵になるよう cols/n も一緒に書き出す */
   const d = { app:'hari', v:1, board:S.board, showPath:S.showPath,
     lines:  S.lines.map(L => JSON.parse(JSON.stringify(L))),
     pieces: S.pieces.filter(p => p.src)
