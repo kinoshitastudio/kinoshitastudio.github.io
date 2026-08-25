@@ -488,14 +488,10 @@
     <input type="range" id="r_holeOrbit" min="0" max="0.8" step="0.005">
     <div class="row"><span class="n">揺れ</span><output id="o_sway"></output></div>
     <input type="range" id="r_sway" min="0" max="0.08" step="0.001">
-    <div class="row"><span class="n">揉む</span><output id="o_knead"></output></div>
-    <input type="range" id="r_knead" min="0" max="0.5" step="0.005">
     <div class="row"><span class="n">息</span><output id="o_breath"></output></div>
     <input type="range" id="r_breath" min="0" max="1.5" step="0.01">
     <div class="note">⭐押すまで動かない。<b>止めると元の姿に戻る</b>。どれも1周でぴったり戻る。<br>
       ⭐⭐<b>揺れ＝紙と文字そのものが動く</b>（ほかは光と穴だけが動く）。まず動かすならこれ<br>
-      ⭐⭐<b>揉む＝紙が波打つ</b>。揺れが絵ごと平行に運ぶのに対し、揉むは<b>場所ごとに違う向きへ</b>
-      ずれる＝紙を揉んでいるように見える。⭐<b>刷る速さは落ちない</b>（焼き上がった絵を動かすだけ）<br>
       ⭐<b>穴の巡り</b>＝黒い穴そのものが回る<br>
       ⚠️ <b>速さは右へ引くほど速い</b>（数字は1周にかかる秒数）<br>
       ⚠️ <b>灯の巡りは 0.8 あたりが上限の目安</b>。それ以上は灯が紙から出ていくので、
@@ -644,7 +640,7 @@ let P = {
   /* 色 */
   paper:'#f7f1e6', lamp:'#ffeccb', wall:'#3b3833', wallL:0.30,
   /* 動き */
-  anim:false, cyc:14, orbit:0.05, breath:0.18, holeOrbit:0, sway:0, knead:0,
+  anim:false, cyc:14, orbit:0.05, breath:0.18, holeOrbit:0, sway:0,
   seed:20260814
 };
 let HOLE = [];   /* 穴（前に貼る黒い円）  {x,y} 正規化 */
@@ -1632,24 +1628,11 @@ function drawGlow(octx,W,H){
       場は作り直さないので、増える手間は canvas の写し1回ぶん（数ms）だけ。
    ⚠️ ずらして空いた所は壁で埋める（紙の外は壁なので、これで正しい）。
    ⚠️ sin/cos なので【1周でぴったり戻る】＝動画の継ぎ目も合う。 */
-/* ══ 揉む ── 紙が波打つ ══
-   🔴🔴 2026-08-25、ここで3回しくじった。全部【刷るループの中でやろうとした】のが原因。
-     この道具は tuneDrag(ms) が【刷りにかかった時間を見て盤の粗さを自動で決める】。
-     だから刷りを 20% 遅くすると、粗さ制御が働いて盤そのものが粗くなる
-     ＝木下には「重い・劣化した」と見える。数字の 20% では済まない。
-   ⭐ だから揺れ（swayShift）と同じ【焼き上がった絵への後処理】にする。
-     刷る時間は1msも増えない。短冊に切って場所ごとに違う向きへずらす＝紙が揉まれて見える。
-   ⚠️ 短冊は1画素重ねて描く（重ねないと継ぎ目に地の線が出る）。
-   ⭐ sin(TAU*t) と cos(TAU*t*2) なので t=0→1 でぴったり戻る。 */
 let swayCv=null;
 function swayShift(octx,W,H,t,wall){
-  const k=P.sway||0, kn=P.knead||0;
-  const doSway=k>0.0005, doKnead=kn>0.002;
-  if(!doSway && !doKnead) return;
-  const m=Math.min(W,H)*k, ph=TAU*(t||0);
-  const dx=doSway?Math.cos(ph)*m:0, dy=doSway?Math.sin(ph)*m:0;
-  /* ⭐ 全画面の控えは【1回だけ】取る。揺れと揉むで2回コピーすると、そのぶん刷りが遅くなり、
-     tuneDrag が盤を粗くしてしまう（この道具は刷った時間で粗さを自動で決めている）。 */
+  const k=P.sway||0; if(!(k>0.0005)) return;
+  const m=Math.min(W,H)*k;
+  const dx=Math.cos(TAU*(t||0))*m, dy=Math.sin(TAU*(t||0))*m;
   if(!swayCv) swayCv=document.createElement('canvas');
   if(swayCv.width!==W||swayCv.height!==H){ swayCv.width=W; swayCv.height=H; }
   const tg=swayCv.getContext('2d');
@@ -1659,22 +1642,7 @@ function swayShift(octx,W,H,t,wall){
   octx.globalAlpha=1; octx.globalCompositeOperation='source-over';
   octx.fillStyle="rgb("+(wall[0]|0)+","+(wall[1]|0)+","+(wall[2]|0)+")";
   octx.fillRect(0,0,W,H);
-  if(!doKnead){ octx.drawImage(swayCv,dx,dy); return; }
-  /* ══ 揉む ── 紙が波打つ ══
-     🔴🔴 2026-08-25、3回しくじった。全部【刷るループの中で1画素ずつ】やろうとしたのが原因。
-       この道具は tuneDrag(ms) が【刷りにかかった時間で盤の粗さを自動で決める】。
-       刷りを 20% 遅くすると粗さ制御が働いて盤そのものが粗くなる＝木下には
-       「重い・劣化した」と見える。数字の 20% では済まない。
-     ⭐ だから揺れと同じ【焼き上がった絵への後処理】にした。短冊に切って場所ごとに
-       違う向きへずらす＝紙が揉まれて見える。刷る中身には一切触らない。
-     ⚠️ 短冊は1画素重ねて描く（重ねないと継ぎ目に地の線が出る）。
-     ⭐ sin(TAU*t) と cos(TAU*t*2) なので t=0→1 でぴったり戻る。 */
-  const N=28, hh=Math.ceil(H/N), amp=Math.min(W,H)*kn*0.05;
-  for(let i=0;i<N;i++){
-    const y=i*hh, h2=Math.min(hh+1, H-y); if(h2<=0) break;
-    octx.drawImage(swayCv, 0,y,W,h2,
-      dx+Math.sin(ph + i*0.85)*amp, y+dy+Math.cos(ph*2 + i*0.55)*amp*0.30, W, h2);
-  }
+  octx.drawImage(swayCv,dx,dy);
 }
 /* ⭐⭐ 穴の位置（動かすとき）。木下＝「動きがやはりあまりない」。
    🔴 実測で分かったこと＝灯の巡りは【広げるほど強くなるのではない】。
@@ -2137,7 +2105,7 @@ const R = [
   ['gloR','gloR',F2,0],['gloI','gloI',F2,0],['rim','rim',F2,0],['fib','fib',F2,0],
   ['cut','cut',FI,0],['cutS','cutS',FI,0],
   ['wallL','wallL',F2,0],['orbit','orbit',F3,0],['holeOrbit','holeOrbit',F3,0],
-  ['sway','sway',F3,0],['knead','knead',F3,0],['breath','breath',F2,0],['long','long',v=>Math.round(v)+'px',0]
+  ['sway','sway',F3,0],['breath','breath',F2,0],['long','long',v=>Math.round(v)+'px',0]
 ];
 R.forEach(([id,key,fmt,re])=>{
   const r=el('r_'+id); if(!r) return;
@@ -2233,7 +2201,7 @@ el('anGo').onclick=()=>{
   const on=!P.anim;
   /* ⭐ 巡りも息も 0 なら、押しても1コマも変わらない＝壊れているのと同じ。
      こちらで巡りを入れて、入れたことを知らせる（襞HIDA の「送り」と同じ作法）。 */
-  if(on&&P.orbit<0.002&&P.breath<0.002&&(P.holeOrbit||0)<0.002&&(P.sway||0)<0.0005&&(P.knead||0)<0.002){
+  if(on&&P.orbit<0.002&&P.breath<0.002&&(P.holeOrbit||0)<0.002&&(P.sway||0)<0.0005){
     pushHist(); P.orbit=0.25; P.sway=0.02; syncUI();
     stat('動く量が 0 だったので 灯の巡り0.25・揺れ0.02 を入れた');
   }
@@ -2764,7 +2732,7 @@ function loadLocal(){
    ══════════════════════════════════════════════════════ */
 function plan(){
   const fps=+segVal('tvFps','24'), loops=+segVal('tvLoop','1');
-  const moving=P.orbit>0.001||P.breath>0.001||(P.holeOrbit||0)>0.001||(P.sway||0)>0.0005||(P.knead||0)>0.002;
+  const moving=P.orbit>0.001||P.breath>0.001||(P.holeOrbit||0)>0.001||(P.sway||0)>0.0005;
   const sec=loops*Math.max(CYC_LO,P.cyc);
   return {fps,loops,sec,total:Math.max(2,Math.round(sec*fps)),moving};
 }
