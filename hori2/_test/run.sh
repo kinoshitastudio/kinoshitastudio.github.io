@@ -18,6 +18,12 @@ echo
 echo "── ④ SVG を置く（SAKUJI のパスが立体になるか）"
 node svgin.mjs   || ng=1
 echo
+echo "── ⑤ SPIN は再生を押して初めて動く"
+node play.mjs    || ng=1
+echo
+echo "── ⑥ 控え（JSON）の往復で位置がずれない"
+node save.mjs    || ng=1
+echo
 [ $ng -eq 0 ] && echo "✅ ぜんぶ通った" || echo "🔴 落ちたものがある"
 # ⭐ 見えが変わっていないかは、直す前のファイルを渡して別に流す：
 #    git show HEAD:hori2/index.html > /tmp/hori2_head.html
