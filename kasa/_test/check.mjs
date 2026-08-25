@@ -479,34 +479,6 @@ try{
     ok('揺れを入れると紙ごと動く（'+mv2(y0,y1)+'画素）', mv2(y0,y1)>500);
     const y2=fr2(1);
     ok('揺れも1周でぴったり戻る（'+mv2(y0,y2)+'）', mv2(y0,y2)===0);
-
-    /* ══ 揉む ── 紙が波打つ（2026-08-25）══
-       🔴🔴 3回しくじったので、ここに残す。刷るループの中で1画素ずつ足す実装は
-          【刷りが遅くなる → tuneDrag が盤を粗くする】という形で、数字以上に絵が劣化する。
-          この道具で「動き」を足すときは、まず【焼き上がった絵への後処理】でできないか考える。 */
-    KASA.P.sway=0; const knKeep=KASA.P.knead||0;
-    KASA.P.knead=0; KASA.rebuild();
-    const q0=fr2(0), q1=fr2(0.25);
-    ok('揉むが 0 なら1画素も動かない（'+mv2(q0,q1)+'）', mv2(q0,q1)===0);
-    KASA.P.knead=0.3; KASA.rebuild();
-    const k0=fr2(0), k1=fr2(0.25), k2=fr2(1);
-    ok('揉むを入れると紙が波打つ（'+mv2(k0,k1)+'画素）', mv2(k0,k1)>500);
-    ok('揉むも1周でぴったり戻る（'+mv2(k0,k2)+'）', mv2(k0,k2)===0);
-    /* ⭐ 揺れとの違い＝絵ぜんぶが同じ向きに運ばれるのではないこと。
-       ⚠️ しきいを px で固定すると小さい盤で偽落ちする。盤の割合で見る。 */
-    {
-      const cen=(d)=>{let n=0,sx=0,sy=0;for(let i=0;i<d.length;i+=4){if(d[i]>140){const q=i/4;n++;sx+=q%W2;sy+=(q/W2)|0;}}
-        return n?[sx/n,sy/n]:[0,0];};
-      const ca=cen(k0), cb=cen(k1);
-      const drift=Math.hypot(cb[0]-ca[0], cb[1]-ca[1]);
-      ok('揉んでも絵ごとは運ばれない（重心のずれ '+drift.toFixed(1)+'px＝盤の'+(drift/W2*100).toFixed(1)+'%）', drift < W2*0.02);
-    }
-    /* 🔴 速さの回帰はここでは測らない ── この盤は1コマ 2ms しか回らず、ブレが支配して
-       偽の判定しか出ない。実寸（1392×1100）での実測を残す：
-       揉む切 149.5ms ／ 揉んでいる間 165.0ms ／ 0 に戻した後 146.6ms（-1.9%＝元通り）。
-       増分は【全画面の控えを1回取る】ぶんで、揺れを使うときに元から払っているのと同じ。 */
-    KASA.P.knead=knKeep;
-
     KASA.P.sway=swKeep; KASA.P.orbit=o0; KASA.P.breath=b0; KASA.P.holeOrbit=h0; KASA.rebuild();
   }
 
