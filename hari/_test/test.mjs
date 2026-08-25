@@ -171,6 +171,47 @@ ok('矢印キーが3つの置き方すべてで効く', nudge['沿う'] && nudge
 ok('矢印1回で版面の 1px 動く', Math.abs(nudge.px1 - 1) < 0.02, '実測 ' + nudge.px1 + 'px');
 ok('⇧＋矢印で 10px 動く',      Math.abs(nudge.px10 - 10) < 0.2, '実測 ' + nudge.px10 + 'px');
 
+/* ── ③d レイヤーを掴んで並べ替え ──
+   🔴 いちばんまずい間違え方は【上下が逆になる】こと（一覧は「手前が上」の逆順で出している）。
+      「上へ動かしたのに奥へ行った」は、動かないことより悪い。だから順の一致を必ず見る。 */
+await page.reload({ waitUntil: 'networkidle0' });
+await page.evaluate(() => document.fonts.ready);
+await new Promise(r => setTimeout(r, 700));
+const ord = await page.evaluate(async () => {
+  /* 3行にして、見分けのつく名前を付ける */
+  const add = () => { const b = document.getElementById('addLine');
+    b.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true, pointerId:1 })); b.click(); };
+  add(); await new Promise(r => setTimeout(r, 250));
+  const s0 = JSON.parse(stateNow());
+  s0.lines.forEach((l, i) => l.text = 'LINE' + i);
+  applyStateStr(JSON.stringify(s0));
+  await new Promise(r => setTimeout(r, 300));
+  const names = () => [...document.querySelectorAll('#lineList .li .t')].map(x => x.textContent.trim());
+  const before = names();
+  /* いちばん下の行を、いちばん上まで引き上げる */
+  const rows = [...document.querySelectorAll('#lineList .li')];
+  const last = rows[rows.length-1], first = rows[0];
+  const rb = last.getBoundingClientRect(), fb = first.getBoundingClientRect();
+  last.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true, clientY:rb.top+rb.height/2, clientX:rb.left+40, pointerId:1 }));
+  for(let y = rb.top; y > fb.top - 8; y -= 8){
+    document.dispatchEvent(new PointerEvent('pointermove', { bubbles:true, clientY:y, clientX:rb.left+40, pointerId:1 }));
+    await new Promise(z => setTimeout(z, 6));
+  }
+  document.dispatchEvent(new PointerEvent('pointerup', { bubbles:true, pointerId:1 }));
+  await new Promise(r => setTimeout(r, 400));
+  const after = names();
+  /* 一覧の並び（手前が上）と、z の大きい順が一致するか */
+  const s = JSON.parse(stateNow());
+  const byZ = s.lines.map(l => ({ t:(l.text||'').trim(), z:l.z }))
+                     .sort((a,b) => b.z - a.z).map(x => x.t);
+  return { before, after, byZ,
+           一致: JSON.stringify(after) === JSON.stringify(byZ),
+           動いた: JSON.stringify(before) !== JSON.stringify(after) };
+});
+ok('一覧を掴んで並べ替えられる', ord.動いた, ord.before + ' → ' + ord.after);
+ok('🔴 並べ替えても【一覧の上＝版面の手前】が保たれる', ord.一致,
+   ord.一致 ? '' : '一覧 ' + JSON.stringify(ord.after) + ' / 手前から ' + JSON.stringify(ord.byZ) + '＝上下が逆');
+
 /* ── ④ 版面の大きさは UI に書いた数字どおりか ── */
 await page.reload({ waitUntil: 'networkidle0' });
 await page.evaluate(() => document.fonts.ready);
