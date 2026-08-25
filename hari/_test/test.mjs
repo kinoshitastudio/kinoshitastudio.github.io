@@ -108,6 +108,69 @@ await new Promise(r => setTimeout(r, 300));
 const n4 = (await S()).lines.length;
 ok('⌘Z 一回で消した行が戻る', n4 === n2, `${n3} → ${n4}（${n2} に戻るはず）`);
 
+/* ── ③b 隠す ── 画面から消えるだけでなく【書き出しにも入らない】か ──
+   ⚠️ ここが片方だけだと、画面と刷り上がりが違う＝版下として使えない。 */
+await page.reload({ waitUntil: 'networkidle0' });
+await page.evaluate(() => document.fonts.ready);
+await new Promise(r => setTimeout(r, 700));
+const hid = await page.evaluate(async () => {
+  const cv = document.getElementById('cv'), g = cv.getContext('2d', { willReadFrequently:true });
+  const sig = () => { const d = g.getImageData(0,0,cv.width,cv.height).data; let s=0;
+    for(let i=0;i<d.length;i+=4*97) s=(s+d[i]*3+d[i+1]*5+d[i+2]*7)%2147483647; return s; };
+  const png = async () => {
+    const rc = HTMLAnchorElement.prototype.click; let u='';
+    HTMLAnchorElement.prototype.click = function(){ if(this.download && !/svg/i.test(this.download)) u=this.href; };
+    document.getElementById('ePNG').click();
+    await new Promise(r => setTimeout(r, 1600));
+    HTMLAnchorElement.prototype.click = rc;
+    const im = new Image();
+    await new Promise((y,n) => { im.onload=y; im.onerror=n; im.src=u; });
+    const c2 = document.createElement('canvas'); c2.width=im.width; c2.height=im.height;
+    const g2 = c2.getContext('2d'); g2.drawImage(im,0,0);
+    const d = g2.getImageData(0,0,im.width,im.height).data; let s=0;
+    for(let i=0;i<d.length;i+=4*197) s=(s+d[i]*3+d[i+1]*5)%2147483647; return s;
+  };
+  const eyes = document.querySelectorAll('#lineList .hd');
+  if(!eyes.length) return { なし:true };
+  const a = sig(), pa = await png();
+  eyes[0].click(); await new Promise(r => setTimeout(r, 350));
+  const b = sig(), pb = await png();
+  eyes[0].click(); await new Promise(r => setTimeout(r, 350));
+  return { 目の数:eyes.length, 画面が変わる:a!==b, 書き出しも変わる:pa!==pb };
+});
+ok('レイヤーごとに隠すボタンがある', !hid.なし && hid.目の数 > 0, '目 ' + (hid.目の数||0) + ' 個');
+ok('隠すと画面から消える', !!hid.画面が変わる);
+ok('🔴 隠したものは書き出しにも入らない', !!hid.書き出しも変わる,
+   hid.書き出しも変わる ? '' : '画面では消えたのに PNG には焼かれている＝版下として使えない');
+
+/* ── ③c 矢印キーで 1px（⇧ で 10px）──
+   ⭐ 置き方で座標の持ち方が違う（張る/並ぶは％・沿うは点）。どれでも版面の1pxで動くこと。 */
+const nudge = await page.evaluate(async () => {
+  const kd = (k, sh) => window.dispatchEvent(new KeyboardEvent('keydown', { key:k, shiftKey:!!sh, bubbles:true }));
+  const kind = t => [...document.querySelectorAll('#segKind button')].find(x => x.textContent.trim() === t);
+  const cur = () => { const s = JSON.parse(stateNow()); return s.lines[s.sel.i]; };
+  const out = {};
+  for(const t of ['沿う','張る','並ぶ']){
+    kind(t).click(); await new Promise(r => setTimeout(r, 350));
+    const a = JSON.stringify(cur());
+    kd('ArrowRight'); kd('ArrowDown');
+    await new Promise(r => setTimeout(r, 250));
+    out[t] = a !== JSON.stringify(cur());
+  }
+  kind('張る').click(); await new Promise(r => setTimeout(r, 300));
+  const W = JSON.parse(stateNow()).board.w;
+  const x = () => cur().box.x;
+  const x0 = x(); kd('ArrowRight'); await new Promise(r => setTimeout(r, 200)); const x1 = x();
+  kd('ArrowRight', true); await new Promise(r => setTimeout(r, 200)); const x2 = x();
+  out.px1  = +((x1-x0)/100*W).toFixed(2);
+  out.px10 = +((x2-x1)/100*W).toFixed(2);
+  return out;
+});
+ok('矢印キーが3つの置き方すべてで効く', nudge['沿う'] && nudge['張る'] && nudge['並ぶ'],
+   JSON.stringify({ 沿う:nudge['沿う'], 張る:nudge['張る'], 並ぶ:nudge['並ぶ'] }));
+ok('矢印1回で版面の 1px 動く', Math.abs(nudge.px1 - 1) < 0.02, '実測 ' + nudge.px1 + 'px');
+ok('⇧＋矢印で 10px 動く',      Math.abs(nudge.px10 - 10) < 0.2, '実測 ' + nudge.px10 + 'px');
+
 /* ── ④ 版面の大きさは UI に書いた数字どおりか ── */
 await page.reload({ waitUntil: 'networkidle0' });
 await page.evaluate(() => document.fonts.ready);

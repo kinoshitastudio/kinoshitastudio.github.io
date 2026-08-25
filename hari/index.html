@@ -98,7 +98,12 @@ input[type=color]{ width:32px; height:28px; padding:0; border:.5px solid var(--l
 /* 行（ライン）の一覧 */
 #lineList{ display:flex; flex-direction:column; gap:4px; margin-bottom:9px }
 /* ⚠️ ○ だけだと何のことか分からなかった（木下＝「行の右の丸とは？」）＝字にする */
-.lk{ margin-left:auto; flex:none; font-size:9px; letter-spacing:.04em; cursor:pointer;
+.hd{ margin-left:auto; flex:none; font-size:9px; letter-spacing:.04em; cursor:pointer;
+  padding:2px 7px; border-radius:9px; border:1px solid var(--line); opacity:.55; }
+.hd:hover{ opacity:1; }
+.hd.on{ opacity:1; background:var(--ink); color:var(--paper); border-color:var(--ink); }
+.li.hidden .t{ opacity:.4; text-decoration:line-through }
+.lk{ flex:none; font-size:9px; letter-spacing:.04em; cursor:pointer;
   padding:2px 7px; border-radius:9px; border:1px solid var(--line); opacity:.6; }
 .lk:hover{ opacity:1; }
 .lk.on{ opacity:1; background:var(--ink); color:var(--paper); border-color:var(--ink); }
@@ -250,7 +255,7 @@ textarea:focus, select:focus{ box-shadow:0 0 0 3px rgba(120,120,128,.22) }
 input[type=color]{ border-radius:8px; height:30px }
 
 /* 固定の印 */
-.lk{ font-size:9.5px; padding:3px 8px; border-radius:10px }
+.lk,.hd{ font-size:9.5px; padding:3px 8px; border-radius:10px }
 
 /* ⚠️ モバイル＝下段のまま。掴める領域だけ確保し直す */
 @media(max-width:760px){
@@ -1368,6 +1373,9 @@ function render(into, opt){
   /* ⭐ 重なりの順に描く（奥→手前）。図と行を1本の並びで扱う＝レイヤーの上下が動かせる。
      ⚠️ 以前は「図をぜんぶ → 行をぜんぶ」の2周だったので、図を行より手前に出せなかった。 */
   stack().forEach(e => {
+  /* ⭐ 隠したものは描かない。⚠️ ここ1か所で止める＝画面・PNG・SVG が必ず一致する
+     （書き出しも同じ render() を流している）。掴み手も描かれないので触れない。 */
+  if(e.o && e.o.hide) return;
   if(e.kind === 'piece'){
     const pc = e.o;
     if(!pc.item) return;
@@ -2304,6 +2312,33 @@ addEventListener('keydown', e => {
   if(typing(e.target)) return;                     // ⚠️ 打っている最中は横取りしない
   const m = e.metaKey || e.ctrlKey;
   const k = (e.key || '').toLowerCase();
+  /* ⭐ 2026-08-26 木下：「ボード内でキーボードを移動できるように。1pxずつなど」
+     ⚠️ 行の種類で座標の持ち方が違う ── 張る・並ぶ・札は box（版面に対する％）、
+        沿うは path.pts（版面の座標）、図は x/y（版面の座標）。
+        どれも【版面の1px】で動くように、％のものだけ版面の幅で割って渡す。
+     ⭐ ⇧ で 10px（Figma と同じ）。⚠️ 錠がかかっている物は動かさない。 */
+  if(/^Arrow(Left|Right|Up|Down)$/.test(e.key)){
+    const L = sel(), pc = (typeof selPiece === 'function') ? selPiece() : null;
+    const o = pc || L;
+    if(!o) return;
+    e.preventDefault();
+    if(o.lock){ stat('固定されている（右の「固定」を外す）'); return; }
+    const step = e.shiftKey ? 10 : 1;
+    const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+    const dy = e.key === 'ArrowUp'   ? -step : e.key === 'ArrowDown'  ? step : 0;
+    pushUndo();
+    if(pc){ pc.x += dx; pc.y += dy; }
+    else if(L.kind === 'meguru' && L.path && L.path.pts){
+      L.path.pts = L.path.pts.map(q => [q[0] + dx, q[1] + dy]);
+    } else if(L.box){
+      L.box.x = Math.max(-50, Math.min(150, L.box.x + dx / S.board.w * 100));
+      L.box.y = Math.max(-50, Math.min(150, L.box.y + dy / S.board.h * 100));
+      setRange('boxX', Math.round(L.box.x)); setRange('boxY', Math.round(L.box.y));
+    }
+    syncPanel(); render();
+    stat((dx ? (dx>0?'右へ':'左へ') : (dy>0?'下へ':'上へ')) + ' ' + step + 'px');
+    return;
+  }
   if(m && k === 'z'){ e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if(m && k === 'c'){ const L = sel(); if(L){ clip = JSON.parse(JSON.stringify(L)); stat('コピーした'); } return; }
   if(m && k === 'v'){
@@ -2368,14 +2403,24 @@ function fillList(el){
   stack().reverse().forEach(e => {
     const isP = e.kind === 'piece', o = e.o, i = e.i;
     const d = document.createElement('div');
-    d.className = 'li' + (isP ? ' pc' : '') + (S.sel.kind === e.kind && S.sel.i === i ? ' on' : '');
+    d.className = 'li' + (isP ? ' pc' : '') + (S.sel.kind === e.kind && S.sel.i === i ? ' on' : '')
+      + (o.hide ? ' hidden' : '');
     d.innerHTML = (isP
         ? `<span class="k">図</span><span class="t">${o.src ? '画像' : 'SVG'}</span>`
         : `<span class="k">${(LAYOUTS[o.kind]||LAYOUTS.meguru).jp}</span><span class="t">${(o.text||'（空）').slice(0,18)}</span>`)
+      + `<span class="hd${o.hide ? ' on' : ''}" title="${o.hide ? '隠している（押すと出す）' : '隠す'}">${o.hide ? '隠' : '見'}</span>`
       + `<span class="lk${o.lock ? ' on' : ''}" title="固定すると振らない">${o.lock ? '固定中' : '固定'}</span>`;
     d.onclick = () => { S.sel = { kind:e.kind, i }; syncPanel(); render(); };
-    /* ⚠️ 錠は選択とは別の操作＝親のクリックまで伝えない */
+    /* ⚠️ 錠と目は選択とは別の操作＝親のクリックまで伝えない */
     d.querySelector('.lk').onclick = ev => { ev.stopPropagation(); o.lock = !o.lock; renderList(); };
+    /* ⭐ 2026-08-26 木下：「レイヤーパネルに各レイヤー非表示できるようにして」
+       ⚠️ 隠したら【書き出しにも入らない】。画面と刷り上がりが違うと版下として使えない。
+          描く所は render() 1本なので、そこで飛ばせば画面も PNG も SVG も同じになる。 */
+    d.querySelector('.hd').onclick = ev => {
+      ev.stopPropagation(); o.hide = !o.hide;
+      renderList(); render(); syncPanel();
+      stat(o.hide ? '隠した（書き出しにも入らない）' : '出した');
+    };
     el.appendChild(d);
   });
 }
@@ -2997,7 +3042,7 @@ syncPanel(); fitView(); render();
       とくに「指2本で版面を動かす」は、書いておかないと一生見つからない。 */
 stat(matchMedia('(pointer:coarse)').matches
   ? 'READY — 指1本で掴んで動かす／⭐指2本で版面を動かす・大きさを変える／ダブルタップで打ち直し'
-  : 'READY — 掴んで動かす／角で大きさ（⇧で均等）・角の少し外で回す／⌥ドラッグで大きさと字間／ダブルクリックで打ち直し／何もない所を押すと選択が外れる');
+  : 'READY — 掴んで動かす／角で大きさ（⇧で均等）・角の少し外で回す／⌥ドラッグで大きさと字間／矢印キーで1px（⇧で10px）／ダブルクリックで打ち直し／何もない所を押すと選択が外れる');
 </script>
 
 <!-- ══════════════════════════════════════════════════════════════
