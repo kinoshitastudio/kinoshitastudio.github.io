@@ -996,7 +996,9 @@
            ／理由＝「貼HARI でそれらでポスターを作る」）。
            ⭐ 色は見えているとおりのまま、物体の【外】だけを透かす。 -->
       <button class="btn" id="btn-png3" style="width:100%;margin-top:6px">地なしで PNG（切り抜き）</button>
+      <div class="mod" id="nobgOut"></div>
       <div class="mod">⭐ <b>物体だけ</b>を切り抜いて出す（地・波紋・影は入らない）<br>
+        ⭐ <b>絵のあるところだけに切り詰めて</b>出す＝貼 HARI で広げても粗くならない<br>
         ⚠️ 物体の<b>中</b>に敷いた地は残る＝<b>隠す COVER</b> を切ると、刻むの縞の隙間まで透ける<br>
         ⭐ 貼 HARI などに<b>重ねて置くため</b>の出し方</div>
       <div class="mod" style="margin-top:10px">⭐ <b>絵ぜんぶ</b>（手で引いた線も 置いた字も まとめて動かす）</div>
@@ -3446,6 +3448,8 @@ function frameSize(){
   const { w, h } = frameWH(P.frameLong);
   return scaleToLimit(w, h, P.frameScale);
 }
+/* ⭐ 倍率をかける前の版面（地なしで【上限まで上げて刷る】ときの元にする） */
+function frameSize0(){ return frameWH(P.frameLong); }
 /* ⚠️⭐ 倍率をかけると GPU の上限（maxTextureSize）に当たる。
    スマホは 4096 のことが多く、超えると【何も出ない／落ちる】。
    ⭐ 黙って壊れるのでなく、上限まで下げて、パネルに実際の寸法を出す。 */
@@ -3490,11 +3494,61 @@ function updateFrameGuide(){
    ⚠️ BLEED は【何フレームも溜めて】できるものなので、大きさを変えた直後は空。
       そのまま撮ると滲みが消える → 溜まるぶんだけ空回ししてから撮る。
    ⚠️ 終わったら必ず元の大きさへ戻す（戻し忘れると画面が壊れる）。 */
+/* ⭐⭐ 地なしは【絵のあるところだけに切り詰めて】出す（簾SUDARE と同じ作法）。
+   🔴 木下＝「地なしPNGで Hari に埋め込んでいるが画質悪い気もする」。
+      実測＝2400×1600 のうち【絵は 749×779＝面積の 15.2%】で、残りは透明な余白だった。
+      それを HARI で版面いっぱいに広げる＝**779px の画を引き伸ばしている**＝粗く見える。
+   ⭐ 切り詰めれば、同じ画素数で **3.08倍こまかく** 写せる（この絵の場合）。
+   ⚠️ WebGL の canvas からは直に画素を読めないので、一度 2D に写してから読む。
+   ⚠️ 縁が切れないよう少しだけ余白を残す。 */
+function cropToInk(el, cb){
+  const w = el.width, h = el.height;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d', { willReadFrequently:true });
+  g.drawImage(el, 0, 0);
+  let d;
+  try{ d = g.getImageData(0, 0, w, h).data; }
+  catch(_){ c.toBlob(cb, 'image/png'); return; }
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for(let y = 0; y < h; y++){
+    const row = y * w * 4;
+    for(let x = 0; x < w; x++){
+      if(d[row + x*4 + 3] > 4){
+        if(x < x0) x0 = x;
+        if(x > x1) x1 = x;
+        if(y < y0) y0 = y;
+        if(y > y1) y1 = y;
+      }
+    }
+  }
+  if(x1 < x0 || y1 < y0){ c.toBlob(cb, 'image/png'); return; }   /* 何も無ければそのまま */
+  const pad = 3;
+  x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad);
+  x1 = Math.min(w - 1, x1 + pad); y1 = Math.min(h - 1, y1 + pad);
+  const cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+  const o = document.createElement('canvas'); o.width = cw; o.height = ch;
+  o.getContext('2d').drawImage(c, x0, y0, cw, ch, 0, 0, cw, ch);
+  lastCrop = cw + '×' + ch;
+  o.toBlob(cb, 'image/png');
+}
+let lastCrop = '';
 function renderToBlob(cb, noBg){
   /* ⭐ 版面が切でも【解像度は上げられる】＝画面と同じ形のまま大きく刷る */
   const el0 = renderer.domElement;
-  const f = ON.frame ? frameSize()
-                     : scaleToLimit(el0.clientWidth||innerWidth, el0.clientHeight||innerHeight, P.frameScale);
+  let f = ON.frame ? frameSize()
+                   : scaleToLimit(el0.clientWidth||innerWidth, el0.clientHeight||innerHeight, P.frameScale);
+  /* 🔴🔴 木下＝「地なしPNGで Hari に埋め込んでいるが画質悪い気もする」。
+     ⭐ 実測で分かった正体＝**絵は版面の 15% しか占めていない**（2400×1600 のうち 749×779）。
+        残りは透明な余白なので、HARI で版面いっぱいに広げると
+        【779px の画を引き伸ばしている】ことになる＝粗い。
+     ⚠️⚠️ 切り詰めるだけでは【画質は上がらない】（画素の細かさは同じまま）。
+     ⭐⭐ だから地なしのときは【この端末で刷れるいちばん大きい所】まで上げてから刷り、
+        そのうえで絵のある所だけに切り詰める。＝同じ絵が何倍もこまかく出る。
+     ⚠️ 倍率のつまみは書き換えない（勝手に数字が変わったように見せない）。 */
+  if(noBg){
+    const base = ON.frame ? frameSize0() : { w: el0.clientWidth||innerWidth, h: el0.clientHeight||innerHeight };
+    f = scaleToLimit(base.w, base.h, 64);      /* 64＝上限に当たるまで上げる（中で下がる） */
+  }
   /* ⭐⭐ 地なしで出す。⚠️ 画面に出ているコマは alpha=1 で焼かれているので、
      地なしのときは【必ず刷り直す】＝この近道は通さない。 */
   if(!noBg && !ON.frame && f.k === 1){ el0.toBlob(cb, 'image/png'); return; }
@@ -3531,7 +3585,7 @@ function renderToBlob(cb, noBg){
       }
       renderer.setRenderTarget(null); renderer.render(postScene, postCam);
     }
-    el.toBlob(cb, 'image/png');
+    if(noBg) cropToInk(el, cb); else el.toBlob(cb, 'image/png');
   } finally {
     // ⚠️ 何があっても戻す（⭐ 画面に地なしのコマを残さないよう、いちばん先に消す）
     postUniforms.uAlphaOut.value = 0;
@@ -4081,6 +4135,10 @@ function exportPNG(noBg){
   const name = `hori_${Date.now()}${noBg ? '_nobg' : ''}.png`;
   const save = blob => {
     if(!blob){ alert('書き出せなかった'); return; }
+    if(noBg){
+      const e = document.getElementById('nobgOut');
+      if(e) e.textContent = lastCrop ? ('切り詰めて ' + lastCrop + ' で出した') : '';
+    }
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = name; a.rel = 'noopener';
