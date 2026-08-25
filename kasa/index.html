@@ -488,15 +488,10 @@
     <input type="range" id="r_holeOrbit" min="0" max="0.8" step="0.005">
     <div class="row"><span class="n">揺れ</span><output id="o_sway"></output></div>
     <input type="range" id="r_sway" min="0" max="0.08" step="0.001">
-    <div class="row"><span class="n">揉む</span><output id="o_knead"></output></div>
-    <input type="range" id="r_knead" min="0" max="0.5" step="0.005">
     <div class="row"><span class="n">息</span><output id="o_breath"></output></div>
     <input type="range" id="r_breath" min="0" max="1.5" step="0.01">
     <div class="note">⭐押すまで動かない。<b>止めると元の姿に戻る</b>。どれも1周でぴったり戻る。<br>
       ⭐⭐<b>揺れ＝紙と文字そのものが動く</b>（ほかは光と穴だけが動く）。まず動かすならこれ<br>
-      ⭐⭐<b>揉む＝皺そのものが動く</b>。⚠️ 揺れは絵ごと平行に運ぶ（形は変わらない）のに対し、
-      揉むは<b>面の向きが動く</b>＝紙を揉み続けているように、折り目と縁の陰が絶えず入れ替わる。
-      <b>位置は1ミリも動かない</b>ので、揺れと重ねても喧嘩しない<br>
       ⭐<b>穴の巡り</b>＝黒い穴そのものが回る<br>
       ⚠️ <b>速さは右へ引くほど速い</b>（数字は1周にかかる秒数）<br>
       ⚠️ <b>灯の巡りは 0.8 あたりが上限の目安</b>。それ以上は灯が紙から出ていくので、
@@ -645,7 +640,7 @@ let P = {
   /* 色 */
   paper:'#f7f1e6', lamp:'#ffeccb', wall:'#3b3833', wallL:0.30,
   /* 動き */
-  anim:false, cyc:14, orbit:0.05, breath:0.18, holeOrbit:0, sway:0, knead:0,
+  anim:false, cyc:14, orbit:0.05, breath:0.18, holeOrbit:0, sway:0,
   seed:20260814
 };
 let HOLE = [];   /* 穴（前に貼る黒い円）  {x,y} 正規化 */
@@ -1499,13 +1494,6 @@ function ensureTRN(){
   trnKey=k;
 }
 
-/* 0 で埋めた表。⚠️ 毎フレーム new すると、揉んでいないのに確保だけ走る */
-const _zt = {};
-function zeroTab(k, n){
-  const a = _zt[k];
-  if(a && a.length === n) return a;
-  return (_zt[k] = new Float32Array(n));
-}
 function paint(octx, W, H, t, cam){
   cam=cam||camOut(W,H);
   if(FW!==W||FH!==H||FKEY!==camKey(W,H,cam)) buildField(W,H,cam);
@@ -1516,42 +1504,6 @@ function paint(octx, W, H, t, cam){
   const wall=[wr[0]*P.wallL, wr[1]*P.wallL, wr[2]*P.wallL];
   const lit=[mix(pr[0],lr[0],.45), mix(pr[1],lr[1],.45), mix(pr[2],lr[2],.45)];
   const dark=[pr[0]*0.26, pr[1]*0.26, pr[2]*0.26];
-
-  /* ══ 揉む ── 皺そのものを動かす ══
-     🔴 2026-08-25 木下：「6秒から12秒の文字の動きがつまみにない。移動はすでにある」
-     ⚠️ 実測したら、動画の動きは【揺れ】そのものだった（swayShift は min(W,H)*k の円運動＝
-        振れ 32.1px・弧を描く。動画の実測と完全に一致）。木下が移動を除いた以上、
-        足すべきは【位置が動かない動き】＝面の向きが動く＝紙を揉み続けている状態。
-     ⭐ 面の向き（法線）に、時間で流れる小さな波を足す。位置は1画素も動かない。
-     ⚠️ ここは1画素ごとのホットループ。中で sin を呼ぶと重い（実測できる差になる）。
-        フレームの頭で W+H 回だけ sin を引いて【表】にし、ループでは掛けるだけにする。
-     ⭐ sin(TAU*t) なので t=0→1 でぴったり1周して戻る（ほかのつまみと同じ約束）。 */
-  /* ⭐⭐ 揉むは【面の向きの配列を差し替える】形にする。
-     🔴 一度は刷るループの中で毎画素 w を足したが、揉んでいない人まで 114→126ms（+10%）遅くなった。
-        使っていない機能で1割落とすのは筋が悪い。
-     ⭐ 波を足した配列を先に作り、刷るループは【参照を差し替えるだけ】＝本体は1文字も重くならない。
-     ⚠️ 前もって作るのは紙のある所（ROWLO〜ROWHI）だけ。全画素を回すと前処理そのものが重い。
-     🔴 位相の倍率を 1.37 にしていたら1周で戻らなかった（実測 t=0 と t=1 で 28904 画素が違う）。
-        縦と横で速さを変えたいなら【整数倍】にする（2 なら t=1 でちょうど2周して戻る）。 */
-  const kn = P.knead || 0;
-  let nxA = NX, nyA = NY;
-  if(kn > 0.002){
-    const ph = TAU*(t||0);
-    const KW = zeroTab('w', W), KH = zeroTab('h', H);
-    for(let x=0;x<W;x++) KW[x] = kn*Math.sin(x*0.021 + ph);
-    for(let y=0;y<H;y++) KH[y] = Math.sin(y*0.017 - ph*2);
-    const n2 = W*H;
-    const KNX = zeroTab('nx', n2), KNY = zeroTab('ny', n2);
-    for(let y=0;y<H;y++){
-      const lo=ROWLO[y], hi=ROWHI[y]; if(hi<lo) continue;
-      const kh=KH[y], row=y*W;
-      for(let x=lo;x<=hi;x++){
-        const i=row+x, w=kh*KW[x];
-        KNX[i]=NX[i]+w; KNY[i]=NY[i]+w*0.7;
-      }
-    }
-    nxA = KNX; nyA = KNY;
-  }
 
   /* ⭐ 壁は1回で塗る。紙のある所だけ画素を書く＝ImageData も紙の囲みぶんだけ */
   octx.setTransform(1,0,0,1,0,0);
@@ -1592,7 +1544,7 @@ function paint(octx, W, H, t, cam){
       const i=y*W+x, m=MSK[i];
       if(m<=0.002) continue;                 /* 壁はもう塗ってある */
       const X=(x-CX)/S;
-      const nx=nxA[i], ny=nyA[i], nz=NZ[i];   /* 揉むが入っていれば波を足した配列が来る */
+      const nx=NX[i], ny=NY[i], nz=NZ[i];
       let E=0;
       for(let k=0;k<nL;k++){
         const dx=lx[k]-X, dy=ly[k]-Y;
@@ -2153,7 +2105,7 @@ const R = [
   ['gloR','gloR',F2,0],['gloI','gloI',F2,0],['rim','rim',F2,0],['fib','fib',F2,0],
   ['cut','cut',FI,0],['cutS','cutS',FI,0],
   ['wallL','wallL',F2,0],['orbit','orbit',F3,0],['holeOrbit','holeOrbit',F3,0],
-  ['sway','sway',F3,0],['knead','knead',F3,0],['breath','breath',F2,0],['long','long',v=>Math.round(v)+'px',0]
+  ['sway','sway',F3,0],['breath','breath',F2,0],['long','long',v=>Math.round(v)+'px',0]
 ];
 R.forEach(([id,key,fmt,re])=>{
   const r=el('r_'+id); if(!r) return;
@@ -2249,7 +2201,7 @@ el('anGo').onclick=()=>{
   const on=!P.anim;
   /* ⭐ 巡りも息も 0 なら、押しても1コマも変わらない＝壊れているのと同じ。
      こちらで巡りを入れて、入れたことを知らせる（襞HIDA の「送り」と同じ作法）。 */
-  if(on&&P.orbit<0.002&&P.breath<0.002&&(P.holeOrbit||0)<0.002&&(P.sway||0)<0.0005&&(P.knead||0)<0.002){
+  if(on&&P.orbit<0.002&&P.breath<0.002&&(P.holeOrbit||0)<0.002&&(P.sway||0)<0.0005){
     pushHist(); P.orbit=0.25; P.sway=0.02; syncUI();
     stat('動く量が 0 だったので 灯の巡り0.25・揺れ0.02 を入れた');
   }
@@ -2780,7 +2732,7 @@ function loadLocal(){
    ══════════════════════════════════════════════════════ */
 function plan(){
   const fps=+segVal('tvFps','24'), loops=+segVal('tvLoop','1');
-  const moving=P.orbit>0.001||P.breath>0.001||(P.holeOrbit||0)>0.001||(P.sway||0)>0.0005||(P.knead||0)>0.002;
+  const moving=P.orbit>0.001||P.breath>0.001||(P.holeOrbit||0)>0.001||(P.sway||0)>0.0005;
   const sec=loops*Math.max(CYC_LO,P.cyc);
   return {fps,loops,sec,total:Math.max(2,Math.round(sec*fps)),moving};
 }
