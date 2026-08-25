@@ -462,7 +462,24 @@ try{
     let lo=9;
     for(let k=0;k<=40;k++) KASA.lampsAt(k/40).forEach(l=>{ if(l.i<lo) lo=l.i; });
     ok('息を強くしても光が負にならない（いちばん暗い所 '+lo.toFixed(2)+'）', lo>=0);
-    KASA.P.orbit=o0; KASA.P.breath=b0; KASA.P.holeOrbit=h0;
+    KASA.P.breath=b0;
+    /* ⭐⭐ 揺れ＝紙と文字そのものが動く（ほかは光と穴だけ）。
+       木下＝「文字のうごきがとまった」＝光しか動いていなかったのが本当の理由。 */
+    /* ⚠️ この塊では s0/s1 を上で使っている。同じ名前で宣言すると【試験ぜんぶが黙って落ちる】 */
+    const swKeep=KASA.P.sway;
+    const W2=200,H2=130;
+    const fr2=t=>{const c=document.createElement('canvas');c.width=W2;c.height=H2;
+      KASA.paint(c.getContext('2d'),W2,H2,t);return c.getContext('2d').getImageData(0,0,W2,H2).data;};
+    const mv2=(A,B)=>{let n=0;for(let i=0;i<A.length;i+=4)if(Math.abs(A[i]-B[i])>8)n++;return n;};
+    KASA.P.orbit=0; KASA.P.breath=0; KASA.P.holeOrbit=0; KASA.P.sway=0; KASA.rebuild();
+    const z0=fr2(0), z1=fr2(0.25);
+    ok('動く量が全部 0 なら1画素も動かない（'+mv2(z0,z1)+'）', mv2(z0,z1)===0);
+    KASA.P.sway=0.03; KASA.rebuild();
+    const y0=fr2(0), y1=fr2(0.25);
+    ok('揺れを入れると紙ごと動く（'+mv2(y0,y1)+'画素）', mv2(y0,y1)>500);
+    const y2=fr2(1);
+    ok('揺れも1周でぴったり戻る（'+mv2(y0,y2)+'）', mv2(y0,y2)===0);
+    KASA.P.sway=swKeep; KASA.P.orbit=o0; KASA.P.breath=b0; KASA.P.holeOrbit=h0; KASA.rebuild();
   }
 
   // 大きく刷れるか
