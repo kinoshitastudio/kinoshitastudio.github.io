@@ -11,6 +11,7 @@ const CHROME='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const HOW = {
   rui:  { shot:`render(c.getContext('2d'), buildPlan(W,H), false)` },
   tama: { shot:`TAMA.paint(c.getContext('2d'), W, H, 0)` },
+  hida: { shot:`paint(c.getContext('2d'), W, H, 0, true)` },
 };
 const tool=process.argv[2], head=process.argv[3];
 if(!tool||!HOW[tool]||!head){ console.log('使い方: node _test/gaku_same.mjs <道具名> <直す前のファイル>'); process.exit(1); }

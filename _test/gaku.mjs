@@ -26,6 +26,7 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const HOW = {
   rui:  { P:'P',      shot:`render(c.getContext('2d'), buildPlan(W,H), false)` },
   tama: { P:'TAMA.P', shot:`TAMA.paint(c.getContext('2d'), W, H, 0)` },
+  hida: { P:'P',      shot:`paint(c.getContext('2d'), W, H, 0, true)` },
 };
 
 const tool = process.argv[2];
@@ -37,8 +38,11 @@ const T = `
 const L=[]; const ok=(n,c)=>L.push((c?'OK  ':'NG  ')+n);
 addEventListener('error',e=>L.push('NG  例外: '+e.message+' @'+e.lineno));
 try{
-  /* ⚠️ 本体の定義より先に読まれると落ちて【何も出ない】ので、必ず try の中で取る */
-  const P = ${HOW[tool].P};
+  /* ⚠️ 本体の P と同じ名前にすると自分を指して落ちる（TDZ）ので別名で持つ */
+  const PP = ${HOW[tool].P};
+  /* 🔴 額の色が【その道具の地の色】と近いと、地を額と数えてしまう（hida で実際に落ちた）。
+     ⭐ 測る前に、どの道具の地とも重ならない色に決め打ちする＝測りたいものだけが動く状態を作る。 */
+  PP.gakuCol = '#ff00ff';
   const W=400,H=520;
   const shot=()=>{const c=document.createElement('canvas');c.width=W;c.height=H;
     ${HOW[tool].shot};
@@ -51,30 +55,30 @@ try{
   const band=(d,dir)=>{let n=0;
     for(let k=0;k<Math.min(W,H)/2;k++){
       const p = dir==='L'?[k,H>>1] : dir==='R'?[W-1-k,H>>1] : dir==='T'?[W>>1,k] : [W>>1,H-1-k];
-      if(isCol(d,p[0],p[1],P.gakuCol)) n++; else break;
+      if(isCol(d,p[0],p[1],PP.gakuCol)) n++; else break;
     } return n;};
   const a=shot();
   ok('額 0 のときは四辺に額の色が無い（'+band(a,'L')+'）', band(a,'L')===0);
-  P.gaku=10;
+  PP.gaku=10;
   const b=shot();
   ok('額を入れると絵が変わる（'+diff(a,b)+'画素）', diff(a,b)>2000);
   const [l,r,t,bo]=[band(b,'L'),band(b,'R'),band(b,'T'),band(b,'B')];
   ok('四辺の帯が同じ太さ（左'+l+' 右'+r+' 上'+t+' 下'+bo+'）', l>0 && l===r && l===t && l===bo);
   ok('帯の太さ＝短い辺の10%（'+l+'px ≒ '+Math.round(Math.min(W,H)*0.10)+'px）',
      Math.abs(l-Math.min(W,H)*0.10)<=2);
-  P.gakuZ=200;
+  PP.gakuZ=200;
   const c2=shot();
   ok('中を2倍にしても縁は残る（左'+band(c2,'L')+' 上'+band(c2,'T')+'）',
      band(c2,'L')===l && band(c2,'T')===t);
   ok('中を2倍にすると中身は変わる（'+diff(b,c2)+'画素）', diff(b,c2)>2000);
-  P.gakuZ=100; P.gakuX=30; P.gakuY=-20;
+  PP.gakuZ=100; PP.gakuX=30; PP.gakuY=-20;
   const e=shot();
   /* ⭐ 寄せると【寄せた側と反対】に額の色が広がる（窓は動かず中の絵だけ動くため）。
      見るのは「四辺とも縁が残っているか」＝どの辺も 0 にならないこと。 */
   ok('寄せても四辺の縁は残る（左'+band(e,'L')+' 右'+band(e,'R')+' 上'+band(e,'T')+' 下'+band(e,'B')+'）',
      band(e,'L')>0 && band(e,'R')>0 && band(e,'T')>0 && band(e,'B')>0);
   ok('寄せた側の縁は太らない（右'+band(e,'R')+'px ≦ '+l+'px）', band(e,'R')<=l+1);
-  P.gaku=0; P.gakuX=0; P.gakuY=0;
+  PP.gaku=0; PP.gakuX=0; PP.gakuY=0;
   ok('ぜんぶ戻すと元の絵（ずれ '+diff(a,shot())+'）', diff(a,shot())===0);
 }catch(e){L.push('NG  落ちた: '+((e&&e.stack)||e));}
 const pre=document.createElement('pre');pre.id='R';pre.textContent=L.join('\\n');

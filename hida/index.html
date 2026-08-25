@@ -394,6 +394,24 @@
 
   <hr>
 
+  <!-- ══⭐⭐ 余白（額）── 朦OBORO から移した（2026-08-25）
+       ⭐ 上に被せるのではなく【中の絵が縮む】＝縁に帯が空く。
+       ⭐⭐ 額は【上のレイヤー】＝中を大きくしても寄せても縁は必ず残る。
+       ⚠️ 余白0・中の大きさ100・よこたて0 で今までの絵と1画素も変わらない。 -->
+  <div class="grp">
+    <label class="h">余白（額）</label>
+    <div class="row"><span class="n">余白</span><output id="o_gaku"></output></div>
+    <input type="range" id="r_gaku" min="0" max="30" step="1">
+    <div class="row"><span class="n">余白の色</span></div>
+    <input type="color" id="c_gakuCol">
+    <div class="row"><span class="n">中の大きさ</span><output id="o_gakuZ"></output></div>
+    <input type="range" id="r_gakuZ" min="50" max="200" step="1">
+    <div class="row"><span class="n">中のよこ</span><output id="o_gakuX"></output></div>
+    <input type="range" id="r_gakuX" min="-50" max="50" step="1">
+    <div class="row"><span class="n">中のたて</span><output id="o_gakuY"></output></div>
+    <input type="range" id="r_gakuY" min="-50" max="50" step="1">
+  </div>
+
   <div class="grp">
     <label class="h">出す・控える</label>
     <label class="chk"><input type="checkbox" id="c_alpha"> 地を抜いて出す</label>
@@ -460,7 +478,9 @@ let P = {
   ratio:'a', long:1620, sz:'1620',
   bg:'#f4f1ea', ink:'#101010', inv:false, alpha:false,
   bOn:true, bFx:'inv', bInk:true, bN:7, bW:0.30, bOff:0.10, bRot:0, bShift:0.05,
-  anim:false, cyc:8
+  anim:false, cyc:8,
+  /* ⭐ 余白（額）2026-08-25 ── 朦OBORO から移した。0 で今までどおり */
+  gaku:0, gakuCol:'#f2efe6', gakuZ:100, gakuX:0, gakuY:0
 };
 let SRC = [], sel = 0;
 
@@ -713,8 +733,40 @@ function stripPath(cam){
 const LAY = document.createElement('canvas');
 const TMP = document.createElement('canvas');
 
+/* ⭐⭐ 余白（額）── 縁に帯を取り、その分だけ【中の絵を縮める】（朦OBORO から移した）。
+   ⭐ 四辺とも同じ画素数の帯（短い辺が基準）。辺ごとに比例させると縦長で上下だけ太くなる
+      ＝OBORO で木下に「上下左右大きさ違う？？よね？」と指摘された型を繰り返さない。
+   ⚠️ この道具は matOf(s,cam) を【置き方の行列】の意味で使っているので、額は gakuOf と呼ぶ。
+   ⚠️ 既定のままなら null＝何も通さない＝今までの絵が1画素も変わらない。 */
+function gakuOf(W,H){
+  const p=(+P.gaku||0)/100;
+  const z=(P.gakuZ==null?100:+P.gakuZ)/100;
+  const ox=(+P.gakuX||0)/100, oy=(+P.gakuY||0)/100;
+  if(p<=0 && z===1 && !ox && !oy) return null;
+  const m=Math.min(W,H)*p;
+  const win={x:m,y:m,w:W-m*2,h:H-m*2};
+  const s=Math.max(0.05, Math.max(win.w/W, win.h/H)*z);
+  return { s, mx:(W-W*s)/2+ox*W, my:(H-H*s)/2+oy*H, win };
+}
+/* ⭐⭐ 額は【上のレイヤー】＝窓の外を最後に塗る＝中を大きくしても縁は必ず残る */
+function drawGaku(octx,W,H,MT){
+  octx.save();
+  octx.setTransform(1,0,0,1,0,0);
+  octx.globalAlpha=1; octx.globalCompositeOperation='source-over';
+  octx.fillStyle=P.gakuCol||'#f2efe6';
+  const w=MT.win;
+  octx.fillRect(0,0,W,Math.max(0,w.y));
+  octx.fillRect(0,Math.min(H,w.y+w.h),W,Math.max(0,H-(w.y+w.h)));
+  octx.fillRect(0,Math.max(0,w.y),Math.max(0,w.x),Math.min(w.h,H));
+  octx.fillRect(Math.min(W,w.x+w.w),Math.max(0,w.y),Math.max(0,W-(w.x+w.w)),Math.min(w.h,H));
+  octx.restore();
+}
 function paint(octx, W, H, t, withBg, cam){
   cam = cam || camOut(W,H);          /* 🔴 既定＝今までの式そのもの（出す絵は変わらない） */
+  /* ⭐ 額は【カメラを縮めるだけ】で通る＝芯も帯も別々に直さなくてもまとめて窓の中へ入る。
+     ⚠️ fw/fh（版面の大きさ）は変えない＝版面のわくは額の外のまま。 */
+  const GK = gakuOf(W,H);
+  if(GK) cam = { ...cam, S:cam.S*GK.s, cx:GK.mx+cam.cx*GK.s, cy:GK.my+cam.cy*GK.s };
   bandCut=false;
   const INK = P.inv ? P.bg : P.ink;
   const BG  = P.inv ? P.ink : P.bg;
@@ -790,6 +842,7 @@ function paint(octx, W, H, t, withBg, cam){
   octx.clearRect(0,0,W,H);
   if(withBg){ octx.fillStyle=BG; octx.fillRect(0,0,W,H); }
   octx.drawImage(LAY,0,0);
+  if(GK) drawGaku(octx,W,H,GK);      /* ⭐ 額は最後に上から（上のレイヤー） */
   return nb;
 }
 
@@ -922,7 +975,11 @@ const CORE_R = [
 const GLOB_R = [
   ['bN','bN',v=>String(Math.round(v))],['bW','bW',v=>v.toFixed(2)],['bOff','bOff',v=>v.toFixed(2)],
   ['bRot','bRot',v=>Math.round(v)+'°'],['bShift','bShift',v=>v.toFixed(3)],
-  ['long','long',v=>Math.round(v)+'px']
+  ['long','long',v=>Math.round(v)+'px'],
+  /* ⭐ 余白（額）2026-08-25 */
+  ['gaku','gaku',v=>v?Math.round(v)+'%':'無し'],['gakuZ','gakuZ',v=>Math.round(v)+'%'],
+  ['gakuX','gakuX',v=>(v>0?'+':'')+Math.round(v)+'%'],
+  ['gakuY','gakuY',v=>(v>0?'+':'')+Math.round(v)+'%']
 ];
 function cur(){ return SRC[sel] || SRC[0] || (SRC[0]=newCore()); }
 
@@ -1014,6 +1071,8 @@ el('anGo').onclick=()=>{
 };
 el('c_bg').oninput=e=>{ P.bg=e.target.value; kick(); saveLocal(); };
 el('c_ink').oninput=e=>{ P.ink=e.target.value; kick(); saveLocal(); };
+/* ⭐ 余白（額）の色。c_bg と同じ形（式を増やさない） */
+el('c_gakuCol').oninput=e=>{ P.gakuCol=e.target.value; kick(); saveLocal(); };
 
 function syncCore(){
   const s=cur();
@@ -1036,6 +1095,7 @@ function syncGlob(){
   el('c_bOn').checked=P.bOn; el('c_bInk').checked=P.bInk; el('c_inv').checked=P.inv;
   el('c_alpha').checked=P.alpha; animSync(); cycSync();
   el('c_bg').value=P.bg; el('c_ink').value=P.ink;
+  el('c_gakuCol').value=P.gakuCol||'#f2efe6';
 }
 function syncAll(){ syncGlob(); drawList(); syncCore(); szSync(); }
 
