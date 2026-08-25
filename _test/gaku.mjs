@@ -32,6 +32,8 @@ const HOW = {
   nuri: { P:'P',      pre:`PP.pmode='grad'; PP.paper2='#ffffff'; PP.paper='#000000';`,
                       shot:`render(c.getContext('2d'), W, H)` },
   sure: { P:'P',      shot:`render(c.getContext('2d'), buildPlan(W,H), false)` },
+  ten:  { P:'P',      pre:`PP.base=0.6;`,   /* 起動直後は版が無く【無地】なので下地の濃さを上げる */
+                      shot:`render(c.getContext('2d'), W, H, false)` },
 };
 
 const tool = process.argv[2];
