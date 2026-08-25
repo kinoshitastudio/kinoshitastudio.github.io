@@ -1,0 +1,1640 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>卓 TAKU — 机の上で文章を組む / 木下スタジオ</title>
+<meta name="description" content="卓 TAKU は、文章を一枚ずつの札にして机の上に並べ、並べたままの順で書き出すブラウザの道具。板の上に紙を置く、掴むと影が伸びる、落とした場所で意味が変わる——机の物理だけで組み立てる。木下スタジオ（滋賀・木下貴博）制作。">
+<link rel="canonical" href="https://kinoshita.studio/taku/">
+<meta property="og:title" content="卓 TAKU — 机の上で文章を組む">
+<meta property="og:description" content="文章を札にして机に並べ、並べたままの順で書き出す。板の上に紙を置く物理だけで組み立てる道具。">
+<meta property="og:url" content="https://kinoshita.studio/taku/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="木下スタジオ">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Zen+Kaku+Gothic+New:wght@300;400;500;700&family=Shippori+Mincho:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0a0a; --panel:rgba(28,28,30,.72); --line:rgba(255,255,255,.10);
+    --fg:#f2f2f2; --fg2:rgba(242,242,242,.55); --fg3:rgba(242,242,242,.32);
+    /* 盤の物理 ── ここだけで机の見えが決まる（地を変えたら刷り直す） */
+    --deskInk:#2a241c;      /* 机の上に落ちる影の色 */
+    --paper:#f6f3ea;        /* 札の紙 */
+    --paperInk:#1a1a18;     /* 札の字 */
+    --gridLine:rgba(255,255,255,.10);
+    --ls:0.02em;   /* 札の字間。canvas 側もこの数字から作る（LS） */
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--fg);
+    font-family:"Zen Kaku Gothic New",-apple-system,BlinkMacSystemFont,sans-serif;
+    font-weight:300; overflow:hidden; display:flex; align-items:stretch;
+  }
+
+  /* ══ 盤 ══════════════════════════════════════════════════════════
+     ⭐ 巻くのは【盤】ひとつ。body は overflow:hidden、盤は touch-action:none。
+        触る端末で盤を引いたときにページごと動くのを止める（膜MAKU/擦SUREで実測）。 */
+  #stage{flex:1;position:relative;min-width:0;overflow:hidden;touch-action:none;
+    background:#171310;cursor:grab}
+  #stage.grabbing{cursor:grabbing}
+  #board{position:absolute;left:0;top:0;width:0;height:0;transform-origin:0 0;will-change:transform}
+  /* 地（板／紙／黒板）。盤と一緒に動く＝机が動く。画面に貼ると机が滑らない */
+  #ground{position:absolute;left:-24000px;top:-24000px;width:48000px;height:48000px;
+    background-repeat:repeat;background-position:0 0;pointer-events:none}
+
+  /* ── 札 ── */
+  .card{position:absolute;border-radius:2px;padding:14px 16px;
+    background:var(--paper);color:var(--paperInk);
+    font-size:15px;line-height:1.85;letter-spacing:var(--ls);
+    white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;
+    cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none;
+    /* 影は光源を置かず投げる ── 一定方向へ落とす。近い濃い影＋遠い薄い影の2枚 */
+    box-shadow:2px 3px 0 rgba(20,14,6,.20), 0 2px 6px rgba(20,14,6,.38);
+    transition:box-shadow .12s ease}
+  .card.lift{cursor:grabbing;z-index:900;
+    box-shadow:10px 16px 0 rgba(20,14,6,.10), 0 10px 26px rgba(20,14,6,.42)}
+  .card.sel{outline:1.5px solid rgba(255,255,255,.85);outline-offset:2px}
+  .card.lock{cursor:not-allowed}
+  .card.lock::after{content:"錠";position:absolute;right:4px;top:2px;font-size:9px;
+    opacity:.35;letter-spacing:0}
+  .card.edit{cursor:text;user-select:text;-webkit-user-select:text;
+    outline:1.5px solid rgba(255,255,255,.85);outline-offset:2px}
+  .card img{display:block;width:100%;height:auto;pointer-events:none}
+  .card.image{padding:8px}
+
+  /* 枠＝章。中に入った札を抱える。地の上に薄く敷く紙 */
+  .card.frame{background:transparent;color:var(--fg2);padding:0;
+    border:1.5px dashed rgba(255,255,255,.42);box-shadow:none;z-index:0}
+  .card.frame.sel{border-style:solid;border-color:rgba(255,255,255,.85);outline:none}
+  .card.frame .fname{position:absolute;left:0;top:-22px;font-size:11px;letter-spacing:.14em;
+    font-family:"Space Mono",monospace;color:rgba(255,255,255,.84);white-space:nowrap;
+    text-shadow:0 1px 3px rgba(0,0,0,.7)}
+  .card.frame.lift{box-shadow:none}
+
+  /* 掴み手（幅を変える）── DOM で重ねる。canvas に描くと当たり判定を自前で持つことになる */
+  .grip{position:absolute;right:-7px;bottom:-7px;width:16px;height:16px;border-radius:50%;
+    background:#fff;box-shadow:0 0 0 1.5px rgba(0,0,0,.5), 0 1px 3px rgba(0,0,0,.45);
+    cursor:nwse-resize;display:none;touch-action:none}
+  .card.sel > .grip{display:block}
+  .card.lock > .grip{display:none}
+
+  #marquee{position:absolute;border:1px solid rgba(255,255,255,.8);
+    background:rgba(255,255,255,.08);display:none;pointer-events:none;z-index:950}
+
+  /* ── 縁の道具 ── 画面に固定。落とす場所で意味が変わる ── */
+  #edge{position:absolute;inset:0;pointer-events:none;z-index:1000}
+  .tool{position:absolute;pointer-events:auto;width:74px;height:74px;border-radius:12px;
+    border:1px dashed rgba(255,255,255,.26);background:rgba(10,10,10,.52);
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    color:var(--fg3);font-size:17px;cursor:pointer;transition:.14s;user-select:none}
+  .tool small{font-size:9px;letter-spacing:.16em;font-family:"Space Mono",monospace}
+  .tool:hover{color:var(--fg2);border-color:rgba(255,255,255,.4)}
+  .tool.hot{background:rgba(255,255,255,.92);color:#111;border-style:solid;border-color:#fff;
+    transform:scale(1.06)}
+  .tool.hot small{color:#111}
+  #tDup{left:16px;bottom:16px}
+  #tLock{left:16px;bottom:100px}
+  #tTrash{right:16px;top:16px}
+
+  #stat{position:absolute;left:0;right:0;bottom:0;padding:8px 14px;font-size:11px;color:var(--fg3);
+    font-family:"Space Mono",monospace;pointer-events:none;text-align:center;z-index:1001}
+  #hint{position:absolute;left:16px;top:16px;z-index:1001;pointer-events:none;
+    font-size:11px;line-height:1.9;color:rgba(255,255,255,.58);letter-spacing:.04em;
+    /* 🔴 木目の上に .32 の白を置いていたので読めなかった。地が何であっても読めるよう縁を付ける */
+    text-shadow:0 1px 3px rgba(0,0,0,.75), 0 0 1px rgba(0,0,0,.9)}
+  #hint b{color:rgba(255,255,255,.92);font-weight:400}
+  body.lightGround #hint{text-shadow:0 1px 2px rgba(255,255,255,.9)}
+  #drop{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(10,10,10,.86);border:1px dashed rgba(255,255,255,.35);
+    font-size:13px;letter-spacing:.08em;color:var(--fg2);z-index:1100;text-align:center;line-height:1.8}
+  body.dragging #drop{display:flex}
+
+  /* ══ 地の反対側に寄せる ══════════════════════════════════════════
+     🔴 白い机（紙）のとき、枠の破線・矩形選択・案内の字を白のままにすると、
+        白い地の上に白を描くことになり【出荷状態で何も見えない】。
+        既定どうしがぶつかる所は、地が変わったら反対側へ作り直す。 */
+  body.lightGround #hint{color:rgba(26,26,24,.42)}
+  body.lightGround #hint b{color:rgba(26,26,24,.72)}
+  body.lightGround #stat{color:rgba(26,26,24,.5)}
+  body.lightGround .card.frame{border-color:rgba(26,26,24,.30);color:rgba(26,26,24,.6)}
+  body.lightGround .card.frame.sel{border-color:rgba(26,26,24,.9)}
+  body.lightGround .card.frame .fname{color:rgba(26,26,24,.62)}
+  body.lightGround .card.sel{outline-color:rgba(26,26,24,.9)}
+  body.lightGround #marquee{border-color:rgba(26,26,24,.8);background:rgba(26,26,24,.08)}
+  body.lightGround .tool{border-color:rgba(26,26,24,.22);background:rgba(255,255,255,.4);color:rgba(26,26,24,.5)}
+  body.lightGround .tool:hover{color:rgba(26,26,24,.8);border-color:rgba(26,26,24,.45)}
+  body.lightGround .tool.hot{background:#1a1a18;color:#fff;border-color:#1a1a18}
+  body.lightGround .tool.hot small{color:#fff}
+  body.lightGround .card{border:1px solid rgba(26,26,24,.10)}
+
+  /* ══ パネル（外枠は AMI と同じ）══ */
+  #panel{width:308px;flex:0 0 308px;height:100%;overflow-y:auto;
+    background:var(--panel);backdrop-filter:blur(24px) saturate(160%);
+    -webkit-backdrop-filter:blur(24px) saturate(160%);
+    border-left:1px solid var(--line);padding:20px 16px 80px}
+  #panel::-webkit-scrollbar{width:0}
+  h1{font-family:"Space Mono",monospace;font-weight:700;font-size:11px;letter-spacing:.22em;color:var(--fg3);margin-bottom:2px}
+  .sub{font-size:11px;color:var(--fg3);margin-bottom:18px;line-height:1.6}
+  .grp{margin-bottom:18px}
+  label.h{display:block;font-family:"Space Mono",monospace;font-size:9px;letter-spacing:.2em;
+    color:var(--fg3);margin-bottom:8px;text-transform:uppercase}
+  .row{display:flex;align-items:center;gap:10px;margin-bottom:7px}
+  .row span.n{flex:1;font-size:12px;color:var(--fg2)}
+  .row output{font-family:"Space Mono",monospace;font-size:10px;color:var(--fg3);min-width:44px;text-align:right}
+  input[type=range]{-webkit-appearance:none;width:100%;height:20px;background:transparent;cursor:pointer}
+  input[type=range]::-webkit-slider-runnable-track{height:2px;background:rgba(255,255,255,.16);border-radius:2px}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;
+    background:var(--fg);margin-top:-5.5px;box-shadow:0 1px 4px rgba(0,0,0,.6)}
+  .seg{display:flex;flex-wrap:wrap;gap:5px}
+  .seg button{flex:1 1 auto;min-width:0;padding:7px 6px;background:rgba(255,255,255,.05);
+    border:1px solid transparent;border-radius:7px;color:var(--fg2);font-family:inherit;font-size:11px;
+    font-weight:300;cursor:pointer;transition:.15s;white-space:nowrap}
+  .seg button:hover{background:rgba(255,255,255,.10)}
+  .seg button.on{background:var(--fg);color:#111;font-weight:500}
+  .btn{width:100%;padding:10px;margin-top:6px;background:rgba(255,255,255,.06);
+    border:1px solid var(--line);border-radius:9px;color:var(--fg);font-family:inherit;font-size:12px;cursor:pointer;transition:.15s}
+  .btn:hover{background:rgba(255,255,255,.13)}
+  .btn.solid{background:var(--fg);color:#111;border-color:transparent;font-weight:500}
+  .btn.solid:hover{background:#fff}
+  .btns2{display:flex;gap:6px}
+  .chk{display:flex;align-items:center;gap:8px;margin-bottom:7px;cursor:pointer;font-size:12px;color:var(--fg2)}
+  .chk input{accent-color:#fff;width:14px;height:14px}
+  hr{border:0;border-top:1px solid var(--line);margin:16px 0}
+  .note{font-size:10.5px;color:var(--fg3);line-height:1.7;margin-top:7px}
+  .note b{color:var(--fg2);font-weight:400}
+  textarea,input[type=text],select{width:100%;padding:8px 9px;background:rgba(255,255,255,.05);
+    border:1px solid var(--line);border-radius:8px;color:var(--fg);font-family:inherit;
+    font-size:12px;font-weight:300;resize:vertical}
+  textarea{min-height:96px;line-height:1.6}
+  select{cursor:pointer}
+  .hide{display:none!important}
+  #meter{margin:8px 0 0;padding:8px 10px;border:1px solid var(--line);border-radius:9px;
+    font-family:"Space Mono",monospace;font-size:10px;color:var(--fg3);line-height:1.8}
+  #meter b{color:var(--fg2);font-weight:400}
+
+  @media (max-width:820px){
+    body{flex-direction:column;overflow:auto}
+    #stage{min-height:52vh}
+    #panel{width:100%;flex:1 1 auto;height:auto;border-left:0;border-top:1px solid var(--line);
+      padding:18px 14px calc(80px + env(safe-area-inset-bottom))}
+    .tool{width:60px;height:60px;font-size:15px}
+    #tLock{bottom:86px}
+    #hint{display:none}
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     モバイル／iPad のパネル（網AMI・作字SAKUJI と同じ作法）
+     ⭐ 高さは CSS 変数 --panelH ひとつ。盤とパネルが一緒に動く。
+     ⚠️ 盤の高さを 100vh から引き算しない（iOS Safari の 100vh は見え高さと食い違う）。
+     ⭐ このブロックと末尾の <script> を消せば完全に元へ戻る。
+     ══════════════════════════════════════════════════════════════ */
+  :root{ --panelH:38vh; --sheetGrip:22px }
+  @supports (height:1dvh){ :root{ --panelH:38dvh } }
+  @media (max-width:820px){
+    #stage{ flex:1 1 auto; min-height:0 }
+    #panel{ flex:none; height:var(--panelH);
+      padding:10px 12px calc(26px + env(safe-area-inset-bottom)) }
+    #sheetGrip{ position:fixed; left:0; right:0; z-index:60;
+      bottom:calc(var(--panelH) - 1px); height:var(--sheetGrip);
+      display:flex; align-items:center; justify-content:center;
+      touch-action:none; cursor:ns-resize; user-select:none; -webkit-user-select:none }
+    #sheetGrip::before{ content:""; width:44px; height:5px; border-radius:5px;
+      background:rgba(255,255,255,.94);
+      box-shadow:0 0 0 1px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.45); opacity:1 }
+    #sheetGrip.dragging::before{ background:#fff;
+      box-shadow:0 0 0 1px rgba(0,0,0,.6), 0 2px 7px rgba(0,0,0,.5) }
+    label.h{ margin:0 -12px 6px; padding:6px 12px 5px }
+    .grp{ margin-bottom:12px }
+    .row{ padding:0; margin-bottom:1px }
+    .seg{ margin:4px 0 6px }
+    .note{ margin-top:5px; line-height:1.5 }
+    #meter{ margin:6px 0; padding:7px 9px }
+    .seg button{ padding:9px 4px; min-height:36px }
+    .btn{ padding:10px 0; min-height:38px; margin-top:4px }
+    /* 🔴 つまみが 20px しかないと指では点にしか当たらない。詳細度に負けないよう3本書く */
+    input[type=range],
+    .row input[type=range],
+    #panel input[type=range]{ height:36px }
+    input[type=range]::-webkit-slider-runnable-track,
+    .row input[type=range]::-webkit-slider-runnable-track{ height:4px }
+    input[type=range]::-webkit-slider-thumb,
+    .row input[type=range]::-webkit-slider-thumb{ width:22px; height:22px; margin-top:-9px }
+    input[type=range]::-moz-range-thumb,
+    .row input[type=range]::-moz-range-thumb{ width:22px; height:22px; border:none }
+    .chk input[type=checkbox]{ width:22px; height:22px }
+  }
+
+  /* ══ モバイルで勝手に寄らせない ══
+     ⚠️ viewport の maximum-scale は iOS に無視される。寄るのは【欄の字が 16px 未満のとき】だけ。 */
+  @media (max-width:760px), (pointer:coarse) and (max-width:1024px){
+    input:not([type=range]):not([type=color]):not([type=checkbox]):not([type=radio]):not([type=file]):not([type=button]),
+    select, textarea{ font-size:16px !important; }
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <div id="board">
+    <div id="ground"></div>
+    <div id="cards"></div>
+  </div>
+  <div id="marquee"></div>
+  <div id="edge">
+    <div class="tool" id="tDup" title="ここへ落とすと写しが出る">写<small>DUP</small></div>
+    <div class="tool" id="tLock" title="ここへ落とすと動かなくなる">錠<small>LOCK</small></div>
+    <div class="tool" id="tTrash" title="ここへ落とすと捨てる">捨<small>TRASH</small></div>
+  </div>
+  <div id="stat"></div>
+  <div id="drop">写真 ／ 控え（JSON）をここに落とす</div>
+</div>
+
+<div id="panel">
+  <h1>TAKU</h1>
+  <div class="sub">卓 — 文章を札にして机に並べ、並べたままの順で書き出す。</div>
+
+  <!-- ══ 入口 ══
+       ⭐ 起動した時点で机の上に例が載っている。空の机は「読んで何も出ない」。 -->
+  <div class="grp">
+    <label class="h">机</label>
+    <div class="btns2">
+      <button class="btn solid" id="bDemo">▶ 例を置く</button>
+      <button class="btn" id="bClear">片づける</button>
+    </div>
+    <div class="btns2" style="margin-top:6px">
+      <button class="btn" id="bFit">全部を見る</button>
+      <button class="btn" id="bReset">等倍へ</button>
+    </div>
+    <div id="meter">札 <b><span id="mCard">0</span></b> ／ 枠 <b><span id="mFrame">0</span></b>　倍率 <b><span id="mZoom">100%</span></b><br>字数 <b><span id="mChar">0</span></b>　読む順 <b><span id="mOrder">縦</span></b></div>
+  </div>
+
+  <hr>
+
+  <!-- ══ 地 ══ -->
+  <div class="grp">
+    <label class="h">地 — 机の面</label>
+    <div class="seg" id="segGround">
+      <button data-g="wood" class="on">板</button>
+      <button data-g="paper">紙</button>
+      <button data-g="slate">黒板</button>
+      <button data-g="void">黒</button>
+    </div>
+    <div class="row" style="margin-top:10px"><span class="n">升目の間隔</span><output id="oGrid">24 px</output></div>
+    <input type="range" id="rGrid" min="8" max="80" step="4" value="24">
+    <label class="chk"><input type="checkbox" id="cGridShow" checked><span>升目を見せる</span></label>
+    <label class="chk"><input type="checkbox" id="cSnap" checked><span>升目に吸わせる</span></label>
+    <div class="note">地を変えると<b>札の紙も刷り直す</b>。黒板の上に白い札を置くと字が飛ぶので、地の反対側へ寄せる。</div>
+  </div>
+
+  <hr>
+
+  <!-- ══ 札 ══ -->
+  <div class="grp">
+    <label class="h">札 — 紙のきまり</label>
+    <div class="row"><span class="n">既定の幅</span><output id="oW">280 px</output></div>
+    <input type="range" id="rW" min="120" max="640" step="10" value="280">
+    <div class="row"><span class="n">字の大きさ</span><output id="oFs">15 px</output></div>
+    <input type="range" id="rFs" min="10" max="34" step="1" value="15">
+    <div class="row"><span class="n">行送り</span><output id="oLh">1.85</output></div>
+    <input type="range" id="rLh" min="120" max="260" step="5" value="185">
+    <div class="row"><span class="n">余白</span><output id="oPad">14 px</output></div>
+    <input type="range" id="rPad" min="0" max="40" step="2" value="14">
+    <div class="row"><span class="n">浮き（影の高さ）</span><output id="oSh">1.0</output></div>
+    <input type="range" id="rSh" min="0" max="30" step="1" value="10">
+    <label class="h" style="margin-top:12px">書体</label>
+    <div class="seg" id="segFont">
+      <button data-f="gothic" class="on">角ゴシック</button>
+      <button data-f="mincho">明朝</button>
+      <button data-f="mono">等幅</button>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ══ 流し込み ══ -->
+  <div class="grp">
+    <label class="h">文章を札に割る</label>
+    <textarea id="taIn" placeholder="ここに文章を貼る。&#10;&#10;空の行で切って、一段落＝一枚の札にする。"></textarea>
+    <div class="row" style="margin-top:8px"><span class="n">机に並べる列数</span><output id="oCols">3 列</output></div>
+    <input type="range" id="rCols" min="1" max="8" step="1" value="3">
+    <button class="btn solid" id="bSplit">札にして並べる</button>
+    <div class="btns2">
+      <button class="btn" id="bAddText">空の札を1枚</button>
+      <button class="btn" id="bAddFrame">枠を1つ</button>
+    </div>
+    <div class="note">枠は<b>章</b>。枠の中に置いた札は、枠を動かすと一緒に付いてくる。枠の名前は枠を二度押しで変えられる。</div>
+  </div>
+
+  <hr>
+
+  <!-- ══ 読む順 ══ -->
+  <div class="grp">
+    <label class="h">読む順 — 書き出しの並び</label>
+    <div class="seg" id="segOrder">
+      <button data-o="v" class="on">縦を先に</button>
+      <button data-o="h">横を先に</button>
+    </div>
+    <div class="note"><b>縦を先に</b>＝列を上から下へ読み切ってから次の列。新聞の段組と同じ。<b>横を先に</b>＝行を左から右へ。<br>枠（章）は上にあるものから順に読む。どの枠にも入っていない札は最後に「余り」として付く。</div>
+  </div>
+
+  <hr>
+
+  <!-- ══ 書き出し ══ -->
+  <div class="grp">
+    <label class="h">書き出す</label>
+    <button class="btn solid" id="bMd">並びのまま Markdown をコピー</button>
+    <div class="btns2">
+      <button class="btn" id="bPng">机を PNG</button>
+      <button class="btn" id="bJson">控え（JSON）</button>
+    </div>
+    <div class="row" style="margin-top:10px"><span class="n">PNG の倍率</span><output id="oScale">2×</output></div>
+    <input type="range" id="rScale" min="1" max="4" step="1" value="2">
+    <div class="note">PNG は<b>机の見たまま</b>を刷り直す。DOM をそのまま撮るのではなく、同じ寸法で canvas に描き直しているので、何倍に伸ばしても字が痩せない。</div>
+  </div>
+
+  <hr>
+  <div class="note" style="line-height:1.9">
+    <b>触り方</b><br>
+    盤を引くと机が動く ／ ホイール・ピンチで寄る<br>
+    札を掴むと影が伸びる ／ 升目に吸う<br>
+    二度押しで書き換え ／ 空白を二度押しで新しい札<br>
+    Shift＋引くで四角く選ぶ ／ Shift＋押しで足して選ぶ<br>
+    札を縁の道具へ落とすと、落とした先の意味になる
+  </div>
+  <div class="note" style="line-height:1.9;margin-top:12px">
+    <b>この道具の物理</b><br>
+    ① 盤は無限の平面。掴んだものは掴んだ所から動く。<br>
+    ② 札は紙。重ねられる。持ち上げると影が伸びる。<br>
+    ③ 縁は道具。落とした場所が、その札に起きることを決める。<br>
+    ④ 並びがそのまま文章。机を組むことが、原稿を組むこと。<br>
+    <span style="opacity:.7">⌘Z で戻す ／ ⇧⌘Z で進む ／ ⌘D で写す ／ Delete で捨てる ／ Esc で選び直す</span>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ══════════════════════════════════════════════════════════════════════
+   卓 TAKU
+   ⭐ 芯は「板の上に紙を置く」だけ。機能はこの物理から生えるものしか足さない。
+   ⚠️ 盤は DOM で組む（canvas ではない）。文字が主役なので、折返し・選択・編集を
+      ブラウザに任せる。canvas にすると字詰めを自前で持つことになり、註CHU と役割が重なる。
+      ただし PNG は canvas に刷り直す（DOM をそのまま撮ると倍率で字が痩せる）。
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── 盤の状態 ─────────────────────────────────────────── */
+const stage  = document.getElementById('stage');
+const board  = document.getElementById('board');
+const ground = document.getElementById('ground');
+const cardsEl= document.getElementById('cards');
+const marq   = document.getElementById('marquee');
+const stat   = document.getElementById('stat');
+
+const view = { x: 0, y: 0, z: 1 };
+let cards = [];              /* {id,kind,x,y,w,h,text,src,img,lock,name} */
+let sel   = new Set();
+let uid   = 1;
+
+const S = {                  /* つまみ ── UI に書いた数字がそのまま入る */
+  ground:'wood', grid:24, gridShow:true, snap:true,
+  w:280, fs:15, lh:1.85, pad:14, sh:1.0, font:'gothic',
+  cols:3, order:'v', scale:2
+};
+
+/* ── 控え（⌘Z）────────────────────────────────────────
+   ⭐ 控えを取るのは【変える直前に1回だけ】。動かしている間に毎コマ積むと、
+      1手が何十手にもなって、戻しても見た目が変わらない。 */
+const undoStack = [], redoStack = [];
+function serialize(){
+  return JSON.stringify(cards.map(c => ({
+    id:c.id, kind:c.kind, x:c.x, y:c.y, w:c.w, h:c.h,
+    text:c.text, src:c.src, lock:c.lock, name:c.name
+  })));
+}
+function restore(json){
+  const list = JSON.parse(json);
+  cards = list.map(c => {
+    const n = Object.assign({}, c);
+    if(n.kind === 'image' && n.src){ n.img = new Image(); n.img.src = n.src; }
+    return n;
+  });
+  uid = cards.reduce((m,c) => Math.max(m, c.id), 0) + 1;
+  sel.clear();
+  rebuild();
+}
+function snap(){
+  undoStack.push(serialize());
+  if(undoStack.length > 80) undoStack.shift();
+  redoStack.length = 0;
+}
+function undo(){
+  if(!undoStack.length) return;
+  redoStack.push(serialize());
+  restore(undoStack.pop());
+  say('戻した');
+}
+function redo(){
+  if(!redoStack.length) return;
+  undoStack.push(serialize());
+  restore(redoStack.pop());
+  say('進めた');
+}
+
+/* ── 地 ── 材質は原因から作る ────────────────────────────
+   ⚠️ グラデーションは結果。板は【年輪が板に斜めに切られた】ことから作る。
+      正弦を重ねた等高線を歪ませ、そこに縦の導管を細く引く。 */
+const GROUNDS = {
+  wood:  { deskInk:'#2a1f14', paper:'#f7f4ec', ink:'#1a1a18', grid:'rgba(255,255,255,.20)',  stage:'#171310' },
+  paper: { deskInk:'#3a3630', paper:'#ffffff', ink:'#1a1a18', grid:'rgba(0,0,0,.10)',        stage:'#e9e5dc' },
+  slate: { deskInk:'#0d1310', paper:'#f2efe4', ink:'#1a1a18', grid:'rgba(255,255,255,.13)',  stage:'#1d2a24' },
+  void:  { deskInk:'#000000', paper:'#f2f2f2', ink:'#111111', grid:'rgba(255,255,255,.12)',  stage:'#0a0a0a' }
+};
+
+function makeGroundTile(kind){
+  const N = 512;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = N;
+  const g = cv.getContext('2d');
+
+  if(kind === 'wood'){
+    /* 板張りの天板 ──
+       🔴 一度目は年輪（同心円）で作って失敗した。同心円は【木口】＝丸太を輪切りにした面で、
+          机の天板には出ない。天板は丸太を縦に挽いた面なので、縞はほぼ縦に走る。
+       ⭐ だから原因は「年輪を縦に切った」＝ゆっくり歪む縦縞。
+          縞は左右対称ではない ── 春に育つ所は広く淡く、秋に締まる所は細く濃い（pow で締める）。
+       ⭐ 継ぎ目は隠さず【板の継ぎ目にする】。無限の平面に1枚板は張れないので、
+          タイルの端を板の合わせ目にすれば、繰り返しがそのまま板張りとして読める。
+       ⚠️ 濃さは抑える。机は主役ではない。強い木目は札の字を食う（実測して下げた）。 */
+    const TAU = Math.PI * 2;
+    const im = g.createImageData(N, N), d = im.data;
+    for(let y = 0; y < N; y++){
+      /* y でゆっくり歪ませる ── 周期を N の整数分の1にすると上下の継ぎ目が出ない */
+      /* ⚠️ 歪みが縞の間隔（約46px）に近いと、板ではなく【布】に見える（1600px で実測）。
+         縞の間隔の 1/3 くらいまで落とすと、まっすぐ通った板目になる。 */
+      const wob = 14 * Math.sin(TAU * y / N)
+                +  6 * Math.sin(TAU * 2 * y / N + 1.3)
+                +  3 * Math.sin(TAU * 3 * y / N + 2.1);
+      for(let x = 0; x < N; x++){
+        const phase = TAU * 11 * (x + wob) / N;      /* 板幅に縞11本＝約46px間隔 */
+        let t = 0.5 + 0.5 * Math.sin(phase);
+        t = Math.pow(t, 2.6);                        /* 濃い筋（晩材）だけ細く締める */
+        /* 導管 ── 縦に走る細い溝。周期を N の整数倍にして継ぎ目を出さない */
+        const pore = Math.pow(0.5 + 0.5 * Math.sin(TAU * 47 * x / N + 2 * Math.sin(TAU * 3 * y / N)), 36) * 0.10;
+        /* 板の合わせ目 ── タイルの左端。ここで繰り返しが意匠になる */
+        const seam = Math.max(0, 1 - Math.min(x, N - x) / 3.5) * 0.46;
+        const v = 0.80 + t * 0.17 - pore - seam;
+        const i = (y * N + x) * 4;
+        d[i]   = 118 * v + 40;
+        d[i+1] =  88 * v + 28;
+        d[i+2] =  62 * v + 19;
+        d[i+3] = 255;
+      }
+    }
+    g.putImageData(im, 0, 0);
+  } else if(kind === 'paper'){
+    g.fillStyle = '#e9e5dc'; g.fillRect(0,0,N,N);
+    const im = g.getImageData(0,0,N,N), d = im.data;
+    for(let i=0; i<d.length; i+=4){
+      const n = (Math.sin(i*12.9898)*43758.5453) % 1;   /* 粒 ── 紙は繊維 */
+      const v = 1 + (n - 0.5) * 0.05;
+      d[i] *= v; d[i+1] *= v; d[i+2] *= v;
+    }
+    g.putImageData(im, 0, 0);
+  } else if(kind === 'slate'){
+    g.fillStyle = '#1d2a24'; g.fillRect(0,0,N,N);
+    for(let i=0; i<2600; i++){
+      const x = Math.random()*N, y = Math.random()*N;
+      g.fillStyle = 'rgba(255,255,255,' + (Math.random()*0.035) + ')';
+      g.fillRect(x, y, 1 + Math.random()*2, 1);
+    }
+  } else {
+    g.fillStyle = '#0a0a0a'; g.fillRect(0,0,N,N);
+  }
+  return cv.toDataURL('image/png');
+}
+
+let groundURL = '';
+function applyGround(){
+  const p = GROUNDS[S.ground];
+  document.documentElement.style.setProperty('--deskInk', p.deskInk);
+  document.documentElement.style.setProperty('--paper',   p.paper);
+  document.documentElement.style.setProperty('--paperInk',p.ink);
+  document.documentElement.style.setProperty('--gridLine',p.grid);
+  stage.style.background = p.stage;
+  groundURL = makeGroundTile(S.ground);
+  ground.style.backgroundImage = 'url(' + groundURL + ')';
+  drawGrid();
+  /* 地の反対側に寄せる ── 白い地では枠線・掴み手・字の色を黒側へ */
+  const lightGround = (S.ground === 'paper');
+  document.body.classList.toggle('lightGround', lightGround);
+}
+
+function drawGrid(){
+  if(!S.gridShow){ gridHolder.style.backgroundImage = 'none'; return; }
+  const c = GROUNDS[S.ground].grid;
+  const n = Math.max(8, S.grid);
+  /* ⭐ 升目は【机に引いた線】なので盤と一緒に拡大される。画像で敷くと寄ったときににじむので、
+     ハードストップの gradient で持つ。倍率が変わるたびにブラウザが引き直すからボケない。 */
+  gridHolder.style.backgroundImage =
+    'repeating-linear-gradient(to right,' + c + ' 0 1px, transparent 1px ' + n + 'px),' +
+    'repeating-linear-gradient(to bottom,' + c + ' 0 1px, transparent 1px ' + n + 'px)';
+  gridHolder.style.backgroundSize = n + 'px ' + n + 'px';
+}
+/* 升目は別の層に敷く ── 地と同じ層に置くと、地を刷り直したときに一緒に消える */
+const gridHolder = document.createElement('div');
+gridHolder.style.cssText = 'position:absolute;left:-24000px;top:-24000px;width:48000px;height:48000px;pointer-events:none;background-repeat:repeat';
+board.insertBefore(gridHolder, cardsEl);
+
+/* ── 盤の座標 ────────────────────────────────────────
+   ⚠️ 親（#board）に transform を持たせたので、入り口で必ず打ち消す。
+      位置・大きさ・掴み手の当たり判定・吸い付きの刻み、全部この関数を通す。 */
+function toBoard(clientX, clientY){
+  const r = stage.getBoundingClientRect();
+  return { x: (clientX - r.left - view.x) / view.z,
+           y: (clientY - r.top  - view.y) / view.z };
+}
+function applyView(){
+  board.style.transform = 'translate(' + view.x + 'px,' + view.y + 'px) scale(' + view.z + ')';
+  document.getElementById('mZoom').textContent = Math.round(view.z * 100) + '%';
+}
+function snapTo(v){ return S.snap ? Math.round(v / S.grid) * S.grid : Math.round(v); }
+
+/* ── 札を作る ──────────────────────────────────────── */
+function newCard(kind, x, y, opt){
+  const c = Object.assign({
+    id: uid++, kind: kind,
+    x: snapTo(x), y: snapTo(y),
+    w: kind === 'frame' ? S.w * 2 + 48 : S.w,
+    h: kind === 'frame' ? 420 : 0,
+    text: '', src: '', lock: false, name: '章'
+  }, opt || {});
+  cards.push(c);
+  return c;
+}
+
+function el(c){ return cardsEl.querySelector('[data-id="' + c.id + '"]'); }
+
+function render(c){
+  let d = el(c);
+  if(!d){
+    d = document.createElement('div');
+    d.dataset.id = c.id;
+    d.className = 'card';
+    const g = document.createElement('div');
+    g.className = 'grip';
+    d.appendChild(g);
+    cardsEl.appendChild(d);
+  }
+  d.className = 'card' + (c.kind === 'frame' ? ' frame' : '')
+                       + (c.kind === 'image' ? ' image' : '')
+                       + (sel.has(c.id) ? ' sel' : '')
+                       + (c.lock ? ' lock' : '');
+  d.style.left = c.x + 'px';
+  d.style.top  = c.y + 'px';
+  d.style.width = c.w + 'px';
+
+  if(c.kind === 'frame'){
+    d.style.height = c.h + 'px';
+    let nm = d.querySelector('.fname');
+    if(!nm){ nm = document.createElement('div'); nm.className = 'fname'; d.appendChild(nm); }
+    nm.textContent = c.name;
+  } else if(c.kind === 'image'){
+    d.style.height = '';
+    d.style.padding = Math.round(S.pad * 0.5) + 'px';
+    let im = d.querySelector('img');
+    if(!im){ im = document.createElement('img'); d.insertBefore(im, d.firstChild); }
+    if(im.getAttribute('src') !== c.src) im.src = c.src;
+  } else {
+    d.style.height = '';
+    d.style.padding = S.pad + 'px ' + Math.round(S.pad * 1.15) + 'px';
+    d.style.fontSize = S.fs + 'px';
+    d.style.lineHeight = S.lh;
+    d.style.fontFamily = fontStack(S.font);
+    /* 掴み手（.grip）を消さないよう、文字は専用の子に入れる */
+    let b = d.querySelector('.body');
+    if(!b){ b = document.createElement('div'); b.className = 'body'; d.insertBefore(b, d.firstChild); }
+    if(b.textContent !== c.text) b.textContent = c.text;
+  }
+  return d;
+}
+
+function fontStack(f){
+  if(f === 'mincho') return '"Shippori Mincho","Hiragino Mincho ProN",serif';
+  if(f === 'mono')   return '"Space Mono",ui-monospace,monospace';
+  return '"Zen Kaku Gothic New",-apple-system,BlinkMacSystemFont,sans-serif';
+}
+
+function rebuild(){
+  cardsEl.textContent = '';
+  /* 枠を先に描く＝地に近い側。札は必ず枠より上に載る */
+  cards.filter(c => c.kind === 'frame').forEach(render);
+  cards.filter(c => c.kind !== 'frame').forEach(render);
+  measureAll();
+  updateMeter();
+}
+function refresh(){
+  /* ⚠️ forEach の中で rebuild() を呼ばないこと。1枚足りないだけで札の数だけ組み直す。
+     足りない札があるなら、その場で1回だけ組み直して抜ける。 */
+  if(cards.some(c => !el(c))){ rebuild(); return; }
+  cards.forEach(render);
+  measureAll();
+  updateMeter();
+}
+
+/* 札の高さは中身が決める（紙は文字の分だけ場所を取る）。実測して持ち直す */
+function measureAll(){
+  cards.forEach(c => {
+    if(c.kind === 'frame') return;
+    const d = el(c); if(!d) return;
+    c.h = d.offsetHeight;
+  });
+}
+
+/* 影の高さ ── つまみ1本で「浮き」を作る。近い影と遠い影の比が触り心地を決める */
+function applyShadow(){
+  const k = S.sh;
+  const near = 'rgba(20,14,6,' + (0.20 * Math.min(1, k)) + ')';
+  const far  = 'rgba(20,14,6,' + (0.38 * Math.min(1, k * 0.9 + 0.1)) + ')';
+  let st = document.getElementById('shStyle');
+  if(!st){ st = document.createElement('style'); st.id = 'shStyle'; document.head.appendChild(st); }
+  st.textContent =
+    '.card{box-shadow:' + (2*k).toFixed(1) + 'px ' + (3*k).toFixed(1) + 'px 0 ' + near + ',' +
+      ' 0 ' + (2*k).toFixed(1) + 'px ' + (6*k).toFixed(1) + 'px ' + far + '}' +
+    '.card.lift{box-shadow:' + (10*k).toFixed(1) + 'px ' + (16*k).toFixed(1) + 'px 0 rgba(20,14,6,.10),' +
+      ' 0 ' + (10*k).toFixed(1) + 'px ' + (26*k).toFixed(1) + 'px rgba(20,14,6,.42)}' +
+    '.card.frame,.card.frame.lift{box-shadow:none}';
+}
+
+/* ── 枠は幾何で決める ────────────────────────────────
+   ⭐ 「どの札がどの枠の子か」をデータで持たない。中心が枠の中にあるか、その一点で決める。
+      持ち方を覚えさせないので、動かすたびに関係が作り直され、ずれようがない。 */
+function inFrame(c, f){
+  const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+  return cx >= f.x && cx <= f.x + f.w && cy >= f.y && cy <= f.y + f.h;
+}
+/* 🔴 枠を枠に重ねると、下の枠の札まで自分の子になっていた（実測 3枚→5枚）。
+   ⭐ 札が属するのは【いちばん内側の枠】ひとつだけ。重ねた盆に紙が二重に入らないのと同じ。
+      同じ大きさの枠が重なったら、後から置いた方＝上にある方が取る（<= で後勝ち）。 */
+function ownerFrame(c){
+  let best = null;
+  for(const f of cards){
+    if(f.kind !== 'frame' || !inFrame(c, f)) continue;
+    if(!best || f.w * f.h <= best.w * best.h) best = f;
+  }
+  return best;
+}
+function childrenOf(f){
+  return cards.filter(c => c.kind !== 'frame' && ownerFrame(c) === f);
+}
+
+/* ── 触る ────────────────────────────────────────── */
+let drag = null;   /* {mode:'pan'|'move'|'resize'|'marquee', ...} */
+let hotTool = null;
+
+stage.addEventListener('pointerdown', e => {
+  if(e.target.closest('.tool')) return;
+  const cardEl = e.target.closest('.card');
+  const gripEl = e.target.closest('.grip');
+  const p = toBoard(e.clientX, e.clientY);
+
+  if(gripEl){
+    const c = byId(+gripEl.parentElement.dataset.id);
+    if(c.lock) return;
+    snap();
+    drag = { mode:'resize', c: c, w0: c.w, h0: c.h, px: p.x, py: p.y };
+    stage.setPointerCapture(e.pointerId);
+    return;
+  }
+
+  if(cardEl){
+    const c = byId(+cardEl.dataset.id);
+    if(cardEl.classList.contains('edit')) return;   /* 書き換え中は触らない */
+    if(!sel.has(c.id)){
+      if(!e.shiftKey) sel.clear();
+      sel.add(c.id);
+      refresh();
+    } else if(e.shiftKey){
+      sel.delete(c.id); refresh(); return;
+    }
+    if(c.lock){ say('錠がかかっている札'); return; }
+    snap();
+    /* 枠を掴んだら、その時点で中に入っている札を一緒に持ち上げる */
+    let group = cards.filter(x => sel.has(x.id) && !x.lock);
+    group.filter(x => x.kind === 'frame').forEach(f => {
+      childrenOf(f).forEach(ch => { if(!group.includes(ch) && !ch.lock) group.push(ch); });
+    });
+    drag = { mode:'move', px: p.x, py: p.y,
+             items: group.map(x => ({ c: x, x0: x.x, y0: x.y })), moved: false };
+    group.forEach(x => { const d = el(x); if(d) d.classList.add('lift'); });
+    stage.setPointerCapture(e.pointerId);
+    return;
+  }
+
+  /* 空白 ── shift なら矩形で選ぶ、そうでなければ机を引く */
+  if(e.shiftKey){
+    sel.clear(); refresh();
+    drag = { mode:'marquee', sx: e.clientX, sy: e.clientY, bx: p.x, by: p.y };
+    marq.style.display = 'block';
+    stage.setPointerCapture(e.pointerId);
+  } else {
+    sel.clear(); refresh();
+    drag = { mode:'pan', sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y };
+    stage.classList.add('grabbing');
+    stage.setPointerCapture(e.pointerId);
+  }
+});
+
+stage.addEventListener('pointermove', e => {
+  if(!drag){ return; }
+  if(drag.mode === 'pan'){
+    view.x = drag.vx + (e.clientX - drag.sx);
+    view.y = drag.vy + (e.clientY - drag.sy);
+    applyView();
+    return;
+  }
+  const p = toBoard(e.clientX, e.clientY);
+
+  if(drag.mode === 'move'){
+    const dx = p.x - drag.px, dy = p.y - drag.py;
+    if(Math.abs(dx) > 2 || Math.abs(dy) > 2) drag.moved = true;
+    drag.items.forEach(it => {
+      it.c.x = snapTo(it.x0 + dx);
+      it.c.y = snapTo(it.y0 + dy);
+      const d = el(it.c);
+      if(d){ d.style.left = it.c.x + 'px'; d.style.top = it.c.y + 'px'; }
+    });
+    /* 縁の道具に重なっているか ── 落とす場所で意味が変わる */
+    const t = toolUnder(e.clientX, e.clientY);
+    if(t !== hotTool){
+      if(hotTool) hotTool.classList.remove('hot');
+      hotTool = t;
+      if(hotTool) hotTool.classList.add('hot');
+    }
+    return;
+  }
+
+  if(drag.mode === 'resize'){
+    const c = drag.c;
+    c.w = Math.max(60, snapTo(drag.w0 + (p.x - drag.px)));
+    if(c.kind === 'frame') c.h = Math.max(60, snapTo(drag.h0 + (p.y - drag.py)));
+    render(c);
+    return;
+  }
+
+  if(drag.mode === 'marquee'){
+    const x1 = Math.min(drag.sx, e.clientX), x2 = Math.max(drag.sx, e.clientX);
+    const y1 = Math.min(drag.sy, e.clientY), y2 = Math.max(drag.sy, e.clientY);
+    const r = stage.getBoundingClientRect();
+    marq.style.left = (x1 - r.left) + 'px';
+    marq.style.top  = (y1 - r.top)  + 'px';
+    marq.style.width  = (x2 - x1) + 'px';
+    marq.style.height = (y2 - y1) + 'px';
+    const a = toBoard(x1, y1), b = toBoard(x2, y2);
+    sel.clear();
+    cards.forEach(c => {
+      if(c.x + c.w > a.x && c.x < b.x && c.y + c.h > a.y && c.y < b.y) sel.add(c.id);
+    });
+    cards.forEach(c => { const d = el(c); if(d) d.classList.toggle('sel', sel.has(c.id)); });
+    updateMeter();
+  }
+});
+
+function endDrag(e){
+  if(!drag) return;
+  stage.classList.remove('grabbing');
+  marq.style.display = 'none';
+
+  if(drag.mode === 'move'){
+    drag.items.forEach(it => { const d = el(it.c); if(d) d.classList.remove('lift'); });
+    if(hotTool){
+      const id = hotTool.id;
+      hotTool.classList.remove('hot'); hotTool = null;
+      const list = drag.items.map(it => it.c);
+      /* 掴んだ位置へ戻してから、落とした先の意味を効かせる */
+      drag.items.forEach(it => { it.c.x = it.x0; it.c.y = it.y0; });
+      /* 🔴 掴んだ時に取った控えを一度外す。この後 doTrash/doDup/doLock が
+         自分で1回取るので、そのままだと1手で控えが2つ積まれ、⌘Z が1回空振りする。 */
+      undoStack.pop();
+      if(id === 'tTrash')      doTrash(list);
+      else if(id === 'tDup')   doDup(list);
+      else if(id === 'tLock')  doLock(list);
+      drag = null;
+      return;
+    }
+    if(!drag.moved) undoStack.pop();     /* 動かしていないなら控えを積まない */
+    measureAll();
+  }
+  if(drag.mode === 'resize') measureAll();
+  drag = null;
+  updateMeter();
+}
+stage.addEventListener('pointerup', endDrag);
+stage.addEventListener('pointercancel', endDrag);
+
+function toolUnder(cx, cy){
+  const els = document.elementsFromPoint(cx, cy);
+  for(const e of els){ if(e.classList && e.classList.contains('tool')) return e; }
+  return null;
+}
+function byId(id){ return cards.find(c => c.id === id); }
+
+/* ── 寄る ────────────────────────────────────────
+   ⚠️ カーソルの下の点が動かないように寄る。中心で寄ると、狙った所から逃げていく。 */
+stage.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = stage.getBoundingClientRect();
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  const before = { x: (mx - view.x) / view.z, y: (my - view.y) / view.z };
+  const k = Math.exp(-e.deltaY * 0.0016);
+  view.z = Math.max(0.12, Math.min(6, view.z * k));
+  view.x = mx - before.x * view.z;
+  view.y = my - before.y * view.z;
+  applyView();
+}, { passive: false });
+
+/* 触る端末の二本指 ── 寄る＋動かす */
+const touches = new Map();
+stage.addEventListener('pointerdown', e => { if(e.pointerType === 'touch') touches.set(e.pointerId, e); });
+stage.addEventListener('pointermove', e => {
+  if(e.pointerType !== 'touch') return;
+  if(!touches.has(e.pointerId)) return;
+  touches.set(e.pointerId, e);
+  if(touches.size === 2){
+    const [a, b] = [...touches.values()];
+    const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    const mx = (a.clientX + b.clientX) / 2, my = (a.clientY + b.clientY) / 2;
+    if(pinch){
+      const r = stage.getBoundingClientRect();
+      const cx = mx - r.left, cy = my - r.top;
+      const before = { x: (cx - view.x) / view.z, y: (cy - view.y) / view.z };
+      view.z = Math.max(0.12, Math.min(6, pinch.z * (d / pinch.d)));
+      view.x = cx - before.x * view.z;
+      view.y = cy - before.y * view.z;
+      applyView();
+      drag = null;                         /* 二本指の間は札を動かさない */
+    } else {
+      pinch = { d: d, z: view.z };
+    }
+  }
+});
+let pinch = null;
+function dropTouch(e){ touches.delete(e.pointerId); if(touches.size < 2) pinch = null; }
+stage.addEventListener('pointerup', dropTouch);
+stage.addEventListener('pointercancel', dropTouch);
+
+/* ── 二度押しで書き換える ──────────────────────────── */
+stage.addEventListener('dblclick', e => {
+  const cardEl = e.target.closest('.card');
+  if(cardEl){
+    const c = byId(+cardEl.dataset.id);
+    if(c.lock){ say('錠がかかっている札'); return; }
+    if(c.kind === 'image') return;
+    if(c.kind === 'frame'){
+      const n = prompt('枠（章）の名前', c.name);
+      if(n !== null){ snap(); c.name = n; render(c); }
+      return;
+    }
+    startEdit(c);
+    return;
+  }
+  const p = toBoard(e.clientX, e.clientY);
+  snap();
+  const c = newCard('text', p.x, p.y, { text: '' });
+  rebuild();
+  startEdit(c);
+});
+
+function startEdit(c){
+  const d = el(c); if(!d) return;
+  const b = d.querySelector('.body'); if(!b) return;
+  d.classList.add('edit');
+  b.contentEditable = 'true';
+  b.focus();
+  const range = document.createRange();
+  range.selectNodeContents(b);
+  const s = getSelection(); s.removeAllRanges(); s.addRange(range);
+  const finish = () => {
+    b.contentEditable = 'false';
+    d.classList.remove('edit');
+    const t = b.innerText.replace(/ /g, ' ');
+    if(t !== c.text){ snap(); c.text = t; }
+    b.removeEventListener('blur', finish);
+    b.removeEventListener('keydown', key);
+    /* 空のまま抜けたら札を残さない（机に白紙が溜まらない） */
+    if(!c.text.trim() && c.kind === 'text'){
+      cards = cards.filter(x => x.id !== c.id);
+    }
+    rebuild();
+  };
+  const key = ev => {
+    if(ev.key === 'Escape'){ ev.preventDefault(); b.blur(); }
+    ev.stopPropagation();                 /* 打っている字を近道に取られない */
+  };
+  b.addEventListener('blur', finish);
+  b.addEventListener('keydown', key);
+}
+
+/* ── 縁の道具（押しても効く）─────────────────────────── */
+function selected(){ return cards.filter(c => sel.has(c.id)); }
+function doTrash(list){
+  if(!list.length){ say('選んでいる札がない'); return; }
+  snap();
+  const ids = new Set(list.map(c => c.id));
+  cards = cards.filter(c => !ids.has(c.id));
+  sel.clear();
+  rebuild();
+  say(list.length + ' 枚を捨てた（⌘Z で戻る）');
+}
+function doDup(list){
+  if(!list.length){ say('選んでいる札がない'); return; }
+  snap();
+  const made = list.map(c => {
+    const n = Object.assign({}, c);
+    n.id = uid++;
+    /* 写しは【見えるところに】出す。真上に重ねると増えたことに気づけない */
+    n.x = snapTo(c.x + S.grid * 2);
+    n.y = snapTo(c.y + S.grid * 2);
+    n.lock = false;
+    cards.push(n);
+    return n;
+  });
+  sel = new Set(made.map(c => c.id));
+  rebuild();
+  say(made.length + ' 枚を写した');
+}
+function doLock(list){
+  if(!list.length){ say('選んでいる札がない'); return; }
+  snap();
+  const on = !list.every(c => c.lock);
+  list.forEach(c => { c.lock = on; });
+  refresh();
+  say(on ? '錠をかけた' : '錠をはずした');
+}
+document.getElementById('tTrash').addEventListener('click', () => doTrash(selected()));
+document.getElementById('tDup')  .addEventListener('click', () => doDup(selected()));
+document.getElementById('tLock') .addEventListener('click', () => doLock(selected()));
+
+/* ── 近道 ────────────────────────────────────────── */
+addEventListener('keydown', e => {
+  if(document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  if(document.querySelector('.card.edit')) return;
+  const mod = e.metaKey || e.ctrlKey;
+  if(mod && e.key.toLowerCase() === 'z'){ e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if(mod && e.key.toLowerCase() === 'd'){ e.preventDefault(); doDup(selected()); return; }
+  if(mod && e.key.toLowerCase() === 'a'){ e.preventDefault(); sel = new Set(cards.map(c => c.id)); refresh(); return; }
+  if(e.key === 'Backspace' || e.key === 'Delete'){ e.preventDefault(); doTrash(selected()); return; }
+  if(e.key === 'Escape'){ sel.clear(); refresh(); return; }
+});
+
+/* ── 貼る（クリップボード）───────────────────────────
+   ⭐ Grant の机が「ファイルビューア＋クリップボード＋デスクトップ」を1つにしていた所。
+      別のアプリで写した文字や写真が、そのまま机の上に置かれる。 */
+addEventListener('paste', e => {
+  if(document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  const items = e.clipboardData ? e.clipboardData.items : null;
+  if(!items) return;
+  const r = stage.getBoundingClientRect();
+  const p = toBoard(r.left + r.width / 2, r.top + r.height / 2);
+  let placed = 0;
+  for(const it of items){
+    if(it.type.indexOf('image') === 0){
+      const f = it.getAsFile();
+      if(f){ e.preventDefault(); placeImage(f, p.x + placed * 24, p.y + placed * 24); placed++; }
+    }
+  }
+  if(placed) return;
+  const txt = e.clipboardData.getData('text/plain');
+  if(txt && txt.trim()){
+    e.preventDefault();
+    snap();
+    const paras = txt.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+    layout(paras, p.x, p.y);
+    rebuild();
+    say(paras.length + ' 枚を机に置いた');
+  }
+});
+
+function placeImage(file, x, y){
+  const fr = new FileReader();
+  fr.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      snap();
+      const w = Math.min(S.w * 1.6, img.width);
+      const c = newCard('image', x, y, { src: fr.result, w: snapTo(w) });
+      c.img = img;
+      rebuild();
+      say('写真を置いた');
+    };
+    img.src = fr.result;
+  };
+  fr.readAsDataURL(file);
+}
+
+/* 落とす（写真・控え）*/
+['dragenter','dragover'].forEach(t => addEventListener(t, e => {
+  e.preventDefault(); document.body.classList.add('dragging');
+}));
+['dragleave','drop'].forEach(t => addEventListener(t, e => {
+  if(t === 'dragleave' && e.relatedTarget) return;
+  document.body.classList.remove('dragging');
+}));
+addEventListener('drop', e => {
+  e.preventDefault();
+  const p = toBoard(e.clientX, e.clientY);
+  const files = [...(e.dataTransfer.files || [])];
+  files.forEach((f, i) => {
+    if(f.type.indexOf('image') === 0) placeImage(f, p.x + i * 24, p.y + i * 24);
+    else if(/json$/i.test(f.name)){
+      const fr = new FileReader();
+      fr.onload = () => { try{ loadJson(JSON.parse(fr.result)); }catch(err){ say('控えが読めなかった'); } };
+      fr.readAsText(f);
+    }
+  });
+});
+
+/* ── 並べる ────────────────────────────────────────
+   ⭐ 列数と札幅から机の上の場所を決める。列の高さを見て、いちばん低い列に置く
+      （新聞の段組と同じ。高さの違う紙を並べても穴が空かない）。 */
+function layout(paras, ox, oy, cols, w){
+  const nc  = Math.max(1, cols || S.cols);
+  const cw  = w || S.w;
+  const gap = S.grid * 1.5;
+  const made = paras.map(text => newCard('text', ox, oy, { text: text, w: cw }));
+  /* ⚠️ 高さは【中身が決める】。一度描くまで 0 のままなので、置いてから測り、測ってから並べる。
+     測る前に並べても、全部が同じ場所に積み上がるだけ。 */
+  rebuild();
+  const colH = new Array(nc).fill(0);
+  made.forEach(c => {
+    let k = 0;
+    for(let i = 1; i < nc; i++) if(colH[i] < colH[k]) k = i;   /* いちばん低い列に置く */
+    c.x = snapTo(ox + k * (cw + gap));
+    c.y = snapTo(oy + colH[k]);
+    colH[k] += c.h + gap;
+  });
+  rebuild();
+  return made;
+}
+
+/* ── 読む順 ────────────────────────────────────────
+   ⭐ 机の並びがそのまま文章の順。人が机を見て読む順と、書き出す順を一致させる。
+   ⚠️ 座標をそのまま並べ替えると、少しの高さの違いで行が入れ替わる。
+      「同じ行」とみなす幅（升目1つ分）を持たせる。 */
+function readOrder(list){
+  const tol = S.grid;
+  const a = list.slice();
+  if(S.order === 'h'){
+    a.sort((p, q) => {
+      const dy = p.y - q.y;
+      if(Math.abs(dy) > tol) return dy;
+      return p.x - q.x;
+    });
+  } else {
+    a.sort((p, q) => {
+      const dx = p.x - q.x;
+      if(Math.abs(dx) > tol) return dx;
+      return p.y - q.y;
+    });
+  }
+  return a;
+}
+function compose(){
+  const frames = cards.filter(c => c.kind === 'frame');
+  const used = new Set();
+  const out = [];
+  readOrder(frames).forEach(f => {
+    const ch = childrenOf(f);
+    ch.forEach(c => used.add(c.id));
+    out.push({ frame: f, items: readOrder(ch) });
+  });
+  const rest = cards.filter(c => c.kind !== 'frame' && !used.has(c.id));
+  if(rest.length) out.push({ frame: null, items: readOrder(rest) });
+  return out;
+}
+function toMarkdown(){
+  const parts = [];
+  compose().forEach(sec => {
+    if(sec.frame) parts.push('## ' + (sec.frame.name || '章'));
+    else if(parts.length) parts.push('## 余り');
+    sec.items.forEach(c => {
+      if(c.kind === 'image') parts.push('![](image)');
+      else if(c.text.trim()) parts.push(c.text.trim());
+    });
+  });
+  return parts.join('\n\n') + '\n';
+}
+
+/* ── 書き出し ────────────────────────────────────── */
+function bbox(){
+  if(!cards.length) return { x:0, y:0, w:800, h:600 };
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  cards.forEach(c => {
+    const h = c.kind === 'frame' ? c.h : (c.h || 60);
+    x1 = Math.min(x1, c.x); y1 = Math.min(y1, c.y);
+    x2 = Math.max(x2, c.x + c.w); y2 = Math.max(y2, c.y + h);
+  });
+  return { x:x1, y:y1, w:x2-x1, h:y2-y1 };
+}
+
+/* 折り返しは canvas 側で測って割る。
+   ⚠️ 書体が届く前に測ると、届いた後で行が変わる。document.fonts.ready を待ってから呼ぶ。 */
+const KINSOKU_HEAD = '、。，．・：；？！ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮー）」』】〕》〉]}»";:,.?!';
+/* 🔴 画面と刷り上がりで行が1文字ずれていた（実測「重ね／る。」が「重ねる。／」になる）。
+   原因は canvas 側で【字間を測っていなかった】こと。CSS には letter-spacing が入っているので
+   canvas の方が狭く測り、1文字多く入ってしまう。
+   ⚠️ 写して直す板は、表示のずれがそのまま成果物の誤りになる。数字は1か所（--ls）から作る。
+   ⭐ ctx.letterSpacing が使えるならそれに任せる（measureText も fillText も込みで効く）。
+      使えない古い webkit では、測る時に足し、描く時は1字ずつ置く。 */
+const LS = 0.02;
+function setFont(g){
+  g.font = S.fs + 'px ' + fontStack(S.font);
+  if('letterSpacing' in g) g.letterSpacing = (S.fs * LS).toFixed(3) + 'px';
+  return ('letterSpacing' in g);
+}
+function textW(g, s, native){
+  return g.measureText(s).width + (native ? 0 : s.length * S.fs * LS);
+}
+function drawLine(g, s, x, y, native){
+  if(native){ g.fillText(s, x, y); return; }
+  let cx = x;
+  for(const ch of s){ g.fillText(ch, cx, y); cx += g.measureText(ch).width + S.fs * LS; }
+}
+/* ⭐⭐ 折り返しは【画面が正】。
+   字間を合わせても、書体の届き方・禁則・ぶら下げまで canvas で真似ることはできない
+   （実測で 6枚中3枚がずれた）。合わせにいくのをやめて、画面がすでに組んだ行をそのまま写す。
+   ⚠️ 改行文字には幅が無いので rect で拾えない。改行は先に切っておく。 */
+function linesFromDom(c){
+  const d = el(c); if(!d) return null;
+  const b = d.querySelector('.body'); if(!b) return null;
+  const node = b.firstChild;
+  if(!node || node.nodeType !== 3) return null;
+  const r = document.createRange();
+  const out = [];
+  let cur = '', last = null;
+  for(let i = 0; i < node.length; i++){
+    const ch = node.data[i];
+    if(ch === '\n'){ out.push(cur); cur = ''; last = null; continue; }
+    r.setStart(node, i); r.setEnd(node, i + 1);
+    const t = r.getBoundingClientRect().top;
+    if(last === null || Math.abs(t - last) < 1.5) cur += ch;
+    else { out.push(cur); cur = ch; }
+    last = t;
+  }
+  out.push(cur);
+  return out;
+}
+/* 画面に札が出ていない時のための控え（控えから直接刷る場合など） */
+function wrapText(g, text, maxW, native){
+  const lines = [];
+  text.split('\n').forEach(para => {
+    if(!para){ lines.push(''); return; }
+    let line = '';
+    for(let i = 0; i < para.length; i++){
+      const ch = para[i];
+      if(textW(g, line + ch, native) > maxW && line){
+        /* 簡易禁則 ── 行頭に来てはいけない字は、前の行に送る */
+        if(KINSOKU_HEAD.indexOf(ch) >= 0){ line += ch; lines.push(line); line = ''; continue; }
+        lines.push(line); line = ch;
+      } else line += ch;
+    }
+    lines.push(line);
+  });
+  return lines;
+}
+
+async function exportPng(){
+  await document.fonts.ready;
+  const k = S.scale;
+  const b = bbox();
+  const m = S.grid * 3;
+  const W = Math.max(2, Math.round((b.w + m * 2) * k));
+  const H = Math.max(2, Math.round((b.h + m * 2) * k));
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  g.save();
+  g.scale(k, k);
+  g.translate(-b.x + m, -b.y + m);
+
+  /* 地 ── 見えているタイルをそのまま敷き直す */
+  const p = GROUNDS[S.ground];
+  await new Promise(res => {
+    const im = new Image();
+    im.onload = () => {
+      const pat = g.createPattern(im, 'repeat');
+      g.save();
+      g.fillStyle = pat;
+      g.fillRect(b.x - m, b.y - m, b.w + m * 2, b.h + m * 2);
+      g.restore();
+      res();
+    };
+    im.onerror = () => { g.fillStyle = p.stage; g.fillRect(b.x-m, b.y-m, b.w+m*2, b.h+m*2); res(); };
+    im.src = groundURL;
+  });
+
+  if(S.gridShow){
+    g.strokeStyle = p.grid; g.lineWidth = 1 / k;
+    const x0 = Math.floor((b.x - m) / S.grid) * S.grid;
+    const y0 = Math.floor((b.y - m) / S.grid) * S.grid;
+    g.beginPath();
+    for(let x = x0; x < b.x + b.w + m; x += S.grid){ g.moveTo(x, b.y - m); g.lineTo(x, b.y + b.h + m); }
+    for(let y = y0; y < b.y + b.h + m; y += S.grid){ g.moveTo(b.x - m, y); g.lineTo(b.x + b.w + m, y); }
+    g.stroke();
+  }
+
+  /* 枠 → 札の順（見えている重なりと同じ） */
+  const order = cards.filter(c => c.kind === 'frame').concat(cards.filter(c => c.kind !== 'frame'));
+  for(const c of order){
+    if(c.kind === 'frame'){
+      g.save();
+      g.strokeStyle = p.grid.replace(/[\d.]+\)$/, '.45)');
+      g.lineWidth = 1.5; g.setLineDash([6, 5]);
+      g.strokeRect(c.x, c.y, c.w, c.h);
+      g.setLineDash([]);
+      g.fillStyle = 'rgba(255,255,255,.62)';
+      g.font = '11px "Space Mono", monospace';
+      g.fillText(c.name || '章', c.x, c.y - 8);
+      g.restore();
+      continue;
+    }
+    const h = c.h || 60;
+    /* 影 ── 光源を置かず、一定方向へ投げる */
+    const sh = S.sh;
+    g.save();
+    g.fillStyle = 'rgba(20,14,6,' + (0.38 * Math.min(1, sh)) + ')';
+    g.filter = 'blur(' + (6 * sh) + 'px)';
+    g.fillRect(c.x, c.y + 2 * sh, c.w, h);
+    g.filter = 'none';
+    g.fillStyle = 'rgba(20,14,6,' + (0.20 * Math.min(1, sh)) + ')';
+    g.fillRect(c.x + 2 * sh, c.y + 3 * sh, c.w, h);
+    g.restore();
+
+    g.fillStyle = p.paper;
+    g.fillRect(c.x, c.y, c.w, h);
+    /* 白い机では影だけでは紙の縁が立たない。画面と同じ縁をここでも引く */
+    if(S.ground === 'paper'){
+      g.strokeStyle = 'rgba(26,26,24,.10)'; g.lineWidth = 1;
+      g.strokeRect(c.x + 0.5, c.y + 0.5, c.w - 1, h - 1);
+    }
+
+    if(c.kind === 'image' && c.img && c.img.complete){
+      const pad = Math.round(S.pad * 0.5);
+      const iw = c.w - pad * 2;
+      const ih = iw * c.img.height / c.img.width;
+      g.drawImage(c.img, c.x + pad, c.y + pad, iw, ih);
+    } else if(c.kind === 'text'){
+      const padY = S.pad, padX = Math.round(S.pad * 1.15);
+      g.fillStyle = p.ink;
+      const native = setFont(g);
+      g.textBaseline = 'alphabetic';
+      const lh = S.fs * S.lh;
+      const lines = linesFromDom(c) || wrapText(g, c.text, c.w - padX * 2, native);
+      lines.forEach((ln, i) => {
+        drawLine(g, ln, c.x + padX, c.y + padY + lh * (i + 0.78), native);
+      });
+      if('letterSpacing' in g) g.letterSpacing = '0px';
+    }
+  }
+  g.restore();
+
+  const a = document.createElement('a');
+  a.download = 'taku-' + stamp() + '.png';
+  a.href = cv.toDataURL('image/png');
+  a.click();
+  say('PNG を書き出した（' + W + '×' + H + ' px）');
+}
+
+function stamp(){
+  const d = new Date();
+  const z = n => String(n).padStart(2, '0');
+  return d.getFullYear() + z(d.getMonth() + 1) + z(d.getDate()) + '-' + z(d.getHours()) + z(d.getMinutes());
+}
+
+/* 控えは【読んで何か出る】まで作る ── 写真も素材ごと入れる */
+/* ⭐ 「控えを作る」と「控えを落とす」を分けておく。
+   分けておかないと、往復（作る→読む）が【ダウンロードを起こさないと試せない】。 */
+function snapshot(){
+  return {
+    tool: 'taku', ver: 1, saved: new Date().toISOString(),
+    settings: Object.assign({}, S),
+    cards: cards.map(c => ({ id:c.id, kind:c.kind, x:c.x, y:c.y, w:c.w, h:c.h,
+                             text:c.text, src:c.src, lock:c.lock, name:c.name })),
+    markdown: toMarkdown()
+  };
+}
+function saveJson(){
+  const data = snapshot();
+  const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.download = 'taku-' + stamp() + '.json';
+  a.href = URL.createObjectURL(blob);
+  a.click();
+  say('控えを書き出した（写真も中に入っている）');
+}
+function loadJson(data){
+  if(!data || data.tool !== 'taku'){ say('卓 TAKU の控えではない'); return; }
+  snap();
+  if(data.settings) Object.keys(S).forEach(k => { if(k in data.settings) S[k] = data.settings[k]; });
+  restore(JSON.stringify(data.cards));
+  syncUI();
+  applyGround(); applyShadow();
+  refresh(); fitAll();
+  say('控えを開いた');
+}
+
+/* ── 見え方 ──────────────────────────────────────── */
+function fitAll(){
+  if(!cards.length) return;
+  const b = bbox();
+  const r = stage.getBoundingClientRect();
+  const m = 60;
+  const z = Math.min((r.width - m * 2) / b.w, (r.height - m * 2) / b.h, 2);
+  view.z = Math.max(0.12, z);
+  view.x = r.width / 2 - (b.x + b.w / 2) * view.z;
+  view.y = r.height / 2 - (b.y + b.h / 2) * view.z;
+  applyView();
+}
+function updateMeter(){
+  const t = cards.filter(c => c.kind !== 'frame').length;
+  const f = cards.filter(c => c.kind === 'frame').length;
+  document.getElementById('mCard').textContent = t;
+  document.getElementById('mFrame').textContent = f;
+  document.getElementById('mChar').textContent =
+    cards.reduce((s, c) => s + (c.text ? c.text.replace(/\s/g, '').length : 0), 0);
+  document.getElementById('mOrder').textContent = S.order === 'v' ? '縦' : '横';
+  document.getElementById('mZoom').textContent = Math.round(view.z * 100) + '%';
+}
+let sayTimer = null;
+function say(msg){
+  stat.textContent = msg;
+  clearTimeout(sayTimer);
+  sayTimer = setTimeout(() => { stat.textContent = ''; }, 2600);
+}
+
+/* ── つまみ ────────────────────────────────────────
+   ⚠️ UI に書いた数字は約束。output に出す文字と、実際に効かせる値は同じ所から作る。 */
+function bindRange(id, outId, key, fmt, after){
+  const r = document.getElementById(id), o = document.getElementById(outId);
+  const run = () => {
+    const v = +r.value;
+    S[key] = key === 'lh' ? v / 100 : (key === 'sh' ? v / 10 : v);
+    o.textContent = fmt(S[key]);
+    if(after) after();
+  };
+  r.addEventListener('input', run);
+  run();
+}
+function bindSeg(id, key, after){
+  const box = document.getElementById(id);
+  box.addEventListener('click', e => {
+    const b = e.target.closest('button'); if(!b) return;
+    [...box.children].forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    S[key] = b.dataset.g || b.dataset.f || b.dataset.o;
+    if(after) after();
+  });
+}
+
+bindRange('rGrid', 'oGrid', 'grid', v => v + ' px', () => { drawGrid(); updateMeter(); });
+bindRange('rW',    'oW',    'w',    v => v + ' px');
+bindRange('rFs',   'oFs',   'fs',   v => v + ' px', () => refresh());
+bindRange('rLh',   'oLh',   'lh',   v => v.toFixed(2), () => refresh());
+bindRange('rPad',  'oPad',  'pad',  v => v + ' px', () => refresh());
+bindRange('rSh',   'oSh',   'sh',   v => v.toFixed(1), () => applyShadow());
+bindRange('rCols', 'oCols', 'cols', v => v + ' 列');
+bindRange('rScale','oScale','scale',v => v + '×');
+
+bindSeg('segGround', 'ground', () => { applyGround(); });
+bindSeg('segFont',   'font',   () => refresh());
+bindSeg('segOrder',  'order',  () => updateMeter());
+
+document.getElementById('cGridShow').addEventListener('change', e => { S.gridShow = e.target.checked; drawGrid(); });
+document.getElementById('cSnap').addEventListener('change', e => { S.snap = e.target.checked; });
+
+function syncUI(){
+  document.getElementById('rGrid').value = S.grid;
+  document.getElementById('rW').value = S.w;
+  document.getElementById('rFs').value = S.fs;
+  document.getElementById('rLh').value = Math.round(S.lh * 100);
+  document.getElementById('rPad').value = S.pad;
+  document.getElementById('rSh').value = Math.round(S.sh * 10);
+  document.getElementById('rCols').value = S.cols;
+  document.getElementById('rScale').value = S.scale;
+  document.getElementById('cGridShow').checked = S.gridShow;
+  document.getElementById('cSnap').checked = S.snap;
+  document.getElementById('oGrid').textContent = S.grid + ' px';
+  document.getElementById('oW').textContent = S.w + ' px';
+  document.getElementById('oFs').textContent = S.fs + ' px';
+  document.getElementById('oLh').textContent = S.lh.toFixed(2);
+  document.getElementById('oPad').textContent = S.pad + ' px';
+  document.getElementById('oSh').textContent = S.sh.toFixed(1);
+  document.getElementById('oCols').textContent = S.cols + ' 列';
+  document.getElementById('oScale').textContent = S.scale + '×';
+  [['segGround','ground','g'],['segFont','font','f'],['segOrder','order','o']].forEach(([id,key,attr]) => {
+    const box = document.getElementById(id);
+    [...box.children].forEach(b => b.classList.toggle('on', b.dataset[attr] === S[key]));
+  });
+}
+
+/* ── ボタン ────────────────────────────────────────── */
+document.getElementById('bSplit').addEventListener('click', () => {
+  const t = document.getElementById('taIn').value;
+  if(!t.trim()){ say('文章が入っていない'); return; }
+  snap();
+  const paras = t.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+  const b = cards.length ? bbox() : { x:0, y:0, w:0, h:0 };
+  layout(paras, snapTo(b.x), snapTo(b.y + b.h + S.grid * 3));
+  fitAll();
+  say(paras.length + ' 枚に割って並べた');
+});
+document.getElementById('bAddText').addEventListener('click', () => {
+  snap();
+  const r = stage.getBoundingClientRect();
+  const p = toBoard(r.left + r.width / 2, r.top + r.height / 2);
+  const c = newCard('text', p.x, p.y, { text: '' });
+  rebuild();
+  startEdit(c);
+});
+document.getElementById('bAddFrame').addEventListener('click', () => {
+  snap();
+  const r = stage.getBoundingClientRect();
+  const p = toBoard(r.left + r.width / 2, r.top + r.height / 2);
+  newCard('frame', p.x - 200, p.y - 120, { name: '章' });
+  rebuild();
+  say('枠を置いた（二度押しで名前を変えられる）');
+});
+document.getElementById('bClear').addEventListener('click', () => {
+  if(!cards.length) return;
+  snap(); cards = []; sel.clear(); rebuild();
+  say('片づけた（⌘Z で戻る）');
+});
+document.getElementById('bFit').addEventListener('click', fitAll);
+document.getElementById('bReset').addEventListener('click', () => {
+  view.z = 1; view.x = 40; view.y = 40; applyView();
+});
+document.getElementById('bMd').addEventListener('click', async () => {
+  const md = toMarkdown();
+  try{
+    await navigator.clipboard.writeText(md);
+    say('Markdown をコピーした（' + md.length + ' 字）');
+  }catch(err){
+    const ta = document.createElement('textarea');
+    ta.value = md; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove();
+    say('Markdown をコピーした（' + md.length + ' 字）');
+  }
+});
+document.getElementById('bPng').addEventListener('click', () => { exportPng(); });
+document.getElementById('bJson').addEventListener('click', saveJson);
+
+/* ── 例 ────────────────────────────────────────────
+   ⭐ 起動した時点で机の上に例が載っている。この道具が何をするものかは、
+      説明ではなく【並んでいる札】が言う。 */
+const DEMO = [
+  '机の上に紙を置く。動かす。重ねる。捨てる。',
+  'この道具には、それ以上の仕掛けは入っていない。',
+  '文章を書くとき、いちばん時間を使うのは書くことではなく、並べ替えることだ。',
+  '画面の中では、段落を入れ替えるのに切り取って貼り付ける。手はいつも二手先を覚えていないといけない。',
+  '机の上なら、掴んで、置く。それだけで済む。',
+  '並びがそのまま順番になっていれば、組み終わった机は、もう原稿になっている。'
+];
+function putDemo(){
+  snap();
+  cards = []; sel.clear(); uid = 1;
+  /* ⚠️ 枠の幅は【中に並べる列数から作る】。パネルの列数（既定3）で組むと枠からはみ出て、
+     枠に入っていない＝章に属さない札になる（幾何で親子を決めているので、見た目がそのまま意味）。 */
+  const COLS = 2, PAD = S.grid * 2, GAP = S.grid * 1.5;
+  const fw = snapTo(S.w * COLS + GAP * (COLS - 1) + PAD * 2);
+
+  const f1 = newCard('frame', 0, 0, { name: 'はじめに', w: fw, h: 200 });
+  const a  = layout(DEMO.slice(0, 3), PAD, PAD, COLS);
+  f1.h = snapTo(a.reduce((m, c) => Math.max(m, c.y + c.h), 0) + PAD);
+
+  const y2 = f1.y + f1.h + S.grid * 4;
+  const f2 = newCard('frame', 0, y2, { name: 'なぜ机なのか', w: fw, h: 200 });
+  const b  = layout(DEMO.slice(3), PAD, y2 + PAD, COLS);
+  f2.h = snapTo(b.reduce((m, c) => Math.max(m, c.y + c.h), 0) - y2 + PAD);
+
+  rebuild();
+  fitAll();
+  say('例を置いた。掴んで動かしてみる');
+}
+document.getElementById('bDemo').addEventListener('click', putDemo);
+
+/* ── 起こす ──────────────────────────────────────── */
+addEventListener('resize', () => { applyView(); });
+applyGround();
+applyShadow();
+syncUI();
+view.x = 40; view.y = 40;
+applyView();
+document.fonts.ready.then(() => { putDemo(); });
+
+/* 書き出し・自己テスト用に外へ出す（headless で実測するため） */
+window.TAKU = {
+  S: S, view: view,
+  cards: () => cards,
+  md: toMarkdown,
+  compose: compose,
+  demo: putDemo,
+  layout: layout,
+  bbox: bbox,
+  newCard: newCard,
+  rebuild: rebuild,
+  fitAll: fitAll,
+  toBoard: toBoard,
+  exportPng: exportPng,
+  /* 実測用 ── 画面の折り返しと刷り上がりの折り返しが同じか、外から確かめられるように出す */
+  save: snapshot,
+  load: loadJson,
+  md_of: toMarkdown,
+  wrap: (text, maxW) => {
+    const g = document.createElement('canvas').getContext('2d');
+    const native = setFont(g);
+    return wrapText(g, text, maxW, native);
+  },
+  lines: linesFromDom
+};
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════
+     モバイル／iPad のパネルの掴み手（網AMI と同じもの）
+     ⭐ HTML の並びは1行も触っていない。この <script> と上の CSS を消せば元へ戻る。
+     ⭐ ブレークポイントを書き分けず、【パネルが画面下いっぱいか】を実行時に見て決める。
+     ══════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  'use strict';
+  const KEY = location.pathname.replace(/\W+/g,'_') + '.panelH.v1';
+  const SNAP = [26, 42, 78];
+  let grip = null;
+  const panel = () => document.getElementById('panel');
+  const isSheet = () => {
+    const p = panel(); if(!p) return false;
+    const b = p.getBoundingClientRect();
+    return b.width >= innerWidth - 3 && b.bottom >= innerHeight - 3 && b.top > 8;
+  };
+  const clamp = v => Math.max(18, Math.min(innerHeight < 500 ? 62 : 86, v));
+  const setH = vh => {
+    document.documentElement.style.setProperty('--panelH', clamp(vh).toFixed(1) + 'vh');
+    try{ window.dispatchEvent(new Event('resize')); }catch(_){}
+  };
+  const curH = () => {
+    const p = panel(); if(!p) return 0;
+    return p.getBoundingClientRect().height / innerHeight * 100;
+  };
+  function build(){
+    if(grip) return;
+    grip = document.createElement('div');
+    grip.id = 'sheetGrip';
+    grip.title = 'ドラッグで高さを変える／タップで段を切り替える';
+    document.body.appendChild(grip);
+    let drag = null;
+    grip.addEventListener('pointerdown', e => {
+      e.preventDefault(); grip.setPointerCapture(e.pointerId);
+      grip.classList.add('dragging');
+      drag = { y:e.clientY, h:curH(), moved:false };
+    });
+    grip.addEventListener('pointermove', e => {
+      if(!drag) return;
+      const d = (drag.y - e.clientY) / innerHeight * 100;
+      if(Math.abs(d) > 1) drag.moved = true;
+      setH(drag.h + d);
+    });
+    const end = () => {
+      if(!drag) return;
+      grip.classList.remove('dragging');
+      if(!drag.moved){
+        const h = curH();
+        const next = SNAP.find(v => clamp(v) > h + 2);
+        setH(next === undefined ? SNAP[0] : next);
+      }
+      try{ localStorage.setItem(KEY, String(Math.round(curH()*10)/10)); }catch(_){}
+      drag = null;
+    };
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
+  }
+  function drop(){
+    if(!grip) return;
+    grip.remove(); grip = null;
+    document.documentElement.style.removeProperty('--panelH');
+  }
+  function sync(){
+    if(isSheet()){
+      build();
+      let v = null; try{ v = parseFloat(localStorage.getItem(KEY)); }catch(_){}
+      if(v > 0) setH(v);
+    }else drop();
+  }
+  addEventListener('resize', () => { if(!grip) sync(); });
+  addEventListener('orientationchange', () => setTimeout(sync, 200));
+  if(document.readyState === 'loading') addEventListener('DOMContentLoaded', sync);
+  else sync();
+})();
+</script>
+</body>
+</html>
