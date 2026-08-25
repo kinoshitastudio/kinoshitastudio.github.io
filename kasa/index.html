@@ -1730,6 +1730,20 @@ function tuneDrag(ms){
      🔴 対称にすると 550⇄1000 を行ったり来たりして、そのたびに場を作り直す。 */
   const raw=Math.sqrt(MS_AIM/Math.max(1,ms));
   const k=raw<1 ? Math.max(raw,0.72) : Math.min(raw,1.25);
+  /* 🔴🔴 2026-08-25 木下＝「停止を押していないのに、途中で何秒かで止まる」。
+     ⭐ 動画を画素で測ったら【止まってはいなかった】＝0.25秒ごとに「動く／動かない」を
+        繰り返していた（絵の重心が 0.5秒で 0.17px しか動かない区間がある）。
+     🔴 正体＝ここが【再生中も】粗さを上げ下げしていたこと。変えるたびに fit() で盤の実寸が
+        変わり、次のコマで【場（紙の形）を作り直す】＝木下の画面で 380ms。その1コマぶん
+        絵が1画素も動かない。しかも 260ms ごとに上げ下げするので、それが延々と続く。
+     ⚠️ 掴んでいる間と違い、再生は【指を離す時が来ない】＝往復が終わらない。
+        木下の機械では 1150px で 18ms・1800px で 380ms ＝ 目標 75ms に収まる粗さが
+        そもそも無い。だから「上げる→重い→下げる→軽い→上げる」で永久に往復していた。
+     ⭐ 直し＝再生中は【粗くする方へだけ】動かす。追いつかなければ粗くなる（今までどおり）が、
+        追いついても細かくし直さない＝往復しない＝場を作り直さない＝止まらない。
+        ⚠️ 止めれば今までどおり 0.18秒で細かく刷り直す。⚠️ 出す絵は1画素も変わらない
+        （書き出しは盤の粗さを見ていない）。 */
+  if(P.anim && !DRAG && k>1) return;
   const nx=clamp(Math.round(DCAP*k/10)*10,DCAP_LO,DCAP_HI);
   if(nx===DCAP) return;
   DCAP=nx; dcapAt=now;
@@ -2009,8 +2023,16 @@ function loop(ts){
 }
 function anim(on){
   P.anim=on; lastTs=0;
+  /* ⭐ 再生は毎回【いちばん細かい所】から始める。
+     再生中は粗くする方へしか動かないので（tuneDrag）、前の再生で落ちた粗さを持ち越すと
+     押すたびにだんだん粗くなる＝同じ設定なのに絵が毎回違う、になる。
+     ⚠️ ここで fit() まで呼んで盤の実寸を変えると【絵の取っ手が掴めなくなる】（試験2つが落ちた）。
+        盤は止めたときに細かく刷り直すので、ここは持ち主（DCAP）を戻すだけでよい。 */
+  if(on){ DCAP=DCAP_HI; dcapAt=0; }
   if(on&&!raf) raf=requestAnimationFrame(loop);
-  if(!on&&raf){ cancelAnimationFrame(raf); raf=null; u=0; kick(); }
+  /* ⭐ 止めたら細かく刷り直す（0.18秒後）。
+     ⚠️ これが無いと、再生中に粗くした盤がそのまま残って【止めたのに眠い絵】になる。 */
+  if(!on&&raf){ cancelAnimationFrame(raf); raf=null; u=0; kick(); hiLater(); }
 }
 function animSync(){
   const b=el('anGo');
@@ -2854,7 +2876,9 @@ window.KASA={ get P(){return P}, get HOLE(){return HOLE}, get LAMP(){return LAMP
   /* ⭐ 1字ずつ：盤の四角と取っ手も【本体と同じ関数】から取る（試験が別に測り直さない） */
   get GLYPH(){return GLYPH}, get GSEL(){return GSEL}, glyphBoxes, glyphHandles,
   get ASEL(){return ASEL}, holesAt, lampsAt,  /* ⭐ 絵を選んでいるか／動かしたときの穴と灯 */
-  get VIEW(){return VIEW} };            /* ⭐ 寄り具合。2本指の試験がここを見る */
+  get VIEW(){return VIEW},              /* ⭐ 寄り具合。2本指の試験がここを見る */
+  /* ⭐ 再生中に盤の粗さが【往復しない】＝場を作り直さない＝絵が止まらないこと を測る入口 */
+  tuneDrag, anim, get DCAP(){return DCAP}, get DRAG(){return DRAG} };
 </script>
 
 <!-- ══════════════════════════════════════════════════════════════

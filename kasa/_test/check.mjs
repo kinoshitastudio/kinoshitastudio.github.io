@@ -482,6 +482,33 @@ try{
     KASA.P.sway=swKeep; KASA.P.orbit=o0; KASA.P.breath=b0; KASA.P.holeOrbit=h0; KASA.rebuild();
   }
 
+  /* 🔴🔴 再生中に盤の粗さが【往復しない】＝場を作り直さない＝絵が止まらない
+     （木下＝「停止を押していないのに途中で止まる」。動画を画素で測ったら
+      0.25秒ごとに「動く／動かない」を繰り返していた＝そのたびに場を作り直していた）
+     ⚠️ 直す前は「重い→粗く／軽い→細かく」を延々と繰り返すので、ここで上がる。 */
+  {
+    const wasAnim=KASA.P.anim;
+    /* ⭐ まず「前の再生で粗くなった」状態を作る → 押し直したら細かい所から始まること */
+    KASA.anim(true); KASA.tuneDrag(900);
+    const coarse=KASA.DCAP;
+    KASA.anim(false); KASA.anim(true);
+    const start=KASA.DCAP;
+    ok('再生を押し直すと粗さを持ち越さない（'+coarse+'→'+start+'px）', start>coarse);
+    let up=0, seen=[start];
+    /* 重い／軽い を交互に投げる（木下の機械＝細かいと 380ms・粗いと 18ms） */
+    for(let i=0;i<6;i++){
+      const before=KASA.DCAP;
+      KASA.tuneDrag(i%2 ? 18 : 380);
+      if(KASA.DCAP>before) up++;
+      if(KASA.DCAP!==before) seen.push(KASA.DCAP);
+      /* ⚠️ 続けて呼んでも 260ms の間は何もしない決まりなので、そのぶん待ってから次を投げる */
+      const t=performance.now()+280; while(performance.now()<t){}
+    }
+    ok('再生中に粗さが上がり直さない＝場を作り直さない（'+seen.join('→')+'）', up===0);
+    ok('重ければ粗くはなる（'+start+'→'+KASA.DCAP+'px）', KASA.DCAP<start);
+    KASA.anim(wasAnim);
+  }
+
   // 大きく刷れるか
   const [ow,oh]=KASA.outSize();
   const t0=performance.now();
