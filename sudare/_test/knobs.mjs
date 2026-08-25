@@ -37,6 +37,11 @@ if(await p.evaluate(() => !!document.querySelector('#dir button[data-v="4"]')))
 let ng = [];
 for(const m of modes){
   const reset = async () => await p.evaluate(s => {
+    /* 🔴 額（余白）は【面のつまみ】＝P に入るので、版を作り直しても残る。
+       残ったまま次のつまみを測ると、絵が縮んだ状態で比べることになり
+       「効かないつまみ」が19本も出た（2026-08-25）。
+       ⭐ 測る前に、測りたいもの以外が動いていない状態を作る。 */
+    if(typeof P !== 'undefined'){ P.gaku = 0; P.gakuZ = 100; P.gakuX = 0; P.gakuY = 0; }
     SHEETS.length = 1; SHEETS[0] = newSheet('CAVOLO'); Object.assign(SHEETS[0], s);
     buildAll(); syncUI(); }, m.set);
   await reset();
