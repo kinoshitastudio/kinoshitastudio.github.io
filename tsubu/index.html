@@ -485,6 +485,11 @@
 
   <h2>字</h2>
   <textarea id="txt">HELLO</textarea>
+  <!-- ⭐⭐ 2026-08-26 木下「Sakuji などの svg データをどちらもこの2つは読み込みできる？」
+       ⭐ 作字SAKUJI などの SVG を【1字ぶん】として置く＝向き・太さ・粒・玉がそのまま効く。
+       ⚠️ 字を打ち直すと消える（字と同じ欄のものなので、それが素直） -->
+  <button class="btn" id="bSvg">SVGを置く</button>
+  <input type="file" id="fSvg" accept=".svg,image/svg+xml" hidden>
   <div class="seg" id="font">
     <button data-v="0" class="on">角ゴ</button>
     <button data-v="1">明朝</button>
@@ -844,20 +849,39 @@ const PALS = [
       太さ → 画が交わって塊になっている所。そこに球が出る
    ──────────────────────────────────────────────────────── */
 const oc = document.createElement('canvas'), og = oc.getContext('2d', { willReadFrequently:true });
+/* ⭐⭐ SVG を1字ぶんとして焼く（2026-08-26 木下
+   「Sakuji などの svg データをどちらもこの2つは読み込みできる？」）
+   ⭐ この道具の入口は【1字を N×N に焼いてドットに落とす】ここ1つだけなので、
+      字の代わりに絵を描けば、あとは向き・太さ・粒・玉が**そのまま効く**。
+   ⚠️ 字は「黒地に白」で焼くが、作字SAKUJI の SVG は「白地に黒線」。
+      だから SVG のときだけ【暗い所を字】として読む＝**白い地の板は自動で無視される**。 */
+const SVG_CH = '\uE000';          /* 文字列の中で「ここは SVG」を表す1字（見えない私用領域） */
+let svgImg = null;                 /* 置いた SVG（Image）。字を打ち直すと使われなくなる */
 function glyphDots(ch, N, fontIdx, fat){
   oc.width = oc.height = N;
   og.fillStyle = '#000'; og.fillRect(0, 0, N, N);
-  og.fillStyle = '#fff';
-  og.textAlign = 'center'; og.textBaseline = 'middle';
-  og.font = fontIdx ? '600 ' + Math.round(N*0.98) + 'px "Zen Old Mincho"'
-                    : '700 ' + Math.round(N*0.94) + 'px "Zen Kaku Gothic New"';
-  og.fillText(ch, N/2, N/2 + N*0.03);
+  const isSvg = (ch === SVG_CH && svgImg);
+  if(isSvg){
+    /* ⭐ 縦横比を保って1字ぶんの枠に収める（少し余白を残す） */
+    const iw = svgImg.width || N, ih = svgImg.height || N;
+    const k = Math.min(N / iw, N / ih) * 0.92;
+    const w = iw * k, h = ih * k;
+    og.fillStyle = '#fff'; og.fillRect(0, 0, N, N);     /* 白地に描く＝あとで暗い所を拾う */
+    og.drawImage(svgImg, (N - w) / 2, (N - h) / 2, w, h);
+  } else {
+    og.fillStyle = '#fff';
+    og.textAlign = 'center'; og.textBaseline = 'middle';
+    og.font = fontIdx ? '600 ' + Math.round(N*0.98) + 'px "Zen Old Mincho"'
+                      : '700 ' + Math.round(N*0.94) + 'px "Zen Kaku Gothic New"';
+    og.fillText(ch, N/2, N/2 + N*0.03);
+  }
   const raw = og.getImageData(0, 0, N, N).data;
 
   // ── 太らせ（膨張） ── 画を太くする＝画が交わる所（青玉）が増える。
   //    日本語は非ボールドだと細く、玉が出にくい。ここで太字を作る。
   let grd = new Uint8Array(N*N);
-  for(let i=0;i<N*N;i++) grd[i] = raw[i*4] > 110 ? 1 : 0;
+  /* ⚠️ 字は白＝明るい所／SVG は黒線＝暗い所。読む向きを分ける */
+  for(let i=0;i<N*N;i++) grd[i] = (isSvg ? raw[i*4] < 110 : raw[i*4] > 110) ? 1 : 0;
   const fatN = Math.round((fat != null ? fat : P.fat) * Math.max(1, N / 32));   // ⭐ 太さを解像度比例に＝高解像度でも同じだけ太る
   for(let s=0; s<fatN; s++){
     const nx = new Uint8Array(N*N);
@@ -2412,6 +2436,31 @@ addEventListener('visibilitychange', () => { if(document.visibilityState === 'hi
   }
 }
 document.getElementById('exJson').onclick = () => { pushToLayer(); exportJSON(); };
+/* ⭐⭐ SVG を1字ぶんとして置く（2026-08-26）
+   ⭐ 置いたら字の欄を SVG の1字に差し替える＝この道具の「字」の道をそのまま通す
+      （版・重なり・向き・太さ・粒・玉・マス目・書き出しに手を入れなくていい）。
+   ⚠️ 同じファイルを続けて選べるよう、読んだあと value を空にする。 */
+document.getElementById('bSvg').onclick = () => document.getElementById('fSvg').click();
+document.getElementById('fSvg').onchange = (e) => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      svgImg = img;
+      const t = document.getElementById('txt');
+      t.value = SVG_CH;                     /* ⭐ 字の欄を SVG 1字に */
+      t.dispatchEvent(new Event('input', { bubbles:true }));
+    };
+    img.onerror = () => alert('SVG を絵にできませんでした');
+    /* ⚠️ 日本語や記号が入るので、btoa の前に UTF-8 へ直す（そのままだと落ちる） */
+    img.src = 'data:image/svg+xml;base64,' +
+      btoa(String.fromCharCode(...new TextEncoder().encode(String(rd.result || ''))));
+  };
+  rd.readAsText(f);
+};
 document.getElementById('inJson').onclick = () => document.getElementById('fJson').click();
 document.getElementById('fJson').onchange = async (e) => {
   const f = e.target.files && e.target.files[0]; if(!f) return;
