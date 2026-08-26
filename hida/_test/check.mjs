@@ -183,6 +183,50 @@ const preW = await p.evaluate(() => {
 check(preW.min >= 50, '見本のボタンが痩せていない', `${preW.min}〜${preW.max}px`);
 await p.evaluate(() => { PRESETS.geijutsu(); syncAll(); kick(); });
 
+/* ══⭐⭐ 選んで描く（2026-08-27 木下「見本以外に自分でそれらを描けるようにしたい。
+   見本の素材を使用してもいい。選んで描くのような」）
+   見るのは【引いた通りに置けるか】と【動かす側を壊していないか】。 */
+{
+  const D = await p.evaluate(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    const cv = document.querySelector('canvas'), r = cv.getBoundingClientRect();
+    const ev = (t,x,y) => cv.dispatchEvent(new PointerEvent(t,{clientX:x,clientY:y,button:0,buttons:1,
+      bubbles:true,pointerId:1,pointerType:'mouse'}));
+    const out = { 種:document.querySelectorAll('#brush button').length, 前:SRC.length };
+    document.querySelector('#brush button[data-v="wa"]').click();
+    out.種を押すと描くに入る = document.querySelector('#use button[data-v="draw"]').classList.contains('on');
+    ev('pointerdown', r.left+r.width*0.40, r.top+r.height*0.45);
+    for(let i=1;i<=8;i++) ev('pointermove', r.left+r.width*(0.40+0.10*i/8), r.top+r.height*(0.45+0.06*i/8));
+    ev('pointerup', r.left+r.width*0.50, r.top+r.height*0.51);
+    await wait(300);
+    const s2 = SRC[SRC.length-1];
+    out.後 = SRC.length;
+    out.種のまま = (s2.n === 16 && s2.round === 1);      /* 「輪」の素材がそのまま入っている */
+    out.引いた長さが大きさ = s2.sc > 0.12;
+    out.引いた向きが角度 = s2.rot !== 0;
+    out.押した所が中心 = (s2.x !== 0 || s2.y !== 0);
+    out.選ばれる = (sel === SRC.length-1);
+    /* 動かすに戻す＝いままでどおり（引っぱると動く・芯は増えない） */
+    document.querySelector('#use button[data-v="move"]').click();
+    const bx = s2.x;
+    ev('pointerdown', r.left+r.width*0.40, r.top+r.height*0.45);
+    ev('pointermove', r.left+r.width*0.55, r.top+r.height*0.45);
+    ev('pointerup',   r.left+r.width*0.55, r.top+r.height*0.45);
+    await wait(250);
+    out.動かすで動く = Math.abs(SRC[SRC.length-1].x - bx) > 0.02;
+    out.動かすで増えない = (SRC.length === out.後);
+    return out;
+  });
+  check(D.種 >= 8, '種（見本の素材）が並んでいる', D.種 + '種');
+  check(D.種を押すと描くに入る, '⭐ 種を押したら【描く】側に入る（押しても描けない、を作らない）');
+  check(D.後 === D.前 + 1, '⭐ 盤を引くと芯が1本増える', `${D.前} → ${D.後}`);
+  check(D.種のまま, '⭐ 選んだ種の素材がそのまま入る（見本と同じ手ざわり）');
+  check(D.引いた長さが大きさ && D.引いた向きが角度 && D.押した所が中心,
+        '⭐⭐ 押した所が中心・引いた長さが大きさ・引いた向きが角度');
+  check(D.選ばれる, '置いた芯が選ばれる（すぐ直せる）');
+  check(D.動かすで動く && D.動かすで増えない, '⚠️ 動かすに戻すといままでどおり（引っぱると動く・増えない）');
+}
+
 console.log(ng.length ? `\n🔴 だめだったもの ${ng.length}件: ${ng.join(' / ')}` : '\n✅ 全部通った');
 if(errs) console.log(`🔴 JSエラー ${errs}件`);
 await b.close();
