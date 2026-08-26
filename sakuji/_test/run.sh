@@ -61,5 +61,9 @@ echo
 echo "── 書き心地（刃HA／擦SURE／滲NIJIMI）"
 node "$(cd "$(dirname "$0")" && pwd)/feel.mjs" || FEELNG=1
 
-if [ "${FEELNG:-0}" = "1" ]; then exit 1; fi
+# ⭐ 書き心地を引いている最中から見せる／あとから掛け直す（2026-08-26 夜）
+echo
+node "$(cd "$(dirname "$0")" && pwd)/feel2.mjs" || FEEL2NG=1
+
+if [ "${FEELNG:-0}" = "1" ] || [ "${FEEL2NG:-0}" = "1" ]; then exit 1; fi
 exit $RC
