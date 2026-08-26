@@ -626,6 +626,30 @@ input[type=color]{ border-radius:8px; height:30px }
   <h2>置く ── 図を入れる</h2>
   <div class="sec">
     <div class="btns">
+      <!-- ⭐⭐ 2026-08-26 木下「Hari と sakuji に✒️で描けるように。sure や Ha、nijimi のような
+           道具の書き心地も切り替えて使えるように」
+           ⭐ 描いた線は【図】として入る＝レイヤーに出て、動かす・回す・書き出しが今までどおり効く。
+           ⚠️ 書き心地の中身は作字SAKUJI と同じ式（道具どうしで手ざわりを揃える）。 -->
+      <button class="btn" id="bPen">✒️ 描く</button>
+      <div class="row" id="rowFeel"><label>書き心地</label>
+        <select id="feel" style="flex:1">
+          <option value="plain">そのまま</option>
+          <option value="ha">刃 HA — 平ペン（角度で太さが変わる）</option>
+          <option value="sure">擦 SURE — 段（升目に丸める）</option>
+          <option value="nijimi">滲 NIJIMI — にじむ（縁が揺れる）</option>
+        </select></div>
+      <div class="row" id="rowPenW"><label>線の太さ</label>
+        <input type="range" id="penW" min="1" max="120" value="18"><span class="v" id="vpenW">18</span></div>
+      <div class="row" id="rowPenC"><label>線の色</label><input type="color" id="penC" value="#111111"></div>
+      <div class="row feel-ha"><label>ペンの角度</label>
+        <input type="range" id="feelAng" min="0" max="180" value="35"><span class="v" id="vfeelAng">35</span></div>
+      <div class="row feel-sure"><label>升目</label>
+        <input type="range" id="feelGrid" min="2" max="60" value="14"><span class="v" id="vfeelGrid">14</span></div>
+      <div class="row feel-nijimi"><label>にじみ</label>
+        <input type="range" id="feelJit" min="1" max="40" value="6"><span class="v" id="vfeelJit">6</span></div>
+      <div class="note" id="penNote">⭐ <b>✒️ 描く</b>を押している間だけ描ける（もう一度押すと選ぶに戻る）<br>
+        ⭐ 引いた線は<b>図として入る</b>＝レイヤーに出て、動かす・回す・書き出しが今までどおり効く<br>
+        ⚠️ どれもパスなので <b>SVG にも</b> そのまま出る</div>
       <button class="btn" id="bImg">画像を置く</button>
       <button class="btn" id="bSvg">SVG を置く</button>
       <button class="btn" id="delPiece">選んだ図を消す</button>
@@ -1703,6 +1727,10 @@ cv.addEventListener('pointerdown', e => {
   const pt = paper.view.viewToProject(new Point(e.clientX - r.left, e.clientY - r.top));
   cv.setPointerCapture(e.pointerId);
 
+  /* ⭐⭐ ✒️ 描くモード（2026-08-26）＝いちばん先に返す。
+     ⚠️ ここより下の掴み判定（頂点・角・回転・パン）には1行も触っていない。 */
+  if(PEN.on && e.button === 0){ penDown(pt); drag = { kind:'pen' }; return; }
+
   /* 🔴 2026-08-25 ── ここで Shift を先に取っていたので、
      【Shift を押しながら角を掴む】が版面のパンになって、均等の拡大縮小に届かなかった。
      ⭐ Shift は Figma と同じ「比率を保つ」に譲る。何にも当たらなければ下で結局パンになる。 */
@@ -1866,6 +1894,7 @@ cv.addEventListener('pointermove', e => {
   if(!drag) return;
   const r = cv.getBoundingClientRect();
   const pt = paper.view.viewToProject(new Point(e.clientX - r.left, e.clientY - r.top));
+  if(drag.kind === 'pen'){ penMove(pt); return; }
   if(drag.kind === 'vertex'){
     const L = sel(); if(!L || !L.path.pts) return;
     L.path.pts[drag.i] = [pt.x, pt.y];
@@ -1983,7 +2012,10 @@ cv.addEventListener('pointermove', e => {
     render();
   }
 });
-addEventListener('pointerup', () => { drag = null; cv.style.cursor = ''; });
+addEventListener('pointerup', () => {
+  if(drag && drag.kind === 'pen') penUp();
+  drag = null; cv.style.cursor = '';
+});
 /* Shift は「回すときに15°ずつ」に使う。⚠️ 掴む前から押していると版面のパンが先に取る */
 let shiftDown = false;
 addEventListener('keydown', e => { if(e.key === 'Shift') shiftDown = true; });
@@ -2980,6 +3012,114 @@ document.querySelectorAll('[data-size]').forEach(b => b.onclick = () => {
 
 /* ══ 置く（SAKUJI から持ち出し）══ */
 /* ⭐ src（元のデータ）も一緒に持つ＝JSON に図ごと入れて、開き直しても戻る */
+/* ══ ✒️ 描く ══════════════════════════════════════════
+   2026-08-26 木下「Hari と sakuji に✒️で描けるように。sure や Ha、nijimi のような
+   道具の書き心地も切り替えて使えるように」
+
+   ⭐⭐ 引いた線は【図（piece）】として入れる＝レイヤーに出て、動かす・回す・重ね順・
+      書き出しが**今までどおり全部効く**（描くためだけの新しい入れ物を作らない）。
+   ⭐ 書き心地の中身は作字SAKUJI と同じ式＝道具どうしで手ざわりを揃える。
+   ⚠️ 掴む判定（頂点・角・回転・パン）には1行も触っていない。
+      描くモードのときだけ、いちばん先に返す。 */
+const PEN = { on:false, w:18, col:'#111111', feel:'plain', ang:35, grid:14, jit:6 };
+let penPath = null;
+
+function penDown(pt){
+  artLayer.activate();
+  penPath = new paper.Path({ strokeColor: PEN.col, strokeWidth: PEN.w,
+                             strokeCap:'round', strokeJoin:'round' });
+  penPath.add(pt);
+}
+function penMove(pt){
+  if(!penPath) return;
+  const last = penPath.lastSegment;
+  /* ⚠️ 近すぎる点は足さない（同じ場所の点が積もると、それ自体が手ブレになる） */
+  if(last && pt.getDistance(last.point) < 1.6/paper.view.zoom) return;
+  penPath.add(pt);
+  const k = penPath.segments.length;
+  if(k > 3) penPath.smooth({ type:'continuous', from:k-4, to:k-1 });
+}
+function penUp(){
+  if(!penPath) return;
+  const p0 = penPath;
+  penPath = null;
+  if(p0.segments.length < 2){ p0.remove(); return; }
+  p0.simplify(2.5);
+  const made = penFeel(p0);
+  const item = made || p0;
+  if(made) p0.remove();
+  addDrawn(item);
+}
+/* ⭐ 引いた線を【図】として置く。⚠️ addPiece は版面の半分に縮めて中央へ置く
+   （読み込んだ画像用）ので、描いた線には使わない＝引いた場所・大きさのまま残す。 */
+function addDrawn(item){
+  item.remove();
+  const c = item.bounds.center;
+  item.position = new Point(0, 0);
+  const pc = { id:uid(), item, src:null, x:c.x, y:c.y, sc:100, rot:0 };
+  S.pieces.push(pc);
+  S.sel = { kind:'piece', i:S.pieces.length-1 };
+  syncPanel(); render();
+  stat('引いた線を図として置いた — 動かす／角で拡大／角の少し外で回す');
+  return pc;
+}
+/* ⭐⭐ 書き心地 ── 作字SAKUJI と同じ式（片方だけ直して手ざわりがずれる、を作らない）。
+   ・刃 HA   ＝ 幅のある平ペン（角度が固定なので進む向きで太さが変わる）
+   ・擦 SURE ＝ 粗い升目に丸める（斜めに飛ばさず縦横に折る＝段）
+   ・滲 NIJIMI＝ 縁が揺れる（乱数は引いた場所から決める＝毎回化けない）
+   ⚠️ どれも paper のパス＝SVG にもそのまま出る。 */
+function penFeel(src){
+  const feel = PEN.feel || 'plain';
+  if(feel === 'plain' || !src || src.segments.length < 2) return null;
+  const col = PEN.col || '#111111';
+  const w   = Math.max(1, PEN.w || 18);
+  const step = Math.max(1.2, w * 0.12);
+  const L = src.length || 1;
+  const pts = [];
+  for(let d = 0; d <= L; d += step) pts.push(src.getPointAt(Math.min(d, L)));
+  if(pts.length < 2) return null;
+
+  if(feel === 'ha'){
+    const a  = (PEN.ang || 35) * Math.PI / 180;
+    const ux = Math.cos(a) * w * 0.5, uy = Math.sin(a) * w * 0.5;
+    const A = pts.map(p => new Point(p.x + ux, p.y + uy));
+    const B = pts.map(p => new Point(p.x - ux, p.y - uy)).reverse();
+    const out = new paper.Path({ segments:[...A, ...B], closed:true, fillColor: col });
+    out.simplify(1.2);
+    return out;
+  }
+  if(feel === 'sure'){
+    const g = Math.max(2, PEN.grid || 14);
+    const sn = []; let lx = null, ly = null;
+    for(const p of pts){
+      const x = Math.round(p.x/g)*g, y = Math.round(p.y/g)*g;
+      if(x === lx && y === ly) continue;
+      if(lx !== null && x !== lx && y !== ly) sn.push(new Point(x, ly));
+      sn.push(new Point(x, y)); lx = x; ly = y;
+    }
+    if(sn.length < 2) return null;
+    return new paper.Path({ segments:sn, strokeColor:col, strokeWidth:w,
+                            strokeCap:'butt', strokeJoin:'miter' });
+  }
+  if(feel === 'nijimi'){
+    const j = Math.max(1, PEN.jit || 6);
+    const rnd = i => { const t = Math.sin(i*12.9898 + pts[0].x*0.017 + pts[0].y*0.023) * 43758.5453;
+                       return (t - Math.floor(t)) - 0.5; };
+    const half = w * 0.5, A = [], B = [];
+    for(let i = 0; i < pts.length; i++){
+      const p = pts[i], q = pts[Math.min(i+1, pts.length-1)], o = pts[Math.max(i-1, 0)];
+      let tx = q.x - o.x, ty = q.y - o.y;
+      const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+      const nx = -ty, ny = tx;
+      A.push(new Point(p.x + nx*(half + rnd(i)*j),     p.y + ny*(half + rnd(i)*j)));
+      B.push(new Point(p.x - nx*(half + rnd(i+977)*j), p.y - ny*(half + rnd(i+977)*j)));
+    }
+    const out = new paper.Path({ segments:[...A, ...B.reverse()], closed:true, fillColor:col });
+    out.smooth({ type:'continuous' });
+    return out;
+  }
+  return null;
+}
 function addPiece(item, src, at){
   item.remove();
   const b = item.bounds, fit = Math.min(S.board.w, S.board.h) * 0.5 / Math.max(b.width, b.height);
@@ -3011,6 +3151,28 @@ function takeFile(f, at){
   };
   isSvg ? rd.readAsText(f) : rd.readAsDataURL(f);
 }
+/* ⭐ ✒️ 描く の入り切り。⚠️ 描くモードの間は掴めない＝カーソルで分かるようにする */
+function syncPen(){
+  const b = $('bPen'); if(!b) return;
+  b.classList.toggle('on', PEN.on);
+  b.textContent = PEN.on ? '✒️ 描く（入）' : '✒️ 描く';
+  cv.style.cursor = PEN.on ? 'crosshair' : '';
+  const f = PEN.feel || 'plain';
+  document.querySelectorAll('.feel-ha,.feel-sure,.feel-nijimi').forEach(el => {
+    el.style.display = el.classList.contains('feel-' + f) ? '' : 'none';
+  });
+}
+$('bPen').onclick = () => { PEN.on = !PEN.on; syncPen();
+  stat(PEN.on ? '✒️ 描く — 盤を引くと線になる（もう一度押すと選ぶに戻る）' : '選ぶに戻した'); };
+$('feel').addEventListener('change', e => { PEN.feel = e.target.value; syncPen(); });
+$('penC').addEventListener('input', e => { PEN.col = e.target.value; });
+[['penW','w'],['feelAng','ang'],['feelGrid','grid'],['feelJit','jit']].forEach(([id, k]) => {
+  const r = $(id); if(!r) return;
+  r.addEventListener('input', () => { PEN[k] = +r.value;
+    const v = $('v' + id.charAt(0).toUpperCase() + id.slice(1)) || $('v' + id);
+    if(v) v.textContent = r.value; });
+});
+syncPen();
 $('bImg').onclick = () => $('fImg').click();
 $('fImg').addEventListener('change', e => { takeFile(e.target.files[0]); e.target.value = ''; });
 $('bSvg').onclick = () => $('fSvg').click();
