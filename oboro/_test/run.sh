@@ -51,6 +51,9 @@ echo
 echo "── ②b どの線を2色でわたすでも／再生の重さ"
 node "$HERE/_test/anim.mjs" "http://localhost:$P1/oboro/" "$OLDURL" || NG=1
 echo
+echo "── ②c 動画にも効く／もっと細かく（2026-08-27）"
+node "$HERE/_test/vid.mjs" "http://localhost:$P1/oboro/" || NG=1
+echo
 if [ -f "$HEIC" ]; then
   echo "── ③ HEIC（iPhone の写真）を読む"
   node "$HERE/_test/heic.mjs" "http://localhost:$P1/oboro/" "$HEIC" || NG=1
