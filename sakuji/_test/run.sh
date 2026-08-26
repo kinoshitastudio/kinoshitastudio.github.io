@@ -55,4 +55,11 @@ PY
 RC=$?
 
 rm -f "$TMP"           # ⚠️ 公開フォルダなので必ず消す
+
+# ⭐ 書き心地の切り替え（2026-08-26）
+echo
+echo "── 書き心地（刃HA／擦SURE／滲NIJIMI）"
+node "$(cd "$(dirname "$0")" && pwd)/feel.mjs" || FEELNG=1
+
+if [ "${FEELNG:-0}" = "1" ]; then exit 1; fi
 exit $RC
