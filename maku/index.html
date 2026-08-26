@@ -360,6 +360,8 @@
     input:not([type=range]):not([type=color]):not([type=checkbox]):not([type=radio]):not([type=file]):not([type=button]),
     select, textarea{ font-size:16px !important; }
   }
+  /* ⭐ 白を抜く は【画像の版】のときだけ出す（字の版で触れるのに効かない、を作らない） */
+  body:not(.sheet-image) .sheet-image-only{ display:none }
 </style>
 </head>
 <body>
@@ -373,7 +375,9 @@
   <h2>版（重ねる）</h2>
   <div class="chips" id="sheets"></div>
   <div class="seg" id="addSeg"><button data-add="text">＋ 字</button><button data-add="image">＋ 画像</button></div>
-  <input type="file" id="imgFile" accept="image/*" hidden>
+  <!-- ⚠️ SVG も image/* に入るが、Finder で選べないことがあるので明記する。
+       ⭐ 作字SAKUJI の SVG は「+画像」からそのまま置ける（白は自動で抜く）。 -->
+  <input type="file" id="imgFile" accept="image/*,.svg,image/svg+xml" hidden>
   <!-- ⭐ 2026-08-06 可動域を広げた。位置は ±100（＝版1枚ぶん）だと画面の外まで押し出せず、
        大きさも 300% で頭打ちだった。値の意味は変えていない（x/y は /100・大きさは倍率）ので
        古い控えはそのまま読める。 -->
@@ -384,6 +388,12 @@
   <div class="row"><label>縦位置</label><input type="range" id="sy" min="-300" max="300" value="0"><span class="val"></span></div>
   <div class="row"><label>大きさ</label><input type="range" id="ss" min="1" max="800" value="100"><span class="val"></span></div>
   <div class="row"><label>角度</label><input type="range" id="sr" min="-180" max="180" value="0"><span class="val"></span></div>
+  <!-- ⭐⭐ 2026-08-26 木下「一応 svg 読み込んだけど、これだと普通の画像と同じかな？」
+       ⭐ そのとおりだった＝作字SAKUJI の SVG は【白い地の板】ごと面に貼られるので、
+          うねりが白い板に効いて【線が動かない】。
+       ⭐ 白を抜くと**線だけが膜になる**（シェーダはもともと透明を捨てる作りだった）。
+       ⚠️ 0＝抜かない＝いままでの絵と1画素も変わらない。SVG を読んだときだけ既定で入れる。 -->
+  <div class="row sheet-image-only" id="rowKnock"><label>白を抜く</label><input type="range" id="knock" min="0" max="100" value="0"><span class="val"></span></div>
   <button class="big" id="dupSheet">この版を複製</button>
   <button class="big" id="delSheet">この版を消す</button>
   <div class="note">版を押す＝その版を選ぶ。<b>「字」「ワープ」「3層」「変形」「文字ごと」は選んだ版だけに効く</b><br>
@@ -1691,6 +1701,15 @@ document.querySelectorAll('#panel input[type=range]').forEach(r=>{
       s.warp[r.id] = +r.value; if(val) val.textContent = r.value; });
     return;
   }
+  /* ⭐ 白を抜く（2026-08-26）＝【選んでいる版】に書いて、その版の絵を焼き直す */
+  if(r.id === 'knock'){
+    r.addEventListener('input', ()=>{
+      const s = S_(); if(!s || s.kind !== 'image') return;
+      s.knock = +r.value; if(val) val.textContent = r.value;
+      bakeSheetImage(s);
+    });
+    return;
+  }
   /* ⭐ 版のつまみ（位置・大きさ・角度・字間・行間）は【選んでいる版】に書く。P には入れない */
   const SHEETKEY = { sx:'x', sy:'y', ss:'scale', sr:'rot', track:'track', leading:'leading' };
   if(SHEETKEY[r.id]){
@@ -1850,6 +1869,7 @@ function syncSheetUI(){
   const set = (id,v)=>{ const el=document.getElementById(id); if(!el) return;
     el.value = v; const t = el.parentElement.querySelector('.val'); if(t) t.textContent = el.value; };
   set('sx', s.x); set('sy', s.y); set('ss', Math.round(s.scale*100)); set('sr', s.rot);
+  set('knock', s.knock || 0);        /* ⭐ 白を抜く も版の持ち物 */
   /* ⭐ 歪み（ワープ・辺ごと・3層）と色も版の持ち物＝版を押したらつまみをその版の値に入れ替える */
   syncWarpUI(); syncLayerUI(); syncInkUI(); syncInk();
   if(s.kind === 'text'){
@@ -2359,21 +2379,60 @@ function foldForKind(kind){
   });
 }
 /* ⭐ 画像は【新しい版】として足す。字の版はそのまま残る＝重ねられる */
-function addImageSheet(img){
-  const s = inheritWarp(newSheet('image'));         // ⭐ 歪みは今の版から受け継ぐ
-  s.img = img; s.asp = img.width / img.height;
+/* ⭐⭐ 白を抜く（2026-08-26）── 明るい所のアルファを落として【線だけ】にする。
+   🔴 木下＝「一応 svg 読み込んだけど、これだと普通の画像と同じかな？」
+      そのとおりで、作字SAKUJI の SVG は白い地の板ごと貼られる＝うねりが板に効いて線が動かない。
+   ⭐ シェーダはもともと `if(t4.a < 0.004) discard;` で透明を捨てる作りなので、
+      **焼くときにアルファを落とすだけ**で線だけが膜になる（描く側は1行も変えない）。
+   ⚠️ 0＝抜かない＝いままでと1画素も変わらない。 */
+function bakeImageTex(img, knock){
+  const w = img.naturalWidth || img.width || 1000;
+  const h = img.naturalHeight || img.height || 1000;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d', { willReadFrequently:true });
+  g.drawImage(img, 0, 0, w, h);
+  const k = Math.max(0, Math.min(100, knock || 0));
+  if(k > 0){
+    const im = g.getImageData(0, 0, w, h), px = im.data;
+    /* ⭐ 抜く強さ＝どこまで明るい所を透明にするか。100 で「真っ白だけ」から
+       だんだん暗い所まで抜ける。⚠️ 縁を残すため、境目はやわらかく落とす。 */
+    const th = 255 - k * 1.9;
+    for(let i = 0; i < px.length; i += 4){
+      const l = (px[i] + px[i+1] + px[i+2]) / 3;
+      if(l >= th){
+        const t = Math.min(1, (l - th) / 24);        /* 境目をやわらかく */
+        px[i+3] = Math.round(px[i+3] * (1 - t));
+      }
+    }
+    g.putImageData(im, 0, 0);
+  }
+  return c;
+}
+function bakeSheetImage(s){
+  if(!s || !s.img || !gl || !s.tex) return;
   gl.bindTexture(gl.TEXTURE_2D, s.tex);
-  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);     // ⚠️ canvas と WebGL で上下が逆
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE,
+                bakeImageTex(s.img, s.knock || 0));
+}
+function addImageSheet(img, isSvg){
+  const s = inheritWarp(newSheet('image'));         // ⭐ 歪みは今の版から受け継ぐ
+  s.img = img; s.asp = (img.naturalWidth||img.width) / (img.naturalHeight||img.height);
+  /* ⭐ SVG は【線を渡すため】に読むものなので、白を抜いた状態から始める。
+     ⚠️ ふつうの画像は 0＝いままでどおり（写真の白が抜けたら困る）。 */
+  s.knock = isSvg ? 60 : 0;
+  bakeSheetImage(s);
   SHEETS.push(s); curSheet = SHEETS.length-1; selChar = -1;
   refreshSheets();
   const st = document.getElementById('stat');
-  if(st) st.textContent = `IMAGE ${img.width}×${img.height}`;
+  if(st) st.textContent = `IMAGE ${img.naturalWidth||img.width}×${img.naturalHeight||img.height}`
+                        + (isSvg ? '（SVG — 白を抜いて線だけにしている）' : '');
 }
 function loadImageFile(f){
   if(!f) return;
+  const isSvg = /svg/i.test(f.type) || /\.svg$/i.test(f.name);
   const img = new Image();
-  img.onload = ()=> addImageSheet(img);
+  img.onload = ()=> addImageSheet(img, isSvg);
   img.onerror = ()=>{ const st=document.getElementById('stat'); if(st) st.textContent='画像を読めなかった'; };
   img.src = URL.createObjectURL(f);
 }
