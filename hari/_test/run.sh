@@ -31,4 +31,11 @@ CODE=$?
 if [ "$STARTED" = "1" ]; then
   pkill -f "http.server $PORT" >/dev/null 2>&1
 fi
+
+# ⭐ ✒️ 描く（2026-08-26）
+echo
+echo "── ✒️ 描く（書き心地つき）"
+node "$(cd "$(dirname "$0")" && pwd)/pen.mjs" || PENNG=1
+
+if [ "${PENNG:-0}" = "1" ]; then exit 1; fi
 exit $CODE
