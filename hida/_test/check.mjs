@@ -195,6 +195,9 @@ await p.evaluate(() => { PRESETS.geijutsu(); syncAll(); kick(); });
     const out = { 種:document.querySelectorAll('#brush button').length, 前:SRC.length };
     document.querySelector('#brush button[data-v="wa"]').click();
     out.種を押すと描くに入る = document.querySelector('#use button[data-v="draw"]').classList.contains('on');
+    /* ⚠️ 既定は【筆】なので、まず「1つだけ」に寄せて前の置き方を確かめる */
+    const bg = document.getElementById('r_bgap');
+    bg.value = bg.max; bg.dispatchEvent(new Event('input', { bubbles:true }));
     ev('pointerdown', r.left+r.width*0.40, r.top+r.height*0.45);
     for(let i=1;i<=8;i++) ev('pointermove', r.left+r.width*(0.40+0.10*i/8), r.top+r.height*(0.45+0.06*i/8));
     ev('pointerup', r.left+r.width*0.50, r.top+r.height*0.51);
@@ -225,6 +228,46 @@ await p.evaluate(() => { PRESETS.geijutsu(); syncAll(); kick(); });
         '⭐⭐ 押した所が中心・引いた長さが大きさ・引いた向きが角度');
   check(D.選ばれる, '置いた芯が選ばれる（すぐ直せる）');
   check(D.動かすで動く && D.動かすで増えない, '⚠️ 動かすに戻すといままでどおり（引っぱると動く・増えない）');
+
+  /* ⭐⭐ まっさら／筆（連続して置く）／解像度（ビット）── 2026-08-27 木下 */
+  const B = await p.evaluate(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    const cv = document.querySelector('canvas'), r = cv.getBoundingClientRect();
+    const ev = (t,x,y) => cv.dispatchEvent(new PointerEvent(t,{clientX:x,clientY:y,button:0,buttons:1,
+      bubbles:true,pointerId:1,pointerType:'mouse'}));
+    const set = (id,v) => { const q=document.getElementById(id); q.value=v;
+      q.dispatchEvent(new Event('input',{bubbles:true})); };
+    const sig = () => { const c=document.createElement('canvas'); c.width=160; c.height=160;
+      c.getContext('2d').drawImage(cv,0,0,160,160);
+      const d=c.getContext('2d').getImageData(0,0,160,160).data; let h=0;
+      for(let i=0;i<d.length;i+=4) h=(h*31+d[i])>>>0; return h; };
+    const out = {};
+    document.getElementById('b_blank').click(); await wait(300);
+    out.まっさら = SRC.length;
+    out.まっさらで描くに入る = document.querySelector('#use button[data-v="draw"]').classList.contains('on');
+    out.まっさらの絵 = sig();
+    /* 筆＝1回引くと何個も置かれる */
+    set('r_bsz', 0.16); set('r_bgap', 0.10);
+    document.querySelector('#brush button[data-v="wa"]').click();
+    ev('pointerdown', r.left+r.width*0.25, r.top+r.height*0.30);
+    for(let i=1;i<=30;i++) ev('pointermove', r.left+r.width*(0.25+0.45*i/30),
+      r.top+r.height*(0.30+0.35*i/30));
+    ev('pointerup', r.left+r.width*0.70, r.top+r.height*0.65);
+    await wait(600);
+    out.筆 = SRC.length;
+    out.道に沿って並ぶ = SRC.length>2 && (SRC[0].x!==SRC[1].x) && (SRC[1].x!==SRC[2].x);
+    /* 解像度（ビット） */
+    const before = sig();
+    set('r_bit', 40); await wait(600); out.ビットで変わる = (sig() !== before);
+    set('r_bit', 0);  await wait(600); out.ゼロで戻る = (sig() === before);
+    return out;
+  });
+  check(B.まっさら === 0, '⭐ まっさら＝芯がゼロになる（白紙から描ける）', B.まっさら + '本');
+  check(B.まっさらで描くに入る, '⭐ まっさらにしたら【描く】側に入る（すぐ引ける）');
+  check(B.筆 >= 8, '⭐⭐ 筆＝1回引くと種が【次々に】置かれる（ブラシ）', B.筆 + '個');
+  check(B.道に沿って並ぶ, '⭐ 引いた道に沿って並ぶ（同じ所に積まない）');
+  check(B.ビットで変わる, '⭐⭐ 解像度（ビット）で絵が変わる（粗い画素になる）');
+  check(B.ゼロで戻る, '⚠️ 0（なし）＝いままでと1画素も変わらない');
 }
 
 console.log(ng.length ? `\n🔴 だめだったもの ${ng.length}件: ${ng.join(' / ')}` : '\n✅ 全部通った');
