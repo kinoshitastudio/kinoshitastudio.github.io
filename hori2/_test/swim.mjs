@@ -37,7 +37,18 @@ const R = await p.evaluate(async () => {
     if(r){const u=r.closest('.unit'); if(u&&u.classList.contains('off'))u.querySelector('.unit-head').click();
       r.value=v; r.dispatchEvent(new Event('input',{bubbles:true}));}};
   const out={};
-  const a=grab(); await wait(700); out.揺らぎ=diff(a,grab());
+  /* 🔴🔴 2026-08-26 ── ここで【まだ組み上がっていない絵】を土台にしていた。
+     機械が混んでいると字の組み直しが 1800ms で終わらず、揺らぎが 13841画素と出て
+     そのあとの判定が全部その数字に引きずられた（＝ぶれる試験＝狼少年）。
+     ⭐ 落ち着くまで撮り続けてから土台にする（[[feedback_prove_no_change_by_pixels]]）。 */
+  let a = grab();
+  for(let i = 0; i < 20; i++){
+    await wait(500);
+    const b2 = grab();
+    if(diff(a, b2) < 200){ a = b2; break; }
+    a = b2;
+  }
+  await wait(700); out.揺らぎ=diff(a,grab());
   /* ⚠️⚠️ 波は【時間で動く】ので、そのままだと「向きを変えたから変わった」のか
      「波が進んだから変わった」のか分からない（直す前の版でも 11946画素 出て通ってしまった）。
      ⭐ 測る前に波の速さを 0 にする＝測りたいものだけが動く状態を作る。 */
@@ -48,6 +59,20 @@ const R = await p.evaluate(async () => {
   const b1=grab();
   knob('waveDir',100); await wait(1500);
   out['厚み→泳ぐ で絵が変わる']=diff(b1,grab());
+  /* ⭐ 🐟 1押しで泳ぐ（2026-08-26 木下「魚のような動きってあれは入れてない感じ？」
+     ＝入っていたが、波の高さ 0 のままだと向きを動かしても何も起きなかった） */
+  const sw = document.getElementById('bSwim');
+  if(!sw){ out.ボタンが無い = true; return out; }
+  knob('wave',0); knob('waveDir',0); knob('speed',0); await wait(900);
+  const c0 = grab();
+  sw.click(); await wait(1500);
+  out['1押しで泳ぐ'] = diff(c0, grab());
+  out['足りない物も入る'] = { 向き:+document.querySelector('[data-p="waveDir"]').value,
+                              波:+document.querySelector('[data-p="wave"]').value,
+                              速さ:+document.querySelector('[data-p="speed"]').value };
+  out['印が点く'] = document.getElementById('bSwim').textContent.includes('泳いでいる');
+  sw.click(); await wait(1200);
+  out['もう一度で厚みに戻る'] = +document.querySelector('[data-p="waveDir"]').value;
   return out;
 });
 await b.close();
@@ -61,4 +86,11 @@ ok(R['波0で向きを変えても不動'] <= Math.max(R.揺らぎ, 20),
 ok(R['厚み→泳ぐ で絵が変わる'] > Math.max(R.揺らぎ*3, 2000),
    '厚み → 泳ぐ で絵が変わる（向きが効いている）',
    `${R['厚み→泳ぐ で絵が変わる']}画素`);
+if(R.ボタンが無い){ ok(false, '🐟 魚のように泳がせる（#bSwim）が有る'); process.exit(1); }
+ok(R['1押しで泳ぐ'] > Math.max(R.揺らぎ*3, 2000),
+   '⭐ 1押しで泳ぐ（波・速さが 0 でも絵が動く）', `${R['1押しで泳ぐ']}画素`);
+ok(R['足りない物も入る'].向き === 100 && R['足りない物も入る'].波 > 0 && R['足りない物も入る'].速さ > 0,
+   '⭐ 足りない物（波の高さ・速さ）も一緒に入る', JSON.stringify(R['足りない物も入る']));
+ok(R['印が点く'], '押したら印が点く（いま泳いでいると分かる）');
+ok(R['もう一度で厚みに戻る'] === 0, 'もう一度押すと厚みの向き（いままでの絵）に戻る');
 process.exit(ng ? 1 : 0);
