@@ -1071,6 +1071,15 @@
       <div class="row"><label>鮮やかさ<i>SAT</i></label><input type="range" data-p="inkSat" min="0" max="100" step="1" value="0"><span class="val"></span></div>
       <div class="row"><label>明るさ<i>VIVID</i></label><input type="range" data-p="inkVal" min="0" max="100" step="1" value="10"><span class="val"></span></div>
       <div class="row"><label>効き<i>AMOUNT</i></label><input type="range" data-p="inkAmt" min="0" max="100" step="1" value="100"><span class="val"></span></div>
+      <!-- ⭐⭐ 2026-08-26 木下「地の色を変えるとオブジェクト自体も変わってしまう」
+           🔴 いちばん下が mix(地, 字, インク量) なので、インク量が 1 未満の所は【地が透ける】
+              ＝地を変えれば絵の色も動く（実測＝地を黒→青にすると絵も青へ寄った）。
+           ⭐ 上げると、絵のある所だけ【下に敷く色】を字の色に差し替える＝地から離れる。
+           ⚠️ 0＝いままでの絵と1画素も変わらない。 -->
+      <div class="row"><label>地から離す<i>HOLD</i></label><input type="range" data-p="inkHold" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+      <div class="mod">⭐ <b>地から離す</b>を上げると、地の色を変えても<b>絵の色が動かなくなる</b><br>
+        （絵の下に敷く色を<b>字の色</b>に差し替える）<br>
+        ⚠️ 0 なら今までどおり＝地が透けて、地の色に引っぱられる</div>
       <div class="mod">⭐ <b>地の反対</b>＝地の明るさを見て、字を反対側へ置く<br>
         ⚠️ 色を固定すると、地を変えるたびに読めなくなる。<b>色は固定でなく地と反対に</b><br>
         <b>鮮やかさ</b> 0 ＝白黒のまま／上げると色がつく（<b>明るさ</b> は「手で決める」のとき効く）</div>
@@ -1298,6 +1307,7 @@ const P = {
   paperHue:40, paperSat:6, paperVal:94,
   washHue:196, washHue2:324, washSat:70, washVal:90, washAng:45, washSoft:100, washOnBg:0,
   /* 11 RIPPLE（波紋）＝地に流す同心円の縞 */
+  inkHold:0,     /* ⭐ 地から離す（2026-08-26）。0＝いままでどおり */
   ripFreq:26, ripSpeed:14, ripSoft:100, ripDepth:38, ripHue:212, ripSat:82, ripVal:88, ripFollow:1,
   ripCover:100, ripSolid:5, ripShape:0, ripSwirl:30, ripCx:50, ripCy:50, ripMat:0, ripCell:34,
   spinSpeed:32,
@@ -1508,13 +1518,14 @@ const ENGINES = [
     id:'ink', jp:'字の色',
     apply(U){
       U.post.uInkOn.value   = 1;
+      U.post.uInkHold.value = (P.inkHold || 0) / 100;
       U.post.uInkAuto.value = P.inkAuto;
       U.post.uInkHue.value  = P.inkHue / 360;
       U.post.uInkSat.value  = P.inkSat / 100;
       U.post.uInkVal.value  = P.inkVal / 100;
       U.post.uInkAmt.value  = P.inkAmt / 100;
     },
-    bypass(U){ U.post.uInkOn.value = 0; }
+    bypass(U){ U.post.uInkOn.value = 0; U.post.uInkHold.value = 0; }
   },
   {
     id:'tape', jp:'通す',
@@ -2827,6 +2838,7 @@ const postUniforms = {
   uRipCx:    { value: 0.5 },
   uRipCy:    { value: 0.5 },
   uInkOn:   { value: 0 },
+  uInkHold: { value: 0 },   /* ⭐ 地から離す（2026-08-26）。0＝いままでどおり */
   uInkAuto: { value: 1 },
   uInkHue:  { value: 0.13 },
   uInkSat:  { value: 0 },
@@ -2874,7 +2886,7 @@ postScene.add(new THREE.Mesh(
       uniform float uRipOn, uRipFreq, uRipSpeed, uRipSoft, uRipDepth, uRipHue, uRipSat, uRipVal;
       uniform float uRipCover, uRipSolid, uRipShape, uRipSwirl, uRipCx, uRipCy, uRipMat, uRipCell;
       uniform float uAlphaOut, uAlphaWide;   /* 地なしで出す */
-      uniform float uInkOn, uInkAuto, uInkHue, uInkSat, uInkVal, uInkAmt;
+      uniform float uInkOn, uInkAuto, uInkHue, uInkSat, uInkVal, uInkAmt, uInkHold;
       uniform float uCycles, uPulse, uT;
       uniform vec2 uRes;
       /* 🔴🔴 木下 2026-08-23＝「png 書き出しすると TAPE のざらつきは入ってないな」
@@ -3272,6 +3284,7 @@ postScene.add(new THREE.Mesh(
               ⚠️ 色を固定すると、地を変えるたびに読めなくなる。
                  **色は固定でなく地と反対に**（他の道具でも同じ話）。
                  これなら地をどう変えても、字は必ず立つ。 */
+        vec3 inkCol = fg;          /* ⭐ 地から離すときに【下に敷く色】として使う */
         if(uInkOn > 0.5){
           vec3 ic;
           if(uInkAuto > 0.5){
@@ -3283,6 +3296,7 @@ postScene.add(new THREE.Mesh(
             ic = hsv2rgb(vec3(fract(uInkHue), uInkSat, uInkVal));
           }
           fg = mix(fg, ic, uInkAmt);
+          inkCol = ic;
         }
 
         /* ⭐⭐ 08c GRID の色 ── 粒の中の帯そのものに色を差す。2026-08-19
@@ -3383,7 +3397,14 @@ postScene.add(new THREE.Mesh(
            ⚠️ uAlphaOut は画面では常に 0＝いままでと1画素も変わらない。 */
         float outA = 1.0;
         if(uAlphaOut > 0.5) outA = silhouette(v, uAlphaWide);
-        gl_FragColor = vec4(mix(bg, fg, v), outA);
+        /* ⭐⭐ 地から離す（2026-08-26 木下「地の色を変えるとオブジェクト自体も変わってしまう」）
+           ⭐ 絵のある所だけ、混ぜる相手を【地】から【字の色】に差し替える。
+              ＝インク量が薄い所でも地が透けない＝地を変えても絵の色が動かない。
+           ⚠️ 0 のときは silhouette も呼ばない＝いままでと1画素も変わらず、重くもならない。 */
+        vec3 base = bg;
+        if(uInkOn > 0.5 && uInkHold > 0.001)
+          base = mix(bg, inkCol, uInkHold * silhouette(v, uAlphaWide));
+        gl_FragColor = vec4(mix(base, fg, v), outA);
       }
     `
   })
