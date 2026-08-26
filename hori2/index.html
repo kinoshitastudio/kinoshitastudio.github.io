@@ -825,6 +825,13 @@
       <div class="row"><label>重ねる枚数<i>LAYER</i></label><input type="range" data-p="layer" min="0" max="40" step="1" value="12"><span class="val"></span></div>
       <div class="row"><label>ねじれ<i>TWIST</i></label><input type="range" data-p="twist" min="0" max="100" step="1" value="22"><span class="val"></span></div>
       <div class="row"><label>波の高さ<i>WAVE</i></label><input type="range" data-p="wave" min="0" max="120" step="1" value="0"><span class="val"></span></div>
+      <!-- ⭐⭐ 2026-08-26 木下「オブジェクト単体を別の動きで動かしたい。魚のように身を動かす」
+           ⭐ うねりの式はもう有り、違うのは【振る向き】だけだった。
+              厚み＝これまでの絵／泳ぐ＝帯の幅の向きに振る＝身をくねらせる。
+           ⚠️ 既定は 0（厚み）＝いままでの絵と1画素も変わらない。 -->
+      <div class="row"><label>うねる向き<i>SWIM</i></label><input type="range" data-p="waveDir" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+      <div class="mod">⭐ 0＝<b>厚みの向き</b>（いままで）／100＝<b>帯の幅の向き</b>＝<b>魚のように身をくねらせる</b><br>
+        ⚠️ <b>波の高さ</b>が 0 だと、向きを変えても何も起きない（振る量が 0 なので）</div>
       <div class="row"><label>波の細かさ<i>FREQ</i></label><input type="range" data-p="wavefreq" min="1" max="200" step="1" value="10"><span class="val"></span></div>
       <div class="row"><label>波の速さ<i>SPEED</i></label><input type="range" data-p="speed" min="0" max="100" step="1" value="40"><span class="val"></span></div>
       <div class="mod">WAVE は音でも叩かれる（中音）<br>0 でも AUDIO を点ければ動く</div>
@@ -1310,6 +1317,7 @@ const P = {
   inkHold:0,     /* ⭐ 地から離す（2026-08-26）。0＝いままでどおり */
   ripFreq:26, ripSpeed:14, ripSoft:100, ripDepth:38, ripHue:212, ripSat:82, ripVal:88, ripFollow:1,
   ripCover:100, ripSolid:5, ripShape:0, ripSwirl:30, ripCx:50, ripCy:50, ripMat:0, ripCell:34,
+  waveDir:0,     /* ⭐ うねる向き（2026-08-26）。0＝いままでどおり厚みの向き */
   spinSpeed:32,
   typeSize:62, typeDetail:4,
   /* ⭐ SVG を置く（2026-08-25）。字とは【別のつまみ】＝片方だけ動かせる */
@@ -1386,6 +1394,7 @@ const ENGINES = [
       U.ink.uTwist.value = P.twist / 100;
       U.ink.uWave.value     = P.wave + M.wave;                // 音が形そのものを揺らす
       U.ink.uWaveFreq.value = P.wavefreq;
+      U.ink.uWaveDir.value  = (P.waveDir || 0) / 100;   /* ⭐ 0＝厚み／100＝泳ぐ */
       U.ink.uSpeed.value    = P.speed / 100 * 3.0;
       U.ink.uPush.value     = M.push;
     },
@@ -1621,6 +1630,7 @@ const inkUniforms = {
   uTime:        { value:0 },
   uWave:        { value:0 },   // 帯がうねる量
   uWaveFreq:    { value:1 },   // うねりの細かさ
+  uWaveDir:     { value:0 },   /* ⭐ うねる向き 0＝厚み（いままで）／1＝帯の幅＝魚のように身をくねらせる */
   uSpeed:       { value:0.4 }, // うねりの速さ
   uPush:        { value:0 },   // 層が前後に開く量
   uHatchMode:   { value:0 },
@@ -1638,7 +1648,8 @@ const inkMaterial = new THREE.ShaderMaterial({
     attribute float aFace;   // 0=top 1=bottom 2=wall
     attribute vec3  aDOff;   // その頂点に乗っている押し出し分（厚みの実体）
     attribute float aLayer;  // 何本目のストロークか
-    uniform   float uDepthScale, uTime, uWave, uWaveFreq, uSpeed, uPush;
+    attribute vec3  aAcross; // 帯の幅の向き（魚のうねりはここへ振る）
+    uniform   float uDepthScale, uTime, uWave, uWaveFreq, uSpeed, uPush, uWaveDir;
     varying vec3  vN;
     varying float vU;
     varying float vFace;
@@ -1652,7 +1663,11 @@ const inkMaterial = new THREE.ShaderMaterial({
 
       // うねり — 弧長に沿って帯が波打つ。ストロークごとに位相をずらすので
       // 全体がバラバラに、しかし同じ拍で動く
-      vec3 axis = normalize(aDOff + vec3(0.0, 0.0, 0.0001));
+      /* ⭐⭐ うねりの【向き】を選べる（2026-08-26 木下「魚のように身を動かしたい」）
+         0＝厚みの向き（いままでの絵）／1＝帯の幅の向き＝魚が身をくねらせる動き。
+         ⚠️ uWaveDir=0 なら式も結果もいままでと1つも変わらない。 */
+        vec3 axD = normalize(aDOff + vec3(0.0, 0.0, 0.0001));
+      vec3 axis = normalize(mix(axD, aAcross, uWaveDir) + vec3(0.0, 0.0, 0.0001));
       float ph  = aU * uWaveFreq * 0.01 + aLayer * 1.7 + uTime * uSpeed;
       pos += axis * sin(ph) * uWave;
 
@@ -1741,6 +1756,7 @@ const inkMaterial = new THREE.ShaderMaterial({
 const shadowUniforms = {
   uDepthScale:inkUniforms.uDepthScale, uTime:inkUniforms.uTime, uWave:inkUniforms.uWave,
   uWaveFreq:inkUniforms.uWaveFreq, uSpeed:inkUniforms.uSpeed, uPush:inkUniforms.uPush,
+  uWaveDir:inkUniforms.uWaveDir,   /* ⚠️ 影も同じ式を通す＝影だけ泳がない、を作らない */
   uSPlane:{ value:0 },      // 0=奥（壁 z）／1=下（床 y）
   uSPos:  { value:-200 },   // その面の位置（世界の長さ）
   uSDir:  { value:new THREE.Vector2(-0.45,-0.45) },  // 光の向き（面に平行な成分）
@@ -1765,14 +1781,19 @@ const shadowMaterial = new THREE.ShaderMaterial({
     attribute float aFace;
     attribute vec3  aDOff;
     attribute float aLayer;
-    uniform float uDepthScale, uTime, uWave, uWaveFreq, uSpeed, uPush;
+    attribute vec3  aAcross;
+    uniform float uDepthScale, uTime, uWave, uWaveFreq, uSpeed, uPush, uWaveDir;
     uniform float uSPlane, uSPos, uSRef;
     uniform vec2  uSDir;
     varying float vTravel;      // 面に届くまでに走った長さ／絵の大きさ
     void main(){
       /* ⚠️ ここは ink の頂点シェーダと同じ式（変えるときは両方） */
       vec3 pos = position - aDOff + aDOff * uDepthScale;
-      vec3 axis = normalize(aDOff + vec3(0.0, 0.0, 0.0001));
+      /* ⭐⭐ うねりの【向き】を選べる（2026-08-26 木下「魚のように身を動かしたい」）
+         0＝厚みの向き（いままでの絵）／1＝帯の幅の向き＝魚が身をくねらせる動き。
+         ⚠️ uWaveDir=0 なら式も結果もいままでと1つも変わらない。 */
+        vec3 axD = normalize(aDOff + vec3(0.0, 0.0, 0.0001));
+      vec3 axis = normalize(mix(axD, aAcross, uWaveDir) + vec3(0.0, 0.0, 0.0001));
       float ph  = aU * uWaveFreq * 0.01 + aLayer * 1.7 + uTime * uSpeed;
       pos += axis * sin(ph) * uWave;
       pos.z += sin(aLayer * 2.3 + uTime * uSpeed * 0.7) * uPush;
@@ -1824,7 +1845,7 @@ function buildStroke(pts, z, layerIdx){
   const taper = P.taper / 100;
   const twist = P.twist / 100;
 
-  const pos = [], nor = [], us = [], fs = [], dof = [], lay = [], idx = [];
+  const pos = [], nor = [], us = [], fs = [], dof = [], lay = [], idx = [], acr = [];
   const secs = [];
   let arc = 0;
 
@@ -1854,6 +1875,11 @@ function buildStroke(pts, z, layerIdx){
 
     const cz = z + p.z;
     // 押し出し分 d を別に持つ。シェーダーが d だけを伸縮できるように
+    /* ⭐⭐ 2026-08-26 木下「オブジェクト単体を別の動きで動かしたい。魚のように身を動かす」
+       ⭐ うねりの式はもう有る。違うのは【振る向き】だけ＝
+          いままでは厚みの向き(aDOff)。魚は【帯の幅の向き＝across】に振る。
+       ⭐ across は断面を作るときにもう手元にある（ax,ay,az）ので、頂点に添えるだけ。 */
+    const acrossV = [ax, ay, az];
     const corner = (sw, sd) => ({
       x: p.x + ax * (w * sw) + bx * (depth * sd),
       y: p.y + ay * (w * sw) + by * (depth * sd),
@@ -1861,12 +1887,13 @@ function buildStroke(pts, z, layerIdx){
       dx: bx * (depth * sd),
       dy: by * (depth * sd),
       dz: bz * (depth * sd),
+      ax: acrossV[0], ay: acrossV[1], az: acrossV[2],   /* ⭐ 帯の幅の向き（魚のうねりはここへ振る） */
     });
 
     secs.push({
       LT: corner( 1,  1), RT: corner(-1,  1),
       RB: corner(-1, -1), LB: corner( 1, -1),
-      arc
+      arc, acr: acrossV
     });
   }
 
@@ -1889,6 +1916,7 @@ function buildStroke(pts, z, layerIdx){
       us.push(U[k]);
       fs.push(face);
       dof.push(A[k].dx, A[k].dy, A[k].dz);
+      acr.push(A[k].ax || 0, A[k].ay || 0, A[k].az || 0);
       lay.push(layerIdx);
     }
     idx.push(base, base+1, base+2, base, base+2, base+3);
@@ -1912,6 +1940,7 @@ function buildStroke(pts, z, layerIdx){
   g.setAttribute('aFace',    new THREE.Float32BufferAttribute(fs, 1));
   g.setAttribute('aDOff',    new THREE.Float32BufferAttribute(dof, 3));
   g.setAttribute('aLayer',   new THREE.Float32BufferAttribute(lay, 1));
+  g.setAttribute('aAcross',  new THREE.Float32BufferAttribute(acr, 3));   /* ⭐ 魚のうねり用 */
   g.setIndex(idx);
   /* ⭐ 影の面を「絵のどこに置くか」で決めるために、1本ごとの箱を1回だけ数えておく
        （毎コマ全頂点を数え直すと重い。作った時の1回で足りる） */
