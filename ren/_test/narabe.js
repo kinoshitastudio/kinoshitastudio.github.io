@@ -564,6 +564,60 @@
       const bars2 = [...document.querySelectorAll('#clipLane .clipseg')];
       ok('戻すと帯も順番に並ぶ', parseFloat(bars2[1].style.left) > 0, bars2[1].style.left);
 
+      /* ══⭐⭐ 切り抜き CROP（2026-08-26 木下「ren だが動画を入れてもクロップできるようにして」）
+         見るのは【動画にも効くか】【切ったぶんだけ絵が変わるか】【戻せるか】。 */
+      clips.length = 0; sel = 0;
+      seg('narabe', 0);
+      /* 左半分＝青／右半分＝赤 の【動画】を作る＝右を切ったら赤が消えるはず */
+      const vc = (() => {
+        const c = document.createElement('canvas'); c.width = 400; c.height = 400;
+        const x = c.getContext('2d');
+        x.fillStyle = '#0000ff'; x.fillRect(0, 0, 200, 400);
+        x.fillStyle = '#ff0000'; x.fillRect(200, 0, 200, 400);
+        Object.defineProperty(c, 'videoWidth',  { value:400 });
+        Object.defineProperty(c, 'videoHeight', { value:400 });
+        c.duration = 2; c.currentTime = 0; c.play = () => Promise.resolve();
+        return { type:'vid', el:c, name:'crop.mp4', url:'', in:0, out:2 };
+      })();
+      clips.push(vc); afterAdd(); sel = 0; buildClips();
+      seg('shape', 0);                      /* 正方形の版面で見る */
+      seg('fitMode', 0);                    /* 収める */
+      frameAt(0); await wait(120);
+      const 切る前 = px(0.75, 0.5);
+      ok('（前提）切る前は右半分が赤い', 切る前 === '255,0,0', 切る前);
+      /* 右を 45% 切る＝右端は青（左半分）が伸びてくる */
+      const cpr = document.getElementById('cpR');
+      cpr.value = 45; cpr.dispatchEvent(new Event('input', { bubbles:true }));
+      frameAt(0); await wait(120);
+      ok('⭐ 動画にも切り抜きが効く（右を切ると赤が減る）', px(0.62, 0.5) !== '255,0,0', px(0.62, 0.5));
+      ok('  切り抜きは素材の持ち物（%で持つ）', clips[0].crop && clips[0].crop.r === 45,
+         JSON.stringify(clips[0].crop));
+      /* 版面の比に合わせて切る＝正方の版面なら 400×400 はそのまま（切らない） */
+      document.getElementById('bCropOff').click();
+      seg('shape', 1);                      /* たて 9:16 */
+      document.getElementById('bCropFit').click();
+      await wait(60);
+      const q = clips[0].crop;
+      ok('⭐ 版面の比に合わせて切る（たて版面なら左右を切る）',
+         q.l > 20 && q.l === q.r && q.t === 0 && q.b === 0, JSON.stringify(q));
+      /* 切ったあとの比が版面と合っている＝収めても地が出ない */
+      const S1 = srcOf(clips[0]);
+      ok('  切ったあとの比が版面とほぼ同じ',
+         Math.abs((S1.w/S1.h) - (cv.width/cv.height)) < 0.06,
+         (S1.w/S1.h).toFixed(3) + ' / ' + (cv.width/cv.height).toFixed(3));
+      /* 戻す（⌘Z）で切り抜きが元に戻る＝控えに入っている */
+      undo(); await wait(60);
+      ok('⭐ 戻すで切り抜きが元に戻る（控えに入っている）',
+         !clips[0].crop || !(clips[0].crop.l), JSON.stringify(clips[0].crop));
+      /* ぜんぶに配る */
+      clips.push(imgClip(400, 400, '#0a0', 'e.png')); afterAdd(); sel = 0; buildClips();
+      const cpl = document.getElementById('cpL');
+      cpl.value = 20; cpl.dispatchEvent(new Event('input', { bubbles:true }));
+      document.getElementById('bCropAll').click();
+      ok('⭐ ぜんぶに＝全部の素材に同じ割合で配る',
+         clips.every(c => c.crop && c.crop.l === 20), clips.map(c => c.crop.l).join('/'));
+      document.getElementById('bCropOff').click();
+
     }catch(e){
       R.push({ n:'⛔ 試験中に例外', p:false, d: e && (e.message + ' @ ' + (e.stack||'').split('\n')[1]) });
     }
