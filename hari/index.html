@@ -466,6 +466,44 @@ input[type=color]{ border-radius:8px; height:30px }
       ⚠️ <b>どちらでも書き出しは版面の中だけ</b>。外にはみ出た分は焼かれない</div>
   </div>
 
+  <!-- ⭐⭐ 紙の質感（2026-08-26 木下「HARI に紙の質感を増やしてほしい。そして Figma でいう
+       オーバーレイでの質感の紙の上に載せるのをやるとより紙らしくなるのでは？」）
+       ⭐ 地の色として塗るのではなく【作品ぜんぶの上に1枚重ねて、下と混ぜる】＝
+          字にも図にも同じ紙目が乗るので「別々の要素」でなく【紙に刷った1枚】に見える。
+       ⚠️ 質感は写真を貼るのでなく【式で作る】＝種で振れる＝道具の中で偶然が起きる。
+       ⚠️ なし＝いままでの絵と1画素も変わらない（分岐ごと通さない）。 -->
+  <h2>紙 ── 質感を重ねる</h2>
+  <div class="sec">
+    <div class="row"><label>紙の目</label>
+      <div class="seg" id="segKami" style="flex:1">
+        <button data-v="none" class="on">なし</button>
+        <button data-v="zara">ざら</button>
+        <button data-v="me">簾目</button>
+        <button data-v="sen">繊維</button>
+        <button data-v="mura">ムラ</button>
+      </div></div>
+    <div id="kamiUI">
+      <div class="row"><label>重ね方</label>
+        <div class="seg" id="segKamiB" style="flex:1">
+          <button data-v="multiply" class="on">乗算</button>
+          <button data-v="overlay">オーバーレイ</button>
+          <button data-v="screen">スクリーン</button>
+        </div></div>
+      <div class="row"><label>強さ</label>
+        <input type="range" id="kAmt" min="0" max="100" value="35"><span class="v" id="vKAmt">35</span></div>
+      <div class="row"><label>粗さ</label>
+        <input type="range" id="kSc" min="0" max="100" value="50"><span class="v" id="vKSc">50</span></div>
+      <div class="row" id="rowKAng"><label>向き</label>
+        <input type="range" id="kAng" min="0" max="180" value="0"><span class="v" id="vKAng">0</span></div>
+      <div class="row"><label>種</label>
+        <input type="range" id="kSeed" min="1" max="99" value="1"><span class="v" id="vKSeed">1</span>
+        <button class="btn" id="kShuf" style="padding:4px 10px">振る</button></div>
+      <div class="note">⭐ <b>乗算</b>＝紙の凹みが影になる（いちばん紙らしい）／<b>オーバーレイ</b>＝<b>明暗の両方</b>が乗って刷りムラに見える（下の色は残る）／<b>スクリーン</b>＝白い繊維が浮く（暗い地向き）<br>
+        ⭐ <b>簾目</b>＝手漉きの簀の目（<b>向き</b>で縦横）／<b>繊維</b>＝和紙のちり／<b>ムラ</b>＝刷りの厚薄<br>
+        ⚠️ <b>PNG は見たまま焼ける</b>。SVG は質感を1枚の画像として <b>mix-blend-mode</b> で重ねる（Illustrator では効かないことがある）</div>
+    </div>
+  </div>
+
   <h2>レイヤー ── 行と図</h2>
   <div class="sec">
     <div class="row" style="margin:0 0 6px">
@@ -1500,6 +1538,133 @@ function drawGuides(){
   }
 }
 
+/* ══⭐⭐ 紙の質感（2026-08-26）══════════════════════════════════
+   木下＝「HARI に紙の質感を増やしてほしい。そして Figma でいうオーバーレイでの
+   質感の紙の上に載せるのをやると、より紙らしくなるのでは？」
+
+   ⭐ 芯＝【地の色として塗る】のではなく【作品ぜんぶの上に1枚重ねて、下と混ぜる】。
+      字にも図にも同じ紙目が乗る＝「別々に置いた物」でなく「紙に刷った1枚」に見える。
+   ⭐ 質感は写真でなく【式】で作る＝種で振れる＝道具の中で偶然が起きる
+      （画像で持ち込めると、その1枚しか出ない）。
+   ⚠️ 同じ濃淡の場（-1〜1）を作り、重ね方（乗算／オーバーレイ／スクリーン）で
+      灰色への直し方だけを変える＝式は1本・規則は1つ。
+   ⚠️ なし＝ここを1行も通らない＝いままでの絵と1画素も変わらない。 */
+const KAMI_DEF = { on:'none', blend:'multiply', amt:35, sc:50, ang:0, seed:1 };
+const kamiOf = () => Object.assign({}, KAMI_DEF, S.kami || {});
+let kamiCache = { key:'', cv:null };
+/* 種から決まる乱数（同じ種なら1画素まで同じ＝振り直さない限り化けない） */
+function kamiRnd(seed){
+  let t = (seed >>> 0) + 0x9E3779B9;
+  return () => { t += 0x6D2B79F5;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296; };
+}
+/* 粗い格子の乱数を滑らかに繋ぐ（ムラ・繊維の土台）。
+   ⚠️ 表を持たない（座標から直に決める）＝版面がどれだけ大きくても場所を食わない。 */
+function kamiHash(x, y, seed){
+  let h = Math.imul(x|0, 374761393) ^ Math.imul(y|0, 668265263) ^ Math.imul(seed|0, 2246822519);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 2147483648 - 1;        // -1〜1
+}
+function kamiNoise(x, y, seed){
+  const x0 = Math.floor(x), y0 = Math.floor(y);
+  const tx = x - x0, ty = y - y0;
+  const sx = tx*tx*(3 - 2*tx), sy = ty*ty*(3 - 2*ty);
+  const h00 = kamiHash(x0,y0,seed),   h10 = kamiHash(x0+1,y0,seed);
+  const h01 = kamiHash(x0,y0+1,seed), h11 = kamiHash(x0+1,y0+1,seed);
+  const a = h00 + (h10 - h00)*sx, b = h01 + (h11 - h01)*sx;
+  return a + (b - a)*sy;
+}
+const kamiField = (cell, seed) => (x, y) => kamiNoise(x/cell, y/cell, seed);
+/* ⭐ 濃淡の場（-1〜1）を作る。⚠️ ここが「紙の目」の違いのぜんぶ */
+function kamiTex(){
+  const K = kamiOf(), B = S.board;
+  if(K.on === 'none') return null;
+  const key = [K.on, K.sc, K.ang, K.seed, K.blend, Math.round(B.w), Math.round(B.h)].join('|');
+  if(kamiCache.key === key && kamiCache.cv) return kamiCache.cv;
+  /* 焼くときは 4096 まで伸びるので、目が溶けないところまで作っておく */
+  const long = Math.max(B.w, B.h), k = Math.min(2048/long, 3);
+  const w = Math.max(8, Math.round(B.w*k)), h = Math.max(8, Math.round(B.h*k));
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const g2 = cv.getContext('2d', { willReadFrequently:true });
+  const im = g2.createImageData(w, h), px = im.data;
+  const a  = K.ang * Math.PI/180, ca = Math.cos(a), sa = Math.sin(a);
+  const rnd = kamiRnd(K.seed*7919 + 13);
+  const coarse = 0.4 + K.sc/100*3.6;                        // 粗さ＝目の大きさ
+  const fine  = kamiField(Math.max(2, 3*coarse), K.seed + 101);
+  const cloud = kamiField(Math.max(24, w/22 + 24*coarse), K.seed + 202);
+  const pitch = Math.max(2.2, 3.2*coarse);                  // 簾目の間隔
+  const chain = pitch * 9;                                  // 糸目（太い筋）
+  for(let y = 0; y < h; y++){
+    for(let x = 0; x < w; x++){
+      const i = (y*w + x)*4;
+      let n = 0;
+      if(K.on === 'zara'){
+        n = (rnd()*2 - 1)*0.75 + fine(x,y)*0.5;
+      } else if(K.on === 'me'){
+        /* ⚠️ まっすぐ引くと【方眼紙】に見える。⭐ 手で漉いた簀はわずかに波打つ＝ゆらす。 */
+        const v = -x*sa + y*ca;
+        const u = x*ca + y*sa + Math.sin(v*0.013)*pitch*0.5 + cloud(x,y)*pitch*0.35;
+        const cd = Math.abs(((v/chain) % 1 + 1) % 1 - 0.5);   // 糸目までの距離
+        n = Math.sin(u/pitch*6.2831853)*0.40                  // 簀の目
+          + (rnd()*2 - 1)*0.26 + cloud(x,y)*0.42;             // ⚠️ むらを混ぜないと方眼に見える
+        /* 糸目＝数本に1本の太い筋。⭐ 足すのでなく【置き換える】＝細かい目に切られて点線にならない */
+        if(cd < 0.022) n = -0.5 + (rnd()*2 - 1)*0.18;
+      } else if(K.on === 'sen'){
+        /* 繊維＝細長い筋。⚠️ 進む向きに引き伸ばした場を引く＝1本1本が長く見える */
+        const u = (x*ca + y*sa)/Math.max(6, 26*coarse), v = (-x*sa + y*ca)/Math.max(1.2, 2.2*coarse);
+        n = kamiSen(u, v, K.seed) + (rnd()*2 - 1)*0.18 + cloud(x,y)*0.3;
+      } else {                                               // mura
+        n = cloud(x,y)*1.15 + fine(x,y)*0.35 + (rnd()*2 - 1)*0.1;
+      }
+      n = Math.max(-1, Math.min(1, n));
+      /* ⭐ 同じ場を、重ね方に合わせて灰色に直す（重ねたあとに何が起きるかで決める） */
+      let v255;
+      /* 🔴 ここを「明暗を一律に灰色へ写す」で作ると、乗算のとき紙ぜんぶが灰色に沈む
+         （＝ただ暗くなるだけで、紙に見えない）。⭐ 紙らしさは【暗さ】でなく【むら】。
+         ⚠️ 乗算は暗くしかできないので【暗い側だけ】使う（明るい側は白＝素通り）。
+         　　スクリーンはその裏返し（明るい側だけ）。オーバーレイは中間が素通りなので両側使える。 */
+      if(K.blend === 'multiply')      v255 = 255 - Math.max(0, -n)*150;    // 白地＋凹みの影
+      else if(K.blend === 'screen')   v255 = Math.max(0,  n)*150;          // 黒地＋浮いた繊維
+      else                            v255 = 128 + n*96;                   // オーバーレイ＝中間で無変化
+      px[i] = px[i+1] = px[i+2] = Math.max(0, Math.min(255, v255));
+      px[i+3] = 255;
+    }
+  }
+  g2.putImageData(im, 0, 0);
+  kamiCache = { key, cv };
+  return cv;
+}
+/* 繊維1本ぶん＝引き伸ばした格子の乱数（横に長く・縦に細かい）。
+   ⭐ 濃い所だけ「ちり」として立てる＝全面がざらつかず、1本1本が見える。 */
+function kamiSen(u, v, seed){
+  const t = kamiNoise(u, v, seed + 303);
+  return Math.abs(t) > 0.42 ? (t > 0 ? -0.9 : 0.55) : t*0.22;
+}
+/* ⭐ 版面ちょうどに敷いて、下と混ぜる。⚠️ 掴む処理からは見えないように data で印を付ける */
+function kamiItem(){
+  const K = kamiOf();
+  const cv = kamiTex();
+  if(!cv || !(K.amt > 0)) return null;
+  /* 🔴 控えた canvas を そのまま Raster に渡してはいけない。
+     paper は Raster を捨てるときに canvas を【使い回しの箱に返す】ので、
+     控えていた紙が別の用に上書きされる＝同じ種なのに毎回ちがう紙になった（実測30万画素）。
+     ⭐ 渡すのは写し。控えの1枚は道具の側で持ち続ける。 */
+  const cp = document.createElement('canvas');
+  cp.width = cv.width; cp.height = cv.height;
+  cp.getContext('2d').drawImage(cv, 0, 0);
+  const r = new paper.Raster(cp);
+  r.remove();
+  r.bounds = new Rectangle(0, 0, S.board.w, S.board.h);
+  r.blendMode = K.blend;
+  r.opacity = K.amt/100;
+  r.locked = true;                       // ⚠️ 掴めない（作品の物ではない）
+  r.name = 'kami';                       // ⭐ SVG では id になる＝あとで mix-blend-mode を差す目印
+  r.data.kami = true;
+  return r;
+}
+
 /* ══ 描き直す（状態 → 画面）══ */
 function render(into, opt){
   const forExport = !!(opt && opt.forExport);
@@ -1570,6 +1735,11 @@ function render(into, opt){
   }
   });
 
+  /* ⭐⭐ 紙の質感 ── 作品ぜんぶの【いちばん上】に1枚重ねて、下と混ぜる（2026-08-26）。
+     ⭐ 版面を隠す入れ物（inner）の中に入れる＝版面の外へはみ出さない・PNG も同じ絵。
+     ⚠️ 掴む処理は data.piece / data.line だけを拾うので、この1枚は選べない（artItems）。 */
+  { const km = kamiItem(); if(km) inner.addChild(km); }
+
   /* ⭐ 版面の外を【薄く】見せる（木下＝はみ出しは隠したい／でも作業中は見たい）。
      ⚠️ クリップだけだと、外に出した図が完全に消えて【見えないものは動かせない】。
      ⭐ 中身は1回しか作らない＝出来上がった入れ物を clone して、クリップだけ外す。
@@ -1577,6 +1747,8 @@ function render(into, opt){
   if(!forExport && S.ghost !== false){
     const gh = inner.clone({ insert:false });
     if(gh.children[0] && gh.children[0].clipMask) gh.children[0].remove();  // クリップを外す＝外まで見える
+    /* ⚠️ 影には紙の質感を出さない＝下の影と上の本体で【二重に掛かる】のを避ける */
+    gh.getItems({ recursive:true, match:it => it.data && it.data.kami }).forEach(it => it.remove());
     gh.locked = true;            // ⚠️ 影は掴めない・選べない（本体だけを掴む）
     gh.opacity = 0.16;
     gh.data.inner = false; gh.data.ghost = true;
@@ -2667,6 +2839,7 @@ function syncPanel(){
     const row = $('rowBc' + i); if(row) row.style.display = i < bn ? '' : 'none';
   });
   $('bang').value = S.board.ang ?? 90; $('vbang').textContent = S.board.ang ?? 90;
+  if(typeof syncKami === 'function') syncKami();     /* ⭐ 紙の質感も版面と一緒に合わせる */
   $('rowAng').style.display = S.board.mode === 'linear' ? '' : 'none';
   const pc0 = selPiece();
   setRange('pcScale', pc0 ? Math.round(pc0.sc) : 100);
@@ -2763,6 +2936,28 @@ function setRange(id, v){ const e = $(id); if(!e) return; e.value = v;
   const s = $('v' + id.replace(/^[tp]c?/,'').replace(/^./, c=>c.toUpperCase())); if(s) s.textContent = v; }
 function segOn(id, v){ document.querySelectorAll('#'+id+' button').forEach(b =>
   b.classList.toggle('on', String(b.dataset.v) === String(v))); }
+
+/* ⭐⭐ 紙の質感 ── つまみ。⚠️ 値を書く道は1本（S.kami）＝画面・PNG・SVG が同じものを見る */
+function kamiSet(k, v){
+  S.kami = Object.assign({}, KAMI_DEF, S.kami || {});
+  S.kami[k] = v;
+  syncKami(); render();
+}
+function syncKami(){
+  const K = kamiOf();
+  segOn('segKami', K.on); segOn('segKamiB', K.blend);
+  $('kamiUI').style.display = K.on === 'none' ? 'none' : '';   /* ⚠️ なしのとき触れるのに効かない、を残さない */
+  $('rowKAng').style.display = (K.on === 'me' || K.on === 'sen') ? '' : 'none';  /* 向きが効くのは目と繊維だけ */
+  setRange('kAmt', K.amt); setRange('kSc', K.sc); setRange('kAng', K.ang); setRange('kSeed', K.seed);
+}
+document.querySelectorAll('#segKami button').forEach(b =>
+  b.onclick = () => { kamiSet('on', b.dataset.v);
+    stat(b.dataset.v === 'none' ? '紙の質感なし' : '紙の質感：' + b.textContent + '（重ね方と強さで効きが変わる）'); });
+document.querySelectorAll('#segKamiB button').forEach(b =>
+  b.onclick = () => kamiSet('blend', b.dataset.v));
+[['kAmt','amt'],['kSc','sc'],['kAng','ang'],['kSeed','seed']].forEach(([id,k]) =>
+  $(id).addEventListener('input', e => kamiSet(k, +e.target.value)));
+$('kShuf').onclick = () => { kamiSet('seed', 1 + Math.floor(Math.random()*99)); stat('紙を振った'); };
 
 /* つまみ → 状態（1本道にまとめる＝足すときはここに1行） */
 const BIND = {
@@ -3536,15 +3731,23 @@ $('ePNG').onclick = async () => {
   c.toBlob(b => { dl(b, 'hari.png'); stat('PNG を書き出した（' + c.width + '×' + c.height + '）'); }, 'image/png');
 };
 $('eSVG').onclick = () => {
-  const svg = artLayer.exportSVG({ asString:true, bounds:new Rectangle(0,0,S.board.w,S.board.h) });
+  let svg = artLayer.exportSVG({ asString:true, bounds:new Rectangle(0,0,S.board.w,S.board.h) });
+  /* ⭐ 紙の質感は【1枚の画像】として出る。⚠️ paper は重ね方（blendMode）を書かないので、
+     ここで mix-blend-mode を差す＝ブラウザで開けば画面と同じに見える。
+     ⚠️ Illustrator は mix-blend-mode を読まないことがある（そのときは PNG を使う）。 */
+  const K = kamiOf();
+  if(K.on !== 'none' && K.amt > 0){
+    svg = svg.replace(/<image([^>]*\bid="kami"[^>]*)>/,
+      (m, at) => '<image' + at + ' style="mix-blend-mode:' + K.blend + '">');
+  }
   dl(new Blob([svg], { type:'image/svg+xml' }), 'hari.svg');
-  stat('SVG を書き出した');
+  stat('SVG を書き出した' + (K.on !== 'none' && K.amt > 0 ? '（紙の質感は mix-blend-mode で重ねている）' : ''));
 };
 $('eJSON').onclick = () => {
   /* ⭐ 図（画像・SVG）も中身ごと入れる＝開き直せばポスターが丸ごと戻る。
      ⚠️ そのぶんファイルは大きくなる（画像は data URL で入るため）。 */
   syncColsFromStops();      /* ⭐ 古い版で開いても近い絵になるよう cols/n も一緒に書き出す */
-  const d = { app:'hari', v:1, board:S.board, showPath:S.showPath,
+  const d = { app:'hari', v:1, board:S.board, showPath:S.showPath, kami:S.kami || null,
     lines:  S.lines.map(L => JSON.parse(JSON.stringify(L))),
     /* ⭐ 描いた線（pen）も控えに入れる＝開き直すと引いた線ごと戻る。
        🔴 これまで src の無い図は捨てていたので、✒️ で引いた線は保存で消えていた。 */
@@ -3592,6 +3795,8 @@ $('fJSON').addEventListener('change', e => {
       const d = JSON.parse(rd.result);
       // ⚠️ 古い保存には mode/bg2 が無い＝既定で埋める（無いと地が消える）
       if(d.board) S.board = Object.assign({ bg2:'#ffffff', mode:'solid', ang:90 }, d.board);
+      /* ⭐ 紙の質感。⚠️ 古い保存には無い＝なし（いままでの絵）に落ちる */
+      S.kami = Object.assign({}, KAMI_DEF, d.kami || {});
       if(d.lines) S.lines = d.lines.map(L => Object.assign(newLine(''), L, { id:uid(),
         cell:Object.assign({}, CELL_DEF, L.cell || {}) }));
       S.pieces = [];
