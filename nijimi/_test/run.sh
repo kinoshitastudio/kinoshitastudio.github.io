@@ -4,6 +4,7 @@
 # 🔴 決め打ちのポートは【別のセッションのサーバ】で埋まっていることがある。
 #    ①空きポートを探し ②立てたあと【本当に NIJIMI か】を確かめてから始める。
 set -u
+ng=0
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d)"; SRV=""
 cleanup(){ [ -n "$SRV" ] && kill "$SRV" 2>/dev/null; rm -rf "$WORK"; }
@@ -28,4 +29,8 @@ fi
 echo "（${PORT} で立てた）"
 echo
 
-node "$HERE/_test/check.mjs" "http://localhost:$PORT/$NAME/"
+node "$HERE/_test/check.mjs" "http://localhost:$PORT/$NAME/" || ng=1
+echo
+echo "── SVG を種にする（作字SAKUJI のパスが滲むか）"
+node "$HERE/_test/svgin.mjs" "$HERE/index.html" || ng=1
+exit ${ng:-0}

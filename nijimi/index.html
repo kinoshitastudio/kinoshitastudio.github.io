@@ -495,6 +495,13 @@
   <div class="sep"></div>
   <button class="btn mode-seed" id="b-seed">まく</button>
   <button class="btn" id="b-clear">リセット</button>
+  <!-- ⭐⭐ 2026-08-26 木下「以前にSakujiで書き出ししたsvgデータをHori2に読み込ませるようなことが
+       できた。このようなことは今後道具の間でも必要だと感じている。Nijimiにもsvgを入れ込みすると
+       それらが作品としてNijimiの中で浮かび上げることはできるか？」
+       ⭐ できた＝この道具は【場】に直接入れる道（restoreField）をもう持っていたので、
+          SVG を白黒に焼いて【種】として置くだけで、あとはいつもの滲みがそのまま効く。 -->
+  <button class="btn" id="b-svg">SVGを置く</button>
+  <input type="file" id="f-svg" accept=".svg,image/svg+xml" hidden>
   <button class="btn" id="b-reroll">替</button>
   <button class="btn" id="b-export">PNG</button>
   <!-- ⭐⭐ 地なし（2026-08-25 木下「貼HARI でポスターを作るから」）＝重ねて置くための出し方 -->
@@ -1589,11 +1596,76 @@ seg('seg-mode','mode',()=>{
        ・モードを行き来すると控え(fieldCache)から古い絵が戻ってくる
        ・リロードすると盤に残った古い絵が戻ってくる
      ＝「リセットしたのに消えない」になる（木下・2026-07-31）。 */
+/* ══ SVG を種にする ── 作字SAKUJI などのパスを、この道具の【場】に置く ══════════
+   2026-08-26 木下「Nijimi にも svg を入れ込みすると、それらが作品として
+   Nijimi の中で浮かび上げることはできるか？」
+
+   ⭐⭐ できた。しかも新しい仕組みは1つも要らなかった＝この道具は
+      【場（Uint8Array）を直に入れる道】(restoreField) を控えの読み書きでもう持っていた。
+      SVG を白黒に焼いて「字のある所＝V を立てる」だけで、あとは滲み・育つ・干渉が
+      そのまま効く（＝手で描いたのと区別が無い）。
+   ⭐ 場の形は F_INIT が決めている＝ R=U=1.0 ／ G=V（字のある所が 1.0）。
+   ⚠️ SVG のラスタライズは【ブラウザに任せる】＝ <img> に dataURL で読ませて drawImage。
+      パスを自分で辿らないので、塗りも線も曲線も文字もそのまま出る。
+   ⚠️ 作字SAKUJI の SVG は【いちばん下に白い地の板】を敷いているが、
+      ここは「暗い所＝字」で拾うので**白い板は自動で無視される**（彫HORI2 のように捨てなくてよい）。 */
+function svgToField(text){
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas'); c.width = c.height = SIM;
+      const g = c.getContext('2d', { willReadFrequently:true });
+      g.fillStyle = '#fff'; g.fillRect(0, 0, SIM, SIM);
+      /* ⭐ 版面いっぱいに、縦横比を保って収める（少し余白を残す） */
+      const iw = img.width || SIM, ih = img.height || SIM;
+      const k = Math.min(SIM / iw, SIM / ih) * 0.86;
+      const w = iw * k, h = ih * k;
+      g.drawImage(img, (SIM - w) / 2, (SIM - h) / 2, w, h);
+      const d = g.getImageData(0, 0, SIM, SIM).data;
+      const px = new Uint8Array(SIM * SIM * 4);
+      let ink = 0;
+      for(let i = 0; i < SIM * SIM; i++){
+        const l = (d[i*4] + d[i*4+1] + d[i*4+2]) / 3;
+        const on = l < 128 ? 255 : 0;          /* 暗い所＝字 */
+        if(on) ink++;
+        px[i*4] = 255; px[i*4+1] = on; px[i*4+2] = 0; px[i*4+3] = 255;
+      }
+      res({ px, ink });
+    };
+    img.onerror = () => rej(new Error('SVG を絵にできなかった'));
+    /* ⚠️ 日本語や記号が入るので、そのまま btoa すると落ちる。UTF-8 に直してから包む */
+    img.src = 'data:image/svg+xml;base64,' +
+      btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+  });
+}
+async function placeSVG(text){
+  try{
+    const { px, ink } = await svgToField(text);
+    if(!ink){ stat && stat('🔴 線が見つからなかった'); return; }
+    restoreField(px);
+    /* ⚠️ 育つ の「元の字」も入れ替える＝入れた直後に育て始めても前の字に戻らない */
+    if(typeof growOrigin !== 'undefined'){ growOrigin = px; }
+    if(typeof growSnapGPU === 'function') growSnapGPU();
+    fieldChanged();
+    if(typeof refreshStat === 'function') refreshStat();
+  }catch(e){ console.warn(e); }
+}
 function fieldChanged(){ delete fieldCache[mode]; refreshStat(); saveSoon(); }
 document.getElementById('b-seed').onclick=()=>{ if(mode==='wave') genSources(); else seedField(); fieldChanged(); };
 document.getElementById('b-clear').onclick=()=>{ if(mode==='wave'){ sources=[]; } else { clearField(); computeGradCoords(); } fieldChanged(); };
 document.getElementById('b-reroll').onclick=()=>{ if(mode==='wave') genSources(); else { seed=Math.random()*1000; bake(); } fieldChanged(); };
 /* ⚠️ onclick に関数をそのまま渡すと第1引数が【イベント】になり、いつでも地なしになる。必ず包む */
+document.getElementById('b-svg').onclick=()=>document.getElementById('f-svg').click();
+/* ⚠️ 同じファイルを続けて選べるよう、読んだあと value を空にする
+   （空にしないと change が飛ばず「押しても何も起きない」になる） */
+document.getElementById('f-svg').addEventListener('change', e => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => placeSVG(String(rd.result || ''));
+  rd.readAsText(f);
+});
 document.getElementById('b-export').onclick=()=>{ exportPNG(false); };
 document.getElementById('b-export2').onclick=()=>{ exportPNG(true); };
 /* 🔴 REC（captureStream + MediaRecorder）は 2026-08-13 に捨てた。
