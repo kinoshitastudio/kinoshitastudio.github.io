@@ -57,18 +57,33 @@ for(let i = 0; i < 40 && a2 === a1; i++){ await new Promise(r => setTimeout(r, 4
 ok(a2 !== a1, '▶再生 を押すと角度が動く', `YAW ${a1}° → ${a2}°`);
 
 await click('btn-play');                       /* 止める */
-/* ⚠️ 止めた瞬間に角度が固まるわけではない＝カメラは【目標へ 0.12 ずつ寄る】作りなので、
-   止めたあともしばらく動く（カクッと止まらないため）。
-   ⭐ だから「ぴたりと同じ数字か」ではなく【動きが小さくなったか】で見る。 */
-const step = async () => { const u = await yaw(); await new Promise(r => setTimeout(r, 1200));
-                           return Math.abs((await yaw()) - u); };
-const moveStopped = await step();
-await click('btn-play');                       /* もう一度再生して比べる */
-await new Promise(r => setTimeout(r, 600));
-const movePlaying = await step();
-await click('btn-play');                       /* 止め直す */
-ok(moveStopped < Math.max(1, movePlaying), '■止める で動きが止まっていく（回り続けない）',
-   `止めているとき ${moveStopped}° ／ 再生中 ${movePlaying}°`);
+/* ⭐⭐ 2026-08-26 木下「停止すると一番最初の位置に戻して」＝止めたら【押す前の向き】へ。
+   ⚠️ ここは前は「動きが小さくなったか」を見ていた（止めた所に残る作りだった）。
+      規則が変わったので、見るものも変えた＝戻ってくるかどうか。
+   ⚠️ カメラは目標へ寄る作りなので、落ち着くまで少し待つ。 */
+let a3 = null;
+for(let i = 0; i < 20; i++){ await new Promise(r => setTimeout(r, 300)); a3 = await yaw();
+                             if(Math.abs(a3 - a1) <= 1) break; }
+ok(Math.abs(a3 - a1) <= 1, '⭐ ■止めると【押す前の向き】に戻る',
+   `押す前 ${a1}° → 回して ${a2}° → 止めて ${a3}°`);
+
+/* ⭐ 逆回転（2026-08-26 木下「さらにスピンの逆回転もできるように」）
+   ⚠️ 見るのは【符号が裏返り、つまみも一緒に動く】こと＝回る向きはこの1つの値で決まる。 */
+/* ⚠️ 本体は type="module" なので P は外から見えない＝【つまみの値】で見る（木下が見る数字と同じ） */
+const spinVal = () => p.evaluate(() => +document.querySelector('[data-p="spinSpeed"]').value);
+if(!(await has('btn-rev'))){
+  ok(false, '⇄逆回転のボタン（#btn-rev）が有る');
+  console.log('  ⚠️ 逆回転の入口が無いので、ここから先は見ない');
+  await b.close(); process.exit(1);
+}
+const revBefore = await spinVal();
+await click('btn-rev');
+const revAfter = await spinVal();
+const revMark = await p.evaluate(() => document.getElementById('btn-rev').textContent.includes('入'));
+ok(revAfter === -revBefore, '⭐ ⇄逆回転で回る向きが裏返る（つまみも一緒に動く）',
+   `${revBefore} → ${revAfter}`);
+ok(revMark === (revAfter < 0), '⇄逆回転の印が状態と合っている');
+await click('btn-rev');                        /* 元に戻しておく */
 
 /* SPIN を消して再生を押したら SPIN も点く（押して何も起きない を作らない） */
 await click('btn-spin');                       /* SPIN を消す */

@@ -1255,6 +1255,11 @@
   <button id="btn-spin">SPIN</button>
   <!-- ⭐ 画面で動かすか＝状態。SPIN（回すかどうか＝設定）とは別に持つ -->
   <button id="btn-play" title="画面で回す・止める（書き出しは SPIN に従うので、止めていても回ります）">▶ 再生</button>
+  <!-- ⭐⭐ 2026-08-26 木下「さらにスピンの逆回転もできるように」
+       ⚠️ 逆回転は【もう有った】（回る速さをマイナスにする）が、SPIN の段の中にしか無く
+          探しにくる場所＝再生の隣に無かった＝無いのと同じ。
+       ⭐ 持ち主は今までどおり P.spinSpeed ひとつ。ここはその【入口】＝符号を裏返すだけ。 -->
+  <button id="btn-rev" title="回る向きを裏返す（回る速さの符号＝SPIN の段のつまみと同じもの）">⇄ 逆回転</button>
   <button id="btn-pan" title="1本指で盤（カメラ）を動かす">移動</button>
   <button id="btn-obj" title="引っぱると絵そのものが動く（描かない）">絵を動かす</button>
   <button id="btn-png">PNG</button>
@@ -2292,6 +2297,7 @@ function syncUIFromP(){
     if(ON[k] !== undefined) u.classList.toggle('off', !ON[k]);
   });
   if(typeof syncSpin === 'function') syncSpin();
+  if(typeof syncRev === 'function') syncRev();     /* ⭐ 控えを読んだときも逆回転の印を合わせる */
   if(typeof gridGraySync === 'function') gridGraySync();
   if(typeof gridGapSync === 'function') gridGapSync();
 }
@@ -3989,6 +3995,8 @@ document.querySelectorAll('input[type=range]').forEach(r => {
     if(r.dataset.p === 'papN') syncGrad();      // 色数で出すつまみが変わる
     // ⭐ 色の濃さは「他のつまみが効くかどうか」を決める。動かしたら註を出し直す
     if(r.dataset.p === 'gridSat' && typeof gridGraySync === 'function') gridGraySync();
+    /* ⭐ 回る速さを直に動かしたときも【逆回転】の印を合わせる（片方だけ古い、を作らない） */
+    if(r.dataset.p === 'spinSpeed' && typeof syncRev === 'function') syncRev();
     if(['gridGap','gridRes','gridWall'].includes(r.dataset.p) && typeof gridGapSync === 'function') gridGapSync();
     saveLocal();
   };
@@ -4405,12 +4413,45 @@ function syncRipColor(){
     if(typeof saveLocal === 'function') saveLocal();
   });
 })();
+/* ⭐⭐ 2026-08-26 木下「再生ボタンを押すとスピンするが、停止すると一番最初の位置に戻して」
+   ⭐ 押した時の向きを控えておき、止めたらそこへ戻す（暈KASA・膜MAKU と同じ作法＝
+      止めれば元の姿・押すまで動かない）。
+   ⚠️ 途中の見た目（cam.az）も一緒に戻す＝戻る途中がぐるっと回るのを避ける。
+   ⚠️ 書き出し（REC/PNG）は SPIN に従うので、ここでは触らない。 */
+let spinAz0 = null;
 document.getElementById('btn-play').onclick = () => {
   PLAYING = !PLAYING;
-  if(PLAYING && !ON.spin){ ON.spin = true; syncSpin(); }   /* ⚠️ 押して何も起きない を作らない */
+  if(PLAYING){
+    if(!ON.spin){ ON.spin = true; syncSpin(); }   /* ⚠️ 押して何も起きない を作らない */
+    spinAz0 = cam.tAz;                            /* ⭐ 押す前の向きを控える */
+  } else if(spinAz0 !== null){
+    cam.tAz = spinAz0; cam.az = spinAz0;          /* ⭐ 止めたら最初の向きへ戻す */
+    spinAz0 = null;
+  }
   syncPlay();
 };
 syncPlay();
+/* ⭐ 逆回転＝回る速さの符号を裏返す。⚠️ 値を書く道は1本（P.spinSpeed）＝つまみも一緒に動かす */
+function syncRev(){
+  const b = document.getElementById('btn-rev');
+  if(!b) return;
+  const back = (+P.spinSpeed || 0) < 0;
+  b.style.background = back ? '#0a0a0a' : '';
+  b.style.color      = back ? '#f4f2ee' : '';
+  b.textContent = back ? '⇄ 逆回転（入）' : '⇄ 逆回転';
+}
+document.getElementById('btn-rev').onclick = () => {
+  const v = +P.spinSpeed || 0;
+  /* ⚠️ 0 のまま裏返しても何も起きない＝既定の速さで逆に回す（押して何も起きない を作らない） */
+  P.spinSpeed = v === 0 ? -32 : -v;
+  const r = document.querySelector('[data-p="spinSpeed"]');
+  if(r){ r.value = P.spinSpeed; const val = r.parentElement.querySelector('.val');
+         if(val) val.textContent = P.spinSpeed; }
+  if(!ON.spin){ ON.spin = true; syncSpin(); }
+  syncRev();
+  if(typeof saveLocal === 'function') saveLocal();
+};
+syncRev();
 /* 🔴 木下＝「いま png ダウンロードできない」（iPhone）。
    ⚠️ 原因は2つあって、どちらも iOS で効く：
      ① <a> を DOM に入れずに click していた（iOS Safari は繋がっていない a を無視する）
