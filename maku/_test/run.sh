@@ -45,5 +45,9 @@ echo
 echo "── SVG を読み込む（作字SAKUJI のパス）"
 node "$(cd "$(dirname "$0")/../.." && pwd)/_test/svgin.mjs" maku || SVGNG=1
 
-if [ "${SVGNG:-0}" = "1" ]; then exit 1; fi
+# ⭐ 画像の版の見え（2026-08-26 木下「画像で選択しているのに文字が変化しているね」）
+echo
+node "$(cd "$(dirname "$0")" && pwd)/tint.mjs" || TINTNG=1
+
+if [ "${SVGNG:-0}" = "1" ] || [ "${TINTNG:-0}" = "1" ]; then exit 1; fi
 exit $CODE
