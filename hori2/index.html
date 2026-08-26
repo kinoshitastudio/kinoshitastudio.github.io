@@ -1016,7 +1016,12 @@
       <div class="row"><label>埋める<i>SOLID</i></label><input type="range" data-p="ripSolid" min="0" max="24" step="1" value="5"><span class="val"></span></div>
       <div class="row"><label>中心よこ<i>CTR X</i></label><input type="range" data-p="ripCx" min="0" max="100" step="1" value="50"><span class="val"></span></div>
       <div class="row"><label>中心たて<i>CTR Y</i></label><input type="range" data-p="ripCy" min="0" max="100" step="1" value="50"><span class="val"></span></div>
-      <div class="row"><label>波紋の色<i>HUE</i></label><input type="range" data-p="ripHue" min="0" max="360" step="1" value="212"><span class="val"></span></div>
+      <!-- ⭐⭐ 2026-08-26 木下「波紋の色もカラーピッカーで変えれるように」
+           ⭐ 中身（HUE/SAT/VIVID）はそのまま＝**式は1本のまま**、入口が増えるだけ。
+              ピッカーで選ぶと下の3つに落ち、3つを動かすとピッカーも追う（どちらも同じ値を見る）。
+           ⚠️ 控えは今までどおり HUE/SAT/VIVID を持つ＝古い控えもそのまま開く。 -->
+      <div class="row"><label>波紋の色<i>COLOR</i></label><input type="color" id="ripColor" value="#3f8fe6"></div>
+      <div class="row"><label>色あい<i>HUE</i></label><input type="range" data-p="ripHue" min="0" max="360" step="1" value="212"><span class="val"></span></div>
       <div class="row"><label>鮮やかさ<i>SAT</i></label><input type="range" data-p="ripSat" min="0" max="100" step="1" value="82"><span class="val"></span></div>
       <div class="row"><label>明るさ<i>VIVID</i></label><input type="range" data-p="ripVal" min="0" max="100" step="1" value="88"><span class="val"></span></div>
       <div class="seg" data-seg="ripFollow">
@@ -2226,6 +2231,8 @@ function saveLocal(){
    ⚠️ 値だけ入れても画面は変わらない＝【表示も一緒に戻す】。ここを忘れると
       「保存されているのにパネルが嘘をつく」状態になる。 */
 function syncUIFromP(){
+  /* ⚠️ 控えを読んだときも色見本を合わせ直す（値だけ戻しても見本は古いまま） */
+  if(typeof syncRipColor === 'function') syncRipColor();
   document.querySelectorAll('input[type=range][data-p]').forEach(r => {
     if(P[r.dataset.p] === undefined) return;
     r.value = P[r.dataset.p];
@@ -3925,6 +3932,8 @@ document.querySelectorAll('input[type=range]').forEach(r => {
     if(['width','taper','smooth','depth','layer','twist'].includes(r.dataset.p)) rebuildAll();
     // ⭐ 字の大きさ・細かさは【字だけ】作り直す（手で引いた線は触らない）
     if(['typeSize','typeDetail','typeX','typeY'].includes(r.dataset.p)) retypeSoon();
+    /* ⭐ 波紋の色は【3つのつまみ】と【色見本】が同じ値を見る＝片方だけ古い、を作らない */
+    if(['ripHue','ripSat','ripVal'].includes(r.dataset.p) && typeof syncRipColor === 'function') syncRipColor();
     if(['svgSize','svgDetail','svgX','svgY'].includes(r.dataset.p)) resvgSoon();
     if(['objScale','objX','objY'].includes(r.dataset.p)) syncObj();
     if(r.dataset.p === 'papN') syncGrad();      // 色数で出すつまみが変わる
@@ -4307,6 +4316,45 @@ function syncPlay(){
   b.style.background = PLAYING ? '#0a0a0a' : '';
   b.style.color      = PLAYING ? '#f4f2ee' : '';
 }
+/* ⭐⭐ 波紋の色ピッカー（2026-08-26）
+   ⭐ 持ち主は今までどおり P.ripHue / ripSat / ripVal の3つ。
+      ピッカーはその【入口】でしかない＝式も控えも1つも増やさない。 */
+function hsv2hex(h, s, v){
+  h = ((h % 360) + 360) % 360; s = Math.max(0, Math.min(1, s)); v = Math.max(0, Math.min(1, v));
+  const c = v * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = v - c;
+  let r = 0, g = 0, b = 0;
+  if(h < 60)       { r = c; g = x; }
+  else if(h < 120) { r = x; g = c; }
+  else if(h < 180) { g = c; b = x; }
+  else if(h < 240) { g = x; b = c; }
+  else if(h < 300) { r = x; b = c; }
+  else             { r = c; b = x; }
+  const q = u => ('0' + Math.round((u + m) * 255).toString(16)).slice(-2);
+  return '#' + q(r) + q(g) + q(b);
+}
+/* ⚠️🔴 hex→HSV は【この道具にもう有った】（2107行）。同じ名前で足して二重定義になり、
+   ページごと落ちていた（JSエラー "Identifier 'hex2hsv' has already been declared"）。
+   ⭐ 足す前に既存の同名を探す。ここは既存を呼ぶだけにする（返りは [h(0..1), s, v]）。 */
+/* ⚠️ 3つのつまみを動かしたときも色見本を追わせる（片方だけ古い、を作らない） */
+function syncRipColor(){
+  const c = document.getElementById('ripColor');
+  if(c) c.value = hsv2hex(+P.ripHue || 0, (+P.ripSat || 0) / 100, (+P.ripVal || 0) / 100);
+}
+(function(){
+  const c = document.getElementById('ripColor');
+  if(!c) return;
+  syncRipColor();
+  c.addEventListener('input', () => {
+    const [h, sa, va] = hex2hsv(c.value);      /* ⚠️ h は 0〜1 で返る（この道具の作り） */
+    P.ripHue = Math.round(h * 360); P.ripSat = Math.round(sa * 100); P.ripVal = Math.round(va * 100);
+    /* ⭐ つまみの見た目も一緒に動かす（値だけ変えても画面は変わらない） */
+    ['ripHue','ripSat','ripVal'].forEach(k => {
+      const r = document.querySelector('[data-p="' + k + '"]');
+      if(r){ r.value = P[k]; const val = r.parentElement.querySelector('.val'); if(val) val.textContent = P[k]; }
+    });
+    if(typeof saveLocal === 'function') saveLocal();
+  });
+})();
 document.getElementById('btn-play').onclick = () => {
   PLAYING = !PLAYING;
   if(PLAYING && !ON.spin){ ON.spin = true; syncSpin(); }   /* ⚠️ 押して何も起きない を作らない */
