@@ -9,6 +9,7 @@
 #
 # 使い方: bash tsubu/_test/run.sh
 set -u
+ng=0
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 WORK="$(mktemp -d)"
@@ -74,4 +75,11 @@ node "$HERE/_test/anivideo.mjs" "http://localhost:$PORT/tsubu/" || NG=1
 
 echo
 [ "$NG" = 0 ] && echo "✅ 全部通った" || echo "🔴 落ちたものがある（上を見る）"
+
+# ⭐ SVG を読み込めるか（2026-08-26 木下「Maku と Tsubu で svg 読み込みを確認しないとだね」）
+echo
+echo "── SVG を読み込む（作字SAKUJI のパス）"
+node "$(cd "$(dirname "$0")/../.." && pwd)/_test/svgin.mjs" tsubu || SVGNG=1
+
+if [ "${SVGNG:-0}" = "1" ]; then exit 1; fi
 exit "$NG"
