@@ -316,6 +316,38 @@ try{
   cv.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
   ok('ダブルクリックで戻る', Math.abs(TAMA.VIEW.z-1)<1e-6);
 
+  /* ⭐⭐ 左右対称に描く（2026-08-27 木下「tama で線を描くとき、左右対象に描けるようにもしてほしい」）
+     見るのは【鏡の線が本当に反対側にあるか】と【1本消すで対も消えるか】。 */
+  {
+    $('useSeg').querySelector('button[data-v="draw"]').click();
+    if($('b_addD')) $('b_addD').click();
+    const L0=TAMA.cur();
+    const r=cv.getBoundingClientRect();
+    const ev=(t,x,y)=>cv.dispatchEvent(new PointerEvent(t,{clientX:x,clientY:y,button:0,buttons:1,
+      bubbles:true,pointerId:1,pointerType:'mouse'}));
+    const draw=(y0)=>{ ev('pointerdown', r.left+r.width*0.32, r.top+r.height*y0);
+      for(let i=1;i<=8;i++) ev('pointermove', r.left+r.width*(0.32+0.12*i/8), r.top+r.height*(y0+0.03*i/8));
+      ev('pointerup', r.left+r.width*0.44, r.top+r.height*(y0+0.03)); };
+    const n0=L0.strokes.length;
+    $('s_sym').querySelector('button[data-v="0"]').click();
+    draw(0.42);
+    const n1=L0.strokes.length;
+    ok('対称なし＝1本だけ増える（いままでどおり）', n1-n0===1);
+    $('s_sym').querySelector('button[data-v="x"]').click();
+    draw(0.55);
+    const n2=L0.strokes.length;
+    ok('左右＝1回引くと2本（元＋鏡）', n2-n1===2);
+    const a=L0.strokes[n2-2], m=L0.strokes[n2-1];
+    ok('鏡は【版面の中心】で折り返している（x が符号だけ逆・y は同じ）',
+       Math.abs(a[0][0]+m[0][0])<1e-9 && Math.abs(a[0][1]-m[0][1])<1e-9);
+    $('b_undoline').click();
+    ok('1本消すで【対も一緒に】消える（'+L0.strokes.length+'）', L0.strokes.length===n1);
+    $('s_sym').querySelector('button[data-v="xy"]').click();
+    draw(0.68);
+    ok('四方＝1回引くと4本', L0.strokes.length-n1===4);
+    $('s_sym').querySelector('button[data-v="0"]').click();
+  }
+
   // 大きく出す
   const [ow,oh]=TAMA.outSize();
   const t0=performance.now();
