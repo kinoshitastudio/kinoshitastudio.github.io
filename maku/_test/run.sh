@@ -8,6 +8,7 @@
 #  ⚠️ 落ちないテストは意味がない。測り方を変えたら、わざと壊した版で
 #     落ちることを必ず確かめてから直す（2026-08-06 に2回すり抜けた）。
 set -u
+ng=0
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"     # 名称未設定/
 STARTED=0
 
@@ -38,4 +39,11 @@ CODE=$?
 if [ "$STARTED" = "1" ]; then
   pkill -f "http.server $PORT" >/dev/null 2>&1
 fi
+
+# ⭐ SVG を読み込めるか（2026-08-26 木下「Maku と Tsubu で svg 読み込みを確認しないとだね」）
+echo
+echo "── SVG を読み込む（作字SAKUJI のパス）"
+node "$(cd "$(dirname "$0")/../.." && pwd)/_test/svgin.mjs" maku || SVGNG=1
+
+if [ "${SVGNG:-0}" = "1" ]; then exit 1; fi
 exit $CODE
