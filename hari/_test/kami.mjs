@@ -89,6 +89,32 @@ const R = await p.evaluate(async () => {
   out.向きを出す = getComputedStyle(document.getElementById('rowKAng')).display !== 'none';
   await set({ on:'none' });
   out.なしなら畳む = getComputedStyle(document.getElementById('kamiUI')).display === 'none';
+
+  /* ══⭐⭐ 2枚（2026-08-27 木下「乗算やオーバーレイなど、どれかしか選べなくない？」
+     「一番上にオーバーレイで乗せると【オブジェクトにも】加工がきそう」）
+     見るのは **下は物に掛からない／上は物にも掛かる**＝木下が見ていた違和感そのもの。 */
+  const setU = async o => { Object.entries(o).forEach(([k,v]) => kamiSet(k, v, 'kamiU')); await wait(450); };
+  await set({ on:'none' }); await setU({ on:'none' });
+  const b0 = shot();
+  /* 字の画素（暗い所）と紙の画素（明るい所）を分けて、動いた量を測る */
+  const ink = [], pap = [];
+  for(let i = 0; i < b0.length; i += 4){ if(b0[i+3] < 200) continue;
+    if(b0[i] < 90) ink.push(i); else if(b0[i] > 200) pap.push(i); }
+  const moved = (a, idx) => Math.round(idx.reduce((s,i) => s + Math.abs(a[i]-b0[i]), 0)
+                                       / Math.max(1, idx.length) * 10) / 10;
+  await setU({ on:'zara', blend:'multiply', amt:60, sc:50, seed:3 });
+  { const a = shot(); out.下だけ = { 字:moved(a, ink), 紙:moved(a, pap) }; }
+  await setU({ on:'none' });
+  await set({ on:'zara', blend:'overlay', amt:60, sc:50, seed:3 });
+  { const a = shot(); out.上だけ = { 字:moved(a, ink), 紙:moved(a, pap) }; }
+  /* 2枚同時＝重ね方を2つ持てる（乗算の紙＋オーバーレイの刷り） */
+  await setU({ on:'zara', blend:'multiply', amt:60, sc:50, seed:3 });
+  { const a = shot(); out.二枚 = { 字:moved(a, ink), 紙:moved(a, pap) }; }
+  out.重ね方は別々 = { 下:(S.kamiU||{}).blend, 上:(S.kami||{}).blend };
+  out.紙は2枚 = artLayer.getItems({ recursive:true, match:it => it.data && it.data.kami }).length;
+  await set({ on:'none' }); await setU({ on:'none' });
+  out.両方なしで戻る = (() => { let n = 0; const a = shot();
+    for(let i = 0; i < a.length; i += 4) if(Math.abs(a[i]-b0[i]) > 3) n++; return n; })();
   return out;
 });
 if(process.argv[2]) await p.screenshot({ path: process.argv[2] });
@@ -112,4 +138,15 @@ ok(R.SVGに紙がある && R.SVGの重ね方, '⭐ SVG にも紙が1枚出る（
 ok(R.向きは出さない, '⚠️ ざらでは【向き】を出さない（触れるのに効かない、を残さない）');
 ok(R.向きを出す, '⭐ 簾目では【向き】が出る');
 ok(R.なしなら畳む, '⚠️ なしのときはつまみを畳む');
+console.log('── 紙は2枚（地に／ぜんぶに）');
+ok(R.下だけ.字 < 1.5 && R.下だけ.紙 > 6,
+   '⭐⭐ 下（地に）＝紙だけが荒れて【字には掛からない】', JSON.stringify(R.下だけ));
+ok(R.上だけ.字 > 2.5, '⭐⭐ 上（ぜんぶに）＝【字にも掛かる】', JSON.stringify(R.上だけ));
+ok(R.二枚.字 > 2.5 && R.二枚.紙 > R.上だけ.紙,
+   '⭐ 2枚同時＝紙は深く・字にも乗る', JSON.stringify(R.二枚));
+ok(R.重ね方は別々.下 === 'multiply' && R.重ね方は別々.上 === 'overlay',
+   '⭐⭐ 重ね方を【2つ同時に】持てる（乗算の紙＋オーバーレイの刷り）',
+   JSON.stringify(R.重ね方は別々));
+ok(R.紙は2枚 === 2, '紙は2枚とも版面に乗る', R.紙は2枚 + '枚');
+ok(R.両方なしで戻る === 0, '⚠️ 両方なしに戻すと1画素も変わらない', R.両方なしで戻る + '画素');
 process.exit(ng ? 1 : 0);

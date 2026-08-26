@@ -130,7 +130,7 @@ const hid = await page.evaluate(async () => {
     const d = g2.getImageData(0,0,im.width,im.height).data; let s=0;
     for(let i=0;i<d.length;i+=4*197) s=(s+d[i]*3+d[i+1]*5)%2147483647; return s;
   };
-  const eyes = document.querySelectorAll('#lineList .hd');
+  const eyes = document.querySelectorAll('#lineList .li:not(.kami) .hd');
   if(!eyes.length) return { なし:true };
   const a = sig(), pa = await png();
   eyes[0].click(); await new Promise(r => setTimeout(r, 350));
@@ -186,10 +186,11 @@ const ord = await page.evaluate(async () => {
   s0.lines.forEach((l, i) => l.text = 'LINE' + i);
   applyStateStr(JSON.stringify(s0));
   await new Promise(r => setTimeout(r, 300));
-  const names = () => [...document.querySelectorAll('#lineList .li .t')].map(x => x.textContent.trim());
+  /* ⚠️ 紙（`.li.kami`）は作品の行ではないので数えない（2026-08-27 に一覧へ出した） */
+  const names = () => [...document.querySelectorAll('#lineList .li:not(.kami) .t')].map(x => x.textContent.trim());
   const before = names();
   /* いちばん下の行を、いちばん上まで引き上げる */
-  const rows = [...document.querySelectorAll('#lineList .li')];
+  const rows = [...document.querySelectorAll('#lineList .li:not(.kami)')];
   const last = rows[rows.length-1], first = rows[0];
   const rb = last.getBoundingClientRect(), fb = first.getBoundingClientRect();
   last.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true, clientY:rb.top+rb.height/2, clientX:rb.left+40, pointerId:1 }));
