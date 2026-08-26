@@ -29,7 +29,10 @@ const b = await puppeteer.launch({ executablePath:'/Applications/Google Chrome.a
 const p = await b.newPage(); let err = 0;
 p.on('pageerror', e => { err++; console.log('🔴 JSエラー:', e.message); });
 await p.setViewport({ width:1200, height:900, deviceScaleFactor:1 });
-await p.goto('file://' + decodeURIComponent(FILE), { waitUntil:'networkidle0' });
+/* ⭐ 公開URLもそのまま渡せる（「ローカルでは直っている」は直っていないのと同じ）
+   例：node maku/_test/tint.mjs https://kinoshita.studio/maku/ */
+const URL_ = /^https?:\/\//.test(FILE) ? FILE : 'file://' + decodeURIComponent(FILE);
+await p.goto(URL_, { waitUntil:'networkidle0' });
 await new Promise(r => setTimeout(r, 4000));
 
 const has = id => p.evaluate(i => !!document.getElementById(i), id);
