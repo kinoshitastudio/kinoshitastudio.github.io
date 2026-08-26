@@ -333,6 +333,16 @@
     <input type="range" id="r_pen" min="0.004" max="0.16" step="0.001">
     <div class="row"><span class="n">筆圧の効き</span><output id="o_press"></output></div>
     <input type="range" id="r_press" min="0" max="1" step="0.02">
+    <!-- ⭐⭐ 2026-08-27 木下「tama で線を描くとき、左右対象に描けるようにもしてほしい」
+         ⭐ 版面の【中心】が軸。引いている最中から鏡の側も伸びる（離してから増えるのではない）。
+         ⚠️ なし＝いままでと1本も変わらない。 -->
+    <div class="row"><span class="n">対称に描く</span></div>
+    <div class="seg" id="s_sym">
+      <button data-v="0" class="on">なし</button>
+      <button data-v="x">左右</button>
+      <button data-v="y">上下</button>
+      <button data-v="xy">四方</button>
+    </div>
     <div class="btns2">
       <button class="btn sm" id="b_undoline">1本消す</button>
       <button class="btn sm" id="b_clear">この層の線を消す</button>
@@ -342,6 +352,7 @@
       同じ線を色違いでもう一度描かなくてよい。⭐<b>筆の太さ・玉のつまみは写しと連動</b>する（片方直せば両方直る）。
       <b>色とずれだけ別々</b>で、そこが刷りずれになる。<br>
       ⭐<b>筆圧</b>＝ペンなら筆圧、マウスなら<b>速さ</b>（速いほど細い）。<br>
+      ⭐<b>対称に描く</b>＝版面の<b>中心</b>が軸。1本引くと鏡の側も<b>同時に</b>伸びる（<b>1本消す</b>で対も一緒に消える）。<br>
       ⚠️描いている間も<b>右ドラッグ／スペース＋ドラッグ</b>で盤は動かせる。</div>
   </div>
 
@@ -497,9 +508,19 @@ let P = {
   ratio:'1', sz:'1620', long:1620, frame:false, alpha:false,
   bg:'#4a2318', draw:false, preset:null, help:false, pair:false,
   anim:false, cyc:8, flow:1, beat:0, spin:0, press:0.7,
+  /* ⭐ 対称に描く（2026-08-27）＝'0'なし／'x'左右／'y'上下／'xy'四方。既定は なし */
+  sym:'0',
   /* ⭐ 余白（額）2026-08-25 ── 朦OBORO から移した。0 で今までどおり */
   gaku:0, gakuCol:'#f2efe6', gakuZ:100, gakuX:0, gakuY:0
 };
+/* ⭐ 対称の符号＝ここ1本で決める（描く・案内の線・1本消す が全部これを見る） */
+function symSigns(){
+  const v=P.sym||'0';
+  if(v==='x')  return [[-1, 1]];
+  if(v==='y')  return [[ 1,-1]];
+  if(v==='xy') return [[-1,1],[1,-1],[-1,-1]];
+  return [];
+}
 let LAYER=[], sel=0;
 let LID=0;
 function newLayer(o){
@@ -747,6 +768,21 @@ function drawGuide(octx,cam){
   octx.lineWidth=Math.max(1,cw/1100); octx.setLineDash([7,6]);
   octx.strokeRect(x,y,w,h);
   octx.restore();
+  drawSymAxis(octx,cam);
+}
+/* ⭐ 対称の軸＝どこで折り返すかを見せる。⚠️ 画面だけ（出す絵には1本も描かない） */
+function drawSymAxis(octx,cam){
+  const sg=symSigns(); if(!sg.length) return;
+  const [hw,hh]=halfWH();
+  const x=cam.cx-hw*cam.S, y=cam.cy-hh*cam.S, w=2*hw*cam.S, h=2*hh*cam.S;
+  octx.save();
+  octx.globalAlpha=Math.max(0.22, guideAlpha());
+  octx.strokeStyle='#fff'; octx.globalCompositeOperation='difference';
+  octx.lineWidth=Math.max(1,cw/1400); octx.setLineDash([4,7]);
+  const v=P.sym||'0';
+  if(v==='x'||v==='xy'){ octx.beginPath(); octx.moveTo(cam.cx,y); octx.lineTo(cam.cx,y+h); octx.stroke(); }
+  if(v==='y'||v==='xy'){ octx.beginPath(); octx.moveTo(x,cam.cy); octx.lineTo(x+w,cam.cy); octx.stroke(); }
+  octx.restore();
 }
 
 function render(){
@@ -878,6 +914,10 @@ function segSet(id,v){ const n=el(id); if(n) [...n.children].forEach(x=>x.classL
 segWire('ratio',v=>{ P.ratio=v; touchView(); fit(); kick(); szSync(); saveLocal(); });
 segWire('szSeg',v=>{ P.sz=v; el('r_long').classList.toggle('hide',v!=='px'); kick(); szSync(); saveLocal(); });
 segWire('fillMode',v=>{ cur().mode=v; mirror(cur()); kick(); saveLocal(); });
+/* ⭐ 対称に描く（2026-08-27）＝これから引く線に効く。⚠️ 引いてある線は作り直さない
+   （＝勝手に作品が変わらない。[[feedback_adjust_all_but_switch_only_next]] の型） */
+segWire('s_sym',v=>{ P.sym=v; kick(); saveLocal();
+  stat(v==='0'?'対称なし':'対称に描く：'+({x:'左右',y:'上下',xy:'四方'}[v])+'（これから引く線に効く）'); });
 
 /* ⭐ 見本 ── 参考の3枚に寄せた置き方。押すと置き、もう一度押すと取り下げる。 */
 const PRESET={
@@ -952,6 +992,7 @@ function useMode(v){
   }
   document.body.classList.toggle('inking',P.draw);
   segSet('useSeg',P.draw?'draw':'move');
+  segSet('s_sym',P.sym||'0');
   syncLayer(); saveLocal();
 }
 segWire('useSeg',useMode);
@@ -981,9 +1022,15 @@ el('b_undoline').onclick=()=>{
   const l=cur();
   if(l.kind!=='draw'||!l.strokes.length){ stat('この層に描いた線は無い'); return; }
   pushHist();
-  const gone=l.strokes.pop();
+  /* ⭐ 対称で引いた線は【鏡の側も一緒に】消す（印 mir が付いている）。
+     ⚠️ 印は控え（JSON）には残らない＝開き直したあとは1本ずつの線として扱う。 */
+  /* ⚠️ 鏡は【元のうしろ】に積んである＝先に鏡を全部取ってから元を取る
+     （先に1本取ると鏡だけ消えて元が残った＝実測で捕まえた） */
+  const gone=[];
+  while(l.strokes.length && l.strokes[l.strokes.length-1].mir) gone.push(l.strokes.pop());
+  if(l.strokes.length) gone.push(l.strokes.pop());
   const t=LAYER.find(x=>x.twinOf===l.id);
-  if(t){ const i=t.strokes.indexOf(gone); if(i>=0) t.strokes.splice(i,1); else t.strokes.pop(); }
+  if(t) for(const g of gone){ const i=t.strokes.indexOf(g); if(i>=0) t.strokes.splice(i,1); else t.strokes.pop(); }
   drawList(); kick(); saveLocal();
 };
 el('b_clear').onclick=()=>{
@@ -1096,6 +1143,7 @@ function syncUI(){
   el('c_gakuCol').value=P.gakuCol||'#f2efe6';
   el('c_alpha').checked=P.alpha; el('c_pair').checked=!!P.pair;
   segSet('useSeg',P.draw?'draw':'move');
+  segSet('s_sym',P.sym||'0');
   document.body.classList.toggle('inking',P.draw);
   document.body.classList.toggle('help',!!P.help);
   drawList(); syncLayer(); szSync();
@@ -1199,6 +1247,7 @@ function dropTwin(l){
 /* ══ 盤の操作と、筆 ══════════════════════════════════ */
 (function(){
   let pan=false, px=0, py=0, ink=null, lastT=0, lastP=null, mov=null;
+  let mirs=[];
   function at(e){
     const r=cv.getBoundingClientRect();
     const S2=fitS*VIEW.z;
@@ -1245,6 +1294,17 @@ function dropTwin(l){
       const p=at(e); ink=[[p[0],p[1],wAt(e,p)]];
       const me=cur(); me.strokes.push(ink);
       if(P.pair) twinOf(me).strokes.push(ink);   /* ⭐ 同じ配列を共有＝描いている間も両方伸びる */
+      /* ⭐⭐ 対称に描く（2026-08-27）── 鏡の側の線も【同じ層】に足して、
+         引いている最中から一緒に伸ばす（離してから増えるのではない）。
+         ⚠️ 版面の中心が軸＝at() は中心を 0 で返すので、符号を裏返すだけ。
+         ⚠️ 鏡の線に印（mir）を付ける＝「1本消す」で対も一緒に消す。 */
+      mirs = symSigns().map(sg => {
+        const m=[[p[0]*sg[0], p[1]*sg[1], ink[0][2]]];
+        m.mir=true;
+        me.strokes.push(m);
+        if(P.pair) twinOf(me).strokes.push(m);
+        return { a:m, sg };
+      });
       cv.setPointerCapture(e.pointerId); e.preventDefault(); kick(); return;
     }
     if(e.button===2||e.button===1||spaceDown){
@@ -1266,7 +1326,12 @@ function dropTwin(l){
     }
     if(ink){
       const p=at(e), q=ink[ink.length-1];
-      if((p[0]-q[0])**2+(p[1]-q[1])**2 > 4e-6){ ink.push([p[0],p[1],wAt(e,p)]); kick(); }
+      if((p[0]-q[0])**2+(p[1]-q[1])**2 > 4e-6){
+        const w=wAt(e,p);
+        ink.push([p[0],p[1],w]);
+        for(const m of mirs) m.a.push([p[0]*m.sg[0], p[1]*m.sg[1], w]);   /* ⭐ 鏡も同時に */
+        kick();
+      }
       return;
     }
     if(!pan) return;
@@ -1279,7 +1344,7 @@ function dropTwin(l){
       if(mov.did) stat(mov.ls.length>1?'組（元＋写し）を動かした':'この層を動かした');
       mov=null; syncLayer(); saveLocal();
     }
-    if(ink){ ink=null; drawList(); saveLocal(); }
+    if(ink){ ink=null; mirs=[]; drawList(); saveLocal(); }
     if(!pan) return; pan=false; document.body.classList.remove('panning');
   };
   cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
