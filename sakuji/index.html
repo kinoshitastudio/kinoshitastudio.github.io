@@ -1556,6 +1556,23 @@
           （見出し無しだと、上の粒UI／下の TEXT どちらかの続きに見える）。 -->
   <h2>線</h2>
   <div class="row"><label>線幅</label><input type="range" id="sw" min="1" max="200" value="40"><span class="val"></span></div>
+  <!-- ⭐⭐ 書き心地（2026-08-26 木下「sure や Ha、nijimi のような道具の書き心地も
+       切り替えて使えるように」）＝フリーハンド（B）で引いた線の【出来上がり方】を替える。
+       ⚠️ どれも paper のパスとして作る＝SVG でも .otf でも今までどおり出せる。
+       ⚠️ 既定は「そのまま」＝いままでと1本も変わらない。 -->
+  <div class="row"><label>書き心地</label>
+    <select id="feel" style="flex:1">
+      <option value="plain">そのまま（いままで）</option>
+      <option value="ha">刃 HA — 平ペン（角度で太さが変わる）</option>
+      <option value="sure">擦 SURE — 段（升目に丸める）</option>
+      <option value="nijimi">滲 NIJIMI — にじむ（縁が揺れる）</option>
+    </select>
+  </div>
+  <div class="row feel-ha"><label>ペンの角度</label><input type="range" id="feelAng" min="0" max="180" value="35"><span class="val"></span></div>
+  <div class="row feel-sure"><label>升目</label><input type="range" id="feelGrid" min="2" max="60" value="14"><span class="val"></span></div>
+  <div class="row feel-nijimi"><label>にじみ</label><input type="range" id="feelJit" min="1" max="40" value="6"><span class="val"></span></div>
+  <div class="note" id="feelNote">⭐ フリーハンド（<b>B</b>）で引いた線に効く。離した時に形が決まる<br>
+    ⚠️ どれもパスなので、<b>SVG にも .otf にも</b>そのまま出せる</div>
   <div class="row"><label>線の位置</label>
     <select id="align" style="flex:1">
       <option value="center">中央</option>
@@ -2031,6 +2048,9 @@ const S = {
   tool:'select',                                 // ⭐ 既定は選択ツール（触ってすぐ掴める側）
   fill:'#0a0a0a', stroke:null, target:'fill',   // 塗り・線は同時に持てる（イラレ準拠）／target＝いま編集している側
   sw:40, grid:1, face:88, bg:'light', gtype:'jp', div:8, body:900,
+  /* ⭐⭐ 書き心地（2026-08-26 木下「sure や Ha、nijimi のような道具の書き心地も
+     切り替えて使えるように」）。'plain'＝いままで／'ha'＝平ペン／'sure'＝段／'nijimi'＝にじむ */
+  feel:'plain', feelAng:35, feelGrid:14, feelJit:6,
   shape:'rrect', polyN:5, rad:0, join:'round', cap:'round', fillMode:'solid', openAs:'stroke',
   snap:1, tracking:0, leading:0,
   // ⭐ アートボードは複数持てる。選んだ1枚を書き出す（イラレ／Figma と同じ流儀）
@@ -2730,6 +2750,86 @@ hook('guides', 'フリーハンドの閉じる予告', () => {
   line.strokeColor = ACC; line.strokeWidth = 1.4/Z; line.dashArray = [4/Z, 3/Z];
   artLayer.activate();
 });
+/* ══ 書き心地 ══════════════════════════════════════════
+   木下＝「sakuji はすでにあるが、その中に sure や、Ha、nijimi のような
+   道具の書き心地も切り替えて使えるように」（2026-08-26）
+
+   ⭐⭐ どれも【他の道具の芯】をそのままパスで作り直したもの：
+     ・刃 HA   ＝ 骨に【幅のある平ペン】を通す＝角度が決まっているので、
+                 進む向きによって太さが変わる（カリグラフィの手ざわり）
+     ・擦 SURE ＝ 粗い升目に丸める＝階段状の輪郭が式ひとつで出る
+     ・滲 NIJIMI＝ 縁が揺れる（反応拡散そのものは画素の世界なので、
+                 ベクターでは【縁の揺れ】として写す）
+   ⚠️ どれも paper のパスとして作る＝SVG にも .otf にもそのまま出せる
+      （ここが「画像にして貼る」との決定的な違い）。
+   ⚠️ 返り値が null なら「作り替えない」＝いままでの線がそのまま残る。 */
+const FEEL_NAME = { plain:'そのまま', ha:'刃 HA（平ペン）', sure:'擦 SURE（段）', nijimi:'滲 NIJIMI（にじみ）' };
+function applyFeel(src){
+  const feel = S.feel || 'plain';
+  if(feel === 'plain' || !src || src.segments.length < 2) return null;
+  const col = src.strokeColor || S.stroke || S.fill || '#0a0a0a';
+  const w   = Math.max(1, S.sw || 40);
+  /* 引いた点を細かく拾い直す＝どの書き心地も同じ土台から作る（式を2つに分けない） */
+  const step = Math.max(1.2, w * 0.12);
+  const L = src.length || 1;
+  const pts = [];
+  for(let d = 0; d <= L; d += step) pts.push(src.getPointAt(Math.min(d, L)));
+  if(pts.length < 2) return null;
+
+  if(feel === 'ha'){
+    /* ⭐ 平ペン＝ペンの角度は【固定】。進む向きと角度の差で太さが変わる。
+       ⚠️ 角度と平行に進むと線が消えるので、いちばん細い所に下限を置く。 */
+    const a  = (S.feelAng || 35) * Math.PI / 180;
+    const ux = Math.cos(a) * w * 0.5, uy = Math.sin(a) * w * 0.5;
+    const A = pts.map(p => new paper.Point(p.x + ux, p.y + uy));
+    const B = pts.map(p => new paper.Point(p.x - ux, p.y - uy)).reverse();
+    const out = new paper.Path({ segments:[...A, ...B], closed:true, fillColor: col });
+    out.simplify(1.2);
+    return out;
+  }
+  if(feel === 'sure'){
+    /* ⭐ 段＝升目に丸める。⚠️ 同じマスに落ちた点は捨てる（同じ所に点が積もらない） */
+    const g = Math.max(2, S.feelGrid || 14);
+    const snapped = [];
+    let lx = null, ly = null;
+    for(const p of pts){
+      const x = Math.round(p.x / g) * g, y = Math.round(p.y / g) * g;
+      if(x === lx && y === ly) continue;
+      /* ⚠️ 斜めに飛ばさない＝縦横に折れて進む＝これが「段」の見え方 */
+      if(lx !== null && x !== lx && y !== ly) snapped.push(new paper.Point(x, ly));
+      snapped.push(new paper.Point(x, y));
+      lx = x; ly = y;
+    }
+    if(snapped.length < 2) return null;
+    const out = new paper.Path({ segments:snapped, closed:src.closed,
+      strokeColor: col, strokeWidth: w, strokeCap:'butt', strokeJoin:'miter' });
+    return out;
+  }
+  if(feel === 'nijimi'){
+    /* ⭐ にじみ＝縁が揺れる。線の両側に、進む向きの直角へ乱数で出し入れした輪郭を作る。
+       ⚠️ 乱数は【引いた場所】から決める＝同じ線を引き直しても同じ揺れ（毎回化けない）。 */
+    const j = Math.max(1, S.feelJit || 6);
+    const rnd = (i) => { const t = Math.sin(i * 12.9898 + pts[0].x * 0.017 + pts[0].y * 0.023) * 43758.5453;
+                         return (t - Math.floor(t)) - 0.5; };
+    const half = w * 0.5;
+    const A = [], B = [];
+    for(let i = 0; i < pts.length; i++){
+      const p  = pts[i];
+      const q  = pts[Math.min(i + 1, pts.length - 1)];
+      const o  = pts[Math.max(i - 1, 0)];
+      let tx = q.x - o.x, ty = q.y - o.y;
+      const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+      const nx = -ty, ny = tx;
+      const wa = half + rnd(i) * j, wb = half + rnd(i + 977) * j;
+      A.push(new paper.Point(p.x + nx * wa, p.y + ny * wa));
+      B.push(new paper.Point(p.x - nx * wb, p.y - ny * wb));
+    }
+    const out = new paper.Path({ segments:[...A, ...B.reverse()], closed:true, fillColor: col });
+    out.smooth({ type:'continuous' });
+    return out;
+  }
+  return null;
+}
 function brushUp(){
   if(!brush) return;
   // ⭐ 吸着圏で離した＝閉じる。最後の点を始点にぴたりと寄せてから閉じる
@@ -2743,9 +2843,15 @@ function brushUp(){
   //   手ブレと一緒に【引いた線の表情】まで消えていた。
   //   引いた通りを残す側に寄せる（BMBoard は点を残して描画側で滑らかにしている）。
   brush.simplify(2.5);
+  /* ⭐⭐ 書き心地（2026-08-26）── 引き終わりに形を作り替える。
+     ⚠️ 引いている間は今までどおり（軽いまま）。決まるのは離した時だけ。 */
+  const made = applyFeel(brush);
+  if(made){ brush.remove(); brush = made; }
   const closed = brush.closed;
   brush.selected = true; brush = null; guides();
-  stat(closed ? '閉じた — 塗りが乗る' : 'フリーハンド確定 — 「線→塗り」で輪郭に');
+  stat(closed ? '閉じた — 塗りが乗る'
+              : (S.feel === 'plain' ? 'フリーハンド確定 — 「線→塗り」で輪郭に'
+                                    : FEEL_NAME[S.feel] + 'で引いた'));
 }
 
 /* ══ グラデーションツール ══
@@ -3497,6 +3603,23 @@ function bindRange(id, fn){
   r.addEventListener('input', sync); sync();
 }
 bindRange('sw',   v => { S.sw = v; selected().forEach(it => { if(it.strokeColor) it.strokeWidth = v; }); });
+/* ⭐ 書き心地。⚠️ 選んだ書き心地に要るつまみだけ出す＝触れるのに効かないつまみを出さない */
+bindRange('feelAng',  v => { S.feelAng  = v; });
+bindRange('feelGrid', v => { S.feelGrid = v; });
+bindRange('feelJit',  v => { S.feelJit  = v; });
+function syncFeel(){
+  const f = S.feel || 'plain';
+  document.querySelectorAll('.feel-ha,.feel-sure,.feel-nijimi').forEach(el => {
+    el.style.display = el.classList.contains('feel-' + f) ? '' : 'none';
+  });
+  const sel = document.getElementById('feel'); if(sel) sel.value = f;
+}
+(() => {
+  const sel = document.getElementById('feel'); if(!sel) return;
+  sel.addEventListener('change', () => { S.feel = sel.value; syncFeel();
+    stat('書き心地：' + FEEL_NAME[S.feel] + '（フリーハンド B で引くと効く）'); });
+  syncFeel();
+})();
 bindRange('face', v => { S.face = v; drawGrid(); });
 bindRange('div',  v => { S.div = v;  drawGrid(); });
 bindRange('body', v => { S.body = v; drawGrid(); });
