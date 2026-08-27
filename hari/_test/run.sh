@@ -13,6 +13,7 @@
 #       ・⭐左の道具立て（選ぶ／描く）が見えていて、どこから押しても印が揃うか
 #       ・⭐書き心地が【引いている最中から】見えるか・【あとから】掛け直せるか
 #       ・⭐紙の質感が重なるか（なしなら1画素も変わらないか・PNG/SVG にも出るか）
+#       ・⭐⭐紙を裏返して書けるか（裏で引いた線が指の所に出る／表からは左右が入れ替わって透ける）
 #       ・モバイルで横に伸びないか・掴み手が出るか・盤を引いてページが動かないか
 #  ⚠️ file:// では写真が読めず、ダウンロードも起きない。必ずサーバ越しに見る。
 #  ⚠️ 落ちないテストは意味がない。最後に「わざと壊したら落ちるか」の検算あり。
@@ -52,5 +53,12 @@ node "$(cd "$(dirname "$0")" && pwd)/feel.mjs" || FEELNG=1
 echo
 node "$(cd "$(dirname "$0")" && pwd)/kami.mjs" || KAMING=1
 
-if [ "${PENNG:-0}" = "1" ] || [ "${TOOLNG:-0}" = "1" ] || [ "${FEELNG:-0}" = "1" ] || [ "${KAMING:-0}" = "1" ]; then exit 1; fi
+# ⭐⭐ 紙を裏返して書く（2026-08-27）
+echo
+node "$(cd "$(dirname "$0")" && pwd)/ura.mjs" || URANG=1
+
+# ⭐ 「直す前と1画素も変わっていない」は same.mjs（前の版を渡して使う）
+#    例： git show HEAD:hari/index.html > /tmp/old.html && node hari/_test/same.mjs /tmp/old.html
+
+if [ "${PENNG:-0}" = "1" ] || [ "${TOOLNG:-0}" = "1" ] || [ "${FEELNG:-0}" = "1" ] || [ "${KAMING:-0}" = "1" ] || [ "${URANG:-0}" = "1" ]; then exit 1; fi
 exit $CODE
