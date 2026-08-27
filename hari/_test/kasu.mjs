@@ -106,6 +106,16 @@ const R = await p.evaluate(async () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key:'z', metaKey:true, bubbles:true }));
     await wait(500);
     out.図も戻る = { 消えた, 戻った:S.pieces.filter(x => x.pen).length }; }
+  /* ══ ⑦🔴 足したボタンで【もとからある物の場所を動かさない】 ══
+     🔴 2026-08-27：この「消しカスを捨てる」を差し込んだら、2列に並ぶ列へ割り込んで
+        【画像を置く】が右へずれた＝木下が「あれ？画像入れることできなかったっけ？」。
+     ⭐ 規則＝新しいボタンは【1行を占める】＝前からある並びに割り込まない。 */
+  {
+    const kb = document.getElementById('clearKasu').getBoundingClientRect();
+    const ib = document.getElementById('bImg').getBoundingClientRect();
+    out.割り込まない = { 同じ行:Math.abs(kb.y - ib.y) < 4,
+                         カスの幅:Math.round(kb.width), 画像の幅:Math.round(ib.width) };
+  }
   return out;
 });
 if(process.argv[2]) await p.screenshot({ path: process.argv[2] });
@@ -135,5 +145,8 @@ else {
   ok(R.戻せる.粒 === R.開き直し.粒, '⭐ ⌘Z で戻る', JSON.stringify(R.戻せる));
   ok(R.図も戻る && R.図も戻る.消えた === 0 && R.図も戻る.戻った === 1,
      '⭐⭐ 「選んだ図を消す」も ⌘Z で戻る（前は戻らなかった）', JSON.stringify(R.図も戻る));
+  ok(R.割り込まない && !R.割り込まない.同じ行 && R.割り込まない.カスの幅 > R.割り込まない.画像の幅 * 2,
+     '🔴 足したボタンが【画像を置く】の並びに割り込まない（1行を占める）',
+     JSON.stringify(R.割り込まない));
 }
 process.exit(ng ? 1 : 0);
