@@ -858,6 +858,27 @@ input[type=color]{ border-radius:8px; height:30px }
     <audio id="audEl" crossorigin="anonymous"></audio>
     <div class="row"><label>強さ</label>
       <input type="range" id="audAmt" min="0" max="200" value="60"><span class="v" id="vaudAmt">60</span></div>
+    <!-- ══⭐⭐ 音の効かせ方（2026-08-27 木下「音のビートの動きだがもっと他の動きも追加できるか？」）══
+         ⭐ これまでは【大きさ・字間・傾き】が同時に効いていた＝どれを効かせるか選べるようにして、
+           **流れる・波打つ・明滅・図が跳ねる** の4つを足した。
+         ⚠️ 新しい4つは既定 0＝これまでと1画素も変わらない。 -->
+    <div class="row"><label>大きさ</label><input type="range" id="mSize" min="0" max="200" value="100"><span class="v" id="vmSize">100</span></div>
+    <div class="row"><label>字間</label><input type="range" id="mTrack" min="0" max="200" value="100"><span class="v" id="vmTrack">100</span></div>
+    <div class="row"><label>揺れ</label><input type="range" id="mRot" min="0" max="200" value="100"><span class="v" id="vmRot">100</span></div>
+    <div class="row"><label>流れる</label><input type="range" id="mFlow" min="0" max="200" value="0"><span class="v" id="vmFlow">0</span></div>
+    <div class="row"><label>波打つ</label><input type="range" id="mWave" min="0" max="200" value="0"><span class="v" id="vmWave">0</span></div>
+    <div class="row"><label>明滅</label><input type="range" id="mCol" min="0" max="200" value="0"><span class="v" id="vmCol">0</span></div>
+    <div class="row"><label>図が跳ねる</label><input type="range" id="mPiece" min="0" max="200" value="0"><span class="v" id="vmPiece">0</span></div>
+    <div class="row"><label>図が回る</label><input type="range" id="mPRot" min="0" max="200" value="0"><span class="v" id="vmPRot">0</span></div>
+    <div class="row"><label>図が揺れる</label><input type="range" id="mPMove" min="0" max="200" value="0"><span class="v" id="vmPMove">0</span></div>
+    <div class="row"><label>図が明滅</label><input type="range" id="mPFade" min="0" max="200" value="0"><span class="v" id="vmPFade">0</span></div>
+    <div class="row"><label>図に色</label><input type="range" id="mPCol" min="0" max="200" value="0"><span class="v" id="vmPCol">0</span></div>
+    <div class="note">⭐ 音は<b>行ごとに低音・中音・高音</b>を割り当てる（行が別々に動く）<br>
+      ⭐ <b>流れる</b>＝字が経路を走る／<b>波打つ</b>＝経路そのものが揺れる（沿う）<br>
+      ⭐ <b>明滅</b>＝字の色が明るく暗く<br>
+      ⭐ <b>置いた画像</b>にも効く＝<b>跳ねる</b>（低音で拡大）／<b>回る</b>（高音）／<b>揺れる</b>（中音と低音）／
+      <b>明滅</b>（低音で濃く）／<b>色</b>（音の色が乗る）<br>
+      ⚠️ どれも<b>0 で効かない</b>（分岐ごと通らない）＝音は<b>描くときだけ</b>掛かる（止めれば元の姿）</div>
     <div class="note">⭐ <b>ビート</b>＝内蔵のリズム（音源が無くてもすぐ動く）。
       ⚠️ 偽の数字ではなく<b>本当に鳴らして解析している</b>＝マイクや音源に替えても効き方が同じ<br>
       ⭐ <b>低音＝大きさ／中音＝字間／高音＝傾き</b>。⚠️ 行ごとに別の帯域が当たる
@@ -1221,7 +1242,9 @@ function sortOf(ch){
    ⚠️ 2箇所に書くと、片方だけ直して層が効かない字が出る。 */
 function charStyle(ch, L){
   const S3 = Object.assign({}, SORT_DEF, L.sort || {});
-  const base = { size:L.size, col:L.col, wt:L.wt };
+  /* ⭐ 音で色が明滅する（2026-08-27）。⚠️ 0 のときは元の色をそのまま＝これまでの絵 */
+  const lum = (typeof audOf === 'function' && AUD && AUD.on) ? (audOf(L).lum || 0) : 0;
+  const base = { size:L.size, col: lum ? audCol(L.col, lum) : L.col, wt:L.wt };
   if(!S3.on) return base;
   const g = sortOf(ch); if(!g) return base;
   const o = Object.assign({}, SORT_DEF[g], S3[g] || {});
@@ -1457,6 +1480,14 @@ const LAYOUTS = {
       if(A.size !== 1 || A.track) L = Object.assign({}, L, {
         size: L.size * A.size, track: L.track + A.track });
       const path = buildPath(L);
+      /* ⭐⭐ 音で【経路が波打つ】（2026-08-27）。⚠️ 0 のときは1本も触らない＝これまでの絵 */
+      if(A.wave){
+        const amp = L.size * 0.5 * A.wave;
+        path.segments.forEach((sg, i) => {
+          sg.point = sg.point.add(new Point(0, Math.sin(i*1.7 + AUD.mid*9) * amp));
+        });
+        path.smooth({ type:'continuous' });
+      }
       const len = path.length;
       if(!(len > 0)){ path.remove(); return; }
       const chars = [...L.text].filter(c => c !== '\n');
@@ -1470,7 +1501,8 @@ const LAYOUTS = {
          ⭐ 2周に分ける理由＝枡は【全部の字より下】に敷かないといけない。
            1字ずつ「枡→字」の順で足すと、次の枡が前の字に被る。 */
       const place = [];
-      let d = (L.start/100) * len;                          // 始まりは全長に対する割合
+      /* ⭐⭐ 音で【字が経路を流れる】（2026-08-27）＝始まりが音で進む */
+      let d = ((L.start + (A.flow || 0))/100) * len;        // 始まりは全長に対する割合
       const d0 = d;
       for(const ch of chars){
         const adv  = advance(ch, L);
@@ -2307,7 +2339,9 @@ function render(into, opt){
        ＝実物だけ原寸に戻り、選択の枠（収めたあとの大きさで計算）とズレる
        （木下＝「画像に関しては範囲がその大きさで四角で囲って」）。
        ⭐ 相対の scale() を使う＝元の倍率の上に積む。順は 大きさ → 回す → 置く。 */
-    c.scale(pc.sc/100);
+    /* ⭐⭐ 音で【図も跳ねる】（2026-08-27）。⚠️ 0 のときは 1 倍＝これまでどおり */
+    const ap = (AUD && AUD.on && AUD.mPiece) ? (audOf(null).piece || 1) : 1;
+    c.scale(pc.sc/100 * ap);
     /* ⭐ 切り抜き（木下＝「画像をクロップしたい」）。
        ⚠️ 順は 大きさ → 切る → 回す → 置く。回してから切ると、切り口が画面の縦横になって斜めにズレる
           （＝「伸ばす→回す→置く」と同じ理由）。
@@ -2326,7 +2360,37 @@ function render(into, opt){
       node = new Group([m, c]);
     }
     node.rotate(pc.rot);
+    /* ⭐⭐ 図にも音（2026-08-27）＝回る・揺れる・明滅・色がつく（跳ねるは上の大きさで掛けた）。
+       ⭐ 行と同じく【低音・中音・高音】を別々のことに使う＝1つの音で全部が同じに動かない。
+       ⚠️ どれも 0 で効かない（分岐ごと通らない）＝音を止めれば元の姿。 */
+    let audShift = null;
+    if(typeof AUD !== 'undefined' && AUD.on){
+      const aa = AUD.amt/100;
+      if(AUD.mPRot)  node.rotate((AUD.high - 0.2) * aa * 34 * (AUD.mPRot/100));
+      /* 🔴 揺れは【置いたあと】に足す（ここで足すと、下の position で上書きされて効かない） */
+      if(AUD.mPMove) audShift = new Point(
+        (AUD.mid  - 0.2) * aa * 46 * (AUD.mPMove/100),
+        (AUD.bass - 0.2) * aa * 46 * (AUD.mPMove/100));
+      /* 🔴 「1から引く」式だと音が強いほど 1 に張り付いて【何も起きなかった】＝
+         ⭐ 音が強いほど濃く・弱いほど薄く（0.25〜1）に直す。 */
+      if(AUD.mPFade) node.opacity = Math.max(0.05, Math.min(1,
+        1 - (1 - AUD.bass) * aa * 0.9 * (AUD.mPFade/100)));
+      /* ⭐ 色がつく＝図の上に【色の膜】を1枚重ねて混ぜる（画像そのものの色は変えられないため）。
+         ⚠️ 図と同じ形に切る＝はみ出して版面を汚さない。 */
+      if(AUD.mPCol){
+        const bb = node.bounds;
+        const hue = (AUD.bass*140 + AUD.mid*120 + AUD.high*100) % 360;
+        const veil = new Path.Rectangle(bb);
+        veil.fillColor = new paper.Color({ hue, saturation:0.85, brightness:0.9 });
+        veil.opacity = Math.max(0, Math.min(0.9, (AUD.mid) * aa * (AUD.mPCol/100)));
+        veil.blendMode = 'color';
+        veil.remove();
+        const g3 = new Group([node, veil]);
+        node = g3;
+      }
+    }
     node.position = new Point(pc.x, pc.y);
+    if(audShift) node.position = node.position.add(audShift);   /* ⭐ 音で揺れる（置いたあとに足す） */
     /* ══⭐⭐ 覆えるのに縁が出ている図は、描くときだけ寄せて埋める（2026-08-27 木下
        「HARIの書き出しpngがまだ余白が出てしまっている。はみ出しているのは書き出しされないように」）══
        🔴 はみ出しは前から切れている（実測済み）。出ていたのは【足りない側】＝版面の縁に地が残る。
@@ -3331,7 +3395,17 @@ function artItems(){
    ⚠️⚠️ 音の値で【状態（S）を書き換えない】。描くときにだけ掛ける。
      書き換えると、止めた瞬間に変な形で固まるし、保存にも音の残骸が入る。
    ⚠️ 行ごとに別の帯域を当てる＝全部が同じ拍で動くと、ただ点滅して見える。 */
-const AUD = { on:0, amt:60, bass:0, mid:0, high:0, ctx:null, an:null, buf:null, raf:0, node:null };
+const AUD = { on:0, amt:60, bass:0, mid:0, high:0, ctx:null, an:null, buf:null, raf:0, node:null,
+  /* ⭐⭐ 音の効かせ方（2026-08-27 木下「音のビートの動きだがもっと他の動きも追加できるか？」）
+     ⭐ これまでは【大きさ・字間・傾き】の3つが**同時に**効いていた
+       ＝どれを効かせるか選べるようにして、動きを4つ足した。
+     ⚠️ 既定＝これまでの3つが 100・新しい4つは 0 ＝**これまでと1画素も変わらない**。 */
+  mSize:100, mTrack:100, mRot:100,
+  mFlow:0, mWave:0, mCol:0,
+  /* ⭐⭐ 図（置いた画像）にも音を掛ける（2026-08-27 木下「配置している画像に対しては
+     アニメーションがついていない。色を変えるとか、その他で何らかアニメーションをいくつかつけて」）
+     ⚠️ どれも既定 0＝押すまで何も起きない。 */
+  mPiece:0, mPRot:0, mPMove:0, mPFade:0, mPCol:0 };
 function audLevels(){
   if(!AUD.an) return;
   AUD.an.getByteFrequencyData(AUD.buf);
@@ -3343,10 +3417,29 @@ function audLevels(){
   AUD.high = sm(AUD.high, band(40,120));
 }
 function audOf(L){
-  if(!AUD.on) return { size:1, track:0, rot:0 };
+  if(!AUD.on) return { size:1, track:0, rot:0, flow:0, wave:0, lum:0 };
   const a = AUD.amt/100;
-  const b = [AUD.bass, AUD.mid, AUD.high][(L._i || 0) % 3];
-  return { size: 1 + b*a*0.9, track: AUD.mid*a*26, rot: (AUD.high - 0.18)*a*44 };
+  /* ⭐ 行ごとに【低音・中音・高音】を割り当てる＝行が別々に動く（1つの音で全部が同じに動かない） */
+  const b = [AUD.bass, AUD.mid, AUD.high][(L && L._i || 0) % 3];
+  return {
+    size : 1 + b*a*0.9 * (AUD.mSize/100),          // 大きさが脈打つ
+    track: AUD.mid*a*26 * (AUD.mTrack/100),        // 字間が開く
+    rot  : (AUD.high - 0.18)*a*44 * (AUD.mRot/100),// 行が揺れる
+    /* ⭐⭐ ここから足した4つ（既定 0＝分岐ごと通らない） */
+    flow : AUD.bass*a*22 * (AUD.mFlow/100),        // 字が経路を【流れる】（始まりが進む・%）
+    wave : b*a * (AUD.mWave/100),                  // 経路が【波打つ】（0〜1）
+    lum  : (b - 0.22)*a * (AUD.mCol/100),          // 色が【明滅する】（-1〜1）
+    piece: 1 + AUD.bass*a*0.5 * (AUD.mPiece/100)   // 図が【跳ねる】（倍率）
+  };
+}
+/* ⭐ 音で色を動かす（明るく／暗く）。⚠️ 0 のときは元の色をそのまま返す＝分岐ごと通らない */
+function audCol(col, lum){
+  if(!lum) return col;
+  try{
+    const c = new paper.Color(col);
+    c.brightness = Math.max(0, Math.min(1, c.brightness + lum*0.6));
+    return c;
+  }catch(_){ return col; }
 }
 function audLoop(){
   AUD.raf = requestAnimationFrame(audLoop);
@@ -4527,6 +4620,18 @@ $('fAud').addEventListener('change', e => {
 $('audAmt').addEventListener('input', () => {
   AUD.amt = Number($('audAmt').value); $('vaudAmt').textContent = $('audAmt').value;
   if(!AUD.on) render();
+});
+/* ⭐⭐ 音の効かせ方（2026-08-27）── どの動きをどれだけ効かせるか。
+   ⭐ 書く道はこの1本（つまみが7本あっても、直す所は1つ）。
+   ⚠️ 新しい4つは既定 0＝押すまで何も起きない。 */
+['mSize','mTrack','mRot','mFlow','mWave','mCol',
+ 'mPiece','mPRot','mPMove','mPFade','mPCol'].forEach(id => {
+  const r = $(id); if(!r) return;
+  r.addEventListener('input', () => {
+    AUD[id] = Number(r.value);
+    const v = $('v' + id); if(v) v.textContent = r.value;
+    if(!AUD.on) render();
+  });
 });
 $('preTsumu').onclick  = () => applyPreset('tsumu');
 $('preMeguru').onclick = () => applyPreset('meguru');

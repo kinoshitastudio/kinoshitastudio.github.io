@@ -88,6 +88,10 @@ node "$(cd "$(dirname "$0")" && pwd)/haru.mjs" "http://localhost:$PORT" || HARUN
 echo
 node "$(cd "$(dirname "$0")" && pwd)/chiru.mjs" "http://localhost:$PORT" || CHIRUNG=1
 
+# ⭐⭐ 音の効かせ方（2026-08-27）
+echo
+node "$(cd "$(dirname "$0")" && pwd)/aud.mjs" "http://localhost:$PORT" || AUDNG=1
+
 # ⭐⭐ 書き出しの縁（地の帯が残らないか）2026-08-27 ── 木下の実ファイルで見る
 echo
 node "$(cd "$(dirname "$0")" && pwd)/edge.mjs" "http://localhost:$PORT" \
@@ -96,5 +100,5 @@ node "$(cd "$(dirname "$0")" && pwd)/edge.mjs" "http://localhost:$PORT" \
 # ⭐ 「直す前と1画素も変わっていない」は same.mjs（前の版を渡して使う）
 #    例： git show HEAD:hari/index.html > /tmp/old.html && node hari/_test/same.mjs /tmp/old.html
 
-if [ "${PENNG:-0}" = "1" ] || [ "${TOOLNG:-0}" = "1" ] || [ "${FEELNG:-0}" = "1" ] || [ "${KAMING:-0}" = "1" ] || [ "${URANG:-0}" = "1" ] || [ "${BOXNG:-0}" = "1" ] || [ "${KASUNG:-0}" = "1" ] || [ "${PANELNG:-0}" = "1" ] || [ "${MULTING:-0}" = "1" ] || [ "${PATHNG:-0}" = "1" ] || [ "${HARUNG:-0}" = "1" ] || [ "${CHIRUNG:-0}" = "1" ] || [ "${EDGENG:-0}" = "1" ]; then exit 1; fi
+if [ "${PENNG:-0}" = "1" ] || [ "${TOOLNG:-0}" = "1" ] || [ "${FEELNG:-0}" = "1" ] || [ "${KAMING:-0}" = "1" ] || [ "${URANG:-0}" = "1" ] || [ "${BOXNG:-0}" = "1" ] || [ "${KASUNG:-0}" = "1" ] || [ "${PANELNG:-0}" = "1" ] || [ "${MULTING:-0}" = "1" ] || [ "${PATHNG:-0}" = "1" ] || [ "${HARUNG:-0}" = "1" ] || [ "${CHIRUNG:-0}" = "1" ] || [ "${EDGENG:-0}" = "1" ] || [ "${AUDNG:-0}" = "1" ]; then exit 1; fi
 exit $CODE
