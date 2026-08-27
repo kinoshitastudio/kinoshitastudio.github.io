@@ -38,7 +38,10 @@ NG=0
 echo "── ① つまみ総当たり／渡り／出す／⌘Z"
 node "$HERE/_test/knobs.mjs" "http://localhost:$PORT" || NG=1
 echo
-echo "── ② モバイルの掴み手（道具ぜんぶ横断のテストを1本に当てる）"
+echo "── ② 版面のかたちと、出る大きさ"
+node "$HERE/_test/paper.mjs" "http://localhost:$PORT" || NG=1
+echo
+echo "── ③ モバイルの掴み手（道具ぜんぶ横断のテストを1本に当てる）"
 node "$ROOT/_test/sheet.mjs" "http://localhost:$PORT" shoku || NG=1
 
 echo
