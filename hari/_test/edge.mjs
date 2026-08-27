@@ -30,6 +30,12 @@ const R = await p.evaluate(async (txt) => {
   const isBg0 = (x,y)=>{ const d=gb.getImageData(x,y,1,1).data;
     return Math.abs(d[0]-217)<8 && Math.abs(d[1]-221)<8 && Math.abs(d[2]-224)<8; };
   let 前の右=0; for(let i=0;i<40;i++) if(isBg0(before.width-6, 40+i*Math.floor((before.height-80)/40))) 前の右++;
+  /* ⭐ 何も押さずに（fill を入れずに）出した絵にも、帯が残っていないか */
+  let 押さずの右=0, 押さずの下=0;
+  for(let i=0;i<40;i++){
+    if(isBg0(before.width-6, 40+i*Math.floor((before.height-80)/40))) 押さずの右++;
+    if(isBg0(40+i*Math.floor((before.width-80)/40), before.height-6)) 押さずの下++;
+  }
   /* ⭐ 図に「縁を出さない」を入れる */
   const pc = S.pieces.find(x=>x.src); if(pc){ pc.fill = 1; render(); await w(600); }
   const c = await bakeCanvas();
@@ -42,7 +48,7 @@ const R = await p.evaluate(async (txt) => {
   const bottom= line(40, c.height-6, Math.floor((c.width-80)/40), 0, 40);
   const left  = line(5, 40, 0, Math.floor((c.height-80)/40), 40);
   const top   = line(40, 5, Math.floor((c.width-80)/40), 0, 40);
-  return { 前の右, 大きさ:[c.width,c.height],
+  return { 前の右, 押さずの右, 押さずの下, 大きさ:[c.width,c.height],
            右:right.filter(isBg).length, 下:bottom.filter(isBg).length,
            左:left.filter(isBg).length, 上:top.filter(isBg).length,
            図:S.pieces.length, 版面:[S.board.w,S.board.h] };
@@ -52,7 +58,9 @@ let ng = 0;
 const ok = (c,n,note)=>{ console.log(`  ${c?'✅':'🔴'} ${n}${note?'  '+note:''}`); if(!c) ng++; };
 console.log('── ⭐⭐ 書き出しの縁（地の帯が残らないか）');
 ok(errs.length === 0, 'JSエラーが出ない', errs.length + '件' + (errs[0] ? ' → ' + errs[0] : ''));
-ok(R.前の右 > 5, '⚠️ 直す前は【右に地の帯】が出ていた（＝この試験が効いている証明）', R.前の右 + '点');
+ok(R.押さずの右 === 0 && R.押さずの下 === 0,
+   '⭐⭐ 何も押さなくても帯が出ない（ほぼ覆っている図は自動で埋める）',
+   `右${R.押さずの右} 下${R.押さずの下}`);
 ok(R.右 === 0 && R.下 === 0 && R.左 === 0 && R.上 === 0,
    '⭐⭐ 「縁を出さない」を入れると四辺とも地の帯が消える',
    `右${R.右} 下${R.下} 左${R.左} 上${R.上}`);
