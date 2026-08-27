@@ -112,6 +112,15 @@ const R = await p.evaluate(async () => {
   { const a = shot(); out.二枚 = { 字:moved(a, ink), 紙:moved(a, pap) }; }
   out.重ね方は別々 = { 下:(S.kamiU||{}).blend, 上:(S.kami||{}).blend };
   out.紙は2枚 = artLayer.getItems({ recursive:true, match:it => it.data && it.data.kami }).length;
+  /* ⭐⭐ 重ね方ごとに【字】と【紙】のどちらに乗るかを測る（2026-08-27） */
+  await setU({ on:'none' });
+  out.重ね方 = {};
+  for(const [bl, nm] of [['multiply','乗算'],['overlay','オーバーレイ'],['screen','スクリーン'],['both','両方']]){
+    await set({ on:'zara', blend:bl, amt:60, sc:50, seed:5 });
+    const a = shot(); out.重ね方[nm] = { 字:moved(a, ink), 紙:moved(a, pap) };
+  }
+  out.目のアイコン = document.querySelectorAll('#lineList .hd svg').length;
+  out.札の字は消えた = [...document.querySelectorAll('#lineList .hd')].every(e => !/見|隠/.test(e.textContent));
   await set({ on:'none' }); await setU({ on:'none' });
   out.両方なしで戻る = (() => { let n = 0; const a = shot();
     for(let i = 0; i < a.length; i += 4) if(Math.abs(a[i]-b0[i]) > 3) n++; return n; })();
@@ -149,4 +158,9 @@ ok(R.重ね方は別々.下 === 'multiply' && R.重ね方は別々.上 === 'over
    JSON.stringify(R.重ね方は別々));
 ok(R.紙は2枚 === 2, '紙は2枚とも版面に乗る', R.紙は2枚 + '枚');
 ok(R.両方なしで戻る === 0, '⚠️ 両方なしに戻すと1画素も変わらない', R.両方なしで戻る + '画素');
+ok(R.重ね方.両方.字 > 8 && R.重ね方.両方.紙 > 8,
+   '⭐⭐ 【両方】＝黒い字の上にも白い地の上にも乗る（木下「文字の上にノイズが乗らない」）',
+   JSON.stringify(R.重ね方));
+ok(R.目のアイコン >= 2 && R.札の字は消えた,
+   '⭐ 一覧の見／隠が【目のアイコン】になった', R.目のアイコン + '個');
 process.exit(ng ? 1 : 0);
