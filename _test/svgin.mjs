@@ -26,10 +26,9 @@ const HOW = {
            want:/IMAGE\s+\d+×\d+/ },
   tsubu: { input:'#fSvg', stat:'#stat',
            /* ⚠️ 粒は 8bit ドットが芯＝既定の 16×16 では細い線が落ちる（実測 5 DOTS）。
-              ⭐ 木下が実際に使う条件（解像を上げる）にしてから測る。 */
-           pre:`const e = document.querySelector('[data-p="res"]') || document.getElementById('res');
-                if(e){ e.value = 96; e.dispatchEvent(new Event('input', {bubbles:true})); }
-                await wait(1500);`,
+              🔴 2026-08-27 まで、この試験は【こちらで解像を 96 に上げてから】測っていた＝
+                 道具が自分で上げているかを一度も見ていなかった。
+              ⭐ 手で上げるのをやめる＝**置いただけで拾えるか**を見る（落ちる試験にする）。 */
            want:/(\d+)\s*DOTS/ , minDots: 300 },
 };
 const tool = process.argv[2];
