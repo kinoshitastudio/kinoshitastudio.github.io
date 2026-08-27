@@ -448,7 +448,9 @@
       <button data-v="x">よこ</button>
     </div>
     <div class="note">⭐⭐ <b>ねじれ</b>＝離れるほど網が回る／<b>粗さの流れ</b>＝離れるほど網が粗く（細かく）なる。
-      <b>濃さでなく網そのものがグラデする</b>＝どこを見ても同じ目にならない</div>
+      <b>濃さでなく網そのものがグラデする</b>＝どこを見ても同じ目にならない<br>
+      ⭐ 粗さを<b>マイナス側</b>へ振ると外側ほど目が詰まる。<b>折り返す手前でやめる</b>ので、
+      詰まりきっても<b>網の目は残る</b>（真っ黒に潰したいときは<b>にじみ</b>で足す）</div>
   </div>
 
   <div class="grp">
@@ -874,10 +876,21 @@ function dots(W, H){
     const u = ( dx*co + dy*si)/d, v = (-dx*si + dy*co)/d;
     if(u<u0)u0=u; if(u>u1)u1=u; if(v<v0)v0=v; if(v>v1)v1=v;
   });
+  /* ⭐⭐ 粗さ（flow）は【このコマの値】をここで出す（範囲もこれで決める）。
+     🔴 2026-08-27 まで、範囲は「揺れのいちばん大きいとき」で固定していた。
+        ＝ 粗さ 0 のコマでも 3.3倍の升目を回していた（実測：172,225 升／必要なのは 52,000）。
+     ⚠️ 1 に近づくと格子が潰れる（下の K が発散する）ので、必ず頭を押さえる。 */
+  let flow = P.flow + (P.flowb > 0 ? P.flowb * Math.sin(PH * Math.PI * 2) : 0);
+  flow = Math.max(-0.85, Math.min(0.85, flow));
+  const af = Math.abs(flow);
   /* ⚠️ 網が流れる（間隔が場所で変わる）と、真っ直ぐな格子より内側／外側へ動く。
-        範囲を広げておいて、はみ出した分は下の枠の外判定で捨てる。 */
-  /* ⚠️ 揺れるぶん、いちばん流れたときの幅で取る。P.flow だけで測ると端が欠ける */
-  const K = 1 / Math.max(0.25, 1 - Math.min(0.85, Math.abs(P.flow) + (P.flowb || 0)));
+        【縮む側】だけ範囲を広げて外の升目を拾いに行く。広がる側は元の範囲で足りる。
+        はみ出した分は下の枠の外判定で捨てる。
+     ⚠️ たて／よこ向きの粗さは掛かる量が負にもなるので、符号ではなく【大きさ】で見る。
+     🔴 s = 1 + flow×q が 0 以下になる升目（q > 1/|flow|）は【中心を突き抜けて折り返す】。
+        写像として意味がなく、遠くの升目を丸ごと枠内に呼び込む（実測：枠内の点の 26.7% が
+        この折り返しだった＝粗さ −0.45 のコマで 1コマ 915ms）。だから範囲もそこで頭を打つ。 */
+  const K = af > 0 ? Math.min(1 / Math.max(0.15, 1 - af), 1 / af) : 1;
   u0 = Math.floor(u0*K)-1; u1 = Math.ceil(u1*K)+1;
   v0 = Math.floor(v0*K)-1; v1 = Math.ceil(v1*K)+1;
 
@@ -892,9 +905,7 @@ function dots(W, H){
      🔴 粗さの流れも【場所ごとに掛かる量が違う】ので、足し続けても元に戻らない＝環にならない。
         （中心から離れるほど間隔が変わるので、一様に送るということができない）
      ⭐ だから【振れて戻る】＝sin で1周に1往復させる＝必ず環になる。
-     ⚠️ 1 に近づくと格子が潰れる（下の K が発散する）ので、必ず頭を押さえる。 */
-  let flow = P.flow + (P.flowb > 0 ? P.flowb * Math.sin(PH * Math.PI * 2) : 0);
-  flow = Math.max(-0.85, Math.min(0.85, flow));
+     ⚠️ flow の値は上（範囲を決めるところ）で出している。 */
   /* にじみが揺れる ── sin なので1周で必ず元へ戻る */
   const bleed = P.bleed * RS + (P.wob > 0 ? P.wob * RS * Math.sin(PH * Math.PI * 2) : 0);
   const nCol = Math.max(2, Math.round(P.colN));
@@ -916,7 +927,23 @@ function dots(W, H){
         const q = P.flowDir === 'y' ? (ly / half)
                 : P.flowDir === 'x' ? (lx / half)
                 : Math.hypot(lx, ly) / half;
-        if(flow !== 0){ const s = 1 + flow*q; lx *= s; ly *= s; }
+        /* ══🔴🔴 折り返した升目は敷かない（2026-08-27 実測して足した）══
+           粗さは【中心からの距離 q で間隔を変える】＝写す先は r' = r × (1 + flow×q)。
+           縮む側（flow<0）でこれは【上に凸の放物線】になり、二度折り返す：
+             ① 1 + flow×q ≤ 0 …… 位置が中心を突き抜けて反対側へ出る（＝裏返る）
+             ② 1 + 2×flow×q ≤ 0 …… 向きが反転して【内側へ戻り始める】
+                ＝ここから先の升目は、すでに敷いた場所へ二重・三重に重なるだけ。
+           どちらも「一つの場所に網を何枚も敷く」ことになり、
+             ・点が数十倍に増えて 1コマ 1,100ms（＝カクつきの正体）
+             ・重なった点で真っ黒に潰れて【網の目が消える】
+           ＝この道具の原則（いちばん濃いところでも白の抜け穴を残す）が壊れていた。
+           ⭐ 折り返す前まででやめる。縮まないコマは1画素も変わらない（実測：差 0 画素）。
+           ⭐ 真っ黒に潰したいときは、今までどおり【にじみ】で足す（潰れは選ぶもの）。 */
+        if(flow !== 0){
+          const s = 1 + flow*q;
+          if(s <= 0 || 1 + 2*flow*q <= 0) continue;
+          lx *= s; ly *= s;
+        }
         if(twist !== 0){ const a = th + twist*q; c2 = Math.cos(a); s2 = Math.sin(a); }
       }
       const x = cx + lx*c2 - ly*s2, y = cy + lx*s2 + ly*c2;
@@ -1108,13 +1135,28 @@ let pend = null, raf = null, lastT = 0;
 /* ⭐ 画面を1枚焼く。⚠️ 動かしている間は【軽い長辺】で焼く＝倍率 RS を一緒に落とすので
       見えは同じまま（点の間隔もにじみも比で決まっている）。書き出しは指定の大きさで焼き直す。 */
 const PREVIEW_LONG = 1000;
-function paintScreen(){
+/* ══⭐ 版を毎コマ焼き直さない（2026-08-27）══════════════════
+   ⭐ 動きのつまみのうち【網】側（回る・ねじれ・粗さ・にじみ・色）は版に触らない。
+      なのに1コマごとに版と形を焼き直していた＝毎コマ 9ms を捨てていた（実測）。
+   🔴🔴 「焼き直していいか」を旗で持たない ── 立て忘れると
+        【つまみを動かしても絵が変わらない】という最悪の落ち方をする（実際に一度踏んだ）。
+   ⭐ 代わりに《使い回していいのは、動きのコマ送り（loop）だけ》と決める：
+        ・paintScreen() ＝ 引数なし ＝ 必ず焼き直す（つまみ・版の操作・読み込み・戻す、全部こっち）
+        ・paintScreen(true) ＝ loop() だけが呼ぶ ＝ 前のコマの版を使い回す
+      ＝ 新しい道を足しても、その道は自動的に「必ず焼く」側に入る（事故が安全側に倒れる）。
+   ⚠️ 版そのものが動くとき（版が揺れる／版が回る）はコマ送りでも焼き直しが要る。 */
+let bakedW = 0, bakedH = 0;
+function paintScreen(reuseBake){
   const full = size();
   const L = (P.anim && P.long > PREVIEW_LONG) ? PREVIEW_LONG : P.long;
   RS = L / P.long;
   const W = Math.max(2, Math.round(full.W * RS)), H = Math.max(2, Math.round(full.H * RS));
   cv.width = W; cv.height = H;
-  bakeTone(W, H); bakeMask(W, H);
+  const sheetsMove = (P.shb > 0 || P.shrN > 0);
+  if(!reuseBake || sheetsMove || W !== bakedW || H !== bakedH){
+    bakeTone(W, H); bakeMask(W, H);
+    bakedW = W; bakedH = H;
+  }
   const t0 = performance.now();
   render(g, W, H, false);
   const ms = performance.now() - t0;
@@ -1126,10 +1168,13 @@ function loop(ts){
   if(!lastT) lastT = ts;
   PH = (PH + (ts - lastT)/1000/Math.max(0.2, P.cyc)) % 1;
   lastT = ts;
-  paintScreen();
+  paintScreen(true);                     /* ⭐ コマ送りは版に触らない＝焼いた版を使い回す */
   raf = requestAnimationFrame(loop);
 }
 function kick(){
+  /* 🔴 焼いた版を【無効にする】。立て忘れても「焼きすぎる（＝今までどおり）」に倒れるだけで、
+        古い絵が残る事故にはならない。ここは早期 return より前に置くこと。 */
+  bakedW = 0;
   if(TV.on) return;                      /* 書き出し中は画面を触らない */
   if(P.anim){ if(!raf){ lastT = 0; raf = requestAnimationFrame(loop); } return; }
   if(raf){ cancelAnimationFrame(raf); raf = null; }
