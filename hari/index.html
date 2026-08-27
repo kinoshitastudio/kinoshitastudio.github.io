@@ -1769,13 +1769,31 @@ function kamiNoise(x, y, seed){
 }
 const kamiField = (cell, seed) => (x, y) => kamiNoise(x/cell, y/cell, seed);
 /* ⭐ 濃淡の場（-1〜1）を作る。⚠️ ここが「紙の目」の違いのぜんぶ */
+/* ══⭐⭐ 紙が重い（2026-08-27 木下「スライダー調整かなり重くなる。
+   モバイルは重すぎてエラーにもなった」）══════════════════════════
+   🔴 紙の目は【版面いっぱいを1画素ずつ】作る＝1000×1414 の版面で 300万画素。
+      粗さ・向き・種を動かすたびに、それを毎回焼き直していた。
+   ⭐ 朧OBORO と同じ手＝【触っている間は粗く・手が止まったら細かく焼き直す】。
+   ⚠️ 書き出しは必ず細かい方（quick を通さない）。
+   ⚠️ 指の端末は作れる大きさが小さい＝上限をさらに下げる（重すぎて落ちるのを避ける）。 */
+let kamiQuick = false, kamiFineT = 0;
+function kamiTouch(){
+  kamiQuick = true;
+  clearTimeout(kamiFineT);
+  kamiFineT = setTimeout(() => { kamiQuick = false; render(); }, 260);
+}
+const kamiCap = () => kamiQuick ? 560
+  : (matchMedia('(pointer:coarse)').matches ? 1100 : 2048);
+
 function kamiTex(K){
   const B = S.board;
   if(!K || K.on === 'none') return null;
-  const key = [K.on, K.sc, K.ang, K.seed, K.blend, K.half||'', Math.round(B.w), Math.round(B.h)].join('|');
+  const cap = kamiCap();
+  /* ⚠️ 粗い版と細かい版が混ざらないよう、控えの名前に【焼いた大きさ】も入れる */
+  const key = [K.on, K.sc, K.ang, K.seed, K.blend, K.half||'', Math.round(B.w), Math.round(B.h), cap].join('|');
   if(kamiCache.has(key)) return kamiCache.get(key);
   /* 焼くときは 4096 まで伸びるので、目が溶けないところまで作っておく */
-  const long = Math.max(B.w, B.h), k = Math.min(2048/long, 3);
+  const long = Math.max(B.w, B.h), k = Math.min(cap/long, 3);
   const w = Math.max(8, Math.round(B.w*k)), h = Math.max(8, Math.round(B.h*k));
   const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
   const g2 = cv.getContext('2d', { willReadFrequently:true });
@@ -3545,7 +3563,12 @@ KAMI_LAYERS.forEach(L => {
   document.querySelectorAll('#segKamiB' + i + ' button').forEach(b =>
     b.onclick = () => kamiSet('blend', b.dataset.v, L.key));
   [['kAmt','amt'],['kSc','sc'],['kAng','ang'],['kSeed','seed']].forEach(([id,k]) => {
-    const e = $(id + i); if(e) e.addEventListener('input', ev => kamiSet(k, +ev.target.value, L.key));
+    const e = $(id + i); if(e) e.addEventListener('input', ev => {
+      /* ⭐ 紙の目を作り直すつまみ（粗さ・向き・種）だけ粗く焼く。
+         ⚠️ 強さ（amt）は焼き直さない（控えの名前に入っていない）＝そのまま軽い。 */
+      if(k !== 'amt') kamiTouch();
+      kamiSet(k, +ev.target.value, L.key);
+    });
   });
   const sh = $('kShuf' + i);
   if(sh) sh.onclick = () => { kamiSet('seed', 1 + Math.floor(Math.random()*99), L.key);
@@ -4642,7 +4665,11 @@ async function bakeCanvas(){
   scope.activate();
   const lay = scope.project.activeLayer;
   const keep = { art:artLayer, ui:uiLayer };
+  /* ⚠️ つまみを触っている最中に押されても、焼く絵は【必ず細かい方】にする
+     （粗く焼いた紙のまま PNG に入ると、画面と刷り上がりが違う） */
+  const wasQuick = kamiQuick; kamiQuick = false;
   render(lay, { forExport:true });                      // ⭐ 同じ描き方をそのまま使う（2つ持たない）
+  kamiQuick = wasQuick;
   lay.scale(sc, new scope.Point(0,0));
   scope.view.update();
   paper.activate();                                     // 元の場に戻す
