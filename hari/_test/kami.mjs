@@ -124,6 +124,18 @@ const R = await p.evaluate(async () => {
   await set({ on:'none' }); await setU({ on:'none' });
   out.両方なしで戻る = (() => { let n = 0; const a = shot();
     for(let i = 0; i < a.length; i += 4) if(Math.abs(a[i]-b0[i]) > 3) n++; return n; })();
+  /* ══⭐⭐ 触っている間は【粗く焼く】（2026-08-27 木下「スライダー調整かなり重くなる。
+     モバイルは重すぎてエラーにもなった」）══
+     ⚠️ 時間で測るとぶれる（狼少年になる）＝【焼いた紙の大きさ】で見る。 */
+  {
+    kamiSet('on', 'zara'); await wait(500);
+    const wid = () => { const c = kamiTex(kamiOf('kami')); return c ? c.width : 0; };
+    const fine = wid();
+    kamiTouch();                       // ⭐ つまみを触っている状態にする
+    const quick = wid();
+    await wait(700);                   // ⭐ 手が止まったら細かい方に戻る
+    out.粗く焼く = { 細かい:fine, 触っている間:quick, 戻る:wid() };
+  }
   return out;
 });
 if(process.argv[2]) await p.screenshot({ path: process.argv[2] });
@@ -163,4 +175,8 @@ ok(R.重ね方.両方.字 > 8 && R.重ね方.両方.紙 > 8,
    JSON.stringify(R.重ね方));
 ok(R.目のアイコン >= 2 && R.札の字は消えた,
    '⭐ 一覧の見／隠が【目のアイコン】になった', R.目のアイコン + '個');
+ok(R.粗く焼く && R.粗く焼く.触っている間 < R.粗く焼く.細かい * 0.6 &&
+   R.粗く焼く.戻る === R.粗く焼く.細かい,
+   '⭐⭐ 触っている間は【粗く焼く】＝手が止まったら細かい方に戻る（重さの直し）',
+   JSON.stringify(R.粗く焼く));
 process.exit(ng ? 1 : 0);
