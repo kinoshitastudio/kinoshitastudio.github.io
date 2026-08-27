@@ -95,6 +95,43 @@ const R = await p.evaluate(async () => {
       out.選ぶに戻る = !PEN.pt;
     }
   }
+  /* ══ ⑦⭐⭐ 回る向き（木下が3回聞いた＝見つかっていなかった所）══
+     ⭐ 見るのは「押したら進む向きが変わる」＋「1字目の位置は保たれる」
+       （＝絵ごと飛ばずに、回る向きだけ入れ替わる）。 */
+  {
+    const L = S.lines[0];
+    S.sel = { kind:'line', i:0 };
+    /* ⚠️ 矩形の【角】から始まると、逆にしたとき進むのは「別の辺」＝90度になって
+       「逆を向いた」で測れない。⭐ 円で測る（どこでも接線がなめらか）。 */
+    L.kind='meguru'; L.path.type='circle'; L.text='ABCDEFGHIJKL'; L.dir = 1; L.upright = 0;
+    syncPanel(); render(); await settle();
+    const pos = () => { const g = artItems().find(c => c.data && c.data.line === L.id);
+      return g.children.map(it => it.bounds.center); };
+    const a1 = pos();
+    document.querySelector('#segDir button[data-v="-1"]').click(); await settle();
+    const a2 = pos();
+    const v1 = a1[3].subtract(a1[0]), v2 = a2[3].subtract(a2[0]);
+    out.回る向き = {
+      逆を向く: (v1.x*v2.x + v1.y*v2.y) < 0,
+      firstGap: Math.round(a1[0].getDistance(a2[0])),
+      段の位置: Math.round(document.getElementById('rowDir').getBoundingClientRect().top),
+      返すの位置: Math.round(document.getElementById('rowMir').getBoundingClientRect().top) };
+    document.querySelector('#segDir button[data-v="1"]').click(); await settle();
+
+    /* ══⭐⭐ 字の姿勢（2026-08-27 木下「テキストがちゃんと読めるようにしたかった。
+       今だと逆になってるから」／「そもそも下にきているのは…になるのか」）══
+       ⭐ 経路に沿わせる限り、下側の字は必ず逆さになる（円形テキストの宿命）。
+       ⭐ 【いつも正立】＝置く場所だけ経路に従い、字は立てたまま＝どこに回っても読める。 */
+    const rots = () => { const g = artItems().find(c => c.data && c.data.line === L.id);
+      return g.children.map(it => Math.round(((it.rotation||0)%360+360)%360)); };
+    L.upright = 0; L.start = 30; syncPanel(); render(); await settle();
+    const r0 = rots();
+    document.querySelector('#segUp button[data-v="1"]').click(); await settle();
+    const r1 = rots();
+    out.正立 = { 沿うとき傾いている字: r0.filter(v => v !== 0).length,
+                 正立でまっすぐな字: r1.filter(v => v === 0).length, 全部: r1.length };
+    document.querySelector('#segUp button[data-v="0"]').click(); await settle();
+  }
   return out;
 });
 await b.close();
@@ -119,4 +156,15 @@ ok(R.道具がある && R.持ち替えた, '⭐⭐ 左の道具立てに【頂�
 ok(R.道具で足せる && R.道具で足せる.後 === R.道具で足せる.前 + 1,
    '⭐⭐ 持ち替えたら【押すだけ】で頂点が増える', JSON.stringify(R.道具で足せる));
 ok(R.選ぶに戻る, '⭐ V で選ぶに戻る（持ちっぱなしにしない）');
+/* ⚠️ 1字目の中心は【字幅のぶん】だけ動く（逆にすると隣の字が来る側が変わるため）＝
+   「絵ごと飛んでいない」ことを見る（字の大きさ 46 の範囲内）。 */
+ok(R.回る向き && R.回る向き.逆を向く && R.回る向き.firstGap < 60,
+   '⭐⭐ 【回る向き】＝進む向きだけ入れ替わる（絵ごと飛ばない）',
+   JSON.stringify(R.回る向き));
+ok(R.正立 && R.正立.沿うとき傾いている字 > 0 && R.正立.正立でまっすぐな字 === R.正立.全部,
+   '⭐⭐ 【いつも正立】＝字が全部まっすぐ立つ（木下：ちゃんと読めるようにしたかった）',
+   JSON.stringify(R.正立));
+ok(R.回る向き && R.回る向き.段の位置 - R.回る向き.返すの位置 < 120,
+   '⭐ 回る向きが【経路の操作のすぐ下】にある（前は370px 下にあって見つからなかった）',
+   `返す ${R.回る向き.返すの位置} → 回る向き ${R.回る向き.段の位置}`);
 process.exit(ng ? 1 : 0);
