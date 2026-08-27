@@ -72,8 +72,12 @@ node "$(cd "$(dirname "$0")" && pwd)/kasu.mjs" || KASUNG=1
 echo
 node "$(cd "$(dirname "$0")" && pwd)/panel.mjs" || PANELNG=1
 
+# ⭐⭐ 複数選択・スペースで版面・掴んだ反対側から（2026-08-27）
+echo
+node "$(cd "$(dirname "$0")" && pwd)/multi.mjs" "http://localhost:$PORT" || MULTING=1
+
 # ⭐ 「直す前と1画素も変わっていない」は same.mjs（前の版を渡して使う）
 #    例： git show HEAD:hari/index.html > /tmp/old.html && node hari/_test/same.mjs /tmp/old.html
 
-if [ "${PENNG:-0}" = "1" ] || [ "${TOOLNG:-0}" = "1" ] || [ "${FEELNG:-0}" = "1" ] || [ "${KAMING:-0}" = "1" ] || [ "${URANG:-0}" = "1" ] || [ "${BOXNG:-0}" = "1" ] || [ "${KASUNG:-0}" = "1" ] || [ "${PANELNG:-0}" = "1" ]; then exit 1; fi
+if [ "${PENNG:-0}" = "1" ] || [ "${TOOLNG:-0}" = "1" ] || [ "${FEELNG:-0}" = "1" ] || [ "${KAMING:-0}" = "1" ] || [ "${URANG:-0}" = "1" ] || [ "${BOXNG:-0}" = "1" ] || [ "${KASUNG:-0}" = "1" ] || [ "${PANELNG:-0}" = "1" ] || [ "${MULTING:-0}" = "1" ]; then exit 1; fi
 exit $CODE

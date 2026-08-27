@@ -127,7 +127,12 @@ body:not(.nohelp) #helpBtn{ background:var(--ink); color:var(--bg); border-color
 .lk.on{ opacity:1; background:var(--ink); color:var(--bg); border-color:var(--ink); }
 .li{ display:flex; align-items:center; gap:7px; padding:6px 8px; border:1px solid var(--line);
   border-radius:6px; cursor:pointer; background:var(--btn) }
-.li.on{ border-color:var(--ink) }
+/* ⭐⭐ 2026-08-27 木下「つかんだレイヤーのオブジェクトはパネルで色をつけるなどアクティブをわかるように」
+   ⚠️ 枠の色だけでは、行が並んでいると【どれが選ばれているか】が見つけられない。
+   ⭐ 地に色を敷いて、左に帯を1本立てる（Figma の選択と同じ見え方）。 */
+.li.on{ border-color:var(--sel); background:color-mix(in srgb, var(--sel) 14%, transparent);
+  box-shadow:inset 3px 0 0 var(--sel) }
+.li.on .t{ color:var(--ink); font-weight:600 }
 .li .t{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px }
 .li .k{ font-size:9px; color:var(--dim); font-family:ui-monospace,monospace }
 /* ⭐⭐ 紙の裏（2026-08-27）＝一覧でも【どちらの面に居るか】が分かる。
@@ -2019,6 +2024,41 @@ function render(into, opt){
   }
 }
 
+/* ⭐⭐ 選んでいるものを ぜんぶ 動かす（2026-08-27）。
+   ⭐ 行は置き方によって「どこに足すか」が違う（箱／頂点／ずれ）＝その分岐もここ1本に閉じる。
+   ⚠️ 固定しているものは動かさない（錠の意味）。 */
+/* ⭐⭐ 選んでいるものを ぜんぶ 消す（2026-08-27）。
+   🔴 前から消すと【番号がずれて別の物が消える】＝後ろから消す。
+   ⭐ 図は置き場へしまう＝⌘Z で戻る（消す道が増えても、しまう場所は1つ）。 */
+function delSel(){
+  const list = selList();
+  if(!list.length) return 0;
+  pushUndo();
+  const li = list.filter(o => o.kind === 'line').map(o => o.i).sort((a,b) => b-a);
+  const pi = list.filter(o => o.kind === 'piece').map(o => o.i).sort((a,b) => b-a);
+  pi.forEach(i => { const pc = S.pieces[i]; if(pc){ dropPiece(pc); if(pc.item) pc.item.remove(); } S.pieces.splice(i,1); });
+  /* ⚠️ 行を1本も無くすと打ち込む先が消える＝最後の1本は残す（これまでの決まり） */
+  li.forEach(i => { if(S.lines.length > 1) S.lines.splice(i,1); });
+  S.sel = { kind:S.lines.length ? 'line' : null, i:S.lines.length ? 0 : null };
+  syncPanel(); render();
+  return list.length;
+}
+function moveSel(dx, dy){
+  selList().forEach(o => {
+    const it = selObj(o); if(!it || it.lock) return;
+    if(o.kind === 'piece'){ it.x += dx; it.y += dy; return; }
+    const L = it;
+    if((L.kind === 'haru' || L.kind === 'fuda') && L.box){
+      L.box.x += dx / S.board.w * 100;
+      L.box.y += dy / S.board.h * 100;
+    } else if(L.path && L.path.type === 'poly' && L.path.pts){
+      L.path.pts = L.path.pts.map(a => [a[0] + dx, a[1] + dy]);
+    } else if(L.path){
+      L.path.dx = (L.path.dx || 0) + dx;
+      L.path.dy = (L.path.dy || 0) + dy;
+    }
+  });
+}
 /* 選んでいる行の頂点ハンドル（多角形だけ） */
 function drawHandles(){
   /* ⚠️ 反対の面の物は透けて見えているだけ＝掴めない（locked）。
@@ -2031,6 +2071,21 @@ function drawHandles(){
   { const o = (S.sel && S.sel.kind === 'line')  ? S.lines[S.sel.i]
             : (S.sel && S.sel.kind === 'piece') ? S.pieces[S.sel.i] : null;
     if(o && o.lock) return; }
+  /* ⭐ 2つ以上選んでいるとき＝【追加分】は薄い枠だけ出す（主には今までどおりの掴み手）。
+     ⚠️ 全部に掴み手を出すと、どれを掴んでいるのか分からなくなる。 */
+  if(selList().length > 1){
+    const w2 = 1.2/paper.view.zoom;
+    selList().slice(1).forEach(o => {
+      const it = selObj(o); if(!it) return;
+      const pts = o.kind === 'piece' ? pieceCorners(it) : lineCorners(it);
+      if(!pts || pts.length < 4) return;
+      const q = [pts[0], pts[2] || pts[1], pts[4] || pts[2], pts[6] || pts[3]];
+      const r = new Path({ segments:q, closed:true });
+      r.strokeColor = new paper.Color(0.04, 0.52, 1, 0.55);
+      r.strokeWidth = w2; r.fillColor = null;
+      uiLayer.addChild(r);
+    });
+  }
   const pc = selPiece();
   if(pc){ pieceHandles(pc); return; }
   const L = sel();
@@ -2139,15 +2194,36 @@ function cropOf(pc){
    ⚠️ 切り抜いた分を引いて測る＝見えている物が版面を覆う。
    ⚠️ 回してあると覆うのに要る大きさが変わる＝【回したあとの外接】で測る。
       これを見ないと、斜めにした写真の角が空く。 */
-function fitPiece(pc, mode){
-  if(!pc || !pc.item) return false;
+/* ⭐ 版面を【覆う／収める】倍率（％）。⚠️ 式はこの1本＝ボタンも、掴んだときの吸着も同じ数を見る
+   （2箇所に書くと「ボタンで敷いた大きさ」と「吸着した大きさ」が黙って食い違う）。 */
+function fitScale(pc, mode){
+  if(!pc || !pc.item) return 0;
   const b = pc.item.bounds, cr = cropOf(pc), B = S.board;
   const iw = b.width  * (cr ? (100 - cr.l - cr.r)/100 : 1);
   const ih = b.height * (cr ? (100 - cr.t - cr.b)/100 : 1);
-  if(!(iw > 0 && ih > 0)) return false;
+  if(!(iw > 0 && ih > 0)) return 0;
   const a = (pc.rot||0) * Math.PI/180, ca = Math.abs(Math.cos(a)), sa = Math.abs(Math.sin(a));
   const ow = iw*ca + ih*sa, oh = iw*sa + ih*ca;
-  const want = mode === 'cover' ? Math.max(B.w/ow, B.h/oh) : Math.min(B.w/ow, B.h/oh);
+  return (mode === 'cover' ? Math.max(B.w/ow, B.h/oh) : Math.min(B.w/ow, B.h/oh)) * 100;
+}
+/* ⭐⭐ 覆えていない辺があれば、その分だけ寄せる（2026-08-27 木下
+   「ちょうどあわせないとフレームが表示されるからゆっくりやってめんどくさい」）。
+   ⚠️ すでに覆えているときは【1ミリも動かさない】＝勝手に動いた、を作らない。 */
+function nudgeCover(pc){
+  const cs = pieceCorners(pc); if(!cs.length) return 0;
+  const xs = cs.map(q=>q.x), ys = cs.map(q=>q.y), B = S.board;
+  const l = Math.min(...xs), r = Math.max(...xs), t = Math.min(...ys), bt = Math.max(...ys);
+  let dx = 0, dy = 0;
+  if(l > 0) dx = -l; else if(r < B.w) dx = B.w - r;
+  if(t > 0) dy = -t; else if(bt < B.h) dy = B.h - bt;
+  pc.x += dx; pc.y += dy;
+  return dx || dy;
+}
+function fitPiece(pc, mode){
+  if(!pc || !pc.item) return false;
+  const B = S.board;
+  const want = fitScale(pc, mode) / 100;
+  if(!(want > 0)) return false;
   const k = Math.max(3, Math.min(600, want*100));
   pc.sc = k;
   pc.x = B.w/2; pc.y = B.h/2;                 // ⭐ 版面の中央へ（端に寄ったままだと覆えない）
@@ -2182,6 +2258,50 @@ const selPiece = () => S.sel.kind === 'piece' ? S.pieces[S.sel.i] : null;
      ・vp(p)  ＝ 控えの座標 ⇄ 見えている座標（同じ式で往復する＝2つ持たない）
      ・atPt(e)＝ 指／マウスの居場所を【控えの座標】で返す（これより先は面を気にしなくていい）
    ⚠️ 表のとき（face=0）はどちらも素通り＝これまでと1画素も変わらない。 */
+/* ══⭐⭐ 複数選択（2026-08-27 木下「複数選択もできるように」）══════════
+   ⭐ 芯＝**主（S.sel）＋ 追加分**。S.sel はこれまでどおり「いま触っている1つ」で、
+     右のつまみも掴み手もそこを見る＝**既存の処理を1行も変えずに済む**。
+   ⭐⭐ S.sel に代入したら追加分は自動で消える（getter/setter にしてある）
+     ＝「選び直したのに前のが残っている」を作らない。**書く道が1本**のまま増やせる。
+   ⚠️ 保存にも出るよう enumerable:true（控えの往復で形が変わらない）。 */
+let _sel = { kind:'line', i:0 }, _also = [];
+{
+  const init = S.sel || { kind:'line', i:0 };
+  delete S.sel;
+  Object.defineProperty(S, 'sel', {
+    enumerable:true, configurable:true,
+    get(){ return _sel; },
+    set(v){ _sel = v || { kind:null, i:null }; _also = []; }   // ⭐ 主を変えたら追加分は消える
+  });
+  S.sel = init;
+}
+/* ⭐ いま選ばれているもの【ぜんぶ】。⚠️ 数える所・回す所はここ1本 */
+function selList(){
+  const a = [];
+  if(_sel && _sel.kind) a.push(_sel);
+  _also.forEach(o => { if(!a.some(x => x.kind === o.kind && x.i === o.i)) a.push(o); });
+  return a;
+}
+function selHas(kind, i){ return selList().some(o => o.kind === kind && o.i === i); }
+/* ⭐ ⇧で足す／外す。⚠️ 外したのが主なら、残りの1つを主に繰り上げる（選択が消えない） */
+function selToggle(kind, i){
+  if(!selHas(kind, i)){
+    if(!_sel || !_sel.kind){ S.sel = { kind, i }; return; }
+    _also.push({ kind, i });
+    return;
+  }
+  if(_sel && _sel.kind === kind && _sel.i === i){
+    const next = _also.shift();
+    const keep = _also.slice();
+    S.sel = next || { kind:null, i:null };      // ⚠️ setter が追加分を消すので、そのあと戻す
+    _also = keep;
+  }else{
+    _also = _also.filter(o => !(o.kind === kind && o.i === i));
+  }
+}
+/* ⭐ 選んでいるものの「もの」を返す（行でも図でも同じ道で扱う） */
+function selObj(o){ return o.kind === 'line' ? S.lines[o.i] : S.pieces[o.i]; }
+
 function flipOn(){ return !!S.face; }
 function vp(p){ return flipOn() ? new Point(S.board.w - p.x, p.y) : p; }
 function atPt(e){
@@ -2280,6 +2400,12 @@ cv.addEventListener('pointerdown', e => {
   const pt = atPt(e);                     // ⭐ 面を戻した【控えの座標】＝ここから下は面を気にしない
   cv.setPointerCapture(e.pointerId);
 
+  /* ⭐⭐ 2026-08-27 木下「今だとそのままボードがずれてしまうので、
+     ボード上を動かす時はスペースを押しながらなど工夫して」
+     ＝版面を動かすのは【スペースを押している間だけ】（Figma と同じ）。
+     ⚠️ いちばん先に返す＝描くモードでも、何を選んでいても、押せば必ず動かせる。 */
+  if(spaceDown){ drag = { kind:'pan', last:vp(pt) }; cv.style.cursor = 'grabbing'; return; }
+
   /* ⭐⭐ ✒️ 描くモード（2026-08-26）＝いちばん先に返す。
      ⚠️ ここより下の掴み判定（頂点・角・回転・パン）には1行も触っていない。 */
   /* ⚠️ 引いている最中の線は【入れ物（inner）の外】に居る＝紙を裏返しても一緒に返らない。
@@ -2350,7 +2476,19 @@ cv.addEventListener('pointerdown', e => {
     cs.forEach((p,i) => { const d2 = p.getDistance(pt); if(d2 < nd){ nd = d2; near = i; } });
     const c = new Point(pcS.x, pcS.y);
     if(near >= 0 && nd < tol){
-      drag = { kind:'scale', d0:Math.max(1, c.getDistance(pt)), sc0:pcS.sc };
+      /* ⭐⭐ 2026-08-27 木下「真ん中から左右に広がるのでやりづらい。
+         掴んだ左右の辺から大きくできるようにして」
+         ＝掴んだ所の【反対側】を止めて伸ばす（Figma・Illustrator と同じ持ち方）。
+         ⚠️ 掴み手は 8点（角4＋辺の中央4）なので、反対側は +4。
+         ⭐ ⌥ を押している間は【中心から】＝今までの効きも残す。 */
+      drag = { kind:'scale', sc0:pcS.sc,
+               A:cs[(near + 4) % cs.length], d0:Math.max(1, cs[(near + 4) % cs.length].getDistance(pt)),
+               /* ⚠️ ⌥（中心から）の物差しは【掴んだ瞬間の中心からの距離】。
+                  いまの指の位置から測り直すと必ず1倍になって【拡大できない】。 */
+               dc0:Math.max(1, c.getDistance(pt)),
+               x0:pcS.x, y0:pcS.y,
+               /* ⭐ 版面をちょうど覆う大きさ＝ここに近づいたら吸い付く */
+               cover:fitScale(pcS, 'cover') };
       cv.style.cursor = 'nwse-resize'; return;
     }
     if(near >= 0 && (near % 2 === 0) && nd < tol*2.6){          // 角の少し外＝回す
@@ -2363,12 +2501,20 @@ cv.addEventListener('pointerdown', e => {
   const owner = hit && hit.item ? rootOf(hit.item) : null;
   if(owner && owner.data.piece !== undefined){
     const i = S.pieces.findIndex(p => p.id === owner.data.piece);
-    if(i >= 0){ S.sel = { kind:'piece', i }; syncPanel(); drag = { kind:'piece', last:pt }; render(); return; }
+    if(i >= 0){
+      /* ⭐ ⇧＝選びに足す／外す（2026-08-27 木下「複数選択もできるように」） */
+      if(e.shiftKey){ selToggle('piece', i); syncPanel(); render(); drag = null; return; }
+      if(!selHas('piece', i)) S.sel = { kind:'piece', i };
+      syncPanel(); drag = { kind:'piece', last:pt }; render(); return;
+    }
   }
   if(owner && owner.data.line !== undefined){
     const i = S.lines.findIndex(l => l.id === owner.data.line);
     if(i >= 0){
-      S.sel = { kind:'line', i }; syncPanel(); render();
+      if(e.shiftKey){ selToggle('line', i); syncPanel(); render(); drag = null; return; }
+      /* ⚠️ すでに選ばれている物を掴んだときは選び直さない＝【まとめて動かす】が続く */
+      if(!selHas('line', i)) S.sel = { kind:'line', i };
+      syncPanel(); render();
       /* ⭐ 掴んだ行がそのまま動く（木下＝「いまだとボード全体が動いてしまう」）。
          ⚠️ ここで return しないと、下の pan に落ちて版面ごと動く。
          ⭐⭐ 修飾キーで【掴む意味】を変える（木下＝「毎回パネルにいくのが面倒」）。
@@ -2391,8 +2537,8 @@ cv.addEventListener('pointerdown', e => {
      ⭐ 何にも当たらなかった＝選ぶものが無い＝選択を外す。マウスでも指でも同じ。
      ⚠️ 外れた状態で取っ手が残っていると「いつも選ばれている」意味になるので、必ず描き直す。 */
   S.sel = { kind:null, i:null }; syncPanel(); render();
-  if(e.pointerType === 'touch') return;      // 指では版面を引かない（狙いを外すたびにずれるため）
-  drag = { kind:'pan', last:vp(pt) };
+  /* 🔴 ここで版面を引いていたので、何もない所を触るたびに【盤ごとずれていた】。
+     ⭐ 版面を動かすのはスペース（上）と中ボタンだけ＝作っている最中に景色が動かない。 */
 });
 /* ══ 版面の上で打ち直す ══
    ⭐ 木下＝「テキストはダブルクリックでテキスト編集できるように」。
@@ -2562,9 +2708,26 @@ cv.addEventListener('pointermove', e => {
     drag.last = pt; render();
   } else if(drag.kind === 'scale'){
     const pc = selPiece(); if(!pc) return;
-    const c = new Point(pc.x, pc.y);
-    pc.sc = Math.max(3, Math.min(600, drag.sc0 * (c.getDistance(pt) / drag.d0)));
+    /* ⌥＝中心から（今までの効き）／ふつうは掴んだ所の反対側を止めて伸ばす */
+    const mid = e.altKey || !drag.A;
+    const A = mid ? new Point(pc.x, pc.y) : drag.A;
+    const d0 = mid ? (drag.dc0 || 1) : drag.d0;
+    let sc = Math.max(3, Math.min(600, drag.sc0 * (A.getDistance(pt) / d0)));
+    /* ⭐⭐ 版面をちょうど覆う大きさの近くで【吸い付く】
+       （木下＝「ちょうどあわせないとフレームが表示されるからゆっくりやってめんどくさい」）。
+       ⚠️ ⌥ を押している間は吸わない＝どうしても中途半端な大きさにしたいときの逃げ道。 */
+    let snap = false;
+    if(!e.altKey && drag.cover > 0 && Math.abs(sc - drag.cover) < Math.max(2, drag.cover * 0.06)){
+      sc = drag.cover; snap = true;
+    }
+    const kk = sc / drag.sc0;
+    pc.sc = sc;
+    if(!mid){ pc.x = A.x + (drag.x0 - A.x) * kk; pc.y = A.y + (drag.y0 - A.y) * kk; }
+    /* ⭐ 吸い付いた瞬間だけ、覆えていない辺のぶん寄せる＝縁（フレーム）が消える。
+       ⚠️ すでに覆えているなら1ミリも動かさない。 */
+    if(snap) nudgeCover(pc);
     setRange('pcScale', Math.round(pc.sc)); render();
+    if(snap) stat('版面をちょうど覆う大きさ（⌥ を押すと吸い付かない）');
   } else if(drag.kind === 'rot'){
     const pc = selPiece(); if(!pc) return;
     const c = new Point(pc.x, pc.y);
@@ -2588,6 +2751,21 @@ addEventListener('pointerup', () => {
   }
   drag = null; cv.style.cursor = '';
 });
+/* ⭐ スペース＝版面を動かす（押している間だけ）。⚠️ 文字を打っている最中は横取りしない */
+let spaceDown = false;
+addEventListener('keydown', e => {
+  if(e.code !== 'Space' || typing(e.target)) return;
+  e.preventDefault();                     // ⚠️ ページが下へ飛ぶのを止める
+  if(spaceDown) return;
+  spaceDown = true; cv.style.cursor = 'grab';
+  stat('スペースを押している間＝版面を動かす');
+});
+addEventListener('keyup', e => {
+  if(e.code !== 'Space') return;
+  spaceDown = false; if(!drag) cv.style.cursor = '';
+});
+/* ⚠️ 窓の外へ出ている間にスペースを離すと押しっぱなしになる＝戻ったら必ず解く */
+addEventListener('blur', () => { spaceDown = false; cv.style.cursor = ''; });
 /* Shift は「回すときに15°ずつ」に使う。⚠️ 掴む前から押していると版面のパンが先に取る */
 let shiftDown = false;
 addEventListener('keydown', e => { if(e.key === 'Shift') shiftDown = true; });
@@ -3030,6 +3208,8 @@ addEventListener('keydown', e => {
     syncPanel(); render(); stat('複製した'); return;
   }
   if(k === 'backspace' || k === 'delete'){
+    /* ⭐ 2つ以上選んでいるときは【まとめて】消す（2026-08-27） */
+    if(selList().length > 1){ e.preventDefault(); const n = delSel(); if(n) stat(n + ' つ消した（⌘Z で戻せる）'); return; }
     if(S.sel.kind === 'piece'){
       const pc = selPiece(); if(!pc) return;
       e.preventDefault(); pushUndo();
@@ -3114,7 +3294,7 @@ function fillList(el){
   stack().reverse().forEach(e => {
     const isP = e.kind === 'piece', o = e.o, i = e.i;
     const d = document.createElement('div');
-    d.className = 'li' + (isP ? ' pc' : '') + (S.sel.kind === e.kind && S.sel.i === i ? ' on' : '')
+    d.className = 'li' + (isP ? ' pc' : '') + (selHas(e.kind, i) ? ' on' : '')
       + (o.hide ? ' hidden' : '')
       + (onFace(o) ? '' : ' offface');       /* ⚠️ 反対の面＝薄く（触れないことを見せる） */
     /* ⭐ 裏の物には「裏」の札。⚠️ 表には何も付けない（いままでの一覧と同じ見え） */
@@ -3126,7 +3306,12 @@ function fillList(el){
         : `<span class="k">${(LAYOUTS[o.kind]||LAYOUTS.meguru).jp}</span>${fx}<span class="t">${(o.text||'（空）').slice(0,18)}</span>`)
       + eyeBtn(!!o.hide, o.hide ? '隠している（押すと出す）' : '隠す')
       + `<span class="lk${o.lock ? ' on' : ''}" title="固定すると振らない">${o.lock ? '固定中' : '固定'}</span>`;
-    d.onclick = () => { S.sel = { kind:e.kind, i }; syncPanel(); render(); };
+    d.onclick = ev => {
+      /* ⭐ ⇧＝選びに足す／外す（版面と同じ道を通る＝印が食い違わない） */
+      if(ev.shiftKey) selToggle(e.kind, i);
+      else S.sel = { kind:e.kind, i };
+      syncPanel(); render();
+    };
     /* ⚠️ 錠と目は選択とは別の操作＝親のクリックまで伝えない */
     d.querySelector('.lk').onclick = ev => { ev.stopPropagation(); o.lock = !o.lock; renderList(); };
     /* ⭐ 2026-08-26 木下：「レイヤーパネルに各レイヤー非表示できるようにして」
