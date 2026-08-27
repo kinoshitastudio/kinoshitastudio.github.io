@@ -662,7 +662,13 @@ input[type=color]{ border-radius:8px; height:30px }
 
   <h2 id="lineHead">沿う ── 選んだ行</h2>
   <div class="sec" id="lineUI">
-    <textarea id="tText" placeholder="文字を入れる"></textarea>
+    <!-- ⭐ 2026-08-27 木下「テキストだが改行できるようにして」
+         ⚠️ 改行は前から効いている（実測＝欄に改行を入れると行が増える）。
+         ⭐ 欄が2行ぶんしか見えず【改行した手応えが無かった】＝広げて、書いておく。 -->
+    <textarea id="tText" placeholder="文字を入れる（Enter で改行できます）" rows="4"
+      style="height:86px"></textarea>
+    <div class="note">⭐ <b>Enter で改行</b>できます（<b>並ぶ</b>＝改行した所で行が変わる／
+      <b>散</b>＝文章はそのまま塊に分かれる／<b>沿う・張る</b>＝経路に沿うので改行は無視されます）</div>
 
     <div class="row" style="margin-top:10px"><label>置き方</label>
       <div class="seg" id="segKind">
@@ -949,7 +955,16 @@ input[type=color]{ border-radius:8px; height:30px }
         </select></div>
       <div class="row" id="rowPenW"><label>線の太さ</label>
         <input type="range" id="penW" min="1" max="120" value="18"><span class="v" id="vpenW">18</span></div>
-      <div class="row" id="rowPenC"><label>線の色</label><input type="color" id="penC" value="#111111"></div>
+      <div class="row" id="rowPenC"><label>線の色</label><input type="color" id="penC" value="#111111">
+        <button class="btn" id="penNoLine" style="padding:4px 9px" title="線を引かない（塗りだけにする）">線なし</button></div>
+      <!-- ⭐⭐ 2026-08-27 木下「これ線の色だけだが塗りも用意してくれるといいかも。Sakujiのように」
+           ⭐ 塗りと線は【別のつまみ】＝片方だけ無しが作れる。
+           ⚠️ 塗り【なし】が既定＝これまでと1画素も変わらない。 -->
+      <div class="row" id="rowPenF"><label>塗りの色</label><input type="color" id="penF" value="#c8322a">
+        <button class="btn on" id="penNoFill" style="padding:4px 9px" title="塗らない（線だけにする）">塗りなし</button></div>
+      <div class="note">⭐ <b>塗り</b>を入れると、閉じた形（刃・滲）は<b>塗りの色で塗って線の色で輪郭</b>が付く／
+        開いた線（そのまま・擦）は<b>中が埋まる</b>（SAKUJI と同じ効き）<br>
+        ⭐ <b>塗りなし／線なし</b>で片方だけにできる（両方なしにはならない）</div>
       <div class="row feel-ha"><label>ペンの角度</label>
         <input type="range" id="feelAng" min="0" max="180" value="35"><span class="v" id="vfeelAng">35</span></div>
       <div class="row feel-sure"><label>升目</label>
@@ -3944,6 +3959,7 @@ function syncPanel(){
     const put = (id, v, vid) => { const e = $(id); if(!e) return; e.value = v;
       const s = $(vid); if(s) s.textContent = v; };
     put('penW', d.w, 'vpenW'); put('penC', d.col);
+    if(d.fill) put('penF', d.fill);
     put('feelAng', d.ang, 'vfeelAng'); put('feelGrid', d.grid, 'vfeelGrid'); put('feelJit', d.jit, 'vfeelJit');
     const n = $('penSelNote'); if(n) n.style.display = dr ? '' : 'none';
     if(typeof syncPen === 'function') syncPen(); }
@@ -4552,6 +4568,8 @@ document.querySelectorAll('[data-size]').forEach(b => b.onclick = () => {
    ⚠️ 掴む判定（頂点・角・回転・パン）には1行も触っていない。
       描くモードのときだけ、いちばん先に返す。 */
 const PEN = { on:false, w:18, col:'#111111', feel:'plain', ang:35, grid:14, jit:6,
+              /* ⭐ 塗り＝なし（''）が既定＝これまでと1画素も変わらない。線を引かない印も別に持つ */
+              fill:'', noLine:0,
               /* ⭐ 鉛筆（2026-08-27）＝芯の硬さと濃さ。消しゴムの効き方も芯で変わる */
               grade:'hb', dark:0.9,
               /* ⭐ 消しゴム＝消える量と、消しカスの量 */
@@ -4637,6 +4655,8 @@ function penRec(p0){
   }
   return { pts,
            feel:PEN.feel, w:PEN.w, col:PEN.col, ang:PEN.ang, grid:PEN.grid, jit:PEN.jit,
+           /* ⭐ 塗り（なし＝''）と、線を引かない印。⚠️ 骨と一緒に控える＝あとから掛け直せる */
+           fill:PEN.fill || '', noLine:PEN.noLine ? 1 : 0,
            /* ⭐ 鉛筆の持ち物＝芯の硬さ・濃さ・【点ごとの消し量 q】（消しゴムがここを減らす） */
            grade:PEN.grade, dark:PEN.dark, q:pts.map(() => 1),
            bx:0, by:0 };
@@ -4768,18 +4788,43 @@ function enpItem(d){
   return r;
 }
 /* ⭐⭐ 引いた1本を【物】にする道は1本（そのまま／刃／擦／滲／鉛筆が全部ここを通る） */
+/* ══⭐⭐ 塗り（2026-08-27 木下「これ線の色だけだが塗りも用意してくれるといいかも。Sakujiのように」）══
+   ⭐ **塗りと線は別のつまみ**＝片方だけ無しが作れる（塗りだけ／線だけ／両方）。
+   ⚠️ 塗りが【なし】のときは分岐ごと通らない＝これまでと1画素も変わらない。
+   ⭐ 閉じた形（刃・滲）は もともと線の色で塗っていた＝塗りを指定したときだけ、そちらを使い
+     線は col で引く（＝輪郭が付く）。開いた線（そのまま・擦）は、塗りを指定すると中が埋まる。 */
+function penPaint(it, d){
+  if(!it) return it;
+  const fill = d.fill || '';
+  if(!fill) return it;                       // ⭐ なし＝これまでどおり
+  const col = d.col || '#111111';
+  const w   = Math.max(1, d.w || 18);
+  const put = q => {
+    q.fillColor = fill;
+    /* ⭐ 線は【引くと決めたときだけ】。⚠️ 太さは元の 1/6（輪郭として効く太さ） */
+    q.strokeColor = d.noLine ? null : col;
+    q.strokeWidth = d.noLine ? 0 : Math.max(1, w * 0.16);
+  };
+  if(it.className === 'Group' || it.className === 'CompoundPath'){
+    (it.children || []).forEach(put); put(it);
+  } else put(it);
+  return it;
+}
 function penItem(raw, d){
-  if((d.feel || 'plain') === 'enpitsu') return enpItem(d);
-  return penFeel(raw, d);
+  const it = ((d.feel || 'plain') === 'enpitsu') ? enpItem(d) : penFeel(raw, d);
+  return penPaint(it, d);
 }
 
 /* ⭐ 控えた骨からパスを作り直す（引いた時とまったく同じ姿） */
 function penRawPath(d){
   const segs = d.pts.map(a => a.length >= 6
     ? [[a[0],a[1]], [a[2],a[3]], [a[4],a[5]]] : [[a[0],a[1]]]);
-  return new paper.Path({ segments:segs, strokeColor:d.col || '#111111',
+  const q = new paper.Path({ segments:segs, strokeColor:d.col || '#111111',
                           strokeWidth:Math.max(1, d.w || 18),
                           strokeCap:'round', strokeJoin:'round' });
+  /* ⭐ 「そのまま」は線そのものが作品＝ここで塗りを足す（閉じずに中を塗る＝SAKUJI と同じ効き） */
+  if(d.fill){ q.fillColor = d.fill; if(d.noLine){ q.strokeColor = null; q.strokeWidth = 0; } }
+  return q;
 }
 /* ⭐ 引いた線を【図】として置く。⚠️ addPiece は版面の半分に縮めて中央へ置く
    （読み込んだ画像用）ので、描いた線には使わない＝引いた場所・大きさのまま残す。 */
@@ -4973,6 +5018,17 @@ function setFeel(v){
 }
 $('feel').addEventListener('change', e => setFeel(e.target.value));
 $('penC').addEventListener('input', e => penParam('col', e.target.value));
+/* ⭐⭐ 塗りと線 ── 値の持ち主は PEN.fill と PEN.noLine の【2つ】（束ねない＝片方だけ無しが作れる）。
+   ⭐ 書く道は penParam 1本＝いま選んでいる線にもその場で掛かる。 */
+$('penF').addEventListener('input', e => { penParam('fill', e.target.value); syncPen(); });
+$('penNoFill').onclick = () => { penParam('fill', ''); syncPen(); stat('塗りなし（線だけ）'); };
+$('penNoLine').onclick = () => {
+  const on = PEN.noLine ? 0 : 1;
+  /* ⚠️ 両方なしにはしない（何も出なくなる）＝線を消すなら塗りを起こす */
+  if(on && !PEN.fill) penParam('fill', $('penF').value);
+  penParam('noLine', on); syncPen();
+  stat(on ? '線なし（塗りだけ）' : '線を引く');
+};
 [['penW','w'],['feelAng','ang'],['feelGrid','grid'],['feelJit','jit']].forEach(([id, k]) => {
   const r = $(id); if(!r) return;
   r.addEventListener('input', () => { penParam(k, +r.value);
