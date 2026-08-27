@@ -268,7 +268,27 @@
       <input type="color" id="c_ink" value="#141414">
       <label class="chk">明暗を入れ替える<input type="checkbox" id="k_inv"></label>
     </div>
-    <div class="note">⭐ <b>写真の色</b>＝色も色数に落とす（元の色みは残る）／<b>2色刷り</b>＝地と刷り色の2本だけ</div>
+    <!-- ⭐⭐ 2026-08-27 木下「色味も変更したりできるように」
+         ⭐ どの色の出し方（白黒／2色刷り／写真の色）でも、最後に同じ1本の式で色味を回す。
+         ⚠️ 0／100／0 ＝いままでと1画素も変わらない。 -->
+    <div class="row"><span class="n">色あい</span><output id="o_hue">0</output></div>
+    <input type="range" id="r_hue" min="-180" max="180" step="1" value="0">
+    <div class="row"><span class="n">鮮やかさ</span><output id="o_sat">100</output></div>
+    <input type="range" id="r_sat" min="0" max="200" step="1" value="100">
+    <div class="row"><span class="n">明るさ</span><output id="o_bri">0</output></div>
+    <input type="range" id="r_bri" min="-60" max="60" step="1" value="0">
+    <div class="row"><span class="n">色の型</span></div>
+    <div class="seg" id="s_pal">
+      <button data-v="sumi">墨</button>
+      <button data-v="biwa">琵琶湖</button>
+      <button data-v="netsu">熱</button>
+      <button data-v="aka">赤青</button>
+      <button data-v="kibatsu">奇抜</button>
+      <button data-v="doku">毒</button>
+    </div>
+    <div class="note">⭐ <b>写真の色</b>＝色も色数に落とす（元の色みは残る）／<b>2色刷り</b>＝地と刷り色の2本だけ<br>
+      ⭐⭐ <b>色あい・鮮やかさ・明るさ</b>は<b>どの出し方にも効く</b>（写真の色を回す／2色刷りの2色も回る）<br>
+      ⭐ <b>色の型</b>＝粒TSUBU・膜MAKU と<b>同じ色群</b>（道具のあいだで色が揃う）。押すと<b>2色刷り</b>になる</div>
   </div>
 
   <div class="grp">
@@ -357,6 +377,8 @@ const stat = m => { el('stat').textContent = m; };
 /* ── 触れるもの（1か所に持つ＝画面・PNG・SVG が同じものを見る） ── */
 const P = { grid:48, lev:3, th:0, con:0, dit:0,
             mode:'mono', paper:'#f4f2ec', ink:'#141414', inv:0,
+            /* ⭐ 色味（2026-08-27）＝0/100/0 でいままでどおり */
+            hue:0, sat:100, bri:0,
             shape:'sq', gap:0, alpha:0,
             cols:3, rows:3, from:8, to:96, sheet:'grid', levFrom:2, levTo:5,
             ratio:'src', long:1600 };
@@ -402,6 +424,32 @@ const hex2rgb = h => { const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exe
   return m ? [parseInt(m[1],16), parseInt(m[2],16), parseInt(m[3],16)] : [0,0,0]; };
 const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
 
+/* ⭐⭐ 色味（2026-08-27 木下「色味も変更したりできるように」）
+   ⭐ 色あい＝色相を回す／鮮やかさ＝灰色から離す・寄せる／明るさ＝持ち上げる。
+   ⚠️ 0／100／0 のときは【この道を通らない】＝いままでと1画素も変わらない。
+   ⚠️ 白黒でも効く（黒と紙の色そのものが回る）＝どの出し方でも同じ1本。 */
+function tone(rgb){
+  if(!P.hue && P.sat === 100 && !P.bri) return rgb;
+  let [r, g, b] = rgb.map(v => v/255);
+  /* 色相＝YIQ で回す（軽い・見た目が素直） */
+  if(P.hue){
+    const a = P.hue * Math.PI/180, c = Math.cos(a), s2 = Math.sin(a);
+    const m = [
+      0.213 + c*0.787 - s2*0.213, 0.715 - c*0.715 - s2*0.715, 0.072 - c*0.072 + s2*0.928,
+      0.213 - c*0.213 + s2*0.143, 0.715 + c*0.285 + s2*0.140, 0.072 - c*0.072 - s2*0.283,
+      0.213 - c*0.213 - s2*0.787, 0.715 - c*0.715 + s2*0.715, 0.072 + c*0.928 + s2*0.072 ];
+    const r2 = r*m[0] + g*m[1] + b*m[2];
+    const g2 = r*m[3] + g*m[4] + b*m[5];
+    const b2 = r*m[6] + g*m[7] + b*m[8];
+    r = r2; g = g2; b = b2;
+  }
+  if(P.sat !== 100){
+    const l = 0.2126*r + 0.7152*g + 0.0722*b, k = P.sat/100;
+    r = l + (r-l)*k; g = l + (g-l)*k; b = l + (b-l)*k;
+  }
+  if(P.bri){ const e = P.bri/100; r += e; g += e; b += e; }
+  return [r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v*255))));
+}
 /* ⭐ 1マスぶんの色を決める（段の表も画面も PNG も SVG も、通るのはこの1本） */
 function cellColor(d, i, x, y, lev){
   const R = d[i]/255, G = d[i+1]/255, B = d[i+2]/255, A = d[i+3]/255;
@@ -413,14 +461,14 @@ function cellColor(d, i, x, y, lev){
     return Math.round(t * (lev - 1)) / (lev - 1);          /* ⭐ 色数に丸める＝ビットになる */
   };
   if(P.mode === 'photo'){
-    return { rgb:[Math.round(fix(R)*255), Math.round(fix(G)*255), Math.round(fix(B)*255)],
+    return { rgb:tone([Math.round(fix(R)*255), Math.round(fix(G)*255), Math.round(fix(B)*255)]),
              q:fix(0.2126*R + 0.7152*G + 0.0722*B), a:A };
   }
   let q = fix(0.2126*R + 0.7152*G + 0.0722*B);
   if(P.inv) q = 1 - q;
   const pa = P.mode === 'duo' ? hex2rgb(P.paper) : [244,242,236];
   const ik = P.mode === 'duo' ? hex2rgb(P.ink)   : [20,20,20];
-  return { rgb:[0,1,2].map(k => Math.round(ik[k] + (pa[k] - ik[k]) * q)), q, a:A };
+  return { rgb:tone([0,1,2].map(k => Math.round(ik[k] + (pa[k] - ik[k]) * q))), q, a:A };
 }
 
 /* ══ 焼く ══
@@ -619,7 +667,8 @@ const RANGES = [['r_grid','grid','o_grid'], ['r_lev','lev','o_lev'], ['r_th','th
                 ['r_con','con','o_con'], ['r_dit','dit','o_dit'], ['r_gap','gap','o_gap'],
                 ['r_cols','cols','o_cols'], ['r_rows','rows','o_rows'],
                 ['r_from','from','o_from'], ['r_to','to','o_to'], ['r_long','long','o_long'],
-                ['r_lf','levFrom','o_lf'], ['r_lt','levTo','o_lt']];
+                ['r_lf','levFrom','o_lf'], ['r_lt','levTo','o_lt'],
+                ['r_hue','hue','o_hue'], ['r_sat','sat','o_sat'], ['r_bri','bri','o_bri']];
 RANGES.forEach(([id, k, out]) => {
   const r = el(id); if(!r) return;
   const sync = () => { P[k] = +r.value; const o = el(out); if(o) o.value = r.value; };
@@ -638,6 +687,25 @@ seg('s_mode', 'mode', () => { el('duoUI').classList.toggle('hide', P.mode !== 'd
 seg('s_shape', 'shape');
 seg('s_ratio', 'ratio');
 seg('s_sheet', 'sheet', () => { el('lev2UI').classList.toggle('hide', P.sheet !== '2d'); });
+/* ⭐ 色の型 ── 粒TSUBU・膜MAKU と同じ色群（道具のあいだで色が揃う）。
+   ⚠️ 押したら【2色刷り】に入れる＝選んだのに色が変わらない、を作らない。 */
+const PAL = {
+  sumi:   ['#f4f2ec', '#141414'],
+  biwa:   ['#e7ecef', '#12457a'],
+  netsu:  ['#f7efe2', '#c8322a'],
+  aka:    ['#f2f0ea', '#2434ff'],
+  kibatsu:['#f2f200', '#e9201c'],
+  doku:   ['#0e0e0e', '#39ff6a'],
+};
+document.querySelectorAll('#s_pal button').forEach(b => b.onclick = () => {
+  const [pa, ik] = PAL[b.dataset.v] || PAL.sumi;
+  P.paper = pa; P.ink = ik; P.mode = 'duo';
+  el('c_paper').value = pa; el('c_ink').value = ik;
+  document.querySelectorAll('#s_mode button').forEach(x => x.classList.toggle('on', x.dataset.v === 'duo'));
+  document.querySelectorAll('#s_pal button').forEach(x => x.classList.toggle('on', x === b));
+  el('duoUI').classList.remove('hide');
+  render();
+});
 el('duoUI').classList.add('hide');
 el('c_paper').addEventListener('input', e => { P.paper = e.target.value; render(); });
 el('c_ink').addEventListener('input', e => { P.ink = e.target.value; render(); });
