@@ -2188,7 +2188,21 @@ function render(into, opt){
   const front = vis.filter(e =>  onFace(e.o));
   /* ⭐ 版面に置く道はこの1本。反対の面ならここで【薄く・掴めなく】する
      （透けて見えているだけの物は、指でも当たり判定でも拾わない）。 */
+  /* ══⭐⭐ 名前を付ける（2026-08-27 木下「AIのイラレ形式でも書き出しできるように。
+     もちろんレイヤーなどは保有したまま」）══
+     ⭐ .ai を直に書くのは PDF ベースで現実的でない。⭐ **SVG で足りる**
+       ＝Illustrator は SVG を開けて、`<g id="...">` を**グループ名／レイヤー名として読む**。
+     ⚠️ paper は item.name を id に出す。id は XML の名前なので、空白と記号は _ に直す。 */
   const put = (it, e) => {
+    { const o = e.o;
+      const nm = e.kind === 'piece'
+        ? ((o.kasu && o.kasu.length) ? '消しカス' : o.pen ? '描いた線' : o.src ? '図_画像' : '図_SVG')
+        : ((LAYOUTS[o.kind] || LAYOUTS.meguru).jp + '_' + String(o.text || '').slice(0, 14));
+      /* ⚠️ id は XML の名前＝空白・記号は使えない／先頭は字であること／必ず一意（id を末尾に） */
+      it.name = (nm.replace(/[^0-9A-Za-z\u3040-\u30FF\u4E00-\u9FFF_-]+/g, '_')
+                   .replace(/^[^A-Za-z\u3040-\u30FF\u4E00-\u9FFF_]+/, '_')
+                 || 'item') + '_' + (o.id || 0);
+    }
     if(!onFace(e.o)){
       it.opacity = Math.max(0, Math.min(100, (S.uraSee != null ? S.uraSee : 18))) / 100;
       it.locked = true;
@@ -5117,7 +5131,15 @@ $('ePNG').onclick = async () => {
   c.toBlob(b => { dl(b, 'hari.png'); stat('PNG を書き出した（' + c.width + '×' + c.height + '）'); }, 'image/png');
 };
 $('eSVG').onclick = () => {
-  let svg = artLayer.exportSVG({ asString:true, bounds:new Rectangle(0,0,S.board.w,S.board.h) });
+  /* 🔴 2026-08-27：ここは画面の層をそのまま出していたので、
+     【版面の外を薄く見せる影（ghost）】まで SVG に入っていた（名前も重複して id が濁った）。
+     ⭐ PNG と同じ道＝「書き出し用に1回描き直す」を通す＝焼く絵と完全に一致する。 */
+  const lay = new paper.Layer(); lay.remove();
+  const keepQuick = kamiQuick; kamiQuick = false;   // ⚠️ 紙は必ず細かい方で
+  render(lay, { forExport:true });
+  kamiQuick = keepQuick;
+  let svg = lay.exportSVG({ asString:true, bounds:new Rectangle(0,0,S.board.w,S.board.h) });
+  lay.remove();
   /* ⭐ 紙の質感は【1枚の画像】として出る。⚠️ paper は重ね方（blendMode）を書かないので、
      ここで mix-blend-mode を差す＝ブラウザで開けば画面と同じに見える。
      ⚠️ Illustrator は mix-blend-mode を読まないことがある（そのときは PNG を使う）。 */
@@ -5133,7 +5155,8 @@ $('eSVG').onclick = () => {
     else put(L.key, K.blend);
   });
   dl(new Blob([svg], { type:'image/svg+xml' }), 'hari.svg');
-  stat('SVG を書き出した' + (any ? '（紙の質感は mix-blend-mode で重ねている）' : ''));
+  stat('SVG を書き出した — Illustrator で開くと【行・図ごとに名前つきのグループ】で入る'
+       + (any ? '／紙の質感は mix-blend-mode（Illustrator は読まないことがある）' : ''));
 };
 $('eJSON').onclick = () => {
   /* ⭐ 図（画像・SVG）も中身ごと入れる＝開き直せばポスターが丸ごと戻る。
