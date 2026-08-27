@@ -1257,6 +1257,32 @@ function pathBack(L, q){
   if(p.my) r = new Point(r.x, B.h - r.y);
   return (z === 1) ? r : c.add(r.subtract(c).divide(z));
 }
+/* ══⭐⭐ 張るの経路（2026-08-27 木下「はるにさ、頂点を追加してくねっと曲げたりできたら」）══
+   ⭐ 始点 → 曲げの点… → 終点 の【開いた曲線】。点が無ければ ただの直線＝これまでの絵。
+   ⚠️ 曲げの点は【箱に対する割合】で持つ（u＝0〜1 が始点→終点／v＝上下のずれ・幅に対する割合）
+     ＝箱の場所も幅も角度も変えられるのに、曲げた形はそのまま付いてくる。
+   ⚠️ 直線も同じ道を通す（式を2本持たない）。 */
+function haruPath(L){
+  const B = S.board;
+  const bx = ((L.box && L.box.x) ?? 10)/100 * B.w;
+  const by = ((L.box && L.box.y) ?? 88)/100 * B.h;
+  const bw = ((L.box && L.box.w) ?? 80)/100 * B.w;
+  const pts = (L.box && L.box.pts) || [];
+  const seg = [new Point(bx, by)];
+  pts.forEach(q => seg.push(new Point(bx + (q[0] || 0) * bw, by + (q[1] || 0) * bw)));
+  seg.push(new Point(bx + bw, by));
+  const path = new Path({ segments:seg, closed:false, insert:false });
+  if(pts.length) path.smooth({ type:'continuous' });   // ⭐ くねっと（角ばらせない）
+  return path;
+}
+/* ⭐ 張るの掴み手・頂点を足す所が見る「割合 ⇄ 版面の座標」。⚠️ 往復の2本を隣に置く */
+function haruUV(L, q){
+  const B = S.board;
+  const bx = ((L.box && L.box.x) ?? 10)/100 * B.w;
+  const by = ((L.box && L.box.y) ?? 88)/100 * B.h;
+  const bw = Math.max(1, ((L.box && L.box.w) ?? 80)/100 * B.w);
+  return [ (q.x - bx) / bw, (q.y - by) / bw ];
+}
 function buildPath(L){
   const { w, h } = S.board, p = L.path;
   const m = (p.inset/100) * Math.min(w,h);
@@ -1429,6 +1455,12 @@ const LAYOUTS = {
       const bw = ((L.box && L.box.w) ?? 80)/100 * B.w;
       const chars = [...L.text].filter(c => c !== '\n');
       if(!chars.length || !(bw > 0)) return;
+      /* ⭐⭐ 2026-08-27 木下「はるにさ、頂点を追加してくねっと曲げたりできたらそれはいいかな」
+         ⭐ 曲げの点（box.pts）を通る【開いた経路】に張る。点が無ければ直線＝これまでの絵。
+         ⚠️ 直線も同じ経路の道を通す（式を2本持たない）＝1画素も変わらないことは画素で確かめた。 */
+      const hp = haruPath(L);
+      const hlen = hp.length;
+      const bent = !!(L.box && L.box.pts && L.box.pts.length);
       const A = audOf(L);
       if(A.size !== 1 || A.track) L = Object.assign({}, L, {
         size: L.size * A.size, track: L.track + A.track });
@@ -1436,27 +1468,40 @@ const LAYOUTS = {
          これが Lena 型（版面いっぱいに字を積む）の核心。
          ⚠️ 字間を伸ばして届かせるのが「張る」、字を大きくして届かせるのが「合わせる」。
            前者は隙間だらけになりやすく、後者は詰まって面になる。 */
+      /* ⚠️ 「両端に届かせる」の物差しは【経路の長さ】＝曲げたぶんだけ伸びる（＝端まで張れる） */
+      const span = hlen > 0 ? hlen : bw;
       if(L.fit){
         const probe = Object.assign({}, L, { size:100 });
         const unit = chars.reduce((a,c) => a + advance(c, probe), 0);
         if(unit > 0) L = Object.assign({}, L, {
-          size: Math.max(6, (bw - L.track*(chars.length-1)) / unit * 100) });
+          size: Math.max(6, (span - L.track*(chars.length-1)) / unit * 100) });
       }
       const adv = chars.map(c => advance(c, L));
       const sum = adv.reduce((a,b) => a+b, 0);
       /* ⭐ 両端に届かせる＝余りを字と字のあいだで等分する */
-      const gap = chars.length > 1 ? (bw - sum - L.track*(chars.length-1)) / (chars.length-1) : 0;
+      const gap = chars.length > 1 ? (span - sum - L.track*(chars.length-1)) / (chars.length-1) : 0;
       const step = i => adv[i] + L.track + gap;
+      /* ⭐ 経路の上の【どこに・どの向きで】置くか。⚠️ 置く道はこの1本（枡も字も同じ所を見る） */
+      const at = d => {
+        const t = Math.max(0, Math.min(hlen, d));
+        const q = hp.getPointAt(t) || new Point(bx + d, by);
+        const tg = hp.getTangentAt(t);
+        return { pos:q, ang: (L.upright || !bent || !tg) ? 0 : tg.angle };
+      };
 
       /* 枡（文字の地）。⭐ 帯＝箱いっぱいの1本＝ここでも「繋がる」側 */
       const C = Object.assign({}, CELL_DEF, L.cell || {});
       const ch2 = L.size * (C.h/100) * ((L.wy || 100)/100);
       const cellItems = [], charItems = [];
       if(C.shape === 'band'){
-        const cell = new Path.Rectangle(new Rectangle(bx, by - ch2/2, bw, ch2));
-        cell.fillColor = C.col; into.addChild(cell); cellItems.push(cell);
+        /* ⭐ 帯＝経路そのものを太らせて通す（曲げれば帯も曲がる）。
+           ⚠️ まっすぐのときは今までどおりの矩形（1画素も変えない）。 */
+        const cell = bent ? bandShape(hp, 0, hlen, 0, ch2)
+                          : new Path.Rectangle(new Rectangle(bx, by - ch2/2, bw, ch2));
+        if(cell){ cell.fillColor = C.col; cell.strokeColor = null;
+                  into.addChild(cell); cellItems.push(cell); }
       } else if(C.shape !== 'none'){
-        let x = bx;
+        let d = 0;
         chars.forEach((ch,i) => {
           const r = new Rectangle(0, 0, adv[i] + C.pad, ch2);
           let cell;
@@ -1464,18 +1509,22 @@ const LAYOUTS = {
           else if(C.shape === 'round') cell = new Path.Rectangle(r, new paper.Size(C.r, C.r));
           else cell = new Path.Rectangle(r);
           cell.fillColor = C.col;
-          cell.position = new Point(x + adv[i]/2, by);
+          const a2 = at(d + adv[i]/2);
+          cell.position = a2.pos;
+          if(a2.ang) cell.rotation = a2.ang;      // ⭐ 曲げたら枡も一緒に傾く
           into.addChild(cell); cellItems.push(cell);
-          x += step(i);
+          d += step(i);
         });
       }
       /* 字 */
-      let x = bx;
+      let d = 0;
       chars.forEach((ch,i) => {
         const t = makeChar(ch, L);
-        t.position = new Point(x + adv[i]/2, by);
+        const a2 = at(d + adv[i]/2);
+        if(a2.ang) t.rotation = a2.ang;           // ⚠️ 伸ばす→回す→置く の順（makeChar の中で伸ばす）
+        t.position = a2.pos;
         into.addChild(t); charItems.push(t);
-        x += step(i);
+        d += step(i);
       });
       /* ⭐ 行ごと傾ける（木下＝「角度変えられないよね」）。
          ⚠️ 箱の【中心】を軸に回す。左端を軸にすると、角度を変えるたびに行が遠くへ飛ぶ。
@@ -1489,12 +1538,14 @@ const LAYOUTS = {
       paintGrad(charItems, Object.assign({}, GRAD_DEF, L.grad || {}), boundsOf(charItems) || new Rectangle(0,0,1,1));
       /* 箱のしるし＝道具の層（書き出しには入らない） */
       if(S.showPath || sel() === L){
-        const g = new Path.Line(new Point(bx, by), new Point(bx + bw, by));
+        const g = hp.clone({ insert:false });
         if(rot) g.rotate(rot, new Point(bx + bw/2, by));
         g.strokeColor = new paper.Color(0.17, 0.42, 0.96, S.showPath ? 0.9 : 0.35);
-        g.strokeWidth = 1/paper.view.zoom;
+        g.strokeWidth = 1/paper.view.zoom; g.fillColor = null;
+        g.data.pathOf = L.id;              /* ⭐ ⌖ 頂点の道具が「この線」だと分かる目印 */
         uiLayer.addChild(g);
       }
+      hp.remove();
     }
   },
   /* ══ 並ぶ ── ふつうの一行（両端揃えをしない）══
@@ -2219,6 +2270,15 @@ function drawHandles(){
     return;
   }
   if(L.kind === 'haru'){
+    /* ⭐ 曲げの点も掴める（2026-08-27）＝掴んで動かすとくねる */
+    if(L.box && L.box.pts && L.box.pts.length){
+      const B2 = S.board;
+      const bx2 = ((L.box.x) ?? 10)/100 * B2.w;
+      const by2 = ((L.box.y) ?? 88)/100 * B2.h;
+      const bw2 = ((L.box.w) ?? 80)/100 * B2.w;
+      L.box.pts.forEach((q, i) =>
+        mk(new Point(bx2 + (q[0]||0)*bw2, by2 + (q[1]||0)*bw2), { haruPt:i }));
+    }
     /* 張る＝箱の【両端】を掴む。左を引けば始まりが、右を引けば幅が変わる */
     const B = S.board;
     const bx = ((L.box && L.box.x) ?? 10)/100 * B.w;
@@ -2550,6 +2610,7 @@ cv.addEventListener('pointerdown', e => {
     if(hUI.item.data.vertex !== undefined){ drag = { kind:'vertex', i:hUI.item.data.vertex }; return; }
     if(hUI.item.data.inset){ drag = { kind:'inset' }; return; }   // 矩形・円＝掴むと余白が変わる
     if(hUI.item.data.boxEnd !== undefined){ drag = { kind:'boxEnd', e:hUI.item.data.boxEnd }; return; }
+    if(hUI.item.data.haruPt !== undefined){ drag = { kind:'haruPt', i:hUI.item.data.haruPt }; return; }
     if(hUI.item.data.lineCorner !== undefined){
       const L = sel();
       const cs = L ? lineCorners(L) : null;
@@ -2704,6 +2765,24 @@ function vertexAt(pt, tol){
     syncPanel(); render(); stat('頂点を1つ減らした（' + L.path.n + '）');
     return true;
   }
+  /* ⭐⭐ 張るの曲げの点（2026-08-27）＝同じ操作で「張る」もくねらせる */
+  if(d.haruPt !== undefined && L.box && L.box.pts){
+    pushUndo();
+    L.box.pts.splice(d.haruPt, 1);
+    syncPanel(); render(); stat('曲げの点を1つ減らした（' + L.box.pts.length + '）');
+    return true;
+  }
+  if(d.pathOf !== undefined && d.pathOf === L.id && L.kind === 'haru'){
+    if(!L.box) return true;
+    if(!L.box.pts) L.box.pts = [];
+    /* ⭐ 押した所を【箱に対する割合】に直して、順番どおりの場所へ割り込ませる */
+    const uv = haruUV(L, pt);
+    const at = L.box.pts.findIndex(q => (q[0] || 0) > uv[0]);
+    pushUndo();
+    L.box.pts.splice(at < 0 ? L.box.pts.length : at, 0, [uv[0], uv[1]]);
+    syncPanel(); render(); stat('曲げの点を1つ足した（' + L.box.pts.length + '）— 掴んで動かすと曲がる');
+    return true;
+  }
   if(d.pathOf !== undefined && d.pathOf === L.id){
     if(L.path.type !== 'poly'){ stat('頂点を足せるのは【多角形】の経路（経路を多角形にする）'); return true; }
     if(!L.path.pts) buildPath(L).remove();      // ⚠️ まだ頂点を覚えていないなら1回作らせる
@@ -2786,6 +2865,12 @@ cv.addEventListener('pointermove', e => {
       : Math.min(q.x, B.w - q.x, q.y, B.h - q.y);
     L.path.inset = Math.max(0, Math.min(45, m/mn*100));
     setRange('inset', Math.round(L.path.inset));
+    render();
+  } else if(drag.kind === 'haruPt'){
+    /* ⭐ 曲げの点を動かす。⚠️ 控えは【箱に対する割合】＝箱を動かしても曲がりが付いてくる */
+    const L = sel(); if(!L || !L.box || !L.box.pts) return;
+    const uv = haruUV(L, pt);
+    L.box.pts[drag.i] = [uv[0], uv[1]];
     render();
   } else if(drag.kind === 'boxEnd'){
     const L = sel(); if(!L || !L.box) return;
