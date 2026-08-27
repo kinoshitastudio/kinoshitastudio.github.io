@@ -508,8 +508,11 @@
 
   <!-- ══⭐ 動かす ══
        ⭐ 位相 u は 0→1 の【環】。1周ぶん進むと数値レベルで元に戻る＝継ぎ目のないループ。
-       🔴 動かすのは【網そのもの】＝回る・ねじれる・色が流れる・にじみが揺れる。
-          点の位置を流す（格子をずらす）のは入れていない ── 崩れ（位置）が点ごとに固定なので、
+       ⭐ 動くものは2種類 ── 【網そのもの】（回る・ねじれる・色が流れる・にじみが揺れる）と、
+          【版そのもの】（2026-08-27 追加。揺れる・回る）。
+       ⭐ 版は【出ている版ぜんぶ】が動く。ただし版ごとに向きと位相を変える
+          ── 全部を同じだけ動かすと絵が丸ごと平行移動して「動いていない」のと同じに見える。
+       🔴 点の位置を流す（格子をずらす）のは入れていない ── 崩れ（位置）が点ごとに固定なので、
           ずらすと1マスごとに崩れが入れ替わって【カクッと飛ぶ】（環にならない）。 -->
   <div class="grp">
     <label class="h">動かす</label>
@@ -526,9 +529,16 @@
     <input type="range" id="r_cflowN" min="0" max="4" step="1">
     <div class="row"><span class="n">にじみが揺れる</span><output id="o_wob"></output></div>
     <input type="range" id="r_wob" min="0" max="3" step="0.05">
+    <div class="row" style="margin-top:10px"><span class="n">版が揺れる</span><output id="o_shb"></output></div>
+    <input type="range" id="r_shb" min="0" max="0.3" step="0.005">
+    <div class="row"><span class="n">版が回る（周）</span><output id="o_shrN"></output></div>
+    <input type="range" id="r_shrN" min="0" max="4" step="1">
     <div class="note">⭐ どれも<b>1周でぴったり元に戻る</b>（継ぎ目なしループ）。<b>回る</b>は整数の周、<b>揺れる</b>は行って戻る<br>
       ⚠️ <b>ねじれ</b>と<b>粗さ</b>は「回る」にできない＝場所ごとに掛かる量が違うので足し続けても戻らない。だから<b>揺れる</b><br>
       ⭐ <b>色が流れる</b>を上げると色の並びが<b>環</b>になる（インク→もう1色→インク）＝繋がって回る<br>
+      ⭐ <b>版が揺れる／版が回る</b>は<b>出ている版ぜんぶ</b>に効く。<b>版ごとに向きと位相が違う</b>ので、
+      版が2枚以上あると<b>重なりが動く＝刷りずれが生きる</b>（1枚なら絵ごと揺れる）<br>
+      ⚠️ <b>画像の版を回す</b>と角が白く抜ける（その版の<b>大きさ</b>を上げると埋まる）<br>
       ⚠️ 動かしている間は<b>画面だけ軽く焼く</b>（見えは同じ・出すときは指定の大きさ）</div>
   </div>
 
@@ -665,6 +675,7 @@ const P = {
   bleed:0.35, jit:0.06, rjit:0.12, rough:0.14, drop:0.04,
   colBy:'none', colN:16,
   anim:false, cyc:6, spinN:0, twob:0, flowb:0, cflowN:0, wob:0,
+  shb:0, shrN:0,                       /* ⭐ 2026-08-27 版そのものを動かす（出ている版ぜんぶ） */
   ratio:'4:5', long:1600, paper:'#f4f2ec', ink:'#111111', ink2:'#c8442a',
   /* ⭐ 余白（額）2026-08-25 ── 朦OBORO から移した。0 で今までどおり */
   gaku:0, gakuCol:'#f2efe6', gakuZ:100, gakuX:0, gakuY:0
@@ -709,6 +720,26 @@ const toneCv = document.createElement('canvas'), toneG = toneCv.getContext('2d',
 const maskCv = document.createElement('canvas'), maskG = maskCv.getContext('2d', { willReadFrequently:true });
 let toneData = null, maskData = null, hasMask = false;
 
+/* ══⭐ 版そのものの動き（2026-08-27）══════════════════════
+   ⭐ 出ている版は【ぜんぶ】動く。形に使っている版も動く（＝抜きの形も動く）。
+   ⭐ ただし版ごとに【向き】と【位相】を変える。
+      🔴 全部を同じだけ動かすと絵が丸ごと平行移動するだけ＝「動いていない」のと同じに見える。
+   ⭐ 向きと位相は版の id から決める（並べ替えても・選び直しても変わらない）。
+      黄金角（2.39996rad）で回すと、id が連番でも向きが散る。
+   ⭐ 揺れる＝sin（行って戻る）／回る＝整数の周。どちらも PH=1 で数値レベルで元に戻る
+      ＝動画にしても継ぎ目が出ない。 */
+function sheetMove(sh){
+  if(!(P.shb > 0 || P.shrN > 0)) return null;
+  const n = (sh.id | 0);
+  const dir = n * 2.399963229728653;                  /* 黄金角＝連番でも向きが散る */
+  const off = (n * 0.6180339887498949) % 1;           /* 版ごとの位相のずれ */
+  const u   = (PH + off) % 1;
+  const w   = P.shb > 0 ? P.shb * Math.sin(u * Math.PI * 2) : 0;
+  /* ⚠️ 回るは版ごとに向きを互い違いにする（同じ向きだと束で回って重なりが動かない） */
+  const rot = P.shrN > 0 ? PH * 360 * P.shrN * (n % 2 ? 1 : -1) : 0;
+  return { dx: w * Math.cos(dir), dy: w * Math.sin(dir), rot };
+}
+
 /* 版1枚を、白い紙に黒で焼く（＝濃さの絵）。white=濃さ0 */
 const layCv = document.createElement('canvas'), layG = layCv.getContext('2d');
 function bakeSheet(sh, W, H, forShape){
@@ -719,8 +750,11 @@ function bakeSheet(sh, W, H, forShape){
   layG.clearRect(0, 0, W, H);
   if(!forShape){ layG.fillStyle = '#fff'; layG.fillRect(0, 0, W, H); }
   layG.save();
-  layG.translate(W/2 + sh.x*W*0.5, H/2 + sh.y*H*0.5);
-  layG.rotate(sh.rot * Math.PI/180);
+  /* ⭐ 動きは【選んだ値に足す】＝つまみの値はそのまま生きる（つまみを無視して効かせない） */
+  const MV = sheetMove(sh);
+  layG.translate(W/2 + (sh.x + (MV ? MV.dx : 0))*W*0.5,
+                 H/2 + (sh.y + (MV ? MV.dy : 0))*H*0.5);
+  layG.rotate((sh.rot + (MV ? MV.rot : 0)) * Math.PI/180);
   if(sh.type === 'txt'){
     const fs = Math.max(4, sh.sc * Math.min(W, H));
     layG.fillStyle = '#000';
@@ -1116,6 +1150,7 @@ const FMT = {
   bleed:v=>v.toFixed(2)+'px', jit:v=>v.toFixed(2), rjit:v=>v.toFixed(2),
   rough:v=>v.toFixed(2), drop:v=>v.toFixed(2), long:v=>v+'px', colN:v=>String(v),
   cyc:v=>v.toFixed(1)+'秒', spinN:v=>String(v), twob:v=>'±'+v+'°', flowb:v=>'±'+v.toFixed(2), cflowN:v=>String(v), wob:v=>v.toFixed(2),
+  shb:v=>'±'+v.toFixed(3), shrN:v=>String(v),
   s_sc:v=>v.toFixed(3), s_x:v=>v.toFixed(2), s_y:v=>v.toFixed(2), s_rot:v=>v+'°',
   s_amt:v=>v.toFixed(2), s_wt:v=>String(v), s_ls:v=>v.toFixed(3), s_lh:v=>v.toFixed(2),
   gaku:v=>v?v+'%':'無し', gakuZ:v=>v+'%',
@@ -1124,7 +1159,7 @@ const FMT = {
 /* 版面ぜんぶに効くつまみ */
 const RANGES = ['pitch','ang','twist','flow','br','ct','gam','base',
                 'bleed','jit','rjit','rough','drop','colN',
-                'cyc','spinN','twob','flowb','cflowN','wob','long',
+                'cyc','spinN','twob','flowb','cflowN','wob','shb','shrN','long',
                 'gaku','gakuZ','gakuX','gakuY'];   /* 余白（額）2026-08-25 */
 /* 選んだ版だけに効くつまみ（r_s_◯ ＝ 版の ◯） */
 const SRANGES = ['sc','x','y','rot','amt','wt','ls','lh'];
@@ -1184,8 +1219,10 @@ el('s_text').addEventListener('input', e => { const s = S_(); if(!s || s.type !=
 
 /* ══⭐ 版の一覧 ══════════════════════════════════════════ */
 function sheetName(s){
-  if(s.type === 'txt') return '文字「' + ((s.text || '').split('\n')[0].slice(0, 6) || '　') + '」';
-  return s.im ? '画像 ' + s.im.width + '×' + s.im.height : '画像（未読み込み）';
+  /* ⚠️ 写しは中身が同じなので名前も同じになる＝一覧で見分けがつかない。印を足す */
+  const tail = s.cp ? '・写し' + (s.cp > 1 ? s.cp : '') : '';
+  if(s.type === 'txt') return '文字「' + ((s.text || '').split('\n')[0].slice(0, 6) || '　') + '」' + tail;
+  return (s.im ? '画像 ' + s.im.width + '×' + s.im.height : '画像（未読み込み）') + tail;
 }
 function drawSheetList(){
   const box = el('sheets'); box.innerHTML = '';
@@ -1249,11 +1286,27 @@ function addSheet(type, url){
 el('b_addTxt').onclick = () => addSheet('txt');
 el('b_addImg').onclick = () => { pickTarget = null; el('f_img').click(); };
 el('b_pick').onclick   = () => { pickTarget = S_(); el('f_img').click(); };
+/* ⭐ 複製は【見えるように】する（2026-08-27）
+   🔴 直すまでの落ち方：写しを同じ場所・同じ重ね方のまま重ねていた。
+      重ね方「置き換える」は版1枚を白い紙ごと上書きする作りなので、
+      同じ絵を同じ場所に置き換える＝濃さの絵が【1ビットも変わらない】。
+      一覧に行は増えるのに絵が動かない＝押した人には「複製できていない」に見える。
+      （「薄くする」も同じ場所なら二度掛けても変わらない。）
+   ⭐ だから押した瞬間に【刷りずれ】になるところまでやる：少しずらし、
+      「置き換える」なら「濃くする」に替える（＝下の版が生き残って二重刷りになる）。
+      ずらし量・重ね方はどちらもつまみで戻せる（決め打ちで固定はしない）。 */
+const DUP_OFF = 0.04;                                   /* 版面の短辺の 2%（＝見えるが邪魔にならない） */
 el('b_dup').onclick = () => {
   const s = S_(); if(!s) return;
   pushHist();
-  const c = { ...s, id:++sheetSeq };
+  const c = { ...s, id:++sheetSeq, cp:(s.cp || 0) + 1 };
+  c.x = Math.max(-1, Math.min(1, (c.x || 0) + DUP_OFF));
+  c.y = Math.max(-1, Math.min(1, (c.y || 0) + DUP_OFF));
+  const wasRep = (c.mode === 'rep');
+  if(wasRep) c.mode = 'add';
   SHEETS.splice(cur, 0, c); drawSheetList(); syncSheetUI(); kick(); saveLocal();
+  stat('複製した ── 少しずらして' + (wasRep ? '「濃くする」にしてある' : 'ある')
+     + '（同じ場所・置き換えるのままだと写しは見えない）');
 };
 /* ⭐ 2026-08-20：1枚しか無くても消せる（版0枚＝白紙が正しい状態）。 */
 el('b_del').onclick = () => {
@@ -1424,7 +1477,9 @@ function tvOut(){
 function tvPlan(){
   const fps = +tvSeg('tvFps', '24'), loops = +tvSeg('tvLoop', '1');
   const sec = loops * Math.max(0.2, P.cyc);
-  const moving = (P.spinN > 0 || P.twob > 0 || P.flowb > 0 || P.cflowN > 0 || P.wob > 0);
+  /* ⚠️ 動かせるものを足したら、ここにも足す（足し忘れると「全コマ同じ絵」と嘘の警告が出る） */
+  const moving = (P.spinN > 0 || P.twob > 0 || P.flowb > 0 || P.cflowN > 0 || P.wob > 0
+               || P.shb > 0 || P.shrN > 0);
   return { fps, loops, sec, total:Math.max(2, Math.round(sec*fps)), moving };
 }
 function tvSizeSync(){
