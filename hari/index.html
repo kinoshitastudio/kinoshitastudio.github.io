@@ -98,10 +98,15 @@ input[type=color]{ width:32px; height:28px; padding:0; border:.5px solid var(--l
 /* 行（ライン）の一覧 */
 #lineList{ display:flex; flex-direction:column; gap:4px; margin-bottom:9px }
 /* ⚠️ ○ だけだと何のことか分からなかった（木下＝「行の右の丸とは？」）＝字にする */
-.hd{ margin-left:auto; flex:none; font-size:9px; letter-spacing:.04em; cursor:pointer;
-  padding:2px 7px; border-radius:9px; border:1px solid var(--line); opacity:.55; }
-.hd:hover{ opacity:1; }
-.hd.on{ opacity:1; background:var(--ink); color:var(--paper); border-color:var(--ink); }
+/* ⭐⭐ 2026-08-27 木下「この UI わかりづらいな。目というか目のアイコンでいいんじゃない？
+   あとこのボタンみたいなしかくは何？」
+   ＝「見／隠」の字を四角い札で出していたので、押す物なのか状態なのか読めなかった。
+   ⭐ 目のアイコン1つにする（開いた目＝出ている／閉じた目＝隠している）。札の枠は外す。 */
+.hd{ margin-left:auto; flex:none; cursor:pointer; padding:2px 3px; border:none; background:none;
+  opacity:.42; line-height:0; color:inherit; }
+.hd svg{ display:block; width:16px; height:16px }
+.hd:hover{ opacity:.95; }
+.hd.on{ opacity:.95; }        /* ⚠️ 隠しているときは【閉じた目】で示す（色は反転させない） */
 .li.hidden .t{ opacity:.4; text-decoration:line-through }
 .li.drag{ opacity:.45 }
 .li.ph{ border:1px dashed var(--ink); background:transparent; opacity:.5 }
@@ -496,6 +501,7 @@ input[type=color]{ border-radius:8px; height:30px }
           <button data-v="multiply" class="on">乗算</button>
           <button data-v="overlay">オーバーレイ</button>
           <button data-v="screen">スクリーン</button>
+          <button data-v="both">両方</button>
         </div></div>
       <div class="row"><label>強さ</label>
         <input type="range" id="kAmtU" min="0" max="100" value="35"><span class="v" id="vKAmtU">35</span></div>
@@ -523,6 +529,7 @@ input[type=color]{ border-radius:8px; height:30px }
           <button data-v="multiply" class="on">乗算</button>
           <button data-v="overlay">オーバーレイ</button>
           <button data-v="screen">スクリーン</button>
+          <button data-v="both">両方</button>
         </div></div>
       <div class="row"><label>強さ</label>
         <input type="range" id="kAmt" min="0" max="100" value="35"><span class="v" id="vKAmt">35</span></div>
@@ -533,7 +540,8 @@ input[type=color]{ border-radius:8px; height:30px }
       <div class="row"><label>種</label>
         <input type="range" id="kSeed" min="1" max="99" value="1"><span class="v" id="vKSeed">1</span>
         <button class="btn" id="kShuf" style="padding:4px 10px">振る</button></div>
-      <div class="note">⭐ <b>乗算</b>＝紙の凹みが影になる（いちばん紙らしい）／<b>オーバーレイ</b>＝<b>明暗の両方</b>が乗って刷りムラに見える（下の色は残る）／<b>スクリーン</b>＝白い繊維が浮く（暗い地向き）<br>
+      <div class="note">⭐⭐ <b>両方</b>＝<b>黒い字の上にも白い地の上にも乗る</b>（暗くする紙と明るくする紙を2枚重ねる）。<b>字にノイズが乗らない</b>ときはこれ<br>
+        ⭐ <b>乗算</b>＝紙の凹みが影になる（いちばん紙らしい）。⚠️ <b>真っ黒の上では効かない</b>（暗くしかできないので）／<b>オーバーレイ</b>＝明暗の両方が乗って刷りムラに見える（⚠️ こちらも<b>真っ黒の上では効かない</b>）／<b>スクリーン</b>＝白い繊維が浮く（暗い地・黒い字向き）<br>
         ⭐ <b>簾目</b>＝手漉きの簀の目（<b>向き</b>で縦横）／<b>繊維</b>＝和紙のちり／<b>ムラ</b>＝刷りの厚薄<br>
         ⚠️ <b>PNG は見たまま焼ける</b>。SVG は質感を1枚の画像として <b>mix-blend-mode</b> で重ねる（Illustrator では効かないことがある）</div>
     </div>
@@ -1626,7 +1634,7 @@ const kamiField = (cell, seed) => (x, y) => kamiNoise(x/cell, y/cell, seed);
 function kamiTex(K){
   const B = S.board;
   if(!K || K.on === 'none') return null;
-  const key = [K.on, K.sc, K.ang, K.seed, K.blend, Math.round(B.w), Math.round(B.h)].join('|');
+  const key = [K.on, K.sc, K.ang, K.seed, K.blend, K.half||'', Math.round(B.w), Math.round(B.h)].join('|');
   if(kamiCache.has(key)) return kamiCache.get(key);
   /* 焼くときは 4096 まで伸びるので、目が溶けないところまで作っておく */
   const long = Math.max(B.w, B.h), k = Math.min(2048/long, 3);
@@ -1670,8 +1678,14 @@ function kamiTex(K){
          （＝ただ暗くなるだけで、紙に見えない）。⭐ 紙らしさは【暗さ】でなく【むら】。
          ⚠️ 乗算は暗くしかできないので【暗い側だけ】使う（明るい側は白＝素通り）。
          　　スクリーンはその裏返し（明るい側だけ）。オーバーレイは中間が素通りなので両側使える。 */
-      if(K.blend === 'multiply')      v255 = 255 - Math.max(0, -n)*150;    // 白地＋凹みの影
-      else if(K.blend === 'screen')   v255 = Math.max(0,  n)*150;          // 黒地＋浮いた繊維
+      /* ⭐⭐ 2026-08-27 木下「文字の上にノイズも何ものらないね」＝そのとおりで、
+         乗算もオーバーレイも【真っ黒の上では何も起きない】（どちらも暗い所では暗くする側）。
+         ⭐ 両方＝暗くする紙と明るくする紙を【2枚】重ねる＝黒い字の上にも白い地の上にも乗る。
+         ⚠️ ここでは「暗くする側（M）」と「明るくする側（S）」を作り分ける。 */
+      if(K.blend === 'multiply' || (K.blend === 'both' && K.half === 'M'))
+                                      v255 = 255 - Math.max(0, -n)*150;    // 白地＋凹みの影
+      else if(K.blend === 'screen' || (K.blend === 'both' && K.half === 'S'))
+                                      v255 = Math.max(0,  n)*150;          // 黒地＋浮いた繊維
       else                            v255 = 128 + n*96;                   // オーバーレイ＝中間で無変化
       px[i] = px[i+1] = px[i+2] = Math.max(0, Math.min(255, v255));
       px[i+3] = 255;
@@ -1692,8 +1706,22 @@ function kamiSen(u, v, seed){
 /* ⭐ 版面ちょうどに敷いて、下と混ぜる。⚠️ 掴む処理からは見えないように data で印を付ける */
 function kamiItem(L){
   const K = kamiOf(L.key);
+  if(K.on === 'none' || !(K.amt > 0)) return null;
+  /* ⭐⭐ 両方＝暗くする紙（乗算）と明るくする紙（スクリーン）を2枚重ねる。
+     ⚠️ 束ねて返す＝置く側（render）は1つの物として扱える（道を増やさない）。 */
+  if(K.blend === 'both'){
+    const a = kamiOne(Object.assign({}, K, { half:'M' }), 'multiply', L.key + 'M');
+    const b = kamiOne(Object.assign({}, K, { half:'S' }), 'screen',   L.key + 'S');
+    const g = new Group([a, b].filter(Boolean));
+    g.remove(); g.locked = true; g.data.kami = true;
+    return g;
+  }
+  return kamiOne(K, K.blend, L.key);
+}
+/* ⭐ 紙1枚ぶん（式は1本＝1枚でも2枚でもここを通る） */
+function kamiOne(K, blend, name){
   const cv = kamiTex(K);
-  if(!cv || !(K.amt > 0)) return null;
+  if(!cv) return null;
   /* 🔴 控えた canvas を そのまま Raster に渡してはいけない。
      paper は Raster を捨てるときに canvas を【使い回しの箱に返す】ので、
      控えていた紙が別の用に上書きされる＝同じ種なのに毎回ちがう紙になった（実測30万画素）。
@@ -1704,10 +1732,10 @@ function kamiItem(L){
   const r = new paper.Raster(cp);
   r.remove();
   r.bounds = new Rectangle(0, 0, S.board.w, S.board.h);
-  r.blendMode = K.blend;
+  r.blendMode = blend;
   r.opacity = K.amt/100;
   r.locked = true;                       // ⚠️ 掴めない（作品の物ではない）
-  r.name = L.key;                        // ⭐ SVG では id になる＝あとで mix-blend-mode を差す目印
+  r.name = name;                         // ⭐ SVG では id になる＝あとで mix-blend-mode を差す目印
   r.data.kami = true;
   return r;
 }
@@ -2787,6 +2815,11 @@ function renderList(){
    ⚠️ 作品の物ではないので【選べない・掴めない・並べ替えられない】。
       押すと右パネルのその段まで送って光らせる（触りに行く場所が分かる）。
    ⚠️「見」は強さを 0 にするのでなく【目を なし に】する＝分岐ごと通さない（＝いままでの絵に戻る）。 */
+/* ⭐ 目のアイコン ── 開いた目＝出ている／閉じた目＝隠している。⚠️ 作る所は1つ（式は1本） */
+const EYE_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.9 12S5.6 5.5 12 5.5 22.1 12 22.1 12 18.4 18.5 12 18.5 1.9 12 1.9 12Z"/><circle cx="12" cy="12" r="3.1"/></svg>';
+const EYE_SHUT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.4 3.6 21.6 20.4"/><path d="M9.6 5.9A9.6 9.6 0 0 1 12 5.6c6.4 0 10.1 6.4 10.1 6.4a17 17 0 0 1-3.3 4"/><path d="M6.3 7.6A17 17 0 0 0 1.9 12s3.7 6.5 10.1 6.5a9.9 9.9 0 0 0 4.2-.9"/><path d="M10 10a3.1 3.1 0 0 0 4.2 4.3"/></svg>';
+const eyeBtn = (hidden, title) =>
+  `<span class="hd${hidden ? ' on' : ''}" title="${title}">${hidden ? EYE_SHUT : EYE_OPEN}</span>`;
 function kamiRow(el, L, wasOn){
   const K = kamiOf(L.key);
   const on = K.on !== 'none' && K.amt > 0;
@@ -2798,7 +2831,7 @@ function kamiRow(el, L, wasOn){
   const jp = { none:'なし', zara:'ざら', me:'簾目', sen:'繊維', mura:'ムラ' }[K.on] || 'なし';
   const bl = { multiply:'乗算', overlay:'オーバーレイ', screen:'スクリーン' }[K.blend] || '';
   d.innerHTML = `<span class="k">紙</span><span class="t">${L.jp}${on ? ' ／ ' + jp + '・' + bl : ''}</span>`
-    + `<span class="hd${on ? '' : ' on'}" title="${on ? '消す（なしにする）' : '出す'}">${on ? '見' : '隠'}</span>`;
+    + eyeBtn(!on, on ? '消す（なしにする）' : '出す');
   d.onclick = () => {
     const box = $('segKami' + L.id);
     if(box){ box.scrollIntoView({ block:'center', behavior:'smooth' });
@@ -2830,7 +2863,7 @@ function fillList(el){
     d.innerHTML = (isP
         ? `<span class="k">図</span><span class="t">${o.src ? '画像' : 'SVG'}</span>`
         : `<span class="k">${(LAYOUTS[o.kind]||LAYOUTS.meguru).jp}</span><span class="t">${(o.text||'（空）').slice(0,18)}</span>`)
-      + `<span class="hd${o.hide ? ' on' : ''}" title="${o.hide ? '隠している（押すと出す）' : '隠す'}">${o.hide ? '隠' : '見'}</span>`
+      + eyeBtn(!!o.hide, o.hide ? '隠している（押すと出す）' : '隠す')
       + `<span class="lk${o.lock ? ' on' : ''}" title="固定すると振らない">${o.lock ? '固定中' : '固定'}</span>`;
     d.onclick = () => { S.sel = { kind:e.kind, i }; syncPanel(); render(); };
     /* ⚠️ 錠と目は選択とは別の操作＝親のクリックまで伝えない */
@@ -3839,8 +3872,11 @@ $('eSVG').onclick = () => {
     const K = kamiOf(L.key);
     if(K.on === 'none' || !(K.amt > 0)) return;
     any = true;
-    svg = svg.replace(new RegExp('<image([^>]*\\bid="' + L.key + '"[^>]*)>'),
-      (m, at) => '<image' + at + ' style="mix-blend-mode:' + K.blend + '">');
+    /* ⚠️ 両方は2枚出る（M＝乗算・S＝スクリーン）＝それぞれに重ね方を差す */
+    const put = (id, bl) => { svg = svg.replace(new RegExp('<image([^>]*\\bid="' + id + '"[^>]*)>'),
+      (m, at) => '<image' + at + ' style="mix-blend-mode:' + bl + '">'); };
+    if(K.blend === 'both'){ put(L.key + 'M', 'multiply'); put(L.key + 'S', 'screen'); }
+    else put(L.key, K.blend);
   });
   dl(new Blob([svg], { type:'image/svg+xml' }), 'hari.svg');
   stat('SVG を書き出した' + (any ? '（紙の質感は mix-blend-mode で重ねている）' : ''));
