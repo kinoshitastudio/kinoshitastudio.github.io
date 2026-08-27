@@ -194,11 +194,10 @@ const R = await p.evaluate(async () => {
   document.getElementById('toFace').click(); await wait(250);
 
   /* ══ ⑩ 控え（JSON）の往復 ══ */
-  /* ⚠️ 数えるのは【控えに入る図】だけ ── 消しカスは src も pen も持たないので
-     もともと保存されない（＝この道具の前からの決まり。ここで測ると狼少年になる）。 */
+  /* ⚠️ 数えるのは【控えに入る図】だけ（2026-08-27 から消しカスも控えに入る）。 */
   out.控え前 = { face:S.face|0,
-                 裏の数:S.pieces.filter(x => x.ura && (x.src || x.pen)).length,
-                 行:S.lines.length, 図:S.pieces.filter(x => x.src || x.pen).length };
+                 裏の数:S.pieces.filter(x => x.ura && (x.src || x.pen || (x.kasu && x.kasu.length))).length,
+                 行:S.lines.length, 図:S.pieces.filter(x => x.src || x.pen || (x.kasu && x.kasu.length)).length };
   return out;
 });
 
@@ -226,8 +225,8 @@ const R2 = await p.evaluate(async () => {
   inp.dispatchEvent(new Event('change', { bubbles:true }));
   await wait(1200);
   return { 控え, 読み直し:{ face:S.face|0,
-                            裏の図:S.pieces.filter(x => x.ura && (x.src || x.pen)).length,
-                            図:S.pieces.filter(x => x.src || x.pen).length, 行:S.lines.length } };
+                            裏の図:S.pieces.filter(x => x.ura && (x.src || x.pen || (x.kasu && x.kasu.length))).length,
+                            図:S.pieces.filter(x => x.src || x.pen || (x.kasu && x.kasu.length)).length, 行:S.lines.length } };
 });
 
 if(process.argv[2]) await p.screenshot({ path: process.argv[2] });

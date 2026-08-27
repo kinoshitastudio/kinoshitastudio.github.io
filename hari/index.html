@@ -907,8 +907,12 @@ input[type=color]{ border-radius:8px; height:30px }
         <input type="range" id="eraR" min="6" max="120" value="26"><span class="v" id="vEraR">26</span></div>
       <div class="row" id="rowKasu"><label>消しカス</label>
         <input type="range" id="eraKasu" min="0" max="100" value="50"><span class="v" id="vEraKasu">50</span></div>
+      <!-- ⭐ 出口は【使う欄】に置く（2026-08-27 木下「不要な時は消しゴムのカスを削除などを用意して」）
+           ⚠️ レイヤーの「選んだ図を消す」まで行かないと捨てられなかった＝1つずつしか消せなかった。 -->
+      <button class="btn" id="clearKasu">消しカスを捨てる</button>
       <div class="note">⭐ 左の道具立ての <b>消しゴム（E）</b>で鉛筆の線をこする。<b>全部は消えない</b>（跡が残る）<br>
         ⭐ <b>消しカス</b>＝こすった先に出る。<b>0 で出ない</b>／カスは<b>図として置かれる</b>ので、動かす・消すができる<br>
+        ⭐ <b>控えにも入る</b>＝保存して開き直すと、同じカスがそのまま戻る。まとめて捨てたいときは上のボタン（⌘Z で戻せる）<br>
         ⚠️ 消せるのは<b>鉛筆で引いた線</b>だけ（他の道具の線・図は消えない）</div>
       <button class="btn" id="bImg">画像を置く</button>
       <button class="btn" id="bSvg">SVG を置く</button>
@@ -2879,7 +2883,10 @@ function stateNow(){
   return JSON.stringify({
     board: S.board, sel: S.sel,
     lines: S.lines,
-    pieces: S.pieces.map(p => ({ id:p.id, x:p.x, y:p.y, sc:p.sc, rot:p.rot, lock:p.lock })),
+    /* ⚠️ ura（どちらの面か）・hide（隠す）・z（重なり）が抜けていた
+       ＝⌘Z で【面を移したのが戻らない／隠したのが戻らない】。控えるものは、戻したいものと同じにする。 */
+    pieces: S.pieces.map(p => ({ id:p.id, x:p.x, y:p.y, sc:p.sc, rot:p.rot, lock:p.lock,
+                                 ura:p.ura, hide:p.hide, z:p.z })),
   });
 }
 function pushUndo(){
@@ -2888,13 +2895,33 @@ function pushUndo(){
   UNDO.push(j); if(UNDO.length > 60) UNDO.shift();
   REDO.length = 0;
 }
+/* ⭐⭐ 消した図の置き場（2026-08-27）。
+   🔴 これまで「図を消す」は【⌘Z で戻らなかった】＝図は実体（item）を持っていて、
+      控え（文字）からは作り直せなかったため。
+   ⭐ 消すときに捨てずにここへ入れておけば、控えに id が残っている限り戻せる
+     （作り直すのではなく、しまってあった実体をそのまま出す）。
+   ⚠️ 置き場は消さない（一度消した図は、その場に居続ける）。数は高が知れている。 */
+const PCBIN = new Map();
+function dropPiece(pc){ if(pc) PCBIN.set(pc.id, pc); }
+
 function applyStateStr(j){
   const o = JSON.parse(j);
   S.board = o.board; S.sel = o.sel;
   S.lines = o.lines;
   /* ⚠️ 図は実体（item）を持っているので、置き場所だけ書き戻す（作り直さない） */
   o.pieces.forEach(v => { const pc = S.pieces.find(x => x.id === v.id);
-    if(pc) Object.assign(pc, { x:v.x, y:v.y, sc:v.sc, rot:v.rot, lock:v.lock }); });
+    if(pc) Object.assign(pc, { x:v.x, y:v.y, sc:v.sc, rot:v.rot, lock:v.lock,
+                               ura:v.ura, hide:v.hide, z:v.z }); });
+  /* ⭐ 控えに有るのに、いま版面に居ない＝【消した図】。置き場から戻す。
+     ⚠️ 並びは z で決まるので、戻す順は気にしなくていい。 */
+  o.pieces.forEach(v => {
+    if(S.pieces.some(x => x.id === v.id)) return;
+    const bin = PCBIN.get(v.id);
+    if(!bin) return;
+    Object.assign(bin, { x:v.x, y:v.y, sc:v.sc, rot:v.rot, lock:v.lock,
+                         ura:v.ura, hide:v.hide, z:v.z });
+    S.pieces.push(bin);
+  });
   syncPanel(); render();
 }
 function undo(){
@@ -3068,7 +3095,9 @@ function fillList(el){
     /* ⭐ 裏の物には「裏」の札。⚠️ 表には何も付けない（いままでの一覧と同じ見え） */
     const fx = o.ura ? '<span class="fx">裏</span>' : '';
     d.innerHTML = (isP
-        ? `<span class="k">図</span>${fx}<span class="t">${o.src ? '画像' : 'SVG'}</span>`
+        ? `<span class="k">図</span>${fx}<span class="t">${
+             (o.kasu && o.kasu.length) ? '消しカス ' + o.kasu.length + '粒'
+             : o.pen ? '引いた線' : o.src ? '画像' : 'SVG'}</span>`
         : `<span class="k">${(LAYOUTS[o.kind]||LAYOUTS.meguru).jp}</span>${fx}<span class="t">${(o.text||'（空）').slice(0,18)}</span>`)
       + eyeBtn(!!o.hide, o.hide ? '隠している（押すと出す）' : '隠す')
       + `<span class="lk${o.lock ? ' on' : ''}" title="固定すると振らない">${o.lock ? '固定中' : '固定'}</span>`;
@@ -3151,6 +3180,12 @@ function syncPanel(){
   /* ⚠️ 古い作品は ghost を持たない＝既定は「薄く見せる」（＝はみ出した物を見失わない） */
   segOn('segGhost', S.ghost === false ? '0' : '1');
   syncFace();                    /* ⭐ 紙の面（表／裏）＝道具立てのボタンと右の段は同じ1つの値 */
+  /* ⭐ 消しカスの数をボタンに出す＝押す前に「何が消えるか」が見える。
+     ⚠️ 数える所は kasuPcs 1本（ボタンの数字と、実際に消える数が食い違わない） */
+  { const bk = $('clearKasu');
+    if(bk){ const n = kasuPcs().length;
+            bk.textContent = n ? '消しカスを捨てる（' + n + '）' : '消しカスを捨てる';
+            bk.disabled = !n; bk.style.opacity = n ? '' : '.45'; } }
   /* 地の色（何色でも）。⚠️ 古い作品は cols を持たないので bg/bg2 から起こす */
   /* ⭐ 地のグラデはストップで持つ。バーと一覧を描き直す（控えを読んだ時もここを通る） */
   stopsOf(); drawStopBar(); fillStopList();
@@ -4196,6 +4231,27 @@ function eraseAt(pt){
   if(hit && PEN.kasu > 0) kasuAt(pt);
   return hit;
 }
+/* ══⭐⭐ 消しカス（2026-08-27）══════════════════════════════════
+   ⭐ カスは【1粒ずつ控える】＝ [x, y, 横半径, 縦半径, 角度, 濃さ] の6つ。
+     こうしておくと、保存して開き直したときに【同じカスがそのまま戻る】。
+     🔴 前は形を控えていなかったので、控え（JSON）に入らず開き直すと消えていた
+        （「図として置かれる・動かせる・消せる」と言っているのに、保存だけ通らなかった）。
+   ⭐ 粒から絵を作る道は kasuGrain / kasuItem の【1本】＝落とすときも、開き直すときも同じ式。
+   ⚠️ 粒は【版面の座標そのまま】で持つ（こすった所にそのまま落ちる）。 */
+const KASU_INK = [0.22, 0.22, 0.21];
+function kasuGrain(g){
+  const e = new Path.Ellipse({ point:[g[0] - g[2], g[1] - g[3]], size:[g[2]*2, g[3]*2] });
+  e.rotate(g[4], new Point(g[0], g[1]));
+  e.fillColor = new paper.Color(KASU_INK[0], KASU_INK[1], KASU_INK[2], g[5]);
+  e.remove();
+  return e;
+}
+/* ⭐ 控えた粒ぜんぶ → 1つの入れ物（開き直しはここを通るだけ） */
+function kasuItem(d){
+  const g = new Group(); g.remove();
+  (d || []).forEach(a => g.addChild(kasuGrain(a)));
+  return g;
+}
 /* ⭐ 消しカス ── こすった所に落ちる。量は木下が決める（0 で出ない） */
 function kasuAt(pt){
   const n = Math.random() < (PEN.kasu/100) * 0.55 ? 1 : 0;
@@ -4203,23 +4259,44 @@ function kasuAt(pt){
   artLayer.activate();
   if(!eraKasuPc){
     const g = new Group(); g.remove();
-    const pc = { id:uid(), item:g, src:null, pen:null, kasu:true, x:0, y:0, sc:100, rot:0,
+    /* ⭐ kasu＝粒の控え（配列）。⚠️ ここが空でないことが「これは消しカス」の目印 */
+    const pc = { id:uid(), item:g, src:null, pen:null, kasu:[], x:0, y:0, sc:100, rot:0,
                  ura:(S.face ? 1 : 0) };    /* ⭐ 消しカスも、こすっている面に落ちる */
-    /* ⚠️ カスは版面の座標そのままで置く＝こすった所にそのまま落ちる */
     S.pieces.push(pc); eraKasuPc = pc;
   }
   const R = Math.max(4, PEN.era || 26);
   const s = Math.max(0.8, R * 0.05) * (0.6 + Math.random());
   const a = Math.random() * 6.2831853, r = R * (0.35 + Math.random() * 0.75);
   const p = new Point(pt.x + Math.cos(a)*r, pt.y + Math.sin(a)*r);
-  const e = new Path.Ellipse({ point:[p.x - s, p.y - s*0.6], size:[s*2, s*1.2] });
-  e.rotate(Math.random()*180, p);
-  e.fillColor = new paper.Color(0.22, 0.22, 0.21, 0.55 + Math.random()*0.35);
-  e.remove();
-  eraKasuPc.item.addChild(e);
+  /* ⚠️ 数字は【丸めてから】控える＝控えが太らない・戻した絵と1粒もずれない
+     （控えを丸めて絵を丸めないと、開き直したときにわずかにずれる） */
+  const rd = v => Math.round(v * 100) / 100;
+  const grain = [rd(p.x), rd(p.y), rd(s), rd(s * 0.6),
+                 rd(Math.random() * 180), rd(0.55 + Math.random() * 0.35)];
+  if(!eraKasuPc.kasu) eraKasuPc.kasu = [];
+  eraKasuPc.kasu.push(grain);
+  eraKasuPc.item.addChild(kasuGrain(grain));
   /* ⚠️ 入れ物の位置は中身から決まる（あとで丸ごと動かせる） */
   const c = eraKasuPc.item.bounds.center;
   eraKasuPc.x = c.x; eraKasuPc.y = c.y;
+}
+/* ⭐ 消しカスだけ数える／まとめて捨てる（木下＝「不要な時は消しゴムのカスを削除」）。
+   ⚠️ 数える所を2箇所に書かない＝ボタンの数字と、実際に消える数が食い違わない。 */
+/* ⚠️ アロー（const）にすると、先に呼ばれたとき TDZ で【起動ごと止まる】。
+   　 syncPanel から呼ぶので、巻き上がる function 宣言にしておく。 */
+function kasuPcs(){ return S.pieces.filter(p => p.kasu && p.kasu.length); }
+function clearKasu(){
+  const n = kasuPcs().length;
+  if(!n){ stat('消しカスは出ていない'); return; }
+  pushUndo();
+  const 粒 = kasuPcs().reduce((a, p) => a + p.kasu.length, 0);
+  kasuPcs().forEach(dropPiece);            /* ⭐ 捨てずにしまう＝⌘Z で戻る */
+  S.pieces = S.pieces.filter(p => !(p.kasu && p.kasu.length));
+  eraKasuPc = null;
+  /* ⚠️ 消したものを選んだままにしない（掴み手だけ残る） */
+  if(S.sel && S.sel.kind === 'piece') S.sel = { kind:null, i:null };
+  syncPanel(); render();
+  stat('消しカスを捨てた（' + n + 'こすり・' + 粒 + '粒）');
 }
 
 /* ── 書き心地のフライアウト（左の道具立ての ✒️ から開く）── */
@@ -4262,8 +4339,11 @@ addEventListener('drop', e => {
   const at = inside ? atPt(e) : new Point(S.board.w/2, S.board.h/2);
   files.forEach(f => takeFile(f, at));
 });
+/* ⭐ 消しカスをまとめて捨てる（2026-08-27）。⚠️ 0 のときは押せなくする＝触れるのに効かない、を作らない */
+$('clearKasu').onclick = clearKasu;
 $('delPiece').onclick = () => { const pc = selPiece(); if(!pc) return;
-  S.pieces.splice(S.sel.i,1); S.sel = { kind:'line', i:0 }; syncPanel(); render(); stat('図を消した'); };
+  pushUndo(); dropPiece(pc);               /* ⭐ しまってから外す＝⌘Z で戻る */
+  S.pieces.splice(S.sel.i,1); S.sel = { kind:'line', i:0 }; syncPanel(); render(); stat('図を消した（⌘Z で戻せる）'); };
 ['pcScale','pcRot'].forEach(id => $(id).addEventListener('input', e => {
   const pc = selPiece(); if(!pc) return;
   pc[id === 'pcScale' ? 'sc' : 'rot'] = Number(e.target.value);
@@ -4389,11 +4469,13 @@ $('eJSON').onclick = () => {
     lines:  S.lines.map(L => JSON.parse(JSON.stringify(L))),
     /* ⭐ 描いた線（pen）も控えに入れる＝開き直すと引いた線ごと戻る。
        🔴 これまで src の無い図は捨てていたので、✒️ で引いた線は保存で消えていた。 */
-    pieces: S.pieces.filter(p => p.src || p.pen)
-              .map(p => ({ src:p.src, pen:p.pen, x:p.x, y:p.y, sc:p.sc, rot:p.rot,
+    /* ⭐ 消しカス（kasu）も控えに入れる（2026-08-27）＝開き直すと同じカスが戻る */
+    pieces: S.pieces.filter(p => p.src || p.pen || (p.kasu && p.kasu.length))
+              .map(p => ({ src:p.src, pen:p.pen, kasu:p.kasu || null,
+                           x:p.x, y:p.y, sc:p.sc, rot:p.rot,
                            ura:(p.ura ? 1 : 0) })) };
   dl(new Blob([JSON.stringify(d)], { type:'application/json' }), 'hari.json');
-  const n = S.pieces.filter(p => p.src || p.pen).length;
+  const n = S.pieces.filter(p => p.src || p.pen || (p.kasu && p.kasu.length)).length;
   stat('保存した（行 ' + S.lines.length + ' ／ 図 ' + n + '）');
 };
 /* 保存から図を作り直す。⚠️ 画像は読み込みが非同期なので、置き場所を先に確保して後から差す */
@@ -4406,6 +4488,15 @@ function restorePiece(p){
                     ura:(p.ura ? 1 : 0) });
     render();
   };
+  /* ⭐ 消しカスは控えた粒から作り直す（2026-08-27）。
+     ⚠️ 画像のように「版面に収める倍率」を掛けない＝カスは版面の座標そのままで置いてある。 */
+  if(p.kasu && p.kasu.length){
+    artLayer.activate();
+    const item = kasuItem(p.kasu);
+    S.pieces.push({ id:uid(), item, src:null, pen:null, kasu:p.kasu,
+                    x:p.x, y:p.y, sc:p.sc, rot:p.rot, ura:(p.ura ? 1 : 0) });
+    render(); return;
+  }
   /* ⭐ 描いた線は骨から作り直す（画像と違って読み込み待ちが要らない） */
   if(p.pen){
     artLayer.activate();
