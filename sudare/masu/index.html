@@ -1379,6 +1379,18 @@ function buildSheet(sh){
        ＝木下「縦の長さを大きくしすぎると消えてしまう」（2026-08-09・縦400で板0枚）。 */
   lines.forEach((ln, i) => put(ln, W2 / 2, H2b / 2 + (i - (lines.length - 1) / 2) * S * 1.02));
   }
+  /* ══⭐⭐ 写真の形は【材料】＝見え方（型）を変えても作り直さない（2026-08-28 木下
+     「これはかなりよいんだが、めちゃくちゃ重い」「特にここ（型）での変化が」）══
+     🔴 型を押すたびに、写真を焼き直して（100万画素超）0/1 の地図を作り直していた。
+        型は【見え方】であって【形】ではない＝作り直す必要がない。
+     ⭐ 形が決まる値（写真・しきい・反転・箱の大きさ）が同じなら、前に作った地図を使い回す。
+     ⚠️ 字のときは焼くのが速いので触らない（分岐ごと通らない）。 */
+  const _pk = sh.PHOTO
+    ? [sh.PSRC ? sh.PSRC.length : 0, sh.pthr, sh.pinv, W2, H2].join('|') : '';
+  if(sh.PHOTO && sh._pk === _pk && sh.MASKD && sh.MASKD.m && sh.MASKD.W === W2 && sh.MASKD.H === H2){
+    const mask = sh.MASKD.m;
+    return buildFromMask(sh, mask, W2, H2, H2b, S, vl, lines, stepY, cols, maxLen, fam);
+  }
   const d = tg.getImageData(0, 0, W2, H2).data;
   const mask = new Uint8Array(W2 * H2);
   if(sh.PHOTO){
@@ -1398,11 +1410,20 @@ function buildSheet(sh){
      字を焼き直さずに済む（[[feedback_many_shapes_pass_as_string]] と同じ気持ち＝重い方を一度だけ）。
      ⚠️ 控え JSON には入らない（SHEET_KEYS に無い）＝ファイルは太らない。 */
   sh.MASKD = { m:mask, W:W2, H:H2, S };
+  sh._pk = _pk;                                   /* ⭐ この地図がどの設定のものか控える */
+  return buildFromMask(sh, mask, W2, H2, H2b, S, vl, lines, stepY, cols, maxLen, fam);
+}
+/* ⭐⭐ 0/1 の地図から【板やマスを作る】所（2026-08-28 に切り出した）。
+   ⭐ 焼いた直後も、地図を使い回すときも、**同じこの1本**を通る＝2つ持たない。 */
+function buildFromMask(sh, mask, W2, H2, H2b, S, vl, lines, stepY, cols, maxLen, fam){
   sh.GPH = grainU(sh);                              // いま焼いた絵がどの位相のものか
   /* ⭐ 分け方が【輪郭から】のときは、板に切らずに距離場を作って画素ごとに刷る。
      ⚠️ 距離の計算は重いので、決めた解像に落としてから計算する（そのぶん縞は粗くなる）。 */
   if(sh.dir === 3){
-    sh.SD = makeSD(sh, W2, H2);
+    /* ⭐⭐ 距離場も【材料】＝形と解像が同じなら作り直さない（2026-08-28）。
+       🔴 型を押すたびに作り直していた＝写真では箱が大きく、ここがいちばん重かった。 */
+    const sk = [sh._pk || '', W2, H2, sh.dRes, sh.dScale].join('|');
+    if(!(sh.SD && sh._sk === sk)){ sh.SD = makeSD(sh, W2, H2); sh._sk = sk; }
     sh.RECTS = []; sh.CELLS = null; sh.ART = { w: W2, h: H2 };
     return;
   }
