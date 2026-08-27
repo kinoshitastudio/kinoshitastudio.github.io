@@ -90,6 +90,21 @@ const R = await p.evaluate(async () => {
     out.表は1枚ずつ違う = diff; }
   document.getElementById('b_one').click(); await wait(600);
   out.一枚に戻る = !/段の表/.test(document.getElementById('meter').textContent);
+  /* ⭐⭐ 色味（2026-08-27 木下「色味も変更したりできるように」） */
+  const avg = () => { const d = pix(); let r=0,g=0,b2=0,n=0;
+    for(let i=0;i<d.length;i+=4*29){ r+=d[i]; g+=d[i+1]; b2+=d[i+2]; n++; }
+    return [Math.round(r/n),Math.round(g/n),Math.round(b2/n)]; };
+  const base = avg();
+  await set('r_hue', 120);  out.色あい = avg();
+  await set('r_hue', 0);
+  await set('r_sat', 0);    out.鮮やかさ0 = avg();
+  await set('r_sat', 100);
+  await set('r_bri', 40);   out.明るく = avg();
+  await set('r_bri', 0);    out.色味を戻す = avg().join() === base.join();
+  out.色味の元 = base;
+  document.querySelector('#s_pal button[data-v="doku"]').click(); await wait(700);
+  out.色の型 = { 色:avg(), 二色刷りになる:(P.mode === 'duo') };
+  document.querySelector('#s_mode button[data-v="mono"]').click(); await wait(500);
   return out;
 });
 /* 出す（PNG／SVG）＝落ちるものが本当に出るか */
@@ -137,4 +152,12 @@ ok(dls.includes('bou.svg'), 'SVG が出る（図形 ' + svgN + ' 個）', dls.jo
 ok(M.横に伸びない, 'モバイルで横に伸びない', M.幅);
 ok(M.掴み手, 'モバイルでパネルの掴み手が出る');
 ok(M.盤は指を取る, '盤を引いてもページが動かない（touch-action:none）');
+console.log('── 色味');
+ok(R.色あい.join() !== R.色味の元.join(), '⭐ 色あいを回すと色が変わる',
+   R.色味の元.join() + ' → ' + R.色あい.join());
+ok(Math.abs(R.鮮やかさ0[0]-R.鮮やかさ0[1]) < 4 && Math.abs(R.鮮やかさ0[1]-R.鮮やかさ0[2]) < 4,
+   '⭐ 鮮やかさ 0 で灰色になる', R.鮮やかさ0.join());
+ok(R.明るく[0] > R.色味の元[0] + 20, '⭐ 明るさが効く', R.明るく.join());
+ok(R.色味を戻す, '⚠️ 0／100／0 に戻すと元の色に帰る');
+ok(R.色の型.二色刷りになる, '⭐ 色の型を押すと【2色刷り】になる（押しても色が変わらない、を作らない）');
 process.exit(ng ? 1 : 0);
