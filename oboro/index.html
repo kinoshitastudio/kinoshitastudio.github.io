@@ -225,7 +225,7 @@
     ⚠️ 割り方（帯の並び）は<b>ひき直す</b>の種で決まるので、コマが変わっても並びは動かない</div>
   <div class="mod">ドラッグ＆ドロップでも置ける。<b>写真も動画も</b>／<b>HEIC（iPhone の写真）も読める</b><br>
     ⚠️ HEIC は<b>そのまま読めるブラウザ（Safari）</b>ならすぐ。読めないブラウザのときだけ
-    変換の部品を取りに行くので、最初の1枚だけ少し待つ</div>
+    ほどく部品を取りに行くので、最初の1枚だけ少し待つ（<b>iPhone の HDR 写真も読める</b>）</div>
 
   <h2>割る</h2>
   <div class="row"><label>段</label><input type="range" id="rows" min="1" max="300" value="14"><span class="val"></span></div>
@@ -1488,18 +1488,53 @@ pgSync();
 const loadMsg = t => { const el = document.getElementById('loadMsg'); if(el) el.innerHTML = t || ''; };
 const isHeic = f => /\.(heic|heif)$/i.test(f.name || '') || /hei[cf]/i.test(f.type || '');
 
-/* ⭐ 部品は【押したときだけ】取りに行く（動画の器と同じ作法） */
-let heicP = null;
-function loadHeicLib(){
-  if(window.heic2any) return Promise.resolve(true);
-  if(!heicP) heicP = new Promise(res => {
-    const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js';
-    s.onload = () => res(!!window.heic2any);
-    s.onerror = () => res(false);
-    document.head.appendChild(s);
+/* ⭐ 部品は【押したときだけ】取りに行く（動画の器と同じ作法）
+   🔴🔴 2026-08-27：heic2any（0.0.4）から libheif-js に替えた。
+      理由＝iPhone の HDR 写真（ftyp に **MiHE** が入っている＝10bit）が
+      heic2any では丸ごと落ちていた（`ERR_LIBHEIF format not supported`）。
+      手元の4枚で実測：heic2any は 2枚失敗／libheif-js は 4枚とも成功、しかも速い
+      （2316×3088 で 1,911ms → 855ms）。中の libheif が古いのが原因で、
+      heic2any は 0.0.4 が最後なので上げようがない。 */
+let heifP = null;
+function loadHeifLib(){
+  if(heifP) return heifP;
+  heifP = (async () => {
+    const ok = await new Promise(res => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/libheif-js@1.18.2/libheif-wasm/libheif-bundle.js';
+      s.onload = () => res(true);
+      s.onerror = () => res(false);
+      document.head.appendChild(s);
+    });
+    if(!ok || !window.libheif) return null;
+    /* ⚠️ 読み込んだ直後の window.libheif は【道具ではなく、道具を作る関数】。
+          await して初めて HeifDecoder が生える。ここを飛ばすと
+          「HeifDecoder is not a constructor」で落ちる（一度踏んだ）。 */
+    return (typeof window.libheif === 'function') ? await window.libheif() : window.libheif;
+  })();
+  return heifP;
+}
+/* HEIC をほどいて JPEG の Blob にする。
+   ⚠️ ほどく間はメインスレッドが止まる（5712×4284 で約2.7秒）ので、
+      呼ぶ側は【先に一言出して、1コマ描かせてから】ここへ入ること。 */
+async function heicToBlob(f){
+  const lib = await loadHeifLib();
+  if(!lib) throw new Error('部品を取りに行けなかった（つながっていない）');
+  const imgs = new lib.HeifDecoder().decode(new Uint8Array(await f.arrayBuffer()));
+  if(!imgs || !imgs.length) throw new Error('中に画像が入っていない');
+  const im = imgs[0], W = im.get_width(), H = im.get_height();
+  if(!(W > 0 && H > 0)) throw new Error('大きさが取れない');
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const cg = c.getContext('2d');
+  const id = cg.createImageData(W, H);
+  await new Promise((res, rej) => {
+    try{ im.display(id, r => r ? res() : rej(new Error('中身をほどけなかった'))); }
+    catch(e){ rej(e); }
   });
-  return heicP;
+  cg.putImageData(id, 0, 0);
+  const blob = await new Promise(res => c.toBlob(res, 'image/jpeg', 0.94));
+  if(!blob) throw new Error('JPEG にできなかった');
+  return blob;
 }
 /* そのまま読めるか試す（Safari はここで通る） */
 function canDecode(url){
@@ -1524,20 +1559,17 @@ async function pickFile(f){
     loadImage(url);
     return;
   }
-  loadMsg('HEIC を変換しています…（最初の1枚だけ少し待ちます）');
-  if(!await loadHeicLib()){                       // ② 部品が取りに行けない
-    loadMsg('🔴 HEIC を変換する部品を取りに行けませんでした（つながっていない）。'
-          + 'Safari で開くか、JPEG に書き出して読み込んでください');
-    return;
-  }
-  try{
-    const out = await window.heic2any({ blob:f, toType:'image/jpeg', quality:0.94 });
-    const blob = Array.isArray(out) ? out[0] : out;
+  loadMsg('HEIC をほどいています…（最初の1枚だけ少し待ちます）');
+  /* ⚠️ ここで1コマ譲る。譲らないと、下でメインスレッドが止まって
+        「ほどいています」が【一度も描かれないまま】固まる＝黙って固まったように見える。 */
+  await new Promise(r => setTimeout(r, 0));
+  try{                                            // ② 部品を取りに行ってほどく
+    const blob = await heicToBlob(f);
     loadMsg('');
     loadImage(URL.createObjectURL(blob));
   }catch(err){                                    // ③ 理由を出して止める
     loadMsg('🔴 この HEIC は読めませんでした（' + (err && err.message || err) + '）。'
-          + 'JPEG に書き出して読み込んでください');
+          + 'Safari で開くか、JPEG に書き出して読み込んでください');
   }
 }
 document.getElementById('bLoad').onclick = () => document.getElementById('file').click();
