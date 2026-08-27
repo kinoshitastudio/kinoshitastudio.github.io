@@ -661,7 +661,7 @@ input[type=color]{ border-radius:8px; height:30px }
       <div class="seg" id="segKind">
         <button data-v="meguru" class="on">沿う</button>
         <button data-v="haru">張る</button>
-        <button data-v="narabu">並ぶ</button>
+        <button data-v="narabu">並ぶ</button><button data-v="chiru">散</button>
         <button data-v="fuda">札</button>
       </div></div>
     <div class="note" id="kindNote">⭐ <b>沿う</b>＝経路に載せる（巡る）／<b>張る</b>＝箱の幅にぴったり届かせる（両端揃え・下部のクレジット）<br>
@@ -720,6 +720,30 @@ input[type=color]{ border-radius:8px; height:30px }
          今でもいい感じだが、左右逆になるとか？上下逆になるとか」
          ⭐ 経路を鏡にする＝字の並ぶ順・回る向き・内外が一度に入れ替わる。
          ⚠️ どちらも切のときは、これまでと1画素も変わらない。 -->
+    <!-- ══⭐⭐ 散（2026-08-27 木下「テキストを入れ込みするとランダムに配置」
+         「フォントを小さく配置させ、ランダムに当て込みし直感的に僕が選べるように」）══
+         ⭐ 振ると置き場所が変わる＝見て選ぶ。塊は盤で掴んで動かせる。 -->
+    <div id="chiruUI" style="display:none">
+      <div class="row"><label>塊の数</label>
+        <input type="range" id="cN" min="1" max="40" value="6"><span class="v" id="vcN">6</span></div>
+      <div class="row"><label>塊の幅</label>
+        <input type="range" id="cW" min="4" max="60" value="20"><span class="v" id="vcW">20</span></div>
+      <div class="row"><label>傾きの振れ</label>
+        <input type="range" id="cRot" min="0" max="90" value="0"><span class="v" id="vcRot">0</span></div>
+      <div class="row"><label>縁の余白</label>
+        <input type="range" id="cPad" min="0" max="40" value="6"><span class="v" id="vcPad">6</span></div>
+      <div class="row"><label>両端揃え</label>
+        <div class="seg" id="segCJ" style="flex:1">
+          <button data-v="1" class="on">する</button><button data-v="0">しない</button>
+        </div></div>
+      <div class="btns" style="margin:6px 0">
+        <button class="btn" id="cShake" style="display:block;width:100%">⤫ 振る（置き場所を作り直す）</button>
+      </div>
+      <div class="note">⭐ <b>文章をそのまま入れる</b>と、<b>塊に分けて版面に散らす</b>（語の切れ目で切る）<br>
+        ⭐ <b>振る</b>たびに置き場所が変わる＝<b>見て選ぶ</b>。気に入った塊は<b>盤で掴んで動かせる</b><br>
+        ⭐ 動かした分は控えに残る（次に振るまで消えない）／<b>大きさ</b>を小さくして使う置き方<br>
+        ⚠️ 塊の数を変えると置き場所は<b>作り直し</b>になる</div>
+    </div>
     <div class="row" id="rowMir"><label>返す</label>
       <div class="btns" style="flex:1;margin:0">
         <button class="btn" id="mirX" title="経路を左右に返す">⇄ 左右</button>
@@ -1257,6 +1281,46 @@ function pathBack(L, q){
   if(p.my) r = new Point(r.x, B.h - r.y);
   return (z === 1) ? r : c.add(r.subtract(c).divide(z));
 }
+/* ══⭐⭐ 散 CHIRU の持ち物（2026-08-27）══
+   ⭐ n＝塊の数／w＝1塊の幅（版面の幅に対する%）／seed＝種（振ると変わる）
+     rot＝傾きの振れ（度・0で傾かない）／just＝両端揃え／put＝置き場所の控え
+   ⚠️ put が【正】＝掴んで動かした分はここに残る。振ると作り直す。 */
+const CHIRU_DEF = { n:6, w:20, seed:1, rot:0, just:1, pad:6, put:null };
+/* ⭐ 塊に分ける＝**語の切れ目**で切る（日本語は切れ目が無いので字数で割る）。
+   ⚠️ 途中の語を割らない＝小さくても文章として読める。 */
+function chiruSplit(txt, n){
+  const words = txt.split(' ').filter(Boolean);
+  if(words.length >= n){
+    const out = Array.from({ length:n }, () => []);
+    /* 字数がなるべく揃うように、長い順でなく順番のまま配る（文章の流れを保つ） */
+    const per = Math.ceil(words.length / n);
+    words.forEach((w, i) => out[Math.min(n-1, Math.floor(i/per))].push(w));
+    return out.map(a => a.join(' ')).filter(Boolean);
+  }
+  /* 語で足りない＝字数で等分（日本語） */
+  const chars = [...txt];
+  const per = Math.ceil(chars.length / n);
+  const out = [];
+  for(let i = 0; i < chars.length; i += per) out.push(chars.slice(i, i+per).join(''));
+  return out.filter(Boolean);
+}
+/* ⭐ 置き場所。控えが有ればそれが正。無ければ【種から】作る＝振れば変わる。
+   ⚠️ 塊の数が変わったら作り直す（古い場所が残ると数と合わない）。 */
+function chiruPut(L, K, n){
+  const cur = K.put;
+  if(cur && cur.length === n) return cur;
+  const rnd = kamiRnd((K.seed|0) * 7919 + 17);
+  const pad = Math.max(0, Math.min(40, K.pad ?? 6));
+  const out = [];
+  for(let i = 0; i < n; i++){
+    out.push([ pad + rnd() * (100 - pad*2),
+               pad + rnd() * (100 - pad*2),
+               K.rot ? (rnd()*2 - 1) * K.rot : 0 ]);
+  }
+  if(!L.chiru) L.chiru = Object.assign({}, CHIRU_DEF);
+  L.chiru.put = out;          // ⭐ 作ったら控える＝掴んで動かせる
+  return out;
+}
 /* ══⭐⭐ 張るの経路（2026-08-27 木下「はるにさ、頂点を追加してくねっと曲げたりできたら」）══
    ⭐ 始点 → 曲げの点… → 終点 の【開いた曲線】。点が無ければ ただの直線＝これまでの絵。
    ⚠️ 曲げの点は【箱に対する割合】で持つ（u＝0〜1 が始点→終点／v＝上下のずれ・幅に対する割合）
@@ -1552,6 +1616,70 @@ const LAYOUTS = {
      ⭐ 張るとの違いは1つだけ ── 【余りを字間に配らない】。
         だから字と字のあいだが一定で、字の大きさが揃って見える。
      ⭐ 箱の幅を超えたら折り返す＝ワープロと同じ組み方。改行（\n）もそのまま効く。 */
+  /* ══⭐⭐ 散 CHIRU ── 小さな文章の塊を版面に散らす（2026-08-27 木下）══
+     木下＝「別途新しいセクションをパネルに作り、そこにテキストを入れ込みすると
+     ランダムに配置できるように。フォントを小さく配置させ、ランダムに当て込みし
+     直感的に僕が選べるようにしたい。また直接ボードをさわり移動することもできる」
+     ⭐ 沿う・張る・並ぶ・札とは別もの＝**ただの文章**を小さく組んで、あちこちに置く。
+     ⭐ 振ると置き場所が変わる＝見て選ぶ（偶然の装置）。
+     ⭐ 置いた塊は【掴んで動かせる】＝動かした分は控えに残る（振り直すまで消えない）。 */
+  chiru:{
+    jp:'散',
+    build(L, into){
+      const B = S.board;
+      const K = Object.assign({}, CHIRU_DEF, L.chiru || {});
+      const txt = String(L.text || '').replace(/\s+/g, ' ').trim();
+      if(!txt) return;
+      const n = Math.max(1, Math.min(40, Math.round(K.n)));
+      /* ⭐ 塊に分ける＝**語の切れ目**で（日本語は切れ目が無いので字数で割る）。
+         ⚠️ 途中の語を割らない＝小さくても文章として読める。 */
+      const chunks = chiruSplit(txt, n);
+      /* ⭐ 置き場所は控え（put）が正。無ければ【種から】作る＝振れば変わる。
+         ⚠️ 塊の数が変わったら作り直す（古い場所が残ると数と合わない）。 */
+      const put = chiruPut(L, K, chunks.length);
+      const bw = Math.max(20, (K.w/100) * B.w);
+      const lead = L.size * ((L.lead ?? 160) / 100);
+      const cellItems = [], charItems = [];
+
+      chunks.forEach((chunk, i) => {
+        const g2 = new Group(); g2.data.chiruAt = i;
+        /* 折り返す（並ぶと同じ道＝禁則もそのまま） */
+        const rows = [];
+        { let cur = [], w = 0;
+          [...chunk].forEach(ch => {
+            const a2 = advance(ch, L);
+            const add = cur.length ? L.track + a2 : a2;
+            if(cur.length && w + add > bw){
+              if(KINSOKU_HEAD.indexOf(ch) >= 0){ cur.push(ch); rows.push(cur); cur = []; w = 0; return; }
+              rows.push(cur); cur = [ch]; w = a2;
+            } else { cur.push(ch); w += add; }
+          });
+          if(cur.length) rows.push(cur); }
+        rows.forEach((chars, r) => {
+          const adv = chars.map(c => advance(c, L));
+          const sum = adv.reduce((a2,b2) => a2+b2, 0);
+          /* ⭐ 両端揃え＝余りを字間に配る（参考にした組み方＝小さい字がびっしり詰まる）。
+             ⚠️ 最後の行は揃えない（そこだけ間延びして見える）。 */
+          const last = (r === rows.length - 1);
+          const gap = (K.just && !last && chars.length > 1)
+            ? (bw - sum - L.track*(chars.length-1)) / (chars.length-1) : 0;
+          let x = 0;
+          chars.forEach((ch, j) => {
+            const t = makeChar(ch, L);
+            t.position = new Point(x + adv[j]/2, r * lead);
+            g2.addChild(t); charItems.push(t);
+            x += adv[j] + L.track + gap;
+          });
+        });
+        if(!g2.children.length){ g2.remove(); return; }
+        const q = put[i] || [50, 50, 0];
+        g2.rotate(q[2] || 0);
+        g2.position = new Point((q[0]/100) * B.w, (q[1]/100) * B.h);
+        into.addChild(g2);
+      });
+      paintGrad(charItems, Object.assign({}, GRAD_DEF, L.grad || {}), boundsOf(charItems) || new Rectangle(0,0,1,1));
+    }
+  },
   narabu:{
     jp:'並ぶ',
     build(L, into){
@@ -2211,7 +2339,7 @@ function moveSel(dx, dy){
     const it = selObj(o); if(!it || it.lock) return;
     if(o.kind === 'piece'){ it.x += dx; it.y += dy; return; }
     const L = it;
-    if((L.kind === 'haru' || L.kind === 'fuda') && L.box){
+    if((L.kind === 'haru' || L.kind === 'fuda' || L.kind === 'narabu') && L.box){
       L.box.x += dx / S.board.w * 100;
       L.box.y += dy / S.board.h * 100;
     } else if(L.path && L.path.type === 'poly' && L.path.pts){
@@ -2254,7 +2382,11 @@ function drawHandles(){
   const L = sel();
   /* ⚠️ ここで置き方を絞る。'meguru' だけにしていたら、張るの箱ハンドルが出なかった。
      置き方を足したら【ここにも足す】＝掴むところが無い＝触れないのと同じ。 */
-  if(!L || (L.kind !== 'meguru' && L.kind !== 'haru' && L.kind !== 'fuda')) return;
+  /* 🔴 2026-08-27 木下「並ぶだけがボードで選択して移動できないのもいやだね」
+     ＝ここに 'narabu' が【抜けていた】＝掴み手が出ず、盤で動かせなかった。
+     ⭐ 置き方を足したら【ここにも足す】（触れる所が無い＝無いのと同じ）。 */
+  if(!L || (L.kind !== 'meguru' && L.kind !== 'haru' && L.kind !== 'fuda'
+            && L.kind !== 'narabu' && L.kind !== 'chiru')) return;
   const r = 5/paper.view.zoom;
   const mk = (pt, data) => {
     const c = new Path.Circle(pt, r);
@@ -2627,7 +2759,9 @@ cv.addEventListener('pointerdown', e => {
        距離で見る＝ハンドルの外側にも掴みしろを作る。 */
   {
     const L = sel();
-    const cs = L ? lineCorners(L) : null;
+    /* 🔴 2026-08-27：散では、この「角の少し外＝回す」が【塊を掴む】より先に取っていた
+       ＝塊が動かせなかった。⭐ 散は塊ごとに傾きを持つので、行ごと回す必要がない＝通さない。 */
+    const cs = (L && L.kind === 'chiru') ? null : (L ? lineCorners(L) : null);
     if(cs){
       /* ⚠️ 掴みしろは【画面で見た大きさ】で決める。プロジェクト単位のままだと、
          版面を縮めて見ているとき（zoom が小さい）に範囲が広がりすぎて、
@@ -2691,6 +2825,18 @@ cv.addEventListener('pointerdown', e => {
     const i = S.lines.findIndex(l => l.id === owner.data.line);
     if(i >= 0){
       if(e.shiftKey){ selToggle('line', i); syncPanel(); render(); drag = null; return; }
+      /* ⭐⭐ 散＝【塊ごと】掴んで動かせる（2026-08-27 木下「直接ボードをさわり移動することもできる」）。
+         ⚠️ 掴んだ物から上へ辿って、どの塊かを見つける（塊は行の中の入れ物）。 */
+      if(S.lines[i].kind === 'chiru'){
+        let nd = hit.item, at = -1;
+        while(nd && nd !== artLayer){ if(nd.data && nd.data.chiruAt !== undefined){ at = nd.data.chiruAt; break; } nd = nd.parent; }
+        if(at >= 0){
+          if(!selHas('line', i)) S.sel = { kind:'line', i };
+          syncPanel(); render();
+          drag = { kind:'chiruMove', line:i, at, last:pt };
+          return;
+        }
+      }
       /* ⚠️ すでに選ばれている物を掴んだときは選び直さない＝【まとめて動かす】が続く */
       if(!selHas('line', i)) S.sel = { kind:'line', i };
       syncPanel(); render();
@@ -2866,6 +3012,13 @@ cv.addEventListener('pointermove', e => {
     L.path.inset = Math.max(0, Math.min(45, m/mn*100));
     setRange('inset', Math.round(L.path.inset));
     render();
+  } else if(drag.kind === 'chiruMove'){
+    /* ⭐ 散の塊を1つだけ動かす。⚠️ 控え（put）は版面に対する割合＝版面を変えても付いてくる */
+    const L = S.lines[drag.line]; if(!L || !L.chiru || !L.chiru.put) return;
+    const d = pt.subtract(drag.last), B = S.board;
+    const q = L.chiru.put[drag.at]; if(!q) return;
+    q[0] += d.x / B.w * 100; q[1] += d.y / B.h * 100;
+    drag.last = pt; render();
   } else if(drag.kind === 'haruPt'){
     /* ⭐ 曲げの点を動かす。⚠️ 控えは【箱に対する割合】＝箱を動かしても曲がりが付いてくる */
     const L = sel(); if(!L || !L.box || !L.box.pts) return;
@@ -3715,7 +3868,13 @@ function syncPanel(){
     if(x) x.classList.toggle('on', !!L.path.mx);
     if(y) y.classList.toggle('on', !!L.path.my); }
   segOn('segDir', L.dir); segOn('segSide', L.side);
-  segOn('segUp', L.upright ? 1 : 0);      /* ⚠️ 古い作品は upright を持たない＝0（沿う） */
+  segOn('segUp', L.upright ? 1 : 0);
+  /* ⭐ 散のときだけ散の段を出す（触れるのに効かない、を残さない） */
+  { const K = Object.assign({}, CHIRU_DEF, L.chiru || {});
+    const box = $('chiruUI');
+    if(box) box.style.display = (L.kind === 'chiru') ? '' : 'none';
+    setRange('cN', K.n); setRange('cW', K.w); setRange('cRot', K.rot); setRange('cPad', K.pad);
+    segOn('segCJ', K.just ? 1 : 0); }      /* ⚠️ 古い作品は upright を持たない＝0（沿う） */
   segOn('segKind', L.kind);
   /* ⭐ 置き方で出し分ける＝触れるのに何も起きないつまみを残さない。
      張る＝箱（左・上下・幅）／沿う＝経路（型・頂点・余白・角・始まり・離れ・向き・面） */
@@ -4057,6 +4216,28 @@ segBind('segPath',   (L,v) => { L.path.type = v; L.path.pts = null; });
 });
 segBind('segCorner', (L,v) => { L.path.corner = Number(v); });
 segBind('segDir',    (L,v) => { L.dir = Number(v); });
+/* ⭐⭐ 散のつまみ。⚠️ 塊の数・幅・縁の余白を変えたら置き場所は作り直す（数と合わなくなるため） */
+[['cN','n'],['cW','w'],['cRot','rot'],['cPad','pad']].forEach(([id,k]) => {
+  const el = $(id); if(!el) return;
+  el.addEventListener('input', e => {
+    const L = sel(); if(!L) return;
+    L.chiru = Object.assign({}, CHIRU_DEF, L.chiru || {});
+    L.chiru[k] = Number(e.target.value);
+    if(k === 'n' || k === 'rot' || k === 'pad') L.chiru.put = null;   // ⭐ 作り直す
+    $('v' + id).textContent = e.target.value;
+    render();
+  });
+});
+segBind('segCJ', (L,v) => { L.chiru = Object.assign({}, CHIRU_DEF, L.chiru || {}); L.chiru.just = Number(v); });
+$('cShake').onclick = () => {
+  const L = sel(); if(!L){ stat('先に行を選ぶ'); return; }
+  pushUndo();
+  L.chiru = Object.assign({}, CHIRU_DEF, L.chiru || {});
+  L.chiru.seed = (L.chiru.seed || 1) + 1;
+  L.chiru.put = null;                       // ⭐ 種が変われば置き場所も作り直す
+  syncPanel(); render();
+  stat('振った（種 ' + L.chiru.seed + '）— 気に入ったら塊を掴んで動かせる');
+};
 /* ⭐ 字の姿勢（経路に沿う／いつも正立）。⚠️ 既定0＝これまでの絵 */
 segBind('segUp',     (L,v) => { L.upright = Number(v); });
 segBind('segSide',   (L,v) => { L.side = Number(v); });

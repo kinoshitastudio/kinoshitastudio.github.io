@@ -84,8 +84,12 @@ node "$(cd "$(dirname "$0")" && pwd)/path.mjs" "http://localhost:$PORT" || PATHN
 echo
 node "$(cd "$(dirname "$0")" && pwd)/haru.mjs" "http://localhost:$PORT" || HARUNG=1
 
+# ⭐⭐ 散（小さな文章を版面に散らす）2026-08-27
+echo
+node "$(cd "$(dirname "$0")" && pwd)/chiru.mjs" "http://localhost:$PORT" || CHIRUNG=1
+
 # ⭐ 「直す前と1画素も変わっていない」は same.mjs（前の版を渡して使う）
 #    例： git show HEAD:hari/index.html > /tmp/old.html && node hari/_test/same.mjs /tmp/old.html
 
-if [ "${PENNG:-0}" = "1" ] || [ "${TOOLNG:-0}" = "1" ] || [ "${FEELNG:-0}" = "1" ] || [ "${KAMING:-0}" = "1" ] || [ "${URANG:-0}" = "1" ] || [ "${BOXNG:-0}" = "1" ] || [ "${KASUNG:-0}" = "1" ] || [ "${PANELNG:-0}" = "1" ] || [ "${MULTING:-0}" = "1" ] || [ "${PATHNG:-0}" = "1" ] || [ "${HARUNG:-0}" = "1" ]; then exit 1; fi
+if [ "${PENNG:-0}" = "1" ] || [ "${TOOLNG:-0}" = "1" ] || [ "${FEELNG:-0}" = "1" ] || [ "${KAMING:-0}" = "1" ] || [ "${URANG:-0}" = "1" ] || [ "${BOXNG:-0}" = "1" ] || [ "${KASUNG:-0}" = "1" ] || [ "${PANELNG:-0}" = "1" ] || [ "${MULTING:-0}" = "1" ] || [ "${PATHNG:-0}" = "1" ] || [ "${HARUNG:-0}" = "1" ] || [ "${CHIRUNG:-0}" = "1" ]; then exit 1; fi
 exit $CODE
