@@ -73,6 +73,28 @@ const R = await p.evaluate(async () => {
     await settle();
   }
   out.減らせる = S.lines[0].path.pts.length;
+  /* ══ ⑥⭐⭐ 左の道具立ての【頂点】＝持ち替えて、押すだけで増える ══ */
+  {
+    const btn = document.querySelector('#tools button[data-tool="pt"]');
+    out.道具がある = !!btn;
+    if(btn){
+      btn.click(); await settle();
+      out.持ち替えた = !!PEN.pt && btn.classList.contains('on');
+      const n0 = S.lines[0].path.pts.length;
+      const line = uiLayer.children.find(c=>c.data && c.data.pathOf !== undefined);
+      const q = line ? line.getPointAt(line.length*0.62) : null;
+      if(q){
+        const v = paper.view.projectToView(q), r = cv.getBoundingClientRect();
+        cv.dispatchEvent(new PointerEvent('pointerdown',
+          { clientX:r.left+v.x, clientY:r.top+v.y, button:0, buttons:1, bubbles:true, pointerId:1, pointerType:'mouse' }));
+        window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:1}));
+        await settle();
+      }
+      out.道具で足せる = { 前:n0, 後:S.lines[0].path.pts.length };
+      document.dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true})); await settle();
+      out.選ぶに戻る = !PEN.pt;
+    }
+  }
   return out;
 });
 await b.close();
@@ -93,4 +115,8 @@ ok(R.掴み手, '⭐ 返している間も、頂点の掴み手が【見えて�
 ok(R.足せる.後 === R.足せる.前 + 1,
    '⭐⭐ 経路の線をダブルクリック＝頂点が1つ増える', JSON.stringify(R.足せる));
 ok(R.減らせる === R.足せる.前, '⭐ 頂点をダブルクリック＝1つ減る', String(R.減らせる));
+ok(R.道具がある && R.持ち替えた, '⭐⭐ 左の道具立てに【頂点】がある／持ち替えられる（木下の頼み）');
+ok(R.道具で足せる && R.道具で足せる.後 === R.道具で足せる.前 + 1,
+   '⭐⭐ 持ち替えたら【押すだけ】で頂点が増える', JSON.stringify(R.道具で足せる));
+ok(R.選ぶに戻る, '⭐ V で選ぶに戻る（持ちっぱなしにしない）');
 process.exit(ng ? 1 : 0);

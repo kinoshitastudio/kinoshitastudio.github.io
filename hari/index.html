@@ -408,6 +408,16 @@ input[type=color]{ border-radius:8px; height:30px }
       <path d="M20.5 20.5H8.6"/><path d="M8.2 8.7 15.3 15.8"/>
     </svg>
   </button>
+  <!-- ⭐⭐ 頂点（2026-08-27 木下「左のツールパネルに頂点を増やすボタンなどあればいいな。
+       それでそのまま押すと増やせるみたいな」）＝持ち替えて、盤の上を押すだけで増やせる。 -->
+  <button data-tool="pt" data-k="A" data-tip="頂点 — 経路の線を押すと増える／頂点を押すと減る">
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"
+         stroke-linejoin="round" stroke-linecap="round">
+      <path d="M3.6 16.8 C 7 8.5, 15 6.4, 20.4 9.6"/>
+      <rect x="9.6" y="9.4" width="4.4" height="4.4" rx=".7" fill="currentColor" stroke="none"/>
+      <path d="M18.4 16.2v5"/><path d="M15.9 18.7h5"/>
+    </svg>
+  </button>
   <!-- ⭐⭐ 紙を裏返す（2026-08-27 木下「紙を裏返して書くこともできるように。表面に書いていると、
        裏面にひっくり返すと本物の紙のようにうっすらと表面が見えている」）
        ⚠️ data-tool は付けない（描く・消しゴムと同じ列だが、道具の【持ち替え】ではないため）。 -->
@@ -756,8 +766,8 @@ input[type=color]{ border-radius:8px; height:30px }
       <input type="range" id="tStart" min="0" max="100" value="0"><span class="v" id="vStart">0</span></div>
     <div class="row" id="rowOff"><label>離れ</label>
       <input type="range" id="tOff" min="-200" max="200" value="0"><span class="v" id="vOff">0</span></div>
-    <div class="row" id="rowDir"><label>向き</label>
-      <div class="seg" id="segDir"><button data-v="1" class="on">順</button><button data-v="-1">逆</button></div></div>
+    <div class="row" id="rowDir"><label>回る向き</label>
+      <div class="seg" id="segDir"><button data-v="1" class="on">↺ 左回り</button><button data-v="-1">↻ 右回り</button></div></div>
     <div class="row" id="rowSide"><label>面</label>
       <div class="seg" id="segSide"><button data-v="0" class="on">外</button><button data-v="1">内</button></div></div>
     <div class="row"><label>字のグラデ</label>
@@ -2107,6 +2117,28 @@ function delSel(){
   syncPanel(); render();
   return list.length;
 }
+/* ══⭐⭐ 版面の縁に吸い付く（2026-08-27 木下「やはりずれてしまっているか、吸着するように
+   してほしいのと、はみ出したのは確実に書き出ししないように」）══
+   🔴 木下が見た PNG の右と下の帯は【はみ出し】ではなく【覆えていない】側だった
+     （はみ出しは前から切れている＝実測済み）。足りない方が問題。
+   ⭐ 図の外接の辺が版面の辺の近くに来たら、そこへ吸わせる＝**縁が出ない**。
+   ⚠️ ⌥ を押している間は吸わない（わざと外へ出したいときの逃げ道）。
+   ⚠️ 近くないときは1ミリも動かさない。 */
+function snapEdge(pc, tol){
+  if(!pc || !pc.item) return false;
+  const cs = pieceCorners(pc); if(!cs.length) return false;
+  const xs = cs.map(q => q.x), ys = cs.map(q => q.y), B = S.board;
+  const l = Math.min(...xs), r = Math.max(...xs);
+  const t = Math.min(...ys), b2 = Math.max(...ys);
+  let dx = 0, dy = 0;
+  if(Math.abs(l) <= tol)             dx = -l;          // 左の辺を版面の左へ
+  else if(Math.abs(r - B.w) <= tol)  dx = B.w - r;     // 右の辺を版面の右へ
+  if(Math.abs(t) <= tol)             dy = -t;
+  else if(Math.abs(b2 - B.h) <= tol) dy = B.h - b2;
+  if(!dx && !dy) return false;
+  pc.x += dx; pc.y += dy;
+  return true;
+}
 function moveSel(dx, dy){
   selList().forEach(o => {
     const it = selObj(o); if(!it || it.lock) return;
@@ -2476,6 +2508,11 @@ cv.addEventListener('pointerdown', e => {
   /* ⚠️ 引いている最中の線は【入れ物（inner）の外】に居る＝紙を裏返しても一緒に返らない。
      ⭐ だから下描きだけは見えている座標で引き、離した時に控えの座標へ返す（penUp）。 */
   if(PEN.on && e.button === 0){ penDown(vp(pt)); drag = { kind:'pen' }; return; }
+  /* ⭐⭐ 頂点の道具＝押すだけで増える／減る。⚠️ 掴む判定には1行も触らない */
+  if(PEN.pt && e.button === 0){
+    if(!vertexAt(pt, 12)) stat('経路の線か、頂点を押す（選んでいる行の経路が対象）');
+    drag = null; return;
+  }
   /* ⭐ 消しゴム＝描くと同じく【いちばん先に返す】（掴む判定には触らない） */
   if(PEN.erase && e.button === 0){
     pushUndo(); eraKasuPc = null;
@@ -2632,6 +2669,49 @@ function closeInline(){
   const el = elIn(); if(!el) return;
   el.style.display = 'none'; inlineL = null;
 }
+/* ══⭐⭐ 経路に頂点を足す／減らす（2026-08-27）══════════════════════
+   木下＝「イラレでいうポイントをひとつ追加、ボード上でできるとより自由に使えそう」
+   　　　「左のツールパネルに頂点を増やすボタンなどあればいいな／そのまま押すと増やせるみたいな」
+   ⭐ 入口は2つ（左の道具立ての ⌖ ／ 経路の線をダブルクリック）だが、**やることはこの1本**。
+   ⭐ 経路の線を押す＝そこに頂点が増える／頂点を押す＝減る。
+   ⚠️ 三角形より減らさない（多角形でなくなる）。
+   返り値＝何かした（true）／何にも当たらなかった（false） */
+function vertexAt(pt, tol){
+  const L = sel(); if(!L) return false;
+  const hUI = uiLayer.hitTest(vp(pt), { fill:true, stroke:true, tolerance:(tol||9)/paper.view.zoom });
+  const d = hUI && hUI.item && hUI.item.data;
+  if(!d) return false;
+  if(d.vertex !== undefined && L.path.pts){
+    if(L.path.pts.length <= 3){ stat('これ以上は減らせない（三角形まで）'); return true; }
+    pushUndo();
+    L.path.pts.splice(d.vertex, 1); L.path.n = L.path.pts.length;
+    syncPanel(); render(); stat('頂点を1つ減らした（' + L.path.n + '）');
+    return true;
+  }
+  if(d.pathOf !== undefined && d.pathOf === L.id){
+    if(L.path.type !== 'poly'){ stat('頂点を足せるのは【多角形】の経路（経路を多角形にする）'); return true; }
+    if(!L.path.pts) buildPath(L).remove();      // ⚠️ まだ頂点を覚えていないなら1回作らせる
+    const pts = L.path.pts; if(!pts || pts.length < 3) return true;
+    /* ⭐ 押した所にいちばん近い【辺】を探して、そこへ割り込ませる */
+    const q = pathBack(L, pt);
+    let at = 0, best = Infinity;
+    for(let i = 0; i < pts.length; i++){
+      const a1 = new Point(pts[i][0], pts[i][1]);
+      const b1 = new Point(pts[(i+1)%pts.length][0], pts[(i+1)%pts.length][1]);
+      const seg = b1.subtract(a1), len2 = Math.max(1e-6, seg.x*seg.x + seg.y*seg.y);
+      let t = ((q.x-a1.x)*seg.x + (q.y-a1.y)*seg.y) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const dd = q.getDistance(a1.add(seg.multiply(t)));
+      if(dd < best){ best = dd; at = i; }
+    }
+    pushUndo();
+    pts.splice(at + 1, 0, [q.x, q.y]);
+    L.path.n = pts.length;
+    syncPanel(); render(); stat('頂点を1つ足した（' + L.path.n + '）');
+    return true;
+  }
+  return false;
+}
 cv.addEventListener('dblclick', e => {
   const pt = atPt(e);
   /* ══⭐⭐ 経路に頂点を足す／減らす（2026-08-27 木下「イラレでいうポイントをひとつ追加、
@@ -2639,40 +2719,7 @@ cv.addEventListener('dblclick', e => {
      ⭐ 経路の線をダブルクリック＝そこに頂点が増える／頂点をダブルクリック＝減る。
      ⚠️ 字のダブルクリックは【打ち直し】のまま（経路の線は別の層に描いてあるので競合しない）。
      ⚠️ 3つ未満にはしない（多角形でなくなる）。 */
-  {
-    const L = sel();
-    const hUI = uiLayer.hitTest(vp(pt), { fill:true, stroke:true, tolerance:9/paper.view.zoom });
-    const d = hUI && hUI.item && hUI.item.data;
-    if(L && d && d.vertex !== undefined && L.path.pts){
-      if(L.path.pts.length <= 3){ stat('これ以上は減らせない（三角形まで）'); return; }
-      e.preventDefault(); pushUndo();
-      L.path.pts.splice(d.vertex, 1); L.path.n = L.path.pts.length;
-      syncPanel(); render(); stat('頂点を1つ減らした（' + L.path.n + '）');
-      return;
-    }
-    if(L && d && d.pathOf !== undefined && d.pathOf === L.id){
-      if(L.path.type !== 'poly'){ stat('頂点を足せるのは【多角形】の経路（経路を多角形にする）'); return; }
-      if(!L.path.pts) buildPath(L).remove();      // ⚠️ まだ頂点を覚えていないなら1回作らせる
-      const pts = L.path.pts; if(!pts || pts.length < 3) return;
-      /* ⭐ 押した所にいちばん近い【辺】を探して、そこへ割り込ませる */
-      const q = pathBack(L, pt);
-      let at = 0, best = Infinity;
-      for(let i = 0; i < pts.length; i++){
-        const a1 = new Point(pts[i][0], pts[i][1]);
-        const b1 = new Point(pts[(i+1)%pts.length][0], pts[(i+1)%pts.length][1]);
-        const seg = b1.subtract(a1), len2 = Math.max(1e-6, seg.x*seg.x + seg.y*seg.y);
-        let t = ((q.x-a1.x)*seg.x + (q.y-a1.y)*seg.y) / len2;
-        t = Math.max(0, Math.min(1, t));
-        const dd = q.getDistance(a1.add(seg.multiply(t)));
-        if(dd < best){ best = dd; at = i; }
-      }
-      e.preventDefault(); pushUndo();
-      pts.splice(at + 1, 0, [q.x, q.y]);
-      L.path.n = pts.length;
-      syncPanel(); render(); stat('頂点を1つ足した（' + L.path.n + '）');
-      return;
-    }
-  }
+  if(vertexAt(pt, 9)){ e.preventDefault(); return; }
   const hit = artLayer.hitTest(vp(pt), { fill:true, stroke:true, tolerance:6/paper.view.zoom });
   const owner = hit && hit.item ? rootOf(hit.item) : null;
   if(!(owner && owner.data && owner.data.line !== undefined)) return;
@@ -2791,25 +2838,22 @@ cv.addEventListener('pointermove', e => {
     L.track = Math.max(-20, Math.min(200, drag.track0 + d.x * 0.12));
     setRange('tSize', Math.round(L.size)); setRange('tTrack', Math.round(L.track));
     render();
-  } else if(drag.kind === 'lineMove'){
-    /* 行ごと版面の中で動かす。
+  } else if(drag.kind === 'lineMove' || drag.kind === 'piece'){
+    /* 版面の中で動かす。
        ⭐ 多角形は頂点そのものを動かす（掴んだ形のまま動く）。
-          矩形・円は型から作るので、ずれ（dx,dy）として覚える。 */
-    const L = sel(); if(!L) return;
+          矩形・円は型から作るので、ずれ（dx,dy）として覚える。（分岐は moveSel の中） */
+    /* 🔴 2026-08-27：ここが行と図で【別々に書いてあった】ので、複数選択を足しても
+       片方しか動かなかった（moveSel は作ったのに、ここから呼んでいなかった）。
+       ⭐ 動かす道はこの1本＝行でも図でも、1つでも複数でも同じ式。 */
     const d = pt.subtract(drag.last);
-    if((L.kind === 'haru' || L.kind === 'fuda') && L.box){
-      L.box.x += d.x / S.board.w * 100;
-      L.box.y += d.y / S.board.h * 100;
-    } else if(L.path.type === 'poly' && L.path.pts){
-      L.path.pts = L.path.pts.map(a => [a[0] + d.x, a[1] + d.y]);
-    } else {
-      L.path.dx = (L.path.dx || 0) + d.x;
-      L.path.dy = (L.path.dy || 0) + d.y;
+    if(!(d.x || d.y)) return;
+    moveSel(d.x, d.y);
+    /* ⭐⭐ 図を1つだけ動かしているときは【版面の縁に吸い付く】（縁が出るのを防ぐ）。
+       ⚠️ ⌥ を押している間は吸わない・近くないときは1ミリも動かさない。 */
+    if(drag.kind === 'piece' && !e.altKey && selList().length === 1){
+      const pc = selPiece();
+      if(pc) snapEdge(pc, Math.max(6, Math.min(S.board.w, S.board.h) * 0.012));
     }
-    drag.last = pt; render();
-  } else if(drag.kind === 'piece'){
-    const pc = selPiece(); if(!pc) return;
-    pc.x += pt.x - drag.last.x; pc.y += pt.y - drag.last.y;
     drag.last = pt; render();
   } else if(drag.kind === 'scale'){
     const pc = selPiece(); if(!pc) return;
@@ -4492,15 +4536,16 @@ function syncPen(){
    ⭐ reveal＝描くに入ったとき、右パネルの〔書き心地〕まで送って光らせる
       （設定は使う欄に置けないので、せめて「そこにある」と分かるようにする）。 */
 function setTool(t, reveal){
-  const on = (t === 'pen'), er = (t === 'erase');
-  const changed = (PEN.on !== on) || (!!PEN.erase !== er);
-  PEN.on = on; PEN.erase = er; syncPen();
+  const on = (t === 'pen'), er = (t === 'erase'), pv = (t === 'pt');
+  const changed = (PEN.on !== on) || (!!PEN.erase !== er) || (!!PEN.pt !== pv);
+  PEN.on = on; PEN.erase = er; PEN.pt = pv; syncPen();
   if(on && reveal){
     const r = $('rowFeel');
     if(r){ r.scrollIntoView({ block:'center', behavior:'smooth' });
            r.classList.remove('flash'); void r.offsetWidth; r.classList.add('flash'); }
   }
-  if(changed) stat(er ? '消しゴム — 鉛筆の線をこする（全部は消えない・カスが出る）'
+  if(changed) stat(pv ? '頂点 — 経路の線を押すと増える／頂点を押すと減る（V で選ぶに戻る）'
+                      : er ? '消しゴム — 鉛筆の線をこする（全部は消えない・カスが出る）'
                       : on ? '✒️ 描く — 盤を引くと線になる（V で選ぶに戻る）' : '選ぶに戻した');
 }
 /* ⭐ ✒️ は押すたびに【書き心地のフライアウト】を開閉する（Figma の道具メニューと同じ）。
