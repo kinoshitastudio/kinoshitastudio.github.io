@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>嵌 KAN — 街の看板に作品を嵌める / 木下スタジオ</title>
+<meta name="description" content="街の写真や動画の看板・壁・窓に、自分の作品を嵌める道具。四隅を合わせるだけで斜めも奥行きもそのまま貼られ、動かして mp4 で出せる。木下スタジオ（木下貴博 / 滋賀・琵琶湖）制作。">
+<link rel="canonical" href="https://kinoshita.studio/kan/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="嵌 KAN — 街の看板に作品を嵌める / 木下スタジオ">
+<meta property="og:description" content="四隅を合わせるだけで、斜めの看板にも奥行きのある壁にも作品が嵌まる。動かして mp4 で出せる。">
+<meta property="og:url" content="https://kinoshita.studio/kan/">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<!-- ⭐ 動画は【コマごとに刻む】（道具の決まり）＝連REN・彫HORI2 と同じ muxer -->
+<script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.1/build/mp4-muxer.min.js"></script>
+<style>
+  /* ⚠️ 外枠（並び方・見た目）は 累 RUI / 点 TEN と同じ＝道具ごとに作りを変えない */
+  :root{
+    --bg:#e8e4dc; --paper:#f4f2ec; --line:rgba(28,28,30,.14);
+    --fg:#1c1c1e; --fg2:rgba(28,28,30,.62); --fg3:rgba(28,28,30,.40);
+    --fill:rgba(28,28,30,.10); --fill2:rgba(28,28,30,.07);
+    --capsule:#fffdf8; --glass:rgba(246,244,238,.84); --r:10px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans","Zen Kaku Gothic New",sans-serif;
+    font-weight:400;overflow:hidden;display:flex;align-items:stretch}
+
+  /* ⭐ 盤＝窓。中の紙は動かさず、見る側だけ transform で動かす（出る絵は1画素も変わらない） */
+  #stage{flex:1;position:relative;min-width:0;overflow:hidden;cursor:crosshair}
+  #stage.panning{cursor:grabbing}
+  #stage::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
+    background:radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,.5), transparent 62%)}
+  canvas#cv{position:absolute;left:0;top:0;transform-origin:0 0;
+    box-shadow:0 14px 44px rgba(28,28,30,.18);display:block}
+  /* ⭐ 選んだ印は【刷る絵に混ぜない】。別の板を同じ倍率で重ねる
+     （混ぜると PNG にも選択枠が出てしまう） */
+  canvas#ov{position:absolute;left:0;top:0;transform-origin:0 0;display:block;
+    pointer-events:none;z-index:2}
+  /* 🔴🔴 2026-08-25 木下＝「モバイルでボードを描くときに、下のパネルも一緒に動くので描きづらい」
+     ＝盤を触るとブラウザの【ページを動かす仕草】に取られていた。
+     ⚠️ 前は「モバイルで none にすると縦スクロールが止まる」として広い画面だけに掛けていたが、
+        いまの作りは【盤（上）＋パネル（下・内側で巻く）】の2段なので、
+        ページそのものは巻かなくてよい＝**どの幅でも盤は none でよい**。
+     ⭐ 盤＝指の動きは全部こちらで受け取る／パネル＝内側だけで巻く（端で親へ渡さない）。 */
+  #stage{touch-action:none}
+
+  #zoom{position:absolute;left:14px;bottom:12px;z-index:5;display:flex;align-items:center;gap:2px;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border:.5px solid var(--line);border-radius:11px;padding:3px;box-shadow:0 4px 14px rgba(28,28,30,.10)}
+  #zoom button{border:none;background:none;border-radius:8px;color:var(--fg);cursor:pointer;
+    font-family:inherit;font-size:11.5px;font-weight:500;padding:6px 9px;opacity:.75;transition:.14s}
+  #zoom button:hover{opacity:1;background:rgba(28,28,30,.09)}
+  #zoom .z{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg2);
+    min-width:52px;text-align:center;font-variant-numeric:tabular-nums;pointer-events:none}
+  #stat{position:absolute;left:0;right:0;bottom:0;padding:8px 14px;font-size:11px;color:var(--fg3);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;pointer-events:none;text-align:center;z-index:4}
+  #drop{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(244,242,236,.92);border:1px dashed rgba(28,28,30,.35);
+    font-size:13px;letter-spacing:.08em;color:var(--fg2);z-index:20;text-align:center;line-height:1.8}
+  body.dragging #drop{display:flex}
+
+  #panel{width:308px;flex:0 0 308px;height:100%;overflow-y:auto;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border-left:.5px solid var(--line);padding:16px 16px 80px}
+  #panel::-webkit-scrollbar{width:0}
+  h1{font-size:12px;font-weight:590;letter-spacing:.12em;color:var(--fg);margin-bottom:2px}
+  .sub{font-size:11.5px;color:var(--fg2);margin-bottom:16px;line-height:1.6}
+  .grp{margin-bottom:20px}
+  label.h{position:sticky;top:-16px;z-index:3;display:block;margin:0 -16px 8px;padding:7px 16px 6px;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border-bottom:.5px solid var(--line);font-size:11px;font-weight:590;letter-spacing:.04em;color:var(--fg2)}
+  .row{display:flex;align-items:center;gap:10px;padding:2px 0;margin-bottom:2px}
+  .row span.n{flex:1;font-size:11.5px;color:var(--fg)}
+  .row output{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg2);
+    width:46px;flex:0 0 46px;text-align:right;font-variant-numeric:tabular-nums}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;background:none;height:26px;
+    cursor:pointer;touch-action:pan-y}
+  input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--fill)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;
+    margin-top:-8px;border-radius:50%;background:var(--fg);border:none;
+    box-shadow:0 1px 3px rgba(28,28,30,.30), 0 0 0 .5px rgba(28,28,30,.05)}
+  .seg{display:flex;flex-wrap:wrap;background:var(--fill2);border-radius:9px;padding:2px;gap:2px;margin:6px 0 10px}
+  .seg button{flex:1 1 auto;min-width:0;border:none;border-radius:7px;background:none;
+    font-family:inherit;font-size:11.5px;font-weight:450;color:var(--fg);opacity:.72;
+    padding:6px 4px;cursor:pointer;transition:.16s;white-space:nowrap}
+  .seg button:hover{opacity:1;background:rgba(28,28,30,.07)}
+  .seg button.on{opacity:1;background:var(--capsule);font-weight:590;
+    box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.04)}
+  .btn{width:100%;background:var(--fill);border:none;border-radius:var(--r);color:var(--fg);
+    font-family:inherit;font-size:12px;font-weight:500;padding:11px 0;margin-top:6px;cursor:pointer;transition:.14s}
+  .btn:hover{background:rgba(28,28,30,.16)}
+  .btn:active{transform:scale(.985);opacity:.8}
+  .btn.solid{background:var(--fg);color:var(--paper);font-weight:590}
+  .btns2{display:flex;gap:6px}
+  .note{font-size:10.5px;line-height:1.65;color:var(--fg2);opacity:.75;margin-top:7px}
+  .note b{font-weight:590;opacity:1}
+  input[type=color]{width:100%;height:32px;padding:0;border:.5px solid var(--line);border-radius:var(--r);
+    background:transparent;cursor:pointer}
+  .chk{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 0;
+    font-size:11.5px;color:var(--fg);cursor:pointer;margin-bottom:5px}
+  .chk input[type=checkbox]{-webkit-appearance:none;appearance:none;flex:0 0 38px;width:38px;height:23px;
+    border-radius:23px;background:var(--fill);position:relative;transition:.2s;cursor:pointer;order:2}
+  .chk input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;
+    border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(28,28,30,.3);transition:.2s}
+  .chk input[type=checkbox]:checked{background:var(--fg)}
+  .chk input[type=checkbox]:checked::after{transform:translateX(15px)}
+  #meter{background:var(--fill2);border:none;border-radius:var(--r);color:var(--fg2);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:10.5px;line-height:1.7;padding:9px 11px;margin:8px 0;
+    white-space:pre-line}
+  .hide{display:none!important}
+
+  /* ⭐ 段の一覧＝iOS のリスト（累 RUI の版の一覧と同じ言い方） */
+  #bands{display:flex;flex-direction:column;gap:4px}
+  .bd{display:flex;align-items:center;gap:10px;background:var(--fill2);border:none;border-radius:var(--r);
+    padding:9px 10px;cursor:pointer;transition:.15s}
+  .bd:hover{background:rgba(28,28,30,.10)}
+  .bd.sel{background:var(--capsule);box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.06)}
+  .bd .sw{width:18px;height:18px;flex:0 0 18px;border-radius:5px;border:.5px solid rgba(28,28,30,.2)}
+  .bd .nm{flex:1;min-width:0;font-size:12px;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bd.sel .nm{color:var(--fg);font-weight:500}
+  .bd .up{width:20px;height:20px;flex:0 0 20px;border:0;background:transparent;color:var(--fg3);
+    cursor:pointer;font-size:9px;line-height:1;padding:0}
+  .bd .up:hover{color:var(--fg)}
+
+  @media (max-width:820px){
+    /* ⚠️ ページ自体は巻かない（2段の作り）。巻くのはパネルの中だけ＝
+       盤を触ってもページが揺れない（iOS の跳ね返りも止める） */
+    body{flex-direction:column;overflow:hidden;overscroll-behavior:none}
+    #panel{overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+    #stage{padding:0;min-height:50vh}
+    #panel{width:100%;flex:1 1 auto;height:auto;border-left:0;border-top:.5px solid var(--line);
+      padding:16px 14px calc(80px + env(safe-area-inset-bottom))}
+    label.h{top:-16px;margin:0 -14px 8px;padding:7px 14px 6px}
+    input[type=range]{height:40px}
+    input[type=range]::-webkit-slider-thumb{width:24px;height:24px;margin-top:-10px}
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     ⭐⭐ モバイル／iPad（2026-08-20）
+     ⚠️ 最初「この型はページごとスクロールするから掴み手は合わない」と考えたが【誤り】。
+        実測すると 盤(上) ＋ パネル(下・内側スクロール) の2段で、
+        body は1pxも動いていない ＝ 作字 SAKUJI と同じ形だった。
+     ⭐ だから高さを CSS 変数 --panelH ひとつにまとめれば、同じ掴み手がそのまま使える。
+     ⭐ このブロックと末尾の <script> を消せば完全に元へ戻る。
+     ══════════════════════════════════════════════════════════════ */
+  /* ⚠️ 盤の高さを 100vh から引き算しない ── iOS Safari の 100vh は実際の見え高さと
+     食い違い、パネルが画面の外へ押し出される。flex に余りを取らせる。 */
+  :root{ --panelH:38vh; --sheetGrip:22px }
+  @supports (height:1dvh){ :root{ --panelH:38dvh } }
+  @media (max-width:820px){
+    #stage{ flex:1 1 auto; min-height:0 }        /* ⭐ 余りは盤が取る */
+    #panel{ flex:none; height:var(--panelH);
+      padding:10px 12px calc(26px + env(safe-area-inset-bottom)) }
+
+    #sheetGrip{ position:fixed; left:0; right:0; z-index:60;
+      bottom:calc(var(--panelH) - 1px); height:var(--sheetGrip);
+      display:flex; align-items:center; justify-content:center;
+      touch-action:none; cursor:ns-resize; user-select:none; -webkit-user-select:none }
+    /* 🔴 2026-08-21 ── 印の色を currentColor（道具の字の色）にしていたので、
+       黒い盤の道具では【黒い印を黒い盤の上に 40% で描いて】いた＝見えない＝無いのと同じ。
+       ⭐ 白い丸＋黒い縁＋影にする。黒い盤でも白い紙でも絵の上でも必ず見える（iOS の作法と同じ）。 */
+    #sheetGrip::before{ content:""; width:44px; height:5px; border-radius:5px;
+      background:rgba(255,255,255,.94);
+      box-shadow:0 0 0 1px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.45); opacity:1 }
+    #sheetGrip.dragging::before{ background:#fff;
+      box-shadow:0 0 0 1px rgba(0,0,0,.6), 0 2px 7px rgba(0,0,0,.5) }
+
+    /* ⭐ 中を密着させる（詰めるのは隙間であって、つまみではない） */
+    label.h{ top:-10px; margin:0 -12px 6px; padding:6px 12px 5px }
+    .grp{ margin-bottom:12px }
+    .row{ padding:0; margin-bottom:1px }
+    .seg{ margin:4px 0 6px }
+    .btn{ margin-top:4px }
+    .note{ margin-top:5px; line-height:1.5 }
+    #meter,#pMeter,#gridMeter{ margin:6px 0; padding:7px 9px }
+
+    /* 🔴 セグメントのボタンが 28px しかなく指で狙えなかった（実測）。
+       ⚠️ ここは詰める側ではなく【広げる側】。密着とぶつかるが、押せない方が困る。 */
+    .seg button{ padding:9px 4px; min-height:36px }
+    .btn{ padding:10px 0; min-height:38px }
+    input[type=color]{ height:34px }
+    .chk input[type=checkbox]{ flex:0 0 44px; width:44px; height:26px }
+    .chk input[type=checkbox]::after{ width:22px; height:22px }
+    .chk input[type=checkbox]:checked::after{ transform:translateX(18px) }
+    /* ⭐ 他の道具と同じ大きさに揃える（この道具はもともと40px。伸びる分を抑えて36px） */
+    input[type=range]{ height:36px }
+    input[type=range]::-webkit-slider-thumb{ width:22px; height:22px; margin-top:-9px }
+    .lay .eye,.lay .up,.bd .up{ min-width:30px; min-height:30px }
+  }
+
+  /* ══ モバイルで勝手に寄らせない（no-auto-zoom-2026-08-22）══════════════════
+     🔴 木下＝2026-08-22「全道具のモバイル画面で言えることだが自動ズームはなしにしたい」
+     ⚠️ viewport の maximum-scale／user-scalable は【iOS に無視される】。
+     ⭐ iOS が寄るのは【文字を打つ欄の字が 16px 未満のとき】だけ。だから 16px にする。
+     ⚠️ つまみ(range)・色・チェックは寄らないので触らない。
+     🔴 class 付きの指定に【詳細度で負ける】ので !important を付ける（SAKUJI で実測した）。
+     ⚠️ @media の中だけ＝PC には1画素も効かない。このブロックを消せば完全に元へ戻る。 */
+  @media (max-width:760px), (pointer:coarse) and (max-width:1024px){
+    input:not([type=range]):not([type=color]):not([type=checkbox]):not([type=radio]):not([type=file]):not([type=button]),
+    select, textarea{ font-size:16px !important; }
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <canvas id="ov"></canvas>
+  <div id="drop">街の写真・動画をここに落とす</div>
+  <div id="zoom">
+    <button id="z_out" title="引く">－</button>
+    <span class="z" id="z_lab">100%</span>
+    <button id="z_in" title="寄る">＋</button>
+    <button id="z_fit" title="画面に合わせる">合わせる</button>
+    <button id="z_one" title="原寸">原寸</button>
+  </div>
+  <div id="stat">街の写真を入れる（落としてもいい）</div>
+</div>
+
+<div id="panel">
+  <h1>嵌　K A N</h1>
+  <div class="sub">街の看板に、自分の作品を<b>嵌める</b>。<br>
+    斜めでも奥行きがあっても、<b>四隅を合わせれば</b>そこに貼られる。
+    <a href="/interaction-design.html" style="color:inherit;opacity:.6">← 木下スタジオ</a></div>
+
+  <div class="grp">
+    <label class="h">街 ── 下に敷くもの</label>
+    <button class="btn solid" id="b_city">街の写真・動画を入れる</button>
+    <input type="file" id="f_city" accept="image/*,video/*" class="hide">
+    <div class="btns2">
+      <button class="btn" id="b_demo">見本にする</button>
+      <button class="btn" id="b_play">■ 止める</button>
+    </div>
+    <div class="note">⭐ <b>写真でも動画でもいい</b>（動画なら街が動いたまま作品が嵌まる）<br>
+      ⚠️ 街も作品も<b>この端末から出さない</b>（全部この画面の中で焼いている）</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">面 ── 嵌める場所</label>
+    <div id="faces"></div>
+    <div class="btns2">
+      <button class="btn" id="b_add">面を足す</button>
+      <button class="btn" id="b_del">この面を消す</button>
+    </div>
+    <div class="note">⭐ <b>四隅を掴んで</b>看板に合わせる（斜め・奥行きはこれで決まる）<br>
+      ⭐ 面の<b>中</b>を引くと丸ごと動く／⌥＋引く＝盤を動かす<br>
+      ⚠️ 面は<b>何枚でも</b>置ける（看板が2つある街ならもう1枚足す）</div>
+  </div>
+
+  <div class="grp" id="faceUI">
+    <label class="h">中身 ── 嵌めるもの</label>
+    <button class="btn solid" id="b_art">作品を入れる（写真・動画）</button>
+    <input type="file" id="f_art" accept="image/*,video/*" class="hide">
+    <div class="note">⭐ 他の道具（貼HARI・膜MAKU・貌BOU…）で<b>出したPNG・動画をそのまま</b>入れる</div>
+    <div class="seg" id="s_fit">
+      <button data-v="cover" class="on">埋める</button>
+      <button data-v="contain">収める</button>
+      <button data-v="stretch">面なり</button>
+    </div>
+    <div class="row"><span class="n">重ね方</span></div>
+    <div class="seg" id="s_blend">
+      <button data-v="source-over" class="on">ふつう</button>
+      <button data-v="multiply">乗算</button>
+      <button data-v="screen">スクリーン</button>
+      <button data-v="overlay">オーバーレイ</button>
+      <button data-v="soft-light">やわらか光</button>
+    </div>
+    <div class="row"><span class="n">濃さ</span><output id="o_amt">100</output></div>
+    <input type="range" id="r_amt" min="0" max="100" step="1" value="100">
+    <div class="row"><span class="n">明るさ</span><output id="o_bri">0</output></div>
+    <input type="range" id="r_bri" min="-80" max="80" step="1" value="0">
+    <div class="row"><span class="n">なじみ（街を透かす）</span><output id="o_mix">0</output></div>
+    <input type="range" id="r_mix" min="0" max="100" step="1" value="0">
+    <div class="note">⭐ <b>重ね方</b>＝街の面に馴染ませる（<b>乗算</b>＝影に沈む／<b>スクリーン</b>＝発光する看板／
+      <b>やわらか光</b>＝壁の凹凸が透ける）<br>
+      ⭐ <b>なじみ</b>＝下の街を少し透かす（汚れ・反射が乗って現実に見える）</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">動き</label>
+    <div class="row"><span class="n">ゆらぎ（面）</span><output id="o_wob">0</output></div>
+    <input type="range" id="r_wob" min="0" max="100" step="1" value="0">
+    <div class="row"><span class="n">流れ（中身）</span><output id="o_flow">0</output></div>
+    <input type="range" id="r_flow" min="0" max="100" step="1" value="0">
+    <div class="row"><span class="n">1周の秒</span><output id="o_cyc">6</output></div>
+    <input type="range" id="r_cyc" min="1" max="30" step="1" value="6">
+    <button class="btn" id="b_anim">▶ 動かす</button>
+    <div class="note">⭐ <b>ゆらぎ</b>＝面がわずかに揺れる（手持ちのカメラで撮ったように見える）<br>
+      ⭐ <b>流れ</b>＝中身が面の中をゆっくり動く（動画を入れているならそのまま流れる）<br>
+      ⚠️ 押すまで動かない／止めると<b>0秒の姿</b>に戻る（他の道具と同じ作法）</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">出す</label>
+    <div class="row"><span class="n">版面</span></div>
+    <div class="seg" id="s_ratio">
+      <button data-v="src" class="on">街のまま</button>
+      <button data-v="1:1">正方</button>
+      <button data-v="4:5">4:5</button>
+      <button data-v="9:16">9:16</button>
+      <button data-v="16:9">16:9</button>
+    </div>
+    <div class="row"><span class="n">長辺</span><output id="o_long">1920</output></div>
+    <input type="range" id="r_long" min="600" max="3840" step="20" value="1920">
+    <button class="btn solid" id="b_png">PNG で出す</button>
+    <div class="row"><span class="n">動画の秒</span><output id="o_sec">6</output></div>
+    <input type="range" id="r_sec" min="1" max="30" step="1" value="6">
+    <div class="row"><span class="n">コマ/秒</span><output id="o_fps">30</output></div>
+    <input type="range" id="r_fps" min="8" max="60" step="1" value="30">
+    <button class="btn" id="b_mp4">動画（mp4）で出す</button>
+    <div id="meter">—</div>
+    <div class="note">⭐ 動画は<b>コマ番号で刻む</b>＝出た動画と画面の動きが必ず合う<br>
+      ⚠️ 街が動画なら、そのコマも一緒に頭出しして焼く</div>
+  </div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════
+   嵌 KAN ── 街の看板に、自分の作品を嵌める（2026-08-27）
+
+   木下＝「ポーラシェラのデザイナーが素晴らしい。街の写真の看板に自分の作品を
+   当て込みできるようなツールを作成してほしい。ただの剛性写真ではなく、動きもできるように。
+   写真を読み込みさせて、指定範囲を選択し写真や動画を入れ込みできるようにしたいが、
+   当て込みによっては斜めになっていたり奥行きがあったりするはずなのでそれもできるように。
+   最終的には他ツールでつくった作品も入れていきたい。
+   ポーラシェアが自分たちの街でデザインこそ現実世界で示れる作品としたように、
+   私の作品もそこで入れ込みをしたい」
+
+   ⭐⭐ 芯＝【作品は、街の面に嵌まってはじめて作品になる】。
+      道具の中で綺麗に出すことではなく、現実の壁・看板・窓に置いて確かめるための道具。
+
+   ⭐⭐ 奥行きは【四隅】で決まる ── 面は矩形ではなく「4点」。
+      4点が決まれば射影変換（homography）が1つに決まるので、斜めも奥行きもそれで出る。
+      ⚠️ canvas に射影変換は無いので、面を細かい格子に割って三角形2枚ずつ貼る
+         ＝連REN の `drawTilt` と同じ手（新しく書かない）。
+
+   ⚠️ 街も作品も、この端末から出さない（読むのも焼くのも画面の中だけ）。
+   ══════════════════════════════════════════════════════════════ */
+const el = id => document.getElementById(id);
+const stage = el('stage'), cv = el('cv'), g = cv.getContext('2d');
+const ov = el('ov'), og = ov.getContext('2d');
+const stat = m => { el('stat').textContent = m; };
+
+const P = { ratio:'src', long:1920, fps:30, sec:6, wob:0, flow:0, cyc:6, anim:false };
+let CITY = null;                 /* 街（Image か Video） */
+let FACES = [], sel = 0;
+let FID = 0;
+let PH = 0;                      /* 位相（0..1）＝動きは全部ここから出す */
+
+/* ── 面（嵌める場所）── ⭐ 4点は【版面に対する割合】で持つ＝長辺を変えても崩れない */
+function newFace(){
+  return { id:++FID, on:true,
+           pts:[[0.32,0.30],[0.68,0.26],[0.68,0.62],[0.32,0.66]],   /* 左上→右上→右下→左下 */
+           art:null, kind:'', name:'',
+           fit:'cover', blend:'source-over', amt:100, bri:0, mix:0 };
+}
+const cur = () => FACES[sel] || FACES[0] || null;
+const isVid = o => !!(o && (o.videoWidth !== undefined) && o.videoWidth);
+const mediaW = o => (o && (o.naturalWidth || o.videoWidth)) || 0;
+const mediaH = o => (o && (o.naturalHeight || o.videoHeight)) || 0;
+
+/* ══ 版面 ══ ⭐ 街のまま＝街の比。それ以外は【中央を切り出す】（街の中身は動かさない） */
+function frame(){
+  const iw = mediaW(CITY), ih = mediaH(CITY);
+  if(!iw || !ih) return { w:1600, h:1000 };
+  if(P.ratio === 'src') return { w:iw, h:ih };
+  const [a, b] = P.ratio.split(':').map(Number);
+  const want = a / b, have = iw / ih;
+  return have > want ? { w:Math.round(ih*want), h:ih } : { w:iw, h:Math.round(iw/want) };
+}
+function citySrc(){
+  const iw = mediaW(CITY), ih = mediaH(CITY), f = frame();
+  const k = Math.min(iw / f.w, ih / f.h);
+  const w = f.w * k, h = f.h * k;
+  return { x:(iw - w)/2, y:(ih - h)/2, w, h };
+}
+
+/* ══⭐⭐ 射影変換 ── 単位正方形 → 四角形（四隅で決まる1つの写し）══
+   ⚠️ ここが「斜め・奥行き」の全部。4点以外に持つものは無い。 */
+function homo(q){
+  const [p0, p1, p2, p3] = q;                    /* 左上・右上・右下・左下 */
+  const dx1 = p1[0]-p2[0], dx2 = p3[0]-p2[0], dx3 = p0[0]-p1[0]+p2[0]-p3[0];
+  const dy1 = p1[1]-p2[1], dy2 = p3[1]-p2[1], dy3 = p0[1]-p1[1]+p2[1]-p3[1];
+  const den = dx1*dy2 - dx2*dy1;
+  let a13 = 0, a23 = 0;
+  if(Math.abs(den) > 1e-12){
+    a13 = (dx3*dy2 - dx2*dy3) / den;
+    a23 = (dx1*dy3 - dx3*dy1) / den;
+  }
+  const a11 = p1[0]-p0[0] + a13*p1[0], a21 = p3[0]-p0[0] + a23*p3[0], a31 = p0[0];
+  const a12 = p1[1]-p0[1] + a13*p1[1], a22 = p3[1]-p0[1] + a23*p3[1], a32 = p0[1];
+  return (u, v) => {
+    const w = a13*u + a23*v + 1 || 1e-6;
+    return [ (a11*u + a21*v + a31)/w, (a12*u + a22*v + a32)/w ];
+  };
+}
+/* 三角形1枚ぶんを貼る（連REN から持ってきた・継ぎ目を 0.6px だけ広げる） */
+function tri(ctx, img, s0,s1,s2, d0,d1,d2){
+  const cx = (d0[0]+d1[0]+d2[0])/3, cy = (d0[1]+d1[1]+d2[1])/3;
+  const ex = pt => { const dx = pt[0]-cx, dy = pt[1]-cy, L = Math.hypot(dx,dy) || 1;
+                     return [pt[0] + dx/L*0.6, pt[1] + dy/L*0.6]; };
+  const e0 = ex(d0), e1 = ex(d1), e2 = ex(d2);
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(e0[0],e0[1]); ctx.lineTo(e1[0],e1[1]); ctx.lineTo(e2[0],e2[1]);
+  ctx.closePath(); ctx.clip();
+  const [x0,y0]=s0,[x1,y1]=s1,[x2,y2]=s2, [u0,v0]=d0,[u1,v1]=d1,[u2,v2]=d2;
+  const det = (x1-x0)*(y2-y0) - (x2-x0)*(y1-y0);
+  if(det){
+    const a = ((u1-u0)*(y2-y0) - (u2-u0)*(y1-y0)) / det;
+    const b = ((u2-u0)*(x1-x0) - (u1-u0)*(x2-x0)) / det;
+    const c = ((v1-v0)*(y2-y0) - (v2-v0)*(y1-y0)) / det;
+    const d = ((v2-v0)*(x1-x0) - (v1-v0)*(x2-x0)) / det;
+    ctx.transform(a, c, b, d, u0 - a*x0 - b*y0, v0 - c*x0 - d*y0);
+    ctx.drawImage(img, 0, 0);
+  }
+  ctx.restore();
+}
+/* ⭐ 面の四隅（版面の画素）＝ゆらぎ（動き）もここで足す＝描く所は1本 */
+function facePts(fc, W, H, t){
+  const w = (P.wob/100) * Math.min(W, H) * 0.012;
+  if(!w) return fc.pts.map(([x, y]) => [x*W, y*H]);
+  /* ⭐⭐ 振れは【いまの絵を端】にして片側だけ行って戻る＝ swing()=(1-cos)/2。
+     🔴 sin で振ると t=0 で 0 にならない＝【止めても元の姿に戻らない】（膜MAKU で踏んだ型）。
+     ⚠️ 隅ごとに向きを変える（全部同じ向きだと、ただの平行移動になる）。 */
+  const sw = (1 - Math.cos(t*6.2831853)) / 2;
+  return fc.pts.map(([x, y], i) => [
+    x*W + Math.cos(i*2.1 + 0.6) * w * sw,
+    y*H + Math.sin(i*1.7 + 1.1) * w * sw ]);
+}
+/* ⭐ 中身を面に嵌める（この1本を、画面も PNG も動画も通る） */
+function drawFace(ctx, fc, W, H, t){
+  if(!fc.on || !fc.art) return 0;
+  const q = facePts(fc, W, H, t);
+  const iw = mediaW(fc.art), ih = mediaH(fc.art);
+  if(!iw || !ih) return 0;
+  /* 面の大きさ（画素）＝格子の細かさを決めるのに使う */
+  const side = Math.max(
+    Math.hypot(q[1][0]-q[0][0], q[1][1]-q[0][1]),
+    Math.hypot(q[2][0]-q[3][0], q[2][1]-q[3][1]),
+    Math.hypot(q[3][0]-q[0][0], q[3][1]-q[0][1]));
+  /* ⚠️ 粗いと遠近が折れ線になる。細かすぎると重い。面の大きさで決める（16〜40） */
+  const N = Math.max(10, Math.min(40, Math.round(side / 26)));
+  const f = homo(q);
+  /* ⭐ 中身の切り出し（埋める／収める／面なり）＋ 流れ（中身が面の中を動く） */
+  const qa = (Math.hypot(q[1][0]-q[0][0], q[1][1]-q[0][1]) +
+              Math.hypot(q[2][0]-q[3][0], q[2][1]-q[3][1])) /
+             (Math.hypot(q[3][0]-q[0][0], q[3][1]-q[0][1]) +
+              Math.hypot(q[2][0]-q[1][0], q[2][1]-q[1][1]) || 1);
+  let sx = 0, sy = 0, sw = iw, sh = ih;
+  if(fc.fit !== 'stretch'){
+    const ia = iw / ih;
+    const want = qa;
+    if(fc.fit === 'cover'){
+      if(ia > want){ sw = ih * want; sx = (iw - sw)/2; }
+      else { sh = iw / want; sy = (ih - sh)/2; }
+    } else {                                   /* 収める＝全部入る（余りは面の中で余白） */
+      if(ia > want){ sh = ih; sw = ih * want; sx = (iw - sw)/2; }
+      else { sw = iw; sh = iw / want; sy = (ih - sh)/2; }
+    }
+  }
+  if(P.flow){
+    /* ⭐ 流れ＝切り出す窓が面の中を行って戻る（片側だけ・1周でぴったり戻る） */
+    const s = (1 - Math.cos(t*6.2831853))/2 * (P.flow/100);
+    sx = Math.max(0, Math.min(iw - sw, sx + (iw - sw) * (s - 0.5)));
+    sy = Math.max(0, Math.min(ih - sh, sy + (ih - sh) * (s - 0.5) * 0.4));
+  }
+  /* 🔴🔴 重ね方（乗算など）を【三角形1枚ずつ】に掛けてはいけない。
+     継ぎ目を 0.6px 広げて貼っているので、重なった線だけ2回濃くなる＝格子が浮いて見えた。
+     ⭐ いったん別の板に【ふつうに】組んでから、1枚として街に重ねる
+     （[[feedback_stencil_fill_compose_once]] と同じ型＝先に1枚に組む）。 */
+  const off = document.createElement('canvas');
+  off.width = W; off.height = H;
+  const ctx0 = off.getContext('2d');
+  ctx0.save();
+  /* ⚠️ 明るさは【中身の側】で作る（街は触らない）＝焼いた絵と画面が必ず一致する */
+  let img = fc.art;
+  if(fc.bri){
+    const c = document.createElement('canvas');
+    c.width = Math.max(2, Math.round(sw)); c.height = Math.max(2, Math.round(sh));
+    const cg = c.getContext('2d');
+    cg.drawImage(fc.art, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    cg.globalCompositeOperation = fc.bri > 0 ? 'lighter' : 'multiply';
+    const k = Math.abs(fc.bri)/100;
+    cg.fillStyle = fc.bri > 0 ? `rgba(255,255,255,${k*0.9})`
+                              : `rgba(${Math.round(255*(1-k))},${Math.round(255*(1-k))},${Math.round(255*(1-k))},1)`;
+    cg.fillRect(0, 0, c.width, c.height);
+    img = c; sx = 0; sy = 0; sw = c.width; sh = c.height;
+  }
+  let n = 0;
+  for(let j = 0; j < N; j++){
+    for(let i = 0; i < N; i++){
+      const u0 = i/N, u1 = (i+1)/N, v0 = j/N, v1 = (j+1)/N;
+      const s00 = [sx + sw*u0, sy + sh*v0], s10 = [sx + sw*u1, sy + sh*v0];
+      const s11 = [sx + sw*u1, sy + sh*v1], s01 = [sx + sw*u0, sy + sh*v1];
+      const d00 = f(u0,v0), d10 = f(u1,v0), d11 = f(u1,v1), d01 = f(u0,v1);
+      tri(ctx0, img, s00, s10, s01, d00, d10, d01);
+      tri(ctx0, img, s10, s11, s01, d10, d11, d01);
+      n += 2;
+    }
+  }
+  /* ⭐ なじみ＝下の街を少し透かす（汚れ・反射が乗って現実に見える） */
+  if(fc.mix > 0 && CITY){
+    ctx0.globalCompositeOperation = 'destination-out';
+    ctx0.globalAlpha = fc.mix/100 * 0.9;
+    ctx0.beginPath();
+    ctx0.moveTo(q[0][0], q[0][1]); ctx0.lineTo(q[1][0], q[1][1]);
+    ctx0.lineTo(q[2][0], q[2][1]); ctx0.lineTo(q[3][0], q[3][1]); ctx0.closePath();
+    ctx0.fill();
+  }
+  ctx0.restore();
+  /* ⭐ 組み上がった1枚を、街の上に【1回だけ】重ねる */
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, Math.min(1, fc.amt/100));
+  ctx.globalCompositeOperation = fc.blend || 'source-over';
+  ctx.drawImage(off, 0, 0);
+  ctx.restore();
+  return n;
+}
+
+/* ══ 一枚ぶんを焼く（画面・PNG・動画が通る1本）══ */
+function paint(ctx, W, H, t){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#0b0b0c'; ctx.fillRect(0, 0, W, H);
+  if(CITY && mediaW(CITY)){
+    const r = citySrc();
+    ctx.drawImage(CITY, r.x, r.y, r.w, r.h, 0, 0, W, H);
+  }
+  let n = 0;
+  for(const fc of FACES) n += drawFace(ctx, fc, W, H, t);
+  return n;
+}
+
+/* ══ 画面 ══ */
+function render(){
+  const f = frame();
+  const k = Math.min(1500 / Math.max(f.w, f.h), 2);
+  const W = Math.max(2, Math.round(f.w * k)), H = Math.max(2, Math.round(f.h * k));
+  if(cv.width !== W || cv.height !== H){ cv.width = W; cv.height = H; ov.width = W; ov.height = H; fitView(); }
+  paint(g, W, H, PH);
+  drawHandles();
+  const fc = cur();
+  el('meter').textContent =
+    `版面 ${f.w} × ${f.h}（出す ${P.long}px）\n面 ${FACES.length}／` +
+    (fc ? (fc.art ? (fc.name || '中身あり') : '中身なし') : '面なし') +
+    (P.anim ? `\n動かしている（1周 ${P.cyc}秒）` : '');
+}
+/* ⭐ 掴み手は【別の板】に描く＝焼いた絵には1本も入らない */
+function drawHandles(){
+  og.setTransform(1,0,0,1,0,0);
+  og.clearRect(0, 0, ov.width, ov.height);
+  const fc = cur(); if(!fc) return;
+  const q = facePts(fc, ov.width, ov.height, PH);
+  const z = Math.max(1, (V.fit*V.z) || 1);
+  og.save();
+  og.lineWidth = 1.5 / z; og.strokeStyle = 'rgba(60,130,255,.95)';
+  og.setLineDash([6/z, 5/z]);
+  og.beginPath(); og.moveTo(q[0][0], q[0][1]);
+  for(let i = 1; i < 4; i++) og.lineTo(q[i][0], q[i][1]);
+  og.closePath(); og.stroke();
+  og.setLineDash([]);
+  const r = 7 / z;
+  q.forEach((p, i) => {
+    og.beginPath(); og.rect(p[0]-r, p[1]-r, r*2, r*2);
+    og.fillStyle = '#fff'; og.fill();
+    og.lineWidth = 1.5 / z; og.strokeStyle = 'rgba(28,28,30,.8)'; og.stroke();
+  });
+  og.restore();
+}
+
+/* ══ 盤（窓）══ */
+const V = { fit:1, z:1, x:0, y:0 };
+function applyView(){
+  const s = V.fit * V.z;
+  const t = `translate(${V.x.toFixed(1)}px,${V.y.toFixed(1)}px) scale(${s})`;
+  cv.style.transform = t; ov.style.transform = t;
+  el('z_lab').textContent = Math.round(s * 100) + '%';
+}
+function fitView(){
+  const r = stage.getBoundingClientRect(), pad = r.width < 560 ? 16 : 30;
+  V.fit = Math.min((r.width - pad*2) / cv.width, (r.height - pad*2) / cv.height) || 1;
+  V.z = 1;
+  V.x = (r.width - cv.width * V.fit) / 2;
+  V.y = (r.height - cv.height * V.fit) / 2;
+  applyView();
+}
+function zoomAt(px, py, f){
+  const old = V.fit * V.z, z = Math.min(30, Math.max(0.1, V.z * f)), nw = V.fit * z;
+  V.x = px - (px - V.x) * (nw / old);
+  V.y = py - (py - V.y) * (nw / old);
+  V.z = z; applyView();
+}
+function zoomCenter(f){ const r = stage.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, f); }
+stage.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = stage.getBoundingClientRect();
+  zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * (e.ctrlKey ? 0.010 : 0.0022)));
+}, { passive:false });
+el('z_in').onclick = () => zoomCenter(1.25);
+el('z_out').onclick = () => zoomCenter(1/1.25);
+el('z_fit').onclick = fitView;
+el('z_one').onclick = () => { const r = stage.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, (1/V.fit)/V.z); };
+addEventListener('resize', () => { if(V.z === 1) fitView(); else applyView(); });
+
+/* ══⭐ 四隅を掴む ══
+   ⭐ 押した所がどれかを、近い順に決める＝角 → 面の中 → 盤（それ以外）。
+   ⚠️ ⌥ を押している間は必ず盤を動かす（角の上でも動かせる）。 */
+function toBoard(e){
+  const r = stage.getBoundingClientRect(), s = V.fit * V.z;
+  return [ ((e.clientX - r.left) - V.x) / s, ((e.clientY - r.top) - V.y) / s ];
+}
+{
+  const pts = new Map();
+  let grab = null, pan = null, pinch = null;
+  stage.addEventListener('pointerdown', e => {
+    pts.set(e.pointerId, e);
+    if(pts.size === 2){ const [a,b] = [...pts.values()];
+      pinch = { d:Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY) }; grab = pan = null; return; }
+    const fc = cur();
+    if(fc && !e.altKey){
+      const p = toBoard(e), q = facePts(fc, cv.width, cv.height, PH);
+      const near = 14 / (V.fit*V.z);
+      let hit = -1, best = near;
+      q.forEach((c, i) => { const d = Math.hypot(p[0]-c[0], p[1]-c[1]); if(d < best){ best = d; hit = i; } });
+      if(hit >= 0){ grab = { i:hit }; stage.setPointerCapture(e.pointerId); return; }
+      if(inQuad(p, q)){ grab = { i:-1, p0:p, was:fc.pts.map(a => a.slice()) };
+                        stage.setPointerCapture(e.pointerId); return; }
+    }
+    pan = { x:e.clientX, y:e.clientY, vx:V.x, vy:V.y };
+    stage.classList.add('panning');
+  });
+  stage.addEventListener('pointermove', e => {
+    if(!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, e);
+    if(pinch && pts.size === 2){
+      const [a,b] = [...pts.values()];
+      const d = Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
+      const r = stage.getBoundingClientRect();
+      zoomAt((a.clientX+b.clientX)/2 - r.left, (a.clientY+b.clientY)/2 - r.top, d / (pinch.d || d));
+      pinch.d = d; return;
+    }
+    const fc = cur();
+    if(grab && fc){
+      const p = toBoard(e);
+      if(grab.i >= 0){
+        fc.pts[grab.i] = [ p[0]/cv.width, p[1]/cv.height ];
+      } else {
+        const dx = (p[0]-grab.p0[0])/cv.width, dy = (p[1]-grab.p0[1])/cv.height;
+        fc.pts = grab.was.map(([x,y]) => [x+dx, y+dy]);
+      }
+      render(); return;
+    }
+    if(pan){ V.x = pan.vx + (e.clientX - pan.x); V.y = pan.vy + (e.clientY - pan.y); applyView(); }
+  });
+  const up = e => { pts.delete(e.pointerId); if(pts.size < 2) pinch = null;
+    if(!pts.size){ if(grab) faceList(); grab = null; pan = null; stage.classList.remove('panning'); } };
+  stage.addEventListener('pointerup', up);
+  stage.addEventListener('pointercancel', up);
+}
+function inQuad(p, q){
+  let s = 0;
+  for(let i = 0; i < 4; i++){
+    const a = q[i], b = q[(i+1)%4];
+    const c = (b[0]-a[0])*(p[1]-a[1]) - (b[1]-a[1])*(p[0]-a[0]);
+    s += c > 0 ? 1 : -1;
+  }
+  return Math.abs(s) === 4;
+}
+
+/* ══ 面の一覧 ══ */
+function faceList(){
+  const box = el('faces'); box.innerHTML = '';
+  FACES.forEach((fc, i) => {
+    const d = document.createElement('div');
+    d.className = 'bd' + (i === sel ? ' sel' : '');
+    d.innerHTML = `<span class="nm">面 ${i+1}${fc.name ? ' ／ ' + fc.name : (fc.art ? '' : ' （中身なし）')}</span>`
+      + `<button class="up" title="${fc.on ? '隠す' : '出す'}">${fc.on ? '●' : '○'}</button>`;
+    d.onclick = () => { sel = i; faceList(); syncFace(); render(); };
+    d.querySelector('.up').onclick = ev => { ev.stopPropagation(); fc.on = !fc.on; faceList(); render(); };
+    box.appendChild(d);
+  });
+  el('faceUI').classList.toggle('hide', !FACES.length);
+}
+function syncFace(){
+  const fc = cur(); if(!fc) return;
+  document.querySelectorAll('#s_fit button').forEach(b => b.classList.toggle('on', b.dataset.v === fc.fit));
+  document.querySelectorAll('#s_blend button').forEach(b => b.classList.toggle('on', b.dataset.v === fc.blend));
+  [['r_amt','amt','o_amt'], ['r_bri','bri','o_bri'], ['r_mix','mix','o_mix']].forEach(([id,k,o]) => {
+    const r = el(id); if(!r) return; r.value = fc[k]; const s = el(o); if(s) s.value = fc[k];
+  });
+}
+el('b_add').onclick = () => { FACES.push(newFace()); sel = FACES.length-1; faceList(); syncFace(); render();
+  stat('面を足した — 四隅を掴んで看板に合わせる'); };
+el('b_del').onclick = () => { if(!FACES.length) return;
+  FACES.splice(sel, 1); sel = Math.max(0, sel-1); faceList(); syncFace(); render(); stat('面を消した'); };
+
+/* ══ 街と中身を受ける（写真も動画も同じ道）══ */
+function loadMedia(f, done){
+  if(!f) return;
+  const vid = /^video\//.test(f.type) || /\.(mp4|mov|m4v|webm)$/i.test(f.name || '');
+  const url = URL.createObjectURL(f);
+  if(vid){
+    const v = document.createElement('video');
+    v.muted = true; v.loop = true; v.playsInline = true; v.preload = 'auto';
+    v.addEventListener('loadeddata', () => done(v, 'vid', f.name), { once:true });
+    v.addEventListener('error', () => stat('この動画は読めなかった'));
+    v.src = url; v.play().catch(()=>{});
+  } else {
+    const im = new Image();
+    im.onload = () => done(im, 'img', f.name);
+    im.onerror = () => stat('この画像は読めなかった');
+    im.src = url;
+  }
+}
+el('b_city').onclick = () => el('f_city').click();
+el('f_city').addEventListener('change', e => {
+  loadMedia(e.target.files[0], (m, kind, name) => {
+    CITY = m; stat(`街を入れた（${mediaW(m)}×${mediaH(m)}${kind === 'vid' ? '・動画' : ''}）`);
+    if(!FACES.length){ FACES.push(newFace()); sel = 0; faceList(); syncFace(); }
+    render(); fitView(); syncPlay();
+  });
+  e.target.value = '';
+});
+el('b_art').onclick = () => el('f_art').click();
+el('f_art').addEventListener('change', e => {
+  const fc = cur(); if(!fc){ stat('先に面を足す'); return; }
+  loadMedia(e.target.files[0], (m, kind, name) => {
+    fc.art = m; fc.kind = kind; fc.name = (name || '').replace(/\.[^.]+$/, '').slice(0, 18);
+    stat('作品を嵌めた'); faceList(); render(); syncPlay();
+  });
+  e.target.value = '';
+});
+['dragenter','dragover'].forEach(t => addEventListener(t, e => {
+  e.preventDefault(); document.body.classList.add('dragging'); }));
+['dragleave','drop'].forEach(t => addEventListener(t, e => {
+  if(t === 'dragleave' && e.relatedTarget) return;
+  document.body.classList.remove('dragging'); }));
+addEventListener('drop', e => {
+  e.preventDefault();
+  const f = e.dataTransfer.files[0]; if(!f) return;
+  /* ⭐ 街がまだ無ければ街に。あれば【いま選んでいる面の中身】に（落とす先で迷わせない） */
+  if(!CITY) loadMedia(f, (m) => { CITY = m; if(!FACES.length){ FACES.push(newFace()); sel = 0; }
+    faceList(); syncFace(); render(); fitView(); syncPlay(); stat('街を入れた'); });
+  else { const fc = cur(); if(!fc) return;
+    loadMedia(f, (m, kind, name) => { fc.art = m; fc.kind = kind;
+      fc.name = (name||'').replace(/\.[^.]+$/,'').slice(0,18); faceList(); render(); syncPlay(); stat('作品を嵌めた'); }); }
+});
+
+/* ══ つまみ ══ */
+[['r_amt','amt','o_amt'], ['r_bri','bri','o_bri'], ['r_mix','mix','o_mix']].forEach(([id,k,o]) => {
+  el(id).addEventListener('input', e => { const fc = cur(); if(!fc) return;
+    fc[k] = +e.target.value; el(o).value = e.target.value; render(); });
+});
+[['r_wob','wob','o_wob'], ['r_flow','flow','o_flow'], ['r_cyc','cyc','o_cyc'],
+ ['r_long','long','o_long'], ['r_sec','sec','o_sec'], ['r_fps','fps','o_fps']].forEach(([id,k,o]) => {
+  el(id).addEventListener('input', e => { P[k] = +e.target.value; el(o).value = e.target.value;
+    if(k !== 'long' && k !== 'sec' && k !== 'fps') render(); else el('meter') && render(); });
+});
+function seg(id, fn){
+  document.querySelectorAll('#' + id + ' button').forEach(b => b.onclick = () => {
+    document.querySelectorAll('#' + id + ' button').forEach(x => x.classList.toggle('on', x === b));
+    fn(b.dataset.v); render();
+  });
+}
+seg('s_fit',   v => { const fc = cur(); if(fc) fc.fit = v; });
+seg('s_blend', v => { const fc = cur(); if(fc) fc.blend = v; });
+seg('s_ratio', v => { P.ratio = v; fitView(); });
+
+/* ══ 動き ══ ⭐ 押すまで動かない／止めると0秒の姿に戻る（他の道具と同じ作法） */
+let raf = 0, t0 = 0;
+function loop(ts){
+  raf = requestAnimationFrame(loop);
+  if(!t0) t0 = ts;
+  PH = ((ts - t0) / 1000 / Math.max(1, P.cyc)) % 1;
+  render();
+}
+el('b_anim').onclick = () => {
+  P.anim = !P.anim;
+  if(P.anim){
+    if(!P.wob && !P.flow && !anyVideo()){ P.wob = 30; el('r_wob').value = 30; el('o_wob').value = 30; }
+    t0 = 0; raf = requestAnimationFrame(loop);
+    el('b_anim').textContent = '■ 止める';
+    playAll(true);
+  } else {
+    cancelAnimationFrame(raf); raf = 0; PH = 0;
+    el('b_anim').textContent = '▶ 動かす';
+    playAll(false); render();
+  }
+  syncPlay();
+};
+const anyVideo = () => isVid(CITY) || FACES.some(f => isVid(f.art));
+function playAll(on){
+  [CITY, ...FACES.map(f => f.art)].forEach(m => { if(!isVid(m)) return;
+    try{ on ? m.play() : m.pause(); }catch(_){} });
+}
+function syncPlay(){
+  const b = el('b_play'); if(!b) return;
+  const has = anyVideo();
+  b.style.opacity = has ? '' : '.4';
+  b.textContent = (has && !isPaused()) ? '■ 止める' : '▶ 再生';
+}
+const isPaused = () => { const m = [CITY, ...FACES.map(f => f.art)].find(x => isVid(x)); return !m || m.paused; };
+el('b_play').onclick = () => { const on = isPaused(); playAll(on); syncPlay(); if(!P.anim) render(); };
+/* ⚠️ 動画が入っているときは、動かしていなくても毎コマ描き直す（中身が流れる） */
+(function tick(){
+  requestAnimationFrame(tick);
+  if(P.anim || !anyVideo() || isPaused()) return;
+  render();
+})();
+
+/* ══ 出す ══ ⭐ 焼くのは【版面の長辺】。⚠️ 掴み手は別の板なので入らない */
+function bake(t){
+  const f = frame();
+  const k = P.long / Math.max(f.w, f.h);
+  const c = document.createElement('canvas');
+  c.width  = Math.max(2, Math.round(f.w * k) & ~1);      /* ⚠️ 偶数（動画に使う） */
+  c.height = Math.max(2, Math.round(f.h * k) & ~1);
+  paint(c.getContext('2d'), c.width, c.height, t);
+  return c;
+}
+function dl(blob, name){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+el('b_png').onclick = () => {
+  if(!CITY){ stat('先に街を入れる'); return; }
+  const c = bake(P.anim ? PH : 0);
+  c.toBlob(b => { dl(b, 'kan.png'); stat(`PNG を出した（${c.width}×${c.height}）`); }, 'image/png');
+};
+/* ══⭐ 動画（mp4）── コマ番号で刻む（連REN・彫HORI2 と同じ作法）══
+   ⚠️ 街や中身が動画なら、そのコマも【頭出ししてから】焼く＝出た動画と画面が合う。 */
+function seekTo(m, t){
+  return new Promise(res => {
+    if(!isVid(m)) return res();
+    const d = m.duration || 0;
+    const tt = d ? (t % d) : 0;
+    if(Math.abs(m.currentTime - tt) < 0.004) return res();
+    const on = () => { m.removeEventListener('seeked', on); res(); };
+    m.addEventListener('seeked', on);
+    try{ m.currentTime = tt; }catch(_){ res(); }
+    setTimeout(res, 250);                       /* ⚠️ 来ないことがあるので待ちすぎない */
+  });
+}
+el('b_mp4').onclick = async () => {
+  if(!CITY){ stat('先に街を入れる'); return; }
+  if(!(window.VideoEncoder && window.Mp4Muxer)){ stat('このブラウザは mp4 を詰められない（PNG で出してください）'); return; }
+  const fps = Math.max(1, P.fps|0), N = Math.max(1, Math.round(P.sec * fps));
+  const c0 = bake(0), W = c0.width, H = c0.height;
+  const bitrate = Math.min(24e6, Math.max(4e6, Math.round(W*H*fps*0.08)));
+  let cfg = null;
+  for(const codec of ['avc1.4d0032','avc1.640028','avc1.42E01E']){
+    try{ const s = await VideoEncoder.isConfigSupported({ codec, width:W, height:H, bitrate, framerate:fps });
+      if(s.supported){ cfg = s.config; break; } }catch(_){}
+  }
+  if(!cfg){ stat('この大きさを詰められる codec が無い（長辺を下げてください）'); return; }
+  const M = window.Mp4Muxer;
+  const muxer = new M.Muxer({ target:new M.ArrayBufferTarget(),
+    video:{ codec:'avc', width:W, height:H }, fastStart:'in-memory' });
+  const venc = new VideoEncoder({ output:(ch, meta) => muxer.addVideoChunk(ch, meta),
+                                  error:e => stat('詰めるところで止まった：' + e.message) });
+  venc.configure(cfg);
+  const was = P.anim; P.anim = false; cancelAnimationFrame(raf); raf = 0;
+  playAll(false);
+  for(let k = 0; k < N; k++){
+    const t = k / N;                                    /* ⭐ 位相＝コマ番号（時間で測らない） */
+    await seekTo(CITY, P.sec * t);
+    for(const fc of FACES) await seekTo(fc.art, P.sec * t);
+    const c = bake(t);
+    const vf = new VideoFrame(c, { timestamp: Math.round(k*1e6/fps), duration: Math.round(1e6/fps) });
+    venc.encode(vf, { keyFrame: k % (fps*2) === 0 });
+    vf.close();
+    if(k % 3 === 0){ stat(`焼いている… ${k+1} / ${N} コマ`); await new Promise(r => setTimeout(r)); }
+    if(venc.encodeQueueSize > 12) await new Promise(r => setTimeout(r, 8));
+  }
+  await venc.flush(); muxer.finalize();
+  dl(new Blob([muxer.target.buffer], { type:'video/mp4' }), 'kan.mp4');
+  stat(`動画を出した（${W}×${H}・${P.sec}秒・${fps}コマ/秒）`);
+  P.anim = was; if(was){ t0 = 0; raf = requestAnimationFrame(loop); playAll(true); }
+};
+
+/* ══ 見本 ══ ⭐ 空の画面から始めない（何をする道具か1秒で分かる） */
+function demo(){
+  const im = new Image();
+  im.onload = () => {
+    CITY = im;
+    if(!FACES.length){ FACES.push(newFace()); sel = 0; }
+    /* ⭐ 見本の作品は【その場で刷る】＝外に取りに行かない・道具の画面写真を貼らない。
+       ⚠️ 木下は自分の作品（貼HARI・膜MAKU・貌BOU の書き出し）を入れる。ここはその置き場の見本。 */
+    const art = document.createElement('canvas');
+    art.width = 1400; art.height = 900;
+    { const a = art.getContext('2d');
+      a.fillStyle = '#0e0e0e'; a.fillRect(0, 0, 1400, 900);
+      a.fillStyle = '#f4f2ec';
+      a.font = '700 150px "Zen Kaku Gothic New", sans-serif';
+      a.fillText('作品を', 110, 330);
+      a.fillText('街に嵌める', 110, 510);
+      a.fillRect(110, 610, 1180, 7);
+      a.font = '400 44px ui-monospace, monospace';
+      a.fillStyle = 'rgba(244,242,236,.62)';
+      a.fillText('KINOSHITA STUDIO', 110, 720);
+      a.fillText('KAN — INTO THE CITY', 110, 790); }
+    Object.defineProperty(art, 'naturalWidth',  { value:1400 });
+    Object.defineProperty(art, 'naturalHeight', { value:900 });
+    const fc = cur(); if(fc){ fc.art = art; fc.kind = 'img'; fc.name = '見本の作品'; }
+    faceList(); syncFace(); render(); fitView();
+    stat('見本 — 四隅を掴んで動かしてみる（街も作品も自分のものに差し替えられる）');
+  };
+  im.onerror = () => { stat('街の写真を入れる'); render(); };
+  im.src = '/assets/img/about-kv-poster.webp';
+}
+faceList();
+demo();
+
+</script>
+<script>
+(function(){
+  'use strict';
+  const KEY = location.pathname.replace(/\W+/g,'_') + '.panelH.v1';
+  const SNAP = [26, 42, 78];
+  let grip = null;
+
+  const panel = () => document.getElementById('panel');
+  /* ⭐ 下段になっているか＝【画面いっぱいの幅で、下端が画面の底にある】。
+     ⚠️ position:fixed で判定してはいけない。道具によっては縦積み(static)のまま
+        同じ2段レイアウトになっている（2026-08-20 実測。fixed で見ていて取りこぼした）。 */
+  const isSheet = () => {
+    const p = panel(); if(!p) return false;
+    const b = p.getBoundingClientRect();
+    return b.width >= innerWidth - 3
+        && b.bottom >= innerHeight - 3
+        && b.top > 8;                       /* 上に盤がある＝全画面パネルではない */
+  };
+  /* ⭐ 端で止める。⚠️ 横向き（高さ500px未満）で目一杯引くと盤が潰れる */
+  const clamp = v => Math.max(18, Math.min(innerHeight < 500 ? 62 : 86, v));
+  const setH = vh => {
+    document.documentElement.style.setProperty('--panelH', clamp(vh).toFixed(1) + 'vh');
+    try{ window.dispatchEvent(new Event('resize')); }catch(_){}
+  };
+  const curH = () => {
+    const p = panel(); if(!p) return 0;
+    return p.getBoundingClientRect().height / innerHeight * 100;
+  };
+
+  function build(){
+    if(grip) return;
+    grip = document.createElement('div');
+    grip.id = 'sheetGrip';
+    grip.title = 'ドラッグで高さを変える／タップで段を切り替える';
+    document.body.appendChild(grip);
+    let drag = null;
+    grip.addEventListener('pointerdown', e => {
+      e.preventDefault(); grip.setPointerCapture(e.pointerId);
+      grip.classList.add('dragging');
+      drag = { y:e.clientY, h:curH(), moved:false };
+    });
+    grip.addEventListener('pointermove', e => {
+      if(!drag) return;
+      const d = (drag.y - e.clientY) / innerHeight * 100;
+      if(Math.abs(d) > 1) drag.moved = true;
+      setH(drag.h + d);
+    });
+    const end = () => {
+      if(!drag) return;
+      grip.classList.remove('dragging');
+      if(!drag.moved){
+        /* ⚠️ 上限で止まっている段を指しても何も起きない＝無反応に見える。
+           実際に届く高さかで判断し、届かないなら一番小さい段へ折り返す。 */
+        const h = curH();
+        const next = SNAP.find(v => clamp(v) > h + 2);
+        setH(next === undefined ? SNAP[0] : next);
+      }
+      try{ localStorage.setItem(KEY, String(Math.round(curH()*10)/10)); }catch(_){}
+      drag = null;
+    };
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
+  }
+  function drop(){
+    if(!grip) return;
+    grip.remove(); grip = null;
+    document.documentElement.style.removeProperty('--panelH');
+  }
+  function sync(){
+    if(isSheet()){
+      build();
+      let v = null; try{ v = parseFloat(localStorage.getItem(KEY)); }catch(_){}
+      if(v > 0) setH(v);
+    }else drop();
+  }
+  addEventListener('resize', () => { if(!grip) sync(); });
+  addEventListener('orientationchange', () => setTimeout(sync, 200));
+  if(document.readyState === 'loading') addEventListener('DOMContentLoaded', sync);
+  else sync();
+})();
+</script>
+</body>
+</html>
