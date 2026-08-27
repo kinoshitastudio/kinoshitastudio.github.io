@@ -810,6 +810,25 @@ input[type=color]{ border-radius:8px; height:30px }
       <input type="range" id="tWx" min="10" max="600" value="100"><span class="v" id="vWx">100</span></div>
     <div class="row"><label>字高</label>
       <input type="range" id="tWy" min="10" max="600" value="100"><span class="v" id="vWy">100</span></div>
+    <!-- ══⭐⭐ 字ごとに横長・縦長をずらす（2026-08-28 木下「同じような感じで書体の横長を
+         ずらすのができるようになりたい。縦長も」／参考＝THE PUBLIC.）══
+         ⭐ 〔分ける〕が「字の種類で変える」なら、こちらは「**何字目か**で変える」。
+         ⚠️ どれも 0 のときは1つも通らない＝これまでと1画素も変わらない。 -->
+    <div class="tag">字ごとにずらす</div>
+    <div class="row"><label>幅の振れ</label>
+      <input type="range" id="wshX" min="0" max="80" value="0"><span class="v" id="vwshX">0</span></div>
+    <div class="row"><label>高さの振れ</label>
+      <input type="range" id="wshY" min="0" max="80" value="0"><span class="v" id="vwshY">0</span></div>
+    <div class="row"><label>幅の並び</label>
+      <input type="range" id="wshXR" min="-80" max="80" value="0"><span class="v" id="vwshXR">0</span></div>
+    <div class="row"><label>高さの並び</label>
+      <input type="range" id="wshYR" min="-80" max="80" value="0"><span class="v" id="vwshYR">0</span></div>
+    <div class="row"><label>種</label>
+      <input type="range" id="wshS" min="1" max="99" value="1"><span class="v" id="vwshS">1</span></div>
+    <div class="note">⭐ <b>振れ</b>＝字ごとにばらつく（<b>種</b>を動かすと組み合わせが変わる＝振れる）<br>
+      ⭐ <b>並び</b>＝先頭から末尾へ少しずつ変わる（＋で末尾が広く／−で末尾が狭く）<br>
+      ⭐ <b>字送りも同じ値を見る</b>＝細くしたのに隙間が空く、は起きない<br>
+      ⚠️ 行ぜんぶの<b>字幅・字高</b>（上のつまみ）に、ここが掛かる</div>
     <div class="row" id="rowStart"><label>始まり</label>
       <input type="range" id="tStart" min="0" max="100" value="0"><span class="v" id="vStart">0</span></div>
     <div class="row" id="rowOff"><label>離れ</label>
@@ -1240,17 +1259,43 @@ function sortOf(ch){
 }
 /* ⭐ 字を1つ作る所を1本にまとめた（沿う・張る・札が同じ道を通る）。
    ⚠️ 2箇所に書くと、片方だけ直して層が効かない字が出る。 */
+/* ══⭐⭐ 字ごとに横長・縦長をずらす（2026-08-28 木下「同じような感じで書体の横長をずらす
+   のができるようになりたい。縦長も」／参考＝THE PUBLIC. の字ごとに幅が違う組み方）══
+   ⭐ 〔分ける〕が「**字の種類**で変える」なら、こちらは「**何字目か**で変える」。
+     ・振れ＝字ごとにばらつかせる（種で振れる＝この道具の芯）
+     ・並び＝先頭から末尾へ少しずつ変える（だんだん細く／太く）
+   ⚠️ どちらも 0 のときは【1つも通らない】＝これまでと1画素も変わらない。
+   ⚠️ 字送り（advance）と字の形（makeChar）が**同じこの1本**を見る
+     ＝細くしたのに送りだけ元のまま、が起きない。 */
+const WSH_DEF = { xAmt:0, yAmt:0, xRun:0, yRun:0, seed:1 };
+function charShift(L){
+  const W = Object.assign({}, WSH_DEF, L.wsh || {});
+  if(!W.xAmt && !W.yAmt && !W.xRun && !W.yRun) return null;
+  const i = L._ci || 0, n = Math.max(1, L._cn || 1);
+  const t = n > 1 ? i/(n-1) : 0;                 // 先頭0 → 末尾1
+  const r = kamiRnd((W.seed|0)*7919 + i*131 + 7);
+  const rx = r()*2 - 1, ry = r()*2 - 1;
+  return {
+    x: 1 + rx*(W.xAmt/100) + t*(W.xRun/100),
+    y: 1 + ry*(W.yAmt/100) + t*(W.yRun/100)
+  };
+}
 function charStyle(ch, L){
   const S3 = Object.assign({}, SORT_DEF, L.sort || {});
   /* ⭐ 音で色が明滅する（2026-08-27）。⚠️ 0 のときは元の色をそのまま＝これまでの絵 */
   const lum = (typeof audOf === 'function' && AUD && AUD.on) ? (audOf(L).lum || 0) : 0;
-  const base = { size:L.size, col: lum ? audCol(L.col, lum) : L.col, wt:L.wt };
+  /* ⭐ 字ごとのずらし。⚠️ 無ければ行の値そのまま＝これまでの絵 */
+  const sh = charShift(L);
+  const wx = Math.max(5, (L.wx || 100) * (sh ? sh.x : 1));
+  const wy = Math.max(5, (L.wy || 100) * (sh ? sh.y : 1));
+  const base = { size:L.size, col: lum ? audCol(L.col, lum) : L.col, wt:L.wt, wx, wy };
   if(!S3.on) return base;
   const g = sortOf(ch); if(!g) return base;
   const o = Object.assign({}, SORT_DEF[g], S3[g] || {});
   return { size: L.size * ((o.size ?? 100)/100),
            col : o.col || L.col,
-           wt  : o.wt  || L.wt };
+           wt  : o.wt  || L.wt,
+           wx  : base.wx, wy : base.wy };
 }
 function makeChar(ch, L, extraCol){
   const st = charStyle(ch, L);
@@ -1258,7 +1303,10 @@ function makeChar(ch, L, extraCol){
     point:[0,0], content:ch, justification:'center',
     fillColor: extraCol || st.col, fontFamily:L.fam, fontWeight:st.wt, fontSize:st.size,
   });
-  if(L.wx !== 100 || L.wy !== 100) t.scaling = new Point((L.wx||100)/100, (L.wy||100)/100);
+  /* ⭐ 長体・平体は【字ごとの値】を使う（行の値＋ずらし）。⚠️ 送りも同じ値を見ている */
+  const wx = st.wx != null ? st.wx : (L.wx || 100);
+  const wy = st.wy != null ? st.wy : (L.wy || 100);
+  if(wx !== 100 || wy !== 100) t.scaling = new Point(wx/100, wy/100);
   t.data.line = L.id;
   return t;
 }
@@ -1275,7 +1323,7 @@ function advance(ch, L){
   const st = (typeof charStyle === 'function') ? charStyle(ch, L) : { size:L.size, wt:L.wt };
   _mctx.font = `${st.wt} ${st.size}px ${L.fam}`;
   // ⚠️ 長体（字幅）を掛け忘れると、細くしたのに送りだけ元のままで隙間が空く
-  return _mctx.measureText(ch).width * ((L.wx || 100)/100);
+  return _mctx.measureText(ch).width * ((st.wx != null ? st.wx : (L.wx || 100))/100);
 }
 
 /* ══ 字と枡のグラデ ══
@@ -1504,7 +1552,10 @@ const LAYOUTS = {
       /* ⭐⭐ 音で【字が経路を流れる】（2026-08-27）＝始まりが音で進む */
       let d = ((L.start + (A.flow || 0))/100) * len;        // 始まりは全長に対する割合
       const d0 = d;
-      for(const ch of chars){
+      /* ⭐ 何字目かを渡す（字ごとのずらしが見る）。⚠️ 送りを測る前に入れる＝形と送りが揃う */
+      L._cn = chars.length;
+      chars.forEach((ch, _ci) => {
+        L._ci = _ci;
         const adv  = advance(ch, L);
         const step = adv + L.track;
         const at = ((d + dir*step/2) % len + len) % len;    // 字の中心が来る位置
@@ -1515,13 +1566,13 @@ const LAYOUTS = {
            ＝閉じた経路に沿わせると、**下側では字が必ず逆さになる**（円形テキストの宿命）。
            ⭐ 【いつも正立】を選べるようにした＝置く場所だけ経路に従い、字は立てたまま
              ＝どこに回っても読める。⚠️ 既定は「経路に沿う」＝これまでと1画素も変わらない。 */
-        place.push({ ch, adv, step,
+        place.push({ ch, adv, step, ci:_ci,
             pos: pt.add(tan.rotate(90).multiply(oAmt)),
             ang: L.upright ? 0
                  : tan.angle + (dir < 0 ? 180 : 0) + (L.side ? 180 : 0) });
         }
         d += dir*step;
-      }
+      });
 
       const cellItems = [], charItems = [];
       /* ── ② 枡（文字の地）── */
@@ -1551,6 +1602,7 @@ const LAYOUTS = {
         /* ⚠️ 順番が要る＝伸ばす → 回す → 置く。
              回してから伸ばすと、伸びる向きが画面の縦横になって字が歪む。
              （伸ばすのは makeChar の中でやっている） */
+        L._ci = p.ci;                     /* ⭐ 送りを測ったときと同じ字番号に戻す */
         const t = makeChar(p.ch, L);
         t.rotation = p.ang;
         t.position = p.pos;       // ⚠️ ベースラインでなく字の真ん中を経路に載せている
@@ -1602,7 +1654,8 @@ const LAYOUTS = {
         if(unit > 0) L = Object.assign({}, L, {
           size: Math.max(6, (span - L.track*(chars.length-1)) / unit * 100) });
       }
-      const adv = chars.map(c => advance(c, L));
+      L._cn = chars.length;
+      const adv = chars.map((c, i) => { L._ci = i; return advance(c, L); });
       const sum = adv.reduce((a,b) => a+b, 0);
       /* ⭐ 両端に届かせる＝余りを字と字のあいだで等分する */
       const gap = chars.length > 1 ? (span - sum - L.track*(chars.length-1)) / (chars.length-1) : 0;
@@ -1644,7 +1697,9 @@ const LAYOUTS = {
       }
       /* 字 */
       let d = 0;
+      L._cn = chars.length;
       chars.forEach((ch,i) => {
+        L._ci = i;                        /* ⭐ 字ごとのずらし（送りを測ったときと同じ番号） */
         const t = makeChar(ch, L);
         const a2 = at(d + adv[i]/2);
         if(a2.ang) t.rotation = a2.ang;           // ⚠️ 伸ばす→回す→置く の順（makeChar の中で伸ばす）
@@ -1779,9 +1834,15 @@ const LAYOUTS = {
       const ch2 = L.size * (C.h/100) * ((L.wy || 100)/100);
       const cellItems = [], charItems = [];
 
+      /* ⭐ 何字目かを渡す（字ごとのずらし）。⚠️ 折り返しても【行の頭から数え直さない】
+         ＝1行目の続きとして数える（そうしないと行ごとに同じばらつきが繰り返す） */
+      let _cn0 = 0; rows.forEach(rw => _cn0 += rw.length);
+      L._cn = _cn0;
+      let _ci0 = 0;
       rows.forEach((chars, r) => {
         if(!chars.length) return;
-        const adv = chars.map(c => advance(c, L));
+        const _base = _ci0; _ci0 += chars.length;
+        const adv = chars.map((c, j) => { L._ci = _base + j; return advance(c, L); });
         const sum = adv.reduce((a,b) => a+b, 0) + L.track * (chars.length - 1);
         let x0 = bx;
         if(align === 'center')     x0 = bx + (bw - sum)/2;
@@ -1807,6 +1868,7 @@ const LAYOUTS = {
         }
         let tx = x0;
         chars.forEach((ch,i) => {
+          L._ci = _base + i;              /* ⭐ 送りを測ったときと同じ字番号に戻す */
           const t = makeChar(ch, L);
           t.position = new Point(tx + adv[i]/2, y);
           into.addChild(t); charItems.push(t);
@@ -4067,6 +4129,10 @@ function syncPanel(){
   $('tFam').value = L.fam; $('tWt').value = L.wt;
   setRange('tSize', L.size); setRange('tTrack', L.track); setRange('tStart', L.start); setRange('tOff', L.off);
   setRange('tWx', L.wx ?? 100); setRange('tWy', L.wy ?? 100);
+  /* ⭐ 字ごとのずらし。⚠️ 古い作品は wsh を持たない＝ぜんぶ0（これまでの絵） */
+  { const W = Object.assign({}, WSH_DEF, L.wsh || {});
+    setRange('wshX', W.xAmt); setRange('wshY', W.yAmt);
+    setRange('wshXR', W.xRun); setRange('wshYR', W.yRun); setRange('wshS', W.seed); }
   setRange('pN', L.path.n); setRange('pInset', L.path.inset);
   /* ⚠️ 古い作品は zoom を持たない＝100（これまでの絵） */
   setRange('pZoom', L.path.zoom == null ? 100 : L.path.zoom);
@@ -4215,6 +4281,18 @@ Object.entries(BIND).forEach(([id,[key,cast]]) => {
     const L = sel(); if(!L) return;
     L[key] = cast(e.target.value);
     const s = $('v' + id.slice(1)); if(s) s.textContent = e.target.value;
+    render();
+  });
+});
+/* ⭐⭐ 字ごとのずらし（2026-08-28）。⚠️ つまみが5本あっても、直す所はこの1本 */
+[['wshX','xAmt'],['wshY','yAmt'],['wshXR','xRun'],['wshYR','yRun'],['wshS','seed']]
+.forEach(([id,k]) => {
+  const r = $(id); if(!r) return;
+  r.addEventListener('input', e => {
+    const L = sel(); if(!L) return;
+    L.wsh = Object.assign({}, WSH_DEF, L.wsh || {});
+    L.wsh[k] = Number(e.target.value);
+    const v = $('v' + id); if(v) v.textContent = e.target.value;
     render();
   });
 });
