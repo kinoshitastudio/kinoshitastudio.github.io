@@ -81,24 +81,39 @@ const near = (a,b2)=> Math.abs(a[0]-b2[0])<6 && Math.abs(a[1]-b2[1])<6 && Math.a
 check(near(m1.corner, col) && near(m1.edge, col), '⭐縁が余白の色になる',
       `四隅 ${m1.corner} / 色 ${col}`);
 const box1 = await A.p.evaluate(()=>window.__box([242,239,230]));
-check(box1.w < box0.w * 0.85 && box1.h < box0.h * 0.85,
-      '⭐⭐中の絵が縮む（上に被せているのではない）', `${box0.w}×${box0.h} → ${box1.w}×${box1.h}`);
-const ar0 = box0.w / box0.h, ar1 = box1.w / box1.h;
-check(Math.abs(ar1 - ar0) / ar0 < 0.02, '⭐縮んでも歪まない（縦横比が変わらない）',
-      `比 ${ar0.toFixed(3)} → ${ar1.toFixed(3)}`);
-/* 余白の幅が四辺とも辺の長さに比例しているか（＝バランスが取れている） */
-const pw = box1.x0 / m1.w, ph = box1.y0 / m1.h2;
-check(Math.abs(pw - ph) < 0.02, '余白が四辺で釣り合っている（辺に比例）',
-      `よこ ${(pw*100).toFixed(1)}% / たて ${(ph*100).toFixed(1)}%`);
+/* ══⭐ 2026-08-21 に【余白の規則そのもの】が変わっている（2026-08-27 に試験を入れ替えた）══
+   木下＝「ふちのせん基本左右上下均等にピクセルが入ると思っていた。
+   　　　余白7でこれあきらかに上下左右大きさ違う？？よね？」
+   ⭐ いまの約束＝**四辺とも同じ画素数**（短い辺を基準）。窓の比は版面と変わるので、
+      中の絵は【窓を覆う（cover）】＝はみ出しは余白の下に隠れる。
+   🔴 ここは前まで「辺に比例」「縦横比が変わらない（contain）」を見ていた＝
+      規則が変わったのに試験が残っていて、ずっと落ちたままだった。 */
+const WIN = await A.p.evaluate(()=>{
+  const p = P.mat/100, m = Math.min(cv.width, cv.height) * p;
+  return { m:Math.round(m), x:Math.round(m), y:Math.round(m),
+           w:Math.round(cv.width - m*2), h:Math.round(cv.height - m*2) };
+});
+check(Math.abs(box1.w - WIN.w) <= Math.max(6, WIN.w*0.02)
+   && Math.abs(box1.h - WIN.h) <= Math.max(6, WIN.h*0.02),
+      '⭐⭐中の絵が【窓の大きさ】に収まる（上に被せているのではない）',
+      `${box0.w}×${box0.h} → ${box1.w}×${box1.h} ／ 窓 ${WIN.w}×${WIN.h}`);
+const ar1 = box1.w / box1.h, arW = WIN.w / WIN.h;
+check(Math.abs(ar1 - arW) / arW < 0.03, '⭐中の絵の比が【窓の比】と合う（覆って切る）',
+      `絵 ${ar1.toFixed(3)} / 窓 ${arW.toFixed(3)}`);
+/* ⭐ 四辺とも【同じ画素数】か（木下が見て言ったのはここ） */
+check(Math.abs(box1.x0 - box1.y0) <= 4 && Math.abs(box1.x0 - WIN.m) <= 4,
+      '⭐⭐余白が四辺とも【同じ画素数】（辺に比例ではない）',
+      `よこ ${box1.x0}px / たて ${box1.y0}px / 窓の余白 ${WIN.m}px`);
 
 /* ── ④b 額の中で絵ごと大きくする・寄せる（2026-08-21）
    ⭐⭐ 木下「余白をつけているときは中の画像は下のレイヤーにいる状態にして。
         なので、ズームすると余白自体は上にあってかわりはない。中のよこ、中のたても」
    🔴 だから見るのは「絵が大きくなったか」ではなく【余白が残っているか】。 */
 const win = await A.p.evaluate(()=>{
-  const p = P.mat/100;
-  return { x:Math.round(cv.width*p), y:Math.round(cv.height*p),
-           w:Math.round(cv.width*(1-p*2)), h:Math.round(cv.height*(1-p*2)) };
+  /* ⚠️ 窓は【短い辺 × 余白%】が四辺とも同じ画素数（2026-08-21 の規則） */
+  const p = P.mat/100, m = Math.min(cv.width, cv.height) * p;
+  return { x:Math.round(m), y:Math.round(m),
+           w:Math.round(cv.width - m*2), h:Math.round(cv.height - m*2) };
 });
 const sig1 = await A.p.evaluate(()=>window.__look().h);
 await set(A.p, 'matzoom', 160); await wait(600);

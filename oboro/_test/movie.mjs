@@ -58,33 +58,38 @@ await pickLoop(A.p, 'sec'); await new Promise(r=>setTimeout(r,120));
 const shown = await A.p.evaluate(()=>getComputedStyle(document.getElementById('tvSecRow')).display);
 check(hidden === 'none' && shown !== 'none', '⭐「秒で」のときだけ秒のつまみが出る', `${hidden} → ${shown}`);
 
-/* ── ③ 欲しい秒にいちばん近い整数の往復へ寄る ── */
+/* ══⭐ ③④ 「秒で」＝**指定した秒ちょうど**（2026-08-21 に規則が変わった）══
+   🔴 ここは前まで【いちばん近い整数の往復へ寄る】【流れを上げると往復が増える】を見ていた。
+      その後「秒は【1往復を引き伸ばす】＋ゆらぎ」に変わった（繰り返しに見えるのをやめた）ので、
+      試験がずっと落ちたままになっていた＝**規則が変わったら、見るものを入れ替える**。
+   ⭐ いまの約束＝出る秒はつまみの秒ちょうど／コマ数＝秒×fps／
+      流れを変えても秒は動かない（速さは画面と同じで、足りない分はゆらぎが埋める）。 */
 const read = () => sizeText(A.p).then(t=>{
-  const m = t.match(/(\d+) コマ・([\d.]+)秒・(\d+)fps・(\d+)往復/);
-  return m ? { total:+m[1], sec:+m[2], fps:+m[3], loops:+m[4], t } : { t };
+  const m = t.match(/(\d+) コマ・([\d.]+)秒・(\d+)fps・(ゆらぎ[^<]*|\d+往復)/);
+  return m ? { total:+m[1], sec:+m[2], fps:+m[3], how:m[4], t } : { t };
 });
 const setSec = (v) => A.p.evaluate(v=>{ const r=document.getElementById('tvSec'); r.value=v;
   r.dispatchEvent(new Event('input',{bubbles:true})); }, v);
-let one = null;
 for(const want of [3, 6, 12, 20]){
   await setSec(want); await new Promise(r=>setTimeout(r,150));
   const r = await read();
-  if(!r.loops){ check(false, `${want}秒 の読み取り`, r.t); continue; }
-  one = r.sec / r.loops;                                  // 1往復にかかる秒
-  const ok = Number.isInteger(r.loops) && r.loops >= 1 && Math.abs(r.sec - want) <= one / 2 + 0.06;
-  check(ok, `⭐${want}秒 → いちばん近い整数の往復`, `${r.loops}往復・${r.sec}秒（1往復 ${one.toFixed(2)}秒）`);
+  if(!r.total){ check(false, `${want}秒 の読み取り`, r.t); continue; }
+  check(Math.abs(r.sec - want) < 0.06 && r.total === Math.round(want * r.fps),
+        `⭐${want}秒 → 秒ちょうど・コマ数も合う`, `${r.total}コマ・${r.sec}秒・${r.fps}fps`);
+  check(/ゆらぎ/.test(r.how), '　⭐「往復」ではなく【ゆらぎ】と書く（1往復と出すと嘘になる）', r.how);
 }
 /* 秒の数字がつまみの横に出ているか */
 const secVal = await A.p.evaluate(()=>document.querySelector('#tvSecRow .val').textContent.trim());
 check(secVal === '20', '秒の数字がつまみと合っている', secVal);
 
-/* ── ④ 流れを変えると同じ秒でも往復の数が変わる ── */
+/* ── ④ 流れを変えても【秒は動かない】（速さは画面と同じ・足りない分はゆらぎ） ── */
 await setFlow(A.p, 200, 30); await setSec(12); await new Promise(r=>setTimeout(r,200));
 const fast = await read();
 await setFlow(A.p, 50, 30);  await setSec(12); await new Promise(r=>setTimeout(r,200));
 const slow = await read();
-check(fast.loops > slow.loops, '⭐流れを上げると同じ秒でも往復が増える',
-      `流れ200 → ${fast.loops}往復 / 流れ50 → ${slow.loops}往復`);
+check(fast.sec === slow.sec && fast.total === slow.total,
+      '⭐流れを変えても【秒とコマ数は動かない】（速さは画面と同じ）',
+      `流れ200 → ${fast.sec}秒/${fast.total}コマ ／ 流れ50 → ${slow.sec}秒/${slow.total}コマ`);
 
 /* ── ⑤ 「秒で」で実際に1本焼ける ── */
 await setFlow(A.p, 150, 12); await setSec(2); await new Promise(r=>setTimeout(r,250));
