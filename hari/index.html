@@ -706,6 +706,19 @@ input[type=color]{ border-radius:8px; height:30px }
         <button data-v="rect">矩形</button>
         <button data-v="circle">円</button>
       </div></div>
+    <!-- ⭐⭐ 2026-08-27 木下「もう少し多角形やたん系が使いやすくしたい。
+         今でもいい感じだが、左右逆になるとか？上下逆になるとか」
+         ⭐ 経路を鏡にする＝字の並ぶ順・回る向き・内外が一度に入れ替わる。
+         ⚠️ どちらも切のときは、これまでと1画素も変わらない。 -->
+    <div class="row" id="rowMir"><label>返す</label>
+      <div class="btns" style="flex:1;margin:0">
+        <button class="btn" id="mirX" title="経路を左右に返す">⇄ 左右</button>
+        <button class="btn" id="mirY" title="経路を上下に返す">⇅ 上下</button>
+      </div></div>
+    <!-- ⭐ 2026-08-27 木下「このままの状態で大きくできるかもいいな」
+         ＝掴んで作った形はそのままに、経路ごと大きく／小さく。 -->
+    <div class="row" id="rowPZ"><label>経路の大きさ</label>
+      <input type="range" id="pZoom" min="20" max="260" value="100"><span class="v" id="vZoom">100</span></div>
     <div class="row" id="rowN"><label>頂点</label>
       <input type="range" id="pN" min="3" max="12" value="6"><span class="v" id="vN">6</span></div>
     <div class="row" id="rowInset"><label>余白</label>
@@ -1201,6 +1214,28 @@ function boundsOf(items){
 }
 
 /* ══ 経路を作る ══ */
+/* ⭐⭐ 経路の【見え方】＝ 大きさ → 鏡（左右／上下）の順に掛ける。
+   ⭐ 控え（p.pts）は素のまま持ち、見せるときだけここを通す
+     ＝掴んで作った形を崩さずに、大きさも向きも後から何度でも変えられる。
+   ⚠️ 逆向き（見え→控え）も要る＝掴んだ頂点を控えに書き戻すため。
+      2本を並べて書く（掛ける順が逆＝片方だけ直すと必ず食い違うので、隣に置いて気づけるように）。 */
+function pathZoom(L){ const p = L && L.path; return (p && p.zoom != null ? p.zoom : 100)/100; }
+function pathFwd(L, q){
+  const p = L && L.path; if(!p) return q;
+  const B = S.board, c = new Point(B.w/2, B.h/2), z = pathZoom(L);
+  let r = (z === 1) ? q : c.add(q.subtract(c).multiply(z));
+  if(p.mx) r = new Point(B.w - r.x, r.y);
+  if(p.my) r = new Point(r.x, B.h - r.y);
+  return r;
+}
+function pathBack(L, q){
+  const p = L && L.path; if(!p) return q;
+  const B = S.board, c = new Point(B.w/2, B.h/2), z = pathZoom(L);
+  let r = q;
+  if(p.mx) r = new Point(B.w - r.x, r.y);
+  if(p.my) r = new Point(r.x, B.h - r.y);
+  return (z === 1) ? r : c.add(r.subtract(c).divide(z));
+}
 function buildPath(L){
   const { w, h } = S.board, p = L.path;
   const m = (p.inset/100) * Math.min(w,h);
@@ -1228,6 +1263,17 @@ function buildPath(L){
   }
   if(p.corner) path.smooth({ type:'continuous' });
   path.closed = true;
+  /* ⭐⭐ 経路ごと大きく（2026-08-27 木下「このままの状態で大きくできるかもいいな」）
+     ⚠️ 余白（inset）は【型から作り直す】ので、掴んで動かした多角形には効かない。
+        ⭐ こちらは形をそのままに、まるごと大きくする（控えの点は書き換えない）。
+     ⚠️ 100 のときは1画素も変わらない。 */
+  { const z = pathZoom(L); if(z !== 1) path.scale(z, new Point(w/2, h/2)); }
+  /* ⭐⭐ 左右／上下を返す（2026-08-27 木下「左右逆になるとか？上下逆になるとか」）
+     ⭐ 経路そのものを版面の真ん中で鏡にする＝**字の並ぶ順も・回る向きも・面の内外も**
+       一度に変わる（つまみを何本も足さずに、構図がもう1組ぶん増える）。
+     ⚠️ 切のときは1画素も変わらない（分岐ごと通らない）。
+     ⚠️ 多角形の控え（p.pts）は【返す前の座標】のまま＝掴んで動かした形は崩れない。 */
+  if(p.mx || p.my) path.scale(p.mx ? -1 : 1, p.my ? -1 : 1, new Point(w/2, h/2));
   /* ⭐ 行ごと動かした分。⚠️ 多角形は pts そのものを動かすので、ここでは足さない
      （両方やると二重に動く）。 */
   if((p.type === 'rect' || p.type === 'circle') && (p.dx || p.dy))
@@ -2136,7 +2182,8 @@ function drawHandles(){
     return;
   }
   if(L.path.type === 'poly' && L.path.pts){
-    L.path.pts.forEach((a,i) => mk(new Point(a[0],a[1]), { vertex:i }));
+    /* ⚠️ 返しているときは【見えている位置】に掴み手を出す（控えの位置に出すと掴めない） */
+    L.path.pts.forEach((a,i) => mk(pathFwd(L, new Point(a[0],a[1])), { vertex:i }));
     return;
   }
   /* ⭐ 矩形・円にも掴むところを出す（木下＝「追加した行には四角が表示されないので分かりにくい」）。
@@ -2587,6 +2634,45 @@ function closeInline(){
 }
 cv.addEventListener('dblclick', e => {
   const pt = atPt(e);
+  /* ══⭐⭐ 経路に頂点を足す／減らす（2026-08-27 木下「イラレでいうポイントをひとつ追加、
+     ボード上でできるとより自由に使えそう」）══
+     ⭐ 経路の線をダブルクリック＝そこに頂点が増える／頂点をダブルクリック＝減る。
+     ⚠️ 字のダブルクリックは【打ち直し】のまま（経路の線は別の層に描いてあるので競合しない）。
+     ⚠️ 3つ未満にはしない（多角形でなくなる）。 */
+  {
+    const L = sel();
+    const hUI = uiLayer.hitTest(vp(pt), { fill:true, stroke:true, tolerance:9/paper.view.zoom });
+    const d = hUI && hUI.item && hUI.item.data;
+    if(L && d && d.vertex !== undefined && L.path.pts){
+      if(L.path.pts.length <= 3){ stat('これ以上は減らせない（三角形まで）'); return; }
+      e.preventDefault(); pushUndo();
+      L.path.pts.splice(d.vertex, 1); L.path.n = L.path.pts.length;
+      syncPanel(); render(); stat('頂点を1つ減らした（' + L.path.n + '）');
+      return;
+    }
+    if(L && d && d.pathOf !== undefined && d.pathOf === L.id){
+      if(L.path.type !== 'poly'){ stat('頂点を足せるのは【多角形】の経路（経路を多角形にする）'); return; }
+      if(!L.path.pts) buildPath(L).remove();      // ⚠️ まだ頂点を覚えていないなら1回作らせる
+      const pts = L.path.pts; if(!pts || pts.length < 3) return;
+      /* ⭐ 押した所にいちばん近い【辺】を探して、そこへ割り込ませる */
+      const q = pathBack(L, pt);
+      let at = 0, best = Infinity;
+      for(let i = 0; i < pts.length; i++){
+        const a1 = new Point(pts[i][0], pts[i][1]);
+        const b1 = new Point(pts[(i+1)%pts.length][0], pts[(i+1)%pts.length][1]);
+        const seg = b1.subtract(a1), len2 = Math.max(1e-6, seg.x*seg.x + seg.y*seg.y);
+        let t = ((q.x-a1.x)*seg.x + (q.y-a1.y)*seg.y) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const dd = q.getDistance(a1.add(seg.multiply(t)));
+        if(dd < best){ best = dd; at = i; }
+      }
+      e.preventDefault(); pushUndo();
+      pts.splice(at + 1, 0, [q.x, q.y]);
+      L.path.n = pts.length;
+      syncPanel(); render(); stat('頂点を1つ足した（' + L.path.n + '）');
+      return;
+    }
+  }
   const hit = artLayer.hitTest(vp(pt), { fill:true, stroke:true, tolerance:6/paper.view.zoom });
   const owner = hit && hit.item ? rootOf(hit.item) : null;
   if(!(owner && owner.data && owner.data.line !== undefined)) return;
@@ -2623,7 +2709,8 @@ cv.addEventListener('pointermove', e => {
   if(drag.kind === 'erase'){ eraseAt(pt); render(); return; }
   if(drag.kind === 'vertex'){
     const L = sel(); if(!L || !L.path.pts) return;
-    L.path.pts[drag.i] = [pt.x, pt.y];
+    const q = pathBack(L, pt);         // ⚠️ 大きさと返しを戻してから控えに書く
+    L.path.pts[drag.i] = [q.x, q.y];
     render();
   } else if(drag.kind === 'inset'){
     /* 矩形・円の四隅を掴んで余白を変える。
@@ -3455,6 +3542,8 @@ function syncPanel(){
   setRange('tSize', L.size); setRange('tTrack', L.track); setRange('tStart', L.start); setRange('tOff', L.off);
   setRange('tWx', L.wx ?? 100); setRange('tWy', L.wy ?? 100);
   setRange('pN', L.path.n); setRange('pInset', L.path.inset);
+  /* ⚠️ 古い作品は zoom を持たない＝100（これまでの絵） */
+  setRange('pZoom', L.path.zoom == null ? 100 : L.path.zoom);
   // 枡
   const C = Object.assign({}, CELL_DEF, L.cell || {});
   segOn('segCell', C.shape); $('cCol').value = C.col;
@@ -3476,6 +3565,10 @@ function syncPanel(){
   $('cgAng').value = CG.ang; $('vcgAng').textContent = CG.ang;
   $('tCol').value = L.col;
   segOn('segPath', L.path.type); segOn('segCorner', L.path.corner);
+  /* ⭐ 返しているかの印。⚠️ 古い作品は mx/my を持たない＝切に落ちる（これまでの絵のまま） */
+  { const x = $('mirX'), y = $('mirY');
+    if(x) x.classList.toggle('on', !!L.path.mx);
+    if(y) y.classList.toggle('on', !!L.path.my); }
   segOn('segDir', L.dir); segOn('segSide', L.side);
   segOn('segKind', L.kind);
   /* ⭐ 置き方で出し分ける＝触れるのに何も起きないつまみを残さない。
@@ -3590,9 +3683,9 @@ Object.entries(BIND).forEach(([id,[key,cast]]) => {
     render();
   });
 });
-['pN','pInset'].forEach(id => $(id).addEventListener('input', e => {
+['pN','pInset','pZoom'].forEach(id => $(id).addEventListener('input', e => {
   const L = sel(); if(!L) return;
-  const k = id === 'pN' ? 'n' : 'inset';
+  const k = id === 'pN' ? 'n' : id === 'pZoom' ? 'zoom' : 'inset';
   L.path[k] = Number(e.target.value);
   if(k === 'n') L.path.pts = null;              // 頂点数が変わったら形を作り直す
   $('v' + id.slice(1)).textContent = e.target.value;
@@ -3805,6 +3898,17 @@ function segBind2(id, fn){ document.querySelectorAll('#'+id+' button').forEach(b
   b.addEventListener('click', () => { fn(b.dataset.v); segOn(id, b.dataset.v); render(); })); }
 
 segBind('segPath',   (L,v) => { L.path.type = v; L.path.pts = null; });
+/* ⭐ 経路を返す（左右／上下）。⚠️ 押した状態が見えないと、返っているのか分からない */
+[['mirX','mx','左右'], ['mirY','my','上下']].forEach(([id, k, jp]) => {
+  const b = $(id); if(!b) return;
+  b.onclick = () => {
+    const L = sel(); if(!L){ stat('先に行を選ぶ'); return; }
+    pushUndo();
+    L.path[k] = L.path[k] ? 0 : 1;
+    syncPanel(); render();
+    stat(jp + (L.path[k] ? 'に返した' : 'を戻した'));
+  };
+});
 segBind('segCorner', (L,v) => { L.path.corner = Number(v); });
 segBind('segDir',    (L,v) => { L.dir = Number(v); });
 segBind('segSide',   (L,v) => { L.side = Number(v); });
