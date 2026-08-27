@@ -516,14 +516,28 @@ const M = { low:0, mid:0, high:0, kick:0 };   // 音の量（0〜1）
    ⚠️ 渡さなければ、これまでと1行も変わらない。 */
 /* ⭐⭐ 動画を読む ── 写真と同じ場所（img）に置く。
    ⚠️ 描く側は drawImage しかしていないので、video でもそのまま通る。
-   ⚠️ ただし img.width / img.height を見ている所があるので、
-      読めた寸法を【属性として入れる】＝置き方の計算が写真とまったく同じ道になる。 */
-let VID = null, vidT = -1, vidN = 0;
+   ⚠️ 元の寸法は imW()/imH() で【その場で読む】（属性に焼くと、回転の情報が後から効く端末で古くなる）。 */
+let VID = null, vidT = -1, vidN = 0, vidLast = 0;
 function loadVideo(srcUrl){
   const v = document.createElement('video');
   v.muted = true; v.loop = true; v.playsInline = true; v.preload = 'auto';
+  v.setAttribute('muted','');  v.setAttribute('playsinline','');   /* ⚠️ iOS は属性も見る */
   v.crossOrigin = 'anonymous';
-  v.addEventListener('loadeddata', () => {
+  /* 🔴🔴 2026-08-27 木下「モバイルだが oboro が動画読み込みできない」
+     ＝ iPhone では【DOM に無い video は中身を読まない】ので `loadeddata` が来ず、
+        何も起きないまま終わっていた（PC では来るので気づけなかった）。
+     ⭐ 直し方は3つとも要る：
+       ① 画面の外に置く（1px・ほぼ透明）＝ブラウザに本当に読ませる／コマも進む
+          ⚠️ display:none や visibility:hidden にすると再生が止まる（連REN で分かっていた型）
+       ② 待つ合図を【loadedmetadata / loadeddata / canplay のどれか最初の1つ】にする
+          （iOS は loadeddata が来ないことがある）
+       ③ 選んだ瞬間（＝指を触った合図）に play() を呼ぶ（iOS は勝手には鳴らせない） */
+  v.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:.01;pointer-events:none;';
+  document.body.appendChild(v);
+  let started = false;
+  const ready = () => {
+    if(started) return; started = true;
+    if(!v.videoWidth){ loadMsg('🔴 この動画は読めなかった（mp4／H.264 で書き出したものを試してください）'); return; }
     v.width = v.videoWidth; v.height = v.videoHeight;
     img = v; VID = v; vidT = -1;
     document.body.classList.add('vid');
@@ -549,14 +563,28 @@ function loadVideo(srcUrl){
     vidSync();
     loadMsg('');
     v.play().catch(()=>{ vidSync(); });
-  }, { once:true });
+  };
+  ['loadedmetadata','loadeddata','canplay'].forEach(ev => v.addEventListener(ev, ready, { once:true }));
   v.addEventListener('error', () => loadMsg('🔴 この動画は読めなかった（mp4／mov／webm を試してください）'));
+  loadMsg('動画を読んでいます…');
   v.src = srcUrl;
+  try{ v.load(); }catch(_){}
+  /* ⭐ 選んだ指の合図のうちに鳴らしにいく（iOS はこれで中身を読み始める）。
+     ⚠️ ここで止めない＝止めると読み込みも止まる端末がある（そのまま流しておく）。 */
+  try{ const q = v.play(); if(q && q.catch) q.catch(()=>{}); }catch(_){}
+  /* ⚠️ どれも来ないときに黙って終わらせない（何が起きたか画面に出す） */
+  setTimeout(() => { if(!started){
+    if(v.videoWidth) ready();
+    else loadMsg('🔴 この動画を読めませんでした（iPhone の HEVC は mp4／H.264 に書き出して試してください）');
+  } }, 4000);
 }
 function vidSync(){
   const b = document.getElementById('bVidPlay');
   if(!b || !VID) return;
   b.textContent = VID.paused ? '▶ 再生' : '■ 止める';
+  /* ⭐ 動画が流れている間は【再生中と同じ粗さ】にする（毎コマ焼き直すので重い） */
+  if(!VID.paused && !VID.ended) anCoarse();
+  else if(!anOn && !coarseHold) anFine();
 }
 {
   const b = document.getElementById('bVidPlay');
@@ -910,13 +938,13 @@ function pageSize(){
   if(!img) return { W:cv.width || 2, H:cv.height || 2 };
   const M = 3000;
   if(P.pratio === 'src'){
-    const k = Math.min(1, M / Math.max(img.width, img.height));
-    return { W:Math.max(2, Math.round(img.width * k)), H:Math.max(2, Math.round(img.height * k)) };
+    const k = Math.min(1, M / Math.max(imW(), imH()));
+    return { W:Math.max(2, Math.round(imW() * k)), H:Math.max(2, Math.round(imH() * k)) };
   }
   const [rw, rh] = RATIOS[P.pratio] || [1, 1];
   /* ⚠️ 写真の面積くらいの版面にする（比だけ変えて、細かさは写真なりに保つ）。
      長辺を M に張り付けると、横長写真を 9:16 にしたとき無駄に重くなる。 */
-  const area = Math.min(img.width * img.height, M * M * 0.6);
+  const area = Math.min(imW() * imH(), M * M * 0.6);
   const s = Math.sqrt(area / (rw * rh));
   let W = Math.round(rw * s), H = Math.round(rh * s);
   const cap = Math.min(1, M / Math.max(W, H));
@@ -936,8 +964,8 @@ function placeRect(W, H){
   if(P.pratio === 'src' && (+P.pzoom || 100) === 100 && !(+P.pox) && !(+P.poy))
     return { dx:0, dy:0, dw:W, dh:H };
   const z = Math.max(0.05, (+P.pzoom || 100) / 100);
-  const k = Math.max(W / img.width, H / img.height) * z;   // cover × 大きさ
-  const dw = img.width * k, dh = img.height * k;
+  const k = Math.max(W / imW(), H / imH()) * z;   // cover × 大きさ
+  const dw = imW() * k, dh = imH() * k;
   /* ⚠️ ずれは【版面の幅・高さに対する％】＝版面の形を変えても手ざわりが変わらない */
   const dx = (W - dw) / 2 + (+P.pox || 0) / 100 * W;
   const dy = (H - dh) / 2 + (+P.poy || 0) / 100 * H;
@@ -954,6 +982,13 @@ function putPhoto(x2d, W, H){
 
 /* ⭐ 色を採る小さい画像を、版面の形で作り直す。
    ⚠️ ここを写真の形のまま作ると、マス（帯）の割り方だけ版面とずれる。 */
+/* 🔴🔴 2026-08-27 木下「帯の調整などしていたらボードの画像が縦に短くなった（勝手に）」
+   ⚠️ 動画を入れたとき、寸法を【読み込んだ瞬間の値で属性に焼いて】いた（v.width/height）。
+      回転の情報が後から効く端末や、読み込み途中では その数字が古くなる＝
+      置き方（placeRect）が古い縦横で計算され、絵が縦に潰れる。
+   ⭐ 元の寸法は【その場で読む】。写真も動画も同じ道（1本）。 */
+function imW(){ return (img && (img.naturalWidth  || img.videoWidth  || img.width )) || 0; }
+function imH(){ return (img && (img.naturalHeight || img.videoHeight || img.height)) || 0; }
 function makeSrc(){
   if(!img) return;
   const S = 700, ks = Math.min(1, S / Math.max(cv.width, cv.height));
@@ -1732,11 +1767,41 @@ function anCoarse(){
 function anFine(){
   if(!anFull) return;
   const W = anFull.W, H = anFull.H; anFull = null;
+  /* ⚠️ 粗くしている間に【版面そのもの】が変わっていたら、控えの大きさに戻してはいけない
+     （縦横が食い違って盤が潰れる）。そのときは版面から組み直す。 */
+  const pg = (typeof pageSize === 'function') ? pageSize() : null;
+  if(pg && (Math.abs(pg.W - W) > 1 || Math.abs(pg.H - H) > 1)){ applyPage(); return; }
   const r = cv.width / W;
   boardTo(W, H);
   Z *= r; fitZ *= r; applyView();              // ⚠️ ここも Z だけ（TX/TY は触らない）
   draw();
 }
+/* ══⭐⭐ 触っている間は粗く、離したら綺麗に（2026-08-27 木下「モバイルだとスライダー調整重いな」）══
+   🔴 つまみを動かすたびに【版面まるごと（長辺3000px）】焼き直していたので、
+      指で連続して動かすモバイルでは1回ぶんが終わらないうちに次が来る＝重い・飛ぶ。
+   ⭐ 直し方は【再生中と同じ道】＝ anCoarse()／anFine() を使い回す（式を増やさない）。
+      触っている間だけ見えている大きさまで落とし、離したら元の版面へ戻す。
+   ⚠️ 再生中・動画が流れている間は戻さない（そちらが粗いままでいたい）。
+   ⚠️ 数え上げ（hold）で持つ＝2本指などで重なっても、離したぶんだけ戻る。 */
+let coarseHold = 0;
+function coarseOn(){ coarseHold++; if(coarseHold === 1) anCoarse(); }
+function coarseOff(){
+  coarseHold = Math.max(0, coarseHold - 1);
+  if(coarseHold) return;
+  if(anOn) return;                                   /* 再生中は粗いまま */
+  if(VID && !VID.paused && !VID.ended) return;        /* 動画が流れている間も粗いまま */
+  anFine();
+}
+addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('#panel input[type=range]').forEach(r => {
+    /* ⚠️ pointer だけで取る（touch と両方だと数え上げが狂う） */
+    r.addEventListener('pointerdown', coarseOn);
+    r.addEventListener('pointerup', coarseOff);
+    r.addEventListener('pointercancel', coarseOff);
+    /* ⚠️ つまみの上から指が外れて離したとき用（pointerup が来ないことがある） */
+    r.addEventListener('lostpointercapture', coarseOff);
+  });
+});
 function anTick(now){
   requestAnimationFrame(anTick);
   if(TV.on) return;                       // ⚠️ 撮っている間は自分で進めない
@@ -1745,8 +1810,11 @@ function anTick(now){
         ＝帯は止まったまま、中身だけが流れる。
      ⚠️ 輪郭（形）は重いので数コマに1回だけ引き直す。 */
   if(VID && !VID.paused && !VID.ended && img === VID && VID.readyState >= 2){
-    if(VID.currentTime !== vidT){
-      vidT = VID.currentTime;
+    /* ⚠️ つまみを触っている間は【動画の焼き直しを止める】＝指を優先する
+       （2026-08-27 木下「モバイルだとスライダー調整重いな」）。 */
+    if(coarseHold){ /* 触っている間は休む */ }
+    else if(VID.currentTime !== vidT && (now - vidLast) >= 1000/Math.max(6, Math.min(30, P.anfps || 30))){
+      vidT = VID.currentTime; vidLast = now;
       makeSrc(); makeBase(); build();
       if(P.shape > 0 && ((vidN++ & 7) === 0)) buildShape(true);
       draw();
@@ -2159,10 +2227,10 @@ function stateObj(withPhoto){
               saved: new Date().toISOString(), P: Object.assign({}, P) };
   if(withPhoto && img){
     /* ⚠️ 元のままだと巨大になるので、作る側と同じ 3000px までに収めて JPEG で持つ */
-    const MX = 3000, k = Math.min(1, MX / Math.max(img.width, img.height));
+    const MX = 3000, k = Math.min(1, MX / Math.max(imW(), imH()));
     const c = document.createElement('canvas');
-    c.width  = Math.max(1, Math.round(img.width  * k));
-    c.height = Math.max(1, Math.round(img.height * k));
+    c.width  = Math.max(1, Math.round(imW() * k));
+    c.height = Math.max(1, Math.round(imH() * k));
     c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
     o.photo = c.toDataURL('image/jpeg', 0.92);
   }

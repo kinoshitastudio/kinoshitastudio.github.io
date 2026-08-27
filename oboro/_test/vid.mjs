@@ -34,6 +34,20 @@ const RANGE = await p.evaluate(() => {
   const r = document.getElementById('rows'), m = document.getElementById('maxx');
   return { 段:+r.max, 細かい:+m.max };
 });
+const COARSE = await p.evaluate(async () => {
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const cv = document.querySelector('canvas');
+  const before = [cv.width, cv.height];
+  const r = document.getElementById('rows');
+  r.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true, pointerId:1 }));
+  await wait(400);
+  const during = [cv.width, cv.height];
+  r.dispatchEvent(new PointerEvent('pointerup', { bubbles:true, pointerId:1 }));
+  await wait(600);
+  return { 前:before, 触っている間:during, 離したあと:[cv.width, cv.height] };
+});
+
+
 /* 動画を入れる */
 const input = await p.$('#file');
 await input.uploadFile(MP4);
@@ -46,6 +60,7 @@ const shot = () => p.evaluate(() => { const cv = document.querySelector('canvas'
 const diff = (a, b2) => a.reduce((n, v, i) => n + (Math.abs(v - b2[i]) > 10 ? 1 : 0), 0);
 
 const R = { };
+R.粗さ = COARSE;
 R.動画の版 = await p.evaluate(() => document.body.classList.contains('vid'));
 R.帯 = await p.evaluate(() => cells.length);
 const a1 = await shot();
@@ -69,6 +84,8 @@ await p.evaluate(() => { const r = document.getElementById('rows');
 await new Promise(r => setTimeout(r, 1500));
 R.細かいときの帯 = await p.evaluate(() => cells.length);
 R.いちばん細い = await p.evaluate(() => Math.min(...cells.map(c => Math.min(c.y1-c.y0, c.x1-c.x0))));
+/* ⭐⭐ 触っている間は粗く、離したら綺麗に（2026-08-27 木下「モバイルだとスライダー調整重いな」）
+   ⚠️ 見本の【写真】で測る（この試験の動画は 480×360 で、元から粗くする必要が無い）。 */
 /* ⭐ 地＝単色（2026-08-27 木下の参考＝白い地に横帯だけが並ぶ絵） */
 R.地 = await p.evaluate(async () => {
   const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -119,4 +136,9 @@ ok(R.いちばん細い <= 1, '⭐⭐ いちばん細い帯が【1px】まで行
      `${R.地.before} → ${R.地.after}`); }
 ok(R.地.色のつまみが出る, '⚠️ 単色のときだけ地の色のつまみが出る');
 ok(R.地.戻る === R.地.before, '⭐ 写真に戻すと元の絵に帰る', R.地.戻る);
+ok(R.粗さ.触っている間[0] < R.粗さ.前[0] * 0.7,
+   '⭐⭐ つまみを触っている間は【粗く】焼く（モバイルで軽くする）',
+   `${R.粗さ.前.join('×')} → ${R.粗さ.触っている間.join('×')}`);
+ok(R.粗さ.離したあと[0] === R.粗さ.前[0] && R.粗さ.離したあと[1] === R.粗さ.前[1],
+   '⭐ 離したら元の版面に戻る（出す絵は変わらない）', R.粗さ.離したあと.join('×'));
 process.exit(ng ? 1 : 0);
