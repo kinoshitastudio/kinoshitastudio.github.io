@@ -706,9 +706,22 @@ function loadMedia(f, done){
   if(vid){
     const v = document.createElement('video');
     v.muted = true; v.loop = true; v.playsInline = true; v.preload = 'auto';
-    v.addEventListener('loadeddata', () => done(v, 'vid', f.name), { once:true });
-    v.addEventListener('error', () => stat('この動画は読めなかった'));
-    v.src = url; v.play().catch(()=>{});
+    v.setAttribute('muted',''); v.setAttribute('playsinline','');
+    /* 🔴 iPhone は【DOM に無い video の中身を読まない】＝画面の外に置く（1px・ほぼ透明）。
+       ⚠️ display:none にすると再生が止まる。合図も loadedmetadata/loadeddata/canplay の
+          いちばん早いものを取る（iOS は loadeddata が来ないことがある）。 */
+    v.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:.01;pointer-events:none;';
+    document.body.appendChild(v);
+    let once = false;
+    const ready = () => { if(once) return; if(!v.videoWidth) return; once = true; done(v, 'vid', f.name); };
+    ['loadedmetadata','loadeddata','canplay'].forEach(ev => v.addEventListener(ev, ready, { once:true }));
+    v.addEventListener('error', () => stat('この動画は読めなかった（mp4／H.264 を試してください）'));
+    stat('動画を読んでいます…');
+    v.src = url;
+    try{ v.load(); }catch(_){}
+    try{ const q = v.play(); if(q && q.catch) q.catch(()=>{}); }catch(_){}
+    setTimeout(() => { if(!once){ if(v.videoWidth) ready();
+      else stat('🔴 この動画を読めませんでした（iPhone の HEVC は mp4／H.264 に書き出して試す）'); } }, 4000);
   } else {
     const im = new Image();
     im.onload = () => done(im, 'img', f.name);
