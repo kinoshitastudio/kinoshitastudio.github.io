@@ -93,6 +93,15 @@ input[type=color]{ width:32px; height:28px; padding:0; border:.5px solid var(--l
   padding:5px 0; font-family:inherit; font-size:11.5px; cursor:pointer; transition:.14s }
 .seg button.on{ background:var(--pill); box-shadow:var(--pillsh) }
 .note{ color:var(--dim); font-size:11px; line-height:1.7; margin:9px 0 2px }
+/* ⭐⭐ 2026-08-27 木下「細かい説明の小さな文字は読まないから非表示で」
+   ⚠️ 消すのではなく【畳む】＝いつでも戻せる（作った理由が書いてある文なので捨てない）。
+   ⭐ 既定は畳む。右上の ⓘ で出し入れ／覚えておく。 */
+body.nohelp .note{ display:none }
+#helpBtn{ position:fixed; right:10px; top:8px; z-index:7; width:26px; height:26px; border-radius:13px;
+  border:.5px solid var(--line); background:var(--btn); color:var(--dim); cursor:pointer;
+  font-family:inherit; font-size:12px; line-height:1; padding:0 }
+#helpBtn:hover{ color:var(--ink) }
+body:not(.nohelp) #helpBtn{ background:var(--ink); color:var(--bg); border-color:transparent }
 .note b{ color:var(--ink); font-weight:590 }
 
 /* 行（ライン）の一覧 */
@@ -399,6 +408,8 @@ input[type=color]{ border-radius:8px; height:30px }
 <!-- ⭐ 版面の上でそのまま打ち直す（ダブルクリック）。⚠️ 画面の上に重ねるだけで、作品には出ない -->
 <textarea id="inlineText" spellcheck="false"></textarea>
 <div id="panel">
+  <!-- ⭐ 説明の出し入れ（既定は畳む。押すと出る・覚えておく） -->
+  <button id="helpBtn" title="説明を出す／畳む">ⓘ</button>
   <h2>版面</h2>
   <div class="sec">
     <div class="row"><label>大きさ</label>
@@ -526,10 +537,10 @@ input[type=color]{ border-radius:8px; height:30px }
     <div id="kamiUI">
       <div class="row"><label>重ね方</label>
         <div class="seg" id="segKamiB" style="flex:1">
-          <button data-v="multiply" class="on">乗算</button>
+          <button data-v="multiply">乗算</button>
           <button data-v="overlay">オーバーレイ</button>
           <button data-v="screen">スクリーン</button>
-          <button data-v="both">両方</button>
+          <button data-v="both" class="on">両方</button>
         </div></div>
       <div class="row"><label>強さ</label>
         <input type="range" id="kAmt" min="0" max="100" value="35"><span class="v" id="vKAmt">35</span></div>
@@ -928,6 +939,19 @@ async function addFontFace(name, buf, font){
 const cv = document.getElementById('cv');
 paper.setup(cv);
 const { Point, Path, Group, Rectangle } = paper;
+/* ⭐ 細かい説明は畳むのが既定（木下＝「小さな文字は読まないから非表示で」）。
+   ⚠️ 消さない＝ⓘ でいつでも出せる／覚えておく。 */
+(function(){
+  let off = true;
+  try{ const v = localStorage.getItem('hari.help'); if(v !== null) off = (v === '0'); }catch(_){}
+  document.body.classList.toggle('nohelp', off);
+  const b = document.getElementById('helpBtn');
+  if(b) b.onclick = () => {
+    const now = !document.body.classList.contains('nohelp');
+    document.body.classList.toggle('nohelp', now);
+    try{ localStorage.setItem('hari.help', now ? '0' : '1'); }catch(_){}
+  };
+})();
 
 /* 版（ポスター）と 道具のしるし（ハンドル等）は層を分ける。
    ⭐ 書き出しは art だけを焼くので、ハンドルが写り込まない。 */
@@ -1600,10 +1624,19 @@ const KAMI_DEF = { on:'none', blend:'multiply', amt:35, sc:50, ang:0, seed:1 };
    ⚠️ いままでの1枚は【上】＝`S.kami` のまま＝古い作品の見え方は1画素も変わらない。
    ⚠️ 下は既定「なし」＝足しても、押すまでは何も起きない。 */
 const KAMI_LAYERS = [
-  { id:'',  key:'kami',  jp:'ぜんぶに（物の上）' },   /* いままでの1枚 */
-  { id:'U', key:'kamiU', jp:'地に（物の下）' },
+  { id:'',  key:'kami',  jp:'ぜんぶに（物の上）', blend:'both' },   /* いままでの1枚 */
+  { id:'U', key:'kamiU', jp:'地に（物の下）',     blend:'multiply' },
 ];
-const kamiOf = (key) => Object.assign({}, KAMI_DEF, S[key || 'kami'] || {});
+/* ⭐⭐ 2026-08-27 木下「やっぱりグラフィックの上や文字の上にノイズないよね？？？」
+   🔴 そのとおりで、【乗算もオーバーレイも真っ黒の上ではほとんど効かない】。
+      実測（強さ35）＝ オーバーレイ：字 1.4／紙 2.9 ＝ 字の上は見えない。
+                     両方：字 8.3／紙 8.8 ＝ 同じだけ乗る。
+   ⭐ だから【ぜんぶに（物の上）】の既定を「両方」にする（この段の目的そのもの）。
+   ⚠️ 【地に（物の下）】は紙そのものなので乗算のまま（凹みが影になる）。 */
+const kamiOf = (key) => {
+  const L = KAMI_LAYERS.find(x => x.key === (key || 'kami'));
+  return Object.assign({}, KAMI_DEF, L ? { blend:L.blend } : null, S[key || 'kami'] || {});
+};
 const kamiCache = new Map();          /* ⚠️ 2枚あるので控えも別々に持つ（同じ鍵で潰し合わない） */
 /* 種から決まる乱数（同じ種なら1画素まで同じ＝振り直さない限り化けない） */
 function kamiRnd(seed){
@@ -2817,7 +2850,13 @@ function renderList(){
    ⚠️「見」は強さを 0 にするのでなく【目を なし に】する＝分岐ごと通さない（＝いままでの絵に戻る）。 */
 /* ⭐ 目のアイコン ── 開いた目＝出ている／閉じた目＝隠している。⚠️ 作る所は1つ（式は1本） */
 const EYE_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.9 12S5.6 5.5 12 5.5 22.1 12 22.1 12 18.4 18.5 12 18.5 1.9 12 1.9 12Z"/><circle cx="12" cy="12" r="3.1"/></svg>';
-const EYE_SHUT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.4 3.6 21.6 20.4"/><path d="M9.6 5.9A9.6 9.6 0 0 1 12 5.6c6.4 0 10.1 6.4 10.1 6.4a17 17 0 0 1-3.3 4"/><path d="M6.3 7.6A17 17 0 0 0 1.9 12s3.7 6.5 10.1 6.5a9.9 9.9 0 0 0 4.2-.9"/><path d="M10 10a3.1 3.1 0 0 0 4.2 4.3"/></svg>';
+/* ⭐ 2026-08-27 木下「非表示の時は目に斜線を入れておいて」
+   ⚠️ 目の形を作り替えず【開いた目に線を1本引く】＝どちらの状態かひと目で分かる
+      （形ごと変えると、小さいときに見分けがつかない）。 */
+const EYE_SHUT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
+  + '<path d="M1.9 12S5.6 5.5 12 5.5 22.1 12 22.1 12 18.4 18.5 12 18.5 1.9 12 1.9 12Z" opacity=".55"/>'
+  + '<circle cx="12" cy="12" r="3.1" opacity=".55"/>'
+  + '<path d="M3.4 3.1 20.6 20.9" stroke-width="2.1"/></svg>';
 const eyeBtn = (hidden, title) =>
   `<span class="hd${hidden ? ' on' : ''}" title="${title}">${hidden ? EYE_SHUT : EYE_OPEN}</span>`;
 function kamiRow(el, L, wasOn){
@@ -3059,7 +3098,9 @@ function segOn(id, v){ document.querySelectorAll('#'+id+' button').forEach(b =>
    ⭐ 2枚とも【同じ表】で回す＝片方だけ直して食い違う、を作らない。 */
 function kamiSet(k, v, key){
   key = key || 'kami';
-  S[key] = Object.assign({}, KAMI_DEF, S[key] || {});
+  /* ⚠️ 種を KAMI_DEF から作ると【その段の既定（上＝両方）】が消える。
+     ⭐ kamiOf() から作る＝段の既定がそのまま残る（触った所だけが変わる）。 */
+  S[key] = Object.assign({}, kamiOf(key));
   S[key][k] = v;
   syncKami(); render();
 }
@@ -3934,9 +3975,10 @@ $('fJSON').addEventListener('change', e => {
       const d = JSON.parse(rd.result);
       // ⚠️ 古い保存には mode/bg2 が無い＝既定で埋める（無いと地が消える）
       if(d.board) S.board = Object.assign({ bg2:'#ffffff', mode:'solid', ang:90 }, d.board);
-      /* ⭐ 紙の質感（2枚）。⚠️ 古い保存には無い＝なし（いままでの絵）に落ちる */
-      S.kami  = Object.assign({}, KAMI_DEF, d.kami  || {});
-      S.kamiU = Object.assign({}, KAMI_DEF, d.kamiU || {});
+      /* ⭐ 紙の質感（2枚）。⚠️ 古い保存には無い＝なし（いままでの絵）に落ちる
+         ⚠️ 段の既定（上＝両方）を残したまま、控えの値だけ上書きする */
+      S.kami  = Object.assign({}, kamiOf('kami'),  d.kami  || {});
+      S.kamiU = Object.assign({}, kamiOf('kamiU'), d.kamiU || {});
       if(d.lines) S.lines = d.lines.map(L => Object.assign(newLine(''), L, { id:uid(),
         cell:Object.assign({}, CELL_DEF, L.cell || {}) }));
       S.pieces = [];
