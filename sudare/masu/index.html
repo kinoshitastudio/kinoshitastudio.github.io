@@ -36,6 +36,15 @@
     border-radius:50%; background:#111; box-shadow:0 1px 4px rgba(0,0,0,.3); cursor:pointer }
   .val{ font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:11px; color:var(--dim);
         width:30px; flex:0 0 30px; text-align:right; font-variant-numeric:tabular-nums }
+  /* ⭐⭐ 数字を打ち込んで直せる（2026-08-27 木下「パネルの数字をテキストで入力して調整できるようにも」）
+     ⚠️ 見た目はこれまでと同じ＝触れると分かる程度に囲みが出るだけ。 */
+  input.val{ width:42px; flex:0 0 42px; border:1px solid transparent; border-radius:6px;
+    background:transparent; padding:2px 3px; cursor:text }
+  input.val:hover{ border-color:var(--line) }
+  input.val:focus{ outline:none; border-color:var(--ink); color:var(--ink);
+    background:rgba(120,120,128,.10) }
+  /* 🔴 iOS は 16px 未満の入力欄で【勝手に拡大する】＝指のときだけ大きくする */
+  @media (pointer:coarse){ input.val{ font-size:16px; width:52px; flex:0 0 52px } }
   textarea{ width:100%; height:52px; border:none; border-radius:10px; background:rgba(120,120,128,.12);
     padding:9px 10px; font-family:inherit; font-size:12.5px; resize:none; color:var(--ink) }
   .seg{ display:flex; background:rgba(120,120,128,.12); border-radius:9px; padding:2px; margin:6px 0 }
@@ -336,6 +345,21 @@
     ⭐ <b>絵の大きさ</b>を 100 より上げると版面からはみ出す＝<b>そこは切れる</b>（100 までなら切れない）<br>
     ⭐ 形を選ぶと画面に<b>破線の囲み</b>が出ます＝<b>その中が出る絵</b>（囲みは書き出しに入りません）</div>
 
+  <!-- ══⭐⭐ ガイド（2026-08-27 木下「余白の線を出せるようにして」）
+       ⭐ 版面を選んでいれば【その紙の中】に、自動なら【盤いっぱい】に引く。
+       ⚠️ 見るだけ＝書き出しには1本も入らない。既定は切＝1画素も変わらない。 -->
+  <h2>ガイド（見るだけ）</h2>
+  <div class="seg" id="guideOn">
+    <button data-v="0" class="on">切</button><button data-v="third">三分割</button
+    ><button data-v="grid">方眼</button>
+  </div>
+  <div class="row"><label>余白</label><input id="gMar" type="range" min="0" max="30" value="0"><span class="val"></span></div>
+  <div class="row" id="rowGGrid" style="display:none"><label>方眼の数</label><input id="gGrid" type="range" min="2" max="24" value="6"><span class="val"></span></div>
+  <div class="note">⭐ <b>余白</b>＝紙の内側に引く枠（辺に対する％）。0 で消える<br>
+    ⭐ <b>三分割</b>＝1/3・中央・2/3／<b>方眼</b>＝マスが正方になる数で割る<br>
+    ⭐ 白と黒の<b>互い違いの破線</b>で引くので、濃い絵の上でも見える<br>
+    ⚠️ どれも<b>書き出しには入りません</b>（見るための線）</div>
+
   <h2>全体で出す（切れない）</h2>
   <div class="seg" id="expk"><button data-k="2000">2000px</button><button data-k="4000" class="on">4000px</button><button data-k="8000">8000px</button></div>
   <button class="big" id="pngFull">PNG（全体）</button>
@@ -439,6 +463,11 @@ const P = { bg:'#0a0a0a', speed:30, fps:30, grain:0 };
 /* ⚠️ RECTS と noBgOnce は build()/draw() が触る。UI の初期化より【前】に宣言する
    ── let は巻き上がらないので、後ろに置くと初期化のときに TDZ で静かに死ぬ（2026-08-07 に踏んだ）。 */
 let noBgOnce = false;
+/* ⭐⭐ ガイド（2026-08-27 木下「余白の線を出せるようにして」）
+   ⭐ 版面のどこに余白を取るかを【線で見る】ための目印。
+   ⚠️ 見るだけ＝書き出しには1本も入らない（noGuideOnce で外して焼く）。
+   ⚠️ 既定は切＝1画素も変わらない。 */
+let noGuideOnce = false;
 /* 🔴 動画の入れ物は【ここ＝先頭側】で作る。中身の実装はいちばん下だが、
    buildAll() と animTick() が TV.on を見るので、下で const にすると TDZ で起動が止まる。 */
 /* 🔴 囲みの入れ物も【ここ＝先頭側】で宣言する。draw() が参照するので、
@@ -1455,6 +1484,8 @@ function draw(){
     g.strokeStyle = 'rgba(255,255,255,.28)';
     g.strokeRect(px + 0.5, py + 0.5, PPREV.width - 1, PPREV.height - 1);
     g.restore();
+    /* ⭐ 版面を選んでいるときは【その紙の中】に余白の線を引く＝出る絵の中で余白が見える */
+    drawGuides(px, py, PPREV.width, PPREV.height);
     return;
   }
   /* ⚠️ 地は【画面いっぱい】に塗る＝ズームしても地は動かない（紙は動かない）。
@@ -1503,11 +1534,74 @@ function draw(){
     g.strokeRect(PFRAME.x, PFRAME.y, PFRAME.w, PFRAME.h);
     g.restore();
   }
+  /* ⭐ 版面を選んでいないとき（自動）は【盤いっぱい】に引く＝構図の目安 */
+  drawGuides(0, 0, cv.width, cv.height);
 }
 
 /* ── UI ── */
 /* ⭐ つまみは【選んでいる版】に書く。P には入れない（P に入れると重ねたとき全部同じになる） */
-const FACE_KEYS = ['speed','fps','grain'];  // 面のつまみ＝どの版にも同じ（動かす速さ・刻みの振れ）
+const FACE_KEYS = ['speed','fps','grain','gMar','gGrid'];  // 面のつまみ＝どの版にも同じ（速さ・刻み・ガイド）
+/* ══⭐⭐ 数字を打ち込んで直せるようにする（2026-08-27）
+   木下＝「パネルの数字をテキストで入力して調整できるようにもして」
+
+   ⭐ HTML も、つまみの配線も【1行も書き換えない】。
+     起動のいちばん先に、見るだけだった .val（span）を【打ち込める欄】に差し替えるだけ
+     ＝つまみが何本あっても、直す所はこの1本。
+   ⭐⭐ 差し替えた欄には textContent を作り直して差してある。
+     本体のあちこちにある `val.textContent = r.value` が【そのまま効く】
+     ＝つまみを動かせば欄の数字も動く（2つの持ち主を作らない）。
+   ⚠️ 打ち込んだら、つまみ本人の 'input' を鳴らす＝絵の直し方は1本のまま。 */
+function editableVals(){
+  document.querySelectorAll('#panel input[type=range]').forEach(r=>{
+    const v = r.parentElement.querySelector('span.val');
+    if(!v) return;
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.className = 'val'; inp.inputMode = 'decimal';
+    inp.setAttribute('aria-label', '数字を打ち込む');
+    inp.value = (v.textContent || r.value).trim();
+    /* ⭐ ここが要＝本体は「.val の textContent に書く」と思ったまま動く */
+    Object.defineProperty(inp, 'textContent', {
+      get(){ return inp.value; },
+      set(t){ if(document.activeElement !== inp) inp.value = t; }   // ⚠️ 打っている最中は横取りしない
+    });
+    v.replaceWith(inp);
+    const step = +r.step || 1;
+    const put = (raw, live) => {
+      let n = parseFloat(String(raw).replace(/[^\d.\-]/g, ''));
+      if(!isFinite(n)) return;
+      n = Math.max(+r.min, Math.min(+r.max, n));
+      if(step >= 1) n = Math.round(n / step) * step;
+      r.value = n;
+      r.dispatchEvent(new Event('input', { bubbles:true }));   // ⭐ 絵を直す道はつまみと同じ1本
+      if(!live) inp.value = r.value;                           // ⚠️ 端で止めた値を見せる（打ち込み中は邪魔しない）
+    };
+    inp.addEventListener('input', () => put(inp.value, true));
+    inp.addEventListener('change', () => put(inp.value, false));
+    inp.addEventListener('blur',  () => { inp.value = r.value; });
+    inp.addEventListener('keydown', e => {
+      /* ⭐ ↑↓ で1つずつ（⇧で10ずつ）＝キーボードだけでも詰められる */
+      if(e.key === 'ArrowUp' || e.key === 'ArrowDown'){
+        e.preventDefault();
+        const d = (e.key === 'ArrowUp' ? 1 : -1) * step * (e.shiftKey ? 10 : 1);
+        put((+r.value || 0) + d, false);
+      }
+      if(e.key === 'Enter'){ e.preventDefault(); put(inp.value, false); inp.blur(); }
+      e.stopPropagation();     /* ⚠️ 版面のキー操作（⌘Z など）に取られない */
+    });
+  });
+}
+editableVals();
+
+/* ⭐ ガイドの段（値が【数でない】ので専用に受ける）。⚠️ 方眼の数は方眼のときだけ出す */
+document.querySelectorAll('#guideOn button').forEach(b=>
+  b.addEventListener('click', ()=>{
+    document.querySelectorAll('#guideOn button').forEach(x=> x.classList.toggle('on', x === b));
+    P.guideOn = b.dataset.v === '0' ? 0 : b.dataset.v;
+    const row = document.getElementById('rowGGrid');
+    if(row) row.style.display = P.guideOn === 'grid' ? '' : 'none';
+    draw();
+  }));
+
 document.querySelectorAll('#panel input[type=range]').forEach(r=>{
   const val = r.parentElement.querySelector('.val');
   const sync = ()=>{ const sh = S_();
@@ -1688,17 +1782,52 @@ addEventListener('keydown', e=>{
 });
 
 /* ── 出す ── ⚠️ 地なしは絵のあるところだけに切り詰める（他の道具に重ねるため） ── */
+/* ══⭐⭐ ガイドを引く（2026-08-27）══════════════════════════════
+   ⭐ 白と黒を【互い違いの破線】で重ねる＝明るい所では黒が、暗い所では白が立つ
+     ＝どんな絵の上でも見える（貼HARI で同じ直しをした型）。
+   ⭐ 版面を選んでいれば【その紙の中】に、自動なら【盤いっぱい】に引く。
+   ⚠️ 描くのはこの1本＝画面のどこに出しても同じ線になる。 */
+function drawGuides(x, y, w, h){
+  if(noGuideOnce) return;
+  const on = P.guideOn || 0, mar = +P.gMar || 0;
+  if(!on && !mar) return;
+  const lw = Math.max(1, cv.width/1400);
+  const dash = Math.max(5, cv.width/170);
+  const two = draw1 => {
+    g.save();
+    g.lineWidth = lw;
+    g.setLineDash([]);        g.strokeStyle = 'rgba(255,255,255,.85)'; draw1();
+    g.setLineDash([dash,dash]); g.strokeStyle = 'rgba(0,0,0,.75)';     draw1();
+    g.restore();
+  };
+  if(mar > 0){
+    const mx = w * mar/100, my = h * mar/100;
+    two(()=>{ g.beginPath(); g.rect(x+mx, y+my, w-mx*2, h-my*2); g.stroke(); });
+  }
+  const line = (x1,y1,x2,y2) => two(()=>{ g.beginPath(); g.moveTo(x1,y1); g.lineTo(x2,y2); g.stroke(); });
+  if(on === 'third'){
+    [1/3, 1/2, 2/3].forEach(t => { line(x+w*t, y, x+w*t, y+h); line(x, y+h*t, x+w, y+h*t); });
+  }else if(on === 'grid'){
+    const n = Math.max(2, Math.round(+P.gGrid || 6));
+    const rows = Math.max(1, Math.round(n * h / w));      // ⭐ マスが正方になる縦の数
+    for(let i=1;i<n;i++)    line(x+w*i/n, y, x+w*i/n, y+h);
+    for(let i=1;i<rows;i++) line(x, y+h*i/rows, x+w, y+h*i/rows);
+  }
+}
 function toBlob(noBg, cb){
-  noBgOnce = !!noBg; draw();
-  if(!noBg){ cv.toBlob(b=>{ noBgOnce=false; draw(); cb(b); }, 'image/png'); return; }
+  /* ⚠️ この道は【画面の canvas をそのまま出す】＝ガイドを描いたまま焼くと絵に入ってしまう。
+     ⭐ 1回だけ外して焼き、終わったら戻す（見るだけの線、という約束を守る）。 */
+  noBgOnce = !!noBg; noGuideOnce = true; draw();
+  const done = b => { noBgOnce = false; noGuideOnce = false; draw(); cb(b); };
+  if(!noBg){ cv.toBlob(done, 'image/png'); return; }
   const W = cv.width, H = cv.height, d = g.getImageData(0,0,W,H).data;
   let x0=W, y0=H, x1=-1, y1=-1;
   for(let y=0;y<H;y++) for(let x=0;x<W;x++){ if(d[(y*W+x)*4+3] > 2){
     if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } }
-  if(x1 < 0){ cv.toBlob(b=>{ noBgOnce=false; draw(); cb(b); }, 'image/png'); return; }
+  if(x1 < 0){ cv.toBlob(done, 'image/png'); return; }
   const o = document.createElement('canvas'); o.width = x1-x0+1; o.height = y1-y0+1;
   o.getContext('2d').drawImage(cv, x0, y0, o.width, o.height, 0, 0, o.width, o.height);
-  o.toBlob(b=>{ noBgOnce=false; draw(); cb(b); }, 'image/png');
+  o.toBlob(done, 'image/png');
 }
 function savePNG(noBg){ toBlob(noBg, b=>{ if(!b) return;
   const u = URL.createObjectURL(b), a = document.createElement('a');
