@@ -348,6 +348,31 @@ try{
     $('s_sym').querySelector('button[data-v="0"]').click();
   }
 
+  /* 🔴 2026-08-27 木下「Tama の大きさがかわらない」
+     ＝線の層では玉の大きさ（r）を一度も見ていなかった＝触れるのに効かないつまみだった。
+     ⭐ 線の層では【筆の太さに対する倍率】。⚠️ 既定（0.045）で倍率1＝いままでと同じ。 */
+  {
+    const L0=TAMA.cur();
+    const col=L0.col.replace('#','');
+    const R=parseInt(col.slice(0,2),16),G=parseInt(col.slice(2,4),16),B=parseInt(col.slice(4,6),16);
+    /* ⚠️ 画面（cv）は rAF で描き直すので、押した直後に読むと【前のコマ】を測る。
+       ⭐ 本体と同じ関数（TAMA.paint）でその場で刷って数える＝待たずに正しく測れる。 */
+    const ink=()=>{ const d=shot(400,400,0); let n=0;
+      for(let i=0;i<d.length;i+=4)
+        if(Math.abs(d[i]-R)<26 && Math.abs(d[i+1]-G)<26 && Math.abs(d[i+2]-B)<26) n++;
+      return n; };
+    set('r_r', 0.045); const a1=ink();
+    set('r_r', 0.12);  const a2=ink();
+    set('r_r', 0.02);  const a3=ink();
+    /* ⚠️ 数えているのは版面ぜんぶの玉の色＝他の層のぶんも入る。
+       ⭐ 見るのは【増えたか・減ったか】（大 > 既定 > 小）。 */
+    ok('🔴 線の層でも【大きさ】が効く（'+a1+' → 大 '+a2+' / 小 '+a3+'）',
+       a2 > a1*1.05 && a3 < a1*0.99);
+    set('r_r', 0.045);
+    ok('⚠️ かたち（塗り＋玉…）は字の層だけ＝線の層では出さない',
+       getComputedStyle($('fillMode')).display === 'none');
+  }
+
   // 大きく出す
   const [ow,oh]=TAMA.outSize();
   const t0=performance.now();
