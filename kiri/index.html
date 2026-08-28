@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>霧 KIRI — 粒の数だけで濃さを作る / 木下スタジオ</title>
+<meta name="description" content="写真や SVG を、大きさの同じ粒の【数】だけに落とす道具。網点と違って格子に乗らない＝吹き付けたように散る。輪郭の外へ飛沫が抜ける。PNG・地なしPNG・SVG で出せる。木下スタジオ（木下貴博 / 滋賀・琵琶湖）制作。">
+<link rel="canonical" href="https://kinoshita.studio/kiri/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="霧 KIRI — 粒の数だけで濃さを作る / 木下スタジオ">
+<meta property="og:description" content="濃さは粒の【数】で作る。大きさは変えない ── だから吹き付けたように散る。">
+<meta property="og:url" content="https://kinoshita.studio/kiri/">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  /* ⚠️ 外枠（並び方・見た目）は 累 RUI / 点 TEN と同じ＝道具ごとに作りを変えない */
+  :root{
+    --bg:#e8e4dc; --paper:#f4f2ec; --line:rgba(28,28,30,.14);
+    --fg:#1c1c1e; --fg2:rgba(28,28,30,.62); --fg3:rgba(28,28,30,.40);
+    --fill:rgba(28,28,30,.10); --fill2:rgba(28,28,30,.07);
+    --capsule:#fffdf8; --glass:rgba(246,244,238,.84); --r:10px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans","Zen Kaku Gothic New",sans-serif;
+    font-weight:400;overflow:hidden;display:flex;align-items:stretch}
+
+  /* ⭐ 盤＝窓。中の紙は動かさず、見る側だけ transform で動かす（出る絵は1画素も変わらない） */
+  #stage{flex:1;position:relative;min-width:0;overflow:hidden;cursor:crosshair}
+  #stage.panning{cursor:grabbing}
+  #stage::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
+    background:radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,.5), transparent 62%)}
+  canvas#cv{position:absolute;left:0;top:0;transform-origin:0 0;
+    box-shadow:0 14px 44px rgba(28,28,30,.18);display:block}
+  /* ⭐ 選んだ印は【刷る絵に混ぜない】。別の板を同じ倍率で重ねる
+     （混ぜると PNG にも選択枠が出てしまう） */
+  canvas#ov{position:absolute;left:0;top:0;transform-origin:0 0;display:block;
+    pointer-events:none;z-index:2}
+  /* 🔴🔴 2026-08-25 木下＝「モバイルでボードを描くときに、下のパネルも一緒に動くので描きづらい」
+     ＝盤を触るとブラウザの【ページを動かす仕草】に取られていた。
+     ⚠️ 前は「モバイルで none にすると縦スクロールが止まる」として広い画面だけに掛けていたが、
+        いまの作りは【盤（上）＋パネル（下・内側で巻く）】の2段なので、
+        ページそのものは巻かなくてよい＝**どの幅でも盤は none でよい**。
+     ⭐ 盤＝指の動きは全部こちらで受け取る／パネル＝内側だけで巻く（端で親へ渡さない）。 */
+  #stage{touch-action:none}
+
+  #zoom{position:absolute;left:14px;bottom:12px;z-index:5;display:flex;align-items:center;gap:2px;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border:.5px solid var(--line);border-radius:11px;padding:3px;box-shadow:0 4px 14px rgba(28,28,30,.10)}
+  #zoom button{border:none;background:none;border-radius:8px;color:var(--fg);cursor:pointer;
+    font-family:inherit;font-size:11.5px;font-weight:500;padding:6px 9px;opacity:.75;transition:.14s}
+  #zoom button:hover{opacity:1;background:rgba(28,28,30,.09)}
+  #zoom .z{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg2);
+    min-width:52px;text-align:center;font-variant-numeric:tabular-nums;pointer-events:none}
+  #stat{position:absolute;left:0;right:0;bottom:0;padding:8px 14px;font-size:11px;color:var(--fg3);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;pointer-events:none;text-align:center;z-index:4}
+  #drop{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(244,242,236,.92);border:1px dashed rgba(28,28,30,.35);
+    font-size:13px;letter-spacing:.08em;color:var(--fg2);z-index:20;text-align:center;line-height:1.8}
+  body.dragging #drop{display:flex}
+
+  #panel{width:308px;flex:0 0 308px;height:100%;overflow-y:auto;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border-left:.5px solid var(--line);padding:16px 16px 80px}
+  #panel::-webkit-scrollbar{width:0}
+  h1{font-size:12px;font-weight:590;letter-spacing:.12em;color:var(--fg);margin-bottom:2px}
+  .sub{font-size:11.5px;color:var(--fg2);margin-bottom:16px;line-height:1.6}
+  .grp{margin-bottom:20px}
+  label.h{position:sticky;top:-16px;z-index:3;display:block;margin:0 -16px 8px;padding:7px 16px 6px;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border-bottom:.5px solid var(--line);font-size:11px;font-weight:590;letter-spacing:.04em;color:var(--fg2)}
+  .row{display:flex;align-items:center;gap:10px;padding:2px 0;margin-bottom:2px}
+  .row span.n{flex:1;font-size:11.5px;color:var(--fg)}
+  .row output{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg2);
+    width:46px;flex:0 0 46px;text-align:right;font-variant-numeric:tabular-nums}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;background:none;height:26px;
+    cursor:pointer;touch-action:pan-y}
+  input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--fill)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;
+    margin-top:-8px;border-radius:50%;background:var(--fg);border:none;
+    box-shadow:0 1px 3px rgba(28,28,30,.30), 0 0 0 .5px rgba(28,28,30,.05)}
+  .seg{display:flex;flex-wrap:wrap;background:var(--fill2);border-radius:9px;padding:2px;gap:2px;margin:6px 0 10px}
+  .seg button{flex:1 1 auto;min-width:0;border:none;border-radius:7px;background:none;
+    font-family:inherit;font-size:11.5px;font-weight:450;color:var(--fg);opacity:.72;
+    padding:6px 4px;cursor:pointer;transition:.16s;white-space:nowrap}
+  .seg button:hover{opacity:1;background:rgba(28,28,30,.07)}
+  .seg button.on{opacity:1;background:var(--capsule);font-weight:590;
+    box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.04)}
+  .btn{width:100%;background:var(--fill);border:none;border-radius:var(--r);color:var(--fg);
+    font-family:inherit;font-size:12px;font-weight:500;padding:11px 0;margin-top:6px;cursor:pointer;transition:.14s}
+  .btn:hover{background:rgba(28,28,30,.16)}
+  .btn:active{transform:scale(.985);opacity:.8}
+  .btn.solid{background:var(--fg);color:var(--paper);font-weight:590}
+  .btns2{display:flex;gap:6px}
+  .note{font-size:10.5px;line-height:1.65;color:var(--fg2);opacity:.75;margin-top:7px}
+  .note b{font-weight:590;opacity:1}
+  input[type=color]{width:100%;height:32px;padding:0;border:.5px solid var(--line);border-radius:var(--r);
+    background:transparent;cursor:pointer}
+  .chk{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 0;
+    font-size:11.5px;color:var(--fg);cursor:pointer;margin-bottom:5px}
+  .chk input[type=checkbox]{-webkit-appearance:none;appearance:none;flex:0 0 38px;width:38px;height:23px;
+    border-radius:23px;background:var(--fill);position:relative;transition:.2s;cursor:pointer;order:2}
+  .chk input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;
+    border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(28,28,30,.3);transition:.2s}
+  .chk input[type=checkbox]:checked{background:var(--fg)}
+  .chk input[type=checkbox]:checked::after{transform:translateX(15px)}
+  #meter{background:var(--fill2);border:none;border-radius:var(--r);color:var(--fg2);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:10.5px;line-height:1.7;padding:9px 11px;margin:8px 0;
+    white-space:pre-line}
+  .hide{display:none!important}
+
+  /* ⭐ 段の一覧＝iOS のリスト（累 RUI の版の一覧と同じ言い方） */
+  #bands{display:flex;flex-direction:column;gap:4px}
+  .bd{display:flex;align-items:center;gap:10px;background:var(--fill2);border:none;border-radius:var(--r);
+    padding:9px 10px;cursor:pointer;transition:.15s}
+  .bd:hover{background:rgba(28,28,30,.10)}
+  .bd.sel{background:var(--capsule);box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.06)}
+  .bd .sw{width:18px;height:18px;flex:0 0 18px;border-radius:5px;border:.5px solid rgba(28,28,30,.2)}
+  .bd .nm{flex:1;min-width:0;font-size:12px;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bd.sel .nm{color:var(--fg);font-weight:500}
+  .bd .up{width:20px;height:20px;flex:0 0 20px;border:0;background:transparent;color:var(--fg3);
+    cursor:pointer;font-size:9px;line-height:1;padding:0}
+  .bd .up:hover{color:var(--fg)}
+
+  @media (max-width:820px){
+    /* ⚠️ ページ自体は巻かない（2段の作り）。巻くのはパネルの中だけ＝
+       盤を触ってもページが揺れない（iOS の跳ね返りも止める） */
+    body{flex-direction:column;overflow:hidden;overscroll-behavior:none}
+    #panel{overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+    #stage{padding:0;min-height:50vh}
+    #panel{width:100%;flex:1 1 auto;height:auto;border-left:0;border-top:.5px solid var(--line);
+      padding:16px 14px calc(80px + env(safe-area-inset-bottom))}
+    label.h{top:-16px;margin:0 -14px 8px;padding:7px 14px 6px}
+    input[type=range]{height:40px}
+    input[type=range]::-webkit-slider-thumb{width:24px;height:24px;margin-top:-10px}
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     ⭐⭐ モバイル／iPad（2026-08-20）
+     ⚠️ 最初「この型はページごとスクロールするから掴み手は合わない」と考えたが【誤り】。
+        実測すると 盤(上) ＋ パネル(下・内側スクロール) の2段で、
+        body は1pxも動いていない ＝ 作字 SAKUJI と同じ形だった。
+     ⭐ だから高さを CSS 変数 --panelH ひとつにまとめれば、同じ掴み手がそのまま使える。
+     ⭐ このブロックと末尾の <script> を消せば完全に元へ戻る。
+     ══════════════════════════════════════════════════════════════ */
+  /* ⚠️ 盤の高さを 100vh から引き算しない ── iOS Safari の 100vh は実際の見え高さと
+     食い違い、パネルが画面の外へ押し出される。flex に余りを取らせる。 */
+  :root{ --panelH:38vh; --sheetGrip:22px }
+  @supports (height:1dvh){ :root{ --panelH:38dvh } }
+  @media (max-width:820px){
+    #stage{ flex:1 1 auto; min-height:0 }        /* ⭐ 余りは盤が取る */
+    #panel{ flex:none; height:var(--panelH);
+      padding:10px 12px calc(26px + env(safe-area-inset-bottom)) }
+
+    #sheetGrip{ position:fixed; left:0; right:0; z-index:60;
+      bottom:calc(var(--panelH) - 1px); height:var(--sheetGrip);
+      display:flex; align-items:center; justify-content:center;
+      touch-action:none; cursor:ns-resize; user-select:none; -webkit-user-select:none }
+    /* 🔴 2026-08-21 ── 印の色を currentColor（道具の字の色）にしていたので、
+       黒い盤の道具では【黒い印を黒い盤の上に 40% で描いて】いた＝見えない＝無いのと同じ。
+       ⭐ 白い丸＋黒い縁＋影にする。黒い盤でも白い紙でも絵の上でも必ず見える（iOS の作法と同じ）。 */
+    #sheetGrip::before{ content:""; width:44px; height:5px; border-radius:5px;
+      background:rgba(255,255,255,.94);
+      box-shadow:0 0 0 1px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.45); opacity:1 }
+    #sheetGrip.dragging::before{ background:#fff;
+      box-shadow:0 0 0 1px rgba(0,0,0,.6), 0 2px 7px rgba(0,0,0,.5) }
+
+    /* ⭐ 中を密着させる（詰めるのは隙間であって、つまみではない） */
+    label.h{ top:-10px; margin:0 -12px 6px; padding:6px 12px 5px }
+    .grp{ margin-bottom:12px }
+    .row{ padding:0; margin-bottom:1px }
+    .seg{ margin:4px 0 6px }
+    .btn{ margin-top:4px }
+    .note{ margin-top:5px; line-height:1.5 }
+    #meter,#pMeter,#gridMeter{ margin:6px 0; padding:7px 9px }
+
+    /* 🔴 セグメントのボタンが 28px しかなく指で狙えなかった（実測）。
+       ⚠️ ここは詰める側ではなく【広げる側】。密着とぶつかるが、押せない方が困る。 */
+    .seg button{ padding:9px 4px; min-height:36px }
+    .btn{ padding:10px 0; min-height:38px }
+    input[type=color]{ height:34px }
+    .chk input[type=checkbox]{ flex:0 0 44px; width:44px; height:26px }
+    .chk input[type=checkbox]::after{ width:22px; height:22px }
+    .chk input[type=checkbox]:checked::after{ transform:translateX(18px) }
+    /* ⭐ 他の道具と同じ大きさに揃える（この道具はもともと40px。伸びる分を抑えて36px） */
+    input[type=range]{ height:36px }
+    input[type=range]::-webkit-slider-thumb{ width:22px; height:22px; margin-top:-9px }
+    .lay .eye,.lay .up,.bd .up{ min-width:30px; min-height:30px }
+  }
+
+  /* ══ モバイルで勝手に寄らせない（no-auto-zoom-2026-08-22）══════════════════
+     🔴 木下＝2026-08-22「全道具のモバイル画面で言えることだが自動ズームはなしにしたい」
+     ⚠️ viewport の maximum-scale／user-scalable は【iOS に無視される】。
+     ⭐ iOS が寄るのは【文字を打つ欄の字が 16px 未満のとき】だけ。だから 16px にする。
+     ⚠️ つまみ(range)・色・チェックは寄らないので触らない。
+     🔴 class 付きの指定に【詳細度で負ける】ので !important を付ける（SAKUJI で実測した）。
+     ⚠️ @media の中だけ＝PC には1画素も効かない。このブロックを消せば完全に元へ戻る。 */
+  @media (max-width:760px), (pointer:coarse) and (max-width:1024px){
+    input:not([type=range]):not([type=color]):not([type=checkbox]):not([type=radio]):not([type=file]):not([type=button]),
+    select, textarea{ font-size:16px !important; }
+  }
+</style></head>
+<body>
+
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="zoom">
+    <button id="z_out">−</button><span class="z" id="z_val">100%</span><button id="z_in">＋</button>
+    <button id="z_fit">合わせる</button>
+  </div>
+  <div id="stat"></div>
+  <div id="drop">ここに落とす<br><span style="font-size:11px;opacity:.7">写真（JPEG / PNG / WebP）または SVG</span></div>
+</div>
+
+<div id="panel">
+  <h1>霧 KIRI</h1>
+  <div class="sub">濃さを<b>粒の数だけ</b>で作る。大きさは変えない ── だから網点にならず、吹き付けたように散る。</div>
+
+  <div class="grp">
+    <label class="h">元</label>
+    <div class="btns2">
+      <button class="btn" id="b_pick">写真を入れる</button>
+      <button class="btn" id="b_svg">SVG を入れる</button>
+    </div>
+    <input type="file" id="f_img" accept="image/*" hidden>
+    <input type="file" id="f_svg" accept=".svg,image/svg+xml" hidden>
+    <div class="btns2">
+      <button class="btn" id="b_demo">見本</button>
+      <button class="btn" id="b_clear">外す</button>
+    </div>
+    <div class="note">⭐ 落として入れてもいい。<b>SVG は形として</b>読む（線が細いと粒が乗らないので太らせる）</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">読み方</label>
+    <div class="seg" id="s_read">
+      <button data-v="tone" class="on">濃さも使う</button><button data-v="shape">形だけ</button>
+    </div>
+    <div class="row"><span class="n">しきい</span><output id="o_thr">128</output></div>
+    <input type="range" id="r_thr" min="1" max="254" value="128">
+    <div class="row"><span class="n">濃さのカーブ</span><output id="o_gam">1.00</output></div>
+    <input type="range" id="r_gam" min="30" max="300" value="100">
+    <div class="seg" id="s_inv">
+      <button data-v="0" class="on">暗い所を粒に</button><button data-v="1">明るい所を粒に</button>
+    </div>
+    <div class="note">⭐ <b>濃さも使う</b>＝写真の明暗がそのまま粒の密度になる／<b>形だけ</b>＝しきいで切った中を一様に撒く<br>
+      ⭐ <b>濃さのカーブ</b>＝下げると濃い所だけが残る（コントラストが立つ）</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">粒</label>
+    <div class="row"><span class="n">数</span><output id="o_n">60000</output></div>
+    <input type="range" id="r_n" min="2000" max="240000" step="1000" value="60000">
+    <div class="row"><span class="n">大きさ</span><output id="o_dot">1.30</output></div>
+    <input type="range" id="r_dot" min="20" max="600" value="130">
+    <div class="row"><span class="n">散り</span><output id="o_gap">2.40</output></div>
+    <input type="range" id="r_gap" min="40" max="900" value="240">
+    <div class="row"><span class="n">むら</span><output id="o_jit">25</output></div>
+    <input type="range" id="r_jit" min="0" max="100" value="25">
+    <div class="note">🔴 <b>散り</b>＝粒どうしの最小の間。<b>これが芯</b>で、近すぎる粒を捨てるからムラにならない<br>
+      ⭐ <b>むら</b>＝粒の大きさの揺れ（0 で全部同じ大きさ＝刷りものの粒に近い）</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">飛沫（ふきこぼれ）</label>
+    <div class="row"><span class="n">広がり</span><output id="o_mb">18</output></div>
+    <input type="range" id="r_mb" min="0" max="120" value="18">
+    <div class="row"><span class="n">量</span><output id="o_ma">0.45</output></div>
+    <input type="range" id="r_ma" min="0" max="100" value="45">
+    <div class="note">⭐ 形の<b>外へ抜ける粒</b>。広がり＝どこまで飛ぶか／量＝どれだけ飛ぶか<br>
+      ⚠️ <b>量 0 で出ない</b>（そのぶん粒は形の中に集まる）</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">版面</label>
+    <div class="seg" id="s_ratio">
+      <button data-v="auto" class="on">元のまま</button><button data-v="1:1">正方</button>
+      <button data-v="4:5">4:5</button><button data-v="3:4">3:4</button><button data-v="9:16">9:16</button>
+    </div>
+    <div class="row"><span class="n">長辺</span><output id="o_long">1400</output></div>
+    <input type="range" id="r_long" min="600" max="4096" step="2" value="1400">
+    <div class="row"><span class="n">余白</span><output id="o_pad">6</output></div>
+    <input type="range" id="r_pad" min="0" max="30" value="6">
+  </div>
+
+  <div class="grp">
+    <label class="h">色</label>
+    <div class="row"><span class="n">粒</span></div>
+    <input type="color" id="c_ink" value="#141414">
+    <div class="row"><span class="n">地</span></div>
+    <input type="color" id="c_bg" value="#f4f2ec">
+    <label class="chk">地を出さない（地なしで出す）<input type="checkbox" id="k_nobg"></label>
+  </div>
+
+  <div class="grp">
+    <label class="h">出す</label>
+    <div id="meter"></div>
+    <button class="btn solid" id="b_png">PNG を書き出す</button>
+    <div class="btns2">
+      <button class="btn" id="b_pngA">地なし PNG</button>
+      <button class="btn" id="b_svgout">SVG</button>
+    </div>
+    <div class="note">⚠️ SVG は粒1つが円1つ＝<b>数が多いと重い</b>（10万粒でおよそ 6MB）</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">種</label>
+    <div class="btns2">
+      <button class="btn" id="b_seed">振り直す</button>
+      <button class="btn" id="b_seedback">前の種に戻す</button>
+    </div>
+    <div class="note">⭐ <b>同じ種なら1粒も同じ</b>＝気に入った散り方は戻ってくる</div>
+  </div>
+</div>
+
+<div id="sheetGrip" aria-label="パネルの高さ" title="ドラッグで高さを変える／タップで段を切り替える"></div>
+
+<script>
+'use strict';
+const el = id => document.getElementById(id);
+const stage = el('stage'), cv = el('cv'), g = cv.getContext('2d');
+let statT = 0;
+function stat(s){ el('stat').textContent = s; clearTimeout(statT);
+  statT = setTimeout(() => el('stat').textContent = '', 4000); }
+
+/* ══⭐⭐ この道具の芯 ══════════════════════════════════════════
+   濃さを【粒の数】だけで作る。粒の大きさは変えない。
+   ⭐ 網（点TEN）との決定的な違い＝**格子に乗らない**。
+     格子に乗せると規則が見えて「網」になる。乗せないと「吹き付けた」になる。
+   🔴 ただの乱数で撒くと【ムラ】が出て汚い（同じ所に固まる・すかすかの穴が空く）。
+     ⭐ だから【近すぎる粒は捨てる】＝青色ノイズ。捨てる距離を濃さで変える
+       （濃い所は近くに置ける＝密／薄い所は離れる＝疎）。ここがこの道具の値打ち。
+   ⭐ 形の外は【ぼかした濃さ】で撒く＝輪郭から離れるほど落ちにくい＝飛沫になる。
+   ══════════════════════════════════════════════════════════ */
+const P = {
+  read:'tone', thr:128, gam:1.0, inv:0,
+  n:60000, dot:1.30, gap:2.40, jit:25,
+  mb:18, ma:0.45,
+  ratio:'auto', long:1400, pad:6,
+  ink:'#141414', bg:'#f4f2ec', nobg:false,
+  seed:1,
+};
+let SRC = null;            /* 元の絵（Image） */
+let SEEDS = [1];           /* 種の控え（戻れるように） */
+
+/* ── 種つきの乱数（同じ種なら1粒も同じ） ── */
+function rnd(seed){
+  let s = seed >>> 0;
+  return () => { s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+}
+
+/* ══ 版面 ══ */
+function sheet(){
+  const L = Math.max(64, Math.round(P.long));
+  let w = L, h = L;
+  if(P.ratio === 'auto'){
+    const iw = SRC ? (SRC.naturalWidth || SRC.width) : 4, ih = SRC ? (SRC.naturalHeight || SRC.height) : 5;
+    if(iw >= ih){ w = L; h = Math.round(L * ih / iw); } else { h = L; w = Math.round(L * iw / ih); }
+  }else{
+    const [a, b] = P.ratio.split(':').map(Number);
+    if(a >= b){ w = L; h = Math.round(L * b / a); } else { h = L; w = Math.round(L * a / b); }
+  }
+  return { w:Math.max(16, w), h:Math.max(16, h) };
+}
+
+/* ══ 濃さの地図を焼く（ここ1本＝写真も SVG も同じ道を通る）══ */
+let MAP = null;                       /* { core:Float32Array, blur:Float32Array, w, h } */
+let MAPKEY = '';
+function bakeMap(){
+  const { w, h } = sheet();
+  const key = [w, h, P.read, P.thr, P.gam, P.inv, P.pad, P.mb, SRC ? SRC.src.length : 0].join('|');
+  if(MAPKEY === key && MAP) return MAP;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const q = c.getContext('2d', { willReadFrequently:true });
+  q.fillStyle = '#fff'; q.fillRect(0, 0, w, h);
+  if(SRC){
+    /* ⭐ 余白のぶん内側に収める（はみ出させない） */
+    const m = P.pad / 100;
+    const iw = SRC.naturalWidth || SRC.width, ih = SRC.naturalHeight || SRC.height;
+    const k = Math.min(w * (1 - 2*m) / iw, h * (1 - 2*m) / ih);
+    q.drawImage(SRC, (w - iw*k)/2, (h - ih*k)/2, iw*k, ih*k);
+  }
+  const d = q.getImageData(0, 0, w, h).data;
+  const core = new Float32Array(w * h);
+  const thr = Math.max(1, Math.min(254, P.thr));
+  const inv = !!P.inv;
+  for(let i = 0, p = 0; i < d.length; i += 4, p++){
+    const lum = d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114;
+    /* ⚠️ 元の外（白いまま）は 0 になる＝形にならない */
+    let v;
+    if(P.read === 'shape'){
+      v = (inv ? (lum > thr) : (lum < thr)) ? 1 : 0;
+    }else{
+      v = inv ? (lum / 255) : (1 - lum / 255);
+      /* しきいより薄い所は捨てる＝地のノイズを拾わない */
+      const cut = inv ? (thr / 255) : (1 - thr / 255);
+      v = v <= 0 ? 0 : Math.max(0, (v - (1 - cut)) / Math.max(1e-6, cut));
+    }
+    core[p] = v > 0 ? Math.pow(Math.min(1, v), P.gam) : 0;
+  }
+  /* ⭐ 飛沫用＝ぼかした濃さ。⚠️ 読むのは別の canvas（形の canvas は読まれると描き方が変わる） */
+  const b = document.createElement('canvas'); b.width = w; b.height = h;
+  const bq = b.getContext('2d', { willReadFrequently:true });
+  bq.filter = 'blur(' + Math.max(0, P.mb) + 'px)';
+  bq.drawImage(c, 0, 0);
+  bq.filter = 'none';
+  const bd = bq.getImageData(0, 0, w, h).data;
+  const blur = new Float32Array(w * h);
+  for(let i = 0, p = 0; i < bd.length; i += 4, p++){
+    const lum = bd[i]*0.299 + bd[i+1]*0.587 + bd[i+2]*0.114;
+    let v = inv ? (lum / 255) : (1 - lum / 255);
+    blur[p] = Math.max(0, Math.min(1, v));
+  }
+  MAP = { core, blur, w, h }; MAPKEY = key;
+  return MAP;
+}
+
+/* ══⭐⭐ 撒く ── 近すぎる粒は捨てる（青色ノイズ）══ */
+let DOTS = null, DOTKEY = '';
+function scatter(){
+  const M = bakeMap();
+  const { w, h } = M;
+  /* 🔴 鍵に入っていない値は【触っても何も起きない】。
+     大きさ・むらは粒そのものの持ち物なので、ここに入れないと作り直されない
+     （実測：むらを 0 にしても前の揺れが残っていた）。 */
+  const key = [MAPKEY, P.n, P.gap, P.ma, P.seed, P.dot, P.jit].join('|');
+  if(DOTKEY === key && DOTS) return DOTS;
+  const N = Math.max(100, Math.round(P.n));
+  const R = rnd(P.seed);
+  const gapMax = Math.max(0.3, P.gap);
+  const cell = gapMax;
+  const gw = Math.max(1, Math.ceil(w / cell)), gh = Math.max(1, Math.ceil(h / cell));
+  const head = new Int32Array(gw * gh).fill(-1);
+  const next = new Int32Array(N).fill(-1);
+  const xs = new Float32Array(N), ys = new Float32Array(N), sz = new Float32Array(N);
+  let n = 0, tries = 0;
+  const maxTries = N * 30;
+  while(n < N && tries < maxTries){
+    tries++;
+    const x = R() * w, y = R() * h;
+    const p = ((y | 0) * w + (x | 0));
+    /* ⭐ 撒く確率＝形の濃さと、ぼかした濃さ×飛沫の量、の大きい方（式は1本） */
+    const d = Math.max(M.core[p], M.blur[p] * P.ma);
+    if(d <= 0.002 || R() > d) continue;
+    /* 🔴 近すぎる粒は捨てる。捨てる距離は【濃いほど小さい】＝濃い所は密になれる */
+    const r = gapMax * (1 - 0.88 * d);
+    const gx = (x / cell) | 0, gy = (y / cell) | 0;
+    let ok = true;
+    for(let j = Math.max(0, gy-1); j <= Math.min(gh-1, gy+1) && ok; j++){
+      for(let i = Math.max(0, gx-1); i <= Math.min(gw-1, gx+1); i++){
+        for(let k = head[j*gw+i]; k >= 0; k = next[k]){
+          const dx = xs[k] - x, dy = ys[k] - y;
+          if(dx*dx + dy*dy < r*r){ ok = false; break; }
+        }
+        if(!ok) break;
+      }
+    }
+    if(!ok) continue;
+    xs[n] = x; ys[n] = y;
+    /* ⭐ 大きさは【変えない】のが芯。むらは「揺れ」であって濃さではない */
+    sz[n] = P.dot * (1 + (R() - 0.5) * 2 * (P.jit / 100));
+    next[n] = head[gy*gw+gx]; head[gy*gw+gx] = n;
+    n++;
+  }
+  DOTS = { xs, ys, sz, n, w, h, tries }; DOTKEY = key;
+  return DOTS;
+}
+
+/* ══ 描く（数万個は文字列で一度に渡す）══ */
+function paint(ctx, W, H, transparent){
+  const D = scatter();
+  const k = W / D.w;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0, 0, W, H);
+  if(!transparent){ ctx.fillStyle = P.bg; ctx.fillRect(0, 0, W, H); }
+  let s = '';
+  for(let i = 0; i < D.n; i++){
+    const x = D.xs[i] * k, y = D.ys[i] * k, r = Math.max(0.12, D.sz[i] * k);
+    s += 'M' + x.toFixed(2) + ' ' + y.toFixed(2)
+       + 'm' + (-r).toFixed(2) + ' 0a' + r.toFixed(2) + ' ' + r.toFixed(2) + ' 0 1 0 ' + (r*2).toFixed(2) + ' 0'
+       + 'a' + r.toFixed(2) + ' ' + r.toFixed(2) + ' 0 1 0 ' + (-r*2).toFixed(2) + ' 0';
+  }
+  ctx.fillStyle = P.ink;
+  if(s) ctx.fill(new Path2D(s));
+  return D;
+}
+
+/* ══ 画面 ══ */
+const V = { x:0, y:0, z:1 };
+function render(){
+  const { w, h } = sheet();
+  if(cv.width !== w || cv.height !== h){ cv.width = w; cv.height = h; }
+  const t0 = performance.now();
+  const D = paint(g, w, h, P.nobg);
+  applyView();
+  const ms = Math.round(performance.now() - t0);
+  el('meter').textContent =
+    w + ' × ' + h + ' px\n' + D.n.toLocaleString() + ' 粒（狙い ' + Math.round(P.n).toLocaleString() + '）\n' + ms + ' ms';
+  if(D.n < P.n * 0.6 && SRC)
+    stat('撒ける所が足りない — 散りを下げるか、数を下げる');
+}
+function applyView(){
+  cv.style.transform = 'translate(' + V.x + 'px,' + V.y + 'px) scale(' + V.z + ')';
+  el('z_val').textContent = Math.round(V.z * 100) + '%';
+}
+function fitView(){
+  const r = stage.getBoundingClientRect();
+  const { w, h } = sheet();
+  V.z = Math.min((r.width - 60) / w, (r.height - 60) / h);
+  V.x = (r.width - w * V.z) / 2; V.y = (r.height - h * V.z) / 2;
+  applyView();
+}
+function zoomAt(px, py, f){
+  const z = Math.max(0.05, Math.min(12, V.z * f));
+  V.x = px - (px - V.x) * (z / V.z); V.y = py - (py - V.y) * (z / V.z); V.z = z; applyView();
+}
+el('z_in').onclick  = () => { const r = stage.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, 1.25); };
+el('z_out').onclick = () => { const r = stage.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, 1/1.25); };
+el('z_fit').onclick = fitView;
+{ /* 掴んで動かす・つまんで寄る（他の道具と同じ） */
+  let pan = null, pinch = null; const pts = new Map();
+  stage.addEventListener('pointerdown', e => {
+    pts.set(e.pointerId, e);
+    if(pts.size === 2){ const [a,b] = [...pts.values()];
+      pinch = { d: Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY) }; pan = null; return; }
+    pan = { x:e.clientX, y:e.clientY, vx:V.x, vy:V.y }; stage.classList.add('panning');
+  });
+  stage.addEventListener('pointermove', e => {
+    if(!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, e);
+    if(pinch && pts.size === 2){
+      const [a,b] = [...pts.values()];
+      const d = Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
+      const r = stage.getBoundingClientRect();
+      zoomAt((a.clientX+b.clientX)/2 - r.left, (a.clientY+b.clientY)/2 - r.top, d / (pinch.d || d));
+      pinch.d = d; return;
+    }
+    if(pan){ V.x = pan.vx + (e.clientX - pan.x); V.y = pan.vy + (e.clientY - pan.y); applyView(); }
+  });
+  const up = e => { pts.delete(e.pointerId); if(pts.size < 2) pinch = null;
+                    if(!pts.size){ pan = null; stage.classList.remove('panning'); } };
+  stage.addEventListener('pointerup', up);
+  stage.addEventListener('pointercancel', up);
+  stage.addEventListener('wheel', e => { e.preventDefault();
+    const r = stage.getBoundingClientRect();
+    zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.08 : 1/1.08); }, { passive:false });
+}
+
+/* ══ 元を受ける（写真も SVG も、落としても、同じ道）══ */
+function takeFile(f){
+  if(!f) return;
+  if(/heic|heif/i.test(f.type || '') || /\.(heic|heif)$/i.test(f.name || '')){
+    stat('この写真は HEIC（iPhone の形式）── Chrome では読めません。JPEG に変換して入れてください');
+    return;
+  }
+  const svg = /svg/i.test(f.type || '') || /\.svg$/i.test(f.name || '');
+  if(!svg && !/^image\//.test(f.type)){ stat('これは画像ではない'); return; }
+  const rd = new FileReader();
+  rd.onload = () => {
+    const img = new Image();
+    img.onload = () => { SRC = img; MAPKEY = ''; DOTKEY = '';
+      stat((img.naturalWidth || img.width) + '×' + (img.naturalHeight || img.height) + ' を読んだ');
+      render(); fitView(); };
+    img.onerror = () => stat('これは読めなかった');
+    if(svg){
+      /* ⚠️ 日本語や記号が入るので、btoa の前に UTF-8 へ直す（そのままだと落ちる） */
+      img.src = 'data:image/svg+xml;base64,' +
+        btoa(String.fromCharCode(...new TextEncoder().encode(String(rd.result || ''))));
+    }else{
+      img.src = rd.result;
+    }
+  };
+  if(svg) rd.readAsText(f); else rd.readAsDataURL(f);
+}
+el('b_pick').onclick = () => el('f_img').click();
+el('b_svg').onclick  = () => el('f_svg').click();
+el('f_img').addEventListener('change', e => { takeFile(e.target.files[0]); e.target.value = ''; });
+el('f_svg').addEventListener('change', e => { takeFile(e.target.files[0]); e.target.value = ''; });
+el('b_clear').onclick = () => { SRC = null; MAPKEY = ''; DOTKEY = ''; stat('外した'); render(); };
+el('b_demo').onclick = () => {
+  const img = new Image();
+  img.onload = () => { SRC = img; MAPKEY = ''; DOTKEY = ''; stat('見本を読んだ（自分の写真を入れてもいい）'); render(); fitView(); };
+  img.onerror = () => stat('見本が読めなかった（写真を入れてください）');
+  img.src = '/assets/img/about-kv-poster.webp';
+};
+['dragenter','dragover'].forEach(t => addEventListener(t, e => {
+  e.preventDefault(); document.body.classList.add('dragging'); }));
+['dragleave','drop'].forEach(t => addEventListener(t, e => {
+  if(t === 'dragleave' && e.relatedTarget) return;
+  document.body.classList.remove('dragging'); }));
+addEventListener('drop', e => { e.preventDefault(); takeFile(e.dataTransfer.files[0]); });
+
+/* ══ つまみ（表1つで回す＝足すときはここに1行）══ */
+const RANGES = [
+  ['r_thr','thr','o_thr', v => v],
+  ['r_gam','gam','o_gam', v => (v/100).toFixed(2), v => v/100],
+  ['r_n','n','o_n', v => (+v).toLocaleString()],
+  ['r_dot','dot','o_dot', v => (v/100).toFixed(2), v => v/100],
+  ['r_gap','gap','o_gap', v => (v/100).toFixed(2), v => v/100],
+  ['r_jit','jit','o_jit', v => v],
+  ['r_mb','mb','o_mb', v => v],
+  ['r_ma','ma','o_ma', v => (v/100).toFixed(2), v => v/100],
+  ['r_long','long','o_long', v => v],
+  ['r_pad','pad','o_pad', v => v],
+];
+RANGES.forEach(([id, k, out, fmt, conv]) => {
+  const r = el(id); if(!r) return;
+  const sync = () => { P[k] = conv ? conv(+r.value) : +r.value;
+    const o = el(out); if(o) o.value = fmt ? fmt(+r.value) : r.value; };
+  r.addEventListener('input', () => { sync(); render(); });
+  sync();
+});
+function seg(id, k, after){
+  document.querySelectorAll('#' + id + ' button').forEach(b => b.onclick = () => {
+    P[k] = isNaN(+b.dataset.v) ? b.dataset.v : +b.dataset.v;
+    document.querySelectorAll('#' + id + ' button').forEach(x => x.classList.toggle('on', x === b));
+    if(after) after();
+    MAPKEY = ''; render();
+  });
+}
+seg('s_read', 'read', () => { el('r_gam').parentElement.classList.toggle('hide', P.read === 'shape'); });
+seg('s_inv', 'inv');
+seg('s_ratio', 'ratio');
+el('c_ink').addEventListener('input', e => { P.ink = e.target.value; render(); });
+el('c_bg').addEventListener('input',  e => { P.bg  = e.target.value; render(); });
+el('k_nobg').addEventListener('change', e => { P.nobg = e.target.checked; render(); });
+
+/* ⭐ 種＝同じ種なら1粒も同じ。振り直したら控えておく（戻ってこられる） */
+el('b_seed').onclick = () => {
+  P.seed = (Math.random() * 4294967296) >>> 0;
+  SEEDS.push(P.seed); if(SEEDS.length > 40) SEEDS.shift();
+  render(); stat('振り直した（種 ' + P.seed + '）');
+};
+el('b_seedback').onclick = () => {
+  if(SEEDS.length < 2){ stat('戻れる種がない'); return; }
+  SEEDS.pop(); P.seed = SEEDS[SEEDS.length - 1];
+  render(); stat('前の種に戻した（種 ' + P.seed + '）');
+};
+
+/* ══ 出す ══ */
+function dl(blob, name){
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function shoot(transparent){
+  const { w, h } = sheet();
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  paint(c.getContext('2d'), w, h, transparent);
+  return c;
+}
+el('b_png').onclick  = () => shoot(P.nobg).toBlob(b => { dl(b, 'kiri_' + Date.now() + '.png'); stat('PNG を出した'); });
+el('b_pngA').onclick = () => shoot(true).toBlob(b => { dl(b, 'kiri_nobg_' + Date.now() + '.png'); stat('地なし PNG を出した'); });
+el('b_svgout').onclick = () => {
+  const D = scatter();
+  const { w, h } = sheet();
+  let s = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">';
+  if(!P.nobg) s += '<rect width="' + w + '" height="' + h + '" fill="' + P.bg + '"/>';
+  s += '<g fill="' + P.ink + '">';
+  for(let i = 0; i < D.n; i++)
+    s += '<circle cx="' + D.xs[i].toFixed(1) + '" cy="' + D.ys[i].toFixed(1) + '" r="' + Math.max(0.12, D.sz[i]).toFixed(2) + '"/>';
+  s += '</g></svg>';
+  dl(new Blob([s], { type:'image/svg+xml' }), 'kiri_' + Date.now() + '.svg');
+  stat('SVG を出した（' + D.n.toLocaleString() + ' 粒・' + Math.round(s.length/1024) + 'KB）');
+};
+
+/* ══ 立ち上げ ══ */
+addEventListener('resize', () => { applyView(); });
+render(); fitView();
+stat('写真か SVG を入れてください（見本でも試せます）');
+</script>
+
+<script>
+(function(){
+  'use strict';
+  const KEY = location.pathname.replace(/\W+/g,'_') + '.panelH.v1';
+  const SNAP = [26, 42, 78];
+  let grip = null;
+
+  const panel = () => document.getElementById('panel');
+  /* ⭐ 下段になっているか＝【画面いっぱいの幅で、下端が画面の底にある】。
+     ⚠️ position:fixed で判定してはいけない。道具によっては縦積み(static)のまま
+        同じ2段レイアウトになっている（2026-08-20 実測。fixed で見ていて取りこぼした）。 */
+  const isSheet = () => {
+    const p = panel(); if(!p) return false;
+    const b = p.getBoundingClientRect();
+    return b.width >= innerWidth - 3
+        && b.bottom >= innerHeight - 3
+        && b.top > 8;                       /* 上に盤がある＝全画面パネルではない */
+  };
+  /* ⭐ 端で止める。⚠️ 横向き（高さ500px未満）で目一杯引くと盤が潰れる */
+  const clamp = v => Math.max(18, Math.min(innerHeight < 500 ? 62 : 86, v));
+  const setH = vh => {
+    document.documentElement.style.setProperty('--panelH', clamp(vh).toFixed(1) + 'vh');
+    try{ window.dispatchEvent(new Event('resize')); }catch(_){}
+  };
+  const curH = () => {
+    const p = panel(); if(!p) return 0;
+    return p.getBoundingClientRect().height / innerHeight * 100;
+  };
+
+  function build(){
+    if(grip) return;
+    grip = document.createElement('div');
+    grip.id = 'sheetGrip';
+    grip.title = 'ドラッグで高さを変える／タップで段を切り替える';
+    document.body.appendChild(grip);
+    let drag = null;
+    grip.addEventListener('pointerdown', e => {
+      e.preventDefault(); grip.setPointerCapture(e.pointerId);
+      grip.classList.add('dragging');
+      drag = { y:e.clientY, h:curH(), moved:false };
+    });
+    grip.addEventListener('pointermove', e => {
+      if(!drag) return;
+      const d = (drag.y - e.clientY) / innerHeight * 100;
+      if(Math.abs(d) > 1) drag.moved = true;
+      setH(drag.h + d);
+    });
+    const end = () => {
+      if(!drag) return;
+      grip.classList.remove('dragging');
+      if(!drag.moved){
+        /* ⚠️ 上限で止まっている段を指しても何も起きない＝無反応に見える。
+           実際に届く高さかで判断し、届かないなら一番小さい段へ折り返す。 */
+        const h = curH();
+        const next = SNAP.find(v => clamp(v) > h + 2);
+        setH(next === undefined ? SNAP[0] : next);
+      }
+      try{ localStorage.setItem(KEY, String(Math.round(curH()*10)/10)); }catch(_){}
+      drag = null;
+    };
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
+  }
+  function drop(){
+    if(!grip) return;
+    grip.remove(); grip = null;
+    document.documentElement.style.removeProperty('--panelH');
+  }
+  function sync(){
+    if(isSheet()){
+      build();
+      let v = null; try{ v = parseFloat(localStorage.getItem(KEY)); }catch(_){}
+      if(v > 0) setH(v);
+    }else drop();
+  }
+  addEventListener('resize', () => { if(!grip) sync(); });
+  addEventListener('orientationchange', () => setTimeout(sync, 200));
+  if(document.readyState === 'loading') addEventListener('DOMContentLoaded', sync);
+  else sync();
+})();
+</script>
+</body>
+</html>
