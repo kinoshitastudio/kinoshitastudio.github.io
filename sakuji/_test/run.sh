@@ -73,6 +73,14 @@ echo
 echo "── 入れる（画像・SVG のドロップダウン）"
 node "$(cd "$(dirname "$0")" && pwd)/addmenu.mjs" || ADDNG=1
 
+echo
+echo "── 枠を外したら升目も出さない"
+node "$(cd "$(dirname "$0")" && pwd)/gridoff.mjs" || GRIDNG=1
+echo
+echo "── 見出しの帯（両方の明るさで測る）"
+node "$(cd "$(dirname "$0")" && pwd)/head.mjs" || HEADNG=1
+
 if [ "${FEELNG:-0}" = "1" ] || [ "${FEEL2NG:-0}" = "1" ] \
-   || [ "${PVNG:-0}" = "1" ] || [ "${ADDNG:-0}" = "1" ]; then exit 1; fi
+   || [ "${PVNG:-0}" = "1" ] || [ "${ADDNG:-0}" = "1" ] \
+   || [ "${GRIDNG:-0}" = "1" ] || [ "${HEADNG:-0}" = "1" ]; then exit 1; fi
 exit $RC
