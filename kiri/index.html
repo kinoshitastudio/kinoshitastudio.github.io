@@ -10,9 +10,9 @@
 <meta property="og:title" content="霧 KIRI — 粒の数だけで濃さを作る / 木下スタジオ">
 <meta property="og:description" content="濃さは粒の【数】で作る。大きさは変えない ── だから吹き付けたように散る。">
 <meta property="og:url" content="https://kinoshita.studio/kiri/">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<!-- ⭐ この道具は【字を描かない】＝web フォントは要らない（2026-08-28 木下「表示まで時間がかかる」）。
+     5ウェイトぶん取りに行くのをやめる＝立ち上がりが速くなる。
+     ⚠️ 画面の字は -apple-system / Hiragino Sans（端末にあるもの）で出る。 -->
 <style>
   /* ⚠️ 外枠（並び方・見た目）は 累 RUI / 点 TEN と同じ＝道具ごとに作りを変えない */
   :root{
@@ -200,6 +200,23 @@
   @media (max-width:760px), (pointer:coarse) and (max-width:1024px){
     input:not([type=range]):not([type=color]):not([type=checkbox]):not([type=radio]):not([type=file]):not([type=button]),
     select, textarea{ font-size:16px !important; }
+  }
+
+  /* ══⭐⭐ モバイルの重さ（2026-08-28 木下「スクロールするとスライダーがもさ」）══
+     🔴 パネルと見出しに backdrop-filter: blur(30px) が掛かっている。
+        巻いている間、**背後をぼかし直し続ける**ので iOS では毎コマ重い。
+        （見出しは sticky なので、巻くたびに何枚も掛かる）
+     ⭐ 指の端末では【透かすのをやめて塗る】＝見た目はほぼ同じで、巻きが軽くなる。
+     ⚠️ PC には1画素も効かない（このブロックを消せば完全に元へ戻る）。 */
+  @media (max-width:820px), (pointer:coarse) and (max-width:1024px){
+    #panel, label.h, #zoom{
+      -webkit-backdrop-filter:none !important; backdrop-filter:none !important;
+    }
+    #panel{ background:var(--paper) }
+    label.h{ background:var(--paper) }
+    #zoom{ background:var(--paper) }
+    /* ⭐ 巻きを親へ渡さない＋滑らかに（iOS の作法） */
+    #panel{ overscroll-behavior:contain; -webkit-overflow-scrolling:touch }
   }
 </style></head>
 <body>
@@ -408,7 +425,9 @@ let MAP = null;                       /* { core:Float32Array, blur:Float32Array,
 let MAPKEY = '';
 function bakeMap(){
   const { w, h } = sheet();
-  const key = [w, h, P.read, P.thr, P.gam, P.inv, P.pad, P.mb, P.kdir, P.kd, P.khi,
+  /* ⚠️ 粗さも鍵に入れる＝離した瞬間に必ず焼き直される（粗いまま残らない） */
+  const MB = COARSE ? Math.min(P.mb, 12) : P.mb;
+  const key = [w, h, P.read, P.thr, P.gam, P.inv, P.pad, MB, P.kdir, P.kd, P.khi, COARSE,
                SRC ? SRC.src.length : 0].join('|');
   if(MAPKEY === key && MAP) return MAP;
   const c = document.createElement('canvas'); c.width = w; c.height = h;
@@ -454,7 +473,7 @@ function bakeMap(){
     const bq = b.getContext('2d', { willReadFrequently:true });
     /* ⚠️ ずらすと隅が空く＝地（白）で埋めてから描く（空いた所が真っ黒な霧にならない） */
     bq.fillStyle = '#fff'; bq.fillRect(0, 0, w, h);
-    bq.filter = 'blur(' + Math.max(0, P.mb) + 'px)';
+    bq.filter = 'blur(' + Math.max(0, MB) + 'px)';
     bq.drawImage(c, dx, dy);
     bq.filter = 'none';
     const bd = bq.getImageData(0, 0, w, h).data;
@@ -484,9 +503,10 @@ function scatter(){
   /* 🔴 鍵に入っていない値は【触っても何も起きない】。
      大きさ・むらは粒そのものの持ち物なので、ここに入れないと作り直されない
      （実測：むらを 0 にしても前の揺れが残っていた）。 */
-  const key = [MAPKEY, P.n, P.gap, P.ma, P.seed, P.dot, P.jit, P.mdot].join('|');
+  const key = [MAPKEY, P.n, P.gap, P.ma, P.seed, P.dot, P.jit, P.mdot, COARSE].join('|');
   if(DOTKEY === key && DOTS) return DOTS;
-  const N = Math.max(100, Math.round(P.n));
+  /* ⭐ 触っている間は粒を減らす（散り方の見え方は同じ＝どこが濃いかは分かる） */
+  const N = Math.max(100, Math.round(COARSE ? Math.min(P.n, 9000) : P.n));
   const R = rnd(P.seed);
   const gapMax = Math.max(0.3, P.gap);
   const cell = gapMax;
@@ -549,6 +569,23 @@ function paint(ctx, W, H, transparent){
   ctx.fillStyle = P.ink;
   if(s) ctx.fill(new Path2D(s));
   return D;
+}
+
+/* ══⭐⭐ 触っている間は粗く（2026-08-28 木下「モバイルスライダーめちゃくちゃ重い」）══
+   🔴 つまみ1回ごとに【地図を焼き直し（ぼかし2枚）＋粒を撒き直し】ていた＝実測 81ms／回。
+      指で滑らせると1秒に何十回も来るので詰まる（iPhone はこの3〜5倍）。
+   ⭐ 作法は他の道具と同じ＝**触っている間は粗く、離したら元の細かさで焼き直す**。
+   ⭐ さらに【1コマに1回だけ】描く（連続で来た分は捨てる）＝間引き。
+   ⚠️ 粗いのは【触っている間だけ】＝出す絵は1画素も変わらない。 */
+let COARSE = 0, coarseT = 0, rafId = 0;
+function renderSoon(){
+  if(rafId) return;
+  rafId = requestAnimationFrame(() => { rafId = 0; render(); });
+}
+function touching(){
+  COARSE = 1;
+  clearTimeout(coarseT);
+  coarseT = setTimeout(() => { COARSE = 0; render(); }, 240);
 }
 
 /* ══ 画面 ══ */
@@ -703,7 +740,7 @@ RANGES.forEach(([id, k, out, fmt, conv]) => {
   const r = el(id); if(!r) return;
   const sync = () => { P[k] = conv ? conv(+r.value) : +r.value;
     const o = el(out); if(o) o.value = fmt ? fmt(+r.value) : r.value; };
-  r.addEventListener('input', () => { sync(); render(); });
+  r.addEventListener('input', () => { sync(); touching(); renderSoon(); });
   sync();
 });
 function seg(id, k, after){
