@@ -268,6 +268,17 @@
     <b>刻みの数</b>＝細く切る本数（少ないほど1枚が太い）</div>
 
   <h2>刷る（1枚に1回のグラデ）</h2>
+  <!-- ══⭐⭐ 白黒にする（2026-08-28 木下「タイポグラフィやロゴとして扱う場合、
+       白黒や黒白などで作成する必要がある。グラデーションという概念はなく」）══
+       ⭐ 色より先に置く＝【階調を持つかどうか】を先に決める、が正しい順番。 -->
+  <div class="seg" id="bw"><button data-v="0" class="on">グラデ</button><button data-v="1">白黒</button></div>
+  <div class="row" id="rowBwT" style="display:none"><label>しきい</label>
+    <input type="range" id="bwT" min="0" max="100" step="1" value="50"><span class="val"></span></div>
+  <div class="note" id="noteBw" style="display:none">⭐⭐ 濃さを<b>面積</b>が受け持つ形に変わる。
+    グラデを<b>しきい値で切る</b>ので、帯だった所に<b>硬い縁</b>が出る ── これがロゴの形<br>
+    ⭐ <b>しきい</b>＝どこで切るか＝<b>黒の面積</b>が決まる（0で全部が地の色／100で全部が反対の色）<br>
+    ⚠️ 2色は<b>地の色から作る</b>＝地を暗くすれば白、明るくすれば黒。地を変えても消えない<br>
+    ⚠️ 色・色数・黒の位置は<b>そのまま残る</b>（切る前の形が変わらない＝戻せば元どおり）</div>
   <div class="seg" id="pal" style="flex-wrap:wrap">
     <button data-v="0">紫</button><button data-v="1">金</button><button data-v="2">銀</button>
     <button data-v="3">熱</button><button data-v="4">赤青</button><button data-v="5">墨</button>
@@ -479,7 +490,7 @@ function inherit(s, src){
 /* 面のもの＝地だけ */
 /* ⭐ speed の既定は【動く値】（HTML の value="30" と必ず揃える）＝「流す」が数字を書き換えない
    ⭐ grain＝「刻みも動かす」の振れ。0 で今までどおり（1画素も変わらない） */
-const P = { bg:'#0a0a0a', speed:30, fps:30, grain:0 };
+const P = { bg:'#0a0a0a', speed:30, fps:30, grain:0, bw:0, bwT:50 };
 
 /* ⚠️ RECTS と noBgOnce は build()/draw() が触る。UI の初期化より【前】に宣言する
    ── let は巻き上がらないので、後ろに置くと初期化のときに TDZ で静かに死ぬ（2026-08-07 に踏んだ）。 */
@@ -1173,15 +1184,43 @@ function colAt(sh, t){
       【ガクッと変わる】（2026-08-08 木下）。⭐ 1周してつながる【環】として扱う
       ＝黒の位置と黒の中心の距離を、環の上の最短距離で測る。
    ⭐ 板でも等高線でも【この式ひとつ】を使う（式は1本・規則は1つ）。 */
+/* ══⭐⭐ 白黒にする（2026-08-28 木下）══
+   木下「タイポグラフィやロゴとして扱う場合、白黒や黒白などで作成する必要がある。
+        グラデーションという概念はなく。その場合どんな形になるか見てみたい」
+   🔴 「色を灰色にする」ではない。ロゴに階調は無い＝【2値】にする。
+     ⭐ 濃さは【面積】が受け持つ ── グラデを しきい値で切ると、
+       板やマスの中で「黒が届いている所／届いていない所」の境目が出て、
+       グラデだった帯が【硬い縁を持つ形】になる。これがロゴの形。
+   ⭐⭐ 色の出どころは inkAtT の1本だけ。ここを通せば
+     マスも板もタイルも、PNG も SVG も 動画も、全部が同じ2値になる（2つ持たない）。
+   ⚠️ しきいは「どこで切るか」＝黒の面積が決まる。0 で全部白／100 で全部黒。
+   ⚠️ 切ったあとの2色は【地の色から作る】。暗い地なら白い字、明るい地なら黒い字
+     ＝地を変えても消えない（既定どうしがぶつからない）。 */
+function bwPair(){
+  const h = (P.bg || '#000').replace('#','');
+  const n = parseInt(h.length === 3 ? h.split('').map(c=>c+c).join('') : h, 16) || 0;
+  const L = ((n>>16&255)*0.299 + (n>>8&255)*0.587 + (n&255)*0.114) / 255;
+  return L < 0.5 ? { on:'#ffffff', off:'#000000' } : { on:'#000000', off:'#ffffff' };
+}
+function lumHex(hx){
+  const h = String(hx).replace('#','');
+  const n = parseInt(h.length === 3 ? h.split('').map(c=>c+c).join('') : h, 16) || 0;
+  return ((n>>16&255)*0.299 + (n>>8&255)*0.587 + (n&255)*0.114) / 255;
+}
 function inkAtT(sh, t){
   t = t - Math.floor(t);                                   // 0..1 に畳む
   const base = colAt(sh, t);
   const kw = sh.kw / 200;
-  if(kw <= 0.002) return base;
-  const kpos = sh.kpos / 100;
-  let dk = Math.abs(((t - kpos + 0.5) % 1 + 1) % 1 - 0.5);  // 環の上の最短距離
-  if(dk >= kw) return base;
-  return mixHex(base, sh.kcol, 1 - dk / kw);               // 中心ほど黒
+  let col = base;
+  if(kw > 0.002){
+    const kpos = sh.kpos / 100;
+    const dk = Math.abs(((t - kpos + 0.5) % 1 + 1) % 1 - 0.5);  // 環の上の最短距離
+    if(dk < kw) col = mixHex(base, sh.kcol, 1 - dk / kw);       // 中心ほど黒
+  }
+  if(!P.bw) return col;
+  /* ⭐ ここで初めて2値にする＝グラデの形はそのまま、階調だけ落とす */
+  const pr = bwPair();
+  return (lumHex(col) < (P.bwT/100)) ? pr.on : pr.off;
 }
 
 /* ⭐ ずらす ── 板ごとに黒の位置を食い違わせる。
@@ -1622,7 +1661,7 @@ function draw(){
 
 /* ── UI ── */
 /* ⭐ つまみは【選んでいる版】に書く。P には入れない（P に入れると重ねたとき全部同じになる） */
-const FACE_KEYS = ['speed','fps','grain','gMar','gGrid'];  // 面のつまみ＝どの版にも同じ（速さ・刻み・ガイド）
+const FACE_KEYS = ['speed','fps','grain','gMar','gGrid','bwT'];  // 面のつまみ＝どの版にも同じ（速さ・刻み・ガイド・白黒のしきい）
 /* ══⭐⭐ 数字を打ち込んで直せるようにする（2026-08-27）
    木下＝「パネルの数字をテキストで入力して調整できるようにもして」
 
@@ -1763,6 +1802,18 @@ document.querySelectorAll('#panel input[type=range]').forEach(r=>{
   r.addEventListener('input', sync);
   sync();
 });
+/* ⭐ 白黒の切替。⚠️ 生のチェックボックスは家の作りに合わない（他は全部 .seg）。
+   ⚠️ しきいのつまみは白黒のときだけ出す（触れるのに効かない物を出さない）。 */
+(function(){
+  const box = document.getElementById('bw');
+  const show = () => ['rowBwT','noteBw'].forEach(id => {
+    const e = document.getElementById(id); if(e) e.style.display = P.bw ? '' : 'none'; });
+  box.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    box.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    P.bw = +b.dataset.v; show(); draw();
+  }));
+  show();
+})();
 document.querySelectorAll('#look button').forEach(b=>{
   b.addEventListener('click', ()=>{
     document.querySelectorAll('#look button').forEach(x=>x.classList.remove('on'));
@@ -1783,6 +1834,10 @@ for(let i = 0; i < 10; i++){
   el.addEventListener('input', ()=> document.querySelectorAll('#pal button').forEach(x=>x.classList.remove('on')));
 }
 document.querySelectorAll('#panel .seg').forEach(seg=>{
+  /* 🔴 白黒(bw)は【面のつまみ】＝P に持つ。ここに任せると版ごとの値 S_() に書かれ、
+        さらに下の同期が sh['bw'] を見て【印を毎回消す】（貼HARI で同じ形を踏んだ）。
+        専用に繋いであるので、ここでは触らない。 */
+  if(seg.id === 'bw') return;
   if(seg.id === 'pal' || seg.id === 'look') return;   // プリセットと型は上で専用に繋いだ
   seg.querySelectorAll('button').forEach(b=> b.addEventListener('click', ()=>{
     seg.querySelectorAll('button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
@@ -1891,6 +1946,12 @@ function syncUI(){
       const v = r.parentElement.querySelector('.val'); if(v) v.textContent = r.value; } });
   document.querySelectorAll('#panel .seg').forEach(seg=>{
     if(seg.id === 'pal') return;
+    /* 🔴 bw は面のつまみ（P.bw）＝ sh には無い。ここに任せると必ず false になって
+          【選択中の印が毎回消える】。面の値で付け直す。 */
+    if(seg.id === 'bw'){
+      seg.querySelectorAll('button').forEach(b=> b.classList.toggle('on', +b.dataset.v === (P.bw ? 1 : 0)));
+      return;
+    }
     seg.querySelectorAll('button').forEach(b=> b.classList.toggle('on', +b.dataset.v === sh[seg.id]));
   });
   for(let i=0;i<10;i++){ const el=document.getElementById('k'+i); if(el) el.value = sh.cols[i]; }
