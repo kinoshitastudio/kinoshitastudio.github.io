@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>隙 SUKI — 粒を太らせて、残った隙間を絵にする / 木下スタジオ</title>
+<meta name="description" content="網点の粒を隣と重なるまで太らせる道具。粒どうしが溶け合って面になり、残った【隙間】が星の形で絵になる。格子の角度でモアレが出る。写真・SVG・字から作れて PNG・SVG・mp4 で出せる。木下スタジオ（木下貴博 / 滋賀・琵琶湖）制作。">
+<link rel="canonical" href="https://kinoshita.studio/suki/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="隙 SUKI — 粒を太らせて、残った隙間を絵にする / 木下スタジオ">
+<meta property="og:description" content="粒が主役でなくなる。残った隙間の方が絵になる。">
+<meta property="og:url" content="https://kinoshita.studio/suki/">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  /* ⚠️ 外枠（並び方・見た目）は 累 RUI / 点 TEN と同じ＝道具ごとに作りを変えない */
+  :root{
+    --bg:#e8e4dc; --paper:#f4f2ec; --line:rgba(28,28,30,.14);
+    --fg:#1c1c1e; --fg2:rgba(28,28,30,.62); --fg3:rgba(28,28,30,.40);
+    --fill:rgba(28,28,30,.10); --fill2:rgba(28,28,30,.07);
+    --capsule:#fffdf8; --glass:rgba(246,244,238,.84); --r:10px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans","Zen Kaku Gothic New",sans-serif;
+    font-weight:400;overflow:hidden;display:flex;align-items:stretch}
+
+  /* ⭐ 盤＝窓。中の紙は動かさず、見る側だけ transform で動かす（出る絵は1画素も変わらない） */
+  #stage{flex:1;position:relative;min-width:0;overflow:hidden;cursor:crosshair}
+  #stage.panning{cursor:grabbing}
+  /* ⚠️ この道具は【黒地】が既定なので、盤の白い演出が絵に被って見える。
+     ⭐ 弱める（作品には元から1画素も入らない。見え方だけ）。 */
+  #stage::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
+    background:radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,.16), transparent 60%)}
+  canvas#cv{position:absolute;left:0;top:0;transform-origin:0 0;
+    box-shadow:0 14px 44px rgba(28,28,30,.18);display:block}
+  /* ⭐ 選んだ印は【刷る絵に混ぜない】。別の板を同じ倍率で重ねる
+     （混ぜると PNG にも選択枠が出てしまう） */
+  canvas#ov{position:absolute;left:0;top:0;transform-origin:0 0;display:block;
+    pointer-events:none;z-index:2}
+  /* 🔴🔴 2026-08-25 木下＝「モバイルでボードを描くときに、下のパネルも一緒に動くので描きづらい」
+     ＝盤を触るとブラウザの【ページを動かす仕草】に取られていた。
+     ⚠️ 前は「モバイルで none にすると縦スクロールが止まる」として広い画面だけに掛けていたが、
+        いまの作りは【盤（上）＋パネル（下・内側で巻く）】の2段なので、
+        ページそのものは巻かなくてよい＝**どの幅でも盤は none でよい**。
+     ⭐ 盤＝指の動きは全部こちらで受け取る／パネル＝内側だけで巻く（端で親へ渡さない）。 */
+  #stage{touch-action:none}
+
+  #zoom{position:absolute;left:14px;bottom:12px;z-index:5;display:flex;align-items:center;gap:2px;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border:.5px solid var(--line);border-radius:11px;padding:3px;box-shadow:0 4px 14px rgba(28,28,30,.10)}
+  #zoom button{border:none;background:none;border-radius:8px;color:var(--fg);cursor:pointer;
+    font-family:inherit;font-size:11.5px;font-weight:500;padding:6px 9px;opacity:.75;transition:.14s}
+  #zoom button:hover{opacity:1;background:rgba(28,28,30,.09)}
+  #zoom .z{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg2);
+    min-width:52px;text-align:center;font-variant-numeric:tabular-nums;pointer-events:none}
+  #stat{position:absolute;left:0;right:0;bottom:0;padding:8px 14px;font-size:11px;color:var(--fg3);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;pointer-events:none;text-align:center;z-index:4}
+  #drop{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(244,242,236,.92);border:1px dashed rgba(28,28,30,.35);
+    font-size:13px;letter-spacing:.08em;color:var(--fg2);z-index:20;text-align:center;line-height:1.8}
+  body.dragging #drop{display:flex}
+
+  #panel{width:308px;flex:0 0 308px;height:100%;overflow-y:auto;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border-left:.5px solid var(--line);padding:16px 16px 80px}
+  #panel::-webkit-scrollbar{width:0}
+  h1{font-size:12px;font-weight:590;letter-spacing:.12em;color:var(--fg);margin-bottom:2px}
+  .sub{font-size:11.5px;color:var(--fg2);margin-bottom:16px;line-height:1.6}
+  .grp{margin-bottom:20px}
+  label.h{position:sticky;top:-16px;z-index:3;display:block;margin:0 -16px 8px;padding:7px 16px 6px;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border-bottom:.5px solid var(--line);font-size:11px;font-weight:590;letter-spacing:.04em;color:var(--fg2)}
+  .row{display:flex;align-items:center;gap:10px;padding:2px 0;margin-bottom:2px}
+  .row span.n{flex:1;font-size:11.5px;color:var(--fg)}
+  .row output{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg2);
+    width:46px;flex:0 0 46px;text-align:right;font-variant-numeric:tabular-nums}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;background:none;height:26px;
+    cursor:pointer;touch-action:pan-y}
+  input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--fill)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;
+    margin-top:-8px;border-radius:50%;background:var(--fg);border:none;
+    box-shadow:0 1px 3px rgba(28,28,30,.30), 0 0 0 .5px rgba(28,28,30,.05)}
+  .seg{display:flex;flex-wrap:wrap;background:var(--fill2);border-radius:9px;padding:2px;gap:2px;margin:6px 0 10px}
+  .seg button{flex:1 1 auto;min-width:0;border:none;border-radius:7px;background:none;
+    font-family:inherit;font-size:11.5px;font-weight:450;color:var(--fg);opacity:.72;
+    padding:6px 4px;cursor:pointer;transition:.16s;white-space:nowrap}
+  .seg button:hover{opacity:1;background:rgba(28,28,30,.07)}
+  .seg button.on{opacity:1;background:var(--capsule);font-weight:590;
+    box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.04)}
+  .btn{width:100%;background:var(--fill);border:none;border-radius:var(--r);color:var(--fg);
+    font-family:inherit;font-size:12px;font-weight:500;padding:11px 0;margin-top:6px;cursor:pointer;transition:.14s}
+  .btn:hover{background:rgba(28,28,30,.16)}
+  .btn:active{transform:scale(.985);opacity:.8}
+  .btn.solid{background:var(--fg);color:var(--paper);font-weight:590}
+  .btns2{display:flex;gap:6px}
+  .note{font-size:10.5px;line-height:1.65;color:var(--fg2);opacity:.75;margin-top:7px}
+  .note b{font-weight:590;opacity:1}
+  input[type=color]{width:100%;height:32px;padding:0;border:.5px solid var(--line);border-radius:var(--r);
+    background:transparent;cursor:pointer}
+  .chk{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 0;
+    font-size:11.5px;color:var(--fg);cursor:pointer;margin-bottom:5px}
+  .chk input[type=checkbox]{-webkit-appearance:none;appearance:none;flex:0 0 38px;width:38px;height:23px;
+    border-radius:23px;background:var(--fill);position:relative;transition:.2s;cursor:pointer;order:2}
+  .chk input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;
+    border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(28,28,30,.3);transition:.2s}
+  .chk input[type=checkbox]:checked{background:var(--fg)}
+  .chk input[type=checkbox]:checked::after{transform:translateX(15px)}
+  #meter{background:var(--fill2);border:none;border-radius:var(--r);color:var(--fg2);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:10.5px;line-height:1.7;padding:9px 11px;margin:8px 0;
+    white-space:pre-line}
+  .hide{display:none!important}
+
+  /* ⭐ 段の一覧＝iOS のリスト（累 RUI の版の一覧と同じ言い方） */
+  #bands{display:flex;flex-direction:column;gap:4px}
+  .bd{display:flex;align-items:center;gap:10px;background:var(--fill2);border:none;border-radius:var(--r);
+    padding:9px 10px;cursor:pointer;transition:.15s}
+  .bd:hover{background:rgba(28,28,30,.10)}
+  .bd.sel{background:var(--capsule);box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.06)}
+  .bd .sw{width:18px;height:18px;flex:0 0 18px;border-radius:5px;border:.5px solid rgba(28,28,30,.2)}
+  .bd .nm{flex:1;min-width:0;font-size:12px;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bd.sel .nm{color:var(--fg);font-weight:500}
+  .bd .up{width:20px;height:20px;flex:0 0 20px;border:0;background:transparent;color:var(--fg3);
+    cursor:pointer;font-size:9px;line-height:1;padding:0}
+  .bd .up:hover{color:var(--fg)}
+
+  @media (max-width:820px){
+    /* ⚠️ ページ自体は巻かない（2段の作り）。巻くのはパネルの中だけ＝
+       盤を触ってもページが揺れない（iOS の跳ね返りも止める） */
+    body{flex-direction:column;overflow:hidden;overscroll-behavior:none}
+    #panel{overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+    #stage{padding:0;min-height:50vh}
+    #panel{width:100%;flex:1 1 auto;height:auto;border-left:0;border-top:.5px solid var(--line);
+      padding:16px 14px calc(80px + env(safe-area-inset-bottom))}
+    label.h{top:-16px;margin:0 -14px 8px;padding:7px 14px 6px}
+    input[type=range]{height:40px}
+    input[type=range]::-webkit-slider-thumb{width:24px;height:24px;margin-top:-10px}
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     ⭐⭐ モバイル／iPad（2026-08-20）
+     ⚠️ 最初「この型はページごとスクロールするから掴み手は合わない」と考えたが【誤り】。
+        実測すると 盤(上) ＋ パネル(下・内側スクロール) の2段で、
+        body は1pxも動いていない ＝ 作字 SAKUJI と同じ形だった。
+     ⭐ だから高さを CSS 変数 --panelH ひとつにまとめれば、同じ掴み手がそのまま使える。
+     ⭐ このブロックと末尾の <script> を消せば完全に元へ戻る。
+     ══════════════════════════════════════════════════════════════ */
+  /* ⚠️ 盤の高さを 100vh から引き算しない ── iOS Safari の 100vh は実際の見え高さと
+     食い違い、パネルが画面の外へ押し出される。flex に余りを取らせる。 */
+  :root{ --panelH:38vh; --sheetGrip:22px }
+  @supports (height:1dvh){ :root{ --panelH:38dvh } }
+  @media (max-width:820px){
+    #stage{ flex:1 1 auto; min-height:0 }        /* ⭐ 余りは盤が取る */
+    #panel{ flex:none; height:var(--panelH);
+      padding:10px 12px calc(26px + env(safe-area-inset-bottom)) }
+
+    #sheetGrip{ position:fixed; left:0; right:0; z-index:60;
+      bottom:calc(var(--panelH) - 1px); height:var(--sheetGrip);
+      display:flex; align-items:center; justify-content:center;
+      touch-action:none; cursor:ns-resize; user-select:none; -webkit-user-select:none }
+    /* 🔴 2026-08-21 ── 印の色を currentColor（道具の字の色）にしていたので、
+       黒い盤の道具では【黒い印を黒い盤の上に 40% で描いて】いた＝見えない＝無いのと同じ。
+       ⭐ 白い丸＋黒い縁＋影にする。黒い盤でも白い紙でも絵の上でも必ず見える（iOS の作法と同じ）。 */
+    #sheetGrip::before{ content:""; width:44px; height:5px; border-radius:5px;
+      background:rgba(255,255,255,.94);
+      box-shadow:0 0 0 1px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.45); opacity:1 }
+    #sheetGrip.dragging::before{ background:#fff;
+      box-shadow:0 0 0 1px rgba(0,0,0,.6), 0 2px 7px rgba(0,0,0,.5) }
+
+    /* ⭐ 中を密着させる（詰めるのは隙間であって、つまみではない） */
+    label.h{ top:-10px; margin:0 -12px 6px; padding:6px 12px 5px }
+    .grp{ margin-bottom:12px }
+    .row{ padding:0; margin-bottom:1px }
+    .seg{ margin:4px 0 6px }
+    .btn{ margin-top:4px }
+    .note{ margin-top:5px; line-height:1.5 }
+    #meter,#pMeter,#gridMeter{ margin:6px 0; padding:7px 9px }
+
+    /* 🔴 セグメントのボタンが 28px しかなく指で狙えなかった（実測）。
+       ⚠️ ここは詰める側ではなく【広げる側】。密着とぶつかるが、押せない方が困る。 */
+    .seg button{ padding:9px 4px; min-height:36px }
+    .btn{ padding:10px 0; min-height:38px }
+    input[type=color]{ height:34px }
+    .chk input[type=checkbox]{ flex:0 0 44px; width:44px; height:26px }
+    .chk input[type=checkbox]::after{ width:22px; height:22px }
+    .chk input[type=checkbox]:checked::after{ transform:translateX(18px) }
+    /* ⭐ 他の道具と同じ大きさに揃える（この道具はもともと40px。伸びる分を抑えて36px） */
+    input[type=range]{ height:36px }
+    input[type=range]::-webkit-slider-thumb{ width:22px; height:22px; margin-top:-9px }
+    .lay .eye,.lay .up,.bd .up{ min-width:30px; min-height:30px }
+  }
+
+  /* ══ モバイルで勝手に寄らせない（no-auto-zoom-2026-08-22）══════════════════
+     🔴 木下＝2026-08-22「全道具のモバイル画面で言えることだが自動ズームはなしにしたい」
+     ⚠️ viewport の maximum-scale／user-scalable は【iOS に無視される】。
+     ⭐ iOS が寄るのは【文字を打つ欄の字が 16px 未満のとき】だけ。だから 16px にする。
+     ⚠️ つまみ(range)・色・チェックは寄らないので触らない。
+     🔴 class 付きの指定に【詳細度で負ける】ので !important を付ける（SAKUJI で実測した）。
+     ⚠️ @media の中だけ＝PC には1画素も効かない。このブロックを消せば完全に元へ戻る。 */
+  @media (max-width:760px), (pointer:coarse) and (max-width:1024px){
+    input:not([type=range]):not([type=color]):not([type=checkbox]):not([type=radio]):not([type=file]):not([type=button]),
+    select, textarea{ font-size:16px !important; }
+  }
+</style></head>
+<body>
+
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="zoom">
+    <button id="z_out">−</button><span class="z" id="z_val">100%</span><button id="z_in">＋</button>
+    <button id="z_fit">合わせる</button>
+  </div>
+  <div id="stat"></div>
+  <div id="drop">ここに落とす<br><span style="font-size:11px;opacity:.7">写真（JPEG / PNG / WebP）または SVG</span></div>
+</div>
+
+<div id="panel">
+  <h1>隙 SUKI</h1>
+  <div class="sub">網点の粒を<b>隣と重なるまで太らせる</b>。粒は溶け合って面になり、残った<b>隙間</b>の方が絵になる。</div>
+
+  <div class="grp">
+    <label class="h">元</label>
+    <textarea id="t_txt" rows="2" style="width:100%;background:var(--fill2);border:none;border-radius:var(--r);color:var(--fg);font-family:inherit;font-size:13px;padding:9px 10px;resize:vertical">B</textarea>
+    <div class="seg" id="s_font">
+      <button data-v="900 " class="on">太ゴ</button><button data-v="400 ">細ゴ</button>
+      <button data-v="900 serif">明朝</button>
+    </div>
+    <div class="btns2">
+      <button class="btn" id="b_pick">写真</button>
+      <button class="btn" id="b_svg">SVG</button>
+      <button class="btn" id="b_clear">字に戻す</button>
+    </div>
+    <input type="file" id="f_img" accept="image/*" hidden>
+    <input type="file" id="f_svg" accept=".svg,image/svg+xml" hidden>
+    <div class="note">⭐ <b>字が既定</b>（参考と同じ入り方）。写真や SVG を入れるとそちらが元になる<br>
+      ⭐ 落として入れてもいい</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">升目</label>
+    <div class="seg" id="s_grid">
+      <button data-v="sq" class="on">正方</button><button data-v="hex">六方</button><button data-v="rad">同心円</button>
+    </div>
+    <div class="row"><span class="n">細かさ</span><output id="o_pitch">36</output></div>
+    <input type="range" id="r_pitch" min="4" max="120" value="36">
+    <div class="row"><span class="n">角度</span><output id="o_ang">0°</output></div>
+    <input type="range" id="r_ang" min="0" max="90" value="0">
+    <div class="note">⭐⭐ <b>角度</b>を少しずらすと、元の絵の並びと干渉して<b>モアレ</b>が出る（参考の背景の縞）</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">粒</label>
+    <div class="row"><span class="n">太らせ</span><output id="o_grow">1.22</output></div>
+    <input type="range" id="r_grow" min="20" max="320" value="122">
+    <div class="row"><span class="n">濃さのカーブ</span><output id="o_gam">1.00</output></div>
+    <input type="range" id="r_gam" min="30" max="300" value="100">
+    <div class="row"><span class="n">いちばん小さい粒</span><output id="o_min">0.18</output></div>
+    <input type="range" id="r_min" min="0" max="60" value="18">
+    <div class="seg" id="s_shape">
+      <button data-v="circle" class="on">丸</button><button data-v="square">四角</button><button data-v="diamond">菱</button>
+    </div>
+    <div id="meter2"></div>
+    <div class="note">🔴🔴 <b>太らせ 1.00 でとなりとちょうど接する</b>。<b>それを超えたところから重なり始める</b><br>
+      ⭐⭐ 重なると粒は<b>面</b>になり、残った<b>隙間が星の形</b>で出る ── ここがこの道具の芯</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">版面</label>
+    <div class="seg" id="s_ratio">
+      <button data-v="1:1" class="on">正方</button><button data-v="auto">元のまま</button>
+      <button data-v="4:5">4:5</button><button data-v="3:4">3:4</button><button data-v="9:16">9:16</button>
+    </div>
+    <div class="row"><span class="n">長辺</span><output id="o_long">1400</output></div>
+    <input type="range" id="r_long" min="600" max="4096" step="2" value="1400">
+    <div class="row"><span class="n">余白</span><output id="o_pad">8</output></div>
+    <input type="range" id="r_pad" min="0" max="30" value="8">
+  </div>
+
+  <div class="grp">
+    <label class="h">色</label>
+    <div class="seg" id="s_inv">
+      <button data-v="1" class="on">黒地に白い粒</button><button data-v="0">白地に黒い粒</button>
+    </div>
+    <div class="row"><span class="n">粒</span></div>
+    <input type="color" id="c_ink" value="#ffffff">
+    <div class="row"><span class="n">地</span></div>
+    <input type="color" id="c_bg" value="#0a0a0a">
+    <label class="chk">地を出さない（地なしで出す）<input type="checkbox" id="k_nobg"></label>
+    <div class="note">⭐ 参考は<b>黒地に白い粒</b>。だから太った粒が白い面になり、隙間が黒い星になる</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">出す</label>
+    <div id="meter"></div>
+    <button class="btn solid" id="b_png">PNG を書き出す</button>
+    <div class="btns2">
+      <button class="btn" id="b_pngA">地なし PNG</button>
+      <button class="btn" id="b_svgout">SVG</button>
+    </div>
+  </div>
+
+  <div class="grp">
+    <label class="h">動かす</label>
+    <div class="seg" id="s_an">
+      <button data-v="turn" class="on">角度が回る</button>
+      <button data-v="grow">粒が太る</button>
+      <button data-v="pitch">升目が変わる</button>
+    </div>
+    <div class="row"><span class="n">速さ</span><output id="o_spd">1.0</output></div>
+    <input type="range" id="r_spd" min="1" max="60" value="10">
+    <button class="btn" id="b_play">再生</button>
+    <div class="note">⭐⭐ <b>角度が回る</b>＝モアレが流れる。この道具でいちばん効く動き<br>
+      ⚠️ 再生の間は<b>升目を粗くして</b>軽く出す（出す絵は変わらない）</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">動画で書き出す</label>
+    <div class="seg" id="s_vfmt"><button data-v="mp4" class="on">mp4</button><button data-v="png">PNG連番</button></div>
+    <div class="row"><span class="n">秒</span><output id="o_vsec">3.0</output></div>
+    <input type="range" id="r_vsec" min="10" max="200" value="30">
+    <div class="row"><span class="n">コマ/秒</span><output id="o_vfps">24</output></div>
+    <input type="range" id="r_vfps" min="8" max="60" value="24">
+    <div class="row"><span class="n">周</span><output id="o_vloop">1</output></div>
+    <input type="range" id="r_vloop" min="1" max="6" value="1">
+    <div id="vsize"></div>
+    <button class="btn solid" id="b_video">動画を書き出す</button>
+    <div class="note">⭐ <b>頭と尻が同じ絵</b>になるので、そのまま繰り返せる（継ぎ目なし）</div>
+  </div>
+</div>
+
+<div id="sheetGrip" aria-label="パネルの高さ" title="ドラッグで高さを変える／タップで段を切り替える"></div>
+
+<script>
+'use strict';
+const el = id => document.getElementById(id);
+const stage = el('stage'), cv = el('cv'), g = cv.getContext('2d');
+let statT = 0;
+function stat(s){ el('stat').textContent = s; clearTimeout(statT);
+  statT = setTimeout(() => el('stat').textContent = '', 4000); }
+
+/* ══⭐⭐ この道具の芯 ══════════════════════════════════════════
+   網点は「粒の大きさで濃さを作る」もの。ふつうは粒どうしが接する前で止める。
+   ⭐⭐ この道具は【止めない】＝隣と重なるまで太らせる。
+     すると粒は溶け合って【面】になり、絵になるのは粒ではなく **残った隙間**。
+     丸が4つ重なった隙間は、あの【星の形】になる。
+   🔴 太らせ 1.00 でちょうど接する。それを超えたところから重なりが始まる
+     （超えないと、ただの網点＝別の道具になる）。
+   ⭐ 升目に【角度】をつけると元の絵の並びと干渉して【モアレ】が出る（参考の背景の縞）。
+   ⚠️ 累RUI と近いが芯が違う：RUI は粒の大きさが一定で「重なった所」を絵にする。
+     ここは **濃さで大きさが変わる（網点）** うえで重なる＝濃い所ほど隙間が閉じていく。
+   ══════════════════════════════════════════════════════════ */
+const P = {
+  txt:'B', font:'900 ',
+  grid:'sq', pitch:36, ang:0,
+  grow:1.22, gam:1.0, min:0.18, shape:'circle',
+  ratio:'1:1', long:1400, pad:8,
+  inv:1, ink:'#ffffff', bg:'#0a0a0a', nobg:false,
+};
+let SRC = null;          /* 写真・SVG を入れたらこちらが元（字より優先） */
+
+/* ══ 版面 ══ */
+function sheet(){
+  const L = Math.max(64, Math.round(P.long));
+  let w = L, h = L;
+  if(P.ratio === 'auto' && SRC){
+    const iw = SRC.naturalWidth || SRC.width, ih = SRC.naturalHeight || SRC.height;
+    if(iw >= ih){ w = L; h = Math.round(L * ih / iw); } else { h = L; w = Math.round(L * iw / ih); }
+  }else if(P.ratio !== 'auto'){
+    const [a, b] = P.ratio.split(':').map(Number);
+    if(a >= b){ w = L; h = Math.round(L * b / a); } else { h = L; w = Math.round(L * a / b); }
+  }
+  return { w:Math.max(16, w), h:Math.max(16, h) };
+}
+
+/* ══ 濃さの地図（字も写真も SVG も、焼くのはここ1本）══ */
+let MAP = null, MAPKEY = '';
+function bakeMap(){
+  const { w, h } = sheet();
+  const key = [w, h, P.pad, P.gam, P.txt, P.font, SRC ? SRC.src.length : 0].join('|');
+  if(MAPKEY === key && MAP) return MAP;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const q = c.getContext('2d', { willReadFrequently:true });
+  q.fillStyle = '#fff'; q.fillRect(0, 0, w, h);
+  const m = P.pad / 100;
+  if(SRC){
+    const iw = SRC.naturalWidth || SRC.width, ih = SRC.naturalHeight || SRC.height;
+    const k = Math.min(w * (1 - 2*m) / iw, h * (1 - 2*m) / ih);
+    q.drawImage(SRC, (w - iw*k)/2, (h - ih*k)/2, iw*k, ih*k);
+  }else{
+    /* ⭐ 字は【版面いっぱいに収める】＝1字でも行でも同じ道 */
+    const lines = String(P.txt || '').split('\n');
+    const fam = /serif/.test(P.font) ? '"Zen Old Mincho",serif' : '"Zen Kaku Gothic New",sans-serif';
+    q.fillStyle = '#000'; q.textAlign = 'center'; q.textBaseline = 'middle';
+    let size = h;
+    for(let t = 0; t < 24; t++){
+      q.font = P.font.replace(/serif/, '') + size + 'px ' + fam;
+      const wid = Math.max(...lines.map(L2 => q.measureText(L2).width), 1);
+      const hei = size * 1.02 * lines.length;
+      const k = Math.min(w * (1 - 2*m) / wid, h * (1 - 2*m) / hei);
+      if(Math.abs(k - 1) < 0.01) break;
+      size = Math.max(4, size * k);
+    }
+    q.font = P.font.replace(/serif/, '') + size + 'px ' + fam;
+    lines.forEach((L2, i) => q.fillText(L2, w/2, h/2 + (i - (lines.length-1)/2) * size * 1.02));
+  }
+  const d = q.getImageData(0, 0, w, h).data;
+  const tone = new Float32Array(w * h);
+  for(let i = 0, p = 0; i < d.length; i += 4, p++){
+    const lum = d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114;
+    tone[p] = Math.pow(Math.max(0, Math.min(1, 1 - lum/255)), P.gam);
+  }
+  MAP = { tone, w, h }; MAPKEY = key;
+  return MAP;
+}
+
+/* ══⭐⭐ 粒を並べる ── 升目に乗せる（ここが KIRI との違い：あちらは格子に乗せない）══ */
+let DOTS = null, DOTKEY = '';
+function lay(){
+  const M = bakeMap();
+  const { w, h } = M;
+  const key = [MAPKEY, P.grid, P.pitch, P.ang, P.grow, P.min].join('|');
+  if(DOTKEY === key && DOTS) return DOTS;
+  const s = Math.max(3, P.pitch);
+  const a = P.ang * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+  const cx = w/2, cy = h/2;
+  const R = Math.hypot(w, h) / 2 + s * 2;
+  const xs = [], ys = [], rs = [];
+  const push = (x, y) => {
+    if(x < -s || y < -s || x > w + s || y > h + s) return;
+    const p = ((y|0) * w + (x|0));
+    if(p < 0 || p >= M.tone.length) return;
+    const t = M.tone[p];
+    /* ⭐⭐ 粒の大きさ＝濃さ。太らせ 1.00 で隣と接する（半径＝升目の半分） */
+    const r = (s/2) * P.grow * Math.max(P.min, t);
+    if(r <= 0.05) return;
+    xs.push(x); ys.push(y); rs.push(r);
+  };
+  if(P.grid === 'rad'){
+    /* 同心円＝中心から輪になって並ぶ（絵の中心が主役になる） */
+    for(let ring = 0; ring * s < R; ring++){
+      const rad = ring * s;
+      const n = Math.max(1, Math.round(2 * Math.PI * rad / s));
+      for(let k = 0; k < n; k++){
+        const th = a + k * 2 * Math.PI / n;
+        push(cx + Math.cos(th) * rad, cy + Math.sin(th) * rad);
+      }
+    }
+  }else{
+    const dy = (P.grid === 'hex') ? s * 0.8660254 : s;
+    const n = Math.ceil(R / Math.min(s, dy)) + 2;
+    for(let j = -n; j <= n; j++){
+      for(let i = -n; i <= n; i++){
+        /* 六方＝1行おきに半分ずらす（隣と6方向で接する＝隙間が三角になる） */
+        const ox = (P.grid === 'hex' && (j & 1)) ? s * 0.5 : 0;
+        const lx = i * s + ox, ly = j * dy;
+        push(cx + lx * ca - ly * sa, cy + lx * sa + ly * ca);
+      }
+    }
+  }
+  DOTS = { xs, ys, rs, n:xs.length, w, h }; DOTKEY = key;
+  return DOTS;
+}
+
+/* ══ 描く（数万個は文字列で一度に渡す）══ */
+function paint(ctx, W, H, transparent){
+  const D = lay();
+  const k = W / D.w;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0, 0, W, H);
+  if(!transparent){ ctx.fillStyle = P.bg; ctx.fillRect(0, 0, W, H); }
+  const a = P.ang * Math.PI / 180;
+  let s = '';
+  for(let i = 0; i < D.n; i++){
+    const x = D.xs[i] * k, y = D.ys[i] * k, r = D.rs[i] * k;
+    if(P.shape === 'circle'){
+      s += 'M' + x.toFixed(2) + ' ' + y.toFixed(2)
+         + 'm' + (-r).toFixed(2) + ' 0a' + r.toFixed(2) + ' ' + r.toFixed(2) + ' 0 1 0 ' + (r*2).toFixed(2) + ' 0'
+         + 'a' + r.toFixed(2) + ' ' + r.toFixed(2) + ' 0 1 0 ' + (-r*2).toFixed(2) + ' 0';
+    }else if(P.shape === 'square'){
+      /* ⚠️ 四角は升目と同じ角度で回す（回さないと重なり方が変わって別の絵になる） */
+      const c2 = Math.cos(a) * r, s2 = Math.sin(a) * r;
+      s += 'M' + (x - c2 + s2).toFixed(2) + ' ' + (y - s2 - c2).toFixed(2)
+         + 'L' + (x + c2 + s2).toFixed(2) + ' ' + (y + s2 - c2).toFixed(2)
+         + 'L' + (x + c2 - s2).toFixed(2) + ' ' + (y + s2 + c2).toFixed(2)
+         + 'L' + (x - c2 - s2).toFixed(2) + ' ' + (y - s2 + c2).toFixed(2) + 'Z';
+    }else{
+      s += 'M' + x.toFixed(2) + ' ' + (y - r).toFixed(2)
+         + 'L' + (x + r).toFixed(2) + ' ' + y.toFixed(2)
+         + 'L' + x.toFixed(2) + ' ' + (y + r).toFixed(2)
+         + 'L' + (x - r).toFixed(2) + ' ' + y.toFixed(2) + 'Z';
+    }
+  }
+  ctx.fillStyle = P.ink;
+  if(s) ctx.fill(new Path2D(s));
+  return D;
+}
+
+/* ══ 画面 ══ */
+const V = { x:0, y:0, z:1 };
+function render(){
+  const { w, h } = sheet();
+  if(cv.width !== w || cv.height !== h){ cv.width = w; cv.height = h; }
+  const t0 = performance.now();
+  const D = paint(g, w, h, P.nobg);
+  applyView();
+  const ms = Math.round(performance.now() - t0);
+  el('meter').textContent = w + ' × ' + h + ' px\n' + D.n.toLocaleString() + ' 粒\n' + ms + ' ms';
+  /* 🔴 「触れるのに効かない」を作らない＝いま重なっているかを数字で出す */
+  /* 🔴🔴 境目は【2つ】ある。両方を数字で出す＝触る前にどちら側にいるか分かる。
+     ×1.00 …… となりと接する（ここから重なり始める）
+     ×1.41 …… 4つの粒の真ん中まで届く＝**隙間が埋まる**（正方の升目のとき）
+     ⭐ だから「隙間が絵になる」のは 1.00〜1.41 のあいだ。 */
+  const m2 = el('meter2');
+  const FILL = (P.grid === 'hex') ? 1.1547 : (P.grid === 'rad' ? 1.30 : 1.41421);
+  if(m2) m2.textContent = '粒の直径 ＝ 升目の ×' + P.grow.toFixed(2)
+    + '\n隙間が絵になるのは ×1.00 〜 ×' + FILL.toFixed(2) + '\n'
+    + (P.grow <= 1.001 ? '🔴 重ならない ── ただの網点（この道具の意味が出ない）'
+       : P.grow < FILL ? '⭐ 重なって、隙間が星の形で残っている'
+       : '⚠️ 隙間まで埋まった ── 濃い所はベタになる（薄い所だけ星が残る）');
+}
+function applyView(){
+  cv.style.transform = 'translate(' + V.x + 'px,' + V.y + 'px) scale(' + V.z + ')';
+  el('z_val').textContent = Math.round(V.z * 100) + '%';
+}
+function fitView(){
+  const r = stage.getBoundingClientRect(), { w, h } = sheet();
+  V.z = Math.min((r.width - 60) / w, (r.height - 60) / h);
+  V.x = (r.width - w * V.z) / 2; V.y = (r.height - h * V.z) / 2;
+  applyView();
+}
+function zoomAt(px, py, f){
+  const z = Math.max(0.05, Math.min(12, V.z * f));
+  V.x = px - (px - V.x) * (z / V.z); V.y = py - (py - V.y) * (z / V.z); V.z = z; applyView();
+}
+el('z_in').onclick  = () => { const r = stage.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, 1.25); };
+el('z_out').onclick = () => { const r = stage.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, 1/1.25); };
+el('z_fit').onclick = fitView;
+{ let pan = null, pinch = null; const pts = new Map();
+  stage.addEventListener('pointerdown', e => { pts.set(e.pointerId, e);
+    if(pts.size === 2){ const [a,b] = [...pts.values()];
+      pinch = { d: Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY) }; pan = null; return; }
+    pan = { x:e.clientX, y:e.clientY, vx:V.x, vy:V.y }; stage.classList.add('panning'); });
+  stage.addEventListener('pointermove', e => { if(!pts.has(e.pointerId)) return; pts.set(e.pointerId, e);
+    if(pinch && pts.size === 2){ const [a,b] = [...pts.values()];
+      const d = Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
+      const r = stage.getBoundingClientRect();
+      zoomAt((a.clientX+b.clientX)/2 - r.left, (a.clientY+b.clientY)/2 - r.top, d / (pinch.d || d));
+      pinch.d = d; return; }
+    if(pan){ V.x = pan.vx + (e.clientX - pan.x); V.y = pan.vy + (e.clientY - pan.y); applyView(); } });
+  const up = e => { pts.delete(e.pointerId); if(pts.size < 2) pinch = null;
+                    if(!pts.size){ pan = null; stage.classList.remove('panning'); } };
+  stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
+  stage.addEventListener('wheel', e => { e.preventDefault(); const r = stage.getBoundingClientRect();
+    zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.08 : 1/1.08); }, { passive:false });
+}
+
+/* ══ 元を受ける ══ */
+function takeFile(f){
+  if(!f) return;
+  if(/heic|heif/i.test(f.type || '') || /\.(heic|heif)$/i.test(f.name || '')){
+    stat('この写真は HEIC（iPhone の形式）── Chrome では読めません。JPEG に変換して入れてください'); return; }
+  const svg = /svg/i.test(f.type || '') || /\.svg$/i.test(f.name || '');
+  if(!svg && !/^image\//.test(f.type)){ stat('これは画像ではない'); return; }
+  const rd = new FileReader();
+  rd.onload = () => {
+    const img = new Image();
+    img.onload = () => { SRC = img; MAPKEY = ''; DOTKEY = '';
+      stat((img.naturalWidth||img.width) + '×' + (img.naturalHeight||img.height) + ' を読んだ'); render(); fitView(); };
+    img.onerror = () => stat('これは読めなかった');
+    if(svg) img.src = 'data:image/svg+xml;base64,' +
+      btoa(String.fromCharCode(...new TextEncoder().encode(String(rd.result || ''))));
+    else img.src = rd.result;
+  };
+  if(svg) rd.readAsText(f); else rd.readAsDataURL(f);
+}
+el('b_pick').onclick = () => el('f_img').click();
+el('b_svg').onclick  = () => el('f_svg').click();
+el('f_img').addEventListener('change', e => { takeFile(e.target.files[0]); e.target.value = ''; });
+el('f_svg').addEventListener('change', e => { takeFile(e.target.files[0]); e.target.value = ''; });
+el('b_clear').onclick = () => { SRC = null; MAPKEY = ''; DOTKEY = ''; stat('字に戻した'); render(); };
+['dragenter','dragover'].forEach(t => addEventListener(t, e => {
+  e.preventDefault(); document.body.classList.add('dragging'); }));
+['dragleave','drop'].forEach(t => addEventListener(t, e => {
+  if(t === 'dragleave' && e.relatedTarget) return; document.body.classList.remove('dragging'); }));
+addEventListener('drop', e => { e.preventDefault(); takeFile(e.dataTransfer.files[0]); });
+el('t_txt').addEventListener('input', e => { P.txt = e.target.value; MAPKEY = ''; render(); });
+
+/* ══ つまみ（表1つで回す）══ */
+const RANGES = [
+  ['r_pitch','pitch','o_pitch', v => v],
+  ['r_ang','ang','o_ang', v => v + '°'],
+  ['r_grow','grow','o_grow', v => (v/100).toFixed(2), v => v/100],
+  ['r_gam','gam','o_gam', v => (v/100).toFixed(2), v => v/100],
+  ['r_min','min','o_min', v => (v/100).toFixed(2), v => v/100],
+  ['r_long','long','o_long', v => v],
+  ['r_pad','pad','o_pad', v => v],
+];
+RANGES.forEach(([id, k, out, fmt, conv]) => {
+  const r = el(id); if(!r) return;
+  const sync = () => { P[k] = conv ? conv(+r.value) : +r.value;
+    const o = el(out); if(o) o.value = fmt ? fmt(+r.value) : r.value; };
+  r.addEventListener('input', () => { sync(); MAPKEY = ''; render(); });
+  sync();
+});
+function seg(id, k, after){
+  document.querySelectorAll('#' + id + ' button').forEach(b => b.onclick = () => {
+    P[k] = isNaN(+b.dataset.v) ? b.dataset.v : +b.dataset.v;
+    document.querySelectorAll('#' + id + ' button').forEach(x => x.classList.toggle('on', x === b));
+    if(after) after();
+    MAPKEY = ''; DOTKEY = ''; render();
+  });
+}
+seg('s_grid', 'grid');
+seg('s_shape', 'shape');
+seg('s_ratio', 'ratio');
+seg('s_font', 'font');
+/* 🔴 動かす・動画の並びは【絵の設定ではない】ので seg() に乗せない。
+   ⚠️ ただし「押した見た目を移す」配線は要る＝これが無いと【押しても切り替わらない】
+      （実測：PNG連番を選んでも mp4 で出ていた）。 */
+document.querySelectorAll('#s_an button').forEach(b => b.onclick = () => {
+  anMode = b.dataset.v;
+  document.querySelectorAll('#s_an button').forEach(x => x.classList.toggle('on', x === b));
+});
+document.querySelectorAll('#s_vfmt button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#s_vfmt button').forEach(x => x.classList.toggle('on', x === b));
+});
+/* ⭐ 白黒は【粒と地を入れ替える】＝2つのつまみを1つに束ねない（色は色で触れる） */
+seg('s_inv', 'inv', () => {
+  P.ink = P.inv ? '#ffffff' : '#141414';
+  P.bg  = P.inv ? '#0a0a0a' : '#f4f2ec';
+  el('c_ink').value = P.ink; el('c_bg').value = P.bg;
+});
+el('c_ink').addEventListener('input', e => { P.ink = e.target.value; render(); });
+el('c_bg').addEventListener('input',  e => { P.bg  = e.target.value; render(); });
+el('k_nobg').addEventListener('change', e => { P.nobg = e.target.checked; render(); });
+
+/* ══ 出す ══ */
+function dl(blob, name){
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function shoot(transparent){
+  const { w, h } = sheet();
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  paint(c.getContext('2d'), w, h, transparent);
+  return c;
+}
+el('b_png').onclick  = () => shoot(P.nobg).toBlob(b => { dl(b, 'suki_' + Date.now() + '.png'); stat('PNG を出した'); });
+el('b_pngA').onclick = () => shoot(true).toBlob(b => { dl(b, 'suki_nobg_' + Date.now() + '.png'); stat('地なし PNG を出した'); });
+el('b_svgout').onclick = () => {
+  const D = lay(); const { w, h } = sheet();
+  const a = P.ang * Math.PI / 180;
+  let s = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">';
+  if(!P.nobg) s += '<rect width="' + w + '" height="' + h + '" fill="' + P.bg + '"/>';
+  s += '<g fill="' + P.ink + '">';
+  for(let i = 0; i < D.n; i++){
+    const x = D.xs[i], y = D.ys[i], r = D.rs[i];
+    if(P.shape === 'circle') s += '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + r.toFixed(2) + '"/>';
+    else if(P.shape === 'square') s += '<rect x="' + (x-r).toFixed(1) + '" y="' + (y-r).toFixed(1) + '" width="' + (r*2).toFixed(1) + '" height="' + (r*2).toFixed(1) + '" transform="rotate(' + P.ang + ' ' + x.toFixed(1) + ' ' + y.toFixed(1) + ')"/>';
+    else s += '<polygon points="' + x.toFixed(1) + ',' + (y-r).toFixed(1) + ' ' + (x+r).toFixed(1) + ',' + y.toFixed(1) + ' ' + x.toFixed(1) + ',' + (y+r).toFixed(1) + ' ' + (x-r).toFixed(1) + ',' + y.toFixed(1) + '"/>';
+  }
+  s += '</g></svg>';
+  dl(new Blob([s], { type:'image/svg+xml' }), 'suki_' + Date.now() + '.svg');
+  stat('SVG を出した（' + D.n.toLocaleString() + ' 粒・' + Math.round(s.length/1024) + 'KB）');
+};
+/* ══⭐⭐ 動かす・動画で書き出す（他の道具と同じ作法）══════════════
+   ⭐ 位相は【コマ番号】で刻む（時計で刻むとコマ落ちで絵が飛ぶ）。
+   ⭐ 頭と尻が同じ絵になるように当てる＝そのまま繰り返せる（継ぎ目なし）。
+   ⚠️ MediaRecorder は使わない（道具の決まり）。mp4-muxer ＋ VideoEncoder。
+   ⚠️ 動かすのは【見え方の値】だけ＝元の絵にも版面にも触らない。 */
+const AN = { on:false, raf:0, t0:0, base:null };
+let anMode = 'turn', anSpd = 1.0;
+function anBase(){ return { ang:P.ang, pitch:P.pitch, grow:P.grow }; }
+/* ⭐ 位相 u（0..1）を当てる道は1本＝画面の再生も、書き出しも同じここを通る */
+function setPhase(u, base){
+  /* ⭐ どれも u=0 と u=1 で同じ値に戻る＝継ぎ目なしで繰り返せる */
+  if(anMode === 'turn'){
+    /* ⭐⭐ 角度が回る＝【モアレが流れる】。この道具でいちばん効く動き */
+    /* ⚠️ 90° でも升目は似た形に戻るが【位相が合わず継ぎ目が出る】＝一周は 360° にする（実測） */
+    P.ang = (base.ang + u * 360) % 360;
+  }else if(anMode === 'grow'){
+    /* 粒が太る＝隙間が閉じたり開いたりする（cos なので頭と尻が一致） */
+    const w = 0.5 - 0.5 * Math.cos(u * 6.2831853);
+    P.grow = base.grow * (0.62 + 0.55 * w);
+  }else{
+    /* 升目が細かくなる／粗くなる */
+    const w = 0.5 - 0.5 * Math.cos(u * 6.2831853);
+    P.pitch = Math.max(3, base.pitch * (0.65 + 0.6 * w));
+  }
+  MAPKEY = ''; DOTKEY = '';
+}
+function anRestore(base){
+  P.ang = base.ang; P.pitch = base.pitch; P.grow = base.grow;
+  MAPKEY = ''; DOTKEY = '';
+}
+/* ⚠️ 速さ・秒・コマ/秒・周 は【絵の設定ではない】＝P に入れず、その場で読む */
+{
+  const r = el('r_spd'), o = el('o_spd');
+  const sync = () => { anSpd = (+r.value) / 10; o.value = anSpd.toFixed(1); };
+  r.addEventListener('input', sync); sync();
+  [['r_vsec','o_vsec', v => (v/10).toFixed(1)], ['r_vfps','o_vfps', v => v], ['r_vloop','o_vloop', v => v]]
+    .forEach(([id, out, fmt]) => { const e = el(id), ov = el(out);
+      const s2 = () => { ov.value = fmt(+e.value); }; e.addEventListener('input', s2); s2(); });
+}
+el('b_play').onclick = () => {
+  if(AN.on){ AN.on = false; cancelAnimationFrame(AN.raf);
+    anRestore(AN.base); el('b_play').textContent = '再生'; render(); stat('止めた'); return; }
+  /* 🔴 この道具は【字が既定】＝写真が無いのが普通。ここで断ると字のときに再生できない
+     （入っているのに無いのと同じ、の型）。中身があるかどうかで見る。 */
+  if(!SRC && !String(P.txt || '').trim()){ stat('字を打つか、写真・SVG を入れてください'); return; }
+  AN.base = anBase(); AN.on = true; AN.t0 = performance.now();
+  el('b_play').textContent = '止める';
+  /* ⚠️ 再生の間は升目を粗くして軽く出す（出す絵は変えない＝止めたら元に戻る） */
+  P.pitch = Math.max(P.pitch, 14);
+  const tick = () => {
+    if(!AN.on) return;
+    const u = ((performance.now() - AN.t0) / 1000 * anSpd) % 1;
+    setPhase(u, AN.base);
+    render();
+    AN.raf = requestAnimationFrame(tick);
+  };
+  tick();
+};
+
+  let CRCT = null;
+  function crc32(u8){
+    if(!CRCT){ CRCT = new Uint32Array(256);
+      for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); CRCT[n]=c>>>0; } }
+    let c = 0xFFFFFFFF;
+    for(let i=0;i<u8.length;i++) c = CRCT[(c ^ u8[i]) & 0xFF] ^ (c>>>8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+  function zip(files){
+    const te = new TextEncoder(), parts = [], cent = [];
+    let off = 0;
+    for(const f of files){
+      const nm = te.encode(f.name), crc = crc32(f.data), sz = f.data.length;
+      const L = new DataView(new ArrayBuffer(30));
+      L.setUint32(0,0x04034b50,true); L.setUint16(4,20,true);
+      L.setUint32(14,crc,true); L.setUint32(18,sz,true); L.setUint32(22,sz,true);
+      L.setUint16(26,nm.length,true);
+      parts.push(new Uint8Array(L.buffer), nm, f.data);
+      const C = new DataView(new ArrayBuffer(46));
+      C.setUint32(0,0x02014b50,true); C.setUint16(4,20,true); C.setUint16(6,20,true);
+      C.setUint32(16,crc,true); C.setUint32(20,sz,true); C.setUint32(24,sz,true);
+      C.setUint16(28,nm.length,true); C.setUint32(42,off,true);
+      cent.push(new Uint8Array(C.buffer), nm);
+      off += 30 + nm.length + sz;
+    }
+    let csz = 0; for(const c of cent) csz += c.length;
+    const E = new DataView(new ArrayBuffer(22));
+    E.setUint32(0,0x06054b50,true);
+    E.setUint16(8,files.length,true); E.setUint16(10,files.length,true);
+    E.setUint32(12,csz,true); E.setUint32(16,off,true);
+    return new Blob(parts.concat(cent, [new Uint8Array(E.buffer)]), { type:'application/zip' });
+  }
+  let muxP = null;
+  function loadMuxer(){
+    if(window.Mp4Muxer) return Promise.resolve(true);
+    if(!muxP) muxP = new Promise(res => {
+      const sc = document.createElement('script');
+      sc.src = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.1/build/mp4-muxer.min.js';
+      sc.onload = () => res(!!window.Mp4Muxer); sc.onerror = () => res(false);
+      document.head.appendChild(sc);
+    });
+    return muxP;
+  }
+  async function pickCodec(W, H, fps, bitrate){
+    const cands = ['avc1.640034','avc1.640033','avc1.640032','avc1.64002a','avc1.640028','avc1.4d0034','avc1.42003c'];
+    for(const codec of cands){
+      try{ const r = await VideoEncoder.isConfigSupported({ codec, width:W, height:H, bitrate, framerate:fps });
+        if(r && r.supported) return r.config; }catch(_){}
+    }
+    return null;
+  }
+  const idle = () => new Promise(r => setTimeout(r, 0));
+  const TV = { on:false, stop:false };
+  function vplan(){
+    const sec = (+el('r_vsec').value) / 10, fps = +el('r_vfps').value, loops = +el('r_vloop').value;
+    /* 🔴 1コマ目は 0 秒（時計で刻まない）。総コマ数は秒×コマ/秒 */
+    const total = Math.max(2, Math.round(sec * fps));
+    return { sec, fps, loops, total };
+  }
+  function vsizeSync(){
+    const { w, h } = sheet(); const p = vplan();
+    el('vsize').textContent = w + ' × ' + h + ' px\n' + p.total + ' コマ・' + p.sec.toFixed(1) + '秒・' + p.loops + '周';
+  }
+  ['r_vsec','r_vfps','r_vloop','r_long','r_pad'].forEach(id =>
+    el(id) && el(id).addEventListener('input', vsizeSync));
+
+  el('b_video').onclick = async () => {
+    if(TV.on){ TV.stop = true; return; }
+    if(!SRC && !String(P.txt || '').trim()){ stat('字を打つか、写真・SVG を入れてください'); return; }
+    const p = vplan();
+    let fmt = document.querySelector('#s_vfmt button.on').dataset.v;
+    const { w:W, h:H } = sheet();
+    /* 🔴 大きすぎるときは【止める】＝頼んでもいない形式に黙って落とさない */
+    if(fmt === 'mp4' && (W > 4096 || H > 4096)){
+      stat('この大きさ（' + W + ' × ' + H + '）は mp4 にできません（辺4096まで）。長辺を下げるか PNG連番へ');
+      return;
+    }
+    if(AN.on) el('b_play').click();
+    const base = anBase();
+    TV.on = true; TV.stop = false;
+    el('b_video').textContent = 'やめる';
+    const out = document.createElement('canvas'); out.width = W; out.height = H;
+    const octx = out.getContext('2d');
+    let enc = null, muxer = null, target = null, encErr = null;
+    try{
+      if(fmt === 'mp4'){
+        const bitrate = Math.min(80e6, Math.round(W * H * p.fps * 0.15));
+        const have = (typeof VideoEncoder !== 'undefined') ? await loadMuxer() : false;
+        const cfg = have ? await pickCodec(W, H, p.fps, bitrate) : null;
+        if(cfg){
+          target = new Mp4Muxer.ArrayBufferTarget();
+          muxer = new Mp4Muxer.Muxer({ target,
+            video:{ codec:'avc', width:W, height:H, frameRate:Math.max(1, Math.round(p.fps)) },
+            fastStart:'in-memory' });
+          enc = new VideoEncoder({ output:(c,m)=>{ try{ muxer.addVideoChunk(c,m); }catch(e){ encErr = e; } },
+                                   error:e => { encErr = e; } });
+          enc.configure(cfg);
+        }else{ stat('この端末では mp4 を作れないので PNG連番で出します'); fmt = 'png'; }
+      }
+      const shots = [], pad = i => String(i).padStart(4,'0');
+      let bytes = 0, i = 0;
+      for(; i < p.total; i++){
+        if(TV.stop) break;
+        if(encErr) throw encErr;
+        setPhase((i / p.total) * p.loops % 1, base);
+        paint(octx, W, H, P.nobg);
+        if(fmt === 'mp4'){
+          const vf = new VideoFrame(out, { timestamp:Math.round(i*1e6/p.fps), duration:Math.round(1e6/p.fps) });
+          enc.encode(vf, { keyFrame:(i % (p.fps*2)) === 0 });
+          vf.close();
+          while(enc.encodeQueueSize > 8 && !encErr) await idle();
+        }else{
+          const b2 = await new Promise(r => out.toBlob(r, 'image/png'));
+          if(!b2) throw new Error('PNG が作れなかった（大きすぎる可能性）');
+          const u8 = new Uint8Array(await b2.arrayBuffer());
+          bytes += u8.length;
+          shots.push({ name:'suki_'+pad(i)+'.png', data:u8 });
+          if(bytes > 1.5e9) throw new Error('PNG連番が大きすぎます（'+Math.round(bytes/1e6)+'MB）');
+        }
+        if((i % 2) === 0 || i === p.total - 1)
+          el('vsize').textContent = '書き出し中 ' + (i+1) + ' / ' + p.total + ' コマ　' + W + ' × ' + H
+            + (fmt === 'png' ? '（' + Math.round(bytes/1e6) + 'MB）' : '') + '\n「やめる」で止められます';
+        await idle();
+      }
+      const shot = i;
+      if(fmt === 'mp4'){
+        await enc.flush(); if(encErr) throw encErr;
+        muxer.finalize(); enc.close();
+        if(shot > 1){
+          const blob = new Blob([target.buffer], { type:'video/mp4' });
+          dl(blob, 'suki_' + Date.now() + '.mp4');
+          stat('mp4 — ' + W + ' × ' + H + '・' + shot + 'コマ・' + (shot/p.fps).toFixed(1) + '秒');
+        }else stat('コマが足りず出せませんでした');
+      }else if(shots.length){
+        dl(zip(shots), 'suki_' + Date.now() + '_seq.zip');
+        stat('PNG連番 — ' + W + ' × ' + H + '・' + shots.length + '枚・' + Math.round(bytes/1e6) + 'MB');
+      }
+    }catch(e){
+      stat('書き出せませんでした：' + (e && e.message ? e.message : e));
+      try{ if(enc && enc.state !== 'closed') enc.close(); }catch(_){}
+    }finally{
+      /* ⚠️ 撮り終わったら【必ず】元の値へ戻す（戻し忘れると絵が変わったままになる） */
+      anRestore(base);
+      TV.on = false; TV.stop = false;
+      el('b_video').textContent = '動画を書き出す';
+      render(); vsizeSync();
+    }
+  };
+  vsizeSync();
+
+
+/* ══ 立ち上げ ══ */
+addEventListener('resize', () => { applyView(); });
+render(); fitView();
+stat('字を打つか、写真・SVG を入れてください');
+</script>
+
+<script>
+(function(){
+  'use strict';
+  const KEY = location.pathname.replace(/\W+/g,'_') + '.panelH.v1';
+  const SNAP = [26, 42, 78];
+  let grip = null;
+
+  const panel = () => document.getElementById('panel');
+  /* ⭐ 下段になっているか＝【画面いっぱいの幅で、下端が画面の底にある】。
+     ⚠️ position:fixed で判定してはいけない。道具によっては縦積み(static)のまま
+        同じ2段レイアウトになっている（2026-08-20 実測。fixed で見ていて取りこぼした）。 */
+  const isSheet = () => {
+    const p = panel(); if(!p) return false;
+    const b = p.getBoundingClientRect();
+    return b.width >= innerWidth - 3
+        && b.bottom >= innerHeight - 3
+        && b.top > 8;                       /* 上に盤がある＝全画面パネルではない */
+  };
+  /* ⭐ 端で止める。⚠️ 横向き（高さ500px未満）で目一杯引くと盤が潰れる */
+  const clamp = v => Math.max(18, Math.min(innerHeight < 500 ? 62 : 86, v));
+  const setH = vh => {
+    document.documentElement.style.setProperty('--panelH', clamp(vh).toFixed(1) + 'vh');
+    try{ window.dispatchEvent(new Event('resize')); }catch(_){}
+  };
+  const curH = () => {
+    const p = panel(); if(!p) return 0;
+    return p.getBoundingClientRect().height / innerHeight * 100;
+  };
+
+  function build(){
+    if(grip) return;
+    grip = document.createElement('div');
+    grip.id = 'sheetGrip';
+    grip.title = 'ドラッグで高さを変える／タップで段を切り替える';
+    document.body.appendChild(grip);
+    let drag = null;
+    grip.addEventListener('pointerdown', e => {
+      e.preventDefault(); grip.setPointerCapture(e.pointerId);
+      grip.classList.add('dragging');
+      drag = { y:e.clientY, h:curH(), moved:false };
+    });
+    grip.addEventListener('pointermove', e => {
+      if(!drag) return;
+      const d = (drag.y - e.clientY) / innerHeight * 100;
+      if(Math.abs(d) > 1) drag.moved = true;
+      setH(drag.h + d);
+    });
+    const end = () => {
+      if(!drag) return;
+      grip.classList.remove('dragging');
+      if(!drag.moved){
+        /* ⚠️ 上限で止まっている段を指しても何も起きない＝無反応に見える。
+           実際に届く高さかで判断し、届かないなら一番小さい段へ折り返す。 */
+        const h = curH();
+        const next = SNAP.find(v => clamp(v) > h + 2);
+        setH(next === undefined ? SNAP[0] : next);
+      }
+      try{ localStorage.setItem(KEY, String(Math.round(curH()*10)/10)); }catch(_){}
+      drag = null;
+    };
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
+  }
+  function drop(){
+    if(!grip) return;
+    grip.remove(); grip = null;
+    document.documentElement.style.removeProperty('--panelH');
+  }
+  function sync(){
+    if(isSheet()){
+      build();
+      let v = null; try{ v = parseFloat(localStorage.getItem(KEY)); }catch(_){}
+      if(v > 0) setH(v);
+    }else drop();
+  }
+  addEventListener('resize', () => { if(!grip) sync(); });
+  addEventListener('orientationchange', () => setTimeout(sync, 200));
+  if(document.readyState === 'loading') addEventListener('DOMContentLoaded', sync);
+  else sync();
+})();
+</script>
+</body>
+</html>
