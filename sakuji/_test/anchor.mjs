@@ -77,21 +77,46 @@ const 後 = await info();
 const 動いた = 前.y.filter((v,i) => v !== 後.y[i]).length;
 ok(動いた === 2, '選んだ2点がまとめて動く', `${前.y} → ${後.y}`);
 
-/* ④ 線の上を押すとアンカーが足される（すでに選んでいるパスのとき） */
-const n0 = (await info()).点;
-let s3 = await toScreen(800,300);
-await at(s3.x, s3.y); await new Promise(r=>setTimeout(r,300));
-const n1 = (await info()).点;
-ok(n1 === n0 + 1, '線の上を押すとアンカーが1つ増える', `${n0} → ${n1} 点`);
-
-/* ⑤ ダブルクリックで消す */
-await p.evaluate(([a,b]) => {
+/* ④ ⭐ 規則は1つ＝【ダブルクリック】。線の上なら足す・アンカーの上なら消す */
+const dbl = (x,y) => p.evaluate(([a,b]) => {
   const cv = document.querySelector('canvas');
   cv.dispatchEvent(new MouseEvent('dblclick', { clientX:a, clientY:b, bubbles:true }));
-}, [s3.x, s3.y]);
+}, [x,y]);
+const n0 = (await info()).点;
+let s3 = await toScreen(800,300);
+await dbl(s3.x, s3.y); await new Promise(r=>setTimeout(r,300));
+const n1 = (await info()).点;
+ok(n1 === n0 + 1, '線の上をダブルクリックするとアンカーが1つ増える', `${n0} → ${n1} 点`);
+
+/* シングルでは増えない（選ぼうとしただけで増えると驚く） */
+let s3b = await toScreen(600,300);
+await at(s3b.x, s3b.y); await new Promise(r=>setTimeout(r,250));
+ok((await info()).点 === n1, 'シングルでは増えない（選ぶだけ）', (await info()).点 + ' 点');
+
+/* ⑤ アンカーの上をダブルクリックで消す */
+await dbl(s3.x, s3.y);
 await new Promise(r=>setTimeout(r,300));
 const n2 = (await info()).点;
-ok(n2 === n1 - 1, 'ダブルクリックでアンカーが消える', `${n1} → ${n2} 点`);
+ok(n2 === n1 - 1, 'アンカーの上をダブルクリックすると消える', `${n1} → ${n2} 点`);
+
+/* ⭐ 押す前に合図（＋／−）が出る */
+/* ⚠️ 合図は【本物のマウス移動】で出す。dispatch した MouseEvent は paper が拾わない
+   （実測：mousePt が更新されず、合図が0に見えた） */
+const hint = async (x,y) => { await p.mouse.move(x, y);
+  await new Promise(r=>setTimeout(r,250));
+  return p.evaluate(() => uiLayer.children.filter(c => c.data && c.data.pvHint).length); };
+/* ⚠️ 前の段で点を動かしている＝まっさらな線を1本置き直してから合図を見る */
+await p.evaluate(() => {
+  artLayer.removeChildren();
+  const q = new paper.Path({ segments:[[300,300],[900,300]], strokeColor:'#111', strokeWidth:6 });
+  q.selected = true; setTool('direct'); guides(); paper.view.update();
+});
+const mid = await toScreen(600,300);
+const hAdd = await hint(mid.x, mid.y);
+ok(hAdd >= 3, '線の上に来ると ＋ の合図が出る（丸＋たて＋よこ）', hAdd + ' 個');
+const end = await toScreen(300,300);
+const hDel = await hint(end.x, end.y);
+ok(hDel >= 2 && hDel < hAdd, 'アンカーの上に来ると − の合図に変わる（線が1本になる）', hDel + ' 個');
 
 /* ⑥ ペンが「選んだ点の続き」から描く（端の点＝1本のまま伸びる） */
 await p.evaluate(() => {

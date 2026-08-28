@@ -3470,7 +3470,12 @@ function toolUpBase(e){                           // ⚠️ 呼ぶのは台帳�
   }
   guides();
 }
-tool.onMouseMove = e => { mousePt = e.point; if(pen) guides(); };
+/* ⭐ ペンを持っている間は【まだ描いていなくても】下見を描き直す（2026-08-28）
+   ＝どこから続きを描けるかの合図が、指の動きに付いてくる。 */
+/* ⭐ 指の下で何が起きるかを見せる道具（ペン＝続きの端／ダイレクト＝＋−／選択＝回す）は
+   まだ押していなくても下見を描き直す。⚠️ それ以外の道具は今までどおり触らない。 */
+tool.onMouseMove = e => { mousePt = e.point;
+  if(pen || S.tool === 'pen' || S.tool === 'direct' || S.tool === 'select') guides(); };
 
 /* ══ 入口の割り振り（台帳の中身は先頭にある）══ */
 function selDown(e){
@@ -12308,24 +12313,11 @@ hook('grid', '字のガイドと下敷き', () => drawGlyphGuides(), 60);
       return true;
     }
 
-    /* ⭐ 線の上を押した＝アンカーを足す。
-       ⚠️ ただし【すでに選んでいるパス】のときだけ＝1回目は選ぶ、2回目で足す。
-          いきなり足すと「選ぼうとしただけ」で点が増えて驚く。 */
-    if(type === 'stroke' && it.segments && it.selected){
-      const loc = it.getNearestLocation(e.point);
-      if(loc){
-        snapshot();
-        const sg = it.divideAt(loc);
-        if(sg){
-          clearSegs();
-          sg.selected = true;
-          dragSeg = sg; dragSeg.__from = sg.point.clone();
-          guides();
-          stat('アンカーを足した（' + it.segments.length + '点）');
-          return true;
-        }
-      }
-    }
+    /* 🔴 2026-08-28 木下「パスダブルクリックしても追加ならないけどな、追加なるようにわかりやすくして」
+       ＝はじめ【線をシングルクリックで足す／アンカーをダブルクリックで消す】にしていた。
+         同じ場所で操作が2種類あって、しかも足すのと消すので押し方が違う＝分かりにくい。
+       ⭐ 規則を1つにした＝**ダブルクリック**。押した場所で決まる：
+          線の上なら【足す】／アンカーの上なら【消す】。合図も出す（下の pvHint）。 */
     /* それ以外（塗りの中・まだ選んでいないパス）は今までどおり本体へ */
     return false;
   }, 20);
@@ -12345,25 +12337,75 @@ hook('grid', '字のガイドと下敷き', () => drawGlyphGuides(), 60);
   /* ⭐ アンカーをダブルクリック＝消す。
      ⚠️ 2点を切ると線でなくなるので、そこは断って理由を出す（黙って何もしないを作らない）。
      ⚠️ 文字の打ち直し（dblclick）より後ろで聞く＝字の上では今までどおり打ち直しが勝つ。 */
-  function killAnchorAt(cx, cy, touch){
+  /* ⭐⭐ 押した場所で決まる＝アンカーの上なら【消す】／線の上なら【足す】。道は1本。 */
+  function anchorAt(pt, touch){
+    const tol = (touch ? 22 : 10) / paper.view.zoom;
+    const seg = artLayer.hitTest(pt, { segments:true, tolerance:tol });
+    if(seg && seg.type === 'segment' && !seg.item.locked && seg.item.visible)
+      return { kind:'del', seg:seg.segment, path:seg.segment.path };
+    const st = artLayer.hitTest(pt, { stroke:true, tolerance:tol });
+    if(st && st.item && st.item.segments && !st.item.locked && st.item.visible)
+      return { kind:'add', path:st.item };
+    return null;
+  }
+  function editAnchorAt(cx, cy, touch){
     if(S.tool !== 'direct') return false;
     const r = cv.getBoundingClientRect();
     const pt = paper.view.viewToProject(new Point(cx - r.left, cy - r.top));
-    const tol = (touch ? 22 : 10) / paper.view.zoom;
-    const h = artLayer.hitTest(pt, { segments:true, tolerance:tol });
-    if(!h || h.type !== 'segment') return false;
-    const pa = h.segment.path;
-    if(!pa || pa.segments.length <= 2){ stat('これ以上は消せません（線には2点いる）'); return true; }
+    const t = anchorAt(pt, touch);
+    if(!t) return false;
+    if(t.kind === 'del'){
+      const pa = t.path;
+      if(!pa || pa.segments.length <= 2){ stat('これ以上は消せません（線には2点いる）'); return true; }
+      snapshot();
+      t.seg.remove();
+      dragSeg = null;
+      guides(); paper.view.update();
+      stat('アンカーを消した（' + pa.segments.length + '点）');
+      return true;
+    }
+    const loc = t.path.getNearestLocation(pt);
+    if(!loc) return false;
     snapshot();
-    h.segment.remove();
-    dragSeg = null;
+    const sg = t.path.divideAt(loc);
+    if(!sg){ stat('ここには足せません'); return true; }
+    clearSegs();
+    artLayer.children.forEach(c => c.selected = false);
+    t.path.selected = true;
+    sg.selected = true;
     guides(); paper.view.update();
-    stat('アンカーを消した（' + pa.segments.length + '点）');
+    stat('アンカーを足した（' + t.path.segments.length + '点）');
     return true;
   }
   cv.addEventListener('dblclick', e => {
-    if(killAnchorAt(e.clientX, e.clientY, false)){ e.preventDefault(); e.stopImmediatePropagation(); }
+    if(editAnchorAt(e.clientX, e.clientY, false)){ e.preventDefault(); e.stopImmediatePropagation(); }
   }, false);
+
+  /* ⭐⭐ 押す前に【何が起きるか】を見せる（2026-08-28 木下「わかりやすくして」）
+     アンカーの上＝− を出す（消える）／線の上＝＋ を出す（足せる）。
+     ⚠️ uiLayer に置くだけ＝作品には1つも混ざらない。 */
+  hook('guides', 'ダイレクト選択＝足す／消すの合図', () => {
+    if(S.tool !== 'direct' || !mousePt) return;
+    const t = anchorAt(mousePt, false);
+    if(!t) return;
+    const Z = paper.view.zoom, r = 7.5 / Z;
+    const at = (t.kind === 'del') ? t.seg.point
+             : (t.path.getNearestLocation(mousePt) || {}).point;
+    if(!at) return;
+    uiLayer.activate();
+    const ring = new Path.Circle(at, r);
+    ring.strokeColor = ACC; ring.strokeWidth = 1.6 / Z;
+    ring.fillColor = new Color(0.29, 0.62, 1, 0.16);
+    ring.data.pvHint = 1;
+    const s2 = r * 0.55;
+    const seg = [[at.x - s2, at.y, at.x + s2, at.y]];
+    if(t.kind === 'add') seg.push([at.x, at.y - s2, at.x, at.y + s2]);   /* ＋ */
+    seg.forEach(a => {
+      const l = new Path.Line(new Point(a[0], a[1]), new Point(a[2], a[3]));
+      l.strokeColor = ACC; l.strokeWidth = 1.8 / Z; l.data.pvHint = 1;
+    });
+    artLayer.activate();
+  }, 45);
   /* 指の2回叩き（モバイルは dblclick が来ない＝打ち直しと同じ理由） */
   let tT = 0, tX = 0, tY = 0, tDown = null;
   cv.addEventListener('pointerdown', e => {
@@ -12376,9 +12418,168 @@ hook('grid', '字のガイドと下敷き', () => drawGlyphGuides(), 60);
     tDown = null;
     if(moved){ tT = 0; return; }
     const now = Date.now(), near = Math.hypot(e.clientX - tX, e.clientY - tY) < 24;
-    if(now - tT < 300 && near){ tT = 0; killAnchorAt(e.clientX, e.clientY, true); return; }
+    if(now - tT < 300 && near){ tT = 0; editAnchorAt(e.clientX, e.clientY, true); return; }
     tT = now; tX = e.clientX; tY = e.clientY;
   }, false);
+})();
+
+/* ══⭐⭐ 続きから描ける所を見せる（2026-08-28）══════════════════
+   木下＝「ここからペンで描くとき、続きのアンカーからかけるという合図をパス上でみせて」
+   ⭐ ペンを持った時点で、**続きを描ける端**（開いたパスの端の点）をパスの上に出す。
+     近づくと濃く・大きくなり、＋ が出る＝そこを押せば1本のまま伸びる、という合図。
+   ⭐ ダイレクト選択で【選んだ端の点】は、いちばん強く出す（そこが狙いだから）。
+   ⚠️ 描き始めたら消す＝そこから先は「次の点までの線」と「繋がる合図」が既にある。
+   ⚠️ uiLayer に置くだけ＝作品には1つも混ざらない。 */
+hook('guides', 'ペン＝続きから描ける端を見せる', () => {
+  if(S.tool !== 'pen' || pen) return;
+  const Z = paper.view.zoom, r = 4.4 / Z;
+  uiLayer.activate();
+  artLayer.children.forEach(it => {
+    if(!it.segments || it.segments.length < 2 || it.closed) return;
+    if(it.locked || !it.visible) return;
+    [it.firstSegment, it.lastSegment].forEach(sg => {
+      const near = mousePt && mousePt.getDistance(sg.point) < 14 / Z;
+      const c = new Path.Circle(sg.point, near ? r * 1.8 : r);
+      c.strokeColor = ACC;
+      c.strokeWidth = (near ? 1.8 : 1.2) / Z;
+      c.fillColor = sg.selected ? ACC : (near ? new Color(0.29, 0.62, 1, 0.32) : null);
+      c.opacity = near ? 1 : (sg.selected ? 0.95 : 0.5);
+      c.data.endcue = 1;
+      if(near){
+        /* ＋＝ここから続く（引いている最中に別の端へ近づいたときと同じ印） */
+        const s2 = 4.6 / Z, x = sg.point.x, y = sg.point.y;
+        [[x - s2, y, x + s2, y], [x, y - s2, x, y + s2]].forEach(a => {
+          const l = new Path.Line(new Point(a[0], a[1]), new Point(a[2], a[3]));
+          l.strokeColor = ACC; l.strokeWidth = 1.6 / Z; l.data.endcue = 1;
+        });
+      }
+    });
+  });
+  artLayer.activate();
+}, 40);
+
+/* ══⭐⭐ 盤が付いてくる（オートパン）2026-08-28 ══════════════════
+   木下＝「ボードをかいているときやマウスでその先をいくときも、その先も一緒にボードがうごくように」
+   ⭐ 引いている最中／ペンで打っている最中に、画面の縁へ寄ると【盤がその方へ滑る】。
+     ＝画面の外へ続きを描ける（いちいち手のひらで動かさなくていい）。
+   ⭐ 速さは縁からの深さで決める（縁に近いほど速い）＝止めたい所で自然に止まる。
+   ⚠️ スペース（手のひら）で自分で動かしている間は動かさない＝二重に動くとどこにいるか分からなくなる。
+   ⚠️ 動かすのは【見る所（view.center）】だけ＝図形の座標は1つも書き換えない。
+   ⚠️ 回すのは滑っている間だけ（rAF を常時回さない）。 */
+(function(){
+  const EDGE = 64;          /* 縁からこの内側に入ったら滑り出す（px） */
+  const MAX  = 14;          /* 1コマで動く上限（px・画面の見た目で） */
+  let pt = null, down = false, raf = 0;
+
+  const running = () => (down || !!pen) && !S.spaceDown && pt;
+
+  function step(){
+    raf = 0;
+    if(!running()){ return; }
+    const r = cv.getBoundingClientRect();
+    let dx = 0, dy = 0;
+    if(pt.x < r.left + EDGE)        dx = -(r.left + EDGE - pt.x);
+    else if(pt.x > r.right - EDGE)  dx =  (pt.x - (r.right - EDGE));
+    if(pt.y < r.top + EDGE)         dy = -(r.top + EDGE - pt.y);
+    else if(pt.y > r.bottom - EDGE) dy =  (pt.y - (r.bottom - EDGE));
+    if(dx || dy){
+      /* ⭐ 深さに比例＝縁ぎりぎりほど速い。⚠️ 上限で頭打ちにする（飛ばない） */
+      const cap = v => Math.max(-MAX, Math.min(MAX, v * 0.35));
+      const k = 1 / paper.view.zoom;                 /* 画面の px → 版面の長さ */
+      paper.view.center = paper.view.center.add(new Point(cap(dx) * k, cap(dy) * k));
+      drawGrid(); guides(); showZoom && showZoom();
+      paper.view.update();
+    }
+    raf = requestAnimationFrame(step);
+  }
+  const kick = () => { if(!raf && running()) raf = requestAnimationFrame(step); };
+
+  cv.addEventListener('pointerdown', e => { pt = { x:e.clientX, y:e.clientY }; down = true; kick(); }, true);
+  /* 🔴 掴んでいる間の移動は【canvas に来ない】。paper は押した時点で document に付け替え、
+     canvas の move を止めるため（実測：down のあとの move が1つも届かなかった）。
+     ⭐ だから window で聞く。 */
+  window.addEventListener('pointermove', e => { pt = { x:e.clientX, y:e.clientY }; kick(); }, true);
+  /* ⚠️ 盤の外で離しても止まるように window で聞く */
+  window.addEventListener('pointerup',     () => { down = false; }, true);
+  window.addEventListener('pointercancel', () => { down = false; }, true);
+  /* ⚠️ ペンは押していなくても【描いている最中】は付いてくる（点はクリックで打つので） */
+  window.addEventListener('keydown', e => { if(e.key === 'Escape') down = false; });
+})();
+
+/* ══⭐⭐ 盤の上で回す（2026-08-28）══════════════════════════════
+   木下＝「選択してボード上でオブジェクトの角度を変えれるようにして」
+   ⭐ イラレ・Figma と同じ作法＝【角の掴み手の少し外】を掴むと回る。
+     ＝拡大縮小の掴み手は1つも動かさない（既にある操作を奪わない）。
+   ⭐ 回る中心は【選んだもの全体の真ん中】。⇧ で 15°刻み。
+   ⚠️ 掴み手そのものは今までどおり拡大縮小＝先に拡大縮小の判定（order 30）を通してから、
+      当たらなかったときだけここ（order 35）が見る。
+   ⚠️ 動かすのは図形の rotate だけ＝盤も版面も触らない。 */
+(function(){
+  let rot = null;
+  const ROT_IN = 10, ROT_OUT = 30;      /* 角から この内〜外（画面px）が回す帯 */
+
+  function rotHit(pt){
+    if(S.tool !== 'select') return null;
+    const b = selBounds(); if(!b) return null;
+    const items = selected(); if(!items.length) return null;
+    const Z = paper.view.zoom;
+    const corners = [b.topLeft, b.topRight, b.bottomRight, b.bottomLeft];
+    for(const c of corners){
+      const d = pt.getDistance(c) * Z;                   /* 画面での距離 */
+      if(d > ROT_IN && d < ROT_OUT){
+        return { center:b.center.clone(), items:items.slice(),
+                 a0:Math.atan2(pt.y - b.center.y, pt.x - b.center.x) * 180 / Math.PI, sum:0 };
+      }
+    }
+    return null;
+  }
+  /* ⭐ 押す前に「ここは回す所」と見せる（合図が無いと当たりが見つからない） */
+  hook('guides', '回すところを見せる', () => {
+    if(S.tool !== 'select' || !mousePt || rot) return;
+    if(!rotHit(mousePt)) return;
+    const b = selBounds(); if(!b) return;
+    const Z = paper.view.zoom, R = 13 / Z;
+    uiLayer.activate();
+    const c = mousePt;
+    /* ぐるりと回る矢（弧＋先） */
+    const arc = new Path.Arc({ from:new Point(c.x + R, c.y), through:new Point(c.x, c.y - R),
+                               to:new Point(c.x - R, c.y) });
+    arc.strokeColor = ACC; arc.strokeWidth = 1.8 / Z; arc.data.rotHint = 1;
+    const t = new Path({ segments:[[c.x - R - 3/Z, c.y - 4/Z], [c.x - R, c.y + 3.5/Z], [c.x - R + 3.5/Z, c.y - 3/Z]],
+                         closed:true });
+    t.fillColor = ACC; t.data.rotHint = 1;
+    artLayer.activate();
+  }, 35);
+
+  hook('down', '回す', e => {
+    const h = rotHit(e.point);
+    if(!h) return false;
+    snapshot(); rot = h;
+    stat('回す — ⇧ で 15°ずつ');
+    return true;
+  }, 35);
+  hook('drag', '回す', e => {
+    if(!rot) return false;
+    const a = Math.atan2(e.point.y - rot.center.y, e.point.x - rot.center.x) * 180 / Math.PI;
+    let d = a - rot.a0;
+    const shift = e.modifiers.shift || !!(e.event && e.event.shiftKey);
+    if(shift){
+      /* ⚠️ 刻むのは【押した所からの合計】＝1コマずつ丸めると誤差が溜まって戻らない */
+      const want = Math.round((rot.sum + d) / 15) * 15;
+      d = want - rot.sum;
+    }
+    if(Math.abs(d) < 1e-6) return true;
+    rot.items.forEach(it => it.rotate(d, rot.center));
+    rot.sum += d;
+    guides(); paper.view.update();
+    stat('回す ' + Math.round(rot.sum) + '°');
+    return true;
+  }, 35);
+  hook('up', '回す', () => {
+    if(!rot) return false;
+    rot = null; guides(); reportSel && reportSel();
+    return true;
+  }, 35);
 })();
 </script>
 </body>

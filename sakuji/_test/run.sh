@@ -92,9 +92,19 @@ node "$(cd "$(dirname "$0")" && pwd)/wobble.mjs" || WBNG=1
 echo
 echo "── アンカーを扱う（選ぶ・⇧で複数・足す・消す・続きから描く）"
 node "$(cd "$(dirname "$0")" && pwd)/anchor.mjs" || ANNG=1
+echo
+echo "── 続きから描ける所の合図（ペン）"
+node "$(cd "$(dirname "$0")" && pwd)/pencue.mjs" || CUENG=1
+echo
+echo "── 盤が付いてくる（オートパン）"
+node "$(cd "$(dirname "$0")" && pwd)/autopan.mjs" || PANNG=1
+echo
+echo "── 盤の上で回す"
+node "$(cd "$(dirname "$0")" && pwd)/rotate.mjs" || ROTNG=1
 
 if [ "${FEELNG:-0}" = "1" ] || [ "${FEEL2NG:-0}" = "1" ] \
    || [ "${PVNG:-0}" = "1" ] || [ "${ADDNG:-0}" = "1" ] \
    || [ "${GRIDNG:-0}" = "1" ] || [ "${HEADNG:-0}" = "1" ] \
-   || [ "${PENNG:-0}" = "1" ] || [ "${PMNG:-0}" = "1" ] || [ "${WBNG:-0}" = "1" ] || [ "${ANNG:-0}" = "1" ]; then exit 1; fi
+   || [ "${PENNG:-0}" = "1" ] || [ "${PMNG:-0}" = "1" ] || [ "${WBNG:-0}" = "1" ] || [ "${ANNG:-0}" = "1" ] || [ "${CUENG:-0}" = "1" ] \
+   || [ "${PANNG:-0}" = "1" ] || [ "${ROTNG:-0}" = "1" ]; then exit 1; fi
 exit $RC
