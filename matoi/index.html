@@ -271,6 +271,12 @@
       <button class="btn" id="b_delFace">この面を消す</button>
     </div>
     <button class="btn" id="b_pts">いまの四隅を写す（list.json 用）</button>
+    <div class="seg" id="s_fill">
+      <button data-v="0" class="on">面はそのまま</button><button data-v="1">面に紙を敷く</button>
+    </div>
+    <div class="note">⭐⭐ <b>ポスターや看板</b>のときだけ「紙を敷く」。置いたものの縁の色で面を埋めて、
+      <b>余った所に元の白い紙が見えなくなる</b>（＝1枚の紙として貼られて見える）<br>
+      ⚠️ Tシャツや箱では要らない（四角い紙が乗ってしまう）。物を選ぶと、その物の既定になる</div>
     <div class="note">⚠️ ふつうは触らなくていい（物を選べば位置は合っている）<br>
       ⭐ 直したいときだけ、盤の上の<b>四隅を掴んで</b>動かす（斜めも奥行きもこれで決まる）<br>
       ⭐ 面は<b>いくつでも</b>足せる（箱の正面と側面／Tシャツの胸とタグ）</div>
@@ -286,6 +292,8 @@
     <input type="range" id="r_hi" min="0" max="150" value="22">
     <div class="row"><span class="n">質感を借りる</span><output id="o_gr">0.30</output></div>
     <input type="range" id="r_gr" min="0" max="150" value="30">
+    <div class="row"><span class="n">色を借りる</span><output id="o_col">0.35</output></div>
+    <input type="range" id="r_col" min="0" max="100" value="35">
     <div class="row"><span class="n">濃さ</span><output id="o_op">0.95</output></div>
     <input type="range" id="r_op" min="0" max="100" value="95">
     <div class="seg" id="s_blend">
@@ -339,7 +347,7 @@ function stat(s){ el('stat').textContent = s; clearTimeout(statT);
      ここは物（布・箱・袋）なので、合わせただけでは浮く。**借りるところ**が違う。
    ══════════════════════════════════════════════════════════ */
 const P = {
-  warp:0.55, sh:0.75, hi:0.22, gr:0.30, op:0.95, blend:'normal',
+  warp:0.55, sh:0.75, hi:0.22, gr:0.30, col:0.35, op:0.95, blend:'normal', fill:false,
   tint:'none', tintCol:'#ffffff', long:1600, cut:true,
 };
 let BG = null, BGKEY = 0;      /* 下地（写真でも、型を描いた紙でもいい）／差し替えた回数 */
@@ -429,13 +437,32 @@ function cutFrame(v){
   VCUTT = v.currentTime;
   return VCUTC;
 }
+/* ⭐ 置いたものの【縁の色】＝面の余りを埋めるのに使う（ポスターの紙の色）
+   ⚠️ 縁が透明なら null＝敷かない（地なしロゴに紙を敷くと台無しになる） */
+let LOGO_EDGE = null;
+function edgeColor(img){
+  const [W, H] = assetSize(img); if(!W || !H) return null;
+  const c = document.createElement('canvas');
+  c.width = Math.max(2, Math.min(64, W)); c.height = Math.max(2, Math.min(64, H));
+  const q = c.getContext('2d', { willReadFrequently:true });
+  let d;
+  try{ q.drawImage(img, 0, 0, c.width, c.height); d = q.getImageData(0,0,c.width,c.height).data; }
+  catch(_){ return null; }
+  let r=0, g=0, b=0, n=0, all=0;
+  const add = (x, y) => { const i=(y*c.width+x)*4; all++;
+    if(d[i+3] < 250) return; r+=d[i]; g+=d[i+1]; b+=d[i+2]; n++; };
+  for(let x=0;x<c.width;x++){ add(x,0); add(x,c.height-1); }
+  for(let y=0;y<c.height;y++){ add(0,y); add(c.width-1,y); }
+  if(n < all*0.9) return null;                    /* 縁に透明がある＝地なし＝敷かない */
+  return 'rgb(' + Math.round(r/n) + ',' + Math.round(g/n) + ',' + Math.round(b/n) + ')';
+}
 /* ⭐ ロゴを差し替える道は【この1本】＝地を抜くかどうかも、控えの合図もここで決まる
    ⚠️ 元の画像も控える＝「そのまま入れる」に切り替えたとき、抜く前に戻せる（抜いた紙からは戻せない） */
 let LOGO_SRC = null, LOGO_NAME = '';
 function setLOGO(img, name){
   /* ⚠️ 前のものが動画なら、必ず止めてから差し替える（裏で回り続けて重くなる） */
   if(isVid(LOGO) && LOGO !== img){ try{ LOGO.pause(); }catch(_){} }
-  if(!img){ LOGO = null; LOGO_SRC = null; LOGOKEY++; showVid(); return; }
+  if(!img){ LOGO = null; LOGO_SRC = null; LOGO_EDGE = null; LOGOKEY++; showVid(); return; }
   LOGO_SRC = img; LOGO_NAME = name || '';
   /* ⚠️ 動画は【1コマ目で色を決めて、あとは毎コマ同じ色を抜く】＝ここでは紙を作らない */
   const cut = (P.cut === false || isVid(img)) ? null : dropBackdrop(img);
@@ -444,6 +471,7 @@ function setLOGO(img, name){
   stat((isVid(img) ? '動画を読んだ' : '置くものを読んだ') + (name ? '：' + name : '')
      + '（' + W + '×' + H + (isVid(img) ? '・' + (img.duration || 0).toFixed(1) + '秒' : '') + '）'
      + (cut ? ' ⭐ 白い地を抜いた（「そのまま入れる」で元のまま）' : ''));
+  LOGO_EDGE = edgeColor(LOGO);
   showVid();
   if(isVid(img)){
     probeVideo(img);                 /* ⭐ 地の色は1コマ目で決める */
@@ -991,7 +1019,8 @@ function useKata(i, keepFaces){
   const k = KATA[KIDX];
   kataBG(k, (src, ratio) => {
     P.ratio = ratio; setBG(src);
-    if(!keepFaces){ FACES = k.faces.map(pts => ({ on:true, pts:pts.map(p => p.slice()) })); cur = 0; renderFaces(); }
+    if(!keepFaces){ FACES = k.faces.map(pts => ({ on:true, pts:pts.map(p => p.slice()) })); cur = 0; renderFaces();
+      setFill(!!k.fill); }
     render(); fitView();
   });
 }
@@ -1009,6 +1038,7 @@ function loadMock(){
           name: it.name || it.file, ratio: 1,
           faces: (it.faces && it.faces.length) ? it.faces
                : [[[0.30,0.35],[0.70,0.35],[0.70,0.60],[0.30,0.60]]],
+          fill: !!it.fill,                    /* ⭐ ポスター系は紙を敷くのが既定 */
           photo: 'mock/' + it.file });
       });
       renderKata();
@@ -1135,10 +1165,19 @@ function drawFace(ctx, fc, W, H){
   /* ⚠️ 動画は【いまのコマ】も合図に入れる（入れないと1コマ目のまま止まって見える） */
   const ck = [fc.pts.join(';'), P.warp, iw, ih, LOGOKEY,
               isVid(LOGO) ? LOGO.currentTime.toFixed(3) : '',
-              P.tint, P.tintCol, W, H, N].join('|');
+              P.tint, P.tintCol, P.fill ? LOGO_EDGE : '', W, H, N].join('|');
   if(!fc._c || fc._c.key !== ck){
     const bs = document.createElement('canvas'); bs.width = W; bs.height = H;
     const bq = bs.getContext('2d');
+    /* ⭐⭐ 面の余りを【置いたものの縁の色】で埋める（2026-08-29）
+       比を保って収めると必ず余りが出て、そこに下の絵（元の白い紙）が見える＝
+       ポスターが1枚の紙に見えない。⚠️ 物によって要る／要らないが違うので、型が既定を持つ。 */
+    if(P.fill && LOGO_EDGE){
+      bq.fillStyle = LOGO_EDGE;
+      bq.beginPath();
+      q.forEach(([x, y], i) => i ? bq.lineTo(x, y) : bq.moveTo(x, y));
+      bq.closePath(); bq.fill();
+    }
     for(let j = 0; j < N; j++){
       for(let i = 0; i < N; i++){
         const u0 = i/N, u1 = (i+1)/N, v0 = j/N, v1 = (j+1)/N;
@@ -1164,7 +1203,7 @@ function drawFace(ctx, fc, W, H){
   lg.drawImage(mask, 0, 0);
   /* ⭐⭐ 陰影を借りる ── ロゴの形の中だけに、下の写真の明暗を掛ける。
      ⚠️ 形は【嵌めたもの】をそのまま使う（もう一度嵌め直さない＝式も手間も1本）。 */
-  if(P.sh > 0.001 || P.hi > 0.001 || P.gr > 0.001){
+  if(P.sh > 0.001 || P.hi > 0.001 || P.gr > 0.001 || P.col > 0.001){
     const put = (src, op, a) => {
       if(a <= 0.001) return;
       lg.globalCompositeOperation = op;
@@ -1174,6 +1213,10 @@ function drawFace(ctx, fc, W, H){
     put(T.shade, 'multiply', P.sh);                  /* 暗い所を暗く */
     put(T.light, 'screen',   P.hi);                  /* 明るい所を明るく */
     put(T.grain, 'overlay',  P.gr);                  /* 粒（布の織り目・紙の粗さ） */
+    /* ⭐⭐ 色を借りる（2026-08-29）── 夜の街に貼った作品の白が【真っ白のまま】浮いていた。
+       ⭐ その場の光の色（色相と彩度）だけを借りて、明るさは作品のまま＝'color' 合成そのもの。
+       ⚠️ 明るさまで借りると作品が消える。借りるのは【色だけ】。 */
+    put(T.canvas, 'color',   P.col);
     /* 🔴 掛けたものが【ロゴの外】へはみ出さないよう、最後に形で切り直す */
     lg.globalCompositeOperation = 'destination-in';
     lg.globalAlpha = 1;
@@ -1204,6 +1247,13 @@ function paint(ctx, W, H){
 let VRAF = 0;
 /* ⭐ 動画のときだけ出す欄も出す＝【出口も設定も「使う画面」に置く】
    （動画を入れていないのに「動画で出す」が押せると、押しても何も起きない道具になる） */
+/* ⭐ 紙を敷くかは【物ごとに既定が違う】＝型が持っている値を、選んだときに入れる
+   （手で変えられるのは変わらない＝設定と状態を混ぜない） */
+function setFill(on){
+  P.fill = !!on;
+  document.querySelectorAll('#s_fill button').forEach(x =>
+    x.classList.toggle('on', (x.dataset.v === '1') === P.fill));
+}
 function showVid(){
   const on = isVid(LOGO) ? '' : 'none';
   const a = el('vidbox'), b = el('vidout');
@@ -1363,6 +1413,7 @@ el('b_pts').onclick = () => {
     navigator.clipboard.writeText(s).then(done, () => { prompt('この行をコピー', s); });
   else prompt('この行をコピー', s);
 };
+document.querySelectorAll('#s_fill button').forEach(b => b.onclick = () => { setFill(b.dataset.v === '1'); render(); });
 el('b_play').onclick = playVideo;
 el('b_stop').onclick = stopVideo;
 el('r_time').addEventListener('input', e => {
@@ -1433,6 +1484,7 @@ const RANGES = [
   ['r_sh','sh','o_sh', v => (v/100).toFixed(2), v => v/100],
   ['r_hi','hi','o_hi', v => (v/100).toFixed(2), v => v/100],
   ['r_gr','gr','o_gr', v => (v/100).toFixed(2), v => v/100],
+  ['r_col','col','o_col', v => (v/100).toFixed(2), v => v/100],
   ['r_op','op','o_op', v => (v/100).toFixed(2), v => v/100],
   ['r_long','long','o_long', v => v],
 ];
