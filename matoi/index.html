@@ -49,6 +49,16 @@
   #zoom button{border:none;background:none;border-radius:8px;color:var(--fg);cursor:pointer;
     font-family:inherit;font-size:11.5px;font-weight:500;padding:6px 9px;opacity:.75;transition:.14s}
   #zoom button:hover{opacity:1;background:rgba(28,28,30,.09)}
+  /* ⭐ 道具の棚＝盤の左上（2026-08-29）。選ぶ／隅／ペン で【触り方】が変わる */
+  #tools{position:absolute;left:14px;top:12px;z-index:5;display:flex;flex-direction:column;gap:2px;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border:.5px solid var(--line);border-radius:11px;padding:3px;box-shadow:0 4px 14px rgba(28,28,30,.10)}
+  #tools button{border:none;background:none;border-radius:8px;color:var(--fg);cursor:pointer;
+    font-family:inherit;font-size:11.5px;font-weight:500;padding:7px 10px;opacity:.7;transition:.14s;
+    display:flex;align-items:center;gap:6px;white-space:nowrap}
+  #tools button:hover{opacity:1;background:rgba(28,28,30,.09)}
+  #tools button.on{opacity:1;background:#fff;box-shadow:0 1px 4px rgba(28,28,30,.14);font-weight:650}
+  #tools .ic{font-size:13px;line-height:1}
   #zoom .z{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg2);
     min-width:52px;text-align:center;font-variant-numeric:tabular-nums;pointer-events:none}
   #stat{position:absolute;left:0;right:0;bottom:0;padding:8px 14px;font-size:11px;color:var(--fg3);
@@ -204,6 +214,11 @@
 <div id="stage">
   <canvas id="cv"></canvas>
   <canvas id="ov"></canvas>
+  <div id="tools">
+    <button data-t="move" title="選ぶ ── 面ごと掴んで動かす"><span class="ic">✥</span>選ぶ</button>
+    <button data-t="corner" class="on" title="隅 ── 四隅を1つずつ動かす"><span class="ic">⬚</span>隅</button>
+    <button data-t="pen" title="ペン ── 辺を押して点を足す／点を押すとカーブになる"><span class="ic">✎</span>ペン</button>
+  </div>
   <div id="zoom">
     <button id="z_out">−</button><span class="z" id="z_val">100%</span><button id="z_in">＋</button>
     <button id="z_fit">合わせる</button>
@@ -531,6 +546,64 @@ function applyRot(fc, W, H){
 }
 /* ⭐ 掴んで動かしたら、その形が新しい基準になる（回した状態から掴んでも壊れない） */
 function rebase(fc){ if(!fc) return; fc.base = fc.pts.map(p => p.slice()); fc.rot = null; }
+
+/* ══⭐⭐ 面の輪郭 ── 四角のままでも、曲線のパスでもいい（2026-08-29）══
+   木下＝「こういう曲線部分は SAKUJI 同様アンカー追加のペンを用意（ツールパネル）させ、
+     アンカーの近くで＋表記させパスを追加できるように。アンカーでカーブをできたり」
+   ⭐⭐ 切り分け＝【嵌める形は四隅（射影変換）のまま・見える範囲だけパスで切る】。
+     射影変換は4点でしか決まらないので、点を増やしても嵌め方は壊れない。
+     スマホの角丸のように「四角だけどはみ出す」所は、これで正しく収まる。
+   ⭐ 丸い点は【前後の中点を通る2次ベジェ】＝ハンドルを持たなくてもカーブになる
+     （SAKUJI のようなハンドル操作は要らない＝点を押すだけで角⇄カーブが切り替わる）。
+   ⭐ 描く所も切る所も【この1本】を通る＝画面の輪郭と、実際に切れる形が食い違わない。 */
+function facePath(ctx, fc, W, H){
+  const cp = fc.clip;
+  if(!cp || cp.length < 3){
+    const q = fc.pts.map(([x, y]) => [x*W, y*H]);
+    ctx.beginPath(); q.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+    ctx.closePath(); return;
+  }
+  const q = cp.map(p => [p.x*W, p.y*H]), n = q.length;
+  const mid = (a, b) => [(a[0]+b[0])/2, (a[1]+b[1])/2];
+  ctx.beginPath();
+  let started = false;
+  for(let i = 0; i < n; i++){
+    const prev = q[(i-1+n)%n], cu = q[i], nx = q[(i+1)%n];
+    if(cp[i].r){
+      const m1 = mid(prev, cu), m2 = mid(cu, nx);
+      if(!started){ ctx.moveTo(m1[0], m1[1]); started = true; } else ctx.lineTo(m1[0], m1[1]);
+      ctx.quadraticCurveTo(cu[0], cu[1], m2[0], m2[1]);
+    }else{
+      if(!started){ ctx.moveTo(cu[0], cu[1]); started = true; } else ctx.lineTo(cu[0], cu[1]);
+    }
+  }
+  ctx.closePath();
+}
+/* ⭐ パスを持っていない面に、四隅から作る（ペンで初めて触ったとき） */
+function ensureClip(fc){
+  if(fc.clip && fc.clip.length >= 3) return fc.clip;
+  fc.clip = fc.pts.map(([x, y]) => ({ x, y, r:false }));
+  return fc.clip;
+}
+/* 点と線分の距離（辺のどこを押したかを知るため） */
+function segDist(px, py, ax, ay, bx, by){
+  const dx = bx-ax, dy = by-ay, L = dx*dx + dy*dy;
+  let t = L ? ((px-ax)*dx + (py-ay)*dy) / L : 0;
+  t = Math.max(0, Math.min(1, t));
+  return { d: Math.hypot(px - (ax+dx*t), py - (ay+dy*t)), t };
+}
+/* 多角形の中か（選ぶ道具で「面を掴んだ」かを決める） */
+function inFace(fc, u, v){
+  const q = (fc.clip && fc.clip.length >= 3) ? fc.clip.map(p => [p.x, p.y]) : fc.pts;
+  let inside = false;
+  for(let i = 0, j = q.length-1; i < q.length; j = i++){
+    if(((q[i][1] > v) !== (q[j][1] > v)) &&
+       (u < (q[j][0]-q[i][0]) * (v-q[i][1]) / (q[j][1]-q[i][1]) + q[i][0])) inside = !inside;
+  }
+  return inside;
+}
+let TOOL = 'corner';        /* 選ぶ / 隅 / ペン */
+let PENHINT = null;         /* ペンで「ここに足せる」と出している所 */
 
 /* ══⭐⭐ 射影変換 ── 単位正方形 → 四角形（四隅で決まる1つの写し）══
    ⚠️ ここが「斜め・奥行き」の全部。4点以外に持つものは無い。 */
@@ -868,7 +941,9 @@ function drawFace(ctx, fc, W, H){
   /* ⚠️ 動画は【いまのコマ】も合図に入れる（入れないと1コマ目のまま止まって見える） */
   const ck = [fc.pts.join(';'), P.warp, iw, ih, LOGOKEY,
               isVid(LOGO) ? LOGO.currentTime.toFixed(3) : '',
-              P.tint, P.tintCol, P.fill ? LOGO_EDGE : '', W, H, N].join('|');
+              P.tint, P.tintCol, P.fill ? LOGO_EDGE : '',
+              fc.clip ? fc.clip.map(p => p.x.toFixed(3)+','+p.y.toFixed(3)+(p.r?'r':'')).join(' ') : '',
+              W, H, N].join('|');
   if(!fc._c || fc._c.key !== ck){
     const bs = document.createElement('canvas'); bs.width = W; bs.height = H;
     const bq = bs.getContext('2d');
@@ -895,6 +970,12 @@ function drawFace(ctx, fc, W, H){
       bq.globalCompositeOperation = 'source-in';
       bq.fillStyle = P.tint === 'white' ? '#ffffff' : P.tint === 'black' ? '#0a0a0a' : P.tintCol;
       bq.fillRect(0, 0, W, H);
+      bq.globalCompositeOperation = 'source-over';
+    }
+    /* ⭐⭐ 切り抜き＝嵌めた後に【形で切る】（スマホの角丸など、四角では収まらない所） */
+    if(fc.clip && fc.clip.length >= 3){
+      bq.globalCompositeOperation = 'destination-in';
+      bq.fillStyle = '#fff'; facePath(bq, fc, W, H); bq.fill();
       bq.globalCompositeOperation = 'source-over';
     }
     fc._c = { key: ck, base: bs };
@@ -1010,21 +1091,44 @@ function render(){
 function drawHandles(){
   og.setTransform(1,0,0,1,0,0);
   og.clearRect(0, 0, ov.width, ov.height);
-  const Z = Math.max(0.2, V.z);
+  const Z = Math.max(0.2, V.z), W = ov.width, H = ov.height;
+  const box = (x, y, r, fill) => { og.beginPath(); og.rect(x-r, y-r, r*2, r*2);
+    og.fillStyle = fill; og.fill(); og.strokeStyle = 'rgba(74,158,255,.95)';
+    og.lineWidth = 1.6/Z; og.stroke(); };
+  const dot = (x, y, r, fill) => { og.beginPath(); og.arc(x, y, r, 0, 7);
+    og.fillStyle = fill; og.fill(); og.strokeStyle = 'rgba(74,158,255,.95)';
+    og.lineWidth = 1.6/Z; og.stroke(); };
   FACES.forEach((fc, k) => {
-    const q = fc.pts.map(([x, y]) => [x*ov.width, y*ov.height]);
-    og.beginPath(); og.moveTo(q[0][0], q[0][1]);
-    for(let i = 1; i < 4; i++) og.lineTo(q[i][0], q[i][1]);
-    og.closePath();
+    /* ⭐ 輪郭は【切る形と同じ1本】を通る＝画面の線と実際に切れる形が食い違わない */
+    facePath(og, fc, W, H);
     og.strokeStyle = k === cur ? 'rgba(74,158,255,.95)' : 'rgba(74,158,255,.35)';
-    og.lineWidth = 1.4 / Z; og.setLineDash([6/Z, 4/Z]); og.stroke(); og.setLineDash([]);
+    og.lineWidth = 1.4/Z; og.setLineDash([6/Z, 4/Z]); og.stroke(); og.setLineDash([]);
     if(k !== cur) return;
-    q.forEach(p => {
-      const r = 7 / Z;
-      og.beginPath(); og.rect(p[0]-r, p[1]-r, r*2, r*2);
-      og.fillStyle = '#fff'; og.fill();
-      og.strokeStyle = 'rgba(74,158,255,.95)'; og.lineWidth = 1.6 / Z; og.stroke();
-    });
+    const q = fc.pts.map(([x, y]) => [x*W, y*H]);
+    const r = 7/Z;
+    if(TOOL === 'pen'){
+      /* ⭐ 切り抜きの点＝角は□・カーブは○（押すと入れ替わる） */
+      (fc.clip || []).forEach(p => {
+        if(p.r) dot(p.x*W, p.y*H, r*0.95, 'rgba(74,158,255,.28)');
+        else    box(p.x*W, p.y*H, r*0.85, '#fff');
+      });
+      /* ⭐ 「ここに足せる」を ＋ で出す（アンカーの近くで＋表記＝木下） */
+      if(PENHINT){
+        const x = PENHINT[0]*W, y = PENHINT[1]*H, s2 = r*0.9;
+        og.strokeStyle = 'rgba(74,158,255,.95)'; og.lineWidth = 2/Z;
+        og.beginPath(); og.moveTo(x-s2, y); og.lineTo(x+s2, y);
+        og.moveTo(x, y-s2); og.lineTo(x, y+s2); og.stroke();
+      }
+      return;
+    }
+    q.forEach(p => box(p[0], p[1], r, '#fff'));
+    if(TOOL === 'move'){
+      /* ⭐ 回せる所を薄い輪で見せる（隅の外を掴むと回る） */
+      og.strokeStyle = 'rgba(74,158,255,.30)'; og.lineWidth = 1.2/Z;
+      og.setLineDash([3/Z, 4/Z]);
+      q.forEach(p => { og.beginPath(); og.arc(p[0], p[1], r*2.1, 0, 7); og.stroke(); });
+      og.setLineDash([]);
+    }
   });
 }
 function applyView(){
@@ -1059,13 +1163,79 @@ function toBoard(e){
     if(pts.size === 2){ const [a,b] = [...pts.values()];
       pinch = { d: Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY) }; pan = null; grab = null; return; }
     const [u, v] = toBoard(e);
-    /* いちばん近い隅を掴む（面を選び直すのも同じ道） */
-    let best = null, bd = 0.045;
+    const ar = cv.width / cv.height || 1;               /* 盤は正方形とは限らない */
+    const hit = 0.045 / Math.max(0.4, V.z / 1.2);       /* 掴める広さは倍率で変える */
+
+    /* ══⭐⭐ 盤の上で直接ふれる（2026-08-29）══
+       木下＝「サイドパネルでスライダーで調整もいいが、
+         直接ボードの四角で触って調整もできるようにしよう」
+       ⭐ 触っているのは**つまみと同じもの**＝位置と大きさは base、回転は rot。
+         だから盤で回してもスライダーが動くし、逆も同じ（2つの真実を作らない）。
+       ⭐ 選ぶ＝【中を掴めば動く／隅を掴めば大きさ／隅の外を掴めば回る】 */
+    if(TOOL === 'move'){
+      const fc = FACES[cur];
+      if(fc){
+        const c = fc.pts.reduce((a,p) => [a[0]+p[0]/4, a[1]+p[1]/4], [0,0]);
+        let near = -1, nd = hit;
+        fc.pts.forEach((p, i) => { const d = Math.hypot(p[0]-u, p[1]-v); if(d < nd){ nd = d; near = i; } });
+        if(near >= 0){                                   /* 隅＝大きさ（中心から） */
+          if(!fc.base) fc.base = fc.pts.map(p => p.slice());
+          grab = { k:cur, scale:true, c, d0:Math.hypot((u-c[0])*ar, v-c[1]) || 1e-4,
+                   b0:fc.base.map(p => p.slice()) };
+          return;
+        }
+        /* 隅の少し外＝回す */
+        let ring = false;
+        fc.pts.forEach(p => { const d = Math.hypot(p[0]-u, p[1]-v); if(d >= hit && d < hit*2.4) ring = true; });
+        if(ring && !inFace(fc, u, v)){
+          if(!fc.base) fc.base = fc.pts.map(p => p.slice());
+          fc.rot = Object.assign({ yaw:0, pitch:0, roll:0, persp:0 }, fc.rot);
+          grab = { k:cur, spin:true, c, a0:Math.atan2(v-c[1], (u-c[0])*ar), r0:fc.rot.roll };
+          return;
+        }
+      }
+      /* 中を掴めば動く（いちばん上にある面から探す） */
+      for(let k = FACES.length-1; k >= 0; k--){
+        if(!FACES[k].on || !inFace(FACES[k], u, v)) continue;
+        cur = k; const f = FACES[k];
+        if(!f.base) f.base = f.pts.map(p => p.slice());
+        grab = { k, move:true, u, v, b0:f.base.map(p => p.slice()),
+                 c0:f.clip ? f.clip.map(p => ({...p})) : null };
+        renderFaces(); syncRot(); drawHandles(); return;
+      }
+      pan = { x:e.clientX, y:e.clientY, vx:V.x, vy:V.y }; stage.classList.add('panning'); return;
+    }
+
+    if(TOOL === 'pen'){
+      const fc = FACES[cur]; if(!fc){ return; }
+      const cp = ensureClip(fc);
+      /* 点の上＝掴む（動かす）。動かさずに離したら 角⇄カーブ が切り替わる */
+      let near = -1, nd = hit;
+      cp.forEach((p, i) => { const d = Math.hypot(p.x-u, p.y-v); if(d < nd){ nd = d; near = i; } });
+      if(near >= 0){ grab = { k:cur, pen:true, i:near, moved:false }; drawHandles(); return; }
+      /* 辺の上＝そこに点を足す（＋が出ている所） */
+      let bi = -1, bd2 = hit*0.9, bt = 0;
+      for(let i = 0; i < cp.length; i++){
+        const a = cp[i], b2 = cp[(i+1)%cp.length];
+        const r = segDist(u, v, a.x, a.y, b2.x, b2.y);
+        if(r.d < bd2){ bd2 = r.d; bi = i; bt = r.t; }
+      }
+      if(bi >= 0){
+        const a = cp[bi], b2 = cp[(bi+1)%cp.length];
+        cp.splice(bi+1, 0, { x:a.x + (b2.x-a.x)*bt, y:a.y + (b2.y-a.y)*bt, r:false });
+        grab = { k:cur, pen:true, i:bi+1, moved:true };
+        render(); drawHandles(); stat('点を足した（もう一度押すと角⇄カーブ）'); return;
+      }
+      pan = { x:e.clientX, y:e.clientY, vx:V.x, vy:V.y }; stage.classList.add('panning'); return;
+    }
+
+    /* 隅＝いちばん近い隅を掴む（面を選び直すのも同じ道） */
+    let best = null, bd = hit;
     FACES.forEach((fc, k) => fc.pts.forEach((p, i) => {
       const d = Math.hypot(p[0]-u, p[1]-v);
       if(d < bd){ bd = d; best = { k, i }; }
     }));
-    if(best){ cur = best.k; grab = best; renderFaces(); drawHandles(); return; }
+    if(best){ cur = best.k; grab = best; renderFaces(); syncRot(); drawHandles(); return; }
     pan = { x:e.clientX, y:e.clientY, vx:V.x, vy:V.y }; stage.classList.add('panning');
   });
   stage.addEventListener('pointermove', e => {
@@ -1080,13 +1250,67 @@ function toBoard(e){
     }
     if(grab){
       const [u, v] = toBoard(e);
-      FACES[grab.k].pts[grab.i] = [Math.max(-.5, Math.min(1.5, u)), Math.max(-.5, Math.min(1.5, v))];
+      const fc = FACES[grab.k];
+      const cl = t => Math.max(-.5, Math.min(1.5, t));
+      const ar = cv.width / cv.height || 1;
+      if(grab.move){                                  /* 面ごと動かす（切り抜きの点も一緒に） */
+        const dx = u - grab.u, dy = v - grab.v;
+        fc.base = grab.b0.map(([x, y]) => [cl(x+dx), cl(y+dy)]);
+        if(grab.c0) fc.clip = grab.c0.map(p => ({ x:cl(p.x+dx), y:cl(p.y+dy), r:p.r }));
+        applyRot(fc, cv.width, cv.height);
+        if(!fc.rot) fc.pts = fc.base.map(p => p.slice());
+      }else if(grab.scale){                           /* 隅＝中心から大きさを変える */
+        const d = Math.hypot((u-grab.c[0])*ar, v-grab.c[1]);
+        const s2 = Math.max(0.05, Math.min(6, d / grab.d0));
+        fc.base = grab.b0.map(([x, y]) => [cl(grab.c[0] + (x-grab.c[0])*s2), cl(grab.c[1] + (y-grab.c[1])*s2)]);
+        applyRot(fc, cv.width, cv.height);
+        if(!fc.rot) fc.pts = fc.base.map(p => p.slice());
+      }else if(grab.spin){                            /* 隅の外＝回す（つまみと同じ値を触る） */
+        const a = Math.atan2(v-grab.c[1], (u-grab.c[0])*ar);
+        fc.rot.roll = Math.round(grab.r0 + (a - grab.a0) * 180/Math.PI);
+        while(fc.rot.roll > 180) fc.rot.roll -= 360;
+        while(fc.rot.roll < -180) fc.rot.roll += 360;
+        applyRot(fc, cv.width, cv.height); syncRot();
+      }else if(grab.pen){                             /* 切り抜きの点を動かす */
+        fc.clip[grab.i] = Object.assign(fc.clip[grab.i], { x:cl(u), y:cl(v) });
+        grab.moved = true;
+      }else{
+        fc.pts[grab.i] = [cl(u), cl(v)];
+      }
       touching(); renderSoon(); drawHandles(); return;
     }
     if(pan){ V.x = pan.vx + (e.clientX - pan.x); V.y = pan.vy + (e.clientY - pan.y); applyView(); }
   });
+  /* ⭐ ペンのとき、辺の近くに来たら【＋】を出す（押せば、そこに点が増える） */
+  stage.addEventListener('pointermove', e => {
+    if(TOOL !== 'pen' || grab || pan) return;
+    const fc = FACES[cur]; if(!fc || !fc.clip){ return; }
+    const [u, v] = toBoard(e);
+    const hit = 0.045 / Math.max(0.4, V.z / 1.2);
+    let show = null, bd = hit*0.9;
+    const cp = fc.clip;
+    /* 点の上では出さない（点を触るのと足すのを取り違えない） */
+    for(const p of cp) if(Math.hypot(p.x-u, p.y-v) < hit) return void (PENHINT && (PENHINT = null, drawHandles()));
+    for(let i = 0; i < cp.length; i++){
+      const a = cp[i], b2 = cp[(i+1)%cp.length];
+      const r = segDist(u, v, a.x, a.y, b2.x, b2.y);
+      if(r.d < bd){ bd = r.d; show = [a.x + (b2.x-a.x)*r.t, a.y + (b2.y-a.y)*r.t]; }
+    }
+    const same = (PENHINT && show && Math.abs(PENHINT[0]-show[0]) < 1e-4 && Math.abs(PENHINT[1]-show[1]) < 1e-4);
+    if(!same || (!!PENHINT !== !!show)){ PENHINT = show; drawHandles(); }
+  });
   const up = e => { pts.delete(e.pointerId); if(pts.size < 2) pinch = null;
-    if(!pts.size){ if(grab){ rebase(FACES[cur]); syncRot(); grab = null; COARSE = 0; render(); }
+    if(!pts.size){
+      if(grab){
+        /* ⭐ ペンで点を押しただけ（動かしていない）＝角⇄カーブの切り替え */
+        if(grab.pen && !grab.moved){
+          const cp = FACES[grab.k].clip;
+          if(cp && cp[grab.i]){ cp[grab.i].r = !cp[grab.i].r;
+            stat(cp[grab.i].r ? 'カーブにした' : '角にした'); }
+        }
+        /* ⚠️ 隅を手で動かしたときだけ基準を移す（回す・大きさは rot/base のまま持つ） */
+        if(!grab.move && !grab.scale && !grab.spin && !grab.pen) rebase(FACES[cur]);
+        syncRot(); grab = null; COARSE = 0; render(); }
                    pan = null; stage.classList.remove('panning'); } };
   stage.addEventListener('pointerup', up);
   stage.addEventListener('pointercancel', up);
@@ -1150,6 +1374,17 @@ ROTS.forEach(([id, k, out, unit]) => {
   });
 });
 document.querySelectorAll('#s_fill button').forEach(b => b.onclick = () => { setFill(b.dataset.v === '1'); render(); });
+/* ⭐ 道具の棚＝触り方を変えるだけ（面の値は同じものを触る） */
+document.querySelectorAll('#tools button').forEach(b => b.onclick = () => {
+  TOOL = b.dataset.t;
+  document.querySelectorAll('#tools button').forEach(x => x.classList.toggle('on', x === b));
+  PENHINT = null;
+  if(TOOL === 'pen' && FACES[cur]) ensureClip(FACES[cur]);
+  stat(TOOL === 'move' ? '選ぶ ── 中を掴めば動く／隅で大きさ／隅の外で回る'
+     : TOOL === 'pen'  ? 'ペン ── 辺を押すと点が増える／点を押すと角⇄カーブ'
+     : '隅 ── 四隅を1つずつ動かす');
+  drawHandles();
+});
 el('b_play').onclick = playVideo;
 el('b_stop').onclick = stopVideo;
 el('r_time').addEventListener('input', e => {

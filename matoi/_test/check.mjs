@@ -303,5 +303,74 @@ const vout = await p.evaluate(() => ({ 落ちた:window.__mp4, 知らせ:el('sta
 ok(vout.落ちた.length > 0 && /mp4 を出した/.test(vout.知らせ),
    '⭐⭐ 動画（mp4）が本当に落ちる', JSON.stringify(vout));
 
+/* ══⭐⭐ 道具の棚（選ぶ・隅・ペン）── 2026-08-29 ══
+   木下＝「ロゴの位置が違う。ツールパネルに選択を追加させ、ボード上で動かせるように」
+        「サイドパネルでスライダーもいいが、直接ボードの四角で触って調整もできるように」
+        「曲線部分は SAKUJI 同様アンカー追加のペンを用意し、アンカーの近くで＋表記させパスを追加」
+   ⭐ 見るのは4つ：面ごと動く／盤で回る／辺に点が増える／点を押すとカーブになる。
+   ⚠️ 触っているのは【つまみと同じ値】＝盤で回すとスライダーも動く（2つの真実を作らない）。 */
+await p.evaluate(() => { useKata(0); });
+await new Promise(r => setTimeout(r, 1200));
+const scr = (u, v) => p.evaluate(([u2,v2]) => { const r = stage.getBoundingClientRect();
+  return [r.left + V.x + u2*cv.width*V.z, r.top + V.y + v2*cv.height*V.z]; }, [u,v]);
+const drag = async (a, b2) => { const A = await scr(...a), B = await scr(...b2);
+  await p.mouse.move(A[0],A[1]); await p.mouse.down();
+  await p.mouse.move((A[0]+B[0])/2,(A[1]+B[1])/2); await p.mouse.move(B[0],B[1]);
+  await p.mouse.up(); await new Promise(r => setTimeout(r, 500)); };
+const facePts = () => p.evaluate(() => JSON.stringify(FACES[0].pts.map(q => q.map(v => +v.toFixed(3)))));
+
+await p.evaluate(() => document.querySelector('#tools button[data-t="move"]').click());
+const mv0 = await facePts();
+const ctr = await p.evaluate(() => { const q = FACES[0].pts;
+  return [(q[0][0]+q[2][0])/2, (q[0][1]+q[2][1])/2]; });
+await drag(ctr, [ctr[0]+0.08, ctr[1]+0.05]);
+ok(await facePts() !== mv0, '⭐⭐ 選ぶ＝面ごと掴んで動かせる', mv0 + ' → ' + await facePts());
+
+const hitR = await p.evaluate(() => 0.045 / Math.max(0.4, V.z / 1.2));
+const cor = await p.evaluate(() => FACES[0].pts[1]);
+const rl0 = await p.evaluate(() => (FACES[0].rot || {}).roll || 0);
+await drag([cor[0]+hitR*1.5, cor[1]-hitR*1.5], [cor[0]+hitR*2.0, cor[1]+hitR*1.2]);
+const rl1 = await p.evaluate(() => (FACES[0].rot || {}).roll || 0);
+ok(rl0 !== rl1 && +(await p.evaluate(() => document.getElementById('r_roll').value)) === rl1,
+   '⭐⭐ 盤の上で回せる（スライダーも同じ値になる）', `${rl0}° → ${rl1}°`);
+
+await p.evaluate(() => document.querySelector('#tools button[data-t="pen"]').click());
+const pn0 = await p.evaluate(() => (FACES[0].clip || []).length);
+const edge = await p.evaluate(() => { const cp = FACES[0].clip;
+  return [(cp[0].x+cp[1].x)/2, (cp[0].y+cp[1].y)/2]; });
+const E = await scr(...edge); await p.mouse.click(E[0], E[1]);
+await new Promise(r => setTimeout(r, 500));
+const pn1 = await p.evaluate(() => (FACES[0].clip || []).length);
+ok(pn1 === pn0 + 1, '⭐⭐ ペン＝辺を押すと点が増える', `${pn0} → ${pn1}`);
+
+const P2 = await scr(...(await p.evaluate(() => { const q = FACES[0].clip[1]; return [q.x, q.y]; })));
+await p.mouse.click(P2[0], P2[1]); await new Promise(r => setTimeout(r, 500));
+ok(await p.evaluate(() => !!FACES[0].clip[1].r), '⭐ 点を押すと 角⇄カーブ が入れ替わる');
+
+/* ⭐ 切り抜きが本当に効く＝パスの外は下地のまま（角丸で収まる） */
+const clipped = await p.evaluate(async () => {
+  FACES = [{ on:true, pts:[[0.2,0.2],[0.8,0.2],[0.8,0.8],[0.2,0.8]] }];
+  const c = document.createElement('canvas'); c.width = 200; c.height = 200;
+  const q = c.getContext('2d'); q.fillStyle = '#111'; q.fillRect(0,0,200,200);
+  const im = new Image(); await new Promise(r => { im.onload = r; im.src = c.toDataURL('image/png'); });
+  P.cut = false; setLOGO(im, 'k.png'); P.fill = false; render();
+  const read = () => { const cc = document.createElement('canvas');
+    cc.width = cv.width; cc.height = cv.height;
+    cc.getContext('2d').drawImage(cv, 0, 0);
+    const d = cc.getContext('2d').getImageData(0,0,cc.width,cc.height).data;
+    /* ⚠️ 置いたものは【比を保って】収まる＝面の隅は空いている。
+       測るのは「ロゴが確かにある所」かつ「切ると消える所」＝左上の切り欠きの中。 */
+    const x = Math.round(cc.width*0.26), y = Math.round(cc.height*0.36), i = (y*cc.width + x)*4;
+    return Math.round(d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114); };
+  const 切る前 = read();
+  /* 左上だけ大きく削ったパスにする */
+  FACES[0].clip = [{x:0.65,y:0.2,r:false},{x:0.8,y:0.2,r:false},
+                   {x:0.8,y:0.8,r:false},{x:0.2,y:0.8,r:false},{x:0.2,y:0.65,r:false}];
+  render();
+  return { 切る前, 切った後: read() };
+});
+ok(clipped.切った後 > clipped.切る前 + 40,
+   '⭐⭐ パスの外は切れる（角丸のような形に収まる）', JSON.stringify(clipped));
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
 await b.close(); process.exit(NG);
