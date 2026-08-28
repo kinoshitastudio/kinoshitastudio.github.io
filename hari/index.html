@@ -45,6 +45,9 @@ html,body{ margin:0; height:100%; overflow:hidden; background:var(--bg); color:v
 #stage{ position:fixed; inset:0 300px 0 0; background:var(--bg) }
 #cv{ width:100%; height:100%; display:block; touch-action:none }
 
+/* ⭐ 開いている控えの名前。⚠️ 直したまま保存していない間は【●】を付ける */
+#fileName{ display:block; font-size:11px; opacity:.72; margin:1px 0 1px }
+#fileName.dirty::after{ content:" ●"; opacity:.85 }
 #hud{ position:fixed; left:14px; top:12px; z-index:5; font-family:ui-monospace,Menlo,monospace;
   font-size:10px; color:var(--dim); line-height:1.9; pointer-events:none }
 #hud a{ color:var(--dim); pointer-events:auto }
@@ -387,6 +390,8 @@ input[type=color]{ border-radius:8px; height:30px }
 
 <div id="hud">
   貼 HARI / <a href="/interaction-design.html">← KINOSHITA STUDIO</a><br>
+  <!-- ⭐ いま開いている控えの名前（2026-08-28 木下）。⚠️ 何も開いていなければ出さない -->
+  <span id="fileName" style="display:none"></span>
   <b id="stat">READY</b>
 </div>
 <button id="theme" title="明るさ">◐</button>
@@ -1118,7 +1123,11 @@ input[type=color]{ border-radius:8px; height:30px }
       <button class="btn" id="iJSON">読み込む</button>
     </div>
     <input type="file" id="fJSON" accept=".json" hidden>
-    <div class="note">⭐ PNG は画面を吸わず<b>長辺4096で焼き直す</b>（画面の大きさやズームに左右されない）</div>
+    <div class="note">⭐ PNG は画面を吸わず<b>長辺4096で焼き直す</b>（画面の大きさやズームに左右されない）<br>
+      ⭐⭐ <b>⌘S で上書き保存</b>／<b>⇧⌘S で名前を付けて保存</b>。開いている控えの名前は<b>左上</b>に出る<br>
+      ⚠️ 上書きできるのは<b>「読み込む」から開いた／画面に落とした／一度保存した</b>ときだけ。
+      それ以外は ⌘S が<b>名前を付けて保存</b>になる（左上に「上書き不可」と出る）<br>
+      ⚠️ Safari は上書きの仕組み自体が無いので、毎回新しく落ちる</div>
   </div>
 </div>
 
@@ -3858,6 +3867,8 @@ function pushUndo(){
   if(UNDO.length && UNDO[UNDO.length-1] === j) return;   // 変わっていないなら積まない
   UNDO.push(j); if(UNDO.length > 60) UNDO.shift();
   REDO.length = 0;
+  /* ⭐ 変えたら【直した印】を立てる。⚠️ 変更の入口はここ1か所なので、立て忘れない */
+  if(typeof fileDirty === 'function') fileDirty();
 }
 /* ⭐⭐ 消した図の置き場（2026-08-27）。
    🔴 これまで「図を消す」は【⌘Z で戻らなかった】＝図は実体（item）を持っていて、
@@ -5443,6 +5454,8 @@ $('fSvg').addEventListener('change', e => { takeFile(e.target.files[0]); e.targe
 ['dragleave','drop'].forEach(t => cv.addEventListener(t, e => {
   e.preventDefault(); cv.style.outline = ''; }));
 cv.addEventListener('drop', e => {
+  /* ⚠️ 控え（.json）は「図として入れる」ものではない＝先に見分ける */
+  if([...(e.dataTransfer.files||[])].some(f => /\.json$/i.test(f.name))){ tryDropJSON(e); return; }
   const at = atPt(e);                    // ⭐ 落とした所（面を戻した控えの座標）
   [...(e.dataTransfer.files||[])].forEach(f => takeFile(f, at));
 });
@@ -5450,10 +5463,28 @@ cv.addEventListener('drop', e => {
    ⚠️ 版面の上だけで受けていたので、パネルや余白に落とすとブラウザが画像を開いていた
      ＝「入らない」に見える。落とした先が版面の外なら、版面の中央に置く。 */
 ['dragenter','dragover'].forEach(t => addEventListener(t, e => { e.preventDefault(); }));
+/* ⭐⭐ 控え（.json）を画面に落として開く（2026-08-28）。
+   ⭐ Chrome は落としたものから【手】が取れる＝そのまま ⌘S で上書きできる。
+   ⚠️ 取れないブラウザでは名前だけ覚えて「上書き不可」と出す（黙って落とさない）。 */
+async function tryDropJSON(e){
+  const items = [...(e.dataTransfer && e.dataTransfer.items || [])];
+  const files = [...(e.dataTransfer && e.dataTransfer.files || [])];
+  const jf = files.find(f => /\.json$/i.test(f.name));
+  if(!jf) return false;
+  e.preventDefault();
+  let h = null;
+  const it = items.find(x => x.kind === 'file');
+  if(it && typeof it.getAsFileSystemHandle === 'function'){
+    try{ const g = await it.getAsFileSystemHandle(); if(g && g.kind === 'file') h = g; }catch(_){}
+  }
+  applyJSONText(await jf.text(), h, jf.name);
+  return true;
+}
 addEventListener('drop', e => {
   if(cv.contains(e.target)) return;                 // 版面の上は上の処理に任せる
   const files = [...(e.dataTransfer && e.dataTransfer.files || [])];
   if(!files.length) return;
+  if(files.some(f => /\.json$/i.test(f.name))){ tryDropJSON(e); return; }
   e.preventDefault();
   const r = cv.getBoundingClientRect();
   const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
@@ -5592,7 +5623,9 @@ $('eSVG').onclick = () => {
   stat('SVG を書き出した — Illustrator で開くと【行・図ごとに名前つきのグループ】で入る'
        + (any ? '／紙の質感は mix-blend-mode（Illustrator は読まないことがある）' : ''));
 };
-$('eJSON').onclick = () => {
+/* ⭐⭐ 控えの中身を作るのは【この1本だけ】。
+   ボタンの「設定を保存」も ⌘S の上書きも、ここが書いたものを書く＝食い違わない。 */
+function snapJSON(){
   /* ⭐ 図（画像・SVG）も中身ごと入れる＝開き直せばポスターが丸ごと戻る。
      ⚠️ そのぶんファイルは大きくなる（画像は data URL で入るため）。 */
   syncColsFromStops();      /* ⭐ 古い版で開いても近い絵になるよう cols/n も一緒に書き出す */
@@ -5608,10 +5641,10 @@ $('eJSON').onclick = () => {
               .map(p => ({ src:p.src, pen:p.pen, kasu:p.kasu || null,
                            x:p.x, y:p.y, sc:p.sc, rot:p.rot,
                            ura:(p.ura ? 1 : 0), fill:(p.fill ? 1 : 0) })) };
-  dl(new Blob([JSON.stringify(d)], { type:'application/json' }), 'hari.json');
-  const n = S.pieces.filter(p => p.src || p.pen || (p.kasu && p.kasu.length)).length;
-  stat('保存した（行 ' + S.lines.length + ' ／ 図 ' + n + '）');
-};
+  return d;
+}
+/* ⚠️ ボタンは【名前を付けて保存】。上書きは ⌘S（手があるときだけ） */
+$('eJSON').onclick = () => saveNow(true);
 /* 保存から図を作り直す。⚠️ 画像は読み込みが非同期なので、置き場所を先に確保して後から差す */
 function restorePiece(p){
   const put = item => {
@@ -5652,13 +5685,102 @@ function restorePiece(p){
     img.src = p.src.d;
   }
 }
-$('iJSON').onclick = () => $('fJSON').click();
-$('fJSON').addEventListener('change', e => {
-  const f = e.target.files[0]; if(!f) return;
-  const rd = new FileReader();
-  rd.onload = () => {
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ いま開いている控えを覚える／⌘S で上書き（2026-08-28 木下）
+   🔴 ブラウザは「落としたファイル」を書き戻せない。書き戻せるのは
+      **こちらが掴んだ手（FileSystemFileHandle）がある時だけ**。
+      手が入るのは ①ファイルを選ぶ窓から開いた ②画面に落とした（Chrome）
+      ③一度「名前を付けて保存」した ── の3つ。
+      ⚠️ 昔ながらの <input type=file> から開くと手が来ない＝**上書きできない**。
+   ⭐ だから ⌘S は【手があれば上書き／無ければ名前を付けて保存】に分ける。
+      🔴 黙って別のことをしない ── どちらをしたか毎回 画面に出す。
+   ⚠️ Safari は手の仕組み自体が無い。そのときは常に「保存」になる（理由も出す）。
+   ══════════════════════════════════════════════════════════════ */
+let FILE = { handle:null, name:null, dirty:false };
+const canHandle = () => (typeof window.showSaveFilePicker === 'function');
+function fileShow(){
+  const el = $('fileName'); if(!el) return;
+  if(!FILE.name){ el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.textContent = FILE.name + (FILE.handle ? '' : '（上書き不可）');
+  el.classList.toggle('dirty', !!FILE.dirty);
+  el.title = FILE.handle
+    ? '⌘S で上書き保存'
+    : 'この開き方だと上書きできません（⌘S は名前を付けて保存になります）';
+}
+/* ⭐ 触ったら「直した印」を立てる。⚠️ 一か所に集める＝立て忘れない */
+function fileDirty(){ if(FILE.name && !FILE.dirty){ FILE.dirty = true; fileShow(); } }
+
+/* ⭐ 控えの中身を作るのは1本だけ（保存も上書きも同じものを書く＝食い違わない） */
+function saveText(){ return JSON.stringify(snapJSON()); }
+
+async function fileWrite(h, txt){
+  const w = await h.createWritable();
+  await w.write(new Blob([txt], { type:'application/json' }));
+  await w.close();
+}
+/* ⌘S ＝ 上書き（手が無ければ名前を付けて保存） */
+async function saveNow(forceAs){
+  const txt = saveText();
+  const nm  = FILE.name || ('hari_' + Date.now() + '.json');
+  if(!forceAs && FILE.handle){
     try{
-      const d = JSON.parse(rd.result);
+      await fileWrite(FILE.handle, txt);
+      FILE.dirty = false; fileShow();
+      stat('上書きした — ' + FILE.name);
+      return;
+    }catch(err){
+      stat('🔴 上書きできなかった（' + (err && err.message || err) + '）— 名前を付けて保存します');
+    }
+  }
+  if(canHandle()){
+    try{
+      const h = await window.showSaveFilePicker({ suggestedName:nm,
+        types:[{ description:'貼 HARI の控え', accept:{ 'application/json':['.json'] } }] });
+      await fileWrite(h, txt);
+      FILE.handle = h; FILE.name = h.name; FILE.dirty = false; fileShow();
+      stat('保存した — ' + FILE.name + '（次からは ⌘S で上書き）');
+      return;
+    }catch(err){
+      if(err && err.name === 'AbortError') return;      /* ⚠️ 閉じただけ＝黙って戻る */
+    }
+  }
+  /* ここへ来る＝手の仕組みが無い（Safari など）。落とすしかない＝理由を出す */
+  dl(new Blob([txt], { type:'application/json' }), nm);
+  FILE.name = nm; FILE.dirty = false; fileShow();
+  stat('保存した — ' + nm + '（このブラウザは上書きできないので、毎回新しく落ちます）');
+}
+/* 開く＝手が取れる道を先に試す（取れれば ⌘S で上書きできる） */
+async function openNow(){
+  if(canHandle() && typeof window.showOpenFilePicker === 'function'){
+    try{
+      const [h] = await window.showOpenFilePicker({ multiple:false,
+        types:[{ description:'貼 HARI の控え', accept:{ 'application/json':['.json'] } }] });
+      const f = await h.getFile();
+      applyJSONText(await f.text(), h, h.name);
+      return;
+    }catch(err){ if(err && err.name === 'AbortError') return; }
+  }
+  $('fJSON').click();                                   /* ⚠️ ここから開くと手が来ない */
+}
+addEventListener('keydown', e => {
+  if((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's'){
+    e.preventDefault();
+    saveNow(e.shiftKey);                                /* ⇧⌘S ＝ 名前を付けて保存 */
+  }
+});
+
+$('iJSON').onclick = () => openNow();
+/* ⭐⭐ 控えを読むのは【この1本だけ】。ファイルを選ぶ窓からでも、画面に落としてでも、
+   昔ながらの入力からでも、通る道は同じ（食い違わない）。
+   ⚠️ h＝掴んだ手。ある時だけ ⌘S で上書きできる（無ければ名前を付けて保存になる）。 */
+function applyJSONText(txt, h, name){
+  try{
+
+      /* ⚠️ 元は FileReader の中にあった処理。移したら【読む元】も直すこと
+            （rd.result のままだと必ず例外＝「読めなかった」しか出ない） */
+      const d = JSON.parse(txt);
       // ⚠️ 古い保存には mode/bg2 が無い＝既定で埋める（無いと地が消える）
       if(d.board) S.board = Object.assign({ bg2:'#ffffff', mode:'solid', ang:90 }, d.board);
       /* ⭐ 紙の質感（2枚）。⚠️ 古い保存には無い＝なし（いままでの絵）に落ちる
@@ -5675,9 +5797,16 @@ $('fJSON').addEventListener('change', e => {
       S.sel = { kind:'line', i:0 };
       syncPanel(); fitView(); render();
       stat('読み込んだ（行 ' + S.lines.length + ' ／ 図 ' + (d.pieces||[]).length + '）');
-    }catch(err){ stat('この JSON は読めなかった'); }
-  };
-  rd.readAsText(f); e.target.value = '';
+    
+    /* ⭐ 開いた控えを覚える＝左上に名前が出て、⌘S の宛先になる */
+    FILE.handle = h || null; FILE.name = name || null; FILE.dirty = false; fileShow();
+  }catch(err){ stat('この JSON は読めなかった'); }
+}
+$('fJSON').addEventListener('change', e => {
+  const f = e.target.files[0]; if(!f) return;
+  /* ⚠️ ここから開くと【手が来ない】＝上書きできない。名前だけ覚えて、その旨を出す */
+  f.text().then(t => applyJSONText(t, null, f.name));
+  e.target.value = '';
 });
 
 /* ══ 明るさ ══ */
