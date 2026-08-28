@@ -156,5 +156,40 @@ const fit = await p.evaluate(() => {
 });
 ok(Math.abs(+fit.比 - 4) < 0.8, '⭐⭐ ロゴは比を保って収まる（歪まない）', '4.00 のはずが ' + fit.比);
 
+/* ══⭐⭐ Tシャツが【布に見える】か ── 2026-08-28 ══
+   木下＝「Tシャツもそうだがもっとリアルなのをお願い」
+   🔴 見た目の良し悪しは測れないが、良く見えた【理由】は測れる：
+     ① 胸が張っている（中央が脇より明るい）  ② 縫い目がある（ヘムの帯だけ明暗が強い）
+     ③ しわが部位ごとに集まっている（脇の下 ≫ 身頃の中央）
+   ⭐ 3つとも【直す前の版で落ちる】ことを確かめてある（前＝ -12 / -1.7 / 1.0倍）。
+   ⚠️ 生地の粒（1画素）で数字が埋まるので、7画素の平均にしてから振れ幅を見る。
+   ⚠️ 測るのは【型を描くための別の板】＝本体の盤は触らない（読むと描き方が変わるため）。 */
+const tee = await p.evaluate(() => {
+  const k = KATA[0], W = 600, H = 750;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const q = c.getContext('2d', { willReadFrequently:true });
+  k.draw(q, W, H);
+  const d = q.getImageData(0, 0, W, H).data;
+  const lum = (x, y) => { const i = (y*W + x)*4; return d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114; };
+  const L = (fx, fy) => +lum(Math.round(W*fx), Math.round(H*fy)).toFixed(1);
+  const swing = (fx0, fx1, fy0, fy1) => {          /* 粒を平均で消してからの振れ幅 */
+    const x0 = Math.round(W*fx0), x1 = Math.round(W*fx1);
+    const y0 = Math.round(H*fy0), y1 = Math.round(H*fy1);
+    let lo = 1e9, hi = -1e9;
+    for(let y = y0; y < y1; y += 3) for(let x = x0; x < x1-6; x += 3){
+      let s = 0; for(let m = 0; m < 7; m++) s += lum(x+m, y);
+      const v = s/7; if(v < lo) lo = v; if(v > hi) hi = v;
+    }
+    return +(hi - lo).toFixed(1);
+  };
+  return { 胸:L(0.50,0.39), 脇:L(0.30,0.39),
+           ヘム:swing(0.32,0.68,0.845,0.885), 平ら:swing(0.32,0.68,0.62,0.68),
+           脇下:swing(0.29,0.44,0.36,0.46),   中央:swing(0.44,0.56,0.58,0.66) };
+});
+ok(tee.胸 > tee.脇 + 20, '⭐ Tシャツの胸が張っている（中央が脇より明るい）', `胸 ${tee.胸} / 脇 ${tee.脇}`);
+ok(tee.ヘム > tee.平ら + 5, '⭐ 縫い目がある（裾のヘムだけ明暗が強い）', `ヘム ${tee.ヘム} / 平ら ${tee.平ら}`);
+ok(tee.脇下 > tee.中央 * 2, '⭐⭐ しわが【部位ごと】に集まっている（脇の下 ≫ 身頃の中央）',
+   `脇下 ${tee.脇下} / 中央 ${tee.中央}`);
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
 await b.close(); process.exit(NG);
