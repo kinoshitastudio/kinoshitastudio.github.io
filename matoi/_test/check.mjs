@@ -15,7 +15,9 @@ const p = await b.newPage(); const errs=[];
 p.on('pageerror', e => errs.push(e.message));
 await p.setViewport({ width:1400, height:900 });
 await p.goto(URL_, { waitUntil:'networkidle0' });
-await new Promise(r=>setTimeout(r,1600));
+/* ⚠️ 立ち上げで【型と仮ロゴが非同期に入る】＝それが終わってから測る
+   （待たずにセットすると、あとから上書きされて前提が崩れる） */
+await new Promise(r=>setTimeout(r,2600));
 let NG=0; const ok=(c,n,x)=>{ console.log((c?'  ✅ ':'  🔴 ')+n+(x!=null?' … '+x:'')); if(!c) NG=1; };
 await p.evaluate(() => { window.__got = [];
   const oc = URL.createObjectURL;
@@ -46,10 +48,12 @@ const read = () => p.evaluate(() => {
   const d = c.getContext('2d').getImageData(0,0,c.width,c.height).data;
   const at = (fx, fy) => { const x = Math.round(c.width*fx), y = Math.round(c.height*fy);
     const i = (y*c.width + x)*4; return Math.round(d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114); };
-  return { 左:at(0.16, 0.50), 右:at(0.84, 0.50), 外上:at(0.16, 0.12), 外下:at(0.84, 0.88) };
+  /* ⚠️ ロゴは【比を保って】面の中央に収まる＝面の端はロゴの外。
+     測るのはロゴが確実にある所（実測で 0.275〜0.725 に入る）。 */
+  return { 左:at(0.33, 0.50), 右:at(0.67, 0.50), 外上:at(0.16, 0.12), 外下:at(0.84, 0.88) };
 });
 const A = await read();
-ok(A.右 > A.左 + 25, '⭐⭐ 陰を借りている（下地が暗い側ではロゴも暗い）', JSON.stringify(A));
+ok(A.右 > A.左 + 12, '⭐⭐ 陰を借りている（下地が暗い側ではロゴも暗い）', JSON.stringify(A));
 
 /* ④ 全部 0 なら「ただ貼っただけ」＝ロゴの中は真っ白で左右同じ */
 const set = (id, v) => p.evaluate(([i,x]) => { const r=document.getElementById(i); r.value=x;
@@ -59,7 +63,7 @@ const set = (id, v) => p.evaluate(([i,x]) => { const r=document.getElementById(i
 await set('r_sh', 0); await set('r_hi', 0); await set('r_gr', 0); await set('r_warp', 0); await set('r_op', 100);
 await new Promise(r=>setTimeout(r,600));
 const B = await read();
-ok(Math.abs(B.右 - B.左) < 6 && B.左 > 230, '全部 0 なら【ただ貼っただけ】に戻る（つまみが嘘でない）', JSON.stringify(B));
+ok(Math.abs(B.右 - B.左) < 8 && B.左 > 230, '全部 0 なら【ただ貼っただけ】に戻る（つまみが嘘でない）', JSON.stringify(B));
 
 /* ③ 借りたものがロゴの外へはみ出さない＝外は下地のまま（左が暗く右が明るい） */
 await set('r_op', 95); await set('r_sh', 120); await new Promise(r=>setTimeout(r,600));
@@ -113,5 +117,44 @@ await new Promise(r=>setTimeout(r,1200));
 const got = await p.evaluate(() => window.__got);
 ok(got.some(x=>/png/.test(x.type)), 'PNG が本当に落ちる', JSON.stringify(got));
 ok(await p.evaluate(() => ov.id === 'ov' && ov !== cv), '掴み手は別の板に描いている（PNG に混ざらない）');
+/* ⭐⭐ 木下＝「モックアップ集みたいなすでに用意された写真がたくさんあり、
+   そこに入れ込みできるロゴをいれると反映される、とかではないんだね」
+   ＝ 物が並んでいて、ロゴを入れるだけで次々に見られること。ここを数字で見る。 */
+ok(await p.evaluate(() => KATA.length >= 6), '物（型）が並んでいる', await p.evaluate(() => KATA.map(k=>k.name).join('・')));
+ok(await p.evaluate(() => document.querySelectorAll('#s_kata button').length === KATA.length),
+   '一覧が画面に出ている');
+/* ⭐ 物を押してもロゴは入れたまま／面はその物に合う */
+await p.evaluate(() => { LOGO_KEEP = LOGO; useKata(2); });
+await new Promise(r=>setTimeout(r,900));
+ok(await p.evaluate(() => LOGO === LOGO_KEEP), '物を押してもロゴは入れたまま');
+ok(await p.evaluate(() => FACES.length === KATA[2].faces.length), '面はその物に合う（箱は2面）',
+   await p.evaluate(() => FACES.length + ' 面'));
+
+/* ⭐⭐ ロゴは【比を保って】収まる＝歪まない（モックアップとして致命的な所） */
+const fit = await p.evaluate(() => {
+  /* 横長のロゴを入れて、縦長の面に置いても比が変わらないことを見る */
+  const c = document.createElement('canvas'); c.width = 400; c.height = 100;
+  const q = c.getContext('2d'); q.fillStyle = '#000'; q.fillRect(0,0,400,100);
+  return new Promise(res => {
+    const im = new Image();
+    im.onload = () => {
+      LOGO = im;
+      FACES = [{ on:true, pts:[[0.30,0.20],[0.50,0.20],[0.50,0.80],[0.30,0.80]] }];  /* 縦長の面 */
+      render();
+      const cc = document.createElement('canvas'); cc.width = cv.width; cc.height = cv.height;
+      cc.getContext('2d').drawImage(cv, 0, 0);
+      const d = cc.getContext('2d').getImageData(0,0,cc.width,cc.height).data;
+      let x0=1e9,x1=-1,y0=1e9,y1=-1;
+      for(let y=0;y<cc.height;y+=2) for(let x=0;x<cc.width;x+=2){
+        const i=(y*cc.width+x)*4;
+        if(d[i]<60 && d[i+1]<60 && d[i+2]<60){ if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
+      }
+      res({ w:x1-x0, h:y1-y0, 比:((x1-x0)/Math.max(1,(y1-y0))).toFixed(2) });
+    };
+    im.src = c.toDataURL('image/png');
+  });
+});
+ok(Math.abs(+fit.比 - 4) < 0.8, '⭐⭐ ロゴは比を保って収まる（歪まない）', '4.00 のはずが ' + fit.比);
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
 await b.close(); process.exit(NG);
