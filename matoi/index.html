@@ -270,6 +270,17 @@
       <button class="btn" id="b_addFace">面を足す</button>
       <button class="btn" id="b_delFace">この面を消す</button>
     </div>
+    <div class="row"><span class="n">横に回す</span><output id="o_yaw">0°</output></div>
+    <input type="range" id="r_yaw" min="-70" max="70" value="0">
+    <div class="row"><span class="n">縦に回す</span><output id="o_pitch">0°</output></div>
+    <input type="range" id="r_pitch" min="-70" max="70" value="0">
+    <div class="row"><span class="n">面内で回す</span><output id="o_roll">0°</output></div>
+    <input type="range" id="r_roll" min="-180" max="180" value="0">
+    <div class="row"><span class="n">奥行き</span><output id="o_persp">0</output></div>
+    <input type="range" id="r_persp" min="0" max="100" value="0">
+    <div class="note">⭐⭐ <b>回すと四隅が動く</b>（角度が入力で、四隅は結果）。0 に戻せば必ず元に戻る<br>
+      ⭐ <b>奥行き</b>＝近くから見た強さ。上げるほど遠い辺が短くなる（袋や箱の側面に効く）<br>
+      ⚠️ 四隅を手で掴んで直すと、<b>その形が新しい基準</b>になって角度は 0 に戻る</div>
     <button class="btn" id="b_pts">いまの四隅を写す（list.json 用）</button>
     <div class="seg" id="s_fill">
       <button data-v="0" class="on">面はそのまま</button><button data-v="1">面に紙を敷く</button>
@@ -294,6 +305,10 @@
     <input type="range" id="r_gr" min="0" max="150" value="30">
     <div class="row"><span class="n">色を借りる</span><output id="o_col">0.35</output></div>
     <input type="range" id="r_col" min="0" max="100" value="35">
+    <div class="row"><span class="n">明るさ</span><output id="o_bri">1.00</output></div>
+    <input type="range" id="r_bri" min="20" max="220" value="100">
+    <div class="row"><span class="n">かたさ</span><output id="o_con">1.00</output></div>
+    <input type="range" id="r_con" min="30" max="220" value="100">
     <div class="row"><span class="n">濃さ</span><output id="o_op">0.95</output></div>
     <input type="range" id="r_op" min="0" max="100" value="95">
     <div class="seg" id="s_blend">
@@ -347,7 +362,7 @@ function stat(s){ el('stat').textContent = s; clearTimeout(statT);
      ここは物（布・箱・袋）なので、合わせただけでは浮く。**借りるところ**が違う。
    ══════════════════════════════════════════════════════════ */
 const P = {
-  warp:0.55, sh:0.75, hi:0.22, gr:0.30, col:0.35, op:0.95, blend:'normal', fill:false,
+  warp:0.55, sh:0.75, hi:0.22, gr:0.30, col:0.35, bri:1.00, con:1.00, op:0.95, blend:'normal', fill:false,
   tint:'none', tintCol:'#ffffff', long:1600, cut:true,
 };
 let BG = null, BGKEY = 0;      /* 下地（写真でも、型を描いた紙でもいい）／差し替えた回数 */
@@ -487,6 +502,35 @@ function newFace(){
   return { on:true, pts:[[0.32,0.34],[0.68,0.34],[0.68,0.62],[0.32,0.62]] };
 }
 FACES.push(newFace());
+
+/* ══⭐⭐ 面を回す ── 角度は【入力】・四隅は【結果】（2026-08-29）══
+   木下＝「角度調整もできるようにしないとね。奥行きとかも」。
+   ⭐ 四隅は掴んで動かせるが、**奥行きのある回し方は手では作れない**
+     （4点を同時に、透視の割合どおりに動かす必要がある）。
+   ⭐⭐ だから base（基準の四隅）を控えて、つまみは【常にそこからの変形】にする。
+     つまみを 0 に戻せば必ず base に戻る＝戻れないつまみを作らない。
+   ⚠️ 手で掴んで動かしたら、その形を新しい base にして角度を 0 に戻す
+     ＝見た目は変わらないまま基準だけが移る（掴んだ形が消えない）。
+   ⚠️ 盤は正方形とは限らないので、横の比を掛けてから回して、戻すときに割る。 */
+function applyRot(fc, W, H){
+  const b = fc.base; if(!b) return;
+  const r = fc.rot || {};
+  const ar = (W && H) ? W / H : 1;
+  const cx = b.reduce((s,p)=>s+p[0],0)/4, cy = b.reduce((s,p)=>s+p[1],0)/4;
+  const yaw = (r.yaw||0)*Math.PI/180, pit = (r.pitch||0)*Math.PI/180, rol = (r.roll||0)*Math.PI/180;
+  /* 奥行き＝焦点距離。0 で遠くから（歪まない）／100 で近くから（強く歪む） */
+  const f = 2.2 / (((r.persp||0)/100) * 0.9 + 0.28);
+  fc.pts = b.map(([x0, y0]) => {
+    let x = (x0-cx)*ar, y = y0-cy, z = 0, t;
+    t = x*Math.cos(rol) - y*Math.sin(rol); y = x*Math.sin(rol) + y*Math.cos(rol); x = t;  /* 面内 */
+    t = x*Math.cos(yaw) + z*Math.sin(yaw); z = -x*Math.sin(yaw) + z*Math.cos(yaw); x = t; /* 横 */
+    t = y*Math.cos(pit) - z*Math.sin(pit); z = y*Math.sin(pit) + z*Math.cos(pit); y = t;  /* 縦 */
+    const k = f / (f + z);
+    return [cx + x*k/ar, cy + y*k];
+  });
+}
+/* ⭐ 掴んで動かしたら、その形が新しい基準になる（回した状態から掴んでも壊れない） */
+function rebase(fc){ if(!fc) return; fc.base = fc.pts.map(p => p.slice()); fc.rot = null; }
 
 /* ══⭐⭐ 射影変換 ── 単位正方形 → 四角形（四隅で決まる1つの写し）══
    ⚠️ ここが「斜め・奥行き」の全部。4点以外に持つものは無い。 */
@@ -631,363 +675,12 @@ function seam(q, pts, w, col, dash, ox, oy){
   q.stroke(); q.restore();
 }
 
-/* ══ ① T シャツ ══
-   ⭐⭐ 木下＝「Tシャツもそうだがもっとリアルなのをお願い」（2026-08-28）
-   本物に見えるかは【形が合っているか】ではなく、布として何が起きているか。効いたのは4つ：
-     ① 縫い目と厚み（襟のリブ・袖口・裾のヘム）＝物には必ず【重なった端】がある
-     ② 胸の張り＝ロゴが乗る所。ここが平らだと、何を借りても「貼っただけ」に見える
-     ③ 生地の落ち感（上が明るく裾へ暗い／裾は垂れる／体の丸みで左右の端が暗い）
-     ④ ⭐⭐ しわを【部位ごとに集める】（脇の下・袖の付け根・裾）
-   ⚠️ ①〜④は全部【ロゴが借りる相手】でもある＝下地が良くなるとロゴの乗りもそのまま良くなる */
-function teePath(q, W, H){
-  q.beginPath();
-  q.moveTo(W*0.415, H*0.176);
-  q.quadraticCurveTo(W*0.500, H*0.252, W*0.585, H*0.176);      /* 襟ぐり */
-  q.quadraticCurveTo(W*0.640, H*0.168, W*0.690, H*0.196);      /* 右肩 */
-  q.quadraticCurveTo(W*0.815, H*0.238, W*0.862, H*0.330);      /* 袖の外 */
-  q.lineTo(W*0.800, H*0.428);                                  /* 袖口 */
-  q.quadraticCurveTo(W*0.762, H*0.394, W*0.712, H*0.372);      /* 袖の下 → 脇 */
-  q.quadraticCurveTo(W*0.736, H*0.640, W*0.726, H*0.884);      /* 右の脇線 */
-  q.quadraticCurveTo(W*0.500, H*0.932, W*0.274, H*0.884);      /* 裾＝垂れる */
-  q.quadraticCurveTo(W*0.264, H*0.640, W*0.288, H*0.372);      /* 左の脇線 */
-  q.quadraticCurveTo(W*0.238, H*0.394, W*0.200, H*0.428);      /* 脇 → 袖の下 */
-  q.lineTo(W*0.138, H*0.330);                                  /* 袖口 */
-  q.quadraticCurveTo(W*0.185, H*0.238, W*0.310, H*0.196);      /* 袖の外 */
-  q.quadraticCurveTo(W*0.360, H*0.168, W*0.415, H*0.176);      /* 左肩 */
-  q.closePath();
-}
-/* ⭐ 面＝【胸のプリント位置】。腹の高さに置くと、絵は合っていても着た所が想像できない */
-kata('tshirt', 'Tシャツ', 4/5, [[[0.355,0.312],[0.645,0.312],[0.645,0.484],[0.355,0.484]]], (q, W, H) => {
-  const S = Math.max(W, H);
-  /* ⚠️ 台が明るいと【脇の輪郭が溶ける】＝布と台の明るさの差で物の縁が立つ */
-  q.fillStyle = shade(q, W*0.5, H*0.30, S*0.95, '#cdc8bf', '#9b968d');   /* 台 */
-  q.fillRect(0, 0, W, H);
-  q.save();                                                              /* 台に落ちる影 */
-  q.filter = 'blur(' + (S*0.018).toFixed(1) + 'px)';
-  q.fillStyle = 'rgba(58,52,44,.28)';
-  q.translate(S*0.010, S*0.014); teePath(q, W, H); q.fill();
-  q.restore();
-  /* ⭐ 襟の穴からは【後身頃】が見える（台ではない）＝布の色のまま、影だけ落とす */
-  q.save();
-  q.beginPath(); q.ellipse(W*0.5, H*0.208, W*0.086, H*0.040, 0, 0, 7);
-  q.fillStyle = '#c4beb3'; q.fill(); q.clip();
-  q.fillStyle = shade(q, W*0.50, H*0.184, W*0.16, 'rgba(38,33,27,.26)', 'rgba(38,33,27,0)');
-  q.fillRect(0, 0, W, H);
-  q.restore();
-
-  teePath(q, W, H);
-  q.save(); q.clip();
-
-  /* ③ 落ち感＝上が明るく、裾へ落ちる */
-  const gv = q.createLinearGradient(0, H*0.14, 0, H*0.95);
-  gv.addColorStop(0, '#f1eee6'); gv.addColorStop(0.42, '#e1dcd2'); gv.addColorStop(1, '#b6b0a5');
-  q.fillStyle = gv; q.fillRect(0, 0, W, H);
-  /* ③ 体の丸み＝左右の端が暗い */
-  const gh = q.createLinearGradient(W*0.262, 0, W*0.738, 0);
-  gh.addColorStop(0, 'rgba(76,70,60,.34)');  gh.addColorStop(0.26, 'rgba(76,70,60,0)');
-  gh.addColorStop(0.72, 'rgba(76,70,60,0)'); gh.addColorStop(1, 'rgba(76,70,60,.36)');
-  q.fillStyle = gh; q.fillRect(0, 0, W, H);
-  /* ② 胸の張り（左右の膨らみ）＝ロゴはこの上に乗る */
-  /* ⚠️ 半径を大きくすると胸でなく【腹まで白く飛ぶ】（1回そうなった）＝張りは胸に閉じ込める */
-  [[0.404, 0.382], [0.596, 0.382]].forEach(([x, y]) => {
-    q.fillStyle = shade(q, W*x, H*y, W*0.145, 'rgba(255,255,255,.24)', 'rgba(255,255,255,0)');
-    q.fillRect(0, 0, W, H);
-  });
-  /* 布が沈む所＝襟の下・袖の付け根・裾 */
-  q.fillStyle = shade(q, W*0.50, H*0.250, W*0.21, 'rgba(42,37,30,.34)', 'rgba(42,37,30,0)');
-  q.fillRect(0, 0, W, H);
-  [[0.316, 0.330], [0.684, 0.330]].forEach(([x, y]) => {
-    q.fillStyle = shade(q, W*x, H*y, W*0.17, 'rgba(42,37,30,.30)', 'rgba(42,37,30,0)');
-    q.fillRect(0, 0, W, H);
-  });
-  q.fillStyle = shade(q, W*0.50, H*0.915, W*0.40, 'rgba(42,37,30,.28)', 'rgba(42,37,30,0)');
-  q.fillRect(0, H*0.60, W, H*0.40);
-
-  /* ③ ⭐ 大きなうねり（＝布の落ち感）。細いしわだけだと【平らな紙にしわを描いた絵】に見える。
-     太く・薄く・強くぼかす＝形は見えないのに平面感だけが消える */
-  q.save(); q.filter = 'blur(' + (S*0.022).toFixed(1) + 'px)';
-  folds(q, W*0.372, H*0.870, -Math.PI/2 - 0.06, 0.34, S*0.44, 3, 131, S*0.085, 0.055);
-  folds(q, W*0.628, H*0.885, -Math.PI/2 + 0.07, 0.30, S*0.40, 3, 149, S*0.075, 0.050);
-  folds(q, W*0.500, H*0.560, -Math.PI/2 - 0.02, 0.26, S*0.22, 2, 167, S*0.070, 0.035);
-  q.restore();
-
-  /* ④ しわ＝部位ごとに集める */
-  q.save(); q.filter = 'blur(' + (S*0.0035).toFixed(2) + 'px)';
-  /* ⚠️ 太く濃くすると【枝】に見える（1回そうなった）。細く・数で出す */
-  /* ⚠️ 左右を同じ角度・同じ長さにすると【翼】に見える＝向きも長さもずらす */
-  folds(q, W*0.300, H*0.402, -0.58, 0.90, S*0.23, 7, 11, S*0.010, 0.15);   /* 左の脇下 → 胸へ */
-  folds(q, W*0.700, H*0.396, Math.PI+0.74, 1.02, S*0.19, 6, 23, S*0.010, 0.14);
-  folds(q, W*0.470, H*0.898, -Math.PI/2 - 0.16, 1.05, S*0.19, 9, 37, S*0.012, 0.09); /* 裾のたるみ */
-  folds(q, W*0.612, H*0.900, -Math.PI/2 + 0.22, 0.80, S*0.14, 5, 41, S*0.011, 0.08);
-  folds(q, W*0.320, H*0.250, 1.35, 0.55, S*0.13, 4, 53, S*0.008, 0.13);    /* 袖の付け根 */
-  folds(q, W*0.680, H*0.250, Math.PI-1.35, 0.55, S*0.13, 4, 71, S*0.008, 0.13);
-  folds(q, W*0.176, H*0.404, -0.85, 0.62, S*0.12, 5, 89, S*0.008, 0.15);   /* 左袖 */
-  folds(q, W*0.824, H*0.404, Math.PI+0.85, 0.62, S*0.12, 5, 97, S*0.008, 0.15);
-  q.restore();
-  wrinkles(q, W, H, 8, 7, 0.028);                                          /* 全体の揺らぎ（薄く） */
-
-  /* ① 縫い目と厚み ── 袖の付け根／袖口／裾のヘム */
-  const arm = s => [[W*(0.5+s*0.190), H*0.198], [W*(0.5+s*0.226), H*0.286], [W*(0.5+s*0.212), H*0.372]];
-  [-1, 1].forEach(s => {
-    seam(q, arm(s), S*0.0040, 'rgba(58,52,44,.22)', null, 0, 0);
-    seam(q, arm(s), S*0.0022, 'rgba(255,255,255,.20)', null, S*0.005*s, 0);
-  });
-  const cuff = s => [[W*(0.5+s*0.258), H*0.417], [W*(0.5+s*0.289), H*0.368], [W*(0.5+s*0.320), H*0.319]];
-  [-1, 1].forEach(s => {
-    seam(q, cuff(s), S*0.0032, 'rgba(58,52,44,.24)', null, 0, 0);
-    seam(q, cuff(s), S*0.0022, 'rgba(58,52,44,.16)', [S*0.010, S*0.008], 0, S*0.011);
-  });
-  const hem = [[W*0.281, H*0.856], [W*0.500, H*0.902], [W*0.719, H*0.856]];
-  seam(q, hem, S*0.0032, 'rgba(58,52,44,.20)', null, 0, 0);
-  seam(q, hem, S*0.0022, 'rgba(58,52,44,.14)', [S*0.011, S*0.009], 0, S*0.013);
-  seam(q, hem, S*0.0055, 'rgba(255,255,255,.22)', null, 0, S*0.024);        /* ヘムの厚み */
-
-  cloth(q, W, H, 9, 0.13);
-  q.restore();
-
-  /* ① 襟のリブ＝【厚み】。ここが1本の線だと必ず「絵」に見える */
-  q.beginPath();
-  q.moveTo(W*0.415, H*0.176); q.quadraticCurveTo(W*0.500, H*0.252, W*0.585, H*0.176);
-  q.lineTo(W*0.576, H*0.198); q.quadraticCurveTo(W*0.500, H*0.278, W*0.424, H*0.198);
-  q.closePath();
-  q.fillStyle = 'rgba(255,255,255,.20)'; q.fill();   /* ⚠️ 濃いと【白い襟】に見える */
-  q.strokeStyle = 'rgba(58,52,44,.24)'; q.lineWidth = S*0.0030; q.stroke();
-  seam(q, [[W*0.427, H*0.204], [W*0.500, H*0.286], [W*0.573, H*0.204]],
-       S*0.0055, 'rgba(58,52,44,.16)', null, 0, 0);                         /* リブの落ち影 */
-});
-
-/* 多角形を1本の道で（面を描く・切り抜く、どちらもここを通る） */
-function poly(q, W, H, pts){
-  q.beginPath();
-  pts.forEach(([x, y], i) => i ? q.lineTo(W*x, H*y) : q.moveTo(W*x, H*y));
-  q.closePath();
-}
-/* ══ ② 紙袋（正面＋側面の2面）══
-   ⭐⭐ 紙は布と違う＝しわは【角ばった折れ】。借りる相手は 口・折り返し・マチの折り・角の稜線。
-   ⚠️ 前の版は【ただの箱】だった。袋である理由（開いた口・折り返しの厚み・持ち手の根元・
-      横のマチ）が1つも無いと、面を斜めにしても袋には見えない。 */
-kata('bag', '紙袋', 4/5, [
-    [[0.272,0.448],[0.556,0.476],[0.556,0.706],[0.272,0.678]],
-    [[0.652,0.408],[0.780,0.363],[0.780,0.608],[0.652,0.653]] ], (q, W, H) => {
-  const S = Math.max(W, H);
-  const FT = [[0.215,0.275],[0.615,0.315],[0.615,0.885],[0.215,0.845]];  /* 正面 */
-  const SD = [[0.615,0.315],[0.815,0.245],[0.815,0.795],[0.615,0.885]];  /* 側面 */
-  const TP = [[0.215,0.275],[0.415,0.205],[0.815,0.245],[0.615,0.315]];  /* 口 */
-  q.fillStyle = shade(q, W*0.42, H*0.24, S*0.95, '#d2cdc4', '#9d988f');  /* 台 */
-  q.fillRect(0, 0, W, H);
-  q.save();                                                             /* 接地影 */
-  q.filter = 'blur(' + (S*0.016).toFixed(1) + 'px)';
-  q.fillStyle = 'rgba(54,48,40,.30)';
-  q.beginPath(); q.ellipse(W*0.50, H*0.888, W*0.28, H*0.018, 0, 0, 7); q.fill();
-  q.restore();
-
-  /* ⭐ 口＝【開いている】。中が暗いことが、袋であることの半分を作っている */
-  poly(q, W, H, TP);
-  q.fillStyle = shade(q, W*0.52, H*0.310, W*0.42, '#918a7e', '#655f56'); q.fill();
-  q.save(); poly(q, W, H, TP); q.clip();
-  q.fillStyle = shade(q, W*0.50, H*0.215, W*0.30, 'rgba(24,21,17,.44)', 'rgba(24,21,17,0)');
-  q.fillRect(0, 0, W, H);                                               /* 奥ほど暗い */
-  /* 奥の壁＝ここが無いと口が【黒い板】に見える（穴に深さが出ない） */
-  poly(q, W, H, [[0.245,0.268],[0.432,0.212],[0.795,0.249],[0.622,0.302]]);
-  q.fillStyle = 'rgba(164,156,144,.55)'; q.fill();
-  q.restore();
-  /* 持ち手＝口の手前の縁から出る（根元は正面に隠れる＝リベットで留めて見せる）
-     ⚠️ 弧が低いと【口の中に埋まる】＝紐に見えない。口の上に出させる */
-  [[0.282, 0.298, 0.392, 0.309], [0.448, 0.311, 0.558, 0.322]].forEach(([x0,y0,x1,y1]) => {
-    q.strokeStyle = 'rgba(62,56,47,.62)'; q.lineWidth = S*0.0085; q.lineCap = 'round';
-    q.beginPath(); q.moveTo(W*x0, H*y0);
-    q.quadraticCurveTo(W*(x0+x1)/2, H*(y0-0.215), W*x1, H*y1); q.stroke();
-    q.strokeStyle = 'rgba(255,255,255,.26)'; q.lineWidth = S*0.0030;
-    q.beginPath(); q.moveTo(W*x0, H*(y0-0.004));
-    q.quadraticCurveTo(W*(x0+x1)/2, H*(y0-0.219), W*x1, H*(y1-0.004)); q.stroke();
-  });
-
-  /* 正面＝光は左上から */
-  poly(q, W, H, FT);
-  const gf = q.createLinearGradient(W*0.215, 0, W*0.615, 0);
-  gf.addColorStop(0, '#f5f1e8'); gf.addColorStop(0.55, '#eae5da'); gf.addColorStop(1, '#d3ccbe');
-  q.fillStyle = gf; q.fill();
-  /* 側面＝暗い（奥行きはここで出る） */
-  poly(q, W, H, SD);
-  const gs = q.createLinearGradient(W*0.615, 0, W*0.815, 0);
-  gs.addColorStop(0, '#a49d90'); gs.addColorStop(0.5, '#b6afa2'); gs.addColorStop(1, '#8e877b');
-  q.fillStyle = gs; q.fill();
-
-  /* ⭐ 折れ・粒は【面の中だけ】に閉じ込める（袋の外へ出ると紙に見えない） */
-  q.save(); poly(q, W, H, FT); q.clip();
-  q.save(); q.filter = 'blur(' + (S*0.004).toFixed(2) + 'px)';
-  /* 紙の折れ＝たわまない（bow は 0 に近い）・数は少なく */
-  fold(q, W*0.235, H*0.392, W*0.600, H*0.486, S*0.003, S*0.009, 0.055);
-  fold(q, W*0.228, H*0.690, W*0.575, H*0.640, -S*0.004, S*0.008, 0.05);
-  fold(q, W*0.400, H*0.340, W*0.372, H*0.872, S*0.008, S*0.014, 0.055);  /* 袋の面のたわみ */
-  q.restore();
-  q.fillStyle = shade(q, W*0.615, H*0.60, W*0.13, 'rgba(48,42,34,.24)', 'rgba(48,42,34,0)');
-  q.fillRect(0, 0, W, H);                                               /* 角の稜線ぎわ */
-  cloth(q, W, H, 5, 0.16, false);
-  q.restore();
-  q.save(); poly(q, W, H, SD); q.clip();
-  q.save(); q.filter = 'blur(' + (S*0.004).toFixed(2) + 'px)';
-  /* ⭐ マチ＝側面のまんなかが内へ折れている。ここが袋であることのもう半分 */
-  fold(q, W*0.716, H*0.288, W*0.716, H*0.840, 0, S*0.016, 0.22);
-  fold(q, W*0.660, H*0.300, W*0.716, H*0.360, 0, S*0.008, 0.16);        /* 口の三角の折り */
-  fold(q, W*0.775, H*0.268, W*0.716, H*0.360, 0, S*0.008, 0.16);
-  q.restore();
-  cloth(q, W, H, 6, 0.16, false);
-  q.restore();
-
-  /* ⭐ 口の折り返し＝【厚み】。1本の線ではなく、帯＋その下の影 */
-  poly(q, W, H, [[0.215,0.275],[0.615,0.315],[0.615,0.348],[0.215,0.308]]);
-  q.fillStyle = 'rgba(255,255,255,.18)'; q.fill();   /* ⚠️ 濃いと【白い帯】に見える */
-  q.strokeStyle = 'rgba(58,52,44,.24)'; q.lineWidth = S*0.0028; q.stroke();
-  poly(q, W, H, [[0.615,0.315],[0.815,0.245],[0.815,0.278],[0.615,0.348]]);
-  q.fillStyle = 'rgba(255,255,255,.10)'; q.fill();
-  q.strokeStyle = 'rgba(58,52,44,.22)'; q.lineWidth = S*0.0028; q.stroke();
-  seam(q, [[W*0.218, H*0.352], [W*0.415, H*0.334], [W*0.612, H*0.392]],
-       S*0.0045, 'rgba(58,52,44,.12)', null, 0, 0);                     /* 折り返しの落ち影 */
-  /* 紐が【通っている穴】。⚠️ 大きく光らせるとボタンが4つ付いた袋に見える */
-  [[0.282,0.302],[0.392,0.313],[0.448,0.315],[0.558,0.326]].forEach(([x,y]) => {
-    q.beginPath(); q.arc(W*x, H*y, S*0.0048, 0, 7);
-    q.fillStyle = 'rgba(74,67,57,.50)'; q.fill();
-  });
-  q.save();                                                             /* 底が台に接している所 */
-  q.filter = 'blur(' + (S*0.006).toFixed(1) + 'px)';
-  q.strokeStyle = 'rgba(48,42,35,.34)'; q.lineWidth = S*0.010;
-  q.beginPath(); q.moveTo(W*0.222, H*0.851); q.lineTo(W*0.613, H*0.889);
-  q.lineTo(W*0.810, H*0.800); q.stroke();
-  q.restore();
-});
-
-/* ══ ③ 箱（正面＋上面）══
-   ⭐⭐ 箱を箱に見せるのは【蓋】。蓋が数センチかぶさっている線が1本入るだけで、
-      同じ立方体が「物」になる。⚠️ 前の版は蓋も接地影も無い【ただの立方体】だった。
-   ⭐ 稜線＝紙の厚みぶん、角のきわだけ明るい／暗い（角が立って見える正体） */
-kata('box', '箱', 1, [
-    [[0.26,0.44],[0.60,0.52],[0.60,0.80],[0.26,0.72]],
-    /* ⚠️ 四隅は【左上→右上→右下→左下】の順。順を崩すと絵が裏返る（上面で踏んだ） */
-    [[0.52,0.30],[0.86,0.38],[0.60,0.52],[0.26,0.44]] ], (q, W, H) => {
-  const S = Math.max(W, H);
-  const TP = [[0.22,0.42],[0.52,0.26],[0.90,0.36],[0.62,0.53]];   /* 上面 */
-  const FT = [[0.22,0.42],[0.62,0.53],[0.62,0.86],[0.22,0.75]];   /* 正面 */
-  const SD = [[0.62,0.53],[0.90,0.36],[0.90,0.70],[0.62,0.86]];   /* 側面 */
-  q.fillStyle = shade(q, W*0.40, H*0.24, S*0.95, '#cfcac1', '#9c978e'); /* 台 */
-  q.fillRect(0, 0, W, H);
-  q.save();                                                       /* 接地影＝箱の下だけ */
-  q.filter = 'blur(' + (S*0.024).toFixed(1) + 'px)';
-  q.fillStyle = 'rgba(52,46,38,.34)';
-  q.beginPath(); q.ellipse(W*0.56, H*0.845, W*0.36, H*0.075, -0.08, 0, 7); q.fill();
-  q.restore();
-
-  poly(q, W, H, TP);                                              /* 上面＝いちばん明るい */
-  q.fillStyle = shade(q, W*0.50, H*0.30, W*0.50, '#fbf9f3', '#d9d3c7'); q.fill();
-  poly(q, W, H, FT);                                              /* 正面 */
-  const gf = q.createLinearGradient(W*0.22, 0, W*0.62, 0);
-  gf.addColorStop(0, '#efebe1'); gf.addColorStop(0.7, '#e4dfd3'); gf.addColorStop(1, '#cdc6b8');
-  q.fillStyle = gf; q.fill();
-  poly(q, W, H, SD);                                              /* 側面＝暗い */
-  const gs = q.createLinearGradient(W*0.62, 0, W*0.90, 0);
-  gs.addColorStop(0, '#9b9488'); gs.addColorStop(1, '#847d72');
-  q.fillStyle = gs; q.fill();
-
-  /* ⭐ 蓋＝上から 8% かぶさっている。この1本が箱を箱にする */
-  const lid = (a, b, d) => {                                       /* 面の上辺を d だけ下へ */
-    poly(q, W, H, [a, b, [b[0], b[1]+d], [a[0], a[1]+d]]);
-    q.fillStyle = 'rgba(255,255,255,.10)'; q.fill();
-    q.strokeStyle = 'rgba(60,54,45,.22)'; q.lineWidth = S*0.0026;
-    q.beginPath(); q.moveTo(W*a[0], H*(a[1]+d)); q.lineTo(W*b[0], H*(b[1]+d)); q.stroke();
-  };
-  lid([0.22,0.42], [0.62,0.53], 0.085);
-  lid([0.62,0.53], [0.90,0.36], 0.085);
-
-  /* ⭐ 稜線＝紙の厚み。角のきわだけ明るい（＋その向こうは暗い） */
-  const edge = (a, b, up, dn) => {
-    q.lineWidth = S*0.0030;
-    q.strokeStyle = up; q.beginPath();
-    q.moveTo(W*a[0], H*(a[1]-0.003)); q.lineTo(W*b[0], H*(b[1]-0.003)); q.stroke();
-    q.strokeStyle = dn; q.beginPath();
-    q.moveTo(W*a[0], H*(a[1]+0.003)); q.lineTo(W*b[0], H*(b[1]+0.003)); q.stroke();
-  };
-  edge([0.22,0.42], [0.52,0.26], 'rgba(255,255,255,.34)', 'rgba(60,54,45,.10)');
-  edge([0.52,0.26], [0.90,0.36], 'rgba(255,255,255,.30)', 'rgba(60,54,45,.10)');
-  edge([0.22,0.42], [0.62,0.53], 'rgba(255,255,255,.26)', 'rgba(60,54,45,.14)');
-  edge([0.62,0.53], [0.90,0.36], 'rgba(255,255,255,.22)', 'rgba(60,54,45,.16)');
-  q.strokeStyle = 'rgba(60,54,45,.26)'; q.lineWidth = S*0.0032;     /* 手前の縦の角 */
-  q.beginPath(); q.moveTo(W*0.622, H*0.532); q.lineTo(W*0.622, H*0.862); q.stroke();
-
-  /* 紙の粒＝面ごとに（外へ出すと箱に見えない） */
-  [TP, FT, SD].forEach((f, i) => {
-    q.save(); poly(q, W, H, f); q.clip(); cloth(q, W, H, 13+i, 0.11, false); q.restore();
-  });
-});
-
-/* ══ ④ カップ（丸み＝曲面）══ */
-kata('cup', 'カップ', 1, [[[0.36,0.40],[0.64,0.40],[0.64,0.62],[0.36,0.62]]], (q, W, H) => {
-  q.fillStyle = '#cbc7bf'; q.fillRect(0, 0, W, H);
-  /* ⭐ 丸みは【横のグラデ】で作る＝これがロゴを曲面に見せる相手になる */
-  const g2 = q.createLinearGradient(W*0.28, 0, W*0.72, 0);
-  g2.addColorStop(0, '#9a938a'); g2.addColorStop(0.28, '#f6f3ee');
-  g2.addColorStop(0.62, '#e2ddd4'); g2.addColorStop(1, '#8d867c');
-  q.fillStyle = g2;
-  q.beginPath();
-  q.moveTo(W*0.30, H*0.30); q.lineTo(W*0.70, H*0.30);
-  q.lineTo(W*0.66, H*0.76); q.quadraticCurveTo(W*0.50, H*0.82, W*0.34, H*0.76);
-  q.closePath(); q.fill();
-  q.fillStyle = 'rgba(255,255,255,.55)';
-  q.beginPath(); q.ellipse(W*0.50, H*0.30, W*0.20, H*0.045, 0, 0, 7); q.fill();
-  q.strokeStyle = 'rgba(70,64,56,.45)'; q.lineWidth = W*0.018;
-  q.beginPath(); q.ellipse(W*0.74, H*0.50, W*0.08, H*0.10, 0, -1.2, 1.2); q.stroke();
-  q.fillStyle = shade(q, W*0.50, H*0.84, W*0.34, 'rgba(0,0,0,.26)', 'rgba(0,0,0,0)');
-  q.fillRect(0, H*0.70, W, H*0.30);
-});
-
-/* ══ ⑤ 名刺（平ら＋影＝いちばん素直に見える）══ */
-kata('card', '名刺', 4/3, [[[0.30,0.40],[0.70,0.40],[0.70,0.58],[0.30,0.58]]], (q, W, H) => {
-  q.fillStyle = '#c6c2ba'; q.fillRect(0, 0, W, H);
-  q.save();
-  q.translate(W*0.5, H*0.5); q.rotate(-0.06); q.translate(-W*0.5, -H*0.5);
-  q.fillStyle = shade(q, W*0.36, H*0.34, W*0.5, '#fdfcf9', '#e6e1d8');
-  q.fillRect(W*0.24, H*0.32, W*0.52, H*0.34);
-  q.restore();
-  q.fillStyle = shade(q, W*0.52, H*0.70, W*0.36, 'rgba(0,0,0,.22)', 'rgba(0,0,0,0)');
-  q.fillRect(0, H*0.58, W, H*0.30);
-});
-
-/* ══ ⑥ 缶バッジ（球のような丸み）══ */
-kata('badge', '缶バッジ', 1, [[[0.36,0.40],[0.64,0.40],[0.64,0.60],[0.36,0.60]]], (q, W, H) => {
-  q.fillStyle = '#c9c5bd'; q.fillRect(0, 0, W, H);
-  q.fillStyle = shade(q, W*0.42, H*0.38, W*0.42, '#ffffff', '#a9a298');
-  q.beginPath(); q.arc(W*0.5, H*0.5, W*0.28, 0, 7); q.fill();
-  q.strokeStyle = 'rgba(60,56,50,.35)'; q.lineWidth = W*0.012;
-  q.beginPath(); q.arc(W*0.5, H*0.5, W*0.275, 0, 7); q.stroke();
-  q.fillStyle = shade(q, W*0.50, H*0.80, W*0.30, 'rgba(0,0,0,.24)', 'rgba(0,0,0,0)');
-  q.fillRect(0, H*0.66, W, H*0.30);
-});
-
-/* ══ ⑦ 封筒（折り目）══ */
-kata('envelope', '封筒', 4/3, [[[0.32,0.44],[0.62,0.44],[0.62,0.60],[0.32,0.60]]], (q, W, H) => {
-  q.fillStyle = '#c8c4bb'; q.fillRect(0, 0, W, H);
-  q.fillStyle = shade(q, W*0.36, H*0.34, W*0.52, '#f7f3ea', '#ddd7ca');
-  q.fillRect(W*0.20, H*0.30, W*0.60, H*0.40);
-  q.fillStyle = 'rgba(0,0,0,.07)';
-  q.beginPath(); q.moveTo(W*0.20,H*0.30); q.lineTo(W*0.50,H*0.52);
-  q.lineTo(W*0.80,H*0.30); q.closePath(); q.fill();
-  q.strokeStyle = 'rgba(0,0,0,.10)'; q.lineWidth = W*0.003;
-  q.beginPath(); q.moveTo(W*0.20,H*0.30); q.lineTo(W*0.50,H*0.52); q.lineTo(W*0.80,H*0.30); q.stroke();
-  q.fillStyle = shade(q, W*0.52, H*0.74, W*0.36, 'rgba(0,0,0,.20)', 'rgba(0,0,0,0)');
-  q.fillRect(0, H*0.62, W, H*0.30);
-});
-
-/* ══ ⑧ 看板（壁・斜め）══ */
-kata('sign', '看板', 4/3, [[[0.26,0.30],[0.72,0.36],[0.72,0.66],[0.26,0.60]]], (q, W, H) => {
-  q.fillStyle = shade(q, W*0.3, H*0.2, W*1.1, '#b9b3a8', '#6f6a62');
-  q.fillRect(0, 0, W, H);
-  wrinkles(q, W, H, 10, 33, 0.05);
-  q.fillStyle = shade(q, W*0.34, H*0.34, W*0.5, '#faf8f3', '#d5cfc3');
-  q.beginPath(); q.moveTo(W*0.24,H*0.28); q.lineTo(W*0.74,H*0.35);
-  q.lineTo(W*0.74,H*0.67); q.lineTo(W*0.24,H*0.62); q.closePath(); q.fill();
-  q.fillStyle = 'rgba(0,0,0,.18)';
-  q.beginPath(); q.moveTo(W*0.74,H*0.35); q.lineTo(W*0.77,H*0.37);
-  q.lineTo(W*0.77,H*0.69); q.lineTo(W*0.74,H*0.67); q.closePath(); q.fill();
-});
+/* ══⭐⭐ 物は【写真】になった（2026-08-29）══
+   木下＝「MATOI に既存であるこれらは削除して」（描いた8つ：Tシャツ・紙袋・箱・カップ・
+   名刺・缶バッジ・封筒・看板）。写真が揃ったので、代役はもう要らない。
+   ⭐ 物は mock/ の写真＋mock/list.json だけで決まる（→ loadMock）。
+   ⚠️ 描くための道具（fold / folds / cloth / seam / poly / wrinkles / shade）は残してある
+      ＝見本（demoCloth）が使っているのと、下地を作り直したくなったときのため。 */
 
 /* ⭐⭐ 型の下地を用意する道は【この1本】＝描いた物も、写真の物も、ここを通る（2026-08-28）
    木下＝「モックアップのものとかかなりあるので、そのあたりから画像を引っ張ってくる方が早い。
@@ -1019,7 +712,10 @@ function useKata(i, keepFaces){
   const k = KATA[KIDX];
   kataBG(k, (src, ratio) => {
     P.ratio = ratio; setBG(src);
-    if(!keepFaces){ FACES = k.faces.map(pts => ({ on:true, pts:pts.map(p => p.slice()) })); cur = 0; renderFaces();
+    if(!keepFaces){
+      FACES = k.faces.map(pts => ({ on:true, pts:pts.map(p => p.slice()),
+                                    base:pts.map(p => p.slice()), rot:null }));
+      cur = 0; renderFaces(); syncRot();
       setFill(!!k.fill);
       /* ⭐ 物ごとの既定（例：光る看板は「光を借りる」を強く）＝押しただけで合っている
          ⚠️ 木下が手で動かしたあと、物を押し直せばその物の既定に戻る（設定であって状態ではない） */
@@ -1046,6 +742,9 @@ function loadMock(){
           photo: 'mock/' + it.file });
       });
       renderKata();
+      /* ⭐⭐ 物は写真だけになった＝【読めてから最初の1つを出す】。
+         ⚠️ 立ち上げ時にまだ物が無い状態を通るので、ここで出さないと空の盤のままになる。 */
+      if(KATA.length && !BG) useKata(0);
     })
     .catch(() => {});
 }
@@ -1204,7 +903,16 @@ function drawFace(ctx, fc, W, H){
   /* ⭐ いったん別の紙に写す＝陰影を【ロゴの形の中だけ】に掛けられる */
   const lay = document.createElement('canvas'); lay.width = W; lay.height = H;
   const lg = lay.getContext('2d');
+  /* ⭐⭐ 明るさ・かたさ＝置いたもの自体の露出（2026-08-29）
+     木下＝「こういう写真もあるので光の付け方や、明るさなども調整できるように」。
+     ⭐ 夜の写真では落とす／白飛びした写真では上げる。**借りる前に、まず自分の明るさを合わせる**。
+     ⚠️ 形（mask）には掛けない＝明るさを変えても切り抜きは1画素も動かない。 */
+  const fx = [];
+  if(Math.abs(P.bri - 1) > 0.005) fx.push('brightness(' + P.bri.toFixed(3) + ')');
+  if(Math.abs(P.con - 1) > 0.005) fx.push('contrast(' + P.con.toFixed(3) + ')');
+  if(fx.length) lg.filter = fx.join(' ');
   lg.drawImage(mask, 0, 0);
+  lg.filter = 'none';
   /* ⭐⭐ 陰影を借りる ── ロゴの形の中だけに、下の写真の明暗を掛ける。
      ⚠️ 形は【嵌めたもの】をそのまま使う（もう一度嵌め直さない＝式も手間も1本）。 */
   if(P.sh > 0.001 || P.hi > 0.001 || P.gr > 0.001 || P.col > 0.001){
@@ -1378,7 +1086,7 @@ function toBoard(e){
     if(pan){ V.x = pan.vx + (e.clientX - pan.x); V.y = pan.vy + (e.clientY - pan.y); applyView(); }
   });
   const up = e => { pts.delete(e.pointerId); if(pts.size < 2) pinch = null;
-    if(!pts.size){ if(grab){ grab = null; COARSE = 0; render(); }
+    if(!pts.size){ if(grab){ rebase(FACES[cur]); syncRot(); grab = null; COARSE = 0; render(); }
                    pan = null; stage.classList.remove('panning'); } };
   stage.addEventListener('pointerup', up);
   stage.addEventListener('pointercancel', up);
@@ -1393,7 +1101,7 @@ function renderFaces(){
     const b = document.createElement('button');
     b.className = 'btn'; b.style.textAlign = 'left';
     b.textContent = (k === cur ? '● ' : '○ ') + '面 ' + (k+1) + (fc.on ? '' : '（隠す）');
-    b.onclick = () => { cur = k; renderFaces(); drawHandles(); };
+    b.onclick = () => { cur = k; renderFaces(); syncRot(); drawHandles(); };
     b.ondblclick = () => { fc.on = !fc.on; renderFaces(); render(); };
     host.appendChild(b);
   });
@@ -1401,12 +1109,13 @@ function renderFaces(){
 el('b_addFace').onclick = () => {
   const f = newFace();
   f.pts = f.pts.map(([x,y]) => [x + 0.06, y + 0.06]);
-  FACES.push(f); cur = FACES.length - 1; renderFaces(); render();
-  stat('面を足した（四隅を掴んで合わせる）');
+  f.base = f.pts.map(p => p.slice());
+  FACES.push(f); cur = FACES.length - 1; renderFaces(); syncRot(); render();
+  stat('面を足した（四隅を掴むか、回して合わせる）');
 };
 el('b_delFace').onclick = () => {
   if(FACES.length < 2){ stat('面は1つ以上いる'); return; }
-  FACES.splice(cur, 1); cur = Math.max(0, cur - 1); renderFaces(); render();
+  FACES.splice(cur, 1); cur = Math.max(0, cur - 1); renderFaces(); syncRot(); render();
 };
 /* ⭐ 合わせた四隅を【そのまま list.json に貼れる形】で写す＝手で数字を書かなくていい */
 el('b_pts').onclick = () => {
@@ -1417,6 +1126,29 @@ el('b_pts').onclick = () => {
     navigator.clipboard.writeText(s).then(done, () => { prompt('この行をコピー', s); });
   else prompt('この行をコピー', s);
 };
+/* ⭐ 回すつまみ＝いま選んでいる面に効く。⚠️ 面を切り替えたら、その面の角度に戻す */
+const ROTS = [['r_yaw','yaw','o_yaw','°'],['r_pitch','pitch','o_pitch','°'],
+              ['r_roll','roll','o_roll','°'],['r_persp','persp','o_persp','']];
+function syncRot(){
+  const fc = FACES[cur], r = (fc && fc.rot) || {};
+  ROTS.forEach(([id, k, out, unit]) => {
+    const e = el(id); if(!e) return;
+    e.value = r[k] || 0;
+    const o = el(out); if(o) o.value = (r[k] || 0) + unit;
+  });
+}
+ROTS.forEach(([id, k, out, unit]) => {
+  const e = el(id); if(!e) return;
+  e.addEventListener('input', () => {
+    const fc = FACES[cur]; if(!fc) return;
+    if(!fc.base) fc.base = fc.pts.map(p => p.slice());
+    fc.rot = Object.assign({ yaw:0, pitch:0, roll:0, persp:0 }, fc.rot);
+    fc.rot[k] = +e.value;
+    const o = el(out); if(o) o.value = e.value + unit;
+    applyRot(fc, cv.width, cv.height);
+    touching(); renderSoon(); drawHandles();
+  });
+});
 document.querySelectorAll('#s_fill button').forEach(b => b.onclick = () => { setFill(b.dataset.v === '1'); render(); });
 el('b_play').onclick = playVideo;
 el('b_stop').onclick = stopVideo;
@@ -1489,6 +1221,8 @@ const RANGES = [
   ['r_hi','hi','o_hi', v => (v/100).toFixed(2), v => v/100],
   ['r_gr','gr','o_gr', v => (v/100).toFixed(2), v => v/100],
   ['r_col','col','o_col', v => (v/100).toFixed(2), v => v/100],
+  ['r_bri','bri','o_bri', v => (v/100).toFixed(2), v => v/100],
+  ['r_con','con','o_con', v => (v/100).toFixed(2), v => v/100],
   ['r_op','op','o_op', v => (v/100).toFixed(2), v => v/100],
   ['r_long','long','o_long', v => v],
 ];
@@ -1750,7 +1484,7 @@ loadMock();          /* ⭐ 写真の物があれば、そのまま一覧の後�
   lq.textAlign = 'center'; lq.textBaseline = 'middle';
   lq.fillText(t, w/2, h/2);
   const li = new Image();
-  li.onload = () => { LOGO = li; LOGOKEY++; useKata(0); };
+  li.onload = () => { LOGO = li; LOGOKEY++; if(KATA.length) useKata(0); else render(); };
   li.src = l.toDataURL('image/png');
 })();
 stat('①ロゴを選ぶ → ②物を押す。位置は自動で合います');
