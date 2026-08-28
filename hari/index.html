@@ -823,10 +823,17 @@ input[type=color]{ border-radius:8px; height:30px }
       <input type="range" id="wshXR" min="-80" max="80" value="0"><span class="v" id="vwshXR">0</span></div>
     <div class="row"><label>高さの並び</label>
       <input type="range" id="wshYR" min="-80" max="80" value="0"><span class="v" id="vwshYR">0</span></div>
+    <div class="row"><label>大きさの振れ</label>
+      <input type="range" id="wshSA" min="0" max="80" value="0"><span class="v" id="vwshSA">0</span></div>
+    <div class="row"><label>大きさの並び</label>
+      <input type="range" id="wshSR" min="-95" max="200" value="0"><span class="v" id="vwshSR">0</span></div>
     <div class="row"><label>種</label>
       <input type="range" id="wshS" min="1" max="99" value="1"><span class="v" id="vwshS">1</span></div>
     <div class="note">⭐ <b>振れ</b>＝字ごとにばらつく（<b>種</b>を動かすと組み合わせが変わる＝振れる）<br>
       ⭐ <b>並び</b>＝先頭から末尾へ少しずつ変わる（＋で末尾が広く／−で末尾が狭く）<br>
+      ⭐⭐ <b>大きさの並び</b>を −70 くらいにすると、<b>先頭は元の大きさのまま、末尾へ向かって小さくなる</b><br>
+      ⚠️ <b>幅・高さ</b>は引き伸ばし（長体・平体）。<b>大きさ</b>は書体の大きさそのもの
+      ＝<b>線の太さも一緒に細くなる</b>。だから見えが違う（使い分ける）<br>
       ⭐ <b>字送りも同じ値を見る</b>＝細くしたのに隙間が空く、は起きない<br>
       ⚠️ 行ぜんぶの<b>字幅・字高</b>（上のつまみ）に、ここが掛かる</div>
     <div class="row" id="rowStart"><label>始まり</label>
@@ -1264,20 +1271,31 @@ function sortOf(ch){
    ⭐ 〔分ける〕が「**字の種類**で変える」なら、こちらは「**何字目か**で変える」。
      ・振れ＝字ごとにばらつかせる（種で振れる＝この道具の芯）
      ・並び＝先頭から末尾へ少しずつ変える（だんだん細く／太く）
+   ⭐⭐ 2026-08-28 に【大きさ】を足した（木下「文字を最初のフォントからじゅんに小さいフォントに」）。
+     ⚠️ 幅・高さは【引き伸ばし】、大きさは【書体の大きさ】＝太さも一緒に変わる。別物。
+     ⭐ 送り（advance）は charStyle を見ているので、大きさを変えれば送りも自動でついてくる。
    ⚠️ どちらも 0 のときは【1つも通らない】＝これまでと1画素も変わらない。
    ⚠️ 字送り（advance）と字の形（makeChar）が**同じこの1本**を見る
      ＝細くしたのに送りだけ元のまま、が起きない。 */
-const WSH_DEF = { xAmt:0, yAmt:0, xRun:0, yRun:0, seed:1 };
+const WSH_DEF = { xAmt:0, yAmt:0, xRun:0, yRun:0, sAmt:0, sRun:0, seed:1 };
 function charShift(L){
   const W = Object.assign({}, WSH_DEF, L.wsh || {});
-  if(!W.xAmt && !W.yAmt && !W.xRun && !W.yRun) return null;
+  if(!W.xAmt && !W.yAmt && !W.xRun && !W.yRun && !W.sAmt && !W.sRun) return null;
   const i = L._ci || 0, n = Math.max(1, L._cn || 1);
   const t = n > 1 ? i/(n-1) : 0;                 // 先頭0 → 末尾1
   const r = kamiRnd((W.seed|0)*7919 + i*131 + 7);
   const rx = r()*2 - 1, ry = r()*2 - 1;
+  /* ⚠️ 大きさの分は【rx・ry を引いた後】に引く。前に足すと組み合わせがずれて、
+        いままでの作品の幅・高さの振れが別物になる（種は同じなのに絵が変わる）。 */
+  const rs = r()*2 - 1;
   return {
     x: 1 + rx*(W.xAmt/100) + t*(W.xRun/100),
-    y: 1 + ry*(W.yAmt/100) + t*(W.yRun/100)
+    y: 1 + ry*(W.yAmt/100) + t*(W.yRun/100),
+    /* ⭐⭐ 大きさ（2026-08-28 木下「文字を最初のフォントからじゅんに小さいフォントに」）
+       ⭐ 幅・高さは【引き伸ばし】（長体・平体）。ここは【書体の大きさ】そのもの。
+         だから字の太さも一緒に細くなる＝引き伸ばしとは見えが違う。
+       ⚠️ 0 より下へは行かせない（消えると送りも 0 になって字が重なる）。 */
+    s: Math.max(0.03, 1 + rs*(W.sAmt/100) + t*(W.sRun/100))
   };
 }
 function charStyle(ch, L){
@@ -1288,11 +1306,13 @@ function charStyle(ch, L){
   const sh = charShift(L);
   const wx = Math.max(5, (L.wx || 100) * (sh ? sh.x : 1));
   const wy = Math.max(5, (L.wy || 100) * (sh ? sh.y : 1));
-  const base = { size:L.size, col: lum ? audCol(L.col, lum) : L.col, wt:L.wt, wx, wy };
+  /* ⭐ 字ごとの大きさ。⚠️ 〔分ける〕を使っていても掛かるよう、両方の道で掛ける */
+  const cs = sh ? sh.s : 1;
+  const base = { size:L.size * cs, col: lum ? audCol(L.col, lum) : L.col, wt:L.wt, wx, wy };
   if(!S3.on) return base;
   const g = sortOf(ch); if(!g) return base;
   const o = Object.assign({}, SORT_DEF[g], S3[g] || {});
-  return { size: L.size * ((o.size ?? 100)/100),
+  return { size: L.size * cs * ((o.size ?? 100)/100),
            col : o.col || L.col,
            wt  : o.wt  || L.wt,
            wx  : base.wx, wy : base.wy };
@@ -4132,7 +4152,8 @@ function syncPanel(){
   /* ⭐ 字ごとのずらし。⚠️ 古い作品は wsh を持たない＝ぜんぶ0（これまでの絵） */
   { const W = Object.assign({}, WSH_DEF, L.wsh || {});
     setRange('wshX', W.xAmt); setRange('wshY', W.yAmt);
-    setRange('wshXR', W.xRun); setRange('wshYR', W.yRun); setRange('wshS', W.seed); }
+    setRange('wshXR', W.xRun); setRange('wshYR', W.yRun);
+    setRange('wshSA', W.sAmt); setRange('wshSR', W.sRun); setRange('wshS', W.seed); }
   setRange('pN', L.path.n); setRange('pInset', L.path.inset);
   /* ⚠️ 古い作品は zoom を持たない＝100（これまでの絵） */
   setRange('pZoom', L.path.zoom == null ? 100 : L.path.zoom);
@@ -4285,7 +4306,8 @@ Object.entries(BIND).forEach(([id,[key,cast]]) => {
   });
 });
 /* ⭐⭐ 字ごとのずらし（2026-08-28）。⚠️ つまみが5本あっても、直す所はこの1本 */
-[['wshX','xAmt'],['wshY','yAmt'],['wshXR','xRun'],['wshYR','yRun'],['wshS','seed']]
+[['wshX','xAmt'],['wshY','yAmt'],['wshXR','xRun'],['wshYR','yRun'],
+ ['wshSA','sAmt'],['wshSR','sRun'],['wshS','seed']]
 .forEach(([id,k]) => {
   const r = $(id); if(!r) return;
   r.addEventListener('input', e => {
