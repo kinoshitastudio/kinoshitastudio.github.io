@@ -101,10 +101,13 @@ node "$(cd "$(dirname "$0")" && pwd)/autopan.mjs" || PANNG=1
 echo
 echo "── 盤の上で回す"
 node "$(cd "$(dirname "$0")" && pwd)/rotate.mjs" || ROTNG=1
+echo
+echo "── フリーハンドも続きから引ける・繋がる"
+node "$(cd "$(dirname "$0")" && pwd)/brushjoin.mjs" || BJNG=1
 
 if [ "${FEELNG:-0}" = "1" ] || [ "${FEEL2NG:-0}" = "1" ] \
    || [ "${PVNG:-0}" = "1" ] || [ "${ADDNG:-0}" = "1" ] \
    || [ "${GRIDNG:-0}" = "1" ] || [ "${HEADNG:-0}" = "1" ] \
    || [ "${PENNG:-0}" = "1" ] || [ "${PMNG:-0}" = "1" ] || [ "${WBNG:-0}" = "1" ] || [ "${ANNG:-0}" = "1" ] || [ "${CUENG:-0}" = "1" ] \
-   || [ "${PANNG:-0}" = "1" ] || [ "${ROTNG:-0}" = "1" ]; then exit 1; fi
+   || [ "${PANNG:-0}" = "1" ] || [ "${ROTNG:-0}" = "1" ] || [ "${BJNG:-0}" = "1" ]; then exit 1; fi
 exit $RC

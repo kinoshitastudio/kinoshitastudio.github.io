@@ -2977,6 +2977,12 @@ function makeShape(kind, r){
 
 /* ══ ストローク（太い線）ツール ══ */
 let brush = null;
+/* ⭐⭐ 2026-08-28 木下「途中のパスに対してフリーハンドも同じように続けて描けるところや、
+   最後の繋げれるところまできたら + などが出たら嬉しい」
+   ⭐ ペンと同じ道具（endpointNear）を使う＝繋がる相手の決め方を2つ持たない。
+   ⚠️ 引いている間は【別の線】として引き、離すときに1本にする
+     ＝書き心地（刃HA・擦・滲）は【引いた分だけ】に掛かる（既に確定した線に掛け直さない）。 */
+let brushJoinFrom = null, brushNearJoin = false;
 function brushDown(e){
   snapshot();
   tzOnNewObject();                                   // ⭐ 新しいものは単色から                                     // 引き始める前の状態を保存
@@ -2985,8 +2991,11 @@ function brushDown(e){
     strokeColor: S.stroke || S.fill || '#0a0a0a',
     strokeWidth: S.sw, strokeCap: S.cap || 'round', strokeJoin: S.join || 'round'
   });
-  brush.add(e.point);
-  stat('フリーハンド — 離すと整う／「線→塗り」で輪郭が確定');
+  /* ⭐ 開いたパスの端から引き始めた＝そこにぴたり付けて始める（段差を出さない） */
+  brushJoinFrom = endpointNear(e.point, null);
+  brush.add(brushJoinFrom ? brushJoinFrom.seg.point.clone() : e.point);
+  stat(brushJoinFrom ? '続きから引く — 離すと1本になる'
+                     : 'フリーハンド — 離すと整う／「線→塗り」で輪郭が確定');
 }
 /* ⭐⭐ 引き終わりが始点の近くなら【吸着して閉じる】。BMBoard と同じ考え方。
    ⚠️ これまでは閉じる判定が無く、手で始点に戻しても開いたままだった＝塗りが乗らない。
@@ -3014,7 +3023,13 @@ function brushDrag(e){
   if(n > 3) brush.smooth({ type:'continuous', from: n-4, to: n-1 });
   const now = brushNearStart(e.point);
   if(now !== brushSnap){ brushSnap = now; stat(now ? '離すと閉じる' : 'フリーハンド'); }
-  if(brushSnap) guides();                            // 予告を描き直す
+  /* ⭐ 2026-08-28 木下「最後の繋げれるところまできたら + などが出たら嬉しい」
+     ＝繋がる端に近づいたときも描き直す。⚠️ ここを呼ばないと合図が出ない
+       （plain のときは下見も要らないので guides を呼んでいなかった＝実測で出なかった）。 */
+  const nearEnd = !brushSnap && !!endpointNear(e.point, brush);
+  if(nearEnd !== brushNearJoin){ brushNearJoin = nearEnd;
+    stat(nearEnd ? 'ここで離すと繋がる' : 'フリーハンド'); }
+  if(brushSnap || nearEnd) guides();                 // 予告を描き直す
   /* ⭐ 書き心地の下見（2026-08-26）＝引いている最中から出来上がりが見える */
   else if((S.feel || 'plain') !== 'plain') feelPreviewSoon();
 }
@@ -3145,7 +3160,27 @@ function brushUp(){
   brush.data = Object.assign({}, brush.data, { pen:rec });
   penMark(brush);                                   /* ⭐ 掛け直しの基準（3点）を控える */
   const closed = brush.closed;
+  /* ⭐⭐ 繋ぐのは【離した後】＝書き心地を掛けたあとの形で繋ぐので、繋ぎ目に段差が出ない。
+     ⚠️ 閉じた形は繋がない（もう端が無い）。⚠️ 相手が消えていたら触らない。 */
+  let joined = 0;
+  if(!closed && brush.segments && brush.segments.length > 1){
+    const f = brushJoinFrom;
+    if(f && f.path && f.path.parent && !f.path.closed && f.path !== brush){
+      if(f.which === 'first') f.path.reverse();      /* 相手の終わりが繋ぎ目に来るよう揃える */
+      brush.firstSegment.point = f.path.lastSegment.point.clone();
+      f.path.join(brush);
+      brush = f.path; joined++;
+    }
+    const t2 = endpointNear(brush.lastSegment.point, brush);
+    if(t2 && t2.path && t2.path.parent && t2.path !== brush){
+      if(t2.which === 'last') t2.path.reverse();     /* 相手の始まりが繋ぎ目に来るよう揃える */
+      brush.lastSegment.point = t2.path.firstSegment.point.clone();
+      brush.join(t2.path); joined++;
+    }
+  }
+  brushJoinFrom = null; brushNearJoin = false;
   brush.selected = true; brush = null; guides();
+  if(joined){ stat('繋げた（' + (joined === 2 ? '両側' : '片側') + '）'); return; }
   stat(closed ? '閉じた — 塗りが乗る'
               : (S.feel === 'plain' ? 'フリーハンド確定 — 「線→塗り」で輪郭に'
                                     : FEEL_NAME[S.feel] + 'で引いた'));
@@ -12430,15 +12465,24 @@ hook('grid', '字のガイドと下敷き', () => drawGlyphGuides(), 60);
    ⭐ ダイレクト選択で【選んだ端の点】は、いちばん強く出す（そこが狙いだから）。
    ⚠️ 描き始めたら消す＝そこから先は「次の点までの線」と「繋がる合図」が既にある。
    ⚠️ uiLayer に置くだけ＝作品には1つも混ざらない。 */
-hook('guides', 'ペン＝続きから描ける端を見せる', () => {
-  if(S.tool !== 'pen' || pen) return;
+hook('guides', 'ペン・フリーハンド＝続きから描ける端を見せる', () => {
+  /* ⭐ フリーハンド（2026-08-28）も同じ合図を出す。
+     ⚠️ ペンは【打っている最中】は出さない（次の点までの線と＋が既にある）。
+     ⭐ フリーハンドは【引いている最中こそ】出す＝「ここまで来たら繋がる」が要る。
+        そのときは指ではなく【いま引いている線の先っぽ】から近さを測る。 */
+  if(S.tool !== 'pen' && S.tool !== 'stroke') return;
+  if(S.tool === 'pen' && pen) return;
+  const probe = (S.tool === 'stroke' && brush && brush.lastSegment)
+              ? brush.lastSegment.point : mousePt;
+  if(!probe) return;
   const Z = paper.view.zoom, r = 4.4 / Z;
   uiLayer.activate();
   artLayer.children.forEach(it => {
     if(!it.segments || it.segments.length < 2 || it.closed) return;
     if(it.locked || !it.visible) return;
+    if(it === brush) return;                       /* いま引いている線は相手にしない */
     [it.firstSegment, it.lastSegment].forEach(sg => {
-      const near = mousePt && mousePt.getDistance(sg.point) < 14 / Z;
+      const near = probe.getDistance(sg.point) < 14 / Z;
       const c = new Path.Circle(sg.point, near ? r * 1.8 : r);
       c.strokeColor = ACC;
       c.strokeWidth = (near ? 1.8 : 1.2) / Z;
