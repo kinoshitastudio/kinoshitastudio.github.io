@@ -361,6 +361,27 @@ const isVid = x => !!x && x.tagName === 'VIDEO';
      使う人にとっては道具の失敗と同じ。だから道具の側で抜く。
    ⚠️ 門番にしない＝弾かずに、抜いてから知らせる（[[feedback_gatekeeper_can_block_the_right_thing]]）。
    ⚠️ 触らない条件を先に決める：もう透明がある／四隅がばらばら／白っぽくない／ほとんど抜けない。 */
+/* ⭐ 抜く色を見つける道は【この1本】＝画像も動画も、同じ目で地を見る
+   （2箇所に書くと、画像では抜けて動画では抜けない、という食い違いになる） */
+function backdropColor(d, W, H){
+  const cn = [[0,0],[W-1,0],[0,H-1],[W-1,H-1]].map(([x, y]) => (y*W + x)*4);
+  if(cn.some(i => d[i+3] < 250)) return null;             /* もう地なし＝触らない */
+  const r0 = d[cn[0]], g0 = d[cn[0]+1], b0 = d[cn[0]+2];
+  const far = i => Math.abs(d[i]-r0) + Math.abs(d[i+1]-g0) + Math.abs(d[i+2]-b0);
+  if(cn.some(i => far(i) > 24)) return null;              /* 四隅がばらばら＝地ではない */
+  if(r0 + g0 + b0 < 600) return null;                     /* 白っぽくない＝抜かない */
+  return { r:r0, g:g0, b:b0 };
+}
+/* ⭐ 抜く式も【この1本】。⚠️ 縁はやわらかく（切ると紙を貼ったように見える） */
+function cutTo(d, col){
+  let n = 0;
+  for(let i = 0; i < d.length; i += 4){
+    const t = (Math.abs(d[i]-col.r) + Math.abs(d[i+1]-col.g) + Math.abs(d[i+2]-col.b)) / 3;
+    if(t < 6){ d[i+3] = 0; n++; }
+    else if(t < 30) d[i+3] = Math.round(255 * (t - 6) / 24);
+  }
+  return n;
+}
 function dropBackdrop(img){
   const [W, H] = assetSize(img);
   if(!W || !H) return null;
@@ -368,22 +389,45 @@ function dropBackdrop(img){
   const q = c.getContext('2d', { willReadFrequently:true });
   q.drawImage(img, 0, 0);
   let im; try{ im = q.getImageData(0, 0, W, H); }catch(_){ return null; }
-  const d = im.data;
-  const cn = [[0,0],[W-1,0],[0,H-1],[W-1,H-1]].map(([x, y]) => (y*W + x)*4);
-  if(cn.some(i => d[i+3] < 250)) return null;             /* もう地なし＝触らない */
-  const r0 = d[cn[0]], g0 = d[cn[0]+1], b0 = d[cn[0]+2];
-  const far = i => Math.abs(d[i]-r0) + Math.abs(d[i+1]-g0) + Math.abs(d[i+2]-b0);
-  if(cn.some(i => far(i) > 24)) return null;              /* 四隅がばらばら＝地ではない */
-  if(r0 + g0 + b0 < 600) return null;                     /* 白っぽくない＝抜かない */
-  let n = 0;
-  for(let i = 0; i < d.length; i += 4){
-    const t = far(i) / 3;
-    if(t < 6){ d[i+3] = 0; n++; }
-    else if(t < 30) d[i+3] = Math.round(255 * (t - 6) / 24);   /* 縁はやわらかく */
-  }
+  const col = backdropColor(im.data, W, H); if(!col) return null;
+  const n = cutTo(im.data, col);
   if(n < W*H*0.06) return null;                           /* ほとんど抜けない＝地ではなかった */
   q.putImageData(im, 0, 0);
   return { canvas:c, n };
+}
+/* ══⭐⭐ 動画の地も抜く（2026-08-29）══
+   木下＝「動画だとなじませにくいか？」── 画面を見たら、**白い地が四角く残っていた**。
+   ⭐ なじまない原因は、しわでも陰でもなく【地が抜けていないこと】だった。
+     四角い白が乗っている限り、つまみをいくら上げても物の上には見えない。
+   ⭐⭐ 判定（四隅が同じ白か）は【1コマ目で1回だけ】。決まったら、あとは同じ色を抜くだけ。
+     ⚠️ 毎コマ判定し直すと、絵が端まで来たコマで判断が揺れて【ちらつく】。 */
+let VCUT = null, VCUTC = null, VCUTT = -1;
+function probeVideo(v){
+  VCUT = null; VCUTC = null; VCUTT = -1;
+  if(P.cut === false) return;
+  const [W, H] = assetSize(v); if(!W || !H) return;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const q = c.getContext('2d', { willReadFrequently:true });
+  try{ q.drawImage(v, 0, 0); VCUT = backdropColor(q.getImageData(0,0,W,H).data, W, H); }catch(_){}
+}
+/* ⭐ いまのコマを「地を抜いた紙」にして返す。⚠️ 同じコマなら焼き直さない（動画は毎コマ来る） */
+function cutFrame(v){
+  if(!VCUT) return v;
+  const [W, H] = assetSize(v); if(!W || !H) return v;
+  if(VCUTC && VCUTC.width === W && VCUTC.height === H && VCUTT === v.currentTime) return VCUTC;
+  if(!VCUTC || VCUTC.width !== W || VCUTC.height !== H){
+    VCUTC = document.createElement('canvas'); VCUTC.width = W; VCUTC.height = H;
+  }
+  const q = VCUTC.getContext('2d', { willReadFrequently:true });
+  q.clearRect(0, 0, W, H);
+  try{
+    q.drawImage(v, 0, 0);
+    const im = q.getImageData(0, 0, W, H);
+    cutTo(im.data, VCUT);
+    q.putImageData(im, 0, 0);
+  }catch(_){ return v; }
+  VCUTT = v.currentTime;
+  return VCUTC;
 }
 /* ⭐ ロゴを差し替える道は【この1本】＝地を抜くかどうかも、控えの合図もここで決まる
    ⚠️ 元の画像も控える＝「そのまま入れる」に切り替えたとき、抜く前に戻せる（抜いた紙からは戻せない） */
@@ -393,7 +437,7 @@ function setLOGO(img, name){
   if(isVid(LOGO) && LOGO !== img){ try{ LOGO.pause(); }catch(_){} }
   if(!img){ LOGO = null; LOGO_SRC = null; LOGOKEY++; showVid(); return; }
   LOGO_SRC = img; LOGO_NAME = name || '';
-  /* ⚠️ 動画の地は抜かない＝コマごとに変わるものを、1コマ目だけ見て決められない */
+  /* ⚠️ 動画は【1コマ目で色を決めて、あとは毎コマ同じ色を抜く】＝ここでは紙を作らない */
   const cut = (P.cut === false || isVid(img)) ? null : dropBackdrop(img);
   LOGO = cut ? cut.canvas : img; LOGOKEY++;
   const [W, H] = assetSize(img);
@@ -402,6 +446,7 @@ function setLOGO(img, name){
      + (cut ? ' ⭐ 白い地を抜いた（「そのまま入れる」で元のまま）' : ''));
   showVid();
   if(isVid(img)){
+    probeVideo(img);                 /* ⭐ 地の色は1コマ目で決める */
     /* ⭐ コマを送ったら描き直す＝送った所が見えないと「動かない」に見える */
     img.onseeked = () => { COARSE = 0; render(); syncTime(); };
     syncTime();
@@ -1049,6 +1094,8 @@ function drawFace(ctx, fc, W, H){
   const q = fc.pts.map(([x, y]) => [x*W, y*H]);
   const f = homo(q);
   const [iw, ih] = assetSize(LOGO);
+  /* ⭐ 動画は【いまのコマの地を抜いた紙】を嵌める（静止画は読んだ時に一度抜いてある） */
+  const SRC = isVid(LOGO) ? cutFrame(LOGO) : LOGO;
   if(!iw || !ih) return;
   /* ⭐ 格子の細かさ＝面の大きさで決める（大きい面ほど細かく＝曲面に沿う） */
   const size = Math.max(...q.map(p => p[0])) - Math.min(...q.map(p => p[0]))
@@ -1097,8 +1144,8 @@ function drawFace(ctx, fc, W, H){
         const u0 = i/N, u1 = (i+1)/N, v0 = j/N, v1 = (j+1)/N;
         const s00 = [u0*iw, v0*ih], s10 = [u1*iw, v0*ih], s11 = [u1*iw, v1*ih], s01 = [u0*iw, v1*ih];
         const d00 = pt(u0,v0), d10 = pt(u1,v0), d11 = pt(u1,v1), d01 = pt(u0,v1);
-        tri(bq, LOGO, s00, s10, s11, d00, d10, d11);
-        tri(bq, LOGO, s00, s11, s01, d00, d11, d01);
+        tri(bq, SRC, s00, s10, s11, d00, d10, d11);
+        tri(bq, SRC, s00, s11, s01, d00, d11, d01);
       }
     }
     /* ⭐ 色を差し替える（1色のロゴを白版・黒版で出せる） */

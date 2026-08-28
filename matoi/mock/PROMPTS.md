@@ -14,8 +14,15 @@
 | `no people` | 人が写ると肖像の話になる。企業案件で出しにくい |
 | `photorealistic, 35mm, natural lighting` | 絵になりすぎると、モックアップとして信用されない |
 
+⭐ **写真は `--ar 4:5`（SNS に出す比）・ポスターは縦長** ── ここは別の話。
+　 4:5 の写真の中に、**縦長のポスターが立っている**のが使いやすい。
+　 木下が SNS に投稿しているのが 4:5 なので、**出したものがそのまま1投稿になる**。
+　 ⭐ 逃げ道＝**貼ってある場所（駅・街）を広く見せたいときだけ `--ar 3:2`** に変える。
+　 ⚠️ 縦に長くしすぎるとポスターが画面いっぱいになり、**貼ってある場所が見えなくなる**
+　 （＝地下鉄にも街にも見えない、ただのポスター画像になる）。
+
 ⚠️ **ポスターの比を先に決める**。日本の掲示は **B1（728×1030mm＝およそ 1:1.414）** が基本。
-　 `--ar 3:4` の写真の中に、その比の枠が立っているのが理想。作品も同じ比で作れば余白が出ない。
+　 作品も同じ比で作れば、面に収めたとき余白が出ない。
 
 ---
 
@@ -26,7 +33,7 @@ Japanese subway station corridor, old white square ceramic tile wall, a single e
 frame mounted on the wall, black metal frame, blank plain white paper inside, no text,
 overhead fluorescent light, soft reflection on the tiles, slightly worn grout lines,
 straight-on frontal view, camera perpendicular to the wall, no people, photorealistic, 35mm
---ar 3:4 --style raw
+--ar 4:5 --style raw
 ```
 
 ## 2. 地下鉄の車内（銀のアルミ枠）
@@ -43,7 +50,7 @@ straight-on frontal view, no people, photorealistic, 35mm --ar 4:5 --style raw
 ```
 Japanese train station platform pillar, backlit advertising light box, blank white glowing
 panel, no text, evening platform, tiled floor, soft bloom around the light box edges,
-straight-on frontal view, no people, photorealistic, 35mm --ar 3:4 --style raw
+straight-on frontal view, no people, photorealistic, 35mm --ar 4:5 --style raw
 ```
 
 ## 4. 街なかの掲示板（木の枠・屋外）
@@ -52,7 +59,7 @@ straight-on frontal view, no people, photorealistic, 35mm --ar 3:4 --style raw
 Japanese neighborhood public notice board, weathered wooden frame with a small roof,
 one blank white sheet pinned inside, no text, narrow residential street, overcast daylight,
 slight paper curl and pin shadows, straight-on frontal view, no people,
-photorealistic, 35mm --ar 4:3 --style raw
+photorealistic, 35mm --ar 4:5 --style raw
 ```
 
 ## 5. 商店街のシャッター横・貼り紙
@@ -61,7 +68,7 @@ photorealistic, 35mm --ar 4:3 --style raw
 Japanese shopping street at dusk, closed metal shutter, a single blank white poster taped
 flat on the concrete wall beside it, no text, slightly peeling corner, warm streetlight from
 the left, wet asphalt reflection, straight-on frontal view, no people,
-photorealistic, 35mm --ar 3:4 --style raw
+photorealistic, 35mm --ar 4:5 --style raw
 ```
 
 ## 6. バス停の広告枠（ガラス越し）
@@ -69,7 +76,7 @@ photorealistic, 35mm --ar 3:4 --style raw
 ```
 Japanese bus stop shelter at night, illuminated advertising panel behind glass, blank white
 panel, no text, rain droplets on the glass, reflection of street lights, straight-on frontal
-view, no people, photorealistic, 35mm --ar 3:4 --style raw
+view, no people, photorealistic, 35mm --ar 4:5 --style raw
 ```
 
 ---

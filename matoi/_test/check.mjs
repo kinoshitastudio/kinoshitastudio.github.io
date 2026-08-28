@@ -281,10 +281,37 @@ await new Promise(r => setTimeout(r, 1200));
 const f1 = await vshape();
 ok(f0 !== f1, '⭐ コマを送ると面の上の絵が変わる', `${f0} → ${f1}`);
 
+/* ⭐⭐ 動画の地も抜ける ── 2026-08-29 ══
+   木下＝「動画だとなじませにくいか？」── 画面を見たら【白い地が四角く残っていた】。
+   ⭐ なじまない原因は、しわでも陰でもなく地。四角い白が乗っている限り物の上には見えない。
+   ⚠️ 動画は1コマ目で色を決めて、あとは毎コマ同じ色を抜く（毎コマ判定するとちらつく）。 */
+const vcut = await p.evaluate(() => {
+  const h = 0.30 * cv.width / cv.height;
+  FACES = [{ on:true, pts:[[0.35,0.30],[0.65,0.30],[0.65,0.30+h],[0.35,0.30+h]] }];
+  const read = () => {
+    render();
+    const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height;
+    c.getContext('2d').drawImage(cv, 0, 0);
+    const d = c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+    const x = Math.round(c.width*0.358), y = Math.round(c.height*(0.30 + h*0.03));
+    const i = (y*c.width + x)*4;
+    return Math.round(d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114);
+  };
+  const v = LOGO_SRC;
+  P.cut = true;  setLOGO(v, 'v.mp4'); const 抜く = read();
+  P.cut = false; setLOGO(v, 'v.mp4'); const そのまま = read();
+  P.cut = true;  setLOGO(v, 'v.mp4'); const もどす = read();
+  return { 抜く, そのまま, もどす, 抜く色: VCUT ? [VCUT.r,VCUT.g,VCUT.b].join(',') : 'なし' };
+});
+ok(vcut.そのまま > 200 && vcut.抜く < 150 && vcut.もどす === vcut.抜く,
+   '⭐⭐ 動画の白い地も抜ける（切れば元のまま）', JSON.stringify(vcut));
+
 /* ⭐⭐ mp4 が本当に落ちる。⚠️ 1コマずつ焼くので、試験は小さい盤・24コマ/秒で回す */
+/* ⚠️ 仕掛けるのは【出す直前】＝入れた動画の分と混ざらない
+   （大きさで区別しようとしたら、絵が軽くなった日に落ちた。混ざらない所で見るのが正しい） */
 await p.evaluate(() => { window.__mp4 = [];
   const oc = URL.createObjectURL;
-  URL.createObjectURL = function(x){ if(x && x.type === 'video/mp4' && x.size > 5000) window.__mp4.push(x.size);
+  URL.createObjectURL = function(x){ if(x && x.type === 'video/mp4') window.__mp4.push(x.size);
     return oc.call(URL, x); };
   P.long = 320; document.querySelectorAll('#s_fps button')[0].click(); render(); });
 await p.evaluate(() => el('b_mp4').click());
