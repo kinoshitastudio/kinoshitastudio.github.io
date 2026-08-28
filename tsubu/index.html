@@ -492,6 +492,19 @@
   <input type="file" id="fSvg" accept=".svg,image/svg+xml" hidden>
   <div class="note">⭐ SVG は線が細いので、置いた時に<b>解像</b>を自動で上げる（16 のままだと画が落ちる）<br>
     ⚠️ それでも線が<b>面に化ける</b>ときは<b>解像を上げる</b>か、元の SVG の<b>線を太く</b>して出し直す</div>
+  <!-- ══⭐⭐ 写真から形を作る（2026-08-28 木下「他道具も写真から形を作るを入れれそうな道具はある？」）══
+       ⭐⭐ この道具の入口は【1字を N×N に焼いてドットに落とす】ここ1つだけ＝
+            字の代わりに写真の明暗を焼けば、向き・太さ・粒・玉・マス目・書き出しが**そのまま効く**。
+       ⚠️ 写真は控え（JSON・自動の控え）に入らない＝開き直したらもう一度入れる（SVG と同じ）。 -->
+  <button class="btn" id="bPh">写真から形を作る</button>
+  <button class="btn" id="bPhOff" style="display:none">写真を外す（字に戻す）</button>
+  <input type="file" id="fPh" accept="image/*" hidden>
+  <div id="phUI" style="display:none">
+    <div class="row"><label>しきい</label><input type="range" id="pthr" min="1" max="254" step="1" value="128"><span class="val"></span></div>
+    <div class="seg" id="pinv"><button data-v="0" class="on">明るい方を形に</button><button data-v="1">暗い方を形に</button></div>
+    <div class="note">⭐ <b>しきい</b>＝どこを形にするか（写真の明暗で切る）。<b>暗い方</b>＝黒い被写体・白い背景のとき<br>
+      ⭐ 形が決まったら<b>解像・粒・太さ・柄・色</b>はいつもどおり効く（写真は字と同じ場所に入っている）</div>
+  </div>
   <div class="seg" id="font">
     <button data-v="0" class="on">角ゴ</button>
     <button data-v="1">明朝</button>
@@ -766,6 +779,9 @@
    透明を許しても見た目は変わらない（実測で確認した）。 */
 const cv = document.getElementById('cv'), g = cv.getContext('2d', { alpha:true });
 const P = { mode:0, res:16, cell:7, pal:1, steps:4, dith:100, gdir:90, gflow:0, fps:30, grav:60, font:0,
+            /* ⭐ 写真から形を作るときの2つ（2026-08-28）。しきい＝どこを形にするか／反転＝暗い方を形に。
+               ⚠️ 写真そのもの（phImg）は控えに入れない＝自動の控えは1.8KBのまま（SVG と同じ扱い） */
+            pthr:128, pinv:0,
             tex:1, wav:0.1, bead:55, beadk:1, line:0, blob:5, ar:100, shine:60, valley:0, grad:0, shift:0, spread:0, dir:0, follow:100, grid:0, depth:0, fat:1,
             /* 版（重ねる）。P には【選んでいる版】の値を載せる＝既存のつまみは全部そのまま動く */
             layers:null, cur:0, txt:'HELLO', lx:0, ly:0, lscale:1, lrot:0,
@@ -859,11 +875,25 @@ const oc = document.createElement('canvas'), og = oc.getContext('2d', { willRead
       だから SVG のときだけ【暗い所を字】として読む＝**白い地の板は自動で無視される**。 */
 const SVG_CH = '\uE000';          /* 文字列の中で「ここは SVG」を表す1字（見えない私用領域） */
 let svgImg = null;                 /* 置いた SVG（Image）。字を打ち直すと使われなくなる */
+/* ⭐⭐ 写真から形を作る（2026-08-28）── 枡MASU・簾[マス] と同じ考え方。
+   ⭐ 形が決まるのはこの関数ひとつ＝字の代わりに写真の明暗を焼けば、
+      向き・太さ・粒・玉・マス目・書き出しは**1行も変えずに**そのまま効く。 */
+const PHOTO_CH = '\uE001';        /* 「ここは写真」を表す1字（SVG の隣） */
+let phImg = null;                  /* 置いた写真（Image）。字を打ち直すと使われなくなる */
 function glyphDots(ch, N, fontIdx, fat){
   oc.width = oc.height = N;
   og.fillStyle = '#000'; og.fillRect(0, 0, N, N);
   const isSvg = (ch === SVG_CH && svgImg);
-  if(isSvg){
+  const isPh  = (ch === PHOTO_CH && phImg);
+  if(isPh){
+    /* ⚠️ 余白は【形でない側】で埋める。黒のまま「暗い方を形に」を選ぶと、
+       写真の外側の余白まで丸ごと形になる（＝四角い塊が出る）。 */
+    og.fillStyle = P.pinv ? '#fff' : '#000'; og.fillRect(0, 0, N, N);
+    const iw = phImg.width || N, ih = phImg.height || N;
+    const k = Math.min(N / iw, N / ih) * 0.98;   /* ⭐ 縦横比を保って1字ぶんの枠に収める */
+    const w = iw * k, h = ih * k;
+    og.drawImage(phImg, (N - w) / 2, (N - h) / 2, w, h);
+  } else if(isSvg){
     /* ⭐ 縦横比を保って1字ぶんの枠に収める（少し余白を残す） */
     const iw = svgImg.width || N, ih = svgImg.height || N;
     const k = Math.min(N / iw, N / ih) * 0.92;
@@ -882,8 +912,20 @@ function glyphDots(ch, N, fontIdx, fat){
   // ── 太らせ（膨張） ── 画を太くする＝画が交わる所（青玉）が増える。
   //    日本語は非ボールドだと細く、玉が出にくい。ここで太字を作る。
   let grd = new Uint8Array(N*N);
-  /* ⚠️ 字は白＝明るい所／SVG は黒線＝暗い所。読む向きを分ける */
-  for(let i=0;i<N*N;i++) grd[i] = (isSvg ? raw[i*4] < 110 : raw[i*4] > 110) ? 1 : 0;
+  if(isPh){
+    /* ⭐ 写真は【明るさ】で測る（字と SVG は白黒なので赤成分だけで足りた）。
+       ⭐ しきい＝どこを形にするか＝ここが写真から形を取り出すつまみ。
+       ⚠️ 反転＝暗い方を形にする（黒い被写体・白い背景のとき）。 */
+    const thr = Math.max(1, Math.min(254, P.pthr == null ? 128 : P.pthr));
+    const inv = !!P.pinv;
+    for(let i=0;i<N*N;i++){
+      const lum = raw[i*4]*0.3 + raw[i*4+1]*0.59 + raw[i*4+2]*0.11;
+      grd[i] = (inv ? (lum < thr) : (lum > thr)) ? 1 : 0;
+    }
+  } else {
+    /* ⚠️ 字は白＝明るい所／SVG は黒線＝暗い所。読む向きを分ける */
+    for(let i=0;i<N*N;i++) grd[i] = (isSvg ? raw[i*4] < 110 : raw[i*4] > 110) ? 1 : 0;
+  }
   const fatN = Math.round((fat != null ? fat : P.fat) * Math.max(1, N / 32));   // ⭐ 太さを解像度比例に＝高解像度でも同じだけ太る
   for(let s=0; s<fatN; s++){
     const nx = new Uint8Array(N*N);
@@ -2245,6 +2287,7 @@ document.querySelectorAll('.seg').forEach(seg => {
     // ⚠️ 版ごとの値は、まず版に書き戻す（でないと版を切り替えた瞬間に捨てられる）
     if(L_KEYS.includes(seg.id)) pushToLayer();
     if(seg.id === 'font' || seg.id === 'lay') build();
+    if(seg.id === 'pinv') build();       // ⭐ どちら側を形にするか＝形が変わる＝焼き直す
     if(seg.id === 'masufill'){ build(); fit(); syncMasuGrad(); }   // 塗りで世界の大きさが変わる
     // ⭐ 柄は版ごと＝バンクを焼き直すのではなく、その版のバンクが無ければ次の描画で焼かれる
     if(['line','masuLine','papLine','frameLine'].includes(seg.id)) dirtyUntil = performance.now() + 400;
@@ -2256,7 +2299,7 @@ document.querySelectorAll('.seg').forEach(seg => {
     if(seg.id === 'mode'){ running = false; build(); stat(); }
   }));
 });
-['res','cell','pal','steps','dith','gdir','gflow','fps','grav','wav','bead','beadk','wrap','gapx','gapy','fall','lx','ly','lscale','lrot','masu','masuN','masuAng','masuWav','masuSteps','frameN','frameAng','frameWav','frameSteps','masuShine','masuFlow','masuShift','masuSpread','frameShine','frameShift','frameFlow','fat','ar','shine','shift','spread','dir','follow','valley','grad','grid','depth','warp','warpn','papN','papAng','papSteps','papWav','papShine'].forEach(id => {
+['res','cell','pal','steps','dith','gdir','gflow','fps','grav','wav','bead','beadk','wrap','gapx','gapy','fall','lx','ly','lscale','lrot','masu','masuN','masuAng','masuWav','masuSteps','frameN','frameAng','frameWav','frameSteps','masuShine','masuFlow','masuShift','masuSpread','frameShine','frameShift','frameFlow','fat','ar','shine','shift','spread','dir','follow','valley','grad','grid','depth','warp','warpn','papN','papAng','papSteps','papWav','papShine','pthr'].forEach(id => {
   const r = document.getElementById(id); if(r.type !== 'range') return;
   const v = r.parentElement.querySelector('.val');
   const sync = (fromUser) => { P[id] = +r.value;
@@ -2264,7 +2307,7 @@ document.querySelectorAll('.seg').forEach(seg => {
     if(v) v.textContent = (['masuShine','masuShift','masuSpread','frameShine','frameShift'].includes(id) && +r.value < 0) ? '字' : r.value;
     if(id==='warpn' && fromUser){ resetAnchors(+r.value); drawWarpCurve(); }
     if(['res','cell','bead','beadk','wrap','gapx','gapy','fall','masu','fat','dir','follow',
-        'shift','spread','lx','ly','lscale','lrot'].includes(id)) build();
+        'shift','spread','lx','ly','lscale','lrot','pthr'].includes(id)) build();
     // ⚠️ 谷・階調は盤ぜんぶ＝全バンクを焼き直す／照り・細かさは版ごと＝その版のバンクだけ次の描画で焼かれる
     if(id==='valley' || id==='grad') buildTiles();
     if(id==='shine' || id==='wav'){ build(); dirtyUntil = performance.now() + 400; }
@@ -2475,6 +2518,64 @@ document.getElementById('fSvg').onchange = (e) => {
   };
   rd.readAsText(f);
 };
+/* ══⭐⭐ 写真から形を作る（2026-08-28）══════════════════════════
+   ⭐ 置いたら字の欄を【写真の1字】に差し替える＝SVG とまったく同じ道を通す
+      （版・重なり・向き・太さ・粒・玉・マス目・書き出しに手を入れなくていい）。
+   ⚠️ 写真は控えに入れない＝自動の控えは 1.8KB のまま（画像を入れると localStorage が溢れる）。 */
+function phSync(){
+  const on = !!phImg && document.getElementById('txt').value.indexOf(PHOTO_CH) >= 0;
+  const g1 = document.getElementById('bPh'), g2 = document.getElementById('bPhOff');
+  const ui = document.getElementById('phUI');
+  if(g1) g1.textContent = on ? '別の写真にする' : '写真から形を作る';
+  if(g2) g2.style.display = on ? '' : 'none';
+  if(ui) ui.style.display = on ? '' : 'none';
+}
+document.getElementById('bPh').onclick = () => document.getElementById('fPh').click();
+/* ⚠️ iPhone の HEIC / HEIF は Chrome では img で読めない（Safari だけ）。
+   🔴 黙って失敗すると「押したのに何も起きない」になる＝押した時点で理由を言う。 */
+const isHeicPh = f => /heic|heif/i.test(f.type || '') || /\.(heic|heif)$/i.test(f.name || '');
+document.getElementById('fPh').onchange = (e) => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if(!f) return;
+  const st = document.getElementById('stat') || document.getElementById('info');
+  if(isHeicPh(f)){
+    if(st) st.textContent = 'この写真は HEIC（iPhone の形式）── Chrome では読めません。'
+      + '写真アプリで「JPEG に変換して書き出す」か、Safari で開いてください';
+    return;
+  }
+  const rd = new FileReader();
+  rd.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      phImg = img;
+      /* ⭐ 写真も 16×16 では形が残らない＝足りなければ解像を引き上げる（下げてある値は下げない）。
+         ⚠️ 既定そのものは変えない＝字だけで使っている人の絵は1画素も変わらない。 */
+      const rs = document.getElementById('res');
+      if(rs && +rs.value < 64){
+        rs.value = Math.min(+rs.max, 96);
+        rs.dispatchEvent(new Event('input', { bubbles:true }));
+      }
+      const t = document.getElementById('txt');
+      t.value = PHOTO_CH;                    /* ⭐ 字の欄を写真1字に */
+      t.dispatchEvent(new Event('input', { bubbles:true }));
+      phSync();
+      if(st) st.textContent = '写真から形を作った — しきいで形を決める（解像を上げるほど細かい）';
+    };
+    img.onerror = () => { if(st) st.textContent = '写真を読めなかった（この browser が読めない形式かもしれません）'; };
+    img.src = rd.result;
+  };
+  rd.readAsDataURL(f);
+};
+document.getElementById('bPhOff').onclick = () => {
+  phImg = null;
+  const t = document.getElementById('txt');
+  if(t.value.indexOf(PHOTO_CH) >= 0){ t.value = 'HELLO'; t.dispatchEvent(new Event('input', { bubbles:true })); }
+  phSync();
+};
+/* ⚠️ 字を打ち直したら写真は使われなくなる＝つまみも一緒に引っ込める */
+document.getElementById('txt').addEventListener('input', phSync);
+phSync();
 document.getElementById('inJson').onclick = () => document.getElementById('fJson').click();
 document.getElementById('fJson').onchange = async (e) => {
   const f = e.target.files && e.target.files[0]; if(!f) return;
