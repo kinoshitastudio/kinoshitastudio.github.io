@@ -44,7 +44,9 @@ const D = () => p.evaluate(() => {
   const d = scatter();
   const half = d.w/2;
   let L=0, R=0, minD=1e9, sizes=[];
-  for(let i=0;i<d.n;i++){ (d.xs[i] < half ? L++ : R++); if(i<400) sizes.push(d.sz[i]); }
+  /* ⭐ 大きさは本体と同じ1本（dotSize）から取る。
+     ⚠️ 控えているのは揺れの種であって大きさではない（ここを直に読むと別の数字になる）。 */
+  for(let i=0;i<d.n;i++){ (d.xs[i] < half ? L++ : R++); if(i<400) sizes.push(dotSize(d.sz[i])); }
   /* 近すぎる粒が無いか＝いちばん近い2粒の距離（先頭2000粒で見る） */
   const m = Math.min(2000, d.n);
   for(let i=0;i<m;i++) for(let j=i+1;j<m;j++){
