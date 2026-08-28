@@ -376,6 +376,17 @@
     </div>
     <div id="s_imgOnly" class="hide">
       <button class="btn" id="b_pick">画像を差し替える</button>
+      <!-- ══⭐⭐ 写真から形を作る（2026-08-28）══
+           ⭐ この版を【形】に選んだとき、写真の明暗のどこを形にするかを決める。
+           ⚠️ 0 ＝切らない＝今までどおり（PNG の透明をそのまま形に使う）。
+              JPEG のような透明の無い写真は、0 のままだと版面いっぱいが形になる。 -->
+      <div class="row" style="margin-top:8px"><span class="n">写真のしきい</span><output id="o_s_pthr"></output></div>
+      <input type="range" id="r_s_pthr" min="0" max="254" step="1">
+      <div class="seg" id="s_pinv">
+        <button data-v="0" class="on">明るい方を形に</button><button data-v="1">暗い方を形に</button>
+      </div>
+      <div class="note">⭐ <b>写真のしきい</b>＝この版を<b>形</b>に選んだとき、写真のどこを形にするか<br>
+        ⚠️ <b>切らない（0）</b>のままだと、透明の無い写真は<b>版面いっぱい</b>が形になる</div>
     </div>
     <div class="row" style="margin-top:8px"><span class="n">大きさ</span><output id="o_s_sc"></output></div>
     <input type="range" id="r_s_sc" min="0.05" max="4" step="0.005">
@@ -701,7 +712,9 @@ let sheetSeq = 0;
 function newSheet(type){
   const s = { id:++sheetSeq, type, on:true, mode:'rep', amt:1, x:0, y:0, sc:1, rot:0, inv:false };
   if(type === 'txt') Object.assign(s, { text:'網', wt:900, ls:0, lh:1.12, sc:0.62 });
-  else Object.assign(s, { url:null, im:null });
+  /* ⭐ 写真から形を作る（2026-08-28）。pthr 0 ＝【切らない】＝今までの絵
+     （PNG の透明をそのまま形に使う）。1〜254 にすると明るさで切る。 */
+  else Object.assign(s, { url:null, im:null, pthr:0, pinv:0 });
   return s;
 }
 const S_ = () => SHEETS[cur] || SHEETS[0];
@@ -827,7 +840,10 @@ function bakeMask(W, H){
   hasMask = !!(mk && (mk.type === 'txt' || mk.im));
   if(hasMask){
     bakeSheet(mk, W, H, true);
-    maskG.drawImage(layCv, 0, 0);                        /* 透明の上に、形のあるところだけ */
+    /* ⭐⭐ 写真から形を作る（2026-08-28）＝【明るさで切る】。
+       ⚠️ しきい 0 は「切らない」＝今までの絵（透明のあるところが形）。 */
+    const usePh = mk.type === 'img' && mk.im && +mk.pthr > 0;
+    maskG.drawImage(usePh ? photoShape(mk, W, H) : layCv, 0, 0);  /* 透明の上に、形のあるところだけ */
     maskG.globalCompositeOperation = 'source-in';
     maskG.fillStyle = '#fff'; maskG.fillRect(0, 0, W, H); /* 在るところを白に */
     maskG.globalCompositeOperation = 'destination-over';
@@ -835,6 +851,30 @@ function bakeMask(W, H){
     maskG.globalCompositeOperation = 'source-over';
   }
   maskData = maskG.getImageData(0, 0, W, H).data;
+}
+
+/* ══⭐⭐ 写真を形にする（2026-08-28）══════════════════════════
+   ⭐ 焼いた版（layCv）の明るさで切って、【在る／無い】に直す。
+   🔴🔴 読むのは【別の canvas】で。layCv から直に getImageData すると、
+      そのあと Chrome がその canvas を CPU 描きに移し、**字の縁の出方まで変わる**
+      （累RUI で実測＝写真を1回入れて外しただけで升目の数が変わった）。 */
+const shCv = document.createElement('canvas');
+function photoShape(sh, W, H){
+  shCv.width = W; shCv.height = H;
+  const q = shCv.getContext('2d', { willReadFrequently:true });
+  q.clearRect(0, 0, W, H);
+  q.drawImage(layCv, 0, 0);
+  const im = q.getImageData(0, 0, W, H), d = im.data;
+  const thr = Math.max(1, Math.min(254, +sh.pthr));
+  const inv = !!sh.pinv;
+  for(let i = 0; i < d.length; i += 4){
+    const lum = d[i]*0.3 + d[i+1]*0.59 + d[i+2]*0.11;
+    /* ⚠️ 写真の外（版を置いていない所）は透明のまま＝形にしない */
+    const on = d[i+3] > 8 && (inv ? (lum < thr) : (lum > thr));
+    d[i] = d[i+1] = d[i+2] = 0; d[i+3] = on ? 255 : 0;
+  }
+  q.putImageData(im, 0, 0);
+  return shCv;
 }
 
 /* ══ 読む ══ */
@@ -1198,6 +1238,7 @@ const FMT = {
   shb:v=>'±'+v.toFixed(3), shrN:v=>String(v),
   s_sc:v=>v.toFixed(3), s_x:v=>v.toFixed(2), s_y:v=>v.toFixed(2), s_rot:v=>v+'°',
   s_amt:v=>v.toFixed(2), s_wt:v=>String(v), s_ls:v=>v.toFixed(3), s_lh:v=>v.toFixed(2),
+  s_pthr:v=>v ? String(v) : '切らない',
   gaku:v=>v?v+'%':'無し', gakuZ:v=>v+'%',
   gakuX:v=>(v>0?'+':'')+v+'%', gakuY:v=>(v>0?'+':'')+v+'%'
 };
@@ -1207,7 +1248,7 @@ const RANGES = ['pitch','ang','twist','flow','br','ct','gam','base',
                 'cyc','spinN','twob','flowb','cflowN','wob','shb','shrN','long',
                 'gaku','gakuZ','gakuX','gakuY'];   /* 余白（額）2026-08-25 */
 /* 選んだ版だけに効くつまみ（r_s_◯ ＝ 版の ◯） */
-const SRANGES = ['sc','x','y','rot','amt','wt','ls','lh'];
+const SRANGES = ['sc','x','y','rot','amt','wt','ls','lh','pthr'];
 RANGES.forEach(k => {
   const r = el('r_'+k), o = el('o_'+k);
   if(!r) return;
@@ -1218,6 +1259,14 @@ RANGES.forEach(k => {
   r.addEventListener('pointerdown', pushHist);
   r.addEventListener('input', () => { P[k] = +r.value; show(); kick(); saveLocal(); });
 });
+/* ⭐ 明るい方／暗い方は【版ごと】の値＝P に書く seg() は通せない（あちらは道具ぜんぶの値） */
+document.querySelectorAll('#s_pinv button').forEach(b => b.addEventListener('click', () => {
+  const sh = S_(); if(!sh) return;
+  pushHist();
+  document.querySelectorAll('#s_pinv button').forEach(x => x.classList.toggle('on', x === b));
+  sh.pinv = +b.dataset.v;
+  kick(); saveLocal();
+}));
 SRANGES.forEach(k => {
   const r = el('r_s_'+k), o = el('o_s_'+k);
   if(!r) return;
@@ -1315,6 +1364,10 @@ function syncSheetUI(){
   SRANGES.forEach(k => { const r = el('r_s_'+k), o = el('o_s_'+k);
     if(!r || s[k] === undefined) return;
     r.value = s[k]; if(o) o.textContent = (FMT['s_'+k] || String)(+r.value); });
+  /* ⚠️ 前に作った版には しきい が無い＝0（切らない＝今までの絵）で埋めてから見せる */
+  if(s.type === 'img'){ if(s.pthr == null) s.pthr = 0; if(s.pinv == null) s.pinv = 0; }
+  document.querySelectorAll('#s_pinv button').forEach(b =>
+    b.classList.toggle('on', String(b.dataset.v) === String(s.pinv || 0)));
   el('s_mode').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === s.mode));
   el('c_s_inv').checked = !!s.inv;
   if(s.type === 'txt') el('s_text').value = s.text || '';
