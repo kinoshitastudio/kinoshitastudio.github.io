@@ -80,7 +80,12 @@ echo
 echo "── 見出しの帯（両方の明るさで測る）"
 node "$(cd "$(dirname "$0")" && pwd)/head.mjs" || HEADNG=1
 
+echo
+echo "── 下描き（鉛筆・消しゴム）"
+node "$(cd "$(dirname "$0")" && pwd)/pencil.mjs" || PENNG=1
+
 if [ "${FEELNG:-0}" = "1" ] || [ "${FEEL2NG:-0}" = "1" ] \
    || [ "${PVNG:-0}" = "1" ] || [ "${ADDNG:-0}" = "1" ] \
-   || [ "${GRIDNG:-0}" = "1" ] || [ "${HEADNG:-0}" = "1" ]; then exit 1; fi
+   || [ "${GRIDNG:-0}" = "1" ] || [ "${HEADNG:-0}" = "1" ] \
+   || [ "${PENNG:-0}" = "1" ]; then exit 1; fi
 exit $RC

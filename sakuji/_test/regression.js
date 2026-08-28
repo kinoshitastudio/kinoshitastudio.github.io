@@ -330,7 +330,12 @@
       {
         const bar = document.getElementById('tools');
         const tools = [...bar.querySelectorAll('button[data-tool]')].map(b => b.dataset.tool);
-        ok('道具は6つ（画像・削除・戻す進むは道具ではない）', tools.length === 6, tools.join('・'));
+        /* ⚠️ 2026-08-28 に【下描きの鉛筆・消しゴム】が増えて 6→8 になった。
+           ⭐ 数だけで縛ると増やすたびに落ちるので、芯（＝どれが道具でどれが道具でないか）で見る。
+              画像・削除・複製・まとめる・戻す進む は data-tool を持たない＝道具ではない。 */
+        const WANT = ['select','direct','pen','stroke','pencil','eraser','shape','text'];
+        ok('道具は8つ（画像・削除・戻す進むは道具ではない）',
+           tools.length === WANT.length && WANT.every(t => tools.includes(t)), tools.join('・'));
         ok('鉛筆はペンのすぐ次', tools.indexOf('stroke') === tools.indexOf('pen') + 1,
            tools.join(' → '));
         bar.querySelector('button[data-tool="stroke"]').click();
