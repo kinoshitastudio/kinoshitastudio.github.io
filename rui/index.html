@@ -382,13 +382,6 @@ on</textarea>
   <!-- ══ 紙 ══ -->
   <div class="grp">
     <label class="h">紙</label>
-    <!-- ⭐⭐ 白黒（ロゴ用）。色より先＝【階調を持つかどうか】を先に決める -->
-    <div class="seg" id="bwSeg"></div>
-    <div class="row" id="rowBwT"><span class="n">しきい</span><output id="o_bwT"></output></div>
-    <input type="range" id="r_bwT" min="0" max="100" step="1">
-    <div class="note" id="noteBw">⭐⭐ 版の色を<b>2色に倒す</b>。濃さを<b>面積</b>が受け持つ形になる<br>
-      ⚠️ グラデの版も写真の版も<b>平らな2色</b>になる（1枚だけ写真のまま、を作らない）<br>
-      ⚠️ 2色は<b>紙の色から作る</b>／重なりと透けはそのまま＝<b>重なりの形は変わらない</b></div>
     <input type="color" id="c_paper">
     <div class="row" style="margin-top:8px"><span class="n">版面</span></div>
     <div class="seg" id="ratioSeg"></div>
@@ -529,7 +522,6 @@ let P = {
   pthr:128, pinv:0,
   guide:'near', gopa:0.30, gw:1.0, gtop:false,
   paper:'#d3d3d3', ratio:'1:1', long:1400,
-  bw:'0', bwT:50,               /* ⭐ 白黒（ロゴ用）。'0'＝そのまま＝これまでと1画素も変わらない */
   /* ⭐ 余白（額）2026-08-25 ── 朦OBORO から移した。0 で今までどおり。
      ⚠️ この道具は【素材】の意味で mat を使っている（pl.fill==='mat'）ので、額は gaku と呼ぶ */
   gaku:0, gakuCol:'#f2efe6', gakuZ:100, gakuX:0, gakuY:0,
@@ -890,20 +882,6 @@ function unitPath(pts, r, shape, rot){
 }
 
 /* ⭐⭐ 刷る計画 ── 画面も PNG も SVG もテストもここだけを見る */
-/* 紙の明るさで、どちらを「地」にするか決める＝紙を変えても消えない */
-function bw2(hex){
-  const h = String(hex || '#000').replace('#','');
-  const n = parseInt(h.length === 3 ? h.split('').map(c=>c+c).join('') : h, 16) || 0;
-  const L = ((n>>16&255)*0.299 + (n>>8&255)*0.587 + (n&255)*0.114) / 255;
-  const ph = String(P.paper || '#fff').replace('#','');
-  const pn = parseInt(ph.length === 3 ? ph.split('').map(c=>c+c).join('') : ph, 16) || 0;
-  const pL = ((pn>>16&255)*0.299 + (pn>>8&255)*0.587 + (pn&255)*0.114) / 255;
-  const ink = pL < 0.5 ? '#ffffff' : '#000000';
-  const off = pL < 0.5 ? '#000000' : '#ffffff';
-  /* ⚠️ 紙が明るいなら「暗い版」がインク／紙が暗いなら「明るい版」がインク */
-  const isInk = (pL < 0.5) ? (L >= (P.bwT/100)) : (L < (P.bwT/100));
-  return isInk ? ink : off;
-}
 function buildPlan(W, H){
   bakeMask(W, H);
   const g = gridOf(W, H);
@@ -939,21 +917,12 @@ function buildPlan(W, H){
     /* ⭐ 中身が何であっても【形の作り方は同じ】。ここが1本の式であることが大事。 */
     const hasMat = pl.fill === 'mat' && !!(pl.mat && IMG.get(pl.id));
     const hasGrad = pl.fill === 'grad';
-    /* ══⭐⭐ 白黒にする（2026-08-28 木下）══
-       🔴 ロゴに階調は無い＝【2値】にする。濃さは【面積】が受け持つ。
-       ⭐ この道具は版ごとに1色（pl.color）＝色の出どころが1本。ここで倒せば
-         画面も PNG も SVG も 動画も、全部が同じ2値になる（2つ持たない）。
-       ⚠️ グラデの版・素材（写真）の版も【平らな2色】に倒す
-         ── そうしないと「白黒にしたのに1枚だけ写真のまま」になる。
-       ⚠️ 2色は紙の色から作る＝紙を変えても消えない。
-       ⚠️ 重ね方（blend）と透け（alpha）はそのまま＝重なりの形は変わらない。 */
-    const _bw = (P.bw === '1');
     const q = {
-      id:pl.id, color:(_bw ? bw2(pl.color) : pl.color), blend:pl.blend, alpha:pl.al,
+      id:pl.id, color:pl.color, blend:pl.blend, alpha:pl.al,
       inner:pl.inner, r:+r.toFixed(3), n:pts.length,
       shape:pl.shape || 'circle', rot:+(pl.rot || 0),
       d:unitPath(pts, r, pl.shape || 'circle', pl.rot || 0),
-      fill:_bw ? 'color' : (hasMat ? 'mat' : (hasGrad ? 'grad' : 'color')),
+      fill:hasMat ? 'mat' : (hasGrad ? 'grad' : 'color'),
       unit:pl.matUnit || 'sheet',
       g:hasGrad ? { ...pl.g } : null
     };
@@ -1659,13 +1628,10 @@ function applyObj(txt, noHist){
 }
 
 /* ══ つまみを繋ぐ ══════════════════════════════ */
-const RANGES = ['bwT','weight','track','lh','margin','cols','thr','grow','rad','gopa','gw','long','pthr',
+const RANGES = ['weight','track','lh','margin','cols','thr','grow','rad','gopa','gw','long','pthr',
                 'cyc','spinN','spinR','spinS','brN','brA',
                 'gaku','gakuZ','gakuX','gakuY'];   /* ⭐ 余白（額）2026-08-25 */
 const FMT = {
-  /* ⚠️ RANGES に足したら FMT にも足す ── 無いと FMT[k] が undefined で
-        「FMT[k] is not a function」になり、つまみ全体が黙って止まる（2026-08-28 に踏んだ）。 */
-  bwT:v => v,
   weight:v => v, track:v => v.toFixed(3), lh:v => v.toFixed(2), margin:v => (v*100).toFixed(1)+'%',
   cols:v => v, thr:v => v.toFixed(2), pthr:v => v, grow:v => (v > 0 ? '+' : '') + v.toFixed(2), rad:v => v.toFixed(2),
   gopa:v => v.toFixed(2), gw:v => v.toFixed(1), long:v => v + 'px',
@@ -1788,8 +1754,6 @@ function buildSeg(id, items, get, set){
   });
   box.__get = get;
 }
-/* ⭐ 白黒（ロゴ用）。⚠️ 家の型（buildSeg）で繋ぐ＝印の付け直しも一括で面倒を見てくれる */
-buildSeg('bwSeg', [{v:'0',n:'そのまま'},{v:'1',n:'白黒'}], () => String(P.bw || '0'), v => P.bw = v);
 buildSeg('fontSeg',  FONTS,   () => P.font,  v => P.font = v);
 buildSeg('pinvSeg', [{v:'0',n:'明るい方を形に'},{v:'1',n:'暗い方を形に'}],
          () => String(P.pinv || 0), v => P.pinv = +v);
@@ -1928,14 +1892,11 @@ function syncUI(){
           : (bad ? '🔴 1.00 以下なので円が重ならない＝この版は何も出ない'
                  : 'レンズの太さはこの数字で決まる（1.00 に近いほど細い）'));
   }
-  ['bwSeg','fontSeg','ratioSeg','blendSeg','guideSeg','innerSeg','matSeg','outSeg','shapeSeg','fillSeg','pinvSeg']
+  ['fontSeg','ratioSeg','blendSeg','guideSeg','innerSeg','matSeg','outSeg','shapeSeg','fillSeg','pinvSeg']
     .forEach(id => {
       const box = el(id), v = String(box.__get());
       box.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
     });
-  /* ⚠️ しきいは白黒のときだけ出す（触れるのに効かない物を出さない） */
-  { const on = (String(P.bw || '0') === '1');
-    ['rowBwT','noteBw','r_bwT'].forEach(id => { const e = el(id); if(e) e.style.display = on ? '' : 'none'; }); }
   [['vFmt','vFmt'],['vFps','vFps'],['vLoop','vLoop'],['vQ','vQ']].forEach(([id, key]) =>
     el(id).querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === String(P[key]))));
   el('c_anim').checked = !!P.anim;
