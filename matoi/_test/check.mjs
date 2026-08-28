@@ -191,5 +191,27 @@ ok(tee.ヘム > tee.平ら + 5, '⭐ 縫い目がある（裾のヘムだけ明�
 ok(tee.脇下 > tee.中央 * 2, '⭐⭐ しわが【部位ごと】に集まっている（脇の下 ≫ 身頃の中央）',
    `脇下 ${tee.脇下} / 中央 ${tee.中央}`);
 
+/* ══⭐⭐ 写真の物 ── 2026-08-28 ══
+   木下＝「モックアップのものとかかなりあるので画像を引っ張ってくる方が早い。あとはなじませるだけ」
+   ＝ 描いた物と【同じ道】を通ること（押せば下地になり、面もその物のものが入る）。
+   ⚠️ 比は写真そのものから決まる（型に書いた ratio ではない）。 */
+const mock = await p.evaluate(async () => {
+  const c = document.createElement('canvas'); c.width = 600; c.height = 400;
+  const q = c.getContext('2d');
+  const g = q.createLinearGradient(0, 0, 600, 0);
+  g.addColorStop(0, '#303030'); g.addColorStop(1, '#e8e8e8');
+  q.fillStyle = g; q.fillRect(0, 0, 600, 400);
+  const n0 = KATA.length;
+  KATA.push({ id:'mock_test', name:'写真の試し', ratio:1,
+    faces:[[[0.25,0.35],[0.75,0.35],[0.75,0.65],[0.25,0.65]]], photo:c.toDataURL('image/png') });
+  renderKata();
+  useKata(KATA.length - 1);
+  await new Promise(r => setTimeout(r, 1200));
+  return { 比:+(P.ratio).toFixed(2), 面:FACES.length, 下地:BG && BG.tagName,
+           一覧:document.querySelectorAll('#s_kata button').length === n0 + 1 };
+});
+ok(mock.下地 === 'IMG' && Math.abs(mock.比 - 1.5) < 0.02 && mock.一覧,
+   '⭐⭐ 写真の物も同じ道で使える（一覧に並ぶ・比は写真から決まる）', JSON.stringify(mock));
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
 await b.close(); process.exit(NG);

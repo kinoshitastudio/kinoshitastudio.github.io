@@ -243,7 +243,9 @@
       ⭐ 位置は自動で合う（⚠️ 気に入らなければ盤の四隅を掴んで直せる）</div>
     <button class="btn" id="b_bg">自分の写真を使う</button>
     <input type="file" id="f_bg" hidden>
-    <div class="note">⚠️ 自分で撮った写真も使える（<b>陰影のはっきりした写真</b>ほどよく馴染む）</div>
+    <div class="note">⚠️ 自分で撮った写真も使える（<b>陰影のはっきりした写真</b>ほどよく馴染む）<br>
+      ⭐⭐ 写真を <b>matoi/mock/</b> に入れて <b>mock/list.json</b> に1行足すと、
+      その写真も<b>上の一覧に並ぶ</b>（＝次からは押すだけ）</div>
   </div>
 
   <div class="grp">
@@ -253,6 +255,7 @@
       <button class="btn" id="b_addFace">面を足す</button>
       <button class="btn" id="b_delFace">この面を消す</button>
     </div>
+    <button class="btn" id="b_pts">いまの四隅を写す（list.json 用）</button>
     <div class="note">⚠️ ふつうは触らなくていい（物を選べば位置は合っている）<br>
       ⭐ 直したいときだけ、盤の上の<b>四隅を掴んで</b>動かす（斜めも奥行きもこれで決まる）<br>
       ⭐ 面は<b>いくつでも</b>足せる（箱の正面と側面／Tシャツの胸とタグ）</div>
@@ -829,12 +832,20 @@ kata('sign', '看板', 4/3, [[[0.26,0.30],[0.72,0.36],[0.72,0.66],[0.26,0.60]]],
   q.lineTo(W*0.77,H*0.69); q.lineTo(W*0.74,H*0.67); q.closePath(); q.fill();
 });
 
-/* ⭐ 型を1つ選ぶ道は【この1本】＝一覧・書き出し・立ち上げが全部ここを通る */
-let KIDX = 0;
-function useKata(i, keepFaces){
-  KIDX = Math.max(0, Math.min(KATA.length - 1, i));
-  const k = KATA[KIDX];
-  P.ratio = k.ratio;
+/* ⭐⭐ 型の下地を用意する道は【この1本】＝描いた物も、写真の物も、ここを通る（2026-08-28）
+   木下＝「モックアップのものとかかなりあるので、そのあたりから画像を引っ張ってくる方が早い。
+     Tシャツのクオリティを見てそう思った。あとはなじませるだけ」
+   ⭐ そのとおりで、この道具の値打ちは【なじませる】側にある。描くのは物が無いときの代役。
+   ⚠️ 写真型は draw を持たない代わりに photo（画像の在り処）を持つ。比は写真そのものから決まる。 */
+function kataBG(k, done){
+  if(k.photo){
+    if(k.img) return done(k.img, (k.img.naturalWidth || 1) / (k.img.naturalHeight || 1));
+    const im = new Image();
+    im.onload = () => { k.img = im; done(im, im.naturalWidth / im.naturalHeight); };
+    im.onerror = () => stat('写真が読めません：' + k.photo);
+    im.src = k.photo;
+    return;
+  }
   const L = Math.max(64, Math.round(P.long));
   const W = k.ratio >= 1 ? L : Math.round(L * k.ratio);
   const H = k.ratio >= 1 ? Math.round(L / k.ratio) : L;
@@ -842,9 +853,38 @@ function useKata(i, keepFaces){
   k.draw(c.getContext('2d'), W, H);
   /* ⭐⭐ ここで PNG に焼いてから読み直していた＝物を押すたびに 347ms 捨てていた（実測）。
      canvas はそのまま drawImage できる＝焼かない。ついでに待ちも消える（同期になる）。 */
-  setBG(c);
-  if(!keepFaces){ FACES = k.faces.map(pts => ({ on:true, pts:pts.map(p => p.slice()) })); cur = 0; renderFaces(); }
-  render(); fitView();
+  done(c, k.ratio);
+}
+/* ⭐ 型を1つ選ぶ道は【この1本】＝一覧・書き出し・立ち上げが全部ここを通る */
+let KIDX = 0;
+function useKata(i, keepFaces){
+  KIDX = Math.max(0, Math.min(KATA.length - 1, i));
+  const k = KATA[KIDX];
+  kataBG(k, (src, ratio) => {
+    P.ratio = ratio; setBG(src);
+    if(!keepFaces){ FACES = k.faces.map(pts => ({ on:true, pts:pts.map(p => p.slice()) })); cur = 0; renderFaces(); }
+    render(); fitView();
+  });
+}
+/* ⭐⭐ 写真の物＝mock/ に画像を置いて mock/list.json に1行足すだけで一覧に並ぶ。
+   ⚠️ ファイルが無ければ何も起きない（置いていない人にはいままで通り）。
+   ⭐ 四隅は道具の中で合わせて【いまの四隅を写す】で写せる＝手で数字を書かなくていい。 */
+function loadMock(){
+  fetch('mock/list.json', { cache:'no-cache' })
+    .then(r => r.ok ? r.json() : null)
+    .then(j => {
+      if(!j || !Array.isArray(j.items) || !j.items.length) return;
+      j.items.forEach(it => {
+        if(!it || !it.file) return;
+        KATA.push({ id: 'mock_' + String(it.file).replace(/[^\w]+/g, '_'),
+          name: it.name || it.file, ratio: 1,
+          faces: (it.faces && it.faces.length) ? it.faces
+               : [[[0.30,0.35],[0.70,0.35],[0.70,0.60],[0.30,0.60]]],
+          photo: 'mock/' + it.file });
+      });
+      renderKata();
+    })
+    .catch(() => {});
 }
 function renderKata(){
   const host = document.getElementById('s_kata'); if(!host) return;
@@ -1150,6 +1190,15 @@ el('b_delFace').onclick = () => {
   if(FACES.length < 2){ stat('面は1つ以上いる'); return; }
   FACES.splice(cur, 1); cur = Math.max(0, cur - 1); renderFaces(); render();
 };
+/* ⭐ 合わせた四隅を【そのまま list.json に貼れる形】で写す＝手で数字を書かなくていい */
+el('b_pts').onclick = () => {
+  const s = JSON.stringify(FACES.filter(f => f.on)
+    .map(f => f.pts.map(p => p.map(v => +v.toFixed(3)))));
+  const done = () => stat('四隅を写した ── mock/list.json の "faces" に貼る');
+  if(navigator.clipboard && navigator.clipboard.writeText)
+    navigator.clipboard.writeText(s).then(done, () => { prompt('この行をコピー', s); });
+  else prompt('この行をコピー', s);
+};
 renderFaces();
 
 /* ══ 受ける ══ */
@@ -1247,27 +1296,27 @@ el('b_all').onclick = async () => {
   for(let i = 0; i < KATA.length; i++){
     await new Promise(res => {
       const k = KATA[i];
-      const L = Math.max(64, Math.round(P.long));
-      const W = k.ratio >= 1 ? L : Math.round(L * k.ratio);
-      const H = k.ratio >= 1 ? Math.round(L / k.ratio) : L;
-      const bc = document.createElement('canvas'); bc.width = W; bc.height = H;
-      k.draw(bc.getContext('2d'), W, H);
-      /* ⚠️ 面も型のものに差し替える＝物ごとに位置が合う
-         🔴 控えを戻すときは【明暗の紙も一緒に】戻す。合図(TONEKEY)だけ戻すと、
-            中身は別の物のまま残る＝次に描くとき、その物の明暗で借りてしまう。 */
-      const keepBG = BG, keepF = FACES, keepK = TONEKEY, keepT = TONE;
-      setBG(bc);
-      FACES = k.faces.map(pts => ({ on:true, pts:pts.map(p=>p.slice()) }));
-      const c = document.createElement('canvas'); c.width = W; c.height = H;
-      paint(c.getContext('2d'), W, H);
-      c.toBlob(b2 => {
-        const a = document.createElement('a'); a.href = URL.createObjectURL(b2);
-        a.download = 'matoi_' + k.id + '.png';
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(a.href), 1500);
-        BG = keepBG; FACES = keepF; TONEKEY = keepK; TONE = keepT;
-        setTimeout(res, 260);
-      }, 'image/png');
+      kataBG(k, (src, ratio) => {                      /* ⭐ 描いた物も写真の物も同じ道 */
+        const L = Math.max(64, Math.round(P.long));
+        const W = ratio >= 1 ? L : Math.round(L * ratio);
+        const H = ratio >= 1 ? Math.round(L / ratio) : L;
+        /* ⚠️ 面も型のものに差し替える＝物ごとに位置が合う
+           🔴 控えを戻すときは【明暗の紙も一緒に】戻す。合図(TONEKEY)だけ戻すと、
+              中身は別の物のまま残る＝次に描くとき、その物の明暗で借りてしまう。 */
+        const keepBG = BG, keepF = FACES, keepK = TONEKEY, keepT = TONE;
+        setBG(src);
+        FACES = k.faces.map(pts => ({ on:true, pts:pts.map(p=>p.slice()) }));
+        const c = document.createElement('canvas'); c.width = W; c.height = H;
+        paint(c.getContext('2d'), W, H);
+        c.toBlob(b2 => {
+          const a = document.createElement('a'); a.href = URL.createObjectURL(b2);
+          a.download = 'matoi_' + k.id + '.png';
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+          BG = keepBG; FACES = keepF; TONEKEY = keepK; TONE = keepT;
+          setTimeout(res, 260);
+        }, 'image/png');
+      });
     });
   }
   el('b_all').textContent = '⭐ 物ぜんぶをまとめて出す';
@@ -1325,6 +1374,7 @@ addEventListener('resize', () => { applyView(); drawHandles(); });
 /* ⭐⭐ 開いた時点で【物が並んでいて、仮のロゴが乗っている】＝何をする道具かが一目で分かる。
    ⚠️ 説明を読ませない。押せば次の物に移る。 */
 renderKata();
+loadMock();          /* ⭐ 写真の物があれば、そのまま一覧の後ろに並ぶ */
 (function(){
   /* ⚠️ 仮のロゴは【測ってから紙を作る】。決め打ちの幅に書くと、字がはみ出して切れる
      （実測：YOUR LOGO が OUR LOG になった。道具ではなく仮ロゴ側の作り方の問題） */
