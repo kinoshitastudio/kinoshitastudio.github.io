@@ -238,6 +238,22 @@ on</textarea>
     <input type="range" id="r_lh" min="0.6" max="2" step="0.01">
     <div class="row"><span class="n">余白</span><output id="o_margin"></output></div>
     <input type="range" id="r_margin" min="0" max="0.3" step="0.005">
+    <!-- ══⭐⭐ 写真から形を作る（2026-08-28）══
+         ⭐⭐ この道具の形は【maskCv（塗られている所）】ひとつで決まる。
+              だから字の代わりに写真の明暗を塗れば、升目・拾い方・円の大きさ・重なり・
+              素材・額・動きが**そのまま効く**（下流は1行も触っていない）。
+         ⚠️ 写真は控えに入れない＝開き直したらもう一度入れる。 -->
+    <button class="btn" id="bPh">写真から形を作る</button>
+    <button class="btn" id="bPhOff" style="display:none">写真を外す（字に戻す）</button>
+    <input type="file" id="fPh" accept="image/*" hidden>
+    <div id="phUI" style="display:none">
+      <div class="row"><span class="n">写真のしきい</span><output id="o_pthr"></output></div>
+      <input type="range" id="r_pthr" min="1" max="254" step="1">
+      <div class="seg" id="pinvSeg"></div>
+      <div class="note">⭐ <b>写真のしきい</b>＝どこを形にするか（写真の明暗で切る）。<b>暗い方</b>＝黒い被写体・白い背景のとき<br>
+        ⭐ 形が決まったら<b>升目の細かさ・拾い方・円の大きさ</b>はいつもどおり効く<br>
+        ⚠️ <b>字を太らせる</b>は字のときだけ（写真には効かない）</div>
+    </div>
   </div>
 
   <!-- ══ 升目 ══ -->
@@ -502,6 +518,8 @@ const RATIOS = [
 let P = {
   text:'orr\non', font:'bodoni', weight:900, track:0.02, lh:1.0, margin:0.07,
   cols:26, thr:0.34, grow:0, rad:1.55,
+  /* ⭐ 写真から形を作るときの2つ（2026-08-28）。⚠️ 写真そのもの（phImg）は控えに入れない */
+  pthr:128, pinv:0,
   guide:'near', gopa:0.30, gw:1.0, gtop:false,
   paper:'#d3d3d3', ratio:'1:1', long:1400,
   /* ⭐ 余白（額）2026-08-25 ── 朦OBORO から移した。0 で今までどおり。
@@ -711,10 +729,41 @@ function outSize(){
 const maskCv = document.createElement('canvas');
 const smCv   = document.createElement('canvas');
 
+/* ⭐⭐ 写真から形を作る（2026-08-28）── 枡MASU・粒TSUBU と同じ考え方。
+   ⭐⭐ 形が決まるのは maskCv ひとつ＝【明るさで切って、塗りに直す】所までをここで済ませる。
+      そこから先（升目に落とす・円を置く・素材で埋める）は1行も変えていない。
+   ⚠️ 拾い方（thr）の意味も変えない＝写真も「塗られている／いない」に直してから渡す。
+   🔴🔴 画素を読むのは【別の canvas】で。maskCv から直に getImageData すると、
+      そのあと Chrome がこの canvas を CPU 描きに移し、**字の縁の出方まで変わる**
+      （写真を1回入れて外しただけで、字の升目が 139→150 に増えた。実測 2026-08-28）。
+      ⭐ maskCv は「描かれるだけ・読まれない」を保つ＝写真を入れても字は1画素も変わらない。 */
+let phImg = null;
+const phCv = document.createElement('canvas');
+function bakePhoto(W, H){
+  phCv.width = W; phCv.height = H;
+  const q = phCv.getContext('2d', { willReadFrequently:true });
+  q.clearRect(0, 0, W, H);
+  const m = P.margin;
+  const k = Math.min((W * (1 - 2*m)) / phImg.width, (H * (1 - 2*m)) / phImg.height);
+  const w = phImg.width * k, h = phImg.height * k;
+  q.drawImage(phImg, (W - w)/2, (H - h)/2, w, h);
+  /* ⭐ 明るさで切って【塗り／透明】に直す。⚠️ 写真の外（余白）は透明のまま＝形にならない */
+  const im = q.getImageData(0, 0, W, H), d = im.data;
+  const thr = Math.max(1, Math.min(254, P.pthr == null ? 128 : P.pthr));
+  const inv = !!P.pinv;
+  for(let i = 0; i < d.length; i += 4){
+    const lum = d[i]*0.3 + d[i+1]*0.59 + d[i+2]*0.11;
+    const on = d[i+3] > 8 && (inv ? (lum < thr) : (lum > thr));
+    d[i] = d[i+1] = d[i+2] = 0; d[i+3] = on ? 255 : 0;
+  }
+  q.putImageData(im, 0, 0);
+  maskCv.getContext('2d').drawImage(phCv, 0, 0);   /* ⭐ maskCv へは【描くだけ】 */
+}
 function bakeMask(W, H){
   maskCv.width = W; maskCv.height = H;
   const c = maskCv.getContext('2d');
   c.clearRect(0, 0, W, H);
+  if(phImg){ bakePhoto(W, H); return; }
   const lines = (P.text || '').split('\n');
   if(!lines.some(s => s.length)) return;
   const f = FONTS.find(x => x.v === P.font) || FONTS[0];
@@ -1579,12 +1628,12 @@ function applyObj(txt, noHist){
 }
 
 /* ══ つまみを繋ぐ ══════════════════════════════ */
-const RANGES = ['weight','track','lh','margin','cols','thr','grow','rad','gopa','gw','long',
+const RANGES = ['weight','track','lh','margin','cols','thr','grow','rad','gopa','gw','long','pthr',
                 'cyc','spinN','spinR','spinS','brN','brA',
                 'gaku','gakuZ','gakuX','gakuY'];   /* ⭐ 余白（額）2026-08-25 */
 const FMT = {
   weight:v => v, track:v => v.toFixed(3), lh:v => v.toFixed(2), margin:v => (v*100).toFixed(1)+'%',
-  cols:v => v, thr:v => v.toFixed(2), grow:v => (v > 0 ? '+' : '') + v.toFixed(2), rad:v => v.toFixed(2),
+  cols:v => v, thr:v => v.toFixed(2), pthr:v => v, grow:v => (v > 0 ? '+' : '') + v.toFixed(2), rad:v => v.toFixed(2),
   gopa:v => v.toFixed(2), gw:v => v.toFixed(1), long:v => v + 'px',
   cyc:v => v.toFixed(1)+'秒', spinN:v => v ? v+'周' : '止', spinR:v => v.toFixed(2),
   spinS:v => v.toFixed(2), brN:v => v ? v+'周' : '止', brA:v => v.toFixed(2),
@@ -1654,6 +1703,45 @@ el('p_color').addEventListener('change', pushHist);
 el('c_gtop').addEventListener('change', () => {
   P.gtop = el('c_gtop').checked; touched(); kick(); saveLocal(); pushHist(); });
 
+/* ══⭐⭐ 写真から形を作る ── 入口（2026-08-28）══════════════════
+   ⭐ 写真を入れたら【形の作り手】が字から写真に替わるだけ＝下流は何も知らなくていい。
+   ⚠️ 写真は控えに入れない＝控えは今までどおり軽いまま。 */
+function phSync(){
+  const on = !!phImg;
+  el('bPh').textContent = on ? '別の写真にする' : '写真から形を作る';
+  el('bPhOff').style.display = on ? '' : 'none';
+  el('phUI').style.display = on ? '' : 'none';
+  /* ⚠️ 写真のときは字の欄も「字を太らせる」も効かない＝薄くして分かるようにする */
+  el('t_text').style.opacity = on ? '.45' : '';
+  el('t_text').disabled = !!on;
+  el('r_grow').style.opacity = on ? '.45' : '';
+  el('r_grow').disabled = !!on;
+}
+el('bPh').onclick = () => el('fPh').click();
+/* ⚠️ iPhone の HEIC / HEIF は Chrome では読めない（Safari だけ）。
+   🔴 黙って失敗すると「押したのに何も起きない」になる＝押した時点で理由を言う。 */
+const isHeicPh = f => /heic|heif/i.test(f.type || '') || /\.(heic|heif)$/i.test(f.name || '');
+el('fPh').onchange = e => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if(!f) return;
+  if(isHeicPh(f)){
+    alert('この写真は HEIC（iPhone の形式）── Chrome では読めません。'
+        + '写真アプリで「JPEG に変換して書き出す」か、Safari で開いてください');
+    return;
+  }
+  const rd = new FileReader();
+  rd.onload = () => {
+    const img = new Image();
+    img.onload = () => { phImg = img; touched(); phSync(); syncUI(); kick(); saveLocal(); pushHist(); };
+    img.onerror = () => alert('写真を絵にできませんでした');
+    img.src = rd.result;
+  };
+  rd.readAsDataURL(f);
+};
+el('bPhOff').onclick = () => { phImg = null; touched(); phSync(); syncUI(); kick(); saveLocal(); pushHist(); };
+phSync();   /* ⭐ 起動時に一度＝写真が無い状態の見た目を作る */
+
 function buildSeg(id, items, get, set){
   const box = el(id);
   box.innerHTML = items.map(x => `<button data-v="${x.v}">${x.n}</button>`).join('');
@@ -1663,6 +1751,8 @@ function buildSeg(id, items, get, set){
   box.__get = get;
 }
 buildSeg('fontSeg',  FONTS,   () => P.font,  v => P.font = v);
+buildSeg('pinvSeg', [{v:'0',n:'明るい方を形に'},{v:'1',n:'暗い方を形に'}],
+         () => String(P.pinv || 0), v => P.pinv = +v);
 buildSeg('ratioSeg', RATIOS,  () => P.ratio, v => P.ratio = v);
 buildSeg('blendSeg', BLENDS,  () => (PLATES[cur] || {}).blend, v => { if(PLATES[cur]) PLATES[cur].blend = v; });
 buildSeg('guideSeg', [{v:'none',n:'なし'},{v:'near',n:'字のまわり'},{v:'all',n:'全面'}],
@@ -1798,7 +1888,7 @@ function syncUI(){
           : (bad ? '🔴 1.00 以下なので円が重ならない＝この版は何も出ない'
                  : 'レンズの太さはこの数字で決まる（1.00 に近いほど細い）'));
   }
-  ['fontSeg','ratioSeg','blendSeg','guideSeg','innerSeg','matSeg','outSeg','shapeSeg','fillSeg']
+  ['fontSeg','ratioSeg','blendSeg','guideSeg','innerSeg','matSeg','outSeg','shapeSeg','fillSeg','pinvSeg']
     .forEach(id => {
       const box = el(id), v = String(box.__get());
       box.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === v));

@@ -29,4 +29,9 @@ if ! curl -sf "http://localhost:$PORT/$NAME/" | grep -q 'id="innerSeg"'; then
 fi
 echo "（${PORT} で立てた）"
 
-node "$HERE/_test/check.mjs" "http://localhost:$PORT/$NAME/"
+NG=0
+node "$HERE/_test/check.mjs" "http://localhost:$PORT/$NAME/" || NG=1
+echo
+echo "── 写真から形を作る"
+node "$HERE/_test/photo.mjs" "http://localhost:$PORT/$NAME/" || NG=1
+exit "$NG"
