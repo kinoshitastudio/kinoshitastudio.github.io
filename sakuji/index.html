@@ -3357,7 +3357,13 @@ function hit(point){
   return (h && skip(h.item)) ? null : h;
 }
 let marquee = null, marqueeStart = null;      // ドラッグの範囲選択（点線の矩形）
-let clip = [];                                // コピー／カットしたオブジェクト（切り離した複製を保持）
+/* コピー／カットしたもの＝{ item:切り離した複製, idx:元の重なり順 } の配列。
+   🔴 前は複製だけを持っていたので、貼ると必ず【一番上】に出て前後関係が壊れた
+      （木下＝「⌘X で切り取ってもう一度 ⌘V を押すと、レイヤー一番上にそれらが表示される」2026-08-29）。
+   ⭐ 元の順（index）も一緒に覚えて、そこへ戻す。 */
+let clip = [];
+let clipCut = false;                          // 切り取ったのか（＝1回目の貼りは「戻す」）
+let clipN = 0;                                // 何回貼ったか（2回目からはずらす）
 function selDownBase(e){                          // ⚠️ 呼ぶのは台帳の selDown から（直接呼ばない）
   snapshot();                                     // 動かす前の状態を保存
   let h = hit(e.point);
@@ -3618,30 +3624,54 @@ window.addEventListener('keydown', e => {
     e.preventDefault();
     if(abCopyBoard()) return;                     // ⭐ 枠を選んでいるなら、枠と中身をコピー
     const sel = selected();
-    if(sel.length){ clip = sel.map(it => it.clone({ insert:false })); stat(`${sel.length}個をコピー`); }
+    if(sel.length){
+      clip = sel.map(it => ({ item: it.clone({ insert:false }), idx: it.index }));
+      clipCut = false; clipN = 0;
+      stat(`${sel.length}個をコピー`);
+    }
     return;
   }
   if(cmd && e.key.toLowerCase() === 'x'){          // ⌘X＝カット（切り取っても貼れる）
     e.preventDefault();
     const sel = selected();
-    if(sel.length){ snapshot(); clip = sel.map(it => it.clone({ insert:false })); sel.forEach(it => it.remove()); guides(); stat(`${sel.length}個をカット`); }
+    if(sel.length){
+      snapshot();
+      /* ⚠️ index は【消す前】に取る（消した後だと詰まってずれる） */
+      clip = sel.map(it => ({ item: it.clone({ insert:false }), idx: it.index }));
+      sel.forEach(it => it.remove());
+      clipCut = true; clipN = 0;
+      guides(); stat(`${sel.length}個をカット — ⌘V で元の場所・元の重なりに戻る`);
+    }
     return;
   }
-  if(cmd && e.key.toLowerCase() === 'v'){          // ⌘V＝ペースト（少しずらして重ねる・連続可）
+  /* ⌘V＝ペースト／⇧⌘V＝その場に貼る（位置も重なりもそのまま＝イラレの Paste in Place）
+     ⭐⭐ 貼る所は【元の重なり順】へ戻す。⚠️ addChild だと必ず一番上に出る。
+     ⭐ ずらすのは【複製として貼るとき】だけ。切り取った物の1回目は「戻す」なのでずらさない
+        ── ⌘X → ⌘V が、位置も前後関係も元どおりになる。 */
+  if(cmd && e.key.toLowerCase() === 'v'){
     e.preventDefault();
     if(abClip && abPasteBoard(abClip)) return;    // ⭐ 枠をコピーしていたなら、枠ごと貼る
     if(!clip.length) return;
     snapshot();
     artLayer.activate();
     artLayer.children.forEach(c => c.selected = false);
-    clip.forEach(src => {
-      const c = src.clone({ insert:false });
-      artLayer.addChild(c);
-      c.position = c.position.add(new Point(24, 24));
+    const inPlace = e.shiftKey || (clipCut && clipN === 0);
+    const d = inPlace ? 0 : 24 * (clipN + 1);
+    /* ⚠️ 下から順に入れる。上から入れると、あとの1つが下にずれる */
+    let ins = 0;
+    [...clip].sort((a, b) => a.idx - b.idx).forEach(src => {
+      const c = src.item.clone({ insert:false });
+      /* 切り取った物の戻し＝記録した所へそのまま。それ以外＝元の1つ上へ（下に入れた数だけ繰り上げ） */
+      const want = (clipCut && clipN === 0) ? src.idx : src.idx + ins + 1;
+      artLayer.insertChild(Math.max(0, Math.min(want, artLayer.children.length)), c);
+      if(d) c.position = c.position.add(new Point(d, d));
       c.selected = true;
+      ins++;
     });
+    clipN++;
+    if(typeof clipFix === 'function') clipFix();   // ⭐ 抜き（クリッピング）を掛け直す
     setTool('select'); guides(); reportSel();
-    stat(`${clip.length}個をペースト`);
+    stat(`${clip.length}個をペースト` + (inPlace ? '（元の場所・元の重なり）' : ''));
     return;
   }
   if(cmd && e.key.toLowerCase() === 'g'){          // ⌘G＝グループ／⇧⌘G＝解除
