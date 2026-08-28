@@ -86,9 +86,12 @@ node "$(cd "$(dirname "$0")" && pwd)/pencil.mjs" || PENNG=1
 echo
 echo "── 鉛筆・消しゴムのフライアウトとカーソル"
 node "$(cd "$(dirname "$0")" && pwd)/penmenu.mjs" || PMNG=1
+echo
+echo "── 手のゆらぎ（調整できる・開いた線を閉じない）"
+node "$(cd "$(dirname "$0")" && pwd)/wobble.mjs" || WBNG=1
 
 if [ "${FEELNG:-0}" = "1" ] || [ "${FEEL2NG:-0}" = "1" ] \
    || [ "${PVNG:-0}" = "1" ] || [ "${ADDNG:-0}" = "1" ] \
    || [ "${GRIDNG:-0}" = "1" ] || [ "${HEADNG:-0}" = "1" ] \
-   || [ "${PENNG:-0}" = "1" ] || [ "${PMNG:-0}" = "1" ]; then exit 1; fi
+   || [ "${PENNG:-0}" = "1" ] || [ "${PMNG:-0}" = "1" ] || [ "${WBNG:-0}" = "1" ]; then exit 1; fi
 exit $RC

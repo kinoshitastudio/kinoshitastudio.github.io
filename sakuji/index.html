@@ -4918,9 +4918,14 @@ function degradePath(path, amp, freq, grow){
     pts.push(p.add(nor.multiply(noise * amp + grow)));
   }
   if(pts.length < 3) return;
+  /* 🔴🔴 2026-08-28 木下「Sakuji で描いたものは手の揺らぎなどここは調整できるようにして」
+     ＝ここで【必ず closed = true】にしていた。フリーハンドやペンで引いた線はほとんど開いているので、
+       掛けた瞬間に端と端が繋がって【別の形】になっていた（字のアウトラインでは気づけない型）。
+     ⭐ 閉じているかどうかは元のまま＝掛けても線は線のまま。⚠️ 劣化・ゆらぎの両方に同じ穴があった。 */
+  const wasClosed = path.closed;
   path.removeSegments();
   pts.forEach(p => path.add(p));
-  path.closed = true;
+  path.closed = wasClosed;
   path.smooth({ type:'continuous', factor:0.35 });
 }
 function degrade(){
@@ -4985,24 +4990,33 @@ function wobblePath(path, o){
     pts.push(p);
   }
   if(pts.length < 3) return;
+  const wasClosed = path.closed;
   path.removeSegments();
   pts.forEach(p => path.add(p));
-  path.closed = true;
+  path.closed = wasClosed;
   // 速いほど滑らかに（角が丸まる）＝勢いで書いた線
   path.smooth({ type:'continuous', factor: 0.25 + o.speed * 0.05 });
   path.simplify(0.6 + o.speed * 0.35);
 }
-function wobble(){
-  const sel = selected();
-  if(!sel.length){ stat('図形を選んでください'); return; }
-  snapshot();
+/* ⭐⭐ つまみを読む道は【1本】（2026-08-28）。
+   🔴 下見（preview）側は `wobbleOpts()` を呼んでいたのに、その関数が【どこにも無かった】。
+      しかも下見の配線が見ていた id（wobAmp / wobTilt …）は実物と違うので、
+      呼ばれもせず・エラーも出ず、【つまみを動かしても何も起きない】状態だった。
+      ＝木下「ここは調整できるようにして」の正体。 */
+function wobbleOpts(){
   const g = id => +document.getElementById(id).value;
-  const o = {
+  return {
     tremor: g('wbTremor') / 100 * 5,
     press : g('wbPress')  / 100 * 9,
     slant : g('wbSlant')  / 100 * 26,
     speed : g('wbSpeed')  / 100 * 6
   };
+}
+function wobble(){
+  const sel = selected();
+  if(!sel.length){ stat('図形を選んでください'); return; }
+  snapshot();
+  const o = wobbleOpts();
   sel.forEach(it => {
     if(it.children) it.children.forEach(c => wobblePath(c, o));
     else wobblePath(it, o);
@@ -6760,6 +6774,20 @@ function pvRestore(){
 }
 function pvClear(){ pvBase = null; }
 
+/* ⭐⭐ つまみを触ったら【その場で下見に入る】（2026-08-28）
+   木下＝「ここは調整できるようにして」＝つまみを動かして見ながら決めたい。
+   ⚠️ 下見のチェックを探させない＝触った時点で入り、チェックも一緒に立てる（表示が嘘にならない）。
+   ⚠️ 何も選んでいないときは入らない（掛ける相手がいない）。 */
+function pvArm(kind){
+  if(!selected().length) return false;
+  const on = document.getElementById(kind === 'deg' ? 'pvDeg' : 'pvWob');
+  if(on && !on.checked){
+    on.checked = true;
+    pvCapture();
+    stat('下見中 —「' + (kind === 'deg' ? 'かける' : '手で書き直す') + '」で確定／チェックを外すと戻る');
+  }
+  return true;
+}
 function pvApply(kind){
   const on = document.getElementById(kind === 'deg' ? 'pvDeg' : 'pvWob');
   if(!on || !on.checked) return;
@@ -6791,11 +6819,14 @@ function pvApply(kind){
 });
 /* スライダーを動かしたら掛け直す */
 ['degNoise','degFreq','degGrow'].forEach(id =>
-  document.getElementById(id)?.addEventListener('input', () => pvApply('deg')));
-['wobAmp','wobPress','wobTilt','wobSpeed'].forEach(id =>
-  document.getElementById(id)?.addEventListener('input', () => pvApply('wob')));
+  document.getElementById(id)?.addEventListener('input', () => { pvArm('deg'); pvApply('deg'); }));
+/* 🔴 ここが実物と食い違っていた（wobAmp / wobTilt は存在しない id）＝
+   ⭐ 同じものを2箇所に書くと黙って食い違う。名前は【HTML の実物】から取る。 */
+['wbTremor','wbPress','wbSlant','wbSpeed'].forEach(id =>
+  document.getElementById(id)?.addEventListener('input', () => { pvArm('wob'); pvApply('wob'); }));
 /* 確定したらプレビューの控えは捨てる（＝戻せなくする＝重ねられる） */
-['bDegrade','bDegradeMore','bWobble','bWobbleMore'].forEach(id =>
+/* 🔴 bWobbleMore も存在しない id だった＝押しても下見の控えが捨てられていなかった */
+['bDegrade','bDegradeMore','bWobble','bWobbleAgain'].forEach(id =>
   document.getElementById(id)?.addEventListener('click', () => {
     pvClear();
     ['pvDeg','pvWob'].forEach(k => { const e = document.getElementById(k); if(e) e.checked = false; });
