@@ -442,6 +442,19 @@
   @media(max-width:760px){ #abBtn{top:50px;height:26px;line-height:26px;font-size:10.5px;padding:0 12px} }
   /* ⚠️ GLYPHS を開いている間は盤が見えない＝枠の出し入れは意味を持たないので隠す（? ◐ JP と同じ） */
   body.glyOn #abBtn{display:none}
+  /* ⭐ パスの出し入れ（2026-08-28）＝枠のピルとまったく同じ形。
+     ⚠️ 左（left）は起動時に【枠の右端から測って】入れる＝ここでは決め打ちしない。 */
+  #pvBtn{position:fixed;left:200px;top:48px;z-index:160;height:21px;padding:0 9px;
+    border-radius:11px;border:none;
+    background:rgba(255,255,255,.94);color:#1a1a18;
+    box-shadow:0 0 0 1px rgba(0,0,0,.28), 0 1px 4px rgba(0,0,0,.18);
+    font-family:ui-monospace,Menlo,monospace;font-size:9px;line-height:21px;letter-spacing:.16em;
+    cursor:pointer;opacity:.9;white-space:nowrap}
+  #pvBtn:hover{opacity:1}
+  #pvBtn.on{background:#1a1a18;color:#EBE8E2;
+    box-shadow:0 0 0 1px rgba(255,255,255,.30), 0 1px 4px rgba(0,0,0,.22);opacity:1}
+  @media(max-width:760px){ #pvBtn{top:50px;height:26px;line-height:26px;font-size:10.5px;padding:0 12px} }
+  body.glyOn #pvBtn{display:none}
   /* ⭐ 地はクリーム（木下＝2026-08-21「ボードの色はクリームにして。見づらい」）。
      🔴 蓋なので【パネルより上】に居なければいけない。#stage の中に置くと
         パネル(z:6)の下に潜る＝起動時に body 直下へ出している（下の JS）。 */
@@ -1007,6 +1020,11 @@
 <input id="inlineT" spellcheck="false">
 <button id="glyBtn" title="グリフ一覧（枠＝字）に切り替える">GLYPHS</button>
 <button id="abBtn" title="枠（アートボード）を出す／出さない">枠</button>
+<!-- ══⭐⭐ 2026-08-28 木下＝「引き終わるとすぐパスが出てくるが、イラストなどを描いているとき
+     これがすごい見づらい。パス表示／パス表示しない をここで（GLYPHS の並びに）」══
+     ⭐ よく使うので【盤の上】に置く（右パネルの奥に埋めない）。イラレの ⌘H と同じもの。
+     ⚠️ 塗ったピルにする（盤は白にも黒にもなるので、縁だけの薄いボタンは消える）＝枠と同じ作法。 -->
+<button id="pvBtn" title="パス（アンカー・ハンドル）を出す／出さない　H">パス</button>
 <button id="manBtn" title="マニュアル">?</button>
 
 <!-- ══⭐⭐ GLYPHS ── 枠を「字の一覧」として見る画面 ══
@@ -2082,6 +2100,8 @@ const S = {
   /* ⭐⭐ 書き心地（2026-08-26 木下「sure や Ha、nijimi のような道具の書き心地も
      切り替えて使えるように」）。'plain'＝いままで／'ha'＝平ペン／'sure'＝段／'nijimi'＝にじむ */
   feel:'plain', feelAng:35, feelGrid:14, feelJit:6,
+  /* ⭐ パス（アンカー・ハンドル）を出すか（2026-08-28）。既定 true ＝これまでと1画素も同じ */
+  pathView:true,
   shape:'rrect', polyN:5, rad:0, join:'round', cap:'round', fillMode:'solid', openAs:'stroke',
   snap:1, tracking:0, leading:0,
   // ⭐ アートボードは複数持てる。選んだ1枚を書き出す（イラレ／Figma と同じ流儀）
@@ -2147,11 +2167,14 @@ function guidesBase(){                            // ⚠️ 呼ぶのは台帳�
         const hp = seg.point.add(h);
         const l = new Path.Line(seg.point, hp); l.strokeColor = ACC; l.strokeWidth = lw; l.opacity = .75;
         const d = new Path.Circle(hp, r*0.85); d.fillColor = ACC; d.opacity = .9;
+        /* ⭐ 「これはパスの下見」と印を付ける＝出し入れを画素でなく【本体と同じ出どころ】で数えられる */
+        l.data.pv = d.data.pv = 1;
       });
       // アンカー（選択中は塗り／通常は白抜き）
       const a = new Path.Rectangle(new Rectangle(seg.point.x-r, seg.point.y-r, r*2, r*2));
       a.strokeColor = ACC; a.strokeWidth = lw;
       a.fillColor = seg.selected ? ACC : (S.bg === 'light' ? '#fff' : '#0a0a0a');
+      a.data.pv = 1;
     });
   };
 
@@ -2196,7 +2219,10 @@ function guidesBase(){                            // ⚠️ 呼ぶのは台帳�
     ghost.strokeWidth = lw; ghost.dashArray = [5/Z, 4/Z];
     uiLayer.addChild(ghost);
   });
-  artLayer.children.forEach(it => { if(it.selected) anchors(it, false); });
+  /* ⭐⭐ パスを出すかは【ここ1か所】で決める（2026-08-28）。
+     ⚠️ ペンで打っている最中と、ダイレクト選択（点を掴む道具）のときは
+        消すと【触れるのに効かない】になるので、設定に関わらず必ず出す。 */
+  if(pathShow()) artLayer.children.forEach(it => { if(it.selected) anchors(it, false); });
   artLayer.activate();
 }
 
@@ -3267,6 +3293,8 @@ window.addEventListener('keydown', e => {
   const cmd = e.metaKey || e.ctrlKey;
   if(e.key === 'Shift'){ shiftDown = true; if(pen) guides(); }
   if(e.code === 'Space'){ S.spaceDown = true; cv.style.cursor='grab'; e.preventDefault(); return; }
+  /* ⭐ パスを出す／出さない（2026-08-28）。⚠️ ⌘H は macOS が奪う（アプリを隠す）ので素の H */
+  if(!cmd && e.key.toLowerCase() === 'h'){ e.preventDefault(); setPathView(S.pathView === false); return; }
   if(cmd && e.key.toLowerCase() === 'z'){ e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if(cmd && e.key.toLowerCase() === 'a'){          // ⌘A＝ぜんぶ選択
     e.preventDefault();
@@ -3466,6 +3494,31 @@ const TOOL_CURSOR = {
   text:   'text',
 };
 function toolCursor(t){ return TOOL_CURSOR[t] || 'default'; }
+/* ══⭐⭐ パスを出す／出さない（2026-08-28 木下「引き終わるとすぐパスが出てきて見づらい」）══
+   ⭐ 出すかどうかを決めるのはこの1つだけ＝画面・ボタン・キーが全部ここを見る。
+   ⚠️ ペン中／ダイレクト選択中は必ず出す（点を掴む道具なので、消すと触れるのに効かない）。 */
+function pathShow(){
+  return !!pen || S.tool === 'direct' || S.pathView !== false;
+}
+const PV_KEY = 'sakuji.pathView';
+function pvSync(){
+  const b = document.getElementById('pvBtn');
+  if(b){ b.classList.toggle('on', S.pathView !== false);
+         b.textContent = 'パス'; }
+  /* ⭐ paper が自前で描く選択の点も同時に止める（こちらの anchors と二重に出ている） */
+  paper.settings.handleSize = pathShow() ? 7 : 0;
+}
+function setPathView(on, quiet){
+  S.pathView = !!on;
+  try{ localStorage.setItem(PV_KEY, on ? '1' : '0'); }catch(_){}
+  pvSync();
+  /* ⭐ 選択を入れ直して描き直す＝つまみだけ変えても paper は描き直さない */
+  const sel = artLayer.children.filter(c => c.selected);
+  sel.forEach(c => c.selected = false);
+  sel.forEach(c => c.selected = true);
+  guides(); paper.view.update();
+  if(!quiet) stat(on ? 'パスを出す' : 'パスを出さない（H で戻す）');
+}
 function setTool(t){
   finishPen();
   S.tool = t;
@@ -3480,6 +3533,8 @@ function setTool(t){
   };
   document.getElementById('modehelp').innerHTML = help[t] || '';
   cv.style.cursor = toolCursor(t);
+  /* ⭐ ダイレクト選択に入る／出るで「必ず出す」が切り替わる＝ここで作り直す */
+  pvSync(); guides();
   stat(t.toUpperCase());
 }
 document.querySelectorAll('#tools button[data-tool]').forEach(b =>
@@ -7005,6 +7060,32 @@ document.querySelectorAll('#abOn button').forEach(b =>
     abSync();
     stat(S.abOn ? '枠を出した' : '枠を出さない（画面ぜんぶが地）');
   });
+})();
+/* ⭐⭐ パスの出し入れ（2026-08-28）── 枠のピルとまったく同じ作りにする。
+   ⭐ 位置は【枠の右端から測って置く】＝数字を決め打ちしない（枠が GLYPHS から測るのと同じ）。 */
+(function(){
+  const btn = document.getElementById('pvBtn');
+  if(!btn) return;
+  const place = () => {
+    const a = document.getElementById('abBtn');
+    if(!a) return;
+    const r = a.getBoundingClientRect();
+    if(!r.width) return;
+    btn.style.left = Math.round(r.right + 8) + 'px';
+    btn.style.top  = Math.round(r.top) + 'px';
+    btn.style.height = btn.style.lineHeight = Math.round(r.height) + 'px';
+  };
+  addEventListener('resize', place);
+  addEventListener('orientationchange', () => setTimeout(place, 200));
+  if(document.fonts && document.fonts.ready) document.fonts.ready.then(place);
+  place();
+  /* ⚠️ 枠も font 到着後に自分の位置を決める＝そのあとで測り直さないと重なる */
+  setTimeout(place, 400);
+  btn.addEventListener('click', () => setPathView(S.pathView === false));
+  /* ⭐ 前に選んだ状態で開く（よく使うつまみなので覚えておく） */
+  let saved = null; try{ saved = localStorage.getItem(PV_KEY); }catch(_){}
+  if(saved === '0') S.pathView = false;
+  pvSync();
 })();
 document.querySelectorAll('#abBgOn button').forEach(b =>
   b.addEventListener('click', () => { abCur().bgOn = b.dataset.v === '1'; abSync(); }));
