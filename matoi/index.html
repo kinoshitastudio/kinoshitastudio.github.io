@@ -409,24 +409,188 @@ function wrinkles(q, W, H, n, seed, strength){
   q.restore();
 }
 
-/* ══ ① T シャツ ══ */
-kata('tshirt', 'Tシャツ', 4/5, [[[0.34,0.36],[0.66,0.36],[0.66,0.58],[0.34,0.58]]], (q, W, H) => {
-  q.fillStyle = '#d9d5cd'; q.fillRect(0, 0, W, H);
-  q.fillStyle = shade(q, W*0.44, H*0.28, W*0.85, '#fbfaf7', '#b9b4ab');
+/* ⭐⭐ しわは【部位ごとに集める】── 2026-08-28
+   🔴 上の wrinkles（全面にばらまく）は、増やしても布に見えない。
+      本物のしわは【布が引かれる所】＝脇の下・袖の付け根・裾から扇に出る。
+   ⭐ 折り目1本＝陰と光を【隣り合わせ】に置く（片側だけだと汚れに見える）。
+      端は消す（線の両端まで濃いと、描いた線に見える）。 */
+function fold(q, x0, y0, x1, y1, bow, w, str){
+  const dx = x1-x0, dy = y1-y0, L = Math.hypot(dx, dy) || 1;
+  const nx = -dy/L, ny = dx/L;                       /* 折り目に直交する向き */
+  const cx = (x0+x1)/2 + nx*bow, cy = (y0+y1)/2 + ny*bow;
+  const line = (ox, oy, c0) => {
+    const g = q.createLinearGradient(x0, y0, x1, y1);
+    g.addColorStop(0, c0 + '0)'); g.addColorStop(0.35, c0 + str.toFixed(3) + ')');
+    g.addColorStop(0.7, c0 + (str*0.6).toFixed(3) + ')'); g.addColorStop(1, c0 + '0)');
+    q.strokeStyle = g; q.lineWidth = w; q.lineCap = 'round';
+    q.beginPath(); q.moveTo(x0+ox, y0+oy);
+    q.quadraticCurveTo(cx+ox, cy+oy, x1+ox, y1+oy); q.stroke();
+  };
+  line(-nx*w*0.5, -ny*w*0.5, 'rgba(45,40,33,');       /* 陰 */
+  line( nx*w*0.5,  ny*w*0.5, 'rgba(255,253,248,');    /* 光 */
+}
+/* 1か所から扇に出るしわの束（起点・向き・広がり・長さ） */
+function folds(q, cx, cy, ang, spread, len, n, seed, w, str){
+  let s = seed >>> 0;
+  const R = () => { s ^= s<<13; s>>>=0; s ^= s>>17; s ^= s<<5; s>>>=0; return s/4294967296; };
+  for(let i = 0; i < n; i++){
+    const a = ang + ((n>1 ? i/(n-1) : 0.5) - 0.5) * spread + (R()-0.5)*0.14;
+    const L = len * (0.55 + R()*0.75);
+    const sx = cx + (R()-0.5)*len*0.18, sy = cy + (R()-0.5)*len*0.18;
+    fold(q, sx, sy, sx + Math.cos(a)*L, sy + Math.sin(a)*L,
+         (R()-0.5)*L*0.22, w*(0.55 + R()*0.9), str*(0.6 + R()*0.8));
+  }
+}
+/* ⭐ 生地の目＝細かい粒（この道具は【質感】をここから借りる） */
+function cloth(q, W, H, seed, str){
+  const n = 96;
+  const c = document.createElement('canvas'); c.width = n; c.height = n;
+  const cq = c.getContext('2d'); const im = cq.createImageData(n, n), d = im.data;
+  let s = seed >>> 0;
+  const R = () => { s ^= s<<13; s>>>=0; s ^= s>>17; s ^= s<<5; s>>>=0; return s/4294967296; };
+  for(let y = 0; y < n; y++) for(let x = 0; x < n; x++){
+    const i = (y*n + x)*4;
+    const knit = (y % 2 === 0 ? 0.545 : 0.455);        /* 編み目＝横に走る筋 */
+    const v = Math.round(255 * (R()*0.28 + knit*0.72));
+    d[i] = d[i+1] = d[i+2] = v; d[i+3] = Math.round(255*str);
+  }
+  cq.putImageData(im, 0, 0);
+  q.save(); q.globalCompositeOperation = 'overlay';
+  q.fillStyle = q.createPattern(c, 'repeat'); q.fillRect(0, 0, W, H); q.restore();
+}
+/* 縫い目＝【二重】に見えること（1本の線だと印刷に見える）。pts は [始点, 制御, 端, 制御, 端…] */
+function seam(q, pts, w, col, dash, ox, oy){
+  q.save(); q.strokeStyle = col; q.lineWidth = w; q.lineCap = 'round';
+  if(dash) q.setLineDash(dash);
+  q.beginPath(); q.moveTo(pts[0][0] + ox, pts[0][1] + oy);
+  for(let i = 1; i < pts.length - 1; i += 2)
+    q.quadraticCurveTo(pts[i][0] + ox, pts[i][1] + oy, pts[i+1][0] + ox, pts[i+1][1] + oy);
+  q.stroke(); q.restore();
+}
+
+/* ══ ① T シャツ ══
+   ⭐⭐ 木下＝「Tシャツもそうだがもっとリアルなのをお願い」（2026-08-28）
+   本物に見えるかは【形が合っているか】ではなく、布として何が起きているか。効いたのは4つ：
+     ① 縫い目と厚み（襟のリブ・袖口・裾のヘム）＝物には必ず【重なった端】がある
+     ② 胸の張り＝ロゴが乗る所。ここが平らだと、何を借りても「貼っただけ」に見える
+     ③ 生地の落ち感（上が明るく裾へ暗い／裾は垂れる／体の丸みで左右の端が暗い）
+     ④ ⭐⭐ しわを【部位ごとに集める】（脇の下・袖の付け根・裾）
+   ⚠️ ①〜④は全部【ロゴが借りる相手】でもある＝下地が良くなるとロゴの乗りもそのまま良くなる */
+function teePath(q, W, H){
   q.beginPath();
-  q.moveTo(W*0.22, H*0.16); q.quadraticCurveTo(W*0.32, H*0.10, W*0.40, H*0.12);
-  q.quadraticCurveTo(W*0.50, H*0.20, W*0.60, H*0.12);
-  q.quadraticCurveTo(W*0.68, H*0.10, W*0.78, H*0.16);
-  q.lineTo(W*0.90, H*0.30); q.lineTo(W*0.80, H*0.40); q.lineTo(W*0.78, H*0.34);
-  q.lineTo(W*0.80, H*0.92); q.quadraticCurveTo(W*0.50, H*0.98, W*0.20, H*0.92);
-  q.lineTo(W*0.22, H*0.34); q.lineTo(W*0.20, H*0.40); q.lineTo(W*0.10, H*0.30);
-  q.closePath(); q.fill();
-  q.save(); q.clip();
-  wrinkles(q, W, H, 30, 7, 0.10);
-  /* 襟もと＝いちばん影が出る所 */
-  q.fillStyle = shade(q, W*0.50, H*0.14, W*0.17, 'rgba(0,0,0,.30)', 'rgba(0,0,0,0)');
+  q.moveTo(W*0.415, H*0.176);
+  q.quadraticCurveTo(W*0.500, H*0.252, W*0.585, H*0.176);      /* 襟ぐり */
+  q.quadraticCurveTo(W*0.640, H*0.168, W*0.690, H*0.196);      /* 右肩 */
+  q.quadraticCurveTo(W*0.815, H*0.238, W*0.862, H*0.330);      /* 袖の外 */
+  q.lineTo(W*0.800, H*0.428);                                  /* 袖口 */
+  q.quadraticCurveTo(W*0.762, H*0.394, W*0.712, H*0.372);      /* 袖の下 → 脇 */
+  q.quadraticCurveTo(W*0.736, H*0.640, W*0.726, H*0.884);      /* 右の脇線 */
+  q.quadraticCurveTo(W*0.500, H*0.932, W*0.274, H*0.884);      /* 裾＝垂れる */
+  q.quadraticCurveTo(W*0.264, H*0.640, W*0.288, H*0.372);      /* 左の脇線 */
+  q.quadraticCurveTo(W*0.238, H*0.394, W*0.200, H*0.428);      /* 脇 → 袖の下 */
+  q.lineTo(W*0.138, H*0.330);                                  /* 袖口 */
+  q.quadraticCurveTo(W*0.185, H*0.238, W*0.310, H*0.196);      /* 袖の外 */
+  q.quadraticCurveTo(W*0.360, H*0.168, W*0.415, H*0.176);      /* 左肩 */
+  q.closePath();
+}
+/* ⭐ 面＝【胸のプリント位置】。腹の高さに置くと、絵は合っていても着た所が想像できない */
+kata('tshirt', 'Tシャツ', 4/5, [[[0.355,0.312],[0.645,0.312],[0.645,0.484],[0.355,0.484]]], (q, W, H) => {
+  const S = Math.max(W, H);
+  /* ⚠️ 台が明るいと【脇の輪郭が溶ける】＝布と台の明るさの差で物の縁が立つ */
+  q.fillStyle = shade(q, W*0.5, H*0.30, S*0.95, '#cdc8bf', '#9b968d');   /* 台 */
+  q.fillRect(0, 0, W, H);
+  q.save();                                                              /* 台に落ちる影 */
+  q.filter = 'blur(' + (S*0.018).toFixed(1) + 'px)';
+  q.fillStyle = 'rgba(58,52,44,.28)';
+  q.translate(S*0.010, S*0.014); teePath(q, W, H); q.fill();
+  q.restore();
+  /* ⭐ 襟の穴からは【後身頃】が見える（台ではない）＝布の色のまま、影だけ落とす */
+  q.save();
+  q.beginPath(); q.ellipse(W*0.5, H*0.208, W*0.086, H*0.040, 0, 0, 7);
+  q.fillStyle = '#c4beb3'; q.fill(); q.clip();
+  q.fillStyle = shade(q, W*0.50, H*0.184, W*0.16, 'rgba(38,33,27,.26)', 'rgba(38,33,27,0)');
   q.fillRect(0, 0, W, H);
   q.restore();
+
+  teePath(q, W, H);
+  q.save(); q.clip();
+
+  /* ③ 落ち感＝上が明るく、裾へ落ちる */
+  const gv = q.createLinearGradient(0, H*0.14, 0, H*0.95);
+  gv.addColorStop(0, '#f1eee6'); gv.addColorStop(0.42, '#e1dcd2'); gv.addColorStop(1, '#b6b0a5');
+  q.fillStyle = gv; q.fillRect(0, 0, W, H);
+  /* ③ 体の丸み＝左右の端が暗い */
+  const gh = q.createLinearGradient(W*0.262, 0, W*0.738, 0);
+  gh.addColorStop(0, 'rgba(76,70,60,.34)');  gh.addColorStop(0.26, 'rgba(76,70,60,0)');
+  gh.addColorStop(0.72, 'rgba(76,70,60,0)'); gh.addColorStop(1, 'rgba(76,70,60,.36)');
+  q.fillStyle = gh; q.fillRect(0, 0, W, H);
+  /* ② 胸の張り（左右の膨らみ）＝ロゴはこの上に乗る */
+  /* ⚠️ 半径を大きくすると胸でなく【腹まで白く飛ぶ】（1回そうなった）＝張りは胸に閉じ込める */
+  [[0.404, 0.382], [0.596, 0.382]].forEach(([x, y]) => {
+    q.fillStyle = shade(q, W*x, H*y, W*0.145, 'rgba(255,255,255,.24)', 'rgba(255,255,255,0)');
+    q.fillRect(0, 0, W, H);
+  });
+  /* 布が沈む所＝襟の下・袖の付け根・裾 */
+  q.fillStyle = shade(q, W*0.50, H*0.250, W*0.21, 'rgba(42,37,30,.34)', 'rgba(42,37,30,0)');
+  q.fillRect(0, 0, W, H);
+  [[0.316, 0.330], [0.684, 0.330]].forEach(([x, y]) => {
+    q.fillStyle = shade(q, W*x, H*y, W*0.17, 'rgba(42,37,30,.30)', 'rgba(42,37,30,0)');
+    q.fillRect(0, 0, W, H);
+  });
+  q.fillStyle = shade(q, W*0.50, H*0.915, W*0.40, 'rgba(42,37,30,.28)', 'rgba(42,37,30,0)');
+  q.fillRect(0, H*0.60, W, H*0.40);
+
+  /* ③ ⭐ 大きなうねり（＝布の落ち感）。細いしわだけだと【平らな紙にしわを描いた絵】に見える。
+     太く・薄く・強くぼかす＝形は見えないのに平面感だけが消える */
+  q.save(); q.filter = 'blur(' + (S*0.022).toFixed(1) + 'px)';
+  folds(q, W*0.372, H*0.870, -Math.PI/2 - 0.06, 0.34, S*0.44, 3, 131, S*0.085, 0.055);
+  folds(q, W*0.628, H*0.885, -Math.PI/2 + 0.07, 0.30, S*0.40, 3, 149, S*0.075, 0.050);
+  folds(q, W*0.500, H*0.560, -Math.PI/2 - 0.02, 0.26, S*0.22, 2, 167, S*0.070, 0.035);
+  q.restore();
+
+  /* ④ しわ＝部位ごとに集める */
+  q.save(); q.filter = 'blur(' + (S*0.0035).toFixed(2) + 'px)';
+  /* ⚠️ 太く濃くすると【枝】に見える（1回そうなった）。細く・数で出す */
+  /* ⚠️ 左右を同じ角度・同じ長さにすると【翼】に見える＝向きも長さもずらす */
+  folds(q, W*0.300, H*0.402, -0.58, 0.90, S*0.23, 7, 11, S*0.010, 0.15);   /* 左の脇下 → 胸へ */
+  folds(q, W*0.700, H*0.396, Math.PI+0.74, 1.02, S*0.19, 6, 23, S*0.010, 0.14);
+  folds(q, W*0.470, H*0.898, -Math.PI/2 - 0.16, 1.05, S*0.19, 9, 37, S*0.012, 0.09); /* 裾のたるみ */
+  folds(q, W*0.612, H*0.900, -Math.PI/2 + 0.22, 0.80, S*0.14, 5, 41, S*0.011, 0.08);
+  folds(q, W*0.320, H*0.250, 1.35, 0.55, S*0.13, 4, 53, S*0.008, 0.13);    /* 袖の付け根 */
+  folds(q, W*0.680, H*0.250, Math.PI-1.35, 0.55, S*0.13, 4, 71, S*0.008, 0.13);
+  folds(q, W*0.176, H*0.404, -0.85, 0.62, S*0.12, 5, 89, S*0.008, 0.15);   /* 左袖 */
+  folds(q, W*0.824, H*0.404, Math.PI+0.85, 0.62, S*0.12, 5, 97, S*0.008, 0.15);
+  q.restore();
+  wrinkles(q, W, H, 8, 7, 0.028);                                          /* 全体の揺らぎ（薄く） */
+
+  /* ① 縫い目と厚み ── 袖の付け根／袖口／裾のヘム */
+  const arm = s => [[W*(0.5+s*0.190), H*0.198], [W*(0.5+s*0.226), H*0.286], [W*(0.5+s*0.212), H*0.372]];
+  [-1, 1].forEach(s => {
+    seam(q, arm(s), S*0.0040, 'rgba(58,52,44,.22)', null, 0, 0);
+    seam(q, arm(s), S*0.0022, 'rgba(255,255,255,.20)', null, S*0.005*s, 0);
+  });
+  const cuff = s => [[W*(0.5+s*0.258), H*0.417], [W*(0.5+s*0.289), H*0.368], [W*(0.5+s*0.320), H*0.319]];
+  [-1, 1].forEach(s => {
+    seam(q, cuff(s), S*0.0032, 'rgba(58,52,44,.24)', null, 0, 0);
+    seam(q, cuff(s), S*0.0022, 'rgba(58,52,44,.16)', [S*0.010, S*0.008], 0, S*0.011);
+  });
+  const hem = [[W*0.281, H*0.856], [W*0.500, H*0.902], [W*0.719, H*0.856]];
+  seam(q, hem, S*0.0032, 'rgba(58,52,44,.20)', null, 0, 0);
+  seam(q, hem, S*0.0022, 'rgba(58,52,44,.14)', [S*0.011, S*0.009], 0, S*0.013);
+  seam(q, hem, S*0.0055, 'rgba(255,255,255,.22)', null, 0, S*0.024);        /* ヘムの厚み */
+
+  cloth(q, W, H, 9, 0.13);
+  q.restore();
+
+  /* ① 襟のリブ＝【厚み】。ここが1本の線だと必ず「絵」に見える */
+  q.beginPath();
+  q.moveTo(W*0.415, H*0.176); q.quadraticCurveTo(W*0.500, H*0.252, W*0.585, H*0.176);
+  q.lineTo(W*0.576, H*0.198); q.quadraticCurveTo(W*0.500, H*0.278, W*0.424, H*0.198);
+  q.closePath();
+  q.fillStyle = 'rgba(255,255,255,.20)'; q.fill();   /* ⚠️ 濃いと【白い襟】に見える */
+  q.strokeStyle = 'rgba(58,52,44,.24)'; q.lineWidth = S*0.0030; q.stroke();
+  seam(q, [[W*0.427, H*0.204], [W*0.500, H*0.286], [W*0.573, H*0.204]],
+       S*0.0055, 'rgba(58,52,44,.16)', null, 0, 0);                         /* リブの落ち影 */
 });
 
 /* ══ ② 紙袋（正面＋側面の2面）══ */
