@@ -2742,6 +2742,43 @@ function penDown(e){
     if(t){ joinTo(t); return; }
   }
   if(!pen){
+    /* ⭐⭐ 2026-08-28 木下「線の途中でも選択をしてペンツールでそのアンカーの続きから
+       書くとつなげてかけるようにしたい」
+       ⭐ ダイレクト選択で【選んだアンカー】があれば、そこから続きを描く。
+         ・端の点なら＝そのパスの続き（今までの道と同じ）
+         ・途中の点なら＝その点から新しい線を始める（見た目はそこから繋がる）
+       ⚠️ 端点クリック（下）より先に見る＝木下が「選んだ点」を狙っているときは、
+          近くの別の端に吸われない。 */
+    if(typeof selSegs === 'function'){
+      const ss = selSegs();
+      if(ss.length === 1){
+        const sg = ss[0], pa = sg.path;
+        if(pa && pa.segments && !pa.closed &&
+           (sg === pa.firstSegment || sg === pa.lastSegment)){
+          snapshot();
+          pen = pa;
+          if(sg === pa.firstSegment) pen.reverse();
+          pen.__anchor = pen.lastSegment;
+          pa.segments.forEach(x => x.selected = false);
+          pen.selected = false;
+          stat('選んだ端の続きから描く');
+          guides(); return;
+        }
+        if(pa && sg){
+          /* 途中の点＝その点を始点にした新しい線（つなげて見える） */
+          snapshot();
+          const from = sg.point.clone();
+          pa.segments.forEach(x => x.selected = false);
+          artLayer.children.forEach(c => c.selected = false);
+          artLayer.activate();
+          pen = new Path();
+          pen.strokeColor = ACC; pen.strokeWidth = 1/paper.view.zoom; pen.fillColor = null;
+          pen.add(from); pen.__anchor = pen.lastSegment;
+          stat('選んだ点から描く — 端の点なら1本に繋がる');
+          guides(); return;
+        }
+      }
+    }
     // 何も描いていない状態で端点をクリック＝そのパスの続きから描き始める
     const t = endpointNear(p, null);
     if(t){
@@ -12200,6 +12237,148 @@ hook('grid', '字のガイドと下敷き', () => drawGlyphGuides(), 60);
     r.addEventListener('input', show); show();
   });
   opSync();
+})();
+
+/* ══════════════════════════════════════════════════════════════
+   アンカーを扱う（ダイレクト選択）                   2026-08-28
+   木下＝「選択ツールでアンカーをダブルタップすると消して、
+           線の途中でポチッとおすとアンカーを追加できるようにしたい」
+           「シフトキーを押しながらだと複数選択できるように」
+           「線の途中でも選択をしてペンツールでそのアンカーの続きから書くと…」
+
+   ⭐ アンカーを触る道具は【ダイレクト選択（A）】なので、そこに入れる。
+   🔴 直す前は `item.selected = true` を立てるだけで、**どの点を選んでいるかを持っていなかった**
+      （見た目は「選ばれた点は塗る」と書いてあるのに、その状態を作る所が無い）。
+      ＝⇧で足すことも、選んだ点から描くこともできなかった。
+   ⭐ ここは【いちばん最後に書いたブロック】。本体の selDownBase には触らず HOOK で割り込む
+      （何もない所からの範囲選択は本体に任せる＝false を返す）。
+   ══════════════════════════════════════════════════════════════ */
+(function(){
+  /* ⭐ 選ばれているアンカー＝この1本から取る（画面もペンもここを見る） */
+  window.selSegs = function(){
+    const out = [];
+    artLayer.children.forEach(it => {
+      if(!it.segments) return;
+      it.segments.forEach(sg => { if(sg.selected) out.push(sg); });
+    });
+    return out;
+  };
+  const clearSegs = () => artLayer.children.forEach(it => {
+    if(it.segments) it.segments.forEach(sg => sg.selected = false); });
+
+  hook('down', 'ダイレクト選択＝点を選ぶ・足す', e => {
+    if(S.tool !== 'direct') return false;
+    const h = hit(e.point);
+    if(!h) return false;                       /* 何もない所は本体（範囲選択）に任せる */
+    const it = tzRootOf(h.item);
+    if(it.locked || !it.visible) return false;
+
+    /* 🔴🔴 hit() は【ハンドルを先に見る】ので、アンカーの上を押しても
+       `handle-in` が返ってくる（曲げていない点はハンドルの長さが 0 で、アンカーと同じ場所にある）。
+       ＝アンカーを押しているのに「アンカーを押した」に入れない（実測で判明・2026-08-28）。
+       ⭐ 長さ 0 のハンドルは【アンカーそのもの】として読む。 */
+    let type = h.type;
+    if(type === 'handle-in' || type === 'handle-out'){
+      const hv = (type === 'handle-in') ? h.segment.handleIn : h.segment.handleOut;
+      if(!hv || (hv.x === 0 && hv.y === 0)) type = 'segment';
+    }
+
+    /* ハンドルは今までどおり（曲がり方を掴む） */
+    if(type === 'handle-in' || type === 'handle-out'){
+      it.selected = true; dragHandle = h; return true;
+    }
+
+    /* ⭐ アンカーを押した＝その点を選ぶ。⇧ で足す／外す（複数選択） */
+    if(type === 'segment'){
+      snapshot();
+      /* ⚠️ ⇧ は paper の modifiers だけを見ない＝元の DOM イベントも見る。
+         paper は自分でキーの上げ下げを見て持っているので、押しっぱなしの取りこぼしがある。 */
+      const shift = e.modifiers.shift || !!(e.event && e.event.shiftKey);
+      if(shift){
+        h.segment.selected = !h.segment.selected;
+      }else if(!h.segment.selected){
+        /* ⚠️ すでに選んでいる点を掴んだときは落とさない＝まとめて動かせる */
+        clearSegs();
+        artLayer.children.forEach(c => c.selected = false);
+        h.segment.selected = true;
+      }
+      it.selected = true;
+      dragSeg = h.segment; dragSeg.__from = h.segment.point.clone();
+      guides(); reportSel && reportSel();
+      return true;
+    }
+
+    /* ⭐ 線の上を押した＝アンカーを足す。
+       ⚠️ ただし【すでに選んでいるパス】のときだけ＝1回目は選ぶ、2回目で足す。
+          いきなり足すと「選ぼうとしただけ」で点が増えて驚く。 */
+    if(type === 'stroke' && it.segments && it.selected){
+      const loc = it.getNearestLocation(e.point);
+      if(loc){
+        snapshot();
+        const sg = it.divideAt(loc);
+        if(sg){
+          clearSegs();
+          sg.selected = true;
+          dragSeg = sg; dragSeg.__from = sg.point.clone();
+          guides();
+          stat('アンカーを足した（' + it.segments.length + '点）');
+          return true;
+        }
+      }
+    }
+    /* それ以外（塗りの中・まだ選んでいないパス）は今までどおり本体へ */
+    return false;
+  }, 20);
+
+  /* ⭐ 選んだ点が複数のときは【まとめて動かす】。
+     ⚠️ 1つだけのときは本体に任せる（吸着・45°の作法がそのまま生きる）。 */
+  hook('drag', 'ダイレクト選択＝選んだ点をまとめて動かす', e => {
+    if(S.tool !== 'direct' || marqueeStart || !dragSeg) return false;
+    const segs = selSegs();
+    if(segs.length < 2) return false;
+    const d = e.point.subtract(e.lastPoint);
+    segs.forEach(sg => { sg.point = sg.point.add(d); });
+    guides();
+    return true;
+  }, 20);
+
+  /* ⭐ アンカーをダブルクリック＝消す。
+     ⚠️ 2点を切ると線でなくなるので、そこは断って理由を出す（黙って何もしないを作らない）。
+     ⚠️ 文字の打ち直し（dblclick）より後ろで聞く＝字の上では今までどおり打ち直しが勝つ。 */
+  function killAnchorAt(cx, cy, touch){
+    if(S.tool !== 'direct') return false;
+    const r = cv.getBoundingClientRect();
+    const pt = paper.view.viewToProject(new Point(cx - r.left, cy - r.top));
+    const tol = (touch ? 22 : 10) / paper.view.zoom;
+    const h = artLayer.hitTest(pt, { segments:true, tolerance:tol });
+    if(!h || h.type !== 'segment') return false;
+    const pa = h.segment.path;
+    if(!pa || pa.segments.length <= 2){ stat('これ以上は消せません（線には2点いる）'); return true; }
+    snapshot();
+    h.segment.remove();
+    dragSeg = null;
+    guides(); paper.view.update();
+    stat('アンカーを消した（' + pa.segments.length + '点）');
+    return true;
+  }
+  cv.addEventListener('dblclick', e => {
+    if(killAnchorAt(e.clientX, e.clientY, false)){ e.preventDefault(); e.stopImmediatePropagation(); }
+  }, false);
+  /* 指の2回叩き（モバイルは dblclick が来ない＝打ち直しと同じ理由） */
+  let tT = 0, tX = 0, tY = 0, tDown = null;
+  cv.addEventListener('pointerdown', e => {
+    if(e.pointerType === 'mouse') return;
+    tDown = { x:e.clientX, y:e.clientY };
+  }, false);
+  cv.addEventListener('pointerup', e => {
+    if(e.pointerType === 'mouse') return;
+    const moved = tDown && Math.hypot(e.clientX - tDown.x, e.clientY - tDown.y) > 10;
+    tDown = null;
+    if(moved){ tT = 0; return; }
+    const now = Date.now(), near = Math.hypot(e.clientX - tX, e.clientY - tY) < 24;
+    if(now - tT < 300 && near){ tT = 0; killAnchorAt(e.clientX, e.clientY, true); return; }
+    tT = now; tX = e.clientX; tY = e.clientY;
+  }, false);
 })();
 </script>
 </body>
