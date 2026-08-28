@@ -191,6 +191,44 @@ ok(tee.ヘム > tee.平ら + 5, '⭐ 縫い目がある（裾のヘムだけ明�
 ok(tee.脇下 > tee.中央 * 2, '⭐⭐ しわが【部位ごと】に集まっている（脇の下 ≫ 身頃の中央）',
    `脇下 ${tee.脇下} / 中央 ${tee.中央}`);
 
+/* ══⭐⭐ 白い地のロゴ ── 2026-08-28 ══
+   木下＝「svg で入れているのに、線だけでなく背景も出ている。png の背景透過も同じでは？」
+   ⭐ 道具は透明をちゃんと通していた（地は素材の側）。それでも道具の側で抜く。
+   ⚠️ 見るのは2つ：**地が乗らないこと**と、**切れば元のまま出ること**（つまみが嘘でない）。 */
+const cut = await p.evaluate(async () => {
+  const bg = document.createElement('canvas'); bg.width = 800; bg.height = 600;
+  const bq = bg.getContext('2d');
+  const g = bq.createLinearGradient(0, 0, 800, 0);
+  g.addColorStop(0, '#404040'); g.addColorStop(1, '#c0c0c0');
+  bq.fillStyle = g; bq.fillRect(0, 0, 800, 600);
+  const bi = new Image(); await new Promise(r => { bi.onload = r; bi.src = bg.toDataURL('image/png'); });
+  /* ⚠️ 下地を替えると【盤の縦横も変わる】＝先に描いて盤を確定してから面を作る
+     （これを忘れて面が正方形にならず、測る所がロゴの外になった） */
+  BG = bi; BGKEY++; TONEKEY = ''; render();
+  const c = document.createElement('canvas'); c.width = 200; c.height = 200;
+  const q = c.getContext('2d');
+  q.fillStyle = '#ffffff'; q.fillRect(0, 0, 200, 200);          /* 白い地 */
+  q.fillStyle = '#111'; q.beginPath(); q.arc(100, 100, 60, 0, 7); q.fill();
+  const im = new Image(); await new Promise(r => { im.onload = r; im.src = c.toDataURL('image/png'); });
+  const h = 0.30 * cv.width / cv.height;                        /* 面を正方形に＝面の隅＝ロゴの隅 */
+  FACES = [{ on:true, pts:[[0.35,0.30],[0.65,0.30],[0.65,0.30+h],[0.35,0.30+h]] }];
+  const read = () => {
+    const cc = document.createElement('canvas'); cc.width = cv.width; cc.height = cv.height;
+    cc.getContext('2d').drawImage(cv, 0, 0);
+    const d = cc.getContext('2d').getImageData(0, 0, cc.width, cc.height).data;
+    const x = Math.round(cc.width*0.358), y = Math.round(cc.height*(0.30 + h*0.03));
+    const i = (y*cc.width + x)*4;
+    return Math.round(d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114);
+  };
+  P.cut = true;  setLOGO(im, 'test.png'); render(); const 抜く = read();
+  P.cut = false; setLOGO(im, 'test.png'); render(); const そのまま = read();
+  P.cut = true;  setLOGO(im, 'test.png'); render(); const もどす = read();
+  return { 抜く, そのまま, もどす };
+});
+/* ⚠️ 白は 255 のままではない＝陰を借りるので少し暗い（実測 223）。境目は余裕を取る */
+ok(cut.そのまま > 200 && cut.抜く < 150 && cut.もどす === cut.抜く,
+   '⭐⭐ 白い地のロゴを入れても地が乗らない（「そのまま入れる」で元にも戻せる）', JSON.stringify(cut));
+
 /* ══⭐⭐ 写真の物 ── 2026-08-28 ══
    木下＝「モックアップのものとかかなりあるので画像を引っ張ってくる方が早い。あとはなじませるだけ」
    ＝ 描いた物と【同じ道】を通ること（押せば下地になり、面もその物のものが入る）。

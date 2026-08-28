@@ -232,7 +232,11 @@
       <button data-v="black">黒</button><button data-v="pick">選ぶ</button>
     </div>
     <input type="color" id="c_tint" value="#ffffff">
-    <div class="note">⭐ <b>地なしの PNG か SVG</b> がいい（背景の白まで乗ってしまわない）<br>
+    <div class="seg" id="s_cut">
+      <button data-v="1" class="on">白い地を抜く</button><button data-v="0">そのまま入れる</button>
+    </div>
+    <div class="note">⭐⭐ <b>白い地のロゴを入れても、地は自動で抜く</b>
+      （四隅が同じ白のときだけ。写真や、白地を残したいものは「そのまま入れる」）<br>
       ⭐ 色を差し替えられる＝<b>白版・黒版を1枚ずつ出せる</b>（企業案件で要る）</div>
   </div>
 
@@ -317,12 +321,55 @@ function stat(s){ el('stat').textContent = s; clearTimeout(statT);
    ══════════════════════════════════════════════════════════ */
 const P = {
   warp:0.55, sh:0.75, hi:0.22, gr:0.30, op:0.95, blend:'normal',
-  tint:'none', tintCol:'#ffffff', long:1600,
+  tint:'none', tintCol:'#ffffff', long:1600, cut:true,
 };
 let BG = null, BGKEY = 0;      /* 下地（写真でも、型を描いた紙でもいい）／差し替えた回数 */
 /* ⭐ 下地を差し替える道は【この1本】＝明暗の焼き直しも必ずここを通る */
 function setBG(src){ BG = src; BGKEY++; TONEKEY = ''; }
-let LOGO = null;               /* 置くもの */
+let LOGO = null, LOGOKEY = 0;  /* 置くもの（画像でも、地を抜いた紙でもいい）／差し替えた回数 */
+/* ⭐⭐ 白い地を抜く（2026-08-28）
+   木下＝「svg で入れているのに、線だけでなく背景も出ている。png の背景透過も同じでは？」
+   ⭐ 画素で確かめた＝道具は透明をちゃんと通していた（地なし PNG も SVG も、ロゴの角は下地の色）。
+     地は【素材の側】に入っている。⚠️ それでも「入れたら白い四角が乗った」のは、
+     使う人にとっては道具の失敗と同じ。だから道具の側で抜く。
+   ⚠️ 門番にしない＝弾かずに、抜いてから知らせる（[[feedback_gatekeeper_can_block_the_right_thing]]）。
+   ⚠️ 触らない条件を先に決める：もう透明がある／四隅がばらばら／白っぽくない／ほとんど抜けない。 */
+function dropBackdrop(img){
+  const W = img.naturalWidth || img.width, H = img.naturalHeight || img.height;
+  if(!W || !H) return null;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const q = c.getContext('2d', { willReadFrequently:true });
+  q.drawImage(img, 0, 0);
+  let im; try{ im = q.getImageData(0, 0, W, H); }catch(_){ return null; }
+  const d = im.data;
+  const cn = [[0,0],[W-1,0],[0,H-1],[W-1,H-1]].map(([x, y]) => (y*W + x)*4);
+  if(cn.some(i => d[i+3] < 250)) return null;             /* もう地なし＝触らない */
+  const r0 = d[cn[0]], g0 = d[cn[0]+1], b0 = d[cn[0]+2];
+  const far = i => Math.abs(d[i]-r0) + Math.abs(d[i+1]-g0) + Math.abs(d[i+2]-b0);
+  if(cn.some(i => far(i) > 24)) return null;              /* 四隅がばらばら＝地ではない */
+  if(r0 + g0 + b0 < 600) return null;                     /* 白っぽくない＝抜かない */
+  let n = 0;
+  for(let i = 0; i < d.length; i += 4){
+    const t = far(i) / 3;
+    if(t < 6){ d[i+3] = 0; n++; }
+    else if(t < 30) d[i+3] = Math.round(255 * (t - 6) / 24);   /* 縁はやわらかく */
+  }
+  if(n < W*H*0.06) return null;                           /* ほとんど抜けない＝地ではなかった */
+  q.putImageData(im, 0, 0);
+  return { canvas:c, n };
+}
+/* ⭐ ロゴを差し替える道は【この1本】＝地を抜くかどうかも、控えの合図もここで決まる
+   ⚠️ 元の画像も控える＝「そのまま入れる」に切り替えたとき、抜く前に戻せる（抜いた紙からは戻せない） */
+let LOGO_SRC = null, LOGO_NAME = '';
+function setLOGO(img, name){
+  if(!img){ LOGO = null; LOGO_SRC = null; LOGOKEY++; return; }
+  LOGO_SRC = img; LOGO_NAME = name || '';
+  const cut = P.cut === false ? null : dropBackdrop(img);
+  LOGO = cut ? cut.canvas : img; LOGOKEY++;
+  const W = img.naturalWidth || img.width, H = img.naturalHeight || img.height;
+  stat('ロゴを読んだ' + (name ? '：' + name : '') + '（' + W + '×' + H + '）'
+     + (cut ? ' ⭐ 白い地を抜いた（「地を抜く」を切れば元のまま）' : ''));
+}
 let FACES = [], cur = 0;
 
 function newFace(){
@@ -1001,7 +1048,7 @@ function drawFace(ctx, fc, W, H){
      四隅・しわの量・ロゴ・差し替えた色・盤の大きさ・格子の細かさ が同じなら控えをそのまま使う。
      実測：スライダー1目盛りごとに 30ms 掛かっていたのが 2ms になる。
      ⚠️ 控えの合図に【いま効いているもの】を全部入れる。1つ落とすと、触っても絵が変わらない。 */
-  const ck = [fc.pts.join(';'), P.warp, iw, ih, LOGO.src ? LOGO.src.length : 0,
+  const ck = [fc.pts.join(';'), P.warp, iw, ih, LOGOKEY,
               P.tint, P.tintCol, W, H, N].join('|');
   if(!fc._c || fc._c.key !== ck){
     const bs = document.createElement('canvas'); bs.width = W; bs.height = H;
@@ -1223,10 +1270,8 @@ el('b_logo').onclick = () => el('f_logo').click();
 el('f_bg').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = '';
   if(f) readImage(f, img => { setBG(img); stat('下地を読んだ'); render(); fitView(); }); });
 el('f_logo').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = '';
-  if(f) readImage(f, img => { LOGO = img;
-    stat('ロゴを読んだ：' + (f.name || '') + '（' + (img.naturalWidth||img.width) + '×'
-       + (img.naturalHeight||img.height) + '）'); render(); }); });
-el('b_logoClear').onclick = () => { LOGO = null; stat('ロゴを外した'); render(); };
+  if(f) readImage(f, img => { setLOGO(img, f.name || ''); render(); }); });
+el('b_logoClear').onclick = () => { setLOGO(null); stat('ロゴを外した'); render(); };
 ['dragenter','dragover'].forEach(t => addEventListener(t, e => {
   e.preventDefault(); document.body.classList.add('dragging'); }));
 ['dragleave','drop'].forEach(t => addEventListener(t, e => {
@@ -1237,7 +1282,7 @@ addEventListener('drop', e => {
   /* ⭐ 落としたものは【下地が無ければ下地／有ればロゴ】＝迷わせない */
   readImage(f, img => {
     if(!BG){ setBG(img); stat('下地を読んだ'); fitView(); }
-    else { LOGO = img; stat('ロゴを読んだ'); }
+    else { setLOGO(img, f.name || ''); }
     render();
   });
 });
@@ -1268,6 +1313,14 @@ function seg(id, k, after){
 }
 seg('s_blend', 'blend');
 seg('s_tint', 'tint');
+/* ⭐ 地を抜くかは【状態でなく設定】＝切り替えたら、いま入っているロゴを入れ直す
+   （設定だけ変えて絵が変わらないと「触れるのに効かない」になる） */
+document.querySelectorAll('#s_cut button').forEach(b => b.onclick = () => {
+  P.cut = b.dataset.v === '1';
+  document.querySelectorAll('#s_cut button').forEach(x => x.classList.toggle('on', x === b));
+  if(LOGO_SRC) setLOGO(LOGO_SRC, LOGO_NAME);
+  render();
+});
 el('c_tint').addEventListener('input', e => { P.tintCol = e.target.value;
   if(P.tint !== 'pick'){ P.tint = 'pick';
     document.querySelectorAll('#s_tint button').forEach(x => x.classList.toggle('on', x.dataset.v === 'pick')); }
@@ -1361,7 +1414,7 @@ function demoCloth(){
       lq.textAlign = 'center'; lq.textBaseline = 'middle';
       lq.fillText('LOGO', 350, 140);
       const li = new Image();
-      li.onload = () => { LOGO = li; render(); fitView(); };
+      li.onload = () => { LOGO = li; LOGOKEY++; render(); fitView(); };
       li.src = l.toDataURL('image/png');
     }else{ render(); fitView(); }
     stat('見本を読んだ（自分の写真とロゴを入れてみてください）');
@@ -1388,7 +1441,7 @@ loadMock();          /* ⭐ 写真の物があれば、そのまま一覧の後�
   lq.textAlign = 'center'; lq.textBaseline = 'middle';
   lq.fillText(t, w/2, h/2);
   const li = new Image();
-  li.onload = () => { LOGO = li; useKata(0); };
+  li.onload = () => { LOGO = li; LOGOKEY++; useKata(0); };
   li.src = l.toDataURL('image/png');
 })();
 stat('①ロゴを選ぶ → ②物を押す。位置は自動で合います');
