@@ -54,5 +54,8 @@ echo
 echo "── ⑨ 版面の比を変えても絵が消えない（ratio）"
 node "$HERE/_test/ratio.mjs" "http://localhost:$PORT/$NAME/" || NG=1
 echo
+echo "── ⑩ 写真から形を作る（photo）"
+node "$HERE/_test/photo.mjs" "http://localhost:$PORT/$NAME/" || NG=1
+echo
 [ "$NG" = 0 ] && echo "✅ 全部通った" || echo "🔴 落ちたものがある（上を見る）"
 exit "$NG"

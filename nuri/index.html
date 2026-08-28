@@ -212,6 +212,12 @@
       <button class="btn" id="b_layAdd">＋ 描く</button>
       <button class="btn" id="b_layText">＋ 字</button>
     </div>
+    <!-- ══⭐⭐ 写真から形を作る（2026-08-28）══
+         ⭐ この道具の形は【場（濃さ）】ひとつ＝字を焼くのと同じ所に写真の明暗を焼けば、
+            筆・色・玉・出すはそのまま効く（写真の形を玉の粒で埋める）。
+         ⚠️ 写真そのものは控えに入らない。焼いた【場】は控えに入る＝開き直しても絵は残る。 -->
+    <button class="btn" id="b_layPhoto" style="margin-top:6px">＋ 写真から形</button>
+    <input type="file" id="f_photo" accept="image/*" hidden>
     <button class="btn" id="b_layDup" style="margin-top:6px">この版を複製</button>
     <!-- ⭐ 版ごとの移動（2026-08-17 木下「重ねた版も指定したら移動できるように」） -->
     <div class="row" style="margin-top:8px"><span class="n">横位置</span><output id="o_ldx"></output></div>
@@ -230,6 +236,16 @@
         <button data-v="sans">ゴシック</button><button data-v="serif">明朝</button><button data-v="mono">等幅</button>
       </div>
       <div class="note">⚠️ 字を変えると焼き直すので、<b>この版に筆で足した分は消える</b></div>
+    </div>
+    <!-- ⭐ 写真の版を選んでいるときだけ出る -->
+    <div id="photoBox" class="hide">
+      <div class="row" style="margin-top:8px"><span class="n">写真のしきい</span><output id="o_pthr"></output></div>
+      <input type="range" id="r_pthr" min="1" max="254" step="1">
+      <div class="seg" id="pinvSeg" style="margin-top:6px">
+        <button data-v="0">明るい方を形に</button><button data-v="1">暗い方を形に</button>
+      </div>
+      <div class="note">⭐ <b>しきい</b>＝どこを形にするか（写真の明暗で切る）。<b>暗い方</b>＝黒い被写体・白い背景のとき<br>
+        ⚠️ しきいを動かすと焼き直すので、<b>この版に筆で足した分は消える</b>（字の版と同じ）</div>
     </div>
     <button class="btn" id="b_layFill" style="margin-top:6px">この版を今の色にする</button>
     <!-- ⭐⭐ 2026-08-19 木下「すでに書いているものに対しては後からでも調整できるように」 -->
@@ -684,6 +700,7 @@ function newLayer(o){
   return Object.assign({ kind:'paint', on:true, col:(typeof P !== 'undefined' ? P.ink : '#3a3ce8'),
     dx:0, dy:0,                     /* ⭐ 版ごとの移動（版面の幅・高さに対する比） */
     text:'あ', tsz:0.5, trot:0, tfont:'sans',   /* 字の版だけ使う */
+    pthr:128, pinv:0,                          /* 写真の版だけ使う（2026-08-28） */
     A:new Float32Array(n),
     C:{ CR:new Float32Array(n), CG:new Float32Array(n), CB:new Float32Array(n) } }, o || {});
 }
@@ -763,6 +780,32 @@ function bakeText(L){
     L.C.CR[i] = rgb[0]; L.C.CG[i] = rgb[1]; L.C.CB[i] = rgb[2];
   }
 }
+/* ══⭐⭐ 写真から形を作る（2026-08-28）══════════════════════════
+   ⭐⭐ この道具の形は【場（濃さ）】ひとつ＝字を焼くのと同じ所に写真の明暗を焼けば、
+      筆・色・玉・出すはそのまま効く（＝写真の形を玉の粒で埋める）。
+   ⚠️ 写真そのもの（PHOTO）は控えに入らない。焼いた【場】は控えに入る＝開き直しても絵は残る。
+   ⚠️ 字の版と同じで、しきいを動かすと焼き直す＝その版に筆で足した分は消える。 */
+let PHOTO = null;
+function bakePhoto(L){
+  if(!PHOTO) return;
+  const c = document.createElement('canvas'); c.width = FW; c.height = FH;
+  const t = c.getContext('2d', { willReadFrequently:true });
+  /* ⭐ 版面に収める（はみ出させない）。⚠️ 外は透明のまま＝形にしない */
+  const k = Math.min(FW / PHOTO.width, FH / PHOTO.height) * 0.94;
+  const w = PHOTO.width * k, h = PHOTO.height * k;
+  t.drawImage(PHOTO, (FW - w)/2, (FH - h)/2, w, h);
+  const d = t.getImageData(0, 0, FW, FH).data;
+  const rgb = hex2rgb(L.col);
+  const thr = Math.max(1, Math.min(254, L.pthr == null ? 128 : L.pthr));
+  const inv = !!L.pinv;
+  for(let i = 0; i < FW*FH; i++){
+    const lum = d[i*4]*0.3 + d[i*4+1]*0.59 + d[i*4+2]*0.11;
+    const on = d[i*4+3] > 8 && (inv ? (lum < thr) : (lum > thr));
+    L.A[i] = on ? 1 : 0;
+    L.C.CR[i] = rgb[0]; L.C.CG[i] = rgb[1]; L.C.CB[i] = rgb[2];
+  }
+}
+
 /* ⭐ 合成 ── 下から順に重ねて、刷るための場を作る。
    ⭐ 濃さで混ぜる＝筆と同じ理屈（上の版が濃いほど、その色になる）。 */
 function bake(){
@@ -1993,10 +2036,10 @@ function drawLayList(){
     sw.title = '入切';
     sw.onclick = e => { e.stopPropagation(); pushHist(); L.on = !L.on; drawLayList(); kick(); saveLocal(); };
     const nm = document.createElement('span');
-    nm.textContent = (L.kind === 'text' ? '字' : '描く') + ' ' + (i+1);
+    nm.textContent = (L.kind === 'text' ? '字' : L.kind === 'photo' ? '写真' : '描く') + ' ' + (i+1);
     row.append(sw, nm);
     row.onclick = () => { sel = i; P.ink = L.col; el('c_pick').value = L.col;
-      drawSwatch(); drawLayList(); syncLay(); syncText(); kickSoft();
+      drawSwatch(); drawLayList(); syncLay(); syncText(); syncPhoto(); kickSoft();
       stat('版「' + nm.textContent + '」を選んだ'); };
     box.appendChild(row);
   }
@@ -2029,6 +2072,64 @@ function syncText(){
   el('r_trot').value = L.trot; el('o_trot').textContent = L.trot + '°';
   el('tfontSeg').querySelectorAll('button').forEach(b2 => b2.classList.toggle('on', b2.dataset.v === L.tfont));
 }
+/* ══⭐ 写真の版のつまみ ══ */
+function syncPhoto(){
+  const L = curLay();
+  const isP = !!L && L.kind === 'photo';
+  el('photoBox').classList.toggle('hide', !isP);
+  if(!isP) return;
+  el('r_pthr').value = L.pthr == null ? 128 : L.pthr;
+  el('o_pthr').textContent = String(el('r_pthr').value);
+  el('pinvSeg').querySelectorAll('button')
+    .forEach(b2 => b2.classList.toggle('on', String(b2.dataset.v) === String(L.pinv || 0)));
+}
+/* ⭐ 写真を焼き直して刷る（式は1本＝ここだけが焼き直す） */
+function rePhoto(){
+  const L = curLay(); if(!L || L.kind !== 'photo') return;
+  bakePhoto(L); drawLayList(); kick(); saveLocal();
+}
+el('b_layPhoto').onclick = () => el('f_photo').click();
+/* ⚠️ iPhone の HEIC / HEIF は Chrome では読めない（Safari だけ）。
+   🔴 黙って失敗すると「押したのに何も起きない」になる＝押した時点で理由を言う。 */
+el('f_photo').onchange = e => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if(!f) return;
+  if(/heic|heif/i.test(f.type || '') || /\.(heic|heif)$/i.test(f.name || '')){
+    stat('この写真は HEIC（iPhone の形式）── Chrome では読めません。'
+       + '写真アプリで「JPEG に変換して書き出す」か、Safari で開いてください');
+    return;
+  }
+  const rd = new FileReader();
+  rd.onload = () => {
+    const im = new Image();
+    im.onload = () => {
+      PHOTO = im;
+      pushHist();
+      const L = newLayer({ kind:'photo', col:P.ink });
+      LAY.push(L); sel = LAY.length - 1;
+      bakePhoto(L);
+      drawLayList(); syncLay(); syncText(); syncPhoto(); kick(); saveLocal();
+      stat('写真から形を作った — しきいで形を決める（筆で足すのはそのあと）');
+    };
+    im.onerror = () => stat('写真を読めなかった（この browser が読めない形式かもしれません）');
+    im.src = rd.result;
+  };
+  rd.readAsDataURL(f);
+};
+el('r_pthr').addEventListener('pointerdown', pushHist);
+el('r_pthr').addEventListener('input', () => {
+  const L = curLay(); if(!L || L.kind !== 'photo') return;
+  L.pthr = +el('r_pthr').value; el('o_pthr').textContent = el('r_pthr').value;
+  rePhoto();
+});
+el('pinvSeg').querySelectorAll('button').forEach(b2 => b2.addEventListener('click', () => {
+  const L = curLay(); if(!L || L.kind !== 'photo') return;
+  pushHist(); L.pinv = +b2.dataset.v;
+  el('pinvSeg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b2));
+  rePhoto();
+}));
+
 /* ⭐ 字を焼き直して刷る（式は1本＝ここだけが焼き直す） */
 function reText(){
   const L = curLay(); if(!L || L.kind !== 'text') return;
@@ -2054,7 +2155,7 @@ el('b_layText').onclick = () => {
   const L = newLayer({ kind:'text', col:P.ink });
   LAY.push(L); sel = LAY.length - 1;
   bakeText(L);
-  drawLayList(); syncLay(); syncText(); kick(); saveLocal();
+  drawLayList(); syncLay(); syncText(); syncPhoto(); kick(); saveLocal();
   stat('字の版を足した（上の「字」に打つと変わる）');
 };
 el('b_layAdd').onclick = () => {
@@ -2085,7 +2186,7 @@ el('b_layDel').onclick = () => {
      ⚠️ 版が 0 枚だと描けないので、最後の1枚は【空の版に置き換える】＝まっさら。⌘Z で戻せる */
   if(LAY.length <= 1){
     pushHist(); LAY = [newLayer()]; sel = 0;
-    drawLayList(); syncLay(); syncText(); kickSoft(); saveLocal();
+    drawLayList(); syncLay(); syncText(); syncPhoto(); kickSoft(); saveLocal();
     stat('まっさらにした（⌘Z で戻せる）'); return;
   }
   pushHist(); LAY.splice(sel, 1); sel = Math.max(0, sel - 1);
@@ -2436,7 +2537,7 @@ function syncUI(){
   if(typeof bgKindUI === 'function') bgKindUI();
   if(el('c_alauto')){ el('c_alauto').checked = !!P.alauto; el('c_alcol').style.opacity = P.alauto ? 0.4 : 1; }
   el('c_stagger').checked = !!P.stagger;
-  drawSwatch(); drawLayList(); syncLay(); syncText();
+  drawSwatch(); drawLayList(); syncLay(); syncText(); syncPhoto();
 }
 
 /* ══⭐ 版の詰め方（控え／このブラウザに残す）══
@@ -2485,7 +2586,9 @@ const fromB64 = (b64, scale, len) => {
 };
 function packLay(){
   return LAY.map(L => ({ kind:L.kind, on:L.on, col:L.col, dx:L.dx || 0, dy:L.dy || 0,
-    text:L.text, tsz:L.tsz, trot:L.trot, tfont:L.tfont, A:toB64(L.A, 255),
+    text:L.text, tsz:L.tsz, trot:L.trot, tfont:L.tfont,
+    pthr:L.pthr, pinv:L.pinv,                       /* ⭐ 写真の版のしきい（2026-08-28） */
+    A:toB64(L.A, 255),
     C:L.C ? { R:toB64(L.C.CR, 1), G:toB64(L.C.CG, 1), B:toB64(L.C.CB, 1) } : null,
     /* ⭐ 引いた線の控え（あとから筆を変えるための材料）。点列なので場より軽い */
     S:L.S && L.S.length ? L.S : null }));
@@ -2500,6 +2603,8 @@ function unpackLay(arr){
     if(o.tsz != null) L.tsz = o.tsz;
     if(o.trot != null) L.trot = o.trot;
     if(o.tfont) L.tfont = o.tfont;
+    if(o.pthr != null) L.pthr = o.pthr;
+    if(o.pinv != null) L.pinv = o.pinv;
     if(o.C) L.C = { CR:fromB64(o.C.R, 1, n), CG:fromB64(o.C.G, 1, n), CB:fromB64(o.C.B, 1, n) };
     if(Array.isArray(o.S) && o.S.length) L.S = o.S;   /* ⭐ 控えがあれば、開いたあとも筆を変えられる */
     return L;
@@ -2555,7 +2660,7 @@ kickSoft(600);
   b2.style.display = has ? '' : 'none';
   b2.onclick = () => {
     if(!loadLocal()){ stat('前のつづきは無い'); return; }
-    ensureField(); syncUI(); drawSwatch(); drawLayList(); syncLay(); syncText();
+    ensureField(); syncUI(); drawSwatch(); drawLayList(); syncLay(); syncText(); syncPhoto();
     kickSoft(600); stat('前のつづきを開いた');
   };
 })();
