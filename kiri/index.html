@@ -269,11 +269,11 @@
   <div class="grp">
     <label class="h">粒</label>
     <div class="row"><span class="n">数</span><output id="o_n">60000</output></div>
-    <input type="range" id="r_n" min="2000" max="240000" step="1000" value="60000">
-    <div class="row"><span class="n">大きさ</span><output id="o_dot">1.30</output></div>
-    <input type="range" id="r_dot" min="20" max="600" value="130">
-    <div class="row"><span class="n">散り</span><output id="o_gap">2.40</output></div>
-    <input type="range" id="r_gap" min="40" max="900" value="240">
+    <input type="range" id="r_n" min="2000" max="400000" step="1000" value="60000">
+    <div class="row"><span class="n">大きさ</span><output id="o_dot">1.60</output></div>
+    <input type="range" id="r_dot" min="20" max="900" value="160">
+    <div class="row"><span class="n">散り</span><output id="o_gap">1.85</output></div>
+    <input type="range" id="r_gap" min="30" max="900" value="185">
     <div class="row"><span class="n">むら</span><output id="o_jit">25</output></div>
     <input type="range" id="r_jit" min="0" max="100" value="25">
     <div class="note">🔴 <b>散り</b>＝粒どうしの最小の間。<b>これが芯</b>で、近すぎる粒を捨てるからムラにならない<br>
@@ -314,7 +314,7 @@
   <div class="grp">
     <label class="h">色</label>
     <div class="row"><span class="n">粒</span></div>
-    <input type="color" id="c_ink" value="#141414">
+    <input type="color" id="c_ink" value="#0d0d0d">
     <div class="row"><span class="n">地</span></div>
     <input type="color" id="c_bg" value="#f4f2ec">
     <label class="chk">地を出さない（地なしで出す）<input type="checkbox" id="k_nobg"></label>
@@ -391,10 +391,10 @@ function stat(s){ el('stat').textContent = s; clearTimeout(statT);
    ══════════════════════════════════════════════════════════ */
 const P = {
   read:'tone', thr:128, gam:1.0, inv:0,
-  n:60000, dot:1.30, gap:2.40, jit:25,
+  n:60000, dot:1.60, gap:1.85, jit:25,
   mb:34, ma:0.55, kdir:315, kd:26, khi:0.45, mdot:0.70,
   ratio:'auto', long:1400, pad:6,
-  ink:'#141414', bg:'#f4f2ec', nobg:false,
+  ink:'#0d0d0d', bg:'#f4f2ec', nobg:false,
   seed:1,
 };
 let SRC = null;            /* 元の絵（Image） */
@@ -423,11 +423,24 @@ function sheet(){
 /* ══ 濃さの地図を焼く（ここ1本＝写真も SVG も同じ道を通る）══ */
 let MAP = null;                       /* { core:Float32Array, blur:Float32Array, w, h } */
 let MAPKEY = '';
-function bakeMap(){
+/* ⭐⭐ 触っている間は【小さい紙で全部やる】（2026-08-28 木下「リアルタイムさがほしい」）
+   🔴 版面 1400×1400 のまま、ぼかしを2枚焼いて 196万画素×2 を読んでいた＝どう間引いても重い。
+   ⭐ 触っている間は短辺 420 で焼く＝**面積で 11 倍speed**。散り・粒・ぼかしも同じ比で縮めるので
+     見え方は同じ（拡大して描くだけ）。離したら本番の大きさで焼き直す。
+   ⚠️ 比を1か所（mapScale）に持つ＝つまみの意味が2つに割れない。 */
+function mapSize(){
   const { w, h } = sheet();
+  if(!COARSE) return { w, h, k:1 };
+  /* ⚠️ 小さいほど速いが、小さすぎると散り方の見当がつかない。260 が折り合い（実測） */
+  const k = Math.min(1, 260 / Math.max(w, h));
+  return { w:Math.max(16, Math.round(w*k)), h:Math.max(16, Math.round(h*k)), k };
+}
+function bakeMap(){
+  const { w, h, k:MK } = mapSize();
   /* ⚠️ 粗さも鍵に入れる＝離した瞬間に必ず焼き直される（粗いまま残らない） */
-  const MB = COARSE ? Math.min(P.mb, 12) : P.mb;
-  const key = [w, h, P.read, P.thr, P.gam, P.inv, P.pad, MB, P.kdir, P.kd, P.khi, COARSE,
+  /* ⚠️ ぼかし・ずれも紙の比に合わせる＝小さい紙でも同じ絵になる */
+  const MB = P.mb * MK, KD = P.kd * MK;
+  const key = [w, h, P.read, P.thr, P.gam, P.inv, P.pad, MB, P.kdir, KD, P.khi,
                SRC ? SRC.src.length : 0].join('|');
   if(MAPKEY === key && MAP) return MAP;
   const c = document.createElement('canvas'); c.width = w; c.height = h;
@@ -467,7 +480,7 @@ function bakeMap(){
      ⚠️ ずれ 0・抜け 0 なら、ずらした霧＝逆の霧＝ただのぼかし＝今までどおり（平たい霧）。
      ⚠️ 読むのは別の canvas（形の canvas は読まれると描き方が変わる） */
   const a = (P.kdir || 0) * Math.PI / 180;
-  const ox = Math.cos(a) * (P.kd || 0), oy = Math.sin(a) * (P.kd || 0);
+  const ox = Math.cos(a) * KD, oy = Math.sin(a) * KD;
   const blurOf = (dx, dy) => {
     const b = document.createElement('canvas'); b.width = w; b.height = h;
     const bq = b.getContext('2d', { willReadFrequently:true });
@@ -503,12 +516,15 @@ function scatter(){
   /* 🔴 鍵に入っていない値は【触っても何も起きない】。
      大きさ・むらは粒そのものの持ち物なので、ここに入れないと作り直されない
      （実測：むらを 0 にしても前の揺れが残っていた）。 */
-  const key = [MAPKEY, P.n, P.gap, P.ma, P.seed, P.dot, P.jit, P.mdot, COARSE].join('|');
+  /* ⚠️ 大きさ・むら・霧の粒は【撒き直さなくていい】＝描くときに決める（鍵に入れない）。
+     ＝つまみを動かしても粒は撒き直されない＝すぐ返る。 */
+  const key = [MAPKEY, P.n, P.gap, P.ma, P.seed].join('|');
   if(DOTKEY === key && DOTS) return DOTS;
   /* ⭐ 触っている間は粒を減らす（散り方の見え方は同じ＝どこが濃いかは分かる） */
-  const N = Math.max(100, Math.round(COARSE ? Math.min(P.n, 9000) : P.n));
+  const MK = w / sheet().w;                       /* 紙の比（触っている間は小さい） */
+  const N = Math.max(100, Math.round(COARSE ? Math.min(P.n, 4200) : P.n));
   const R = rnd(P.seed);
-  const gapMax = Math.max(0.3, P.gap);
+  const gapMax = Math.max(0.3, P.gap * MK);
   const cell = gapMax;
   const gw = Math.max(1, Math.ceil(w / cell)), gh = Math.max(1, Math.ceil(h / cell));
   const head = new Int32Array(gw * gh).fill(-1);
@@ -524,7 +540,7 @@ function scatter(){
     const cv0 = M.core[p], mv = M.blur[p] * P.ma;
     const d = Math.max(cv0, mv);
     if(d <= 0.002 || R() > d) continue;
-    /* ⭐⭐ 形から出た粒と【霧から出た粒】で大きさを変える。
+    /* ⭐⭐ 形から出た粒と【霧から出た粒】で大きさを変える（描くときに使う印だけ持つ）。
        ⚠️ これは「濃さで大きさを変える」ことではない（それは網になる）。
           版が2つある＝形はしっかり・霧は細かい、という別の話。参考の絵もそうなっている。 */
     const mist = mv > cv0;
@@ -544,12 +560,21 @@ function scatter(){
     if(!ok) continue;
     xs[n] = x; ys[n] = y;
     /* ⭐ 大きさは【変えない】のが芯。むらは「揺れ」であって濃さではない */
-    sz[n] = P.dot * (mist ? P.mdot : 1) * (1 + (R() - 0.5) * 2 * (P.jit / 100));
+    /* ⭐ 揺れの種だけ控える（大きさそのものは描くときに決める＝つまみが軽い） */
+    sz[n] = (mist ? -1 : 1) * (1 + (R() - 0.5) * 2);
     next[n] = head[gy*gw+gx]; head[gy*gw+gx] = n;
     n++;
   }
   DOTS = { xs, ys, sz, n, w, h, tries }; DOTKEY = key;
   return DOTS;
+}
+
+/* ⭐⭐ 粒の大きさを決めるのは【この1本】＝描くときも、測るときも、ここを見る。
+   ⚠️ 控えているのは「揺れの種（±1、負なら霧の粒）」だけ＝大きさ・むら・霧の粒を
+      触っても粒を撒き直さなくていい（つまみがすぐ返る）。 */
+function dotSize(q){
+  const base = P.dot * (q < 0 ? P.mdot : 1);
+  return Math.max(0.12, base * (1 + (Math.abs(q) - 1) * (P.jit / 100)));
 }
 
 /* ══ 描く（数万個は文字列で一度に渡す）══ */
@@ -561,10 +586,17 @@ function paint(ctx, W, H, transparent){
   if(!transparent){ ctx.fillStyle = P.bg; ctx.fillRect(0, 0, W, H); }
   let s = '';
   for(let i = 0; i < D.n; i++){
-    const x = D.xs[i] * k, y = D.ys[i] * k, r = Math.max(0.12, D.sz[i] * k);
-    s += 'M' + x.toFixed(2) + ' ' + y.toFixed(2)
-       + 'm' + (-r).toFixed(2) + ' 0a' + r.toFixed(2) + ' ' + r.toFixed(2) + ' 0 1 0 ' + (r*2).toFixed(2) + ' 0'
-       + 'a' + r.toFixed(2) + ' ' + r.toFixed(2) + ' 0 1 0 ' + (-r*2).toFixed(2) + ' 0';
+    const x = D.xs[i] * k, y = D.ys[i] * k, r = dotSize(D.sz[i]) * k;
+    if(COARSE){
+      /* ⭐ 触っている間は【四角】で置く＝道の文字列が半分以下になり、作るのが速い。
+         ⚠️ 粒は小さいので見分けはつかない。離したら丸で描き直す。 */
+      const d2 = (r*2).toFixed(1);
+      s += 'M' + (x-r).toFixed(1) + ' ' + (y-r).toFixed(1) + 'h' + d2 + 'v' + d2 + 'h-' + d2 + 'z';
+    }else{
+      s += 'M' + x.toFixed(2) + ' ' + y.toFixed(2)
+         + 'm' + (-r).toFixed(2) + ' 0a' + r.toFixed(2) + ' ' + r.toFixed(2) + ' 0 1 0 ' + (r*2).toFixed(2) + ' 0'
+         + 'a' + r.toFixed(2) + ' ' + r.toFixed(2) + ' 0 1 0 ' + (-r*2).toFixed(2) + ' 0';
+    }
   }
   ctx.fillStyle = P.ink;
   if(s) ctx.fill(new Path2D(s));
@@ -591,7 +623,10 @@ function touching(){
 /* ══ 画面 ══ */
 const V = { x:0, y:0, z:1 };
 function render(){
-  const { w, h } = sheet();
+  /* ⭐⭐ 触っている間は【盤そのものも小さく描く】＝粒を並べる手間も面積の比だけ減る。
+     ⚠️ 見え方は変わらない（見る側の倍率で戻す）。離したら本番の大きさで描き直す。 */
+  const sh = sheet(), m = mapSize();
+  const w = COARSE ? m.w : sh.w, h = COARSE ? m.h : sh.h;
   if(cv.width !== w || cv.height !== h){ cv.width = w; cv.height = h; }
   const t0 = performance.now();
   const D = paint(g, w, h, P.nobg);
@@ -603,7 +638,9 @@ function render(){
     stat('撒ける所が足りない — 散りを下げるか、数を下げる');
 }
 function applyView(){
-  cv.style.transform = 'translate(' + V.x + 'px,' + V.y + 'px) scale(' + V.z + ')';
+  /* ⭐ 盤が小さいときは、そのぶん大きく見せる＝画面の絵は同じ大きさのまま */
+  const k = (cv.width ? sheet().w / cv.width : 1);
+  cv.style.transform = 'translate(' + V.x + 'px,' + V.y + 'px) scale(' + (V.z * k) + ')';
   el('z_val').textContent = Math.round(V.z * 100) + '%';
 }
 function fitView(){
@@ -799,7 +836,7 @@ el('b_svgout').onclick = () => {
   if(!P.nobg) s += '<rect width="' + w + '" height="' + h + '" fill="' + P.bg + '"/>';
   s += '<g fill="' + P.ink + '">';
   for(let i = 0; i < D.n; i++)
-    s += '<circle cx="' + D.xs[i].toFixed(1) + '" cy="' + D.ys[i].toFixed(1) + '" r="' + Math.max(0.12, D.sz[i]).toFixed(2) + '"/>';
+    s += '<circle cx="' + D.xs[i].toFixed(1) + '" cy="' + D.ys[i].toFixed(1) + '" r="' + dotSize(D.sz[i]).toFixed(2) + '"/>';
   s += '</g></svg>';
   dl(new Blob([s], { type:'image/svg+xml' }), 'kiri_' + Date.now() + '.svg');
   stat('SVG を出した（' + D.n.toLocaleString() + ' 粒・' + Math.round(s.length/1024) + 'KB）');
