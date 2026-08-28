@@ -804,6 +804,12 @@ input[type=color]{ border-radius:8px; height:30px }
       <input type="range" id="tSize" min="8" max="180" value="46"><span class="v" id="vSize">46</span></div>
     <div class="row"><label>字間</label>
       <input type="range" id="tTrack" min="-20" max="80" value="2"><span class="v" id="vTrack">2</span></div>
+    <div class="row"><label>角で開ける</label>
+      <input type="range" id="tCgap" min="0" max="150" value="0"><span class="v" id="vCgap">0</span></div>
+    <div class="note">⭐ <b>角で開ける</b>＝経路の<b>曲がり角だけ</b>に隙間を足す。
+      字間は行ぜんぶに効くので、角の詰まりを直すと<b>組み全体の形が変わる</b> ── ここは角だけ<br>
+      ⚠️ 足す量は<b>曲がる角度 × 字の背</b>で決まる（直角ほど大きく開く）。
+      なめらかな所（12°未満）には足さない</div>
     <div class="row" id="rowFit"><label>合わせる</label>
       <div class="seg" id="segFit"><button data-v="0" class="on">字間で</button><button data-v="1">字の大きさで</button></div></div>
     <div class="note" id="fitNote">⭐ <b>字間で</b>＝大きさそのままで隙間を伸ばす／<b>字の大きさで</b>＝箱の幅に字を合わせる（版面いっぱいの面になる）</div>
@@ -1210,6 +1216,7 @@ function newLine(text){
     path:{ type:'poly', n:6, inset:12, corner:0, pts:null },   // pts=null なら型から作る
     /* ⭐ 張る用の箱（版面に対する％）。⚠️ path と両方持たせる＝置き方を切り替えても値が残る */
     box:{ x:10, y:88, w:80, rot:0 },
+    cgap:0,                                  // ⭐ 角で開ける（沿う／張る）。0＝これまでと1画素も変わらない
     fit:0,                                   // ⭐ 張るのとき＝箱の幅に字の大きさを合わせる
     align:'left', lead:160,                  // ⭐ 並ぶのとき＝揃えと行送り（字の大きさに対する％）
     grad: JSON.parse(JSON.stringify(GRAD_DEF)),   // ⭐ 字のグラデ（切なら単色）
@@ -1337,6 +1344,34 @@ function makeChar(ch, L, extraCol){
 
 /* 行頭に来てはいけない字（並ぶの折り返しで使う） */
 const KINSOKU_HEAD = '、。，．・：；？！ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮー）」』】〕》〉]}»\'";:,.?!';
+
+/* ══⭐⭐ 角で開ける（2026-08-28）══
+   木下「交差しているところが読みづらいからスペースしたり字幅を広げたりするけど、
+        そうすると形自体が変わっちゃう」
+   🔴 字間は【行ぜんぶ】に効く。角の詰まりを直そうとすると組み全体が伸びて別の形になる。
+     直したいのは【角だけ】＝角にだけ長さを足す。
+   ⭐ 角で字が詰まる理由は、曲がった瞬間に字が回るから。
+     内側では隣と重なり、外側では開く。必要な長さは【曲がる角度 × 字の背】で決まる
+     ＝原因から出せる（つまみは「どれだけ効かせるか」だけ）。
+   ⚠️ 曲がっていない継ぎ目（なめらかな所）には足さない＝しきい（度）で切る。 */
+function cornersOf(path, minDeg){
+  const out = [];
+  const cs = path.curves;
+  if(!cs || !cs.length) return out;
+  let acc = 0;
+  for(let i = 0; i < cs.length; i++){
+    acc += cs[i].length;
+    const nx = cs[i + 1] || (path.closed ? cs[0] : null);
+    if(!nx) break;
+    let t1, t2;
+    try{ t1 = cs[i].getTangentAtTime(1); t2 = nx.getTangentAtTime(0); }catch(_){ continue; }
+    if(!t1 || !t2) continue;
+    let a = Math.abs(t1.getDirectedAngle(t2));      // 度（−180〜180 の絶対値）
+    if(a > 180) a = 360 - a;
+    if(a >= minDeg) out.push({ at:acc, turn:a * Math.PI/180 });
+  }
+  return out;
+}
 
 /* ══ 字送りを測る ══
    ⚠️ paper の bounds は空白で 0 になるので送りに使えない。
@@ -1578,10 +1613,22 @@ const LAYOUTS = {
       const d0 = d;
       /* ⭐ 何字目かを渡す（字ごとのずらしが見る）。⚠️ 送りを測る前に入れる＝形と送りが揃う */
       L._cn = chars.length;
+      /* ⭐ 角の場所と曲がる角度を先に測る。⚠️ 0 のときは1つも測らない＝これまでの絵 */
+      const CG = Number(L.cgap) || 0;
+      const CORN = CG ? cornersOf(path, 12) : [];
+      const cH = L.size * ((L.wy || 100)/100);            // 字の背＝開ける量の物差し
       chars.forEach((ch, _ci) => {
         L._ci = _ci;
         const adv  = advance(ch, L);
         const step = adv + L.track;
+        /* ⭐ この字が角をまたぐなら、そこだけ長さを足す（字間は触らない＝形が変わらない） */
+        if(CORN.length){
+          const a0 = ((d % len) + len) % len, a1 = a0 + Math.abs(step);
+          for(const c of CORN){
+            let ca = c.at; if(ca < a0) ca += len;
+            if(ca >= a0 && ca <= a1) d += dir * (CG/100) * c.turn * cH;
+          }
+        }
         const at = ((d + dir*step/2) % len + len) % len;    // 字の中心が来る位置
         const pt  = path.getPointAt(at);
         const tan = path.getTangentAt(at);
@@ -4151,7 +4198,8 @@ function syncPanel(){
   if(!L) return;
   $('tText').value = L.text;
   $('tFam').value = L.fam; $('tWt').value = L.wt;
-  setRange('tSize', L.size); setRange('tTrack', L.track); setRange('tStart', L.start); setRange('tOff', L.off);
+  setRange('tSize', L.size); setRange('tTrack', L.track); setRange('tCgap', L.cgap || 0);
+  setRange('tStart', L.start); setRange('tOff', L.off);
   setRange('tWx', L.wx ?? 100); setRange('tWy', L.wy ?? 100);
   /* ⭐ 字ごとのずらし。⚠️ 古い作品は wsh を持たない＝ぜんぶ0（これまでの絵） */
   { const W = Object.assign({}, WSH_DEF, L.wsh || {});
@@ -4297,7 +4345,7 @@ KAMI_LAYERS.forEach(L => {
 /* つまみ → 状態（1本道にまとめる＝足すときはここに1行） */
 const BIND = {
   tText:['text', v=>v], tFam:['fam', v=>v], tWt:['wt', v=>v],
-  tSize:['size', Number], tTrack:['track', Number], tStart:['start', Number], tOff:['off', Number],
+  tSize:['size', Number], tTrack:['track', Number], tCgap:['cgap', Number], tStart:['start', Number], tOff:['off', Number],
   tCol:['col', v=>v], tWx:['wx', Number], tWy:['wy', Number],
   tLead:['lead', Number],                    // ⭐ 並ぶの行送り
 };
