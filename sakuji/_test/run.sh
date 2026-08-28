@@ -65,5 +65,14 @@ node "$(cd "$(dirname "$0")" && pwd)/feel.mjs" || FEELNG=1
 echo
 node "$(cd "$(dirname "$0")" && pwd)/feel2.mjs" || FEEL2NG=1
 
-if [ "${FEELNG:-0}" = "1" ] || [ "${FEEL2NG:-0}" = "1" ]; then exit 1; fi
+# ⭐ 盤の上のショートカット（2026-08-28）＝パスの出し入れ／入れるドロップダウン
+echo
+echo "── パスを出す／出さない（H）"
+node "$(cd "$(dirname "$0")" && pwd)/pathview.mjs" || PVNG=1
+echo
+echo "── 入れる（画像・SVG のドロップダウン）"
+node "$(cd "$(dirname "$0")" && pwd)/addmenu.mjs" || ADDNG=1
+
+if [ "${FEELNG:-0}" = "1" ] || [ "${FEEL2NG:-0}" = "1" ] \
+   || [ "${PVNG:-0}" = "1" ] || [ "${ADDNG:-0}" = "1" ]; then exit 1; fi
 exit $RC
