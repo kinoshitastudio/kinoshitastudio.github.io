@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>符 FU — 写真を絵文字で組み直す / 木下スタジオ</title>
+<meta name="description" content="写真を絵文字（符）で組み直す道具。絵文字を実際に描いて色と占有率を測り、地に合成した色で選ぶ。絵のまま PNG で出せて、そのまま貼れる文字としても出せる。木下スタジオ（木下貴博 / 滋賀・琵琶湖）制作。">
+<link rel="canonical" href="https://kinoshita.studio/fu/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="符 FU — 写真を絵文字で組み直す / 木下スタジオ">
+<meta property="og:description" content="絵は、記号で組み直せる。出てくるのは画像であり、同時に貼れる文字。">
+<meta property="og:url" content="https://kinoshita.studio/fu/">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<style>
+
+  /* ⚠️ 外枠（並び方・見た目）は 累 RUI / 点 TEN と同じ＝道具ごとに作りを変えない */
+  :root{
+    --bg:#e8e4dc; --paper:#f4f2ec; --line:rgba(28,28,30,.14);
+    --fg:#1c1c1e; --fg2:rgba(28,28,30,.62); --fg3:rgba(28,28,30,.40);
+    --fill:rgba(28,28,30,.10); --fill2:rgba(28,28,30,.07);
+    --capsule:#fffdf8; --glass:rgba(246,244,238,.84); --r:10px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans","Zen Kaku Gothic New",sans-serif;
+    font-weight:400;overflow:hidden;display:flex;align-items:stretch}
+
+  /* ⭐ 盤＝窓。中の紙は動かさず、見る側だけ transform で動かす（出る絵は1画素も変わらない） */
+  #stage{flex:1;position:relative;min-width:0;overflow:hidden;cursor:crosshair}
+  #stage.panning{cursor:grabbing}
+  #stage::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
+    background:radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,.5), transparent 62%)}
+  canvas#cv{position:absolute;left:0;top:0;transform-origin:0 0;
+    box-shadow:0 14px 44px rgba(28,28,30,.18);display:block}
+  /* ⭐ 選んだ印は【刷る絵に混ぜない】。別の板を同じ倍率で重ねる
+     （混ぜると PNG にも選択枠が出てしまう） */
+  canvas#ov{position:absolute;left:0;top:0;transform-origin:0 0;display:block;
+    pointer-events:none;z-index:2}
+  /* 🔴🔴 2026-08-25 木下＝「モバイルでボードを描くときに、下のパネルも一緒に動くので描きづらい」
+     ＝盤を触るとブラウザの【ページを動かす仕草】に取られていた。
+     ⚠️ 前は「モバイルで none にすると縦スクロールが止まる」として広い画面だけに掛けていたが、
+        いまの作りは【盤（上）＋パネル（下・内側で巻く）】の2段なので、
+        ページそのものは巻かなくてよい＝**どの幅でも盤は none でよい**。
+     ⭐ 盤＝指の動きは全部こちらで受け取る／パネル＝内側だけで巻く（端で親へ渡さない）。 */
+  #stage{touch-action:none}
+
+  #zoom{position:absolute;left:14px;bottom:12px;z-index:5;display:flex;align-items:center;gap:2px;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border:.5px solid var(--line);border-radius:11px;padding:3px;box-shadow:0 4px 14px rgba(28,28,30,.10)}
+  #zoom button{border:none;background:none;border-radius:8px;color:var(--fg);cursor:pointer;
+    font-family:inherit;font-size:11.5px;font-weight:500;padding:6px 9px;opacity:.75;transition:.14s}
+  #zoom button:hover{opacity:1;background:rgba(28,28,30,.09)}
+  #zoom .z{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg2);
+    min-width:52px;text-align:center;font-variant-numeric:tabular-nums;pointer-events:none}
+  #stat{position:absolute;left:0;right:0;bottom:0;padding:8px 14px;font-size:11px;color:var(--fg3);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;pointer-events:none;text-align:center;z-index:4}
+  #drop{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(244,242,236,.92);border:1px dashed rgba(28,28,30,.35);
+    font-size:13px;letter-spacing:.08em;color:var(--fg2);z-index:20;text-align:center;line-height:1.8}
+  body.dragging #drop{display:flex}
+
+  #panel{width:308px;flex:0 0 308px;height:100%;overflow-y:auto;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border-left:.5px solid var(--line);padding:16px 16px 80px}
+  #panel::-webkit-scrollbar{width:0}
+  h1{font-size:12px;font-weight:590;letter-spacing:.12em;color:var(--fg);margin-bottom:2px}
+  .sub{font-size:11.5px;color:var(--fg2);margin-bottom:16px;line-height:1.6}
+  .grp{margin-bottom:20px}
+  label.h{position:sticky;top:-16px;z-index:3;display:block;margin:0 -16px 8px;padding:7px 16px 6px;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border-bottom:.5px solid var(--line);font-size:11px;font-weight:590;letter-spacing:.04em;color:var(--fg2)}
+  .row{display:flex;align-items:center;gap:10px;padding:2px 0;margin-bottom:2px}
+  .row span.n{flex:1;font-size:11.5px;color:var(--fg)}
+  .row output{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg2);
+    width:46px;flex:0 0 46px;text-align:right;font-variant-numeric:tabular-nums}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;background:none;height:26px;
+    cursor:pointer;touch-action:pan-y}
+  input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--fill)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;
+    margin-top:-8px;border-radius:50%;background:var(--fg);border:none;
+    box-shadow:0 1px 3px rgba(28,28,30,.30), 0 0 0 .5px rgba(28,28,30,.05)}
+  .seg{display:flex;flex-wrap:wrap;background:var(--fill2);border-radius:9px;padding:2px;gap:2px;margin:6px 0 10px}
+  .seg button{flex:1 1 auto;min-width:0;border:none;border-radius:7px;background:none;
+    font-family:inherit;font-size:11.5px;font-weight:450;color:var(--fg);opacity:.72;
+    padding:6px 4px;cursor:pointer;transition:.16s;white-space:nowrap}
+  .seg button:hover{opacity:1;background:rgba(28,28,30,.07)}
+  .seg button.on{opacity:1;background:var(--capsule);font-weight:590;
+    box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.04)}
+  .btn{width:100%;background:var(--fill);border:none;border-radius:var(--r);color:var(--fg);
+    font-family:inherit;font-size:12px;font-weight:500;padding:11px 0;margin-top:6px;cursor:pointer;transition:.14s}
+  .btn:hover{background:rgba(28,28,30,.16)}
+  .btn:active{transform:scale(.985);opacity:.8}
+  .btn.solid{background:var(--fg);color:var(--paper);font-weight:590}
+  .btns2{display:flex;gap:6px}
+  .note{font-size:10.5px;line-height:1.65;color:var(--fg2);opacity:.75;margin-top:7px}
+  .note b{font-weight:590;opacity:1}
+  input[type=color]{width:100%;height:32px;padding:0;border:.5px solid var(--line);border-radius:var(--r);
+    background:transparent;cursor:pointer}
+  .chk{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 0;
+    font-size:11.5px;color:var(--fg);cursor:pointer;margin-bottom:5px}
+  .chk input[type=checkbox]{-webkit-appearance:none;appearance:none;flex:0 0 38px;width:38px;height:23px;
+    border-radius:23px;background:var(--fill);position:relative;transition:.2s;cursor:pointer;order:2}
+  .chk input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;
+    border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(28,28,30,.3);transition:.2s}
+  .chk input[type=checkbox]:checked{background:var(--fg)}
+  .chk input[type=checkbox]:checked::after{transform:translateX(15px)}
+  #meter{background:var(--fill2);border:none;border-radius:var(--r);color:var(--fg2);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:10.5px;line-height:1.7;padding:9px 11px;margin:8px 0;
+    white-space:pre-line}
+  .hide{display:none!important}
+
+  /* ⭐ 段の一覧＝iOS のリスト（累 RUI の版の一覧と同じ言い方） */
+  #bands{display:flex;flex-direction:column;gap:4px}
+  .bd{display:flex;align-items:center;gap:10px;background:var(--fill2);border:none;border-radius:var(--r);
+    padding:9px 10px;cursor:pointer;transition:.15s}
+  .bd:hover{background:rgba(28,28,30,.10)}
+  .bd.sel{background:var(--capsule);box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.06)}
+  .bd .sw{width:18px;height:18px;flex:0 0 18px;border-radius:5px;border:.5px solid rgba(28,28,30,.2)}
+  .bd .nm{flex:1;min-width:0;font-size:12px;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bd.sel .nm{color:var(--fg);font-weight:500}
+  .bd .up{width:20px;height:20px;flex:0 0 20px;border:0;background:transparent;color:var(--fg3);
+    cursor:pointer;font-size:9px;line-height:1;padding:0}
+  .bd .up:hover{color:var(--fg)}
+
+  @media (max-width:820px){
+    /* ⚠️ ページ自体は巻かない（2段の作り）。巻くのはパネルの中だけ＝
+       盤を触ってもページが揺れない（iOS の跳ね返りも止める） */
+    body{flex-direction:column;overflow:hidden;overscroll-behavior:none}
+    #panel{overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+    #stage{padding:0;min-height:50vh}
+    #panel{width:100%;flex:1 1 auto;height:auto;border-left:0;border-top:.5px solid var(--line);
+      padding:16px 14px calc(80px + env(safe-area-inset-bottom))}
+    label.h{top:-16px;margin:0 -14px 8px;padding:7px 14px 6px}
+    input[type=range]{height:40px}
+    input[type=range]::-webkit-slider-thumb{width:24px;height:24px;margin-top:-10px}
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     ⭐⭐ モバイル／iPad（2026-08-20）
+     ⚠️ 最初「この型はページごとスクロールするから掴み手は合わない」と考えたが【誤り】。
+        実測すると 盤(上) ＋ パネル(下・内側スクロール) の2段で、
+        body は1pxも動いていない ＝ 作字 SAKUJI と同じ形だった。
+     ⭐ だから高さを CSS 変数 --panelH ひとつにまとめれば、同じ掴み手がそのまま使える。
+     ⭐ このブロックと末尾の <script> を消せば完全に元へ戻る。
+     ══════════════════════════════════════════════════════════════ */
+  /* ⚠️ 盤の高さを 100vh から引き算しない ── iOS Safari の 100vh は実際の見え高さと
+     食い違い、パネルが画面の外へ押し出される。flex に余りを取らせる。 */
+  :root{ --panelH:38vh; --sheetGrip:22px }
+  @supports (height:1dvh){ :root{ --panelH:38dvh } }
+  @media (max-width:820px){
+    #stage{ flex:1 1 auto; min-height:0 }        /* ⭐ 余りは盤が取る */
+    #panel{ flex:none; height:var(--panelH);
+      padding:10px 12px calc(26px + env(safe-area-inset-bottom)) }
+
+    #sheetGrip{ position:fixed; left:0; right:0; z-index:60;
+      bottom:calc(var(--panelH) - 1px); height:var(--sheetGrip);
+      display:flex; align-items:center; justify-content:center;
+      touch-action:none; cursor:ns-resize; user-select:none; -webkit-user-select:none }
+    /* 🔴 2026-08-21 ── 印の色を currentColor（道具の字の色）にしていたので、
+       黒い盤の道具では【黒い印を黒い盤の上に 40% で描いて】いた＝見えない＝無いのと同じ。
+       ⭐ 白い丸＋黒い縁＋影にする。黒い盤でも白い紙でも絵の上でも必ず見える（iOS の作法と同じ）。 */
+    #sheetGrip::before{ content:""; width:44px; height:5px; border-radius:5px;
+      background:rgba(255,255,255,.94);
+      box-shadow:0 0 0 1px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.45); opacity:1 }
+    #sheetGrip.dragging::before{ background:#fff;
+      box-shadow:0 0 0 1px rgba(0,0,0,.6), 0 2px 7px rgba(0,0,0,.5) }
+
+    /* ⭐ 中を密着させる（詰めるのは隙間であって、つまみではない） */
+    label.h{ top:-10px; margin:0 -12px 6px; padding:6px 12px 5px }
+    .grp{ margin-bottom:12px }
+    .row{ padding:0; margin-bottom:1px }
+    .seg{ margin:4px 0 6px }
+    .btn{ margin-top:4px }
+    .note{ margin-top:5px; line-height:1.5 }
+    #meter,#pMeter,#gridMeter{ margin:6px 0; padding:7px 9px }
+
+    /* 🔴 セグメントのボタンが 28px しかなく指で狙えなかった（実測）。
+       ⚠️ ここは詰める側ではなく【広げる側】。密着とぶつかるが、押せない方が困る。 */
+    .seg button{ padding:9px 4px; min-height:36px }
+    .btn{ padding:10px 0; min-height:38px }
+    input[type=color]{ height:34px }
+    .chk input[type=checkbox]{ flex:0 0 44px; width:44px; height:26px }
+    .chk input[type=checkbox]::after{ width:22px; height:22px }
+    .chk input[type=checkbox]:checked::after{ transform:translateX(18px) }
+    /* ⭐ 他の道具と同じ大きさに揃える（この道具はもともと40px。伸びる分を抑えて36px） */
+    input[type=range]{ height:36px }
+    input[type=range]::-webkit-slider-thumb{ width:22px; height:22px; margin-top:-9px }
+    .lay .eye,.lay .up,.bd .up{ min-width:30px; min-height:30px }
+  }
+
+  /* ══ モバイルで勝手に寄らせない（no-auto-zoom-2026-08-22）══════════════════
+     🔴 木下＝2026-08-22「全道具のモバイル画面で言えることだが自動ズームはなしにしたい」
+     ⚠️ viewport の maximum-scale／user-scalable は【iOS に無視される】。
+     ⭐ iOS が寄るのは【文字を打つ欄の字が 16px 未満のとき】だけ。だから 16px にする。
+     ⚠️ つまみ(range)・色・チェックは寄らないので触らない。
+     🔴 class 付きの指定に【詳細度で負ける】ので !important を付ける（SAKUJI で実測した）。
+     ⚠️ @media の中だけ＝PC には1画素も効かない。このブロックを消せば完全に元へ戻る。 */
+  /* ⭐自分の符を並べる欄（家の入力と同じ見た目に揃える） */
+  .ta{width:100%;margin-top:6px;border:1px solid var(--line);border-radius:8px;
+    background:var(--capsule);color:var(--fg);font-family:inherit;font-size:13px;
+    line-height:1.6;padding:8px 10px;resize:vertical;min-height:44px;display:none}
+  .ta:focus{outline:none;border-color:rgba(28,28,30,.34)}
+
+  @media (max-width:760px), (pointer:coarse) and (max-width:1024px){
+    input:not([type=range]):not([type=color]):not([type=checkbox]):not([type=radio]):not([type=file]):not([type=button]),
+    select, textarea{ font-size:16px !important; }
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <canvas id="ov"></canvas>
+  <div id="drop">写真をここに落とす</div>
+  <div id="zoom">
+    <button id="z_out" title="引く">－</button>
+    <span class="z" id="z_lab">100%</span>
+    <button id="z_in" title="寄る">＋</button>
+    <button id="z_fit" title="画面に合わせる">合わせる</button>
+    <button id="z_one" title="原寸">原寸</button>
+  </div>
+  <div id="stat">写真を入れる（落としてもいい）</div>
+</div>
+
+<div id="panel">
+  <h1>符　F U</h1>
+  <div class="sub">写真を<b>絵文字</b>で組み直す。<br>
+    出てくるのは絵であり、同時に<b>そのまま貼れる文字</b>。
+    <a href="/interaction-design.html" style="color:inherit;opacity:.6">← 木下スタジオ</a></div>
+
+  <div class="grp">
+    <label class="h">写真</label>
+    <button class="btn solid" id="b_pick">写真を入れる</button>
+    <input type="file" id="f_img" accept="image/*" class="hide">
+    <div class="btns2">
+      <button class="btn" id="b_demo">見本にする</button>
+      <button class="btn" id="b_clear">外す</button>
+    </div>
+    <div class="note">⭐ スマホなら<b>撮った写真</b>をそのまま選べる／PC は画面に<b>落として</b>もいい<br>
+      ⚠️ 写真はこの端末から<b>どこにも送らない</b>（全部この画面の中で焼いている）</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">升 ── どれだけ刻むか</label>
+    <div class="row"><span class="n">横の数</span><output id="o_grid"></output></div>
+    <input type="range" id="r_grid" min="8" max="160" step="1">
+    <div class="row"><span class="n">隙間</span><output id="o_gap"></output></div>
+    <input type="range" id="r_gap" min="0" max="40" step="1">
+    <div class="note">⭐ 横の数だけ決めれば、縦は<b>写真の比</b>から出る（1マスは必ず正方形）<br>
+      ⚠️ 増やすほど絵に近づくが、<b>絵文字が小さくなって何の記号か読めなくなる</b>。その境目を探す道具</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">符 ── 何で組むか</label>
+    <div class="seg" id="s_set">
+      <button data-v="all">ぜんぶ</button><button data-v="face">顔</button>
+      <button data-v="nat">自然</button><button data-v="thing">もの</button>
+    </div>
+    <div class="seg" id="s_set2" style="margin-top:6px">
+      <button data-v="sign">記号</button><button data-v="block">四角</button>
+      <button data-v="mine">自分の</button>
+    </div>
+    <textarea id="t_mine" class="ta" rows="2" placeholder="ここに絵文字や字を並べる（例：木下studio●○◆）"></textarea>
+    <div class="note">⭐ 選んだ組の絵文字を<b>1つずつ実際に描いて色を測る</b>。だから見た目どおりに合う<br>
+      ⚠️ 絵文字の絵は<b>端末の書体</b>で決まる（iPhone と Windows では別の絵になる）</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">色</label>
+    <div class="row"><span class="n">地</span><input type="color" id="c_paper"></div>
+    <label class="chk"><input type="checkbox" id="k_alpha"> 地を敷かない（透ける PNG）</label>
+    <div class="row"><span class="n">明るさ</span><output id="o_bri"></output></div>
+    <input type="range" id="r_bri" min="-60" max="60" step="1">
+    <div class="row"><span class="n">鮮やかさ</span><output id="o_sat"></output></div>
+    <input type="range" id="r_sat" min="0" max="200" step="5">
+    <div class="row"><span class="n">当たりの強さ</span><output id="o_con"></output></div>
+    <input type="range" id="r_con" min="-50" max="80" step="1">
+    <div class="note">🔴 <b>地の色は選び方そのものに効く</b>。絵文字は透けている所があるので、
+      <b>地に載せて初めて色が決まる</b>（黒地の上と白地の上では選ばれる符が変わる）</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">選び方</label>
+    <div class="seg" id="s_how">
+      <button data-v="rgb">色で選ぶ</button><button data-v="lum">明るさで選ぶ</button>
+    </div>
+    <div class="row"><span class="n">ばらつき</span><output id="o_var"></output></div>
+    <input type="range" id="r_var" min="0" max="100" step="1">
+    <div class="note">⭐ <b>ばらつき</b>＝いちばん近い1つに固定せず、近い順から選ぶ幅を広げる。
+      同じ符が続くのが崩れて、<b>絵ではなく文字の面</b>に見えてくる<br>
+      ⚠️ 選び方は<b>場所で決まる</b>（乱数ではない）＝同じ写真・同じつまみなら<b>毎回同じ絵</b></div>
+  </div>
+
+  <div class="grp">
+    <label class="h">出す</label>
+    <div class="row"><span class="n">長辺</span><output id="o_long"></output></div>
+    <input type="range" id="r_long" min="600" max="4000" step="100">
+    <button class="btn solid" id="b_png">PNG で出す</button>
+    <div class="btns2">
+      <button class="btn" id="b_txt">文字をコピー</button>
+      <button class="btn" id="b_txtdl">文字で保存</button>
+    </div>
+    <button class="btn" id="b_shot">画面を撮る</button>
+    <div class="note">⭐⭐ <b>文字をコピー</b>＝この絵は<b>文字の格子</b>なので、そのまま
+      メモや SNS に貼れる。<b>絵として出すか、文字として出すか</b>を選べるのがこの道具<br>
+      ⚠️ 貼った先の書体で絵が変わる／等幅でないと格子が崩れる</div>
+    <div class="meter" id="meter"></div>
+  </div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════
+   符 FU ── 写真を絵文字で組み直す（2026-08-28）
+
+   木下＝「画像を読み込むとこのような表現ができる」（絵文字で絵を組んだ参考）
+
+   ⭐⭐ 芯＝【絵は、記号で組み直せる】。出てくるのは画像であり、
+      同時に【そのまま貼れる文字】。どちらでも出せるのがこの道具。
+   🔴🔴 いちばんの落とし穴＝「絵文字の色」は表から引けない。
+      ① 絵文字は【透明の余白】を持つ。載せる地の色で見え方が変わる。
+      ② 絵文字ごとに【占める面積】が違う。同じ色でも小さい符は地が透けて薄く見える。
+      ⭐ だから色は【実際に描いて測る】。地に合成した色で比べる。
+         表に色を書き並べる作りにすると、黒地に替えた瞬間に全部外れる。
+   ⚠️ 貌 BOU は「写真 → 升目と色数」（色を減らす）。ここは「写真 → 符」＝
+      升目を【他人の絵】で埋める。入口は同じでも出口が違う。役割は重ねない。
+   ⚠️ 絵文字の絵は端末の書体で決まる（iPhone と Windows では別の絵になる）。
+      だから色は起動時に【その端末で】測り直す。
+   ⚠️ 写真はこの端末から出さない（読むのも焼くのも画面の中だけ）。
+   ══════════════════════════════════════════════════════════════ */
+const el = id => document.getElementById(id);
+const stage = el('stage'), cv = el('cv'), cx = cv.getContext('2d', { willReadFrequently:true });
+const ov = el('ov'), ox = ov.getContext('2d');
+const stat = m => { el('stat').textContent = m; };
+
+/* ── 触れるもの（1か所に持つ＝画面も PNG も文字も同じものを見る） ── */
+const P = { grid:56, gap:0, set:'all', mine:'', paper:'#0e0e10', alpha:0,
+            bri:0, sat:100, con:0, how:'rgb', vary:0, long:1600 };
+let IMG = null;
+
+/* ══ 符の組 ══
+   ⚠️ 並べるのは【絵として面積のあるもの】だけ。空白や幅0の記号を混ぜると格子が崩れる。 */
+const SETS = {
+  face: [...'😀😃😄😁😆😅😂🙂🙃😉😊😇🥰😍🤩😘😗😚😙🥲😋😛😜🤪😝🤑🤗🤭🤫🤔🤐🤨😐😑😶😏😒🙄😬😮😯😲😴🤤😪😵🤯🤠🥳😎🤓🧐😕😟🙁😮‍💨😢😭😤😠😡🤬😈👿💀☠️👻👽🤖😺😸😹😻😼😽🙀😿😾'],
+  nat:  [...'🌱🌿🍀🍁🍂🍃🌵🌴🌳🌲🌷🌹🥀🌺🌸🌼🌻🌞🌝🌚🌛🌜🌙⭐🌟✨⚡🔥💧🌊❄️☃️⛄🌈☁️⛅🌤️🌧️⛈️🍇🍈🍉🍊🍋🍌🍍🥭🍎🍏🍐🍑🍒🍓🥝🥥🥑🍆🥔🥕🌽🌶️🥒🥬🥦🧄🧅🍄🥜🌰'],
+  thing:[...'⌚📱💻⌨️🖥️🖨️🖱️💽💾💿📀📷📸📹🎥📞☎️📟📠📺📻🎙️⏰⌛⏳📡🔋🔌💡🔦🕯️🪔🧯🛢️💸💵💴💶💷💰💳💎⚖️🧰🔧🔨⚒️🛠️⛏️🔩⚙️🧱⛓️🧲🔫💣🧨🪓🔪🗡️⚔️🛡️🚬⚰️🏺🔮📿'],
+  sign: [...'⬛⬜◼️◻️◾◽▪️▫️🔶🔷🔸🔹🔺🔻💠🔘🔴🟠🟡🟢🔵🟣🟤⚫⚪🟥🟧🟨🟩🟦🟪🟫✅❎✔️✖️➕➖➗♾️‼️⁉️❓❔❕❗〽️⚠️🚸🔱⚜️🔰♻️✳️❇️™️💯🆎🆑🆒🆓🆔🆕🆖🆗🆙🆚🈁🈂️🈚🈯🈲🈳🈴🈵🈶🈷️🈸🈹🈺🉐🉑'],
+  block:[...'█▉▊▋▌▍▎▏░▒▓■□▪▫◆◇◈●○◐◑◒◓◘◙▲△▼▽◤◥◣◢┃┏┓┗┛╋═║╬♦♠♣♥'],
+};
+SETS.all = [...new Set([...SETS.face, ...SETS.nat, ...SETS.thing, ...SETS.sign])];
+function glyphs(){
+  if(P.set === 'mine'){
+    const g = [...(P.mine || '')].filter(c => c.trim().length);
+    return g.length ? g : SETS.block;
+  }
+  return SETS[P.set] || SETS.all;
+}
+
+/* ══⭐⭐ 符の色を【描いて測る】══
+   ⭐ 手順：透明の板に1つ描く → 画素を全部読む →
+      ① 平均の色（アルファで重みを付ける＝透けている所は数えない）
+      ② 占有率（アルファの平均＝どれだけ面積を持っているか）
+   ⭐ 地に載せたときの色 ＝ 地 + (符の色 − 地) × 占有率。
+      🔴 ここを飛ばして「符の色」だけで比べると、黒地で全部が明るく見えて総崩れになる。
+   ⚠️ 測るのは1回だけ。組と書体が同じなら結果は変わらないので控えておく。 */
+const MS = 24;                                   /* 測るときの1マスの画素（小さくて十分） */
+const _mc = document.createElement('canvas');
+_mc.width = MS; _mc.height = MS;
+const _mx = _mc.getContext('2d', { willReadFrequently:true });
+const _palCache = new Map();
+function palette(){
+  const gs = glyphs();
+  const key = P.set + '|' + (P.set === 'mine' ? P.mine : '');
+  let base = _palCache.get(key);
+  if(!base){
+    base = [];
+    _mx.textAlign = 'center'; _mx.textBaseline = 'middle';
+    _mx.font = Math.round(MS*0.82) + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",system-ui,sans-serif';
+    for(const ch of gs){
+      _mx.clearRect(0, 0, MS, MS);
+      _mx.fillStyle = '#888';                    /* 色を持たない字（記号）は灰で測る */
+      _mx.fillText(ch, MS/2, MS/2 + MS*0.04);
+      const d = _mx.getImageData(0, 0, MS, MS).data;
+      let r=0,g=0,b=0,a=0;
+      for(let i=0;i<d.length;i+=4){ const al=d[i+3]/255; r+=d[i]*al; g+=d[i+1]*al; b+=d[i+2]*al; a+=al; }
+      const n = d.length/4;
+      if(a < n*0.02) continue;                   /* ⚠️ ほぼ何も出ない字は捨てる（空白・幅0） */
+      base.push({ ch, r:r/a, g:g/a, b:b/a, cov:a/n });
+    }
+    _palCache.set(key, base);
+  }
+  /* 地に合成した色を、地が変わるたびに出し直す（測り直しはしない＝速い） */
+  const [pr, pg, pb] = hex2rgb(P.paper);
+  return base.map(e => ({ ch:e.ch,
+    R: pr + (e.r - pr) * e.cov,
+    G: pg + (e.g - pg) * e.cov,
+    B: pb + (e.b - pb) * e.cov }));
+}
+
+/* ══ 版面と、写真の読み方（貌 BOU と同じ作り＝道具ごとに変えない） ══ */
+function frame(){
+  if(!IMG) return { w:1200, h:1200 };
+  return { w:IMG.naturalWidth || IMG.width, h:IMG.naturalHeight || IMG.height };
+}
+const _samp = document.createElement('canvas');
+const _sx = _samp.getContext('2d', { willReadFrequently:true });
+/* ⭐ 1マス1色はブラウザの縮小（面で平均する）をそのまま使う＝速くて正しい */
+function sample(cols){
+  if(!IMG) return null;
+  const f = frame();
+  const rows = Math.max(1, Math.round(cols * f.h / f.w));
+  _samp.width = cols; _samp.height = rows;
+  _sx.clearRect(0, 0, cols, rows);
+  _sx.imageSmoothingEnabled = true; _sx.imageSmoothingQuality = 'high';
+  _sx.drawImage(IMG, 0, 0, cols, rows);
+  return { cols, rows, d:_sx.getImageData(0, 0, cols, rows).data };
+}
+const hex2rgb = h => { const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(h || '');
+  return m ? [parseInt(m[1],16), parseInt(m[2],16), parseInt(m[3],16)] : [0,0,0]; };
+const cl255 = v => v < 0 ? 0 : v > 255 ? 255 : v;
+
+/* 明るさ・鮮やかさ・当たりの強さ。⚠️ 既定（0/100/0）ならこの道を通らない */
+function tone(r, g, b){
+  if(!P.bri && P.sat === 100 && !P.con) return [r, g, b];
+  if(P.con){ const k = 1 + P.con/100;
+    r = (r-128)*k+128; g = (g-128)*k+128; b = (b-128)*k+128; }
+  if(P.sat !== 100){ const s = P.sat/100, L = r*0.299 + g*0.587 + b*0.114;
+    r = L + (r-L)*s; g = L + (g-L)*s; b = L + (b-L)*s; }
+  if(P.bri){ r += P.bri*2.55; g += P.bri*2.55; b += P.bri*2.55; }
+  return [cl255(r), cl255(g), cl255(b)];
+}
+/* ⚠️ 場所だけで決まる値＝毎回同じ絵になる（乱数は使わない） */
+function hash2(x, y){
+  let h = (x*374761393 + y*668265263) | 0;
+  h = Math.imul(h ^ (h>>>13), 1274126177); h ^= h>>>16;
+  return (h>>>0) / 4294967296;
+}
+
+/* ══⭐ 符を選ぶ ══
+   ⭐ 近さは【目の重み】をかけた距離（緑を重く見る＝人の目に合う）。
+   ⭐ ばらつき＝近い順の上位いくつかから、場所で決まる値で1つ引く。
+      🔴 乱数にしない ── 同じ写真・同じつまみなら毎回同じ絵が出ること。 */
+function pick(pal, r, g, b, x, y){
+  const top = 1 + Math.round(P.vary/100 * Math.min(11, pal.length - 1));
+  if(top <= 1){
+    let bi = 0, bd = Infinity;
+    for(let i = 0; i < pal.length; i++){
+      const e = pal[i], dr = e.R-r, dg = e.G-g, db = e.B-b;
+      const d = dr*dr*0.30 + dg*dg*0.59 + db*db*0.11;
+      if(d < bd){ bd = d; bi = i; }
+    }
+    return pal[bi];
+  }
+  const best = [];
+  for(let i = 0; i < pal.length; i++){
+    const e = pal[i], dr = e.R-r, dg = e.G-g, db = e.B-b;
+    const d = dr*dr*0.30 + dg*dg*0.59 + db*db*0.11;
+    if(best.length < top){ best.push({ e, d }); best.sort((A,B)=>A.d-B.d); }
+    else if(d < best[top-1].d){ best[top-1] = { e, d }; best.sort((A,B)=>A.d-B.d); }
+  }
+  return best[Math.min(best.length-1, Math.floor(hash2(x, y) * best.length))].e;
+}
+
+/* ══⭐ 組む ── 画面も PNG も文字も【この1本】から出る ══
+   ⭐ 返すのは「何をどこに置いたか」の一覧。絵に描くのも文字にするのも、これを読むだけ。
+      🔴 絵と文字で別々に組むと、片方だけ直したときに食い違う。 */
+function build(cols){
+  const s = sample(cols);
+  if(!s) return null;
+  const pal = palette();
+  if(!pal.length) return null;
+  const lum = (P.how === 'lum');
+  const out = new Array(s.rows);
+  for(let y = 0; y < s.rows; y++){
+    const row = new Array(s.cols);
+    for(let x = 0; x < s.cols; x++){
+      const i = (y*s.cols + x)*4;
+      let [r, g, b] = tone(s.d[i], s.d[i+1], s.d[i+2]);
+      if(lum){ const L = r*0.299 + g*0.587 + b*0.114; r = g = b = L; }
+      row[x] = pick(pal, r, g, b, x, y);
+    }
+    out[y] = row;
+  }
+  return { cols:s.cols, rows:s.rows, cells:out };
+}
+
+/* ══ 焼く ══ */
+function paint(g, W, H, B){
+  const cw = W / B.cols, ch = H / B.rows;
+  const size = Math.min(cw, ch) * (1 - P.gap/100);
+  g.clearRect(0, 0, W, H);
+  if(!P.alpha){ g.fillStyle = P.paper; g.fillRect(0, 0, W, H); }
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = Math.round(size) + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",system-ui,sans-serif';
+  g.fillStyle = '#888';                   /* 色を持たない字はこの色で出る */
+  for(let y = 0; y < B.rows; y++){
+    for(let x = 0; x < B.cols; x++){
+      g.fillText(B.cells[y][x].ch, x*cw + cw/2, y*ch + ch/2 + ch*0.04);
+    }
+  }
+  return B.cols * B.rows;
+}
+/* 文字にする（⭐ 絵と同じ一覧から作る＝食い違わない） */
+function asText(B){
+  return B.cells.map(row => row.map(c => c.ch).join('')).join('\n');
+}
+
+/* ══ 画面 ══ */
+let LAST = null;
+function render(){
+  const f = frame();
+  const k = Math.min(1400 / Math.max(f.w, f.h), 2);
+  cv.width = Math.max(2, Math.round(f.w * k)); cv.height = Math.max(2, Math.round(f.h * k));
+  ov.width = cv.width; ov.height = cv.height;
+  ox.clearRect(0, 0, ov.width, ov.height);
+  cx.clearRect(0, 0, cv.width, cv.height);
+  if(!IMG){ el('meter').textContent = '写真を入れると始まる'; return; }
+  const t0 = performance.now();
+  LAST = build(Math.max(4, Math.round(P.grid)));
+  if(!LAST){ el('meter').textContent = '符が1つも無い'; return; }
+  paint(cx, cv.width, cv.height, LAST);
+  const ms = Math.round(performance.now() - t0);
+  el('meter').textContent =
+    `${LAST.cols} × ${LAST.rows} 升（符 ${(LAST.cols*LAST.rows).toLocaleString()} 個）\n`
+    + `組 ${palette().length} 種・${ms} ms\n`
+    + `版面 ${Math.round(f.w)} × ${Math.round(f.h)}`;
+  fitView();
+}
+/* ══ 盤（窓）══ ⭐ 中の紙は動かさず、見る側だけ動かす（出る絵は1画素も変わらない） */
+const V = { fit:1, z:1, x:0, y:0 };
+function applyView(){
+  const s = V.fit * V.z;
+  const t = `translate(${V.x.toFixed(1)}px,${V.y.toFixed(1)}px) scale(${s})`;
+  cv.style.transform = t; ov.style.transform = t;
+  el('z_lab').textContent = Math.round(s * 100) + '%';
+}
+function fitView(){
+  const r = stage.getBoundingClientRect(), pad = r.width < 560 ? 16 : 30;
+  V.fit = Math.min((r.width - pad*2) / cv.width, (r.height - pad*2) / cv.height) || 1;
+  V.z = 1;
+  V.x = (r.width - cv.width * V.fit) / 2;
+  V.y = (r.height - cv.height * V.fit) / 2;
+  applyView();
+}
+function zoomAt(px, py, f){
+  const old = V.fit * V.z, z = Math.min(30, Math.max(0.1, V.z * f)), nw = V.fit * z;
+  V.x = px - (px - V.x) * (nw / old);
+  V.y = py - (py - V.y) * (nw / old);
+  V.z = z; applyView();
+}
+function zoomCenter(f){ const r = stage.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, f); }
+stage.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = stage.getBoundingClientRect();
+  zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * (e.ctrlKey ? 0.010 : 0.0022)));
+}, { passive:false });
+el('z_in').onclick = () => zoomCenter(1.25);
+el('z_out').onclick = () => zoomCenter(1/1.25);
+el('z_fit').onclick = fitView;
+el('z_one').onclick = () => { const r = stage.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, (1/V.fit)/V.z); };
+addEventListener('resize', () => { if(V.z === 1) fitView(); else applyView(); });
+/* 指・マウスで動かす（1本＝動かす／2本＝寄る） */
+{
+  const pts = new Map();
+  let pan = null, pinch = null;
+  stage.addEventListener('pointerdown', e => {
+    pts.set(e.pointerId, e);
+    if(pts.size === 1){ pan = { x:e.clientX, y:e.clientY, vx:V.x, vy:V.y }; stage.classList.add('panning'); }
+    else if(pts.size === 2){ const [a,b] = [...pts.values()];
+      pinch = { d:Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY) }; pan = null; }
+  });
+  stage.addEventListener('pointermove', e => {
+    if(!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, e);
+    if(pinch && pts.size === 2){
+      const [a,b] = [...pts.values()];
+      const d = Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
+      const r = stage.getBoundingClientRect();
+      zoomAt((a.clientX+b.clientX)/2 - r.left, (a.clientY+b.clientY)/2 - r.top, d / (pinch.d || d));
+      pinch.d = d; return;
+    }
+    if(pan){ V.x = pan.vx + (e.clientX - pan.x); V.y = pan.vy + (e.clientY - pan.y); applyView(); }
+  });
+  const up = e => { pts.delete(e.pointerId); if(pts.size < 2) pinch = null;
+                    if(!pts.size){ pan = null; stage.classList.remove('panning'); } };
+  stage.addEventListener('pointerup', up);
+  stage.addEventListener('pointercancel', up);
+}
+
+
+/* ══ 写真を受ける（ボタンからでも、落としてからでも同じ道）══ */
+function takeFile(f){
+  if(!f || !/^image\//.test(f.type)){ stat('画像を入れる'); return; }
+  const u = URL.createObjectURL(f);
+  const im = new Image();
+  im.onload = () => { IMG = im; stat(`読んだ ${im.naturalWidth}×${im.naturalHeight}`); render(); };
+  im.onerror = () => stat('🔴 この画像は読めなかった');
+  im.src = u;
+}
+el('b_pick').onclick = () => el('f_img').click();
+el('f_img').addEventListener('change', e => { takeFile(e.target.files[0]); e.target.value = ''; });
+el('b_clear').onclick = () => { IMG = null; LAST = null; render(); stat('外した'); };
+addEventListener('dragover', e => { e.preventDefault(); el('drop').classList.add('on'); });
+addEventListener('dragleave', e => { if(e.relatedTarget === null) el('drop').classList.remove('on'); });
+addEventListener('drop', e => { e.preventDefault(); el('drop').classList.remove('on');
+  takeFile([...e.dataTransfer.files].find(x => /^image\//.test(x.type))); });
+
+/* 見本＝空の画面から始めない（⭐ 起動した瞬間に何が起きる道具か分かる） */
+function loadDemo(){
+  const c = document.createElement('canvas'); c.width = 900; c.height = 900;
+  const g = c.getContext('2d');
+  g.fillStyle = '#0a0d16'; g.fillRect(0, 0, 900, 900);
+  let gr = g.createRadialGradient(430, 330, 30, 430, 330, 520);
+  gr.addColorStop(0, '#fff6d8'); gr.addColorStop(.35, '#ffb44d'); gr.addColorStop(1, '#0a0d16');
+  g.fillStyle = gr; g.beginPath(); g.arc(430, 330, 300, 0, 6.2832); g.fill();
+  g.fillStyle = '#1b3a6b'; g.beginPath(); g.moveTo(0, 900); g.lineTo(0, 640);
+  g.lineTo(230, 470); g.lineTo(430, 690); g.lineTo(640, 520); g.lineTo(900, 760);
+  g.lineTo(900, 900); g.closePath(); g.fill();
+  g.fillStyle = '#0d2246'; g.beginPath(); g.moveTo(0, 900); g.lineTo(0, 800);
+  g.lineTo(320, 660); g.lineTo(620, 820); g.lineTo(900, 700); g.lineTo(900, 900); g.closePath(); g.fill();
+  const im = new Image();
+  im.onload = () => { IMG = im; render(); stat('見本を出した（自分の写真を落とすと替わる）'); };
+  im.src = c.toDataURL();
+}
+el('b_demo').onclick = loadDemo;
+
+/* ══ つまみ（表1つで回す＝足すときはここに1行）══ */
+const FMT = { grid:v=>v+' 升', gap:v=>v+'%', bri:v=>(v>0?'+':'')+v, sat:v=>v+'%',
+              con:v=>(v>0?'+':'')+v, vary:v=>v+'%', long:v=>v+'px' };
+['grid','gap','bri','sat','con','vary','long'].forEach(k => {
+  const r = el('r_'+k), o = el('o_'+k);
+  if(!r) return;
+  r.value = P[k];
+  const show = () => { if(o) o.textContent = (FMT[k] || String)(+r.value); };
+  show();
+  r.addEventListener('input', () => { P[k] = +r.value; show(); render(); save(); });
+});
+function seg(id, key, after){
+  const box = el(id); if(!box) return;
+  box.querySelectorAll('button').forEach(b => {
+    b.classList.toggle('on', b.dataset.v === String(P[key]));
+    b.onclick = () => { P[key] = b.dataset.v;
+      /* ⚠️ 組は2段に分けて並べているので、両方の印を付け直す */
+      ['s_set','s_set2'].forEach(sid => { const bx = el(sid); if(bx)
+        bx.querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.v === String(P[key]))); });
+      box.querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.v === String(P[key])));
+      if(after) after(); render(); save(); };
+  });
+}
+seg('s_set', 'set', () => { el('t_mine').style.display = P.set === 'mine' ? '' : 'none'; });
+seg('s_set2','set', () => { el('t_mine').style.display = P.set === 'mine' ? '' : 'none'; });
+seg('s_how', 'how');
+el('t_mine').addEventListener('input', e => { P.mine = e.target.value; _palCache.clear(); render(); save(); });
+el('c_paper').value = P.paper;
+el('c_paper').addEventListener('input', e => { P.paper = e.target.value; render(); save(); });
+el('k_alpha').addEventListener('change', e => { P.alpha = e.target.checked ? 1 : 0; render(); save(); });
+
+/* ══ 覚える（つまみだけ。写真は覚えない＝端末から出さない作法と揃える）══ */
+const KEY = 'fu.v1';
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(P)); }catch(_){} }
+(function load(){
+  let o = null; try{ o = JSON.parse(localStorage.getItem(KEY)); }catch(_){}
+  if(o) Object.assign(P, o);
+  ['grid','gap','bri','sat','con','vary','long'].forEach(k => {
+    const r = el('r_'+k), out = el('o_'+k);
+    if(r){ r.value = P[k]; if(out) out.textContent = (FMT[k] || String)(+r.value); }
+  });
+  el('c_paper').value = P.paper; el('k_alpha').checked = !!P.alpha;
+  el('t_mine').value = P.mine || '';
+  el('t_mine').style.display = P.set === 'mine' ? '' : 'none';
+  ['s_set','s_set2'].forEach(id => { const b = el(id); if(b)
+    b.querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.v === P.set)); });
+  const h = el('s_how'); if(h) h.querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.v === P.how));
+})();
+
+/* ══ 出す ══
+   ⭐ 焼くときは【版面の長辺】で焼き直す＝画面の大きさに縛られない。 */
+function dl(blob, name){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+el('b_png').onclick = () => {
+  if(!IMG || !LAST){ stat('先に写真を入れる'); return; }
+  const f = frame(), k = P.long / Math.max(f.w, f.h);
+  const c = document.createElement('canvas');
+  c.width = Math.max(2, Math.round(f.w*k)); c.height = Math.max(2, Math.round(f.h*k));
+  paint(c.getContext('2d'), c.width, c.height, LAST);
+  c.toBlob(b => { dl(b, 'fu.png'); stat(`PNG を出した（${c.width}×${c.height}）`); }, 'image/png');
+};
+el('b_shot').onclick = () => {
+  if(!IMG){ stat('先に写真を入れる'); return; }
+  cv.toBlob(b => { dl(b, 'fu-screen.png'); stat('画面を撮った'); }, 'image/png');
+};
+/* ⭐⭐ この道具の芯 ── 出てくるのは絵であり、そのまま貼れる文字でもある */
+el('b_txt').onclick = async () => {
+  if(!LAST){ stat('先に写真を入れる'); return; }
+  const t = asText(LAST);
+  try{ await navigator.clipboard.writeText(t); stat(`文字をコピーした（${LAST.rows} 行）`); }
+  catch(_){ dl(new Blob([t], { type:'text/plain' }), 'fu.txt'); stat('コピーできなかったので保存した'); }
+};
+el('b_txtdl').onclick = () => {
+  if(!LAST){ stat('先に写真を入れる'); return; }
+  dl(new Blob([asText(LAST)], { type:'text/plain;charset=utf-8' }), 'fu.txt');
+  stat(`文字で保存した（${LAST.rows} 行）`);
+};
+
+/* 起動＝見本を出す。⚠️ 絵文字の書体が届いてから測る（届く前だと全部の色が外れる） */
+if(document.fonts && document.fonts.ready) document.fonts.ready.then(loadDemo);
+else loadDemo();
+</script>
+<script>
+(function(){
+  'use strict';
+  const KEY = location.pathname.replace(/\W+/g,'_') + '.panelH.v1';
+  const SNAP = [26, 42, 78];
+  let grip = null;
+
+  const panel = () => document.getElementById('panel');
+  /* ⭐ 下段になっているか＝【画面いっぱいの幅で、下端が画面の底にある】。
+     ⚠️ position:fixed で判定してはいけない。道具によっては縦積み(static)のまま
+        同じ2段レイアウトになっている（2026-08-20 実測。fixed で見ていて取りこぼした）。 */
+  const isSheet = () => {
+    const p = panel(); if(!p) return false;
+    const b = p.getBoundingClientRect();
+    return b.width >= innerWidth - 3
+        && b.bottom >= innerHeight - 3
+        && b.top > 8;                       /* 上に盤がある＝全画面パネルではない */
+  };
+  /* ⭐ 端で止める。⚠️ 横向き（高さ500px未満）で目一杯引くと盤が潰れる */
+  const clamp = v => Math.max(18, Math.min(innerHeight < 500 ? 62 : 86, v));
+  const setH = vh => {
+    document.documentElement.style.setProperty('--panelH', clamp(vh).toFixed(1) + 'vh');
+    try{ window.dispatchEvent(new Event('resize')); }catch(_){}
+  };
+  const curH = () => {
+    const p = panel(); if(!p) return 0;
+    return p.getBoundingClientRect().height / innerHeight * 100;
+  };
+
+  function build(){
+    if(grip) return;
+    grip = document.createElement('div');
+    grip.id = 'sheetGrip';
+    grip.title = 'ドラッグで高さを変える／タップで段を切り替える';
+    document.body.appendChild(grip);
+    let drag = null;
+    grip.addEventListener('pointerdown', e => {
+      e.preventDefault(); grip.setPointerCapture(e.pointerId);
+      grip.classList.add('dragging');
+      drag = { y:e.clientY, h:curH(), moved:false };
+    });
+    grip.addEventListener('pointermove', e => {
+      if(!drag) return;
+      const d = (drag.y - e.clientY) / innerHeight * 100;
+      if(Math.abs(d) > 1) drag.moved = true;
+      setH(drag.h + d);
+    });
+    const end = () => {
+      if(!drag) return;
+      grip.classList.remove('dragging');
+      if(!drag.moved){
+        /* ⚠️ 上限で止まっている段を指しても何も起きない＝無反応に見える。
+           実際に届く高さかで判断し、届かないなら一番小さい段へ折り返す。 */
+        const h = curH();
+        const next = SNAP.find(v => clamp(v) > h + 2);
+        setH(next === undefined ? SNAP[0] : next);
+      }
+      try{ localStorage.setItem(KEY, String(Math.round(curH()*10)/10)); }catch(_){}
+      drag = null;
+    };
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
+  }
+  function drop(){
+    if(!grip) return;
+    grip.remove(); grip = null;
+    document.documentElement.style.removeProperty('--panelH');
+  }
+  function sync(){
+    if(isSheet()){
+      build();
+      let v = null; try{ v = parseFloat(localStorage.getItem(KEY)); }catch(_){}
+      if(v > 0) setH(v);
+    }else drop();
+  }
+  addEventListener('resize', () => { if(!grip) sync(); });
+  addEventListener('orientationchange', () => setTimeout(sync, 200));
+  if(document.readyState === 'loading') addEventListener('DOMContentLoaded', sync);
+  else sync();
+})();
+</script>
+</body>
+</html>
