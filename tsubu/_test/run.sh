@@ -74,6 +74,10 @@ echo "── ⑥ 動画（落ちる・集まる・漂う）＝最初の字・な
 node "$HERE/_test/anivideo.mjs" "http://localhost:$PORT/tsubu/" || NG=1
 
 echo
+echo "── ⑦ 写真から形を作る（しきい・反転・字に戻す）"
+node "$HERE/_test/photo.mjs" "http://localhost:$PORT/tsubu/" || NG=1
+
+echo
 [ "$NG" = 0 ] && echo "✅ 全部通った" || echo "🔴 落ちたものがある（上を見る）"
 
 # ⭐ SVG を読み込めるか（2026-08-26 木下「Maku と Tsubu で svg 読み込みを確認しないとだね」）
