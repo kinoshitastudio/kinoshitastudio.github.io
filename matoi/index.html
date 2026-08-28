@@ -214,12 +214,12 @@
 
 <div id="panel">
   <h1>纏 MATOI</h1>
-  <div class="sub">ロゴを物に<b>まとわせる</b>。貼るのではなく、下の写真の<b>しわと陰影を借りる</b> ── だからそこに在るように見える。</div>
+  <div class="sub">作ったものを物に<b>まとわせる</b>。貼るのではなく、下の写真の<b>しわと陰影を借りる</b> ── だからそこに在るように見える。</div>
 
   <div class="grp">
-    <label class="h">① ロゴを入れる</label>
+    <label class="h">① 置くものを入れる（ロゴ・画像・動画）</label>
     <div class="btns2">
-      <button class="btn solid" id="b_logo">ロゴを選ぶ</button>
+      <button class="btn solid" id="b_logo">選ぶ</button>
       <button class="btn" id="b_logoClear">外す</button>
     </div>
     <!-- 🔴 accept を書かない（2026-08-28 木下「svgやpngは入れれる？今入れたが何も反応しなかった」）
@@ -235,9 +235,20 @@
     <div class="seg" id="s_cut">
       <button data-v="1" class="on">白い地を抜く</button><button data-v="0">そのまま入れる</button>
     </div>
-    <div class="note">⭐⭐ <b>白い地のロゴを入れても、地は自動で抜く</b>
+    <div class="note">⭐⭐ <b>ロゴでも、絵でも、動画でもいい</b>（mp4 / mov / webm）。
+      動画は面の上でそのまま動く<br>
+      ⭐⭐ <b>白い地のものを入れても、地は自動で抜く</b>
       （四隅が同じ白のときだけ。写真や、白地を残したいものは「そのまま入れる」）<br>
       ⭐ 色を差し替えられる＝<b>白版・黒版を1枚ずつ出せる</b>（企業案件で要る）</div>
+    <div id="vidbox" style="display:none">
+      <div class="btns2">
+        <button class="btn" id="b_play">▶ 動かす</button>
+        <button class="btn" id="b_stop">■ 止める</button>
+      </div>
+      <div class="row"><span class="n">コマ</span><output id="o_time">0.00s</output></div>
+      <input type="range" id="r_time" min="0" max="1000" value="0">
+      <div class="note">⚠️ 動かしている間は<b>粗く描く</b>（止めると細かくなる）</div>
+    </div>
   </div>
 
   <div class="grp">
@@ -293,8 +304,16 @@
     <div id="meter"></div>
     <button class="btn solid" id="b_png">この1枚を PNG で出す</button>
     <button class="btn" id="b_all">⭐ 物ぜんぶをまとめて出す</button>
+    <div id="vidout" style="display:none">
+      <button class="btn solid" id="b_mp4">⭐ 動画で出す（mp4）</button>
+      <div class="seg" id="s_fps">
+        <button data-v="24">24 コマ/秒</button><button data-v="30" class="on">30 コマ/秒</button>
+      </div>
+      <div class="note">⚠️ <b>1コマずつ焼く</b>ので、長い動画は時間がかかる（画面の再生とは別）<br>
+        ⭐ できた mp4 は <b>連 REN</b> に放り込めば、他の物と1本に繋げられる</div>
+    </div>
     <div class="note">⭐ 提案書にそのまま貼れる大きさで出る（<b>長辺</b>で決める）<br>
-      ⭐⭐ <b>まとめて出す</b>＝いま並んでいる物すべてに同じロゴを入れて、1枚ずつ落とす</div>
+      ⭐⭐ <b>まとめて出す</b>＝いま並んでいる物すべてに同じものを入れて、1枚ずつ落とす</div>
   </div>
 </div>
 
@@ -326,7 +345,15 @@ const P = {
 let BG = null, BGKEY = 0;      /* 下地（写真でも、型を描いた紙でもいい）／差し替えた回数 */
 /* ⭐ 下地を差し替える道は【この1本】＝明暗の焼き直しも必ずここを通る */
 function setBG(src){ BG = src; BGKEY++; TONEKEY = ''; }
-let LOGO = null, LOGOKEY = 0;  /* 置くもの（画像でも、地を抜いた紙でもいい）／差し替えた回数 */
+let LOGO = null, LOGOKEY = 0;  /* 置くもの（画像でも、地を抜いた紙でも、動画でもいい）／差し替えた回数 */
+/* ⭐⭐ 置くものの大きさを読む道は【この1本】── 画像・canvas・動画で読む所が違う（2026-08-29）
+   🔴 6か所に散らすと「絵は動画なのに、大きさは前の画像のまま」になる（REN の CROP で踏んだ型） */
+function assetSize(x){
+  if(!x) return [0, 0];
+  return [x.videoWidth || x.naturalWidth || x.width || 0,
+          x.videoHeight || x.naturalHeight || x.height || 0];
+}
+const isVid = x => !!x && x.tagName === 'VIDEO';
 /* ⭐⭐ 白い地を抜く（2026-08-28）
    木下＝「svg で入れているのに、線だけでなく背景も出ている。png の背景透過も同じでは？」
    ⭐ 画素で確かめた＝道具は透明をちゃんと通していた（地なし PNG も SVG も、ロゴの角は下地の色）。
@@ -335,7 +362,7 @@ let LOGO = null, LOGOKEY = 0;  /* 置くもの（画像でも、地を抜いた�
    ⚠️ 門番にしない＝弾かずに、抜いてから知らせる（[[feedback_gatekeeper_can_block_the_right_thing]]）。
    ⚠️ 触らない条件を先に決める：もう透明がある／四隅がばらばら／白っぽくない／ほとんど抜けない。 */
 function dropBackdrop(img){
-  const W = img.naturalWidth || img.width, H = img.naturalHeight || img.height;
+  const [W, H] = assetSize(img);
   if(!W || !H) return null;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const q = c.getContext('2d', { willReadFrequently:true });
@@ -362,13 +389,23 @@ function dropBackdrop(img){
    ⚠️ 元の画像も控える＝「そのまま入れる」に切り替えたとき、抜く前に戻せる（抜いた紙からは戻せない） */
 let LOGO_SRC = null, LOGO_NAME = '';
 function setLOGO(img, name){
-  if(!img){ LOGO = null; LOGO_SRC = null; LOGOKEY++; return; }
+  /* ⚠️ 前のものが動画なら、必ず止めてから差し替える（裏で回り続けて重くなる） */
+  if(isVid(LOGO) && LOGO !== img){ try{ LOGO.pause(); }catch(_){} }
+  if(!img){ LOGO = null; LOGO_SRC = null; LOGOKEY++; showVid(); return; }
   LOGO_SRC = img; LOGO_NAME = name || '';
-  const cut = P.cut === false ? null : dropBackdrop(img);
+  /* ⚠️ 動画の地は抜かない＝コマごとに変わるものを、1コマ目だけ見て決められない */
+  const cut = (P.cut === false || isVid(img)) ? null : dropBackdrop(img);
   LOGO = cut ? cut.canvas : img; LOGOKEY++;
-  const W = img.naturalWidth || img.width, H = img.naturalHeight || img.height;
-  stat('ロゴを読んだ' + (name ? '：' + name : '') + '（' + W + '×' + H + '）'
-     + (cut ? ' ⭐ 白い地を抜いた（「地を抜く」を切れば元のまま）' : ''));
+  const [W, H] = assetSize(img);
+  stat((isVid(img) ? '動画を読んだ' : '置くものを読んだ') + (name ? '：' + name : '')
+     + '（' + W + '×' + H + (isVid(img) ? '・' + (img.duration || 0).toFixed(1) + '秒' : '') + '）'
+     + (cut ? ' ⭐ 白い地を抜いた（「そのまま入れる」で元のまま）' : ''));
+  showVid();
+  if(isVid(img)){
+    /* ⭐ コマを送ったら描き直す＝送った所が見えないと「動かない」に見える */
+    img.onseeked = () => { COARSE = 0; render(); syncTime(); };
+    syncTime();
+  }
 }
 let FACES = [], cur = 0;
 
@@ -1011,7 +1048,7 @@ function drawFace(ctx, fc, W, H){
   const T = bakeTone(W, H);
   const q = fc.pts.map(([x, y]) => [x*W, y*H]);
   const f = homo(q);
-  const iw = LOGO.naturalWidth || LOGO.width, ih = LOGO.naturalHeight || LOGO.height;
+  const [iw, ih] = assetSize(LOGO);
   if(!iw || !ih) return;
   /* ⭐ 格子の細かさ＝面の大きさで決める（大きい面ほど細かく＝曲面に沿う） */
   const size = Math.max(...q.map(p => p[0])) - Math.min(...q.map(p => p[0]))
@@ -1048,7 +1085,9 @@ function drawFace(ctx, fc, W, H){
      四隅・しわの量・ロゴ・差し替えた色・盤の大きさ・格子の細かさ が同じなら控えをそのまま使う。
      実測：スライダー1目盛りごとに 30ms 掛かっていたのが 2ms になる。
      ⚠️ 控えの合図に【いま効いているもの】を全部入れる。1つ落とすと、触っても絵が変わらない。 */
+  /* ⚠️ 動画は【いまのコマ】も合図に入れる（入れないと1コマ目のまま止まって見える） */
   const ck = [fc.pts.join(';'), P.warp, iw, ih, LOGOKEY,
+              isVid(LOGO) ? LOGO.currentTime.toFixed(3) : '',
               P.tint, P.tintCol, W, H, N].join('|');
   if(!fc._c || fc._c.key !== ck){
     const bs = document.createElement('canvas'); bs.width = W; bs.height = H;
@@ -1112,6 +1151,37 @@ function paint(ctx, W, H){
 }
 
 /* ══ 画面 ══ */
+/* ══⭐⭐ 動画を面の上で動かす（2026-08-29）══
+   ⭐ 嵌める式は1本のまま＝動くのは【嵌める相手】だけ。
+   ⚠️ 動かしている間は毎コマ嵌め直す＝粗く描く（止めたら細かく描き直す）。 */
+let VRAF = 0;
+/* ⭐ 動画のときだけ出す欄も出す＝【出口も設定も「使う画面」に置く】
+   （動画を入れていないのに「動画で出す」が押せると、押しても何も起きない道具になる） */
+function showVid(){
+  const on = isVid(LOGO) ? '' : 'none';
+  const a = el('vidbox'), b = el('vidout');
+  if(a) a.style.display = on;
+  if(b) b.style.display = on;
+}
+function syncTime(){
+  if(!isVid(LOGO)) return;
+  const d = LOGO.duration || 1;
+  const o = el('o_time'); if(o) o.textContent = LOGO.currentTime.toFixed(2) + 's / ' + d.toFixed(2) + 's';
+  const r = el('r_time');
+  if(r && document.activeElement !== r) r.value = Math.round(LOGO.currentTime / d * 1000);
+}
+function videoLoop(){
+  VRAF = 0;
+  if(!isVid(LOGO) || LOGO.paused){ COARSE = 0; render(); syncTime(); return; }
+  COARSE = 1; render(); syncTime();
+  VRAF = requestAnimationFrame(videoLoop);
+}
+function playVideo(){
+  if(!isVid(LOGO)){ stat('動画を入れると動かせます'); return; }
+  LOGO.play().then(() => { if(!VRAF) VRAF = requestAnimationFrame(videoLoop); },
+                   () => stat('動かせませんでした'));
+}
+function stopVideo(){ if(isVid(LOGO)) LOGO.pause(); }
 let COARSE = 0, coarseT = 0, rafId = 0;
 function renderSoon(){ if(rafId) return; rafId = requestAnimationFrame(() => { rafId = 0; render(); }); }
 function touching(){ COARSE = 1; clearTimeout(coarseT);
@@ -1246,9 +1316,31 @@ el('b_pts').onclick = () => {
     navigator.clipboard.writeText(s).then(done, () => { prompt('この行をコピー', s); });
   else prompt('この行をコピー', s);
 };
+el('b_play').onclick = playVideo;
+el('b_stop').onclick = stopVideo;
+el('r_time').addEventListener('input', e => {
+  if(!isVid(LOGO)) return;
+  stopVideo();
+  const d = LOGO.duration || 1;
+  LOGO.currentTime = Math.max(0, Math.min(d - 0.001, d * (+e.target.value / 1000)));
+});
 renderFaces();
 
 /* ══ 受ける ══ */
+/* ⭐⭐ 置くものを読む道は【この1本】── ロゴも、絵も、動画も、同じ入口から入る（2026-08-29）
+   木下＝「今ロゴしか掲載できない状態だけど画像と動画も載せれるようにして」
+   ⭐ 画像は元からこの道を通っていた（＝入口の言葉が「ロゴ」だっただけ）。足したのは動画。
+   ⚠️ 門番を先に置かない＝拡張子でも type でも弾かず、読めるかどうかは読んでみて決める。 */
+function readAsset(f, cb){
+  const vid = /video/i.test(f.type || '') || /\.(mp4|mov|webm|m4v|avi)$/i.test(f.name || '');
+  if(!vid) return readImage(f, cb);
+  const v = document.createElement('video');
+  v.muted = true; v.playsInline = true; v.loop = true; v.preload = 'auto';
+  v.crossOrigin = 'anonymous';
+  v.onloadeddata = () => { v.currentTime = 0; cb(v); };
+  v.onerror = () => stat('この動画は読めませんでした（mp4 / mov / webm）');
+  v.src = URL.createObjectURL(f);
+}
 function readImage(f, cb){
   const svg = /svg/i.test(f.type || '') || /\.svg$/i.test(f.name || '');
   const rd = new FileReader();
@@ -1270,7 +1362,7 @@ el('b_logo').onclick = () => el('f_logo').click();
 el('f_bg').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = '';
   if(f) readImage(f, img => { setBG(img); stat('下地を読んだ'); render(); fitView(); }); });
 el('f_logo').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = '';
-  if(f) readImage(f, img => { setLOGO(img, f.name || ''); render(); }); });
+  if(f) readAsset(f, img => { setLOGO(img, f.name || ''); render(); }); });
 el('b_logoClear').onclick = () => { setLOGO(null); stat('ロゴを外した'); render(); };
 ['dragenter','dragover'].forEach(t => addEventListener(t, e => {
   e.preventDefault(); document.body.classList.add('dragging'); }));
@@ -1280,8 +1372,9 @@ addEventListener('drop', e => {
   e.preventDefault();
   const f = e.dataTransfer.files[0]; if(!f) return;
   /* ⭐ 落としたものは【下地が無ければ下地／有ればロゴ】＝迷わせない */
-  readImage(f, img => {
-    if(!BG){ setBG(img); stat('下地を読んだ'); fitView(); }
+  readAsset(f, img => {
+    if(!BG || isVid(img)){ if(isVid(img)) setLOGO(img, f.name || '');
+      else { setBG(img); stat('下地を読んだ'); fitView(); } }
     else { setLOGO(img, f.name || ''); }
     render();
   });
@@ -1339,6 +1432,110 @@ el('b_png').onclick = () => {
     stat('PNG を出した（' + w + ' × ' + h + '）');
   }, 'image/png');
 };
+
+/* ══⭐⭐ 動画で出す（2026-08-29）══
+   🔴 MediaRecorder は使わない＝実時間で画面を録るとコマが落ちる（[[feedback_video_export_no_mediarecorder]]）。
+   ⭐ ここの位相は【元の動画の時刻】＝コマ番号 n → n/fps 秒へ送って、送り終わってから1枚焼く。
+     機械が遅くても1コマも落ちない。⚠️ 送る待ちがあるので、長い動画は時間がかかる。
+   ⭐ 器（mp4-muxer）は押したときだけ取りに行く。取れなければ【理由を出して】止める。
+   ⚠️ 出来た mp4 を1本に繋ぐのは 連REN の仕事＝ここでは【1本の動画を物にまとわせる】だけ。 */
+let MUXP = null;
+function loadMuxer(){
+  if(window.Mp4Muxer) return Promise.resolve(true);
+  if(!MUXP) MUXP = new Promise(res => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.1/build/mp4-muxer.min.js';
+    s.onload = () => res(!!window.Mp4Muxer); s.onerror = () => res(false);
+    document.head.appendChild(s);
+  });
+  return MUXP;
+}
+async function pickCodec(w, h, fps, bitrate){
+  for(const codec of ['avc1.640034','avc1.640033','avc1.640032','avc1.64002a','avc1.640028','avc1.4d0034','avc1.42003c']){
+    try{ const s = await VideoEncoder.isConfigSupported({ codec, width:w, height:h, bitrate, framerate:fps });
+      if(s && s.supported) return s.config; }catch(_){}
+  }
+  return null;
+}
+const idle = () => new Promise(r => setTimeout(r, 0));
+/* ⚠️ 同じ時刻へ送ると seeked が来ない＝待ちっぱなしになる。必ず時間切れを置く */
+function seekTo(v, t){
+  return new Promise(res => {
+    if(Math.abs(v.currentTime - t) < 1e-4) return res();
+    let done = false;
+    const on = () => { if(done) return; done = true; v.removeEventListener('seeked', on); res(); };
+    v.addEventListener('seeked', on);
+    v.currentTime = t;
+    setTimeout(on, 800);
+  });
+}
+let VOUT = false;
+el('b_mp4').onclick = async () => {
+  if(!isVid(LOGO)){ stat('動画を入れてから押してください'); return; }
+  if(VOUT){ VOUT = false; return; }
+  stopVideo();
+  const fps = +(document.querySelector('#s_fps button.on') || {}).dataset?.v || 30;
+  const { w, h } = sheet();
+  const ow = Math.max(2, w - (w % 2)), oh = Math.max(2, h - (h % 2));
+  const dur = LOGO.duration || 0;
+  const total = Math.max(1, Math.round(dur * fps));
+  const keepC = COARSE; COARSE = 0;                    /* ⭐ 出すときは必ず細かい方 */
+  VOUT = true; el('b_mp4').textContent = 'やめる';
+  let msg = '';
+  try{
+    if(typeof VideoEncoder === 'undefined') throw new Error('この browser は mp4 を作れません（Chrome で開いてください）');
+    if(!await loadMuxer()) throw new Error('mp4 の器を取りに行けませんでした（つながっていない）');
+    const bitrate = Math.min(80e6, Math.round(ow * oh * fps * 0.15));
+    const cfg = await pickCodec(ow, oh, fps, bitrate);
+    if(!cfg) throw new Error('この大きさ（' + ow + '×' + oh + '）は mp4 の上限を超えています。長辺を下げてください');
+    const target = new Mp4Muxer.ArrayBufferTarget();
+    const muxer = new Mp4Muxer.Muxer({ target,
+      video:{ codec:'avc', width:ow, height:oh, frameRate:Math.max(1, Math.round(fps)) },
+      fastStart:'in-memory' });
+    let encErr = null;
+    const enc = new VideoEncoder({ output:(c, m) => { try{ muxer.addVideoChunk(c, m); }catch(e){ encErr = e; } },
+                                   error:e => { encErr = e; } });
+    enc.configure(cfg);
+    const out = document.createElement('canvas'); out.width = ow; out.height = oh;
+    const octx = out.getContext('2d');
+    let n = 0;
+    for(; n < total; n++){
+      if(!VOUT) break;
+      if(encErr) throw encErr;
+      await seekTo(LOGO, Math.min(dur - 1e-3, n / fps));   /* ⭐ 時計ではなくコマ番号で刻む */
+      paint(octx, ow, oh);
+      const vf = new VideoFrame(out, { timestamp: Math.round(n * 1e6 / fps),
+                                       duration: Math.round(1e6 / fps) });
+      enc.encode(vf, { keyFrame:(n % (fps * 2)) === 0 });
+      vf.close();
+      while(enc.encodeQueueSize > 8 && !encErr) await idle();
+      if((n % 3) === 0 || n === total - 1)
+        stat('動画を焼いています ' + (n+1) + ' / ' + total + ' コマ（' + ow + '×' + oh + '）── もう一度押すと止まります');
+      await idle();
+    }
+    await enc.flush();
+    if(encErr) throw encErr;
+    muxer.finalize(); enc.close();
+    if(n > 1){
+      const blob = new Blob([target.buffer], { type:'video/mp4' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+      a.download = 'matoi_' + Date.now() + '.mp4';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+      msg = 'mp4 を出した — ' + ow + ' × ' + oh + '・' + n + 'コマ・' + (n/fps).toFixed(1) + '秒・'
+          + Math.round(blob.size/1e6) + 'MB' + (VOUT ? '' : '（途中で止めた）');
+    }else msg = '止めました（1コマも出していません）';
+  }catch(err){
+    msg = '🔴 ' + ((err && err.message) || err);           /* 🔴 何が起きても必ず理由を出す */
+  }finally{
+    VOUT = false; el('b_mp4').textContent = '⭐ 動画で出す（mp4）';
+    COARSE = keepC; render();
+    stat(msg);
+  }
+};
+document.querySelectorAll('#s_fps button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#s_fps button').forEach(x => x.classList.toggle('on', x === b));
+});
 
 /* ⭐⭐ まとめて出す ── いま並んでいる物ぜんぶに同じロゴを入れて、1枚ずつ落とす
    （企業案件で「一式ください」に1回で応えられる） */

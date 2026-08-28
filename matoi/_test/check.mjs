@@ -251,5 +251,50 @@ const mock = await p.evaluate(async () => {
 ok(mock.下地 === 'IMG' && Math.abs(mock.比 - 1.5) < 0.02 && mock.一覧,
    '⭐⭐ 写真の物も同じ道で使える（一覧に並ぶ・比は写真から決まる）', JSON.stringify(mock));
 
+/* ══⭐⭐ 動画も置ける ── 2026-08-29 ══
+   木下＝「今ロゴしか掲載できない状態だけど画像と画像も載せれるようにして」
+   ⭐ 画像は元から置けた（入口の言葉が「ロゴ」だっただけ）。足したのは動画。
+   ⭐ 見るのは3つ：置けること／面の上でコマが進むこと／**mp4 が本当に落ちること**。
+   ⚠️ sample.mp4 は「黒い四角がコマごとに横へ動く」だけの2秒＝絵が変わったかを画素で見られる。 */
+/* ⚠️ パスに日本語が入ると URL は %E5… に化ける＝戻さないと開けない（黙って読まれない） */
+const vpath = decodeURIComponent(new URL('./sample.mp4', import.meta.url).pathname);
+await (await p.$('#f_logo')).uploadFile(vpath);
+await new Promise(r => setTimeout(r, 1800));
+const v0 = await p.evaluate(() => ({ 種:LOGO && LOGO.tagName, 幅:assetSize(LOGO)[0],
+  秒:LOGO && LOGO.duration ? +LOGO.duration.toFixed(1) : 0,
+  出す欄:el('vidout').style.display !== 'none' }));
+ok(v0.種 === 'VIDEO' && v0.幅 > 0 && v0.出す欄,
+   '⭐⭐ 動画も置ける（動かす欄と出す欄も一緒に出る）', JSON.stringify(v0));
+
+const vshape = () => p.evaluate(() => {
+  const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height;
+  c.getContext('2d').drawImage(cv, 0, 0);
+  const d = c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+  let h = 2166136261;
+  for(let i=0;i<d.length;i+=4*97){ h ^= d[i]; h = Math.imul(h, 16777619); }
+  return (h>>>0);
+});
+const f0 = await vshape();
+await p.evaluate(() => { const r = el('r_time'); r.value = 600;
+  r.dispatchEvent(new Event('input', { bubbles:true })); });
+await new Promise(r => setTimeout(r, 1200));
+const f1 = await vshape();
+ok(f0 !== f1, '⭐ コマを送ると面の上の絵が変わる', `${f0} → ${f1}`);
+
+/* ⭐⭐ mp4 が本当に落ちる。⚠️ 1コマずつ焼くので、試験は小さい盤・24コマ/秒で回す */
+await p.evaluate(() => { window.__mp4 = [];
+  const oc = URL.createObjectURL;
+  URL.createObjectURL = function(x){ if(x && x.type === 'video/mp4' && x.size > 5000) window.__mp4.push(x.size);
+    return oc.call(URL, x); };
+  P.long = 320; document.querySelectorAll('#s_fps button')[0].click(); render(); });
+await p.evaluate(() => el('b_mp4').click());
+for(let i = 0; i < 90; i++){
+  await new Promise(r => setTimeout(r, 700));
+  if(!/やめる/.test(await p.evaluate(() => el('b_mp4').textContent))) break;
+}
+const vout = await p.evaluate(() => ({ 落ちた:window.__mp4, 知らせ:el('stat').textContent }));
+ok(vout.落ちた.length > 0 && /mp4 を出した/.test(vout.知らせ),
+   '⭐⭐ 動画（mp4）が本当に落ちる', JSON.stringify(vout));
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
 await b.close(); process.exit(NG);
