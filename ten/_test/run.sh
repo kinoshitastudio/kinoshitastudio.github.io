@@ -27,4 +27,9 @@ if ! curl -sf "http://localhost:$PORT/$NAME/" | grep -q 'id="b_svg"'; then
 fi
 echo "（${PORT} で立てた）"
 echo
-node "$HERE/_test/check.mjs" "http://localhost:$PORT/$NAME/"
+NG=0
+node "$HERE/_test/check.mjs" "http://localhost:$PORT/$NAME/" || NG=1
+echo
+echo "── 写真から形を作る（しきい・明るい方/暗い方）"
+node "$HERE/_test/photo.mjs" "http://localhost:$PORT/$NAME/" || NG=1
+exit "$NG"
