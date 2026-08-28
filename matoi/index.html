@@ -316,7 +316,9 @@ const P = {
   warp:0.55, sh:0.75, hi:0.22, gr:0.30, op:0.95, blend:'normal',
   tint:'none', tintCol:'#ffffff', long:1600,
 };
-let BG = null;                 /* 下地の写真 */
+let BG = null, BGKEY = 0;      /* 下地（写真でも、型を描いた紙でもいい）／差し替えた回数 */
+/* ⭐ 下地を差し替える道は【この1本】＝明暗の焼き直しも必ずここを通る */
+function setBG(src){ BG = src; BGKEY++; TONEKEY = ''; }
 let LOGO = null;               /* 置くもの */
 let FACES = [], cur = 0;
 
@@ -441,8 +443,9 @@ function folds(q, cx, cy, ang, spread, len, n, seed, w, str){
          (R()-0.5)*L*0.22, w*(0.55 + R()*0.9), str*(0.6 + R()*0.8));
   }
 }
-/* ⭐ 生地の目＝細かい粒（この道具は【質感】をここから借りる） */
-function cloth(q, W, H, seed, str){
+/* ⭐ 生地の目＝細かい粒（この道具は【質感】をここから借りる）
+   ⭐ knit を false にすると【向きのない粒】＝紙・金属になる（既定は今までの絵＝布の筋） */
+function cloth(q, W, H, seed, str, knit){
   const n = 96;
   const c = document.createElement('canvas'); c.width = n; c.height = n;
   const cq = c.getContext('2d'); const im = cq.createImageData(n, n), d = im.data;
@@ -450,8 +453,8 @@ function cloth(q, W, H, seed, str){
   const R = () => { s ^= s<<13; s>>>=0; s ^= s>>17; s ^= s<<5; s>>>=0; return s/4294967296; };
   for(let y = 0; y < n; y++) for(let x = 0; x < n; x++){
     const i = (y*n + x)*4;
-    const knit = (y % 2 === 0 ? 0.545 : 0.455);        /* 編み目＝横に走る筋 */
-    const v = Math.round(255 * (R()*0.28 + knit*0.72));
+    const kn = knit === false ? 0.5 : (y % 2 === 0 ? 0.545 : 0.455);   /* 編み目＝横に走る筋 */
+    const v = Math.round(255 * (R()*0.28 + kn*0.72));
     d[i] = d[i+1] = d[i+2] = v; d[i+3] = Math.round(255*str);
   }
   cq.putImageData(im, 0, 0);
@@ -593,51 +596,167 @@ kata('tshirt', 'Tシャツ', 4/5, [[[0.355,0.312],[0.645,0.312],[0.645,0.484],[0
        S*0.0055, 'rgba(58,52,44,.16)', null, 0, 0);                         /* リブの落ち影 */
 });
 
-/* ══ ② 紙袋（正面＋側面の2面）══ */
+/* 多角形を1本の道で（面を描く・切り抜く、どちらもここを通る） */
+function poly(q, W, H, pts){
+  q.beginPath();
+  pts.forEach(([x, y], i) => i ? q.lineTo(W*x, H*y) : q.moveTo(W*x, H*y));
+  q.closePath();
+}
+/* ══ ② 紙袋（正面＋側面の2面）══
+   ⭐⭐ 紙は布と違う＝しわは【角ばった折れ】。借りる相手は 口・折り返し・マチの折り・角の稜線。
+   ⚠️ 前の版は【ただの箱】だった。袋である理由（開いた口・折り返しの厚み・持ち手の根元・
+      横のマチ）が1つも無いと、面を斜めにしても袋には見えない。 */
 kata('bag', '紙袋', 4/5, [
-    [[0.28,0.30],[0.62,0.33],[0.62,0.52],[0.28,0.49]],
-    [[0.66,0.34],[0.80,0.30],[0.80,0.48],[0.66,0.53]] ], (q, W, H) => {
-  q.fillStyle = '#cfcbc3'; q.fillRect(0, 0, W, H);
-  /* 正面 */
-  q.fillStyle = shade(q, W*0.32, H*0.28, W*0.62, '#f0ece3', '#c6bfb2');
-  q.beginPath(); q.moveTo(W*0.20,H*0.24); q.lineTo(W*0.64,H*0.28);
-  q.lineTo(W*0.64,H*0.86); q.lineTo(W*0.20,H*0.82); q.closePath(); q.fill();
-  /* 側面（暗い＝奥行き） */
-  q.fillStyle = shade(q, W*0.72, H*0.30, W*0.34, '#c9c2b6', '#8f887c');
-  q.beginPath(); q.moveTo(W*0.64,H*0.28); q.lineTo(W*0.84,H*0.20);
-  q.lineTo(W*0.84,H*0.78); q.lineTo(W*0.64,H*0.86); q.closePath(); q.fill();
-  /* 折り目＝上端 */
-  q.fillStyle = 'rgba(0,0,0,.10)';
-  q.beginPath(); q.moveTo(W*0.20,H*0.24); q.lineTo(W*0.64,H*0.28);
-  q.lineTo(W*0.84,H*0.20); q.lineTo(W*0.40,H*0.16); q.closePath(); q.fill();
-  q.save();
-  q.beginPath(); q.moveTo(W*0.20,H*0.24); q.lineTo(W*0.84,H*0.20);
-  q.lineTo(W*0.84,H*0.78); q.lineTo(W*0.20,H*0.82); q.closePath(); q.clip();
-  wrinkles(q, W, H, 16, 21, 0.07);
+    [[0.272,0.448],[0.556,0.476],[0.556,0.706],[0.272,0.678]],
+    [[0.652,0.408],[0.780,0.363],[0.780,0.608],[0.652,0.653]] ], (q, W, H) => {
+  const S = Math.max(W, H);
+  const FT = [[0.215,0.275],[0.615,0.315],[0.615,0.885],[0.215,0.845]];  /* 正面 */
+  const SD = [[0.615,0.315],[0.815,0.245],[0.815,0.795],[0.615,0.885]];  /* 側面 */
+  const TP = [[0.215,0.275],[0.415,0.205],[0.815,0.245],[0.615,0.315]];  /* 口 */
+  q.fillStyle = shade(q, W*0.42, H*0.24, S*0.95, '#d2cdc4', '#9d988f');  /* 台 */
+  q.fillRect(0, 0, W, H);
+  q.save();                                                             /* 接地影 */
+  q.filter = 'blur(' + (S*0.016).toFixed(1) + 'px)';
+  q.fillStyle = 'rgba(54,48,40,.30)';
+  q.beginPath(); q.ellipse(W*0.50, H*0.888, W*0.28, H*0.018, 0, 0, 7); q.fill();
   q.restore();
-  /* 持ち手 */
-  q.strokeStyle = 'rgba(60,55,48,.55)'; q.lineWidth = W*0.008;
-  q.beginPath(); q.moveTo(W*0.30,H*0.23); q.quadraticCurveTo(W*0.40,H*0.10, W*0.52,H*0.25); q.stroke();
+
+  /* ⭐ 口＝【開いている】。中が暗いことが、袋であることの半分を作っている */
+  poly(q, W, H, TP);
+  q.fillStyle = shade(q, W*0.52, H*0.310, W*0.42, '#918a7e', '#655f56'); q.fill();
+  q.save(); poly(q, W, H, TP); q.clip();
+  q.fillStyle = shade(q, W*0.50, H*0.215, W*0.30, 'rgba(24,21,17,.44)', 'rgba(24,21,17,0)');
+  q.fillRect(0, 0, W, H);                                               /* 奥ほど暗い */
+  /* 奥の壁＝ここが無いと口が【黒い板】に見える（穴に深さが出ない） */
+  poly(q, W, H, [[0.245,0.268],[0.432,0.212],[0.795,0.249],[0.622,0.302]]);
+  q.fillStyle = 'rgba(164,156,144,.55)'; q.fill();
+  q.restore();
+  /* 持ち手＝口の手前の縁から出る（根元は正面に隠れる＝リベットで留めて見せる）
+     ⚠️ 弧が低いと【口の中に埋まる】＝紐に見えない。口の上に出させる */
+  [[0.282, 0.298, 0.392, 0.309], [0.448, 0.311, 0.558, 0.322]].forEach(([x0,y0,x1,y1]) => {
+    q.strokeStyle = 'rgba(62,56,47,.62)'; q.lineWidth = S*0.0085; q.lineCap = 'round';
+    q.beginPath(); q.moveTo(W*x0, H*y0);
+    q.quadraticCurveTo(W*(x0+x1)/2, H*(y0-0.215), W*x1, H*y1); q.stroke();
+    q.strokeStyle = 'rgba(255,255,255,.26)'; q.lineWidth = S*0.0030;
+    q.beginPath(); q.moveTo(W*x0, H*(y0-0.004));
+    q.quadraticCurveTo(W*(x0+x1)/2, H*(y0-0.219), W*x1, H*(y1-0.004)); q.stroke();
+  });
+
+  /* 正面＝光は左上から */
+  poly(q, W, H, FT);
+  const gf = q.createLinearGradient(W*0.215, 0, W*0.615, 0);
+  gf.addColorStop(0, '#f5f1e8'); gf.addColorStop(0.55, '#eae5da'); gf.addColorStop(1, '#d3ccbe');
+  q.fillStyle = gf; q.fill();
+  /* 側面＝暗い（奥行きはここで出る） */
+  poly(q, W, H, SD);
+  const gs = q.createLinearGradient(W*0.615, 0, W*0.815, 0);
+  gs.addColorStop(0, '#a49d90'); gs.addColorStop(0.5, '#b6afa2'); gs.addColorStop(1, '#8e877b');
+  q.fillStyle = gs; q.fill();
+
+  /* ⭐ 折れ・粒は【面の中だけ】に閉じ込める（袋の外へ出ると紙に見えない） */
+  q.save(); poly(q, W, H, FT); q.clip();
+  q.save(); q.filter = 'blur(' + (S*0.004).toFixed(2) + 'px)';
+  /* 紙の折れ＝たわまない（bow は 0 に近い）・数は少なく */
+  fold(q, W*0.235, H*0.392, W*0.600, H*0.486, S*0.003, S*0.009, 0.055);
+  fold(q, W*0.228, H*0.690, W*0.575, H*0.640, -S*0.004, S*0.008, 0.05);
+  fold(q, W*0.400, H*0.340, W*0.372, H*0.872, S*0.008, S*0.014, 0.055);  /* 袋の面のたわみ */
+  q.restore();
+  q.fillStyle = shade(q, W*0.615, H*0.60, W*0.13, 'rgba(48,42,34,.24)', 'rgba(48,42,34,0)');
+  q.fillRect(0, 0, W, H);                                               /* 角の稜線ぎわ */
+  cloth(q, W, H, 5, 0.16, false);
+  q.restore();
+  q.save(); poly(q, W, H, SD); q.clip();
+  q.save(); q.filter = 'blur(' + (S*0.004).toFixed(2) + 'px)';
+  /* ⭐ マチ＝側面のまんなかが内へ折れている。ここが袋であることのもう半分 */
+  fold(q, W*0.716, H*0.288, W*0.716, H*0.840, 0, S*0.016, 0.22);
+  fold(q, W*0.660, H*0.300, W*0.716, H*0.360, 0, S*0.008, 0.16);        /* 口の三角の折り */
+  fold(q, W*0.775, H*0.268, W*0.716, H*0.360, 0, S*0.008, 0.16);
+  q.restore();
+  cloth(q, W, H, 6, 0.16, false);
+  q.restore();
+
+  /* ⭐ 口の折り返し＝【厚み】。1本の線ではなく、帯＋その下の影 */
+  poly(q, W, H, [[0.215,0.275],[0.615,0.315],[0.615,0.348],[0.215,0.308]]);
+  q.fillStyle = 'rgba(255,255,255,.18)'; q.fill();   /* ⚠️ 濃いと【白い帯】に見える */
+  q.strokeStyle = 'rgba(58,52,44,.24)'; q.lineWidth = S*0.0028; q.stroke();
+  poly(q, W, H, [[0.615,0.315],[0.815,0.245],[0.815,0.278],[0.615,0.348]]);
+  q.fillStyle = 'rgba(255,255,255,.10)'; q.fill();
+  q.strokeStyle = 'rgba(58,52,44,.22)'; q.lineWidth = S*0.0028; q.stroke();
+  seam(q, [[W*0.218, H*0.352], [W*0.415, H*0.334], [W*0.612, H*0.392]],
+       S*0.0045, 'rgba(58,52,44,.12)', null, 0, 0);                     /* 折り返しの落ち影 */
+  /* 紐が【通っている穴】。⚠️ 大きく光らせるとボタンが4つ付いた袋に見える */
+  [[0.282,0.302],[0.392,0.313],[0.448,0.315],[0.558,0.326]].forEach(([x,y]) => {
+    q.beginPath(); q.arc(W*x, H*y, S*0.0048, 0, 7);
+    q.fillStyle = 'rgba(74,67,57,.50)'; q.fill();
+  });
+  q.save();                                                             /* 底が台に接している所 */
+  q.filter = 'blur(' + (S*0.006).toFixed(1) + 'px)';
+  q.strokeStyle = 'rgba(48,42,35,.34)'; q.lineWidth = S*0.010;
+  q.beginPath(); q.moveTo(W*0.222, H*0.851); q.lineTo(W*0.613, H*0.889);
+  q.lineTo(W*0.810, H*0.800); q.stroke();
+  q.restore();
 });
 
-/* ══ ③ 箱（正面＋上面）══ */
+/* ══ ③ 箱（正面＋上面）══
+   ⭐⭐ 箱を箱に見せるのは【蓋】。蓋が数センチかぶさっている線が1本入るだけで、
+      同じ立方体が「物」になる。⚠️ 前の版は蓋も接地影も無い【ただの立方体】だった。
+   ⭐ 稜線＝紙の厚みぶん、角のきわだけ明るい／暗い（角が立って見える正体） */
 kata('box', '箱', 1, [
     [[0.26,0.44],[0.60,0.52],[0.60,0.80],[0.26,0.72]],
     /* ⚠️ 四隅は【左上→右上→右下→左下】の順。順を崩すと絵が裏返る（上面で踏んだ） */
     [[0.52,0.30],[0.86,0.38],[0.60,0.52],[0.26,0.44]] ], (q, W, H) => {
-  q.fillStyle = '#c8c4bc'; q.fillRect(0, 0, W, H);
-  q.fillStyle = shade(q, W*0.30, H*0.46, W*0.5, '#eeeae1', '#c4bdb0');   /* 正面 */
-  q.beginPath(); q.moveTo(W*0.22,H*0.42); q.lineTo(W*0.62,H*0.53);
-  q.lineTo(W*0.62,H*0.86); q.lineTo(W*0.22,H*0.75); q.closePath(); q.fill();
-  q.fillStyle = shade(q, W*0.55, H*0.30, W*0.46, '#fbf9f4', '#d8d2c6');  /* 上面 */
-  q.beginPath(); q.moveTo(W*0.22,H*0.42); q.lineTo(W*0.52,H*0.26);
-  q.lineTo(W*0.90,H*0.36); q.lineTo(W*0.62,H*0.53); q.closePath(); q.fill();
-  q.fillStyle = shade(q, W*0.76, H*0.50, W*0.34, '#a49d90', '#7d766b');  /* 側面 */
-  q.beginPath(); q.moveTo(W*0.62,H*0.53); q.lineTo(W*0.90,H*0.36);
-  q.lineTo(W*0.90,H*0.70); q.lineTo(W*0.62,H*0.86); q.closePath(); q.fill();
-  /* 影 */
-  q.fillStyle = shade(q, W*0.55, H*0.88, W*0.42, 'rgba(0,0,0,.28)', 'rgba(0,0,0,0)');
-  q.fillRect(0, H*0.70, W, H*0.30);
+  const S = Math.max(W, H);
+  const TP = [[0.22,0.42],[0.52,0.26],[0.90,0.36],[0.62,0.53]];   /* 上面 */
+  const FT = [[0.22,0.42],[0.62,0.53],[0.62,0.86],[0.22,0.75]];   /* 正面 */
+  const SD = [[0.62,0.53],[0.90,0.36],[0.90,0.70],[0.62,0.86]];   /* 側面 */
+  q.fillStyle = shade(q, W*0.40, H*0.24, S*0.95, '#cfcac1', '#9c978e'); /* 台 */
+  q.fillRect(0, 0, W, H);
+  q.save();                                                       /* 接地影＝箱の下だけ */
+  q.filter = 'blur(' + (S*0.024).toFixed(1) + 'px)';
+  q.fillStyle = 'rgba(52,46,38,.34)';
+  q.beginPath(); q.ellipse(W*0.56, H*0.845, W*0.36, H*0.075, -0.08, 0, 7); q.fill();
+  q.restore();
+
+  poly(q, W, H, TP);                                              /* 上面＝いちばん明るい */
+  q.fillStyle = shade(q, W*0.50, H*0.30, W*0.50, '#fbf9f3', '#d9d3c7'); q.fill();
+  poly(q, W, H, FT);                                              /* 正面 */
+  const gf = q.createLinearGradient(W*0.22, 0, W*0.62, 0);
+  gf.addColorStop(0, '#efebe1'); gf.addColorStop(0.7, '#e4dfd3'); gf.addColorStop(1, '#cdc6b8');
+  q.fillStyle = gf; q.fill();
+  poly(q, W, H, SD);                                              /* 側面＝暗い */
+  const gs = q.createLinearGradient(W*0.62, 0, W*0.90, 0);
+  gs.addColorStop(0, '#9b9488'); gs.addColorStop(1, '#847d72');
+  q.fillStyle = gs; q.fill();
+
+  /* ⭐ 蓋＝上から 8% かぶさっている。この1本が箱を箱にする */
+  const lid = (a, b, d) => {                                       /* 面の上辺を d だけ下へ */
+    poly(q, W, H, [a, b, [b[0], b[1]+d], [a[0], a[1]+d]]);
+    q.fillStyle = 'rgba(255,255,255,.10)'; q.fill();
+    q.strokeStyle = 'rgba(60,54,45,.22)'; q.lineWidth = S*0.0026;
+    q.beginPath(); q.moveTo(W*a[0], H*(a[1]+d)); q.lineTo(W*b[0], H*(b[1]+d)); q.stroke();
+  };
+  lid([0.22,0.42], [0.62,0.53], 0.085);
+  lid([0.62,0.53], [0.90,0.36], 0.085);
+
+  /* ⭐ 稜線＝紙の厚み。角のきわだけ明るい（＋その向こうは暗い） */
+  const edge = (a, b, up, dn) => {
+    q.lineWidth = S*0.0030;
+    q.strokeStyle = up; q.beginPath();
+    q.moveTo(W*a[0], H*(a[1]-0.003)); q.lineTo(W*b[0], H*(b[1]-0.003)); q.stroke();
+    q.strokeStyle = dn; q.beginPath();
+    q.moveTo(W*a[0], H*(a[1]+0.003)); q.lineTo(W*b[0], H*(b[1]+0.003)); q.stroke();
+  };
+  edge([0.22,0.42], [0.52,0.26], 'rgba(255,255,255,.34)', 'rgba(60,54,45,.10)');
+  edge([0.52,0.26], [0.90,0.36], 'rgba(255,255,255,.30)', 'rgba(60,54,45,.10)');
+  edge([0.22,0.42], [0.62,0.53], 'rgba(255,255,255,.26)', 'rgba(60,54,45,.14)');
+  edge([0.62,0.53], [0.90,0.36], 'rgba(255,255,255,.22)', 'rgba(60,54,45,.16)');
+  q.strokeStyle = 'rgba(60,54,45,.26)'; q.lineWidth = S*0.0032;     /* 手前の縦の角 */
+  q.beginPath(); q.moveTo(W*0.622, H*0.532); q.lineTo(W*0.622, H*0.862); q.stroke();
+
+  /* 紙の粒＝面ごとに（外へ出すと箱に見えない） */
+  [TP, FT, SD].forEach((f, i) => {
+    q.save(); poly(q, W, H, f); q.clip(); cloth(q, W, H, 13+i, 0.11, false); q.restore();
+  });
 });
 
 /* ══ ④ カップ（丸み＝曲面）══ */
@@ -721,11 +840,11 @@ function useKata(i, keepFaces){
   const H = k.ratio >= 1 ? Math.round(L / k.ratio) : L;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   k.draw(c.getContext('2d'), W, H);
-  const img = new Image();
-  img.onload = () => { BG = img; TONEKEY = '';
-    if(!keepFaces){ FACES = k.faces.map(pts => ({ on:true, pts:pts.map(p => p.slice()) })); cur = 0; renderFaces(); }
-    render(); fitView(); };
-  img.src = c.toDataURL('image/png');
+  /* ⭐⭐ ここで PNG に焼いてから読み直していた＝物を押すたびに 347ms 捨てていた（実測）。
+     canvas はそのまま drawImage できる＝焼かない。ついでに待ちも消える（同期になる）。 */
+  setBG(c);
+  if(!keepFaces){ FACES = k.faces.map(pts => ({ on:true, pts:pts.map(p => p.slice()) })); cur = 0; renderFaces(); }
+  render(); fitView();
 }
 function renderKata(){
   const host = document.getElementById('s_kata'); if(!host) return;
@@ -750,16 +869,15 @@ function sheet(){
 /* ══⭐⭐ 下地の明暗を読む（しわ・陰・光・質感が全部ここから出る）══ */
 let TONE = null, TONEKEY = '';
 function bakeTone(W, H){
-  const key = [W, H, BG ? BG.src.length : 0].join('|');
+  /* ⚠️ 下地は canvas のことも Image のこともある＝控えの合図は【差し替えた回数】で持つ
+     （BG.src.length で見ていたが、canvas には src が無い） */
+  const key = [W, H, BGKEY].join('|');
   if(TONEKEY === key && TONE) return TONE;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const q = c.getContext('2d', { willReadFrequently:true });
   q.fillStyle = '#808080'; q.fillRect(0, 0, W, H);
   if(BG) q.drawImage(BG, 0, 0, W, H);
   const d = q.getImageData(0, 0, W, H).data;
-  const lum = new Float32Array(W * H);
-  for(let i = 0, p = 0; i < d.length; i += 4, p++)
-    lum[p] = (d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114) / 255;
   /* ⭐ しわ用＝少しぼかした明暗（粒まで拾うとロゴが震えるだけになる） */
   const b = document.createElement('canvas'); b.width = W; b.height = H;
   const bq = b.getContext('2d', { willReadFrequently:true });
@@ -776,22 +894,27 @@ function bakeTone(W, H){
         陰 ＝ 暗い側だけ（明るい所は白＝掛けても変わらない）
         光 ＝ 明るい側だけ（暗い所は黒＝重ねても変わらない）
         質感 ＝ 粒だけ（ぼかしとの差＝0.5 中心）
-     ＝ これで「暗い所が暗くなり、明るい所が明るくなる」だけになる。 */
-  const mk = f => {
-    const cc = document.createElement('canvas'); cc.width = W; cc.height = H;
-    const cq = cc.getContext('2d');
-    const im = cq.createImageData(W, H), dd = im.data;
-    for(let p2 = 0, i = 0; p2 < lum.length; p2++, i += 4){
-      const v = Math.max(0, Math.min(255, Math.round(f(lum[p2], soft[p2]) * 255)));
-      dd[i] = dd[i+1] = dd[i+2] = v; dd[i+3] = 255;
-    }
-    cq.putImageData(im, 0, 0);
-    return cc;
-  };
-  const shade = mk(l => Math.min(1, l * 2));               /* 暗い側だけ */
-  const light = mk(l => Math.max(0, l * 2 - 1));           /* 明るい側だけ */
-  const grain = mk((l, sf) => 0.5 + (l - sf) * 2);         /* 粒だけ（0.5 中心） */
-  TONE = { lum, soft, W, H, canvas:c, shade, light, grain }; TONEKEY = key;
+     ＝ これで「暗い所が暗くなり、明るい所が明るくなる」だけになる。
+
+     ⭐⭐ 3枚を【1回の走査で】作る（前は同じ画素を3周していた＝実測 98ms → 46ms）。
+     ⚠️ canvas の filter（grayscale＋brightness）でも同じ式は書けて 4ms まで落ちるが、
+        filter の grayscale は係数が違う（Rec709／ここは Rec601）＝色のある写真で
+        陰影の濃さが最大 2% ずれる。**見え方を変えない**方を採った。 */
+  const A = document.createElement('canvas'), B2 = document.createElement('canvas'),
+        C2 = document.createElement('canvas');
+  [A, B2, C2].forEach(x => { x.width = W; x.height = H; });
+  const aq = A.getContext('2d'), b2q = B2.getContext('2d'), c2q = C2.getContext('2d');
+  const ia = aq.createImageData(W, H), ib = b2q.createImageData(W, H), ic = c2q.createImageData(W, H);
+  const da = ia.data, db = ib.data, dc = ic.data;
+  const cl = v => Math.max(0, Math.min(255, Math.round(v * 255)));
+  for(let i = 0, p = 0; i < d.length; i += 4, p++){
+    const l = (d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114) / 255, sf = soft[p];
+    da[i] = da[i+1] = da[i+2] = cl(Math.min(1, l * 2));        da[i+3] = 255;  /* 陰 */
+    db[i] = db[i+1] = db[i+2] = cl(Math.max(0, l * 2 - 1));    db[i+3] = 255;  /* 光 */
+    dc[i] = dc[i+1] = dc[i+2] = cl(0.5 + (l - sf) * 2);        dc[i+3] = 255;  /* 粒 */
+  }
+  aq.putImageData(ia, 0, 0); b2q.putImageData(ib, 0, 0); c2q.putImageData(ic, 0, 0);
+  TONE = { soft, W, H, canvas:c, shade:A, light:B2, grain:C2 }; TONEKEY = key;
   return TONE;
 }
 
@@ -834,30 +957,41 @@ function drawFace(ctx, fc, W, H){
     }
     return p;
   };
-  /* ⭐ いったん別の紙に嵌める＝陰影を【ロゴの形の中だけ】に掛けられる */
+  /* ⭐⭐ 嵌めた姿は【材料】── つまみ（陰・光・粒・濃さ・重ね方）を回すたびに嵌め直さない。
+     四隅・しわの量・ロゴ・差し替えた色・盤の大きさ・格子の細かさ が同じなら控えをそのまま使う。
+     実測：スライダー1目盛りごとに 30ms 掛かっていたのが 2ms になる。
+     ⚠️ 控えの合図に【いま効いているもの】を全部入れる。1つ落とすと、触っても絵が変わらない。 */
+  const ck = [fc.pts.join(';'), P.warp, iw, ih, LOGO.src ? LOGO.src.length : 0,
+              P.tint, P.tintCol, W, H, N].join('|');
+  if(!fc._c || fc._c.key !== ck){
+    const bs = document.createElement('canvas'); bs.width = W; bs.height = H;
+    const bq = bs.getContext('2d');
+    for(let j = 0; j < N; j++){
+      for(let i = 0; i < N; i++){
+        const u0 = i/N, u1 = (i+1)/N, v0 = j/N, v1 = (j+1)/N;
+        const s00 = [u0*iw, v0*ih], s10 = [u1*iw, v0*ih], s11 = [u1*iw, v1*ih], s01 = [u0*iw, v1*ih];
+        const d00 = pt(u0,v0), d10 = pt(u1,v0), d11 = pt(u1,v1), d01 = pt(u0,v1);
+        tri(bq, LOGO, s00, s10, s11, d00, d10, d11);
+        tri(bq, LOGO, s00, s11, s01, d00, d11, d01);
+      }
+    }
+    /* ⭐ 色を差し替える（1色のロゴを白版・黒版で出せる） */
+    if(P.tint !== 'none'){
+      bq.globalCompositeOperation = 'source-in';
+      bq.fillStyle = P.tint === 'white' ? '#ffffff' : P.tint === 'black' ? '#0a0a0a' : P.tintCol;
+      bq.fillRect(0, 0, W, H);
+      bq.globalCompositeOperation = 'source-over';
+    }
+    fc._c = { key: ck, base: bs };
+  }
+  const mask = fc._c.base;                           /* 嵌めた姿＝これが形でもある */
+  /* ⭐ いったん別の紙に写す＝陰影を【ロゴの形の中だけ】に掛けられる */
   const lay = document.createElement('canvas'); lay.width = W; lay.height = H;
   const lg = lay.getContext('2d');
-  for(let j = 0; j < N; j++){
-    for(let i = 0; i < N; i++){
-      const u0 = i/N, u1 = (i+1)/N, v0 = j/N, v1 = (j+1)/N;
-      const s00 = [u0*iw, v0*ih], s10 = [u1*iw, v0*ih], s11 = [u1*iw, v1*ih], s01 = [u0*iw, v1*ih];
-      const d00 = pt(u0,v0), d10 = pt(u1,v0), d11 = pt(u1,v1), d01 = pt(u0,v1);
-      tri(lg, LOGO, s00, s10, s11, d00, d10, d11);
-      tri(lg, LOGO, s00, s11, s01, d00, d11, d01);
-    }
-  }
-  /* ⭐ 色を差し替える（1色のロゴを白版・黒版で出せる） */
-  if(P.tint !== 'none'){
-    lg.globalCompositeOperation = 'source-in';
-    lg.fillStyle = P.tint === 'white' ? '#ffffff' : P.tint === 'black' ? '#0a0a0a' : P.tintCol;
-    lg.fillRect(0, 0, W, H);
-    lg.globalCompositeOperation = 'source-over';
-  }
+  lg.drawImage(mask, 0, 0);
   /* ⭐⭐ 陰影を借りる ── ロゴの形の中だけに、下の写真の明暗を掛ける。
-     ⚠️ 形は【いま嵌めたもの】をそのまま控えて使う（もう一度嵌め直さない＝式も手間も1本）。 */
+     ⚠️ 形は【嵌めたもの】をそのまま使う（もう一度嵌め直さない＝式も手間も1本）。 */
   if(P.sh > 0.001 || P.hi > 0.001 || P.gr > 0.001){
-    const mask = document.createElement('canvas'); mask.width = W; mask.height = H;
-    mask.getContext('2d').drawImage(lay, 0, 0);      /* いまの姿＝これが形 */
     const put = (src, op, a) => {
       if(a <= 0.001) return;
       lg.globalCompositeOperation = op;
@@ -1038,7 +1172,7 @@ function readImage(f, cb){
 el('b_bg').onclick   = () => el('f_bg').click();
 el('b_logo').onclick = () => el('f_logo').click();
 el('f_bg').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = '';
-  if(f) readImage(f, img => { BG = img; TONEKEY = ''; stat('下地を読んだ'); render(); fitView(); }); });
+  if(f) readImage(f, img => { setBG(img); stat('下地を読んだ'); render(); fitView(); }); });
 el('f_logo').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = '';
   if(f) readImage(f, img => { LOGO = img;
     stat('ロゴを読んだ：' + (f.name || '') + '（' + (img.naturalWidth||img.width) + '×'
@@ -1053,7 +1187,7 @@ addEventListener('drop', e => {
   const f = e.dataTransfer.files[0]; if(!f) return;
   /* ⭐ 落としたものは【下地が無ければ下地／有ればロゴ】＝迷わせない */
   readImage(f, img => {
-    if(!BG){ BG = img; TONEKEY = ''; stat('下地を読んだ'); fitView(); }
+    if(!BG){ setBG(img); stat('下地を読んだ'); fitView(); }
     else { LOGO = img; stat('ロゴを読んだ'); }
     render();
   });
@@ -1118,23 +1252,22 @@ el('b_all').onclick = async () => {
       const H = k.ratio >= 1 ? Math.round(L / k.ratio) : L;
       const bc = document.createElement('canvas'); bc.width = W; bc.height = H;
       k.draw(bc.getContext('2d'), W, H);
-      const img = new Image();
-      img.onload = () => {
-        /* ⚠️ 面も型のものに差し替える＝物ごとに位置が合う */
-        const keepBG = BG, keepF = FACES, keepK = TONEKEY;
-        BG = img; TONEKEY = ''; FACES = k.faces.map(pts => ({ on:true, pts:pts.map(p=>p.slice()) }));
-        const c = document.createElement('canvas'); c.width = W; c.height = H;
-        paint(c.getContext('2d'), W, H);
-        c.toBlob(b2 => {
-          const a = document.createElement('a'); a.href = URL.createObjectURL(b2);
-          a.download = 'matoi_' + k.id + '.png';
-          document.body.appendChild(a); a.click(); a.remove();
-          setTimeout(() => URL.revokeObjectURL(a.href), 1500);
-          BG = keepBG; FACES = keepF; TONEKEY = keepK;
-          setTimeout(res, 260);
-        }, 'image/png');
-      };
-      img.src = bc.toDataURL('image/png');
+      /* ⚠️ 面も型のものに差し替える＝物ごとに位置が合う
+         🔴 控えを戻すときは【明暗の紙も一緒に】戻す。合図(TONEKEY)だけ戻すと、
+            中身は別の物のまま残る＝次に描くとき、その物の明暗で借りてしまう。 */
+      const keepBG = BG, keepF = FACES, keepK = TONEKEY, keepT = TONE;
+      setBG(bc);
+      FACES = k.faces.map(pts => ({ on:true, pts:pts.map(p=>p.slice()) }));
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      paint(c.getContext('2d'), W, H);
+      c.toBlob(b2 => {
+        const a = document.createElement('a'); a.href = URL.createObjectURL(b2);
+        a.download = 'matoi_' + k.id + '.png';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+        BG = keepBG; FACES = keepF; TONEKEY = keepK; TONE = keepT;
+        setTimeout(res, 260);
+      }, 'image/png');
     });
   }
   el('b_all').textContent = '⭐ 物ぜんぶをまとめて出す';
@@ -1170,7 +1303,7 @@ function demoCloth(){
   }
   q.restore();
   const img = new Image();
-  img.onload = () => { BG = img; TONEKEY = '';
+  img.onload = () => { setBG(img);
     if(!LOGO){
       /* 置くものが無いときは、仮のロゴも描いて見せる（何が起きるか分かる） */
       const l = document.createElement('canvas'); l.width = 700; l.height = 260;
