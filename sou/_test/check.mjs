@@ -153,16 +153,20 @@ ok(ax.pos0 === 0, '⭐ 向きを変えると紙が白紙に戻る', '戻った�
 ok(ax.横.L > ax.横.R && ax.縦.U > ax.縦.D,
    '⭐ 横は左から・縦は上から刷る', JSON.stringify(ax.横) + ' / ' + JSON.stringify(ax.縦));
 
-/* ── ⑤ 版面を変えると白紙に戻る ── */
+/* ── ⑤ 版面を変えても【刷った紙は消えない】── 2026-08-29 に決まりを変えた
+   🔴 前は白紙に戻していたが、木下＝「長編をいじると元に戻った」。
+     手の記録を一緒に伸び縮みさせて刷り直す＝紙の大きさは変わり、刷った所は残る。 */
 const sz = await p.evaluate(() => {
+  const r0 = el('r_long'); r0.value = 1400; r0.dispatchEvent(new Event('input', { bubbles:true }));
   wipe(); fitSrc();
-  for(let i = 0; i < 60; i++){ TAKE.push({ to:POS+P.speed, x:T.x, y:T.y, z:T.z }); scanTo(POS + P.speed); }
-  const was = Math.round(POS);
+  for(let i = 0; i < 200; i++){ TAKE.push({ to:POS+P.speed, x:T.x, y:T.y, z:T.z }); scanTo(POS + P.speed); }
+  const was = { pos:Math.round(POS), len:sheet().w };
   const r = el('r_long'); r.value = 1000; r.dispatchEvent(new Event('input', { bubbles:true }));
-  return { was, now:Math.round(POS), w:sheet().w, film:[paper().width, paper().height] };
+  return { was, now:{ pos:Math.round(POS), len:sheet().w }, film:[paper().width, paper().height] };
 });
-ok(sz.was > 0 && sz.now === 0 && sz.film[0] === sz.w,
-   '⭐ 版面を変えると白紙に戻る（黙って引き伸ばさない）', JSON.stringify(sz));
+ok(sz.was.pos > 0 && sz.now.pos > 0 && sz.film[0] === sz.now.len
+   && Math.abs(sz.now.pos / sz.now.len - sz.was.pos / sz.was.len) < 0.06,
+   '⭐⭐ 版面を変えても【刷った所は同じ割合で残る】', JSON.stringify(sz));
 
 /* ── ⑥ 揺れ（機械の癖）── */
 const jt = await p.evaluate(() => {
