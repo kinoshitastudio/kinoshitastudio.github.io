@@ -140,6 +140,7 @@ ok(got.length >= 2 && got.some(x => /png/.test(x.type)) && got.some(x => /svg/.t
     for(let i = 0; i < d.length; i += 4){ if(d[i] < 128) 墨++; if(d[i] < 40) 真っ黒++; }
     return { 墨, 真っ黒, 粒:scatter().n };
   });
+  await p.evaluate(() => { P.lay = 'drop'; DOTKEY = ''; render(); });
   const rows = [];
   for(const v of [10, 40, 70, 100]){
     await set('r_dens', v);
@@ -150,6 +151,7 @@ ok(got.length >= 2 && got.some(x => /png/.test(x.type)) && got.some(x => /svg/.t
      '⭐⭐ 濃さを上げるほど濃くなる（どこかで張り付かない）', JSON.stringify(rows.map(r => r.v + ':' + r.墨)));
   ok(rows[3].粒 > 200000 && rows[3].墨 > 0,
      '⭐⭐ 20万粒を超えても【ちゃんと描かれる】（道を刻んで渡す）', rows[3].粒.toLocaleString() + ' 粒 / 墨 ' + rows[3].墨);
+  await p.evaluate(() => { P.lay = 'dither'; DOTKEY = ''; render(); });
   ok(rows[3].真っ黒 > rows[0].真っ黒 * 5 && rows[3].真っ黒 > rows[3].墨 * 0.85,
      '⭐⭐ いちばん濃くすると【真っ黒まで届く】（参考の吹き付けと同じ）',
      '濃さ10 ' + rows[0].真っ黒 + ' → 濃さ100 ' + rows[3].真っ黒
@@ -169,6 +171,86 @@ ok(got.length >= 2 && got.some(x => /png/.test(x.type)) && got.some(x => /svg/.t
      '900px ' + s900.墨 + ' / 2200px ' + s2200.墨);
   await p.evaluate(() => { const r = el('r_long'); r.value = 1400; r.dispatchEvent(new Event('input',{bubbles:true})); });
   await new Promise(r => setTimeout(r, 1200));
+}
+
+/* ⭐⭐ 質感 ── 参考は【1bit のディザ】だった（2026-08-29）
+   🔴 木下＝「砂の集まりというか質感から違う」「今のままなら ten でも十分そう」。
+     参考を原寸で読んだら、粒は **1画素ぶんで、画素の升目の上に乗っていた**（誤差拡散の虫食い模様つき）。
+     ＝ 丸い粒をランダムに撒く作りでは、どのつまみを回しても到達できない。
+   ⭐ 「画素に置く（ディザ）」を足した。芯（濃さを粒の数だけで作る）は同じで、置く場所が升目。 */
+{
+  /* ⚠️ 板ぜんぶで数えると、真っ白な地に薄められて動きが見えない
+     （実測 16.5%→18.5%）。⭐ 効くのは【中間調】なので、そこだけ数える。 */
+  const cells = () => p.evaluate(() => {
+    const M = bakeMap(), D = ditherCells();
+    let on = 0, n = 0;
+    for(let y = 0; y < D.gh; y++) for(let x = 0; x < D.gw; x++){
+      const i = Math.min(M.core.length-1, y*D.px*M.w + x*D.px);
+      const m2 = Math.max(M.core[i], M.blur[i]*P.ma);
+      if(m2 > 0.06 && m2 < 0.94){ n++; on += D.on[y*D.gw+x]; }
+    }
+    return { on, 中間調:n, 割合:n ? +(on/n).toFixed(3) : 0, 升目:D.px };
+  });
+  await p.evaluate(() => { P.lay = 'dither'; P.dot = 1; P.dens = 50; MAPKEY = ''; render(); });
+  await new Promise(r => setTimeout(r, 900));
+  const a1 = await cells();
+  await p.evaluate(() => { P.dens = 85; render(); });
+  await new Promise(r => setTimeout(r, 900));
+  const a2 = await cells();
+  ok(a1.割合 > 0 && a2.割合 > a1.割合 * 1.25,
+     '⭐⭐ 画素に置く＝濃さで【黒い升目が増える】', JSON.stringify(a1) + ' → ' + JSON.stringify(a2));
+
+  /* ⭐ 誤差拡散＝濃さが1画素も失われない＝出た黒の割合が、狙った濃さの平均に近い */
+  const keep = await p.evaluate(() => {
+    P.dens = 50; MAPKEY = '';
+    const M = bakeMap(), D = ditherCells();
+    const gam2 = Math.max(0.18, 2.2 - 1.9 * (P.dens / 100));
+    let want = 0;
+    for(let i = 0; i < M.core.length; i++){
+      const m2 = Math.min(1, Math.max(M.core[i], M.blur[i]*P.ma));
+      want += m2 > 0 ? Math.pow(m2, gam2) : 0;
+    }
+    want /= M.core.length;
+    let on = 0; for(let i = 0; i < D.on.length; i++) on += D.on[i];
+    return { 狙い:+want.toFixed(3), 出た:+(on / D.on.length).toFixed(3) };
+  });
+  ok(Math.abs(keep.狙い - keep.出た) < 0.03,
+     '⭐⭐ 誤差拡散＝【濃さが失われない】（出た黒の割合＝狙った濃さ）', JSON.stringify(keep));
+
+  /* ⭐ 大きさ＝升目の大きさになる（粒が画素の升目に乗る） */
+  const px2 = await p.evaluate(() => { P.dot = 3; const D = ditherCells(); return D.px; });
+  ok(px2 === 3, '⭐ 大きさ＝升目の大きさ（画素の升目に乗る）', '升目 ' + px2 + ' px');
+
+  /* ⭐ 降らせる（吹き付け）にも戻せる＝向きを縛らない */
+  const both = await p.evaluate(async () => {
+    const shot = () => { const c = document.getElementById('cv');
+      const t = document.createElement('canvas'); t.width = 180; t.height = 180;
+      const q = t.getContext('2d'); q.drawImage(c, 0, 0, 180, 180);
+      const d = q.getImageData(0,0,180,180).data; let x = 2166136261;
+      for(let i = 0; i < d.length; i += 4){ x ^= d[i]; x = Math.imul(x, 16777619); } return x >>> 0; };
+    P.dot = 1; P.dens = 55;
+    P.lay = 'dither'; MAPKEY=''; DOTKEY=''; render(); const a3 = shot();
+    P.lay = 'drop';   MAPKEY=''; DOTKEY=''; render(); const b3 = shot();
+    P.lay = 'dither'; MAPKEY=''; DOTKEY=''; render();
+    return { ディザ:a3, 降らせる:b3 };
+  });
+  ok(both.ディザ !== both.降らせる,
+     '⭐ 【降らせる】にも戻せる（吹き付けの粗さも選べる）', JSON.stringify(both));
+}
+
+/* ⭐ 欄と絵が同じ値を指している（HTML と P の食い違いを起こさない）── 2026-08-29
+   ⚠️ ここまでの段で P を直接触っているので、【読み込み直した所】で見る。 */
+{
+  const m = await b.newPage();
+  await m.setViewport({ width:1400, height:900 });
+  await m.goto(URL_, { waitUntil:'networkidle0' });
+  await new Promise(r => setTimeout(r, 2600));
+  const same = await m.evaluate(() => ({
+    dens:[+el('r_dens').value, P.dens], dot:[+el('r_dot').value/100, P.dot],
+    gap:[+el('r_gap').value/100, P.gap], 表示:[el('o_dens').value, el('o_dot').value, el('o_gap').value] }));
+  ok(['dens','dot','gap'].every(k => Math.abs(same[k][0] - same[k][1]) < 1e-6),
+     '⭐⭐ 欄と絵が【同じ値】を指している', JSON.stringify(same));
+  await m.close();
 }
 
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
