@@ -1114,6 +1114,10 @@ input[type=color]{ border-radius:8px; height:30px }
         ⚠️ 消せるのは<b>鉛筆で引いた線</b>だけ（他の道具の線・図は消えない）</div>
       <button class="btn" id="bImg">画像を置く</button>
       <button class="btn" id="bSvg">SVG を置く</button>
+      <!-- ⭐ 2026-08-29 木下「画像を差し替えるボタンがない」
+           ⚠️ 置き直すと大きさ・位置・切り抜きがやり直しになる＝【中身だけ】替える。 -->
+      <button class="btn" id="bImgSwap">選んだ画像を差し替える</button>
+      <input type="file" id="fImgSwap" accept="image/*" hidden>
       <button class="btn" id="delPiece">選んだ図を消す</button>
     </div>
     <input type="file" id="fImg" accept="image/*" hidden>
@@ -3415,6 +3419,35 @@ cv.addEventListener('pointerdown', e => {
   }
   // ② 版の中身を掴む（図 → 文字の順に見る＝図は面で当たるので先）
   const hit = artLayer.hitTest(vp(pt), { fill:true, stroke:true, tolerance:4/paper.view.zoom });
+  /* ══⭐⭐ ②.5 いま選んでいる物が【他の物の下】にあるときは、それを掴む（2026-08-29 木下
+     「レイヤーパネルで選択してもうごけたらいいよね」）══
+     🔴 版面のどこを押しても【いちばん手前の物】が当たる。抜くの板は版面ぜんぶを覆うので、
+        一覧で下の図を選んでも、版面では板しか掴めなかった＝選べるのに動かせない。
+     ⭐ 押した所に【選んでいる物そのもの】が当たっていないときだけ、囲みの中なら横取りする。
+     ⚠️⚠️ 当たっているときは横取りしない ── 散の塊掴み・⌥での大きさ変えなど、
+        下の本来の道が持っている作法を殺してしまう（実測でここを踏んだ）。
+     ⚠️ ⇧のときも通さない（選び直しの邪魔になる）。
+     ⚠️ 板そのものは版面ぜんぶ＝どこを押しても当たるので、横取りの対象にしない。 */
+  if(!e.shiftKey && S.sel){
+    const selNow = (S.sel.kind === 'piece') ? S.pieces[S.sel.i]
+                 : (S.sel.kind === 'line')  ? S.lines[S.sel.i] : null;
+    const own0 = hit && hit.item ? rootOf(hit.item) : null;
+    const hitsSel = !!(own0 && selNow &&
+      ((S.sel.kind === 'piece' && own0.data.piece === selNow.id) ||
+       (S.sel.kind === 'line'  && own0.data.line  === selNow.id)));
+    if(selNow && !hitsSel && !selNow.lock && !selNow.hide && !selNow.nuki && onFace(selNow)){
+      let box = null;
+      const key = (S.sel.kind === 'piece') ? 'piece' : 'line';
+      artItems().forEach(it => { if(it.data && it.data[key] === selNow.id){
+        try{ box = box ? box.unite(it.bounds) : it.bounds.clone(); }catch(_){}
+      } });
+      if(box && box.contains(vp(pt))){
+        drag = { kind:(S.sel.kind === 'piece') ? 'piece' : 'lineMove', last:pt };
+        cv.style.cursor = 'grabbing';
+        return;
+      }
+    }
+  }
   const owner = hit && hit.item ? rootOf(hit.item) : null;
   if(owner && owner.data.piece !== undefined){
     const i = S.pieces.findIndex(p => p.id === owner.data.piece);
@@ -3999,9 +4032,17 @@ const PRESETS = {
 function applyPreset(key){
   const P = PRESETS[key]; if(!P) return;
   snapForShake();                                  // ⭐ 型も「振る前に戻す」で戻せる
-  const texts = S.lines.map(L => L.text).filter(t => t && t.trim());
+  /* ⭐⭐ 2026-08-29 木下「型を変更すると楕円の周りのテキストまで適応されてしまう。
+     楕円の周りのテキストとは別にしてほしい」
+     🔴 型は S.lines を丸ごと作り直していたので、窓に回した字が毎回消えていた。
+     ⭐ 窓に付いた行（経路＝窓）は【型の外】に置く＝型を押しても1文字も変わらない。
+     ⚠️ ただし型「窓」だけは窓の並びごと組み直すので、そこは作り直す。 */
+  const holds = (key === 'mado') ? []
+    : S.lines.filter(L => L.path && L.path.type === 'hole');
+  const rest  = S.lines.filter(L => holds.indexOf(L) < 0);
+  const texts = rest.map(L => L.text).filter(t => t && t.trim());
   const base  = texts.length ? texts : ['貼 HARI', 'POSTER TYPESETTING'];
-  const keep  = S.lines[0] || newLine('');
+  const keep  = rest[0] || S.lines[0] || newLine('');
   S.lines = P.build(base).map(spec => {
     const L = newLine(spec.text);
     /* ⭐ 書体・色・字の設定は【いま使っているもの】を引き継ぐ＝型を変えても自分の字のまま */
@@ -4010,10 +4051,13 @@ function applyPreset(key){
     L.cell = Object.assign({}, CELL_DEF, spec.cell || {});
     return L;
   });
+  /* ⭐ 窓に回していた字は、そのまま戻す（型の外） */
+  holds.forEach(L => S.lines.push(L));
   S.sel = { kind:'line', i:0 };
   /* ⭐ 行のほかに用意するものがある型は、ここで呼ぶ（窓＝板を置く） */
   if(P.after) try{ P.after(); }catch(e){}
-  syncPanel(); render(); stat(P.jp + 'で組んだ');
+  syncPanel(); render();
+  stat(P.jp + 'で組んだ' + (holds.length ? '（窓に回した字 ' + holds.length + ' 本はそのまま）' : ''));
 }
 
 /* ══ 振る ── 並べるところに偶然を入れる ══
@@ -4574,6 +4618,65 @@ function kamiRow(el, L, wasOn){
   };
   el.appendChild(d);
 }
+/* ⭐⭐ 右パネルを、その段まで連れて行く（畳んでいたら開く・少し光らせる）。
+   ⚠️ 「入っているのに見つからない」を作らないための道具。名前の頭で探す。 */
+function jumpToSec(head){
+  const h = [...document.querySelectorAll('#panel h2')]
+    .find(x => (x.textContent || '').trim().indexOf(head) === 0);
+  if(!h) return;
+  h.classList.remove('fold2');                 /* ⚠️ 畳んでいたら開く（開かないと飛んでも見えない） */
+  const box = h.nextElementSibling;
+  h.scrollIntoView({ block:'start', behavior:'smooth' });
+  if(box){ box.classList.remove('flash'); void box.offsetWidth; box.classList.add('flash'); }
+}
+/* ⭐⭐ 選んだ画像の【中身だけ】を差し替える（2026-08-29 木下「画像を差し替えるボタンがない」）。
+   ⚠️ 置き直すと大きさ・位置・角度・切り抜きがやり直しになる＝そこは触らない。
+   ⚠️ 元の絵と比が違うと見え方が変わるので、覆っていた図は覆い直す。 */
+(function(){
+  const b = document.getElementById('bImgSwap'), f = document.getElementById('fImgSwap');
+  if(!b || !f) return;
+  b.onclick = () => {
+    const pc = selPiece();
+    if(!pc){ stat('先に差し替えたい図を選ぶ（一覧か版面をクリック）'); return; }
+    if(!pc.src || pc.src.t === 'svg'){ stat('画像の図を選んでください（SVG・引いた線は差し替えられません）'); return; }
+    f.click();
+  };
+  f.addEventListener('change', e => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if(!file) return;
+    const pc = selPiece();
+    if(!pc){ stat('図の選択が外れました'); return; }
+    const covered = (function(){                 /* 差し替える前に、覆っていたかを覚える */
+      try{ const b2 = pc.item.bounds;
+        return b2.width * (pc.sc/100) >= S.board.w * 0.98 && b2.height * (pc.sc/100) >= S.board.h * 0.98;
+      }catch(_){ return false; }
+    })();
+    const rd = new FileReader();
+    rd.onload = () => {
+      const im = new Image();
+      im.onload = () => {
+        pushUndo();
+        artLayer.activate();
+        const r = new paper.Raster(im); r.remove();
+        /* ⭐ 置いたときと同じ「版面に収める倍率」を掛ける＝つまみの数字の意味が変わらない */
+        const bb = r.bounds;
+        const fit = Math.min(S.board.w, S.board.h) * 0.5 / Math.max(bb.width, bb.height);
+        r.scale(fit); r.position = new Point(0, 0);
+        if(pc.item) pc.item.remove();
+        pc.item = r; pc.src = { t:'img', d:rd.result };
+        if(covered && typeof fitPiece === 'function') fitPiece(pc, 'cover');
+        syncPanel(); render();
+        stat('画像を差し替えた — 大きさ・位置・切り抜きはそのまま'
+             + (covered ? '（覆っていたので敷き直した）' : ''));
+      };
+      im.onerror = () => stat('この画像は読めませんでした');
+      im.src = rd.result;
+    };
+    rd.readAsDataURL(file);
+  });
+})();
+
 function fillList(el){
   el.innerHTML = '';
   kamiRow(el, KAMI_LAYERS[0]);          /* ⭐ 上（ぜんぶに）＝一覧のいちばん上 */
@@ -4604,6 +4707,11 @@ function fillList(el){
       if(ev.shiftKey) selToggle(e.kind, i);
       else S.sel = { kind:e.kind, i };
       syncPanel(); render();
+      /* ⭐⭐ 2026-08-29 木下「レイヤーパネルで画像ボタンをおすとサイドパネルも
+         それに合わせて画像のある、置くを表示するぐらいしてほしい」
+         ＝選んだものの【直す場所】へ、右パネルを連れて行く。
+         ⚠️ ⇧で足しているときは飛ばない（選び直しの最中に画面が動くと狙えない）。 */
+      if(!ev.shiftKey) jumpToSec(isP ? (o.nuki ? '抜く' : '置く') : '沿う');
     };
     /* ⚠️ 錠と目は選択とは別の操作＝親のクリックまで伝えない */
     d.querySelector('.lk').onclick = ev => { ev.stopPropagation(); o.lock = !o.lock; renderList(); };
