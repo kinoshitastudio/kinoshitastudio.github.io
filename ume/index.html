@@ -532,15 +532,14 @@ function bakeMap(){
 let CELLS = null, CELLKEY = '';
 function cells(){
   const M = bakeMap();
-  const key = [MAPKEY, P.side, P.cell, P.span, COARSE].join('|');
+  const key = [MAPKEY, P.side, P.cell, P.span].join('|');
   if(CELLKEY === key && CELLS) return CELLS;
   const { w, h, sum } = M;
   const W1 = w + 1;
   const at = (x, y, ww, hh) =>
     sum[(y+hh)*W1 + (x+ww)] - sum[y*W1 + (x+ww)] - sum[(y+hh)*W1 + x] + sum[y*W1 + x];
 
-  /* ⚠️ 触っている間だけマスを粗くする（絵の作りは同じ・離せば必ず元に戻る） */
-  const cs = Math.max(6, COARSE ? Math.max(P.cell, 40) : P.cell);
+  const cs = Math.max(6, P.cell);
   const cols = Math.max(1, Math.round(w / cs)), rows = Math.max(1, Math.round(h / cs));
   /* ⭐ マスの境は版面をちょうど割り切る所に置く＝端に半端なマスを作らない */
   const ex = i => Math.round(i * w / cols), ey = i => Math.round(i * h / rows);
@@ -661,29 +660,25 @@ function paint(ctx, W, H, transparent){
   return { n:C.n };
 }
 
-let COARSE = 0, coarseT = 0, rafId = 0;
+/* 🔴🔴 2026-08-29：ここには【触っている間だけ盤を半分にする】仕掛けがあった。
+   木下＝「スライダーはモバイルで動くけどそれに合わせて反映がない」。
+   ⭐ 測ったら、指の端末（CPUを1/4に絞った状態）で **1〜5ms** しか掛かっていなかった。
+     重くないのに絵を半分の粗さで描いていたので、つまみを動かしても違いが見えなかった。
+   ⚠️ 元の仕掛けは 隙SUKI（地図を焼くのに 778ms 掛かる道具）から外枠ごと借りたもの。
+     この道具には要らない＝丸ごと外した。 → [[feedback_measure_before_you_optimize]] */
+let rafId = 0;
 function renderSoon(){
   if(rafId) return;
   rafId = requestAnimationFrame(() => { rafId = 0; render(); });
 }
-function touching(){
-  COARSE = 1;
-  clearTimeout(coarseT);
-  coarseT = setTimeout(() => { COARSE = 0; render(); }, 240);
-}
+function touching(){ /* 何もしない（重くないので粗くする必要が無い） */ }
 
 /* ══ 画面 ══ */
 const V = { x:0, y:0, z:1 };
 function render(){
   const { w, h } = sheet();
-  /* ⭐⭐ 触っている間は【盤そのものも小さく】する（2026-08-29）
-     木下＝「モバイルだとスライダーがやはり重い。リアルタイムで変更はみれず、時間差がある」。
-     🔴 計算は 12ms しか掛かっていなかった＝重いのは**1400×1400 の板を毎コマ画面へ送る**方だった。
-     ⭐ 板を半分にすると画素は 1/4。粒の計算（地図・並び）は同じものを使うので**絵は変わらない**
-       ＝見る側の倍率を同じだけ上げて、大きさも見え方も揃える。
-     ⚠️ 離した瞬間に COARSE が 0 に戻って、必ず元の大きさで焼き直される。 */
-  const k = COARSE ? 0.5 : 1;
-  const W2 = Math.max(64, Math.round(w*k)), H2 = Math.max(64, Math.round(h*k));
+  /* ⭐ 盤はいつでも実寸で描く（実測 1〜5ms） */
+  const W2 = Math.max(64, w), H2 = Math.max(64, h);
   if(cv.width !== W2 || cv.height !== H2){ cv.width = W2; cv.height = H2; }
   const t0 = performance.now();
   const D = paint(g, W2, H2, P.nobg);
@@ -794,13 +789,13 @@ let TXTT = 0;
   let ft = 0;
   el('t_fill').addEventListener('input', e => {
     P.fill = e.target.value;
-    clearTimeout(ft); ft = setTimeout(() => { COARSE = 0; render(); }, 160);
+    clearTimeout(ft); ft = setTimeout(() => { render(); }, 160);
   });
 }
 el('t_txt').addEventListener('input', e => {
   P.txt = e.target.value;
   clearTimeout(TXTT);
-  TXTT = setTimeout(() => { MAPKEY = ''; COARSE = 0; render(); }, 180);
+  TXTT = setTimeout(() => { MAPKEY = ''; render(); }, 180);
 });
 
 /* ══ つまみ（表1つで回す）══ */
@@ -1088,16 +1083,9 @@ el('b_play').onclick = () => {
 
 
 /* ══ 立ち上げ ══ */
-/* ⚠️ 指の端末は細かい升目だと重い＝既定だけ粗くする（つまみは同じ）
-   🔴 ここは【この道具にあるつまみ】を触ること。外枠を借りたとき隣の道具のつまみ名が
-      そのまま残っていて、指の端末だけ立ち上げが丸ごと死んだ（2026-08-29）。
-      無い時は何もしない・立ち上げは止めない。 */
-if(matchMedia('(pointer:coarse)').matches){
-  try{
-    const r = el('r_cell');   /* マスの大きさ＝大きくすると長方形が減る */
-    if(r && +r.value < 120){ r.value = 120; r.dispatchEvent(new Event('input', { bubbles:true })); }
-  }catch(_){}
-}
+/* 🔴 ここには【指の端末だけマスを粗くする】上書きがあったが、外した。
+   実測 1〜5ms＝粗くする必要が無く、**指の端末だけ別の絵**になってしまっていた。
+   ⚠️ そもそも隣の道具（隙SUKI）の外枠と一緒に付いてきた行だった。 */
 /* 🔴🔴 欄と絵で【違う字】が出ていた（2026-08-29 木下＝「元にBと入っている。違うよね？」）。
    HTML の初期値と P の初期値が別々に書かれていて、動いているのは P の方だった。
    ⭐ 持ち主を P ひとつに決める＝立ち上げで欄を P から書く（式は1本・規則は1つ）。 */
