@@ -37,7 +37,7 @@ await p.evaluate(async () => {
   await new Promise(r => { im.onload = r; im.src = c.toDataURL('image/png'); });
   SRC = im; MAPKEY=''; DOTKEY=''; render();
 });
-await set('r_pad', 0); await set('r_ma', 0); await set('r_n', 40000);
+await set('r_pad', 0); await set('r_ma', 0); await set('r_dens', 40);
 await new Promise(r=>setTimeout(r,700));
 
 const D = () => p.evaluate(() => {
@@ -124,5 +124,52 @@ await new Promise(r=>setTimeout(r,900));
 const got = await p.evaluate(() => window.__got);
 ok(got.length >= 2 && got.some(x => /png/.test(x.type)) && got.some(x => /svg/.test(x.type)),
    'PNG と SVG が本当に落ちる', JSON.stringify(got));
+/* ⭐⭐ 濃さは【霧から真っ黒まで】通る ── 2026-08-29
+   🔴 木下＝「いくらつまみをあげてもそこまで表現が変わらない」。原因は2つ：
+     ① つまみが「数」だった＝版面を大きくするとスカスカになり、上限で張り付く
+     ② 20万粒を超えると **道の文字列が大きすぎて new Path2D が黙って失敗し、何も描かれなかった**
+        （実測：40万粒で墨 0）。だから木下は 15万あたりから先へ行けなかった。
+   ⭐ つまみを「濃さ（どこまで詰めるか）」にして、道は刻んで渡すようにした。 */
+{
+  const shot = () => p.evaluate(() => {
+    const c = document.getElementById('cv');
+    const t = document.createElement('canvas'); t.width = 200; t.height = 200;
+    const q = t.getContext('2d'); q.drawImage(c, 0, 0, 200, 200);
+    const d = q.getImageData(0,0,200,200).data;
+    let 墨 = 0, 真っ黒 = 0;
+    for(let i = 0; i < d.length; i += 4){ if(d[i] < 128) 墨++; if(d[i] < 40) 真っ黒++; }
+    return { 墨, 真っ黒, 粒:scatter().n };
+  });
+  const rows = [];
+  for(const v of [10, 40, 70, 100]){
+    await set('r_dens', v);
+    await new Promise(r => setTimeout(r, 1400));
+    rows.push({ v, ...(await shot()) });
+  }
+  ok(rows[0].墨 < rows[1].墨 && rows[1].墨 < rows[2].墨 && rows[2].墨 <= rows[3].墨,
+     '⭐⭐ 濃さを上げるほど濃くなる（どこかで張り付かない）', JSON.stringify(rows.map(r => r.v + ':' + r.墨)));
+  ok(rows[3].粒 > 200000 && rows[3].墨 > 0,
+     '⭐⭐ 20万粒を超えても【ちゃんと描かれる】（道を刻んで渡す）', rows[3].粒.toLocaleString() + ' 粒 / 墨 ' + rows[3].墨);
+  ok(rows[3].真っ黒 > rows[0].真っ黒 * 5 && rows[3].真っ黒 > rows[3].墨 * 0.85,
+     '⭐⭐ いちばん濃くすると【真っ黒まで届く】（参考の吹き付けと同じ）',
+     '濃さ10 ' + rows[0].真っ黒 + ' → 濃さ100 ' + rows[3].真っ黒
+     + '（墨のうち ' + Math.round(rows[3].真っ黒 / rows[3].墨 * 100) + '% が真っ黒）');
+  /* ⭐ 版面を変えても濃さの見え方が変わらない（数は結果） */
+  await set('r_dens', 62);
+  const a = await p.evaluate(async () => { const r = el('r_long'); r.value = 900; r.dispatchEvent(new Event('input',{bubbles:true}));
+    await new Promise(x => setTimeout(x, 1200)); return null; });
+  await new Promise(r => setTimeout(r, 900));
+  const s900 = await shot();
+  await p.evaluate(async () => { const r = el('r_long'); r.value = 2200; r.dispatchEvent(new Event('input',{bubbles:true}));
+    await new Promise(x => setTimeout(x, 1600)); });
+  await new Promise(r => setTimeout(r, 1400));
+  const s2200 = await shot();
+  ok(Math.abs(s900.墨 - s2200.墨) < s900.墨 * 0.28,
+     '⭐ 版面を変えても【濃さの見え方が変わらない】（数は面積から出す）',
+     '900px ' + s900.墨 + ' / 2200px ' + s2200.墨);
+  await p.evaluate(() => { const r = el('r_long'); r.value = 1400; r.dispatchEvent(new Event('input',{bubbles:true})); });
+  await new Promise(r => setTimeout(r, 1200));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
 await b.close(); process.exit(NG);
