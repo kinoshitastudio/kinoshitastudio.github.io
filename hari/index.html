@@ -1247,8 +1247,9 @@ input[type=color]{ border-radius:8px; height:30px }
       ⭐⭐ <b>窓どうしは重ならない</b>（接するだけ）。残った板が花びらや尖った断面になるのはそのため。<br>
       ⭐ <b>板を隠す</b>＝色は消えるが窓は残る ── <b>パスに沿った字だけ</b>が浮く。<br>
       ⭐ <b>選んだ行を、窓の数だけ作って回す</b>＝全部の窓のふちに同じ字が付く（あとで1行ずつ直せる）。<br>
-      ⚠️ 上のつまみ（窓の数・大きさ・楕円度・傾き・倍率）は<b>全部を置き直す</b>ので、
-      「窓を1つずつ」で直した分は消える。<br>
+      ⭐ 上の <b>大きさ・楕円度・傾き・全体の倍率</b> は<b>いまの並びに掛け直す</b>
+      ── 「窓を1つずつ」で直した分は<b>消えない</b>。<br>
+      ⚠️ <b>窓の数</b>・<b>振る</b>・<b>縁に寄せる</b> の3つだけは<b>置き直す</b>（並びそのものが変わるため）。<br>
       ⭐ <b>中の写真</b>＝窓から見えている写真を動かす（板は動かない）。<b>版面では掴めない</b>
       ── 板が全面を覆っているので、ここのつまみで触る。<br>
       ⚠️ 板は<b>図（レイヤー）</b>なので上下を動かせる。<b>写真より上</b>に置くこと。
@@ -4710,8 +4711,12 @@ function fillList(el){
     /* ⭐ 裏の物には「裏」の札。⚠️ 表には何も付けない（いままでの一覧と同じ見え） */
     const fx = o.ura ? '<span class="fx">裏</span>' : '';
     d.innerHTML = (isP
+        /* 🔴 2026-08-29 木下「楕円で作られたレイヤーをパネルで見てみると svg だった」
+           ＝板は src も pen も持たないので、最後の「SVG」に落ちていた。
+           ⭐ 板は板と名乗る（何が並んでいるか分からないと選べない）。 */
         ? `<span class="k">図</span>${fx}<span class="t">${
-             (o.kasu && o.kasu.length) ? '消しカス ' + o.kasu.length + '粒'
+             o.nuki ? '板（窓 ' + ((o.nuki.holes || []).length) + '）'
+             : (o.kasu && o.kasu.length) ? '消しカス ' + o.kasu.length + '粒'
              : o.pen ? '引いた線' : o.src ? '画像' : 'SVG'}</span>`
         : `<span class="k">${(LAYOUTS[o.kind]||LAYOUTS.meguru).jp}</span>${fx}<span class="t">${(o.text||'（空）').slice(0,18)}</span>`)
       + eyeBtn(!!o.hide, o.hide ? '隠している（押すと出す）' : '隠す')
@@ -5490,8 +5495,33 @@ $('addLine').onclick = () => {
 $('dupLine').onclick = () => { const L = sel(); if(!L) return;
   const c = JSON.parse(JSON.stringify(L)); c.id = uid();
   S.lines.splice(S.sel.i+1, 0, c); S.sel.i++; syncPanel(); render(); stat('行を複製した'); };
-$('delLine').onclick = () => { if(!S.lines.length) return;
-  S.lines.splice(S.sel.i, 1); S.sel.i = Math.max(0, S.sel.i-1); syncPanel(); render(); stat('行を消した'); };
+/* ⭐⭐ 2026-08-29 木下「全部パネルから削除していったが最後にこの状態になり
+   テキストは消せない」
+   🔴 ① この削除は【いつも行】を消していた ── 図を選んでいると、
+      そのぶん番号の行が消える＝**選んでいない物が消える**。
+   🔴 ② 最後の1行を消したあと `S.sel.i` が 0 のままで、次に押しても何も起きなかった。
+   ⭐ 選んでいる種類のものを消す／0行になっても壊れないようにする。
+   ⚠️ 0行でも版面は描ける（stack が空になるだけ）。「行を足す」で戻せる。 */
+$('delLine').onclick = () => {
+  if(S.sel && S.sel.kind === 'piece'){
+    const pc = S.pieces[S.sel.i];
+    if(!pc){ stat('消すものが選ばれていません'); return; }
+    pushUndo();
+    dropPiece(pc); if(pc.item) pc.item.remove();
+    S.pieces.splice(S.sel.i, 1);
+    S.sel = S.pieces.length ? { kind:'piece', i:Math.max(0, S.sel.i - 1) }
+          : (S.lines.length ? { kind:'line', i:0 } : { kind:null, i:0 });
+    syncPanel(); render(); stat('図を消した'); return;
+  }
+  if(!S.lines.length){ stat('消す行がありません'); return; }
+  pushUndo();
+  const i = Math.max(0, Math.min(S.lines.length - 1, (S.sel && S.sel.i) || 0));
+  S.lines.splice(i, 1);
+  S.sel = S.lines.length ? { kind:'line', i:Math.max(0, i - 1) }
+        : (S.pieces.length ? { kind:'piece', i:0 } : { kind:null, i:0 });
+  syncPanel(); render();
+  stat(S.lines.length ? '行を消した' : '行を消した — 版面に行が無くなった（「行を足す」で戻せる）');
+};
 $('showPath').onclick = () => { S.showPath = !S.showPath; $('showPath').classList.toggle('on', S.showPath); render(); };
 
 ['bw','bh'].forEach(id => $(id).addEventListener('input', e => {
@@ -6966,11 +6996,64 @@ stat(matchMedia('(pointer:coarse)').matches
   }
   document.getElementById('nkAdd').onclick = () => nkAdd();
   document.getElementById('nkDel').onclick = nkDel;
+  /* ══⭐⭐ 2026-08-30 木下「よこたて大きさをそれぞれの楕円で調整した後、
+     全体を大きくしようとしたら、配置したのが初期状態に戻った」══
+     🔴 大きさ・楕円度・傾き が【全部置き直す】設定だった＝1つずつの調整が毎回消えていた。
+     ⭐ **いまある窓に掛け直す**（置き直さない）＝1つずつの調整が生きたまま全体が効く。
+     ⚠️ 置き直すのは【窓の数】と【振る】と【縁に寄せる】だけ ── 形の並びそのものが変わる3つ。
+     ⚠️ 掛け直したあとは押し離す（重ならないのは変えない）。 */
+  function nkApply(key, to){
+    const pc = nkPc(); if(!pc) return;
+    const nk = pc.nuki, from = nk[key];
+    const hs = nk.holes || [];
+    if(key === 'r'){                     /* 大きさ＝半径を掛け直す（位置はそのまま） */
+      const k = (to || 1) / (from || 1);
+      hs.forEach(h => { h.rx *= k; h.ry *= k; });
+    }else if(key === 'e'){               /* 楕円度＝縦だけ掛け直す */
+      hs.forEach(h => { h.ry = h.rx / (to / 100); });
+    }else if(key === 'rot'){             /* 傾き＝差を足す（1つずつの振れは残る） */
+      const d = to - from;
+      hs.forEach(h => { h.rot += d; });
+    }
+    nk[key] = to;
+    /* ⭐⭐ 重なったときは【位置を動かさない】── 一様に縮めて接する所で止める。
+       🔴 押し離すと、1つずつ直した配置がその場で崩れる
+         （木下＝「よこたて大きさをそれぞれの楕円で調整した後、全体を大きくしようとしたら、
+          配置したのが初期状態に戻った」の正体はこれ。置き直しではなく押し離しだった）。
+       ⚠️ だからつまみの数字より小さく効くことがある＝画面でそう言う。 */
+    let capped = 0;
+    for(let t = 0; t < 90 && nkAnyOverlap(hs); t++){
+      hs.forEach(h => { h.rx *= 0.985; h.ry *= 0.985; });
+      capped++;
+    }
+    nkBuild(pc);
+    if(capped) stat('となりの窓と接する所で止めた（重ならないように、少し小さく効いています）');
+  }
+  /* どこか1組でも重なっているか */
+  function nkAnyOverlap(hs){
+    for(let i = 0; i < hs.length; i++) for(let j = i + 1; j < hs.length; j++)
+      if(nkOverlap(hs[i], hs[j])) return true;
+    return false;
+  }
   knob('nkCol', 'col', false);
-  knob('nkN',   'n',   true);
-  knob('nkR',   'r',   true);
-  knob('nkE',   'e',   true);
-  knob('nkRot', 'rot', true);
+  knob('nkN',   'n',   true);           /* ⚠️ 数が変わる＝置き直すしかない */
+  { [['nkR','r'],['nkE','e'],['nkRot','rot']].forEach(([id, key]) => {
+      const el = document.getElementById(id); if(!el) return;
+      let arm = false;
+      const on = () => { arm = true; };
+      el.addEventListener('pointerdown', on);
+      el.addEventListener('keydown', on);
+      el.addEventListener('input', () => {
+        const lab = el.parentElement && el.parentElement.querySelector('.v');
+        if(lab) lab.textContent = el.value;
+        if(!nkPc()){ stat('先に「板を置いて窓を抜く」を押してください'); return; }
+        if(arm){ pushUndo(); arm = false; }
+        nkApply(key, +el.value);
+        render();
+        if(typeof nkOneSync === 'function') nkOneSync();
+      });
+      el.addEventListener('pointerup', () => { arm = false; });
+    }); }
   /* ⚠️ 倍率だけは【置き直さない】＝並びを保ったまま拡げる（上の nkZoomTo） */
   { const el = document.getElementById('nkZ');
     let arm = false;
@@ -7187,10 +7270,9 @@ stat(matchMedia('(pointer:coarse)').matches
       const L = nkLineOf(k);
       if(!L){ stat('この窓に字はありません'); return; }
       pushUndo();
-      /* ⚠️ 行が1本しか無いときは消さない（HARI は行が0だと組めない）＝経路だけ外す */
-      if(S.lines.length <= 1) L.path.type = 'circle';
-      else S.lines.splice(S.lines.indexOf(L), 1);
-      S.sel = { kind:'line', i:0 };
+      S.lines.splice(S.lines.indexOf(L), 1);
+      S.sel = S.lines.length ? { kind:'line', i:0 }
+            : (S.pieces.length ? { kind:'piece', i:0 } : { kind:null, i:0 });
       syncPanel(); render(); stat('窓 ' + (k + 1) + ' の字を消した');
     }; }
   { const b3 = document.getElementById('nkOneSel');
@@ -7243,6 +7325,12 @@ stat(matchMedia('(pointer:coarse)').matches
       h.rx *= k; h.ry *= k;
     });
     nk.z = to;
+    /* ⚠️ 位置ごと拡げるので普通は重ならないが、1つずつ直したあとは重なり得る。
+       ⭐ そこでも【位置は動かさず】縮めて止める。 */
+    if(typeof nkAnyOverlap === 'function'){
+      for(let t = 0; t < 90 && nkAnyOverlap(nk.holes); t++)
+        nk.holes.forEach(h => { h.rx *= 0.985; h.ry *= 0.985; });
+    }
   };
 
   /* ⭐ 板を出す／隠す */
