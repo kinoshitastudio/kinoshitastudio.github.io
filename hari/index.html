@@ -561,6 +561,20 @@ input[type=color]{ border-radius:8px; height:30px }
       <input type="range" id="gGrid" min="2" max="24" value="6"><span class="v" id="vgGrid">6</span></div>
     <div class="note">⭐ <b>三分割</b>＝1/3・中央・2/3 に線／<b>方眼</b>＝版面の比に合わせた正方のマス<br>
       ⭐ <b>余白</b>＝版面の内側に引く枠（%）。0 で消える。⚠️ どのガイドも<b>書き出しには入らない</b></div>
+    <!-- ══⭐⭐ 外の余白（2026-08-30 木下「全体の周りに線の余白をつけることで、
+         全体のレイアウトが真ん中に寄せられる」）══
+         ⚠️ 上の「余白」はガイド（見るだけ）。こちらは【組みに効く】し【書き出しにも入る】。 -->
+    <div class="row" style="margin-top:11px"><label>外の余白</label>
+      <input type="range" id="bPad" min="0" max="25" value="0"><span class="v" id="vbPad">0</span></div>
+    <div class="row"><label>余白の線</label>
+      <div class="seg" id="segPadLine" style="flex:1">
+        <button data-v="1" class="on">引く</button><button data-v="0">引かない</button>
+      </div>
+      <input type="color" id="bPadCol" value="#111111"></div>
+    <div class="note">⭐ <b>外の余白</b>＝版面の内側に額をつくり、<b>組みぜんぶをその中へ寄せる</b>。
+      張る・並ぶ・散・札の箱がこの中に割り付く<br>
+      ⚠️ 0 なら1画素も変わらない／⚠️ 線は<b>書き出しにも入る</b>（ガイドとは別）</div>
+
     <div class="row" style="margin-top:11px"><label>版面の外</label>
       <div class="seg" id="segGhost" style="flex:1">
         <button data-v="1">薄く見せる</button><button data-v="0">隠す</button>
@@ -1403,6 +1417,10 @@ let S = {
   pieces:[],
   sel:{ kind:'line', i:0 },      // いま選んでいるもの
   guide:{ on:0, margin:8, grid:6 },   // ⭐ ガイド（見るだけ・書き出しに入らない）
+  /* ⭐⭐ 外の余白（2026-08-30 木下「全体の周りに線の余白をつけることで、
+     全体のレイアウトが真ん中に寄せられる」）。⚠️ ガイドと違って【効く】し【書き出しにも入る】。
+     ⚠️ 0 なら1画素も変わらない。 */
+  pad:0, padLine:1, padCol:'#111111', padW:1.5,
   showPath:false,
   /* ⭐⭐ 紙を裏返す（2026-08-27 木下＝「表面に書いていると、裏面にひっくり返すと
      本物の紙のようにうっすらと表面が見えている」）。
@@ -1805,9 +1823,10 @@ function chiruPut(L, K, n){
    ⚠️ 直線も同じ道を通す（式を2本持たない）。 */
 function haruPath(L){
   const B = S.board;
-  const bx = ((L.box && L.box.x) ?? 10)/100 * B.w;
-  const by = ((L.box && L.box.y) ?? 88)/100 * B.h;
-  const bw = ((L.box && L.box.w) ?? 80)/100 * B.w;
+  const R_ = padRect();
+  const bx = R_.x + ((L.box && L.box.x) ?? 10)/100 * R_.w;
+  const by = R_.y + ((L.box && L.box.y) ?? 88)/100 * R_.h;
+  const bw = ((L.box && L.box.w) ?? 80)/100 * R_.w;
   const pts = (L.box && L.box.pts) || [];
   const seg = [new Point(bx, by)];
   pts.forEach(q => seg.push(new Point(bx + (q[0] || 0) * bw, by + (q[1] || 0) * bw)));
@@ -1819,10 +1838,17 @@ function haruPath(L){
 /* ⭐ 張るの掴み手・頂点を足す所が見る「割合 ⇄ 版面の座標」。⚠️ 往復の2本を隣に置く */
 function haruUV(L, q){
   const B = S.board;
-  const bx = ((L.box && L.box.x) ?? 10)/100 * B.w;
-  const by = ((L.box && L.box.y) ?? 88)/100 * B.h;
-  const bw = Math.max(1, ((L.box && L.box.w) ?? 80)/100 * B.w);
+  const R_ = padRect();
+  const bx = R_.x + ((L.box && L.box.x) ?? 10)/100 * R_.w;
+  const by = R_.y + ((L.box && L.box.y) ?? 88)/100 * R_.h;
+  const bw = Math.max(1, ((L.box && L.box.w) ?? 80)/100 * R_.w);
   return [ (q.x - bx) / bw, (q.y - by) / bw ];
+}
+/* ⭐ 外の余白を引いた【使える範囲】。箱（％）はこの中に割り付ける。
+   ⚠️ 0 なら版面そのもの＝これまでと1画素も変わらない。 */
+function padRect(){
+  const B = S.board, p = Math.max(0, (B.pad || 0)) / 100 * Math.min(B.w, B.h);
+  return { x:p, y:p, w:Math.max(1, B.w - p*2), h:Math.max(1, B.h - p*2) };
 }
 function buildPath(L){
   const { w, h } = S.board, p = L.path;
@@ -2034,9 +2060,10 @@ const LAYOUTS = {
     jp:'張る',
     build(L, into){
       const B = S.board;
-      const bx = ((L.box && L.box.x) ?? 10)/100 * B.w;
-      const by = ((L.box && L.box.y) ?? 88)/100 * B.h;
-      const bw = ((L.box && L.box.w) ?? 80)/100 * B.w;
+      const R_ = padRect();
+  const bx = R_.x + ((L.box && L.box.x) ?? 10)/100 * R_.w;
+      const by = R_.y + ((L.box && L.box.y) ?? 88)/100 * R_.h;
+      const bw = ((L.box && L.box.w) ?? 80)/100 * R_.w;
       const chars = [...L.text].filter(c => c !== '\n');
       if(!chars.length || !(bw > 0)) return;
       /* ⭐⭐ 2026-08-27 木下「はるにさ、頂点を追加してくねっと曲げたりできたらそれはいいかな」
@@ -2209,9 +2236,10 @@ const LAYOUTS = {
     jp:'並ぶ',
     build(L, into){
       const B = S.board;
-      const bx = ((L.box && L.box.x) ?? 10)/100 * B.w;
-      const by = ((L.box && L.box.y) ?? 88)/100 * B.h;
-      const bw = ((L.box && L.box.w) ?? 80)/100 * B.w;
+      const R_ = padRect();
+  const bx = R_.x + ((L.box && L.box.x) ?? 10)/100 * R_.w;
+      const by = R_.y + ((L.box && L.box.y) ?? 88)/100 * R_.h;
+      const bw = ((L.box && L.box.w) ?? 80)/100 * R_.w;
       if(!(bw > 0)) return;
       const A = audOf(L);
       if(A.size !== 1 || A.track) L = Object.assign({}, L, {
@@ -2345,8 +2373,9 @@ const LAYOUTS = {
     jp:'札',
     build(L, into){
       const B = S.board, F = Object.assign({}, FUDA_DEF, L.fuda || {});
-      const cx = ((L.box && L.box.x) ?? 10)/100 * B.w;
-      const cy = ((L.box && L.box.y) ?? 88)/100 * B.h;
+      const R2_ = padRect();
+      const cx = R2_.x + ((L.box && L.box.x) ?? 10)/100 * R2_.w;
+      const cy = R2_.y + ((L.box && L.box.y) ?? 88)/100 * R2_.h;
       const mk = (txt, size, col) => new paper.PointText({
         point:[0,0], content:txt, justification:'left',
         fillColor:col, fontFamily:L.fam, fontWeight:L.wt, fontSize:size,
@@ -2811,6 +2840,16 @@ function render(into, opt){
   const clipRect = new Path.Rectangle(new Rectangle(0,0,S.board.w,S.board.h));
   clipRect.clipMask = true;
   const inner = new Group([clipRect]);
+  /* ⭐ 外の余白の線。⚠️ ガイド（uiLayer）と違って【書き出しにも入る】＝版面の一部。
+     ⚠️ 物より先に置く＝いちばん奥（字や図に隠れる）。 */
+  if((S.board.pad || 0) > 0 && S.board.padLine !== 0){
+    const R = padRect();
+    const fr = new Path.Rectangle(new Rectangle(R.x, R.y, R.w, R.h));
+    fr.strokeColor = S.board.padCol || '#111111';
+    fr.strokeWidth = Math.max(0.3, S.board.padW || 1.5);
+    fr.fillColor = null;
+    inner.addChild(fr);
+  }
   inner.data.inner = true;      // ⚠️ 掴む処理がここを目印に1段もぐる（rootOf / artItems）
   FLOW_HOST = inner;            // ⭐ 回り込みが「避ける相手」を探す先
   target.addChild(inner);
@@ -3140,7 +3179,9 @@ function drawHandles(){
   if(L.kind === 'fuda'){
     /* 札＝左上の1点も掴める（動かす用） */
     const B = S.board;
-    mk(new Point(((L.box && L.box.x) ?? 10)/100 * B.w, ((L.box && L.box.y) ?? 88)/100 * B.h), { fudaAt:1 });
+    { const R3_ = padRect();
+      mk(new Point(R3_.x + ((L.box && L.box.x) ?? 10)/100 * R3_.w,
+                   R3_.y + ((L.box && L.box.y) ?? 88)/100 * R3_.h), { fudaAt:1 }); }
     return;
   }
   if(L.kind === 'haru'){
@@ -3155,9 +3196,10 @@ function drawHandles(){
     }
     /* 張る＝箱の【両端】を掴む。左を引けば始まりが、右を引けば幅が変わる */
     const B = S.board;
-    const bx = ((L.box && L.box.x) ?? 10)/100 * B.w;
-    const by = ((L.box && L.box.y) ?? 88)/100 * B.h;
-    const bw = ((L.box && L.box.w) ?? 80)/100 * B.w;
+    const R_ = padRect();
+  const bx = R_.x + ((L.box && L.box.x) ?? 10)/100 * R_.w;
+    const by = R_.y + ((L.box && L.box.y) ?? 88)/100 * R_.h;
+    const bw = ((L.box && L.box.w) ?? 80)/100 * R_.w;
     const rot = (L.box && L.box.rot) || 0, c = new Point(bx + bw/2, by);
     mk(new Point(bx, by).rotate(rot, c),      { boxEnd:0 });
     mk(new Point(bx + bw, by).rotate(rot, c), { boxEnd:1 });
@@ -5083,6 +5125,9 @@ function syncPanel(){
   /* ⚠️ 版面と図のつまみは【行を選んでいなくても】合わせる。
      行が無いところで return していたので、図を選んだ瞬間に大きさ・角度が古い値のままだった。 */
   segOn('segBg', S.board.mode); $('bw').value = S.board.w; $('bh').value = S.board.h;
+  setRange('bPad', S.board.pad || 0);
+  segOn('segPadLine', (S.board.padLine === 0) ? '0' : '1');
+  { const c = $('bPadCol'); if(c) c.value = S.board.padCol || '#111111'; }
   /* ⚠️ 古い作品は ghost を持たない＝既定は「薄く見せる」（＝はみ出した物を見失わない） */
   segOn('segGhost', S.ghost === false ? '0' : '1');
   syncFace();                    /* ⭐ 紙の面（表／裏）＝道具立てのボタンと右の段は同じ1つの値 */
@@ -5862,6 +5907,17 @@ function boardResize(nw, nh){
   syncPanel(); fitView(); render();
   stat('版面を ' + nw + '×' + nh + ' に — 構図も一緒に連れてきた');
 }
+/* ⭐ 外の余白のつまみ。⚠️ 組みに効くので、動かすたびに刷り直す（renderSoon でまとめる） */
+{ const el = $('bPad');
+  if(el) el.addEventListener('input', e => {
+    const v = Math.max(0, Number(e.target.value) || 0);
+    $('vbPad').textContent = v; S.board.pad = v;
+    renderSoon(); }); }
+document.querySelectorAll('#segPadLine button').forEach(b => b.onclick = () => {
+  S.board.padLine = +b.dataset.v; segOn('segPadLine', b.dataset.v); render();
+  stat(S.board.padLine ? '余白の線を引く（書き出しにも入る）' : '余白の線は引かない'); });
+{ const c = $('bPadCol');
+  if(c) c.addEventListener('input', e => { S.board.padCol = e.target.value; renderSoon(); }); }
 ['bw','bh'].forEach(id => $(id).addEventListener('input', e => {
   const v = Math.max(50, Number(e.target.value)||50);
   boardResize(id === 'bw' ? v : S.board.w, id === 'bh' ? v : S.board.h);
