@@ -768,8 +768,14 @@ input[type=color]{ border-radius:8px; height:30px }
         <button data-v="circle">円</button>
         <button data-v="hole">窓</button>
       </div></div>
-    <div class="row" id="rowHole"><label>どの窓</label>
+    <!-- 🔴 2026-08-29 木下「もともとテキストがなかったのを窓で選択していると、
+         選択されるとテキストが表示され、違う窓を選択するとまた消えたりしている」
+         ＝〈抜く〉の「どの窓」（どの窓を直すか）と名前が同じで、
+           こちらは【この行を どの窓へ移すか】＝**付けるのではなく移す**だった。
+         ⭐ 名前を分けて、その窓に何本付いているかも出す。 -->
+    <div class="row" id="rowHole"><label>この行を回す窓</label>
       <input type="range" id="pHole" min="1" max="8" value="1"><span class="v" id="vHole">1</span></div>
+    <div class="note" id="holeNote" style="display:none"></div>
     <!-- ⭐⭐ 2026-08-27 木下「もう少し多角形やたん系が使いやすくしたい。
          今でもいい感じだが、左右逆になるとか？上下逆になるとか」
          ⭐ 経路を鏡にする＝字の並ぶ順・回る向き・内外が一度に入れ替わる。
@@ -1192,6 +1198,17 @@ input[type=color]{ border-radius:8px; height:30px }
         <span class="v" id="vnkPick">1 / 1</span></div>
       <div class="row"><label>どの窓</label>
         <input type="range" id="nkPick" min="1" max="8" value="1"><span class="v" id="vnkPickN">1</span></div>
+      <!-- ⭐⭐ 2026-08-29 木下「わかりづらいなw」
+           🔴 窓に字を付ける入口が【4か所】に散っていた
+             （抜くの どの窓／付ける・選ぶボタン／沿うの 回す窓／窓の数だけ作る）。
+           ⭐ **選んだ窓の字を、ここで直接打つ**＝付ける・直す・消すが1か所。
+           ⚠️ 打った時点で行が無ければ作る（「付ける」ボタンを押さなくていい）。 -->
+      <textarea id="nkOneText2" placeholder="この窓のまわりに回す字（打つとその場で付く）"
+        style="width:100%;min-height:52px;margin-top:4px"></textarea>
+      <div class="grid2">
+        <button class="btn" id="nkOneDel">この窓の字を消す</button>
+        <button class="btn" id="nkOneSel">この窓の行を選ぶ</button>
+      </div>
       <div class="row"><label>よこ</label>
         <input type="range" id="nkOX" min="-20" max="120" value="50"><span class="v" id="vnkOX">50</span></div>
       <div class="row"><label>たて</label>
@@ -1202,9 +1219,6 @@ input[type=color]{ border-radius:8px; height:30px }
         <input type="range" id="nkOE" min="100" max="260" value="160"><span class="v" id="vnkOE">160</span></div>
       <div class="row"><label>傾き</label>
         <input type="range" id="nkORot" min="0" max="360" value="0"><span class="v" id="vnkORot">0</span></div>
-      <!-- ⭐ 2026-08-29 木下「たとえば1にテキストがない場合、テキストをパス周りに
-           つける場合どうするんだっけ？」＝聞かれた場所に置く。 -->
-      <button class="btn" id="nkOneText" style="display:block;width:100%">この窓に字を付ける</button>
     </div>
     <button class="btn" id="nkRing" style="display:block;width:100%;margin-top:6px">選んだ行を、窓の数だけ作って回す</button>
     <!-- ══⭐⭐ 中の写真（2026-08-29）══
@@ -4881,8 +4895,24 @@ function syncPanel(){
   segOn('segPath', L.path.type); segOn('segCorner', L.path.corner);
   /* ⭐ 「どの窓」は経路が窓のときだけ出す＝触れるのに効かないつまみを残さない */
   { const r = $('rowHole');
-    if(r) r.style.display = (L.path.type === 'hole') ? '' : 'none';
-    setRange('pHole', L.path.hole || 1); }
+    const on = (L.path.type === 'hole');
+    if(r) r.style.display = on ? '' : 'none';
+    setRange('pHole', L.path.hole || 1);
+    /* ⭐ その窓に何本付いているかを出す＝【移した】のか【足した】のかが分かる */
+    const nt = $('holeNote');
+    if(nt){
+      nt.style.display = on ? '' : 'none';
+      if(on){
+        const k = L.path.hole || 1;
+        const pc = S.pieces.find(x => x.nuki);
+        const max = pc ? (pc.nuki.holes || []).length : 0;
+        const same = S.lines.filter(x => x.path && x.path.type === 'hole' && (x.path.hole || 1) === k);
+        const others = same.length - 1;
+        nt.innerHTML = '⚠️ ここは<b>この行を移す先</b>（付け足しではない）'
+          + (others > 0 ? '／いまこの窓には <b>' + same.length + ' 本</b>重なっている' : '')
+          + '<br>⭐ 窓ごとに字を打つなら〈<b>抜く</b>〉の「<b>窓を1つずつ</b>」';
+      }
+    } }
   /* ⭐ 返しているかの印。⚠️ 古い作品は mx/my を持たない＝切に落ちる（これまでの絵のまま） */
   { const x = $('mirX'), y = $('mirY');
     if(x) x.classList.toggle('on', !!L.path.mx);
@@ -6918,6 +6948,10 @@ stat(matchMedia('(pointer:coarse)').matches
       pc.nuki[key] = (el.type === 'color') ? el.value : +el.value;
       if(replace) nkPlace(pc.nuki);          /* 形が変わるつまみは置き直す */
       nkBuild(pc); render();
+      /* 🔴 2026-08-29：ここを呼んでいなかったので、窓の数を変えても
+         「窓を1つずつ」の札が【古い数のまま】残った（木下＝「ずっと6のまま」）。
+         ⭐ 形が変わったら、下の欄も必ず合わせ直す。 */
+      if(typeof nkOneSync === 'function') nkOneSync();
     });
     el.addEventListener('pointerup', () => { arm = false; });
   }
@@ -6948,12 +6982,14 @@ stat(matchMedia('(pointer:coarse)').matches
     pushUndo();
     pc.nuki.edge = +b.dataset.v;
     nkPlace(pc.nuki); nkBuild(pc); syncPanel(); render();
+    if(typeof nkOneSync === 'function') nkOneSync();
   });
   document.getElementById('nkShake').onclick = () => {
     const pc = nkPc(); if(!pc){ stat('先に板を置いてください'); return; }
     pushUndo();
     pc.nuki.seed = (pc.nuki.seed + 1 + Math.floor(Math.random()*97)) % 99999;
     nkPlace(pc.nuki); nkBuild(pc); render();
+    if(typeof nkOneSync === 'function') nkOneSync();
     stat('窓の置き場所を作り直した');
   };
   /* 「どの窓」 */
@@ -7034,12 +7070,27 @@ stat(matchMedia('(pointer:coarse)').matches
        それぞれの楕円は角度や大きさ向きなどの変更は可能」
      ⭐ 数値は【版面に対する％】で持つ＝版面の大きさを変えても意味が変わらない
        （＝書き出しの大きさを変えても崩れない）。 */
-  let nkPick = 0;
+  /* ══🔴🔴 2026-08-29 木下「どの窓を変えてもずっと6のまま。選択は切り替わっている」══
+     🔴 「いま選んでいる窓」を【変数】と【つまみ】の2か所で持っていた。
+        片方だけ書き換わると食い違う（札は4なのにつまみは6、など）。
+     ⭐⭐ **つまみ1本を唯一の出どころにする**（数字は1か所に）。
+        変数は置かない＝ずれようがない。
+     ⚠️ 窓の数が減ったときは、つまみの側を丸める（読むときに必ず通る道で1回だけ）。 */
+  function nkPickEl(){ return document.getElementById('nkPick'); }
+  function nkPickAt(){
+    const pc = nkPc(); const hs = pc && pc.nuki.holes;
+    const el = nkPickEl();
+    if(!hs || !hs.length || !el) return 0;
+    let k = Math.round(+el.value || 1) - 1;
+    if(k < 0) k = 0;
+    if(k > hs.length - 1) k = hs.length - 1;
+    if(String(k + 1) !== String(el.value)) el.value = String(k + 1);   /* ⭐ つまみ側も揃える */
+    return k;
+  }
   function nkHole(){ const pc = nkPc();
     const hs = pc && pc.nuki.holes;
     if(!hs || !hs.length) return null;
-    if(nkPick >= hs.length) nkPick = hs.length - 1;
-    return hs[nkPick]; }
+    return hs[nkPickAt()]; }
   function nkOneSync(){
     const box = document.getElementById('nkOneBox'); if(!box) return;
     const pc = nkPc(), hs = pc && pc.nuki.holes;
@@ -7053,18 +7104,18 @@ stat(matchMedia('(pointer:coarse)').matches
       e.value = Math.round(v);
       const lab = e.parentElement && e.parentElement.querySelector('.v');
       if(lab) lab.textContent = e.value; };
-    set('nkPick', nkPick + 1);
+    
     set('nkOX', h.x / B.w * 100);
     set('nkOY', h.y / B.h * 100);
     set('nkOR', h.rx / Math.min(B.w, B.h) * 100);
     set('nkOE', h.rx / h.ry * 100);
     set('nkORot', ((h.rot % 360) + 360) % 360);
-    /* ⭐ その窓に字が付いているかを、その場に出す（探しに行かせない） */
-    const has = (typeof nkLineOf === 'function') ? nkLineOf(nkPick) : null;
+    /* ⭐ 選んだ窓の字を、欄に入れる（触っている最中は書き換えない） */
+    const has = (typeof nkLineOf === 'function') ? nkLineOf(nkPickAt()) : null;
     const lab = document.getElementById('vnkPick');
-    if(lab) lab.textContent = (nkPick + 1) + ' / ' + hs.length + '　字：' + (has ? 'あり' : 'なし');
-    const bt = document.getElementById('nkOneText');
-    if(bt) bt.textContent = has ? 'この窓の行を選ぶ' : 'この窓に字を付ける';
+    if(lab) lab.textContent = (nkPickAt() + 1) + ' / ' + hs.length;
+    const ta = document.getElementById('nkOneText2');
+    if(ta && document.activeElement !== ta) ta.value = has ? (has.text || '') : '';
   }
   function oneKnob(id, apply){
     const el = document.getElementById(id); if(!el) return;
@@ -7087,39 +7138,79 @@ stat(matchMedia('(pointer:coarse)').matches
   function nkLineOf(k){
     return S.lines.find(L => L.path && L.path.type === 'hole' && ((L.path.hole || 1) - 1) === k);
   }
-  /* ⭐⭐ 選んでいる窓に字を付ける／すでに有るならその行を選ぶ。
-     ⚠️ 「どうやって窓に字を付けるんだっけ」を、探させない＝聞かれた場所に置く。 */
-  { const b = document.getElementById('nkOneText');
-    if(b) b.onclick = () => {
+  /* ══⭐⭐ 選んだ窓の字を、その場で打つ（2026-08-29 木下「わかりづらいなw」）══
+     🔴 窓に字を付ける入口が【4か所】に散っていた。
+     ⭐ ここ1か所で【付ける・直す・消す】が済む。
+       ⚠️ 打った時点で行が無ければ作る（ボタンを押させない）。
+       ⚠️ 見本は【いま選んでいる行】＝書体・色・大きさを引き継ぐ。 */
+  function nkTextBox(){ return document.getElementById('nkOneText2'); }
+  function nkMakeLine(k){
+    const src = (S.sel && S.sel.kind === 'line' && S.lines[S.sel.i])
+             || S.lines.find(L => L.path && L.path.type === 'hole') || S.lines[0];
+    const c = src ? JSON.parse(JSON.stringify(src)) : newLine('');
+    c.id = uid(); c.kind = 'meguru';
+    c.path = Object.assign({}, c.path, { type:'hole', hole:k + 1, pts:null, dx:0, dy:0 });
+    c.start = (k * 29) % 100;
+    S.lines.push(c);
+    return c;
+  }
+  { const ta = nkTextBox();
+    if(ta){
+      let armed = false;
+      ta.addEventListener('focusin', () => { armed = true; });
+      ta.addEventListener('focusout', () => { armed = false; });
+      ta.addEventListener('input', () => {
+        const pc = nkPc(); const hs = pc && pc.nuki.holes;
+        if(!hs || !hs.length){ stat('先に板を置いてください'); return; }
+        const k = nkPickAt();
+        if(armed){ pushUndo(); armed = false; }     /* ⚠️ 1打ごとに積まない */
+        let L = nkLineOf(k);
+        if(!L){ L = nkMakeLine(k); S.sel = { kind:'line', i:S.lines.length - 1 }; }
+        L.text = ta.value;
+        render();
+      });
+    } }
+  { const b2 = document.getElementById('nkOneDel');
+    if(b2) b2.onclick = () => {
       const pc = nkPc(); const hs = pc && pc.nuki.holes;
       if(!hs || !hs.length){ stat('先に板を置いてください'); return; }
-      const k = Math.max(0, Math.min(hs.length - 1, nkPick));
-      const has = nkLineOf(k);
-      if(has){
-        S.sel = { kind:'line', i:S.lines.indexOf(has) };
-        syncPanel(); render();
-        stat('窓 ' + (k + 1) + ' の行を選んだ — 〈沿う〉で字や大きさを直せる');
-        return;
-      }
+      const k = nkPickAt();
+      const L = nkLineOf(k);
+      if(!L){ stat('この窓に字はありません'); return; }
       pushUndo();
-      /* ⭐ 見本は【いま選んでいる行】＝書体も色も大きさも引き継ぐ。
-         ⚠️ 無ければ窓に付いている別の行、それも無ければ1本目。 */
-      const src = (S.sel && S.sel.kind === 'line' && S.lines[S.sel.i])
-               || S.lines.find(L => L.path && L.path.type === 'hole') || S.lines[0];
-      const c = src ? JSON.parse(JSON.stringify(src)) : newLine('');
-      c.id = uid(); c.kind = 'meguru';
-      c.path = Object.assign({}, c.path, { type:'hole', hole:k + 1, pts:null, dx:0, dy:0 });
-      c.start = (k * 29) % 100;
-      S.lines.push(c);
-      S.sel = { kind:'line', i:S.lines.length - 1 };
-      syncPanel(); render();
-      stat('窓 ' + (k + 1) + ' に字を付けた — 〈沿う〉の字の欄で打ち替えられる');
+      /* ⚠️ 行が1本しか無いときは消さない（HARI は行が0だと組めない）＝経路だけ外す */
+      if(S.lines.length <= 1) L.path.type = 'circle';
+      else S.lines.splice(S.lines.indexOf(L), 1);
+      S.sel = { kind:'line', i:0 };
+      syncPanel(); render(); stat('窓 ' + (k + 1) + ' の字を消した');
     }; }
+  { const b3 = document.getElementById('nkOneSel');
+    if(b3) b3.onclick = () => {
+      const pc = nkPc(); const hs = pc && pc.nuki.holes;
+      if(!hs || !hs.length){ stat('先に板を置いてください'); return; }
+      const k = nkPickAt();
+      const L = nkLineOf(k);
+      if(!L){ stat('この窓に字はありません — 上の欄に打つと付きます'); return; }
+      S.sel = { kind:'line', i:S.lines.indexOf(L) };
+      syncPanel(); render();
+      jumpToSec('沿う');
+      stat('窓 ' + (k + 1) + ' の行を選んだ — 〈沿う〉で書体や大きさを直せる');
+    }; }
+  /* ⭐ その窓に字が付いているか（付いていれば、その行を返す） */
+  function nkLineOf(k){
+    return S.lines.find(L => L.path && L.path.type === 'hole' && ((L.path.hole || 1) - 1) === k);
+  }
 
   { const pk = document.getElementById('nkPick');
-    if(pk) pk.addEventListener('input', () => { nkPick = Math.max(0, +pk.value - 1);
-      nkOneSync(); render();          /* ⭐ 版面の印を描き直す＝どれを選んだか見える */
-      stat('窓 ' + pk.value + ' を選んだ — 版面で橙に囲まれている窓'); }); }
+    if(pk) pk.addEventListener('input', () => {
+      /* ⭐⭐ その窓に字が付いていれば、その行も一緒に選ぶ
+         ＝〈抜く〉の「どの窓」と〈沿う〉の「この行を回す窓」が噛み合う
+         （木下が2つの「どの窓」で迷った所）。 */
+      const has = (typeof nkLineOf === 'function') ? nkLineOf(nkPickAt()) : null;
+      if(has) S.sel = { kind:'line', i:S.lines.indexOf(has) };
+      syncPanel(); render();
+      stat('窓 ' + pk.value + ' を選んだ（版面で橙に囲まれている窓）'
+           + (has ? ' — この窓の行も選んだ' : ' — この窓に字は無い')); }); }
   oneKnob('nkOX',  (h, v, B) => { h.x = B.w * v / 100; });
   oneKnob('nkOY',  (h, v, B) => { h.y = B.h * v / 100; });
   oneKnob('nkOR',  (h, v, B) => { const e = h.rx / h.ry;
@@ -7191,7 +7282,7 @@ stat(matchMedia('(pointer:coarse)').matches
     if(!box || box.style.display === 'none') return;
     const pc = nkPc(); const hs = pc && pc.nuki.holes;
     if(!hs || !hs.length) return;
-    const k = Math.max(0, Math.min(hs.length - 1, nkPick));
+    const k = nkPickAt();
     const Z = paper.view.zoom;
     hs.forEach((h, i) => {
       const on = (i === k);
