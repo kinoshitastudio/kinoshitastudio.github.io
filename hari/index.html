@@ -1198,6 +1198,9 @@ input[type=color]{ border-radius:8px; height:30px }
         <input type="range" id="nkOE" min="100" max="260" value="160"><span class="v" id="vnkOE">160</span></div>
       <div class="row"><label>傾き</label>
         <input type="range" id="nkORot" min="0" max="360" value="0"><span class="v" id="vnkORot">0</span></div>
+      <!-- ⭐ 2026-08-29 木下「たとえば1にテキストがない場合、テキストをパス周りに
+           つける場合どうするんだっけ？」＝聞かれた場所に置く。 -->
+      <button class="btn" id="nkOneText" style="display:block;width:100%">この窓に字を付ける</button>
     </div>
     <button class="btn" id="nkRing" style="display:block;width:100%;margin-top:6px">選んだ行を、窓の数だけ作って回す</button>
     <!-- ══⭐⭐ 中の写真（2026-08-29）══
@@ -6948,9 +6951,12 @@ stat(matchMedia('(pointer:coarse)').matches
     set('nkOR', h.rx / Math.min(B.w, B.h) * 100);
     set('nkOE', h.rx / h.ry * 100);
     set('nkORot', ((h.rot % 360) + 360) % 360);
+    /* ⭐ その窓に字が付いているかを、その場に出す（探しに行かせない） */
+    const has = (typeof nkLineOf === 'function') ? nkLineOf(nkPick) : null;
     const lab = document.getElementById('vnkPick');
-    if(lab) lab.textContent = (nkPick + 1) + ' / ' + hs.length
-      + (pc.nuki.got != null && pc.nuki.got < pc.nuki.n ? '（重ならない分だけ入った）' : '');
+    if(lab) lab.textContent = (nkPick + 1) + ' / ' + hs.length + '　字：' + (has ? 'あり' : 'なし');
+    const bt = document.getElementById('nkOneText');
+    if(bt) bt.textContent = has ? 'この窓の行を選ぶ' : 'この窓に字を付ける';
   }
   function oneKnob(id, apply){
     const el = document.getElementById(id); if(!el) return;
@@ -6969,6 +6975,39 @@ stat(matchMedia('(pointer:coarse)').matches
     });
     el.addEventListener('pointerup', () => { arm = false; });
   }
+  /* ⭐ その窓に字が付いているか（付いていれば、その行を返す） */
+  function nkLineOf(k){
+    return S.lines.find(L => L.path && L.path.type === 'hole' && ((L.path.hole || 1) - 1) === k);
+  }
+  /* ⭐⭐ 選んでいる窓に字を付ける／すでに有るならその行を選ぶ。
+     ⚠️ 「どうやって窓に字を付けるんだっけ」を、探させない＝聞かれた場所に置く。 */
+  { const b = document.getElementById('nkOneText');
+    if(b) b.onclick = () => {
+      const pc = nkPc(); const hs = pc && pc.nuki.holes;
+      if(!hs || !hs.length){ stat('先に板を置いてください'); return; }
+      const k = Math.max(0, Math.min(hs.length - 1, nkPick));
+      const has = nkLineOf(k);
+      if(has){
+        S.sel = { kind:'line', i:S.lines.indexOf(has) };
+        syncPanel(); render();
+        stat('窓 ' + (k + 1) + ' の行を選んだ — 〈沿う〉で字や大きさを直せる');
+        return;
+      }
+      pushUndo();
+      /* ⭐ 見本は【いま選んでいる行】＝書体も色も大きさも引き継ぐ。
+         ⚠️ 無ければ窓に付いている別の行、それも無ければ1本目。 */
+      const src = (S.sel && S.sel.kind === 'line' && S.lines[S.sel.i])
+               || S.lines.find(L => L.path && L.path.type === 'hole') || S.lines[0];
+      const c = src ? JSON.parse(JSON.stringify(src)) : newLine('');
+      c.id = uid(); c.kind = 'meguru';
+      c.path = Object.assign({}, c.path, { type:'hole', hole:k + 1, pts:null, dx:0, dy:0 });
+      c.start = (k * 29) % 100;
+      S.lines.push(c);
+      S.sel = { kind:'line', i:S.lines.length - 1 };
+      syncPanel(); render();
+      stat('窓 ' + (k + 1) + ' に字を付けた — 〈沿う〉の字の欄で打ち替えられる');
+    }; }
+
   { const pk = document.getElementById('nkPick');
     if(pk) pk.addEventListener('input', () => { nkPick = Math.max(0, +pk.value - 1);
       nkOneSync(); render();          /* ⭐ 版面の印を描き直す＝どれを選んだか見える */
