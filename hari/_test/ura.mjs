@@ -208,8 +208,18 @@ const R2 = await p.evaluate(async () => {
   let json = null;
   const dl0 = window.dl;
   window.dl = (blob, name) => { if(/json$/.test(name)) json = blob; };
+  /* 🔴🔴 2026-08-29「控えが出なかった」の正体
+     ── puppeteer では【最初の showSaveFilePicker が返ってこない】（実測）。
+        本体は正しく、手が取れる道を先に試すので、そこで止まって
+        落とす道（dl）まで来ない＝控えを横取りできなかった。
+     ⭐ 試験が見たいのは【落とした控えの中身】なので、手の仕組みを閉じてから押す。
+     ⚠️ 押し終わったら必ず戻す（他の試験に持ち越さない）。
+     ⚠️ 待ち時間は決め打ちにしない（出るまで待つ・最大5秒）。 */
+  const pick0 = window.showSaveFilePicker;
+  window.showSaveFilePicker = undefined;
   document.getElementById('eJSON').click();
-  await wait(300);
+  for(let i = 0; i < 50 && !json; i++) await wait(100);
+  window.showSaveFilePicker = pick0;
   window.dl = dl0;
   if(!json) return { 無し:'控えが出なかった' };
   const txt = await json.text();

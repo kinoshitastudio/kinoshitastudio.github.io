@@ -74,31 +74,33 @@ node "$(cd "$(dirname "$0")" && pwd)/panel.mjs" || PANELNG=1
 
 # ⭐⭐ 複数選択・スペースで版面・掴んだ反対側から（2026-08-27）
 echo
-node "$(cd "$(dirname "$0")" && pwd)/multi.mjs" "http://localhost:$PORT" || MULTING=1
+node "$(cd "$(dirname "$0")" && pwd)/multi.mjs" "http://localhost:$PORT/hari/index.html" || MULTING=1
 
 # ⭐⭐ 経路（返す・大きさ・頂点を足す）2026-08-27
 echo
-node "$(cd "$(dirname "$0")" && pwd)/path.mjs" "http://localhost:$PORT" || PATHNG=1
+node "$(cd "$(dirname "$0")" && pwd)/path.mjs" "http://localhost:$PORT/hari/index.html" || PATHNG=1
 
 # ⭐⭐ 張るをくねらせる（2026-08-27）
 echo
-node "$(cd "$(dirname "$0")" && pwd)/haru.mjs" "http://localhost:$PORT" || HARUNG=1
+node "$(cd "$(dirname "$0")" && pwd)/haru.mjs" "http://localhost:$PORT/hari/index.html" || HARUNG=1
 
 # ⭐⭐ 散（小さな文章を版面に散らす）2026-08-27
 echo
-node "$(cd "$(dirname "$0")" && pwd)/chiru.mjs" "http://localhost:$PORT" || CHIRUNG=1
+node "$(cd "$(dirname "$0")" && pwd)/chiru.mjs" "http://localhost:$PORT/hari/index.html" || CHIRUNG=1
 
 # ⭐⭐ 字ごとに横長・縦長をずらす（2026-08-28）
 echo
-node "$(cd "$(dirname "$0")" && pwd)/wsh.mjs" "http://localhost:$PORT" || WSHNG=1
+node "$(cd "$(dirname "$0")" && pwd)/wsh.mjs" "http://localhost:$PORT/hari/index.html" || WSHNG=1
 
 # ⭐⭐ 音の効かせ方（2026-08-27）
 echo
-node "$(cd "$(dirname "$0")" && pwd)/aud.mjs" "http://localhost:$PORT" || AUDNG=1
+node "$(cd "$(dirname "$0")" && pwd)/aud.mjs" "http://localhost:$PORT/hari/index.html" || AUDNG=1
 
 # ⭐⭐ 書き出しの縁（地の帯が残らないか）2026-08-27 ── 木下の実ファイルで見る
 echo
-node "$(cd "$(dirname "$0")" && pwd)/edge.mjs" "http://localhost:$PORT" \
+# 🔴 2026-08-29: ここは【サイトの根】を渡していた＝HARI ではない頁が開き、
+#    #fJSON が無くて "Cannot set properties of null" で落ちていた（試験が動いていなかった）。
+node "$(cd "$(dirname "$0")" && pwd)/edge.mjs" "http://localhost:$PORT/hari/index.html" \
      "$(cd "$(dirname "$0")" && pwd)/_edge.json" || EDGENG=1
 
 # ⭐ 「直す前と1画素も変わっていない」は same.mjs（前の版を渡して使う）
