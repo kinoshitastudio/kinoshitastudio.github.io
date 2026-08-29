@@ -6315,8 +6315,14 @@ function snapJSON(){
        🔴 これまで src の無い図は捨てていたので、✒️ で引いた線は保存で消えていた。 */
     /* ⭐ 消しカス（kasu）も控えに入れる（2026-08-27）＝開き直すと同じカスが戻る */
     /* ⭐ 抜いた板（nuki）も控えに入れる。⚠️ 形は数値から作り直すので絵は持たない */
+    /* 🔴🔴 2026-08-29：z（重なり順）を控えていなかった。
+       読み込みは【画像だけ非同期】なので、板は先に・写真は後から入る
+       ＝順番が逆さになり、**写真が板を覆って色が消えた**
+       （木下＝「板を出すにチェックが入っていても、色がついていない」）。
+       ⭐ 並びを数字で控える＝読み込む速さに左右されない。 */
     pieces: S.pieces.filter(p => p.src || p.pen || p.nuki || (p.kasu && p.kasu.length))
-              .map(p => ({ src:p.src, pen:p.pen, kasu:p.kasu || null,
+              .map((p, i) => ({ z:(p.z != null ? p.z : i),
+                           src:p.src, pen:p.pen, kasu:p.kasu || null,
                            nuki: p.nuki ? JSON.parse(JSON.stringify(p.nuki)) : null,
                            x:p.x, y:p.y, sc:p.sc, rot:p.rot,
                            ura:(p.ura ? 1 : 0), fill:(p.fill ? 1 : 0),
@@ -6326,12 +6332,15 @@ function snapJSON(){
 /* ⚠️ ボタンは【名前を付けて保存】。上書きは ⌘S（手があるときだけ） */
 $('eJSON').onclick = () => saveNow(true);
 /* 保存から図を作り直す。⚠️ 画像は読み込みが非同期なので、置き場所を先に確保して後から差す */
-function restorePiece(p){
+function restorePiece(p, idx){
+  /* ⭐ 控えの並び（または控えた z）をそのまま使う。
+     ⚠️ ここを入れないと、読み込む速さで前後が入れ替わる。 */
+  const Z = (p && p.z != null) ? p.z : (idx || 0);
   const put = item => {
     item.remove();
     const b = item.bounds, fit = Math.min(S.board.w, S.board.h) * 0.5 / Math.max(b.width, b.height);
     item.scale(fit); item.position = new Point(0,0);
-    S.pieces.push({ id:uid(), item, src:p.src, x:p.x, y:p.y, sc:p.sc, rot:p.rot,
+    S.pieces.push({ id:uid(), item, src:p.src, x:p.x, y:p.y, sc:p.sc, rot:p.rot, z:Z,
                     ura:(p.ura ? 1 : 0), fill:(p.fill ? 1 : 0), lock:(p.lock ? 1 : 0),
                     ji:(p.ji ? 1 : 0) });
     render();
@@ -6341,7 +6350,7 @@ function restorePiece(p){
   if(p.nuki){
     artLayer.activate();
     const pc = { id:uid(), item:null, src:null, nuki:JSON.parse(JSON.stringify(p.nuki)),
-                 x:p.x, y:p.y, sc:100, rot:0,
+                 x:p.x, y:p.y, sc:100, rot:0, z:Z,
                  ura:(p.ura ? 1 : 0), lock:(p.lock ? 1 : 0) };
     if(typeof nkBuild === 'function') nkBuild(pc);
     S.pieces.push(pc);
@@ -6353,7 +6362,7 @@ function restorePiece(p){
     artLayer.activate();
     const item = kasuItem(p.kasu);
     S.pieces.push({ id:uid(), item, src:null, pen:null, kasu:p.kasu,
-                    x:p.x, y:p.y, sc:p.sc, rot:p.rot, ura:(p.ura ? 1 : 0) });
+                    x:p.x, y:p.y, sc:p.sc, rot:p.rot, z:Z, ura:(p.ura ? 1 : 0) });
     render(); return;
   }
   /* ⭐ 描いた線は骨から作り直す（画像と違って読み込み待ちが要らない） */
@@ -6365,7 +6374,7 @@ function restorePiece(p){
     if(made) raw.remove();
     item.remove(); const c = item.bounds.center; item.position = new Point(0,0);
     const rec = Object.assign({}, p.pen, { bx:c.x, by:c.y });
-    S.pieces.push({ id:uid(), item, src:null, pen:rec, x:p.x, y:p.y, sc:p.sc, rot:p.rot,
+    S.pieces.push({ id:uid(), item, src:null, pen:rec, x:p.x, y:p.y, sc:p.sc, rot:p.rot, z:Z,
                     ura:(p.ura ? 1 : 0) });
     render(); return;
   }
