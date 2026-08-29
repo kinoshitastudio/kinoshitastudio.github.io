@@ -104,5 +104,35 @@ await new Promise(r=>setTimeout(r,1400));
 const got = await p.evaluate(() => window.__got);
 ok(got.some(x=>/png/.test(x.type)), 'PNG が本当に落ちる', JSON.stringify(got));
 
+/* ⭐⭐ 指の端末で【立ち上がるか】── 2026-08-29
+   🔴 外枠を隣の道具から借りたとき、その道具にしか無いつまみを触る1行が付いてきて、
+      指の端末だけ立ち上げが丸ごと死んでいた（何も描かれない）。
+   ⚠️ PC 幅の「JSエラーが出ない」では出ない＝【指の端末で1回開く】試験がここに要る。 */
+{
+  const m = await b.newPage(); const merr = [];
+  m.on('pageerror', e => merr.push(e.message));
+  await m.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Version/17.5 Mobile/15E148 Safari/604.1');
+  await m.setViewport({ width:390, height:844, deviceScaleFactor:2, isMobile:true, hasTouch:true });
+  await m.goto(URL_, { waitUntil:'networkidle0' });
+  await new Promise(r=>setTimeout(r,3200));
+  /* 盤に本当に絵が乗っているか＝一色でないこと */
+  const ink = await m.evaluate(() => {
+    let best = 0;
+    document.querySelectorAll('canvas').forEach(c => {
+      if(!c.width || !c.height) return;
+      const t = document.createElement('canvas'); t.width = 48; t.height = 48;
+      const g = t.getContext('2d'); g.drawImage(c, 0, 0, 48, 48);
+      const d = g.getImageData(0,0,48,48).data, f = [d[0],d[1],d[2],d[3]]; let n = 0;
+      for(let i=0;i<d.length;i+=4)
+        if(Math.abs(d[i]-f[0])>6||Math.abs(d[i+1]-f[1])>6||Math.abs(d[i+2]-f[2])>6||Math.abs(d[i+3]-f[3])>6) n++;
+      if(n > best) best = n;
+    });
+    return best;
+  });
+  ok(merr.length === 0, '⭐⭐ 指の端末で立ち上げが死なない', merr.join(' / '));
+  ok(ink > 20, '⭐⭐ 指の端末でも盤に絵が出る', '違う画素 ' + ink);
+  await m.close();
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
 await b.close(); process.exit(NG);
