@@ -24,6 +24,21 @@ await p.evaluate(() => { window.__got = [];
   const oc = URL.createObjectURL;
   URL.createObjectURL = function(x){ window.__got.push({ size:x.size, type:x.type }); return oc.call(URL, x); }; });
 
+/* ⚠️ 立ち上げの値を控えておく。
+   🔴 「選ぶボタンを全部押す」試験のあとは【最後に押したボタン】が残る（コピー二値・9:16・縦…）。
+     そのまま次を測ると必ず誤判定する（2026-08-29 に2回踏んだ）。 */
+const BOOT = await p.evaluate(() => JSON.parse(JSON.stringify(P)));
+const back = () => p.evaluate(b2 => {
+  Object.assign(P, b2);
+  document.querySelectorAll('.seg').forEach(sg => {
+    const k = sg.id.replace(/^s_/, '');
+    sg.querySelectorAll('button').forEach(x => x.classList.toggle('on', String(P[k]) === x.dataset.v));
+  });
+  el('c_bg').value = P.bg; el('k_nobg').checked = !!P.nobg;
+  el('r_long').value = P.long; el('r_long').dispatchEvent(new Event('input', { bubbles:true }));
+  TXTKEY = ''; ASPKEY = ''; LKEY = ''; wipe(); fitSrc(); syncSize(); render();
+}, BOOT);
+
 /* 手つきを決めて、最後まで刷る（＝実機で指を動かしたのと同じ道を通す） */
 const run = (amp) => p.evaluate((amp) => {
   RUN = false; wipe(); fitSrc();
@@ -248,6 +263,114 @@ ok(got.some(x => /png/.test(x.type)), 'PNG が本当に落ちる', JSON.stringif
   ok(ink > 20, '⭐⭐ 指の端末でも盤に絵が出る', '違う画素 ' + ink);
   ok(drag.moved > 40, '⭐⭐ 指の端末でも【なぞると元が動く】', '動いた ' + drag.moved + ' px');
   await m.close();
+}
+
+await back();
+/* ⭐⭐ 印刷の癖 ── 2026-08-29（木下＝「もっと印刷感があるよね」「綺麗すぎるような」）
+   🔴 既定で癖が入っていること・全部0にすれば綺麗な絵へ戻せること の両方を見る。 */
+{
+  const shot = () => p.evaluate(() => {
+    RUN = false; wipe(); fitSrc();
+    const { w } = sheet(); const by = T.y; let i = 0;
+    while(POS < w){ T.y = by + Math.sin(i/9) * 90; TAKE.push({ to:POS+P.speed, x:T.x, y:T.y, z:T.z }); scanTo(POS + P.speed); i++; }
+    T.y = by;
+    /* 🔴 縮めて撮ると粒が平均されて消える＝【原寸で切り出して】測る */
+    const c = document.createElement('canvas'); c.width = 300; c.height = 300;
+    const q = c.getContext('2d'); q.drawImage(paper(), 60, 60, 300, 300, 0, 0, 300, 300);
+    const d = q.getImageData(0,0,300,300).data;
+    let h = 2166136261, rough = 0;
+    for(let k = 0; k < d.length; k += 4){ h ^= d[k]; h = Math.imul(h, 16777619); }
+    /* ⭐ ざらつき＝隣の画素との差の合計（粒子・紙のムラが乗っているか） */
+    for(let y = 0; y < 300; y += 2) for(let x = 1; x < 300; x++)
+      rough += Math.abs(d[(y*300+x)*4] - d[(y*300+x-1)*4]);
+    /* ⭐ 紙の色が残っているか＝【棒の真ん中】で見る（端は灯りのムラで沈むのが正しい） */
+    const mid = (150*300 + 4) * 4;
+    const corner = [d[mid], d[mid+1], d[mid+2]];
+    return { hash:h >>> 0, rough, corner };
+  });
+  await p.evaluate(() => { P.lamp = 0; });      /* ⚠️ 端の落ちは正しい挙動＝ここでは切って焼きだけ見る */
+  const on = await shot();
+  const off = await p.evaluate(async () => { Object.assign(P, { smear:0, burn:0, grain:0, fiber:0, lamp:0 }); });
+  const flat = await shot();
+  await p.evaluate(() => Object.assign(P, { smear:30, burn:45, grain:45, fiber:30, lamp:0 }));
+  const back = await shot();
+  ok(on.rough > flat.rough * 1.6,
+     '⭐⭐ 既定で【印刷の癖】が乗っている（ざらつき）', 'なし ' + flat.rough + ' → あり ' + on.rough);
+  ok(flat.hash !== on.hash && back.hash === on.hash,
+     '⭐ 癖を全部0にすれば【綺麗な絵に戻る】・戻せば同じ絵', flat.hash + ' / ' + on.hash + ' / ' + back.hash);
+  /* 🔴 焼きが紙の色まで飛ばしていないか（実測で灰色になった） */
+  ok(Math.abs(on.corner[0] - 0xd8) < 22 && Math.abs(on.corner[2] - 0xc9) < 22,
+     '⭐⭐ 焼きが【紙の色】を飛ばさない', JSON.stringify(on.corner));
+}
+
+/* ⭐⭐ 癖に乱数を使っていない（＝なぞり直すと1画素まで同じ）── 2026-08-29
+   🔴 Math.random を使うと、刷った紙と動画が食い違う。 */
+{
+  const same = await p.evaluate(() => {
+    const h = () => { const c = document.createElement('canvas'); c.width = 220; c.height = 220;
+      paint(c.getContext('2d'), 220, 220, false);
+      const d = c.getContext('2d').getImageData(0,0,220,220).data; let x = 2166136261;
+      for(let i = 0; i < d.length; i += 4){ x ^= d[i]; x = Math.imul(x, 16777619); } return x >>> 0; };
+    const a = h(); replay(1); const b2 = h(); replay(1); const c2 = h();
+    return { a, b2, c2 };
+  });
+  ok(same.a === same.b2 && same.b2 === same.c2,
+     '⭐⭐ 癖に乱数を使っていない（なぞり直すと同じ絵）', JSON.stringify(same));
+}
+
+await back();
+/* ⭐ 盤が【真ん中】に来る ── 2026-08-29（木下＝「ボード自体が左端で小さい」）*/
+{
+  const v = await p.evaluate(() => {
+    fitView();
+    const r = stage.getBoundingClientRect(), s2 = sheet();
+    const cx = V.x + s2.w * V.z / 2, cy = V.y + s2.h * V.z / 2;
+    return { dx:Math.round(cx - r.width/2), dy:Math.round(cy - r.height/2),
+             覆い:Math.round(Math.max(s2.w * V.z / r.width, s2.h * V.z / r.height) * 100) };
+  });
+  ok(Math.abs(v.dx) <= 2 && Math.abs(v.dy) <= 2 && v.覆い >= 80,
+     '⭐⭐ 盤が画面の【真ん中】に来て、十分大きい', JSON.stringify(v));
+}
+
+/* ⭐ 元の大きさ ── つまみで変えられ、手で動かしても数字が追いてくる */
+{
+  const z = await p.evaluate(() => {
+    fitSrc(); syncSize();
+    const v0 = +el('r_size').value, z0 = T.z;
+    const r = el('r_size'); r.value = 180; r.dispatchEvent(new Event('input', { bubbles:true }));
+    const z1 = T.z, v1 = +el('r_size').value;
+    /* 手で拡大したときに数字が追いてくるか */
+    T.z = z1 * 0.5; syncSize();
+    const v2 = +el('r_size').value;
+    r.value = v0; r.dispatchEvent(new Event('input', { bubbles:true }));
+    return { v0, z0:+z0.toFixed(3), v1, z1:+z1.toFixed(3), v2 };
+  });
+  ok(z.z1 > z.z0 && z.v1 === 180 && z.v2 < z.v1 * 0.7,
+     '⭐ 元の大きさ＝つまみで変わり、手で動かしても数字が追いてくる', JSON.stringify(z));
+}
+
+/* ⭐ 打った字が【全部】焼かれる ── 2026-08-29（木下＝「入力した文字の一部がみえない」）
+   🔴 測る側と描く側で揃え方が違っていて、墨の左半分が紙の外へ出ていた。 */
+{
+  const t = await p.evaluate(() => {
+    const one = () => { P.txt = 'そ'; TXTKEY = ''; const s2 = source(); return s2.width; };
+    const two = () => { P.txt = 'そう'; TXTKEY = ''; const s2 = source(); return s2.width; };
+    const w1 = one(), w2 = two();
+    /* 2文字の紙に、墨が【左端にも右端にも】乗っているか */
+    const s2 = source();
+    const c = document.createElement('canvas'); c.width = s2.width; c.height = s2.height;
+    const q = c.getContext('2d'); q.drawImage(s2, 0, 0);
+    const d = q.getImageData(0, 0, s2.width, s2.height).data;
+    const band = (x0, x1) => { let n = 0;
+      for(let y = 0; y < s2.height; y += 2) for(let x = x0; x < x1; x++)
+        if(d[(y*s2.width+x)*4+3] > 60) n++;
+      return n; };
+    const L = band(0, Math.round(s2.width*0.22)), R = band(Math.round(s2.width*0.78), s2.width);
+    P.txt = '掃'; TXTKEY = ''; fitSrc(); syncSize();
+    return { w1, w2, L, R };
+  });
+  ok(t.w2 > t.w1 * 1.5 && t.L > 0 && t.R > 0,
+     '⭐⭐ 打った字が【全部】焼かれる（左端にも右端にも墨がある）', JSON.stringify(t));
 }
 
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));

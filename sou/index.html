@@ -268,7 +268,11 @@
     </div>
     <input type="file" id="f_img" accept="image/*" hidden>
     <input type="file" id="f_svg" accept=".svg,image/svg+xml" hidden>
+    <div class="row"><span class="n">元の大きさ</span><output id="o_size">78</output></div>
+    <input type="range" id="r_size" min="5" max="300" value="78">
+    <button class="btn" id="b_center">まん中に戻す</button>
     <div class="note">⭐⭐ <b>盤の上で元をつかんで動かす</b>（PC はドラッグ＋ホイールで拡大／指はなぞる・つまむ）<br>
+      ⭐ <b>大きさはつまみでも変えられる</b>（指の端末でつまむのが難しいとき）<br>
       ⭐ 他の道具で作った PNG をそのまま入れられる</div>
   </div>
 
@@ -291,15 +295,28 @@
   </div>
 
   <div class="grp">
-    <label class="h">機械の癖</label>
+    <label class="h">機械の癖（印刷にする）</label>
+    <div class="row"><span class="n">にじみ（残像）</span><output id="o_smear">30</output></div>
+    <input type="range" id="r_smear" min="0" max="100" value="30">
+    <div class="row"><span class="n">焼き（トナーの乗り）</span><output id="o_burn">45</output></div>
+    <input type="range" id="r_burn" min="0" max="100" value="45">
+    <div class="row"><span class="n">粒子（トナーの粒）</span><output id="o_grain">45</output></div>
+    <input type="range" id="r_grain" min="0" max="100" value="45">
+    <div class="row"><span class="n">紙のムラ</span><output id="o_fiber">30</output></div>
+    <input type="range" id="r_fiber" min="0" max="100" value="30">
+    <div class="row"><span class="n">灯りのムラ（端の落ち）</span><output id="o_lamp">25</output></div>
+    <input type="range" id="r_lamp" min="0" max="100" value="25">
     <div class="row"><span class="n">揺れ（送りのムラ）</span><output id="o_jit">0</output></div>
     <input type="range" id="r_jit" min="0" max="120" value="0">
     <div class="row"><span class="n">揺れの周期</span><output id="o_jfr">40</output></div>
     <input type="range" id="r_jfr" min="4" max="200" value="40">
-    <div class="row"><span class="n">粒子</span><output id="o_grain">0</output></div>
-    <input type="range" id="r_grain" min="0" max="100" value="0">
-    <div class="note">⭐ <b>揺れ</b>＝送りが一定でない機械の癖。手を動かさなくても像が波打つ<br>
-      ⭐ <b>粒子</b>＝古い機械のノイズ。刷った1本ごとに乗るので、あとから足したのとは粒の乗り方が違う</div>
+    <div class="note">🔴🔴 <b>綺麗すぎる絵は「印刷」に見えない</b>。参考の粒子は既定で <b>72%</b>＝<b>癖こそが本体</b><br>
+      ⭐⭐ <b>にじみ</b>＝センサーの残像。1本前を引きずるので、<b>硬く切れた所が煙のようにぼける</b>
+      ── 参考のふちが煙っぽいのはこれ<br>
+      ⭐ <b>焼き</b>＝複写機のトーンカーブ（中間を潰して白と黒に寄せる）<br>
+      ⭐ <b>粒子</b>＝トナーの粒。<b>刷った1本ごとに乗る</b>ので、あとから全体に掛けたのとは乗り方が違う<br>
+      ⭐ <b>紙のムラ／灯りのムラ</b>＝紙の繊維と、ランプが端で落ちること<br>
+      ⚠️ 全部 0 にすれば元の綺麗な絵に戻る</div>
   </div>
 
   <div class="grp">
@@ -317,6 +334,7 @@
     <label class="h">色</label>
     <div class="seg" id="s_mono">
       <button data-v="0" class="on">そのままの色</button><button data-v="1">白黒</button>
+      <button data-v="2">コピー（二値）</button>
     </div>
     <div class="row"><span class="n">紙の色</span></div>
     <input type="color" id="c_bg" value="#d8d4c9">
@@ -375,7 +393,7 @@ function stat(s){ el('stat').textContent = s; clearTimeout(statT);
 const P = {
   txt:'掃', font:'900 ',
   axis:'x', speed:1.4,              /* 刷る：向きと速さ（1コマに何本） */
-  jit:0, jfr:40, grain:0,           /* 機械の癖 */
+  smear:30, burn:45, grain:45, fiber:30, lamp:25, jit:0, jfr:40,   /* 機械の癖＝印刷にする */
   mono:0,
   ratio:'1:1', long:1400,
   bg:'#d8d4c9', nobg:false,
@@ -417,6 +435,10 @@ function source(){
   const lines = t.split('\n'), size = 400;
   const m = document.createElement('canvas').getContext('2d');
   m.font = P.font.replace(/serif/, '') + size + 'px ' + fam;
+  /* 🔴🔴 測る側と描く側で【揃え方を必ず同じに】する。
+     ここを既定（start）のまま測って center で描いていたので、
+     墨の左半分が焼く紙の外へ出て【「そう」の「そ」が消えていた】（2026-08-29 木下の指摘）。 */
+  m.textAlign = 'center'; m.textBaseline = 'alphabetic';
   let l = 0, r = 0, a = 0, d = 0;
   lines.forEach((L2, i) => {
     const q = m.measureText(L2), dy = (i - (lines.length-1)/2) * size * 1.02;
@@ -465,7 +487,7 @@ function blank(){
   q.setTransform(1,0,0,1,0,0);
   q.clearRect(0, 0, FILM.width, FILM.height);
   if(!P.nobg){ q.fillStyle = P.bg; q.fillRect(0, 0, FILM.width, FILM.height); }
-  POS = 0;
+  POS = 0; PREV = null;      /* ⚠️ 残像も切る（前の刷りを引きずらない） */
 }
 /* 🔴 こちらは【手の記録ごと】捨てる。
    ⚠️ なぞり直し（replay）でこちらを呼ぶと、なぞる元の記録まで消える（実際に踏んだ）。 */
@@ -486,41 +508,124 @@ function drawSrc(q, W, H, ox, oy){
 /* ══⭐⭐ 1本ずつ刷る ── この道具のすべてがここ ══
    ⭐ 走査線の位置 p の【1本】だけを切り取って、いまの元を焼く。
      手が動いていれば、次の1本は別の場所から来る＝そこで像がちぎれる。
-   ⭐ 揺れ＝送りのムラ。手を動かさなくても機械の癖で波打つ。
-   ⚠️ 粒子は【刷った1本ごと】に乗せる（あとから全体に掛けるのとは乗り方が違う）。 */
+   ⭐⭐ 焼くときに【機械の癖】を通す＝ここで印刷になる（あとから全体に掛けるのとは別物）。
+   ⚠️ 1本ぶんの小さな板を別に持って、そこで画素をいじってから紙へ貼る。
+     🔴 紙そのものから画素を読むと、紙が CPU 描きに落ちて全部が遅くなる。 */
+let LINE = null, LKEY = '', PREV = null;
+function lineBoard(){
+  const c = paper();
+  const key = P.axis + '|' + c.width + 'x' + c.height;
+  if(!LINE || LKEY !== key){
+    LINE = document.createElement('canvas');
+    if(P.axis === 'x'){ LINE.width = 1; LINE.height = c.height; }
+    else               { LINE.width = c.width; LINE.height = 1; }
+    LKEY = key; PREV = null;
+  }
+  return LINE;
+}
+/* ⭐ 種から決まる乱れ（Math.random は使わない）。
+   🔴 乱数を使うと【なぞり直しで別の絵になる】＝動画が刷った紙と食い違う。 */
+function noise2(x, y, s){
+  let h = (x * 374761393 + y * 668265263 + s * 1442695041) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
 function scanTo(np){
   const c = paper(), q = c.getContext('2d');
   const len = (P.axis === 'x') ? c.width : c.height;
   const to = Math.min(len, Math.floor(np));
+  const L = lineBoard(), lq = L.getContext('2d', { willReadFrequently:true });
+  const n = (P.axis === 'x') ? c.height : c.width;
   const jit = P.jit / 10, per = Math.max(2, P.jfr);
   for(let p = Math.floor(POS); p < to; p++){
     const d = jit ? Math.sin(p / per * Math.PI * 2) * jit : 0;
-    q.save();
-    q.beginPath();
-    if(P.axis === 'x') q.rect(p, 0, 1, c.height); else q.rect(0, p, c.width, 1);
-    q.clip();
-    if(!P.nobg){ q.fillStyle = P.bg; q.fillRect(0, 0, c.width, c.height); }
-    drawSrc(q, c.width, c.height, P.axis === 'x' ? 0 : d, P.axis === 'x' ? d : 0);
-    if(P.mono){
-      q.globalCompositeOperation = 'saturation';
-      q.fillStyle = '#808080'; q.fillRect(0, 0, c.width, c.height);
-      q.globalCompositeOperation = 'source-over';
-    }
-    if(P.grain > 0) grainLine(q, c, p);
-    q.restore();
+    lq.setTransform(1,0,0,1,0,0);
+    lq.clearRect(0, 0, L.width, L.height);
+    if(!P.nobg){ lq.fillStyle = P.bg; lq.fillRect(0, 0, L.width, L.height); }
+    lq.save();
+    if(P.axis === 'x') lq.translate(-p, 0); else lq.translate(0, -p);
+    drawSrc(lq, c.width, c.height, P.axis === 'x' ? 0 : d, P.axis === 'x' ? d : 0);
+    lq.restore();
+    press(lq, L, p, n);
+    q.drawImage(L, P.axis === 'x' ? p : 0, P.axis === 'x' ? 0 : p);
   }
   POS = Math.min(len, np);
 }
-function grainLine(q, c, p){
-  const n = P.grain / 100, len = (P.axis === 'x') ? c.height : c.width;
-  q.globalAlpha = Math.min(0.85, n * 0.9);
-  for(let i = 0; i < len; i += 2){
-    const v = Math.random();
-    if(v > 0.72) continue;
-    q.fillStyle = v < 0.36 ? '#000' : '#fff';
-    if(P.axis === 'x') q.fillRect(p, i, 1, 2); else q.fillRect(i, p, 2, 1);
+
+/* ══⭐⭐ 1本を【印刷にする】══
+   複写機を通った絵が綺麗でないのは、順にこれだけのことが起きているから：
+     ① 灯りのムラ ── ランプは棒の端で落ちる＝両端が沈む
+     ② 焼き ────── トナーは中間調を保てない＝白と黒へ寄る（コピーのトーンカーブ）
+     ③ にじみ ───── センサーは1本前を引きずる＝硬く切れた所が煙のようにぼける
+     ④ 紙のムラ ─── 紙の繊維。刷った所にだけ出る
+     ⑤ 粒子 ────── トナーの粒。中間調でいちばん目立ち、粒は2画素ぶんの塊になる
+     ⑥ 二値 ────── コピー機は最後に「乗るか乗らないか」に落とす（網でごまかす）
+   ⭐ ③を④⑤より【先】に掛ける＝粒がにじみで筋にならない（粒は場所に固定される）。 */
+function press(lq, L, p, n){
+  const burn = P.burn/100, grain = P.grain/100, lamp = P.lamp/100,
+        fiber = P.fiber/100, smear = P.smear/100 * 0.86;
+  if(!burn && !grain && !lamp && !fiber && !smear && !P.mono){ PREV = null; return; }
+  const img = lq.getImageData(0, 0, L.width, L.height), a = img.data;
+  if(!PREV || PREV.length !== n*3) PREV = new Float32Array(n*3);
+  const M4 = [0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5];   /* 網（4×4）*/
+  /* ⭐⭐ 焼きの【白の基準は紙】。ここを 1.0（真っ白）にすると、
+     せっかく選んだ紙の色まで飛んで灰色になる（実測でそうなった）。
+     ⚠️ 紙を出さないときだけ 1.0。 */
+  const pw = P.nobg ? [1,1,1]
+    : [parseInt(P.bg.slice(1,3),16)/255, parseInt(P.bg.slice(3,5),16)/255, parseInt(P.bg.slice(5,7),16)/255]
+      .map(v => Math.max(0.08, v));
+  for(let i = 0; i < n; i++){
+    const k = i*4;
+    let r = a[k]/255, g2 = a[k+1]/255, b2 = a[k+2]/255;
+    /* ① 灯りのムラ＝棒の端が沈む */
+    if(lamp){
+      const t = (i / Math.max(1, n-1)) * 2 - 1;
+      const f = 1 - lamp * 0.55 * t * t;
+      r *= f; g2 *= f; b2 *= f;
+    }
+    /* ② 焼き＝中間を潰して【紙の白】と黒へ寄せる */
+    if(burn){
+      const cur = (v, w2) => { const t = Math.max(0, Math.min(1, v / w2));
+        const u = Math.max(0, Math.min(1, (t - 0.34) / 0.32));
+        return (t + burn * (u*u*(3 - 2*u) - t)) * w2; };
+      r = cur(r, pw[0]); g2 = cur(g2, pw[1]); b2 = cur(b2, pw[2]);
+    }
+    /* ③ にじみ＝1本前を引きずる（センサーの残像） */
+    if(smear){
+      const j = i*3;
+      r  = r  * (1-smear) + PREV[j  ] * smear;
+      g2 = g2 * (1-smear) + PREV[j+1] * smear;
+      b2 = b2 * (1-smear) + PREV[j+2] * smear;
+      PREV[j] = r; PREV[j+1] = g2; PREV[j+2] = b2;
+    }
+    /* ④ 紙のムラ（低い周波数） */
+    if(fiber){
+      const f = (noise2(p >> 3, i >> 3, 7) + noise2(p >> 1, i >> 2, 11)) * 0.5 - 0.5;
+      const v = f * fiber * 0.20;
+      r += v; g2 += v; b2 += v;
+    }
+    /* ⑤ 粒子＝中間調でいちばん目立ち、2画素ぶんの塊になる */
+    if(grain){
+      const lum = (r*0.299 + g2*0.587 + b2*0.114);
+      const mid = 1 - Math.abs(lum*2 - 1);             /* 中間ほど強い */
+      const gv = (noise2(p >> 1, i >> 1, 3) * 0.7 + noise2(p, i, 5) * 0.3) - 0.5;
+      const v = gv * grain * (0.16 + 0.42 * mid);
+      r += v; g2 += v; b2 += v;
+    }
+    /* ⑥ 白黒 ／ コピー（二値・網でごまかす） */
+    if(P.mono){
+      let lum = r*0.299 + g2*0.587 + b2*0.114;
+      if(P.mono === 2){
+        const th = (M4[((p & 3) << 2) | (i & 3)] + 0.5) / 16;
+        lum = lum > th ? 1 : 0;
+      }
+      r = g2 = b2 = lum;
+    }
+    a[k]   = r  < 0 ? 0 : r  > 1 ? 255 : (r  * 255) | 0;
+    a[k+1] = g2 < 0 ? 0 : g2 > 1 ? 255 : (g2 * 255) | 0;
+    a[k+2] = b2 < 0 ? 0 : b2 > 1 ? 255 : (b2 * 255) | 0;
   }
-  q.globalAlpha = 1;
+  lq.putImageData(img, 0, 0);
 }
 
 /* ══ 出す（刷った紙だけ）══ */
@@ -588,12 +693,20 @@ function applyView(){
   el('z_val').textContent = Math.round(V.z * 100) + '%';
 }
 function fitView(){
+  /* 🔴 盤を【真ん中に置く】。ここを 0,0 にしていて、盤が画面の左上に貼り付いたまま
+     はみ出していた（2026-08-29 木下＝「ボード自体が左端で小さい」「字の一部がみえない」）。 */
   const r = stage.getBoundingClientRect(), { w, h } = sheet();
-  V.z = Math.min((r.width - 60) / w, (r.height - 60) / h);
-  V.x = 0; V.y = 0; applyView();
+  V.z = Math.min((r.width - 40) / w, (r.height - 40) / h);
+  V.x = (r.width - w * V.z) / 2; V.y = (r.height - h * V.z) / 2;
+  applyView();
 }
-el('z_in').onclick  = () => { V.z = Math.min(8, V.z * 1.2); applyView(); };
-el('z_out').onclick = () => { V.z = Math.max(0.02, V.z / 1.2); applyView(); };
+/* ⭐ 寄る／引くは【画面の真ん中を軸に】＝押すたびに盤が流れていかない */
+function zoomAt(px, py, f){
+  const z = Math.max(0.05, Math.min(12, V.z * f));
+  V.x = px - (px - V.x) * (z / V.z); V.y = py - (py - V.y) * (z / V.z); V.z = z; applyView();
+}
+el('z_in').onclick  = () => { const r = stage.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, 1.25); };
+el('z_out').onclick = () => { const r = stage.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, 1/1.25); };
 el('z_fit').onclick = () => fitView();
 
 /* ══⭐⭐ 盤の上で元を手で動かす ══
@@ -631,6 +744,7 @@ el('z_fit').onclick = () => fitView();
     }else{
       T.x += p.x - prev.x; T.y += p.y - prev.y;
     }
+    syncSize();
     if(!RUN) render();
   });
   const up = e => { pts.delete(e.pointerId); base = null; if(!pts.size) cv.classList.remove('grabbing'); };
@@ -643,9 +757,37 @@ el('z_fit').onclick = () => fitView();
     T.x = p.x - (p.x - T.x) * (z2 / T.z);
     T.y = p.y - (p.y - T.y) * (z2 / T.z);
     T.z = z2;
+    syncSize();
     if(!RUN) render();
   }, { passive:false });
 }
+
+/* ══⭐ 元の大きさ（つまみ）══
+   ⭐ 手で拡大したときも、つまみの数字は必ず追いてくる（数字が嘘をつかない）。
+   ⚠️ これは【状態】（手で動かせるもの）＝つまみは同じ値を書くもう1つの入口。 */
+function sizePct(){
+  const s2 = source(); if(!s2) return 78;
+  const { w, h } = sheet();
+  return Math.max(1, Math.round(Math.max(s2.width, s2.height) * T.z / Math.max(w, h) * 100));
+}
+function syncSize(){
+  const r = el('r_size'), o = el('o_size');
+  if(!r) return;
+  const v = Math.max(+r.min, Math.min(+r.max, sizePct()));
+  r.value = v; if(o) o.value = v;
+}
+el('r_size').addEventListener('input', () => {
+  const s2 = source(); if(!s2) return;
+  const { w, h } = sheet(), v = +el('r_size').value;
+  el('o_size').value = v;
+  const z2 = Math.max(0.01, Math.max(w, h) * (v/100) / Math.max(s2.width, s2.height));
+  /* ⭐ 真ん中を軸に伸ばす＝つまみを回しても元が飛んでいかない */
+  const cx = T.x + s2.width * T.z / 2, cy = T.y + s2.height * T.z / 2;
+  T.z = z2;
+  T.x = cx - s2.width * T.z / 2; T.y = cy - s2.height * T.z / 2;
+  if(!RUN) render();
+});
+el('b_center').onclick = () => { fitSrc(); syncSize(); render(); stat('元をまん中に戻した'); };
 
 /* ══ 刷る（走らせる）══ */
 function syncRun(){
@@ -701,7 +843,7 @@ function takeFile(f){
     const img = new Image();
     img.onload = () => { SRC = img; TXTKEY = ''; ASPKEY = '';
       stat((img.naturalWidth||img.width) + '×' + (img.naturalHeight||img.height) + ' を読んだ');
-reset(); fitSrc(); render(); fitView(); };
+reset(); fitSrc(); syncSize(); render(); fitView(); };
     img.onerror = () => stat((/heic|heif/i.test(f.type || '') || /\.(heic|heif)$/i.test(f.name || ''))
         ? 'この写真は HEIC（iPhone の形式）── この browser では読めませんでした。'
           + '写真アプリで「JPEG に変換して書き出す」か、Safari で開いてください'
@@ -730,16 +872,20 @@ let TXTT = 0;
 el('t_txt').addEventListener('input', e => {
   P.txt = e.target.value;
   clearTimeout(TXTT);
-  TXTT = setTimeout(() => { TXTKEY = ''; ASPKEY = ''; fitSrc(); reset(); }, 180);
+  TXTT = setTimeout(() => { TXTKEY = ''; ASPKEY = ''; fitSrc(); syncSize(); reset(); }, 180);
 });
 
 
 /* ══ つまみ（表1つで回す）══ */
 const RANGES = [
   ['r_speed','speed','o_speed', v => (v/10).toFixed(1), v => v/10],
+  ['r_smear','smear','o_smear', v => v],
+  ['r_burn','burn','o_burn',    v => v],
+  ['r_grain','grain','o_grain', v => v],
+  ['r_fiber','fiber','o_fiber', v => v],
+  ['r_lamp','lamp','o_lamp',    v => v],
   ['r_jit','jit','o_jit',       v => v],
   ['r_jfr','jfr','o_jfr',       v => v],
-  ['r_grain','grain','o_grain', v => v],
   ['r_long','long','o_long',    v => v],
 ];
 RANGES.forEach(([id, k, out, fmt, conv]) => {
@@ -968,7 +1114,7 @@ needFont(P.font);
 addEventListener('resize', () => { applyView(); });
 [['t_txt','txt']].forEach(([id, k]) => { const e = el(id); if(e && P[k] != null) e.value = P[k]; });
 el('c_bg').value = P.bg;
-paper(); fitSrc(); render(); fitView(); syncRun();
+paper(); fitSrc(); syncSize(); render(); fitView(); syncRun();
 stat('「刷る」を押して、刷っている間に盤の上で元を動かす');
 </script>
 
