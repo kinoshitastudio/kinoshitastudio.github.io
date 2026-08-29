@@ -237,6 +237,13 @@ body:not(.nohelp) #helpBtn{ background:var(--ink); color:var(--bg); border-color
 /* ⭐ レイヤー（行と図の一覧）。高さを自分で変えられる・畳める */
 #lineList{ overflow-y:auto; max-height:190px; }
 #lineList.fold{ display:none }
+/* ══⭐⭐ 段の折り畳み（2026-08-29 木下「音のパネルだが、折りたたんでおいてくれない？」）══
+   ⭐ 見出しを押すと、その段だけ畳む／開く。覚えておく（次に開いても同じ）。
+   ⚠️ 畳んでも中身は【消していない】＝つまみの値も効きもそのまま。 */
+#panel h2{ cursor:pointer; user-select:none }
+#panel h2::after{ content:'▾'; float:right; font-size:11px; opacity:.55; transition:.15s }
+#panel h2.fold2::after{ content:'▸' }
+#panel h2.fold2 + .sec{ display:none !important }
 #layGrip{ height:10px; margin:2px 0 0; border-radius:5px; cursor:ns-resize;
   background:linear-gradient(var(--line),var(--line)) center/28px 2px no-repeat }
 #layGrip:hover{ background:linear-gradient(var(--dim),var(--dim)) center/28px 2px no-repeat }
@@ -458,6 +465,14 @@ input[type=color]{ border-radius:8px; height:30px }
 
 <!-- ⭐ 版面の上に浮かぶレイヤー（木下＝「別レイヤーパネルをボードに出すように」）。
      ⚠️ 中身は右パネルの一覧と【同じ関数】が描く＝2箇所に同じものを書かない -->
+<!-- ══⭐⭐ 版面の上で打つ（2026-08-29 木下「ダブルクリックをするとボード上で
+     テキストを入力できるようにしてほしい」）══
+     ⚠️ 版面（canvas）の上に浮かせた素の欄。ここで打った字はその場の行に入る。 -->
+<textarea id="boardT" spellcheck="false"
+  style="position:fixed;display:none;z-index:60;min-width:180px;min-height:34px;
+         padding:6px 8px;border-radius:8px;border:1.5px solid #3b82f6;
+         background:rgba(255,255,255,.96);color:#111;font:500 15px/1.5 inherit;
+         box-shadow:0 6px 22px rgba(0,0,0,.18);resize:none;outline:none"></textarea>
 <div id="layPanel">
   <div id="layHead"><span>レイヤー</span><span class="v" id="layCount2"></span><button id="layClose" title="閉じる">×</button></div>
   <div id="layBody"></div>
@@ -2373,6 +2388,11 @@ function applyBgPreset(key){
       方眼は【マスが正方になる】ように縦の数を比から出す（横6・1000×1414 なら縦8）。
    ⚠️ uiLayer に描く＝書き出しには1本も入らない。 */
 function drawGuides(){
+  /* ⭐⭐ 選んでいる窓に印を出す（2026-08-29 木下
+     「どの窓が数字にはなっているがどれかわからないので選択したのはわかるようにしてほしい」）。
+     ⚠️ ガイドの入切より先に出す＝ガイドを切っていても、選んだ窓は見える。
+     ⚠️ 見るだけの線＝uiLayer に描くので書き出しには1本も入らない。 */
+  if(typeof nkGuide === 'function') nkGuide();
   const G = S.guide || {};
   const B = S.board;
   if(!G.on && !(G.margin > 0)) return;
@@ -4137,14 +4157,21 @@ function stateNow(){
   return JSON.stringify({
     board: S.board, sel: S.sel,
     lines: S.lines,
+    /* ⚠️⚠️ 2026-08-29：紙の質感・表裏・透け・経路の見せ方が抜けていた
+       ＝パネルでそこを触っても ⌘Z で戻らなかった。控えるものは、戻したいものと同じにする。 */
+    kami: S.kami || null, kamiU: S.kamiU || null,
+    face: S.face ? 1 : 0, uraSee: S.uraSee, showPath: S.showPath,
     /* ⚠️⚠️ **控えるものは、戻したいものと同じにする。** ここは3回落とし穴になっている ──
        ura（どちらの面か）・hide（隠す）・z（重なり）が抜けていて
        ⌘Z で【面を移したのが戻らない／隠したのが戻らない】。
        さらに 2026-08-29、抜いた板（nuki）が抜けていて
        ⌘Z が【窓のつまみに効かない】（位置だけ戻って窓は変わらないまま）だった。
        ⭐ 図に新しい種類を足したら、必ずここも足す。 */
+    /* ⚠️ 図は切り抜き（crop）・縁を出さない（fill）・地の印（ji）も控える
+       ＝そこを触って ⌘Z を押したら戻る */
     pieces: S.pieces.map(p => ({ id:p.id, x:p.x, y:p.y, sc:p.sc, rot:p.rot, lock:p.lock,
-                                 ura:p.ura, hide:p.hide, z:p.z,
+                                 ura:p.ura, hide:p.hide, z:p.z, fill:p.fill, ji:p.ji,
+                                 crop:p.crop ? JSON.parse(JSON.stringify(p.crop)) : null,
                                  nuki:p.nuki ? JSON.parse(JSON.stringify(p.nuki)) : null })),
   });
 }
@@ -4169,11 +4196,22 @@ function applyStateStr(j){
   const o = JSON.parse(j);
   S.board = o.board; S.sel = o.sel;
   S.lines = o.lines;
+  /* ⭐ 紙の質感・表裏・透け・経路の見せ方も戻す（⚠️ 古い控えには無い＝いまの値のまま） */
+  /* ⚠️ 「無い（null）」も戻せる形にする。⭐ `&& o.kami` を付けると
+     【紙なし → 紙あり】にしたあと ⌘Z で「なし」に戻せない（実測でここを踏んだ）。 */
+  if('kami'  in o) S.kami  = o.kami  ? JSON.parse(JSON.stringify(o.kami))  : null;
+  if('kamiU' in o) S.kamiU = o.kamiU ? JSON.parse(JSON.stringify(o.kamiU)) : null;
+  if(o.face !== undefined) S.face = o.face ? 1 : 0;
+  if(o.uraSee !== undefined) S.uraSee = o.uraSee;
+  if(o.showPath !== undefined) S.showPath = o.showPath;
+  /* ⚠️ 紙の目は焼いた絵を持っているので、作り直しの印を立てないと古い絵のまま戻る */
+  if(typeof kamiTouch === 'function') kamiTouch();
   /* ⚠️ 図は実体（item）を持っているので、置き場所だけ書き戻す（作り直さない） */
   o.pieces.forEach(v => { const pc = S.pieces.find(x => x.id === v.id);
     if(!pc) return;
     Object.assign(pc, { x:v.x, y:v.y, sc:v.sc, rot:v.rot, lock:v.lock,
-                        ura:v.ura, hide:v.hide, z:v.z });
+                        ura:v.ura, hide:v.hide, z:v.z, fill:v.fill, ji:v.ji,
+                        crop:v.crop ? JSON.parse(JSON.stringify(v.crop)) : null });
     /* ⭐ 抜いた板は【数値から絵を作り直す】。⚠️ 数値を戻すだけでは1画素も変わらない */
     if(v.nuki && pc.nuki){
       pc.nuki = JSON.parse(JSON.stringify(v.nuki));
@@ -4199,6 +4237,184 @@ function applyStateStr(j){
   });
   syncPanel(); render();
 }
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ パネルで触ったものは、ぜんぶ ⌘Z で戻る（2026-08-29）
+   木下＝「コマンドzでパネルで編集した内容も戻るようにして」
+
+   🔴 直す前は、控えを積んでいるのは【一部の入口だけ】だった。
+     つまみ（BIND・枡・紙・経路・字ごとのずらし…）は1つも積んでいなかった
+     ＝**パネルの編集は ⌘Z で1つも戻らなかった**。
+   🔴 つまみ1本ずつに pushUndo() を足すのは、20か所以上あって必ず足し忘れる
+     （そして足し忘れは「そこだけ戻らない」＝気づけない形で出る）。
+   ⭐⭐ だから【触りはじめを1か所で拾う】── パネルと一覧の中で
+     指を下ろした／キーを押した瞬間に、変わる前の姿を1回だけ積む。
+     ＝**新しいつまみを足しても、何もしなくても ⌘Z が効く。**
+
+   ⚠️ 1コマずつ積まない ── 指を下ろしてから離すまでで1回だけ（arm）。
+   ⚠️ 文字を打つ欄は、打つたびに積むと履歴が埋まる
+     ＝**入った瞬間に1回だけ**（focus で armし、最初の1打で積む）。
+   ⚠️ pushUndo は【前と同じ姿なら積まない】ので、
+     出す・保存・折り畳み・明るさなど絵が変わらない操作は勝手に落ちる。
+   ══════════════════════════════════════════════════════════════ */
+(function(){
+  const HOSTS = ['panel', 'layPanel'];
+  const isField = el => {
+    const t = (el.tagName || '').toUpperCase();
+    return t === 'TEXTAREA' || (t === 'INPUT' && /^(text|search|email|url|number)$/i.test(el.type || 'text'));
+  };
+  const inHost = el => !!(el && el.closest && HOSTS.some(id => el.closest('#' + id)));
+  let armed = false, snap = null;
+  const arm = () => { armed = true; };
+  const fire = () => { if(!armed) return; armed = false;
+    if(typeof pushUndo !== 'function') return;
+    snap = stateNow();
+    pushUndo();
+  };
+  /* ⭐⭐ 触ったが【何も変わらなかった】ときは、積んだ1手を捨てる。
+     🔴 これが無いと「⌘Z を押しても何も起きない」空の1手ができる
+        （すでに入っているボタンをもう一度押した、など。実測で 1→2→3 と増えていた）。
+     ⚠️ 見るのは【指を離した所】＝つまみを引いている間に捨ててしまわない。
+     ⚠️ 自分が積んだ1手が【いちばん上にある】ときだけ捨てる（他の処理が積んでいたら触らない）。 */
+  const settle = () => {
+    if(snap === null) return;
+    if(UNDO.length && UNDO[UNDO.length - 1] === snap && stateNow() === snap) UNDO.pop();
+    snap = null;
+  };
+  addEventListener('pointerup', settle, true);
+  addEventListener('keyup', settle, true);
+
+  HOSTS.forEach(id => {
+    const host = document.getElementById(id); if(!host) return;
+    /* 触りはじめ＝指を下ろした所／キーを押した所 */
+    host.addEventListener('pointerdown', e => {
+      if(!e.target || isField(e.target)) return;   /* 打ち込み欄は下の focus で拾う */
+      arm(); fire();                               /* ⭐ 変わる前に積む */
+    }, true);
+    host.addEventListener('keydown', e => {
+      if(isField(e.target)) return;
+      if(e.metaKey || e.ctrlKey) return;           /* ⌘Z 自体では積まない */
+      arm(); fire();
+    }, true);
+    /* 打ち込み欄＝入ってから最初の1打だけ積む（打つたびには積まない） */
+    host.addEventListener('focusin', e => { if(isField(e.target)) arm(); }, true);
+    host.addEventListener('input', e => { if(isField(e.target)) fire(); }, true);
+    /* 欄から出たら、次に入ったときにまた1回積めるようにする */
+    host.addEventListener('focusout', e => { if(isField(e.target)) armed = false; }, true);
+  });
+})();
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 版面をダブルクリックして、その場で打つ（2026-08-29）
+   木下＝「ダブルクリックをするとボード上でテキストを入力できるようにしてほしい」
+        「その場合のテキストのますはなしで」
+   ⭐ 何も無い所をダブルクリック＝**その場に行を1本作って、その場で打つ**。
+     置き方は「並ぶ」＝打った所から素直に流れる／⚠️ 枡（文字の地）は**なし**。
+   ⭐ 字の上をダブルクリック＝**その行を打ち直す**（作り直さない）。
+   ⚠️ Enter で確定・Esc で取消（Shift+Enter で改行）。
+   ⚠️ 版面の座標は【％】で持つ＝版面の大きさを変えても位置が崩れない。
+   ══════════════════════════════════════════════════════════════ */
+(function(){
+  const box = document.getElementById('boardT');
+  if(!box) return;
+  let target = null, made = false, before = '';
+
+  function put(pt){
+    const v = paper.view.projectToView(pt), r = cv.getBoundingClientRect();
+    box.style.left = Math.round(r.left + v.x) + 'px';
+    box.style.top  = Math.round(r.top  + v.y) + 'px';
+  }
+  function open(L, pt){
+    target = L; before = L.text || '';
+    box.value = before; box.style.display = 'block';
+    put(pt);
+    box.focus(); box.select();
+    stat('その場で打つ — Enter で確定／Esc で取消（⇧Enter で改行）');
+  }
+  function close(keep){
+    if(!target) return;
+    if(!keep){
+      if(made){ const i = S.lines.indexOf(target); if(i >= 0) S.lines.splice(i, 1); }
+      else target.text = before;
+    }else if(!String(box.value).trim() && made){
+      const i = S.lines.indexOf(target); if(i >= 0) S.lines.splice(i, 1);   /* 空なら残さない */
+    }
+    target = null; made = false;
+    box.style.display = 'none';
+    syncPanel(); render();
+  }
+  box.addEventListener('input', () => {
+    if(!target) return;
+    target.text = box.value;
+    render();
+  });
+  box.addEventListener('keydown', e => {
+    if(e.key === 'Escape'){ e.preventDefault(); close(false); stat('取り消した'); return; }
+    if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); close(true); stat('入れた'); }
+  });
+  box.addEventListener('blur', () => close(true));
+
+  cv.addEventListener('dblclick', e => {
+    if(box.style.display === 'block') return;
+    const r = cv.getBoundingClientRect();
+    const pt = paper.view.viewToProject(new Point(e.clientX - r.left, e.clientY - r.top));
+    /* ⭐ 字の上なら、その行を打ち直す（新しく作らない） */
+    const hit = artLayer.hitTest(pt, { fill:true, stroke:true, tolerance:8 / paper.view.zoom });
+    const own = hit && (function(it){ while(it){ if(it.data && it.data.line != null) return it.data.line; it = it.parent; } return null; })(hit.item);
+    if(own != null){
+      const L = S.lines.find(x => x.id === own);
+      if(L){ pushUndo(); S.sel = { kind:'line', i:S.lines.indexOf(L) }; syncPanel(); open(L, pt); return; }
+    }
+    /* ⭐ 何も無い所＝その場に行を作る。⚠️ 枡はなし（木下の指示） */
+    pushUndo();
+    const B = S.board;
+    const L = Object.assign(newLine(''), {
+      kind:'narabu', text:'',
+      ura:(S.face ? 1 : 0),
+      box:{ x: Math.max(0, Math.min(95, pt.x / B.w * 100)),
+            y: Math.max(0, Math.min(100, pt.y / B.h * 100)),
+            w: 46, rot:0 },
+      cell: Object.assign({}, CELL_DEF, { shape:'none' }),
+      size: 40, align:'left',
+    });
+    S.lines.push(L);
+    S.sel = { kind:'line', i:S.lines.length - 1 };
+    made = true;
+    syncPanel(); render();
+    open(L, pt);
+  }, false);
+})();
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 段を畳む（2026-08-29 木下「音のパネルだが、折りたたんでおいてくれない？」）
+   ⭐ 見出しを押すと、その段だけ畳む／開く。⭐ 覚えておく（次に開いても同じ）。
+   ⚠️ 畳んでも中身は消えない＝つまみの値も効きもそのまま
+     （＝畳んだせいで絵が変わることは無い）。
+   ⚠️ 既定で畳むのは【音】だけ。ほかは今までどおり開いている
+     （畳んだ段は「入っていない」に見えるので、勝手に増やさない）。
+   ══════════════════════════════════════════════════════════════ */
+(function(){
+  const KEY = 'hari.fold';
+  let memo = {};
+  try{ memo = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; }catch(e){}
+  const DEFAULT_FOLDED = ['音'];        /* ⭐ 既定で畳む段（見出しの頭で見る） */
+  document.querySelectorAll('#panel h2').forEach(h => {
+    const box = h.nextElementSibling;
+    if(!box || !box.classList.contains('sec')) return;
+    const name = (h.textContent || '').trim();
+    const key = name.split(' ')[0];
+    const folded = (key in memo) ? !!memo[key]
+                                 : DEFAULT_FOLDED.some(d => key.indexOf(d) === 0);
+    h.classList.toggle('fold2', folded);
+    h.addEventListener('click', () => {
+      const now = !h.classList.contains('fold2');
+      h.classList.toggle('fold2', now);
+      memo[key] = now;
+      try{ localStorage.setItem(KEY, JSON.stringify(memo)); }catch(e){}
+      stat(name + ' を' + (now ? '畳んだ（見出しを押すと開く）' : '開いた'));
+    });
+  });
+})();
+
 function undo(){
   if(!UNDO.length){ stat('これ以上は戻れない'); return; }
   REDO.push(stateNow());
@@ -6405,12 +6621,43 @@ stat(matchMedia('(pointer:coarse)').matches
                   y: oy + ch * (j + 0.5) + (R() - 0.5) * ch * 0.28,
                   rx: rx0, ry: rx0 / (nk.e / 100),
                   rot: nk.rot + (R() - 0.5) * 40 };
-      /* ⭐ 重なったら、重ならなくなるまで縮める＝接する所で止まる */
-      for(let t = 0; t < 60 && out.some(o => nkOverlap(o, h)); t++){ h.rx *= 0.94; h.ry *= 0.94; }
-      if(!out.some(o => nkOverlap(o, h)) && h.rx > cell * 0.05) out.push(h);
+      /* ⭐ まず入れる。重なりは最後の nkRelax でまとめて解く
+         ＝ここで捨てると【つまみの数だけ入らない】＝触れるのに効かない。 */
+      out.push(h);
     }
+    /* ⭐⭐ 最後に押し離して重なりを消す（2026-08-29）
+       ── 縮めるだけだと窓が小さくなって数が足りなく見える。
+       ⭐ まず【離す】、それでも駄目な分だけ縮める＝大きさを保ったまま接する。 */
+    nkRelax(out);
     nk.holes = out;
     nk.got = out.length;          /* 実際に入った数（つまみと違うことがある） */
+  }
+  /* ⭐ 重なっている2つを、中心どうしの向きへ少しずつ押し離す */
+  function nkRelax(hs){
+    for(let t = 0; t < 160; t++){
+      let moved = false;
+      for(let i = 0; i < hs.length; i++) for(let j = i + 1; j < hs.length; j++){
+        const a = hs[i], b = hs[j];
+        if(!nkOverlap(a, b)) continue;
+        let dx = b.x - a.x, dy = b.y - a.y;
+        let d = Math.hypot(dx, dy);
+        if(d < 1e-6){ dx = 1; dy = 0; d = 1; }        /* ⚠️ 真上に重なったら横へ逃がす */
+        dx /= d; dy /= d;
+        const push = Math.max(2, (a.rx + b.rx) * 0.02);
+        a.x -= dx * push; a.y -= dy * push;
+        b.x += dx * push; b.y += dy * push;
+        moved = true;
+      }
+      if(!moved) return true;
+    }
+    /* 離しきれない分だけ縮める（最後の手） */
+    for(let t = 0; t < 80; t++){
+      let bad = false;
+      for(let i = 0; i < hs.length; i++) for(let j = i + 1; j < hs.length; j++)
+        if(nkOverlap(hs[i], hs[j])){ hs[j].rx *= 0.96; hs[j].ry *= 0.96; bad = true; }
+      if(!bad) return true;
+    }
+    return false;
   }
   function nkEllipse(hh){
     const e = new Path.Ellipse(new Rectangle(hh.x - hh.rx, hh.y - hh.ry, hh.rx * 2, hh.ry * 2));
@@ -6570,7 +6817,21 @@ stat(matchMedia('(pointer:coarse)').matches
   knob('nkR',   'r',   true);
   knob('nkE',   'e',   true);
   knob('nkRot', 'rot', true);
-  knob('nkZ',   'z',   true);
+  /* ⚠️ 倍率だけは【置き直さない】＝並びを保ったまま拡げる（上の nkZoomTo） */
+  { const el = document.getElementById('nkZ');
+    let arm = false;
+    const on = () => { arm = true; };
+    el.addEventListener('pointerdown', on);
+    el.addEventListener('keydown', on);
+    el.addEventListener('input', () => {
+      const lab = el.parentElement.querySelector('.v'); if(lab) lab.textContent = el.value;
+      const pc = nkPc(); if(!pc){ stat('先に板を置いてください'); return; }
+      if(arm){ pushUndo(); arm = false; }
+      nkZoomTo(pc.nuki, +el.value);
+      nkBuild(pc); render(); nkOneSync();
+      stat('全体の倍率 ' + el.value + '% — 並びごと拡げるので重ならない');
+    });
+    el.addEventListener('pointerup', () => { arm = false; }); }
   document.querySelectorAll('#segNkEdge button').forEach(b => b.onclick = () => {
     const pc = nkPc(); if(!pc){ stat('先に板を置いてください'); return; }
     pushUndo();
@@ -6710,13 +6971,32 @@ stat(matchMedia('(pointer:coarse)').matches
   }
   { const pk = document.getElementById('nkPick');
     if(pk) pk.addEventListener('input', () => { nkPick = Math.max(0, +pk.value - 1);
-      nkOneSync(); stat('窓 ' + pk.value + ' を選んだ'); }); }
+      nkOneSync(); render();          /* ⭐ 版面の印を描き直す＝どれを選んだか見える */
+      stat('窓 ' + pk.value + ' を選んだ — 版面で橙に囲まれている窓'); }); }
   oneKnob('nkOX',  (h, v, B) => { h.x = B.w * v / 100; });
   oneKnob('nkOY',  (h, v, B) => { h.y = B.h * v / 100; });
   oneKnob('nkOR',  (h, v, B) => { const e = h.rx / h.ry;
     h.rx = Math.min(B.w, B.h) * v / 100; h.ry = h.rx / e; });
   oneKnob('nkOE',  (h, v) => { h.ry = h.rx / (v / 100); });
   oneKnob('nkORot',(h, v) => { h.rot = v; });
+
+  /* ══⭐⭐ 全体の倍率は【配置ごと】拡げる（2026-08-29）══
+     木下＝「ぜんぶフルをした場合でも、窓の数を増やした場合も、
+       楕円が重なるではなくひっついた状態にしてほしい。通常のフルとは分けた方がよさそう」
+     🔴 前は倍率を上げると【1つずつが太る】だけだったので、隣と重なって塊になった。
+     ⭐ 版面の真ん中を基準に、**位置も大きさも一緒に**拡げる
+       ＝並びの関係が変わらない＝接したまま、外へはみ出していく
+       （参考の「全局孔洞等比缩放」はこれ）。 */
+  window.nkZoomTo = function nkZoomTo(nk, to){
+    const from = nk.z || 100;
+    if(!nk.holes || !nk.holes.length || from === to){ nk.z = to; return; }
+    const k = to / from, B = S.board, cx = B.w / 2, cy = B.h / 2;
+    nk.holes.forEach(h => {
+      h.x = cx + (h.x - cx) * k; h.y = cy + (h.y - cy) * k;
+      h.rx *= k; h.ry *= k;
+    });
+    nk.z = to;
+  };
 
   /* ⭐ 板を出す／隠す */
   document.querySelectorAll('#segNkPlate button').forEach(b => b.onclick = () => {
@@ -6755,6 +7035,44 @@ stat(matchMedia('(pointer:coarse)').matches
       syncPanel(); render();
       stat(hs.length + ' 個の窓に字を回した — 押し直しても増えない（窓に付いた行は作り直す）');
     }; }
+
+  /* ⭐⭐ 選んでいる窓を版面の上で見せる ── 数字だけでは【どれか分からない】。
+     ⭐ 縁を橙の破線でなぞり、真ん中に番号を置く。
+     ⚠️ 「窓を1つずつ」の欄が出ているときだけ（ふだんは邪魔になる）。 */
+  window.nkGuide = function nkGuide(){
+    const box = document.getElementById('nkOneBox');
+    if(!box || box.style.display === 'none') return;
+    const pc = nkPc(); const hs = pc && pc.nuki.holes;
+    if(!hs || !hs.length) return;
+    const k = Math.max(0, Math.min(hs.length - 1, nkPick));
+    const Z = paper.view.zoom;
+    hs.forEach((h, i) => {
+      const on = (i === k);
+      const e = new Path.Ellipse(new Rectangle(h.x - h.rx, h.y - h.ry, h.rx * 2, h.ry * 2));
+      e.rotate(h.rot, new Point(h.x, h.y));
+      e.strokeColor = on ? '#ff8a00' : new paper.Color(1, 1, 1, 0.55);
+      e.strokeWidth = (on ? 2.6 : 1.1) / Z;
+      e.dashArray = on ? [10 / Z, 5 / Z] : [4 / Z, 5 / Z];
+      e.fillColor = null;
+      uiLayer.addChild(e);
+      /* ⭐ 番号は【全部の窓】に出す＝つまみの数字と版面が突き合わせられる */
+      const t = new paper.PointText(new Point(h.x, h.y + 9 / Z));
+      t.content = String(i + 1);
+      t.justification = 'center';
+      t.fontSize = (on ? 30 : 20) / Z;
+      t.fontWeight = 700;
+      t.fillColor = on ? '#ff8a00' : new paper.Color(1, 1, 1, 0.75);
+      /* ⚠️ 明るい写真の上でも読めるよう、下に濃い縁を敷く */
+      t.shadowColor = new paper.Color(0, 0, 0, 0.55);
+      t.shadowBlur = 6 / Z;
+      uiLayer.addChild(t);
+      if(on){
+        /* 選んだ窓は真ん中に点も置く（動かしている間の目印） */
+        const c = new Path.Circle(new Point(h.x, h.y), 3.4 / Z);
+        c.fillColor = '#ff8a00'; uiLayer.addChild(c);
+      }
+    });
+  };
 
   window.nkJiPc = nkJiPc; window.nkJiSync = nkJiSync; window.nkOneSync = nkOneSync;
 
