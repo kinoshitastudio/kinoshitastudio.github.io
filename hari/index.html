@@ -419,6 +419,15 @@ input[type=color]{ border-radius:8px; height:30px }
     </svg>
     <span class="fly">▸</span>
   </button>
+  <!-- ⭐⭐ T ＝ 打つ（2026-08-30 木下「ツールパネルにTのテキストを打ち込みできるようにしよう」）
+       ⚠️ 版面のダブルクリックでも打てるが、道具立てに無いと【打てると分からない】。
+       ⭐ T を選んで版面を1回押す＝その場に行を作って、その場で打つ。 -->
+  <button data-tool="text" data-k="T" data-tip="打つ — 版面を押すと、その場に文字を打てる">
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round">
+      <path d="M5 5.5 H19"/><path d="M12 5.5 V19"/>
+    </svg>
+  </button>
   <!-- ⭐⭐ 消しゴム（2026-08-27）＝鉛筆の線をこすって薄くする。全部は消えない。 -->
   <button data-tool="erase" data-k="E" data-tip="消しゴム — 鉛筆の線をこする（全部は消えない・カスが出る）">
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"
@@ -1150,6 +1159,24 @@ input[type=color]{ border-radius:8px; height:30px }
     <div class="row"><label>角度</label>
       <input type="range" id="pcRot" min="-180" max="180" value="0"><span class="v" id="vRot">0</span></div>
 
+    <!-- ══⭐⭐ 2026-08-30 木下が見せた参考（yhhydesign の Shape Outline Offset Tool）══
+         写真から抜いた形の【輪郭を外へ何重にも】オフセットして、色を替えて重ねる。
+         ⭐ HARI には字用の「縁を何重にも」が既にある ── それを**図にも**掛ける。
+         ⚠️ 効くのは【形を持つ図】＝SVG・引いた線・空き箱。写真（画素）は輪郭を持たない。 -->
+    <div class="row"><label>縁の本数</label>
+      <input type="range" id="pcEdgeN" min="0" max="12" value="0"><span class="v" id="vpcEdgeN">0</span></div>
+    <div class="row"><label>縁の間隔</label>
+      <input type="range" id="pcEdgeGap" min="1" max="80" value="10"><span class="v" id="vpcEdgeGap">10</span></div>
+    <div class="row"><label>縁の太さ</label>
+      <input type="range" id="pcEdgeW" min="1" max="40" value="3"><span class="v" id="vpcEdgeW">3</span></div>
+    <div class="row"><label>縁の色</label>
+      <input type="color" id="pcEdgeCol" value="#ff3b30">
+      <input type="color" id="pcEdgeCol2" value="#00c2ff"></div>
+    <div class="note">⭐ <b>形を持つ図</b>（SVG・引いた線）の輪郭を<b>外へ何重にも</b>広げる。
+      2色を交互に敷くので、<b>補色を選ぶと参考のような層</b>になる<br>
+      ⚠️ 写真は画素なので輪郭を持たない＝掛からない。<b>霧KIRI などで形にしてから</b>持ち込む<br>
+      ⚠️ 0 本なら1画素も変わらない</div>
+
     <!-- ⭐⭐ 2026-08-27 木下「書き出しpngがまだ余白が出てしまっている。
          はみ出しているのは書き出しされないようにして書き出しできるように」
          ⭐ 入にすると、その図は【いつも版面を覆う】＝縁に地が残らない。
@@ -1592,6 +1619,26 @@ function addEdges(items, L, first){
     /* ⚠️ 束の子にも印を付ける（掴む処理は子から辿るため） */
     e.getItems({ recursive:true }).forEach(c => { c.data = Object.assign({}, c.data, { edge:true }); });
     e.insertBelow(first);
+  }
+}
+/* ⭐ 図の縁。字の addEdges と同じ考え方で、外へ広がる輪を交互の色で敷く。
+   ⚠️ 敷くのは【その図の下】＝形そのものは前のまま。 */
+function pcEdges(pc, node){
+  const n = Math.max(0, pc.edgeN|0);
+  if(!n || !node || !node.parent) return;
+  const g = Math.max(0.5, pc.edgeGap || 10), t = Math.max(0.2, pc.edgeW || 3);
+  const c1 = pc.edgeCol || '#ff3b30', c2 = pc.edgeCol2 || '#00c2ff';
+  let tpl; try{ tpl = node.clone({ insert:false }); }catch(_){ return; }
+  tpl.remove();
+  for(let k = n; k >= 1; k--){
+    const w = t + g*k;
+    let e; try{ e = tpl.clone({ insert:false }); }catch(_){ continue; }
+    e.fillColor = null;
+    e.strokeColor = (k % 2) ? c1 : c2;
+    e.strokeWidth = w; e.strokeJoin = 'round'; e.strokeCap = 'round';
+    e.data = Object.assign({}, e.data, { edge:true });
+    e.getItems({ recursive:true }).forEach(c => { c.data = Object.assign({}, c.data, { edge:true }); });
+    e.insertBelow(node);
   }
 }
 function makeChar(ch, L, extraCol){
@@ -2921,6 +2968,11 @@ function render(into, opt){
       } }
     node.data.piece = pc.id;
     put(node, e);
+    /* ⭐⭐ 図の縁（2026-08-30）── 字の「縁を何重にも」と同じ作り。
+       🔴 【版面に入れたあと】に敷く ── 入れる前だと親がまだ無くて
+          insertBelow が効かず、1本も敷かれない（実測でここを踏んだ）。
+       ⚠️ 写真（Raster）は輪郭を持たないので何も起きない＝画面でそう言う。 */
+    if(pc.edgeN > 0) pcEdges(pc, node);
   } else {
     // 文字の帯
     const L = e.o;
@@ -4301,6 +4353,8 @@ function stateNow(){
     pieces: S.pieces.map(p => ({ id:p.id, x:p.x, y:p.y, sc:p.sc, rot:p.rot, lock:p.lock,
                                  ura:p.ura, hide:p.hide, z:p.z, fill:p.fill, ji:p.ji,
                                  aki:p.aki ? JSON.parse(JSON.stringify(p.aki)) : null,
+                                 edgeN:p.edgeN, edgeGap:p.edgeGap, edgeW:p.edgeW,
+                                 edgeCol:p.edgeCol, edgeCol2:p.edgeCol2,
                                  crop:p.crop ? JSON.parse(JSON.stringify(p.crop)) : null,
                                  nuki:p.nuki ? JSON.parse(JSON.stringify(p.nuki)) : null })),
   });
@@ -4341,6 +4395,8 @@ function applyStateStr(j){
     if(!pc) return;
     Object.assign(pc, { x:v.x, y:v.y, sc:v.sc, rot:v.rot, lock:v.lock,
                         ura:v.ura, hide:v.hide, z:v.z, fill:v.fill, ji:v.ji,
+                        edgeN:v.edgeN, edgeGap:v.edgeGap, edgeW:v.edgeW,
+                        edgeCol:v.edgeCol, edgeCol2:v.edgeCol2,
                         crop:v.crop ? JSON.parse(JSON.stringify(v.crop)) : null });
     /* ⭐ 抜いた板は【数値から絵を作り直す】。⚠️ 数値を戻すだけでは1画素も変わらない */
     if(v.nuki && pc.nuki){
@@ -4498,6 +4554,16 @@ function applyStateStr(j){
   });
   box.addEventListener('blur', () => close(true));
 
+  /* ⭐ T の道具のときは【1回押す】だけで打てる（ダブルクリックと同じ道を通す） */
+  cv.addEventListener('pointerdown', e => {
+    if(!window.TEXTTOOL) return;
+    if(box.style.display === 'block') return;
+    e.preventDefault(); e.stopPropagation();
+    const ev = new MouseEvent('dblclick', { clientX:e.clientX, clientY:e.clientY, bubbles:false });
+    cv.dispatchEvent(ev);
+    /* ⚠️ 打ち終わったら選ぶに戻す（打つ道具のまま置いておくと、動かそうとして字が増える） */
+    setTool('select');
+  }, true);
   cv.addEventListener('dblclick', e => {
     if(box.style.display === 'block') return;
     const r = cv.getBoundingClientRect();
@@ -4612,8 +4678,9 @@ addEventListener('keydown', e => {
   }
   /* ⭐ 道具立てのショートカット（2026-08-26）＝作字SAKUJI と同じ V／P。
      ⚠️ ⌘V（貼る）と分けるため【修飾キーが無いときだけ】。打っている最中は上の typing() で抜けている。 */
-  if(!m && !e.altKey && (k === 'v' || k === 'p' || k === 'e')){
-    e.preventDefault(); setTool(k === 'p' ? 'pen' : k === 'e' ? 'erase' : 'select'); return;
+  if(!m && !e.altKey && (k === 'v' || k === 'p' || k === 'e' || k === 't')){
+    e.preventDefault();
+    setTool(k === 'p' ? 'pen' : k === 'e' ? 'erase' : k === 't' ? 'text' : 'select'); return;
   }
   /* ⭐ U＝紙を裏返す（2026-08-27）。⚠️ 修飾キーが無いときだけ（⌘U は下線などに使われる） */
   if(!m && !e.altKey && k === 'u'){ e.preventDefault(); setFace(!S.face); return; }
@@ -5044,6 +5111,13 @@ function syncPanel(){
   const pc0 = selPiece();
   setRange('pcScale', pc0 ? Math.round(pc0.sc) : 100);
   setRange('pcRot',   pc0 ? Math.round(pc0.rot) : 0);
+  /* ⭐ 図の縁も合わせる（⚠️ 図を選び替えたときに前の図の値が残らないように） */
+  setRange('pcEdgeN',   pc0 ? (pc0.edgeN   || 0)  : 0);
+  setRange('pcEdgeGap', pc0 ? (pc0.edgeGap || 10) : 10);
+  setRange('pcEdgeW',   pc0 ? (pc0.edgeW   || 3)  : 3);
+  { const a=$('pcEdgeCol'), b=$('pcEdgeCol2');
+    if(a) a.value = (pc0 && pc0.edgeCol)  || '#ff3b30';
+    if(b) b.value = (pc0 && pc0.edgeCol2) || '#00c2ff'; }
   /* ⭐ 切り抜きのつまみも合わせる。⚠️ 図を選び替えたときに前の図の値が残らないように、無ければ0に戻す */
   { const cr0 = (pc0 && pc0.crop) || { t:0, r:0, b:0, l:0 };
     setRange('pcCropT', Math.round(cr0.t||0)); setRange('pcCropB', Math.round(cr0.b||0));
@@ -5746,16 +5820,55 @@ $('delLine').onclick = () => {
 };
 $('showPath').onclick = () => { S.showPath = !S.showPath; $('showPath').classList.toggle('on', S.showPath); render(); };
 
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 版面の大きさを変えたら、構図ごと連れていく（2026-08-30）
+   木下「幅縦長のサイズを変更させても、それにあわせて構図が変更できるか」
+   🔴 実測：行の箱（％で持っている）は追従したが、
+      **沿うの頂点・図・抜くの窓は px で持っていた**ので追従せず、
+      1000×1414 → 1600×900 で 図が (50,50)% → (31,79)% ＝**版面の外**へ飛んでいた。
+   ⭐ 位置は【縦横それぞれの比】で、大きさは【短い方の比】で連れていく
+     （大きさを縦横別々に伸ばすと、丸が楕円に潰れる）。
+   ⚠️ 多角形の頂点は「作り直す（pts=null）」が既定 ── だが木下が掴んで動かした形は
+      作り直すと消える。⭐ **動かした形は連れていく**（型のままなら作り直す）。
+   ══════════════════════════════════════════════════════════════ */
+function boardResize(nw, nh){
+  const ow = S.board.w, oh = S.board.h;
+  nw = Math.max(50, Number(nw) || 50); nh = Math.max(50, Number(nh) || 50);
+  const kx = nw / ow, ky = nh / oh, ks = Math.min(kx, ky);
+  S.board.w = nw; S.board.h = nh;
+  $('bw').value = nw; $('bh').value = nh;
+  if(kx === 1 && ky === 1) { fitView(); render(); return; }
+  S.lines.forEach(L => {
+    if(!L.path) return;
+    if(L.path.type === 'poly'){
+      /* ⭐ 掴んで動かした形は連れていく／触っていなければ型から作り直す */
+      if(L.path.pts && L.path.pts.length)
+        L.path.pts = L.path.pts.map(a => [a[0]*kx, a[1]*ky]);
+      else L.path.pts = null;
+    }
+    if(L.path.dx) L.path.dx *= kx;
+    if(L.path.dy) L.path.dy *= ky;
+  });
+  S.pieces.forEach(pc => {
+    pc.x *= kx; pc.y *= ky;
+    /* ⚠️ 板は版面ぴったりに作り直すので位置は触らない。窓だけ連れていく */
+    if(pc.nuki && pc.nuki.holes){
+      pc.nuki.holes.forEach(h => { h.x *= kx; h.y *= ky; h.rx *= ks; h.ry *= ks; });
+      if(typeof nkBuild === 'function') nkBuild(pc);
+    }else{
+      pc.sc = (pc.sc || 100) * ks;      /* ⭐ 図の大きさも短い方の比で */
+    }
+  });
+  syncPanel(); fitView(); render();
+  stat('版面を ' + nw + '×' + nh + ' に — 構図も一緒に連れてきた');
+}
 ['bw','bh'].forEach(id => $(id).addEventListener('input', e => {
-  S.board[id === 'bw' ? 'w' : 'h'] = Math.max(50, Number(e.target.value)||50);
-  S.lines.forEach(L => { if(L.path.type === 'poly') L.path.pts = null; });   // 版面が変わったら形を作り直す
-  fitView(); render();
+  const v = Math.max(50, Number(e.target.value)||50);
+  boardResize(id === 'bw' ? v : S.board.w, id === 'bh' ? v : S.board.h);
 }));
 document.querySelectorAll('[data-size]').forEach(b => b.onclick = () => {
   const [w,h] = b.dataset.size.split(',').map(Number);
-  S.board.w = w; S.board.h = h; $('bw').value = w; $('bh').value = h;
-  S.lines.forEach(L => { if(L.path.type === 'poly') L.path.pts = null; });
-  fitView(); render();
+  boardResize(w, h);
 });
 /* （同上：bbg の配線も data-bc へ移した） */
 
@@ -6199,6 +6312,11 @@ function syncPen(){
       （設定は使う欄に置けないので、せめて「そこにある」と分かるようにする）。 */
 function setTool(t, reveal){
   const on = (t === 'pen'), er = (t === 'erase'), pv = (t === 'pt');
+  /* ⭐ T＝打つ（2026-08-30）。⚠️ ほかの道具とは別に持つ（PEN の3つとは排他） */
+  window.TEXTTOOL = (t === 'text');
+  document.querySelectorAll('#tools button[data-tool]').forEach(b =>
+    b.classList.toggle('on', b.dataset.tool === t));
+  if(TEXTTOOL){ stat('打つ — 版面を押すと、その場に文字を打てる（V で選ぶに戻る）'); }
   const changed = (PEN.on !== on) || (!!PEN.erase !== er) || (!!PEN.pt !== pv);
   PEN.on = on; PEN.erase = er; PEN.pt = pv; syncPen();
   if(on && reveal){
@@ -6453,6 +6571,27 @@ $('delPiece').onclick = () => { const pc = selPiece(); if(!pc) return;
   syncPanel(); render();
   stat(r === 'over' ? '大きさの上限（600%）で止まった＝もっと大きい元の画像が要る' : msg);
 });
+/* ⭐ 図の縁のつまみ。⚠️ 数字は【図ごと】に持つ（行の縁とは別） */
+[['pcEdgeN','edgeN',Number], ['pcEdgeGap','edgeGap',Number], ['pcEdgeW','edgeW',Number],
+ ['pcEdgeCol','edgeCol',v=>v], ['pcEdgeCol2','edgeCol2',v=>v]].forEach(([id,key,cast]) => {
+  const el = $(id); if(!el) return;
+  let arm = false;
+  const on = () => { arm = true; };
+  el.addEventListener('pointerdown', on);
+  el.addEventListener('keydown', on);
+  el.addEventListener('input', e => {
+    const s2 = $('v' + id); if(s2) s2.textContent = e.target.value;
+    const pc = selPiece();
+    if(!pc){ stat('先に図を選んでください'); return; }
+    if(arm){ pushUndo(); arm = false; }
+    pc[key] = cast(e.target.value);
+    /* ⚠️ 写真は輪郭を持たない＝掛からない。黙って効かないを作らない */
+    if(key === 'edgeN' && pc[key] > 0 && pc.src && pc.src.t !== 'svg')
+      stat('⚠️ 写真は輪郭を持たないので縁は掛かりません（霧KIRI などで形にしてから持ち込む）');
+    renderSoon();
+  });
+  el.addEventListener('pointerup', () => { arm = false; });
+});
 $('pcCropOff').onclick = () => {
   const pc = selPiece(); if(!pc) return;
   pc.crop = null;
@@ -6575,6 +6714,8 @@ function snapJSON(){
     pieces: S.pieces.filter(p => p.src || p.pen || p.nuki || p.aki || (p.kasu && p.kasu.length))
               .map((p, i) => ({ z:(p.z != null ? p.z : i),
                            aki: p.aki ? JSON.parse(JSON.stringify(p.aki)) : null,
+                           edgeN:p.edgeN||0, edgeGap:p.edgeGap||10, edgeW:p.edgeW||3,
+                           edgeCol:p.edgeCol||null, edgeCol2:p.edgeCol2||null,
                            src:p.src, pen:p.pen, kasu:p.kasu || null,
                            nuki: p.nuki ? JSON.parse(JSON.stringify(p.nuki)) : null,
                            x:p.x, y:p.y, sc:p.sc, rot:p.rot,
@@ -6614,7 +6755,9 @@ function restorePiece(p, idx){
     item.scale(fit); item.position = new Point(0,0);
     S.pieces.push({ id:uid(), item, src:p.src, x:p.x, y:p.y, sc:p.sc, rot:p.rot, z:Z,
                     ura:(p.ura ? 1 : 0), fill:(p.fill ? 1 : 0), lock:(p.lock ? 1 : 0),
-                    ji:(p.ji ? 1 : 0) });
+                    ji:(p.ji ? 1 : 0),
+                    edgeN:p.edgeN||0, edgeGap:p.edgeGap||10, edgeW:p.edgeW||3,
+                    edgeCol:p.edgeCol||null, edgeCol2:p.edgeCol2||null });
     render();
   };
   /* ⭐ 空き箱は数値だけ（絵は毎回作る） */
