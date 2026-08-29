@@ -1161,6 +1161,30 @@ input[type=color]{ border-radius:8px; height:30px }
       <div class="seg" id="segNkEdge">
         <button data-v="0" class="on">中に置く</button><button data-v="1">縁で切る</button>
       </div></div>
+    <div class="row"><label>板を出す</label>
+      <div class="seg" id="segNkPlate">
+        <button data-v="1" class="on">出す</button><button data-v="0">隠す（字だけ）</button>
+      </div></div>
+    <!-- ══⭐⭐ 1つずつ触る（2026-08-29 木下「それぞれの楕円はそれぞれで移動できたり
+         大きさ調整できたりする」）══
+         ⚠️ 上のつまみは【全部を作り直す】ので、ここで直した分は消える。 -->
+    <div id="nkOneBox" style="display:none">
+      <div class="row"><label style="font-weight:700">窓を1つずつ</label>
+        <span class="v" id="vnkPick">1 / 1</span></div>
+      <div class="row"><label>どの窓</label>
+        <input type="range" id="nkPick" min="1" max="8" value="1"><span class="v" id="vnkPickN">1</span></div>
+      <div class="row"><label>よこ</label>
+        <input type="range" id="nkOX" min="-20" max="120" value="50"><span class="v" id="vnkOX">50</span></div>
+      <div class="row"><label>たて</label>
+        <input type="range" id="nkOY" min="-20" max="120" value="50"><span class="v" id="vnkOY">50</span></div>
+      <div class="row"><label>大きさ</label>
+        <input type="range" id="nkOR" min="4" max="80" value="20"><span class="v" id="vnkOR">20</span></div>
+      <div class="row"><label>楕円度</label>
+        <input type="range" id="nkOE" min="100" max="260" value="160"><span class="v" id="vnkOE">160</span></div>
+      <div class="row"><label>傾き</label>
+        <input type="range" id="nkORot" min="0" max="360" value="0"><span class="v" id="vnkORot">0</span></div>
+    </div>
+    <button class="btn" id="nkRing" style="display:block;width:100%;margin-top:6px">選んだ行を、窓の数だけ作って回す</button>
     <!-- ══⭐⭐ 中の写真（2026-08-29）══
          🔴 板は版面ぜんぶを覆うので、版面のどこを押しても【板】が掴める
             ＝下の写真は掴めない。だから掴むのではなく【つまみ】で触る。
@@ -1184,6 +1208,11 @@ input[type=color]{ border-radius:8px; height:30px }
       ⭐ 型の <b>「窓」</b>を押せば、写真・板・字までまとめて組む。ここは<b>あとから直す所</b>。<br>
       ⭐ 窓どうしが<b>重なると溶けて1つ</b>になる ── 残った板が尖った形になるのはそのため。<br>
       ⭐ 行の<b>経路を「窓」</b>にすると、<b>字が窓のふちを回る</b>（どの窓かは選べる）。<br>
+      ⭐⭐ <b>窓どうしは重ならない</b>（接するだけ）。残った板が花びらや尖った断面になるのはそのため。<br>
+      ⭐ <b>板を隠す</b>＝色は消えるが窓は残る ── <b>パスに沿った字だけ</b>が浮く。<br>
+      ⭐ <b>選んだ行を、窓の数だけ作って回す</b>＝全部の窓のふちに同じ字が付く（あとで1行ずつ直せる）。<br>
+      ⚠️ 上のつまみ（窓の数・大きさ・楕円度・傾き・倍率）は<b>全部を置き直す</b>ので、
+      「窓を1つずつ」で直した分は消える。<br>
       ⭐ <b>中の写真</b>＝窓から見えている写真を動かす（板は動かない）。<b>版面では掴めない</b>
       ── 板が全面を覆っているので、ここのつまみで触る。<br>
       ⚠️ 板は<b>図（レイヤー）</b>なので上下を動かせる。<b>写真より上</b>に置くこと。
@@ -6297,7 +6326,9 @@ stat(matchMedia('(pointer:coarse)').matches
      パネル1段・経路の1種類・型1つ・振るの2か所・控えの2か所 だけ。
    ══════════════════════════════════════════════════════════════ */
 (function(){
-  const NK_DEF = { col:'#ff5a3c', n:5, r:24, e:160, rot:30, z:100, seed:1, edge:0 };
+  /* ⭐ 既定は参考の絵に寄せた（窓は多め・大きめ・縁で切る）。
+     ⚠️ 木下が触った値は控えに残るので、既定を変えても前の作品は変わらない。 */
+  const NK_DEF = { col:'#ff5a3c', n:7, r:18, e:170, rot:40, z:105, seed:1, edge:1, plate:1 };
   /* 板の色の見本＝参考と同じで【原色を殴る】。地に負けない濃さだけを選ぶ */
   const NK_COLS = ['#ff5a3c','#1f3ecb','#0f9d58','#f2c200','#111111','#ff7fa8'];
 
@@ -6309,18 +6340,77 @@ stat(matchMedia('(pointer:coarse)').matches
   /* ⭐ 窓を置く。
      ⚠️ 縁に寄りすぎると板が細い帯になって汚い＝既定は内側に置く。
      ⭐「縁で切る」を入れると、わざと版面の外へはみ出させる（参考の絵はこちら）。 */
+  /* ⭐ ある点が、その窓の中か（傾いた楕円の式）。回した分を打ち消してから測る */
+  function nkIn(h, x, y){
+    const t = -h.rot * Math.PI / 180, dx = x - h.x, dy = y - h.y;
+    const u = dx * Math.cos(t) - dy * Math.sin(t);
+    const v = dx * Math.sin(t) + dy * Math.cos(t);
+    return (u * u) / (h.rx * h.rx) + (v * v) / (h.ry * h.ry) < 1;
+  }
+  function nkRim(h, n){
+    const o = [], t = h.rot * Math.PI / 180;
+    for(let i = 0; i < (n || 28); i++){
+      const a = i * Math.PI * 2 / (n || 28);
+      const u = h.rx * Math.cos(a), v = h.ry * Math.sin(a);
+      o.push([h.x + u * Math.cos(t) - v * Math.sin(t), h.y + u * Math.sin(t) + v * Math.cos(t)]);
+    }
+    return o;
+  }
+  /* 🔴🔴 2つの窓が【重なる】か。⚠️ 楕円どうしの交差は式で解くと重いので、
+     縁の点を拾って相手の中に入るかで見る（窓は多くて8個なので、これで足りる）。 */
+  function nkOverlap(a, b){
+    if(nkIn(b, a.x, a.y) || nkIn(a, b.x, b.y)) return true;
+    return nkRim(a).some(([x, y]) => nkIn(b, x, y))
+        || nkRim(b).some(([x, y]) => nkIn(a, x, y));
+  }
+  /* ══⭐⭐ 窓を置く（2026-08-29 作り直し）══
+     🔴 前は【ただ撒いて、重なったら溶かして1つ】にしていた ── 木下＝
+       「ランダムにしても全部が重なったりまとまったりすることはなく、
+        重ならずひっつく感じでそれぞれの楕円で切り抜かれている」＝**逆だった**。
+     ⭐ 重なったら置き直す（当たり判定で弾く）。**接するのは良い・重なるのは駄目**。
+       残った板が花びらや尖った断面になるのは、窓どうしが**接している**から。
+     ⚠️ 置けないときは少しずつ小さくして入れる（数が減ると「効かない」に見えるので）。 */
+  /* ══⭐⭐ 窓を置く（2026-08-29 2度目の作り直し）══
+     🔴 1度目＝ただ撒いて重なったら溶かす → 全部くっついて塊になった。
+     🔴 2度目＝撒いて重なったら弾く → 大きい窓が入り切らず、数が足りなかった
+       （つまみ7に対して実測4）。**触れるのに効かない**。
+     ⭐ 3度目＝**版面を n 個に割って、その升へ1つずつ置く**。
+       ＝必ず n 個入る／隣とは**接するが重ならない**（重なったら縮める）。
+       木下＝「重ならずひっつく感じでそれぞれの楕円で切り抜かれている」。
+     ⭐ 「大きさ」は升に対する倍率＝**版面や書き出しの大きさを変えても崩れない**。
+     ⚠️ 升に置くだけだと整列して見えるので、升の中で振る（jitter）。 */
   function nkPlace(nk){
     const B = S.board, R = rnd0(nk.seed * 9176 + 13);
-    const base = Math.min(B.w, B.h) * (nk.r / 100) * (nk.z / 100);
-    const lo = nk.edge ? -0.05 : 0.10, hi = nk.edge ? 1.05 : 0.90;
+    const n = Math.max(1, nk.n | 0);
+    /* 版面の比から、n個がだいたい正方に並ぶ列・段を決める */
+    const cols = Math.max(1, Math.round(Math.sqrt(n * B.w / B.h)));
+    const rows = Math.max(1, Math.ceil(n / cols));
+    /* ⭐「縁で切る」＝版面の外まで割る＝縁で切れた断面だけが板に残る */
+    const bleed = nk.edge ? 0.20 : 0.02;
+    const W = B.w * (1 + bleed * 2), H = B.h * (1 + bleed * 2);
+    const ox = -B.w * bleed, oy = -B.h * bleed;
+    const cw = W / cols, ch = H / rows, cell = Math.min(cw, ch);
+    /* ⚠️ 端から順に埋めると偏る＝升の順番を振る */
+    const order = [];
+    for(let j = 0; j < rows; j++) for(let i = 0; i < cols; i++) order.push([i, j]);
+    for(let i = order.length - 1; i > 0; i--){
+      const j = Math.floor(R() * (i + 1)); const t = order[i]; order[i] = order[j]; order[j] = t;
+    }
     const out = [];
-    for(let i = 0; i < nk.n; i++){
-      const k = 0.75 + R() * 0.5;
-      out.push({ x: B.w * (lo + R() * (hi - lo)), y: B.h * (lo + R() * (hi - lo)),
-                 rx: base * k, ry: base * k / (nk.e / 100),
-                 rot: nk.rot + (R() - 0.5) * 30 });
+    for(let k = 0; k < n && k < order.length; k++){
+      const [i, j] = order[k];
+      const scale = (nk.r / 18) * (nk.z / 100);        /* 18 が「升にぴったり」の目安 */
+      const rx0 = cell * 0.5 * scale * (0.85 + R() * 0.30);
+      const h = { x: ox + cw * (i + 0.5) + (R() - 0.5) * cw * 0.28,
+                  y: oy + ch * (j + 0.5) + (R() - 0.5) * ch * 0.28,
+                  rx: rx0, ry: rx0 / (nk.e / 100),
+                  rot: nk.rot + (R() - 0.5) * 40 };
+      /* ⭐ 重なったら、重ならなくなるまで縮める＝接する所で止まる */
+      for(let t = 0; t < 60 && out.some(o => nkOverlap(o, h)); t++){ h.rx *= 0.94; h.ry *= 0.94; }
+      if(!out.some(o => nkOverlap(o, h)) && h.rx > cell * 0.05) out.push(h);
     }
     nk.holes = out;
+    nk.got = out.length;          /* 実際に入った数（つまみと違うことがある） */
   }
   function nkEllipse(hh){
     const e = new Path.Ellipse(new Rectangle(hh.x - hh.rx, hh.y - hh.ry, hh.rx * 2, hh.ry * 2));
@@ -6331,7 +6421,9 @@ stat(matchMedia('(pointer:coarse)').matches
      1つずつ引くと重なった所が抜けたり戻ったりする（偶奇）＝穴の中に板が残る。 */
   function nkBuild(pc){
     const nk = pc.nuki, B = S.board;
-    if(!nk.holes || nk.holes.length !== nk.n) nkPlace(nk);
+    /* ⚠️ 「入った数 ≠ つまみの数」は正常（重ならないので入り切らないことがある）。
+       ここで数を見て置き直すと**無限に置き直す**ので、有無だけ見る。 */
+    if(!nk.holes || !nk.holes.length) nkPlace(nk);
     const plate = new Path.Rectangle(new Rectangle(0, 0, B.w, B.h));
     let u = null;
     nk.holes.map(nkEllipse).forEach(e => {
@@ -6340,7 +6432,10 @@ stat(matchMedia('(pointer:coarse)').matches
     });
     const res = u ? plate.subtract(u) : plate.clone();
     plate.remove(); if(u) u.remove();
-    res.fillColor = nk.col;
+    /* ⭐⭐ 板を隠す（2026-08-29 木下「楕円の色を非表示にすることも可能で、
+       その場合、楕円のパス通りにテキストを置いているので偶然的なレイアウトもできる」）。
+       ⚠️ 消すのではなく【透明にする】＝窓（経路）は残るので、字はそのまま回る。 */
+    res.fillColor = (nk.plate === 0) ? new paper.Color(0, 0, 0, 0) : nk.col;
     res.remove();
     if(pc.item) pc.item.remove();
     pc.item = res;
@@ -6435,6 +6530,7 @@ stat(matchMedia('(pointer:coarse)').matches
     /* ⚠️ 先に呼ぶ＝板を外したときに「中の写真」の欄も一緒に引っ込む
        （後ろに置くと、板が無いときは通らず出しっぱなしになる） */
     if(typeof nkJiSync === 'function') nkJiSync();
+    if(typeof nkOneSync === 'function') nkOneSync();
     if(!pc) return;
     const nk = pc.nuki;
     [['nkCol','col'],['nkN','n'],['nkR','r'],['nkE','e'],['nkRot','rot'],['nkZ','z']]
@@ -6444,7 +6540,8 @@ stat(matchMedia('(pointer:coarse)').matches
         const lab = el.parentElement && el.parentElement.querySelector('.v');
         if(lab) lab.textContent = nk[k];
       });
-    if(typeof segOn === 'function') segOn('segNkEdge', nk.edge ? 1 : 0);
+    if(typeof segOn === 'function'){ segOn('segNkEdge', nk.edge ? 1 : 0);
+      segOn('segNkPlate', nk.plate === 0 ? 0 : 1); }
   }
 
   /* ⚠️ つまみは【触りはじめの1回だけ】控える（1コマずつ積むと ⌘Z が効かなくなる） */
@@ -6560,7 +6657,106 @@ stat(matchMedia('(pointer:coarse)').matches
       pc.rot = 0; pc.fill = 1;
       syncPanel(); render(); stat('中の写真を版面に敷き直した');
     }; }
-  window.nkJiPc = nkJiPc; window.nkJiSync = nkJiSync;
+  /* ══⭐⭐ 窓を1つずつ触る ══
+     木下＝「それぞれの楕円はそれぞれで移動できたり大きさ調整できたりする。
+       それぞれの楕円は角度や大きさ向きなどの変更は可能」
+     ⭐ 数値は【版面に対する％】で持つ＝版面の大きさを変えても意味が変わらない
+       （＝書き出しの大きさを変えても崩れない）。 */
+  let nkPick = 0;
+  function nkHole(){ const pc = nkPc();
+    const hs = pc && pc.nuki.holes;
+    if(!hs || !hs.length) return null;
+    if(nkPick >= hs.length) nkPick = hs.length - 1;
+    return hs[nkPick]; }
+  function nkOneSync(){
+    const box = document.getElementById('nkOneBox'); if(!box) return;
+    const pc = nkPc(), hs = pc && pc.nuki.holes;
+    box.style.display = (hs && hs.length) ? '' : 'none';
+    if(!hs || !hs.length) return;
+    const B = S.board, h = nkHole();
+    const pk = document.getElementById('nkPick');
+    pk.max = hs.length; if(+pk.value > hs.length) pk.value = hs.length;
+    const set = (id, v) => { const e = document.getElementById(id);
+      if(!e || document.activeElement === e) return;
+      e.value = Math.round(v);
+      const lab = e.parentElement && e.parentElement.querySelector('.v');
+      if(lab) lab.textContent = e.value; };
+    set('nkPick', nkPick + 1);
+    set('nkOX', h.x / B.w * 100);
+    set('nkOY', h.y / B.h * 100);
+    set('nkOR', h.rx / Math.min(B.w, B.h) * 100);
+    set('nkOE', h.rx / h.ry * 100);
+    set('nkORot', ((h.rot % 360) + 360) % 360);
+    const lab = document.getElementById('vnkPick');
+    if(lab) lab.textContent = (nkPick + 1) + ' / ' + hs.length
+      + (pc.nuki.got != null && pc.nuki.got < pc.nuki.n ? '（重ならない分だけ入った）' : '');
+  }
+  function oneKnob(id, apply){
+    const el = document.getElementById(id); if(!el) return;
+    let arm = false;
+    const on = () => { arm = true; };
+    el.addEventListener('pointerdown', on);
+    el.addEventListener('keydown', on);
+    el.addEventListener('input', () => {
+      const lab = el.parentElement && el.parentElement.querySelector('.v');
+      if(lab) lab.textContent = el.value;
+      const pc = nkPc(), h = nkHole();
+      if(!pc || !h){ stat('先に板を置いてください'); return; }
+      if(arm){ pushUndo(); arm = false; }
+      apply(h, +el.value, S.board);
+      nkBuild(pc); render(); nkOneSync();
+    });
+    el.addEventListener('pointerup', () => { arm = false; });
+  }
+  { const pk = document.getElementById('nkPick');
+    if(pk) pk.addEventListener('input', () => { nkPick = Math.max(0, +pk.value - 1);
+      nkOneSync(); stat('窓 ' + pk.value + ' を選んだ'); }); }
+  oneKnob('nkOX',  (h, v, B) => { h.x = B.w * v / 100; });
+  oneKnob('nkOY',  (h, v, B) => { h.y = B.h * v / 100; });
+  oneKnob('nkOR',  (h, v, B) => { const e = h.rx / h.ry;
+    h.rx = Math.min(B.w, B.h) * v / 100; h.ry = h.rx / e; });
+  oneKnob('nkOE',  (h, v) => { h.ry = h.rx / (v / 100); });
+  oneKnob('nkORot',(h, v) => { h.rot = v; });
+
+  /* ⭐ 板を出す／隠す */
+  document.querySelectorAll('#segNkPlate button').forEach(b => b.onclick = () => {
+    const pc = nkPc(); if(!pc){ stat('先に板を置いてください'); return; }
+    pushUndo();
+    pc.nuki.plate = +b.dataset.v;
+    nkBuild(pc); syncPanel(); render();
+    stat(pc.nuki.plate ? '板を出した' : '板を隠した — 窓は残るので、字はそのまま回る');
+  });
+
+  /* ⭐⭐ 選んだ行を、窓の数だけ作って回す
+     木下＝「楕円の周りにテキストがこのように表示することも可能」（全部の窓に付く）
+     ⚠️ 1本の行で全部の窓を回すのではなく【行を増やす】＝あとで1行ずつ直せる。 */
+  { const b = document.getElementById('nkRing');
+    if(b) b.onclick = () => {
+      const pc = nkPc(); if(!pc){ stat('先に板を置いてください'); return; }
+      const hs = pc.nuki.holes || [];
+      if(!hs.length){ stat('窓がありません'); return; }
+      const L = (S.sel && S.sel.kind === 'line') ? S.lines[S.sel.i] : S.lines[0];
+      if(!L){ stat('先に行を選んでください'); return; }
+      pushUndo();
+      /* ⚠️ 押すたびに増えないよう、いま窓に付いている【ほかの行】は先に外す
+         ＝何度押しても同じ結果になる（押し間違いで行が溜まらない）。 */
+      S.lines = S.lines.filter(x => x === L || !(x.path && x.path.type === 'hole'));
+      /* 元の行を1つ目の窓に割り当て、足りない分を複製する */
+      L.kind = 'meguru';
+      L.path = Object.assign({}, L.path, { type:'hole', hole:1, pts:null, dx:0, dy:0 });
+      const base = JSON.stringify(L);
+      for(let i = 1; i < hs.length; i++){
+        const c = JSON.parse(base);
+        c.id = uid(); c.path.hole = i + 1;
+        c.start = (i * 29) % 100;              /* ⚠️ 全部同じ所から始まると揃いすぎる */
+        S.lines.push(c);
+      }
+      S.sel = { kind:'line', i:S.lines.indexOf(L) };
+      syncPanel(); render();
+      stat(hs.length + ' 個の窓に字を回した — 押し直しても増えない（窓に付いた行は作り直す）');
+    }; }
+
+  window.nkJiPc = nkJiPc; window.nkJiSync = nkJiSync; window.nkOneSync = nkOneSync;
 
   window.nkAdd = nkAdd; window.nkBuild = nkBuild; window.nkPc = nkPc;
   window.nkPlace = nkPlace; window.nkDel = nkDel;
