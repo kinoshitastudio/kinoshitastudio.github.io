@@ -295,18 +295,22 @@
 
   <div class="grp">
     <label class="h">粒</label>
-    <div class="row"><span class="n">太らせ</span><output id="o_grow">1.22</output></div>
-    <input type="range" id="r_grow" min="20" max="320" value="122">
+    <div class="row"><span class="n">太らせ</span><output id="o_grow">1.14</output></div>
+    <input type="range" id="r_grow" min="20" max="320" value="114">
+    <div class="row"><span class="n">にじみ</span><output id="o_soft">0.60</output></div>
+    <input type="range" id="r_soft" min="0" max="300" value="60">
     <div class="row"><span class="n">濃さのカーブ</span><output id="o_gam">1.00</output></div>
     <input type="range" id="r_gam" min="30" max="300" value="100">
-    <div class="row"><span class="n">いちばん小さい粒</span><output id="o_min">0.18</output></div>
+    <div class="row"><span class="n">いちばん小さい粒</span><output id="o_min">0.08</output></div>
     <input type="range" id="r_min" min="0" max="60" value="8">
     <div class="seg" id="s_shape">
       <button data-v="circle" class="on">丸</button><button data-v="square">四角</button><button data-v="diamond">菱</button>
     </div>
     <div id="meter2"></div>
     <div class="note">🔴🔴 <b>太らせ 1.00 でとなりとちょうど接する</b>。<b>それを超えたところから重なり始める</b><br>
-      ⭐⭐ 重なると粒は<b>面</b>になり、残った<b>隙間が星の形</b>で出る ── ここがこの道具の芯</div>
+      ⭐⭐ 重なると粒は<b>面</b>になり、残った<b>隙間が星の形</b>で出る ── ここがこの道具の芯<br>
+      ⭐ <b>にじみ</b>＝濃さを<b>読む四角の広さ</b>。0 でちょうど升目1つぶん、上げるほど隣まで混ざる<br>
+      　 字のように白か黒しかない元でも、<b>輪郭にまたがった粒が中くらいの太さ</b>になって縁が階段で落ちる</div>
   </div>
 
   <div class="grp">
@@ -397,11 +401,15 @@ function stat(s){ el('stat').textContent = s; clearTimeout(statT);
    ⭐ 升目に【角度】をつけると元の絵の並びと干渉して【モアレ】が出る（参考の背景の縞）。
    ⚠️ 累RUI と近いが芯が違う：RUI は粒の大きさが一定で「重なった所」を絵にする。
      ここは **濃さで大きさが変わる（網点）** うえで重なる＝濃い所ほど隙間が閉じていく。
+   🔴🔴 だからこの道具は【濃さに段が無いと壁紙になる】（2026-08-30）。
+     直す前は升目の**まん中の1画素だけ**を読んでいた。字は白か黒しかないので粒は2種類しか出ず、
+     隙間が全部おなじ形＝ただの模様だった。＝**芯（隙間が絵になる）が動いていなかった**。
+     → いまは升目のぶんを平均して読む（toneAt）＋【にじみ】で読む四角を広げられる。
    ══════════════════════════════════════════════════════════ */
 const P = {
   txt:'B', font:'900 ',
   grid:'sq', pitch:36, ang:0,
-  grow:1.22, gam:1.0, min:0.08, shape:'circle',
+  grow:1.14, gam:1.0, min:0.08, soft:0.6, shape:'circle',
   ratio:'1:1', long:1400, pad:8,
   inv:1, ink:'#ffffff', bg:'#0a0a0a', nobg:false,
 };
@@ -468,13 +476,39 @@ function bakeMap(){
   return MAP;
 }
 
+/* ══⭐⭐ 濃さは【升目のぶんを平均して】読む（2026-08-30）══
+   🔴🔴 それまでは升目の【まん中の1画素だけ】を見ていた。細かさ36なら 36×36＝1296画素のうち1つ。
+      字は白か黒しかないので、出てくる粒は「いちばん太い」か「いちばん細い」の**2種類だけ**。
+      ＝隙間が全部おなじ形の【壁紙】になり、この道具の芯（隙間が絵になる）が消えていた。
+      木下＝「グラフィックの見た目が違う気がする」。参考の写真は隙間の大きさがぜんぶ違う。
+   ⭐ 升目のぶんを平均すると、輪郭にまたがった粒は「半分の濃さ＝半分の太さ」になる。
+      ＝縁が1列ぶんの階段で落ちて、そこだけ隙間が開く（参考と同じギザギザの縁）。
+   ⭐ にじみ ＝【読む四角を升目より広げる】だけ。式は1本のまま・広さが変わるだけ。
+   ⚠️ 網点の刷りは元々こう読む（1点だけ見るのは間違い）。速さは粒1つに 25回で、既定なら約4万回＝1ms 未満。 */
+const TAP = 5;
+function toneAt(M, x, y, half){
+  const w = M.w, h = M.h, T = M.tone, step = 2 * half / TAP;
+  let sum = 0;
+  for(let j = 0; j < TAP; j++){
+    let sy = ((y - half + (j + 0.5) * step) | 0);
+    sy = sy < 0 ? 0 : sy >= h ? h - 1 : sy;
+    const row = sy * w;
+    for(let i = 0; i < TAP; i++){
+      let sx = ((x - half + (i + 0.5) * step) | 0);
+      sx = sx < 0 ? 0 : sx >= w ? w - 1 : sx;
+      sum += T[row + sx];
+    }
+  }
+  return sum / (TAP * TAP);
+}
+
 /* ══⭐⭐ 粒を並べる ── 升目に乗せる（ここが KIRI との違い：あちらは格子に乗せない）══ */
 let DOTS = null, DOTKEY = '';
 function lay(){
   const M = bakeMap();
   const { w, h } = M;
   /* ⚠️ 粗さも鍵に入れる＝離した瞬間に必ず焼き直される（粗いまま残らない） */
-  const key = [MAPKEY, P.grid, P.pitch, P.ang, P.grow, P.min, COARSE].join('|');
+  const key = [MAPKEY, P.grid, P.pitch, P.ang, P.grow, P.min, P.soft, COARSE].join('|');
   if(DOTKEY === key && DOTS) return DOTS;
   /* ⭐ 触っている間は升目を粗く（並び方は同じ＝どう変わるかは分かる） */
   const s = Math.max(3, COARSE ? Math.max(P.pitch, 22) : P.pitch);
@@ -482,11 +516,11 @@ function lay(){
   const cx = w/2, cy = h/2;
   const R = Math.hypot(w, h) / 2 + s * 2;
   const xs = [], ys = [], rs = [];
+  /* ⭐⭐ 読む四角の半分。にじみ 0 ＝ ちょうど升目1つぶん */
+  const half = (s/2) * (1 + P.soft);
   const push = (x, y) => {
     if(x < -s || y < -s || x > w + s || y > h + s) return;
-    const p = ((y|0) * w + (x|0));
-    if(p < 0 || p >= M.tone.length) return;
-    const t = M.tone[p];
+    const t = toneAt(M, x, y, half);
     /* ⭐⭐ 粒の大きさ＝濃さ。太らせ 1.00 で隣と接する（半径＝升目の半分） */
     const r = (s/2) * P.grow * Math.max(P.min, t);
     if(r <= 0.05) return;
@@ -688,6 +722,7 @@ const RANGES = [
   ['r_pitch','pitch','o_pitch', v => v],
   ['r_ang','ang','o_ang', v => v + '°'],
   ['r_grow','grow','o_grow', v => (v/100).toFixed(2), v => v/100],
+  ['r_soft','soft','o_soft', v => (v/100).toFixed(2), v => v/100],
   ['r_gam','gam','o_gam', v => (v/100).toFixed(2), v => v/100],
   ['r_min','min','o_min', v => (v/100).toFixed(2), v => v/100],
   ['r_long','long','o_long', v => v],
