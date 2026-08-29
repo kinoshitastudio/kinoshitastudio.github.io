@@ -531,7 +531,7 @@ function paint(ctx, W, H, transparent){
   if(!transparent){ ctx.fillStyle = P.inv ? P.bg : P.ink; ctx.fillRect(0, 0, W, H); }
   ctx.imageSmoothingEnabled = false;         /* ⚠️ 1本を運ぶので、にじませない */
   const n = S2.n;
-  const stepD = COARSE ? 2 : 1;              /* ⭐ 触っている間は1本おき（並びは同じ） */
+  const stepD = 1;   /* ⭐ いつでも全部の列を運ぶ（実測 8ms＝間引く必要が無い） */
   if(P.axis === 'y'){
     for(let i = 0; i < n; i += stepD){
       const sy = S2.src[i], dx = S2.off[i];
@@ -550,29 +550,24 @@ function paint(ctx, W, H, transparent){
 
 /* ⚠️ 芯を差し替えたとき、この1行を巻き込んで消していた（COARSE is not defined）
    ＝【切り出したら、消えたものが無いか退避版と突き合わせる】 */
-let COARSE = 0, coarseT = 0, rafId = 0;
+/* 🔴🔴 2026-08-29：ここには【触っている間だけ盤を半分にし、列を1本おきにする】仕掛けがあった。
+   ⭐ 測ったら、指の端末（CPUを1/4に絞った状態）で **8ms** しか掛かっていなかった。
+     重くないのに絵を粗く描いていたので、つまみを動かしても違いが見えにくかった。
+   ⚠️ 元は 隙SUKI（地図を焼くのに 778ms 掛かる道具）から外枠ごと借りたもの。ここには要らない。
+   → [[feedback_measure_before_you_optimize]] */
+let rafId = 0;
 function renderSoon(){
   if(rafId) return;
   rafId = requestAnimationFrame(() => { rafId = 0; render(); });
 }
-function touching(){
-  COARSE = 1;
-  clearTimeout(coarseT);
-  coarseT = setTimeout(() => { COARSE = 0; render(); }, 240);
-}
+function touching(){ /* 何もしない（重くないので粗くする必要が無い） */ }
 
 /* ══ 画面 ══ */
 const V = { x:0, y:0, z:1 };
 function render(){
   const { w, h } = sheet();
-  /* ⭐⭐ 触っている間は【盤そのものも小さく】する（2026-08-29）
-     木下＝「モバイルだとスライダーがやはり重い。リアルタイムで変更はみれず、時間差がある」。
-     🔴 計算は 12ms しか掛かっていなかった＝重いのは**1400×1400 の板を毎コマ画面へ送る**方だった。
-     ⭐ 板を半分にすると画素は 1/4。粒の計算（地図・並び）は同じものを使うので**絵は変わらない**
-       ＝見る側の倍率を同じだけ上げて、大きさも見え方も揃える。
-     ⚠️ 離した瞬間に COARSE が 0 に戻って、必ず元の大きさで焼き直される。 */
-  const k = COARSE ? 0.5 : 1;
-  const W2 = Math.max(64, Math.round(w*k)), H2 = Math.max(64, Math.round(h*k));
+  /* ⭐ 盤はいつでも実寸で描く（実測 8ms） */
+  const W2 = Math.max(64, w), H2 = Math.max(64, h);
   if(cv.width !== W2 || cv.height !== H2){ cv.width = W2; cv.height = H2; }
   const t0 = performance.now();
   const D = paint(g, W2, H2, P.nobg);
@@ -680,7 +675,7 @@ let TXTT = 0;
 el('t_txt').addEventListener('input', e => {
   P.txt = e.target.value;
   clearTimeout(TXTT);
-  TXTT = setTimeout(() => { MAPKEY = ''; COARSE = 0; render(); }, 180);
+  TXTT = setTimeout(() => { MAPKEY = ''; render(); }, 180);
 });
 
 /* ══ つまみ（表1つで回す）══ */

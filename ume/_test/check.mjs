@@ -75,6 +75,9 @@ const shape = () => p.evaluate(() => {
   return h >>> 0;
 });
 
+/* PC の立ち上げの値（指の端末と突き合わせる） */
+const DEF = await p.evaluate(() => ({ cell:P.cell, wide:P.wide, span:P.span, gap:P.gap, ratio:P.ratio }));
+
 /* ── ① 階段になっているか＝大きい字の輪郭がマスの境にしか無い ── */
 await cs({ txt:'埋', fill:'あいうえお', cell:96, wide:100, side:'out', ratio:'1:1', pad:8 });
 const step = await p.evaluate(() => {
@@ -182,6 +185,70 @@ ok(got.some(x=>/png/.test(x.type)), 'PNG が本当に落ちる', JSON.stringify(
   });
   ok(merr.length === 0, '⭐⭐ 指の端末で立ち上げが死なない', merr.join(' / '));
   ok(ink > 20, '⭐⭐ 指の端末でも盤に絵が出る', '違う画素 ' + ink);
+  /* ⭐⭐ 指の端末だけ【別の絵】で立ち上がらない（2026-08-29）
+     🔴 「指の端末は重いから既定を粗く」という上書きが入っていて、PC と違う絵が出ていた。
+        実測 1〜5ms＝粗くする理由が無かった。 → [[feedback_measure_before_you_optimize]] */
+  const mp = await m.evaluate(() => ({ cell:P.cell, wide:P.wide, span:P.span, gap:P.gap, ratio:P.ratio }));
+  ok(JSON.stringify(mp) === JSON.stringify(DEF),
+     '⭐⭐ 指の端末でも【PC と同じ絵】で立ち上がる', JSON.stringify(mp) + ' / PC ' + JSON.stringify(DEF));
+  await m.close();
+}
+
+/* ⭐⭐ 指で【引いている最中に】絵が追いてくるか ── 2026-08-29
+   🔴 木下＝「スライダーはモバイルで動くけどそれに合わせて反映がないなあ」。
+      つまみの値は変わるのに絵が変わらない／粗いまま、が起きていた
+      （隣の道具から借りた「触っている間は盤を半分にする」仕掛けのせい。実測 1〜5ms で不要だった）。
+   ⚠️ 値を代入する試験（p.evaluate で P を触る）では絶対に出ない＝【指で引く】こと。 */
+{
+  const m = await b.newPage(); const merr = [];
+  m.on('pageerror', e => merr.push(e.message));
+  await m.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Version/17.5 Mobile/15E148 Safari/604.1');
+  await m.setViewport({ width:390, height:844, deviceScaleFactor:2, isMobile:true, hasTouch:true });
+  const cdp = await m.target().createCDPSession();
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });   /* 実機に寄せる */
+  await m.goto(URL_, { waitUntil:'networkidle0' });
+  await new Promise(r=>setTimeout(r,3600));
+  const hash = () => m.evaluate(() => { const c = document.getElementById('cv');
+    const t = document.createElement('canvas'); t.width = 140; t.height = 140;
+    const g = t.getContext('2d'); g.drawImage(c, 0, 0, 140, 140);
+    const d = g.getImageData(0,0,140,140).data; let h = 2166136261;
+    for(let i=0;i<d.length;i+=5){ h ^= d[i]; h = Math.imul(h, 16777619); } return h >>> 0; });
+  const board = () => m.evaluate(() => { const c = document.getElementById('cv');
+    return { w:c.width, h:c.height, sheet:sheet().w }; });
+  const b0 = await board();
+  const rows = [];
+  for(const id of ['r_cell','r_wide','r_span','r_gap']){
+    /* ⚠️ 1本ずつ【既定に戻してから】引く。前のつまみを端まで引いた状態が残っていると、
+       升目が5×5しか無い盤で「伸び」を動かして「変わらない」と誤判定する（実際にした）。 */
+    await m.evaluate(() => { [['r_cell',96],['r_wide',100],['r_span',6],['r_gap',0]].forEach(([i,v]) => {
+      const r = el(i); if(r){ r.value = v; r.dispatchEvent(new Event('input',{bubbles:true})); } }); });
+    await new Promise(r=>setTimeout(r,400));
+    const box = await m.evaluate(i => { const r = el(i); r.scrollIntoView({ block:'center' });
+      const b2 = r.getBoundingClientRect(); return { x:b2.x, y:b2.y, w:b2.width, h:b2.height }; }, id);
+    await new Promise(r=>setTimeout(r,300));
+    const y = box.y + box.h/2;
+    /* ⚠️ 端から端まで引く。真ん中だけだと、効きが端に寄っているつまみ
+       （伸び＝1〜8 でほぼ決まる）で「変わらない」と誤判定する。 */
+    await m.touchscreen.touchStart(box.x + box.w*0.03, y);
+    const seen = new Set(); let small = 0;
+    for(let t = 1; t <= 6; t++){
+      await m.touchscreen.touchMove(box.x + box.w*(0.03 + 0.94*t/6), y);
+      await new Promise(r=>setTimeout(r,110));
+      seen.add(await hash());
+      const bb = await board(); if(bb.w < bb.sheet) small++;   /* 引いている間に盤が粗くなっていないか */
+    }
+    await m.touchscreen.touchEnd();
+    await new Promise(r=>setTimeout(r,700));
+    rows.push({ id, 途中の絵:seen.size, 粗くなった:small });
+  }
+  const b1 = await board();
+  ok(rows.every(r => r.途中の絵 >= 3),
+     '⭐⭐ 指で引いている【最中に】絵が追いてくる（1目盛りずつ変わる）',
+     rows.map(r => r.id+' '+r.途中の絵+'通り').join(' / '));
+  ok(rows.every(r => r.粗くなった === 0) && b0.w === b0.sheet && b1.w === b1.sheet,
+     '⭐⭐ 引いている間も【盤を粗くしない】（指の端末だけ別の絵にならない）',
+     '盤 '+b0.w+' → '+b1.w+'（版面 '+b0.sheet+'）');
+  ok(merr.length === 0, '⭐ 指で引いてもエラーが出ない', merr.join(' / '));
   await m.close();
 }
 
