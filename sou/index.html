@@ -502,7 +502,7 @@ function paperOnly(){
 /* 🔴 こちらは【手の記録ごと】捨てる。
    ⚠️ なぞり直し（replay）でこちらを呼ぶと、なぞる元の記録まで消える（実際に踏んだ）。 */
 function wipe(){ blank(); TAKE = []; }
-function reset(msg){ RUN = false; paper(); wipe(); render(); syncRun(); if(msg) stat(msg); }
+function reset(msg){ RUN = false; paper(); wipe(); buildPreview(); render(); syncRun(); if(msg) stat(msg); }
 
 /* いまの元を、いまの置き場所で描く（1本ぶんに切って使う） */
 function drawSrc(q, W, H, ox, oy){
@@ -526,6 +526,8 @@ function scanTo(np){
   const jit = P.jit / 10, per = Math.max(2, P.jfr);
   for(let p = Math.floor(POS); p < to; p++){
     const d = jit ? Math.sin(p / per * Math.PI * 2) * jit : 0;
+    /* ⚠️ 置く前に1本ぶんを消す＝下見で置いたものが残らない */
+    if(P.axis === 'x') q.clearRect(p, 0, 1, c.height); else q.clearRect(0, p, c.width, 1);
     q.save();
     q.beginPath();
     if(P.axis === 'x') q.rect(p, 0, 1, c.height); else q.rect(0, p, c.width, 1);
@@ -559,13 +561,18 @@ function noise2(x, y, s){
 /* from を渡すと【そこから先だけ】現像する（刷っている間はこれで足りる） */
 function develop(from){
   const c = paper();
-  const axX = (P.axis === 'x');
-  const len = axX ? c.width : c.height, n = axX ? c.height : c.width;
   let a0 = (from == null) ? DEV : from;
   if(a0 > POS) a0 = 0;
   if(a0 === 0){ PREV = null; paperOnly(); }
-  const a1 = Math.floor(POS);
-  if(a1 <= a0){ DEV = a1; return; }
+  DEV = Math.floor(POS);
+  devRange(a0, DEV);
+}
+/* ⭐ 範囲を1つ現像する（本刷りも下見もここを通る＝式は1本） */
+function devRange(a0, a1){
+  const c = paper();
+  const axX = (P.axis === 'x');
+  const n = axX ? c.height : c.width;
+  if(a1 <= a0) return;
   const rq = RAW.getContext('2d', { willReadFrequently:true });
   const fq = FILM.getContext('2d');
   const sx = axX ? a0 : 0, sy = axX ? 0 : a0;
@@ -638,22 +645,75 @@ function develop(from){
     }
   }
   fq.putImageData(img, sx, sy);
-  DEV = a1;
+}
+/* ══⭐⭐ 下見も【同じ現像】を通す ══
+   🔴 木下＝「つまみがかわらないけどな」。刷る前は紙に何も乗っていないので、
+     どのつまみを動かしても絵が1画素も変わらなかった＝道具としては「効かない」と同じ。
+   ⭐ まだ刷っていない側に「いま走査線が通ったら」の絵を置いて、同じ現像を通す。
+     ＝ 刷る前でも、つまみの効きがそのまま見える。
+   ⚠️ 本刷りの控え（DEV／PREV）は壊さない。刷り始めたら消える。 */
+let PREOK = false, preT = 0;
+function clearPreview(){
+  if(!PREOK || !FILM) return;
+  const c = paper(), axX = (P.axis === 'x');
+  const len = axX ? c.width : c.height;
+  const q = FILM.getContext('2d');
+  q.setTransform(1,0,0,1,0,0);
+  if(axX) q.clearRect(POS, 0, c.width - POS, c.height); else q.clearRect(0, POS, c.width, c.height - POS);
+  if(!P.nobg){ q.fillStyle = P.bg;
+    if(axX) q.fillRect(POS, 0, c.width - POS, c.height); else q.fillRect(0, POS, c.width, c.height - POS); }
+  PREOK = false;
+}
+function buildPreview(){
+  const c = paper(), axX = (P.axis === 'x');
+  const len = axX ? c.width : c.height;
+  const from = Math.floor(POS);
+  if(from >= len || !source()){ PREOK = false; return; }
+  const q = RAW.getContext('2d');
+  q.setTransform(1,0,0,1,0,0);
+  q.save();
+  q.beginPath();
+  if(axX) q.rect(from, 0, len - from, c.height); else q.rect(0, from, c.width, len - from);
+  q.clip();
+  if(axX) q.clearRect(from, 0, len - from, c.height); else q.clearRect(0, from, c.width, len - from);
+  drawSrc(q, c.width, c.height, 0, 0);
+  q.restore();
+  const dev = DEV, prev = PREV;
+  PREV = null;                    /* 下見はここから始まる（本刷りの残像を引き継がない） */
+  devRange(from, len);
+  DEV = dev; PREV = prev;
+  PREOK = true;
+}
+let preBusy = 0;
+function previewSoon(){
+  clearTimeout(preT);
+  preT = setTimeout(() => { buildPreview(); render(); }, 90);
 }
 /* ⭐ つまみを動かしたら【最初から現像し直す】＝版はそのまま・紙だけ作り直す */
 let devT = 0;
 function redevelop(){
   clearTimeout(devT);
-  devT = setTimeout(() => { develop(0); render(); }, 45);
+  devT = setTimeout(() => { develop(0); buildPreview(); render(); }, 45);
 }
 
 /* ══ 出す（刷った紙だけ）══ */
 function paint(ctx, W, H, transparent){
   const c = paper();
+  const axX = (P.axis === 'x');
+  const len = axX ? c.width : c.height;
   ctx.setTransform(1,0,0,1,0,0);
   ctx.clearRect(0, 0, W, H);
-  if(!transparent && P.nobg){ /* 地なしのときは何も敷かない */ }
   ctx.drawImage(c, 0, 0, W, H);
+  /* 🔴🔴 下見は【出さない】。紙には現像して置いてあるので、
+     まだ刷っていない側をここで紙に戻す（試験が拾った：刷る前の PNG に絵が写り込んでいた）。 */
+  if(PREOK && POS < len){
+    const k = W / c.width, kh = H / c.height;
+    const x = axX ? POS * k : 0, y = axX ? 0 : POS * kh;
+    const w2 = axX ? (W - x) : W, h2 = axX ? H : (H - y);
+    ctx.clearRect(x, y, w2, h2);
+    if(!P.nobg && !transparent){ ctx.fillStyle = P.bg; ctx.fillRect(x, y, w2, h2); }
+    else if(!P.nobg){ ctx.fillStyle = P.bg; ctx.fillRect(x, y, w2, h2); }
+  }
   return { pos:POS };
 }
 
@@ -666,19 +726,27 @@ function render(){
   g.setTransform(1,0,0,1,0,0);
   g.clearRect(0, 0, w, h);
   g.drawImage(c, 0, 0);
-  /* ⭐ まだ刷っていない側＝いまの元が薄く見える（＝どこを刷るかが分かる）
-     ⚠️ 下見に色は付けない・薄い影だけ → 出す絵には1画素も入らない */
+  /* ⭐ まだ刷っていない側＝「いま走査線が通ったら」の絵。
+     ⭐⭐ 下見も【同じ現像】を通してあるので、刷る前でもつまみの効きが見える。
+     ⚠️ 手で動かしている間・刷っている間は、間に合わないので薄い影で出す（作りは同じ）。
+     ⚠️ どちらも【出す絵には1画素も入らない】（PNG は刷った紙だけ）。 */
   const rest = (P.axis === 'x') ? (w - POS) : (h - POS);
   if(rest > 0){
     g.save();
     g.beginPath();
     if(P.axis === 'x') g.rect(POS, 0, w - POS, h); else g.rect(0, POS, w, h - POS);
     g.clip();
-    g.fillStyle = P.nobg ? 'rgba(0,0,0,.06)' : P.bg;
-    g.fillRect(0, 0, w, h);
-    g.globalAlpha = 0.5;
-    drawSrc(g, w, h, 0, 0);
-    g.globalAlpha = 1;
+    if(!PREOK){
+      g.fillStyle = P.nobg ? 'rgba(0,0,0,.06)' : P.bg;
+      g.fillRect(0, 0, w, h);
+      g.globalAlpha = 0.5;
+      drawSrc(g, w, h, 0, 0);
+      g.globalAlpha = 1;
+    }else{
+      /* 下見はもう紙に現像してある＝【まだ刷っていない】ことだけ薄い膜で伝える */
+      g.fillStyle = 'rgba(255,255,255,.22)';
+      g.fillRect(0, 0, w, h);
+    }
     g.restore();
   }
   /* 走査線 */
@@ -764,9 +832,11 @@ el('z_fit').onclick = () => fitView();
       T.x += p.x - prev.x; T.y += p.y - prev.y;
     }
     syncSize();
+    clearPreview();
     if(!RUN) render();
   });
-  const up = e => { pts.delete(e.pointerId); base = null; if(!pts.size) cv.classList.remove('grabbing'); };
+  const up = e => { pts.delete(e.pointerId); base = null;
+    if(!pts.size){ cv.classList.remove('grabbing'); if(!RUN) previewSoon(); } };
   cv.addEventListener('pointerup', up);
   cv.addEventListener('pointercancel', up);
   cv.addEventListener('wheel', e => {
@@ -777,7 +847,9 @@ el('z_fit').onclick = () => fitView();
     T.y = p.y - (p.y - T.y) * (z2 / T.z);
     T.z = z2;
     syncSize();
+    clearPreview();
     if(!RUN) render();
+    if(!RUN) previewSoon();
   }, { passive:false });
 }
 
@@ -804,21 +876,23 @@ el('r_size').addEventListener('input', () => {
   const cx = T.x + s2.width * T.z / 2, cy = T.y + s2.height * T.z / 2;
   T.z = z2;
   T.x = cx - s2.width * T.z / 2; T.y = cy - s2.height * T.z / 2;
-  if(!RUN) render();
+  clearPreview();
+  if(!RUN){ render(); previewSoon(); }
 });
-el('b_center').onclick = () => { fitSrc(); syncSize(); render(); stat('元をまん中に戻した'); };
+el('b_center').onclick = () => { fitSrc(); syncSize(); clearPreview(); render(); previewSoon(); stat('元をまん中に戻した'); };
 
 /* ══ 刷る（走らせる）══ */
 function syncRun(){
   el('b_run').textContent = RUN ? '止める' : (POS > 0 ? '続きを刷る' : '刷る');
 }
 function tick(){
-  if(!RUN){ rafId = 0; return; }
+  if(!RUN){ rafId = 0; previewSoon(); return; }
   const { w, h } = sheet(), len = (P.axis === 'x') ? w : h;
   TAKE.push({ to:Math.min(len, POS + P.speed), x:T.x, y:T.y, z:T.z });
   scanTo(POS + P.speed);
   render();
   if(POS >= len){ RUN = false; rafId = 0; syncRun(); stat('刷り終わった'); return; }
+  if(PREOK) clearPreview();
   rafId = requestAnimationFrame(tick);
 }
 el('b_run').onclick = () => {
@@ -826,7 +900,7 @@ el('b_run').onclick = () => {
   if(!source()){ stat('字を打つか、写真・SVG を入れてください'); return; }
   const { w, h } = sheet(), len = (P.axis === 'x') ? w : h;
   if(POS >= len) wipe();
-  RUN = true; syncRun();
+  RUN = true; syncRun(); clearPreview();
   if(!rafId) rafId = requestAnimationFrame(tick);
 };
 el('b_rewind').onclick = () => reset('白紙に戻した');
@@ -835,6 +909,7 @@ el('b_all').onclick = () => {
   RUN = false; syncRun();
   const { w, h } = sheet(), len = (P.axis === 'x') ? w : h;
   if(POS >= len) wipe();
+  clearPreview();
   while(POS < len){ TAKE.push({ to:Math.min(len, POS + P.speed), x:T.x, y:T.y, z:T.z }); scanTo(POS + P.speed); }
   render(); stat('最後まで刷った（手を動かしていないので、まっすぐ刷れている）');
 };
@@ -908,7 +983,7 @@ let TXTT = 0;
 el('t_txt').addEventListener('input', e => {
   P.txt = e.target.value;
   clearTimeout(TXTT);
-  TXTT = setTimeout(() => { TXTKEY = ''; ASPKEY = ''; fitSrc(); syncSize(); reset(); }, 180);
+  TXTT = setTimeout(() => { TXTKEY = ''; ASPKEY = ''; fitSrc(); syncSize(); reset(); previewSoon(); }, 180);
 });
 
 
@@ -1177,7 +1252,7 @@ needFont(P.font);
 addEventListener('resize', () => { applyView(); });
 [['t_txt','txt']].forEach(([id, k]) => { const e = el(id); if(e && P[k] != null) e.value = P[k]; });
 el('c_bg').value = P.bg;
-paper(); fitSrc(); syncSize(); render(); fitView(); syncRun();
+paper(); fitSrc(); syncSize(); buildPreview(); render(); fitView(); syncRun();
 stat('「刷る」を押して、刷っている間に盤の上で元を動かす');
 </script>
 

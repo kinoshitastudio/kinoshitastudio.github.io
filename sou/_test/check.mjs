@@ -443,5 +443,41 @@ await back();
   ok(ms < 400, '⭐ 現像し直しが速い（つまみが待たされない）', ms + ' ms');
 }
 
+await back();
+/* ⭐⭐ 刷る【前】でもつまみが効く ── 2026-08-29
+   🔴 木下＝「さっきいったところのつまみがかわらないけどな」。
+     刷ったあとは効いていたが、**刷る前は紙に何も乗っていないので1画素も変わらなかった**。
+   ⭐ まだ刷っていない側に「いま走査線が通ったら」の絵を置き、**同じ現像**を通すようにした。 */
+{
+  await p.evaluate(() => { reset(); });
+  await new Promise(r => setTimeout(r, 500));
+  const scr = () => p.evaluate(() => { const c = document.getElementById('cv');
+    const t = document.createElement('canvas'); t.width = 180; t.height = 180;
+    const q = t.getContext('2d'); q.drawImage(c, 0, 0, 180, 180);
+    const d = q.getImageData(0,0,180,180).data; let x = 2166136261;
+    for(let i = 0; i < d.length; i += 4){ x ^= d[i]; x = Math.imul(x, 16777619); } return x >>> 0; });
+  const pos0 = await p.evaluate(() => Math.round(POS));
+  const dead = [];
+  for(const [id, v] of [['r_grain',95],['r_burn',95],['r_smear',95],['r_fiber',95],['r_lamp',95]]){
+    const before = await scr();
+    await p.evaluate(([i,x]) => { const r = el(i); r.value = x; r.dispatchEvent(new Event('input',{bubbles:true})); }, [id,v]);
+    await new Promise(r => setTimeout(r, 600));
+    if(await scr() === before) dead.push(id);
+  }
+  ok(pos0 === 0 && dead.length === 0,
+     '⭐⭐ 刷る【前】でもつまみが効く（下見も同じ現像を通る）',
+     '刷った位置 ' + pos0 + ' / ' + (dead.length ? '効かない: ' + dead.join(' ') : '5本ぜんぶ効く'));
+  /* 🔴 下見は【出す絵に1画素も入らない】 */
+  const out = await p.evaluate(() => {
+    const c = shoot(false);
+    const q = c.getContext('2d'); const d = q.getImageData(0,0,c.width,c.height).data;
+    let 紙以外 = 0;
+    for(let i = 0; i < d.length; i += 4*97)
+      if(Math.abs(d[i] - 0xd8) > 26 || Math.abs(d[i+2] - 0xc9) > 26) 紙以外++;
+    return { 紙以外, w:c.width };
+  });
+  ok(out.紙以外 === 0, '⭐ 下見は【出す絵に1画素も入らない】（刷る前の PNG は真っさら）', JSON.stringify(out));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
 await b.close(); process.exit(NG);
