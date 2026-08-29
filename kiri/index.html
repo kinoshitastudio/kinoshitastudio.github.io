@@ -279,8 +279,8 @@
 
   <div class="grp">
     <label class="h">粒</label>
-    <div class="row"><span class="n">数</span><output id="o_n">60000</output></div>
-    <input type="range" id="r_n" min="2000" max="400000" step="1000" value="60000">
+    <div class="row"><span class="n">濃さ（どこまで詰めるか）</span><output id="o_dens">62</output></div>
+    <input type="range" id="r_dens" min="2" max="100" value="62">
     <div class="row"><span class="n">大きさ</span><output id="o_dot">1.60</output></div>
     <input type="range" id="r_dot" min="20" max="900" value="160">
     <div class="row"><span class="n">散り</span><output id="o_gap">1.85</output></div>
@@ -402,7 +402,7 @@ function stat(s){ el('stat').textContent = s; clearTimeout(statT);
    ══════════════════════════════════════════════════════════ */
 const P = {
   read:'tone', thr:128, gam:1.0, inv:0,
-  n:60000, dot:1.60, gap:1.85, jit:25,
+  dens:62, dot:1.60, gap:1.85, jit:25,
   mb:34, ma:0.55, kdir:315, kd:26, khi:0.45, mdot:0.70,
   ratio:'auto', long:1400, pad:6,
   ink:'#0d0d0d', bg:'#f4f2ec', nobg:false,
@@ -522,6 +522,21 @@ function bakeMap(){
   return MAP;
 }
 
+/* ══⭐⭐ 何粒撒くかは【結果】── つまみは「濃さ」だけ ══
+   🔴🔴 前はここが「数」というつまみだった。だが
+     ・版面を大きくすると同じ数でもスカスカになる（実測 600px と 4096px で墨が 13473→849）
+     ・上限（40万）で張り付いて、そこから先は何をしても変わらない
+     ・しかも 20万を超えると **道の文字列が大きすぎて何も描かれなかった**
+   ⭐ 大きさと散りが決まれば、真っ黒まで詰めるのに要る数は【計算で出る】。
+     だからつまみは「どこまで詰めるか」だけにした（100 で真っ黒まで届く）。
+   → [[feedback_count_is_a_result_not_a_knob]] */
+function wantDots(){
+  const s2 = sheet();
+  const full = (s2.w * s2.h) / Math.max(0.6, P.dot * P.dot * 2.0);   /* 真っ黒まで埋める数 */
+  const d = Math.max(0, Math.min(1, P.dens / 100));
+  return Math.max(300, Math.min(500000, Math.round(full * Math.pow(d, 1.5))));
+}
+
 /* ══⭐⭐ 撒く ── 近すぎる粒は捨てる（青色ノイズ）══ */
 let DOTS = null, DOTKEY = '';
 function scatter(){
@@ -532,11 +547,12 @@ function scatter(){
      （実測：むらを 0 にしても前の揺れが残っていた）。 */
   /* ⚠️ 大きさ・むら・霧の粒は【撒き直さなくていい】＝描くときに決める（鍵に入れない）。
      ＝つまみを動かしても粒は撒き直されない＝すぐ返る。 */
-  const key = [MAPKEY, P.n, P.gap, P.ma, P.seed].join('|');
+  const key = [MAPKEY, P.dens, P.dot, P.gap, P.ma, P.seed].join('|');
   if(DOTKEY === key && DOTS) return DOTS;
   /* ⭐ 触っている間は粒を減らす（散り方の見え方は同じ＝どこが濃いかは分かる） */
   const MK = w / sheet().w;                       /* 紙の比（触っている間は小さい） */
-  const N = Math.max(100, Math.round(COARSE ? Math.min(P.n, 4200) : P.n));
+  const want = wantDots();
+  const N = Math.max(100, Math.round(COARSE ? Math.min(want, 4200) : want));
   const R = rnd(P.seed);
   const gapMax = Math.max(0.3, P.gap * MK);
   const cell = gapMax;
@@ -598,6 +614,12 @@ function paint(ctx, W, H, transparent){
   ctx.setTransform(1,0,0,1,0,0);
   ctx.clearRect(0, 0, W, H);
   if(!transparent){ ctx.fillStyle = P.bg; ctx.fillRect(0, 0, W, H); }
+  /* 🔴🔴 道の文字列は【刻んで渡す】。
+     1本にまとめると、40万粒で **36MB** になって `new Path2D` が黙って失敗し、
+     **何も描かれない**（＝数を上げると絵が消える。2026-08-29 実測）。
+     ⭐ 2万粒ずつに区切れば、いくら増やしても同じ速さで描ける。 */
+  ctx.fillStyle = P.ink;
+  const CH = 20000;
   let s = '';
   for(let i = 0; i < D.n; i++){
     const x = D.xs[i] * k, y = D.ys[i] * k, r = dotSize(D.sz[i]) * k;
@@ -611,8 +633,8 @@ function paint(ctx, W, H, transparent){
          + 'm' + (-r).toFixed(2) + ' 0a' + r.toFixed(2) + ' ' + r.toFixed(2) + ' 0 1 0 ' + (r*2).toFixed(2) + ' 0'
          + 'a' + r.toFixed(2) + ' ' + r.toFixed(2) + ' 0 1 0 ' + (-r*2).toFixed(2) + ' 0';
     }
+    if((i % CH) === CH - 1){ ctx.fill(new Path2D(s)); s = ''; }
   }
-  ctx.fillStyle = P.ink;
   if(s) ctx.fill(new Path2D(s));
   return D;
 }
@@ -647,9 +669,9 @@ function render(){
   applyView();
   const ms = Math.round(performance.now() - t0);
   el('meter').textContent =
-    w + ' × ' + h + ' px\n' + D.n.toLocaleString() + ' 粒（狙い ' + Math.round(P.n).toLocaleString() + '）\n' + ms + ' ms';
-  if(D.n < P.n * 0.6 && SRC)
-    stat('撒ける所が足りない — 散りを下げるか、数を下げる');
+    w + ' × ' + h + ' px\n' + D.n.toLocaleString() + ' 粒（濃さ ' + Math.round(P.dens) + '）\n' + ms + ' ms';
+  if(D.n < wantDots() * 0.6 && SRC)
+    stat('これ以上は詰まらない — 粒を小さくするか、散りを下げる');
 }
 function applyView(){
   /* ⭐ 盤が小さいときは、そのぶん大きく見せる＝画面の絵は同じ大きさのまま */
@@ -778,7 +800,7 @@ addEventListener('drop', e => { e.preventDefault(); takeFile(e.dataTransfer.file
 const RANGES = [
   ['r_thr','thr','o_thr', v => v],
   ['r_gam','gam','o_gam', v => (v/100).toFixed(2), v => v/100],
-  ['r_n','n','o_n', v => (+v).toLocaleString()],
+  ['r_dens','dens','o_dens', v => v],
   ['r_dot','dot','o_dot', v => (v/100).toFixed(2), v => v/100],
   ['r_gap','gap','o_gap', v => (v/100).toFixed(2), v => v/100],
   ['r_jit','jit','o_jit', v => v],
@@ -875,7 +897,7 @@ el('b_svgout').onclick = () => {
    ⚠️ 動かすのは【見え方の値】だけ＝元の絵にも版面にも触らない。 */
 const AN = { on:false, raf:0, t0:0, base:null };
 let anMode = 'light', anSpd = 1.0;
-function anBase(){ return { kdir:P.kdir, seed:P.seed, mb:P.mb, n:P.n }; }
+function anBase(){ return { kdir:P.kdir, seed:P.seed, mb:P.mb, dens:P.dens }; }
 /* ⭐ 位相 u（0..1）を当てる道は1本＝画面の再生も、書き出しも同じここを通る */
 function setPhase(u, base){
   if(anMode === 'light'){
@@ -891,7 +913,7 @@ function setPhase(u, base){
   MAPKEY = ''; DOTKEY = '';
 }
 function anRestore(base){
-  P.kdir = base.kdir; P.seed = base.seed; P.mb = base.mb; P.n = base.n;
+  P.kdir = base.kdir; P.seed = base.seed; P.mb = base.mb; P.dens = base.dens;
   MAPKEY = ''; DOTKEY = '';
 }
 /* ⚠️ 速さ・秒・コマ/秒・周 は【絵の設定ではない】＝P に入れず、その場で読む */
@@ -910,7 +932,7 @@ el('b_play').onclick = () => {
   AN.base = anBase(); AN.on = true; AN.t0 = performance.now();
   el('b_play').textContent = '止める';
   /* ⚠️ 再生の間は粒を減らして軽く出す（出す絵は変えない＝止めたら元に戻る） */
-  P.n = Math.min(AN.base.n, 26000);
+  P.dens = Math.min(AN.base.dens, 34);   /* ⚠️ 再生の間だけ薄く＝止めたら元に戻る */
   const tick = () => {
     if(!AN.on) return;
     const u = ((performance.now() - AN.t0) / 1000 * anSpd) % 1;
@@ -1072,10 +1094,10 @@ el('b_play').onclick = () => {
   vsizeSync();
 
 /* ══ 立ち上げ ══ */
-/* ⚠️ 指の端末は 60000 粒だと数秒かかる＝「入れたのに何も出ない」に見える（2026-08-28 木下）。
+/* ⚠️ 指の端末は濃く詰めると数秒かかる＝「入れたのに何も出ない」に見える（2026-08-28 木下）。
    ⭐ 既定だけ下げる＝つまみは同じなので、上げれば同じ絵になる。 */
 if(matchMedia('(pointer:coarse)').matches){
-  const r = el('r_n'); r.value = 24000; r.dispatchEvent(new Event('input', { bubbles:true }));
+  const r = el('r_dens'); if(r && +r.value > 45){ r.value = 45; r.dispatchEvent(new Event('input', { bubbles:true })); }
 }
 addEventListener('resize', () => { applyView(); });
 render(); fitView();
