@@ -279,15 +279,23 @@
 
   <div class="grp">
     <label class="h">粒</label>
-    <div class="row"><span class="n">濃さ（どこまで詰めるか）</span><output id="o_dens">62</output></div>
-    <input type="range" id="r_dens" min="2" max="100" value="62">
-    <div class="row"><span class="n">大きさ</span><output id="o_dot">1.60</output></div>
-    <input type="range" id="r_dot" min="20" max="900" value="160">
-    <div class="row"><span class="n">散り</span><output id="o_gap">1.85</output></div>
-    <input type="range" id="r_gap" min="30" max="900" value="185">
+    <div class="seg" id="s_lay">
+      <button data-v="dither" class="on">画素に置く（ディザ）</button><button data-v="drop">降らせる</button>
+    </div>
+    <div class="row"><span class="n">濃さ（どこまで詰めるか）</span><output id="o_dens">55</output></div>
+    <input type="range" id="r_dens" min="2" max="100" value="55">
+    <div class="row"><span class="n">大きさ</span><output id="o_dot">1.00</output></div>
+    <input type="range" id="r_dot" min="20" max="900" value="100">
+    <div class="row"><span class="n">散り（近すぎる粒を捨てる）</span><output id="o_gap">0.00</output></div>
+    <input type="range" id="r_gap" min="0" max="900" value="0">
     <div class="row"><span class="n">むら</span><output id="o_jit">25</output></div>
     <input type="range" id="r_jit" min="0" max="100" value="25">
-    <div class="note">🔴 <b>散り</b>＝粒どうしの最小の間。<b>これが芯</b>で、近すぎる粒を捨てるからムラにならない<br>
+    <div class="note">🔴🔴 <b>散りは 0 が既定＝捨てない＝【吹き付け】</b>。粒がただ降るので重なりも空きも出る。
+      参考のエアブラシはこれ<br>
+      ⚠️ 上げると近すぎる粒を捨てて<b>均される</b> ── きれいだが<b>砂利の肌</b>になり、吹き付けに見えなくなる
+      （2026-08-29 木下＝「砂の集まりというか質感から違う」）<br>
+      ⭐ <b>濃さ</b>＝どこまで詰めるか。<b>大きさを小さくすると細かい霧・大きくすると黒が詰まる</b>
+      （要る粒の数は自動で決まる）<br>
       ⭐ <b>むら</b>＝粒の大きさの揺れ（0 で全部同じ大きさ＝刷りものの粒に近い）</div>
   </div>
 
@@ -402,7 +410,7 @@ function stat(s){ el('stat').textContent = s; clearTimeout(statT);
    ══════════════════════════════════════════════════════════ */
 const P = {
   read:'tone', thr:128, gam:1.0, inv:0,
-  dens:62, dot:1.60, gap:1.85, jit:25,
+  lay:'dither', dens:55, dot:1.00, gap:0, jit:25,
   mb:34, ma:0.55, kdir:315, kd:26, khi:0.45, mdot:0.70,
   ratio:'auto', long:1400, pad:6,
   ink:'#0d0d0d', bg:'#f4f2ec', nobg:false,
@@ -522,6 +530,61 @@ function bakeMap(){
   return MAP;
 }
 
+/* ══⭐⭐ 画素に置く（誤差拡散ディザ）── 参考の質感はこちら ══
+   🔴🔴 2026-08-29、参考を【原寸】で読んだら、粒は**1画素ぶんで、画素の升目の上に乗っていた**。
+     中間調には誤差拡散特有の虫食い模様。＝ **粒を撒いたものではなく、1bit のディザ**だった。
+     木下＝「砂の集まりというか質感から違う」「今のままなら ten でも十分そう」。
+   ⭐ 芯（濃さを粒の数だけで作る・大きさは変えない）は同じ。**置く場所が画素の升目**なだけ。
+     誤差拡散＝置けなかった濃さを隣へ送る＝**濃さが1画素も失われない**ので、
+     撒くより滑らかな階調が出る（参考のエアブラシに見えるのはこれ）。
+   ⚠️ 「降らせる」も残す（吹き付けの粗さが要る絵もある）＝向きを縛らない。 */
+function ditherCells(){
+  const M = bakeMap();
+  const px = Math.max(1, Math.round(P.dot));          /* 粒の大きさ＝何画素ぶんの升目か */
+  const gw = Math.max(1, Math.ceil(M.w / px)), gh = Math.max(1, Math.ceil(M.h / px));
+  /* ⭐ 画素に置くときの「濃さ」は【掛け算ではなく曝し（ガンマ）】。
+     🔴 掛け算だと、もともと濃い所と真っ白な所には効かず、真ん中しか動かない
+        （実測：濃さ 50→85 で黒い升目が 16.9%→17.8% しか増えなかった）。
+     ⭐ 曝しなら 0 と 1 は動かないまま、間の階調が全部持ち上がる＝薄い霧から真っ黒まで通る。 */
+  const gam2 = Math.max(0.18, 2.2 - 1.9 * (P.dens / 100));
+  const v = new Float32Array(gw * gh);
+  /* 升目ごとに濃さを平均する（形と霧の大きい方＝撒くときと同じ式） */
+  for(let gy = 0; gy < gh; gy++){
+    const y0 = gy*px, y1 = Math.min(M.h, y0+px);
+    for(let gx = 0; gx < gw; gx++){
+      const x0 = gx*px, x1 = Math.min(M.w, x0+px);
+      let sum = 0, n = 0;
+      for(let y = y0; y < y1; y++) for(let x = x0; x < x1; x++){
+        const i = y*M.w + x;
+        sum += Math.max(M.core[i], M.blur[i] * P.ma); n++;
+      }
+      const m2 = n ? Math.min(1, sum / n) : 0;
+      v[gy*gw+gx] = m2 > 0 ? Math.pow(m2, gam2) : 0;
+    }
+  }
+  /* ⭐ 誤差拡散（Floyd–Steinberg）＝置けなかったぶんを隣へ送る */
+  const on = new Uint8Array(gw * gh);
+  const R = rnd(P.seed);
+  const wob = P.jit / 100 * 0.22;                     /* むら＝しきいを少し揺らす（機械の粒） */
+  for(let y = 0; y < gh; y++){
+    for(let x = 0; x < gw; x++){
+      const i = y*gw+x;
+      const cur = v[i];
+      const th = 0.5 + (wob ? (R() - 0.5) * wob : 0);
+      const b = cur >= th ? 1 : 0;
+      on[i] = b;
+      const e = cur - b;
+      if(x+1 < gw)              v[i+1]      += e * 7/16;
+      if(y+1 < gh){
+        if(x > 0)               v[i+gw-1]   += e * 3/16;
+                                v[i+gw]     += e * 5/16;
+        if(x+1 < gw)            v[i+gw+1]   += e * 1/16;
+      }
+    }
+  }
+  return { on, gw, gh, px, w:M.w, h:M.h };
+}
+
 /* ══⭐⭐ 何粒撒くかは【結果】── つまみは「濃さ」だけ ══
    🔴🔴 前はここが「数」というつまみだった。だが
      ・版面を大きくすると同じ数でもスカスカになる（実測 600px と 4096px で墨が 13473→849）
@@ -534,7 +597,7 @@ function wantDots(){
   const s2 = sheet();
   const full = (s2.w * s2.h) / Math.max(0.6, P.dot * P.dot * 2.0);   /* 真っ黒まで埋める数 */
   const d = Math.max(0, Math.min(1, P.dens / 100));
-  return Math.max(300, Math.min(500000, Math.round(full * Math.pow(d, 1.5))));
+  return Math.max(300, Math.min(1000000, Math.round(full * Math.pow(d, 1.5))));
 }
 
 /* ══⭐⭐ 撒く ── 近すぎる粒は捨てる（青色ノイズ）══ */
@@ -609,6 +672,7 @@ function dotSize(q){
 
 /* ══ 描く（数万個は文字列で一度に渡す）══ */
 function paint(ctx, W, H, transparent){
+  if(P.lay === 'dither') return paintDither(ctx, W, H, transparent);
   const D = scatter();
   const k = W / D.w;
   ctx.setTransform(1,0,0,1,0,0);
@@ -637,6 +701,30 @@ function paint(ctx, W, H, transparent){
   }
   if(s) ctx.fill(new Path2D(s));
   return D;
+}
+
+/* ⭐ 画素に置くときは【画素をそのまま置く】＝丸を何十万個描くより速くて、参考と同じ肌になる */
+function paintDither(ctx, W, H, transparent){
+  const D = ditherCells();
+  const k = W / D.w, px = D.px;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0, 0, W, H);
+  if(!transparent){ ctx.fillStyle = P.bg; ctx.fillRect(0, 0, W, H); }
+  ctx.fillStyle = P.ink;
+  /* 横に続く升目はまとめて1つの四角にする（数が1/3以下になる） */
+  let n = 0;
+  for(let gy = 0; gy < D.gh; gy++){
+    let gx = 0;
+    while(gx < D.gw){
+      if(!D.on[gy*D.gw+gx]){ gx++; continue; }
+      let g2 = gx; while(g2 < D.gw && D.on[gy*D.gw+g2]) g2++;
+      const x0 = gx*px*k, x1 = Math.min(D.w, g2*px)*k;
+      const y0 = gy*px*k, y1 = Math.min(D.h, (gy+1)*px)*k;
+      ctx.fillRect(x0, y0, Math.max(k*0.6, x1-x0), Math.max(k*0.6, y1-y0));
+      n += g2 - gx; gx = g2;
+    }
+  }
+  return { n, w:D.w, h:D.h };
 }
 
 /* ══⭐⭐ 触っている間は粗く（2026-08-28 木下「モバイルスライダーめちゃくちゃ重い」）══
@@ -670,7 +758,7 @@ function render(){
   const ms = Math.round(performance.now() - t0);
   el('meter').textContent =
     w + ' × ' + h + ' px\n' + D.n.toLocaleString() + ' 粒（濃さ ' + Math.round(P.dens) + '）\n' + ms + ' ms';
-  if(D.n < wantDots() * 0.6 && SRC)
+  if(P.lay !== 'dither' && D.n < wantDots() * 0.6 && SRC)
     stat('これ以上は詰まらない — 粒を小さくするか、散りを下げる');
 }
 function applyView(){
@@ -836,6 +924,7 @@ function seg(id, k, after){
   });
 }
 seg('s_read', 'read', () => { el('r_gam').parentElement.classList.toggle('hide', P.read === 'shape'); });
+seg('s_lay', 'lay');
 seg('s_inv', 'inv');
 seg('s_ratio', 'ratio');
 /* ⚠️ 動かす・動画の並びは【絵の設定ではない】＝P に数字として入れない（NaN が控えに乗る） */
@@ -1094,6 +1183,18 @@ el('b_play').onclick = () => {
   vsizeSync();
 
 /* ══ 立ち上げ ══ */
+/* 🔴🔴 つまみの初期値（HTML）と P の初期値が別々に書いてあると、黙って食い違う。
+   ここでは HTML 側が勝っていて、P で決めたつもりの既定が効いていなかった（2026-08-29）。
+   ⭐ 持ち主は P ひとつ＝立ち上げでつまみを P から書く（式は1本・規則は1つ）。
+   → [[feedback_same_formula_in_two_places_drifts]] */
+[['r_dens','dens',1], ['r_dot','dot',100], ['r_gap','gap',100], ['r_jit','jit',1],
+ ['r_thr','thr',1], ['r_gam','gam',100], ['r_mb','mb',1], ['r_ma','ma',100],
+ ['r_kdir','kdir',1], ['r_kd','kd',1], ['r_khi','khi',100], ['r_mdot','mdot',100],
+ ['r_long','long',1], ['r_pad','pad',1]].forEach(([id, k, mul]) => {
+  const r = el(id); if(!r || P[k] == null) return;
+  const v = Math.round(P[k] * mul);
+  if(+r.value !== v){ r.value = v; r.dispatchEvent(new Event('input', { bubbles:true })); }
+});
 /* ⚠️ 指の端末は濃く詰めると数秒かかる＝「入れたのに何も出ない」に見える（2026-08-28 木下）。
    ⭐ 既定だけ下げる＝つまみは同じなので、上げれば同じ絵になる。 */
 if(matchMedia('(pointer:coarse)').matches){
