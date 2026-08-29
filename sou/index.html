@@ -468,26 +468,36 @@ function fitSrc(){
 }
 
 /* ══⭐⭐ 刷った紙（ここが「状態」）══
-   🔴 この道具は P だけでは絵が決まらない。**刷った分が紙に溜まる**。
-     だから版面や向きを変えたら紙は白紙に戻す（参考も「改变运动方向将自动重置底片」）。 */
-let FILM = null, FKEY = '', POS = 0, TAKE = [], RUN = false, rafId = 0;
+   ⭐⭐ 2つに分けてある：
+     **版（RAW）** ＝ 走査線がどこで何を読んだか【だけ】。紙も癖も入っていない（地は透明）。
+     **紙（FILM）** ＝ 版を【現像】したもの。紙の色・機械の癖・白黒はここで乗る。
+   🔴 最初は癖を刷るときに焼き込んでいた＝**刷ったあとにつまみを動かしても何も変わらない**
+     （2026-08-29 木下＝「機械のくせはスライダー調整しても何もかわらず」）。
+     分けたので、**版はそのままに、何度でも現像し直せる**。 */
+let RAW = null, FILM = null, FKEY = '', POS = 0, TAKE = [], RUN = false, rafId = 0;
 function paper(){
   const { w, h } = sheet();
   const key = w + 'x' + h;
   if(!FILM || FKEY !== key){
-    FILM = document.createElement('canvas'); FILM.width = w; FILM.height = h; FKEY = key;
-    wipe();
+    RAW  = document.createElement('canvas'); RAW.width  = w; RAW.height = h;
+    FILM = document.createElement('canvas'); FILM.width = w; FILM.height = h;
+    FKEY = key; blank();
   }
   return FILM;
 }
-/* ⭐ 紙だけ真っさらにする（手の記録は残す）＝なぞり直しに使う */
+/* ⭐ 版と紙を真っさらにする（手の記録は残す）＝なぞり直しに使う */
 function blank(){
   if(!FILM) return;
+  const q = RAW.getContext('2d');
+  q.setTransform(1,0,0,1,0,0); q.clearRect(0, 0, RAW.width, RAW.height);
+  paperOnly();
+  POS = 0; PREV = null; DEV = 0;
+}
+/* 紙だけを敷く（まだ刷っていない所はこの色のまま） */
+function paperOnly(){
   const q = FILM.getContext('2d');
-  q.setTransform(1,0,0,1,0,0);
-  q.clearRect(0, 0, FILM.width, FILM.height);
+  q.setTransform(1,0,0,1,0,0); q.clearRect(0, 0, FILM.width, FILM.height);
   if(!P.nobg){ q.fillStyle = P.bg; q.fillRect(0, 0, FILM.width, FILM.height); }
-  POS = 0; PREV = null;      /* ⚠️ 残像も切る（前の刷りを引きずらない） */
 }
 /* 🔴 こちらは【手の記録ごと】捨てる。
    ⚠️ なぞり直し（replay）でこちらを呼ぶと、なぞる元の記録まで消える（実際に踏んだ）。 */
@@ -505,127 +515,136 @@ function drawSrc(q, W, H, ox, oy){
   q.restore();
 }
 
-/* ══⭐⭐ 1本ずつ刷る ── この道具のすべてがここ ══
-   ⭐ 走査線の位置 p の【1本】だけを切り取って、いまの元を焼く。
+/* ══⭐⭐ 1本ずつ刷る（版に置くだけ）══
+   ⭐ 走査線の位置 p の【1本】だけを切り取って、いまの元を版に置く。
      手が動いていれば、次の1本は別の場所から来る＝そこで像がちぎれる。
-   ⭐⭐ 焼くときに【機械の癖】を通す＝ここで印刷になる（あとから全体に掛けるのとは別物）。
-   ⚠️ 1本ぶんの小さな板を別に持って、そこで画素をいじってから紙へ貼る。
-     🔴 紙そのものから画素を読むと、紙が CPU 描きに落ちて全部が遅くなる。 */
-let LINE = null, LKEY = '', PREV = null;
-function lineBoard(){
-  const c = paper();
-  const key = P.axis + '|' + c.width + 'x' + c.height;
-  if(!LINE || LKEY !== key){
-    LINE = document.createElement('canvas');
-    if(P.axis === 'x'){ LINE.width = 1; LINE.height = c.height; }
-    else               { LINE.width = c.width; LINE.height = 1; }
-    LKEY = key; PREV = null;
+   ⭐ 揺れ＝送りのムラ。ここは【読む場所】が変わるので、版の側に入る。 */
+function scanTo(np){
+  const c = paper(), q = RAW.getContext('2d');
+  const len = (P.axis === 'x') ? c.width : c.height;
+  const to = Math.min(len, Math.floor(np));
+  const jit = P.jit / 10, per = Math.max(2, P.jfr);
+  for(let p = Math.floor(POS); p < to; p++){
+    const d = jit ? Math.sin(p / per * Math.PI * 2) * jit : 0;
+    q.save();
+    q.beginPath();
+    if(P.axis === 'x') q.rect(p, 0, 1, c.height); else q.rect(0, p, c.width, 1);
+    q.clip();
+    drawSrc(q, c.width, c.height, P.axis === 'x' ? 0 : d, P.axis === 'x' ? d : 0);
+    q.restore();
   }
-  return LINE;
+  POS = Math.min(len, np);
+  if(!RESCAN) develop();
 }
-/* ⭐ 種から決まる乱れ（Math.random は使わない）。
-   🔴 乱数を使うと【なぞり直しで別の絵になる】＝動画が刷った紙と食い違う。 */
+
+/* ══⭐⭐ 現像 ── 版を【紙】にする ══
+   複写機を通った絵が綺麗でないのは、順にこれだけのことが起きているから：
+     ① 紙に乗る ─── 版は地が透明。ここで紙の色の上に乗る
+     ② 灯りのムラ ── ランプは棒の端で落ちる＝両端が沈む
+     ③ 焼き ────── トナーは中間調を保てない＝【紙の白】と黒へ寄る
+     ④ にじみ ───── センサーは1本前を引きずる＝硬く切れた所が煙のようにぼける
+     ⑤ 紙のムラ ─── 紙の繊維
+     ⑥ 粒子 ────── トナーの粒。中間調でいちばん目立ち、2画素ぶんの塊になる
+     ⑦ 二値 ────── コピー機は最後に「乗るか乗らないか」に落とす（4×4 の網でごまかす）
+   ⭐ ④を⑤⑥より【先】に掛ける＝粒がにじみで筋にならない（粒は場所に固定される）。
+   ⭐⭐ ④は走査の向きに沿った【1本前を引きずるだけ】なので、あとからでも同じ順でなぞれる
+     ＝ **刷り終わったあとに現像し直しても、刷りながら現像したのと1画素も変わらない**。
+   ⚠️ 刷っていない所には掛けない（まだ機械を通っていない紙だから）。 */
+let PREV = null, DEV = 0, RESCAN = false;
 function noise2(x, y, s){
   let h = (x * 374761393 + y * 668265263 + s * 1442695041) | 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
-function scanTo(np){
-  const c = paper(), q = c.getContext('2d');
-  const len = (P.axis === 'x') ? c.width : c.height;
-  const to = Math.min(len, Math.floor(np));
-  const L = lineBoard(), lq = L.getContext('2d', { willReadFrequently:true });
-  const n = (P.axis === 'x') ? c.height : c.width;
-  const jit = P.jit / 10, per = Math.max(2, P.jfr);
-  for(let p = Math.floor(POS); p < to; p++){
-    const d = jit ? Math.sin(p / per * Math.PI * 2) * jit : 0;
-    lq.setTransform(1,0,0,1,0,0);
-    lq.clearRect(0, 0, L.width, L.height);
-    if(!P.nobg){ lq.fillStyle = P.bg; lq.fillRect(0, 0, L.width, L.height); }
-    lq.save();
-    if(P.axis === 'x') lq.translate(-p, 0); else lq.translate(0, -p);
-    drawSrc(lq, c.width, c.height, P.axis === 'x' ? 0 : d, P.axis === 'x' ? d : 0);
-    lq.restore();
-    press(lq, L, p, n);
-    q.drawImage(L, P.axis === 'x' ? p : 0, P.axis === 'x' ? 0 : p);
-  }
-  POS = Math.min(len, np);
-}
+/* from を渡すと【そこから先だけ】現像する（刷っている間はこれで足りる） */
+function develop(from){
+  const c = paper();
+  const axX = (P.axis === 'x');
+  const len = axX ? c.width : c.height, n = axX ? c.height : c.width;
+  let a0 = (from == null) ? DEV : from;
+  if(a0 > POS) a0 = 0;
+  if(a0 === 0){ PREV = null; paperOnly(); }
+  const a1 = Math.floor(POS);
+  if(a1 <= a0){ DEV = a1; return; }
+  const rq = RAW.getContext('2d', { willReadFrequently:true });
+  const fq = FILM.getContext('2d');
+  const sx = axX ? a0 : 0, sy = axX ? 0 : a0;
+  const sw = axX ? (a1 - a0) : c.width, sh = axX ? c.height : (a1 - a0);
+  const img = rq.getImageData(sx, sy, sw, sh), d = img.data;
 
-/* ══⭐⭐ 1本を【印刷にする】══
-   複写機を通った絵が綺麗でないのは、順にこれだけのことが起きているから：
-     ① 灯りのムラ ── ランプは棒の端で落ちる＝両端が沈む
-     ② 焼き ────── トナーは中間調を保てない＝白と黒へ寄る（コピーのトーンカーブ）
-     ③ にじみ ───── センサーは1本前を引きずる＝硬く切れた所が煙のようにぼける
-     ④ 紙のムラ ─── 紙の繊維。刷った所にだけ出る
-     ⑤ 粒子 ────── トナーの粒。中間調でいちばん目立ち、粒は2画素ぶんの塊になる
-     ⑥ 二値 ────── コピー機は最後に「乗るか乗らないか」に落とす（網でごまかす）
-   ⭐ ③を④⑤より【先】に掛ける＝粒がにじみで筋にならない（粒は場所に固定される）。 */
-function press(lq, L, p, n){
   const burn = P.burn/100, grain = P.grain/100, lamp = P.lamp/100,
         fiber = P.fiber/100, smear = P.smear/100 * 0.86;
-  if(!burn && !grain && !lamp && !fiber && !smear && !P.mono){ PREV = null; return; }
-  const img = lq.getImageData(0, 0, L.width, L.height), a = img.data;
-  if(!PREV || PREV.length !== n*3) PREV = new Float32Array(n*3);
-  const M4 = [0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5];   /* 網（4×4）*/
-  /* ⭐⭐ 焼きの【白の基準は紙】。ここを 1.0（真っ白）にすると、
-     せっかく選んだ紙の色まで飛んで灰色になる（実測でそうなった）。
-     ⚠️ 紙を出さないときだけ 1.0。 */
   const pw = P.nobg ? [1,1,1]
     : [parseInt(P.bg.slice(1,3),16)/255, parseInt(P.bg.slice(3,5),16)/255, parseInt(P.bg.slice(5,7),16)/255]
-      .map(v => Math.max(0.08, v));
-  for(let i = 0; i < n; i++){
-    const k = i*4;
-    let r = a[k]/255, g2 = a[k+1]/255, b2 = a[k+2]/255;
-    /* ① 灯りのムラ＝棒の端が沈む */
-    if(lamp){
-      const t = (i / Math.max(1, n-1)) * 2 - 1;
-      const f = 1 - lamp * 0.55 * t * t;
-      r *= f; g2 *= f; b2 *= f;
-    }
-    /* ② 焼き＝中間を潰して【紙の白】と黒へ寄せる */
-    if(burn){
-      const cur = (v, w2) => { const t = Math.max(0, Math.min(1, v / w2));
-        const u = Math.max(0, Math.min(1, (t - 0.34) / 0.32));
-        return (t + burn * (u*u*(3 - 2*u) - t)) * w2; };
-      r = cur(r, pw[0]); g2 = cur(g2, pw[1]); b2 = cur(b2, pw[2]);
-    }
-    /* ③ にじみ＝1本前を引きずる（センサーの残像） */
-    if(smear){
-      const j = i*3;
-      r  = r  * (1-smear) + PREV[j  ] * smear;
-      g2 = g2 * (1-smear) + PREV[j+1] * smear;
-      b2 = b2 * (1-smear) + PREV[j+2] * smear;
-      PREV[j] = r; PREV[j+1] = g2; PREV[j+2] = b2;
-    }
-    /* ④ 紙のムラ（低い周波数） */
-    if(fiber){
-      const f = (noise2(p >> 3, i >> 3, 7) + noise2(p >> 1, i >> 2, 11)) * 0.5 - 0.5;
-      const v = f * fiber * 0.20;
-      r += v; g2 += v; b2 += v;
-    }
-    /* ⑤ 粒子＝中間調でいちばん目立ち、2画素ぶんの塊になる */
-    if(grain){
-      const lum = (r*0.299 + g2*0.587 + b2*0.114);
-      const mid = 1 - Math.abs(lum*2 - 1);             /* 中間ほど強い */
-      const gv = (noise2(p >> 1, i >> 1, 3) * 0.7 + noise2(p, i, 5) * 0.3) - 0.5;
-      const v = gv * grain * (0.16 + 0.42 * mid);
-      r += v; g2 += v; b2 += v;
-    }
-    /* ⑥ 白黒 ／ コピー（二値・網でごまかす） */
-    if(P.mono){
-      let lum = r*0.299 + g2*0.587 + b2*0.114;
-      if(P.mono === 2){
-        const th = (M4[((p & 3) << 2) | (i & 3)] + 0.5) / 16;
-        lum = lum > th ? 1 : 0;
+        .map(v => Math.max(0.08, v));
+  if(!PREV || PREV.length !== n*3) PREV = new Float32Array(n*3);
+  const M4 = [0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5];   /* 網（4×4）*/
+  const cur = (v, w2) => { const t = Math.max(0, Math.min(1, v / w2));
+    const u = Math.max(0, Math.min(1, (t - 0.34) / 0.32));
+    return (t + burn * (u*u*(3 - 2*u) - t)) * w2; };
+
+  for(let q = a0; q < a1; q++){          /* q＝走査の位置（1本ずつ、順に） */
+    for(let i = 0; i < n; i++){          /* i＝その1本の中の位置 */
+      const k = (axX ? (i * sw + (q - a0)) : ((q - a0) * sw + i)) * 4;
+      /* ① 紙に乗る */
+      const al = d[k+3] / 255;
+      let r  = d[k]  /255 * al + pw[0] * (1 - al) * (P.nobg ? 0 : 1);
+      let g2 = d[k+1]/255 * al + pw[1] * (1 - al) * (P.nobg ? 0 : 1);
+      let b2 = d[k+2]/255 * al + pw[2] * (1 - al) * (P.nobg ? 0 : 1);
+      let oa = P.nobg ? al : 1;
+      /* ② 灯りのムラ */
+      if(lamp){
+        const t = (i / Math.max(1, n-1)) * 2 - 1;
+        const f = 1 - lamp * 0.55 * t * t;
+        r *= f; g2 *= f; b2 *= f;
       }
-      r = g2 = b2 = lum;
+      /* ③ 焼き */
+      if(burn){ r = cur(r, pw[0]); g2 = cur(g2, pw[1]); b2 = cur(b2, pw[2]); }
+      /* ④ にじみ（1本前を引きずる） */
+      if(smear){
+        const j = i*3;
+        r  = r  * (1-smear) + PREV[j  ] * smear;
+        g2 = g2 * (1-smear) + PREV[j+1] * smear;
+        b2 = b2 * (1-smear) + PREV[j+2] * smear;
+        PREV[j] = r; PREV[j+1] = g2; PREV[j+2] = b2;
+      }
+      /* ⑤ 紙のムラ */
+      if(fiber){
+        const f = (noise2(q >> 3, i >> 3, 7) + noise2(q >> 1, i >> 2, 11)) * 0.5 - 0.5;
+        const v = f * fiber * 0.20;
+        r += v; g2 += v; b2 += v;
+      }
+      /* ⑥ 粒子 */
+      if(grain){
+        const lum = (r*0.299 + g2*0.587 + b2*0.114);
+        const mid = 1 - Math.abs(lum*2 - 1);
+        const gv = (noise2(q >> 1, i >> 1, 3) * 0.7 + noise2(q, i, 5) * 0.3) - 0.5;
+        const v = gv * grain * (0.16 + 0.42 * mid);
+        r += v; g2 += v; b2 += v;
+      }
+      /* ⑦ 白黒 ／ コピー（二値） */
+      if(P.mono){
+        let lum = r*0.299 + g2*0.587 + b2*0.114;
+        if(P.mono === 2){
+          const th = (M4[((q & 3) << 2) | (i & 3)] + 0.5) / 16;
+          lum = lum > th ? 1 : 0;
+        }
+        r = g2 = b2 = lum;
+      }
+      d[k]   = r  < 0 ? 0 : r  > 1 ? 255 : (r  * 255) | 0;
+      d[k+1] = g2 < 0 ? 0 : g2 > 1 ? 255 : (g2 * 255) | 0;
+      d[k+2] = b2 < 0 ? 0 : b2 > 1 ? 255 : (b2 * 255) | 0;
+      d[k+3] = oa < 0 ? 0 : oa > 1 ? 255 : (oa * 255) | 0;
     }
-    a[k]   = r  < 0 ? 0 : r  > 1 ? 255 : (r  * 255) | 0;
-    a[k+1] = g2 < 0 ? 0 : g2 > 1 ? 255 : (g2 * 255) | 0;
-    a[k+2] = b2 < 0 ? 0 : b2 > 1 ? 255 : (b2 * 255) | 0;
   }
-  lq.putImageData(img, 0, 0);
+  fq.putImageData(img, sx, sy);
+  DEV = a1;
+}
+/* ⭐ つまみを動かしたら【最初から現像し直す】＝版はそのまま・紙だけ作り直す */
+let devT = 0;
+function redevelop(){
+  clearTimeout(devT);
+  devT = setTimeout(() => { develop(0); render(); }, 45);
 }
 
 /* ══ 出す（刷った紙だけ）══ */
@@ -825,8 +844,25 @@ function replay(frac){
   const n = Math.max(0, Math.min(TAKE.length, Math.round(TAKE.length * frac)));
   blank();          /* 🔴 wipe() ではない＝なぞる元の記録を消してしまう */
   const sx = T.x, sy = T.y, sz = T.z;
+  /* ⭐ なぞっている間は現像しない（版だけ積む）＝終わってから1回で現像する */
+  RESCAN = true;
   for(let i = 0; i < n; i++){ const t = TAKE[i]; T.x = t.x; T.y = t.y; T.z = t.z; scanTo(t.to); }
+  RESCAN = false;
   T.x = sx; T.y = sy; T.z = sz;
+  develop(0);
+}
+/* ⭐⭐ 版面の大きさが変わっても【刷った紙は捨てない】── 手の記録を一緒に伸び縮みさせて刷り直す
+   （2026-08-29 木下＝「長編をいじると元に戻った」）。 */
+function refit(fn){
+  const o = sheet();
+  fn();
+  const nz = sheet();
+  const kx = nz.w / o.w, ky = nz.h / o.h, kz = Math.min(kx, ky);
+  TAKE.forEach(t => { t.to *= (P.axis === 'x') ? kx : ky; t.x *= kx; t.y *= ky; t.z *= kz; });
+  T.x *= kx; T.y *= ky; T.z *= kz;
+  FKEY = ''; paper();            /* 新しい大きさの版と紙を用意する */
+  if(TAKE.length) replay(1); else render();
+  syncSize(); render();
 }
 
 /* ══ 元を受ける ══ */
@@ -892,8 +928,17 @@ RANGES.forEach(([id, k, out, fmt, conv]) => {
   const r = el(id); if(!r) return;
   const sync = () => { P[k] = conv ? conv(+r.value) : +r.value;
     const o = el(out); if(o) o.value = fmt ? fmt(+r.value) : r.value; };
-  /* ⚠️ 版面を変えると紙の大きさが変わる＝刷った紙は白紙に戻すしかない（黙って引き伸ばさない） */
-  r.addEventListener('input', () => { sync(); if(k === 'long') reset(); else render(); });
+  /* ⭐⭐ どのつまみも【刷ったあとから効く】。効かせ方は3通り：
+     ・版面（long）＝紙の大きさが変わる＝手の記録ごと伸び縮みさせて刷り直す
+     ・揺れ（jit/jfr）＝【読む場所】が変わる＝版から刷り直す（なぞり直し）
+     ・機械の癖・色＝版はそのまま【現像だけ】やり直す（速い）
+     🔴 前は刷るときに焼き込んでいて、刷ったあとは何を触っても変わらなかった。 */
+  r.addEventListener('input', () => {
+    sync();
+    if(k === 'long'){ refit(() => {}); }
+    else if(k === 'jit' || k === 'jfr'){ if(TAKE.length) rescanSoon(); else render(); }
+    else redevelop();
+  });
   sync();
 });
 function seg(id, k, after){
@@ -906,18 +951,32 @@ function seg(id, k, after){
     if(k === 'font') needFont(P[k]);
     if(after) after();
     TXTKEY = ''; ASPKEY = '';
-    if(k === 'axis' || k === 'ratio') reset();
+    /* ⭐ 向きだけは【刷り直しようがない】ので白紙に戻す（参考も同じ作法）。
+       版面の比は紙の形が変わるだけ＝手の記録ごと伸び縮みさせて刷り直す。
+       色（白黒・二値）は版はそのまま【現像だけ】やり直す。 */
+    if(k === 'axis') reset();
+    else if(k === 'ratio') refit(() => {});
+    else if(k === 'mono') redevelop();
+    else if(k === 'font'){ if(TAKE.length) rescanSoon(); else render(); }
     else render();
   });
 }
 seg('s_axis', 'axis');
-seg('s_ratio', 'ratio', () => { });
+seg('s_ratio', 'ratio', () => { });   /* ⚠️ 向きと比は refit / reset の側で面倒を見る */
 seg('s_font', 'font', () => { TXTKEY = ''; fitSrc(); });
 seg('s_mono', 'mono');
 document.querySelectorAll('#s_vfmt button').forEach(b => b.onclick = () => {
   document.querySelectorAll('#s_vfmt button').forEach(x => x.classList.toggle('on', x === b)); });
-el('c_bg').addEventListener('input', e => { P.bg = e.target.value; reset(); });
-el('k_nobg').addEventListener('change', e => { P.nobg = e.target.checked; reset(); });
+/* ⭐ 紙の色・地なし・白黒は【現像だけ】やり直す＝刷った紙はそのまま残る
+   （2026-08-29 木下＝「色も印刷後でも調整できるように」） */
+el('c_bg').addEventListener('input', e => { P.bg = e.target.value; redevelop(); });
+el('k_nobg').addEventListener('change', e => { P.nobg = e.target.checked; redevelop(); });
+/* ⭐ 揺れは【読む場所】が変わるので版から刷り直す。触っている間は詰まらないよう間引く */
+let rescanT = 0;
+function rescanSoon(){
+  clearTimeout(rescanT);
+  rescanT = setTimeout(() => { replay(1); render(); }, 90);
+}
 
 /* ══🔴🔴 使う書体は【使う前に読み込ませる】══
    canvas は読み込まれていない書体を **黙って別の書体で描く**。

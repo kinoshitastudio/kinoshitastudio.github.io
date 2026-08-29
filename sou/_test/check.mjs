@@ -373,5 +373,71 @@ await back();
      '⭐⭐ 打った字が【全部】焼かれる（左端にも右端にも墨がある）', JSON.stringify(t));
 }
 
+await back();
+/* ⭐⭐ 刷ったあとでも【全部のつまみが効く】── 2026-08-29
+   🔴 木下＝「パネルの機械のくせはスライダー調整しても何もかわらず、これは想定できない」
+        「色も印刷後でも調整できるように」「長編をいじると元に戻った」。
+   ⭐ 版（走査線がどこで何を読んだか）と 紙（現像したもの）を分けたので、
+     版はそのままに何度でも現像し直せる。 */
+{
+  const fill = () => p.evaluate(() => {
+    RUN = false; wipe(); fitSrc();
+    const { w } = sheet(); const by = T.y; let i = 0;
+    while(POS < w){ T.y = by + Math.sin(i/9) * 90; TAKE.push({ to:POS+P.speed, x:T.x, y:T.y, z:T.z }); scanTo(POS + P.speed); i++; }
+    T.y = by; render();
+  });
+  const h = () => p.evaluate(() => { const c = document.createElement('canvas'); c.width = 200; c.height = 200;
+    const q = c.getContext('2d'); q.drawImage(paper(), 0, 0, 200, 200);
+    const d = q.getImageData(0,0,200,200).data; let x = 2166136261;
+    for(let i = 0; i < d.length; i += 4){ x ^= d[i]; x = Math.imul(x, 16777619); } return x >>> 0; });
+  await fill();
+  const dead = [];
+  const knob = async (name, fn, wait) => {
+    const before = await h();
+    await p.evaluate(fn); await new Promise(r => setTimeout(r, wait || 400));
+    if(await h() === before) dead.push(name);
+  };
+  await knob('粒子',   () => { const r = el('r_grain'); r.value = 95; r.dispatchEvent(new Event('input',{bubbles:true})); });
+  await knob('焼き',   () => { const r = el('r_burn');  r.value = 95; r.dispatchEvent(new Event('input',{bubbles:true})); });
+  await knob('にじみ', () => { const r = el('r_smear'); r.value = 90; r.dispatchEvent(new Event('input',{bubbles:true})); });
+  await knob('紙のムラ',() => { const r = el('r_fiber'); r.value = 95; r.dispatchEvent(new Event('input',{bubbles:true})); });
+  await knob('灯りのムラ',() => { const r = el('r_lamp'); r.value = 90; r.dispatchEvent(new Event('input',{bubbles:true})); });
+  await knob('揺れ',   () => { const r = el('r_jit');   r.value = 80; r.dispatchEvent(new Event('input',{bubbles:true})); }, 1000);
+  await knob('紙の色', () => { const c = el('c_bg'); c.value = '#ffd7a0'; c.dispatchEvent(new Event('input',{bubbles:true})); });
+  await knob('白黒',   () => document.querySelectorAll('#s_mono button')[1].click());
+  await knob('コピー二値', () => document.querySelectorAll('#s_mono button')[2].click());
+  ok(dead.length === 0, '⭐⭐ 刷ったあとでも【全部のつまみが効く】', dead.length ? '効かない: ' + dead.join(' / ') : '9本ぜんぶ効く');
+
+  /* ⭐⭐ 版面を変えても【刷った紙が消えない】 */
+  const keep = await p.evaluate(async () => {
+    const was = { pos:Math.round(POS), len:sheet().w };
+    const r = el('r_long'); r.value = 1000; r.dispatchEvent(new Event('input',{bubbles:true}));
+    await new Promise(x => setTimeout(x, 900));
+    return { was, now:{ pos:Math.round(POS), len:sheet().w } };
+  });
+  ok(keep.was.pos > 0 && keep.now.pos > keep.now.len * 0.95,
+     '⭐⭐ 版面を変えても【刷った紙が消えない】（一緒に伸び縮みする）', JSON.stringify(keep));
+
+  /* ⭐ 現像し直しても、刷りながら現像したのと同じ絵になる */
+  await back(); await fill();
+  const same = await p.evaluate(() => {
+    const h2 = () => { const c = document.createElement('canvas'); c.width = 220; c.height = 220;
+      const q = c.getContext('2d'); q.drawImage(paper(), 0, 0, 220, 220);
+      const d = q.getImageData(0,0,220,220).data; let x = 2166136261;
+      for(let i = 0; i < d.length; i += 4){ x ^= d[i]; x = Math.imul(x, 16777619); } return x >>> 0; };
+    const a = h2(); develop(0); const b2 = h2(); develop(0); const c2 = h2();
+    return { a, b2, c2 };
+  });
+  ok(same.a === same.b2 && same.b2 === same.c2,
+     '⭐⭐ 現像し直しても【刷りながら現像したのと同じ絵】', JSON.stringify(same));
+
+  /* ⭐ 現像は指の端末でも待たされない速さか */
+  const ms = await p.evaluate(() => { const a = [];
+    for(let k = 0; k < 3; k++){ P.grain = 40 + k*5; const t0 = performance.now(); develop(0); a.push(performance.now() - t0); }
+    P.grain = 45; develop(0);
+    return Math.round(a.sort((x,y) => x-y)[1]); });
+  ok(ms < 400, '⭐ 現像し直しが速い（つまみが待たされない）', ms + ' ms');
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
 await b.close(); process.exit(NG);
