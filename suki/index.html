@@ -222,6 +222,17 @@
     /* ⭐ 巻きを親へ渡さない＋滑らかに（iOS の作法） */
     #panel{ overscroll-behavior:contain; -webkit-overflow-scrolling:touch }
   }
+
+  /* ══⭐⭐ 指の端末ではガラスをやめる ── 2026-08-29 ══
+     木下＝「モバイルだとスライダーがやはり重い。リアルタイムで変更はみれず、時間差がある」。
+     🔴 backdrop-filter は【背後をぼかし直す】＝つまみを動かしている間ずっと走り続ける。
+        iOS ではこれが指の動きに追いつかない（描く方は実測 3ms しか掛かっていなかった）。
+     ⭐ 消せば元に戻る上書き1ブロック（元の指定は1行も触っていない）。
+     ⚠️ 見た目はガラス→不透明になる。指の端末だけ。 */
+  @media (hover: none) and (pointer: coarse){
+    :root{ --glass:#f6f4ee; }
+    *{ -webkit-backdrop-filter:none !important; backdrop-filter:none !important; }
+  }
 </style></head>
 <body>
 
@@ -543,9 +554,17 @@ function touching(){
 const V = { x:0, y:0, z:1 };
 function render(){
   const { w, h } = sheet();
-  if(cv.width !== w || cv.height !== h){ cv.width = w; cv.height = h; }
+  /* ⭐⭐ 触っている間は【盤そのものも小さく】する（2026-08-29）
+     木下＝「モバイルだとスライダーがやはり重い。リアルタイムで変更はみれず、時間差がある」。
+     🔴 計算は 12ms しか掛かっていなかった＝重いのは**1400×1400 の板を毎コマ画面へ送る**方だった。
+     ⭐ 板を半分にすると画素は 1/4。粒の計算（地図・並び）は同じものを使うので**絵は変わらない**
+       ＝見る側の倍率を同じだけ上げて、大きさも見え方も揃える。
+     ⚠️ 離した瞬間に COARSE が 0 に戻って、必ず元の大きさで焼き直される。 */
+  const k = COARSE ? 0.5 : 1;
+  const W2 = Math.max(64, Math.round(w*k)), H2 = Math.max(64, Math.round(h*k));
+  if(cv.width !== W2 || cv.height !== H2){ cv.width = W2; cv.height = H2; }
   const t0 = performance.now();
-  const D = paint(g, w, h, P.nobg);
+  const D = paint(g, W2, H2, P.nobg);
   applyView();
   const ms = Math.round(performance.now() - t0);
   el('meter').textContent = w + ' × ' + h + ' px\n' + D.n.toLocaleString() + ' 粒\n' + ms + ' ms';
@@ -563,7 +582,10 @@ function render(){
        : '⚠️ 隙間まで埋まった ── 濃い所はベタになる（薄い所だけ星が残る）');
 }
 function applyView(){
-  cv.style.transform = 'translate(' + V.x + 'px,' + V.y + 'px) scale(' + V.z + ')';
+  /* ⚠️ 盤を小さく描いている間は、見る側の倍率をその分だけ上げる＝絵の大きさは1画素も動かない */
+  const s0 = sheet();
+  const k = (cv.width && s0.w) ? (cv.width / s0.w) : 1;
+  cv.style.transform = 'translate(' + V.x + 'px,' + V.y + 'px) scale(' + (V.z / (k || 1)) + ')';
   el('z_val').textContent = Math.round(V.z * 100) + '%';
 }
 function fitView(){
