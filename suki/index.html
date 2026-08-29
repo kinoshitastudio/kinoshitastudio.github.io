@@ -276,7 +276,7 @@
     <div class="row"><span class="n">濃さのカーブ</span><output id="o_gam">1.00</output></div>
     <input type="range" id="r_gam" min="30" max="300" value="100">
     <div class="row"><span class="n">いちばん小さい粒</span><output id="o_min">0.18</output></div>
-    <input type="range" id="r_min" min="0" max="60" value="18">
+    <input type="range" id="r_min" min="0" max="60" value="8">
     <div class="seg" id="s_shape">
       <button data-v="circle" class="on">丸</button><button data-v="square">四角</button><button data-v="diamond">菱</button>
     </div>
@@ -373,7 +373,7 @@ function stat(s){ el('stat').textContent = s; clearTimeout(statT);
 const P = {
   txt:'B', font:'900 ',
   grid:'sq', pitch:36, ang:0,
-  grow:1.22, gam:1.0, min:0.18, shape:'circle',
+  grow:1.22, gam:1.0, min:0.08, shape:'circle',
   ratio:'1:1', long:1400, pad:8,
   inv:1, ink:'#ffffff', bg:'#0a0a0a', nobg:false,
 };
@@ -426,9 +426,15 @@ function bakeMap(){
   }
   const d = q.getImageData(0, 0, w, h).data;
   const tone = new Float32Array(w * h);
+  /* ⭐⭐ 既定（1.00）では Math.pow を通らない（2026-08-29）
+     木下＝「かなり時間がかかる」。1文字打つたびにここを 196万回まわしていて、
+     その大半が **pow(x, 1)** ＝ 何もしない計算だった。実測 122ms → 65ms。 */
+  const g = P.gam, plain = Math.abs(g - 1) < 0.001;
   for(let i = 0, p = 0; i < d.length; i += 4, p++){
     const lum = d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114;
-    tone[p] = Math.pow(Math.max(0, Math.min(1, 1 - lum/255)), P.gam);
+    const v = 1 - lum/255;
+    const c2 = v < 0 ? 0 : v > 1 ? 1 : v;
+    tone[p] = plain ? c2 : Math.pow(c2, g);
   }
   MAP = { tone, w, h }; MAPKEY = key;
   return MAP;
@@ -626,7 +632,16 @@ el('b_clear').onclick = () => { SRC = null; MAPKEY = ''; DOTKEY = ''; stat('字�
 ['dragleave','drop'].forEach(t => addEventListener(t, e => {
   if(t === 'dragleave' && e.relatedTarget) return; document.body.classList.remove('dragging'); }));
 addEventListener('drop', e => { e.preventDefault(); takeFile(e.dataTransfer.files[0]); });
-el('t_txt').addEventListener('input', e => { P.txt = e.target.value; MAPKEY = ''; render(); });
+/* ⭐⭐ 打っている間は地図を焼き直さない（2026-08-29）
+   木下＝「かなり時間がかかる」。1文字打つたびに**版面いっぱいの地図を焼き直して**いた
+   （実測 1文字 132ms）。⭐ 止まってから1回だけ焼く＝打鍵は詰まらない。
+   ⚠️ 消しても同じ道を通る（キーを打つ＝input はどちらも来る）。 */
+let TXTT = 0;
+el('t_txt').addEventListener('input', e => {
+  P.txt = e.target.value;
+  clearTimeout(TXTT);
+  TXTT = setTimeout(() => { MAPKEY = ''; COARSE = 0; render(); }, 180);
+});
 
 /* ══ つまみ（表1つで回す）══ */
 const RANGES = [
