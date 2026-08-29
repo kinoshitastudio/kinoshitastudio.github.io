@@ -1161,12 +1161,31 @@ input[type=color]{ border-radius:8px; height:30px }
       <div class="seg" id="segNkEdge">
         <button data-v="0" class="on">中に置く</button><button data-v="1">縁で切る</button>
       </div></div>
+    <!-- ══⭐⭐ 中の写真（2026-08-29）══
+         🔴 板は版面ぜんぶを覆うので、版面のどこを押しても【板】が掴める
+            ＝下の写真は掴めない。だから掴むのではなく【つまみ】で触る。
+         ⚠️ 作字SAKUJI の「ダブルクリックで中へ入る」とは別の作り
+            （あちらは板と画像が1つの束、こちらは別々のレイヤー）。 -->
+    <div id="nkJiBox" style="display:none">
+      <div class="row"><label style="font-weight:700">中の写真</label></div>
+      <div class="row"><label>よこ</label>
+        <input type="range" id="nkJX" min="-50" max="50" value="0"><span class="v" id="vnkJX">0</span></div>
+      <div class="row"><label>たて</label>
+        <input type="range" id="nkJY" min="-50" max="50" value="0"><span class="v" id="vnkJY">0</span></div>
+      <div class="row"><label>大きさ</label>
+        <input type="range" id="nkJS" min="20" max="400" value="100"><span class="v" id="vnkJS">100</span></div>
+      <div class="row"><label>回す</label>
+        <input type="range" id="nkJR" min="-180" max="180" value="0"><span class="v" id="vnkJR">0</span></div>
+      <button class="btn" id="nkJFit" style="display:block;width:100%">版面に敷き直す</button>
+    </div>
     <button class="btn" id="nkShake" style="display:block;width:100%;margin-top:6px">⤫ 振る（窓の置き場所を作り直す）</button>
     <button class="btn" id="nkDel" style="display:block;width:100%;margin-top:4px">板を外す</button>
     <div style="font-size:10.5px;line-height:1.75;margin-top:8px;opacity:.75">
       ⭐ 型の <b>「窓」</b>を押せば、写真・板・字までまとめて組む。ここは<b>あとから直す所</b>。<br>
       ⭐ 窓どうしが<b>重なると溶けて1つ</b>になる ── 残った板が尖った形になるのはそのため。<br>
       ⭐ 行の<b>経路を「窓」</b>にすると、<b>字が窓のふちを回る</b>（どの窓かは選べる）。<br>
+      ⭐ <b>中の写真</b>＝窓から見えている写真を動かす（板は動かない）。<b>版面では掴めない</b>
+      ── 板が全面を覆っているので、ここのつまみで触る。<br>
       ⚠️ 板は<b>図（レイヤー）</b>なので上下を動かせる。<b>写真より上</b>に置くこと。
     </div>
   </div>
@@ -4061,6 +4080,9 @@ function shake(what){
     /* ⭐ 板は版面ぴったりが前提＝置き場所も大きさも振らない
        （形は上の nkShakeAll が振っている）。動かすと窓が版面からずれる。 */
     if(pc.nuki) return;
+    /* ⭐ 地に敷いた写真も振らない（窓の向こうが版面の地になってしまう）。
+       ⚠️ 一覧からは選べる・つまみでも触れる＝閉じ込めない。 */
+    if(pc.ji) return;
     if(what !== 'style'){
       pc.x = B.w * (0.15 + Math.random()*0.7);
       pc.y = B.h * ((bandY(rnd(rows)) + (Math.random()-0.5)*8) / 100);
@@ -4404,6 +4426,10 @@ function fillList(el){
 const $ = id => document.getElementById(id);
 function syncPanel(){
   renderList();
+  /* ⭐ 抜く（板・中の写真）の欄は【行を選んでいなくても】合わせる。
+     🔴 下の行のブロックの中に入れていたので、板を置いた直後（＝図を選んでいる）は
+        通らず、「中の写真」の欄が出てこなかった（2026-08-29 実測）。 */
+  if(typeof nkSync === 'function') nkSync();
   const L = sel();
   $('lineUI').style.opacity = L ? 1 : .35;
   $('lineUI').style.pointerEvents = L ? 'auto' : 'none';
@@ -4501,7 +4527,6 @@ function syncPanel(){
   { const r = $('rowHole');
     if(r) r.style.display = (L.path.type === 'hole') ? '' : 'none';
     setRange('pHole', L.path.hole || 1); }
-  if(typeof nkSync === 'function') nkSync();
   /* ⭐ 返しているかの印。⚠️ 古い作品は mx/my を持たない＝切に落ちる（これまでの絵のまま） */
   { const x = $('mirX'), y = $('mirY');
     if(x) x.classList.toggle('on', !!L.path.mx);
@@ -5909,7 +5934,7 @@ function snapJSON(){
                            nuki: p.nuki ? JSON.parse(JSON.stringify(p.nuki)) : null,
                            x:p.x, y:p.y, sc:p.sc, rot:p.rot,
                            ura:(p.ura ? 1 : 0), fill:(p.fill ? 1 : 0),
-                           lock:(p.lock ? 1 : 0) })) };
+                           lock:(p.lock ? 1 : 0), ji:(p.ji ? 1 : 0) })) };
   return d;
 }
 /* ⚠️ ボタンは【名前を付けて保存】。上書きは ⌘S（手があるときだけ） */
@@ -5921,7 +5946,8 @@ function restorePiece(p){
     const b = item.bounds, fit = Math.min(S.board.w, S.board.h) * 0.5 / Math.max(b.width, b.height);
     item.scale(fit); item.position = new Point(0,0);
     S.pieces.push({ id:uid(), item, src:p.src, x:p.x, y:p.y, sc:p.sc, rot:p.rot,
-                    ura:(p.ura ? 1 : 0), fill:(p.fill ? 1 : 0), lock:(p.lock ? 1 : 0) });
+                    ura:(p.ura ? 1 : 0), fill:(p.fill ? 1 : 0), lock:(p.lock ? 1 : 0),
+                    ji:(p.ji ? 1 : 0) });
     render();
   };
   /* ⭐ 抜いた板は【数値から作り直す】（絵は控えていない）。
@@ -6358,7 +6384,12 @@ stat(matchMedia('(pointer:coarse)').matches
     if(!img) return null;
     if(typeof fitPiece === 'function') fitPiece(img, 'cover');
     img.fill = 1;                    /* 縁を出さない＝描くときにも版面を覆う */
-    img.lock = 1;                    /* 振っても動かない＝地になる */
+    /* ⭐⭐ 【固定】ではなく【地の印】にする（2026-08-29）。
+       🔴 固定にすると振っても動かない代わりに、木下も触れなくなる
+         ＝窓から見える写真を直せない。⚠️ 掴めないのは板が全面を覆っているからで、
+         固定のせいではない。⭐ 印だけ立てて、振るの側で除ける。 */
+    img.ji = 1;
+    img.lock = 0;
     return img;
   }
   function nkMado(){
@@ -6400,7 +6431,11 @@ stat(matchMedia('(pointer:coarse)').matches
   /* ⭐ つまみを板の状態に合わせる（syncPanel から呼ばれる）
      ⚠️ 触っている最中のつまみは書き換えない（指が弾かれる） */
   function nkSync(){
-    const pc = nkPc(); if(!pc) return;
+    const pc = nkPc();
+    /* ⚠️ 先に呼ぶ＝板を外したときに「中の写真」の欄も一緒に引っ込む
+       （後ろに置くと、板が無いときは通らず出しっぱなしになる） */
+    if(typeof nkJiSync === 'function') nkJiSync();
+    if(!pc) return;
     const nk = pc.nuki;
     [['nkCol','col'],['nkN','n'],['nkR','r'],['nkE','e'],['nkRot','rot'],['nkZ','z']]
       .forEach(([id, k]) => {
@@ -6462,6 +6497,70 @@ stat(matchMedia('(pointer:coarse)').matches
     }); }
   { const b = document.getElementById('preMado');
     if(b) b.onclick = () => applyPreset('mado'); }
+
+  /* ══⭐⭐ 中の写真（窓から見えている写真）を触る ══
+     🔴 板は版面ぜんぶを覆うので、版面のどこを押しても板が掴める＝下の写真は掴めない。
+       だから【掴む】のではなく【つまみ】で触る。
+     ⚠️ 作字SAKUJI の「ダブルクリックで中へ入る」とは別の作り
+        （あちらは板と画像が1つの束、こちらは別々のレイヤー）。 */
+  function nkJiPc(){
+    /* ⭐ 型「窓」で敷いた写真（印つき）。無ければ、板より下でいちばん上の図。 */
+    let p = S.pieces.find(x => x.ji && !x.nuki);
+    if(p) return p;
+    const k = S.pieces.findIndex(x => x.nuki);
+    if(k <= 0) return null;
+    for(let i = k - 1; i >= 0; i--) if(S.pieces[i].src) return S.pieces[i];
+    return null;
+  }
+  /* ⭐ つまみは【版面に対する％】で持つ＝版面の大きさを変えても意味が変わらない */
+  function nkJiSync(){
+    const box = document.getElementById('nkJiBox');
+    const pc = nkPc() ? nkJiPc() : null;
+    if(!box) return;
+    box.style.display = pc ? '' : 'none';       /* 写真が無いときは出さない */
+    if(!pc) return;
+    const B = S.board;
+    const set = (id, v) => { const e = document.getElementById(id);
+      if(!e || document.activeElement === e) return;
+      e.value = Math.round(v);
+      const lab = e.parentElement && e.parentElement.querySelector('.v');
+      if(lab) lab.textContent = e.value; };
+    set('nkJX', (pc.x - B.w/2) / B.w * 100);
+    set('nkJY', (pc.y - B.h/2) / B.h * 100);
+    set('nkJS', pc.sc);
+    set('nkJR', pc.rot);
+  }
+  function jiKnob(id, apply){
+    const el = document.getElementById(id); if(!el) return;
+    let arm = false;
+    const on = () => { arm = true; };
+    el.addEventListener('pointerdown', on);
+    el.addEventListener('keydown', on);
+    el.addEventListener('input', () => {
+      const lab = el.parentElement && el.parentElement.querySelector('.v');
+      if(lab) lab.textContent = el.value;
+      const pc = nkJiPc();
+      if(!pc){ stat('窓の下に写真がありません — 「画像を置く」で置いてください'); return; }
+      if(arm){ pushUndo(); arm = false; }
+      apply(pc, +el.value, S.board);
+      render();
+    });
+    el.addEventListener('pointerup', () => { arm = false; });
+  }
+  jiKnob('nkJX', (pc, v, B) => { pc.x = B.w/2 + B.w * v/100; stat('中の写真をよこへ ' + v + '%'); });
+  jiKnob('nkJY', (pc, v, B) => { pc.y = B.h/2 + B.h * v/100; stat('中の写真をたてへ ' + v + '%'); });
+  jiKnob('nkJS', (pc, v) => { pc.sc = v; stat('中の写真の大きさ ' + v + '%'); });
+  jiKnob('nkJR', (pc, v) => { pc.rot = v; stat('中の写真を回す ' + v + '°'); });
+  { const b = document.getElementById('nkJFit');
+    if(b) b.onclick = () => {
+      const pc = nkJiPc();
+      if(!pc){ stat('窓の下に写真がありません'); return; }
+      pushUndo();
+      if(typeof fitPiece === 'function') fitPiece(pc, 'cover');
+      pc.rot = 0; pc.fill = 1;
+      syncPanel(); render(); stat('中の写真を版面に敷き直した');
+    }; }
+  window.nkJiPc = nkJiPc; window.nkJiSync = nkJiSync;
 
   window.nkAdd = nkAdd; window.nkBuild = nkBuild; window.nkPc = nkPc;
   window.nkPlace = nkPlace; window.nkDel = nkDel;
