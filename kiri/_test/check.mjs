@@ -253,5 +253,29 @@ ok(got.length >= 2 && got.some(x => /png/.test(x.type)) && got.some(x => /svg/.t
   await m.close();
 }
 
+/* ⭐⭐ 隠すのは【効かない2本だけ】── 2026-08-30
+   🔴🔴 つまみの親は【グループそのもの】だった。parentElement を隠したら
+     「粒」と「霧」がまるごと消えた（木下＝「サイドパネルで調整のスライダーがほとんどなくなったね」）。 */
+{
+  const look = () => p.evaluate(() => ({
+    つまみ:[...document.querySelectorAll('#panel input[type=range]')]
+      .filter(r => r.getBoundingClientRect().height > 0).map(r => r.id),
+    グループ:[...document.querySelectorAll('#panel .grp')]
+      .filter(g => g.getBoundingClientRect().height > 0).length }));
+  await p.evaluate(() => { document.querySelectorAll('#s_lay button')[1].click(); });
+  await new Promise(r => setTimeout(r, 900));
+  const drop = await look();
+  await p.evaluate(() => { document.querySelectorAll('#s_lay button')[0].click(); });
+  await new Promise(r => setTimeout(r, 900));
+  const dith = await look();
+  const 消えた = drop.つまみ.filter(x => !dith.つまみ.includes(x));
+  ok(dith.グループ === drop.グループ && dith.グループ >= 9,
+     '⭐⭐ 置き方を変えても【グループは1つも消えない】', 'ディザ ' + dith.グループ + ' / 降らせる ' + drop.グループ + ' 群');
+  ok(消えた.length === 2 && 消えた.includes('r_gap') && 消えた.includes('r_mdot'),
+     '⭐ 隠すのは【効かない2本だけ】（散り・霧の粒）', '消えた: ' + (消えた.join(' ') || 'なし'));
+  ok(dith.つまみ.length >= 14,
+     '⭐ ディザでも【つまみは十分に残っている】', dith.つまみ.length + ' 本');
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
 await b.close(); process.exit(NG);
