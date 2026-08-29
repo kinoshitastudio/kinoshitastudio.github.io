@@ -252,5 +252,42 @@ ok(got.some(x=>/png/.test(x.type)), 'PNG が本当に落ちる', JSON.stringify(
   await m.close();
 }
 
+/* ⭐⭐ 選ぶボタン（seg）を【全部押しても落ちない】＋ 明朝が本当に明朝か ── 2026-08-29
+   🔴🔴 木下＝「元は、フォント変えても変わらない」＝変わらないのではなく【落ちていた】。
+      data-v="900 "（末尾に空白）を +"900 " で数にしていて P.font が 900（数）になり、
+      次に .replace を呼んだ所で道具ごと止まっていた。以後どのつまみも効かない。
+   🔴 明朝は Google Fonts が「画面のどこかで使われるまで」落ちてこないので、
+      盤にしか出ない書体は **一度も読み込まれず、素の serif で描かれていた**。 */
+{
+  const segs = await p.evaluate(() => [...document.querySelectorAll('.seg')].map(s => s.id).filter(Boolean));
+  const dead = [];
+  for(const sid of segs){
+    const n = await p.evaluate(s => document.querySelectorAll('#'+s+' button').length, sid);
+    for(let i = 0; i < n; i++){
+      const before = errs.length;
+      await p.evaluate((s,i) => document.querySelectorAll('#'+s+' button')[i].click(), sid, i);
+      await new Promise(r=>setTimeout(r,220));
+      if(errs.length > before)
+        dead.push(sid+'['+i+'] '+await p.evaluate((s,i)=>document.querySelectorAll('#'+s+' button')[i].textContent, sid, i));
+    }
+  }
+  ok(dead.length === 0, '⭐⭐ 選ぶボタンを【全部押しても落ちない】', dead.length ? dead.join(' / ') : segs.length+' 群ぜんぶ');
+  const kind = await p.evaluate(() => ({ font:typeof P.font, ffont:typeof P.ffont }));
+  ok(kind.font === 'string' && (kind.ffont === 'undefined' || kind.ffont === 'string'),
+     '⭐ 書体の指定が【文字列のまま】（数にならない）', JSON.stringify(kind));
+
+  await p.evaluate(() => { const b2 = [...document.querySelectorAll('#s_font button')].find(x=>/明朝/.test(x.textContent)); if(b2) b2.click(); });
+  await new Promise(r=>setTimeout(r,2500));
+  const f = await p.evaluate(() => {
+    const draw = fam => { const c = document.createElement('canvas'); c.width = 200; c.height = 200;
+      const g = c.getContext('2d'); g.font = '900 150px ' + fam; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('埋', 100, 100); const d = g.getImageData(0,0,200,200).data; let h = 2166136261;
+      for(let i = 3; i < d.length; i += 4){ h ^= d[i]; h = Math.imul(h, 16777619); } return h >>> 0; };
+    return { 明朝:draw('"Zen Old Mincho",serif'), 素:draw('serif'), 読めた:document.fonts.check('900 100px "Zen Old Mincho"', '埋') };
+  });
+  ok(f.読めた && f.明朝 !== f.素,
+     '⭐⭐ 明朝が【本当に明朝】で描かれる（素の serif に落ちていない）', JSON.stringify(f));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
 await b.close(); process.exit(NG);
