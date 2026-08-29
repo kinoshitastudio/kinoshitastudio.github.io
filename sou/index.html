@@ -671,13 +671,24 @@ function buildPreview(){
   if(from >= len || !source()){ PREOK = false; return; }
   const q = RAW.getContext('2d');
   q.setTransform(1,0,0,1,0,0);
-  q.save();
-  q.beginPath();
-  if(axX) q.rect(from, 0, len - from, c.height); else q.rect(0, from, c.width, len - from);
-  q.clip();
   if(axX) q.clearRect(from, 0, len - from, c.height); else q.clearRect(0, from, c.width, len - from);
-  drawSrc(q, c.width, c.height, 0, 0);
-  q.restore();
+  /* ⭐ 下見にも【揺れ】を入れる＝刷る前でも送りのムラが見える。
+     ⚠️ 1本ずつ置くので、揺れが 0 のときは1回で置いて速く済ませる。 */
+  const jit = P.jit / 10, per = Math.max(2, P.jfr);
+  if(!jit){
+    q.save(); q.beginPath();
+    if(axX) q.rect(from, 0, len - from, c.height); else q.rect(0, from, c.width, len - from);
+    q.clip(); drawSrc(q, c.width, c.height, 0, 0); q.restore();
+  }else{
+    for(let x = from; x < len; x++){
+      const d = Math.sin(x / per * Math.PI * 2) * jit;
+      q.save(); q.beginPath();
+      if(axX) q.rect(x, 0, 1, c.height); else q.rect(0, x, c.width, 1);
+      q.clip();
+      drawSrc(q, c.width, c.height, axX ? 0 : d, axX ? d : 0);
+      q.restore();
+    }
+  }
   const dev = DEV, prev = PREV;
   PREV = null;                    /* 下見はここから始まる（本刷りの残像を引き継がない） */
   devRange(from, len);
@@ -693,7 +704,12 @@ function previewSoon(){
 let devT = 0;
 function redevelop(){
   clearTimeout(devT);
-  devT = setTimeout(() => { develop(0); buildPreview(); render(); }, 45);
+  devT = setTimeout(() => {
+    /* ⚠️ 大きい版面では現像に時間が掛かる＝黙って待たせない */
+    const { w, h } = sheet();
+    if(w * h > 3.2e6) stat('現像しています…');
+    develop(0); buildPreview(); render();
+  }, 45);
 }
 
 /* ══ 出す（刷った紙だけ）══ */
@@ -885,18 +901,24 @@ el('b_center').onclick = () => { fitSrc(); syncSize(); clearPreview(); render();
 function syncRun(){
   el('b_run').textContent = RUN ? '止める' : (POS > 0 ? '続きを刷る' : '刷る');
 }
+let ALL = false;
 function tick(){
-  if(!RUN){ rafId = 0; previewSoon(); return; }
+  if(!RUN){ rafId = 0; ALL = false; previewSoon(); return; }
   const { w, h } = sheet(), len = (P.axis === 'x') ? w : h;
-  TAKE.push({ to:Math.min(len, POS + P.speed), x:T.x, y:T.y, z:T.z });
-  scanTo(POS + P.speed);
+  /* ⭐⭐ 「最後まで刷る」は【小刻みに】刷る。
+     🔴 一気に回すと、大きい版面（実測 3832px で 29秒）その間ずっと画面が固まる。 */
+  const step = ALL ? Math.max(P.speed, len / 50) : P.speed;
+  TAKE.push({ to:Math.min(len, POS + step), x:T.x, y:T.y, z:T.z });
+  scanTo(POS + step);
   render();
-  if(POS >= len){ RUN = false; rafId = 0; syncRun(); stat('刷り終わった'); return; }
+  if(ALL) stat('刷っています… ' + Math.round(POS / len * 100) + '%');
+  if(POS >= len){ RUN = false; rafId = 0; syncRun();
+    stat(ALL ? '最後まで刷った' : '刷り終わった'); ALL = false; return; }
   if(PREOK) clearPreview();
   rafId = requestAnimationFrame(tick);
 }
 el('b_run').onclick = () => {
-  if(RUN){ RUN = false; syncRun(); render(); return; }
+  if(RUN){ RUN = false; ALL = false; syncRun(); render(); return; }
   if(!source()){ stat('字を打つか、写真・SVG を入れてください'); return; }
   const { w, h } = sheet(), len = (P.axis === 'x') ? w : h;
   if(POS >= len) wipe();
@@ -906,12 +928,11 @@ el('b_run').onclick = () => {
 el('b_rewind').onclick = () => reset('白紙に戻した');
 el('b_all').onclick = () => {
   if(!source()){ stat('字を打つか、写真・SVG を入れてください'); return; }
-  RUN = false; syncRun();
   const { w, h } = sheet(), len = (P.axis === 'x') ? w : h;
   if(POS >= len) wipe();
   clearPreview();
-  while(POS < len){ TAKE.push({ to:Math.min(len, POS + P.speed), x:T.x, y:T.y, z:T.z }); scanTo(POS + P.speed); }
-  render(); stat('最後まで刷った（手を動かしていないので、まっすぐ刷れている）');
+  RUN = true; ALL = true; syncRun();
+  if(!rafId) rafId = requestAnimationFrame(tick);
 };
 
 /* ══⭐ 刷った手の動きを【もう一度なぞる】＝動画はこれを再生する ══ */
@@ -1013,7 +1034,7 @@ RANGES.forEach(([id, k, out, fmt, conv]) => {
        （先に sync() すると「前の版面」が測れず、刷った所の割合がずれる） */
     if(k === 'long'){ refit(sync); return; }
     sync();
-    if(k === 'jit' || k === 'jfr'){ if(TAKE.length) rescanSoon(); else render(); }
+    if(k === 'jit' || k === 'jfr'){ if(TAKE.length) rescanSoon(); else { clearPreview(); render(); previewSoon(); } }
     else redevelop();
   });
   sync();

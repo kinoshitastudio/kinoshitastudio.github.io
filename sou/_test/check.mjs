@@ -479,5 +479,58 @@ await back();
   ok(out.紙以外 === 0, '⭐ 下見は【出す絵に1画素も入らない】（刷る前の PNG は真っさら）', JSON.stringify(out));
 }
 
+await back();
+/* ⭐⭐ 指の端末で【一通り触っても固まらない・全部効く】── 2026-08-29
+   🔴 「最後まで刷る」を一気に回していて、大きい版面では 29秒ずっと画面が固まっていた。
+   🔴 揺れは刷る前に何も見えなかった（下見に揺れを入れていなかった）。 */
+{
+  const m = await b.newPage(); const merr = [];
+  m.on('pageerror', e => merr.push(e.message));
+  await m.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Version/17.5 Mobile/15E148 Safari/604.1');
+  await m.setViewport({ width:390, height:844, deviceScaleFactor:2, isMobile:true, hasTouch:true });
+  const cdp = await m.target().createCDPSession();
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+  await m.goto(URL_, { waitUntil:'networkidle0' });
+  await new Promise(r => setTimeout(r, 4000));
+  const scr = () => m.evaluate(() => { const c = document.getElementById('cv');
+    const t = document.createElement('canvas'); t.width = 160; t.height = 160;
+    const q = t.getContext('2d'); q.drawImage(c, 0, 0, 160, 160);
+    const d = q.getImageData(0,0,160,160).data; let x = 2166136261;
+    for(let i = 0; i < d.length; i += 4){ x ^= d[i]; x = Math.imul(x, 16777619); } return x >>> 0; });
+  const drag = async (id) => { const bx = await m.evaluate(i => { const e = el(i); e.scrollIntoView({ block:'center' });
+      const r = e.getBoundingClientRect(); return { x:r.x, y:r.y, w:r.width, h:r.height }; }, id);
+    await new Promise(r => setTimeout(r, 300));
+    const y = bx.y + bx.h/2;
+    await m.touchscreen.touchStart(bx.x + bx.w*0.15, y);
+    for(let t = 1; t <= 5; t++){ await m.touchscreen.touchMove(bx.x + bx.w*(0.15 + 0.6*t/5), y); await new Promise(r => setTimeout(r, 90)); }
+    await m.touchscreen.touchEnd(); };
+
+  /* 刷る前：癖のつまみが全部見えるか（揺れを含む） */
+  const dead = [];
+  for(const id of ['r_smear','r_burn','r_grain','r_fiber','r_lamp','r_jit']){
+    const a = await scr(); await drag(id); await new Promise(r => setTimeout(r, 1000));
+    if(await scr() === a) dead.push(id);
+  }
+  ok(dead.length === 0, '⭐⭐ 指の端末：刷る前でも癖のつまみが【全部見える】（揺れも）',
+     dead.length ? '見えない: ' + dead.join(' ') : '6本ぜんぶ');
+
+  /* 「最後まで刷る」の間、画面が固まらないか＝押したあと少し経った時点で【途中】が見えること */
+  const big = await m.evaluate(async () => {
+    const r = el('r_long'); r.value = 2600; r.dispatchEvent(new Event('input', { bubbles:true }));
+    await new Promise(x => setTimeout(x, 600));
+    wipe(); render();
+    const t0 = performance.now();
+    el('b_all').click();
+    await new Promise(x => setTimeout(x, 700));
+    const half = { t:Math.round(performance.now() - t0), pos:Math.round(POS), len:sheet().w, run:RUN };
+    for(let i = 0; i < 60 && RUN; i++) await new Promise(x => setTimeout(x, 300));
+    return { half, done:{ pos:Math.round(POS), len:sheet().w }, all:Math.round(performance.now() - t0) };
+  });
+  ok(big.half.run && big.half.pos > 0 && big.half.pos < big.half.len && big.done.pos >= big.done.len,
+     '⭐⭐ 指の端末：「最後まで刷る」が【小刻み】＝押している間も途中が見える', JSON.stringify(big));
+  ok(merr.length === 0, '⭐ 指の端末：一通り触ってもエラーが出ない', merr.join(' / '));
+  await m.close();
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
 await b.close(); process.exit(NG);
