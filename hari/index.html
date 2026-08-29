@@ -4086,10 +4086,15 @@ function stateNow(){
   return JSON.stringify({
     board: S.board, sel: S.sel,
     lines: S.lines,
-    /* ⚠️ ura（どちらの面か）・hide（隠す）・z（重なり）が抜けていた
-       ＝⌘Z で【面を移したのが戻らない／隠したのが戻らない】。控えるものは、戻したいものと同じにする。 */
+    /* ⚠️⚠️ **控えるものは、戻したいものと同じにする。** ここは3回落とし穴になっている ──
+       ura（どちらの面か）・hide（隠す）・z（重なり）が抜けていて
+       ⌘Z で【面を移したのが戻らない／隠したのが戻らない】。
+       さらに 2026-08-29、抜いた板（nuki）が抜けていて
+       ⌘Z が【窓のつまみに効かない】（位置だけ戻って窓は変わらないまま）だった。
+       ⭐ 図に新しい種類を足したら、必ずここも足す。 */
     pieces: S.pieces.map(p => ({ id:p.id, x:p.x, y:p.y, sc:p.sc, rot:p.rot, lock:p.lock,
-                                 ura:p.ura, hide:p.hide, z:p.z })),
+                                 ura:p.ura, hide:p.hide, z:p.z,
+                                 nuki:p.nuki ? JSON.parse(JSON.stringify(p.nuki)) : null })),
   });
 }
 function pushUndo(){
@@ -4115,12 +4120,26 @@ function applyStateStr(j){
   S.lines = o.lines;
   /* ⚠️ 図は実体（item）を持っているので、置き場所だけ書き戻す（作り直さない） */
   o.pieces.forEach(v => { const pc = S.pieces.find(x => x.id === v.id);
-    if(pc) Object.assign(pc, { x:v.x, y:v.y, sc:v.sc, rot:v.rot, lock:v.lock,
-                               ura:v.ura, hide:v.hide, z:v.z }); });
+    if(!pc) return;
+    Object.assign(pc, { x:v.x, y:v.y, sc:v.sc, rot:v.rot, lock:v.lock,
+                        ura:v.ura, hide:v.hide, z:v.z });
+    /* ⭐ 抜いた板は【数値から絵を作り直す】。⚠️ 数値を戻すだけでは1画素も変わらない */
+    if(v.nuki && pc.nuki){
+      pc.nuki = JSON.parse(JSON.stringify(v.nuki));
+      if(typeof nkBuild === 'function') nkBuild(pc);
+    } });
   /* ⭐ 控えに有るのに、いま版面に居ない＝【消した図】。置き場から戻す。
      ⚠️ 並びは z で決まるので、戻す順は気にしなくていい。 */
   o.pieces.forEach(v => {
     if(S.pieces.some(x => x.id === v.id)) return;
+    /* ⭐ 抜いた板は置き場が要らない＝【数値から作り直せる】。
+       ⚠️ これが無いと「板を外す」を ⌘Z で戻せない（実体を捨てているため）。 */
+    if(v.nuki){
+      const pc2 = { id:v.id, item:null, src:null, nuki:JSON.parse(JSON.stringify(v.nuki)),
+                    x:v.x, y:v.y, sc:100, rot:0, lock:v.lock, ura:v.ura, hide:v.hide, z:v.z };
+      if(typeof nkBuild === 'function') nkBuild(pc2);
+      S.pieces.push(pc2); return;
+    }
     const bin = PCBIN.get(v.id);
     if(!bin) return;
     Object.assign(bin, { x:v.x, y:v.y, sc:v.sc, rot:v.rot, lock:v.lock,
