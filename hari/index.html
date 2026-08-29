@@ -809,6 +809,18 @@ input[type=color]{ border-radius:8px; height:30px }
       <input type="range" id="tSize" min="8" max="180" value="46"><span class="v" id="vSize">46</span></div>
     <div class="row"><label>字間</label>
       <input type="range" id="tTrack" min="-20" max="80" value="2"><span class="v" id="vTrack">2</span></div>
+    <div class="row"><label>縁の本数</label>
+      <input type="range" id="tEdgeN" min="0" max="12" value="0"><span class="v" id="vEdgeN">0</span></div>
+    <div class="row"><label>縁の間隔</label>
+      <input type="range" id="tEdgeGap" min="1" max="80" value="10"><span class="v" id="vEdgeGap">10</span></div>
+    <div class="row"><label>縁の太さ</label>
+      <input type="range" id="tEdgeW" min="1" max="40" value="2"><span class="v" id="vEdgeW">2</span></div>
+    <div class="row"><label>縁の色</label>
+      <input type="color" id="tEdgeCol" value="#ffffff"></div>
+    <div class="note">⭐⭐ <b>字の形のまま外へ広がる</b>縁取り（Paula Scher の WAR! / LOVE! の作り）。
+      本数を上げるほど外へ増える<br>
+      ⭐ <b>間</b>は版面の地の色で抜いている＝<b>地の色を変えると縁の間も変わる</b><br>
+      ⚠️ 0 本なら1画素も変わらない。⚠️ 縁は掴めない（字を掴めば一緒に動く）</div>
     <div class="row"><label>角で開ける</label>
       <input type="range" id="tCgap" min="0" max="150" value="0"><span class="v" id="vCgap">0</span></div>
     <div class="note">⭐ <b>角で開ける</b>＝経路の<b>曲がり角だけ</b>に隙間を足す。
@@ -1239,6 +1251,8 @@ function newLine(text){
     /* ⭐ upright＝字を立てたまま置く（0＝経路に沿う・これまでの絵） */
     upright:0,
     size:46, track:2, start:0, off:0, dir:1, side:0, col:'#111111',
+    /* ⭐⭐ 縁を何重にも（2026-08-29）。0 本なら1画素も変わらない */
+    edgeN:0, edgeGap:10, edgeW:2, edgeCol:'#ffffff',
     wx:100, wy:100,                          // ⭐ 長体・平体（字の幅と高さを別々に伸ばす）
     cell:{ ...CELL_DEF },                    // ⭐ 枡（文字の地）。none なら何も敷かない
   };
@@ -1336,6 +1350,39 @@ function charStyle(ch, L){
            col : o.col || L.col,
            wt  : o.wt  || L.wt,
            wx  : base.wx, wy : base.wy };
+}
+/* ══⭐⭐ 縁を何重にも巻く ── 2026-08-29 ══
+   木下＝「あるテキストの周りにこのように縁に線をつけることも可能か？」
+     ＋参考＝Paula Scher / The Public Theater（WAR! / LOVE! の何重もの白い縁取り）。
+   ⭐⭐ 参考の絵の芯は【字の形のまま外へ広がる】こと。
+     簾SUDARE[マス] にも縁取りはあるが、あちらは**四角い版の中を塗り分ける**道具なので
+     縁が版の外に出られず、広げると四角で切れる。ここは字そのものを太らせるので切れない。
+   ⭐ 作り＝字を【線だけ】で複製して、太い順に奥から重ねる。
+     線の色と地の色を交互に置くと、間が空いて「線が何重にも」に見える。
+     ＝ 太さは「間隔 × 何本目」で決まる＝本数と間隔の2つしか持たない（1本ずつの値を持たない）。
+   ⚠️ 複製は insert:false で作る（clone は黙って同じ親に挿さる＝作品に混ざる）。
+   ⚠️ 1字ずつでなく【層ごとに全字】を置く＝隣の字の縁が上に乗って断裂しない。 */
+function addEdges(items, L, first){
+  const n = Math.max(0, L.edgeN|0);
+  if(!n || !items.length || !first || !first.parent) return;
+  const g = Math.max(0.5, L.edgeGap || 10), t = Math.max(0.2, L.edgeW || 2);
+  const cl = L.edgeCol || '#ffffff';
+  /* ⭐ 間は【版面の地の色】で抜く＝地を変えれば間も一緒に変わる（2つの真実を作らない）。
+     ⚠️ 地はグラデも持てるので、最初の色を代表にする（S.board.bg は持っていない）。 */
+  let cb = '#ffffff';
+  try{ const st = stopsOf(); if(st && st.length) cb = st[0].c || cb; }catch(_){}
+  for(let k = n*2; k >= 1; k--){
+    const w = t + g*k;
+    const col = (k % 2) ? cl : cb;
+    items.forEach(it => {
+      let e; try{ e = it.clone({ insert:false }); }catch(_){ return; }
+      e.fillColor = null;
+      e.strokeColor = col; e.strokeWidth = w;
+      e.strokeJoin = 'round'; e.strokeCap = 'round';
+      e.data = Object.assign({}, e.data, { edge:true });   /* ⚠️ 掴む対象にしない目印 */
+      e.insertBelow(first);
+    });
+  }
 }
 function makeChar(ch, L, extraCol){
   const st = charStyle(ch, L);
@@ -1691,6 +1738,9 @@ const LAYOUTS = {
       /* ⭐ 集め終わってから、行ぜんぶを1本のグラデで塗る */
       paintGrad(cellItems, Object.assign({}, GRAD_DEF, (L.cell||{}).grad || {}), boundsOf(cellItems) || new Rectangle(0,0,1,1));
       paintGrad(charItems, Object.assign({}, GRAD_DEF, L.grad || {}), boundsOf(charItems) || new Rectangle(0,0,1,1));
+      /* ⭐ 縁は【字を塗り終えてから】字の下へ入れる（グラデが縁にも掛かると別物になる）
+         ⚠️ 置き方（巡る／張る／並ぶ／札）で描く所が分かれている＝4か所すべてで呼ぶ */
+      addEdges(charItems, L, charItems[0]);
       if(S.showPath || (sel() === L)){
         // 経路そのものは【道具のしるし】＝別の層。書き出しには入らない
         const g = path.clone({ insert:false });
@@ -1797,6 +1847,7 @@ const LAYOUTS = {
       }
       paintGrad(cellItems, Object.assign({}, GRAD_DEF, (L.cell||{}).grad || {}), boundsOf(cellItems) || new Rectangle(0,0,1,1));
       paintGrad(charItems, Object.assign({}, GRAD_DEF, L.grad || {}), boundsOf(charItems) || new Rectangle(0,0,1,1));
+      addEdges(charItems, L, charItems[0]);
       /* 箱のしるし＝道具の層（書き出しには入らない） */
       if(S.showPath || sel() === L){
         const g = hp.clone({ insert:false });
@@ -1875,6 +1926,7 @@ const LAYOUTS = {
         into.addChild(g2);
       });
       paintGrad(charItems, Object.assign({}, GRAD_DEF, L.grad || {}), boundsOf(charItems) || new Rectangle(0,0,1,1));
+      addEdges(charItems, L, charItems[0]);
     }
   },
   narabu:{
@@ -1963,6 +2015,7 @@ const LAYOUTS = {
       }
       paintGrad(cellItems, Object.assign({}, GRAD_DEF, (L.cell||{}).grad || {}), boundsOf(cellItems) || new Rectangle(0,0,1,1));
       paintGrad(charItems, Object.assign({}, GRAD_DEF, L.grad || {}), boundsOf(charItems) || new Rectangle(0,0,1,1));
+      addEdges(charItems, L, charItems[0]);
 
       /* 箱のしるし ── 折り返すので【面】で見せる。線1本だと、どの幅で折り返すのか分からない */
       if(S.showPath || sel() === L){
@@ -4210,6 +4263,9 @@ function syncPanel(){
   $('tText').value = L.text;
   $('tFam').value = L.fam; $('tWt').value = L.wt;
   setRange('tSize', L.size); setRange('tTrack', L.track); setRange('tCgap', L.cgap || 0);
+  setRange('tEdgeN', L.edgeN || 0); setRange('tEdgeGap', L.edgeGap || 10);
+  setRange('tEdgeW', L.edgeW || 2);
+  if($('tEdgeCol')) $('tEdgeCol').value = L.edgeCol || '#ffffff';
   setRange('tStart', L.start); setRange('tOff', L.off);
   setRange('tWx', L.wx ?? 100); setRange('tWy', L.wy ?? 100);
   /* ⭐ 字ごとのずらし。⚠️ 古い作品は wsh を持たない＝ぜんぶ0（これまでの絵） */
@@ -4358,6 +4414,8 @@ const BIND = {
   tText:['text', v=>v], tFam:['fam', v=>v], tWt:['wt', v=>v],
   tSize:['size', Number], tTrack:['track', Number], tCgap:['cgap', Number], tStart:['start', Number], tOff:['off', Number],
   tCol:['col', v=>v], tWx:['wx', Number], tWy:['wy', Number],
+  tEdgeN:['edgeN', Number], tEdgeGap:['edgeGap', Number],
+  tEdgeW:['edgeW', Number], tEdgeCol:['edgeCol', v=>v],
   tLead:['lead', Number],                    // ⭐ 並ぶの行送り
 };
 Object.entries(BIND).forEach(([id,[key,cast]]) => {
