@@ -798,7 +798,9 @@
         <b>そのまま</b>入れる（引いた線と同じものになる）<br>
         置いたあとは <b>彫る／刻む／粒にする</b> がそのまま効く<br>
         ⚠️ 渡るのは<b>形だけ</b>（SAKUJI の色・グラデは入らない。色はこちらで付ける）<br>
-        ⚠️ 塗りの<b>閉じた形</b>は<b>縁取りが立体</b>になる（塗り潰しの塊にはならない）</div>
+        ⚠️ 塗りの<b>閉じた形</b>は<b>縁取りが立体</b>になる（塗り潰しの塊にはならない）<br>
+        ⭐ <b>パスが入っていない SVG</b>（文字・絵文字だけで出来たものなど）は
+        <b>絵として読んで輪郭を拾う</b>＝そのまま置ける</div>
       <input type="file" id="svgFile" accept=".svg,image/svg+xml" hidden>
       <div class="row"><label>大きさ<i>SIZE</i></label><input type="range" data-p="svgSize" min="10" max="95" step="1" value="62"><span class="val"></span></div>
       <div class="row"><label>左右<i>X</i></label><input type="range" data-p="svgX" min="-100" max="100" step="1" value="0"><span class="val"></span></div>
@@ -2499,6 +2501,71 @@ function placeText(){
    ⚠️ 塗りの閉じた形は【縁取りが立体】になる（塗り潰しの塊にはならない）＝字と同じ。 */
 let svgSrc = null;             // 読み込んだ SVG の中身（つまみを動かしたら引き直すため）
 
+/* ══⭐⭐ パスが1本も入っていない SVG は【絵として読む】（2026-08-30）══
+   🔴 木下＝「svg をおけるはずだが、この svg はおくことができない」（fu.svg）。
+      中を見たら <path> が 0個・<text>（絵文字）が 3136個だった。
+      SVG の入口は path/rect/circle… しか見ていないので、拾えるものが 1本も無かった。
+      ＝門番ではなく【入口がそこに無かった】。
+   ⭐ 直し方は安い方＝この道具がすでに持っている輪郭追跡（traceBitmap＝字を置くのと同じもの）へ
+      合流させる。SVG を絵として焼いて、地の色から離れた画素を形とみなして輪郭を追う。
+   ⚠️ だから <text>・絵文字・グラデ・フィルタなど「パスでないもの」もぜんぶ置ける。
+   ⚠️ パスが有る SVG は今までどおりパスから拾う（1画素も変わらない）。 */
+let svgRaster = null, svgRasterBusy = 0;
+
+function rasterizeSVG(text, cb){
+  let url = '';
+  try{ url = URL.createObjectURL(new Blob([text], { type:'image/svg+xml;charset=utf-8' })); }
+  catch(_){ cb([]); return; }
+  const img = new Image();
+  img.onerror = () => { URL.revokeObjectURL(url); cb([]); };
+  img.onload = () => {
+    const L = 900;
+    const iw = img.naturalWidth || img.width || L, ih = img.naturalHeight || img.height || L;
+    const k = Math.min(L / iw, L / ih);
+    const W = Math.max(8, Math.round(iw * k)), H = Math.max(8, Math.round(ih * k));
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const x = c.getContext('2d', { willReadFrequently:true });
+    x.drawImage(img, 0, 0, W, H);
+    URL.revokeObjectURL(url);
+    let im;
+    try{ im = x.getImageData(0, 0, W, H); }catch(_){ cb([]); return; }
+    const d = im.data;
+    /* ⭐ 地の色＝四隅の平均。地から離れた画素だけを【形】とする。
+       ⚠️ 明るい地でも暗い地でも同じ式で通る（どちらが形かを決め打ちしない）。
+       ⚠️ 四隅が透けているなら地の板は無い＝そのまま alpha で見る。 */
+    const corner = (cx, cy) => {
+      let r=0,g2=0,b=0,a=0,n=0;
+      for(let y=cy;y<cy+8;y++) for(let X=cx;X<cx+8;X++){
+        const p=((y*W)+X)*4; r+=d[p]; g2+=d[p+1]; b+=d[p+2]; a+=d[p+3]; n++;
+      }
+      return [r/n, g2/n, b/n, a/n];
+    };
+    const cs = [corner(0,0), corner(W-8,0), corner(0,H-8), corner(W-8,H-8)];
+    const solid = cs.every(q => q[3] > 200);
+    const bg = [0,1,2].map(i => cs.reduce((s,q)=>s+q[i],0)/4);
+    const mask = new ImageData(W, H);
+    const md = mask.data;
+    for(let p = 0; p < d.length; p += 4){
+      let on;
+      if(!solid) on = d[p+3] > 128;
+      else{
+        const dr = d[p]-bg[0], dg = d[p+1]-bg[1], db = d[p+2]-bg[2];
+        on = (dr*dr + dg*dg + db*db) > 60*60;
+      }
+      md[p+3] = on ? 255 : 0;
+    }
+    /* ⭐ 輪郭追跡は【字を置く】とまったく同じもの */
+    let cont = traceBitmap(mask, W, H, 24);
+    /* 🔴 モザイクのような絵は輪郭が数千本になる＝そのまま置くと重い。長い順に上限で切る */
+    const CAP = 600;
+    if(cont.length > CAP) cont = cont.sort((a,b)=>b.length-a.length).slice(0, CAP);
+    rasterizeSVG.capped = cont.length;
+    /* 2画素ごとに間引く（このあと DETAIL でもう一度間引かれる） */
+    cb(cont.map(pts => pts.filter((_, i) => (i & 1) === 0)).filter(p => p.length > 2));
+  };
+  img.src = url;
+}
+
 /* SVG の中の形をぜんぶ拾って、点の列にする。
    ⭐ 形ごとに getPointAtLength で長さに沿って刻む＝曲線もそのまま点になる。
    ⚠️ getTotalLength / getPointAtLength は【DOM に入っていないと動かない】ので、
@@ -2575,8 +2642,24 @@ function placeSVG(){
   }
 
   /* ⭐ 刻む細かさは【SVG の実寸】で決まるので、まず粗く拾って大きさを知る */
-  const rough = svgToPolys(svgSrc, 2);
-  if(!rough.length){ setSvgInfo('線が見つからなかった'); rebuildAll(); saveLocal(); return; }
+  let rough = svgToPolys(svgSrc, 2), fromRaster = false;
+  /* ⭐⭐ パスが1本も無い SVG（<text>・絵文字だけで出来ているものなど）は【絵として読む】。
+     ⚠️ 焼くのは1回だけ＝つまみを動かすたびに焼き直さない（覚えておく）。 */
+  if(!rough.length){
+    if(svgRaster){ rough = svgRaster; fromRaster = true; }
+    else{
+      if(!svgRasterBusy){
+        svgRasterBusy = 1;
+        setSvgInfo('パスが入っていないので、絵として読んでいる…');
+        rasterizeSVG(svgSrc, polys => {
+          svgRasterBusy = 0; svgRaster = polys;
+          if(!polys.length){ setSvgInfo('線も形も見つからなかった'); rebuildAll(); saveLocal(); return; }
+          placeSVG();
+        });
+      }
+      return;
+    }
+  }
   let x0 = 1e18, y0 = 1e18, x1 = -1e18, y1 = -1e18;
   for(const poly of rough) for(const [X,Y] of poly){
     if(X<x0) x0=X; if(X>x1) x1=X; if(Y<y0) y0=Y; if(Y>y1) y1=Y;
@@ -2591,7 +2674,8 @@ function placeSVG(){
 
   /* ⭐ 本番は【世界での間隔】から逆算して刻む＝DETAIL の手ざわりが字と揃う */
   const gapWorld = Math.max(1, P.svgDetail) * typeState.per * 1.6;
-  const polys = svgToPolys(svgSrc, Math.max(0.5, gapWorld / k));
+  /* ⚠️ 絵として読んだ側は焼き直せない（画素は1枚しか無い）＝間引きは下の gapWorld でやる */
+  const polys = fromRaster ? rough : svgToPolys(svgSrc, Math.max(0.5, gapWorld / k));
   let added = 0, npts = 0;
   polys.forEach(poly => {
     const pts = [];
@@ -2609,7 +2693,8 @@ function placeSVG(){
   });
   const dropped = svgToPolys.dropped || 0;
   setSvgInfo(added ? `${added} 本・${npts} 点を置いた`
-                     + (dropped ? `（地の板 ${dropped} 枚は捨てた）` : '')
+                     + (fromRaster ? '（パスが無いので絵として読んだ）'
+                                   : (dropped ? `（地の板 ${dropped} 枚は捨てた）` : ''))
                    : '短すぎて置けなかった');
   rebuildAll();
   saveLocal();
@@ -4344,12 +4429,13 @@ document.getElementById('svgFile').addEventListener('change', e => {
   e.target.value = '';
   if(!f) return;
   const rd = new FileReader();
-  rd.onload = () => { svgSrc = String(rd.result || ''); setSvgInfo('読んでいる…'); placeSVG(); };
+  rd.onload = () => { svgSrc = String(rd.result || ''); svgRaster = null;   /* ⚠️ 別の SVG に替えたら焼いた絵は捨てる */
+    setSvgInfo('読んでいる…'); placeSVG(); };
   rd.onerror = () => setSvgInfo('🔴 読めなかった');
   rd.readAsText(f);
 });
 document.getElementById('btn-unsvg').onclick = () => {
-  clearSvgStrokes(); svgSrc = null; setSvgInfo('まだ読んでいない'); rebuildAll(); saveLocal();
+  clearSvgStrokes(); svgSrc = null; svgRaster = null; setSvgInfo('まだ読んでいない'); rebuildAll(); saveLocal();
 };
 
 document.getElementById('btn-undo').onclick = () => {
