@@ -449,7 +449,9 @@ let MAPKEY = '';
    ⚠️ 比を1か所（mapScale）に持つ＝つまみの意味が2つに割れない。 */
 function mapSize(){
   const { w, h } = sheet();
-  if(!COARSE) return { w, h, k:1 };
+  /* 🔴 ディザは【升目の大きさが質感そのもの】＝小さい紙で焼くと別の肌になる。
+     画素で直に書くようにして速くなったので、粗くしない（触っている間も同じ絵）。 */
+  if(!COARSE || P.lay === 'dither') return { w, h, k:1 };
   /* ⚠️ 小さいほど速いが、小さすぎると散り方の見当がつかない。260 が折り合い（実測） */
   const k = Math.min(1, 260 / Math.max(w, h));
   return { w:Math.max(16, Math.round(w*k)), h:Math.max(16, Math.round(h*k)), k };
@@ -703,28 +705,46 @@ function paint(ctx, W, H, transparent){
   return D;
 }
 
-/* ⭐ 画素に置くときは【画素をそのまま置く】＝丸を何十万個描くより速くて、参考と同じ肌になる */
+/* ⭐⭐ 画素に置くときは【画素をそのまま書く】。
+   🔴 四角を何十万個 fillRect すると 816ms 掛かる＝つまみが追いてこない。
+     画素の板に直に書けば 1/5 以下になる（＝触っている間に粗くする必要がなくなる）。
+   ⭐⭐ 粗くしないことが大事：ディザは升目の大きさが質感そのものなので、
+     触っている間だけ小さい紙で焼くと**別の肌**が出て、離した瞬間に変わる
+     （2026-08-30 木下＝「一度違う感じが出てそのあと変わるので ????となる」）。 */
 function paintDither(ctx, W, H, transparent){
   const D = ditherCells();
-  const k = W / D.w, px = D.px;
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.clearRect(0, 0, W, H);
-  if(!transparent){ ctx.fillStyle = P.bg; ctx.fillRect(0, 0, W, H); }
-  ctx.fillStyle = P.ink;
-  /* 横に続く升目はまとめて1つの四角にする（数が1/3以下になる） */
+  const px = D.px, w = D.w, h = D.h;
+  const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = h;
+  const tq = tmp.getContext('2d');
+  const img = tq.createImageData(w, h);
+  /* ⭐ 画素は【32bit でまとめて】書く（1画素ずつ4回書くより速い。実測 329→◯ms） */
+  const u32 = new Uint32Array(img.data.buffer);
+  const hx = c => [parseInt(c.slice(1,3),16), parseInt(c.slice(3,5),16), parseInt(c.slice(5,7),16)];
+  const ink = hx(P.ink), bg = hx(P.bg);
+  /* ⚠️ 並びは端末による＝little endian は ABGR。両方に効く形で作る */
+  const pack = (r, g2, b2, a2) => {
+    const t = new Uint8Array(4); t[0] = r; t[1] = g2; t[2] = b2; t[3] = a2;
+    return new Uint32Array(t.buffer)[0];
+  };
+  const INK = pack(ink[0], ink[1], ink[2], 255);
+  const BG  = pack(bg[0],  bg[1],  bg[2],  transparent ? 0 : 255);
+  u32.fill(BG);
   let n = 0;
   for(let gy = 0; gy < D.gh; gy++){
-    let gx = 0;
-    while(gx < D.gw){
-      if(!D.on[gy*D.gw+gx]){ gx++; continue; }
-      let g2 = gx; while(g2 < D.gw && D.on[gy*D.gw+g2]) g2++;
-      const x0 = gx*px*k, x1 = Math.min(D.w, g2*px)*k;
-      const y0 = gy*px*k, y1 = Math.min(D.h, (gy+1)*px)*k;
-      ctx.fillRect(x0, y0, Math.max(k*0.6, x1-x0), Math.max(k*0.6, y1-y0));
-      n += g2 - gx; gx = g2;
+    const y0 = gy*px, y1 = Math.min(h, y0+px);
+    for(let gx = 0; gx < D.gw; gx++){
+      if(!D.on[gy*D.gw+gx]) continue;
+      n++;
+      const x0 = gx*px, x1 = Math.min(w, x0+px);
+      if(px === 1){ u32[y0*w + x0] = INK; continue; }
+      for(let y = y0; y < y1; y++) u32.fill(INK, y*w + x0, y*w + x1);
     }
   }
-  return { n, w:D.w, h:D.h };
+  tq.putImageData(img, 0, 0);
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(tmp, 0, 0, W, H);
+  return { n, w, h };
 }
 
 /* ══⭐⭐ 触っている間は粗く（2026-08-28 木下「モバイルスライダーめちゃくちゃ重い」）══
@@ -750,7 +770,8 @@ function render(){
   /* ⭐⭐ 触っている間は【盤そのものも小さく描く】＝粒を並べる手間も面積の比だけ減る。
      ⚠️ 見え方は変わらない（見る側の倍率で戻す）。離したら本番の大きさで描き直す。 */
   const sh = sheet(), m = mapSize();
-  const w = COARSE ? m.w : sh.w, h = COARSE ? m.h : sh.h;
+  const w = (COARSE && P.lay !== 'dither') ? m.w : sh.w,
+        h = (COARSE && P.lay !== 'dither') ? m.h : sh.h;
   if(cv.width !== w || cv.height !== h){ cv.width = w; cv.height = h; }
   const t0 = performance.now();
   const D = paint(g, w, h, P.nobg);
@@ -924,7 +945,20 @@ function seg(id, k, after){
   });
 }
 seg('s_read', 'read', () => { el('r_gam').parentElement.classList.toggle('hide', P.read === 'shape'); });
-seg('s_lay', 'lay');
+/* ⭐ 置き方で【効かないつまみは隠す】＝「触れるのに効かない」を作らない。
+   実測：ディザでは 散り（近すぎる粒を捨てる）と 霧の粒 は1画素も効かない（降らせる専用）。 */
+function layUI(){
+  const drop = (P.lay !== 'dither');
+  const g = el('r_gap'), m = el('r_mdot');
+  if(g) g.parentElement.classList.toggle('hide', !drop);
+  if(m) m.parentElement.classList.toggle('hide', !drop);
+  document.querySelectorAll('.row').forEach(r => {
+    const t = r.textContent;
+    if(/散り（近すぎる粒を捨てる）/.test(t) || /霧の粒/.test(t)) r.classList.toggle('hide', !drop);
+  });
+}
+seg('s_lay', 'lay', layUI);
+layUI();
 seg('s_inv', 'inv');
 seg('s_ratio', 'ratio');
 /* ⚠️ 動かす・動画の並びは【絵の設定ではない】＝P に数字として入れない（NaN が控えに乗る） */
