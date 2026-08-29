@@ -316,18 +316,22 @@
     <input type="range" id="r_to" min="8" max="240" step="1" value="96">
     <div class="seg" id="s_sheet">
       <button data-v="grid" class="on">粗さだけ</button>
+      <button data-v="lev">色数だけ</button>
       <button data-v="2d">粗さ × 色数</button>
     </div>
     <div id="lev2UI" class="hide">
-      <div class="row"><span class="n">色数（上の段）</span><output id="o_lf">2</output></div>
-      <input type="range" id="r_lf" min="2" max="8" step="1" value="2">
-      <div class="row"><span class="n">色数（下の段）</span><output id="o_lt">5</output></div>
-      <input type="range" id="r_lt" min="2" max="8" step="1" value="5">
+      <div class="row"><span class="n">色数（はじめ）</span><output id="o_lf">2</output></div>
+      <input type="range" id="r_lf" min="2" max="16" step="1" value="2">
+      <div class="row"><span class="n">色数（おわり）</span><output id="o_lt">5</output></div>
+      <input type="range" id="r_lt" min="2" max="16" step="1" value="5">
     </div>
     <button class="btn" id="b_sheet">段の表を焼く</button>
     <div class="note">⭐ 同じ写真を<b>粗さの順に並べて1枚</b>にする。<b>どこで何か分からなくなるか</b>が見える<br>
+      ⭐⭐ <b>色数だけ</b>＝升目は<b>そのまま</b>で<b>ビットだけ</b>を並べる（2色→…→何色）<br>
       ⭐⭐ <b>粗さ×色数</b>＝<b>横が粗さ・縦が色数</b>。ビット感は色数で決まるので、こちらが本命<br>
-      ⚠️ 焼くと盤がその表に変わる（<b>1枚に戻す</b>で戻る）</div>
+      ⚠️ 焼くと盤がその表に変わる（<b>1枚に戻す</b>で戻る）<br>
+      🔴 <b>灰色一色に潰れる</b>ときは<b>コントラスト</b>を上げる。写真の濃さが真ん中に寄っていると、
+      色数を増やしても<b>真ん中の段しか使われない</b>（＝黒も白も出てこない）</div>
     <button class="btn" id="b_one">1枚に戻す</button>
   </div>
 
@@ -519,25 +523,33 @@ function paintSheet(g, W, H){
   const tmp = document.createElement('canvas');
   const tg = tmp.getContext('2d');
   let total = 0;
+  /* ⭐ 何を使って焼いたかを控える。⚠️ 画面も試験も【この記録】を見る＝式を2度書かない */
+  paintSheet.used = [];
   for(let k = 0; k < n; k++){
     const ix = k % cols, iy = (k / cols) | 0;
     /* ⭐ 粗い → 細かい。1枚しか無いときは「いちばん粗い」を出す（端で止める）
-       ⭐⭐ 表の並べ方は2つ：
+       ⭐⭐ 表の並べ方は3つ：
          ・粗さだけ ＝ 左上から右下へ、だんだん細かく（参考の1枚目の並び）
-         ・粗さ×色数 ＝ 【横が粗さ・縦が色数】＝2つのつまみを1枚で見比べる
-           （ビット感は色数で決まるので、粗さだけ並べても半分しか見えない） */
+         ・色数だけ ＝ 升目はそのままで【ビットだけ】を並べる（2026-08-30 木下
+           「一覧でビット違いも出せるとなお嬉しい」）。ビット感の正体は色数なので、
+           粗さを止めて色数だけ動かすと【何色から絵に見えるか】がまっすぐ見える。
+         ・粗さ×色数 ＝ 【横が粗さ・縦が色数】＝2つのつまみを1枚で見比べる */
     const tx = cols === 1 ? 0 : ix / (cols - 1);
     const t  = n === 1 ? 0 : k / (n - 1);
-    const grid = Math.round(P.from + (P.to - P.from) * (P.sheet === '2d' ? tx : t));
+    const grid = P.sheet === 'lev' ? Math.max(2, Math.round(P.grid))
+               : Math.round(P.from + (P.to - P.from) * (P.sheet === '2d' ? tx : t));
     let lev = P.lev;
     if(P.sheet === '2d'){
       const ty = rows === 1 ? 0 : iy / (rows - 1);
       lev = Math.round(P.levFrom + (P.levTo - P.levFrom) * ty);
+    }else if(P.sheet === 'lev'){
+      lev = Math.round(P.levFrom + (P.levTo - P.levFrom) * t);
     }
     /* ⚠️ 1枚ぶんは【版面の比のまま】焼く。表の升と比が違うと写真が潰れる
        （表の大きさは sheetFrame で「版面×列×段」にしてあるので、ここは割り切れる）。 */
     tmp.width = Math.max(2, Math.round(tw)); tmp.height = Math.max(2, Math.round(th));
     tg.clearRect(0, 0, tmp.width, tmp.height);
+    paintSheet.used.push({ grid, lev:Math.max(2, Math.round(lev)) });
     total += paint(tg, tmp.width, tmp.height, grid, lev);
     g.drawImage(tmp, (k % cols) * tw, ((k / cols) | 0) * th, tw, th);
   }
@@ -567,9 +579,13 @@ function render(){
   const n = SHEET ? paintSheet(cx, cv.width, cv.height)
                   : paint(cx, cv.width, cv.height, Math.max(2, Math.round(P.grid)));
   const s = sample(Math.max(2, Math.round(P.grid)));
-  el('meter').textContent =
-    (SHEET ? `段の表 ${P.cols}×${P.rows}（${P.from}→${P.to} 升）\n` : `${s.cols} × ${s.rows} 升\n`)
-    + `色数 ${P.lev}／マス ${n.toLocaleString()} 個\n`
+  /* 🔴 表のときに「色数 3」と1つだけ出すのは嘘になる（並んでいるのは何段もある）＝並べた幅を出す */
+  const head = !SHEET ? `${s.cols} × ${s.rows} 升\n色数 ${P.lev}`
+    : P.sheet === 'lev' ? `段の表 ${P.cols}×${P.rows}（${Math.max(2,Math.round(P.grid))} 升のまま）\n色数 ${P.levFrom}→${P.levTo}`
+    : P.sheet === '2d'  ? `段の表 ${P.cols}×${P.rows}（横 ${P.from}→${P.to} 升）\n色数 ${P.levFrom}→${P.levTo}（縦）`
+    :                     `段の表 ${P.cols}×${P.rows}（${P.from}→${P.to} 升）\n色数 ${P.lev}`;
+  el('meter').textContent = head
+    + `／マス ${n.toLocaleString()} 個\n`
     + `版面 ${Math.round(f.w)} × ${Math.round(f.h)}`;
   fitView();
 }
@@ -686,7 +702,9 @@ function seg(id, k, after){
 seg('s_mode', 'mode', () => { el('duoUI').classList.toggle('hide', P.mode !== 'duo'); });
 seg('s_shape', 'shape');
 seg('s_ratio', 'ratio');
-seg('s_sheet', 'sheet', () => { el('lev2UI').classList.toggle('hide', P.sheet !== '2d'); });
+/* ⚠️ 色数の幅は【色数だけ】でも【粗さ×色数】でも使う＝どちらでも出す
+   （出しっぱなしにすると「粗さだけ」で触れるのに効かないつまみになる） */
+seg('s_sheet', 'sheet', () => { el('lev2UI').classList.toggle('hide', P.sheet === 'grid'); });
 /* ⭐ 色の型 ── 粒TSUBU・膜MAKU と同じ色群（道具のあいだで色が揃う）。
    ⚠️ 押したら【2色刷り】に入れる＝選んだのに色が変わらない、を作らない。 */
 const PAL = {

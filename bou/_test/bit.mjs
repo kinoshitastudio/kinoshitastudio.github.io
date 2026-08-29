@@ -88,6 +88,28 @@ const R = await p.evaluate(async () => {
       if(Math.abs(at(x, y) - at(x + (W/3|0), y)) > 24) diff++;
     }
     out.表は1枚ずつ違う = diff; }
+  /* ⭐⭐ 色数だけの一覧（2026-08-30 木下「一覧でビット違いも出せるとなお嬉しい」）
+     見るのは【升目は動かさずに色数だけが増えているか】＝
+       ・1枚目（2色）で使われている色が少なく、最後の1枚では増えている
+       ・升目の細かさは全部の枡で同じ（＝粗さが混ざっていない） */
+  {
+    document.querySelector('#s_sheet button[data-v="lev"]').click(); await wait(200);
+    await set('r_cols', 4); await set('r_rows', 1);
+    await set('r_lf', 2); await set('r_lt', 9); await set('r_con', 60);
+    document.getElementById('b_sheet').click(); await wait(1100);
+    const d = pix(), W = cv.width, H = cv.height, cw = W/4|0;
+    const colors = c => { const s = new Set();
+      for(let y = 6; y < H-6; y += 3) for(let x = c*cw+6; x < (c+1)*cw-6; x += 3)
+        s.add(d[((y*W)+x)*4] >> 3);
+      return s.size; };
+    out.色数だけ = { 一枚目:colors(0), 最後:colors(3) };
+    /* ⚠️ 物差しは【本体が実際に使った値】から取る（画素の変わる回数で測ると、
+       色数が増えただけでも増えてしまって、ぶれる試験になる） */
+    out.使った = paintSheet.used.map(u => u.grid + '升/' + u.lev + '色');
+    out.表の見出し = document.getElementById('meter').textContent;
+    document.querySelector('#s_sheet button[data-v="grid"]').click(); await wait(200);
+    await set('r_con', 0);
+  }
   document.getElementById('b_one').click(); await wait(600);
   out.一枚に戻る = !/段の表/.test(document.getElementById('meter').textContent);
   /* ⭐⭐ 色味（2026-08-27 木下「色味も変更したりできるように」） */
@@ -146,6 +168,19 @@ ok(R.透かす後 > R.透かす前 + 1000, '⭐ 地を透かすと穴があく�
 ok(R.表の版面[0] / R.表の版面[1] > 1, '⭐ 段の表は【列×段】の版面になる（写真が潰れない）',
    R.表の版面.join(' × '));
 ok(R.表は1枚ずつ違う > 40, '⭐⭐ 段の表は1枚ずつ違う絵になる', R.表は1枚ずつ違う + '点で違う');
+ok(R.色数だけ.最後 > R.色数だけ.一枚目 * 2,
+   '⭐⭐ 色数だけの一覧＝右へ行くほど色数が増える',
+   `2色 ${R.色数だけ.一枚目}色 → 9色 ${R.色数だけ.最後}色`);
+{
+  const g = R.使った.map(s => s.split('/')[0]);
+  const l = R.使った.map(s => s.split('/')[1]);
+  ok(new Set(g).size === 1, '⭐ 色数だけ＝【升目は動かさない】（粗さが混ざっていない）',
+     R.使った.join(' / '));
+  ok(new Set(l).size === R.使った.length, '⭐ 枡ごとに色数が違う（同じ絵が並ばない）',
+     l.join(' / '));
+}
+ok(/色数 2→9/.test(R.表の見出し), '⭐ 並べた色数の幅を数字で出す（「色数 3」と嘘をつかない）',
+   R.表の見出し.replace(/\n/g, ' ／ '));
 ok(R.一枚に戻る, '1枚に戻せる');
 ok(dls.includes('bou.png'), 'PNG が出る', dls.join(','));
 ok(dls.includes('bou.svg'), 'SVG が出る（図形 ' + svgN + ' 個）', dls.join(','));
