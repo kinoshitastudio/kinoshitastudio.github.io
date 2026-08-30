@@ -613,22 +613,36 @@ function tsubuGrain(){
   const N = 256;
   tsubuC = document.createElement('canvas'); tsubuC.width = tsubuC.height = N;
   const g = tsubuC.getContext('2d'), im = g.createImageData(N,N), d = im.data;
-  const r = rnd(C.seed*5501 + 17);
-  /* ⭐ 細かい粒＝小さい格子の乱れ。⚠️ 大きい雲（かすれ）とは別物にする */
-  const cell = Math.max(2, Math.round(C.tg * 0.10));
-  const m = Math.ceil(N/cell)+2, nz = new Float32Array(m*m);
-  for(let i=0;i<nz.length;i++) nz[i] = r();
-  const at = (x,y) => {
-    const fx=x/cell, fy=y/cell, ix=fx|0, iy=fy|0, tx=fx-ix, ty=fy-iy;
-    const sx=tx*tx*(3-2*tx), sy=ty*ty*(3-2*ty);
-    const a=nz[(iy%m)*m+(ix%m)], b=nz[(iy%m)*m+((ix+1)%m)];
-    const c=nz[((iy+1)%m)*m+(ix%m)], e=nz[((iy+1)%m)*m+((ix+1)%m)];
-    return (a*(1-sx)+b*sx)*(1-sy) + (c*(1-sx)+e*sx)*sy;
+  /* ══⭐⭐ 粒は【2段】で作る（2026-08-31 直し）══
+     🔴 細かい格子ひとつで作ると、線の中に **均等な斑点＝豹柄** が並ぶ。
+       参考（ちるらん）は **塊で残る所と、完全に抜ける所** がはっきり分かれている。
+     ⭐ だから「粗い雲」で **粒が出る所・出ない所** をまず決め、
+       そこを「細かい粒」で刻む ── 掛け算にする。
+     ⚠️ 1段だと、しきい値をどう振っても「均等な斑点」から出られない。 */
+  const layer = (cell, seed) => {
+    const r = rnd(seed), m = Math.ceil(N/cell)+2, nz = new Float32Array(m*m);
+    for(let i=0;i<nz.length;i++) nz[i] = r();
+    return (x,y) => {
+      const fx=x/cell, fy=y/cell, ix=fx|0, iy=fy|0, tx=fx-ix, ty=fy-iy;
+      const sx=tx*tx*(3-2*tx), sy=ty*ty*(3-2*ty);
+      const a=nz[(iy%m)*m+(ix%m)], b=nz[(iy%m)*m+((ix+1)%m)];
+      const c=nz[((iy+1)%m)*m+(ix%m)], e=nz[((iy+1)%m)*m+((ix+1)%m)];
+      return (a*(1-sx)+b*sx)*(1-sy) + (c*(1-sx)+e*sx)*sy;
+    };
   };
-  const th = 0.72 - (C.tsubu/100)*0.40;
+  const fine = Math.max(2, Math.round(C.tg * 0.10));      /* 細かい粒 */
+  const F = layer(fine, C.seed*5501 + 17);
+  const Cl = layer(Math.max(10, fine*7), C.seed*911 + 53); /* 粗い雲＝どこが荒れるか */
+  const t = C.tsubu/100;
   for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+    const cl = Cl(x,y);
+    /* ⭐ 粗い雲が低い所＝そのまま残る（塊）／高い所＝細かい粒で刻まれる */
+    /* ⚠️ 2段にしたら抜ける量が減った（縁 0.549→0.832）＝荒れる所が狭すぎた。
+       ⭐ 粗い雲のしきいを下げて【荒れる所を広く】、そのぶん深く刻む。 */
+    const heat = Math.min(1, Math.max(0, (cl - (1 - t*1.75)) / Math.max(0.05, t*0.85)));
+    const th = 1 - heat;                                   /* heat 0 なら抜けない */
     const i=(y*N+x)*4; d[i]=d[i+1]=d[i+2]=255;
-    d[i+3] = at(x,y) > th ? 255 : 0;
+    d[i+3] = F(x,y) > th ? 255 : 0;
   }
   g.putImageData(im,0,0);
   return tsubuC;
