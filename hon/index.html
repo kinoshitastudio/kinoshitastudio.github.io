@@ -111,6 +111,15 @@
   <div class="grp">
     <label class="h">① 何を書くか</label>
     <textarea id="tText" rows="2">YASUKO</textarea>
+    <div class="seg" id="segSrc">
+      <button data-v="bone" class="on">手書きの骨（欧文）</button>
+      <button data-v="auto">書体から起こす</button>
+    </div>
+    <div class="seg" id="segFam">
+      <button data-v="min" class="on">明朝</button>
+      <button data-v="kaku">角ゴ</button>
+      <button data-v="maru">丸ゴ</button>
+    </div>
   </div>
 
   <div class="grp">
@@ -155,8 +164,25 @@
     <button class="btn" id="bShake">振る ── 種を送る</button>
   </div>
 
+  <!-- ══⭐⭐ 1字ずつ（2026-08-31 木下「参考画像はかさなっているが
+       それぞれの文字ひとつひとつを調整することはできないか？」）══
+       ⭐ 盤の上で【字を掴んで動かす】。⚠️ 持ち方は「規則からのズレ」＝
+         ③のつまみを動かしても、1字ずつ直した分は保たれたまま付いてくる。 -->
   <div class="grp">
-    <label class="h">④ 走らせる</label>
+    <label class="h">④ 1字ずつ ── 盤で掴んで動かす</label>
+    <div id="selName" style="font-size:11.5px;color:var(--fg2);margin-bottom:6px">字を押すと選べる</div>
+    <div class="row"><span class="n">この字の大きさ</span><output id="oAs">100</output></div>
+    <input type="range" id="aS" min="20" max="300" value="100">
+    <div class="row"><span class="n">この字の傾き</span><output id="oAr">0</output></div>
+    <input type="range" id="aR" min="-90" max="90" value="0">
+    <div class="btns2">
+      <button class="btn" id="bAdjClear">この字のずれを消す</button>
+      <button class="btn" id="bAdjAll">ぜんぶ消す</button>
+    </div>
+  </div>
+
+  <div class="grp">
+    <label class="h">⑤ 走らせる</label>
     <div class="row"><span class="n">大きさ（‰）</span><output id="oSize">230</output></div>
     <input type="range" id="size" min="40" max="900" value="230">
     <div class="row"><span class="n">字送り</span><output id="oAdv">62</output></div>
@@ -185,7 +211,7 @@
   </div>
 
   <div class="grp">
-    <label class="h">⑤ 出す</label>
+    <label class="h">⑥ 出す</label>
     <div class="row"><span class="n">長辺（px）</span><output id="oOut">2400</output></div>
     <input type="range" id="outLong" min="600" max="6000" step="100" value="2400">
     <div class="btns2">
@@ -232,6 +258,10 @@ const S = {
      直す前の既定は整いすぎていて「機械が並べた」ように見えていた。 */
   hand:{ warp:44, jit:38, jg:30, jr:48, js:46, jy:42, seed:7 },
   run:{ size:230, adv:62, ang:10, x:8, y:14, wide:66, tall:118, w:1000, h:1500, col:'#e8452a' },
+  src:'bone', fam:'min',
+  /* ⭐ 1字ずつの直しは【規則からのズレ】で持つ（絶対値で持つと、③を動かした瞬間に
+     その字だけ規則から取り残される＝MOYA で通った所と同じ考え）。 */
+  adj:{}, sel:-1,
   view:'run',
   out:{ long:2400 },
 };
@@ -296,6 +326,97 @@ const BONE = {
   '&':[[[.9,1],[.2,.2],[.5,0],[.62,.24],[.1,.7],[.3,1],[.86,.6]]],
 };
 const boneOf = ch => BONE[ch.toUpperCase()] || null;
+
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 書体から【骨】を起こす ── 漢字・かなを通す道
+   2026-08-31 木下「漢字はむりか？ 日本語は、ひらがなかたかなは？」
+
+   🔴 骨を手で書く道は **漢字では現実的でない**（常用漢字だけで2000字超）。
+   ⭐ だから **書いた字を細らせて骨にする**（細線化＝Zhang-Suen）。
+     ＝ 輪郭ではなく **1画素の芯** まで削って、それを筆の通り道にする。
+   ⭐ これで **漢字もかなも欧文も、端末にある字なら全部** 骨が起こせる。
+   ⚠️ 起こした骨は手で書いた骨より点が多い＝間引く（重さは点数で決まる）。
+   ⚠️ 交わる所（十字・T字）で道が分かれる＝分岐で切って、1本ずつの線にする。
+   ══════════════════════════════════════════════════════════════ */
+const FAM = {
+  min : '"Zen Old Mincho","Hiragino Mincho ProN",serif',
+  kaku: '"Zen Kaku Gothic New","Hiragino Sans",sans-serif',
+  maru: '"Zen Maru Gothic","Hiragino Maru Gothic ProN",sans-serif',
+};
+const autoCache = new Map();
+function boneFromFont(ch){
+  const key = ch + '|' + S.fam;
+  if(autoCache.has(key)) return autoCache.get(key);
+  const N = 128;
+  const c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0,0,N,N);
+  g.fillStyle = '#000';
+  g.font = '700 ' + Math.round(N*0.78) + 'px ' + FAM[S.fam];
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(ch, N/2, N*0.52);
+  const d = g.getImageData(0,0,N,N).data;
+  let A = new Uint8Array(N*N);
+  for(let i=0;i<N*N;i++) A[i] = d[i*4] < 128 ? 1 : 0;
+  /* ── 細線化（Zhang-Suen）＝黒を1画素の芯まで削る ── */
+  const at = (a,x,y) => (x<0||y<0||x>=N||y>=N) ? 0 : a[y*N+x];
+  for(let pass=0; pass<40; pass++){
+    let changed = 0;
+    for(let sub=0; sub<2; sub++){
+      const del = [];
+      for(let y=1;y<N-1;y++) for(let x=1;x<N-1;x++){
+        if(!at(A,x,y)) continue;
+        const P = [at(A,x,y-1),at(A,x+1,y-1),at(A,x+1,y),at(A,x+1,y+1),
+                   at(A,x,y+1),at(A,x-1,y+1),at(A,x-1,y),at(A,x-1,y-1)];
+        const B = P.reduce((s,v)=>s+v,0);
+        if(B < 2 || B > 6) continue;
+        let Ac = 0; for(let i=0;i<8;i++) if(P[i]===0 && P[(i+1)%8]===1) Ac++;
+        if(Ac !== 1) continue;
+        if(sub === 0){ if(P[0]*P[2]*P[4] || P[2]*P[4]*P[6]) continue; }
+        else         { if(P[0]*P[2]*P[6] || P[0]*P[4]*P[6]) continue; }
+        del.push(y*N+x);
+      }
+      del.forEach(i => { A[i] = 0; }); changed += del.length;
+    }
+    if(!changed) break;
+  }
+  /* ── 芯を1本ずつの線にする（分岐で切る）── */
+  const nb = (x,y) => { const o=[];
+    for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+      if(!dx && !dy) continue; if(at(A,x+dx,y+dy)) o.push([x+dx,y+dy]); }
+    return o; };
+  const used = new Set(), lines = [];
+  const walk = (sx,sy) => {
+    const line = [[sx,sy]]; used.add(sy*N+sx);
+    let x = sx, y = sy;
+    for(let step=0; step<4000; step++){
+      const ns = nb(x,y).filter(([a,b]) => !used.has(b*N+a));
+      if(ns.length !== 1) break;                 /* 分岐・行き止まりで切る */
+      [x,y] = ns[0]; used.add(y*N+x); line.push([x,y]);
+    }
+    return line;
+  };
+  /* 端（隣が1つ）から先に歩く → 残った輪（○など）も拾う */
+  const starts = [];
+  for(let y=0;y<N;y++) for(let x=0;x<N;x++) if(at(A,x,y) && nb(x,y).length !== 2) starts.push([x,y]);
+  starts.forEach(([x,y]) => { if(!used.has(y*N+x)) { const l = walk(x,y); if(l.length>3) lines.push(l); } });
+  for(let y=0;y<N;y++) for(let x=0;x<N;x++)
+    if(at(A,x,y) && !used.has(y*N+x)){ const l = walk(x,y); if(l.length>3) lines.push(l); }
+  /* 0〜1 に直して間引く（⚠️ 点が多いと重い） */
+  const out = lines.map(l => {
+    const keep = Math.max(1, Math.round(l.length/12));
+    const t = l.filter((_,i) => i % keep === 0);
+    if(t[t.length-1] !== l[l.length-1]) t.push(l[l.length-1]);
+    return t.map(([x,y]) => [x/N, y/N]);
+  }).filter(l => l.length >= 2);
+  if(autoCache.size > 300) autoCache.clear();
+  autoCache.set(key, out);
+  return out;
+}
+function boneFor(ch){
+  if(S.src === 'auto') return boneFromFont(ch);
+  return boneOf(ch);
+}
 
 /* ══════════════════════════════════════════════════════════════
    ② 筆を着せる ── 骨（線）→ 輪郭
@@ -412,10 +533,10 @@ function strokeOutline(pts, w, seed){
 const cache = new Map();
 function glyph(ch, i){
   const H = S.hand, P = S.pen;
-  const key = ch + '|' + i + '|' + [P.w,P.taper,P.flow,P.sweep,P.vary,P.over,P.trace,P.cap,H.warp,H.jit,H.jg,H.seed].join(',');
+  const key = ch + '|' + i + '|' + S.src + S.fam + '|' + [P.w,P.taper,P.flow,P.sweep,P.vary,P.over,P.trace,P.cap,H.warp,H.jit,H.jg,H.seed].join(',');
   if(cache.has(key)) return cache.get(key);
-  const bone = boneOf(ch);
-  if(!bone){ cache.set(key, []); return []; }
+  const bone = boneFor(ch);
+  if(!bone || !bone.length){ cache.set(key, []); return []; }
   const w = P.w;
   /* 🔴 直す前はここで w を10倍していた＝線幅が字の高さの62%になり、
      字が【1つの塊】に潰れていた。参考（ゆきてかへらぬの赤い字）を実測すると
@@ -491,10 +612,12 @@ function runChars(){ return [...S.text].filter(c => c !== '\n'); }
 /* 1字ぶんの置き方（大きさ・傾き・上下のずれ）＝種で決まる */
 function place(i, ch, size){
   const H = S.hand, r = rnd(H.seed*613 + i*29 + ch.charCodeAt(0));
+  const a = S.adj[i] || {};
   return {
-    s: 1 + (r()-0.5)*(H.js/100)*1.1,
-    rot: (r()-0.5)*(H.jr/100)*44,
-    dy: (r()-0.5)*(H.jy/100)*0.7,
+    s: (1 + (r()-0.5)*(H.js/100)*1.1) * ((a.s ?? 100)/100),
+    rot: (r()-0.5)*(H.jr/100)*44 + (a.rot || 0),
+    dy: (r()-0.5)*(H.jy/100)*0.7 + (a.dy || 0),
+    dx: (a.dx || 0),
   };
 }
 /* 走らせた結果の外形（版面に収めるのに要る） */
@@ -505,7 +628,7 @@ function runBox(size){
   let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
   chars.forEach((ch,i) => {
     const p = place(i, ch, size), sz = size*p.s;
-    const cxp = i*adv*ca, cyp = i*adv*sa + p.dy*size;
+    const cxp = i*adv*ca + p.dx*size, cyp = i*adv*sa + p.dy*size;
     x0=Math.min(x0,cxp); x1=Math.max(x1,cxp+sz*(R.wide/100));
     y0=Math.min(y0,cyp); y1=Math.max(y1,cyp+sz*(R.tall/100));
   });
@@ -523,7 +646,7 @@ function paint(g, W, H2, opt){
 
   const col = S.run.col;
   if(S.view === 'sheet'){
-    const chars = Object.keys(BONE);
+    const chars = S.src === 'auto' ? [...'あいうえおかきくけこさしすせそたちつてとアイウエオ誰爆弾春赤'] : Object.keys(BONE);
     const cols = 9, cell = 200, size = 130;
     chars.forEach((ch,i) => {
       const px = 30 + (i%cols)*cell, py = 30 + ((i/cols)|0)*cell;
@@ -538,7 +661,15 @@ function paint(g, W, H2, opt){
     const ox = R.x/100*BW, oy = R.y/100*BH;
     chars.forEach((ch,i) => {
       const p = place(i, ch, size);
-      drawGlyph(g, ch, ox + i*adv*ca, oy + i*adv*sa + p.dy*size, size*p.s, p.rot, col, i, svg);
+      const gx = ox + i*adv*ca + p.dx*size, gy = oy + i*adv*sa + p.dy*size;
+      drawGlyph(g, ch, gx, gy, size*p.s, p.rot, col, i, svg);
+      /* ⭐ 選んでいる字に印（⚠️ 焼くときは出さない＝刷る絵に混ぜない） */
+      if(!svg && S.sel === i && S.view === 'run'){
+        g.save(); g.strokeStyle='rgba(59,130,246,.9)'; g.lineWidth=Math.max(1,size*0.012);
+        g.setLineDash([size*0.06, size*0.05]);
+        g.strokeRect(gx, gy, size*p.s*(R.wide/100), size*p.s*(R.tall/100));
+        g.restore();
+      }
     });
     const B = runBox(size);
     dryOver(g, ox+B.x0-size*0.3, oy+B.y0-size*0.3, B.w+size, B.h+size, size);
@@ -599,7 +730,13 @@ function draw(){ if(rafId) return; rafId = requestAnimationFrame(()=>{ rafId=0; 
 function render(){ const [W,H2] = boardSize(); paint(cx, W, H2, null); meter(); }
 function meter(){
   const chars = runChars();
-  const miss = chars.filter(c => c.trim() && !boneOf(c));
+  const miss = chars.filter(c => c.trim() && !(boneFor(c)||[]).length);
+  /* 🔴 2026-08-31 木下が「誰なのか？」と打って【真っ白】になった。
+     しかも理由は右パネルの下にしか出ていなかった＝**見えない所に書いても書いていないのと同じ**。
+     ⭐ 盤の上（下の帯）で言う。⭐ しかも【どうすれば出るか】まで言う。 */
+  if(miss.length && S.src === 'bone')
+    stat('🔴 ' + miss.join('') + ' の骨が無い（手書きの骨は欧文の大文字と数字だけ）— ①の「書体から起こす」に替えると 漢字・かな も書けます');
+  else if(!chars.filter(c=>c.trim()).length) stat('①に字を打つ');
   let rings = 0, pts = 0;
   chars.forEach((ch,i) => glyph(ch,i).forEach(r => { rings++; pts += r.length; }));
   const size = S.run.size/1000*S.run.w, B = runBox(size);
@@ -609,14 +746,14 @@ function meter(){
   $('meter').textContent =
     `骨 ${Object.keys(BONE).length}字ぶん\n字 ${chars.length} ／ 帯 ${rings} ／ 点 ${pts}\n`
     + `出す ${S.out.long}px`
-    + (miss.length ? `\n🔴 骨が無い字：${miss.join('')}（欧文の大文字・数字だけ）` : '')
+    + (miss.length ? `\n🔴 骨が無い字：${miss.join('')} — ①を「書体から起こす」に替える` : '')
     + ((over[0]+over[1]+over[2]+over[3]) ? `\n🔴 版面から出ている 左${over[0]} 右${over[1]} 上${over[2]} 下${over[3]} px` : '');
 }
 function stat(s){ $('stat').textContent = s; }
 
 /* ══ つまみ ══ ⭐ 配線は1か所 */
 const OUTID = { pW:'oW', taper:'oTaper', flow:'oFlow', sweep:'oSweep', vary:'oVary', trace:'oTrace', over:'oOver', dry:'oDry',
-  wide:'oWide', tall:'oTall',
+  wide:'oWide', tall:'oTall', aS:'oAs', aR:'oAr',
   warp:'oWarp', jit:'oJit', jg:'oJg', jr:'oJr', js:'oJs', jy:'oJy', seed:'oSeed',
   size:'oSize', adv:'oAdv', ang:'oAng', x:'oX', y:'oY', outLong:'oOut' };
 function out(id){ const o=$(OUTID[id]); if(o) o.textContent = $(id).value; }
@@ -630,9 +767,29 @@ const RUN = { size:'size', adv:'adv', ang:'ang', x:'x', y:'y', wide:'wide', tall
 Object.entries(RUN).forEach(([id,key]) => $(id).addEventListener('input', e => {
   S.run[key] = +e.target.value; out(id); draw(); }));
 $('outLong').addEventListener('input', e => { S.out.long = +e.target.value; out('outLong'); meter(); });
-$('tText').addEventListener('input', e => { S.text = e.target.value.toUpperCase(); draw(); });
+$('tText').addEventListener('input', e => {
+  /* ⚠️ 大文字に直すのは【手書きの骨】のときだけ。書体から起こすなら日本語をそのまま */
+  S.text = (S.src === 'bone') ? e.target.value.toUpperCase() : e.target.value;
+  if(S.text !== e.target.value) e.target.value = S.text;
+  S.sel = -1; syncAdj(); draw(); });
 $('col').addEventListener('input', e => { S.run.col = e.target.value; draw(); });
 function segOn(id,v){ document.querySelectorAll('#'+id+' button').forEach(b=>b.classList.toggle('on', String(b.dataset.v)===String(v))); }
+document.querySelectorAll('#segSrc button').forEach(b => b.onclick = () => {
+  S.src = b.dataset.v; segOn('segSrc', S.src); autoCache.clear(); cache.clear();
+  if(S.src === 'auto'){
+    /* ⚠️ 漢字は画数が多い＝欧文と同じ崩し量だと【潰れて読めない】。
+       ⭐ 押した瞬間に読める値へ落とす。⚠️ 裏で別の値を使わず【つまみ自体を動かす】。 */
+    S.pen.w = 26; S.pen.sweep = 22; S.pen.over = 24; S.pen.trace = 1;
+    S.hand.warp = 14; S.hand.jit = 18; S.hand.jr = 16; S.hand.js = 22; S.hand.jy = 20;
+    S.run.wide = 100; S.run.tall = 100; S.run.adv = 104;
+    syncAll(); cache.clear();
+    stat('書体から骨を起こす（漢字・かなも書ける）— 画数が多いので崩しを控えめな値に入れた（つまみもこの値）');
+  } else {
+    stat('手書きの骨（欧文の大文字と数字）');
+  }
+  draw(); });
+document.querySelectorAll('#segFam button').forEach(b => b.onclick = () => {
+  S.fam = b.dataset.v; segOn('segFam', S.fam); autoCache.clear(); cache.clear(); draw(); });
 document.querySelectorAll('#segCap button').forEach(b => b.onclick = () => {
   S.pen.cap = +b.dataset.v; segOn('segCap', S.pen.cap); cache.clear(); draw(); });
 document.querySelectorAll('#modes button').forEach(b => b.onclick = () => {
@@ -693,10 +850,11 @@ $('eSVG').onclick = () => {
   dl(new Blob([svg],{type:'image/svg+xml'}),'hon.svg');
   stat('SVG を出した — 筆の形が path で入っている（⚠️ かすれは入らない）');
 };
-function saveJSON(){ dl(new Blob([JSON.stringify({ text:S.text, pen:S.pen, hand:S.hand, run:S.run, out:S.out },null,1)],
+function saveJSON(){ dl(new Blob([JSON.stringify({ text:S.text, src:S.src, fam:S.fam, adj:S.adj, pen:S.pen, hand:S.hand, run:S.run, out:S.out },null,1)],
   {type:'application/json'}),'hon.json'); stat('控えを保存した（⚠️ 写真は入らない）'); }
 function loadJSON(txt){ try{ const o=JSON.parse(txt);
-  S.text = o.text || S.text;
+  S.text = o.text || S.text; S.src = o.src || S.src; S.fam = o.fam || S.fam;
+  S.adj = o.adj || {}; S.sel = -1;
   Object.assign(S.pen,o.pen||{}); Object.assign(S.hand,o.hand||{});
   Object.assign(S.run,o.run||{}); Object.assign(S.out,o.out||{});
   cache.clear(); syncAll(); layout(); fit(); draw(); stat('控えを読んだ');
@@ -712,14 +870,68 @@ function syncAll(){
   $('outLong').value = S.out.long; out('outLong');
   $('tText').value = S.text; $('col').value = S.run.col;
   segOn('segCap', S.pen.cap); segOn('modes', S.view); segOn('segRatio', S.run.w+','+S.run.h);
+  segOn('segSrc', S.src); segOn('segFam', S.fam); syncAdj();
 }
 
 /* ══ 盤を触る・キー ══ */
+/* ⭐⭐ 盤で字を掴む＝絵が操作そのもの（つまみの列は道具ではない）。
+   ⚠️ 掴んだ分は【ずれ】に入れる＝③の規則を動かしても残る。 */
+function atBoard(e){ const r = cv.getBoundingClientRect();
+  return [ (e.clientX-r.left)/Z, (e.clientY-r.top)/Z ]; }
+function hitChar(x, y){
+  if(S.view !== 'run') return -1;
+  const R = S.run, chars = runChars();
+  const size = R.size/1000*R.w, a = R.ang*Math.PI/180, ca = Math.cos(a), sa = Math.sin(a);
+  const adv = size*(R.adv/100), ox = R.x/100*R.w, oy = R.y/100*R.h;
+  for(let i=chars.length-1;i>=0;i--){
+    const p = place(i, chars[i], size);
+    const gx = ox + i*adv*ca + p.dx*size, gy = oy + i*adv*sa + p.dy*size;
+    const w = size*p.s*(R.wide/100), h = size*p.s*(R.tall/100);
+    if(x >= gx && x <= gx+w && y >= gy && y <= gy+h) return i;
+  }
+  return -1;
+}
 let drag = null;
-$('stage').addEventListener('pointerdown', e => { drag={x:e.clientX-PX,y:e.clientY-PY};
-  $('stage').classList.add('panning'); });
-addEventListener('pointermove', e => { if(!drag) return; PX=e.clientX-drag.x; PY=e.clientY-drag.y; place2(); });
+$('stage').addEventListener('pointerdown', e => {
+  const [bx,by] = atBoard(e);
+  const hit = hitChar(bx, by);
+  if(hit >= 0){
+    S.sel = hit; syncAdj();
+    const R = S.run, size = R.size/1000*R.w;
+    drag = { kind:'char', i:hit, x:bx, y:by, size,
+             d0:[ (S.adj[hit]&&S.adj[hit].dx)||0, (S.adj[hit]&&S.adj[hit].dy)||0 ] };
+    draw(); return;
+  }
+  S.sel = -1; syncAdj(); draw();
+  drag = { kind:'pan', x:e.clientX-PX, y:e.clientY-PY }; $('stage').classList.add('panning');
+});
+addEventListener('pointermove', e => {
+  if(!drag) return;
+  if(drag.kind === 'pan'){ PX=e.clientX-drag.x; PY=e.clientY-drag.y; place2(); return; }
+  const [bx,by] = atBoard(e);
+  const a = S.adj[drag.i] || (S.adj[drag.i] = {});
+  a.dx = drag.d0[0] + (bx-drag.x)/drag.size;
+  a.dy = drag.d0[1] + (by-drag.y)/drag.size;
+  draw();
+});
 addEventListener('pointerup', () => { drag=null; $('stage').classList.remove('panning'); });
+function syncAdj(){
+  const chars = runChars(), i = S.sel;
+  const a = S.adj[i] || {};
+  $('selName').textContent = (i >= 0 && chars[i])
+    ? `選んでいる字：${chars[i]}（${i+1}字目）` : '字を押すと選べる';
+  $('aS').value = a.s ?? 100; $('aR').value = a.rot || 0;
+  out('aS'); out('aR');
+}
+['aS','aR'].forEach(id => $(id).addEventListener('input', e => {
+  if(S.sel < 0){ stat('先に盤で字を押す'); return; }
+  const a = S.adj[S.sel] || (S.adj[S.sel] = {});
+  if(id === 'aS') a.s = +e.target.value; else a.rot = +e.target.value;
+  out(id); draw();
+}));
+$('bAdjClear').onclick = () => { if(S.sel<0){ stat('先に盤で字を押す'); return; }
+  delete S.adj[S.sel]; syncAdj(); draw(); stat('この字のずれを消した（規則どおりに戻った）'); };
+$('bAdjAll').onclick = () => { S.adj = {}; syncAdj(); draw(); stat('1字ずつの直しを全部消した'); };
 $('stage').addEventListener('wheel', e => { e.preventDefault();
   const r = cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
   const nz = Math.max(0.06, Math.min(8, Z*(e.deltaY<0?1.09:1/1.09)));
