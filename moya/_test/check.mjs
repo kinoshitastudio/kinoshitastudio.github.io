@@ -372,18 +372,16 @@ const PEN = await p.evaluate(async () => {
   const L = LAYERS[0]; L.x = 0.5; L.y = 0.5; SEL = 0;
   el('k_nobg').checked = true; el('k_nobg').dispatchEvent(new Event('change',{bubbles:true}));
   document.querySelector('#tools button[data-t="path"]').click();
-  COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
-  const solid = () => { const d = g.getImageData(0,0,cv.width,cv.height).data; let n = 0;
-    for(let i=0;i<d.length;i+=4*7) if(d[i+3]>128) n++; return n; };
-  const out = { 前: solid() };
-  /* 素材の中の割合(u,v) → 画面の座標 */
-  const toSc = (u, v) => {
-    const iw = L.img.naturalWidth, ih = L.img.naturalHeight;
-    const dw = L.s * cv.width, dh = dw * ih / iw;
-    const bx = L.x + (u - 0.5) * dw / cv.width;
-    const by = L.y + (v - 0.5) * dh / cv.height;
-    return toScreen(bx, by);
+  COARSE = 0; render(); fitView(); await new Promise(r => setTimeout(r, 300));
+  /* ⚠️ 切り抜きの画面では盤に市松（不透明）が敷いてあるので、
+     画面の画素では測れない。⭐ 物差しは【型（マスク）そのもの】＝本体のデータから取る。 */
+  const maskOpaque = () => {
+    const m = maskOf(L), d = m.getContext('2d').getImageData(0,0,m.width,m.height).data;
+    let n = 0; for(let i=3;i<d.length;i+=4*5) if(d[i] > 128) n++; return n;
   };
+  const out = { 前: maskOpaque() };
+  /* ⭐ 切り抜きの画面では【盤の割合＝素材の中の割合】（2026-08-30 にそう変えた） */
+  const toSc = (u, v) => toScreen(u, v);
   /* ⚠️ 指の出来事は【1つずつ】。まとめて投げると pts の出入りが噛み合わず、
      打ったつもりの点が入らない（試験がぶれる） */
   const tick = () => new Promise(r => setTimeout(r, 20));
@@ -423,7 +421,7 @@ const PEN = await p.evaluate(async () => {
   const n1 = POLY.length;
   down(POLY[0].x / M.w, POLY[0].y / M.h); await tick(); up(); await tick();
   COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
-  out.閉じて切れた = POLY.length === 0 && solid() < out.前;
+  out.閉じて切れた = POLY.length === 0 && maskOpaque() < out.前;
   out.打った数 = n1;
   clearMask(L);
   el('k_nobg').checked = false; el('k_nobg').dispatchEvent(new Event('change',{bubbles:true}));
@@ -814,7 +812,73 @@ ok(NAJI.modoru === 0, '⚠️ ぜんぶ 0 に戻すと1画素も同じに戻る'
 ok(NAJI.jump <= 6, '⭐⭐ 影は【素材の形】で出る（板の四角で切られない）',
    'いきなり濃さが変わる所 ' + NAJI.jump + ' か所');
 
-/* ⑨ モバイル */
+/* ⭐⭐ 設定JSONに【切り抜きの型】まで入るか（木下＝「どう作ったのか見たいから json 書き出しも」）
+   🔴 型が入っていないと「どう作ったか」が戻らない＝設定として不完全。 */
+const JS = await p.evaluate(async () => {
+  await demo();
+  const L = LAYERS[0]; SEL = 0;
+  const m = maskSize(L);
+  pickColor(L, 2, 2);
+  const keepB = P.brush; P.brush = 0.2;
+  cutBrush(L, m.w*0.5, m.h*0.5, null, null, true);
+  P.brush = keepB;
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 300));
+  const plan = () => pathOf ? null : null;
+  const before = window.__full();
+  const o = JSON.parse(JSON.stringify(snapshot()));
+  const out = {
+    型が入っている: !!(o.layers[0].mCut || o.layers[0].mKeep),
+    覚えた色も入っている: (o.layers[0].keys || []).length > 0,
+    灯も入っている: (o.lights || []).length > 0,
+    紙も入っている: !!o.paper,
+    大きさKB: Math.round(JSON.stringify(o).length / 1024),
+  };
+  /* 荒らして読み戻す */
+  clearMask(L); LAYERS[0].x += 0.2;
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 300));
+  out.荒らせた = window.__sad(before, window.__full()) > 0;
+  applyJSON(o);
+  await new Promise(r => setTimeout(r, 700));
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 200));
+  out.戻る = window.__sad(before, window.__full());
+  return out;
+});
+ok(JS.型が入っている && JS.覚えた色も入っている && JS.灯も入っている && JS.紙も入っている,
+   '⭐⭐ 設定JSONに【切り抜きの型・覚えた色・灯・紙】まで入る', JSON.stringify(JS));
+ok(JS.荒らせた, '（前提）荒らすと絵は変わっている');
+ok(JS.戻る === 0, '⭐⭐ 設定を読むと【切り抜きも含めて】1画素も同じに戻る', JS.戻る);
+
+/* ⭐⭐ 切り抜きの画面（木下＝「同じボード内でパス切り抜きは小さすぎてムズカシイ」） */
+const CV = await p.evaluate(async () => {
+  await demo(); SEL = 0;
+  document.querySelector('#tools button[data-t="move"]').click();
+  await new Promise(r => setTimeout(r, 150));
+  const out = { 版面: sheet(), 動かすときの盤: [cv.width, cv.height] };
+  document.querySelector('#tools button[data-t="path"]').click();
+  await new Promise(r => setTimeout(r, 300));
+  const L = LAYERS[SEL];
+  out.切り抜きの画面 = cutView();
+  out.切るときの盤 = [cv.width, cv.height];
+  out.素材の比 = [L.img.naturalWidth, L.img.naturalHeight];
+  /* ⭐ 盤の比が【素材の比】になっているか */
+  const a1 = out.切るときの盤[0] / out.切るときの盤[1];
+  const a2 = out.素材の比[0] / out.素材の比[1];
+  out.比が合う = Math.abs(a1 - a2) < 0.02;
+  /* ⭐ 盤の割合がそのまま素材の中の割合になっているか（大きく切れる） */
+  const q = toMask(L, { x:0.25, y:0.75 }, cv.width, cv.height);
+  out.座標が素直 = Math.abs(q.u - 0.25) < 0.01 && Math.abs(q.v - 0.75) < 0.01;
+  document.querySelector('#tools button[data-t="move"]').click();
+  await new Promise(r => setTimeout(r, 200));
+  out.戻ると版面 = !cutView() && cv.width !== out.切るときの盤[0];
+  return out;
+});
+ok(CV.切り抜きの画面, '⭐⭐ 切り抜くを選ぶと【その素材だけの画面】になる');
+ok(CV.比が合う, '⭐ 盤の比が素材の比になる（大きく切れる）',
+   CV.切るときの盤.join('×') + ' ／ 素材 ' + CV.素材の比.join('×'));
+ok(CV.座標が素直, '⭐⭐ 盤の割合＝素材の中の割合（座標が食い違わない）');
+ok(CV.戻ると版面, '⭐ 動かすに戻すと版面へ戻る');
+
+/* ⑨ モバイル *//* ⑨ モバイル */
 await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
 await wait(900);
 const MB = await p.evaluate(() => ({

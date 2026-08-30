@@ -717,6 +717,59 @@ function sheet(){
   return { w:Math.max(16, w), h:Math.max(16, h) };
 }
 const isPaper = () => !!PAPERS[P.ratio];
+
+/* ══⭐⭐ 切り抜きの画面（2026-08-30）══════════════════════════
+   🔴 木下＝「同じボード内でパス切り抜きは**小さすぎてムズカシイ**。
+      Photoshop なら画像切り抜きを**画像だけの画面**で切り抜いて、png にして
+      それを馴染ませようのボードに持ってきたりするね」
+   ⭐ だから【切り抜くを選んだら、盤をその素材だけの画面に切り替える】。
+     ・素材の比のまま・画面いっぱい ／ ・空気も灯も切って**素の写真**を出す
+     ・抜けた所は市松（透明）で見せる
+   ⚠️ 別の道具へ行かずに同じことができる＝木下の「別ツールでできても意味がない」に応える。
+   ⭐ 「動かす」に戻せば版面へ戻る（素材の置き方は1つも触っていない）。 */
+const cutView = () => MODE === 'cut' && !!(LAYERS[SEL] && LAYERS[SEL].img);
+/* ⭐⭐ 【いま盤に出ている版面】はここ1本。盤・見る倍率・掴む所がぜんぶこれを見る
+   ＝切り抜きの画面に切り替わっても、座標が食い違わない。 */
+function viewSheet(){ return cutView() ? cutSheet() : sheet(); }
+function cutSheet(){
+  const L = LAYERS[SEL];
+  if(!L || !L.img) return sheet();
+  const iw = L.img.naturalWidth || 1, ih = L.img.naturalHeight || 1;
+  const Lg = 1400;
+  return iw >= ih ? { w:Lg, h:Math.max(16, Math.round(Lg * ih / iw)) }
+                  : { h:Lg, w:Math.max(16, Math.round(Lg * iw / ih)) };
+}
+/* 市松（透明を見せる紙） */
+let CHECKER = null;
+function checker(){
+  if(CHECKER) return CHECKER;
+  const n = 24, c = document.createElement('canvas'); c.width = n*2; c.height = n*2;
+  const x = c.getContext('2d');
+  x.fillStyle = '#d9d5cc'; x.fillRect(0,0,n*2,n*2);
+  x.fillStyle = '#eeeae1'; x.fillRect(0,0,n,n); x.fillRect(n,n,n,n);
+  CHECKER = c; return c;
+}
+/* ⭐ 切り抜きの画面を描く（空気も灯もかけない＝素の写真で切る） */
+function paintCut(ctx, W, H){
+  const L = LAYERS[SEL];
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = ctx.createPattern(checker(), 'repeat');
+  ctx.fillRect(0, 0, W, H);
+  if(!L || !L.img) return { n:0 };
+  const t = document.createElement('canvas'); t.width = W; t.height = H;
+  const tx = t.getContext('2d');
+  if(L.flip){ tx.save(); tx.translate(W, 0); tx.scale(-1, 1); tx.drawImage(L.img, 0, 0, W, H); tx.restore(); }
+  else tx.drawImage(L.img, 0, 0, W, H);
+  if(hasCut(L)){
+    const fm = featherMask(L);
+    tx.globalCompositeOperation = 'destination-in';
+    if(L.flip){ tx.save(); tx.translate(W, 0); tx.scale(-1, 1); tx.drawImage(fm, 0, 0, W, H); tx.restore(); }
+    else tx.drawImage(fm, 0, 0, W, H);
+  }
+  ctx.drawImage(t, 0, 0);
+  return { n:1 };
+}
 const hex2rgb = h => { const n = parseInt(String(h).replace('#',''), 16);
   return [(n>>16)&255, (n>>8)&255, n&255]; };
 const rgba = (h, a) => { const [r,g2,b] = hex2rgb(h); return 'rgba('+r+','+g2+','+b+','+a+')'; };
@@ -858,6 +911,13 @@ function featherMask(L){
 }
 /* 盤の座標（版面の割合）→ 型の中の座標 */
 function toMask(L, q, W, H){
+  /* ⭐ 切り抜きの画面では、盤の割合がそのまま素材の中の割合（大きく切れる） */
+  if(typeof cutView === 'function' && cutView() && LAYERS[SEL] === L){
+    let u = q.x, v = q.y;
+    if(L.flip) u = 1 - u;
+    const m = maskSize(L);
+    return { x:u * m.w, y:v * m.h, u, v, in: u >= 0 && u <= 1 && v >= 0 && v <= 1 };
+  }
   const iw = L.img.naturalWidth || 1, ih = L.img.naturalHeight || 1;
   const dw = L.s * W, dh = dw * ih / iw;
   const px = q.x * W - L.x * W, py = q.y * H - L.y * H;
@@ -1417,16 +1477,18 @@ function renderSoon(){ if(rafId) return; rafId = requestAnimationFrame(() => { r
 function touching(){ COARSE = 1; clearTimeout(coarseT);
   coarseT = setTimeout(() => { COARSE = 0; render(); }, 240); }
 function render(){
-  const f = sheet();
+  const f = viewSheet();
   const k = Math.min(1, (COARSE ? 700 : 1500) / Math.max(f.w, f.h));
   const W = Math.max(16, Math.round(f.w * k)), H = Math.max(16, Math.round(f.h * k));
   if(cv.width !== W || cv.height !== H){ cv.width = W; cv.height = H; ov.width = W; ov.height = H; }
   const t0 = performance.now();
-  const r = paint(g, W, H, P.nobg);
+  const r = cutView() ? paintCut(g, W, H) : paint(g, W, H, P.nobg);
   const ms = Math.round(performance.now() - t0);
-  el('meter').textContent = r.n + ' 枚を置いている\n' + f.w + ' × ' + f.h + ' px'
+  el('meter').textContent = (cutView() ? '切り抜きの画面（' + (LAYERS[SEL] ? LAYERS[SEL].name : '') + '）\n'
+      + '素の写真です。空気と灯はかかっていません'
+    : r.n + ' 枚を置いている\n' + f.w + ' × ' + f.h + ' px'
     + (isPaper() ? '（' + P.ratio + '・' + (P.dpi||350) + 'dpi' + (P.land ? '・よこ' : '') + '）' : '')
-    + '　' + ms + ' ms';
+    + '　' + ms + ' ms');
   drawOverlay(W, H);
   applyView();
   syncOut();
@@ -1513,8 +1575,42 @@ function drawOverlay(W, H){
     og.fillStyle = '#fff'; og.fillText(nm, LT.x*W, LT.y*H + R*2.2);
   });
   }
-  /* 選んだ素材の枠 */
+  /* 選んだ素材の枠。⭐ 切り抜きの画面では【盤ぜんぶ】がその素材 */
   const L = LAYERS[SEL];
+  if(L && L.img && cutView()){
+    const m = maskSize(L);
+    og.save(); og.translate(W/2, H/2);
+    const dw = W, dh = H;
+    og.strokeStyle = 'rgba(255,64,64,.55)'; og.lineWidth = Math.max(1.5, W/700);
+    og.strokeRect(-dw/2, -dh/2, dw, dh);
+    if(TOOL === 'path' && POLY.length){
+      const toB = q2 => { let u = q2.x / m.w; const v = q2.y / m.h;
+        if(L.flip) u = 1 - u; return { x:(u - 0.5) * dw, y:(v - 0.5) * dh }; };
+      const sx = dw / m.w, sy = dh / m.h, fx = L.flip ? -1 : 1;
+      const bp = POLY.map(q2 => { const b3 = toB(q2);
+        return { x:b3.x, y:b3.y, hx:(q2.hx||0)*sx*fx, hy:(q2.hy||0)*sy,
+                 ihx:(q2.ihx==null?null:q2.ihx*sx*fx), ihy:(q2.ihy==null?null:q2.ihy*sy) }; });
+      const d = pathD(bp, POLY.length > 2);
+      if(d){ og.strokeStyle = 'rgba(255,64,64,.95)'; og.lineWidth = Math.max(1.5, W/420);
+        og.stroke(new Path2D(d)); }
+      const rp = Math.max(4, W/180);
+      bp.forEach((b3, i) => {
+        if(b3.hx || b3.hy){
+          og.strokeStyle = 'rgba(255,64,64,.5)'; og.lineWidth = Math.max(1, W/900);
+          og.beginPath(); og.moveTo(b3.x, b3.y); og.lineTo(b3.x + b3.hx, b3.y + b3.hy); og.stroke();
+          og.beginPath(); og.arc(b3.x + b3.hx, b3.y + b3.hy, rp*0.7, 0, 6.2831853);
+          og.fillStyle = 'rgba(255,64,64,.9)'; og.fill();
+          og.strokeStyle = 'rgba(255,255,255,.85)'; og.stroke();
+        }
+        og.lineWidth = Math.max(1.5, W/420);
+        og.beginPath(); og.arc(b3.x, b3.y, i === 0 ? rp*1.35 : rp, 0, 6.2831853);
+        og.fillStyle = i === 0 ? '#ffd24a' : '#fff'; og.fill();
+        og.strokeStyle = 'rgba(0,0,0,.65)'; og.stroke();
+      });
+    }
+    og.restore();
+    return;
+  }
   if(L && L.on && L.img){
     const iw = L.img.naturalWidth || 1, ih = L.img.naturalHeight || 1;
     const dw = L.s * W, dh = dw * ih / iw;
@@ -1586,14 +1682,14 @@ function drawOverlay(W, H){
   }
 }
 function applyView(){
-  const f = sheet();
+  const f = viewSheet();
   const k = (cv.width && f.w) ? (cv.width / f.w) : 1;
   const t = 'translate(' + V.x + 'px,' + V.y + 'px) scale(' + (V.z / (k || 1)) + ')';
   cv.style.transform = t; ov.style.transform = t;
   el('z_val').textContent = Math.round(V.z * 100) + '%';
 }
 function fitView(){
-  const r = stage.getBoundingClientRect(), f = sheet();
+  const r = stage.getBoundingClientRect(), f = viewSheet();
   V.z = Math.min((r.width - 60) / f.w, (r.height - 60) / f.h);
   V.x = (r.width - f.w * V.z) / 2; V.y = (r.height - f.h * V.z) / 2;
   applyView();
@@ -1621,7 +1717,7 @@ el('z_fit').onclick = fitView;
      ここに k は出てこない＝**盤をどれだけ粗く描いても1画素もずれない**。
    ⭐ 逆向き（toScreen）も同じ式から作る＝2か所に書かない。 */
 function boardScale(){
-  const f = sheet();
+  const f = viewSheet();
   return { f, sx: Math.max(1e-6, V.z * f.w), sy: Math.max(1e-6, V.z * f.h) };
 }
 function toBoard(e){
@@ -1851,7 +1947,8 @@ function buildList(){
     const col = document.createElement('div'); col.className = 'col';
     col.append(nm, dp);
     row.append(th, col, eye, up, dn, x);
-    row.onclick = () => { SEL = i; POLY = []; buildList(); syncSel(); syncKeys(); render(); };
+    row.onclick = () => { SEL = i; POLY = []; buildList(); syncSel(); syncKeys();
+    render(); if(cutView()) fitView(); };
     box.appendChild(row);
   }
   el('selBox').classList.toggle('hide', !(LAYERS[SEL]));
@@ -1994,14 +2091,19 @@ document.querySelectorAll('#s_mode button').forEach(bt => bt.onclick = () => {
   el('cutUI').classList.toggle('hide', MODE !== 'cut');
   if(MODE === 'cut') TOOLBAR_LIGHT = false;
   if(typeof syncToolbar === 'function') syncToolbar();
-  stat(MODE === 'cut' ? '切り抜き ── 素材も灯も動きません' : '動かす');
+  /* ⭐ 切り抜きに入ると【その素材だけの画面】になる＝大きく切れる */
+  render(); fitView();
+  stat(MODE === 'cut'
+    ? (LAYERS[SEL] ? '切り抜きの画面 ── 素の写真を画面いっぱいに出しています'
+                   : '先に素材を選んでください')
+    : '動かす');
   drawOverlay(cv.width, cv.height);
 });
 document.querySelectorAll('#s_tool button').forEach(bt => bt.onclick = () => {
   TOOL = bt.dataset.v; POLY = [];
   document.querySelectorAll('#s_tool button').forEach(x => x.classList.toggle('on', x === bt));
   if(typeof syncToolbar === 'function') syncToolbar();
-  drawOverlay(cv.width, cv.height);
+  render(); drawOverlay(cv.width, cv.height);
 });
 /* 🔴🔴 許容・ふち・なめらかさは【リアルタイムで見える】
    （前は色で抜くを押した瞬間に焼いていたので、許容を動かしても何も起きなかった） */
@@ -2369,8 +2471,15 @@ function snapshot(){
   return { tool:TOOLNAME, v:2, at:new Date().toISOString(), seg:sg, ui,
            lights: LIGHTS.map(L2 => Object.assign({}, L2)),
            paper: { ratio:P.ratio, dpi:P.dpi, land:P.land },
+           /* ⭐⭐ 切り抜きの型も入れる（2026-08-30 木下＝「今回作ったデータをどう作ったのか
+              みたいから json 書き出しも」）＝これが無いと「どう作ったか」が戻らない。
+              ⚠️ 写真そのものは入らない（大きすぎる）＝同じ写真を置いてから読む。 */
            layers: LAYERS.map(L => ({ x:L.x, y:L.y, s:L.s, rot:L.rot, flip:L.flip, d:L.d, on:L.on, op:L.op, ord:L.ord,
-                             adj: Object.assign(newAdj(), L.adj || {}) })) };
+                             name:L.name,
+                             adj: Object.assign(newAdj(), L.adj || {}),
+                             keys: (L.keys || []).map(k => Object.assign({}, k)),
+                             mCut:  L.mCut  ? L.mCut.toDataURL('image/png')  : null,
+                             mKeep: L.mKeep ? L.mKeep.toDataURL('image/png') : null })) };
 }
 function applyJSON(o){
   if(!o || o.tool !== TOOLNAME) throw new Error('靄MOYA の JSON ではありません');
@@ -2399,8 +2508,28 @@ function applyJSON(o){
   /* ⭐ 置き方は【素材の枚数が合っているときだけ】戻す（合わないなら何が何か決められない） */
   const ls = o.layers || [];
   if(ls.length && ls.length === LAYERS.length){
-    ls.forEach((s, i) => { Object.assign(LAYERS[i], s); LAYERS[i]._key = ''; });
-    stat('設定と置き方を読んだ');
+    ls.forEach((o2, i) => {
+      const L = LAYERS[i];
+      Object.assign(L, { x:o2.x, y:o2.y, s:o2.s, rot:o2.rot, flip:o2.flip,
+                         d:o2.d, on:o2.on, op:o2.op == null ? 1 : o2.op, ord:o2.ord });
+      L.adj = Object.assign(newAdj(), o2.adj || {});
+      L.keys = (o2.keys || []).map(k => Object.assign({}, k));
+      /* ⭐ 切り抜きの型を戻す（絵なので、読み込んでから当てる） */
+      const put = (url, which) => {
+        L[which] = null;
+        if(!url) return;
+        const im = new Image();
+        im.onload = () => {
+          const c = document.createElement('canvas'); c.width = im.width; c.height = im.height;
+          c.getContext('2d').drawImage(im, 0, 0);
+          L[which] = c; bumpMask(L); render();
+        };
+        im.src = url;
+      };
+      put(o2.mCut, 'mCut'); put(o2.mKeep, 'mKeep');
+      L._dist = null; L._mk = ''; L._key = '';
+    });
+    stat('設定と置き方（切り抜きの型も）を読んだ');
   }else if(ls.length){
     stat('設定だけ読んだ（素材が ' + ls.length + ' 枚ぶんの置き方だが、いまは ' + LAYERS.length + ' 枚）');
   }
