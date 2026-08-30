@@ -1178,7 +1178,7 @@ const SU = await p.evaluate(() => {
                 'r_igsize','r_igop','r_bsize','r_bdepth','r_bang','r_bhiop','r_bloop',
                 'r_tang','r_tdist','r_tblur','r_top','r_gscale',
                 'r_selsw','r_selblur','t_hs','t_vs','t_skew','t_sw','t_bgpad','t_bgr','t_bgop',
-                'r_mang','r_wfreq'];
+                'r_mang','r_wfreq','r_liqrad','r_liqstr','r_rrough','r_rsize','r_rstr','r_rseed'];
   const bad = [];
   document.querySelectorAll('#panel input[type=range]').forEach(e => {
     if(SKIP.includes(e.id)) return;
@@ -1725,6 +1725,140 @@ ok(await p.evaluate(() => LAYERS.some(L => L.kind === 'text') && LAYERS.some(L =
 ok(await p.evaluate(() => LAYERS.some(L => L.fx && L.fx.grad.on)),
    '⭐ 見本2 にエフェクト（黄金色）が乗っている');
 await p.evaluate(() => document.getElementById('b_demo').click());
+await wait(1600);
+
+/* ══㉕ 仕事の版面（バナー）══ 2026-08-31・木下＝「ビジネス用のバナー画像作成のような」 */
+await p.setViewport({ width:1400, height:900 });
+const BAN = await p.evaluate(async () => {
+  const out = [];
+  for(const bt of document.querySelectorAll('#s_banner button')){
+    bt.click(); await new Promise(r => setTimeout(r, 160));
+    const f = sheet();
+    out.push(bt.dataset.v + ':' + f.w + 'x' + f.h + (bt.classList.contains('on') ? '' : ' 印なし'));
+  }
+  return { out, longHidden:document.getElementById('longUI').classList.contains('hide'),
+           dpiHidden:document.getElementById('dpiUI').classList.contains('hide') };
+});
+ok(BAN.out.length === 11 && BAN.out.every(x => !x.includes('印なし')),
+   '⭐⭐ 仕事の版面が全部効いて印もつく', BAN.out.length + ' 個');
+ok(BAN.out.includes('OGP:1200x630') && BAN.out.includes('ストーリー:1080x1920'),
+   '⭐ px そのもので決まる（OGP 1200×630／ストーリー 1080×1920）');
+ok(BAN.longHidden && BAN.dpiHidden,
+   '⭐ px の版面では 長辺も解像度も出さない（触れるのに効かないつまみを出さない）');
+await p.evaluate(() => document.querySelector('#s_ratio button[data-v="2:3"]').click());
+await wait(400);
+
+/* ══㉖ フィルター（移動ぼかし・放射状ぼかし・うねり・渦巻き）══ */
+await p.evaluate(() => document.getElementById('b_demo').click());
+await wait(1600);
+await p.evaluate(() => { const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+  SEL = LAYERS.indexOf(o[1]); SELIDS = [o[1].id]; syncSel(); buildList(); });
+await wait(700);
+const fullShot3 = () => p.evaluate(() => { COARSE = 0; render(); return window.__full(); });
+const sad3 = (A, B) => p.evaluate(([a2, b2]) => window.__sad(a2, b2), [A, B]);
+const FI0 = await fullShot3();
+const FIDEAD = [];
+for(const k of ['r_mblur','r_rblur','r_wave','r_twirl']){
+  const keep = await p.evaluate(kk => { const e = document.getElementById(kk); const v = e.value;
+    e.value = 60; e.dispatchEvent(new Event('input', { bubbles:true })); return v; }, k);
+  await wait(1000);
+  if(await sad3(FI0, await fullShot3()) === 0) FIDEAD.push(k);
+  await p.evaluate((kk, v) => { const e = document.getElementById(kk); e.value = v;
+    e.dispatchEvent(new Event('input', { bubbles:true })); }, k, keep);
+  await wait(800);
+}
+ok(FIDEAD.length === 0, '⭐⭐ 移動ぼかし・放射状ぼかし・うねり・渦巻きが効く',
+   FIDEAD.length ? FIDEAD.join(',') : '4/4');
+ok(await sad3(FI0, await fullShot3()) === 0, '🔴 戻すと1画素も同じに戻る');
+
+/* ══㉗ ゆがみ（Liquify）══ */
+await p.evaluate(() => document.querySelector('#tools button[data-t="liq"]').click());
+await wait(700);
+ok(await p.evaluate(() => TOOL === 'liq'), '⭐ ゆがみの道具に切り替わる');
+ok(await p.evaluate(() => !document.getElementById('liqUI').classList.contains('hide')),
+   '⭐ ゆがみのつまみだけが出る');
+const LQ0 = await fullShot3();
+await p.evaluate(async () => {
+  const L = LAYERS[SEL], st = document.getElementById('stage'), A = toScreen(L.x, L.y);
+  st.dispatchEvent(new PointerEvent('pointerdown',
+    { bubbles:true, pointerId:11, clientX:A.clientX, clientY:A.clientY }));
+  for(let i = 1; i <= 6; i++)
+    st.dispatchEvent(new PointerEvent('pointermove',
+      { bubbles:true, pointerId:11, clientX:A.clientX + i*8, clientY:A.clientY }));
+  st.dispatchEvent(new PointerEvent('pointerup',
+    { bubbles:true, pointerId:11, clientX:A.clientX + 48, clientY:A.clientY }));
+  await new Promise(r => setTimeout(r, 600));
+});
+await wait(900);
+ok(await sad3(LQ0, await fullShot3()) !== 0, '⭐⭐ なぞると画素が押される（ゆがみ）');
+ok(await p.evaluate(() => liqAny(LAYERS[SEL])), '⭐ ゆがみは【押した量の地図】で持つ',
+   await p.evaluate(() => LAYERS[SEL].liq.n + ' 押し'));
+await p.evaluate(() => document.getElementById('b_liqclear').click());
+await wait(900);
+ok(await sad3(LQ0, await fullShot3()) === 0, '🔴 ぜんぶ戻すと1画素も同じに戻る（焼き込んでいない）');
+await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t="move"]');
+  if(bt) bt.click(); });
+await wait(500);
+
+/* ══㉘ 雲・光（Photoshop の「描画」フィルター）══
+   ⭐ 写真を壊して描くのではなく【新しいレイヤーとして置く】 */
+const RN0 = await fullShot3();
+await p.evaluate(() => document.getElementById('b_cloud').click());
+await wait(1500);
+ok(await p.evaluate(() => LAYERS[SEL].kind === 'render' && LAYERS[SEL].img.naturalWidth > 10),
+   '⭐⭐ 雲を置ける', await p.evaluate(() =>
+     LAYERS[SEL].img.naturalWidth + 'x' + LAYERS[SEL].img.naturalHeight));
+ok(await sad3(RN0, await fullShot3()) !== 0, '⭐ 盤に雲が出る');
+const CL1 = await fullShot3();
+await p.evaluate(() => { const e = document.getElementById('r_rseed');
+  e.value = 42; e.dispatchEvent(new Event('input', { bubbles:true })); });
+await wait(1200);
+ok(await sad3(CL1, await fullShot3()) !== 0, '⭐ 種を変えると雲が変わる');
+await p.evaluate(() => { const e = document.getElementById('r_rseed');
+  e.value = 7; e.dispatchEvent(new Event('input', { bubbles:true })); });
+await wait(1200);
+ok(await sad3(CL1, await fullShot3()) === 0, '⭐ 同じ種なら1画素も同じ');
+await p.evaluate(() => document.getElementById('b_flare').click());
+await wait(1500);
+ok(await p.evaluate(() => LAYERS[SEL].rnd.kind === 'flare' && LAYERS[SEL].blend === 'lighter'),
+   '⭐ 光を置ける（重ね方は「明るさをプラス」が既定）');
+
+/* ══㉙ パスを残す・パスから図形を作る ══ */
+await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t="move"]');
+  if(bt) bt.click(); document.getElementById('b_demo').click(); });
+await wait(1600);
+await p.evaluate(() => {
+  const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+  SEL = LAYERS.indexOf(o[1]); SELIDS = [o[1].id]; syncSel(); buildList();
+  document.querySelector('#tools button[data-t="path"]').click();
+  const m = maskSize(LAYERS[SEL]);
+  POLY = [{x:m.w*0.2,y:m.h*0.2,hx:0,hy:0},{x:m.w*0.8,y:m.h*0.25,hx:0,hy:0},
+          {x:m.w*0.5,y:m.h*0.8,hx:0,hy:0}];
+  closePath();
+});
+await wait(900);
+await p.evaluate(() => document.getElementById('b_pathsave').click());
+await wait(600);
+ok(await p.evaluate(() => LAYERS[SEL].paths.length === 1 &&
+     document.getElementById('pathList').children.length === 1),
+   '⭐⭐ パスを残せる（Photoshop のパスパネルと同じ）');
+await p.evaluate(() => document.getElementById('b_selclear').click());
+await wait(500);
+await p.evaluate(() => document.getElementById('pathList').children[0]
+  .querySelector('button').click());
+await wait(600);
+ok(await p.evaluate(() => !!LAYERS[SEL].sel), '⭐ 残したパスを選択に呼び戻せる');
+const PS0 = await p.evaluate(() => LAYERS.length);
+await p.evaluate(() => document.getElementById('b_pathshape').click());
+await wait(900);
+ok(await p.evaluate(() => LAYERS.length) === PS0 + 1 &&
+   await p.evaluate(() => LAYERS[SEL].img.naturalWidth > 10),
+   '⭐⭐ パスから図形を作れる（新しいレイヤーになる）');
+ok(await p.evaluate(() => { const o = snapshot();
+     return o.layers.some(l => (l.paths || []).length > 0); }),
+   '⭐ 残したパスは設定JSONにも入る');
+await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t="move"]');
+  if(bt) bt.click(); document.getElementById('b_demo').click(); });
 await wait(1600);
 
 /* ⑨ モバイル */
