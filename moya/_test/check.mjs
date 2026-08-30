@@ -371,6 +371,8 @@ const PEN = await p.evaluate(async () => {
   LAYERS = []; addImage(img, 'ペンためし', 0.1);
   const L = LAYERS[0]; L.x = 0.5; L.y = 0.5; SEL = 0;
   el('k_nobg').checked = true; el('k_nobg').dispatchEvent(new Event('change',{bubbles:true}));
+  /* ⚠️ 2026-08-31 から【道具を選んでも画面は飛ばない】＝この画面はダブルクリックで入る */
+  openEditor(0);
   document.querySelector('#tools button[data-t="path"]').click();
   COARSE = 0; render(); fitView(); await new Promise(r => setTimeout(r, 300));
   /* ⚠️ 切り抜きの画面では盤に市松（不透明）が敷いてあるので、
@@ -858,8 +860,10 @@ const CV = await p.evaluate(async () => {
   document.querySelector('#tools button[data-t="move"]').click();
   await new Promise(r => setTimeout(r, 150));
   const out = { 版面: sheet(), 動かすときの盤: [cv.width, cv.height] };
+  /* ⚠️ 素材だけの画面は【ダブルクリック】で入る（道具を選んでも飛ばない） */
+  openEditor(SEL);
   document.querySelector('#tools button[data-t="path"]').click();
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 400));
   const L = LAYERS[SEL];
   out.切り抜きの画面 = cutView();
   out.切るときの盤 = [cv.width, cv.height];
@@ -876,7 +880,7 @@ const CV = await p.evaluate(async () => {
   out.戻ると版面 = !cutView() && cv.width !== out.切るときの盤[0];
   return out;
 });
-ok(CV.切り抜きの画面, '⭐⭐ 切り抜くを選ぶと【その素材だけの画面】になる');
+ok(CV.切り抜きの画面, '⭐⭐ ダブルクリックで【その素材だけの画面】になる');
 ok(CV.比が合う, '⭐ 盤の比が素材の比になる（大きく切れる）',
    CV.切るときの盤.join('×') + ' ／ 素材 ' + CV.素材の比.join('×'));
 ok(CV.座標が素直, '⭐⭐ 盤の割合＝素材の中の割合（座標が食い違わない）');
@@ -1160,7 +1164,11 @@ const SU = await p.evaluate(() => {
   const SKIP = ['r_long','r_tol','r_brush','r_feather','r_seed','r_shds','r_shdl','r_shdc',
                 'r_lr','r_scale','r_depth','r_rot','r_sy','r_fillop',
                 't_weight','t_size','t_track','t_lead',
-                'sh_w','sh_h','sh_r','sh_sides','sh_sw'];
+                'sh_w','sh_h','sh_r','sh_sides','sh_sw',
+                'r_sang','r_sdist','r_sblur','r_sop','r_gsize','r_gop','r_stw','r_stop',
+                'r_iang','r_idist','r_iblur','r_iop','r_gang','r_gdop',
+                'r_igsize','r_igop','r_bsize','r_bdepth','r_bang','r_bhiop','r_bloop',
+                'r_tang','r_tdist','r_tblur','r_top','r_gscale'];
   const bad = [];
   document.querySelectorAll('#panel input[type=range]').forEach(e => {
     if(SKIP.includes(e.id)) return;
@@ -1442,6 +1450,156 @@ ok(await p.evaluate(() => !document.querySelector('#tools button[data-t="light"]
    '⭐ 灯のアイコンはツールバーに出さない（木下＝「このアイコンはいらない」）');
 ok(await p.evaluate(() => LIGHTS.length > 0 && typeof hitLight === 'function'),
    '⭐ 灯は【動かす】のまま盤の白い丸でつかめる');
+
+/* ══⑱ エフェクト（レイヤースタイル 9種）══ 2026-08-31
+   木下＝「画像や字にエフェクトをかけたりするところは強化させる」
+   Photoshop のレイヤースタイルは10種。ここは9つ持つ
+   （カラーオーバーレイ＝［塗りを重ねる］／パターンは クリッピングマスク が担う）。 */
+await p.setViewport({ width:1400, height:900 });
+await p.evaluate(() => document.getElementById('b_demo').click());
+await wait(1600);
+await p.evaluate(() => { const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+  SEL = LAYERS.indexOf(o[1]); SELIDS = [o[1].id]; syncSel(); buildList(); render(); });
+await wait(700);
+ok(await p.evaluate(() => !document.getElementById('fxBox').classList.contains('hide')),
+   '⭐ エフェクトのパネルが出る');
+/* ⚠️ 物差しは【差の合計（__sad）】。「8より大きい画素を数える」だと、
+   やわらかい影のように【全面に薄くかかるもの】が 0 と出てしまう（2026-08-30 に踏んだ型）。
+   → feedback_test_metric_from_the_same_function */
+const fullShot = () => p.evaluate(() => { COARSE = 0; render(); return window.__full(); });
+const sad = (A, B) => p.evaluate(([a2, b2]) => window.__sad(a2, b2), [A, B]);
+const FX0 = await fullShot();
+const FXDEAD = [];
+for(const [id, nm] of [['fx_shadow','ドロップシャドウ'], ['fx_glow','光彩（外側）'],
+     ['fx_stroke','境界線'], ['fx_inner','内側の影'], ['fx_iglow','光彩（内側）'],
+     ['fx_bevel','ベベルとエンボス'], ['fx_satin','サテン'], ['fx_grad','グラデーション']]){
+  await p.evaluate(i => { const e = document.getElementById(i);
+    e.checked = true; e.dispatchEvent(new Event('change', { bubbles:true })); }, id);
+  await wait(800);
+  if(await sad(FX0, await fullShot()) === 0) FXDEAD.push(nm);
+  await p.evaluate(i => { const e = document.getElementById(i);
+    e.checked = false; e.dispatchEvent(new Event('change', { bubbles:true })); }, id);
+  await wait(700);
+  if(await sad(FX0, await fullShot()) !== 0) FXDEAD.push(nm + '（切っても戻らない）');
+}
+ok(FXDEAD.length === 0,
+   '⭐⭐ エフェクト8つが効いて、切れば1画素も同じに戻る（焼き込んでいない）',
+   FXDEAD.length ? FXDEAD.join(' , ') : '8/8');
+
+/* 型（黄金色など）＝押したら絵が変わり、［ぜんぶ切る］で戻る */
+await p.evaluate(() => document.querySelector('#s_fxpre button[data-v="gold"]').click());
+await wait(900);
+ok(await sad(FX0, await fullShot()) !== 0,
+   '⭐ 型「黄金色」が当たる（多色グラデ＋ベベル＋境界線＋サテン）');
+ok(await p.evaluate(() => LAYERS[SEL].fx.grad.stops.length >= 6),
+   '⭐ グラデーションは多色（黄金色は6色）',
+   await p.evaluate(() => LAYERS[SEL].fx.grad.stops.length + '色'));
+await p.evaluate(() => document.getElementById('b_fxreset').click());
+await wait(800);
+ok(await sad(FX0, await fullShot()) === 0, '🔴 ［エフェクトをぜんぶ切る］で1画素も同じに戻る');
+
+/* ══⑲ 編集の画面は【盤と同じ見え方】══ 2026-08-31
+   🔴 木下＝「盤ではこの見た目なのに、ダブルクリックするとこれになるのはおかしい。連動してないと」
+   ⭐ 板だけでは足りない（灯のひろがり・寒暖の差・にじみは【紙のもの】で、版面ぜんぶに
+     かかってから素材の上に乗る）。だから【この素材だけを出した版面】を描いて切り出す。
+   ⚠️ 物差しは「盤の同じ場所の色」＝見る所と比べる所を同じものにする。
+     → feedback_test_metric_from_the_same_function */
+const SOLOCHK = async idx => p.evaluate(async i => {
+  const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+  const L = o[i < 0 ? o.length - 1 : i];
+  const f = sheet();
+  const big = document.createElement('canvas'); big.width = f.w; big.height = f.h;
+  COARSE = 0; LAYERS.forEach(x => x._key = '');
+  paint(big.getContext('2d'), f.w, f.h, false);
+  const bd = big.getContext('2d')
+    .getImageData(Math.round(L.x*f.w), Math.round(L.y*f.h), 1, 1).data;
+  openEditor(LAYERS.indexOf(L));
+  await new Promise(r => setTimeout(r, 1600));
+  const sd = g.getImageData((cv.width/2)|0, (cv.height/2)|0, 1, 1).data;
+  return { 名:L.name, 盤:[bd[0],bd[1],bd[2]], 編集:[sd[0],sd[1],sd[2]] };
+}, idx);
+const near3 = (a2, b2) => Math.abs(a2[0]-b2[0]) < 16 && Math.abs(a2[1]-b2[1]) < 16
+                        && Math.abs(a2[2]-b2[2]) < 16;
+const SOLOA = await SOLOCHK(0);
+ok(near3(SOLOA.盤, SOLOA.編集),
+   '⭐⭐ 編集の画面の色が【盤の同じ場所】と一致する（連動している）', JSON.stringify(SOLOA));
+const SOLOB = await SOLOCHK(-1);
+ok(near3(SOLOB.盤, SOLOB.編集),
+   '⭐ いちばん奥（空気が最大に効く素材）でも一致する', JSON.stringify(SOLOB));
+const SOLO2 = await p.evaluate(async () => {
+  document.querySelector('#s_tool button[data-v="color"]').click();
+  await new Promise(r => setTimeout(r, 900));
+  const d = g.getImageData((cv.width/2)|0, (cv.height/2)|0, 1, 1).data;
+  const L = LAYERS[SEL];
+  const c2 = document.createElement('canvas'); c2.width = 200; c2.height = 200;
+  c2.getContext('2d').drawImage(edSrc(L, 200, 200), 0, 0, 200, 200);
+  const raw = c2.getContext('2d').getImageData(100, 100, 1, 1).data;
+  document.querySelector('#tools button[data-t="move"]').click();
+  return { 画面:[d[0],d[1],d[2]], 素:[raw[0],raw[1],raw[2]] };
+});
+ok(near3(SOLO2.画面, SOLO2.素),
+   '⭐ ［色で抜く］のときだけ素の写真（押した色と拾う色が合う）', JSON.stringify(SOLO2));
+await wait(600);
+
+/* ══⑳ 道具は【選んだレイヤーにかかる】・画面は飛ばさない ══ 2026-08-31
+   🔴 木下＝「基本前提は 選択したレイヤーに対してそれらがかかる。
+      現状だとそれぞれの機能に対してツールパネルを選択してそれぞれに飛びそう」 */
+await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t="move"]');
+  if(bt) bt.click(); document.getElementById('b_demo').click(); });
+await wait(1600);
+const TOOLSTAY = [];
+for(const t of ['color','erase','paint','path']){
+  await p.evaluate(tt => document.querySelector('#tools button[data-t="' + tt + '"]').click(), t);
+  await wait(450);
+  const v = await p.evaluate(() => ({ cut:cutView(), mode:MODE }));
+  if(v.cut || v.mode !== 'cut') TOOLSTAY.push(t + JSON.stringify(v));
+}
+ok(TOOLSTAY.length === 0, '⭐⭐ 切る道具を選んでも【版面のまま】（画面が飛ばない）',
+   TOOLSTAY.length ? TOOLSTAY.join(' , ') : '4/4');
+const BRUSH = await p.evaluate(async () => {
+  const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+  SEL = LAYERS.indexOf(o[1]); SELIDS = [o[1].id]; syncSel(); buildList();
+  document.querySelector('#tools button[data-t="erase"]').click();
+  await new Promise(r => setTimeout(r, 400));
+  const L = LAYERS[SEL], before = hasCut(L);
+  const st = document.getElementById('stage'), A = toScreen(L.x, L.y);
+  st.dispatchEvent(new PointerEvent('pointerdown',
+    { bubbles:true, pointerId:7, clientX:A.clientX, clientY:A.clientY }));
+  st.dispatchEvent(new PointerEvent('pointermove',
+    { bubbles:true, pointerId:7, clientX:A.clientX+20, clientY:A.clientY+20 }));
+  st.dispatchEvent(new PointerEvent('pointerup',
+    { bubbles:true, pointerId:7, clientX:A.clientX+20, clientY:A.clientY+20 }));
+  await new Promise(r => setTimeout(r, 500));
+  return { 前:before, 後:hasCut(LAYERS[SEL]) };
+});
+ok(!BRUSH.前 && BRUSH.後, '⭐⭐ 版面のまま【選んだレイヤー】に筆が効く', JSON.stringify(BRUSH));
+await p.evaluate(() => { undo(); const bt = document.querySelector('#tools button[data-t="move"]');
+  if(bt) bt.click(); });
+await wait(700);
+await p.evaluate(() => document.getElementById('layers').children[1]
+  .dispatchEvent(new MouseEvent('dblclick', { bubbles:true })));
+await wait(1400);
+ok(await p.evaluate(() => SOLO && cutView()), '⭐ ダブルクリックのときだけ素材だけの画面へ入る');
+ok(await p.evaluate(() => !document.getElementById('b_solo').classList.contains('hide')),
+   '⭐［版面へ戻る］が出る');
+await p.evaluate(() => document.getElementById('b_solo').click());
+await wait(900);
+ok(await p.evaluate(() => !SOLO && !cutView()), '⭐ 押すと版面へ戻る');
+
+/* ㉑ 段は折りたためる（木下＝「邪魔な時は折りたたむから」） */
+const FOLD = await p.evaluate(() => {
+  const g2 = document.getElementById('airBox');
+  const h0 = g2.getBoundingClientRect().height;
+  g2.querySelector('label.h').click();
+  const h1 = g2.getBoundingClientRect().height;
+  const saved = localStorage.getItem('moya.fold.v1');
+  g2.querySelector('label.h').click();
+  return { 開:Math.round(h0), 閉:Math.round(h1),
+           再開:Math.round(g2.getBoundingClientRect().height), 覚えた:saved };
+});
+ok(FOLD.閉 < FOLD.開 * 0.4, '⭐ 見出しを押すと段がたたまれる', JSON.stringify(FOLD));
+ok(Math.abs(FOLD.再開 - FOLD.開) < 3, '⭐ もう一度押すと開く');
+ok(/airBox/.test(FOLD.覚えた || ''), '⭐ たたんだ状態を覚える');
 
 /* ⑨ モバイル */
 await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
