@@ -195,8 +195,14 @@
     </div>
     <div class="row"><span class="n">濃さのしきい</span><output id="o_th">0.50</output></div>
     <input type="range" id="r_th" min="5" max="95" step="1" value="50">
+    <div class="row"><span class="n">字間</span><output id="o_tra">0.00</output></div>
+    <input type="range" id="r_tra" min="-30" max="60" step="1" value="0">
+    <div class="row"><span class="n">行間</span><output id="o_lead">1.04</output></div>
+    <input type="range" id="r_lead" min="60" max="200" step="1" value="104">
     <div class="note">⭐ 元は<b>字だけ</b>。ここで決まるのは「どのマスを塗るか」＝<b>絵</b>。
-      このあとの升目をどう動かしても、この絵は<b>1マスも変わらない</b></div>
+      このあとの升目をどう動かしても、この絵は<b>1マスも変わらない</b><br>
+      ⭐ <b>字間・行間</b>は<b>収める前</b>に効く＝詰めた分だけ字が大きく入る（版面は変わらない）<br>
+      ⚠️ <b>行間</b>を 1.00 より詰めると行どうしが<b>くっつく</b>（参考の組み方はこれ）</div>
   </div>
 
   <div class="grp">
@@ -282,6 +288,37 @@
   </div>
 
   <div class="grp">
+    <label class="h">動かす</label>
+    <div class="seg" id="s_an">
+      <button data-v="wave" class="on">桁が波打つ</button>
+      <button data-v="round">丸めが動く</button>
+      <button data-v="cols">マスが変わる</button>
+    </div>
+    <div class="row"><span class="n">速さ</span><output id="o_spd">1.0</output></div>
+    <input type="range" id="r_spd" min="1" max="60" value="10">
+    <div class="row"><span class="n">揺れ</span><output id="o_swing">0.45</output></div>
+    <input type="range" id="r_swing" min="5" max="95" step="1" value="45">
+    <button class="btn" id="b_play">再生</button>
+    <div class="note">⭐⭐ <b>桁が波打つ</b>＝この道具の芯がそのまま動く（字は動かず<b>升目</b>が動く）<br>
+      ⚠️ 動かしている間も<b>絵（塗るマス）は1マスも変わらない</b>。止めたら<b>押す前の桁に戻る</b></div>
+  </div>
+
+  <div class="grp">
+    <label class="h">動画で書き出す</label>
+    <div class="seg" id="s_vfmt"><button data-v="mp4" class="on">mp4</button><button data-v="png">PNG連番</button></div>
+    <div class="row"><span class="n">秒</span><output id="o_vsec">3.0</output></div>
+    <input type="range" id="r_vsec" min="10" max="200" value="30">
+    <div class="row"><span class="n">コマ/秒</span><output id="o_vfps">24</output></div>
+    <input type="range" id="r_vfps" min="8" max="60" value="24">
+    <div class="row"><span class="n">周</span><output id="o_vloop">1</output></div>
+    <input type="range" id="r_vloop" min="1" max="6" value="1">
+    <div id="vsize"></div>
+    <button class="btn solid" id="b_video">動画を書き出す</button>
+    <div class="note">⭐ <b>頭と尻が同じ絵</b>になるので、そのまま繰り返せる（継ぎ目なし）<br>
+      ⚠️ 一覧を出している間は<b>1枚に戻してから</b>撮る</div>
+  </div>
+
+  <div class="grp">
     <label class="h">出す</label>
     <button class="btn solid" id="b_png">PNG で出す</button>
     <div class="btns2">
@@ -323,7 +360,7 @@ function stat(s){ el('stat').textContent = s; clearTimeout(statT);
      ＝この3つでマスが溶け合って、モジュラー書体の丸い形になる。
    ══════════════════════════════════════════════════════════ */
 const P = {
-  txt:'KETA', font:'900 ', th:0.50,
+  txt:'KETA', font:'900 ', th:0.50, tra:0, lead:1.04,
   cols:22, rows:12,
   wamp:0.55, hamp:0.25, floor:0.10, seed:7,
   rnd:0.50, gap:0, inv:0, ink:'#141414', bg:'#f4f2ec', nobg:false,
@@ -356,7 +393,7 @@ function sheet(){
 let PIC = null, PICKEY = '';
 function bakePic(){
   const C = Math.max(2, Math.round(P.cols)), R = Math.max(2, Math.round(P.rows));
-  const key = [C, R, P.txt, P.font, P.th].join('|');
+  const key = [C, R, P.txt, P.font, P.th, P.tra, P.lead].join('|');
   if(PICKEY === key && PIC) return PIC;
   const S = 8;                                   /* 1マスを 8×8 画素で焼いて平均する */
   const W = C * S, H = R * S;
@@ -367,18 +404,35 @@ function bakePic(){
   const fam = /serif/.test(P.font) ? '"Zen Old Mincho",serif' : '"Zen Kaku Gothic New",sans-serif';
   const wt = P.font.replace(/serif/, '');
   q.fillStyle = '#000'; q.textAlign = 'center'; q.textBaseline = 'middle';
+  /* ⭐ 字間は【自分で1字ずつ置く】（canvas の letterSpacing は端末で入っていないことがある）。
+     ⚠️ 最後の1字のうしろに字間を足さない＝足すと行が右へずれる。 */
+  const chars = L2 => [...String(L2)];
+  const widthOf = (L2, sz) => {
+    const cs = chars(L2); if(!cs.length) return 1;
+    let w = 0; for(const ch of cs) w += q.measureText(ch).width;
+    return w + (cs.length - 1) * sz * P.tra;
+  };
   /* ⭐ 字は升目いっぱいに収める（1字でも行でも同じ道） */
   let size = H;
   for(let t = 0; t < 24; t++){
     q.font = wt + size + 'px ' + fam;
-    const wid = Math.max(...lines.map(L2 => q.measureText(L2).width), 1);
-    const hei = size * 1.04 * lines.length;
+    const wid = Math.max(...lines.map(L2 => widthOf(L2, size)), 1);
+    const hei = size * P.lead * lines.length;
     const k = Math.min(W / wid, H / hei);
     if(Math.abs(k - 1) < 0.005) break;
     size = Math.max(4, size * k);
   }
   q.font = wt + size + 'px ' + fam;
-  lines.forEach((L2, i) => q.fillText(L2, W/2, H/2 + (i - (lines.length-1)/2) * size * 1.04));
+  q.textAlign = 'left';
+  lines.forEach((L2, i) => {
+    const cs = chars(L2);
+    let x = W/2 - widthOf(L2, size) / 2;
+    const y = H/2 + (i - (lines.length-1)/2) * size * P.lead;
+    for(const ch of cs){
+      q.fillText(ch, x, y);
+      x += q.measureText(ch).width + size * P.tra;
+    }
+  });
   const d = q.getImageData(0, 0, W, H).data;
   const on = new Uint8Array(C * R);
   let n = 0;
@@ -411,10 +465,18 @@ function rnd1(seed){                         /* 種から決まる 0〜1（同�
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
+/* ⭐⭐ 動かすときだけ、桁ごとに【回る位相】を足す（止めている間は null ＝いままでの絵）。
+   ⭐ u=0 と u=1 で必ず同じ値に戻る（sin の1周）＝継ぎ目なしで繰り返せる。 */
+let ANPH = null;
 function makeKeta(n, amp, floor, seed){
   const a = [];
   for(let i = 0; i < n; i++){
-    const u = rnd1(seed * 7919 + i * 104729);
+    let u = rnd1(seed * 7919 + i * 104729);
+    if(ANPH !== null){
+      /* 桁ごとに違う出だし（種で決まる）＝ばらばらに波打つ。端で止める（0〜1のまま） */
+      const ph = rnd1(seed * 31337 + i * 2654435) * 6.2831853;
+      u = Math.max(0, Math.min(1, u + ANPH.swing * Math.sin(ANPH.u * 6.2831853 + ph)));
+    }
     /* 🔴🔴 ここを【一様に散らす】と何も起きない（2026-08-30 実測）。
        1±振れ で散らすと、細い桁と太い桁が打ち消し合って、振れを端まで上げても
        いちばん細い桁が ×0.5 までしか下がらなかった＝つまみが1通りの絵しか作らない。
@@ -430,7 +492,9 @@ function makeKeta(n, amp, floor, seed){
 /* ⭐ 鍵は【1本だけ】書く。2か所に書くと、手で直したときと作り直すときで黙って食い違う */
 function ketaKey(){
   const { C, R } = bakePic();
-  return [C, R, P.wamp, P.hamp, P.floor, P.seed].join('|');
+  /* ⚠️ 位相も鍵に入れる＝入れないと控えが返って【再生しても動かない】 */
+  return [C, R, P.wamp, P.hamp, P.floor, P.seed,
+          ANPH ? (ANPH.u.toFixed(4) + ':' + ANPH.swing) : ''].join('|');
 }
 function keta(){
   const key = ketaKey();
@@ -794,6 +858,8 @@ function needFont(spec){
 /* ══ つまみ（表1つで回す）══ */
 const RANGES = [
   ['r_th','th','o_th', v => (v/100).toFixed(2), v => v/100],
+  ['r_tra','tra','o_tra', v => (v/100).toFixed(2), v => v/100],
+  ['r_lead','lead','o_lead', v => (v/100).toFixed(2), v => v/100],
   ['r_cols','cols','o_cols', v => v],
   ['r_rows','rows','o_rows', v => v],
   ['r_wamp','wamp','o_wamp', v => (v/100).toFixed(2), v => v/100],
@@ -907,6 +973,235 @@ el('b_svg').onclick = () => {
   dl(new Blob([s], { type:'image/svg+xml' }), 'keta_' + Date.now() + '.svg');
   stat('SVG を出した');
 };
+
+/* ══⭐⭐ 動かす・動画で書き出す（他の道具と同じ作法）══════════════
+   ⭐ 位相は【コマ番号】で刻む（時計で刻むとコマ落ちで絵が飛ぶ）。
+   ⭐ 頭と尻が同じ絵になるように当てる＝そのまま繰り返せる（継ぎ目なし）。
+   ⚠️ MediaRecorder は使わない（道具の決まり）。mp4-muxer ＋ VideoEncoder。
+   ⚠️ 動かすのは【見え方の値】だけ＝絵（塗るマス）にも版面にも触らない。
+   🔴 手で直した桁は控えて、止めたら必ず返す。 */
+const AN = { on:false, raf:0, t0:0, base:null };
+let anMode = 'wave', anSpd = 1.0, anSwing = 0.45;
+function anBase(){
+  return { rnd:P.rnd, cols:P.cols, wx:WX ? WX.slice() : null, hy:HY ? HY.slice() : null,
+           kk:KETAKEY, sheet:SHEET };
+}
+/* ⭐ 位相 u（0..1）を当てる道は1本＝画面の再生も、書き出しも同じここを通る */
+function setPhase(u, base){
+  const w = 0.5 - 0.5 * Math.cos(u * 6.2831853);   /* 頭と尻が一致する 0→1→0 */
+  if(anMode === 'wave'){
+    ANPH = { u, swing:anSwing };                   /* ⭐⭐ 芯そのもの＝升目が波打つ */
+  }else if(anMode === 'round'){
+    P.rnd = base.rnd * (1 - w) + w;                /* 角ばる ⇄ まん丸 */
+  }else{
+    P.cols = Math.max(4, Math.round(base.cols * (0.55 + 0.75 * w)));
+    PICKEY = '';                                   /* ⚠️ マスの数が変わる＝絵も焼き直す */
+  }
+}
+function anRestore(base){
+  ANPH = null; P.rnd = base.rnd; P.cols = base.cols;
+  PICKEY = '';
+  /* ⚠️ 手で直した桁をそのまま返す（作り直すと手の跡が消える） */
+  if(base.wx){ WX = base.wx.slice(); HY = base.hy.slice(); KETAKEY = base.kk; }
+  else KETAKEY = '';
+}
+/* ⚠️ 速さ・揺れ・秒・コマ/秒・周 は【絵の設定ではない】＝P に入れず、その場で読む */
+{
+  const r = el('r_spd'), o = el('o_spd');
+  const sync = () => { anSpd = (+r.value) / 10; o.value = anSpd.toFixed(1); };
+  r.addEventListener('input', sync); sync();
+  const r2 = el('r_swing'), o2 = el('o_swing');
+  const sync2 = () => { anSwing = (+r2.value) / 100; o2.value = anSwing.toFixed(2); };
+  r2.addEventListener('input', sync2); sync2();
+  [['r_vsec','o_vsec', v => (v/10).toFixed(1)], ['r_vfps','o_vfps', v => v], ['r_vloop','o_vloop', v => v]]
+    .forEach(([id, out, fmt]) => { const e = el(id), ov = el(out);
+      const s2 = () => { ov.value = fmt(+e.value); }; e.addEventListener('input', s2); s2(); });
+}
+/* 🔴 選ぶ並びは【絵の設定ではない】ので seg() に乗せない。
+   ⚠️ ただし「押した見た目を移す」配線は要る＝これが無いと押しても切り替わらない。 */
+document.querySelectorAll('#s_an button').forEach(b => b.onclick = () => {
+  anMode = b.dataset.v;
+  document.querySelectorAll('#s_an button').forEach(x => x.classList.toggle('on', x === b));
+});
+document.querySelectorAll('#s_vfmt button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#s_vfmt button').forEach(x => x.classList.toggle('on', x === b));
+});
+el('b_play').onclick = () => {
+  if(AN.on){ AN.on = false; cancelAnimationFrame(AN.raf);
+    anRestore(AN.base); el('b_play').textContent = '再生'; render(); stat('止めた'); return; }
+  if(!String(P.txt || '').trim()){ stat('字を打ってください'); return; }
+  /* ⚠️ 一覧のままだと何を動かすのか決まらない＝1枚に戻す。
+     🔴 黙って戻さない（勝手に変わったように見える）＝画面に言う。 */
+  if(SHEET){ SHEET = false; stat('一覧から1枚に戻して再生します'); }
+  AN.base = anBase(); AN.on = true; AN.t0 = performance.now();
+  el('b_play').textContent = '止める';
+  const tick = () => {
+    if(!AN.on) return;
+    const u = ((performance.now() - AN.t0) / 1000 * anSpd) % 1;
+    setPhase(u, AN.base);
+    render();
+    AN.raf = requestAnimationFrame(tick);
+  };
+  tick();
+};
+
+{
+  let CRCT = null;
+  function crc32(u8){
+    if(!CRCT){ CRCT = new Uint32Array(256);
+      for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); CRCT[n]=c>>>0; } }
+    let c = 0xFFFFFFFF;
+    for(let i=0;i<u8.length;i++) c = CRCT[(c ^ u8[i]) & 0xFF] ^ (c>>>8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+  function zip(files){
+    const te = new TextEncoder(), parts = [], cent = [];
+    let off = 0;
+    for(const f of files){
+      const nm = te.encode(f.name), crc = crc32(f.data), sz = f.data.length;
+      const L = new DataView(new ArrayBuffer(30));
+      L.setUint32(0,0x04034b50,true); L.setUint16(4,20,true);
+      L.setUint32(14,crc,true); L.setUint32(18,sz,true); L.setUint32(22,sz,true);
+      L.setUint16(26,nm.length,true);
+      parts.push(new Uint8Array(L.buffer), nm, f.data);
+      const C = new DataView(new ArrayBuffer(46));
+      C.setUint32(0,0x02014b50,true); C.setUint16(4,20,true); C.setUint16(6,20,true);
+      C.setUint32(16,crc,true); C.setUint32(20,sz,true); C.setUint32(24,sz,true);
+      C.setUint16(28,nm.length,true); C.setUint32(42,off,true);
+      cent.push(new Uint8Array(C.buffer), nm);
+      off += 30 + nm.length + sz;
+    }
+    let csz = 0; for(const c of cent) csz += c.length;
+    const E = new DataView(new ArrayBuffer(22));
+    E.setUint32(0,0x06054b50,true);
+    E.setUint16(8,files.length,true); E.setUint16(10,files.length,true);
+    E.setUint32(12,csz,true); E.setUint32(16,off,true);
+    return new Blob(parts.concat(cent, [new Uint8Array(E.buffer)]), { type:'application/zip' });
+  }
+  let muxP = null;
+  function loadMuxer(){
+    if(window.Mp4Muxer) return Promise.resolve(true);
+    if(!muxP) muxP = new Promise(res => {
+      const sc = document.createElement('script');
+      sc.src = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.1/build/mp4-muxer.min.js';
+      sc.onload = () => res(!!window.Mp4Muxer); sc.onerror = () => res(false);
+      document.head.appendChild(sc);
+    });
+    return muxP;
+  }
+  async function pickCodec(W, H, fps, bitrate){
+    const cands = ['avc1.640034','avc1.640033','avc1.640032','avc1.64002a','avc1.640028','avc1.4d0034','avc1.42003c'];
+    for(const codec of cands){
+      try{ const r = await VideoEncoder.isConfigSupported({ codec, width:W, height:H, bitrate, framerate:fps });
+        if(r && r.supported) return r.config; }catch(_){}
+    }
+    return null;
+  }
+  const idle = () => new Promise(r => setTimeout(r, 0));
+  const TV = { on:false, stop:false };
+  function vplan(){
+    const sec = (+el('r_vsec').value) / 10, fps = +el('r_vfps').value, loops = +el('r_vloop').value;
+    /* 🔴 1コマ目は 0 秒（時計で刻まない）。総コマ数は秒×コマ/秒 */
+    const total = Math.max(2, Math.round(sec * fps));
+    return { sec, fps, loops, total };
+  }
+  /* 🔴 mp4 は【偶数の辺】でないと作れない端末がある＝盤は偶数に丸める */
+  function vsize(){
+    const f = sheet();
+    return { w: f.w - (f.w % 2), h: f.h - (f.h % 2) };
+  }
+  function vsizeSync(){
+    const { w, h } = vsize(); const p = vplan();
+    el('vsize').textContent = w + ' × ' + h + ' px\n' + p.total + ' コマ・' + p.sec.toFixed(1) + '秒・' + p.loops + '周';
+  }
+  ['r_vsec','r_vfps','r_vloop','r_long','r_pad','r_cols','r_rows'].forEach(id =>
+    el(id) && el(id).addEventListener('input', vsizeSync));
+  document.querySelectorAll('#s_ratio button').forEach(b => b.addEventListener('click', vsizeSync));
+
+  el('b_video').onclick = async () => {
+    if(TV.on){ TV.stop = true; return; }
+    if(!String(P.txt || '').trim()){ stat('字を打ってください'); return; }
+    const p = vplan();
+    let fmt = document.querySelector('#s_vfmt button.on').dataset.v;
+    if(SHEET){ SHEET = false; stat('一覧から1枚に戻して撮ります'); render(); }
+    const { w:W, h:H } = vsize();
+    /* 🔴 大きすぎるときは【止める】＝頼んでもいない形式に黙って落とさない */
+    if(fmt === 'mp4' && (W > 4096 || H > 4096)){
+      stat('この大きさ（' + W + ' × ' + H + '）は mp4 にできません（辺4096まで）。長辺を下げるか PNG連番へ');
+      return;
+    }
+    if(AN.on) el('b_play').click();
+    const base = anBase();
+    TV.on = true; TV.stop = false;
+    el('b_video').textContent = 'やめる';
+    const out = document.createElement('canvas'); out.width = W; out.height = H;
+    const octx = out.getContext('2d');
+    let enc = null, muxer = null, target = null, encErr = null;
+    try{
+      if(fmt === 'mp4'){
+        const bitrate = Math.min(80e6, Math.round(W * H * p.fps * 0.15));
+        const have = (typeof VideoEncoder !== 'undefined') ? await loadMuxer() : false;
+        const cfg = have ? await pickCodec(W, H, p.fps, bitrate) : null;
+        if(cfg){
+          target = new Mp4Muxer.ArrayBufferTarget();
+          muxer = new Mp4Muxer.Muxer({ target,
+            video:{ codec:'avc', width:W, height:H, frameRate:Math.max(1, Math.round(p.fps)) },
+            fastStart:'in-memory' });
+          enc = new VideoEncoder({ output:(c,m)=>{ try{ muxer.addVideoChunk(c,m); }catch(e){ encErr = e; } },
+                                   error:e => { encErr = e; } });
+          enc.configure(cfg);
+        }else{ stat('この端末では mp4 を作れないので PNG連番で出します'); fmt = 'png'; }
+      }
+      const shots = [], pad = i => String(i).padStart(4,'0');
+      let bytes = 0, i = 0;
+      for(; i < p.total; i++){
+        if(TV.stop) break;
+        if(encErr) throw encErr;
+        setPhase((i / p.total) * p.loops % 1, base);
+        paint(octx, W, H, P.nobg);
+        if(fmt === 'mp4'){
+          const vf = new VideoFrame(out, { timestamp:Math.round(i*1e6/p.fps), duration:Math.round(1e6/p.fps) });
+          enc.encode(vf, { keyFrame:(i % (p.fps*2)) === 0 });
+          vf.close();
+          while(enc.encodeQueueSize > 8 && !encErr) await idle();
+        }else{
+          const b2 = await new Promise(r => out.toBlob(r, 'image/png'));
+          if(!b2) throw new Error('PNG が作れなかった（大きすぎる可能性）');
+          const u8 = new Uint8Array(await b2.arrayBuffer());
+          bytes += u8.length;
+          shots.push({ name:'keta_'+pad(i)+'.png', data:u8 });
+          if(bytes > 1.5e9) throw new Error('PNG連番が大きすぎます（'+Math.round(bytes/1e6)+'MB）');
+        }
+        if((i % 2) === 0 || i === p.total - 1)
+          el('vsize').textContent = '書き出し中 ' + (i+1) + ' / ' + p.total + ' コマ　' + W + ' × ' + H
+            + (fmt === 'png' ? '（' + Math.round(bytes/1e6) + 'MB）' : '') + '\n「やめる」で止められます';
+        await idle();
+      }
+      const shot = i;
+      if(fmt === 'mp4'){
+        await enc.flush(); if(encErr) throw encErr;
+        muxer.finalize(); enc.close();
+        if(shot > 1){
+          dl(new Blob([target.buffer], { type:'video/mp4' }), 'keta_' + Date.now() + '.mp4');
+          stat('mp4 — ' + W + ' × ' + H + '・' + shot + 'コマ・' + (shot/p.fps).toFixed(1) + '秒');
+        }else stat('コマが足りず出せませんでした');
+      }else if(shots.length){
+        dl(zip(shots), 'keta_' + Date.now() + '_seq.zip');
+        stat('PNG連番 — ' + W + ' × ' + H + '・' + shots.length + '枚・' + Math.round(bytes/1e6) + 'MB');
+      }
+    }catch(e){
+      stat('書き出せませんでした：' + (e && e.message ? e.message : e));
+      try{ if(enc && enc.state !== 'closed') enc.close(); }catch(_){}
+    }finally{
+      /* ⚠️ 撮り終わったら【必ず】元の値へ戻す（戻し忘れると絵が変わったままになる） */
+      anRestore(base);
+      TV.on = false; TV.stop = false;
+      el('b_video').textContent = '動画を書き出す';
+      render(); vsizeSync();
+    }
+  };
+  vsizeSync();
+}
 
 /* ══ 設定（プリセット代わり）══
    ⭐⭐ 戻すのは【つまみを触る道】で。値を直に P へ入れない。
