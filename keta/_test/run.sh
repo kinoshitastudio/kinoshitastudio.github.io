@@ -19,5 +19,8 @@ if ! curl -sf "http://localhost:$PORT/keta/index.html" | grep -q 'id="r_wamp"'; 
 fi
 node "$ROOT/keta/_test/check.mjs" "http://localhost:$PORT/keta/"
 CODE=$?
+echo
+echo "── 動かす・動画"
+node "$ROOT/keta/_test/video.mjs" "http://localhost:$PORT/keta/" || CODE=1
 [ "$STARTED" = "1" ] && pkill -f "http.server $PORT" >/dev/null 2>&1
 exit $CODE
