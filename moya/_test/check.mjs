@@ -448,7 +448,68 @@ ok(got.some(x => x.type === 'image/svg+xml'), '⭐⭐ SVG が本当に落ちる'
 ok(got.some(x => x.type === 'application/zip'), '⭐⭐ 素材ごとPNG（zip）が本当に落ちる',
    JSON.stringify(got.filter(x => x.type === 'application/zip')));
 
-/* ⑨ モバイル */
+/* ⭐⭐ 左のツールバー（2026-08-30 木下＝「左にツールパネルを出して直感的に」）
+   🔴 見るのは「並んでいる」ではなく【押したら本当に道具が変わるか】＝
+      見た目と中身を二重に持つと「押しても切り替わらない」が必ず出る。 */
+const TB = await p.evaluate(async () => {
+  const out = { 数: document.querySelectorAll('#tools button[data-t]').length, 押した:{} };
+  for(const [t, want] of [['color',['cut','color']], ['erase',['cut','erase']],
+                          ['paint',['cut','paint']], ['path',['cut','path']],
+                          ['move',['move',null]], ['light',['move',null]]]){
+    document.querySelector('#tools button[data-t="' + t + '"]').click();
+    await new Promise(r => setTimeout(r, 60));
+    const on = [...document.querySelectorAll('#tools button.on')].map(e => e.dataset.t);
+    out.押した[t] = { MODE, TOOL, 印: on.join(','),
+                      合っている: MODE === want[0] && (want[1] == null || TOOL === want[1]) };
+  }
+  document.querySelector('#tools button[data-t="move"]').click();
+  return out;
+});
+ok(TB.数 === 8, '⭐ 左のツールバーが出ている', TB.数 + ' 個');
+{
+  const bad = Object.entries(TB.押した).filter(([k, v]) => !v.合っている).map(([k]) => k);
+  ok(bad.length === 0, '⭐⭐ ツールバーを押すと本当に道具が変わる（見た目だけになっていない）',
+     JSON.stringify(TB.押した));
+  const noMark = Object.entries(TB.押した).filter(([k, v]) => v.印.indexOf(k) < 0).map(([k]) => k);
+  ok(noMark.length === 0, '⭐ 押した道具に印が付く', noMark.length ? noMark.join(',') : 'ぜんぶ付く');
+}
+
+/* ⭐⭐ どのつまみが盤のどこに効くかを見せる（触った瞬間に光る・出す絵には入らない） */
+const HL = await p.evaluate(async () => {
+  const board = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+    let h = 0; for(let i = 0; i < d.length; i += 4*11) h = (h*31 + d[i])|0; return h; };
+  const over = () => { const d = og.getImageData(0,0,ov.width,ov.height).data;
+    let n = 0; for(let i = 3; i < d.length; i += 4*11) if(d[i] > 8) n++; return n; };
+  const out = {};
+  document.querySelector('#tools button[data-t="move"]').click();
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 200));
+  const 盤0 = board(), 印0 = over();
+  const s = (id, v) => { const r = document.getElementById(id); r.value = v;
+    r.dispatchEvent(new Event('input', { bubbles:true })); };
+  s('r_haze', 52); COARSE = 0; render(); await new Promise(r => setTimeout(r, 150));
+  out.空気で印が増える = over() > 印0;
+  out.帯の中身 = HILITETXT + '／' + HILITE;
+  s('r_li', 60); COARSE = 0; render(); await new Promise(r => setTimeout(r, 150));
+  out.灯でも出る = HILITE === 'light';
+  /* ⚠️ 印は【出す絵】に入っていないこと */
+  const f = sheet();
+  const c1 = document.createElement('canvas'); c1.width = 300; c1.height = 450;
+  paint(c1.getContext('2d'), 300, 450, false);
+  const d1 = c1.getContext('2d').getImageData(0,0,300,450).data;
+  HILITE = null; HILITETXT = '';
+  const c2 = document.createElement('canvas'); c2.width = 300; c2.height = 450;
+  paint(c2.getContext('2d'), 300, 450, false);
+  const d2 = c2.getContext('2d').getImageData(0,0,300,450).data;
+  let diff = 0; for(let i = 0; i < d1.length; i += 4*7) if(Math.abs(d1[i]-d2[i]) > 4) diff++;
+  out.出す絵に入らない = diff === 0;
+  drawOverlay(cv.width, cv.height);
+  return out;
+});
+ok(HL.空気で印が増える, '⭐⭐ 空気のつまみを触ると【版面ぜんぶ】が光る', HL.帯の中身);
+ok(HL.灯でも出る, '⭐ 灯のつまみを触ると【灯】が光る');
+ok(HL.出す絵に入らない, '⚠️ 光らせる印は【出す絵に1画素も入らない】');
+
+/* ⑨ モバイル *//* ⑨ モバイル */
 await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
 await wait(900);
 const MB = await p.evaluate(() => ({
