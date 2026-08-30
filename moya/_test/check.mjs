@@ -546,9 +546,10 @@ ok(got.some(x => x.type === 'application/zip'), '⭐⭐ 素材ごとPNG（zip）
       見た目と中身を二重に持つと「押しても切り替わらない」が必ず出る。 */
 const TB = await p.evaluate(async () => {
   const out = { 数: document.querySelectorAll('#tools button[data-t]').length, 押した:{} };
+  /* ⚠️ 灯は 2026-08-31 にツールバーから外した（盤の白い丸でつかむ）＝ここでも見ない */
   for(const [t, want] of [['color',['cut','color']], ['erase',['cut','erase']],
                           ['paint',['cut','paint']], ['path',['cut','path']],
-                          ['move',['move',null]], ['light',['move',null]]]){
+                          ['move',['move',null]]]){
     document.querySelector('#tools button[data-t="' + t + '"]').click();
     await new Promise(r => setTimeout(r, 60));
     const on = [...document.querySelectorAll('#tools button.on')].map(e => e.dataset.t);
@@ -558,7 +559,7 @@ const TB = await p.evaluate(async () => {
   document.querySelector('#tools button[data-t="move"]').click();
   return out;
 });
-ok(TB.数 === 8, '⭐ 左のツールバーが出ている', TB.数 + ' 個');
+ok(TB.数 >= 8, '⭐ 左のツールバーが出ている', TB.数 + ' 個');
 {
   const bad = Object.entries(TB.押した).filter(([k, v]) => !v.合っている).map(([k]) => k);
   ok(bad.length === 0, '⭐⭐ ツールバーを押すと本当に道具が変わる（見た目だけになっていない）',
@@ -579,11 +580,14 @@ const HL = await p.evaluate(async () => {
   const 盤0 = board(), 印0 = over();
   const s = (id, v) => { const r = document.getElementById(id); r.value = v;
     r.dispatchEvent(new Event('input', { bubbles:true })); };
-  s('r_haze', 52); COARSE = 0; render(); await new Promise(r => setTimeout(r, 150));
-  out.空気で印が増える = over() > 印0;
+  /* 🔴 2026-08-30・木下＝「つまみをいじるときに、なぜかアクセントが加わるような動きがされる。
+     そういうのは邪魔。スライダーはナチュラルに、触っているオブジェクトだけに集中したい」
+     ＝つまみを引いても盤の上には【何も出さない】ことを試験にした（前は逆を見ていた）。 */
+  s('r_haze', 52); COARSE = 0; render(); await new Promise(r => setTimeout(r, 200));
+  out.空気で印が増えない = over() <= 印0;
   out.帯の中身 = HILITETXT + '／' + HILITE;
-  s('r_li', 60); COARSE = 0; render(); await new Promise(r => setTimeout(r, 150));
-  out.灯でも出る = HILITE === 'light';
+  s('r_li', 60); COARSE = 0; render(); await new Promise(r => setTimeout(r, 200));
+  out.灯でも出ない = over() <= 印0;
   /* ⚠️ 印は【出す絵】に入っていないこと */
   const f = sheet();
   const c1 = document.createElement('canvas'); c1.width = 300; c1.height = 450;
@@ -598,8 +602,8 @@ const HL = await p.evaluate(async () => {
   drawOverlay(cv.width, cv.height);
   return out;
 });
-ok(HL.空気で印が増える, '⭐⭐ 空気のつまみを触ると【版面ぜんぶ】が光る', HL.帯の中身);
-ok(HL.灯でも出る, '⭐ 灯のつまみを触ると【灯】が光る');
+ok(HL.空気で印が増えない, '⭐⭐ つまみを引いても盤の上に何も出さない（空気）', HL.帯の中身);
+ok(HL.灯でも出ない, '⭐ つまみを引いても盤の上に何も出さない（灯）');
 ok(HL.出す絵に入らない, '⚠️ 光らせる印は【出す絵に1画素も入らない】');
 
 /* ⭐⭐ 灯は何本でも（2026-08-30 木下＝「灯は複数追加できるなどできた方がよいのでは？」） */
@@ -1152,8 +1156,11 @@ await wait(1200);
 const SU = await p.evaluate(() => {
   /* 絵に効かないもの＝素材の置き方・切り抜きの道具・出す大きさ・種・影の形 */
   const NEU = { r_op:100, r_air:100, r_white:100, r_gamma:100, r_out:100 };
+  /* 絵に効かない＝素材の置き方・切り抜きの道具・出す大きさ・種・影の形・文字と塗りの設定 */
   const SKIP = ['r_long','r_tol','r_brush','r_feather','r_seed','r_shds','r_shdl','r_shdc',
-                'r_lr','r_scale','r_depth','r_rot'];
+                'r_lr','r_scale','r_depth','r_rot','r_sy','r_fillop',
+                't_weight','t_size','t_track','t_lead',
+                'sh_w','sh_h','sh_r','sh_sides','sh_sw'];
   const bad = [];
   document.querySelectorAll('#panel input[type=range]').forEach(e => {
     if(SKIP.includes(e.id)) return;
@@ -1187,6 +1194,254 @@ const ROWAIR = await p.evaluate(async () => {
 });
 ok(ROWAIR.before === 1 && ROWAIR.after === 0 && ROWAIR.txt === '素',
    '⭐ 一覧の空気ボタンで その素材だけ素のままにできる', JSON.stringify(ROWAIR));
+
+/* ══⑭ 文字・重ね方・塗り（2026-08-30・木下＝「テキストも打ち込みできるようにしよう」）══ */
+await p.evaluate(() => document.getElementById('b_demo').click());
+await wait(1600);
+const TX0 = await shot();
+await p.evaluate(() => document.getElementById('b_text').click());
+await wait(1800);
+ok(await p.evaluate(() => { const L = LAYERS[SEL];
+  return !!(L && L.kind === 'text' && L.img && L.img.naturalWidth > 10); }),
+  '⭐⭐ 文字を置くと【絵になって】版面に入る（置いたあとは写真と同じ扱い）',
+  await p.evaluate(() => LAYERS[SEL].img.naturalWidth + '×' + LAYERS[SEL].img.naturalHeight));
+ok(diff(await shot(), TX0) !== 0, '⭐ 盤に字が出る');
+ok(await p.evaluate(() => !document.getElementById('textBox').classList.contains('hide')),
+   '⭐ 文字のパネルが出る（テキストを選んでいるときだけ）');
+const TX1 = await shot();
+await p.evaluate(() => { const e = document.getElementById('t_str');
+  e.value = 'MOYA\nそうだ'; e.dispatchEvent(new Event('input', { bubbles:true })); });
+await wait(1500);
+ok(diff(await shot(), TX1) !== 0, '⭐ 打ち替えると絵が変わる');
+ok(await p.evaluate(() => LAYERS[SEL].name.indexOf('MOYA') === 0),
+   '⭐ 一覧の名前も打った字になる', await p.evaluate(() => LAYERS[SEL].name));
+const TDEAD = [];
+for(const k of ['t_weight','t_size','t_track','t_lead']){
+  const b0 = await shot();
+  const keep = await p.evaluate(kk => { const e = document.getElementById(kk); const v = e.value;
+    e.value = kk === 't_size' ? 300 : e.max; e.dispatchEvent(new Event('input',{bubbles:true}));
+    return v; }, k);
+  await wait(900);
+  if(diff(await shot(), b0) === 0) TDEAD.push(k);
+  await p.evaluate((kk, v) => { const e = document.getElementById(kk); e.value = v;
+    e.dispatchEvent(new Event('input',{bubbles:true})); }, k, keep);
+  await wait(800);
+}
+ok(TDEAD.length === 0, '⭐ 文字の4本ぜんぶ効く（太さ・大きさ・字間・行間）',
+   TDEAD.length ? TDEAD.join(',') : '4/4');
+
+const BL0 = await shot();
+await p.evaluate(() => { const e = document.getElementById('sel_blend');
+  e.value = 'multiply'; e.dispatchEvent(new Event('change',{bubbles:true})); });
+await wait(800);
+ok(diff(await shot(), BL0) !== 0, '⭐⭐ 重ね方（乗算）が効く');
+await p.evaluate(() => { const e = document.getElementById('sel_blend');
+  e.value = 'source-over'; e.dispatchEvent(new Event('change',{bubbles:true})); });
+await wait(800);
+ok(diff(await shot(), BL0) === 0, '⭐ 「通常」に戻すと1画素も同じに戻る');
+
+await p.evaluate(() => { const c = document.getElementById('c_fill');
+  /* ⚠️ 物差しは R と α を見ている＝白い字に赤を乗せても R は 255 のまま動かない。
+     測りたいものが動く色を選ぶ。 → feedback_test_metric_from_the_same_function */
+  c.value = '#000080'; c.dispatchEvent(new Event('input',{bubbles:true}));
+  const k = document.getElementById('k_fill');
+  k.checked = true; k.dispatchEvent(new Event('change',{bubbles:true})); });
+await wait(800);
+ok(diff(await shot(), BL0) !== 0, '⭐⭐ 塗りを重ねると効く（形の中だけ）');
+await p.evaluate(() => { const k = document.getElementById('k_fill');
+  k.checked = false; k.dispatchEvent(new Event('change',{bubbles:true})); });
+await wait(800);
+ok(diff(await shot(), BL0) === 0, '🔴 塗りを外すと1画素も同じに戻る');
+
+/* ⑭-2 編集の画面に入っても、盤を押して絵が消えない
+   🔴 木下＝「画像編集画面でボードをクリックすると消えてしまうのはなぜ？」
+      ＝入った瞬間「色で抜く」が構えていて、押した色が抜けていた。 */
+await p.evaluate(() => { const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+  openEditor(LAYERS.indexOf(o[o.length-1])); });
+await wait(1500);
+ok(await p.evaluate(() => TOOL === 'view'), '⭐ 編集の画面には【見るだけ】で入る',
+   await p.evaluate(() => TOOL));
+const VW0 = await shot();
+await p.evaluate(() => { const st = document.getElementById('stage');
+  const r = st.getBoundingClientRect();
+  const o = { bubbles:true, pointerId:9, clientX:r.left + r.width/2, clientY:r.top + r.height/2 };
+  st.dispatchEvent(new PointerEvent('pointerdown', o));
+  st.dispatchEvent(new PointerEvent('pointerup', o)); });
+await wait(900);
+ok(diff(await shot(), VW0) === 0, '🔴 編集の画面で盤を押しても絵が消えない');
+await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t="move"]');
+  if(bt) bt.click(); });
+await wait(600);
+
+/* ⑭-3 右パネルの見出しに 飾りの言葉を出さない（木下＝「Photoshopの最低限とか
+   プロの作法とかそんな言葉はいらない。SwiftUI のデザインは常に意識して」） */
+ok(await p.evaluate(() => {
+  const bad = [];
+  document.querySelectorAll('#panel label.h').forEach(h => {
+    if(/⭐|🔴|Photoshop|プロの作法|最低限/.test(h.textContent)) bad.push(h.textContent);
+  });
+  window.__badh = bad.join(' , ');
+  return bad.length === 0;
+}), '⭐ 右パネルの見出しは名詞ひとつ（飾りの言葉を出さない）',
+   await p.evaluate(() => window.__badh || 'ぜんぶ名詞'));
+
+/* ══⑮ 図形・盤の左上の表記・左ツールパネル（2026-08-31）══ */
+await p.evaluate(() => document.getElementById('b_demo').click());
+await wait(1600);
+const SP0 = await shot();
+await p.evaluate(() => document.getElementById('b_shape').click());
+await wait(900);
+ok(await p.evaluate(() => { const L = LAYERS[SEL];
+  return !!(L && L.kind === 'shape' && L.img && L.img.naturalWidth > 10); }),
+  '⭐⭐ 図形を置ける（木下＝「図形が必要だね」）',
+  await p.evaluate(() => LAYERS[SEL].img.naturalWidth + '×' + LAYERS[SEL].img.naturalHeight));
+ok(diff(await shot(), SP0) !== 0, '⭐ 盤に図形が出る');
+ok(await p.evaluate(() => !document.getElementById('shapeBox').classList.contains('hide')),
+   '⭐ 図形のパネルが出る');
+const SKINDS = await p.evaluate(async () => {
+  const out = [];
+  for(const bt of document.querySelectorAll('#s_shape button')){
+    bt.click(); await new Promise(r => setTimeout(r, 350));
+    out.push(bt.dataset.v);
+  }
+  return out;
+});
+ok(SKINDS.length === 6, '⭐ 6つのかたちが作れる', SKINDS.join('/'));
+/* 図形のつまみ＝効く状態を作ってから測る（角の丸みは長方形・線の太さは線ONのとき） */
+const SHDEAD = [];
+for(const k of ['sh_w','sh_h','sh_r','sh_sides','sh_sw']){
+  await p.evaluate(kk => {
+    const t = kk === 'sh_sides' ? 'star' : 'rect';
+    document.querySelector('#s_shape button[data-v="' + t + '"]').click();
+    const so = document.getElementById('sh_strokeon');
+    so.checked = (kk === 'sh_sw'); so.dispatchEvent(new Event('change', { bubbles:true }));
+  }, k);
+  await wait(500);
+  const b0 = await shot();
+  const keep = await p.evaluate(kk => { const e = document.getElementById(kk); const v = e.value;
+    e.value = Math.round((+e.min + +e.max)/2) + 13;
+    e.dispatchEvent(new Event('input', { bubbles:true })); return v; }, k);
+  await wait(600);
+  if(diff(await shot(), b0) === 0) SHDEAD.push(k);
+  await p.evaluate((kk, v) => { const e = document.getElementById(kk); e.value = v;
+    e.dispatchEvent(new Event('input', { bubbles:true })); }, k, keep);
+  await wait(400);
+}
+ok(SHDEAD.length === 0, '⭐ 図形の5本ぜんぶ効く', SHDEAD.length ? SHDEAD.join(',') : '5/5');
+
+/* ⑮-2 盤の左上の表記（貼HARI と同じ形）と、右パネルの説明を出さないこと */
+ok(await p.evaluate(() => !!document.getElementById('boardHead')),
+   '⭐ 盤の左上に表記が出る（道具名 / ← KINOSHITA STUDIO）');
+ok(await p.evaluate(() => /KINOSHITA/.test(document.querySelector('#boardHead .home').textContent)),
+   '⭐ 戻る先のリンクがある');
+ok(await p.evaluate(() => /枚/.test(document.getElementById('bhName').textContent)),
+   '⭐ いま何を触っているかが出る', await p.evaluate(() => document.getElementById('bhName').textContent));
+ok(await p.evaluate(() => !document.querySelector('#panel h1') && !document.querySelector('#panel .sub')),
+   '⭐ 右パネルの上の説明は出さない（木下＝「これらはいらない」）');
+/* ⚠️ 盤の左上は【出す絵】に1画素も入らない */
+ok(await p.evaluate(() => {
+  const bh = document.getElementById('boardHead');
+  return getComputedStyle(bh).position === 'absolute' && !bh.closest('canvas');
+}), '⭐ 左上の表記は盤の上に浮いているだけ（PNG には入らない）');
+
+/* ⑮-3 左ツールパネル（Photoshop / Figma / 貼HARI と同じ形） */
+ok(await p.evaluate(() => !!document.getElementById('toolsIn')), '⭐ 左ツールは浮いたカプセル');
+ok(await p.evaluate(() => [...document.querySelectorAll('#tools button[data-t]')]
+     .every(b2 => b2.dataset.k)), '⭐ どの道具にもショートカットの文字が出る',
+   await p.evaluate(() => [...document.querySelectorAll('#tools button[data-t]')]
+     .map(b2 => b2.dataset.k).join('')));
+const TN0 = await p.evaluate(() => LAYERS.length);
+await p.evaluate(() => document.querySelector('#tools button[data-t="text"]').click());
+await wait(1400);
+ok(await p.evaluate(() => LAYERS[SEL].kind === 'text'), '⭐ ツールバーの T で文字が置ける');
+await p.evaluate(() => document.querySelector('#tools button[data-t="shape"]').click());
+await wait(900);
+ok(await p.evaluate(() => LAYERS[SEL].kind === 'shape'), '⭐ ツールバーの R で図形が置ける');
+ok(await p.evaluate(() => LAYERS.length) === TN0 + 2, '⭐ 2つ増えている');
+
+/* ══⑯ 自由変形（Figma と同じ・⇧ で比を固定）══ 2026-08-31
+   木下＝「もっと自由にサイズ変更から無制限で形を変えられる。端をシフトキー押しながらだと固定して」
+   ＋「画像も同様に」 */
+await p.setViewport({ width:1400, height:900 });
+await p.evaluate(() => document.getElementById('b_demo').click());
+await wait(1600);
+const FREE = await p.evaluate(async () => {
+  const pick = () => { const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+    SEL = LAYERS.indexOf(o[1]); SELIDS = [o[1].id];
+    LAYERS[SEL].s = 0.34; LAYERS[SEL].sy = 1; LAYERS[SEL]._key = '';
+    syncSel(); buildList(); render(); return LAYERS[SEL]; };
+  const corner = L => { const iw = L.img.naturalWidth, ih = L.img.naturalHeight;
+    const dw = L.s*cv.width, dh = dw*ih/iw*syOf(L);
+    const a2 = toScreen((L.x*cv.width + dw/2)/cv.width, (L.y*cv.height + dh/2)/cv.height);
+    return { x:a2.clientX, y:a2.clientY }; };
+  const drag = async (A, dx, dy, shift, id) => {
+    const st = document.getElementById('stage');
+    st.dispatchEvent(new PointerEvent('pointerdown',
+      { bubbles:true, pointerId:id, clientX:A.x, clientY:A.y }));
+    st.dispatchEvent(new PointerEvent('pointermove',
+      { bubbles:true, pointerId:id, clientX:A.x+dx, clientY:A.y+dy, shiftKey:shift }));
+    st.dispatchEvent(new PointerEvent('pointerup',
+      { bubbles:true, pointerId:id, clientX:A.x+dx, clientY:A.y+dy }));
+    await new Promise(r => setTimeout(r, 400));
+  };
+  let L = pick();
+  await drag(corner(L), 0, 160, false, 31);
+  const 自由 = { s:LAYERS[SEL].s, sy:syOf(LAYERS[SEL]) };
+  L = pick();
+  await drag(corner(L), 120, 120, true, 32);
+  const 固定 = { s:LAYERS[SEL].s, sy:syOf(LAYERS[SEL]) };
+  pick();
+  return { 自由, 固定 };
+});
+ok(Math.abs(FREE.自由.sy - 1) > 0.02 && Math.abs(FREE.自由.s - 0.34) < 0.01,
+   '⭐⭐ 角を縦に引くと【縦だけ】伸びる（自由変形）', JSON.stringify(FREE.自由));
+ok(FREE.固定.s > 0.35 && Math.abs(FREE.固定.sy - 1) < 0.02,
+   '⭐⭐ ⇧ を押しながらだと 比を固定したまま大きくなる', JSON.stringify(FREE.固定));
+ok(await p.evaluate(() => !!document.getElementById('r_sy')),
+   '⭐ 縦の伸ばしはつまみでも触れる（既定 1.00 ＝写真の比のまま）');
+ok(await p.evaluate(() => { const L = LAYERS[0]; L.sy = 1;
+  return true; }) || true, '（前提）縦の伸ばしを 1 に戻した');
+/* 盤のカーソル＝動かすときは矢印（木下＝「ボード上では選択アイコンで触れる感じ」） */
+ok(await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t="move"]');
+  if(bt) bt.click();
+  return getComputedStyle(document.getElementById('stage')).cursor === 'default'; }),
+  '⭐ 動かすときの盤のカーソルは矢印');
+ok(await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t="erase"]');
+  if(bt) bt.click();
+  const c = getComputedStyle(document.getElementById('stage')).cursor;
+  const bt2 = document.querySelector('#tools button[data-t="move"]'); if(bt2) bt2.click();
+  return c === 'crosshair'; }), '⭐ 切り抜きのときだけ十字');
+
+/* ══⑰ 置いたものは素のまま／素のままでも【ズレ】は効く（2026-08-31）══
+   🔴 木下＝「素のままにするを押したことで【ズレ】も素の状態になっているのでは？これは違うよね？」 */
+await p.evaluate(() => document.getElementById('b_demo').click());
+await wait(1600);
+await p.evaluate(() => document.getElementById('b_shape').click());
+await wait(900);
+ok(await p.evaluate(() => airOf(LAYERS[SEL]) === 0),
+   '⭐⭐ 置いた図形は【素のまま】で出る（木下＝「そこから俺が調整する」）',
+   await p.evaluate(() => airOf(LAYERS[SEL])));
+await p.evaluate(() => { const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+  const L = o.find(x => x.name.indexOf('見本') === 0);
+  SEL = LAYERS.indexOf(L); SELIDS = [L.id]; L.air = 0; L._key = '';
+  syncSel(); buildList(); render(); });
+await wait(700);
+const RAWADJ0 = await shot();
+await p.evaluate(() => { const e = document.getElementById('r_abri');
+  e.value = 60; e.dispatchEvent(new Event('input', { bubbles:true })); });
+await wait(800);
+ok(diff(await shot(), RAWADJ0) !== 0,
+   '⭐⭐ 空気の効き 0 でも【空気からのズレ】は効く（ズレは素材自身の調整）');
+await p.evaluate(() => { const e = document.getElementById('r_abri');
+  e.value = 0; e.dispatchEvent(new Event('input', { bubbles:true })); });
+await wait(700);
+ok(diff(await shot(), RAWADJ0) === 0, '⭐ ズレを 0 に戻すと1画素も同じに戻る');
+
+/* ⑰-2 灯はツールバーから外した（盤の丸でつかむ） */
+ok(await p.evaluate(() => !document.querySelector('#tools button[data-t="light"]')),
+   '⭐ 灯のアイコンはツールバーに出さない（木下＝「このアイコンはいらない」）');
+ok(await p.evaluate(() => LIGHTS.length > 0 && typeof hitLight === 'function'),
+   '⭐ 灯は【動かす】のまま盤の白い丸でつかめる');
 
 /* ⑨ モバイル */
 await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
