@@ -195,6 +195,13 @@
     <label class="h">④ 見る</label>
     <div class="row"><span class="n">字見本の字</span></div>
     <textarea id="sheetText" rows="3">あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん爆弾誰お前</textarea>
+    <div class="row"><span class="n">字の色</span></div>
+    <input type="color" id="inkCol" value="#141414">
+    <div class="row"><span class="n">地の色</span></div>
+    <input type="color" id="bgCol" value="#ffffff">
+    <div class="seg" id="segInv">
+      <button data-v="0" class="on">そのまま</button><button data-v="1">白と黒を入れ替え</button>
+    </div>
     <div class="row"><span class="n">升目を出す</span></div>
     <div class="seg" id="segGrid"><button data-v="1" class="on">出す</button><button data-v="0">出さない</button></div>
   </div>
@@ -273,7 +280,7 @@ const S = {
         chip:0, hair:0, spat:0, brk:0, bn:5, dry:0, seed:1 },
   view:'one',
   sheet:'あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん爆弾誰お前',
-  grid:1,
+  grid:1, ink:'#141414', bg:'#ffffff', inv:0,
   kumi:{ dir:'v', lead:104, line:150, wrap:4 },
   lay:{ w:1000, h:1437, size:276, x:33, y:30, open:54 },
   out:{ long:2400 },
@@ -582,10 +589,17 @@ function breakOver(g, ch, x, y, size){
   g.restore();
 }
 /* ⭐ かすれ＝紙の目で抜く（原因から作る）。⚠️ 画素なので SVG には出ない */
-let grainC = null;
+let grainC = null, grainFor = -1;
 function dryOver(g, x, y, w, h, size){
   if(!(S.cut.dry > 0)) return;
-  if(!grainC){
+  /* 🔴🔴 直す前は【濃さ（globalAlpha）】で効かせていた。
+     ＝ 抜き方が中途半端になり、白い地の上では **グレーの汚れ** に見えた
+       （木下の絵で、字の中に黒い横縞が残っていたのがこれ）。
+     ⭐ かすれは「墨が乗ったか・乗らなかったか」の2つしかない。
+       ⭐ **抜くときは完全に抜く**（濃さは 1）。強さは【目の密度】で効かせる。
+     ⚠️ だから目そのものを dry ごとに作り直す（作り置き1枚では密度が変えられない）。 */
+  if(!grainC || grainFor !== S.cut.dry){
+    grainFor = S.cut.dry;
     /* 🔴 直す前は【点のノイズ】だった＝かすれではなく「ざらざらの汚れ」に見えた。
        ⭐ 筆のかすれは【筆が進んだ向きに走る筋】。だから横に長く伸ばした粒にする
          （縦に細く・横に長い＝1本1本が筋になる）。 */
@@ -600,7 +614,9 @@ function dryOver(g, x, y, w, h, size){
       for(let x=0;x<W;x++){
         /* 横へ引きずる＝前の値を引き継ぐ（筋になる） */
         v = v*0.86 + (r()-0.5)*0.9;
-        const a = (v + (rows[y]-0.5)*1.4) > 0.28 ? 255 : 0;
+        /* ⭐ しきい値を dry で動かす＝強いほど抜ける筋が増える（濃さでは薄めない） */
+        const th = 0.95 - (S.cut.dry/100) * 1.05;
+        const a = (v + (rows[y]-0.5)*1.4) > th ? 255 : 0;
         const i = (y*W+x)*4;
         d[i]=d[i+1]=d[i+2]=255; d[i+3] = a;
       }
@@ -612,9 +628,7 @@ function dryOver(g, x, y, w, h, size){
   const cell = Math.max(3, size*0.10);
   g.save();
   g.globalCompositeOperation = 'destination-out';
-  /* 🔴 一度「2値寄りに」と濃くしたが**裏目**だった ── 字の中が黒い斑になって汚れに見えた。
-     ⭐ 目そのものが既に2値（0か255）なので、ここは濃さで効かせるのが正しい。 */
-  g.globalAlpha = S.cut.dry/100 * 0.9;
+  g.globalAlpha = 1;                 /* ⭐ 抜くときは完全に抜く（グレーを作らない） */
   g.translate(x, y); g.scale(cell/8, cell/8);
   g.fillStyle = pat; g.fillRect(0,0,w/(cell/8),h/(cell/8));
   g.restore();
@@ -660,12 +674,16 @@ function boardSize(){
   const cols = 10, rows = Math.max(1, Math.ceil(sheetChars().length/cols));
   return [ cols*140 + 40, rows*140 + 40 ];
 }
+/* ⭐ 字と地の色は【ここ1か所】で決める。⚠️ 見え方ごとに色を書くと必ず食い違う。
+   ⭐ 入れ替え＝参考（FOG DOG）は暗い写真の上の**白抜き**。1押しでそこへ行ける。 */
+function inkCol(){ return S.inv ? S.bg : S.ink; }
+function bgCol(){ return S.inv ? S.ink : S.bg; }
 function paint(g, W, H, opt){
   const svg = (opt && opt.svg) ? [] : null;
   const [BW, BH] = boardSize(), k = W/BW;
   g.save(); g.scale(k, k);
   g.clearRect(0,0,BW,BH);
-  g.fillStyle = '#ffffff'; g.fillRect(0,0,BW,BH);
+  g.fillStyle = bgCol(); g.fillRect(0,0,BW,BH);
 
   if(S.view === 'one'){
     const chars = bigChars(), size = 640, R = runPos(chars.length, size), pad = 130;
@@ -679,7 +697,7 @@ function paint(g, W, H, opt){
         g.moveTo(px-size/2, py); g.lineTo(px+size/2, py);
         g.setLineDash([6,6]); g.stroke(); g.setLineDash([]);
       }
-      drawGlyph(g, ch, px, py, size, '#141414', svg);
+      drawGlyph(g, ch, px, py, size, inkCol(), svg);
       if(!svg) breakOver(g, ch, px, py, size);
       dryOver(g, px-size/2, py-size/2, size, size, size);
     });
@@ -691,7 +709,7 @@ function paint(g, W, H, opt){
       const px = 20 + (i%cols)*cell + cell/2, py = 20 + ((i/cols)|0)*cell + cell/2;
       if(S.grid){ g.strokeStyle = 'rgba(28,28,30,.13)'; g.lineWidth = 1;
         g.strokeRect(px-size/2, py-size/2, size, size); }
-      drawGlyph(g, ch, px, py, size, '#141414', svg);
+      drawGlyph(g, ch, px, py, size, inkCol(), svg);
       if(!svg) breakOver(g, ch, px, py, size);
     });
     dryOver(g, 0, 0, BW, BH, size);
@@ -705,7 +723,7 @@ function paint(g, W, H, opt){
     const size = L.size/1000 * BW;
     const R = runPos(chars.length, size);
     const x = L.x/100*BW, y0 = L.y/100*BH;
-    const col = photo ? '#f4f1ea' : '#141414';
+    const col = inkCol();
     /* 鉤括弧＝字として組まず線で引く（参考でいちばん効いていた装置）。
        ⚠️ 囲む箱は【組んだ結果の外形】で伸びる＝縦組みでも横組みでも枠が付いてくる */
     const open = L.open/100, arm = 0.386*BW, wq = Math.max(1, size*0.06);
@@ -853,6 +871,11 @@ document.querySelectorAll('#segKata button').forEach(b => b.onclick = () => {
 /* ⚠️ つまみを触ったら型の印を外す（いま出ている絵と印が食い違わない） */
 Object.keys(CUT).forEach(id => $(id).addEventListener('input', () => {
   document.querySelectorAll('#segKata button').forEach(b => b.classList.remove('on')); }));
+$('inkCol').addEventListener('input', e => { S.ink = e.target.value; draw(); });
+$('bgCol').addEventListener('input', e => { S.bg = e.target.value; draw(); });
+document.querySelectorAll('#segInv button').forEach(b => b.onclick = () => {
+  S.inv = +b.dataset.v; segOn('segInv', S.inv); draw();
+  stat(S.inv ? '白と黒を入れ替えた（暗い地の白抜き）' : 'そのまま'); });
 document.querySelectorAll('#segGrid button').forEach(b => b.onclick = () => {
   S.grid = +b.dataset.v; segOn('segGrid', S.grid); draw(); });
 document.querySelectorAll('#segRatio button').forEach(b => b.onclick = () => {
@@ -933,16 +956,17 @@ $('eSVG').onclick = () => {
   const g = document.createElement('canvas').getContext('2d');
   const body = paint(g, W, H, { svg:true });
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`
-    + `<rect width="${W}" height="${H}" fill="#ffffff"/><g id="uwasa">${body.join('')}</g></svg>`;
+    + `<rect width="${W}" height="${H}" fill="${bgCol()}"/><g id="uwasa">${body.join('')}</g></svg>`;
   dl(new Blob([svg],{type:'image/svg+xml'}), 'uwasa.svg');
   stat('SVG を出した — 崩した輪郭が path で入っている（⚠️ かすれは入らない）');
 };
 function saveJSON(){ dl(new Blob([JSON.stringify({ text:S.text, src:S.src, fam:S.fam, cut:S.cut,
-  sheet:S.sheet, grid:S.grid, kumi:S.kumi, lay:S.lay, out:S.out }, null, 1)],{type:'application/json'}), 'uwasa.json');
+  sheet:S.sheet, grid:S.grid, ink:S.ink, bg:S.bg, inv:S.inv, kumi:S.kumi, lay:S.lay, out:S.out }, null, 1)],{type:'application/json'}), 'uwasa.json');
   stat('控えを保存した（⚠️ 書体ファイルと写真は入らない）'); }
 function loadJSON(txt){ try{ const o = JSON.parse(txt);
   S.text = o.text || S.text; S.fam = o.fam || S.fam; S.sheet = o.sheet || S.sheet;
   S.grid = (o.grid === undefined ? S.grid : o.grid);
+  S.ink = o.ink || S.ink; S.bg = o.bg || S.bg; S.inv = o.inv || 0;
   Object.assign(S.cut, o.cut||{}); Object.assign(S.kumi, o.kumi||{});
   Object.assign(S.lay, o.lay||{}); Object.assign(S.out, o.out||{});
   outCache.clear(); cutCache.clear(); syncAll(); layout(); fit(); draw(); stat('控えを読んだ');
@@ -959,6 +983,7 @@ function syncAll(){
   ['mSize','mX','mY','kOpen','outLong'].forEach(out);
   segOn('segDir', S.kumi.dir);
   $('tText').value = S.text; $('sheetText').value = S.sheet;
+  $('inkCol').value = S.ink; $('bgCol').value = S.bg; segOn('segInv', S.inv);
   segOn('segFam', S.fam); segOn('segGrid', S.grid); segOn('modes', S.view);
   segOn('segSrc', S.src); segOn('segRatio', S.lay.w+','+S.lay.h); syncRatio();
 }
