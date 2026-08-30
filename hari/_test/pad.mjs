@@ -132,15 +132,24 @@ const R = await p.evaluate(async () => {
     const before = { L:S.lines.map(L2 => L2.path && L2.path.dx != null ? L2.path.dx/S.board.w : null),
                      P:S.pieces.map(pc => [pc.x/S.board.w, pc.y/S.board.h]) };
     const long0 = Math.max(S.board.w, S.board.h);
-    let calls = 0; const R0 = render;
+    /* ⚠️ 「刷りが何回」を生の数で見ると、機械の速さで落ちたり通ったりする
+       （実測 15〜25 でぶれた）。⭐ 見るのは【コマ数を超えて刷っていないか】＝
+       1コマに1回だけ、が守れているか。投げた数と比べるのは意味がない。 */
+    let calls = 0, frames = 0, run = true;
+    const R0 = render;
     window.render = function(){ calls++; return R0.apply(this, arguments); };
+    const tick = () => { if(!run) return; frames++; requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
     for(let i = 0; i < 30; i++){
       el.value = String(50 - i*3);
       el.dispatchEvent(new Event('input', { bubbles:true }));
       await wait(4);
     }
     await wait(120);
-    out['⑧30回投げて刷り'] = calls;
+    run = false;
+    out['⑧投げた数'] = 30;
+    out['⑧刷り'] = calls;
+    out['⑧コマ'] = frames;
     window.render = R0;
     el.dispatchEvent(new Event('change', { bubbles:true }));
     await wait(200);
@@ -165,6 +174,26 @@ const R = await p.evaluate(async () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key:'z', metaKey:true, bubbles:true }));
     await wait(300);
     out['⑨1回で戻る'] = (S.board.w + '×' + S.board.h) === was;
+  }
+
+  /* ⑫⑬ 版面の比を変えたとき（2026-08-30 木下の「夏の日残像4a」で出た2件）
+     ⑫ 字の大きさが連れていかれる（前は px のまま残って、組みが壊れて見えた）
+     ⑬ 比を【往復すると元に戻る】（前は min を掛け続けて 1往復で 43% 縮んで戻らなかった） */
+  { const hit = s => document.querySelector('[data-size="'+s+'"]').click();
+    hit('1000,1250'); await wait(300);
+    const take = () => ({ s:S.lines.map(L => +(L.size||0).toFixed(4)),
+                          p:S.pieces.map(q => [+q.x.toFixed(3), +q.y.toFixed(3), +q.sc.toFixed(4)]) });
+    const a = take();
+    hit('1414,1000'); await wait(300);
+    const b = take();
+    out['⑫字が連れていかれる'] = a.s.length > 0 && a.s.every((v, i) => Math.abs(b.s[i] - v) > 0.01);
+    /* 9:16 → 正方 → A比縦 と回って 4:5 に戻す */
+    ['1080,1920','1000,1000','1000,1414','1000,1250'].forEach(s => hit(s));
+    await wait(500);
+    const c = take();
+    const d = Math.max(0, ...a.s.map((v, i) => Math.abs(c.s[i] - v) / (v || 1)),
+                          ...a.p.map((q, i) => Math.max(...q.map((v, j) => Math.abs(c.p[i][j] - v) / (Math.abs(v) || 1)))));
+    out['⑬往復のずれ'] = +d.toFixed(5);
   }
 
   /* ⑩ 外の余白も ⌘Z で1回で戻る */
@@ -198,10 +227,14 @@ ok('⑦つまみある', R['⑦つまみある'] === true);
 ok('⑦長辺そのまま', R['⑦長辺そのまま'] === true);
 ok('⑦割合ずれ', R['⑦割合ずれ'] < 0.01);
 ok('⑦つまみと版面が合う', R['⑦つまみと版面が合う'] === true);
-ok('⑧30回投げて刷り', R['⑧30回投げて刷り'] > 0 && R['⑧30回投げて刷り'] < 25);
+/* ⭐ 1コマに1回だけ＝刷りがコマ数を超えない（投げた数ではなくコマ数と比べる） */
+console.log('  ・投げた ' + R['⑧投げた数'] + ' ／ コマ ' + R['⑧コマ'] + ' ／ 刷り ' + R['⑧刷り']);
+ok('⑧刷り', R['⑧刷り'] > 0 && R['⑧刷り'] <= R['⑧コマ'] + 1);
 ok('⑪ガイドずれ', typeof R['⑪ガイドずれ'] === 'number' && R['⑪ガイドずれ'] < 1);
 ok('⑨1回で戻る', R['⑨1回で戻る'] === true);
 ok('⑩1回で戻る', R['⑩1回で戻る'] === true);
+ok('⑫字が連れていかれる', R['⑫字が連れていかれる'] === true);
+ok('⑬往復のずれ', typeof R['⑬往復のずれ'] === 'number' && R['⑬往復のずれ'] < 0.001);
 console.log('  ' + (err ? '🔴 例外 ' + err + '件' : '✅ 例外なし'));
 if(NG.length || err){ console.log('  🔴 落ち：' + NG.join('／')); await b.close(); process.exit(1); }
 console.log('  ── 通過');

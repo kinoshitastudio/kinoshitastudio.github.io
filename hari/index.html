@@ -3382,6 +3382,20 @@ function fitPiece(pc, mode){
   return k >= 600 && want*100 > 600 ? 'over' : true;   // ⚠️ 上限で止まったら呼び元に知らせる
 }
 /* 角4つ＋辺の中央4つ（0,2,4,6 が角） */
+/* ⭐ その図は【版面を覆っているか】＝背景として敷いてあるか。
+   ⚠️ 見方は nudgeCover と同じ（四隅で見る）＝「敷けている」の判定が2つに割れない。 */
+function coversBoard(pc){
+  if(!pc) return false;
+  if(pc.fill) return true;          /* ⭐「縁を出さない＝入」は【いつも覆う】と言ってある */
+  const cs = pieceCorners(pc); if(!cs.length) return false;
+  const B = S.board, xs = cs.map(q => q.x), ys = cs.map(q => q.y);
+  /* ⭐ 版面と重なっている幅・高さで見る＝大きいだけで脇に置いてある物は「敷いた」ではない。
+     ⚠️ 線引きは【描くときと同じ 95%】── 木下の実ファイルは 992×1240（版面 1000×1250）で
+        99% 覆っていた＝「覆うつもりで置いた」もの。ここを厳しくすると背景が拾えない。 */
+  const ix = Math.min(Math.max(...xs), B.w) - Math.max(Math.min(...xs), 0);
+  const iy = Math.min(Math.max(...ys), B.h) - Math.max(Math.min(...ys), 0);
+  return ix >= B.w * 0.95 && iy >= B.h * 0.95;
+}
 function pieceCorners(pc){
   if(!pc || !pc.item) return [];
   const b = pc.item.bounds, k = (pc.sc||100)/100;
@@ -5954,11 +5968,40 @@ $('showPath').onclick = () => { S.showPath = !S.showPath; $('showPath').classLis
 function boardResize(nw, nh, quiet){
   const ow = S.board.w, oh = S.board.h;
   nw = Math.max(50, Number(nw) || 50); nh = Math.max(50, Number(nh) || 50);
-  const kx = nw / ow, ky = nh / oh, ks = Math.min(kx, ky);
+  const kx = nw / ow, ky = nh / oh;
+  /* ⭐⭐ 大きさの物差し（2026-08-30 直し）＝**縦横の比の相乗平均**（面積の比の平方根）。
+     🔴 直す前は `Math.min(kx,ky)` だった。1本だけなら丸は潰れないが、**往復すると戻らない**
+        ── 1000×1250 → 1414×1000 で 0.8、戻すと 0.707。掛けると 0.566＝
+        ボタンを行って戻るだけで字も図も **43% 小さくなって二度と戻らなかった**。
+     ⭐ 相乗平均なら kx·ky の積が1に戻るので、**どんな道を通っても往復で必ず元に戻る**
+       （比のつまみは左右に何度も動かす＝ここが戻らないと組みが溶ける）。
+     ⚠️ 1本の数で掛ける点は同じ＝丸は丸のまま・字は伸びない。 */
+  const ks = Math.sqrt(kx * ky);
+  /* 🔴 ここは【版面を書き換える前】でないといけない（2026-08-30 に踏んだ）。
+     ⚠️ 「覆っていたか」は**古い版面に対して**の話 ── 新しい版面で測ると、
+        いま敷いてある写真が「覆っていない」ことになって、背景が拾えなかった。 */
+  const wasCover = new Map();
+  S.pieces.forEach(pc => wasCover.set(pc, coversBoard(pc)));
   S.board.w = nw; S.board.h = nh;
   $('bw').value = nw; $('bh').value = nh;
   if(kx === 1 && ky === 1) { fitView(); quiet ? renderSoon() : render(); return; }
+  /* ⭐⭐ 版面を【覆っていた】図は、覆ったまま連れていく（2026-08-30）。
+     木下「背景に画像をおいていると それらは変わらず、上のテキストや画像が動く認識であってる？」
+     🔴 直す前：位置は割合・大きさは短い方の比で連れていたので、**全面に敷いた写真が
+        比を変えたとたん版面を覆わなくなり**、地が出て「浮いた四角」になっていた。
+     ⚠️ 覆っていなかった図は1ミリも触らない（勝手に敷かれる、を作らない）。
+     ⚠️ 測るのは【変える前】＝変えたあとでは「覆っていたか」がもう分からない。 */
   S.lines.forEach(L => {
+    /* ⭐⭐ 2026-08-30：字の大きさは px なのに連れて行かれていなかった。
+       🔴 版面を横長にすると【字だけ元の大きさ】で残り、組みが丸ごと壊れて見えていた
+          （木下の「夏の日残像4a」で 4:5 → A比横 にして出た）。
+       ⭐ 短い方の比で（縦横別々に伸ばすと字が潰れる）＝図の大きさと同じ物差し。
+       ⚠️ **割合で持っている物には掛けない**（行送り・箱の高さ・角の開け方は L.size に
+          対する％なので、ここで掛けると二重に効く）。 */
+    if(L.size)    L.size    *= ks;
+    if(L.track)   L.track   *= ks;   /* 字間＝送りに足す px */
+    if(L.flowMin) L.flowMin *= ks;   /* 回り込みの最小の幅＝px */
+    if(L.flowPad) L.flowPad *= ks;   /* 避ける隙間＝px */
     if(!L.path) return;
     if(L.path.type === 'poly'){
       /* ⭐ 掴んで動かした形は連れていく／触っていなければ型から作り直す */
@@ -5975,6 +6018,12 @@ function boardResize(nw, nh, quiet){
     if(pc.nuki && pc.nuki.holes){
       pc.nuki.holes.forEach(h => { h.x *= kx; h.y *= ky; h.rx *= ks; h.ry *= ks; });
       if(typeof nkBuild === 'function') nkBuild(pc);
+    }else if(wasCover.get(pc)){
+      /* ⭐ 敷いてあった物は敷いたまま＝新しい版面を覆う最小の大きさに取り直す。
+         ⚠️ 覆う倍率の式は fitScale 1本（ボタンも吸着もここを見る）＝食い違わない。 */
+      const s = fitScale(pc, 'cover');
+      if(s > 0) pc.sc = s; else pc.sc = (pc.sc || 100) * ks;
+      if(typeof nudgeCover === 'function') nudgeCover(pc);
     }else{
       pc.sc = (pc.sc || 100) * ks;      /* ⭐ 図の大きさも短い方の比で */
     }
