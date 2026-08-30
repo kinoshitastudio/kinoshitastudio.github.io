@@ -170,24 +170,24 @@ const CUT = await p.evaluate(async () => {
   const 前 = { 緑:green(), 不透明:solid() };
   const L = LAYERS[0];
   /* ① 色で抜く */
-  cutColor(L, 10, 10); COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  pickColor(L, 10, 10); COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
   const 色で抜いた = { 緑:green(), 不透明:solid() };
   /* ② 筆で消す（丸の真ん中を消す） */
-  const m = maskOf(L);
+  const m = maskSize(L);
   const keepB = P.brush; P.brush = 0.15;
-  cutBrush(L, m.width/2, m.height/2, null, null, true);
+  cutBrush(L, m.w/2, m.h/2, null, null, true);
   P.brush = keepB;
   COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
   const 筆で消した = { 不透明:solid() };
   /* ③ 筆で戻す */
-  P.brush = 0.15; cutBrush(L, m.width/2, m.height/2, null, null, false); P.brush = keepB;
+  P.brush = 0.15; cutBrush(L, m.w/2, m.h/2, null, null, false); P.brush = keepB;
   COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
   const 筆で戻した = { 不透明:solid() };
   /* ④ 切り抜きを消す＝元の写真に戻る */
   clearMask(L); COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
   const 消した = { 緑:green(), 不透明:solid() };
   /* ⑤ 囲って抜く */
-  cutPoly(L, [{x:0,y:0},{x:m.width,y:0},{x:m.width,y:m.height*0.4},{x:0,y:m.height*0.4}], false);
+  cutPath(L, [{x:0,y:0},{x:m.w,y:0},{x:m.w,y:m.h*0.4},{x:0,y:m.h*0.4}], false);
   COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
   const 囲って抜いた = { 不透明:solid() };
   clearMask(L);
@@ -209,9 +209,133 @@ ok(CUT.消した.緑 === CUT.前.緑 && CUT.消した.不透明 === CUT.前.不�
    '⭐⭐ ⑤ 切り抜きを消すと【1画素も同じに】戻る（元の写真を削っていない）',
    `${CUT.前.不透明.toLocaleString()} → ${CUT.消した.不透明.toLocaleString()} 画素`);
 
+/* ⭐⭐ 許容つまみがリアルタイムで効く（2026-08-30 木下
+   ＝「切り抜く色で抜くも含め、スライダー調整でリアルタイムで見える」）
+   🔴 前は押した瞬間に型へ焼いていたので、そのあと許容を動かしても何も起きなかった。 */
+const TOL = await p.evaluate(async () => {
+  const c = document.createElement('canvas'); c.width = 400; c.height = 400;
+  const x = c.getContext('2d');
+  /* 3段の緑。⚠️ 色の距離を【つまみの目盛りに合わせて】刻む
+     （適当に選ぶと、18 と 40 で同じ結果になって「効かない」に見える＝ぶれる試験）
+     #22cc55 からの距離 … #4ae05f＝45.8（許容0.104）／#86ff69＝114.6（許容0.259） */
+  x.fillStyle = '#22cc55'; x.fillRect(0,0,400,140);
+  x.fillStyle = '#4ae05f'; x.fillRect(0,140,400,140);
+  x.fillStyle = '#86ff69'; x.fillRect(0,280,400,120);
+  const img = new Image();
+  await new Promise(r => { img.onload = r; img.src = c.toDataURL(); });
+  LAYERS = []; addImage(img, '許容ためし', 0.1);
+  el('k_nobg').checked = true; el('k_nobg').dispatchEvent(new Event('change', { bubbles:true }));
+  await new Promise(r => setTimeout(r, 250));
+  const L = LAYERS[0];
+  const solid = () => { const d = g.getImageData(0,0,cv.width,cv.height).data; let n = 0;
+    for(let i=0;i<d.length;i+=4*7) if(d[i+3]>128) n++; return n; };
+  const s2 = v => { const r = document.getElementById('r_tol'); r.value = v;
+    r.dispatchEvent(new Event('input', { bubbles:true })); };
+  s2(5); COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  const 押す前 = solid();
+  /* 1色だけ覚える（抜くのはあと） */
+  pickColor(L, 10, 10);
+  const out = { 覚えた: (L.keys || []).length };
+  const at = async v => { s2(v); LAYERS.forEach(o => { o._mk=''; o._key=''; });
+    COARSE = 0; render(); await new Promise(r => setTimeout(r, 250)); return solid(); };
+  out.許容5  = await at(5);
+  out.許容18 = await at(18);
+  out.許容40 = await at(40);
+  out.押す前 = 押す前;
+  /* 速さ＝許容を1回動かすのに何ms（スライダーを引ける速さか） */
+  const t0 = performance.now();
+  for(let i = 0; i < 5; i++){ P.tol = 0.2 + i*0.02;
+    LAYERS.forEach(o => { o._mk=''; o._key=''; }); paint(g, cv.width, cv.height, true); }
+  out.許容1回のms = Math.round((performance.now() - t0) / 5);
+  el('k_nobg').checked = false; el('k_nobg').dispatchEvent(new Event('change', { bubbles:true }));
+  return out;
+});
+ok(TOL.覚えた === 1, '⭐ 色は「覚える」だけ（押した瞬間に焼かない）', TOL.覚えた + ' つ');
+ok(TOL.許容5 > TOL.許容18 && TOL.許容18 > TOL.許容40,
+   '⭐⭐ 許容つまみを動かすと【リアルタイムで抜け方が変わる】',
+   `5→${TOL.許容5.toLocaleString()} / 18→${TOL.許容18.toLocaleString()} / 40→${TOL.許容40.toLocaleString()} 画素`);
+ok(TOL.許容1回のms < 40, '⭐ 許容を動かすのが軽い（スライダーを引ける）', TOL.許容1回のms + ' ms');
+
+/* ⭐⭐ パスツール（点を打つ・なめらかさで直線⇄曲線） */
+const PATH = await p.evaluate(async () => {
+  const out = {};
+  const pts = [{x:10,y:10},{x:300,y:40},{x:280,y:300},{x:30,y:260}];
+  const 直線 = pathD(pts, true, 0);
+  const 曲線 = pathD(pts, true, 0.8);
+  out.直線にCが無い = 直線.indexOf('C') < 0 && 直線.indexOf('L') >= 0;
+  out.曲線にCが有る = 曲線.indexOf('C') >= 0;
+  /* 実際に切れるか */
+  const c = document.createElement('canvas'); c.width = 400; c.height = 400;
+  const x = c.getContext('2d'); x.fillStyle = '#c83'; x.fillRect(0,0,400,400);
+  const img = new Image(); await new Promise(r => { img.onload = r; img.src = c.toDataURL(); });
+  LAYERS = []; addImage(img, 'パスためし', 0.1);
+  el('k_nobg').checked = true; el('k_nobg').dispatchEvent(new Event('change', { bubbles:true }));
+  await new Promise(r => setTimeout(r, 250));
+  const solid = () => { const d = g.getImageData(0,0,cv.width,cv.height).data; let n = 0;
+    for(let i=0;i<d.length;i+=4*7) if(d[i+3]>128) n++; return n; };
+  const L = LAYERS[0], m = maskSize(L);
+  out.前 = solid();
+  const q = [{x:m.w*0.2,y:m.h*0.2},{x:m.w*0.8,y:m.h*0.2},{x:m.w*0.8,y:m.h*0.8},{x:m.w*0.2,y:m.h*0.8}];
+  cutPath(L, q, true);            /* 中を残す */
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  out.中を残した = solid();
+  clearMask(L); COARSE = 0; render(); await new Promise(r => setTimeout(r, 200));
+  out.戻る = solid();
+  cutPath(L, q, false);           /* 中を消す */
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  out.中を消した = solid();
+  clearMask(L);
+  el('k_nobg').checked = false; el('k_nobg').dispatchEvent(new Event('change', { bubbles:true }));
+  return out;
+});
+ok(PATH.直線にCが無い && PATH.曲線にCが有る,
+   '⭐⭐ パスの【なめらかさ】で直線⇄曲線が切り替わる', JSON.stringify(PATH));
+ok(PATH.中を残した < PATH.前 * 0.75, '⭐ パスで【中を残す】が効く',
+   `${PATH.前.toLocaleString()} → ${PATH.中を残した.toLocaleString()} 画素`);
+ok(PATH.中を消した < PATH.前 && PATH.中を消した > PATH.中を残した, '⭐ パスで【中を消す】が効く',
+   `${PATH.前.toLocaleString()} → ${PATH.中を消した.toLocaleString()} 画素`);
+ok(PATH.戻る === PATH.前, '⚠️ パスで切っても消せば1画素も同じに戻る', PATH.戻る + ' 画素');
+
+/* ⭐ レイヤー（隠す・不透明度・奥行きが同じときの前後） */
+const LAY = await p.evaluate(async () => {
+  const mk = async col => { const c = document.createElement('canvas'); c.width = 200; c.height = 200;
+    const x = c.getContext('2d'); x.fillStyle = col; x.fillRect(0,0,200,200);
+    const img = new Image(); await new Promise(r => { img.onload = r; img.src = c.toDataURL(); }); return img; };
+  LAYERS = [];
+  addImage(await mk('#ff0000'), '赤', 0.5); LAYERS[0].x = 0.5; LAYERS[0].y = 0.5;
+  addImage(await mk('#0000ff'), '青', 0.5); LAYERS[1].x = 0.5; LAYERS[1].y = 0.5;
+  const keep = { haze:P.haze, split:P.split, bloom:P.bloom, grain:P.grain, vig:P.vig, li:P.li,
+                 edge:P.edge, mix:P.mix, wob:P.wob };
+  P.haze = P.split = P.bloom = P.grain = P.vig = P.li = P.edge = P.mix = P.wob = 0;
+  LAYERS.forEach(L => L._key = '');
+  const mid = () => { COARSE = 0; render();
+    const d = g.getImageData((cv.width/2)|0, (cv.height/2)|0, 1, 1).data; return [d[0],d[1],d[2],d[3]]; };
+  const out = {};
+  out.同じ奥行きの初期 = mid();
+  nudgeOrder(0, +1);                                  /* 赤を手前へ */
+  out.前後を入れ替えた = mid();
+  LAYERS[0].on = false; LAYERS[0]._key = '';
+  out.隠した = mid();
+  LAYERS[0].on = true; LAYERS[0].op = 0.0; LAYERS[0]._key = '';
+  out.濃さ0 = mid();
+  LAYERS[0].op = 1; LAYERS[0]._key = '';
+  Object.assign(P, keep); LAYERS.forEach(L => L._key = '');
+  return out;
+});
+ok(LAY.同じ奥行きの初期[2] > LAY.同じ奥行きの初期[0],
+   '⭐ 奥行きが同じなら【あとに置いた方】が手前', LAY.同じ奥行きの初期.join(','));
+ok(LAY.前後を入れ替えた[0] > LAY.前後を入れ替えた[2],
+   '⭐⭐ ▲▼で【奥行きが同じときの前後】を入れ替えられる', LAY.前後を入れ替えた.join(','));
+ok(LAY.隠した[2] > LAY.隠した[0], '⭐ 素材を隠せる', LAY.隠した.join(','));
+ok(LAY.濃さ0[2] > LAY.濃さ0[0], '⭐ 濃さ（不透明度）が効く', LAY.濃さ0.join(','));
+
 /* ⑥ 空気は版面のもの＝1回だけ／⑦ 並ぶ順は奥行きが決める */
 const AIR = await p.evaluate(async () => {
-  await new Promise(r => setTimeout(r, 100));
+  /* ⚠️ 直前の試験が素材を差し替えている＝まず1回描いてから土台を撮る
+     （描く前の古い画面を土台にすると、必ず「戻らない」で落ちる） */
+  await demo();
+  COARSE = 0; render();
+  await new Promise(r => setTimeout(r, 300));
   const out = {};
   const s = (id, v) => { const r = document.getElementById(id); r.value = v;
     r.dispatchEvent(new Event('input', { bubbles:true })); };
@@ -261,8 +385,18 @@ await p.evaluate(async () => {
   document.getElementById('b_png').click();
   await new Promise(r => setTimeout(r, 1200));
 });
+await p.evaluate(async () => {
+  document.getElementById('b_svg').click();
+  await new Promise(r => setTimeout(r, 2500));
+  document.getElementById('b_layers').click();
+  await new Promise(r => setTimeout(r, 3500));
+});
 const got = await p.evaluate(() => window.__got);
-ok(got.some(x => x.type === 'image/png'), '⑧ PNG が本当に落ちる', JSON.stringify(got));
+ok(got.some(x => x.type === 'image/png'), '⑧ PNG が本当に落ちる');
+ok(got.some(x => x.type === 'image/svg+xml'), '⭐⭐ SVG が本当に落ちる',
+   JSON.stringify(got.filter(x => x.type === 'image/svg+xml')));
+ok(got.some(x => x.type === 'application/zip'), '⭐⭐ 素材ごとPNG（zip）が本当に落ちる',
+   JSON.stringify(got.filter(x => x.type === 'application/zip')));
 
 /* ⑨ モバイル */
 await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
