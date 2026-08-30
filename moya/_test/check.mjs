@@ -33,6 +33,15 @@ await p.evaluate(() => {
     const o = []; for(let i = 0; i < d.length; i += 4*7) o.push(d[i], d[i+3]); return o; };
   window.__diff = (A,B) => { let n = 0;
     for(let i = 0; i < Math.min(A.length,B.length); i++) if(Math.abs(A[i]-B[i]) > 8) n++; return n; };
+  /* ⭐ 薄い変化も拾う物差し＝【差の合計】。
+     ⚠️「8より大きい画素を数える」だけだと、全面に薄くかかる直し（黒の持ち上げ等）や
+        細い帯にしか出ない直し（縁の回り込み）が **0 と出てしまう**（2026-08-30 に踏んだ）。 */
+  window.__full = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+    const o = []; for(let i = 0; i < d.length; i += 4*3) o.push(d[i], d[i+1], d[i+2], d[i+3]);
+    return o; };
+  window.__sad = (A,B) => { let s2 = 0;
+    for(let i = 0; i < Math.min(A.length,B.length); i++) s2 += Math.abs(A[i]-B[i]);
+    return Math.round(s2); };
 });
 const shot = () => p.evaluate(() => window.__shot());
 const diff = (A,B) => { let n = 0;
@@ -749,7 +758,63 @@ ok(OUT2.板も大きくなる,
    '⭐⭐ 出す大きさで素材の板も作り直す＝拡大しても甘くならない');
 ok(/px/.test(OUT2.注意が出る), '⭐ 出る px を数字で出す', OUT2.注意が出る.split('\n')[0]);
 
-/* ⑨ モバイル *//* ⑨ モバイル */
+/* ⭐⭐ 馴染ませ（プロの作法・木下＝「馴染ませることに突き抜けて特化もしよう」）
+   🔴 見るのは【10本とも効くか】。1本でも死んでいたら「触れるのに効かない」になる。
+   ⚠️ 物差しは【差の合計（__sad）】。「8より大きい画素を数える」だと、
+      全面に薄くかかるもの（黒の持ち上げ）や細い帯だけのもの（縁の回り込み）が 0 と出る。 */
+const NAJI = await p.evaluate(async () => {
+  await demo();
+  document.querySelector('#s_preset button[data-v="kasumi"]').click();
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  const all = ['r_shd','r_shdl','r_shds','r_shdc','r_wrap','r_clean',
+               'r_lift','r_gain','r_ca','r_halo'];
+  const s = (id, v) => { const r = document.getElementById(id); r.value = v;
+    r.dispatchEvent(new Event('input', { bubbles:true })); };
+  const zero = () => { all.forEach(id => s(id, 0)); };
+  const draw = async () => { LAYERS.forEach(L => L._key = ''); COARSE = 0; render();
+    await new Promise(r => setTimeout(r, 300)); COARSE = 0; render();
+    await new Promise(r => setTimeout(r, 60)); };
+  zero(); await draw();
+  const A = window.__full();
+  const out = { knobs:{} };
+  /* ⚠️ 影の3本（長さ・やわらかさ・接地）は「影の濃さ」が 0 だと当然効かない
+     ＝濃さを立ててから測る（測りたいものだけが動く状態を作る） */
+  const need = { r_shdl:['r_shd'], r_shds:['r_shd','r_shdl'], r_shdc:['r_shd'],
+                 r_shd:['r_shdl'] };
+  for(const id of all){
+    zero();
+    (need[id] || []).forEach(o => s(o, 80));
+    s(id, 85);
+    await draw();
+    out.knobs[id] = window.__sad(A, window.__full());
+  }
+  zero(); await draw();
+  out.modoru = window.__sad(A, window.__full());
+  /* ⭐ 影は【素材の形】で出る（板の四角で切られない） */
+  zero(); s('r_shd', 90); s('r_shdl', 80); s('r_shds', 20); await draw();
+  {
+    const d = g.getImageData(0, 0, cv.width, cv.height).data;
+    let jump = 0, y = (cv.height * 0.52) | 0, prev = null;
+    for(let x = 4; x < cv.width - 4; x += 2){
+      const v = d[((y*cv.width)+x)*4];
+      if(prev != null && Math.abs(v - prev) > 26) jump++;
+      prev = v;
+    }
+    out.jump = jump;
+  }
+  zero(); await draw();
+  return out;
+});
+{
+  const dead = Object.entries(NAJI.knobs).filter(([k, v]) => v < 3000).map(([k]) => k);
+  ok(dead.length === 0, '⭐⭐ 馴染ませの10本がぜんぶ効く（死んでいるつまみが無い）',
+     JSON.stringify(NAJI.knobs));
+}
+ok(NAJI.modoru === 0, '⚠️ ぜんぶ 0 に戻すと1画素も同じに戻る', NAJI.modoru);
+ok(NAJI.jump <= 6, '⭐⭐ 影は【素材の形】で出る（板の四角で切られない）',
+   'いきなり濃さが変わる所 ' + NAJI.jump + ' か所');
+
+/* ⑨ モバイル */
 await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
 await wait(900);
 const MB = await p.evaluate(() => ({
