@@ -98,6 +98,20 @@ const R = await p.evaluate(async () => {
     const body = paint(g, S.lay.w, S.lay.h, { svg:true });
     out['⑧pathの数'] = body.filter(s => s.startsWith('<path')).length; }
 
+  /* ⑭ ⭐ 型＝押すとつまみ自体がその値になる／素へ必ず戻れる（2026-08-31） */
+  document.querySelector('#segKata button[data-v="sure"]').click(); await wait(350);
+  out['⑭型でつまみが動く'] = (+document.getElementById('chip').value === S.cut.chip && S.cut.chip > 0);
+  out['⑭型で絵が変わる'] = (glyph('G').length > 1);      /* 毛羽・飛沫が別の囲みとして増える */
+  document.querySelector('#segKata button[data-v="su"]').click(); await wait(300);
+  out['⑭素へ戻る'] = (S.cut.chip === 0 && S.cut.rough === 0 && S.cut.hair === 0 && S.cut.spat === 0);
+  out['⑭素は囲み1つ'] = (glyph('G').length === 1);
+  /* ⚠️ つまみを触ったら型の印が外れる（絵と印が食い違わない） */
+  set('rough', 70); await wait(200);
+  out['⑭触ると印が外れる'] = document.querySelectorAll('#segKata button.on').length === 0;
+  /* ⚠️⚠️ ここで【素のまま】にすると、次の⑨（種で変わるか）が
+     崩しゼロのせいで落ちる ── 本体ではなく試験の置き方の問題。既定へ戻す。 */
+  set('rough', 34); set('fat', 0); set('smooth', 18); await wait(200);
+
   /* ⑨ 種で崩れ方が変わる（🔴 種の1発目が潰れていると変わらない） */
   const g1 = JSON.stringify(glyph('あ'));
   set('seed', 42); await wait(150);
@@ -127,6 +141,11 @@ ok('⑦はみ出しを数える', R['⑦はみ出しを数える'] === true);
 ok('⑦収めたら0', R['⑦収めたら0'] === true);
 ok('⑦つまみも動く', R['⑦つまみも動く'] === true);
 ok('⑧pathの数', R['⑧pathの数'] >= 5);
+ok('⑭型でつまみが動く', R['⑭型でつまみが動く'] === true);
+ok('⑭素へ戻る', R['⑭素へ戻る'] === true);
+ok('⑭型で絵が変わる', R['⑭型で絵が変わる'] === true);
+ok('⑭素は囲み1つ', R['⑭素は囲み1つ'] === true);
+ok('⑭触ると印が外れる', R['⑭触ると印が外れる'] === true);
 ok('⑨種で変わる', R['⑨種で変わる'] === true);
 ok('⑨散らばり', R['⑨散らばり'] > 0.4);
 console.log('  ' + (err ? '🔴 例外 ' + err + '件' : '✅ 例外なし'));
@@ -142,5 +161,5 @@ console.log('  ── 検算：崩しを全部切ったら字が変わった＝ 
   + '（ここが false なら つまみが効いていない＝②③が落ちる）');
 
 if(NG.length || err){ console.log('  🔴 落ち：' + NG.join('／')); await b.close(); process.exit(1); }
-console.log('  ── 通過（18項目）');
+console.log('  ── 通過（23項目）');
 await b.close();
