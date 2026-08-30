@@ -439,8 +439,6 @@
       <div id="keyInfo" class="hide"></div>
       <div class="row"><span class="n">筆の太さ</span><output id="o_brush">0.08</output></div>
       <input type="range" id="r_brush" min="1" max="40" step="1" value="8">
-      <div class="row"><span class="n">パスのなめらかさ</span><output id="o_smooth">0.60</output></div>
-      <input type="range" id="r_smooth" min="0" max="100" step="1" value="60">
       <div class="row"><span class="n">ふちをやわらかく</span><output id="o_feather">0.25</output></div>
       <input type="range" id="r_feather" min="0" max="100" step="1" value="25">
       <div class="btns2">
@@ -453,7 +451,9 @@
     <div class="note">⭐ <b>色で抜く</b>＝抜きたい色を盤の上で<b>押す</b>。何色でも足せる<br>
       🔴🔴 <b>押した色は「覚える」だけ</b>＝そのあと<b>許容を動かすとリアルタイムで抜け方が変わる</b><br>
       ⭐ <b>筆</b>＝はみ出しを消す／消しすぎを戻す（何度でも行き来できる）<br>
-      ⭐⭐ <b>パスで抜く</b>＝点を打つ。<b>点はつまんで動かせる</b>／<b>なめらかさ</b>で直線⇄曲線<br>
+      ⭐⭐ <b>パスで抜く</b>＝<b>打つ</b>と角の点／<b>打ったまま引く</b>と曲がる（イラレと同じ）<br>
+      　 点も<b>ハンドル</b>もあとから<b>掴んで動かせる</b>。<b>最初の黄色い点をもう一度押すと閉じて切る</b><br>
+      　 ⌫ で1点戻す／Esc でやめる／Enter でも閉じる。⌥ を押しながら引くと<b>角が折れる</b><br>
       🔴🔴 <b>切り抜きも焼き込まない</b>＝元の写真は残っていて、いつでも消してやり直せる<br>
       ⚠️ 切り抜いている間は素材も灯も動かない（<b>動かす</b>に戻すと動く）</div>
   </div>
@@ -561,6 +561,9 @@
 
   <div class="grp" id="outBox">
     <label class="h">出す</label>
+    <div class="row"><span class="n">出す大きさ</span><output id="o_scale2">×1.0</output></div>
+    <input type="range" id="r_out" min="25" max="300" step="5" value="100">
+    <div id="outsize"></div>
     <button class="btn solid" id="b_png">PNG で出す</button>
     <div class="btns2">
       <button class="btn" id="b_svg">SVG で出す</button>
@@ -571,7 +574,10 @@
       <button class="btn" id="b_inj">設定を読む</button>
     </div>
     <input type="file" id="f_json" accept="application/json,.json" hidden>
-    <div class="note">⭐ <b>SVG</b>＝素材が<b>1枚ずつ分かれたまま</b>入る（Illustrator で開いて動かせる）。
+    <div class="note">🔴🔴 <b>出す大きさ</b>＝組んでいる間は小さく、<b>出すときだけ大きく</b>。
+      版面の px はここで決まる（切り抜きの型は<b>元の写真から</b>作り直すので、拡大しても甘くならない）<br>
+      ⚠️ <b>素材より大きく出しても、素材の解像度は増えない</b>。原寸を超えるときは数字で言う<br>
+      ⭐ <b>SVG</b>＝素材が<b>1枚ずつ分かれたまま</b>入る（Illustrator で開いて動かせる）。
       空気は最後の1枚として上に重なる<br>
       ⭐⭐ <b>素材ごとに出す</b>＝空気を着せた状態の<b>地なしPNGを1枚ずつ</b>（zip）＝
       <b>貼HARI へそのまま持っていける</b><br>
@@ -621,7 +627,7 @@ function stat(s){ el('stat').textContent = s; clearTimeout(statT);
 const P = {
   haze:0.55, soft:0.45, fade:0.55, air:'#3f5a86',
   split:0.45, bloom:0.35, grain:0.28, vig:0.35,
-  ratio:'2:3', long:1800, dpi:350, land:false, bg:'#0d1522', nobg:false,
+  ratio:'2:3', long:1800, dpi:350, land:false, out:1, bg:'#0d1522', nobg:false,
   /* ⭐ 切り抜きのつまみ（型は素材ごと・数字は道具ごと） */
   tol:0.18, brush:0.08, feather:0.25, smooth:0.6,
   /* ⭐ 木下が挙げた「周りのぼかし方」と「偶然の何か」 */
@@ -867,31 +873,40 @@ function cutBrush(L, mx, my, lx, ly, erase){
      なめらかさ 0＝直線でつなぐ／1＝曲線でつなぐ（Catmull-Rom → ベジェ）。
      ＝ハンドルを掴まないので、電話でも同じように引ける。
    ⭐ 点は打ったあとも【つまんで動かせる】。閉じるまで何度でも直せる。 */
-function pathD(pts, close, smooth){
+/* 🔴🔴 2026-08-30 木下＝「**パスが全然使いものにならない**。Sakuji とかを見てきて」
+   ⭐ 作字SAKUJI のペンを読んで、同じ作りに直した：
+     ① 打つ＝角の点／② **打ったまま引く＝ハンドルが出て曲がる**（イラレと同じ）
+     ③ 打った点は**あとから掴んで動かせる**／④ **ハンドルも掴んで動かせる**
+     ⑤ **最初の点をもう一度押すと閉じる**（ボタンを探さなくていい）
+     ⑥ Enter で閉じる／Esc で取り消し／⌫ で1点戻す
+   ⚠️ 前の作りは「点＋なめらかさ1本」だったので、**思った形にならなかった**。
+      形は点ごとのハンドルでしか決まらない。
+   ⭐ 点は { x, y, hx, hy } ＝ハンドルは【出る側】だけ持ち、入る側はその逆（対称）。
+      alt を押しながら引くと片側だけ折れる（角を作れる）。 */
+function pathD(pts, close){
   const n = pts.length;
   if(n < 2) return '';
-  if(smooth <= 0.001 || n < 3){
-    let d = 'M' + pts[0].x.toFixed(2) + ' ' + pts[0].y.toFixed(2);
-    for(let i = 1; i < n; i++) d += 'L' + pts[i].x.toFixed(2) + ' ' + pts[i].y.toFixed(2);
-    return d + (close ? 'Z' : '');
-  }
+  const f = v => v.toFixed(2);
   const at = i => pts[close ? ((i % n) + n) % n : Math.max(0, Math.min(n-1, i))];
-  const k = smooth / 6;
-  let d = 'M' + pts[0].x.toFixed(2) + ' ' + pts[0].y.toFixed(2);
+  let d = 'M' + f(pts[0].x) + ' ' + f(pts[0].y);
   const last = close ? n : n - 1;
   for(let i = 0; i < last; i++){
-    const p0 = at(i-1), p1 = at(i), p2 = at(i+1), p3 = at(i+2);
-    const c1x = p1.x + (p2.x - p0.x) * k, c1y = p1.y + (p2.y - p0.y) * k;
-    const c2x = p2.x - (p3.x - p1.x) * k, c2y = p2.y - (p3.y - p1.y) * k;
-    d += 'C' + c1x.toFixed(2) + ' ' + c1y.toFixed(2) + ' ' + c2x.toFixed(2) + ' ' + c2y.toFixed(2)
-       + ' ' + p2.x.toFixed(2) + ' ' + p2.y.toFixed(2);
+    const a1 = at(i), a2 = at(i+1);
+    const o1x = a1.x + (a1.hx || 0), o1y = a1.y + (a1.hy || 0);
+    /* 入る側は【出る側の逆】＝a2 の手前の制御点 */
+    const i2x = a2.x - (a2.ihx != null ? a2.ihx : (a2.hx || 0));
+    const i2y = a2.y - (a2.ihy != null ? a2.ihy : (a2.hy || 0));
+    const straight = !(a1.hx || a1.hy) && !(a2.hx || a2.hy) && a2.ihx == null;
+    d += straight ? ('L' + f(a2.x) + ' ' + f(a2.y))
+                  : ('C' + f(o1x) + ' ' + f(o1y) + ' ' + f(i2x) + ' ' + f(i2y)
+                     + ' ' + f(a2.x) + ' ' + f(a2.y));
   }
   return d + (close ? 'Z' : '');
 }
 function cutPath(L, pts, keepInside){
   if(!pts || pts.length < 3) return;
   hist();
-  const d = pathD(pts, true, P.smooth);
+  const d = pathD(pts, true);
   const path = new Path2D(d);
   const m = maskSize(L);
   if(keepInside){
@@ -1180,6 +1195,7 @@ function render(){
     + '　' + ms + ' ms';
   drawOverlay(W, H);
   applyView();
+  syncOut();
 }
 /* ══⭐⭐ いま触っているつまみが【盤のどこに効くか】を見せる ══════
    🔴 2026-08-30 木下＝「この参考だとパネルとどう調整できるかわかりにくい。
@@ -1198,7 +1214,8 @@ const HILITE_OF = {
   r_depth:'layer', r_scale:'layer', r_rot:'layer', r_op:'layer',
   r_abri:'layer', r_asat:'layer', r_acon:'layer', r_atmp:'layer', r_ablur:'layer', r_ahaze:'layer',
   /* 切り抜き */
-  r_tol:'cut', r_brush:'cut', r_smooth:'cut', r_feather:'cut',
+  r_tol:'cut', r_brush:'cut', r_feather:'cut',
+  r_out:'air',
 };
 function hilite(kind, txt){
   HILITE = kind; HILITETXT = txt || '';
@@ -1278,13 +1295,33 @@ function drawOverlay(W, H){
         return { x:(u - 0.5) * dw, y:(v - 0.5) * dh };
       };
       /* ⭐ 出す形とまったく同じ道（pathD）で下見を描く＝見たとおりに切れる */
-      const bp = POLY.map(toB);
-      const d = pathD(bp, POLY.length > 2, P.smooth);
+      const sx = dw / m.width, sy = dh / m.height;
+      const bp = POLY.map(q2 => {
+        const b3 = toB(q2);
+        const fx = L.flip ? -1 : 1;
+        return { x:b3.x, y:b3.y,
+                 hx:(q2.hx || 0) * sx * fx, hy:(q2.hy || 0) * sy,
+                 ihx:(q2.ihx == null ? null : q2.ihx * sx * fx),
+                 ihy:(q2.ihy == null ? null : q2.ihy * sy) };
+      });
+      const d = pathD(bp, POLY.length > 2);
       if(d){ og.strokeStyle = 'rgba(255,64,64,.95)'; og.stroke(new Path2D(d)); }
-      POLY.forEach(q2 => { const b3 = toB(q2);
-        og.beginPath(); og.arc(b3.x, b3.y, Math.max(3, W/220), 0, 6.2831853);
-        og.fillStyle = '#fff'; og.fill();
-        og.strokeStyle = 'rgba(0,0,0,.6)'; og.stroke(); });
+      const rp = Math.max(3.5, W/200);
+      bp.forEach((b3, i) => {
+        /* ⭐ ハンドルは線＋小さい丸（掴めるものが見えている） */
+        if(b3.hx || b3.hy){
+          og.strokeStyle = 'rgba(255,64,64,.5)'; og.lineWidth = Math.max(1, W/900);
+          og.beginPath(); og.moveTo(b3.x, b3.y); og.lineTo(b3.x + b3.hx, b3.y + b3.hy); og.stroke();
+          og.beginPath(); og.arc(b3.x + b3.hx, b3.y + b3.hy, rp*0.7, 0, 6.2831853);
+          og.fillStyle = 'rgba(255,64,64,.9)'; og.fill();
+          og.strokeStyle = 'rgba(255,255,255,.85)'; og.stroke();
+        }
+        og.lineWidth = Math.max(1.5, W/420);
+        og.beginPath(); og.arc(b3.x, b3.y, i === 0 ? rp*1.35 : rp, 0, 6.2831853);
+        /* ⭐ いちばん最初の点は大きく＝ここを押すと閉じる、が見える */
+        og.fillStyle = i === 0 ? '#ffd24a' : '#fff'; og.fill();
+        og.strokeStyle = 'rgba(0,0,0,.65)'; og.stroke();
+      });
     }
     og.restore();
   }
@@ -1407,13 +1444,26 @@ function hitLayer(q){
         stat('色を ' + n + ' つ覚えた ── 許容を動かすと抜け方が変わります'); return;
       }
       if(TOOL === 'path'){
-        /* ⭐ 近くに点があればつまむ（打った点はあとから動かせる） */
-        const near = 22 * perScreenPx() * (maskSize(L).w / (L.s * cv.width));
+        /* ⭐ 掴む幅は【画面の px】で決める（盤の px だと引いて見ていると届かない） */
+        const near = 16 * perScreenPx() * (maskSize(L).w / Math.max(1, L.s * cv.width));
+        /* ① ハンドルを掴む */
+        let hh = -1, hb = near;
+        POLY.forEach((q2, i) => {
+          if(!(q2.hx || q2.hy)) return;
+          const d = Math.hypot(q2.x + q2.hx - m.x, q2.y + q2.hy - m.y);
+          if(d < hb){ hb = d; hh = i; }
+        });
+        if(hh >= 0){ grab = { what:'handle', i:hh }; drawOverlay(cv.width, cv.height); return; }
+        /* ② 点を掴む。⭐ いちばん最初の点をもう一度押したら【閉じて切る】 */
         let hit = -1, best = near;
         POLY.forEach((q2, i) => { const d = Math.hypot(q2.x - m.x, q2.y - m.y);
           if(d < best){ best = d; hit = i; } });
+        if(hit === 0 && POLY.length >= 3){ closePath(); return; }
         if(hit >= 0){ grab = { what:'point', i:hit }; drawOverlay(cv.width, cv.height); return; }
-        POLY.push({ x:m.x, y:m.y }); drawOverlay(cv.width, cv.height); return;
+        /* ③ 何も無ければ点を打つ。⭐ そのまま引くとハンドルが出る（イラレと同じ） */
+        POLY.push({ x:m.x, y:m.y, hx:0, hy:0 });
+        grab = { what:'pen', i:POLY.length - 1, alt:e.altKey };
+        drawOverlay(cv.width, cv.height); return;
       }
       hist();
       grab = { what:'brush', lx:null, ly:null };
@@ -1446,7 +1496,20 @@ function hitLayer(q){
       if(grab.what === 'point'){
         const L = LAYERS[SEL]; if(!L) return;
         const m = toMask(L, q, cv.width, cv.height);
-        POLY[grab.i] = { x:m.x, y:m.y };
+        const o = POLY[grab.i];
+        POLY[grab.i] = { x:m.x, y:m.y, hx:o.hx || 0, hy:o.hy || 0,
+                         ihx:o.ihx, ihy:o.ihy };
+        drawOverlay(cv.width, cv.height); return;
+      }
+      /* ⭐ 打ったまま引く＝ハンドルが出る（点の位置は動かない） */
+      if(grab.what === 'pen' || grab.what === 'handle'){
+        const L = LAYERS[SEL]; if(!L) return;
+        const m = toMask(L, q, cv.width, cv.height);
+        const o = POLY[grab.i]; if(!o) return;
+        o.hx = m.x - o.x; o.hy = m.y - o.y;
+        /* ⚠️ alt を押しながらなら片側だけ折れる（角を作れる）＝SAKUJI と同じ作法 */
+        if(grab.alt || e.altKey){ if(o.ihx == null){ o.ihx = 0; o.ihy = 0; } }
+        else { o.ihx = null; o.ihy = null; }
         drawOverlay(cv.width, cv.height); return;
       }
       if(grab.what === 'brush'){
@@ -1647,6 +1710,7 @@ const RANGES = [
   ['r_wob','wob','o_wob', v => (v/100).toFixed(2), v => v/100],
   ['r_seed','seed','o_seed', v => v],
   ['r_long','long','o_long', v => v],
+  ['r_out','out','o_scale2', v => '×' + (v/100).toFixed(1), v => v/100],
 ];
 RANGES.forEach(([id, k, out, fmt, conv]) => {
   const r = el(id); if(!r) return;
@@ -1696,7 +1760,7 @@ document.querySelectorAll('#s_tool button').forEach(bt => bt.onclick = () => {
 /* 🔴🔴 許容・ふち・なめらかさは【リアルタイムで見える】
    （前は色で抜くを押した瞬間に焼いていたので、許容を動かしても何も起きなかった） */
 [['r_tol','tol','o_tol'], ['r_brush','brush','o_brush'],
- ['r_feather','feather','o_feather'], ['r_smooth','smooth','o_smooth']]
+ ['r_feather','feather','o_feather']]
   .forEach(([id, k, out]) => {
     const r = el(id);
     const sync = () => { P[k] = (+r.value) / 100; el(out).value = P[k].toFixed(2); };
@@ -1705,7 +1769,7 @@ document.querySelectorAll('#s_tool button').forEach(bt => bt.onclick = () => {
       if(k === 'tol' || k === 'feather'){
         LAYERS.forEach(L => { L._mk = ''; L._key = ''; });
         touching(); renderSoon();
-      }else if(k === 'smooth'){ drawOverlay(cv.width, cv.height); }
+      }
     });
     sync();
   });
@@ -1721,12 +1785,14 @@ function syncKeys(){
   if(bt) bt.onclick = () => { const L2 = LAYERS[SEL]; if(!L2) return;
     L2.keys = []; L2._dist = null; bumpMask(L2); syncKeys(); render(); stat('覚えた色を忘れた'); };
 }
-el('b_polyend').onclick = () => {
+function closePath(){
   const L = LAYERS[SEL];
-  if(!L || POLY.length < 3){ stat('点を3つ以上打ってから閉じてください'); return; }
+  if(!L || POLY.length < 3){ stat('点を3つ以上打ってください'); return; }
   cutPath(L, POLY, el('k_keepin').checked);
-  POLY = []; render(); stat('パスで切った');
-};
+  POLY = []; render();
+  stat(el('k_keepin').checked ? 'パスの中を残した' : 'パスの中を消した');
+}
+el('b_polyend').onclick = closePath;
 el('b_polyundo').onclick = () => {
   if(!POLY.length){ stat('戻す点がありません'); return; }
   POLY.pop(); drawOverlay(cv.width, cv.height); stat('点をひとつ戻した');
@@ -1858,19 +1924,45 @@ el('c_bg').addEventListener('input',  e => { P.bg  = e.target.value; render(); }
 el('k_nobg').addEventListener('change', e => { P.nobg = e.target.checked; render(); });
 
 /* ══ 出す ══ */
+/* ⭐ 出す大きさ。⚠️ 画面（盤）はこれに左右されない＝重くならない */
+function outSheet(){
+  const f = sheet();
+  const k = Math.max(0.25, Math.min(3, P.out || 1));
+  return { w: Math.max(16, Math.round(f.w * k)), h: Math.max(16, Math.round(f.h * k)) };
+}
+/* ⭐ 素材の原寸を超えていないかを数える（超えると引き伸ばしになる） */
+function outWarn(){
+  const o = outSheet();
+  let over = 0;
+  for(const L of LAYERS){
+    if(!L.on || !L.img) continue;
+    const need = L.s * o.w;
+    if(need > (L.img.naturalWidth || 0) * 1.02) over++;
+  }
+  return over;
+}
+function syncOut(){
+  const o = outSheet(), n = outWarn();
+  el('outsize').textContent = '出す絵 ' + o.w + ' × ' + o.h + ' px'
+    + (isPaper() ? '（' + P.ratio + '・' + Math.round((P.dpi||350) * (P.out||1)) + 'dpi 相当）' : '')
+    + (n ? '\n⚠️ ' + n + ' 枚が原寸より大きく引き伸ばされます' : '');
+}
+
 function dl(blob, name){
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 el('b_png').onclick = () => {
-  const f = sheet();
+  const f = outSheet();
   const c = document.createElement('canvas'); c.width = f.w; c.height = f.h;
   const keep = COARSE; COARSE = 0;
+  LAYERS.forEach(L => L._key = '');          /* ⚠️ 出す大きさで板を作り直す＝甘くならない */
   paint(c.getContext('2d'), f.w, f.h, P.nobg);
-  COARSE = keep;
+  COARSE = keep; LAYERS.forEach(L => L._key = '');
   c.toBlob(b => { dl(b, 'moya_' + Date.now() + '.png');
-    stat((P.nobg ? '地なしPNG' : 'PNG') + ' を出した — ' + f.w + ' × ' + f.h); });
+    stat((P.nobg ? '地なしPNG' : 'PNG') + ' を出した — ' + f.w + ' × ' + f.h
+      + (outWarn() ? '（⚠️ ' + outWarn() + ' 枚は引き伸ばし）' : '')); });
 };
 
 /* ══⭐ zip（PNG を何枚かまとめて落とす。他の道具と同じもの）══ */
@@ -1931,7 +2023,7 @@ function stackOnly(W, H){
    ⚠️ 空気は画素の混ぜ方（soft-light / lighter / overlay）でできているので、
       SVG の図形では出せない＝ここだけ1枚の絵になる。そう画面にも書いてある。 */
 function svgOut(){
-  const f = sheet();
+  const f = outSheet();
   const W = f.w, H = f.h;
   const keep = COARSE; COARSE = 0;
   const parts = [];
@@ -1981,8 +2073,9 @@ el('b_layers').onclick = () => {
   stat('素材ごとに書き出しています…');
   setTimeout(async () => {
     try{
-      const f = sheet(), W = f.w, H = f.h;
+      const f = outSheet(), W = f.w, H = f.h;
       const keep = COARSE; COARSE = 0;
+      LAYERS.forEach(L => L._key = '');
       const files = [];
       const order = LAYERS.map((L, i) => ({ L, i })).sort((a, b) => zOf(b.L) - zOf(a.L));
       let n = 0;
@@ -2188,7 +2281,7 @@ function syncAllUI(){
    ['r_split','o_split','split'],['r_bloom','o_bloom','bloom'],['r_grain','o_grain','grain'],
    ['r_vig','o_vig','vig'],['r_edge','o_edge','edge'],['r_mix','o_mix','mix'],
    ['r_wob','o_wob','wob'],['r_tol','o_tol','tol'],['r_brush','o_brush','brush'],
-   ['r_feather','o_feather','feather'],['r_smooth','o_smooth','smooth']]
+   ['r_feather','o_feather','feather']]
    .forEach(([id, o, k]) => { put(id, Math.round(P[k]*100)); out(o, P[k].toFixed(2)); });
   put('r_seed', P.seed); out('o_seed', P.seed);
   put('r_long', P.long); out('o_long', P.long);
@@ -2252,6 +2345,17 @@ addEventListener('keydown', e => {
     hist(); dupLayer(CLIP); buildList(); syncSel(); render(); stat('貼り付けた（⌘V）'); return; }
   if(cmd && k === '0'){ e.preventDefault(); fitView(); return; }
   if(cmd && (k === 's')){ e.preventDefault(); el('b_png').click(); return; }
+  /* ⭐ ペンのキー（イラレ・SAKUJI と同じ言い方）
+     🔴 素材を消す（⌫）より【先に】見る。後ろに置いたら、パスを引いている最中の ⌫ で
+        **素材ごと消えた**（2026-08-30 の試験で見つけた）。 */
+  if(MODE === 'cut' && TOOL === 'path'){
+    if(k === 'enter'){ e.preventDefault(); closePath(); return; }
+    if(k === 'escape'){ e.preventDefault(); POLY = []; drawOverlay(cv.width, cv.height);
+      stat('パスをやめた'); return; }
+    if((k === 'backspace' || k === 'delete') && POLY.length){
+      e.preventDefault(); POLY.pop(); drawOverlay(cv.width, cv.height);
+      stat('点をひとつ戻した（残り ' + POLY.length + '）'); return; }
+  }
   if(k === 'delete' || k === 'backspace'){
     if(SEL >= 0 && LAYERS.length){ e.preventDefault(); hist(); removeAt(SEL); } return; }
   /* 道具の切り替え（Figma と同じ言い方） */
@@ -2306,7 +2410,7 @@ document.querySelectorAll('#tools button[data-t]').forEach(b2 => {
     if(c.tool) document.querySelector('#s_tool button[data-v="' + c.tool + '"]').click();
     syncToolbar();
     focusGrp(t === 'light' ? 'litBox' : (c.mode === 'cut' ? 'cutBox' : 'selBox'),
-             t === 'color' ? 'r_tol' : t === 'path' ? 'r_smooth'
+             t === 'color' ? 'r_tol'
              : (t === 'erase' || t === 'paint') ? 'r_brush' : null);
     if(c.say){ stat(c.say); hilite('light', '灯'); }
     else if(c.mode === 'cut'){

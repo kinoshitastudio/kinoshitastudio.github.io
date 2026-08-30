@@ -312,9 +312,10 @@ ok(TOL.許容1回のms < 40, '⭐ 許容を動かすのが軽い（スライダ�
 /* ⭐⭐ パスツール（点を打つ・なめらかさで直線⇄曲線） */
 const PATH = await p.evaluate(async () => {
   const out = {};
-  const pts = [{x:10,y:10},{x:300,y:40},{x:280,y:300},{x:30,y:260}];
-  const 直線 = pathD(pts, true, 0);
-  const 曲線 = pathD(pts, true, 0.8);
+  const kaku = [{x:10,y:10},{x:300,y:40},{x:280,y:300},{x:30,y:260}];
+  const maru = kaku.map((q,i) => ({ ...q, hx: i%2 ? 40 : -40, hy: 30 }));
+  const 直線 = pathD(kaku, true);
+  const 曲線 = pathD(maru, true);
   out.直線にCが無い = 直線.indexOf('C') < 0 && 直線.indexOf('L') >= 0;
   out.曲線にCが有る = 曲線.indexOf('C') >= 0;
   /* 実際に切れるか */
@@ -342,14 +343,94 @@ const PATH = await p.evaluate(async () => {
   return out;
 });
 ok(PATH.直線にCが無い && PATH.曲線にCが有る,
-   '⭐⭐ パスの【なめらかさ】で直線⇄曲線が切り替わる', JSON.stringify(PATH));
+   '⭐⭐ 打つだけ＝直線／ハンドルを引く＝曲線', JSON.stringify({直線:PATH.直線にCが無い, 曲線:PATH.曲線にCが有る}));
 ok(PATH.中を残した < PATH.前 * 0.75, '⭐ パスで【中を残す】が効く',
    `${PATH.前.toLocaleString()} → ${PATH.中を残した.toLocaleString()} 画素`);
 ok(PATH.中を消した < PATH.前 && PATH.中を消した > PATH.中を残した, '⭐ パスで【中を消す】が効く',
    `${PATH.前.toLocaleString()} → ${PATH.中を消した.toLocaleString()} 画素`);
 ok(PATH.戻る === PATH.前, '⚠️ パスで切っても消せば1画素も同じに戻る', PATH.戻る + ' 画素');
 
-/* ⭐ レイヤー（隠す・不透明度・奥行きが同じときの前後） */
+/* ⭐⭐ ペン（2026-08-30 木下＝「パスが全然使いものにならない。Sakuji とかを見てきて」）
+   🔴 見るのは【イラレと同じ手が通るか】：
+     打つ／打ったまま引いて曲げる／点を掴んで動かす／ハンドルを掴んで動かす／
+     最初の点をもう一度押すと閉じる／⌫で1点戻す／Escでやめる */
+const PEN = await p.evaluate(async () => {
+  await demo();
+  const c = document.createElement('canvas'); c.width = 400; c.height = 400;
+  const x = c.getContext('2d'); x.fillStyle = '#c83'; x.fillRect(0,0,400,400);
+  const img = new Image(); await new Promise(r => { img.onload = r; img.src = c.toDataURL(); });
+  LAYERS = []; addImage(img, 'ペンためし', 0.1);
+  const L = LAYERS[0]; L.x = 0.5; L.y = 0.5; SEL = 0;
+  el('k_nobg').checked = true; el('k_nobg').dispatchEvent(new Event('change',{bubbles:true}));
+  document.querySelector('#tools button[data-t="path"]').click();
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  const solid = () => { const d = g.getImageData(0,0,cv.width,cv.height).data; let n = 0;
+    for(let i=0;i<d.length;i+=4*7) if(d[i+3]>128) n++; return n; };
+  const out = { 前: solid() };
+  /* 素材の中の割合(u,v) → 画面の座標 */
+  const toSc = (u, v) => {
+    const iw = L.img.naturalWidth, ih = L.img.naturalHeight;
+    const dw = L.s * cv.width, dh = dw * ih / iw;
+    const bx = L.x + (u - 0.5) * dw / cv.width;
+    const by = L.y + (v - 0.5) * dh / cv.height;
+    return toScreen(bx, by);
+  };
+  /* ⚠️ 指の出来事は【1つずつ】。まとめて投げると pts の出入りが噛み合わず、
+     打ったつもりの点が入らない（試験がぶれる） */
+  const tick = () => new Promise(r => setTimeout(r, 20));
+  const down = (u,v,alt) => { const s2 = toSc(u,v);
+    stage.dispatchEvent(new PointerEvent('pointerdown', { clientX:s2.clientX, clientY:s2.clientY,
+      pointerId:1, bubbles:true, altKey:!!alt })); };
+  const move = (u,v) => { const s2 = toSc(u,v);
+    stage.dispatchEvent(new PointerEvent('pointermove', { clientX:s2.clientX, clientY:s2.clientY,
+      pointerId:1, bubbles:true })); };
+  const up = () => stage.dispatchEvent(new PointerEvent('pointerup', { pointerId:1, bubbles:true }));
+  const M = maskSize(L);
+  /* ① 打つ＝角の点 */
+  down(0.20,0.20); await tick(); up(); await tick();
+  down(0.80,0.20); await tick(); up(); await tick();
+  out.打てた = POLY.length;
+  /* ② 打ったまま引く＝ハンドルが出る（点は動かない） */
+  down(0.80,0.80); await tick(); move(0.95,0.80); await tick(); up(); await tick();
+  out.点の数 = POLY.length;
+  const p3 = POLY[2] || { x:0, y:0, hx:0, hy:0 };
+  out.ハンドルが出た = Math.abs(p3.hx) > 1;
+  out.点は動かない = Math.abs(p3.x - 0.80 * M.w) < 4;
+  const hx0 = p3.hx;
+  /* ③ 点を掴んで動かす
+     ⚠️ いちばん最初の点は【押すと閉じる】ので、途中の点で試す（最初の点で試すと閉じてしまう） */
+  down(0.80,0.20); await tick(); move(0.72,0.30); await tick(); up(); await tick();
+  out.点を動かせた = Math.abs(POLY[1].x - 0.72 * M.w) < 8;
+  /* ④ ハンドルを掴んで動かす */
+  const hu = (p3.x + p3.hx) / M.w, hv = (p3.y + p3.hy) / M.h;
+  down(hu, hv); await tick(); move(hu + 0.08, hv); await tick(); up(); await tick();
+  out.ハンドルを動かせた = Math.abs(POLY[2].hx) > Math.abs(hx0) + 1;
+  /* ⑤ ⌫ で1点戻す */
+  const n0 = POLY.length;
+  dispatchEvent(new KeyboardEvent('keydown', { key:'Backspace', bubbles:true }));
+  out.一点戻せた = POLY.length === n0 - 1;
+  down(0.80,0.80); await tick(); up(); await tick();
+  /* ⑥ 最初の点をもう一度押すと閉じて切る */
+  const n1 = POLY.length;
+  down(POLY[0].x / M.w, POLY[0].y / M.h); await tick(); up(); await tick();
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  out.閉じて切れた = POLY.length === 0 && solid() < out.前;
+  out.打った数 = n1;
+  clearMask(L);
+  el('k_nobg').checked = false; el('k_nobg').dispatchEvent(new Event('change',{bubbles:true}));
+  document.querySelector('#tools button[data-t="move"]').click();
+  return out;
+});
+ok(PEN.打てた === 2, '⭐ 打つと点が増える', PEN.打てた + ' 点');
+ok(PEN.ハンドルが出た && PEN.点は動かない,
+   '⭐⭐ 打ったまま引くと【ハンドルが出て曲がる】（点は動かない）',
+   JSON.stringify({ ハンドル:PEN.ハンドルが出た, 点:PEN.点は動かない }));
+ok(PEN.点を動かせた, '⭐ 打った点はあとから掴んで動かせる');
+ok(PEN.ハンドルを動かせた, '⭐ ハンドルも掴んで動かせる');
+ok(PEN.一点戻せた, '⭐ ⌫ で1点戻せる');
+ok(PEN.閉じて切れた, '⭐⭐ 最初の点をもう一度押すと【閉じて切れる】（ボタンを探さなくていい）');
+
+/* ⭐ レイヤー（隠す・不透明度・奥行きが同じときの前後） *//* ⭐ レイヤー（隠す・不透明度・奥行きが同じときの前後） */
 const LAY = await p.evaluate(async () => {
   const mk = async col => { const c = document.createElement('canvas'); c.width = 200; c.height = 200;
     const x = c.getContext('2d'); x.fillStyle = col; x.fillRect(0,0,200,200);
@@ -636,7 +717,39 @@ ok(HS.yarinaoshi, '⭐ ⌘⇧Z でやり直せる');
 ok(HS.fukusei && HS.fukuseiUndo, '⭐ ⌘D で複製・取り消せる');
 ok(HS.kiri && HS.kiriUndo, '⭐⭐ 切り抜き（型）も取り消せる ── 型は絵なので、ここが崩れやすい');
 
-/* ⑨ モバイル */
+/* ⭐⭐ 出す大きさ（2026-08-30 木下＝「書き出し時のピクセルとか大事かも」）
+   🔴 見るのは【盤は重くならず、出す絵だけが大きくなるか】と
+      【拡大しても甘くならないか（板を出す大きさで作り直しているか）】。 */
+const OUT2 = await p.evaluate(async () => {
+  await demo();
+  const s = (id, v) => { const r = document.getElementById(id); r.value = v;
+    r.dispatchEvent(new Event('input', { bubbles:true })); };
+  document.querySelector('#s_ratio button[data-v="2:3"]').click();
+  s('r_long', 1200); s('r_out', 100);
+  await new Promise(r => setTimeout(r, 250));
+  const out = { 版面: sheet(), 出す1: outSheet(), 盤1: [cv.width, cv.height] };
+  s('r_out', 200);
+  await new Promise(r => setTimeout(r, 250));
+  out.出す2 = outSheet(); out.盤2 = [cv.width, cv.height];
+  /* ⭐ 大きく出したとき、板（素材の控え）も大きく作り直されるか＝甘くならない */
+  const L = LAYERS.find(x => x.on);
+  const before = layerPlate(L, out.出す1.w, out.出す1.h).width;
+  const after  = layerPlate(L, out.出す2.w, out.出す2.h).width;
+  out.板も大きくなる = after > before * 1.8;
+  out.注意が出る = el('outsize').textContent;
+  s('r_out', 100);
+  return out;
+});
+ok(OUT2.出す2.w === OUT2.出す1.w * 2, '⭐⭐ 出す大きさで【出す絵だけ】が大きくなる',
+   OUT2.出す1.w + ' → ' + OUT2.出す2.w + ' px');
+ok(OUT2.盤1[0] === OUT2.盤2[0] && OUT2.盤1[1] === OUT2.盤2[1],
+   '⭐ 盤（画面）は大きくならない＝組んでいる間は重くならない',
+   OUT2.盤1.join('×') + ' / ' + OUT2.盤2.join('×'));
+ok(OUT2.板も大きくなる,
+   '⭐⭐ 出す大きさで素材の板も作り直す＝拡大しても甘くならない');
+ok(/px/.test(OUT2.注意が出る), '⭐ 出る px を数字で出す', OUT2.注意が出る.split('\n')[0]);
+
+/* ⑨ モバイル *//* ⑨ モバイル */
 await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
 await wait(900);
 const MB = await p.evaluate(() => ({
