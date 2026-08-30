@@ -878,7 +878,47 @@ ok(CV.比が合う, '⭐ 盤の比が素材の比になる（大きく切れる�
 ok(CV.座標が素直, '⭐⭐ 盤の割合＝素材の中の割合（座標が食い違わない）');
 ok(CV.戻ると版面, '⭐ 動かすに戻すと版面へ戻る');
 
-/* ⑨ モバイル *//* ⑨ モバイル */
+/* ⑨ モバイル *//* ⭐⭐ まるごと出す（木下＝「写真そのものも入れて」）
+   🔴 設定だけだと「同じ写真を同じ順で置いてから」が要る＝渡せない・あとから開けない。
+   ⚠️ 写真は長辺を落として入れるので【1画素も同じ】にはならない（それでいい）。
+      見るのは「素材・切り抜き・置き方・つまみが戻るか」。 */
+const BD = await p.evaluate(async () => {
+  await demo();
+  const L = LAYERS[0]; SEL = 0;
+  const m = maskSize(L);
+  pickColor(L, 2, 2);
+  const pts = []; for(let i=0;i<10;i++){ const t=i/10*6.2831853;
+    pts.push({ x:m.w*(0.5+0.3*Math.cos(t)), y:m.h*(0.5+0.4*Math.sin(t)), hx:0, hy:0 }); }
+  el('k_keepin').checked = true; cutPath(L, pts, true);
+  L.x = 0.37; L.y = 0.44; L.s = 0.51; L.d = 0.12; L.adj.bri = 0.3;
+  const s = (id, v) => { const r = document.getElementById(id); r.value = v;
+    r.dispatchEvent(new Event('input', { bubbles:true })); };
+  s('r_haze', 61); s('r_shd', 66);
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 400));
+  const want = { n:LAYERS.length, x:L.x, y:L.y, s:L.s, d:L.d, bri:L.adj.bri,
+                 cut:hasCut(L), keys:(L.keys||[]).length, haze:P.haze, shd:P.shd };
+  const o = JSON.parse(JSON.stringify(snapshot()));
+  o.bundled = true;
+  o.layers.forEach((L2, i) => { L2.img = imgData(LAYERS[i].img, 1200); });
+  const mb = +(JSON.stringify(o).length/1024/1024).toFixed(2);
+  LAYERS = []; SEL = -1; buildList(); COARSE = 0; render();
+  await new Promise(r => setTimeout(r, 300));
+  applyJSON(o);
+  await new Promise(r => setTimeout(r, 2600));
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 300));
+  const L2 = LAYERS[0] || {};
+  return { mb, back: LAYERS.length === want.n,
+    oki: L2.x === want.x && L2.y === want.y && L2.s === want.s && L2.d === want.d,
+    zure: !!L2.adj && Math.abs(L2.adj.bri - want.bri) < 1e-9,
+    kiri: hasCut(L2) === want.cut && (L2.keys||[]).length === want.keys,
+    knob: Math.abs(P.haze - want.haze) < 1e-9 && Math.abs(P.shd - want.shd) < 1e-9,
+    hasImg: !!(L2.img && L2.img.naturalWidth > 0) };
+});
+ok(BD.back && BD.hasImg, '⭐⭐ まるごと＝【写真を置き直さずに】戻る', JSON.stringify(BD));
+ok(BD.oki && BD.zure && BD.kiri && BD.knob,
+   '⭐⭐ 置き方・ズレ・切り抜き・つまみが全部戻る');
+
+/* ⑨ モバイル */
 await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
 await wait(900);
 const MB = await p.evaluate(() => ({

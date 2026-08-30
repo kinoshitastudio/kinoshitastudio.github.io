@@ -609,6 +609,11 @@
       <button class="btn" id="b_exj">設定を出す</button>
       <button class="btn" id="b_inj">設定を読む</button>
     </div>
+    <button class="btn" id="b_exjall">まるごと出す（写真も入れる）</button>
+    <div class="seg" id="s_bundle">
+      <button data-v="1600">写真 1600</button><button data-v="2400" class="on">2400</button>
+      <button data-v="0">原寸</button>
+    </div>
     <input type="file" id="f_json" accept="application/json,.json" hidden>
     <div class="note">🔴🔴 <b>出す大きさ</b>＝組んでいる間は小さく、<b>出すときだけ大きく</b>。
       版面の px はここで決まる（切り抜きの型は<b>元の写真から</b>作り直すので、拡大しても甘くならない）<br>
@@ -617,8 +622,11 @@
       空気は最後の1枚として上に重なる<br>
       ⭐⭐ <b>素材ごとに出す</b>＝空気を着せた状態の<b>地なしPNGを1枚ずつ</b>（zip）＝
       <b>貼HARI へそのまま持っていける</b><br>
-      ⭐ <b>設定＝いまのつまみ一式と素材の置き方</b>。⚠️ 写真そのものは入らない（大きすぎる）<br>
-      ⚠️ 読むときは<b>同じ枚数の素材</b>が入っている必要がある（置き方だけを戻す）</div>
+      ⭐ <b>設定を出す</b>＝つまみ一式＋置き方＋<b>切り抜きの型</b>（軽い）。
+      ⚠️ 読むときは<b>同じ写真を同じ順で置いてから</b><br>
+      ⭐⭐ <b>まるごと出す</b>＝<b>写真そのものも入れる</b>＝1つのファイルで完全に元へ戻る<br>
+      ⚠️ 大きい写真はファイルも大きくなる。<b>長辺を落としてから入れる</b>のが実用的
+      （原寸は残しておいて、出すときだけ上げるのが速い）</div>
   </div>
 </div>
 
@@ -2483,6 +2491,43 @@ function snapshot(){
 }
 function applyJSON(o){
   if(!o || o.tool !== TOOLNAME) throw new Error('靄MOYA の JSON ではありません');
+  /* ⭐ 写真が入っているなら、素材ごと作り直す（同じ写真を置いてもらう必要が無い） */
+  if(o.bundled && (o.layers || []).some(L2 => L2.img)){
+    const ls = o.layers;
+    let left = ls.length;
+    LAYERS = []; SEL = -1;
+    ls.forEach((o2, i) => {
+      const img = new Image();
+      img.onload = () => {
+        LAYERS[i] = { id:UID++, img, name:o2.name || ('素材' + (i+1)),
+          x:o2.x, y:o2.y, s:o2.s, rot:o2.rot, flip:o2.flip, d:o2.d,
+          on:o2.on, op:o2.op == null ? 1 : o2.op, ord:o2.ord == null ? i+1 : o2.ord,
+          keys:(o2.keys || []).map(k => Object.assign({}, k)),
+          mCut:null, mKeep:null, adj:Object.assign(newAdj(), o2.adj || {}),
+          mask:null, mv:1, _dist:null, _mk:'', _c:null, _key:'' };
+        const put = (url, which) => { if(!url) return;
+          const im2 = new Image();
+          im2.onload = () => { const c = document.createElement('canvas');
+            c.width = im2.width; c.height = im2.height;
+            c.getContext('2d').drawImage(im2, 0, 0);
+            LAYERS[i][which] = c; bumpMask(LAYERS[i]); render(); };
+          im2.src = url; };
+        put(o2.mCut, 'mCut'); put(o2.mKeep, 'mKeep');
+        if(--left === 0){
+          SEL = 0;
+          applyRest(o);
+          stat('まるごと読んだ（写真 ' + LAYERS.length + ' 枚）');
+        }
+      };
+      img.onerror = () => { if(--left === 0){ SEL = 0; applyRest(o); } };
+      img.src = o2.img;
+    });
+    return;
+  }
+  applyRest(o);
+}
+/* つまみ・灯・紙・置き方を当てる（写真が入っていてもいなくても同じ道） */
+function applyRest(o){
   Object.entries(o.seg || {}).forEach(([gid, v]) => {
     const b = document.querySelector('#' + gid + ' button[data-v="' + v + '"]'); if(b) b.click(); });
   Object.entries(o.ui || {}).forEach(([id, v]) => {
@@ -2535,6 +2580,52 @@ function applyJSON(o){
   }
   buildList(); syncSel(); render();
 }
+/* ══⭐⭐ まるごと出す（写真も入れる）══
+   🔴 木下＝「**写真そのものも入れて**」。設定だけだと「同じ写真を同じ順で置いてから」が要る。
+   ⭐ 写真を入れれば **1つのファイルで完全に元へ戻る**（人に渡せる・あとから開ける）。
+   ⚠️ 木下＝「5000px などを超える場合はもう少し落としてからやるべき」＝そのとおりなので、
+      入れるときの長辺を選べるようにした（既定 2400）。⭐ 原寸は元のファイルに残っている。 */
+let BUNDLE_L = 2400;
+document.querySelectorAll('#s_bundle button').forEach(bt => bt.onclick = () => {
+  BUNDLE_L = +bt.dataset.v;
+  document.querySelectorAll('#s_bundle button').forEach(x => x.classList.toggle('on', x === bt));
+});
+function imgData(img, long){
+  const iw = img.naturalWidth || 1, ih = img.naturalHeight || 1;
+  const k = (!long || Math.max(iw, ih) <= long) ? 1 : long / Math.max(iw, ih);
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(iw * k)); c.height = Math.max(1, Math.round(ih * k));
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  /* ⚠️ 地なしPNG は透明を持てる形で出す。写真は JPEG の方がずっと軽い */
+  return hasAlpha(img, c) ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.92);
+}
+/* 透明を持っているか（地なしPNG かどうか）を1回だけ見る */
+function hasAlpha(img, c){
+  if(img.__alpha != null) return img.__alpha;
+  const t = document.createElement('canvas'); t.width = 60; t.height = 60;
+  const x = t.getContext('2d', { willReadFrequently:true });
+  x.drawImage(c, 0, 0, 60, 60);
+  const d = x.getImageData(0, 0, 60, 60).data;
+  let a4 = false;
+  for(let i = 3; i < d.length; i += 4) if(d[i] < 250){ a4 = true; break; }
+  img.__alpha = a4;
+  return a4;
+}
+el('b_exjall').onclick = () => {
+  if(!LAYERS.length){ stat('先に素材を置いてください'); return; }
+  stat('写真も入れて書き出しています…');
+  setTimeout(() => {
+    try{
+      const o = snapshot();
+      o.bundled = true;
+      o.layers.forEach((L2, i) => { L2.img = imgData(LAYERS[i].img, BUNDLE_L); });
+      const txt = JSON.stringify(o);
+      dl(new Blob([txt], { type:'application/json' }), TOOLNAME + '_まるごと_' + Date.now() + '.json');
+      stat('まるごと出した（写真 ' + LAYERS.length + ' 枚・'
+        + (txt.length/1024/1024).toFixed(1) + 'MB・長辺 ' + (BUNDLE_L || '原寸') + '）');
+    }catch(e){ stat('出せませんでした：' + (e && e.message ? e.message : e)); }
+  }, 30);
+};
 el('b_exj').onclick = () => {
   dl(new Blob([JSON.stringify(snapshot(), null, 1)], { type:'application/json' }),
      TOOLNAME + '_' + Date.now() + '.json');
