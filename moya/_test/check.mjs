@@ -419,11 +419,17 @@ const PEN = await p.evaluate(async () => {
   dispatchEvent(new KeyboardEvent('keydown', { key:'Backspace', bubbles:true }));
   out.一点戻せた = POLY.length === n0 - 1;
   down(0.80,0.80); await tick(); up(); await tick();
-  /* ⑥ 最初の点をもう一度押すと閉じて切る */
+  /* ⑥ 最初の点をもう一度押すと閉じる
+     ⚠️ 2026-08-31 から【閉じても切らない】＝選択範囲になる（そこから切る／反転／ぼかす）
+        → 木下＝「Photoshop 同様パスとしておいて、これで切り抜きもできる想定」 */
   const n1 = POLY.length;
   down(POLY[0].x / M.w, POLY[0].y / M.h); await tick(); up(); await tick();
   COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
-  out.閉じて切れた = POLY.length === 0 && maskOpaque() < out.前;
+  out.閉じて選択になった = POLY.length === 0 && !!L.sel && L.sel.pts.length >= 3;
+  /* そこから【中を残して切る】が効く */
+  document.getElementById('b_selin').click();
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  out.選択から切れた = maskOpaque() < out.前;
   out.打った数 = n1;
   clearMask(L);
   el('k_nobg').checked = false; el('k_nobg').dispatchEvent(new Event('change',{bubbles:true}));
@@ -437,7 +443,9 @@ ok(PEN.ハンドルが出た && PEN.点は動かない,
 ok(PEN.点を動かせた, '⭐ 打った点はあとから掴んで動かせる');
 ok(PEN.ハンドルを動かせた, '⭐ ハンドルも掴んで動かせる');
 ok(PEN.一点戻せた, '⭐ ⌫ で1点戻せる');
-ok(PEN.閉じて切れた, '⭐⭐ 最初の点をもう一度押すと【閉じて切れる】（ボタンを探さなくていい）');
+ok(PEN.閉じて選択になった,
+   '⭐⭐ 最初の点をもう一度押すと【閉じて選択範囲になる】（ボタンを探さなくていい）');
+ok(PEN.選択から切れた, '⭐⭐ 選択範囲から【中を残して切る】が効く');
 
 /* ⭐ レイヤー（隠す・不透明度・奥行きが同じときの前後） *//* ⭐ レイヤー（隠す・不透明度・奥行きが同じときの前後） */
 const LAY = await p.evaluate(async () => {
@@ -1168,7 +1176,9 @@ const SU = await p.evaluate(() => {
                 'r_sang','r_sdist','r_sblur','r_sop','r_gsize','r_gop','r_stw','r_stop',
                 'r_iang','r_idist','r_iblur','r_iop','r_gang','r_gdop',
                 'r_igsize','r_igop','r_bsize','r_bdepth','r_bang','r_bhiop','r_bloop',
-                'r_tang','r_tdist','r_tblur','r_top','r_gscale'];
+                'r_tang','r_tdist','r_tblur','r_top','r_gscale',
+                'r_selsw','r_selblur','t_hs','t_vs','t_skew','t_sw','t_bgpad','t_bgr','t_bgop',
+                'r_mang','r_wfreq'];
   const bad = [];
   document.querySelectorAll('#panel input[type=range]').forEach(e => {
     if(SKIP.includes(e.id)) return;
@@ -1601,6 +1611,122 @@ ok(FOLD.閉 < FOLD.開 * 0.4, '⭐ 見出しを押すと段がたたまれる', 
 ok(Math.abs(FOLD.再開 - FOLD.開) < 3, '⭐ もう一度押すと開く');
 ok(/airBox/.test(FOLD.覚えた || ''), '⭐ たたんだ状態を覚える');
 
+/* ══㉒ 文字の塗り・線・背景／長体・傾き・縦書き／書体の読み込み ══ 2026-08-31 */
+await p.setViewport({ width:1400, height:900 });
+await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t="move"]');
+  if(bt) bt.click(); document.getElementById('b_demo').click(); });
+await wait(1600);
+await p.evaluate(() => document.getElementById('b_text').click());
+await wait(1800);
+await p.evaluate(() => { const e = document.getElementById('t_str');
+  e.value = 'あいう\nかきく'; e.dispatchEvent(new Event('input', { bubbles:true })); });
+await wait(1500);
+const fullShot2 = () => p.evaluate(() => { COARSE = 0; render(); return window.__full(); });
+const sad2 = (A, B) => p.evaluate(([a2, b2]) => window.__sad(a2, b2), [A, B]);
+const TX = await fullShot2();
+const TDEAD2 = [];
+for(const [id, nm] of [['t_bgon','背景を敷く'], ['t_strokeon','字に線を引く'], ['t_vert','縦書き']]){
+  await p.evaluate(i => { const e = document.getElementById(i);
+    e.checked = true; e.dispatchEvent(new Event('change', { bubbles:true })); }, id);
+  await wait(1300);
+  if(await sad2(TX, await fullShot2()) === 0) TDEAD2.push(nm);
+  await p.evaluate(i => { const e = document.getElementById(i);
+    e.checked = false; e.dispatchEvent(new Event('change', { bubbles:true })); }, id);
+  await wait(1200);
+  if(await sad2(TX, await fullShot2()) !== 0) TDEAD2.push(nm + '（切っても戻らない）');
+}
+ok(TDEAD2.length === 0,
+   '⭐⭐ 字の背景・字の線・縦書きが効いて、切れば1画素も同じに戻る',
+   TDEAD2.length ? TDEAD2.join(' , ') : '3/3');
+const TKNOB = [];
+for(const k of ['t_hs','t_vs','t_skew']){
+  const b0 = await fullShot2();
+  const keep = await p.evaluate(kk => { const e = document.getElementById(kk); const v = e.value;
+    e.value = (kk === 't_skew') ? 30 : 220;
+    e.dispatchEvent(new Event('input', { bubbles:true })); return v; }, k);
+  await wait(1200);
+  if(await sad2(b0, await fullShot2()) === 0) TKNOB.push(k);
+  await p.evaluate((kk, v) => { const e = document.getElementById(kk); e.value = v;
+    e.dispatchEvent(new Event('input', { bubbles:true })); }, k, keep);
+  await wait(1000);
+}
+ok(TKNOB.length === 0, '⭐ 長体・平体・傾きが効く（字の形を作り直さず座標を曲げる）',
+   TKNOB.length ? TKNOB.join(',') : '3/3');
+ok(await p.evaluate(() => !!document.getElementById('b_font') && !!document.getElementById('f_font')),
+   '⭐ 書体を読み込む入口がある（可変フォントは太さの範囲を渡す）');
+/* 塗りだけ無し（線だけ）が作れる＝2つのつまみを束ねていない */
+ok(await p.evaluate(() => {
+  const so = document.getElementById('t_strokeon');
+  so.checked = true; so.dispatchEvent(new Event('change', { bubbles:true }));
+  const fo = document.getElementById('t_fillon');
+  fo.checked = false; fo.dispatchEvent(new Event('change', { bubbles:true }));
+  const t = LAYERS[SEL].text;
+  const ok2 = t.fillOn === false && t.strokeOn === true;
+  fo.checked = true; fo.dispatchEvent(new Event('change', { bubbles:true }));
+  so.checked = false; so.dispatchEvent(new Event('change', { bubbles:true }));
+  return ok2;
+}), '⭐ 塗りだけ無し（線だけ）が作れる');
+await wait(800);
+
+/* ══㉓ パス＝選択範囲としても使える（Photoshop と同じ）══ 2026-08-31
+   🔴 木下＝「パスとしておいて、これで切り抜きもできる想定。線を描くこともできる。
+      囲ったのは【選択】として表現もできて、反転してぼかしをかけたり、
+      その部分をぼかして切ることもできる」 */
+await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t="move"]');
+  if(bt) bt.click(); document.getElementById('b_demo').click(); });
+await wait(1600);
+await p.evaluate(() => {
+  const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+  SEL = LAYERS.indexOf(o[1]); SELIDS = [o[1].id]; syncSel(); buildList();
+  document.querySelector('#tools button[data-t="path"]').click();
+  const m = maskSize(LAYERS[SEL]);
+  POLY = [{x:m.w*0.2,y:m.h*0.2,hx:0,hy:0},{x:m.w*0.8,y:m.h*0.25,hx:0,hy:0},
+          {x:m.w*0.5,y:m.h*0.8,hx:0,hy:0}];
+  closePath();
+});
+await wait(900);
+ok(await p.evaluate(() => !!LAYERS[SEL].sel && !hasCut(LAYERS[SEL])),
+   '⭐⭐ パスを閉じても【切らない】＝選択範囲になる');
+ok(await p.evaluate(() => !document.getElementById('selUI').classList.contains('hide')),
+   '⭐ 選択の道具（切る／反転／中だけぼかす／線を描く）が出る');
+const SEL0 = await fullShot2();
+await p.evaluate(() => { const e = document.getElementById('r_selblur');
+  e.value = 70; e.dispatchEvent(new Event('input', { bubbles:true })); });
+await wait(1100);
+ok(await sad2(SEL0, await fullShot2()) !== 0, '⭐⭐ 選択の中だけぼかせる');
+await p.evaluate(() => { const e = document.getElementById('r_selblur');
+  e.value = 0; e.dispatchEvent(new Event('input', { bubbles:true })); });
+await wait(900);
+ok(await sad2(SEL0, await fullShot2()) === 0, '🔴 0 に戻すと1画素も同じに戻る（焼き込んでいない）');
+await p.evaluate(() => document.getElementById('b_selinv').click());
+await wait(800);
+ok(await p.evaluate(() => LAYERS[SEL].sel.inv === true), '⭐ 選択を反転できる');
+const PN0 = await p.evaluate(() => LAYERS.length);
+await p.evaluate(() => document.getElementById('b_selstroke').click());
+await wait(1000);
+ok(await p.evaluate(() => LAYERS.length) === PN0 + 1,
+   '⭐⭐ パスに線を描くと【新しいレイヤーになる】（焼き込まない）');
+await p.evaluate(() => {
+  const L = LAYERS.find(x => x.sel);
+  if(L){ SEL = LAYERS.indexOf(L); SELIDS = [L.id]; syncSel(); buildList(); syncSelPath();
+    document.getElementById('b_selin').click(); }
+});
+await wait(900);
+ok(await p.evaluate(() => { const L = LAYERS[SEL]; return hasCut(L) && !L.sel; }),
+   '⭐ 選択から切り抜ける');
+
+/* ══㉔ 見本2（木下＝「今の見本も1として2も作成してほしい」）══ */
+await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t="move"]');
+  if(bt) bt.click(); document.getElementById('b_demo2').click(); });
+await wait(4000);
+ok(await p.evaluate(() => LAYERS.some(L => L.kind === 'text') && LAYERS.some(L => L.kind === 'shape')),
+   '⭐⭐ 見本2 に 文字と図形が入る', await p.evaluate(() =>
+     LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b)).map(L => L.name).join('/')));
+ok(await p.evaluate(() => LAYERS.some(L => L.fx && L.fx.grad.on)),
+   '⭐ 見本2 にエフェクト（黄金色）が乗っている');
+await p.evaluate(() => document.getElementById('b_demo').click());
+await wait(1600);
+
 /* ⑨ モバイル */
 await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
 await wait(900);
@@ -1613,6 +1739,15 @@ const MB = await p.evaluate(() => ({
 ok(MB.横に伸びない, '⑨ モバイルで横に伸びない', MB.幅);
 ok(MB.掴み手, '⑨ モバイルでパネルの掴み手が出る');
 ok(MB.盤は指を取る, '⑨ 盤を引いてもページが動かない（touch-action:none）');
+/* 🔴🔴 浮いたカプセルを足したとき、指の端末でツールバーが縦のままで
+   画面をぜんぶ食い、盤の高さが 0 になっていた（2026-08-31） */
+const MBT = await p.evaluate(() => ({
+  ツールバー: Math.round(document.getElementById('tools').getBoundingClientRect().height),
+  並び: getComputedStyle(document.getElementById('toolsIn')).flexDirection,
+  盤: Math.round(document.getElementById('stage').getBoundingClientRect().height),
+}));
+ok(MBT.並び === 'row' && MBT.ツールバー < 110 && MBT.盤 > 200,
+   '⑨ 指の端末ではツールバーが横一列・盤が潰れない', JSON.stringify(MBT));
 
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
