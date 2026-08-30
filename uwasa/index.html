@@ -93,6 +93,52 @@
     font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:10.5px;line-height:1.7;padding:9px 11px;margin:8px 0;
     white-space:pre-line}
   .hide{display:none!important}
+
+  /* ══════════════════════════════════════════════════════════════
+     ⭐⭐ 指の端末（2026-08-31 木下「uwasa と hon がモバイルUIが変だよ」）
+     ⚠️ 曳HIKI / 貼HARI と【同じ作り】を写した（道具ごとに作りを変えない）。
+     ⭐ 盤（上）＋ パネル（下・内側だけ巻く）の2段。⚠️ ページ自体は巻かない
+       ＝盤を触ってもページが揺れない（iOS の跳ね返りも止める）。
+     ⭐ このブロックを消せば完全に元へ戻る（PC には1画素も効かない）。
+     ══════════════════════════════════════════════════════════════ */
+  :root{ --panelH:42vh }
+  @supports (height:1dvh){ :root{ --panelH:42dvh } }
+  @media (max-width:820px){
+    body{ flex-direction:column; overflow:hidden; overscroll-behavior:none }
+    #stage{ flex:1 1 auto; min-height:0 }          /* ⭐ 余りは盤が取る */
+    #panel{ width:100%; flex:none; height:var(--panelH); border-left:0;
+      border-top:.5px solid var(--line);
+      padding:10px 12px calc(26px + env(safe-area-inset-bottom));
+      overscroll-behavior:contain; -webkit-overflow-scrolling:touch }
+    label.h{ top:-10px; margin:0 -12px 6px; padding:6px 12px 5px }
+    /* ⭐ つまみは指で掴める大きさに */
+    input[type=range]{ height:40px }
+    input[type=range]::-webkit-slider-thumb{ width:26px; height:26px; margin-top:-11px }
+    .seg button{ padding:9px 6px }
+    .btn{ padding:13px 0 }
+    /* ⚠️ 盤の上の道具立て・倍率は【指の下に隠れない】所へ */
+    #modes{ top:8px; padding:2px }
+    #modes button{ padding:8px 11px }
+    #zoom{ left:8px; bottom:8px }
+    /* ⚠️ 下の帯と倍率のバーが【同じ所】に出て重なっていた。
+       ⭐ 帯はバーの上へ逃がす（言っていることが読めないと、言っていないのと同じ）。 */
+    #stat{ font-size:10px; padding:6px 10px; bottom:auto; top:56px;
+      text-align:right; padding-right:12px }
+  }
+  /* ⚠️ iOS が画面を寄せるのは【打つ欄の字が 16px 未満のとき】だけ。
+     🔴 class 付きの指定に詳細度で負けるので !important が要る（作字SAKUJI で実測）。 */
+  @media (max-width:760px), (pointer:coarse) and (max-width:1024px){
+    input:not([type=range]):not([type=color]):not([type=checkbox]):not([type=file]),
+    select, textarea{ font-size:16px !important }
+  }
+  /* ══⭐⭐ 指の端末ではガラスをやめる ══
+     🔴 backdrop-filter は【背後をぼかし直す】＝つまみを動かしている間ずっと走る。
+        iOS ではこれが指に追いつかない（描く方は数msしか掛かっていない）。
+     ⚠️ 見た目はガラス→不透明になる。指の端末だけ。 */
+  @media (hover:none) and (pointer:coarse){
+    :root{ --glass:#f6f4ee }
+    *{ -webkit-backdrop-filter:none !important; backdrop-filter:none !important }
+  }
 </style>
 </head>
 <body>
@@ -129,6 +175,11 @@
       <button data-v="min" class="on">明朝</button>
       <button data-v="kaku">角ゴ</button>
       <button data-v="maru">丸ゴ</button>
+      <button data-v="fude">筆</button>
+      <button data-v="kai">楷書</button>
+      <button data-v="futo">極太</button>
+      <button data-v="tegaki">手書き</button>
+      <button data-v="shippori">しっぽり明朝</button>
     </div>
     <button class="btn" id="bFont">書体ファイルを読む（.otf / .ttf）</button>
     <input type="file" id="fFont" accept=".otf,.ttf" hidden>
@@ -301,11 +352,35 @@ const S = {
 let FONT = null;          /* opentype.js の書体（読ませたとき） */
 let photo = null;
 
+/* ══⭐⭐ 元の書体（2026-08-31 木下「元の書体ももってこれない？」）══
+   ⭐ 崩す前の字が持っている抑揚は、**元の書体からしか来ない**。
+     明朝を崩しても筆にはならない ── だから筆書体そのものを持ってくる。
+   ⚠️ 全部を最初から読むと立ち上がりが遅くなる（曳HIKI で木下に言われた所）。
+     ⭐ **押したときに読む**（そのとき初めて取りに行く）＝開くのは今までどおり速い。 */
 const FAM = {
-  min : '"Zen Old Mincho","Hiragino Mincho ProN",serif',
-  kaku: '"Zen Kaku Gothic New","Hiragino Sans",sans-serif',
-  maru: '"Zen Maru Gothic","Hiragino Maru Gothic ProN",sans-serif',
+  min : { css:'"Zen Old Mincho","Hiragino Mincho ProN",serif', g:null },
+  kaku: { css:'"Zen Kaku Gothic New","Hiragino Sans",sans-serif', g:null },
+  maru: { css:'"Zen Maru Gothic","Hiragino Maru Gothic ProN",sans-serif', g:null },
+  fude: { css:'"Yuji Mai","Hiragino Mincho ProN",serif', g:'Yuji+Mai' },
+  kai : { css:'"Yuji Syuku","Hiragino Mincho ProN",serif', g:'Yuji+Syuku' },
+  futo: { css:'"Dela Gothic One","Hiragino Sans",sans-serif', g:'Dela+Gothic+One' },
+  tegaki:{ css:'"Zen Kurenaido","Hiragino Sans",sans-serif', g:'Zen+Kurenaido' },
+  shippori:{ css:'"Shippori Mincho B1","Hiragino Mincho ProN",serif', g:'Shippori+Mincho+B1' },
 };
+const famCss = k => (FAM[k] || FAM.min).css;
+const famLoaded = {};
+/* ⭐ 押したときに取りに行く。⚠️ 届くまで描くと【別の字を拾う】ので、届いてから拾い直す */
+function loadFam(k){
+  const F = FAM[k];
+  if(!F || !F.g || famLoaded[k]) return Promise.resolve();
+  famLoaded[k] = true;
+  const l = document.createElement('link');
+  l.rel = 'stylesheet';
+  l.href = 'https://fonts.googleapis.com/css2?family=' + F.g + '&display=swap';
+  document.head.appendChild(l);
+  return new Promise(res => { l.onload = res; l.onerror = res; setTimeout(res, 4000); })
+    .then(() => document.fonts.ready);
+}
 
 /* ⭐ 種で振れる乱数。🔴 素の線形合同法は【1発目が種にほぼ比例する】ので、
    種を先に潰して数回から回す（この道具で実測して踏んだ）。 */
@@ -369,7 +444,7 @@ function fromDevice(ch){
   const g = c.getContext('2d');
   g.fillStyle = '#fff'; g.fillRect(0,0,N,N);
   g.fillStyle = '#000';
-  g.font = '900 ' + Math.round(N*0.80) + 'px ' + FAM[S.fam];
+  g.font = '900 ' + Math.round(N*0.80) + 'px ' + famCss(S.fam);
   g.textAlign = 'center'; g.textBaseline = 'middle';
   g.fillText(ch, N/2, N*0.52);
   const d = g.getImageData(0,0,N,N).data;
@@ -695,6 +770,33 @@ function maskByGlyph(tg, ch, size, pad){
   tg.drawImage(m, 0, 0);
   tg.restore();
 }
+/* ⭐ その字で【実際に使う芯】。⚠️ 決める所はここ1本
+   （試験が別に計算すると、本体が適応した分だけ食い違って落ちる ── 実際に落とした）。 */
+const coreCache = new Map();
+function coreOf(ch){
+  const C = S.cut;
+  const key = ch + '|' + S.src + S.fam + '|' + C.core + '|' +
+    [C.fat,C.rough,C.grain,C.smooth,C.slant,C.wide,C.tall,C.seed].join(',');
+  if(coreCache.has(key)) return coreCache.get(key);
+  let d = (C.core/100) * EM * 0.075;
+  let rings = [];
+  if(d > 0){
+    const area = rs => { let a = 0;
+      rs.forEach(r2 => { for(let i=0;i<r2.length;i++){ const p=r2[i], q=r2[(i+1)%r2.length];
+        a += p[0]*q[1] - q[0]*p[1]; } });
+      return Math.abs(a/2); };
+    const full = area(glyph(ch)) || 1;
+    rings = coreRings(ch, d);
+    /* ⚠️ 芯が元の 22% を切ったら細すぎ＝押し込みを半分にして作り直す（最大5回）。
+       🔴 これが無いと、線の細い字（漢字）で芯が消えて**輪郭線だけ**になる。 */
+    for(let t2=0; t2<5 && area(rings) < full*0.22; t2++){
+      d *= 0.5; rings = coreRings(ch, d);
+    }
+  }
+  if(coreCache.size > 400) coreCache.clear();
+  coreCache.set(key, rings);
+  return rings;
+}
 function tsubuOver(g, ch, x, y, size){
   const C = S.cut;
   if(!(C.tsubu > 0)) return;
@@ -711,10 +813,14 @@ function tsubuOver(g, ch, x, y, size){
   tg.restore();
   /* ⭐ ① の直後に【字の形で切る】＝地を食わない */
   maskByGlyph(tg, ch, size, pad);
-  /* ② 芯を粒の板から抜く＝粒は【縁の帯】にしか残らない */
-  const dIn = (C.core/100) * EM * 0.075;
-  if(dIn > 0){
-    const rings = coreRings(ch, dIn);
+  /* ══⭐⭐ ② 芯を粒の板から抜く＝粒は【縁の帯】にしか残らない ══
+     🔴🔴 押し込みを【絶対値】で決めていたので、**線の細い字（漢字）では芯が消え**、
+       字ぜんぶが「縁の帯」になって粒に食われた ── 中身が抜けて**輪郭線だけ**になった。
+       ⚠️ 試験は太い O で測っていたので出なかった（**測る字が悪かった**）。
+     ⭐ 芯は「線の太さの何割か」であって絶対値ではない。
+       だから **芯が痩せすぎたら押し込みを減らして作り直す**（残る面積で見る）。 */
+  if(C.core > 0){
+    const rings = coreOf(ch);
     if(rings.length){
       const k = size/EM;
       tg.save();
@@ -1018,7 +1124,7 @@ const OUTID = { fat:'oFat', rough:'oRough', grain:'oGrain', smooth:'oSmooth', sl
   kOpen:'oKOpen', kLead:'oLead', kLine:'oLine', kWrap:'oWrap', outLong:'oOut' };
 function out(id){ const o = $(OUTID[id]); if(o) o.textContent = $(id).value; }
 Object.keys(CUT).forEach(id => $(id).addEventListener('input', e => {
-  S.cut[CUT[id]] = +e.target.value; out(id); cutCache.clear(); draw(); }));
+  S.cut[CUT[id]] = +e.target.value; out(id); cutCache.clear(); coreCache.clear(); draw(); }));
 ['mSize','mX','mY','kOpen'].forEach(id => $(id).addEventListener('input', e => {
   S.lay[{mSize:'size',mX:'x',mY:'y',kOpen:'open'}[id]] = +e.target.value; out(id); draw(); }));
 /* ⭐ 組みの3本＝【大きく】でも【試し組み】でも同じだけ効く。
@@ -1059,11 +1165,19 @@ document.querySelectorAll('#segSrc button').forEach(b => b.onclick = () => {
         触った瞬間に出る所へ移した（.ttc の件は書体を読ませたときに出る）。 */
   if(b.dataset.v === 'file' && !FONT){
     stat('⚠️ まだ書体ファイルを読んでいない（.otf / .ttf を落とす。.ttc は読めない）'); return; }
-  S.src = b.dataset.v; segOn('segSrc', S.src); outCache.clear(); cutCache.clear(); draw();
+  S.src = b.dataset.v; segOn('segSrc', S.src); outCache.clear(); cutCache.clear(); coreCache.clear(); draw();
   stat(S.src === 'file' ? '読ませた書体から輪郭を取る（正確）'
                         : '端末の書体から輪郭を拾う（すぐ触れる・角が少し丸まる）'); });
 document.querySelectorAll('#segFam button').forEach(b => b.onclick = () => {
-  S.fam = b.dataset.v; segOn('segFam', S.fam); outCache.clear(); cutCache.clear(); draw(); });
+  S.fam = b.dataset.v; segOn('segFam', S.fam);
+  outCache.clear(); cutCache.clear(); coreCache.clear(); draw();
+  stat('書体を ' + b.textContent + ' に — 取りに行っています…');
+  loadFam(S.fam).then(() => {
+    /* ⚠️ 書体が届く前に拾った輪郭は【別の字】なので、届いたら必ず拾い直す */
+    outCache.clear(); cutCache.clear(); coreCache.clear(); draw();
+    stat('書体を ' + b.textContent + ' に');
+  });
+});
 /* ══⭐⭐ 型 ── 参考から起こした崩しの組み合わせ ══
    ⭐ 押すと**つまみ自体がその値になる**（裏で別の値を使わない＝そこから動かせる）。
    ⚠️ 「素」は全部 0 ＝ **元の書体のまま**。どの型からでも必ずここへ戻れる
@@ -1094,7 +1208,7 @@ document.querySelectorAll('#segKata button').forEach(b => b.onclick = () => {
   const k = KATA[b.dataset.v]; if(!k) return;
   Object.assign(S.cut, k);
   segOn('segKata', b.dataset.v);
-  outCache.clear(); cutCache.clear(); syncAll(); draw();
+  outCache.clear(); cutCache.clear(); coreCache.clear(); syncAll(); draw();
   stat('型：' + KATA_NAME[b.dataset.v] + '（つまみもこの値になっている。ここから動かせる）');
 });
 /* ⚠️ つまみを触ったら型の印を外す（いま出ている絵と印が食い違わない） */
@@ -1125,7 +1239,7 @@ function takeFont(file){
     try{
       FONT = opentype.parse(buf); FONT._id = file.name + file.size;
       S.src = 'file'; segOn('segSrc','file');
-      outCache.clear(); cutCache.clear(); draw();
+      outCache.clear(); cutCache.clear(); coreCache.clear(); draw();
       stat('書体を読んだ：' + file.name + ' — 輪郭が正確に取れる');
     }catch(err){ stat('🔴 読めなかった：' + err.message + '（⚠️ .ttc は読めない）'); }
   });
@@ -1198,7 +1312,7 @@ function loadJSON(txt){ try{ const o = JSON.parse(txt);
   S.ink = o.ink || S.ink; S.bg = o.bg || S.bg; S.inv = o.inv || 0;
   Object.assign(S.cut, o.cut||{}); Object.assign(S.kumi, o.kumi||{});
   Object.assign(S.lay, o.lay||{}); Object.assign(S.out, o.out||{});
-  outCache.clear(); cutCache.clear(); syncAll(); layout(); fit(); draw(); stat('控えを読んだ');
+  outCache.clear(); cutCache.clear(); coreCache.clear(); syncAll(); layout(); fit(); draw(); stat('控えを読んだ');
 }catch(err){ stat('🔴 控えが読めなかった：'+err.message); } }
 $('eJSON').onclick = saveJSON;
 $('iJSON').onclick = () => $('fJSON').click();
@@ -1246,7 +1360,7 @@ addEventListener('keydown', e => {
 /* ══ 立ち上げ ══ ⚠️ 書体が届いてから輪郭を拾う（届く前だと別の字を拾う） */
 syncAll(); layout(); fit(); draw();
 if(document.fonts && document.fonts.ready){
-  document.fonts.ready.then(() => { outCache.clear(); cutCache.clear(); draw();
+  document.fonts.ready.then(() => { outCache.clear(); cutCache.clear(); coreCache.clear(); draw();
     stat('READY — ②のつまみが【全部の字に同じ規則で】掛かる'); });
 }
 stat('READY — ②のつまみが【全部の字に同じ規則で】掛かる');
