@@ -119,6 +119,10 @@
     <input type="range" id="pW" min="4" max="200" value="58">
     <div class="row"><span class="n">入り抜き</span><output id="oTaper">58</output></div>
     <input type="range" id="taper" min="0" max="100" value="58">
+    <div class="row"><span class="n">流れ（角を丸める）</span><output id="oFlow">62</output></div>
+    <input type="range" id="flow" min="0" max="100" value="62">
+    <div class="row"><span class="n">払い（終筆を伸ばす）</span><output id="oSweep">64</output></div>
+    <input type="range" id="sweep" min="0" max="100" value="64">
     <div class="row"><span class="n">なぞり（2度書き）</span><output id="oTrace">2</output></div>
     <input type="range" id="trace" min="1" max="4" value="2">
     <div class="row"><span class="n">線幅のムラ</span><output id="oVary">58</output></div>
@@ -140,8 +144,8 @@
     <input type="range" id="jit" min="0" max="100" value="38">
     <div class="row"><span class="n">震えの粒</span><output id="oJg">30</output></div>
     <input type="range" id="jg" min="4" max="100" value="30">
-    <div class="row"><span class="n">字ごとの傾き</span><output id="oJr">36</output></div>
-    <input type="range" id="jr" min="0" max="100" value="36">
+    <div class="row"><span class="n">字ごとの傾き</span><output id="oJr">48</output></div>
+    <input type="range" id="jr" min="0" max="100" value="48">
     <div class="row"><span class="n">字ごとの大きさ</span><output id="oJs">46</output></div>
     <input type="range" id="js" min="0" max="100" value="46">
     <div class="row"><span class="n">上下のばらつき</span><output id="oJy">42</output></div>
@@ -155,8 +159,8 @@
     <label class="h">④ 走らせる</label>
     <div class="row"><span class="n">大きさ（‰）</span><output id="oSize">230</output></div>
     <input type="range" id="size" min="40" max="900" value="230">
-    <div class="row"><span class="n">字送り</span><output id="oAdv">76</output></div>
-    <input type="range" id="adv" min="30" max="200" value="76">
+    <div class="row"><span class="n">字送り</span><output id="oAdv">62</output></div>
+    <input type="range" id="adv" min="30" max="200" value="62">
     <div class="row"><span class="n">字幅（横に長く）</span><output id="oWide">66</output></div>
     <input type="range" id="wide" min="30" max="180" value="66">
     <div class="row"><span class="n">字高（縦に長く）</span><output id="oTall">118</output></div>
@@ -221,11 +225,13 @@ const S = {
   /* ⭐ 既定は【参考の実測】に寄せる（映画『ゆきてかへらぬ』の赤い手書き）。
      線幅は字の高さの 3.6%／字は縦長（幅:高さ ≒ 0.64）／1字は版面の幅の 21%。
      ⚠️ 直す前は 線幅 5.8%・正方の箱だったので「全然違う」形になっていた。 */
-  pen:{ w:58, taper:58, vary:58, over:58, trace:2, dry:0, cap:0 },
+  /* ⭐ 参考は【ブロック体を崩したもの】ではなく【続け書き】── 角が丸く、終筆が長く鋭い。
+     だから 流れ（角を丸める）と 払い（終筆を伸ばす）を持つ。 */
+  pen:{ w:58, taper:58, flow:62, sweep:64, vary:58, over:58, trace:2, dry:0, cap:0 },
   /* ⭐ 参考は【字ごとの不揃いが強い】── 傾き・大きさ・上下がかなりばらつく。
      直す前の既定は整いすぎていて「機械が並べた」ように見えていた。 */
-  hand:{ warp:44, jit:38, jg:30, jr:36, js:46, jy:42, seed:7 },
-  run:{ size:230, adv:76, ang:10, x:8, y:14, wide:66, tall:118, w:1000, h:1500, col:'#e8452a' },
+  hand:{ warp:44, jit:38, jg:30, jr:48, js:46, jy:42, seed:7 },
+  run:{ size:230, adv:62, ang:10, x:8, y:14, wide:66, tall:118, w:1000, h:1500, col:'#e8452a' },
   view:'run',
   out:{ long:2400 },
 };
@@ -298,6 +304,26 @@ const boneOf = ch => BONE[ch.toUpperCase()] || null;
    ⭐ はみ出し＝端を少し伸ばす（交点を越えて走る）。
    ⚠️ 震えは【道のりに沿ったなめらかな乱れ】＝画素ごとの乱数だと「ざらざら」になる。
    ══════════════════════════════════════════════════════════════ */
+/* ══⭐⭐ 流れ ── 骨の角を丸めて【続け書き】にする ══
+   🔴 骨は直線のポリライン＝そのまま筆を着せると「ブロック体を崩した字」になる。
+     参考（ゆきてかへらぬの赤い字）は**続け書き**で、角がぜんぶ丸い。
+   ⭐ Chaikin の切り落とし＝各辺の 1/4 と 3/4 に点を打ち直す。回すほど丸くなる。
+   ⚠️ 端の点は動かさない（払いの先が縮むと、抜きが効かなくなる）。 */
+function chaikin(pts, k, times){
+  if(k <= 0 || pts.length < 3) return pts;
+  let P = pts;
+  for(let t=0;t<times;t++){
+    const out = [P[0]];
+    for(let i=0;i<P.length-1;i++){
+      const a = P[i], b = P[i+1];
+      out.push([ a[0] + (b[0]-a[0])*(0.25*k), a[1] + (b[1]-a[1])*(0.25*k) ]);
+      out.push([ a[0] + (b[0]-a[0])*(1-0.25*k), a[1] + (b[1]-a[1])*(1-0.25*k) ]);
+    }
+    out.push(P[P.length-1]);
+    P = out;
+  }
+  return P;
+}
 function resample(pts, step){
   const out = [pts[0]];
   let carry = 0;
@@ -321,11 +347,16 @@ function resample(pts, step){
 function strokeOutline(pts, w, seed){
   const P = S.pen, H = S.hand;
   /* はみ出し＝端を伸ばす */
-  const ov = (P.over/100) * w * 0.9;
-  if(ov > 0 && pts.length >= 2){
-    const ext = (a,b) => { const d = Math.hypot(b[0]-a[0], b[1]-a[1]) || 1;
-      return [ a[0] + (a[0]-b[0])/d*ov, a[1] + (a[1]-b[1])/d*ov ]; };
-    pts = [ext(pts[0], pts[1]), ...pts, ext(pts[pts.length-1], pts[pts.length-2])];
+  /* ⭐ 流れ＝角を丸める（続け書きにする）。⚠️ 筆を着せる前に掛ける */
+  pts = chaikin(pts, P.flow/100, 2);
+  /* ⭐ はみ出し＝入り側／⭐⭐ 払い＝【終筆だけ】長く伸ばす。
+     ⚠️ 参考は入りより抜きが圧倒的に長い（速く払った跡）。両端おなじだと「ただの延長」に見える。 */
+  const ovIn = (P.over/100) * w * 0.9;
+  const ovOut = ovIn + (P.sweep/100) * w * 4.2;
+  if(pts.length >= 2){
+    const ext = (a,b,d0) => { const d = Math.hypot(b[0]-a[0], b[1]-a[1]) || 1;
+      return [ a[0] + (a[0]-b[0])/d*d0, a[1] + (a[1]-b[1])/d*d0 ]; };
+    pts = [ext(pts[0], pts[1], ovIn), ...pts, ext(pts[pts.length-1], pts[pts.length-2], ovOut)];
   }
   const step = Math.max(2, w*0.22);
   const R = resample(pts, step);
@@ -366,9 +397,11 @@ function strokeOutline(pts, w, seed){
     const len = Math.hypot(nx,ny) || 1; nx/=len; ny/=len;
     const t = i/(n-1);
     /* 入り抜き＝両端で細る（真ん中は太いまま） */
+    /* ⭐ 入りは短く鈍く・抜きは長く鋭く（速く払った跡）。⚠️ 左右対称だと「両端が細い棒」に見える */
     const k = P.taper/100;
-    const e = Math.min(t, 1-t)*2;                      /* 端で0・真ん中で1 */
-    const wid = w * vary[i] * (1 - k*(1 - Math.pow(Math.min(1,e*1.6), 0.7))) * 0.5;
+    const eIn = Math.min(1, t*7), eOut = Math.min(1, (1-t)*2.2);
+    const e = Math.min(eIn, eOut);
+    const wid = w * vary[i] * (1 - k*(1 - Math.pow(e, 0.85))) * 0.5;
     const cxp = R[i][0] + nx*wob(i)*amp, cyp = R[i][1] + ny*wob(i)*amp;
     L.push([cxp + nx*wid, cyp + ny*wid]);
     Rt.push([cxp - nx*wid, cyp - ny*wid]);
@@ -379,7 +412,7 @@ function strokeOutline(pts, w, seed){
 const cache = new Map();
 function glyph(ch, i){
   const H = S.hand, P = S.pen;
-  const key = ch + '|' + i + '|' + [P.w,P.taper,P.vary,P.over,P.trace,P.cap,H.warp,H.jit,H.jg,H.seed].join(',');
+  const key = ch + '|' + i + '|' + [P.w,P.taper,P.flow,P.sweep,P.vary,P.over,P.trace,P.cap,H.warp,H.jit,H.jg,H.seed].join(',');
   if(cache.has(key)) return cache.get(key);
   const bone = boneOf(ch);
   if(!bone){ cache.set(key, []); return []; }
@@ -582,12 +615,12 @@ function meter(){
 function stat(s){ $('stat').textContent = s; }
 
 /* ══ つまみ ══ ⭐ 配線は1か所 */
-const OUTID = { pW:'oW', taper:'oTaper', vary:'oVary', trace:'oTrace', over:'oOver', dry:'oDry',
+const OUTID = { pW:'oW', taper:'oTaper', flow:'oFlow', sweep:'oSweep', vary:'oVary', trace:'oTrace', over:'oOver', dry:'oDry',
   wide:'oWide', tall:'oTall',
   warp:'oWarp', jit:'oJit', jg:'oJg', jr:'oJr', js:'oJs', jy:'oJy', seed:'oSeed',
   size:'oSize', adv:'oAdv', ang:'oAng', x:'oX', y:'oY', outLong:'oOut' };
 function out(id){ const o=$(OUTID[id]); if(o) o.textContent = $(id).value; }
-const PEN = { pW:'w', taper:'taper', vary:'vary', trace:'trace', over:'over', dry:'dry' };
+const PEN = { pW:'w', taper:'taper', flow:'flow', sweep:'sweep', vary:'vary', trace:'trace', over:'over', dry:'dry' };
 Object.entries(PEN).forEach(([id,key]) => $(id).addEventListener('input', e => {
   S.pen[key] = +e.target.value; out(id); cache.clear(); draw(); }));
 const HAND = { warp:'warp', jit:'jit', jg:'jg', jr:'jr', js:'js', jy:'jy', seed:'seed' };
