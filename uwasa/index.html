@@ -164,6 +164,10 @@
     <input type="range" id="hair" min="0" max="100" value="0">
     <div class="row"><span class="n">飛沫</span><output id="oSpat">0</output></div>
     <input type="range" id="spat" min="0" max="100" value="0">
+    <div class="row"><span class="n">飛び散りのムラ</span><output id="oClump">62</output></div>
+    <input type="range" id="clump" min="0" max="100" value="62">
+    <div class="row"><span class="n">形のいびつさ</span><output id="oWonk">58</output></div>
+    <input type="range" id="wonk" min="0" max="100" value="58">
     <div class="row"><span class="n">角をまるめる</span><output id="oSmooth">18</output></div>
     <input type="range" id="smooth" min="0" max="100" value="18">
     <div class="row"><span class="n">傾き（せん断）</span><output id="oSlant">0</output></div>
@@ -279,7 +283,7 @@ const S = {
   /* ⭐ 欠け・毛羽・飛沫は 2026-08-31 追加（参考＝映画『FOG DOG』題字・吉良進太郎）。
      ⚠️ 既定は 0 ＝これまでの作品が1画素も変わらない。足したものは選ばせる。 */
   cut:{ fat:0, rough:34, grain:30, smooth:18, slant:0, wide:100, tall:100,
-        chip:0, hair:0, spat:0, brk:0, bn:5, bias:0, dry:0, seed:1 },
+        chip:0, hair:0, spat:0, clump:62, wonk:58, brk:0, bn:5, bias:0, dry:0, seed:1 },
   view:'one',
   sheet:'あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん爆弾誰お前',
   grid:1, ink:'#141414', bg:'#ffffff', inv:0,
@@ -478,7 +482,7 @@ function shape(p){
 const cutCache = new Map();
 function glyph(ch){
   const C = S.cut;
-  const key = ch + '|' + S.src + S.fam + '|' + [C.fat,C.rough,C.grain,C.smooth,C.slant,C.wide,C.tall,C.chip,C.hair,C.spat,C.seed].join(',') + '|' + (FONT?FONT._id:'');
+  const key = ch + '|' + S.src + S.fam + '|' + [C.fat,C.rough,C.grain,C.smooth,C.slant,C.wide,C.tall,C.chip,C.hair,C.spat,C.clump,C.wonk,C.seed].join(',') + '|' + (FONT?FONT._id:'');
   if(cutCache.has(key)) return cutCache.get(key);
   /* ⚠️ 種は【字ごとに変える】＝同じ字は同じ崩れ／違う字は違う崩れ。
      でも掛かる規則（強さ・粒・角）は全字おなじ＝だから書体になる。 */
@@ -490,6 +494,18 @@ function glyph(ch){
      ⭐ 毛羽＝縁から細い筋が1本飛び出す／飛沫＝縁の少し外に小さな塊が散る。 */
   if(C.hair > 0 || C.spat > 0){
     const r = rnd(C.seed*7717 + ch.charCodeAt(0)*13);
+    /* ══⭐⭐ 飛び散りのムラ（2026-08-31 木下「量をランダムにできるとよい」）══
+       🔴 一様な確率で撒くと、縁ぜんぶに **等間隔で並ぶ** ＝ 機械が置いたように見える。
+       ⭐ 飛び散りは均一に散らない ── **飛んだ所は集中し、他は何もない**。
+         だから道のりに沿ったなめらかな乱れで【出やすさ】そのものを場所ごとに変える。 */
+    const cl = C.clump/100, wonk = C.wonk/100;
+    const clumpAt = (() => {
+      const rc = rnd(C.seed*991 + ch.charCodeAt(0)*7), cell = 9, m = 40, nz = [];
+      for(let i=0;i<m;i++) nz.push(rc());
+      return i => { const f=i/cell, k=f|0, t=f-k, sm=t*t*(3-2*t);
+        const v = nz[k%m]*(1-sm) + nz[(k+1)%m]*sm;
+        return 1 - cl + cl * v * 2.2; };        /* 0〜2.2倍 の出やすさ */
+    })();
     base.forEach((ring, ri) => {
       const n2 = ring.length;
       const step = Math.max(3, Math.round(n2 / (6 + (C.hair+C.spat)/100*26)));
@@ -499,24 +515,41 @@ function glyph(ch){
         const L = Math.hypot(nx,ny)||1; nx/=L; ny/=L;
         const sg2 = (isInk && isInk(p[0]+nx*EM*0.016, p[1]+ny*EM*0.016)) ? -1 : 1;
         nx*=sg2; ny*=sg2;
-        if(C.hair > 0 && r() < C.hair/140){
-          /* 毛羽＝細い三角（根元が太く、先が尖る） */
-          const len = (0.3+r()*0.7) * (C.hair/100) * EM*0.09;
-          const wdt = EM*0.006 + r()*EM*0.006;
+        const heat = clumpAt(i);
+        if(C.hair > 0 && r() < (C.hair/140)*heat){
+          /* ⭐ 毛羽＝**折れた細長い形**（きれいな二等辺三角形は機械に見える）。
+             ⚠️ 根元の幅を左右で変え、途中で1回曲げ、先を尖らせる。 */
+          const len = (0.25+r()*0.85) * (C.hair/100) * EM*0.10 * (0.5 + heat*0.6);
+          const w1 = EM*0.004 + r()*EM*0.008*(1+wonk);
+          const w2 = EM*0.003 + r()*EM*0.008*(1+wonk);
           const tx = -ny, ty = nx;
-          g.push([[p[0]+tx*wdt, p[1]+ty*wdt],
-                  [p[0]+nx*len + (r()-0.5)*EM*0.012, p[1]+ny*len + (r()-0.5)*EM*0.012],
-                  [p[0]-tx*wdt, p[1]-ty*wdt]].map(shape));
+          const bendT = 0.35 + r()*0.4;
+          const bx = (r()-0.5)*len*wonk*0.9, by = (r()-0.5)*len*wonk*0.9;
+          const tip = [p[0]+nx*len + bx*1.4, p[1]+ny*len + by*1.4];
+          const mid = [p[0]+nx*len*bendT + tx*(r()-0.5)*w1*4*wonk + bx*0.5,
+                       p[1]+ny*len*bendT + ty*(r()-0.5)*w1*4*wonk + by*0.5];
+          g.push([[p[0]+tx*w1, p[1]+ty*w1],
+                  [mid[0]+tx*w2*0.5, mid[1]+ty*w2*0.5],
+                  tip,
+                  [mid[0]-tx*w2*0.7, mid[1]-ty*w2*0.7],
+                  [p[0]-tx*w2, p[1]-ty*w2]].map(shape));
         }
-        if(C.spat > 0 && r() < C.spat/220){
-          /* 飛沫＝縁の少し外に散る小さな塊 */
-          const d = (0.4+r()*1.6) * (C.spat/100) * EM*0.10;
-          const cxp = p[0] + nx*d + (r()-0.5)*EM*0.05, cyp = p[1] + ny*d + (r()-0.5)*EM*0.05;
-          const rad = EM*0.004 + r()*(C.spat/100)*EM*0.012;
-          const k2 = 5 + ((r()*3)|0);
+        if(C.spat > 0 && r() < (C.spat/220)*heat){
+          /* ⭐ 飛沫＝**歪んだ塊**（丸い多角形だと粒に見える）。
+             ⚠️ 飛んだ向きに伸ばす＋点ごとに半径を大きく振る。⭐ 大きさも大きく振る。 */
+          const d = (0.3+r()*1.9) * (C.spat/100) * EM*0.11 * (0.4 + heat*0.8);
+          const cxp = p[0] + nx*d + (r()-0.5)*EM*0.06, cyp = p[1] + ny*d + (r()-0.5)*EM*0.06;
+          const rad = (EM*0.003 + r()*(C.spat/100)*EM*0.016) * (0.4 + r()*r()*2.2);
+          const k2 = 4 + ((r()*5)|0);
+          const stretch = 1 + wonk*(0.6 + r()*1.8);      /* 飛んだ向きへ伸びる */
+          const ang = Math.atan2(ny, nx), ca2 = Math.cos(ang), sa2 = Math.sin(ang);
           const poly = [];
-          for(let q=0;q<k2;q++){ const th2 = q/k2*Math.PI*2, rr2 = rad*(0.6+r()*0.8);
-            poly.push([cxp + Math.cos(th2)*rr2, cyp + Math.sin(th2)*rr2]); }
+          for(let q=0;q<k2;q++){
+            const th2 = q/k2*Math.PI*2 + (r()-0.5)*wonk*0.9;
+            const rr2 = rad*(0.25 + r()*(1 + wonk*1.4));
+            const ux = Math.cos(th2)*rr2*stretch, uy = Math.sin(th2)*rr2;
+            poly.push([cxp + ux*ca2 - uy*sa2, cyp + ux*sa2 + uy*ca2]);
+          }
           g.push(poly.map(shape));
         }
       }
@@ -821,10 +854,10 @@ function meter(){
 function stat(s){ $('stat').textContent = s; }
 
 /* ══ つまみ ══ ⭐ 配線は1か所（効かないつまみを作らない） */
-const CUT = { fat:'fat', rough:'rough', grain:'grain', smooth:'smooth', slant:'slant', wide:'wide', tall:'tall', chip:'chip', hair:'hair', spat:'spat', brk:'brk', bn:'bn', bias:'bias', dry:'dry', seed:'seed' };
+const CUT = { fat:'fat', rough:'rough', grain:'grain', smooth:'smooth', slant:'slant', wide:'wide', tall:'tall', chip:'chip', hair:'hair', spat:'spat', clump:'clump', wonk:'wonk', brk:'brk', bn:'bn', bias:'bias', dry:'dry', seed:'seed' };
 const OUTID = { fat:'oFat', rough:'oRough', grain:'oGrain', smooth:'oSmooth', slant:'oSlant',
   wide:'oWide', tall:'oTall', chip:'oChip', hair:'oHair', spat:'oSpat',
-  brk:'oBreak', bn:'oBn', bias:'oBias', dry:'oDry', seed:'oSeed', mSize:'oMSize', mX:'oMX', mY:'oMY',
+  clump:'oClump', wonk:'oWonk', brk:'oBreak', bn:'oBn', bias:'oBias', dry:'oDry', seed:'oSeed', mSize:'oMSize', mX:'oMX', mY:'oMY',
   kOpen:'oKOpen', kLead:'oLead', kLine:'oLine', kWrap:'oWrap', outLong:'oOut' };
 function out(id){ const o = $(OUTID[id]); if(o) o.textContent = $(id).value; }
 Object.keys(CUT).forEach(id => $(id).addEventListener('input', e => {
@@ -879,16 +912,16 @@ document.querySelectorAll('#segFam button').forEach(b => b.onclick = () => {
    ⚠️ 「素」は全部 0 ＝ **元の書体のまま**。どの型からでも必ずここへ戻れる
      （戻る所が無い型ぞろえは、触るのが怖くなる）。 */
 const KATA = {
-  su  : { fat:0,  rough:0,  grain:30, smooth:0,  chip:0,  hair:0,  spat:0,  brk:0,  bn:5, bias:0, dry:0,  wide:100, tall:100 },
+  su  : { fat:0,  rough:0,  grain:30, smooth:0,  chip:0,  hair:0,  spat:0,  clump:62, wonk:58, brk:0,  bn:5, bias:0, dry:0,  wide:100, tall:100 },
   /* 筆＝映画『爆弾』の見出し。輪郭が波打つ（筆の毛が紙を通った跡） */
-  fude: { fat:8,  rough:46, grain:28, smooth:16, chip:0,  hair:0,  spat:0,  brk:0,  bn:5, bias:0, dry:16, wide:100, tall:100 },
+  fude: { fat:8,  rough:46, grain:28, smooth:16, chip:0,  hair:0,  spat:0,  clump:62, wonk:58, brk:0,  bn:5, bias:0, dry:16, wide:100, tall:100 },
   /* 擦れ＝映画『FOG DOG』の題字。筆先が割れて縁が欠け、毛羽と飛沫が出る */
   /* 🔴 一度 割れ70・数6 にしたら**字が読めなくなった**（半分以上持っていかれる）。
      ⭐ 参考は「大きく欠けるが、字は読める」── 塊は**大きく・少なく**。 */
   sure: { fat:22, rough:18, grain:22, smooth:12, chip:28, hair:24, spat:20,
-          brk:38, bn:3, bias:72, dry:12, wide:100, tall:100 },
+          clump:68, wonk:64, brk:38, bn:3, bias:72, dry:12, wide:100, tall:100 },
   /* 細身＝映画『ゆきてかへらぬ』の縦組み。細く・縦長・崩しはほとんど無い */
-  hoso: { fat:-16,rough:6,  grain:30, smooth:6,  chip:0,  hair:0,  spat:0,  brk:0,  bn:5, bias:0, dry:0,  wide:92,  tall:106 },
+  hoso: { fat:-16,rough:6,  grain:30, smooth:6,  chip:0,  hair:0,  spat:0,  clump:62, wonk:58, brk:0,  bn:5, bias:0, dry:0,  wide:92,  tall:106 },
 };
 const KATA_NAME = { su:'素 — 元の書体のまま', fude:'筆 — 輪郭が波打つ',
   sure:'擦れ — 筆先が割れて縁が欠ける', hoso:'細身 — 細く縦長' };

@@ -98,6 +98,24 @@ const R = await p.evaluate(async () => {
     const body = paint(g, S.lay.w, S.lay.h, { svg:true });
     out['⑧pathの数'] = body.filter(s => s.startsWith('<path')).length; }
 
+  /* ⑲ ⭐ 毛羽・飛沫の形（2026-08-31 木下「小さな三角をもっと歪に／量もランダムに」）
+     ⚠️ 「縦横比のばらつき」で測ろうとしたが 0.71→0.60 と**逆に出た**（形が伸びると
+        比は揃う方向にも動く）＝測り方が悪い。⭐ 確かめられる所で測る：
+        ・毛羽は【折れた形】＝5点（前は二等辺三角の3点だった）
+        ・飛沫の点数が【複数種類】に散る（前は5〜7で固定に近かった）
+        ・ムラを上げると【出る数】そのものが変わる（一様に撒いていない） */
+  { S.cut.hair=54; S.cut.spat=48; S.cut.wonk=58; S.cut.clump=0;
+    outCache.clear(); cutCache.clear();
+    const small = () => glyph('O').slice(1).map(r2 => r2.length);
+    const a = small();
+    out['⑲毛羽は折れた形（5点）'] = a.filter(v => v === 5).length > 0;
+    out['⑲飛沫の点数の種類'] = [...new Set(a.filter(v => v !== 5))].sort((x,y)=>x-y);
+    const n0 = a.length;
+    S.cut.clump = 100; cutCache.clear();
+    out['⑲ムラで出る数が変わる'] = (small().length !== n0);
+    out['⑲数'] = n0 + ' → ' + small().length;
+    S.cut.hair=0; S.cut.spat=0; S.cut.clump=62; cutCache.clear(); }
+
   /* ⑱ ⭐⭐ 片寄り＝欠けが【一方向に寄る】（全周に均等だと「摩耗」に見える）
      測り方＝抜けた所の重心が、字の真ん中からどれだけ離れるか。 */
   { const off = () => { const c=document.createElement('canvas'); c.width=c.height=320;
@@ -222,6 +240,9 @@ ok('⑧pathの数', R['⑧pathの数'] >= 5);
    判定は効いていても「動いていないテスト」に見える。⭐ 出す値をそのキーに入れる。 */
 R['⑯かすれで汚れない'] = { 素:R['⑯かすれ0の中間色%'], かすれ80:R['⑯かすれ80の中間色%'] };
 R['⑱片寄りで一方に寄る'] = R['⑱片寄り0の集中度'] + ' → ' + R['⑱片寄り100の集中度'];
+ok('⑲毛羽は折れた形（5点）', R['⑲毛羽は折れた形（5点）'] === true);
+ok('⑲飛沫の点数の種類', R['⑲飛沫の点数の種類'].length >= 3);
+ok('⑲ムラで出る数が変わる', R['⑲ムラで出る数が変わる'] === true);
 ok('⑱片寄りで一方に寄る', R['⑱片寄り100の集中度'] > R['⑱片寄り0の集中度'] + 0.15);
 ok('⑯かすれで汚れない', R['⑯かすれ80の中間色%'] <= R['⑯かすれ0の中間色%'] + 0.2);
 ok('⑯かすれ80で残る墨', R['⑯かすれ80で残る墨'] < 0.85);
@@ -250,5 +271,5 @@ console.log('  ── 検算：崩しを全部切ったら字が変わった＝ 
   + '（ここが false なら つまみが効いていない＝②③が落ちる）');
 
 if(NG.length || err){ console.log('  🔴 落ち：' + NG.join('／')); await b.close(); process.exit(1); }
-console.log('  ── 通過（29項目）');
+console.log('  ── 通過（32項目）');
 await b.close();
