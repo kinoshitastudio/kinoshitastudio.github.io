@@ -590,42 +590,50 @@ function breakOver(g, ch, x, y, size){
 }
 /* ⭐ かすれ＝紙の目で抜く（原因から作る）。⚠️ 画素なので SVG には出ない */
 let grainC = null, grainFor = -1;
+/* ══⭐⭐ かすれの目（2026-08-31 作り直し）══
+   🔴 直す前は【横に引きずった筋】だった。しかも段ごとに一様だったので、
+     字の中に **規則的な白い横縞** が出て「縞模様」に見えた（木下「うーん」）。
+   ⭐ 参考（FOG DOG）のかすれは筋ではない ── **筆が紙の凹凸に乗らず、
+     大小の塊が不定形にまだらに抜けている**。
+   ⭐ だから 2次元の雲（粗い乱れ＋細かい乱れを重ねる）を しきい値で切る。
+   ⚠️ タイルは大きく取る（小さいと繰り返しが縞として見える）。
+   ⚠️ しきい値は dry で動かす＝強さは【抜ける面積】で効かせる（濃さで薄めない）。 */
 function dryOver(g, x, y, w, h, size){
   if(!(S.cut.dry > 0)) return;
-  /* 🔴🔴 直す前は【濃さ（globalAlpha）】で効かせていた。
-     ＝ 抜き方が中途半端になり、白い地の上では **グレーの汚れ** に見えた
-       （木下の絵で、字の中に黒い横縞が残っていたのがこれ）。
-     ⭐ かすれは「墨が乗ったか・乗らなかったか」の2つしかない。
-       ⭐ **抜くときは完全に抜く**（濃さは 1）。強さは【目の密度】で効かせる。
-     ⚠️ だから目そのものを dry ごとに作り直す（作り置き1枚では密度が変えられない）。 */
   if(!grainC || grainFor !== S.cut.dry){
     grainFor = S.cut.dry;
-    /* 🔴 直す前は【点のノイズ】だった＝かすれではなく「ざらざらの汚れ」に見えた。
-       ⭐ 筆のかすれは【筆が進んだ向きに走る筋】。だから横に長く伸ばした粒にする
-         （縦に細く・横に長い＝1本1本が筋になる）。 */
-    const W = 256, H = 128;
-    grainC = document.createElement('canvas'); grainC.width = W; grainC.height = H;
-    const gg = grainC.getContext('2d'), im = gg.createImageData(W,H), d = im.data;
-    const r = rnd(7);
-    const rows = [];
-    for(let y=0;y<H;y++) rows.push(r());          /* 段ごとに「かすれやすさ」を持つ */
-    for(let y=0;y<H;y++){
-      let v = 0;
-      for(let x=0;x<W;x++){
-        /* 横へ引きずる＝前の値を引き継ぐ（筋になる） */
-        v = v*0.86 + (r()-0.5)*0.9;
-        /* ⭐ しきい値を dry で動かす＝強いほど抜ける筋が増える（濃さでは薄めない） */
-        const th = 0.95 - (S.cut.dry/100) * 1.05;
-        const a = (v + (rows[y]-0.5)*1.4) > th ? 255 : 0;
-        const i = (y*W+x)*4;
-        d[i]=d[i+1]=d[i+2]=255; d[i+3] = a;
-      }
+    const N = 512;
+    grainC = document.createElement('canvas'); grainC.width = grainC.height = N;
+    const gg = grainC.getContext('2d'), im = gg.createImageData(N,N), d = im.data;
+    /* 雲＝格子の乱れをなめらかに繋いだもの。粗い→細かい を重ねる */
+    const layer = (cell, seed) => {
+      const r = rnd(seed), m = Math.ceil(N/cell)+2, nz = new Float32Array(m*m);
+      for(let i=0;i<nz.length;i++) nz[i] = r();
+      return (x2,y2) => {
+        const fx = x2/cell, fy = y2/cell;
+        const ix = fx|0, iy = fy|0, tx = fx-ix, ty = fy-iy;
+        const sx = tx*tx*(3-2*tx), sy = ty*ty*(3-2*ty);
+        const a = nz[(iy%m)*m + (ix%m)], b = nz[(iy%m)*m + ((ix+1)%m)];
+        const c = nz[((iy+1)%m)*m + (ix%m)], e = nz[((iy+1)%m)*m + ((ix+1)%m)];
+        return (a*(1-sx)+b*sx)*(1-sy) + (c*(1-sx)+e*sx)*sy;
+      };
+    };
+    const L1 = layer(96, 13), L2 = layer(34, 71), L3 = layer(12, 149);
+    /* しきい値＝強いほど よく抜ける */
+    /* 🔴 一度 0.78→0.16 まで振ったら、かすれ80で **字が丸ごと消えた**（残る墨 0）。
+       ⭐ 振り切っても半分は残る幅にする（かすれは「消す」ではなく「まだらに欠ける」）。 */
+    const th = 0.70 - (S.cut.dry/100) * 0.26;
+    for(let y2=0;y2<N;y2++) for(let x2=0;x2<N;x2++){
+      const v = L1(x2,y2)*0.55 + L2(x2,y2)*0.30 + L3(x2,y2)*0.15;
+      const i = (y2*N+x2)*4;
+      d[i]=d[i+1]=d[i+2]=255;
+      d[i+3] = v > th ? 255 : 0;      /* ⭐ 抜けるか抜けないかの2つだけ */
     }
     gg.putImageData(im,0,0);
   }
   const pat = g.createPattern(grainC, 'repeat');
-  /* ⚠️ 筋の太さは【字の大きさ】に付ける＝大きく焼いても かすれ方が変わらない */
-  const cell = Math.max(3, size*0.10);
+  /* ⚠️ 塊の大きさは【字の大きさ】に付ける＝大きく焼いても かすれ方が変わらない */
+  const cell = Math.max(3, size*0.055);
   g.save();
   g.globalCompositeOperation = 'destination-out';
   g.globalAlpha = 1;                 /* ⭐ 抜くときは完全に抜く（グレーを作らない） */
