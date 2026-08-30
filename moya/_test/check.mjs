@@ -151,6 +151,56 @@ ok(ADJ.ズレは残っている,
 ok(ADJ.ズレを消したら戻る === 0, '⭐ ズレを消すと空気どおりに戻る', ADJ.ズレを消したら戻る + ' 点');
 ok(ADJ.印 === '空気どおり', '⭐ いまズレているかを画面に出す', ADJ.印);
 
+/* ⭐⭐ 盤の座標（2026-08-30 木下＝「つまみ動かそうとすると、なぜか左上に距離がある」）
+   🔴 見るのは【画面 → 版面 → 画面 で元の所に戻るか】。
+      しかも **寄り（倍率）と、触っている間の粗さ（COARSE）を変えてもずれないこと**。
+      前の式は盤を縮めて描く倍率 k を二重に掛けていたので、
+      k のぶん（既定 0.83倍）左上へずれ、粗さを変えるとずれ方まで変わっていた。 */
+const XY = await p.evaluate(async () => {
+  await demo();
+  const out = { ずれ:[], 掴めた:[] };
+  const pts = [[0.5,0.5],[0.2,0.8],[0.85,0.15]];
+  for(const z of [0.2, 0.6, 1.4]){
+    for(const coarse of [0, 1]){
+      V.z = z; COARSE = coarse; render();
+      await new Promise(r => setTimeout(r, 60));
+      for(const [u, v] of pts){
+        const sc = toScreen(u, v);
+        const q = toBoard(sc);
+        out.ずれ.push(+Math.max(Math.abs(q.x - u), Math.abs(q.y - v)).toFixed(6));
+      }
+    }
+  }
+  /* 素材の【まん中】を押したら、その素材が掴めるか（見えている所と当たる所が一致するか） */
+  COARSE = 0; V.z = 0.6; render();
+  await new Promise(r => setTimeout(r, 80));
+  for(const L of LAYERS){
+    const sc = toScreen(L.x, L.y);
+    out.掴めた.push(hitLayer(toBoard(sc)) >= 0);
+  }
+  /* 灯のまん中を押したら灯が掴めるか */
+  const lc = toScreen(P.lx, P.ly);
+  out.灯を掴めた = hitLight(toBoard(lc));
+  /* ⭐ 動かした量が、指の動いた量と合っているか（左上へ縮まないか） */
+  const L0 = LAYERS[0];
+  const before = { x:L0.x, y:L0.y };
+  const a1 = toScreen(0.30, 0.30), a2 = toScreen(0.55, 0.62);
+  const q1 = toBoard(a1), q2 = toBoard(a2);
+  L0.x = before.x + (q2.x - q1.x); L0.y = before.y + (q2.y - q1.y);
+  out.動いた量 = [+(L0.x - before.x).toFixed(4), +(L0.y - before.y).toFixed(4)];
+  L0.x = before.x; L0.y = before.y;
+  V.z = 1; COARSE = 0; render();
+  return out;
+});
+ok(Math.max(...XY.ずれ) < 1e-6,
+   '⭐⭐ 画面→版面→画面 で元の所に戻る（寄りも粗さも変えて18通り）',
+   'いちばん大きいずれ ' + Math.max(...XY.ずれ));
+ok(XY.掴めた.every(Boolean), '⭐⭐ 素材の【まん中】を押したらその素材が掴める',
+   XY.掴めた.join(','));
+ok(XY.灯を掴めた, '⭐ 灯のまん中を押したら灯が掴める');
+ok(Math.abs(XY.動いた量[0] - 0.25) < 1e-6 && Math.abs(XY.動いた量[1] - 0.32) < 1e-6,
+   '⭐⭐ 動かした量が指の動いた量と合う（左上へ縮まない）', XY.動いた量.join(' / '));
+
 /* ⭐⭐ 切り抜き ── 効く・元は残っている */
 const CUT = await p.evaluate(async () => {
   /* 無地の地に丸を描いた素材を入れる（色で抜けるはず） */
