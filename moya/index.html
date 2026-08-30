@@ -126,14 +126,22 @@
   .ly{display:flex;align-items:center;gap:6px;background:var(--fill2);border:none;border-radius:var(--r);
     padding:6px 7px;cursor:pointer;transition:.15s}
   .ly:hover{background:rgba(28,28,30,.10)}
-  .ly.sel{background:var(--capsule);box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.06)}
+  /* 🔴🔴 選んでいる行は【黒地に白字】（2026-08-30・木下＝「基本は白で、選択すると黒背景白テキスト
+     などにし、これが選択されていると分かるように」）。前は白いカプセルで、地の白と見分けが付かなかった。 */
+  .ly.sel{background:var(--fg);box-shadow:0 1px 4px rgba(28,28,30,.28)}
+  .ly.sel:hover{background:var(--fg)}
+  .ly.sel .nm{color:#fff;font-weight:600}
+  .ly.sel .dp{color:rgba(255,255,255,.72)}
+  .ly.sel .x{color:rgba(255,255,255,.72)}
+  .ly.sel .x:hover{color:#fff;background:rgba(255,255,255,.18)}
+  .ly.sel .th{border-color:rgba(255,255,255,.45)}
   .ly .th{width:30px;height:30px;flex:0 0 30px;border-radius:6px;border:.5px solid rgba(28,28,30,.18);
     background:#fff center/contain no-repeat}
   /* 🔴 名前・奥行き・ボタンを1行に並べたら名前が「見本…」まで潰れた（2026-08-30）
      ⭐ 名前と奥行きを2段にして、名前に幅を渡す */
   .ly .col{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:1px}
   .ly .nm{min-width:0;font-size:11.5px;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .ly.sel .nm{color:var(--fg);font-weight:500}
+  .ly.sel .nm{color:#fff;font-weight:600}   /* ⚠️ 上の .ly.sel .nm と同じ強さ＝あとに書いた方が勝つ */
   .ly .dp{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:9.5px;color:var(--fg3);
     white-space:nowrap}
   .ly .x{width:24px;height:24px;min-width:24px;min-height:24px;flex:0 0 24px;border:0;background:transparent;
@@ -377,10 +385,15 @@
       <button class="btn" id="b_add">素材を置く</button>
       <button class="btn" id="b_demo">見本に戻す</button>
     </div>
+    <button class="btn" id="b_relink" style="width:100%;margin-top:8px">選んだ枠に写真を入れる（差し替え）</button>
     <input type="file" id="f_img" accept="image/*" multiple hidden>
+    <input type="file" id="f_relink" accept="image/*" multiple hidden>
     <div id="layersHost"><div id="layers"></div></div>
     <div id="meter"></div>
-    <div class="note">⭐ 盤の上で<b>つかんで動かす</b>／ホイール・ピンチで盤を寄せる<br>
+    <div class="note">⭐⭐ <b>素材を置く</b>＝新しく足す／<b>差し替え</b>＝<b>いまの枠のまま中身だけ入れ替える</b><br>
+      （置き方・奥行き・ズレ・切り抜きの型はそのまま残る＝<b>設定を読んでから写真を入れられる</b>）<br>
+      ⭐ 何枚でも選べる＝<b>選んだ枠から順に</b>入る（3枚選べば3つの枠が一度に埋まる）<br>
+      ⭐ 盤の上で<b>つかんで動かす</b>／ホイール・ピンチで盤を寄せる<br>
       ⭐ 他の道具の<b>地なしPNG</b>をそのまま落とせる（貼HARI・作字SAKUJI・桁KETA…）<br>
       ⚠️ 一覧は<b>手前が上</b>（奥行きの順に並ぶ。順番は奥行きで決まる）</div>
   </div>
@@ -1255,12 +1268,21 @@ function paint(ctx, W, H, transparent){
     if(!L.on || (L.op != null && L.op <= 0.001)) continue;
     const plate = layerPlate(L, W, H);
     if(!plate) continue;
+    /* 🔴🔴 回していない素材は【画素の升目に載せる】（2026-08-30・木下＝「大きい画像を置いたが
+       書き出しできちんと鮮明に出るか」）。半画素ずれた所へ置くと、板はもう一度引き伸ばされる
+       ＝つまみを全部0にしても消えない甘さになる（実測 出す大きさ次第で 100% ⇄ 83%）。
+       ⭐ 回している素材は升目に載せられないので、そのまま（回した時点でにじむのは避けられない）。
+       → feedback_measure_before_you_optimize */
     const put = (c2, alpha, mode) => {
       ctx.save();
       ctx.globalAlpha = alpha; ctx.globalCompositeOperation = mode || 'source-over';
-      ctx.translate(L.x * W, L.y * H);
-      if(L.rot) ctx.rotate(L.rot * Math.PI / 180);
-      ctx.drawImage(c2, -c2.width/2, -c2.height/2);
+      if(L.rot){
+        ctx.translate(L.x * W, L.y * H);
+        ctx.rotate(L.rot * Math.PI / 180);
+        ctx.drawImage(c2, -c2.width/2, -c2.height/2);
+      }else{
+        ctx.drawImage(c2, Math.round(L.x * W - c2.width/2), Math.round(L.y * H - c2.height/2));
+      }
       ctx.restore();
     };
     /* ══⭐⭐ ① 影（この素材より後ろのものへ落とす）══
@@ -1543,6 +1565,10 @@ const HILITE_SAY = { light:'灯に効きます（盤の丸を動かせます）'
                      layer:'選んだ素材だけに効きます',
                      cut:'選んだ素材の切り抜きに効きます' };
 
+/* ⭐ 大きさを変える四角。角4つ＋辺の真ん中4つ。値は【1つの表】が持つ */
+const HANDLES = [[-1,-1],[1,-1],[1,1],[-1,1],[0,-1],[1,0],[0,1],[-1,0]];
+const HANDLE_PX = 11;
+/* ⚠️ 上の2つは drawOverlay より前に置く（初回の描画は下の宣言より先に走る） */
 /* ⭐ 灯の丸と、選んだ素材の枠は【別の板】に描く＝PNG に1画素も入らない */
 function drawOverlay(W, H){
   og.setTransform(1,0,0,1,0,0);
@@ -1626,6 +1652,21 @@ function drawOverlay(W, H){
     og.strokeStyle = MODE === 'cut' ? 'rgba(255,64,64,.95)' : 'rgba(0,122,255,.95)';
     og.lineWidth = Math.max(1.5, W/420);
     og.strokeRect(-dw/2, -dh/2, dw, dh);
+    /* ══⭐⭐ 掴んで大きさを変える四角（2026-08-30・木下＝「ボード上で画像を選択すると
+       左右上下の四角が表示され、直感的に大きさも変えられるように」）══
+       ⭐ 大きさは1つ（縦横は写真の比で決まる）ので、掴んだ所の【向かい側を留めたまま】比のまま伸びる。
+       ⭐ 四角の大きさは【画面の px】で決める＝引いて見ていても指で届く。
+       → feedback_grab_size_in_screen_px */
+    if(MODE !== 'cut'){
+      const s = HANDLE_PX * perScreenPx();
+      og.lineWidth = Math.max(1, W/900);
+      for(const [sx, sy] of HANDLES){
+        og.fillStyle = '#fff'; og.strokeStyle = 'rgba(0,122,255,.95)';
+        og.beginPath();
+        og.rect(sx*dw/2 - s/2, sy*dh/2 - s/2, s, s);
+        og.fill(); og.stroke();
+      }
+    }
     /* ⭐ 囲って抜くの点＝いま何を囲っているかを見せる（見えないと打てない） */
     if(MODE === 'cut' && TOOL === 'path' && POLY.length){
       const m = maskOf(L);
@@ -1742,6 +1783,28 @@ function perScreenPx(){
   const b = boardScale();
   return (cv.width || 1) / b.sx;
 }
+/* 選んでいる素材の四角を掴んだか（画面の px で見る）。掴んだら [sx,sy] を返す */
+function hitHandle(q){
+  if(MODE === 'cut') return null;
+  const L = LAYERS[SEL];
+  if(!L || !L.on || !L.img) return null;
+  const W = cv.width, H = cv.height;
+  const iw = L.img.naturalWidth || 1, ih = L.img.naturalHeight || 1;
+  const dw = L.s * W, dh = dw * ih / iw;
+  /* 盤の座標を、素材の（回した）枠の中の座標に直す */
+  const a = -L.rot * Math.PI / 180;
+  const px = q.x * W - L.x * W, py = q.y * H - L.y * H;
+  const lx = px * Math.cos(a) - py * Math.sin(a);
+  const ly = px * Math.sin(a) + py * Math.cos(a);
+  /* ⚠️ 掴む幅は「隣の四角の半分」を超えない（超えると素材そのものを動かせなくなる） */
+  const r = Math.min(HANDLE_PX * 1.5 * perScreenPx(), Math.max(dw, dh) / 4);
+  let best = r, hit = null;
+  for(const [sx, sy] of HANDLES){
+    const d = Math.hypot(lx - sx*dw/2, ly - sy*dh/2);
+    if(d < best){ best = d; hit = [sx, sy]; }
+  }
+  return hit;
+}
 function hitLight(q){
   const W = cv.width, H = cv.height;
   const rr = 26 * perScreenPx();
@@ -1811,6 +1874,15 @@ function hitLayer(q){
       grab.lx = m.x; grab.ly = m.y;
       touching(); renderSoon(); return;
     }
+    /* ⭐ 大きさの四角がいちばん先（枠の上にあるので、灯より先に見る） */
+    const hh2 = hitHandle(q);
+    if(hh2){
+      hist();
+      const L = LAYERS[SEL];
+      const iw = L.img.naturalWidth || 1, ih = L.img.naturalHeight || 1;
+      grab = { what:'size', h:hh2, s0:L.s, iw, ih };
+      stage.classList.add('moving'); return;
+    }
     const li = hitLight(q);
     if(li >= 0){ hist(); LSEL = li; syncLights(); grab = { what:'light', i:li };
       stage.classList.add('moving'); render(); return; }
@@ -1859,6 +1931,32 @@ function hitLayer(q){
         grab.lx = m.x; grab.ly = m.y;
         touching(); renderSoon(); return;
       }
+      /* ══⭐ 四角を引いて大きさを変える ══
+         ⭐ 掴んだ所の【向かい側】を留めたまま、写真の比のまま伸び縮みする。
+         🔴 大きさは1つしか無い（縦横は比で決まる）＝角も辺も同じ式で、どの目盛りを見るかだけが違う。
+            → feedback_one_formula_one_rule */
+      if(grab.what === 'size'){
+        const L = LAYERS[SEL]; if(!L) return;
+        const W = cv.width, H = cv.height;
+        const [sx, sy] = grab.h;
+        const dw = L.s * W, dh = dw * grab.ih / grab.iw;
+        const a = L.rot * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+        const rot = (x, y) => ({ x: x*ca - y*sa, y: x*sa + y*ca });   /* 素材の枠 → 盤 */
+        const inv = (x, y) => ({ x: x*ca + y*sa, y: -x*sa + y*ca });  /* 盤 → 素材の枠 */
+        /* 留める所＝掴んだ所の向かい側 */
+        const off = rot(-sx*dw/2, -sy*dh/2);
+        const A = { x: L.x*W + off.x, y: L.y*H + off.y };
+        const v = inv(q.x*W - A.x, q.y*H - A.y);
+        /* 角＝縦横のうち大きく動いた方／辺＝その辺の向きだけを見る */
+        let k = sx && sy ? Math.max(Math.abs(v.x)/dw, Math.abs(v.y)/dh)
+              : sx       ? Math.abs(v.x)/dw
+                         : Math.abs(v.y)/dh;
+        const s2 = Math.min(2.2, Math.max(0.04, L.s * k));           /* つまみと同じ端で止める */
+        const nw = s2 * W, nh = nw * grab.ih / grab.iw;
+        const back = rot(sx*nw/2, sy*nh/2);
+        L.s = s2; L.x = (A.x + back.x) / W; L.y = (A.y + back.y) / H;
+        L._key = ''; syncSel(); touching(); renderSoon(); return;
+      }
       if(grab.what === 'light'){ const LT = LIGHTS[grab.i] || litNow();
         LT.x = clamp01(q.x); LT.y = clamp01(q.y); LAYERS.forEach(L => L._key = ''); }
       else { const L = LAYERS[grab.i]; L.x = q.x - grab.ox; L.y = q.y - grab.oy; }
@@ -1877,15 +1975,16 @@ function hitLayer(q){
 /* ══ 素材を受ける ══
    🔴 種類で先に断らない（HEIC を弾くと iPhone の写真がほぼ全部断られる）。
       まず読む。読めなかったときだけ理由を言う。 */
-function takeFile(f, then){
-  if(!f) return;
+function takeFile(f, then, fail){
+  if(!f){ if(fail) fail(); return; }
   const rd = new FileReader();
   rd.onload = () => {
     const img = new Image();
     img.onload = () => then(img, f.name || '素材');
-    img.onerror = () => stat((/heic|heif/i.test(f.type || '') || /\.(heic|heif)$/i.test(f.name || ''))
+    img.onerror = () => { stat((/heic|heif/i.test(f.type || '') || /\.(heic|heif)$/i.test(f.name || ''))
       ? 'この写真は HEIC（iPhone の形式）── この browser では読めませんでした。JPEG に書き出すか Safari で開いてください'
       : 'この画像は読めませんでした：' + (f.name || ''));
+      if(fail) fail(); };
     if(/svg/i.test(f.type || '') || /\.svg$/i.test(f.name || ''))
       img.src = 'data:image/svg+xml;base64,' +
         btoa(String.fromCharCode(...new TextEncoder().encode(String(rd.result || ''))));
@@ -1910,11 +2009,83 @@ function addImage(img, name, d){
   if(window.requestIdleCallback) requestIdleCallback(pre, { timeout:1500 });
   else setTimeout(pre, 400);
 }
+/* ══⭐⭐ 選んだ枠に写真を入れる（差し替え）══ 2026-08-30
+   🔴🔴 木下＝「レイヤーを選択して素材を置くをしても、**その設定された場所に入るのではなく
+        別場所に表示される**」。原因＝【置く】は いつも新しく足す だけで、
+        【この枠の中身を入れ替える】という道が どこにも無かった。
+   ⭐ 設定JSON は「置き方・奥行き・ズレ・切り抜きの型」を戻すが **写真は入っていない**ので、
+      読んだあと この差し替えが無いと 戻したはずの枠に写真を入れられない（＝設定が使えない）。
+   ⚠️ 型（マスク）は【写真の比】で作ってあるので、比が変わるときだけ 型を新しい比に伸ばす。
+   → feedback_a_tool_starts_from_being_ready / feedback_bake_late_so_the_knob_still_works */
+function relinkImage(L, img, name){
+  L.img = img; L.name = name;
+  L.want = null;                                    /* 「この写真を待っている」印を消す */
+  const m = maskSize(L);                            /* 新しい写真に合う型の大きさ */
+  /* 🔴 見比べるのは【型そのものの大きさ】。入れ替える前の写真の比ではない
+     （設定JSONから戻した型は もう元の写真の大きさで入っているので、そこから伸ばすと壊れる）。 */
+  ['mCut', 'mKeep'].forEach(k => {
+    const o = L[k]; if(!o) return;
+    if(o.width === m.w && o.height === m.h) return;
+    const c = document.createElement('canvas'); c.width = m.w; c.height = m.h;
+    c.getContext('2d').drawImage(o, 0, 0, m.w, m.h);
+    L[k] = c;
+  });
+  /* 元の写真から作った控えは全部作り直す（覚えた色そのものは色なので残す） */
+  L._sd = null; L._sdw = 0; L._dist = null; L._distW = 0; L._distN = -1;
+  L.mask = null; L._mk = ''; L._c = null; L._key = '';
+  bumpMask(L);
+  /* ⭐ 置いたときと【まったく同じ手順】にする＝色で抜くの読みを先に作っておく。
+     ⚠️ これを飛ばすと、置いた場合と差し替えた場合で 縮めた絵がわずかに違う
+        （browser は「その絵をどの大きさで描いたか」を覚えていて、次の縮小に使うため）。 */
+  const pre = () => { try{ srcData(L); }catch(_){} };
+  if(window.requestIdleCallback) requestIdleCallback(pre, { timeout:1500 });
+  else setTimeout(pre, 400);
+}
+el('b_relink').onclick = () => {
+  if(SEL < 0 || !LAYERS[SEL]){ stat('先に一覧から枠を選んでください'); return; }
+  el('f_relink').click();
+};
+el('f_relink').addEventListener('change', e => {
+  const fs = [...e.target.files]; e.target.value = '';
+  if(!fs.length || SEL < 0) return;
+  const start = SEL;
+  const room = LAYERS.length - start;
+  const use = fs.slice(0, room);
+  hist();
+  let left = use.length, done = 0;
+  const fin = () => {
+    if(--left) return;
+    buildList(); syncSel(); syncKeys(); render();
+    stat(done + ' 枚を枠に入れた（置き方・切り抜きはそのまま）'
+      + (fs.length > room ? '／⚠️ ' + (fs.length - room) + ' 枚は枠が足りず入らなかった' : ''));
+  };
+  /* ⭐ 番号で当てる＝読み終わる順に関係なく【選んだ順】に入る */
+  use.forEach((f, j) => takeFile(f, (img, nm) => {
+    const L = LAYERS[start + j];
+    if(L){ relinkImage(L, img, nm); done++; }
+    fin();
+  }, fin));
+});
+/* 🔴🔴 何枚かまとめて置くときは【選んだ順】に置く（2026-08-30）。
+   前は読み終わった順に足していたので、**同じ3枚を選んでも毎回ちがう順に並んだ**。
+   設定JSON は「同じ写真を同じ順で置いてから読む」前提なので、これでは戻らない。
+   ⭐ 全部読み終わってから、番号どおりに足す。 → feedback_settings_json_replay_the_knobs */
+function takeFiles(fs, done){
+  const got = new Array(fs.length).fill(null);
+  let left = fs.length;
+  if(!left){ if(done) done(0); return; }
+  const fin = () => {
+    if(--left) return;
+    let n = 0;
+    got.forEach(g => { if(g){ addImage(g.img, g.nm); n++; } });
+    if(done) done(n);
+  };
+  fs.forEach((f, i) => takeFile(f, (img, nm) => { got[i] = { img, nm }; fin(); }, fin));
+}
 el('b_add').onclick = () => el('f_img').click();
 el('f_img').addEventListener('change', e => {
   const fs = [...e.target.files]; e.target.value = '';
-  fs.forEach(f => takeFile(f, (img, nm) => addImage(img, nm)));
-  if(fs.length) stat(fs.length + ' 枚を置いた');
+  takeFiles(fs, n => { if(n) stat(n + ' 枚を選んだ順に置いた'); });
 });
 ['dragenter','dragover'].forEach(t => addEventListener(t, e => {
   e.preventDefault(); document.body.classList.add('dragging'); }));
@@ -1922,8 +2093,7 @@ el('f_img').addEventListener('change', e => {
   if(t === 'dragleave' && e.relatedTarget) return; document.body.classList.remove('dragging'); }));
 addEventListener('drop', e => { e.preventDefault();
   const fs = [...(e.dataTransfer.files || [])];
-  fs.forEach(f => takeFile(f, (img, nm) => addImage(img, nm)));
-  if(fs.length) stat(fs.length + ' 枚を置いた');
+  takeFiles(fs, n => { if(n) stat(n + ' 枚を落とした順に置いた'); });   /* ⭐ 落とした順も守る */
 });
 
 /* ══ 素材の一覧（手前が上）══ */
@@ -2231,8 +2401,14 @@ const PRESETS = {
   shiro:{  名:'白', air:{ haze:.30, soft:.28, fade:.30, air:'#c9d4e4', split:.28, bloom:.22,
             grain:.14, vig:.16, edge:.20, mix:.20, wob:.15 },
            lights:[{x:.50,y:.16,col:'#fff4e2',i:.42,rim:.35,bnc:.30,r:1.10}] },
+  /* 🔴🔴「素」は【本当に素】にする（2026-08-30）。前は空気と灯しか 0 にしておらず、
+     色収差・ハレーション・影・黒の持ち上げが残ったまま＝**素と言っているのに素にならない**。
+     木下＝「まずははっきりした画像を見たい」に、これ1つで届くようにした。
+     ⭐ 素だけが naji を持つ（他の型は 馴染ませを触らない＝作り込みを消さない）。
+     → feedback_dont_bundle_two_knobs_in_one（0 は本当に 0 に） */
   su:{     名:'素', air:{ haze:0, soft:0, fade:0, air:'#3f5a86', split:0, bloom:0,
             grain:0, vig:0, edge:0, mix:0, wob:0 },
+           naji:{ shd:0, wrap:0, clean:0, lift:0, gain:0, ca:0, halo:0 },
            lights:[{x:.62,y:.30,col:'#ffb066',i:0,rim:0,bnc:0,r:.70}] },
 };
 function applyPreset(o, say){
@@ -2245,6 +2421,10 @@ function applyPreset(o, say){
   put('r_haze',A.haze); put('r_soft',A.soft); put('r_fade',A.fade); put('r_split',A.split);
   put('r_bloom',A.bloom); put('r_grain',A.grain); put('r_vig',A.vig);
   put('r_edge',A.edge); put('r_mix',A.mix); put('r_wob',A.wob);
+  /* ⭐ 馴染ませは【持っている型だけ】が触る（無い型は木下の作り込みをそのまま残す） */
+  if(o.naji){ const N = o.naji;
+    put('r_shd',N.shd); put('r_wrap',N.wrap); put('r_clean',N.clean);
+    put('r_lift',N.lift); put('r_gain',N.gain); put('r_ca',N.ca); put('r_halo',N.halo); }
   el('c_air').value = A.air; el('c_air').dispatchEvent(new Event('input', { bubbles:true }));
   if(o.lights && o.lights.length){
     LIGHTS = o.lights.map(L2 => Object.assign(newLight(L2.x, L2.y), L2));
@@ -2484,6 +2664,10 @@ function snapshot(){
               ⚠️ 写真そのものは入らない（大きすぎる）＝同じ写真を置いてから読む。 */
            layers: LAYERS.map(L => ({ x:L.x, y:L.y, s:L.s, rot:L.rot, flip:L.flip, d:L.d, on:L.on, op:L.op, ord:L.ord,
                              name:L.name,
+                             /* 🔴🔴 id も入れる（2026-08-30）＝【ゆらぎ（偶然）は id で振っている】ので、
+                                これが無いと読み直すたびに偶然が別の目になり、1画素も同じには戻らない。
+                                → feedback_settings_json_replay_the_knobs */
+                             id:L.id,
                              adj: Object.assign(newAdj(), L.adj || {}),
                              keys: (L.keys || []).map(k => Object.assign({}, k)),
                              mCut:  L.mCut  ? L.mCut.toDataURL('image/png')  : null,
@@ -2499,7 +2683,8 @@ function applyJSON(o){
     ls.forEach((o2, i) => {
       const img = new Image();
       img.onload = () => {
-        LAYERS[i] = { id:UID++, img, name:o2.name || ('素材' + (i+1)),
+        if(o2.id != null) UID = Math.max(UID, o2.id + 1);
+        LAYERS[i] = { id:o2.id != null ? o2.id : UID++, img, name:o2.name || ('素材' + (i+1)),
           x:o2.x, y:o2.y, s:o2.s, rot:o2.rot, flip:o2.flip, d:o2.d,
           on:o2.on, op:o2.op == null ? 1 : o2.op, ord:o2.ord == null ? i+1 : o2.ord,
           keys:(o2.keys || []).map(k => Object.assign({}, k)),
@@ -2557,6 +2742,10 @@ function applyRest(o){
       const L = LAYERS[i];
       Object.assign(L, { x:o2.x, y:o2.y, s:o2.s, rot:o2.rot, flip:o2.flip,
                          d:o2.d, on:o2.on, op:o2.op == null ? 1 : o2.op, ord:o2.ord });
+      if(o2.id != null){ L.id = o2.id; UID = Math.max(UID, o2.id + 1); }   /* ゆらぎの目を戻す */
+      /* ⭐ 設定JSON に写真は入っていない＝【この枠がどの写真を待っているか】を出す。
+         名前まで当ててしまうと「入っていないのに入ったように見える」ので、印だけ持つ。 */
+      L.want = (o2.name && o2.name !== L.name) ? o2.name : null;
       L.adj = Object.assign(newAdj(), o2.adj || {});
       L.keys = (o2.keys || []).map(k => Object.assign({}, k));
       /* ⭐ 切り抜きの型を戻す（絵なので、読み込んでから当てる） */
