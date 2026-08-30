@@ -74,12 +74,14 @@ await wait(300);
 const LIT = await p.evaluate(async () => {
   const before = window.__shot();
   const plates = LAYERS.map(L => L._key);
-  const keep = { lx:P.lx, ly:P.ly };
-  P.lx = 0.12; P.ly = 0.85; COARSE = 0; render();
+  const keep = { lx:LIGHTS[0].x, ly:LIGHTS[0].y };
+  LIGHTS[0].x = 0.12; LIGHTS[0].y = 0.85;
+  LAYERS.forEach(L => L._key = ''); COARSE = 0; render();
   await new Promise(r => setTimeout(r, 200));
   const after = window.__shot();
   const changed = LAYERS.filter((L, i) => L._key !== plates[i]).length;
-  P.lx = keep.lx; P.ly = keep.ly; COARSE = 0; render();
+  LIGHTS[0].x = keep.lx; LIGHTS[0].y = keep.ly;
+  LAYERS.forEach(L => L._key = ''); COARSE = 0; render();
   await new Promise(r => setTimeout(r, 200));
   return { 変わった画素: window.__diff(before, after), 作り直された素材: changed, 枚数: LAYERS.length,
            戻った: window.__diff(before, window.__shot()) };
@@ -127,11 +129,12 @@ const ADJ = await p.evaluate(async () => {
   COARSE = 0; render(); await new Promise(r => setTimeout(r, 200));
   out.ズレている = hasAdj(L);
   const B = window.__shot();
-  const keep = { lx:P.lx, ly:P.ly };
-  P.lx = 0.15; P.ly = 0.8; COARSE = 0; render(); await new Promise(r => setTimeout(r, 200));
+  const keep = { lx:LIGHTS[0].x, ly:LIGHTS[0].y };
+  LIGHTS[0].x = 0.15; LIGHTS[0].y = 0.8;
+  LAYERS.forEach(L => L._key = ''); COARSE = 0; render(); await new Promise(r => setTimeout(r, 200));
   out.灯で変わる = window.__diff(B, window.__shot());
   out.ズレは残っている = hasAdj(L) && Math.abs(L.adj.bri - 0.7) < 1e-9 && Math.abs(L.adj.tmp + 0.6) < 1e-9;
-  P.lx = keep.lx; P.ly = keep.ly;
+  LIGHTS[0].x = keep.lx; LIGHTS[0].y = keep.ly; LAYERS.forEach(L => L._key = '');
   document.getElementById('b_adj0').click();
   COARSE = 0; render(); await new Promise(r => setTimeout(r, 200));
   out.ズレを消したら戻る = window.__diff(A, window.__shot());
@@ -179,8 +182,8 @@ const XY = await p.evaluate(async () => {
     out.掴めた.push(hitLayer(toBoard(sc)) >= 0);
   }
   /* 灯のまん中を押したら灯が掴めるか */
-  const lc = toScreen(P.lx, P.ly);
-  out.灯を掴めた = hitLight(toBoard(lc));
+  const lc = toScreen(LIGHTS[0].x, LIGHTS[0].y);
+  out.灯を掴めた = hitLight(toBoard(lc)) >= 0;
   /* ⭐ 動かした量が、指の動いた量と合っているか（左上へ縮まないか） */
   const L0 = LAYERS[0];
   const before = { x:L0.x, y:L0.y };
@@ -354,9 +357,11 @@ const LAY = await p.evaluate(async () => {
   LAYERS = [];
   addImage(await mk('#ff0000'), '赤', 0.5); LAYERS[0].x = 0.5; LAYERS[0].y = 0.5;
   addImage(await mk('#0000ff'), '青', 0.5); LAYERS[1].x = 0.5; LAYERS[1].y = 0.5;
-  const keep = { haze:P.haze, split:P.split, bloom:P.bloom, grain:P.grain, vig:P.vig, li:P.li,
+  const keep = { haze:P.haze, split:P.split, bloom:P.bloom, grain:P.grain, vig:P.vig,
                  edge:P.edge, mix:P.mix, wob:P.wob };
-  P.haze = P.split = P.bloom = P.grain = P.vig = P.li = P.edge = P.mix = P.wob = 0;
+  const li0 = LIGHTS.map(L2 => L2.i);
+  P.haze = P.split = P.bloom = P.grain = P.vig = P.edge = P.mix = P.wob = 0;
+  LIGHTS.forEach(L2 => L2.i = 0);
   LAYERS.forEach(L => L._key = '');
   const mid = () => { COARSE = 0; render();
     const d = g.getImageData((cv.width/2)|0, (cv.height/2)|0, 1, 1).data; return [d[0],d[1],d[2],d[3]]; };
@@ -369,7 +374,7 @@ const LAY = await p.evaluate(async () => {
   LAYERS[0].on = true; LAYERS[0].op = 0.0; LAYERS[0]._key = '';
   out.濃さ0 = mid();
   LAYERS[0].op = 1; LAYERS[0]._key = '';
-  Object.assign(P, keep); LAYERS.forEach(L => L._key = '');
+  Object.assign(P, keep); LIGHTS.forEach((L2, i) => L2.i = li0[i]); LAYERS.forEach(L => L._key = '');
   return out;
 });
 ok(LAY.同じ奥行きの初期[2] > LAY.同じ奥行きの初期[0],
@@ -418,10 +423,10 @@ const ORD = await p.evaluate(async () => {
   addImage(blue, '青', 0.0); LAYERS[1].x = 0.5; LAYERS[1].y = 0.5;
   /* かすみ・空気を切って、素直に色だけ見る */
   const keep = { haze:P.haze, split:P.split, bloom:P.bloom, grain:P.grain, vig:P.vig, li:P.li };
-  P.haze = P.split = P.bloom = P.grain = P.vig = P.li = 0;
+  P.haze = P.split = P.bloom = P.grain = P.vig = 0; LIGHTS.forEach(L2 => L2.i = 0);
   COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
   const d = g.getImageData((cv.width/2)|0, (cv.height/2)|0, 1, 1).data;
-  Object.assign(P, keep);
+  Object.assign(P, keep); LIGHTS.forEach(L2 => L2.i = 0.55); LAYERS.forEach(L => L._key = '');
   return { 手前が上: d[2] > d[0], 画素:[d[0],d[1],d[2]] };
 });
 ok(ORD.手前が上, '⑦ 並ぶ順は【奥行きが決める】（手前の物が上に出る）', ORD.画素.join(','));
@@ -509,7 +514,129 @@ ok(HL.空気で印が増える, '⭐⭐ 空気のつまみを触ると【版面�
 ok(HL.灯でも出る, '⭐ 灯のつまみを触ると【灯】が光る');
 ok(HL.出す絵に入らない, '⚠️ 光らせる印は【出す絵に1画素も入らない】');
 
-/* ⑨ モバイル *//* ⑨ モバイル */
+/* ⭐⭐ 灯は何本でも（2026-08-30 木下＝「灯は複数追加できるなどできた方がよいのでは？」） */
+const LT = await p.evaluate(async () => {
+  await demo(); COARSE = 0; render(); await new Promise(r => setTimeout(r, 200));
+  const A = window.__shot();
+  const out = { はじめ: LIGHTS.length };
+  document.getElementById('b_litadd').click();
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  out.足した = LIGHTS.length;
+  out.絵が変わる = window.__diff(A, window.__shot());
+  const before = LAYERS.map(L => L._key);
+  LIGHTS[1].x = 0.15; LIGHTS[1].y = 0.85;
+  LAYERS.forEach(L => L._key = '');
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 200));
+  out.ni = LAYERS.filter((L, i) => L._key !== before[i]).length === LAYERS.length;
+  document.getElementById('b_litdel').click();
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  out.消せる = LIGHTS.length;
+  out.modori = window.__diff(A, window.__shot());
+  return out;
+});
+ok(LT.足した === LT.はじめ + 1 && LT.消せる === LT.はじめ, '⭐⭐ 灯を足せる・消せる',
+   LT.はじめ + ' → ' + LT.足した + ' → ' + LT.消せる + ' 本');
+ok(LT.絵が変わる > 200, '⭐ 灯を足すと絵が変わる', LT.絵が変わる + ' 点');
+ok(LT.ni, '⭐⭐ 2本目の灯でも【置いた素材が全部いっしょに】変わる');
+ok(LT.modori === 0, '⚠️ 1本に戻すと1画素も同じに戻る', LT.modori + ' 点');
+
+/* ⭐⭐ 空気の型（ライトルームのプリセット）＝空気と灯だけを変え、素材の置き方は触らない */
+const PRE = await p.evaluate(async () => {
+  await demo();
+  const L = LAYERS[0];
+  L.x = 0.31; L.y = 0.42; L.s = 0.55; L.rot = 12; L.adj.bri = 0.3; L._key = '';
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 200));
+  const oki = JSON.stringify({ x:L.x, y:L.y, s:L.s, rot:L.rot, adj:L.adj });
+  const A = window.__shot();
+  const out = { 型ごと:{} };
+  for(const k of ['kasumi','homura','yoi','shiro','su']){
+    document.querySelector('#s_preset button[data-v="' + k + '"]').click();
+    COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+    out.型ごと[k] = window.__diff(A, window.__shot());
+  }
+  out.okiSame = JSON.stringify({ x:L.x, y:L.y, s:L.s, rot:L.rot, adj:L.adj }) === oki;
+  document.querySelector('#s_preset button[data-v="homura"]').click();
+  out.homuraLights = LIGHTS.length;
+  return out;
+});
+{
+  const dead = Object.entries(PRE.型ごと).filter(([k, v]) => v < 200).map(([k]) => k);
+  ok(dead.length === 0, '⭐⭐ 型を当てると絵が変わる（5つとも死んでいない）',
+     JSON.stringify(PRE.型ごと));
+  ok(new Set(Object.values(PRE.型ごと)).size >= 4, '⭐ 型ごとに違う絵になる');
+}
+ok(PRE.okiSame, '⭐⭐ 型は【空気と灯だけ】＝素材の置き方とズレは1つも触らない');
+ok(PRE.homuraLights === 2, '⭐ 型は灯の本数も持てる（炎＝2本）', PRE.homuraLights + ' 本');
+
+/* ⭐ 紙の大きさ（A4・A3…）＝mm と解像度から決まる */
+const PAPER = await p.evaluate(async () => {
+  const out = {};
+  const hit = v => document.querySelector('#s_ratio button[data-v="' + v + '"]');
+  hit('A4').click(); await new Promise(r => setTimeout(r, 200));
+  out.a350 = sheet();
+  document.querySelector('#s_dpi button[data-v="150"]').click();
+  await new Promise(r => setTimeout(r, 200));
+  out.a150 = sheet();
+  el('k_land').checked = true; el('k_land').dispatchEvent(new Event('change', { bubbles:true }));
+  await new Promise(r => setTimeout(r, 200));
+  out.a150y = sheet();
+  out.dpiOut = !el('dpiUI').classList.contains('hide');
+  out.longHid = el('longUI').classList.contains('hide');
+  el('k_land').checked = false; el('k_land').dispatchEvent(new Event('change', { bubbles:true }));
+  hit('2:3').click(); await new Promise(r => setTimeout(r, 200));
+  out.longBack = !el('longUI').classList.contains('hide');
+  return out;
+});
+ok(PAPER.a350.w === 2894 && PAPER.a350.h === 4093,
+   '⭐ A4 350dpi ＝ 2894 × 4093 px（210×297mm）', PAPER.a350.w + ' × ' + PAPER.a350.h);
+ok(PAPER.a150.w === 1240 && PAPER.a150.h === 1754,
+   '⭐ 解像度を下げると小さくなる（A4 150dpi）', PAPER.a150.w + ' × ' + PAPER.a150.h);
+ok(PAPER.a150y.w === 1754 && PAPER.a150y.h === 1240, '⭐ よこ長にできる',
+   PAPER.a150y.w + ' × ' + PAPER.a150y.h);
+ok(PAPER.dpiOut && PAPER.longHid && PAPER.longBack,
+   '⭐ 紙のときは解像度／比のときは長辺（触れるのに効かないつまみを出さない）');
+
+/* ⭐⭐ 取り消し・複製 */
+const HS = await p.evaluate(async () => {
+  document.querySelector('#s_preset button[data-v="kasumi"]').click();
+  await demo(); COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  const out = {};
+  const A = window.__shot(), n0 = LAYERS.length;
+  hist(); LAYERS[0].x += 0.2; LAYERS[0]._key = '';
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 200));
+  out.ugoita = window.__diff(A, window.__shot()) > 100;
+  undo(); COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  out.torikeshi = window.__diff(A, window.__shot()) === 0;
+  redo(); COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  out.yarinaoshi = window.__diff(A, window.__shot()) > 100;
+  undo(); COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  SEL = 0; hist(); dupLayer(LAYERS[0]); buildList(); COARSE = 0; render();
+  await new Promise(r => setTimeout(r, 200));
+  out.fukusei = LAYERS.length === n0 + 1;
+  undo(); COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  out.fukuseiUndo = LAYERS.length === n0;
+  const L = LAYERS[0];
+  const solid = () => { const d = g.getImageData(0,0,cv.width,cv.height).data; let n = 0;
+    for(let i=0;i<d.length;i+=4*7) if(d[i+3]>128) n++; return n; };
+  el('k_nobg').checked = true; el('k_nobg').dispatchEvent(new Event('change',{bubbles:true}));
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  const mae = solid();
+  hist(); const keepB = P.brush; P.brush = 0.25;
+  cutBrush(L, maskSize(L).w/2, maskSize(L).h/2, null, null, true);
+  P.brush = keepB;
+  COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  out.kiri = solid() < mae;
+  undo(); COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
+  out.kiriUndo = solid() === mae;
+  el('k_nobg').checked = false; el('k_nobg').dispatchEvent(new Event('change',{bubbles:true}));
+  return out;
+});
+ok(HS.ugoita && HS.torikeshi, '⭐⭐ ⌘Z で取り消せる（1画素も同じに戻る）');
+ok(HS.yarinaoshi, '⭐ ⌘⇧Z でやり直せる');
+ok(HS.fukusei && HS.fukuseiUndo, '⭐ ⌘D で複製・取り消せる');
+ok(HS.kiri && HS.kiriUndo, '⭐⭐ 切り抜き（型）も取り消せる ── 型は絵なので、ここが崩れやすい');
+
+/* ⑨ モバイル */
 await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
 await wait(900);
 const MB = await p.evaluate(() => ({
