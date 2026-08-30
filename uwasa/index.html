@@ -152,7 +152,11 @@
     <input type="range" id="rough" min="0" max="100" value="34">
     <div class="row"><span class="n">あれの粒</span><output id="oGrain">30</output></div>
     <input type="range" id="grain" min="4" max="100" value="30">
-    <div class="row"><span class="n">欠け</span><output id="oChip">0</output></div>
+    <div class="row"><span class="n">割れ（塊で持っていく）</span><output id="oBreak">0</output></div>
+    <input type="range" id="brk" min="0" max="100" value="0">
+    <div class="row"><span class="n">割れの数</span><output id="oBn">5</output></div>
+    <input type="range" id="bn" min="1" max="14" value="5">
+    <div class="row"><span class="n">欠け（縁がぎざつく）</span><output id="oChip">0</output></div>
     <input type="range" id="chip" min="0" max="100" value="0">
     <div class="row"><span class="n">毛羽</span><output id="oHair">0</output></div>
     <input type="range" id="hair" min="0" max="100" value="0">
@@ -266,7 +270,7 @@ const S = {
   /* ⭐ 欠け・毛羽・飛沫は 2026-08-31 追加（参考＝映画『FOG DOG』題字・吉良進太郎）。
      ⚠️ 既定は 0 ＝これまでの作品が1画素も変わらない。足したものは選ばせる。 */
   cut:{ fat:0, rough:34, grain:30, smooth:18, slant:0, wide:100, tall:100,
-        chip:0, hair:0, spat:0, dry:0, seed:1 },
+        chip:0, hair:0, spat:0, brk:0, bn:5, dry:0, seed:1 },
   view:'one',
   sheet:'あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん爆弾誰お前',
   grid:1,
@@ -538,6 +542,45 @@ function drawGlyph(g, ch, x, y, size, col, svg){
     svg.push(`<path d="${d}" fill="${col}" fill-rule="evenodd"/>`);
   }
 }
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐ 割れ ── 塊で持っていく（2026-08-31）
+   🔴 「欠け」は輪郭の点を食い込ませる＝**縁のさざ波**にしかならない。
+     参考（映画『FOG DOG』題字）は G の上半分が丸ごと無い
+     ── **塊で持っていかれている**。木下「かけがあるね」。
+   ⭐ だから縁の上に【消しゴムの塊】を置いて、まとめて抜く。
+   ⚠️ 塊は【縁の上】に置く（真ん中だと字に穴が空くだけで、割れに見えない）。
+   ⚠️ 数は少なく・大きく。小さいのを沢山だと、けっきょく「さざ波」に戻る。
+   ⚠️ 画素で抜くので SVG には出ない（出すなら PNG）。
+   ══════════════════════════════════════════════════════════════ */
+function breakOver(g, ch, x, y, size){
+  const C = S.cut;
+  if(!(C.brk > 0)) return;
+  const rings = glyph(ch); if(!rings.length) return;
+  const r = rnd(C.seed*3391 + ch.charCodeAt(0)*29);
+  const k = size / EM;
+  const n = Math.max(1, Math.round(C.bn));
+  g.save();
+  g.globalCompositeOperation = 'destination-out';
+  g.fillStyle = '#000';
+  for(let i=0;i<n;i++){
+    const ring = rings[(r()*rings.length)|0];
+    if(!ring || !ring.length) continue;
+    const p = ring[(r()*ring.length)|0];
+    const cxp = x - size/2 + p[0]*k, cyp = y - size/2 + p[1]*k;
+    /* ⚠️ 上限を上げすぎると、つまみを振り切ったとき字が丸ごと消える。
+       ⭐ 大きさは字の 4〜17% まで（それ以上は「割れ」ではなく「消しゴム」） */
+    const rad = size * (0.04 + r()*0.13) * (C.brk/100);
+    const m = 7 + ((r()*6)|0);
+    g.beginPath();
+    for(let q=0;q<m;q++){
+      const th = q/m*Math.PI*2, rr = rad*(0.4 + r()*1.1);
+      const px = cxp + Math.cos(th)*rr, py = cyp + Math.sin(th)*rr*(0.55+r()*0.9);
+      q ? g.lineTo(px,py) : g.moveTo(px,py);
+    }
+    g.closePath(); g.fill();
+  }
+  g.restore();
+}
 /* ⭐ かすれ＝紙の目で抜く（原因から作る）。⚠️ 画素なので SVG には出ない */
 let grainC = null;
 function dryOver(g, x, y, w, h, size){
@@ -569,6 +612,8 @@ function dryOver(g, x, y, w, h, size){
   const cell = Math.max(3, size*0.10);
   g.save();
   g.globalCompositeOperation = 'destination-out';
+  /* 🔴 一度「2値寄りに」と濃くしたが**裏目**だった ── 字の中が黒い斑になって汚れに見えた。
+     ⭐ 目そのものが既に2値（0か255）なので、ここは濃さで効かせるのが正しい。 */
   g.globalAlpha = S.cut.dry/100 * 0.9;
   g.translate(x, y); g.scale(cell/8, cell/8);
   g.fillStyle = pat; g.fillRect(0,0,w/(cell/8),h/(cell/8));
@@ -635,6 +680,7 @@ function paint(g, W, H, opt){
         g.setLineDash([6,6]); g.stroke(); g.setLineDash([]);
       }
       drawGlyph(g, ch, px, py, size, '#141414', svg);
+      if(!svg) breakOver(g, ch, px, py, size);
       dryOver(g, px-size/2, py-size/2, size, size, size);
     });
   }
@@ -646,6 +692,7 @@ function paint(g, W, H, opt){
       if(S.grid){ g.strokeStyle = 'rgba(28,28,30,.13)'; g.lineWidth = 1;
         g.strokeRect(px-size/2, py-size/2, size, size); }
       drawGlyph(g, ch, px, py, size, '#141414', svg);
+      if(!svg) breakOver(g, ch, px, py, size);
     });
     dryOver(g, 0, 0, BW, BH, size);
   }
@@ -671,7 +718,10 @@ function paint(g, W, H, opt){
       if(svg) svg.push(`<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${col}" stroke-width="${wq.toFixed(1)}"/>`); };
     seg(l,t,l+arm,t); seg(l+wq/2,t,l+wq/2,t+arm*0.62);
     seg(r-arm,b,r,b); seg(r-wq/2,b,r-wq/2,b-arm*0.62);
-    chars.forEach((ch,i) => drawGlyph(g, ch, x + R.pos[i][0], y0 + R.pos[i][1], size, col, svg));
+    chars.forEach((ch,i) => {
+      drawGlyph(g, ch, x + R.pos[i][0], y0 + R.pos[i][1], size, col, svg);
+      if(!svg) breakOver(g, ch, x + R.pos[i][0], y0 + R.pos[i][1], size);
+    });
     dryOver(g, x-size, y0-size, R.runW + size*2, R.runH + size*2, size);
   }
   g.restore();
@@ -722,9 +772,10 @@ function meter(){
 function stat(s){ $('stat').textContent = s; }
 
 /* ══ つまみ ══ ⭐ 配線は1か所（効かないつまみを作らない） */
-const CUT = { fat:'fat', rough:'rough', grain:'grain', smooth:'smooth', slant:'slant', wide:'wide', tall:'tall', chip:'chip', hair:'hair', spat:'spat', dry:'dry', seed:'seed' };
+const CUT = { fat:'fat', rough:'rough', grain:'grain', smooth:'smooth', slant:'slant', wide:'wide', tall:'tall', chip:'chip', hair:'hair', spat:'spat', brk:'brk', bn:'bn', dry:'dry', seed:'seed' };
 const OUTID = { fat:'oFat', rough:'oRough', grain:'oGrain', smooth:'oSmooth', slant:'oSlant',
-  wide:'oWide', tall:'oTall', chip:'oChip', hair:'oHair', spat:'oSpat', dry:'oDry', seed:'oSeed', mSize:'oMSize', mX:'oMX', mY:'oMY',
+  wide:'oWide', tall:'oTall', chip:'oChip', hair:'oHair', spat:'oSpat',
+  brk:'oBreak', bn:'oBn', dry:'oDry', seed:'oSeed', mSize:'oMSize', mX:'oMX', mY:'oMY',
   kOpen:'oKOpen', kLead:'oLead', kLine:'oLine', kWrap:'oWrap', outLong:'oOut' };
 function out(id){ const o = $(OUTID[id]); if(o) o.textContent = $(id).value; }
 Object.keys(CUT).forEach(id => $(id).addEventListener('input', e => {
@@ -779,13 +830,16 @@ document.querySelectorAll('#segFam button').forEach(b => b.onclick = () => {
    ⚠️ 「素」は全部 0 ＝ **元の書体のまま**。どの型からでも必ずここへ戻れる
      （戻る所が無い型ぞろえは、触るのが怖くなる）。 */
 const KATA = {
-  su  : { fat:0,  rough:0,  grain:30, smooth:0,  chip:0,  hair:0,  spat:0,  dry:0,  wide:100, tall:100 },
+  su  : { fat:0,  rough:0,  grain:30, smooth:0,  chip:0,  hair:0,  spat:0,  brk:0,  bn:5, dry:0,  wide:100, tall:100 },
   /* 筆＝映画『爆弾』の見出し。輪郭が波打つ（筆の毛が紙を通った跡） */
-  fude: { fat:8,  rough:46, grain:28, smooth:16, chip:0,  hair:0,  spat:0,  dry:16, wide:100, tall:100 },
+  fude: { fat:8,  rough:46, grain:28, smooth:16, chip:0,  hair:0,  spat:0,  brk:0,  bn:5, dry:16, wide:100, tall:100 },
   /* 擦れ＝映画『FOG DOG』の題字。筆先が割れて縁が欠け、毛羽と飛沫が出る */
-  sure: { fat:16, rough:26, grain:22, smooth:10, chip:58, hair:46, spat:40, dry:26, wide:100, tall:100 },
+  /* 🔴 一度 割れ70・数6 にしたら**字が読めなくなった**（半分以上持っていかれる）。
+     ⭐ 参考は「大きく欠けるが、字は読める」── 塊は**大きく・少なく**。 */
+  sure: { fat:22, rough:18, grain:22, smooth:12, chip:28, hair:24, spat:20,
+          brk:34, bn:3, dry:12, wide:100, tall:100 },
   /* 細身＝映画『ゆきてかへらぬ』の縦組み。細く・縦長・崩しはほとんど無い */
-  hoso: { fat:-16,rough:6,  grain:30, smooth:6,  chip:0,  hair:0,  spat:0,  dry:0,  wide:92,  tall:106 },
+  hoso: { fat:-16,rough:6,  grain:30, smooth:6,  chip:0,  hair:0,  spat:0,  brk:0,  bn:5, dry:0,  wide:92,  tall:106 },
 };
 const KATA_NAME = { su:'素 — 元の書体のまま', fude:'筆 — 輪郭が波打つ',
   sure:'擦れ — 筆先が割れて縁が欠ける', hoso:'細身 — 細く縦長' };
