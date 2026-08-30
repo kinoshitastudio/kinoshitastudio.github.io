@@ -111,6 +111,33 @@ const R = await p.evaluate(async () => {
   out['⑦収めたら消える'] = !document.getElementById('meter').textContent.includes('版面から出ている');
   out['⑦つまみも動く'] = (+document.getElementById('size').value === S.run.size);
 
+  /* ⑩ ⭐ 書体から骨を起こす＝漢字・かなが書ける（骨を手で書く道は漢字では現実的でない） */
+  document.getElementById('tText').value='誰なのか？';
+  document.getElementById('tText').dispatchEvent(new Event('input',{bubbles:true})); await wait(200);
+  out['⑩骨が無いと盤で言う'] = document.getElementById('stat').textContent.includes('骨が無い');
+  document.querySelector('#segSrc button[data-v="auto"]').click(); await wait(1400);
+  out['⑩誰の骨'] = boneFor('誰').length;
+  out['⑩あの骨'] = boneFor('あ').length;
+  out['⑩漢字向けに落ちた'] = (S.pen.w <= 34 && S.hand.warp <= 20);
+  out['⑩つまみも動いた'] = (+document.getElementById('pW').value === S.pen.w);
+
+  /* ⑪ ⭐⭐ 1字ずつの直しは【規則からのズレ】＝③を動かしても残る */
+  S.adj = {}; S.sel = 1; syncAdj();
+  document.getElementById('aS').value = 160;
+  document.getElementById('aS').dispatchEvent(new Event('input',{bubbles:true})); await wait(150);
+  out['⑪ずれが入る'] = !!(S.adj[1] && S.adj[1].s === 160);
+  const keep = JSON.stringify(S.adj[1]);
+  document.getElementById('jr').value = 80;
+  document.getElementById('jr').dispatchEvent(new Event('input',{bubbles:true})); await wait(200);
+  out['⑪規則を動かしても残る'] = JSON.stringify(S.adj[1]) === keep;
+  /* ⚠️ でも【絵】は規則ぶん変わっている（ずれが規則を殺していない） */
+  document.getElementById('bAdjClear').click(); await wait(150);
+  out['⑪消せる'] = !S.adj[1];
+  set('jr', 48); await wait(120);
+  document.querySelector('#segSrc button[data-v="bone"]').click(); await wait(300);
+  document.getElementById('tText').value='YASUKO';
+  document.getElementById('tText').dispatchEvent(new Event('input',{bubbles:true})); await wait(200);
+
   /* ⑧ SVG */
   { const g = document.createElement('canvas').getContext('2d');
     out['⑧pathの数'] = paint(g, S.run.w, S.run.h, { svg:true }).filter(s=>s.startsWith('<path')).length; }
@@ -136,6 +163,14 @@ ok('⑦つまみも動く', R['⑦つまみも動く'] === true);
 ok('⑧pathの数', R['⑧pathの数'] >= 6);
 ok('⑨ムラ0の幅の開き', R['⑨ムラ0の幅の開き'] < 1.05);
 ok('⑨ムラ90の幅の開き', R['⑨ムラ90の幅の開き'] > 1.5);
+ok('⑩骨が無いと盤で言う', R['⑩骨が無いと盤で言う'] === true);
+ok('⑩誰の骨', R['⑩誰の骨'] > 5);
+ok('⑩あの骨', R['⑩あの骨'] > 2);
+ok('⑩漢字向けに落ちた', R['⑩漢字向けに落ちた'] === true);
+ok('⑩つまみも動いた', R['⑩つまみも動いた'] === true);
+ok('⑪ずれが入る', R['⑪ずれが入る'] === true);
+ok('⑪規則を動かしても残る', R['⑪規則を動かしても残る'] === true);
+ok('⑪消せる', R['⑪消せる'] === true);
 console.log('  ' + (err ? '🔴 例外 '+err+'件' : '✅ 例外なし'));
 
 /* ⚠️ 検算＝わざと壊したら落ちるか */
@@ -147,5 +182,5 @@ const bad = await p.evaluate(() => {
 console.log('  ── 検算：筆を極細にしたら帯が変わった＝ ' + bad + '（false なら②が落ちる）');
 
 if(NG.length || err){ console.log('  🔴 落ち：'+NG.join('／')); await b.close(); process.exit(1); }
-console.log('  ── 通過（16項目）');
+console.log('  ── 通過（24項目）');
 await b.close();
