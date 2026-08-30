@@ -98,6 +98,35 @@ const R = await p.evaluate(async () => {
     const body = paint(g, S.lay.w, S.lay.h, { svg:true });
     out['⑧pathの数'] = body.filter(s => s.startsWith('<path')).length; }
 
+  /* ⑯ ⭐ かすれが【グレーの汚れ】を作らない（抜くときは完全に抜く）
+     🔴 直す前は濃さで効かせていたので、白地の上で中間色になり「汚れ」に見えた。 */
+  { const grey = () => { const c=document.createElement('canvas'); c.width=c.height=320;
+      const g2=c.getContext('2d'); g2.fillStyle='#fff'; g2.fillRect(0,0,320,320);
+      drawGlyph(g2,'G',160,160,260,'#000',null); dryOver(g2,20,20,280,280,260);
+      const d=g2.getImageData(0,0,320,320).data;
+      let mid=0, tot=0;
+      for(let i=0;i<d.length;i+=4){ if(d[i+3]<10) continue; tot++;
+        if(d[i]>60 && d[i]<200) mid++; }
+      return +(mid/tot*100).toFixed(2); };
+    const ink2 = () => { const c=document.createElement('canvas'); c.width=c.height=320;
+      const g2=c.getContext('2d'); g2.fillStyle='#fff'; g2.fillRect(0,0,320,320);
+      drawGlyph(g2,'G',160,160,260,'#000',null); dryOver(g2,20,20,280,280,260);
+      const d=g2.getImageData(0,0,320,320).data;
+      let k=0; for(let i=0;i<d.length;i+=4) if(d[i+3]>128 && d[i]<128) k++; return k; };
+    S.cut.dry=0; cutCache.clear(); const m0=grey(), a0=ink2();
+    S.cut.dry=80; cutCache.clear();
+    out['⑯かすれ0の中間色%'] = m0;
+    out['⑯かすれ80の中間色%'] = grey();
+    out['⑯かすれ80で残る墨'] = +(ink2()/a0).toFixed(3);
+    S.cut.dry=0; cutCache.clear(); }
+
+  /* ⑰ ⭐ 字の色・地の色／白黒の入れ替え（参考は暗い地の白抜き） */
+  { S.ink='#111111'; S.bg='#ffffff'; S.inv=0;
+    out['⑰そのままの字色'] = inkCol(); out['⑰そのままの地色'] = bgCol();
+    S.inv=1;
+    out['⑰入れ替えた字色'] = inkCol(); out['⑰入れ替えた地色'] = bgCol();
+    S.inv=0; }
+
   /* ⑮ ⭐⭐ 割れ＝塊で持っていく（縁のさざ波ではない）＝墨が【まとまって】減る */
   { const ink = () => { const c = document.createElement('canvas');
       c.width = c.height = 300; const g2 = c.getContext('2d');
@@ -160,6 +189,9 @@ ok('⑦はみ出しを数える', R['⑦はみ出しを数える'] === true);
 ok('⑦収めたら0', R['⑦収めたら0'] === true);
 ok('⑦つまみも動く', R['⑦つまみも動く'] === true);
 ok('⑧pathの数', R['⑧pathの数'] >= 5);
+ok('⑯かすれで汚れない', R['⑯かすれ80の中間色%'] <= R['⑯かすれ0の中間色%'] + 0.2);
+ok('⑯かすれ80で残る墨', R['⑯かすれ80で残る墨'] < 0.85);
+ok('⑰白黒が入れ替わる', R['⑰そのままの字色'] === R['⑰入れ替えた地色'] && R['⑰そのままの地色'] === R['⑰入れ替えた字色']);
 ok('⑮割れで墨が減る', R['⑮割れで墨が減る'] > 0.3 && R['⑮割れで墨が減る'] < 0.95);
 ok('⑮振り切っても消えない', R['⑮振り切っても消えない'] === true);
 ok('⑭型でつまみが動く', R['⑭型でつまみが動く'] === true);
@@ -182,5 +214,5 @@ console.log('  ── 検算：崩しを全部切ったら字が変わった＝ 
   + '（ここが false なら つまみが効いていない＝②③が落ちる）');
 
 if(NG.length || err){ console.log('  🔴 落ち：' + NG.join('／')); await b.close(); process.exit(1); }
-console.log('  ── 通過（25項目）');
+console.log('  ── 通過（28項目）');
 await b.close();
