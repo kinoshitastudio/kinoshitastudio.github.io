@@ -98,6 +98,35 @@ const R = await p.evaluate(async () => {
     const body = paint(g, S.lay.w, S.lay.h, { svg:true });
     out['⑧pathの数'] = body.filter(s => s.startsWith('<path')).length; }
 
+  /* ⑱ ⭐⭐ 片寄り＝欠けが【一方向に寄る】（全周に均等だと「摩耗」に見える）
+     測り方＝抜けた所の重心が、字の真ん中からどれだけ離れるか。 */
+  { const off = () => { const c=document.createElement('canvas'); c.width=c.height=320;
+      const g2=c.getContext('2d'); g2.fillStyle='#fff'; g2.fillRect(0,0,320,320);
+      drawGlyph(g2,'O',160,160,260,'#000',null);
+      const a=g2.getImageData(0,0,320,320).data;
+      breakOver(g2,'O',160,160,260);
+      const b2=g2.getImageData(0,0,320,320).data;
+      /* ⭐ 測るのは【角度の集中度】＝抜けた所が字のまわりのどれだけ狭い方向に固まっているか。
+         🔴 「重心のずれ」で測ったら 44→51（1.16倍）しか出ず、効いているのに落ちた。
+           ⚠️ 塊がランダムでも重心はずれるので、ずれの大きさでは分からない。
+         ⭐ 角度を単位ベクトルにして足す（円周の集中度）。散っていれば打ち消し合って 0 に近い。 */
+      let vx=0, vy=0, k=0;
+      for(let i=0;i<a.length;i+=4){
+        const was = a[i+3]>128 && a[i]<128, now = b2[i+3]>128 && b2[i]<128;
+        if(was && !now){ const p=(i/4)|0, px=p%320, py=(p/320)|0;
+          const th=Math.atan2(py-160, px-160); vx+=Math.cos(th); vy+=Math.sin(th); k++; }
+      }
+      if(!k) return 0;
+      return +(Math.hypot(vx,vy)/k).toFixed(3);            /* 0＝散る／1＝一方向 */
+    };
+    /* ⚠️ 塊が少ないと、片寄り0でも偏って見える（6個で 0.772）＝差が出ない。
+       ⭐ **測れる条件で測る** ── 塊を多くして「散る／寄る」がはっきり分かれる所で比べる。 */
+    S.cut.brk = 45; S.cut.bn = 14; S.cut.bias = 0; cutCache.clear();
+    out['⑱片寄り0の集中度'] = off();
+    S.cut.bias = 100; cutCache.clear();
+    out['⑱片寄り100の集中度'] = off();
+    S.cut.brk = 0; S.cut.bn = 5; S.cut.bias = 0; cutCache.clear(); }
+
   /* ⑯ ⭐ かすれが【グレーの汚れ】を作らない（抜くときは完全に抜く）
      🔴 直す前は濃さで効かせていたので、白地の上で中間色になり「汚れ」に見えた。 */
   { const grey = () => { const c=document.createElement('canvas'); c.width=c.height=320;
@@ -192,6 +221,8 @@ ok('⑧pathの数', R['⑧pathの数'] >= 5);
 /* 🔴 ok() は R[キー] を表示する。R に無いキーで呼ぶと **undefined が出て通る** ＝
    判定は効いていても「動いていないテスト」に見える。⭐ 出す値をそのキーに入れる。 */
 R['⑯かすれで汚れない'] = { 素:R['⑯かすれ0の中間色%'], かすれ80:R['⑯かすれ80の中間色%'] };
+R['⑱片寄りで一方に寄る'] = R['⑱片寄り0の集中度'] + ' → ' + R['⑱片寄り100の集中度'];
+ok('⑱片寄りで一方に寄る', R['⑱片寄り100の集中度'] > R['⑱片寄り0の集中度'] + 0.15);
 ok('⑯かすれで汚れない', R['⑯かすれ80の中間色%'] <= R['⑯かすれ0の中間色%'] + 0.2);
 ok('⑯かすれ80で残る墨', R['⑯かすれ80で残る墨'] < 0.85);
 R['⑰白黒が入れ替わる'] = R['⑰そのままの字色'] + '/' + R['⑰そのままの地色']
@@ -219,5 +250,5 @@ console.log('  ── 検算：崩しを全部切ったら字が変わった＝ 
   + '（ここが false なら つまみが効いていない＝②③が落ちる）');
 
 if(NG.length || err){ console.log('  🔴 落ち：' + NG.join('／')); await b.close(); process.exit(1); }
-console.log('  ── 通過（28項目）');
+console.log('  ── 通過（29項目）');
 await b.close();
