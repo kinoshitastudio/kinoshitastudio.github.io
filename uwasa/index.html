@@ -154,6 +154,8 @@
     <input type="range" id="grain" min="4" max="100" value="30">
     <div class="row"><span class="n">割れ（塊で持っていく）</span><output id="oBreak">0</output></div>
     <input type="range" id="brk" min="0" max="100" value="0">
+    <div class="row"><span class="n">片寄り（擦れる向き）</span><output id="oBias">0</output></div>
+    <input type="range" id="bias" min="0" max="100" value="0">
     <div class="row"><span class="n">割れの数</span><output id="oBn">5</output></div>
     <input type="range" id="bn" min="1" max="14" value="5">
     <div class="row"><span class="n">欠け（縁がぎざつく）</span><output id="oChip">0</output></div>
@@ -277,7 +279,7 @@ const S = {
   /* ⭐ 欠け・毛羽・飛沫は 2026-08-31 追加（参考＝映画『FOG DOG』題字・吉良進太郎）。
      ⚠️ 既定は 0 ＝これまでの作品が1画素も変わらない。足したものは選ばせる。 */
   cut:{ fat:0, rough:34, grain:30, smooth:18, slant:0, wide:100, tall:100,
-        chip:0, hair:0, spat:0, brk:0, bn:5, dry:0, seed:1 },
+        chip:0, hair:0, spat:0, brk:0, bn:5, bias:0, dry:0, seed:1 },
   view:'one',
   sheet:'あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん爆弾誰お前',
   grid:1, ink:'#141414', bg:'#ffffff', inv:0,
@@ -569,14 +571,35 @@ function breakOver(g, ch, x, y, size){
   g.save();
   g.globalCompositeOperation = 'destination-out';
   g.fillStyle = '#000';
+  /* ══⭐⭐ 片寄り（2026-08-31）══
+     🔴 割れを輪郭の【どこでも】に置くと、全周に均等に散って「摩耗」に見える。
+     ⭐ 参考（FOG DOG）は G が上半分・O が左・D が右下 ──
+       **字ごとに違う一方向が、大きく持っていかれている**。
+     ⭐ 筆は一方向に走るので、擦れは**進む向きの片側に寄る**（原因から作る）。
+     ⚠️ 向きは【字ごとに】決める（全字おなじ向きだと、機械が削ったように見える）。
+       ⚠️ でも決め方の規則は全字おなじ＝だから書体になる。 */
+  const dir = r() * Math.PI * 2;                  /* この字が擦れる向き */
+  const bias = C.bias/100;
+  const cxAll = 500, cyAll = 500;                 /* em の箱の真ん中 */
   for(let i=0;i<n;i++){
     const ring = rings[(r()*rings.length)|0];
     if(!ring || !ring.length) continue;
-    const p = ring[(r()*ring.length)|0];
+    let p = ring[(r()*ring.length)|0];
+    if(bias > 0){
+      /* ⭐ 向きに近い側の点を選び直す＝寄せる。何度か引いて、いちばん向いている点を採る */
+      let best = p, bestD = -9;
+      const tries = 2 + Math.round(bias*10);
+      for(let t=0;t<tries;t++){
+        const q = ring[(r()*ring.length)|0];
+        const d = Math.cos(Math.atan2(q[1]-cyAll, q[0]-cxAll) - dir);
+        if(d > bestD){ bestD = d; best = q; }
+      }
+      p = best;
+    }
     const cxp = x - size/2 + p[0]*k, cyp = y - size/2 + p[1]*k;
     /* ⚠️ 上限を上げすぎると、つまみを振り切ったとき字が丸ごと消える。
        ⭐ 大きさは字の 4〜17% まで（それ以上は「割れ」ではなく「消しゴム」） */
-    const rad = size * (0.04 + r()*0.13) * (C.brk/100);
+    const rad = size * (0.04 + r()*0.13) * (C.brk/100) * (1 + bias*0.8);
     const m = 7 + ((r()*6)|0);
     g.beginPath();
     for(let q=0;q<m;q++){
@@ -798,10 +821,10 @@ function meter(){
 function stat(s){ $('stat').textContent = s; }
 
 /* ══ つまみ ══ ⭐ 配線は1か所（効かないつまみを作らない） */
-const CUT = { fat:'fat', rough:'rough', grain:'grain', smooth:'smooth', slant:'slant', wide:'wide', tall:'tall', chip:'chip', hair:'hair', spat:'spat', brk:'brk', bn:'bn', dry:'dry', seed:'seed' };
+const CUT = { fat:'fat', rough:'rough', grain:'grain', smooth:'smooth', slant:'slant', wide:'wide', tall:'tall', chip:'chip', hair:'hair', spat:'spat', brk:'brk', bn:'bn', bias:'bias', dry:'dry', seed:'seed' };
 const OUTID = { fat:'oFat', rough:'oRough', grain:'oGrain', smooth:'oSmooth', slant:'oSlant',
   wide:'oWide', tall:'oTall', chip:'oChip', hair:'oHair', spat:'oSpat',
-  brk:'oBreak', bn:'oBn', dry:'oDry', seed:'oSeed', mSize:'oMSize', mX:'oMX', mY:'oMY',
+  brk:'oBreak', bn:'oBn', bias:'oBias', dry:'oDry', seed:'oSeed', mSize:'oMSize', mX:'oMX', mY:'oMY',
   kOpen:'oKOpen', kLead:'oLead', kLine:'oLine', kWrap:'oWrap', outLong:'oOut' };
 function out(id){ const o = $(OUTID[id]); if(o) o.textContent = $(id).value; }
 Object.keys(CUT).forEach(id => $(id).addEventListener('input', e => {
@@ -856,16 +879,16 @@ document.querySelectorAll('#segFam button').forEach(b => b.onclick = () => {
    ⚠️ 「素」は全部 0 ＝ **元の書体のまま**。どの型からでも必ずここへ戻れる
      （戻る所が無い型ぞろえは、触るのが怖くなる）。 */
 const KATA = {
-  su  : { fat:0,  rough:0,  grain:30, smooth:0,  chip:0,  hair:0,  spat:0,  brk:0,  bn:5, dry:0,  wide:100, tall:100 },
+  su  : { fat:0,  rough:0,  grain:30, smooth:0,  chip:0,  hair:0,  spat:0,  brk:0,  bn:5, bias:0, dry:0,  wide:100, tall:100 },
   /* 筆＝映画『爆弾』の見出し。輪郭が波打つ（筆の毛が紙を通った跡） */
-  fude: { fat:8,  rough:46, grain:28, smooth:16, chip:0,  hair:0,  spat:0,  brk:0,  bn:5, dry:16, wide:100, tall:100 },
+  fude: { fat:8,  rough:46, grain:28, smooth:16, chip:0,  hair:0,  spat:0,  brk:0,  bn:5, bias:0, dry:16, wide:100, tall:100 },
   /* 擦れ＝映画『FOG DOG』の題字。筆先が割れて縁が欠け、毛羽と飛沫が出る */
   /* 🔴 一度 割れ70・数6 にしたら**字が読めなくなった**（半分以上持っていかれる）。
      ⭐ 参考は「大きく欠けるが、字は読める」── 塊は**大きく・少なく**。 */
   sure: { fat:22, rough:18, grain:22, smooth:12, chip:28, hair:24, spat:20,
-          brk:34, bn:3, dry:12, wide:100, tall:100 },
+          brk:38, bn:3, bias:72, dry:12, wide:100, tall:100 },
   /* 細身＝映画『ゆきてかへらぬ』の縦組み。細く・縦長・崩しはほとんど無い */
-  hoso: { fat:-16,rough:6,  grain:30, smooth:6,  chip:0,  hair:0,  spat:0,  brk:0,  bn:5, dry:0,  wide:92,  tall:106 },
+  hoso: { fat:-16,rough:6,  grain:30, smooth:6,  chip:0,  hair:0,  spat:0,  brk:0,  bn:5, bias:0, dry:0,  wide:92,  tall:106 },
 };
 const KATA_NAME = { su:'素 — 元の書体のまま', fude:'筆 — 輪郭が波打つ',
   sure:'擦れ — 筆先が割れて縁が欠ける', hoso:'細身 — 細く縦長' };
