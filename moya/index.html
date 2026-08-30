@@ -794,6 +794,16 @@
     <input type="range" id="sh_sides" min="3" max="20" step="1" value="6">
     <label class="chk">塗る<input type="checkbox" id="sh_fillon" checked></label>
     <input type="color" id="sh_fill" value="#ffffff">
+    <label class="chk">塗りをグラデーションにする<input type="checkbox" id="sh_grad"></label>
+    <div id="shGradUI" class="hide">
+      <div class="row"><span class="n">はじめの色</span></div>
+      <input type="color" id="sh_g1" value="#000000">
+      <div class="row"><span class="n">おわりの色</span></div>
+      <input type="color" id="sh_g2" value="#000000">
+      <label class="chk">おわりを透明にする<input type="checkbox" id="sh_gfade" checked></label>
+      <div class="row"><span class="n">向き</span><output id="o_shgang">90°</output></div>
+      <input type="range" id="sh_gang" min="0" max="360" step="1" value="90">
+    </div>
     <label class="chk">線を引く<input type="checkbox" id="sh_strokeon"></label>
     <input type="color" id="sh_stroke" value="#1c1c1e">
     <div class="row"><span class="n">線の太さ</span><output id="o_ssw">8</output></div>
@@ -1675,8 +1685,12 @@ function textCanvas(L){
    ⭐ 塗りと線は別のつまみ（片方だけ無しが作れる）→ feedback_dont_bundle_two_knobs_in_one */
 const SHAPES = [['rect','長方形'], ['ellipse','楕円'], ['line','線'],
                 ['tri','三角'], ['poly','多角形'], ['star','星']];
+/* ⭐⭐ 図形の塗りは【単色】か【グラデーション】（2026-08-31）
+   🔴 ポスターは「下を暗く落として字を置く」が定番なので、
+      終わりを透明にできるグラデーションが無いと、帯を何枚も重ねる羽目になる（段差が出る）。 */
 function newShape(){ return { type:'rect', w:600, h:400, r:0, sides:6,
-  fill:'#ffffff', fillOn:true, stroke:'#1c1c1e', strokeOn:false, sw:8 }; }
+  fill:'#ffffff', fillOn:true, stroke:'#1c1c1e', strokeOn:false, sw:8,
+  grad:false, g1:'#000000', g2:'#000000', gang:90, gfade:true }; }
 function shapeOf(L){ return L.shape || (L.shape = newShape()); }
 function shapeCanvas(L){
   const q = shapeOf(L);
@@ -1709,7 +1723,18 @@ function shapeCanvas(L){
     }
     x.closePath();
   }
-  if(q.fillOn && q.type !== 'line'){ x.fillStyle = q.fill; x.fill(); }
+  if(q.fillOn && q.type !== 'line'){
+    if(q.grad){
+      const th = (q.gang || 90) * Math.PI / 180;
+      const ux = Math.cos(th), uy = Math.sin(th);
+      const gr = x.createLinearGradient(cx - ux*W/2, cy - uy*H/2, cx + ux*W/2, cy + uy*H/2);
+      gr.addColorStop(0, q.g1);
+      /* ⭐ 終わりを透明にすると【段差の出ない落とし】が1枚で作れる */
+      gr.addColorStop(1, q.gfade ? rgba(q.g2, 0) : q.g2);
+      x.fillStyle = gr;
+    }else x.fillStyle = q.fill;
+    x.fill();
+  }
   if(sw > 0){ x.strokeStyle = q.stroke; x.lineWidth = sw; x.lineJoin = 'round';
     x.lineCap = 'round'; x.stroke(); }
   try{
@@ -4656,10 +4681,22 @@ SHROWS.forEach(([rid, oid, key, toVal, fmt]) => {
     shapeOf(L)[key] = e.target.value; rebuildShape(L); touching(); renderSoon();
   });
 });
-[['sh_fillon','fillOn'], ['sh_strokeon','strokeOn']].forEach(([id, key]) => {
+[['sh_g1','g1'], ['sh_g2','g2']].forEach(([id, key]) => {
+  el(id).addEventListener('input', e => {
+    const L = LAYERS[SEL]; if(!L || L.kind !== 'shape') return;
+    shapeOf(L)[key] = e.target.value; rebuildShape(L); touching(); renderSoon();
+  });
+});
+el('sh_gang').addEventListener('input', e => {
+  const L = LAYERS[SEL]; if(!L || L.kind !== 'shape') return;
+  shapeOf(L).gang = +e.target.value; el('o_shgang').value = e.target.value + '°';
+  rebuildShape(L); touching(); renderSoon();
+});
+[['sh_fillon','fillOn'], ['sh_strokeon','strokeOn'], ['sh_grad','grad'],
+ ['sh_gfade','gfade']].forEach(([id, key]) => {
   el(id).addEventListener('change', e => {
     const L = LAYERS[SEL]; if(!L || L.kind !== 'shape') return;
-    hist(); shapeOf(L)[key] = e.target.checked; rebuildShape(L); render();
+    hist(); shapeOf(L)[key] = e.target.checked; rebuildShape(L); syncShape(); render();
   });
 });
 function syncShape(){
@@ -4674,6 +4711,12 @@ function syncShape(){
     el(rid).value = Math.round(q[key]); el(oid).value = fmt(q[key]); });
   el('sh_fill').value = q.fill; el('sh_stroke').value = q.stroke;
   el('sh_fillon').checked = !!q.fillOn; el('sh_strokeon').checked = !!q.strokeOn;
+  el('sh_grad').checked = !!q.grad;
+  el('sh_gfade').checked = q.gfade !== false;
+  el('sh_g1').value = q.g1 || '#000000'; el('sh_g2').value = q.g2 || '#000000';
+  el('sh_gang').value = q.gang == null ? 90 : q.gang;
+  el('o_shgang').value = (q.gang == null ? 90 : q.gang) + '°';
+  el('shGradUI').classList.toggle('hide', !q.grad);
   /* ⭐ 触れるのに効かないつまみは出さない（角の丸みは長方形だけ・角の数は多角形と星だけ） */
   const show = (id, on2) => { const e = el(id); if(!e) return;
     e.style.display = on2 ? '' : 'none';

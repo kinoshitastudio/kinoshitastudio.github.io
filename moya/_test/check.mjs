@@ -1178,7 +1178,8 @@ const SU = await p.evaluate(() => {
                 'r_igsize','r_igop','r_bsize','r_bdepth','r_bang','r_bhiop','r_bloop',
                 'r_tang','r_tdist','r_tblur','r_top','r_gscale',
                 'r_selsw','r_selblur','t_hs','t_vs','t_skew','t_sw','t_bgpad','t_bgr','t_bgop',
-                'r_mang','r_wfreq','r_liqrad','r_liqstr','r_rrough','r_rsize','r_rstr','r_rseed'];
+                'r_mang','r_wfreq','r_liqrad','r_liqstr','r_rrough','r_rsize','r_rstr','r_rseed',
+                'sh_gang'];
   const bad = [];
   document.querySelectorAll('#panel input[type=range]').forEach(e => {
     if(SKIP.includes(e.id)) return;
@@ -1325,6 +1326,28 @@ const SKINDS = await p.evaluate(async () => {
   return out;
 });
 ok(SKINDS.length === 6, '⭐ 6つのかたちが作れる', SKINDS.join('/'));
+/* ⭐⭐ 図形の塗りは【グラデーション（終わりを透明）】にできる
+   🔴 ポスターの「下を落として字を置く」は これが無いと帯を何枚も重ねる羽目になり、
+      必ず段差が出る（2026-08-31 にキングダム風を組んで分かった）。 */
+const SHG = await p.evaluate(async () => {
+  document.querySelector('#s_shape button[data-v="rect"]').click();
+  await new Promise(r => setTimeout(r, 300));
+  const L = LAYERS[SEL];
+  Object.assign(shapeOf(L), { w:800, h:800, fillOn:true, strokeOn:false,
+    grad:true, g1:'#000000', g2:'#000000', gang:270, gfade:true });
+  rebuildShape(L);
+  await new Promise(r => setTimeout(r, 300));
+  const c = document.createElement('canvas'); c.width = 40; c.height = 40;
+  c.getContext('2d').drawImage(L.img, 0, 0, 40, 40);
+  const d = c.getContext('2d').getImageData(0, 0, 40, 40).data;
+  return { 上:d[(2*40+20)*4+3], 下:d[(37*40+20)*4+3] };
+});
+ok(Math.abs(SHG.上 - SHG.下) > 120,
+   '⭐⭐ 図形の塗りをグラデーションにでき、終わりが透明になる（段差の出ない落とし）',
+   JSON.stringify(SHG));
+await p.evaluate(() => { const L = LAYERS[SEL];
+  shapeOf(L).grad = false; rebuildShape(L); });
+await wait(400);
 /* 図形のつまみ＝効く状態を作ってから測る（角の丸みは長方形・線の太さは線ONのとき） */
 const SHDEAD = [];
 for(const k of ['sh_w','sh_h','sh_r','sh_sides','sh_sw']){
