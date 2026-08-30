@@ -98,6 +98,25 @@ const R = await p.evaluate(async () => {
     const body = paint(g, S.lay.w, S.lay.h, { svg:true });
     out['⑧pathの数'] = body.filter(s => s.startsWith('<path')).length; }
 
+  /* ⑮ ⭐⭐ 割れ＝塊で持っていく（縁のさざ波ではない）＝墨が【まとまって】減る */
+  { const ink = () => { const c = document.createElement('canvas');
+      c.width = c.height = 300; const g2 = c.getContext('2d');
+      g2.fillStyle='#fff'; g2.fillRect(0,0,300,300);
+      drawGlyph(g2,'G',150,150,240,'#000',null);
+      breakOver(g2,'G',150,150,240);
+      const d = g2.getImageData(0,0,300,300).data;
+      /* 🔴 色だけで数えると【抜いた所も墨】に数えてしまう ──
+         destination-out で抜けた画素は alpha=0 だが RGB は 0（黒）のまま。
+         ⭐ alpha も一緒に見る。実測：見ないと「割れを入れたら墨が1.365倍に増えた」になる。 */
+      let k=0; for(let i=0;i<d.length;i+=4) if(d[i+3] > 128 && d[i] < 128) k++;
+      return k; };
+    S.cut.brk = 0; cutCache.clear(); const i0 = ink();
+    S.cut.brk = 60; S.cut.bn = 5; cutCache.clear(); const i1 = ink();
+    out['⑮割れで墨が減る'] = +(i1/i0).toFixed(3);
+    S.cut.brk = 100; cutCache.clear(); const i2 = ink();
+    out['⑮振り切っても消えない'] = (i2/i0) > 0.15;   /* 字が丸ごと消えない */
+    S.cut.brk = 0; cutCache.clear(); }
+
   /* ⑭ ⭐ 型＝押すとつまみ自体がその値になる／素へ必ず戻れる（2026-08-31） */
   document.querySelector('#segKata button[data-v="sure"]').click(); await wait(350);
   out['⑭型でつまみが動く'] = (+document.getElementById('chip').value === S.cut.chip && S.cut.chip > 0);
@@ -141,6 +160,8 @@ ok('⑦はみ出しを数える', R['⑦はみ出しを数える'] === true);
 ok('⑦収めたら0', R['⑦収めたら0'] === true);
 ok('⑦つまみも動く', R['⑦つまみも動く'] === true);
 ok('⑧pathの数', R['⑧pathの数'] >= 5);
+ok('⑮割れで墨が減る', R['⑮割れで墨が減る'] > 0.3 && R['⑮割れで墨が減る'] < 0.95);
+ok('⑮振り切っても消えない', R['⑮振り切っても消えない'] === true);
 ok('⑭型でつまみが動く', R['⑭型でつまみが動く'] === true);
 ok('⑭素へ戻る', R['⑭素へ戻る'] === true);
 ok('⑭型で絵が変わる', R['⑭型で絵が変わる'] === true);
@@ -161,5 +182,5 @@ console.log('  ── 検算：崩しを全部切ったら字が変わった＝ 
   + '（ここが false なら つまみが効いていない＝②③が落ちる）');
 
 if(NG.length || err){ console.log('  🔴 落ち：' + NG.join('／')); await b.close(); process.exit(1); }
-console.log('  ── 通過（23項目）');
+console.log('  ── 通過（25項目）');
 await b.close();
