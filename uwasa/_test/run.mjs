@@ -109,7 +109,7 @@ const R = await p.evaluate(async () => {
       const b2=g2.getImageData(0,0,N,N).data;
       const cc=document.createElement('canvas'); cc.width=cc.height=N;
       const gc=cc.getContext('2d'); gc.fillStyle='#000';
-      const rings=coreRings('O', S.cut.core/100*1000*0.075), k=250/1000;
+      const rings=coreOf('O'), k=250/1000;   /* ⭐ 本体が実際に使う芯を聞く（別計算だと食い違う） */
       gc.save(); gc.translate(N/2-125, N/2-125); gc.scale(k,k);
       gc.beginPath(); rings.forEach(r2=>{ gc.moveTo(r2[0][0],r2[0][1]);
         for(let i=1;i<r2.length;i++) gc.lineTo(r2[i][0],r2[i][1]); gc.closePath(); });
@@ -125,10 +125,28 @@ const R = await p.evaluate(async () => {
       }
       return { 芯:+(cn/Math.max(1,cw)).toFixed(3), 縁:+(en/Math.max(1,ew)).toFixed(3), 地を食った:outside };
     };
-    S.cut.tsubu=0; cutCache.clear(); const z0 = zone();
-    S.cut.tsubu=70; cutCache.clear(); const z1 = zone();
-    S.cut.core=0;  cutCache.clear(); const z2 = zone();
-    S.cut.tsubu=0; S.cut.core=46; cutCache.clear();
+    /* ⚠️ 芯を変えたら芯の控えも捨てる（本体と同じ道を通す） */
+    const cc2 = () => { cutCache.clear(); coreCache.clear(); };
+    S.cut.tsubu=0; cc2(); const z0 = zone();
+    S.cut.tsubu=70; cc2(); const z1 = zone();
+    S.cut.core=0;  cc2(); const z2 = zone();
+    S.cut.tsubu=0; S.cut.core=46; cc2();
+    /* ㉒ ⭐ 画数の多い字でも【中身が残る】か
+       🔴 芯の押し込みを絶対値でやっていたとき、漢字は芯が消えて**輪郭線だけ**になった。
+       ⚠️ 太い O だけで測っていたので出なかった＝**測る字が悪かった**。 */
+    const keep = ch2 => { const N=420, c=document.createElement('canvas'); c.width=c.height=N;
+      const g2=c.getContext('2d'); g2.fillStyle='#fff'; g2.fillRect(0,0,N,N);
+      drawGlyph(g2,ch2,N/2,N/2,320,'#000',null);
+      const a2=g2.getImageData(0,0,N,N).data;
+      tsubuOver(g2,ch2,N/2,N/2,320);
+      const b3=g2.getImageData(0,0,N,N).data;
+      let was=0, now=0;
+      for(let i=0;i<a2.length;i+=4){ if(a2[i+3]>128&&a2[i]<128){ was++;
+        if(b3[i+3]>128&&b3[i]<128) now++; } }
+      return +(now/Math.max(1,was)).toFixed(3); };
+    S.cut.tsubu=62; S.cut.core=44; cc2();
+    out['㉒画数の多い字に残る'] = { 爆:keep('爆'), 弾:keep('弾'), あ:keep('あ') };
+    S.cut.tsubu=0; S.cut.core=46; cc2();
     out['⑳粒立ちは縁を食う'] = z0.縁 + ' → ' + z1.縁;
     out['⑳芯は残る'] = z1.芯;
     out['⑳芯0なら芯も食う'] = z2.芯;
@@ -280,6 +298,7 @@ ok('⑳粒立ちは縁を食う', R['⑳粒立ちは縁を食う'] === '1 → ' 
 ok('⑳芯は残る', R['⑳芯は残る'] > 0.95);
 ok('⑳芯0なら芯も食う', R['⑳芯0なら芯も食う'] < 0.8);
 ok('㉑地を食っていない', R['㉑地を食っていない'] === 0);
+ok('㉒画数の多い字に残る', Object.values(R['㉒画数の多い字に残る']).every(v => v > 0.35));
 ok('⑲毛羽は折れた形（5点）', R['⑲毛羽は折れた形（5点）'] === true);
 ok('⑲飛沫の点数の種類', R['⑲飛沫の点数の種類'].length >= 3);
 ok('⑲ムラで出る数が変わる', R['⑲ムラで出る数が変わる'] === true);
@@ -311,5 +330,5 @@ console.log('  ── 検算：崩しを全部切ったら字が変わった＝ 
   + '（ここが false なら つまみが効いていない＝②③が落ちる）');
 
 if(NG.length || err){ console.log('  🔴 落ち：' + NG.join('／')); await b.close(); process.exit(1); }
-console.log('  ── 通過（36項目）');
+console.log('  ── 通過（37項目）');
 await b.close();
