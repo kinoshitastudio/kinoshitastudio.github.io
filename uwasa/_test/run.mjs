@@ -98,6 +98,42 @@ const R = await p.evaluate(async () => {
     const body = paint(g, S.lay.w, S.lay.h, { svg:true });
     out['⑧pathの数'] = body.filter(s => s.startsWith('<path')).length; }
 
+  /* ⑳ ⭐⭐ 粒立ち ── 線の中が粒でできる／芯は残る（参考＝映画『ちるらん』題字）
+     ㉑ 🔴🔴 抜きは【地まで食う】── 板を字の形で切っていないと版面に穴が空く */
+  { const zone = () => {
+      const N=340, c=document.createElement('canvas'); c.width=c.height=N;
+      const g2=c.getContext('2d'); g2.fillStyle='#fff'; g2.fillRect(0,0,N,N);
+      drawGlyph(g2,'O',N/2,N/2,250,'#000',null);
+      const a=g2.getImageData(0,0,N,N).data;
+      tsubuOver(g2,'O',N/2,N/2,250);
+      const b2=g2.getImageData(0,0,N,N).data;
+      const cc=document.createElement('canvas'); cc.width=cc.height=N;
+      const gc=cc.getContext('2d'); gc.fillStyle='#000';
+      const rings=coreRings('O', S.cut.core/100*1000*0.075), k=250/1000;
+      gc.save(); gc.translate(N/2-125, N/2-125); gc.scale(k,k);
+      gc.beginPath(); rings.forEach(r2=>{ gc.moveTo(r2[0][0],r2[0][1]);
+        for(let i=1;i<r2.length;i++) gc.lineTo(r2[i][0],r2[i][1]); gc.closePath(); });
+      gc.fill('evenodd'); gc.restore();
+      const cd=gc.getImageData(0,0,N,N).data;
+      let cw=0,cn=0,ew=0,en=0, outside=0;
+      for(let i=0;i<a.length;i+=4){
+        const was=a[i+3]>128&&a[i]<128, now=b2[i+3]>128&&b2[i]<128;
+        /* ㉑ 字の外の地が抜かれていないか（抜かれると alpha が落ちる） */
+        if(!was && a[i+3]>128 && b2[i+3]<128) outside++;
+        if(!was) continue;
+        if(cd[i+3]>128){ cw++; if(now) cn++; } else { ew++; if(now) en++; }
+      }
+      return { 芯:+(cn/Math.max(1,cw)).toFixed(3), 縁:+(en/Math.max(1,ew)).toFixed(3), 地を食った:outside };
+    };
+    S.cut.tsubu=0; cutCache.clear(); const z0 = zone();
+    S.cut.tsubu=70; cutCache.clear(); const z1 = zone();
+    S.cut.core=0;  cutCache.clear(); const z2 = zone();
+    S.cut.tsubu=0; S.cut.core=46; cutCache.clear();
+    out['⑳粒立ちは縁を食う'] = z0.縁 + ' → ' + z1.縁;
+    out['⑳芯は残る'] = z1.芯;
+    out['⑳芯0なら芯も食う'] = z2.芯;
+    out['㉑地を食っていない'] = z1.地を食った; }
+
   /* ⑲ ⭐ 毛羽・飛沫の形（2026-08-31 木下「小さな三角をもっと歪に／量もランダムに」）
      ⚠️ 「縦横比のばらつき」で測ろうとしたが 0.71→0.60 と**逆に出た**（形が伸びると
         比は揃う方向にも動く）＝測り方が悪い。⭐ 確かめられる所で測る：
@@ -149,7 +185,7 @@ const R = await p.evaluate(async () => {
      🔴 直す前は濃さで効かせていたので、白地の上で中間色になり「汚れ」に見えた。 */
   { const grey = () => { const c=document.createElement('canvas'); c.width=c.height=320;
       const g2=c.getContext('2d'); g2.fillStyle='#fff'; g2.fillRect(0,0,320,320);
-      drawGlyph(g2,'G',160,160,260,'#000',null); dryOver(g2,20,20,280,280,260);
+      drawGlyph(g2,'G',160,160,260,'#000',null); dryOver(g2,'G',160,160,260);   /* ⚠️ 字ごと・字の形で切る形に変わった */
       const d=g2.getImageData(0,0,320,320).data;
       let mid=0, tot=0;
       for(let i=0;i<d.length;i+=4){ if(d[i+3]<10) continue; tot++;
@@ -157,7 +193,7 @@ const R = await p.evaluate(async () => {
       return +(mid/tot*100).toFixed(2); };
     const ink2 = () => { const c=document.createElement('canvas'); c.width=c.height=320;
       const g2=c.getContext('2d'); g2.fillStyle='#fff'; g2.fillRect(0,0,320,320);
-      drawGlyph(g2,'G',160,160,260,'#000',null); dryOver(g2,20,20,280,280,260);
+      drawGlyph(g2,'G',160,160,260,'#000',null); dryOver(g2,'G',160,160,260);   /* ⚠️ 字ごと・字の形で切る形に変わった */
       const d=g2.getImageData(0,0,320,320).data;
       let k=0; for(let i=0;i<d.length;i+=4) if(d[i+3]>128 && d[i]<128) k++; return k; };
     S.cut.dry=0; cutCache.clear(); const m0=grey(), a0=ink2();
@@ -240,6 +276,10 @@ ok('⑧pathの数', R['⑧pathの数'] >= 5);
    判定は効いていても「動いていないテスト」に見える。⭐ 出す値をそのキーに入れる。 */
 R['⑯かすれで汚れない'] = { 素:R['⑯かすれ0の中間色%'], かすれ80:R['⑯かすれ80の中間色%'] };
 R['⑱片寄りで一方に寄る'] = R['⑱片寄り0の集中度'] + ' → ' + R['⑱片寄り100の集中度'];
+ok('⑳粒立ちは縁を食う', R['⑳粒立ちは縁を食う'] === '1 → ' + R['⑳粒立ちは縁を食う'].split(' → ')[1] && parseFloat(R['⑳粒立ちは縁を食う'].split(' → ')[1]) < 0.8);
+ok('⑳芯は残る', R['⑳芯は残る'] > 0.95);
+ok('⑳芯0なら芯も食う', R['⑳芯0なら芯も食う'] < 0.8);
+ok('㉑地を食っていない', R['㉑地を食っていない'] === 0);
 ok('⑲毛羽は折れた形（5点）', R['⑲毛羽は折れた形（5点）'] === true);
 ok('⑲飛沫の点数の種類', R['⑲飛沫の点数の種類'].length >= 3);
 ok('⑲ムラで出る数が変わる', R['⑲ムラで出る数が変わる'] === true);
@@ -271,5 +311,5 @@ console.log('  ── 検算：崩しを全部切ったら字が変わった＝ 
   + '（ここが false なら つまみが効いていない＝②③が落ちる）');
 
 if(NG.length || err){ console.log('  🔴 落ち：' + NG.join('／')); await b.close(); process.exit(1); }
-console.log('  ── 通過（32項目）');
+console.log('  ── 通過（36項目）');
 await b.close();
