@@ -110,9 +110,9 @@
 
   <div class="grp">
     <label class="h">① 何を書くか</label>
-    <textarea id="tText" rows="2">YASUKO</textarea>
+    <textarea id="tText" rows="2">HON</textarea>
     <div class="seg" id="segSrc">
-      <button data-v="bone" class="on">手書きの骨（欧文）</button>
+      <button data-v="bone" class="on">手書きの骨＋起こす</button>
       <button data-v="auto">書体から起こす</button>
     </div>
     <div class="seg" id="segFam">
@@ -247,7 +247,9 @@ const $ = id => document.getElementById(id);
 const cv = $('cv'), cx = cv.getContext('2d');
 
 const S = {
-  text:'YASUKO',
+  /* ⚠️ 既定を YASUKO にしていたが、参考にした映画のものだと分かってしまう。
+     ⭐ 道具の名前を書く（2026-08-31 木下）。 */
+  text:'HON',
   /* ⭐ 既定は【参考の実測】に寄せる（映画『ゆきてかへらぬ』の赤い手書き）。
      線幅は字の高さの 3.6%／字は縦長（幅:高さ ≒ 0.64）／1字は版面の幅の 21%。
      ⚠️ 直す前は 線幅 5.8%・正方の箱だったので「全然違う」形になっていた。 */
@@ -413,9 +415,19 @@ function boneFromFont(ch){
   autoCache.set(key, out);
   return out;
 }
+/* ⭐⭐ 2026-08-31 木下が「DあRえDあ」と打って、かなだけ消えた。
+   🔴 下の帯で「①を替えれば書ける」と言ってはいたが、**替えさせる作りだった**。
+     ＝ 出せるのに出していない＝入っていないのと同じ。
+   ⭐ 混ざっていたら**自動で拾う** ── 欧文は手書きの骨・かな漢字は起こした骨。
+     字ごとに出どころが違ってよい（どちらも「骨」であることは同じ）。 */
 function boneFor(ch){
   if(S.src === 'auto') return boneFromFont(ch);
-  return boneOf(ch);
+  return boneOf(ch) || boneFromFont(ch);
+}
+/* その字の骨が【どこから来たか】＝画面で言うために持つ */
+function boneSrcOf(ch){
+  if(S.src === 'auto') return 'auto';
+  return boneOf(ch) ? 'bone' : 'auto';
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -465,15 +477,17 @@ function resample(pts, step){
   return out;
 }
 /* 骨1本 → 閉じた輪郭（帯） */
-function strokeOutline(pts, w, seed){
+function strokeOutline(pts, w, seed, opt){
   const P = S.pen, H = S.hand;
+  const kSweep = (opt && opt.sweepK !== undefined) ? opt.sweepK : 1;
+  const kOver  = (opt && opt.overK  !== undefined) ? opt.overK  : 1;
   /* はみ出し＝端を伸ばす */
   /* ⭐ 流れ＝角を丸める（続け書きにする）。⚠️ 筆を着せる前に掛ける */
   pts = chaikin(pts, P.flow/100, 2);
   /* ⭐ はみ出し＝入り側／⭐⭐ 払い＝【終筆だけ】長く伸ばす。
      ⚠️ 参考は入りより抜きが圧倒的に長い（速く払った跡）。両端おなじだと「ただの延長」に見える。 */
-  const ovIn = (P.over/100) * w * 0.9;
-  const ovOut = ovIn + (P.sweep/100) * w * 4.2;
+  const ovIn = (P.over/100) * w * 0.9 * kOver;
+  const ovOut = ovIn + (P.sweep/100) * w * 4.2 * kSweep;
   if(pts.length >= 2){
     const ext = (a,b,d0) => { const d = Math.hypot(b[0]-a[0], b[1]-a[1]) || 1;
       return [ a[0] + (a[0]-b[0])/d*d0, a[1] + (a[1]-b[1])/d*d0 ]; };
@@ -490,7 +504,7 @@ function strokeOutline(pts, w, seed){
   for(let i=0;i<m;i++) nz.push(r()*2-1);
   const wob = i => { const f=i/cell, k=f|0, t=f-k, s=t*t*(3-2*t);
     return (nz[k%m])*(1-s) + (nz[(k+1)%m])*s; };
-  const amp = (H.jit/100) * w * 0.42;
+  const amp = (H.jit/100) * w * 0.42 * (opt && opt.jitK !== undefined ? opt.jitK : 1);
   /* ══⭐⭐ 線幅のムラ ── 【速さ】から作る（結果でなく原因から）══
      ⭐ 手で速く書くと、**曲がる所は遅くなって太り、まっすぐな所は速くて細る**。
        だから太さを乱数でばらすのではなく、**骨の曲がり具合**から出す。
@@ -537,7 +551,14 @@ function glyph(ch, i){
   if(cache.has(key)) return cache.get(key);
   const bone = boneFor(ch);
   if(!bone || !bone.length){ cache.set(key, []); return []; }
-  const w = P.w;
+  /* ⚠️⚠️ 同じつまみでも、骨の【出どころ】で崩れ方が変わる。
+     起こした骨は点が細かく画数も多いので、欧文の手書き骨と同じ量を掛けると**潰れて読めない**。
+     ⭐ だから起こした骨には割り引いて掛ける（つまみの値は変えない＝選んだ値は動かさない）。
+     ⚠️ 割り引いていることは画面で言う（黙って別の値を使わない）。 */
+  const lent = boneSrcOf(ch) === 'auto';
+  const K = lent ? { w:0.55, warp:0.28, jit:0.42, sweep:0.34, over:0.45, trace:1 }
+                 : { w:1, warp:1, jit:1, sweep:1, over:1, trace:0 };
+  const w = P.w * K.w;
   /* 🔴 直す前はここで w を10倍していた＝線幅が字の高さの62%になり、
      字が【1つの塊】に潰れていた。参考（ゆきてかへらぬの赤い字）を実測すると
      線幅は字の高さの **約6%**。⭐ つまみの数字をそのまま em1000 の単位で使う。 */
@@ -545,7 +566,8 @@ function glyph(ch, i){
      参考の赤い字は、線が1本でなく **2本以上が少しずれて重なっている**
      （速く書いて、足りない所をもう一度なぞった跡）。
      ⚠️ 同じ震えで重ねても1本にしか見えない＝種を変えるのが要点。 */
-  const tr = Math.max(1, Math.round(P.trace||1));
+  /* ⚠️ 起こした骨は画数が多い＝なぞりを重ねると真っ黒になる。1回だけにする */
+  const tr = lent ? 1 : Math.max(1, Math.round(P.trace||1));
   const g = [];
   bone.forEach((st, si) => {
     for(let t=0;t<tr;t++){
@@ -562,7 +584,7 @@ function glyph(ch, i){
            骨の角の位置を字ごとにずらす。⚠️ ずらすのは字の大きさに対する割合。
          ⚠️ 端の点は少し強めに（払いの先ほど狙いが外れる）。 */
       const wr = rnd(H.seed*457 + i*211 + si*29 + ch.charCodeAt(0)*3);
-      const wa = (H.warp/100) * 90;
+      const wa = (H.warp/100) * 90 * K.warp;
       const pts = st.map((p, pi) => {
         const edge = (pi === 0 || pi === st.length-1) ? 1.5 : 1;
         const wx = (wr()-0.5)*wa*edge, wy = (wr()-0.5)*wa*edge;
@@ -570,7 +592,8 @@ function glyph(ch, i){
         return [ 500 + x*ca2 - y*sa2 + off[0], 500 + x*sa2 + y*ca2 + off[1] ];
       });
       const o = strokeOutline(pts, w * (t===0 ? 1 : 0.82),
-        H.seed*977 + i*131 + si*17 + t*4409 + ch.charCodeAt(0));
+        H.seed*977 + i*131 + si*17 + t*4409 + ch.charCodeAt(0),
+        { jitK:K.jit, sweepK:K.sweep, overK:K.over });
       if(o) g.push(o);
     }
   });
@@ -731,11 +754,14 @@ function render(){ const [W,H2] = boardSize(); paint(cx, W, H2, null); meter(); 
 function meter(){
   const chars = runChars();
   const miss = chars.filter(c => c.trim() && !(boneFor(c)||[]).length);
+  const lent = chars.filter(c => c.trim() && boneSrcOf(c) === 'auto');
   /* 🔴 2026-08-31 木下が「誰なのか？」と打って【真っ白】になった。
      しかも理由は右パネルの下にしか出ていなかった＝**見えない所に書いても書いていないのと同じ**。
      ⭐ 盤の上（下の帯）で言う。⭐ しかも【どうすれば出るか】まで言う。 */
-  if(miss.length && S.src === 'bone')
-    stat('🔴 ' + miss.join('') + ' の骨が無い（手書きの骨は欧文の大文字と数字だけ）— ①の「書体から起こす」に替えると 漢字・かな も書けます');
+  if(miss.length)
+    stat('🔴 ' + miss.join('') + ' は書けなかった（端末にその字が無い）');
+  else if(lent.length && S.src === 'bone')
+    stat('⭐ ' + lent.join('') + ' は【書体から骨を起こして】書いた ── 起こした骨は画数が多いので、崩しは割り引いて掛けています（つまみの値はそのまま）');
   else if(!chars.filter(c=>c.trim()).length) stat('①に字を打つ');
   let rings = 0, pts = 0;
   chars.forEach((ch,i) => glyph(ch,i).forEach(r => { rings++; pts += r.length; }));
@@ -746,7 +772,8 @@ function meter(){
   $('meter').textContent =
     `骨 ${Object.keys(BONE).length}字ぶん\n字 ${chars.length} ／ 帯 ${rings} ／ 点 ${pts}\n`
     + `出す ${S.out.long}px`
-    + (miss.length ? `\n🔴 骨が無い字：${miss.join('')} — ①を「書体から起こす」に替える` : '')
+    + (lent.length ? `\n⭐ 起こした骨で書いた字：${lent.join('')}` : '')
+    + (miss.length ? `\n🔴 書けなかった字：${miss.join('')}（端末にその字が無い）` : '')
     + ((over[0]+over[1]+over[2]+over[3]) ? `\n🔴 版面から出ている 左${over[0]} 右${over[1]} 上${over[2]} 下${over[3]} px` : '');
 }
 function stat(s){ $('stat').textContent = s; }
@@ -769,8 +796,13 @@ Object.entries(RUN).forEach(([id,key]) => $(id).addEventListener('input', e => {
 $('outLong').addEventListener('input', e => { S.out.long = +e.target.value; out('outLong'); meter(); });
 $('tText').addEventListener('input', e => {
   /* ⚠️ 大文字に直すのは【手書きの骨】のときだけ。書体から起こすなら日本語をそのまま */
-  S.text = (S.src === 'bone') ? e.target.value.toUpperCase() : e.target.value;
-  if(S.text !== e.target.value) e.target.value = S.text;
+  /* ⚠️ 大文字に直すのは【欧文の小文字】だけ。日本語をそのまま通す
+     （前は丸ごと toUpperCase していたが、混ざったときに困る） */
+  S.text = (S.src === 'bone')
+    ? [...e.target.value].map(c => /[a-z]/.test(c) ? c.toUpperCase() : c).join('')
+    : e.target.value;
+  if(S.text !== e.target.value){ const p0 = e.target.selectionStart; e.target.value = S.text;
+    try{ e.target.setSelectionRange(p0,p0); }catch(_){} }
   S.sel = -1; syncAdj(); draw(); });
 $('col').addEventListener('input', e => { S.run.col = e.target.value; draw(); });
 function segOn(id,v){ document.querySelectorAll('#'+id+' button').forEach(b=>b.classList.toggle('on', String(b.dataset.v)===String(v))); }

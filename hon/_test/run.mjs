@@ -49,7 +49,12 @@ const R = await p.evaluate(async () => {
   document.getElementById('tText').dispatchEvent(new Event('input',{bubbles:true})); await wait(150);
   /* 骨が無い字は画面で名指しするか */
   S.text = 'YASUKOあ'; render(); await wait(120);
-  out['①無い字を名指し'] = document.getElementById('meter').textContent.includes('骨が無い字');
+  /* ⭐ 2026-08-31 仕様が変わった：手書きの骨が無い字は【自動で起こして拾う】。
+     ⚠️ だから「骨が無い」とは言わない。⭐ 代わりに【どこから来た骨か】を言う。 */
+  await wait(1400);
+  out['①かなも書ける'] = boneFor('あ').length > 2;
+  out['①出どころを言う'] = document.getElementById('stat').textContent.includes('起こして');
+  out['①欧文は手書きの骨のまま'] = boneSrcOf('Y') === 'bone';
   S.text = 'YASUKO'; document.getElementById('tText').value='YASUKO'; render(); await wait(120);
 
   /* ② 太さが割合で効く（🔴 10倍していて塊になっていた） */
@@ -114,7 +119,7 @@ const R = await p.evaluate(async () => {
   /* ⑩ ⭐ 書体から骨を起こす＝漢字・かなが書ける（骨を手で書く道は漢字では現実的でない） */
   document.getElementById('tText').value='誰なのか？';
   document.getElementById('tText').dispatchEvent(new Event('input',{bubbles:true})); await wait(200);
-  out['⑩骨が無いと盤で言う'] = document.getElementById('stat').textContent.includes('骨が無い');
+  out['⑩起こしたと盤で言う'] = document.getElementById('stat').textContent.includes('起こして');
   document.querySelector('#segSrc button[data-v="auto"]').click(); await wait(1400);
   out['⑩誰の骨'] = boneFor('誰').length;
   out['⑩あの骨'] = boneFor('あ').length;
@@ -149,7 +154,9 @@ const ok = (k, cond) => { console.log((cond?'  ✅ ':'  🔴 ')+k+' … '+JSON.s
 console.log('── 奔 HON（骨で書いた欧文を、筆で走らせる）');
 ok('①骨の字数', R['①骨の字数'] >= 36);
 ok('①A–Zが揃う', R['①A–Zが揃う'] === true);
-ok('①無い字を名指し', R['①無い字を名指し'] === true);
+ok('①かなも書ける', R['①かなも書ける'] === true);
+ok('①出どころを言う', R['①出どころを言う'] === true);
+ok('①欧文は手書きの骨のまま', R['①欧文は手書きの骨のまま'] === true);
 ok('②字の高さに対して%', R['②字の高さに対して%'] > 2 && R['②字の高さに対して%'] < 12);
 ok('②太さ120の帯', R['②太さ120の帯'] > R['②太さ58の帯']*1.7);
 ok('③端の太さ', R['③端の太さ'] < R['③真ん中の太さ']*0.6);
@@ -163,7 +170,7 @@ ok('⑦つまみも動く', R['⑦つまみも動く'] === true);
 ok('⑧pathの数', R['⑧pathの数'] >= 6);
 ok('⑨ムラ0の幅の開き', R['⑨ムラ0の幅の開き'] < 1.05);
 ok('⑨ムラ90の幅の開き', R['⑨ムラ90の幅の開き'] > 1.5);
-ok('⑩骨が無いと盤で言う', R['⑩骨が無いと盤で言う'] === true);
+ok('⑩起こしたと盤で言う', R['⑩起こしたと盤で言う'] === true);
 ok('⑩誰の骨', R['⑩誰の骨'] > 5);
 ok('⑩あの骨', R['⑩あの骨'] > 2);
 ok('⑩漢字向けに落ちた', R['⑩漢字向けに落ちた'] === true);
@@ -182,5 +189,5 @@ const bad = await p.evaluate(() => {
 console.log('  ── 検算：筆を極細にしたら帯が変わった＝ ' + bad + '（false なら②が落ちる）');
 
 if(NG.length || err){ console.log('  🔴 落ち：'+NG.join('／')); await b.close(); process.exit(1); }
-console.log('  ── 通過（24項目）');
+console.log('  ── 通過（26項目）');
 await b.close();
