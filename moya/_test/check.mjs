@@ -1062,6 +1062,132 @@ ok(await same10(SH0), '🔴 紙の形を消すと1画素も同じに戻る',
 ok(await p.evaluate(() => typeof takeFiles === 'function'),
    '⭐ まとめて置くのは takeFiles 1本を通る（＝選んだ順に並ぶ）');
 
+/* ══⑪ 素材ひとつを編集する画面（ダブルクリック／階調・色・フィルター・パレット）══ */
+await p.evaluate(() => document.getElementById('b_demo').click());
+await wait(1800);
+await p.evaluate(() => document.getElementById('layers').children[1]
+  .dispatchEvent(new MouseEvent('dblclick', { bubbles:true })));
+await wait(1400);
+ok(await p.evaluate(() => cutView()), '⭐⭐ 一覧をダブルクリックすると【その素材だけの画面】に入る');
+ok(await p.evaluate(() => !document.getElementById('editBox').classList.contains('hide')),
+   '⭐ 編集パネル（階調・色・フィルター）が出る');
+ok(await p.evaluate(() => { const c = document.getElementById('histo').getContext('2d');
+  const d = c.getImageData(0,0,240,64).data; let n = 0;
+  for(let i=3;i<d.length;i+=4) if(d[i]>0) n++; return n > 200; }), '⭐ ヒストグラムが出る');
+const SW = await p.evaluate(() => document.getElementById('swatches').children.length);
+ok(SW > 0, '⭐ カラーパレット（その素材の色）が出る', SW + '色');
+
+/* ⭐⭐ 17本ぜんぶが効く＝死んでいるつまみが無い（端まで動かして絵が変わるか）
+   → feedback_count_the_pictures_a_knob_makes */
+const ED0 = await shot();
+const EDKNOBS = ['r_black','r_white','r_gamma','r_hue','r_sat','r_lum','r_temp','r_tint',
+  'r_eblur','r_sharp','r_enoise','r_mosaic','r_poster','r_thresh','r_mono','r_einvert','r_eedge'];
+const EDDEAD = [];
+for(const k of EDKNOBS){
+  const before = await shot();
+  const keep = await p.evaluate(kk => { const e = document.getElementById(kk); const v0 = e.value;
+    e.value = (kk === 'r_white' || kk === 'r_gamma') ? e.min : e.max;
+    e.dispatchEvent(new Event('input', { bubbles:true })); return v0; }, k);
+  await wait(650);
+  if(diff(await shot(), before) === 0) EDDEAD.push(k);
+  await p.evaluate((kk, v) => { const e = document.getElementById(kk); e.value = v;
+    e.dispatchEvent(new Event('input', { bubbles:true })); }, k, keep);
+  await wait(450);
+}
+ok(EDDEAD.length === 0, '⭐⭐ 編集の17本ぜんぶが効く（死んでいるつまみが無い）',
+   EDDEAD.length ? EDDEAD.join(',') : '17/17');
+ok(diff(await shot(), ED0) === 0, '⭐ つまみを戻すと1画素も同じに戻る');
+await p.evaluate(() => { const e = document.getElementById('r_mosaic'); e.value = 70;
+  e.dispatchEvent(new Event('input', { bubbles:true })); });
+await wait(700);
+ok(diff(await shot(), ED0) !== 0, '（前提）モザイクをかけると絵は変わっている');
+await p.evaluate(() => document.getElementById('b_edreset').click());
+await wait(700);
+ok(diff(await shot(), ED0) === 0, '🔴 ［ぜんぶ戻す］で1画素も同じに戻る（編集を焼き込んでいない）');
+/* 設定JSON にも入る */
+ok(await p.evaluate(() => { const e = document.getElementById('r_mosaic'); e.value = 50;
+  e.dispatchEvent(new Event('input', { bubbles:true }));
+  const o = snapshot(); return !!(o.layers[SEL] && o.layers[SEL].ed && o.layers[SEL].ed.mosaic > 0); }),
+  '⭐ 編集の値は設定JSONにも入る（どう作ったかが戻る）');
+await p.evaluate(() => document.getElementById('b_edreset').click());
+await wait(500);
+await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t="move"]');
+  if(bt) bt.click(); });
+await wait(700);
+
+/* ══⑫ 空気の効き 0 は【紙の仕上げ】も通さない ══
+   🔴 木下＝「入れた画像を素のままにしているのになぜ（白く）効いている？」 */
+await p.evaluate(() => document.getElementById('b_demo').click());
+await wait(1800);
+const RAWCHK = await p.evaluate(async () => {
+  const shot2 = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+    const o = []; for(let i = 0; i < d.length; i += 4*7) o.push(d[i], d[i+3]); return o; };
+  const df = (A,B) => { let n = 0;
+    for(let i = 0; i < Math.min(A.length,B.length); i++) if(Math.abs(A[i]-B[i]) > 8) n++; return n; };
+  /* 灯とにじみを強くしてから、いちばん手前の素材だけ「素のまま」にする */
+  const put = (id, v) => { const e = document.getElementById(id); e.value = v;
+    e.dispatchEvent(new Event('input',{bubbles:true})); };
+  put('r_li', 90); put('r_bloom', 90); put('r_halo', 90); put('r_lift', 60);
+  await new Promise(r=>setTimeout(r,600));
+  const before = shot2();
+  const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+  SEL = LAYERS.indexOf(o[0]); SELIDS = [o[0].id]; syncSel();
+  put('r_air', 0);
+  await new Promise(r=>setTimeout(r,800));
+  const after = shot2();
+  put('r_air', 100);
+  await new Promise(r=>setTimeout(r,800));
+  return { 効いた: df(before, after) > 0, 戻る: df(before, shot2()) === 0 };
+});
+ok(RAWCHK.効いた, '⭐⭐ 空気の効き 0 は【灯のひろがり・にじみ・ハレーション】も通さない');
+ok(RAWCHK.戻る, '⭐ 1 に戻すと1画素も同じに戻る');
+
+/* ══⑬ 型「素」と右パネルの整合（木下＝「素の状態から少しだけ調整して全体のバランスを
+   とる。そのためにも素の状態と右パネルがしっかり整合性をとっていないと困る」）══
+   ⭐ 素を押したら【絵に効くつまみは ぜんぶ 0】でなければ嘘になる。 */
+await p.evaluate(() => document.getElementById('b_demo').click());
+await wait(1600);
+await p.evaluate(() => document.querySelector('#s_preset button[data-v="su"]').click());
+await wait(1200);
+const SU = await p.evaluate(() => {
+  /* 絵に効かないもの＝素材の置き方・切り抜きの道具・出す大きさ・種・影の形 */
+  const NEU = { r_op:100, r_air:100, r_white:100, r_gamma:100, r_out:100 };
+  const SKIP = ['r_long','r_tol','r_brush','r_feather','r_seed','r_shds','r_shdl','r_shdc',
+                'r_lr','r_scale','r_depth','r_rot'];
+  const bad = [];
+  document.querySelectorAll('#panel input[type=range]').forEach(e => {
+    if(SKIP.includes(e.id)) return;
+    const want = (e.id in NEU) ? NEU[e.id] : 0;
+    if(+e.value !== want) bad.push(e.id + '=' + e.value + '（' + want + ' のはず）');
+  });
+  return { bad, 灯: LIGHTS.map(L => L.i + '/' + L.rim + '/' + L.bnc).join(' ') };
+});
+ok(SU.bad.length === 0, '⭐⭐ 型「素」を押すと 絵に効くつまみは ぜんぶ 0（右パネルと絵が食い違わない）',
+   SU.bad.length ? SU.bad.join(' , ') : 'ぜんぶ 0');
+ok(SU.灯 === '0/0/0', '⭐ 素では 灯の強さ・縁の光・照り返しも 0', SU.灯);
+
+/* ⑬-2 一覧の数字が【略さず】出る（木下＝「奥行きの数字を明確に表示してほしい」） */
+const ROWTXT = await p.evaluate(() => {
+  const r = document.getElementById('layers').children[0];
+  return { dp:r.querySelector('.dp').textContent, air:r.querySelector('.air').textContent };
+});
+ok(/奥 \d\.\d\d/.test(ROWTXT.dp) && /空気 \d\.\d\d/.test(ROWTXT.dp),
+   '⭐ 一覧に 奥行きと空気の効きが 数字で出る', ROWTXT.dp);
+ok(['空','素'].includes(ROWTXT.air) || /%$/.test(ROWTXT.air),
+   '⭐ 空気のボタンは 空／素／◯◯% のどれか（略した数字を出さない）', ROWTXT.air);
+
+/* ⑬-3 一覧の空気ボタンが本当に切り替わる */
+const ROWAIR = await p.evaluate(async () => {
+  const rows = () => [...document.getElementById('layers').children];
+  const val = () => airOf(LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b))[2]);
+  const before = val();
+  rows()[2].querySelector('.air').click();
+  await new Promise(r => setTimeout(r, 300));
+  return { before, after: val(), txt: rows()[2].querySelector('.air').textContent };
+});
+ok(ROWAIR.before === 1 && ROWAIR.after === 0 && ROWAIR.txt === '素',
+   '⭐ 一覧の空気ボタンで その素材だけ素のままにできる', JSON.stringify(ROWAIR));
+
 /* ⑨ モバイル */
 await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
 await wait(900);
