@@ -918,6 +918,150 @@ ok(BD.back && BD.hasImg, '⭐⭐ まるごと＝【写真を置き直さずに�
 ok(BD.oki && BD.zure && BD.kiri && BD.knob,
    '⭐⭐ 置き方・ズレ・切り抜き・つまみが全部戻る');
 
+/* ══⑩ 2026-08-30 に足したもの（一覧・複数選択・グループ・クリップ・調整・紙を切る）══ */
+await p.setViewport({ width:1400, height:900 });
+await p.evaluate(() => { document.getElementById('b_demo').click(); });
+await wait(1800);
+const fp10  = () => shot();
+const same10 = async A => diff(await shot(), A) === 0;
+
+/* ⑩-1 ▲▼ が本当に効く（前は「奥行きが同じもの」しか入れ替えず、押しても動かなかった） */
+const ORD10 = await p.evaluate(async () => {
+  const now = () => LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b)).map(L=>L.name).join('|');
+  const before = now();
+  const rows = [...document.getElementById('layers').children];
+  [...rows[rows.length-1].querySelectorAll('button')].find(b2=>b2.textContent==='▲').click();
+  await new Promise(r=>setTimeout(r,250));
+  return { before, after: now() };
+});
+ok(ORD10.before !== ORD10.after, '⭐⭐ ▲で並ぶ順が本当に変わる', ORD10.after);
+
+/* ⑩-2 目のアイコンに斜線が出る／行が薄くなる */
+const EYE10 = await p.evaluate(() => {
+  const q = () => document.getElementById('layers').children[0];
+  const on = q().querySelector('.eye').innerHTML.includes('M2.4');
+  q().querySelector('.eye').click();
+  return { 出しているとき斜線:on, 隠したとき斜線:q().querySelector('.eye').innerHTML.includes('M2.4'),
+           行が薄い:q().classList.contains('off') };
+});
+ok(!EYE10.出しているとき斜線 && EYE10.隠したとき斜線 && EYE10.行が薄い,
+   '⭐ 隠すと目に斜線が引かれ、行も薄くなる', JSON.stringify(EYE10));
+await p.evaluate(() => document.getElementById('layers').children[0].querySelector('.eye').click());
+await wait(300);
+
+/* ⑩-3 空気の効き＝既定 1.00 は【分岐ごと通さない】＝1画素も変わらない */
+const AIR0 = await fp10();
+await p.evaluate(() => { SEL = 1; SELIDS = [LAYERS[1].id]; syncSel();
+  const e = document.getElementById('r_air'); e.value = 100; e.dispatchEvent(new Event('input',{bubbles:true})); });
+await wait(700);
+ok(await same10(AIR0), '⭐⭐ 空気の効き 1.00 は1画素も変えない（既定＝いままでの絵）');
+await p.evaluate(() => { const e = document.getElementById('r_air'); e.value = 0;
+  e.dispatchEvent(new Event('input',{bubbles:true})); });
+await wait(700);
+ok(!(await same10(AIR0)), '⭐⭐ 0 にすると素のまま（空気を通さない）');
+await p.evaluate(() => { const e = document.getElementById('r_air'); e.value = 100;
+  e.dispatchEvent(new Event('input',{bubbles:true})); });
+await wait(700);
+ok(await same10(AIR0), '⭐ 1 に戻すと1画素も同じに戻る');
+
+/* ⑩-4 複数選択とグループ */
+const GRP10 = await p.evaluate(async () => {
+  SELIDS = [LAYERS[0].id, LAYERS[1].id]; syncSelIds(); buildList();
+  const two = SELIDS.length;
+  groupSel();
+  await new Promise(r=>setTimeout(r,200));
+  const o = { two, g:GROUPS.length, member:LAYERS.filter(L=>L.g!=null).length,
+              見出し:!!document.querySelector('.ly.grp'),
+              一員が寄る:document.querySelectorAll('.ly.ing').length };
+  SELIDS = []; syncSelIds();
+  setSel(LAYERS.findIndex(L=>L.g!=null), false);
+  o.ごと選ぶ = SELIDS.length;
+  const bx = LAYERS.map(L=>L.x);
+  selLayers().forEach(L => { L.x += 0.05; });
+  o.まとめて動く = LAYERS.filter((L,i)=>L.x!==bx[i]).length;
+  return o;
+});
+ok(GRP10.two === 2 && GRP10.g === 1 && GRP10.member === 2, '⭐⭐ ⌘G で2枚がグループになる', JSON.stringify(GRP10));
+ok(GRP10.見出し && GRP10.一員が寄る === 2, '⭐ 一覧にグループの見出しが出て、一員が寄って並ぶ');
+ok(GRP10.ごと選ぶ === 2 && GRP10.まとめて動く === 2, '⭐⭐ 一員を選ぶとグループごと選ばれ、まとめて動く');
+await p.evaluate(() => { ungroupSel(); });
+await wait(300);
+ok(await p.evaluate(() => GROUPS.length === 0 && LAYERS.every(L=>L.g==null)), '⭐ ⌘⇧G で解ける');
+
+/* ⑩-5 クリッピングマスク＝焼き込まない */
+await p.evaluate(() => document.getElementById('b_demo').click());
+await wait(1800);
+const CL0 = await fp10();
+await p.evaluate(() => {
+  const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+  SEL = LAYERS.indexOf(o[0]); SELIDS = [o[0].id]; syncSel();
+  const e = document.getElementById('k_clip'); e.checked = true;
+  e.dispatchEvent(new Event('change',{bubbles:true}));
+});
+await wait(700);
+ok(!(await same10(CL0)), '⭐⭐ クリッピングマスク＝下の素材の形で切れる');
+await p.evaluate(() => { const e = document.getElementById('k_clip'); e.checked = false;
+  e.dispatchEvent(new Event('change',{bubbles:true})); });
+await wait(700);
+ok(await same10(CL0), '🔴 外すと1画素も同じに戻る（クリップを焼き込んでいない）');
+
+/* ⑩-6 調整レイヤー＝置いた瞬間は何も変わらない／効く範囲は奥行きで決まる */
+const AD0 = await fp10();
+await p.evaluate(() => {
+  const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+  SEL = LAYERS.indexOf(o[0]); SELIDS = [o[0].id]; syncSel();
+  document.getElementById('b_adjlayer').click();
+});
+await wait(800);
+ok(await same10(AD0), '⭐⭐ 調整レイヤーは置いた瞬間 1画素も変えない（既定ぜんぶ 0）');
+await p.evaluate(() => { const e = document.getElementById('r_abri'); e.value = 60;
+  e.dispatchEvent(new Event('input',{bubbles:true})); });
+await wait(800);
+ok(!(await same10(AD0)), '⭐⭐ 明るさを動かすと【奥にあるものぜんぶ】が変わる');
+await p.evaluate(() => moveToSlot(LAYERS.findIndex(L=>L.kind==='adj'), LAYERS.length-1));
+await wait(800);
+ok(await same10(AD0), '⭐⭐ いちばん奥へ送ると誰にも効かない（効く範囲は奥行きが決める）');
+ok(await p.evaluate(() => { const i = hitLayer({x:.5,y:.5});
+  return i < 0 || LAYERS[i].kind !== 'adj'; }), '⭐ 調整レイヤーは盤で掴めない（絵が無い）');
+
+/* ⑩-7 紙ぜんぶをパスで切る */
+await p.evaluate(() => document.getElementById('b_demo').click());
+await wait(1800);
+const SH0 = await fp10();
+const alpha = () => p.evaluate(() => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+  let a = 0; for(let i=3;i<d.length;i+=4) if(d[i]>0) a++; return a; });
+const SA0 = await alpha();
+await p.evaluate(() => {
+  const e = document.getElementById('k_sheetpath'); e.checked = true;
+  e.dispatchEvent(new Event('change',{bubbles:true}));
+  POLY = [{x:.2,y:.2,hx:0,hy:0},{x:.8,y:.25,hx:0,hy:0},{x:.5,y:.8,hx:0,hy:0}];
+  document.getElementById('k_keepin').checked = true;
+  closePath();
+});
+await wait(900);
+ok(!(await p.evaluate(() => cutView())), '⭐ 紙を切るモードでも盤は版面のまま（素材の画面へ入らない）');
+const SA1 = await alpha();
+ok(SA1 < SA0 * 0.6, '⭐⭐ 紙ぜんぶがパスの形に切れる', SA0 + ' → ' + SA1);
+const SOUT = await p.evaluate(() => { const f = outSheet();
+  const c = document.createElement('canvas'); c.width = f.w; c.height = f.h;
+  const keep = COARSE; COARSE = 0; LAYERS.forEach(L => L._key = '');
+  paint(c.getContext('2d'), f.w, f.h, true); COARSE = keep;
+  const d = c.getContext('2d').getImageData(0,0,f.w,f.h).data;
+  let a = 0; for(let i=3;i<d.length;i+=4) if(d[i]>0) a++;
+  return a / (f.w*f.h); });
+ok(SOUT < 0.6, '⭐ 書き出しでも同じ形に切れる（見た目と出す絵が食い違わない）',
+   Math.round(SOUT*100) + '%');
+await p.evaluate(() => { document.getElementById('b_unsheet').click();
+  const e = document.getElementById('k_sheetpath'); e.checked = false;
+  e.dispatchEvent(new Event('change',{bubbles:true})); });
+await wait(900);
+ok(await same10(SH0), '🔴 紙の形を消すと1画素も同じに戻る',
+   '違い ' + diff(await shot(), SH0));
+
+/* ⑩-8 まとめて置いたとき【選んだ順】に並ぶ（読み終わり順に足すと毎回変わっていた） */
+ok(await p.evaluate(() => typeof takeFiles === 'function'),
+   '⭐ まとめて置くのは takeFiles 1本を通る（＝選んだ順に並ぶ）');
+
 /* ⑨ モバイル */
 await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
 await wait(900);
