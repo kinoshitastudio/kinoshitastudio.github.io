@@ -1861,6 +1861,71 @@ await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t
   if(bt) bt.click(); document.getElementById('b_demo').click(); });
 await wait(1600);
 
+/* ══㉚ 閉じたパスは【あとから点を直せる】══ 2026-08-31
+   ⭐ 点／ハンドルを掴む・線の上を押すと点が増える・⌫ で消す・続きを描く */
+await p.setViewport({ width:1400, height:900 });
+await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t="move"]');
+  if(bt) bt.click(); document.getElementById('b_demo').click(); });
+await wait(1600);
+await p.evaluate(() => {
+  const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+  SEL = LAYERS.indexOf(o[1]); SELIDS = [o[1].id]; syncSel(); buildList();
+  document.querySelector('#tools button[data-t="path"]').click();
+  const m = maskSize(LAYERS[SEL]);
+  POLY = [{x:m.w*0.2,y:m.h*0.2,hx:0,hy:0},{x:m.w*0.8,y:m.h*0.25,hx:0,hy:0},
+          {x:m.w*0.5,y:m.h*0.8,hx:0,hy:0}];
+  closePath();
+});
+await wait(900);
+const PE = await p.evaluate(async () => {
+  const L = LAYERS[SEL], m = maskSize(L);
+  const toScr = (u, v) => {
+    const iw = L.img.naturalWidth, ih = L.img.naturalHeight;
+    const dw = L.s*cv.width, dh = dw*ih/iw*syOf(L);
+    let uu = u; if(L.flip) uu = 1 - u;
+    const s2 = toScreen((L.x*cv.width + (uu-0.5)*dw)/cv.width,
+                        (L.y*cv.height + (v-0.5)*dh)/cv.height);
+    return { x:s2.clientX, y:s2.clientY };
+  };
+  const before = { x:L.sel.pts[0].x, y:L.sel.pts[0].y };
+  const A = toScr(before.x/m.w, before.y/m.h);
+  const st = document.getElementById('stage');
+  st.dispatchEvent(new PointerEvent('pointerdown',
+    { bubbles:true, pointerId:21, clientX:A.x, clientY:A.y }));
+  st.dispatchEvent(new PointerEvent('pointermove',
+    { bubbles:true, pointerId:21, clientX:A.x+40, clientY:A.y+30 }));
+  st.dispatchEvent(new PointerEvent('pointerup',
+    { bubbles:true, pointerId:21, clientX:A.x+40, clientY:A.y+30 }));
+  await new Promise(r => setTimeout(r, 500));
+  const moved = Math.abs(LAYERS[SEL].sel.pts[0].x - before.x) > 3 ||
+                Math.abs(LAYERS[SEL].sel.pts[0].y - before.y) > 3;
+  /* 線の上を押すと点が増える */
+  const n0 = LAYERS[SEL].sel.pts.length;
+  const ps = LAYERS[SEL].sel.pts;
+  const mid = { x:(ps[0].x+ps[1].x)/2, y:(ps[0].y+ps[1].y)/2 };
+  const B = toScr(mid.x/m.w, mid.y/m.h);
+  st.dispatchEvent(new PointerEvent('pointerdown',
+    { bubbles:true, pointerId:22, clientX:B.x, clientY:B.y }));
+  st.dispatchEvent(new PointerEvent('pointerup',
+    { bubbles:true, pointerId:22, clientX:B.x, clientY:B.y }));
+  await new Promise(r => setTimeout(r, 500));
+  const n1 = LAYERS[SEL].sel.pts.length;
+  dispatchEvent(new KeyboardEvent('keydown', { key:'Backspace', bubbles:true }));
+  await new Promise(r => setTimeout(r, 400));
+  return { moved, 掴んだ:SELPT, n0, n1, n2:LAYERS[SEL].sel.pts.length };
+});
+ok(PE.moved, '⭐⭐ 閉じたパスの点を掴んで動かせる（形をあとから直せる）', JSON.stringify(PE));
+ok(PE.n1 === PE.n0 + 1, '⭐ 線の上を押すと点が増える（Photoshop と同じ）',
+   PE.n0 + ' → ' + PE.n1);
+ok(PE.n2 === PE.n0, '⭐ ⌫ で選んだ点を消せる');
+await p.evaluate(() => document.getElementById('b_pathedit').click());
+await wait(800);
+ok(await p.evaluate(() => POLY.length >= 3 && !LAYERS[SEL].sel),
+   '⭐［続きを描く］で開いた状態に戻る（点は残る）');
+await p.evaluate(() => { POLY = []; const bt = document.querySelector('#tools button[data-t="move"]');
+  if(bt) bt.click(); document.getElementById('b_demo').click(); });
+await wait(1600);
+
 /* ⑨ モバイル */
 await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
 await wait(900);

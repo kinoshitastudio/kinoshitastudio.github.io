@@ -657,6 +657,9 @@
           <button class="btn" id="b_pathsave">このパスを残す</button>
           <button class="btn" id="b_pathshape">パスから図形を作る</button>
         </div>
+        <button class="btn" id="b_pathedit" style="width:100%;margin-top:6px">続きを描く（開いた状態に戻す）</button>
+        <div class="note">パスの道具にすると<b>点が出ます</b>。点もハンドルも掴んで直せます。
+          <b>線の上を押すと点が増え</b>、⌫ で選んだ点を消せます。</div>
         <div class="row"><span class="n">残したパス</span>
           <output id="o_pathn" style="width:auto;flex:0 0 auto">0</output></div>
         <div id="pathList" style="display:flex;flex-direction:column;gap:4px"></div>
@@ -1256,6 +1259,7 @@ function syncSelIds(){
 /* ⭐ 選び方は1本の道。add＝足す（⇧/⌘）／同じものをもう一度なら外す。
    ⭐ グループの一員を選んだら【グループごと】選ぶ（Photoshop と同じ言い方）。 */
 function setSel(i, add){
+  SELPT = -1;
   const L = LAYERS[i];
   if(!L){ SELIDS = []; syncSelIds(); return; }
   const g = groupOf(L);
@@ -1348,6 +1352,7 @@ const isPaper = () => !!PAPERS[P.ratio];
      （toMask が版面の座標も素材の中の座標に直せる）。
      近づいて切りたいときだけ ダブルクリックで その素材だけの画面へ入る。 */
 let SOLO = false;               /* ダブルクリックで入った「その素材だけの画面」か */
+let SELPT = -1;                 /* 閉じたパスの、いま掴んでいる点 */
 let SHEETPATH = false;          /* いま紙を切るモードか */
 let SHEETCUT = null;            /* {pts, keepIn} ── 覚えた形（絵ではなく点） */
 const cutView = () => SOLO && !SHEETPATH && !!(LAYERS[SEL] && LAYERS[SEL].img);
@@ -3248,7 +3253,8 @@ function drawOverlay(W, H){
       });
     }
   }
-  /* ⭐ 選択範囲を点線で出す（Photoshop と同じ言い方・出す絵には入らない） */
+  /* ⭐ 選択範囲を点線で出す（Photoshop と同じ言い方・出す絵には入らない）
+     ⭐⭐ パスの道具のときは【点とハンドルも出す】＝閉じたあとでも形を直せる（2026-08-31） */
   {
     const L2 = LAYERS[SEL];
     if(L2 && L2.sel && L2.sel.pts && L2.sel.pts.length >= 3 && L2.img){
@@ -3274,6 +3280,24 @@ function drawOverlay(W, H){
         og.lineDashOffset = Math.max(4, W/150);
         og.strokeStyle = 'rgba(0,0,0,.75)'; og.stroke(new Path2D(d3));
         og.setLineDash([]); og.lineDashOffset = 0;
+        /* ⭐ パスの道具のときは点とハンドルを出す＝そのまま掴んで直せる */
+        if(MODE === 'cut' && TOOL === 'path'){
+          const rp = Math.max(4, W/180);
+          bp3.forEach((b4, i4) => {
+            if(b4.hx || b4.hy){
+              og.strokeStyle = 'rgba(255,64,64,.55)'; og.lineWidth = Math.max(1, W/900);
+              og.beginPath(); og.moveTo(b4.x, b4.y); og.lineTo(b4.x + b4.hx, b4.y + b4.hy);
+              og.stroke();
+              og.beginPath(); og.arc(b4.x + b4.hx, b4.y + b4.hy, rp*0.7, 0, 6.2831853);
+              og.fillStyle = 'rgba(255,64,64,.9)'; og.fill();
+              og.strokeStyle = 'rgba(255,255,255,.85)'; og.stroke();
+            }
+            og.lineWidth = Math.max(1.5, W/420);
+            og.beginPath(); og.arc(b4.x, b4.y, i4 === SELPT ? rp*1.4 : rp, 0, 6.2831853);
+            og.fillStyle = i4 === SELPT ? '#ffd24a' : '#fff'; og.fill();
+            og.strokeStyle = 'rgba(0,0,0,.65)'; og.stroke();
+          });
+        }
       }
       og.restore();
     }
@@ -3536,6 +3560,42 @@ function hitLayer(q){
       if(TOOL === 'path'){
         /* ⭐ 掴む幅は【画面の px】で決める（盤の px だと引いて見ていると届かない） */
         const near = 16 * perScreenPx() * (maskSize(L).w / Math.max(1, L.s * cv.width));
+        /* ══⭐⭐ 閉じたパスは【あとから点を直せる】（2026-08-31）══
+           ⭐ 点を掴む／ハンドルを掴む／線の上を押すと点が増える／⌫ で消す。
+           ⚠️ 新しく描いている最中（POLY がある）は、そちらが先。 */
+        if(!POLY.length && L.sel && L.sel.pts.length >= 3){
+          const ps = L.sel.pts;
+          let hh4 = -1, hb4 = near;
+          ps.forEach((q2, i2) => { if(!(q2.hx || q2.hy)) return;
+            const d = Math.hypot(q2.x + q2.hx - m.x, q2.y + q2.hy - m.y);
+            if(d < hb4){ hb4 = d; hh4 = i2; } });
+          if(hh4 >= 0){ hist(); SELPT = hh4;
+            grab = { what:'selhandle', i:hh4 }; drawOverlay(cv.width, cv.height); return; }
+          let hit4 = -1, best4 = near;
+          ps.forEach((q2, i2) => { const d = Math.hypot(q2.x - m.x, q2.y - m.y);
+            if(d < best4){ best4 = d; hit4 = i2; } });
+          if(hit4 >= 0){ hist(); SELPT = hit4;
+            grab = { what:'selpoint', i:hit4 }; drawOverlay(cv.width, cv.height); return; }
+          /* 線の上を押すと、そこに点が増える（Photoshop と同じ） */
+          let bestSeg = -1, bestD = near * 1.2, bt = 0;
+          for(let i2 = 0; i2 < ps.length; i2++){
+            const a2 = ps[i2], b2 = ps[(i2+1) % ps.length];
+            const vx = b2.x - a2.x, vy = b2.y - a2.y;
+            const len2 = vx*vx + vy*vy; if(len2 < 1e-6) continue;
+            let t = ((m.x - a2.x)*vx + (m.y - a2.y)*vy) / len2;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            const d = Math.hypot(a2.x + vx*t - m.x, a2.y + vy*t - m.y);
+            if(d < bestD){ bestD = d; bestSeg = i2; bt = t; }
+          }
+          if(bestSeg >= 0){
+            hist();
+            ps.splice(bestSeg + 1, 0, { x:m.x, y:m.y, hx:0, hy:0 });
+            SELPT = bestSeg + 1;
+            L._key = '';
+            grab = { what:'selpoint', i:SELPT };
+            render(); return;
+          }
+        }
         /* ① ハンドルを掴む */
         let hh = -1, hb = near;
         POLY.forEach((q2, i) => {
@@ -3602,6 +3662,17 @@ function hitLayer(q){
       pinch.d = d; return; }
     if(grab){
       const q = toBoard(e);
+      /* 閉じたパスの点・ハンドルを動かす */
+      if(grab.what === 'selpoint' || grab.what === 'selhandle'){
+        const L = LAYERS[SEL]; if(!L || !L.sel) return;
+        const m = toMask(L, q, cv.width, cv.height);
+        const o = L.sel.pts[grab.i]; if(!o) return;
+        if(grab.what === 'selpoint'){ o.x = m.x; o.y = m.y; }
+        else { o.hx = m.x - o.x; o.hy = m.y - o.y;
+          if(e.altKey){ if(o.ihx == null){ o.ihx = 0; o.ihy = 0; } }
+          else { o.ihx = null; o.ihy = null; } }
+        L._key = ''; touching(); renderSoon(); return;
+      }
       if(grab.what === 'point'){
         const o0 = POLY[grab.i];
         if(grab.sheet){ POLY[grab.i] = { x:q.x, y:q.y, hx:o0.hx || 0, hy:o0.hy || 0,
@@ -5221,6 +5292,17 @@ el('b_pathshape').onclick = () => {
   buildList(); syncSel(); render();
   stat('パスから形を作った（新しいレイヤーになりました）');
 };
+el('b_pathedit').onclick = () => {
+  const L = LAYERS[SEL]; if(!L || !L.sel){ stat('先にパスを閉じてください'); return; }
+  hist();
+  /* 🔴 道具を押すと POLY は空にされるので、【押してから】点を戻す */
+  const bt = document.querySelector('#tools button[data-t="path"]');
+  if(bt) bt.click();
+  POLY = L.sel.pts.map(q => Object.assign({}, q));
+  L.sel = null; SELPT = -1;
+  syncSelPath(); render(); drawOverlay(cv.width, cv.height);
+  stat('開いた状態に戻した ── 続きを打てます（最初の点をもう一度押すと閉じます）');
+};
 el('b_polyend').onclick = closePath;
 el('b_polyundo').onclick = () => {
   if(!POLY.length){ stat('戻す点がありません'); return; }
@@ -6111,6 +6193,15 @@ addEventListener('keydown', e => {
     if((k === 'backspace' || k === 'delete') && POLY.length){
       e.preventDefault(); POLY.pop(); drawOverlay(cv.width, cv.height);
       stat('点をひとつ戻した（残り ' + POLY.length + '）'); return; }
+    /* ⭐ 閉じたパスは、掴んでいる点を ⌫ で消せる（3つより少なくはしない） */
+    if((k === 'backspace' || k === 'delete') && SELPT >= 0){
+      const L = LAYERS[SEL];
+      if(L && L.sel && L.sel.pts.length > 3){
+        e.preventDefault(); hist();
+        L.sel.pts.splice(SELPT, 1); SELPT = -1; L._key = '';
+        render(); stat('点を1つ消した（残り ' + L.sel.pts.length + '）');
+      }else e.preventDefault();
+      return; }
   }
   if(k === 'delete' || k === 'backspace'){
     const ls = selLayers();
