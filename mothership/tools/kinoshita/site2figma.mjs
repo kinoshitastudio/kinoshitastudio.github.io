@@ -86,15 +86,55 @@ await p.evaluate(async () => {
 });
 await new Promise(r => setTimeout(r, 2500));
 
-const secs = await p.$$('section');
-console.log(`section ${secs.length} 個\n`);
+// ⭐ セクションを決めて印を付ける。
+//   `<section>` があればそれ。無ければ「画面幅いっぱい・高さ200以上のトップレベルの塊」を探す
+//   （cosawell は section が0個だった＝タグ頼みだと何も採れない）
+const secKind = await p.evaluate(() => {
+  const W = document.documentElement.clientWidth;
+  const visible = el => { const c = getComputedStyle(el); return c.display !== 'none' && c.visibility !== 'hidden'; };
+  let list = [...document.querySelectorAll('section')].filter(visible);
+  let kind = '<section>';
+  if (!list.length) {
+    kind = '自動（幅いっぱいの塊）';
+    // 🔴 「1個しか採れない」＝まだラッパーの中。2個以上に割れるまで掘り続ける
+    let root = document.body;
+    const pick = (el, wideOnly) => [...el.children].filter(c => {
+      const r = c.getBoundingClientRect();
+      return visible(c) && r.height >= 200 && (!wideOnly || r.width >= W * 0.9);
+    });
+    list = [];
+    for (let d = 0; d < 10; d++) {
+      let l = pick(root, true);
+      if (l.length < 2) { const l2 = pick(root, false); if (l2.length > l.length) l = l2; }
+      if (l.length >= 2) { list = l; break; }
+      if (l.length === 1) { root = l[0]; continue; }
+      break;
+    }
+    if (!list.length) list = [...root.children].filter(visible);
+    // 🔴 割れても1枚が高すぎる（＝まだ束）ならその中を割る。2回まで
+    for (let pass = 0; pass < 2; pass++) {
+      const next = [];
+      let split = false;
+      list.forEach(el => {
+        if (el.getBoundingClientRect().height <= 1600) { next.push(el); return; }
+        let kids = pick(el, true); if (kids.length < 2) kids = pick(el, false);
+        if (kids.length >= 2) { next.push(...kids); split = true; } else next.push(el);
+      });
+      list = next; if (!split) break;
+    }
+  }
+  list.forEach((el, i) => el.setAttribute('data-ms-sec', String(i)));
+  return { kind, n: list.length };
+});
+const secs = await p.$$('[data-ms-sec]');
+console.log(`セクション ${secs.length} 個（切り方：${secKind.kind}）\n`);
 
 const grab = (i) => p.evaluate((i) => {
   // ⭐ i === -1 ＝ KV（最初の section より上の帯。`<section>` の外にあるので別扱い）
   const KV = i === -1;
-  const sec = KV ? document.body : document.querySelectorAll('section')[i];
+  const sec = KV ? document.body : document.querySelector('[data-ms-sec="' + i + '"]');
   const S = KV ? { left: 0, top: 0, width: document.documentElement.clientWidth,
-                   height: Math.round(document.querySelector('section').getBoundingClientRect().top) }
+                   height: Math.round(document.querySelector('[data-ms-sec="0"]').getBoundingClientRect().top) }
                : sec.getBoundingClientRect();
   const px = v => Math.round((parseFloat(v) || 0) * 100) / 100;
   const LEAFISH = new Set(['BR', 'SPAN', 'EM', 'B', 'STRONG', 'A', 'I', 'SUP', 'SUB', 'SMALL', 'TIME']);
@@ -200,7 +240,7 @@ const grab = (i) => p.evaluate((i) => {
     // 帯に収まる中でいちばん大きい塊＝KV本体
     let best = null, area = 0;
     document.body.querySelectorAll('*').forEach(el => {
-      if (el.closest('section') || !fits(el)) return;
+      if (el.closest('[data-ms-sec]') || !fits(el)) return;
       const r = el.getBoundingClientRect(), a = r.width * r.height;
       if (a > area) { area = a; best = el; }
     });
@@ -211,7 +251,7 @@ const grab = (i) => p.evaluate((i) => {
       const c = getComputedStyle(el);
       if (c.position !== 'fixed' && c.position !== 'sticky') return;
       if (best && best.contains(el)) return;
-      if (el.closest('section')) return;
+      if (el.closest('[data-ms-sec]')) return;
       const r = el.getBoundingClientRect();
       if (r.width < 40 || r.height < 20 || r.top > Y - 20) return;
       if (kids.some(k => k.__el === el)) return;
@@ -227,7 +267,7 @@ const grab = (i) => p.evaluate((i) => {
       document.body.querySelectorAll('*').forEach(el => {
         const c = getComputedStyle(el);
         if (c.position !== 'fixed' && c.position !== 'sticky') return;
-        if (el.closest('section')) return;
+        if (el.closest('[data-ms-sec]')) return;
         const r = el.getBoundingClientRect();
         if (r.width < 40 || r.height < 20) return;
         if (r.bottom < R.top + 4 || r.top > R.top + 200) return;   // 先頭セクションの頭に重なっている物だけ
