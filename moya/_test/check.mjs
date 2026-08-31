@@ -19,6 +19,7 @@ await p.setViewport({ width:1400, height:900 });
 await p.goto(URL_, { waitUntil:'networkidle0' });
 await new Promise(r => setTimeout(r, 2500));
 let NG = 0;
+const OPTSUB = ['color','erase','paint','liq'];   /* 画像編集の小道具（2026-08-31 に1つのアイコンへ） */
 const ok = (c, n, x) => { console.log((c ? '  ✅ ' : '  🔴 ') + n + (x != null ? ' … ' + x : '')); if(!c) NG = 1; };
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
@@ -554,13 +555,13 @@ ok(got.some(x => x.type === 'application/zip'), '⭐⭐ 素材ごとPNG（zip）
 /* ⭐⭐ 左のツールバー（2026-08-30 木下＝「左にツールパネルを出して直感的に」）
    🔴 見るのは「並んでいる」ではなく【押したら本当に道具が変わるか】＝
       見た目と中身を二重に持つと「押しても切り替わらない」が必ず出る。 */
-const TB = await p.evaluate(async () => {
+const TB = await p.evaluate(async (OPTSUB) => {
   const out = { 数: document.querySelectorAll('#tools button[data-t]').length, 押した:{} };
   /* ⚠️ 灯は 2026-08-31 にツールバーから外した（盤の白い丸でつかむ）＝ここでも見ない */
   for(const [t, want] of [['color',['cut','color']], ['erase',['cut','erase']],
                           ['paint',['cut','paint']], ['path',['cut','path']],
                           ['move',['move',null]]]){
-    document.querySelector('#tools button[data-t="' + t + '"]').click();
+    (OPTSUB.includes(t) ? (document.querySelector('#tools button[data-t="retouch"]').click(),document.querySelector('#s_tool button[data-v="'+t+'"]').click()) : document.querySelector('#tools button[data-t="'+t+'"]').click());
     await new Promise(r => setTimeout(r, 60));
     const on = [...document.querySelectorAll('#tools button.on')].map(e => e.dataset.t);
     out.押した[t] = { MODE, TOOL, 印: on.join(','),
@@ -568,13 +569,17 @@ const TB = await p.evaluate(async () => {
   }
   document.querySelector('#tools button[data-t="move"]').click();
   return out;
-});
-ok(TB.数 >= 8, '⭐ 左のツールバーが出ている', TB.数 + ' 個');
+}, OPTSUB);
+ok(TB.数 >= 6, '⭐ 左のツールバーが出ている', TB.数 + ' 個');
 {
   const bad = Object.entries(TB.押した).filter(([k, v]) => !v.合っている).map(([k]) => k);
   ok(bad.length === 0, '⭐⭐ ツールバーを押すと本当に道具が変わる（見た目だけになっていない）',
      JSON.stringify(TB.押した));
-  const noMark = Object.entries(TB.押した).filter(([k, v]) => v.印.indexOf(k) < 0).map(([k]) => k);
+  /* ⚠️ 画像編集の小道具（色で消す・切り抜き・復元・ゆがみ）は
+     2026-08-31 に【1つのアイコン】へまとめたので、印は retouch に付く */
+  const noMark = Object.entries(TB.押した)
+    .filter(([k, v]) => (OPTSUB.includes(k) ? v.印.indexOf('retouch') < 0 : v.印.indexOf(k) < 0))
+    .map(([k]) => k);
   ok(noMark.length === 0, '⭐ 押した道具に印が付く', noMark.length ? noMark.join(',') : 'ぜんぶ付く');
 }
 
@@ -1453,11 +1458,12 @@ ok(await p.evaluate(() => { const bt = document.querySelector('#tools button[dat
   if(bt) bt.click();
   return getComputedStyle(document.getElementById('stage')).cursor === 'default'; }),
   '⭐ 動かすときの盤のカーソルは矢印');
-ok(await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t="erase"]');
-  if(bt) bt.click();
+ok(await p.evaluate(() => {
+  document.querySelector('#tools button[data-t="retouch"]').click();
+  document.querySelector('#s_tool button[data-v="erase"]').click();
   const c = getComputedStyle(document.getElementById('stage')).cursor;
   const bt2 = document.querySelector('#tools button[data-t="move"]'); if(bt2) bt2.click();
-  return c === 'crosshair'; }), '⭐ 切り抜きのときだけ十字');
+  return c === 'crosshair'; }), '⭐ 画像編集のときだけ十字');
 
 /* ══⑰ 置いたものは素のまま／素のままでも【ズレ】は効く（2026-08-31）══
    🔴 木下＝「素のままにするを押したことで【ズレ】も素の状態になっているのでは？これは違うよね？」 */
@@ -1588,7 +1594,10 @@ await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t
 await wait(1600);
 const TOOLSTAY = [];
 for(const t of ['color','erase','paint','path']){
-  await p.evaluate(tt => document.querySelector('#tools button[data-t="' + tt + '"]').click(), t);
+  await p.evaluate(([tt, SUB]) => (SUB.includes(tt)
+    ? (document.querySelector('#tools button[data-t="retouch"]').click(),
+       document.querySelector('#s_tool button[data-v="' + tt + '"]').click())
+    : document.querySelector('#tools button[data-t="' + tt + '"]').click()), [t, OPTSUB]);
   await wait(450);
   const v = await p.evaluate(() => ({ cut:cutView(), mode:MODE }));
   if(v.cut || v.mode !== 'cut') TOOLSTAY.push(t + JSON.stringify(v));
@@ -1598,7 +1607,7 @@ ok(TOOLSTAY.length === 0, '⭐⭐ 切る道具を選んでも【版面のまま�
 const BRUSH = await p.evaluate(async () => {
   const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
   SEL = LAYERS.indexOf(o[1]); SELIDS = [o[1].id]; syncSel(); buildList();
-  document.querySelector('#tools button[data-t="erase"]').click();
+  (document.querySelector('#tools button[data-t="retouch"]').click(),document.querySelector('#s_tool button[data-v="erase"]').click());
   await new Promise(r => setTimeout(r, 400));
   const L = LAYERS[SEL], before = hasCut(L);
   const st = document.getElementById('stage'), A = toScreen(L.x, L.y);
@@ -1801,7 +1810,7 @@ ok(FIDEAD.length === 0, '⭐⭐ 移動ぼかし・放射状ぼかし・うねり
 ok(await sad3(FI0, await fullShot3()) === 0, '🔴 戻すと1画素も同じに戻る');
 
 /* ══㉗ ゆがみ（Liquify）══ */
-await p.evaluate(() => document.querySelector('#tools button[data-t="liq"]').click());
+await p.evaluate(() => (document.querySelector('#tools button[data-t="retouch"]').click(),document.querySelector('#s_tool button[data-v="liq"]').click()));
 await wait(700);
 ok(await p.evaluate(() => TOOL === 'liq'), '⭐ ゆがみの道具に切り替わる');
 ok(await p.evaluate(() => !document.getElementById('liqUI').classList.contains('hide')),
