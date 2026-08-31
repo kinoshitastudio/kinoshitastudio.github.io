@@ -582,6 +582,60 @@ ok(SELPNG.png >= 1, '⭐⭐ 選んだものだけ PNG で落ちる（地なし�
    JSON.stringify(SELPNG));
 ok(SELPNG.json >= 1, '🔴 設定JSON が本当に落ちる（落ちたら理由を言う）', SELPNG.say);
 
+/* ══🔴🔴 木下が実機で踏んだ2つ（2026-09-01）══
+   ① 選択範囲を【何枚でも重なる subs 形式】に変えたのに、書き出しが古い pts を読んでいた
+      → Cannot read properties of undefined (reading 'map')
+   ② 調整レイヤー（絵を持たない）を写真として出そうとしていた
+      → Cannot read properties of null (reading 'naturalWidth')
+   ＝どちらも【その人の作りかたでだけ落ちる】＝手元では出るので気づけなかった。 */
+const EXP2 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const o = LAYERS.slice().sort((a,b) => zOf(a)-zOf(b));
+  const i = LAYERS.indexOf(o[1]);
+  SEL = i; SELIDS = [o[1].id]; syncSelIds(); syncSel();
+  document.getElementById('b_adjlayer').click(); await w(400);   /* ② 調整レイヤー */
+  SEL = i; syncSel();
+  const L = LAYERS[i], m = maskSize(L);
+  document.querySelector('#tools button[data-t="path"]').click();
+  POLY = [{x:m.w*0.2,y:m.h*0.2,hx:0,hy:0},{x:m.w*0.7,y:m.h*0.25,hx:0,hy:0},
+          {x:m.w*0.5,y:m.h*0.7,hx:0,hy:0}];
+  closePath(); await w(250);
+  document.getElementById('b_pload').click(); await w(250);      /* ① subs 形式の選択範囲 */
+  document.querySelector('#tools button[data-t="move"]').click();
+  const out = { 形:LAYERS[i].sel && LAYERS[i].sel.subs ? 'subs' : 'pts',
+                調整:LAYERS.some(x => x.kind === 'adj') };
+  try{ out.設定 = 'OK ' + Math.round(JSON.stringify(snapshot()).length/1024) + 'KB'; }
+  catch(e){ out.設定 = 'NG: ' + e.message; }
+  try{
+    const j = snapshot(); j.bundled = true;
+    j.layers.forEach((L2, k) => {
+      L2.img = LAYERS[k].img ? imgData(LAYERS[k].img, 1200) : null;
+      const sb = LAYERS[k].sub;
+      if(sb) L2.subImgs = sb.layers.map(q => q.img ? imgData(q.img, 1200) : null);
+    });
+    out.まるごと = 'OK ' + (JSON.stringify(j).length/1024/1024).toFixed(2) + 'MB';
+  }catch(e){ out.まるごと = 'NG: ' + e.message; }
+  const svg = svgOut();
+  out.SVG = { 素材は隠す:svg.indexOf('id="sozai" display="none"') >= 0,
+              仕上がり:svg.indexOf('id="shiage"') >= 0 };
+  /* ⚠️ 後片付け＝選択範囲（点線）と調整レイヤーを消す。
+     残すと【次の試験で盤に点線が出て】別の試験が落ちる（ぶれる試験を作らない）。 */
+  LAYERS.forEach(x => { x.sel = null; x.work = null; });
+  setLayers(LAYERS.filter(x => x.kind !== 'adj'));
+  PATHSEL = null; POLY = [];
+  buildList(); syncSel(); syncSelPath(); render();
+  await w(300);
+  return out;
+});
+ok(EXP2.形 === 'subs' && EXP2.調整 && /^OK/.test(EXP2.設定) && /^OK/.test(EXP2.まるごと),
+   '🔴🔴 調整レイヤー＋選択範囲があっても【設定・まるごと】が書き出せる',
+   JSON.stringify(EXP2));
+ok(EXP2.SVG.素材は隠す && EXP2.SVG.仕上がり,
+   '⭐⭐ SVG は【仕上がり1枚】＋素材は隠して入る（同じ絵が二重にならない）',
+   JSON.stringify(EXP2.SVG));
+
 /* ⭐⭐ 左のツールバー（2026-08-30 木下＝「左にツールパネルを出して直感的に」）
    🔴 見るのは「並んでいる」ではなく【押したら本当に道具が変わるか】＝
       見た目と中身を二重に持つと「押しても切り替わらない」が必ず出る。 */

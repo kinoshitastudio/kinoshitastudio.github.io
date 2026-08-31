@@ -9270,16 +9270,28 @@ function svgOut(){
       + '<image x="' + (-plate.width/2).toFixed(2) + '" y="' + (-plate.height/2).toFixed(2)
       + '" width="' + plate.width + '" height="' + plate.height + '" href="' + url + '"/></g>');
   }
-  /* 空気だけの1枚＝「素材を並べた板」と「空気まで掛けた板」の差 */
+  /* ══🔴🔴 空気の1枚 ══ 2026-09-01・木下＝「svg で書き出したが、**灯が入っていない**」
+     ＝ここを【地なし】で描いていた。空気のうち
+       **灯のひろがり・寒暖の差・にじみ・まわりの落ち は「地の上」に出るもの**なので、
+       地なしで描くと **素材の無い所がぜんぶ透明** になり、灯が消えていた。
+     ⭐ 直し＝紙の地ごと描く（＝盤と同じ絵）。地なし指定のときだけ透明のまま。
+     ⚠️ 下の素材は【分かれたまま】残してある（この1枚を隠せば Illustrator で触れる）。 */
   const full = document.createElement('canvas'); full.width = W; full.height = H;
-  paint(full.getContext('2d'), W, H, true);
+  paint(full.getContext('2d'), W, H, P.nobg);
   const air = full.toDataURL('image/png');
   COARSE = keep;
+  /* 🔴 2026-09-01・木下＝「svg は背景画像に全部がひっつき、その上に切り抜いた画像がある」
+     ＝【完成画】と【素材】が二重に入っていた（同じ絵が2つ見える）。
+     ⭐ 直し＝**完成画を1枚**にして、素材のグループは【隠して】入れておく。
+       ・開いた瞬間は 盤とまったく同じ絵（空気も灯も入っている）
+       ・素材を触りたいときは、Illustrator でそのレイヤーを表示にすれば1枚ずつ動かせる
+     ⚠️ 空気は「画素の混ぜ方」でできているので、素材と分けて持つことはできない
+       （＝Illustrator に渡せるのは【完成画】か【素の素材】のどちらか）。 */
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"'
     + ' width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">'
-    + (P.nobg ? '' : '<rect width="' + W + '" height="' + H + '" fill="' + P.bg + '"/>')
-    + '<g id="sozai">' + parts.join('') + '</g>'
-    + '<g id="kuki"><title>空気（画素の混ぜ方でできているので1枚の絵）</title>'
+    + '<g id="sozai" display="none"><title>素材（1枚ずつ・空気なし）'
+    + ' ── 上の「仕上がり」を隠すと出ます</title>' + parts.join('') + '</g>'
+    + '<g id="shiage"><title>仕上がり（盤と同じ絵・空気と灯が入っています）</title>'
     + '<image x="0" y="0" width="' + W + '" height="' + H + '" href="' + air + '"/></g>'
     + '</svg>';
   return svg;
@@ -9394,6 +9406,11 @@ function snapshot(){
                              /* ⭐⭐ 中身（その素材だけのアートボード）も入れる（2026-08-31）
                                 🔴 入れないと「中に足したもの」が保存で消える＝設定として嘘になる */
                              work:L.work ? { pts:L.work.pts.map(q => Object.assign({}, q)) } : null,
+                             /* ⭐ 選択範囲（点線）も入れる＝読んだら続きから切れる */
+                             sel:L.sel ? { inv:!!L.sel.inv,
+                               subs:selSubs(L.sel).map(t => ({ op:t.op || 'new',
+                                 pts:(t.pts || []).map(u => Object.assign({}, u)) })) } : null,
+                             selBlur:L.selBlur || 0,
                              amask:L.amask ? { inv:!!L.amask.inv, feather:L.amask.feather,
                                pts:L.amask.pts.map(q => Object.assign({}, q)) } : null,
                              vmask:L.vmask ? { inv:!!L.vmask.inv, op:L.vmask.op, feather:L.vmask.feather,
@@ -9444,7 +9461,14 @@ function subJSON(s){
       adj:Object.assign(newAdj(), o.adj || {}),
       keys:(o.keys || []).map(k => Object.assign({}, k)),
       paths:(o.paths || []).map(q => ({ name:q.name, pts:q.pts.map(t => Object.assign({}, t)) })),
-      sel:o.sel ? { inv:!!o.sel.inv, pts:o.sel.pts.map(t => Object.assign({}, t)) } : null,
+      /* 🔴🔴 2026-09-01・木下＝「まるごと書き出しができない」
+         ＝Cannot read properties of undefined (reading 'map')。
+         選択範囲を【何枚でも重なる subs 形式】に変えたのに、書き出し側が古い pts を
+         読んでいた（＝パスから選択範囲を作った人だけ、書き出しが黙って落ちる）。
+         ⭐ 正規化は selSubs() 1本に任せる（形が増えてもここは変わらない）。 */
+      sel:o.sel ? { inv:!!o.sel.inv,
+        subs:selSubs(o.sel).map(t => ({ op:t.op || 'new',
+          pts:(t.pts || []).map(u => Object.assign({}, u)) })) } : null,
       selBlur:o.selBlur || 0,
       mCut:  o.mCut  ? o.mCut.toDataURL('image/png')  : null,
       mKeep: o.mKeep ? o.mKeep.toDataURL('image/png') : null,
@@ -9480,7 +9504,10 @@ function applySub(L, o, imgs){
       Object.keys(f0).forEach(g2 => Object.assign(f0[g2], q.fx[g2] || {})); b.fx = f0; }
     b.keys = (q.keys || []).map(k => Object.assign({}, k));
     b.paths = (q.paths || []).map(t => ({ name:t.name, pts:t.pts.map(u => Object.assign({}, u)) }));
-    b.sel = q.sel ? { inv:!!q.sel.inv, pts:q.sel.pts.map(u => Object.assign({}, u)) } : null;
+    /* ⚠️ 古い pts 形式の JSON も読めるようにしておく（前に出した設定が開けなくならない） */
+    b.sel = q.sel ? { inv:!!q.sel.inv,
+      subs:(q.sel.subs || (q.sel.pts ? [{ op:'new', pts:q.sel.pts }] : []))
+        .map(t => ({ op:t.op || 'new', pts:(t.pts || []).map(u => Object.assign({}, u)) })) } : null;
     const put = (url, which) => { if(!url) return;
       const im2 = new Image();
       im2.onload = () => { const c = document.createElement('canvas');
@@ -9505,6 +9532,23 @@ function applyJSON(o){
     closeAllEditors();
     LAYERS = []; SEL = -1;
     ls.forEach((o2, i) => {
+      /* ⚠️ 絵を持たない層（調整レイヤー）は、写真として読まずに枠だけ作る
+         （読もうとすると落ちて、そこから先が全部作られない） */
+      if(!o2.img){
+        if(o2.id != null) UID = Math.max(UID, o2.id + 1);
+        LAYERS[i] = { id:o2.id != null ? o2.id : UID++, img:null,
+          name:o2.name || '調整レイヤー',
+          x:o2.x, y:o2.y, s:o2.s, rot:o2.rot, flip:o2.flip, d:o2.d,
+          on:o2.on, op:o2.op == null ? 1 : o2.op, ord:o2.ord == null ? i+1 : o2.ord,
+          sy:o2.sy == null ? 1 : o2.sy, air:o2.air == null ? 1 : o2.air,
+          g:o2.g == null ? null : o2.g, clip:!!o2.clip, kind:o2.kind || 'adj',
+          ed:Object.assign(newEd(), o2.ed || {}), _edc:null, _edk:'',
+          keys:[], mCut:null, mKeep:null, adj:Object.assign(newAdj(), o2.adj || {}),
+          mask:null, mv:1, _dist:null, _mk:'', _c:null, _key:'' };
+        if(--left === 0){ SEL = 0; applyRest(o);
+          stat('まるごと読んだ（写真 ' + LAYERS.filter(L => L.img).length + ' 枚）'); }
+        return;
+      }
       const img = new Image();
       img.onload = () => {
         if(o2.id != null) UID = Math.max(UID, o2.id + 1);
@@ -9620,6 +9664,10 @@ function applyRest(o){
       L.adj = Object.assign(newAdj(), o2.adj || {});
       /* ⭐ 中身（その素材だけのアートボード）も戻す。⚠️ 写真はいま持っているものを使う */
       L.work = o2.work ? { pts:o2.work.pts.map(q => Object.assign({}, q)) } : null;
+      L.sel = o2.sel ? { inv:!!o2.sel.inv,
+        subs:(o2.sel.subs || (o2.sel.pts ? [{ op:'new', pts:o2.sel.pts }] : []))
+          .map(t => ({ op:t.op || 'new', pts:(t.pts || []).map(u => Object.assign({}, u)) })) } : null;
+      L.selBlur = o2.selBlur || 0;
       L.amask = o2.amask ? { inv:!!o2.amask.inv, feather:o2.amask.feather || 0,
         pts:o2.amask.pts.map(q => Object.assign({}, q)) } : null;
       L.vmask = o2.vmask ? { inv:!!o2.vmask.inv, op:o2.vmask.op == null ? 1 : o2.vmask.op,
@@ -9689,7 +9737,10 @@ el('b_exjall').onclick = () => {
       const o = snapshot();
       o.bundled = true;
       o.layers.forEach((L2, i) => {
-        L2.img = imgData(LAYERS[i].img, BUNDLE_L);
+        /* 🔴 2026-09-01・木下の画面のエラー＝Cannot read properties of null (reading 'naturalWidth')
+           ＝【調整レイヤーは絵を持たない】のに写真として出そうとして落ちていた。
+             ＝調整レイヤーを1枚でも置いた人は まるごと書き出しが必ず落ちる。 */
+        L2.img = LAYERS[i].img ? imgData(LAYERS[i].img, BUNDLE_L) : null;
         /* ⭐ 中に置いた写真も入れる（入れないと中身が戻らない） */
         const sb = LAYERS[i].sub;
         if(sb) L2.subImgs = sb.layers.map(q => q.img ? imgData(q.img, BUNDLE_L) : null);
