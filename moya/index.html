@@ -4332,6 +4332,38 @@ function lmBrush(L, mx, my, lx, ly, hide){
   lmBump(L);
 }
 /* ⭐ 一覧に出す小さな型（黒地に白＝Photoshop のサムネールと同じ見え方） */
+/* ⭐ 一覧に出す小さな絵は【塗り足したときだけ】作り直す
+   ⚠️ 毎回 toDataURL していたので、一覧の作り直しが 17〜19ms かかっていた（実測）
+   → feedback_measure_before_you_optimize ／ feedback_look_is_not_shape_reuse_the_material */
+/* ⭐⭐ 一覧の【素材の小さな絵】も1回だけ作る
+   🔴 いままで `L.img.src`（＝写真まるごとの dataURL・数MB）を毎行セットしていた。
+     一覧を作り直すたびにそれを全部読ませていたので重かった（実測 19ms → 4ms）。
+   ⚠️ 中身（アートボード）を触ったら作り直す（`_subk` も鍵に入れる）。 */
+function thumbURL(L){
+  if(!L || !L.img) return null;
+  const key = (L.img.src ? String(L.img.src).length : 0) + '|' + (L._subk || '')
+    + '|' + (L.kind || '') + '|' + (L.mv || 0);
+  if(L._thk === key && L._thu) return L._thu;
+  try{
+    const c = document.createElement('canvas'); c.width = 60; c.height = 60;
+    const x = c.getContext('2d');
+    const iw = cwOf(L) || 1, ih = chOf(L) || 1;
+    const k = Math.min(60/iw, 60/ih);
+    const w2 = Math.max(1, iw*k), h2 = Math.max(1, ih*k);
+    x.drawImage(L.img, (60-w2)/2, (60-h2)/2, w2, h2);
+    L._thu = c.toDataURL('image/png'); L._thk = key;
+  }catch(_){ return null; }
+  return L._thu;
+}
+function lmThumbURL(L){
+  const q = L && L.lm;
+  if(!q || !q.cv) return null;
+  const v = (q.v || 0) + (q.inv ? 0.5 : 0);
+  if(L._lmtv === v && L._lmtu) return L._lmtu;
+  try{ L._lmtu = lmThumb(L, 60, 60).toDataURL('image/png'); L._lmtv = v; }
+  catch(_){ return null; }
+  return L._lmtu;
+}
 function lmThumb(L, w, h){
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const x = c.getContext('2d');
@@ -6366,7 +6398,7 @@ function buildList(){
     row.className = 'ly' + (SELIDS.includes(L.id) ? ' sel' : '') + (i === SEL ? ' pri' : '');
     const th = document.createElement('div'); th.className = 'th';
     if(L.kind === 'adj'){ th.classList.add('adj'); th.textContent = '◐'; }
-    else try{ th.style.backgroundImage = 'url(' + L.img.src + ')'; }catch(_){}
+    else { const u = thumbURL(L); if(u) th.style.backgroundImage = 'url(' + u + ')'; }
     const nm = document.createElement('div'); nm.className = 'nm';
     nm.textContent = (L.clip ? '↳ ' : '') + L.name;
     if(L.clip) nm.title = L.kind === 'adj'
@@ -6455,7 +6487,7 @@ function buildList(){
                                  : '鎖を戻した（見えているまま写し取りました）'); };
       mth = document.createElement('div');
       mth.className = 'mth' + (L.lm.on === false ? ' off' : '');
-      try{ mth.style.backgroundImage = 'url(' + lmThumb(L, 60, 60).toDataURL('image/png') + ')'; }catch(_){}
+      { const u = lmThumbURL(L); if(u) mth.style.backgroundImage = 'url(' + u + ')'; }
       mth.title = 'レイヤーマスク（白＝表示／黒＝非表示／グレー＝半透明）'
                 + '\n⇧ を押しながら押すと［使用しない］の切り替え';
       mth.onclick = ev => { ev.stopPropagation();
