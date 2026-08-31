@@ -640,6 +640,23 @@ ok(EXP2.SVG.素材は隠す && EXP2.SVG.仕上がり,
    '⭐⭐ SVG は【仕上がり1枚】＋素材は隠して入る（同じ絵が二重にならない）',
    JSON.stringify(EXP2.SVG));
 
+/* ⭐ SVG の重さ＝仕上がりの1枚は【地があるなら JPEG】（実測 6.0MB → 1.4MB）
+   ⚠️ 地なし（透ける）ときは PNG のまま（JPEG は透明を持てない） */
+const SVGSZ = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const s1 = svgOut();
+  const out = { 地あり:Math.round(s1.length/1024), JPEGで入る:s1.indexOf('data:image/jpeg') >= 0 };
+  const k = document.getElementById('k_nobg');
+  k.checked = true; k.dispatchEvent(new Event('change', { bubbles:true })); await w(600);
+  const s2 = svgOut();
+  out.地なしはPNG = s2.indexOf('data:image/jpeg') < 0;
+  k.checked = false; k.dispatchEvent(new Event('change', { bubbles:true })); await w(500);
+  return out;
+});
+ok(SVGSZ.JPEGで入る && SVGSZ.地なしはPNG,
+   '⭐ SVG の仕上がりは【地があるなら JPEG】で軽く・地なしなら PNG で透ける',
+   JSON.stringify(SVGSZ));
+
 /* ⭐⭐ 左のツールバー（2026-08-30 木下＝「左にツールパネルを出して直感的に」）
    🔴 見るのは「並んでいる」ではなく【押したら本当に道具が変わるか】＝
       見た目と中身を二重に持つと「押しても切り替わらない」が必ず出る。 */
