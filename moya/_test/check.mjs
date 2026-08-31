@@ -428,8 +428,13 @@ const PEN = await p.evaluate(async () => {
   const n1 = POLY.length;
   down(POLY[0].x / M.w, POLY[0].y / M.h); await tick(); up(); await tick();
   COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
-  out.閉じて選択になった = POLY.length === 0 && !!L.sel && L.sel.pts.length >= 3;
-  /* そこから【中を残して切る】が効く */
+  /* ⚠️ 2026-08-31 から Photoshop と同じ＝閉じたら【作業用パス】になる（選択にはならない）
+     ＝選択にするのは［パスを選択範囲として読み込む］の一手（Adobe の公式手順）。 */
+  out.閉じて作業用パスになった = POLY.length === 0 && !!L.work && L.work.pts.length >= 3;
+  document.getElementById('b_pload').click();
+  await new Promise(r => setTimeout(r, 250));
+  out.選択に読み込めた = !!L.sel && L.sel.pts.length >= 3;
+  /* そこから【囲った外を消す】が効く */
   document.getElementById('b_selin').click();
   COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
   out.選択から切れた = maskOpaque() < out.前;
@@ -446,9 +451,11 @@ ok(PEN.ハンドルが出た && PEN.点は動かない,
 ok(PEN.点を動かせた, '⭐ 打った点はあとから掴んで動かせる');
 ok(PEN.ハンドルを動かせた, '⭐ ハンドルも掴んで動かせる');
 ok(PEN.一点戻せた, '⭐ ⌫ で1点戻せる');
-ok(PEN.閉じて選択になった,
-   '⭐⭐ 最初の点をもう一度押すと【閉じて選択範囲になる】（ボタンを探さなくていい）');
-ok(PEN.選択から切れた, '⭐⭐ 選択範囲から【中を残して切る】が効く');
+ok(PEN.閉じて作業用パスになった,
+   '⭐⭐ 最初の点をもう一度押すと【閉じて作業用パスになる】（Photoshop と同じ・まだ切らない）');
+ok(PEN.選択に読み込めた,
+   '⭐⭐［パスを選択範囲として読み込む］で選択になる（Adobe の公式手順）');
+ok(PEN.選択から切れた, '⭐⭐ 選択範囲から【囲った外を消す】が効く');
 
 /* ⭐ レイヤー（隠す・不透明度・奥行きが同じときの前後） *//* ⭐ レイヤー（隠す・不透明度・奥行きが同じときの前後） */
 const LAY = await p.evaluate(async () => {
@@ -1190,7 +1197,9 @@ const SU = await p.evaluate(() => {
                 /* 塗りレイヤー（べた塗り・グラデーション・パターン）の形の設定＝絵の空気ではない */
                 'r_rgang','r_patsz','r_patw','r_patang',
                 /* パターンオーバーレイの柄の設定＝絵の空気ではない（入り切りは行の丸が持つ） */
-                'r_fxpsz','r_fxpw','r_fxpang','r_fxpop'];
+                'r_fxpsz','r_fxpw','r_fxpang','r_fxpop',
+                /* パスの許容値＝形を点に直すときの精度（絵の空気ではない） */
+                'r_ptol'];
   const bad = [];
   document.querySelectorAll('#panel input[type=range]').forEach(e => {
     if(SKIP.includes(e.id)) return;
@@ -1729,10 +1738,17 @@ await p.evaluate(() => {
   closePath();
 });
 await wait(900);
-ok(await p.evaluate(() => !!LAYERS[SEL].sel && !hasCut(LAYERS[SEL])),
-   '⭐⭐ パスを閉じても【切らない】＝選択範囲になる');
+/* ⚠️ 2026-08-31 から Photoshop と同じ＝閉じたら【作業用パス】。切らないし選択にもならない。
+   ⭐ パスパネルに並び、そこから 選択にする／線を描く／塗る／ベクトルマスクにする を選ぶ。 */
+ok(await p.evaluate(() => !!LAYERS[SEL].work && !LAYERS[SEL].sel && !hasCut(LAYERS[SEL])),
+   '⭐⭐ パスを閉じても【切らないし選択にもならない】＝作業用パスになる（Adobe と同じ）');
+ok(await p.evaluate(() => !document.getElementById('pathBox').classList.contains('hide')
+   && document.querySelectorAll('#pathList .pathrow').length >= 1),
+   '⭐⭐ パスパネルに【作業用パス】として並ぶ');
+await p.evaluate(() => document.getElementById('b_pload').click());
+await wait(700);
 ok(await p.evaluate(() => !document.getElementById('selUI').classList.contains('hide')),
-   '⭐ 選択の道具（切る／反転／中だけぼかす／線を描く）が出る');
+   '⭐［パスを選択範囲として読み込む］と選択の道具が出る');
 const SEL0 = await fullShot2();
 await p.evaluate(() => { const e = document.getElementById('r_selblur');
   e.value = 70; e.dispatchEvent(new Event('input', { bubbles:true })); });
@@ -1884,19 +1900,20 @@ await p.evaluate(() => {
   closePath();
 });
 await wait(900);
-await p.evaluate(() => document.getElementById('b_pathsave').click());
+/* ⚠️ 2026-08-31 から Adobe と同じ＝閉じたものは【作業用パス】。
+   ［作業用パスを保存］で名前つきになり、上書きされなくなる。 */
+await p.evaluate(() => document.getElementById('b_psave').click());
 await wait(600);
-ok(await p.evaluate(() => LAYERS[SEL].paths.length === 1 &&
-     document.getElementById('pathList').children.length === 1),
-   '⭐⭐ パスを残せる（Photoshop のパスパネルと同じ）');
-await p.evaluate(() => document.getElementById('b_selclear').click());
-await wait(500);
-await p.evaluate(() => document.getElementById('pathList').children[0]
-  .querySelector('button').click());
+ok(await p.evaluate(() => LAYERS[SEL].paths.length === 1 && !LAYERS[SEL].work &&
+     document.querySelectorAll('#pathList .pathrow').length === 1),
+   '⭐⭐ 作業用パスを保存できる（Adobe のパスパネルと同じ）');
+await p.evaluate(() => { document.querySelector('#pathList .pathrow').click(); });
+await wait(400);
+await p.evaluate(() => document.getElementById('b_pload').click());
 await wait(600);
 ok(await p.evaluate(() => !!LAYERS[SEL].sel), '⭐ 残したパスを選択に呼び戻せる');
 const PS0 = await p.evaluate(() => LAYERS.length);
-await p.evaluate(() => document.getElementById('b_pathshape').click());
+await p.evaluate(() => document.getElementById('b_pshape').click());
 await wait(900);
 ok(await p.evaluate(() => LAYERS.length) === PS0 + 1 &&
    await p.evaluate(() => LAYERS[SEL].img.naturalWidth > 10),
@@ -1934,7 +1951,9 @@ const PE = await p.evaluate(async () => {
                         (L.y*cv.height + (v-0.5)*dh)/cv.height);
     return { x:s2.clientX, y:s2.clientY };
   };
-  const before = { x:L.sel.pts[0].x, y:L.sel.pts[0].y };
+  /* ⚠️ 2026-08-31 から 閉じたものは【作業用パス】＝直す相手は curPathPts */
+  const PP = () => curPathPts(LAYERS[SEL]);
+  const before = { x:PP()[0].x, y:PP()[0].y };
   const A = toScr(before.x/m.w, before.y/m.h);
   const st = document.getElementById('stage');
   st.dispatchEvent(new PointerEvent('pointerdown',
@@ -1944,11 +1963,11 @@ const PE = await p.evaluate(async () => {
   st.dispatchEvent(new PointerEvent('pointerup',
     { bubbles:true, pointerId:21, clientX:A.x+40, clientY:A.y+30 }));
   await new Promise(r => setTimeout(r, 500));
-  const moved = Math.abs(LAYERS[SEL].sel.pts[0].x - before.x) > 3 ||
-                Math.abs(LAYERS[SEL].sel.pts[0].y - before.y) > 3;
+  const moved = Math.abs(PP()[0].x - before.x) > 3 ||
+                Math.abs(PP()[0].y - before.y) > 3;
   /* 線の上を押すと点が増える */
-  const n0 = LAYERS[SEL].sel.pts.length;
-  const ps = LAYERS[SEL].sel.pts;
+  const n0 = PP().length;
+  const ps = PP();
   const mid = { x:(ps[0].x+ps[1].x)/2, y:(ps[0].y+ps[1].y)/2 };
   const B = toScr(mid.x/m.w, mid.y/m.h);
   st.dispatchEvent(new PointerEvent('pointerdown',
@@ -1956,18 +1975,18 @@ const PE = await p.evaluate(async () => {
   st.dispatchEvent(new PointerEvent('pointerup',
     { bubbles:true, pointerId:22, clientX:B.x, clientY:B.y }));
   await new Promise(r => setTimeout(r, 500));
-  const n1 = LAYERS[SEL].sel.pts.length;
+  const n1 = PP().length;
   dispatchEvent(new KeyboardEvent('keydown', { key:'Backspace', bubbles:true }));
   await new Promise(r => setTimeout(r, 400));
-  return { moved, 掴んだ:SELPT, n0, n1, n2:LAYERS[SEL].sel.pts.length };
+  return { moved, 掴んだ:SELPT, n0, n1, n2:PP().length };
 });
 ok(PE.moved, '⭐⭐ 閉じたパスの点を掴んで動かせる（形をあとから直せる）', JSON.stringify(PE));
 ok(PE.n1 === PE.n0 + 1, '⭐ 線の上を押すと点が増える（Photoshop と同じ）',
    PE.n0 + ' → ' + PE.n1);
 ok(PE.n2 === PE.n0, '⭐ ⌫ で選んだ点を消せる');
-await p.evaluate(() => document.getElementById('b_pathedit').click());
+await p.evaluate(() => document.getElementById('b_pedit').click());
 await wait(800);
-ok(await p.evaluate(() => POLY.length >= 3 && !LAYERS[SEL].sel),
+ok(await p.evaluate(() => POLY.length >= 3 && !LAYERS[SEL].work),
    '⭐［続きを描く］で開いた状態に戻る（点は残る）');
 await p.evaluate(() => { POLY = []; const bt = document.querySelector('#tools button[data-t="move"]');
   if(bt) bt.click(); document.getElementById('b_demo').click(); });
@@ -2493,6 +2512,83 @@ const SELVIS = await p.evaluate(async () => {
 ok(SELVIS.dark > 90 && SELVIS.light > 90,
    '⭐ 選んでいる行は【どちらの明かりでも】地と字がはっきり分かれる',
    JSON.stringify({ 暗:Math.round(SELVIS.dark), 明:Math.round(SELVIS.light) }));
+
+/* ══⭐⭐ パスパネルとベクトルマスク（Adobe の公式ヘルプどおり）══ 2026-08-31
+   🔴 木下＝「フォトショ同様 **パスのレイヤーパネルも出した方がよい**」
+      「**きちんと Photoshop の作業構成の手順などは見た方がよさそう**。
+        ちゃんと実装するなら何をどうやっているのか調べて実装して」
+   ⭐ 公式ヘルプを読んで直した所を試験にする：
+     ・閉じたら【作業用パス】（切らないし選択にもならない）
+     ・パスパネルに ベクトルマスク／保存したパス／作業用パス が並ぶ・一度に1つ
+     ・**ベクトルマスク＝焼き込まない**（点を直すと切り口も変わる・外すと1画素も同じ）
+     ・⌘＋サムネールで選択範囲として読み込む
+     ・選択範囲から作業用パスを作成（許容値）
+     ・Esc／空いている所でパスの選択解除
+   出典 https://helpx.adobe.com/jp/photoshop/using/paths.html */
+const PATHP = await p.evaluate(async () => {
+  const wait2 = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+  SEL = LAYERS.indexOf(o[1]); SELIDS = [o[1].id]; syncSel(); buildList();
+  document.querySelector('#tools button[data-t="path"]').click();
+  const L = LAYERS[SEL], m = maskSize(L);
+  COARSE = 0; render(); await wait2(300);
+  const before = window.__full();
+  POLY = [{x:m.w*0.2,y:m.h*0.2,hx:0,hy:0},{x:m.w*0.8,y:m.h*0.25,hx:0,hy:0},
+          {x:m.w*0.5,y:m.h*0.8,hx:0,hy:0}];
+  closePath(); await wait2(400);
+  const out = {
+    作業用パスになる: !!L.work && !L.sel && !hasCut(L),
+    パネルに並ぶ: document.querySelectorAll('#pathList .pathrow').length === 1,
+    一度に1つ: !!PATHSEL,
+  };
+  /* ⌘＋サムネールで選択範囲として読み込む（公式の手） */
+  document.querySelector('#pathList .pathrow')
+    .dispatchEvent(new MouseEvent('click', { bubbles:true, metaKey:true }));
+  await wait2(400);
+  out.コマンドクリックで選択になる = !!L.sel;
+  L.sel = null; syncSelPath();
+  /* ベクトルマスク＝焼き込まない */
+  document.getElementById('b_pvmask').click();
+  COARSE = 0; render(); await wait2(500);
+  out.ベクトルマスクで切れる = window.__sad(before, window.__full()) > 0;
+  out.型は焼いていない = !hasCut(L);
+  const A = window.__full();
+  L.vmask.pts[0].x = m.w * 0.35; L._key = '';
+  COARSE = 0; render(); await wait2(400);
+  out.点を直すと切り口も変わる = window.__sad(A, window.__full()) > 0;
+  L.vmask = null; L._key = '';
+  COARSE = 0; render(); await wait2(400);
+  out.外すと1画素も同じ = window.__sad(before, window.__full()) === 0;
+  /* 選択範囲から作業用パスを作成 */
+  L.work = null;
+  pickColor(L, 3, 3); COARSE = 0; render(); await wait2(400);
+  document.getElementById('b_pfromsel').click(); await wait2(500);
+  out.選択範囲から作業用パス = !!(L.work && L.work.pts.length >= 3);
+  out.点の数 = L.work ? L.work.pts.length : 0;
+  /* Esc で選択解除 */
+  PATHSEL = { kind:'work' };
+  dispatchEvent(new KeyboardEvent('keydown', { key:'Escape', bubbles:true }));
+  await wait2(200);
+  out.Escで解除 = PATHSEL === null;
+  clearMask(L); L.work = null; PATHSEL = null; buildPathList(); render();
+  return out;
+});
+ok(PATHP.作業用パスになる && PATHP.パネルに並ぶ,
+   '⭐⭐ パスを閉じると【作業用パス】になり、パスパネルに並ぶ（Adobe と同じ）',
+   JSON.stringify({ 作業用:PATHP.作業用パスになる, パネル:PATHP.パネルに並ぶ }));
+ok(PATHP.コマンドクリックで選択になる,
+   '⭐ ⌘＋サムネールのクリックで【選択範囲として読み込む】（Adobe の公式の手）');
+ok(PATHP.ベクトルマスクで切れる && PATHP.型は焼いていない,
+   '⭐⭐ ベクトルマスクで切れる（⚠️ 型に焼き込んでいない）',
+   JSON.stringify({ 切れた:PATHP.ベクトルマスクで切れる, 焼いていない:PATHP.型は焼いていない }));
+ok(PATHP.点を直すと切り口も変わる,
+   '⭐⭐ ベクトルマスクの点を直すと【切り口も変わる】（解像度に依存しないパス）');
+ok(PATHP.外すと1画素も同じ, '🔴 ベクトルマスクを外すと1画素も同じに戻る');
+ok(PATHP.選択範囲から作業用パス,
+   '⭐ 選択範囲から作業用パスを作成できる（許容値で点が減る）', PATHP.点の数 + ' 点');
+ok(PATHP.Escで解除, '⭐ Esc でパスの選択を解除できる（Adobe と同じ）');
 
 /* 盤の左上の表記＝画面のいちばん左上・小さく（木下の指示） */
 await p.setViewport({ width:1400, height:900 });
