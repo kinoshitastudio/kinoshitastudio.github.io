@@ -1030,6 +1030,23 @@
          ＝画像編集の道具を選んでいてもパスは見えるし、パスを選んでいても画像編集に行ける。
        ⭐ 並ぶのは Adobe と同じ3種類：ベクトルマスク／保存したパス／作業用パス。
        出典 https://helpx.adobe.com/jp/photoshop/using/paths.html -->
+  <!-- ══⭐⭐ 調整レイヤーのマスク ══ 2026-08-31
+       Adobe＝「白い領域（選択範囲）は調整を表示、黒い領域は調整を非表示」
+       ⭐ MOYA は【形（点）】で持つ＝焼き込まない。点を直すと効く範囲も変わる。 -->
+  <div class="grp hide" id="amaskBox">
+    <label class="h">この調整が効く範囲</label>
+    <div class="row"><span class="n">いま</span>
+      <output id="o_amask" style="width:auto;flex:0 0 auto">版面ぜんぶ</output></div>
+    <button class="btn" id="b_amaskmake" style="width:100%">紙のパスから作る（囲った中だけに効く）</button>
+    <div class="btns2">
+      <button class="btn" id="b_amaskinv">中と外を入れ替える</button>
+      <button class="btn" id="b_amaskoff">範囲を外す（版面ぜんぶ）</button>
+    </div>
+    <div class="knob"><span class="n">ふちをぼかす</span><input class="num" type="number" id="n_r_amaskf"><input type="range" id="r_amaskf" min="0" max="100" step="1" value="0"><output id="o_amaskf" hidden>0.00</output></div>
+    <div class="note"><b>［紙ぜんぶを切る］を入れてパスの道具で囲む</b>→ここで作ります。<br>
+      <b>焼き込みません</b>＝点を直すと効く範囲も変わり、外せば版面ぜんぶに戻ります。</div>
+  </div>
+
   <div class="grp hide" id="pathBox">
     <label class="h">パス</label>
     <div id="pathList" style="display:flex;flex-direction:column;gap:3px"></div>
@@ -1086,6 +1103,17 @@
         <button class="btn" id="b_liqclear" style="width:100%;margin-top:6px">ゆがみをぜんぶ戻す</button>
         <div class="note">なぞった所の画素を押します。<b>焼き込みません</b>
           ──［ぜんぶ戻す］で 1画素も同じに戻ります。</div>
+      </div>
+      <!-- ⭐⭐ 選択範囲の演算（Adobe のオプションバーと同じ4つ・同じ並び）── 2026-08-31
+           A. 新規選択／B. 選択範囲に追加／C. 現在の選択範囲から一部削除／
+           D. 現在の選択範囲との共通範囲
+           出典 https://helpx.adobe.com/jp/photoshop/using/selecting-marquee-tools.html -->
+      <div class="row" style="margin-top:8px"><span class="n">パスを閉じたとき</span></div>
+      <div class="seg" id="s_selop">
+        <button data-v="new" class="on">新規選択</button>
+        <button data-v="add">追加</button>
+        <button data-v="sub">一部削除</button>
+        <button data-v="int">共通範囲</button>
       </div>
       <div id="selUI" class="hide">
         <!-- ⭐⭐ 2026-08-31・木下＝「パスで選択して、選択を反転させて外側を消したい。
@@ -2113,7 +2141,9 @@ function subKey(s){
      JSON.stringify(o.fill || {}), JSON.stringify(o.adj || {}),
      o.kind || '', o.text ? JSON.stringify(o.text) : '',
      o.shape ? JSON.stringify(o.shape) : '', o.rnd ? JSON.stringify(o.rnd) : '',
-     o.liq ? o.liq.n : 0, o.sel ? (o.sel.inv ? 'i' : 'o') + o.sel.pts.length : '',
+     o.liq ? o.liq.n : 0,
+     o.sel ? (o.sel.inv ? 'i' : 'o') + selSubs(o.sel).map(q => q.op + q.pts.length).join(',') : '',
+     o.vmask ? 'v' + o.vmask.pts.length : '', o.work ? 'w' + o.work.pts.length : '',
      o.sub ? subKey(o.sub) : ''].join(',')).join(';');
 }
 /* ⭐⭐ 中身を【要る大きさで】1枚に組む。⚠️ 板を作る道（layerPlate）は版面と同じ1本 */
@@ -2159,13 +2189,26 @@ function bumpSub(L){
 /* ══⭐⭐ 描画モード（重ね方）══ 2026-08-30
    木下＝「Figma などで見られる、色にもうひとつレイヤーを重ねられるようにもしよう」
    ⭐ 既定は「通常」＝いままでの絵（分岐ごと通さない）。名前は Photoshop / Figma と同じ言い方。 */
+/* ⭐⭐ 名前と並びは Adobe 公式の描画モードに合わせた（2026-08-31・調べて修正）
+   公式は6つのまとまり＝通常／比較（暗）／比較（明）／コントラスト／比較／HSL。
+   ⚠️ 「暗く」「明るく」「焼き込み」「覆い焼き」「差分」「色」は MOYA の言い方だった。
+     公式は「比較（暗）」「比較（明）」「焼き込みカラー」「覆い焼きカラー」「差の絶対値」「カラー」。
+   ⚠️ browser が持っていないもの（焼き込み（リニア）・ビビッドライト等）は出さない
+     ＝出しても効かないものは並べない。
+   出典 https://helpx.adobe.com/jp/photoshop/using/blending-modes.html */
 const BLENDS = [
-  ['source-over','通常'], ['multiply','乗算'], ['darken','暗く'], ['color-burn','焼き込み'],
-  ['screen','スクリーン'], ['lighten','明るく'], ['color-dodge','覆い焼き'],
+  ['source-over','通常'],
+  ['multiply','乗算'], ['darken','比較（暗）'], ['color-burn','焼き込みカラー'],
+  ['screen','スクリーン'], ['lighten','比較（明）'], ['color-dodge','覆い焼きカラー'],
   ['overlay','オーバーレイ'], ['soft-light','ソフトライト'], ['hard-light','ハードライト'],
-  ['difference','差分'], ['exclusion','除外'],
-  ['hue','色相'], ['saturation','彩度'], ['color','色'], ['luminosity','輝度'],
+  ['difference','差の絶対値'], ['exclusion','除外'],
+  ['hue','色相'], ['saturation','彩度'], ['color','カラー'], ['luminosity','輝度'],
+  /* ⭐ 「明るさをプラス」は canvas の lighter＝公式には無い名前なので、そう書く */
+  ['lighter','明るさをプラス（canvas のみ）'],
 ];
+/* まとまり（公式のグループ）＝選ぶときに迷わないように、区切りの前の値を持つ */
+const BLENDGROUP = { 'multiply':'比較（暗）', 'screen':'比較（明）',
+  'overlay':'コントラスト', 'difference':'比較', 'hue':'HSL', 'lighter':'canvas のもの' };
 
 /* ══⭐⭐ 塗りを重ねる ══ 2026-08-30
    木下＝「白テキストの上に画像を乗せて、塗りを % で指定したもの」（Figma の塗り2段）。
@@ -2857,7 +2900,7 @@ function adjEdSig(L){
   return out;
 }
 function edChain(L){
-  const out = [edOf(L)];
+  const out = [{ e:edOf(L), A:null }];
   if(L.kind === 'adj') return out;
   /* 手前にある調整レイヤーを、奥から順に重ねる */
   const zs = LAYERS.filter(o => o.kind === 'adj' && o.on !== false && zOf(o) < zOf(L));
@@ -2867,7 +2910,48 @@ function edChain(L){
     if(edPlain(e)) continue;
     /* ⭐ 切る（クリッピング）＝すぐ下の1枚だけ。その1枚が自分でなければ通さない */
     if(A.clip && adjTarget(A) !== L) continue;
-    out.push(e);
+    out.push({ e, A });
+  }
+  return out;
+}
+/* ══⭐⭐ 調整レイヤーのマスク ══ 2026-08-31
+   Adobe 公式＝「選択範囲に基づいて調整レイヤーが自動的に作成される。
+   **白い領域（選択範囲）は調整を表示、黒い領域（選択範囲外）は調整を非表示**」
+   ⭐ MOYA は形（点）で持つ＝**焼き込まない**。あとから点を直すと効く範囲も変わる。
+   ⚠️ 点は【版面の割合 0〜1】で持つ（調整レイヤーは版面のものなので、素材の中の座標ではない）。
+   出典 https://helpx.adobe.com/jp/photoshop/desktop/create-manage-layers/color-adjustment-fill-layers/use-layer-masks-to-target-adjustment-or-fill-layers.html */
+function adjMaskCanvas(A, L, W, H, dw, dh){
+  const q = A.amask;
+  if(!q || !q.pts || q.pts.length < 3) return null;
+  const c = document.createElement('canvas'); c.width = dw; c.height = dh;
+  const x = c.getContext('2d');
+  /* 版面の割合 → この素材の板の座標（板は L の枠にぴったり） */
+  const ox = L.x * W - dw/2, oy = L.y * H - dh/2;
+  const bp = q.pts.map(t => ({ x:t.x * W - ox, y:t.y * H - oy,
+    hx:(t.hx||0) * W, hy:(t.hy||0) * H,
+    ihx:(t.ihx==null?null:t.ihx*W), ihy:(t.ihy==null?null:t.ihy*H) }));
+  const d = pathD(bp, true);
+  if(!d) return null;
+  x.save();
+  if(q.feather > 0) x.filter = 'blur(' + (q.feather * Math.min(dw, dh) * 0.06).toFixed(2) + 'px)';
+  if(q.inv){
+    x.fillStyle = '#fff'; x.fillRect(0, 0, dw, dh);
+    x.globalCompositeOperation = 'destination-out';
+    x.fill(new Path2D(d));
+  }else{
+    x.fillStyle = '#fff'; x.fill(new Path2D(d));
+  }
+  x.restore();
+  return c;
+}
+function amaskSig(L){
+  if(L.kind === 'adj') return '';
+  let out = '';
+  for(const A of LAYERS){
+    if(A.kind !== 'adj' || A.on === false || !A.amask) continue;
+    if(zOf(A) >= zOf(L)) continue;
+    out += A.id + (A.amask.inv ? 'i' : 'o') + (A.amask.feather || 0)
+      + A.amask.pts.map(q => q.x.toFixed(3) + ':' + q.y.toFixed(3)).join('_');
   }
   return out;
 }
@@ -3000,17 +3084,31 @@ function edOnce(base, e, dw, dh){
 }
 /* ⭐ 編集をかけた元の絵。⚠️ 何もしていないなら【元の写真そのもの】を返す（作り直さない）
    → feedback_look_is_not_shape_reuse_the_material */
-function edSrc(L, dw, dh){
+function edSrc(L, dw, dh, W, H){
   const chain = edChain(L);
   /* ⭐ 中にアートボードを持つ素材は、まず中身を【要る大きさで】組んでから編集をかける */
   const base = contentOf(L, dw, dh);
-  const live = chain.filter(e => !edPlain(e));
+  const live = chain.filter(o => !edPlain(o.e));
   if(!live.length && !liqAny(L)) return base;
-  const key = dw + 'x' + dh + '|' + live.map(e => JSON.stringify(e)).join('~')
-            + '|liq' + (L.liq ? L.liq.n : 0) + '|' + (L.sub ? subKey(L.sub) : '');
+  const key = dw + 'x' + dh + '|' + live.map(o => JSON.stringify(o.e)).join('~')
+            + '|liq' + (L.liq ? L.liq.n : 0) + '|' + (L.sub ? subKey(L.sub) : '')
+            + '|' + (W ? amaskSig(L) : '');
   if(L._edk === key && L._edc) return L._edc;
   let cur = base;
-  for(const e of live) cur = edOnce(cur, e, dw, dh);
+  for(const o of live){
+    const done = edOnce(cur, o.e, dw, dh);
+    /* ⭐ 調整レイヤーにマスクが有れば、その形の中だけに効かせる（外は元のまま） */
+    const mk = (o.A && W) ? adjMaskCanvas(o.A, L, W, H, dw, dh) : null;
+    if(mk){
+      const t = document.createElement('canvas'); t.width = dw; t.height = dh;
+      const tx = t.getContext('2d');
+      tx.drawImage(done, 0, 0);
+      tx.globalCompositeOperation = 'destination-in'; tx.drawImage(mk, 0, 0);
+      tx.globalCompositeOperation = 'destination-over';
+      tx.drawImage(cur, 0, 0, dw, dh);
+      cur = t;
+    }else cur = done;
+  }
   /* ⑦ ゆがみ（筆でなぞった分）。⚠️ 編集が1つも無いときは紙に写してからかける */
   if(liqAny(L)){
     if(cur === base){
@@ -3366,6 +3464,35 @@ function pathD(pts, close){
   }
   return d + (close ? 'Z' : '');
 }
+/* ⭐⭐ 選択範囲（何枚でも重なる）で切る ── 2026-08-31
+   ⚠️ 1本のパスではなく【組み上がった選択の形】で切る＝追加・一部削除・共通範囲が効く */
+function cutBySel(L, keepInside){
+  const sm = selMask(L);
+  if(!sm) return;
+  hist();
+  const m = maskSize(L);
+  const put = (dst, invert) => {
+    const t = document.createElement('canvas'); t.width = m.w; t.height = m.h;
+    const tx = t.getContext('2d');
+    if(invert){ tx.fillStyle = '#fff'; tx.fillRect(0, 0, m.w, m.h);
+      tx.globalCompositeOperation = 'destination-out'; tx.drawImage(sm, 0, 0); }
+    else tx.drawImage(sm, 0, 0);
+    dst.getContext('2d').drawImage(t, 0, 0);
+  };
+  put(editCanvas(L, 'cut'), !!keepInside);
+  /* ⚠️ 切った所の「戻す跡」は消す（そうしないと戻す跡が勝って抜けない） */
+  if(L.mKeep){
+    const ox = L.mKeep.getContext('2d');
+    ox.save(); ox.globalCompositeOperation = 'destination-out';
+    const t2 = document.createElement('canvas'); t2.width = m.w; t2.height = m.h;
+    const t2x = t2.getContext('2d');
+    if(keepInside){ t2x.fillStyle = '#fff'; t2x.fillRect(0, 0, m.w, m.h);
+      t2x.globalCompositeOperation = 'destination-out'; t2x.drawImage(sm, 0, 0); }
+    else t2x.drawImage(sm, 0, 0);
+    ox.drawImage(t2, 0, 0); ox.restore();
+  }
+  bumpMask(L);
+}
 function cutPath(L, pts, keepInside){
   if(!pts || pts.length < 3) return;
   hist();
@@ -3473,13 +3600,14 @@ function layerPlate(L, W, H){
                L.kind === 'shape' && L.shape ? JSON.stringify(L.shape) : '',
                L.kind === 'render' && L.rnd ? JSON.stringify(L.rnd) : '',
                L.fx ? JSON.stringify(L.fx) : '',
-               L.sel ? (L.sel.inv ? 'i' : 'o') + L.sel.pts.length + '|' + (L.selBlur || 0) : '',
+               L.sel ? (L.sel.inv ? 'i' : 'o') + selSubs(L.sel).map(q => q.op + q.pts.length).join(',')
+                 + '|' + (L.selBlur || 0) : '',
                L.sub ? subKey(L.sub) : '',      /* ⭐ 中身が変わったら板も作り直す */
                L.fillA == null ? 1 : L.fillA,
                /* 🔴 手前にある調整レイヤーの色調補正も鍵に入れる。
                   入れないと【調整レイヤーを消しても絵が戻らない】（板の控えが古いまま）。
                   ⚠️ 調整レイヤーが1枚も無いときは空文字＝いままでと1画素も同じ・costも同じ */
-               adjEdSig(L),
+               adjEdSig(L), amaskSig(L),
                /* ⭐ ベクトルマスクも鍵に入れる（点を直したら切り口も変わる＝焼き込まない） */
                L.vmask ? (L.vmask.inv ? 'i' : 'o') + L.vmask.pts.length + ',' +
                  (L.vmask.op == null ? 1 : L.vmask.op) + ',' + (L.vmask.feather || 0) + ',' +
@@ -3494,7 +3622,7 @@ function layerPlate(L, W, H){
   x.filter = 'blur(' + (k.blur * dw / 1000).toFixed(2) + 'px) saturate(' + k.sat.toFixed(3)
            + ') contrast(' + k.con.toFixed(3) + ') brightness(' + k.bri.toFixed(3) + ')';
   if(L.flip){ x.translate(dw, 0); x.scale(-1, 1); }
-  x.drawImage(edSrc(L, dw, dh), 0, 0, dw, dh);   /* ⭐ 素材そのものの編集を先に通す */
+  x.drawImage(edSrc(L, dw, dh, W, H), 0, 0, dw, dh);   /* ⭐ 素材そのものの編集を先に通す */
   x.restore();
 
   /* ①' 切り抜きの型をかぶせる（元の写真は削っていない＝いつでも消せる）
@@ -4465,14 +4593,16 @@ function drawOverlay(W, H){
      ⭐⭐ パスの道具のときは【点とハンドルも出す】＝閉じたあとでも形を直せる（2026-08-31） */
   {
     const L2 = LAYERS[SEL];
-    if(L2 && L2.sel && L2.sel.pts && L2.sel.pts.length >= 3 && L2.img){
+    const subs2 = L2 ? selSubs(L2.sel) : [];
+    if(L2 && subs2.length && L2.img){
       const iw3 = cwOf(L2), ih3 = chOf(L2);
       const dw3 = L2.s * W, dh3 = dw3 * ih3 / iw3 * syOf(L2);
       const m3 = maskSize(L2);
       og.save();
       og.translate(L2.x*W, L2.y*H); og.rotate(L2.rot * Math.PI/180);
       const fx3 = L2.flip ? -1 : 1;
-      const bp3 = L2.sel.pts.map(q2 => {
+      /* ⭐ 選択は何枚でも重なる（追加・一部削除・共通範囲）＝ぜんぶ点線を出す */
+      const toB3 = pts => pts.map(q2 => {
         let u = q2.x / m3.w; const v = q2.y / m3.h;
         if(L2.flip) u = 1 - u;
         return { x:(u - 0.5) * dw3, y:(v - 0.5) * dh3,
@@ -4480,6 +4610,8 @@ function drawOverlay(W, H){
                  ihx:(q2.ihx==null?null:q2.ihx / m3.w * dw3 * fx3),
                  ihy:(q2.ihy==null?null:q2.ihy / m3.h * dh3) };
       });
+      const bp3 = toB3(subs2[0].pts);
+      const extra = subs2.slice(1).map(sb => pathD(toB3(sb.pts), true)).filter(Boolean);
       const d3 = pathD(bp3, true);
       if(d3){
         /* ⭐⭐ 点線を動かす（Photoshop の marching ants）── 2026-08-31・木下＝
@@ -4493,6 +4625,14 @@ function drawOverlay(W, H){
         og.strokeStyle = 'rgba(255,255,255,.95)'; og.stroke(new Path2D(d3));
         og.lineDashOffset = -ANTS + dash;
         og.strokeStyle = 'rgba(0,0,0,.75)'; og.stroke(new Path2D(d3));
+        /* 2枚目からの形も点線で出す（追加・一部削除・共通範囲） */
+        for(const dx of extra){
+          const pp = new Path2D(dx);
+          og.lineDashOffset = -ANTS;
+          og.strokeStyle = 'rgba(255,255,255,.95)'; og.stroke(pp);
+          og.lineDashOffset = -ANTS + dash;
+          og.strokeStyle = 'rgba(0,0,0,.75)'; og.stroke(pp);
+        }
         /* ⭐ 反転しているときは【素材の外枠にも点線】を出す（Photoshop と同じ）
            ＝「外が選ばれている」ことが見える。これが無いと、ぼかしが余白にかかっていても
              気づけない（2026-08-31・木下が踏んだ）。 */
@@ -4868,7 +5008,7 @@ function hitLayer(q){
         /* ⭐⭐ 直す相手は【パスパネルで選んでいるパス】（Adobe のパス選択ツールと同じ）
            ＝作業用パスでも、保存したパスでも、ベクトルマスクでも、同じ手で直せる。
            ⚠️ 選択範囲（点線）は絵ではなく範囲なので、直す相手はあくまでパス。 */
-        const ps0 = curPathPts(L) || (L.sel && L.sel.pts);
+        const ps0 = curPathPts(L) || (selSubs(L.sel)[0] && selSubs(L.sel)[0].pts);
         if(!POLY.length && ps0 && ps0.length >= 3){
           const ps = ps0;
           let hh4 = -1, hb4 = near;
@@ -4983,7 +5123,7 @@ function hitLayer(q){
       /* 閉じたパスの点・ハンドルを動かす */
       if(grab.what === 'selpoint' || grab.what === 'selhandle'){
         const L = LAYERS[SEL]; if(!L) return;
-        const ps1 = curPathPts(L) || (L.sel && L.sel.pts); if(!ps1) return;
+        const ps1 = curPathPts(L) || (selSubs(L.sel)[0] && selSubs(L.sel)[0].pts); if(!ps1) return;
         const m = toMask(L, q, cv.width, cv.height);
         const o = ps1[grab.i]; if(!o) return;
         if(grab.what === 'selpoint'){ o.x = m.x; o.y = m.y; }
@@ -5854,6 +5994,9 @@ function syncPanelMode(){
      （木下＝「パスを選択していると画像編集ツールパネルにいけない」＝混ざっていた） */
   const pb = el('pathBox');
   if(pb) pb.classList.toggle('hide', !(L && L.img && !isAdj));
+  const ab = el('amaskBox');
+  if(ab) ab.classList.toggle('hide', !isAdj);
+  if(isAdj && typeof syncAmask === 'function') syncAmask();
   el('textBox').classList.toggle('hide', !(solo && L && L.kind === 'text'));
   el('shapeBox').classList.toggle('hide', !(solo && L && L.kind === 'shape'));
   el('renderBox').classList.toggle('hide', !(solo && L && L.kind === 'render'));
@@ -6206,10 +6349,14 @@ function buildSwatches(){
   }
 }
 /* ══ 重ね方・塗り・文字 の配線（値の持ち主は L ひとつ）══ */
-BLENDS.forEach(([v, n]) => {
-  ['sel_blend','sel_fillmode'].forEach(id => {
+/* ⭐ 公式と同じ【まとまり】で区切って出す（29種のうち browser が持つものだけ） */
+['sel_blend','sel_fillmode'].forEach(id => {
+  let grp = null;
+  BLENDS.forEach(([v, n]) => {
+    if(BLENDGROUP[v]){ grp = document.createElement('optgroup');
+      grp.label = BLENDGROUP[v]; el(id).appendChild(grp); }
     const o = document.createElement('option'); o.value = v; o.textContent = n;
-    el(id).appendChild(o);
+    (grp || el(id)).appendChild(o);
   });
 });
 FONTS.forEach(([v, n]) => { const o = document.createElement('option');
@@ -7190,18 +7337,51 @@ function closePath(){
      + '（⚠️ 保存しないで描き直すと上書きされます）');
 }
 /* ⭐ 選択範囲を【素材の中の型】にする（式は1本＝切るのもぼかすのも同じ道を通る） */
+/* ══⭐⭐ 選択範囲は【何枚でも重ねられる】══ 2026-08-31
+   Adobe のオプションバーと同じ4つ＝新規選択／選択範囲に追加／現在の選択範囲から一部削除／
+   現在の選択範囲との共通範囲。
+   ⚠️ 「共通範囲」は「パスと選択範囲が重ならない場合は、何も選択されません」（公式）
+   ⭐ 形（点）で持つ＝焼き込まない。あとから点を直すと選択も変わる。
+   出典 https://helpx.adobe.com/jp/photoshop/using/selecting-marquee-tools.html */
+function selSubs(q){
+  if(!q) return [];
+  if(q.subs && q.subs.length) return q.subs;
+  if(q.pts && q.pts.length >= 3) return [{ pts:q.pts, op:'new' }];   /* 前の形も読める */
+  return [];
+}
 function selMask(L){
   const q = L.sel;
-  if(!q || !q.pts || q.pts.length < 3) return null;
+  const subs = selSubs(q);
+  if(!subs.length) return null;
   const m = maskSize(L);
   const c = document.createElement('canvas'); c.width = m.w; c.height = m.h;
   const x = c.getContext('2d');
-  const d = pathD(q.pts, true);
-  if(!d) return null;
   x.fillStyle = '#fff';
-  if(q.inv){ x.fillRect(0, 0, m.w, m.h);
-    x.globalCompositeOperation = 'destination-out'; x.fill(new Path2D(d)); }
-  else x.fill(new Path2D(d));
+  subs.forEach((sub, i) => {
+    const d = pathD(sub.pts, true);
+    if(!d) return;
+    const op = i === 0 ? 'new' : (sub.op || 'add');
+    const path = new Path2D(d);
+    if(op === 'new'){ x.globalCompositeOperation = 'source-over';
+      x.clearRect(0, 0, m.w, m.h); x.fill(path); }
+    else if(op === 'add'){ x.globalCompositeOperation = 'source-over'; x.fill(path); }
+    else if(op === 'sub'){ x.globalCompositeOperation = 'destination-out'; x.fill(path); }
+    else if(op === 'int'){
+      /* 共通範囲＝いまの選択と、この形の重なりだけ */
+      const t = document.createElement('canvas'); t.width = m.w; t.height = m.h;
+      const tx = t.getContext('2d');
+      tx.fillStyle = '#fff'; tx.fill(path);
+      x.globalCompositeOperation = 'destination-in'; x.drawImage(t, 0, 0);
+    }
+    x.globalCompositeOperation = 'source-over';
+  });
+  if(q.inv){
+    const t = document.createElement('canvas'); t.width = m.w; t.height = m.h;
+    const tx = t.getContext('2d');
+    tx.fillStyle = '#fff'; tx.fillRect(0, 0, m.w, m.h);
+    tx.globalCompositeOperation = 'destination-out'; tx.drawImage(c, 0, 0);
+    return t;
+  }
   return c;
 }
 /* ⭐⭐ 紙を切るモード。⚠️ 盤は版面のまま（素材の画面へ入らない） */
@@ -7228,7 +7408,7 @@ el('b_unsheet').onclick = () => {
 /* ══ 選択範囲の道具（切る／反転／中だけぼかす／線を描く）══ 2026-08-31 */
 function syncSelPath(){
   const L = LAYERS[SEL];
-  const on = !!(L && L.sel && L.sel.pts && L.sel.pts.length >= 3);
+  const on = !!(L && selSubs(L.sel).length);
   el('selUI').classList.toggle('hide', !on);
   if(!on) return;
   el('o_selst').value = L.sel.inv ? '外（囲いの外側）' : '中（囲いの中）';
@@ -7246,12 +7426,12 @@ function syncSelPath(){
    ⭐ 消したあとも【選択は残す】（Photoshop と同じ）＝続けてふちをぼかす等ができる。 */
 el('b_selin').onclick = () => {
   const L = LAYERS[SEL]; if(!L || !L.sel) return;
-  cutPath(L, L.sel.pts, true);          /* 中を残す＝外を消す */
+  cutBySel(L, true);          /* 中を残す＝外を消す（選択が何枚でも通る） */
   L._key = ''; syncSelPath(); render(); stat('囲った外を消した（選択は残っています）');
 };
 el('b_selout').onclick = () => {
   const L = LAYERS[SEL]; if(!L || !L.sel) return;
-  cutPath(L, L.sel.pts, false);         /* 中を消す */
+  cutBySel(L, false);         /* 中を消す（選択が何枚でも通る） */
   L._key = ''; syncSelPath(); render(); stat('囲った中を消した（選択は残っています）');
 };
 /* ⭐⭐ 選択の中だけを【新しいレイヤーにする】（Photoshop の ⌘J）── 2026-08-31
@@ -7260,7 +7440,7 @@ el('b_selout').onclick = () => {
      ⇧ を足すと 元からは消える（Photoshop の ⌘⇧J＝切り取ったレイヤー）。 */
 function selToLayer(cutFromOriginal){
   const L = LAYERS[SEL];
-  if(!L || !L.sel || !L.sel.pts || L.sel.pts.length < 3){ stat('先にパスを閉じてください'); return; }
+  if(!L || !selSubs(L.sel).length){ stat('先にパスを閉じてください'); return; }
   hist();
   const o = dupLayer(L, 0, 0);
   if(!o) return;
@@ -7268,8 +7448,11 @@ function selToLayer(cutFromOriginal){
   o.sel = null; o.selBlur = 0;
   o.paths = [];
   LAYERS.push(o);
-  cutPath(o, L.sel.pts, !L.sel.inv);          /* 新しい方は【選んだ側】だけを残す */
-  if(cutFromOriginal) cutPath(L, L.sel.pts, !!L.sel.inv);   /* 元からは選んだ側を消す */
+  o.sel = { subs:selSubs(L.sel).map(q => ({ pts:q.pts.map(t => Object.assign({}, t)), op:q.op })),
+            inv:!!L.sel.inv };
+  cutBySel(o, true);                        /* 新しい方は【選んだ所】だけを残す */
+  o.sel = null;
+  if(cutFromOriginal) cutBySel(L, false);   /* 元からは選んだ所を消す */
   SEL = LAYERS.length - 1; SELIDS = [o.id];
   syncSelIds(); buildList(); syncSel(); render();
   stat(cutFromOriginal ? '選んだ所を切り取って新しいレイヤーにした（選択の道具で動かせます）'
@@ -7334,7 +7517,7 @@ function strokePath(L, pts, fillIt){
 }
 el('b_selstroke').onclick = () => {
   const L = LAYERS[SEL]; if(!L || !L.sel) return;
-  strokePath(L, L.sel.pts, false);
+  strokePath(L, selSubs(L.sel)[0].pts, false);
 };
 [['r_liqrad','o_liqrad'], ['r_liqstr','o_liqstr']].forEach(([rid, oid]) => {
   el(rid).addEventListener('input', e => { el(oid).value = (+e.target.value/100).toFixed(2); });
@@ -7490,12 +7673,28 @@ el('b_psave').onclick = () => {
   stat('作業用パスを保存した（もう上書きされません）');
 };
 /* パスを選択範囲として読み込む（Adobe＝「パスを選択範囲として読み込む」） */
+let SELOP = 'new';           /* 選択範囲の演算（Adobe のオプションバーと同じ4つ） */
+document.querySelectorAll('#s_selop button').forEach(bt => bt.onclick = () => {
+  SELOP = bt.dataset.v;
+  document.querySelectorAll('#s_selop button').forEach(x => x.classList.toggle('on', x === bt));
+  stat({ new:'新規選択', add:'選択範囲に追加', sub:'現在の選択範囲から一部削除',
+         int:'現在の選択範囲との共通範囲' }[SELOP] + ' にした');
+});
 el('b_pload').onclick = () => {
   const g2 = needPath(); if(!g2) return;
   hist();
-  g2.L.sel = { pts:g2.pts.map(q => Object.assign({}, q)), inv:false };
-  g2.L._key = ''; syncSelPath(); render();
-  stat('パスを選択範囲として読み込んだ（点線が動きます）');
+  const L = g2.L;
+  const pts = g2.pts.map(q => Object.assign({}, q));
+  if(SELOP === 'new' || !L.sel || !selSubs(L.sel).length){
+    L.sel = { subs:[{ pts, op:'new' }], inv:false };
+  }else{
+    L.sel.subs = selSubs(L.sel).slice();
+    L.sel.subs.push({ pts, op:SELOP });
+    delete L.sel.pts;
+  }
+  L._key = ''; syncSelPath(); render();
+  stat('パスを選択範囲として読み込んだ（' +
+    { new:'新規', add:'追加', sub:'一部削除', int:'共通範囲' }[SELOP] + '・点線が動きます）');
 };
 /* ベクトルマスクにする（Adobe＝レイヤー／ベクトルマスク／現在のパス） */
 el('b_pvmask').onclick = () => {
@@ -8005,6 +8204,8 @@ function snapshot(){
                              /* ⭐⭐ 中身（その素材だけのアートボード）も入れる（2026-08-31）
                                 🔴 入れないと「中に足したもの」が保存で消える＝設定として嘘になる */
                              work:L.work ? { pts:L.work.pts.map(q => Object.assign({}, q)) } : null,
+                             amask:L.amask ? { inv:!!L.amask.inv, feather:L.amask.feather,
+                               pts:L.amask.pts.map(q => Object.assign({}, q)) } : null,
                              vmask:L.vmask ? { inv:!!L.vmask.inv, op:L.vmask.op, feather:L.vmask.feather,
                                pts:L.vmask.pts.map(q => Object.assign({}, q)) } : null,
                              sub: subJSON(L.sub) })) };
@@ -8196,6 +8397,8 @@ function applyRest(o){
       L.adj = Object.assign(newAdj(), o2.adj || {});
       /* ⭐ 中身（その素材だけのアートボード）も戻す。⚠️ 写真はいま持っているものを使う */
       L.work = o2.work ? { pts:o2.work.pts.map(q => Object.assign({}, q)) } : null;
+      L.amask = o2.amask ? { inv:!!o2.amask.inv, feather:o2.amask.feather || 0,
+        pts:o2.amask.pts.map(q => Object.assign({}, q)) } : null;
       L.vmask = o2.vmask ? { inv:!!o2.vmask.inv, op:o2.vmask.op == null ? 1 : o2.vmask.op,
         feather:o2.vmask.feather || 0,
         pts:o2.vmask.pts.map(q => Object.assign({}, q)) } : null;
@@ -8495,6 +8698,8 @@ function snapState(){
       /* ⭐ 中身・ゆがみ・選択パス・作業用パス・ベクトルマスクも控える */
       sub:L.sub || null, liq:L.liq || null, sel:L.sel || null, selBlur:L.selBlur || 0,
       work:L.work ? { pts:L.work.pts.map(q => Object.assign({}, q)) } : null,
+      amask:L.amask ? { inv:!!L.amask.inv, feather:L.amask.feather,
+        pts:L.amask.pts.map(q => Object.assign({}, q)) } : null,
       vmask:L.vmask ? { inv:!!L.vmask.inv, op:L.vmask.op, feather:L.vmask.feather,
         pts:L.vmask.pts.map(q => Object.assign({}, q)) } : null,
     })),
@@ -8521,7 +8726,7 @@ function restoreState(st){
     /* ⭐ 中身（その素材だけのアートボード）・ゆがみ・選択パスも戻す
        ⚠️ 中身は控えを取らずそのまま持つ（中で戻すときは中の並びが控えられている） */
     sub:o.sub || null, liq:o.liq || null, sel:o.sel || null, selBlur:o.selBlur || 0,
-    work:o.work || null, vmask:o.vmask || null,
+    work:o.work || null, vmask:o.vmask || null, amask:o.amask || null,
     mask:null, mv:1, _dist:null, _mk:'', _c:null, _key:'', _subc:null, _subk:'',
   })));
   SHEETCUT = st.SHEETCUT ? { keepIn:st.SHEETCUT.keepIn,
@@ -8650,7 +8855,7 @@ addEventListener('keydown', e => {
      ⚠️ 選択が無いときの Delete は【素材を消す】のまま（今までと同じ）。 */
   {
     const L2 = LAYERS[SEL];
-    const hasSel = !!(L2 && L2.sel && L2.sel.pts && L2.sel.pts.length >= 3);
+    const hasSel = !!(L2 && selSubs(L2.sel).length);
     if(cmd && e.shiftKey && k === 'i' && hasSel){
       e.preventDefault(); el('b_selinv').click(); return; }
     if(cmd && k === 'd' && hasSel){
@@ -8682,7 +8887,7 @@ addEventListener('keydown', e => {
     /* ⭐ 閉じたパスは、掴んでいる点を ⌫ で消せる（3つより少なくはしない） */
     if((k === 'backspace' || k === 'delete') && SELPT >= 0){
       const L = LAYERS[SEL];
-      const ps2 = L ? (curPathPts(L) || (L.sel && L.sel.pts)) : null;
+      const ps2 = L ? (curPathPts(L) || (selSubs(L.sel)[0] && selSubs(L.sel)[0].pts)) : null;
       if(ps2 && ps2.length > 3){
         e.preventDefault(); hist();
         ps2.splice(SELPT, 1); SELPT = -1; L._key = '';
@@ -8741,7 +8946,7 @@ var ANTS = 0;
   const tick = t => {
     requestAnimationFrame(tick);
     const L = LAYERS[SEL];
-    if(!(L && L.sel && L.sel.pts && L.sel.pts.length >= 3)) return;
+    if(!(L && selSubs(L.sel).length)) return;
     if(t - t0 < 60) return;
     t0 = t; ANTS = (ANTS + 2) % 1000;
     if(typeof drawOverlay === 'function') drawOverlay(cv.width, cv.height);
