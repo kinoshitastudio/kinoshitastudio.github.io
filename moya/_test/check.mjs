@@ -1225,8 +1225,12 @@ ok(await p.evaluate(() => { const L = LAYERS[SEL];
   '⭐⭐ 文字を置くと【絵になって】版面に入る（置いたあとは写真と同じ扱い）',
   await p.evaluate(() => LAYERS[SEL].img.naturalWidth + '×' + LAYERS[SEL].img.naturalHeight));
 ok(diff(await shot(), TX0) !== 0, '⭐ 盤に字が出る');
-ok(await p.evaluate(() => !document.getElementById('textBox').classList.contains('hide')),
-   '⭐ 文字のパネルが出る（テキストを選んでいるときだけ）');
+ok(await p.evaluate(() => { openEditor(SEL); return true; }) &&
+   await (async () => { await wait(1400);
+     return p.evaluate(() => !document.getElementById('textBox').classList.contains('hide')); })(),
+   '⭐ 文字のパネルは【編集画面】で出る（ボード画面には置き方だけ）');
+await p.evaluate(() => document.getElementById('b_solo').click());
+await wait(900);
 const TX1 = await shot();
 await p.evaluate(() => { const e = document.getElementById('t_str');
   e.value = 'MOYA\nそうだ'; e.dispatchEvent(new Event('input', { bubbles:true })); });
@@ -1315,8 +1319,10 @@ ok(await p.evaluate(() => { const L = LAYERS[SEL];
   '⭐⭐ 図形を置ける（木下＝「図形が必要だね」）',
   await p.evaluate(() => LAYERS[SEL].img.naturalWidth + '×' + LAYERS[SEL].img.naturalHeight));
 ok(diff(await shot(), SP0) !== 0, '⭐ 盤に図形が出る');
-ok(await p.evaluate(() => !document.getElementById('shapeBox').classList.contains('hide')),
-   '⭐ 図形のパネルが出る');
+ok(await p.evaluate(() => { openEditor(SEL); return true; }) &&
+   await (async () => { await wait(1400);
+     return p.evaluate(() => !document.getElementById('shapeBox').classList.contains('hide')); })(),
+   '⭐ 図形のパネルは【編集画面】で出る');
 const SKINDS = await p.evaluate(async () => {
   const out = [];
   for(const bt of document.querySelectorAll('#s_shape button')){
@@ -1382,8 +1388,8 @@ ok(await p.evaluate(() => !document.querySelector('#panel h1') && !document.quer
 /* ⚠️ 盤の左上は【出す絵】に1画素も入らない */
 ok(await p.evaluate(() => {
   const bh = document.getElementById('boardHead');
-  return getComputedStyle(bh).position === 'absolute' && !bh.closest('canvas');
-}), '⭐ 左上の表記は盤の上に浮いているだけ（PNG には入らない）');
+  return /fixed|absolute/.test(getComputedStyle(bh).position) && !bh.closest('canvas');
+}), '⭐ 左上の表記は浮いているだけ（PNG には入らない）');
 
 /* ⑮-3 左ツールパネル（Photoshop / Figma / 貼HARI と同じ形） */
 ok(await p.evaluate(() => !!document.getElementById('toolsIn')), '⭐ 左ツールは浮いたカプセル');
@@ -1970,6 +1976,42 @@ const MBT = await p.evaluate(() => ({
 }));
 ok(MBT.並び === 'row' && MBT.ツールバー < 110 && MBT.盤 > 200,
    '⑨ 指の端末ではツールバーが横一列・盤が潰れない', JSON.stringify(MBT));
+/* 🔴🔴 ダブルタップ拡大を止める（2026-08-31・木下＝「タップするとときどき違うところで
+   デザイン関係なくズームされるやつ」）。⚠️ iOS は user-scalable=no を無視するので
+   止められるのは touch-action だけ。 */
+const ZM = await p.evaluate(() => {
+  const ta = sel => { const e = document.querySelector(sel);
+    return e ? getComputedStyle(e).touchAction : 'なし'; };
+  const small = [];
+  document.querySelectorAll('textarea,select,input[type=text],input[type=number]')
+    .forEach(e => { if(parseFloat(getComputedStyle(e).fontSize) < 16)
+      small.push((e.id || e.tagName) + ':' + getComputedStyle(e).fontSize); });
+  const btns = [...document.querySelectorAll('#panel button')].slice(0, 20)
+    .filter(e => getComputedStyle(e).touchAction !== 'manipulation').length;
+  return { body:ta('body'), panel:ta('#panel'), tools:ta('#tools'), stage:ta('#stage'),
+           小さい字の入力:small, 押す所でmanipulationでない:btns };
+});
+ok(ZM.body === 'manipulation' && ZM.押す所でmanipulationでない === 0,
+   '⑨ 指の端末で【ダブルタップ拡大】が止まる', JSON.stringify(ZM));
+ok(ZM.panel === 'pan-y' && ZM.tools === 'pan-x' && ZM.stage === 'none',
+   '⑨ 引ける所は引けるまま（右パネル縦・ツールバー横・盤は指を全部取る）');
+ok(ZM.小さい字の入力.length === 0,
+   '⑨ 字を打つ所はぜんぶ 16px（iOS が勝手に寄らない）',
+   ZM.小さい字の入力.join(',') || '0件');
+/* 盤の左上の表記＝画面のいちばん左上・小さく（木下の指示） */
+await p.setViewport({ width:1400, height:900 });
+await wait(700);
+const BH = await p.evaluate(() => {
+  const h = document.getElementById('boardHead').getBoundingClientRect();
+  const ti = document.getElementById('toolsIn').getBoundingClientRect();
+  return { 左:Math.round(h.left), 上:Math.round(h.top),
+           字:getComputedStyle(document.querySelector('#boardHead .l1')).fontSize,
+           カプセル上:Math.round(ti.top) };
+});
+ok(BH.左 < 20 && BH.上 < 20 && parseFloat(BH.字) <= 10 && BH.上 + 60 < BH.カプセル上,
+   '⭐ 盤の表記は【画面の左上】に小さく出る（ツールバーと重ならない）', JSON.stringify(BH));
+await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
+await wait(600);
 
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
