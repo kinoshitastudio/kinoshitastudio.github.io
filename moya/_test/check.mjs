@@ -433,7 +433,7 @@ const PEN = await p.evaluate(async () => {
   out.閉じて作業用パスになった = POLY.length === 0 && !!L.work && L.work.pts.length >= 3;
   document.getElementById('b_pload').click();
   await new Promise(r => setTimeout(r, 250));
-  out.選択に読み込めた = !!L.sel && L.sel.pts.length >= 3;
+  out.選択に読み込めた = selSubs(L.sel).length >= 1;
   /* そこから【囲った外を消す】が効く */
   document.getElementById('b_selin').click();
   COARSE = 0; render(); await new Promise(r => setTimeout(r, 250));
@@ -1773,7 +1773,7 @@ await p.evaluate(() => {
     document.getElementById('b_selin').click(); }
 });
 await wait(900);
-ok(await p.evaluate(() => { const L = LAYERS[SEL]; return hasCut(L) && !!L.sel; }),
+ok(await p.evaluate(() => { const L = LAYERS[SEL]; return hasCut(L) && selSubs(L.sel).length > 0; }),
    '⭐ 選択から切り抜ける（⚠️ 切ったあとも選択は残る＝Photoshop と同じ）');
 
 /* ══㉔ 見本2（木下＝「今の見本も1として2も作成してほしい」）══ */
@@ -1912,7 +1912,7 @@ await p.evaluate(() => { document.querySelector('#pathList .pathrow').click(); }
 await wait(400);
 await p.evaluate(() => document.getElementById('b_pload').click());
 await wait(600);
-ok(await p.evaluate(() => !!LAYERS[SEL].sel), '⭐ 残したパスを選択に呼び戻せる');
+ok(await p.evaluate(() => selSubs(LAYERS[SEL].sel).length > 0), '⭐ 残したパスを選択に呼び戻せる');
 const PS0 = await p.evaluate(() => LAYERS.length);
 await p.evaluate(() => document.getElementById('b_pshape').click());
 await wait(900);
@@ -2548,7 +2548,7 @@ const PATHP = await p.evaluate(async () => {
   document.querySelector('#pathList .pathrow')
     .dispatchEvent(new MouseEvent('click', { bubbles:true, metaKey:true }));
   await wait2(400);
-  out.コマンドクリックで選択になる = !!L.sel;
+  out.コマンドクリックで選択になる = selSubs(L.sel).length > 0;
   L.sel = null; syncSelPath();
   /* ベクトルマスク＝焼き込まない */
   document.getElementById('b_pvmask').click();
@@ -2655,6 +2655,47 @@ ok(PSDIFF.土台の不透明度が効く && PSDIFF.土台の重ね方が効く &
 ok(PSDIFF.塗り0で絵が消える && PSDIFF.塗り0でも影は残る,
    '⭐⭐ 塗り（Fill）は【絵だけ】薄くする＝レイヤー効果（影）は残る（Adobe 公式どおり）',
    JSON.stringify({ 絵:PSDIFF.絵, 影:PSDIFF.影 }));
+
+/* ══⭐⭐ 調整レイヤーは【効く範囲】を持てる ══ 2026-08-31
+   Adobe＝「白い領域（選択範囲）は調整を表示、黒い領域（選択範囲外）は調整を非表示」
+   ⭐ MOYA は形（点）で持つ＝焼き込まない。外すと版面ぜんぶに戻る。
+   出典 use-layer-masks-to-target-adjustment-or-fill-layers.html */
+const AMASK = await p.evaluate(async () => {
+  const wait2 = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1600); });
+  const at = (u, v) => { COARSE = 0; render();
+    const d = g.getImageData(Math.round(cv.width*u), Math.round(cv.height*v), 1, 1).data;
+    return [d[0], d[1], d[2]]; };
+  document.getElementById('b_adjlayer').click(); await wait2(500);
+  const A = LAYERS[SEL];
+  const put = (id, v) => { const e = document.getElementById(id); e.value = v;
+    e.dispatchEvent(new Event('input', { bubbles:true })); };
+  put('r_black', 45); touchEd(A); await wait2(400);
+  const 全 = { 左上:at(0.3,0.3), 右下:at(0.7,0.7) };
+  A.amask = { inv:false, feather:0, pts:[
+    {x:0.05,y:0.05,hx:0,hy:0},{x:0.5,y:0.05,hx:0,hy:0},
+    {x:0.5,y:0.5,hx:0,hy:0},{x:0.05,y:0.5,hx:0,hy:0}] };
+  LAYERS.forEach(o => { o._key = ''; o._edk = ''; o._edc = null; });
+  await wait2(400);
+  const 部 = { 左上:at(0.3,0.3), 右下:at(0.7,0.7) };
+  const out = {
+    パネルが出る: !document.getElementById('amaskBox').classList.contains('hide'),
+    中はそのまま: 部.左上.join() === 全.左上.join(),
+    外は元に戻る: 部.右下.join() !== 全.右下.join(),
+    値: { 全, 部 },
+  };
+  A.amask = null; LAYERS.forEach(o => { o._key = ''; o._edk = ''; o._edc = null; });
+  await wait2(400);
+  out.外すと版面ぜんぶ = at(0.7,0.7).join() === 全.右下.join();
+  removeAt(SEL); render(); await wait2(300);
+  return out;
+});
+ok(AMASK.パネルが出る, '⭐ 調整レイヤーを選ぶと【効く範囲】の段が出る');
+ok(AMASK.中はそのまま && AMASK.外は元に戻る,
+   '⭐⭐ 調整レイヤーは【囲った中だけ】に効く（Adobe のマスクと同じ）',
+   JSON.stringify(AMASK.値));
+ok(AMASK.外すと版面ぜんぶ, '🔴 範囲を外すと版面ぜんぶに戻る（焼き込んでいない）');
 
 /* 盤の左上の表記＝画面のいちばん左上・小さく（木下の指示） */
 await p.setViewport({ width:1400, height:900 });
