@@ -1302,7 +1302,12 @@
            **この透明部分だけが動いて終わる**」＝選択が【外】になっていて、
            ぼかしが余白にかかっていた。＝反転していることが見えていなかった。
            ⭐ 名前を「選んだ所」にして、いま【中／外】どちらかを行のすぐ横に出す。 -->
-      <div class="knob"><span class="n">選んだ所をぼかす<b id="selWhich" style="color:#0d99ff">（中）</b></span><input class="num" type="number" id="n_r_selblur"><input type="range" id="r_selblur" min="0" max="100" step="1" value="0"><output id="o_selblur" hidden>0.00</output></div>
+      <!-- ══⭐⭐ アンチエイリアスとぼかしは【別物】（Adobe 公式）══ 2026-09-01
+           ・アンチエイリアス＝**縁の1画素だけ**なめらかにする（選択を作る前に決める）
+           ・ぼかし＝**遷移ゾーン**を作る（作った後でも効く）
+           ⚠️ Adobe＝アンチエイリアスが効くのは【ぼかしの半径が 0 のとき】 -->
+      <label class="chk">アンチエイリアス（縁をなめらかに）<input type="checkbox" id="k_selaa" checked></label>
+      <div class="knob"><span class="n">ぼかしの半径<b id="selWhich" style="color:#0d99ff">（中）</b></span><input class="num" type="number" id="n_r_selblur"><input type="range" id="r_selblur" min="0" max="100" step="1" value="0"><output id="o_selblur" hidden>0.00</output></div>
       <button class="btn" id="b_selstroke" style="width:100%;margin-top:6px">パスに線を描く（新しいレイヤーになる）</button>
       <div class="knob"><span class="n">線の太さ</span><input class="num" type="number" id="n_r_selsw"><input type="range" id="r_selsw" min="1" max="60" step="1" value="6"><output id="o_selsw" hidden>6</output></div>
       <!-- ⭐ ここが【描画色】の本体（左のツールバーのスウォッチは これを押すだけ） -->
@@ -2436,7 +2441,8 @@ function subKey(s){
      o.kind || '', o.text ? JSON.stringify(o.text) : '',
      o.shape ? JSON.stringify(o.shape) : '', o.rnd ? JSON.stringify(o.rnd) : '',
      o.liq ? o.liq.n : 0,
-     o.sel ? (o.sel.inv ? 'i' : 'o') + selSubs(o.sel).map(q => q.op + q.pts.length).join(',') : '',
+     o.sel ? (o.sel.inv ? 'i' : 'o') + selSubs(o.sel).map(q => q.op + q.pts.length).join(',')
+       + (o.sel.aa === false ? 'j' : '') : '',
      o.vmask ? 'v' + o.vmask.pts.length : '', o.work ? 'w' + o.work.pts.length : '',
      o.sub ? subKey(o.sub) : ''].join(',')).join(';');
 }
@@ -4398,7 +4404,7 @@ function layerPlate(L, W, H){
                L.kind === 'render' && L.rnd ? JSON.stringify(L.rnd) : '',
                L.fx ? JSON.stringify(L.fx) : '',
                L.sel ? (L.sel.inv ? 'i' : 'o') + selSubs(L.sel).map(q => q.op + q.pts.length).join(',')
-                 + '|' + (L.selBlur || 0) : '',
+                 + '|' + (L.selBlur || 0) + '|' + (L.sel.aa === false ? 0 : 1) : '',
                L.sub ? subKey(L.sub) : '',      /* ⭐ 中身が変わったら板も作り直す */
                L.fillA == null ? 1 : L.fillA,
                /* 🔴 手前にある調整レイヤーの色調補正も鍵に入れる。
@@ -8615,7 +8621,7 @@ function selMask(L){
   if(!subs.length) return null;
   const m = maskSize(L);
   const c = document.createElement('canvas'); c.width = m.w; c.height = m.h;
-  const x = c.getContext('2d');
+  const x = c.getContext('2d', { willReadFrequently:true });
   x.fillStyle = '#fff';
   subs.forEach((sub, i) => {
     const d = pathD(sub.pts, true);
@@ -8635,6 +8641,17 @@ function selMask(L){
     }
     x.globalCompositeOperation = 'source-over';
   });
+  /* ══⭐⭐ アンチエイリアス（Adobe＝ぼかしとは【別物】）══ 2026-09-01
+     Adobe＝「アンチエイリアス＝**エッジピクセルのみ変更**。選択範囲を**作る前に**入れる」
+            「ぼかし＝遷移ゾーンを作る。**作った後でも適用できる**」
+     ⭐ canvas は黙ってアンチエイリアスを掛けるので、**切る**方を作った。
+       切ると縁が1画素ずつの硬い形になる（升目・粒の道具と相性が良い）。
+     ⚠️ Adobe も「アンチエイリアスが効くのは **ぼかしの半径が 0 のとき**」。 */
+  if(q && q.aa === false){
+    const im = x.getImageData(0, 0, m.w, m.h), d2 = im.data;
+    for(let i = 3; i < d2.length; i += 4) d2[i] = d2[i] > 127 ? 255 : 0;
+    x.putImageData(im, 0, 0);
+  }
   if(q.inv){
     const t = document.createElement('canvas'); t.width = m.w; t.height = m.h;
     const tx = t.getContext('2d');
@@ -8677,6 +8694,7 @@ function syncSelPath(){
     sw2.style.color = L.sel.inv ? '#ff9f0a' : '#0d99ff'; }
   const v = L.selBlur == null ? 0 : L.selBlur;
   el('r_selblur').value = Math.round(v*100); el('o_selblur').value = v.toFixed(2);
+  const ka = el('k_selaa'); if(ka) ka.checked = L.sel.aa !== false;
 }
 /* ══⭐⭐ 消すボタンは【いつも同じ意味】にする ══ 2026-08-31
    🔴 木下＝「選択を反転させて中を消すにすると、**選択反転されて消されているのか、わかりにくい**」
@@ -8717,6 +8735,17 @@ function selToLayer(cutFromOriginal){
   syncSelIds(); buildList(); syncSel(); render();
   stat(cutFromOriginal ? '選んだ所を切り取って新しいレイヤーにした（選択の道具で動かせます）'
                        : '選んだ所を新しいレイヤーにした（元はそのまま・選択の道具で動かせます）');
+}
+/* ⭐ アンチエイリアス（切ると縁が1画素ずつの硬い形になる） */
+{
+  const k = el('k_selaa');
+  if(k) k.addEventListener('change', e => {
+    const L = LAYERS[SEL]; if(!L || !L.sel) return;
+    hist(); L.sel.aa = e.target.checked; L._key = '';
+    syncSelPath(); render();
+    stat(e.target.checked ? 'アンチエイリアスを入れた（縁がなめらかになります）'
+                          : 'アンチエイリアスを切った（縁が1画素ずつの硬い形になります）');
+  });
 }
 el('b_selinv').onclick = () => {
   const L = LAYERS[SEL]; if(!L || !L.sel) return;
@@ -9595,7 +9624,7 @@ function snapshot(){
                                 🔴 入れないと「中に足したもの」が保存で消える＝設定として嘘になる */
                              work:L.work ? { pts:L.work.pts.map(q => Object.assign({}, q)) } : null,
                              /* ⭐ 選択範囲（点線）も入れる＝読んだら続きから切れる */
-                             sel:L.sel ? { inv:!!L.sel.inv,
+                             sel:L.sel ? { inv:!!L.sel.inv, aa:L.sel.aa !== false,
                                subs:selSubs(L.sel).map(t => ({ op:t.op || 'new',
                                  pts:(t.pts || []).map(u => Object.assign({}, u)) })) } : null,
                              selBlur:L.selBlur || 0,
@@ -9654,7 +9683,7 @@ function subJSON(s){
          選択範囲を【何枚でも重なる subs 形式】に変えたのに、書き出し側が古い pts を
          読んでいた（＝パスから選択範囲を作った人だけ、書き出しが黙って落ちる）。
          ⭐ 正規化は selSubs() 1本に任せる（形が増えてもここは変わらない）。 */
-      sel:o.sel ? { inv:!!o.sel.inv,
+      sel:o.sel ? { inv:!!o.sel.inv, aa:o.sel.aa !== false,
         subs:selSubs(o.sel).map(t => ({ op:t.op || 'new',
           pts:(t.pts || []).map(u => Object.assign({}, u)) })) } : null,
       selBlur:o.selBlur || 0,
@@ -9693,7 +9722,7 @@ function applySub(L, o, imgs){
     b.keys = (q.keys || []).map(k => Object.assign({}, k));
     b.paths = (q.paths || []).map(t => ({ name:t.name, pts:t.pts.map(u => Object.assign({}, u)) }));
     /* ⚠️ 古い pts 形式の JSON も読めるようにしておく（前に出した設定が開けなくならない） */
-    b.sel = q.sel ? { inv:!!q.sel.inv,
+    b.sel = q.sel ? { inv:!!q.sel.inv, aa:q.sel.aa !== false,
       subs:(q.sel.subs || (q.sel.pts ? [{ op:'new', pts:q.sel.pts }] : []))
         .map(t => ({ op:t.op || 'new', pts:(t.pts || []).map(u => Object.assign({}, u)) })) } : null;
     const put = (url, which) => { if(!url) return;
@@ -9852,7 +9881,7 @@ function applyRest(o){
       L.adj = Object.assign(newAdj(), o2.adj || {});
       /* ⭐ 中身（その素材だけのアートボード）も戻す。⚠️ 写真はいま持っているものを使う */
       L.work = o2.work ? { pts:o2.work.pts.map(q => Object.assign({}, q)) } : null;
-      L.sel = o2.sel ? { inv:!!o2.sel.inv,
+      L.sel = o2.sel ? { inv:!!o2.sel.inv, aa:o2.sel.aa !== false,
         subs:(o2.sel.subs || (o2.sel.pts ? [{ op:'new', pts:o2.sel.pts }] : []))
           .map(t => ({ op:t.op || 'new', pts:(t.pts || []).map(u => Object.assign({}, u)) })) } : null;
       L.selBlur = o2.selBlur || 0;
