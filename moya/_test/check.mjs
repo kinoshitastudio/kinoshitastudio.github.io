@@ -3259,6 +3259,46 @@ ok(LSL.版面でも触れる,
    '⭐⭐ 選択範囲の段（反転 ⌘⇧I・解除・ぼかす）は【道具が何であっても】触れる',
    LSL.版面でも触れる);
 
+/* ══⭐⭐ 包括光源を使用（Adobe＝影・内側の影・ベベルで共有される単一の照明角度）══ 2026-09-01
+   ⭐ MOYA は版面に【灯】が有るので、そこへ合わせる＝角度を別に持たない。
+     ＝灯を動かすと 3つの効果の向きが **全部いっしょに** ついてくる（芯と同じ）。 */
+const GL = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const o = LAYERS.slice().sort((a,b) => zOf(a)-zOf(b));
+  SEL = LAYERS.indexOf(o[1]); SELIDS = [o[1].id]; syncSelIds(); syncSel();
+  const L = LAYERS[SEL], f = fxOf(L);
+  f.shadow.on = true; f.shadow.op = 0.9; f.shadow.dist = 30;
+  f.inner.on = true; f.bevel.on = true;
+  L._key = ''; COARSE = 0; render(); await w(600);
+  const A = window.__full();
+  const lx = LIGHTS[0].x, ly = LIGHTS[0].y;
+  const k = document.getElementById('k_fxglobal');
+  k.checked = true; k.dispatchEvent(new Event('change', { bubbles:true })); await w(600);
+  COARSE = 0; render(); await w(400);
+  const 灯に合う = window.__sad(A, window.__full());
+  const 向きが隠れる = getComputedStyle(document.getElementById('r_sang').closest('.knob'))
+    .display === 'none';
+  const B = window.__full();
+  LIGHTS[0].x = 0.1; LIGHTS[0].y = 0.1; LAYERS.forEach(x => x._key = '');
+  COARSE = 0; render(); await w(600);
+  const 灯で動く = window.__sad(B, window.__full());
+  LIGHTS[0].x = lx; LIGHTS[0].y = ly; LAYERS.forEach(x => x._key = '');
+  k.checked = false; k.dispatchEvent(new Event('change', { bubbles:true })); await w(600);
+  COARSE = 0; render(); await w(400);
+  const 外すと戻る = window.__sad(A, window.__full());
+  f.shadow.on = false; f.inner.on = false; f.bevel.on = false; L._key = '';
+  COARSE = 0; render(); await w(300);
+  return { 灯に合う, 向きが隠れる, 灯で動く, 外すと戻る };
+});
+ok(GL.灯に合う > 0 && GL.向きが隠れる,
+   '⭐⭐ 包括光源＝影・内側の影・段差の向きが【灯】に合う（向きのつまみは出さない）',
+   JSON.stringify(GL));
+ok(GL.灯で動く > 0 && GL.外すと戻る === 0,
+   '⭐⭐ 灯を動かすと3つの向きが全部ついてくる／外すと1画素も同じに戻る',
+   JSON.stringify(GL));
+
 /* 盤の左上の表記＝画面のいちばん左上・小さく（木下の指示） */
 await p.setViewport({ width:1400, height:900 });
 await wait(700);
