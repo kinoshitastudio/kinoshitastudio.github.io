@@ -3317,6 +3317,47 @@ ok(LSL.版面でも触れる,
    '⭐⭐ 選択範囲の段（反転 ⌘⇧I・解除・ぼかす）は【道具が何であっても】触れる',
    LSL.版面でも触れる);
 
+/* ══⭐⭐ アンチエイリアスとぼかしは【別物】（Adobe 公式）══ 2026-09-01
+   Adobe＝「アンチエイリアス＝**エッジピクセルのみ変更**（選択を作る前に決める）」
+          「ぼかし＝**遷移ゾーン**を作る（作った後でも効く）」
+   ⭐ canvas は黙って AA を掛けるので【切る】方を作った＝縁が1画素ずつの硬い形になる。 */
+const AAT = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const o = LAYERS.slice().sort((a,b) => zOf(a)-zOf(b));
+  const i = LAYERS.indexOf(o[1]);
+  SEL = i; SELIDS = [o[1].id]; syncSelIds(); syncSel(); buildList();
+  const L = LAYERS[SEL], m = maskSize(L);
+  document.querySelector('#tools button[data-t="path"]').click();
+  POLY = [{x:m.w*0.2,y:m.h*0.25,hx:0,hy:0},{x:m.w*0.75,y:m.h*0.2,hx:0,hy:0},
+          {x:m.w*0.5,y:m.h*0.7,hx:0,hy:0}];
+  closePath(); await w(250);
+  document.getElementById('b_pload').click(); await w(300);
+  /* 縁に【中間の濃さ】があるか＝アンチエイリアスが効いているか */
+  const half = () => { const c = selMask(L);
+    const d = c.getContext('2d', { willReadFrequently:true })
+      .getImageData(0, 0, c.width, c.height).data;
+    let n = 0; for(let k = 3; k < d.length; k += 4) if(d[k] > 10 && d[k] < 245) n++; return n; };
+  const out = { あり:half() };
+  const k = document.getElementById('k_selaa');
+  k.checked = false; k.dispatchEvent(new Event('change', { bubbles:true })); await w(300);
+  out.なし = half();
+  out.JSON = snapshot().layers[i].sel.aa;
+  k.checked = true; k.dispatchEvent(new Event('change', { bubbles:true })); await w(250);
+  out.戻る = half();
+  /* 後片付け（選択を残すと次の試験で盤に点線が出る） */
+  LAYERS.forEach(x => { x.sel = null; x.work = null; });
+  PATHSEL = null; POLY = [];
+  document.querySelector('#tools button[data-t="move"]').click();
+  buildList(); syncSelPath(); render(); await w(300);
+  return out;
+});
+ok(AAT.あり > 0 && AAT.なし === 0 && AAT.戻る === AAT.あり,
+   '⭐⭐ アンチエイリアスを切ると縁が【1画素ずつの硬い形】になる（ぼかしとは別物）',
+   JSON.stringify(AAT));
+ok(AAT.JSON === false, '⭐ アンチエイリアスの入り切りは設定JSONにも入る', String(AAT.JSON));
+
 /* ══⭐⭐ ガラス（Photoshop のフィルターギャラリー／変形／ガラス）══ 2026-09-01
    🔴 木下がくれた作例＝ゆがみ12・滑らかさ6・テクスチャ・拡大縮小100%
    ⭐ つまみは4つ（ゆがみ／滑らかさ／テクスチャ／大きさ）＝どれも【絵が変わる】こと、
