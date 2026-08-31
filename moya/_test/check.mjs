@@ -961,7 +961,9 @@ const same10 = async A => diff(await shot(), A) === 0;
 const ORD10 = await p.evaluate(async () => {
   const now = () => LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b)).map(L=>L.name).join('|');
   const before = now();
-  const rows = [...document.getElementById('layers').children];
+  /* ⚠️ いちばん下の【背景】は紙の地（素材ではない）＝数えない（2026-08-31 に足した） */
+  const rows = [...document.getElementById('layers').children]
+    .filter(r => !r.classList.contains('bgrow'));
   [...rows[rows.length-1].querySelectorAll('button')].find(b2=>b2.textContent==='▲').click();
   await new Promise(r=>setTimeout(r,250));
   return { before, after: now() };
@@ -1233,7 +1235,8 @@ ok(['空','素'].includes(ROWTXT.air) || /%$/.test(ROWTXT.air),
 
 /* ⑬-3 一覧の空気ボタンが本当に切り替わる */
 const ROWAIR = await p.evaluate(async () => {
-  const rows = () => [...document.getElementById('layers').children];
+  const rows = () => [...document.getElementById('layers').children]
+    .filter(r => !r.classList.contains('bgrow'));
   const val = () => airOf(LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b))[2]);
   const before = val();
   rows()[2].querySelector('.air').click();
@@ -2076,7 +2079,8 @@ const AB = await p.evaluate(async () => {
   await wait2(700);
   out.入った = !!SUBOF;
   out.中の枚数 = LAYERS.length;
-  out.一覧の行 = document.getElementById('layers').children.length;
+  out.一覧の行 = [...document.getElementById('layers').children]
+    .filter(r => !r.classList.contains('bgrow')).length;
   out.紙 = [SUBOF.sub.w, SUBOF.sub.h];
   out.奥行きを出さない = getComputedStyle(document.getElementById('depthKnob')).display === 'none';
   out.空気を出さない = getComputedStyle(document.getElementById('airPart')).display === 'none';
@@ -2183,7 +2187,8 @@ ok(AB3.中の写真も入る && AB3.まるごとで組み直せる,
 const NMW = await p.evaluate(async () => {
   closeAllEditors();
   await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1600); });
-  const rows = [...document.getElementById('layers').children];
+  const rows = [...document.getElementById('layers').children]
+    .filter(r => !r.classList.contains('bgrow'));
   return rows.map(r => { const n = r.querySelector('.nm');
     return { t:n.textContent, w:Math.round(n.clientWidth), need:Math.round(n.scrollWidth) }; });
 });
@@ -2749,6 +2754,108 @@ const TUT = await p.evaluate(async () => {
      dead.length ? dead.join(',') : names.join(' / '));
   ok(stuck.length === 0, '🔴 どれも切ると【1画素も同じ】に戻る（焼き込んでいない）',
      stuck.length ? stuck.join(',') : 'ぜんぶ戻る');
+}
+
+/* ══⭐⭐ 一覧のいちばん下は【背景】＝紙の地 ══ 2026-08-31
+   🔴 木下＝「一番下に背景というのをレイヤーパネルにデフォルトで入れておこう」
+   ⚠️ 新しいデータを作っていないこと（P.nobg / P.bg をそのまま出している）も見る。 */
+await p.evaluate(async () => {
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  COARSE = 0; render();
+});
+await wait(700);
+const BGR = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const rows = [...document.getElementById('layers').children];
+  const last = rows[rows.length - 1];
+  const out = { いちばん下:last.querySelector('.nm').textContent,
+                印:last.classList.contains('bgrow'),
+                動かせない:!last.dataset.i };
+  const before = window.__full();
+  last.querySelector('.eye').click(); await w(400); COARSE = 0; render(); await w(300);
+  out.地なしにできる = window.__sad(before, window.__full()) > 0 && !!P.nobg;
+  last.querySelector('.eye').click(); await w(400); COARSE = 0; render(); await w(300);
+  out.戻ると同じ = window.__sad(before, window.__full());
+  return out;
+});
+ok(BGR.いちばん下 === '背景' && BGR.印 && BGR.動かせない,
+   '⭐⭐ 一覧のいちばん下に【背景】（紙の地）が出る・並べ替えの相手にならない',
+   JSON.stringify(BGR));
+ok(BGR.地なしにできる && BGR.戻ると同じ === 0,
+   '⭐ 背景の目で【地なし】に切り替わり、戻すと1画素も同じ', JSON.stringify(BGR));
+
+/* ══⭐⭐ ＋ 新規パスを作成（パスを何本でも持てる）══ 2026-08-31
+   🔴 木下＝「パスを追加できるように＋ボタンを押せるようにすればよいのでは？
+      そうすると複数パスを追加してもそれらを選択して選択範囲として読めば範囲選択の余地が増える」 */
+const PNEW = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const o = LAYERS.slice().sort((a,b) => zOf(a)-zOf(b));
+  SEL = LAYERS.indexOf(o[1]); SELIDS = [o[1].id]; syncSelIds(); syncSel(); buildList();
+  const L = LAYERS[SEL], m = maskSize(L);
+  L.paths = []; L.work = null; L.sel = null; PATHSEL = null;
+  document.getElementById('b_pnew').click(); await w(250);
+  POLY = [{x:m.w*0.1,y:m.h*0.1,hx:0,hy:0},{x:m.w*0.4,y:m.h*0.1,hx:0,hy:0},{x:m.w*0.4,y:m.h*0.4,hx:0,hy:0}];
+  closePath(); await w(250);
+  const 作業用にしない = !L.work && pathsOf(L).length === 1 && pathsOf(L)[0].pts.length === 3;
+  document.getElementById('b_pnew').click(); await w(250);
+  POLY = [{x:m.w*0.6,y:m.h*0.6,hx:0,hy:0},{x:m.w*0.9,y:m.h*0.6,hx:0,hy:0},{x:m.w*0.9,y:m.h*0.9,hx:0,hy:0}];
+  closePath(); await w(250);
+  const 本数 = pathsOf(L).length;
+  document.querySelector('#s_selop button[data-v="new"]').click();
+  PATHSEL = { kind:'saved', i:0 }; document.getElementById('b_pload').click(); await w(200);
+  const n1 = selSubs(L.sel).length;
+  document.querySelector('#s_selop button[data-v="add"]').click();
+  PATHSEL = { kind:'saved', i:1 }; document.getElementById('b_pload').click(); await w(200);
+  const n2 = selSubs(L.sel).length;
+  PATHSEL = { kind:'saved', i:1 };
+  document.getElementById('b_pdel').click(); await w(200);
+  const 消せる = pathsOf(L).length === 1;
+  document.querySelector('#s_selop button[data-v="new"]').click();
+  return { 作業用にしない, 本数, 足せる:[n1, n2], 消せる };
+});
+ok(PNEW.作業用にしない && PNEW.本数 === 2 && PNEW.消せる,
+   '⭐⭐ ＋でパスを何本でも作れる（描くと そのパスに入る・作業用パスを上書きしない）',
+   JSON.stringify(PNEW));
+ok(PNEW.足せる[0] === 1 && PNEW.足せる[1] === 2,
+   '⭐⭐ 別々のパスを【追加】で選択範囲に足していける（範囲選択の余地が増える）',
+   JSON.stringify(PNEW.足せる));
+
+/* ══⭐ 選択ツールでパスをそのまま動かせる（Photoshop のパスコンポーネント選択）══
+   🔴 木下＝「パスを閉じて選択ツールにした場合、作業用パスを選択している状態だと
+      パスをそのまま移動できる」 */
+{
+  const P0 = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    const L = LAYERS[SEL], m = maskSize(L);
+    L.paths = []; L.sel = null; PATHSEL = null;
+    document.querySelector('#tools button[data-t="path"]').click();
+    POLY = [{x:m.w*0.3,y:m.h*0.3,hx:0,hy:0},{x:m.w*0.7,y:m.h*0.3,hx:0,hy:0},{x:m.w*0.5,y:m.h*0.7,hx:0,hy:0}];
+    closePath(); await w(250);
+    document.querySelector('#tools button[data-t="move"]').click();
+    await w(200);
+    const cx = L.x, cy = L.y;                      /* 素材の中心＝パスの内側 */
+    const a = toScreen(cx, cy), b2 = toScreen(cx + 0.05, cy + 0.03);
+    return { before:curPathPts(L).map(q => [q.x|0, q.y|0]),
+             a:{ x:a.clientX, y:a.clientY }, b:{ x:b2.clientX, y:b2.clientY } };
+  });
+  await p.mouse.move(P0.a.x, P0.a.y);
+  await p.mouse.down();
+  for(let i = 1; i <= 5; i++)
+    await p.mouse.move(P0.a.x + (P0.b.x-P0.a.x)*i/5, P0.a.y + (P0.b.y-P0.a.y)*i/5);
+  await p.mouse.up();
+  await wait(400);
+  const P1 = await p.evaluate(() => ({
+    after: curPathPts(LAYERS[SEL]).map(q => [q.x|0, q.y|0]),
+    素材は動いていない: true }));
+  const moved = P0.before.every((q, i) => P1.after[i][0] > q[0] + 4 && P1.after[i][1] > q[1] + 2);
+  /* ⚠️ 座標は整数に丸めて見ているので、ずれ幅は ±1 まで許す（ぶれる試験にしない） */
+  const dx = P0.before.map((q, i) => P1.after[i][0] - q[0]);
+  const dy = P0.before.map((q, i) => P1.after[i][1] - q[1]);
+  const same = Math.max(...dx) - Math.min(...dx) <= 1 && Math.max(...dy) - Math.min(...dy) <= 1;
+  ok(moved && same,
+     '⭐⭐ 選択ツールで【パスをそのまま動かせる】（形は変えずに全部いっしょに）',
+     JSON.stringify({ 前:P0.before[0], 後:P1.after[0], ずれ:[dx, dy] }));
 }
 
 /* ══⭐⭐ レイヤーマスク（Photoshop の「レイヤーマスク」）══ 2026-08-31
