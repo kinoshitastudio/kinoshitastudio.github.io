@@ -2968,17 +2968,30 @@ const LSL = await p.evaluate(async () => {
   document.querySelector('#pathList .pathrow')
     .dispatchEvent(new MouseEvent('click', { bubbles:true, metaKey:true }));
   await w(400); syncLm();
+  /* ⭐ 選択範囲の段（反転・解除・ぼかす）は【道具が何であっても】触れる
+     🔴 2026-08-31・木下＝「ここから選択範囲を反転させたい。どうする？」
+        ＝反転は［切り抜き・パス］の中にあって、切り抜きの道具でないと出なかった。
+        ⭐ パスの段（持ち物）へ移した＝素材を選んでいれば常に出る。 */
+  document.querySelector('#tools button[data-t="move"]').click();
+  await w(250);
+  const su = document.getElementById('selUI');
+  const 版面でも触れる = !su.classList.contains('hide')
+    && su.getBoundingClientRect().height > 10
+    && document.getElementById('b_selinv').getBoundingClientRect().height > 0;
   const ボタンが出る = !document.getElementById('lmSel').classList.contains('hide');
   document.getElementById('b_lmselout').click();
   COARSE = 0; render(); await w(500);
   const 効いた = window.__sad(A, window.__full());
   document.getElementById('b_lmdel').click(); COARSE = 0; render(); await w(400);
   const 消すと戻る = window.__sad(A, window.__full());
-  return { ボタンが出る, 効いた, 消すと戻る };
+  return { ボタンが出る, 効いた, 消すと戻る, 版面でも触れる };
 });
 ok(LSL.ボタンが出る && LSL.効いた > 0 && LSL.消すと戻る === 0,
    '⭐⭐ 選択範囲外をマスクできる（Adobe の公式の手）＋消すと1画素も同じに戻る',
    JSON.stringify(LSL));
+ok(LSL.版面でも触れる,
+   '⭐⭐ 選択範囲の段（反転 ⌘⇧I・解除・ぼかす）は【道具が何であっても】触れる',
+   LSL.版面でも触れる);
 
 /* 盤の左上の表記＝画面のいちばん左上・小さく（木下の指示） */
 await p.setViewport({ width:1400, height:900 });
