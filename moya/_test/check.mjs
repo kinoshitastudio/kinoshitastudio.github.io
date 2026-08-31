@@ -370,10 +370,12 @@ const PEN = await p.evaluate(async () => {
   const x = c.getContext('2d'); x.fillStyle = '#c83'; x.fillRect(0,0,400,400);
   const img = new Image(); await new Promise(r => { img.onload = r; img.src = c.toDataURL(); });
   LAYERS = []; addImage(img, 'ペンためし', 0.1);
-  const L = LAYERS[0]; L.x = 0.5; L.y = 0.5; SEL = 0;
+  LAYERS[0].x = 0.5; LAYERS[0].y = 0.5; SEL = 0;
   el('k_nobg').checked = true; el('k_nobg').dispatchEvent(new Event('change',{bubbles:true}));
   /* ⚠️ 2026-08-31 から【道具を選んでも画面は飛ばない】＝この画面はダブルクリックで入る */
   openEditor(0);
+  /* ⚠️ 2026-08-31 から編集画面は【その画像だけのアートボード】＝切る相手は中の1枚目 */
+  const L = LAYERS[SEL];
   document.querySelector('#tools button[data-t="path"]').click();
   COARSE = 0; render(); fitView(); await new Promise(r => setTimeout(r, 300));
   /* ⚠️ 切り抜きの画面では盤に市松（不透明）が敷いてあるので、
@@ -434,7 +436,7 @@ const PEN = await p.evaluate(async () => {
   out.打った数 = n1;
   clearMask(L);
   el('k_nobg').checked = false; el('k_nobg').dispatchEvent(new Event('change',{bubbles:true}));
-  document.querySelector('#tools button[data-t="move"]').click();
+  document.getElementById('b_solo').click();
   return out;
 });
 ok(PEN.打てた === 2, '⭐ 打つと点が増える', PEN.打てた + ' 点');
@@ -888,7 +890,7 @@ const CV = await p.evaluate(async () => {
   /* ⭐ 盤の割合がそのまま素材の中の割合になっているか（大きく切れる） */
   const q = toMask(L, { x:0.25, y:0.75 }, cv.width, cv.height);
   out.座標が素直 = Math.abs(q.u - 0.25) < 0.01 && Math.abs(q.v - 0.75) < 0.01;
-  document.querySelector('#tools button[data-t="move"]').click();
+  document.getElementById('b_solo').click();
   await new Promise(r => setTimeout(r, 200));
   out.戻ると版面 = !cutView() && cv.width !== out.切るときの盤[0];
   return out;
@@ -897,7 +899,7 @@ ok(CV.切り抜きの画面, '⭐⭐ ダブルクリックで【その素材だ�
 ok(CV.比が合う, '⭐ 盤の比が素材の比になる（大きく切れる）',
    CV.切るときの盤.join('×') + ' ／ 素材 ' + CV.素材の比.join('×'));
 ok(CV.座標が素直, '⭐⭐ 盤の割合＝素材の中の割合（座標が食い違わない）');
-ok(CV.戻ると版面, '⭐ 動かすに戻すと版面へ戻る');
+ok(CV.戻ると版面, '⭐［← 版面へ戻る］で版面へ戻る（⚠️ 動かすでは出ない＝中で素材を動かすため）');
 
 /* ⑨ モバイル *//* ⭐⭐ まるごと出す（木下＝「写真そのものも入れて」）
    🔴 設定だけだと「同じ写真を同じ順で置いてから」が要る＝渡せない・あとから開けない。
@@ -1101,7 +1103,7 @@ ok(SW > 0, '⭐ カラーパレット（その素材の色）が出る', SW + '�
 /* ⭐⭐ 17本ぜんぶが効く＝死んでいるつまみが無い（端まで動かして絵が変わるか）
    → feedback_count_the_pictures_a_knob_makes */
 const ED0 = await shot();
-const EDKNOBS = ['r_black','r_white','r_gamma','r_hue','r_sat','r_lum','r_temp','r_tint',
+const EDKNOBS = ['r_black','r_white','r_gamma','r_con','r_hue','r_sat','r_lum','r_temp','r_tint',
   'r_eblur','r_sharp','r_enoise','r_mosaic','r_poster','r_thresh','r_mono','r_einvert','r_eedge'];
 const EDDEAD = [];
 for(const k of EDKNOBS){
@@ -1115,7 +1117,7 @@ for(const k of EDKNOBS){
     e.dispatchEvent(new Event('input', { bubbles:true })); }, k, keep);
   await wait(450);
 }
-ok(EDDEAD.length === 0, '⭐⭐ 編集の17本ぜんぶが効く（死んでいるつまみが無い）',
+ok(EDDEAD.length === 0, '⭐⭐ 編集の18本ぜんぶが効く（死んでいるつまみが無い）',
    EDDEAD.length ? EDDEAD.join(',') : '17/17');
 ok(diff(await shot(), ED0) === 0, '⭐ つまみを戻すと1画素も同じに戻る');
 await p.evaluate(() => { const e = document.getElementById('r_mosaic'); e.value = 70;
@@ -1132,8 +1134,7 @@ ok(await p.evaluate(() => { const e = document.getElementById('r_mosaic'); e.val
   '⭐ 編集の値は設定JSONにも入る（どう作ったかが戻る）');
 await p.evaluate(() => document.getElementById('b_edreset').click());
 await wait(500);
-await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t="move"]');
-  if(bt) bt.click(); });
+await p.evaluate(() => document.getElementById('b_solo').click());
 await wait(700);
 
 /* ══⑫ 空気の効き 0 は【紙の仕上げ】も通さない ══
@@ -1297,8 +1298,7 @@ await p.evaluate(() => { const st = document.getElementById('stage');
   st.dispatchEvent(new PointerEvent('pointerup', o)); });
 await wait(900);
 ok(diff(await shot(), VW0) === 0, '🔴 編集の画面で盤を押しても絵が消えない');
-await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t="move"]');
-  if(bt) bt.click(); });
+await p.evaluate(() => document.getElementById('b_solo').click());
 await wait(600);
 
 /* ⑭-3 右パネルの見出しに 飾りの言葉を出さない（木下＝「Photoshopの最低限とか
@@ -1579,7 +1579,7 @@ const SOLO2 = await p.evaluate(async () => {
   const c2 = document.createElement('canvas'); c2.width = 200; c2.height = 200;
   c2.getContext('2d').drawImage(edSrc(L, 200, 200), 0, 0, 200, 200);
   const raw = c2.getContext('2d').getImageData(100, 100, 1, 1).data;
-  document.querySelector('#tools button[data-t="move"]').click();
+  document.getElementById('b_solo').click();
   return { 画面:[d[0],d[1],d[2]], 素:[raw[0],raw[1],raw[2]] };
 });
 ok(near3(SOLO2.画面, SOLO2.素),
@@ -2007,6 +2007,248 @@ ok(ZM.panel === 'pan-y' && ZM.tools === 'pan-x' && ZM.stage === 'none',
 ok(ZM.小さい字の入力.length === 0,
    '⑨ 字を打つ所はぜんぶ 16px（iOS が勝手に寄らない）',
    ZM.小さい字の入力.join(',') || '0件');
+/* ══⭐⭐ 編集画面＝【その画像だけのアートボード】══ 2026-08-31 ═══════════
+   🔴🔴 木下＝「編集画面内ではその画像のレイヤーとしてレイヤーパネルも切り替えて。
+      フレームサイズの変更や、この画像だけ小さくして左端に余白ができたりもできるのが普通」
+   ⭐ 見るのは【中と外が別の紙になっているか】：
+     ・入ると一覧が中身に切り替わる（版面の枚数は変わらない）
+     ・紙を大きくすると まわりに余白ができて、中の素材は px で動かない
+     ・中で足したものは 外から見ると【1枚の画像】
+     ・入って出るだけなら 1画素も変わらない（中を作っただけで絵を変えない） */
+await p.setViewport({ width:1400, height:900 });
+await wait(600);
+/* ⚠️ 指の端末に切り替えたところで頁が読み直される＝物差しを入れ直す */
+await p.evaluate(() => {
+  window.__full = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+    const o = []; for(let i = 0; i < d.length; i += 4*3) o.push(d[i], d[i+1], d[i+2], d[i+3]);
+    return o; };
+  window.__sad = (A,B) => { let s2 = 0;
+    for(let i = 0; i < Math.min(A.length,B.length); i++) s2 += Math.abs(A[i]-B[i]);
+    return Math.round(s2); };
+});
+await p.evaluate(() => { closeAllEditors(); document.getElementById('b_demo').click(); });
+await wait(2000);
+const AB0 = await p.evaluate(() => window.__full());
+const AB = await p.evaluate(async () => {
+  const wait2 = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+  const idx = LAYERS.indexOf(o[0]);
+  out.版面の枚数 = LAYERS.length;
+  openEditor(idx);
+  await wait2(700);
+  out.入った = !!SUBOF;
+  out.中の枚数 = LAYERS.length;
+  out.一覧の行 = document.getElementById('layers').children.length;
+  out.紙 = [SUBOF.sub.w, SUBOF.sub.h];
+  out.奥行きを出さない = getComputedStyle(document.getElementById('depthKnob')).display === 'none';
+  out.空気を出さない = getComputedStyle(document.getElementById('airPart')).display === 'none';
+  out.置き方は出す = !document.getElementById('selBox').classList.contains('hide');
+  out.素材を足せる = !document.getElementById('matBox').classList.contains('hide');
+  /* 入って出るだけ＝1画素も変わらない */
+  closeEditor(); await wait2(700);
+  COARSE = 0; render(); await wait2(300);
+  out.出たあとの枚数 = LAYERS.length;
+  return out;
+});
+const AB1 = await p.evaluate(() => window.__full());
+ok(AB.入った && AB.中の枚数 === 1 && AB.一覧の行 === 1,
+   '⭐⭐ ダブルクリックで【その画像だけのアートボード】に入る（一覧が中身に切り替わる）',
+   JSON.stringify({ 中の枚数:AB.中の枚数, 一覧:AB.一覧の行, 版面:AB.版面の枚数 }));
+ok(AB.奥行きを出さない && AB.空気を出さない && AB.置き方は出す && AB.素材を足せる,
+   '⭐ 中では【奥行き・空気】を出さない（版面のもの）／置き方と素材を足すは出す',
+   JSON.stringify({ 奥行き:AB.奥行きを出さない, 空気:AB.空気を出さない,
+                    置き方:AB.置き方は出す, 素材:AB.素材を足せる }));
+ok(AB.出たあとの枚数 === AB.版面の枚数 && await p.evaluate(([a,b2]) => window.__sad(a,b2), [AB0, AB1]) === 0,
+   '🔴 入って出るだけなら【1画素も同じ】（中を作っただけで絵を変えない）',
+   await p.evaluate(([a,b2]) => window.__sad(a,b2), [AB0, AB1]));
+
+/* ⭐ 紙を大きくすると まわりに余白ができる（中の素材は px で動かない） */
+const AB2 = await p.evaluate(async () => {
+  const wait2 = ms => new Promise(r => setTimeout(r, ms));
+  const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+  openEditor(LAYERS.indexOf(o[0]));
+  await wait2(600);
+  const s = SUBOF.sub, b0 = LAYERS[0];
+  const 前 = { w:s.w, h:s.h, px:b0.s * s.w, cx:b0.x * s.w };
+  document.getElementById('b_submargin').click();
+  await wait2(600);
+  const 後 = { w:s.w, h:s.h, px:LAYERS[0].s * s.w, cx:LAYERS[0].x * s.w };
+  /* 中の素材は px では動いていない（紙だけ大きくなった＝余白ができた） */
+  const 動いていない = Math.abs(後.px - 前.px) < 2 && Math.abs((後.cx - 後.w/2) - (前.cx - 前.w/2)) < 2;
+  const 紙が大きい = 後.w > 前.w && 後.h > 前.h;
+  /* 中で画像を足せる */
+  const c = document.createElement('canvas'); c.width = 120; c.height = 120;
+  const x = c.getContext('2d'); x.fillStyle = '#22cc55'; x.fillRect(0,0,120,120);
+  const img = new Image();
+  await new Promise(r => { img.onload = r; img.src = c.toDataURL(); });
+  addImage(img, '中に足した', 0);
+  await wait2(500);
+  const 中で足せた = LAYERS.length === 2 && LAYERS[1].name === '中に足した';
+  const 版面の枚数 = SUBBACK[0].layers.length;
+  closeEditor(); await wait2(700);
+  return { 動いていない, 紙が大きい, 中で足せた, 版面の枚数, 出たあと:LAYERS.length, 前, 後 };
+});
+ok(AB2.紙が大きい && AB2.動いていない,
+   '⭐⭐ 紙を大きくすると【まわりに余白】ができる（中の素材は動かない）',
+   JSON.stringify({ 前:AB2.前.w + '×' + AB2.前.h, 後:AB2.後.w + '×' + AB2.後.h }));
+ok(AB2.中で足せた && AB2.出たあと === AB2.版面の枚数,
+   '⭐⭐ 中で画像を足せる（版面から見ると【1枚の画像】のまま）',
+   JSON.stringify({ 中:2, 版面:AB2.出たあと }));
+
+/* ⭐⭐ 中身は設定JSONに入る（＝「どう作ったか」が戻る） */
+const AB3 = await p.evaluate(async () => {
+  const wait2 = ms => new Promise(r => setTimeout(r, ms));
+  COARSE = 0; render(); await wait2(300);
+  const before = window.__full();
+  const j = JSON.parse(JSON.stringify(snapshot()));
+  const L = LAYERS.find(x => x.sub);
+  const 入っている = !!(j.layers.find(q => q.sub && q.sub.layers.length === 2));
+  /* ① 設定JSON＝写真は入っていないので【いま置いてある写真のまま】紙と置き方が戻るか
+     ⚠️ 荒らすのは「紙の大きさと中の置き方」（写真を捨てると設定JSONでは戻せない＝仕様） */
+  L.sub.w = Math.round(L.sub.w * 1.7);
+  L.sub.layers[0].x = 0.2; L.sub.layers[0].s *= 0.6;
+  L.sub.layers.forEach(o => o._key = ''); bumpSub(L);
+  COARSE = 0; render(); await wait2(400);
+  const 荒らせた = window.__sad(before, window.__full()) > 0;
+  applyJSON(j);
+  await wait2(900); COARSE = 0; render(); await wait2(300);
+  const 戻る = window.__sad(before, window.__full());
+  /* ② まるごとJSON＝中に置いた写真も入るので、中身を捨てても組み直せる */
+  const jb = JSON.parse(JSON.stringify(snapshot()));
+  jb.bundled = true;
+  jb.layers.forEach((L2, i) => {
+    L2.img = imgData(LAYERS[i].img, 1600);
+    const sb = LAYERS[i].sub;
+    if(sb) L2.subImgs = sb.layers.map(q => q.img ? imgData(q.img, 1600) : null);
+  });
+  const 中の写真も入る = !!(jb.layers.find(q => q.subImgs && q.subImgs.length === 2
+                                              && q.subImgs.every(u => typeof u === 'string')));
+  LAYERS.forEach(o => { o.sub = null; bumpSub(o); });
+  COARSE = 0; render(); await wait2(400);
+  applyJSON(jb);
+  await wait2(1600); COARSE = 0; render(); await wait2(400);
+  const L2 = LAYERS.find(x => x.sub);
+  const まるごとで組み直せる = !!(L2 && L2.sub.layers.length === 2
+                                 && L2.sub.layers[1].img && L2.sub.layers[1].img.naturalWidth > 10);
+  return { 入っている, 荒らせた, 戻る, 中の写真も入る, まるごとで組み直せる };
+});
+ok(AB3.入っている, '⭐⭐ 中身（アートボード）は設定JSONに入る');
+ok(AB3.荒らせた, '（前提）中身の紙と置き方を荒らすと絵は変わっている');
+ok(AB3.戻る === 0, '⭐⭐ 設定を読むと【中の紙と置き方まで】1画素も同じに戻る', AB3.戻る);
+ok(AB3.中の写真も入る && AB3.まるごとで組み直せる,
+   '⭐⭐ まるごと書き出しには【中に置いた写真】も入る（中身ごと組み直せる）',
+   JSON.stringify({ 写真:AB3.中の写真も入る, 組み直せた:AB3.まるごとで組み直せる }));
+
+/* ══⭐ 一覧の名前が読める（1文字に潰れない）══ 2026-08-31
+   🔴 ボタンが6つで幅を全部取り、名前が「見.」まで潰れていた（実機のスクショで発覚）。
+   ⭐ 見るのは【はみ出していないか】＝ellipsis で切られていないか。 */
+const NMW = await p.evaluate(async () => {
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1600); });
+  const rows = [...document.getElementById('layers').children];
+  return rows.map(r => { const n = r.querySelector('.nm');
+    return { t:n.textContent, w:Math.round(n.clientWidth), need:Math.round(n.scrollWidth) }; });
+});
+{
+  const bad = NMW.filter(o => o.need > o.w + 2);
+  ok(bad.length === 0, '⭐ 一覧の名前が【潰れずに読める】（ellipsis で切られない）',
+     bad.length ? JSON.stringify(bad) : NMW.map(o => o.t).join(' / '));
+}
+
+/* ══⭐⭐ 押しても何も起きない、を作らない ══ 2026-08-31
+   🔴🔴 木下＝「画像を入れてみた。色で消すとかも反映されていないような気がする」
+      「全部そうだが、もしくはリアルタイムでプレビューできない状態？」
+     ＝道具は効いていた。効いていなかったのは【入口】── 色で消すは盤で色を押すまで
+       許容つまみが何もしないのに、つまみは触れる形で出ていた。 */
+const HINT = await p.evaluate(async () => {
+  const wait2 = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors(); SEL = 0; syncSel(); buildList();
+  document.querySelector('#tools button[data-t="retouch"]').click();
+  document.querySelector('#s_tool button[data-v="color"]').click();
+  await wait2(400);
+  const 前 = { 案内:el('optSay').textContent, 許容:el('r_tol').disabled,
+               戻す:el('b_uncut').disabled };
+  const L = LAYERS[SEL];
+  pickColor(L, 3, 3); syncKeys();
+  await wait2(300);
+  const 後 = { 案内:el('optSay').textContent, 許容:el('r_tol').disabled,
+               戻す:el('b_uncut').disabled };
+  clearMask(L); syncKeys(); render();
+  document.querySelector('#tools button[data-t="move"]').click();
+  return { 前, 後 };
+});
+ok(/押す/.test(HINT.前.案内) && HINT.前.許容 === true && HINT.前.戻す === true,
+   '⭐⭐ 色で消すを選ぶと【盤で色を押す】と出て、押すまで許容つまみは触れない',
+   JSON.stringify(HINT.前));
+ok(HINT.後.許容 === false && HINT.後.戻す === false && /覚え/.test(HINT.後.案内),
+   '⭐ 色を押すと 許容つまみが効くようになる（覚えた数も出る）',
+   JSON.stringify(HINT.後));
+
+/* ══⭐⭐ 空気と関係ない【ふつうの色調補正】══ 2026-08-31
+   🔴 木下＝「**空気関係なく** 明るさやサイドなど、いわゆる Photoshop 的な所はここに今ある？」
+     ＝有ったのは黒点・白点・ガンマ・色まで。コントラストとトーンカーブが無かった。
+   ⭐ 見るのは【絶対値として効くか】と【まっすぐに戻すと1画素も同じに戻るか】。 */
+const TC = await p.evaluate(async () => {
+  const wait2 = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1600); });
+  const idx = LAYERS.length - 1;
+  openEditor(idx); await wait2(800);
+  const L = LAYERS[SEL];
+  COARSE = 0; render(); await wait2(300);
+  const before = window.__full();
+  const 平ら = curvePlain(edOf(L).curve);
+  /* ① RGB を曲げる（中間を持ち上げる） */
+  const pts = curveOf(L, 'rgb');
+  pts.splice(1, 0, [0.5, 0.78]);
+  L._key = ''; L._edk = ''; L._edc = null; if(SUBOF) bumpSub(SUBOF);
+  COARSE = 0; render(); await wait2(400);
+  const 曲げた = window.__sad(before, window.__full());
+  /* ② まっすぐに戻す */
+  document.getElementById('b_curve0').click();
+  COARSE = 0; render(); await wait2(400);
+  const 戻る = window.__sad(before, window.__full());
+  /* ③ R だけ曲げると【赤だけ】動く */
+  const rp = curveOf(L, 'r');
+  rp.splice(1, 0, [0.5, 0.85]);
+  L._key = ''; L._edk = ''; L._edc = null; if(SUBOF) bumpSub(SUBOF);
+  COARSE = 0; render(); await wait2(400);
+  const d = g.getImageData(0,0,cv.width,cv.height).data;
+  let dr = 0, db = 0, n = 0;
+  for(let i = 0; i < d.length; i += 4*3){
+    dr += Math.abs(d[i] - before[n]); db += Math.abs(d[i+2] - before[n+2]); n += 4;
+  }
+  const 赤だけ = dr > db * 3;
+  /* ④ 設定JSON に入る */
+  const j = JSON.parse(JSON.stringify(snapshot()));
+  const 中に入る = JSON.stringify(j).indexOf('"curve"') >= 0;
+  document.getElementById('b_curve0').click();
+  await wait2(300);
+  /* ⑤ コントラストは絶対値（空気を触っていない） */
+  const put = (id, v) => { const e = document.getElementById(id); e.value = v;
+    e.dispatchEvent(new Event('input',{bubbles:true})); };
+  COARSE = 0; render(); await wait2(300);
+  const b2 = window.__full();
+  put('r_con', 80);
+  COARSE = 0; render(); await wait2(400);
+  const コントラストが効く = window.__sad(b2, window.__full()) > 0;
+  put('r_con', 0);
+  COARSE = 0; render(); await wait2(400);
+  const コントラストを戻す = window.__sad(b2, window.__full());
+  closeEditor(); await wait2(600);
+  return { 平ら, 曲げた, 戻る, 赤だけ, 中に入る, コントラストが効く, コントラストを戻す, dr:Math.round(dr), db:Math.round(db) };
+});
+ok(TC.平ら, '⭐ トーンカーブの既定は【まっすぐ】（分岐ごと通さない）');
+ok(TC.曲げた > 0, '⭐⭐ トーンカーブを曲げると絵が変わる', TC.曲げた);
+ok(TC.戻る === 0, '🔴 まっすぐに戻すと【1画素も同じ】に戻る（焼き込んでいない）', TC.戻る);
+ok(TC.赤だけ, '⭐⭐ R だけ曲げると【赤だけ】動く（色かぶりを直せる）',
+   JSON.stringify({ 赤:TC.dr, 青:TC.db }));
+ok(TC.中に入る, '⭐ トーンカーブは設定JSONに入る');
+ok(TC.コントラストが効く && TC.コントラストを戻す === 0,
+   '⭐⭐ コントラスト（絶対値）が効いて、0 に戻すと1画素も同じに戻る',
+   TC.コントラストを戻す);
+
 /* 盤の左上の表記＝画面のいちばん左上・小さく（木下の指示） */
 await p.setViewport({ width:1400, height:900 });
 await wait(700);
