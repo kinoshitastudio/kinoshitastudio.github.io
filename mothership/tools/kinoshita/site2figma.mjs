@@ -179,8 +179,17 @@ const grab = (i) => p.evaluate((i) => {
       });
     });
     [...el.children].forEach(ch => { const n = node(ch); if (n) o.children.push(n); });
-    // 背景画像だけの箱＝写真として扱う
-    if (!o.children.length && o.bgimg) { o.kind = 'image'; o.src = o.bgimg; o.fit = o.bgsize === 'contain' ? 'contain' : 'cover'; }
+    // 🔴 background-image は「子が無い箱」だけでなく必ず拾う。
+    //    子がある箱の背景を捨てると、写真が丸ごと落ちる（H-7 の KV は
+    //    女性の写真が背景で、拾えていたのは上に重なる矢羽根のオーバーレイ画像だけだった）
+    if (o.bgimg) {
+      if (!o.children.length) { o.kind = 'image'; o.src = o.bgimg; o.fit = o.bgsize === 'contain' ? 'contain' : 'cover'; }
+      else o.children.unshift({                       // いちばん下に敷く
+        id: ++uid, tag: 'bg', cls: '', 疑似: true, kind: 'image',
+        x: o.x, y: o.y, w: o.w, h: o.h, pos: 'absolute',
+        src: o.bgimg, fit: o.bgsize === 'contain' ? 'contain' : 'cover', children: []
+      });
+    }
     return o;
   };
   let tree;
@@ -280,7 +289,7 @@ function dedupImages(kids) {
   return out;
 }
 
-const stats = { al: 0, abs: 0, band: 0, svg: 0, swap: 0, blank: 0 };
+const stats = { al: 0, abs: 0, band: 0, svg: 0, swap: 0, blank: 0, shot: 0 };
 
 const r1 = v => Math.round(v * 10) / 10;
 
@@ -495,6 +504,53 @@ function band(S, gaps) {
    ============================================================ */
 function strip(n) { delete n.__w; delete n.__h; delete n.__mx; delete n.__my; delete n.__cands; (n.children || []).forEach(strip); return n; }
 
+/* ⭐⭐ 解けない所は「スクショを敷く」──木下「構成そのままでなく
+   スクリーンショット的な感じで画像だけ置いていてもいい」。
+   クロスフェード・スライドショー・重なりが解けない塊は、URLを当てにいかず見た目を焼く。
+   文字は上に残すので編集はできる。 */
+async function shotNode(pageX, pageY, w, h, name) {
+  const buf = await p.screenshot({ type: 'jpeg', quality: 78, captureBeyondViewport: true,
+    clip: { x: Math.max(0, Math.round(pageX)), y: Math.max(0, Math.round(pageY)), width: Math.round(w), height: Math.round(h) } });
+  stats.shot++;
+  const W2 = Math.round(w), H2 = Math.round(h);
+  return { type: 'svg', name: name || '見た目（スクショ）', w: W2, h: H2,
+    svg: `<svg width="${W2}" height="${H2}" viewBox="0 0 ${W2} ${H2}" xmlns="http://www.w3.org/2000/svg">`
+       + `<image width="${W2}" height="${H2}" preserveAspectRatio="xMidYMid slice" href="data:image/jpeg;base64,${buf.toString('base64')}"/></svg>` };
+}
+
+// 未読込の写真（灰色の枠）を、その場所のスクショに差し替える
+async function fillBlanks(n, offX, offY) {
+  const kids = n.children || [];
+  for (let i = 0; i < kids.length; i++) {
+    const c = kids[i];
+    if (c.name === '写真（未読込）' && c.__mx != null) {
+      const sh = await shotNode(offX + c.__mx, offY + c.__my, c.w, c.h, '写真（スクショ）');
+      sh.x = c.x; sh.y = c.y; sh.__w = c.__w; sh.__h = c.__h; sh.__mx = c.__mx; sh.__my = c.__my;
+      kids[i] = sh;
+    } else await fillBlanks(c, offX, offY);
+  }
+}
+
+// KV は丸ごとスクショを敷いて、その上に 文字とベクター だけ乗せる
+async function kvFlatten(root, offX, offY) {
+  const keep = [];
+  const walk = n => {
+    (n.children || []).forEach(c => {
+      const vector = c.type === 'svg' && !/<image/.test(c.svg || '');
+      if (c.type === 'text' || vector) {
+        const o = { ...c }; delete o.children;
+        o.x = Math.round(c.__mx); o.y = Math.round(c.__my);
+        keep.push(o);
+      } else walk(c);
+    });
+  };
+  walk(root);
+  const bg = await shotNode(offX, offY, root.w, root.h, '見た目（スクショ）');
+  bg.x = 0; bg.y = 0; bg.__w = root.w; bg.__h = root.h; bg.__mx = 0; bg.__my = 0;
+  delete root.layout;
+  root.children = [bg, ...keep];
+}
+
 /* 🔴 同じ場所の写真候補から「中身のある方」を選ぶ。
    空のプレージホルダは極端に軽い＝バイト数がいちばん大きい物が実物。
    （H-7 は <img> が真っ白の 1360×540、実物は ::before の背景だった） */
@@ -605,6 +661,10 @@ for (const i of targets) {
 
   await pickImages(root);          // 同じ場所の候補から実物を選ぶ
   await inlineSvgs(root);          // .svg は中身を取ってきてベクターにする
+  // ⭐ 解けない所はスクショを敷く（KV は丸ごと／未読込の写真はその場所だけ）
+  const box = (i === -1) ? { x: 0, y: 0 } : (await secs[i].boundingBox()) || { x: 0, y: 0 };
+  if (i === -1) await kvFlatten(root, box.x, box.y);
+  else await fillBlanks(root, box.x, box.y);
   const v = verify(root);          // ⭐ 出す前に、実測とズレていないか測る
   strip(root);
 
@@ -628,6 +688,6 @@ function count(n, a = { t: 0, lay: 0, abs: 0, img: 0 }) {
 
 const T = done.reduce((a, c) => ({ t: a.t + c.t, lay: a.lay + c.lay, abs: a.abs + c.abs, img: a.img + c.img }), { t: 0, lay: 0, abs: 0, img: 0 });
 console.log(`\n合計 ${done.length}枚 / ノード ${T.t} / オートレイアウト ${T.lay} / 絶対配置 ${T.abs}（重ねる所）/ 写真 ${T.img}`);
-console.log(`束ねた回数 ${stats.band} ── gap が2種類ある所を入れ子にした / svgを取り込んだ ${stats.svg}件 / 写真を実物に差し替えた ${stats.swap}件 / 空だった写真 ${stats.blank}件`);
+console.log(`束ねた回数 ${stats.band} ── gap が2種類ある所を入れ子にした / svgを取り込んだ ${stats.svg}件 / 写真を実物に差し替えた ${stats.swap}件 / 空だった写真 ${stats.blank}件 / スクショを敷いた ${stats.shot}件`);
 console.log(`\n→ ${LIB}`);
 console.log(`⭐ Figma に出す: cp "library/<名前>.json" mothership.json`);
