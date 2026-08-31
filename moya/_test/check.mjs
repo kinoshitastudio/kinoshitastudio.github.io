@@ -3334,6 +3334,57 @@ ok(LSL.版面でも触れる,
    '⭐⭐ 選択範囲の段（反転 ⌘⇧I・解除・ぼかす）は【道具が何であっても】触れる',
    LSL.版面でも触れる);
 
+/* ══⭐⭐ まるごとJSON の【往復】══ 2026-09-01
+   🔴 木下がこれから通る道＝「まるごと書き出す → リロード → 設定を読む」。
+     ここが通らないと、作ったものが消える。
+   ⭐ 作り込んでから出して、**全部消して読み直して**、絵が同じかを見る。 */
+const RT = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const o = LAYERS.slice().sort((a,b) => zOf(a)-zOf(b));
+  const i = LAYERS.indexOf(o[1]);
+  SEL = i; SELIDS = [o[1].id]; syncSelIds(); syncSel();
+  const L = LAYERS[SEL], m = maskSize(L);
+  document.getElementById('b_lmadd').click(); await w(300);
+  L.lm.cv.getContext('2d').clearRect(0, 0, m.w/2, m.h); lmBump(L);   /* マスク */
+  cutBrush(L, m.w*0.8, m.h*0.8, null, null, true);                   /* 切り抜き */
+  document.querySelector('#tools button[data-t="text"]').click(); await w(800);
+  document.querySelector('#tools button[data-t="shape"]').click(); await w(800);
+  SEL = i; syncSel();
+  document.getElementById('b_adjlayer').click(); await w(400);
+  LAYERS[SEL].adj.bri = 0.3;
+  const put = (id, v) => { const e = document.getElementById(id); e.value = v;
+    e.dispatchEvent(new Event('input', { bubbles:true })); };
+  put('r_haze', 70); put('r_bloom', 60);
+  LAYERS.forEach(x => x._key = ''); COARSE = 0; render(); await w(800);
+  const 前 = { 絵:window.__full(), 枚:LAYERS.length,
+               種:LAYERS.map(x => x.kind || 'img').join(','),
+               マスク:LAYERS.filter(x => x.lm && x.lm.cv).length,
+               切り抜き:LAYERS.filter(x => hasCut(x)).length, haze:P.haze };
+  /* まるごとJSON を作って、全部消して読み直す */
+  const j = snapshot(); j.bundled = true;
+  j.layers.forEach((L2, k) => {
+    L2.img = LAYERS[k].img ? imgData(LAYERS[k].img, 1600) : null;
+    const sb = LAYERS[k].sub;
+    if(sb) L2.subImgs = sb.layers.map(q => q.img ? imgData(q.img, 1600) : null);
+  });
+  const txt = JSON.stringify(j);
+  applyJSON(JSON.parse(txt));
+  await w(3000); COARSE = 0; render(); await w(800);
+  const 後 = { 枚:LAYERS.length, 種:LAYERS.map(x => x.kind || 'img').join(','),
+               マスク:LAYERS.filter(x => x.lm && x.lm.cv).length,
+               切り抜き:LAYERS.filter(x => hasCut(x)).length, haze:P.haze };
+  return { 差:window.__sad(前.絵, window.__full()), MB:+(txt.length/1024/1024).toFixed(2),
+           前:{ 枚:前.枚, 種:前.種, マスク:前.マスク, 切り抜き:前.切り抜き, haze:前.haze }, 後 };
+});
+ok(RT.差 === 0 && RT.前.枚 === RT.後.枚 && RT.前.種 === RT.後.種,
+   '⭐⭐ まるごとJSON は【往復して1画素も同じ】（写真・文字・図形・調整レイヤーごと戻る）',
+   JSON.stringify(RT));
+ok(RT.後.マスク === RT.前.マスク && RT.後.切り抜き === RT.前.切り抜き
+   && RT.後.haze === RT.前.haze,
+   '⭐⭐ レイヤーマスク・切り抜き・空気のつまみも戻る', JSON.stringify(RT.後));
+
 /* ══⭐⭐ アンチエイリアスとぼかしは【別物】（Adobe 公式）══ 2026-09-01
    Adobe＝「アンチエイリアス＝**エッジピクセルのみ変更**（選択を作る前に決める）」
           「ぼかし＝**遷移ゾーン**を作る（作った後でも効く）」
