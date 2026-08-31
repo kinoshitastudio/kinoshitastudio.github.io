@@ -26,6 +26,7 @@ import puppeteer from '/Users/kinoshitatakahiro/.npm/_npx/1ade4bf2e2bf80fd/node_
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { execFileSync } from 'child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');          // mothership/
@@ -68,7 +69,7 @@ const hex = (c) => {
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox'] });
 const p = await b.newPage();
-await p.setViewport({ width: W, height: 900, deviceScaleFactor: 2 });
+await p.setViewport({ width: W, height: 900, deviceScaleFactor: 1 });   // 🔴 2倍で撮るとスクショのデータ量が4倍。Figma には等倍で置くので無駄
 await p.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36');
 await p.goto(URL_, { waitUntil: 'networkidle2', timeout: 60000 });
 await new Promise(r => setTimeout(r, 3000));
@@ -329,7 +330,7 @@ function dedupImages(kids) {
   return out;
 }
 
-const stats = { al: 0, abs: 0, band: 0, svg: 0, swap: 0, blank: 0, shot: 0, kasanari: 0 };
+const stats = { al: 0, abs: 0, band: 0, svg: 0, swap: 0, blank: 0, shot: 0, kasanari: 0, heavysvg: 0 };
 
 const r1 = v => Math.round(v * 10) / 10;
 
@@ -555,13 +556,37 @@ function strip(n) { delete n.__w; delete n.__h; delete n.__mx; delete n.__my; de
    クロスフェード・スライドショー・重なりが解けない塊は、URLを当てにいかず見た目を焼く。
    文字は上に残すので編集はできる。 */
 async function shotNode(pageX, pageY, w, h, name) {
-  const buf = await p.screenshot({ type: 'jpeg', quality: 78, captureBeyondViewport: true,
+  let buf = await p.screenshot({ type: 'jpeg', quality: 70, captureBeyondViewport: true,
     clip: { x: Math.max(0, Math.round(pageX)), y: Math.max(0, Math.round(pageY)), width: Math.round(w), height: Math.round(h) } });
   stats.shot++;
   const W2 = Math.round(w), H2 = Math.round(h);
+  // ⚠️ 長い帯は画素が増えすぎる。中身は同じ枠に伸ばすので、長辺1800で撮り直す
+  if (Math.max(W2, H2) > 1800) {
+    try {
+      const tin = path.join(OUT, '_shot_in.jpg'), tout = path.join(OUT, '_shot_out.jpg');
+      fs.writeFileSync(tin, buf);
+      execFileSync('sips', ['-Z', '1800', '-s', 'formatOptions', '65', tin, '--out', tout], { stdio: 'ignore' });
+      buf = fs.readFileSync(tout); fs.unlinkSync(tin); fs.unlinkSync(tout);
+    } catch (e) {}
+  }
   return { type: 'svg', name: name || '見た目（スクショ）', w: W2, h: H2,
     svg: `<svg width="${W2}" height="${H2}" viewBox="0 0 ${W2} ${H2}" xmlns="http://www.w3.org/2000/svg">`
        + `<image width="${W2}" height="${H2}" preserveAspectRatio="xMidYMid slice" href="data:image/jpeg;base64,${buf.toString('base64')}"/></svg>` };
+}
+
+// 🔴 サイトの inline <svg> が巨大なことがある（装飾イラスト1つで578KB＝パスが細かすぎる）。
+//    ベクターで持つ意味が無いので、その場所のスクショに置き換える
+const SVG_LIMIT = 60000;
+async function hugeSvgToShot(n, offX, offY) {
+  const kids = n.children || [];
+  for (let i = 0; i < kids.length; i++) {
+    const c = kids[i];
+    if (c.type === 'svg' && (c.svg || '').length > SVG_LIMIT && !/<image/.test(c.svg) && c.__mx != null) {
+      const sh = await shotNode(offX + c.__mx, offY + c.__my, c.w, c.h, c.name);
+      sh.x = c.x; sh.y = c.y; sh.__w = c.__w; sh.__h = c.__h; sh.__mx = c.__mx; sh.__my = c.__my;
+      kids[i] = sh; stats.heavysvg++;
+    } else await hugeSvgToShot(c, offX, offY);
+  }
 }
 
 // 未読込の写真（灰色の枠）を、その場所のスクショに差し替える
@@ -607,7 +632,7 @@ async function kvFlatten(root, offX, offY) {
   const keep = [];
   const walk = n => {
     (n.children || []).forEach(c => {
-      const vector = c.type === 'svg' && !/<image/.test(c.svg || '');
+      const vector = c.type === 'svg' && !/<image/.test(c.svg || '') && (c.svg || '').length <= SVG_LIMIT;
       if (c.type === 'text' || vector) {
         const o = { ...c }; delete o.children;
         o.x = Math.round(c.__mx); o.y = Math.round(c.__my);
@@ -740,7 +765,7 @@ for (const i of targets) {
   const isKV = (i === -1) && root.h >= 200;   // ⚠️ 名前の行では root.h でなく t.h を直に見る（TDZ）
   const kasanari = !isKV && overlapsPhoto(root);   // 文字が写真の上に乗っている＝構造では解けない
   if (isKV || kasanari) { await kvFlatten(root, box.x, box.y); if (kasanari) stats.kasanari++; }
-  else await fillBlanks(root, box.x, box.y);
+  else { await hugeSvgToShot(root, box.x, box.y); await fillBlanks(root, box.x, box.y); }
   const v = verify(root);          // ⭐ 出す前に、実測とズレていないか測る
   strip(root);
 
@@ -764,6 +789,6 @@ function count(n, a = { t: 0, lay: 0, abs: 0, img: 0 }) {
 
 const T = done.reduce((a, c) => ({ t: a.t + c.t, lay: a.lay + c.lay, abs: a.abs + c.abs, img: a.img + c.img }), { t: 0, lay: 0, abs: 0, img: 0 });
 console.log(`\n合計 ${done.length}枚 / ノード ${T.t} / オートレイアウト ${T.lay} / 絶対配置 ${T.abs}（重ねる所）/ 写真 ${T.img}`);
-console.log(`束ねた回数 ${stats.band} ── gap が2種類ある所を入れ子にした / svgを取り込んだ ${stats.svg}件 / 写真を実物に差し替えた ${stats.swap}件 / 空だった写真 ${stats.blank}件 / スクショを敷いた ${stats.shot}件（うち 重ね ${stats.kasanari}枚）`);
+console.log(`束ねた回数 ${stats.band} ── gap が2種類ある所を入れ子にした / svgを取り込んだ ${stats.svg}件 / 写真を実物に差し替えた ${stats.swap}件 / 空だった写真 ${stats.blank}件 / スクショを敷いた ${stats.shot}件（うち 重ね ${stats.kasanari}枚）/ 重いsvgを画像に ${stats.heavysvg}件`);
 console.log(`\n→ ${LIB}`);
 console.log(`⭐ Figma に出す: cp "library/<名前>.json" mothership.json`);
