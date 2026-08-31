@@ -19,7 +19,8 @@ await p.setViewport({ width:1400, height:900 });
 await p.goto(URL_, { waitUntil:'networkidle0' });
 await new Promise(r => setTimeout(r, 2500));
 let NG = 0;
-const OPTSUB = ['color','erase','paint','liq'];   /* 画像編集の小道具（2026-08-31 に1つのアイコンへ） */
+/* 画像編集の小道具（2026-08-31 に1つのアイコンへ・同日 マスクを塗るを足した） */
+const OPTSUB = ['color','erase','paint','lmask','liq'];
 const ok = (c, n, x) => { console.log((c ? '  ✅ ' : '  🔴 ') + n + (x != null ? ' … ' + x : '')); if(!c) NG = 1; };
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
@@ -568,7 +569,8 @@ const TB = await p.evaluate(async (OPTSUB) => {
   const out = { 数: document.querySelectorAll('#tools button[data-t]').length, 押した:{} };
   /* ⚠️ 灯は 2026-08-31 にツールバーから外した（盤の白い丸でつかむ）＝ここでも見ない */
   for(const [t, want] of [['color',['cut','color']], ['erase',['cut','erase']],
-                          ['paint',['cut','paint']], ['path',['cut','path']],
+                          ['paint',['cut','paint']], ['lmask',['cut','lmask']],
+                          ['path',['cut','path']],
                           ['move',['move',null]]]){
     (OPTSUB.includes(t) ? (document.querySelector('#tools button[data-t="retouch"]').click(),document.querySelector('#s_tool button[data-v="'+t+'"]').click()) : document.querySelector('#tools button[data-t="'+t+'"]').click());
     await new Promise(r => setTimeout(r, 60));
@@ -1182,8 +1184,9 @@ await wait(1200);
 const SU = await p.evaluate(() => {
   /* 絵に効かないもの＝素材の置き方・切り抜きの道具・出す大きさ・種・影の形 */
   /* ⚠️ 「そのまま」が 0 でないつまみ＝チャンネルミキサーの元の R は 100%（＝素通し） */
+  /* ⚠️ 「何もしない値」が 0 でないつまみ（濃度・不透明度のたぐい）は 100 が素 */
   const NEU = { r_op:100, r_air:100, r_white:100, r_gamma:100, r_out:100, r_mxr:100,
-                r_filla:100 };
+                r_filla:100, r_lmdens:100 };
   /* 絵に効かない＝素材の置き方・切り抜きの道具・出す大きさ・種・影の形・文字と塗りの設定 */
   const SKIP = ['r_long','r_tol','r_brush','r_feather','r_seed','r_shds','r_shdl','r_shdc',
                 'r_lr','r_scale','r_depth','r_rot','r_sy','r_fillop',
@@ -1203,7 +1206,9 @@ const SU = await p.evaluate(() => {
                 /* パスの許容値＝形を点に直すときの精度（絵の空気ではない） */
                 'r_ptol','r_halfsz','r_gpenang',
                 /* グラデーションで消すの形の設定（入り切りはチェックが持つ） */
-                'r_mgang','r_mgstart','r_mgsoft','r_glossn'];
+                'r_mgang','r_mgstart','r_mgsoft','r_glossn',
+                /* レイヤーマスクの筆の設定（濃さ・やわらかさ）＝道具の数字で、絵の空気ではない */
+                'r_lmflow','r_lmsoft'];
   const bad = [];
   document.querySelectorAll('#panel input[type=range]').forEach(e => {
     if(SKIP.includes(e.id)) return;
@@ -2745,6 +2750,235 @@ const TUT = await p.evaluate(async () => {
   ok(stuck.length === 0, '🔴 どれも切ると【1画素も同じ】に戻る（焼き込んでいない）',
      stuck.length ? stuck.join(',') : 'ぜんぶ戻る');
 }
+
+/* ══⭐⭐ レイヤーマスク（Photoshop の「レイヤーマスク」）══ 2026-08-31
+   Adobe＝「白＝表示／黒＝非表示／グレー＝半透明（グレーが暗いほど透明度が高い）」
+   🔴 見るのは【焼き込んでいないか】＝使用しない・消す で 1画素も同じに戻るか。
+   ⭐ 筆は【本当に盤を引いて】試す（つまみを直接触るだけでは、入口が死んでいても通る）。 */
+await p.setViewport({ width:1400, height:900 });
+await wait(500);
+await p.evaluate(async () => {
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1600); });
+  SEL = LAYERS.findIndex(L => L.img && !L.kind);
+  SELIDS = [LAYERS[SEL].id]; syncSelIds(); syncSel(); buildList();
+  COARSE = 0; render();
+});
+await wait(600);
+const LM0 = await p.evaluate(() => ({
+  段が出る: !document.getElementById('lmBox').classList.contains('hide'),
+  マスクなし: document.getElementById('o_lm').value,
+  前: window.__full(),
+}));
+ok(LM0.段が出る && LM0.マスクなし === 'マスクなし',
+   '⭐ 素材を選ぶと【レイヤーマスク】の段が出る（まだマスクは無い）', LM0.マスクなし);
+
+await p.evaluate(A => { window.__before = A; }, LM0.前);
+const LM1b = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  document.getElementById('b_lmadd').click();
+  COARSE = 0; render(); await w(400);
+  out.白を足しても同じ = window.__sad(window.__before, window.__full());
+  document.getElementById('b_lmblack').click();
+  COARSE = 0; render(); await w(400);
+  out.黒で隠れる = window.__sad(window.__before, window.__full());
+  document.getElementById('b_lmwhite').click();
+  COARSE = 0; render(); await w(400);
+  out.白に戻すと同じ = window.__sad(window.__before, window.__full());
+  return out;
+});
+ok(LM1b.白を足しても同じ === 0,
+   '⭐⭐ マスクを足しただけでは【1画素も変わらない】（すべて表示＝白）', LM1b.白を足しても同じ);
+ok(LM1b.黒で隠れる > 0 && LM1b.白に戻すと同じ === 0,
+   '⭐⭐ 黒＝非表示／白＝表示（ぜんぶ黒で消え、白に戻すと1画素も同じ）',
+   JSON.stringify(LM1b));
+
+/* ⭐ 筆＝ツールバーから入って、盤を本当に引く（入口が死んでいたら落ちる） */
+await p.evaluate(() => {
+  document.querySelector('#tools button[data-t="retouch"]').click();
+  document.querySelector('#s_tool button[data-v="lmask"]').click();
+});
+await wait(400);
+const TOOLON = await p.evaluate(() => ({ MODE, TOOL,
+  つまみが出る: !document.getElementById('lmUI').classList.contains('hide') }));
+ok(TOOLON.TOOL === 'lmask' && TOOLON.MODE === 'cut' && TOOLON.つまみが出る,
+   '⭐ ツールバー［画像編集］→［マスクを塗る］で入れる（つまみもそこに出る）',
+   JSON.stringify(TOOLON));
+{
+  const pt = await p.evaluate(() => {
+    const L = LAYERS[SEL];
+    const a = toScreen(L.x - L.s * 0.22, L.y), b2 = toScreen(L.x + L.s * 0.22, L.y);
+    return { ax:a.clientX, ay:a.clientY, bx:b2.clientX, by:b2.clientY };
+  });
+  await p.evaluate(() => { window.__b2 = window.__full(); });
+  await p.mouse.move(pt.ax, pt.ay);
+  await p.mouse.down();
+  for(let i = 1; i <= 6; i++)
+    await p.mouse.move(pt.ax + (pt.bx - pt.ax) * i / 6, pt.ay + (pt.by - pt.ay) * i / 6);
+  await p.mouse.up();
+  await wait(700);
+  const BR = await p.evaluate(async () => {
+    COARSE = 0; render(); await new Promise(r => setTimeout(r, 400));
+    const d = window.__sad(window.__b2, window.__full());
+    const L = LAYERS[SEL];
+    /* 使用しない＝1画素も同じに戻る（焼き込んでいない） */
+    L.lm.on = false; lmBump(L); COARSE = 0; render();
+    await new Promise(r => setTimeout(r, 400));
+    const back = window.__sad(window.__b2, window.__full());
+    L.lm.on = true; lmBump(L); COARSE = 0; render();
+    await new Promise(r => setTimeout(r, 400));
+    return { 塗った差:d, 使用しないで戻る:back, 塗った後:window.__full() };
+  });
+  ok(BR.塗った差 > 0, '⭐⭐ 盤を指で引くと【黒で塗れる＝隠れる】', BR.塗った差 + ' 点');
+  ok(BR.使用しないで戻る === 0,
+     '🔴🔴 ［使用しない］で【1画素も同じ】に戻る（元の写真を削っていない）', BR.使用しないで戻る);
+  await p.evaluate(A => { window.__b3 = A; }, BR.塗った後);
+}
+/* ⭐ グレー＝半透明（濃さを半分にして塗ると、黒で塗った時の中間になる） */
+const GR = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const L = LAYERS[SEL], m = maskSize(L);
+  document.getElementById('b_lmwhite').click();
+  P.lmflow = 1;
+  lmStrokeStart(L); lmBrush(L, m.w*0.5, m.h*0.5, null, null, true); lmStrokeEnd();
+  COARSE = 0; render(); await w(400);
+  const kuro = window.__sad(window.__before, window.__full());
+  document.getElementById('b_lmwhite').click();
+  P.lmflow = 0.5;
+  lmStrokeStart(L); lmBrush(L, m.w*0.5, m.h*0.5, null, null, true); lmStrokeEnd();
+  COARSE = 0; render(); await w(400);
+  const hai = window.__sad(window.__before, window.__full());
+  P.lmflow = 1;
+  /* 反転＝白と黒が入れ替わる */
+  document.getElementById('b_lmblack').click();
+  L.lm.inv = true; lmBump(L); COARSE = 0; render(); await w(400);
+  const hanten = window.__sad(window.__before, window.__full());
+  L.lm.inv = false;
+  /* 濃度＝マスクの効き（0 で効かない） */
+  document.getElementById('b_lmblack').click();
+  L.lm.dens = 0; lmBump(L); COARSE = 0; render(); await w(400);
+  const dens0 = window.__sad(window.__before, window.__full());
+  L.lm.dens = 1;
+  /* 消す＝1画素も同じに戻る */
+  document.getElementById('b_lmdel').click(); COARSE = 0; render(); await w(400);
+  const keshita = window.__sad(window.__before, window.__full());
+  return { 黒:kuro, 灰:hai, 反転で戻る:hanten, 濃度0で戻る:dens0, 消すと戻る:keshita };
+});
+ok(GR.灰 > 0 && GR.灰 < GR.黒 * 0.85,
+   '⭐⭐ グレー＝半透明（濃さを半分にして塗ると、黒の中間になる）',
+   JSON.stringify([GR.灰, GR.黒]));
+ok(GR.反転で戻る === 0,
+   '⭐ 白と黒を入れ替える（反転）が効く（ぜんぶ黒＋反転＝ぜんぶ白）', GR.反転で戻る);
+ok(GR.濃度0で戻る === 0, '⭐ 濃度 0 でマスクが効かなくなる（Adobe の濃度と同じ）', GR.濃度0で戻る);
+ok(GR.消すと戻る === 0,
+   '🔴🔴 ［マスクを消す］で【1画素も同じ】に戻る（焼き込んでいない）', GR.消すと戻る);
+
+/* ⭐⭐ 鎖（リンク）＝外すとマスクは版面に留まる（素材だけが中で動く） */
+const LNK = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const L = LAYERS[SEL], m = maskSize(L);
+  document.getElementById('b_lmadd').click();
+  L.lm.cv.getContext('2d').clearRect(0, 0, m.w/2, m.h);   /* 左半分を黒＝隠す */
+  lmBump(L); COARSE = 0; render(); await w(400);
+  const A = window.__full();
+  const x0 = L.x;
+  L.x = x0 + 0.12; L._key = ''; COARSE = 0; render(); await w(400);
+  const 鎖あり = window.__sad(A, window.__full());
+  L.x = x0; L._key = ''; COARSE = 0; render(); await w(400);
+  const 戻ると同じ = window.__sad(A, window.__full());
+  lmLink(L, false); COARSE = 0; render(); await w(400);
+  const 外した瞬間 = window.__sad(A, window.__full());
+  L.x = x0 + 0.12; L._key = ''; COARSE = 0; render(); await w(500);
+  const B = window.__full();
+  const 鎖なし = window.__sad(A, B);
+  lmLink(L, true); COARSE = 0; render(); await w(500);
+  const 戻した差 = window.__sad(B, window.__full());
+  L.x = x0; L._key = '';
+  return { 鎖あり, 戻ると同じ, 外した瞬間, 鎖なし, 戻した差 };
+});
+ok(LNK.外した瞬間 === 0 && LNK.鎖なし > 0 && LNK.鎖あり > 0,
+   '⭐⭐ 鎖を外すとマスクは【版面に留まる】（外した瞬間は1画素も変わらない）',
+   JSON.stringify(LNK));
+ok(LNK.戻した差 === 0,
+   '⭐ 鎖を戻すと【見えているまま】写し取る（絵が飛ばない）', LNK.戻した差);
+
+/* ⭐ 設定JSON に【マスクの紙そのもの】が入って、読むと同じ絵に戻る */
+const LJ = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const L = LAYERS[SEL], m = maskSize(L), i = SEL;
+  document.getElementById('b_lmwhite').click();
+  L.lm.cv.getContext('2d').clearRect(0, 0, m.w/2, m.h);
+  L.lm.dens = 0.7; L.lm.feather = 0.2; lmBump(L);
+  COARSE = 0; render(); await w(500);
+  const C = window.__full();
+  const j = JSON.parse(JSON.stringify(snapshot()));
+  const 入る = !!(j.layers[i] && j.layers[i].lm && j.layers[i].lm.cv);
+  const つまみ = j.layers[i].lm ? [j.layers[i].lm.dens, j.layers[i].lm.feather] : null;
+  L.lm = null; L._key = ''; COARSE = 0; render(); await w(300);
+  lmApply(L, j.layers[i].lm);
+  await w(900); COARSE = 0; render(); await w(400);
+  const 戻ると同じ = window.__sad(C, window.__full());
+  document.getElementById('b_lmdel').click(); COARSE = 0; render(); await w(300);
+  return { 入る, つまみ, 戻ると同じ };
+});
+ok(LJ.入る && LJ.つまみ[0] === 0.7 && LJ.つまみ[1] === 0.2 && LJ.戻ると同じ === 0,
+   '⭐⭐ 設定JSON にマスクの紙とつまみが入り、読むと同じ絵に戻る', JSON.stringify(LJ));
+
+/* ⭐ ひと筆は【⌘Z で戻る】／複製にはマスクが写る（控えるものは戻したいものと同じに） */
+const LUN = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const L = LAYERS[SEL], m = maskSize(L);
+  document.getElementById('b_lmdel').click();
+  COARSE = 0; render(); await w(400);
+  const A = window.__full();
+  hist(); lmStrokeStart(L);
+  lmBrush(L, m.w*0.4, m.h*0.5, null, null, true);
+  lmBrush(L, m.w*0.6, m.h*0.5, m.w*0.4, m.h*0.5, true);
+  lmStrokeEnd(); COARSE = 0; render(); await w(400);
+  const 塗った = window.__sad(A, window.__full());
+  undo(); COARSE = 0; render(); await w(500);
+  const 戻した = window.__sad(A, window.__full());
+  redo(); COARSE = 0; render(); await w(500);
+  const やり直した = window.__sad(A, window.__full());
+  const d2 = dupLayer(L, 0.05, 0.05);
+  const 複製に写る = !!(d2.lm && d2.lm.cv && d2.lm.cv !== L.lm.cv);
+  LAYERS.pop(); SEL = LAYERS.findIndex(o => o === L); SELIDS = [L.id]; syncSelIds();
+  document.getElementById('b_lmdel').click(); buildList(); COARSE = 0; render(); await w(300);
+  return { 塗った, 戻した, やり直した, 複製に写る };
+});
+ok(LUN.塗った > 0 && LUN.戻した === 0 && LUN.やり直した === LUN.塗った,
+   '⭐⭐ マスクのひと筆は ⌘Z で【1画素も同じ】に戻り、⌘⇧Z でやり直せる', JSON.stringify(LUN));
+ok(LUN.複製に写る, '⭐ 複製（⌘D）にはマスクも写る（写した方を塗っても元は変わらない）');
+
+/* ⭐ 選択範囲からマスクを作る（Adobe＝レイヤー／レイヤーマスク／選択範囲外をマスク） */
+const LSL = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const o = LAYERS.slice().sort((a,b) => zOf(a)-zOf(b));
+  SEL = LAYERS.indexOf(o[1]); SELIDS = [o[1].id]; syncSel(); buildList();
+  document.querySelector('#tools button[data-t="path"]').click();
+  const L = LAYERS[SEL], m = maskSize(L);
+  COARSE = 0; render(); await w(400);
+  const A = window.__full();
+  POLY = [{x:m.w*0.2,y:m.h*0.2,hx:0,hy:0},{x:m.w*0.8,y:m.h*0.25,hx:0,hy:0},
+          {x:m.w*0.5,y:m.h*0.8,hx:0,hy:0}];
+  closePath(); await w(300);
+  document.querySelector('#pathList .pathrow')
+    .dispatchEvent(new MouseEvent('click', { bubbles:true, metaKey:true }));
+  await w(400); syncLm();
+  const ボタンが出る = !document.getElementById('lmSel').classList.contains('hide');
+  document.getElementById('b_lmselout').click();
+  COARSE = 0; render(); await w(500);
+  const 効いた = window.__sad(A, window.__full());
+  document.getElementById('b_lmdel').click(); COARSE = 0; render(); await w(400);
+  const 消すと戻る = window.__sad(A, window.__full());
+  return { ボタンが出る, 効いた, 消すと戻る };
+});
+ok(LSL.ボタンが出る && LSL.効いた > 0 && LSL.消すと戻る === 0,
+   '⭐⭐ 選択範囲外をマスクできる（Adobe の公式の手）＋消すと1画素も同じに戻る',
+   JSON.stringify(LSL));
 
 /* 盤の左上の表記＝画面のいちばん左上・小さく（木下の指示） */
 await p.setViewport({ width:1400, height:900 });
