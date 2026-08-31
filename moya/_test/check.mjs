@@ -1188,7 +1188,9 @@ const SU = await p.evaluate(() => {
                 'r_mang','r_wfreq','r_liqrad','r_liqstr','r_rrough','r_rsize','r_rstr','r_rseed',
                 'sh_gang',
                 /* 塗りレイヤー（べた塗り・グラデーション・パターン）の形の設定＝絵の空気ではない */
-                'r_rgang','r_patsz','r_patw','r_patang'];
+                'r_rgang','r_patsz','r_patw','r_patang',
+                /* パターンオーバーレイの柄の設定＝絵の空気ではない（入り切りは行の丸が持つ） */
+                'r_fxpsz','r_fxpw','r_fxpang','r_fxpop'];
   const bad = [];
   document.querySelectorAll('#panel input[type=range]').forEach(e => {
     if(SKIP.includes(e.id)) return;
@@ -1520,7 +1522,8 @@ const FX0 = await fullShot();
 const FXDEAD = [];
 for(const [id, nm] of [['fx_shadow','ドロップシャドウ'], ['fx_glow','光彩（外側）'],
      ['fx_stroke','境界線'], ['fx_inner','内側の影'], ['fx_iglow','光彩（内側）'],
-     ['fx_bevel','ベベルとエンボス'], ['fx_satin','サテン'], ['fx_grad','グラデーション']]){
+     ['fx_bevel','ベベルとエンボス'], ['fx_satin','サテン'], ['fx_grad','グラデーション'],
+     ['fx_pat','パターン']]){
   await p.evaluate(i => { const e = document.getElementById(i);
     e.checked = true; e.dispatchEvent(new Event('change', { bubbles:true })); }, id);
   await wait(800);
@@ -1531,8 +1534,8 @@ for(const [id, nm] of [['fx_shadow','ドロップシャドウ'], ['fx_glow','光
   if(await sad(FX0, await fullShot()) !== 0) FXDEAD.push(nm + '（切っても戻らない）');
 }
 ok(FXDEAD.length === 0,
-   '⭐⭐ エフェクト8つが効いて、切れば1画素も同じに戻る（焼き込んでいない）',
-   FXDEAD.length ? FXDEAD.join(' , ') : '8/8');
+   '⭐⭐ エフェクト9つが効いて、切れば1画素も同じに戻る（焼き込んでいない）',
+   FXDEAD.length ? FXDEAD.join(' , ') : '9/9');
 
 /* 型（黄金色など）＝押したら絵が変わり、［ぜんぶ切る］で戻る */
 await p.evaluate(() => document.querySelector('#s_fxpre button[data-v="gold"]').click());
@@ -2416,6 +2419,80 @@ const PGP = await p.evaluate(async () => {
 });
 ok(PGP.残った === 1 && PGP.消した && PGP.戻せた && PGP.JSONにも,
    '⭐⭐ 版面のパスも残せて、呼び戻せる（設定JSONにも入る）', JSON.stringify(PGP));
+
+/* ══⭐⭐ 可変フォントの軸（wght 以外）══ 2026-08-31
+   🔴 canvas は font の書き方に軸を書けない＝【軸の値ごとに別の書体として登録する】。
+   ⭐ 見るのは【軸を読めるか】【動かすと字の形が変わるか】【既定へ戻ると元に戻るか】。 */
+{
+  const fsMod = await import('node:fs');
+  const B64 = fsMod.readFileSync('/System/Library/Fonts/SFNS.ttf').toString('base64');
+  const VF = await p.evaluate(async (b64) => {
+    const wait2 = ms => new Promise(r => setTimeout(r, ms));
+    const bin = atob(b64); const u8 = new Uint8Array(bin.length);
+    for(let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const buf = u8.buffer;
+    const out = { 軸:readAxes(buf).map(a => a.tag) };
+    const fam = 'moya-VFtest', fam2 = '"' + fam + '"';
+    const face = new FontFace(fam, buf, { weight:'1 1000' });
+    await face.load(); document.fonts.add(face);
+    FONTS.push([fam2, 'VFtest']); FONTBUF[fam2] = buf; FONTAXES[fam2] = readAxes(buf);
+    const o = document.createElement('option');
+    o.value = fam2; o.textContent = 'VFtest'; document.getElementById('t_font').appendChild(o);
+    closeAllEditors();
+    document.getElementById('b_text').click(); await wait2(900);
+    const L = LAYERS[SEL];
+    textOf(L).font = fam2; textOf(L).str = 'Wdth 幅';
+    await new Promise(r => rebuildText(L, r)); await wait2(500);
+    const wOf = () => L.img.naturalWidth;
+    const w0 = wOf();
+    /* つまみが【その書体が持っている軸だけ】出る */
+    buildAxes();
+    out.つまみ = [...document.getElementById('axBox').querySelectorAll('.knob .n')]
+      .map(e => e.textContent);
+    axesOfText(textOf(L)).wdth = 30;
+    await new Promise(r => rebuildText(L, r)); await wait2(900);
+    out.幅が効く = wOf() !== w0;
+    axesOfText(textOf(L)).wdth = FONTAXES[fam2].find(a => a.tag === 'wdth').def;
+    await new Promise(r => rebuildText(L, r)); await wait2(700);
+    out.既定へ戻る = wOf() === w0;
+    out.太さは出さない = !out.つまみ.some(t => /wght/.test(t));
+    removeAt(SEL); render();
+    return out;
+  }, B64);
+  ok(VF.軸.includes('wdth') && VF.軸.includes('wght'),
+     '⭐⭐ 書体ファイルから【可変フォントの軸】を読める', VF.軸.join('・'));
+  ok(VF.つまみ.length >= 2 && VF.太さは出さない,
+     '⭐ その書体が持っている軸だけ つまみが出る（太さは元からあるので出さない）',
+     VF.つまみ.join(' / '));
+  ok(VF.幅が効く, '⭐⭐ 軸を動かすと【字の形が変わる】（幅の軸）');
+  ok(VF.既定へ戻る, '🔴 既定へ戻すと元の形に戻る（焼き込んでいない）');
+}
+
+/* ══⭐ 選んでいる行がどちらの明かりでも読める ══ 2026-08-31
+   🔴 木下＝「選択しているとこ見辛え」（ライトで薄い青に白字だった） */
+const SELVIS = await p.evaluate(async () => {
+  const wait2 = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  SEL = 0; SELIDS = [LAYERS[0].id]; syncSelIds(); buildList(); syncSel();
+  await wait2(400);
+  const lum = c => { const v = c.match(/[\d.]+/g).slice(0,3).map(Number);
+    return 0.2126*v[0] + 0.7152*v[1] + 0.0722*v[2]; };
+  const read = () => {
+    const row = document.querySelector('#layers .ly.sel.pri');
+    if(!row) return null;
+    const s2 = getComputedStyle(row), n2 = getComputedStyle(row.querySelector('.nm'));
+    return Math.abs(lum(s2.backgroundColor) - lum(n2.color));
+  };
+  const dark = read();
+  document.getElementById('lightBtn').click(); await wait2(500);
+  const light = read();
+  document.getElementById('lightBtn').click(); await wait2(300);
+  return { dark, light };
+});
+ok(SELVIS.dark > 90 && SELVIS.light > 90,
+   '⭐ 選んでいる行は【どちらの明かりでも】地と字がはっきり分かれる',
+   JSON.stringify({ 暗:Math.round(SELVIS.dark), 明:Math.round(SELVIS.light) }));
 
 /* 盤の左上の表記＝画面のいちばん左上・小さく（木下の指示） */
 await p.setViewport({ width:1400, height:900 });
