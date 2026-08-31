@@ -11,11 +11,28 @@
    使い方: node moya/_test/check.mjs <URL> */
 import puppeteer from '/Users/kinoshitatakahiro/.npm/_npx/1ade4bf2e2bf80fd/node_modules/puppeteer-core/lib/puppeteer/puppeteer-core.js';
 const URL_ = process.argv[2] || 'http://localhost:8460/moya/';
+/* ⚠️ 試験が増えて重くなると【タブごと落ちる】ことがある（落ちる場所が毎回変わるのが目印）。
+   ⭐ 共有メモリを使わない指定を足して、落ちたらその場で分かるようにする。 */
 const b = await puppeteer.launch({ executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  headless:'new', args:['--no-sandbox'] });
+  headless:'new', args:['--no-sandbox', '--disable-dev-shm-usage', '--js-flags=--max-old-space-size=4096'] });
 const p = await b.newPage(); const errs = [];
 p.on('pageerror', e => errs.push(e.message));
+p.on('error', e => { console.log('  🔴 タブが落ちた（メモリ切れの疑い）：' + (e && e.message));
+  process.exitCode = 1; });
 await p.setViewport({ width:1400, height:900 });
+/* ══⭐⭐ 同じ配線を【二重に付けていないか】を見張る ══ 2026-09-01
+   🔴 木下＝「そういったミスがないか検証実装をして」
+     ＝つまみの「引き始めに控える」配線を、すでに有るのに もう1本足してしまい、
+       1回のドラッグで **2手** 積まれていた（ヒストリーに名前の無い「操作」が混ざる）。
+   ⭐ 読み込みの最初から addEventListener を数えておく（記録するだけ・動きは変えない）。 */
+await p.evaluateOnNewDocument(() => {
+  window.__listen = [];
+  const orig = EventTarget.prototype.addEventListener;
+  EventTarget.prototype.addEventListener = function(t, f, o){
+    try{ if(this && this.id) window.__listen.push(this.id + '|' + t); }catch(_){}
+    return orig.call(this, t, f, o);
+  };
+});
 await p.goto(URL_, { waitUntil:'networkidle0' });
 await new Promise(r => setTimeout(r, 2500));
 let NG = 0;
@@ -3426,6 +3443,46 @@ ok(AAT.あり > 0 && AAT.なし === 0 && AAT.戻る === AAT.あり,
    JSON.stringify(AAT));
 ok(AAT.JSON === false, '⭐ アンチエイリアスの入り切りは設定JSONにも入る', String(AAT.JSON));
 
+/* ══⭐⭐ CHU Modular（木下の書体）を MOYA でも使う ══ 2026-09-01
+   🔴 木下＝「chu module を MOYA でもテキストフォント使えるようにして」
+   ⚠️ いちばん上は【新しく置く字の既定】なので、そこは動かさない（今までの絵のまま）。 */
+const CHU = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const out = { 並ぶ:FONTS.filter(f => /CHU/.test(f[0])).map(f => f[1]).length,
+                既定:FONTS[0][1] };
+  document.querySelector('#tools button[data-t="text"]').click(); await w(900);
+  const L = LAYERS[SEL];
+  out.置いた字の書体 = L.text.font;
+  const put = (id, v) => { const e = document.getElementById(id); e.value = v;
+    e.dispatchEvent(new Event('input', { bubbles:true })); };
+  put('t_str', 'ABC'); await w(700);
+  COARSE = 0; render(); await w(400);
+  const A = window.__full();
+  const sel = document.getElementById('t_font');
+  sel.value = 'CHU, sans-serif'; sel.dispatchEvent(new Event('change', { bubbles:true }));
+  await w(2000); COARSE = 0; render(); await w(500);
+  out.CHUで変わる = window.__sad(A, window.__full());
+  out.読めた = document.fonts.check('700 100px CHU');
+  const B = window.__full();
+  put('t_weight', 100); await w(900); COARSE = 0; render(); await w(400);
+  out.太さが効く = window.__sad(B, window.__full());
+  put('t_str', 'あいう'); await w(600);
+  sel.value = 'CHUJP, sans-serif'; sel.dispatchEvent(new Event('change', { bubbles:true }));
+  await w(2500); COARSE = 0; render(); await w(600);
+  out.JPも読めた = document.fonts.check('700 100px CHUJP');
+  return out;
+});
+ok(CHU.並ぶ >= 7 && CHU.CHUで変わる > 0 && CHU.読めた && CHU.JPも読めた,
+   '⭐⭐ CHU Modular（欧文・かな・型5つ）が MOYA の書体に並び、本当に切り替わる',
+   JSON.stringify(CHU));
+ok(CHU.太さが効く > 0,
+   '⭐ 可変フォントの太さ（100〜900）がそのまま効く', CHU.太さが効く);
+ok(/ゴシック/.test(CHU.既定) && /apple-system/.test(CHU.置いた字の書体),
+   '🔴 新しく置く字の【既定は今までどおり】（書体を足しても既定を変えない）',
+   JSON.stringify({ 既定:CHU.既定, 置いた:CHU.置いた字の書体 }));
+
 /* ══⭐⭐ ガラス（Photoshop のフィルターギャラリー／変形／ガラス）══ 2026-09-01
    🔴 木下がくれた作例＝ゆがみ12・滑らかさ6・テクスチャ・拡大縮小100%
    ⭐ つまみは4つ（ゆがみ／滑らかさ／テクスチャ／大きさ）＝どれも【絵が変わる】こと、
@@ -3590,6 +3647,48 @@ await wait(900);
      JSON.stringify(IN));
   await p.evaluate(async () => { closeAllEditors(); await new Promise(r => setTimeout(r, 400)); });
   await wait(500);
+}
+
+/* ══⭐⭐ 配線の二重チェック（木下＝「そういったミスがないか検証実装をして」）══
+   ⚠️ input は「値を反映する配線」と「別の目的」で2本付くことが普通にある＝見ない。
+     見るのは【1回の操作が2回起きる】もの＝押す・引き始め・変える・2回押す。 */
+{
+  const DUP = await p.evaluate(() => {
+    const n = {};
+    (window.__listen || []).forEach(k => n[k] = (n[k] || 0) + 1);
+    return Object.entries(n).filter(([k, v]) => v > 1)
+      .filter(([k]) => /\|(click|pointerdown|change|dblclick)$/.test(k))
+      .map(([k, v]) => k + '×' + v);
+  });
+  ok(DUP.length === 0,
+     '⭐⭐ 同じ物に【押す・引き始め・変える】の配線が二重に付いていない',
+     DUP.length ? DUP.join(' , ') : 'ぜんぶ1本');
+}
+/* ⭐⭐ 1回の操作＝ヒストリー1手（二重に控えていないか・名前が付いているか） */
+{
+  const ONE = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    closeAllEditors();
+    await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1600); });
+    const before = HIST.past.length;
+    const r = document.getElementById('r_haze');
+    r.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true }));
+    r.value = 80; r.dispatchEvent(new Event('input', { bubbles:true }));
+    await w(300);
+    const 引いた = HIST.past.length - before;
+    const 名 = HIST.past[HIST.past.length-1].name;
+    const b2 = HIST.past.length;
+    const o = LAYERS.slice().sort((a,b) => zOf(a)-zOf(b));
+    SEL = LAYERS.indexOf(o[1]); SELIDS = [o[1].id]; syncSelIds(); syncSel(); buildList();
+    document.getElementById('b_lmadd').click();
+    await w(300);
+    return { 引いた, 名, 押した:HIST.past.length - b2,
+             押した名:HIST.past[HIST.past.length-1].name };
+  });
+  ok(ONE.引いた === 1 && ONE.名 === 'かすみ',
+     '⭐⭐ つまみを1回引いたら【1手】だけ積まれ、名前が付く', JSON.stringify(ONE));
+  ok(ONE.押した === 1 && /マスク/.test(ONE.押した名 || ''),
+     '⭐ ボタンを1回押したら【1手】だけ積まれる', JSON.stringify(ONE));
 }
 
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
