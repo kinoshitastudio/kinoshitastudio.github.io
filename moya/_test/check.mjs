@@ -1173,7 +1173,8 @@ await p.evaluate(() => document.querySelector('#s_preset button[data-v="su"]').c
 await wait(1200);
 const SU = await p.evaluate(() => {
   /* 絵に効かないもの＝素材の置き方・切り抜きの道具・出す大きさ・種・影の形 */
-  const NEU = { r_op:100, r_air:100, r_white:100, r_gamma:100, r_out:100 };
+  /* ⚠️ 「そのまま」が 0 でないつまみ＝チャンネルミキサーの元の R は 100%（＝素通し） */
+  const NEU = { r_op:100, r_air:100, r_white:100, r_gamma:100, r_out:100, r_mxr:100 };
   /* 絵に効かない＝素材の置き方・切り抜きの道具・出す大きさ・種・影の形・文字と塗りの設定 */
   const SKIP = ['r_long','r_tol','r_brush','r_feather','r_seed','r_shds','r_shdl','r_shdc',
                 'r_lr','r_scale','r_depth','r_rot','r_sy','r_fillop',
@@ -1185,7 +1186,9 @@ const SU = await p.evaluate(() => {
                 'r_tang','r_tdist','r_tblur','r_top','r_gscale',
                 'r_selsw','r_selblur','t_hs','t_vs','t_skew','t_sw','t_bgpad','t_bgr','t_bgop',
                 'r_mang','r_wfreq','r_liqrad','r_liqstr','r_rrough','r_rsize','r_rstr','r_rseed',
-                'sh_gang'];
+                'sh_gang',
+                /* 塗りレイヤー（べた塗り・グラデーション・パターン）の形の設定＝絵の空気ではない */
+                'r_rgang','r_patsz','r_patw','r_patang'];
   const bad = [];
   document.querySelectorAll('#panel input[type=range]').forEach(e => {
     if(SKIP.includes(e.id)) return;
