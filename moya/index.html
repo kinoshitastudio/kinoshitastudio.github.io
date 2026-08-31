@@ -1810,6 +1810,17 @@
         <button data-v="fish">魚眼</button><button data-v="squeeze">しぼり</button>
       </div>
       <div class="knob"><span class="n">曲げる量</span><input class="num" type="number" id="n_r_warp"><input type="range" id="r_warp" min="-100" max="100" step="1" value="0"><output id="o_warp" hidden>0.00</output></div>
+      <!-- ══⭐⭐ ガラス（Photoshop のフィルターギャラリー／変形／ガラス）══ 2026-09-01
+           🔴 木下がくれた作例＝ゆがみ12・滑らかさ6・テクスチャを読み込み・拡大縮小100%
+           ⭐ つまみは Photoshop と同じ4つ。テクスチャの明暗で画素をずらす。 -->
+      <div class="row" style="margin-top:6px"><span class="n">ガラス（すりガラス越しの歪み）</span></div>
+      <div class="seg" id="s_glass">
+        <button data-v="frost" class="on">霜付き</button><button data-v="block">ブロック</button>
+        <button data-v="canvas">カンバス</button><button data-v="lens">小さいレンズ</button>
+      </div>
+      <div class="knob"><span class="n">ゆがみ</span><input class="num" type="number" id="n_r_glass"><input type="range" id="r_glass" min="0" max="20" step="1" value="0"><output id="o_glass" hidden>0</output></div>
+      <div class="knob"><span class="n">滑らかさ</span><input class="num" type="number" id="n_r_glasssm"><input type="range" id="r_glasssm" min="1" max="15" step="1" value="6"><output id="o_glasssm" hidden>6</output></div>
+      <div class="knob"><span class="n">テクスチャの大きさ</span><input class="num" type="number" id="n_r_glassscale"><input type="range" id="r_glassscale" min="50" max="200" step="1" value="100"><output id="o_glassscale" hidden>100</output></div>
       <!-- ⭐⭐ フィルターギャラリーの3つ（Photoshop の言い方そのまま）── 2026-08-31
            木下が持ってきたチュートリアル④ヴィンテージ・ハーフトーンに要るもの -->
       <div class="knob"><span class="n">ハーフトーンパターン</span><input class="num" type="number" id="n_r_half"><input type="range" id="r_half" min="0" max="100" step="1" value="0"><output id="o_half" hidden>0.00</output></div>
@@ -3059,7 +3070,16 @@ function newEd(){ return {
   warp:0, warpKind:'arc',    /* 曲げる量と型（arc 弓なり／flag 旗／fish 魚眼／squeeze しぼり） */
   half:0, halfSize:0.35,      /* ハーフトーンパターン（円）＝レトロな印刷の網点 */
   gpen:0, gpenAng:45,         /* グラフィックペン＝斜めの線で明暗を描く */
-  film:0                      /* フィルム粒子＝粒＋わずかに沈む */ }; }
+  film:0,                     /* フィルム粒子＝粒＋わずかに沈む */
+  /* ══⭐⭐ ガラス（Photoshop のフィルターギャラリー／変形／ガラス）══ 2026-09-01
+     ⭐ つまみは Photoshop と同じ4つ＝**ゆがみ／滑らかさ／テクスチャ／拡大・縮小**
+       （木下がくれた作例＝ゆがみ12・滑らかさ6・テクスチャを読み込み・拡大縮小100%）
+     ⭐ 仕組み＝**テクスチャの明暗で画素をずらす**（置き換え）。
+       ・ゆがみ ＝ずらす量（0〜20）
+       ・滑らかさ＝テクスチャをぼかす（1〜15）＝ずれがなめらかになる
+       ・拡大・縮小＝テクスチャの大きさ（50〜200%）
+     ⚠️ 既定 0＝分岐ごと通さない（絵を変えない・重くしない）。焼き込まない。 */
+  glass:0, glassSm:6, glassTex:'frost', glassScale:1 }; }
 /* ⚠️ 前に作った素材には新しいつまみが無い＝既定で埋めてから返す
    （埋めないと「undefined を toFixed」で道具ごと落ちる） */
 function edOf(L){
@@ -3076,7 +3096,7 @@ function edPlain(e){
     !e.blur && !e.sharp && !e.noise && !e.mosaic &&
     !e.poster && !e.thresh && !e.mono && !e.invert && !e.edge &&
     !e.mblur && !e.rblur && !e.wave && !e.twirl &&
-    !e.half && !e.gpen && !e.film && !e.warp); }
+    !e.half && !e.gpen && !e.film && !e.warp && !e.glass); }
 /* ══⭐⭐ トーンカーブ ══ 2026-08-31
    ⭐ 点を打って曲げるだけ。⚠️ 端の2点（0,0）（1,1）は必ず居る＝まっすぐが既定。
    🔴 通すのは【単調な3次曲線】（Fritsch–Carlson）＝点のあいだで勝手に山ができない
@@ -3404,6 +3424,8 @@ function edOnce(base, e, dw, dh){
   }
   /* ⑥ うねり・渦巻き＝【画素を動かす】ので、ここは1画素ずつ */
   if(e.wave > 0 || e.twirl > 0 || e.warp) edWarp(x, dw, dh, e);
+  /* ⑥' ガラス＝テクスチャの明暗で画素をずらす（Photoshop の「ガラス」と同じ考え） */
+  if(e.glass > 0.001) edGlass(x, dw, dh, e);
   /* ══⭐⭐ フィルターギャラリーの3つ（2026-08-31）══
      ⚠️ 名前は Photoshop の言い方（ハーフトーンパターン／グラフィックペン／フィルム粒子）。
      ⭐ どれも【明るさを読んで描き直す】＝式は1本ずつ。既定 0 なら通らない。 */
@@ -3520,6 +3542,96 @@ function edSrc(L, dw, dh, W, H){
 }
 /* 隣どうしの差を見る（シャープ＝差を足す／輪郭＝差だけ残す）。式は1本、使い方が2つ */
 /* ⭐ 画素を動かすフィルター（うねり・渦巻き）。式は1本、どこへ動かすかだけが違う */
+/* ══⭐⭐ ガラス（Photoshop のフィルターギャラリー／変形／ガラス）══ 2026-09-01
+   🔴 木下がくれた作例（mdn.co.jp の Photoshop チュートリアル）＝
+     **ゆがみ 12／滑らかさ 6／テクスチャ（画像を読み込み）／拡大・縮小 100%**
+   ⭐ 仕組み＝**テクスチャの明暗を高さと見て、その傾きぶん画素をずらす**。
+     ＝すりガラス越しに見たときのズレ（レンズの効果）と同じ理屈。
+   ⭐ テクスチャは Photoshop の既定4つと同じ名前で持つ：
+     ブロック／カンバス／霜付き／小さいレンズ
+   ⚠️ Adobe 公式のフィルター一覧ページは（何度試しても）読み込めなかったので、
+      **つまみの名前と範囲は Photoshop の画面と作例に合わせている**（推測で足していない）。 */
+function glassTex(kind, w, h, scale){
+  /* テクスチャは【小さい紙】で1枚作って引き伸ばす＝大きい写真でも重くならない */
+  const k = Math.max(0.5, Math.min(2, scale == null ? 1 : scale));
+  const tw = Math.max(8, Math.round(w / 3)), th = Math.max(8, Math.round(h / 3));
+  const c = document.createElement('canvas'); c.width = tw; c.height = th;
+  const x = c.getContext('2d', { willReadFrequently:true });
+  const px = Math.max(3, Math.round(24 * k * Math.min(tw, th) / 300));
+  x.fillStyle = '#808080'; x.fillRect(0, 0, tw, th);
+  if(kind === 'block'){
+    /* ブロック＝四角いガラスブロックの並び（継ぎ目で大きくずれる） */
+    for(let y = 0; y < th; y += px) for(let i = 0; i < tw; i += px){
+      const g = x.createLinearGradient(i, y, i + px, y + px);
+      g.addColorStop(0, '#ffffff'); g.addColorStop(0.5, '#909090'); g.addColorStop(1, '#202020');
+      x.fillStyle = g; x.fillRect(i + 0.5, y + 0.5, px - 1, px - 1);
+    }
+  }else if(kind === 'canvas'){
+    /* カンバス＝布目（縦と横の糸） */
+    x.fillStyle = '#707070'; x.fillRect(0, 0, tw, th);
+    x.fillStyle = '#c8c8c8';
+    for(let i = 0; i < tw; i += px) x.fillRect(i, 0, Math.max(1, px*0.45), th);
+    for(let y = 0; y < th; y += px) x.fillRect(0, y, tw, Math.max(1, px*0.45));
+  }else if(kind === 'lens'){
+    /* 小さいレンズ＝丸いレンズの並び（まん中がふくらむ） */
+    for(let y = 0; y < th; y += px) for(let i = 0; i < tw; i += px){
+      const g = x.createRadialGradient(i + px/2, y + px/2, 0, i + px/2, y + px/2, px/2);
+      g.addColorStop(0, '#ffffff'); g.addColorStop(0.7, '#808080'); g.addColorStop(1, '#303030');
+      x.fillStyle = g; x.beginPath(); x.arc(i + px/2, y + px/2, px/2, 0, 6.2831853); x.fill();
+    }
+  }else{
+    /* 霜付き（すりガラス）＝粒をぼかしたもの */
+    const im = x.createImageData(tw, th), d = im.data;
+    let sd = 12345;
+    const rnd = () => { sd = (sd * 1664525 + 1013904223) >>> 0; return sd / 4294967296; };
+    for(let i = 0, q = 0; i < tw*th; i++, q += 4){
+      const v = (rnd() * 255) | 0;
+      d[q] = d[q+1] = d[q+2] = v; d[q+3] = 255;
+    }
+    x.putImageData(im, 0, 0);
+    const t2 = document.createElement('canvas'); t2.width = tw; t2.height = th;
+    const g2 = t2.getContext('2d');
+    /* ⚠️ ここでぼかしすぎると【滑らかさのつまみが効かない】（粒が先に消える） */
+    g2.filter = 'blur(' + Math.max(0.5, px * 0.10).toFixed(2) + 'px)';
+    g2.drawImage(c, 0, 0);
+    x.clearRect(0, 0, tw, th); x.filter = 'none'; x.drawImage(t2, 0, 0);
+  }
+  return c;
+}
+function edGlass(x, w, h, e){
+  const amt = e.glass;                                   /* 0〜1（画面では 0〜20） */
+  const sm  = Math.max(1, e.glassSm == null ? 6 : e.glassSm);
+  const tex = glassTex(e.glassTex || 'frost', w, h, e.glassScale);
+  /* 滑らかさ＝テクスチャをぼかす（ぼかすほど ずれがなだらかになる）
+     ⚠️ 1〜15 が【見て分かる差】になる強さにしてある（0.5倍では 6 と 15 が同じ絵だった） */
+  const t = document.createElement('canvas'); t.width = w; t.height = h;
+  const tg = t.getContext('2d', { willReadFrequently:true });
+  tg.filter = 'blur(' + (sm * 0.35 * Math.min(w, h) / 700).toFixed(2) + 'px)';
+  tg.drawImage(tex, 0, 0, w, h);
+  tg.filter = 'none';
+  const td = tg.getImageData(0, 0, w, h).data;
+  const src = x.getImageData(0, 0, w, h);
+  const out = x.createImageData(w, h);
+  /* ⭐ 画素は【4バイトまとめて】写す（1つずつだと 2〜3倍かかる）
+     → feedback_measure_before_you_optimize */
+  const s32 = new Uint32Array(src.data.buffer), o32 = new Uint32Array(out.data.buffer);
+  const k = amt * 22;                                    /* ゆがみ 20 ＝ 22px ぶん */
+  for(let y = 0; y < h; y++){
+    const yw = y * w;
+    const up = (y > 0 ? yw - w : yw) * 4, dn = (y < h-1 ? yw + w : yw) * 4;
+    for(let i = 0; i < w; i++){
+      /* テクスチャの【傾き】＝隣との明るさの差（これが「ガラスの面の向き」） */
+      const l = td[(yw + (i > 0 ? i-1 : 0)) * 4], r = td[(yw + (i < w-1 ? i+1 : w-1)) * 4];
+      const u = td[up + i*4], d2 = td[dn + i*4];
+      let sx = i + (((r - l) * k / 255) | 0);
+      let sy = y + (((d2 - u) * k / 255) | 0);
+      sx = sx < 0 ? 0 : sx >= w ? w-1 : sx;
+      sy = sy < 0 ? 0 : sy >= h ? h-1 : sy;
+      o32[yw + i] = s32[sy*w + sx];
+    }
+  }
+  x.putImageData(out, 0, 0);
+}
 function edWarp(x, w, h, e){
   const im = x.getImageData(0, 0, w, h), src = new Uint8ClampedArray(im.data), d = im.data;
   const cx = w/2, cy = h/2, R = Math.max(cx, cy);
@@ -6024,6 +6136,32 @@ function hitLayer(q){
   /* ⭐ 盤の素材をダブルクリックしても、その素材の画面へ入る */
   /* ⭐ 盤のダブルクリック＝編集画面へ（Photoshop のスマートオブジェクトと同じ）
      ⭐⭐ 編集画面で【文字】をダブルクリックしたら、そのまま書き換えられるようにする */
+  /* ══⭐⭐ 指の端末の【2回たたく】══ 2026-09-01
+     🔴 木下＝「モバイルだとオブジェクトの詳細画面に入れない。
+        ボードを2回タップすると画面全体がズームになる」
+     ＝ dblclick は指ではほぼ出ない（出る前にブラウザのダブルタップ拡大が起きる）。
+     ⭐ 自分で【2回たたいた】を見る（300ms 以内・指が 24px 以上動いていない）。
+     ⚠️ 指のときだけ（PC は今までどおり dblclick）＝同じことを2回やらない。
+     ⚠️ preventDefault で【ブラウザの拡大】を止める（縦スクロールは止めない）。 */
+  {
+    let last = 0, lx = 0, ly = 0;
+    stage.addEventListener('pointerup', e => {
+      if(e.pointerType !== 'touch') return;
+      const now = Date.now();
+      const near = Math.abs(e.clientX - lx) < 24 && Math.abs(e.clientY - ly) < 24;
+      if(now - last < 300 && near){
+        last = 0;
+        e.preventDefault();
+        if(cutView() || MODE === 'cut') return;
+        const i = hitLayer(toBoard(e));
+        /* ⚠️ 名前は【入る前】に取る（入ると LAYERS が中身に入れ替わる） */
+        if(i >= 0){ const nm = LAYERS[i].name; openEditor(i);
+          stat('「' + nm + '」の中に入った（← 版面へ戻る／Esc）'); }
+        return;
+      }
+      last = now; lx = e.clientX; ly = e.clientY;
+    }, { passive:false });
+  }
   stage.addEventListener('dblclick', e => {
     if(cutView()){
       const L = LAYERS[SEL];
@@ -6724,6 +6862,10 @@ const EDROWS = [
   ['r_gpen','o_gpen','gpen',      v => v/100,      v => v*100],
   ['r_gpenang','o_gpenang','gpenAng', v => v,      v => v],
   ['r_film','o_film','film',      v => v/100,      v => v*100],
+  /* ⭐ ガラス（Photoshop と同じ目盛り＝ゆがみ 0〜20／滑らかさ 1〜15／大きさ 50〜200%） */
+  ['r_glass','o_glass','glass',   v => v/20,       v => v*20],
+  ['r_glasssm','o_glasssm','glassSm', v => v,      v => v],
+  ['r_glassscale','o_glassscale','glassScale', v => v/100, v => v*100],
 ];
 EDROWS.forEach(([rid, oid, key, toVal]) => {
   const r = el(rid); if(!r) return;
@@ -6748,6 +6890,8 @@ function syncEd(){
   });
   document.querySelectorAll('#s_warp button')
     .forEach(x => x.classList.toggle('on', x.dataset.v === (ed.warpKind || 'arc')));
+  document.querySelectorAll('#s_glass button')
+    .forEach(x => x.classList.toggle('on', x.dataset.v === (ed.glassTex || 'frost')));
   drawHisto(); buildSwatches();
   if(typeof drawCurve === 'function') drawCurve();
   if(typeof syncAdj2 === 'function') syncAdj2();
@@ -7634,6 +7778,13 @@ document.querySelectorAll('#s_warp button').forEach(bt => bt.onclick = () => {
   hist(); edOf(L).warpKind = bt.dataset.v;
   document.querySelectorAll('#s_warp button').forEach(x => x.classList.toggle('on', x === bt));
   touchEd(L); render(); stat('ワープの型を「' + bt.textContent + '」にした');
+});
+/* ⭐ ガラスのテクスチャ（Photoshop の既定4つと同じ名前） */
+document.querySelectorAll('#s_glass button').forEach(bt => bt.onclick = () => {
+  const L = LAYERS[SEL]; if(!L) return;
+  hist(); edOf(L).glassTex = bt.dataset.v;
+  document.querySelectorAll('#s_glass button').forEach(x => x.classList.toggle('on', x === bt));
+  touchEd(L); render(); stat('ガラスのテクスチャを「' + bt.textContent + '」にした');
 });
 document.querySelectorAll('#s_gloss button').forEach(bt => bt.onclick = () => {
   const L = LAYERS[SEL]; if(!L) return;

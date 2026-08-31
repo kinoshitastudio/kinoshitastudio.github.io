@@ -1343,7 +1343,7 @@ const SU = await p.evaluate(() => {
   /* ⚠️ 「そのまま」が 0 でないつまみ＝チャンネルミキサーの元の R は 100%（＝素通し） */
   /* ⚠️ 「何もしない値」が 0 でないつまみ（濃度・不透明度のたぐい）は 100 が素 */
   const NEU = { r_op:100, r_air:100, r_white:100, r_gamma:100, r_out:100, r_mxr:100,
-                r_filla:100, r_lmdens:100 };
+                r_filla:100, r_lmdens:100, r_glasssm:6, r_glassscale:100 };
   /* 絵に効かない＝素材の置き方・切り抜きの道具・出す大きさ・種・影の形・文字と塗りの設定 */
   const SKIP = ['r_long','r_tol','r_brush','r_feather','r_seed','r_shds','r_shdl','r_shdc',
                 'r_lr','r_scale','r_depth','r_rot','r_sy','r_fillop',
@@ -3317,6 +3317,51 @@ ok(LSL.版面でも触れる,
    '⭐⭐ 選択範囲の段（反転 ⌘⇧I・解除・ぼかす）は【道具が何であっても】触れる',
    LSL.版面でも触れる);
 
+/* ══⭐⭐ ガラス（Photoshop のフィルターギャラリー／変形／ガラス）══ 2026-09-01
+   🔴 木下がくれた作例＝ゆがみ12・滑らかさ6・テクスチャ・拡大縮小100%
+   ⭐ つまみは4つ（ゆがみ／滑らかさ／テクスチャ／大きさ）＝どれも【絵が変わる】こと、
+     0 に戻すと1画素も同じに戻ることを見る。 */
+const GLS = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const o = LAYERS.slice().sort((a,b) => zOf(a)-zOf(b));
+  openEditor(LAYERS.indexOf(o[1])); await w(900);
+  COARSE = 0; render(); await w(400);
+  const A = window.__full();
+  const put = (id, v) => { const e = document.getElementById(id); e.value = v;
+    e.dispatchEvent(new Event('input', { bubbles:true })); };
+  put('r_glass', 12); await w(500); COARSE = 0; render(); await w(350);
+  const out = { かかる:window.__sad(A, window.__full()), 種:{} };
+  for(const k of ['block','canvas','lens']){
+    document.querySelector('#s_glass button[data-v="' + k + '"]').click();
+    await w(450); COARSE = 0; render(); await w(300);
+    out.種[k] = window.__sad(A, window.__full());
+  }
+  document.querySelector('#s_glass button[data-v="frost"]').click(); await w(400);
+  put('r_glasssm', 15); await w(450); COARSE = 0; render(); await w(300);
+  out.滑らかさ = window.__sad(A, window.__full());
+  /* 重さ＝ガラスそのものだけを測る（版面の描き直しは入れない） */
+  const c = document.createElement('canvas'); c.width = 1000; c.height = 1250;
+  const x = c.getContext('2d', { willReadFrequently:true });
+  x.fillStyle = '#888'; x.fillRect(0, 0, 1000, 1250);
+  const t0 = performance.now();
+  edGlass(x, 1000, 1250, { glass:0.6, glassSm:6, glassTex:'frost', glassScale:1 });
+  out.重さms = Math.round(performance.now() - t0);
+  put('r_glass', 0); put('r_glasssm', 6); await w(500); COARSE = 0; render(); await w(400);
+  out.ゼロで戻る = window.__sad(A, window.__full());
+  closeEditor(); await w(600);
+  return out;
+});
+ok(GLS.かかる > 0 && GLS.滑らかさ !== GLS.かかる,
+   '⭐⭐ ガラス＝ゆがみと滑らかさで絵が変わる（Photoshop と同じつまみ）',
+   JSON.stringify(GLS));
+ok(new Set(Object.values(GLS.種)).size === 3 && !Object.values(GLS.種).includes(GLS.かかる),
+   '⭐⭐ テクスチャ4種（霜付き／ブロック／カンバス／小さいレンズ）が別の絵になる',
+   JSON.stringify(GLS.種));
+ok(GLS.ゼロで戻る === 0, '🔴 ゆがみ 0 で【1画素も同じ】に戻る（焼き込んでいない）', GLS.ゼロで戻る);
+ok(GLS.重さms < 200, '⭐ ガラスは 1000×1250 で 200ms 未満（つまみが引ける）', GLS.重さms + ' ms');
+
 /* ══⭐⭐ ロックは4種（Adobe＝すべて／透明ピクセル／画像ピクセル／位置）══ 2026-09-01
    ⭐ 黒＝完全にロック／白＝部分的にロック（Adobe と同じ見え方）。
    🔴 鍵をかけても【選択は外さない】＝外すとパネルの持ち主が移り、その場で外せなくなる。 */
@@ -3410,7 +3455,33 @@ const BH = await p.evaluate(() => {
 ok(BH.左 < 20 && BH.上 < 20 && parseFloat(BH.字) <= 10 && BH.上 + 60 < BH.カプセル上,
    '⭐ 盤の表記は【画面の左上】に小さく出る（ツールバーと重ならない）', JSON.stringify(BH));
 await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
-await wait(600);
+await wait(900);
+
+/* ══⭐⭐ 指で【2回たたく】と中に入れる ══ 2026-09-01
+   🔴 木下＝「モバイルだとオブジェクトの詳細画面に入れない。
+      ボードを2回タップすると画面全体がズームになる」
+   ＝ dblclick は指ではほぼ出ない。自分で2回たたきを見るようにした。 */
+{
+  const pos = await p.evaluate(async () => {
+    closeAllEditors();
+    await new Promise(r => setTimeout(r, 500));
+    const o = LAYERS.slice().sort((a,b) => zOf(a)-zOf(b));
+    const L = o[1];
+    SEL = LAYERS.indexOf(L); SELIDS = [L.id]; syncSelIds(); syncSel(); buildList();
+    const s = toScreen(L.x, L.y);
+    return { x:Math.round(s.clientX), y:Math.round(s.clientY), name:L.name };
+  });
+  await p.touchscreen.tap(pos.x, pos.y);
+  await wait(120);
+  await p.touchscreen.tap(pos.x, pos.y);
+  await wait(900);
+  const IN = await p.evaluate(() => ({ 中:!!SUBOF, 名:SUBOF ? SUBOF.name : null }));
+  ok(IN.中 && IN.名 === pos.name,
+     '⭐⭐ 指で【2回たたく】と、その素材の中に入れる（指では dblclick が出ない）',
+     JSON.stringify(IN));
+  await p.evaluate(async () => { closeAllEditors(); await new Promise(r => setTimeout(r, 400)); });
+  await wait(500);
+}
 
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
