@@ -1756,8 +1756,8 @@ await p.evaluate(() => {
     document.getElementById('b_selin').click(); }
 });
 await wait(900);
-ok(await p.evaluate(() => { const L = LAYERS[SEL]; return hasCut(L) && !L.sel; }),
-   '⭐ 選択から切り抜ける');
+ok(await p.evaluate(() => { const L = LAYERS[SEL]; return hasCut(L) && !!L.sel; }),
+   '⭐ 選択から切り抜ける（⚠️ 切ったあとも選択は残る＝Photoshop と同じ）');
 
 /* ══㉔ 見本2（木下＝「今の見本も1として2も作成してほしい」）══ */
 await p.evaluate(() => { const bt = document.querySelector('#tools button[data-t="move"]');
@@ -2187,11 +2187,11 @@ const HINT = await p.evaluate(async () => {
   document.querySelector('#tools button[data-t="move"]').click();
   return { 前, 後 };
 });
-ok(/押す/.test(HINT.前.案内) && HINT.前.許容 === true && HINT.前.戻す === true,
-   '⭐⭐ 色で消すを選ぶと【盤で色を押す】と出て、押すまで許容つまみは触れない',
+ok(/どこが消えるか/.test(HINT.前.案内) && HINT.前.許容 === false && HINT.前.戻す === true,
+   '⭐⭐ 色で消すは【押す前でも許容を触れる】／案内は「どこが消えるか出る」',
    JSON.stringify(HINT.前));
 ok(HINT.後.許容 === false && HINT.後.戻す === false && /覚え/.test(HINT.後.案内),
-   '⭐ 色を押すと 許容つまみが効くようになる（覚えた数も出る）',
+   '⭐ 色を押すと 覚えた数が出る（許容はずっと触れる）',
    JSON.stringify(HINT.後));
 
 /* ══⭐⭐ 空気と関係ない【ふつうの色調補正】══ 2026-08-31
