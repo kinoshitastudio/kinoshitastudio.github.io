@@ -1181,7 +1181,8 @@ await wait(1200);
 const SU = await p.evaluate(() => {
   /* 絵に効かないもの＝素材の置き方・切り抜きの道具・出す大きさ・種・影の形 */
   /* ⚠️ 「そのまま」が 0 でないつまみ＝チャンネルミキサーの元の R は 100%（＝素通し） */
-  const NEU = { r_op:100, r_air:100, r_white:100, r_gamma:100, r_out:100, r_mxr:100 };
+  const NEU = { r_op:100, r_air:100, r_white:100, r_gamma:100, r_out:100, r_mxr:100,
+                r_filla:100 };
   /* 絵に効かない＝素材の置き方・切り抜きの道具・出す大きさ・種・影の形・文字と塗りの設定 */
   const SKIP = ['r_long','r_tol','r_brush','r_feather','r_seed','r_shds','r_shdl','r_shdc',
                 'r_lr','r_scale','r_depth','r_rot','r_sy','r_fillop',
@@ -2589,6 +2590,71 @@ ok(PATHP.外すと1画素も同じ, '🔴 ベクトルマスクを外すと1画�
 ok(PATHP.選択範囲から作業用パス,
    '⭐ 選択範囲から作業用パスを作成できる（許容値で点が減る）', PATHP.点の数 + ' 点');
 ok(PATHP.Escで解除, '⭐ Esc でパスの選択を解除できる（Adobe と同じ）');
+
+/* ══⭐⭐ Adobe 公式との食い違いを直した所 ══ 2026-08-31
+   ① クリッピングマスク＝「ベースレイヤーの不透明度およびモード属性が適用されます」
+   ② 不透明度と塗り（Fill）は別物＝「塗りはレイヤー効果の不透明度には影響しません」
+   出典 revealing-layers-clipping-masks.html ／ layer-opacity-blending.html */
+const PSDIFF = await p.evaluate(async () => {
+  const wait2 = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  const mk = async col => { const c = document.createElement('canvas'); c.width = 300; c.height = 300;
+    const x = c.getContext('2d'); x.fillStyle = col; x.fillRect(0,0,300,300);
+    const img = new Image(); await new Promise(r => { img.onload = r; img.src = c.toDataURL(); });
+    return img; };
+  LAYERS = [];
+  addImage(await mk('#ff0000'), '土台', 0.5); LAYERS[0].x = .5; LAYERS[0].y = .5; LAYERS[0].air = 0;
+  addImage(await mk('#0000ff'), '上',  0.5); LAYERS[1].x = .5; LAYERS[1].y = .5; LAYERS[1].air = 0;
+  LAYERS[1].clip = true;
+  P.haze = P.split = P.bloom = P.grain = P.vig = P.edge = P.mix = P.wob = 0;
+  LIGHTS.forEach(L => L.i = 0);
+  LAYERS.forEach(L => L._key = '');
+  const mid = () => { COARSE = 0; render();
+    const d = g.getImageData((cv.width/2)|0, (cv.height/2)|0, 1, 1).data; return [d[0],d[1],d[2]]; };
+  await wait2(300);
+  const out = {};
+  const a0 = mid();
+  LAYERS[0].op = 0.5; LAYERS.forEach(L => L._key = ''); await wait2(200);
+  const a1 = mid();
+  out.土台の不透明度が効く = Math.abs(a1[2] - a0[2]) > 10;
+  LAYERS[0].op = 1; LAYERS.forEach(L => L._key = '');
+  LAYERS[0].blend = 'multiply'; LAYERS.forEach(L => L._key = ''); await wait2(200);
+  const a2 = mid();
+  out.土台の重ね方が効く = Math.abs(a2[2] - a0[2]) > 10;
+  LAYERS[0].blend = 'source-over'; LAYERS.forEach(L => L._key = ''); await wait2(200);
+  out.戻ると同じ = mid().join() === a0.join();
+  out.値 = { 素:a0, 半分:a1, 乗算:a2 };
+  /* ② 塗り（Fill）＝絵だけ薄くなって、影は残る
+     ⚠️ 空気の効きを 1 に戻して【版面の道】で見る（素のままは最後に置き直す別の道） */
+  LAYERS[1].clip = false; LAYERS[0].air = 1; LAYERS[1].air = 1;
+  LAYERS.forEach(L => L._key = '');
+  SEL = 1; SELIDS = [LAYERS[1].id]; syncSel();
+  fxOf(LAYERS[1]).shadow.on = true; fxOf(LAYERS[1]).shadow.op = 1;
+  fxOf(LAYERS[1]).shadow.dist = 40; LAYERS.forEach(L => L._key = '');
+  COARSE = 0; render(); await wait2(400);
+  /* 影の出る所（右下へずらしてある）を読む */
+  const shadowAt = () => { COARSE = 0; render();
+    const px = Math.round(cv.width*0.5 + cv.width*0.13), py = Math.round(cv.height*0.5 + cv.height*0.13);
+    const d = g.getImageData(px, py, 1, 1).data; return [d[0],d[1],d[2]]; };
+  const 影0 = shadowAt(), 絵0 = mid();
+  LAYERS[1].fillA = 0; LAYERS.forEach(L => L._key = '');
+  COARSE = 0; render(); await wait2(400);
+  const 影1 = shadowAt(), 絵1 = mid();
+  out.塗り0で絵が消える = Math.abs(絵1[2] - 絵0[2]) > 40;
+  out.塗り0でも影は残る = Math.abs(影1[0] - 影0[0]) < 30 && Math.abs(影1[1] - 影0[1]) < 30;
+  out.影 = { 前:影0, 後:影1 }; out.絵 = { 前:絵0, 後:絵1 };
+  LAYERS[1].fillA = 1; fxOf(LAYERS[1]).shadow.on = false;
+  LAYERS.forEach(L => L._key = '');
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1500); });
+  return out;
+});
+ok(PSDIFF.土台の不透明度が効く && PSDIFF.土台の重ね方が効く && PSDIFF.戻ると同じ,
+   '⭐⭐ クリッピングマスクは【土台の不透明度と描画モード】が上にも効く（Adobe 公式どおり）',
+   JSON.stringify(PSDIFF.値));
+ok(PSDIFF.塗り0で絵が消える && PSDIFF.塗り0でも影は残る,
+   '⭐⭐ 塗り（Fill）は【絵だけ】薄くする＝レイヤー効果（影）は残る（Adobe 公式どおり）',
+   JSON.stringify({ 絵:PSDIFF.絵, 影:PSDIFF.影 }));
 
 /* 盤の左上の表記＝画面のいちばん左上・小さく（木下の指示） */
 await p.setViewport({ width:1400, height:900 });
