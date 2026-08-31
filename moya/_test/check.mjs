@@ -2853,6 +2853,45 @@ const TUT = await p.evaluate(async () => {
      stuck.length ? stuck.join(',') : 'ぜんぶ戻る');
 }
 
+/* ══⭐⭐ ヒストリー ══ 2026-08-31
+   🔴 木下＝「ヒストリーがいるね。何をしたか？パネルに並んでいて、戻せるという仕組み」
+   ⚠️ つまみは控えを取っていなかった＝⌘Z で戻せず、並びもしなかった。 */
+const HIS = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const names = () => [...document.querySelectorAll('#histList .hrow')].map(e => e.textContent);
+  const out = { 開いたとき:names()[0] };
+  const o = LAYERS.slice().sort((a,b) => zOf(a)-zOf(b));
+  SEL = LAYERS.indexOf(o[1]); SELIDS = [o[1].id]; syncSelIds(); syncSel(); buildList();
+  document.getElementById('b_lmadd').click(); await w(300);
+  document.getElementById('b_flip').click(); await w(300);
+  out.操作が並ぶ = names().slice(-2);
+  /* つまみ＝触り始めに1回だけ控える */
+  const r = document.getElementById('r_haze');
+  const 前 = P.haze;
+  r.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true }));
+  r.value = 90; r.dispatchEvent(new Event('input', { bubbles:true })); await w(300);
+  out.つまみも並ぶ = names()[names().length - 1];
+  out.かすみが変わった = P.haze !== 前;
+  /* 一覧を押してそこまで戻る（⚠️ 行の番号は絶対位置＝「ひとつ前」は最後から2番目） */
+  const rows = [...document.querySelectorAll('#histList .hrow')];
+  rows[rows.length - 2].click(); await w(600);
+  out.戻った = { いま:document.getElementById('o_histn').value,
+                 かすみ:P.haze === 前, 薄い:[...document.querySelectorAll('#histList .hrow.undone')].length };
+  const last = [...document.querySelectorAll('#histList .hrow')];
+  last[last.length - 1].click(); await w(600);
+  out.やり直した = document.getElementById('o_histn').value;
+  return out;
+});
+ok(HIS.開いたとき === '開いたとき' && HIS.操作が並ぶ.join('/').indexOf('マスク') >= 0,
+   '⭐⭐ ヒストリーに【何をしたか】が名前で並ぶ（案内の言葉をそのまま使う）',
+   JSON.stringify(HIS.操作が並ぶ));
+ok(HIS.つまみも並ぶ === 'かすみ' && HIS.かすみが変わった,
+   '⭐⭐ つまみもヒストリーに並ぶ（触り始めに1回だけ控える）', HIS.つまみも並ぶ);
+ok(HIS.戻った.かすみ && HIS.戻った.薄い > 0,
+   '⭐⭐ 一覧を押すとその時点まで戻る（先は薄く残ってやり直せる）', JSON.stringify(HIS.戻った));
+
 /* ══⭐⭐ 一覧のいちばん下は【背景】＝紙の地 ══ 2026-08-31
    🔴 木下＝「一番下に背景というのをレイヤーパネルにデフォルトで入れておこう」
    ⚠️ 新しいデータを作っていないこと（P.nobg / P.bg をそのまま出している）も見る。 */
