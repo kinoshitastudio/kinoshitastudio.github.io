@@ -1170,6 +1170,11 @@ input[type=color]{ border-radius:8px; height:30px }
         ⚠️ 消せるのは<b>鉛筆で引いた線</b>だけ（他の道具の線・図は消えない）</div>
       <button class="btn" id="bImg">画像を置く</button>
       <button class="btn" id="bSvg">SVG を置く</button>
+      <!-- ⭐⭐ 靄MOYA から持ってくる（2026-09-01・木下＝「HARI 連動いこう」）
+           ⚠️ MOYA の［まるごと書き出す（写真も入れる）］で出した JSON を選ぶ。
+              設定JSON には写真が入っていないので置けない。 -->
+      <button class="btn" id="bMoya">靄MOYA から読む（写真ごと）</button>
+      <input type="file" id="fMoya" accept="application/json,.json" hidden>
       <!-- ⭐ 2026-08-29 木下「画像を差し替えるボタンがない」
            ⚠️ 置き直すと大きさ・位置・切り抜きがやり直しになる＝【中身だけ】替える。 -->
       <!-- ⭐⭐ 2026-08-30 木下「テキストのところに空白ボックスをいれると、
@@ -7118,8 +7123,76 @@ $('iJSON').onclick = () => openNow();
 /* ⭐⭐ 控えを読むのは【この1本だけ】。ファイルを選ぶ窓からでも、画面に落としてでも、
    昔ながらの入力からでも、通る道は同じ（食い違わない）。
    ⚠️ h＝掴んだ手。ある時だけ ⌘S で上書きできる（無ければ名前を付けて保存になる）。 */
+/* ══⭐⭐ 靄MOYA の JSON を読む（MOYA → HARI の連動）══ 2026-09-01
+   🔴 木下＝「HARI 連動いこう」。設計は
+      `04_ログ/…/2026-08-30/⏸ 提案：MOYA を見て HARI に足すもの` の ⑥：
+      「**MOYA の JSON を読んで、素材ごとPNG を同じ位置で版面に並べる**」
+      ＝1枚に焼かず【バラのまま】渡るので、MOYA で作った空気の中身を HARI で組み直せる。
+   ⭐ 置き方（位置・大きさ・回転）は MOYA の値をそのまま写す
+     ・MOYA の x,y は【版面の割合】＝HARI の版面に掛けるだけ
+     ・MOYA の s は【版面の幅に対する割合】＝置いたあとに sc（％）で合わせる
+   ⚠️ **HARI の版面（比・大きさ）は変えない**（変えると木下の組んだ字がずれる）。
+     比が違うときは、そう言う。
+   ⚠️ 写真は【まるごと書き出す】にしか入っていない（設定JSONには入らない）。 */
+function isMoyaJSON(d){ return !!(d && d.tool === 'moya' && Array.isArray(d.layers)); }
+function fromMOYA(d){
+  const ls = d.layers.filter(L => L && L.img);
+  if(!ls.length){
+    stat('MOYA の JSON だが【写真が入っていない】 ── MOYA の［まるごと書き出す（写真も入れる）］で出したものを落としてください');
+    return;
+  }
+  pushUndo();                       /* ⚠️ HARI の控えは pushUndo（⌘Z で戻せる） */
+  const bw = S.board.w, bh = S.board.h;
+  /* 版面の比が違うと構図はずれる（位置は割合で合わせる）＝黙って置かずに言う */
+  const mr = (d.paper && d.paper.ratio) || '';
+  const hr = (bw / bh).toFixed(3);
+  let left = ls.length, put = 0;
+  ls.forEach(L => {
+    const img = new Image();
+    img.onload = () => {
+      const r = new paper.Raster(img); r.remove();
+      const pc = addPiece(r, { t:'img', d:L.img },
+        new Point((L.x == null ? 0.5 : L.x) * bw, (L.y == null ? 0.5 : L.y) * bh));
+      if(pc){
+        /* ⭐ 大きさ＝MOYA の「版面の幅に対する割合」に合わせる（置いた時の幅から逆算） */
+        const want = (L.s == null ? 0.6 : L.s) * bw;
+        const now = pc.item.bounds.width || 1;
+        pc.sc = Math.max(2, Math.min(2000, 100 * want / now));
+        pc.rot = L.rot || 0;
+        put++;
+      }
+      if(--left === 0){
+        syncPanel(); render();
+        stat('MOYA から ' + put + ' 枚を置いた（'
+          + (d.forHari ? '空気ごと' : '元の写真') + '・置き方は MOYA のまま）'
+          + (mr ? ' ── MOYA の紙は ' + mr + '／HARI の版面は ' + hr + '。比が違うと構図はずれます' : ''));
+      }
+    };
+    img.onerror = () => { if(--left === 0){ syncPanel(); render();
+      stat('MOYA から ' + put + ' 枚を置いた（読めなかった写真があります）'); } };
+    img.src = L.img;
+  });
+}
+{
+  const b2 = document.getElementById('bMoya'), f2 = document.getElementById('fMoya');
+  if(b2 && f2){
+    b2.onclick = () => f2.click();
+    f2.addEventListener('change', async e => {
+      const f = e.target.files[0]; e.target.value = '';
+      if(!f) return;
+      try{
+        const d = JSON.parse(await f.text());
+        if(!isMoyaJSON(d)){ stat('これは MOYA の JSON ではありません'); return; }
+        fromMOYA(d);
+      }catch(err){ stat('読めませんでした：' + (err && err.message ? err.message : err)); }
+    });
+  }
+}
 function applyJSONText(txt, h, name){
   try{
+    /* ⭐ 先に【MOYA の JSON か】を見る（HARI の控えとは別物なので、上書きしない） */
+    { const d0 = JSON.parse(txt);
+      if(isMoyaJSON(d0)){ fromMOYA(d0); return; } }
 
       /* ⚠️ 元は FileReader の中にあった処理。移したら【読む元】も直すこと
             （rd.result のままだと必ず例外＝「読めなかった」しか出ない） */
