@@ -2,9 +2,10 @@
    セクションを「オートレイアウトで建て直す」ために実測する道具
 
    使い方:
-     node tools/kinoshita/measure-sec.mjs "<URL>" <section番号> [幅=1440]
+     node tools/kinoshita/measure-sec.mjs "<URL>" <section番号|all> [幅=1440]
    例:
      node tools/kinoshita/measure-sec.mjs "https://www.uniform-net.jp/" 1
+     node tools/kinoshita/measure-sec.mjs "https://www.uniform-net.jp/" all   # ⭐ブラウザ1回で全部
 
    出す物（tools/kinoshita/_out/ に置く）:
      sec<N>.json  … 入れ子・flex/grid・余白・角丸・線・影・写真URL・文字と書体
@@ -26,9 +27,9 @@ const OUT = path.join(HERE, '_out');
 fs.mkdirSync(OUT, { recursive: true });
 
 const URL_ = process.argv[2];
-const SEC = Number(process.argv[3] ?? 0);
+const ARG = String(process.argv[3] ?? '0');
 const W = Number(process.argv[4] ?? 1440);
-if (!URL_) { console.error('使い方: node measure-sec.mjs "<URL>" <section番号> [幅=1440]'); process.exit(1); }
+if (!URL_) { console.error('使い方: node measure-sec.mjs "<URL>" <section番号|all> [幅=1440]'); process.exit(1); }
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox'] });
@@ -45,10 +46,11 @@ await p.evaluate(async () => {
 await new Promise(r => setTimeout(r, 2000));
 
 const secs = await p.$$('section');
-if (!secs[SEC]) { console.error(`section[${SEC}] が無い（このページの section は ${secs.length} 個）`); await b.close(); process.exit(1); }
-await secs[SEC].screenshot({ path: path.join(OUT, `sec${SEC}.png`) });
+const IDX = ARG === 'all' ? secs.map((_, i) => i) : [Number(ARG)];
+if (IDX.some(i => !secs[i])) { console.error(`その section が無い（このページの section は ${secs.length} 個）`); await b.close(); process.exit(1); }
+console.log(`section ${secs.length} 個 / 測るのは ${IDX.length} 個\n`);
 
-const data = await p.evaluate((SEC) => {
+const measure = (SEC) => p.evaluate((SEC) => {
   const sec = document.querySelectorAll('section')[SEC];
   const S = sec.getBoundingClientRect();
   const px = v => Math.round(parseFloat(v) || 0);
@@ -121,16 +123,18 @@ const data = await p.evaluate((SEC) => {
       });
     });
   });
-  return { sec: { w: Math.round(S.width), h: Math.round(S.height), bg: bgUp(sec) }, rows, pseudo };
+  // 見出しらしい文字＝そのセクションの名前に使う
+  const head = rows.find(r => r.text && /^h[1-6]$/.test(r.tag)) || rows.find(r => r.text);
+  return { sec: { w: Math.round(S.width), h: Math.round(S.height), bg: bgUp(sec), 見出し: head ? head.text.replace(/\n/g, ' ') : '' }, rows, pseudo };
 }, SEC);
 
-const jp = path.join(OUT, `sec${SEC}.json`);
-fs.writeFileSync(jp, JSON.stringify(data, null, 1));
+for (const SEC of IDX) {
+  const data = await measure(SEC);
+  await secs[SEC].screenshot({ path: path.join(OUT, `sec${SEC}.png`) });
+  fs.writeFileSync(path.join(OUT, `sec${SEC}.json`), JSON.stringify(data, null, 1));
+  const clips = data.rows.filter(r => r.clip).length;
+  console.log(`✅ sec${SEC}  ${data.sec.w}×${data.sec.h}  bg:${data.sec.bg}  「${data.sec.見出し.slice(0, 20)}」`);
+  console.log(`   要素 ${data.rows.length} / 疑似要素 ${data.pseudo.length}${clips ? ` / ⚠️ clip-path ${clips}（自動では出せない）` : ''}`);
+}
 await b.close();
-
-console.log(`✅ section[${SEC}] ${data.sec.w}×${data.sec.h} bg:${data.sec.bg}`);
-console.log(`   ${jp}`);
-console.log(`   ${path.join(OUT, `sec${SEC}.png`)}`);
-console.log(`   要素 ${data.rows.length} / 疑似要素 ${data.pseudo.length}${data.pseudo.length ? '  ⭐ 疑似要素を JSON で確認（矢印・丸・帯はここに居る）' : ''}`);
-const clips = data.rows.filter(r => r.clip).length;
-if (clips) console.log(`   ⚠️ clip-path ${clips}件 ── 自動では出せない。ベクターを描く必要がある`);
+console.log(`\n→ ${OUT}`);
