@@ -3259,6 +3259,46 @@ ok(LSL.版面でも触れる,
    '⭐⭐ 選択範囲の段（反転 ⌘⇧I・解除・ぼかす）は【道具が何であっても】触れる',
    LSL.版面でも触れる);
 
+/* ══⭐⭐ ロックは4種（Adobe＝すべて／透明ピクセル／画像ピクセル／位置）══ 2026-09-01
+   ⭐ 黒＝完全にロック／白＝部分的にロック（Adobe と同じ見え方）。
+   🔴 鍵をかけても【選択は外さない】＝外すとパネルの持ち主が移り、その場で外せなくなる。 */
+const LOCK = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const o = LAYERS.slice().sort((a,b) => zOf(a)-zOf(b));
+  const L = o[0];                       /* いちばん手前＝重なりで邪魔されない */
+  SEL = LAYERS.indexOf(L); SELIDS = [L.id]; syncSelIds(); syncSel(); buildList();
+  const set = (id, v) => { const e = document.getElementById(id);
+    e.checked = v; e.dispatchEvent(new Event('change', { bubbles:true })); };
+  const row = () => [...document.querySelectorAll('#layers .ly[data-i]')]
+    .find(rr => +rr.dataset.i === LAYERS.indexOf(L));
+  const 掴める = () => hitLayer({ x:L.x, y:L.y }) === LAYERS.indexOf(L);
+  const out = { はじめ:{ 掴める:掴める(), 状態:lockState(L) } };
+  set('k_lockpos', true); await w(300);
+  out.位置 = { 掴める:掴める(), 状態:lockState(L), 表示:document.getElementById('o_lock').value,
+              白い鍵:row().querySelector('.lock').innerHTML.includes('fill="none"') };
+  set('k_lockall', true); await w(300);
+  out.ぜんぶ = { 状態:lockState(L),
+                黒い鍵:row().querySelector('.lock').innerHTML.includes('fill="currentColor"'),
+                選択は残る:SELIDS.includes(L.id) };
+  set('k_lockall', false); set('k_lockpos', false); await w(300);
+  out.外せる = { 掴める:掴める(), 状態:lockState(L) };
+  set('k_lockpix', true); await w(200);
+  const j = snapshot(); const q = j.layers[LAYERS.indexOf(L)];
+  out.JSONに入る = [q.lock, q.lockPos, q.lockPix, q.lockAlpha].join(',');
+  set('k_lockpix', false); await w(200);
+  return out;
+});
+ok(LOCK.はじめ.掴める && !LOCK.位置.掴める && LOCK.位置.白い鍵 && LOCK.ぜんぶ.黒い鍵,
+   '⭐⭐ 鍵4種＝位置を止めると掴めない／部分は白い鍵・ぜんぶは黒い鍵（Adobe と同じ）',
+   JSON.stringify(LOCK));
+ok(LOCK.ぜんぶ.選択は残る && LOCK.外せる.掴める && LOCK.外せる.状態 === 'none',
+   '🔴 鍵をかけても選択は残る＝その場で外せる（外すと持ち主が移って外せなくなる）',
+   JSON.stringify(LOCK.外せる));
+ok(LOCK.JSONに入る === 'false,false,true,false',
+   '⭐ 鍵4種は設定JSONにも入る', LOCK.JSONに入る);
+
 /* ══⭐⭐ 包括光源を使用（Adobe＝影・内側の影・ベベルで共有される単一の照明角度）══ 2026-09-01
    ⭐ MOYA は版面に【灯】が有るので、そこへ合わせる＝角度を別に持たない。
      ＝灯を動かすと 3つの効果の向きが **全部いっしょに** ついてくる（芯と同じ）。 */

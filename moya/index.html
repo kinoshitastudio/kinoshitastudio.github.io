@@ -1058,6 +1058,21 @@
       <button class="btn" id="b_flip">左右を返す</button>
       <button class="btn" id="b_del">この素材を消す</button>
     </div>
+    <!-- ══⭐⭐ ロックは4種（Adobe 公式）══ 2026-09-01
+         すべてロック／透明ピクセルをロック／画像ピクセルをロック／位置をロック
+         ⭐ MOYA の言い方に置き換えた（誰でも分かる語）。一覧の鍵は
+           黒＝ぜんぶ／白＝部分（Adobe と同じ見え方）。 -->
+    <div class="row" style="margin-top:10px"><span class="n" style="font-weight:590">鍵（ロック）</span>
+      <output id="o_lock" style="width:auto;flex:0 0 auto">鍵なし</output></div>
+    <label class="chk">ぜんぶ触らない<input type="checkbox" id="k_lockall"></label>
+    <label class="chk">位置を動かさない<input type="checkbox" id="k_lockpos"></label>
+    <label class="chk">絵を描き換えない<input type="checkbox" id="k_lockpix"></label>
+    <label class="chk">透けている所に描かない<input type="checkbox" id="k_lockalpha"></label>
+    <div class="note"><b>位置</b>＝盤で掴めなくなります（大きさ・回すはここから変えられます）。<br>
+      <b>絵</b>＝色で消す・消しゴム・ゆがみ・切る が効かなくなります
+      （<b>レイヤーマスクは塗れます</b>＝別の紙なので）。<br>
+      <b>透けている所</b>＝［復元］とマスクの［白（出す）］が効かなくなります。</div>
+
     <label class="row" style="margin-top:8px;cursor:pointer">
       <input type="checkbox" id="k_clip" style="margin-right:8px">
       <span class="n" style="font-weight:590">下の素材の形で切る（クリッピングマスク）</span></label>
@@ -3957,6 +3972,31 @@ function cutPath(L, pts, keepInside){
   }
   bumpMask(L);
 }
+/* ══⭐⭐ ロックは4種（Adobe 公式）══ 2026-09-01
+   **すべてロック／透明ピクセルをロック／画像ピクセルをロック／位置をロック**
+   ⭐ MOYA の言い方（誰でも分かる語）に置き換える：
+     ・ぜんぶ触らない（L.lock）
+     ・位置を動かさない（L.lockPos）＝盤で掴めない（大きさ・回すはパネルからできる）
+     ・透けている所に描かない（L.lockAlpha）＝［復元］とマスクの［白（出す）］が効かない
+     ・絵を描き換えない（L.lockPix）＝色で消す・消しゴム・ゆがみ・切るが効かない
+   ⚠️ Adobe は文字と図形の2つを既定でロックして外せないが、MOYA は**文字も図形も
+      置いたら写真と同じ扱い**（切り抜きも編集も効く）ので、そこは縛らない。 */
+function lockPos(L){ return !!(L && (L.lock || L.lockPos)); }
+function lockPix(L){ return !!(L && (L.lock || L.lockPix)); }
+function lockAlpha(L){ return !!(L && (L.lock || L.lockAlpha)); }
+function lockState(L){
+  if(!L) return 'none';
+  if(L.lock) return 'all';
+  return (L.lockPos || L.lockPix || L.lockAlpha) ? 'part' : 'none';
+}
+function lockSay(L){
+  const a = [];
+  if(L.lock) return 'ぜんぶ触らない';
+  if(L.lockPos) a.push('位置');
+  if(L.lockPix) a.push('絵');
+  if(L.lockAlpha) a.push('透けている所');
+  return a.length ? a.join('・') + 'に鍵' : '鍵なし';
+}
 function clearMask(L){
   hist();
   L.keys = []; L.mCut = null; L.mKeep = null; L.mask = null; L._dist = null; L._mk = '';
@@ -5388,7 +5428,7 @@ function drawOverlay(W, H){
       og.fillStyle = '#fff'; og.fillText(txt, 0, ty);
       og.restore();
     }
-    if(MODE !== 'cut' && !L.lock){
+    if(MODE !== 'cut' && !lockPos(L)){
       const s = HANDLE_PX * perScreenPx();
       og.lineWidth = Math.max(1, W/900);
       for(const [sx, sy] of HANDLES){
@@ -5576,7 +5616,7 @@ function perScreenPx(){
 function hitRotate(q){
   if(MODE === 'cut') return null;
   const L = LAYERS[SEL];
-  if(!L || !L.on || !L.img || L.lock) return null;
+  if(!L || !L.on || !L.img || lockPos(L)) return null;
   const W = cv.width, H = cv.height;
   const sz = sizeOf(L, W, H), dw = sz.dw, dh = sz.dh;
   const a = -L.rot * Math.PI / 180;
@@ -5627,7 +5667,7 @@ function hitLayer(q){
   /* ⚠️ 手前（奥行きが小さい方）から当てる＝見えている物が先に掴める */
   const order = LAYERS.map((L, i) => ({ L, i })).sort((a, b) => zOf(a.L) - zOf(b.L));
   for(const { L, i } of order){
-    if(L.kind === 'adj' || L.lock || !L.on || !L.img) continue;   /* 調整レイヤー・鍵は掴めない */
+    if(L.kind === 'adj' || lockPos(L) || !L.on || !L.img) continue;   /* 調整レイヤー・鍵は掴めない */
     const iw = cwOf(L), ih = chOf(L);
     const hw = L.s / 2, hh = (L.s * ih / iw * syOf(L)) * (cv.width / cv.height) / 2;
     const a = -L.rot * Math.PI / 180;
@@ -5672,6 +5712,12 @@ function hitLayer(q){
     if(MODE === 'cut'){
       const L = LAYERS[SEL];
       if(!L){ stat('先に素材を選んでください'); return; }
+      /* ⭐ 鍵4種（Adobe）。⚠️ レイヤーマスクは【別の紙】なので「絵を描き換えない」でも塗れる */
+      if(TOOL !== 'lmask' && TOOL !== 'view' && lockPix(L)){
+        stat('この素材には【絵を描き換えない】鍵がかかっています（［選んだレイヤー］の段で外せます）');
+        return; }
+      if(TOOL === 'paint' && lockAlpha(L)){
+        stat('この素材には【透けている所に描かない】鍵がかかっています'); return; }
       const m = toMask(L, q, cv.width, cv.height);
       if(TOOL === 'color'){
         const n = pickColor(L, m.x, m.y);
@@ -5743,6 +5789,10 @@ function hitLayer(q){
       /* ⭐⭐ マスクを塗る＝白（出す）／黒（隠す）／濃さでグレー。
          ⚠️ 切り抜きの型とは【別の紙】に塗る（消しゴムと混ざらない）。 */
       if(TOOL === 'lmask'){
+        /* ⚠️ 透けている所に描かない＝マスクの【白（出す）】は効かない（黒は効く） */
+        if(LMPAINT === 'show' && lockAlpha(L)){
+          stat('この素材には【透けている所に描かない】鍵がかかっています（黒で隠すのは効きます）');
+          return; }
         hist();
         lmStrokeStart(L);
         grab = { what:'lmask', lx:m.x, ly:m.y };
@@ -6205,11 +6255,15 @@ function buildList(){
     /* ⭐ 鍵＝この素材を触れないようにする（2026-08-31・木下＝「パネルに鍵マークのロックを」）
        ⚠️ 触れないのは【盤の上だけ】。一覧からは出す／隠す も 順の入れ替えもできる。 */
     const lk = document.createElement('button'); lk.className = 'x lock';
-    lk.innerHTML = LOCK_SVG(!!L.lock);
-    lk.title = L.lock ? '鍵をはずす（盤で触れるようになります）' : '鍵をかける（盤で触れなくなります）';
-    lk.style.opacity = L.lock ? '1' : '.42';
+    lk.innerHTML = LOCK_SVG(lockState(L));
+    /* ⭐ 4種のうち何がかかっているかを出す（黒＝ぜんぶ／白＝部分・Adobe と同じ見え方） */
+    lk.title = (L.lock ? 'ぜんぶ触らない ── 押すと外します'
+              : lockState(L) === 'part' ? (lockSay(L) + ' ── 押すと［ぜんぶ触らない］にします')
+              : '鍵をかける（盤で触れなくなります）')
+              + '\n細かい鍵は［選んだレイヤー］の段で選べます';
+    lk.style.opacity = lockState(L) === 'none' ? '.42' : '1';
     lk.onclick = ev => { ev.stopPropagation(); hist(); L.lock = !L.lock;
-      if(L.lock){ SELIDS = SELIDS.filter(id => id !== L.id); syncSelIds(); }
+      /* ⚠️ 鍵をかけても選択は保つ（外すと、かけた鍵をその場で外せなくなる） */
       buildList(); syncSel(); render();
       stat(L.lock ? '「' + L.name + '」に鍵をかけた' : '「' + L.name + '」の鍵をはずした'); };
     const eye = document.createElement('button'); eye.className = 'x eye';
@@ -6277,7 +6331,7 @@ function buildList(){
        ひとつひとつの画像を編集できる画面になればいい」） */
     if(L.kind !== 'adj') row.ondblclick = ev => { ev.stopPropagation(); openEditor(i); };
     if(!L.on) row.classList.add('off');
-    if(L.lock) row.classList.add('locked');
+    if(lockState(L) !== 'none') row.classList.add('locked');
     if(it.inG) row.classList.add('ing');
     rowDrag(row, i);
     box.appendChild(row);
@@ -6416,8 +6470,13 @@ function dropEmptyGroups(){
   GROUPS = GROUPS.filter(g => LAYERS.some(L => L.g === g.id));
 }
 /* ⭐ 鍵。かかっている／開いている（1本の関数が両方を作る） */
-function LOCK_SVG(on){
-  const body = '<rect x="4" y="9.5" width="8" height="5.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.3"/>';
+/* ⭐ 鍵。Adobe＝「完全にロック＝**黒いロックアイコン**／部分的にロック＝**白いロックアイコン**」
+   ＝ここでは 'all'（塗りつぶし）／'part'（枠だけ）／'none'（開いた鍵）の3つ。 */
+function LOCK_SVG(st){
+  const on = st === true || st === 'all' || st === 'part';
+  const fill = (st === true || st === 'all') ? 'currentColor' : 'none';
+  const body = '<rect x="4" y="9.5" width="8" height="5.5" rx="1.2" fill="' + fill
+    + '" stroke="currentColor" stroke-width="1.3"/>';
   const arc = on ? '<path d="M5.9 9.5V7.6a2.1 2.1 0 0 1 4.2 0v1.9" fill="none" stroke="currentColor" stroke-width="1.3"/>'
                  : '<path d="M5.9 9.5V7.6a2.1 2.1 0 0 1 4.2 0" fill="none" stroke="currentColor" stroke-width="1.3"/>';
   return '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">' + arc + body + '</svg>';
@@ -6534,6 +6593,11 @@ function syncSel(){
   put('r_sy','o_sy', Math.round(syOf(L) * 100), v => (v/100).toFixed(2));
   put('r_air','o_air', Math.round(airOf(L) * 100), v => (v/100).toFixed(2));
   el('k_clip').checked = !!L.clip;
+  /* ⭐ 鍵4種（値の持ち主は L のフラグ・一覧の鍵と同じものを見る） */
+  { const put2 = (id, v) => { const e = el(id); if(e) e.checked = !!v; };
+    put2('k_lockall', L.lock); put2('k_lockpos', L.lockPos);
+    put2('k_lockpix', L.lockPix); put2('k_lockalpha', L.lockAlpha);
+    const o2 = el('o_lock'); if(o2) o2.value = lockSay(L); }
   /* ⭐ 調整レイヤーでは【不透明度＝調整の効きの強さ】／クリップは「すぐ下の1枚だけ」 */
   {
     const opl = el('opKnob') && el('opKnob').querySelector('.n');
@@ -7814,6 +7878,21 @@ document.querySelectorAll('#fxBox .fxhead').forEach(h => {
     buildFxList();
   };
 });
+/* ⭐ 鍵4種の配線（Adobe＝すべて／透明ピクセル／画像ピクセル／位置） */
+[['k_lockall','lock','ぜんぶ触らない'], ['k_lockpos','lockPos','位置を動かさない'],
+ ['k_lockpix','lockPix','絵を描き換えない'], ['k_lockalpha','lockAlpha','透けている所に描かない']]
+  .forEach(([id, key, say]) => {
+    const k = el(id); if(!k) return;
+    k.addEventListener('change', e => {
+      const L = LAYERS[SEL]; if(!L) return;
+      /* 🔴 鍵をかけても【選択は外さない】── 外すとパネルの持ち主が別の素材に移り、
+         かけた鍵を **その場で外せなくなる**（2026-09-01 の試験で踏んだ）。
+         Photoshop も鍵をかけたレイヤーは選べる（動かせないだけ）。 */
+      hist(); L[key] = e.target.checked;
+      buildList(); syncSel(); render();
+      stat(e.target.checked ? ('鍵をかけた：' + say) : ('鍵をはずした：' + say));
+    });
+  });
 {
   const k = el('k_fxglobal');
   if(k) k.addEventListener('change', e => {
@@ -9288,7 +9367,9 @@ function snapshot(){
                                 これが無いと読み直すたびに偶然が別の目になり、1画素も同じには戻らない。
                                 → feedback_settings_json_replay_the_knobs */
                              id:L.id, sy:syOf(L), air:airOf(L), g:L.g == null ? null : L.g, clip:!!L.clip,
-                             kind:L.kind || null, lock:!!L.lock, ed:Object.assign(newEd(), L.ed || {}),
+                             kind:L.kind || null, lock:!!L.lock, lockPos:!!L.lockPos,
+                             lockPix:!!L.lockPix, lockAlpha:!!L.lockAlpha,
+                             ed:Object.assign(newEd(), L.ed || {}),
                              blend:L.blend || 'source-over',
                              fill:Object.assign({ on:false, color:'#ffffff', op:1, mode:'source-over' }, L.fill || {}),
                              text:L.text ? Object.assign({}, L.text) : null,
@@ -9517,6 +9598,7 @@ function applyRest(o){
       L.clip = !!o2.clip;                                                   /* クリッピングマスク */
       L.kind = o2.kind || null;                                             /* 調整レイヤーか */
       L.lock = !!o2.lock;                                                   /* 鍵 */
+      L.lockPos = !!o2.lockPos; L.lockPix = !!o2.lockPix; L.lockAlpha = !!o2.lockAlpha;
       L.ed = Object.assign(newEd(), o2.ed || {});                           /* 素材の編集 */
       L.blend = o2.blend || 'source-over';
       L.fill = Object.assign({ on:false, color:'#ffffff', op:1, mode:'source-over' }, o2.fill || {});
@@ -9890,7 +9972,8 @@ function snapState(){
     layers: LAYERS.map(L => ({
       id:L.id, img:L.img, name:L.name, x:L.x, y:L.y, s:L.s, rot:L.rot, flip:L.flip,
       d:L.d, on:L.on, op:L.op, fillA:L.fillA == null ? 1 : L.fillA, ord:L.ord, sy:syOf(L), air:airOf(L), g:L.g == null ? null : L.g, clip:!!L.clip,
-      kind:L.kind || null, lock:!!L.lock, ed:Object.assign(newEd(), L.ed || {}),
+      kind:L.kind || null, lock:!!L.lock, lockPos:!!L.lockPos, lockPix:!!L.lockPix,
+      lockAlpha:!!L.lockAlpha, ed:Object.assign(newEd(), L.ed || {}),
       blend:L.blend || 'source-over',
       fill:Object.assign({ on:false, color:'#ffffff', op:1, mode:'source-over' }, L.fill || {}),
       text:L.text ? Object.assign({}, L.text) : null,
@@ -9923,7 +10006,8 @@ function restoreState(st){
   setLayers(st.layers.map(o => ({
     id:o.id, img:o.img, name:o.name, x:o.x, y:o.y, s:o.s, rot:o.rot, flip:o.flip,
     d:o.d, on:o.on, op:o.op, fillA:o.fillA == null ? 1 : o.fillA, ord:o.ord, sy:o.sy == null ? 1 : o.sy, air:o.air == null ? 1 : o.air, g:o.g == null ? null : o.g, clip:!!o.clip,
-    kind:o.kind || null, lock:!!o.lock, ed:Object.assign(newEd(), o.ed || {}), _edc:null, _edk:'',
+    kind:o.kind || null, lock:!!o.lock, lockPos:!!o.lockPos, lockPix:!!o.lockPix,
+    lockAlpha:!!o.lockAlpha, ed:Object.assign(newEd(), o.ed || {}), _edc:null, _edk:'',
     blend:o.blend || 'source-over',
     fill:Object.assign({ on:false, color:'#ffffff', op:1, mode:'source-over' }, o.fill || {}),
     text:o.text ? Object.assign({}, o.text) : null,
@@ -10054,6 +10138,7 @@ function dupLayer(L, dx, dy){
     x:L.x + (dx == null ? 0.03 : dx), y:L.y + (dy == null ? 0.03 : dy),
     s:L.s, sy:syOf(L), rot:L.rot, flip:L.flip, d:L.d, on:L.on, op:L.op, ord:UID,
     air:airOf(L), g:L.g == null ? null : L.g, clip:!!L.clip, kind:L.kind || null, lock:!!L.lock,
+    lockPos:!!L.lockPos, lockPix:!!L.lockPix, lockAlpha:!!L.lockAlpha,
     ed:Object.assign(newEd(), L.ed || {}), _edc:null, _edk:'',
     blend:L.blend || 'source-over',
     fill:Object.assign({ on:false, color:'#ffffff', op:1, mode:'source-over' }, L.fill || {}),
