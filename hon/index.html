@@ -269,6 +269,25 @@
       <button class="btn" id="iJSON">読み込む</button>
     </div>
     <input type="file" id="fJSON" accept=".json" hidden>
+
+    <!-- ══⭐ 鋳る ── 走らせた骨を、そのまま書体（.ttf）にする ══ -->
+    <label class="h" style="margin-top:14px">⑦ 鋳る ── 書体ファイルにする</label>
+    <div class="row"><span class="n">字の種類</span>
+      <select id="ttfSet">
+        <option value="all" selected>骨のある字ぜんぶ（A–Z 0–9 . , ' -）</option>
+        <option value="打った字">いま走らせている字だけ</option>
+      </select></div>
+    <div class="row"><span class="n">まるめ（点を減らす）</span><output id="oSimp">3</output></div>
+    <input type="range" id="ttfSimp" min="0" max="12" step="1" value="3">
+    <div class="row"><span class="n">書体の名</span></div>
+    <input type="text" id="ttfName" value="HON" style="width:100%;padding:7px 9px;border-radius:8px;
+      border:1px solid var(--line,#333);background:#0d0d0d;color:#eee;font:12px/1.4 'Space Mono',monospace">
+    <div class="btns2" style="margin-top:8px">
+      <button class="btn" id="eTTF">.ttf で出す</button>
+      <button class="btn" id="tTTF">この場で打つ</button>
+    </div>
+    <div id="ttfNote" class="hint">—</div>
+
     <div id="meter">—</div>
   </div>
 </div>
@@ -1032,6 +1051,332 @@ syncAll(); layout();
 $('bFit').click();
 fit(); draw();
 stat('READY — ②③のつまみが【全部の字に同じ規則で】掛かる');
+
+/* ══════════════════════════════════════════════════════════════
+   ⑦ 鋳る ── 走らせた骨の輪郭を、そのまま .ttf にする（外の部品を使わない）
+
+   ⭐⭐ ここが成り立つ理由 ── HON は骨を【0〜1 の箱】で持ち、筆の太さから輪郭を作る。
+      だから「なぞる（トレース）」工程が要らない＝置いた点がそのまま輪郭になる。
+      （画素の絵から作る道具は、ここで角が丸まり字ごとにブレる）
+
+   🔴 踏む穴を先に書いておく：
+     ・glyf の座標は【整数】。小数のまま入れると別の字になる
+     ・loca は long（4バイト）＝表が 64KB を超えても壊れない
+     ・head の checkSumAdjustment は【全部組んでから】最後に埋める
+     ・glyph 0 は必ず .notdef ／ 表はタグ順・4バイト境界まで詰める
+     ・🔴 板は evenodd で塗っている。TrueType は【nonzero】なので、
+        入れ子の深さで向きを揃えないと【字の中の穴が埋まる】
+     ・🔴 輪郭は canvas の向き（y 下）で持っている＝【y を戻す】
+   ══════════════════════════════════════════════════════════════ */
+class TBW {
+  constructor(){ this.a = []; }
+  u8(v){ this.a.push(v & 255); return this; }
+  u16(v){ this.a.push((v>>8)&255, v&255); return this; }
+  i16(v){ return this.u16(v < 0 ? v + 65536 : v); }
+  u32(v){ this.a.push((v>>>24)&255, (v>>>16)&255, (v>>>8)&255, v&255); return this; }
+  tag(s){ for(let i=0;i<4;i++) this.u8(s.charCodeAt(i)); return this; }
+  utf16(s){ for(const c of s) this.u16(c.charCodeAt(0)); return this; }
+  bytes(u){ for(const b of u) this.a.push(b & 255); return this; }
+  get out(){ return new Uint8Array(this.a); }
+}
+const tPad4 = u => { const n=(4-(u.length%4))%4; if(!n) return u;
+  const o=new Uint8Array(u.length+n); o.set(u); return o; };
+const tSum32 = u => { let s=0; for(let i=0;i<u.length;i+=4)
+  s=(s+(((u[i]<<24)|(u[i+1]<<16)|(u[i+2]<<8)|u[i+3])>>>0))>>>0; return s>>>0; };
+
+/* ⭐ まるめ ── 点を減らす（形を変えない範囲で）。点が多いと .ttf が重くなるだけ */
+function ttfThin(pts, tol){
+  if(pts.length < 8 || tol <= 0) return pts;
+  const keep = new Uint8Array(pts.length); keep[0]=1; keep[pts.length-1]=1;
+  const st = [[0, pts.length-1]];
+  while(st.length){
+    const [a,b] = st.pop(); if(b-a < 2) continue;
+    const A=pts[a], B=pts[b], dx=B[0]-A[0], dy=B[1]-A[1], L=Math.hypot(dx,dy)||1;
+    let mi=-1, md=-1;
+    for(let i=a+1;i<b;i++){
+      const d = Math.abs((pts[i][0]-A[0])*dy - (pts[i][1]-A[1])*dx)/L;
+      if(d > md){ md=d; mi=i; }
+    }
+    if(md > tol){ keep[mi]=1; st.push([a,mi],[mi,b]); }
+  }
+  const o = []; for(let i=0;i<pts.length;i++) if(keep[i]) o.push(pts[i]);
+  return o.length >= 3 ? o : pts;
+}
+const ttfArea2 = r => { let s=0; for(let i=0;i<r.length;i++){
+  const a=r[i], b=r[(i+1)%r.length]; s += a[0]*b[1] - b[0]*a[1]; } return s/2; };
+const ttfIn = (pt, r) => { let c=false;
+  for(let i=0,j=r.length-1;i<r.length;j=i++){
+    const xi=r[i][0], yi=r[i][1], xj=r[j][0], yj=r[j][1];
+    if(((yi>pt[1])!==(yj>pt[1])) && (pt[0] < (xj-xi)*(pt[1]-yi)/((yj-yi)||1e-9)+xi)) c=!c;
+  } return c; };
+
+/* ══⭐ 基線と送りを測る ── 元の字の出どころで変換が違う ══
+   🔴 ここを間違えると【字が上下ひっくり返る】。実測（Zen Kaku）──
+     ・書体ファイル：outlineOf の y は 1160〜1860（基線が 1160＝ascender）。
+       ＝ y は【上向きのまま、原点が下にずれている】。戻し方は  y − 基線
+     ・端末の書体：220px の箱の画素をそのまま EM_T に直した【下向き】。戻し方は 基線 − y
+   ⚠️ 端末の書体は fromDevice と【同じ条件】で測る（条件を変えると基線がずれる） */
+function ttfMetrics(){
+  /* 🔴 骨の箱は 0〜1000・左上が原点・下（y=1000）がベースライン。
+     ⭐ そのままだと大文字の高さが em いっぱい＝でかすぎるので、
+        欧文らしく【キャップハイト 700】に収める。 */
+  return { kind:'骨（HON）', K:0.70, base:1000,
+           asc:Math.round(EM_T*0.75), desc:-Math.round(EM_T*0.22) };
+}
+
+/* 崩した輪郭 → glyf の輪郭（y 上・整数・向きを揃える） */
+function ttfContours(rings, M, tol){
+  const rs = rings.map(r => ttfThin(r, tol)).filter(r => r.length >= 3)
+    .map(r => r.map(p => [p[0]*M.K, (M.base - p[1])*M.K]));   /* 骨は y 下向き＝反して縮める */
+  const out = [];
+  rs.forEach((r, i) => {
+    /* 🔴 evenodd → nonzero ── 入れ子の深さで向きを決める。
+       深さが偶数＝外側（時計回り＝面積が負）／奇数＝穴（反時計回り） */
+    let depth = 0;
+    const pt = r[0];
+    rs.forEach((o, j) => { if(j !== i && ttfIn(pt, o)) depth++; });
+    const want = (depth % 2 === 0) ? -1 : 1;
+    const rr = (Math.sign(ttfArea2(r)) === want) ? r : r.slice().reverse();
+    out.push(rr.map(p => ({ x: Math.round(p[0]), y: Math.round(p[1]), on: true })));
+  });
+  return out;
+}
+function ttfGlyf(cont){
+  if(!cont.length) return { data:new Uint8Array(0), xMin:0, yMin:0, xMax:0, yMax:0, pts:0 };
+  let xMin=1e9, yMin=1e9, xMax=-1e9, yMax=-1e9, pts=0;
+  for(const c of cont) for(const p of c){ pts++;
+    if(p.x<xMin)xMin=p.x; if(p.x>xMax)xMax=p.x; if(p.y<yMin)yMin=p.y; if(p.y>yMax)yMax=p.y; }
+  const w = new TBW();
+  w.i16(cont.length).i16(xMin).i16(yMin).i16(xMax).i16(yMax);
+  let n=0; for(const c of cont){ n+=c.length; w.u16(n-1); }
+  w.u16(0);                                             /* 命令なし */
+  for(const c of cont) for(const p of c) w.u8(1);       /* 全部 on-curve（直線） */
+  let px=0; for(const c of cont) for(const p of c){ w.i16(p.x-px); px=p.x; }
+  let py=0; for(const c of cont) for(const p of c){ w.i16(p.y-py); py=p.y; }
+  return { data:tPad4(w.out), xMin, yMin, xMax, yMax, pts };
+}
+function ttfCmap4(pairs){
+  const segs = [];
+  for(const [c,gi] of pairs){
+    const last = segs[segs.length-1];
+    if(last && c === last.end+1 && gi === last.gid + (c - last.start)) last.end = c;
+    else segs.push({ start:c, end:c, gid:gi });
+  }
+  segs.push({ start:0xFFFF, end:0xFFFF, gid:0, term:true });
+  const n = segs.length, sr = 2*Math.pow(2, Math.floor(Math.log2(n)));
+  const sub = new TBW();
+  sub.u16(4).u16(16+n*8).u16(0).u16(n*2).u16(sr).u16(Math.floor(Math.log2(sr/2))).u16(n*2-sr);
+  for(const s of segs) sub.u16(s.end);
+  sub.u16(0);
+  for(const s of segs) sub.u16(s.start);
+  for(const s of segs){ const d = s.term ? 1 : ((s.gid - s.start) & 0xFFFF);
+    sub.i16(d > 32767 ? d - 65536 : d); }
+  for(const s of segs) sub.u16(0);
+  const body = sub.out, w = new TBW();
+  w.u16(0).u16(1).u16(3).u16(1).u32(12).bytes(body);
+  return w.out;
+}
+function ttfName(rec){
+  const strs = [], w = new TBW(); let off = 0;
+  const items = rec.map(([id,s]) => { const b = new TBW().utf16(s).out;
+    const o = { id, off, len:b.length }; strs.push(b); off += b.length; return o; });
+  w.u16(0).u16(items.length).u16(6 + items.length*12);
+  for(const it of items) w.u16(3).u16(1).u16(0x0409).u16(it.id).u16(it.len).u16(it.off);
+  for(const b of strs) w.bytes(b);
+  return w.out;
+}
+
+/* ⭐ 字の種類 ── 🔴 骨にある字だけ（BONE のキー）。無い字を入れると空の字になる */
+const EM_T = 1000;
+function ttfChars(kind){
+  const has = c => !!(typeof BONE !== 'undefined' && BONE[c]);
+  const all = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,\'-'].filter(has);
+  if(kind === '打った字'){
+    const t = ($('run') && $('run').value) || ($('src') && $('src').value) || '';
+    return [...new Set([...t.toUpperCase()].filter(has))];
+  }
+  return all;
+}
+
+/* ══ 鋳る本体 ══ */
+function ttfBuild(opt){
+  opt = opt || {};
+  /* ⭐ 元の字は【書体ファイル】でも【端末の書体】でもよい。どれからでも鋳れる。 */
+  const M = ttfMetrics();
+  const ASC = M.asc, DESC = M.desc;
+  const tol = opt.tol == null ? 3 : opt.tol;
+  const chars = ttfChars(opt.set || 'kana');
+
+  const glyphs = [{ code:null, adv:Math.round(EM_T*0.5), cont:[] }];   /* 0 ＝ .notdef */
+  let skipped = 0;
+  for(const ch of chars){
+    const cont = ttfContours(glyph(ch, 0), M, tol);
+    if(!cont.length){ skipped++; continue; }
+    /* ⭐ 骨には送りが無い。輪郭の右端＋左右のアキ（em の 7%）で決める */
+    let xMax = -1e9; for(const c of cont) for(const p of c) if(p.x > xMax) xMax = p.x;
+    const adv = Math.round(xMax + EM_T*0.07);
+    glyphs.push({ code: ch.codePointAt(0), adv, cont });
+  }
+  if(glyphs.length < 2) throw new Error('鋳る字がありません');
+
+  const built = glyphs.map(x => ({ ...x, g: ttfGlyf(x.cont) }));
+  const nG = built.length;
+  const advMax = Math.max(...built.map(b => b.adv));
+  const maxPts = Math.max(4, ...built.map(b => b.g.pts));
+  const maxCts = Math.max(1, ...built.map(b => b.cont.length));
+  const totalPts = built.reduce((a,b) => a + b.g.pts, 0);
+
+  const glyfW = new TBW(); const locaW = new TBW();
+  let off = 0;
+  for(const b of built){ locaW.u32(off); glyfW.bytes(b.g.data); off += b.g.data.length; }
+  locaW.u32(off);
+  const glyf = glyfW.out;
+
+  const hmtx = new TBW();
+  /* 🔴 lsb は 0 ではなく その字の xMin（head.flags で「lsb は x=0」と宣言しているので） */
+  for(const b of built) hmtx.u16(b.adv).i16(b.g.pts ? b.g.xMin : 0);
+
+  const xs = built.filter(b => b.g.pts);
+  const bb = {
+    xMin: xs.length ? Math.min(...xs.map(b=>b.g.xMin)) : 0,
+    yMin: xs.length ? Math.min(...xs.map(b=>b.g.yMin)) : DESC,
+    xMax: xs.length ? Math.max(...xs.map(b=>b.g.xMax)) : EM_T,
+    yMax: xs.length ? Math.max(...xs.map(b=>b.g.yMax)) : ASC,
+  };
+  const now = Math.floor(Date.now()/1000) + 2082844800;
+  const head = new TBW();
+  head.u32(0x00010000).u32(0x00010000).u32(0)           /* checkSumAdjustment は後で */
+      .u32(0x5F0F3CF5).u16(3).u16(EM_T)
+      .u32(0).u32(now).u32(0).u32(now)
+      .i16(bb.xMin).i16(bb.yMin).i16(bb.xMax).i16(bb.yMax)
+      .u16(0).u16(8).i16(2).i16(1).i16(0);
+  /* ⚠️ 最後の2つ ＝ indexToLocFormat（1＝long）／glyphDataFormat（🔴 必ず 0）。
+     glyphDataFormat を 1 にすると fontTools は通るのに、
+     ブラウザ（OTS）が「head: bad glyphDataFormat」で弾いて【黙って元の書体に落ちる】。
+     ＝ 板の絵ではなく、打った字を見ないと気づけない種類の間違い。 */
+
+  const hhea = new TBW();
+  hhea.u32(0x00010000).i16(ASC).i16(DESC).i16(0).u16(advMax)
+      .i16(bb.xMin).i16(bb.xMin).i16(bb.xMax).i16(1).i16(0).i16(0)
+      .i16(0).i16(0).i16(0).i16(0).i16(0).u16(nG);
+
+  const maxp = new TBW();
+  maxp.u32(0x00010000).u16(nG).u16(maxPts).u16(maxCts)
+      .u16(0).u16(0).u16(2).u16(0).u16(0).u16(0).u16(0).u16(0).u16(0).u16(0).u16(0);
+
+  const codes = built.map((b,i) => [b.code, i]).filter(x => x[0] != null).sort((a,b) => a[0]-b[0]);
+  const cmap = ttfCmap4(codes);
+
+  const avg = Math.round(built.reduce((a,b) => a+b.adv, 0)/nG);
+  const os2 = new TBW();
+  os2.u16(4).i16(avg).u16(400).u16(5).u16(0)
+     .i16(Math.round(EM_T*0.7)).i16(Math.round(EM_T*0.65)).i16(Math.round(EM_T*0.075))
+     .i16(Math.round(EM_T*0.35)).i16(0).i16(0).i16(0).i16(0).i16(0).i16(0)
+     .i16(Math.round(EM_T*0.5)).i16(Math.round(EM_T*0.1))
+     .u32(0).u32(0).u32(0).u32(0)
+     .tag('KNSH').u16(0).u16(400).u16(5)
+     .u16(codes.length ? codes[0][0] : 32).u16(codes.length ? codes[codes.length-1][0] : 32)
+     .i16(ASC).i16(DESC).i16(0).u16(ASC).u16(-DESC)
+     .u32(1).u32(0).i16(Math.round(EM_T*0.5)).i16(Math.round(EM_T*0.7)).u16(1);
+
+  const post = new TBW();
+  post.u32(0x00030000).u32(0).i16(Math.round(-EM_T*0.075)).i16(Math.round(EM_T*0.05))
+      .u32(0).u32(0).u32(0).u32(0).u32(0);
+
+  const fam = (opt.family || 'HON').trim() || 'HON';
+  const ps = fam.replace(/[^A-Za-z0-9]/g,'') || 'HON';
+  const name = ttfName([
+    [0,'木下スタジオ / kinoshita studio'], [1,fam], [2,'Regular'],
+    [3,'KNSH:'+ps+':2026'], [4,fam+' Regular'], [5,'Version 1.000'],
+    [6,ps+'-Regular'], [9,'木下貴博 / Takahiro Kinoshita'], [11,'https://kinoshita.studio/'],
+  ]);
+
+  const tabs = [
+    ['OS/2', os2.out], ['cmap', cmap], ['glyf', glyf], ['head', head.out],
+    ['hhea', hhea.out], ['hmtx', hmtx.out], ['loca', locaW.out],
+    ['maxp', maxp.out], ['name', name], ['post', post.out],
+  ].sort((a,b) => a[0] < b[0] ? -1 : 1);
+
+  const n = tabs.length, sr2 = 16*Math.pow(2, Math.floor(Math.log2(n)));
+  const dir = new TBW();
+  dir.u32(0x00010000).u16(n).u16(sr2).u16(Math.floor(Math.log2(n))).u16(n*16 - sr2);
+  let o2 = 12 + n*16;
+  const padded = tabs.map(([t,d]) => [t, tPad4(d)]);
+  for(let i=0;i<n;i++){ const [t,d] = padded[i];
+    dir.tag(t).u32(tSum32(d)).u32(o2).u32(tabs[i][1].length); o2 += d.length; }
+  const head0 = dir.out, file = new Uint8Array(o2);
+  file.set(head0, 0);
+  let p2 = head0.length;
+  for(const [,d] of padded){ file.set(d, p2); p2 += d.length; }
+
+  /* 🔴 checkSumAdjustment は【全部組んでから】head の中の位置に埋める */
+  let hoff = 12;
+  for(let i=0;i<n;i++) if(padded[i][0] === 'head')
+    hoff = (head0[12+i*16+8]<<24 | head0[12+i*16+9]<<16 | head0[12+i*16+10]<<8 | head0[12+i*16+11]) >>> 0;
+  const adj = (0xB1B0AFBA - tSum32(file)) >>> 0;
+  file[hoff+8]=(adj>>>24)&255; file[hoff+9]=(adj>>>16)&255;
+  file[hoff+10]=(adj>>>8)&255; file[hoff+11]=adj&255;
+
+  return { file, nG, chars: codes.length, skipped, bytes: file.length, pts: totalPts, fam };
+}
+
+/* ══ つまみ・ボタンの配線 ══ */
+(function(){
+  const note = m => { const n = $('ttfNote'); if(n) n.innerHTML = m; };
+  /* ⭐ 元の字は【端末の書体】でも【落とした書体ファイル】でも鋳れる。
+       ⚠️ 端末の書体は輪郭を画素から拾うので角が少し丸まる＝それも書体の顔になる。 */
+  const tell = () => note('⭐ いまの<b>筆と手</b>のまま、骨を輪郭にして鋳ります。'
+    + '<br>⚠️ 骨がある字だけ（<b>A–Z・0–9・. , \' -</b>）。小文字と和文は入りません。');
+  const simp = $('ttfSimp');
+  if(simp) simp.addEventListener('input', () => { $('oSimp').textContent = simp.value; });
+
+  const make = () => {
+    const t0 = performance.now();
+    const r = ttfBuild({ set: $('ttfSet').value, tol: +$('ttfSimp').value,
+                         family: $('ttfName').value });
+    note('⭐ <b>' + r.fam + '</b>／' + r.chars + '字・' + (r.bytes/1024|0) + 'KB・点 '
+       + r.pts.toLocaleString() + '（' + Math.round(performance.now()-t0) + 'ms）'
+       + (r.skipped ? '<br>⚠️ 元の書体に無かった字 ' + r.skipped + '（入れていません）' : ''));
+    return r;
+  };
+
+  $('eTTF') && $('eTTF').addEventListener('click', () => {
+    try{
+      const r = make();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([r.file], { type:'font/ttf' }));
+      a.download = r.fam.replace(/[^A-Za-z0-9]/g,'') + '-Regular.ttf';
+      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    }catch(e){ note('🔴 ' + e.message); }
+  });
+
+  /* ⭐ その場で打つ ── 板の絵ではなく【ブラウザが字として組んだもの】を見る */
+  $('tTTF') && $('tTTF').addEventListener('click', async () => {
+    try{
+      const r = make();
+      const ff = new FontFace('HON_TEST_' + Date.now(), r.file.buffer);
+      await ff.load(); document.fonts.add(ff);
+      let box = $('ttfProof');
+      if(!box){
+        box = document.createElement('div'); box.id = 'ttfProof';
+        box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99;padding:18px 20px;'
+          + 'background:#faf8f4;color:#111;border-top:1px solid #222;max-height:42vh;overflow:auto';
+        document.body.appendChild(box);
+      }
+      box.innerHTML = '<div style="font:11px/1.4 \'Space Mono\',monospace;opacity:.6;margin-bottom:8px">'
+        + '鋳った書体で、ブラウザが組んだもの（板の絵ではない） ── 押すと閉じる</div>'
+        + '<div style="font-family:\'' + ff.family + '\';font-size:40px;line-height:1.5">'
+        + 'HON 奔<br>あいうえお かきくけこ<br>アイウエオ カキクケコ<br>Handgloves 0123</div>';
+      box.onclick = () => box.remove();
+    }catch(e){ note('🔴 ' + e.message); }
+  });
+
+  tell();
+  /* ⭐ ①で元の字を変えたら言い直す（効かないつまみ・古い説明を残さない） */
+  window.ttfTell = tell;
+})();
+
+
 </script>
 </body>
 </html>
