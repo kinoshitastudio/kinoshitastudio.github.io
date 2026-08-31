@@ -1780,7 +1780,10 @@ const BAN = await p.evaluate(async () => {
   return { out, longHidden:document.getElementById('longUI').classList.contains('hide'),
            dpiHidden:document.getElementById('dpiUI').classList.contains('hide') };
 });
-ok(BAN.out.length === 11 && BAN.out.every(x => !x.includes('印なし')),
+/* ⚠️ 数は増える（2026-08-31 に7つ足した）ので【ボタンの数と一致するか】で見る
+   ＝「押した数だけ効いて、押した所に印が付く」が本当に見たいこと */
+const BANN = await p.evaluate(() => document.querySelectorAll('#s_banner button').length);
+ok(BAN.out.length === BANN && BAN.out.every(x => !x.includes('印なし')),
    '⭐⭐ 仕事の版面が全部効いて印もつく', BAN.out.length + ' 個');
 ok(BAN.out.includes('OGP:1200x630') && BAN.out.includes('ストーリー:1080x1920'),
    '⭐ px そのもので決まる（OGP 1200×630／ストーリー 1080×1920）');
@@ -2251,6 +2254,168 @@ ok(TC.中に入る, '⭐ トーンカーブは設定JSONに入る');
 ok(TC.コントラストが効く && TC.コントラストを戻す === 0,
    '⭐⭐ コントラスト（絶対値）が効いて、0 に戻すと1画素も同じに戻る',
    TC.コントラストを戻す);
+
+/* ══⭐⭐ 調整レイヤーは【空気とは別の色調補正】を持つ ══ 2026-08-31
+   🔴 木下＝「今の調整レイヤーはレイヤーパネルの上にあり、下にある画像に対して調整が
+      できるという内容だよね？ **空気とは別に** ここに調整できるための」
+   ⭐ 見るのは【下に効くか】【0 に戻すと1画素も同じに戻るか】【切ると1枚だけか】。 */
+const ADJ2 = await p.evaluate(async () => {
+  const wait2 = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  COARSE = 0; render(); await wait2(300);
+  const before = window.__full();
+  document.getElementById('b_adjlayer').click(); await wait2(500);
+  const L = LAYERS[SEL];
+  const out = { 調整レイヤー: L.kind === 'adj',
+    盤でパネルが出る: !document.getElementById('editBox').classList.contains('hide'),
+    置き方は出さない: getComputedStyle(document.getElementById('scaleKnob')).display === 'none' };
+  const put = (id, v) => { const e = document.getElementById(id); e.value = v;
+    e.dispatchEvent(new Event('input', { bubbles:true })); };
+  const one = async (name, on, off) => {
+    on(); touchEd(L); COARSE = 0; render(); await wait2(420);
+    const d1 = window.__sad(before, window.__full());
+    off(); touchEd(L); COARSE = 0; render(); await wait2(420);
+    out[name] = [d1, window.__sad(before, window.__full())];
+  };
+  await one('レベル補正', () => put('r_black', 30), () => put('r_black', 0));
+  await one('コントラスト', () => put('r_con', 70), () => put('r_con', 0));
+  await one('露光量', () => put('r_expo', 60), () => put('r_expo', 0));
+  await one('自然な彩度', () => put('r_vib', 90), () => put('r_vib', 0));
+  await one('レンズフィルター', () => put('r_lens', 60), () => put('r_lens', 0));
+  await one('トーンカーブ',
+    () => { curveOf(L, 'rgb').splice(1, 0, [0.5, 0.8]); },
+    () => { document.getElementById('b_curve0').click(); });
+  await one('チャンネルミキサー',
+    () => { MIXCH = 'r'; put('r_mxg', 130); },
+    () => { document.getElementById('b_mix0').click(); });
+  await one('グラデーションマップ',
+    () => { const g2 = gmapOf(L); g2.stops = GMPRE.sepia.map(o => Object.assign({}, o)); g2.on = true; },
+    () => { gmapOf(L).on = false; });
+  /* ⭐ 切ると【すぐ下の1枚だけ】に効く（Photoshop と同じ） */
+  put('r_black', 30); touchEd(L); COARSE = 0; render(); await wait2(400);
+  const ぜんぶ = window.__sad(before, window.__full());
+  L.clip = true; touchEd(L); COARSE = 0; render(); await wait2(400);
+  const いち枚だけ = window.__sad(before, window.__full());
+  out.切ると狭くなる = ぜんぶ > いち枚だけ && いち枚だけ > 0;
+  out.きき = [ぜんぶ, いち枚だけ];
+  removeAt(SEL); COARSE = 0; render(); await wait2(400);
+  out.消したら戻る = window.__sad(before, window.__full());
+  return out;
+});
+ok(ADJ2.調整レイヤー && ADJ2.盤でパネルが出る && ADJ2.置き方は出さない,
+   '⭐⭐ 調整レイヤーは【盤の上で】色調補正のパネルが出る（置き方は出さない）',
+   JSON.stringify({ パネル:ADJ2.盤でパネルが出る, 置き方:ADJ2.置き方は出さない }));
+{
+  const names = ['レベル補正','コントラスト','露光量','自然な彩度','レンズフィルター',
+                 'トーンカーブ','チャンネルミキサー','グラデーションマップ'];
+  const dead = names.filter(k => !(ADJ2[k] && ADJ2[k][0] > 0));
+  const stuck = names.filter(k => ADJ2[k] && ADJ2[k][1] !== 0);
+  ok(dead.length === 0, '⭐⭐ 調整レイヤーの補正8つが【下の素材ぜんぶ】に効く',
+     dead.length ? dead.join(',') : names.length + '本');
+  ok(stuck.length === 0, '🔴 どれも 0 に戻すと【1画素も同じ】に戻る（焼き込んでいない）',
+     stuck.length ? stuck.join(',') : 'ぜんぶ戻る');
+}
+ok(ADJ2.切ると狭くなる, '⭐⭐［下の素材の形で切る］で【すぐ下の1枚だけ】に効く',
+   JSON.stringify(ADJ2.きき));
+ok(ADJ2.消したら戻る === 0, '🔴 調整レイヤーを消すと1画素も同じに戻る', ADJ2.消したら戻る);
+
+/* ══⭐⭐ 塗りレイヤー（べた塗り・グラデーション・パターン）══ 2026-08-31 */
+const FILLL = await p.evaluate(async () => {
+  const wait2 = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  COARSE = 0; render(); await wait2(300);
+  const before = window.__full();
+  const out = {};
+  for(const [id, k, nm] of [['b_solid','solid','べた塗り'], ['b_grad','grad','グラデーション'],
+                            ['b_pattern','pattern','パターン']]){
+    document.getElementById(id).click(); await wait2(600);
+    COARSE = 0; render(); await wait2(300);
+    out[nm] = { 出た: window.__sad(before, window.__full()) > 0,
+                種類: LAYERS[SEL].rnd.kind === k,
+                絵になっている: !!(LAYERS[SEL].img && LAYERS[SEL].img.naturalWidth > 10) };
+    removeAt(SEL); COARSE = 0; render(); await wait2(300);
+    out[nm].消したら戻る = window.__sad(before, window.__full()) === 0;
+  }
+  /* 柄6つがぜんぶ違う絵になる */
+  document.getElementById('b_pattern').click(); await wait2(600);
+  const seen = []; let prev = null;
+  for(const bt of document.querySelectorAll('#s_pat button')){
+    bt.click(); await wait2(320); COARSE = 0; render(); await wait2(200);
+    const now = window.__full();
+    seen.push([bt.dataset.v, prev ? window.__sad(prev, now) > 0 : true]);
+    prev = now;
+  }
+  out.柄 = seen;
+  /* 地なしにできる＝下が透ける */
+  const kb = document.getElementById('k_patbg');
+  kb.checked = false; kb.dispatchEvent(new Event('change', { bubbles:true }));
+  await wait2(400);
+  out.地なしにできる = renderOf(LAYERS[SEL]).pc2 === '#00000000';
+  removeAt(SEL); COARSE = 0; render(); await wait2(300);
+  return out;
+});
+{
+  const bad = ['べた塗り','グラデーション','パターン']
+    .filter(k => !(FILLL[k].出た && FILLL[k].種類 && FILLL[k].絵になっている && FILLL[k].消したら戻る));
+  ok(bad.length === 0, '⭐⭐ 塗りレイヤー3種が置けて、消すと1画素も同じに戻る',
+     bad.length ? bad.join(',') : 'べた塗り／グラデーション／パターン');
+  const dead = FILLL.柄.filter(([, ok2]) => !ok2).map(([k]) => k);
+  ok(dead.length === 0, '⭐ パターンの柄6つがぜんぶ違う絵になる',
+     dead.length ? dead.join(',') : FILLL.柄.map(([k]) => k).join('/'));
+  ok(FILLL.地なしにできる, '⭐ パターンは地なしにできる（下が透ける）');
+}
+
+/* ══⭐ ライト／ダーク ══ 2026-08-31・木下＝「ボードが白色じゃないといけない時もある」 */
+const LTMODE = await p.evaluate(async () => {
+  const wait2 = ms => new Promise(r => setTimeout(r, ms));
+  COARSE = 0; render(); await wait2(300);
+  const 盤0 = window.__full();
+  const 台0 = getComputedStyle(document.getElementById('stage')).backgroundColor;
+  document.getElementById('lightBtn').click(); await wait2(500);
+  COARSE = 0; render(); await wait2(300);
+  const out = {
+    台が変わる: getComputedStyle(document.getElementById('stage')).backgroundColor !== 台0,
+    盤は変わらない: window.__sad(盤0, window.__full()) === 0,
+    見出しが逆の色: (() => {
+      const h = document.querySelector('#panel > .grp > label.h');
+      const s2 = getComputedStyle(h);
+      const n = c => c.match(/\d+/g).slice(0,3).map(Number).reduce((a,b)=>a+b,0) / 3;
+      return Math.abs(n(s2.backgroundColor) - n(s2.color)) > 100;
+    })(),
+  };
+  document.getElementById('lightBtn').click(); await wait2(400);
+  out.戻せる = !document.body.classList.contains('light');
+  return out;
+});
+ok(LTMODE.台が変わる && LTMODE.戻せる, '⭐ ライト／ダークを切り替えられる（覚えておく）',
+   JSON.stringify(LTMODE));
+ok(LTMODE.盤は変わらない, '🔴 明かりを変えても【出す絵は1画素も変わらない】（画面の明かりと紙の色は別）');
+ok(LTMODE.見出しが逆の色, '⭐ 大きな見出しは【地と逆の色】（どこからどこまでか分かる）');
+
+/* ══⭐ 版面のパスも残せる ══ 2026-08-31 */
+const PGP = await p.evaluate(async () => {
+  const wait2 = ms => new Promise(r => setTimeout(r, ms));
+  PAGEPATHS = [];
+  SHEETCUT = { keepIn:true, pts:[{x:0.2,y:0.2,hx:0,hy:0},{x:0.8,y:0.25,hx:0,hy:0},{x:0.5,y:0.8,hx:0,hy:0}] };
+  LAYERS.forEach(L => L._key = ''); COARSE = 0; render(); await wait2(300);
+  const 切った = window.__full();
+  document.getElementById('b_pgsave').click(); await wait2(200);
+  const 残った = PAGEPATHS.length;
+  SHEETCUT = null; LAYERS.forEach(L => L._key = ''); COARSE = 0; render(); await wait2(300);
+  const 消した = window.__sad(切った, window.__full()) > 0;
+  document.querySelector('#pgList button').click(); await wait2(300);
+  COARSE = 0; render(); await wait2(300);
+  const 戻せた = window.__sad(切った, window.__full()) === 0;
+  const j = JSON.parse(JSON.stringify(snapshot()));
+  const JSONにも = (j.pagePaths || []).length === 1;
+  SHEETCUT = null; PAGEPATHS = []; buildPgList();
+  LAYERS.forEach(L => L._key = ''); COARSE = 0; render(); await wait2(200);
+  return { 残った, 消した, 戻せた, JSONにも };
+});
+ok(PGP.残った === 1 && PGP.消した && PGP.戻せた && PGP.JSONにも,
+   '⭐⭐ 版面のパスも残せて、呼び戻せる（設定JSONにも入る）', JSON.stringify(PGP));
 
 /* 盤の左上の表記＝画面のいちばん左上・小さく（木下の指示） */
 await p.setViewport({ width:1400, height:900 });
