@@ -26,6 +26,10 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 
 /* 出す物を横取りする */
 await p.evaluate(() => { window.__got = [];
+  /* ⚠️ 2026-09-01：書き出しに【保存ダイアログ】（showSaveFilePicker）を入れた。
+     headless では出せないので、ここでは無いことにして
+     【使えないときは そのまま落ちる】道（＝いままでの動き）を試験する。 */
+  try{ delete window.showSaveFilePicker; }catch(_){ window.showSaveFilePicker = undefined; }
   const oc = URL.createObjectURL;
   URL.createObjectURL = function(x){ window.__got.push({ size:x.size, type:x.type }); return oc.call(URL, x); }; });
 

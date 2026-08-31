@@ -9166,7 +9166,44 @@ function syncOut(){
     + (n ? '\n⚠️ ' + n + ' 枚が原寸より大きく引き伸ばされます' : '');
 }
 
-function dl(blob, name){
+/* ⭐ 出す名前＝【いつ出したか】が読める形にする（2026-09-01・木下＝「どこにどのような
+   タイトルで書き出すか」）。moya_1788191726724.png のような数字の羅列をやめる。 */
+function stamp(){
+  const d = new Date(), z = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + z(d.getMonth()+1) + '-' + z(d.getDate())
+    + '_' + z(d.getHours()) + z(d.getMinutes());
+}
+function outName(what, ext, extra){
+  return 'MOYA_' + (what ? what + '_' : '') + stamp()
+    + (extra ? '_' + extra : '') + '.' + ext;
+}
+/* ══⭐⭐ 書き出し ══ 2026-09-01
+   🔴 木下＝「パソコン内のどこにどのようなタイトルで書き出すかが、
+      いわゆる mac PC の書き出しと同じにして」（いまは黙ってダウンロードへ落ちる）
+   ⭐ Chrome の【保存ダイアログ】を出す＝場所と名前をその場で決められる。
+   ⚠️ 使えないとき・断られたときは いままでどおりダウンロードへ落とす（止まらない）。
+   ⚠️ 「キャンセル」を押したときは何もしない（勝手に落とさない）。 */
+const SAVETYPE = {
+  png:  { description:'PNG 画像',  accept:{ 'image/png':['.png'] } },
+  svg:  { description:'SVG',       accept:{ 'image/svg+xml':['.svg'] } },
+  json: { description:'MOYA の設定', accept:{ 'application/json':['.json'] } },
+  zip:  { description:'ZIP',       accept:{ 'application/zip':['.zip'] } },
+};
+async function dl(blob, name){
+  const ext = String(name).split('.').pop().toLowerCase();
+  if(window.showSaveFilePicker){
+    try{
+      const h = await window.showSaveFilePicker({ suggestedName:name,
+        types: SAVETYPE[ext] ? [SAVETYPE[ext]] : [] });
+      const w = await h.createWritable();
+      await w.write(blob); await w.close();
+      stat('保存した：' + h.name);
+      return;
+    }catch(e){
+      if(e && e.name === 'AbortError') return;          /* キャンセル＝何もしない */
+      console.warn('保存ダイアログが使えないので、そのまま落とします', e);
+    }
+  }
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
@@ -9182,7 +9219,7 @@ el('b_png').onclick = () => {
     COARSE = keep; LAYERS.forEach(L => L._key = '');
     c.toBlob(b => {
       if(!b){ stat('PNG を作れませんでした（大きすぎるかもしれません）'); return; }
-      dl(b, 'moya_' + Date.now() + '.png');
+      dl(b, outName(P.nobg ? '地なし' : '', 'png', f.w + 'x' + f.h));
       stat((P.nobg ? '地なしPNG' : 'PNG') + ' を出した — ' + f.w + ' × ' + f.h
         + (outWarn() ? '（⚠️ ' + outWarn() + ' 枚は引き伸ばし）' : ''));
     });
@@ -9302,7 +9339,7 @@ el('b_svg').onclick = () => {
   setTimeout(() => {
     try{
       const svg = svgOut();
-      dl(new Blob([svg], { type:'image/svg+xml' }), 'moya_' + Date.now() + '.svg');
+      dl(new Blob([svg], { type:'image/svg+xml' }), outName('', 'svg'));
       stat('SVG を出した（素材 ' + LAYERS.filter(L => L.on).length + ' 枚が分かれて入っています・'
         + Math.round(svg.length/1024) + 'KB）');
     }catch(e){ stat('SVG を出せませんでした：' + (e && e.message ? e.message : e)); }
@@ -9344,7 +9381,7 @@ el('b_layers').onclick = () => {
       if(ab) files.push({ name:'moya_99_空気.png', data:new Uint8Array(await ab.arrayBuffer()) });
       COARSE = keep;
       if(!files.length){ stat('出せる素材がありませんでした'); return; }
-      dl(zip(files), 'moya_' + Date.now() + '_layers.zip');
+      dl(zip(files), outName('素材ごと', 'zip'));
       stat('素材ごとに出した — ' + files.length + ' 枚（版面と同じ大きさなので HARI で重なります）');
     }catch(e){ stat('出せませんでした：' + (e && e.message ? e.message : e)); }
   }, 30);
@@ -9746,7 +9783,7 @@ el('b_exjall').onclick = () => {
         if(sb) L2.subImgs = sb.layers.map(q => q.img ? imgData(q.img, BUNDLE_L) : null);
       });
       const txt = JSON.stringify(o);
-      dl(new Blob([txt], { type:'application/json' }), TOOLNAME + '_まるごと_' + Date.now() + '.json');
+      dl(new Blob([txt], { type:'application/json' }), outName('まるごと', 'json'));
       stat('まるごと出した（写真 ' + LAYERS.length + ' 枚・'
         + (txt.length/1024/1024).toFixed(1) + 'MB・長辺 ' + (BUNDLE_L || '原寸') + '）');
     }catch(e){ stat('出せませんでした：' + (e && e.message ? e.message : e)); }
@@ -9758,7 +9795,7 @@ el('b_exjall').onclick = () => {
 el('b_exj').onclick = () => {
   try{
     const j = JSON.stringify(snapshot(), null, 1);
-    dl(new Blob([j], { type:'application/json' }), TOOLNAME + '_' + Date.now() + '.json');
+    dl(new Blob([j], { type:'application/json' }), outName('設定', 'json'));
     stat('設定を JSON で出した（' + Math.max(1, Math.round(j.length/1024)) + 'KB）');
   }catch(err){
     console.error('設定の書き出しで落ちた', err);
@@ -9800,7 +9837,7 @@ el('b_selpng').onclick = () => {
     c.getContext('2d').drawImage(big, x0, y0, cw, ch, 0, 0, cw, ch);
     c.toBlob(bl => {
       if(!bl){ stat('出せませんでした'); return; }
-      dl(bl, 'moya_' + Date.now() + '_selected.png');
+      dl(bl, outName('選んだもの', 'png', cw + 'x' + ch));
       stat('選んだ ' + ls.length + ' 枚を PNG で出した（' + cw + ' × ' + ch + ' px・地なし）');
     }, 'image/png');
   }catch(err){
