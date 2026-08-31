@@ -817,6 +817,19 @@
     color:var(--ink3); font-size:11px; line-height:1; cursor:pointer; border-radius:3px }
   #swatch .swbtns button:hover{ color:var(--ink); background:var(--grid) }
 
+  /* 🔴 調整レイヤーは【絵を持たない】＝効かないつまみは出さない（2026-08-31・木下の指摘）
+     ・重ね方／カラーオーバーレイ（塗り）／塗りの不透明度 ── 絵が無いので何も起きない
+     ・大きさ／縦の伸ばし／回す／左右を返す ── 調整は版面ぜんぶにかかるので意味がない
+     ⭐ 残すのは【奥行き（＝どこから奥に効くか）】と【不透明度（＝効きの強さ）】。 */
+  body.isadj #paintPart, body.isadj #fillAKnob, body.isadj #scaleKnob,
+  body.isadj #syKnob, body.isadj #rotKnob, body.isadj #b_flip{ display:none !important }
+
+  /* ⭐⭐ クリッピングマスク＝【上のレイヤーが右へ寄る】（Adobe と同じ見え方）
+     木下＝「下のレイヤーパネルはひとつ右側によせられているなどするとわかりやすい
+     さらに色付けしてグルーピングすると」 */
+  .ly.clipped{ margin-left:16px; border-left:2px solid var(--accent) }
+  .ly.clipbase .nm{ text-decoration:underline; text-underline-offset:2px }
+
   /* ⭐⭐ ヒストリー（何をしたかが並ぶ・押すとそこまで戻る） */
   #histList{ max-height:210px; overflow:auto; display:flex; flex-direction:column; gap:2px;
     margin:4px 0 2px }
@@ -1035,6 +1048,10 @@
       <span class="n" style="font-weight:590">下の素材の形で切る（クリッピングマスク）</span></label>
     <div class="note">一覧で<b>1つ下＝1つ奥</b>の素材の形だけに出ます（続けて何枚でも重ねられます）。<br>
       <b>焼き込みません</b>＝外せば1画素も同じに戻ります。</div>
+    <!-- ⚠️ 調整レイヤーは【絵を持たない】＝重ね方も塗りも効かない。
+         🔴 木下＝「カラーオーバーレイで乗算したけど赤くなってないよね」＝そのとおりで、
+         触れるのに効かないつまみになっていた。調整レイヤーのときは丸ごと隠す。 -->
+    <div id="paintPart">
     <div class="row" style="margin-top:8px"><span class="n" style="font-weight:590">重ね方（描画モード）</span></div>
     <select id="sel_blend" style="width:100%;font-family:inherit;font-size:12px;padding:8px 9px;
       border-radius:9px;border:.5px solid rgba(28,28,30,.16);background:#fff;color:var(--fg)"></select>
@@ -1050,6 +1067,7 @@
       border-radius:9px;border:.5px solid rgba(28,28,30,.16);background:#fff;color:var(--fg)"></select>
     <div class="note"><b>画像を乗せたい</b>ときは、上に画像を置いて
       <b>［下の素材の形で切る］</b>を入れてください（Figma の「画像の塗り」と同じ絵になります）。</div>
+    </div>
 
     <!-- ⭐ 空気は【版面のもの】＝中の紙（アートボード）では出さない（触れるのに効かない、を作らない） -->
     <div id="airPart">
@@ -1911,6 +1929,8 @@
       <button class="btn" id="b_svg">SVG で書き出す</button>
       <button class="btn" id="b_layers">素材ごとに書き出す</button>
     </div>
+    <!-- 🔴 木下＝「選択したものを png でも書き出しできるようにもして」 -->
+    <button class="btn" id="b_selpng" style="width:100%">選んだものだけ PNG で書き出す（地なし）</button>
     <div class="btns2">
       <button class="btn" id="b_exj">設定を書き出す</button>
       <button class="btn" id="b_inj">設定を読む</button>
@@ -3552,13 +3572,22 @@ function edConv(x, w, h, e){
       素材が何枚増えても、つまみは増えない。 → project_moya の芯／reference_najimase_no_saho */
 function adjStack(L){
   const base = L.adj || newAdj();
-  const zs = LAYERS.filter(o => o.kind === 'adj' && o.on !== false && zOf(o) < zOf(L));
+  /* 🔴🔴 2026-08-31・木下＝「下のふたつともかかっちゃってるよね？」
+     ＝【クリッピングマスクを入れても、空気からのズレは全部にかかっていた】。
+       色調補正（レベル・カーブ…）だけ clip を見ていて、ズレの方は見ていなかった
+       ＝同じ「効く範囲」を2か所で別々に決めていた（必ず食い違う）。
+     ⭐ ここも adjTarget（すぐ下の1枚）で揃える。
+     ⭐ Photoshop と同じで【不透明度＝調整の効きの強さ】にする（0 で効かない）。
+     → feedback_same_formula_in_two_places_drifts */
+  const zs = LAYERS.filter(o => o.kind === 'adj' && o.on !== false && zOf(o) < zOf(L)
+    && !(o.clip && adjTarget(o) !== L));
   if(!zs.length) return base;
   const out = Object.assign({}, base);
   for(const A of zs){
     const a = A.adj || newAdj();
-    out.bri += a.bri; out.sat += a.sat; out.con += a.con;
-    out.tmp += a.tmp; out.blur += a.blur; out.haze += a.haze;
+    const k = A.op == null ? 1 : A.op;
+    out.bri += a.bri * k; out.sat += a.sat * k; out.con += a.con * k;
+    out.tmp += a.tmp * k; out.blur += a.blur * k; out.haze += a.haze * k;
   }
   return out;
 }
@@ -6091,7 +6120,19 @@ function buildList(){
     else try{ th.style.backgroundImage = 'url(' + L.img.src + ')'; }catch(_){}
     const nm = document.createElement('div'); nm.className = 'nm';
     nm.textContent = (L.clip ? '↳ ' : '') + L.name;
-    if(L.clip) nm.title = '下の素材の形で切っています（クリッピングマスク）';
+    if(L.clip) nm.title = L.kind === 'adj'
+      ? 'すぐ下の1枚だけに効いています（クリッピングマスク）'
+      : '下の素材の形で切っています（クリッピングマスク）';
+    /* ⭐ クリップしている側を【右へ寄せる】／土台の名前に下線（Adobe と同じ見え方） */
+    if(L.clip) row.classList.add('clipped');
+    if(L.kind === 'adj' && L.clip){
+      const t2 = adjTarget(L);
+      if(t2) row.dataset.clipbase = t2.id;
+    }else if(L.clip){
+      const below = LAYERS.filter(o => o !== L && o.img && zOf(o) > zOf(L))
+        .sort((a, b) => zOf(a) - zOf(b))[0];
+      if(below) row.dataset.clipbase = below.id;
+    }
     const dp = document.createElement('div'); dp.className = 'dp';
     /* ⭐ 数字は【はっきり出す】（2026-08-30・木下＝「奥行きの数字を明確に表示してほしい」）
        ⚠️ 「.4」のような略し方は何の数字か読み取れなかった＝略さない。 */
@@ -6189,6 +6230,15 @@ function buildList(){
     if(it.inG) row.classList.add('ing');
     rowDrag(row, i);
     box.appendChild(row);
+  }
+  /* ⭐ 土台（クリップされている先）の名前に下線を引く（Adobe と同じ見え方） */
+  {
+    const bases = new Set([...box.querySelectorAll('.ly[data-clipbase]')]
+      .map(r => r.dataset.clipbase));
+    [...box.querySelectorAll('.ly[data-i]')].forEach(r => {
+      const L2 = LAYERS[+r.dataset.i];
+      if(L2 && bases.has(String(L2.id))) r.classList.add('clipbase');
+    });
   }
   /* ══⭐⭐ いちばん下は【背景】＝紙の地 ══ 2026-08-31
      🔴 木下＝「一番下に背景というのをレイヤーパネルにデフォルトで入れておこう」
@@ -6433,6 +6483,15 @@ function syncSel(){
   put('r_sy','o_sy', Math.round(syOf(L) * 100), v => (v/100).toFixed(2));
   put('r_air','o_air', Math.round(airOf(L) * 100), v => (v/100).toFixed(2));
   el('k_clip').checked = !!L.clip;
+  /* ⭐ 調整レイヤーでは【不透明度＝調整の効きの強さ】／クリップは「すぐ下の1枚だけ」 */
+  {
+    const opl = el('opKnob') && el('opKnob').querySelector('.n');
+    if(opl) opl.textContent = L.kind === 'adj' ? '不透明度（調整の効き）' : '不透明度';
+    const cl = el('k_clip') && el('k_clip').parentNode.querySelector('.n');
+    if(cl) cl.textContent = L.kind === 'adj'
+      ? 'すぐ下の1枚だけにかける（クリッピングマスク ⌥⌘G）'
+      : '下の素材の形で切る（クリッピングマスク）';
+  }
   el('sel_blend').value = L.blend || 'source-over';
   const fl = L.fill || { on:false, color:'#ffffff', op:1, mode:'source-over' };
   el('k_fill').checked = !!fl.on;
@@ -9485,10 +9544,61 @@ el('b_exjall').onclick = () => {
     }catch(e){ stat('出せませんでした：' + (e && e.message ? e.message : e)); }
   }, 30);
 };
+/* 🔴 2026-08-31・木下＝「なぜか svg は書き出しできるが、設定は書き出せない」
+   ⭐ 途中で落ちても【黙って何も起きない】ようになっていた（try が無かった）。
+     理由をその場で言う＋どこで落ちたかを console に残す。 */
 el('b_exj').onclick = () => {
-  dl(new Blob([JSON.stringify(snapshot(), null, 1)], { type:'application/json' }),
-     TOOLNAME + '_' + Date.now() + '.json');
-  stat('設定を JSON で出した');
+  try{
+    const j = JSON.stringify(snapshot(), null, 1);
+    dl(new Blob([j], { type:'application/json' }), TOOLNAME + '_' + Date.now() + '.json');
+    stat('設定を JSON で出した（' + Math.max(1, Math.round(j.length/1024)) + 'KB）');
+  }catch(err){
+    console.error('設定の書き出しで落ちた', err);
+    stat('設定を出せませんでした：' + (err && err.message ? err.message : err));
+  }
+};
+/* ⭐⭐ 選んだものだけを PNG で出す ── 2026-08-31
+   🔴 木下＝「選択したものを png でも書き出しできるようにもして」
+   ⭐ 版面と同じ理屈で描いてから【選んだものが入る四角】で切り出す（地なし）。
+   ⚠️ 空気は版面のものなので、選んだものに乗る分だけがそのまま出る。 */
+el('b_selpng').onclick = () => {
+  const ls = selLayers().filter(L => L.img && L.kind !== 'adj');
+  if(!ls.length){ stat('先に素材を選んでください（⇧ か ⌘ で何枚でも）'); return; }
+  try{
+    const f = sheet();
+    const W = Math.max(16, f.w), H = Math.max(16, f.h);
+    const keepOn = LAYERS.map(o => o.on);
+    LAYERS.forEach(o => { if(!ls.includes(o) && o.kind !== 'adj') o.on = false; });
+    const keepC = COARSE; COARSE = 0;
+    LAYERS.forEach(o => o._key = '');
+    const big = document.createElement('canvas'); big.width = W; big.height = H;
+    paint(big.getContext('2d'), W, H, true);        /* 地なしで描く */
+    COARSE = keepC;
+    LAYERS.forEach((o, i) => { o.on = keepOn[i]; o._key = ''; });
+    render();
+    /* 選んだものが入る四角（効果のはみ出しぶんに少し余白） */
+    let x0 = W, y0 = H, x1 = 0, y1 = 0;
+    ls.forEach(L => {
+      const sz = sizeOf(L, W, H);
+      const w2 = Math.abs(sz.dw), h2 = Math.abs(sz.dh);
+      const r = Math.hypot(w2, h2) / 2;             /* 回っていても入る大きさ */
+      x0 = Math.min(x0, L.x * W - r); x1 = Math.max(x1, L.x * W + r);
+      y0 = Math.min(y0, L.y * H - r); y1 = Math.max(y1, L.y * H + r);
+    });
+    x0 = Math.max(0, Math.floor(x0)); y0 = Math.max(0, Math.floor(y0));
+    x1 = Math.min(W, Math.ceil(x1));  y1 = Math.min(H, Math.ceil(y1));
+    const cw = Math.max(2, x1 - x0), ch = Math.max(2, y1 - y0);
+    const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+    c.getContext('2d').drawImage(big, x0, y0, cw, ch, 0, 0, cw, ch);
+    c.toBlob(bl => {
+      if(!bl){ stat('出せませんでした'); return; }
+      dl(bl, 'moya_' + Date.now() + '_selected.png');
+      stat('選んだ ' + ls.length + ' 枚を PNG で出した（' + cw + ' × ' + ch + ' px・地なし）');
+    }, 'image/png');
+  }catch(err){
+    console.error('選んだものの書き出しで落ちた', err);
+    stat('出せませんでした：' + (err && err.message ? err.message : err));
+  }
 };
 el('b_inj').onclick = () => el('f_json').click();
 el('f_json').addEventListener('change', e => {
@@ -9909,6 +10019,12 @@ addEventListener('keydown', e => {
   if(typing) return;
   const cmd = e.metaKey || e.ctrlKey;
   const k = (e.key || '').toLowerCase();
+  /* ⭐⭐ パスを描いている最中の ⌘Z は【点をひとつ戻す】（Photoshop と同じ）── 2026-08-31
+     🔴 木下＝「パスを描いているときのコマンドZ はひとつ前に戻る」
+     ⚠️ ここで全体を戻すと、描きかけの点が消えるうえに【別の操作】まで戻ってしまう。
+     ⭐ 押す先は［点をひとつ戻す］の本体＝同じ道を通す（式は1本）。 */
+  if(cmd && k === 'z' && !e.shiftKey && POLY.length){
+    e.preventDefault(); el('b_polyundo').click(); return; }
   if(cmd && k === 'z'){ e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if(cmd && k === 'y'){ e.preventDefault(); redo(); return; }
   if(cmd && k === 'd'){ e.preventDefault();
@@ -9954,6 +10070,11 @@ addEventListener('keydown', e => {
     if(cmd && k === 'j' && hasSel){
       e.preventDefault(); selToLayer(e.shiftKey); return; }
   }
+  /* ⭐ ⌥⌘G＝クリッピングマスクを作る／外す（Photoshop と同じキー）
+     ⚠️ ⌘G（グループ）より先に見る（⌥の有無で分ける） */
+  if(cmd && e.altKey && k === 'g'){ e.preventDefault();
+    const kc = el('k_clip'); if(kc && LAYERS[SEL]){ kc.checked = !kc.checked;
+      kc.dispatchEvent(new Event('change', { bubbles:true })); } return; }
   if(cmd && k === 'g'){ e.preventDefault(); e.shiftKey ? ungroupSel() : groupSel(); return; }
   if(cmd && k === 'a'){ e.preventDefault();
     SELIDS = LAYERS.map(L => L.id); syncSelIds(); buildList(); syncSel(); render();

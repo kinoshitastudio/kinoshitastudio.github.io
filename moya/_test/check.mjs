@@ -562,6 +562,26 @@ ok(got.some(x => x.type === 'image/svg+xml'), '⭐⭐ SVG が本当に落ちる'
 ok(got.some(x => x.type === 'application/zip'), '⭐⭐ 素材ごとPNG（zip）が本当に落ちる',
    JSON.stringify(got.filter(x => x.type === 'application/zip')));
 
+/* ⭐⭐ 選んだものだけ PNG（木下＝「選択したものを png でも書き出しできるようにもして」）
+   ＋ 設定JSON が本当に落ちる（木下＝「svg は書き出しできるが、設定は書き出せない」） */
+const SELPNG = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  window.__got = [];
+  const o = LAYERS.slice().sort((a,b) => zOf(a)-zOf(b));
+  SEL = LAYERS.indexOf(o[1]); SELIDS = [o[1].id]; syncSelIds(); syncSel(); buildList();
+  document.getElementById('b_selpng').click();
+  await w(1200);
+  const png = window.__got.slice();
+  document.getElementById('b_exj').click();
+  await w(900);
+  return { png:png.filter(x => x.type === 'image/png').length,
+           json:window.__got.filter(x => x.type === 'application/json').length,
+           say:document.getElementById('stat').textContent };
+});
+ok(SELPNG.png >= 1, '⭐⭐ 選んだものだけ PNG で落ちる（地なし・選んだ所で切り取る）',
+   JSON.stringify(SELPNG));
+ok(SELPNG.json >= 1, '🔴 設定JSON が本当に落ちる（落ちたら理由を言う）', SELPNG.say);
+
 /* ⭐⭐ 左のツールバー（2026-08-30 木下＝「左にツールパネルを出して直感的に」）
    🔴 見るのは「並んでいる」ではなく【押したら本当に道具が変わるか】＝
       見た目と中身を二重に持つと「押しても切り替わらない」が必ず出る。 */
@@ -1057,6 +1077,51 @@ await wait(800);
 ok(await same10(AD0), '⭐⭐ いちばん奥へ送ると誰にも効かない（効く範囲は奥行きが決める）');
 ok(await p.evaluate(() => { const i = hitLayer({x:.5,y:.5});
   return i < 0 || LAYERS[i].kind !== 'adj'; }), '⭐ 調整レイヤーは盤で掴めない（絵が無い）');
+
+/* ══⭐⭐ 調整レイヤーの【効く範囲】は1つの規則で決まる ══ 2026-08-31
+   🔴 木下＝「下のふたつともかかっちゃってるよね？」
+     ＝クリッピングマスクを入れても【空気からのズレ】は全部にかかっていた
+       （色調補正だけ clip を見ていた＝同じことを2か所で別々に決めていた）。
+   ⭐ 物差しは本体と同じ関数（adjStack）から取る。 */
+const CLIPADJ = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const o = LAYERS.slice().sort((a,b) => zOf(a)-zOf(b));
+  SEL = LAYERS.indexOf(o[0]); SELIDS = [o[0].id]; syncSelIds(); syncSel();
+  document.getElementById('b_adjlayer').click(); await w(400);
+  const A = LAYERS[SEL];
+  const e = document.getElementById('r_abri'); e.value = 60;
+  e.dispatchEvent(new Event('input', { bubbles:true })); await w(500);
+  const 効く = () => LAYERS.filter(L => L.img && L.kind !== 'adj' && adjStack(L).bri > 0.001)
+    .map(L => L.name);
+  const 全部 = 効く();
+  const kc = document.getElementById('k_clip');
+  kc.checked = true; kc.dispatchEvent(new Event('change', { bubbles:true })); await w(500);
+  const クリップ = 効く();
+  const すぐ下 = adjTarget(A) ? adjTarget(A).name : null;
+  /* 不透明度＝効きの強さ（Photoshop と同じ・0 で効かない） */
+  A.op = 0; LAYERS.forEach(L => L._key = ''); await w(200);
+  const 濃さ0 = 効く();
+  A.op = 1;
+  kc.checked = false; kc.dispatchEvent(new Event('change', { bubbles:true })); await w(300);
+  return { 全部, クリップ, すぐ下, 濃さ0 };
+});
+ok(CLIPADJ.全部.length >= 2 && CLIPADJ.クリップ.length === 1
+   && CLIPADJ.クリップ[0] === CLIPADJ.すぐ下,
+   '⭐⭐ クリッピングを入れた調整レイヤーは【すぐ下の1枚だけ】に効く（ズレも色調補正も）',
+   JSON.stringify(CLIPADJ));
+ok(CLIPADJ.濃さ0.length === 0,
+   '⭐ 調整レイヤーの不透明度＝効きの強さ（0 で効かない・Photoshop と同じ）',
+   JSON.stringify(CLIPADJ.濃さ0));
+ok(await p.evaluate(() => {
+     const a = LAYERS.find(L => L.kind === 'adj');
+     if(!a) return false;
+     SEL = LAYERS.indexOf(a); SELIDS = [a.id]; syncSelIds(); syncSel(); syncPanelMode();
+     const hid = id => getComputedStyle(document.getElementById(id)).display === 'none';
+     return hid('paintPart') && hid('fillAKnob') && hid('scaleKnob') && hid('rotKnob');
+   }),
+   '⭐⭐ 調整レイヤーでは【効かないつまみ】を出さない（塗り・重ね方・大きさ・回す）');
 
 /* ⑩-7 紙ぜんぶをパスで切る */
 await p.evaluate(() => document.getElementById('b_demo').click());
@@ -2856,6 +2921,29 @@ ok(PNEW.足せる[0] === 1 && PNEW.足せる[1] === 2,
   ok(moved && same,
      '⭐⭐ 選択ツールで【パスをそのまま動かせる】（形は変えずに全部いっしょに）',
      JSON.stringify({ 前:P0.before[0], 後:P1.after[0], ずれ:[dx, dy] }));
+}
+
+/* ⭐⭐ 描いている最中の ⌘Z は【点をひとつ戻す】（別の操作を戻さない）── 2026-08-31
+   🔴 木下＝「パスを描いているときのコマンドZ はひとつ前に戻る」 */
+{
+  const Z0 = await p.evaluate(async () => {
+    const L = LAYERS[SEL], m = maskSize(L);
+    L.paths = []; L.work = null; L.sel = null; PATHSEL = null;
+    document.querySelector('#tools button[data-t="path"]').click();
+    await new Promise(r => setTimeout(r, 200));
+    POLY = [{x:m.w*0.2,y:m.h*0.2,hx:0,hy:0},{x:m.w*0.5,y:m.h*0.2,hx:0,hy:0},
+            {x:m.w*0.5,y:m.h*0.5,hx:0,hy:0}];
+    drawOverlay(cv.width, cv.height);
+    document.body.focus();
+    return { 点:POLY.length, 手:HIST.past.length, 枚:LAYERS.length };
+  });
+  await p.keyboard.down('Meta'); await p.keyboard.press('KeyZ'); await p.keyboard.up('Meta');
+  await wait(300);
+  const Z1 = await p.evaluate(() => ({ 点:POLY.length, 手:HIST.past.length, 枚:LAYERS.length }));
+  ok(Z1.点 === Z0.点 - 1 && Z1.手 === Z0.手 && Z1.枚 === Z0.枚,
+     '⭐⭐ パスを描いている最中の ⌘Z は【点をひとつ戻す】（前の操作まで戻さない）',
+     JSON.stringify({ 前:Z0, 後:Z1 }));
+  await p.evaluate(() => { POLY = []; drawOverlay(cv.width, cv.height); });
 }
 
 /* ══⭐⭐ レイヤーマスク（Photoshop の「レイヤーマスク」）══ 2026-08-31
