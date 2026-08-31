@@ -1123,6 +1123,38 @@ ok(await p.evaluate(() => {
    }),
    '⭐⭐ 調整レイヤーでは【効かないつまみ】を出さない（塗り・重ね方・大きさ・回す）');
 
+/* ⭐⭐ 外の調整レイヤーは【中の画面（アートボード）にも乗る】── 2026-08-31
+   🔴 木下＝「調整レイヤーをかけたら、中身も見た目も変わっておくべき？」
+     ＝そのとおり。中を描くときに調整レイヤーまで消していた＝盤と食い違っていた。
+   ⚠️ Photoshop のスマートオブジェクトは中身が素のままだが、MOYA は
+     【近づいて見る画面は本番と同じ見え方】を選んでいる（木下の指示）。 */
+const INSUB = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const o = LAYERS.slice().sort((a,b) => zOf(a)-zOf(b));
+  const i = LAYERS.indexOf(o[1]);
+  openEditor(i); await w(900); COARSE = 0; render(); await w(400);
+  const 前 = window.__full();
+  closeEditor(); await w(700);
+  SEL = LAYERS.indexOf(o[0]); SELIDS = [o[0].id]; syncSelIds(); syncSel();
+  document.getElementById('b_adjlayer').click(); await w(400);
+  const A = LAYERS[SEL];
+  const e = document.getElementById('r_abri'); e.value = 80;
+  e.dispatchEvent(new Event('input', { bubbles:true })); await w(600);
+  openEditor(LAYERS.indexOf(o[1])); await w(1000); COARSE = 0; render(); await w(500);
+  const 乗る = window.__sad(前, window.__full());
+  closeEditor(); await w(600);
+  A.on = false; LAYERS.forEach(L => L._key = ''); await w(200);
+  openEditor(LAYERS.indexOf(o[1])); await w(1000); COARSE = 0; render(); await w(500);
+  const 外すと戻る = window.__sad(前, window.__full());
+  closeEditor(); await w(600);
+  return { 乗る, 外すと戻る };
+});
+ok(INSUB.乗る > 0 && INSUB.外すと戻る === 0,
+   '⭐⭐ 外の調整レイヤーは【中の画面にも乗る】／外すと1画素も同じに戻る',
+   JSON.stringify(INSUB));
+
 /* ⑩-7 紙ぜんぶをパスで切る */
 await p.evaluate(() => document.getElementById('b_demo').click());
 await wait(1800);
