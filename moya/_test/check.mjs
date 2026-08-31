@@ -1111,7 +1111,8 @@ ok(SW > 0, '⭐ カラーパレット（その素材の色）が出る', SW + '�
    → feedback_count_the_pictures_a_knob_makes */
 const ED0 = await shot();
 const EDKNOBS = ['r_black','r_white','r_gamma','r_con','r_hue','r_sat','r_lum','r_temp','r_tint',
-  'r_eblur','r_sharp','r_enoise','r_mosaic','r_poster','r_thresh','r_mono','r_einvert','r_eedge'];
+  'r_eblur','r_sharp','r_enoise','r_mosaic','r_poster','r_thresh','r_mono','r_einvert','r_eedge',
+  'r_half','r_gpen','r_film','r_warp'];
 const EDDEAD = [];
 for(const k of EDKNOBS){
   const before = await shot();
@@ -1124,7 +1125,7 @@ for(const k of EDKNOBS){
     e.dispatchEvent(new Event('input', { bubbles:true })); }, k, keep);
   await wait(450);
 }
-ok(EDDEAD.length === 0, '⭐⭐ 編集の18本ぜんぶが効く（死んでいるつまみが無い）',
+ok(EDDEAD.length === 0, '⭐⭐ 編集の22本ぜんぶが効く（死んでいるつまみが無い）',
    EDDEAD.length ? EDDEAD.join(',') : '17/17');
 ok(diff(await shot(), ED0) === 0, '⭐ つまみを戻すと1画素も同じに戻る');
 await p.evaluate(() => { const e = document.getElementById('r_mosaic'); e.value = 70;
@@ -1200,7 +1201,9 @@ const SU = await p.evaluate(() => {
                 /* パターンオーバーレイの柄の設定＝絵の空気ではない（入り切りは行の丸が持つ） */
                 'r_fxpsz','r_fxpw','r_fxpang','r_fxpop',
                 /* パスの許容値＝形を点に直すときの精度（絵の空気ではない） */
-                'r_ptol'];
+                'r_ptol','r_halfsz','r_gpenang',
+                /* グラデーションで消すの形の設定（入り切りはチェックが持つ） */
+                'r_mgang','r_mgstart','r_mgsoft','r_glossn'];
   const bad = [];
   document.querySelectorAll('#panel input[type=range]').forEach(e => {
     if(SKIP.includes(e.id)) return;
@@ -2696,6 +2699,52 @@ ok(AMASK.中はそのまま && AMASK.外は元に戻る,
    '⭐⭐ 調整レイヤーは【囲った中だけ】に効く（Adobe のマスクと同じ）',
    JSON.stringify(AMASK.値));
 ok(AMASK.外すと版面ぜんぶ, '🔴 範囲を外すと版面ぜんぶに戻る（焼き込んでいない）');
+
+/* ══⭐⭐ 木下が持ってきた Photoshop チュートリアル8本に足りなかったもの ══ 2026-08-31
+   ④ヴィンテージ・ハーフトーン＝ハーフトーンパターン／グラフィックペン／フィルム粒子
+   ⑦ピクセルストレッチ＝グラデーションでマスク（端に向かって消える）
+   ⚠️ どれも【焼き込まない】＝0 に戻すと1画素も同じに戻る */
+const TUT = await p.evaluate(async () => {
+  const wait2 = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1600); });
+  const o = LAYERS.slice().sort((a,b)=>zOf(a)-zOf(b));
+  const out = {};
+  const put = (id, v) => { const e = document.getElementById(id); e.value = v;
+    e.dispatchEvent(new Event('input', { bubbles:true })); };
+  openEditor(LAYERS.indexOf(o[1])); await wait2(800);
+  COARSE = 0; render(); await wait2(300);
+  const before = window.__full();
+  const one = async (name, on, off) => {
+    on(); COARSE = 0; render(); await wait2(450);
+    const d1 = window.__sad(before, window.__full());
+    off(); COARSE = 0; render(); await wait2(450);
+    out[name] = [d1, window.__sad(before, window.__full())];
+  };
+  await one('ハーフトーンパターン', () => put('r_half', 90), () => put('r_half', 0));
+  await one('グラフィックペン',   () => put('r_gpen', 80), () => put('r_gpen', 0));
+  await one('フィルム粒子',       () => put('r_film', 70), () => put('r_film', 0));
+  closeEditor(); await wait2(700);
+  COARSE = 0; render(); await wait2(300);
+  const b2 = window.__full();
+  const kg = document.getElementById('k_mgrad');
+  kg.checked = true; kg.dispatchEvent(new Event('change', { bubbles:true }));
+  await wait2(500); COARSE = 0; render(); await wait2(300);
+  out.グラデーションで消す = [window.__sad(b2, window.__full())];
+  kg.checked = false; kg.dispatchEvent(new Event('change', { bubbles:true }));
+  await wait2(500); COARSE = 0; render(); await wait2(300);
+  out.グラデーションで消す.push(window.__sad(b2, window.__full()));
+  return out;
+});
+{
+  const names = ['ハーフトーンパターン','グラフィックペン','フィルム粒子','グラデーションで消す'];
+  const dead = names.filter(k => !(TUT[k] && TUT[k][0] > 0));
+  const stuck = names.filter(k => TUT[k] && TUT[k][1] !== 0);
+  ok(dead.length === 0, '⭐⭐ チュートリアルに要った4つが効く（ハーフトーン／ペン／粒子／グラデで消す）',
+     dead.length ? dead.join(',') : names.join(' / '));
+  ok(stuck.length === 0, '🔴 どれも切ると【1画素も同じ】に戻る（焼き込んでいない）',
+     stuck.length ? stuck.join(',') : 'ぜんぶ戻る');
+}
 
 /* 盤の左上の表記＝画面のいちばん左上・小さく（木下の指示） */
 await p.setViewport({ width:1400, height:900 });
