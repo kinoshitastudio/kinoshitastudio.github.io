@@ -289,7 +289,7 @@ function dedupImages(kids) {
   return out;
 }
 
-const stats = { al: 0, abs: 0, band: 0, svg: 0, swap: 0, blank: 0, shot: 0 };
+const stats = { al: 0, abs: 0, band: 0, svg: 0, swap: 0, blank: 0, shot: 0, kasanari: 0 };
 
 const r1 = v => Math.round(v * 10) / 10;
 
@@ -302,9 +302,15 @@ function toNode(n, parentBgKnown) {
       font: { family: mapFont(n.font.family), size: r1(n.font.size), weight: n.font.weight, lineHeight: Math.round(n.font.lineHeight) } };
     if (n.font.ls) o.font.letterSpacing = r1(n.font.ls);
     if (n.ta && n.ta !== 'start' && n.ta !== 'left') o.align = n.ta === 'end' ? 'right' : n.ta;
-    // 🔴 w の入れどころ：複数行 と 中央/右寄せ は実寸が要る。1行の見出し・ラベルは hug（書体差で折り返して壊れるから）
-    if (lines >= 2 || (o.align && o.align !== 'left')) o.w = Math.round(n.w);
-    o.__w = lines >= 2 || o.align ? Math.round(n.w) : (n.tw || n.w);
+    // 🔴 w の入れどころ
+    //  ・複数行／中央・右寄せ … 実寸が要る
+    //  ・箱に余裕がある（文字の実寸 < 箱の幅）… 実寸を入れる。
+    //    ⚠️ hug にすると <a> の余白が消えて隣が詰まる（実測72pxずれた）。余裕があるので折り返さない
+    //  ・箱ぴったりの短いラベル … hug のまま（実寸を入れると書体差で折り返してボタンが壊れる）
+    const boxW = Math.round(n.w), ink = n.tw != null ? n.tw : n.w;
+    const roomy = ink <= boxW - 2;
+    if (lines >= 2 || (o.align && o.align !== 'left') || roomy) o.w = boxW;
+    o.__w = o.w != null ? o.w : ink;
     o.__h = n.h;
     return mark(o);
   }
@@ -531,6 +537,31 @@ async function fillBlanks(n, offX, offY) {
   }
 }
 
+// ⭐ 文字が写真の上に重なっているセクションは、構造では解けない（＝KVと同じ）。
+//    重なりは「どちらが上か」「巨大な見出しの実寸」まで合わせないと必ずズレるので、見た目を焼く。
+function overlapsPhoto(root) {
+  const texts = [], imgs = [];
+  const w = n => {
+    const isImg = n.type === 'image' || (n.type === 'svg' && /<image/.test(n.svg || ''));
+    if (n.type === 'text') texts.push(n);
+    else if (isImg) imgs.push(n);
+    (n.children || []).forEach(w);
+  };
+  w(root);
+  const box = n => ({ x: n.__mx, y: n.__my, w: n.__w ?? n.w ?? 0, h: n.__h ?? n.h ?? 0 });
+  return texts.some(t => {
+    if (t.__mx == null) return false;
+    const a = box(t);
+    return imgs.some(i => {
+      if (i.__mx == null) return false;
+      const b = box(i);
+      const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+      const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      return ox > 8 && oy > 8;      // 8px 以上かぶっていれば「重ね」
+    });
+  });
+}
+
 // KV は丸ごとスクショを敷いて、その上に 文字とベクター だけ乗せる
 async function kvFlatten(root, offX, offY) {
   const keep = [];
@@ -540,7 +571,9 @@ async function kvFlatten(root, offX, offY) {
       if (c.type === 'text' || vector) {
         const o = { ...c }; delete o.children;
         o.x = Math.round(c.__mx); o.y = Math.round(c.__my);
-        keep.push(o);
+        // ⚠️ 枠の外に流れている物（マーキーの続き）はレイヤーを散らかすだけ＝捨てる
+        const ow = o.__w ?? o.w ?? 0, oh = o.__h ?? o.h ?? 0;
+        if (o.x + ow > 8 && o.x < root.w - 8 && o.y + oh > 8 && o.y < root.h - 8) keep.push(o);
       } else walk(c);
     });
   };
@@ -647,7 +680,7 @@ for (const i of targets) {
   const t = collapse(tree, true);
   const root = frameNode(t);
   root.name = (i === -1)
-    ? `${PREFIX} — 00 KV (${W})`
+    ? `${PREFIX} — 00 ${Math.round(t.h) >= 200 ? 'KV' : 'ヘッダー'} (${W})`
     : `${PREFIX} — ${String(i + 1).padStart(2, '0')} ${head.slice(0, 18) || 'sec' + (i + 1)} (${W})`;
   root.w = W; root.h = Math.round(t.h);
   if (!root.fill && bg) root.fill = hex(bg);
@@ -663,7 +696,10 @@ for (const i of targets) {
   await inlineSvgs(root);          // .svg は中身を取ってきてベクターにする
   // ⭐ 解けない所はスクショを敷く（KV は丸ごと／未読込の写真はその場所だけ）
   const box = (i === -1) ? { x: 0, y: 0 } : (await secs[i].boundingBox()) || { x: 0, y: 0 };
-  if (i === -1) await kvFlatten(root, box.x, box.y);
+  // ⚠️ 帯が薄い＝KV ではなく「ヘッダーだけ」。スクショは敷かず、構造のまま建てる
+  const isKV = (i === -1) && root.h >= 200;   // ⚠️ 名前の行では root.h でなく t.h を直に見る（TDZ）
+  const kasanari = !isKV && overlapsPhoto(root);   // 文字が写真の上に乗っている＝構造では解けない
+  if (isKV || kasanari) { await kvFlatten(root, box.x, box.y); if (kasanari) stats.kasanari++; }
   else await fillBlanks(root, box.x, box.y);
   const v = verify(root);          // ⭐ 出す前に、実測とズレていないか測る
   strip(root);
@@ -688,6 +724,6 @@ function count(n, a = { t: 0, lay: 0, abs: 0, img: 0 }) {
 
 const T = done.reduce((a, c) => ({ t: a.t + c.t, lay: a.lay + c.lay, abs: a.abs + c.abs, img: a.img + c.img }), { t: 0, lay: 0, abs: 0, img: 0 });
 console.log(`\n合計 ${done.length}枚 / ノード ${T.t} / オートレイアウト ${T.lay} / 絶対配置 ${T.abs}（重ねる所）/ 写真 ${T.img}`);
-console.log(`束ねた回数 ${stats.band} ── gap が2種類ある所を入れ子にした / svgを取り込んだ ${stats.svg}件 / 写真を実物に差し替えた ${stats.swap}件 / 空だった写真 ${stats.blank}件 / スクショを敷いた ${stats.shot}件`);
+console.log(`束ねた回数 ${stats.band} ── gap が2種類ある所を入れ子にした / svgを取り込んだ ${stats.svg}件 / 写真を実物に差し替えた ${stats.swap}件 / 空だった写真 ${stats.blank}件 / スクショを敷いた ${stats.shot}件（うち 重ね ${stats.kasanari}枚）`);
 console.log(`\n→ ${LIB}`);
 console.log(`⭐ Figma に出す: cp "library/<名前>.json" mothership.json`);
