@@ -3443,6 +3443,35 @@ ok(AAT.あり > 0 && AAT.なし === 0 && AAT.戻る === AAT.あり,
    JSON.stringify(AAT));
 ok(AAT.JSON === false, '⭐ アンチエイリアスの入り切りは設定JSONにも入る', String(AAT.JSON));
 
+/* ══⭐⭐ まわりの色で抜く（「被写体を選択」の代わり）══ 2026-09-01
+   ⚠️ Adobe の「被写体を選択」「空を選択」は AI ＝ MOYA は持っていない。
+   ⭐ 代わりに【縁の色＝背景】とみなして色を覚える＝「色で消す」を自動で押すだけ。
+     ＝許容つまみでその場で直せる／消せば1画素も同じに戻る（焼き込まない）。 */
+const AR = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  document.getElementById('b_solid').click(); await w(600);   /* 背景が1色の素材を作る */
+  const L = LAYERS[SEL];
+  L.s = 0.8; L.d = 0.5; L._key = ''; COARSE = 0; render(); await w(500);
+  const A = window.__full();
+  const 前 = (L.keys || []).length;
+  document.getElementById('b_around').click(); await w(500);
+  COARSE = 0; render(); await w(400);
+  const out = { 前, 後:(L.keys || []).length, 変わる:window.__sad(A, window.__full()),
+                文:document.getElementById('stat').textContent };
+  clearMask(L); L._key = ''; COARSE = 0; render(); await w(400);
+  out.消すと戻る = window.__sad(A, window.__full());
+  /* 後片付け＝足した素材を消す */
+  setLayers(LAYERS.filter(x => x !== L)); SEL = 0; SELIDS = [];
+  syncSelIds(); buildList(); syncSel(); render(); await w(300);
+  return out;
+});
+ok(AR.後 > AR.前 && AR.変わる > 0,
+   '⭐⭐［まわりの色で抜く］で背景の色を覚えて抜ける（AI の代わり）', JSON.stringify(AR));
+ok(AR.消すと戻る === 0,
+   '🔴 切り抜きを消すと1画素も同じに戻る（覚えるだけ＝焼き込まない）', AR.消すと戻る);
+
 /* ══⭐⭐ CHU Modular（木下の書体）を MOYA でも使う ══ 2026-09-01
    🔴 木下＝「chu module を MOYA でもテキストフォント使えるようにして」
    ⚠️ いちばん上は【新しく置く字の既定】なので、そこは動かさない（今までの絵のまま）。 */
