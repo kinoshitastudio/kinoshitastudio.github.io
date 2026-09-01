@@ -11056,8 +11056,40 @@ function pathToShape(L, pts){
   stat('ペンの形が【レイヤー】になった ── 塗り・線・グラデが効きます／選んで動かせます');
 }
 el('b_polyend').onclick = closePath;
+/* ══⭐⭐ ペンを押したら【どちらで描くか】をその場で選ぶ ══ 2026-09-01
+   🔴 木下＝「ツールパネルでクリックをすると、パスか作業パスかのまずどちらを選ぶ
+      ことができるようにしよう。そうすると作業パスとの区分けができる」
+   ⭐ 前に選んだ方を覚えて、それで入る（毎回選び直させない）。
+     ⚠️ 初めは【作業用パス】＝いままでの動きと同じ（切り抜きの道を変えない）。
+   ⭐ 押した直後に 上のバーの2つを光らせる＝そこで選ぶ、が見える。 */
+let PENLAST = 'path';
+try{ PENLAST = localStorage.getItem('moya.penmode') || 'path'; }catch(_){}
+function penPick(){
+  PENMODE = PENLAST === 'shape' ? 'shape' : 'path';
+  document.querySelectorAll('#s_penmode button')
+    .forEach(x => x.classList.toggle('on', x.dataset.v === PENMODE));
+  if(typeof syncCutHint === 'function') syncCutHint();
+  /* 上のバーの2つを光らせる（どこで選ぶか分かる） */
+  setTimeout(() => {
+    const seg = document.getElementById('s_penmode');
+    if(!seg) return;
+    seg.classList.remove('flash'); void seg.offsetWidth; seg.classList.add('flash');
+    setTimeout(() => seg.classList.remove('flash'), 1400);
+  }, 60);
+  stat(PENMODE === 'shape'
+    ? 'ペン＝【図形を描く】（閉じるとレイヤーになります）── 上のバーで切り替えられます'
+    : 'ペン＝【作業用パス】（切り抜き・選択範囲）── 上のバーで【図形を描く】に切り替えられます');
+}
+function syncPenSay(){
+  const e = document.getElementById('penSay');
+  if(e) e.textContent = PENMODE === 'shape' ? '図形を描く（閉じるとレイヤーになります）'
+                                            : '作業用パス（切り抜き・選択範囲）';
+}
 document.querySelectorAll('#s_penmode button').forEach(bt => bt.onclick = () => {
   PENMODE = bt.dataset.v;
+  PENLAST = PENMODE;
+  try{ localStorage.setItem('moya.penmode', PENMODE); }catch(_){}
+  syncPenSay();
   document.querySelectorAll('#s_penmode button').forEach(x => x.classList.toggle('on', x === bt));
   stat(PENMODE === 'shape'
     ? 'ペン＝【図形を描く】：繋ぐと そのままレイヤーになります（塗り・線が効く・選んで動かせる）'
@@ -12874,7 +12906,8 @@ const CUTSAY = {
   paint:'盤の上を <b>なぞる</b> と戻ります',
   lmask:'盤の上を <b>なぞる</b> と、黒＝隠れる／白＝出る（濃さを下げると <b>グレー＝半透明</b>）',
   liq:'盤の上を <b>なぞる</b> と画素が動きます',
-  path:'盤を押して点を打つ（<b>押したまま引くと曲がる</b>）／最初の点をもう一度押すと閉じます',
+  path:'盤を押して点を打つ（<b>押したまま引くと曲がる</b>）／最初の点をもう一度押すと閉じます'
+      + '　── いまは <b id="penSay">図形を描く</b>',
 };
 function syncCutHint(){
   const s = el('optSay'); if(!s) return;
@@ -12887,6 +12920,7 @@ function syncCutHint(){
               : CUTSAY[TOOL];
   s.innerHTML = t;
   s.classList.toggle('hide', !t);
+  if(typeof syncPenSay === 'function') syncPenSay();   /* ペンの役割を帯に出す */
   /* 🔴 2026-08-31・木下＝「ボードをさわる前は許容範囲の設定スライダーは調整できないのか」
      ＝そのとおりで、触れなくしていた。⭐ 直し＝**いつでも触れる**ようにして、
        代わりに【押す前にどこが消えるか】を盤の上で見せる（CUTPREV）。
@@ -12922,7 +12956,19 @@ const TOOLBAR = {
   color: { mode:'cut', tool:'color' },
   erase: { mode:'cut', tool:'erase' },
   paint: { mode:'cut', tool:'paint' },
-  path:  { mode:'cut', tool:'path' },
+  /* ══⭐⭐ ペンは入口で役割が決まる ══ 2026-09-01
+     🔴 木下＝「ペンで繋ぐと黒い線だけになり、移動もできる。ただ塗りや線に色つけるなどできない」
+       ＝【作業用パス】のまま描いていた（既定が作業用パスだったので、毎回切り替えが要った）。
+     🔴 木下＝「最初のどちらかによって役割は違う」＝そのとおり。入口で決める：
+       ・ツールバーの【ペン】＝図形を描く（Photoshop のペンの既定も「シェイプ」）
+       ・【画像編集】→パス＝作業用パス（切り抜き・選択範囲）
+     ⚠️ どちらも上のバーでいつでも切り替えられる。 */
+  /* ⚠️ 既定は【作業用パス】のまま（切り抜きの道を壊さない）。
+     ⭐ ただし押したときに【どちらで描くか】をその場で選べるように光らせる
+       ＋ 前に選んだ方を覚える（毎回選び直させない）。 */
+  path:  { mode:'cut', tool:'path',
+           act:() => { penPick(); } },
+  /* ⭐ 画像編集＝前に使っていた小道具のまま入る（毎回選び直させない） */
   /* ⭐ 画像編集＝前に使っていた小道具のまま入る（毎回選び直させない） */
   retouch: { mode:'cut', tool:null },
 };
