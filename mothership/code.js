@@ -231,7 +231,19 @@ figma.clientStorage.getAsync("ms_size").then((s) => {
   if (s && s.w && s.h) figma.ui.resize(s.w, s.h);
 }).catch(() => {});
 // 選択状態をUIへ通知（メインチャットで「選択フレームを編集」に切替えるため）
-figma.on("selectionchange", () => { try { postSel(); } catch (e) {} scheduleSelExport(); });
+// ⭐ 人が【手で】選んだものを覚えておく。
+//    生成のたびに selection を結果へ移すので、それを基準にすると
+//    2枚目以降は「前回の生成物の隣」に並んでしまう（木下が選んだ物の隣に来ない）。
+let userAnchor = null;
+let _selfSel = false;              // プラグインが選択を変えた直後だけ true
+figma.on("selectionchange", () => {
+  if (!_selfSel) {
+    const s = figma.currentPage.selection;
+    if (s.length && typeof s[0].x === "number") userAnchor = s[0];
+  }
+  _selfSel = false;
+  try { postSel(); } catch (e) {} scheduleSelExport();
+});
 setTimeout(() => { try { postSel(); } catch (e) {} scheduleSelExport(); }, 60);  // 起動直後の現在選択も送る
 
 const generated = {}; // name -> 生成済みノード（同名は置き換え、新名は新フレーム）
@@ -271,9 +283,13 @@ async function generate(jsonStr, zoom) {
     // 新規フレームの配置基準：選択中フレームの右隣／無ければ今見ている場所（遠くに飛ばさない）
     const vc = figma.viewport.center;
     const sel = figma.currentPage.selection;
+    // ⭐ 木下が【手で】選んだものを優先（生成が selection を上書きするので、いまの選択だけ見ると
+    //    2枚目から「前回の生成物の隣」になり、選んだ物から離れていく）
+    let base = (userAnchor && !userAnchor.removed) ? userAnchor : null;
+    if (!base && sel.length && typeof sel[0].x === "number") base = sel[0];
     let anchorX, anchorY, anchorMode;
-    if (sel.length && typeof sel[0].x === "number") {
-      anchorX = sel[0].x + (sel[0].width || 0) + 80; anchorY = sel[0].y; anchorMode = "right";
+    if (base) {
+      anchorX = base.x + (base.width || 0) + 80; anchorY = base.y; anchorMode = "right";
     } else { anchorX = vc.x; anchorY = vc.y; anchorMode = "center"; }
     let stack = 0;
     for (const r of roots) {
@@ -287,7 +303,12 @@ async function generate(jsonStr, zoom) {
 
       const node = await build(r);
       figma.currentPage.appendChild(node);
-      if (px != null) { node.x = px; node.y = py; }                          // 既存：その場で更新（動かさない）
+      // ⭐ 既存の同名フレームは その場で更新（動かさない）。
+      //    ⚠️ ただし【ライブラリから手で送った】かつ【手で何かを選んでいる】ときは、
+      //    木下が「ここに出したい」と言っている＝そちらへ寄せる
+      //    （同じ名前を何度も建て直すと、いつまでも遠い場所で更新され続ける）
+      //    🔴 relay の自動反映（live＝zoom false）では動かさない。編集中に盤が飛ぶのは事故
+      if (px != null && !(base && zoom)) { node.x = px; node.y = py; }
       else if (r.x != null || r.y != null) { node.x = (r.x != null ? r.x : anchorX); node.y = (r.y != null ? r.y : anchorY); } // JSON指定優先
       else if (anchorMode === "center") {                                    // 何も選択なし：今見ている中央に
         node.x = Math.round(vc.x - node.width / 2) + stack * 40;
@@ -298,6 +319,7 @@ async function generate(jsonStr, zoom) {
       generated[name] = node;
       made.push(node);
     }
+    _selfSel = true;                 // ⚠️ この選択は人が選んだのではない＝基準にしない
     figma.currentPage.selection = made;
     // 生成・更新のたびに結果へカメラを寄せる（ライブラリ送信／詰め書き出しのどちらでも追える）
     figma.viewport.scrollAndZoomIntoView(made);
