@@ -3873,17 +3873,33 @@ await wait(600);
       stage.dispatchEvent(new MouseEvent('dblclick',
         { clientX:s.clientX, clientY:s.clientY, bubbles:true })); };
     dbl(ti); await w(600);
-    const 字 = { 焦点:document.activeElement === document.getElementById('t_str'),
+    /* ⭐ 2026-09-01・木下＝「ボードないでテキストを変更できない」
+       ＝右のパネルへ焦点を送るのではなく【盤の上の入力欄】が出て、打つと絵が変わること */
+    const ta = document.getElementById('boardText');
+    const 字 = { 盤に入力欄:!!ta, 焦点:!!ta && document.activeElement === ta,
                  中に入っていない:!SUBOF, 選んだ:!!(LAYERS[SEL] && LAYERS[SEL].kind === 'text'),
                  言った:document.getElementById('stat').textContent };
-    document.getElementById('t_str').blur();
+    if(ta){
+      const 前 = LAYERS[SEL].text.str;
+      ta.value = '打ち直し'; ta.dispatchEvent(new Event('input', { bubbles:true }));
+      await w(400);
+      字.打つと変わる = LAYERS[SEL].text.str === '打ち直し' && 前 !== '打ち直し';
+      字.段にも入る = document.getElementById('t_str').value === '打ち直し';
+      ta.dispatchEvent(new KeyboardEvent('keydown', { key:'Escape', bubbles:true }));
+      await w(200);
+      字.Escで閉じる = !document.getElementById('boardText');
+    }
+    const t0 = document.getElementById('t_str'); if(t0) t0.blur();
     dbl(ii); await w(800);
     const 中 = !!SUBOF;
     closeAllEditors(); await w(500);
     return { 字, 中 };
   });
-  ok(DBL.字.焦点 && DBL.字.中に入っていない && DBL.字.選んだ && /書き換え/.test(DBL.字.言った || ''),
-     '⭐⭐ 盤で字を2回押すと【その場で書き換えられる】（中には入らない）',
+  ok(DBL.字.盤に入力欄 && DBL.字.焦点 && DBL.字.中に入っていない && DBL.字.選んだ,
+     '⭐⭐ 盤で字を2回押すと【盤の上に入力欄】が出る（中には入らない）',
+     JSON.stringify(DBL.字));
+  ok(DBL.字.打つと変わる && DBL.字.段にも入る && DBL.字.Escで閉じる,
+     '⭐⭐ 盤の上で打つと絵が変わり、［文字］の段にも同じ字が入る（値の持ち主は1つ）',
      JSON.stringify(DBL.字));
   ok(DBL.中, '⚠️ 字でない素材は今までどおり【中に入る】', DBL.中);
 }

@@ -140,6 +140,15 @@
     resize:none;flex:0 0 auto}
   /* 借りてきた物の名前（色の四角だけでは何の色か分からない） */
   #optbar .ol{flex:0 0 auto;font-size:11px;color:var(--fg2);white-space:nowrap;margin-left:2px}
+  /* ⭐⭐ 盤の上で字を打つ入力欄（2026-09-01）＝字そのものは canvas が描くので【透明】。
+     見えるのはカーソルと枠だけ＝盤に出ている絵がそのまま更新される。 */
+  #boardText{position:fixed;z-index:11;margin:0;padding:0;border:1px dashed rgba(13,153,255,.9);
+    border-radius:2px;background:rgba(13,153,255,.07);color:transparent;caret-color:#0d99ff;
+    font-family:inherit;font-weight:700;text-align:center;resize:none;overflow:hidden;
+    outline:none;box-shadow:0 0 0 9999px rgba(0,0,0,0)}
+  #boardText::selection{background:rgba(13,153,255,.35)}
+  /* 借りて上のバーへ持っていった所に残す目印（パネルに穴を空けない） */
+  .moved{font-size:10.5px;color:var(--fg3);padding:4px 2px;opacity:.9}
   #optbar input[type=color]{height:24px;width:38px;flex:0 0 auto;margin:0}
   #optbar .row{display:none}
   @media (max-width:820px){
@@ -1577,6 +1586,7 @@
     <div class="knob"><span class="n">角の丸み</span><input class="num" type="number" id="n_sh_r"><input type="range" id="sh_r" min="0" max="400" step="1" value="0"><output id="o_sr" hidden>0</output></div>
     <div class="knob"><span class="n">角の数</span><input class="num" type="number" id="n_sh_sides"><input type="range" id="sh_sides" min="3" max="20" step="1" value="6"><output id="o_ss" hidden>6</output></div>
     <label class="chk">塗る<input type="checkbox" id="sh_fillon" checked></label>
+    <div class="row"><span class="n">塗りの色</span></div>
     <input type="color" id="sh_fill" value="#ffffff">
     <label class="chk">塗りをグラデーションにする<input type="checkbox" id="sh_grad"></label>
     <div id="shGradUI" class="hide">
@@ -1588,8 +1598,17 @@
       <div class="knob"><span class="n">向き</span><input class="num" type="number" id="n_sh_gang"><input type="range" id="sh_gang" min="0" max="360" step="1" value="90"><output id="o_shgang" hidden>90°</output></div>
     </div>
     <label class="chk">線を引く<input type="checkbox" id="sh_strokeon"></label>
+    <div class="row"><span class="n">線の色</span></div>
     <input type="color" id="sh_stroke" value="#1c1c1e">
     <div class="knob"><span class="n">線の太さ</span><input class="num" type="number" id="n_sh_sw"><input type="range" id="sh_sw" min="0" max="120" step="1" value="8"><output id="o_ssw" hidden>8</output></div>
+    <!-- ⭐⭐ 線の位置（イラレと同じ3つ）── 2026-09-01・木下＝
+         「線が中塗りだけになっている。中央、外側、内側選べるように」 -->
+    <div class="row"><span class="n">線の位置</span></div>
+    <div class="seg" id="s_shalign">
+      <button data-v="center" class="on">中央</button>
+      <button data-v="inner">内側</button>
+      <button data-v="outer">外側</button>
+    </div>
     <div class="note">塗りと線は別のつまみです（片方だけ無しにできます）。
       置いたあとは写真と同じ扱いなので、奥行き・空気・馴染ませ・重ね方がそのまま効きます。</div>
   </div>
@@ -2205,6 +2224,8 @@ let SELBG = false;
    ⚠️ 印の板（ov）に描く＝出す絵には1画素も入らない。
    ⚠️ 宣言はここ（drawOverlay は立ち上げの早い時期に走るので、下に置くと届かない）。 */
 let PATHPV = null;      /* { mode:'fill'|'stroke', src:'path'|'sel'|'auto' } */
+/* ⭐ 盤の上で字を打っている最中の入れ物（⚠️ ここで宣言＝drawOverlay から見える） */
+let TEDIT = null;
 const selIdx = () => SELIDS.map(id => LAYERS.findIndex(L => L.id === id)).filter(i => i >= 0);
 const selLayers = () => selIdx().map(i => LAYERS[i]);
 const groupOf = L => (L && L.g != null) ? GROUPS.find(g => g.id === L.g) : null;
@@ -2944,39 +2965,51 @@ const SHAPES = [['rect','長方形'], ['ellipse','楕円'], ['line','線'],
       終わりを透明にできるグラデーションが無いと、帯を何枚も重ねる羽目になる（段差が出る）。 */
 function newShape(){ return { type:'rect', w:600, h:400, r:0, sides:6,
   fill:'#ffffff', fillOn:true, stroke:'#1c1c1e', strokeOn:false, sw:8,
-  grad:false, g1:'#000000', g2:'#000000', gang:90, gfade:true }; }
+  grad:false, g1:'#000000', g2:'#000000', gang:90, gfade:true,
+  /* ⭐ 線の位置＝既定は【中央】（canvas の既定と同じ＝今までの絵は1画素も変わらない） */
+  align:'center' }; }
 function shapeOf(L){ return L.shape || (L.shape = newShape()); }
 function shapeCanvas(L){
   const q = shapeOf(L);
   const sw = q.strokeOn ? Math.max(0, q.sw) : 0;
-  const pad = Math.ceil(sw / 2) + 2;
+  /* ══⭐⭐ 線の位置（中央・外側・内側）══ 2026-09-01
+     🔴 木下＝「線が中塗りだけになっている。中央、外側、内側選べるように」
+       （イラレの「線の位置」と同じ。いままでは canvas の既定＝中央だけだった）
+     ⚠️ 既定は【中央】＝いままで置いた図形は1画素も変わらない。
+       外側のときだけ紙の余白を線1本ぶん広げる（外へ出るぶんが切られないように）。 */
+  const align = q.align || 'center';
+  const pad = Math.ceil(align === 'outer' ? sw : sw / 2) + 2;
   const W = Math.max(8, Math.round(q.w) + pad*2), H = Math.max(8, Math.round(q.h) + pad*2);
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const x = c.getContext('2d');
   const w = q.w, h = q.h, cx = W/2, cy = H/2;
-  x.beginPath();
-  if(q.type === 'rect'){
-    const r = Math.max(0, Math.min(q.r, Math.min(w, h)/2));
-    if(x.roundRect) x.roundRect(pad, pad, w, h, r);
-    else x.rect(pad, pad, w, h);
-  }else if(q.type === 'ellipse'){
-    x.ellipse(cx, cy, w/2, h/2, 0, 0, 6.2831853);
-  }else if(q.type === 'line'){
-    x.moveTo(pad, cy); x.lineTo(pad + w, cy);
-  }else if(q.type === 'tri'){
-    x.moveTo(cx, pad); x.lineTo(pad + w, pad + h); x.lineTo(pad, pad + h); x.closePath();
-  }else{
-    /* 多角形と星は【まん中から角を回して打つ】＝式は1本、頂点の数と半径だけが違う */
-    const n = Math.max(3, Math.round(q.sides));
-    const pts = q.type === 'star' ? n*2 : n;
-    for(let i = 0; i < pts; i++){
-      const a = -Math.PI/2 + i / pts * 6.2831853;
-      const k = (q.type === 'star' && i % 2) ? 0.46 : 1;
-      const px = cx + Math.cos(a) * w/2 * k, py = cy + Math.sin(a) * h/2 * k;
-      i ? x.lineTo(px, py) : x.moveTo(px, py);
+  /* ⭐ 形を描く道は1本（塗り・線・外側の切り抜きが同じ形を見る） */
+  const trace = x2 => {
+    x2.beginPath();
+    if(q.type === 'rect'){
+      const r = Math.max(0, Math.min(q.r, Math.min(w, h)/2));
+      if(x2.roundRect) x2.roundRect(pad, pad, w, h, r);
+      else x2.rect(pad, pad, w, h);
+    }else if(q.type === 'ellipse'){
+      x2.ellipse(cx, cy, w/2, h/2, 0, 0, 6.2831853);
+    }else if(q.type === 'line'){
+      x2.moveTo(pad, cy); x2.lineTo(pad + w, cy);
+    }else if(q.type === 'tri'){
+      x2.moveTo(cx, pad); x2.lineTo(pad + w, pad + h); x2.lineTo(pad, pad + h); x2.closePath();
+    }else{
+      /* 多角形と星は【まん中から角を回して打つ】＝式は1本、頂点の数と半径だけが違う */
+      const n = Math.max(3, Math.round(q.sides));
+      const pts = q.type === 'star' ? n*2 : n;
+      for(let i = 0; i < pts; i++){
+        const a = -Math.PI/2 + i / pts * 6.2831853;
+        const k = (q.type === 'star' && i % 2) ? 0.46 : 1;
+        const px = cx + Math.cos(a) * w/2 * k, py = cy + Math.sin(a) * h/2 * k;
+        i ? x2.lineTo(px, py) : x2.moveTo(px, py);
+      }
+      x2.closePath();
     }
-    x.closePath();
-  }
+  };
+  trace(x);
   if(q.fillOn && q.type !== 'line'){
     if(q.grad){
       const th = (q.gang || 90) * Math.PI / 180;
@@ -2989,8 +3022,25 @@ function shapeCanvas(L){
     }else x.fillStyle = q.fill;
     x.fill();
   }
-  if(sw > 0){ x.strokeStyle = q.stroke; x.lineWidth = sw; x.lineJoin = 'round';
-    x.lineCap = 'round'; x.stroke(); }
+  if(sw > 0){
+    x.strokeStyle = q.stroke; x.lineJoin = 'round'; x.lineCap = 'round';
+    if(align === 'inner'){
+      /* 内側＝形の中だけに残す（2倍の太さで描いて、外へ出たぶんを切る） */
+      x.save(); x.clip(); x.lineWidth = sw * 2; x.stroke(); x.restore();
+    }else if(align === 'outer' && q.type !== 'line'){
+      /* 外側＝2倍の太さで描いて、形の中を消す（塗りを削らないように別の紙で作る） */
+      const t = document.createElement('canvas'); t.width = W; t.height = H;
+      const tx = t.getContext('2d');
+      trace(tx);
+      tx.strokeStyle = q.stroke; tx.lineJoin = 'round'; tx.lineCap = 'round';
+      tx.lineWidth = sw * 2; tx.stroke();
+      tx.globalCompositeOperation = 'destination-out';
+      trace(tx); tx.fill();
+      x.drawImage(t, 0, 0);
+    }else{
+      x.lineWidth = sw; x.stroke();
+    }
+  }
   try{
     Object.defineProperty(c, 'naturalWidth',  { value:W, configurable:true });
     Object.defineProperty(c, 'naturalHeight', { value:H, configurable:true });
@@ -5163,7 +5213,13 @@ function paint(ctx, W, H, transparent){
         g9.filter = 'none';
         g9.globalCompositeOperation = 'source-in';
         g9.fillStyle = F.glow.color; g9.fillRect(0, 0, t9.width, t9.height);
-        put(t9, clamp01(F.glow.op) * opL, 'lighter');
+        /* 🔴🔴 2026-09-01・木下＝「図形の上をとおるとエフェクトが外れている
+           画像やテキスト、図形含めそれは違う」
+           ＝光彩を【加算（lighter）】で盤に置いていたので、下が明るい（金色の図形など）と
+             すぐ飽和して真っ白＝**光っていないように見えていた**。
+           ⭐ Photoshop の光彩（外側）の既定は【スクリーン】＝明るい下地でも飛ばずに光る。
+           ⚠️ 暗い下地での見え方は少しおとなしくなるが、こちらが公式と同じ。 */
+        put(t9, clamp01(F.glow.op) * opL, 'screen');
       }
       /* ドロップシャドウ＝角度と距離でずらして ぼかす */
       if(F.shadow.on && F.shadow.op > 0.001){
@@ -7391,7 +7447,7 @@ function syncPanelMode(){
      ⚠️ 版面のもの（空気・灯・馴染ませ）は今までどおり版面だけ＝芯は動かしていない。 */
   el('textBox').classList.toggle('hide', !(L && L.kind === 'text'));
   el('shapeBox').classList.toggle('hide', !(L && L.kind === 'shape'));
-  el('renderBox').classList.toggle('hide', !(solo && L && L.kind === 'render'));
+  el('renderBox').classList.toggle('hide', !(L && L.kind === 'render'));
   /* ⭐ 中の紙の設定は、中に入っているときだけ */
   const sb = el('subBox'); if(sb) sb.classList.toggle('hide', !sub);
   /* 版面のもの（馴染ませ・空気・灯・版面・出す）はボード画面だけ
@@ -7482,14 +7538,79 @@ function focusTextEdit(){
   stat('文字を書き換えられます ── 打つとそのまま盤に出ます');
   return true;
 }
+/* ══⭐⭐ 盤の【上】で字を打つ ══ 2026-09-01
+   🔴 木下＝「詳細画面ではダブルクリックしてボードないでテキストを変更できない」
+     ＝右のパネルへ焦点を送るだけでは「盤で打っている」ことにならない。
+   ⭐ 字のある所へ【透明な入力欄】を重ねる。打った字は canvas が今までどおり描く
+     ＝見えているのは本物の絵のまま、カーソルだけが盤の上にある（Figma と同じ体験）。
+   ⚠️ 値の持ち主は1つ＝入力は［文字］の段の t_str に流して、同じ道を通す。
+   ⚠️ TEDIT の宣言は もっと上（drawOverlay から見えるように）。 */
+function placeBoardText(){
+  if(!TEDIT) return;
+  const L = TEDIT.L;
+  if(!L || LAYERS.indexOf(L) < 0){ closeBoardText(); return; }
+  const b = boardScale();
+  const sz = sizeOf(L, cv.width, cv.height);
+  const wpx = Math.max(24, (sz.dw / cv.width) * b.sx);
+  const hpx = Math.max(20, (Math.abs(sz.dh) / cv.height) * b.sy);
+  const c = toScreen(L.x, L.y);
+  const ta = TEDIT.ta;
+  ta.style.left = (c.clientX - wpx/2) + 'px';
+  ta.style.top  = (c.clientY - hpx/2) + 'px';
+  ta.style.width = wpx + 'px';
+  ta.style.height = hpx + 'px';
+  ta.style.transform = 'rotate(' + (L.rot || 0) + 'deg)';
+  /* カーソルの高さを字の大きさに合わせる（打つ位置が見た目とずれない） */
+  const fs = Math.max(8, (L.text && L.text.size ? L.text.size : 100) * hpx / Math.max(1, chOf(L)));
+  ta.style.fontSize = fs.toFixed(1) + 'px';
+  ta.style.lineHeight = ((L.text && L.text.lead ? L.text.lead : 1.2)).toFixed(2);
+}
+function closeBoardText(){
+  if(!TEDIT) return;
+  const ta = TEDIT.ta;
+  TEDIT = null;
+  if(ta && ta.parentNode) ta.parentNode.removeChild(ta);
+}
+function openBoardText(i){
+  const L = LAYERS[i];
+  if(!L || L.kind !== 'text' || !L.text) return false;
+  if(SEL !== i){ setSel(i, false); syncSel(); buildList(); render(); }
+  closeBoardText();
+  const ta = document.createElement('textarea');
+  ta.id = 'boardText';
+  ta.value = L.text.str || '';
+  ta.spellcheck = false;
+  ta.setAttribute('aria-label', '盤の上で字を打つ');
+  document.body.appendChild(ta);
+  TEDIT = { L, ta };
+  placeBoardText();
+  ta.focus();
+  ta.setSelectionRange(0, ta.value.length);
+  /* ⭐ 打った字は【文字の段の入力欄】へ流す＝絵を作り直す道は1本のまま */
+  ta.addEventListener('input', () => {
+    const t = el('t_str'); if(!t) return;
+    t.value = ta.value;
+    t.dispatchEvent(new Event('input', { bubbles:true }));
+    setTimeout(placeBoardText, 0);
+  });
+  ta.addEventListener('keydown', e => {
+    e.stopPropagation();                       /* ⚠️ 盤のショートカットに取られない */
+    if(e.key === 'Escape'){ e.preventDefault(); closeBoardText(); }
+    /* ⌘Enter＝打ち終わり（Enter は改行のまま） */
+    if(e.key === 'Enter' && (e.metaKey || e.ctrlKey)){ e.preventDefault(); closeBoardText(); }
+  });
+  ta.addEventListener('blur', () => setTimeout(closeBoardText, 120));
+  stat('盤の上で字を打てます（Esc か ⌘Enter で終わり／右の［文字］でも直せます）');
+  return true;
+}
 function boardDouble(i){
   /* ⚠️ 切り抜き・その素材だけの画面では【盤ぜんぶ＝その素材】＝当たり判定を使わない */
   if(cutView() && !SUBOF) i = SEL;
   const L = LAYERS[i];
   if(!L) return false;
   if(L.kind === 'text'){
-    if(SEL !== i){ setSel(i, false); syncSel(); buildList(); render(); }
-    return focusTextEdit();
+    /* ⭐ 盤の上で打つ（できないときだけ右の段へ送る） */
+    return openBoardText(i) || focusTextEdit();
   }
   if(cutView() && !SUBOF) return false;       /* もう中に居る＝これ以上は入らない */
   openEditor(i);                              /* ⚠️ 案内は openEditor が言う（2か所で言わない） */
@@ -7498,6 +7619,26 @@ function boardDouble(i){
 function openEditor(i){
   const L = LAYERS[i]; if(!L || !L.img || L.kind === 'adj') return;
   setSel(i, false); syncSel(); buildList();
+  /* ══🔴🔴 中の紙を持てない素材（字・図形・雲）は【中に入らない】══ 2026-09-01
+     木下＝「図形も詳細画面に入っているのに、ボード画面と同じものが掲載されている」
+     　　　「図形詳細では、ボード画面全体がうごき、図形自体の大きさを選んで移動できない」
+     ＝入っても【盤ぜんぶ＝その素材】になるだけで、一覧は版面のまま・掴んで動かせない＝嘘。
+     ⚠️ 字と図形は「打ち直す・作り直す」道があるので、中の紙（sub）とは両立しない
+       （中に写した絵は、字を変えても更新できない）＝だから中を持たせない。
+     ⭐ 代わりに【その素材の段へ送って光らせる】。版面のまま、掴んで動かせて、つまみも全部ある。
+     → feedback_dont_teleport_the_screen_when_a_tool_is_picked ／ feedback_a_panel_hidden_by_mode_looks_missing */
+  if(!canSub(L)){
+    const g0 = L.kind === 'text'  ? ['textBox',  '文字']
+             : L.kind === 'shape' ? ['shapeBox', '図形']
+             : L.kind === 'render'? ['renderBox','雲・光'] : null;
+    if(g0){
+      if(typeof focusGrp === 'function') focusGrp(g0[0]);
+      if(L.kind === 'text'){ focusTextEdit(); return; }
+      stat('「' + L.name + '」は版面のまま直せます ──［' + g0[1] + '］の段'
+         + '（盤で掴んで動かす・大きさも変えられます）');
+      return;
+    }
+  }
   SHEETPATH = false; el('k_sheetpath').checked = false;
   /* ⭐⭐ 中に【その素材だけのアートボード】を作って、そこへ入る（2026-08-31）
      ＝レイヤーパネルも その画像の中のレイヤーに切り替わる。
@@ -8086,6 +8227,12 @@ el('sh_gang').addEventListener('input', e => {
   shapeOf(L).gang = +e.target.value; el('o_shgang').value = e.target.value + '°';
   rebuildShape(L); touching(); renderSoon();
 });
+/* ⭐ 線の位置（中央・内側・外側）＝形を作り直すだけ（値の持ち主は L.shape ひとつ） */
+document.querySelectorAll('#s_shalign button').forEach(bt => bt.onclick = () => {
+  const L = LAYERS[SEL]; if(!L || L.kind !== 'shape') return;
+  hist(); shapeOf(L).align = bt.dataset.v; rebuildShape(L); syncShape(); render();
+  stat('線の位置を「' + bt.textContent + '」にした');
+});
 [['sh_fillon','fillOn'], ['sh_strokeon','strokeOn'], ['sh_grad','grad'],
  ['sh_gfade','gfade']].forEach(([id, key]) => {
   el(id).addEventListener('change', e => {
@@ -8110,6 +8257,8 @@ function syncShape(){
   el('sh_gang').value = q.gang == null ? 90 : q.gang;
   el('o_shgang').value = (q.gang == null ? 90 : q.gang) + '°';
   el('shGradUI').classList.toggle('hide', !q.grad);
+  document.querySelectorAll('#s_shalign button')
+    .forEach(x => x.classList.toggle('on', x.dataset.v === (q.align || 'center')));
   /* ⭐ 触れるのに効かないつまみは出さない（角の丸みは長方形だけ・角の数は多角形と星だけ） */
   const show = (id, on2) => { const e = el(id); if(!e) return;
     e.style.display = on2 ? '' : 'none';
@@ -11304,7 +11453,8 @@ const OPT = {
      バーは狭いので、後ろほど はみ出して見えなくなる。 */
   text:  { 名:'文字',     ids:['t_font','t_fillon','t_color:字の色',
                               't_strokeon','t_stroke:線の色','t_size','t_weight','t_align'] },
-  shape: { 名:'図形',     ids:['s_shape','sh_fill:塗りの色','sh_strokeon','sh_sw'] },
+  shape: { 名:'図形',     ids:['s_shape','sh_fillon','sh_fill:塗りの色',
+                              'sh_strokeon','sh_stroke:線の色','sh_sw','s_shalign'] },
 };
 let OPTHOME = [];      /* 借りてきた物の【元の場所】 */
 function optClear(){
@@ -11313,6 +11463,7 @@ function optClear(){
     const o = OPTHOME[i];
     if(o.next && o.next.parentNode === o.parent) o.parent.insertBefore(o.el, o.next);
     else o.parent.appendChild(o.el);
+    if(o.mark && o.mark.parentNode) o.mark.parentNode.removeChild(o.mark);
   }
   OPTHOME = [];
   el('optbar').querySelector('.oin').innerHTML = '';
@@ -11342,7 +11493,16 @@ function optFill(tool){
     if(!node || !node.parentNode) return;
     if(lab){ const s = document.createElement('span'); s.className = 'ol'; s.textContent = lab;
       box.appendChild(s); }
-    OPTHOME.push({ el:node, parent:node.parentNode, next:node.nextSibling });
+    /* 🔴🔴 2026-09-01・木下は【線の色】を塗りの色だと思って触っていた。
+       ＝借りて持っていくと、右のパネルには**名前だけ・入力だけ**が残って読めなくなる。
+       ⭐ 借りた場所に「上のバーにあります」を置く＝パネルに穴が空かない。
+       ⚠️ 目印はその場で作る（返すものは増やさない・optClear で消える）。 */
+    const mark = document.createElement('div');
+    mark.className = 'moved';
+    mark.textContent = '↑ ' + (lab || (node.textContent || '').trim().slice(0, 12) || 'この設定')
+                     + ' は上のバーにあります';
+    node.parentNode.insertBefore(mark, node);
+    OPTHOME.push({ el:node, parent:node.parentNode, next:node.nextSibling, mark });
     box.appendChild(node);
     got++;
   });
