@@ -358,7 +358,7 @@ const grab = (i) => p.evaluate((i) => {
     if (o.bgimg) {
       if (!o.children.length) { o.kind = 'image'; o.src = o.bgimg; o.fit = o.bgsize === 'contain' ? 'contain' : 'cover'; }
       else o.children.unshift({                       // いちばん下に敷く
-        id: ++uid, tag: 'bg', cls: '', 疑似: true, kind: 'image',
+        id: ++uid, tag: 'bg', cls: '', 疑似: true, kind: 'image', 背景: true,
         x: o.x, y: o.y, w: o.w, h: o.h, pos: 'absolute',
         src: o.bgimg, fit: o.bgsize === 'contain' ? 'contain' : 'cover', children: []
       });
@@ -511,6 +511,7 @@ function toNode(n, parentBgKnown) {
     }
     const o = { type: 'image', name: (n.cls || n.tag || 'photo').slice(0, 24), w: Math.round(n.w), h: Math.round(n.h),
       src: n.src, scaleMode: n.fit === 'contain' ? 'FIT' : 'FILL' };
+    if (n.背景) o.__bg = true;      // ⭐ いちばん下に敷いた背景。重なり判定の相手にしない
     if (n.cands && n.cands.length > 1) o.__cands = n.cands;
     if (n.radius) o.radius = n.radius;
     o.__w = o.w; o.__h = o.h; return mark(o);
@@ -758,8 +759,16 @@ async function fillBlanks(n, offX, offY) {
 //    重なりは「どちらが上か」「巨大な見出しの実寸」まで合わせないと必ずズレるので、見た目を焼く。
 function overlapsPhoto(root) {
   const texts = [], imgs = [];
+  // ⭐ 帯の大半を覆う写真は【実質の背景】。その上に文字が乗るのは普通の作り
+  const secArea = Math.max(1, (root.w || 0) * (root.h || 0));
   const w = n => {
-    const isImg = n.type === 'image' || (n.type === 'svg' && /<image/.test(n.svg || ''));
+    // 🔴 いちばん下に敷いた背景写真を「重なりの相手」にすると、
+    //    その上の文字は全部「写真に乗っている」ことになり、帯が丸ごとスクショになる。
+    //    → スクショに焼かれた文字の上に、さらに文字レイヤーが乗って【二重に見える】
+    //    ⭐ 背景の上に文字が乗るのは普通のこと。数えない
+    const isPhoto = n.type === 'image' || (n.type === 'svg' && /<image/.test(n.svg || ''));
+    const big = isPhoto && ((n.__w ?? n.w ?? 0) * (n.__h ?? n.h ?? 0)) > secArea * 0.6;
+    const isImg = isPhoto && !n.__bg && !big;
     if (n.type === 'text') texts.push(n);
     else if (isImg) imgs.push(n);
     (n.children || []).forEach(w);
@@ -782,6 +791,10 @@ function overlapsPhoto(root) {
   //    実測：ある採用サイトで 画面内41枚あった写真が3枚になった（6セクションがスクショ化）。
   // ⭐ スクショにするのは【絵として作られた帯】だけ＝文字の半分以上が写真に乗っているとき。
   //    数個の重なりは、その文字を絶対配置に置けば構造のまま建つ（KV と同じ仕組みが既にある）。
+  if (process.env.MS_DEBUG_OVERLAP) {
+    console.log(`   [重なり] 文字${texts.length} 写真${imgs.length} 乗っている文字${hit}`);
+    imgs.forEach(i => console.log(`      写真: ${String(i.name).slice(0,20)} @${i.__mx},${i.__my} ${i.__w}x${i.__h} bg=${!!i.__bg}`));
+  }
   return texts.length > 0 && hit >= Math.max(3, Math.ceil(texts.length * 0.5));
 }
 
@@ -969,6 +982,19 @@ for (const i of targets) {
   const kasanari = !isKV && overlapsPhoto(root);   // 文字が写真の上に乗っている＝構造では解けない
   if (isKV || kasanari) { await kvFlatten(root, box.x, box.y); if (kasanari) stats.kasanari++; }
   else { await hugeSvgToShot(root, box.x, box.y); await fillBlanks(root, box.x, box.y); }
+  // 🔴 帯の大半を覆う写真＝背景。DOM の並びでは後ろ（＝前面）に来ることがあり、
+  //    Figma では文字を覆い隠す（元サイトは z-index や position で文字が上に来ている）。
+  //    ⭐ 背景として敷き直す＝いちばん下へ
+  {
+    const A = Math.max(1, (root.w || 0) * (root.h || 0));
+    const ks = root.children || [];
+    const big = i => {
+      const c = ks[i]; if (!c || c.x == null) return false;
+      const isPh = c.type === 'image' || (c.type === 'svg' && /<image/.test(c.svg || ''));
+      return isPh && ((c.__w ?? c.w ?? 0) * (c.__h ?? c.h ?? 0)) > A * 0.6;
+    };
+    for (let k = ks.length - 1; k > 0; k--) if (big(k)) { const [b] = ks.splice(k, 1); ks.unshift(b); }
+  }
   const v = verify(root);          // ⭐ 出す前に、実測とズレていないか測る
   strip(root);
 
