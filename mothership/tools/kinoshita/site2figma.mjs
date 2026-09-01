@@ -47,7 +47,11 @@ const JP = /[ぁ-んァ-ヶ一-龠]|明朝|ゴシック|丸ゴ|リュウミン|�
 function mapFont(family) {
   const f = String(family || '').replace(/["']/g, '');
   const first = f.split(',')[0].trim();
-  const mincho = /明朝|Mincho|リュウミン|Ryumin|Serif|游明朝|Yu Mincho|Hiragino Mincho/i.test(f);
+  // 🔴🔴 明朝かどうかは【最初の1つ】で決める（ブラウザも最初に見つかった物を使う）。
+  //    リスト全体を見ると "sans-serif" や "Noto Sans Serif JP" の serif に当たって
+  //    和文ゴシックが丸ごと明朝になる（実測：2サイト・121箇所が Noto Serif JP で建っていた）
+  const mincho = /明朝|Mincho|リュウミン|Ryumin|Garamond|Georgia|Times/i.test(first)
+              || (/serif/i.test(first) && !/sans/i.test(first));
   if (/Cormorant/i.test(f)) return 'Cormorant Garamond';
   if (/Playfair/i.test(f)) return 'Playfair Display';
   if (JP.test(first) || JP.test(f)) return mincho ? 'Noto Serif JP' : 'Noto Sans JP';
@@ -177,12 +181,51 @@ const grab = (i) => p.evaluate((i) => {
     return (s.backgroundColor && !/rgba\(0, 0, 0, 0\)|transparent/.test(s.backgroundColor))
         || parseFloat(s.borderTopWidth) > 0 || parseFloat(s.borderLeftWidth) > 0
         || parseFloat(s.borderTopLeftRadius) > 0; };
+  // 🔴 塗りも枠も無いリンクが横に並ぶ行（ナビなど）は boxy で拾えず、葉のまま
+  //    1つの文字に潰れる（実測：ナビ6項目が「TOP基本ルール募集要件…」の1ノードになっていた）
+  //    ⭐ 子どうしが横に離れて並んでいる＝別々の要素。葉にしない。
+  //    （<br> 入りの見出しや、文中の <span> は隙間が無いので今までどおり1つの文字のまま）
+  const spread = el => {
+    const kids = [...el.children];
+    if (!kids.length) return false;
+    // ⭐ 親が flex / grid ＝ 子は「並べられた別々の要素」。文の中の強調とは違う
+    const d = getComputedStyle(el).display;
+    if (kids.length >= 2 && /^(inline-)?(flex|grid)$/.test(d)) return true;
+    // ⭐ <b>…</b><br>ふつうの文 のように【行が分かれていて、片方だけ書式が違う】ものは
+    //    1つの文字にすると太字が失われる（実測：フッターの社名が太字でなくなった）。
+    //    ⚠️ 順番が大事 ── BR 以外が1つでもここに来る（先に「2つ未満」で弾くと届かない）。
+    //    ⚠️ <br> だけの見出し（<h1>あ<br>い</h1>）は今までどおり1つの文字のまま
+    if (kids.some(c => c.tagName === 'BR') && kids.some(c => c.tagName !== 'BR')) return true;
+    const ks = kids.filter(c => c.tagName !== 'BR');
+    if (ks.length < 2) return false;
+    const rs = ks.map(c => c.getBoundingClientRect()).filter(r => r.width > 0 && r.height > 0);
+    if (rs.length < 2) return false;
+    rs.sort((a, b) => a.left - b.left);
+    // ⚠️ 4px だと拾えない。ナビの隙間は実測 2px だった
+    for (let i = 1; i < rs.length; i++) if (rs[i].left - rs[i - 1].right > 1.5) return true;
+    return false;
+  };
+  // 🔴🔴 いちばん大事な条件 ── 1つの文字にしてよいのは【全部同じ書式】のときだけ。
+  //    <span 太字・青>11:00</span><span 小さい灰>内容</span> を1つにすると
+  //    級数・太さ・色が親の既定に潰れる（実測：14箇所が 16px/400/#222222 になっていた）
+  const sameStyle = el => {
+    const pc = getComputedStyle(el);
+    return [...el.children].filter(c => c.tagName !== 'BR').every(c => {
+      const cc = getComputedStyle(c);
+      return cc.fontSize === pc.fontSize && cc.fontWeight === pc.fontWeight
+          && cc.color === pc.color && cc.fontFamily === pc.fontFamily
+          && cc.letterSpacing === pc.letterSpacing;
+    });
+  };
   const isLeafText = el => el.childElementCount === 0
-    || [...el.children].every(c => LEAFISH.has(c.tagName) && c.childElementCount === 0 && !boxy(c));
+    || ([...el.children].every(c => LEAFISH.has(c.tagName) && c.childElementCount === 0 && !boxy(c))
+        && !spread(el) && sameStyle(el));
   const txt = el => {
     let s = '';
     const rec = n => {
-      if (n.nodeType === 3) s += n.nodeValue;
+      // 🔴 HTML ではソース中の改行は【空白】。そのまま足すと <br> と二重になり
+      //    Figma で行間が2倍に開く（実測：3行の本文が \n\n 区切りになっていた）
+      if (n.nodeType === 3) s += n.nodeValue.replace(/\s*\n\s*/g, ' ');
       else if (n.tagName === 'BR') s += (getComputedStyle(n).display === 'none' ? '' : '\n');
       else [...n.childNodes].forEach(rec);
     };
@@ -198,6 +241,22 @@ const grab = (i) => p.evaluate((i) => {
       const c = getComputedStyle(n).backgroundColor;
       if (c && !/rgba\(0, 0, 0, 0\)|transparent/.test(c)) return c; n = n.parentElement; } return null; };
   const urlOf = s => { const m = String(s).match(/url\(["']?(.+?)["']?\)/); return m ? m[1] : null; };
+  // 🔴 背景が linear-gradient のとき backgroundColor は transparent。
+  //    親をさかのぼって白を拾ってしまい、帯の色味が丸ごと消える（実測：KVの水色→白のグラデが白一色に）
+  const gradOf = (v) => {
+    const m = String(v || '').match(/linear-gradient\((.+)\)$/);
+    if (!m) return null;
+    const parts = m[1].split(/,(?![^(]*\))/).map(x => x.trim());
+    let angle = 180;
+    if (/deg$/.test(parts[0])) { angle = parseFloat(parts[0]); parts.shift(); }
+    else if (/^to /.test(parts[0])) {
+      const d = parts.shift();
+      angle = /top/.test(d) ? 0 : /bottom/.test(d) ? 180 : /left/.test(d) ? 270 : 90;
+    }
+    const stops = parts.map(x => (x.match(/rgba?\([^)]+\)|#[0-9a-fA-F]{3,8}/) || [])[0]).filter(Boolean);
+    if (stops.length < 2) return null;
+    return { stops, angle };
+  };
   const tmat = t => { const m = String(t).match(/matrix\(([^)]+)\)/); if (!m) return [0, 0];
     const a = m[1].split(',').map(parseFloat); return [a[4] || 0, a[5] || 0]; };
 
@@ -216,6 +275,7 @@ const grab = (i) => p.evaluate((i) => {
       pad: [px(c.paddingTop), px(c.paddingRight), px(c.paddingBottom), px(c.paddingLeft)],
       bg: /rgba\(0, 0, 0, 0\)/.test(c.backgroundColor) ? null : c.backgroundColor,
       bgimg: urlOf(c.backgroundImage), bgsize: c.backgroundSize,
+      bggrad: gradOf(c.backgroundImage),
       radius: px(c.borderTopLeftRadius),
       border: px(c.borderTopWidth) > 0 ? { w: px(c.borderTopWidth), c: c.borderTopColor } : null,
       shadow: c.boxShadow !== 'none' ? c.boxShadow : null,
@@ -487,6 +547,11 @@ function frameName(n) {
 function frameNode(n) {
   const o = { type: 'frame', name: frameName(n), w: Math.round(n.w), h: Math.round(n.h) };
   if (n.bg) { const f = hex(n.bg); if (f) o.fill = f; }
+  // ⭐ グラデーションは backgroundColor より優先（そちらは transparent になっている）
+  if (n.bggrad) {
+    const cols = n.bggrad.stops.map(c => (/^#/.test(c) ? c : hex(c))).filter(Boolean);
+    if (cols.length >= 2) o.fill = { gradient: cols, angle: n.bggrad.angle };
+  }
   if (n.radius) o.radius = n.radius;
   if (n.border) { const s = hex(n.border.c); if (s) { o.stroke = s; o.strokeWidth = n.border.w; } }
   if (n.opacity != null) o.opacity = n.opacity;
