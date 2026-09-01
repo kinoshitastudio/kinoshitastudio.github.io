@@ -336,7 +336,9 @@ const grab = (i) => p.evaluate((i) => {
     const rec = n => { if (t) return; if (n.kind === 'text' && /^h[1-6]$/.test(n.tag)) t = n.text; (n.children || []).forEach(rec); };
     rec(tree); if (!t) { const rec2 = n => { if (t) return; if (n.kind === 'text') t = n.text; (n.children || []).forEach(rec2); }; rec2(tree); }
     return t || ''; })();
-  return { tree, bg: KV ? (getComputedStyle(document.body).backgroundColor || null) : bgUp(sec), head: head.replace(/\s+/g, ' ').trim() };
+  // ⭐ セクション自身が画面のどこに・どれだけの幅で置かれているか（中央寄せの帯を見抜くのに要る）
+  const secBox = { x: px(S.left), w: px(S.width) };
+  return { tree, secBox, bg: KV ? (getComputedStyle(document.body).backgroundColor || null) : bgUp(sec), head: head.replace(/\s+/g, ' ').trim() };
 }, i);
 
 /* ============================================================
@@ -384,7 +386,7 @@ function dedupImages(kids) {
   return out;
 }
 
-const stats = { al: 0, abs: 0, band: 0, svg: 0, swap: 0, blank: 0, shot: 0, kasanari: 0, heavysvg: 0, local: 0 };
+const stats = { al: 0, abs: 0, band: 0, svg: 0, swap: 0, blank: 0, shot: 0, kasanari: 0, heavysvg: 0, local: 0, hankei: 0 };
 
 const r1 = v => Math.round(v * 10) / 10;
 
@@ -817,7 +819,7 @@ function verify(root) {
 const done = [];
 const targets = [-1, ...secs.map((_, i) => i)];      // ⭐ -1 = KV を 00 として先に
 for (const i of targets) {
-  const { tree, bg, head } = await grab(i);
+  const { tree, secBox, bg, head } = await grab(i);
   if (i === -1 && (!tree.children || !tree.children.length)) { console.log('（KV は見つからなかった）\n'); continue; }
   try {
     if (i === -1) await p.screenshot({ path: path.join(OUT, 'sec_kv.png'), captureBeyondViewport: true,
@@ -846,6 +848,19 @@ for (const i of targets) {
     if (c.type === 'frame' && c.x == null && !c.fill && !c.stroke && !c.radius && c.w === root.w && c.h === root.h) {
       root.layout = c.layout; root.children = c.children; root.clip = c.clip || root.clip;
     }
+  }
+  // 🔴🔴 セクション自身が中央寄せ（max-width + margin auto）だと、実幅が画面より狭い。
+  //    その中身の位置から取った padding は「セクションの左端」が基準なので左右が 0 になり、
+  //    root.w だけ W に書き替えると【中身1128 ＋ padding0】の矛盾が残る。
+  //    → Figma は counterAxis を hug で描いて中身幅に縮む（実測：1440と書いたのに 1185 / 1304 で出た）。
+  // ⭐ 画面の端からセクションの端までを padding に足す＝どの枚も本当に W 幅で建つ。
+  if (secBox && i !== -1 && root.layout && Math.round(secBox.w) < W) {
+    const padL = Math.max(0, Math.round(secBox.x));
+    const padR = Math.max(0, Math.round(W - secBox.x - secBox.w));
+    const P = root.layout.padding;
+    if (P && typeof P === 'object') { P.left = (P.left || 0) + padL; P.right = (P.right || 0) + padR; }
+    else root.layout.padding = { top: P || 0, right: (P || 0) + padR, bottom: P || 0, left: (P || 0) + padL };
+    stats.hankei++;
   }
 
   await pickImages(root);          // 同じ場所の候補から実物を選ぶ
@@ -881,6 +896,6 @@ function count(n, a = { t: 0, lay: 0, abs: 0, img: 0 }) {
 
 const T = done.reduce((a, c) => ({ t: a.t + c.t, lay: a.lay + c.lay, abs: a.abs + c.abs, img: a.img + c.img }), { t: 0, lay: 0, abs: 0, img: 0 });
 console.log(`\n合計 ${done.length}枚 / ノード ${T.t} / オートレイアウト ${T.lay} / 絶対配置 ${T.abs}（重ねる所）/ 写真 ${T.img}`);
-console.log(`束ねた回数 ${stats.band} ── gap が2種類ある所を入れ子にした / svgを取り込んだ ${stats.svg}件 / 写真を実物に差し替えた ${stats.swap}件 / 空だった写真 ${stats.blank}件 / スクショを敷いた ${stats.shot}件（うち 重ね ${stats.kasanari}枚）/ 重いsvgを画像に ${stats.heavysvg}件 / 手元の写真を refs/img に ${stats.local}件`);
+console.log(`束ねた回数 ${stats.band} ── gap が2種類ある所を入れ子にした / svgを取り込んだ ${stats.svg}件 / 写真を実物に差し替えた ${stats.swap}件 / 空だった写真 ${stats.blank}件 / スクショを敷いた ${stats.shot}件（うち 重ね ${stats.kasanari}枚）/ 重いsvgを画像に ${stats.heavysvg}件 / 手元の写真を refs/img に ${stats.local}件 / 中央寄せの帯を画面幅に直した ${stats.hankei}件`);
 console.log(`\n→ ${LIB}`);
 console.log(`⭐ Figma に出す: cp "library/<名前>.json" mothership.json`);
