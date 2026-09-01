@@ -1706,6 +1706,8 @@
     <div class="row"><span class="n">色</span></div>
     <input type="color" id="c_brush" value="#ffffff">
     <div class="knob"><span class="n">種（振り直す）</span><input class="num" type="number" id="n_r_brseed"><input type="range" id="r_brseed" min="0" max="999" step="1" value="7"><output id="o_brseed" hidden>7</output></div>
+    <div class="note hide" id="brushSay"></div>
+    <button class="btn hide" id="b_bradd" style="width:100%">この筆で描き足す（同じ層に）</button>
     <label class="chk">1回のひと筆で【新しいレイヤー】を作る<input type="checkbox" id="k_brnew" checked></label>
     <div class="note">盤を<b>なぞる</b>と描けます。描いたものは<b>置いた素材と同じ扱い</b>なので、
       空気・重ね方・エフェクト・切り抜きが そのまま効きます。<br>
@@ -3199,18 +3201,18 @@ const FONTS = [
        canvas が黙って別の書体に差し替えるので「変わらない」としか見えなかった。
      ⚠️ これは画面から測れない（代替書体どうしを比べることになる）＝表で持つ。 */
   ['CHU, sans-serif',        'CHU Modular（欧文・可変）', false],
-  ['CHUJP, sans-serif',      'CHU Modular JP（かな込み・可変）', true],
+  ['CHUJP, sans-serif',      'CHU Modular JP（かな込み・漢字なし）', 'kana'],
   ['CHURound, sans-serif',   'CHU 丸（欧文）', false],
   ['CHUSquare, sans-serif',  'CHU 角（欧文）', false],
   ['CHUHex, sans-serif',     'CHU 六角（欧文）', false],
   ['CHUDiamond, sans-serif', 'CHU 菱（欧文）', false],
   ['CHUWide, sans-serif',    'CHU 幅広（欧文）', false],
   ['UWASA, sans-serif',      'UWASA（崩して鋳る・欧文）', false],
-  ['UWASAJP, sans-serif',    'UWASA JP（かな込み）', true],
+  ['UWASAJP, sans-serif',    'UWASA JP（かな込み・漢字なし）', 'kana'],
   ['HON, sans-serif',        'HON（骨から鋳る・欧文）', false],
   /* ⭐ 2026-09-01・木下＝「KETAもフォント追加されたから 利用できるようにして」
      ＝桁KETA の升目から鋳った4つ目のリリース（typography.html の 04） */
-  ['KETA, sans-serif',       'KETA（升目から鋳る・欧文）', false],
+  ['KETA, sans-serif',       'KETA（升目から鋳る・かな込み・漢字なし）', 'kana'],
   ['"Hiragino Mincho ProN","Yu Mincho",serif',                    '明朝'],
   ['ui-monospace,"SF Mono",Menlo,monospace',                      '等幅'],
   ['"Helvetica Neue",Helvetica,Arial,sans-serif',                 'Helvetica'],
@@ -3318,12 +3320,18 @@ function syncFontWarn(){
   const nm = (FONTS.find(f => f[0] === t.font) || [null, t.font])[1];
   wn.classList.toggle('hide', !bad);
   if(!bad) return;
-  /* かなや漢字が抜けているなら、同じ仲間の「かな込み」を勧める */
+  const row = FONTS.find(f => f[0] === t.font) || [];
   const head = nm.split('（')[0].trim().split(' ')[0];
-  const jp = FONTS.find(f => f[2] === true && f[1].indexOf(head) === 0);
-  wn.innerHTML = '⚠️ <b>' + nm + '</b> はこの字を持っていません（' + bad.slice(0, 6) + '）。<br>'
-    + 'いまは別の書体で描かれています'
-    + (jp ? '。<b>' + jp[1] + '</b> を選ぶと出ます。' : '（かな込みの書体を選んでください）。');
+  const jp = FONTS.find(f => f[2] === 'kana' && f[1].indexOf(head) === 0);
+  const kanji = /[\u3400-\u9fff]/.test(bad);
+  wn.innerHTML = '⚠️ <b>' + nm + '</b> はこの字を持っていません（' + bad.slice(0, 6) + '）'
+    + '＝いまは別の書体で描かれています。<br>'
+    + (row[2] === 'kana' || !jp
+        ? (kanji ? '🔴 <b>木下の書体には漢字がまだ1文字も入っていません</b>（かな・カナ・欧文だけ）。'
+                 + '漢字を出すには 明朝・ゴシックなどを選ぶか、鋳CHU で漢字を足す必要があります。'
+                 : 'かな込みの書体を選んでください。')
+        : '<b>' + jp[1] + '</b> を選ぶと かな は出ます'
+          + (kanji ? '（<b>漢字はまだどの書体にも入っていません</b>）。' : '。'));
 }
 function fontMissing(fam, str){
   /* ⚠️ 「その書体が この字を持っているか」は画面から測れない
@@ -3333,11 +3341,15 @@ function fontMissing(fam, str){
   const s2 = String(str || '');
   if(!s2) return '';
   const row = FONTS.find(f => f[0] === fam);
-  if(!row || row[2] !== false) return '';        /* 表に無い／かな込み＝何も言わない */
-  /* かな・カタカナ・漢字が入っているか */
+  if(!row || row[2] == null) return '';          /* 表に無い＝環境の書体＝何も言わない */
+  /* ⭐ 木下が鋳た書体は【漢字を1文字も持っていない】（2026-09-01に fontTools で数えた）
+     ・false ＝ 欧文だけ（かなも無い）  ・'kana' ＝ 欧文＋かな・カナ（漢字は無い）
+     🔴 だから「UWASA を選んだのに変わらない」は漢字を打っているとき。 */
+  const kana = row[2] === 'kana';
+  const re = kana ? /[\u3400-\u9fff]/ : /[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]/;
   const bad = [];
   for(const ch of s2){
-    if(/[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]/.test(ch) && bad.indexOf(ch) < 0) bad.push(ch);
+    if(re.test(ch) && bad.indexOf(ch) < 0) bad.push(ch);
     if(bad.length >= 8) break;
   }
   return bad.join('');
@@ -6131,13 +6143,20 @@ const V = { x:0, y:0, z:1 };
 let COARSE = 0, coarseT = 0, rafId = 0;
 function renderSoon(){ if(rafId) return; rafId = requestAnimationFrame(() => { rafId = 0; render(); }); }
 /* ⭐ 触っている間は小さく描く（出す絵は1画素も変わらない＝離したら焼き直す） */
+let OVM = 0;              /* 印の板が版面の外へ持つ余白（版面の画素） */
 function touching(){ COARSE = 1; clearTimeout(coarseT);
   coarseT = setTimeout(() => { COARSE = 0; render(); }, 240); }
 function render(){
   const f = viewSheet();
   const k = Math.min(1, (COARSE ? 700 : 1500) / Math.max(f.w, f.h));
   const W = Math.max(16, Math.round(f.w * k)), H = Math.max(16, Math.round(f.h * k));
-  if(cv.width !== W || cv.height !== H){ cv.width = W; cv.height = H; ov.width = W; ov.height = H; }
+  if(cv.width !== W || cv.height !== H){ cv.width = W; cv.height = H;
+    /* ⭐⭐ 印の板は【版面より一回り大きく】持つ ── 版面からはみ出した素材でも
+       枠と四隅と「◯×◯」が見える（2026-09-01・木下＝「このフレームよりも大きい
+       オブジェクトになったとしてもボード外も選択範囲は見れるようにして」）。 */
+    OVM = Math.round(Math.max(W, H) * 0.28);
+    ov.width = W + OVM * 2; ov.height = H + OVM * 2;
+    applyView(); }
   const t0 = performance.now();
   const r = cutView() ? paintCut(g, W, H) : paint(g, W, H, P.nobg);
   const ms = Math.round(performance.now() - t0);
@@ -6232,7 +6251,9 @@ function selPreview(L){
 }
 function drawOverlay(W, H){
   og.setTransform(1,0,0,1,0,0);
-  og.clearRect(0, 0, W, H);
+  og.clearRect(0, 0, ov.width, ov.height);
+  /* ⭐ 版面の (0,0) を板の (OVM,OVM) に置く＝以降は今までどおり版面の座標で描ける */
+  og.setTransform(1,0,0,1, OVM, OVM);
   const R = Math.max(9, W/64);
   /* ⭐ 空気に効くつまみを触っている＝版面ぜんぶが光る
      ⭐⭐ 背景（紙の地）を選んだときも【まったく同じ枠】で光らせる＝式は1本
@@ -6767,8 +6788,12 @@ function drawOverlay(W, H){
 function applyView(){
   const f = viewSheet();
   const k = (cv.width && f.w) ? (cv.width / f.w) : 1;
-  const t = 'translate(' + V.x + 'px,' + V.y + 'px) scale(' + (V.z / (k || 1)) + ')';
-  cv.style.transform = t; ov.style.transform = t;
+  const z2 = V.z / (k || 1);
+  const t = 'translate(' + V.x + 'px,' + V.y + 'px) scale(' + z2 + ')';
+  cv.style.transform = t;
+  /* ⭐ 印の板は OVM ぶん外へずらして重ねる（版面の位置はぴったり合う） */
+  ov.style.transform = 'translate(' + (V.x - OVM * z2) + 'px,'
+    + (V.y - OVM * z2) + 'px) scale(' + z2 + ')';
   el('z_val').textContent = Math.round(V.z * 100) + '%';
 }
 function fitView(){
@@ -7325,6 +7350,13 @@ function hitLayer(q){
   const up = e => { pts.delete(e.pointerId); if(pts.size < 2) pinch = null;
     /* ⭐⭐ 指を離した所で【図形ができる】（Figma と同じ）
        ⚠️ ほとんど動いていないときは、いままでどおりの大きさで真ん中に置く */
+    /* ⭐ ひと筆おわり＝紙を【絵のある所】まで切り詰める
+       ＝盤で掴んで動かせる板になる（版面いっぱいのままだと、どこを押しても
+         この筆を掴んでしまい、下の素材が選べない）。2026-09-01・木下の指摘。 */
+    if(grab && grab.what === 'brush' && BRUSHON && BRUSHL && BRUSHL.brush){
+      BRSTROKE = null;
+      brBake(BRUSHL); buildList(); syncSel(); render();
+    }
     if(grab && grab.what === 'shapedraw' && SHAPEBOX){
       const f = sheet();
       let w0 = Math.abs(SHAPEBOX.x1 - SHAPEBOX.x0) * f.w;
@@ -8519,7 +8551,9 @@ function syncPanelMode(){
      ⭐ 字と図形は【道具ではなく持ち物】＝選んでいれば版面でも出す（パスと同じ考え）。
      ⚠️ 版面のもの（空気・灯・馴染ませ）は今までどおり版面だけ＝芯は動かしていない。 */
   /* ⭐ 筆の段は【筆を持っている間】出す（道具の段＝持ち物ではない） */
-  { const bb = el('brushBox'); if(bb) bb.classList.toggle('hide', !BRUSHON); }
+  { const bb = el('brushBox');
+    if(bb) bb.classList.toggle('hide', !(BRUSHON || (L && L.brush)));
+    if(typeof syncBrush === 'function') syncBrush(); }
   el('textBox').classList.toggle('hide', !(L && L.kind === 'text'));
   el('shapeBox').classList.toggle('hide', !(L && L.kind === 'shape'));
   el('renderBox').classList.toggle('hide', !(L && L.kind === 'render'));
@@ -9495,6 +9529,106 @@ function brStamp(x2, cx, cy, r, col, ang){
   }
   x2.restore();
 }
+/* ⭐⭐⭐ 筆は【焼き込まない】── 打った点を覚えておいて、つまみを回したら描き直す。
+   （2026-09-01・木下＝「書いた後で太さや濃さなど変えても何も変わらない」）
+   ・strokes ＝ ひと筆ぶんの点の並び（版面の割合 0〜1・その層の紙の座標）
+   ・box ＝ いまの紙が版面のどこを切り取ったものか。動かしても大きさを変えても、
+     ここを見て【見た目の位置を保ったまま】紙だけ張り替える。 */
+let BRSTROKE = null;
+function brCopy(b2){
+  if(!b2) return null;
+  const o = Object.assign({}, b2);
+  o.box = b2.box ? Object.assign({}, b2.box) : { x:0, y:0, w:1, h:1 };
+  o.strokes = (b2.strokes || []).map(st => st.map(d => d.slice()));
+  return o;
+}
+function brBox(L){ return (L.brush && L.brush.box) || { x:0, y:0, w:1, h:1 }; }
+/* 盤の座標(0〜1) → その層の紙の座標(0〜1・版面いっぱいのとき等倍) */
+function brToSrc(L, u, v){
+  const ob = brBox(L), f = sheet();
+  const k = L.s / (ob.w || 1), ky = k * (L.sy == null ? 1 : L.sy);
+  let px = (u - L.x) * f.w, py = (v - L.y) * f.h;
+  const r = -(L.rot || 0) * Math.PI / 180;
+  if(r){ const c = Math.cos(r), s2 = Math.sin(r);
+    const nx = px * c - py * s2, ny = px * s2 + py * c; px = nx; py = ny; }
+  return { u: ob.x + ob.w / 2 + px / f.w / (k || 1),
+           v: ob.y + ob.h / 2 + py / f.h / (ky || 1) };
+}
+/* 紙を張り替える（見た目の位置と大きさは動かさない） */
+function brPlace(L, nb){
+  const f = sheet(), ob = L.brush.box;
+  if(!ob){ L.x = nb.x + nb.w / 2; L.y = nb.y + nb.h / 2; L.s = nb.w;
+           L.brush.box = nb; return; }
+  const k = L.s / (ob.w || 1), ky = k * (L.sy == null ? 1 : L.sy);
+  let dx = (nb.x + nb.w / 2 - (ob.x + ob.w / 2)) * f.w * k;
+  let dy = (nb.y + nb.h / 2 - (ob.y + ob.h / 2)) * f.h * ky;
+  const r = (L.rot || 0) * Math.PI / 180;
+  if(r){ const c = Math.cos(r), s2 = Math.sin(r);
+    const nx = dx * c - dy * s2, ny = dx * s2 + dy * c; dx = nx; dy = ny; }
+  L.x += dx / f.w; L.y += dy / f.h; L.s = nb.w * k;
+  L.brush.box = nb;
+}
+/* ⭐ いまのつまみで描き直す。full＝版面いっぱいの紙のまま（描き足す前用）。
+   ⚠️ 何も描かれていない紙は切り詰めない（大きさ 0 の板になる）。 */
+function brBake(L, full){
+  if(!L || !L.brush || !L.brush.strokes) return;
+  const f = sheet();
+  const c = document.createElement('canvas'); c.width = f.w; c.height = f.h;
+  const save = Object.assign({}, BR);
+  Object.assign(BR, { kind:L.brush.kind, size:L.brush.size, flow:L.brush.flow,
+    scat:L.brush.scat, grain:L.brush.grain, seed:L.brush.seed, col:L.brush.col });
+  for(const st of L.brush.strokes){
+    brSeed(L.brush.seed + 1);
+    for(const d of st) brStampAt(c, d[0], d[1], d[2], d[3]);
+  }
+  Object.assign(BR, save);
+  let out = c, nb = { x:0, y:0, w:1, h:1 };
+  if(!full){
+    const d2 = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+    for(let y = 0; y < c.height; y++){
+      const row = y * c.width;
+      for(let x = 0; x < c.width; x++){
+        if(d2[(row + x) * 4 + 3]){
+          if(x < x0) x0 = x; if(x > x1) x1 = x;
+          if(y < y0) y0 = y; if(y > y1) y1 = y; }
+      }
+    }
+    if(x1 >= 0){
+      const pad = 2;
+      x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad);
+      x1 = Math.min(c.width - 1, x1 + pad); y1 = Math.min(c.height - 1, y1 + pad);
+      const cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+      const c2 = document.createElement('canvas'); c2.width = cw; c2.height = ch;
+      c2.getContext('2d').drawImage(c, x0, y0, cw, ch, 0, 0, cw, ch);
+      out = c2; nb = { x:x0 / f.w, y:y0 / f.h, w:cw / f.w, h:ch / f.h };
+    }
+  }
+  try{
+    Object.defineProperty(out, 'naturalWidth',  { value:out.width,  configurable:true });
+    Object.defineProperty(out, 'naturalHeight', { value:out.height, configurable:true });
+    Object.defineProperty(out, 'src', { value:'', configurable:true });
+  }catch(_){}
+  L.img = out;
+  brPlace(L, nb);
+  L.mv = (L.mv || 0) + 1; L._key = ''; L._dist = null; L._mk = ''; L._c = null;
+}
+let BRQ = 0;
+function brSoon(L){
+  if(BRQ) return;
+  BRQ = requestAnimationFrame(() => { BRQ = 0;
+    if(LAYERS.indexOf(L) < 0) return;
+    brBake(L); buildList(); syncSel(); touching(); render(); });
+}
+/* ⭐ 筆の層を選んでいる間は、つまみを回すと【その絵】が描き直される */
+function brLive(){
+  const L = LAYERS[SEL];
+  if(BRUSHON || !L || !L.brush || !L.brush.strokes || !L.brush.strokes.length) return null;
+  Object.assign(L.brush, { kind:BR.kind, size:BR.size, flow:BR.flow, scat:BR.scat,
+    grain:BR.grain, seed:BR.seed, col:BR.col });
+  brSoon(L);
+  return L;
+}
 /* ひと筆＝新しいレイヤー（版面の実寸で持つ） */
 function brBegin(){
   const f = sheet();
@@ -9506,8 +9640,22 @@ function brBegin(){
   const KIND = { powder:'粉', fog:'霧', beam:'光の筋', splash:'しぶき',
                  bolt:'稲妻', shard:'破片', foam:'泡' };
   hist('筆で描く');
-  if(!el('k_brnew').checked && BRUSHL && LAYERS.indexOf(BRUSHL) >= 0) return BRUSHL;
+  if(!el('k_brnew').checked && BRUSHL && LAYERS.indexOf(BRUSHL) >= 0){
+    const L2 = BRUSHL;
+    if(!L2.brush) L2.brush = { kind:BR.kind, size:BR.size, flow:BR.flow, scat:BR.scat,
+      grain:BR.grain, seed:BR.seed, col:BR.col, strokes:[], box:{ x:0, y:0, w:1, h:1 } };
+    if(!L2.brush.strokes) L2.brush.strokes = [];
+    /* ⭐ 描き足す前に【版面いっぱいの紙】へ戻す（切り詰めた紙のままだと外へはみ出せない） */
+    if(L2.brush.strokes.length) brBake(L2, true);
+    BRSTROKE = []; L2.brush.strokes.push(BRSTROKE);
+    return L2;
+  }
+  /* ⭐ どの筆で描いたかを持たせる（2026-09-01・木下＝「粉、とか霧とか書いてあるけど
+     どこかにあるの？」＝筆で描いた層を選んでも筆の段が出ず、描き足せなかった） */
   const o = { id:UID++, kind:null, img:c, name:'筆：' + (KIND[BR.kind] || BR.kind),
+    brush:{ kind:BR.kind, size:BR.size, flow:BR.flow, scat:BR.scat,
+            grain:BR.grain, seed:BR.seed, col:BR.col,
+            strokes:[], box:{ x:0, y:0, w:1, h:1 } },
     x:.5, y:.5, s:1, sy:1, rot:0, flip:false,
     d:0, on:true, op:1, ord:UID, air:1, g:null, clip:false, blend:'source-over',
     keys:[], mCut:null, mKeep:null, adj:newAdj(), ed:newEd(), fx:newFx(),
@@ -9515,16 +9663,22 @@ function brBegin(){
     mask:null, mv:0, _dist:null, _mk:'', _c:null, _key:'' };
   LAYERS.push(o); SEL = LAYERS.length - 1; SELIDS = [o.id];
   BRUSHL = o;
+  BRSTROKE = []; o.brush.strokes.push(BRSTROKE);
   buildList(); syncSel();
   return o;
 }
+/* ⭐⭐ 打つのは【その層の紙】の上。盤で動かした後でも、指の下に来るように直す。 */
+function brStampAt(c, u, v, du, dv){
+  const f = sheet();
+  const x2 = c.getContext('2d');
+  const r = BR.size / 100 * Math.min(f.w, f.h) * 0.5;
+  brStamp(x2, u * f.w, v * f.h, Math.max(2, r), BR.col, Math.atan2(dv || 0, du || 1));
+}
 function brDab(u, v, du, dv){
   const L = BRUSHL; if(!L || !L.img) return;
-  const f = sheet();
-  const x2 = L.img.getContext('2d');
-  const r = BR.size / 100 * Math.min(f.w, f.h) * 0.5;
-  const ang = Math.atan2(dv || 0, du || 1);
-  brStamp(x2, u * f.w, v * f.h, Math.max(2, r), BR.col, ang);
+  const p = brToSrc(L, u, v);
+  if(BRSTROKE) BRSTROKE.push([+p.u.toFixed(5), +p.v.toFixed(5), du || 0, dv || 0]);
+  brStampAt(L.img, p.u, p.v, du, dv);
   L.mv = (L.mv || 0) + 1; L._key = ''; L._dist = null; L._mk = '';
   try{ Object.defineProperty(L.img, 'src',
     { value:'', configurable:true }); }catch(_){}
@@ -9535,13 +9689,66 @@ function brDab(u, v, du, dv){
  ['r_brseed','o_brseed','seed']].forEach(([rid, oid, key]) => {
   const e = el(rid); if(!e) return;
   e.addEventListener('input', ev => { BR[key] = +ev.target.value;
-    el(oid).value = String(Math.round(BR[key])); });
+    el(oid).value = String(Math.round(BR[key])); brLive(); });
 });
-{ const c2 = el('c_brush'); if(c2) c2.addEventListener('input', e => { BR.col = e.target.value; }); }
+{ const c2 = el('c_brush'); if(c2) c2.addEventListener('input', e => {
+    BR.col = e.target.value; brLive(); }); }
+/* ⭐ 筆のつまみを触る直前に控えを取る（段まるごとに1つ＝つまみを二重に配線しない） */
+{ const bb = el('brushBox');
+  if(bb) bb.addEventListener('pointerdown', () => {
+    const L = LAYERS[SEL];
+    if(!BRUSHON && L && L.brush && L.brush.strokes && L.brush.strokes.length) hist('筆を直す');
+  }, true); }
+/* ⭐⭐ 筆の段の中身を、いまの筆（BR）に合わせる。
+   ⚠️ 筆で描いた層を選んでいるときは【その層を描いた筆】を出す＝そのまま描き足せる。 */
+let BRSEEN = -1;                 /* 前に見ていた筆の層（持ち替えは1回だけ） */
+function syncBrush(){
+  const L = LAYERS[SEL];
+  /* ⭐ 筆で描いた層を選んだら、つまみを【その層を描いた筆】に持ち替える。
+     ⚠️ 持ち替えは選び直した1回だけ（毎回やると、その場で回したつまみが戻る） */
+  if(!BRUSHON && L && L.brush && BRSEEN !== L.id){ Object.assign(BR, L.brush); BRSEEN = L.id; }
+  if(!(L && L.brush)) BRSEEN = -1;
+  const src = BR;
+  document.querySelectorAll('#s_brkind button')
+    .forEach(x => x.classList.toggle('on', x.dataset.v === src.kind));
+  const put = (id, oid, v) => { const e = el(id); if(!e) return;
+    e.value = Math.round(v); const o = el(oid); if(o) o.value = String(Math.round(v));
+    const n = el('n_' + id); if(n) n.value = e.value; };
+  put('r_brsize','o_brsize', src.size); put('r_brflow','o_brflow', src.flow);
+  put('r_brscat','o_brscat', src.scat); put('r_brgrain','o_brgrain', src.grain);
+  put('r_brseed','o_brseed', src.seed);
+  const c2 = el('c_brush'); if(c2) c2.value = src.col || '#ffffff';
+  const say = el('brushSay');
+  if(say){
+    const on = !BRUSHON && L && L.brush;
+    say.classList.toggle('hide', !on);
+    if(on) say.innerHTML = 'この絵は <b>' + (({powder:'粉',fog:'霧',beam:'光の筋',
+      splash:'しぶき',bolt:'稲妻',shard:'破片',foam:'泡'})[L.brush.kind] || L.brush.kind)
+      + '</b> で描いたものです。<b>上のつまみを回すとこの絵が描き直されます</b>'
+      + '（盤の上で動かす・大きさも変えられます）';
+  }
+  const b2 = el('b_bradd');
+  if(b2) b2.classList.toggle('hide', !(!BRUSHON && L && L.brush));
+}
+/* ⭐ その層に描き足す（新しい層を作らずに、同じ紙へ足す） */
+{
+  const b3 = el('b_bradd');
+  if(b3) b3.onclick = () => {
+    const L = LAYERS[SEL];
+    if(!L || !L.brush){ stat('先に筆で描いた層を選んでください'); return; }
+    BRUSHON = true; BRUSHL = L;
+    const k = el('k_brnew'); if(k) k.checked = false;   /* 新しい層を作らない */
+    document.body.classList.add('brushon');
+    if(typeof syncPanelMode === 'function') syncPanelMode();
+    stat('この層に描き足せます（盤をなぞる／Esc でやめる）');
+  };
+}
 document.querySelectorAll('#s_brkind button').forEach(bt => bt.onclick = () => {
   BR.kind = bt.dataset.v;
   document.querySelectorAll('#s_brkind button').forEach(x => x.classList.toggle('on', x === bt));
-  stat('筆を「' + bt.textContent + '」にした ── 盤をなぞると描けます');
+  /* ⭐ 描いた後でも種類を変えられる（打った点はそのまま・描き方だけ変わる） */
+  if(brLive()) stat('筆を「' + bt.textContent + '」に描き直した');
+  else stat('筆を「' + bt.textContent + '」にした ── 盤をなぞると描けます');
 });
 /* ══ 図形 の配線 ══ */
 SHAPES.forEach(([v, n], i) => { const b2 = document.createElement('button');
@@ -11788,7 +11995,7 @@ function snapshot(){
                              kind:L.kind || null, lock:!!L.lock, lockPos:!!L.lockPos,
                              lockPix:!!L.lockPix, lockAlpha:!!L.lockAlpha,
                              ed:edCopy(L.ed),
-                             blend:L.blend || 'source-over', round:L.round || 0, adjRange:L.adjRange ? { from:L.adjRange.from, to:L.adjRange.to } : null,
+                             blend:L.blend || 'source-over', round:L.round || 0, adjRange:L.adjRange ? { from:L.adjRange.from, to:L.adjRange.to } : null, brush:brCopy(L.brush),
                              fills:(L.fills || []).map(f => ({ kind:f.kind, color:f.color, src:f.src, op:f.op, mode:f.mode, on:f.on !== false, k:f.k == null ? 1 : f.k, ox:f.ox || 0, oy:f.oy || 0, rot:f.rot || 0 })),
                              fill:Object.assign({ on:false, color:'#ffffff', op:1, mode:'source-over' }, L.fill || {}),
                              text:L.text ? Object.assign({}, L.text) : null,
@@ -11862,7 +12069,7 @@ function subJSON(s){
       id:o.id, name:o.name, x:o.x, y:o.y, s:o.s, sy:syOf(o), rot:o.rot, flip:o.flip,
       d:o.d, on:o.on, op:o.op == null ? 1 : o.op, ord:o.ord, air:airOf(o),
       clip:!!o.clip, kind:o.kind || null, lock:!!o.lock,
-      ed:edCopy(o.ed), blend:o.blend || 'source-over', round:o.round || 0, adjRange:o.adjRange ? { from:o.adjRange.from, to:o.adjRange.to } : null,
+      ed:edCopy(o.ed), blend:o.blend || 'source-over', round:o.round || 0, adjRange:o.adjRange ? { from:o.adjRange.from, to:o.adjRange.to } : null, brush:brCopy(o.brush),
       fills:(o.fills || []).map(f => ({ kind:f.kind, color:f.color, src:f.src, op:f.op, mode:f.mode, on:f.on !== false, k:f.k == null ? 1 : f.k, ox:f.ox || 0, oy:f.oy || 0, rot:f.rot || 0 })),
       fill:Object.assign({ on:false, color:'#ffffff', op:1, mode:'source-over' }, o.fill || {}),
       fx:JSON.parse(JSON.stringify(o.fx || newFx())),
@@ -11904,7 +12111,7 @@ function applySub(L, o, imgs){
       flip:q.flip, d:q.d || 0, on:q.on !== false, op:q.op == null ? 1 : q.op,
       ord:q.ord == null ? i + 1 : q.ord, air:q.air == null ? 0 : q.air,
       clip:!!q.clip, kind:q.kind || null, lock:!!q.lock,
-      blend:q.blend || 'source-over', round:q.round || 0, adjRange:q.adjRange ? { from:q.adjRange.from, to:q.adjRange.to } : null, selBlur:q.selBlur || 0,
+      blend:q.blend || 'source-over', round:q.round || 0, adjRange:q.adjRange ? { from:q.adjRange.from, to:q.adjRange.to } : null, brush:brCopy(q.brush), selBlur:q.selBlur || 0,
       fills:(q.fills || []).map(f => ({ kind:f.kind, color:f.color, src:f.src, op:f.op, mode:f.mode, on:f.on !== false, k:f.k == null ? 1 : f.k, ox:f.ox || 0, oy:f.oy || 0, rot:f.rot || 0 })) });
     b.ed = Object.assign(newEd(), q.ed || {});
     b.adj = Object.assign(newAdj(), q.adj || {});
@@ -12055,6 +12262,7 @@ function applyRest(o){
       L.ed = Object.assign(newEd(), o2.ed || {});                           /* 素材の編集 */
       L.blend = o2.blend || 'source-over'; L.round = o2.round || 0;
       L.adjRange = o2.adjRange ? { from:o2.adjRange.from, to:o2.adjRange.to } : null;
+      L.brush = brCopy(o2.brush);
       L.fills = (o2.fills || []).map(f => ({ kind:f.kind, color:f.color, src:f.src,
         op:f.op == null ? 1 : f.op, mode:f.mode || 'source-over', on:f.on !== false,
         k:f.k == null ? 1 : f.k, ox:f.ox || 0, oy:f.oy || 0, rot:f.rot || 0 }));
@@ -12537,7 +12745,7 @@ function snapState(){
       d:L.d, on:L.on, op:L.op, fillA:L.fillA == null ? 1 : L.fillA, ord:L.ord, sy:syOf(L), air:airOf(L), g:L.g == null ? null : L.g, clip:!!L.clip,
       kind:L.kind || null, lock:!!L.lock, lockPos:!!L.lockPos, lockPix:!!L.lockPix,
       lockAlpha:!!L.lockAlpha, ed:edCopy(L.ed),
-      blend:L.blend || 'source-over', round:L.round || 0, adjRange:L.adjRange ? { from:L.adjRange.from, to:L.adjRange.to } : null,
+      blend:L.blend || 'source-over', round:L.round || 0, adjRange:L.adjRange ? { from:L.adjRange.from, to:L.adjRange.to } : null, brush:brCopy(L.brush),
       fills:(L.fills || []).map(f => ({ kind:f.kind, color:f.color, src:f.src, op:f.op, mode:f.mode, on:f.on !== false, k:f.k == null ? 1 : f.k, ox:f.ox || 0, oy:f.oy || 0, rot:f.rot || 0 })),
       fill:Object.assign({ on:false, color:'#ffffff', op:1, mode:'source-over' }, L.fill || {}),
       text:L.text ? Object.assign({}, L.text) : null,
@@ -12571,7 +12779,7 @@ function restoreState(st){
     d:o.d, on:o.on, op:o.op, fillA:o.fillA == null ? 1 : o.fillA, ord:o.ord, sy:o.sy == null ? 1 : o.sy, air:o.air == null ? 1 : o.air, g:o.g == null ? null : o.g, clip:!!o.clip,
     kind:o.kind || null, lock:!!o.lock, lockPos:!!o.lockPos, lockPix:!!o.lockPix,
     lockAlpha:!!o.lockAlpha, ed:edCopy(o.ed), _edc:null, _edk:'',
-    blend:o.blend || 'source-over', round:o.round || 0, adjRange:o.adjRange ? { from:o.adjRange.from, to:o.adjRange.to } : null,
+    blend:o.blend || 'source-over', round:o.round || 0, adjRange:o.adjRange ? { from:o.adjRange.from, to:o.adjRange.to } : null, brush:brCopy(o.brush),
     fills:(o.fills || []).map(f => ({ kind:f.kind, color:f.color, src:f.src, op:f.op, mode:f.mode, on:f.on !== false, k:f.k == null ? 1 : f.k, ox:f.ox || 0, oy:f.oy || 0, rot:f.rot || 0 })),
     fill:Object.assign({ on:false, color:'#ffffff', op:1, mode:'source-over' }, o.fill || {}),
     text:o.text ? Object.assign({}, o.text) : null,
@@ -12715,7 +12923,7 @@ function dupLayer(L, dx, dy){
     air:airOf(L), g:L.g == null ? null : L.g, clip:!!L.clip, kind:L.kind || null, lock:!!L.lock,
     lockPos:!!L.lockPos, lockPix:!!L.lockPix, lockAlpha:!!L.lockAlpha,
     ed:edCopy(L.ed), _edc:null, _edk:'',
-    blend:L.blend || 'source-over', round:L.round || 0, adjRange:L.adjRange ? { from:L.adjRange.from, to:L.adjRange.to } : null,
+    blend:L.blend || 'source-over', round:L.round || 0, adjRange:L.adjRange ? { from:L.adjRange.from, to:L.adjRange.to } : null, brush:brCopy(L.brush),
     fills:(L.fills || []).map(f => ({ kind:f.kind, color:f.color, src:f.src, op:f.op, mode:f.mode, on:f.on !== false, k:f.k == null ? 1 : f.k, ox:f.ox || 0, oy:f.oy || 0, rot:f.rot || 0 })),
     fill:Object.assign({ on:false, color:'#ffffff', op:1, mode:'source-over' }, L.fill || {}),
     text:L.text ? Object.assign({}, L.text) : null,

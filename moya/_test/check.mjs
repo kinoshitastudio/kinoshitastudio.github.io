@@ -4480,6 +4480,96 @@ await wait(600);
      JSON.stringify(MK));
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   ⭐⭐ 筆は【焼き込まない】── 描いた後でもつまみが効く／板として掴める
+   （2026-09-01・木下＝「書いた後で太さや濃さなど変えても何も変わらない」
+     「この筆もレイヤーとして生きているためボード上で移動できるようにして」）
+   ══════════════════════════════════════════════════════════════════════ */
+{
+  await p.evaluate(() => {
+    closeAllEditors();
+    document.querySelector('#tools button[data-t="brush"]').click();
+  });
+  await wait(500);
+  const pt = await p.evaluate(() => {
+    const a = toScreen(0.34, 0.42), b2 = toScreen(0.62, 0.56);
+    return { ax:a.clientX, ay:a.clientY, bx:b2.clientX, by:b2.clientY };
+  });
+  await p.mouse.move(pt.ax, pt.ay);
+  await p.mouse.down();
+  for(let i = 1; i <= 8; i++)
+    await p.mouse.move(pt.ax + (pt.bx - pt.ax) * i / 8, pt.ay + (pt.by - pt.ay) * i / 8);
+  await p.mouse.up();
+  await wait(700);
+  const B1 = await p.evaluate(() => {
+    const L = LAYERS[SEL], f = sheet();
+    return { 筆:!!(L && L.brush), 打った点:L.brush ? L.brush.strokes.reduce((n, st) => n + st.length, 0) : 0,
+      紙の幅:L.img ? L.img.naturalWidth : 0, 版面の幅:f.w,
+      切り詰めた:!!(L.img && L.img.naturalWidth < f.w),
+      掴める:hitLayer({ x:L.x, y:L.y }) === SEL,
+      外は掴まない:hitLayer({ x:0.03, y:0.03 }) !== SEL };
+  });
+  ok(B1.筆 && B1.打った点 > 3, '⭐⭐ 筆は【打った点】を覚えている（焼き込まない）', JSON.stringify(B1));
+  ok(B1.切り詰めた && B1.掴める && B1.外は掴まない,
+     '⭐⭐ ひと筆おわりで紙が絵の大きさに切り詰まる＝盤で掴んで動かせる板になる',
+     JSON.stringify(B1));
+
+  /* ⭐ 描いた後にツールを戻して、つまみを回すと【その絵が描き直される】 */
+  await p.evaluate(() => {
+    document.querySelector('#tools button[data-t="move"]').click();
+  });
+  await wait(400);
+  const B2 = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    const L = LAYERS[SEL];
+    const out = { 段が出る: !document.getElementById('brushBox').classList.contains('hide'),
+                  描き足す釦: !document.getElementById('b_bradd').classList.contains('hide') };
+    COARSE = 0; render(); await w(400);
+    const 前 = window.__full();
+    const 太さ0 = L.brush.size;
+    const e = document.getElementById('r_brsize');
+    e.value = String(Math.min(90, 太さ0 * 3));
+    e.dispatchEvent(new Event('input', { bubbles:true }));
+    await w(700); COARSE = 0; render(); await w(400);
+    out.太さで変わる = window.__sad(前, window.__full());
+    e.value = String(太さ0); e.dispatchEvent(new Event('input', { bubbles:true }));
+    await w(700); COARSE = 0; render(); await w(400);
+    out.戻すと同じ = window.__sad(前, window.__full());
+    /* 種類も後から変えられる */
+    const bt = [...document.querySelectorAll('#s_brkind button')]
+      .find(x => x.dataset.v !== L.brush.kind);
+    bt.click(); await w(700); COARSE = 0; render(); await w(400);
+    out.種類でも変わる = window.__sad(前, window.__full());
+    out.種類 = L.brush.kind;
+    return out;
+  });
+  ok(B2.段が出る && B2.描き足す釦,
+     '⭐⭐ 筆で描いた層を選ぶと【筆の段】が出る（入口が死んでいない）', JSON.stringify(B2));
+  ok(B2.太さで変わる > 0 && B2.戻すと同じ === 0,
+     '⭐⭐ 描いた後でも太さが効く／戻すと1画素も同じ（焼き込んでいない）', JSON.stringify(B2));
+  ok(B2.種類でも変わる > 0, '⭐ 描いた後でも【粉・霧…】の種類を変えられる', JSON.stringify(B2));
+}
+
+/* ⭐ 版面からはみ出しても、枠と四隅が見える（印の板が版面より大きい） */
+{
+  const OV = await p.evaluate(() => ({ 盤:cv.width, 印:ov.width, 余白:OVM }));
+  ok(OV.印 > OV.盤 && OV.余白 > 0,
+     '⭐⭐ 印の板は版面より一回り大きい＝はみ出した素材の枠も見える', JSON.stringify(OV));
+}
+
+/* ⭐ 木下の書体は漢字を持っていない＝打ったら言う */
+{
+  const FM = await p.evaluate(() => ({
+    UWASA欧文にかな: fontMissing('UWASA, sans-serif', 'しずか'),
+    UWASAJPにかな:   fontMissing('UWASAJP, sans-serif', 'しずか'),
+    UWASAJPに漢字:   fontMissing('UWASAJP, sans-serif', '静かな手紙'),
+    KETAにかな:      fontMissing('KETA, sans-serif', 'しずか'),
+    明朝に漢字:      fontMissing('"Hiragino Mincho ProN","Yu Mincho",serif', '静かな手紙') }));
+  ok(FM.UWASA欧文にかな && !FM.UWASAJPにかな && FM.UWASAJPに漢字 === '静手紙'
+     && !FM.KETAにかな && !FM.明朝に漢字,
+     '⭐⭐ 書体に無い字を先に言う（かな込みでも【漢字は無い】と言う）', JSON.stringify(FM));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);
