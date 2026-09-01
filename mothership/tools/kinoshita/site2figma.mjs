@@ -668,7 +668,7 @@ function overlapsPhoto(root) {
   };
   w(root);
   const box = n => ({ x: n.__mx, y: n.__my, w: n.__w ?? n.w ?? 0, h: n.__h ?? n.h ?? 0 });
-  return texts.some(t => {
+  const hit = texts.filter(t => {
     if (t.__mx == null) return false;
     const a = box(t);
     return imgs.some(i => {
@@ -678,7 +678,13 @@ function overlapsPhoto(root) {
       const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
       return ox > 8 && oy > 8;      // 8px 以上かぶっていれば「重ね」
     });
-  });
+  }).length;
+  // 🔴 「1つでも重なったらスクショ」にすると、写真の上にラベルが乗るだけの普通のカードで
+  //    セクションが丸ごと1枚の絵になり、写真もテキストも編集できなくなる。
+  //    実測：ある採用サイトで 画面内41枚あった写真が3枚になった（6セクションがスクショ化）。
+  // ⭐ スクショにするのは【絵として作られた帯】だけ＝文字の半分以上が写真に乗っているとき。
+  //    数個の重なりは、その文字を絶対配置に置けば構造のまま建つ（KV と同じ仕組みが既にある）。
+  return texts.length > 0 && hit >= Math.max(3, Math.ceil(texts.length * 0.5));
 }
 
 // KV は丸ごとスクショを敷いて、その上に 文字とベクター だけ乗せる
