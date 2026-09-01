@@ -4299,6 +4299,69 @@ await wait(600);
      '⭐⭐ 盤でパスを押すと【そのパスに選び直せる】', String(PSEL.選び直せた));
 }
 
+/* ⭐⭐ ⑮ ペンで盤に描いて閉じると【図形レイヤー】になる（入口をそのまま通す）
+   🔴 木下＝「ペンツールでボード上に書いて閉じたパスは塗り、線で図形になる。
+      実装できてる？レイヤーパネルにも追加されてる？」 */
+{
+  const PEN = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    closeAllEditors(); await w(300);
+    const n0 = LAYERS.length;
+    /* ⚠️ 点は【選んでいる素材の中の座標】で持つ＝盤いっぱいの素材を選んでおく
+       （小さい素材だと、打った点が素材の外に落ちて図形にできない） */
+    const big = LAYERS.map((L2, i2) => ({ L2, i2 })).filter(o => o.L2.img && !o.L2.kind)
+      .sort((a2, b2) => b2.L2.s - a2.L2.s)[0];
+    if(big){ setSel(big.i2, false); syncSel(); buildList();
+      big.L2.s = 1; big.L2.x = 0.5; big.L2.y = 0.5; big.L2._key = ''; render(); await w(300); }
+    document.querySelector('#tools button[data-t="path"]').click(); await w(500);
+    /* ⭐ ツールバーの【ペン】は図形を描くで入る（画像編集→パスは作業用パス） */
+    const out = { 段が出る:!!document.getElementById('s_penmode'), 既定:PENMODE };
+    document.querySelector('#s_penmode button[data-v="shape"]').click(); await w(250);
+    out.切り替え = PENMODE;
+    const pt = (u, v) => { const s = toScreen(u, v);
+      stage.dispatchEvent(new PointerEvent('pointerdown',
+        { clientX:s.clientX, clientY:s.clientY, bubbles:true, pointerId:11 }));
+      stage.dispatchEvent(new PointerEvent('pointerup',
+        { clientX:s.clientX, clientY:s.clientY, bubbles:true, pointerId:11 })); };
+    pt(0.35, 0.35); await w(150); pt(0.65, 0.38); await w(150); pt(0.55, 0.70); await w(150);
+    out.点 = POLY.length;
+    pt(0.35, 0.35); await w(800);          /* 最初の点をもう一度＝閉じる */
+    const L = LAYERS[SEL];
+    out.増えた = LAYERS.length - n0;
+    out.種 = L && L.kind; out.形 = L && L.shape && L.shape.type;
+    /* ⚠️ 並ぶ順は【奥行き】が決める＝いちばん上とは限らない。一覧に居ることを見る */
+    out.一覧に出る = [...document.querySelectorAll('#layers .ly .nm')]
+      .some(e => e.textContent === L.name);
+    out.塗りの段 = !document.getElementById('shapeBox').classList.contains('hide');
+    /* 塗りと線が本当に効く */
+    document.querySelector('#tools button[data-t="move"]').click(); await w(400);
+    COARSE = 0; render(); await w(400);
+    const A = window.__full();
+    document.querySelector('#shSw i[data-c="#d43b2b"]').click(); await w(400);
+    COARSE = 0; render(); await w(300);
+    out.塗りが効く = window.__sad(A, window.__full());
+    document.getElementById('shcStroke').click(); await w(200);
+    document.querySelector('#shSw i[data-c="#0a0a0a"]').click(); await w(300);
+    const sw = document.getElementById('sh_sw');
+    sw.value = 30; sw.dispatchEvent(new Event('input', { bubbles:true })); await w(400);
+    COARSE = 0; render(); await w(300);
+    out.線が効く = window.__sad(A, window.__full());
+    out.点は残る = L.shape.pts.length;
+    /* 後片付け */
+    PENMODE = 'path';
+    document.querySelector('#s_penmode button[data-v="path"]').click();
+    return out;
+  });
+  ok(PEN.段が出る && PEN.切り替え === 'shape' && PEN.点 === 3,
+     '⭐⭐ ペンを押すと【作業用パス／図形を描く】を選べる（前に選んだ方で入る）',
+     JSON.stringify(PEN));
+  ok(PEN.増えた === 1 && PEN.種 === 'shape' && PEN.形 === 'path'
+     && PEN.一覧に出る && PEN.塗りの段 && PEN.点は残る === 3,
+     '⭐⭐ 盤で描いて閉じると【図形レイヤー】になり、一覧にも出る', JSON.stringify(PEN));
+  ok(PEN.塗りが効く > 0 && PEN.線が効く > 0,
+     '⭐⭐ その図形に 塗りと線がそのまま効く', JSON.stringify({ 塗り:PEN.塗りが効く, 線:PEN.線が効く }));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);
