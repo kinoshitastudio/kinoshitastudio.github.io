@@ -1402,6 +1402,22 @@
        ⭐ MOYA は【形（点）】で持つ＝焼き込まない。点を直すと効く範囲も変わる。 -->
   <div class="grp hide" id="amaskBox">
     <label class="h">この調整が効く範囲</label>
+    <!-- ══⭐⭐ どこまでに効かせるか（2026-09-01）══
+         🔴 木下＝「その下でまた調整レイヤーを入れてかけるにはどうしたらいい？
+            フォトショならクリッピングマスクにしたり、グループにさせるのか。実装可能？」
+         ⭐ MOYA は【奥行き】で前後が決まるので、グループを作らずに
+           **奥行きの帯**で切れる（＝Photoshop のグループより軽く、芯とも合う）。 -->
+    <div class="seg" id="s_adjscope">
+      <button data-v="all" class="on">ここより奥ぜんぶ</button>
+      <button data-v="clip">すぐ下の1枚</button>
+      <button data-v="band">奥行きの帯</button>
+    </div>
+    <div id="adjBandUI" class="hide">
+      <div class="knob"><span class="n">奥 これから</span><input class="num" type="number" id="n_r_adjfrom"><input type="range" id="r_adjfrom" min="0" max="100" step="1" value="0"><output id="o_adjfrom" hidden>0</output></div>
+      <div class="knob"><span class="n">奥 ここまで</span><input class="num" type="number" id="n_r_adjto"><input type="range" id="r_adjto" min="0" max="100" step="1" value="100"><output id="o_adjto" hidden>100</output></div>
+      <div class="note">この帯の<b>奥行きに入っている素材だけ</b>に効きます。<br>
+        ⭐ 一覧の行に<b>何枚に効いているか</b>が出ます（0枚なら ⚠️ と出ます）。</div>
+    </div>
     <div class="row"><span class="n">いま</span>
       <output id="o_amask" style="width:auto;flex:0 0 auto">版面ぜんぶ</output></div>
     <button class="btn" id="b_amaskmake" style="width:100%">紙のパスから作る（囲った中だけに効く）</button>
@@ -3950,15 +3966,31 @@ function edLUT(e){
    🔴 焼き込まない＝値を持っているだけ。消せば1画素も同じに戻る。 */
 /* ⭐ この素材にかかっている【手前の調整レイヤーの色調補正】の印。
    ⚠️ 1枚も無ければ空文字（分岐ごと通さない） */
+/* ══⭐⭐ 調整レイヤーが【この素材に効くか】を決める道は1本 ══ 2026-09-01
+   🔴 木下＝「その下でまた調整レイヤーを入れてかけるにはどうしたらいい？
+      フォトショならクリッピングマスクにしたり、グループにさせるのか。実装可能？」
+   ⭐ MOYA は【奥行き】で前後が決まるので、グループを作らずに
+     **奥行きの帯（ここからここまで）**で効く範囲を切れる＝軽いし、芯（順は奥行きが決める）とも合う。
+   ⭐ 3つ：ここより奥ぜんぶ／すぐ下の1枚（クリップ）／奥行きの帯。
+   ⚠️ この判定は 3か所（signature・編集の連なり・空気からのズレ）に**別々に書かれていた**。
+     1本にまとめた。→ feedback_same_formula_in_two_places_drifts */
+function adjHits(A, L){
+  if(!A || A.kind !== 'adj' || A.on === false) return false;
+  if(!L || L.kind === 'adj') return false;
+  if(zOf(A) >= zOf(L)) return false;              /* 自分より手前には効かない */
+  if(A.clip) return adjTarget(A) === L;           /* すぐ下の1枚だけ */
+  const r = A.adjRange;
+  if(r) return L.d >= (r.from - 1e-6) && L.d <= (r.to + 1e-6);   /* 奥行きの帯 */
+  return true;                                    /* ここより奥ぜんぶ */
+}
 function adjEdSig(L){
   if(L.kind === 'adj') return '';
   let out = '';
   for(const A of LAYERS){
     if(A.kind !== 'adj' || A.on === false) continue;
-    if(zOf(A) >= zOf(L)) continue;
+    if(!adjHits(A, L)) continue;
     const e = A.ed;
     if(!e || edPlain(e)) continue;
-    if(A.clip && adjTarget(A) !== L) continue;
     out += A.id + JSON.stringify(e);
   }
   return out;
@@ -3967,13 +3999,11 @@ function edChain(L){
   const out = [{ e:edOf(L), A:null }];
   if(L.kind === 'adj') return out;
   /* 手前にある調整レイヤーを、奥から順に重ねる */
-  const zs = LAYERS.filter(o => o.kind === 'adj' && o.on !== false && zOf(o) < zOf(L));
+  const zs = LAYERS.filter(o => adjHits(o, L));
   zs.sort((a, b) => zOf(b) - zOf(a));
   for(const A of zs){
     const e = edOf(A);
     if(edPlain(e)) continue;
-    /* ⭐ 切る（クリッピング）＝すぐ下の1枚だけ。その1枚が自分でなければ通さない */
-    if(A.clip && adjTarget(A) !== L) continue;
     out.push({ e, A });
   }
   return out;
@@ -4516,8 +4546,7 @@ function adjStack(L){
      ⭐ ここも adjTarget（すぐ下の1枚）で揃える。
      ⭐ Photoshop と同じで【不透明度＝調整の効きの強さ】にする（0 で効かない）。
      → feedback_same_formula_in_two_places_drifts */
-  const zs = LAYERS.filter(o => o.kind === 'adj' && o.on !== false && zOf(o) < zOf(L)
-    && !(o.clip && adjTarget(o) !== L));
+  const zs = LAYERS.filter(o => adjHits(o, L));
   if(!zs.length) return base;
   const out = Object.assign({}, base);
   for(const A of zs){
@@ -7547,12 +7576,12 @@ function buildList(){
        場合もある」＝【効く相手が1枚も無い】ときは切っても絵が変わらない（正しい動き）が、
        画面がそれを言っていなかった。⭐ 何枚に効いているかを行に出す。 */
     const adjN = L.kind === 'adj'
-      ? (L.clip ? (adjTarget(L) ? 1 : 0)
-                : LAYERS.filter(o => o !== L && o.img && o.kind !== 'adj' && o.on !== false
-                    && zOf(o) > zOf(L)).length)
+      ? LAYERS.filter(o => o.img && adjHits(L, o)).length
       : 0;
     dp.textContent = L.kind === 'adj'
-      ? (L.clip ? 'すぐ下の1枚だけ' : '奥 ' + L.d.toFixed(2) + ' より奥ぜんぶ')
+      ? (L.clip ? 'すぐ下の1枚だけ'
+         : L.adjRange ? ('奥 ' + L.adjRange.from.toFixed(2) + '〜' + L.adjRange.to.toFixed(2) + ' だけ')
+         : '奥 ' + L.d.toFixed(2) + ' より奥ぜんぶ')
         + '　' + (adjN ? adjN + ' 枚に効いています' : '⚠️ 効く相手がいません')
       : '奥 ' + L.d.toFixed(2) + '　空気 ' + av.toFixed(2) + (hasAdj(L) ? '　＊' : '');
     }
@@ -8215,6 +8244,60 @@ function syncCb(){
   const k2 = el('k_cblum'); if(k2) k2.checked = !c || c.lum !== false;
   syncCbOut();
 }
+
+/* ══⭐⭐ 調整レイヤーの【効く範囲】の配線 ══ 2026-09-01
+   ⭐ 値の持ち主は L（clip と adjRange）ひとつ。選ぶボタンはそこへ書き込むだけ。
+   ⚠️ 効くかどうかを決める道は adjHits 1本（3か所に散らばっていたのをまとめた）。 */
+function syncAmask(){
+  const L = LAYERS[SEL];
+  if(!L || L.kind !== 'adj') return;
+  const mode = L.clip ? 'clip' : (L.adjRange ? 'band' : 'all');
+  document.querySelectorAll('#s_adjscope button')
+    .forEach(x => x.classList.toggle('on', x.dataset.v === mode));
+  const ui = el('adjBandUI'); if(ui) ui.classList.toggle('hide', mode !== 'band');
+  const r = L.adjRange || { from:Math.max(0, L.d), to:1 };
+  const put = (id, oid, v) => { const e = el(id); if(!e) return;
+    e.value = Math.round(v * 100); const o = el(oid); if(o) o.value = String(Math.round(v * 100));
+    const n = el('n_' + id); if(n) n.value = e.value; };
+  put('r_adjfrom','o_adjfrom', r.from);
+  put('r_adjto','o_adjto', r.to);
+  /* 何枚に効いているかも出す（0枚なら気づける） */
+  const o2 = el('o_amask');
+  if(o2 && !L.amask){
+    const n = LAYERS.filter(o => o.img && adjHits(L, o)).length;
+    o2.value = n ? (n + ' 枚に効いています') : '⚠️ 効く相手がいません';
+  }
+}
+document.querySelectorAll('#s_adjscope button').forEach(bt => bt.onclick = () => {
+  const L = LAYERS[SEL]; if(!L || L.kind !== 'adj') return;
+  hist('効く範囲');
+  const v = bt.dataset.v;
+  if(v === 'clip'){ L.clip = true; L.adjRange = null; }
+  else if(v === 'band'){ L.clip = false;
+    L.adjRange = L.adjRange || { from:Math.max(0, L.d), to:1 }; }
+  else { L.clip = false; L.adjRange = null; }
+  LAYERS.forEach(o => o._key = '');
+  syncAmask(); syncSel(); buildList(); render();
+  stat(v === 'clip' ? 'すぐ下の1枚だけに効かせる'
+     : v === 'band' ? '奥行きの帯（この間の素材だけ）に効かせる'
+     : 'ここより奥ぜんぶに効かせる');
+});
+[['r_adjfrom','o_adjfrom','from'], ['r_adjto','o_adjto','to']].forEach(([rid, oid, key]) => {
+  const r = el(rid); if(!r) return;
+  r.addEventListener('input', e => {
+    const L = LAYERS[SEL]; if(!L || L.kind !== 'adj') return;
+    if(!L.adjRange) L.adjRange = { from:Math.max(0, L.d), to:1 };
+    L.adjRange[key] = (+e.target.value) / 100;
+    /* ⚠️ 逆さまにしない（から＞まで にならないように寄せる） */
+    if(L.adjRange.from > L.adjRange.to){
+      if(key === 'from') L.adjRange.to = L.adjRange.from;
+      else L.adjRange.from = L.adjRange.to;
+    }
+    el(oid).value = String(Math.round((+e.target.value)));
+    LAYERS.forEach(o => o._key = '');
+    buildList(); touching(); renderSoon();
+  });
+});
 function syncEd(){
   const L = LAYERS[SEL];
   if(!L) return;   /* 出す・出さないは syncPanelMode が1本で決める */
@@ -11645,7 +11728,7 @@ function snapshot(){
                              kind:L.kind || null, lock:!!L.lock, lockPos:!!L.lockPos,
                              lockPix:!!L.lockPix, lockAlpha:!!L.lockAlpha,
                              ed:edCopy(L.ed),
-                             blend:L.blend || 'source-over', round:L.round || 0,
+                             blend:L.blend || 'source-over', round:L.round || 0, adjRange:L.adjRange ? { from:L.adjRange.from, to:L.adjRange.to } : null,
                              fills:(L.fills || []).map(f => ({ kind:f.kind, color:f.color, src:f.src, op:f.op, mode:f.mode, on:f.on !== false, k:f.k == null ? 1 : f.k, ox:f.ox || 0, oy:f.oy || 0, rot:f.rot || 0 })),
                              fill:Object.assign({ on:false, color:'#ffffff', op:1, mode:'source-over' }, L.fill || {}),
                              text:L.text ? Object.assign({}, L.text) : null,
@@ -11719,7 +11802,7 @@ function subJSON(s){
       id:o.id, name:o.name, x:o.x, y:o.y, s:o.s, sy:syOf(o), rot:o.rot, flip:o.flip,
       d:o.d, on:o.on, op:o.op == null ? 1 : o.op, ord:o.ord, air:airOf(o),
       clip:!!o.clip, kind:o.kind || null, lock:!!o.lock,
-      ed:edCopy(o.ed), blend:o.blend || 'source-over', round:o.round || 0,
+      ed:edCopy(o.ed), blend:o.blend || 'source-over', round:o.round || 0, adjRange:o.adjRange ? { from:o.adjRange.from, to:o.adjRange.to } : null,
       fills:(o.fills || []).map(f => ({ kind:f.kind, color:f.color, src:f.src, op:f.op, mode:f.mode, on:f.on !== false, k:f.k == null ? 1 : f.k, ox:f.ox || 0, oy:f.oy || 0, rot:f.rot || 0 })),
       fill:Object.assign({ on:false, color:'#ffffff', op:1, mode:'source-over' }, o.fill || {}),
       fx:JSON.parse(JSON.stringify(o.fx || newFx())),
@@ -11761,7 +11844,7 @@ function applySub(L, o, imgs){
       flip:q.flip, d:q.d || 0, on:q.on !== false, op:q.op == null ? 1 : q.op,
       ord:q.ord == null ? i + 1 : q.ord, air:q.air == null ? 0 : q.air,
       clip:!!q.clip, kind:q.kind || null, lock:!!q.lock,
-      blend:q.blend || 'source-over', round:q.round || 0, selBlur:q.selBlur || 0,
+      blend:q.blend || 'source-over', round:q.round || 0, adjRange:q.adjRange ? { from:q.adjRange.from, to:q.adjRange.to } : null, selBlur:q.selBlur || 0,
       fills:(q.fills || []).map(f => ({ kind:f.kind, color:f.color, src:f.src, op:f.op, mode:f.mode, on:f.on !== false, k:f.k == null ? 1 : f.k, ox:f.ox || 0, oy:f.oy || 0, rot:f.rot || 0 })) });
     b.ed = Object.assign(newEd(), q.ed || {});
     b.adj = Object.assign(newAdj(), q.adj || {});
@@ -11911,6 +11994,7 @@ function applyRest(o){
       L.lockPos = !!o2.lockPos; L.lockPix = !!o2.lockPix; L.lockAlpha = !!o2.lockAlpha;
       L.ed = Object.assign(newEd(), o2.ed || {});                           /* 素材の編集 */
       L.blend = o2.blend || 'source-over'; L.round = o2.round || 0;
+      L.adjRange = o2.adjRange ? { from:o2.adjRange.from, to:o2.adjRange.to } : null;
       L.fills = (o2.fills || []).map(f => ({ kind:f.kind, color:f.color, src:f.src,
         op:f.op == null ? 1 : f.op, mode:f.mode || 'source-over', on:f.on !== false,
         k:f.k == null ? 1 : f.k, ox:f.ox || 0, oy:f.oy || 0, rot:f.rot || 0 }));
@@ -12390,7 +12474,7 @@ function snapState(){
       d:L.d, on:L.on, op:L.op, fillA:L.fillA == null ? 1 : L.fillA, ord:L.ord, sy:syOf(L), air:airOf(L), g:L.g == null ? null : L.g, clip:!!L.clip,
       kind:L.kind || null, lock:!!L.lock, lockPos:!!L.lockPos, lockPix:!!L.lockPix,
       lockAlpha:!!L.lockAlpha, ed:edCopy(L.ed),
-      blend:L.blend || 'source-over', round:L.round || 0,
+      blend:L.blend || 'source-over', round:L.round || 0, adjRange:L.adjRange ? { from:L.adjRange.from, to:L.adjRange.to } : null,
       fills:(L.fills || []).map(f => ({ kind:f.kind, color:f.color, src:f.src, op:f.op, mode:f.mode, on:f.on !== false, k:f.k == null ? 1 : f.k, ox:f.ox || 0, oy:f.oy || 0, rot:f.rot || 0 })),
       fill:Object.assign({ on:false, color:'#ffffff', op:1, mode:'source-over' }, L.fill || {}),
       text:L.text ? Object.assign({}, L.text) : null,
@@ -12424,7 +12508,7 @@ function restoreState(st){
     d:o.d, on:o.on, op:o.op, fillA:o.fillA == null ? 1 : o.fillA, ord:o.ord, sy:o.sy == null ? 1 : o.sy, air:o.air == null ? 1 : o.air, g:o.g == null ? null : o.g, clip:!!o.clip,
     kind:o.kind || null, lock:!!o.lock, lockPos:!!o.lockPos, lockPix:!!o.lockPix,
     lockAlpha:!!o.lockAlpha, ed:edCopy(o.ed), _edc:null, _edk:'',
-    blend:o.blend || 'source-over', round:o.round || 0,
+    blend:o.blend || 'source-over', round:o.round || 0, adjRange:o.adjRange ? { from:o.adjRange.from, to:o.adjRange.to } : null,
     fills:(o.fills || []).map(f => ({ kind:f.kind, color:f.color, src:f.src, op:f.op, mode:f.mode, on:f.on !== false, k:f.k == null ? 1 : f.k, ox:f.ox || 0, oy:f.oy || 0, rot:f.rot || 0 })),
     fill:Object.assign({ on:false, color:'#ffffff', op:1, mode:'source-over' }, o.fill || {}),
     text:o.text ? Object.assign({}, o.text) : null,
@@ -12568,7 +12652,7 @@ function dupLayer(L, dx, dy){
     air:airOf(L), g:L.g == null ? null : L.g, clip:!!L.clip, kind:L.kind || null, lock:!!L.lock,
     lockPos:!!L.lockPos, lockPix:!!L.lockPix, lockAlpha:!!L.lockAlpha,
     ed:edCopy(L.ed), _edc:null, _edk:'',
-    blend:L.blend || 'source-over', round:L.round || 0,
+    blend:L.blend || 'source-over', round:L.round || 0, adjRange:L.adjRange ? { from:L.adjRange.from, to:L.adjRange.to } : null,
     fills:(L.fills || []).map(f => ({ kind:f.kind, color:f.color, src:f.src, op:f.op, mode:f.mode, on:f.on !== false, k:f.k == null ? 1 : f.k, ox:f.ox || 0, oy:f.oy || 0, rot:f.rot || 0 })),
     fill:Object.assign({ on:false, color:'#ffffff', op:1, mode:'source-over' }, L.fill || {}),
     text:L.text ? Object.assign({}, L.text) : null,

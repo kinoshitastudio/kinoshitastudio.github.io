@@ -1420,7 +1420,9 @@ const SU = await p.evaluate(() => {
                 /* レイヤーマスクの筆の設定（濃さ・やわらかさ）＝道具の数字で、絵の空気ではない */
                 'r_lmflow','r_lmsoft',
                 /* 筆（特殊効果）の設定＝道具の数字で、絵の空気ではない（2026-09-01） */
-                'r_brsize','r_brflow','r_brscat','r_brgrain','r_brseed'];
+                'r_brsize','r_brflow','r_brscat','r_brgrain','r_brseed',
+                /* 調整レイヤーの効く範囲（奥行きの帯）＝どこに効かせるかの設定で、絵の空気ではない */
+                'r_adjfrom','r_adjto'];
   const bad = [];
   document.querySelectorAll('#panel input[type=range]').forEach(e => {
     if(SKIP.includes(e.id)) return;
@@ -4397,6 +4399,53 @@ await wait(600);
   ok(FW.欧文では言わない && FW.かな込みでは言わない && FW.既定でも言わない && FW.表に印がある,
      '⚠️ 欧文のとき・かな込みのとき・既定のときは言わない（うるさくしない）',
      JSON.stringify(FW));
+}
+
+/* ⭐⭐ ⑰ 調整レイヤーの【効く範囲】＝奥ぜんぶ／すぐ下の1枚／奥行きの帯
+   🔴 木下＝「その下でまた調整レイヤーを入れてかけるにはどうしたらいい？
+      フォトショならクリッピングマスクにしたり、グループにさせるのか。実装可能？」
+   ⭐ MOYA は奥行きで前後が決まるので【奥行きの帯】で切る（グループを作らない＝軽い）。 */
+{
+  const AR = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    closeAllEditors(); await w(300);
+    const ims = LAYERS.filter(L2 => L2.img && !L2.kind);
+    ims.forEach((L2, i2) => { L2.d = [0.1, 0.5, 0.9][i2] == null ? 0.5 : [0.1,0.5,0.9][i2];
+      L2._key = ''; });
+    document.getElementById('b_adjlayer').click(); await w(600);
+    const A = LAYERS[SEL];
+    A.d = 0; A.adj.bri = 0.6; A.ed.expo = 0.5;
+    LAYERS.forEach(o => o._key = ''); COARSE = 0; render(); await w(600);
+    const 奥ぜんぶ = window.__full();
+    const out = { 奥ぜんぶの枚数:LAYERS.filter(o => o.img && adjHits(A, o)).length };
+    document.querySelector('#s_adjscope button[data-v="band"]').click(); await w(400);
+    const f = document.getElementById('r_adjfrom'), t = document.getElementById('r_adjto');
+    f.value = 40; f.dispatchEvent(new Event('input', { bubbles:true }));
+    t.value = 60; t.dispatchEvent(new Event('input', { bubbles:true }));
+    LAYERS.forEach(o => o._key = ''); COARSE = 0; render(); await w(600);
+    out.帯の枚数 = LAYERS.filter(o => o.img && adjHits(A, o)).length;
+    out.絵が変わる = window.__sad(奥ぜんぶ, window.__full());
+    out.一覧に帯が出る = [...document.querySelectorAll('#layers .ly .dp')]
+      .some(e => /0\.40〜0\.60/.test(e.textContent));
+    out.設定に入る = /adjRange/.test(JSON.stringify(snapshot()));
+    document.querySelector('#s_adjscope button[data-v="all"]').click(); await w(400);
+    LAYERS.forEach(o => o._key = ''); COARSE = 0; render(); await w(600);
+    out.戻すと同じ = window.__diff(奥ぜんぶ, window.__full());
+    /* すぐ下の1枚 */
+    document.querySelector('#s_adjscope button[data-v="clip"]').click(); await w(400);
+    out.クリップの枚数 = LAYERS.filter(o => o.img && adjHits(A, o)).length;
+    document.querySelector('#s_adjscope button[data-v="all"]').click(); await w(300);
+    /* 後片付け */
+    setLayers(LAYERS.filter(o => o !== A)); SEL = 0; SELIDS = [];
+    syncSelIds(); buildList(); syncSel(); render();
+    return out;
+  });
+  ok(AR.奥ぜんぶの枚数 >= 2 && AR.帯の枚数 === 1 && AR.クリップの枚数 === 1,
+     '⭐⭐ 調整の効く範囲＝奥ぜんぶ／すぐ下の1枚／奥行きの帯 が別々に効く', JSON.stringify(AR));
+  ok(AR.絵が変わる > 0 && AR.戻すと同じ === 0,
+     '🔴 帯にすると絵が変わり、奥ぜんぶへ戻すと1画素も同じに戻る', JSON.stringify(AR));
+  ok(AR.一覧に帯が出る && AR.設定に入る,
+     '⭐ 一覧に「奥 0.40〜0.60 だけ」と出て、設定JSONにも入る', JSON.stringify(AR));
 }
 
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
