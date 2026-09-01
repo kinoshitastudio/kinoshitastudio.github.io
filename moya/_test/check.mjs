@@ -4225,6 +4225,78 @@ await wait(600);
      '⭐ その図形に 塗り・線・グラデがそのまま効く', String(P2S.グラデが効く));
 }
 
+/* ⭐⭐ ⑬ フィルターの追加（木下＝「フィルター機能にこれらも追加したい」liginc の記事）
+   ⚠️ 記事の4つ（うずまき・ぼかし・放射状ぼかし・移動ぼかし）は **もともと有った**＝実測で確かめる。
+   ⭐ 足りなかった【球面】と【太らせる／痩せさせる】を足した（どちらも 0 で1画素も同じに戻る）。 */
+{
+  const FI = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    closeAllEditors(); await w(300);
+    const i = LAYERS.findIndex(L2 => L2.img && !L2.kind);
+    setSel(i, false); syncSel(); buildList();
+    const L = LAYERS[SEL];
+    COARSE = 0; render(); await w(400);
+    const A = window.__full(), out = {};
+    const set = (id, v) => { const e = document.getElementById(id); e.value = v;
+      e.dispatchEvent(new Event('input', { bubbles:true })); };
+    for(const [id, v] of [['r_twirl',60], ['r_rblur',40], ['r_mblur',40], ['r_wave',40],
+                          ['r_sphere',70], ['r_dilate',50]]){
+      set(id, v); COARSE = 0; render(); await w(450);
+      out[id] = window.__sad(A, window.__full());
+      set(id, 0); COARSE = 0; render(); await w(350);
+      out[id + '_戻る'] = window.__diff(A, window.__full());
+    }
+    return out;
+  });
+  const 効く = ['r_twirl','r_rblur','r_mblur','r_wave','r_sphere','r_dilate']
+    .filter(k => FI[k] > 0);
+  const 戻る = ['r_twirl','r_rblur','r_mblur','r_wave','r_sphere','r_dilate']
+    .filter(k => FI[k + '_戻る'] === 0);
+  ok(効く.length === 6,
+     '⭐⭐ フィルター6つ（渦巻き・放射状・移動・うねり・球面・太らせる）がぜんぶ効く',
+     効く.join(',') + ' / ' + JSON.stringify(FI));
+  ok(戻る.length === 6,
+     '🔴 どれも 0 に戻すと1画素も同じに戻る（焼き込んでいない）', 戻る.join(','));
+}
+
+/* ⭐⭐ ⑭ 盤で【パスを押して選び直せる】（木下＝「今そのパスを選択することもできない」） */
+{
+  const PSEL = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    closeAllEditors(); await w(300);
+    const i = LAYERS.findIndex(L2 => L2.img && !L2.kind);
+    setSel(i, false); syncSel(); buildList();
+    const L = LAYERS[SEL], m = maskSize(L);
+    L.paths = []; L.work = null; PATHSEL = null;
+    document.getElementById('b_pnew').click(); await w(200);
+    POLY = [{x:m.w*0.15,y:m.h*0.15,hx:0,hy:0},{x:m.w*0.4,y:m.h*0.15,hx:0,hy:0},
+            {x:m.w*0.4,y:m.h*0.4,hx:0,hy:0}];
+    closePath(); await w(250);
+    document.getElementById('b_pnew').click(); await w(200);
+    POLY = [{x:m.w*0.6,y:m.h*0.6,hx:0,hy:0},{x:m.w*0.9,y:m.h*0.6,hx:0,hy:0},
+            {x:m.w*0.9,y:m.h*0.9,hx:0,hy:0}];
+    closePath(); await w(250);
+    PATHSEL = { kind:'saved', i:1 }; buildPathList();
+    document.querySelector('#tools button[data-t="move"]').click(); await w(300);
+    /* 1本目の点の近くを盤で押す */
+    const f = sheet(), iw = cwOf(L), ih = chOf(L);
+    const dw = L.s, dh = dw * ih / iw * syOf(L) * (f.w / f.h);
+    const u = L.x + ((m.w*0.15)/m.w - 0.5) * dw, v = L.y + ((m.h*0.15)/m.h - 0.5) * dh;
+    const sc = toScreen(u, v);
+    stage.dispatchEvent(new PointerEvent('pointerdown',
+      { clientX:sc.clientX, clientY:sc.clientY, bubbles:true, pointerId:3 }));
+    await w(300);
+    stage.dispatchEvent(new PointerEvent('pointerup',
+      { clientX:sc.clientX, clientY:sc.clientY, bubbles:true, pointerId:3 }));
+    await w(200);
+    const out = { 選び直せた:!!(PATHSEL && PATHSEL.kind === 'saved' && PATHSEL.i === 0) };
+    L.paths = []; L.work = null; PATHSEL = null; buildPathList(); render();
+    return out;
+  });
+  ok(PSEL.選び直せた,
+     '⭐⭐ 盤でパスを押すと【そのパスに選び直せる】', String(PSEL.選び直せた));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);
