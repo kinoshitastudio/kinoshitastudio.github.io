@@ -191,11 +191,12 @@ const grab = (i) => p.evaluate((i) => {
     // ⭐ 親が flex / grid ＝ 子は「並べられた別々の要素」。文の中の強調とは違う
     const d = getComputedStyle(el).display;
     if (kids.length >= 2 && /^(inline-)?(flex|grid)$/.test(d)) return true;
-    // ⭐ <b>…</b><br>ふつうの文 のように【行が分かれていて、片方だけ書式が違う】ものは
-    //    1つの文字にすると太字が失われる（実測：フッターの社名が太字でなくなった）。
-    //    ⚠️ 順番が大事 ── BR 以外が1つでもここに来る（先に「2つ未満」で弾くと届かない）。
-    //    ⚠️ <br> だけの見出し（<h1>あ<br>い</h1>）は今までどおり1つの文字のまま
-    if (kids.some(c => c.tagName === 'BR') && kids.some(c => c.tagName !== 'BR')) return true;
+    // ⚠️ 以前ここで「BR と他の子が同居していたら分ける」としていたが、
+    //    <h1><span>名前</span>さんから聞いて<br>…</h1> にも当たって【行の流れが壊れ、文字が重なった】。
+    //    🔴 太字が1つ失われるより、重なるほうが遥かに悪い。BR では分けない。
+    //    （行ごとに書式が違うものは、下の「全部 inline か」で拾う）
+    if (kids.some(c => c.tagName === 'BR')
+        && kids.some(c => c.tagName !== 'BR' && getComputedStyle(c).display !== 'inline')) return true;
     const ks = kids.filter(c => c.tagName !== 'BR');
     if (ks.length < 2) return false;
     const rs = ks.map(c => c.getBoundingClientRect()).filter(r => r.width > 0 && r.height > 0);
@@ -217,9 +218,15 @@ const grab = (i) => p.evaluate((i) => {
           && cc.letterSpacing === pc.letterSpacing;
     });
   };
+  // 🔴🔴 ここを間違えると【行の流れが壊れて文字が重なる】。
+  //    <h1><span>名前</span>さんから聞いて<br>…</h1> ＝ 文の中の強調。分けると横に流れなくなる
+  //    <li><span>09:00</span><span>内容</span></li>  ＝ 独立した行（display:block）。分けないと書式が潰れる
+  //    ⭐ CSS の display がそのまま答え ── 全部 inline なら【文】、そうでなければ【並び】
+  const flowInline = el => [...el.children].filter(c => c.tagName !== 'BR')
+    .every(c => getComputedStyle(c).display === 'inline');
   const isLeafText = el => el.childElementCount === 0
     || ([...el.children].every(c => LEAFISH.has(c.tagName) && c.childElementCount === 0 && !boxy(c))
-        && !spread(el) && sameStyle(el));
+        && !spread(el) && (flowInline(el) || sameStyle(el)));
   const txt = el => {
     let s = '';
     const rec = n => {
@@ -496,7 +503,9 @@ function toNode(n, parentBgKnown) {
     //    ⚠️ hug にすると <a> の余白が消えて隣が詰まる（実測72pxずれた）。余裕があるので折り返さない
     //  ・箱ぴったりの短いラベル … hug のまま（実寸を入れると書体差で折り返してボタンが壊れる）
     const boxW = Math.round(n.w), ink = n.tw != null ? n.tw : n.w;
-    const roomy = ink <= boxW - 2;
+    // 🔴 1行のラベルは、余裕が小さいと書体差（Noto は元書体より最大3.7px広い）で折り返して壊れる。
+    //    実測：ボタンの中の1行が2行になり、箱からはみ出した
+    const roomy = ink <= boxW - (lines === 1 ? 20 : 2);
     if (lines >= 2 || (o.align && o.align !== 'left') || roomy) o.w = boxW;
     o.__w = o.w != null ? o.w : ink;
     o.__h = n.h;
@@ -894,6 +903,7 @@ function verify(root) {
   const sz = k => ({ w: k.__w ?? k.w ?? 0, h: k.__h ?? k.h ?? 0 });
 
   const place = (k, X, Y) => {
+    { const m0 = sz(k); k.__vx = X; k.__vy = Y; k.__vw = m0.w; k.__vh = m0.h; }
     n++;
     if (k.__mx != null) {
       const d = Math.max(Math.abs(X - k.__mx), Math.abs(Y - k.__my));
@@ -922,7 +932,28 @@ function verify(root) {
     });
   };
   place(root, 0, 0);
-  return { n, max: Math.round(max * 10) / 10, bad };
+  // 🔴🔴 文字どうしが重なっていないか（＝木下に見つけてもらう前に、こちらで出す）
+  //    実測とのズレが 0 でも、行の流れを壊すと文字が重なる。位置の検査だけでは出ない
+  return { n, max: Math.round(max * 10) / 10, bad, kasa: countKasanari(root) };
+}
+
+/* ⭐ 文字どうしの重なりを数える。Figma と同じ規則で展開した座標を使う */
+function countKasanari(root) {
+  const boxes = [];
+  const walk = (k, X, Y) => {
+    if (k.__vx == null) return;
+    if (k.type === 'text') boxes.push({ x: k.__vx, y: k.__vy, w: k.__vw, h: k.__vh, t: String(k.text || '').slice(0, 16) });
+    (k.children || []).forEach(c => walk(c));
+  };
+  walk(root);
+  let hit = 0; const list = [];
+  for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+    const a = boxes[i], b = boxes[j];
+    const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    if (ox > 4 && oy > 4) { hit++; if (list.length < 4) list.push(`「${a.t}」×「${b.t}」`); }
+  }
+  return { hit, list };
 }
 
 const done = [];
@@ -1025,6 +1056,7 @@ for (const i of targets) {
   console.log(`✅ ${name}`);
   console.log(`   ノード ${c.t} / オートレイアウト ${c.lay} / 絶対配置 ${c.abs} / 写真 ${c.img}`);
   console.log(`   実測とのズレ: 最大 ${v.max}px / 2px超 ${v.bad.length}件`);
+  if (v.kasa && v.kasa.hit) console.log(`   🔴 文字の重なり ${v.kasa.hit}件  ${v.kasa.list.join(' / ')}`);
   v.bad.slice(0, 4).forEach(x => console.log(`     🔴 ${x.name}  実測${x.実測} → 組上${x.組上}  (${x.ズレ}px)`));
 }
 await b.close();
