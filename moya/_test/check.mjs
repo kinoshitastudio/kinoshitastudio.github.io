@@ -33,6 +33,25 @@ await p.evaluateOnNewDocument(() => {
     return orig.call(this, t, f, o);
   };
 });
+
+/* ⭐ 図形は【盤でドラッグして描く】に変わった（2026-09-01）＝試験も同じ道を通す */
+await p.evaluateOnNewDocument(() => {
+  window.drawShape = async (x0, y0, x1, y1) => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    document.querySelector('#tools button[data-t="shape"]').click();
+    await w(400);
+    const a = toScreen(x0 == null ? 0.32 : x0, y0 == null ? 0.32 : y0);
+    const b = toScreen(x1 == null ? 0.62 : x1, y1 == null ? 0.58 : y1);
+    stage.dispatchEvent(new PointerEvent('pointerdown',
+      { clientX:a.clientX, clientY:a.clientY, bubbles:true, pointerId:9 }));
+    stage.dispatchEvent(new PointerEvent('pointermove',
+      { clientX:b.clientX, clientY:b.clientY, bubbles:true, pointerId:9 }));
+    stage.dispatchEvent(new PointerEvent('pointerup',
+      { clientX:b.clientX, clientY:b.clientY, bubbles:true, pointerId:9 }));
+    await w(500);
+    return LAYERS[SEL];
+  };
+});
 await p.goto(URL_, { waitUntil:'networkidle0' });
 await new Promise(r => setTimeout(r, 2500));
 let NG = 0;
@@ -1627,9 +1646,33 @@ const TN0 = await p.evaluate(() => LAYERS.length);
 await p.evaluate(() => document.querySelector('#tools button[data-t="text"]').click());
 await wait(1400);
 ok(await p.evaluate(() => LAYERS[SEL].kind === 'text'), '⭐ ツールバーの T で文字が置ける');
-await p.evaluate(() => document.querySelector('#tools button[data-t="shape"]').click());
-await wait(900);
-ok(await p.evaluate(() => LAYERS[SEL].kind === 'shape'), '⭐ ツールバーの R で図形が置ける');
+/* ⭐⭐ 2026-09-01・図形は【盤でドラッグして描く】に変えた（木下＝「選ぶとすぐに出るのではなく、
+   自分でドラッグして入れたい。これが一番良さそう」）＝押しただけでは増えない。 */
+const SD = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const n0 = LAYERS.length;
+  document.querySelector('#tools button[data-t="shape"]').click(); await w(500);
+  const 押しただけでは増えない = LAYERS.length === n0 && SHAPEDRAW === true;
+  const a2 = toScreen(0.3, 0.3), b2 = toScreen(0.6, 0.55);
+  stage.dispatchEvent(new PointerEvent('pointerdown',
+    { clientX:a2.clientX, clientY:a2.clientY, bubbles:true, pointerId:1 }));
+  stage.dispatchEvent(new PointerEvent('pointermove',
+    { clientX:b2.clientX, clientY:b2.clientY, bubbles:true, pointerId:1 }));
+  await w(200);
+  const 下見が出る = !!SHAPEBOX;
+  stage.dispatchEvent(new PointerEvent('pointerup',
+    { clientX:b2.clientX, clientY:b2.clientY, bubbles:true, pointerId:1 }));
+  await w(600);
+  const L = LAYERS[LAYERS.length-1], f = sheet();
+  return { 押しただけでは増えない, 下見が出る, 種:L.kind, 増えた:LAYERS.length === n0 + 1,
+           幅:Math.round(L.shape ? L.shape.w : 0), ねらい:Math.round(0.3 * f.w),
+           十字:document.body.classList.contains('shapedraw') };
+});
+ok(SD.押しただけでは増えない && SD.下見が出る,
+   '⭐⭐ 図形は【押しただけでは置かれない】＝盤でドラッグして描く', JSON.stringify(SD));
+ok(SD.増えた && SD.種 === 'shape' && Math.abs(SD.幅 - SD.ねらい) <= 2,
+   '⭐⭐ ドラッグした大きさそのままで図形が置かれる', JSON.stringify(SD));
+ok(!SD.十字, '⭐ 描き終わったら【描く待ち】は解ける（十字が残らない）', String(SD.十字));
 ok(await p.evaluate(() => LAYERS.length) === TN0 + 2, '⭐ 2つ増えている');
 
 /* ══⑯ 自由変形（Figma と同じ・⇧ で比を固定）══ 2026-08-31
@@ -3373,7 +3416,7 @@ const RT = await p.evaluate(async () => {
   L.lm.cv.getContext('2d').clearRect(0, 0, m.w/2, m.h); lmBump(L);   /* マスク */
   cutBrush(L, m.w*0.8, m.h*0.8, null, null, true);                   /* 切り抜き */
   document.querySelector('#tools button[data-t="text"]').click(); await w(800);
-  document.querySelector('#tools button[data-t="shape"]').click(); await w(800);
+  await drawShape(); await w(400);
   SEL = i; syncSel();
   document.getElementById('b_adjlayer').click(); await w(400);
   LAYERS[SEL].adj.bri = 0.3;
@@ -4092,7 +4135,7 @@ await wait(600);
   const RD = await p.evaluate(async () => {
     const w = ms => new Promise(r => setTimeout(r, ms));
     closeAllEditors(); await w(300);
-    document.querySelector('#tools button[data-t="shape"]').click(); await w(900);
+    await drawShape(); await w(400);
     COARSE = 0; render(); await w(300);
     const 前 = window.__full();
     const r2 = document.getElementById('r_round');
@@ -4117,6 +4160,69 @@ await wait(600);
   ok(RD.並び[0] >= 0 && RD.並び[1] === RD.並び[0] + 1
      && RD.並び[2] === RD.並び[1] + 1 && RD.並び[3] === RD.並び[2] + 1,
      '⭐ 外見（不透明度・塗り・角の丸み・重ね方）が ひとつづきに並ぶ', JSON.stringify(RD.並び));
+}
+
+/* ⭐⭐ ⑪ 1枚のレイヤーの中に【塗りを何枚でも】積める（Figma の「塗り」）
+   🔴 木下＝「ひとつのレイヤーの中に画像などをいれてオーバーレイできるとかもできるように
+      なった？」＝色でも画像でも、濃さ・重ね方・目つきで何枚でも積める。 */
+{
+  const FL = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    closeAllEditors(); await w(300);
+    await drawShape(); await w(400);
+    const L = LAYERS[SEL];
+    COARSE = 0; render(); await w(300);
+    const 前 = window.__full();
+    document.getElementById('b_fillcol').click(); await w(350);
+    const f = L.fills[0]; f.color = '#ff0000'; L._key = ''; COARSE = 0; render(); await w(400);
+    const 色が乗る = window.__sad(前, window.__full());
+    f.mode = 'overlay'; L._key = ''; COARSE = 0; render(); await w(400);
+    const 重ね方が効く = window.__sad(前, window.__full()) !== 色が乗る;
+    const 行 = document.querySelectorAll('#fillsList .growp').length;
+    const 設定に入る = /"fills":\[\{/.test(JSON.stringify(snapshot()));
+    /* 目で外すと 1画素も同じに戻る（焼き込まない） */
+    document.querySelector('#fillsList .growp .mini').click(); await w(400);
+    COARSE = 0; render(); await w(300);
+    const 目で戻ると同じ = window.__diff(前, window.__full());
+    return { 色が乗る, 重ね方が効く, 行, 設定に入る, 目で戻ると同じ };
+  });
+  ok(FL.色が乗る > 0 && FL.重ね方が効く && FL.行 === 1 && FL.設定に入る,
+     '⭐⭐ 1枚のレイヤーの中に【塗りを積める】（色・濃さ・重ね方・目）', JSON.stringify(FL));
+  ok(FL.目で戻ると同じ === 0,
+     '🔴 目で外すと1画素も同じに戻る（塗りを焼き込んでいない）', FL.目で戻ると同じ);
+}
+
+/* ⭐⭐ ⑫ ペンで描いた形は【本物の図形】になる（塗り・線・グラデがそのまま効く）
+   🔴 木下＝「パスは繋ぐと図形にもなるのでは？ いまだと全部作業用パスになる」 */
+{
+  const P2S = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    closeAllEditors(); await w(300);
+    const i = LAYERS.findIndex(L2 => L2.img && !L2.kind);
+    setSel(i, false); syncSel(); buildList();
+    const L = LAYERS[SEL], m = maskSize(L);
+    L.paths = []; L.work = null; L.sel = null; PATHSEL = null;
+    document.getElementById('b_pnew').click(); await w(250);
+    POLY = [{x:m.w*0.2,y:m.h*0.2,hx:0,hy:0},{x:m.w*0.8,y:m.h*0.25,hx:0,hy:0},
+            {x:m.w*0.6,y:m.h*0.8,hx:0,hy:0}];
+    closePath(); await w(300);
+    PATHSEL = { kind:'saved', i:0 }; buildPathList();
+    const n0 = LAYERS.length;
+    document.getElementById('b_pshape').click(); await w(600);
+    const S = LAYERS[SEL];
+    const out = { 増えた:LAYERS.length === n0 + 1, 種:S.kind,
+                  形:S.shape ? S.shape.type : null, 点:S.shape ? (S.shape.pts||[]).length : 0 };
+    /* 塗りをグラデにできる＝本物の図形として扱える */
+    COARSE = 0; render(); await w(300);
+    const 前 = window.__full();
+    shapeOf(S).fmode = 'linear'; rebuildShape(S); COARSE = 0; render(); await w(400);
+    out.グラデが効く = window.__sad(前, window.__full()) > 0;
+    return out;
+  });
+  ok(P2S.増えた && P2S.種 === 'shape' && P2S.形 === 'path' && P2S.点 === 3,
+     '⭐⭐ ペンで描いた形は【本物の図形レイヤー】になる（点も残る）', JSON.stringify(P2S));
+  ok(P2S.グラデが効く,
+     '⭐ その図形に 塗り・線・グラデがそのまま効く', String(P2S.グラデが効く));
 }
 
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
