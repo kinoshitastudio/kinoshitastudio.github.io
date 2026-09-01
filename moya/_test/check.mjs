@@ -4570,6 +4570,57 @@ await wait(600);
      '⭐⭐ 書体に無い字を先に言う（かな込みでも【漢字は無い】と言う）', JSON.stringify(FM));
 }
 
+/* ⭐⭐ ペンの【図形を描く】＝閉じたら本当にレイヤーになる（2026-09-01・木下）
+   🔴 前は選んでいる素材の紙の中で点を取っていたので、小さい素材を選んだまま
+      広い所に描くと「図形にできませんでした」で終わっていた。 */
+{
+  await p.evaluate(() => {
+    closeAllEditors();
+    document.querySelector('#tools button[data-t="path"]').click();
+  });
+  await wait(600);
+  await p.evaluate(() => {
+    /* いちばん小さい素材を選んでおく（前はこれで必ず失敗した） */
+    let k = 0, best = 9;
+    LAYERS.forEach((L, i) => { if(L.img && L.s < best){ best = L.s; k = i; } });
+    setSel(k, false); syncSel();
+    const bt = [...document.querySelectorAll('#s_penmode button')].find(x => x.dataset.v === 'shape');
+    if(bt) bt.click();
+  });
+  await wait(400);
+  const P0 = await p.evaluate(() => ({ 枚:LAYERS.length, PENMODE,
+    釦:document.getElementById('b_polyend').textContent }));
+  const pp = await p.evaluate(() => {
+    const a2 = toScreen(0.34, 0.28), b2 = toScreen(0.63, 0.35), c2 = toScreen(0.45, 0.60);
+    return [[a2.clientX, a2.clientY], [b2.clientX, b2.clientY], [c2.clientX, c2.clientY]];
+  });
+  for(const [x, y] of pp){ await p.mouse.click(x, y); await wait(250); }
+  await p.mouse.click(pp[0][0], pp[0][1]);
+  await wait(800);
+  const P1 = await p.evaluate(() => {
+    const o = LAYERS[SEL];
+    return { 枚:LAYERS.length, 名:o ? o.name : null, 種:o ? o.kind : null,
+      型:o && o.shape ? o.shape.type : null, 点:o && o.shape ? o.shape.pts.length : 0,
+      x:o ? +o.x.toFixed(2) : 0, y:o ? +o.y.toFixed(2) : 0, s:o ? +o.s.toFixed(2) : 0,
+      掴める:o ? hitLayer({ x:o.x, y:o.y }) === SEL : false,
+      案内:document.getElementById('stat').textContent };
+  });
+  ok(/図形/.test(P0.釦) && P0.PENMODE === 'shape',
+     '⭐ ［図形を描く］にすると閉じる釦の名前も変わる（釦が嘘をつかない）', JSON.stringify(P0));
+  ok(P1.枚 === P0.枚 + 1 && P1.種 === 'shape' && P1.型 === 'path' && P1.点 === 3,
+     '⭐⭐ ペンで囲んで閉じると【本物の図形レイヤー】になる（塗り・線が効く）', JSON.stringify(P1));
+  ok(Math.abs(P1.x - 0.485) < 0.04 && Math.abs(P1.y - 0.44) < 0.05
+     && Math.abs(P1.s - 0.29) < 0.05 && P1.掴める,
+     '⭐⭐ 描いた場所・大きさのまま版面に置かれる（選んでいる素材に引きずられない）',
+     JSON.stringify(P1));
+  await p.evaluate(() => {
+    const bt = [...document.querySelectorAll('#s_penmode button')].find(x => x.dataset.v === 'path');
+    if(bt) bt.click();
+    document.querySelector('#tools button[data-t="move"]').click();
+  });
+  await wait(300);
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);

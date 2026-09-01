@@ -6457,12 +6457,12 @@ function drawOverlay(W, H){
     if(!SUBOF) return;
   }
   /* ⭐⭐ 紙を切るときの下見＝【出す形とまったく同じ道】で描く（見たとおりに切れる） */
-  if(SHEETPATH || SHEETCUT){
-    const done = sheetPath2D(W, H);
+  if(SHEETPATH || SHEETCUT || (PENMODE === 'shape' && POLY.length)){
+    const done = (SHEETPATH || SHEETCUT) ? sheetPath2D(W, H) : null;
     if(done){ og.setLineDash([Math.max(4, W/140), Math.max(4, W/140)]);
       og.strokeStyle = 'rgba(255,64,64,.75)'; og.lineWidth = Math.max(1.5, W/500);
       og.stroke(done); og.setLineDash([]); }
-    if(SHEETPATH && POLY.length){
+    if((SHEETPATH || PENMODE === 'shape') && POLY.length){
       const bp = POLY.map(q2 => ({ x:q2.x*W, y:q2.y*H, hx:(q2.hx||0)*W, hy:(q2.hy||0)*H,
         ihx:(q2.ihx==null?null:q2.ihx*W), ihy:(q2.ihy==null?null:q2.ihy*H) }));
       const d = pathD(bp, POLY.length > 2);
@@ -6924,8 +6924,13 @@ function hitLayer(q){
       pan = { x:e.clientX, y:e.clientY, vx:V.x, vy:V.y };
       stage.classList.add('panning'); return;
     }
-    if(MODE === 'cut' && SHEETPATH && TOOL === 'path'){
-      /* ⭐ 紙を切るときは【版面の割合 0〜1】がそのまま点になる（素材の中の座標に直さない） */
+    /* ⭐⭐ 版面の座標で点を取るのは2つ ── ①紙を切るとき ②ペンで【図形を描く】とき。
+       🔴 2026-09-01・木下＝「これは図形を描いてもレイヤーにならない」
+         ＝図形なのに【選んでいる素材の紙の中】で点を取っていたので、
+           小さい素材を選んだまま広い所に描くと紙の外＝「図形にできませんでした」。
+         図形は版面に置くものだから、版面の座標で取る。 */
+    if(MODE === 'cut' && (SHEETPATH || PENMODE === 'shape') && TOOL === 'path'){
+      /* ⭐ 版面の割合 0〜1 がそのまま点になる（素材の中の座標に直さない） */
       const near = 16 * perScreenPx() / Math.max(1, cv.width);
       let hh3 = -1, hb3 = near;
       POLY.forEach((q2, i2) => { if(!(q2.hx || q2.hy)) return;
@@ -10802,13 +10807,15 @@ function closePath(){
     return;
   }
   const L = LAYERS[SEL];
-  if(!L || POLY.length < 3){ stat('点を3つ以上打ってください'); return; }
+  if(POLY.length < 3){ stat('点を3つ以上打ってください'); return; }
+  /* ⭐ 図形は版面に置くので、素材を選んでいなくても描ける */
+  if(!L && PENMODE !== 'shape'){ stat('先に素材を選んでください'); return; }
   /* ⭐⭐ ペンのモードが【シェイプ】なら、閉じた瞬間に図形レイヤーになる（2026-09-01）
      ＝木下＝「ボードで繋ぐとレイヤーにパスで作成されたものが追加される」 */
   if(PENMODE === 'shape'){
     const pts = POLY.map(q => Object.assign({}, q));
     POLY = [];
-    pathToShape(L, pts);
+    pathToShape(L, pts, true);        /* 点は【版面の割合】で入っている */
     return;
   }
   /* ══⭐⭐ 閉じたら【作業用パス】になる（Photoshop と同じ）══ 2026-08-31（調べ直して修正）
@@ -11410,8 +11417,15 @@ el('b_pedit').onclick = () => {
 };
 /* ⭐ パスから図形を作る＝【形をそのまま図形レイヤーにする】
    ⚠️ 図形は塗りと線を別に持つので、そのあと自由に色を決められる。 */
-function pathToShape(L, pts){
-  const m = maskSize(L);
+/* ⭐ inSheet＝点が【版面の割合 0〜1】で入っている（ペンの図形モード）。
+   ⚠️ 素材のパスから作るとき（［パスから図形を作る］）は今までどおり素材の紙の画素。 */
+function pathToShape(L, pts, inSheet){
+  if(inSheet && !L) L = null;
+  const m = inSheet ? sheet() : maskSize(L);
+  if(inSheet) pts = pts.map(o2 => ({ x:o2.x * m.w, y:o2.y * m.h,
+    hx:(o2.hx || 0) * m.w, hy:(o2.hy || 0) * m.h,
+    ihx:(o2.ihx == null ? null : o2.ihx * m.w),
+    ihy:(o2.ihy == null ? null : o2.ihy * m.h) }));
   const d = pathD(pts, true);
   if(!d){ stat('図形にできませんでした'); return; }
   /* 形の入る四角を測る（余白なしで置く） */
@@ -11440,15 +11454,21 @@ function pathToShape(L, pts){
     ihx:(o2.ihx == null ? null : o2.ihx / bw), ihy:(o2.ihy == null ? null : o2.ihy / bh) }));
   q.fill = el('c_selsw') ? el('c_selsw').value : '#ffffff';
   q.fstops = [{ p:0, c:q.fill }, { p:1, c:'#0a0a0a' }];
-  /* 元の素材の中の位置を、版面の位置に直して置く */
-  const iw = cwOf(L), ih = chOf(L);
+  /* 置く場所＝①版面に描いたならそのまま ②素材のパスからなら素材の位置に直して */
   const cu = (x0 + bw/2) / m.w, cv2 = (y0 + bh/2) / m.h;
   const f = sheet();
-  const dw = L.s * f.w, dh = dw * ih / iw * syOf(L);
+  let px, py, ps, prot, pd;
+  if(inSheet){
+    px = cu; py = cv2; ps = bw / m.w; prot = 0; pd = 0;
+  }else{
+    const iw = cwOf(L), ih = chOf(L);
+    const dw = L.s * f.w, dh = dw * ih / iw * syOf(L);
+    px = L.x + (cu - 0.5) * dw / f.w; py = L.y + (cv2 - 0.5) * dh / f.h;
+    ps = (bw / m.w) * L.s; prot = L.rot; pd = Math.max(0, L.d - 0.001);
+  }
   const o = { id:UID++, kind:'shape', img:null, name:'ペンの図形', shape:q,
-    x:L.x + (cu - 0.5) * dw / f.w, y:L.y + (cv2 - 0.5) * dh / f.h,
-    s:(bw / m.w) * L.s, sy:1, rot:L.rot, flip:false,
-    d:Math.max(0, L.d - 0.001), on:true, op:1, ord:UID, air:0, g:null, clip:false,
+    x:px, y:py, s:ps, sy:1, rot:prot, flip:false,
+    d:pd, on:true, op:1, ord:UID, air:0, g:null, clip:false,
     blend:'source-over', keys:[], mCut:null, mKeep:null, adj:newAdj(), ed:newEd(), fx:newFx(),
     fill:{ on:false, color:'#ffffff', op:1, mode:'source-over' }, fills:[],
     mask:null, mv:0, _dist:null, _mk:'', _c:null, _key:'' };
@@ -11470,6 +11490,7 @@ function penPick(){
   PENMODE = PENLAST === 'shape' ? 'shape' : 'path';
   document.querySelectorAll('#s_penmode button')
     .forEach(x => x.classList.toggle('on', x.dataset.v === PENMODE));
+  if(typeof syncPenSay === 'function') syncPenSay();   /* 釦の名前もモードに合わせる */
   if(typeof syncCutHint === 'function') syncCutHint();
   /* 上のバーの2つを光らせる（どこで選ぶか分かる） */
   setTimeout(() => {
@@ -11484,6 +11505,9 @@ function penPick(){
 }
 function syncPenSay(){
   const e = document.getElementById('penSay');
+  { const eb = el('b_polyend');
+    if(eb) eb.textContent = PENMODE === 'shape'
+      ? '閉じて図形にする（レイヤーになる）' : 'パスを閉じる（作業用パスに）'; }
   if(e) e.textContent = PENMODE === 'shape' ? '図形を描く（閉じるとレイヤーになります）'
                                             : '作業用パス（切り抜き・選択範囲）';
 }
