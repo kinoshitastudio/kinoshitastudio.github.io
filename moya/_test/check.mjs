@@ -3937,6 +3937,68 @@ await wait(600);
      JSON.stringify(KT));
 }
 
+/* ⭐⭐ ⑦ パスを【塗る／線を描く】前に下見が出る（押すまで分からない、を無くす）
+   🔴 木下＝「PREVIEW しないとわからないので、これはどこの操作でも同じ。全部確認し」 */
+{
+  const PV = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    const over = () => { const d = og.getImageData(0,0,ov.width,ov.height).data;
+      let n = 0; for(let i = 3; i < d.length; i += 4*11) if(d[i] > 8) n++; return n; };
+    closeAllEditors(); await w(300);
+    /* 写真の素材に三角のパスを1本作る */
+    const i = LAYERS.findIndex(L2 => L2.img && L2.kind !== 'text' && L2.kind !== 'shape');
+    setSel(i, false); syncSel(); buildList();
+    const L = LAYERS[SEL], m = maskSize(L);
+    L.paths = []; L.work = null; L.sel = null; PATHSEL = null;
+    document.getElementById('b_pnew').click(); await w(250);
+    POLY = [{x:m.w*0.2,y:m.h*0.2,hx:0,hy:0},{x:m.w*0.8,y:m.h*0.2,hx:0,hy:0},
+            {x:m.w*0.8,y:m.h*0.8,hx:0,hy:0}];
+    closePath(); await w(300);
+    PATHSEL = { kind:'saved', i:0 }; buildPathList();
+    COARSE = 0; render(); await w(300);
+    const 前 = over(), 盤前 = window.__full();
+    const 枚前 = LAYERS.length;
+    /* ボタンに触れる＝下見が出る */
+    const bf = document.getElementById('b_pfill');
+    bf.dispatchEvent(new PointerEvent('pointerenter', { bubbles:true }));
+    await w(250);
+    const 塗りの下見 = over();
+    const 盤は変わらない = window.__diff(盤前, window.__full());
+    const 増えていない = LAYERS.length === 枚前;
+    bf.dispatchEvent(new PointerEvent('pointerleave', { bubbles:true }));
+    await w(250);
+    const 離すと消える = over();
+    /* 線の方も出る（太さを引いても出る） */
+    const bs = document.getElementById('b_pstroke');
+    bs.dispatchEvent(new PointerEvent('pointerenter', { bubbles:true }));
+    await w(250);
+    const 線の下見 = over();
+    bs.dispatchEvent(new PointerEvent('pointerleave', { bubbles:true }));
+    const r2 = document.getElementById('r_selsw');
+    r2.value = 40; r2.dispatchEvent(new Event('input', { bubbles:true }));
+    await w(250);
+    const 太さでも出る = over();
+    PATHPV = null; drawOverlay(cv.width, cv.height);
+    /* 本当に押すと絵になる（下見と同じ形が新しいレイヤーで出る） */
+    document.getElementById('b_pfill').click(); await w(400);
+    const 押すと増える = LAYERS.length === 枚前 + 1;
+    const 名 = LAYERS[SEL] ? LAYERS[SEL].name : '';
+    undo(); await w(400);
+    const 戻せる = LAYERS.length === 枚前;
+    return { 前, 塗りの下見, 離すと消える, 線の下見, 太さでも出る,
+             盤は変わらない, 増えていない, 押すと増える, 名, 戻せる };
+  });
+  ok(PV.塗りの下見 > PV.前 && PV.線の下見 > PV.前 && PV.太さでも出る > PV.前,
+     '⭐⭐ パスを【塗る／線を描く】前に、描かれるものが盤に出る（押すまで分からない を無くす）',
+     JSON.stringify(PV));
+  /* ⚠️ 点線（marching ants）は毎コマ動くので印の数は少しゆれる＝ぴったり比べない
+     （下見は 20倍以上になるので、ゆれと混ざらない）→ feedback_regression_test_before_push */
+  ok(PV.離すと消える < PV.前 * 1.5 && PV.盤は変わらない === 0 && PV.増えていない,
+     '⚠️ 下見は印の板だけ＝絵は1画素も変わらず、レイヤーも増えない', JSON.stringify(PV));
+  ok(PV.押すと増える && /パスの塗り/.test(PV.名) && PV.戻せる,
+     '⭐ 押すと本当に新しいレイヤーになり、⌘Z で戻せる', JSON.stringify(PV));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);
