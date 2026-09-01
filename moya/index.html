@@ -2197,6 +2197,14 @@ let SELIDS = [], GROUPS = [], GID = 1;
    ⭐ 新しいデータは作らない。**印を1つ持つだけ**（素材の選択とは同時に立たない）。
    ⚠️ 描くのは印の板（ov）だけ＝出す絵には1画素も入らない。 */
 let SELBG = false;
+/* ══⭐⭐ パスを【塗る／線を描く】の下見 ══ 2026-09-01
+   🔴 木下＝「PREVIEW しないとわからないので、これはどこの操作でも同じ。全部確認し」
+     ＝［パスを塗りつぶす］［パスの境界線を描く］［パスに線を描く］は**押すまで結果が見えない**。
+       しかも新しいレイヤーになるので、違ったときは消してやり直しになる。
+   ⭐ ボタンに触れている間・太さや色を触っている間だけ、**描かれるものを薄く出す**。
+   ⚠️ 印の板（ov）に描く＝出す絵には1画素も入らない。
+   ⚠️ 宣言はここ（drawOverlay は立ち上げの早い時期に走るので、下に置くと届かない）。 */
+let PATHPV = null;      /* { mode:'fill'|'stroke', src:'path'|'sel'|'auto' } */
 const selIdx = () => SELIDS.map(id => LAYERS.findIndex(L => L.id === id)).filter(i => i >= 0);
 const selLayers = () => selIdx().map(i => LAYERS[i]);
 const groupOf = L => (L && L.g != null) ? GROUPS.find(g => g.id === L.g) : null;
@@ -5527,6 +5535,63 @@ function drawOverlay(W, H){
     else og.fillRect(bx4, by4, tw4 + pd4*2, fs4*1.8);
     og.fillStyle = '#fff';
     og.fillText(t4, bx4 + pd4, by4 + fs4*0.9);
+  }
+  /* ══⭐⭐ パスを【塗る／線を描く】前の下見 ══ 2026-09-01
+     🔴 木下＝「PREVIEW しないとわからないので、これはどこの操作でも同じ。全部確認し」
+     ⭐ 描く道は strokePath とまったく同じ（同じ点・同じ太さの決め方）＝見たとおりに描かれる。
+     ⚠️ ここに置くのは、切り抜きの画面では この下で return するから
+       （＝版面でも切り抜きの画面でも同じように出す）。 */
+  if(PATHPV && typeof pathPvPts === 'function'){
+    const LP2 = LAYERS[SEL];
+    const pp2 = pathPvPts();
+    if(LP2 && LP2.img && pp2 && pp2.length >= 3){
+      /* 切り抜きの画面では【盤ぜんぶ＝その素材】（中の紙のときは今までどおりの置き方） */
+      const solo5 = cutView() && !SUBOF;
+      const iw5 = cwOf(LP2), ih5 = chOf(LP2);
+      const dw5 = solo5 ? W : LP2.s * W;
+      const dh5 = solo5 ? H : dw5 * ih5 / iw5 * syOf(LP2);
+      const m5 = maskSize(LP2);
+      og.save();
+      og.translate(solo5 ? W/2 : LP2.x*W, solo5 ? H/2 : LP2.y*H);
+      if(!solo5 && LP2.rot) og.rotate(LP2.rot * Math.PI/180);
+      const fx5 = LP2.flip ? -1 : 1;
+      const bp5 = pp2.map(q2 => { let u = q2.x / m5.w; const v = q2.y / m5.h;
+        if(LP2.flip) u = 1 - u;
+        return { x:(u - 0.5) * dw5, y:(v - 0.5) * dh5,
+                 hx:(q2.hx||0) / m5.w * dw5 * fx5, hy:(q2.hy||0) / m5.h * dh5,
+                 ihx:(q2.ihx==null?null:q2.ihx / m5.w * dw5 * fx5),
+                 ihy:(q2.ihy==null?null:q2.ihy / m5.h * dh5) }; });
+      const d5 = pathD(bp5, true);
+      if(d5){
+        const col5 = el('c_selsw') ? el('c_selsw').value : '#ffffff';
+        og.globalAlpha = 0.62;
+        if(PATHPV.mode === 'fill'){ og.fillStyle = col5; og.fill(new Path2D(d5)); }
+        else{
+          /* ⭐ 太さの決め方は strokePath と同じ式（画面に出すぶんの倍率だけ掛ける） */
+          const sw5 = (+el('r_selsw').value) * Math.min(m5.w, m5.h) / 300 * (dw5 / m5.w);
+          og.strokeStyle = col5; og.lineWidth = Math.max(0.5, sw5);
+          og.lineJoin = 'round'; og.lineCap = 'round';
+          og.stroke(new Path2D(d5));
+        }
+        og.globalAlpha = 1;
+      }
+      og.restore();
+      if(d5){
+        /* 何が起きるかを字でも言う（薄い絵だけでは「下見」だと分からない） */
+        const fs5 = Math.max(11, W/62), pd5 = fs5*0.5;
+        const t5 = (PATHPV.mode === 'fill' ? '押すと ここが塗られます' : '押すと この線が描かれます')
+                 + '（新しいレイヤーになります）';
+        og.font = '600 ' + fs5.toFixed(0) + 'px -apple-system,BlinkMacSystemFont,sans-serif';
+        og.textAlign = 'left'; og.textBaseline = 'middle';
+        const tw5 = og.measureText(t5).width;
+        const bx5 = Math.max(8, (W - tw5)/2), by5 = fs5*1.2;
+        og.fillStyle = 'rgba(20,20,20,.86)';
+        if(og.roundRect){ og.beginPath();
+          og.roundRect(bx5 - pd5, by5, tw5 + pd5*2, fs5*1.8, fs5*0.4); og.fill(); }
+        else og.fillRect(bx5 - pd5, by5, tw5 + pd5*2, fs5*1.8);
+        og.fillStyle = '#fff'; og.fillText(t5, bx5, by5 + fs5*0.9);
+      }
+    }
   }
   /* 灯（白い丸＋黒い縁＝暗い盤でも明るい盤でも必ず見える）
      ⚠️ 切り抜き中は掴めないので印も出さない（触れるのに効かない、を作らない） */
@@ -9158,6 +9223,41 @@ el('b_selstroke').onclick = () => {
   const L = LAYERS[SEL]; if(!L || !L.sel) return;
   strokePath(L, selSubs(L.sel)[0].pts, false);
 };
+/* ══⭐⭐ 押す前の下見（PATHPV）の配線 ══ 2026-09-01
+   ⭐ 出す先は3つとも同じ形＝【いま描かれる点】を1本の道で決める。
+     ・パスパネルで選んでいるパス（無ければ）選択範囲の形
+     ・［パスに線を描く］は選択範囲そのものを使うので src:'sel' */
+function pathPvPts(){
+  const L = LAYERS[SEL]; if(!L || !PATHPV) return null;
+  const fromSel = () => { const s = L.sel ? selSubs(L.sel)[0] : null; return s ? s.pts : null; };
+  if(PATHPV.src === 'sel') return fromSel();
+  return (typeof curPathPts === 'function' ? curPathPts(L) : null) || fromSel();
+}
+function pathPvSet(v){ PATHPV = v; drawOverlay(cv.width, cv.height); }
+let pathPvT = 0;
+/* つまみ・色は「触った少しのあいだ」だけ出す（HILITE と同じ作法） */
+function pathPvFlash(mode){
+  clearTimeout(pathPvT);
+  pathPvSet({ mode, src:'auto' });
+  pathPvT = setTimeout(() => pathPvSet(null), 1800);
+}
+[['b_pfill','fill','path'], ['b_pstroke','stroke','path'], ['b_selstroke','stroke','sel']]
+  .forEach(([id, mode, src]) => {
+    const b2 = el(id); if(!b2) return;
+    const on = () => { clearTimeout(pathPvT); pathPvSet({ mode, src }); };
+    const off = () => pathPvSet(null);
+    b2.addEventListener('pointerenter', on);
+    b2.addEventListener('pointerleave', off);
+    b2.addEventListener('focus', on);
+    b2.addEventListener('blur', off);
+  });
+/* 太さ・描画色を触っている間も出す（＝引きながら太さが決められる） */
+{
+  const r2 = el('r_selsw');
+  if(r2) r2.addEventListener('input', () => pathPvFlash('stroke'));
+  const c2 = el('c_selsw');
+  if(c2) c2.addEventListener('input', () => pathPvFlash(PATHPV ? PATHPV.mode : 'stroke'));
+}
 [['r_liqrad','o_liqrad'], ['r_liqstr','o_liqstr']].forEach(([rid, oid]) => {
   el(rid).addEventListener('input', e => { el(oid).value = (+e.target.value/100).toFixed(2); });
 });
