@@ -386,7 +386,7 @@ function dedupImages(kids) {
   return out;
 }
 
-const stats = { al: 0, abs: 0, band: 0, svg: 0, swap: 0, blank: 0, shot: 0, kasanari: 0, heavysvg: 0, local: 0, hankei: 0 };
+const stats = { al: 0, abs: 0, band: 0, svg: 0, swap: 0, blank: 0, shot: 0, kasanari: 0, heavysvg: 0, local: 0, hankei: 0, oldout: 0 };
 
 const r1 = v => Math.round(v * 10) / 10;
 
@@ -878,6 +878,24 @@ for (const i of targets) {
 
   const name = root.name.replace(/[\/\\:*?"<>|]/g, '-');
   const json = { name: root.name, font: 'Noto Sans JP', root };
+  // 🔴 ファイル名に見出しが入っているので、サイト側の文言が1文字変わるだけで【別の1枚】になり
+  //    ライブラリが同じ帯で二重に増える。⭐ 同じ「接頭辞・番号・幅」の古い枚は控えへ退かす。
+  //    ⚠️ 消さずに退かす（ライブラリ画面の🗑と違って、戻せるようにしておく）
+  {
+    const numTag = `${PREFIX} — ${i === -1 ? '00' : String(i + 1).padStart(2, '0')} `;
+    const tail = ` (${W}).json`;
+    const olds = fs.readdirSync(LIB).filter(f =>
+      f.startsWith(numTag) && f.endsWith(tail) && f !== name + '.json');
+    if (olds.length) {
+      const bk = path.join(ROOT, '_bk', 'library-' + new Date().toISOString().slice(0, 10));
+      fs.mkdirSync(bk, { recursive: true });
+      olds.forEach(o => {
+        fs.renameSync(path.join(LIB, o), path.join(bk, o));
+        console.log(`   ♻️ 見出しが変わったので古い枚を退かした: ${o}`);
+      });
+      stats.oldout += olds.length;
+    }
+  }
   fs.writeFileSync(path.join(LIB, name + '.json'), JSON.stringify(json, null, 1));
 
   const c = count(root);
@@ -896,6 +914,6 @@ function count(n, a = { t: 0, lay: 0, abs: 0, img: 0 }) {
 
 const T = done.reduce((a, c) => ({ t: a.t + c.t, lay: a.lay + c.lay, abs: a.abs + c.abs, img: a.img + c.img }), { t: 0, lay: 0, abs: 0, img: 0 });
 console.log(`\n合計 ${done.length}枚 / ノード ${T.t} / オートレイアウト ${T.lay} / 絶対配置 ${T.abs}（重ねる所）/ 写真 ${T.img}`);
-console.log(`束ねた回数 ${stats.band} ── gap が2種類ある所を入れ子にした / svgを取り込んだ ${stats.svg}件 / 写真を実物に差し替えた ${stats.swap}件 / 空だった写真 ${stats.blank}件 / スクショを敷いた ${stats.shot}件（うち 重ね ${stats.kasanari}枚）/ 重いsvgを画像に ${stats.heavysvg}件 / 手元の写真を refs/img に ${stats.local}件 / 中央寄せの帯を画面幅に直した ${stats.hankei}件`);
+console.log(`束ねた回数 ${stats.band} ── gap が2種類ある所を入れ子にした / svgを取り込んだ ${stats.svg}件 / 写真を実物に差し替えた ${stats.swap}件 / 空だった写真 ${stats.blank}件 / スクショを敷いた ${stats.shot}件（うち 重ね ${stats.kasanari}枚）/ 重いsvgを画像に ${stats.heavysvg}件 / 手元の写真を refs/img に ${stats.local}件 / 中央寄せの帯を画面幅に直した ${stats.hankei}件 / 見出しが変わった古い枚を退かした ${stats.oldout}件`);
 console.log(`\n→ ${LIB}`);
 console.log(`⭐ Figma に出す: cp "library/<名前>.json" mothership.json`);
