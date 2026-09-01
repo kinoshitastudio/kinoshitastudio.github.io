@@ -4021,6 +4021,71 @@ await wait(600);
      '⭐ 押すと本当に新しいレイヤーになり、⌘Z で戻せる', JSON.stringify(PV));
 }
 
+/* ⭐⭐ ⑧ 重ね方（描画モード）は【空気を 0 にしていても】効く
+   🔴🔴 木下＝「円だが、重ね方オーバーレイにしたが何の変化もない」「画像もオーバーレイできないね」
+     ＝素のまま（空気 0）の素材は仕上げのあとに置き直す作りで、そこで source-over に戻していた。
+     ＝**空気を 0 にしている素材だけ 重ね方が丸ごと効かなかった**（木下の画面は全部 空気 0.00）。 */
+{
+  const BL = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    closeAllEditors(); await w(300);
+    const i = LAYERS.findIndex(L2 => L2.img && L2.kind !== 'adj');
+    setSel(i, false); syncSel(); buildList();
+    const L = LAYERS[SEL];
+    const keep = { blend:L.blend, air:airOf(L) };
+    setAir(L, 0); L.blend = 'source-over'; L._key = ''; COARSE = 0; render(); await w(350);
+    const 素0 = window.__full();
+    L.blend = 'overlay'; L._key = ''; COARSE = 0; render(); await w(350);
+    const 空気0で効く = window.__sad(素0, window.__full());
+    L.blend = 'source-over'; setAir(L, 1); L._key = ''; COARSE = 0; render(); await w(350);
+    const 空1 = window.__full();
+    L.blend = 'overlay'; L._key = ''; COARSE = 0; render(); await w(350);
+    const 空気1でも効く = window.__sad(空1, window.__full());
+    L.blend = 'source-over'; L._key = ''; COARSE = 0; render(); await w(350);
+    const 戻ると同じ = window.__diff(空1, window.__full());
+    setAir(L, keep.air); L.blend = keep.blend || 'source-over'; L._key = ''; render();
+    return { 空気0で効く, 空気1でも効く, 戻ると同じ };
+  });
+  ok(BL.空気0で効く > 0 && BL.空気1でも効く > 0,
+     '⭐⭐ 重ね方（オーバーレイ）は【空気 0 の素材でも】効く', JSON.stringify(BL));
+  ok(BL.戻ると同じ === 0,
+     '🔴 通常に戻すと1画素も同じに戻る（重ね方を焼き込んでいない）', BL.戻ると同じ);
+}
+
+/* ⭐⭐ ⑨ 一覧に【そのレイヤーのエフェクト】がぶら下がる
+   🔴 木下＝「エフェクトが追加されているレイヤーには、レイヤーパネルに
+      エフェクトがずらずらとついているとよいかも」 */
+{
+  const FR = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    const ti = LAYERS.findIndex(L2 => L2.kind === 'text');
+    setSel(ti < 0 ? 0 : ti, false); syncSel(); buildList();
+    document.querySelector('#s_fxpre button[data-v="gold"]').click();
+    await w(400); buildList(); await w(150);
+    /* ⚠️ 一覧には【素材ごとに】ぶら下がる＝いま選んでいる素材の行だけを見る */
+    const mine = () => [...document.querySelectorAll('#layers .fxrow')]
+      .filter(r => +r.dataset.i === SEL);
+    const rows = mine();
+    const 名 = rows.map(r => r.textContent.trim());
+    const 効いている数 = FXLIST.filter(([k]) => fxOf(LAYERS[SEL])[k].on).length;
+    /* 行の目で外せる（一覧から直に切れる） */
+    const k0 = rows[0] && rows[0].dataset.fx;
+    const 前 = k0 ? fxOf(LAYERS[SEL])[k0].on : null;
+    if(rows[0]) rows[0].querySelector('.eye').click();
+    await w(350);
+    const 後 = k0 ? fxOf(LAYERS[SEL])[k0].on : null;
+    const back = mine().find(r => r.dataset.fx === k0);
+    if(back) back.querySelector('.eye').click();
+    await w(350);
+    return { 名, 数:rows.length, 効いている数, 前, 後 };
+  });
+  ok(FR.数 === FR.効いている数 && FR.数 >= 5,
+     '⭐⭐ 一覧に【そのレイヤーのエフェクト】がぶら下がる', JSON.stringify(FR));
+  ok(FR.前 === true && FR.後 === false,
+     '⭐ 一覧の目でエフェクトを切れる（右のパネルへ行かなくていい）',
+     JSON.stringify({ 前:FR.前, 後:FR.後 }));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);
