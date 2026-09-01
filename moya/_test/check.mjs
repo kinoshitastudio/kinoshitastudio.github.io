@@ -1403,6 +1403,8 @@ const SU = await p.evaluate(() => {
   const bad = [];
   document.querySelectorAll('#panel input[type=range]').forEach(e => {
     if(SKIP.includes(e.id)) return;
+    /* ⚠️ その場で作るつまみ（グラデの向きなど）は id を持たない＝目印で外す */
+    if(e.dataset && e.dataset.neu === 'skip') return;
     const want = (e.id in NEU) ? NEU[e.id] : 0;
     if(+e.value !== want) bad.push(e.id + '=' + e.value + '（' + want + ' のはず）');
   });
@@ -1559,8 +1561,12 @@ const SHG = await p.evaluate(async () => {
   document.querySelector('#s_shape button[data-v="rect"]').click();
   await new Promise(r => setTimeout(r, 300));
   const L = LAYERS[SEL];
+  /* ⚠️ わざと【古い設定JSON と同じ形】にする（はじめの色・おわりの色・おわりを透明に）。
+     ＝読むときにストップへ写されて、絵は同じままになることを見る（2026-09-01 に作り替えた） */
   Object.assign(shapeOf(L), { w:800, h:800, fillOn:true, strokeOn:false,
     grad:true, g1:'#000000', g2:'#000000', gang:270, gfade:true });
+  delete L.shape.fmode; delete L.shape.smode;
+  shapeOf(L);                       /* ← ここで古い形から写される */
   rebuildShape(L);
   await new Promise(r => setTimeout(r, 300));
   const c = document.createElement('canvas'); c.width = 40; c.height = 40;
