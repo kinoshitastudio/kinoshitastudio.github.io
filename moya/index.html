@@ -9842,8 +9842,27 @@ const SHROWS = [
 SHROWS.forEach(([rid, oid, key, toVal, fmt]) => {
   el(rid).addEventListener('input', e => {
     const L = LAYERS[SEL]; if(!L || L.kind !== 'shape') return;
-    shapeOf(L)[key] = toVal(+e.target.value);
-    el(oid).value = fmt(L.shape[key]);
+    const q = shapeOf(L);
+    q[key] = toVal(+e.target.value);
+    /* ══⭐⭐ 線の太さを動かしたら【線を出す】══ 2026-09-02
+       🔴🔴 木下＝「ペンツールで図形を描けた後に、線の太さなどを変更するが
+          何も図形に変化はなし」
+        ＝図形は **線なし（strokeOn:false）で生まれる**ので、太さを 60 にしても
+          絵は1通りしか出なかった＝**死んだつまみ**。
+          線を出す道は［線］の色を選んでから ／ を押す所にしか無く、そこに気づけない
+          ＝芯は正しいのに入口が無い。
+       ⭐ 0 は本当に 0（線なし）／0 より大きくしたら線が出る＝つまみが必ず絵を変える。
+       ⚠️ 変えるのは【触ったときだけ】＝いままで置いた図形は1画素も動かない。
+       → feedback_count_the_pictures_a_knob_makes ／ feedback_a_tool_starts_from_being_ready */
+    if(key === 'sw'){
+      const want = q.sw > 0;
+      if(q.strokeOn !== want){
+        q.strokeOn = want; syncShape();
+        stat(want ? '線を出した（太さ ' + Math.round(q.sw) + '）── 0 にすると線なしに戻ります'
+                  : '線を「なし」にした（太さ 0）');
+      }
+    }
+    el(oid).value = fmt(q[key]);
     rebuildShape(L); touching(); renderSoon();
   });
 });
@@ -9941,8 +9960,14 @@ function shGradBuild(){
 /* ⭐ 線の位置（中央・内側・外側）＝形を作り直すだけ（値の持ち主は L.shape ひとつ） */
 document.querySelectorAll('#s_shalign button').forEach(bt => bt.onclick = () => {
   const L = LAYERS[SEL]; if(!L || L.kind !== 'shape') return;
-  hist(); shapeOf(L).align = bt.dataset.v; rebuildShape(L); syncShape(); render();
-  stat('線の位置を「' + bt.textContent + '」にした');
+  hist(); const q = shapeOf(L);
+  q.align = bt.dataset.v;
+  /* ⭐ 線の位置も同じ（線が無いまま位置だけ選んでも1通りの絵しか出ない）。
+     ⚠️ 太さが 0 のときは太さも既定へ戻す＝押したのに何も出ない、を作らない。 */
+  let 出した = false;
+  if(!q.strokeOn){ q.strokeOn = true; if(!(q.sw > 0)) q.sw = 8; 出した = true; }
+  rebuildShape(L); syncShape(); render();
+  stat('線の位置を「' + bt.textContent + '」にした' + (出した ? '（線を出しました）' : ''));
 });
 [['sh_fillon','fillOn'], ['sh_strokeon','strokeOn'], ['sh_grad','grad'],
  ['sh_gfade','gfade']].forEach(([id, key]) => {
@@ -13385,8 +13410,11 @@ const CUTSAY = {
   paint:'盤の上を <b>なぞる</b> と戻ります',
   lmask:'盤の上を <b>なぞる</b> と、黒＝隠れる／白＝出る（濃さを下げると <b>グレー＝半透明</b>）',
   liq:'盤の上を <b>なぞる</b> と画素が動きます',
-  path:'盤を押して点を打つ（<b>押したまま引くと曲がる</b>）／最初の点をもう一度押すと閉じます'
-      + '　── いまは <b id="penSay">図形を描く</b>',
+  /* ⚠️ ペン（path）はここに書かない ── 2026-09-02・木下＝「ペンツールを使う際の
+     この青色のメッセージは非表示にして」。帯が版面の上に居座って邪魔だった。
+     ⭐ 消しても役割は分かる：上のバーの［作業用パス／図形を描く］が押した直後に光る／
+       stat に同じことが出る／［閉じる］釦の名前もモードで変わる（syncPenSay）。
+     ＝ 出しっぱなしの帯だけをやめて、聞かれた時に答える所は残す。 */
 };
 function syncCutHint(){
   const s = el('optSay'); if(!s) return;
