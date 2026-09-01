@@ -4362,6 +4362,43 @@ await wait(600);
      '⭐⭐ その図形に 塗りと線がそのまま効く', JSON.stringify({ 塗り:PEN.塗りが効く, 線:PEN.線が効く }));
 }
 
+/* ⭐⭐ ⑯ 欧文だけの書体に日本語を打ったら【言う】（黙って差し替えない）
+   🔴 木下＝「テキストがうまく反映していない」（UWASA＝欧文に日本語）
+   ⚠️ 「その書体が字を持っているか」は画面から測れない（代替書体どうしを比べることになる）
+     ＝FONTS の3つ目（かな込みか）で判断する。 */
+{
+  const FW = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    closeAllEditors(); await w(300);
+    document.querySelector('#tools button[data-t="text"]').click(); await w(1000);
+    const ta = document.getElementById('t_str'), sel = document.getElementById('t_font');
+    const wn = document.getElementById('fontWarn');
+    const out = {};
+    sel.value = 'UWASA, sans-serif'; sel.dispatchEvent(new Event('change', { bubbles:true }));
+    await w(1500);
+    ta.value = 'テキスト'; ta.dispatchEvent(new Event('input', { bubbles:true })); await w(900);
+    out.日本語で言う = !wn.classList.contains('hide');
+    out.文 = wn.textContent.slice(0, 40);
+    ta.value = 'HIKARI'; ta.dispatchEvent(new Event('input', { bubbles:true })); await w(800);
+    out.欧文では言わない = wn.classList.contains('hide');
+    sel.value = 'UWASAJP, sans-serif'; sel.dispatchEvent(new Event('change', { bubbles:true }));
+    await w(1500);
+    ta.value = 'テキスト'; ta.dispatchEvent(new Event('input', { bubbles:true })); await w(900);
+    out.かな込みでは言わない = wn.classList.contains('hide');
+    sel.value = FONTS[0][0]; sel.dispatchEvent(new Event('change', { bubbles:true })); await w(800);
+    ta.value = 'テキスト'; ta.dispatchEvent(new Event('input', { bubbles:true })); await w(800);
+    out.既定でも言わない = wn.classList.contains('hide');
+    /* 表に「かな込みか」が入っていること（入れ忘れると黙る） */
+    out.表に印がある = FONTS.filter(f => f[2] === false).length >= 8;
+    return out;
+  });
+  ok(FW.日本語で言う && /持っていません/.test(FW.文),
+     '⭐⭐ 欧文だけの書体に日本語を打つと【言う】（黙って差し替えない）', JSON.stringify(FW));
+  ok(FW.欧文では言わない && FW.かな込みでは言わない && FW.既定でも言わない && FW.表に印がある,
+     '⚠️ 欧文のとき・かな込みのとき・既定のときは言わない（うるさくしない）',
+     JSON.stringify(FW));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);
