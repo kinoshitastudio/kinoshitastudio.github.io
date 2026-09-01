@@ -978,6 +978,8 @@
       <a class="home" href="https://kinoshita.studio/">← KINOSHITA STUDIO</a></div>
     <div class="l2"><span id="bhName">見本</span><span id="bhDot" class="dot"></span></div>
     <div class="l3" id="bhSay"></div>
+    <!-- ⭐ 点線が出ている間だけ「外し方」を出す（2026-09-01・木下の指摘） -->
+    <div class="l3 hide" id="bhSel" style="color:#ff9f0a"></div>
   </div>
   <canvas id="cv"></canvas>
   <canvas id="ov"></canvas>
@@ -1359,11 +1361,16 @@
         <button data-v="liq">ゆがみ</button>
       </div>
       <div class="knob"><span class="n">許容（色で抜く）</span><input class="num" type="number" id="n_r_tol"><input type="range" id="r_tol" min="1" max="80" step="1" value="18"><output id="o_tol" hidden>0.18</output></div>
+      <!-- ⭐⭐ 被写体をざっくり（Adobe の「被写体を選択」は AI＝持っていないので、
+           【まわりの色＝背景】とみなして色を覚える＝「色で消す」の自動版）── 2026-09-01 -->
+      <button class="btn" id="b_around" style="width:100%">まわりの色で抜く（被写体をざっくり）</button>
       <div id="keyInfo" class="hide"></div>
       <div class="knob"><span class="n">筆の太さ</span><input class="num" type="number" id="n_r_brush"><input type="range" id="r_brush" min="1" max="40" step="1" value="8"><output id="o_brush" hidden>0.08</output></div>
       <div class="knob"><span class="n">ふちをやわらかく</span><input class="num" type="number" id="n_r_feather"><input type="range" id="r_feather" min="0" max="100" step="1" value="25"><output id="o_feather" hidden>0.25</output></div>
       <div class="btns2">
-        <button class="btn" id="b_polyend">パスを閉じる（選択にする）</button>
+        <!-- ⚠️ 閉じても【選択にはならない】（Adobe と同じ＝作業用パスになる）。
+             選択にするのは［パスを選択範囲として読み込む］。名前が嘘だったので直した。 -->
+        <button class="btn" id="b_polyend">パスを閉じる（作業用パスに）</button>
         <button class="btn" id="b_polyundo">点をひとつ戻す</button>
       </div>
       <!-- ══⭐⭐ レイヤーマスクの筆 ══ 2026-08-31
@@ -2043,9 +2050,16 @@ const stage = el('stage'), cv = el('cv'), g = cv.getContext('2d');
 const ov = el('ov'), og = ov.getContext('2d');
 let statT = 0;
 /* ⭐ 状態は【盤の左上】に出す（貼HARI と同じ形）。⚠️ 出す絵には入らない */
+let STATNAME = true;      /* この案内を【控えの名前】にしてよいか（戻す/やり直すでは付けない） */
+function statPlain(s){ STATNAME = false; try{ stat(s); } finally { STATNAME = true; } }
 function stat(s){
   el('stat').textContent = s;
   const b = el('bhSay'); if(b) b.textContent = s;
+  /* 🔴 2026-09-01・木下＝「ヒストリーが戻らない」
+     ＝【戻したときの案内文】が、そのまま次の手の名前になって積まれていた
+       （「ここまで戻した：操作」という行が増える）＝戻っていないように見える。
+     ⭐ 戻す・やり直すの案内では名前を付けない。 */
+  if(!STATNAME) return;
   /* ⭐⭐ ヒストリー用に【何をしたか】を控えの名前にする（2026-08-31）
      ⭐ hist() は操作の【前】に呼ばれるので、名前はまだ分からない。
        操作のあとに必ず出る この案内を、そのまま名前として使う＝言葉を2か所に書かない。
@@ -2070,6 +2084,15 @@ function boardHead(){
     ? (L ? L.name : LAYERS.length + ' 枚') + '（' + LAYERS.length + ' 枚）'
     : '素材がありません';
   const d = el('bhDot'); if(d) d.classList.toggle('on', BHDIRTY);
+  /* 🔴 2026-09-01・木下＝「選択を外す場合はどうすればいいか？」
+     ＝点線が出ているのに、外し方がどこにも書いていなかった。
+     ⭐ 点線が出ている間だけ、盤の左上に【外し方】を出す（触れる所は増やさない）。 */
+  const s3 = el('bhSel');
+  if(s3){
+    const on = !!(L && typeof selSubs === 'function' && selSubs(L.sel).length);
+    s3.textContent = on ? '選択中 ── ⌘D で外す（Esc でも）' : '';
+    s3.classList.toggle('hide', !on);
+  }
 }
 
 /* ══⭐⭐ この道具の芯 ══════════════════════════════════════════
@@ -4009,6 +4032,38 @@ function pickColor(L, mx, my){
   bumpMask(L);
   return L.keys.length;
 }
+/* ══⭐⭐ まわりの色で抜く（Photoshop の「被写体を選択」の代わり）══ 2026-09-01
+   ⚠️ Adobe の「被写体を選択」「空を選択」は **AI** ＝ MOYA は持っていない。
+   ⭐ 代わりに【写真の縁の色＝背景】とみなして、その色をまとめて覚える。
+     ＝「色で消す」を自動で押しているだけなので、**許容つまみでその場で直せる**（焼き込まない）。
+   ⭐ 似た色はまとめる（同じ色を何個も覚えない）。
+   ⚠️ 背景が複雑な写真では抜けない ── そのときはパスで囲む（そう言う）。 */
+function pickAround(L){
+  const m = maskSize(L), sd = srcData(L), d = sd.data;
+  const at = (x, y) => {
+    const px = Math.max(0, Math.min(m.w-1, x|0)), py = Math.max(0, Math.min(m.h-1, y|0));
+    const q = (py*m.w + px)*4;
+    return { r:d[q], g:d[q+1], b:d[q+2], a:d[q+3] };
+  };
+  const pts = [];
+  const n = 14;
+  for(let i = 0; i < n; i++){
+    const t = (i + 0.5) / n;
+    pts.push([t*m.w, 1], [t*m.w, m.h-2], [1, t*m.h], [m.w-2, t*m.h]);
+  }
+  const keys = (L.keys || []).slice();
+  let add = 0;
+  for(const [x, y] of pts){
+    const c = at(x, y);
+    if(c.a < 8) continue;                     /* もう透けている所は覚えない */
+    if(keys.some(k => Math.abs(k.r-c.r) + Math.abs(k.g-c.g) + Math.abs(k.b-c.b) < 30)) continue;
+    keys.push({ r:c.r, g:c.g, b:c.b }); add++;
+  }
+  if(!add) return 0;
+  hist();
+  L.keys = keys; L._dist = null; bumpMask(L);
+  return add;
+}
 /* ② 筆で消す／戻す */
 function cutBrush(L, mx, my, lx, ly, erase){
   const m = maskSize(L);
@@ -5361,6 +5416,35 @@ const HANDLES = [[-1,-1],[1,-1],[1,1],[-1,1],[0,-1],[1,0],[0,1],[-1,0]];
 const HANDLE_PX = 11;
 /* ⚠️ 上の2つは drawOverlay より前に置く（初回の描画は下の宣言より先に走る） */
 /* ⭐ 灯の丸と、選んだ素材の枠は【別の板】に描く＝PNG に1画素も入らない */
+/* ══⭐⭐ 選択範囲を【盤で見えるように】する ══ 2026-09-01
+   🔴 木下＝「選択範囲を反転し、ぼかしの半径を max にしても
+      それらがボード上で PREVIEW しているわけではない。PREVIEW しないとわからない」
+   ⭐ 選択の【外】を薄く暗くする＝どちらが選ばれているかも、ぼかしの効きも、その場で見える。
+   ⚠️ 印の板（ov）に描くだけ＝**出す絵には1画素も入らない**。
+   ⭐ 重いので【選択・ぼかし・反転が変わったときだけ】作り直す（点線は毎コマ動くため）。 */
+let SELPV = { key:'', cv:null };
+function selPreview(L){
+  const q = L && L.sel;
+  if(!q || !selSubs(q).length) return null;
+  const m = maskSize(L);
+  const key = [L.id, q.inv ? 'i' : 'o', q.aa === false ? 0 : 1,
+    selSubs(q).map(t => t.op + t.pts.length + ':' + ((t.pts[0]||{}).x|0)).join(','),
+    L.selBlur || 0, m.w].join('|');
+  if(SELPV.key === key && SELPV.cv) return SELPV.cv;
+  const sm = selMask(L);
+  if(!sm) return null;
+  const c = document.createElement('canvas'); c.width = m.w; c.height = m.h;
+  const x = c.getContext('2d');
+  x.fillStyle = 'rgba(0,0,0,.34)';
+  x.fillRect(0, 0, m.w, m.h);
+  x.globalCompositeOperation = 'destination-out';
+  /* ⭐ ぼかしの半径をそのまま見せる（板に掛かるのと同じ割合） */
+  const bl = (L.selBlur || 0) * Math.min(m.w, m.h) * 0.08;
+  if(bl > 0.3) x.filter = 'blur(' + bl.toFixed(1) + 'px)';
+  x.drawImage(sm, 0, 0);
+  SELPV = { key, cv:c };
+  return c;
+}
 function drawOverlay(W, H){
   og.setTransform(1,0,0,1,0,0);
   og.clearRect(0, 0, W, H);
@@ -5524,6 +5608,12 @@ function drawOverlay(W, H){
                  ihx:(q2.ihx==null?null:q2.ihx / m3.w * dw3 * fx3),
                  ihy:(q2.ihy==null?null:q2.ihy / m3.h * dh3) };
       });
+      /* ⭐ 選択の外を薄く暗くする（反転・ぼかしがその場で見える） */
+      { const pv = selPreview(L2);
+        if(pv){ og.save();
+          if(L2.flip) og.scale(-1, 1);
+          og.drawImage(pv, -dw3/2, -dh3/2, dw3, dh3);
+          og.restore(); } }
       const bp3 = toB3(subs2[0].pts);
       const extra = subs2.slice(1).map(sb => pathD(toB3(sb.pts), true)).filter(Boolean);
       const d3 = pathD(bp3, true);
@@ -5651,8 +5741,23 @@ function drawOverlay(W, H){
                  ihx:(q2.ihx == null ? null : q2.ihx * sx * fx),
                  ihy:(q2.ihy == null ? null : q2.ihy * sy) };
       });
-      const d = pathD(bp, POLY.length > 2);
+      /* 🔴 2026-09-01・木下＝「パスを描いていても基本最初から繋がっている状態になっている
+         ような見た目なので、パスが閉じたよというのをもっとわかりやすくしてほしい」
+         ＝点が3つになった時点で【閉じた形】を描いていた＝まだ閉じていないのに閉じて見える。
+         ⭐ 描いている最中は【開いた線】。最初の点へ戻る所だけ**うすい点線**で見せる
+           （＝ここを押すと閉じる、が分かる）。 */
+      const d = pathD(bp, false);
       if(d){ og.strokeStyle = 'rgba(255,64,64,.95)'; og.stroke(new Path2D(d)); }
+      if(bp.length > 2){
+        og.save();
+        og.setLineDash([Math.max(3, W/220), Math.max(3, W/220)]);
+        og.strokeStyle = 'rgba(255,210,74,.85)'; og.lineWidth = Math.max(1, W/700);
+        og.beginPath();
+        og.moveTo(bp[bp.length-1].x, bp[bp.length-1].y);
+        og.lineTo(bp[0].x, bp[0].y);
+        og.stroke();
+        og.restore();
+      }
       const rp = Math.max(3.5, W/200);
       bp.forEach((b3, i) => {
         /* ⭐ ハンドルは線＋小さい丸（掴めるものが見えている） */
@@ -6029,7 +6134,7 @@ function hitLayer(q){
     /* ⭐ 四隅の少し外＝回す */
     const rr2 = hitRotate(q);
     if(rr2 && !hitHandle(q)){
-      hist();
+      hist('回す');
       const L = LAYERS[SEL];
       grab = { what:'rotate', a0:Math.atan2(q.y*cv.height - L.y*cv.height,
                                             q.x*cv.width  - L.x*cv.width), r0:L.rot };
@@ -6038,18 +6143,18 @@ function hitLayer(q){
     /* ⭐ 大きさの四角がいちばん先（枠の上にあるので、灯より先に見る） */
     const hh2 = hitHandle(q);
     if(hh2){
-      hist();
+      hist('大きさ');
       const L = LAYERS[SEL];
       const iw = cwOf(L), ih = chOf(L);
       grab = { what:'size', h:hh2, s0:L.s, iw, ih };
       stage.classList.add('moving'); return;
     }
     const li = cutView() ? -1 : hitLight(q);
-    if(li >= 0){ hist(); LSEL = li; syncLights(); grab = { what:'light', i:li };
+    if(li >= 0){ hist('灯を動かす'); LSEL = li; syncLights(); grab = { what:'light', i:li };
       stage.classList.add('moving'); render(); return; }
     const i = hitLayer(q);
     if(i >= 0){
-      hist();
+      hist('動かす');
       /* ⭐ ⇧ か ⌘ を押しながらで【足して選ぶ】（もう一度押したら外す） */
       setSel(i, e.shiftKey || e.metaKey || e.ctrlKey);
       syncSel(); buildList(); focusSel();
@@ -9258,9 +9363,32 @@ function pathToShape(L, pts){
   stat('パスから形を作った（新しいレイヤーになりました）');
 }
 el('b_polyend').onclick = closePath;
+el('b_around').onclick = () => {
+  const L = LAYERS[SEL];
+  if(!L || !L.img){ stat('先に素材を選んでください'); return; }
+  if(lockPix(L)){ stat('この素材には【絵を描き換えない】鍵がかかっています'); return; }
+  const n = pickAround(L);
+  syncKeys(); render();
+  stat(n ? ('まわりの色を ' + n + ' つ覚えた ── 許容つまみで抜け方を直せます'
+            + '（抜けないときはパスで囲んでください）')
+         : 'まわりに新しい色がありませんでした（もう覚えているか、縁が透けています）');
+};
 el('b_polyundo').onclick = () => {
-  if(!POLY.length){ stat('戻す点がありません'); return; }
-  POLY.pop(); drawOverlay(cv.width, cv.height); stat('点をひとつ戻した');
+  /* 描いている最中＝最後に打った点を戻す */
+  if(POLY.length){ POLY.pop(); drawOverlay(cv.width, cv.height);
+    stat('点をひとつ戻した（残り ' + POLY.length + '）'); return; }
+  /* 🔴 2026-09-01・木下＝「点をひとつ戻すも稼働していないような？」
+     ＝**閉じたあと**は POLY が空なので何も起きなかった。
+     ⭐ 閉じたあとは【選んでいる点】を消す（⌫ と同じ道＝式は1本）。 */
+  const L = LAYERS[SEL];
+  const ps = L ? curPathPts(L) : null;
+  if(ps && ps.length > 3 && SELPT >= 0 && ps[SELPT]){
+    hist('点を消す');
+    ps.splice(SELPT, 1); SELPT = -1; L._key = '';
+    buildPathList(); syncSelPath(); render(); drawOverlay(cv.width, cv.height);
+    stat('点を1つ消した（残り ' + ps.length + '）'); return;
+  }
+  stat(ps ? '消したい点を先に押してください（点は掴んで動かせます）' : '戻す点がありません');
 };
 el('b_dice').onclick = () => {
   const r = el('r_seed'); r.value = Math.floor(Math.random() * 1000);
@@ -10321,6 +10449,25 @@ function maskCopy(c){
   d.getContext('2d').drawImage(c, 0, 0);
   return d;
 }
+/* ══🔴🔴 控えは【中身をコピー】する ══ 2026-09-01
+   木下＝「ヒストリーで戻ってもぼかしが残ってる」「完全にもどっているわけではなさそう」
+   ＝ **選択範囲（sel）とゆがみ（liq）を参照のまま控えていた**ので、
+     そのあと中身を書き換えると【控えの中身まで一緒に変わって】いた＝戻らない。
+   ⭐ 形の分かっているものは、その形どおりに写す（Object.assign だけでは中の配列が共有される）。 */
+function copySel(q){
+  if(!q) return null;
+  const subs = (q.subs && q.subs.length) ? q.subs
+    : (q.pts && q.pts.length ? [{ op:'new', pts:q.pts }] : []);
+  return { inv:!!q.inv, aa:q.aa !== false,
+    subs:subs.map(t => ({ op:t.op || 'new',
+      pts:(t.pts || []).map(u => Object.assign({}, u)) })) };
+}
+function copyLiq(q){
+  if(!q) return null;
+  return { n:q.n || 0,
+    x:q.x && q.x.slice ? q.x.slice() : q.x,
+    y:q.y && q.y.slice ? q.y.slice() : q.y };
+}
 /* ⭐ レイヤーマスクの控え。⚠️ 型（絵）は【塗り足したときだけ】複製する（毎回だと重い） */
 function snapLM(L){
   const q = L.lm;
@@ -10374,7 +10521,7 @@ function snapState(){
       lm: snapLM(L),
       adj: Object.assign(newAdj(), L.adj || {}),
       /* ⭐ 中身・ゆがみ・選択パス・作業用パス・ベクトルマスクも控える */
-      sub:L.sub || null, liq:L.liq || null, sel:L.sel || null, selBlur:L.selBlur || 0,
+      sub:L.sub || null, liq:copyLiq(L.liq), sel:copySel(L.sel), selBlur:L.selBlur || 0,
       work:L.work ? { pts:L.work.pts.map(q => Object.assign({}, q)) } : null,
       amask:L.amask ? { inv:!!L.amask.inv, feather:L.amask.feather,
         pts:L.amask.pts.map(q => Object.assign({}, q)) } : null,
@@ -10407,9 +10554,12 @@ function restoreState(st){
     adj: Object.assign(newAdj(), o.adj),
     /* ⭐ 中身（その素材だけのアートボード）・ゆがみ・選択パスも戻す
        ⚠️ 中身は控えを取らずそのまま持つ（中で戻すときは中の並びが控えられている） */
-    sub:o.sub || null, liq:o.liq || null, sel:o.sel || null, selBlur:o.selBlur || 0,
+    sub:o.sub || null, liq:copyLiq(o.liq), sel:copySel(o.sel), selBlur:o.selBlur || 0,
     work:o.work || null, vmask:o.vmask || null, amask:o.amask || null,
     mask:null, mv:1, _dist:null, _mk:'', _c:null, _key:'', _subc:null, _subk:'',
+    /* ⚠️ 控えのメモ（版数で使い回す仕掛け）も消す＝戻したのに古い型が返るのを防ぐ */
+    _sn_mCut:null, _sn_mCut_mv:-1, _sn_mKeep:null, _sn_mKeep_mv:-1, _sn_lm:null, _sn_lm_v:-1,
+    _thu:null, _thk:'', _lmtu:null, _lmtv:-1,
   })));
   SHEETCUT = st.SHEETCUT ? { keepIn:st.SHEETCUT.keepIn,
     pts:st.SHEETCUT.pts.map(q => Object.assign({}, q)) } : null;
@@ -10447,9 +10597,10 @@ function syncAllUI(){
      ・past[k] ＝ k+1 番目の操作を **する前** の絵／その操作の名前を name に持つ
      ・名前は stat（操作のあとに必ず出る案内）から取る＝言葉を2か所に書かない
    ⭐ 押した所へ飛ぶ＝その回数だけ ⌘Z（または ⌘⇧Z）を通る＝道は1本。 */
-function hist(){
+function hist(name){
   BHDIRTY = true;
-  HIST.past.push({ st:snapState(), name:null });
+  /* ⭐ 名前をその場で渡せる（渡さないときは、次に出る案内が名前になる） */
+  HIST.past.push({ st:snapState(), name:name || null });
   if(HIST.past.length > HIST.max) HIST.past.shift();
   HIST.future.length = 0;
   if(typeof buildHist === 'function') buildHist();
@@ -10459,7 +10610,7 @@ function undo(){
   const o = HIST.past.pop();
   HIST.future.push({ st:snapState(), name:o.name });
   restoreState(o.st);
-  stat('取り消した：' + (o.name || '操作') + '（⌘⇧Z でやり直せます）');
+  statPlain('取り消した：' + (o.name || '操作') + '（⌘⇧Z でやり直せます）');
   if(typeof buildHist === 'function') buildHist();
 }
 function redo(){
@@ -10467,27 +10618,34 @@ function redo(){
   const o = HIST.future.pop();
   HIST.past.push({ st:snapState(), name:o.name });
   restoreState(o.st);
-  stat('やり直した：' + (o.name || '操作'));
+  statPlain('やり直した：' + (o.name || '操作'));
   if(typeof buildHist === 'function') buildHist();
 }
 /* ⭐ 一覧の n 番目（0＝開いたとき）の状態へ飛ぶ */
 function jumpHist(n){
   const now = HIST.past.length;
   if(n === now) return;
-  const k = Math.abs(n - now);
-  for(let i = 0; i < k; i++){
-    if(n < now){ if(!HIST.past.length) break;
+  /* 🔴 2026-09-01・木下＝「ヒストリーに関しては時間差がある気もする。重いせいか？」
+     ＝**戻る手数ぶん描き直していた**（実測 10手 402ms／26手 1357ms）。
+     ⭐ 控えの付け替えだけ先にやって、**描き直すのは最後の1回**にする
+       （＝10手でも1手でも同じ速さ）。→ feedback_measure_before_you_optimize */
+  let target = null;
+  if(n < now){
+    while(HIST.past.length > n && HIST.past.length){
       const o = HIST.past.pop();
-      HIST.future.push({ st:snapState(), name:o.name });
-      restoreState(o.st);
-    }else{ if(!HIST.future.length) break;
+      HIST.future.push({ st:target || snapState(), name:o.name });
+      target = o.st;
+    }
+  }else{
+    while(HIST.past.length < n && HIST.future.length){
       const o = HIST.future.pop();
-      HIST.past.push({ st:snapState(), name:o.name });
-      restoreState(o.st);
+      HIST.past.push({ st:target || snapState(), name:o.name });
+      target = o.st;
     }
   }
+  if(target) restoreState(target);
   buildHist();
-  stat(n === 0 ? '開いたときまで戻した' : ('ここまで戻した：' + (histNames()[n] || '操作')));
+  statPlain(n === 0 ? '開いたときまで戻した' : ('ここまで戻した：' + (histNames()[n] || '操作')));
 }
 /* 一覧に出す名前（0＝開いたとき／1〜＝操作） */
 function histNames(){
