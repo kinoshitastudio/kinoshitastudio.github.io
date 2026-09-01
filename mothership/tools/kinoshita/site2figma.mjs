@@ -101,7 +101,9 @@ const secKind = await p.evaluate(() => {
     let root = document.body;
     const pick = (el, wideOnly) => [...el.children].filter(c => {
       const r = c.getBoundingClientRect();
-      return visible(c) && r.height >= 200 && (!wideOnly || r.width >= W * 0.9);
+      // 🔴 0.9 だと「中身が 1240px の帯」（＝画面の86%）が落ちて、その帯が1枚も建たない。
+      //    実測：お知らせの9箇所が丸ごと消えていた。0.8 なら拾える
+      return visible(c) && r.height >= 200 && (!wideOnly || r.width >= W * 0.8);
     });
     list = [];
     for (let d = 0; d < 10; d++) {
@@ -112,23 +114,52 @@ const secKind = await p.evaluate(() => {
       break;
     }
     if (!list.length) list = [...root.children].filter(visible);
-    // 🔴 割れても1枚が高すぎる（＝まだ束）ならその中を割る。2回まで
-    for (let pass = 0; pass < 2; pass++) {
+    // 🔴 割れても1枚が高すぎる（＝まだ束）ならその中を割る。
+    //    ⚠️ 2回までだと 8800px の塊を割り切れず、中の帯（お知らせ・フッター）が
+    //       丸ごと1枚も建たないことがあった（実測：文字9箇所が消えていた）
+    for (let pass = 0; pass < 3; pass++) {
       const next = [];
       let split = false;
       list.forEach(el => {
         if (el.getBoundingClientRect().height <= 1600) { next.push(el); return; }
-        let kids = pick(el, true); if (kids.length < 2) kids = pick(el, false);
-        if (kids.length >= 2) { next.push(...kids); split = true; } else next.push(el);
+        // 🔴 「子が1つ」＝まだ入れ物の中。そこで諦めると 2900px の塊がそのまま残り、
+        //    中の帯（お知らせなど）が1枚も建たない。1つなら掘り進む
+        let cur = el;
+        for (let d = 0; d < 6; d++) {
+          let kids = pick(cur, true); if (kids.length < 2) kids = pick(cur, false);
+          if (kids.length >= 2) {
+            // 🔴 大きさでは決まらない（500px のカードが4枚並ぶ帯と、500px の帯は同じ大きさ）。
+            //    ⭐ セクション＝意味の単位＝見出しを持つ。見出しが2つ以上に分かれるときだけ割る。
+            //    （実測：これが無いと「数字で見る…」の帯がカード4枚に割れて 6枚→14枚の細切れになった）
+            const withH = kids.filter(k => k.querySelector('h1,h2,h3')).length;
+            if (withH < 2) break;
+            next.push(...kids); split = true; return;
+          }
+          if (kids.length === 1) { cur = kids[0]; continue; }
+          break;
+        }
+        next.push(el);
       });
       list = next; if (!split) break;
     }
   }
   list.forEach((el, i) => el.setAttribute('data-ms-sec', String(i)));
-  return { kind, n: list.length };
+  // ⭐ 何をどう切ったか見えるようにする（高すぎる塊が残っていたら、そこが取りこぼしの元）
+  const cut = list.map(el => {
+    const r = el.getBoundingClientRect();
+    const h = el.querySelector('h1,h2,h3');
+    return { h: Math.round(r.height), t: (h ? h.textContent : '').replace(/\s+/g, ' ').trim().slice(0, 22) };
+  });
+  return { kind, n: list.length, cut };
 });
 const secs = await p.$$('[data-ms-sec]');
-console.log(`セクション ${secs.length} 個（切り方：${secKind.kind}）\n`);
+console.log(`セクション ${secs.length} 個（切り方：${secKind.kind}）`);
+if (secKind.kind !== '<section>') {
+  secKind.cut.forEach((c, i) => console.log(`   ${String(i + 1).padStart(2, '0')}  ${String(c.h).padStart(5)}px  ${c.t || '(見出しなし)'}`));
+  const tall = secKind.cut.filter(c => c.h > 2500);
+  if (tall.length) console.log(`   ⚠️ まだ ${tall.length}枚 が 2500px より高い＝この中に別の帯が埋まっているかもしれない`);
+}
+console.log('');
 
 const grab = (i) => p.evaluate((i) => {
   // ⭐ i === -1 ＝ KV（最初の section より上の帯。`<section>` の外にあるので別扱い）
