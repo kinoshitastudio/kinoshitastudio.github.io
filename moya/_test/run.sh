@@ -6,7 +6,7 @@
 #     ・切り抜きを消すと 1画素も同じに 戻る（＝元の写真を削っていない）
 #
 #  ══ 使い方（2026-09-01・2段にした）══════════════════════════
-#   bash moya/_test/run.sh              … ぜんぶ（384本・実測 9分23秒）★push の前は必ずこれ
+#   bash moya/_test/run.sh              … ぜんぶ（392本・実測 9分半ほど）★push の前は必ずこれ
 #   bash moya/_test/run.sh --list       … 章の一覧（番号・本数・見出し）
 #   bash moya/_test/run.sh 筆           … 芯 ＋「筆」を含む章だけ（速い束）
 #   bash moya/_test/run.sh パス マスク    … 言葉はいくつでも（どれかに当たる章ぜんぶ）
@@ -18,6 +18,7 @@
 #   ・小さな直し1つのたびに 9分待っていた＝待ち時間が仕事より長かった。
 #  ⭐ 速い束でも【芯（①〜⑨・51本）】と【JSエラーが出ない】は必ず流す。
 #     ＝関係ない所を壊したらそこで落ちる。
+#  ✅ 全章を1つずつ単独で流して確かめてある（bash moya/_test/verify-chapters.sh）。
 #  🔴🔴 速い束が通っても【直したことにはならない】。push の前は引数なしで全部流す。
 #     → feedback_regression_test_before_push
 set -u
@@ -32,11 +33,15 @@ fi
 
 # ── 引数があれば【選んだ章だけ】を組み直した使い捨ての1本を作る ──
 #    ⚠️ 直すのはいつも check.mjs の方（.pick.mjs は毎回捨てて作り直す）
+# 🔴🔴 名前のかぶりは【流す前に】弾く（かぶると SyntaxError で1本も走らない）
+#    2026-09-02 に `const SW` を二重に作って、9分待った末に全部死んだ。
+node "$ROOT/moya/_test/pick.mjs" --dup || exit 1
+
 TARGET="$ROOT/moya/_test/check.mjs"
 if [ "$#" -gt 0 ]; then
   TARGET="$(node "$ROOT/moya/_test/pick.mjs" "$@")" || exit 1
 else
-  echo "· ぜんぶ流す（384本・9分ほど）　※章だけなら  bash moya/_test/run.sh --list"
+  echo "· ぜんぶ流す（392本・9分半ほど）　※章だけなら  bash moya/_test/run.sh --list"
 fi
 
 STARTED=0

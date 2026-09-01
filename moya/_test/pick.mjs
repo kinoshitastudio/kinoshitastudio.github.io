@@ -7,9 +7,11 @@
      ここで【序＋芯＋選んだ章＋終わり】だけを組み直した使い捨ての1本を作って流す。
      ＝試験の文が2か所に分かれない（[[feedback_same_formula_in_two_places_drifts]]）。
 
-   ⭐ 章の切れ目＝check.mjs の行頭の `/* ══`（54個ある）。
-     章はどれも冒頭で closeAllEditors() → b_demo で見本を組み直すので、
-     ほとんどの章は単独で通る。通らない章は「前の章が要る」＝名指しで足す。
+   ⭐ 章の切れ目＝check.mjs の行頭の `/* ══`。
+     章はどれも冒頭で closeAllEditors() → b_demo で見本を組み直すので、ほぼ単独で通る。
+     通らない2つは自動で解く：⑤ 名前を辿って作っている章を足す／⑥ @下地 の章を足す。
+   ✅ 2026-09-01 に **全章を1つずつ単独で流して、ぜんぶ通ることを確かめた**
+     （moya/_test/verify-chapters.sh・落ちた4章は⑤で解けた）。
 
    使い方:
      node moya/_test/pick.mjs --list          … 章の一覧（番号・本数・見出し）
@@ -70,8 +72,39 @@ const countOk = (a, b) => { let n = 0;
 const coreN = countOk(0, CORE_END);
 const tailN = countOk(tailAt, lines.length);   /* 「JSエラーが出ない」＝いつも付く1本 */
 
+/* ── ③.5 名前のかぶりを【流す前に】弾く ──────────────────
+   🔴🔴 2026-09-02 に踏んだ：新しい章で `const SW` を作ったら、
+     1300行めに同じ名前が既に有って **9分待った末に SyntaxError で全部死んだ**
+     （`Identifier 'SW' has already been declared`）。
+     ⚠️ 速い束では出ない（その章を選ばなければ かぶらない）＝**全部流すまで気づけない**。
+   ⭐ 行頭の宣言は必ず同じ場所（トップレベル）に並ぶので、かぶりは**読むだけで分かる**。
+     ＝9分待たずに その場で言う。 → feedback_check_existing_before_adding */
+function dupNames(){
+  const seen = new Map(), dup = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = DECL0.exec(lines[i]);
+    if (!m) continue;
+    const w = m[1] || m[2];
+    if (seen.has(w)) dup.push({ w, first: seen.get(w) + 1, again: i + 1 });
+    else seen.set(w, i);
+  }
+  return dup;
+}
+const DECL0 = /^(?:const|let|var)\s+([A-Za-z_$][\w$]*)|^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/;
+
 /* ── ④ 引数を読む ────────────────────────────────────── */
 const argv = process.argv.slice(2);
+if (argv.includes('--dup')) {
+  const d = dupNames();
+  d.forEach(o => console.error(`🔴 名前がかぶっている： ${o.w} … ${o.first}行 と ${o.again}行`));
+  if (d.length) console.error('   → どちらかの名前を変える（このまま全部流すと SyntaxError で1本も走らない）');
+  process.exit(d.length ? 1 : 0);
+}
+{ const d = dupNames();
+  if (d.length) { d.forEach(o =>
+    console.error(`🔴 名前がかぶっている： ${o.w} … ${o.first}行 と ${o.again}行`));
+    console.error('   → 全部流すと SyntaxError で1本も走らない。先に名前を変える。');
+    process.exit(1); } }
 if (argv.includes('--list')) {
   console.log(`  芯（①〜⑨・いつも流す）  ${String(coreN + tailN).padStart(3)}本  1〜${CORE_END}行`);
   chaps.forEach(c => console.log(
@@ -99,7 +132,49 @@ if (argv.includes('--core')) {
   }
 }
 
-/* ── ⑤ 下地の章を足す ────────────────────────────────
+/* ── ⑤ 章をまたいで使っている名前を辿って、要る章を足す ──────
+   🔴 実測（2026-09-01）：53章を1つずつ流したら **4章が単独で死んだ**。
+     落ちた文＝`ReferenceError: fp10 is not defined`
+     ＝その章が【前の章で作った const】をそのまま使っていた。
+     ⚠️ ok() が1本も 🔴 にならずに落ちる＝「通ったのか死んだのか」が読めない＝いちばん悪い。
+   ⭐ 手で印を付けて回らない。**名前を辿って、作っている章を黙って足す**。
+     ・章ごとに【行頭で作っている名前】を拾う（const / let / function）
+     ・選んだ章が使っている名前が、前の章でしか作られていなければ その章を足す
+     ・足した章がまた別の章を要るかもしれないので、増えなくなるまで繰り返す
+   ⚠️ 多めに足すのは構わない（遅くなるだけ）。足りないと **嘘の🔴** が出る。 */
+/* ⭐ 宣言を読む物差しは1本（かぶりの見張りと同じ DECL0 を使う） */
+const declsOf = (a, b) => {
+  const set = new Set();
+  for (let i = a; i < b; i++) { const m = DECL0.exec(lines[i]); if (m) set.add(m[1] || m[2]); }
+  return set;
+};
+const PRE = declsOf(0, CORE_END);                    /* 序＋芯が作る名前＝いつも有る */
+chaps.forEach(c => { c.decl = declsOf(c.at, c.end); });
+const usedIn = c => {
+  const set = new Set();
+  for (let i = c.at; i < c.end; i++) {
+    const m = lines[i].match(/[A-Za-z_$][\w$]*/g);
+    if (m) m.forEach(w => set.add(w));
+  }
+  return set;
+};
+function pullDeps(sel) {
+  for (let guard = 0; guard < 60; guard++) {
+    let added = false;
+    for (const c of [...sel]) {
+      for (const w of usedIn(c)) {
+        if (PRE.has(w) || sel.some(s => s.decl.has(w))) continue;
+        const src = chaps.find(o => o.at < c.at && o.decl.has(w));
+        if (src && !sel.includes(src)) { sel.push(src); added = true; }
+      }
+    }
+    if (!added) break;
+  }
+  return sel;
+}
+want = pullDeps(want);
+
+/* ── ⑥ 下地の章を足す ────────────────────────────────
    🔴 実測（2026-09-01）：「筆」の章だけを流したら 2本落ちた。
      ＝その章は前の章が組んだ【見本2】を使い回していて、単独では素材がゼロだった。
    ⭐ だから @下地 の印が付いた章は、それより後ろの章を選んだら黙って足す。
@@ -108,7 +183,7 @@ chaps.filter(c => c.base).forEach(b => {
   if (want.some(c => c.at > b.at) && !want.includes(b)) want.push(b);
 });
 
-/* ── ⑥ 組み直す ──────────────────────────────────────
+/* ── ⑦ 組み直す ──────────────────────────────────────
    ⚠️ 章の順は check.mjs のまま（前後を入れ替えない＝状態の順が狂わない）。 */
 want.sort((a, b) => a.at - b.at);
 const out = [];

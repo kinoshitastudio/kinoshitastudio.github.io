@@ -3867,6 +3867,93 @@ await wait(500);
      JSON.stringify({ 言った:SV.言った, 枚:SV.枚 }));
 }
 
+/* ══⭐ ペンのときは【青い帯】を出さない ══ 2026-09-02
+   🔴 木下＝「ペンツールを使う際のこの青色のメッセージは非表示にして」
+     ＝盤の上に案内の帯が出しっぱなしで、絵の邪魔だった。
+   ⭐ 見るのは【消したのはペンだけか】と【役割が分からなくなっていないか】：
+     ・ペンを選んでも #optSay は出ない
+     ・色で消す・なぞって消す などの案内は今までどおり出る
+     ・役割［作業用パス／図形を描く］は上のバーに出たまま（押した直後に光る）
+     ・切り替えると［閉じる］釦の名前が変わる＝どちらで描いているか分かる
+   ＝ 出しっぱなしの帯だけをやめて、聞かれた時に答える所は残す。 */
+const PENBAR = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const say = () => { const e = document.getElementById('optSay');
+    return { 出ている: !!e && !e.classList.contains('hide'), 文: e ? e.textContent.trim() : null }; };
+  closeAllEditors(); SEL = 0; syncSel(); buildList();
+  document.querySelector('#tools button[data-t="retouch"]').click();
+  document.querySelector('#s_tool button[data-v="color"]').click();
+  await w(500);
+  const 色 = say();
+  document.querySelector('#tools button[data-t="path"]').click();
+  await w(700);
+  const ペン = say();
+  const seg = document.getElementById('s_penmode');
+  const 役割 = { 段が出ている: !!seg && seg.offsetParent !== null,
+    光る: !!seg && seg.classList.contains('flash'),
+    閉じる釦: (document.getElementById('b_polyend') || {}).textContent };
+  const bt = seg && [...seg.querySelectorAll('button')].find(x => x.dataset.v === 'shape');
+  if(bt) bt.click(); await w(400);
+  const 切替後 = { 帯: say(), 閉じる釦: (document.getElementById('b_polyend') || {}).textContent };
+  if(seg){ const b0 = [...seg.querySelectorAll('button')].find(x => x.dataset.v === 'path');
+    if(b0) b0.click(); }                                   /* もとに戻す（次の章に持ち越さない） */
+  document.querySelector('#tools button[data-t="move"]').click();
+  await w(300);
+  return { 色, ペン, 役割, 切替後 };
+});
+ok(PENBAR.ペン.出ている === false,
+   '⭐ ペンを選んでも【青い帯】は出ない（盤の上に居座らない）', JSON.stringify(PENBAR.ペン));
+ok(PENBAR.色.出ている === true && /どこが消えるか/.test(PENBAR.色.文),
+   '⭐ 消したのはペンだけ ── 色で消すの案内は今までどおり出る', JSON.stringify(PENBAR.色));
+ok(PENBAR.役割.段が出ている === true,
+   '⭐ 役割［作業用パス／図形を描く］は上のバーに出たまま（入口を殺していない）',
+   JSON.stringify(PENBAR.役割));
+ok(PENBAR.切替後.帯.出ている === false && PENBAR.切替後.閉じる釦 !== PENBAR.役割.閉じる釦,
+   '⭐ 切り替えても帯は出ない／［閉じる］釦の名前でどちらか分かる', JSON.stringify(PENBAR.切替後));
+
+/* ══⭐⭐ 線の太さを動かしたら【線が出る】══ 2026-09-02
+   🔴🔴 木下＝「ペンツールで図形を描けた後に、線の太さなどを変更するが
+      何も図形に変化はなし」
+     ＝図形は【線なし（strokeOn:false）】で生まれるので、太さを 60 にしても
+       絵は1通りしか出なかった＝死んだつまみ。線を出す道は［線］の色を選んでから
+       ／ を押す所にしか無く、そこに気づけなかった＝芯は正しいのに入口が無い。
+   ⭐ 見るのは【つまみが必ず絵を変えるか】と【0 は本当に 0 か】：
+     ・太さを上げると 絵が変わる／strokeOn が true になる
+     ・0 に戻すと 線なしの絵に **1画素も同じ**に戻る
+     ・線の位置（中央・内側・外側）を押しても線が出る
+   → feedback_count_the_pictures_a_knob_makes ／ feedback_a_tool_starts_from_being_ready */
+const SWDTH = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const set = (id, v) => { const e = document.getElementById(id);
+    e.value = v; e.dispatchEvent(new Event('input', { bubbles:true })); };
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1600); });
+  const L = await window.drawShape(0.30, 0.30, 0.60, 0.58);
+  const q = L.shape;
+  COARSE = 0; render(); await w(400);
+  const 生まれたとき = { 線: q.strokeOn, 太さ: q.sw };
+  const A = window.__full();
+  set('sh_sw', 24); await w(500);
+  const 太くした = { 線: q.strokeOn, 太さ: q.sw, 変わった: window.__sad(window.__full(), A) };
+  set('sh_sw', 0); await w(500);
+  const ゼロ = { 線: q.strokeOn, 戻り: window.__sad(window.__full(), A) };
+  /* 線の位置を押すだけでも線が出る（押したのに何も出ない、を作らない） */
+  document.querySelector('#s_shalign button[data-v="outer"]').click();
+  await w(500);
+  const 位置 = { 線: q.strokeOn, 太さ: q.sw, 変わった: window.__sad(window.__full(), A) };
+  return { 生まれたとき, 太くした, ゼロ, 位置 };
+});
+ok(SWDTH.生まれたとき.線 === false,
+   '⚠️ 図形は【線なし】で生まれる（今までの絵を変えない）', JSON.stringify(SWDTH.生まれたとき));
+ok(SWDTH.太くした.線 === true && SWDTH.太くした.変わった > 0,
+   '⭐⭐ 線の太さを上げると【線が出て絵が変わる】（死んだつまみにしない）',
+   JSON.stringify(SWDTH.太くした));
+ok(SWDTH.ゼロ.線 === false && SWDTH.ゼロ.戻り === 0,
+   '🔴 0 は本当に 0 ── 線なしの絵に1画素も同じに戻る', JSON.stringify(SWDTH.ゼロ));
+ok(SWDTH.位置.線 === true && SWDTH.位置.太さ > 0 && SWDTH.位置.変わった > 0,
+   '⭐ 線の位置を押しても線が出る（押したのに何も起きない、を作らない）',
+   JSON.stringify(SWDTH.位置));
+
 /* ══ @下地 ここから先は【見本2（文字・図形・エフェクト）】を1回だけ組んで使い回す ══
    ⭐ @下地 ＝ この章より後ろの章を選んだときは、この章も必ず一緒に流す印。
       （moya/_test/pick.mjs が読む。ここを外すと「筆」などが素材ゼロで落ちる） */
