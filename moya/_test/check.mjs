@@ -3720,6 +3720,223 @@ await wait(900);
      '⭐ ボタンを1回押したら【1手】だけ積まれる', JSON.stringify(ONE));
 }
 
+
+/* ══════════ 2026-09-01（木下の実機確認・後半）で足したもの ══════════
+   ⚠️ 見本の組み直しは【重い】＝タブごと落ちる。ここでは見本を2回しか組まない。
+   🔴🔴 ここに来るまでに指の端末の試験があり、**isMobile を変えると Puppeteer は
+      ページを読み直す**＝window に入れておいた物差し（__full など）が消えている。
+      ＝入れ直さないと「window.__full is not a function」で試験ごと落ちる。
+   → feedback_regression_test_before_push（ぶれる試験はもっと悪い） */
+await p.setViewport({ width:1400, height:900 });
+await wait(900);
+await p.evaluate(() => {
+  window.__shot = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+    const o = []; for(let i = 0; i < d.length; i += 4*7) o.push(d[i], d[i+3]); return o; };
+  window.__diff = (A,B) => { let n = 0;
+    for(let i = 0; i < Math.min(A.length,B.length); i++) if(Math.abs(A[i]-B[i]) > 8) n++; return n; };
+  window.__full = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+    const o = []; for(let i = 0; i < d.length; i += 4*3) o.push(d[i], d[i+1], d[i+2], d[i+3]);
+    return o; };
+  window.__sad = (A,B) => { let s2 = 0;
+    for(let i = 0; i < Math.min(A.length,B.length); i++) s2 += Math.abs(A[i]-B[i]);
+    return Math.round(s2); };
+});
+await p.evaluate(async () => {
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+});
+await wait(500);
+
+/* ⭐⭐ ① 背景（紙の地）を選んだら、盤も「選んでいる」見た目になる
+   🔴 木下＝「背景をレイヤーパネルで選択したらボードに同じようなアクティブ状態にして」 */
+{
+  const BG = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    const over = () => { const d = og.getImageData(0,0,ov.width,ov.height).data;
+      let n = 0; for(let i = 3; i < d.length; i += 4*11) if(d[i] > 8) n++; return n; };
+    setSel(0, false); syncSel(); buildList(); COARSE = 0; render();
+    await w(250);
+    const 前 = over(), 盤前 = window.__full();
+    const row = document.querySelector('#layers .bgrow');
+    if(!row) return { だめ:'背景の行が無い' };
+    row.click(); await w(300);
+    COARSE = 0; render(); await w(200);
+    /* ⚠️ 印は ov（印の板）だけ＝盤の絵そのものは1画素も動かないこと */
+    const 盤後 = window.__full();
+    const 後 = over(), 印 = SELBG;
+    /* ⚠️ 押すと一覧は作り直される＝行は取り直す（古い行を見ると必ず「印が無い」と出る） */
+    const 行 = (document.querySelector('#layers .bgrow') || {}).className || '';
+    setSel(0, false); syncSel(); buildList(); await w(150);   /* 素材を選ぶと外れる */
+    return { 前, 後, 印, 行, 外れる:!SELBG,
+             盤は変わらない:window.__diff(盤前, 盤後) };
+  });
+  ok(BG.後 > BG.前 && BG.印 === true && /sel/.test(BG.行 || '') && BG.外れる,
+     '⭐⭐ 背景を一覧で選ぶと【盤も選んでいる見た目】になる（素材を選ぶと外れる）',
+     JSON.stringify(BG));
+  ok(BG.盤は変わらない === 0,
+     '⚠️ 背景の枠は【印の板】にしか描かない（絵そのものは1画素も変わらない）', BG.盤は変わらない);
+}
+
+/* ⭐⭐ ② ⌘S ＝ いま開いているファイルへ上書き保存（できた旨を画面で言う）
+   🔴 木下＝「コマンドsで読み込んだJSONは上書き保存できるように、
+      上書き保存できた旨もメッセージでユーザーに伝えるように」
+   ⚠️ 見本は組み直さない（いまの版面のまま保存できるかを見る） */
+{
+  const SV = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    let 書かれた = null, 許可 = 0;
+    const fake = { name:'MOYA_設定_test.json',
+      queryPermission:async () => { 許可++; return 'granted'; },
+      createWritable:async () => ({ write:async b2 => { 書かれた = await b2.text(); },
+                                    close:async () => {} }),
+      getFile:async () => new File([JSON.stringify(snapshot())], 'MOYA_設定_test.json') };
+    window.showOpenFilePicker = async () => [fake];
+    document.getElementById('b_inj').click();          /* ［設定を読む］でファイルを覚える */
+    await w(800);
+    const 覚えた = CURFILE ? CURFILE.h.name : null;
+    const 画面 = document.getElementById('curfile').textContent;
+    /* ⌘S＝字を打っている最中でも効く */
+    document.getElementById('t_str').focus();
+    document.dispatchEvent(new KeyboardEvent('keydown',
+      { key:'s', metaKey:true, bubbles:true, cancelable:true }));
+    await w(900);
+    document.getElementById('t_str').blur();
+    let 中身 = null; try{ 中身 = JSON.parse(書かれた || 'null'); }catch(_){}
+    書かれた = null;
+    return { 覚えた, 画面, 許可, 言った:document.getElementById('stat').textContent,
+             靄のJSON:!!(中身 && 中身.tool), 枚:中身 ? (中身.layers||[]).length : -1 };
+  });
+  ok(SV.覚えた === 'MOYA_設定_test.json' && /⌘S/.test(SV.画面 || ''),
+     '⭐⭐ 設定JSONを読むと【そのファイル】を覚える（画面にも出る）',
+     JSON.stringify({ 覚えた:SV.覚えた, 画面:SV.画面 }));
+  ok(SV.靄のJSON && SV.枚 > 0 && /上書き保存した/.test(SV.言った || ''),
+     '⭐⭐ ⌘S で【同じファイルに上書き】され、上書きしたと画面が言う',
+     JSON.stringify({ 言った:SV.言った, 枚:SV.枚 }));
+}
+
+/* ══ ここから先は【見本2（文字・図形・エフェクト）】を1回だけ組んで使い回す ══ */
+await p.evaluate(async () => {
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo2').click(); setTimeout(r, 1800); });
+});
+await wait(600);
+
+/* ⭐⭐ ③ エフェクトは【1つずつ目で外せる】（ぜんぶ切るしか無かった）
+   🔴 木下＝「かかっていたグラデーションを全部切るにしてしまうと、
+      入っていたエフェクトが全部なくなってしまう、、、これではだめだ」 */
+{
+  const FX = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    let i = LAYERS.findIndex(L => L.kind === 'text'); if(i < 0) i = 0;
+    setSel(i, false); syncSel(); buildList();
+    document.querySelector('#s_fxpre button[data-v="gold"]').click();
+    COARSE = 0; render(); await w(350);
+    const 前 = window.__full();
+    const f = fxOf(LAYERS[SEL]);
+    const 効いていた = FXLIST.filter(([k]) => f[k].on).length;
+    const sec = document.querySelector('#fxBox .fxsec[data-fx="grad"]');
+    const eye = sec.querySelector('.fxhead .eye');
+    eye.click(); COARSE = 0; render(); await w(350);
+    const 絵が変わる = window.__sad(前, window.__full());
+    const 行は残る = !sec.classList.contains('off');
+    const 斜線 = /M2\.4 13\.6/.test(eye.innerHTML);
+    const 他は残る = FXLIST.filter(([k]) => fxOf(LAYERS[SEL])[k].on).length;
+    eye.click(); COARSE = 0; render(); await w(350);
+    const 戻ると同じ = window.__diff(前, window.__full());
+    sec.querySelector('.fxhead .xr').click(); await w(250);   /* × ＝一覧から外す */
+    const 消える = sec.classList.contains('off');
+    const 足すに戻る = [...document.querySelectorAll('#fxAddMenu button')]
+      .some(b2 => /グラデーション/.test(b2.textContent));
+    document.execCommand && 0;
+    return { 効いていた, 絵が変わる, 行は残る, 斜線, 他は残る, 戻ると同じ, 消える, 足すに戻る };
+  });
+  ok(FX.絵が変わる > 0 && FX.行は残る && FX.斜線 && FX.他は残る === FX.効いていた - 1,
+     '⭐⭐ エフェクトは【1つだけ】目で外せる（行は残り、目に斜線・他は効いたまま）',
+     JSON.stringify(FX));
+  ok(FX.戻ると同じ === 0,
+     '🔴 目で戻すと【1画素も同じ】に戻る（値を捨てていない）', FX.戻ると同じ);
+  ok(FX.消える && FX.足すに戻る,
+     '⭐ × で一覧から外すと［＋足す］へ戻る', JSON.stringify({ 消:FX.消える, 戻:FX.足すに戻る }));
+}
+
+/* ⭐⭐ ④ 盤を2回押す＝字は書き換え／字でないものは中へ入る
+   🔴 木下＝「ボード上でもダブルクリックするとテキスト差し替えできるように。
+      編集画面問わず他の画面でも」 */
+{
+  const DBL = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    const ti = LAYERS.findIndex(L => L.kind === 'text');
+    const ii = LAYERS.findIndex(L => L.img && L.kind !== 'text' && L.kind !== 'shape');
+    setSel(ii, false); syncSel(); buildList();
+    /* ⭐ 入口をそのまま通す＝盤の【本物のダブルクリック】（関数を直に呼ばない） */
+    const dbl = i2 => { const L = LAYERS[i2]; const s = toScreen(L.x, L.y);
+      stage.dispatchEvent(new MouseEvent('dblclick',
+        { clientX:s.clientX, clientY:s.clientY, bubbles:true })); };
+    dbl(ti); await w(600);
+    const 字 = { 焦点:document.activeElement === document.getElementById('t_str'),
+                 中に入っていない:!SUBOF, 選んだ:!!(LAYERS[SEL] && LAYERS[SEL].kind === 'text'),
+                 言った:document.getElementById('stat').textContent };
+    document.getElementById('t_str').blur();
+    dbl(ii); await w(800);
+    const 中 = !!SUBOF;
+    closeAllEditors(); await w(500);
+    return { 字, 中 };
+  });
+  ok(DBL.字.焦点 && DBL.字.中に入っていない && DBL.字.選んだ && /書き換え/.test(DBL.字.言った || ''),
+     '⭐⭐ 盤で字を2回押すと【その場で書き換えられる】（中には入らない）',
+     JSON.stringify(DBL.字));
+  ok(DBL.中, '⚠️ 字でない素材は今までどおり【中に入る】', DBL.中);
+}
+
+/* ⭐⭐ ⑤ 上のバーが【壊れていない】（木下＝「なんかUIがおかしいな、テキストの編集画面の上部」）
+   🔴 借りてきた select に inline の width:100% が付いていて、
+     字の色・線の色が【バーの外へ押し出されて見えなかった】＝木下の「色はどこにある？」の正体。
+   → feedback_measure_the_look（見た目の直しも実測する） */
+{
+  const BAR = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    const ti = LAYERS.findIndex(L => L.kind === 'text');
+    setSel(ti, false); syncSel(); buildList(); syncOpt();
+    await w(400);
+    const bar = document.getElementById('optbar').getBoundingClientRect();
+    const r = id => { const e = document.getElementById(id); if(!e) return null;
+      const b2 = e.getBoundingClientRect();
+      return { w:Math.round(b2.width), 中:b2.left >= bar.left - 1 && b2.right <= bar.right + 1 }; };
+    const out = { 書体:r('t_font'), 字の色:r('t_color'), 線の色:r('t_stroke'),
+                  名前:[...document.querySelectorAll('#optbar .ol')].map(x => x.textContent) };
+    /* 中に入っているときは［← 版面へ戻る］と重ならないこと */
+    const bi = LAYERS.findIndex(L => L.img && L.kind !== 'text' && L.kind !== 'shape');
+    openEditor(bi); await w(800);
+    const sb = document.getElementById('b_solo').getBoundingClientRect();
+    const bar2 = document.getElementById('optbar').getBoundingClientRect();
+    out.重なる = document.body.classList.contains('hasopt') && bar2.left < sb.right;
+    closeAllEditors(); await w(500);
+    return out;
+  });
+  ok(BAR.書体 && BAR.書体.w < 200 && BAR.字の色 && BAR.字の色.中 && BAR.線の色 && BAR.線の色.中,
+     '⭐⭐ 文字の上のバーに【字の色・線の色】が見えている（書体に押し出されていない）',
+     JSON.stringify(BAR));
+  ok(BAR.名前.includes('字の色') && BAR.名前.includes('線の色'),
+     '⭐ 色の四角には【何の色か】の名前が付く', JSON.stringify(BAR.名前));
+  ok(!BAR.重なる,
+     '🔴 中に入っている間、上のバーは［← 版面へ戻る］に重ならない', String(BAR.重なる));
+}
+
+/* ⭐ ⑥ KETA（4つ目のリリース）も MOYA の書体に並ぶ
+   🔴 木下＝「KETAもフォント追加されたから 利用できるようにして　MOYAね」 */
+{
+  const KT = await p.evaluate(async () => {
+    const 並ぶ = FONTS.filter(f => /^KETA/.test(f[0])).map(f => f[1]);
+    let 読めた = false;
+    try{ await document.fonts.load('700 100px KETA', 'KETA 0123');
+         読めた = document.fonts.check('700 100px KETA'); }catch(_){}
+    return { 並ぶ, 読めた, 既定:FONTS[0][1] };
+  });
+  ok(KT.並ぶ.length === 1 && KT.読めた && /ゴシック/.test(KT.既定),
+     '⭐ KETA（升目から鋳る）が MOYA の書体に並び、本当に読める（既定は動かさない）',
+     JSON.stringify(KT));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);
