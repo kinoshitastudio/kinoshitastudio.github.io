@@ -1418,7 +1418,9 @@ const SU = await p.evaluate(() => {
                 /* グラデーションで消すの形の設定（入り切りはチェックが持つ） */
                 'r_mgang','r_mgstart','r_mgsoft','r_glossn',
                 /* レイヤーマスクの筆の設定（濃さ・やわらかさ）＝道具の数字で、絵の空気ではない */
-                'r_lmflow','r_lmsoft'];
+                'r_lmflow','r_lmsoft',
+                /* 筆（特殊効果）の設定＝道具の数字で、絵の空気ではない（2026-09-01） */
+                'r_brsize','r_brflow','r_brscat','r_brgrain','r_brseed'];
   const bad = [];
   document.querySelectorAll('#panel input[type=range]').forEach(e => {
     if(SKIP.includes(e.id)) return;
