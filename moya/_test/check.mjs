@@ -3867,7 +3867,9 @@ await wait(500);
      JSON.stringify({ 言った:SV.言った, 枚:SV.枚 }));
 }
 
-/* ══ ここから先は【見本2（文字・図形・エフェクト）】を1回だけ組んで使い回す ══ */
+/* ══ @下地 ここから先は【見本2（文字・図形・エフェクト）】を1回だけ組んで使い回す ══
+   ⭐ @下地 ＝ この章より後ろの章を選んだときは、この章も必ず一緒に流す印。
+      （moya/_test/pick.mjs が読む。ここを外すと「筆」などが素材ゼロで落ちる） */
 await p.evaluate(async () => {
   closeAllEditors();
   await new Promise(r => { document.getElementById('b_demo2').click(); setTimeout(r, 1800); });
@@ -4619,6 +4621,36 @@ await wait(600);
     document.querySelector('#tools button[data-t="move"]').click();
   });
   await wait(300);
+}
+
+/* ⭐⭐ 地の色を変えても見えないときは【理由を言う】（2026-09-01・木下＝
+   「いくらやっても背景白にならないな、俺のデータ」＝いちばん奥の見本が版面を覆っていた） */
+{
+  const BG = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    closeAllEditors();
+    let deep = null;
+    LAYERS.forEach(L => { if(L.img && !L.kind && (!deep || L.d > deep.d)) deep = L; });
+    if(!deep) return { だめ:'絵の素材が無い' };
+    const s0 = deep.s, y0 = deep.sy, x0 = deep.x, yy0 = deep.y;
+    deep.s = 1.2; deep.sy = 4; deep.x = 0.5; deep.y = 0.5; deep._key = '';
+    buildList(); render(); await w(400);
+    const 覆う = { 名:bgCover() ? bgCover().name : null,
+      段:!document.getElementById('bgCoverSay').classList.contains('hide'),
+      一覧:!!document.querySelector('#layers .bgrow.covered') };
+    /* 目を閉じたら言わない（覆っていないので） */
+    deep.on = false; buildList(); render(); await w(300);
+    const 閉じたら = { 名:bgCover() ? bgCover().name : null,
+      段:!document.getElementById('bgCoverSay').classList.contains('hide') };
+    deep.on = true;
+    deep.s = s0; deep.sy = y0; deep.x = x0; deep.y = yy0; deep._key = '';
+    buildList(); render(); await w(300);
+    const 戻したら = { 名:bgCover() ? bgCover().name : null };
+    return { 覆う, 閉じたら, 戻したら };
+  });
+  ok(BG.覆う && BG.覆う.名 && BG.覆う.段 && BG.覆う.一覧 && !BG.閉じたら.名 && !BG.閉じたら.段,
+     '⭐⭐ 地の色が【覆われていて見えない】ときは、どの素材のせいか言う',
+     JSON.stringify(BG));
 }
 
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));

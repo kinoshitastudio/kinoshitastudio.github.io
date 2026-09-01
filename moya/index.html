@@ -2287,6 +2287,7 @@
     </div>
     <div class="row"><span class="n">地の色</span></div>
     <input type="color" id="c_bg" value="#0d1522">
+    <div class="note hide" id="bgCoverSay" style="color:#ff9f0a"></div>
     <label class="chk">地を透かす（地なしPNG）<input type="checkbox" id="k_nobg"></label>
     <div class="note"><b>紙の大きさ</b>（A4・A3・B5・B4・はがき・名刺）は<b>mm から解像度で</b>決まる<br>
       A3 の 350dpi は 4093 × 5787 px ＝ かなり重い。組んでいる間は<b>150dpi</b>で、
@@ -2446,6 +2447,33 @@ let LAYERS = [], SEL = -1, UID = 1;
       だからグループは【いっしょに動かす・いっしょに隠す・いっしょに消す】ための括りに閉じる。
    ⭐ 選んでいるものは【番号】ではなく【id】で覚える（消したり並べ替えても迷子にならない）。 */
 let SELIDS = [], GROUPS = [], GID = 1;
+/* ⭐⭐ 地の色を変えても見えないときがある ── いちばん奥の素材が版面いっぱいに
+   乗っていると、紙の地は一生出てこない。
+   🔴 2026-09-01・木下＝「いくらやっても背景白にならないな、俺のデータ」
+     ＝空気のせいではなかった（実測：空気を同じにしても中央は白のまま出る）。
+       いちばん奥の「見本：遠い山」が 大きさ1.2 で版面を覆っていた。
+   ⭐ 触れるのに効かないなら【理由を言う】。返すのは覆っている素材（無ければ null）。
+   ⚠️ 判定は形だけ（絵の中の透けは見ない）＝「たぶん覆っている」を言うだけで、
+      勝手に消したり動かしたりはしない。 */
+function bgCover(){
+  if(SUBOF) return null;
+  let hit = null, deep = -1;
+  for(const L of LAYERS){
+    if(!L || !L.on || L.kind === 'adj' || !L.img) continue;
+    if((L.op == null ? 1 : L.op) < 0.98) continue;
+    if(L.clip || L.mask || (L.lm && L.lm.on) || L.mCut || L.mKeep) continue;
+    if(L.blend && L.blend !== 'source-over') continue;
+    if(L.rot) continue;
+    const iw = cwOf(L), ih = chOf(L);
+    if(!(iw > 0) || !(ih > 0)) continue;              /* まだ読み込めていない絵は見ない */
+    const hw = L.s / 2;
+    const hh = (L.s * ih / iw * syOf(L)) * (cv.width / cv.height) / 2;
+    if(Math.abs(L.x - 0.5) + hw < 0.5) continue;      /* 横が届いていない */
+    if(Math.abs(L.y - 0.5) + hh < 0.5) continue;      /* 縦が届いていない */
+    if(L.d > deep){ deep = L.d; hit = L; }            /* いちばん奥のものを言う */
+  }
+  return hit;
+}
 /* ══⭐⭐ 背景（紙の地）を選んでいる印 ══ 2026-09-01
    🔴 木下＝「背景をレイヤーパネルで選択したらボードに同じようなアクティブ状態にして」
       ＝一覧の［背景］を押しても盤に何も出ず、選べたのかどうか分からなかった。
@@ -7847,6 +7875,17 @@ function buildList(){
     dp.textContent = nobg ? '地なし（透ける）' : ('紙の地　' + col);
     dp.title = inSub ? 'この画像の紙の地です' : '版面ぜんぶの地です（素材ではありません）';
     col2.append(nm, dp);
+    /* ⭐ 覆われていて見えないなら、そう言う（色を変えても何も起きない理由） */
+    if(typeof syncBgCover === 'function') syncBgCover();   /* 段の案内も同じ判定で */
+    const cov = nobg ? null : bgCover();
+    if(cov){
+      const wn = document.createElement('div'); wn.className = 'dp';
+      wn.style.color = '#ff9f0a';
+      wn.textContent = '⚠️「' + (cov.name || '素材') + '」が版面いっぱいに乗っているので見えません';
+      wn.title = 'その素材の目を閉じるか、小さくすると 地の色が出ます';
+      col2.appendChild(wn);
+      row.classList.add('covered');
+    }
     const bx = document.createElement('div'); bx.className = 'lyb';
     const lk = document.createElement('button'); lk.className = 'x lock';
     lk.innerHTML = LOCK_SVG(true); lk.style.opacity = '.55';
@@ -11682,7 +11721,16 @@ el('b_mypre').onclick = () => {
 
 el('c_air').addEventListener('input', e => { P.air = e.target.value;
   LAYERS.forEach(L => L._key = ''); render(); });
-el('c_bg').addEventListener('input',  e => { P.bg  = e.target.value; render(); });
+function syncBgCover(){
+  const e = el('bgCoverSay'); if(!e) return;
+  const cov = (SUBOF || P.nobg) ? null : bgCover();
+  e.classList.toggle('hide', !cov);
+  if(cov) e.innerHTML = '⚠️ いま <b>「' + (cov.name || '素材')
+    + '」</b> が版面いっぱいに乗っているので、<b>地の色は見えません</b>。'
+    + 'その素材の目を閉じるか、小さくすると出ます。';
+}
+el('c_bg').addEventListener('input',  e => { P.bg  = e.target.value; render();
+  syncBgCover(); });
 el('k_nobg').addEventListener('change', e => { P.nobg = e.target.checked; render(); });
 
 /* ══ 出す ══ */
