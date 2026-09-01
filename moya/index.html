@@ -3508,6 +3508,13 @@ function shapeOf(L){
   }
   return q;
 }
+/* ⭐ 紙の余白（線がはみ出すぶん）を決める式は【1本】＝盤の倍率を直す側もここを見る。
+   ⚠️ 2か所に書くと黙って食い違う → feedback_same_formula_in_two_places_drifts */
+function shPad(q){
+  const sw = q.strokeOn ? Math.max(0, q.sw) : 0;
+  return Math.ceil((q.align || 'center') === 'outer' ? sw : sw / 2) + 2;
+}
+const shSheetW = q => Math.max(8, Math.round(q.w) + shPad(q) * 2);
 function shapeCanvas(L){
   const q = shapeOf(L);
   const sw = q.strokeOn ? Math.max(0, q.sw) : 0;
@@ -3517,8 +3524,8 @@ function shapeCanvas(L){
      ⚠️ 既定は【中央】＝いままで置いた図形は1画素も変わらない。
        外側のときだけ紙の余白を線1本ぶん広げる（外へ出るぶんが切られないように）。 */
   const align = q.align || 'center';
-  const pad = Math.ceil(align === 'outer' ? sw : sw / 2) + 2;
-  const W = Math.max(8, Math.round(q.w) + pad*2), H = Math.max(8, Math.round(q.h) + pad*2);
+  const pad = shPad(q);
+  const W = shSheetW(q), H = Math.max(8, Math.round(q.h) + pad*2);
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const x = c.getContext('2d');
   const w = q.w, h = q.h, cx = W/2, cy = H/2;
@@ -3566,19 +3573,29 @@ function shapeCanvas(L){
                       kind:q.fmode === 'radial' ? 'radial' : 'linear' }, W, H);
     if(P2()) x.fill(P2()); else x.fill();
   }
-  if(sw > 0){
+  /* ══⭐⭐ 線を描く道は【1本】＝盤に置く紙にも、線だけの紙にも同じものを描く ══ 2026-09-02
+     🔴 木下＝「画像が入っている状態では、線をこのまま大きくすると **線が足されるのではなく、
+        画像が切り取りされているような動き**になる」
+       ＝［塗り］に足した画像を **形の中ぜんぶ（線の上まで）** に乗せていたので、線が隠れていた。
+     ⭐ イラレと同じ順にする＝**塗り → 塗りの画像 → 線** の順で重ねる。
+       そのために【形の中だけの型（_body）】と【線だけの紙（_strk）】を別に持つ。
+     ⚠️ 式は1本（ここ）。2か所に書くと黙って食い違う。 */
+  const strokeInto = x2 => {
+    if(!(sw > 0)) return;
+    trace(x2);
+    const PP = () => x2.__p2 || null;
     /* ⭐ 線もグラデにできる（塗りと同じ道具・同じ式） */
-    const sstyle = q.smode === 'solid' ? q.stroke
-      : gradFrom(x, { ang:q.sang, stops:q.sstops, scale:1, rev:false,
-                      kind:q.smode === 'radial' ? 'radial' : 'linear' }, W, H);
-    x.strokeStyle = sstyle; x.lineJoin = 'round'; x.lineCap = 'round';
+    x2.strokeStyle = q.smode === 'solid' ? q.stroke
+      : gradFrom(x2, { ang:q.sang, stops:q.sstops, scale:1, rev:false,
+                       kind:q.smode === 'radial' ? 'radial' : 'linear' }, W, H);
+    x2.lineJoin = 'round'; x2.lineCap = 'round';
     if(align === 'inner'){
       /* 内側＝形の中だけに残す（2倍の太さで描いて、外へ出たぶんを切る） */
-      x.save();
-      if(P2()) x.clip(P2()); else x.clip();
-      x.lineWidth = sw * 2;
-      if(P2()) x.stroke(P2()); else x.stroke();
-      x.restore();
+      x2.save();
+      if(PP()) x2.clip(PP()); else x2.clip();
+      x2.lineWidth = sw * 2;
+      if(PP()) x2.stroke(PP()); else x2.stroke();
+      x2.restore();
     }else if(align === 'outer' && q.type !== 'line'){
       /* 外側＝2倍の太さで描いて、形の中を消す（塗りを削らないように別の紙で作る） */
       const t = document.createElement('canvas'); t.width = W; t.height = H;
@@ -3593,12 +3610,24 @@ function shapeCanvas(L){
       if(tx.__p2) tx.stroke(tx.__p2); else tx.stroke();
       tx.globalCompositeOperation = 'destination-out';
       trace(tx); if(tx.__p2) tx.fill(tx.__p2); else tx.fill();
-      x.drawImage(t, 0, 0);
+      x2.drawImage(t, 0, 0);
     }else{
-      x.lineWidth = sw;
-      if(P2()) x.stroke(P2()); else x.stroke();
+      x2.lineWidth = sw;
+      if(PP()) x2.stroke(PP()); else x2.stroke();
     }
-  }
+  };
+  strokeInto(x);
+  /* ⭐ 形の中だけの型（塗りが「無し」でも要る＝画像の塗りはここに入る） */
+  { const bc = document.createElement('canvas'); bc.width = W; bc.height = H;
+    const bg = bc.getContext('2d');
+    if(q.type === 'line'){ /* 線の形は中身が無い＝型も空 */ }
+    else { trace(bg); bg.fillStyle = '#ffffff';
+      if(bg.__p2) bg.fill(bg.__p2); else bg.fill(); }
+    q._body = bc; }
+  /* ⭐ 線だけの紙（塗りの画像のあとに、もう一度いちばん上へ乗せる） */
+  if(sw > 0){ const sc = document.createElement('canvas'); sc.width = W; sc.height = H;
+    strokeInto(sc.getContext('2d')); q._strk = sc; }
+  else q._strk = null;
   try{
     Object.defineProperty(c, 'naturalWidth',  { value:W, configurable:true });
     Object.defineProperty(c, 'naturalHeight', { value:H, configurable:true });
@@ -3606,7 +3635,36 @@ function shapeCanvas(L){
   }catch(_){}
   return c;
 }
+/* ⭐ 形の中だけの型（_body）と線だけの紙（_strk）を返す。
+   ⚠️ 控えから戻った直後などは持っていないので、その場で作り直す（自分で治る）。 */
+function shParts(L){
+  const q = L.shape; if(!q) return null;
+  if(!(q._body && q._body.width)) shapeCanvas(L);
+  return q._body && q._body.width ? q : null;
+}
 function rebuildShape(L){
+  const q = shapeOf(L);
+  /* ══⭐⭐ 線を太くしても【本体の大きさは変えない】══ 2026-09-02
+     🔴🔴 木下＝「外側と書いてあると普通のその三角の白い部分の大きさは変わらず、
+        外に線がつくだけだが、今ではその白い面積自体も小さくなっている。中央、内側も？」
+      ＝そのとおりだった。実測（太さ47・白い本体の幅）：
+        太さ0 **318px** → 外側 **256px**／中央 **248px**／内側 **214px**
+      原因＝線が太くなると **紙（shapeCanvas）が余白のぶん大きくなる**のに、
+        盤に置く倍率 `L.s` はそのままだった。
+        ＝大きくなった紙を同じ幅に押し込む＝**中身がまるごと縮む**（388→482 で ×0.80）。
+     ⭐ 直し＝紙が伸びたぶんだけ `L.s` を同じ割合で伸ばす。式は1本（shSheetW）。
+       ＝外側は白が変わらず外へ線が付く／中央は半分・内側は全部 内へ食い込む（イラレと同じ）。
+     ⚠️ 直すのは【余白が変わったときだけ】＝幅・高さのつまみの効きは今までのまま。
+       ⚠️ `_shPad` を持っていない古いデータは、最初の1回は直さない
+         ＝**いままで置いた図形・設定JSONは1画素も変わらない**。
+     → feedback_canvas_view_fix_zoom_not_offset ／ feedback_new_knob_default_equals_the_old_picture */
+  const padNew = shPad(q);
+  if(L._shPad != null && L._shPad !== padNew && L.s > 0){
+    const wNew = shSheetW(q);
+    const wOld = Math.max(8, Math.round(q.w) + L._shPad * 2);
+    L.s = Math.min(8, L.s * wNew / wOld);
+  }
+  L._shPad = padNew;
   L.img = shapeCanvas(L);
   L._key = ''; L._edc = null; L._edk = ''; L._sd = null; L._dist = null;
   bumpMask(L);
@@ -5632,6 +5690,16 @@ function layerPlate(L, W, H){
      ⭐ 何枚でも積める。1枚ずつ【色 or 画像】＋濃さ＋重ね方＋目を持つ。
        ⚠️ いままでの［カラーオーバーレイ］は【その1枚目】＝道は1本のまま・絵も1画素も変わらない。
      ⚠️ 画像は形の中を【覆う大きさ】で置く（Figma の「切り抜き」と同じ考え）。 */
+  /* ══⭐⭐ 図形のときは【塗りは線の下】に入れる ══ 2026-09-02
+     🔴 木下＝「線が足されるのではなく、画像が切り取りされているような動きになる」
+       ＝塗りを **形の中ぜんぶ（線の上まで）** に乗せていたので線が隠れていた。
+     ⭐ イラレと同じ順＝**塗り → 塗りの画像 → 線**。型は【形の中だけ（_body）】を使い、
+       塗り終わったら【線だけの紙（_strk）】をいちばん上へ乗せ直す。
+     ⚠️ 線が無い図形・写真は _body が無い＝今までどおり（1画素も変わらない）。 */
+  const shp = (L.kind === 'shape' && L.shape) ? shParts(L) : null;
+  const putMask = g6 => { if(shp) g6.drawImage(shp._body, 0, 0, dw, dh);
+                          else g6.drawImage(c, 0, 0); };
+  let fillPainted = false;
   for(const fl of [L.fill].concat(L.fills || [])){
     if(!fl || !fl.on || !(fl.op > 0.001)) continue;
     const isImg = fl.kind === 'image';
@@ -5646,9 +5714,18 @@ function layerPlate(L, W, H){
       if(!src || !src.complete || !src.naturalWidth) continue;
     }
     x.save();
-    x.globalCompositeOperation = fl.mode === 'source-over' ? 'source-atop' : fl.mode;
+    /* ══⭐⭐ 型は【1回だけ】かける ══ 2026-09-02
+       🔴 木下＝「線の太さが0の場合でも **うっすらと線も見えている**」
+         ＝別の紙で形に切ってから（destination-in）、盤へ置くときも source-atop で
+           もう一度 形のアルファを掛けていた＝**縁の1画素だけ 0.5×0.5＝0.25** になり、
+           下の白い塗りが縁からにじんで【線のように】見えていた。
+       ⭐ すでに切ってある紙は そのまま置く（source-over）＝縁が半端にならない。
+       ⚠️ 重ね方を選んでいるときは その重ね方のまま（切ってあるので外へは出ない）。 */
+    const preCut = isImg || fl.mode !== 'source-over' || !!shp;
+    x.globalCompositeOperation = fl.mode === 'source-over'
+      ? (preCut ? 'source-over' : 'source-atop') : fl.mode;
     x.globalAlpha = clamp01(fl.op);
-    if(isImg || fl.mode !== 'source-over'){
+    if(preCut){
       /* 重ね方を選んだときも【形の外へはみ出さない】＝いったん形で切ってから乗せる */
       const t5 = document.createElement('canvas'); t5.width = dw; t5.height = dh;
       const g5 = t5.getContext('2d');
@@ -5669,14 +5746,17 @@ function layerPlate(L, W, H){
         g5.fillStyle = fl.color; g5.fillRect(0, 0, dw, dh);
       }
       g5.globalCompositeOperation = 'destination-in';
-      g5.drawImage(c, 0, 0);
+      putMask(g5);
       x.drawImage(t5, 0, 0);
     }else{
       x.fillStyle = fl.color; x.fillRect(0, 0, dw, dh);
     }
     x.restore();
     x.globalCompositeOperation = 'source-over'; x.globalAlpha = 1;
+    fillPainted = true;
   }
+  /* ⭐ 塗りを乗せたら【線をいちばん上へ】乗せ直す（イラレと同じ＝線は塗りの上） */
+  if(shp && shp._strk && fillPainted) x.drawImage(shp._strk, 0, 0, dw, dh);
   L._c = c; L._key = key;
   return c;
 }
@@ -6322,7 +6402,13 @@ function drawOverlay(W, H){
     og.strokeRect(-dwF/2, -dhF/2, dwF, dhF);
     og.setLineDash([]);
     og.restore();
-    const fs7 = Math.max(11, W/62), t7 = 'ドラッグ＝動かす／⇧＝大きさ／⌥＝回す';
+    /* ⭐ いまの倍率と角度を出す＝引いている本人に「効いている」が見える
+       （2026-09-02・木下＝「大きくできない」＝効いていたが見えていなかった） */
+    const fF = FILLEDIT.f;
+    const kF = fF.k == null ? 1 : fF.k, rF = Math.round(fF.rot || 0);
+    const fs7 = Math.max(11, W/62);
+    const t7 = 'ドラッグ＝動かす／⇧＝大きさ  ×' + kF.toFixed(2)
+             + '／⌥＝回す  ' + rF + '°';
     og.font = '600 ' + fs7.toFixed(0) + 'px -apple-system,BlinkMacSystemFont,sans-serif';
     og.textAlign = 'left'; og.textBaseline = 'middle';
     const tw7 = og.measureText(t7).width, pd7 = fs7*0.5;
@@ -7233,8 +7319,17 @@ function hitLayer(q){
           const a2 = Math.atan2(q.y - grab.sy, q.x - grab.sx) * 180 / Math.PI;
           f.rot = (grab.rot || 0) + a2;
         }else if(e.shiftKey){
-          const d = (q.y - grab.sy) * 2;
-          f.k = Math.max(0.1, Math.min(8, grab.k * (1 - d)));
+          /* ══⭐⭐ 大きさの効きは【素材の大きさ】で測る ══ 2026-09-02
+             🔴 木下＝「塗り画像の部分のみを触ることができるが**大きくできない**」
+              ＝効いてはいた（実測で k は動く）。**効きが弱すぎた**。
+                物差しが【版面いっぱい】だったので、素材の上を少し引いても
+                版面のごく一部＝**×1.05 程度**しか動かない＝「効かない」に見える。
+             ⭐ 直し＝**素材の高さ1つぶん引いたら 2倍**（下へ引けば 1/2）。
+               ＝手の動きと絵の変わり方が釣り合う。⚠️ 0.1〜8 で止めるのは今までどおり。 */
+          const ihS = chOf(L2), iwS = cwOf(L2);
+          const dhS = Math.max(0.02, L2.s * ihS / iwS * syOf(L2) * (cv.width / cv.height));
+          const d = (q.y - grab.sy) / dhS;
+          f.k = Math.max(0.1, Math.min(8, grab.k * Math.pow(2, -d)));
         }else{
           const iw2 = cwOf(L2), ih2 = chOf(L2);
           const dw2 = L2.s, dh2 = dw2 * ih2 / iw2 * syOf(L2) * (cv.width / cv.height);
@@ -12827,7 +12922,17 @@ function snapMask(L, which){
      ed.curve（入れ子）や shape.pts / fstops が【参照のまま】＝控えごと書き換わっていた。
    ⭐ 中身を写す。→ feedback_undo_must_copy_not_reference（今日3回目の同じ形） */
 function edCopy(e){ return e ? JSON.parse(JSON.stringify(e)) : newEd(); }
-function shapeCopy(q){ return q ? JSON.parse(JSON.stringify(q)) : null; }
+/* ⭐ 図形の設定を写す。⚠️ `_` で始まるものは【作り直せる紙】＝写さない。
+   🔴 2026-09-02：形の中だけの型（_body）と線だけの紙（_strk）を持たせたとき、
+     JSON で写すと canvas が `{}` になり、⌘Z で戻った直後に drawImage が落ちる。
+     ＝**控えは中身を写す。作り直せるものは写さずに作り直す。**
+   → feedback_undo_must_copy_not_reference */
+function shapeCopy(q){
+  if(!q) return null;
+  const o = {};
+  for(const k in q) if(k.charAt(0) !== '_') o[k] = q[k];
+  return JSON.parse(JSON.stringify(o));
+}
 function snapState(){
   return {
     P: JSON.parse(JSON.stringify(P)),

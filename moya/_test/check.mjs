@@ -52,6 +52,29 @@ await p.evaluateOnNewDocument(() => {
     return LAYERS[SEL];
   };
 });
+/* ══🔴🔴 盤の指紋（物差し）は【読み込むたびに必ず入る】ようにする ══ 2026-09-02
+   🔴🔴 2026-09-02 に踏んだ：速い束（章だけ）を流したら
+     `window.__full is not a function` で **ok() が1本も 🔴 にならずにプロセスごと死んだ**。
+     原因＝物差しを goto の【後】に1回入れていただけで、
+       指の端末の試験でページが読み直されると消え、入れ直す章を選ばないと戻らなかった。
+     ⚠️ ✅の数だけ見ていると「通った」に見える＝いちばんたちが悪い。
+   ⭐ evaluateOnNewDocument＝**読み込みのたびに先に入る**。＝入れ直しの章はもう要らない。
+     ＝式は1本（ここだけ）。 → feedback_same_formula_in_two_places_drifts */
+await p.evaluateOnNewDocument(() => {
+  window.__shot = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+    const o = []; for(let i = 0; i < d.length; i += 4*7) o.push(d[i], d[i+3]); return o; };
+  window.__diff = (A,B) => { let n = 0;
+    for(let i = 0; i < Math.min(A.length,B.length); i++) if(Math.abs(A[i]-B[i]) > 8) n++; return n; };
+  /* ⭐ 薄い変化も拾う物差し＝【差の合計】。
+     ⚠️「8より大きい画素を数える」だけだと、全面に薄くかかる直し（黒の持ち上げ等）や
+        細い帯にしか出ない直し（縁の回り込み）が **0 と出てしまう**（2026-08-30 に踏んだ）。 */
+  window.__full = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+    const o = []; for(let i = 0; i < d.length; i += 4*3) o.push(d[i], d[i+1], d[i+2], d[i+3]);
+    return o; };
+  window.__sad = (A,B) => { let s2 = 0;
+    for(let i = 0; i < Math.min(A.length,B.length); i++) s2 += Math.abs(A[i]-B[i]);
+    return Math.round(s2); };
+});
 await p.goto(URL_, { waitUntil:'networkidle0' });
 await new Promise(r => setTimeout(r, 2500));
 let NG = 0;
@@ -69,22 +92,7 @@ await p.evaluate(() => { window.__got = [];
   const oc = URL.createObjectURL;
   URL.createObjectURL = function(x){ window.__got.push({ size:x.size, type:x.type }); return oc.call(URL, x); }; });
 
-/* 盤の指紋（画素をとびとびに読む） */
-await p.evaluate(() => {
-  window.__shot = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
-    const o = []; for(let i = 0; i < d.length; i += 4*7) o.push(d[i], d[i+3]); return o; };
-  window.__diff = (A,B) => { let n = 0;
-    for(let i = 0; i < Math.min(A.length,B.length); i++) if(Math.abs(A[i]-B[i]) > 8) n++; return n; };
-  /* ⭐ 薄い変化も拾う物差し＝【差の合計】。
-     ⚠️「8より大きい画素を数える」だけだと、全面に薄くかかる直し（黒の持ち上げ等）や
-        細い帯にしか出ない直し（縁の回り込み）が **0 と出てしまう**（2026-08-30 に踏んだ）。 */
-  window.__full = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
-    const o = []; for(let i = 0; i < d.length; i += 4*3) o.push(d[i], d[i+1], d[i+2], d[i+3]);
-    return o; };
-  window.__sad = (A,B) => { let s2 = 0;
-    for(let i = 0; i < Math.min(A.length,B.length); i++) s2 += Math.abs(A[i]-B[i]);
-    return Math.round(s2); };
-});
+/* ⭐ 盤の指紋（物差し）は上の evaluateOnNewDocument で入っている */
 const shot = () => p.evaluate(() => window.__shot());
 const diff = (A,B) => { let n = 0;
   for(let i = 0; i < Math.min(A.length,B.length); i++) if(Math.abs(A[i]-B[i]) > 8) n++; return n; };
@@ -2299,15 +2307,7 @@ ok(ZM.小さい字の入力.length === 0,
      ・入って出るだけなら 1画素も変わらない（中を作っただけで絵を変えない） */
 await p.setViewport({ width:1400, height:900 });
 await wait(600);
-/* ⚠️ 指の端末に切り替えたところで頁が読み直される＝物差しを入れ直す */
-await p.evaluate(() => {
-  window.__full = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
-    const o = []; for(let i = 0; i < d.length; i += 4*3) o.push(d[i], d[i+1], d[i+2], d[i+3]);
-    return o; };
-  window.__sad = (A,B) => { let s2 = 0;
-    for(let i = 0; i < Math.min(A.length,B.length); i++) s2 += Math.abs(A[i]-B[i]);
-    return Math.round(s2); };
-});
+/* ⭐ 読み直されても物差しは戻る（evaluateOnNewDocument）＝入れ直さない */
 await p.evaluate(() => { closeAllEditors(); document.getElementById('b_demo').click(); });
 await wait(2000);
 const AB0 = await p.evaluate(() => window.__full());
@@ -3782,18 +3782,6 @@ await wait(900);
    → feedback_regression_test_before_push（ぶれる試験はもっと悪い） */
 await p.setViewport({ width:1400, height:900 });
 await wait(900);
-await p.evaluate(() => {
-  window.__shot = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
-    const o = []; for(let i = 0; i < d.length; i += 4*7) o.push(d[i], d[i+3]); return o; };
-  window.__diff = (A,B) => { let n = 0;
-    for(let i = 0; i < Math.min(A.length,B.length); i++) if(Math.abs(A[i]-B[i]) > 8) n++; return n; };
-  window.__full = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
-    const o = []; for(let i = 0; i < d.length; i += 4*3) o.push(d[i], d[i+1], d[i+2], d[i+3]);
-    return o; };
-  window.__sad = (A,B) => { let s2 = 0;
-    for(let i = 0; i < Math.min(A.length,B.length); i++) s2 += Math.abs(A[i]-B[i]);
-    return Math.round(s2); };
-});
 await p.evaluate(async () => {
   closeAllEditors();
   await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
@@ -3953,6 +3941,177 @@ ok(SWDTH.ゼロ.線 === false && SWDTH.ゼロ.戻り === 0,
 ok(SWDTH.位置.線 === true && SWDTH.位置.太さ > 0 && SWDTH.位置.変わった > 0,
    '⭐ 線の位置を押しても線が出る（押したのに何も起きない、を作らない）',
    JSON.stringify(SWDTH.位置));
+
+/* ══⭐⭐ 線を太くしても【本体の大きさは変えない】══ 2026-09-02
+   🔴🔴 木下＝「外側と書いてあると普通のその三角の白い部分の大きさは変わらず、外に線が
+      つくだけだが、今ではその白い面積自体も小さくなっている。中央、内側も？と思う動きだ」
+     ＝実測でそのとおりだった（太さ47・白い本体の幅）：
+       太さ0 **318px** → 外側 **256px**／中央 **248px**／内側 **214px**
+     原因＝線が太くなると紙（shapeCanvas）が余白のぶん大きくなるのに、盤に置く倍率 L.s が
+       そのままだった＝大きくなった紙を同じ幅に押し込む＝**中身がまるごと縮む**。
+   ⭐ 見るのはイラレと同じ3つの振る舞い：
+     ・**外側**＝白い本体は変わらない（線は外へ付く）
+     ・**中央**＝線の半分が内へ食い込む（本体は少し小さくなる）
+     ・**内側**＝線ぜんぶが内へ食い込む（中央よりさらに小さい）
+   → feedback_canvas_view_fix_zoom_not_offset ／ feedback_same_formula_in_two_places_drifts */
+const SHSTK = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const set = (id, v) => { const e = document.getElementById(id);
+    e.value = v; e.dispatchEvent(new Event('input', { bubbles:true })); };
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1600); });
+  const L = await window.drawShape(0.30, 0.30, 0.62, 0.58);
+  document.querySelector('#tools button[data-t="move"]').click(); await w(300);
+  COARSE = 0;
+  const q = L.shape;
+  /* 白い本体の幅＝盤に出ている「まっ白な画素」の横の広がり（線は黒なので混ざらない） */
+  const body = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+    let x0 = 1e9, x1 = -1;
+    for(let y = 0; y < cv.height; y++) for(let x = 0; x < cv.width; x++){
+      const i = (y*cv.width + x)*4;
+      if(d[i] > 230 && d[i+1] > 230 && d[i+2] > 230){ if(x < x0) x0 = x; if(x > x1) x1 = x; } }
+    return x1 - x0; };
+  q.fill = '#ffffff'; q.fillOn = true; q.stroke = '#000000';
+  q.strokeOn = false; q.sw = 0; rebuildShape(L); render(); await w(400);
+  const 太さ0 = body();
+  document.querySelector('#s_shalign button[data-v="outer"]').click(); await w(200);
+  set('sh_sw', 47); await w(500);
+  const 外側 = body();
+  document.querySelector('#s_shalign button[data-v="center"]').click(); await w(500);
+  const 中央 = body();
+  document.querySelector('#s_shalign button[data-v="inner"]').click(); await w(500);
+  const 内側 = body();
+  return { 太さ0, 外側, 中央, 内側 };
+});
+ok(Math.abs(SHSTK.外側 - SHSTK.太さ0) <= 3,
+   '⭐⭐ 外側＝白い本体の大きさは【変わらない】（線が外へ付くだけ）', JSON.stringify(SHSTK));
+ok(SHSTK.中央 < SHSTK.太さ0 - 10 && SHSTK.中央 > SHSTK.内側 + 10,
+   '⭐ 中央＝線の半分だけ内へ食い込む（外側と内側のちょうど間）', JSON.stringify(SHSTK));
+ok(SHSTK.内側 < SHSTK.中央,
+   '⭐ 内側＝線ぜんぶが内へ食い込む（いちばん小さい）', JSON.stringify(SHSTK));
+
+/* ══⭐⭐ 塗りの画像は【素材の大きさ】を物差しに盤で大きくできる ══ 2026-09-02
+   🔴 木下＝「塗り画像の部分のみを触ることができるが**大きくできない**」
+     ＝効いてはいた（k は動いていた）。**効きが弱すぎた**＝物差しが【版面いっぱい】で、
+       素材の上を引いても版面のごく一部＝×1.05 程度しか動かず「効かない」に見えた。
+   ⭐ **素材の高さ1つぶん引いたら 2倍**（下へ引けば 1/2）＝手の動きと絵が釣り合う。
+   → feedback_count_the_pictures_a_knob_makes ／ feedback_grab_size_in_screen_px */
+const FILK = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1600); });
+  const L = await window.drawShape(0.30, 0.30, 0.62, 0.58);
+  document.querySelector('#tools button[data-t="move"]').click(); await w(300);
+  COARSE = 0;
+  const tc = document.createElement('canvas'); tc.width = 200; tc.height = 200;
+  const tg = tc.getContext('2d');
+  tg.fillStyle = '#ff0000'; tg.fillRect(0, 0, 200, 200);
+  tg.fillStyle = '#00ff00'; tg.fillRect(50, 50, 100, 100);
+  fillsOf(L).push({ kind:'image', src:tc.toDataURL(), op:1, mode:'source-over', on:true });
+  L._key = ''; buildList(); render(); await w(900);
+  const f = fillsOf(L)[0];
+  const shot = () => { const d = g.getImageData(0,0,cv.width,cv.height).data; const o = [];
+    for(let i = 0; i < d.length; i += 4*3) o.push(d[i], d[i+1], d[i+2], d[i+3]); return o; };
+  const sad = (A, B) => { let s2 = 0; for(let i = 0; i < A.length; i++) s2 += Math.abs(A[i]-B[i]);
+    return s2; };
+  const A = shot();
+  /* 素材の高さの 2/3 ぶん、上へ引く */
+  FILLEDIT = { L, f };
+  const dh = L.s * chOf(L)/cwOf(L) * syOf(L) * (cv.width/cv.height);
+  const p0 = toScreen(0.46, 0.50), p1 = toScreen(0.46, 0.50 - dh*2/3);
+  stage.dispatchEvent(new PointerEvent('pointerdown',
+    { clientX:p0.clientX, clientY:p0.clientY, bubbles:true, pointerId:11, shiftKey:true }));
+  await w(60);
+  stage.dispatchEvent(new PointerEvent('pointermove',
+    { clientX:p1.clientX, clientY:p1.clientY, bubbles:true, pointerId:11, shiftKey:true }));
+  await w(60);
+  stage.dispatchEvent(new PointerEvent('pointerup',
+    { clientX:p1.clientX, clientY:p1.clientY, bubbles:true, pointerId:11, shiftKey:true }));
+  await w(500);
+  const 大きく = { k:f.k, 変わった: sad(shot(), A) };
+  /* 下へ同じだけ引いたら小さくなる（両向きに効く） */
+  f.k = 1; L._key = ''; render(); await w(300);
+  const p2 = toScreen(0.46, 0.50 + dh*2/3);
+  stage.dispatchEvent(new PointerEvent('pointerdown',
+    { clientX:p0.clientX, clientY:p0.clientY, bubbles:true, pointerId:12, shiftKey:true }));
+  await w(60);
+  stage.dispatchEvent(new PointerEvent('pointermove',
+    { clientX:p2.clientX, clientY:p2.clientY, bubbles:true, pointerId:12, shiftKey:true }));
+  await w(60);
+  stage.dispatchEvent(new PointerEvent('pointerup',
+    { clientX:p2.clientX, clientY:p2.clientY, bubbles:true, pointerId:12, shiftKey:true }));
+  await w(500);
+  const 小さく = { k:f.k };
+  FILLEDIT = null;
+  return { 大きく, 小さく };
+});
+ok(FILK.大きく.k > 1.4 && FILK.大きく.変わった > 0,
+   '⭐⭐ 素材の高さの2/3 引いたら【1.4倍より大きく】なる（弱すぎない）', JSON.stringify(FILK));
+ok(FILK.小さく.k < 0.75,
+   '⭐ 下へ引けば小さくなる（両向きに同じだけ効く）', JSON.stringify(FILK));
+
+/* ══⭐⭐ 塗りの画像は【線の下】に入る／型は1回だけかける ══ 2026-09-02
+   🔴🔴 木下の2つ：
+     ①「画像が入っている状態では、線をこのまま大きくすると **線が足されるのではなく、
+        画像が切り取りされているような動き**になる」
+        ＝塗りの画像を【形の中ぜんぶ（線の上まで）】に乗せていたので、線が隠れていた。
+        → イラレと同じ順に：**塗り → 塗りの画像 → 線**。
+     ②「**線の太さが0の場合でもうっすらと線も見えている**」
+        ＝別の紙で形に切ってから、盤へ置くときも source-atop でもう一度 形のアルファを
+          掛けていた＝縁の1画素が 0.5×0.5＝0.25 になり、下の塗り（白）がにじんで見えた。
+        → すでに切ってある紙は そのまま置く（型は1回だけ）。
+   ⭐ 見るのは画素で数える3つ：
+     ・線なし＝**白い縁が1画素も出ない**（下の白い塗りが漏れていない）
+     ・外側＝**画像の面積が線なしとほぼ同じ**（切り取られていない）＋線の黒が増える
+     ・内側＝画像が内へ食い込む（減る）＋線の黒が増える
+   ⚠️ 控えは canvas を写さない（shapeCopy が `_` を落とす）＝⌘Z で戻しても落ちない。 */
+const SHFILL = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const set = (id, v) => { const e = document.getElementById(id);
+    e.value = v; e.dispatchEvent(new Event('input', { bubbles:true })); };
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1600); });
+  const L = await window.drawShape(0.28, 0.28, 0.66, 0.62);
+  document.querySelector('#tools button[data-t="move"]').click(); await w(300);
+  COARSE = 0;
+  const q = L.shape;
+  q.type = 'tri'; q.fill = '#ffffff'; q.fillOn = true; q.stroke = '#000000';
+  q.strokeOn = false; q.sw = 0; rebuildShape(L);
+  /* まっ赤な画像＝線（黒）と はっきり分かれる */
+  const tc = document.createElement('canvas'); tc.width = 200; tc.height = 200;
+  const tg = tc.getContext('2d'); tg.fillStyle = '#ff0000'; tg.fillRect(0, 0, 200, 200);
+  fillsOf(L).push({ kind:'image', src:tc.toDataURL(), op:1, mode:'source-over', on:true });
+  L._key = ''; buildList(); render(); await w(900);
+  const count = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+    let 赤 = 0, 黒 = 0, 白 = 0;
+    for(let i = 0; i < d.length; i += 4){
+      const r = d[i], g2 = d[i+1], b2 = d[i+2];
+      if(r > 180 && g2 < 70 && b2 < 70) 赤++;
+      else if(r < 28 && g2 < 28 && b2 < 28) 黒++;
+      else if(r > 235 && g2 > 235 && b2 > 235) 白++;
+    }
+    return { 赤, 黒, 白 }; };
+  const 線なし = count();
+  document.querySelector('#s_shalign button[data-v="inner"]').click(); await w(300);
+  set('sh_sw', 60); await w(600);
+  const 内側 = count();
+  document.querySelector('#s_shalign button[data-v="outer"]').click(); await w(600);
+  const 外側 = count();
+  let 戻して落ちない = false;
+  try{ undo(); await w(600); 戻して落ちない = true; }catch(_){ }
+  return { 線なし, 内側, 外側, 戻して落ちない };
+});
+ok(SHFILL.線なし.白 === 0,
+   '⭐⭐ 線の太さ0で【うっすらした線が1画素も出ない】（型は1回だけかける）',
+   JSON.stringify(SHFILL.線なし));
+ok(SHFILL.外側.赤 > SHFILL.線なし.赤 * 0.97 && SHFILL.外側.黒 > SHFILL.線なし.黒 * 1.3,
+   '⭐⭐ 外側＝画像は切り取られない（面積そのまま）＋線が外へ足される',
+   JSON.stringify(SHFILL.外側) + ' / 線なし ' + JSON.stringify(SHFILL.線なし));
+ok(SHFILL.内側.赤 < SHFILL.線なし.赤 * 0.8 && SHFILL.内側.黒 > SHFILL.線なし.黒 * 1.3,
+   '⭐ 内側＝線が画像の上に乗る（画像は内へ食い込む・線は見える）',
+   JSON.stringify(SHFILL.内側));
+ok(SHFILL.戻して落ちない === true,
+   '🔴 ⌘Z で戻しても落ちない（控えは作り直せる紙を写さない）', String(SHFILL.戻して落ちない));
 
 /* ══ @下地 ここから先は【見本2（文字・図形・エフェクト）】を1回だけ組んで使い回す ══
    ⭐ @下地 ＝ この章より後ろの章を選んだときは、この章も必ず一緒に流す印。
