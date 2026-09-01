@@ -1622,6 +1622,9 @@
     <button class="btn" id="b_font" style="width:100%;margin-top:6px">書体を読み込む（.ttf .otf .woff2）</button>
     <input type="file" id="f_font" accept=".ttf,.otf,.woff,.woff2,font/*" multiple hidden>
     <div class="note">読み込んだ書体はこの一覧に足されます。可変フォントは太さがそのまま動きます。</div>
+    <!-- 🔴 2026-09-01・木下＝「テキストがうまく反映していない」（欧文の書体に日本語を打った）
+         ＝canvas は持っていない字を黙って差し替える＝ここで言う -->
+    <div class="note hide" id="fontWarn" style="color:#c2410c;font-weight:590"></div>
     <div class="knob"><span class="n">太さ</span><input class="num" type="number" id="n_t_weight"><input type="range" id="t_weight" min="100" max="900" step="100" value="700"><output id="o_tw" hidden>700</output></div>
     <!-- ⭐⭐ 可変フォントの軸（2026-08-31）＝その書体が持っている軸だけを出す
          ⚠️ 「たぶん有る」つまみは出さない（触れるのに効かない、を作らない） -->
@@ -3167,19 +3170,23 @@ const FONTS = [
   ['-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif', 'ゴシック（システム）'],
   /* ⭐⭐ 木下の書体（鋳CHU から出た CHU Modular）── 2026-09-01
      ⚠️ VF は可変（太さ 100〜900 が無段階）＝［太さ］のつまみがそのまま効く */
-  ['CHU, sans-serif',        'CHU Modular（欧文・可変）'],
-  ['CHUJP, sans-serif',      'CHU Modular JP（かな込み・可変）'],
-  ['CHURound, sans-serif',   'CHU 丸'],
-  ['CHUSquare, sans-serif',  'CHU 角'],
-  ['CHUHex, sans-serif',     'CHU 六角'],
-  ['CHUDiamond, sans-serif', 'CHU 菱'],
-  ['CHUWide, sans-serif',    'CHU 幅広'],
-  ['UWASA, sans-serif',      'UWASA（崩して鋳る）'],
-  ['UWASAJP, sans-serif',    'UWASA JP（かな込み）'],
-  ['HON, sans-serif',        'HON（骨から鋳る）'],
+  /* ⭐ 3つ目＝【かなや漢字を持っているか】。false＝欧文だけ（2026-09-01）
+     🔴 木下＝「テキストがうまく反映していない」＝欧文の書体に日本語を打つと
+       canvas が黙って別の書体に差し替えるので「変わらない」としか見えなかった。
+     ⚠️ これは画面から測れない（代替書体どうしを比べることになる）＝表で持つ。 */
+  ['CHU, sans-serif',        'CHU Modular（欧文・可変）', false],
+  ['CHUJP, sans-serif',      'CHU Modular JP（かな込み・可変）', true],
+  ['CHURound, sans-serif',   'CHU 丸（欧文）', false],
+  ['CHUSquare, sans-serif',  'CHU 角（欧文）', false],
+  ['CHUHex, sans-serif',     'CHU 六角（欧文）', false],
+  ['CHUDiamond, sans-serif', 'CHU 菱（欧文）', false],
+  ['CHUWide, sans-serif',    'CHU 幅広（欧文）', false],
+  ['UWASA, sans-serif',      'UWASA（崩して鋳る・欧文）', false],
+  ['UWASAJP, sans-serif',    'UWASA JP（かな込み）', true],
+  ['HON, sans-serif',        'HON（骨から鋳る・欧文）', false],
   /* ⭐ 2026-09-01・木下＝「KETAもフォント追加されたから 利用できるようにして」
      ＝桁KETA の升目から鋳った4つ目のリリース（typography.html の 04） */
-  ['KETA, sans-serif',       'KETA（升目から鋳る）'],
+  ['KETA, sans-serif',       'KETA（升目から鋳る・欧文）', false],
   ['"Hiragino Mincho ProN","Yu Mincho",serif',                    '明朝'],
   ['ui-monospace,"SF Mono",Menlo,monospace',                      '等幅'],
   ['"Helvetica Neue",Helvetica,Arial,sans-serif',                 'Helvetica'],
@@ -3270,6 +3277,47 @@ function varFamily(fam, axes){
   return VARFAM[key];
 }
 function axesOfText(t){ return t.axes || (t.axes = {}); }
+/* ══⭐⭐ その書体で【描けない字】があるかを見る ══ 2026-09-01
+   🔴 木下＝「テキストがうまく反映していない」（UWASA＝欧文に日本語を打った）
+     ＝canvas は持っていない字を**黙って別の書体に差し替える**ので、
+       打った本人には「書体を選んだのに変わらない」としか見えない。
+   ⭐ その書体で測った幅と、書体を外して測った幅が【同じ】なら差し替わっている。
+   ⚠️ 数字・記号・空白は どの書体でも同じ幅になりうるので見ない（誤って言わない）。
+   → feedback_canvas_needs_the_font_loaded_first */
+/* ⭐ いまの書体で描けない字があるかを画面に出す（打つたび・書体を変えるたび） */
+function syncFontWarn(){
+  const wn = el('fontWarn'); if(!wn) return;
+  const L = LAYERS[SEL];
+  if(!L || L.kind !== 'text' || !L.text){ wn.classList.add('hide'); return; }
+  const t = L.text;
+  const bad = fontMissing(t.font, t.str);
+  const nm = (FONTS.find(f => f[0] === t.font) || [null, t.font])[1];
+  wn.classList.toggle('hide', !bad);
+  if(!bad) return;
+  /* かなや漢字が抜けているなら、同じ仲間の「かな込み」を勧める */
+  const head = nm.split('（')[0].trim().split(' ')[0];
+  const jp = FONTS.find(f => f[2] === true && f[1].indexOf(head) === 0);
+  wn.innerHTML = '⚠️ <b>' + nm + '</b> はこの字を持っていません（' + bad.slice(0, 6) + '）。<br>'
+    + 'いまは別の書体で描かれています'
+    + (jp ? '。<b>' + jp[1] + '</b> を選ぶと出ます。' : '（かな込みの書体を選んでください）。');
+}
+function fontMissing(fam, str){
+  /* ⚠️ 「その書体が この字を持っているか」は画面から測れない
+     （持っていない字は 環境の代替書体で描かれ、比べる相手も同じ書体になるため）。
+     ⭐ だから【こちらが持っている表】で判断する＝FONTS の3つ目が false なら欧文だけ。
+     → feedback_canvas_needs_the_font_loaded_first（canvas は黙って差し替える） */
+  const s2 = String(str || '');
+  if(!s2) return '';
+  const row = FONTS.find(f => f[0] === fam);
+  if(!row || row[2] !== false) return '';        /* 表に無い／かな込み＝何も言わない */
+  /* かな・カタカナ・漢字が入っているか */
+  const bad = [];
+  for(const ch of s2){
+    if(/[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]/.test(ch) && bad.indexOf(ch) < 0) bad.push(ch);
+    if(bad.length >= 8) break;
+  }
+  return bad.join('');
+}
 function textCanvas(L){
   const t = textOf(L);
   const lines = String(t.str == null ? '' : t.str).split('\n');
@@ -9001,12 +9049,15 @@ el('t_str').addEventListener('input', e => {
   const L = LAYERS[SEL]; if(!L || L.kind !== 'text') return;
   textOf(L).str = e.target.value;
   L.name = (e.target.value.split('\n')[0] || 'テキスト').slice(0, 14);
-  rebuildText(L, () => { buildList(); touching(); renderSoon(); });
+  rebuildText(L, () => { buildList(); touching(); renderSoon();
+    if(typeof syncFontWarn === 'function') syncFontWarn(); });
 });
 el('t_font').addEventListener('change', e => {
   const L = LAYERS[SEL]; if(!L || L.kind !== 'text') return;
   hist(); textOf(L).font = e.target.value;
-  rebuildText(L, () => render());
+  rebuildText(L, () => { render();
+    /* ⭐ 書体を変えた直後にも見る（持っていない字は黙って差し替わるので） */
+    if(typeof syncFontWarn === 'function') syncFontWarn(); });
 });
 /* ══ 書体を読み込む ══ 2026-08-31・木下＝「テキストフォント読み込みもね」
    🔴 可変フォントは FontFace に【太さの範囲】を渡す（渡さないと 400 に固定される）。
@@ -9168,6 +9219,7 @@ function syncText(){
   const t = textOf(L);
   buildAxes();
   el('t_str').value = t.str;
+  syncFontWarn();
   el('t_font').value = t.font;
   el('t_color').value = t.color;
   el('t_weight').value = t.weight; el('o_tw').value = String(t.weight);
