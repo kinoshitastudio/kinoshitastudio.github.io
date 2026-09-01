@@ -4086,6 +4086,39 @@ await wait(600);
      JSON.stringify({ 前:FR.前, 後:FR.後 }));
 }
 
+/* ⭐⭐ ⑩ 外見の【角の丸み】＝どんな素材でも四隅を丸められる（Figma の「外見」と同じ場所）
+   🔴 木下＝「Figma でいう外見に…」／⚠️ 既定 0＝今までの絵と1画素も同じ */
+{
+  const RD = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    closeAllEditors(); await w(300);
+    document.querySelector('#tools button[data-t="shape"]').click(); await w(900);
+    COARSE = 0; render(); await w(300);
+    const 前 = window.__full();
+    const r2 = document.getElementById('r_round');
+    r2.value = 40; r2.dispatchEvent(new Event('input', { bubbles:true }));
+    COARSE = 0; render(); await w(400);
+    const 丸めた = window.__sad(前, window.__full());
+    const 設定に入る = /"round":0\.4/.test(JSON.stringify(snapshot()));
+    r2.value = 0; r2.dispatchEvent(new Event('input', { bubbles:true }));
+    COARSE = 0; render(); await w(400);
+    const 戻ると同じ = window.__diff(前, window.__full());
+    /* 外見＝濃さ・塗り・角の丸み・重ね方 が ひとつづきに並んでいること */
+    const ids = [...document.querySelectorAll('#selBox .knob, #selBox #blendPart')]
+      .map(e => e.id || (e.querySelector('input[type=range]') || {}).id);
+    const i0 = ids.indexOf('opKnob'), i1 = ids.indexOf('fillAKnob');
+    const i2 = ids.indexOf('roundKnob'), i3 = ids.indexOf('blendPart');
+    return { 丸めた, 設定に入る, 戻ると同じ, 並び:[i0, i1, i2, i3] };
+  });
+  ok(RD.丸めた > 0 && RD.設定に入る,
+     '⭐⭐ 外見の【角の丸み】が効き、設定JSONにも入る', JSON.stringify(RD));
+  ok(RD.戻ると同じ === 0,
+     '🔴 0 に戻すと1画素も同じに戻る（角を焼き込んでいない）', RD.戻ると同じ);
+  ok(RD.並び[0] >= 0 && RD.並び[1] === RD.並び[0] + 1
+     && RD.並び[2] === RD.並び[1] + 1 && RD.並び[3] === RD.並び[2] + 1,
+     '⭐ 外見（不透明度・塗り・角の丸み・重ね方）が ひとつづきに並ぶ', JSON.stringify(RD.並び));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);
