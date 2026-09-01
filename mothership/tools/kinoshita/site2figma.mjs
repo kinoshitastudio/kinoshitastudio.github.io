@@ -139,8 +139,15 @@ const grab = (i) => p.evaluate((i) => {
                : sec.getBoundingClientRect();
   const px = v => Math.round((parseFloat(v) || 0) * 100) / 100;
   const LEAFISH = new Set(['BR', 'SPAN', 'EM', 'B', 'STRONG', 'A', 'I', 'SUP', 'SUB', 'SMALL', 'TIME']);
+  // 🔴 インライン要素でも「箱として描かれている」物は文字に潰さない。
+  //    ボタン（<a class="btn">）が2つ並ぶ行を葉と見なすと、1つのテキストに潰れて
+  //    塗り・枠・余白が丸ごと消える（実測：締めの帯のボタン2つが1ノードに潰れた）
+  const boxy = c => { const s = getComputedStyle(c);
+    return (s.backgroundColor && !/rgba\(0, 0, 0, 0\)|transparent/.test(s.backgroundColor))
+        || parseFloat(s.borderTopWidth) > 0 || parseFloat(s.borderLeftWidth) > 0
+        || parseFloat(s.borderTopLeftRadius) > 0; };
   const isLeafText = el => el.childElementCount === 0
-    || [...el.children].every(c => LEAFISH.has(c.tagName) && c.childElementCount === 0);
+    || [...el.children].every(c => LEAFISH.has(c.tagName) && c.childElementCount === 0 && !boxy(c));
   const txt = el => {
     let s = '';
     const rec = n => {
@@ -195,6 +202,19 @@ const grab = (i) => p.evaluate((i) => {
                    lineHeight: px(c.lineHeight) || Math.round(px(c.fontSize) * 1.4),
                    ls: c.letterSpacing === 'normal' ? 0 : px(c.letterSpacing) };
         o.color = c.color; o.ta = c.textAlign;
+        // 🔴 自分自身が「箱として描かれている」なら、文字1枚では塗り・枠・角丸・余白が全部消える。
+        //    箱（frame）にして、中に文字を1つ置く（実測：⑧のボタンが紺の塗りを失って白文字だけになった）
+        if (o.bg || o.border || o.radius >= 2) {
+          const [pt, pr, pb, pl] = o.pad;
+          const inner = { ...o, id: ++uid, cls: '', x: o.x + pl, y: o.y + pt,
+            w: Math.max(1, o.w - pl - pr), h: Math.max(1, o.h - pt - pb),
+            bg: null, bgimg: null, border: null, radius: 0, shadow: null,
+            pad: [0, 0, 0, 0], pos: 'static', children: [] };
+          o.kind = 'frame';
+          delete o.text; delete o.font; delete o.color; delete o.tw; delete o.ta;
+          o.children = [inner];
+          return o;
+        }
         return o;
       }
     }
@@ -219,7 +239,28 @@ const grab = (i) => p.evaluate((i) => {
         radius: px(pc.borderTopLeftRadius), border: null, children: []
       });
     });
-    [...el.children].forEach(ch => { const n = node(ch); if (n) o.children.push(n); });
+    // 🔴 childNodes で回る（children ではない）。
+    //    箱の直下に「要素で囲まれていない裸の文字」があると、children を回るだけでは拾えず
+    //    文字が丸ごと消える（実測：印つきリストの項目名が全部落ちた）
+    [...el.childNodes].forEach(ch => {
+      if (ch.nodeType === 1) { const n = node(ch); if (n) o.children.push(n); return; }
+      if (ch.nodeType !== 3 || !ch.nodeValue.trim()) return;
+      const rg = document.createRange(); rg.selectNode(ch);
+      const rs = [...rg.getClientRects()]; if (!rs.length) return;
+      const x0 = Math.min(...rs.map(v => v.left)), y0 = Math.min(...rs.map(v => v.top));
+      const x1 = Math.max(...rs.map(v => v.right)), y1 = Math.max(...rs.map(v => v.bottom));
+      if (x1 - x0 < 2 || y1 - y0 < 2) return;
+      const lh = px(c.lineHeight) || Math.round(px(c.fontSize) * 1.4);
+      o.children.push({
+        id: ++uid, tag: '#text', cls: '', kind: 'text',
+        text: ch.nodeValue.replace(/\s+/g, ' ').trim(),
+        x: px(x0 - S.left), y: px(y0 - S.top), w: px(x1 - x0), h: Math.max(px(y1 - y0), lh * rs.length),
+        tw: px(x1 - x0), pos: 'static', disp: 'inline', pad: [0, 0, 0, 0],
+        font: { family: c.fontFamily, size: px(c.fontSize), weight: parseInt(c.fontWeight) || 400,
+                lineHeight: lh, ls: c.letterSpacing === 'normal' ? 0 : px(c.letterSpacing) },
+        color: c.color, ta: c.textAlign, children: []
+      });
+    });
     // 🔴 background-image は「子が無い箱」だけでなく必ず拾う。
     //    子がある箱の背景を捨てると、写真が丸ごと落ちる（H-7 の KV は
     //    女性の写真が背景で、拾えていたのは上に重なる矢羽根のオーバーレイ画像だけだった）
@@ -247,6 +288,19 @@ const grab = (i) => p.evaluate((i) => {
     });
     const kids = [];
     if (best) { const n = node(best); if (n) kids.push(n); }
+    // 🔴 帯の中に「兄弟が何枚も」並んでいると、どれも fits に通らず 1枚も拾えない
+    //    （実測：SharePoint バー40 ＋ サイト名50 ＋ ナビ45 の3枚／高さ74pxのヘッダー1枚が
+    //     丸ごと落ちて「KV は見つからなかった」になっていた）
+    //    → いちばん大きい塊が無いときは、帯に収まる直下の帯を全部そのまま並べる
+    if (!kids.length) {
+      [...document.body.children].forEach(el => {
+        if (el.closest('[data-ms-sec]') || el.querySelector('[data-ms-sec]')) return;
+        const r = el.getBoundingClientRect();
+        if (r.height < 8 || r.width < Wp * 0.3) return;
+        if (r.top < -8 || r.bottom > Y + 8) return;
+        const n = node(el); if (n) kids.push(n);
+      });
+    }
     // 🔴 ヘッダーは position:fixed ＝ 帯の外に居る。別に拾って KV に合成する
     document.body.querySelectorAll('*').forEach(el => {
       const c = getComputedStyle(el);
@@ -330,7 +384,7 @@ function dedupImages(kids) {
   return out;
 }
 
-const stats = { al: 0, abs: 0, band: 0, svg: 0, swap: 0, blank: 0, shot: 0, kasanari: 0, heavysvg: 0 };
+const stats = { al: 0, abs: 0, band: 0, svg: 0, swap: 0, blank: 0, shot: 0, kasanari: 0, heavysvg: 0, local: 0 };
 
 const r1 = v => Math.round(v * 10) / 10;
 
@@ -674,6 +728,28 @@ async function pickImages(n) {
   for (const c of n.children || []) await pickImages(c);
 }
 
+/* 🔴 手元のサーバ（127.0.0.1 / localhost）から採った写真は、素のURLのまま保存すると
+   サーバを止めた瞬間に二度と入らなくなる（bake は localhost 以外の http を毎回 DL しにいく）。
+   ⭐ refs/img に落として相対パスにする＝ライブラリ単体で後日そのまま使える。
+   ⚠️ refs/ は .gitignore 済み＝社外秘の写真も git には入らない。 */
+async function localImages(root) {
+  const dir = path.join(ROOT, 'refs', 'img');
+  fs.mkdirSync(dir, { recursive: true });
+  const jobs = [];
+  (function w(n) {
+    if (n.type === 'image' && /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])[:\/]/i.test(String(n.src || ''))) jobs.push(n);
+    (n.children || []).forEach(w);
+  })(root);
+  for (const n of jobs) {
+    const base = (decodeURIComponent(n.src.split('?')[0].split('/').pop()) || 'img.png').replace(/[^\w.-]+/g, '_');
+    try {
+      const r = await fetch(n.src); if (!r.ok) throw new Error(r.status);
+      fs.writeFileSync(path.join(dir, base), Buffer.from(await r.arrayBuffer()));
+      n.src = 'refs/img/' + base; stats.local++;
+    } catch (e) { console.log('  ⚠️ 写真が取れなかった:', n.src); }
+  }
+}
+
 /* 🔴 .svg を image のまま渡すと壊れる（bake は svg を jpeg 扱いする）。
    中身を取ってきて svg ノードに差し替える＝Figma にネイティブのベクターで出る */
 const svgCache = new Map();
@@ -742,7 +818,16 @@ for (const i of targets) {
       clip: { x: 0, y: 0, width: W, height: Math.min(Math.round(tree.h), 4000) } });
     else await secs[i].screenshot({ path: path.join(OUT, `sec${i}.png`) });
   } catch (e) {}
-  const t = collapse(tree, true);
+  let t = collapse(tree, true);
+  // 🔴 セクション自身が「文字だけ」のとき（フッターの連絡先など）、そのまま frameNode に渡すと
+  //    children が空の frame になって文字が丸ごと消える（実測：⑨ がノード1・中身なしになった）
+  //    → 箱で包んで、中に文字を1つ置く。余白はセクションの padding をそのまま使う
+  if (t.kind === 'text') {
+    const [pt, pr, pb, pl] = t.pad || [0, 0, 0, 0];
+    const inner = { ...t, x: t.x + pl, y: t.y + pt, w: Math.max(1, t.w - pl - pr), h: Math.max(1, t.h - pt - pb) };
+    t = { ...t, kind: 'frame', children: [inner] };
+    delete t.text; delete t.font; delete t.color; delete t.tw; delete t.ta;
+  }
   const root = frameNode(t);
   root.name = (i === -1)
     ? `${PREFIX} — 00 ${Math.round(t.h) >= 200 ? 'KV' : 'ヘッダー'} (${W})`
@@ -759,6 +844,7 @@ for (const i of targets) {
 
   await pickImages(root);          // 同じ場所の候補から実物を選ぶ
   await inlineSvgs(root);          // .svg は中身を取ってきてベクターにする
+  await localImages(root);         // 🔴 手元サーバの写真は refs/img に落とす（サーバを止めても入るように）
   // ⭐ 解けない所はスクショを敷く（KV は丸ごと／未読込の写真はその場所だけ）
   const box = (i === -1) ? { x: 0, y: 0 } : (await secs[i].boundingBox()) || { x: 0, y: 0 };
   // ⚠️ 帯が薄い＝KV ではなく「ヘッダーだけ」。スクショは敷かず、構造のまま建てる
@@ -789,6 +875,6 @@ function count(n, a = { t: 0, lay: 0, abs: 0, img: 0 }) {
 
 const T = done.reduce((a, c) => ({ t: a.t + c.t, lay: a.lay + c.lay, abs: a.abs + c.abs, img: a.img + c.img }), { t: 0, lay: 0, abs: 0, img: 0 });
 console.log(`\n合計 ${done.length}枚 / ノード ${T.t} / オートレイアウト ${T.lay} / 絶対配置 ${T.abs}（重ねる所）/ 写真 ${T.img}`);
-console.log(`束ねた回数 ${stats.band} ── gap が2種類ある所を入れ子にした / svgを取り込んだ ${stats.svg}件 / 写真を実物に差し替えた ${stats.swap}件 / 空だった写真 ${stats.blank}件 / スクショを敷いた ${stats.shot}件（うち 重ね ${stats.kasanari}枚）/ 重いsvgを画像に ${stats.heavysvg}件`);
+console.log(`束ねた回数 ${stats.band} ── gap が2種類ある所を入れ子にした / svgを取り込んだ ${stats.svg}件 / 写真を実物に差し替えた ${stats.swap}件 / 空だった写真 ${stats.blank}件 / スクショを敷いた ${stats.shot}件（うち 重ね ${stats.kasanari}枚）/ 重いsvgを画像に ${stats.heavysvg}件 / 手元の写真を refs/img に ${stats.local}件`);
 console.log(`\n→ ${LIB}`);
 console.log(`⭐ Figma に出す: cp "library/<名前>.json" mothership.json`);

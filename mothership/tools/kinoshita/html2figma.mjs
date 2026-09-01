@@ -2,8 +2,14 @@
 import puppeteer from '/Users/kinoshitatakahiro/.npm/_npx/1ade4bf2e2bf80fd/node_modules/puppeteer-core/lib/puppeteer/puppeteer-core.js';
 import fs from 'fs';
 const M=process.env.HOME+'/Desktop/GitHub-clone/名称未設定/mothership/library/';
-const B='http://localhost:8178/html/_figma/';
-const PAGES=[['社内','page-a.html','naibu'],['社外','page-b.html','gaibu']];
+// ⚠️ この道具は site2figma.mjs に統合済み（手元HTMLもサーバで配れば site2figma がそのまま当たる）。
+//    残してあるのは「HTMLを直に読んで建てる」経路が要る時のため。案件名は書かず、引数で渡す。
+//    使い方: node html2figma.mjs "<接頭辞>" "<配信ベースURL>" "<ファイル名1>" ["<ファイル名2>" ...]
+const PREFIX = process.argv[2] || 'site';
+const B = process.argv[3] || 'http://localhost:8178/';
+const FILES = process.argv.slice(4);
+if (!FILES.length) { console.error('使い方: node html2figma.mjs "<接頭辞>" "<ベースURL>" "<ファイル名>" ...'); process.exit(1); }
+const PAGES = FILES.map((f, i) => [String(i + 1).padStart(2, '0'), f, 'p' + (i + 1)]);
 const b=await puppeteer.launch({executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:'new',args:['--no-sandbox']});
 const rgb=s=>{const m=s.match(/\d+/g); if(!m) return null;
   if(m.length>3 && +m[3]===0) return null;
@@ -72,7 +78,7 @@ for(const [tag,file,slug] of PAGES){
     }
     const bgTok = tok(s.bg) || '@colors.white';
     if(!T.colors.white) T.colors.white='#ffffff';
-    const name=`site ${tag} — ${String(s.i).padStart(2,'0')} ${s.title} (1440)`;
+    const name=`${PREFIX||"site"} ${tag} — ${String(s.i).padStart(2,'0')} ${s.title} (1440)`;
     const board={name,font:'Noto Sans JP',tokens:T,
       root:{type:'frame',name,w:s.w,h:s.h,fill:bgTok,clip:true,children}};
     const f=M+name.replace(/[\/\\:*?"<>|]/g,'-')+'.json';
