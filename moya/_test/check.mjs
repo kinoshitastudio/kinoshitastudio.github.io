@@ -4448,6 +4448,38 @@ await wait(600);
      '⭐ 一覧に「奥 0.40〜0.60 だけ」と出て、設定JSONにも入る', JSON.stringify(AR));
 }
 
+/* ⭐⭐ ⑱ 1枚組んで見つけた2つ（実際にポスターを作って踏んだ）
+   ・字の大きさ(px) と レイヤーの大きさ が二重に掛かる → 打った px そのままにする1手
+   ・版面からはみ出しても何も言わない → 一覧に印（言うだけ・止めない） */
+{
+  const MK = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    closeAllEditors(); await w(300);
+    document.querySelector('#tools button[data-t="text"]').click(); await w(1000);
+    const out = { 前:document.getElementById('tfitSay').textContent };
+    document.getElementById('b_tfit').click(); await w(500);
+    out.後 = document.getElementById('tfitSay').textContent;
+    const L = LAYERS[SEL], f = sheet();
+    out.実寸になった = Math.abs(L.s * f.w - (L.img.naturalWidth || 0)) < 2;
+    /* はみ出しの印＝半分以上出たときだけ */
+    const i2 = LAYERS.findIndex(L2 => L2.img && !L2.kind);
+    setSel(i2, false); syncSel(); buildList(); await w(200);
+    out.見本では印なし = !document.querySelector('#layers .ly.outside');
+    const L2 = LAYERS[SEL]; const keep = L2.x;
+    L2.x = 1.25; L2._key = ''; buildList(); await w(250);
+    out.半分以上出ると印 = !!document.querySelector('#layers .ly.outside');
+    L2.x = keep; buildList(); await w(200);
+    out.戻すと消える = !document.querySelector('#layers .ly.outside');
+    return out;
+  });
+  ok(/ずれています/.test(MK.前) && /一致しています/.test(MK.後) && MK.実寸になった,
+     '⭐⭐ 字は【打った px そのままの大きさ】にできる（二重に掛かるのを解く）',
+     JSON.stringify(MK));
+  ok(MK.見本では印なし && MK.半分以上出ると印 && MK.戻すと消える,
+     '⭐ 版面から半分以上はみ出したら一覧に印（全面に敷いた背景では言わない）',
+     JSON.stringify(MK));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);

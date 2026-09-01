@@ -201,6 +201,8 @@
   .fxrow.off .nm{opacity:.45}
   /* 盤で触っている塗り＝行にも印（どれを触っているか分かる） */
   .fxrow.onboard{background:rgba(255,190,110,.22);box-shadow:inset 0 0 0 1px rgba(255,190,110,.8)}
+  /* 版面からはみ出している素材（言うだけ・止めない） */
+  .ly.outside .nm::after{content:' \26A0\FE0E';color:#e08a1e;font-weight:700}
   .fxrow.off .fxdot{opacity:.25}
   .fxrow .x{width:20px;height:20px;flex:0 0 20px;padding:0;border:0;background:none;
     color:var(--fg3);cursor:pointer;display:flex;align-items:center;justify-content:center}
@@ -1646,6 +1648,12 @@
          ⚠️ 「たぶん有る」つまみは出さない（触れるのに効かない、を作らない） -->
     <div id="axBox"></div>
     <div class="knob"><span class="n">大きさ（字の高さ px）</span><input class="num" type="number" id="n_t_size"><input type="range" id="t_size" min="8" max="600" step="1" value="120"><output id="o_ts" hidden>120</output></div>
+    <!-- 🔴🔴 2026-09-01・1枚組んで分かった穴＝【字の大きさ(px)】と【レイヤーの大きさ】が
+         二重に掛かる。「120px」と打っても、置いたときの倍率で拡大されて別の大きさで出る。
+         ⭐ この1手で【打った px そのまま】の大きさに合わせる（版面の実寸に対して）。
+         ⚠️ 既定は変えない＝いままで置いた字は1画素も動かない。 -->
+    <button class="btn" id="b_tfit" style="width:100%">打った px そのままの大きさにする</button>
+    <div class="note" id="tfitSay">いまの見た目の高さ＝<b>—</b>（打っているのは <b>—</b> px）</div>
     <div class="knob"><span class="n">字間</span><input class="num" type="number" id="n_t_track"><input type="range" id="t_track" min="-20" max="80" step="1" value="0"><output id="o_tt" hidden>0.00</output></div>
     <div class="knob"><span class="n">行間</span><input class="num" type="number" id="n_t_lead"><input type="range" id="t_lead" min="60" max="300" step="1" value="120"><output id="o_tl" hidden>1.20</output></div>
     <div class="knob"><span class="n">長体・平体（横の倍率）</span><input class="num" type="number" id="n_t_hs"><input type="range" id="t_hs" min="20" max="300" step="1" value="100"><output id="o_ths" hidden>1.00</output></div>
@@ -7672,6 +7680,24 @@ function buildList(){
     if(!L.on) row.classList.add('off');
     if(lockState(L) !== 'none') row.classList.add('locked');
     if(it.inG) row.classList.add('ing');
+    /* 🔴 2026-09-01・1枚組んで分かった穴＝【版面からはみ出しても何も言わない】
+       （縦組みの題が右端で切れていたのに、画面のどこにも出なかった）。
+       ⭐ 一覧の行に印を出す。⚠️ わざと外に置くこともあるので【言うだけ・止めない】。 */
+    if(L.img && L.kind !== 'adj'){
+      const f9 = sheet();
+      const iw9 = cwOf(L), ih9 = chOf(L);
+      const dw9 = L.s * f9.w, dh9 = dw9 * ih9 / iw9 * syOf(L);
+      /* ⚠️ 全面に敷いた背景は少しはみ出すのが普通＝それで印を出すとうるさい。
+         ⭐ 【重なっている割合】で見る＝版面に入っているのが 6割を切ったときだけ言う。 */
+      const L9 = L.x * f9.w - dw9/2, R9 = L.x * f9.w + dw9/2;
+      const T9 = L.y * f9.h - dh9/2, B9 = L.y * f9.h + dh9/2;
+      const ov = Math.max(0, Math.min(R9, f9.w) - Math.max(L9, 0))
+               * Math.max(0, Math.min(B9, f9.h) - Math.max(T9, 0));
+      const area = Math.max(1, (R9 - L9) * (B9 - T9));
+      const out9 = (ov / area) < 0.6;
+      if(out9){ row.classList.add('outside');
+        row.title = '版面からはみ出しています（出す絵には切られて入ります）'; }
+    }
     rowDrag(row, i);
     box.appendChild(row);
     /* ══⭐⭐ その素材に付いている【エフェクトをぶら下げる】══ 2026-09-01
@@ -9295,6 +9321,39 @@ function buildAxes(){
     buildAxes(); rebuildText(L, () => render()); stat('軸を既定へ戻した'); };
   box.appendChild(b2);
 }
+
+/* ⭐⭐ 字を【打った px そのままの大きさ】にする（2026-09-01）
+   🔴 1枚組んで分かった穴＝字の大きさ(px)とレイヤーの大きさが二重に掛かる。
+     ＝「120px」と打っても、置いたときの倍率で拡大されて別の大きさで出る。
+   ⚠️ 既定は変えない（いままで置いた字は1画素も動かない）＝この1手を押した時だけ合わせる。 */
+el('b_tfit').onclick = () => {
+  const L = LAYERS[SEL];
+  if(!L || L.kind !== 'text' || !L.img){ stat('先に字を選んでください'); return; }
+  hist('字を実寸にする');
+  const f = sheet();
+  const before = Math.round(L.s * f.w);
+  L.s = (L.img.naturalWidth || L.img.width) / f.w;
+  L._key = '';
+  syncSel(); buildList(); render();
+  stat('打った px そのままの大きさにした（' + before + ' → '
+    + Math.round(L.s * f.w) + ' px 幅）');
+};
+/* いまの見た目の高さと、打っている px を並べて出す（食い違いが読める） */
+function syncTFit(){
+  const e = el('tfitSay'); if(!e) return;
+  const L = LAYERS[SEL];
+  if(!L || L.kind !== 'text' || !L.img || !L.text){ e.innerHTML = ''; return; }
+  const f = sheet();
+  /* ⭐ 見た目の大きさ＝打った px × 板の倍率（板の実寸に対して どれだけ拡大されているか）
+     ＝この倍率が 1.00 のとき「打った px そのまま」になる */
+  const k9 = (L.s * f.w) / Math.max(1, cwOf(L));
+  const now = Math.round(L.text.size * k9);
+  const want = Math.round(L.text.size);
+  const same = Math.abs(now - want) <= Math.max(2, want * 0.03);
+  e.innerHTML = 'いまの見た目の高さ＝<b>' + now + ' px</b>（打っているのは <b>'
+    + want + ' px</b>）'
+    + (same ? '　✅ 一致しています' : '　⚠️ ずれています（下の1手で合わせられます）');
+}
 function syncText(){
   const L = LAYERS[SEL];
   const on = !!(L && L.kind === 'text');
@@ -9303,6 +9362,7 @@ function syncText(){
   buildAxes();
   el('t_str').value = t.str;
   syncFontWarn();
+  if(typeof syncTFit === 'function') syncTFit();
   el('t_font').value = t.font;
   el('t_color').value = t.color;
   el('t_weight').value = t.weight; el('o_tw').value = String(t.weight);
