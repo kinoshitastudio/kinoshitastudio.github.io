@@ -6353,6 +6353,147 @@ await wait(600);
      JSON.stringify([KJ.かなだけ.画素, KJ.漢字入り.画素]));
 }
 
+/* ══⭐⭐ 木下の実機確認【16巡目】── レイヤーまわり4件 ══ 2026-09-02
+   ① 「オブジェクトをコピーしてペーストするとき、**同じ位置で複製したい**」
+      ＝⌘V が右下へ 0.03 ずらしていた。Photoshop / Illustrator は ⌘V＝同じ位置。
+      → ⌘V＝同じ位置／⌘⇧V＝ずらす／⌘D＝ずらして複製、に役割を分けた。
+   ② 「レイヤーパネルを**複数選択できグルーピング**でフォルダにしたい」
+      ＝**もう出来た**（⇧か⌘で足して選ぶ→⌘G）。だが**どこにも書いていなかった**＝無いのと同じ。
+      → 行を選んだその場で言う。
+   ③ 「奥行きを変更した場合、レイヤーが変わり、**どのレイヤーだっけ**になる」
+      ＝並ぶ順は奥行きが決めるので行が飛ぶ。→ 選んでいる行まで一覧をスクロールする。
+   ④ 「縦書きの字の色と線の色の横に**空白が開いている**。これは何？」
+      ＝色の四角だけ上のバーへ借りて、**名前だけの `.row` が段に残っていた**＝穴。
+      → 借りるときは名前の行も隠し、返すときに戻す。 */
+{
+  const LY = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    const out = {};
+    closeAllEditors();
+    await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+    const key = (k, sh) => document.dispatchEvent(new KeyboardEvent('keydown',
+      { key:k, metaKey:true, shiftKey:!!sh, bubbles:true }));
+    /* ① ⌘V＝同じ位置 */
+    const L0 = LAYERS.find(L => L.img && !L.kind);
+    setSel(LAYERS.indexOf(L0), false); syncSel(); await w(300);
+    const 枚 = LAYERS.length;
+    key('c'); await w(200); key('v'); await w(700);
+    const 貼1 = LAYERS[SEL];
+    out.同じ位置 = { 増えた:LAYERS.length - 枚, 同じ:貼1.x === L0.x && 貼1.y === L0.y,
+                     選ばれた:SELIDS[0] === 貼1.id };
+    key('v', true); await w(700);
+    out.ずらして貼る = Math.abs(LAYERS[SEL].x - L0.x) > 0.02;
+    /* ② 複数選択 → ⌘G */
+    const rows = () => [...document.querySelectorAll('#layers .ly:not(.bgrow):not(.grp)')];
+    const 押す = (e2, sh) => { const y = e2.getBoundingClientRect().top + 8;
+      e2.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true, pointerId:1, clientY:y }));
+      e2.dispatchEvent(new PointerEvent('pointerup',
+        { bubbles:true, pointerId:1, shiftKey:!!sh, clientY:y })); };
+    押す(rows()[0]); await w(400);
+    out['1枚の案内'] = (document.getElementById('stat') || {}).textContent || '';
+    押す(rows()[1], true); await w(400);
+    out['2枚の案内'] = (document.getElementById('stat') || {}).textContent || '';
+    out.複数選べる = selLayers().length;
+    out.Gが押せる = !document.getElementById('b_group').disabled;
+    const g前 = GROUPS.length;
+    key('g'); await w(700);
+    out.グループできた = GROUPS.length > g前 && !!document.querySelector('#layers .ly.grp');
+    /* ③ 奥行きを変えたら選んでいる行を追う
+       ⚠️ スクロールしているのは #layersHost とは限らない（右パネルの中／レイヤー窓の中）
+         ＝ 決め打ちで測ると嘘になる → **本当にスクロールする先祖**を探して測る。 */
+    /* ⚠️ 追うのは【切り離したレイヤー窓】の中だけ（右パネルは動かさない決め）
+       ＝ 窓を開いてから測る。#panel に当たったら追わない。 */
+    const wb = document.getElementById('layOpen');
+    if(wb && !document.body.classList.contains('laywin')){ wb.click(); await w(800); }
+    const 親 = e2 => { let h2 = e2.parentElement;
+      while(h2 && h2 !== document.body && h2.id !== 'panel'){
+        const st = getComputedStyle(h2);
+        if(/(auto|scroll)/.test(st.overflowY) && h2.scrollHeight > h2.clientHeight + 2) return h2;
+        h2 = h2.parentElement; }
+      return null; };
+    const L2 = LAYERS.find(L => L.img && !L.kind && L.g == null) || LAYERS[0];
+    setSel(LAYERS.indexOf(L2), false); syncSel(); buildList(); await w(500);
+    const host = 親(document.querySelector('#layers .ly'));
+    out.スクロールする所がある = !!host;
+    if(host){ host.scrollTop = 0; await w(300); }
+    L2.d = 0.95; L2._key = ''; buildList(); await w(1000);
+    const 行 = document.querySelector('#layers .ly.pri');
+    if(!host || !行){ out.追える = true; }        /* スクロールしない＝全部見えている */
+    else { const r = 行.getBoundingClientRect(), h = host.getBoundingClientRect();
+      out.追える = r.top >= h.top - 2 && r.bottom <= h.bottom + 2; }
+    /* ④ 借りた所に名前だけ残らない */
+    document.getElementById('b_text').click(); await w(800);
+    const 色 = document.getElementById('t_color');
+    const 名 = 色 ? 色.previousElementSibling : null;
+    out.穴 = { バーの中:!!(色 && 色.closest('#optbar')),
+               名前だけ残る:!!(名 && 名.classList.contains('row') && !名.classList.contains('hide')) };
+    const bt = document.querySelector('#tools button[data-t="move"]'); if(bt) bt.click();
+    await w(500);
+    out.戻したら名前も戻る = !!(名 && !名.classList.contains('hide'));
+    return out;
+  });
+  ok(LY.同じ位置.増えた === 1 && LY.同じ位置.同じ && LY.同じ位置.選ばれた,
+     '🔴 ⌘V は【同じ位置】に貼る（Photoshop・Illustrator と同じ）＋貼ったものを選ぶ',
+     JSON.stringify(LY.同じ位置));
+  ok(LY.ずらして貼る === true,
+     '⭐ ⌘⇧V は【ずらして】貼る（役割を分けた／⌘D はずらして複製のまま）',
+     String(LY.ずらして貼る));
+  ok(LY.複数選べる === 2 && LY.Gが押せる && LY.グループできた,
+     '⭐⭐ ⇧か⌘で【複数選べる】→ ⌘G でグループ（フォルダ）になる',
+     JSON.stringify([LY.複数選べる, LY.Gが押せる, LY.グループできた]));
+  ok(/複数選べます/.test(LY['1枚の案内']) && /グループ/.test(LY['2枚の案内']),
+     '🔴 出来ることを【選んだその場で言う】── 前は どこにも書いていなくて「無い」と同じだった',
+     JSON.stringify([LY['1枚の案内'].slice(0, 40), LY['2枚の案内'].slice(0, 30)]));
+  ok(LY.追える === true,
+     '⭐⭐ 奥行きを変えて行が飛んでも【選んでいる行まで一覧がスクロールする】＝見失わない',
+     String(LY.追える));
+  ok(LY.穴.バーの中 && LY.穴.名前だけ残る === false && LY.戻したら名前も戻る,
+     '🔴🔴 上のバーへ借りたら【名前の行も一緒に隠す】＝「字の色」と書いて横が空っぽ、を作らない',
+     JSON.stringify([LY.穴, LY.戻したら名前も戻る]));
+}
+
+/* ══🔴🔴 足した画像のフィルターは【その場で触れる】 ══ 2026-09-02
+   木下＝「試しにレイヤーブラーをたしたが、**調整がこの場でできない**」
+        「モザイクもそれ以外もだね。ポリた（ポスタリゼーション）なんとかも」
+   ＝つまみは借りられていて hide も外れていたのに、**見えていなかった**。
+     理由＝`.fxbody` は CSS で `display:none` が既定で、
+     **`.fxsec.open .fxbody` のときだけ** 出る。
+     レイヤースタイル9種は `.open` を付けていたが、
+     **私が足した画像のフィルター19種には付けていなかった**＝19個ぜんぶ触れなかった。
+   ⚠️ hide の付け外しだけ見ていると気づけない ── **「見えているか」で測る**。 */
+{
+  const FXED = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    closeAllEditors();
+    await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+    const L = LAYERS.find(x => x.img && !x.kind);
+    setSel(LAYERS.indexOf(L), false); syncSel(); await w(400);
+    const out = { だめ:[], 数:0 };
+    for(const [k, n] of EDLIST){
+      document.getElementById('b_fxadd').click(); await w(260);
+      const bt = [...document.querySelectorAll('#fxAddMenu button')]
+        .find(x => x.textContent === n);
+      if(!bt){ out.だめ.push(n + '：一覧に無い'); continue; }
+      bt.click(); await w(700);
+      const sec = [...document.querySelectorAll('#fxEdList .fxsec')]
+        .find(s2 => (s2.querySelector('.nm') || {}).textContent === n);
+      if(!sec){ out.だめ.push(n + '：行が出ない'); continue; }
+      const body = sec.querySelector('.fxbody');
+      const つ = body.querySelectorAll('input[type=range]').length;
+      const 見 = !!body.offsetParent && body.getBoundingClientRect().height > 4;
+      if(!つ) out.だめ.push(n + '：つまみが無い');
+      else if(!見) out.だめ.push(n + '：見えていない');
+      else out.数++;
+      const xr = sec.querySelector('.xr'); if(xr) xr.click(); await w(380);
+    }
+    return out;
+  });
+  ok(FXED.だめ.length === 0 && FXED.数 === 19,
+     '🔴🔴 ［＋足す］で足した画像のフィルター【19種ぜんぶ】が、その場で開いて触れる'
+     + ' ── 前は .fxsec に .open を付け忘れて 19個とも触れなかった',
+     JSON.stringify([FXED.数, FXED.だめ]));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);
