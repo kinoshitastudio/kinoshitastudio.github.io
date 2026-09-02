@@ -6306,6 +6306,53 @@ await wait(600);
      FK.段の文.slice(0, 140));
 }
 
+/* ══⭐⭐ 漢字入りの UWASA ══ 2026-09-02
+   🔴 木下＝「なんとか使えるように **漢字も含めフォントダウンロードしたい**な uwasa の」
+     ＝噂UWASA で【元の書体（Zen Kaku Gothic New）の漢字ぜんぶ】を鋳って `uwasa/fonts/` へ置いた。
+       実測＝6,949字（かな168・漢字6,682）／素 13MB・筆 3.7MB・擦れ 7.2MB・墨 8.6MB・細身 3.8MB。
+   ⚠️ 重いので **かなだけの5本はそのまま残す**（今までの絵は1画素も変わらない）。
+   ⭐ ここで見るのは3つ ── ①一覧に出る ②型が5つ ③**漢字の警告が消える**（嘘を言わない）。 */
+{
+  const KJ = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    const out = {};
+    closeAllEditors();
+    await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+    out.一覧 = [...document.querySelectorAll('#t_font option')].map(x => x.textContent)
+      .filter(s => /UWASA/.test(s));
+    document.getElementById('b_text').click(); await w(700);
+    const L = LAYERS[SEL];
+    const ta = document.getElementById('t_str');
+    ta.value = '静かな手紙'; ta.dispatchEvent(new Event('input', { bubbles:true })); await w(600);
+    const put = async (id, v) => { const e = document.getElementById(id);
+      e.value = v; e.dispatchEvent(new Event('change', { bubbles:true })); await w(1400); };
+    const cnt = c2 => { const d = c2.getContext('2d').getImageData(0,0,c2.width,c2.height).data;
+      let n = 0; for(let i = 3; i < d.length; i += 4) if(d[i] > 8) n++; return n; };
+    await put('t_font', 'UWASAJP, sans-serif');
+    out.かなだけ = { 画素:cnt(L.img),
+      印:!document.getElementById('fontWarnChip').classList.contains('hide') };
+    await put('t_font', 'UWASAJPK, sans-serif');
+    await w(7000);                       /* 3.7MB が落ちてくるのを待つ */
+    await new Promise(r => rebuildText(L, r)); await w(400);
+    out.漢字入り = { 画素:cnt(L.img),
+      印:!document.getElementById('fontWarnChip').classList.contains('hide') };
+    out.型 = [...document.querySelectorAll('#t_style option')].map(x => x.textContent);
+    return out;
+  });
+  ok(KJ.一覧.includes('UWASA JP 漢字入り') && KJ.一覧.includes('UWASA JP（かな込み・漢字なし）'),
+     '⭐ 一覧に【UWASA JP 漢字入り】が並ぶ（かなだけの軽い方も残っている）',
+     JSON.stringify(KJ.一覧));
+  ok(KJ.型.join('・') === '素・筆・擦れ・墨・細身',
+     '⭐ 漢字入りにも【5つの型】がある（かなだけの方と同じ言葉・同じ順）',
+     JSON.stringify(KJ.型));
+  ok(KJ.かなだけ.印 === true && KJ.漢字入り.印 === false,
+     '🔴🔴 漢字入りでは【⚠️ を出さない】＝漢字を持っているのに「持っていません」と嘘を言わない',
+     JSON.stringify([KJ.かなだけ.印, KJ.漢字入り.印]));
+  ok(KJ.漢字入り.画素 > 0 && KJ.漢字入り.画素 !== KJ.かなだけ.画素,
+     '⭐⭐ 漢字入りにすると【漢字のところも UWASA になる】＝絵が変わる',
+     JSON.stringify([KJ.かなだけ.画素, KJ.漢字入り.画素]));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);
