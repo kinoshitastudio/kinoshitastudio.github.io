@@ -5104,11 +5104,21 @@ const BLUR = await p.evaluate(async () => {
   r.value = 0; r.dispatchEvent(new Event('input', { bubbles:true })); await w(700);
   out.戻すと = sad(full(), A);
   /* ⭐ 2026-09-02・木下＝「エフェクトの中に入れると綺麗かも。実装上変？」
-     ＝変ではない（Figma も同じ置き方）。ここでは【エフェクトの段にある】ことを見る。 */
-  out.どの段 = r.closest('.grp').id;
-  out.段の見出し = (r.closest('.grp').querySelector('.h') || {}).textContent;
-  out.レイヤーブラーという名前 = [...r.closest('.grp').querySelectorAll('.n')]
-    .some(e => /レイヤーブラー/.test(e.textContent));
+     ＝変ではない（Figma も同じ置き方）。
+     ⚠️ そのあと木下＝「デフォルトでレイヤーブラーがあるのはok？」＝よくない
+       ＝この段は【足したものだけ行になる】。だから**足してから**居場所を見る。 */
+  document.getElementById('b_fxadd').click(); await w(300);
+  const bt2 = [...document.querySelectorAll('#fxAddMenu button')]
+    .find(x => x.textContent === 'レイヤーブラー');
+  out.一覧にある = !!bt2;
+  if(bt2){ bt2.click(); await w(800); }
+  out.どの段 = r.closest('.grp') ? r.closest('.grp').id : '（段の外）';
+  out.段の見出し = r.closest('.grp')
+    ? (r.closest('.grp').querySelector('.h') || {}).textContent : '';
+  out.行の名前 = [...document.querySelectorAll('#fxEdList .fxhead .nm')].map(e => e.textContent);
+  /* 後片付け＝外して 0 に戻す（次の章に持ち越さない） */
+  const xr2 = document.querySelector('#fxEdList .fxhead .xr');
+  if(xr2){ xr2.click(); await w(500); }
   return out;
 });
 ok(BLUR.空気 === 0 && BLUR.ぼかした.変わった > 0,
@@ -5118,10 +5128,10 @@ ok(BLUR.戻すと === 0,
    '🔴 0 に戻すと【1画素も同じ】に戻る（焼き込まない）', String(BLUR.戻すと));
 ok(BLUR.ぼかした.名 === 'ぼかし',
    '⭐ 名前は「ぼかし」＝空気の話に見えない（独立した段に置いた）', BLUR.ぼかした.名);
-ok(BLUR.どの段 === 'fxBox' && BLUR.レイヤーブラーという名前,
-   '⭐⭐ ぼかしは【エフェクトの段】にある／名前は Figma と同じ「レイヤーブラー」'
+ok(BLUR.一覧にある && BLUR.どの段 === 'fxBox' && BLUR.行の名前.includes('レイヤーブラー'),
+   '⭐⭐ ［＋足す］から足すと【エフェクトの段】に「レイヤーブラー」の行が出る'
    + ' ── 木下＝「細かくやった上で最後に空気、なじませる」＝作る順番と画面の並びが合う',
-   JSON.stringify([BLUR.どの段, BLUR.段の見出し, BLUR.レイヤーブラーという名前]));
+   JSON.stringify([BLUR.一覧にある, BLUR.どの段, BLUR.行の名前]));
 
 /* ══⭐⭐ 画像のフィルターも【エフェクトの同じ一覧】から足せる ══ 2026-09-02
    🔴 木下＝「今ある分に関して、エフェクトに全部まとめるような感じで追加したらやばそう？」
@@ -5223,6 +5233,49 @@ ok(BDBLUR.戻すと === 0,
    '🔴 0 に戻すと1画素も同じに戻る（焼き込まない）', String(BDBLUR.戻すと));
 ok(BDBLUR.一覧にある,
    '⭐ ［＋足す］の一覧にも並ぶ（探すのは1か所）', String(BDBLUR.一覧にある));
+
+/* ══⭐ レイヤーブラーも【足したときだけ出る】 ══ 2026-09-02
+   🔴 木下＝「エフェクトにデフォルトでレイヤーブラーがあるのはok？」
+     ＝よくない。この段は【足したものだけ行になる】のが決まりなのに、
+       これだけ 0 でも出っぱなしだった＝並びが揃っていない。
+   ⭐ ほかと同じ［＋足す］から出す。つまみの居場所は隠してあり、足すと借りて 外すと返る。 */
+const LBLUR = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const full = () => { const d = g.getImageData(0,0,cv.width,cv.height).data; const o = [];
+    for(let i = 0; i < d.length; i += 4*3) o.push(d[i], d[i+1], d[i+2], d[i+3]); return o; };
+  const sad = (A, B) => { let s2 = 0; for(let i = 0; i < A.length; i++) s2 += Math.abs(A[i]-B[i]);
+    return s2; };
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const L = LAYERS.find(x => x.img && !x.kind);
+  setSel(LAYERS.indexOf(L), false); syncSel(); buildList(); COARSE = 0; render(); await w(600);
+  out.足す前 = { 出ている:!!document.querySelector('#fxEdList #r_ablur'),
+                 行:document.querySelectorAll('#fxEdList .fxsec').length };
+  const A = full();
+  document.getElementById('b_fxadd').click(); await w(300);
+  const bt = [...document.querySelectorAll('#fxAddMenu button')]
+    .find(x => x.textContent === 'レイヤーブラー');
+  out.一覧にある = !!bt;
+  bt.click(); await w(900);
+  out.足した = { 出ている:!!document.querySelector('#fxEdList #r_ablur'),
+                 行:document.querySelectorAll('#fxEdList .fxsec').length,
+                 絵が変わった:sad(full(), A) };
+  document.querySelector('#fxEdList .fxhead .xr').click(); await w(700);
+  const 居場所 = (() => { let m = document.getElementById('r_ablur').parentElement;
+    while(m && !m.id) m = m.parentElement; return m ? m.id : '?'; })();
+  out.外した = { 行:document.querySelectorAll('#fxEdList .fxsec').length, 居場所 };
+  const e = document.getElementById('r_ablur');
+  e.value = 0; e.dispatchEvent(new Event('input', { bubbles:true })); await w(500);
+  return out;
+});
+ok(LBLUR.足す前.出ている === false && LBLUR.足す前.行 === 0 && LBLUR.一覧にある,
+   '⭐ レイヤーブラーは【足すまで出ない】（この段は足したものだけ行になる）',
+   JSON.stringify(LBLUR.足す前));
+ok(LBLUR.足した.出ている && LBLUR.足した.行 === 1 && LBLUR.足した.絵が変わった > 0
+   && LBLUR.外した.行 === 0 && LBLUR.外した.居場所 === 'blurHome',
+   '⭐ 足すと行が増えて絵が変わる／外すと元の居場所へ返る（つまみは1つのまま）',
+   JSON.stringify([LBLUR.足した, LBLUR.外した]));
 
 /* ══ @下地 ここから先は【見本2（文字・図形・エフェクト）】を1回だけ組んで使い回す ══
    ⭐ @下地 ＝ この章より後ろの章を選んだときは、この章も必ず一緒に流す印。
