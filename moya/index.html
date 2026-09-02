@@ -8678,6 +8678,43 @@ function buildList(){
   const gb = el('b_ungroup'), gb2 = el('b_group');
   if(gb) gb.disabled = !selLayers().some(L => L.g != null);
   if(gb2) gb2.disabled = selLayers().length < 2;
+  followSel();
+}
+/* ══⭐⭐ 選んでいる行を【見失わない】══ 2026-09-02
+   🔴 木下＝「奥行きを変更した場合、レイヤーが変わり、**どのレイヤーだっけ**になるので、
+      その後もアクティブ状態にし、レイヤーパネル内でスクロールして追えるようにしてほしい」
+     ＝並ぶ順は【奥行きが決める】ので、奥行きを動かすと行が上下に飛ぶ。
+       選んでいるのは変わっていないのに、**目が追えない**＝別のものを触っている気になる。
+   ⭐ 並べ直したあと、選んでいる行が窓の外なら【その行まで一覧をスクロールする】。
+   ⚠️ もう見えているときは動かさない（手の下で動かない）＝focusGrp と同じ決め。
+   ⚠️ 引いている最中は動かさない（行が指から逃げる）＝離してからの buildList で追う。 */
+function followSel(){
+  const box = el('layers'); if(!box) return;
+  const row = box.querySelector('.ly.pri') || box.querySelector('.ly.sel');
+  if(!row) return;
+  /* 🔴 スクロールしているのは #layersHost ではない ── 一覧は
+     【右パネル】の中にも【切り離したレイヤー窓】の中にも入る。
+     ＝ 決め打ちにすると片方で動かない（実測で回帰が落ちた）。
+     ⭐ **本当にスクロールできる先祖**を上へ辿って探す。 */
+  /* 🔴🔴 **右パネル（#panel）は動かさない** ── 2026-09-02
+     いちど「スクロールする先祖」を素直に上へ辿ったら **#panel まで行き着いて**、
+     「もう見えている段なら盤で掴んでも右パネルは1pxも動かない」という決めを壊した
+     （回帰が落ちた＝差 2,888px 動いていた）。
+     ＝ 追ってよいのは【一覧そのものの窓】だけ。#panel に当たったらそこで止める。
+     ⚠️ 右パネルの中の一覧は今までどおり（パネルごとスクロールして見る）。
+       木下が言っているのは**切り離したレイヤー窓**の中の話。 */
+  let host = row.parentElement;
+  while(host && host !== document.body && host.id !== 'panel'){
+    const st = getComputedStyle(host);
+    if(/(auto|scroll)/.test(st.overflowY) && host.scrollHeight > host.clientHeight + 2) break;
+    host = host.parentElement;
+  }
+  if(!host || host === document.body || host.id === 'panel') return;
+  const r = row.getBoundingClientRect(), h = host.getBoundingClientRect();
+  if(r.top >= h.top - 1 && r.bottom <= h.bottom + 1) return;   /* もう見えている */
+  const 先 = host.scrollTop + (r.top - h.top) - (h.height - r.height) / 2;
+  try{ host.scrollTo({ top: Math.max(0, 先), behavior:'smooth' }); }
+  catch(_){ host.scrollTop = Math.max(0, 先); }
 }
 /* ⭐ グループの見出し行。開く／閉じる・まとめて隠す・名前を変える・解く */
 function groupRow(g, mem){
@@ -8847,6 +8884,17 @@ function rowDrag(row, i){
            + ' ── 目を閉じるか、小さくすると地の色が出ます');
       else if(L3 && row.classList.contains('outside'))
         stat('⚠️ この素材は版面からはみ出しています（出す絵には切られて入ります）');
+      /* ══⭐⭐ グループの入口をその場で言う ══ 2026-09-02
+         🔴 木下＝「レイヤーパネルを**複数選択できグルーピングでフォルダにしたい**。
+            このあたりはフォトショと同じ思想」
+           ＝**もう出来る**（⇧か⌘で足して選ぶ → ⌘G）。だが**どこにも書いていなかった**
+             ＝「無い」と同じ。ボタンも 2枚選ぶまで押せないので、余計に気づけない。
+         ⭐ 1枚だけ選んだときに1回だけ言う（複数選んでいる間は言わない＝うるさくしない）。 */
+      else if(L3 && selLayers().length === 1)
+        stat('「' + L3.name + '」を選んだ ── '
+           + '⇧ か ⌘ を押しながら押すと【複数選べます】／2枚以上で ⌘G＝グループ（フォルダ）');
+      else if(selLayers().length >= 2)
+        stat(selLayers().length + ' 枚を選んでいます ── ⌘G でグループ（フォルダ）にできます');
     }
     /* ══⭐⭐ 一覧で選んだら、右パネルの【その段】まで送る ══ 2026-09-02
        🔴 木下＝「レイヤーパネルで筆のレイヤーを選ぶと、サイドパネルも筆の場所に
@@ -11667,8 +11715,24 @@ function buildFxEd(){
   const L = LAYERS[SEL]; if(!L || L.kind === 'adj') return;
   EDLIST.forEach(([k, n, ids]) => {
     if(!edShown(L, k)) return;
-    const sec = document.createElement('div'); sec.className = 'fxsec';
+    /* ══🔴🔴 開いている印は【親の .open】で付ける ══ 2026-09-02
+       木下＝「試しにレイヤーブラーをたしたが、**調整がこの場でできない**」
+            「モザイクもそれ以外もだね。ポリた（ポスタリゼーション）なんとかも」
+       ＝つまみは borrow できていて、body の hide も外れていた。それでも見えなかった。
+         理由＝`.fxbody` は CSS で **`display:none`** が既定で、
+         **`.fxsec.open .fxbody` のときだけ** `display:block` になる。
+         レイヤースタイル9種は `.open` を付けていたが、
+         **私が足した画像のフィルター19種は付けていなかった**＝19個ぜんぶ触れなかった。
+       ⭐ 実測＝つまみの数 1〜3・開いている true なのに **見えている false**（6つとも）。
+       ⚠️ hide の付け外しだけ見ていると気づけない＝**「見えているか」で測る**。
+       → feedback_a_panel_hidden_by_mode_looks_missing */
+    const 開く = FXOPEN === 'ed:' + k;
+    const sec = document.createElement('div');
+    sec.className = 'fxsec' + (開く ? ' open' : '');
     const head = document.createElement('div'); head.className = 'fxhead';
+    /* ⭐ 開いているか閉じているかを見出しで言う（押せば開くと分かる） */
+    const tw = document.createElement('span'); tw.className = 'tw';
+    tw.textContent = 開く ? '⌄' : '›';
     const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = n;
     /* ⭐ × ＝一覧から外す（値は残る＝また足せば同じ絵に戻る） */
     const xr = document.createElement('button'); xr.className = 'xr'; xr.textContent = '×';
@@ -11677,10 +11741,9 @@ function buildFxEd(){
       hist(); edShow(L)[k] = false;
       if(FXOPEN === 'ed:' + k) FXOPEN = null;
       fxTouched(L); stat(n + ' を一覧から外した（値は残っています）'); };
-    head.append(nm, xr);
-    head.onclick = () => { FXOPEN = (FXOPEN === 'ed:' + k) ? null : 'ed:' + k; buildFxEd(); };
+    head.append(tw, nm, xr);
+    head.onclick = () => { FXOPEN = 開く ? null : 'ed:' + k; buildFxEd(); };
     const body = document.createElement('div'); body.className = 'fxbody';
-    if(FXOPEN !== 'ed:' + k) body.classList.add('hide');
     ids.forEach(id => {
       const e = el(id); if(!e) return;
       const node = e.closest('.knob') || e;
@@ -14512,9 +14575,23 @@ addEventListener('keydown', e => {
   if(cmd && k === 'c'){ e.preventDefault();
     const L = LAYERS[SEL]; if(!L){ stat('先に素材を選んでください'); return; }
     CLIP = L; stat('コピーした（⌘V で貼れます）'); return; }
+  /* ══⭐⭐ 貼り付けは【同じ位置】に ══ 2026-09-02
+     🔴 木下＝「オブジェクトをコピーしてペーストするとき、**同じ位置で複製したい**」
+       ＝いままでは右下へ 0.03 ずらしていた（重なって見えないのを避けるため）。
+         だが Photoshop / Illustrator の ⌘V は**同じ位置**が当たり前で、
+         「ずらす」は ⌘D（複製）の役目。役割が入れ替わっていた。
+     ⭐ 決め ── **⌘V＝同じ位置**／**⌘⇧V＝少しずらして貼る**／**⌘D＝ずらして複製**。
+     ⚠️ 同じ位置に貼ると重なって見えないので、**盤の左上でそう言う**。 */
   if(cmd && k === 'v'){ e.preventDefault();
     if(!CLIP){ stat('コピーしたものがありません'); return; }
-    hist(); dupLayer(CLIP); buildList(); syncSel(); render(); stat('貼り付けた（⌘V）'); return; }
+    hist();
+    const ず = e.shiftKey ? 0.03 : 0;
+    const o = dupLayer(CLIP, ず, ず);
+    if(o){ SEL = LAYERS.indexOf(o); SELIDS = [o.id]; }
+    buildList(); syncSel(); render();
+    stat(e.shiftKey ? 'ずらして貼り付けた（⌘⇧V）'
+       : '同じ位置に貼り付けた（⌘V）── 重なっています。⌘⇧V ならずれます');
+    return; }
   /* ⭐⭐ 選んで Enter＝その素材の編集画面へ（2026-08-31・木下の指示）
      ⚠️ 盤のダブルクリックは【文字の書き換え】に使うので、入口は Enter に寄せた。 */
   if(k === 'enter' && !cmd && SEL >= 0 && !cutView()){
@@ -14774,6 +14851,7 @@ function optClear(){
     if(o.next && o.next.parentNode === o.parent) o.parent.insertBefore(o.el, o.next);
     else o.parent.appendChild(o.el);
     if(o.mark && o.mark.parentNode) o.mark.parentNode.removeChild(o.mark);
+    if(o.名の行) o.名の行.classList.remove('hide');   /* ⭐ 名前の行も戻す */
   }
   OPTHOME = [];
   el('optbar').querySelector('.oin').innerHTML = '';
@@ -14819,7 +14897,19 @@ function optFill(tool){
                        + ' は上のバーにあります';
       node.parentNode.insertBefore(mark, node);
     }
-    OPTHOME.push({ el:node, parent:node.parentNode, next:node.nextSibling, mark });
+    /* ══🔴🔴 借りたら【名前の行】も一緒に隠す ══ 2026-09-02
+       木下＝「縦書きの字の色と線の色の横に**空白が開いている**。これは何？」
+       ＝色の四角だけ上のバーへ借りていって、**名前だけ書いた `.row` が段に残っていた**
+         ＝「字の色」と書いてあるのに、その横に何も無い＝穴。
+       ⭐ 名前は借り物と1つの塊。**借りるときは名前の行も隠し、返すときに戻す**。
+       ⚠️ 隠すだけ（消さない）＝ほかの道具に切り替えれば元どおり出る。 */
+    let 名の行 = null;
+    const prev = node.previousElementSibling;
+    if(prev && prev.classList.contains('row') && !prev.querySelector('input,select,button')
+       && !prev.classList.contains('hide')){
+      名の行 = prev; prev.classList.add('hide');
+    }
+    OPTHOME.push({ el:node, parent:node.parentNode, next:node.nextSibling, mark, 名の行 });
     box.appendChild(node);
     got++;
   });
