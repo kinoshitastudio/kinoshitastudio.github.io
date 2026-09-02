@@ -60,6 +60,14 @@ await p.evaluateOnNewDocument(() => {
      ⚠️ ✅の数だけ見ていると「通った」に見える＝いちばんたちが悪い。
    ⭐ evaluateOnNewDocument＝**読み込みのたびに先に入る**。＝入れ直しの章はもう要らない。
      ＝式は1本（ここだけ）。 → feedback_same_formula_in_two_places_drifts */
+/* ⚠️ 試験は【前の続きから開かない】＝自動保存に引きずられない（2026-09-02）
+   🔴 これが無いと、指の端末で頁が読み直されたときに その回の素材を全部復元しようとして
+     15 秒を超え、ok() が1本も🔴にならずに落ちる＝ぶれる試験になる。
+   ⭐ 自動保存を見る章だけ、その場で localStorage の印を立てて外す。 */
+await p.evaluateOnNewDocument(() => {
+  try{ window.__MOYA_NOLOCAL = !localStorage.getItem('moya.test.local'); }
+  catch(_){ window.__MOYA_NOLOCAL = true; }
+});
 await p.evaluateOnNewDocument(() => {
   window.__shot = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
     const o = []; for(let i = 0; i < d.length; i += 4*7) o.push(d[i], d[i+3]); return o; };
@@ -93,6 +101,25 @@ await p.evaluate(() => { window.__got = [];
   URL.createObjectURL = function(x){ window.__got.push({ size:x.size, type:x.type }); return oc.call(URL, x); }; });
 
 /* ⭐ 盤の指紋（物差し）は上の evaluateOnNewDocument で入っている */
+/* ══🔴🔴 画面の大きさを変えたら【盤が出るまで待つ】══ 2026-09-02
+   🔴 指の端末（isMobile）に切り替えると **ページが読み直される**。
+     いままで `wait(900)` と決め打ちしていたので、読み直しが少し遅いと
+     `getComputedStyle(document.getElementById('stage'))` が null で落ちた
+     （＝ok() が1本も🔴にならずにプロセスごと死ぬ＝いちばん読めない落ち方）。
+   ⭐ 時間で待たない。**盤と素材が出たことを見てから進む**＝ぶれない。
+   → feedback_regression_test_before_push（⭐⭐ぶれる試験は落ちない試験よりもっと悪い） */
+const ready = async (ms = 20000) => {
+  /* 🔴🔴 2026-09-02 に踏んだ：ここで `window.LAYERS` を見ていたが、
+     **`let LAYERS` は window に載らない**ので【一度も真にならない条件】を待っていた
+     ＝毎回 15 秒待って TimeoutError で落ちていた（ok() は1本も🔴にならない）。
+     ⭐ 中の名前は `typeof` で見る（window 経由にしない）。
+     → feedback_prove_no_change_by_pixels（画面の中の物は画面の言葉で確かめる） */
+  await p.waitForFunction(
+    () => !!document.getElementById('stage') && !!window.cv
+       && typeof LAYERS !== 'undefined' && Array.isArray(LAYERS),
+    { timeout: ms });
+  await wait(600);            /* 出てから ひと呼吸（描き終わりを待つ） */
+};
 const shot = () => p.evaluate(() => window.__shot());
 const diff = (A,B) => { let n = 0;
   for(let i = 0; i < Math.min(A.length,B.length); i++) if(Math.abs(A[i]-B[i]) > 8) n++; return n; };
@@ -1445,15 +1472,18 @@ ok(SU.bad.length === 0, '⭐⭐ 型「素」を押すと 絵に効くつまみ�
    SU.bad.length ? SU.bad.join(' , ') : 'ぜんぶ 0');
 ok(SU.灯 === '0/0/0', '⭐ 素では 灯の強さ・縁の光・照り返しも 0', SU.灯);
 
-/* ⑬-2 一覧の数字が【略さず】出る（木下＝「奥行きの数字を明確に表示してほしい」） */
+/* ⑬-2 一覧の数字が【略さず】出る（木下＝「奥行きの数字を明確に表示してほしい」）
+   ⚠️ 2026-09-02：置き場所を変えた。名前の下の「奥 x 空気 y」（読むだけ）をやめて、
+     【奥・空・濃 の3つの引ける数字】を1行に並べた（同じ数字を2つの顔で出さない）。 */
 const ROWTXT = await p.evaluate(() => {
   const r = document.getElementById('layers').children[0];
-  return { dp:r.querySelector('.dp').textContent, air:r.querySelector('.air').textContent };
+  return { 奥:r.querySelector('.dep').textContent, 空:r.querySelector('.air').textContent,
+           濃:r.querySelector('.op').textContent, dp:r.querySelector('.dp').textContent };
 });
-ok(/奥 \d\.\d\d/.test(ROWTXT.dp) && /空気 \d\.\d\d/.test(ROWTXT.dp),
-   '⭐ 一覧に 奥行きと空気の効きが 数字で出る', ROWTXT.dp);
-ok(['空','素'].includes(ROWTXT.air) || /%$/.test(ROWTXT.air),
-   '⭐ 空気のボタンは 空／素／◯◯% のどれか（略した数字を出さない）', ROWTXT.air);
+ok(/^奥\d\.\d\d$/.test(ROWTXT.奥) && /^濃\d+%$/.test(ROWTXT.濃),
+   '⭐ 一覧に 奥行きと濃さが【名札つきで略さず】出る', JSON.stringify(ROWTXT));
+ok(ROWTXT.空 === '空' || /^空\d+%$/.test(ROWTXT.空),
+   '⭐ 空気は 空／空◯◯% のどれか（0 のときは斜線で言う）', ROWTXT.空);
 
 /* ⑬-3 一覧の空気ボタンが本当に切り替わる */
 const ROWAIR = await p.evaluate(async () => {
@@ -1463,10 +1493,15 @@ const ROWAIR = await p.evaluate(async () => {
   const before = val();
   rows()[2].querySelector('.air').click();
   await new Promise(r => setTimeout(r, 300));
-  return { before, after: val(), txt: rows()[2].querySelector('.air').textContent };
+  const chip = rows()[2].querySelector('.air');
+  return { before, after: val(), txt: chip.textContent, 斜線: chip.classList.contains('raw') };
 });
-ok(ROWAIR.before === 1 && ROWAIR.after === 0 && ROWAIR.txt === '素',
-   '⭐ 一覧の空気ボタンで その素材だけ素のままにできる', JSON.stringify(ROWAIR));
+/* ⚠️ 2026-09-02・木下＝「素に変わって斜線ではなく、**空に斜め・非アクティブ**の方が分かりやすい」
+   ＝字は「空」のまま。切ってあることは【斜線】で言う（目のアイコンと同じ言い方）。
+   ⚠️ このとき `.click()` でも切り替わること＝引ける形にしたら一度殺していた入口。 */
+ok(ROWAIR.before === 1 && ROWAIR.after === 0 && ROWAIR.txt === '空' && ROWAIR.斜線,
+   '⭐ 一覧の空気ボタン（click でも）その素材だけ素のままにできる／字は「空」のまま斜線',
+   JSON.stringify(ROWAIR));
 
 /* ══⑭ 文字・重ね方・塗り（2026-08-30・木下＝「テキストも打ち込みできるようにしよう」）══ */
 await p.evaluate(() => document.getElementById('b_demo').click());
@@ -2256,7 +2291,7 @@ await wait(1600);
 
 /* ⑨ モバイル */
 await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
-await wait(900);
+await ready();
 const MB = await p.evaluate(() => ({
   幅: document.documentElement.scrollWidth + '/' + innerWidth,
   横に伸びない: document.documentElement.scrollWidth <= innerWidth + 1,
@@ -2306,7 +2341,7 @@ ok(ZM.小さい字の入力.length === 0,
      ・中で足したものは 外から見ると【1枚の画像】
      ・入って出るだけなら 1画素も変わらない（中を作っただけで絵を変えない） */
 await p.setViewport({ width:1400, height:900 });
-await wait(600);
+await ready();
 /* ⭐ 読み直されても物差しは戻る（evaluateOnNewDocument）＝入れ直さない */
 await p.evaluate(() => { closeAllEditors(); document.getElementById('b_demo').click(); });
 await wait(2000);
@@ -3703,7 +3738,7 @@ const BH = await p.evaluate(() => {
 ok(BH.左 < 20 && BH.上 < 20 && parseFloat(BH.字) <= 10 && BH.上 + 60 < BH.カプセル上,
    '⭐ 盤の表記は【画面の左上】に小さく出る（ツールバーと重ならない）', JSON.stringify(BH));
 await p.setViewport({ width:390, height:844, isMobile:true, hasTouch:true });
-await wait(900);
+await ready();
 
 /* ══⭐⭐ 指で【2回たたく】と中に入れる ══ 2026-09-01
    🔴 木下＝「モバイルだとオブジェクトの詳細画面に入れない。
@@ -4112,6 +4147,981 @@ ok(SHFILL.内側.赤 < SHFILL.線なし.赤 * 0.8 && SHFILL.内側.黒 > SHFILL.
    JSON.stringify(SHFILL.内側));
 ok(SHFILL.戻して落ちない === true,
    '🔴 ⌘Z で戻しても落ちない（控えは作り直せる紙を写さない）', String(SHFILL.戻して落ちない));
+
+/* ══⭐⭐ 一覧で選んだら、右パネルの【その段】まで送る ══ 2026-09-02
+   🔴 木下＝「レイヤーパネルで筆のレイヤーを選ぶと、サイドパネルも筆の場所にスクロールする
+      ように」「レイヤーがテキストの時はサイドパネルを文字にスクロールしてほしい」
+     ＝右パネルは長いので、選んでも【どこを触ればいいか】が画面の外にあった。
+   ⭐ 道具を押したときと同じ道（focusGrp）＝送り方は1本。動かすのは右パネルだけ（盤は動かさない）。
+   ⚠️ あわせて「↑ ◯◯ は上のバーにあります」の補足を出さないようにした
+      （木下＝「補足説明のこのテキストは非表示で」＝同じ文が段ごとに並んで本文より多かった）。
+      ⭐ ただし【上のバーには名前が付いたまま】＝迷子にはならない（ここも見る）。 */
+const JUMP = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1600); });
+  /* 筆で1本引く */
+  document.querySelector('#tools button[data-t="brush"]').click(); await w(500);
+  const a = toScreen(0.34, 0.42), c = toScreen(0.62, 0.56);
+  stage.dispatchEvent(new PointerEvent('pointerdown',
+    { clientX:a.clientX, clientY:a.clientY, bubbles:true, pointerId:7 }));
+  stage.dispatchEvent(new PointerEvent('pointermove',
+    { clientX:c.clientX, clientY:c.clientY, bubbles:true, pointerId:7 }));
+  stage.dispatchEvent(new PointerEvent('pointerup',
+    { clientX:c.clientX, clientY:c.clientY, bubbles:true, pointerId:7 }));
+  await w(800);
+  document.querySelector('#tools button[data-t="move"]').click(); await w(300);
+  /* 文字を1つ置く */
+  document.querySelector('#tools button[data-t="text"]').click(); await w(700);
+  document.querySelector('#tools button[data-t="move"]').click(); await w(400);
+  const 筆L = LAYERS.find(L => L.brush), 字L = LAYERS.find(L => L.kind === 'text');
+  const 素材 = () => LAYERS.findIndex(L => L.img && !L.kind && !L.brush);
+  const rows = () => [...document.querySelectorAll('#layers .ly')]
+    .filter(r => !r.classList.contains('bgrow') && !r.classList.contains('grp'));
+  const press = L => { const row = rows().find(r => (r.textContent || '').includes(L.name));
+    if(!row) return false;
+    row.dispatchEvent(new PointerEvent('pointerdown',
+      { bubbles:true, pointerId:21, clientX:10, clientY:10 }));
+    row.dispatchEvent(new PointerEvent('pointerup',
+      { bubbles:true, pointerId:21, clientX:10, clientY:10 }));
+    return true; };
+  const 光り = id => { const e = document.getElementById(id);
+    return e ? { 出ている:!e.classList.contains('hide'), 光った:e.classList.contains('flash') } : null; };
+  setSel(素材(), false); syncSel(); buildList(); await w(300);
+  out.筆を押せた = press(筆L); await w(250);
+  out.筆 = { 段:光り('brushBox'), 選ばれた:!!(LAYERS[SEL] && LAYERS[SEL].brush) };
+  await w(700);
+  setSel(素材(), false); syncSel(); buildList(); await w(300);
+  out.字を押せた = press(字L); await w(250);
+  out.字 = { 段:光り('textBox'), 選ばれた:!!(LAYERS[SEL] && LAYERS[SEL].kind === 'text') };
+  out.補足の数 = document.querySelectorAll('.moved').length;
+  out.上のバーの名前 = [...document.querySelectorAll('#optbar .ol')].map(e => e.textContent);
+  return out;
+});
+ok(JUMP.筆を押せた && JUMP.筆.選ばれた && JUMP.筆.段.出ている && JUMP.筆.段.光った,
+   '⭐⭐ 一覧で【筆】の層を選ぶと、右パネルの筆の段まで送って光る', JSON.stringify(JUMP.筆));
+ok(JUMP.字を押せた && JUMP.字.選ばれた && JUMP.字.段.出ている && JUMP.字.段.光った,
+   '⭐⭐ 一覧で【文字】の層を選ぶと、右パネルの文字の段まで送って光る', JSON.stringify(JUMP.字));
+ok(JUMP.補足の数 === 0,
+   '⭐「↑ ◯◯ は上のバーにあります」を出さない（本文より目印が多かった）', String(JUMP.補足の数));
+ok(JUMP.上のバーの名前.length > 0,
+   '⚠️ ただし上のバーには【名前が付いたまま】＝借りた物が迷子にならない',
+   JSON.stringify(JUMP.上のバーの名前));
+
+/* ══🔴🔴 盤で【掴んだだけ】ではパネルを動かさない ══ 2026-09-02
+   🔴 木下＝「筆のレイヤーパネルを押す、サイドパネルが筆にいく、しかしそのレイヤーを
+      ボード上で移動するとサイドパネルが選んだレイヤーに自動的にまた変わる。これでいいのか？」
+     ＝よくない。手が盤の上にある最中に、目で追っている右パネルが勝手に動く。
+       しかも動かしているのは「もう選んである物」＝新しく見せるものが何も無い。
+   ⭐ 決め＝**選んでいるものが変わったときだけ送る**。
+     ・盤でいまの物を掴んで動かす → 変わっていないので**動かさない**
+     ・盤で別の物を押した → 変わったので送る（その物の設定が見たいはず）
+   ⭐ あわせて段の見出しに【何を選んでいるか】を出す
+     （木下＝「選んだレイヤーというタイトルが気になるな」＝一覧の言葉「素材」に揃えた）。 */
+const HOLD = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const panel = document.getElementById('panel');
+  const top = () => Math.round(panel.scrollTop);
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1600); });
+  document.querySelector('#tools button[data-t="brush"]').click(); await w(500);
+  const a = toScreen(0.40, 0.44), c = toScreen(0.60, 0.54);
+  stage.dispatchEvent(new PointerEvent('pointerdown',
+    { clientX:a.clientX, clientY:a.clientY, bubbles:true, pointerId:7 }));
+  stage.dispatchEvent(new PointerEvent('pointermove',
+    { clientX:c.clientX, clientY:c.clientY, bubbles:true, pointerId:7 }));
+  stage.dispatchEvent(new PointerEvent('pointerup',
+    { clientX:c.clientX, clientY:c.clientY, bubbles:true, pointerId:7 }));
+  await w(900);
+  document.querySelector('#tools button[data-t="move"]').click(); await w(400);
+  const 筆L = LAYERS.find(L => L.brush);
+  out.見出し_筆 = document.getElementById('selH').textContent;
+  /* 筆の段まで送っておく（見えている状態にする） */
+  focusGrp('brushBox'); await w(1500);
+  const 前 = top();
+  /* ① その筆を盤の上で【動かす】＝もう見えている段なので送らない */
+  const 中 = toScreen(筆L.x, 筆L.y), 先 = toScreen(筆L.x + 0.06, 筆L.y + 0.04);
+  stage.dispatchEvent(new PointerEvent('pointerdown',
+    { clientX:中.clientX, clientY:中.clientY, bubbles:true, pointerId:41 }));
+  await w(700);
+  out.掴んでも動かない = { 前, 後:top(), 差:Math.abs(top() - 前) };
+  stage.dispatchEvent(new PointerEvent('pointermove',
+    { clientX:先.clientX, clientY:先.clientY, bubbles:true, pointerId:41 }));
+  stage.dispatchEvent(new PointerEvent('pointerup',
+    { clientX:先.clientX, clientY:先.clientY, bubbles:true, pointerId:41 }));
+  await w(500);
+  out.動かしても選ばれたまま = !!(LAYERS[SEL] && LAYERS[SEL].brush);
+  /* ② 見えていない段（空気）まで送ってから 別の物を押す＝送られる */
+  focusGrp('airBox'); await w(1400);
+  const 前2 = top();
+  const 他 = LAYERS.find(L => L.img && !L.kind && !L.brush);
+  const q3 = toScreen(他.x, 他.y);
+  stage.dispatchEvent(new PointerEvent('pointerdown',
+    { clientX:q3.clientX, clientY:q3.clientY, bubbles:true, pointerId:42 }));
+  await w(900);
+  out.見えていなければ送る = { 前:前2, 後:top(), 差:Math.abs(top() - 前2) };
+  stage.dispatchEvent(new PointerEvent('pointerup',
+    { clientX:q3.clientX, clientY:q3.clientY, bubbles:true, pointerId:42 }));
+  await w(300);
+  out.見出し_素材 = document.getElementById('selH').textContent;
+  SELIDS = LAYERS.slice(0, 3).map(L => L.id); syncSelIds(); syncSel(); await w(200);
+  out.見出し_3枚 = document.getElementById('selH').textContent;
+  return out;
+});
+ok(HOLD.掴んでも動かない.差 <= 2 && HOLD.動かしても選ばれたまま,
+   '🔴🔴 もう見えている段なら、盤で掴んでも右パネルは【1pxも動かない】',
+   JSON.stringify(HOLD.掴んでも動かない));
+ok(HOLD.見えていなければ送る.差 > 20,
+   '⭐ 見えていない段のときは ちゃんと送る（探さなくていい）',
+   JSON.stringify(HOLD.見えていなければ送る));
+ok(/^選んでいるレイヤー/.test(HOLD.見出し_筆) && /筆/.test(HOLD.見出し_筆)
+   && /見本/.test(HOLD.見出し_素材) && /3 枚/.test(HOLD.見出し_3枚),
+   '⭐ 段の見出しが【何を選んでいるか】を言う（2枚以上なら枚数）',
+   JSON.stringify([HOLD.見出し_筆, HOLD.見出し_素材, HOLD.見出し_3枚]));
+
+/* ══⭐⭐ 一覧の見出しから【版面のもの】へ飛ぶ／盤の灯を押すと灯の段へ ══ 2026-09-02
+   🔴 木下＝「ボードの灯を押すとサイドパネルも灯にスクロール」
+      「ここに空気、エフェクト、馴染ませのアイコンを押してそれぞれのサイドパネルに
+       スクロールさせるのはどうだろうか？」
+   ⭐ 見るのは3つ：
+     ・見出しの釦が【横一列に収まる】（文字の釦を足して縦に潰れていないか）
+     ・押すとその段へ送る（スクロール量で測る＝光っただけ、を通さない）
+     ・エフェクトは素材を選ぶまで押せない（触れるのに効かない釦を作らない）
+   → feedback_flex_button_squeeze ／ feedback_a_tool_starts_from_being_ready */
+const LAYGO = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const panel = document.getElementById('panel');
+  const top = () => Math.round(panel.scrollTop);
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  document.getElementById('layOpen').click(); await w(500);
+  const btns = [...document.querySelectorAll('#layGo button')];
+  const head = document.getElementById('layWinHead');
+  /* 🔴🔴 2026-09-02・木下＝「アイコンにしよう。これはださいわ」
+     ＝文字の釦が【中で折り返して】潰れていた（馴染ま/せ）。
+     ⚠️ 前の試験は「釦が1段に並んでいるか」しか見ていなかったので通ってしまった。
+     ⭐ 中の高さ（scrollHeight）が釦の高さを超えていないかを見る＝折り返しはここに出る。
+       ⭐ さらに【窓をいちばん狭くして】も崩れないことを見る（木下の画面は狭い）。 */
+  const 崩れ = () => btns.map(b2 => ({
+    名: b2.getAttribute('aria-label'),
+    幅: Math.round(b2.getBoundingClientRect().width),
+    高さ: Math.round(b2.getBoundingClientRect().height),
+    中がはみ出す: b2.scrollHeight > b2.clientHeight + 1 || b2.scrollWidth > b2.clientWidth + 1,
+    アイコン: !!b2.querySelector('svg'),
+  }));
+  const win = document.getElementById('layWin');
+  const w0 = win.style.width;
+  win.style.width = '260px'; await w(300);       /* いちばん狭くしてみる */
+  out.狭くしても = 崩れ();
+  out.狭いとき見出し = { はみ出し: head.scrollWidth > head.clientWidth + 1 };
+  win.style.width = w0 || ''; await w(300);
+  out.並び = { 釦の数:btns.length,
+    段数: new Set(btns.map(b2 => Math.round(b2.getBoundingClientRect().top))).size,
+    はみ出し: head.scrollWidth > head.clientWidth + 1 };
+  /* ⚠️ 2026-09-02・木下＝「非表示のアイコンがあるのはなぜなのか？」
+     ＝薄い釦は「壊れている」か「使えない」かが読めない。4つとも同じ濃さで出す。
+     ⭐ 代わりに、押したときに【なぜ出ないか】を言う（答えるのは聞かれたとき）。 */
+  SELIDS = []; syncSelIds(); syncSel(); buildList();
+  if(window.syncLayGo) syncLayGo(); await w(250);
+  const fxb = document.querySelector('#layGo button[data-go="fxBox"]');
+  out.薄い釦 = [...document.querySelectorAll('#layGo button')].filter(b2 => b2.disabled).length;
+  /* ⚠️ 2026-09-02 に実測で分かった：fxBox は素材を選んでいなくても【出ている】。
+     ＝押せば送られる（何も起きない釦ではない）＝ここは「押すと何か言う」を見る。 */
+  fxb.click(); await w(300);
+  out.素材なしで押した = (document.getElementById('stat') || {}).textContent || '';
+  out.素材なしでも出ている = !document.getElementById('fxBox').classList.contains('hide');
+  setSel(LAYERS.findIndex(L => L.img && !L.kind), false); syncSel(); buildList();
+  if(window.syncLayGo) syncLayGo(); await w(300);
+  out.素材ありで出る = !document.getElementById('fxBox').classList.contains('hide');
+  /* 一番下まで送っておいてから、空気・馴染ませ を押す＝本当に動くか */
+  out.送った = {};
+  for(const id of ['airBox','najiBox','litBox']){
+    panel.scrollTop = panel.scrollHeight; await w(300);
+    const 前 = top();
+    document.querySelector('#layGo button[data-go="' + id + '"]').click();
+    await w(800);
+    out.送った[id] = { 前, 後:top(), 動いた:Math.abs(top() - 前) > 20,
+                       光った:document.getElementById(id).classList.contains('flash') };
+    await w(700);
+  }
+  /* 盤の灯を押すと灯の段へ（見えていないときは送られる） */
+  panel.scrollTop = 0; await w(400);
+  const 前L = top();
+  const lit = LIGHTS[0], q4 = toScreen(lit.x, lit.y);
+  stage.dispatchEvent(new PointerEvent('pointerdown',
+    { clientX:q4.clientX, clientY:q4.clientY, bubbles:true, pointerId:51 }));
+  await w(900);
+  out.灯を押した = { 前:前L, 後:top(), 動いた:Math.abs(top() - 前L) > 20,
+                     光った:document.getElementById('litBox').classList.contains('flash') };
+  stage.dispatchEvent(new PointerEvent('pointerup',
+    { clientX:q4.clientX, clientY:q4.clientY, bubbles:true, pointerId:51 }));
+  await w(1500);
+  /* もう見えているので、掴み直しても動かない */
+  const 前L2 = top();
+  stage.dispatchEvent(new PointerEvent('pointerdown',
+    { clientX:q4.clientX, clientY:q4.clientY, bubbles:true, pointerId:52 }));
+  await w(700);
+  out.灯を掴み直す = { 差:Math.abs(top() - 前L2) };
+  stage.dispatchEvent(new PointerEvent('pointerup',
+    { clientX:q4.clientX, clientY:q4.clientY, bubbles:true, pointerId:52 }));
+  return out;
+});
+ok(LAYGO.並び.釦の数 === 4 && LAYGO.並び.段数 === 1 && !LAYGO.並び.はみ出し,
+   '⭐ 一覧の見出しの釦4つが【横一列】に収まる（縦に潰れない・はみ出さない）',
+   JSON.stringify(LAYGO.並び));
+ok(LAYGO.狭くしても.every(o => o.アイコン && !o.中がはみ出す && o.幅 >= 18 && o.高さ >= 18)
+   && !LAYGO.狭いとき見出し.はみ出し,
+   '🔴🔴 窓をいちばん狭くしても釦が【中で折り返さない】（文字をやめてアイコンにした）',
+   JSON.stringify(LAYGO.狭くしても));
+ok(LAYGO.送った.airBox.動いた && LAYGO.送った.najiBox.動いた && LAYGO.送った.litBox.動いた,
+   '⭐⭐ 空気・馴染ませ・灯 を押すと、その段まで【本当に送られる】（スクロール量で測った）',
+   JSON.stringify(LAYGO.送った));
+ok(LAYGO.薄い釦 === 0 && LAYGO.素材ありで出る
+   && (LAYGO.素材なしでも出ている ? /へ送った/.test(LAYGO.素材なしで押した)
+                                  : /レイヤーを選んで/.test(LAYGO.素材なしで押した)),
+   '⭐ 釦は4つとも同じ濃さ（薄い釦を作らない）／押すと【送る】か【なぜ出ないか】を言う'
+   + '＝黙って何もしない釦にしない',
+   JSON.stringify([LAYGO.薄い釦, LAYGO.素材なしでも出ている, LAYGO.素材なしで押した]));
+ok(LAYGO.灯を押した.動いた && LAYGO.灯を掴み直す.差 <= 2,
+   '⭐⭐ 盤の灯を押すと灯の段へ送る／もう見えているときは1pxも動かない',
+   JSON.stringify([LAYGO.灯を押した, LAYGO.灯を掴み直す]));
+
+/* ══⭐⭐ 落としても消えない（この機械に控える）＋ボードをまっさらにする ══ 2026-09-02
+   🔴 木下＝「読み込んだデータをローカルデータとしてパソコンに保存するようにして。
+      リロードしてもまた立ち上がるように。iphoneもやモバイルも同様に」
+      「レイヤーにボードをまっさらにするを追加してボードをまっさらの状態にしてほしい」
+   ⭐ 見るのは4つ：
+     ・手が止まったら控えが取られる（IndexedDB・まるごと＝写真も入る）
+     ・**読み直したら続きから開く**（見本に戻らない）
+     ・まっさらにすると空になり、⌘Z で戻る
+     ・まっさらのあと読み直しても空のまま（控えも空になっている）
+   🔴🔴 いちばん危ないのは【立ち上がりの読み込みが終わる前に、空の盤で上書きする】こと。
+     SAVEOK が立つまで控えないことで止めている（ここも見る）。
+   ⚠️ 実測（18枚・4.5MB）＝組み立て 241ms／書き込み 44ms／読み出し 13ms。 */
+{
+  /* ⭐ この章だけ【前の続きから開く】を効かせる（印を立てる） */
+  await p.evaluate(() => { window.confirm = () => true;
+    try{ localStorage.setItem('moya.test.local', '1'); }catch(_){}
+    window.__MOYA_NOLOCAL = false; });
+  const A = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    closeAllEditors();
+    await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1800); });
+    LAYERS[0].name = '控えに残るはず'; buildList(); render();
+    await w(4200);                       /* 手が止まってから 2.5 秒で書く */
+    const got = await idbGet();
+    return { 枚数:LAYERS.length, 控えがある:!!(got && got.txt),
+             控えに名がある:!!(got && got.txt && got.txt.indexOf('控えに残るはず') >= 0),
+             控えms:LASTSAVE, 起動の見張り:SAVEOK };
+  });
+  await p.reload({ waitUntil:'networkidle0' });
+  await ready();
+  await wait(3500);                      /* 写真を読み終えるまで */
+  const B = await p.evaluate(() => ({
+    枚数:LAYERS.length, 名:(LAYERS[0] || {}).name }));
+  ok(A.控えがある && A.控えに名がある && A.起動の見張り === true,
+     '⭐⭐ 手が止まったら【この機械に控える】（まるごと＝写真も入る）', JSON.stringify(A));
+  ok(B.枚数 === A.枚数 && B.名 === '控えに残るはず',
+     '⭐⭐ 読み直しても【続きから開く】（見本に戻らない）', JSON.stringify(B));
+  const C = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    window.confirm = () => true;
+    const 前 = LAYERS.length;
+    document.getElementById('b_clear').click(); await w(600);
+    const 空 = LAYERS.length;
+    undo(); await w(600);
+    const 戻した = LAYERS.length;
+    /* もう一度まっさらにして、控えも空にしておく（次の章に持ち越さない） */
+    document.getElementById('b_clear').click(); await w(4200);
+    const got = await idbGet();
+    return { 前, 空, 戻した,
+             控えも空:!!(got && got.txt && JSON.parse(got.txt).layers.length === 0) };
+  });
+  await p.reload({ waitUntil:'networkidle0' });
+  await ready();
+  await wait(2500);
+  const D = await p.evaluate(() => ({ 枚数:LAYERS.length }));
+  ok(C.空 === 0 && C.戻した === C.前,
+     '⭐ ボードをまっさらにする＝空になり、⌘Z で戻る（消しっぱなしにしない）',
+     JSON.stringify(C));
+  ok(C.控えも空 && D.枚数 === 0,
+     '⭐ まっさらのあと読み直しても空のまま（控えも空になっている）',
+     JSON.stringify([C.控えも空, D.枚数]));
+  /* 後片付け＝控えを消し、印も外して見本に戻す（次の章は今までどおり見本から始まる） */
+  await p.evaluate(async () => { await idbPut(null);
+    try{ localStorage.removeItem('moya.test.local'); }catch(_){}
+    window.__MOYA_NOLOCAL = true; });
+  await p.evaluate(async () => {
+    closeAllEditors();
+    await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1800); });
+  });
+  await wait(1200);
+}
+
+/* ══🔴🔴 縦書きに切り替えても【字の大きさは変わらない】══ 2026-09-02
+   🔴 木下＝「言えなかった言葉をのテキスト縦組にすると同じフォントサイズではなく、
+      自動的に小さくなる」
+     ＝実測：縦書きで盤に出る大きさが 58×447、横に戻すと **58×8**（ほぼ消えた）。
+     原因＝縦書きにすると紙（textCanvas）が【細長い】に変わるのに、盤に置く倍率 L.s
+       （版面に対する **幅** の割合）はそのままだった＝幅だけ固定され、縦横比のぶん縮む。
+       🔴 図形の線を太くしたときと **まったく同じ形**の間違い（紙が変わるのに倍率を直さない）。
+   ⭐ 見るのは【紙の1画素が盤の何pxに落ちるか】＝これが変わらなければ字の大きさは同じ。
+     ・横→縦 で 倍率が変わらない／盤の箱は 縦横が入れ替わるだけ
+     ・縦→横 に戻すと 1画素も同じに戻る */
+const TATE = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  document.querySelector('#tools button[data-t="text"]').click(); await w(900);
+  document.querySelector('#tools button[data-t="move"]').click(); await w(400);
+  const L = LAYERS[SEL];
+  const ta = document.getElementById('t_str');
+  ta.value = '言えなかった言葉を、いま';
+  ta.dispatchEvent(new Event('input', { bubbles:true })); await w(900);
+  COARSE = 0;
+  /* 紙の1画素が版面の何pxに落ちるか＝字の大きさそのもの */
+  const 倍率 = () => +((L.s * sheet().w) / cwOf(L)).toFixed(4);
+  const 箱 = () => { const dw = L.s * sheet().w;
+    return { 幅:Math.round(dw), 高さ:Math.round(dw * chOf(L)/cwOf(L) * syOf(L)) }; };
+  const 前 = { 倍率:倍率(), 箱:箱() };
+  const v = document.getElementById('t_vert');
+  v.checked = true; v.dispatchEvent(new Event('change', { bubbles:true })); await w(1200);
+  const 縦 = { 倍率:倍率(), 箱:箱() };
+  v.checked = false; v.dispatchEvent(new Event('change', { bubbles:true })); await w(1200);
+  const 戻す = { 倍率:倍率(), 箱:箱() };
+  return { 前, 縦, 戻す };
+});
+ok(Math.abs(TATE.縦.倍率 - TATE.前.倍率) < 0.002,
+   '🔴🔴 縦書きにしても【字の大きさは変わらない】（紙の1画素→盤の大きさが同じ）',
+   JSON.stringify([TATE.前, TATE.縦]));
+ok(Math.abs(TATE.縦.箱.幅 - TATE.前.箱.高さ) <= 2 && Math.abs(TATE.縦.箱.高さ - TATE.前.箱.幅) <= 2,
+   '⭐ 盤に出る箱は【縦横が入れ替わるだけ】（字が縮まない）',
+   JSON.stringify([TATE.前.箱, TATE.縦.箱]));
+ok(Math.abs(TATE.戻す.倍率 - TATE.前.倍率) < 0.002
+   && Math.abs(TATE.戻す.箱.幅 - TATE.前.箱.幅) <= 2,
+   '⭐ 横に戻すと1画素も同じに戻る', JSON.stringify([TATE.前, TATE.戻す]));
+
+/* ══⭐⭐ 上のバーが潰れない／行で【濃さ】を直に触れる ══ 2026-09-02
+   🔴 木下の3つ：
+     ①「太さのところ（が潰れている）」②「スライダー調整しづらい」
+     ③「大きさ（字…）見れないし見る必要があるのか？」
+       ＝つまみ1つを 150px に詰めていたので、名前が 78px で切れ（「大きさ（字…」）、
+         スライダーは 60px ＝ **つまみの黒い丸しか見えなかった**（●太さ に見えた）。
+       ⭐ 幅を決め打ちしない／名前は折り返さず出し切る／スライダーは 110px 以上。
+     ④「少し薄くしたいなどの透明の調整を直感的にするところがどこかわからない」
+       ＝不透明度は段の下の方にしか無く、行に出ている「62%」は**空気の効き**だった。
+       ⭐ Photoshop と同じ【行の中】に濃さを置く。横に引く＝1px で 1%。
+   ⚠️ 値の持ち主は L.op ひとつ（段のつまみと同じもの）＝ここも見る。 */
+const BAR = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  document.querySelector('#tools button[data-t="text"]').click(); await w(900);
+  document.querySelector('#tools button[data-t="move"]').click(); await w(500);
+  out.つまみ = [...document.querySelectorAll('#optbar .knob')].map(k => {
+    const n = k.querySelector('.n'), r = k.querySelector('input[type=range]');
+    return { 名:n ? n.textContent : '',
+             名が切れる: n ? n.scrollWidth > n.clientWidth + 1 : false,
+             スライダー: r ? Math.round(r.getBoundingClientRect().width) : 0 };
+  });
+  const ob = document.getElementById('optbar');
+  out.バーがはみ出す = ob.scrollWidth > ob.clientWidth + 1;
+  /* 行の濃さ */
+  const L = LAYERS.find(x => x.img && !x.kind);
+  setSel(LAYERS.indexOf(L), false); syncSel(); buildList(); await w(400);
+  const row = [...document.querySelectorAll('#layers .ly')]
+    .find(r => (r.textContent || '').includes(L.name));
+  const op = row.querySelector('.op');
+  out.濃さの釦 = { ある:!!op, 文:op ? op.textContent : null };
+  const r0 = op.getBoundingClientRect();
+  const x0 = r0.left + r0.width/2, y0 = r0.top + r0.height/2;
+  op.dispatchEvent(new PointerEvent('pointerdown',
+    { clientX:x0, clientY:y0, bubbles:true, pointerId:61 }));
+  op.dispatchEvent(new PointerEvent('pointermove',
+    { clientX:x0 - 35, clientY:y0, bubbles:true, pointerId:61 }));
+  op.dispatchEvent(new PointerEvent('pointerup',
+    { clientX:x0 - 35, clientY:y0, bubbles:true, pointerId:61 }));
+  await w(400);
+  out.引いたあと = { op:+L.op.toFixed(2), 文:op.textContent,
+                     段のつまみ:document.getElementById('r_op').value };
+  undo(); await w(500);
+  out.戻した = +(LAYERS.find(x => x.id === L.id).op).toFixed(2);
+  return out;
+});
+/* ⚠️ 2026-09-02：バーは【溢れたら横に流れる】作り（overflow-x:auto）＝はみ出し自体は正しい。
+   木下の指摘は「名前が切れる」「スライダーが引けない」だったので、そこだけを見る。
+   （1400px の試験窓では、色の種類を足したぶん必ず溢れる＝そこで落とすと嘘の🔴になる） */
+ok(BAR.つまみ.length >= 2 && BAR.つまみ.every(o => !o.名が切れる && o.スライダー >= 100),
+   '⭐⭐ 上のバーのつまみ＝名前が切れない／スライダーが引ける長さ（110px以上）',
+   JSON.stringify(BAR.つまみ));
+ok(BAR.濃さの釦.ある && BAR.濃さの釦.文 === '濃100%',
+   '⭐⭐ 行の中に【濃さ（不透明度）】が出ている（探さなくていい）',
+   JSON.stringify(BAR.濃さの釦));
+ok(BAR.引いたあと.op < 0.8 && BAR.引いたあと.文 === '濃' + Math.round(BAR.引いたあと.op*100) + '%'
+   && String(BAR.引いたあと.段のつまみ) === String(Math.round(BAR.引いたあと.op*100)),
+   '⭐ 横に引くと薄くなる／段のつまみと【同じ値】になる（持ち主は1つ）',
+   JSON.stringify(BAR.引いたあと));
+ok(BAR.戻した === 1, '⭐ ⌘Z で元の濃さに戻る', String(BAR.戻した));
+
+/* ══⭐⭐ 空気の効きも【行の中で引いて】決める／行とパネルが食い違わない ══ 2026-09-02
+   🔴 木下＝「空気を ON にすると自動的に 1.00 になる。パネルを見ると 1.00 ではなく
+      調整した数字のまま。これがひとつ不思議」
+     ＝押した行が【選んでいる行ではなかった】＝パネルは選んでいる方を出していた。
+       値は正しいのに、2つを並べて読むと食い違って見える＝いちばん混乱する形。
+     ⭐ 直し＝**触った行のものを選ぶ**＝パネルは必ずその行を出す。
+   🔴 木下＝「このレイヤーパネルで空気の効きをスライダーなどで調整できるように」
+     ⭐ 濃さと同じ手ざわり＝横に引く（1px で 1%）／押すと 空⇄素。
+       ＝上のアイコンで版面ぜんぶ → 行で1枚ずつ → 段で細かく、の3段になる。 */
+const AIRROW = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const ls = LAYERS.filter(x => x.img && !x.kind);
+  const A = ls[0], B = ls[1];
+  /* わざと【別の行】を選んでおく＝食い違いが起きる状況を作る */
+  setSel(LAYERS.indexOf(A), false); syncSel(); buildList(); await w(400);
+  const chip = r => [...document.querySelectorAll('#layers .ly')]
+    .find(x => (x.textContent || '').includes(r.name)).querySelector('.air');
+  const c = chip(B), q = c.getBoundingClientRect();
+  const x0 = q.left + q.width/2, y0 = q.top + q.height/2;
+  c.dispatchEvent(new PointerEvent('pointerdown',
+    { clientX:x0, clientY:y0, bubbles:true, pointerId:81 }));
+  c.dispatchEvent(new PointerEvent('pointerup',
+    { clientX:x0, clientY:y0, bubbles:true, pointerId:81 }));
+  await w(500);
+  out.押した = { 選ばれた:LAYERS[SEL] === B, 空気:+airOf(B).toFixed(2),
+                 パネル:document.getElementById('o_air').value };
+  /* 横に引くと細かく変わる（右へ45px＝＋45%） */
+  const c2 = chip(B), q2 = c2.getBoundingClientRect();
+  const x1 = q2.left + q2.width/2, y1 = q2.top + q2.height/2;
+  c2.dispatchEvent(new PointerEvent('pointerdown',
+    { clientX:x1, clientY:y1, bubbles:true, pointerId:82 }));
+  c2.dispatchEvent(new PointerEvent('pointermove',
+    { clientX:x1 + 45, clientY:y1, bubbles:true, pointerId:82 }));
+  c2.dispatchEvent(new PointerEvent('pointerup',
+    { clientX:x1 + 45, clientY:y1, bubbles:true, pointerId:82 }));
+  await w(500);
+  out.引いた = { 空気:+airOf(B).toFixed(2), 行:chip(B).textContent,
+                 パネル:document.getElementById('o_air').value,
+                 つまみ:document.getElementById('r_air').value };
+  undo(); await w(500);
+  out.戻した = +airOf(LAYERS.find(x => x.id === B.id)).toFixed(2);
+  return out;
+});
+ok(AIRROW.押した.選ばれた && AIRROW.押した.パネル === AIRROW.押した.空気.toFixed(2),
+   '⭐⭐ 行の空気を触ると【その行が選ばれ】、パネルも同じ値を出す（食い違わない）',
+   JSON.stringify(AIRROW.押した));
+ok(AIRROW.引いた.空気 > 0.3 && AIRROW.引いた.行 === '空' + Math.round(AIRROW.引いた.空気*100) + '%'
+   && String(AIRROW.引いた.つまみ) === String(Math.round(AIRROW.引いた.空気*100)),
+   '⭐⭐ 行の中で【横に引いて】空気の効きを決められる（段のつまみと同じ値）',
+   JSON.stringify(AIRROW.引いた));
+ok(AIRROW.戻した !== AIRROW.引いた.空気, '⭐ ⌘Z で戻る（空気）',
+   JSON.stringify([AIRROW.引いた.空気, AIRROW.戻した]));
+
+/* ══🔴🔴 同じ数字は【3か所とも同時に】動く ══ 2026-09-02
+   🔴 木下＝「上の空気0.62と下の76%の違いはなんなのか？まず知りたい」
+     ＝**同じもの**だった。引いている最中に【チップだけ】書き換えて、
+       名前の下の行（奥 0.00 空気 0.62）を書き換えていなかった＝食い違って見えた。
+   ⭐ 同じ数字を2か所以上に出すなら、**書き換える道も1本**にする。
+   ⚠️ ここは「引いている最中」を見る（離したあとは buildList が全部直すので隠れる）。 */
+const AIRSYNC = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const L = LAYERS.find(x => x.img && !x.kind);
+  setSel(LAYERS.indexOf(L), false); syncSel(); buildList(); await w(400);
+  const row = () => [...document.querySelectorAll('#layers .ly')].find(x => x.__L === L);
+  const よむ = () => ({ チップ:row().querySelector('.air').textContent,
+    行:row().querySelector('.dp').textContent.trim(),
+    段:document.getElementById('o_air').value });
+  setAir(L, 0.62, true); buildList(); await w(300);
+  const 前 = よむ();
+  const c = row().querySelector('.air'), q = c.getBoundingClientRect();
+  const x = q.left + q.width/2, y = q.top + q.height/2;
+  c.dispatchEvent(new PointerEvent('pointerdown', { clientX:x, clientY:y, bubbles:true, pointerId:99 }));
+  c.dispatchEvent(new PointerEvent('pointermove', { clientX:x + 14, clientY:y, bubbles:true, pointerId:99 }));
+  await w(300);
+  const 最中 = よむ();
+  c.dispatchEvent(new PointerEvent('pointerup', { clientX:x + 14, clientY:y, bubbles:true, pointerId:99 }));
+  await w(400);
+  return { 前, 最中, 後:よむ() };
+});
+{
+  /* ⚠️ 2026-09-02：名前の下の重複は【消した】（同じ数字を2つの顔で出さない）。
+     ＝そろっているかは【チップ】と【段のつまみ】で見る。 */
+  const そろう = o => {
+    const n = parseInt(String(o.チップ).replace(/[^0-9]/g, ''), 10);   /* 空76% → 76 */
+    return Math.round(+o.段 * 100) === n;
+  };
+  ok(そろう(AIRSYNC.最中),
+     '🔴🔴 引いている最中も【チップと段のつまみ】が同じ数字（食い違わない）',
+     JSON.stringify(AIRSYNC.最中));
+  ok(そろう(AIRSYNC.前) && そろう(AIRSYNC.後) && AIRSYNC.後.行 === '',
+     '⭐ 引く前・離したあとも同じ／名前の下に同じ数字を二重に出さない',
+     JSON.stringify([AIRSYNC.前, AIRSYNC.後]));
+}
+
+/* ══⭐ 空気を着せていない（素）ときは【目と同じ斜線】を入れる ══ 2026-09-02
+   🔴 木下＝「空気を聴かせないときの表示は表示非表示同様アイコンに斜め線も入れて」
+     ＝いままでは字を薄くするだけで、目のように「切ってある」と読めなかった。
+   ⭐ 同じ意味は同じ形で言う（向きも太さも EYE_SVG の斜線と同じ）。
+   ⚠️ 斜線が出るのは【素（0）のときだけ】＝途中の値や 空気どおり では出さない。 */
+const AIRSLASH = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const ls = LAYERS.filter(x => x.img && !x.kind);
+  setAir(ls[0], 1, true); setAir(ls[1], 0.45, true); setAir(ls[2], 0, true);
+  buildList(); await w(400);
+  const chip = r => [...document.querySelectorAll('#layers .ly')]
+    .find(x => (x.textContent || '').includes(r.name)).querySelector('.air');
+  const よむ = r => { const e = chip(r);
+    return { 文:e.textContent, 斜線:e.classList.contains('raw') }; };
+  return { 空気どおり:よむ(ls[0]), 途中:よむ(ls[1]), 素:よむ(ls[2]) };
+});
+ok(AIRSLASH.素.斜線 === true && AIRSLASH.素.文 === '空',
+   '⭐ 空気を着せていないときは【「空」のまま斜線】が入る（目と同じ言い方）'
+   + ' ── 2026-09-02・木下＝「素に変わって斜線ではなく、空に斜め・非アクティブの方が分かりやすい」',
+   JSON.stringify(AIRSLASH.素));
+ok(AIRSLASH.空気どおり.斜線 === false && AIRSLASH.途中.斜線 === false,
+   '⚠️ 空気どおり・途中の値では斜線を出さない（うるさくしない）',
+   JSON.stringify([AIRSLASH.空気どおり, AIRSLASH.途中]));
+
+/* ══⭐⭐ 字と塗りも【グラデーション】にできる ══ 2026-09-02
+   🔴 木下＝「グラデーションなどはできないのか？」（字の色を開いて）
+      「そう考えるとここの色もグラデーションできるようにしたいな」（重ねる塗りの色）
+     ＝図形だけが 単色／グラデ／放射 を持っていて、字と塗りは単色だけだった。
+   ⭐ **部品を増やさない**＝引く式は gradFrom 1本、組む所は gradEditor 1本
+     （図形・字・塗りの3つが同じものを見る）。
+   ⚠️ 既定は 'solid'＝いままで置いた字・塗り・設定JSONは1画素も変わらない。
+     ⭐ だから【単色に戻すと 1画素も同じに戻る】かをここで見る。 */
+const GRAD = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const full = () => { const d = g.getImageData(0,0,cv.width,cv.height).data; const o = [];
+    for(let i = 0; i < d.length; i += 4*3) o.push(d[i], d[i+1], d[i+2], d[i+3]); return o; };
+  const sad = (A, B) => { let s2 = 0; for(let i = 0; i < A.length; i++) s2 += Math.abs(A[i]-B[i]);
+    return s2; };
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  /* ── 字 ── */
+  document.querySelector('#tools button[data-t="text"]').click(); await w(900);
+  document.querySelector('#tools button[data-t="move"]').click(); await w(500);
+  const L = LAYERS[SEL]; COARSE = 0; render(); await w(500);
+  const A = full();
+  document.querySelector('#s_tfmode button[data-v="linear"]').click(); await w(900);
+  out.字 = { mode:textOf(L).fmode, 変わった:sad(full(), A),
+             組む所:!document.getElementById('tfGradUI').classList.contains('hide') };
+  document.querySelector('#s_tfmode button[data-v="solid"]').click(); await w(900);
+  out.字を戻す = { mode:textOf(L).fmode, 戻り:sad(full(), A) };
+  document.querySelector('#s_tsmode button[data-v="radial"]').click(); await w(900);
+  out.字の線 = { mode:textOf(L).smode, 線が出た:!!textOf(L).strokeOn, 変わった:sad(full(), A) };
+  document.querySelector('#s_tsmode button[data-v="solid"]').click();
+  textOf(L).strokeOn = false; rebuildText(L, () => {}); await w(800);
+  /* ── 重ねる塗り ── */
+  const P0 = LAYERS.find(x => x.img && !x.kind);
+  setSel(LAYERS.indexOf(P0), false); syncSel(); buildList(); buildFills(); await w(400);
+  document.getElementById('b_fillcol').click(); await w(500);
+  const B = full();
+  const seg = document.querySelector('#fillsList .seg button[data-v="linear"]');
+  out.塗りの釦 = !!seg;
+  if(seg){
+    seg.click(); await w(900);
+    const f = fillsOf(P0)[0];
+    out.塗り = { fmode:f.fmode, ストップ:(f.fstops || []).length, 変わった:sad(full(), B) };
+    document.querySelector('#fillsList .seg button[data-v="solid"]').click(); await w(800);
+    out.塗りを戻す = { fmode:fillsOf(P0)[0].fmode, 戻り:sad(full(), B) };
+  }
+  return out;
+});
+ok(GRAD.字.mode === 'linear' && GRAD.字.変わった > 0 && GRAD.字.組む所,
+   '⭐⭐ 字の色を【グラデーション】にできる（組む所も出る）', JSON.stringify(GRAD.字));
+ok(GRAD.字を戻す.mode === 'solid' && GRAD.字を戻す.戻り === 0,
+   '🔴 単色に戻すと【1画素も同じ】に戻る（字）', JSON.stringify(GRAD.字を戻す));
+ok(GRAD.字の線.mode === 'radial' && GRAD.字の線.線が出た && GRAD.字の線.変わった > 0,
+   '⭐ 字の線もグラデにできる（グラデにしたら線を出す＝押しても何も出ない、を作らない）',
+   JSON.stringify(GRAD.字の線));
+ok(GRAD.塗りの釦 && GRAD.塗り && GRAD.塗り.fmode === 'linear' && GRAD.塗り.変わった > 0,
+   '⭐⭐ 重ねる塗りの色も【グラデーション】にできる', JSON.stringify(GRAD.塗り));
+ok(GRAD.塗りを戻す && GRAD.塗りを戻す.fmode === 'solid' && GRAD.塗りを戻す.戻り === 0,
+   '🔴 単色に戻すと【1画素も同じ】に戻る（塗り）', JSON.stringify(GRAD.塗りを戻す));
+
+/* ══⭐⭐ 紙の地（背景）も【グラデーション】にできる ══ 2026-09-02
+   🔴 木下＝「背景の地にもグラデできるようにしよう」
+   ⭐ 描く所は paint() 1本＝画面も PNG も SVG も同じものを通る（ここも見る）。
+   ⚠️ ストップと向きは【入力欄ではない】ので、設定JSONへ明示的に写している（ここも見る）。 */
+const BGGRAD = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const full = () => { const d = g.getImageData(0,0,cv.width,cv.height).data; const o = [];
+    for(let i = 0; i < d.length; i += 4*3) o.push(d[i], d[i+1], d[i+2], d[i+3]); return o; };
+  const sad = (A, B) => { let s2 = 0; for(let i = 0; i < A.length; i++) s2 += Math.abs(A[i]-B[i]);
+    return s2; };
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  COARSE = 0; render(); await w(600);
+  const A = full();
+  document.querySelector('#s_bgmode button[data-v="linear"]').click(); await w(900);
+  out.グラデ = { mode:P.bgmode, ストップ:(P.bgstops || []).length, 変わった:sad(full(), A),
+                 組む所:!document.getElementById('bgGradUI').classList.contains('hide') };
+  const txt = cfgText(false);
+  out.JSONに入る = /"bgmode": *"linear"/.test(txt) && /"bgstops"/.test(txt);
+  /* 出す絵（paint 1本）にも効いている＝上と下で色が違う */
+  const t = document.createElement('canvas'); t.width = 200; t.height = 300;
+  paint(t.getContext('2d'), 200, 300, false);
+  const d2 = t.getContext('2d').getImageData(0, 0, 200, 300).data;
+  const 上 = [d2[0], d2[1], d2[2]], 下 = [d2[299*200*4], d2[299*200*4+1], d2[299*200*4+2]];
+  out.出す絵にも = { 上, 下,
+    ちがう: 上.some((v, i) => Math.abs(v - 下[i]) > 12) };
+  document.querySelector('#s_bgmode button[data-v="solid"]').click(); await w(900);
+  out.単色に戻す = { mode:P.bgmode, 戻り:sad(full(), A) };
+  applyJSON(JSON.parse(txt)); await w(1500);
+  out.読み直すと = { mode:P.bgmode,
+    段:document.querySelector('#s_bgmode button.on').dataset.v };
+  /* 後片付け＝単色に戻す（次の章に持ち越さない） */
+  document.querySelector('#s_bgmode button[data-v="solid"]').click(); await w(600);
+  return out;
+});
+ok(BGGRAD.グラデ.mode === 'linear' && BGGRAD.グラデ.変わった > 0 && BGGRAD.グラデ.組む所,
+   '⭐⭐ 紙の地（背景）も【グラデーション】にできる', JSON.stringify(BGGRAD.グラデ));
+ok(BGGRAD.出す絵にも.ちがう,
+   '⭐ 出す絵（paint 1本）にも効いている＝上と下で色が違う',
+   JSON.stringify(BGGRAD.出す絵にも));
+ok(BGGRAD.単色に戻す.mode === 'solid' && BGGRAD.単色に戻す.戻り === 0,
+   '🔴 単色に戻すと【1画素も同じ】に戻る（紙の地）', JSON.stringify(BGGRAD.単色に戻す));
+ok(BGGRAD.JSONに入る && BGGRAD.読み直すと.mode === 'linear'
+   && BGGRAD.読み直すと.段 === 'linear',
+   '⭐ 設定JSONに入って、読み直すと段も合う（ストップは入力欄ではない）',
+   JSON.stringify([BGGRAD.JSONに入る, BGGRAD.読み直すと]));
+
+/* ══⭐ 図形のグラデは【上のバーからも】行ける／図形を選ぶと図形の段へ送る ══ 2026-09-02
+   🔴 木下＝「そうすると図形もそうだよね」
+     ＝図形にはグラデが**有った**のに、上のバーからは行けなかった（右パネルだけ）。
+   🔴 木下＝「図形パネルに関してもサイドパネルは図形のパネルにスクロールしてほしいな」
+   ⚠️ 3択は【長い名前と短い名前の2枚札】＝上のバーでは1文字（1680px で 127px はみ出した）。
+     ＝案内文は btName() で長い方を読む（「単色単」にならない）。 */
+const SHBAR = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const panel = document.getElementById('panel'), top = () => Math.round(panel.scrollTop);
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const L = await window.drawShape(0.30, 0.30, 0.55, 0.52);
+  document.querySelector('#tools button[data-t="move"]').click(); await w(500);
+  out.バーに種類がある = !!document.querySelector('#optbar #s_shmode');
+  out.バーは1文字 = (() => { const b2 = document.querySelector('#optbar #s_shmode button');
+    if(!b2) return null;
+    const lg = b2.querySelector('.lg'), sm = b2.querySelector('.sm');
+    return { 長い:lg ? lg.textContent : null, 短い:sm ? sm.textContent : null,
+             名前を読む:typeof btName === 'function' ? btName(b2) : null }; })();
+  /* 一覧で図形を選ぶと図形の段へ送られる（スクロール量で測る） */
+  panel.scrollTop = panel.scrollHeight; await w(400);
+  const 前 = top();
+  const row = [...document.querySelectorAll('#layers .ly')]
+    .find(r => (r.textContent || '').includes(L.name));
+  row.dispatchEvent(new PointerEvent('pointerdown',
+    { bubbles:true, pointerId:71, clientX:10, clientY:10 }));
+  row.dispatchEvent(new PointerEvent('pointerup',
+    { bubbles:true, pointerId:71, clientX:10, clientY:10 }));
+  await w(900);
+  out.図形の段へ = { 前, 後:top(), 動いた:Math.abs(top() - 前) > 20,
+                     光った:document.getElementById('shapeBox').classList.contains('flash') };
+  return out;
+});
+ok(SHBAR.バーに種類がある && SHBAR.バーは1文字
+   && SHBAR.バーは1文字.短い.length === 1 && SHBAR.バーは1文字.名前を読む.length > 1,
+   '⭐ 図形の【単色／グラデ／放射】が上のバーにある（バーでは1文字・案内は長い名前）',
+   JSON.stringify(SHBAR.バーは1文字));
+ok(SHBAR.図形の段へ.動いた && SHBAR.図形の段へ.光った,
+   '⭐ 一覧で【図形】を選ぶと、右パネルの図形の段まで送って光る',
+   JSON.stringify(SHBAR.図形の段へ));
+
+/* ══⭐⭐ エフェクトを触ったら【一覧も】その場で描き直す ══ 2026-09-02
+   🔴 木下＝「Effect をつけた時にすぐにレイヤーのところは変化がない、
+      ボードなど他の行為をした瞬間からレイヤー下に表示される。これでいいのか？」
+     ＝よくない。足す・目で外す・× で外す のどこも `syncFx(); render()` だけで
+       **一覧（buildList）を呼んでいなかった**＝次に何かするまで古い一覧が残っていた。
+       ＝絵は変わっているのに一覧が黙っている＝「効いていないのでは？」に見える。
+   ⭐ 触ったあとにやることを fxTouched() 1本にまとめた（6か所に同じ3行を書かない）。
+   ⚠️ buildList の中から syncFx を呼んでいる所がある（一覧の行→パネル）＝逆向きなので回らない。 */
+const FXROW = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const L = LAYERS.find(x => x.img && !x.kind);
+  setSel(LAYERS.indexOf(L), false); syncSel(); buildList(); await w(500);
+  const 行 = () => document.querySelectorAll('#layers .fxrow').length;
+  out.前 = 行();
+  document.getElementById('b_fxadd').click(); await w(300);
+  const menu = [...document.querySelectorAll('#fxAddMenu button')];
+  const drop = menu.find(b2 => /ドロップ/.test(b2.textContent)) || menu[0];
+  drop.click(); await w(600);
+  out.足した直後 = 行();                       /* ★ここが本題＝その場で出るか */
+  /* ⚠️ 見出しは9つとも DOM に居る＝名指しで探す（先頭を押すと別のを足してしまう） */
+  const head = [...document.querySelectorAll('#fxBox .fxhead')]
+    .find(h => /ドロップ/.test(h.textContent));
+  const K = head ? head.dataset.fx : null;
+  if(head){
+    head.querySelector('.eye').click(); await w(500);
+    out.目で外した = { 行:行(), 効いている:fxOf(L)[K].on };
+    head.querySelector('.xr').click(); await w(500);
+    out.バツで外した = { 行:行(), 一覧に出す:fxOf(L)[K].use };
+  }
+  return out;
+});
+ok(FXROW.前 === 0 && FXROW.足した直後 === 1,
+   '⭐⭐ エフェクトを足したら【その場で】一覧に出る（他を触るまで待たせない）',
+   JSON.stringify([FXROW.前, FXROW.足した直後]));
+ok(FXROW.目で外した.行 === 1 && FXROW.目で外した.効いている === false,
+   '⭐ 目で外しても【行は残る】（値も残る・いつでも戻せる）',
+   JSON.stringify(FXROW.目で外した));
+ok(FXROW.バツで外した.行 === 0 && FXROW.バツで外した.一覧に出す === false,
+   '⭐ × で外すと その場で一覧から消える', JSON.stringify(FXROW.バツで外した));
+
+/* ══⭐⭐ 奥行きは【引いている最中は並べ替えない】／空気0なら そう言う ══ 2026-09-02
+   🔴 木下＝「ここで奥行きを調整するとレイヤー自体がどんどん下に移動していく。
+      しかし本来は違うよね？」
+     ＝並ぶ順は奥行きが決める（芯）ので動くこと自体は正しい。だが**引いている最中に
+       毎回並べ替えていた**＝行が指の下から逃げて読めなかった。
+     ⭐ 引いている間は【その行の数字だけ】書き換える。並べ替えは手を離してから。
+   🔴 木下＝「筆やテキスト、図形も同じ仕様だね、これは実装できていない認識のような気がする」
+     ＝実装はできている。**文字と図形は空気 0 で生まれる**ので、奥行きを動かしても
+       かすみ・ぼけ・色は1画素も変わらず、並ぶ順だけが動いていた。
+     実測（奥 0→0.9 の差の合計）：
+       写真 296,660／筆 126,968／文字 942,932（＝順が動いただけ）／
+       文字の空気を 1 にすると 2,103,458（＝ちゃんと効く）
+     ⭐ 壊れてはいない。**そう書いていない**のが問題だった＝つまみの下でその場で言う。 */
+const DEPTHSAY = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  COARSE = 0;
+  document.querySelector('#tools button[data-t="text"]').click(); await w(900);
+  document.querySelector('#tools button[data-t="move"]').click(); await w(500);
+  const T = LAYERS[SEL];
+  out.空気0 = { 空気:airOf(T),
+    言う:!document.getElementById('depthSay').classList.contains('hide'),
+    文:(document.getElementById('depthSay').textContent || '').slice(0, 24) };
+  setAir(T, 1, true); syncSel(); await w(300);
+  out.空気1 = { 言う:!document.getElementById('depthSay').classList.contains('hide') };
+  setAir(T, 0, true); syncSel(); await w(300);
+  /* 引いている最中は並べ替えない＝行の位置が変わらない */
+  const idx = () => [...document.querySelectorAll('#layers .ly')].findIndex(r => r.__L === T);
+  const 前 = idx();
+  const r = document.getElementById('r_depth');
+  r.value = 70; r.dispatchEvent(new Event('input', { bubbles:true })); await w(400);
+  const dp = [...document.querySelectorAll('#layers .ly')]
+    .find(x => x.__L === T).querySelector('.dp');
+  out.引いている最中 = { 前, 後:idx(), 動かない:idx() === 前, 行の字:dp.textContent.trim() };
+  r.dispatchEvent(new Event('change', { bubbles:true })); await w(500);
+  out.手を離すと = { 後:idx(), 並べ替わった:idx() !== 前 };
+  return out;
+});
+ok(DEPTHSAY.空気0.空気 === 0 && DEPTHSAY.空気0.言う && /空気 0/.test(DEPTHSAY.空気0.文),
+   '⭐⭐ 空気 0 のときは【奥行きは並ぶ順だけに効く】とその場で言う',
+   JSON.stringify(DEPTHSAY.空気0));
+ok(DEPTHSAY.空気1.言う === false,
+   '⚠️ 空気を上げたら言わない（うるさくしない）', JSON.stringify(DEPTHSAY.空気1));
+ok(DEPTHSAY.引いている最中.動かない && /奥 0\.70/.test(DEPTHSAY.引いている最中.行の字),
+   '🔴🔴 奥行きを引いている最中は【並べ替えない】（行が指の下から逃げない・数字は追う）',
+   JSON.stringify(DEPTHSAY.引いている最中));
+ok(DEPTHSAY.手を離すと.並べ替わった,
+   '⭐ 手を離したら並べ替わる（並ぶ順は奥行きが決める＝芯は守る）',
+   JSON.stringify(DEPTHSAY.手を離すと));
+
+/* ══⭐⭐ 行の数字は【奥・空・濃】の3つ／どれも引ける・切れない ══ 2026-09-02
+   🔴 木下＝「奥0.00になっている。サイドパネルも同じ。ではその下の100%になっているのは
+      なぜか？…ここも違うのはなぜか？たぶんバグだと思う」
+     ＝バグではなく **並びが不揃い**だった：
+       空気だけ2回（名前の下の行とチップ）／奥行きは読むだけ／不透明度は触るだけ。
+       だから「100% は奥行きのはず」と読めた。
+   🔴 木下＝「空気と奥行きは重要な役割で、それによりなじみ度が変わると思っていたから
+      ここを奥行きで表示させるようにした」
+     ＝そのとおり。実測：写真（空気1）で 奥 0→0.9 は 296,660 変わる／空気 0 だと 0。
+       ＝奥行きは【空気とセットでしか効かない】。消さずに同じ資格で並べる。
+   ⭐ 3つを【名前の下の1行】に置く。⚠️ 右のボタン列に混ぜたら 308px に入らず
+     いちばん左の「奥」が切れた（実測）＝置き場所を分ける。 */
+const CHIPS = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const L = LAYERS.find(x => x.img && !x.kind);
+  setAir(L, 0.77, true); L.d = 0; L._key = ''; buildList(); render(); await w(500);
+  const row = () => [...document.querySelectorAll('#layers .ly')].find(x => x.__L === L);
+  const 見る = () => [...row().querySelectorAll('.chips .x')].map(e => ({
+    文:e.textContent, 幅:Math.round(e.getBoundingClientRect().width),
+    切れる:e.scrollWidth > e.clientWidth + 1 }));
+  out.みっつ = 見る();
+  out.名前の下 = row().querySelector('.dp').textContent.trim();
+  /* 奥行きを引く＝引いている最中は並べ替えない／離すと並べ替わる */
+  const idx = () => [...document.querySelectorAll('#layers .ly')].findIndex(r => r.__L === L);
+  const d = row().querySelector('.dep'), q = d.getBoundingClientRect();
+  const x = q.left + q.width/2, y = q.top + q.height/2;
+  const 前 = idx();
+  d.dispatchEvent(new PointerEvent('pointerdown', { clientX:x, clientY:y, bubbles:true, pointerId:77 }));
+  d.dispatchEvent(new PointerEvent('pointermove', { clientX:x + 60, clientY:y, bubbles:true, pointerId:77 }));
+  await w(350);
+  out.引いている最中 = { 動かない:idx() === 前, チップ:row().querySelector('.dep').textContent,
+                         段:document.getElementById('o_depth').value };
+  d.dispatchEvent(new PointerEvent('pointerup', { clientX:x + 60, clientY:y, bubbles:true, pointerId:77 }));
+  await w(600);
+  out.離すと = { 並べ替わった:idx() !== 前, 奥:+L.d.toFixed(2) };
+  return out;
+});
+ok(CHIPS.みっつ.length === 3 && CHIPS.みっつ.every(o => !o.切れる && o.幅 > 20)
+   && /^奥/.test(CHIPS.みっつ[0].文) && /^空/.test(CHIPS.みっつ[1].文) && /^濃/.test(CHIPS.みっつ[2].文),
+   '⭐⭐ 行に【奥・空・濃】の3つが名札つきで並び、1つも切れない',
+   JSON.stringify(CHIPS.みっつ));
+ok(CHIPS.名前の下 === '',
+   '⭐ 同じ数字を2つの顔で出さない（名前の下の重複を消した）',
+   JSON.stringify(CHIPS.名前の下));
+ok(CHIPS.引いている最中.動かない
+   && String(CHIPS.引いている最中.段) === CHIPS.引いている最中.チップ.replace('奥',''),
+   '🔴 奥行きを引いている最中は並べ替えない／段のつまみと同じ数字',
+   JSON.stringify(CHIPS.引いている最中));
+ok(CHIPS.離すと.並べ替わった,
+   '⭐ 離したら並べ替わる（並ぶ順は奥行きが決める＝芯は守る）',
+   JSON.stringify(CHIPS.離すと));
+
+/* ══⭐⭐ 空気を押して戻したら【元の値に戻る】══ 2026-09-02
+   🔴 木下＝「空気62%これを押すと空気はゼロに、もう一度押すと今だと1.0になる。
+      元に戻るようにして」
+     ＝目と同じ考え＝**切っても値は残る**。1.0 に飛ばすと 62% が消えてしまう。
+   ⭐ 切る直前の値を覚えて、戻すときはそれを返す（覚えが無いときだけ 1.0）。 */
+const AIRBACK = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const L = LAYERS.find(x => x.img && !x.kind);
+  setAir(L, 0.62, true); buildList(); await w(400);
+  const row = () => [...document.querySelectorAll('#layers .ly')].find(x => x.__L === L);
+  const よむ = () => ({ 空:+airOf(L).toFixed(2), 文:row().querySelector('.air').textContent });
+  const おす = () => row().querySelector('.air').click();
+  const a = よむ(); おす(); await w(400);
+  const b2 = よむ(); おす(); await w(400);
+  const c = よむ(); おす(); await w(400);
+  const d = よむ();
+  return { はじめ:a, 一回目:b2, 二回目:c, 三回目:d };
+});
+ok(AIRBACK.はじめ.空 === 0.62 && AIRBACK.一回目.空 === 0 && AIRBACK.二回目.空 === 0.62,
+   '⭐⭐ 空気を押して切って、もう一度押すと【元の値（0.62）に戻る】（1.0 に飛ばさない）',
+   JSON.stringify(AIRBACK));
+ok(AIRBACK.三回目.空 === 0 && AIRBACK.一回目.文 === '空',
+   '⭐ 何度でも行き来できる／切っているときも字は「空」のまま（斜線で言う）',
+   JSON.stringify([AIRBACK.三回目, AIRBACK.一回目]));
+
+/* ══⭐⭐ 行の3つは【同じ手ざわり】／言葉は1つ ══ 2026-09-02
+   🔴 木下の4つ：
+     ①「空気はクリックで0にできるが、奥行きは今はできていない」
+       → 奥行きも押すと 0 ⇄ 元の値。⚠️ 斜線は引かない（奥 0 は「切ってある」ではなく
+         【いちばん手前】。斜線は「効いていない」の印＝空気と目だけに使う）。
+     ②「濃さを押すとポップアップが表示される。不要」
+       → やめて、空気・奥行きと同じ 押すと 100% ⇄ 元の値。数字は段の欄で打てる。
+     ③「表記が濃100%なのだが、サイドパネルは不透明度になっている。統一した方がいい」
+       → 🔴🔴 HTML では「濃さ」に直したのに、**JS が実行時に「不透明度」へ書き戻していた**
+         ＝言葉の持ち主が2か所にあった。両方「濃さ」に揃えた。
+     ④「不透明度と塗りの違いはなんなのか？同じようにも見える」
+       → Photoshop と同じ違い（濃さ＝エフェクトごと／塗り＝絵だけ・エフェクトは残る）。
+         **エフェクトを付けたときにだけ差が出る**ので、何も無いと同じに見える＝段で言う。 */
+const ROWUX = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  let ポップアップ = 0;
+  const _p = window.prompt; window.prompt = (...a) => { ポップアップ++; return _p ? null : null; };
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const L = LAYERS.find(x => x.img && !x.kind);
+  setSel(LAYERS.indexOf(L), false); syncSel(); buildList(); await w(400);
+  const row = () => [...document.querySelectorAll('#layers .ly')].find(x => x.__L === L);
+  /* 奥行き＝押すと 0 ⇄ 元の値・斜線は引かない */
+  L.d = 0.42; L._key = ''; buildList(); await w(300);
+  const a1 = +L.d.toFixed(2);
+  row().querySelector('.dep').click(); await w(400);
+  const a2 = +L.d.toFixed(2);
+  row().querySelector('.dep').click(); await w(400);
+  out.奥行き = { はじめ:a1, 一回目:a2, 二回目:+L.d.toFixed(2),
+                 斜線:row().querySelector('.dep').classList.contains('raw') };
+  /* 濃さ＝押してもポップアップが出ない */
+  const b1 = +(L.op == null ? 1 : L.op).toFixed(2);
+  row().querySelector('.op').click(); await w(400);
+  out.濃さ = { はじめ:b1, 押したあと:+(L.op == null ? 1 : L.op).toFixed(2), ポップアップ };
+  /* 言葉が揃っている */
+  out.言葉 = { 段:document.querySelector('#opKnob .n').textContent,
+               行:row().querySelector('.op').textContent };
+  out.塗りの説明 = [...document.querySelectorAll('#selBox .note')]
+    .some(e => /濃さ/.test(e.textContent) && /塗り/.test(e.textContent) && /違い/.test(e.textContent));
+  window.prompt = _p;
+  return out;
+});
+ok(ROWUX.奥行き.一回目 === 0 && ROWUX.奥行き.二回目 === ROWUX.奥行き.はじめ
+   && ROWUX.奥行き.斜線 === false,
+   '⭐⭐ 奥行きも押すと 0 ⇄ 元の値（空気と同じ手ざわり）／⚠️ 斜線は引かない（0＝手前）',
+   JSON.stringify(ROWUX.奥行き));
+ok(ROWUX.濃さ.ポップアップ === 0 && ROWUX.濃さ.押したあと !== ROWUX.濃さ.はじめ,
+   '⭐ 濃さを押しても【ポップアップを出さない】（押すと切り替わる・数字は段の欄で打つ）',
+   JSON.stringify(ROWUX.濃さ));
+ok(ROWUX.言葉.段 === '濃さ' && /^濃/.test(ROWUX.言葉.行),
+   '🔴🔴 言葉は1つ＝行も段も「濃さ」（JS が実行時に書き戻していたのを直した）',
+   JSON.stringify(ROWUX.言葉));
+ok(ROWUX.塗りの説明,
+   '⭐ 段で【濃さと塗りの違い】を言う（エフェクトが無いと同じに見えるので）',
+   String(ROWUX.塗りの説明));
+
+/* ══⭐⭐ ぼかし（ガウス）は【空気と関係なく】効く・独立して置く ══ 2026-09-02
+   🔴 木下＝「図形をぼかしやガウスを適応させる場合どうすればいい？エフェクトを見たがない」
+      →「空気からのズレに入れちゃうと空気の効きをONしないと適応されないからよくないね。
+         別で必要かも」
+     ＝**効きは空気と関係なく出る**（実測：図形・空気0で 182,699 変化）。
+       だが【空気からのズレ】の下にあると「空気が要る」と読める＝読めない置き場所は無いのと同じ。
+   ⭐ 外見のすぐ下に独立させた（段の中で 2159px → 1306px）。値の持ち主は1つのまま（adj.blur）。
+   ⭐ エフェクトの段からは【押すと飛ぶ釦】で連れて行く（場所を書くだけにしない）。 */
+const BLUR = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const full = () => { const d = g.getImageData(0,0,cv.width,cv.height).data; const o = [];
+    for(let i = 0; i < d.length; i += 4*3) o.push(d[i], d[i+1], d[i+2], d[i+3]); return o; };
+  const sad = (A, B) => { let s2 = 0; for(let i = 0; i < A.length; i++) s2 += Math.abs(A[i]-B[i]);
+    return s2; };
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const L = await window.drawShape(0.32, 0.32, 0.58, 0.55);
+  document.querySelector('#tools button[data-t="move"]').click(); await w(600);
+  COARSE = 0; render(); await w(500);
+  out.空気 = +airOf(L).toFixed(2);
+  const A = full();
+  const r = document.getElementById('r_ablur');
+  r.value = 60; r.dispatchEvent(new Event('input', { bubbles:true })); await w(800);
+  out.ぼかした = { 名:r.closest('.knob').querySelector('.n').textContent,
+                   変わった:sad(full(), A), 空気:+airOf(L).toFixed(2) };
+  r.value = 0; r.dispatchEvent(new Event('input', { bubbles:true })); await w(700);
+  out.戻すと = sad(full(), A);
+  /* ⭐ 2026-09-02・木下＝「エフェクトの中に入れると綺麗かも。実装上変？」
+     ＝変ではない（Figma も同じ置き方）。ここでは【エフェクトの段にある】ことを見る。 */
+  out.どの段 = r.closest('.grp').id;
+  out.段の見出し = (r.closest('.grp').querySelector('.h') || {}).textContent;
+  out.レイヤーブラーという名前 = [...r.closest('.grp').querySelectorAll('.n')]
+    .some(e => /レイヤーブラー/.test(e.textContent));
+  return out;
+});
+ok(BLUR.空気 === 0 && BLUR.ぼかした.変わった > 0,
+   '⭐⭐ ぼかしは【空気 0 の素材（図形）でも効く】（空気の ON は要らない）',
+   JSON.stringify(BLUR.ぼかした));
+ok(BLUR.戻すと === 0,
+   '🔴 0 に戻すと【1画素も同じ】に戻る（焼き込まない）', String(BLUR.戻すと));
+ok(BLUR.ぼかした.名 === 'ぼかし',
+   '⭐ 名前は「ぼかし」＝空気の話に見えない（独立した段に置いた）', BLUR.ぼかした.名);
+ok(BLUR.どの段 === 'fxBox' && BLUR.レイヤーブラーという名前,
+   '⭐⭐ ぼかしは【エフェクトの段】にある／名前は Figma と同じ「レイヤーブラー」'
+   + ' ── 木下＝「細かくやった上で最後に空気、なじませる」＝作る順番と画面の並びが合う',
+   JSON.stringify([BLUR.どの段, BLUR.段の見出し, BLUR.レイヤーブラーという名前]));
 
 /* ══ @下地 ここから先は【見本2（文字・図形・エフェクト）】を1回だけ組んで使い回す ══
    ⭐ @下地 ＝ この章より後ろの章を選んだときは、この章も必ず一緒に流す印。
@@ -4881,9 +5891,13 @@ await wait(600);
     const s0 = deep.s, y0 = deep.sy, x0 = deep.x, yy0 = deep.y;
     deep.s = 1.2; deep.sy = 4; deep.x = 0.5; deep.y = 0.5; deep._key = '';
     buildList(); render(); await w(400);
+    /* ⚠️ 2026-09-02・木下＝「これは背景ではなく、そのボードより大きくなっている
+       レイヤーにつけるべき」＝印は【覆っている側の行】に移した。
+       背景の行には何も足さない（長い文が行に居座らない）。 */
     const 覆う = { 名:bgCover() ? bgCover().name : null,
       段:!document.getElementById('bgCoverSay').classList.contains('hide'),
-      一覧:!!document.querySelector('#layers .bgrow.covered') };
+      原因の行に印:!!document.querySelector('#layers .ly.covering'),
+      背景の行は素:!document.querySelector('#layers .bgrow.covered') };
     /* 目を閉じたら言わない（覆っていないので） */
     deep.on = false; buildList(); render(); await w(300);
     const 閉じたら = { 名:bgCover() ? bgCover().name : null,
@@ -4894,9 +5908,12 @@ await wait(600);
     const 戻したら = { 名:bgCover() ? bgCover().name : null };
     return { 覆う, 閉じたら, 戻したら };
   });
-  ok(BG.覆う && BG.覆う.名 && BG.覆う.段 && BG.覆う.一覧 && !BG.閉じたら.名 && !BG.閉じたら.段,
+  ok(BG.覆う && BG.覆う.名 && BG.覆う.段 && !BG.閉じたら.名 && !BG.閉じたら.段,
      '⭐⭐ 地の色が【覆われていて見えない】ときは、どの素材のせいか言う',
      JSON.stringify(BG));
+  ok(BG.覆う && BG.覆う.原因の行に印 && BG.覆う.背景の行は素,
+     '⚠️ 印は【覆っている側の行】に付く（背景の行には長い文を置かない）',
+     JSON.stringify(BG.覆う));
 }
 
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
