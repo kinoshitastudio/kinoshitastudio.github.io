@@ -6070,6 +6070,79 @@ await wait(600);
      JSON.stringify(BG.覆う));
 }
 
+/* ══⭐⭐ 木下の実機確認【10巡目】＝行の空気の表記／書体の理由が見える所に有るか ══ 2026-09-02
+   🔴 ① 木下＝「空気のきき100%の場合パーセンテージまで表記がないため100%と記載して」
+        ＝行の数字は3つ並んでいるのに、**濃100% は出て 空だけ出ていなかった**（言い方が不揃い）。
+   🔴🔴 ② 木下＝「フォントだが俺らが作った UWASA JP にしても表記は変わらない。ここしっかり見て」
+        ＝実測すると **書体はちゃんと効いていた**（「かな」で 塗った画素 9776 → 7583）。
+          変わらなく見えたのは「静かな手紙」の3字が漢字で、UWASA JP は漢字を1文字も
+          持っていないから（fontTools＝267字・かな168・漢字0）。
+        ＝本当の穴は【理由が、書体を選ぶ場所から見えなかった】。
+          警告は出ていたが居場所は右パネルの［文字］の段で、
+          実測 `fontWarn.offsetParent === null`＝**1度も画面に出ていなかった**。
+   ⭐ 直し＝上のバーへ⚠️の印を借りる／盤の左上でも言う／言葉は fontWarnWords 1本から。 */
+{
+  const FW = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    const out = {};
+    closeAllEditors();
+    await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+    /* ① 空気の効きが 1.00 の行は「空100%」と書く（0 のときだけ「空」＋斜線） */
+    const L0 = LAYERS.find(x => x.img && !x.kind && airOf(x) >= 0.999);
+    out.空 = { 満:[...document.querySelectorAll('#layers .x.air')]
+                    .map(e => e.textContent).filter(s => /^空\d/.test(s))[0] || null };
+    if(L0){ L0.air = 0; buildList(); await w(300);
+      const row = [...document.querySelectorAll('#layers .ly')].find(x => x.__L === L0);
+      out.空.素 = row.querySelector('.air').textContent;
+      out.空.斜線 = row.querySelector('.air').classList.contains('raw');
+      L0.air = 1; buildList(); await w(300);
+      const row2 = [...document.querySelectorAll('#layers .ly')].find(x => x.__L === L0);
+      out.空.戻すと = row2.querySelector('.air').textContent; }
+    /* ② 漢字を持っていない書体を選ぶと、上のバーに⚠️が出て 盤でも言う */
+    document.getElementById('b_text').click(); await w(700);
+    const T = LAYERS[SEL];
+    const ta = document.getElementById('t_str');
+    ta.value = '静かな手紙'; ta.dispatchEvent(new Event('input', { bubbles:true })); await w(500);
+    const sel = document.getElementById('t_font');
+    sel.value = 'UWASAJP, sans-serif'; sel.dispatchEvent(new Event('change', { bubbles:true }));
+    await w(1100);
+    const ch = document.getElementById('fontWarnChip');
+    out.印 = { 出る:!ch.classList.contains('hide'),
+               上のバー:!!ch.closest('#optbar'),
+               見えている:!!ch.offsetParent && ch.getBoundingClientRect().width > 0,
+               吹き出し:ch.title };
+    out.盤 = (document.getElementById('bhSay') || {}).textContent || '';
+    /* ③ 持っている字しか無いときは【言わない】（嘘を言わない） */
+    ta.value = 'かな'; ta.dispatchEvent(new Event('input', { bubbles:true })); await w(700);
+    out.かなだけ出る = !ch.classList.contains('hide');
+    /* ④ 書体は本当に効いている（画素で見る） */
+    const cnt = cv2 => { const d = cv2.getContext('2d')
+        .getImageData(0, 0, cv2.width, cv2.height).data;
+      let n = 0; for(let i = 3; i < d.length; i += 4) if(d[i] > 8) n++; return n; };
+    const shot = async fam => { T.text.font = fam;
+      await new Promise(r => rebuildText(T, r)); await w(200); return cnt(T.img); };
+    out.画素 = { ゴシック:await shot(FONTS[0][0]), UWASAJP:await shot('UWASAJP, sans-serif') };
+    return out;
+  });
+  ok(FW.空.満 === '空100%' && FW.空.素 === '空' && FW.空.斜線 === true
+     && FW.空.戻すと === '空100%',
+     '⭐ 行の空気は【空100%】と書く（0 のときだけ「空」＋斜線＝切ってある印）',
+     JSON.stringify(FW.空));
+  ok(FW.印.出る && FW.印.上のバー && FW.印.見えている,
+     '🔴🔴 漢字を持たない書体を選んだら【上のバー（書体の隣）】に⚠️が出る'
+     + ' ── 前は右パネルにしか無く、実測で1度も画面に出ていなかった',
+     JSON.stringify(FW.印));
+  ok(/持っていません/.test(FW.印.吹き出し) && /変わっています/.test(FW.印.吹き出し)
+     && /持っていません/.test(FW.盤),
+     '⭐⭐ 理由は【盤の左上】でも言う＋「ほかの字は変わっている」も言う（効いていない と読ませない）',
+     JSON.stringify([FW.印.吹き出し, FW.盤]).slice(0, 200));
+  ok(FW.かなだけ出る === false,
+     '⭐ 持っている字しか無いときは言わない（嘘の警告を出さない）', String(FW.かなだけ出る));
+  ok(FW.画素.UWASAJP > 0 && FW.画素.UWASAJP !== FW.画素.ゴシック,
+     '🔴 そもそも UWASA JP は【効いている】＝かなの画素が変わる（効かないのではなく漢字が無い）',
+     JSON.stringify(FW.画素));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);
