@@ -319,7 +319,8 @@
       <select id="ttfSet">
         <option value="latin">欧文・数字・約物（95字）</option>
         <option value="kana" selected>＋ ひらがな・カタカナ（270字）</option>
-        <option value="打った字">試し組みに打った字だけ</option>
+        <!-- ⭐ 2026-09-02・ここが【漢字を入れる道】＝①元の字／③字見本 に打った字がそのまま鋳られる -->
+        <option value="打った字">①と③に打った字だけ（漢字もここから）</option>
       </select></div>
     <div class="row"><span class="n">まるめ（点を減らす）</span><output id="oSimp">3</output></div>
     <input type="range" id="ttfSimp" min="0" max="12" step="1" value="3">
@@ -330,6 +331,18 @@
       <button class="btn" id="eTTF">.ttf で出す</button>
       <button class="btn" id="tTTF">この場で打つ</button>
     </div>
+    <!-- ══⭐⭐ 細字・中間・太字を まとめて鋳る ══ 2026-09-02
+         🔴 木下＝「素、筆、擦れ、墨、細身で ひとつのフォント内に5つのスタイルを持っている
+            から これの細字、中間、太字を選べるようにしておいて」
+         ⭐ 型（崩し方）は5つのまま。**太さは〔太らせる〕を ±に振って3本**出す。
+           ＝いま画面に出ている型・元の書体・つまみのまま3本鋳るので、**3本の顔が揃う**。
+         ⚠️ 名前は決め打ち（MOYA が拾う規約）＝`UWASA-JP-<型>-Hosoji/Futoji.ttf`。
+           中間は今までの `.ttf で出す` で出るファイルそのもの。 -->
+    <div class="row" style="margin-top:10px"><span class="n">太さの振り幅（±）</span>
+      <output id="oFatW">14</output></div>
+    <input type="range" id="fatW" min="4" max="30" step="1" value="14">
+    <button class="btn" id="eTTF3" style="width:100%">細字・中間・太字を まとめて鋳る（3本）</button>
+    <div id="ttf3Note" class="hint">—</div>
     <div id="ttfNote" class="hint">—</div>
 
     <div id="meter">—</div>
@@ -1539,8 +1552,17 @@ const TTF_JPSYM = [...'ー、。「」・〜（）'];
 function ttfChars(kind){
   if(kind === 'latin') return TTF_LATIN;
   if(kind === 'kana')  return [...TTF_LATIN, ...TTF_HIRA, ...TTF_KATA, ...TTF_JPSYM];
-  const t = ($('tv') && $('tv').value) || '';         /* 試し組みに打った字だけ */
-  return [...new Set([...t].filter(c => c !== '\n'))];
+  /* ══🔴🔴 ここが死んでいた ══ 2026-09-02
+     木下＝「（漢字は）今はまだだめだね」＝そのとおりだった。
+     ＝この分岐は `$('tv')` を読んでいたが、**そんな欄はこの道具に無い**（0件）。
+       いつも空になり、必ず「鋳る字がありません」で落ちていた
+       ＝選べるのに一度も鋳れない【触れるのに効かない選択肢】。
+     ⭐ 実際の欄は ①元の字（`tText` ＝ `S.text`）と ③字見本（`sheetText` ＝ `S.sheet`）の2つ。
+       ここに漢字を打てば **漢字も鋳れる**（元の書体が持っている字なら何でも）。
+     ⚠️ 元の書体に無い字は入れない（`M.adv(ch)` が null＝skipped で数えて画面に出る）。 */
+  const t = String((typeof S !== 'undefined' && S.text) || '')
+          + String((typeof S !== 'undefined' && S.sheet) || '');
+  return [...new Set([...t].filter(c => c !== '\n' && c !== '\r'))];
 }
 
 /* ══ 鋳る本体 ══ */
@@ -1695,6 +1717,53 @@ function ttfBuild(opt){
       a.download = r.fam.replace(/[^A-Za-z0-9]/g,'') + '-Regular.ttf';
       a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     }catch(e){ note('🔴 ' + e.message); }
+  });
+
+  /* ══⭐⭐ 細字・中間・太字を まとめて鋳る（3本）══ 2026-09-02
+     🔴 木下＝「これの細字、中間、太字を選べるようにしておいて」
+     ⭐ 型（崩し方）はいまのまま。**〔太らせる〕だけを −W / いま / +W に振って3本**鋳る。
+       ＝元の書体もつまみも同じなので**3本の顔が揃う**（別々に鋳ると揃わない）。
+     ⭐ 名前は MOYA が拾う規約に合わせる＝`UWASA-JP-<型>-Hosoji.ttf` / なし / `-Futoji.ttf`。
+       いま選んでいる型のファイル名（Su/Regular/Sure/Sumi/Hoso）から作る。
+     ⚠️ 鋳ったあとは【つまみを元に戻す】＝画面の絵は1画素も変わらない。 */
+  const KATA_FILE = { su:'Su', fude:'Regular', sure:'Sure', sumi:'Sumi', hoso:'Hoso' };
+  const fatW = $('fatW');
+  if(fatW) fatW.addEventListener('input', () => { $('oFatW').textContent = fatW.value; });
+  const note3 = s => { const n = $('ttf3Note'); if(n) n.innerHTML = s; };
+  $('eTTF3') && $('eTTF3').addEventListener('click', () => {
+    const on = document.querySelector('#segKata button.on');
+    const kata = on ? on.dataset.v : null;
+    const base = kata && KATA_FILE[kata] ? KATA_FILE[kata] : null;
+    if(!base){
+      note3('🔴 先に <b>②崩す</b> の型（素・筆・擦れ・墨・細身）を押してください'
+          + '<br>＝どの型の 細字／太字 なのかが決まらないと、名前が付けられません。');
+      return;
+    }
+    const W = +fatW.value;
+    const fat0 = S.cut.fat;
+    const out = [];
+    try{
+      for(const [suf, d] of [['-Hosoji', -W], ['', 0], ['-Futoji', +W]]){
+        S.cut.fat = Math.max(-60, Math.min(60, fat0 + d));
+        outCache.clear(); cutCache.clear(); coreCache.clear();
+        const r = ttfBuild({ set: $('ttfSet').value, tol: +$('ttfSimp').value,
+                             family: $('ttfName').value });
+        const name = 'UWASA-JP-' + base + suf + '.ttf';
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([r.file], { type:'font/ttf' }));
+        a.download = name; a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 6000);
+        out.push(name + '（太らせる ' + S.cut.fat + '・' + (r.bytes/1024|0) + 'KB）');
+      }
+      note3('⭐ 3本出した（型＝<b>' + KATA_NAME[kata].split(' —')[0] + '</b>）<br>'
+          + out.join('<br>')
+          + '<br>⭐ この3本を <b>uwasa/fonts/</b> に置くと、靄MOYA の［太さ］が'
+          + '<b>本物の字</b>になります（置くまでは今までの1本のまま）。');
+    }catch(e){ note3('🔴 ' + e.message); }
+    finally{
+      S.cut.fat = fat0;
+      outCache.clear(); cutCache.clear(); coreCache.clear(); syncAll(); draw();
+    }
   });
 
   /* ⭐ その場で打つ ── 板の絵ではなく【ブラウザが字として組んだもの】を見る */
