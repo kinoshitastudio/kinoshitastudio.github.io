@@ -966,6 +966,13 @@
        （バーは left:86px から始まるが、戻るボタンは中に入ると left:13px へ動く＝約 129px まで伸びる）。
        ⭐ 中に入っている間だけ バーの始まりをボタンの右へずらす。 */
     body.soloui #optbar{ left:140px }
+    /* 🔴🔴 2026-09-02・木下が送ってきた画面で見つけた（本人は言っていない）
+       ＝上のバーが出ている間、盤の表記（靄 MOYA ／ 素材の名前）が
+         バーの【道具名】と select の上に重なって読めなかった。
+       ＝バーは left:86px から・表記は left:13px からで、2行目の名前が長いと必ずぶつかる。
+       ⭐ バーが出ている間だけ 表記をバーの下へ落とす（8＋38＝46 の下）。
+       ⚠️ 動くのは【言葉の位置】だけ＝出す絵は1画素も変わらない。 */
+    body.hasopt #boardHead{ top:52px }
   }
 
   /* ⭐⭐ 描画色と背景色（左のツールバーの下）── 木下＝「塗りと線のUIを同じように」 */
@@ -1742,6 +1749,14 @@
     <!-- 🔴 2026-09-01・木下＝「テキストがうまく反映していない」（欧文の書体に日本語を打った）
          ＝canvas は持っていない字を黙って差し替える＝ここで言う -->
     <div class="note hide" id="fontWarn" style="color:#c2410c;font-weight:590"></div>
+    <!-- ══⭐⭐ 上のバーへ借りていく【⚠️ の印】══ 2026-09-02
+         🔴🔴 木下＝「UWASA JP にしても表記は変わらない」＝理由（漢字を持っていない）は
+           上の fontWarn に出ていたのに、**書体を選ぶ上のバーからは見えなかった**
+           （実測＝offsetParent が null ＝1度も画面に出ていない）。
+         ⭐ 幅を食わない1文字の印だけを借りていく。吹き出しに1文・押すと段へ送って光らせる。
+         ⚠️ ここが本体＝借りて返すだけ（値も言葉も持ち主は1つ）。 -->
+    <button class="btn hide" id="fontWarnChip"
+      style="flex:0 0 auto;width:auto;padding:5px 9px;color:#c2410c;font-weight:700">⚠️</button>
     <div class="knob"><span class="n">太さ</span><input class="num" type="number" id="n_t_weight"><input type="range" id="t_weight" min="100" max="900" step="100" value="700"><output id="o_tw" hidden>700</output></div>
     <!-- ⭐⭐ 可変フォントの軸（2026-08-31）＝その書体が持っている軸だけを出す
          ⚠️ 「たぶん有る」つまみは出さない（触れるのに効かない、を作らない） -->
@@ -3512,28 +3527,60 @@ function axesOfText(t){ return t.axes || (t.axes = {}); }
    ⭐ その書体で測った幅と、書体を外して測った幅が【同じ】なら差し替わっている。
    ⚠️ 数字・記号・空白は どの書体でも同じ幅になりうるので見ない（誤って言わない）。
    → feedback_canvas_needs_the_font_loaded_first */
-/* ⭐ いまの書体で描けない字があるかを画面に出す（打つたび・書体を変えるたび） */
-function syncFontWarn(){
-  const wn = el('fontWarn'); if(!wn) return;
+/* ══⭐⭐ 言葉を作る道は1本（短い方と長い方を【同じ材料】から作る）══ 2026-09-02
+   🔴🔴 木下＝「フォントだが俺らが作った UWASA JP にしても表記は変わらない。ここしっかり見て」
+     ＝実測すると **書体はちゃんと効いていた**（「かな」2文字で 塗った画素 9776 → 7583）。
+       変わらなく見えたのは「静かな手紙」の **5文字のうち3文字が漢字**で、
+       UWASA JP は漢字を1文字も持っていないから（fontTools で実測＝267字・かな168・漢字0）。
+   🔴🔴 本当の穴は【その理由が、書体を選ぶ場所から見えなかった】こと。
+     ・警告は出ていた（hide は外れていた）が、居場所は **右パネルの［文字］の段**。
+     ・木下が書体を選んでいるのは **上のバー**。しかもレイヤーの窓を出すと右パネルは隠れる。
+     ・実測＝`fontWarn.offsetParent` が null ＝ **画面に1度も出ていなかった**。
+   ⭐ 直しは3つ（芯は触らない）：
+     ① 上のバーの書体の隣に【⚠️ の印】を借りてくる（幅を食わない・押すと段へ送る）
+     ② 書体を変えた瞬間に **盤の左上（stat）でも言う**＝いちばん見ている所
+     ③ 言葉は `fontWarnWords()` **1本**から作る（短い方＝印と盤／長い方＝段）
+   → feedback_a_panel_hidden_by_mode_looks_missing ／ feedback_move_the_setting_with_the_exit */
+function fontWarnWords(){
   const L = LAYERS[SEL];
-  if(!L || L.kind !== 'text' || !L.text){ wn.classList.add('hide'); return; }
+  if(!L || L.kind !== 'text' || !L.text) return null;
   const t = L.text;
   const bad = fontMissing(t.font, t.str);
+  if(!bad) return null;
   const nm = (FONTS.find(f => f[0] === t.font) || [null, t.font])[1];
-  wn.classList.toggle('hide', !bad);
-  if(!bad) return;
   const row = FONTS.find(f => f[0] === t.font) || [];
   const head = nm.split('（')[0].trim().split(' ')[0];
   const jp = FONTS.find(f => f[2] === 'kana' && f[1].indexOf(head) === 0);
   const kanji = /[\u3400-\u9fff]/.test(bad);
-  wn.innerHTML = '⚠️ <b>' + nm + '</b> はこの字を持っていません（' + bad.slice(0, 6) + '）'
-    + '＝いまは別の書体で描かれています。<br>'
-    + (row[2] === 'kana' || !jp
-        ? (kanji ? '🔴 <b>木下の書体には漢字がまだ1文字も入っていません</b>（かな・カナ・欧文だけ）。'
-                 + '漢字を出すには 明朝・ゴシックなどを選ぶか、鋳CHU で漢字を足す必要があります。'
-                 : 'かな込みの書体を選んでください。')
-        : '<b>' + jp[1] + '</b> を選ぶと かな は出ます'
-          + (kanji ? '（<b>漢字はまだどの書体にも入っていません</b>）。' : '。'));
+  /* ⭐ 「持っている字は ちゃんと変わっている」を先に言う＝「効いていない」と読ませない
+     （木下が見たのは「静かな手紙」＝3字が漢字で変わらず、か・な は変わっていた） */
+  const ok2 = [...String(t.str || '')].filter(c => bad.indexOf(c) < 0 && !/\s/.test(c));
+  const あと = (row[2] === 'kana' || !jp)
+      ? (kanji ? '🔴 <b>木下の書体には漢字がまだ1文字も入っていません</b>（かな・カナ・欧文だけ）。'
+               + '漢字を出すには 明朝・ゴシックなどを選ぶか、鋳CHU で漢字を足す必要があります。'
+               : 'かな込みの書体を選んでください。')
+      : '<b>' + jp[1] + '</b> を選ぶと かな は出ます'
+        + (kanji ? '（<b>漢字はまだどの書体にも入っていません</b>）。' : '。');
+  return {
+    /* 短い方＝上のバーの印（吹き出し）と 盤の左上。1文で終わらせる */
+    短: '⚠️ ' + nm.split('（')[0].trim() + ' は「' + bad.slice(0, 6) + '」を持っていません'
+      + '＝そこだけ別の書体で描いています'
+      + (ok2.length ? '（ほかの「' + ok2.slice(0, 6).join('') + '」は変わっています）' : ''),
+    /* 長い方＝［文字］の段。どうすれば出せるかまで言う */
+    長: '⚠️ <b>' + nm + '</b> はこの字を持っていません（' + bad.slice(0, 6) + '）'
+      + '＝いまは別の書体で描かれています。'
+      + (ok2.length ? '<b>ほかの字（' + ok2.slice(0, 8).join('') + '）は変わっています。</b>' : '')
+      + '<br>' + あと,
+  };
+}
+/* ⭐ いまの書体で描けない字があるかを画面に出す（打つたび・書体を変えるたび） */
+function syncFontWarn(){
+  const wn = el('fontWarn'), ch = el('fontWarnChip');
+  const wd = fontWarnWords();
+  if(wn){ wn.classList.toggle('hide', !wd); if(wd) wn.innerHTML = wd.長; }
+  /* ⭐ 印は【上のバーへ借りていける】＝書体を選ぶ所の隣で気づける（幅は1文字ぶん）。
+     ⚠️ 持ち主は1つ＝言葉は fontWarnWords の1本から作る（2か所に書かない）。 */
+  if(ch){ ch.classList.toggle('hide', !wd); if(wd) ch.title = wd.短; }
 }
 function fontMissing(fam, str){
   /* ⚠️ 「その書体が この字を持っているか」は画面から測れない
@@ -8116,8 +8163,13 @@ function buildList(){
             **空に斜めアイコン非アクティブ表示**の方がわかりやすい」
            ＝そのとおり。目は「隠す」でも【目のまま】斜線が入る＝物は変わらず状態だけ変わる。
              字が「空」→「素」と入れ替わると、**別のものに見える**。
-         ⭐ いつも「空」。切ってあるときだけ 斜線＋薄く。途中は数字。 */
-      air.textContent = a <= 0.001 ? '空' : (a >= 0.999 ? '空' : '空' + Math.round(a*100) + '%');
+         ⭐ いつも「空」。切ってあるときだけ 斜線＋薄く。途中は数字。
+         ⭐ 2026-09-02・木下＝「空気のきき100%の場合パーセンテージまで表記がないため
+            100%と記載して」＝そのとおり。**濃100% は出ているのに 空だけ出ていなかった**
+            ＝3つ並べた数字のうち1つだけ言い方が違った（読むと不揃いに見える）。
+          ⚠️ 0 のときは【斜線＋「空」】のまま（木下が2026-09-02の朝に決めた形）。
+            0% と書くと「効きが 0 の数字」に見えて、斜線＝切ってある印とぶつかる。 */
+      air.textContent = a <= 0.001 ? '空' : '空' + Math.round(a * 100) + '%';
       air.style.opacity = a <= 0.001 ? '.5' : '1';
       air.classList.toggle('raw', a <= 0.001);
       air.title = (a <= 0.001 ? '空気を着せていません（素のまま）'
@@ -9944,8 +9996,20 @@ el('t_font').addEventListener('change', e => {
   hist(); textOf(L).font = e.target.value;
   rebuildText(L, () => { render();
     /* ⭐ 書体を変えた直後にも見る（持っていない字は黙って差し替わるので） */
-    if(typeof syncFontWarn === 'function') syncFontWarn(); });
+    if(typeof syncFontWarn === 'function') syncFontWarn();
+    /* ══⭐⭐ 盤の左上でも言う ══ 2026-09-02
+       🔴🔴 木下＝「UWASA JP にしても表記は変わらない」＝理由は右パネルにしか無く、
+         木下は上のバーで選んで盤を見ていた＝**答えが目の前に無かった**。
+       ⭐ 選んだ瞬間に stat で言う（言葉は fontWarnWords の1本から）。 */
+    /* ⚠️ 控えの名前は「 ── 」より前・「（」より前で切られる＝頭は短い名前にしておく */
+    const nm2 = ((FONTS.find(f => f[0] === e.target.value) || [null, e.target.value])[1])
+      .split('（')[0].trim();
+    const wd2 = typeof fontWarnWords === 'function' ? fontWarnWords() : null;
+    stat('書体を「' + nm2 + '」にした' + (wd2 ? ' ── ' + wd2.短 : ''));
+  });
 });
+/* ⭐ ⚠️ の印を押したら［文字］の段の【その行】まで送って光らせる（全文はそこに有る） */
+el('fontWarnChip').onclick = () => focusGrp('textBox', 'fontWarn');
 /* ══ 書体を読み込む ══ 2026-08-31・木下＝「テキストフォント読み込みもね」
    🔴 可変フォントは FontFace に【太さの範囲】を渡す（渡さないと 400 に固定される）。
       → feedback_variable_font_needs_weight_range */
@@ -14312,7 +14376,8 @@ const OPT = {
      バーは狭いので、後ろほど はみ出して見えなくなる。 */
   /* ⚠️ 名札は付けない＝【色の四角のすぐ隣】に置くので「何の種類か」は見れば分かる。
      名札を付けたら 1600px でもバーがはみ出した（2026-09-02 に実測）。 */
-  text:  { 名:'文字',     ids:['t_font','t_fillon','t_color:字の色','s_tfmode',
+  /* ⭐ 2026-09-02・書体のすぐ隣に【⚠️ の印】を置く（持っていない字があるときだけ出る） */
+  text:  { 名:'文字',     ids:['t_font','fontWarnChip','t_fillon','t_color:字の色','s_tfmode',
                               't_strokeon','t_stroke:線の色','s_tsmode',
                               't_size','t_weight','t_align'] },
   /* ⚠️ 色そのもの（sh_fill / sh_stroke）はバーへ持ってこない
