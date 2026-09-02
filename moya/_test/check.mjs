@@ -5123,6 +5123,107 @@ ok(BLUR.どの段 === 'fxBox' && BLUR.レイヤーブラーという名前,
    + ' ── 木下＝「細かくやった上で最後に空気、なじませる」＝作る順番と画面の並びが合う',
    JSON.stringify([BLUR.どの段, BLUR.段の見出し, BLUR.レイヤーブラーという名前]));
 
+/* ══⭐⭐ 画像のフィルターも【エフェクトの同じ一覧】から足せる ══ 2026-09-02
+   🔴 木下＝「今ある分に関して、エフェクトに全部まとめるような感じで追加したらやばそう？」
+      →「まとめるではなく、あなたが言っているやり方でやろう」
+     ＝**見た目は増やさない・探すのは1か所**。［＋足す］の一覧に混ぜて、
+       選ぶと**エフェクトの段に行が増えて そこで触れる**。
+   ⭐ つまみは画像編集の段から【借りてくる】＝値の持ち主は1つのまま（上のバーと同じ考え）。
+     × で外すと**元の場所へ返る**（実測：editBox へ戻る）。値は残る＝また足せば同じ絵。
+   ⭐ 印は `ed.show` に持つ＝edCopy が JSON まるごと写すので、控え・設定JSON に自動で乗る。
+   ⚠️ 足した瞬間に【何か見える】ようにする（押しても何も起きない、を作らない）。
+     ⚠️ すでに触ってある値は上書きしない。 */
+const FXED = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const full = () => { const d = g.getImageData(0,0,cv.width,cv.height).data; const o = [];
+    for(let i = 0; i < d.length; i += 4*3) o.push(d[i], d[i+1], d[i+2], d[i+3]); return o; };
+  const sad = (A, B) => { let s2 = 0; for(let i = 0; i < A.length; i++) s2 += Math.abs(A[i]-B[i]);
+    return s2; };
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const L = LAYERS.find(x => x.img && !x.kind);
+  setSel(LAYERS.indexOf(L), false); syncSel(); buildList(); COARSE = 0; render(); await w(600);
+  const A = full();
+  document.getElementById('b_fxadd').click(); await w(300);
+  const menu = [...document.querySelectorAll('#fxAddMenu button')].map(x => x.textContent);
+  out.一覧 = { 数:menu.length, 区切り:[...document.querySelectorAll('#fxAddMenu div')]
+    .map(x => x.textContent) };
+  out.元の9つがある = ['ドロップシャドウ','境界線','サテン'].every(n => menu.includes(n));
+  out.フィルターもある = ['渦巻き','ガラス（歪み）','モザイク','フィルム粒子']
+    .every(n => menu.includes(n));
+  const tw = [...document.querySelectorAll('#fxAddMenu button')]
+    .find(x => x.textContent === '渦巻き');
+  tw.click(); await w(900);
+  out.足した = { 行:document.querySelectorAll('#fxEdList .fxsec').length,
+                 つまみが来た:!!document.querySelector('#fxEdList #r_twirl'),
+                 絵が変わった:sad(full(), A), 値:document.getElementById('r_twirl').value };
+  /* × で外すと元へ返る（値は残る） */
+  document.querySelector('#fxEdList .fxhead .xr').click(); await w(700);
+  const 居場所 = (() => { const e = document.getElementById('r_twirl');
+    let n = e; while(n && !(n.classList && n.classList.contains('grp'))) n = n.parentElement;
+    return n ? n.id : '（段の外）'; })();
+  out.外した = { 行:document.querySelectorAll('#fxEdList .fxsec').length,
+                 借りたまま:!!document.querySelector('#fxEdList #r_twirl'),
+                 居場所, 値は残る:document.getElementById('r_twirl').value };
+  /* 後片付け＝元に戻す */
+  const e2 = document.getElementById('r_twirl');
+  e2.value = 0; e2.dispatchEvent(new Event('input', { bubbles:true })); await w(500);
+  out.戻すと = sad(full(), A);
+  return out;
+});
+ok(FXED.元の9つがある && FXED.フィルターもある && FXED.一覧.区切り.includes('画像のフィルター'),
+   '⭐⭐ ［＋足す］の一覧に【レイヤースタイル9つ＋画像のフィルター】が並ぶ（探すのは1か所）',
+   JSON.stringify(FXED.一覧));
+ok(FXED.足した.行 === 1 && FXED.足した.つまみが来た && FXED.足した.絵が変わった > 0,
+   '⭐⭐ 選ぶとエフェクトの段に【行が増えて そこで触れる】／足した瞬間に絵が変わる',
+   JSON.stringify(FXED.足した));
+ok(FXED.外した.行 === 0 && !FXED.外した.借りたまま && FXED.外した.居場所 === 'editBox'
+   && FXED.外した.値は残る === FXED.足した.値,
+   '⭐ × で外すと【元の場所へ返る】／値は残る（つまみを2つ作っていない）',
+   JSON.stringify(FXED.外した));
+ok(FXED.戻すと === 0,
+   '🔴 0 に戻すと1画素も同じに戻る（焼き込まない）', String(FXED.戻すと));
+
+/* ══⭐⭐ 背景のぼかし（下にあるものをぼかす）══ 2026-09-02
+   🔴 木下＝「背景のぼかしもしよう」＝Figma のエフェクトに有って MOYA に無かった1つ。
+   ⭐ MOYA は【奥→手前】に描くので、その素材を描く直前の盤＝下にあるもの。
+     そこをぼかして、その素材の形で切って敷く＝すりガラス越しの見え方。
+   ⚠️ 焼き込まない＝0 に戻すと1画素も同じ。⚠️ 0 のときは1回も走らせない（重いので）。 */
+const BDBLUR = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const full = () => { const d = g.getImageData(0,0,cv.width,cv.height).data; const o = [];
+    for(let i = 0; i < d.length; i += 4*3) o.push(d[i], d[i+1], d[i+2], d[i+3]); return o; };
+  const sad = (A, B) => { let s2 = 0; for(let i = 0; i < A.length; i++) s2 += Math.abs(A[i]-B[i]);
+    return s2; };
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const L = await window.drawShape(0.30, 0.34, 0.62, 0.62);
+  document.querySelector('#tools button[data-t="move"]').click(); await w(400);
+  /* 半透明にしないと下が見えない＝すりガラスの試し方 */
+  L.op = 0.45; L.d = 0; L._key = ''; COARSE = 0; render(); await w(700);
+  const A = full();
+  const r = document.getElementById('r_bdblur');
+  out.つまみがある = !!r;
+  r.value = 45; r.dispatchEvent(new Event('input', { bubbles:true })); await w(900);
+  out.かけた = { 変わった:sad(full(), A), 値:+((L.ed && L.ed.bdblur) || 0).toFixed(2) };
+  r.value = 0; r.dispatchEvent(new Event('input', { bubbles:true })); await w(700);
+  out.戻すと = sad(full(), A);
+  document.getElementById('b_fxadd').click(); await w(300);
+  out.一覧にある = [...document.querySelectorAll('#fxAddMenu button')]
+    .some(x => x.textContent === '背景のぼかし');
+  document.getElementById('b_fxadd').click();
+  return out;
+});
+ok(BDBLUR.つまみがある && BDBLUR.かけた.変わった > 0 && BDBLUR.かけた.値 === 0.45,
+   '⭐⭐ 背景のぼかし＝【下にあるもの】がぼけて透ける（Figma に有って無かった1つ）',
+   JSON.stringify(BDBLUR.かけた));
+ok(BDBLUR.戻すと === 0,
+   '🔴 0 に戻すと1画素も同じに戻る（焼き込まない）', String(BDBLUR.戻すと));
+ok(BDBLUR.一覧にある,
+   '⭐ ［＋足す］の一覧にも並ぶ（探すのは1か所）', String(BDBLUR.一覧にある));
+
 /* ══ @下地 ここから先は【見本2（文字・図形・エフェクト）】を1回だけ組んで使い回す ══
    ⭐ @下地 ＝ この章より後ろの章を選んだときは、この章も必ず一緒に流す印。
       （moya/_test/pick.mjs が読む。ここを外すと「筆」などが素材ゼロで落ちる） */

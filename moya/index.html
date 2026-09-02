@@ -1980,6 +1980,8 @@
          ⭐ MOYA は版面に【灯】が有るので、そこへ合わせる＝向きを別に持たない。 -->
     <label class="chk">包括光源を使う（<b>灯の向き</b>に合わせる）<input type="checkbox" id="k_fxglobal"></label>
     <div id="fxAddMenu" class="hide"></div>
+    <!-- ⭐ 画像のフィルターを足したら、ここに行が並ぶ（つまみは借りてきて、外すと返す） -->
+    <div id="fxEdList"></div>
     <div class="fxsec" data-fx="grad">
       <div class="fxhead" data-fx="grad"><span class="sw"></span><span class="nm">グラデーションオーバーレイ</span><span class="tw">⌄</span></div>
       <div class="fxbody">
@@ -2292,6 +2294,8 @@
       <div class="knob"><span class="n">グラフィックペン</span><input class="num" type="number" id="n_r_gpen"><input type="range" id="r_gpen" min="0" max="100" step="1" value="0"><output id="o_gpen" hidden>0.00</output></div>
       <div class="knob"><span class="n">ペンの向き</span><input class="num" type="number" id="n_r_gpenang"><input type="range" id="r_gpenang" min="0" max="180" step="1" value="45"><output id="o_gpenang" hidden>45</output></div>
       <div class="knob"><span class="n">フィルム粒子</span><input class="num" type="number" id="n_r_film"><input type="range" id="r_film" min="0" max="100" step="1" value="0"><output id="o_film" hidden>0.00</output></div>
+      <!-- ⭐ 2026-09-02・背景のぼかし＝この素材の【下にあるもの】をぼかして透かす -->
+      <div class="knob"><span class="n">背景のぼかし</span><input class="num" type="number" id="n_r_bdblur"><input type="range" id="r_bdblur" min="0" max="100" step="1" value="0"><output id="o_bdblur" hidden>0.00</output></div>
 
     <div class="row" style="margin-top:10px"><span class="n" style="font-weight:590">カラーパレット（この素材の色）</span></div>
     <div id="swatches" style="display:flex;flex-wrap:wrap;gap:5px"></div>
@@ -4022,6 +4026,9 @@ function newEd(){ return {
      **コントラストとトーンカーブが無かった** ので足した（どちらも【絶対値】＝空気を見ない）。
      ⚠️【空気からのズレ】は版面の空気を基準にした相対値。ここは基準を持たない別の段。 */
   con:0,                                     /* コントラスト（絶対値・0＝何もしない） */
+  /* ⭐ 背景のぼかし（2026-09-02・木下＝「背景のぼかしもしよう」）
+     ＝下にあるものをぼかす。0＝何もしない（いままでの絵は1画素も変わらない） */
+  bdblur:0,
   expo:0,                                    /* 露光量（写真の絞り1段ぶん＝×2） */
   curve:null,                                /* トーンカーブ {rgb,r,g,b} ─ null＝まっすぐ */
   /* ⭐⭐ カラーバランス（Adobe＝階調ごとに シアン⇄赤・マゼンタ⇄緑・イエロー⇄青）── 2026-09-01
@@ -6063,6 +6070,33 @@ function paint(ctx, W, H, transparent){
     if(!L.on || (L.op != null && L.op <= 0.001)) continue;
     const plate = layerPlate(L, W, H);
     if(!plate) continue;
+    /* ══⭐⭐ 背景のぼかし（下にあるものをぼかす）══ 2026-09-02
+       🔴 木下＝「背景のぼかしもしよう」（Figma のエフェクトに有る・MOYA には無かった）
+       ⭐ MOYA は【奥→手前】に描くので、**この素材を描く直前の盤＝下にあるもの**。
+         そこをぼかして、この素材の形で切って、上に敷く＝すりガラス越しの見え方。
+       ⚠️ 焼き込まない＝0 にすれば1画素も同じに戻る（毎回その場で作る）。
+       ⚠️ その素材より奥のものしか映らない（手前はまだ描かれていない）。
+       ⚠️ 重いので【0 のときは1回も走らせない】。 */
+    {
+      const bd = (L.ed && L.ed.bdblur) || 0;
+      if(bd > 0.001){
+        const bl = Math.max(0.5, bd * Math.min(W, H) / 220);
+        const t = document.createElement('canvas'); t.width = W; t.height = H;
+        const gt = t.getContext('2d');
+        gt.filter = 'blur(' + bl.toFixed(1) + 'px)';
+        gt.drawImage(ctx.canvas, 0, 0);          /* いままで描いた分＝下にあるもの */
+        gt.filter = 'none';
+        const sil = document.createElement('canvas'); sil.width = W; sil.height = H;
+        const gs = sil.getContext('2d');
+        if(L.rot){ gs.save(); gs.translate(L.x*W, L.y*H); gs.rotate(L.rot*Math.PI/180);
+          gs.drawImage(plate, -plate.width/2, -plate.height/2); gs.restore(); }
+        else gs.drawImage(plate, Math.round(L.x*W - plate.width/2),
+                                 Math.round(L.y*H - plate.height/2));
+        gt.globalCompositeOperation = 'destination-in';
+        gt.drawImage(sil, 0, 0);
+        ctx.drawImage(t, 0, 0);
+      }
+    }
     /* 土台が無い（いちばん奥でクリップを入れた）ときは切らない＝消えたように見せない */
     const base = clipBase.get(L);
     drawn.push({ L, plate, base });
@@ -8886,6 +8920,8 @@ const EDROWS = [
   ['r_gpen','o_gpen','gpen',      v => v/100,      v => v*100],
   ['r_gpenang','o_gpenang','gpenAng', v => v,      v => v],
   ['r_film','o_film','film',      v => v/100,      v => v*100],
+  /* ⭐ 背景のぼかし（2026-09-02）＝下にあるものをぼかす。ほかの ed のつまみと同じ道 */
+  ['r_bdblur','o_bdblur','bdblur', v => v/100,      v => v*100],
   /* ⭐ ガラス（Photoshop と同じ目盛り＝ゆがみ 0〜20／滑らかさ 1〜15／大きさ 50〜200%） */
   ['r_glass','o_glass','glass',   v => v/20,       v => v*20],
   ['r_glasssm','o_glasssm','glassSm', v => v,      v => v],
@@ -10961,6 +10997,41 @@ el('b_fxreset').onclick = () => {
    ⚠️ 公式は「シャドウ（内側）」で、MOYA は「内側の影」と呼んでいた＝合わせた。
    ⚠️「カラーオーバーレイ」は MOYA では［塗りを重ねる］が担っている（選んでいるレイヤーの段）。
    出典 https://helpx.adobe.com/jp/photoshop/desktop/create-manage-layers/apply-layer-effects/layer-style-effects-and-options-overview.html */
+/* ══⭐⭐ 画像編集のフィルターも【エフェクトの一覧】から足せる ══ 2026-09-02
+   🔴 木下＝「今ある分に関して、エフェクトに全部まとめるような感じで追加したらやばそう？」
+      →「まとめるではなく（＋足すの一覧に混ぜる）、あなたが言っているやり方でやろう」
+     ＝実測で **7つとも図形・文字で効く**（渦巻き474,475／放射状361,240／移動311,205／
+       うねり384,615／球面94,644／太らせる236,304／ガラス107,198）。
+   ⭐ 置き場所は動かさない（値の持ち主は `L.ed` のまま・画像編集の段にも残す）。
+     ＝**同じ値を2つの画面から触れるが、持ち主は1つ**。
+   ⭐ 出す・出さないの印は `ed.show` に持つ＝edCopy が JSON まるごと写すので、
+     控え・設定JSON・まるごと の道に**自動で乗る**（4か所に手を入れない）。
+   ⚠️ 名前は画像編集の段と同じ言葉にする（言葉を2か所で変えない）。 */
+const EDLIST = [
+  /* 名前は【画像編集の段と同じ言葉】にする（言葉を2か所で変えない）。
+     3つ目＝その行に出すつまみ（1つ目が「効いているか」を決める主のつまみ）。 */
+  ['mosaic', 'モザイク',         ['r_mosaic']],
+  ['poster', 'ポスタリゼーション', ['r_poster']],
+  ['thresh', '2階調化（しきい）', ['r_thresh']],
+  ['mono',   '白黒',             ['r_mono']],
+  ['einv',   '階調の反転',       ['r_einvert']],
+  ['eedge',  '輪郭検出',         ['r_eedge']],
+  ['mblur',  '移動ぼかし',       ['r_mblur','r_mang']],
+  ['rblur',  '放射状ぼかし',     ['r_rblur']],
+  ['wave',   'うねり',           ['r_wave','r_wfreq']],
+  ['twirl',  '渦巻き',           ['r_twirl']],
+  ['sphere', '球面',             ['r_sphere']],
+  ['dilate', '太らせる／痩せさせる', ['r_dilate']],
+  ['warp',   'ワープ（曲げる）', ['r_warp']],
+  ['glass',  'ガラス（歪み）',   ['r_glass','r_glasssm','r_glassscale']],
+  ['half',   'ハーフトーン',     ['r_half','r_halfsz']],
+  ['gpen',   'グラフィックペン', ['r_gpen','r_gpenang']],
+  ['film',   'フィルム粒子',     ['r_film']],
+  /* ⭐ 2026-09-02・木下＝「背景のぼかしもしよう」＝Figma に有って MOYA に無かった1つ */
+  ['bdblur', '背景のぼかし',     ['r_bdblur']],
+];
+const edShow = L => { const e = edOf(L); return e.show || (e.show = {}); };
+const edShown = (L, k) => !!edShow(L)[k];
 const FXLIST = [
   ['bevel','ベベルとエンボス'], ['stroke','境界線'], ['inner','シャドウ（内側）'],
   ['iglow','光彩（内側）'], ['satin','サテン'],
@@ -11019,7 +11090,39 @@ function buildFxList(){
       stat(n + ' を足した（左の目で いつでも外せます）'); };
     menu.appendChild(b2);
   });
-  el('b_fxadd').disabled = rest.length === 0;
+  /* ══⭐⭐ 画像編集のフィルターも【同じ一覧】から足せる ══ 2026-09-02
+     🔴 木下＝「まとめるではなく（一覧に混ぜる）、あなたが言っているやり方でやろう」
+       ＝**見た目は増やさない・探すのは1か所**。選ぶとこの段に行が増えて、そこで触れる。
+     ⚠️ 値の持ち主は `L.ed` のまま（画像編集の段にも今までどおり有る）＝持ち主は1つ。
+     ⚠️ 見出しは【区切り】を1つ置く＝どこからが借りものか分かる。 */
+  const restEd = EDLIST.filter(([k]) => !edShown(L, k));
+  if(restEd.length){
+    const sep = document.createElement('div');
+    sep.textContent = '画像のフィルター';
+    sep.style.cssText = 'flex:1 0 100%;font-size:10px;color:var(--fg3);margin:6px 0 2px';
+    menu.appendChild(sep);
+  }
+  restEd.forEach(([k, n, ids]) => {
+    const b2 = document.createElement('button');
+    b2.textContent = n;
+    b2.onclick = () => {
+      hist();
+      edShow(L)[k] = true;
+      /* ⭐ 足した瞬間に【何か見える】ようにする＝押しても何も起きない、を作らない。
+         ⚠️ すでに触ってある値はそのまま（勝手に上書きしない）。 */
+      const main = el(ids[0]);
+      if(main && Math.abs(+main.value - (+main.dataset.zero || 0)) < 0.0001){
+        const mid = (+main.max) * (+main.min < 0 ? 0.4 : 0.35);
+        main.value = Math.round(mid);
+        main.dispatchEvent(new Event('input', { bubbles:true }));
+      }
+      FXOPEN = 'ed:' + k;
+      menu.classList.add('hide'); fxTouched(L);
+      stat(n + ' を足した（この段で触れます／画像編集の段にも同じものがあります）');
+    };
+    menu.appendChild(b2);
+  });
+  el('b_fxadd').disabled = (rest.length + restEd.length) === 0;
 }
 el('b_fxadd').onclick = () => {
   el('fxAddMenu').classList.toggle('hide');
@@ -11096,9 +11199,55 @@ document.querySelectorAll('#fxBox .fxhead').forEach(h => {
    ⭐ 触ったあとにやることを【1本】にまとめる＝6か所に同じ3行を書かない。
    ⚠️ buildList の中から syncFx を呼んでいる所がある（一覧の行→パネル）。
       逆向きなので回らない。 */
+/* ══⭐⭐ 画像のフィルターを【エフェクトの段に行として並べる】══ 2026-09-02
+   ⭐ つまみは画像編集の段から【借りてくる】＝値の持ち主は1つのまま（上のバーと同じ考え）。
+     外す（×）と元の場所へ返す。＝同じつまみを2つ作らない。
+   ⚠️ 借りた物は元の場所・元の順番へ返す（optClear と同じ作法）。 */
+let FXEDHOME = [];
+function fxEdClear(){
+  for(let i = FXEDHOME.length - 1; i >= 0; i--){
+    const o = FXEDHOME[i];
+    if(o.next && o.next.parentNode === o.parent) o.parent.insertBefore(o.el, o.next);
+    else o.parent.appendChild(o.el);
+  }
+  FXEDHOME = [];
+  const box = el('fxEdList'); if(box) box.innerHTML = '';
+}
+function buildFxEd(){
+  fxEdClear();
+  const box = el('fxEdList'); if(!box) return;
+  const L = LAYERS[SEL]; if(!L || L.kind === 'adj') return;
+  EDLIST.forEach(([k, n, ids]) => {
+    if(!edShown(L, k)) return;
+    const sec = document.createElement('div'); sec.className = 'fxsec';
+    const head = document.createElement('div'); head.className = 'fxhead';
+    const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = n;
+    /* ⭐ × ＝一覧から外す（値は残る＝また足せば同じ絵に戻る） */
+    const xr = document.createElement('button'); xr.className = 'xr'; xr.textContent = '×';
+    xr.title = '一覧から外す（値は残ります・［＋足す］でまた出せます）';
+    xr.onclick = ev => { ev.stopPropagation();
+      hist(); edShow(L)[k] = false;
+      if(FXOPEN === 'ed:' + k) FXOPEN = null;
+      fxTouched(L); stat(n + ' を一覧から外した（値は残っています）'); };
+    head.append(nm, xr);
+    head.onclick = () => { FXOPEN = (FXOPEN === 'ed:' + k) ? null : 'ed:' + k; buildFxEd(); };
+    const body = document.createElement('div'); body.className = 'fxbody';
+    if(FXOPEN !== 'ed:' + k) body.classList.add('hide');
+    ids.forEach(id => {
+      const e = el(id); if(!e) return;
+      const node = e.closest('.knob') || e;
+      if(!node || !node.parentNode) return;
+      FXEDHOME.push({ el:node, parent:node.parentNode, next:node.nextSibling });
+      body.appendChild(node);
+    });
+    sec.append(head, body);
+    box.appendChild(sec);
+  });
+}
 function fxTouched(L){
   if(L) L._key = '';
   syncFx();
+  buildFxEd();      /* ⭐ 画像のフィルターの行も作り直す（2026-09-02） */
   buildList();
   render();
 }
@@ -11124,6 +11273,9 @@ function syncFx(){
   el('fx_grev').checked = !!f.grad.rev; el('fx_stgrad').checked = !!f.stroke.grad;
   if(f.pat) el('fx_pat').checked = !!f.pat.on;
   buildFxList();
+  /* ⭐ 画像のフィルターの行も、選び直したときに作り直す（2026-09-02）
+     ⚠️ syncFx は buildList から呼ばれるので、ここでは buildList を呼ばない（回る） */
+  if(typeof buildFxEd === 'function') buildFxEd();
   el('sel_gmode').value = f.grad.mode;
   if(f.bevel) document.querySelectorAll('#s_gloss button')
     .forEach(x => x.classList.toggle('on', x.dataset.v === (f.bevel.gloss || 'linear')));
