@@ -321,7 +321,26 @@
         <option value="kana" selected>＋ ひらがな・カタカナ（270字）</option>
         <!-- ⭐ 2026-09-02・ここが【漢字を入れる道】＝①元の字／③字見本 に打った字がそのまま鋳られる -->
         <option value="打った字">①と③に打った字だけ（漢字もここから）</option>
+        <!-- ══⭐⭐ 漢字ぜんぶ ══ 2026-09-02・木下＝「漢字も含めフォントダウンロードしたい」
+             ⚠️【読ませた書体】のときだけ。元の書体の cmap から拾うので、手で一覧を書かない。 -->
+        <option value="kana漢字">＋ 漢字ぜんぶ（読ませた書体から拾う）</option>
+        <option value="kanji">漢字だけ（読ませた書体から拾う）</option>
       </select></div>
+    <div id="kanjiUI" class="hide">
+      <div class="row"><span class="n">漢字の数（0＝ぜんぶ）</span><output id="oKanjiN">0</output></div>
+      <input type="range" id="kanjiN" min="0" max="8000" step="100" value="0">
+      <div class="hint">⭐ <b>配るものは 0（ぜんぶ）で鋳ってください。</b><br>
+        🔴 数を決めると <b>Unicode の若い順</b>に切ります ──
+        <b>常用漢字を上から順に入れるわけではありません</b>。
+        打ちたい字が入らないことがあるので、<b>数を決めるのは「大きさと時間を見るための試し鋳り」</b>
+        だと思ってください。<br>
+        ⭐ 実測（元＝Zen Kaku Gothic New・型＝筆・まるめ 3）：
+        <b>漢字 500 ＝ 767字 277KB 0.8秒／2,500 ＝ 2,767字 1.2MB 2.4秒／
+        ぜんぶ 6,682 ＝ 6,949字 3.7MB 6.3秒</b>。<br>
+        ⚠️ <b>［読ませた書体］でないと拾えません</b>（端末の書体は中を読めないため）。
+        ①で <b>書体ファイルを読む</b> を押して、元にしたい .otf / .ttf を読ませてください
+        （配っている UWASA JP の元は <b>Zen Kaku Gothic New</b> です）。</div>
+    </div>
     <div class="row"><span class="n">まるめ（点を減らす）</span><output id="oSimp">3</output></div>
     <input type="range" id="ttfSimp" min="0" max="12" step="1" value="3">
     <div class="row"><span class="n">書体の名</span></div>
@@ -1552,6 +1571,31 @@ const TTF_JPSYM = [...'ー、。「」・〜（）'];
 function ttfChars(kind){
   if(kind === 'latin') return TTF_LATIN;
   if(kind === 'kana')  return [...TTF_LATIN, ...TTF_HIRA, ...TTF_KATA, ...TTF_JPSYM];
+  /* ══⭐⭐ 漢字も鋳る ══ 2026-09-02
+     🔴 木下＝「なるほど これでは フォントを引用してるから ひらがなカタカナ、漢字 見れるってこと？
+        なんとか使えるように **漢字も含めフォントダウンロードしたい**な uwasa の」
+       ＝そのとおり。画面は**元の書体から字を借りて崩している**ので漢字も出る。
+         鋳るときに【かなまで】しか入れていなかったので、配っている .ttf に漢字が無かった。
+     ⭐ 漢字の一覧を**手で書かない**（推測で作らない）── 元の書体の cmap から拾う。
+       ＝その書体が本当に持っている漢字だけが、確実に入る。
+     ⚠️ だから【読ませた書体】のときだけ使える（端末の書体は中を読めない）。
+     ⭐ 上限を持つ＝**多い順に切る**のではなく、⑦の〔漢字の数〕で決める（大きさを見て決められる）。 */
+  if(kind === 'kanji' || kind === 'kana漢字'){
+    const base = kind === 'kanji' ? [] : [...TTF_LATIN, ...TTF_HIRA, ...TTF_KATA, ...TTF_JPSYM];
+    const cap = Math.max(0, +(($('kanjiN') && $('kanjiN').value) || 0));
+    const k2 = [];
+    if(FONT && FONT.tables && FONT.tables.cmap && FONT.tables.cmap.glyphIndexMap){
+      const m = FONT.tables.cmap.glyphIndexMap;
+      for(const key of Object.keys(m)){
+        const c = +key;
+        /* CJK統合漢字（基本＋拡張A）だけ。⚠️ かな・記号はここで拾わない */
+        if((c >= 0x4e00 && c <= 0x9fff) || (c >= 0x3400 && c <= 0x4dbf)) k2.push(c);
+      }
+      k2.sort((a, b2) => a - b2);
+    }
+    const use = cap ? k2.slice(0, cap) : k2;
+    return [...new Set([...base, ...use.map(c => String.fromCodePoint(c))])];
+  }
   /* ══🔴🔴 ここが死んでいた ══ 2026-09-02
      木下＝「（漢字は）今はまだだめだね」＝そのとおりだった。
      ＝この分岐は `$('tv')` を読んでいたが、**そんな欄はこの道具に無い**（0件）。
@@ -1698,6 +1742,20 @@ function ttfBuild(opt){
       + 'かっちり出したいときは ①で書体ファイルを落としてください。');
   const simp = $('ttfSimp');
   if(simp) simp.addEventListener('input', () => { $('oSimp').textContent = simp.value; });
+  /* ⭐ 漢字を選んだときだけ〔漢字の数〕を出す（触れるのに効かないつまみを作らない） */
+  const kN = $('kanjiN');
+  if(kN) kN.addEventListener('input', () => { $('oKanjiN').textContent = kN.value; });
+  function syncKanjiUI(){
+    const v = $('ttfSet') ? $('ttfSet').value : '';
+    const on = (v === 'kanji' || v === 'kana漢字');
+    $('kanjiUI').classList.toggle('hide', !on);
+    if(on && !FONT)
+      note('⚠️ 漢字は<b>［読ませた書体］からしか拾えません</b>。'
+         + '①の <b>書体ファイルを読む（.otf / .ttf）</b> で元の書体を読ませてください。'
+         + '<br>⭐ 配っている UWASA JP の元は <b>Zen Kaku Gothic New</b> です。');
+  }
+  $('ttfSet') && $('ttfSet').addEventListener('change', syncKanjiUI);
+  syncKanjiUI();
 
   const make = () => {
     const t0 = performance.now();
