@@ -6242,6 +6242,70 @@ await wait(600);
      JSON.stringify(FS.可変));
 }
 
+/* ══⭐⭐ 読み込んだ書体は【この機械に残る】／足す道具を名指しする ══ 2026-09-02
+   🔴 木下＝「フォントを読み込みしても ローカルにそのデータがあるなら
+      そこで利用できるようにしてね」＝開き直すと消えていた（毎回 .ttf を選び直し）。
+   🔴🔴 木下＝「使用する場合は、CHU に入れないといけないの？なんかその辺がわかってなくて」
+     ＝混乱の元は**私が書いた文**だった（UWASA の書体なのに「鋳CHU で足す」と書いていた）。
+       → その書体を作った道具を名指しする（UWASA→噂UWASA／CHU→鋳CHU／KETA→桁KETA）。 */
+{
+  const FK = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    const out = {};
+    closeAllEditors();
+    /* ① 書体を足したら IndexedDB に残るか（読み戻す道が本当に動くか） */
+    const buf = await (await fetch('../uwasa/fonts/UWASA-JP-Sumi.ttf')).arrayBuffer();
+    const nm = '試験用の書体';
+    const fam = 'moya-shiken';
+    const fam2 = '"' + fam + '"';
+    document.fonts.add(await new FontFace(fam, buf, { weight:'1 1000' }).load());
+    FONTBUF[fam2] = buf; FONTAXES[fam2] = readAxes(buf);
+    await fontSave(fam2, nm, buf);
+    FONTS.push([fam2, nm]);
+    /* 覚えていないふりをして、読み戻す道だけを通す */
+    const i = FONTS.findIndex(o => o[0] === fam2);
+    FONTS.splice(i, 1); delete FONTBUF[fam2];
+    out.読み戻した = await fontRestore();
+    out.一覧にある = [...document.querySelectorAll('#t_font option')]
+      .map(x => x.textContent).includes(nm);
+    out.FONTSにある = FONTS.some(o => o[0] === fam2);
+    await document.fonts.load('400 120px ' + fam2, 'かなAB');
+    const m = document.createElement('canvas').getContext('2d');
+    m.font = '400 120px ' + fam2; const a = m.measureText('AB').width;
+    m.font = '400 120px sans-serif'; const s2 = m.measureText('AB').width;
+    out.その書体で描ける = Math.round(a) !== Math.round(s2);
+    /* 後片付け＝残したものを消す（次の回に持ち越さない） */
+    await fontDrop(fam2);
+    const j = FONTS.findIndex(o => o[0] === fam2); if(j >= 0) FONTS.splice(j, 1);
+    const op = [...document.querySelectorAll('#t_font option')].find(x => x.value === fam2);
+    if(op) op.remove();
+    /* ② 足す道具の名指し */
+    out.道具 = { UWASA:makerOf('UWASAJP, sans-serif'), CHU:makerOf('CHUJP, sans-serif'),
+                 KETA:makerOf('KETA, sans-serif') };
+    document.getElementById('b_text').click(); await w(700);
+    const T = LAYERS[SEL];
+    const ta = document.getElementById('t_str');
+    ta.value = '静かな手紙'; ta.dispatchEvent(new Event('input', { bubbles:true })); await w(500);
+    const sel = document.getElementById('t_font');
+    sel.value = 'UWASAJP, sans-serif'; sel.dispatchEvent(new Event('change', { bubbles:true }));
+    await w(1100);
+    out.段の文 = (document.getElementById('fontWarn').textContent || '');
+    return out;
+  });
+  ok(FK.読み戻した >= 1 && FK.一覧にある && FK.FONTSにある && FK.その書体で描ける,
+     '⭐⭐ 読み込んだ書体は【この機械に残る】＝開き直しても一覧から選べて、その書体で描ける',
+     JSON.stringify(FK));
+  ok(FK.道具.UWASA && FK.道具.UWASA[0] === '噂 UWASA'
+     && FK.道具.CHU && FK.道具.CHU[0] === '鋳 CHU'
+     && FK.道具.KETA && FK.道具.KETA[0] === '桁 KETA',
+     '⭐ その書体を【どの道具が作ったか】を持っている（UWASA→噂UWASA／CHU→鋳CHU）',
+     JSON.stringify(FK.道具));
+  ok(/噂 UWASA/.test(FK.段の文) && !/鋳CHU で漢字を足す/.test(FK.段の文),
+     '🔴🔴 漢字が無いと言うときは【その書体を作った道具】を名指しする'
+     + ' ── 前は UWASA の書体なのに「鋳CHU で足す」と書いていた（木下が混乱した元）',
+     FK.段の文.slice(0, 140));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);

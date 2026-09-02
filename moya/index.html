@@ -3642,9 +3642,21 @@ function fontWarnWords(){
   /* ⭐ 「持っている字は ちゃんと変わっている」を先に言う＝「効いていない」と読ませない
      （木下が見たのは「静かな手紙」＝3字が漢字で変わらず、か・な は変わっていた） */
   const ok2 = [...String(t.str || '')].filter(c => bad.indexOf(c) < 0 && !/\s/.test(c));
+  /* ══⭐⭐ 足すなら【その書体を作った道具】── 2026-09-02
+     🔴🔴 木下＝「使用する場合は、CHU に入れないといけないの？なんかその辺がわかってなくて」
+       ＝混乱の元は**私が書いた文**だった。UWASA の書体なのに「鋳CHU で足す」と言っていた。
+       ＝道具は作り方ごとに別（CHU＝升目に落とす／UWASA＝元の字を崩す／KETA＝升目から鋳る）。
+         **UWASA の字を増やすのは UWASA。CHU は関係ない。**
+     ⭐ だから【その書体を作った道具】を名指しして、そこへ行けるようにする。 */
+  const 道具 = makerOf(t.font);
   const あと = (row[2] === 'kana' || !jp)
       ? (kanji ? '🔴 <b>木下の書体には漢字がまだ1文字も入っていません</b>（かな・カナ・欧文だけ）。'
-               + '漢字を出すには 明朝・ゴシックなどを選ぶか、鋳CHU で漢字を足す必要があります。'
+               + '<br>⭐ 足すなら<b>この書体を作った道具</b>＝'
+               + (道具 ? '<a href="' + 道具[1] + '" target="_blank" style="color:#0a63c9">'
+                         + 道具[0] + '</a>' : 'その書体を作った道具')
+               + ' で<b>使う漢字を打って鋳ります</b>'
+               + '（⚠️ 別の道具＝鋳CHU などに入れる必要はありません。作り方が違う別の書体です）。'
+               + '<br>すぐ出したいときは 明朝・ゴシックなどを選んでください。'
                : 'かな込みの書体を選んでください。')
       : '<b>' + jp[1] + '</b> を選ぶと かな は出ます'
         + (kanji ? '（<b>漢字はまだどの書体にも入っていません</b>）。' : '。');
@@ -9878,6 +9890,25 @@ function buildSwatches(){
      家を持たない書体（明朝・Helvetica など）は自分1人が家＝姿は1つ＝欄を出さない
      （触れるのに効かない欄を作らない）。
    ⚠️ 値の持ち主は `t.font` 1つのまま（姿も CSS のファミリー名）＝保存の道に手を入れない。 */
+/* ══⭐⭐ その書体を【どの道具が作ったか】══ 2026-09-02
+   🔴🔴 木下＝「使用する場合は、CHU に入れないといけないの？なんかその辺がわかってなくて」
+     ＝道具は作り方ごとに別もの。**字を増やすのは、その書体を作った道具**。
+       ・鋳CHU ＝ 升目（粒）に落として鋳る
+       ・噂UWASA ＝ 元の書体を崩して鋳る
+       ・桁KETA ＝ 升目から鋳る ／ HON ＝ 骨から鋳る
+     ＝ UWASA の字を増やすのに CHU は関係ない。 */
+const MAKER = [
+  [/^UWASA/, '噂 UWASA', '../uwasa/'],
+  [/^CHU/,   '鋳 CHU',   '../chu/'],
+  [/^KETA/,  '桁 KETA',  '../keta/'],
+  [/^HON/,   'HON',      '../hon/'],
+];
+function makerOf(fam){
+  const r = FONTS.find(x => x[0] === fam);
+  const nm = r ? r[1] : String(fam);
+  const hit = MAKER.find(([re]) => re.test(nm));
+  return hit ? [hit[1], hit[2]] : null;
+}
 const famOf   = f => { const r = FONTS.find(x => x[0] === f); return r ? (r[3] || r[0]) : f; };
 const famRows = f => { const k = famOf(f); return FONTS.filter(x => (x[3] || x[0]) === k); };
 /* 🔴 家の代表＝**FONTS に先に書いてある行**（並び替えの前に決める）＝一覧は1行も動かない */
@@ -10232,6 +10263,77 @@ el('t_style').addEventListener('change', e => {
     syncWeightSay();
     stat('スタイルを「' + styleOf(e.target.value) + '」にした'); });
 });
+/* ══⭐⭐ 読み込んだ書体は【この機械に残る】══ 2026-09-02
+   🔴 木下＝「フォントを読み込みしても ローカルにそのデータがあるなら
+      そこで利用できるようにしてね」
+     ＝いままでは読んだ書体を FONTBUF に持つだけで、**開き直すと消えていた**
+       （＝毎回 .ttf を選び直す／設定JSONを読んでも書体が無くて別の字で出る）。
+   ⭐ 素材と同じ IndexedDB に、**中身（ArrayBuffer）ごと**しまう。
+     立ち上がりに読み戻して FONTS と一覧に足す＝**次からそのまま選べる**。
+   ⚠️ 書き込むのは【読み込んだときだけ】（つまみを回すたびには書かない）。
+   ⚠️ 壊れていたら黙って飛ばす（開かない道具を作らない）＝素材の控えと同じ作法。 */
+const FDB = { db:'moya.fonts', store:'fonts', ver:1 };
+function fdb(){
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(FDB.db, FDB.ver);
+    r.onupgradeneeded = () => { const d = r.result;
+      if(!d.objectStoreNames.contains(FDB.store)) d.createObjectStore(FDB.store); };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function fontSave(fam2, nm, buf){
+  try{
+    const d = await fdb();
+    await new Promise((res, rej) => { const t = d.transaction(FDB.store, 'readwrite');
+      t.objectStore(FDB.store).put({ nm, buf }, fam2);
+      t.oncomplete = res; t.onerror = () => rej(t.error); });
+    d.close();
+  }catch(e){ console.warn('書体をこの機械に残せなかった', e); }
+}
+async function fontDrop(fam2){
+  try{ const d = await fdb();
+    await new Promise(res => { const t = d.transaction(FDB.store, 'readwrite');
+      t.objectStore(FDB.store).delete(fam2); t.oncomplete = res; t.onerror = res; });
+    d.close(); }catch(_){}
+}
+/* ⭐ 立ち上がりに読み戻す。⚠️ 素材の控えより先に済ませる（字が別の書体で描かれないように） */
+async function fontRestore(){
+  let rows = [];
+  try{
+    const d = await fdb();
+    rows = await new Promise((res, rej) => { const t = d.transaction(FDB.store, 'readonly');
+      const out = []; const q = t.objectStore(FDB.store).openCursor();
+      q.onsuccess = ev => { const c = ev.target.result;
+        if(c){ out.push([c.key, c.value]); c.continue(); } else res(out); };
+      q.onerror = () => rej(q.error); });
+    d.close();
+  }catch(_){ return 0; }
+  let n = 0;
+  for(const [fam2, v] of rows){
+    if(!v || !v.buf) continue;
+    const fam = String(fam2).replace(/^"|"$/g, '');
+    try{
+      const ff = await new FontFace(fam, v.buf, { weight:'1 1000' }).load();
+      document.fonts.add(ff);
+      FONTBUF[fam2] = v.buf;
+      FONTAXES[fam2] = readAxes(v.buf);
+      if(!FONTS.some(o => o[0] === fam2)){
+        FONTS.push([fam2, v.nm || fam]);
+        const o = document.createElement('option');
+        o.value = fam2; o.textContent = v.nm || fam; el('t_font').appendChild(o);
+      }
+      n++;
+    }catch(_){ await fontDrop(fam2); }      /* 壊れていたら捨てる（黙って飛ばす） */
+  }
+  if(n){
+    /* ⭐ もう置いてある字を描き直す（読み戻す前は別の書体で描かれている） */
+    LAYERS.forEach(L => { if(L.kind === 'text') rebuildText(L, () => render()); });
+    stat('この機械に残っていた書体 ' + n + ' つを読み戻した');
+  }
+  return n;
+}
+
 /* ══ 書体を読み込む ══ 2026-08-31・木下＝「テキストフォント読み込みもね」
    🔴 可変フォントは FontFace に【太さの範囲】を渡す（渡さないと 400 に固定される）。
       → feedback_variable_font_needs_weight_range */
@@ -10253,6 +10355,9 @@ el('f_font').addEventListener('change', e => {
           /* ⭐ 中身と軸を覚えておく（軸を動かすとき、その値の書体を作り直すのに要る） */
           FONTBUF[fam2] = rd.result;
           FONTAXES[fam2] = readAxes(rd.result);
+          /* ⭐ この機械に残す＝開き直しても、そのまま選べる（木下＝「ローカルに
+             そのデータがあるなら そこで利用できるように」） */
+          fontSave(fam2, nm, rd.result);
           if(!FONTS.some(o => o[0] === fam2)){
             FONTS.push([fam2, nm]);
             const o = document.createElement('option');
@@ -15270,6 +15375,11 @@ addEventListener('visibilitychange', () => {
       stat('素材を落とすと、そのまま空気を着ます'); });
     return;
   }
+  /* ⭐⭐ 読み込んだ書体を【先に】読み戻す（2026-09-02・木下＝「ローカルに
+     そのデータがあるなら そこで利用できるように」）。
+     🔴 素材の控えより先にやる ── あとにすると、控えの中の字が
+       **一瞬ちがう書体で描かれてから**入れ替わる（＝別の絵が焼ける）。 */
+  try{ await fontRestore(); }catch(_){ }
   let got = null;
   try{ got = await idbGet(); }catch(_){ }
   if(got && got.txt){
