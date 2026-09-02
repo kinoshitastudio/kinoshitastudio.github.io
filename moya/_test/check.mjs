@@ -6143,6 +6143,105 @@ await wait(600);
      JSON.stringify(FW.画素));
 }
 
+/* ══⭐⭐ 書体は【家】と【姿】の2段（Figma のタイポグラフィと同じ）══ 2026-09-02
+   🔴 木下＝「太字なのか。細いのかなど この辺りも実装としていりそうだな。でないと整合性あわなそう」
+     ＝そのとおりだった。実測で分かった2つ：
+     ① `uwasa/fonts/` には Hoso・Regular・Su・Sumi・Sure の **5本**が有るのに
+        MOYA は Regular 1本しか読んでいなかった＝**4本は選べなかった**。
+        同じ字・同じ幅（480）で墨の量だけ違う＝**事実上の太さの5段**
+        （細 7,263 ＜ 素 8,422 ＜ 標準 9,128 ＜ 擦 10,135 ＜ 墨 10,511）。
+     ② ［太さ］のつまみは、姿を1本しか持たない書体では **ブラウザの合成の太字**。
+        Figma の Bold（書体が持っている実体）とは別物なので、そう言う。
+   ⭐ 決めは1つ ── 一覧に出るのは【家の代表】だけ／姿は［スタイル］の欄。
+     姿が1つの書体では欄ごと出さない（触れるのに効かない欄を作らない）。 */
+{
+  const FS = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    const out = {};
+    closeAllEditors();
+    await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+    out.一覧 = [...document.querySelectorAll('#t_font option')].map(o => o.textContent);
+    document.getElementById('b_text').click(); await w(700);
+    const L = LAYERS[SEL];
+    const ta = document.getElementById('t_str');
+    ta.value = 'かなカナ'; ta.dispatchEvent(new Event('input', { bubbles:true })); await w(500);
+    const sel = document.getElementById('t_font'), sv = document.getElementById('t_style');
+    const row = document.getElementById('styleRow'), say = document.getElementById('weightSay');
+    const put = async (id, v) => { const e = document.getElementById(id);
+      e.value = v; e.dispatchEvent(new Event('change', { bubbles:true })); await w(900); };
+    const cnt = cv2 => { const d = cv2.getContext('2d')
+        .getImageData(0, 0, cv2.width, cv2.height).data;
+      let n = 0; for(let i = 3; i < d.length; i += 4) if(d[i] > 8) n++; return n; };
+    /* 姿を1つしか持たない書体＝欄を出さない＋合成だと言う */
+    await put('t_font', FONTS[0][0]);
+    out.ひとつ = { 欄:!row.classList.contains('hide'), 言う:/合成/.test(say.textContent) };
+    /* UWASA JP＝姿が5つ */
+    await put('t_font', 'UWASAJP, sans-serif');
+    out.五つ = { 欄:!row.classList.contains('hide'),
+      姿:[...sv.options].map(x => x.textContent),
+      上のバー:!!row.closest('#optbar'), 見えている:!!row.offsetParent,
+      太さの一言:say.textContent };
+    out.画素 = {};
+    for(const v of [...sv.options].map(x => x.value)){
+      await put('t_style', v); out.画素[styleOf(v)] = cnt(L.img); }
+    await put('t_style', 'UWASAJP, sans-serif');
+    out.戻すと = cnt(L.img);
+    out.家は代表のまま = sel.value;
+    /* ⭐ 細字・太字を置いていない状態で【合成の太字が効く】ことを見る */
+    const tw = document.getElementById('t_weight');
+    const wt = async v => { tw.value = v; tw.dispatchEvent(new Event('input', { bubbles:true }));
+      await w(800); return cnt(L.img); };
+    out.太さ = { w400:await wt(400), w700:await wt(700) };
+    await wt(700);
+    /* 可変フォント＝太さの実体を持つ（合成ではない） */
+    await put('t_font', 'CHUJP, sans-serif');
+    out.可変 = { 欄:!row.classList.contains('hide'), 言う:/実体/.test(say.textContent) };
+    return out;
+  });
+  /* ⚠️ 数で見ない（前の章で書体を読み込むと1行増える＝ぶれる試験になる）。
+     見るのは【姿の行が一覧に出ていないこと】＝家の代表だけが並んでいること。 */
+  ok(!FS.一覧.some(s => /^UWASA JP (素|擦れ|墨|細身)$/.test(s))
+     && FS.一覧.indexOf('UWASA JP（かな込み・漢字なし）') >= 0,
+     '⭐ 書体の一覧は【家の代表だけ】＝姿の4行は出ていない（姿は［スタイル］へ）',
+     JSON.stringify(FS.一覧.filter(s => /UWASA/.test(s))));
+  ok(FS.ひとつ.欄 === false && FS.ひとつ.言う,
+     '⭐⭐ 姿を1つしか持たない書体では［スタイル］を出さない＋［太さ］は合成だと言う',
+     JSON.stringify(FS.ひとつ));
+  /* 🔴 名前は【木下の言葉と道具の KATA】に合わせる（素・筆・擦れ・墨・細身）。
+     私は最初「標準・細・素・擦・墨」と書いていた＝道具の中を見ずに付けた名前だった。 */
+  /* 🔴🔴 並びも言葉も【道具（uwasa の #segKata）とまったく同じ】にする。
+     いったん「墨の量が多い順＝太字」に並べ替えたが、木下がくれた5枚の画面では
+     **墨は線の中が白く抜けて軽く見える**＝太さの階段ではなかった。→ 道具の順に戻した。 */
+  ok(FS.五つ.欄 && FS.五つ.上のバー && FS.五つ.見えている
+     && FS.五つ.姿.join('・') === '素・筆・擦れ・墨・細身',
+     '🔴🔴 UWASA JP の【5つの型】＝素・筆・擦れ・墨・細身（道具と同じ順・同じ言葉）'
+     + ' ── 前は Regular 1本しか読んでいなかった／⚠️ これは太さではなく崩し方',
+     JSON.stringify(FS.五つ));
+  ok(new Set(Object.values(FS.画素)).size === 5,
+     '⭐⭐ 5つの型は【ぜんぶ違う絵】になる（同じ字・同じ大きさで墨の量が5通り）',
+     JSON.stringify(FS.画素));
+  ok(FS.戻すと === FS.画素.筆 && FS.家は代表のまま === 'UWASAJP, sans-serif',
+     '🔴 型を戻すと1画素も同じ／型を選んでいる間も一覧は【家】を指したまま',
+     JSON.stringify([FS.戻すと, FS.画素.筆, FS.家は代表のまま]));
+  ok(/太さ（細字・中間・太字）はこの/.test(FS.五つ.太さの一言 || ''),
+     '⭐ ［太さ］の下で「細字・中間・太字はこのつまみ」と言う',
+     String(FS.五つ.太さの一言).slice(0, 80));
+  /* ══🔴🔴 私が一度こわした所を、二度と壊さないための試験 ══ 2026-09-02
+     細字・太字の .ttf を CSS の @font-face で【先に宣言】したら、
+     ファイルが無くて中間の1本へ落ちるのに「その太さの face は有る」と見なされ、
+     **ブラウザの合成の太字まで止まった**（実測＝300/400/700 が全部 9,172 で同じ）。
+     ＝［太さ］が1通りの絵しか作らない＝死んだつまみ／しかも**今までの絵が変わる**。
+     ⭐ 直し＝実ファイルが本当に読めたときだけ JS で FontFace を足す。
+     ⚠️ ここは「置いていない状態」なので、**合成の太字が効いていること**を見る。 */
+  ok(FS.太さ && FS.太さ.w700 > FS.太さ.w400,
+     '🔴🔴 細字・太字を置いていないうちは【合成の太字が今までどおり効く】'
+     + '（@font-face を先に宣言すると合成が止まって、つまみが死ぬ）',
+     JSON.stringify(FS.太さ));
+  ok(FS.可変.欄 === false && FS.可変.言う,
+     '⭐ 可変フォント（CHU JP）は【太さの実体】を持つ＝つまみがそのまま効くと言う',
+     JSON.stringify(FS.可変));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);
