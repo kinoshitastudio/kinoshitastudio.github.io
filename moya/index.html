@@ -1588,6 +1588,23 @@
       <button class="btn" id="b_lmselout">選択範囲外をマスク</button>
       <button class="btn" id="b_lmselin">選択範囲をマスク</button>
     </div>
+    <!-- ══⭐⭐ 明るさからマスクを作る（輝度マスク）══ 2026-09-03
+         Photoshop＝チャンネルの RGB を ⌘クリック。手でなぞらずに
+         「明るい所だけ／暗い所だけ」に効かせられる。 -->
+    <div class="row" style="margin-top:8px"><span class="n" style="font-weight:590">明るさから作る（輝度マスク）</span></div>
+    <div class="btns2">
+      <button class="btn" id="b_lmlum">明るい所を残す</button>
+      <button class="btn" id="b_lmlumd">暗い所を残す</button>
+    </div>
+    <div class="btns2">
+      <button class="btn" id="b_lmlumm">中間だけ残す</button>
+      <button class="btn" id="b_lmlumn">もっと狭く（絞る）</button>
+    </div>
+    <div class="note"><b>絵の明るさ そのもの</b>を型にします（手でなぞりません）。<br>
+      ［もっと狭く］を押すたび<b>いちばん明るい所だけ</b>に絞れます（Photoshop の ⌘⇧⌥クリックと同じ）。<br>
+      <b>焼き込みません</b>＝［マスクを消す］で1画素も同じに戻ります。</div>
+    <div class="btns2">
+    </div>
     <div id="lmHas" class="hide">
       <button class="btn" id="b_lmpaint" style="width:100%;margin-top:6px">筆で塗る（白＝出す／黒＝隠す）</button>
       <div class="knob"><span class="n">濃度</span><input class="num" type="number" id="n_r_lmdens"><input type="range" id="r_lmdens" min="0" max="100" step="1" value="100"><output id="o_lmdens" hidden>1.00</output></div>
@@ -5670,6 +5687,45 @@ function lmAdd(L, black){
   const q = lmOf(L);
   q.cv = lmNew(L, black); q.on = true; q.inv = false; q.link = true; q.anchor = null;
   lmBump(L);
+}
+/* ══⭐⭐ 明るさからマスクを作る（輝度マスク）══ 2026-09-03 ═══════════
+   ⭐ Obsidian「06_…馴染ませる」第6部④＝Tony Kuyper の **輝度マスク**。
+     Photoshop では `チャンネル ▸ RGB のサムネイルを ⌘クリック` で
+     **画像の明るい所が選択範囲になる**（明るいほど強く選ばれる）。
+     ⌘⇧⌥クリックを重ねるほど「もっと明るい所だけ」に絞れる。⇧⌘I で暗い側。
+   ⭐ MOYA では【その素材の絵の明るさ】をそのままマスクにする＝
+     手でなぞらずに「明るい所にだけ／暗い所にだけ」効かせられる。
+   ⚠️ マスクは白＝出す／黒＝隠す。だから
+     ・明るい側＝明るい所ほど白い型（＝明るい所が残る）
+     ・暗い側＝暗い所ほど白い型（＝暗い所が残る）
+   ⚠️ 焼き込まない ── ［マスクを消す］で1画素も同じに戻る。 */
+function lmFromLum(L, どちら, 絞り){
+  LUMWHICH = どちら;
+  const m = maskSize(L);
+  const src = srcData(L);
+  if(!src){ stat('この素材には絵がありません'); return false; }
+  hist();
+  const c = document.createElement('canvas'); c.width = m.w; c.height = m.h;
+  const x = c.getContext('2d');
+  const im = x.createImageData(m.w, m.h), d = im.data;
+  const s = src.data || src;
+  const n = Math.max(1, Math.min(4, 絞り | 0));      /* 重ねるほど狭くなる（Adobe と同じ考え） */
+  for(let i = 0; i < d.length; i += 4){
+    /* 明るさ＝Adobe の RGB チャンネル（輝度） */
+    let v = (s[i] * 299 + s[i+1] * 587 + s[i+2] * 114) / 255000;   /* 0〜1 */
+    if(どちら === 'dark') v = 1 - v;
+    if(どちら === 'mid') v = 1 - Math.abs(v * 2 - 1);               /* 中間だけ */
+    for(let k = 1; k < n; k++) v *= v;                              /* 絞る＝掛け合わせる */
+    /* 透けている所は そのまま透ける（素材の外を白くしない） */
+    const a = s[i+3] / 255;
+    d[i] = d[i+1] = d[i+2] = 255;
+    d[i+3] = Math.round(255 * v * a);
+  }
+  x.putImageData(im, 0, 0);
+  const q = lmOf(L);
+  q.cv = c; q.on = true; q.inv = false; q.link = true; q.anchor = null;
+  lmBump(L);
+  return true;
 }
 function lmDel(L){ hist(); L.lm = null; L._key = ''; }
 /* 型ぜんぶを白／黒に塗り直す（マスクは残る） */
@@ -11715,6 +11771,8 @@ function buildBrPre(){
      （→ feedback_move_the_setting_with_the_exit＝設定は使う欄に置く）。
    ⚠️ 読むのは【別の紙に刷り直したもの】＝本番の盤を getImageData しない
      （→ feedback_reading_pixels_changes_how_it_draws＝読むと描き方が変わる）。 */
+let LUMN = 1;                     /* 輝度マスクを何回 絞ったか（Adobe の ⌘⇧⌥クリックの回数） */
+let LUMWHICH = 'light';           /* どちら側から作ったか（絞るときに同じ側で作り直す） */
 let PICKTO = null;                /* いま吸った色を入れる欄 */
 function pickStart(target){
   PICKTO = target;
@@ -13144,6 +13202,18 @@ function syncLm(){
                           else stat('先にパスを閉じて選択範囲を作ってください'); });
   on('b_lmselin',  L => { if(lmFromSel(L, true))  done('選択範囲をマスクした（囲った中が隠れます）');
                           else stat('先にパスを閉じて選択範囲を作ってください'); });
+  /* ⭐ 明るさから作る（輝度マスク）── ［もっと狭く］は同じ絵から作り直す＝重ねても濁らない */
+  on('b_lmlum',  L => { LUMN = 1; if(lmFromLum(L, 'light', LUMN))
+    done('明るい所を残す型を作った（絵の明るさ そのものが型）'); });
+  on('b_lmlumd', L => { LUMN = 1; if(lmFromLum(L, 'dark', LUMN))
+    done('暗い所を残す型を作った'); });
+  on('b_lmlumm', L => { LUMN = 1; if(lmFromLum(L, 'mid', LUMN))
+    done('中間だけ残す型を作った'); });
+  on('b_lmlumn', L => {
+    LUMN = Math.min(4, (LUMN || 1) + 1);
+    if(lmFromLum(L, LUMWHICH, LUMN))
+      done('もっと狭くした（' + LUMN + ' 回め）── いちばん明るい所だけに寄ります');
+  });
   on('b_lmwhite', L => { lmFill(L, false); done('マスクをぜんぶ白にした（すべて表示）'); });
   on('b_lmblack', L => { lmFill(L, true);  done('マスクをぜんぶ黒にした（すべて隠す）'); });
   on('b_lmdel',   L => { lmDel(L); done('マスクを消した（1画素も同じに戻りました）'); });
