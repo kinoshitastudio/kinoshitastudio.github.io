@@ -6914,6 +6914,60 @@ ok(PICK22.空気に入った && PICK22.モードが終わった,
    JSON.stringify(PICK22));
 ok(PICK22.Escでやめられる, '⭐ Esc でスポイトをやめられる', JSON.stringify(PICK22));
 
+/* ══⭐⭐ 明るさからマスクを作る（輝度マスク）══ 2026-09-03
+   Obsidian「06_…馴染ませる」第6部④＝Tony Kuyper の輝度マスク。
+   Photoshop の『チャンネルの RGB を ⌘クリック』にあたるもの。 */
+const LUM22 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const 撮 = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+    let s2 = 0; for(let i = 0; i < d.length; i += 4*5) s2 += d[i]*3 + d[i+1]*5 + d[i+2]*7;
+    return s2; };
+  const 層を撮る = (L) => { const f = sheet(); const 控 = LAYERS.map(o2 => o2.on);
+    LAYERS.forEach(o2 => o2.on = (o2 === L));
+    const keep = COARSE; COARSE = 0; LAYERS.forEach(o2 => o2._key = '');
+    const c = document.createElement('canvas'); c.width = f.w; c.height = f.h;
+    paint(c.getContext('2d'), f.w, f.h, false); COARSE = keep;
+    const d = c.getContext('2d').getImageData(0,0,f.w,f.h).data;
+    let s2 = 0; for(let i = 0; i < d.length; i += 4*7) s2 += d[i]*3 + d[i+1]*5 + d[i+2]*7;
+    LAYERS.forEach((o2, k) => o2.on = 控[k]); LAYERS.forEach(o2 => o2._key = '');
+    return s2; };
+  const L = LAYERS.filter(x => !x.kind && x.img).sort((a,b) => a.d - b.d)[0];
+  setSel(LAYERS.indexOf(L), false); syncSel(); await w(500);
+  const out = { 釦が有る: ['b_lmlum','b_lmlumd','b_lmlumm','b_lmlumn']
+    .every(id => { const e = document.getElementById(id); return !!e && !!e.offsetParent; }) };
+  const 素 = 撮();
+  const 素の層 = LAYERS.map(x => 層を撮る(x));
+  const t0 = performance.now();
+  document.getElementById('b_lmlum').click(); await w(800);
+  out.ms = Math.round(performance.now() - t0 - 800);
+  const 明 = 撮();
+  out.明るい所が効く = 明 !== 素;
+  const 後の層 = LAYERS.map(x => 層を撮る(x));
+  out.変わった層 = LAYERS.filter((x, k) => 素の層[k] !== 後の層[k]).length;
+  document.getElementById('b_lmlumn').click(); await w(800);
+  out.絞ると変わる = 撮() !== 明;
+  document.getElementById('b_lmlumd').click(); await w(800);
+  out.暗い側は別の絵 = 撮() !== 明;
+  document.getElementById('b_lmdel').click(); await w(900);
+  out.消すと元に戻る = 撮() === 素;
+  return out;
+});
+ok(LUM22.釦が有る && LUM22.明るい所が効く && LUM22.暗い側は別の絵,
+   '⭐⭐ 明るさからマスクを作れる（輝度マスク・明るい側／暗い側／中間）',
+   JSON.stringify(LUM22));
+ok(LUM22.絞ると変わる,
+   '⭐ ［もっと狭く］でいちばん明るい所だけに寄る（Photoshop の ⌘⇧⌥クリックと同じ）',
+   JSON.stringify(LUM22));
+ok(LUM22.変わった層 === 1,
+   '🔴🔴 輝度マスクは【選んでいる層だけ】に効く（他の層は1画素も変わらない）',
+   String(LUM22.変わった層));
+ok(LUM22.消すと元に戻る,
+   '🔴🔴 輝度マスクは【焼き込まない】── ［マスクを消す］で1画素も同じに戻る',
+   JSON.stringify(LUM22));
+ok(LUM22.ms < 400, '⭐ 輝度マスクは重すぎない', LUM22.ms + 'ms');
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);
