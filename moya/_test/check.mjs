@@ -6576,6 +6576,130 @@ await wait(600);
      JSON.stringify(BRU.つまみが出る));
 }
 
+/* ══⭐⭐ 21巡目 ── 木下の実機（第2波）で見つかった3つ ══ 2026-09-03 ════════
+   ① 一覧の【選ぶ四角】── 木下＝「複数選択時に中のものも数字をいじってしまう」
+   ② JSON を【落として読める】── 木下＝「ドラッグアンドドロップで読み込みできるように」
+   ③ ガラス（歪み）の3つのつまみが【大きい絵でも効く】
+      木下＝「ガラスの歪みのつまみが全く反映されない」
+      🔴 原因は2つ＝ずれが 22px の決め打ち／滑らかさを上げるほど傾きが消えていた */
+const CK21 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const out = {};
+  const cks = () => [...document.querySelectorAll('#layers .ly .lyck')];
+  out.四角の数 = cks().length;
+  out.見える = cks().every(e => !!e.offsetParent && e.getBoundingClientRect().width > 8);
+  const L = LAYERS[SEL] || LAYERS[0];
+  const 控 = { d:L.d, air:L.air, op:L.op };
+  /* ⚠️ 数で比べない ── 押した瞬間に【もう無い層の id】が落とされるので数はずれる。
+     ＝ 見るのは「その層が選ばれたか」そのもの。 */
+  const 行1 = [...document.querySelectorAll('#layers .ly')].filter(r => r.querySelector('.lyck'))[1];
+  const id1 = LAYERS[+行1.dataset.i] ? LAYERS[+行1.dataset.i].id : null;
+  cks()[1] && cks()[1].click(); await w(350);
+  out.押すと増える = SELIDS.includes(id1);
+  /* ⚠️ SELIDS には【もう一覧に出ていない層】の id が混ざることがある（章をまたぐ回帰では特に）。
+     ＝ 比べるのは「いま一覧に出ている行のうち選ばれている数」。 */
+  { const 出 = new Set([...document.querySelectorAll('#layers .ly .lyck')]
+      .map((c, k) => k)); 
+    const 行 = [...document.querySelectorAll('#layers .ly')].filter(r => r.querySelector('.lyck'));
+    const 選 = 行.filter(r => r.classList.contains('sel')).length;
+    out.印が付く = 行.filter(r => r.querySelector('.lyck').classList.contains('on')).length === 選;
+    out.見えている選択 = 選; }
+  /* 🔴🔴 木下＝「選択して筆の調整をした後、**もう一度レイヤーパネルで選択を外そうとすると
+     外せないパターン**があるわ」＝ 私が「ぜんぶ外れないように」1枚のときは外させなかった。
+     ⭐ ぜんぶ外れてよい（左端の【ぜんぶ選ぶ】で1回で戻せる）。 */
+  cks()[1] && cks()[1].click(); await w(350);
+  out.もう一度で減る = !SELIDS.includes(id1);
+  /* 1枚だけのときも外せる（0 枚になれる） */
+  const 残 = [...document.querySelectorAll('#layers .ly .lyck')];
+  SELIDS.slice().forEach(() => { const c = 残.find(x => x.classList.contains('on')); if(c) c.click(); });
+  await w(400);
+  out.ぜんぶ外せる = SELIDS.length === 0;
+  out.数字は動かない = (L.d === 控.d && L.air === 控.air && L.op === 控.op);
+  return out;
+});
+ok(CK21.四角の数 >= 3 && CK21.見える,
+   '⭐⭐ 一覧の行に【選ぶ四角】が出ている（行の数字に触れずに選べる）', JSON.stringify(CK21));
+ok(CK21.押すと増える && CK21.もう一度で減る && CK21.印が付く,
+   '⭐ 四角を押すと選んだものに足され、もう一度で外れる（印も付く）', JSON.stringify(CK21));
+ok(CK21.ぜんぶ外せる,
+   '🔴🔴 1枚だけのときも【外せる】（0枚になれる）── 外せないパターンを作らない',
+   JSON.stringify(CK21));
+const ALL21 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  const e2 = document.getElementById('lp_all');
+  if(!e2) return { 無い:true };
+  const 見 = !!e2.offsetParent && e2.getBoundingClientRect().width > 8;
+  e2.click(); await w(400);
+  const 全 = { 数:SELIDS.length, 顔:e2.textContent, ぜんぶ:SELIDS.length === LAYERS.length };
+  e2.click(); await w(400);
+  const 空 = { 数:SELIDS.length, 顔:e2.textContent };
+  /* いくつかだけ選ぶと【−】の顔になる */
+  const cks = [...document.querySelectorAll('#layers .ly .lyck')];
+  cks[0] && cks[0].click(); await w(400);
+  const 一部 = { 顔:e2.textContent, some:e2.classList.contains('some') };
+  return { 見えている:見, 全, 空, 一部, 層:LAYERS.length };
+});
+ok(ALL21.見えている && ALL21.全.ぜんぶ && ALL21.全.顔 === '✓',
+   '⭐⭐ アイコン列の左端で【ぜんぶ選ぶ】── メールの一覧と同じ（顔は ✓）',
+   JSON.stringify(ALL21));
+ok(ALL21.空.数 === 0 && ALL21.空.顔 === '◻',
+   '⭐⭐ もう一度押すと【ぜんぶ外れる】（選び間違えても1回で戻せる）',
+   JSON.stringify(ALL21));
+ok(ALL21.一部.顔 === '−' && ALL21.一部.some,
+   '⭐ いくつかだけ選んでいるときは【−】の顔（押す前に何枚か分かる）',
+   JSON.stringify(ALL21));
+
+ok(CK21.数字は動かない,
+   '🔴🔴 四角を押しても【奥行き・空気・濃さ】は1つも動かない（木下の困りごとの本体）',
+   JSON.stringify(CK21));
+
+const DROP21 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const 前 = LAYERS.length;
+  /* いまの版を JSON にして、それを【落として】読み直す＝往復して同じ数に戻る */
+  const txt = cfgText(true);
+  LAYERS.length = 0; SEL = -1; SELIDS = []; buildList(); render(); await w(400);
+  const f = new File([txt], 'MOYA_試し.json', { type:'application/json' });
+  const dt = new DataTransfer(); dt.items.add(f);
+  window.dispatchEvent(new DragEvent('drop', { bubbles:true, cancelable:true, dataTransfer:dt }));
+  await w(6000);
+  return { 前, 後:LAYERS.length };
+});
+ok(DROP21.後 === DROP21.前 && DROP21.後 > 0,
+   '⭐⭐ JSON を【落として読める】（読む道は applyJSON 1本＝［設定を読む］と同じ絵）',
+   JSON.stringify(DROP21));
+
+const GLASS21 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  /* 🔴 大きい絵で測る（22px の決め打ちは 700px 級では見えていた＝小さい絵では気づけない） */
+  const 触 = (id, v) => { const e = document.getElementById(id); if(!e) return;
+    e.value = String(v); e.dispatchEvent(new Event('input',{bubbles:true}));
+    e.dispatchEvent(new Event('change',{bubbles:true})); };
+  触('r_long', 1800); await w(700);
+  const 撮 = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+    let s2 = 0; for(let i = 0; i < d.length; i += 4*5) s2 += d[i]*3 + d[i+1]*5 + d[i+2]*7;
+    return s2; };
+  const L = LAYERS.filter(x => !x.kind && x.img).sort((a,b)=>a.d-b.d)[0];
+  setSel(LAYERS.indexOf(L), false); syncSel(); await w(500);
+  edShow(L)['glass'] = true; FXOPEN = 'ed:glass'; buildFxEd(); await w(300);
+  触('r_glass', 15); await w(800);  const 甲 = 撮();
+  触('r_glasssm', 15); await w(800); const 乙 = 撮();
+  触('r_glassscale', 165); await w(800); const 丙 = 撮();
+  触('r_glass', 0); await w(800);   const 丁 = 撮();
+  edShow(L)['glass'] = false;
+  return { ゆがみが効く: 甲 !== 丁, 滑らかさが効く: 乙 !== 甲,
+           テクスチャが効く: 丙 !== 乙, ゼロで戻る: 丁 };
+});
+ok(GLASS21.ゆがみが効く && GLASS21.滑らかさが効く && GLASS21.テクスチャが効く,
+   '🔴🔴 ガラス（歪み）の3つのつまみが【大きい絵でも】ぜんぶ効く（22px の決め打ちをやめた）',
+   JSON.stringify(GLASS21));
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);
