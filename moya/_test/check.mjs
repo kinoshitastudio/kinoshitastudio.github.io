@@ -6877,6 +6877,43 @@ ok(SNAP22.遠い所では寄らない,
    '🔴 近くに何も無ければ【1画素も動かさない】（いままでの動かし心地のまま）',
    JSON.stringify(SNAP22));
 
+/* ══⭐⭐ スポイト（盤から色を吸う）══ 2026-09-03
+   Obsidian「06_…馴染ませる」の対応表＝「空気の色＝背景の一番遠い所をスポイトで吸う」。
+   ⭐ 道具を増やさず【色の欄ごとに［吸］の釦】＝どの色でも同じ道。 */
+const PICK22 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const 釦 = id => { const e = document.getElementById(id);
+    return e && e.nextSibling && e.nextSibling.classList
+      && e.nextSibling.classList.contains('pickb') ? e.nextSibling : null; };
+  const 欄 = ['c_air','c_lit','c_bg','c_brush','c_selsw'];
+  const out = { 釦の数: 欄.filter(id => !!釦(id)).length };
+  const e = document.getElementById('c_air');
+  const 前 = e.value;
+  釦('c_air').click(); await w(300);
+  out.吸うモード = document.body.classList.contains('picking');
+  /* 盤の左上あたりを吸う（本物の押下と同じ道＝pickAt） */
+  pickAt(0.22, 0.18); await w(600);
+  out.色が変わった = e.value !== 前;
+  out.空気に入った = (P.air === e.value);
+  out.モードが終わった = !document.body.classList.contains('picking');
+  /* Esc でやめられる */
+  釦('c_lit').click(); await w(200);
+  const 中 = document.body.classList.contains('picking');
+  document.dispatchEvent(new KeyboardEvent('keydown', { key:'Escape', bubbles:true }));
+  await w(300);
+  out.Escでやめられる = 中 && !document.body.classList.contains('picking');
+  return out;
+});
+ok(PICK22.釦の数 === 5 && PICK22.吸うモード && PICK22.色が変わった,
+   '⭐⭐ スポイト＝色の欄ごとの［吸］で盤から色を吸える（空気・灯・地・筆・描画色）',
+   JSON.stringify(PICK22));
+ok(PICK22.空気に入った && PICK22.モードが終わった,
+   '⭐ 吸った色は【その欄の持ち主】に入る（空気の色なら P.air）／吸ったら終わる',
+   JSON.stringify(PICK22));
+ok(PICK22.Escでやめられる, '⭐ Esc でスポイトをやめられる', JSON.stringify(PICK22));
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);

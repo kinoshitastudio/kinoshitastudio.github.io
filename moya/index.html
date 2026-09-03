@@ -1004,6 +1004,9 @@
     color:#fff; font:inherit; font-size:11px; line-height:1; cursor:pointer; align-self:center }
   .lyck:hover{ border-color:var(--accent) }
   .lyck.on{ background:var(--accent); border-color:var(--accent) }
+  /* ⭐ スポイト中は盤のカーソルを十字に（いま何をする所か が分かる） */
+  body.picking #stage, body.picking #cv, body.picking #ov{ cursor:crosshair !important }
+  .pickb{ font-size:11px }
   /* ⭐ 一覧の下のアイコン列（Photoshop のレイヤーパネル下部と同じ役割） */
   #lpBar{ display:flex; gap:2px; justify-content:flex-end; align-items:center;
     padding:5px 4px 2px; border-top:.5px solid rgba(28,28,30,.10); margin-top:4px }
@@ -7785,6 +7788,9 @@ function hitLayer(q){
 }
 { let pan = null, pinch = null, grab = null; const pts = new Map();
   stage.addEventListener('pointerdown', e => {
+    /* ⭐ スポイト中は【吸って終わり】＝ほかの操作は起こさない */
+    if(PICKTO){ e.preventDefault(); e.stopPropagation();
+      const q = toBoard(e); pickAt(q.x, q.y); return; }
     pts.set(e.pointerId, e);
     if(pts.size === 2){ const [a,b] = [...pts.values()];
       pinch = { d: Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY) }; pan = null; grab = null; return; }
@@ -11701,6 +11707,61 @@ function buildBrPre(){
 }
 /* ⭐⭐ 筆の段の中身を、いまの筆（BR）に合わせる。
    ⚠️ 筆で描いた層を選んでいるときは【その層を描いた筆】を出す＝そのまま描き足せる。 */
+/* ══⭐⭐ スポイト（盤から色を吸う）══ 2026-09-03 ═══════════════════
+   ⭐ Obsidian「06_…馴染ませる」の対応表＝**「空気の色＝背景の一番遠い所をスポイトで吸う」**。
+     いままで MOYA は色を手で決めるしかなかった（実測で左のツール10個の中に無かった）。
+   ⭐ 道具を1つ増やすのではなく、**色の欄ごとに［吸］の釦を置く**。
+     ＝空気の色・灯の色・地の色・筆の色・描画色 どれも【同じ道】で吸える
+     （→ feedback_move_the_setting_with_the_exit＝設定は使う欄に置く）。
+   ⚠️ 読むのは【別の紙に刷り直したもの】＝本番の盤を getImageData しない
+     （→ feedback_reading_pixels_changes_how_it_draws＝読むと描き方が変わる）。 */
+let PICKTO = null;                /* いま吸った色を入れる欄 */
+function pickStart(target){
+  PICKTO = target;
+  document.body.classList.add('picking');
+  stat('盤の上を押すと、その色を吸います（やめるときは Esc）');
+}
+function pickStop(){
+  PICKTO = null;
+  document.body.classList.remove('picking');
+}
+function pickAt(u, v){
+  const t = PICKTO; if(!t) return;
+  const f = sheet();
+  /* 小さめに刷り直して読む（本番の盤は触らない・1回だけなので軽い） */
+  const w2 = Math.max(64, Math.min(700, Math.round(f.w / 2)));
+  const h2 = Math.max(64, Math.round(w2 * f.h / f.w));
+  const c = document.createElement('canvas'); c.width = w2; c.height = h2;
+  const keep = COARSE; COARSE = 0; LAYERS.forEach(L => L._key = '');
+  paint(c.getContext('2d'), w2, h2, false);
+  COARSE = keep; LAYERS.forEach(L => L._key = '');
+  const x = Math.max(0, Math.min(w2 - 1, Math.round(u * w2)));
+  const y = Math.max(0, Math.min(h2 - 1, Math.round(v * h2)));
+  const d = c.getContext('2d').getImageData(x, y, 1, 1).data;
+  const hex = '#' + [d[0], d[1], d[2]]
+    .map(n => n.toString(16).padStart(2, '0')).join('');
+  t.value = hex;
+  t.dispatchEvent(new Event('input', { bubbles:true }));
+  t.dispatchEvent(new Event('change', { bubbles:true }));
+  const 名 = ({ c_air:'空気の色', c_lit:'灯の色', c_bg:'地の色',
+                c_brush:'筆の色', c_selsw:'描画色' })[t.id] || '色';
+  stat(名 + ' に ' + hex + ' を吸った');
+  pickStop();
+}
+/* ⭐ 主な色の欄に［吸］を1つずつ足す（全部の色見本に付けると煩い） */
+function addPickers(){
+  ['c_air','c_lit','c_bg','c_brush','c_selsw'].forEach(id => {
+    const e = el(id); if(!e || e.dataset.pk) return;
+    e.dataset.pk = '1';
+    const b2 = document.createElement('button');
+    b2.className = 'btn pickb'; b2.textContent = '吸';
+    b2.title = 'スポイト ── 盤の上を押すと、その色をここに入れます';
+    b2.style.cssText = 'flex:0 0 auto;padding:6px 10px;margin-left:6px';
+    b2.onclick = ev => { ev.stopPropagation(); pickStart(e); };
+    if(e.parentNode) e.parentNode.insertBefore(b2, e.nextSibling);
+  });
+}
+setTimeout(() => { try{ addPickers(); }catch(_){ } }, 0);
 let BRSEEN = -1;                 /* 前に見ていた筆の層（持ち替えは1回だけ） */
 function syncBrush(){
   buildBrPre();
@@ -15487,6 +15548,8 @@ addEventListener('keydown', e => {
   /* 編集画面で Esc＝版面へ戻る */
   /* ⭐ Esc＝パスの選択解除（Adobe「パスパネルで空白部分をクリックするか、Esc キーを押します」） */
   /* 図形を描くのをやめる */
+  /* ⭐ スポイト中の Esc＝やめる（いちばん先に見る） */
+  if(k === 'escape' && PICKTO){ e.preventDefault(); pickStop(); stat('スポイトをやめた'); return; }
   if(k === 'escape' && BRUSHON){ e.preventDefault(); BRUSHON = false; BRUSHL = null;
     document.body.classList.remove('brushon');
     if(typeof syncPanelMode === 'function') syncPanelMode();
