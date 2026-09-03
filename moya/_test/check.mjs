@@ -6968,6 +6968,62 @@ ok(LUM22.消すと元に戻る,
    JSON.stringify(LUM22));
 ok(LUM22.ms < 400, '⭐ 輝度マスクは重すぎない', LUM22.ms + 'ms');
 
+/* ══⭐⭐ カラールックアップ（.cube）══ 2026-09-03
+   Obsidian「08_MOYAに無い『Photoshopの普通の機能』」が【本当に無い】と挙げた1つ。
+   ⚠️ ［画像を編集］の段は【素材の編集画面】か【調整レイヤー】のときだけ出る。
+     Photoshop もカラールックアップは調整レイヤー＝この道が正しい。 */
+const CUBE22 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  /* 試し用の .cube（8³・青を上げ 赤を下げる）を その場で作る＝外の物に頼らない */
+  const n = 8, lines = ['TITLE "test"', 'LUT_3D_SIZE ' + n];
+  for(let b2 = 0; b2 < n; b2++) for(let g2 = 0; g2 < n; g2++) for(let r2 = 0; r2 < n; r2++)
+    lines.push((r2/(n-1)*0.65).toFixed(6) + ' ' + (g2/(n-1)*0.92).toFixed(6) + ' '
+      + Math.min(1, b2/(n-1) + 0.22).toFixed(6));
+  const cu = cubeParse(lines.join('\n'));
+  const out = { 読めた: !!cu, 格子: cu ? cu.n : 0 };
+  /* 調整レイヤーを置くと［画像を編集］の段が出る＝そこに欄がある */
+  document.getElementById('b_adjlayer').click(); await w(800);
+  out.欄が見える = ['b_cube','b_cube0','r_cube'].every(id => {
+    const e = document.getElementById(id); return !!e && !!e.offsetParent; });
+  removeAt(SEL); await w(600);
+  const 撮 = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+    let s2 = 0, rr = 0, bb = 0, c2 = 0;
+    for(let i = 0; i < d.length; i += 4*5){ s2 += d[i]*3 + d[i+1]*5 + d[i+2]*7;
+      rr += d[i]; bb += d[i+2]; c2++; }
+    return { 印:s2, 赤:rr/c2, 青:bb/c2 }; };
+  const L = LAYERS.filter(x => !x.kind && x.img).sort((a,b) => a.d - b.d)[0];
+  setSel(LAYERS.indexOf(L), false); syncSel(); await w(400);
+  const 素 = 撮();
+  const t0 = performance.now();
+  const e2 = edOf(L); e2.cube = cu; e2.cubeName = 'test'; e2.cubeAmt = 1;
+  L._key = ''; L._edc = null; L._edk = ''; if(L._edcM) L._edcM.clear();
+  render(); await w(900);
+  out.ms = Math.round(performance.now() - t0 - 900);
+  const 後 = 撮();
+  out.効く = 後.印 !== 素.印;
+  out.青が増えた = 後.青 > 素.青;
+  out.赤が減った = 後.赤 < 素.赤;
+  const r3 = document.getElementById('r_cube');
+  r3.value = '0'; r3.dispatchEvent(new Event('input', { bubbles:true })); await w(900);
+  out['効き0で元に戻る'] = 撮().印 === 素.印;
+  r3.value = '100'; r3.dispatchEvent(new Event('input', { bubbles:true })); await w(600);
+  document.getElementById('b_cube0').click(); await w(900);
+  out['外すと元に戻る'] = 撮().印 === 素.印;
+  return out;
+});
+ok(CUBE22.読めた && CUBE22.格子 === 8 && CUBE22.欄が見える,
+   '⭐⭐ カラールックアップ＝.cube（3D LUT）を読める（Photoshop の調整レイヤーと同じ場所）',
+   JSON.stringify(CUBE22));
+ok(CUBE22.効く && CUBE22.青が増えた && CUBE22.赤が減った,
+   '⭐ LUT のとおりに色が入れ替わる（青が上がり 赤が下がる LUT で確かめた）',
+   JSON.stringify(CUBE22));
+ok(CUBE22['効き0で元に戻る'] && CUBE22['外すと元に戻る'],
+   '🔴🔴 LUT は【焼き込まない】── 効き 0／外す で1画素も同じに戻る',
+   JSON.stringify(CUBE22));
+ok(CUBE22.ms < 500, '⭐ LUT は重すぎない', CUBE22.ms + 'ms');
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);
