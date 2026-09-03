@@ -1456,6 +1456,9 @@ const SU = await p.evaluate(() => {
                 'r_lmflow','r_lmsoft',
                 /* 筆（特殊効果）の設定＝道具の数字で、絵の空気ではない（2026-09-01） */
                 'r_brsize','r_brflow','r_brscat','r_brgrain','r_brseed',
+                /* ブラシの かたさ・間隔・不透明度＝筆の道具の数字（2026-09-03）
+                   ⚠️ 既定は 70／25／100 で、0 ではない（Adobe の丸ブラシに合わせた値） */
+                'r_brhard','r_brspace','r_bropa','r_brtaper','r_brwob',
                 /* 調整レイヤーの効く範囲（奥行きの帯）＝どこに効かせるかの設定で、絵の空気ではない */
                 'r_adjfrom','r_adjto'];
   const bad = [];
@@ -5188,9 +5191,14 @@ ok(FXED.元の9つがある && FXED.フィルターもある && FXED.一覧.区�
 ok(FXED.足した.行 === 1 && FXED.足した.つまみが来た && FXED.足した.絵が変わった > 0,
    '⭐⭐ 選ぶとエフェクトの段に【行が増えて そこで触れる】／足した瞬間に絵が変わる',
    JSON.stringify(FXED.足した));
+/* ══🔴🔴 × は【効果も消す】── 2026-09-03 に仕様を変えた ══
+   木下＝「エフェクトで画像編集のエフェクトつけたんだけど、**削除してもそれが適応されている
+         状態だった**わ」＝ 前は「一覧から外すだけ・値は残す」＝押しても絵が1画素も変わらない。
+   ⭐ Photoshop と同じ2段：👁＝一時的に切る（値は残る）／×＝消す（つまみも既定へ戻る）。
+   ⚠️ だから この試験は【値が既定に戻っていること】を見る（前は「残ること」を見ていた）。 */
 ok(FXED.外した.行 === 0 && !FXED.外した.借りたまま && FXED.外した.居場所 === 'editBox'
-   && FXED.外した.値は残る === FXED.足した.値,
-   '⭐ × で外すと【元の場所へ返る】／値は残る（つまみを2つ作っていない）',
+   && Number(FXED.外した.値は残る) === 0,
+   '⭐⭐ × で消すと【元の場所へ返る＋つまみも既定に戻る】（消したのに効いたままにしない）',
    JSON.stringify(FXED.外した));
 ok(FXED.戻すと === 0,
    '🔴 0 に戻すと1画素も同じに戻る（焼き込まない）', String(FXED.戻すと));
@@ -6492,6 +6500,80 @@ await wait(600);
      '🔴🔴 ［＋足す］で足した画像のフィルター【19種ぜんぶ】が、その場で開いて触れる'
      + ' ── 前は .fxsec に .open を付け忘れて 19個とも触れなかった',
      JSON.stringify([FXED.数, FXED.だめ]));
+}
+
+/* ══⭐⭐ ブラシ（ふつうに色を塗る筆）══ 2026-09-03
+   🔴 木下＝「ブラシツールなんだろうな」「今だと筆だから ちょっとスムーズではないね」
+     ＝MOYA の筆は【特殊効果】7種だけで、**ただ色を塗る筆が1つも無かった**。
+   ⭐ Adobe 公式のブラシに合わせて3つ足した（推測で作らない・出典で決めた）：
+     ・かたさ Hardness＝「硬い中心部の大きさ」を直径に対する%で持つ
+     ・間隔 Spacing＝ブラシマーク同士の距離を直径に対する%で。丸ブラシの既定 25%。
+       ⚠️ 切ると「カーソルの速度」が間隔を決める＝**MOYA の今までの状態**＝数珠つなぎの正体
+     ・不透明度 Opacity＝**そのひと筆の天井**（離すまで超えない）／流量 Flow＝天井へ溜まる速さ
+       → helpx.adobe.com/photoshop/using/painting-tools.html
+   🔴🔴 いちど3つとも「効かない」と実測で出た＝**筆の値を層に写す3か所で写し忘れていた**
+     （新しい層／描き足し／brBake）。→ 3か所とも同じ顔ぶれにした。 */
+{
+  const BRU = await p.evaluate(async () => {
+    const w = ms => new Promise(r => setTimeout(r, ms));
+    closeAllEditors();
+    await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+    const stage = document.getElementById('stage');
+    const b2 = stage.getBoundingClientRect();
+    const 道 = [[.20,.30],[.40,.42],[.60,.34],[.80,.46]];
+    const ひと筆 = async (set) => {
+      Object.assign(BR, set);
+      const k = document.getElementById('k_brnew'); if(k) k.checked = true;
+      const bt = document.querySelector('#tools button[data-t="brush"]'); if(bt) bt.click();
+      BRUSHON = true; document.body.classList.add('brushon');
+      const ev = (t, u, v) => stage.dispatchEvent(new PointerEvent(t,
+        { bubbles:true, pointerId:71, clientX:b2.x + b2.width*u, clientY:b2.y + b2.height*v }));
+      ev('pointerdown', 道[0][0], 道[0][1]);
+      for(const [u, v] of 道.slice(1)){ ev('pointermove', u, v); await w(60); }
+      ev('pointerup', 道[3][0], 道[3][1]);
+      await w(500);
+      BRUSHON = false; document.body.classList.remove('brushon');
+      const L = LAYERS[SEL]; const c = L && L.img; if(!c) return null;
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let n = 0, a = 0, 半 = 0;
+      for(let i = 3; i < d.length; i += 4){ if(d[i] > 4){ n++; a += d[i];
+        if(d[i] > 110 && d[i] < 210) 半++; } }
+      return { 塗った:n, 平均:Math.round(a / Math.max(1, n)), 中間:半,
+               写った:{ hard:L.brush.hard, space:L.brush.space, opa:L.brush.opa } };
+    };
+    const 基 = { kind:'brush', size:14, flow:100, scat:0, grain:0,
+                 col:'#ff0000', neu:false, seed:7 };
+    const o = {};
+    o.間隔密 = await ひと筆({ ...基, hard:92, space:1,  opa:100 });
+    o.間隔粗 = await ひと筆({ ...基, hard:92, space:60, opa:100 });
+    o.天井100 = await ひと筆({ ...基, hard:100, space:10, opa:100 });
+    o.天井40  = await ひと筆({ ...基, hard:100, space:10, opa:40 });
+    o.かたさ100 = await ひと筆({ ...基, size:20, hard:100, space:10, opa:100 });
+    o.かたさ20  = await ひと筆({ ...基, size:20, hard:20,  space:10, opa:100 });
+    o.一覧 = [...document.querySelectorAll('#s_brkind button')].map(x => x.textContent);
+    o.つまみが出る = ['brHardKnob','brSpaceKnob','brOpaKnob']
+      .map(id => !document.getElementById(id).classList.contains('hide'));
+    return o;
+  });
+  ok(BRU.一覧.includes('ブラシ') && BRU.一覧.includes('刷毛'),
+     '⭐⭐ 筆に【ブラシ】と【刷毛】を足した（前は特殊効果7種だけで色を塗る筆が無かった）',
+     JSON.stringify(BRU.一覧));
+  ok(BRU.間隔密.塗った > BRU.間隔粗.塗った,
+     '⭐ 間隔（Spacing）が効く ── 密なほど塗れる／これが無いと【数珠つなぎ】になる',
+     JSON.stringify([BRU.間隔密.塗った, BRU.間隔粗.塗った]));
+  ok(BRU.天井40.平均 < BRU.天井100.平均 * 0.75,
+     '🔴🔴 不透明度は【ひと筆の天井】＝重ねても超えない（Adobe と同じ・流量とは別物）',
+     JSON.stringify([BRU.天井100.平均, BRU.天井40.平均]));
+  ok(BRU.かたさ20.中間 > BRU.かたさ100.中間 * 1.5,
+     '⭐ かたさ（Hardness）が効く ── 低いほど縁がぼける（中間の濃さの画素が増える）',
+     JSON.stringify([BRU.かたさ100.中間, BRU.かたさ20.中間]));
+  ok(BRU.天井40.写った.opa === 40 && BRU.かたさ20.写った.hard === 20
+     && BRU.間隔密.写った.space === 1,
+     '🔴🔴 筆の値が【層に写る】── 写す所は3つ有り、いちど3つとも写し忘れて全部効かなかった',
+     JSON.stringify(BRU.天井40.写った));
+  ok(BRU.つまみが出る.every(Boolean),
+     '⭐ かたさ・間隔・不透明度は【ブラシ・刷毛のときだけ】出す（効かないつまみを出さない）',
+     JSON.stringify(BRU.つまみが出る));
 }
 
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
