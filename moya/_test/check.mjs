@@ -1459,6 +1459,10 @@ const SU = await p.evaluate(() => {
                 /* ブラシの かたさ・間隔・不透明度＝筆の道具の数字（2026-09-03）
                    ⚠️ 既定は 70／25／100 で、0 ではない（Adobe の丸ブラシに合わせた値） */
                 'r_brhard','r_brspace','r_bropa','r_brtaper','r_brwob',
+                /* ⭐ 既定が 0 でないもの＝【0 が「何もしない」ではない】つまみ。
+                   ブレンド条件の白側は 255 が「何もしない」／灯の当たる帯の上限も 100 が「ぜんぶ」。
+                   ＝ 型「素」で 0 にすると **逆に効いてしまう**ので、ここは触らない。 */
+                'r_bi2','r_bi3','r_lto',
                 /* 調整レイヤーの効く範囲（奥行きの帯）＝どこに効かせるかの設定で、絵の空気ではない */
                 'r_adjfrom','r_adjto'];
   const bad = [];
@@ -6699,6 +6703,179 @@ const GLASS21 = await p.evaluate(async () => {
 ok(GLASS21.ゆがみが効く && GLASS21.滑らかさが効く && GLASS21.テクスチャが効く,
    '🔴🔴 ガラス（歪み）の3つのつまみが【大きい絵でも】ぜんぶ効く（22px の決め打ちをやめた）',
    JSON.stringify(GLASS21));
+
+/* ══⭐⭐ 22巡目 ── Photoshop / Figma から取り入れた2つ ══ 2026-09-03 ══════
+   台帳＝Obsidian「07_MOYA に足りないもの ── Photoshop と Figma から取り入れる台帳」
+   ① 灯が【どこまで届くか】（木下＝「光の範囲とかもそうだなと俺は思った」）
+   ② そろえる・等間隔（木下＝「便利なツールなどは Figma からも取り入れるべき」）
+   ⭐ 木下の物差し4つで見る＝**効く／重すぎない／他に触っていない／往復して戻る**。 */
+const LIT22 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const 触 = (id, v) => { const e = document.getElementById(id); if(!e) return false;
+    e.value = String(v); e.dispatchEvent(new Event('input',{bubbles:true}));
+    e.dispatchEvent(new Event('change',{bubbles:true})); return true; };
+  const 撮 = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+    let s2 = 0; for(let i = 0; i < d.length; i += 4*5) s2 += d[i]*3 + d[i+1]*5 + d[i+2]*7;
+    return s2; };
+  const 有 = ['r_lfall','r_lfrom','r_lto'].every(id => {
+    const e = document.getElementById(id); return !!e && !!e.offsetParent; });
+  /* 1本目（灯そのもの）を効かせたまま測る */
+  触('r_li', 80); 触('r_rim', 80); 触('r_bnc', 70); await w(800);
+  const 素 = 撮();
+  const t0 = performance.now();
+  触('r_lfall', 90); await w(800);
+  const 落 = 撮();
+  const ms = Math.round(performance.now() - t0 - 800);
+  /* 何度も往復して元に戻る */
+  for(let i = 0; i < 10; i++){ 触('r_lfall', i % 2 ? 90 : 0); await w(120); }
+  触('r_lfall', 0); await w(900);
+  const 戻 = 撮();
+  /* 当たる帯＝手前だけにすると、奥の素材だけが変わる */
+  触('r_lfrom', 0); 触('r_lto', 20); await w(800);
+  const 帯 = 撮();
+  触('r_lto', 100); await w(800);
+  const 戻2 = 撮();
+  return { つまみが有る:有, 届く距離が効く: 落 !== 素, ms,
+           往復して戻る: 戻 === 素, 帯が効く: 帯 !== 素, 帯を戻すと同じ: 戻2 === 素 };
+});
+ok(LIT22.つまみが有る && LIT22.届く距離が効く && LIT22.帯が効く,
+   '⭐⭐ 灯に【届く距離】と【当たる奥行きの帯】ができた（木下＝「光の範囲」）',
+   JSON.stringify(LIT22));
+ok(LIT22.往復して戻る && LIT22.帯を戻すと同じ,
+   '🔴🔴 灯の届き方は【焼き込まない】── 10往復しても 0 に戻せば1画素も同じ',
+   JSON.stringify(LIT22));
+ok(LIT22.ms < 400,
+   '⭐ 灯の届き方は重すぎない（1回の描き直し）', LIT22.ms + 'ms');
+
+const ALIGN22 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const al = () => document.getElementById('s_align');
+  /* ⚠️ オブジェクトのキーは【数字で始めない】（`1枚では出ない` は文法エラー）。
+     2026-09-02 に `out.1枚の案内` で同じ所を踏んでいる＝2度目。 */
+  const out = { '1枚では出ない': al().classList.contains('hide') || !al().offsetParent };
+  document.getElementById('lp_all').click(); await w(400);
+  document.querySelector('#tools button[data-t="move"]').click(); await w(500);
+  out['2枚以上で出る'] = !al().classList.contains('hide') && !!al().offsetParent;
+  out['釦の数'] = al().querySelectorAll('button').length;
+  const 枠 = () => { const f = sheet();
+    return LAYERS.map(L => { const s2 = sizeOf(L, f.w, f.h);
+      return { l:+(L.x - s2.dw/f.w/2).toFixed(4), 奥:L.d, 空:L.air, 大:L.s }; }); };
+  const 前 = 枠();
+  const t0 = performance.now();
+  al().querySelector('button[data-v="l"]').click(); await w(600);
+  out.ms = Math.round(performance.now() - t0 - 600);
+  const 後 = 枠();
+  const ls = 後.map(o2 => o2.l);
+  out['左がそろう'] = Math.max(...ls) - Math.min(...ls) < 0.0006;
+  out['奥行きは動かない'] = 前.every((o2, i) => o2.奥 === 後[i].奥);
+  out['空気は動かない'] = 前.every((o2, i) => o2.空 === 後[i].空);
+  out['大きさは動かない'] = 前.every((o2, i) => o2.大 === 後[i].大);
+  return out;
+});
+ok(ALIGN22['2枚以上で出る'] && ALIGN22.釦の数 === 8 && ALIGN22['1枚では出ない'],
+   '⭐⭐ そろえる・等間隔（8つ）が【2枚以上選んだときだけ】上のバーに出る',
+   JSON.stringify(ALIGN22));
+ok(ALIGN22['左がそろう'],
+   '⭐ ［左にそろえる］で左端がぴたりと揃う（目で見ないで枠で測る）',
+   JSON.stringify(ALIGN22));
+ok(ALIGN22['奥行きは動かない'] && ALIGN22['空気は動かない'] && ALIGN22['大きさは動かない'],
+   '🔴🔴 そろえても【奥行き・空気・大きさ】は1つも動かない（芯を触らない）',
+   JSON.stringify(ALIGN22));
+
+/* ══⭐⭐ ブレンド条件（Blend If）══ 2026-09-03
+   Obsidian「06_…馴染ませる」第6部⑤に **「MOYAには無い考え方」** と名指しされていた1つ。
+   ⭐ 木下の物差し4つ＝効く／重すぎない／他の層に触っていない／往復して戻る。 */
+const BI22 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const 触 = (id, v) => { const e = document.getElementById(id); if(!e) return false;
+    e.value = String(v); e.dispatchEvent(new Event('input',{bubbles:true}));
+    e.dispatchEvent(new Event('change',{bubbles:true})); return true; };
+  const 撮 = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+    let s2 = 0; for(let i = 0; i < d.length; i += 4*5) s2 += d[i]*3 + d[i+1]*5 + d[i+2]*7;
+    return s2; };
+  /* その層だけを出して撮る＝他の層に触っていないかを1枚ずつ見る */
+  const 層を撮る = (L) => {
+    const f = sheet(); const 控 = LAYERS.map(o2 => o2.on);
+    LAYERS.forEach(o2 => o2.on = (o2 === L));
+    const keep = COARSE; COARSE = 0; LAYERS.forEach(o2 => o2._key = '');
+    const c = document.createElement('canvas'); c.width = f.w; c.height = f.h;
+    paint(c.getContext('2d'), f.w, f.h, false); COARSE = keep;
+    const d = c.getContext('2d').getImageData(0,0,f.w,f.h).data;
+    let s2 = 0; for(let i = 0; i < d.length; i += 4*7) s2 += d[i]*3 + d[i+1]*5 + d[i+2]*7;
+    LAYERS.forEach((o2, k) => o2.on = 控[k]); LAYERS.forEach(o2 => o2._key = '');
+    return s2;
+  };
+  const 有 = ['r_bi0','r_bi1','r_bi2','r_bi3'].every(id => {
+    const e = document.getElementById(id); return !!e && !!e.offsetParent; });
+  const 素 = 撮();
+  const 素の層 = LAYERS.map(L => 層を撮る(L));
+  const t0 = performance.now();
+  触('r_bi1', 200); 触('r_bi0', 160); await w(900);
+  const 後 = 撮();
+  const ms = Math.round(performance.now() - t0 - 900);
+  const 後の層 = LAYERS.map(L => 層を撮る(L));
+  const 変 = [];
+  LAYERS.forEach((L, k) => { if(素の層[k] !== 後の層[k]) 変.push(L.name); });
+  /* 何度も往復して元に戻る */
+  for(let i = 0; i < 10; i++){ 触('r_bi0', i % 2 ? 160 : 0); await w(120); }
+  触('r_bi0', 0); 触('r_bi1', 0); await w(900);
+  const 戻 = 撮();
+  return { つまみが有る:有, 効く: 後 !== 素, ms, 変わった層:変,
+           往復して戻る: 戻 === 素, 案内:(document.getElementById('o_biSay')||{}).value };
+});
+ok(BI22.つまみが有る && BI22.効く,
+   '⭐⭐ ブレンド条件（このレイヤー）＝黒を消すと絵が変わる（火の粉・煙の黒地を抜く）',
+   JSON.stringify(BI22));
+ok(BI22.変わった層.length === 1,
+   '🔴🔴 ブレンド条件は【選んでいる層だけ】に効く（他の層は1画素も変わらない）',
+   JSON.stringify(BI22.変わった層));
+ok(BI22.往復して戻る,
+   '🔴🔴 ブレンド条件は【焼き込まない】── 10往復しても 0 に戻せば1画素も同じ',
+   JSON.stringify(BI22));
+ok(BI22.ms < 400, '⭐ ブレンド条件は重すぎない（1回の描き直し）', BI22.ms + 'ms');
+
+/* ══⭐⭐ 吸い付き（スマートガイド）══ 2026-09-03・Figma から取り入れた1つ
+   ⚠️ マウスを使わずに【snapMove の入り口と出口】で見る（試験を速く・ぶれなく）。 */
+const SNAP22 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  document.querySelector('#tools button[data-t="move"]').click(); await w(400);
+  const L = LAYERS.filter(x => !x.kind && x.img).sort((a,b) => a.d - b.d)[0];
+  setSel(LAYERS.indexOf(L), false); syncSel(); await w(300);
+  const f = sheet();
+  /* いまの中心から【版面の中央のすぐ手前】へ動かすつもりで呼ぶ */
+  const move = [{ L, ox:0, oy:0 }];
+  const 近 = { x:0.5 + 3 / boardScale().sx, y:0.5 + 3 / boardScale().sy };
+  SNAPLINES = [];
+  const 寄 = snapMove(move, 近, false);
+  const 線 = SNAPLINES.slice();
+  /* ⌘ を押している間は切れる */
+  SNAPLINES = [];
+  const 切 = snapMove(move, 近, true);
+  return { 線の数:線.length,
+    寄った: Math.abs(寄.x - 近.x) > 1e-9 || Math.abs(寄.y - 近.y) > 1e-9,
+    切ると寄らない: Math.abs(切.x - 近.x) < 1e-12 && Math.abs(切.y - 近.y) < 1e-12,
+    切ると線も出ない: SNAPLINES.length === 0,
+    /* 遠い所では吸わない（いままでの動かし心地のまま） */
+    遠い所では寄らない: (() => { SNAPLINES = [];
+      const r2 = snapMove(move, { x:0.23, y:0.71 }, false);
+      return Math.abs(r2.x - 0.23) < 1e-12 && Math.abs(r2.y - 0.71) < 1e-12; })() };
+});
+ok(SNAP22.線の数 > 0 && SNAP22.寄った,
+   '⭐⭐ 吸い付き（スマートガイド）＝近くの端・中心に寄って赤い線が出る（Figma と同じ）',
+   JSON.stringify(SNAP22));
+ok(SNAP22.切ると寄らない && SNAP22.切ると線も出ない,
+   '⭐ ⌘ を押している間は吸い付かない（Figma と同じ）', JSON.stringify(SNAP22));
+ok(SNAP22.遠い所では寄らない,
+   '🔴 近くに何も無ければ【1画素も動かさない】（いままでの動かし心地のまま）',
+   JSON.stringify(SNAP22));
 
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
