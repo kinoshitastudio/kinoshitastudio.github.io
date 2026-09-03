@@ -998,6 +998,12 @@
      木下＝「下のレイヤーパネルはひとつ右側によせられているなどするとわかりやすい
      さらに色付けしてグルーピングすると」 */
   .ly.clipped{ margin-left:16px; border-left:2px solid var(--accent) }
+  /* ⭐ 選ぶための四角（行の中の数字に触れずに選べる） */
+  .lyck{ flex:0 0 18px; width:18px; height:18px; margin-right:6px; padding:0;
+    border-radius:4px; border:1.5px solid rgba(120,120,128,.55); background:transparent;
+    color:#fff; font:inherit; font-size:11px; line-height:1; cursor:pointer; align-self:center }
+  .lyck:hover{ border-color:var(--accent) }
+  .lyck.on{ background:var(--accent); border-color:var(--accent) }
   /* ⭐ 一覧の下のアイコン列（Photoshop のレイヤーパネル下部と同じ役割） */
   #lpBar{ display:flex; gap:2px; justify-content:flex-end; align-items:center;
     padding:5px 4px 2px; border-top:.5px solid rgba(28,28,30,.10); margin-top:4px }
@@ -1015,6 +1021,13 @@
   .lpb:hover{ background:rgba(120,120,128,.16); opacity:1 }
   .lpb:active{ background:rgba(120,120,128,.28) }
   .lpb.on{ background:var(--accent); color:#fff; opacity:1 }
+  /* ⭐ 左端の「ぜんぶ選ぶ」は四角に見せる（一覧の中の四角と同じ顔） */
+  #lpBar{ justify-content:space-between }
+  .lpb.ckall{ width:20px; height:20px; border-radius:4px; font-size:12px;
+    border:1.5px solid rgba(120,120,128,.55); opacity:.9 }
+  .lpb.ckall.some{ background:var(--accent); border-color:var(--accent); color:#fff }
+  .lpb.ckall.all{ background:var(--accent); border-color:var(--accent); color:#fff }
+  .lpsep{ flex:1 1 auto }
   .ly.clipbase .nm{ text-decoration:underline; text-underline-offset:2px }
 
   /* ⭐ 包括光源のあいだは【向きのつまみ】を出さない（灯が持っているので触れても効かない） */
@@ -1320,6 +1333,17 @@
            ・マスク＝⌥ で【すべて隠す（黒）】（Adobe＝Alt+クリック）
          出典 https://helpx.adobe.com/jp/photoshop/kb/4995.html ほか -->
     <div id="lpBar">
+      <!-- ══⭐⭐ ぜんぶ選ぶ／ぜんぶ外す ══ 2026-09-03
+           🔴 木下＝「ここに◻︎のチェックボックスをおいて、チェックすると、全選択→
+              もう一度チェックを外すと全選択解除になるので、これをつけた方が、
+              上のレイヤーでいくつか選択をしていても、**あ、ミスったとなっても
+              全選択させて外すと選択解除になる**からやりやすいのではないか？
+              これはメール管理の時とかにある手法だが」
+           ⭐ メールの一覧と同じ【3つの顔】にする：
+             ぜんぶ ✓ ／ いくつか − ／ ひとつも ◻
+             ＝ いま何枚選んでいるかが、押す前に分かる。 -->
+      <button class="lpb ckall" id="lp_all" title="ぜんぶ選ぶ／ぜんぶ外す">◻</button>
+      <span class="lpsep"></span>
       <button class="lpb" id="lp_clip" title="クリッピングマスク（下の形で切る）⌥⌘G　── 一覧の行を ⌥ クリックでも切り替わります">⌐</button>
       <button class="lpb" id="lp_fx" title="エフェクト（レイヤースタイル）">fx</button>
       <button class="lpb" id="lp_mask" title="レイヤーマスクを足す（⌥ を押しながら＝すべて隠す）">◻</button>
@@ -4948,13 +4972,25 @@ function edGlass(x, w, h, e){
   /* ⭐ 画素は【4バイトまとめて】写す（1つずつだと 2〜3倍かかる）
      → feedback_measure_before_you_optimize */
   const s32 = new Uint32Array(src.data.buffer), o32 = new Uint32Array(out.data.buffer);
-  const k = amt * 22;                                    /* ゆがみ 20 ＝ 22px ぶん */
+  /* ══🔴🔴 2026-09-03・木下＝「ガラスの歪みのつまみが全く反映されない」 ══
+     実測で原因は2つあった（どちらも【大きい絵】で出る）：
+     ① ずれが **22px の決め打ち** だった ── 版面 1200x1800 では 22px は見えない。
+       ⭐ 絵の大きさに比例させる（700px を基準）＝小さい絵は今までと同じ絵のまま。
+     ② **滑らかさを上げるほど効かなくなっていた** ── 隣の画素との差で「面の向き」を
+       出していたので、ぼかすほど隣との差が消える＝ゆがみが 0 に近づく。
+       ⭐ 傾きを測る幅を【ぼかした量に合わせて広げる】＝滑らかさは
+         「細かいうねり ⇄ 大きいうねり」に変わる（効きは消えない）＝これが理想の動き。 */
+  const 基 = Math.max(1, Math.min(w, h) / 700);
+  const k = amt * 22 * 基;                               /* ゆがみ 20 ＝ 22px ぶん（700px のとき） */
+  const st = Math.max(1, Math.round(sm * 0.5 * 基));      /* 傾きを測る幅（ぼかしに合わせる） */
   for(let y = 0; y < h; y++){
     const yw = y * w;
-    const up = (y > 0 ? yw - w : yw) * 4, dn = (y < h-1 ? yw + w : yw) * 4;
+    const yu = y - st < 0 ? 0 : y - st, yd = y + st >= h ? h-1 : y + st;
+    const up = yu * w * 4, dn = yd * w * 4;
     for(let i = 0; i < w; i++){
-      /* テクスチャの【傾き】＝隣との明るさの差（これが「ガラスの面の向き」） */
-      const l = td[(yw + (i > 0 ? i-1 : 0)) * 4], r = td[(yw + (i < w-1 ? i+1 : w-1)) * 4];
+      /* テクスチャの【傾き】＝ st 画素はなれた所との明るさの差（＝ガラスの面の向き） */
+      const il = i - st < 0 ? 0 : i - st, ir = i + st >= w ? w-1 : i + st;
+      const l = td[(yw + il) * 4], r = td[(yw + ir) * 4];
       const u = td[up + i*4], d2 = td[dn + i*4];
       let sx = i + (((r - l) * k / 255) | 0);
       let sy = y + (((d2 - u) * k / 255) | 0);
@@ -8223,7 +8259,39 @@ el('f_img').addEventListener('change', e => {
   if(t === 'dragleave' && e.relatedTarget) return; document.body.classList.remove('dragging'); }));
 addEventListener('drop', e => { e.preventDefault();
   const fs = [...(e.dataTransfer.files || [])];
-  takeFiles(fs, n => { if(n) stat(n + ' 枚を落とした順に置いた'); });   /* ⭐ 落とした順も守る */
+  /* ══⭐⭐ 設定・まるごとの JSON も【落として読める】══ 2026-09-03
+     🔴 木下＝「JSONファイルもドラッグアンドドロップで読み込みできるようにもして」
+     ⭐ 読む道は【いままでと同じ applyJSON 1本】＝落として読んでも、
+       ［設定を読む］から読んでも まったく同じ絵になる（道を2つ作らない）。
+     ⚠️ 写真と混ぜて落とされたら、JSON を先に読んでから写真を置く
+       （applyJSON は版面を作り直すので、順が逆だと置いた写真が消える）。
+     ⚠️ 中身を見るまで JSON かどうか分からない拡張子もあるので、
+       **読めたときだけ** JSON として扱う（読めなければ写真の道へ戻す）。 */
+  const jsons = fs.filter(f => /\.json$/i.test(f.name) || f.type === 'application/json');
+  const imgs  = fs.filter(f => !jsons.includes(f));
+  const あと = () => { if(imgs.length)
+    takeFiles(imgs, n => { if(n) stat(n + ' 枚を落とした順に置いた'); }); };
+  if(!jsons.length){ あと(); return; }
+  const f = jsons[0];
+  stat('読んでいます：' + f.name + '（' + Math.round(f.size/1024) + 'KB）…');
+  const rd = new FileReader();
+  rd.onload = () => {
+    let o = null;
+    try{ o = JSON.parse(String(rd.result)); }
+    catch(err){ stat('⚠️ ' + f.name + ' は読めませんでした：'
+      + (err && err.message ? err.message : err)); あと(); return; }
+    try{
+      applyJSON(o);
+      if(typeof setCurFile === 'function') setCurFile(null, !!o.bundled);
+      stat((o.bundled ? 'まるごと' : '設定を') + '読んだ：' + f.name
+        + (jsons.length > 1 ? '（JSON は1つだけ読みます）' : '')
+        + ' ── ⌘S で上書き保存できます');
+    }catch(err){ stat('⚠️ 読めましたが当てられませんでした：'
+      + (err && err.message ? err.message : err)); }
+    /* ⭐ 版面ができてから写真を置く */
+    setTimeout(あと, 400);
+  };
+  rd.readAsText(f);
 });
 
 /* ══ 素材の一覧（手前が上）══ */
@@ -8253,6 +8321,35 @@ function buildList(){
     const { L, i } = it;
     const row = document.createElement('div');
     row.className = 'ly' + (SELIDS.includes(L.id) ? ' sel' : '') + (i === SEL ? ' pri' : '');
+    /* ══⭐⭐ 選ぶための四角（チェック）══ 2026-09-03 ══════════════
+       🔴 木下＝「複数選択時に中のものも数字をいじってしまうことがあるため、複数選択が難しい。
+          たとえば左端に四角のチェックボタンを用意してそれらをポチッとすれば
+          **選択された状態にしてくれないか？**」
+       ⭐ ⇧／⌘ を押しながら行を押す道はそのまま残す（覚えている人はそれで速い）。
+         ここは【押すだけで足りる】もう1つの入口＝行の中の数字に触れずに選べる。
+       ⚠️ 四角の上で始まった押しは 並べ替え（ドラッグ）にしない＝掴めなくなる。 */
+    const ck = document.createElement('button');
+    ck.className = 'lyck' + (SELIDS.includes(L.id) ? ' on' : '');
+    ck.textContent = SELIDS.includes(L.id) ? '✓' : '';
+    ck.title = SELIDS.includes(L.id) ? '選んでいます（押すと外す）' : '押すと【選んだものに足す】';
+    ck.onclick = ev => { ev.stopPropagation();
+      /* ⚠️ もう無い層の id が混ざっていることがある（消した・グループを解いた あと）。
+         選び直すときに落としておく＝「選んでいる数」と「印の数」が食い違わない。 */
+      { const 在 = new Set(LAYERS.map(o => o.id));
+        SELIDS = SELIDS.filter(id => 在.has(id)); }
+      const j = SELIDS.indexOf(L.id);
+      /* 🔴🔴 2026-09-03・木下＝「選択してたとえば筆の調整をした後、
+         **もう一度レイヤーパネルで選択を外そうとすると外せないパターン**があるわ」
+         ＝ 私が「ぜんぶ外れないように」1枚だけのときは外させない作りにしていた。
+         ⭐ ぜんぶ外れてよい（盤の空いた所を押したときと同じ状態）。
+           選び直しは 左端の【ぜんぶ選ぶ】で1回で戻せる。 */
+      if(j >= 0) SELIDS.splice(j, 1);
+      else SELIDS.push(L.id);
+      if(!SELIDS.length) SEL = -1;
+      syncSelIds(); buildList(); syncSel(); drawOverlay(cv.width, cv.height);
+      stat(SELIDS.length + ' 枚を選んでいます ── ⌘G でグループ（フォルダ）にできます');
+    };
+    ck.addEventListener('pointerdown', ev => ev.stopPropagation());
     const th = document.createElement('div'); th.className = 'th';
     if(L.kind === 'adj'){ th.classList.add('adj'); th.textContent = '◐'; }
     else { const u = thumbURL(L); if(u) th.style.backgroundImage = 'url(' + u + ')'; }
@@ -8584,8 +8681,8 @@ function buildList(){
     /* ⭐ ボタンは1つの入れ物に。狭いときは【まとめて2段目へ落ちる】＝名前が潰れない */
     const bx = document.createElement('div'); bx.className = 'lyb';
     bx.append(lk, eye, up, dn, x);
-    if(mth) row.append(th, lnk, mth, col, bx);
-    else    row.append(th, col, bx);
+    if(mth) row.append(ck, th, lnk, mth, col, bx);
+    else    row.append(ck, th, col, bx);
     row.dataset.i = i;
     /* ⭐⭐ ダブルクリック＝その素材だけの画面（木下＝「ダブルクリックしたら
        ひとつひとつの画像を編集できる画面になればいい」） */
@@ -8750,6 +8847,8 @@ function buildList(){
       });
     }
   }
+  /* ⭐ 一覧を作り直したら【ぜんぶ選ぶ】の顔も合わせる（同じ道から1回で） */
+  try{ if(typeof syncCkAll === 'function') syncCkAll(); }catch(_){ }
   /* ⭐ 土台（クリップされている先）の名前に下線を引く（Adobe と同じ見え方） */
   {
     const bases = new Set([...box.querySelectorAll('.ly[data-clipbase]')]
@@ -8912,7 +9011,9 @@ function groupRow(g, mem){
    ⚠️ そのため、間に別の素材が挟まっていることがある。一覧ではそれを隠さず ⚠ で言う。 */
 function groupSel(){
   const ls = selLayers();
-  if(ls.length < 2){ stat('2枚以上を選んでからグループにしてください（⇧ か ⌘ を押しながら選ぶ）'); return; }
+  if(ls.length < 2){ stat('2枚以上を選んでからグループにしてください ── '
+    + '⭐ 一覧の【左端の四角】を押していくのがいちばん確かです（行の数字に触れません）／'
+    + '⇧ か ⌘ を押しながら行を押しても選べます'); return; }
   hist();
   const g = { id:GID++, name:'グループ ' + GID, open:true };
   GROUPS.push(g);
@@ -12480,7 +12581,29 @@ function clipToggle(i){
     : 'クリッピングマスクを外した（1画素も同じに戻りました）');
 }
 /* ⭐ 一覧の下のアイコン列＝すでにある道を呼ぶだけ（同じ仕事を2か所に書かない） */
+/* ⭐ 「ぜんぶ選ぶ」の顔を いまの選び具合に合わせる（ぜんぶ ✓／いくつか −／ひとつも ◻） */
+function syncCkAll(){
+  const e2 = el('lp_all'); if(!e2) return;
+  const 全 = LAYERS.length;
+  const 在 = new Set(LAYERS.map(o => o.id));
+  const 選 = SELIDS.filter(id => 在.has(id)).length;
+  e2.classList.toggle('all',  全 > 0 && 選 === 全);
+  e2.classList.toggle('some', 選 > 0 && 選 < 全);
+  e2.textContent = (全 > 0 && 選 === 全) ? '✓' : (選 > 0 ? '−' : '◻');
+  e2.title = (全 > 0 && 選 === 全)
+    ? 'ぜんぶ選んでいます（押すと ぜんぶ外す）'
+    : (選 > 0 ? 選 + ' 枚を選んでいます（押すと ぜんぶ選ぶ）' : '押すと ' + 全 + ' 枚ぜんぶ選ぶ');
+}
 { const 押 = (id, f2) => { const e2 = el(id); if(e2) e2.onclick = f2; };
+  押('lp_all', () => {
+    const 在 = new Set(LAYERS.map(o => o.id));
+    const 選 = SELIDS.filter(id => 在.has(id));
+    if(選.length >= LAYERS.length && LAYERS.length){ SELIDS = []; }
+    else SELIDS = LAYERS.map(o => o.id);
+    syncSelIds(); buildList(); syncSel(); drawOverlay(cv.width, cv.height);
+    stat(SELIDS.length ? SELIDS.length + ' 枚ぜんぶを選んだ（⌘G でグループにできます）'
+                       : '選択をぜんぶ外した');
+  });
   押('lp_clip', () => clipToggle());
   押('lp_fx',   () => { const b2 = el('fxBox'); if(b2){ b2.classList.remove('hide');
       b2.scrollIntoView({ block:'nearest' }); } stat('エフェクト（レイヤースタイル）の段を出した'); });
