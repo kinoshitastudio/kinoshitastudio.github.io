@@ -1463,6 +1463,9 @@ const SU = await p.evaluate(() => {
                    ブレンド条件の白側は 255 が「何もしない」／灯の当たる帯の上限も 100 が「ぜんぶ」。
                    ＝ 型「素」で 0 にすると **逆に効いてしまう**ので、ここは触らない。 */
                 'r_bi2','r_bi3','r_lto',
+                /* ⭐ シャドウ・ハイライトの【階調の幅】と【半径】も 0 が「何もしない」ではない。
+                   量（r_shA / r_hiA）が 0 なら1回も走らない＝素のままは そちらで守られる。 */
+                'r_shW','r_shR',
                 /* 調整レイヤーの効く範囲（奥行きの帯）＝どこに効かせるかの設定で、絵の空気ではない */
                 'r_adjfrom','r_adjto'];
   const bad = [];
@@ -7023,6 +7026,153 @@ ok(CUBE22['効き0で元に戻る'] && CUBE22['外すと元に戻る'],
    '🔴🔴 LUT は【焼き込まない】── 効き 0／外す で1画素も同じに戻る',
    JSON.stringify(CUBE22));
 ok(CUBE22.ms < 500, '⭐ LUT は重すぎない', CUBE22.ms + 'ms');
+
+/* ══⭐⭐ 特定色域の選択／シャドウ・ハイライト ══ 2026-09-03
+   Obsidian「08_MOYAに無い『Photoshopの普通の機能』」の★★2つ。
+   つまみ名は「Photoshop の作法 — 公式ヘルプの調べ2」から取った（推測しない）。
+   ⚠️ 相対値／絶対値の差は【sel6Apply の入口と出口】で見る。
+     素材の色によっては絵の差が丸めで消えるので、絵で測るとぶれる
+     （→ feedback_regression_test_before_push＝ぶれる試験はもっと悪い）。 */
+const SC22 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const 触 = (id, v) => { const e = document.getElementById(id); if(!e) return false;
+    e.value = String(v); e.dispatchEvent(new Event('input',{bubbles:true}));
+    e.dispatchEvent(new Event('change',{bubbles:true})); return true; };
+  const 撮 = () => { const d = g.getImageData(0,0,cv.width,cv.height).data;
+    let s2 = 0; for(let i = 0; i < d.length; i += 4*5) s2 += d[i]*3 + d[i+1]*5 + d[i+2]*7;
+    return s2; };
+  const 層を撮る = (L) => { const f = sheet(); const 控 = LAYERS.map(o2 => o2.on);
+    LAYERS.forEach(o2 => o2.on = (o2 === L));
+    const keep = COARSE; COARSE = 0; LAYERS.forEach(o2 => o2._key = '');
+    const c = document.createElement('canvas'); c.width = f.w; c.height = f.h;
+    paint(c.getContext('2d'), f.w, f.h, false); COARSE = keep;
+    const d = c.getContext('2d').getImageData(0,0,f.w,f.h).data;
+    let s2 = 0; for(let i = 0; i < d.length; i += 4*7) s2 += d[i]*3 + d[i+1]*5 + d[i+2]*7;
+    LAYERS.forEach((o2, k) => o2.on = 控[k]); LAYERS.forEach(o2 => o2._key = '');
+    return s2; };
+  const out = {};
+  document.getElementById('b_adjlayer').click(); await w(800);
+  out.欄が見える = ['r_shA','r_hiA','r_sc6c','r_sc6m','b_sc60'].every(id => {
+    const e = document.getElementById(id); return !!e && !!e.offsetParent; });
+  out.色域の数 = document.querySelectorAll('#s_sc6 button').length;
+  removeAt(SEL); await w(600);
+  const L = LAYERS.filter(x => !x.kind && x.img).sort((a,b) => a.d - b.d)[0];
+  setSel(LAYERS.indexOf(L), false); syncSel(); await w(500);
+  const 素 = 撮();
+  const 素の層 = LAYERS.map(x => 層を撮る(x));
+  /* ① シャドウ・ハイライト */
+  let t0 = performance.now();
+  触('r_shA', 80); await w(900);
+  out.SHms = Math.round(performance.now() - t0 - 900);
+  out.暗部持ち上げが効く = 撮() !== 素;
+  const 影の層 = LAYERS.map(x => 層を撮る(x));
+  out.SH変わった層 = LAYERS.filter((x, k) => 素の層[k] !== 影の層[k]).length;
+  触('r_shA', 0); await w(900);
+  out.SH0で戻る = 撮() === 素;
+  /* ② 特定色域 */
+  t0 = performance.now();
+  document.querySelector('#s_sc6 button[data-v="r"]').click(); await w(200);
+  触('r_sc6m', 60); await w(900);
+  out.SCms = Math.round(performance.now() - t0 - 1100);
+  out.特定色域が効く = 撮() !== 素;
+  out.案内 = (document.getElementById('o_sc6Say')||{}).value;
+  document.querySelector('#s_sc6 button[data-v="c"]').click(); await w(300);
+  out.色域を変えると欄も変わる = document.getElementById('r_sc6m').value === '0';
+  document.querySelector('#s_sc6 button[data-v="r"]').click(); await w(250);
+  document.getElementById('b_sc60').click(); await w(900);
+  out.SC0で戻る = 撮() === 素;
+  /* ③ 相対値と絶対値は【計算そのもの】で違うことを見る（素材に左右されない） */
+  const q1 = newSel6(); q1.r[1] = 60; q1.rel = true;
+  const q2 = newSel6(); q2.r[1] = 60; q2.rel = false;
+  const a1 = sel6Apply(q1, 200, 60, 60), a2 = sel6Apply(q2, 200, 60, 60);
+  out.相対と絶対が違う = !!(a1 && a2 && Math.abs(a1[1] - a2[1]) > 2);
+  out.相対 = a1 ? a1.map(v => Math.round(v)) : null;
+  out.絶対 = a2 ? a2.map(v => Math.round(v)) : null;
+  /* 0 なら何もしない */
+  out.ぜんぶ0なら効かない = sel6Apply(newSel6(), 200, 60, 60) === null;
+  return out;
+});
+ok(SC22.欄が見える && SC22.色域の数 === 9,
+   '⭐⭐ 特定色域の選択＝9つの色域（Adobe と同じ並び）と C/M/Y/K の4本が出ている',
+   JSON.stringify({ 欄:SC22.欄が見える, 色域:SC22.色域の数 }));
+ok(SC22.特定色域が効く && SC22.色域を変えると欄も変わる && SC22.SC0で戻る,
+   '⭐ 色域を選んで足し引きでき、色域を変えると欄も変わり、0 で1画素も同じに戻る',
+   JSON.stringify(SC22));
+ok(SC22.相対と絶対が違う && SC22.ぜんぶ0なら効かない,
+   '⭐⭐ 相対値と絶対値は【別の計算】（Adobe と同じ）／ぜんぶ 0 なら何もしない',
+   JSON.stringify({ 相対:SC22.相対, 絶対:SC22.絶対 }));
+ok(SC22.暗部持ち上げが効く && SC22.SH0で戻る && SC22.SH変わった層 === 1,
+   '⭐⭐ シャドウ・ハイライト＝暗部だけ持ち上がり、0 で1画素も同じに戻る（選んだ層だけ）',
+   JSON.stringify(SC22));
+ok(SC22.SHms < 500 && SC22.SCms < 500,
+   '⭐ どちらも重すぎない', 'SH ' + SC22.SHms + 'ms / SC ' + SC22.SCms + 'ms');
+
+/* ══🔴🔴 今日足したもの ぜんぶが【書き出して読み直しても同じ絵】か ══ 2026-09-03
+   木下＝「実装に問題ないかも踏まえて実際のつまみで検証よろしく」
+   ＝ この試験で **本当の穴が2つ** 見つかった：
+     ① 書き出す道・読む道が【各2本】あり、ブレンド条件を片方にしか入れていなかった
+        ＝まるごとで渡すと消えていた（→ feedback_same_formula_in_two_places_drifts）
+     ② LUT が Float32Array に戻らず「数の入ったただのオブジェクト」のまま効いて
+        絵が変わっていた ＝ **使う直前の1か所で関門**をかけて直した。
+   ⚠️ だから この試験は【往復して1画素も同じ】を見る。 */
+const ROUND22 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const 触 = (id, v) => { const e = document.getElementById(id); if(!e) return false;
+    e.value = String(v); e.dispatchEvent(new Event('input',{bubbles:true}));
+    e.dispatchEvent(new Event('change',{bubbles:true})); return true; };
+  const 撮 = () => { const f = sheet();
+    const keep = COARSE; COARSE = 0; LAYERS.forEach(L => L._key = '');
+    const c = document.createElement('canvas'); c.width = f.w; c.height = f.h;
+    paint(c.getContext('2d'), f.w, f.h, false); COARSE = keep;
+    const d = c.getContext('2d').getImageData(0,0,f.w,f.h).data;
+    let s2 = 0; for(let i = 0; i < d.length; i += 4*3) s2 += d[i]*3 + d[i+1]*5 + d[i+2]*7;
+    return s2; };
+  const L = LAYERS.filter(x => !x.kind && x.img).sort((a,b) => a.d - b.d)[0];
+  setSel(LAYERS.indexOf(L), false); syncSel(); await w(500);
+  /* 今日足したもの ぜんぶを効かせる */
+  触('r_li',80); 触('r_rim',80); 触('r_bnc',70);
+  触('r_lfall',70); 触('r_lfrom',0); 触('r_lto',90);
+  触('r_bi1',200); 触('r_bi0',120);
+  触('r_shA',60); 触('r_hiA',40);
+  document.querySelector('#s_sc6 button[data-v="r"]').click(); await w(200);
+  触('r_sc6m',50); 触('r_sc6y',-30);
+  /* LUT（8³・青を上げ 赤を下げる）をその場で作って入れる */
+  const n = 8, lines = ['LUT_3D_SIZE ' + n];
+  for(let b2 = 0; b2 < n; b2++) for(let g2 = 0; g2 < n; g2++) for(let r2 = 0; r2 < n; r2++)
+    lines.push((r2/(n-1)*0.65).toFixed(6) + ' ' + (g2/(n-1)*0.92).toFixed(6) + ' '
+      + Math.min(1, b2/(n-1) + 0.22).toFixed(6));
+  const e2 = edOf(L); e2.cube = cubeParse(lines.join('\n')); e2.cubeName = 'test'; e2.cubeAmt = 0.8;
+  L._key = ''; L._edc = null; L._edk = ''; if(L._edcM) L._edcM.clear();
+  render(); await w(1200);
+  const 前 = 撮();
+  const txt = cfgText(true);
+  const KB = Math.round(txt.length / 1024);
+  LAYERS.length = 0; SEL = -1; SELIDS = []; buildList(); render(); await w(500);
+  applyJSON(JSON.parse(txt)); await w(6000);
+  const 後 = 撮();
+  const L2 = LAYERS.filter(x => !x.kind && x.img).sort((a,b) => a.d - b.d)[0];
+  const q = L2 ? edOf(L2) : {};
+  return { 同じ絵: 前 === 後, KB,
+    cubeが残る: !!(q.cube && q.cube.d && q.cube.d.length),
+    cubeが正しい型: !!(q.cube && q.cube.d instanceof Float32Array),
+    shAが残る: q.shA === 60, sel6が残る: !!(q.sel6 && q.sel6.r && q.sel6.r[1] === 50),
+    blendifが残る: !!(L2 && L2.blendif && L2.blendif.b0 === 120),
+    灯が残る: !!(LIGHTS[0] && LIGHTS[0].fall === 70 && LIGHTS[0].to === 90) };
+});
+ok(ROUND22.同じ絵,
+   '🔴🔴 今日足したもの ぜんぶ入れて【書き出して読み直しても1画素も同じ】',
+   JSON.stringify(ROUND22));
+ok(ROUND22.blendifが残る && ROUND22.cubeが残る && ROUND22.shAが残る
+   && ROUND22.sel6が残る && ROUND22.灯が残る,
+   '⭐⭐ ブレンド条件・LUT・シャドウハイライト・特定色域・灯の届き方が【まるごとJSONに残る】',
+   JSON.stringify(ROUND22));
+ok(ROUND22.cubeが正しい型,
+   '🔴 LUT は読み直しても Float32Array（数の入ったただのオブジェクトのまま効かせない）',
+   JSON.stringify(ROUND22));
 
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
