@@ -7393,6 +7393,86 @@ ok(BR24.型.includes('ps_hikkaki') && BR24.型.includes('ps_hair'),
    '⭐ 木下が Photoshop に登録した筆（ひっかき・筆の毛）が MOYA にもある',
    BR24.型.filter(v => v.indexOf('ps_') === 0).join(','));
 
+/* ══⭐⭐ パスを【いまの筆で】なぞる（Photoshop のパスパネル下の【○】）══ 2026-09-04
+   🔴 ⭐07 の3番＝木下が「引っかき（細い線・くるくる）」で使っている手。
+     Photoshop の芯＝**いま選ばれているブラシの設定そのまま**で描かれる。
+   ⭐⭐ いちばん大事な試験＝**なぞった線が、盤に直接引いた線と同じ太さに見えるか**
+     （素材の紙は版面と目盛りが違うので、換算を間違えると太さが変わる）。 */
+const PB24 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const 触 = (id, v) => { const e = document.getElementById(id); if(!e) return false;
+    e.value = String(v); e.dispatchEvent(new Event('input',{bubbles:true}));
+    e.dispatchEvent(new Event('change',{bubbles:true})); return true; };
+  /* いちばん手前の層だけを版面へ置き直して、真ん中の縦1列で【線の太さ】を数える */
+  const 太さ = () => {
+    const f = sheet(), o = LAYERS[LAYERS.length-1];
+    if(!o || !o.img) return -1;
+    const c = document.createElement('canvas'); c.width = f.w; c.height = f.h;
+    const g = c.getContext('2d', { willReadFrequently:true });
+    const iw = o.img.naturalWidth || o.img.width, ih = o.img.naturalHeight || o.img.height;
+    const dw = o.s * f.w, dh = dw * ih / iw * (o.sy == null ? 1 : o.sy);
+    g.drawImage(o.img, o.x*f.w - dw/2, o.y*f.h - dh/2, dw, dh);
+    const d = g.getImageData(f.w>>1, 0, 1, f.h).data;
+    let n = 0; for(let i = 3; i < d.length; i += 4) if(d[i] > 20) n++;
+    return n;
+  };
+  const 数 = (o) => { const c = document.createElement('canvas'); c.width=300; c.height=300;
+    const g = c.getContext('2d',{willReadFrequently:true});
+    g.drawImage(o.img, 0, 0, 300, 300);
+    const d = g.getImageData(0,0,300,300).data;
+    let n=0; for(let i=3;i<d.length;i+=4) if(d[i]>20) n++; return n; };
+  const L = LAYERS.filter(x => !x.kind && x.img).sort((a,b) => a.d - b.d)[0];
+  const 引く = async (kind, size) => {
+    setSel(LAYERS.indexOf(L), false); syncSel(); await w(300);
+    const ps = pathsOf(L); ps.length = 0;
+    ps.push({ name:'ためし', pts:[
+      { x:0.10, y:0.50, hx:0.10, hy:0 }, { x:0.50, y:0.50, hx:0.10, hy:0 },
+      { x:0.90, y:0.50, hx:0.10, hy:0 } ] });
+    PATHSEL = { kind:'saved', i:0 }; buildPathList(); syncSelPath(); await w(300);
+    document.querySelector('#s_brkind button[data-v="' + kind + '"]').click();
+    触('r_brsize', size); 触('r_brtaper', 0); 触('r_brwob', 0); 触('r_brhard', 100);
+    await w(300);
+    const 前 = LAYERS.length;
+    document.getElementById('b_pbrush').click(); await w(900);
+    const o = LAYERS[LAYERS.length-1];
+    return { 増えた:LAYERS.length - 前, 名前:o.name, 画素:数(o), 太さ:太さ(),
+      重なる: Math.abs(o.x - L.x) < 1e-9 && Math.abs(o.y - L.y) < 1e-9 };
+  };
+  const ブラシ20 = await 引く('brush', 20);
+  const 刷毛20  = await 引く('hake', 20);
+  const ブラシ8  = await 引く('brush', 8);
+  /* 盤に直接 同じ筆で真横に引いて、太さを見比べる */
+  LAYERS.length = 0; SEL = -1; SELIDS = []; buildList(); render(); await w(400);
+  document.querySelector('#tools button[data-t="brush"]').click(); await w(300);
+  document.querySelector('#s_brkind button[data-v="brush"]').click();
+  触('r_brsize', 20); 触('r_brtaper', 0); 触('r_brhard', 100); await w(200);
+  const A = toScreen(0.10, 0.50), B = toScreen(0.90, 0.50);
+  stage.dispatchEvent(new PointerEvent('pointerdown',
+    { clientX:A.clientX, clientY:A.clientY, bubbles:true, pointerId:41 }));
+  for(let i = 1; i <= 16; i++) stage.dispatchEvent(new PointerEvent('pointermove',
+    { clientX:A.clientX + (B.clientX - A.clientX) * i / 16, clientY:A.clientY,
+      bubbles:true, pointerId:41 }));
+  stage.dispatchEvent(new PointerEvent('pointerup',
+    { clientX:B.clientX, clientY:B.clientY, bubbles:true, pointerId:41 }));
+  await w(900);
+  return { ブラシ20, 刷毛20, ブラシ8, 盤に直接:太さ() };
+});
+ok(PB24.ブラシ20.増えた === 1 && PB24.ブラシ20.名前 === 'パスを筆でなぞった'
+   && PB24.ブラシ20.重なる,
+   '⭐⭐ ［いまの筆でパスをなぞる］が効く（元の素材にぴったり重なる新しいレイヤー）',
+   JSON.stringify(PB24.ブラシ20));
+ok(PB24.ブラシ20.太さ === PB24.盤に直接,
+   '⭐⭐ なぞった線は【盤に直接引いた線と同じ太さ】に見える（紙と版面の目盛りの換算）',
+   'なぞり ' + PB24.ブラシ20.太さ + ' px ／ 盤に直接 ' + PB24.盤に直接 + ' px');
+ok(PB24.刷毛20.画素 !== PB24.ブラシ20.画素,
+   '⭐ 筆を変えると別の線になる（＝いま選んでいる筆の設定で描かれている）',
+   'ブラシ ' + PB24.ブラシ20.画素 + ' / 刷毛 ' + PB24.刷毛20.画素);
+ok(PB24.ブラシ8.太さ > 0 && PB24.ブラシ8.太さ < PB24.ブラシ20.太さ,
+   '⭐ 太さのつまみがそのまま効く（8 は 20 より細い）',
+   '太さ8 → ' + PB24.ブラシ8.太さ + ' px ／ 太さ20 → ' + PB24.ブラシ20.太さ + ' px');
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
 process.exit(NG ? 1 : 0);

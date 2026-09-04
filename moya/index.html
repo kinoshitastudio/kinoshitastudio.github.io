@@ -1728,6 +1728,14 @@
       <button class="btn" id="b_pfill">パスを塗りつぶす</button>
       <button class="btn" id="b_pstroke">パスの境界線を描く</button>
     </div>
+    <!-- ══⭐⭐ パスを【いまの筆で】なぞる ── 2026-09-04
+         Photoshop＝パスパネル下の【○】（ツール：ブラシ）。
+         ⭐ 引っかき・くるくるの細い線は これで引く（手で描いていない）。 -->
+    <button class="btn" id="b_pbrush" style="width:100%;margin-top:6px">いまの筆でパスをなぞる</button>
+    <div class="note"><b>［パスの境界線を描く］は太さ一定の線</b>。
+      <b>［いまの筆でなぞる］は筆の質感</b>（入り抜き・震え・毛の本数）が乗ります。<br>
+      ⭐ Photoshop と同じで<b>いま選んでいる筆の設定そのまま</b>で描かれます
+      ── <b>筆・太さ・色を先に決めてから</b>押してください。</div>
     <!-- ⭐⭐ 選択範囲の演算（Adobe のオプションバーと同じ4つ・同じ並び）── 2026-08-31
          A. 新規選択／B. 選択範囲に追加／C. 現在の選択範囲から一部削除／
          D. 現在の選択範囲との共通範囲
@@ -11788,6 +11796,11 @@ const BR = { kind:'powder', size:18, flow:55, scat:60, grain:50, seed:7,
   /* ⭐ 毛の本数（刷毛だけ）0＝おまかせ／滑らかさ（手ブレ補正）0＝いままでどおり。2026-09-04 */
   hair:0, smooth:0,
   opa:100, taper:0, wob:0, col:'#ffffff', neu:true };
+/* ⭐ 筆の種類の【日本語の名前】は1か所だけ持つ（同じ表を何か所にも書かない）
+   → feedback_same_formula_in_two_places_drifts */
+const BRKINDNAME = { powder:'粉', fog:'霧', beam:'光の筋', splash:'しぶき',
+  bolt:'稲妻', shard:'破片', foam:'泡', hake:'刷毛', brush:'ブラシ' };
+function brKindName(k){ return BRKINDNAME[k] || k; }
 let BRUSHON = false, BRUSHL = null, brRnd = 0;
 function brSeed(n){ brRnd = (n >>> 0) || 1; }
 function brR(){ brRnd = (brRnd * 1664525 + 1013904223) >>> 0; return brRnd / 4294967296; }
@@ -12090,9 +12103,7 @@ function brBegin(){
     Object.defineProperty(c, 'naturalWidth',  { value:c.width, configurable:true });
     Object.defineProperty(c, 'naturalHeight', { value:c.height, configurable:true });
   }catch(_){}
-  const KIND = { powder:'粉', fog:'霧', beam:'光の筋', splash:'しぶき',
-    hake:'刷毛', brush:'ブラシ',
-                 bolt:'稲妻', shard:'破片', foam:'泡' };
+  const KIND = BRKINDNAME;
   hist('筆で描く');
   if(!el('k_brnew').checked && BRUSHL && LAYERS.indexOf(BRUSHL) >= 0){
     const L2 = BRUSHL;
@@ -12394,8 +12405,7 @@ function syncBrush(){
   if(say){
     const on = !BRUSHON && L && L.brush;
     say.classList.toggle('hide', !on);
-    if(on) say.innerHTML = 'この絵は <b>' + (({powder:'粉',fog:'霧',beam:'光の筋',
-      splash:'しぶき',bolt:'稲妻',shard:'破片',foam:'泡',hake:'刷毛',brush:'ブラシ'})[L.brush.kind] || L.brush.kind)
+    if(on) say.innerHTML = 'この絵は <b>' + brKindName(L.brush.kind)
       + '</b> で描いたものです。<b>上のつまみを回すとこの絵が描き直されます</b>'
       + '（盤の上で動かす・大きさも変えられます）';
   }
@@ -14099,6 +14109,67 @@ el('b_selstroke').onclick = () => {
   const L = LAYERS[SEL]; if(!L || !L.sel) return;
   strokePath(L, selSubs(L.sel)[0].pts, false);
 };
+/* ══⭐⭐ パスを【いまの筆で】なぞる ══ 2026-09-04
+   （Photoshop＝パスパネル下の【○】＝「ブラシでパスの境界線を描く」）
+   🔴 木下が `筆の型.psd` の「引っかき（細い線・くるくる）」で使っている手そのもの。
+     ⭐ Photoshop の芯＝**いま選ばれているブラシの設定そのままで描かれる**
+       （だから ①筆・太さ・色を先に決める ②パスを引く ③なぞらせる、の順になる）。
+   ⚠️ 太さ一定の［パスの境界線を描く］とは別物＝**筆の質感・入り抜き・震え・毛の本数**が乗る。
+   ⚠️ Photoshop と同じで、押した時点で【1枚の絵】になる（パスは残る）。
+     ＝ここは「パスを絵にする」操作なので焼き込みでよい（つまみを焼き込むのとは別の話）。 */
+function strokePathBrush(L, pts){
+  const m = maskSize(L), f = sheet();
+  const d = pathD(pts, true);
+  if(!d){ stat('描けませんでした'); return; }
+  /* ⭐ パスの上を【等間隔にたどる】＝SVG の getTotalLength / getPointAtLength */
+  const sv = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  sv.setAttribute('d', d);
+  let len = 0;
+  try{ len = sv.getTotalLength(); }catch(_){ }
+  if(!(len > 0)){ stat('パスの長さが読めませんでした'); return; }
+  /* ⭐ 筆の太さは【版面】に対する％＝素材の紙に打つときは その紙の目盛りに直す
+     （版面での見え方が、盤に直接描いたときと同じになる） */
+  const r版 = Math.max(2, BR.size / 100 * Math.min(f.w, f.h) * 0.5);
+  const 紙倍 = m.w / Math.max(1, L.s * f.w);
+  const r = Math.max(0.7, r版 * 紙倍);
+  /* ⚠️ 縁からはみ出す分だけ紙を広げる（広げすぎると重い＝半径ぶん＋少し） */
+  const pad = Math.ceil(r * 1.2) + 8;
+  const c = document.createElement('canvas');
+  c.width = m.w + pad*2; c.height = m.h + pad*2;
+  const x = c.getContext('2d');
+  x.translate(pad, pad);
+  const sp = Math.max(0.8, (BR.space == null ? 25 : BR.space) / 100 * r * 2);
+  /* ⚠️ ひと筆の位置と長さは【入り抜き】が見る。終わったら元に戻す（他のひと筆に影響させない） */
+  const 保P = BRPOS, 保L = BRLEN;
+  BRLEN = Math.max(1, len);
+  brSeed((BR.seed || 1) + 1);
+  for(let s = 0; s <= len; s += sp){
+    const p0 = sv.getPointAtLength(s);
+    const p1 = sv.getPointAtLength(Math.min(len, s + Math.max(0.5, sp * 0.5)));
+    const ang = Math.atan2(p1.y - p0.y, p1.x - p0.x);
+    BRPOS = s;
+    brStamp(x, p0.x, p0.y, Math.max(0.7, r * brTaper(s / len)), BR.col, ang);
+  }
+  BRPOS = 保P; BRLEN = 保L;
+  try{
+    Object.defineProperty(c, 'naturalWidth',  { value:c.width, configurable:true });
+    Object.defineProperty(c, 'naturalHeight', { value:c.height, configurable:true });
+    Object.defineProperty(c, 'src', { value:c.toDataURL('image/png'), configurable:true });
+  }catch(_){}
+  hist();
+  const o = { id:UID++, kind:null, img:c, name:'パスを筆でなぞった', x:L.x, y:L.y,
+    s:L.s * (c.width / m.w), sy:syOf(L), rot:L.rot, flip:L.flip,
+    d:Math.max(0, L.d - 0.001), on:true, op:1, ord:UID, air:0, g:null, clip:false,
+    blend:'source-over', keys:[], mCut:null, mKeep:null, adj:newAdj(), ed:newEd(), fx:newFx(),
+    fill:{ on:false, color:'#ffffff', op:1, mode:'source-over' },
+    mask:null, mv:0, _dist:null, _mk:'', _c:null, _key:'' };
+  LAYERS.push(o); SEL = LAYERS.length - 1; SELIDS = [o.id];
+  buildList(); syncSel(); render();
+  stat('いまの筆（' + brKindName(BR.kind)
+     + '・太さ ' + BR.size + '）でパスをなぞった ── 筆を変えてからもう一度押すと別の線になります');
+}
+{ const b = el('b_pbrush');
+  if(b) b.onclick = () => { const g2 = needPath(); if(!g2) return; strokePathBrush(g2.L, g2.pts); }; }
 /* ══⭐⭐ 押す前の下見（PATHPV）の配線 ══ 2026-09-01
    ⭐ 出す先は3つとも同じ形＝【いま描かれる点】を1本の道で決める。
      ・パスパネルで選んでいるパス（無ければ）選択範囲の形
