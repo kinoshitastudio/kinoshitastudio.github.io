@@ -1431,7 +1431,10 @@ const SU = await p.evaluate(() => {
   /* ⚠️ 「そのまま」が 0 でないつまみ＝チャンネルミキサーの元の R は 100%（＝素通し） */
   /* ⚠️ 「何もしない値」が 0 でないつまみ（濃度・不透明度のたぐい）は 100 が素 */
   const NEU = { r_op:100, r_air:100, r_white:100, r_gamma:100, r_out:100, r_mxr:100,
-                r_filla:100, r_lmdens:100, r_glasssm:6, r_glassscale:100 };
+                r_filla:100, r_lmdens:100, r_glasssm:6, r_glassscale:100,
+                /* ⭐ 出力レベルの白は【255 が「何もしない」】（0 にすると真っ黒になる）
+                   ＝ 0 が素ではないつまみ。→ feedback_the_default_is_raw_and_pro_adjusts_from_there */
+                r_outhi:255 };
   /* 絵に効かない＝素材の置き方・切り抜きの道具・出す大きさ・種・影の形・文字と塗りの設定 */
   const SKIP = ['r_long','r_tol','r_brush','r_feather','r_seed','r_shds','r_shdl','r_shdc',
                 'r_lr','r_scale','r_depth','r_rot','r_sy','r_fillop',
@@ -1459,6 +1462,8 @@ const SU = await p.evaluate(() => {
                 /* ブラシの かたさ・間隔・不透明度＝筆の道具の数字（2026-09-03）
                    ⚠️ 既定は 70／25／100 で、0 ではない（Adobe の丸ブラシに合わせた値） */
                 'r_brhard','r_brspace','r_bropa','r_brtaper','r_brwob',
+                /* 毛の本数・滑らかさ＝筆の道具の数字（2026-09-04・既定は 0＝おまかせ／効かせない） */
+                'r_brhair','r_brsm',
                 /* ⭐ 既定が 0 でないもの＝【0 が「何もしない」ではない】つまみ。
                    ブレンド条件の白側は 255 が「何もしない」／灯の当たる帯の上限も 100 が「ぜんぶ」。
                    ＝ 型「素」で 0 にすると **逆に効いてしまう**ので、ここは触らない。 */
@@ -7173,6 +7178,220 @@ ok(ROUND22.blendifが残る && ROUND22.cubeが残る && ROUND22.shAが残る
 ok(ROUND22.cubeが正しい型,
    '🔴 LUT は読み直しても Float32Array（数の入ったただのオブジェクトのまま効かせない）',
    JSON.stringify(ROUND22));
+
+/* ══⭐⭐ Photoshop で いま手を動かしていることが MOYA でも出来るか ══ 2026-09-04
+   🔴 木下は `筆の型.psd` を手で組み直しながら学び直している（Obsidian ⭐07）。
+     そこで実際に使っている手のうち、MOYA に無かった4つを足した：
+       ① 色相・彩度の【色域】（マスターで下げると背景の青い筆まで灰色になる）
+       ② レベル補正の【出力レベル】（主役：起こす の 出力 16/250）
+       ③ ⌘J＝同じ位置に複製（ライトラップと接地の影は ここから始まる）
+       ④ 原寸（⌘1）／毛の本数／滑らかさ／Photoshop に登録した筆5本
+   ⭐ この章は【Photoshop の数字がそのまま入るか】を見る＝道具が追いついている印。 */
+const PS24 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  await new Promise(r => { document.getElementById('b_demo').click(); setTimeout(r, 1700); });
+  const 触 = (id, v) => { const e = document.getElementById(id); if(!e) return false;
+    e.value = String(v); e.dispatchEvent(new Event('input',{bubbles:true}));
+    e.dispatchEvent(new Event('change',{bubbles:true})); return true; };
+  const 撮 = () => { const f = sheet();
+    const keep = COARSE; COARSE = 0; LAYERS.forEach(L => L._key = '');
+    const c = document.createElement('canvas'); c.width = f.w; c.height = f.h;
+    paint(c.getContext('2d'), f.w, f.h, false); COARSE = keep;
+    const d = c.getContext('2d').getImageData(0,0,f.w,f.h).data;
+    let s2 = 0; for(let i = 0; i < d.length; i += 4*3) s2 += d[i]*3 + d[i+1]*5 + d[i+2]*7;
+    return s2; };
+  const L = LAYERS.filter(x => !x.kind && x.img).sort((a,b) => a.d - b.d)[0];
+  setSel(LAYERS.indexOf(L), false); syncSel(); await w(500);
+  const 素 = 撮();
+
+  /* ── ① 色相・彩度の色域 ── 飴色と青を持つ絵を1枚だけ置いて、青が動かないことを見る */
+  const c2 = document.createElement('canvas'); c2.width = 400; c2.height = 400;
+  const x2 = c2.getContext('2d');
+  x2.fillStyle = '#c8641e'; x2.fillRect(0,0,400,200);      /* 飴色 */
+  x2.fillStyle = '#2f6fd0'; x2.fillRect(0,200,400,200);    /* 青 */
+  const im2 = new Image();
+  await new Promise(r => { im2.onload = r; im2.src = c2.toDataURL(); });
+  addImage(im2, '色域の見本');
+  await w(700);
+  const T = LAYERS[LAYERS.length - 1];
+  setSel(LAYERS.indexOf(T), false); syncSel(); await w(300);
+  const 板 = (y) => { const dw = 200, dh = 200;
+    const c3 = document.createElement('canvas'); c3.width = dw; c3.height = dh;
+    const g3 = c3.getContext('2d', { willReadFrequently:true });
+    g3.drawImage(edSrc(T, dw, dh), 0, 0, dw, dh);
+    const d3 = g3.getImageData(dw>>1, y, 1, 1).data;
+    return d3[0] + ',' + d3[1] + ',' + d3[2]; };
+  const 飴0 = 板(60), 青0 = 板(140);
+  /* マスターで彩度 −100 ＝ 全部の色が抜ける（Photoshop と同じ・これが困る挙動） */
+  document.querySelector('#s_hs6 button[data-v="master"]').click();
+  触('r_sat', -100); await w(400);
+  const 飴M = 板(60), 青M = 板(140);
+  触('r_sat', 0); await w(200);
+  /* レッド系だけ −100 ＝ 青は1画素も動かない */
+  document.querySelector('#s_hs6 button[data-v="r"]').click();
+  触('r_sat', -100); await w(400);
+  const 飴R = 板(60), 青R = 板(140);
+  /* ⭐ 木下が Photoshop で入れている数字がそのまま入るか（主役：飴色を抜く） */
+  触('r_sat', -48);
+  document.querySelector('#s_hs6 button[data-v="y"]').click();
+  触('r_hue', -10); 触('r_sat', -58);
+  document.querySelector('#s_hs6 button[data-v="b"]').click();
+  触('r_sat', 30); await w(400);
+  const 飴色を抜いた = JSON.parse(JSON.stringify(edOf(T).hsl6));
+  /* つまみは色域ごとに持ち替わる（マスターへ戻すと マスターの値が出る） */
+  document.querySelector('#s_hs6 button[data-v="master"]').click(); await w(200);
+  const マスターのつまみ = +document.getElementById('r_sat').value;
+  document.querySelector('#s_hs6 button[data-v="r"]').click(); await w(200);
+  const レッドのつまみ = +document.getElementById('r_sat').value;
+  const 色相の幅 = document.getElementById('r_hue').min + '〜' + document.getElementById('r_hue').max;
+
+  /* ── ② 出力レベル ── 255/255 で真っ白／0/0 で真っ黒／戻すと1画素も同じ */
+  const e4 = edOf(T);
+  e4.hsl6 = null; touchEd(T); await w(300);
+  const 色域を消した = 板(60);
+  document.getElementById('b_outwhite').click(); await w(400);
+  const 白 = 板(60);
+  document.getElementById('b_outblack').click(); await w(400);
+  const 黒 = 板(60);
+  触('r_outlo', 16); 触('r_outhi', 250); await w(400);
+  const 出力16250 = { lo:edOf(T).outLo, hi:edOf(T).outHi, 色:板(60) };
+  触('r_outlo', 0); 触('r_outhi', 255); await w(400);
+  const 出力を戻した = 板(60);
+
+  /* ── ③ ⌘J＝同じ位置に複製 */
+  const 前枚 = LAYERS.length;
+  document.dispatchEvent(new KeyboardEvent('keydown',
+    { key:'j', metaKey:true, bubbles:true, cancelable:true }));
+  await w(600);
+  const 写し = LAYERS[LAYERS.length - 1];
+  const 複製 = { 増えた:LAYERS.length - 前枚,
+    同じ位置: Math.abs(写し.x - T.x) < 1e-9 && Math.abs(写し.y - T.y) < 1e-9 };
+
+  /* ── ④ 原寸（⌘1） */
+  fitView(); const 合わせる = V.z; fullView(); const 原寸 = V.z;
+
+  /* ── ⑤ 書き出して読み直しても同じ絵（色域と出力レベルが JSON に残るか）
+     ⚠️ 見たいのは【つまみが往復しても同じ絵を出すか】。
+       色域の見本は canvas で作った絵なので、まるごと書き出しでは JPEG に落ちて
+       画素が必ず変わる（＝書き出しの仕様で、色域のせいではない）。
+       だから ここでは見本を外して、置いてある写真に同じつまみを入れて測る。 */
+  LAYERS.splice(LAYERS.indexOf(T), 1);
+  LAYERS.filter(x => x.name === '色域の見本 の写し')
+        .forEach(x => LAYERS.splice(LAYERS.indexOf(x), 1));
+  buildList(); render(); await w(400);
+  setSel(LAYERS.indexOf(L), false); syncSel(); await w(200);
+  const e5 = edOf(L);
+  e5.hsl6 = { r:[0,-48,0], y:[-10,-58,0], g:[0,0,0], c:[0,0,0], b:[0,30,0], m:[0,0,0] };
+  e5.outLo = 16/255; e5.outHi = 250/255;
+  touchEd(L); render(); await w(900);
+  const 前 = 撮();
+  const txt = cfgText(true);
+  LAYERS.length = 0; SEL = -1; SELIDS = []; buildList(); render(); await w(500);
+  applyJSON(JSON.parse(txt)); await w(6000);
+  const 後 = 撮();
+  const T2 = LAYERS.filter(x => !x.kind && x.img).sort((a,b) => a.d - b.d)[0];
+  const q2 = T2 ? edOf(T2) : {};
+  return { 素, 飴0, 青0, 飴M, 青M, 飴R, 青R, 飴色を抜いた,
+    マスターのつまみ, レッドのつまみ, 色相の幅,
+    色域を消した, 白, 黒, 出力16250, 出力を戻した, 複製,
+    合わせる:+合わせる.toFixed(3), 原寸:+原寸.toFixed(3),
+    往復で同じ絵: 前 === 後,
+    色域が残る: !!(q2.hsl6 && q2.hsl6.r && q2.hsl6.r[1] === -48 && q2.hsl6.y[0] === -10),
+    出力が残る: !!(q2.outLo && Math.abs(q2.outLo - 16/255) < 1e-6) };
+});
+ok(PS24.青M !== PS24.青0,
+   '🔴 マスターで彩度を下げると【青い所まで】色が抜ける（Photoshop と同じ・これが困る挙動）',
+   '青 ' + PS24.青0 + ' → ' + PS24.青M);
+ok(PS24.青R === PS24.青0 && PS24.飴R !== PS24.飴0,
+   '⭐⭐ レッド系だけ下げると【青は1画素も動かず】飴色だけ落ちる',
+   '飴 ' + PS24.飴0 + ' → ' + PS24.飴R + ' ／ 青 ' + PS24.青0 + ' → ' + PS24.青R);
+ok(PS24.飴色を抜いた.r[1] === -48 && PS24.飴色を抜いた.y[0] === -10
+   && PS24.飴色を抜いた.y[1] === -58 && PS24.飴色を抜いた.b[1] === 30,
+   '⭐⭐ Photoshop の数字がそのまま入る（レッド −48／イエロー −10・−58／ブルー +30）',
+   JSON.stringify(PS24.飴色を抜いた));
+ok(PS24.マスターのつまみ === 0 && PS24.レッドのつまみ === -48,
+   '⭐ 同じ3本のつまみが【選んでいる色域の値】を出す（Photoshop と同じ作り）',
+   'マスター ' + PS24.マスターのつまみ + ' / レッド ' + PS24.レッドのつまみ);
+ok(PS24.色相の幅 === '-180〜180',
+   '⭐ 色相の目盛りは Photoshop と同じ【度】（±180°）', PS24.色相の幅);
+ok(PS24.白 === '255,255,255', '⭐⭐ 出力 255/255 で【真っ白に潰れる】＝ライトラップの作り方', PS24.白);
+ok(PS24.黒 === '0,0,0', '⭐⭐ 出力 0/0 で【真っ黒に潰れる】＝接地の影の作り方', PS24.黒);
+ok(PS24.出力16250.色 !== PS24.色域を消した.色,
+   '⭐ 出力 16／250 が入る（主役：起こす の数字）',
+   JSON.stringify(PS24.出力16250));
+ok(PS24.出力を戻した === PS24.色域を消した,
+   '⚠️ 出力を 0／255 に戻すと1画素も同じに戻る（焼き込まない）',
+   PS24.色域を消した + ' → ' + PS24.出力を戻した);
+ok(PS24.複製.増えた === 1 && PS24.複製.同じ位置,
+   '⭐⭐ ⌘J＝同じ位置に複製（Photoshop と同じ／ここから ライトラップと接地の影を作る）',
+   JSON.stringify(PS24.複製));
+ok(PS24.原寸 === 1 && PS24.合わせる !== 1,
+   '⭐ ⌘1＝原寸（100%）で見られる（質感は原寸でしか分からない）',
+   '合わせる ' + PS24.合わせる + ' → 原寸 ' + PS24.原寸);
+ok(PS24.往復で同じ絵 && PS24.色域が残る && PS24.出力が残る,
+   '🔴🔴 色域と出力レベルは【書き出して読み直しても1画素も同じ】',
+   JSON.stringify({ 同じ絵:PS24.往復で同じ絵, 色域:PS24.色域が残る, 出力:PS24.出力が残る }));
+
+/* ══⭐⭐ 筆 ── 毛の本数と滑らかさ（Photoshop の筆の型.psd から）══ 2026-09-04
+   🔴🔴 原寸で見て分かったこと＝**帯を太くするのは毛でなく本数**（幅÷本×1.45 が境目）。
+   ⭐ 滑らかさ＝Photoshop 2018 の手ブレ補正。昔パスでなぞらせていたのは これが無かったから。
+   ⚠️ どちらも既定 0＝今までの絵は1画素も変わらない。 */
+const BR24 = await p.evaluate(async () => {
+  const w = ms => new Promise(r => setTimeout(r, ms));
+  closeAllEditors();
+  const 触 = (id, v) => { const e = document.getElementById(id); if(!e) return false;
+    e.value = String(v); e.dispatchEvent(new Event('input',{bubbles:true}));
+    e.dispatchEvent(new Event('change',{bubbles:true})); return true; };
+  const ひと筆 = async (kind, hair, sm, ぎざ) => {
+    LAYERS.length = 0; SEL = -1; SELIDS = []; buildList(); render(); await w(300);
+    document.querySelector('#tools button[data-t="brush"]').click(); await w(300);
+    document.querySelector('#s_brkind button[data-v="' + kind + '"]').click(); await w(150);
+    触('r_brsize', kind === 'hake' ? 40 : 8); 触('r_brhair', hair); 触('r_brsm', sm);
+    await w(200);
+    const A = toScreen(0.25, 0.5), B = toScreen(0.75, 0.5);
+    stage.dispatchEvent(new PointerEvent('pointerdown',
+      { clientX:A.clientX, clientY:A.clientY, bubbles:true, pointerId:31 }));
+    for(let i = 1; i <= 20; i++){
+      const x = A.clientX + (B.clientX - A.clientX) * i / 20;
+      const y = A.clientY + (ぎざ ? (i % 2 ? 18 : -18) : 0);
+      stage.dispatchEvent(new PointerEvent('pointermove',
+        { clientX:x, clientY:y, bubbles:true, pointerId:31 }));
+    }
+    stage.dispatchEvent(new PointerEvent('pointerup',
+      { clientX:B.clientX, clientY:B.clientY, bubbles:true, pointerId:31 }));
+    await w(700);
+    const L = LAYERS[LAYERS.length - 1];
+    if(!L || !L.img) return null;
+    const c = document.createElement('canvas'); c.width = 300; c.height = 300;
+    const g = c.getContext('2d', { willReadFrequently:true });
+    g.drawImage(L.img, 0, 0, 300, 300);
+    const d = g.getImageData(0,0,300,300).data;
+    let n = 0; for(let i = 3; i < d.length; i += 4) if(d[i] > 20) n++;
+    const st = (L.brush && L.brush.strokes && L.brush.strokes[0]) || [];
+    let mn = 9, mx = -9; st.forEach(q => { mn = Math.min(mn, q[1]); mx = Math.max(mx, q[1]); });
+    return { 画素:n, ぶれ:+(mx - mn).toFixed(4), 毛:L.brush.hair };
+  };
+  const おまかせ = await ひと筆('hake', 0, 0, false);
+  const 五本     = await ひと筆('hake', 5, 0, false);
+  const 三十本   = await ひと筆('hake', 30, 0, false);
+  const ぶれ0    = await ひと筆('brush', 0, 0, true);
+  const ぶれ60   = await ひと筆('brush', 0, 60, true);
+  const 型 = [...document.querySelectorAll('#sel_brpre option')].map(o => o.value);
+  return { おまかせ, 五本, 三十本, ぶれ0, ぶれ60, 型 };
+});
+ok(BR24.五本 && BR24.三十本 && BR24.五本.画素 !== BR24.三十本.画素,
+   '⭐⭐ 毛の本数で絵が変わる（5本＝板／30本＝櫛）',
+   '5本 ' + (BR24.五本||{}).画素 + ' / 30本 ' + (BR24.三十本||{}).画素);
+ok(BR24.おまかせ && BR24.おまかせ.毛 === 0,
+   '⚠️ 既定は 0＝おまかせ（いままでどおり粒の大きさから決める）',
+   JSON.stringify(BR24.おまかせ));
+ok(BR24.ぶれ60 && BR24.ぶれ0 && BR24.ぶれ60.ぶれ < BR24.ぶれ0.ぶれ * 0.8,
+   '⭐⭐ 滑らかさ 60 で【手のぶれが均される】（記録する点そのものが滑らかになる）',
+   '0 → ' + (BR24.ぶれ0||{}).ぶれ + ' ／ 60 → ' + (BR24.ぶれ60||{}).ぶれ);
+ok(BR24.型.includes('ps_hikkaki') && BR24.型.includes('ps_hair'),
+   '⭐ 木下が Photoshop に登録した筆（ひっかき・筆の毛）が MOYA にもある',
+   BR24.型.filter(v => v.indexOf('ps_') === 0).join(','));
 
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' | '));
 await b.close();
