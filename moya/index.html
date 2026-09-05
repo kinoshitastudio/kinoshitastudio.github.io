@@ -2584,6 +2584,8 @@
       <canvas id="gmapBar" width="256" height="18"
         style="width:100%;height:18px;border-radius:6px;display:block;margin:4px 0 6px"></canvas>
       <div id="gmapStops" style="display:flex;flex-wrap:wrap;gap:5px;align-items:center"></div>
+      <!-- ⭐⭐ 濃さ＝Photoshop の調整レイヤーの不透明度。100% だと写真が消えて色だけになる -->
+      <div class="knob"><span class="n">不透明度</span><input class="num" type="number" id="n_r_gmapop"><input type="range" id="r_gmapop" min="0" max="100" step="1" value="100"><output id="o_gmapop" hidden>100</output></div>
       <div class="btns2" style="margin-top:6px">
         <button class="btn" id="b_gmadd">色を足す</button>
         <button class="btn" id="b_gmdel">最後を消す</button>
@@ -4865,9 +4867,14 @@ function mix3Of(m){
 /* ══⭐⭐ グラデーションマップ ══ 2026-08-31
    ⭐ 明るさ（0〜255）を、置いた色の帯に置き換える＝写真がそのまま2色刷りになる。
    ⚠️ 既定は「かけない」（null）。色は最低2つ。 */
-function newGmap(){ return { on:false,
+function newGmap(){ return { on:false, op:1,
   stops:[{ p:0, c:'#1b2a4a' }, { p:1, c:'#f6e7c8' }] }; }
-function gmapPlain(g){ return !g || !g.on || !g.stops || g.stops.length < 2; }
+/* ⭐⭐ 濃さ（Photoshop＝調整レイヤーの不透明度）── 2026-09-05
+   🔴 MOYA で `筆の型` を1枚組んでみて出た穴。Photoshop 側は **34%** で当てている。
+     100% だと写真が消えて色だけになる（`16_筆の型` ＝「56% では肌が灰色。34% が境目」）。
+   ⚠️ 既定 1（＝100%）＝いままでの絵は1画素も変わらない。 */
+function gmapOp(g){ return (!g || g.op == null) ? 1 : Math.max(0, Math.min(1, g.op)); }
+function gmapPlain(g){ return !g || !g.on || !g.stops || g.stops.length < 2 || gmapOp(g) <= 0.001; }
 function gmapLUT(g){
   const c = document.createElement('canvas'); c.width = 256; c.height = 1;
   const x = c.getContext('2d', { willReadFrequently:true });
@@ -5133,6 +5140,7 @@ function edOnce(base, e, dw, dh){
     const im = x.getImageData(0, 0, dw, dh), d = im.data;
     const { R, G, B } = edLUT(e);
     const gm = gmapPlain(e.gmap) ? null : gmapLUT(e.gmap);
+    const gmop = gmapOp(e.gmap);
     const sel6 = sel6Plain(e.sel6) ? null : e.sel6;
     const hsl6 = hsl6Plain(e.hsl6) ? null : e.hsl6;
     /* 🔴🔴 2026-09-03・読む道が複数あり、どれか1本で Float32Array に戻し忘れると
@@ -5188,7 +5196,8 @@ function edOnce(base, e, dw, dh){
       if(gm){
         const v = ((0.299*r + 0.587*g2 + 0.114*b2)|0);
         const q = v*3;
-        r = gm[q]; g2 = gm[q+1]; b2 = gm[q+2];
+        if(gmop >= 0.999){ r = gm[q]; g2 = gm[q+1]; b2 = gm[q+2]; }
+        else { r += (gm[q] - r) * gmop; g2 += (gm[q+1] - g2) * gmop; b2 += (gm[q+2] - b2) * gmop; }
       }
       /* ⭐⭐ 色相・彩度の【色域】＝狙った色だけ 色相・彩度・明度を動かす
          （マスターで彩度を下げると【全部の色】が抜けてしまうので、色域で狙う） */
@@ -10442,9 +10451,20 @@ function syncAdj2(){
     put2('r_shR','o_shR', e.shR == null ? 30 : e.shR); }
   const kg = el('k_gmap'); if(kg) kg.checked = !!(e.gmap && e.gmap.on);
   const gu = el('gmapUI'); if(gu) gu.classList.toggle('hide', !(e.gmap && e.gmap.on));
+  { const r = el('r_gmapop');
+    if(r){ const v = Math.round(gmapOp(e.gmap) * 100);
+      r.value = v; const o = el('o_gmapop'); if(o) o.value = String(v);
+      const n = el('n_r_gmapop'); if(n) n.value = v; } }
   buildGmap();
 }
 function gmapOf(L){ const e = edOf(L); if(!e.gmap) e.gmap = newGmap(); return e.gmap; }
+{ const r = el('r_gmapop');
+  if(r) r.addEventListener('input', ev => {
+    const L = LAYERS[SEL]; if(!L) return;
+    gmapOf(L).op = (+ev.target.value) / 100;
+    const o = el('o_gmapop'); if(o) o.value = String(Math.round(+ev.target.value));
+    touchEd(L); touching(); renderSoon();
+  }); }
 function buildGmap(){
   const box = el('gmapStops'); if(!box) return;
   const L = LAYERS[SEL]; if(!L) return;
@@ -11890,8 +11910,14 @@ function brStamp(x2, cx, cy, r, col, ang){
        ⚠️ 乱数は「毛ごとの個性」にだけ使い、「押すたび」には使わない。 */
     /* ⭐ 毛の本数＝つまみが 0 なら いままでどおり粒の大きさから決める（今までの絵と同じ） */
     const 毛 = (BR.hair > 0) ? BR.hair : (5 + Math.round(BR.grain / 8));
-    const 幅 = r * 1.0;                                /* 帯の太さ＝掴んだ太さ */
-    const 長 = r * 0.62;                               /* ひと押しの長さ（重ねて帯になる） */
+    /* 🔴🔴 帯の太さ＝**掴んだ太さ（直径）** ── 2026-09-05 に直した
+       前は `r * 1.0`（＝半径）で、書いてある意味と実装が食い違っていた。
+       ＝「太さ 20」と入れてもブラシの半分の帯しか出ず、毛だけが細くなって【櫛】に見えた。
+       ⭐ ブラシと同じ目盛りになる（太さ 20 の帯＝太さ 20 のブラシと同じ幅）。 */
+    const 幅 = r * 2.0;                                /* 帯の太さ＝掴んだ太さ（直径） */
+    /* ⚠️ ひと押しの長さ＝間隔（既定 25%＝r×0.5）より長くないと【破線】になる。
+       ⭐ 1.0＝間隔の2倍で確実に繋がる（1.15 まで伸ばすと重なりすぎて面が潰れる・実測済み） */
+    const 長 = r * 1.0;                                /* ひと押しの長さ（重ねて帯になる） */
     const 種 = (BR.seed || 1) * 0.6180339887;
     /* 毛ごとに決まる 0〜1（押すたびに変わらない） */
     const 毛値 = (i, k) => { const t = Math.sin((i + 1) * (12.9898 + k * 4.1414) + 種 * 78.233);
@@ -11900,10 +11926,21 @@ function brStamp(x2, cx, cy, r, col, ang){
       const t = (i + 0.5) / 毛 - 0.5;                  /* -0.5〜0.5＝帯の中の位置 */
       /* 毛のばらけ＝散らばり。ひと筆のあいだ動かない */
       const y0 = t * 幅 + (毛値(i, 1) - 0.5) * 幅 * 0.55 * sc;
-      const h2 = 幅 / 毛 * (0.85 + 毛値(i, 2) * 1.1);   /* 毛1本の太さ（不揃い・固定） */
+      /* ══⭐⭐ 毛1本の太さ ＝（帯の幅 ÷ 本数）× 1.45 ══ 2026-09-05
+         🔴🔴 Photoshop 側で画素を数えて出した境目（Obsidian `16_筆の型`）：
+           ×1.0 以下 ＝ **櫛**（線が1本ずつ独立して見える）
+           **×1.45 ＝ 芯だけ繋がって、縁が割れる**（＝参考の筆跡はこれ）
+           ×1.9 以上 ＝ **板**（全部埋まって筆に見えない）
+         ⭐ さらに **中の毛ほど太く・外の毛ほど細く**（1 → 0.45）＝穂先が自然に割れる。
+         ⚠️ 前は 0.85〜1.95 の幅で振っていて、細い毛が隙間を作り【櫛】に見えていた
+           （MOYA で `筆の型` を1枚組んで見つけた）。 */
+      const 中外 = 1 - Math.abs(t) * 2 * 0.55;          /* 中央 1.0 → 端 0.45 */
+      const h2 = 幅 / 毛 * 1.45 * 中外 * (0.88 + 毛値(i, 2) * 0.24);
       /* 毛の欠け＝筆先が割れた所。これも毛ごとに決める（ちらつかせない） */
       if(sc > 0.05 && 毛値(i, 3) < sc * 0.28) continue;
-      x2.globalAlpha = a * (0.62 + 毛値(i, 4) * 0.38);
+      /* ⚠️ 毛ごとの濃さを大きく振ると、重なった所だけ濃くなって【縞】に見える。
+         ⭐ 参考の筆跡は帯の中がぎっしり均一＝振り幅は小さく（0.85〜1.00）。 */
+      x2.globalAlpha = a * (0.85 + 毛値(i, 4) * 0.15);
       x2.fillStyle = col;
       /* 進む向きに長い帯＝ひと押しを重ねると1本の筋になる */
       x2.fillRect(-長 * 0.5, y0 - h2 * 0.5, 長, h2);
