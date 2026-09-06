@@ -49,28 +49,6 @@ input[type=color]{width:100%;height:36px;border:1px solid var(--grid);border-rad
 .hint b{color:var(--hot)}
 .two{display:flex;gap:10px}
 .two>*{flex:1}
-
-/* ══⭐⭐ モバイル ── 横に並べない ══
-   🔴 2026-09-06 実測：@media が無く、390px 幅で盤が110pxまで潰れて
-     説明文が1文字ずつ改行していた（倍率1%）。
-   ⭐ 盤を上・パネルを下。指で触るので当たりも大きくする。 */
-@media (max-width: 820px){
-  body{ flex-direction:column; overflow:auto; height:auto; }
-  #stage{ flex:0 0 auto; height:56svh; min-height:320px; width:100%; }
-  #panel{ width:100%; flex:1 1 auto; border-left:none;
-          border-top:1px solid var(--grid); padding:18px 16px 64px; overflow-y:visible; }
-  /* ⚠️ 横並びを前提に right:420px が入っている＝縦積みでは幅が負になる */
-  #note{ right:16px; bottom:56px; font-size:12px; }
-  /* 指で押す物は大きく（44px は Apple の最小） */
-  .seg button{ padding:11px 8px; font-size:13px; }
-  .btn{ padding:13px; font-size:14px; }
-  input[type=range]{ height:30px; }
-  textarea{ font-size:16px; }   /* ⚠️ 16px 未満だと iOS が勝手に拡大する */
-}
-@media (max-width: 420px){
-  #stage{ height:48svh; min-height:260px; }
-  #panel{ padding:14px 12px 56px; }
-}
 </style></head><body>
 <div id="stage">
   <div class="seg" id="modes" style="width:auto">
@@ -1414,8 +1392,112 @@ document.querySelectorAll('#segTyped button').forEach(b => b.onclick = () => {
   S.typed = b.dataset.v; handUI(); });
 
 addEventListener('resize', () => { fit(); });
-/* ⭐ 縦積みだと画面の回転・アドレスバーの出入りで高さが変わる。合わせ直す。 */
-addEventListener('orientationchange', () => setTimeout(fit, 250));
 S.vert = false;
 syncAll(); toolUI(); modeUI(); layout(); fit(); draw();
+</script><div id="TESTOUT" style="display:none"></div>
+<script>
+addEventListener('load', () => {
+  const R=[]; const ok=(n,c,extra)=>R.push((c?'✓':'✗')+' '+n+(extra!==undefined?'  '+extra:''));
+  const errs=[]; addEventListener('error', e=>errs.push(e.message));
+  try{
+    const [BW,BH]=boardSize();
+    // 盤の上でポインタを動かす（人と同じ道で投げる）
+    const r=cv.getBoundingClientRect();
+    const toClient=(bx,by)=>({clientX:r.left+bx*r.width/BW, clientY:r.top+by*r.height/BH});
+    function stroke(pts, id){
+      const a=toClient(pts[0][0],pts[0][1]);
+      cv.dispatchEvent(new PointerEvent('pointerdown',{...a,pointerId:id,bubbles:true}));
+      for(let i=1;i<pts.length;i++){
+        const c=toClient(pts[i][0],pts[i][1]);
+        cv.dispatchEvent(new PointerEvent('pointermove',{...c,pointerId:id,bubbles:true}));
+      }
+      cv.dispatchEvent(new PointerEvent('pointerup',{...toClient(pts.at(-1)[0],pts.at(-1)[1]),pointerId:id,bubbles:true}));
+    }
+    // ① 打つ のままでは描けない
+    S.mode='type'; modeUI();
+    stroke([[100,100],[200,200],[300,250]],1);
+    ok('「打つ」では描けない', S.draw.length===0, '画数'+S.draw.length);
+
+    // ② なぞる で1画引ける
+    S.mode='draw'; S.hand='pen'; modeUI();
+    const P=[]; for(let i=0;i<=60;i++){ P.push([200+i*10, 500+Math.sin(i/8)*90]); }
+    stroke(P,2);
+    ok('1画 引けた', S.draw.length===1, '画数'+S.draw.length);
+    const nPts=S.draw[0]?S.draw[0].length:0;
+    ok('点が間引かれた（掴める数）', nPts>=3 && nPts<=28, '生61点 → '+nPts+'点');
+
+    // ③ もう1画
+    const Q=[]; for(let i=0;i<=40;i++){ Q.push([900+i*8, 300+i*5]); }
+    stroke(Q,3);
+    ok('2画目も引けた', S.draw.length===2, '画数'+S.draw.length);
+
+    // ④ 直す ── 線を掴む → 点が出る
+    S.hand='edit'; handUI();
+    const mid=S.draw[0][Math.floor(S.draw[0].length/2)];
+    const md=toClient(mid[0],mid[1]);
+    cv.dispatchEvent(new PointerEvent('pointerdown',{...md,pointerId:4,bubbles:true}));
+    cv.dispatchEvent(new PointerEvent('pointerup',{...md,pointerId:4,bubbles:true}));
+    ok('線を掴んで選べた', S.sel===0, 'sel='+S.sel);
+
+    // ⑤ 点を動かす
+    const p0=S.draw[0][1].slice();
+    const c1=toClient(p0[0],p0[1]), c2=toClient(p0[0]+120,p0[1]-80);
+    cv.dispatchEvent(new PointerEvent('pointerdown',{...c1,pointerId:5,bubbles:true}));
+    cv.dispatchEvent(new PointerEvent('pointermove',{...c2,pointerId:5,bubbles:true}));
+    cv.dispatchEvent(new PointerEvent('pointerup',{...c2,pointerId:5,bubbles:true}));
+    const moved=Math.hypot(S.draw[0][1][0]-p0[0], S.draw[0][1][1]-p0[1]);
+    ok('点を動かせた', moved>50, 'ずれ '+moved.toFixed(0)+'px');
+
+    // ⑥ ⌘Z で戻る
+    undo();
+    const back=Math.hypot(S.draw[0][1][0]-p0[0], S.draw[0][1][1]-p0[1]);
+    ok('⌘Zで点が戻った', back<1, 'ずれ '+back.toFixed(2)+'px');
+
+    // ⑦ 線ごと移す
+    S.sel=1; const before=S.draw[1][0].slice();
+    /* ⚠️ 間引きの後は点が3つしか無いこともある。真ん中を取る（[5]は存在しない） */
+    const mi=Math.floor(S.draw[1].length/2), mp=S.draw[1][mi];
+    R.push('   （2画目は '+S.draw[1].length+'点に間引かれている）');
+    const b1=toClient(mp[0],mp[1]), b2=toClient(mp[0]+200,mp[1]+100);
+    cv.dispatchEvent(new PointerEvent('pointerdown',{...b1,pointerId:6,bubbles:true,shiftKey:true}));
+    cv.dispatchEvent(new PointerEvent('pointermove',{...b2,pointerId:6,bubbles:true}));
+    cv.dispatchEvent(new PointerEvent('pointerup',{...b2,pointerId:6,bubbles:true}));
+    const shifted=Math.hypot(S.draw[1][0][0]-before[0], S.draw[1][0][1]-before[1]);
+    ok('線ごと移せた', shifted>150, 'ずれ '+shifted.toFixed(0)+'px');
+
+    // ⑧ 打った字が消えていない
+    ok('打った字はそのまま', S.text==='ファーストクラス' && runChars().length===8, S.text);
+
+    // ⑨ 絵が出ているか（画素を数える）
+    const cnt=(bg)=>{ const c=document.createElement('canvas'); c.width=400;c.height=250;
+      paint(c.getContext('2d'),400,250,{}); const d=c.getContext('2d').getImageData(0,0,400,250).data;
+      let k=0; for(let i=0;i<d.length;i+=4){ if(Math.abs(d[i]-bg[0])+Math.abs(d[i+1]-bg[1])+Math.abs(d[i+2]-bg[2])>30) k++; } return k; };
+    S.typed='hide'; const onlyHand=cnt([255,255,255]);
+    S.typed='solid'; const both=cnt([255,255,255]);
+    ok('手の骨だけでも絵が出る', onlyHand>200, onlyHand+'画素');
+    ok('打った字を足すと増える', both>onlyHand, both+' > '+onlyHand);
+
+    // ⑩ 書き出しに掴み手が入らない
+    S.hand='edit'; S.sel=0;
+    const c=document.createElement('canvas'); c.width=400;c.height=250;
+    paint(c.getContext('2d'),400,250,{});
+    const d=c.getContext('2d').getImageData(0,0,400,250).data;
+    let orange=0; for(let i=0;i<d.length;i+=4){ if(d[i]>200&&d[i+1]>70&&d[i+1]<140&&d[i+2]<90) orange++; }
+    ok('書き出しに掴み手が焼き付かない', orange===0, 'オレンジ '+orange+'画素');
+
+    // ⑪ SVG も出る
+    const sv=paint(document.createElement('canvas').getContext('2d'),BW,BH,{svg:true});
+    ok('SVGにも手の骨が入る', sv && sv.length>0, (sv?sv.length:0)+'本のpath');
+
+    // ⑫ 全部消す
+    S.draw=[]; S.sel=-1; draw();
+    ok('全部消せる', S.draw.length===0);
+  }catch(e){ R.push('✗ 例外: '+e.message+' @ '+(e.stack||'').split('\n')[1]); }
+  if(errs.length) R.push('✗ ページのエラー: '+errs.join(' / '));
+  document.getElementById('TESTOUT').textContent = R.join('\n');
+});
 </script></body></html>
+</html>
+</html>
+</html>
+</html>
