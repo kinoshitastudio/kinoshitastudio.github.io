@@ -1286,7 +1286,8 @@
 
   <h3>パスを彫る</h3>
   <div class="kv">
-    <i>合体 / 前面で削る / 交差</i><span>複数選択（Shift＋クリック）してから実行</span>
+    <i>合体 / 前面で削る / 交差 / 重なりを抜く</i><span>複数選択（Shift＋クリック）してから実行。土台は【いちばん奥】</span>
+    <i>1つのパスに均す</i><span>読み込んだ SVG（グループ）をブーリアンの掛かる形にする</span>
     <i>線→塗り</i><span>線をアウトライン化して面にする。グラデが自由に効く</span>
     <i>スムーズ / コーナー</i><span>選んだ点の性質を変える</span>
     <i>1字にまとめる / 枡に合わせる</i><span>作字のとき、字として整える</span>
@@ -1845,8 +1846,12 @@
     <button class="btn" id="bUnite">合体</button>
     <button class="btn" id="bSub">前面で削る</button>
     <button class="btn" id="bInter">交差</button>
+    <button class="btn" id="bExcl">重なりを抜く</button>
     <button class="btn" id="bOutline">線→塗り</button>
+    <button class="btn" id="bFlat">1つのパスに均す</button>
   </div>
+  <div class="note">⭐ <b>読み込んだ SVG（グループ）にも掛かる</b> ── 掛ける前に1枚の輪郭に均している<br>
+    ⚠️ 土台は【いちばん奥】。「前面で削る」＝手前の形で奥を彫る（Illustrator と同じ）</div>
   <button class="btn" id="bGradAlong" style="margin-top:6px">パスに沿ってグラデを流す</button>
   <div class="seg" id="alongDir"><button data-v="n" class="on">幅ぞい</button><button data-v="t">流れぞい</button></div>
   <div class="row"><label>分割</label><input type="range" id="alongN" min="8" max="200" step="2" value="48"><span class="val"></span></div>
@@ -2002,7 +2007,7 @@
   <h2 class="fold" data-open="1">画像・切り抜き（クリッピング）</h2>
   <div class="foldbox">
     <button class="btn" id="bImgLoad">画像を置く</button>
-    <input type="file" id="fileImg" accept="image/*" hidden>
+    <input type="file" id="fileImg" accept="image/*,.svg" hidden>
     <div class="row"><label>不透明度</label><input type="range" id="imgOp" min="0" max="100" value="100"><span class="val"></span></div>
     <div class="grid2">
       <button class="btn" id="bImgFit">枡に合わせる</button>
@@ -5183,20 +5188,87 @@ document.getElementById('bWobble').onclick = wobble;
 document.getElementById('bWobbleAgain').onclick = wobble;
 
 /* ══ パス演算 ══ */
-function boolOp(op){
-  const sel = selected();
-  if(sel.length < 2){ stat('2つ以上選んでください'); return; }
-  snapshot();
-  let base = sel[0];
-  for(let i=1;i<sel.length;i++){
-    const r = base[op](sel[i]);
-    r.selected = false; base.remove(); sel[i].remove(); base = r;
+/* ══⭐⭐ 掛ける前に【1枚の輪郭】に均す ══ 2026-09-08
+   🔴 paper.js の unite / subtract / intersect は【Path と CompoundPath にしか無い】。
+     読み込んだ SVG は Group で入るので、そのまま掛けると関数が無くて**黙って止まる**
+     （木下＝「パスを追加するとパス通しを混合させたり、抜いたりできるようにして」）。
+   ⭐ グループの中の閉じたパスを集めて、1枚の CompoundPath にしてから掛ける。
+   ⚠️ 穴が穴のまま残るように fillRule は evenodd にする（噂の「見たまま」SVG がこれ）。 */
+function inheritFill(it){
+  for(let x = it; x; x = x.parent) if(x.fillColor) return x.fillColor;
+  return null;
+}
+function asPathItem(it){
+  if(it instanceof paper.Path || it instanceof paper.CompoundPath) return it;
+  if(it instanceof paper.Shape && it.toPath){
+    const p = it.toPath(false);
+    p.copyAttributes(it, true); p.insertAbove(it); it.remove(); return p;
   }
-  base.selected = true; stat(op.toUpperCase());
+  if(it instanceof paper.Group){
+    const kids = it.children.slice();
+    if(!kids.length) return null;
+    /* ⚠️ ここを「全部の輪を1枚の evenodd にまとめる」でやってはいけない。
+       　 別々の形が重なっていると、その重なりが【穴になる】＝絵が変わる。
+       ⭐ 子を1つずつパスに直して【合体】していく＝重なりはただ繋がるだけ。 */
+    const conv = [];
+    for(const c of kids){ const q = asPathItem(c); if(q) conv.push(q); }
+    if(!conv.length){ it.remove(); return null; }
+    const col = inheritFill(it) || inheritFill(conv[0]) || '#141414';
+    let acc = conv[0].clone(false);
+    acc.insertAbove(it);
+    for(let i=1;i<conv.length;i++){
+      const other = conv[i].clone(false); other.insertAbove(acc);
+      let r = null;
+      try{ r = acc.unite(other); }catch(err){ r = null; }
+      if(r){ r.insertAbove(acc); acc.remove(); other.remove(); acc = r; }
+      else { other.remove(); }                    /* 合体できない物は捨てずに諦める */
+    }
+    acc.fillColor = col; acc.strokeColor = null; acc.selected = false;
+    it.remove();
+    return acc;
+  }
+  return null;
+}
+/* ⭐ 選んだ物を1枚の輪郭に均すだけ（ブーリアンの前にも、単体でも使える） */
+document.getElementById('bFlat').onclick = () => {
+  const sel = selected();
+  if(!sel.length){ stat('図形を選んでください'); return; }
+  snapshot();
+  const out = sel.map(asPathItem).filter(Boolean);
+  if(!out.length){ stat('パスにできる物が無い'); return; }
+  out.forEach(x => x.selected = true);
+  guides(); reportSel();
+  stat('1つのパスに均した — ' + out.length + '枚（これでブーリアンが掛かる）');
+};
+function boolOp(op){
+  let sel = selected();
+  if(sel.length < 2){ stat('2つ以上選んでください（Shift＋クリック）'); return; }
+  snapshot();
+  /* ⭐ 前後の順に並べる。いちばん【奥】が土台＝「前面で削る」が Illustrator と同じ意味になる */
+  sel = sel.slice().sort((a,b) => (a.index || 0) - (b.index || 0));
+  const shapes = sel.map(asPathItem).filter(Boolean);
+  if(shapes.length < 2){ stat('パスにできない物が混ざっている（画像はブーリアンできない）'); return; }
+  let base = shapes[0];
+  const col = inheritFill(base);
+  for(let i=1;i<shapes.length;i++){
+    let r = null;
+    try{ r = base[op](shapes[i]); }catch(err){ r = null; }
+    if(!r){ stat('この形には掛けられなかった（⌘Zで戻せる）'); return; }
+    r.selected = false; base.remove(); shapes[i].remove(); base = r;
+  }
+  if(col) base.fillColor = col;
+  base.strokeColor = null;
+  base.selected = true;
+  guides(); reportSel();
+  const b = base.bounds;
+  if(!b || !b.width || !b.height){ stat('重なりが無いので何も残らなかった（⌘Zで戻せる）'); return; }
+  stat(({ unite:'合体した', subtract:'前面の形で削った', intersect:'重なった所だけ残した',
+          exclude:'重なりを抜いた' }[op] || op) + ' — 点 ' + countSegs(base));
 }
 document.getElementById('bUnite').onclick = () => boolOp('unite');
 document.getElementById('bSub').onclick   = () => boolOp('subtract');
 document.getElementById('bInter').onclick = () => boolOp('intersect');
+document.getElementById('bExcl').onclick  = () => boolOp('exclude');
 
 document.getElementById('bOutline').onclick = () => {   // 線 → 塗りパス（アウトライン化）
   const sel = selected().filter(it => it.strokeColor);
@@ -5543,7 +5615,54 @@ async function dlPick(blob, name){
    選択パスでマスクすれば「文字の形に画像を流し込む」ことができる。 */
 document.getElementById('bImgLoad').onclick = () => document.getElementById('fileImg').click();
 document.getElementById('fileImg').addEventListener('change', e => {
-  const f = e.target.files[0]; if(!f) return;
+  const f = e.target.files[0]; if(f) takeDropFile(f);
+  e.target.value = '';
+});
+
+/* ══⭐⭐ 落として入れる ── SVG は【パス】で、写真は【図】で ══ 2026-09-08
+   木下＝「Sakuji が今 svg なのに画像としてでしか読み込みできない。パスになるように」
+        「svg も jpg png も画像ファイルはドロップで入れれるようにしたい」
+   🔴 これまで .svg も Raster（画像）にしていた＝せっかくのパスが画になっていた。
+   ⭐ paper.js の importSVG でそのままパスになる（噂UWASA の「見たまま」SVG も丸ごと入る）。
+   ⚠️ 置く先は【枠を出しているならその枠の真ん中】＝枡と同じ基準（下敷きと揃えた）。 */
+function placeCenter(){
+  const a = (S.abOn && S.abs && S.abs.length) ? abCur() : null;
+  return a ? abRectOf(a).center : paper.view.center;
+}
+function countSegs(it){
+  let n = 0;
+  const walk = x => { if(x.segments) n += x.segments.length;
+    if(x.children) x.children.forEach(walk); };
+  walk(it); return n;
+}
+function placeSVGText(text, name){
+  let item = null;
+  snapshot();
+  artLayer.activate();
+  try{ item = paper.project.importSVG(text, { expandShapes:true, insert:false }); }
+  catch(err){ item = null; }
+  if(!item){ stat('この SVG は読めなかった'); return; }
+  artLayer.addChild(item);
+  /* ⚠️ importSVG は <svg> の枠ぶんの【見えない四角】を1枚作る。
+     　 残すと選択の当たりが枠になって、中のパスが掴めない → 捨てる。 */
+  if (item.children) item.children.slice().forEach(c => {
+    if (c.className === 'Shape' && !c.fillColor && !c.strokeColor) c.remove();
+  });
+  if (item.children && item.children.length === 1) {          /* 中身が1つならグループを外す */
+    const only = item.children[0];
+    only.remove(); artLayer.addChild(only); item.remove(); item = only;
+  }
+  const b = item.strokeBounds;
+  if(!b || !b.width || !b.height){ item.remove(); stat('中身が空の SVG だった'); return; }
+  const k = (S.body * 0.9) / Math.max(b.width, b.height);
+  item.scale(k, b.center);
+  item.position = placeCenter();
+  artLayer.children.forEach(c => c.selected = false);
+  item.selected = true;
+  guides(); reportSel();
+  stat('SVG を【パス】で入れた — 点 ' + countSegs(item) + '（' + (name||'') + '）');
+}
+function placeImageFile(f){
   const rd = new FileReader();
   rd.onload = () => {
     const img = new Image();
@@ -5551,20 +5670,36 @@ document.getElementById('fileImg').addEventListener('change', e => {
       snapshot();
       artLayer.activate();
       const r = new paper.Raster(img);
-      r.position = paper.view.center;
+      r.position = placeCenter();
       const k = (S.body * 0.9) / Math.max(r.width, r.height);
       r.scale(k);
-      r.opacity = +document.getElementById('imgOp').value / 100;
+      const op = document.getElementById('imgOp');
+      r.opacity = op ? +op.value / 100 : 1;
       artLayer.children.forEach(c => c.selected = false);
       r.selected = true;
       guides(); reportSel();
       stat('画像を置いた — 移動・拡大できます');
     };
+    img.onerror = () => stat('この画像は読めなかった');
     img.src = rd.result;
   };
   rd.readAsDataURL(f);
-  e.target.value = '';
-});
+}
+function takeDropFile(f){
+  if(/svg/i.test(f.type) || /\.svg$/i.test(f.name)){
+    f.text().then(t => placeSVGText(t, f.name), () => stat('この SVG は読めなかった'));
+  } else placeImageFile(f);
+}
+addEventListener('drop', e => {
+  const files = [...(e.dataTransfer && e.dataTransfer.files || [])];
+  if(!files.length) return;
+  if(files.some(f => /\.json$/i.test(f.name))) return;        /* 控えは別の道が拾う */
+  const f = files.find(x => /\.(svg|png|jpe?g|webp|gif|avif)$/i.test(x.name)
+                         || /^image\//.test(x.type));
+  if(!f) return;
+  e.preventDefault(); e.stopPropagation();
+  takeDropFile(f);
+}, true);
 document.getElementById('bImgFit').onclick = () => {
   const imgs = selected().filter(it => it instanceof paper.Raster);
   if(!imgs.length){ stat('画像を選んでください'); return; }
