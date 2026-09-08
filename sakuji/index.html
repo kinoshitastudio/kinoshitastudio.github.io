@@ -1302,6 +1302,7 @@
   <div class="kv">
     <i>合体 / 前面で削る / 交差 / 重なりを抜く</i><span>複数選択（Shift＋クリック）してから実行。土台は【いちばん奥】</span>
     <i>1つのパスに均す</i><span>読み込んだ SVG（グループ）をブーリアンの掛かる形にする</span>
+    <i>選んだ所を外に出す</i><span>ダイレクト選択（A）で囲った一画・一字を、グループから抜いて単体にする</span>
     <i>線→塗り</i><span>線をアウトライン化して面にする。グラデが自由に効く</span>
     <i>スムーズ / コーナー</i><span>選んだ点の性質を変える</span>
     <i>1字にまとめる / 枡に合わせる</i><span>作字のとき、字として整える</span>
@@ -1863,9 +1864,12 @@
     <button class="btn" id="bExcl">重なりを抜く</button>
     <button class="btn" id="bOutline">線→塗り</button>
     <button class="btn" id="bFlat">1つのパスに均す</button>
+    <button class="btn" id="bExtract">選んだ所を外に出す</button>
   </div>
   <div class="note">⭐ <b>読み込んだ SVG（グループ）にも掛かる</b> ── 掛ける前に1枚の輪郭に均している<br>
-    ⚠️ 土台は【いちばん奥】。「前面で削る」＝手前の形で奥を彫る（Illustrator と同じ）</div>
+    ⚠️ 土台は【いちばん奥】。「前面で削る」＝手前の形で奥を彫る（Illustrator と同じ）<br>
+    ⭐⭐ <b>選んだ所を外に出す</b>＝ダイレクト選択（A）で範囲を囲ってから押すと、
+    その<b>一画・一字だけ</b>がグループから抜けて、単体で動かせる・消せるようになる</div>
   <button class="btn" id="bGradAlong" style="margin-top:6px">パスに沿ってグラデを流す</button>
   <div class="seg" id="alongDir"><button data-v="n" class="on">幅ぞい</button><button data-v="t">流れぞい</button></div>
   <div class="row"><label>分割</label><input type="range" id="alongN" min="8" max="200" step="2" value="48"><span class="val"></span></div>
@@ -2384,22 +2388,50 @@ function guidesBase(){                            // ⚠️ 呼ぶのは台帳�
   uiLayer.activate(); uiLayer.removeChildren();
   const Z = paper.view.zoom, r = 3.6/Z, lw = 1/Z;
 
+  /* ══⭐⭐ アンカーの出し方 ══ 2026-09-08
+     🔴 木下＝「パスが多いせいか、ここから調整するのがかなり難しい」
+        「イラレはちょんぼが小さいね」「ボタンが大きいせいなのか」
+     ⭐ 埋まる原因は3つあった：
+       1 印が大きい（3.6/Z＝画面7.2px）→ イラレは 2.2px 角くらい
+       2 塗り潰していた → イラレは【白抜き＋細い線】。選んだ点だけ塗る
+       3 ⭐⭐ ハンドルを【全部の点】に出していた → イラレは【選んだ点とその隣】だけ
+     ⚠️ 見え方だけを直す。パスにも書き出しにも1画素も触らない。 */
+  const AR = 2.2/Z, ALW = 1/Z;                    /* 印の半径と線の太さ（画面の大きさで一定） */
+  /* ⚠️ 画面の外を描かない間引きは【点が多いときだけ】にする。
+     🔴 いつもやると、見えているのに出ない事故（＝「アンカーが表示されていない」）に
+       つながる。数が少ないうちは全部出した方が安全で、重くもない。
+     ⚠️ 余白も大きめ（画面の半分ぶん）に取る。 */
+  const _vb = paper.view.bounds;
+  const AVIEW = (_vb && _vb.width > 1 && _vb.height > 1)
+    ? _vb.expand(_vb.width * 0.5, _vb.height * 0.5) : null;
+  let _segTotal = 0;
+  artLayer.children.forEach(t0 => { if(typeof eachPath === 'function') eachPath(t0, pp => _segTotal += pp.segments.length); });
+  const ACULL = (_segTotal > 800) ? AVIEW : null;
   const anchors = (item, live) => {
     if(!item.segments) return;
-    item.segments.forEach(seg => {
-      // ハンドル（曲線の腕）
-      ['handleIn','handleOut'].forEach(k => {
-        const h = seg[k];
-        if(!h || (h.x === 0 && h.y === 0)) return;
-        const hp = seg.point.add(h);
-        const l = new Path.Line(seg.point, hp); l.strokeColor = ACC; l.strokeWidth = lw; l.opacity = .75;
-        const d = new Path.Circle(hp, r*0.85); d.fillColor = ACC; d.opacity = .9;
-        /* ⭐ 「これはパスの下見」と印を付ける＝出し入れを画素でなく【本体と同じ出どころ】で数えられる */
-        l.data.pv = d.data.pv = 1;
-      });
-      // アンカー（選択中は塗り／通常は白抜き）
-      const a = new Path.Rectangle(new Rectangle(seg.point.x-r, seg.point.y-r, r*2, r*2));
-      a.strokeColor = ACC; a.strokeWidth = lw;
+    const segs = item.segments, n = segs.length;
+    segs.forEach((seg, i) => {
+      if(ACULL && !ACULL.contains(seg.point)) return;   /* 点が多いときだけ、画面の外は出さない */
+      /* ⭐ ハンドルは【選んだ点とその隣】だけ（イラレと同じ）。全部出すと字が埋まる */
+      const near = seg.selected
+        || (n > 1 && segs[(i-1+n)%n] && segs[(i-1+n)%n].selected)
+        || (n > 1 && segs[(i+1)%n] && segs[(i+1)%n].selected);
+      if(live || near){
+        ['handleIn','handleOut'].forEach(k => {
+          const h = seg[k];
+          if(!h || (h.x === 0 && h.y === 0)) return;
+          const hp = seg.point.add(h);
+          const l = new Path.Line(seg.point, hp); l.strokeColor = ACC; l.strokeWidth = ALW; l.opacity = .7;
+          const d = new Path.Circle(hp, AR*0.9);
+          d.fillColor = S.bg === 'light' ? '#fff' : '#0a0a0a';
+          d.strokeColor = ACC; d.strokeWidth = ALW;
+          /* ⭐ 「これはパスの下見」と印を付ける＝出し入れを画素でなく【本体と同じ出どころ】で数えられる */
+          l.data.pv = d.data.pv = 1;
+        });
+      }
+      // アンカー（選んだ点は塗り／それ以外は白抜き＝下の字が読める）
+      const a = new Path.Rectangle(new Rectangle(seg.point.x-AR, seg.point.y-AR, AR*2, AR*2));
+      a.strokeColor = ACC; a.strokeWidth = ALW;
       a.fillColor = seg.selected ? ACC : (S.bg === 'light' ? '#fff' : '#0a0a0a');
       a.data.pv = 1;
     });
@@ -2438,18 +2470,26 @@ function guidesBase(){                            // ⚠️ 呼ぶのは台帳�
     anchors(pen, true);
   }
   // 塗りも線も「なし」の図形は画面上で見えない＝迷子になるので、輪郭だけ薄く出す
-  artLayer.children.forEach(it => {
-    if(it.fillColor || it.strokeColor || !it.segments) return;
+  artLayer.children.forEach(top => eachPath(top, it => {
+    if(it.fillColor || it.strokeColor || (it.parent && it.parent.fillColor)) return;
     const ghost = it.clone({ insert:false });
     ghost.fillColor = null;
     ghost.strokeColor = new Color(0.5, 0.5, 0.5, 0.55);
     ghost.strokeWidth = lw; ghost.dashArray = [5/Z, 4/Z];
     uiLayer.addChild(ghost);
-  });
+  }));
   /* ⭐⭐ パスを出すかは【ここ1か所】で決める（2026-08-28）。
      ⚠️ ペンで打っている最中と、ダイレクト選択（点を掴む道具）のときは
         消すと【触れるのに効かない】になるので、設定に関わらず必ず出す。 */
-  if(pathShow()) artLayer.children.forEach(it => { if(it.selected) anchors(it, false); });
+  /* ══🔴🔴 中まで降りる ══ 2026-09-08 木下＝「アンカーが表示されていないね」
+     ⭐ anchors() は .segments を持つ物にしか描けない。
+       読み込んだ SVG は Group / CompoundPath なので、直下だけ見ると
+       【1つもアンカーが出ない】＝触れるのに見えない状態になっていた。
+     ⭐ 選ばれた点を持つパスは、親が選ばれていなくても出す（範囲選択の結果が見える）。 */
+  if(pathShow()) artLayer.children.forEach(it => {
+    if(it.selected) eachPath(it, pp => anchors(pp, false));
+    else eachPath(it, pp => { if(pp.segments.some(sg => sg.selected)) anchors(pp, false); });
+  });
   artLayer.activate();
 }
 
@@ -2771,6 +2811,36 @@ function styleOf(item){
   return item;
 }
 const selected = () => artLayer.children.filter(c => c.selected);
+
+/* ══⭐⭐ 中のパスを1本ずつ返す（Group / CompoundPath の中まで降りる）══ 2026-09-08
+   🔴🔴 木下＝「選択範囲で選択した部分だけを移動できたり削除できたりするようにしよう。
+        このままでは読み込んだ svg のグループのまま外すことができない」
+   ⭐ 原因＝範囲選択も Delete も矢印も【artLayer の直下】しか見ていなかった。
+     Group と CompoundPath には .segments が無いので、
+     `if(it.segments)` の所で全部こぼれて【図形まるごと】の選択に落ちていた。
+   ⭐ 降りる道は【この1本だけ】。増やすと必ず食い違う。 */
+function eachPath(it, fn){
+  if(!it) return;
+  if(it.segments){ fn(it); return; }
+  (it.children || []).slice().forEach(c => eachPath(c, fn));
+}
+function allPaths(root){
+  const out = [];
+  ((root || artLayer).children || []).forEach(c => {
+    if(c.visible === false || c.locked) return;
+    eachPath(c, p => out.push(p));
+  });
+  return out;
+}
+/* いちばん上の親（artLayer の直下）まで登る */
+function topOf(it){ let x = it; while(x && x.parent && x.parent !== artLayer) x = x.parent; return x; }
+/* ⚠️ 選ばれているアンカーを集める selSegs は【いちばん下のダイレクト選択ブロック】が持っている
+   （window.selSegs）。ここには書かない＝同じ名前を2か所に置くと、後で書いた方が黙って勝つ。 */
+/* 空になった入れ物を片付ける（上へ登りながら） */
+function pruneUp(it){
+  let x = it;
+  while(x && x !== artLayer && x.children && !x.children.length){ const p = x.parent; x.remove(); x = p; }
+}
 
 /* Shift＝45°刻みに拘束する（水平・垂直・斜め45°）。イラレと同じ感触 */
 function snapAngle(from, to){
@@ -3472,18 +3542,22 @@ function selDragBase(e){                          // ⚠️ 呼ぶのは台帳�
     marquee.fillColor = new Color(0.29, 0.62, 1, 0.08);
     artLayer.activate();
     const r = new Rectangle(marqueeStart, e.point);
-    artLayer.children.forEach(it => {
-      // ダイレクト選択のときはアンカー単位、それ以外は図形単位で拾う
-      if(S.tool === 'direct' && it.segments){
-        it.segments.forEach(sg => sg.selected = r.contains(sg.point));
-        it.selected = it.segments.some(sg => sg.selected);
-      } else {
-        it.selected = r.intersects(it.bounds) || r.contains(it.bounds);
-      }
-    });
+    if(S.tool === 'direct'){
+      /* ⭐ 中まで降りてアンカー単位で拾う（読み込んだ SVG は Group / CompoundPath なので
+         直下だけ見ると【図形まるごと】になっていた） */
+      allPaths().forEach(pp => pp.segments.forEach(sg => sg.selected = r.contains(sg.point)));
+      artLayer.children.forEach(it => {
+        let any = false; eachPath(it, pp => { if(pp.segments.some(sg => sg.selected)) any = true; });
+        it.selected = any;
+      });
+    } else {
+      artLayer.children.forEach(it => { it.selected = r.intersects(it.bounds) || r.contains(it.bounds); });
+    }
     return;
   }
   const d = e.point.subtract(e.lastPoint);
+  /* ⚠️ 選んだ点を【まとめて動かす】のは、いちばん下の「ダイレクト選択」ブロックの
+     hook('drag') が持っている。ここには書かない（道を2本にしない）。 */
   if(dragSeg){
     if(e.modifiers.shift && dragSeg.__from){        // Shift＝掴んだ位置から45°刻み
       dragSeg.point = snapAngle(dragSeg.__from, e.point);
@@ -3724,11 +3798,24 @@ window.addEventListener('keydown', e => {
     e.preventDefault();
     if(abDeleteBoard()) return;                    // ⭐ 枠を選んでいるなら、枠を中身ごと消す
     snapshot();                                    // 消す前に保存（後だと戻せない）
-    if(S.tool === 'direct'){                       // アンカーだけ消す
-      artLayer.children.forEach(it=>{
-        if(!it.segments) return;
-        for(let i=it.segments.length-1;i>=0;i--) if(it.segments[i].selected) it.segments[i].remove();
+    if(S.tool === 'direct'){                       // アンカーだけ消す（中まで降りる）
+      let n = 0;
+      allPaths().forEach(pp => {
+        for(let i=pp.segments.length-1;i>=0;i--) if(pp.segments[i].selected){ pp.segments[i].remove(); n++; }
       });
+      if(n){
+        /* ⭐ 点が1つ以下になったパスは形として残れない → 片付ける（空の入れ物も一緒に） */
+        allPaths().forEach(pp => { if(pp.segments.length < 2){ const par = pp.parent; pp.remove(); pruneUp(par); } });
+        stat(n + '点を消した');
+      } else {
+        /* ⚠️ 点を1つも選んでいないのに何も起きないのは【壊れて見える】。
+           ⭐ イラレと同じ＝図形を選んでいるなら図形ごと消す
+             （2026-09-08 木下＝「今は削除自体もできない」）。 */
+        const sel = selected();
+        sel.forEach(it => it.remove());
+        stat(sel.length ? (sel.length + '個を削除（点を選んでいなかったので図形ごと）')
+                        : '選択されていません');
+      }
     } else {
       const sel = selected();
       sel.forEach(it=>it.remove());
@@ -3748,7 +3835,9 @@ window.addEventListener('keydown', e => {
     const sel = selected(); if(!sel.length) return;
     snapshot();
     if(S.tool === 'direct'){
-      sel.forEach(it => it.segments && it.segments.forEach(sg => { if(sg.selected) sg.point = sg.point.add(mv); }));
+      const sg = selSegs();
+      if(sg.length) sg.forEach(x => x.point = x.point.add(mv));
+      else sel.forEach(it => it.position = it.position.add(mv));
     } else {
       sel.forEach(it => it.position = it.position.add(mv));
     }
@@ -5260,6 +5349,35 @@ document.getElementById('bFlat').onclick = () => {
   guides(); reportSel();
   stat('1つのパスに均した — ' + out.length + '枚（これでブーリアンが掛かる）');
 };
+/* ══⭐⭐ 選んだ所を外に出す ══ 2026-09-08
+   木下＝「読み込んだ svg の【グループのまま外すことができない】」
+   ⭐ ダイレクト選択（A）で範囲を囲う → アンカーが1つでも選ばれているパスを
+     グループから抜き出して、単体の形にする。
+   ⚠️ 抜くのは【パス1本ごと】ではなく、選ばれたぶんを1つの複合パスにまとめる
+     ＝字の中の穴（口・目）も一緒に付いてくる（バラすと穴が塗り潰れる）。 */
+function extractSelection(){
+  const src = allPaths().filter(pp => pp.segments.some(sg => sg.selected));
+  if(!src.length){ stat('先にダイレクト選択（A）で範囲を囲ってアンカーを選ぶ'); return; }
+  snapshot();
+  const col = inheritFill(src[0]) || '#141414';
+  const rule = (src[0].parent && src[0].parent.fillRule) || 'evenodd';
+  const clones = src.map(pp => { const c = pp.clone(false);
+    c.strokeColor = null; c.fillColor = null; c.selected = false; return c; });
+  src.forEach(pp => { const par = pp.parent; pp.remove(); pruneUp(par); });
+  artLayer.activate();
+  let out;
+  if(clones.length === 1){ out = clones[0]; out.fillColor = col; artLayer.addChild(out); }
+  else {
+    out = new paper.CompoundPath({ children: clones, insert:false });
+    out.fillRule = rule; out.fillColor = col; artLayer.addChild(out);
+  }
+  artLayer.children.forEach(c => c.selected = false);
+  out.selected = true;
+  guides(); reportSel();
+  stat('外に出した — ' + src.length + '本のパス（そのまま動かせる・消せる）');
+}
+document.getElementById('bExtract').onclick = extractSelection;
+
 function boolOp(op){
   let sel = selected();
   if(sel.length < 2){ stat('2つ以上選んでください（Shift＋クリック）'); return; }
@@ -5695,7 +5813,16 @@ function placeSVGText(text, name){
   artLayer.children.forEach(c => c.selected = false);
   item.selected = true;
   guides(); reportSel();
-  stat('SVG を【パス】で入れた — 点 ' + countSegs(item) + '（' + (name||'') + '）');
+  /* ⚠️ 白い字を白い盤に落とすと【アンカーしか見えない】＝入っていないように見える。
+     （2026-09-08・噂で作った題字は白なのでこれが必ず起きる） */
+  let 同じ色 = false;
+  try{
+    const f = item.fillColor || (item.children && item.children[0] && item.children[0].fillColor);
+    if(f){ const bg = (S.bg === 'light') ? new Color('#ffffff') : new Color('#0a0a0a');
+      同じ色 = Math.abs(f.red-bg.red) + Math.abs(f.green-bg.green) + Math.abs(f.blue-bg.blue) < 0.25; }
+  }catch(_){}
+  stat('SVG を【パス】で入れた — 点 ' + countSegs(item) + '（' + (name||'') + '）'
+     + (同じ色 ? '　⚠️ 字の色が盤とほぼ同じ（白い字）— 塗りを変えるか、盤を反転して見る' : ''));
 }
 function placeImageFile(f){
   const rd = new FileReader();
@@ -12675,17 +12802,18 @@ hook('grid', '字のガイドと下敷き', () => drawGlyphGuides(), 60);
       （何もない所からの範囲選択は本体に任せる＝false を返す）。
    ══════════════════════════════════════════════════════════════ */
 (function(){
-  /* ⭐ 選ばれているアンカー＝この1本から取る（画面もペンもここを見る） */
+  /* ⭐ 選ばれているアンカー＝この1本から取る（画面もペンもここを見る）
+     🔴🔴 2026-09-08 ここが artLayer の【直下】しか見ていなかった。
+       読み込んだ SVG は Group / CompoundPath なので .segments を持たず、
+       全部こぼれていた＝範囲で選んでも「選んだ点は0」になり、
+       まとめて動かす／消す が1つも効かなかった（木下＝「グループのまま外すことができない」）。
+     ⭐ allPaths() で中まで降りる（降りる道は上の1本だけ）。 */
   window.selSegs = function(){
     const out = [];
-    artLayer.children.forEach(it => {
-      if(!it.segments) return;
-      it.segments.forEach(sg => { if(sg.selected) out.push(sg); });
-    });
+    allPaths().forEach(pp => pp.segments.forEach(sg => { if(sg.selected) out.push(sg); }));
     return out;
   };
-  const clearSegs = () => artLayer.children.forEach(it => {
-    if(it.segments) it.segments.forEach(sg => sg.selected = false); });
+  const clearSegs = () => allPaths().forEach(pp => pp.segments.forEach(sg => sg.selected = false));
 
   hook('down', 'ダイレクト選択＝点を選ぶ・足す', e => {
     if(S.tool !== 'direct') return false;
@@ -12723,7 +12851,7 @@ hook('grid', '字のガイドと下敷き', () => drawGlyphGuides(), 60);
         artLayer.children.forEach(c => c.selected = false);
         h.segment.selected = true;
       }
-      it.selected = true;
+      topOf(it).selected = true;          /* ⭐ グループの中の点でも、選択は いちばん上の親に立てる */
       dragSeg = h.segment; dragSeg.__from = h.segment.point.clone();
       guides(); reportSel && reportSel();
       return true;
