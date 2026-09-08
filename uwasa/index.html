@@ -316,6 +316,17 @@
          ⚠️ 白抜き（反転）のときは地が無いと字が消えるので、そのときだけ地を敷いて そう言う。 -->
     <label class="chk" style="display:block;margin:6px 0 2px">
       <input type="checkbox" id="kNoBg" checked> 地なしで出す（字だけ・PNG も SVG も）</label>
+    <!-- ══🔴🔴 SVG が【盤と違う絵】で出ていた ══ 2026-09-08
+         木下＝「書き出したんだけど…違う」／「確実に uwasa でボードを見ているのを
+                書き出しできるようにして。でないと意味がない」
+         🔴 原因＝SVG は【崩した輪郭（rings）】だけを書いていた。
+           粒立ち・割れ・かすれ は **画素で抜いている** ので、1つも入っていなかった。
+           ＝ 見ている絵と出る絵が別物。⚠️ PNG は paint をそのまま焼くので合っていた。
+         ⭐ 直し＝**出す絵の画素から輪郭を起こす**（見えている物が全部入る）。
+           ⚠️ 代わりに曲線ではなく折れ線になり、点が増える。
+           ⭐ 画素の道具を1つも使っていないときは、軽い【輪郭】の方が綺麗なので選べる。 -->
+    <label class="chk" style="display:block;margin:2px 0 6px">
+      <input type="checkbox" id="kTrace" checked> SVG は見たままで出す（盤の画素から輪郭を起こす）</label>
     <div class="btns2">
       <button class="btn" id="ePNG">PNG</button>
       <button class="btn" id="eSVG">SVG</button>
@@ -1118,7 +1129,7 @@ function paint(g, W, H, opt){
   else {
     /* ④ 試し組み ── ⚠️ 組む道具ではない。作った字が版面でどう立つかを見るだけ */
     const L = S.lay;
-    if(photo){ const kk = Math.max(BW/photo.width, BH/photo.height);
+    if(photo && !(opt && opt.nophoto)){ const kk = Math.max(BW/photo.width, BH/photo.height);
       g.drawImage(photo, (BW-photo.width*kk)/2, (BH-photo.height*kk)/2, photo.width*kk, photo.height*kk); }
     const chars = [...S.text].filter(c => c.trim());
     const size = L.size/1000 * BW;
@@ -1376,16 +1387,120 @@ addEventListener('drop', e => {
 /* ══ 出す ══ ⚠️ 画面を吸わない＝出す大きさで組み直す */
 /* ⭐ 地を敷くかどうかは【1つのつまみ】から取る（PNG も SVG もここを見る） */
 function noBgOut(){ const k = $('kNoBg'); return !!(k && k.checked) && !S.inv; }
-function bake(long){
+function bake(long, extra){
   const [W,H] = boardSize(), k = long/Math.max(W,H);
   const c = document.createElement('canvas');
   c.width = Math.round(W*k); c.height = Math.round(H*k);
-  paint(c.getContext('2d'), c.width, c.height, { nobg: noBgOut(), out:true });
+  paint(c.getContext('2d'), c.width, c.height,
+    Object.assign({ nobg: noBgOut(), out:true }, extra||{}));
   return c;
 }
 function dl(blob, name){ const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = name; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href), 4000); }
+/* ══════════════════════════════════════════════════════════════
+   ⭐⭐⭐ 見たまま ── 出す絵の【画素】から輪郭を起こす（2026-09-08）
+   🔴 SVG が盤と違って出ていた。粒立ち・割れ・かすれ は画素で抜いているので
+     「崩した輪郭」を書き出すだけでは1つも入らない。
+   ⭐ ここでは【焼いた画素そのもの】を輪郭に起こすので、見えている物が全部入る。
+   　 塗りの側を一定の向きに保った単位の辺を集めて輪にする
+   　 → 外側と穴が自然に逆向きになる → fill-rule="evenodd" で穴が開く。
+   ⚠️ 折れ線になる（曲線ではない）。点は間引く（Douglas–Peucker）。
+   ══════════════════════════════════════════════════════════════ */
+function traceMask(mask, w, h){
+  const W1 = w+1, N = W1*(h+1);
+  const e1 = new Int32Array(N).fill(-1), e2 = new Int32Array(N).fill(-1);
+  const add = (fx,fy,tx,ty) => { const f = fy*W1+fx, t = ty*W1+tx;
+    if (e1[f] < 0) e1[f] = t; else e2[f] = t; };
+  const on = (x,y) => x>=0 && y>=0 && x<w && y<h && mask[y*w+x];
+  for (let y=0;y<h;y++) for (let x=0;x<w;x++){
+    if (!mask[y*w+x]) continue;
+    if (!on(x,y-1)) add(x+1,y,   x,  y);      /* 上が空 → 左へ */
+    if (!on(x,y+1)) add(x,  y+1, x+1,y+1);    /* 下が空 → 右へ */
+    if (!on(x-1,y)) add(x,  y,   x,  y+1);    /* 左が空 → 下へ */
+    if (!on(x+1,y)) add(x+1,y+1, x+1,y);      /* 右が空 → 上へ */
+  }
+  const loops = [];
+  for (let s2=0; s2<N; s2++){
+    while (e1[s2] >= 0){
+      const idx = []; let cur = s2;
+      for (let guard=0; guard<N*4; guard++){
+        const nxt = e1[cur]; if (nxt < 0) break;
+        e1[cur] = e2[cur]; e2[cur] = -1;      /* 使った辺は外す */
+        idx.push(cur); cur = nxt;
+        if (cur === s2) break;
+      }
+      if (idx.length >= 4) loops.push(idx.map(i => [i % W1, (i / W1) | 0]));
+    }
+  }
+  return loops;
+}
+function dpOpen(p, eps){
+  if (p.length < 3) return p;
+  const keep = new Uint8Array(p.length); keep[0] = keep[p.length-1] = 1;
+  const st = [[0, p.length-1]];
+  while (st.length){
+    const [i,j] = st.pop(); if (j <= i+1) continue;
+    const ax=p[i][0], ay=p[i][1], dx=p[j][0]-ax, dy=p[j][1]-ay;
+    const L = Math.hypot(dx,dy) || 1;
+    let bi=-1, bd=eps;
+    for (let k=i+1;k<j;k++){
+      const d = Math.abs((p[k][0]-ax)*dy - (p[k][1]-ay)*dx) / L;
+      if (d > bd){ bd = d; bi = k; }
+    }
+    if (bi >= 0){ keep[bi] = 1; st.push([i,bi],[bi,j]); }
+  }
+  const out = []; for (let k=0;k<p.length;k++) if (keep[k]) out.push(p[k]);
+  return out;
+}
+function simplifyLoop(pts, eps){
+  const n = pts.length, a = [];
+  for (let i=0;i<n;i++){                       /* まず一直線をたたむ（階段の直線部） */
+    const q = pts[i], o = pts[(i-1+n)%n], r = pts[(i+1)%n];
+    if ((q[0]-o[0])*(r[1]-q[1]) !== (q[1]-o[1])*(r[0]-q[0])) a.push(q);
+  }
+  if (a.length < 3) return a.length >= 3 ? a : pts;
+  if (eps <= 0) return a;
+  /* 閉じた輪＝いちばん遠い点で2本に割ってから間引く（起点だけ角が残るのを防ぐ） */
+  let fi = 0, fd = -1;
+  for (let i=1;i<a.length;i++){
+    const d = (a[i][0]-a[0][0])**2 + (a[i][1]-a[0][1])**2;
+    if (d > fd){ fd = d; fi = i; }
+  }
+  const A = dpOpen(a.slice(0, fi+1), eps);
+  const B = dpOpen(a.slice(fi).concat([a[0]]), eps);
+  return A.concat(B.slice(1, -1));
+}
+/* 出す絵を焼いて、その画素を輪郭に起こす。
+   ⭐⭐ 地と字を【別々に】起こす。地を四角で敷いてはいけない ──
+   　 かすれ（destination-out）は地ごと抜くので、盤には【透けた穴】が空いている。
+   　 四角を敷くとその穴が埋まって、盤と違う絵になる（2026-09-08 実測 5.33%）。 */
+function tracePaths(long){
+  const c = bake(Math.min(long, 3200), { nophoto:true });   /* ⚠️ 写真はベクタにできないので敷かない */
+  const [BW] = boardSize();
+  const im = c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+  const w = c.width, h = c.height, n = w*h;
+  const bh = bgCol(), br = parseInt(bh.slice(1,3),16), bg2 = parseInt(bh.slice(3,5),16), bb = parseInt(bh.slice(5,7),16);
+  const mBg = new Uint8Array(n), mInk = new Uint8Array(n);
+  for (let i=0,j=0;i<n;i++,j+=4){
+    if (im[j+3] < 128) continue;                            /* 透けている所は どちらでもない */
+    const near = (Math.abs(im[j]-br) + Math.abs(im[j+1]-bg2) + Math.abs(im[j+2]-bb)) <= 90;
+    if (near) mBg[i] = 1; else mInk[i] = 1;
+  }
+  const k = BW / w, eps = 0.5;   /* ⚠️ 字見本のような小さい字でも崩れないように細かく取る */
+  const toD = (mask) => {
+    let d = '', cnt = 0;
+    for (const loop of traceMask(mask, w, h)){
+      const sp = simplifyLoop(loop, eps);
+      if (sp.length < 3) continue;
+      d += 'M' + sp.map(q => (q[0]*k).toFixed(1) + ' ' + (q[1]*k).toFixed(1)).join('L') + 'Z';
+      cnt++;
+    }
+    return { d, cnt };
+  };
+  const ink = toD(mInk), bg = toD(mBg);
+  return { ink:ink.d, bg:bg.d, n:ink.cnt + bg.cnt, w, h };
+}
 $('ePNG').onclick = () => { const c = bake(S.out.long);
   c.toBlob(b => { dl(b,'uwasa.png');
     stat('PNG を出した（'+c.width+'×'+c.height+'・'
@@ -1393,23 +1508,42 @@ $('ePNG').onclick = () => { const c = bake(S.out.long);
 $('eSVG').onclick = () => {
   /* ══🔴🔴 地（白）を敷かない ══ 2026-09-02
      木下＝「svg でだしたら、**背景の白なぜかのってるわ**」
-     ＝そのとおり。`<rect fill="地の色">` を**必ず**敷いていたので、
-       靄MOYA や Illustrator に持っていくと **白い板**として乗ってしまう。
      ⭐ 書体を出す道具の SVG は【字だけ】が正しい＝地は敷かない。
        → feedback_transparent_export_for_chain（道具から道具へは地なしで出す）
-     ⚠️ 白抜き（反転）にしているときだけは、地が無いと**字が消えて見える**ので敷く
-       ＝そのときだけ「地ごと出した」と言う。 */
+     ⚠️ 白抜き（反転）のときだけは、地が無いと字が消えるので敷く。
+
+     ══🔴🔴 そして【盤と同じ絵】で出す ══ 2026-09-08
+     木下＝「確実に uwasa でボードを見ているのを書き出しできるようにして。
+             でないと意味がない」
+     ⭐ 既定は［見たまま］＝出す絵の画素から輪郭を起こす。
+       粒立ち・割れ・かすれ まで全部入る。 */
   const [W,H] = boardSize();
-  const g = document.createElement('canvas').getContext('2d');
-  const body = paint(g, W, H, { svg:true, out:true });
-  const 地あり = !noBgOut();        /* ⭐ PNG とまったく同じつまみを見る */
+  const 地あり = !noBgOut();
+  const col = inkCol();
+  const 見たまま = !$('kTrace') || $('kTrace').checked;
+  let body, note, 四角 = 地あり;
+  if (見たまま){
+    stat('見たままで起こしている…');
+    const t = tracePaths(S.out.long);
+    if (!t.n){ stat('絵が1つも無いので出せなかった'); return; }
+    /* ⭐ 地も【起こした形】で出す＝かすれの穴がそのまま穴で残る */
+    body = (t.bg ? `<path d="${t.bg}" fill="${bgCol()}" fill-rule="evenodd"/>` : '')
+         + `<path d="${t.ink}" fill="${col}" fill-rule="evenodd"/>`;
+    四角 = false;
+    note = '見たまま（' + t.n + '本の輪・' + t.w + '×' + t.h + 'の画素から起こした）'
+         + ' ── 粒立ち・割れ・かすれも入っている';
+  } else {
+    const g = document.createElement('canvas').getContext('2d');
+    body = paint(g, W, H, { svg:true, out:true }).join('');
+    note = '崩した輪郭（軽い・曲線のまま）'
+         + ' ── ⚠️ 粒立ち・割れ・かすれは入らない';
+  }
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`
-    + (地あり ? `<rect width="${W}" height="${H}" fill="${bgCol()}"/>` : '')
-    + `<g id="uwasa">${body.join('')}</g></svg>`;
+    + (四角 ? `<rect width="${W}" height="${H}" fill="${bgCol()}"/>` : '')
+    + `<g id="uwasa">${body}</g></svg>`;
   dl(new Blob([svg],{type:'image/svg+xml'}), 'uwasa.svg');
-  stat('SVG を出した — 崩した輪郭が path で入っている'
-     + (地あり ? '（白抜きなので地ごと）' : '（地なし＝字だけ）')
-     + '（⚠️ かすれは入らない）');
+  stat('SVG を出した — ' + note + (地あり ? '（地ごと）' : '（地なし＝字だけ）')
+     + ((photo && S.view==='lay') ? ' ⚠️ 敷いた写真は入らない（ベクタにできない）' : ''));
 };
 function saveJSON(){ dl(new Blob([JSON.stringify({ text:S.text, src:S.src, fam:S.fam, cut:S.cut,
   sheet:S.sheet, grid:S.grid, ink:S.ink, bg:S.bg, inv:S.inv, kumi:S.kumi, lay:S.lay, out:S.out }, null, 1)],{type:'application/json'}), 'uwasa.json');
