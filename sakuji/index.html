@@ -105,10 +105,21 @@
   .foldbox.open{ display:block }
   .row{ display:flex; align-items:center; gap:10px; margin-bottom:8px; font-size:12px }
   .row label{ width:64px; color:var(--dim); flex:none }
-  .row input[type=range]{ flex:1; -webkit-appearance:none; height:1px; background:#2c2c2c; outline:none }
+  /* 🔴 つまみを横に引くと【パネルのスクロール】に取られて値が動かないことがあった
+       （2026-09-12 木下＝「スライダー調整やスクロールしづらい」）。
+     ⭐ pan-y ＝ 縦に払えばパネルが送られ、横に引けば値が変わる。
+       ⚠️ none にすると、つまみの上から縦に払ってもパネルが送れなくなる
+         （つまみが密に並ぶモバイルでは、そちらの方が困る）。 */
+  /* 🔴 min-width:0 が要る。flex:1 でも <input> は【中身ぶんの幅】を最低値として持つので、
+       右に数字欄を足した途端に行が縮まず、欄がパネルの外へ 32px はみ出していた（実測）。
+       ⚠️ .rot-row で既に同じ手当てをしてある＝この道具ではこれが定石。 */
+  .row input[type=range]{ flex:1; min-width:0; -webkit-appearance:none; height:1px;
+    background:#2c2c2c; outline:none; touch-action:pan-y }
   .row input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; width:11px; height:11px;
     border-radius:50%; background:var(--ink); cursor:pointer }
   .row .val{ width:34px; text-align:right; color:var(--dim); font-family:ui-monospace,Menlo,monospace; font-size:10px }
+  /* ⭐ .val が打ち込める数のときは、既にある .row input[type=number] の見た目に乗せる
+       （幅・地・枠・右揃え・スピンボタン無しは全部そちらが持っている）。 */
   .seg{ display:flex; gap:0; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-bottom:10px }
   .seg button{ flex:1; padding:8px 0; background:var(--btn); color:var(--dim); border:0; cursor:pointer;
     font-size:11.5px; font-family:inherit; transition:.12s }
@@ -166,10 +177,18 @@
     #tools .sep{ width:1px; height:auto; margin:6px 2px; flex:none }
 
     /* パネル＝下半分に固定して縦スクロール */
+    /* 🔴 下が左右に揺れていた（2026-09-12 木下＝「モバイルのパネル、下が左右に揺れて
+         スライダー調整やスクロールしづらい」）。実測＝clientW 389 に対して scrollW 393。
+       ⭐ 犯人は見出しの帯。#panel h2 は margin:0 -20px（＝PC の padding 20px ぶん）で
+         パネルいっぱいに伸ばしているが、モバイルの padding は 14px なので【左右 6px ずつ出る】。
+         はみ出すと overflow-y:auto の副作用で overflow-x が auto になり、指が横に流れる。
+       ⭐ 直し＝帯の負のマージンをモバイルの padding に合わせる ＋ 横は出さないと決める。 */
     #panel{ left:0; right:0; top:auto; bottom:0; width:100%; height:46vh;
       border-left:0; border-top:1px solid var(--line); padding:14px 14px 28px;
+      overflow-x:hidden; overscroll-behavior:contain; touch-action:pan-y;
       -webkit-overflow-scrolling:touch }
-    #panel h2{ margin:16px 0 8px }
+    #panel h2{ margin:16px -14px 8px; padding-left:14px; padding-right:14px }
+    #panel h2:first-child{ margin-top:-14px }
     .grid2{ grid-template-columns:1fr 1fr }
     .row label{ width:58px }
 
@@ -490,7 +509,22 @@
     font-family:ui-monospace,Menlo,monospace; pointer-events:none }
   #ctxbar .sep{ width:1px; background:var(--line); margin:4px 2px }
   body.glyOn #ctxbar{ display:none !important }
-  @media(max-width:760px){ #ctxbar button{ padding:9px 11px; font-size:12px } }
+  /* 🔴 モバイルで【画面からはみ出して巨大になっていた】（2026-09-12 木下＝「線に触れると
+       これが表示されデカすぎる」）。原因は2つ：
+       ① 幅の上限が無く、5つのボタンを並べると 390px の画面より広くなる
+          → JS の「はみ出したら中へ寄せる」計算が負の値になり、右へ流れたまま出ていた
+       ② 個数（1個／点73）が入りきらず【縦に折り返して】板ごと背が伸びていた
+     ⭐ 直し＝幅を画面内に収めて【横に送れる】ようにし、個数は消す
+       （同じ数は画面いちばん上の HUD に出ている＝二重に出していた）。 */
+  @media(max-width:760px){
+    #ctxbar{ max-width:calc(100vw - 16px); overflow-x:auto; overflow-y:hidden;
+      flex-wrap:nowrap; scrollbar-width:none; -webkit-overflow-scrolling:touch;
+      touch-action:pan-x; padding:3px }
+    #ctxbar::-webkit-scrollbar{ display:none }
+    #ctxbar button{ padding:8px 10px; font-size:12px; flex:none }
+    #ctxbar .n{ display:none }
+    #ctxbar .sep{ flex:none }
+  }
   #addMenu, #docMenu{ position:fixed; left:250px; top:74px; min-width:230px;
     background:#141414; border:1px solid var(--line); border-radius:10px; padding:6px;
     z-index:170; opacity:0; pointer-events:none; transition:.14s; transform:translateY(-6px);
@@ -1801,7 +1835,9 @@
        ⚠️ #panel の直下＝粒パネルの外。h2 を付けて所属を切っている
           （見出し無しだと、上の粒UI／下の TEXT どちらかの続きに見える）。 -->
   <h2>線</h2>
-  <div class="row"><label>線幅</label><input type="range" id="sw" min="1" max="200" value="40"><span class="val"></span></div>
+  <!-- ⭐ 上限を 200 → 1000 にした（2026-09-12 木下＝「線幅ももっと大きくしたい」）。
+       ⚠️ つまみの目盛りは変えない（1刻みのまま）＝いままでの 1〜200 の位置は同じ意味で残る。 -->
+  <div class="row"><label>線幅</label><input type="range" id="sw" min="1" max="1000" value="40"><input type="number" class="val" id="swNum" min="1" max="1000" step="1"></div>
   <!-- ⭐⭐ 書き心地（2026-08-26 木下「sure や Ha、nijimi のような道具の書き心地も
        切り替えて使えるように」）＝フリーハンド（B）で引いた線の【出来上がり方】を替える。
        ⚠️ どれも paper のパスとして作る＝SVG でも .otf でも今までどおり出せる。
@@ -1826,14 +1862,24 @@
       <option value="inside">内側</option>
       <option value="outside">外側</option>
     </select>
+    <!-- ⭐ 確定の入口をこの行に置く（2026-09-12 木下＝「線幅を内側にしても何も変わらない」）。
+         🔴 理由の書き置き（下の alignNote）はパネルの下にあり、モバイルでは画面の外だった。
+            触れるのに効かないつまみは、【効かせる手段を同じ行に置く】。
+         ⚠️ 配線は1本＝押すと下の〔線→塗り〕(#bOutline) をそのまま押す。 -->
+    <button class="btn" id="alignNow" style="flex:none;width:auto;padding:6px 9px;margin:0;font-size:10.5px"
+            title="この位置で線を面にする（＝線→塗り）">確定</button>
   </div>
   <!-- 🔴 木下＝2026-08-22「線の位置を変更しても変わらない気がする」＝そのとおり。
        paper.js は中央線しか描けないので、内側／外側は【画面では一切変わらない】。
        ⭐ いままでは押した瞬間に stat() へ1回出すだけだった＝盤の下なので気づけない。
           触れるのに効かないものは【そのつまみの真下に、出したままにする】。 -->
-  <div class="note" id="alignNote" style="display:none;color:#c98a2e">
-    ⚠️ <b>いまは画面では変わりません</b>（線は中央に見えたまま）。
-    下の〔<b>線→塗り</b>〕を押すと、この位置で<b>面になります</b>。</div>
+  <!-- 🔴 .note は「?」を押したときしか出ない（body.help のときだけ display:block）。
+       つまりこの案内は、いままで木下の目に一度も入っていなかった。
+       ⭐ 中央以外を選んでいる間は【いつでも見える】ようにする（.note を使わない）。 -->
+  <div id="alignNote" style="display:none;color:#c98a2e;font-size:10.5px;line-height:1.6;
+       margin:-4px 0 10px;padding:7px 9px;border:1px solid rgba(201,138,46,.35);border-radius:7px">
+    ⚠️ <b>画面の線は中央に見えたままです</b>（paper.js は中央線しか描けない）。<br>
+    右の〔<b>確定</b>〕を押すと、この位置で<b>面になります</b>。</div>
   <div class="row"><label>角</label>
     <select id="join" style="flex:1">
       <option value="round">丸</option>
@@ -2393,6 +2439,12 @@ const stat = t => document.getElementById('stat').textContent = t;
 
 /* ── レイヤー構成：下=グリッド、上=作画 ── */
 const ACC = '#4a9eff';                // 編集ガイドの青（イラレ／Figma の流儀）
+/* ⭐ ズームの下限（2026-09-12 木下＝「ボード内のズームアウトをもっとできるように」）。
+   ⚠️ これまで 0.1（＝10%）で止まっていた。モバイルの盤は 390×557px しかなく、
+     10% でも A4 相当の枠が画面から溢れて全体が見えなかった。
+   ⭐ 0.02（＝2%）まで引く＝5倍ひろく見える。上限 40（4000%）は1つも変えない。
+   ⚠️ ここで宣言する理由＝ACC と同じ（起動の途中で読まれるので先頭側に置く）。 */
+const ZMIN = 0.02;
 /* ⭐ 盤面で選ばれている枠（-1＝選択なし）。保存しない＝開いたときは必ず選択なし。
    ⚠️ ここで宣言する理由＝起動の途中で drawArtboard が走るので、
       let を下に置くと「初期化前に読んだ」で落ちる。 */
@@ -3935,7 +3987,7 @@ window.addEventListener('keyup', e => {
     if(pts.size === 2 && p0){
       e.preventDefault();
       const c = center();
-      const z = Math.max(0.1, Math.min(40, p0.zoom * (c.d / p0.d)));
+      const z = Math.max(ZMIN, Math.min(40, p0.zoom * (c.d / p0.d)));
       paper.view.zoom = z;
       // 指の中心の移動ぶんだけボードも動かす
       paper.view.center = new Point(
@@ -3956,7 +4008,7 @@ window.addEventListener('keyup', e => {
 cv.addEventListener('wheel', e => {                 // ホイール＝カーソル中心ズーム
   e.preventDefault();
   const f = e.deltaY < 0 ? 1.09 : 1/1.09;
-  const nz = Math.max(0.1, Math.min(40, paper.view.zoom * f));
+  const nz = Math.max(ZMIN, Math.min(40, paper.view.zoom * f));
   const mp = paper.view.viewToProject(new Point(e.offsetX, e.offsetY));
   paper.view.center = mp.add(paper.view.center.subtract(mp).multiply(paper.view.zoom / nz));
   paper.view.zoom = nz; drawGrid();
@@ -4301,10 +4353,22 @@ function setBG(v){
 document.querySelectorAll('#bgsw button').forEach(b =>
   b.addEventListener('click', () => setBG(b.dataset.v)));
 
+/* ⭐ .val が <input> なら【数を打ち込める】（2026-09-12）。
+   🔴 線幅の上限を 200→1000 にした副作用＝つまみ1画素あたりの刻みが5倍粗くなり、
+     細い所（1〜20）が指で合わせられなくなる。打ち込みを足して、そこを取り戻す。
+   ⚠️ 配線は1本のまま＝どちらから入れても同じ sync を通る。 */
 function bindRange(id, fn){
   const r = document.getElementById(id), v = r.parentElement.querySelector('.val');
-  const sync = () => { v.textContent = r.value; fn(+r.value); };
-  r.addEventListener('input', sync); sync();
+  const isIn = v && v.tagName === 'INPUT';
+  const sync = () => { if(isIn) v.value = r.value; else v.textContent = r.value; fn(+r.value); };
+  r.addEventListener('input', sync);
+  if(isIn) v.addEventListener('input', () => {
+    const n = +v.value;
+    if(v.value === '' || !isFinite(n)) return;          // 打っている途中は触らない
+    r.value = Math.max(+r.min, Math.min(+r.max, n));
+    fn(+r.value);
+  });
+  sync();
 }
 /* ⭐⭐ 線幅（2026-08-26）── 引いた線を選んでいれば【掛け直す】。
    🔴 刃HA・滲NIJIMI は「塗りの輪郭」なので strokeWidth を変えても1画素も動かなかった
@@ -4387,9 +4451,17 @@ function roundCorner(seg, r){
    🔴 一度きりの知らせ（stat）は盤の下なので気づけない（木下＝「変わらない気がする」）。 */
 function alignNoteSync(){
   const n = document.getElementById('alignNote');
-  if(n) n.style.display = (S.align && S.align !== 'center') ? '' : 'none';
+  const b = document.getElementById('alignNow');
+  const on = !!(S.align && S.align !== 'center');
+  if(n) n.style.display = on ? '' : 'none';
+  if(b) b.style.display = on ? '' : 'none';   /* 中央のときは押す物が無いので出さない */
 }
 alignNoteSync();
+/* ⭐ 「確定」＝下の〔線→塗り〕をそのまま押す（配線は1本のまま） */
+document.getElementById('alignNow')?.addEventListener('click', () => {
+  const t = document.getElementById('bOutline');
+  if(t) t.click(); else stat('〔線→塗り〕が見つからない');
+});
 
 /* ══ テキスト ══ */
 /* ⭐ 文字を置く。字間・行間・縦組に対応するため、1字ずつ置いて束ねる。
