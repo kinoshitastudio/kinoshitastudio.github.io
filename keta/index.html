@@ -325,12 +325,21 @@
       <button class="btn" id="b_apng">地なしPNG</button>
       <button class="btn" id="b_svg">SVG</button>
     </div>
+    <div class="seg" id="s_svgm" style="margin-top:6px">
+      <button data-v="keta" class="on">桁のまま</button><button data-v="sil">シルエット</button>
+    </div>
+    <div class="row"><span class="n">シルエット：なめらかさ</span><output id="o_sm">2</output></div>
+    <input type="range" id="r_sm" min="0" max="6" value="2">
     <div class="btns2">
       <button class="btn" id="b_exj">設定を出す</button>
       <button class="btn" id="b_inj">設定を読む</button>
     </div>
     <input type="file" id="f_json" accept="application/json,.json" hidden>
-    <div class="note">⭐ SVG は<b>形そのまま</b>で出る＝<b>鋳CHU</b>や<b>貼HARI</b>へそのまま渡せる<br>
+    <div class="note">⭐ <b>桁のまま</b>＝桁ひとつひとつが別々の形で入る（升目を後から触れる）<br>
+      ⭐⭐ <b>シルエット</b>＝<b>全部を1本の輪郭にまとめる</b>。
+      境目の線が消えて、<b>字の外形そのもの</b>になる（ロゴにするならこちら）<br>
+      🔴 いままでは桁のままだけだった＝Illustrator で開くと<b>中に縦の切れ目が並んで見えていた</b><br>
+      ⚠️ シルエットは<b>穴もそのまま空く</b>。<b>なめらかさ</b>は上げるほど角が取れて点も減る<br>
       ⭐ <b>設定＝いまのつまみ一式</b>（手で直した桁も一緒に入る）</div>
   </div>
 </div>
@@ -368,6 +377,8 @@ const P = {
   scols:2, srows:2,
   inner:1,              /* ⭐ 内側の角（穴・凹み）も丸める＝参考どおり */
   showgrid:true,        /* ⭐ 升目を出す（別の板に描くだけ＝出す絵には入らない） */
+  /* ⚠️ ここから下は【出すときだけ】のつまみ＝盤の絵は変わらないのが正しい */
+  svgm:'keta', svgsm:2,
 };
 let SHEET = false;              /* いま盤に出ているのが「一覧」か */
 
@@ -949,8 +960,132 @@ function shoot(transparent){
 }
 el('b_png').onclick  = () => shoot(P.nobg).toBlob(b => { dl(b, 'keta_' + Date.now() + '.png'); stat('PNG を出した'); });
 el('b_apng').onclick = () => shoot(true).toBlob(b => { dl(b, 'keta_nobg_' + Date.now() + '.png'); stat('地なしPNG を出した'); });
+/* ══⭐⭐ シルエットで出す ─────────────────────────────────────
+   🔴🔴 2026-09-12・木下が Illustrator で開いて見つけた ──
+      「パスになってるんだが、**シルエットのパスの形でないなあ**」。
+      ⭐ 正体＝KETA の d は【縦に続くマスのかたまり】を1つずつ閉じて並べたもの。
+        隣どうしがぴったり接しているので**塗ると繋がって見える**が、
+        中身は別々の輪なので、**開くと中に縦の切れ目が並んで見える**。
+   ⭐ 直し＝**描いた絵から輪郭を1本だけ取り直す**（曳HIKI・蝕SHOKU と同じ手）。
+      ⚠️ 桁のままの方も残す＝升目を後から触りたいときはそちらが要る（つまみで選ぶ）。 */
+const TRACE_MAX = 2400;
+function traceMask(m, W, H){
+  const K = (x, y) => x * (H + 1) + y;
+  const out = new Map();
+  const put = (x0, y0, x1, y1) => { const k = K(x0, y0), v = out.get(k);
+    if(v) v.push(K(x1, y1)); else out.set(k, [K(x1, y1)]); };
+  const at = (x, y) => (x < 0 || y < 0 || x >= W || y >= H) ? 0 : m[y * W + x];
+  for(let y = 0; y < H; y++) for(let x = 0; x < W; x++){
+    if(!at(x, y)) continue;
+    if(!at(x, y-1)) put(x,   y,   x+1, y  );
+    if(!at(x+1, y)) put(x+1, y,   x+1, y+1);
+    if(!at(x, y+1)) put(x+1, y+1, x,   y+1);
+    if(!at(x-1, y)) put(x,   y+1, x,   y  );
+  }
+  const loops = [], starts = [...out.keys()];
+  for(const s of starts){
+    while(out.has(s) && out.get(s).length){
+      const pts = []; let cur = s, guard = 0;
+      while(guard++ < 4000000){
+        const arr = out.get(cur);
+        if(!arr || !arr.length) break;
+        const nxt = arr.pop();
+        if(!arr.length) out.delete(cur);
+        pts.push([(cur / (H + 1)) | 0, cur % (H + 1)]);
+        cur = nxt;
+        if(cur === s) break;
+      }
+      if(pts.length > 3) loops.push(pts);
+    }
+  }
+  return loops;
+}
+function dropStraight(p){
+  const o = [], n = p.length;
+  for(let i = 0; i < n; i++){
+    const a = p[(i-1+n)%n], b = p[i], c = p[(i+1)%n];
+    if((b[0]-a[0])*(c[1]-b[1]) !== (b[1]-a[1])*(c[0]-b[0])) o.push(b);
+  }
+  return o.length > 3 ? o : p;
+}
+/* 🔴 角を丸めるだけだと点が倍々に増える（蝕SHOKU で踏んだ）＝丸めたあと必ず間引く */
+function thin(p, tol){
+  const n = p.length;
+  if(n < 5) return p;
+  const keep = new Uint8Array(n); keep[0] = 1; keep[n-1] = 1;
+  const st = [[0, n-1]], t2 = tol * tol;
+  while(st.length){
+    const [a, b] = st.pop();
+    if(b <= a + 1) continue;
+    const ax = p[a][0], ay = p[a][1];
+    const dx = p[b][0]-ax, dy = p[b][1]-ay, L = dx*dx + dy*dy;
+    let mi = -1, md = -1;
+    for(let i = a+1; i < b; i++){
+      const px = p[i][0]-ax, py = p[i][1]-ay;
+      let dd;
+      if(L === 0) dd = px*px + py*py; else { const cr = px*dy - py*dx; dd = cr*cr / L; }
+      if(dd > md){ md = dd; mi = i; }
+    }
+    if(md > t2){ keep[mi] = 1; st.push([a, mi]); st.push([mi, b]); }
+  }
+  const o = [];
+  for(let i = 0; i < n; i++) if(keep[i]) o.push(p[i]);
+  return o.length > 3 ? o : p;
+}
+function chaikin(p, times){
+  for(let t = 0; t < times; t++){
+    if(p.length < 4) break;
+    const o = [];
+    for(let i = 0; i < p.length; i++){
+      const a = p[i], b = p[(i+1) % p.length];
+      o.push([a[0]*0.75 + b[0]*0.25, a[1]*0.75 + b[1]*0.25]);
+      o.push([a[0]*0.25 + b[0]*0.75, a[1]*0.25 + b[1]*0.75]);
+    }
+    p = o;
+  }
+  return p;
+}
+function silhouetteD(){
+  const f = frameNow();
+  const k0 = Math.min(1, TRACE_MAX / Math.max(f.w, f.h));
+  const W = Math.max(8, Math.round(f.w * k0)), H = Math.max(8, Math.round(f.h * k0));
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d', { willReadFrequently:true });
+  /* ⭐ 地なしで描く＝【塗った所】が濃さでそのまま分かる（色を見比べなくていい） */
+  if(SHEET) paintSheet(x, W, H, true); else paint(x, W, H, true);
+  const d = x.getImageData(0, 0, W, H).data;
+  const m = new Uint8Array(W * H);
+  for(let i = 3, p2 = 0; p2 < W*H; p2++, i += 4) m[p2] = d[i] > 127 ? 1 : 0;
+  const sm = Math.max(0, Math.min(6, P.svgsm | 0));
+  const kk = f.w / W;
+  const loops = traceMask(m, W, H).map(p => {
+    p = dropStraight(p);
+    if(sm > 0) p = thin(p, 0.35 + sm * 0.30);
+    p = chaikin(p, Math.min(sm, 3));
+    return sm > 0 ? thin(p, 0.22) : p;
+  }).filter(p => {
+    let mnx=1e9, mny=1e9, mxx=-1e9, mxy=-1e9;
+    for(const q of p){ if(q[0]<mnx)mnx=q[0]; if(q[0]>mxx)mxx=q[0];
+                       if(q[1]<mny)mny=q[1]; if(q[1]>mxy)mxy=q[1]; }
+    return (mxx-mnx) > 1.2 || (mxy-mny) > 1.2;
+  });
+  return { d: loops.map(p => 'M' + p.map(q =>
+      (q[0]*kk).toFixed(2) + ' ' + (q[1]*kk).toFixed(2)).join('L') + 'Z').join(''),
+    loops: loops.length, pts: loops.reduce((a,p)=>a+p.length,0) };
+}
 el('b_svg').onclick = () => {
   const f = frameNow();
+  if(P.svgm === 'sil'){
+    const R = silhouetteD();
+    const s = '<?xml version="1.0" encoding="UTF-8"?>\n'
+      + '<svg xmlns="http://www.w3.org/2000/svg" width="' + f.w + '" height="' + f.h
+      + '" viewBox="0 0 ' + f.w + ' ' + f.h + '">'
+      + (P.nobg ? '' : '<rect width="' + f.w + '" height="' + f.h + '" fill="' + P.bg + '"/>')
+      + '<path d="' + R.d + '" fill="' + P.ink + '" fill-rule="evenodd"/></svg>';
+    dl(new Blob([s], { type:'image/svg+xml' }), 'keta_sil_' + Date.now() + '.svg');
+    stat('SVG（シルエット）を出した　輪 ' + R.loops + ' / 点 ' + R.pts.toLocaleString());
+    return;
+  }
   let body = '';
   if(SHEET){
     const cols = Math.max(1, Math.round(P.scols)), rows = Math.max(1, Math.round(P.srows));
@@ -971,8 +1106,15 @@ el('b_svg').onclick = () => {
     + (P.nobg ? '' : '<rect width="' + f.w + '" height="' + f.h + '" fill="' + P.bg + '"/>')
     + body + '</svg>';
   dl(new Blob([s], { type:'image/svg+xml' }), 'keta_' + Date.now() + '.svg');
-  stat('SVG を出した');
+  stat('SVG（桁のまま）を出した');
 };
+/* ⚠️ どちらも【出すときだけ】のつまみ＝盤の絵は変わらないのが正しい */
+el('s_svgm').addEventListener('click', e => {
+  const b = e.target.closest('button'); if(!b) return;
+  [...el('s_svgm').children].forEach(x => x.classList.toggle('on', x === b));
+  P.svgm = b.dataset.v;
+});
+el('r_sm').addEventListener('input', e => { P.svgsm = +e.target.value; el('o_sm').textContent = P.svgsm; });
 
 /* ══⭐⭐ 動かす・動画で書き出す（他の道具と同じ作法）══════════════
    ⭐ 位相は【コマ番号】で刻む（時計で刻むとコマ落ちで絵が飛ぶ）。

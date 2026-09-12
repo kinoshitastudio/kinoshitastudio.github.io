@@ -84,33 +84,69 @@ await new Promise(r=>setTimeout(r,1400));
 const got = await p.evaluate(() => window.__got);
 ok(got.some(x=>/png/.test(x.type)), 'PNG が本当に落ちる', JSON.stringify(got));
 
-/* ⭐⭐ SVG（短冊で出す）── 2026-09-12
-   🔴 見るのは「落ちたか」だけでなく【中身が本当に短冊になっているか】。
-     ⚠️ 地なしを選んだのに地の矩形が入っていたら、道具の間で繋げなくなる。 */
+/* ⭐⭐ SVG ── 2026-09-12。出し方は2つ（輪郭／短冊）。
+   🔴 見るのは「落ちたか」ではなく【Illustrator / Figma で触れる形になっているか】。
+     ① 輪郭＝**掴むのは1本**（字の形そのもの）。穴が空く
+     ② 短冊＝画素のまま。図形は数千枚になるが **path は色の数だけ**（木下が Figma で
+        「Vector が何千個」になっているのを見つけた。まとめる鍵がうねりでずれて効いていなかった）
+     ③ 地なし＝**本当に透明**。元の絵に地の色を焼いていて、ずっと効いていなかった
+     ④ 地なしに地の矩形が入らない（道具の間で繋げる） */
 {
   const sv = await p.evaluate(() => {
-    const A = svgOut(false), B = svgOut(true);
-    return { 図形:A.shapes, 矩形:(A.svg.match(/<rect /g)||[]).length,
-             地あり:/<svg[^>]*>\s*<rect width=/.test(A.svg),
-             地なし:/<svg[^>]*>\s*<rect width=/.test(B.svg), 頭:A.svg.slice(0,45) };
+    const T = svgTrace(false), Ta = svgTrace(true), S = svgStrip(false), Sa = svgStrip(true);
+    const paths = s => (s.match(/<path /g)||[]).length;
+    return {
+      輪郭:{ 輪:T.shapes, path:paths(T.svg), 穴:/fill-rule="evenodd"/.test(T.svg),
+             画素でない:!/<image|base64/.test(T.svg), 頭:T.svg.slice(0,42) },
+      短冊:{ 図形:S.shapes, path:paths(S.svg) },
+      地矩形:{ 輪郭地あり:/<svg[^>]*><rect width=/.test(T.svg),
+               輪郭地なし:/<svg[^>]*><rect width=/.test(Ta.svg),
+               短冊地なし:/<svg[^>]*><rect width=/.test(Sa.svg) },
+      地なしに形がある:{ 輪:Ta.shapes, 短冊:Sa.shapes },
+    };
   });
-  ok(sv.図形 > 100 && sv.矩形 > 100 && /^<\?xml/.test(sv.頭),
-     '⭐⭐ SVG が【短冊】で出る（図形が本当に入っている）', JSON.stringify(sv));
-  ok(sv.地あり === true && sv.地なし === false,
-     '⭐⭐ 地なし SVG に【地の矩形が入らない】（道具の間で繋げる）', JSON.stringify(sv));
+  ok(sv.輪郭.輪 > 0 && sv.輪郭.path === 1 && sv.輪郭.穴 && sv.輪郭.画素でない && /^<\?xml/.test(sv.輪郭.頭),
+     '⭐⭐ 輪郭＝【掴むのは1本】で出る（画素を貼っていない・穴が空く）', JSON.stringify(sv.輪郭));
+  /* 🔴 ここが今回の本丸。図形は数千でよいが、path が数千あってはいけない */
+  ok(sv.短冊.図形 > 100 && sv.短冊.path < 70,
+     '🔴🔴 短冊＝図形は数千でも【掴むのは色の数だけ】（Vector が数千個にならない）',
+     JSON.stringify(sv.短冊));
+  ok(sv.地矩形.輪郭地あり === true && sv.地矩形.輪郭地なし === false && sv.地矩形.短冊地なし === false,
+     '⭐⭐ 地なし SVG に【地の矩形が入らない】（道具の間で繋げる）', JSON.stringify(sv.地矩形));
+  ok(sv.地なしに形がある.輪 > 0 && sv.地なしに形がある.短冊 > 100,
+     '🔴🔴 地なしでも【形が残る】（元の絵に地を焼いていて空になっていた）',
+     JSON.stringify(sv.地なしに形がある));
+  /* 🔴🔴 地なしが【本当に透明】か＝画素を数える。ここを見ていなかったので気づけなかった */
+  const tr = await p.evaluate(() => {
+    const { w, h } = sheet();
+    const c = document.createElement('canvas'); c.width = 240; c.height = 240;
+    paint(c.getContext('2d'), 240, 240, true);
+    const d = c.getContext('2d').getImageData(0,0,240,240).data;
+    let clear = 0; for(let i = 3; i < d.length; i += 4) if(d[i] < 8) clear++;
+    return { 透明な画素:clear, 全部:240*240 };
+  });
+  ok(tr.透明な画素 > tr.全部 * 0.1, '🔴🔴 地なしが【本当に透明】（地の色を焼き込んでいない）',
+     JSON.stringify(tr));
   await p.evaluate(() => { window.__got = []; document.getElementById('b_svgo').click(); });
   await new Promise(r=>setTimeout(r,1800));
   const g2 = await p.evaluate(() => window.__got);
   ok(g2.some(x=>/svg/.test(x.type)), 'SVG が本当に落ちる', JSON.stringify(g2));
-  /* ⭐ 色数を下げたら図形が減る（つまみが本当に効いている） */
+  /* ⭐ 出すときだけのつまみが、出る形に効いているか */
   const less = await p.evaluate(() => {
-    const e = document.getElementById('r_qz');
-    const set = v => { e.value = v; e.dispatchEvent(new Event('input',{bubbles:true})); };
-    set(64); const hi = svgOut(false).shapes;
-    set(2);  const lo = svgOut(false).shapes;
-    set(16); return { 色数64:hi, 色数2:lo };
+    const set = (id, v) => { const e = document.getElementById(id);
+      e.value = v; e.dispatchEvent(new Event('input',{bubbles:true})); };
+    set('r_qz', 64); const hi = svgStrip(false).shapes;
+    set('r_qz', 2);  const lo = svgStrip(false).shapes;
+    set('r_qz', 16);
+    set('r_sm', 0); const s0 = svgTrace(false).pts;
+    set('r_sm', 4); const s4 = svgTrace(false).pts;
+    set('r_sm', 2);
+    return { 色数64:hi, 色数2:lo, なめらか0:s0, なめらか4:s4 };
   });
-  ok(less.色数2 <= less.色数64, '⭐ 色数を下げると図形が減る', JSON.stringify(less));
+  ok(less.色数2 <= less.色数64, '⭐ 短冊：色数を下げると図形が減る',
+     JSON.stringify({ 色数64:less.色数64, 色数2:less.色数2 }));
+  ok(less.なめらか4 < less.なめらか0, '⭐⭐ 輪郭：なめらかさを上げると点が【減る】（増えない）',
+     JSON.stringify({ なめらか0:less.なめらか0, なめらか4:less.なめらか4 }));
 }
 
 /* ⭐⭐ 指の端末で【立ち上がるか】── 2026-08-29

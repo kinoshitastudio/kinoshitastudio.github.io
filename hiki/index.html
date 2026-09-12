@@ -345,16 +345,25 @@
     <div class="btns2">
       <button class="btn" id="b_pngA">地なし PNG</button>
   </div>
+    <div class="seg" id="s_svgm" style="margin-top:8px">
+      <button data-v="trace" class="on">輪郭で出す</button><button data-v="strip">短冊で出す</button>
+    </div>
     <div class="btns2" style="margin-top:4px">
       <button class="btn" id="b_svgo">SVG を書き出す</button>
       <button class="btn" id="b_svgoA">地なし SVG</button>
     </div>
-    <div class="row"><span class="n">SVG のまとめ（色数）</span><output id="o_qz">16</output></div>
+    <div class="row"><span class="n">輪郭：なめらかさ</span><output id="o_sm">2</output></div>
+    <input type="range" id="r_sm" min="0" max="6" value="2">
+    <div class="row"><span class="n">輪郭：どこから塗りか</span><output id="o_thr">50</output></div>
+    <input type="range" id="r_thr" min="1" max="99" value="50">
+    <div class="row"><span class="n">短冊：まとめ（色数）</span><output id="o_qz">16</output></div>
     <input type="range" id="r_qz" min="2" max="64" value="16">
-    <div class="note">⚠️ この道具が運んでいるのは<b>画素そのもの</b>なので、SVG は
-      <b>読んだ線を1本ずつ、短冊のまま</b>出す（形に作り直さない）<br>
-      ⭐ <b>字・SVG から作った絵はそのままの形で出る</b>（色数を上げても図形は増えない）<br>
-      ⚠️ <b>写真は色数のぶんだけ階段になる</b>。色数を下げるほど図形が減って軽くなる</div>
+    <div class="note">⭐⭐ <b>輪郭</b>＝境目を線にする。<b>字・自作SVG・ロゴはこちら</b>。
+      Illustrator / Figma で<b>掴めるのは形ひとつ</b>（穴もそのまま空く）<br>
+      ⭐ <b>短冊</b>＝読んだ線を1本ずつ矩形のまま。<b>色のある絵・写真はこちら</b>（色をそのまま運ぶ）<br>
+      🔴 <b>短冊は図形が数千枚になる</b>（うねった絵ほど増える）。同じ色は1本にまとめてあるので
+      掴むものは<b>色の数</b>だけ。色数を下げるほど軽くなる<br>
+      ⚠️ <b>どこから塗りか</b>＝輪郭のときだけ効く。写真から輪郭を取るときはここで形が決まる</div>
     <button class="btn" id="b_exj" style="margin-top:8px">設定を JSON で出す</button>
     <button class="btn" id="b_inj" style="margin-top:4px">JSON を読む</button>
     <input type="file" id="f_json" accept="application/json,.json" hidden>
@@ -423,7 +432,8 @@ const P = {
   sh:0, shf:1.0,                                       /* 線のずれ */
   ratio:'1:1', long:1400, pad:8,
   inv:1, ink:'#ffffff', bg:'#0a0a0a', nobg:false,
-  qz:16,                                               /* SVG のまとめ（色数）。絵には効かない＝出すときだけ */
+  /* ⚠️ ここから下は【出すときだけ】のつまみ。盤の絵は変わらないのが正しい */
+  svgm:'trace', qz:16, sm:2, thr:50,
 };
 let SRC = null;          /* 写真・SVG を入れたらこちらが元（字より優先） */
 
@@ -444,14 +454,24 @@ function sheet(){
 /* ══⭐⭐ 元を版面に焼く ══
    ⭐ ここで作るのは【画素そのもの】＝走査は色を運ぶ（粒の道具のような濃さの地図ではない）。
    ⚠️ 明暗も要る（「絵の明暗から」で読む速さを決めるため）＝同じ1回の走査で両方作る。 */
+/* 🔴🔴 2026-09-12：ここに【地の色を必ず焼いていた】ので、
+   「地を出さない」を入れても **元の絵がすでに不透明** ＝ 地なしが効いていなかった。
+   （PNG も SVG も、地の色が入ったまま出ていた。木下が Figma で開いて分かった）
+   ⭐ 直し＝**地なしのときは地を焼かない**。元の絵を2種類で控える（切り替えても焼き直さない）。
+   ⚠️ 読む速さ（明暗）は地ありの方から取る＝地なしにしても絵の伸び方は変わらない。 */
+let MAPS = { 0:null, 1:null }, MAPKEYS = { 0:'', 1:'' };
 let MAP = null, MAPKEY = '';
-function bakeMap(){
+function bakeMap(noBg){
+  const nb = noBg ? 1 : 0;
+  /* ⭐ 外から「焼き直せ」と言われる道は `MAPKEY = ''` の1本しかない（7か所ある）。
+     ここで受けて2つとも捨てる＝呼ぶ側を1か所も書き換えずに済む。 */
+  if(MAPKEY === ''){ MAPKEYS[0] = MAPKEYS[1] = ''; }
   const { w, h } = sheet();
-  const key = [w, h, P.pad, P.txt, P.font, P.inv, P.ink, P.bg, SRC ? SRC.src.length : 0].join('|');
-  if(MAPKEY === key && MAP) return MAP;
+  const key = [w, h, P.pad, P.txt, P.font, P.inv, P.ink, P.bg, nb, SRC ? SRC.src.length : 0].join('|');
+  if(MAPKEYS[nb] === key && MAPS[nb]){ MAP = MAPS[nb]; MAPKEY = MAPKEYS[0] || key; return MAP; }
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const q = c.getContext('2d', { willReadFrequently:true });
-  q.fillStyle = P.inv ? P.bg : P.ink; q.fillRect(0, 0, w, h);
+  if(!noBg){ q.fillStyle = P.inv ? P.bg : P.ink; q.fillRect(0, 0, w, h); }
   const m = P.pad / 100;
   if(SRC){
     const iw = SRC.naturalWidth || SRC.width, ih = SRC.naturalHeight || SRC.height;
@@ -491,7 +511,8 @@ function bakeMap(){
     }
     lum[i] = cnt ? (sum/cnt)/255 : 0.5;
   }
-  MAP = { canvas:c, w, h, lum, n }; MAPKEY = key;
+  MAP = { canvas:c, w, h, lum, n };
+  MAPS[nb] = MAP; MAPKEYS[nb] = key; MAPKEY = key;
   return MAP;
 }
 
@@ -500,9 +521,10 @@ function bakeMap(){
    ⚠️ 端は必ず元の中に収める（外を読むと絵が切れる）＝**向きは縛らず、端で止める**。 */
 let SCAN = null, SCANKEY = '';
 function scan(){
-  const M = bakeMap();
+  /* ⚠️ 読む速さは【地あり】の明暗から取る＝地なしにしても伸び方が変わらない（式は1本） */
+  const M = bakeMap(false);
   const n = M.n;
-  const key = [MAPKEY, P.axis, P.way, P.amp, P.freq, P.ph, P.sh, P.shf, n].join('|');
+  const key = [MAPKEYS[0], P.axis, P.way, P.amp, P.freq, P.ph, P.sh, P.shf, n].join('|');
   if(SCANKEY === key && SCAN) return SCAN;
   const src = new Float32Array(n);      /* 元のどこを読むか */
   const off = new Float32Array(n);      /* 読んだ線を直角にどれだけずらすか */
@@ -552,7 +574,7 @@ function scan(){
 /* ══ 描く（1本ずつ運ぶ）══
    ⭐ 1本ぶんを drawImage で運ぶ＝色も質感もそのまま運ばれる（作り直さない）。 */
 function paint(ctx, W, H, transparent){
-  const M = bakeMap(), S2 = scan();
+  const M = bakeMap(transparent), S2 = scan();
   const k = W / M.w, kh = H / M.h;
   ctx.setTransform(1,0,0,1,0,0);
   ctx.clearRect(0, 0, W, H);
@@ -865,62 +887,198 @@ el('b_pngA').onclick = () => shoot(true).toBlob(b => { dl(b, 'hiki_nobg_' + Date
       伸ばした所ほど図形が減る。絵の作りがそのまま図形の数になる。
    ⚠️ 色数（P.qz）で丸めてから走る。字・SVG から作った絵は色が元々少ないので
       丸めても形が変わらない。写真は階段になる＝そこは正直に note に書いてある。 */
-function svgOut(transparent){
+/* 🔴🔴 2026-09-12 実機で2つ落ちた（木下が Figma で開いて分かった）──
+   ① **1画素の高さの矩形が 8,000 枚**になっていた。
+      「止まった所は1枚にまとまる」と書いたが、まとめる鍵に【短冊の始まりと終わり】を
+      使っていたので、絵がうねった瞬間に1画素ずつずれて **二度と一致しない**。
+      ⭐ 直し＝隣どうしを繋ごうとするのをやめ、**同じ色のものを1本の path にまとめる**。
+        図形の数は変わらないが、**掴むものが「色の数」だけ**になる（Figma で 8,000 → 数個）。
+   ② **地なしで半透明が真っ白になっていた**。alpha を捨てて「濃さ 8 以上なら塗る」に
+      していたため。⭐ 直し＝**alpha も丸めて `fill-opacity` で持たせる**。
+   ⭐⭐ そして【輪郭】を選べるようにした ── 字や自作 SVG のような二値の絵は、
+      短冊ではなく輪郭で出さないと Illustrator / Figma で触れない（蝕SHOKU と同じ出し方）。 */
+function hexOf(r, g2, b){ return '#' + ((1 << 24) + (r << 16) + (g2 << 8) + b).toString(16).slice(1); }
+
+/* ── 短冊で出す（画素のまま。写真・色のある絵はこちら）── */
+function svgStrip(transparent){
   const { w, h } = sheet();
   const c = shoot(transparent);
   const d = c.getContext('2d').getImageData(0, 0, w, h).data;
   const L = Math.max(2, Math.min(64, P.qz | 0));
   const step = 255 / (L - 1);
   const qz = v => Math.round(Math.round(v / step) * step);
-  const hex = (r, g2, b) => '#' + ((1 << 24) + (r << 16) + (g2 << 8) + b).toString(16).slice(1);
+  const qa = v => Math.round(v / 255 * 8) / 8;      /* 濃さは8段で丸める */
 
-  /* 走る向きに沿って同じ色が続くところを1本の短冊にする */
   const along = (P.axis === 'y') ? 'y' : 'x';
-  const A = along === 'x' ? w : h;          /* 走る向きの長さ */
-  const B = along === 'x' ? h : w;          /* 直角の向きの長さ */
+  const A = along === 'x' ? w : h;
+  const B = along === 'x' ? h : w;
   const at = (a, b) => (along === 'x' ? (b * w + a) : (a * w + b)) * 4;
 
-  /* 直角方向にまったく同じ短冊が続いたら、1枚にまとめる */
-  let open = new Map(), out = [], shapes = 0;
+  /* ⭐ 色（と濃さ）ごとに path をひとつ。矩形は「部分パス」として足していく */
+  const bag = new Map();
+  let shapes = 0;
   for(let b = 0; b < B; b++){
-    const now = new Map();
     let a = 0;
     while(a < A){
       const i = at(a, b);
-      if(d[i + 3] < 8){ a++; continue; }
+      const al = qa(d[i + 3]);
+      if(al <= 0){ a++; continue; }
       const r = qz(d[i]), g2 = qz(d[i + 1]), bl = qz(d[i + 2]);
       let a2 = a + 1;
       while(a2 < A){
         const j = at(a2, b);
-        if(d[j + 3] < 8) break;
+        if(qa(d[j + 3]) !== al) break;
         if(qz(d[j]) !== r || qz(d[j + 1]) !== g2 || qz(d[j + 2]) !== bl) break;
         a2++;
       }
-      const key = a + ':' + a2 + ':' + r + ',' + g2 + ',' + bl;
-      const prev = open.get(key);
-      if(prev){ prev.b2 = b + 1; now.set(key, prev); }
-      else now.set(key, { a, len: a2 - a, b, b2: b + 1, fill: hex(r, g2, bl) });
+      const x = along === 'x' ? a : b, y = along === 'x' ? b : a;
+      const rw = along === 'x' ? (a2 - a) : 1;
+      const rh = along === 'x' ? 1 : (a2 - a);
+      const key = hexOf(r, g2, bl) + '|' + al;
+      let s = bag.get(key); if(!s){ s = []; bag.set(key, s); }
+      s.push('M' + x + ' ' + y + 'h' + rw + 'v' + rh + 'h' + (-rw) + 'z');
+      shapes++;
       a = a2;
     }
-    /* 途切れたものを書き出す */
-    for(const [k, v] of open) if(!now.has(k)){ out.push(v); shapes++; }
-    open = now;
   }
-  for(const [, v] of open){ out.push(v); shapes++; }
-
-  const body = out.map(v => {
-    const x = along === 'x' ? v.a : v.b, y = along === 'x' ? v.b : v.a;
-    const rw = along === 'x' ? v.len : (v.b2 - v.b);
-    const rh = along === 'x' ? (v.b2 - v.b) : v.len;
-    return '<rect x="' + x + '" y="' + y + '" width="' + rw + '" height="' + rh + '" fill="' + v.fill + '"/>';
+  const body = [...bag.entries()].map(([k, seg]) => {
+    const [fill, al] = k.split('|');
+    return '<path fill="' + fill + '"' + (+al < 1 ? ' fill-opacity="' + al + '"' : '')
+         + ' d="' + seg.join('') + '"/>';
   }).join('');
 
   const svg = '<?xml version="1.0" encoding="UTF-8"?>\n'
     + '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" '
     + 'viewBox="0 0 ' + w + ' ' + h + '" shape-rendering="crispEdges">'
     + (transparent ? '' : '<rect width="' + w + '" height="' + h + '" fill="' + (P.inv ? P.bg : P.ink) + '"/>')
-    + '<g>' + body + '</g></svg>';
-  return { svg, shapes };
+    + body + '</svg>';
+  return { svg, shapes, paths: bag.size, mode: '短冊' };
+}
+
+/* ── 輪郭で出す（二値の絵。字・自作 SVG・ロゴはこちら）──
+   ⭐ 蝕SHOKU と同じ手順：①塗った所の地図 ②境目をたどって閉じた輪 ③角を取って点を減らす。
+   ⚠️ たどるのは長辺 2400 まで（それ以上は出す大きさへ掛け算で戻す）。 */
+const TRACE_MAX = 2400;
+function traceMask(m, W, H){
+  const K = (x, y) => x * (H + 1) + y;
+  const out = new Map();
+  const put = (x0, y0, x1, y1) => { const k = K(x0, y0), v = out.get(k);
+    if(v) v.push(K(x1, y1)); else out.set(k, [K(x1, y1)]); };
+  const at = (x, y) => (x < 0 || y < 0 || x >= W || y >= H) ? 0 : m[y * W + x];
+  for(let y = 0; y < H; y++) for(let x = 0; x < W; x++){
+    if(!at(x, y)) continue;
+    if(!at(x, y-1)) put(x,   y,   x+1, y  );
+    if(!at(x+1, y)) put(x+1, y,   x+1, y+1);
+    if(!at(x, y+1)) put(x+1, y+1, x,   y+1);
+    if(!at(x-1, y)) put(x,   y+1, x,   y  );
+  }
+  const loops = [], starts = [...out.keys()];
+  for(const s of starts){
+    while(out.has(s) && out.get(s).length){
+      const pts = []; let cur = s, guard = 0;
+      while(guard++ < 4000000){
+        const arr = out.get(cur);
+        if(!arr || !arr.length) break;
+        const nxt = arr.pop();
+        if(!arr.length) out.delete(cur);
+        pts.push([(cur / (H + 1)) | 0, cur % (H + 1)]);
+        cur = nxt;
+        if(cur === s) break;
+      }
+      if(pts.length > 3) loops.push(pts);
+    }
+  }
+  return loops;
+}
+function dropStraight(p){
+  const o = [], n = p.length;
+  for(let i = 0; i < n; i++){
+    const a = p[(i-1+n)%n], b = p[i], c = p[(i+1)%n];
+    if((b[0]-a[0])*(c[1]-b[1]) !== (b[1]-a[1])*(c[0]-b[0])) o.push(b);
+  }
+  return o.length > 3 ? o : p;
+}
+/* 🔴 角を丸めるだけだと点が倍々に増える（蝕SHOKU で踏んだ）＝丸めたあと必ず間引く */
+function thin(p, tol){
+  const n = p.length;
+  if(n < 5) return p;
+  const keep = new Uint8Array(n); keep[0] = 1; keep[n-1] = 1;
+  const st = [[0, n-1]], t2 = tol * tol;
+  while(st.length){
+    const [a, b] = st.pop();
+    if(b <= a + 1) continue;
+    const ax = p[a][0], ay = p[a][1];
+    const dx = p[b][0]-ax, dy = p[b][1]-ay, L = dx*dx + dy*dy;
+    let mi = -1, md = -1;
+    for(let i = a+1; i < b; i++){
+      const px = p[i][0]-ax, py = p[i][1]-ay;
+      let dd;
+      if(L === 0) dd = px*px + py*py; else { const cr = px*dy - py*dx; dd = cr*cr / L; }
+      if(dd > md){ md = dd; mi = i; }
+    }
+    if(md > t2){ keep[mi] = 1; st.push([a, mi]); st.push([mi, b]); }
+  }
+  const o = [];
+  for(let i = 0; i < n; i++) if(keep[i]) o.push(p[i]);
+  return o.length > 3 ? o : p;
+}
+function chaikin(p, times){
+  for(let t = 0; t < times; t++){
+    if(p.length < 4) break;
+    const o = [];
+    for(let i = 0; i < p.length; i++){
+      const a = p[i], b = p[(i+1) % p.length];
+      o.push([a[0]*0.75 + b[0]*0.25, a[1]*0.75 + b[1]*0.25]);
+      o.push([a[0]*0.25 + b[0]*0.75, a[1]*0.25 + b[1]*0.75]);
+    }
+    p = o;
+  }
+  return p;
+}
+function svgTrace(transparent){
+  const { w:OW, h:OH } = sheet();
+  const k0 = Math.min(1, TRACE_MAX / Math.max(OW, OH));
+  const W = Math.max(8, Math.round(OW * k0)), H = Math.max(8, Math.round(OH * k0));
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  paint(c.getContext('2d'), W, H, transparent);
+  const d = c.getContext('2d').getImageData(0, 0, W, H).data;
+
+  /* ⭐ 何を「塗った所」とみなすか ──
+     地なし＝濃さで決まる（粒だけ残っている）。地あり＝明るさのしきい値で決める。
+     ⚠️ 白地に黒い粒のときは【暗い方】が粒＝P.inv で向きが変わる。 */
+  const thr = Math.max(0, Math.min(100, P.thr)) / 100 * 255;
+  const m = new Uint8Array(W * H);
+  for(let i = 0, p2 = 0; p2 < W*H; p2++, i += 4){
+    if(d[i+3] < 128){ m[p2] = 0; continue; }
+    if(transparent){ m[p2] = 1; continue; }
+    const lum = d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114;
+    m[p2] = (P.inv ? (lum > thr) : (lum < thr)) ? 1 : 0;
+  }
+  const sm = Math.max(0, Math.min(6, P.sm | 0));
+  const kk = OW / W;
+  let loops = traceMask(m, W, H).map(p => {
+    p = dropStraight(p);
+    if(sm > 0) p = thin(p, 0.35 + sm * 0.30);
+    p = chaikin(p, Math.min(sm, 3));
+    return sm > 0 ? thin(p, 0.22) : p;
+  }).filter(p => {
+    let mnx=1e9, mny=1e9, mxx=-1e9, mxy=-1e9;
+    for(const q of p){ if(q[0]<mnx)mnx=q[0]; if(q[0]>mxx)mxx=q[0];
+                       if(q[1]<mny)mny=q[1]; if(q[1]>mxy)mxy=q[1]; }
+    return (mxx-mnx) > 1.2 || (mxy-mny) > 1.2;
+  });
+  const dstr = loops.map(p => 'M' + p.map(q =>
+      (q[0]*kk).toFixed(2) + ' ' + (q[1]*kk).toFixed(2)).join('L') + 'Z').join('');
+  const ink = P.inv ? P.ink : P.bg;
+  const svg = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    + '<svg xmlns="http://www.w3.org/2000/svg" width="' + OW + '" height="' + OH + '" '
+    + 'viewBox="0 0 ' + OW + ' ' + OH + '">'
+    + (transparent ? '' : '<rect width="' + OW + '" height="' + OH + '" fill="' + (P.inv ? P.bg : P.ink) + '"/>')
+    + '<path fill="' + ink + '" fill-rule="evenodd" d="' + dstr + '"/></svg>';
+  return { svg, shapes:loops.length, paths:1, pts:loops.reduce((a,p)=>a+p.length,0), mode:'輪郭' };
+}
+function svgOut(transparent){
+  return P.svgm === 'trace' ? svgTrace(transparent) : svgStrip(transparent);
 }
 function svgShoot(transparent){
   stat('SVG を組み立てています…');
@@ -930,15 +1088,22 @@ function svgShoot(transparent){
     const R = svgOut(transparent);
     const ms = Math.round(performance.now() - t0);
     dl(new Blob([R.svg], { type: 'image/svg+xml' }),
-       'hiki_' + (transparent ? 'nobg_' : '') + Date.now() + '.svg');
-    stat('SVG を出した（' + R.shapes.toLocaleString() + ' 図形・' + ms + ' ms）'
-       + (R.shapes > 60000 ? '　⚠️ 図形が多い。色数を下げると軽くなる' : ''));
+       'hiki_' + R.mode + '_' + (transparent ? 'nobg_' : '') + Date.now() + '.svg');
+    stat('SVG を出した（' + R.mode + '・' + R.shapes.toLocaleString() + ' 図形／掴むのは '
+       + R.paths + ' 本・' + ms + ' ms）'
+       + (R.shapes > 40000 ? '　⚠️ 図形が多い。色数を下げるか【輪郭】にすると軽くなる' : ''));
   });
 }
 el('b_svgo').onclick  = () => svgShoot(P.nobg);
 el('b_svgoA').onclick = () => svgShoot(true);
-el('r_qz').addEventListener('input', e => {
-  P.qz = +e.target.value; el('o_qz').textContent = P.qz;
+el('r_qz').addEventListener('input',  e => { P.qz  = +e.target.value; el('o_qz').textContent  = P.qz; });
+el('r_sm').addEventListener('input',  e => { P.sm  = +e.target.value; el('o_sm').textContent  = P.sm; });
+el('r_thr').addEventListener('input', e => { P.thr = +e.target.value; el('o_thr').textContent = P.thr; });
+/* ⚠️ 出し方を選ぶボタンは【絵を作り直さない】＝盤は何も変わらないのが正しい */
+el('s_svgm').addEventListener('click', e => {
+  const b = e.target.closest('button'); if(!b) return;
+  [...el('s_svgm').children].forEach(x => x.classList.toggle('on', x === b));
+  P.svgm = b.dataset.v;
 });
 /* ══⭐⭐ 動かす・動画で書き出す（他の道具と同じ作法）══════════════
    ⭐ 位相は【コマ番号】で刻む（時計で刻むとコマ落ちで絵が飛ぶ）。
