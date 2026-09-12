@@ -5641,11 +5641,27 @@ document.getElementById('bDup').onclick = () => { snapshot();
   selected().forEach(it => { const c = it.clone(); c.position = c.position.add(new Point(24,24)); it.selected=false; c.selected=true; }); };
 document.getElementById('bFlipH').onclick = () => { snapshot(); selected().forEach(it => it.scale(-1,1)); guides(); };
 document.getElementById('bFlipV').onclick = () => { snapshot(); selected().forEach(it => it.scale(1,-1)); guides(); };
-/* 回転：ボタン＝相対、スライダー＝絶対（図形ごとに現在角度を覚えておく） */
+/* 回転：ボタン＝相対、スライダー＝絶対（図形ごとに現在角度を覚えておく）
+   🔴🔴 2026-09-12・木下＝「角度変更をボードでした後、ここと連動していない」。
+     ⭐ 正体＝**角度を覚える所（it.__rot）を通さずに回している道があった**。
+       盤の回転ハンドルは `it.rotate(d)` だけで `__rot` を足していなかったので、
+       ①つまみの数字が動かない ②そのあとスライダーを触ると**間違った角度ぶん回る**
+       ③「角度リセット」が正しい所へ戻らない ── 3つ同時に壊れていた。
+     ⭐ 直し＝**回す道は全部この2本を通す**。`bumpRot` で覚え、`syncRot` でつまみに返す。
+       → [[feedback_set_the_knob_not_the_variable]]／[[feedback_same_formula_in_two_places_drifts]] */
+function bumpRot(it, d){
+  /* ⭐ -180〜180 に畳む＝スライダー（±180）と数値欄がいつでも同じ値になる。
+     ⚠️ 回転は360で一周するので、畳んでも見た目は1度も変わらない。 */
+  let v = ((it.__rot || 0) + d) % 360;
+  if(v > 180) v -= 360;
+  if(v <= -180) v += 360;
+  it.__rot = v;
+}
+function syncRot(){ if(window.__syncRot) window.__syncRot(); }
 function rotateBy(deg){
   snapshot();
-  selected().forEach(it => { it.rotate(deg); it.__rot = (it.__rot || 0) + deg; });
-  guides();
+  selected().forEach(it => { it.rotate(deg); bumpRot(it, deg); });
+  guides(); syncRot();
 }
 document.getElementById('bRotL').onclick   = () => rotateBy(-90);
 document.getElementById('bRotR').onclick   = () => rotateBy(90);
@@ -5654,9 +5670,8 @@ document.getElementById('bRot15R').onclick = () => rotateBy(15);
 document.getElementById('bReset').onclick  = () => {
   snapshot();
   selected().forEach(it => { it.rotate(-(it.__rot || 0)); it.__rot = 0; });
-  document.getElementById('rot').value = 0;
-  document.getElementById('rot').parentElement.querySelector('.val').textContent = '0';
-  guides();
+  guides(); syncRot();                            /* ⭐ 表示に返す道も1本にする */
+  const nm = document.getElementById('rotNum'); if(nm) nm.value = 0;
 };
 document.getElementById('bFront').onclick = () => { snapshot(); selected().forEach(it => it.bringToFront()); };
 document.getElementById('bBack').onclick  = () => { snapshot(); selected().forEach(it => it.sendToBack()); };
@@ -6966,7 +6981,8 @@ document.getElementById('shapeIcon').innerHTML = SHAPE_ICON[S.shape] || SHAPE_IC
 {
   const sl = document.getElementById('rot'), nm = document.getElementById('rotNum');
   const setRot = v => {
-    selected().forEach(it => { const cur = it.__rot || 0; it.rotate(v - cur); it.__rot = v; });
+    /* ⭐ 覚える所は bumpRot に一本化（盤で回す道と式を分けない） */
+    selected().forEach(it => { const cur = it.__rot || 0; it.rotate(v - cur); bumpRot(it, v - cur); });
     guides();
   };
   sl.addEventListener('input', () => { nm.value = sl.value; setRot(+sl.value); });
@@ -6975,12 +6991,17 @@ document.getElementById('shapeIcon').innerHTML = SHAPE_ICON[S.shape] || SHAPE_IC
     sl.value = Math.max(-180, Math.min(180, v));
     setRot(v);
   });
-  // 選択が変わったら、その図形の角度を表示に戻す
+  /* ⭐ いまの角度をつまみに返す。呼ぶのは【選択が変わったとき】と【盤で回している最中】。
+     ⚠️ .val の表示も一緒に直す。ここを忘れると、数字は合っているのに
+        スライダー脇の値だけ古いまま残って「効いていない」に見える。 */
   window.__syncRot = () => {
     const s = selected();
     if(!s.length) return;
-    const v = s[0].__rot || 0;
-    sl.value = Math.max(-180, Math.min(180, v)); nm.value = v;
+    const v = Math.round((s[0].__rot || 0) * 10) / 10;
+    sl.value = Math.max(-180, Math.min(180, v));
+    nm.value = v;
+    const lab = sl.parentElement && sl.parentElement.querySelector('.val');
+    if(lab) lab.textContent = String(v);
   };
 }
 // ズーム率表示
@@ -13357,9 +13378,13 @@ hook('guides', 'ペン・フリーハンド＝続きから描ける端を見せ�
       d = want - rot.sum;
     }
     if(Math.abs(d) < 1e-6) return true;
-    rot.items.forEach(it => it.rotate(d, rot.center));
+    /* 🔴 ここで __rot を足していなかった＝盤で回すと、つまみの数字が嘘になっていた。
+       ⚠️ 回す中心が図形の真ん中でなくても、向きの変わり方は同じ d なので、
+          覚える角度はそのまま足してよい。 */
+    rot.items.forEach(it => { it.rotate(d, rot.center); bumpRot(it, d); });
     rot.sum += d;
     guides(); paper.view.update();
+    syncRot();                                   /* ⭐ 引いている最中も数字が追いてくる */
     stat('回す ' + Math.round(rot.sum) + '°');
     return true;
   }, 35);
