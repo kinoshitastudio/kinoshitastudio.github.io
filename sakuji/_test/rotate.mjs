@@ -14,6 +14,12 @@ await p.setViewport({ width:1300, height:900 });
 await p.goto(FILE, { waitUntil:'networkidle0' });
 await new Promise(r=>setTimeout(r,3200));
 let NG=0; const ok=(c,n,x)=>{ console.log((c?'  ✅ ':'  🔴 ')+n+(x!=null?' → '+x:'')); if(!c) NG=1; };
+/* ⭐ つまみ（角度スライダー・数値欄）がいまの角度を映しているか */
+const knob = () => p.evaluate(() => ({
+  slider:+document.getElementById('rot').value,
+  num:+document.getElementById('rotNum').value,
+  覚えている:Math.round((artLayer.children[0].__rot || 0) * 10) / 10,
+}));
 
 const setup = () => p.evaluate(() => {
   artLayer.removeChildren();
@@ -77,5 +83,56 @@ await p.keyboard.up('Shift');
 await new Promise(r=>setTimeout(r,300));
 const b3 = await box();
 ok(Math.abs(b3.ang % 15) < 2, '⇧ で 15°刻みになる', b3.ang + '°');
+
+/* ══⭐⭐ ④ 盤で回したら【つまみも連動する】── 2026-09-12
+   木下＝「角度変更をボードでした後、ここと連動していない」。
+   🔴 正体＝盤の回転が it.__rot を通らずに回していた。だから
+      ①数字が動かない ②そのあとスライダーを触ると間違った角度ぶん回る
+      ③「角度リセット」が正しい所に戻らない ── 3つ同時に壊れていた。 */
+await setup();
+/* ⚠️ 物差しの注意：box().ang は【辺の向き】なので、回していない四角でも 0 にはならない
+   （この四角は -90）。だから「0 かどうか」でなく【基準からどれだけ回ったか】で見る。
+   🔴 ここを 0 と決めつけて2回、正しい実装を落とした。 */
+const BASE = (await box()).ang;
+const turned = a => ((a - BASE) % 360 + 540) % 360 - 180;   /* 基準からの回り、-180〜180 */
+/* ⚠️ 盤で選び直したのと同じ道を通す（選択が変わったら角度欄も戻る、が本来の動き） */
+await p.evaluate(() => reportSel());
+const k0 = await knob();
+ok(k0.slider === 0 && k0.num === 0 && k0.覚えている === 0,
+   '⭐ 選び直すと角度欄が【その図形の角度】に戻る', JSON.stringify(k0));
+const o3 = await toScreen(400 - 14, 300 - 14);
+await p.mouse.move(o3.x, o3.y); await p.mouse.down();
+await p.mouse.move(o3.x + 60, o3.y + 60, { steps:10 }); await p.mouse.up();
+await new Promise(r=>setTimeout(r,300));
+const b4 = await box(), k1 = await knob();
+ok(k1.slider !== 0 && k1.num !== 0, '🔴🔴 盤で回すと【つまみの数字も動く】',
+   `盤 ${turned(b4.ang)}° / スライダー ${k1.slider} / 欄 ${k1.num}`);
+ok(Math.abs(k1.覚えている - k1.slider) < 0.6 && Math.abs(k1.num - k1.slider) < 0.6,
+   '⭐ 覚えている角度・スライダー・数値欄が【3つとも同じ】', JSON.stringify(k1));
+ok(Math.abs(turned(b4.ang) - k1.num) < 2.5,
+   '🔴🔴 つまみの数字が【盤の実際の傾き】と合っている（嘘をつかない）',
+   `盤 ${turned(b4.ang)}° / 欄 ${k1.num}`);
+
+/* ⑤ 盤で回したあとスライダーを使う＝【そこへ行く】（ずれた分だけ余計に回らない） */
+await p.evaluate(() => { const e = document.getElementById('rot');
+  e.value = 30; e.dispatchEvent(new Event('input', { bubbles:true })); });
+await new Promise(r=>setTimeout(r,250));
+const b5 = await box();
+ok(Math.abs(turned(b5.ang) - 30) < 2,
+   '🔴🔴 盤で回したあとスライダーを 30° にすると【本当に 30°】になる', turned(b5.ang) + '°');
+
+/* ⑥ 角度リセットが本当に 0 に戻る */
+await p.evaluate(() => document.getElementById('bReset').click());
+await new Promise(r=>setTimeout(r,250));
+const b6 = await box(), k2 = await knob();
+ok(Math.abs(turned(b6.ang)) < 2 && k2.slider === 0 && k2.num === 0,
+   '⭐ 角度リセットで【盤もつまみも 0】に戻る', `盤 ${turned(b6.ang)}° / ${JSON.stringify(k2)}`);
+
+/* ⑦ ボタン（±15°）でもつまみが動く */
+await p.evaluate(() => document.getElementById('bRot15R').click());
+await new Promise(r=>setTimeout(r,250));
+const k3 = await knob();
+ok(k3.slider === 15 && k3.num === 15, '⭐ ＋15° を押すとつまみも 15 になる', JSON.stringify(k3));
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
 await b.close(); process.exit(NG);
