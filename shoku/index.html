@@ -216,6 +216,9 @@
   <div id="outSize"></div>
   <button class="big" id="png">PNG</button>
   <button class="big" id="pngA">PNG（地なし）</button>
+  <button class="big" id="svgB">SVG（輪郭）</button>
+  <button class="big" id="svgA">SVG（輪郭・地なし）</button>
+  <div class="row"><label>SVG のなめらかさ</label><input type="range" id="svgSm" min="0" max="6" step="1" value="2"><output id="svgSmV">2</output></div>
   <button class="big" id="save">控えを保存</button>
   <button class="big" id="load">控えを読む</button>
   <input type="file" id="jsonFile" accept="application/json,.json" hidden>
@@ -223,6 +226,9 @@
     ⭐ 数字は<b>出来上がりの長辺</b>。段に無い大きさは<b>打ち込む</b>（200〜8000）<br>
     ⭐ 拡大ではなく<b>その大きさで切り直してから</b>出す<br>
     ⭐ <b>地なし</b>＝字のところだけ残して透明で出す（他の道具に重ねるため）<br>
+    ⭐⭐ <b>SVG＝輪郭を本当に線にして出す</b>（画素ではない）。Illustrator でそのまま触れる<br>
+    ⭐ この道具は<b>塗るか塗らないかの二択</b>で描いている＝だから輪郭が1本に決まる<br>
+    ⚠️ <b>なめらかさ</b>＝0 は画素の階段をそのまま・上げるほど角が取れて<b>点も減る</b>（2〜3 が目安）<br>
     ⭐ 書き出しは<b>見えているとおり</b>＝寄って撮れば寄った絵が出る（ダブルクリックで正面に戻る）<br>
     ⭐ <b>⌘Z</b> で1つ戻る</div>
 
@@ -798,6 +804,162 @@ function shoot(noBg){
 }
 document.getElementById('png').onclick  = ()=> shoot(false);
 document.getElementById('pngA').onclick = ()=> shoot(true);
+
+/* ══⭐⭐ SVG（輪郭）で出す ────────────────────────────────────
+   ⭐⭐ この道具は【塗るか塗らないかの二択】で描いている（`(f + cut - eat*band + n) > 0`）。
+      にじみが一切無い＝だから輪郭が1本に決まり、画素ではなく【線】で出せる。
+      （曳HIKI は画素そのものを運ぶ道具なので、あちらは短冊で出す。出し方は道具ごとに違う）
+   ⭐ 手順は3つだけ ── ①塗った所の地図を作る ②境目をたどって閉じた輪にする
+      ③角を取って点を減らす。穴（字の中の抜き）は evenodd で自然に空く。
+   ⚠️ たどるのは長辺 2400 まで（それ以上は出す大きさへ【掛け算で戻す】）。
+      1画素の階段より細かい所は、どのみち「なめらかさ」で丸める＝重くするだけ無駄。 */
+const TRACE_MAX = 2400;
+function maskAt(noBg, T){
+  const ar = boardAR() || (cv.width / cv.height);
+  const W = ar >= 1 ? T : Math.round(T*ar), H = ar >= 1 ? Math.round(T/ar) : T;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  paint(c.getContext('2d'), W, H, noBg);
+  const d = c.getContext('2d').getImageData(0, 0, W, H).data;
+  const fg = hex(P.fg), m = new Uint8Array(W*H);
+  for(let i = 0, k = 0; k < W*H; k++, i += 4){
+    /* 地なしのときは【不透明かどうか】、地ありのときは【字の色かどうか】で決める */
+    m[k] = noBg ? (d[i+3] > 127 ? 1 : 0)
+                : ((Math.abs(d[i]-fg[0]) + Math.abs(d[i+1]-fg[1]) + Math.abs(d[i+2]-fg[2])) < 90 ? 1 : 0);
+  }
+  return { m, W, H };
+}
+/* ② 境目をたどる ── 塗った画素の【外を向いた辺】だけを、頭と尻でつないで輪にする。
+   ⭐ 辺の向きを揃えてあるので、外側の輪と穴の輪は逆回りになる＝evenodd で穴が空く。 */
+function traceMask(m, W, H){
+  const K = (x,y) => x*(H+1) + y;
+  const out = new Map();
+  const put = (x0,y0,x1,y1) => { const k = K(x0,y0), v = out.get(k);
+    if(v) v.push(K(x1,y1)); else out.set(k, [K(x1,y1)]); };
+  const at = (x,y) => (x < 0 || y < 0 || x >= W || y >= H) ? 0 : m[y*W + x];
+  for(let y = 0; y < H; y++) for(let x = 0; x < W; x++){
+    if(!at(x,y)) continue;
+    if(!at(x,y-1)) put(x,   y,   x+1, y  );
+    if(!at(x+1,y)) put(x+1, y,   x+1, y+1);
+    if(!at(x,y+1)) put(x+1, y+1, x,   y+1);
+    if(!at(x-1,y)) put(x,   y+1, x,   y  );
+  }
+  const loops = [], starts = [...out.keys()];
+  for(const s of starts){
+    while(out.has(s) && out.get(s).length){
+      const pts = []; let cur = s, guard = 0;
+      while(guard++ < 4000000){
+        const arr = out.get(cur);
+        if(!arr || !arr.length) break;
+        const nxt = arr.pop();
+        if(!arr.length) out.delete(cur);
+        pts.push([(cur / (H+1)) | 0, cur % (H+1)]);
+        cur = nxt;
+        if(cur === s) break;
+      }
+      if(pts.length > 3) loops.push(pts);
+    }
+  }
+  return loops;
+}
+/* ③ 点を減らす ── まず一直線に並んだ点を落とし、次に角を丸める（Chaikin）。
+   ⚠️ 輪は閉じているので、頭と尻をつないだまま丸める（開いた線として扱うと継ぎ目に角が残る）。 */
+function dropStraight(p){
+  const o = [], n = p.length;
+  for(let i = 0; i < n; i++){
+    const a = p[(i-1+n)%n], b = p[i], c = p[(i+1)%n];
+    if((b[0]-a[0])*(c[1]-b[1]) !== (b[1]-a[1])*(c[0]-b[0])) o.push(b);
+  }
+  return o.length > 3 ? o : p;
+}
+/* 🔴🔴 2026-09-12：角を丸めるだけだと【点が16倍に増えた】（2,644 → 42,304）。
+   Chaikin は1回ごとに点が倍になるので、丸めたあとに必ず間引く。
+   ⭐ 間引きは Douglas-Peucker＝「線から一番離れている点だけ残す」。
+   ⚠️ これを入れて初めて「なめらかさを上げるほど点が減る」が本当になる。 */
+function thin(p, tol){
+  const n = p.length;
+  if(n < 5) return p;
+  const keep = new Uint8Array(n); keep[0] = 1; keep[n-1] = 1;
+  const st = [[0, n-1]], t2 = tol*tol;
+  while(st.length){
+    const [a, b] = st.pop();
+    if(b <= a+1) continue;
+    const ax = p[a][0], ay = p[a][1];
+    const dx = p[b][0]-ax, dy = p[b][1]-ay, L = dx*dx + dy*dy;
+    let mi = -1, md = -1;
+    for(let i = a+1; i < b; i++){
+      const px = p[i][0]-ax, py = p[i][1]-ay;
+      let d;
+      if(L === 0) d = px*px + py*py;
+      else { const cr = px*dy - py*dx; d = cr*cr / L; }
+      if(d > md){ md = d; mi = i; }
+    }
+    if(md > t2){ keep[mi] = 1; st.push([a, mi]); st.push([mi, b]); }
+  }
+  const o = [];
+  for(let i = 0; i < n; i++) if(keep[i]) o.push(p[i]);
+  return o.length > 3 ? o : p;
+}
+function chaikin(p, times){
+  for(let t = 0; t < times; t++){
+    if(p.length < 4) break;
+    const o = [];
+    for(let i = 0; i < p.length; i++){
+      const a = p[i], b = p[(i+1)%p.length];
+      o.push([a[0]*0.75 + b[0]*0.25, a[1]*0.75 + b[1]*0.25]);
+      o.push([a[0]*0.25 + b[0]*0.75, a[1]*0.25 + b[1]*0.75]);
+    }
+    p = o;
+  }
+  return p;
+}
+function svgOut(noBg){
+  const T = expK(), { W:OW, H:OH } = outWH(T);
+  const tt = Math.min(TRACE_MAX, T);
+  const { m, W, H } = maskAt(noBg, tt);
+  const k = OW / W;                                   /* たどった大きさ → 出す大きさ */
+  const sm = Math.max(0, Math.min(6, +document.getElementById('svgSm').value));
+  /* ⭐ 順番に意味がある ── ①一直線の点を落とす ②階段の細かい出っ張りを間引く
+     ③角を丸める ④丸めて増えた点をもう一度間引く。④が無いと点が増える一方になる。 */
+  let loops = traceMask(m, W, H).map(p => {
+    p = dropStraight(p);
+    if(sm > 0) p = thin(p, 0.35 + sm*0.30);
+    p = chaikin(p, Math.min(sm, 3));
+    return sm > 0 ? thin(p, 0.22) : p;
+  });
+  /* ⭐ 丸めたあとで、ほとんど点の輪（画素1つぶんのゴミ）を捨てる */
+  loops = loops.filter(p => {
+    let mnx=1e9,mny=1e9,mxx=-1e9,mxy=-1e9;
+    for(const q of p){ if(q[0]<mnx)mnx=q[0]; if(q[0]>mxx)mxx=q[0];
+                       if(q[1]<mny)mny=q[1]; if(q[1]>mxy)mxy=q[1]; }
+    return (mxx-mnx) > 1.2 || (mxy-mny) > 1.2;
+  });
+  const d = loops.map(p => 'M' + p.map(q =>
+      (q[0]*k).toFixed(2) + ' ' + (q[1]*k).toFixed(2)).join('L') + 'Z').join('');
+  const svg = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    + '<svg xmlns="http://www.w3.org/2000/svg" width="' + OW + '" height="' + OH + '" '
+    + 'viewBox="0 0 ' + OW + ' ' + OH + '">'
+    + (noBg ? '' : '<rect width="' + OW + '" height="' + OH + '" fill="' + P.bg + '"/>')
+    + '<path fill="' + P.fg + '" fill-rule="evenodd" d="' + d + '"/></svg>';
+  return { svg, loops:loops.length, pts:loops.reduce((a,p)=>a+p.length,0), W:OW, H:OH };
+}
+function svgShoot(noBg){
+  hud('輪郭をたどっています…');
+  requestAnimationFrame(() => {
+    const t0 = performance.now();
+    const R = svgOut(noBg);
+    const u = URL.createObjectURL(new Blob([R.svg], { type:'image/svg+xml' }));
+    const a = document.createElement('a');
+    a.href = u; a.download = `shoku_${noBg ? 'nobg_' : ''}${Date.now()}.svg`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(u), 4000);
+    hud(`SVG ${R.W}×${R.H}${noBg ? '・地なし' : ''}　輪 ${R.loops} / 点 ${R.pts.toLocaleString()}　${Math.round(performance.now()-t0)}ms`);
+  });
+}
+document.getElementById('svgB').onclick = ()=> svgShoot(false);
+document.getElementById('svgA').onclick = ()=> svgShoot(true);
+document.getElementById('svgSm').addEventListener('input', e => {
+  document.getElementById('svgSmV').textContent = e.target.value;
+});
 document.getElementById('save').onclick = ()=>{
   const b = new Blob([JSON.stringify({ app:'shoku', P }, null, 1)], { type:'application/json' });
   const u = URL.createObjectURL(b), a = document.createElement('a');

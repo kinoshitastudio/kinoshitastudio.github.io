@@ -345,6 +345,16 @@
     <div class="btns2">
       <button class="btn" id="b_pngA">地なし PNG</button>
   </div>
+    <div class="btns2" style="margin-top:4px">
+      <button class="btn" id="b_svgo">SVG を書き出す</button>
+      <button class="btn" id="b_svgoA">地なし SVG</button>
+    </div>
+    <div class="row"><span class="n">SVG のまとめ（色数）</span><output id="o_qz">16</output></div>
+    <input type="range" id="r_qz" min="2" max="64" value="16">
+    <div class="note">⚠️ この道具が運んでいるのは<b>画素そのもの</b>なので、SVG は
+      <b>読んだ線を1本ずつ、短冊のまま</b>出す（形に作り直さない）<br>
+      ⭐ <b>字・SVG から作った絵はそのままの形で出る</b>（色数を上げても図形は増えない）<br>
+      ⚠️ <b>写真は色数のぶんだけ階段になる</b>。色数を下げるほど図形が減って軽くなる</div>
     <button class="btn" id="b_exj" style="margin-top:8px">設定を JSON で出す</button>
     <button class="btn" id="b_inj" style="margin-top:4px">JSON を読む</button>
     <input type="file" id="f_json" accept="application/json,.json" hidden>
@@ -413,6 +423,7 @@ const P = {
   sh:0, shf:1.0,                                       /* 線のずれ */
   ratio:'1:1', long:1400, pad:8,
   inv:1, ink:'#ffffff', bg:'#0a0a0a', nobg:false,
+  qz:16,                                               /* SVG のまとめ（色数）。絵には効かない＝出すときだけ */
 };
 let SRC = null;          /* 写真・SVG を入れたらこちらが元（字より優先） */
 
@@ -845,8 +856,90 @@ function shoot(transparent){
 }
 el('b_png').onclick  = () => shoot(P.nobg).toBlob(b => { dl(b, 'hiki_' + Date.now() + '.png'); stat('PNG を出した'); });
 el('b_pngA').onclick = () => shoot(true).toBlob(b => { dl(b, 'hiki_nobg_' + Date.now() + '.png'); stat('地なし PNG を出した'); });
-/* ⚠️ SVG は出さない ── この道具が運んでいるのは【画素そのもの】なので、
-   図形にすると別のものになる（粒の道具とは出せる形が違う）。ボタンごと外してある。 */
+/* ══⭐⭐ SVG で出す ════════════════════════════════════════════
+   ⚠️ もともと「SVG は出さない」と決めていた。運んでいるのが【画素そのもの】だからで、
+      輪郭をとって図形にすると【別のもの】になる。その判断はいまも変えていない。
+   ⭐ 代わりに【短冊のまま出す】＝読んだ線を1本ずつ矩形で並べる。
+      この道具の芯（1本の線でしか読まない）と、出る形が一致する。
+   ⭐ 短冊は【走る向き】に取る＝止まった所（＝帯）が1枚の矩形にまとまるので、
+      伸ばした所ほど図形が減る。絵の作りがそのまま図形の数になる。
+   ⚠️ 色数（P.qz）で丸めてから走る。字・SVG から作った絵は色が元々少ないので
+      丸めても形が変わらない。写真は階段になる＝そこは正直に note に書いてある。 */
+function svgOut(transparent){
+  const { w, h } = sheet();
+  const c = shoot(transparent);
+  const d = c.getContext('2d').getImageData(0, 0, w, h).data;
+  const L = Math.max(2, Math.min(64, P.qz | 0));
+  const step = 255 / (L - 1);
+  const qz = v => Math.round(Math.round(v / step) * step);
+  const hex = (r, g2, b) => '#' + ((1 << 24) + (r << 16) + (g2 << 8) + b).toString(16).slice(1);
+
+  /* 走る向きに沿って同じ色が続くところを1本の短冊にする */
+  const along = (P.axis === 'y') ? 'y' : 'x';
+  const A = along === 'x' ? w : h;          /* 走る向きの長さ */
+  const B = along === 'x' ? h : w;          /* 直角の向きの長さ */
+  const at = (a, b) => (along === 'x' ? (b * w + a) : (a * w + b)) * 4;
+
+  /* 直角方向にまったく同じ短冊が続いたら、1枚にまとめる */
+  let open = new Map(), out = [], shapes = 0;
+  for(let b = 0; b < B; b++){
+    const now = new Map();
+    let a = 0;
+    while(a < A){
+      const i = at(a, b);
+      if(d[i + 3] < 8){ a++; continue; }
+      const r = qz(d[i]), g2 = qz(d[i + 1]), bl = qz(d[i + 2]);
+      let a2 = a + 1;
+      while(a2 < A){
+        const j = at(a2, b);
+        if(d[j + 3] < 8) break;
+        if(qz(d[j]) !== r || qz(d[j + 1]) !== g2 || qz(d[j + 2]) !== bl) break;
+        a2++;
+      }
+      const key = a + ':' + a2 + ':' + r + ',' + g2 + ',' + bl;
+      const prev = open.get(key);
+      if(prev){ prev.b2 = b + 1; now.set(key, prev); }
+      else now.set(key, { a, len: a2 - a, b, b2: b + 1, fill: hex(r, g2, bl) });
+      a = a2;
+    }
+    /* 途切れたものを書き出す */
+    for(const [k, v] of open) if(!now.has(k)){ out.push(v); shapes++; }
+    open = now;
+  }
+  for(const [, v] of open){ out.push(v); shapes++; }
+
+  const body = out.map(v => {
+    const x = along === 'x' ? v.a : v.b, y = along === 'x' ? v.b : v.a;
+    const rw = along === 'x' ? v.len : (v.b2 - v.b);
+    const rh = along === 'x' ? (v.b2 - v.b) : v.len;
+    return '<rect x="' + x + '" y="' + y + '" width="' + rw + '" height="' + rh + '" fill="' + v.fill + '"/>';
+  }).join('');
+
+  const svg = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    + '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" '
+    + 'viewBox="0 0 ' + w + ' ' + h + '" shape-rendering="crispEdges">'
+    + (transparent ? '' : '<rect width="' + w + '" height="' + h + '" fill="' + (P.inv ? P.bg : P.ink) + '"/>')
+    + '<g>' + body + '</g></svg>';
+  return { svg, shapes };
+}
+function svgShoot(transparent){
+  stat('SVG を組み立てています…');
+  /* 🔴 重い処理の前に一度描き直させる（押した瞬間に固まって見えないように） */
+  requestAnimationFrame(() => {
+    const t0 = performance.now();
+    const R = svgOut(transparent);
+    const ms = Math.round(performance.now() - t0);
+    dl(new Blob([R.svg], { type: 'image/svg+xml' }),
+       'hiki_' + (transparent ? 'nobg_' : '') + Date.now() + '.svg');
+    stat('SVG を出した（' + R.shapes.toLocaleString() + ' 図形・' + ms + ' ms）'
+       + (R.shapes > 60000 ? '　⚠️ 図形が多い。色数を下げると軽くなる' : ''));
+  });
+}
+el('b_svgo').onclick  = () => svgShoot(P.nobg);
+el('b_svgoA').onclick = () => svgShoot(true);
+el('r_qz').addEventListener('input', e => {
+  P.qz = +e.target.value; el('o_qz').textContent = P.qz;
+});
 /* ══⭐⭐ 動かす・動画で書き出す（他の道具と同じ作法）══════════════
    ⭐ 位相は【コマ番号】で刻む（時計で刻むとコマ落ちで絵が飛ぶ）。
    ⭐ 頭と尻が同じ絵になるように当てる＝そのまま繰り返せる（継ぎ目なし）。
