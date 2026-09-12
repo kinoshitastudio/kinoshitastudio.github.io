@@ -899,18 +899,33 @@ function thin(p, tol){
   for(let i = 0; i < n; i++) if(keep[i]) o.push(p[i]);
   return o.length > 3 ? o : p;
 }
-function chaikin(p, times){
-  for(let t = 0; t < times; t++){
-    if(p.length < 4) break;
-    const o = [];
-    for(let i = 0; i < p.length; i++){
-      const a = p[i], b = p[(i+1)%p.length];
-      o.push([a[0]*0.75 + b[0]*0.25, a[1]*0.75 + b[1]*0.25]);
-      o.push([a[0]*0.25 + b[0]*0.75, a[1]*0.25 + b[1]*0.75]);
+/* 🔴🔴🔴 角の丸めは【辺の長さの割合】でやってはいけない（2026-09-12・曳HIKI で発覚して横展開）
+   Chaikin は毎回「辺の 25%」を切り落とす＝間引いたあとは辺が数百 px に伸びているので、
+   角が数百 px 単位で削れて **字が溶ける**。直線が長い形（字・ロゴ）ほど壊れる。
+   ⭐ 直し＝丸めは【px の半径】で効かせる。角のところだけ半径 R まで食い込んで、
+      辺の真ん中には触らない＝長い直線は直線のまま残る。 */
+function roundCorners(p, R){
+  const n = p.length;
+  if(n < 3 || R <= 0) return p;
+  const o = [];
+  for(let i = 0; i < n; i++){
+    const a = p[(i-1+n)%n], b = p[i], c = p[(i+1)%n];
+    let ax = a[0]-b[0], ay = a[1]-b[1], cx = c[0]-b[0], cy = c[1]-b[1];
+    const la = Math.hypot(ax, ay), lc = Math.hypot(cx, cy);
+    if(la < 1e-9 || lc < 1e-9){ o.push(b); continue; }
+    ax /= la; ay /= la; cx /= lc; cy /= lc;
+    const t = Math.min(R, la * 0.5, lc * 0.5);      /* ⚠️ 隣の辺の半分まで（向こうの角を飲まない） */
+    if(t < 0.05){ o.push(b); continue; }
+    const x0 = b[0] + ax*t, y0 = b[1] + ay*t;
+    const x1 = b[0] + cx*t, y1 = b[1] + cy*t;
+    const steps = t > 3 ? 6 : 4;                    /* 角のところだけ点を足す */
+    for(let s = 0; s <= steps; s++){
+      const u = s / steps, w = 1 - u;
+      o.push([w*w*x0 + 2*w*u*b[0] + u*u*x1,
+              w*w*y0 + 2*w*u*b[1] + u*u*y1]);
     }
-    p = o;
   }
-  return p;
+  return o.length > 3 ? o : p;
 }
 function svgOut(noBg){
   const T = expK(), { W:OW, H:OH } = outWH(T);
@@ -919,12 +934,14 @@ function svgOut(noBg){
   const k = OW / W;                                   /* たどった大きさ → 出す大きさ */
   const sm = Math.max(0, Math.min(6, +document.getElementById('svgSm').value));
   /* ⭐ 順番に意味がある ── ①一直線の点を落とす ②階段の細かい出っ張りを間引く
-     ③角を丸める ④丸めて増えた点をもう一度間引く。④が無いと点が増える一方になる。 */
+     ③角を丸める ④丸めて増えた点をもう一度間引く。④が無いと点が増える一方になる。
+     🔴 ③は【px の半径】で丸める。割合（Chaikin）でやると②のあと辺が伸びていて字が溶ける。 */
   let loops = traceMask(m, W, H).map(p => {
     p = dropStraight(p);
-    if(sm > 0) p = thin(p, 0.35 + sm*0.30);
-    p = chaikin(p, Math.min(sm, 3));
-    return sm > 0 ? thin(p, 0.22) : p;
+    if(sm === 0) return p;
+    p = thin(p, 0.35 + sm*0.30);
+    p = roundCorners(p, sm * 1.2);
+    return thin(p, 0.22);
   });
   /* ⭐ 丸めたあとで、ほとんど点の輪（画素1つぶんのゴミ）を捨てる */
   loops = loops.filter(p => {
