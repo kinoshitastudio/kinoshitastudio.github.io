@@ -233,6 +233,46 @@ const got = await p.evaluate(() => window.__got);
 ok(got.filter(x => x.type === 'image/png').length >= 2 && got.some(x => x.type === 'image/svg+xml'),
    '⑨ PNG／地なしPNG／SVG が本当に落ちる', JSON.stringify(got));
 
+/* ⑨' シルエット ── 2026-09-12
+   🔴🔴 木下が Illustrator で開いて見つけた：「パスになってるが、シルエットの形でない」。
+     正体＝桁のままの d は【縦のかたまりを1つずつ閉じた輪】が何十個も並んでいる。
+     塗ると繋がって見えるが、開くと中に縦の切れ目が並ぶ。
+   ⭐ 見るのは【輪が桁の数よりはっきり少ないこと】＝本当にひとつの外形になったか。
+   ⚠️ 穴は残る（字の中の抜きが塞がったら別の不具合）。 */
+{
+  const sil = await p.evaluate(() => {
+    const f = frameNow();
+    const keta = pathOf(f.w, f.h).d;
+    const R = silhouetteD();
+    const subs = s => (s.match(/M/g) || []).length;
+    return { 桁のままの輪:subs(keta), シルエットの輪:R.loops, 点:R.pts,
+             穴が残る:R.loops > 1, 部分パス:subs(R.d) };
+  });
+  ok(sil.シルエットの輪 > 0 && sil.シルエットの輪 < sil.桁のままの輪 / 3 && sil.穴が残る,
+     '🔴🔴 ⑨\' シルエット＝【ひとつの外形】になる（中の切れ目が消える・穴は残る）',
+     JSON.stringify(sil));
+  /* ⭐ なめらかさは出る形にだけ効く。上げると点が減る（増えない） */
+  const sm = await p.evaluate(() => {
+    const set = v => { const e = document.getElementById('r_sm');
+      e.value = v; e.dispatchEvent(new Event('input', { bubbles:true })); };
+    set(0); const a = silhouetteD().pts;
+    set(4); const b2 = silhouetteD().pts;
+    set(2); return { なめらか0:a, なめらか4:b2 };
+  });
+  ok(sm.なめらか4 < sm.なめらか0, '⭐⭐ なめらかさを上げると点が【減る】（増えない）', JSON.stringify(sm));
+  /* ⭐ 選んだ方が本当に落ちる */
+  const dl2 = await p.evaluate(async () => {
+    window.__got = [];
+    document.querySelector('#s_svgm button[data-v="sil"]').click();
+    document.getElementById('b_svg').click(); await new Promise(r=>setTimeout(r,900));
+    const a = window.__got.slice();
+    document.querySelector('#s_svgm button[data-v="keta"]').click();
+    return { 落ちた:a, 印:document.querySelector('#s_svgm button.on').dataset.v };
+  });
+  ok(dl2.落ちた.some(x => x.type === 'image/svg+xml'),
+     '⭐ シルエットを選ぶと、そちらが落ちる', JSON.stringify(dl2));
+}
+
 /* ⑨ 設定の往復 ── 作る → 荒らす → 読む
    ⚠️ 物差しは【本体が作る道そのもの（pathOf の d）】から取る。
       画素で見ると、getImageData を1回でも通した canvas は CPU 描きに移って
