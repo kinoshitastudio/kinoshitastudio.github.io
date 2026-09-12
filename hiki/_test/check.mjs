@@ -84,6 +84,35 @@ await new Promise(r=>setTimeout(r,1400));
 const got = await p.evaluate(() => window.__got);
 ok(got.some(x=>/png/.test(x.type)), 'PNG が本当に落ちる', JSON.stringify(got));
 
+/* ⭐⭐ SVG（短冊で出す）── 2026-09-12
+   🔴 見るのは「落ちたか」だけでなく【中身が本当に短冊になっているか】。
+     ⚠️ 地なしを選んだのに地の矩形が入っていたら、道具の間で繋げなくなる。 */
+{
+  const sv = await p.evaluate(() => {
+    const A = svgOut(false), B = svgOut(true);
+    return { 図形:A.shapes, 矩形:(A.svg.match(/<rect /g)||[]).length,
+             地あり:/<svg[^>]*>\s*<rect width=/.test(A.svg),
+             地なし:/<svg[^>]*>\s*<rect width=/.test(B.svg), 頭:A.svg.slice(0,45) };
+  });
+  ok(sv.図形 > 100 && sv.矩形 > 100 && /^<\?xml/.test(sv.頭),
+     '⭐⭐ SVG が【短冊】で出る（図形が本当に入っている）', JSON.stringify(sv));
+  ok(sv.地あり === true && sv.地なし === false,
+     '⭐⭐ 地なし SVG に【地の矩形が入らない】（道具の間で繋げる）', JSON.stringify(sv));
+  await p.evaluate(() => { window.__got = []; document.getElementById('b_svgo').click(); });
+  await new Promise(r=>setTimeout(r,1800));
+  const g2 = await p.evaluate(() => window.__got);
+  ok(g2.some(x=>/svg/.test(x.type)), 'SVG が本当に落ちる', JSON.stringify(g2));
+  /* ⭐ 色数を下げたら図形が減る（つまみが本当に効いている） */
+  const less = await p.evaluate(() => {
+    const e = document.getElementById('r_qz');
+    const set = v => { e.value = v; e.dispatchEvent(new Event('input',{bubbles:true})); };
+    set(64); const hi = svgOut(false).shapes;
+    set(2);  const lo = svgOut(false).shapes;
+    set(16); return { 色数64:hi, 色数2:lo };
+  });
+  ok(less.色数2 <= less.色数64, '⭐ 色数を下げると図形が減る', JSON.stringify(less));
+}
+
 /* ⭐⭐ 指の端末で【立ち上がるか】── 2026-08-29
    🔴 外枠を隣の道具から借りたとき、その道具にしか無いつまみを触る1行が付いてきて、
       指の端末だけ立ち上げが丸ごと死んでいた（何も描かれない）。

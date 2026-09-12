@@ -37,7 +37,10 @@ check(base.ink > 500, '字が出ている', `白い画素 ${base.ink}`);
 /* ── ① つまみ総当たり ── */
 /* ⚠️ 動かす・動画のためのつまみ（速さ・コマ・動画の秒）は【1コマ目の絵】には出ない。
    絵が変わらないのが正しい（触れるのに効かない、ではない）＝ここでは見ない。 */
-const SKIP = ['fps', 'speed', 'tvSec'];
+/* ⚠️ 出すときだけのつまみ（SVG のなめらかさ）も同じ＝盤の絵は変わらないのが正しい。
+   🔴 ここを「効かない」と数えると、正しい実装が落ちる（2026-09-12 に踏んだ）。
+   ⭐ 見分け方＝【絵を作るつまみ】か【出し方を決めるつまみ】か。後者はここでは見ない。 */
+const SKIP = ['fps', 'speed', 'tvSec', 'svgSm'];
 /* ⚠️ 出ていないつまみは見ない（出し分けているものを「効かない」と誤検出しないため） */
 const ids = await p.evaluate(()=>[...document.querySelectorAll('#panel input[type=range]')]
   .filter(r=> r.offsetParent !== null).map(r=>r.id));
@@ -107,6 +110,44 @@ const out = await p.evaluate(async ()=>{
 check(out.filter(o=>/png/.test(o.type)).length === 2, 'PNG が2枚（地あり・地なし）落ちた',
       out.filter(o=>/png/.test(o.type)).map(o=>Math.round(o.size/1e3)+'KB').join(' / '));
 check(out.some(o=>/json/.test(o.type)), '控えが落ちた');
+
+/* ── ③' SVG（輪郭）── 2026-09-12
+   🔴 見るのは「落ちたか」だけでなく【本当に輪郭になっているか】。
+     ⭐ この道具は二値なので、輪が1つ以上あり、点が十分あれば線になっている。
+     ⚠️ 地なしを選んだのに地の矩形が入っていたら、道具の間で繋げなくなる。 */
+{
+  const sv = await p.evaluate(()=>{
+    const A = svgOut(false), B = svgOut(true);
+    return { 輪:A.loops, 点:A.pts,
+             地あり:/<rect width=/.test(A.svg), 地なし:/<rect width=/.test(B.svg),
+             穴:/fill-rule="evenodd"/.test(A.svg),
+             画素でない:!/<image|base64/.test(A.svg), 頭:A.svg.slice(0,42) };
+  });
+  check(sv.輪 > 0 && sv.点 > 200 && sv.画素でない && sv.穴,
+        '⭐⭐ SVG が【輪郭】で出る（画素を貼っていない・穴が空く）', JSON.stringify(sv));
+  check(sv.地あり === true && sv.地なし === false,
+        '⭐⭐ 地なし SVG に【地の矩形が入らない】（道具の間で繋げる）',
+        JSON.stringify({ 地あり:sv.地あり, 地なし:sv.地なし }));
+  /* ⭐ なめらかさが本当に効く＝上げると点が減る（盤の絵は変わらないが、出る形は変わる） */
+  const sm = await p.evaluate(()=>{
+    const e = document.getElementById('svgSm');
+    const set = v => { e.value = v; e.dispatchEvent(new Event('input',{bubbles:true})); };
+    set(0); const a = svgOut(true).pts;
+    set(4); const b = svgOut(true).pts;
+    set(2); return { なめらか0:a, なめらか4:b };
+  });
+  /* 🔴 ここは「変わる」では足りない。丸めるだけだと点が16倍に増える（実際に踏んだ）。
+     ⭐ 見るのは【上げたら点が減る】こと。 */
+  check(sm.なめらか4 < sm.なめらか0, '⭐⭐ なめらかさを上げると点が【減る】（増えない）', JSON.stringify(sm));
+  const dl2 = await p.evaluate(async ()=>{
+    window.__got = [];
+    document.getElementById('svgB').click(); await new Promise(x=>setTimeout(x,1600));
+    document.getElementById('svgA').click(); await new Promise(x=>setTimeout(x,1600));
+    return window.__got;
+  });
+  check(dl2.filter(o=>/svg/.test(o.type)).length === 2, 'SVG が2枚（地あり・地なし）落ちた',
+        dl2.filter(o=>/svg/.test(o.type)).map(o=>Math.round(o.size/1e3)+'KB').join(' / '));
+}
 
 const undo = await p.evaluate(async ()=>{
   const before = window.__sig();
