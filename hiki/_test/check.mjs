@@ -147,6 +147,55 @@ ok(got.some(x=>/png/.test(x.type)), 'PNG が本当に落ちる', JSON.stringify(
      JSON.stringify({ 色数64:less.色数64, 色数2:less.色数2 }));
   ok(less.なめらか4 < less.なめらか0, '⭐⭐ 輪郭：なめらかさを上げると点が【減る】（増えない）',
      JSON.stringify({ なめらか0:less.なめらか0, なめらか4:less.なめらか4 }));
+
+  /* 🔴🔴🔴 ここが【今まで無かった物差し】── 2026-09-12
+     「1本の path で出た」「点が減った」は全部通っていたのに、出た形は【溶けていた】。
+     角の丸めを《辺の長さの割合》でやっていたので、間引いたあと辺が数百 px に伸びた状態で
+     角を数百 px 削っていた（木下が Illustrator で開いて発覚）。
+     ⭐ 数える物差しでは出ない＝**出た SVG を焼いて、盤の絵と画素で突き合わせる**。
+     ⚠️ 字は【直線が長い】ほど壊れるので、丸い字ではなく **TBT のような角の形** で見る。 */
+  for(const [txt, sm] of [['TBT', 2], ['TBT', 6], ['永', 2]]){
+    const r = await p.evaluate((txt, sm) => {
+      Object.assign(P, { txt, sm }); MAPKEY = ''; SCANKEY = ''; render();
+      const T = svgTrace(false);
+      const N = 420, { w:OW, h:OH } = sheet();
+      const c = document.createElement('canvas');
+      c.width = N; c.height = Math.round(N * OH / OW);
+      paint(c.getContext('2d'), c.width, c.height, false);
+      return { svg:T.svg, pts:T.pts, W:c.width, H:c.height, board:c.toDataURL('image/png') };
+    }, txt, sm);
+    const pg = await b.newPage();
+    await pg.setViewport({ width:r.W, height:r.H });
+    await pg.goto('data:text/html,' + encodeURIComponent('<body style="margin:0">'
+      + r.svg.replace(/<\?xml[^>]*\?>\n?/, '')
+             .replace('<svg ', '<svg style="width:' + r.W + 'px;height:' + r.H + 'px;display:block" ')
+      + '</body>'));
+    await new Promise(x => setTimeout(x, 300));
+    const shot = await pg.screenshot({ encoding:'base64' });
+    await pg.close();
+    const df = await p.evaluate(async (a, bb, W, H) => {
+      const load = s => new Promise(r2 => { const i = new Image(); i.onload = () => r2(i); i.src = s; });
+      const A = await load(a), B = await load('data:image/png;base64,' + bb);
+      const ca = document.createElement('canvas'); ca.width = W; ca.height = H;
+      const cb = document.createElement('canvas'); cb.width = W; cb.height = H;
+      ca.getContext('2d').drawImage(A, 0, 0, W, H);
+      cb.getContext('2d').drawImage(B, 0, 0, W, H);
+      const da = ca.getContext('2d').getImageData(0, 0, W, H).data;
+      const db = cb.getContext('2d').getImageData(0, 0, W, H).data;
+      let bad = 0, ink = 0;
+      for(let i = 0; i < da.length; i += 4){
+        const la = da[i]*.299 + da[i+1]*.587 + da[i+2]*.114 > 127 ? 1 : 0;
+        const lb = db[i]*.299 + db[i+1]*.587 + db[i+2]*.114 > 127 ? 1 : 0;
+        if(la) ink++;
+        if(la !== lb) bad++;
+      }
+      return { ずれ:bad, 全部:W*H, 白:ink };
+    }, r.board, shot, r.W, r.H);
+    const pc = df.ずれ / df.全部 * 100;
+    ok(pc < 1.0, '🔴🔴🔴 輪郭が【盤の絵と同じ形】で出る（溶けない）: ' + txt + '・なめらかさ' + sm,
+       'ずれ ' + pc.toFixed(2) + '%（点 ' + r.pts + '）');
+  }
+  await p.evaluate(() => { Object.assign(P, { txt:'永', sm:2 }); MAPKEY = ''; SCANKEY = ''; render(); });
 }
 
 /* ⭐⭐ 指の端末で【立ち上がるか】── 2026-08-29
