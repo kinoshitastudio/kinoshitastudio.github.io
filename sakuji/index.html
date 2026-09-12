@@ -33,6 +33,11 @@
   input, textarea, select{ user-select:text; -webkit-user-select:text; }
   #stage{ position:fixed; inset:0; }
   canvas{ display:block; width:100%; height:100%; cursor:crosshair; }
+  /* 🔴 盤は幅に関係なく touch-action:none（2026-09-12）。
+     ⚠️ これまで下の @media(max-width:760px) の中にしか書いていなかったので、
+       モバイルの版面になる 761〜820px と、指のタブレット（〜1024px）では
+       指のなぞりがブラウザのスクロールに取られて盤が動いていた。 */
+  #cv{ touch-action:none; overscroll-behavior:none; }
 
   /* ── HUD ── */
   #fileName{ display:block; font-size:11px; opacity:.72; margin:1px 0 }
@@ -13160,13 +13165,23 @@ hook('guides', 'ペン・フリーハンド＝続きから描ける端を見せ�
    ⭐ 速さは縁からの深さで決める（縁に近いほど速い）＝止めたい所で自然に止まる。
    ⚠️ スペース（手のひら）で自分で動かしている間は動かさない＝二重に動くとどこにいるか分からなくなる。
    ⚠️ 動かすのは【見る所（view.center）】だけ＝図形の座標は1つも書き換えない。
-   ⚠️ 回すのは滑っている間だけ（rAF を常時回さない）。 */
+   ⚠️ 回すのは滑っている間だけ（rAF を常時回さない）。
+   🔴🔴 指のときは滑らせない（2026-09-12 木下＝「モバイルだとボード上で○など作る時も
+     ボードが動いてしまう。ボードは動かさないように」）。
+     ⚠️ 原因は【縁の帯が盤に対して大きすぎる】こと。モバイルは #stage が inset:0 0 46vh 0 なので
+       390×844 の機械で盤は およそ 390×456px しかない。そこから上下左右 64px を取ると
+       滑らない所は 262×328 ＝ 盤の【面積の半分以下】。つまり指で描けばほぼ必ず盤が動く。
+     🔴 さらに running() は (down || !!pen) なので、ペンを持っている間は【指を離しても】
+       最後に触った位置で滑り続ける＝縁の近くを1回叩くと盤が止まらなくなる。
+     ⭐ 指は画面の外へ出られないので、そもそもオートパンが要らない。移動は2本指に任せる。
+     ⚠️ マウスとスタイラス（pointerType='pen'）は1画素も変えない＝当たっている操作は触らない。 */
 (function(){
   const EDGE = 64;          /* 縁からこの内側に入ったら滑り出す（px） */
   const MAX  = 14;          /* 1コマで動く上限（px・画面の見た目で） */
-  let pt = null, down = false, raf = 0;
+  let pt = null, down = false, raf = 0, ptType = 'mouse';
 
-  const running = () => (down || !!pen) && !S.spaceDown && pt;
+  const finger = () => ptType === 'touch';   /* 指だけ。マウス・スタイラスは今までどおり */
+  const running = () => (down || !!pen) && !S.spaceDown && !finger() && pt;
 
   function step(){
     raf = 0;
@@ -13189,11 +13204,17 @@ hook('guides', 'ペン・フリーハンド＝続きから描ける端を見せ�
   }
   const kick = () => { if(!raf && running()) raf = requestAnimationFrame(step); };
 
-  cv.addEventListener('pointerdown', e => { pt = { x:e.clientX, y:e.clientY }; down = true; kick(); }, true);
+  cv.addEventListener('pointerdown', e => {
+    ptType = e.pointerType || 'mouse';
+    pt = { x:e.clientX, y:e.clientY }; down = true; kick();
+  }, true);
   /* 🔴 掴んでいる間の移動は【canvas に来ない】。paper は押した時点で document に付け替え、
      canvas の move を止めるため（実測：down のあとの move が1つも届かなかった）。
      ⭐ だから window で聞く。 */
-  window.addEventListener('pointermove', e => { pt = { x:e.clientX, y:e.clientY }; kick(); }, true);
+  window.addEventListener('pointermove', e => {
+    ptType = e.pointerType || 'mouse';         /* ⭐ 触った物が替わったらここで戻る（兼用機） */
+    pt = { x:e.clientX, y:e.clientY }; kick();
+  }, true);
   /* ⚠️ 盤の外で離しても止まるように window で聞く */
   window.addEventListener('pointerup',     () => { down = false; }, true);
   window.addEventListener('pointercancel', () => { down = false; }, true);
