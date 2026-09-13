@@ -226,7 +226,9 @@ const mock = await p.evaluate(async () => {
   useKata(KATA.length - 1);
   await new Promise(r => setTimeout(r, 1200));
   return { 比:+(P.ratio).toFixed(2), 面:FACES.length, 下地:BG && BG.tagName,
-           一覧:document.querySelectorAll('#s_kata button').length === n0 + 1 };
+           /* ⚠️ 一覧の最後には【＋ 写真を足す】が1つ居る（2026-09-13）＝物の数＋1 が正しい */
+           一覧:document.querySelectorAll('#s_kata button').length === KATA.length + 1
+                && KATA.length === n0 + 1 };
 });
 ok(mock.下地 === 'IMG' && Math.abs(mock.比 - 1.5) < 0.02 && mock.一覧,
    '⭐⭐ 写真の物も同じ道で使える（一覧に並ぶ・比は写真から決まる）', JSON.stringify(mock));
@@ -410,6 +412,78 @@ const clipped = await p.evaluate(async () => {
 });
 ok(clipped.切った後 > clipped.切る前 + 40,
    '⭐⭐ パスの外は切れる（角丸のような形に収まる）', JSON.stringify(clipped));
+
+/* ══⭐⭐ 影を落とす ── 2026-09-13 ══
+   木下＝「ドロップシャドウなども付けれるか？ サインなどは svg や画像で渡す想定としても
+     ないと不自然だ」。
+   ⭐⭐ 他のつまみは全部【借りる】側。これだけは【こちらが作る】＝切り文字は壁から浮いていて、
+     その影は下の写真に写っていないので借りようがない。
+   ⭐ 見るのは4つ：既定は今までの絵のまま／効かせるとロゴの【外】が暗くなる／
+     向きで影の行き先が変わる／物を押し直すと消える（印刷ものに影が残らない）。 */
+{
+  const shot = () => p.evaluate(() => {
+    const c = document.createElement('canvas'); c.width = 300;
+    c.height = Math.round(300 * cv.height / cv.width);
+    c.getContext('2d').drawImage(cv, 0, 0, c.width, c.height);
+    const d = c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+    let s = 0; for(let i = 0; i < d.length; i += 4) s = (s*31 + d[i] + d[i+1] + d[i+2]) >>> 0;
+    return s; });
+  /* ⭐ 影は【ロゴの外】に出るもの＝盤ぜんぶの明るさで見る（1点で測ると
+     ロゴの中に当たって「変わらない」になる。⚠️ 実際1回それで落ちた） */
+  const around = () => p.evaluate(() => {
+    const c = document.createElement('canvas'); c.width = 400;
+    c.height = Math.round(400 * cv.height / cv.width);
+    c.getContext('2d').drawImage(cv, 0, 0, c.width, c.height);
+    const d = c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+    let s = 0, n = 0;
+    for(let i = 0; i < d.length; i += 4){ s += d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114; n++; }
+    return +(s/n).toFixed(2); });
+  await p.evaluate(() => { useKata(0); });
+  await new Promise(r => setTimeout(r, 1200));
+  await p.evaluate(() => { P.dsh = 0; syncKnobs(); render(); });
+  await new Promise(r => setTimeout(r, 300));
+  const off = await shot(), offL = await around();
+  ok(+(await p.evaluate(() => document.getElementById('r_dsh').value)) === 0,
+     '⭐⭐ 影の既定は 0（新しいつまみで今までの絵を変えない）');
+  await p.evaluate(() => { P.dsh = 0.8; P.dsd = 3; P.dsb = 1; P.dsa = 135; syncKnobs(); render(); });
+  await new Promise(r => setTimeout(r, 400));
+  const on = await shot(), onL = await around();
+  ok(on !== off && onL < offL - 0.5,
+     '⭐⭐ 影を落とすと盤が暗くなる（ロゴの外に本当に影が落ちている）', offL + ' → ' + onL);
+  await p.evaluate(() => { P.dsa = 315; render(); });
+  await new Promise(r => setTimeout(r, 300));
+  ok(await shot() !== on, '⭐ 影の向きを変えると絵が変わる');
+  /* 🔴 物を押し直したら影は消える（印刷ものに切り文字の影が残らない） */
+  await p.evaluate(() => { useKata(1); });
+  await new Promise(r => setTimeout(r, 1400));
+  ok(await p.evaluate(() => P.dsh) === 0
+     && +(await p.evaluate(() => document.getElementById('r_dsh').value)) === 0,
+     '🔴🔴 物を押し直すと影は消える（棒も戻る）');
+}
+
+/* ══⭐⭐ 一覧の【＋】で版を足せる ── 2026-09-13 ══
+   木下＝「追加する項目をプラスなどで版を追加できるようにしてくれるとさらに触りやすくなりそうだ」。
+   ⭐ 下の「自分の写真を使う」は下地を差し替えるだけで一覧に残らなかった＝押し比べができない。 */
+{
+  const n0 = await p.evaluate(() => KATA.length);
+  ok(await p.evaluate(() => !!document.getElementById('b_kataAdd')),
+     '⭐ 一覧のいちばん後ろに【＋】がある');
+  await p.evaluate(async () => {
+    const c = document.createElement('canvas'); c.width = 600; c.height = 400;
+    const q = c.getContext('2d'); q.fillStyle = '#bbb'; q.fillRect(0,0,600,400);
+    const im = new Image(); await new Promise(r => { im.onload = r; im.src = c.toDataURL('image/png'); });
+    KATA.push({ id:'own_test', name:'＋ 試し', ratio:1,
+      faces:[[[0.3,0.35],[0.7,0.35],[0.7,0.6],[0.3,0.6]]], fill:false, knobs:null, img:im });
+    useKata(KATA.length - 1); renderKata();
+  });
+  await new Promise(r => setTimeout(r, 900));
+  ok(await p.evaluate(() => KATA.length) === n0 + 1
+     && await p.evaluate(() => [...document.querySelectorAll('#s_kata button')]
+          .some(b => b.textContent.trim() === '＋ 試し')),
+     '⭐⭐ 足した版が【一覧に残る】（押せば何度でも戻れる）');
+  ok(await p.evaluate(() => !!BG && (BG.naturalWidth || BG.width) === 600),
+     '⭐ 足した版がそのまま下地になる（読み直していない）');
+}
 
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
 await b.close(); process.exit(NG);
