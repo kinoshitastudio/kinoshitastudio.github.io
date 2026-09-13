@@ -297,6 +297,7 @@
       ⭐ 位置は自動で合う（⚠️ 気に入らなければ盤の四隅を掴んで直せる）</div>
     <button class="btn" id="b_bg">自分の写真を使う</button>
     <input type="file" id="f_bg" hidden>
+    <input type="file" id="f_kata" accept="image/*" hidden>
     <div class="note">⚠️ 自分で撮った写真も使える（<b>陰影のはっきりした写真</b>ほどよく馴染む）<br>
       ⭐⭐ 写真を <b>matoi/mock/</b> に入れて <b>mock/list.json</b> に1行足すと、
       その写真も<b>上の一覧に並ぶ</b>（＝次からは押すだけ）</div>
@@ -350,13 +351,24 @@
     <input type="range" id="r_con" min="30" max="220" value="100">
     <div class="row"><span class="n">濃さ</span><output id="o_op">0.95</output></div>
     <input type="range" id="r_op" min="0" max="100" value="95">
+    <div class="row"><span class="n">影を落とす</span><output id="o_dsh">0.00</output></div>
+    <input type="range" id="r_dsh" min="0" max="100" value="0">
+    <div class="row"><span class="n">影の距離</span><output id="o_dsd">1.0</output></div>
+    <input type="range" id="r_dsd" min="0" max="60" value="10">
+    <div class="row"><span class="n">影のぼかし</span><output id="o_dsb">1.0</output></div>
+    <input type="range" id="r_dsb" min="0" max="60" value="10">
+    <div class="row"><span class="n">影の向き</span><output id="o_dsa">135°</output></div>
+    <input type="range" id="r_dsa" min="0" max="359" value="135">
     <div class="seg" id="s_blend">
       <button data-v="multiply">乗算</button><button data-v="normal" class="on">そのまま</button>
       <button data-v="overlay">オーバーレイ</button><button data-v="screen">スクリーン</button>
     </div>
     <div class="note">⭐⭐ <b>しわに沿う</b>＝下の写真の明暗の<b>傾き</b>だけロゴをずらす。布のたるみに沿って曲がる<br>
       ⭐⭐ <b>陰を借りる／光を借りる</b>＝下の写真の暗い所・明るい所を<b>ロゴの上にだけ</b>掛ける<br>
-      ⚠️ 全部 0 なら<b>ただ貼っただけ</b>になる（そこが「嵌める」との違い）</div>
+      ⚠️ 全部 0 なら<b>ただ貼っただけ</b>になる（そこが「嵌める」との違い）<br>
+      ⭐⭐ <b>影を落とす</b>＝借りるのでなく<b>こちらが作る影</b>。<b>切り文字・立体サイン</b>に要る
+      （壁から浮いていないと不自然）。⚠️ <b>印刷もの（のぼり・看板・名刺）では 0 のまま</b>＝
+      面に刷ってあるものに影は落ちない</div>
   </div>
 
   <div class="grp">
@@ -406,6 +418,10 @@ function stat(s){ el('stat').textContent = s; clearTimeout(statT);
    ══════════════════════════════════════════════════════════ */
 const P = {
   warp:0.55, sh:0.75, hi:0.22, gr:0.30, col:0.35, bri:1.00, con:1.00, op:0.95, blend:'normal', fill:false,
+  /* ⭐⭐ 影を落とす（2026-09-13）＝借りるのでなく【こちらが作る】唯一のもの。
+     🔴 既定は 0 ＝いままでの絵のまま（新しいつまみで過去の絵を変えない）。
+        要る物（切り文字の壁など）は list.json の knobs で立てる。 */
+  dsh:0, dsd:1.0, dsb:1.0, dsa:135,
   tint:'none', tintCol:'#ffffff', long:1600, cut:true,
 };
 let BG = null, BGKEY = 0;      /* 下地（写真でも、型を描いた紙でもいい）／差し替えた回数 */
@@ -789,8 +805,10 @@ function seam(q, pts, w, col, dash, ox, oy){
    ⭐ そのとおりで、この道具の値打ちは【なじませる】側にある。描くのは物が無いときの代役。
    ⚠️ 写真型は draw を持たない代わりに photo（画像の在り処）を持つ。比は写真そのものから決まる。 */
 function kataBG(k, done){
-  if(k.photo){
-    if(k.img) return done(k.img, (k.img.naturalWidth || 1) / (k.img.naturalHeight || 1));
+  if(k.photo || k.img){
+    /* ⭐ もう読んである画像（＋で足した版）は、そのまま渡す＝読み直さない */
+    if(k.img) return done(k.img, (k.img.naturalWidth || k.img.width || 1)
+                               / (k.img.naturalHeight || k.img.height || 1));
     const im = new Image();
     im.onload = () => { k.img = im; done(im, im.naturalWidth / im.naturalHeight); };
     im.onerror = () => stat('写真が読めません：' + k.photo);
@@ -820,7 +838,12 @@ function useKata(i, keepFaces){
       setFill(!!k.fill);
       /* ⭐ 物ごとの既定（例：光る看板は「光を借りる」を強く）＝押しただけで合っている
          ⚠️ 木下が手で動かしたあと、物を押し直せばその物の既定に戻る（設定であって状態ではない） */
-      if(k.knobs){ Object.assign(P, k.knobs); syncKnobs(); } }
+      /* 🔴🔴 影だけは【押すたびに必ず消してから】その物の既定を入れる（2026-09-13）。
+         切り文字の壁で立てた影が、次に押したTシャツやのぼりに残ると必ず嘘になる
+         ＝印刷したものに影は落ちない。⚠️ 他のつまみは今までどおり持ち越す（既定を変えない）。 */
+      Object.assign(P, { dsh:0, dsd:1.0, dsb:1.0, dsa:135 });
+      if(k.knobs) Object.assign(P, k.knobs);
+      syncKnobs(); }
     render(); fitView();
   });
 }
@@ -858,6 +881,28 @@ function renderKata(){
     b.className = i === KIDX ? 'on' : '';
     b.onclick = () => { useKata(i); renderKata(); stat(k.name + 'に当て込んだ（中を掴めば四角ごと動く／四隅で詰める）'); };
     host.appendChild(b);
+  });
+  /* ⭐⭐ 一覧のいちばん後ろに【＋】を置く（2026-09-13）
+     木下＝「追加する項目をプラスなどで版を追加できるようにしてくれるとさらに触りやすくなりそうだ」。
+     ⭐ 下の「自分の写真を使う」は【いまの下地を差し替える】だけで、一覧に残らなかった＝
+       押し比べができない。ここで足したものは **一覧に並んで、押せば何度でも戻ってこられる**。
+     ⚠️ 一覧に残るのはこの画面を開いている間だけ（list.json には書けない）。
+       ずっと残したいものは mock/ に置いて list.json に1行足す。 */
+  const add = document.createElement('button');
+  add.textContent = '＋ 写真を足す'; add.id = 'b_kataAdd';
+  add.title = '自分の写真を版として一覧に足す（この画面を開いている間だけ）';
+  add.onclick = () => el('f_kata').click();
+  host.appendChild(add);
+}
+/* ⭐ 足す道も【1本】＝読み込みは readImage、並べるのは KATA.push、選ぶのは useKata */
+function addKata(file){
+  readImage(file, img => {
+    const nm = (file.name || '写真').replace(/\.[^.]+$/, '').slice(0, 12);
+    KATA.push({ id:'own_' + Date.now(), name:'＋ ' + nm, ratio:1,
+      faces:[[[0.30,0.35],[0.70,0.35],[0.70,0.60],[0.30,0.60]]],
+      fill:false, knobs:null, img });
+    useKata(KATA.length - 1); renderKata();
+    stat('版を足した ── 四隅を合わせて使う（一覧に残るのはこの画面の間だけ）');
   });
 }
 
@@ -1043,6 +1088,33 @@ function drawFace(ctx, fc, W, H){
     lg.globalAlpha = 1;
     lg.drawImage(mask, 0, 0);
     lg.globalCompositeOperation = 'source-over';
+  }
+  /* ══⭐⭐ 影を落とす（2026-09-13）══
+     木下＝「ドロップシャドウなども付けれるか？ サインなどは svg や画像で渡す想定としても
+       ないと不自然だ」。
+     ⭐⭐ この道具の他のつまみは全部【借りる】側だが、これだけは【こちらが作る】。
+       切り文字・立体サインは**壁から浮いている**＝下の写真にその影は写っていないので、
+       借りようがない。無いと必ず「貼っただけ」に見える。
+     ⭐ 形は【嵌めた姿（mask）】をそのまま使う＝ロゴを嵌め直さない（式も手間も1本）。
+     ⭐⭐ 焼き込まない＝控え（fc._c）には入れない。だから影のつまみを回しても嵌め直しは起きない。
+     ⚠️ 影はロゴの【下】に敷く＝先に置いてから本体を乗せる。 */
+  if(P.dsh > 0.001){
+    const a = (P.dsa - 90) * Math.PI / 180;            /* 0°＝真上から光＝影は下 */
+    const d = P.dsd * Math.min(W, H) * 0.01;
+    const bl = P.dsb * Math.min(W, H) * 0.006;
+    const sc = document.createElement('canvas'); sc.width = W; sc.height = H;
+    const sg = sc.getContext('2d');
+    if(bl > 0.2) sg.filter = 'blur(' + bl.toFixed(2) + 'px)';
+    sg.drawImage(mask, Math.cos(a) * d, Math.sin(a) * d);
+    sg.filter = 'none';
+    /* ⭐ 形だけ要る＝中身を黒で塗り替える（ロゴの色が影に出ない） */
+    sg.globalCompositeOperation = 'source-in';
+    sg.fillStyle = '#000'; sg.fillRect(0, 0, W, H);
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, P.dsh);
+    ctx.globalCompositeOperation = 'multiply';         /* 下地の色を残したまま暗くする */
+    ctx.drawImage(sc, 0, 0);
+    ctx.restore();
   }
   /* ⭐ 最後に本体へ乗せる（重ね方と濃さ＝馴染ませの仕上げ） */
   ctx.save();
@@ -1473,6 +1545,8 @@ el('b_bg').onclick   = () => el('f_bg').click();
 el('b_logo').onclick = () => el('f_logo').click();
 el('f_bg').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = '';
   if(f) readImage(f, img => { setBG(img); stat('下地を読んだ'); render(); fitView(); }); });
+el('f_kata').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = '';
+  if(f) addKata(f); });
 el('f_logo').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = '';
   if(f) readAsset(f, img => { setLOGO(img, f.name || ''); render(); }); });
 el('b_logoClear').onclick = () => { setLOGO(null); stat('ロゴを外した'); render(); };
@@ -1502,6 +1576,12 @@ const RANGES = [
   ['r_bri','bri','o_bri', v => (v/100).toFixed(2), v => v/100],
   ['r_con','con','o_con', v => (v/100).toFixed(2), v => v/100],
   ['r_op','op','o_op', v => (v/100).toFixed(2), v => v/100],
+  ['r_dsh','dsh','o_dsh', v => (v/100).toFixed(2), v => v/100],
+  /* ⚠️ 目盛と値の比が 100 でないものは【戻し方】も一緒に書く
+     （書かないと、物の既定を読んだときに棒だけ別の所へ飛ぶ） */
+  ['r_dsd','dsd','o_dsd', v => (v/10).toFixed(1), v => v/10, v => Math.round(v*10)],
+  ['r_dsb','dsb','o_dsb', v => (v/10).toFixed(1), v => v/10, v => Math.round(v*10)],
+  ['r_dsa','dsa','o_dsa', v => v + '°'],
   ['r_long','long','o_long', v => v],
 ];
 RANGES.forEach(([id, k, out, fmt, conv]) => {
@@ -1514,9 +1594,9 @@ RANGES.forEach(([id, k, out, fmt, conv]) => {
 /* ⭐ 値の側から【つまみの見た目】へ戻す道。物ごとの既定を入れたとき、
    数字だけ変わってつまみが動かないと「触れるのに効かない」に見える */
 function syncKnobs(){
-  RANGES.forEach(([id, k, out, fmt, conv]) => {
+  RANGES.forEach(([id, k, out, fmt, conv, inv]) => {
     const r = el(id); if(!r || P[k] == null) return;
-    r.value = conv ? Math.round(P[k] * 100) : P[k];
+    r.value = inv ? inv(P[k]) : (conv ? Math.round(P[k] * 100) : P[k]);
     const o = el(out); if(o) o.value = fmt ? fmt(+r.value) : r.value;
   });
 }
