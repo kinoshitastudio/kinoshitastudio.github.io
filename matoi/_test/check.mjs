@@ -334,6 +334,45 @@ const rl1 = await p.evaluate(() => (FACES[0].rot || {}).roll || 0);
 ok(rl0 !== rl1 && +(await p.evaluate(() => document.getElementById('r_roll').value)) === rl1,
    '⭐⭐ 盤の上で回せる（スライダーも同じ値になる）', `${rl0}° → ${rl1}°`);
 
+/* ══⭐⭐ 隅でも【四角ごと】動かせる ── 2026-09-13 ══
+   木下＝「四角をボード上で自分で自由に移動できるようにして」。
+   🔴 隅は1つずつ動かせていたのに、**四角ごと運ぶ道が無かった**（中を掴むと盤がパンしていた）。
+   ⚠️ 当て込みは四隅がずれた所から始まる＝まず四角ごと物の上へ運んでから隅で詰める。
+   ⭐ 見るのは3つ：中を掴むと四角ごと動く／隅は1つずつのまま／外を掴めばパンは残っている。 */
+await p.evaluate(() => document.querySelector('#tools button[data-t="corner"]').click());
+{
+  const before = await facePts();
+  const c2 = await p.evaluate(() => { const q = FACES[0].pts;
+    return [(q[0][0]+q[2][0])/2, (q[0][1]+q[2][1])/2]; });
+  await drag(c2, [c2[0]+0.09, c2[1]+0.06]);
+  const after = await facePts();
+  const B4 = JSON.parse(before), A4 = JSON.parse(after);
+  const moved = A4.every((q, i) => Math.abs(q[0]-B4[i][0] - (A4[0][0]-B4[0][0])) < 0.01
+                                && Math.abs(q[1]-B4[i][1] - (A4[0][1]-B4[0][1])) < 0.01);
+  ok(before !== after && moved,
+     '⭐⭐ 隅でも【四角ごと】動かせる（4隅が同じだけ平行に動く）', before + ' → ' + after);
+
+  /* ⚠️ 1つずつ動かす方は殺していない（隅を掴んだら その隅だけ） */
+  const b1 = JSON.parse(await facePts());
+  const c1 = await p.evaluate(() => FACES[0].pts[0]);
+  await drag(c1, [c1[0]+0.06, c1[1]+0.04]);
+  const a1 = JSON.parse(await facePts());
+  ok(JSON.stringify(a1[0]) !== JSON.stringify(b1[0])
+     && JSON.stringify(a1.slice(1)) === JSON.stringify(b1.slice(1)),
+     '⭐ 隅は【1つずつ】のまま（他の3隅は動かない）', JSON.stringify(a1));
+
+  /* ⚠️ 四角の外を掴めば盤が動く＝パンを奪っていない */
+  const pv0 = await p.evaluate(() => [Math.round(V.x), Math.round(V.y)]);
+  const far = await p.evaluate(() => {                 /* 四角から離れた所を選ぶ */
+    for(const q of [[0.03,0.03],[0.97,0.03],[0.03,0.97],[0.97,0.97],[0.5,0.02]])
+      if(!inFace(FACES[0], q[0], q[1])) return q;
+    return [0.02,0.02]; });
+  await drag(far, [far[0]+0.10, far[1]+0.06]);
+  const pv1 = await p.evaluate(() => [Math.round(V.x), Math.round(V.y)]);
+  ok(pv0[0] !== pv1[0] || pv0[1] !== pv1[1],
+     '⭐ 四角の外を掴めば【盤が動く】（パンを奪っていない）', pv0 + ' → ' + pv1);
+}
+
 await p.evaluate(() => document.querySelector('#tools button[data-t="pen"]').click());
 const pn0 = await p.evaluate(() => (FACES[0].clip || []).length);
 const edge = await p.evaluate(() => { const cp = FACES[0].clip;
