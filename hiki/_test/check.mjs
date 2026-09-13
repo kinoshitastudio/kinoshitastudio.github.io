@@ -84,6 +84,43 @@ await new Promise(r=>setTimeout(r,1400));
 const got = await p.evaluate(() => window.__got);
 ok(got.some(x=>/png/.test(x.type)), 'PNG が本当に落ちる', JSON.stringify(got));
 
+/* ══🔴🔴🔴 2026-09-13 ── 書き出し倍率を上げても【中身が細かくならない】を捕まえる ══
+   木下＝「書き出したpng自体もがびがび」。
+   この道具は元の絵を1画素の行に切って運ぶので、**運ぶ行の数 ＝ 出せる細かさの上限**。
+   元の絵を版面と同じ 1400 行でしか焼いていなかったので、×2 にしても
+   「1400本の帯を2倍に太らせた」だけだった＝板だけ大きくて中身は同じ。
+   ⭐ 見るのは canvas の大きさではなく **MAP.n（運ぶ行）が倍率に付いてくるか**。 */
+{
+  const r = await p.evaluate(() => {
+    const o = [];
+    for(const k of [1, 2, 3]){
+      P.pngk = k; const c = shoot(false);
+      o.push({ k, px:c.width, 行:(typeof MAP !== 'undefined' && MAP ? MAP.n : 0) });
+    }
+    P.pngk = 2; render();
+    return o;
+  });
+  const base = r[0].行;
+  ok(r.every(x => Math.abs(x.行 - base * x.k) <= 2 && x.px === r[0].px * x.k),
+     '🔴🔴🔴 書き出し倍率を上げると【運ぶ行も同じだけ増える】（板だけ大きくしない）',
+     r.map(x => '×'+x.k+' '+x.px+'px/'+x.行+'行').join(' / '));
+}
+/* ⭐ 盤も同じ＝見る倍率を上げたら運ぶ行が増える（見る前からガビガビだった所） */
+{
+  const r = await p.evaluate(() => {
+    const o = [];
+    for(const z of [1, 3]){
+      V.z = z; render();
+      o.push({ z, px:document.getElementById('cv').width, 行:MAP ? MAP.n : 0 });
+    }
+    V.z = 1; render();
+    return o;
+  });
+  ok(r[1].行 > r[0].行 && r[1].px > r[0].px,
+     '🔴🔴 盤を拡大すると【盤も運ぶ行も細かくなる】（拡大しても階段が増えない）',
+     r.map(x => '見る'+(x.z*100)+'% '+x.px+'px/'+x.行+'行').join(' / '));
+}
+
 /* ⭐⭐ SVG ── 2026-09-12。出し方は2つ（輪郭／短冊）。
    🔴 見るのは「落ちたか」ではなく【Illustrator / Figma で触れる形になっているか】。
      ① 輪郭＝**掴むのは1本**（字の形そのもの）。穴が空く
@@ -279,9 +316,11 @@ ok(got.some(x=>/png/.test(x.type)), 'PNG が本当に落ちる', JSON.stringify(
   ok(rows.every(r => r.途中の絵 >= 3),
      '⭐⭐ 指で引いている【最中に】絵が追いてくる（1目盛りずつ変わる）',
      rows.map(r => r.id+' '+r.途中の絵+'通り').join(' / '));
-  ok(rows.every(r => r.粗くなった === 0) && b0.w === b0.sheet && b1.w === b1.sheet,
+  /* ⚠️ 2026-09-13：盤は【版面より細かく】焼くようになった（見る倍率×画面の細かさ）。
+     ここで見たいのは「粗くなっていないか」なので、等しいことではなく **下回らない** ことを見る。 */
+  ok(rows.every(r => r.粗くなった === 0) && b0.w >= b0.sheet && b1.w >= b1.sheet,
      '⭐⭐ 引いている間も【盤を粗くしない】（指の端末だけ別の絵にならない）',
-     '盤 '+b0.w+' → '+b1.w+'（版面 '+b0.sheet+'）');
+     '盤 '+b0.w+' → '+b1.w+'（版面 '+b0.sheet+'・下回らなければ合格）');
   ok(merr.length === 0, '⭐ 指で引いてもエラーが出ない', merr.join(' / '));
   await m.close();
 }

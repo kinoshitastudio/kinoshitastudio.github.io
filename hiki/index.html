@@ -38,6 +38,11 @@
     background:radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,.16), transparent 60%)}
   canvas#cv{position:absolute;left:0;top:0;transform-origin:0 0;
     box-shadow:0 14px 44px rgba(28,28,30,.18);display:block}
+  /* ⭐⭐ 出す SVG を【そのまま盤に重ねて見る】板。
+     画素ではなく図形なので、いくら拡大しても階段が出ない
+     ＝「書き出したら荒れていた」を、押す前にここで確かめられる。 */
+  img#pv{position:absolute;left:0;top:0;transform-origin:0 0;display:none;
+    pointer-events:none;z-index:2}
   /* ⭐ 選んだ印は【刷る絵に混ぜない】。別の板を同じ倍率で重ねる
      （混ぜると PNG にも選択枠が出てしまう） */
   canvas#ov{position:absolute;left:0;top:0;transform-origin:0 0;display:block;
@@ -251,6 +256,7 @@
 
 <div id="stage">
   <canvas id="cv"></canvas>
+  <img id="pv" alt="">
   <div id="zoom">
     <button id="z_out">−</button><span class="z" id="z_val">100%</span><button id="z_in">＋</button>
     <button id="z_fit">合わせる</button>
@@ -341,6 +347,17 @@
   <div class="grp">
     <label class="h">出す</label>
     <div id="meter"></div>
+    <!-- ⭐⭐ 書き出し倍率（2026-09-13・木下＝「今見えているものを完全にそのまま png で書き出しできないのか？」）
+         🔴 これまで PNG は【長辺のつまみのまま】＝既定 1400px で焼いていた。
+            ロゴのような線の細い絵だと 1400 では縁が階段になる＝これがガビガビの正体。
+         ⭐ 版面（＝見え）は1画素も変えず、焼く画素だけを倍にする。
+         ⭐ 出る px は押す前に必ず出す（押してから分かるのは遅い）。 -->
+    <div class="row"><span class="n">書き出し倍率</span><output id="o_pk">×2</output></div>
+    <div class="seg" id="s_pk">
+      <button data-v="1">×1</button><button data-v="2" class="on">×2</button>
+      <button data-v="3">×3</button><button data-v="4">×4</button>
+    </div>
+    <div class="note" id="pkNote">出る大きさ ──</div>
     <button class="btn solid" id="b_png">PNG を書き出す</button>
     <div class="btns2">
       <button class="btn" id="b_pngA">地なし PNG</button>
@@ -358,6 +375,13 @@
     <input type="range" id="r_thr" min="1" max="99" value="50">
     <div class="row"><span class="n">短冊：まとめ（色数）</span><output id="o_qz">16</output></div>
     <input type="range" id="r_qz" min="2" max="64" value="16">
+    <!-- 🔴🔴 2026-09-13 木下＝「この辺りも反映しないし」
+         ＝ここの3つは【出すときだけ】のつまみなので、動かしても盤は何も変わらなかった。
+         ⭐ 触って何も起きないのは壊れているのと同じ。出る形をそのまま盤に重ねて見せる。 -->
+    <button class="btn" id="b_pv" style="margin-top:8px">出る形を盤で確かめる</button>
+    <div class="note" id="pvNote">⭐ 押すと、<b>いま書き出したら出てくる形</b>をそのまま盤に重ねます。
+      これは画素ではなく<b>図形</b>なので、盤をどれだけ拡大しても階段が出ません。<br>
+      ⭐ 重ねた状態で上の3つを動かすと、離した時に組み直します（数えるのに 0.5 秒ほど掛かります）</div>
     <div class="note">⭐⭐ <b>輪郭</b>＝境目を線にする。<b>字・自作SVG・ロゴはこちら</b>。
       Illustrator / Figma で<b>掴めるのは形ひとつ</b>（穴もそのまま空く）<br>
       ⭐ <b>短冊</b>＝読んだ線を1本ずつ矩形のまま。<b>色のある絵・写真はこちら</b>（色をそのまま運ぶ）<br>
@@ -436,7 +460,7 @@ const P = {
   ratio:'1:1', long:1400, pad:8,
   inv:1, ink:'#ffffff', bg:'#0a0a0a', nobg:false,
   /* ⚠️ ここから下は【出すときだけ】のつまみ。盤の絵は変わらないのが正しい */
-  svgm:'trace', qz:16, sm:8, thr:50,
+  svgm:'trace', qz:16, sm:8, thr:50, pngk:2,
 };
 let SRC = null;          /* 写真・SVG を入れたらこちらが元（字より優先） */
 
@@ -464,16 +488,38 @@ function sheet(){
    ⚠️ 読む速さ（明暗）は地ありの方から取る＝地なしにしても絵の伸び方は変わらない。 */
 let MAPS = { 0:null, 1:null }, MAPKEYS = { 0:'', 1:'' };
 let MAP = null, MAPKEY = '';
+/* ⭐⭐ 元の絵を【版面の何倍の細かさで焼くか】。運ぶ行の数がこれで決まる。
+   1 のときはこれまでと1画素も変わらない。焼く前に呼ぶ側が合わせる。 */
+let MAPK = 1;
+/* ⚠️ 元の絵を焼く板の一辺の上限。書き出しの一瞬だけ大きくなるので、盤より少し緩い。
+   指の端末は canvas の面積に上限があり、超えると【黙って真っ白】になるので低め。 */
+const MAPCAP = (window.matchMedia && matchMedia('(pointer:coarse)').matches) ? 3200 : 6000;
+function useMapK(k){
+  const v = Math.max(1, Math.min(4, +k || 1));
+  if(Math.abs(v - MAPK) > 1e-6){ MAPK = v; SCANKEY = ''; }
+  return MAPK;
+}
 function bakeMap(noBg){
   const nb = noBg ? 1 : 0;
   /* ⭐ 外から「焼き直せ」と言われる道は `MAPKEY = ''` の1本しかない（7か所ある）。
      ここで受けて2つとも捨てる＝呼ぶ側を1か所も書き換えずに済む。 */
   if(MAPKEY === ''){ MAPKEYS[0] = MAPKEYS[1] = ''; }
   const { w, h } = sheet();
-  const key = [w, h, P.pad, P.txt, P.font, P.inv, P.ink, P.bg, nb, SRC ? SRC.src.length : 0].join('|');
+  /* ══🔴🔴 ここが【階段の本当の出どころ】だった（2026-09-13）══
+     この道具は元の絵を【1画素の行】に切って運ぶ。だから
+     **元の絵の行数 ＝ 出せる細かさの上限**。
+     ずっと版面と同じ 1400 行でしか焼いていなかったので、
+     盤をいくら大きく焼いても「1400本の帯を太らせる」だけ＝階段は大きくなるだけだった。
+     ⭐ 直し方＝元の絵も同じ倍率で焼く（＝行を増やす）。形も並びも1つも変えない。
+     ⚠️ MAPK が 1 のときは、これまでと1画素も変わらない（既定は 1）。 */
+  const K = Math.max(1, Math.min(MAPK, MAPCAP / Math.max(w, h)));
+  const bw = Math.max(1, Math.round(w * K)), bh = Math.max(1, Math.round(h * K));
+  const key = [w, h, K, P.pad, P.txt, P.font, P.inv, P.ink, P.bg, nb, SRC ? SRC.src.length : 0].join('|');
   if(MAPKEYS[nb] === key && MAPS[nb]){ MAP = MAPS[nb]; MAPKEY = MAPKEYS[0] || key; return MAP; }
-  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const c = document.createElement('canvas'); c.width = bw; c.height = bh;
   const q = c.getContext('2d', { willReadFrequently:true });
+  /* ⭐ 以下は【版面の座標のまま】書く＝焼く細かさが変わっても字の大きさも位置も1つも動かない */
+  q.setTransform(K, 0, 0, K, 0, 0);
   if(!noBg){ q.fillStyle = P.inv ? P.bg : P.ink; q.fillRect(0, 0, w, h); }
   const m = P.pad / 100;
   if(SRC){
@@ -500,21 +546,22 @@ function bakeMap(noBg){
   }
   /* ⭐ 走る向きの1本ごとの明るさ（「絵の明暗から」で使う）
      ⚠️ 既定では使わないので、ここは軽い1回の走査で済ませる */
-  const d = q.getImageData(0, 0, w, h).data;
-  const n = (P.axis === 'y') ? h : w;
+  q.setTransform(1, 0, 0, 1, 0, 0);   /* ⚠️ 画素を読むのは【焼いた実寸】で */
+  const d = q.getImageData(0, 0, bw, bh).data;
+  const n = (P.axis === 'y') ? bh : bw;
   const lum = new Float32Array(n);
-  const across = (P.axis === 'y') ? w : h;
+  const across = (P.axis === 'y') ? bw : bh;
   const stepA = Math.max(1, Math.floor(across / 120));      /* 全部見なくても筋は出る */
   for(let i = 0; i < n; i++){
     let sum = 0, cnt = 0;
     for(let j = 0; j < across; j += stepA){
       const x = (P.axis === 'y') ? j : i, y = (P.axis === 'y') ? i : j;
-      const o = (y*w + x)*4;
+      const o = (y*bw + x)*4;
       sum += d[o]*0.299 + d[o+1]*0.587 + d[o+2]*0.114; cnt++;
     }
     lum[i] = cnt ? (sum/cnt)/255 : 0.5;
   }
-  MAP = { canvas:c, w, h, lum, n };
+  MAP = { canvas:c, w:bw, h:bh, lum, n, k:K };
   MAPS[nb] = MAP; MAPKEYS[nb] = key; MAPKEY = key;
   return MAP;
 }
@@ -617,16 +664,43 @@ function touching(){ /* 何もしない（重くないので粗くする必要�
 
 /* ══ 画面 ══ */
 const V = { x:0, y:0, z:1 };
+/* ══🔴🔴 盤が【見る前から】階段だった（2026-09-13・木下＝「解像度の問題では？」）══
+   これまで盤は版面と同じ 1400px でしか焼いていなかった。
+   ・Retina（devicePixelRatio 2）では、はめ込んだ時点で 1400 の絵を 1664 の画素に引き伸ばす
+   ・拡大すると、その 1400 をさらに引き伸ばす＝132% で見て階段が見えていた正体
+   ⭐ 直し方＝【見る倍率の分だけ細かく焼く】。版面（出る px）は 1画素も変えない。
+   ⚠️ 倍率は段（1/1.5/2/3/4）にする。つまんでいる間じゅう焼き直さないため。 */
+/* ⚠️ 一辺の上限。指の端末は canvas の面積に上限があり、超えると【黙って真っ白】になる
+   （iOS が代表例）。なので触る端末は 2400 で止める。
+   ⚠️ ここは【盤の板】と【元の絵】の両方に効く＝二重に画素を持つので、欲張らない。
+      1400角なら 4200＝×3（板70MB＋絵70MB）。 */
+const PXCAP = (window.matchMedia && matchMedia('(pointer:coarse)').matches) ? 2400 : 4200;
+function bakeK(){
+  const { w, h } = sheet();
+  const want = (window.devicePixelRatio || 1) * Math.max(1, V.z);
+  const step = [1, 1.5, 2, 3, 4].find(s => s >= want) || 4;
+  return Math.max(1, Math.min(step, PXCAP / Math.max(w, h)));
+}
+let BAKEK = 0;
+/* ⭐ 見る倍率が段をまたいだ時だけ焼き直す（またがない限り何もしない＝軽い） */
+function reBake(){ if(Math.abs(bakeK() - BAKEK) > 1e-6) renderSoon(); }
+/* ⭐ 重ねている SVG が【古くなった】かを見る鍵（見る倍率は入れない＝拡大では組み直さない） */
+let PVKEY = '';
+function pvKey(){ try{ return JSON.stringify(P) + '|' + (SRC ? (SRC.src || '').length : 0); }catch(_){ return String(Math.random()); } }
 function render(){
   const { w, h } = sheet();
-  /* ⭐ 盤はいつでも実寸で描く（実測 8ms） */
-  const W2 = Math.max(64, w), H2 = Math.max(64, h);
+  /* ⭐ 盤は【見る倍率 × 画面の細かさ】で焼く（版面 w,h に対して相対に描くので見えは同じ） */
+  BAKEK = bakeK();
+  useMapK(BAKEK);   /* ⭐ 板だけ大きくしても意味が無い＝運ぶ行も同じだけ増やす */
+  const W2 = Math.max(64, Math.round(w * BAKEK)), H2 = Math.max(64, Math.round(h * BAKEK));
   if(cv.width !== W2 || cv.height !== H2){ cv.width = W2; cv.height = H2; }
   const t0 = performance.now();
   const D = paint(g, W2, H2, P.nobg);
   applyView();
   const ms = Math.round(performance.now() - t0);
-  el('meter').textContent = w + ' × ' + h + ' px\n' + D.n.toLocaleString() + ' 本\n' + ms + ' ms';
+  /* 🔴 「いま何画素で焼いているか」を出す＝階段が見えたとき、ここを見れば原因が分かる */
+  el('meter').textContent = w + ' × ' + h + ' px\n' + D.n.toLocaleString() + ' 本\n' + ms + ' ms'
+    + (BAKEK > 1 ? '\n盤は ×' + (Math.round(BAKEK * 10) / 10) + '（' + W2 + ' px）で焼いている' : '');
   /* 🔴 「触れるのに効かない」を作らない＝いま重なっているかを数字で出す */
   /* 🔴 「触れるのに効かない」を作らない＝いま何が起きているかを数字で出す。
      ⭐ この道具の境目は【読む速さが 1 かどうか】＝1 なら元のまま・1未満で伸び・負で鏡。 */
@@ -646,23 +720,32 @@ function render(){
          : flat ? '⭐ 止まっている所がある＝【帯】が出る（' + flat + ' 本）'
          : '⭐ 伸びと縮みだけ（止まりも鏡も無い）');
   }
+  /* ⭐ 盤が変わったら、重ねてある SVG も組み直す（古い形が乗ったままにしない） */
+  if(PVON && pvKey() !== PVKEY) pvDraw();
+  /* ⭐ 版面を変えたら「出る px」も付いて回る（押す前に分かるように） */
+  if(typeof pkSync === 'function') pkSync();
 }
 function applyView(){
   /* ⚠️ 盤を小さく描いている間は、見る側の倍率をその分だけ上げる＝絵の大きさは1画素も動かない */
   const s0 = sheet();
   const k = (cv.width && s0.w) ? (cv.width / s0.w) : 1;
   cv.style.transform = 'translate(' + V.x + 'px,' + V.y + 'px) scale(' + (V.z / (k || 1)) + ')';
+  /* ⭐ 重ねる SVG は版面の実寸で置いて、見る倍率だけ掛ける（図形なので割り戻しは要らない） */
+  const pv = el('pv');
+  if(pv){ pv.style.width = s0.w + 'px'; pv.style.height = s0.h + 'px';
+          pv.style.transform = 'translate(' + V.x + 'px,' + V.y + 'px) scale(' + V.z + ')'; }
   el('z_val').textContent = Math.round(V.z * 100) + '%';
 }
 function fitView(){
   const r = stage.getBoundingClientRect(), { w, h } = sheet();
   V.z = Math.min((r.width - 60) / w, (r.height - 60) / h);
   V.x = (r.width - w * V.z) / 2; V.y = (r.height - h * V.z) / 2;
-  applyView();
+  applyView(); reBake();
 }
 function zoomAt(px, py, f){
   const z = Math.max(0.05, Math.min(12, V.z * f));
   V.x = px - (px - V.x) * (z / V.z); V.y = py - (py - V.y) * (z / V.z); V.z = z; applyView();
+  reBake();   /* ⭐ 拡大したらその細かさで焼き直す＝拡大しても階段が出ない */
 }
 el('z_in').onclick  = () => { const r = stage.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, 1.25); };
 el('z_out').onclick = () => { const r = stage.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, 1/1.25); };
@@ -875,10 +958,32 @@ el('f_json').addEventListener('change', e => {
 });
 function shoot(transparent){
   const { w, h } = sheet();
-  const c = document.createElement('canvas'); c.width = w; c.height = h;
-  paint(c.getContext('2d'), w, h, transparent);
+  const k = Math.max(1, Math.min(4, P.pngk | 0)) || 1;
+  useMapK(k);   /* 🔴 これが無いと「1400本の帯を k 倍に太らせた」だけの絵が出る（＝木下の見たガビガビ） */
+  const c = document.createElement('canvas'); c.width = w * k; c.height = h * k;
+  /* ⚠️ paint は w,h に対して【相対】で描くので、大きい canvas に渡すだけで
+     見えはそのまま・画素だけ増える（拡大ではない。焼き直し）。 */
+  paint(c.getContext('2d'), w * k, h * k, transparent);
   return c;
 }
+/* ⭐ 出る px を押す前に出す */
+function pkSync(){
+  const { w, h } = sheet();
+  const k = Math.max(1, Math.min(4, P.pngk | 0)) || 1;
+  const o = el('o_pk'), n = el('pkNote');
+  if(o) o.textContent = '×' + k;
+  /* ⭐ 大きさだけでなく【運ぶ行が何本になるか】を出す＝なめらかさの正体はこの数 */
+  const mk = Math.max(1, Math.min(k, MAPCAP / Math.max(w, h)));
+  const lines = Math.round((P.axis === 'y' ? h : w) * mk);
+  if(n) n.innerHTML = '出る大きさ ── <b>' + (w*k) + ' × ' + (h*k) + ' px</b>'
+    + '／運ぶ線は <b>' + lines.toLocaleString() + ' 本</b>'
+    + (k > 1 ? '（版面 ' + w + '×' + h + ' はそのまま。線を細かくして焼き直す）' : '');
+}
+document.querySelectorAll('#s_pk button').forEach(b => b.onclick = () => {
+  P.pngk = +b.dataset.v;
+  document.querySelectorAll('#s_pk button').forEach(x => x.classList.toggle('on', x === b));
+  pkSync();
+});
 el('b_png').onclick  = () => shoot(P.nobg).toBlob(b => { dl(b, 'hiki_' + Date.now() + '.png'); stat('PNG を出した'); });
 el('b_pngA').onclick = () => shoot(true).toBlob(b => { dl(b, 'hiki_nobg_' + Date.now() + '.png'); stat('地なし PNG を出した'); });
 /* ══⭐⭐ SVG で出す ════════════════════════════════════════════
@@ -969,7 +1074,7 @@ const TRACE_MAX = 4096;
    ⭐ 2倍でなぞると、同じ階段が出す絵では【0.5画素】になる。
       間引きのしきい値（1.85px）から見れば十分に小さいので、きれいに消える。
    ⚠️ 点は増えない（間引きが効くので、むしろ減る）。⚠️ 上限は 4096（それ以上は重いだけ）。 */
-const TRACE_OVER = 2;
+const TRACE_OVER = 3;   /* ⭐ 3倍でなぞる＝階段が出力で3分の1画素になる */
 function traceMask(m, W, H){
   const K = (x, y) => x * (H + 1) + y;
   const out = new Map();
@@ -1068,7 +1173,7 @@ function roundCorners(p, R){
       木下＝「変形してるからかあれてるな」＝伸ばしたせいではなく、そもそも曲線が無かった。
    ⭐ Catmull-Rom を三次ベジェに置き換える（点を通る曲線）。点は1つも増えない。
    ⚠️ 角（曲がりが急な点）は【角のまま残す】。ここを丸めると字とロゴが溶ける。 */
-function toCurve(p, cornerDeg){
+function toCurve(p, cornerDeg, minSeg){
   const n = p.length;
   if(n < 4) return null;
   const lim = Math.cos(cornerDeg * Math.PI / 180);
@@ -1079,8 +1184,20 @@ function toCurve(p, cornerDeg){
     const la = Math.hypot(ax, ay), lc = Math.hypot(cx, cy);
     if(la < 1e-9 || lc < 1e-9){ T.push([0, 0]); continue; }
     const dot = (ax*cx + ay*cy) / (la*lc);      /* −1＝まっすぐ ／ +1＝折り返し */
-    if(dot > lim){ T.push([0, 0]); continue; }  /* 鋭い角＝接線を殺して角のまま */
-    T.push([(c[0]-a[0]) / 6, (c[1]-a[1]) / 6]);
+    /* 🔴🔴 角の見分け（2026-09-13・木下＝「Tの形が変わってしまってるな」）
+       角度だけで決めると、階段の細かいギザギザまで「角」になり、
+       逆に【両隣が長い＝本物の角】が丸められて字が崩れる。
+       ⭐ 角＝曲がりが大きい【かつ】両隣の辺が長い、の2つで決める。 */
+    const real = Math.min(la, lc) > minSeg;
+    if(dot > lim && real){ T.push([0, 0]); continue; }   /* 本物の角＝接線を殺して角のまま */
+    /* 🔴🔴 はみ出しを止める（木下＝「はしががたがた」）
+       Catmull-Rom の接線 (c−a)/6 は、点の間隔がばらつくと長くなりすぎて
+       辺の外へふくらむ＝細かい波に見える。
+       ⭐ 接線の長さを【隣の辺の短いほうの3分の1】で頭打ちにする。ふくらまない。 */
+    let tx = c[0]-a[0], ty = c[1]-a[1];
+    const L = Math.hypot(tx, ty) || 1;
+    const cap = Math.min(la, lc) / 3;
+    T.push([tx / L * cap, ty / L * cap]);
   }
   return { T };
 }
@@ -1101,6 +1218,7 @@ function svgTrace(transparent){
   const { w:OW, h:OH } = sheet();
   const k0 = Math.min(TRACE_OVER, TRACE_MAX / Math.max(OW, OH));
   const W = Math.max(8, Math.round(OW * k0)), H = Math.max(8, Math.round(OH * k0));
+  useMapK(k0);   /* ⭐ なぞる前の絵も同じ細かさで焼く＝輪郭が階段を拾わない */
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   paint(c.getContext('2d'), W, H, transparent);
   const d = c.getContext('2d').getImageData(0, 0, W, H).data;
@@ -1143,7 +1261,7 @@ function svgTrace(transparent){
     return (mxx-mnx) > 1.2 || (mxy-mny) > 1.2;
   });
   /* ⭐ なめらかさが 0 より上なら【曲線】で出す。0 は素の折れ線のまま残す */
-  const dstr = loops.map(p => pathD(p, kk, sm > 0 ? toCurve(p, 75) : null)).join('');
+  const dstr = loops.map(p => pathD(p, kk, sm > 0 ? toCurve(p, 150, 2.5 * S) : null)).join('');
   const ink = P.inv ? P.ink : P.bg;
   const svg = '<?xml version="1.0" encoding="UTF-8"?>\n'
     + '<svg xmlns="http://www.w3.org/2000/svg" width="' + OW + '" height="' + OH + '" '
@@ -1171,14 +1289,60 @@ function svgShoot(transparent){
 }
 el('b_svgo').onclick  = () => svgShoot(P.nobg);
 el('b_svgoA').onclick = () => svgShoot(true);
+/* ══⭐⭐ 出る形を盤に重ねる ════════════════════════════════════
+   ⚠️ 輪郭を取るのは実測 460ms 掛かる（4096角をなぞるため）。
+      つまみを動かしている【最中】には走らせない＝指を離した時（change）だけ組み直す。
+   ⭐ 重ねるのは画素でなく SVG そのもの＝拡大しても階段が出ない。
+     「書き出してから荒れに気づく」を無くすのがこの板の役目。 */
+let PVON = false, PVURL = '', PVT = 0;
+function pvKill(){ if(PVURL){ URL.revokeObjectURL(PVURL); PVURL = ''; } }
+function pvDraw(){
+  const pv = el('pv'); if(!pv) return;
+  PVKEY = pvKey();
+  if(!PVON){ pv.style.display = 'none'; pvKill(); return; }
+  stat('出る形を組み立てています…');
+  clearTimeout(PVT);
+  PVT = setTimeout(() => {
+    const t0 = performance.now();
+    /* 地なしで出す＝盤の絵の上に【形だけ】が乗る（地を敷くと下が見えなくなる） */
+    const R = svgOut(true);
+    const ms = Math.round(performance.now() - t0);
+    pvKill();
+    PVURL = URL.createObjectURL(new Blob([R.svg], { type:'image/svg+xml' }));
+    pv.src = PVURL; pv.style.display = 'block';
+    applyView();
+    stat('重ねた ── ' + R.mode + '／' + R.shapes.toLocaleString() + ' 図形'
+       + (R.pts != null ? '・' + R.pts.toLocaleString() + ' 点' : '')
+       + '・' + Math.round(R.svg.length / 1024) + ' KB（' + ms + ' ms）＝これがそのまま出る形');
+  }, 60);
+}
+/* ⭐ 重ねていない時でも、離したら【数】だけは出す（触って何も起きないのを無くす） */
+function pvReport(){
+  if(PVON){ pvDraw(); return; }
+  clearTimeout(PVT);
+  PVT = setTimeout(() => {
+    const t0 = performance.now();
+    const R = svgOut(P.nobg);
+    const ms = Math.round(performance.now() - t0);
+    stat('いまの設定で出る形 ── ' + R.mode + '／' + R.shapes.toLocaleString() + ' 図形'
+       + (R.pts != null ? '・' + R.pts.toLocaleString() + ' 点' : '')
+       + '・' + Math.round(R.svg.length / 1024) + ' KB（' + ms + ' ms）'
+       + '　※【出る形を盤で確かめる】を押すと目でも見えます');
+  }, 60);
+}
 el('r_qz').addEventListener('input',  e => { P.qz  = +e.target.value; el('o_qz').textContent  = P.qz; });
 el('r_sm').addEventListener('input',  e => { P.sm  = +e.target.value; el('o_sm').textContent  = P.sm; });
 el('r_thr').addEventListener('input', e => { P.thr = +e.target.value; el('o_thr').textContent = P.thr; });
-/* ⚠️ 出し方を選ぶボタンは【絵を作り直さない】＝盤は何も変わらないのが正しい */
+['r_qz','r_sm','r_thr'].forEach(id => el(id).addEventListener('change', pvReport));
+{ const b = el('b_pv');
+  if(b) b.onclick = () => { PVON = !PVON; b.classList.toggle('on', PVON);
+    b.textContent = PVON ? '重ねをはずす' : '出る形を盤で確かめる'; pvDraw(); }; }
+/* ⚠️ 出し方を選ぶボタンは【盤の絵】を作り直さない。重ねている時だけ組み直す */
 el('s_svgm').addEventListener('click', e => {
   const b = e.target.closest('button'); if(!b) return;
   [...el('s_svgm').children].forEach(x => x.classList.toggle('on', x === b));
   P.svgm = b.dataset.v;
+  if(PVON) pvDraw();
 });
 /* ══⭐⭐ 動かす・動画で書き出す（他の道具と同じ作法）══════════════
    ⭐ 位相は【コマ番号】で刻む（時計で刻むとコマ落ちで絵が飛ぶ）。
@@ -1321,6 +1485,7 @@ el('b_play').onclick = () => {
     TV.on = true; TV.stop = false;
     el('b_video').textContent = 'やめる';
     const out = document.createElement('canvas'); out.width = W; out.height = H;
+    useMapK(1);   /* ⚠️ 動画は版面の実寸で撮る＝細かさは版面のまま */
     const octx = out.getContext('2d');
     let enc = null, muxer = null, target = null, encErr = null;
     try{
