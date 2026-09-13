@@ -121,8 +121,9 @@ ok(await p.evaluate(() => ov.id === 'ov' && ov !== cv), '掴み手は別の板�
    そこに入れ込みできるロゴをいれると反映される、とかではないんだね」
    ＝ 物が並んでいて、ロゴを入れるだけで次々に見られること。ここを数字で見る。 */
 ok(await p.evaluate(() => KATA.length >= 6), '物（型）が並んでいる', await p.evaluate(() => KATA.map(k=>k.name).join('・')));
-ok(await p.evaluate(() => document.querySelectorAll('#s_kata button').length === KATA.length),
-   '一覧が画面に出ている');
+/* ⚠️ 一覧の最後には【＋ 写真を足す】が1つ居る（2026-09-13）＝物の数＋1 が正しい */
+ok(await p.evaluate(() => document.querySelectorAll('#s_kata button').length === KATA.length + 1),
+   '一覧が画面に出ている（＋ を1つ含む）');
 /* ⭐ 物を押してもロゴは入れたまま／面はその物に合う */
 await p.evaluate(() => { LOGO_KEEP = LOGO; useKata(2); });
 await new Promise(r=>setTimeout(r,900));
@@ -483,6 +484,75 @@ ok(clipped.切った後 > clipped.切る前 + 40,
      '⭐⭐ 足した版が【一覧に残る】（押せば何度でも戻れる）');
   ok(await p.evaluate(() => !!BG && (BG.naturalWidth || BG.width) === 600),
      '⭐ 足した版がそのまま下地になる（読み直していない）');
+}
+
+/* ══⭐⭐ 2026-09-13 の4つ ══
+   木下＝「もうひとつ入れる場合にこんがらがるな」（面が2つあるのに置くものは1つ）／
+     「地の色も選べるといいな、カラーピッカーで」／
+     「点線からはみ出したのは基本みえなくなるように」／「コマンドzで戻れるようにもして」 */
+{
+  const shot = () => p.evaluate(() => {
+    const c = document.createElement('canvas'); c.width = 200;
+    c.height = Math.round(200 * cv.height / cv.width);
+    c.getContext('2d').drawImage(cv, 0, 0, c.width, c.height);
+    const d = c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+    let h = 2166136261;
+    for(let i = 0; i < d.length; i += 4){ h ^= d[i]; h = Math.imul(h, 16777619); }
+    return h >>> 0; });
+
+  /* ⭐⭐ 面ごとに別のものを置ける（＝共通のものは触らない） */
+  const f2 = await p.evaluate(async () => {
+    document.getElementById('b_addFace').click();
+    const c = document.createElement('canvas'); c.width = 400; c.height = 200;
+    const q = c.getContext('2d'); q.fillStyle = '#c00'; q.fillRect(0,0,400,200);
+    const im = new Image(); await new Promise(r => { im.onload = r; im.src = c.toDataURL('image/png'); });
+    const fc = FACES[1];
+    fc.asset = im; fc.assetKey = 1; fc.edge = '#cc0000'; fc.assetName = '赤'; fc._c = null;
+    renderFaces(); render();
+    return { 面:FACES.length, 面2は別:!!FACES[1].asset, 面1は共通:!FACES[0].asset,
+             行:[...document.querySelectorAll('#faces button')].map(b => b.textContent.trim()) };
+  });
+  ok(f2.面 === 2 && f2.面2は別 && f2.面1は共通,
+     '⭐⭐ 面ごとに【別のものを置ける】（共通のものは触らない）', JSON.stringify(f2.行));
+
+  /* ⭐ 敷く紙の色＝つまんだら「選ぶ」に移る（触ったのに効かない、を作らない） */
+  const fc2 = await p.evaluate(() => {
+    setFill(true);
+    const c = document.getElementById('c_fill'); c.value = '#00ff88';
+    c.dispatchEvent(new Event('input', { bubbles:true }));
+    return { fillAuto:P.fillAuto, fillCol:P.fillCol, fill:P.fill }; });
+  ok(fc2.fillAuto === false && fc2.fillCol === '#00ff88' && fc2.fill === true,
+     '⭐⭐ 紙の色をカラーピッカーで選べる（つまむと【選ぶ】へ移る）', JSON.stringify(fc2));
+
+  /* ⭐⭐ 点線の外は切る。⚠️ はみ出す正体は「しわに沿う」なので、強くしてから見る */
+  await p.evaluate(() => { Object.assign(P, { warp:2.0 }); FACES.forEach(f => f._c = null);
+    setClipFace(false); render(); });
+  await new Promise(r => setTimeout(r, 400));
+  const noclip = await shot();
+  await p.evaluate(() => { setClipFace(true); FACES.forEach(f => f._c = null); render(); });
+  await new Promise(r => setTimeout(r, 400));
+  const clipped2 = await shot();
+  ok(noclip !== clipped2 && await p.evaluate(() => P.clipFace) === true,
+     '⭐⭐ 点線（面）の外は切れる／既定は切る', noclip + ' → ' + clipped2);
+
+  /* ⌘Z：戻る・進む・🔴 控えが【写し】であること */
+  const u = await p.evaluate(() => {
+    Object.assign(P, { warp:0.55 }); FACES.forEach(f => f._c = null); render();
+    const before = JSON.stringify(FACES[0].pts);
+    snap();
+    FACES[0].pts = [[0.1,0.1],[0.6,0.1],[0.6,0.5],[0.1,0.5]]; FACES[0]._c = null; render();
+    const moved = JSON.stringify(FACES[0].pts);
+    undo(); const back = JSON.stringify(FACES[0].pts);
+    redo(); const fwd = JSON.stringify(FACES[0].pts);
+    return { before, moved, back, fwd }; });
+  ok(u.moved !== u.before && u.back === u.before, '⭐⭐ ⌘Z で1つ戻る', u.before + ' → ' + u.back);
+  ok(u.fwd === u.moved, '⭐ ⌘⇧Z で1つ進む');
+  const cp = await p.evaluate(() => {
+    snap(); const want = JSON.stringify(FACES[0].pts);
+    FACES[0].pts[0][0] = 0.999; FACES[0]._c = null; render();   /* 控えの中身を直に触る形 */
+    undo(); return { 戻り:JSON.stringify(FACES[0].pts), 期待:want }; });
+  ok(cp.戻り === cp.期待,
+     '🔴🔴 ⌘Z の控えは【写し】＝あとで書き換えても汚れない', cp.戻り);
 }
 
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
