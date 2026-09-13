@@ -618,5 +618,82 @@ ok(clipped.切った後 > clipped.切る前 + 40,
   ok(u.戻り === u.前, '🔴🔴 ⌘Z は1回で【必ず絵が変わる】（同じ控えは飛ばす）');
 }
 
+/* ══⭐⭐ 置くものの【大きさ・位置】── 2026-09-13 ══
+   木下＝「以前入れた画像を大きくしたり小さくしたりすることができないね」。
+   ⭐ 置くものは面いっぱいに比を保って入るだけで、面の中での大きさ・位置を触れなかった。
+   ⚠️ 面ごとの値＝面を切り替えたら棒もその面に戻る（回すのと同じ扱い）。 */
+{
+  /* ⚠️ 測るものをはっきりさせる＝【真っ白な四角】を置く（字だと画素が少なすぎて数えられない） */
+  await p.evaluate(async () => {
+    useKata(0); setFill(false);
+    const c = document.createElement('canvas'); c.width = 400; c.height = 200;
+    const q = c.getContext('2d'); q.fillStyle = '#ffffff'; q.fillRect(0,0,400,200);
+    const im = new Image(); await new Promise(r => { im.onload = r; im.src = c.toDataURL('image/png'); });
+    P.cut = false; setLOGO(im, 'white.png'); FACES.forEach(f => f._c = null); render();
+  });
+  /* ⚠️ 立ち上げ直後に測ると【まだ置くものが乗っていない】＝1枚目が 0 になる（1回踏んだ） */
+  await new Promise(r => setTimeout(r, 2200));
+  const inFaceInk = () => p.evaluate(() => {
+    const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height;
+    c.getContext('2d').drawImage(cv, 0, 0);
+    const d = c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+    const q = FACES[0].pts.map(([x,y]) => [x*c.width, y*c.height]);
+    const inq = (x,y) => { let s = false;
+      for(let i = 0, j = 3; i < 4; j = i++){ const [xi,yi] = q[i], [xj,yj] = q[j];
+        if((yi>y) !== (yj>y) && x < (xj-xi)*(y-yi)/(yj-yi)+xi) s = !s; } return s; };
+    let n = 0, sy = 0, m = 0;
+    for(let y = 0; y < c.height; y += 2) for(let x = 0; x < c.width; x += 2){
+      if(!inq(x,y)) continue; const i = (y*c.width+x)*4;
+      const l = d[i]*.299 + d[i+1]*.587 + d[i+2]*.114;
+      if(l > 200){ n++; sy += y; m++; } }        /* 白いロゴなので明るい方を数える */
+    return { 量:n, 重心:m ? Math.round(sy/m) : 0 };
+  });
+  const set = async (id, v) => { await p.evaluate((i,x) => { const e = document.getElementById(i);
+    e.value = x; e.dispatchEvent(new Event('input',{bubbles:true})); }, id, v);
+    await new Promise(r => setTimeout(r, 450)); };
+  const a100 = await inFaceInk();
+  await set('r_zoom', 40);  const a40 = await inFaceInk();
+  await set('r_zoom', 250); const a250 = await inFaceInk();
+  await set('r_zoom', 100);
+  ok(a40.量 < a100.量 * 0.5 && a250.量 > a100.量 * 1.2,
+     '⭐⭐ 置くものの【大きさ】が効く', `40%:${a40.量} 100%:${a100.量} 250%:${a250.量}`);
+  const c0 = await inFaceInk();
+  await set('r_oy', -25); const c1 = await inFaceInk();
+  await set('r_oy', 0);
+  ok(c1.重心 < c0.重心 - 10, '⭐ 【縦にずらす】が効く', c0.重心 + ' → ' + c1.重心);
+  /* ⚠️ 面ごとの値＝切り替えたら棒も戻る（2つの真実を作らない） */
+  await p.evaluate(() => { document.getElementById('b_addFace').click(); });
+  await new Promise(r => setTimeout(r, 600));
+  await set('r_zoom', 180);
+  const two = await p.evaluate(() => ({ 面1:FACES[0].zoom == null ? 1 : FACES[0].zoom, 面2:FACES[1].zoom }));
+  await p.evaluate(() => { cur = 0; renderFaces(); syncRot(); drawHandles(); });
+  await new Promise(r => setTimeout(r, 400));
+  const bar = await p.evaluate(() => document.getElementById('r_zoom').value);
+  ok(two.面1 === 1 && Math.abs(two.面2 - 1.8) < 0.01 && bar === '100',
+     '⭐⭐ 大きさは【面ごと】＝面を切り替えると棒もその面に戻る', JSON.stringify(two) + ' 棒:' + bar);
+  /* ⭐ 大きくしても点線の外へは出ない */
+  await p.evaluate(() => { cur = 1; renderFaces(); syncRot(); });
+  await set('r_zoom', 300);
+  const out = await p.evaluate(() => {
+    const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height;
+    c.getContext('2d').drawImage(cv, 0, 0);
+    const d = c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+    const q = FACES[1].pts.map(([x,y]) => [x*c.width, y*c.height]);
+    const inq = (x,y) => { let s = false;
+      for(let i = 0, j = 3; i < 4; j = i++){ const [xi,yi] = q[i], [xj,yj] = q[j];
+        if((yi>y) !== (yj>y) && x < (xj-xi)*(y-yi)/(yj-yi)+xi) s = !s; } return s; };
+    const mnx = Math.min(...q.map(a=>a[0])), mxx = Math.max(...q.map(a=>a[0]));
+    const mny = Math.min(...q.map(a=>a[1])), mxy = Math.max(...q.map(a=>a[1]));
+    let n = 0;
+    for(let y = Math.max(0,mny-50); y < Math.min(c.height,mxy+50); y += 2)
+      for(let x = Math.max(0,mnx-50); x < Math.min(c.width,mxx+50); x += 2){
+        if(inq(x,y)) continue; const i = (y*c.width+x)*4;
+        if(d[i]*.299 + d[i+1]*.587 + d[i+2]*.114 > 210) n++; }
+    return n; });
+  ok(out === 0, '⭐ 300% にしても【点線の外へは出ない】（切れている）', '外に出た画素 ' + out);
+  await p.evaluate(() => { document.getElementById('b_delFace').click(); });
+  await new Promise(r => setTimeout(r, 400));
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
 await b.close(); process.exit(NG);
