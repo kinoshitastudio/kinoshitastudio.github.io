@@ -324,6 +324,18 @@
     <input type="range" id="r_roll" min="-180" max="180" value="0">
     <div class="row"><span class="n">奥行き</span><output id="o_persp">0</output></div>
     <input type="range" id="r_persp" min="0" max="100" value="0">
+    <!-- ⭐⭐ 木下＝「以前入れた画像を大きくしたり小さくしたりすることができないね」（2026-09-13）
+         ＝置くものは【面いっぱいに比を保って】入るだけで、面の中での大きさと位置を触れなかった。
+         ⚠️ これは面ごとの値（面を選んでから触る）。100% を超えたぶんは点線で切れる。 -->
+    <div class="row"><span class="n">置くものの大きさ</span><output id="o_zoom">100%</output></div>
+    <input type="range" id="r_zoom" min="10" max="300" value="100">
+    <div class="row"><span class="n">横にずらす</span><output id="o_ox">0</output></div>
+    <input type="range" id="r_ox" min="-50" max="50" value="0">
+    <div class="row"><span class="n">縦にずらす</span><output id="o_oy">0</output></div>
+    <input type="range" id="r_oy" min="-50" max="50" value="0">
+    <div class="note">⭐⭐ <b>置くものの大きさ</b>＝面の中での大きさ（100% ＝ 面に収まる目いっぱい）。
+      <b>面ごと</b>に効くので、面を選んでから触る<br>
+      ⭐ 100% を超えると<b>点線からはみ出したぶんは切れる</b>（＝面いっぱいに敷ける）</div>
     <div class="note">⭐⭐ <b>回すと四隅が動く</b>（角度が入力で、四隅は結果）。0 に戻せば必ず元に戻る<br>
       ⭐ <b>奥行き</b>＝近くから見た強さ。上げるほど遠い辺が短くなる（袋や箱の側面に効く）<br>
       ⚠️ 四隅を手で掴んで直すと、<b>その形が新しい基準</b>になって角度は 0 に戻る</div>
@@ -1042,8 +1054,14 @@ function drawFace(ctx, fc, W, H){
   const fw = (dist(q[0], q[1]) + dist(q[3], q[2])) / 2;
   const fh = (dist(q[0], q[3]) + dist(q[1], q[2])) / 2;
   const kk = Math.min(fw / iw, fh / ih) || 1;
-  const uw = Math.min(1, (iw * kk) / (fw || 1)), vh = Math.min(1, (ih * kk) / (fh || 1));
-  const uo = (1 - uw) / 2, vo = (1 - vh) / 2;
+  /* ⭐⭐ 面の中での【大きさ】と【位置】（2026-09-13）──
+     木下＝「以前入れた画像を大きくしたり小さくしたりすることができないね」。
+     ⭐ 比は保ったまま、面に収まる目いっぱい（=1.00）を基準に伸び縮みさせる。
+     ⚠️ 1.00 を超えたぶんは【点線の外は切る】で切れる＝面いっぱいに敷ける。
+     ⚠️ 面ごとの値なので、面を選んでから触る（回すのと同じ扱い）。 */
+  const z = Math.max(0.1, Math.min(3, fc.zoom == null ? 1 : fc.zoom));
+  const uw = Math.min(1, (iw * kk) / (fw || 1)) * z, vh = Math.min(1, (ih * kk) / (fh || 1)) * z;
+  const uo = (1 - uw) / 2 + (fc.ox || 0), vo = (1 - vh) / 2 + (fc.oy || 0);
   const pt = (u, v) => {
     const p = f(uo + u * uw, vo + v * vh);
     if(amp > 0.01){
@@ -1063,6 +1081,7 @@ function drawFace(ctx, fc, W, H){
   const ck = [fc.pts.join(';'), P.warp, iw, ih, AKEY,
               isVid(A) ? A.currentTime.toFixed(3) : '',
               P.tint, P.tintCol, P.fill ? PAPER : '', P.clipFace ? 'c' : '',
+              z, fc.ox || 0, fc.oy || 0,
               fc.clip ? fc.clip.map(p => p.x.toFixed(3)+','+p.y.toFixed(3)+(p.r?'r':'')).join(' ') : '',
               W, H, N].join('|');
   if(!fc._c || fc._c.key !== ck){
@@ -1540,6 +1559,13 @@ el('b_pts').onclick = () => {
 /* ⭐ 回すつまみ＝いま選んでいる面に効く。⚠️ 面を切り替えたら、その面の角度に戻す */
 const ROTS = [['r_yaw','yaw','o_yaw','°'],['r_pitch','pitch','o_pitch','°'],
               ['r_roll','roll','o_roll','°'],['r_persp','persp','o_persp','']];
+/* ⭐ 置くものの大きさ・位置も【面ごと】＝回すのと同じ扱い（面を選んでから触る）
+   ⚠️ 目盛と値の比が違うので、行くとき（conv）と戻すとき（inv）を両方書く */
+const FKNOBS = [
+  ['r_zoom','zoom','o_zoom', v => Math.round(v*100) + '%', v => v/100, v => Math.round((v==null?1:v)*100), 1],
+  ['r_ox','ox','o_ox', v => (v*100).toFixed(0), v => v/100, v => Math.round((v||0)*100), 0],
+  ['r_oy','oy','o_oy', v => (v*100).toFixed(0), v => v/100, v => Math.round((v||0)*100), 0],
+];
 function syncRot(){
   const fc = FACES[cur], r = (fc && fc.rot) || {};
   ROTS.forEach(([id, k, out, unit]) => {
@@ -1547,7 +1573,22 @@ function syncRot(){
     e.value = r[k] || 0;
     const o = el(out); if(o) o.value = (r[k] || 0) + unit;
   });
+  FKNOBS.forEach(([id, k, out, fmt, conv, inv, dflt]) => {
+    const e = el(id); if(!e) return;
+    const v = fc && fc[k] != null ? fc[k] : dflt;
+    e.value = inv(v);
+    const o = el(out); if(o) o.value = fmt(v);
+  });
 }
+FKNOBS.forEach(([id, k, out, fmt, conv]) => {
+  const e = el(id); if(!e) return;
+  e.addEventListener('input', () => {
+    const fc = FACES[cur]; if(!fc) return;
+    fc[k] = conv(+e.value); fc._c = null;
+    const o = el(out); if(o) o.value = fmt(fc[k]);
+    touching(); renderSoon(); drawHandles();
+  });
+});
 ROTS.forEach(([id, k, out, unit]) => {
   const e = el(id); if(!e) return;
   e.addEventListener('input', () => {
@@ -1606,6 +1647,7 @@ const UNDO = [], REDO = [];
 function faceCopy(f){
   return { on:f.on, asset:f.asset || null, assetKey:f.assetKey || 0,
            edge:f.edge || null, assetName:f.assetName || '',
+           zoom:f.zoom == null ? 1 : f.zoom, ox:f.ox || 0, oy:f.oy || 0,
            pts:f.pts.map(p => p.slice()),
            base:f.base ? f.base.map(p => p.slice()) : null,
            rot:f.rot ? Object.assign({}, f.rot) : null,
@@ -1615,7 +1657,7 @@ function stateNow(){ return { P:Object.assign({}, P), faces:FACES.map(faceCopy),
 /* ⭐ 見分けの札＝これが同じなら「同じ絵」。⚠️ 置くもの（画像）は札に入れない（重い・毎回別物になる） */
 function stateTag(s){
   return JSON.stringify([s.P, s.cur, s.kidx,
-    s.faces.map(f => [f.on, f.pts, f.rot, f.clip, f.assetName, f.assetKey])]);
+    s.faces.map(f => [f.on, f.pts, f.rot, f.clip, f.assetName, f.assetKey, f.zoom, f.ox, f.oy])]);
 }
 /* 🔴🔴 木下＝「コマンドzのキーボードショートカットがきかないなあ」（2026-09-13）
    ⭐ 正体＝**同じ絵を何枚も積んでいた**。盤を押すたび・つまみを掴むたびに積むので、
