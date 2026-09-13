@@ -373,6 +373,10 @@
     <input type="range" id="r_dsb" min="0" max="60" value="10">
     <div class="row"><span class="n">影の向き</span><output id="o_dsa">135°</output></div>
     <input type="range" id="r_dsa" min="0" max="359" value="135">
+    <!-- ⭐⭐ 木下＝「この色がのらないなあ」＝地つきの作品の色が、借りたぶんズレて出ていた。
+         実測 #3a6b45 →（光0.08＋色0.30＋濃さ0.95で）#59745b。
+         ⭐ 3つ戻せば #3a6b45 ぴったりに戻る＝**その3つを1回で戻すボタン**（新しい値は作らない） -->
+    <button class="btn" id="b_truecol">⭐ 作品の色をそのまま出す</button>
     <div class="seg" id="s_blend">
       <button data-v="multiply">乗算</button><button data-v="normal" class="on">そのまま</button>
       <button data-v="overlay">オーバーレイ</button><button data-v="screen">スクリーン</button>
@@ -380,6 +384,8 @@
     <div class="note">⭐⭐ <b>しわに沿う</b>＝下の写真の明暗の<b>傾き</b>だけロゴをずらす。布のたるみに沿って曲がる<br>
       ⭐⭐ <b>陰を借りる／光を借りる</b>＝下の写真の暗い所・明るい所を<b>ロゴの上にだけ</b>掛ける<br>
       ⚠️ 全部 0 なら<b>ただ貼っただけ</b>になる（そこが「嵌める」との違い）<br>
+      🔴 <b>濃い色の地がついた作品を入れたら「光を借りる」を下げる</b>
+      （明るい面ほど効きすぎて、<b>濃い色が灰色に飛ぶ</b>）<br>
       ⭐⭐ <b>影を落とす</b>＝借りるのでなく<b>こちらが作る影</b>。<b>切り文字・立体サイン</b>に要る
       （壁から浮いていないと不自然）。⚠️ <b>印刷もの（のぼり・看板・名刺）では 0 のまま</b>＝
       面に刷ってあるものに影は落ちない</div>
@@ -533,6 +539,12 @@ function cutFrame(v){
 /* ⭐ 置いたものの【縁の色】＝面の余りを埋めるのに使う（ポスターの紙の色）
    ⚠️ 縁が透明なら null＝敷かない（地なしロゴに紙を敷くと台無しになる） */
 let LOGO_EDGE = null;
+/* ⭐ 'rgb(r,g,b)' → '#rrggbb'（カラーピッカーは16進しか受け取らない） */
+function rgbHex(s){
+  const m = /rgb\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(s || '');
+  if(!m) return /^#[0-9a-f]{6}$/i.test(s || '') ? s : null;
+  return '#' + [1,2,3].map(i => (+m[i]).toString(16).padStart(2, '0')).join('');
+}
 function edgeColor(img){
   const [W, H] = assetSize(img); if(!W || !H) return null;
   const c = document.createElement('canvas');
@@ -565,6 +577,15 @@ function setLOGO(img, name){
      + '（' + W + '×' + H + (isVid(img) ? '・' + (img.duration || 0).toFixed(1) + '秒' : '') + '）'
      + (cut ? ' ⭐ 白い地を抜いた（「そのまま入れる」で元のまま）' : ''));
   LOGO_EDGE = edgeColor(LOGO);
+  /* ⭐⭐ 敷く紙の色を【置いたものの地の色】に合わせておく（2026-09-13）──
+     木下＝「背景色を地に入れるとそれに合わない」。地つきの1枚（濃い緑の上に白い字）を入れて
+     面に紙を敷くと、余った所だけ別の緑になって帯に見えていた。
+     🔴 「自動」は元から縁の色を使うので合っていたが、【色を選ぶ】に移った瞬間に
+        前の色（白）が使われて食い違っていた。⭐ 読んだ時に両方そろえる。 */
+  if(LOGO_EDGE){
+    const h = rgbHex(LOGO_EDGE);
+    if(h){ P.fillCol = h; const e = el('c_fill'); if(e) e.value = h; }
+  }
   showVid();
   if(isVid(img)){
     probeVideo(img);                 /* ⭐ 地の色は1コマ目で決める */
@@ -1540,6 +1561,15 @@ ROTS.forEach(([id, k, out, unit]) => {
   });
 });
 document.querySelectorAll('#s_fill button').forEach(b => b.onclick = () => { setFill(b.dataset.v === '1'); render(); });
+/* ⭐⭐ 作品の色をそのまま出す（2026-09-13）＝**色をズラしている3つだけ**を戻す。
+   ⚠️ 陰・質感・しわ・影は残す＝物に嵌まって見えるのはそちらの仕事。
+   ⭐ 新しい値を作らない＝**つまみを触る道**を通るので、⌘Z でも設定JSONでもそのまま戻る。 */
+el('b_truecol').onclick = () => {
+  snap();
+  Object.assign(P, { hi:0, col:0, op:1 });
+  syncKnobs(); FACES.forEach(f => f._c = null); render();
+  stat('作品の色をそのまま出した（光・色を借りるを 0／濃さを 1.00 にした）');
+};
 /* ⭐ 敷く紙の色（2026-09-13）＝既定は自動（置いたものの縁の色）＝いままでの絵のまま */
 function setFillMode(auto){
   P.fillAuto = !!auto;
@@ -1547,6 +1577,8 @@ function setFillMode(auto){
     x.classList.toggle('on', (x.dataset.v === '1') === P.fillAuto));
 }
 document.querySelectorAll('#s_fillm button').forEach(b => b.onclick = () => {
+  /* ⭐ 「色を選ぶ」に移るときは【いまピッカーに出ている色】を採る（見た目と値を食い違わせない） */
+  if(b.dataset.v === '0') P.fillCol = el('c_fill').value;
   setFillMode(b.dataset.v === '1'); FACES.forEach(f => f._c = null); render(); });
 el('c_fill').addEventListener('input', e => {
   P.fillCol = e.target.value;
@@ -1580,7 +1612,21 @@ function faceCopy(f){
            clip:f.clip ? f.clip.map(p => Object.assign({}, p)) : null };
 }
 function stateNow(){ return { P:Object.assign({}, P), faces:FACES.map(faceCopy), cur, kidx:KIDX }; }
-function snap(){ UNDO.push(stateNow()); if(UNDO.length > 60) UNDO.shift(); REDO.length = 0; }
+/* ⭐ 見分けの札＝これが同じなら「同じ絵」。⚠️ 置くもの（画像）は札に入れない（重い・毎回別物になる） */
+function stateTag(s){
+  return JSON.stringify([s.P, s.cur, s.kidx,
+    s.faces.map(f => [f.on, f.pts, f.rot, f.clip, f.assetName, f.assetKey])]);
+}
+/* 🔴🔴 木下＝「コマンドzのキーボードショートカットがきかないなあ」（2026-09-13）
+   ⭐ 正体＝**同じ絵を何枚も積んでいた**。盤を押すたび・つまみを掴むたびに積むので、
+     まだ何も変えていない状態が控えに何枚も入る → ⌘Z を押しても「いまと同じ絵」に戻る
+     ＝押しても何も起きないように見える（実際は1つ戻っている）。
+   ⭐ 直し＝①同じ札なら積まない ②戻すときは【違う絵が出るまで】まとめて戻す。 */
+function snap(){
+  const s = stateNow(), t = stateTag(s);
+  if(UNDO.length && UNDO[UNDO.length-1].tag === t) return;
+  s.tag = t; UNDO.push(s); if(UNDO.length > 60) UNDO.shift(); REDO.length = 0;
+}
 function applyState(s){
   Object.assign(P, s.P);
   FACES = s.faces.map(faceCopy);              /* ⭐ 戻すときも写す（控えを渡さない） */
@@ -1595,25 +1641,34 @@ function applyState(s){
   drawHandles();
 }
 function undo(){
-  const s = UNDO.pop(); if(!s){ stat('これ以上は戻せない'); return; }
-  REDO.push(stateNow()); applyState(s); stat('1つ戻した（⌘⇧Z で進む）');
+  const now = stateNow(), nt = stateTag(now);
+  let s = null;
+  /* ⚠️ いまと同じ絵の控えは飛ばす＝押したら必ず【何かが変わる】 */
+  while(UNDO.length){ const c = UNDO.pop(); if((c.tag || stateTag(c)) !== nt){ s = c; break; } }
+  if(!s){ stat('これ以上は戻せない'); return; }
+  now.tag = nt; REDO.push(now); applyState(s); stat('1つ戻した（⌘⇧Z で進む）');
 }
 function redo(){
-  const s = REDO.pop(); if(!s){ stat('これ以上は進めない'); return; }
-  UNDO.push(stateNow()); applyState(s); stat('1つ進めた');
+  const now = stateNow(), nt = stateTag(now);
+  let s = null;
+  while(REDO.length){ const c = REDO.pop(); if((c.tag || stateTag(c)) !== nt){ s = c; break; } }
+  if(!s){ stat('これ以上は進めない'); return; }
+  now.tag = nt; UNDO.push(now); applyState(s); stat('1つ進めた');
 }
 /* ⭐ 積むのは【触り始め】＝パネルのボタン・スライダーを掴んだ瞬間と、盤を掴んだ瞬間 */
 el('panel').addEventListener('pointerdown', e => {
   if(e.target.closest('button, input[type=range], input[type=color]')) snap();
 }, true);
 stage.addEventListener('pointerdown', () => snap(), true);
+/* ⚠️ 日本語入力や JIS 配列では e.key が 'z' で来ないことがある＝**キーの位置（code）でも見る** */
 addEventListener('keydown', e => {
-  if(!(e.metaKey || e.ctrlKey) || (e.key || '').toLowerCase() !== 'z') return;
+  const isZ = (e.key || '').toLowerCase() === 'z' || e.code === 'KeyZ';
+  if(!(e.metaKey || e.ctrlKey) || !isZ) return;
   const t = e.target;
   if(t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && /^(|text|number)$/.test(t.type)))) return;
   e.preventDefault();
   if(e.shiftKey) redo(); else undo();
-});
+}, true);
 /* ⭐ 道具の棚＝触り方を変えるだけ（面の値は同じものを触る） */
 document.querySelectorAll('#tools button').forEach(b => b.onclick = () => {
   TOOL = b.dataset.t;
