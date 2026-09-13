@@ -555,5 +555,68 @@ ok(clipped.切った後 > clipped.切る前 + 40,
      '🔴🔴 ⌘Z の控えは【写し】＝あとで書き換えても汚れない', cp.戻り);
 }
 
+/* ══⭐⭐ 作品の色が【そのまま】出せるか ── 2026-09-13 ══
+   木下＝「背景色を地に入れるとそれに合わない」「この色がのらないなあ」。
+   ⭐ 地つきの1枚（濃い緑に白い字）を入れたときに見えた2つ：
+     ① 面に紙を敷くと、余った所だけ別の色になって【帯】に見える
+        → 読んだ時に紙の色を【置いたものの地の色】にそろえる
+     ② 光・色を借りる＋濃さ 0.95 のぶん、作品の色がズレて出る（実測 #3a6b45 → #59745b）
+        → 「作品の色をそのまま出す」で3つだけ戻すと #3a6b45 ぴったりに戻る */
+{
+  await p.evaluate(async () => {
+    const c = document.createElement('canvas'); c.width = 1800; c.height = 385;
+    const q = c.getContext('2d'); q.fillStyle = '#3a6b45'; q.fillRect(0,0,1800,385);
+    q.fillStyle = '#fff'; q.font = 'bold 90px sans-serif'; q.textBaseline = 'middle';
+    q.fillText('TBT', 420, 200);
+    const im = new Image(); await new Promise(r => { im.onload = r; im.src = c.toDataURL('image/png'); });
+    setLOGO(im, 'green.png'); render();
+  });
+  await new Promise(r => setTimeout(r, 900));
+  const paper = await p.evaluate(() => ({ 棒:document.getElementById('c_fill').value, 値:P.fillCol }));
+  ok(paper.棒 === '#3a6b45' && paper.値 === '#3a6b45',
+     '⭐⭐ 置くものを読むと【紙の色】がその地の色になる（帯にならない）', JSON.stringify(paper));
+
+  await p.evaluate(() => { setFill(true); document.querySelector('#s_fillm button[data-v="0"]').click(); });
+  await new Promise(r => setTimeout(r, 400));
+  ok(await p.evaluate(() => P.fillCol) === '#3a6b45',
+     '⭐ 「色を選ぶ」に移してもピッカーと値が食い違わない');
+
+  const read = () => p.evaluate(() => {
+    const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height;
+    c.getContext('2d').drawImage(cv, 0, 0);
+    const d = c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+    const q = FACES[0].pts;
+    const X = Math.round((q[0][0]*0.85 + q[1][0]*0.15) * c.width);
+    const Y = Math.round((q[0][1] + (q[3][1]-q[0][1])*0.5) * c.height);
+    const i = (Y*c.width + X)*4;
+    return '#' + [d[i],d[i+1],d[i+2]].map(v => v.toString(16).padStart(2,'0')).join('');
+  });
+  await p.evaluate(() => { Object.assign(P, { sh:0.75, hi:0.30, gr:0.30, col:0.30, op:0.95 });
+    FACES.forEach(f => f._c = null); syncKnobs(); render(); });
+  await new Promise(r => setTimeout(r, 450));
+  const before = await read();
+  await p.evaluate(() => document.getElementById('b_truecol').click());
+  await new Promise(r => setTimeout(r, 500));
+  const after = await read();
+  ok(before !== '#3a6b45' && after === '#3a6b45',
+     '⭐⭐ 「作品の色をそのまま出す」で素材の色ぴったりに戻る', before + ' → ' + after);
+  ok(await p.evaluate(() => P.sh) > 0.5,
+     '⚠️ 陰・質感は残る（物に嵌まって見えるのはそちらの仕事）');
+
+  /* 🔴🔴 ⌘Z が「効かない」に見えていた正体＝同じ絵を何枚も積んでいた */
+  const u = await p.evaluate(() => {
+    UNDO.length = 0; REDO.length = 0;
+    snap(); snap(); snap();
+    const 空打ち = UNDO.length;
+    const 前 = JSON.stringify(FACES[0].pts);
+    snap(); FACES[0].pts = [[0.1,0.1],[0.6,0.1],[0.6,0.5],[0.1,0.5]]; FACES[0]._c = null; render();
+    snap(); snap();
+    undo();
+    return { 空打ち, 戻り:JSON.stringify(FACES[0].pts), 前 };
+  });
+  ok(u.空打ち === 1, '⭐⭐ 同じ絵は控えに積まない（空打ちで増えない）', '3回押して ' + u.空打ち + ' 枚');
+  ok(u.戻り === u.前, '🔴🔴 ⌘Z は1回で【必ず絵が変わる】（同じ控えは飛ばす）');
+}
+
 ok(errs.length === 0, 'JSエラーが出ない', errs.join(' / '));
 await b.close(); process.exit(NG);
