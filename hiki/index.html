@@ -352,8 +352,8 @@
       <button class="btn" id="b_svgo">SVG を書き出す</button>
       <button class="btn" id="b_svgoA">地なし SVG</button>
     </div>
-    <div class="row"><span class="n">輪郭：なめらかさ</span><output id="o_sm">5</output></div>
-    <input type="range" id="r_sm" min="0" max="8" value="5">
+    <div class="row"><span class="n">輪郭：なめらかさ</span><output id="o_sm">8</output></div>
+    <input type="range" id="r_sm" min="0" max="24" value="8">
     <div class="row"><span class="n">輪郭：どこから塗りか</span><output id="o_thr">50</output></div>
     <input type="range" id="r_thr" min="1" max="99" value="50">
     <div class="row"><span class="n">短冊：まとめ（色数）</span><output id="o_qz">16</output></div>
@@ -436,7 +436,7 @@ const P = {
   ratio:'1:1', long:1400, pad:8,
   inv:1, ink:'#ffffff', bg:'#0a0a0a', nobg:false,
   /* ⚠️ ここから下は【出すときだけ】のつまみ。盤の絵は変わらないのが正しい */
-  svgm:'trace', qz:16, sm:5, thr:50,
+  svgm:'trace', qz:16, sm:8, thr:50,
 };
 let SRC = null;          /* 写真・SVG を入れたらこちらが元（字より優先） */
 
@@ -961,7 +961,15 @@ function svgStrip(transparent){
 /* ── 輪郭で出す（二値の絵。字・自作 SVG・ロゴはこちら）──
    ⭐ 蝕SHOKU と同じ手順：①塗った所の地図 ②境目をたどって閉じた輪 ③角を取って点を減らす。
    ⚠️ たどるのは長辺 2400 まで（それ以上は出す大きさへ掛け算で戻す）。 */
-const TRACE_MAX = 2400;
+const TRACE_MAX = 4096;
+/* ⭐⭐⭐ なぞる大きさを出す大きさの【2倍】にする（2026-09-13）
+   🔴🔴 これが階段の本当の出どころだった。これまでは等倍（1400の絵を1400でなぞる）なので、
+      階段1段が出す絵でも1画素ぶん残る。曲線にしても、その1画素を律儀になぞって【細かい波】になる。
+      木下＝「やはりガタガタだわ」＝296%まで寄るとこの波が見える。
+   ⭐ 2倍でなぞると、同じ階段が出す絵では【0.5画素】になる。
+      間引きのしきい値（1.85px）から見れば十分に小さいので、きれいに消える。
+   ⚠️ 点は増えない（間引きが効くので、むしろ減る）。⚠️ 上限は 4096（それ以上は重いだけ）。 */
+const TRACE_OVER = 2;
 function traceMask(m, W, H){
   const K = (x, y) => x * (H + 1) + y;
   const out = new Map();
@@ -1054,9 +1062,44 @@ function roundCorners(p, R){
   }
   return o.length > 3 ? o : p;
 }
+/* ⭐⭐⭐ 折れ線を【曲線】にする（2026-09-13）
+   🔴🔴 これまで d は 'M … L … L … Z' の【直線だけ】だった。
+      折れ線なので、Figma で 700% に拡大すれば【必ず面が見える】。
+      木下＝「変形してるからかあれてるな」＝伸ばしたせいではなく、そもそも曲線が無かった。
+   ⭐ Catmull-Rom を三次ベジェに置き換える（点を通る曲線）。点は1つも増えない。
+   ⚠️ 角（曲がりが急な点）は【角のまま残す】。ここを丸めると字とロゴが溶ける。 */
+function toCurve(p, cornerDeg){
+  const n = p.length;
+  if(n < 4) return null;
+  const lim = Math.cos(cornerDeg * Math.PI / 180);
+  const T = [];
+  for(let i = 0; i < n; i++){
+    const a = p[(i-1+n)%n], b = p[i], c = p[(i+1)%n];
+    const ax = a[0]-b[0], ay = a[1]-b[1], cx = c[0]-b[0], cy = c[1]-b[1];
+    const la = Math.hypot(ax, ay), lc = Math.hypot(cx, cy);
+    if(la < 1e-9 || lc < 1e-9){ T.push([0, 0]); continue; }
+    const dot = (ax*cx + ay*cy) / (la*lc);      /* −1＝まっすぐ ／ +1＝折り返し */
+    if(dot > lim){ T.push([0, 0]); continue; }  /* 鋭い角＝接線を殺して角のまま */
+    T.push([(c[0]-a[0]) / 6, (c[1]-a[1]) / 6]);
+  }
+  return { T };
+}
+function pathD(p, kk, curve){
+  const n = p.length, f = q => (q[0]*kk).toFixed(2) + ' ' + (q[1]*kk).toFixed(2);
+  if(!curve) return 'M' + p.map(f).join('L') + 'Z';
+  const T = curve.T;
+  let d = 'M' + f(p[0]);
+  for(let i = 0; i < n; i++){
+    const b = p[i], c = p[(i+1)%n], t0 = T[i], t1 = T[(i+1)%n];
+    d += 'C' + f([b[0]+t0[0], b[1]+t0[1]]) + ' '
+             + f([c[0]-t1[0], c[1]-t1[1]]) + ' ' + f(c);
+  }
+  return d + 'Z';
+}
+
 function svgTrace(transparent){
   const { w:OW, h:OH } = sheet();
-  const k0 = Math.min(1, TRACE_MAX / Math.max(OW, OH));
+  const k0 = Math.min(TRACE_OVER, TRACE_MAX / Math.max(OW, OH));
   const W = Math.max(8, Math.round(OW * k0)), H = Math.max(8, Math.round(OH * k0));
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   paint(c.getContext('2d'), W, H, transparent);
@@ -1073,28 +1116,34 @@ function svgTrace(transparent){
     const lum = d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114;
     m[p2] = (P.inv ? (lum > thr) : (lum < thr)) ? 1 : 0;
   }
-  const sm = Math.max(0, Math.min(8, P.sm | 0));
+  const sm = Math.max(0, Math.min(24, P.sm | 0));
   const kk = OW / W;
   /* 🔴🔴 間引きと丸めの効き目を【版面の大きさに比例】させる（2026-09-13）。
      これまで px 固定だったので、版面が大きいほど相対的に効かず、
      木下が Figma で開くと【階段がそのまま残っていた】。
      実測（1400角・既定 sm=2）＝隣り合う辺の 82% が折り返し＝これが階段の正体。
      ⚠️ 基準を 1400 にしてあるので、1400 角の絵ではこれまでと1画素も変わらない。 */
-  const S = Math.max(W, H) / 1400;
+  const S = Math.max(OW, OH) / 1400 * k0;   /* ⭐ しきい値は【なぞった座標系】で効かせる */
   let loops = traceMask(m, W, H).map(p => {
     p = dropStraight(p);
     if(sm === 0) return p;
-    p = thin(p, (0.35 + sm * 0.30) * S);
-    p = roundCorners(p, sm * 1.2 * S);    /* ⭐ 丸めは px の半径で（割合でやると字が溶ける） */
-    return thin(p, 0.22 * S);
+    /* 🔴🔴🔴 roundCorners を外した（2026-09-13）
+       角を丸めるのは【折れ線しか出せなかった頃】の代用品で、1つの角に6〜7点を足す。
+       実測＝間引きでいくら減らしても、そのあと丸めが増やすので点が減らなかった
+       （なめらかさ 5→24 で 221→260点。上げても減らない）。
+       ⭐ しかも増えた点は元の角のまわりに固まるので、曲線がそこで揺れる＝【細かい波】の正体。
+         木下＝「やはりガタガタだわ。パスを少なくしてもっとなめらかに」
+       ⭐ いまは本物の三次ベジェ（toCurve）で出しているので、丸めは要らない。
+       ⚠️ 間引きだけにすると、上げたぶんだけ素直に点が減る。 */
+    return thin(p, (0.35 + sm * 0.30) * S);
   }).filter(p => {
     let mnx=1e9, mny=1e9, mxx=-1e9, mxy=-1e9;
     for(const q of p){ if(q[0]<mnx)mnx=q[0]; if(q[0]>mxx)mxx=q[0];
                        if(q[1]<mny)mny=q[1]; if(q[1]>mxy)mxy=q[1]; }
     return (mxx-mnx) > 1.2 || (mxy-mny) > 1.2;
   });
-  const dstr = loops.map(p => 'M' + p.map(q =>
-      (q[0]*kk).toFixed(2) + ' ' + (q[1]*kk).toFixed(2)).join('L') + 'Z').join('');
+  /* ⭐ なめらかさが 0 より上なら【曲線】で出す。0 は素の折れ線のまま残す */
+  const dstr = loops.map(p => pathD(p, kk, sm > 0 ? toCurve(p, 75) : null)).join('');
   const ink = P.inv ? P.ink : P.bg;
   const svg = '<?xml version="1.0" encoding="UTF-8"?>\n'
     + '<svg xmlns="http://www.w3.org/2000/svg" width="' + OW + '" height="' + OH + '" '
