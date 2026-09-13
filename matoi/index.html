@@ -258,8 +258,10 @@
   <div class="grp">
     <label class="h">① 置くものを入れる（ロゴ・画像・動画）</label>
     <div class="btns2">
-      <button class="btn solid" id="b_logo">選ぶ</button>
+      <button class="btn solid" id="b_logo">画像を入れる</button>
       <button class="btn" id="b_logoClear">外す</button>
+      <!-- ⚠️ 木下＝「あー、外していれるのか」＝【選ぶ】だけで入れ替わるのに、
+           外してから入れるものだと読めていた。名前で言い切る（外す必要はない）。 -->
     </div>
     <!-- 🔴 accept を書かない（2026-08-28 木下「svgやpngは入れれる？今入れたが何も反応しなかった」）
        ⚠️ headless では PNG も SVG も読めている＝**選ぶ窓の側で弾かれている**疑い。
@@ -274,8 +276,9 @@
     <div class="seg" id="s_cut">
       <button data-v="1" class="on">白い地を抜く</button><button data-v="0">そのまま入れる</button>
     </div>
-    <div class="note">⭐⭐ <b>ロゴでも、絵でも、動画でもいい</b>（mp4 / mov / webm）。
-      動画は面の上でそのまま動く<br>
+    <div class="note">⭐⭐ <b>ロゴでも、絵でも、動画でもいい</b>（SVG / PNG / JPG / mp4）。
+      <b>外さなくても「画像を入れる」だけで入れ替わる</b>（盤に落としても入る）<br>
+      ⭐ <b>面ごとに別のものを置きたいとき</b>は ③ の行の「画像」から<br>
       ⭐⭐ <b>白い地のものを入れても、地は自動で抜く</b>
       （四隅が同じ白のときだけ。写真や、白地を残したいものは「そのまま入れる」）<br>
       ⭐ 色を差し替えられる＝<b>白版・黒版を1枚ずつ出せる</b>（企業案件で要る）</div>
@@ -306,6 +309,9 @@
   <div class="grp">
     <label class="h">③ 位置を直す（要るときだけ）</label>
     <div id="faces"></div>
+    <input type="file" id="f_face" accept="image/*" hidden>
+    <div class="note">⭐⭐ <b>面ごとに別のものを置ける</b>＝行の「画像」を押すとその面だけ差し替わる
+      （<b>共</b>＝①で入れた共通のもの）。面を足せば1枚に何個でも入る</div>
     <div class="btns2">
       <button class="btn" id="b_addFace">面を足す</button>
       <button class="btn" id="b_delFace">この面を消す</button>
@@ -324,6 +330,14 @@
     <button class="btn" id="b_pts">いまの四隅を写す（list.json 用）</button>
     <div class="seg" id="s_fill">
       <button data-v="0" class="on">面はそのまま</button><button data-v="1">面に紙を敷く</button>
+    </div>
+    <!-- ⭐ 敷く紙の色＝いままで「置いたものの縁の色」に固定だった（2026-09-13 に選べるようにした） -->
+    <div class="seg" id="s_fillm" style="margin-top:6px">
+      <button data-v="1" class="on">紙の色は自動</button><button data-v="0">色を選ぶ</button>
+    </div>
+    <input type="color" id="c_fill" value="#ffffff">
+    <div class="seg" id="s_clipf" style="margin-top:6px">
+      <button data-v="1" class="on">点線の外は切る</button><button data-v="0">はみ出しも見せる</button>
     </div>
     <div class="note">⭐⭐ <b>ポスターや看板</b>のときだけ「紙を敷く」。置いたものの縁の色で面を埋めて、
       <b>余った所に元の白い紙が見えなくなる</b>（＝1枚の紙として貼られて見える）<br>
@@ -422,6 +436,11 @@ const P = {
      🔴 既定は 0 ＝いままでの絵のまま（新しいつまみで過去の絵を変えない）。
         要る物（切り文字の壁など）は list.json の knobs で立てる。 */
   dsh:0, dsd:1.0, dsb:1.0, dsa:135,
+  /* ⭐ 敷く紙の色＝自動（置いたものの縁）／手で選ぶ（2026-09-13） */
+  fillAuto:true, fillCol:'#ffffff',
+  /* ⭐⭐ 面（点線）の外へはみ出したものは切る（2026-09-13・木下＝「点線からはみ出したのは
+     基本みえなくなるように」）。しわに沿うを強くすると必ずはみ出す＝物の外に絵が乗る。 */
+  clipFace:true,
   tint:'none', tintCol:'#ffffff', long:1600, cut:true,
 };
 let BG = null, BGKEY = 0;      /* 下地（写真でも、型を描いた紙でもいい）／差し替えた回数 */
@@ -968,13 +987,21 @@ function bakeTone(W, H){
 
 /* ══⭐⭐ 面にロゴを嵌める（しわに沿わせながら）══ */
 function drawFace(ctx, fc, W, H){
-  if(!fc.on || !LOGO) return;
+  /* ⭐⭐ 置くものは【面ごと】に持てる（2026-09-13）──
+     木下＝「もうひとつ入れる場合にこんがらがるな」。面はいくつでも足せるのに
+     置くものが1つしか無く、面2に別のロゴを入れる道が無かった。
+     ⭐ 面が自分の絵を持っていればそれ、無ければ共通のもの＝**入れ方は今までのまま**。 */
+  const A = fc.asset || LOGO;
+  if(!fc.on || !A) return;
+  const AKEY = fc.asset ? ('f' + (fc.assetKey || 0)) : LOGOKEY;
+  const AEDGE = fc.asset ? fc.edge : LOGO_EDGE;
+  const PAPER = P.fillAuto ? AEDGE : P.fillCol;   /* ⭐ 敷く紙の色＝自動 or 手で選ぶ */
   const T = bakeTone(W, H);
   const q = fc.pts.map(([x, y]) => [x*W, y*H]);
   const f = homo(q);
-  const [iw, ih] = assetSize(LOGO);
+  const [iw, ih] = assetSize(A);
   /* ⭐ 動画は【いまのコマの地を抜いた紙】を嵌める（静止画は読んだ時に一度抜いてある） */
-  const SRC = isVid(LOGO) ? cutFrame(LOGO) : LOGO;
+  const SRC = isVid(A) ? cutFrame(A) : A;
   if(!iw || !ih) return;
   /* ⭐ 格子の細かさ＝面の大きさで決める（大きい面ほど細かく＝曲面に沿う） */
   const size = Math.max(...q.map(p => p[0])) - Math.min(...q.map(p => p[0]))
@@ -1012,9 +1039,9 @@ function drawFace(ctx, fc, W, H){
      実測：スライダー1目盛りごとに 30ms 掛かっていたのが 2ms になる。
      ⚠️ 控えの合図に【いま効いているもの】を全部入れる。1つ落とすと、触っても絵が変わらない。 */
   /* ⚠️ 動画は【いまのコマ】も合図に入れる（入れないと1コマ目のまま止まって見える） */
-  const ck = [fc.pts.join(';'), P.warp, iw, ih, LOGOKEY,
-              isVid(LOGO) ? LOGO.currentTime.toFixed(3) : '',
-              P.tint, P.tintCol, P.fill ? LOGO_EDGE : '',
+  const ck = [fc.pts.join(';'), P.warp, iw, ih, AKEY,
+              isVid(A) ? A.currentTime.toFixed(3) : '',
+              P.tint, P.tintCol, P.fill ? PAPER : '', P.clipFace ? 'c' : '',
               fc.clip ? fc.clip.map(p => p.x.toFixed(3)+','+p.y.toFixed(3)+(p.r?'r':'')).join(' ') : '',
               W, H, N].join('|');
   if(!fc._c || fc._c.key !== ck){
@@ -1023,8 +1050,8 @@ function drawFace(ctx, fc, W, H){
     /* ⭐⭐ 面の余りを【置いたものの縁の色】で埋める（2026-08-29）
        比を保って収めると必ず余りが出て、そこに下の絵（元の白い紙）が見える＝
        ポスターが1枚の紙に見えない。⚠️ 物によって要る／要らないが違うので、型が既定を持つ。 */
-    if(P.fill && LOGO_EDGE){
-      bq.fillStyle = LOGO_EDGE;
+    if(P.fill && PAPER){
+      bq.fillStyle = PAPER;
       bq.beginPath();
       q.forEach(([x, y], i) => i ? bq.lineTo(x, y) : bq.moveTo(x, y));
       bq.closePath(); bq.fill();
@@ -1045,8 +1072,12 @@ function drawFace(ctx, fc, W, H){
       bq.fillRect(0, 0, W, H);
       bq.globalCompositeOperation = 'source-over';
     }
-    /* ⭐⭐ 切り抜き＝嵌めた後に【形で切る】（スマホの角丸など、四角では収まらない所） */
-    if(fc.clip && fc.clip.length >= 3){
+    /* ⭐⭐ 切り抜き＝嵌めた後に【形で切る】（スマホの角丸など、四角では収まらない所）
+       ⭐⭐ 2026-09-13：ペンの形が無くても【面（点線）そのもの】で切るようにした。
+         木下＝「点線からはみ出したのは基本みえなくなるように」。
+         🔴 はみ出す正体は【しわに沿う】＝下の明暗の傾きぶんずらすので、強くすると必ず外へ出る。
+         ⚠️ 影はここで切らない（壁に落ちる影は面の外に出るのが正しい）。 */
+    if((fc.clip && fc.clip.length >= 3) || P.clipFace){
       bq.globalCompositeOperation = 'destination-in';
       bq.fillStyle = '#fff'; facePath(bq, fc, W, H); bq.fill();
       bq.globalCompositeOperation = 'source-over';
@@ -1434,15 +1465,35 @@ function toBoard(e){
 }
 
 /* ══ 面の一覧 ══ */
+let FACEPICK = -1;                       /* ⭐ どの面に入れるか＝押した行を1つだけ覚える */
 function renderFaces(){
   const host = el('faces'); host.innerHTML = '';
   FACES.forEach((fc, k) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:4px;align-items:stretch';
     const b = document.createElement('button');
-    b.className = 'btn'; b.style.textAlign = 'left';
-    b.textContent = (k === cur ? '● ' : '○ ') + '面 ' + (k+1) + (fc.on ? '' : '（隠す）');
+    b.className = 'btn'; b.style.textAlign = 'left'; b.style.flex = '1'; b.style.paddingLeft = '10px';
+    b.textContent = (k === cur ? '● ' : '○ ') + '面 ' + (k+1) + (fc.on ? '' : '（隠す）')
+                  + (fc.asset ? '　' + (fc.assetName || '別の絵') : '　共');
     b.onclick = () => { cur = k; renderFaces(); syncRot(); drawHandles(); };
     b.ondblclick = () => { fc.on = !fc.on; renderFaces(); render(); };
-    host.appendChild(b);
+    row.appendChild(b);
+    /* ⭐ この面だけ差し替える（①で入れた共通のものは触らない） */
+    const pick = document.createElement('button');
+    pick.className = 'btn'; pick.textContent = '画像'; pick.style.flex = '0 0 58px';
+    pick.title = 'この面だけ別のものを置く';
+    pick.onclick = () => { FACEPICK = k; el('f_face').click(); };
+    row.appendChild(pick);
+    if(fc.asset){
+      const back = document.createElement('button');
+      back.className = 'btn'; back.textContent = '共通'; back.style.flex = '0 0 58px';
+      back.title = '①で入れた共通のものに戻す';
+      back.onclick = () => { snap();
+        fc.asset = null; fc.edge = null; fc.assetName = ''; fc._c = null;
+        renderFaces(); render(); stat('面 ' + (k+1) + ' を共通のものに戻した'); };
+      row.appendChild(back);
+    }
+    host.appendChild(row);
   });
 }
 el('b_addFace').onclick = () => {
@@ -1489,6 +1540,80 @@ ROTS.forEach(([id, k, out, unit]) => {
   });
 });
 document.querySelectorAll('#s_fill button').forEach(b => b.onclick = () => { setFill(b.dataset.v === '1'); render(); });
+/* ⭐ 敷く紙の色（2026-09-13）＝既定は自動（置いたものの縁の色）＝いままでの絵のまま */
+function setFillMode(auto){
+  P.fillAuto = !!auto;
+  document.querySelectorAll('#s_fillm button').forEach(x =>
+    x.classList.toggle('on', (x.dataset.v === '1') === P.fillAuto));
+}
+document.querySelectorAll('#s_fillm button').forEach(b => b.onclick = () => {
+  setFillMode(b.dataset.v === '1'); FACES.forEach(f => f._c = null); render(); });
+el('c_fill').addEventListener('input', e => {
+  P.fillCol = e.target.value;
+  /* ⭐ 色をつまんだら【選ぶ】に自動で移る（触ったのに効かない、を作らない） */
+  if(P.fillAuto) setFillMode(false);
+  if(!P.fill) setFill(true);                 /* ⚠️ 敷いていなければ、敷く側に倒す */
+  FACES.forEach(f => f._c = null); render();
+});
+/* ⭐⭐ 点線の外は切る（2026-09-13）＝はみ出す正体は「しわに沿う」 */
+function setClipFace(on){
+  P.clipFace = !!on;
+  document.querySelectorAll('#s_clipf button').forEach(x =>
+    x.classList.toggle('on', (x.dataset.v === '1') === P.clipFace));
+}
+document.querySelectorAll('#s_clipf button').forEach(b => b.onclick = () => {
+  setClipFace(b.dataset.v === '1'); FACES.forEach(f => f._c = null); render(); });
+/* ══⭐⭐ ⌘Z で戻す（2026-09-13・木下＝「コマンドzで戻れるようにもして」）══
+   🔴🔴 控えは【写し】でないと戻らない ── 面の配列をそのまま持つと、あとで書き換えた
+     ときに控えの中身まで一緒に変わる（＝押しても何も起きない）。
+   ⚠️ 置くものの画像そのものは控えない（重い）＝面が持つ絵は【参照のまま】持ち、
+     形・つまみ・どの物か だけを戻す。
+   🔴 引いている最中に積むと1回のドラッグで何十個も積まれて1段ずつしか戻らない
+     ＝【掴んだ瞬間に1回だけ】積む（蝕SHOKU と同じ作法）。 */
+const UNDO = [], REDO = [];
+function faceCopy(f){
+  return { on:f.on, asset:f.asset || null, assetKey:f.assetKey || 0,
+           edge:f.edge || null, assetName:f.assetName || '',
+           pts:f.pts.map(p => p.slice()),
+           base:f.base ? f.base.map(p => p.slice()) : null,
+           rot:f.rot ? Object.assign({}, f.rot) : null,
+           clip:f.clip ? f.clip.map(p => Object.assign({}, p)) : null };
+}
+function stateNow(){ return { P:Object.assign({}, P), faces:FACES.map(faceCopy), cur, kidx:KIDX }; }
+function snap(){ UNDO.push(stateNow()); if(UNDO.length > 60) UNDO.shift(); REDO.length = 0; }
+function applyState(s){
+  Object.assign(P, s.P);
+  FACES = s.faces.map(faceCopy);              /* ⭐ 戻すときも写す（控えを渡さない） */
+  cur = Math.max(0, Math.min(s.cur, FACES.length - 1));
+  setFill(P.fill); setFillMode(P.fillAuto); setClipFace(P.clipFace);
+  el('c_fill').value = P.fillCol; el('c_tint').value = P.tintCol;
+  document.querySelectorAll('#s_blend button').forEach(x => x.classList.toggle('on', x.dataset.v === P.blend));
+  document.querySelectorAll('#s_tint button').forEach(x => x.classList.toggle('on', x.dataset.v === P.tint));
+  syncKnobs(); renderFaces(); syncRot();
+  /* ⚠️ 物が変わっていたら【下地だけ】戻す（面は控えたものを使う＝上書きさせない） */
+  if(s.kidx !== KIDX && KATA[s.kidx]) useKata(s.kidx, true); else render();
+  drawHandles();
+}
+function undo(){
+  const s = UNDO.pop(); if(!s){ stat('これ以上は戻せない'); return; }
+  REDO.push(stateNow()); applyState(s); stat('1つ戻した（⌘⇧Z で進む）');
+}
+function redo(){
+  const s = REDO.pop(); if(!s){ stat('これ以上は進めない'); return; }
+  UNDO.push(stateNow()); applyState(s); stat('1つ進めた');
+}
+/* ⭐ 積むのは【触り始め】＝パネルのボタン・スライダーを掴んだ瞬間と、盤を掴んだ瞬間 */
+el('panel').addEventListener('pointerdown', e => {
+  if(e.target.closest('button, input[type=range], input[type=color]')) snap();
+}, true);
+stage.addEventListener('pointerdown', () => snap(), true);
+addEventListener('keydown', e => {
+  if(!(e.metaKey || e.ctrlKey) || (e.key || '').toLowerCase() !== 'z') return;
+  const t = e.target;
+  if(t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && /^(|text|number)$/.test(t.type)))) return;
+  e.preventDefault();
+  if(e.shiftKey) redo(); else undo();
+});
 /* ⭐ 道具の棚＝触り方を変えるだけ（面の値は同じものを触る） */
 document.querySelectorAll('#tools button').forEach(b => b.onclick = () => {
   TOOL = b.dataset.t;
@@ -1547,6 +1672,24 @@ el('f_bg').addEventListener('change', e => { const f = e.target.files[0]; e.targ
   if(f) readImage(f, img => { setBG(img); stat('下地を読んだ'); render(); fitView(); }); });
 el('f_kata').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = '';
   if(f) addKata(f); });
+/* ⭐⭐ 面ごとの置くもの（2026-09-13）＝読む道は共通（readAsset）・白い地を抜くのも同じ道 */
+el('f_face').addEventListener('change', e => {
+  const f = e.target.files[0]; e.target.value = '';
+  const k = FACEPICK; FACEPICK = -1;
+  if(!f || k < 0 || !FACES[k]) return;
+  readAsset(f, img => {
+    const fc = FACES[k]; if(!fc) return;
+    snap();
+    const cut = (P.cut === false || isVid(img)) ? null : dropBackdrop(img);
+    fc.asset = cut ? cut.canvas : img;
+    fc.assetKey = (fc.assetKey || 0) + 1;
+    fc.edge = edgeColor(fc.asset);
+    fc.assetName = (f.name || '').replace(/\.[^.]+$/, '').slice(0, 10);
+    fc._c = null;
+    cur = k; renderFaces(); syncRot(); render(); drawHandles();
+    stat('面 ' + (k+1) + ' に別のものを置いた：' + (f.name || ''));
+  });
+});
 el('f_logo').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = '';
   if(f) readAsset(f, img => { setLOGO(img, f.name || ''); render(); }); });
 el('b_logoClear').onclick = () => { setLOGO(null); stat('ロゴを外した'); render(); };
