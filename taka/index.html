@@ -734,7 +734,7 @@ main.list{max-width:1440px;margin:0 auto;padding-block:120px 160px}
 /* 入口の場：墨のにじみ（ゆがめたノイズ）＋粒子＋赤い筋。WebGL が無い・動きを減らす設定なら静止 */
 (function(){
   const cv=document.getElementById('hw-canvas'); if(!cv) return;
-  const gl=cv.getContext('webgl',{antialias:false,premultipliedAlpha:false});
+  const gl=cv.getContext('webgl',{antialias:false,premultipliedAlpha:false,preserveDrawingBuffer:true});
   if(!gl){ cv.parentNode.style.background='radial-gradient(120% 90% at 30% 40%,#2a2a26 0%,#8f8d86 45%,#ecebe6 75%)'; return; }
   const vs='attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}';
   const fs=`
@@ -746,9 +746,10 @@ main.list{max-width:1440px;margin:0 auto;padding-block:120px 160px}
   precision mediump float;
   #endif
   uniform vec2 r;uniform float t;uniform float seed;
-  float h(vec2 p){ p=fract(p*vec2(123.34,345.45)); p+=dot(p,p+34.345); return fract(p.x*p.y); }
-  float n(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
-    return mix(mix(h(i),h(i+vec2(1,0)),f.x),mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x),f.y);}
+  uniform sampler2D nz;              /* 256×256 の雑音画像（JSで1回だけ作る） */
+  /* 🔴 GPUごとの精度差で崩れないよう、乱数は計算せず画像から読む */
+  float n(vec2 p){ return texture2D(nz,(p+.5)/256.).r; }
+  float h(vec2 p){ return texture2D(nz,(p+.5)/256.).g; }
   float fb(vec2 p){float v=0.,a=.5;for(int k=0;k<5;k++){v+=a*n(p);p=p*2.03+vec2(1.7,9.2);a*=.5;}return v;}
   vec3 spec(float x){ return .5+.5*cos(6.2832*(x+vec3(0.,.33,.67))); }   /* 虹の色 */
   void main(){
@@ -764,26 +765,27 @@ main.list{max-width:1440px;margin:0 auto;padding-block:120px 160px}
       float fi=float(i);
       float ang=seed*6.2832+fi*2.094+t*(.035+.012*fi)*(mod(fi,2.)*2.-1.);
       vec2 an=.5+vec2(cos(ang),sin(ang))*vec2(.62,.62)+.08*vec2(sin(t*.11+fi*1.7),cos(t*.09+fi*2.3));
-      vec2 dd=(uv-an)*vec2(r.x/sd,r.y/sd);
-      pull+=exp(-length(dd)*2.4)*(.13+.05*sin(t*.13+fi*3.1));
+      vec2 dd=uv-an;                      /* 画面の比で割らない＝縦長でも墨が痩せない */
+      pull+=exp(-length(dd)*2.4)*(.11+.04*sin(t*.13+fi*3.1));
     }
     f+=pull;
     vec3 paper=vec3(.935,.928,.905), ink=vec3(.09,.09,.10), red=vec3(.78,.16,.12);
     vec2 c=(uv-.5)*vec2(r.x/r.y,1.);
     /* 墨を中央近くまで広げる。名前の帯（横長の楕円）だけ紙を残す */
-    float away=smoothstep(.02,.45,length(c));
+    float away=smoothstep(.04,.50,length(c));
     float nzw=r.y>r.x?.30:.42, nzh=r.y>r.x?.14:.10;
     float nameZone=exp(-(c.x*c.x/(nzw*nzw)+c.y*c.y/(nzh*nzh)));
-    float m=smoothstep(.43,.78,f)*mix(.6,1.,away)*(1.-.92*nameZone);
-    vec3 col=mix(paper,ink,m*.85);
+    float thr=r.y>r.x?.455:.47;
+    float m=smoothstep(thr,.78,f)*mix(.6,1.,away)*(1.-.92*nameZone);
+    vec3 col=mix(paper,ink,m*.80);
 
     /* ① 墨の中にクロムの縞（刃と同じ：縁からの深さに明暗の往復を当てる） */
-    float depth=smoothstep(.43,.78,f)*(1.-.92*nameZone);
+    float depth=smoothstep(thr,.78,f)*(1.-.92*nameZone);
     float chrome=pow(.5+.5*sin(depth*38.-t*.35),6.)*smoothstep(.05,.6,depth)*away;
     col+=vec3(.95,.93,.9)*chrome*.55;
 
     /* ② 虹の縁（吉良さんの虹の筋にあたる）：墨の縁を虹色に光らせる */
-    float rim=exp(-pow((f-.56)*70.,2.))*mix(.6,1.,away)*(1.-.9*nameZone);
+    float rim=exp(-pow((f-(thr+.13))*70.,2.))*mix(.6,1.,away)*(1.-.9*nameZone);
     /* 右端で気に入ってもらった色＝橙→朱→桃（青緑は出さない） */
     float k=.5+.5*sin(uv.x*3.1+uv.y*2.3+t*.08+f*4.);
     vec3 irid=mix(mix(vec3(1.,.66,.22),vec3(.93,.25,.16),smoothstep(.0,.55,k)),vec3(.98,.32,.52),smoothstep(.55,1.,k));
@@ -798,7 +800,7 @@ main.list{max-width:1440px;margin:0 auto;padding-block:120px 160px}
     float sweep=exp(-pow((uv.x+uv.y*.35-fract(t*.035)*2.2+.3)*3.2,2.));
     col+=vec3(1.,.97,.92)*sweep*.10;
 
-    float g=h(mod(floor(gl_FragCoord.xy),512.)+fract(t*7.13)*17.)-.5;   /* 座標を折り返して桁落ちを防ぐ */
+    float g=h(mod(floor(gl_FragCoord.xy),256.)+mod(floor(t*30.),8.)*37.)-.5;   /* 数を256未満に保つ＝低精度のGPUでも崩れない */
     col+=g*(.05+.04*m);
     gl_FragColor=vec4(col,1.);
   }`;
@@ -809,6 +811,14 @@ main.list{max-width:1440px;margin:0 auto;padding-block:120px 160px}
     const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
     const al=gl.getAttribLocation(pr,'a');gl.enableVertexAttribArray(al);gl.vertexAttribPointer(al,2,gl.FLOAT,false,0,0);
     ur=gl.getUniformLocation(pr,'r'); ut=gl.getUniformLocation(pr,'t'); us=gl.getUniformLocation(pr,'seed');
+    /* 雑音画像（256×256）を作って渡す。滑らかな補間はGPUの LINEAR に任せる */
+    const N=256, px=new Uint8Array(N*N*4);
+    for(let i=0;i<N*N;i++){ px[i*4]=Math.random()*255; px[i*4+1]=Math.random()*255; px[i*4+2]=Math.random()*255; px[i*4+3]=255; }
+    const tex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,tex);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,N,N,0,gl.RGBA,gl.UNSIGNED_BYTE,px);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.activeTexture(gl.TEXTURE0); gl.uniform1i(gl.getUniformLocation(pr,'nz'),0);
     cv.width=0; /* 次の draw で大きさを必ず入れ直す */
   }
   init();
@@ -817,7 +827,7 @@ main.list{max-width:1440px;margin:0 auto;padding-block:120px 160px}
   function size(){const W=Math.round(cv.clientWidth*DPR),H=Math.round(cv.clientHeight*DPR);if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;gl.viewport(0,0,W,H);}}
   const still=matchMedia('(prefers-reduced-motion: reduce)').matches;
   const t0=performance.now(); let on=true, lost=false;
-  function draw(){ if(lost||gl.isContextLost()) return; size();gl.uniform2f(ur,cv.width,cv.height);gl.uniform1f(ut,still?40.:(performance.now()-t0)/1000+40.);gl.uniform1f(us,SEED);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);}
+  function draw(){ if(lost||gl.isContextLost()) return; size(); gl.clearColor(.93,.925,.9,1); gl.clear(gl.COLOR_BUFFER_BIT);gl.uniform2f(ur,cv.width,cv.height);gl.uniform1f(ut,still?40.:((performance.now()-t0)/1000)%600+40.);   /* 600秒で折り返す＝長く開いても精度が落ちない */gl.uniform1f(us,SEED);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);}
   /* 🔴 上に戻ると消える対策：①画面外で止めても、戻った瞬間に必ず描き直す ②GPUの都合でコンテキストが失われたら作り直す ③タブに戻った時も描き直す */
   new IntersectionObserver(e=>{on=e[0].isIntersecting; if(on) draw();}).observe(cv);
   cv.addEventListener('webglcontextlost',e=>{e.preventDefault();lost=true;},false);
