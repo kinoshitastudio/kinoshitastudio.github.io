@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>拭 FUKI — 写真を面にして、消して、もう一度 / 木下スタジオ</title>
+<meta name="description" content="写真をぼかすのではなく、領域ごとに平らな面にして、選んだ面を消し、その絵にもう一度掛ける道具。足すのではなく捨てる場所を選ぶことで、写真が絵の具になる。木下スタジオ（木下貴博 / 滋賀・琵琶湖）制作。">
+<link rel="canonical" href="https://kinoshita.studio/fuki/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="拭 FUKI — 写真を面にして、消して、もう一度 / 木下スタジオ">
+<meta property="og:description" content="写真を平らな面に割り、選んだ面を消す。足すのでなく捨てる場所を選ぶと、写真が絵の具になる。">
+<meta property="og:url" content="https://kinoshita.studio/fuki/">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  /* ⚠️ 外枠（並び方・見た目）は 累 RUI / 点 TEN と同じ＝道具ごとに作りを変えない */
+  :root{
+    --bg:#e8e4dc; --paper:#f4f2ec; --line:rgba(28,28,30,.14);
+    --fg:#1c1c1e; --fg2:rgba(28,28,30,.62); --fg3:rgba(28,28,30,.40);
+    --fill:rgba(28,28,30,.10); --fill2:rgba(28,28,30,.07);
+    --capsule:#fffdf8; --glass:rgba(246,244,238,.84); --r:10px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans","Zen Kaku Gothic New",sans-serif;
+    font-weight:400;overflow:hidden;display:flex;align-items:stretch}
+
+  /* ⭐ 盤＝窓。中の紙は動かさず、見る側だけ transform で動かす（出る絵は1画素も変わらない） */
+  #stage{flex:1;position:relative;min-width:0;overflow:hidden;cursor:crosshair}
+  #stage.panning{cursor:grabbing}
+  /* ⚠️ この道具は【黒地】が既定なので、盤の白い演出が絵に被って見える。
+     ⭐ 弱める（作品には元から1画素も入らない。見え方だけ）。 */
+  #stage::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
+    background:radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,.16), transparent 60%)}
+  canvas#cv{position:absolute;left:0;top:0;transform-origin:0 0;
+    box-shadow:0 14px 44px rgba(28,28,30,.18);display:block}
+  /* ⭐ 選んだ印は【刷る絵に混ぜない】。別の板を同じ倍率で重ねる
+     （混ぜると PNG にも選択枠が出てしまう） */
+  canvas#ov{position:absolute;left:0;top:0;transform-origin:0 0;display:block;
+    pointer-events:none;z-index:2}
+  /* 🔴🔴 2026-08-25 木下＝「モバイルでボードを描くときに、下のパネルも一緒に動くので描きづらい」
+     ＝盤を触るとブラウザの【ページを動かす仕草】に取られていた。
+     ⚠️ 前は「モバイルで none にすると縦スクロールが止まる」として広い画面だけに掛けていたが、
+        いまの作りは【盤（上）＋パネル（下・内側で巻く）】の2段なので、
+        ページそのものは巻かなくてよい＝**どの幅でも盤は none でよい**。
+     ⭐ 盤＝指の動きは全部こちらで受け取る／パネル＝内側だけで巻く（端で親へ渡さない）。 */
+  #stage{touch-action:none}
+
+  #zoom{position:absolute;left:14px;bottom:12px;z-index:5;display:flex;align-items:center;gap:2px;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border:.5px solid var(--line);border-radius:11px;padding:3px;box-shadow:0 4px 14px rgba(28,28,30,.10)}
+  #zoom button{border:none;background:none;border-radius:8px;color:var(--fg);cursor:pointer;
+    font-family:inherit;font-size:11.5px;font-weight:500;padding:6px 9px;opacity:.75;transition:.14s}
+  #zoom button:hover{opacity:1;background:rgba(28,28,30,.09)}
+  #zoom .z{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg2);
+    min-width:52px;text-align:center;font-variant-numeric:tabular-nums;pointer-events:none}
+  #stat{position:absolute;left:0;right:0;bottom:0;padding:8px 14px;font-size:11px;color:var(--fg3);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;pointer-events:none;text-align:center;z-index:4}
+  #drop{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(244,242,236,.92);border:1px dashed rgba(28,28,30,.35);
+    font-size:13px;letter-spacing:.08em;color:var(--fg2);z-index:20;text-align:center;line-height:1.8}
+  body.dragging #drop{display:flex}
+
+  #panel{width:308px;flex:0 0 308px;height:100%;overflow-y:auto;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border-left:.5px solid var(--line);padding:16px 16px 80px}
+  #panel::-webkit-scrollbar{width:0}
+  h1{font-size:12px;font-weight:590;letter-spacing:.12em;color:var(--fg);margin-bottom:2px}
+  .sub{font-size:11.5px;color:var(--fg2);margin-bottom:16px;line-height:1.6}
+  .grp{margin-bottom:20px}
+  label.h{position:sticky;top:-16px;z-index:3;display:block;margin:0 -16px 8px;padding:7px 16px 6px;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border-bottom:.5px solid var(--line);font-size:11px;font-weight:590;letter-spacing:.04em;color:var(--fg2)}
+  .row{display:flex;align-items:center;gap:10px;padding:2px 0;margin-bottom:2px}
+  .row span.n{flex:1;font-size:11.5px;color:var(--fg)}
+  .row output{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg2);
+    width:46px;flex:0 0 46px;text-align:right;font-variant-numeric:tabular-nums}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;background:none;height:26px;
+    cursor:pointer;touch-action:pan-y}
+  input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--fill)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;
+    margin-top:-8px;border-radius:50%;background:var(--fg);border:none;
+    box-shadow:0 1px 3px rgba(28,28,30,.30), 0 0 0 .5px rgba(28,28,30,.05)}
+  .seg{display:flex;flex-wrap:wrap;background:var(--fill2);border-radius:9px;padding:2px;gap:2px;margin:6px 0 10px}
+  .seg button{flex:1 1 auto;min-width:0;border:none;border-radius:7px;background:none;
+    font-family:inherit;font-size:11.5px;font-weight:450;color:var(--fg);opacity:.72;
+    padding:6px 4px;cursor:pointer;transition:.16s;white-space:nowrap}
+  .seg button:hover{opacity:1;background:rgba(28,28,30,.07)}
+  .seg button.on{opacity:1;background:var(--capsule);font-weight:590;
+    box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.04)}
+  .btn{width:100%;background:var(--fill);border:none;border-radius:var(--r);color:var(--fg);
+    font-family:inherit;font-size:12px;font-weight:500;padding:11px 0;margin-top:6px;cursor:pointer;transition:.14s}
+  .btn:hover{background:rgba(28,28,30,.16)}
+  .btn:active{transform:scale(.985);opacity:.8}
+  .btn.solid{background:var(--fg);color:var(--paper);font-weight:590}
+  .btns2{display:flex;gap:6px}
+  .note{font-size:10.5px;line-height:1.65;color:var(--fg2);opacity:.75;margin-top:7px}
+  .note b{font-weight:590;opacity:1}
+  input[type=color]{width:100%;height:32px;padding:0;border:.5px solid var(--line);border-radius:var(--r);
+    background:transparent;cursor:pointer}
+  .chk{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 0;
+    font-size:11.5px;color:var(--fg);cursor:pointer;margin-bottom:5px}
+  .chk input[type=checkbox]{-webkit-appearance:none;appearance:none;flex:0 0 38px;width:38px;height:23px;
+    border-radius:23px;background:var(--fill);position:relative;transition:.2s;cursor:pointer;order:2}
+  .chk input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;
+    border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(28,28,30,.3);transition:.2s}
+  .chk input[type=checkbox]:checked{background:var(--fg)}
+  .chk input[type=checkbox]:checked::after{transform:translateX(15px)}
+  #meter,#meter2{background:var(--fill2);border:none;border-radius:var(--r);color:var(--fg2);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:10.5px;line-height:1.7;padding:9px 11px;margin:8px 0;
+    white-space:pre-line}
+  .hide{display:none!important}
+
+  /* ⭐ 段の一覧＝iOS のリスト（累 RUI の版の一覧と同じ言い方） */
+  #bands{display:flex;flex-direction:column;gap:4px}
+  .bd{display:flex;align-items:center;gap:10px;background:var(--fill2);border:none;border-radius:var(--r);
+    padding:9px 10px;cursor:pointer;transition:.15s}
+  .bd:hover{background:rgba(28,28,30,.10)}
+  .bd.sel{background:var(--capsule);box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.06)}
+  .bd .sw{width:18px;height:18px;flex:0 0 18px;border-radius:5px;border:.5px solid rgba(28,28,30,.2)}
+  .bd .nm{flex:1;min-width:0;font-size:12px;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bd.sel .nm{color:var(--fg);font-weight:500}
+  .bd .up{width:20px;height:20px;flex:0 0 20px;border:0;background:transparent;color:var(--fg3);
+    cursor:pointer;font-size:9px;line-height:1;padding:0}
+  .bd .up:hover{color:var(--fg)}
+
+  @media (max-width:820px){
+    /* ⚠️ ページ自体は巻かない（2段の作り）。巻くのはパネルの中だけ＝
+       盤を触ってもページが揺れない（iOS の跳ね返りも止める） */
+    body{flex-direction:column;overflow:hidden;overscroll-behavior:none}
+    #panel{overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+    #stage{padding:0;min-height:50vh}
+    #panel{width:100%;flex:1 1 auto;height:auto;border-left:0;border-top:.5px solid var(--line);
+      padding:16px 14px calc(80px + env(safe-area-inset-bottom))}
+    label.h{top:-16px;margin:0 -14px 8px;padding:7px 14px 6px}
+    input[type=range]{height:40px}
+    input[type=range]::-webkit-slider-thumb{width:24px;height:24px;margin-top:-10px}
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     ⭐⭐ モバイル／iPad（2026-08-20）
+     ⚠️ 最初「この型はページごとスクロールするから掴み手は合わない」と考えたが【誤り】。
+        実測すると 盤(上) ＋ パネル(下・内側スクロール) の2段で、
+        body は1pxも動いていない ＝ 作字 SAKUJI と同じ形だった。
+     ⭐ だから高さを CSS 変数 --panelH ひとつにまとめれば、同じ掴み手がそのまま使える。
+     ⭐ このブロックと末尾の <script> を消せば完全に元へ戻る。
+     ══════════════════════════════════════════════════════════════ */
+  /* ⚠️ 盤の高さを 100vh から引き算しない ── iOS Safari の 100vh は実際の見え高さと
+     食い違い、パネルが画面の外へ押し出される。flex に余りを取らせる。 */
+  :root{ --panelH:38vh; --sheetGrip:22px }
+  @supports (height:1dvh){ :root{ --panelH:38dvh } }
+  @media (max-width:820px){
+    #stage{ flex:1 1 auto; min-height:0 }        /* ⭐ 余りは盤が取る */
+    #panel{ flex:none; height:var(--panelH);
+      padding:10px 12px calc(26px + env(safe-area-inset-bottom)) }
+
+    #sheetGrip{ position:fixed; left:0; right:0; z-index:60;
+      bottom:calc(var(--panelH) - 1px); height:var(--sheetGrip);
+      display:flex; align-items:center; justify-content:center;
+      touch-action:none; cursor:ns-resize; user-select:none; -webkit-user-select:none }
+    /* 🔴 2026-08-21 ── 印の色を currentColor（道具の字の色）にしていたので、
+       黒い盤の道具では【黒い印を黒い盤の上に 40% で描いて】いた＝見えない＝無いのと同じ。
+       ⭐ 白い丸＋黒い縁＋影にする。黒い盤でも白い紙でも絵の上でも必ず見える（iOS の作法と同じ）。 */
+    #sheetGrip::before{ content:""; width:44px; height:5px; border-radius:5px;
+      background:rgba(255,255,255,.94);
+      box-shadow:0 0 0 1px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.45); opacity:1 }
+    #sheetGrip.dragging::before{ background:#fff;
+      box-shadow:0 0 0 1px rgba(0,0,0,.6), 0 2px 7px rgba(0,0,0,.5) }
+
+    /* ⭐ 中を密着させる（詰めるのは隙間であって、つまみではない） */
+    label.h{ top:-10px; margin:0 -12px 6px; padding:6px 12px 5px }
+    .grp{ margin-bottom:12px }
+    .row{ padding:0; margin-bottom:1px }
+    .seg{ margin:4px 0 6px }
+    .btn{ margin-top:4px }
+    .note{ margin-top:5px; line-height:1.5 }
+    #meter,#meter2,#pMeter,#gridMeter{ margin:6px 0; padding:7px 9px }
+
+    /* 🔴 セグメントのボタンが 28px しかなく指で狙えなかった（実測）。
+       ⚠️ ここは詰める側ではなく【広げる側】。密着とぶつかるが、押せない方が困る。 */
+    .seg button{ padding:9px 4px; min-height:36px }
+    .btn{ padding:10px 0; min-height:38px }
+    input[type=color]{ height:34px }
+    .chk input[type=checkbox]{ flex:0 0 44px; width:44px; height:26px }
+    .chk input[type=checkbox]::after{ width:22px; height:22px }
+    .chk input[type=checkbox]:checked::after{ transform:translateX(18px) }
+    /* ⭐ 他の道具と同じ大きさに揃える（この道具はもともと40px。伸びる分を抑えて36px） */
+    input[type=range]{ height:36px }
+    input[type=range]::-webkit-slider-thumb{ width:22px; height:22px; margin-top:-9px }
+    .lay .eye,.lay .up,.bd .up{ min-width:30px; min-height:30px }
+  }
+
+  /* ══ モバイルで勝手に寄らせない（no-auto-zoom-2026-08-22）══════════════════
+     🔴 木下＝2026-08-22「全道具のモバイル画面で言えることだが自動ズームはなしにしたい」
+     ⚠️ viewport の maximum-scale／user-scalable は【iOS に無視される】。
+     ⭐ iOS が寄るのは【文字を打つ欄の字が 16px 未満のとき】だけ。だから 16px にする。
+     ⚠️ つまみ(range)・色・チェックは寄らないので触らない。
+     🔴 class 付きの指定に【詳細度で負ける】ので !important を付ける（SAKUJI で実測した）。
+     ⚠️ @media の中だけ＝PC には1画素も効かない。このブロックを消せば完全に元へ戻る。 */
+  @media (max-width:760px), (pointer:coarse) and (max-width:1024px){
+    input:not([type=range]):not([type=color]):not([type=checkbox]):not([type=radio]):not([type=file]):not([type=button]),
+    select, textarea{ font-size:16px !important; }
+  }
+
+  /* ══⭐⭐ モバイルの重さ（2026-08-28 木下「スクロールするとスライダーがもさ」）══
+     🔴 パネルと見出しに backdrop-filter: blur(30px) が掛かっている。
+        巻いている間、**背後をぼかし直し続ける**ので iOS では毎コマ重い。
+        （見出しは sticky なので、巻くたびに何枚も掛かる）
+     ⭐ 指の端末では【透かすのをやめて塗る】＝見た目はほぼ同じで、巻きが軽くなる。
+     ⚠️ PC には1画素も効かない（このブロックを消せば完全に元へ戻る）。 */
+  @media (max-width:820px), (pointer:coarse) and (max-width:1024px){
+    #panel, label.h, #zoom{
+      -webkit-backdrop-filter:none !important; backdrop-filter:none !important;
+    }
+    #panel{ background:var(--paper) }
+    label.h{ background:var(--paper) }
+    #zoom{ background:var(--paper) }
+    /* ⭐ 巻きを親へ渡さない＋滑らかに（iOS の作法） */
+    #panel{ overscroll-behavior:contain; -webkit-overflow-scrolling:touch }
+  }
+
+  /* ══⭐⭐ 指の端末ではガラスをやめる ── 2026-08-29 ══
+     木下＝「モバイルだとスライダーがやはり重い。リアルタイムで変更はみれず、時間差がある」。
+     🔴 backdrop-filter は【背後をぼかし直す】＝つまみを動かしている間ずっと走り続ける。
+        iOS ではこれが指の動きに追いつかない（描く方は実測 3ms しか掛かっていなかった）。
+     ⭐ 消せば元に戻る上書き1ブロック（元の指定は1行も触っていない）。
+     ⚠️ 見た目はガラス→不透明になる。指の端末だけ。 */
+  @media (hover: none) and (pointer: coarse){
+    :root{ --glass:#f6f4ee; }
+    *{ -webkit-backdrop-filter:none !important; backdrop-filter:none !important; }
+  }
+
+  /* ══⭐⭐ 補足説明（小さな文字）は【既定で隠す】── 2026-08-30 ══
+     木下＝「サイドパネルの補足説明などの小さな文字は非表示で」。
+     ⭐ 消すのではなく畳む＝右上の ⓘ でいつでも出せる（覚えているうちは要らない）。
+     ⚠️ このブロックと ⓘ を消せば完全に元へ戻る。 */
+  #panel .note{ display:none }
+  body.shownote #panel .note{ display:block }
+  #noteBtn{ position:absolute; right:12px; top:10px; z-index:6;
+    width:26px; height:26px; border-radius:50%; border:.5px solid var(--line);
+    background:var(--fill2); color:var(--fg2); font-size:12px; line-height:1;
+    display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0 }
+  #noteBtn:hover{ color:var(--fg) }
+  body.shownote #noteBtn{ background:var(--fg); color:var(--paper); border-color:var(--fg) }
+</style>
+<style>
+  /* この道具だけの足し（外枠はいじらない） */
+  #panel .two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  #panel input[type=color]{width:100%;height:32px;border:.5px solid var(--line);background:transparent;padding:0;cursor:pointer}
+  #zoom{right:auto;left:14px}
+  /* ⭐ 盤は市松＝地なしで出したときに「抜けている所」が見える */
+  #cv{image-rendering:auto;background:
+    repeating-conic-gradient(#0000 0 25%, rgba(28,28,30,.05) 0 50%) 0 0/16px 16px}
+  /* ⭐ 消す手のときだけカーソルを変える＝いまどちらの手か盤の側でも分かる */
+  #stage.erasing{cursor:cell}
+  #stage.erasing.panning{cursor:cell}
+  #busy{position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:6;
+    background:var(--glass);border:.5px solid var(--line);border-radius:999px;
+    padding:5px 13px;font-size:11px;color:var(--fg2);display:none}
+  body.busy #busy{display:block}
+  #shots{display:flex;gap:6px}
+  #shots button{flex:1;padding:0;border:.5px solid var(--line);border-radius:var(--r);
+    background:var(--fill2);cursor:pointer;overflow:hidden;height:52px}
+  #shots button img{width:100%;height:100%;object-fit:cover;display:block}
+  #shots button.on{box-shadow:0 0 0 2px var(--fg) inset}
+  #f_file{display:none}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="busy">…掛けています</div>
+  <div id="zoom"><button id="z_out">−</button><output id="o_zoom">100%</output><button id="z_in">＋</button><button id="z_fit">合わせる</button></div>
+  <div id="drop">写真をここに落とす</div>
+</div>
+
+<div id="panel">
+  <button id="noteBtn" title="補足を出す／しまう">ⓘ</button>
+  <h1>拭 FUKI</h1>
+  <div class="sub"><b>写真を平らな面に割り、選んだ面を消して、その絵にもう一度掛ける。</b>足すのではなく<b>捨てる場所を選ぶ</b>と、写真が絵の具になる。</div>
+
+  <div class="grp">
+    <label class="h">写真</label>
+    <div id="shots">
+      <button data-v="1.jpg" class="on"><img src="1.jpg" alt="写真1"></button>
+      <button data-v="2.jpg"><img src="2.jpg" alt="写真2"></button>
+    </div>
+    <button class="btn" id="b_open">写真を開く</button>
+    <input type="file" id="f_file" accept="image/*">
+    <div class="note">盤に落としてもいい。<b>写真は端末から出ない</b>（全部この画面の中で処理している）。</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">① 面にする</label>
+    <div class="row"><span class="n">面の粗さ</span><output id="o_k">500</output></div>
+    <input type="range" id="r_k" min="20" max="1600" value="500">
+    <div class="note">⭐ <b>ぼかしではない。</b>色の近いところを1つの面にまとめて、その中を<b>平らな1色</b>にする。上げるほど面が大きくなる。</div>
+    <div class="row"><span class="n">小さい面を残さない</span><output id="o_min">300</output></div>
+    <input type="range" id="r_min" min="4" max="2000" value="300">
+    <div class="row"><span class="n">ならし</span><output id="o_blur">1.6</output></div>
+    <input type="range" id="r_blur" min="0" max="50" value="16">
+    <div class="note">面を決める前に写真をならす。上げると細かい柄を拾わなくなる。</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">② 縁</label>
+    <div class="row"><span class="n">縁の濃さ</span><output id="o_edge">55</output></div>
+    <input type="range" id="r_edge" min="0" max="100" value="55">
+    <div class="note">面と面の境だけを暗くする。<b>0 ＝ 縁なし</b>。面が平らなだけだと絵にならず、ここで輪郭が立つ。</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">③ 消す</label>
+    <div class="seg" id="s_hand">
+      <button data-v="pan" class="on">手＝動かす</button>
+      <button data-v="erase">手＝消す</button>
+    </div>
+    <div class="note">⭐ <b>「消す」にして盤の面を押すと、その面が消える</b>（もう一度押すと戻る）。⌘Z でも戻る。<br>
+      🔴 この道具の芯はここ。<b>どこを捨てるかは道具でなく木下が決める</b>。</div>
+    <div class="row"><span class="n">自動で消す</span><output id="o_kesu">0</output></div>
+    <input type="range" id="r_kesu" min="0" max="60" value="0">
+    <div class="note">大きい面から順に、この割合だけ機械が消す。<b>既定は 0 ＝ 機械は消さない</b>。</div>
+    <div class="row"><span class="n">種</span><output id="o_seed">7</output></div>
+    <input type="range" id="r_seed" min="1" max="200" value="7">
+    <div class="seg" id="s_kesuiro">
+      <button data-v="dark" class="on">面の色を暗く</button>
+      <button data-v="flat">1色で</button>
+    </div>
+    <input type="color" id="c_kesu" value="#14161c">
+    <button class="btn" id="b_kesu_reset">手で消したのを全部戻す</button>
+  </div>
+
+  <div class="grp">
+    <label class="h">④ 絵の具にする</label>
+    <div class="row"><span class="n">彩度</span><output id="o_sai">1.20</output></div>
+    <input type="range" id="r_sai" min="0" max="260" value="120">
+    <div class="note">🔴 参考（Gobled）を作品1点で測ると<b>彩度は落ちていない。上がっている</b>。ここは下げる側ではない。</div>
+    <div class="row"><span class="n">ムラ（斑）</span><output id="o_mura">6</output></div>
+    <input type="range" id="r_mura" min="0" max="30" value="6">
+    <div class="row"><span class="n">粒</span><output id="o_tsubu">3</output></div>
+    <input type="range" id="r_tsubu" min="0" max="24" value="3">
+    <div class="note">⭐ 面が<b>完全に平ら</b>だと機械の絵になる。絵の具と紙の斑をここで戻す。</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">⑤ もう一度掛ける</label>
+    <div class="seg" id="s_round">
+      <button data-v="1" class="on">1周</button>
+      <button data-v="2">2周</button>
+      <button data-v="3">3周</button>
+      <button data-v="4">4周</button>
+    </div>
+    <div class="note">⭐ 出来た絵に<b>もう一度①〜④を掛ける</b>。2〜3周で写真から離れて、どこかで見たようで見たことのない絵になる。<br>
+      ⚠️ 1周は「平らにしただけ」＝ここが既定。</div>
+  </div>
+
+  <div class="grp">
+    <label class="h">出す</label>
+    <div class="seg" id="s_exp">
+      <button data-v="1" class="on">×1</button>
+      <button data-v="2">×2</button>
+      <button data-v="3">×3</button>
+      <button data-v="4">×4</button>
+      <button data-v="5">×5</button>
+    </div>
+    <div class="note" id="n_exp"></div>
+    <label class="chk"><input type="checkbox" id="k_trans"> 消した所を抜く（道具間はこれ）</label>
+    <button class="btn solid" id="b_png">PNG</button>
+    <div class="note" id="stat"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ══════════════════════════════════════════════════════════════════════
+   拭 FUKI ── 芯
+   写真を【領域ごとに平らな面】にして、選んだ面を【消し】、その絵にもう一度掛ける。
+
+   ⭐⭐ 芯は5手（順番が全部）
+     ① 面にする ── ぼかしではなく、色の近いところを1つの面にまとめて中を1色にする
+     ② 縁      ── 面と面の境だけ暗くする（平らなだけでは絵にならない）
+     ③ 消す    ── 面をまるごと潰す。⭐ここが「フィルター」と「絵画」の分かれ目
+     ④ 絵の具  ── 彩度を上げ、面の中にムラと粒を戻す（平ら過ぎると機械の絵）
+     ⑤ 繰り返す ── 出来た絵にもう一度①〜④
+
+   🔴🔴 面は【SEG の解像度で1回だけ決める】。下見も書き出しも同じ面を使う。
+      盤だけ大きくして描き直すと絵が変わる（2026-09-21 簾で実測した罠）ので、
+      倍率は「面を引き伸ばして画素を増やす」だけにしてある＝出る絵は同じ。
+   ══════════════════════════════════════════════════════════════════════ */
+
+const SEG = 1024;            /* 面を決める長辺。ここは倍率で動かさない */
+let EXPK = 1;                /* つまみ。書き出しの倍率 */
+
+const stage = document.getElementById('stage');
+const cv = document.getElementById('cv'), cx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+
+/* ── 種つきの乱数（下見と書き出しで同じ絵が出るように） ───────────── */
+function rng(s){ let x = (s|0) || 1; return () => { x ^= x<<13; x ^= x>>>17; x ^= x<<5; return ((x>>>0) / 4294967296); }; }
+
+/* ── ならし（箱ぼかし2回 ≒ ガウス） ─────────────────────────── */
+function blur(d, W, H, r){
+  if (r < 1) return d;
+  const t = new Float32Array(d.length);
+  for (let pass = 0; pass < 2; pass++){
+    for (let c = 0; c < 3; c++){
+      for (let y = 0; y < H; y++){
+        let s = 0; const o = y*W;
+        for (let x = -r; x <= r; x++) s += d[(o + Math.min(W-1, Math.max(0, x)))*3 + c];
+        for (let x = 0; x < W; x++){
+          t[(o+x)*3+c] = s / (2*r+1);
+          s -= d[(o + Math.min(W-1, Math.max(0, x-r)))*3 + c];
+          s += d[(o + Math.min(W-1, Math.max(0, x+r+1)))*3 + c];
+        }
+      }
+    }
+    for (let c = 0; c < 3; c++){
+      for (let x = 0; x < W; x++){
+        let s = 0;
+        for (let y = -r; y <= r; y++) s += t[(Math.min(H-1, Math.max(0, y))*W + x)*3 + c];
+        for (let y = 0; y < H; y++){
+          d[(y*W+x)*3+c] = s / (2*r+1);
+          s -= t[(Math.min(H-1, Math.max(0, y-r))*W + x)*3 + c];
+          s += t[(Math.min(H-1, Math.max(0, y+r+1))*W + x)*3 + c];
+        }
+      }
+    }
+  }
+  return d;
+}
+
+/* ── ① 面にする（Felzenszwalb のグラフ併合） ──────────────────────
+ * 隣どうしの色の差を辺にして、弱い辺から順に併合する。
+ * 併合していいのは「その面の中のばらつき＋k/大きさ」より差が小さいときだけ
+ * ＝ ⭐ 小さい面は繋がりやすく、大きい面は繋がりにくい（だから面が育ちすぎない）。
+ * 🔴 辺は 256 段の整数なので【数え上げで並べ替える】＝ sort を使わない（実測で一番効く）。 */
+function menni(d, W, H, k, minsz){
+  const N = W*H;
+  const M = (W-1)*H + W*(H-1);
+  const ea = new Int32Array(M), eb = new Int32Array(M), ew = new Uint8Array(M);
+  let m = 0;
+  for (let y = 0; y < H; y++){
+    for (let x = 0; x < W; x++){
+      const i = y*W + x, i3 = i*3;
+      if (x+1 < W){ const j3 = (i+1)*3;
+        let w = Math.abs(d[i3]-d[j3]); let t = Math.abs(d[i3+1]-d[j3+1]); if (t>w) w=t;
+        t = Math.abs(d[i3+2]-d[j3+2]); if (t>w) w=t;
+        ea[m]=i; eb[m]=i+1; ew[m]= w>255?255:w|0; m++; }
+      if (y+1 < H){ const j3 = (i+W)*3;
+        let w = Math.abs(d[i3]-d[j3]); let t = Math.abs(d[i3+1]-d[j3+1]); if (t>w) w=t;
+        t = Math.abs(d[i3+2]-d[j3+2]); if (t>w) w=t;
+        ea[m]=i; eb[m]=i+W; ew[m]= w>255?255:w|0; m++; }
+    }
+  }
+  const cnt = new Int32Array(257);
+  for (let i = 0; i < m; i++) cnt[ew[i]+1]++;
+  for (let i = 0; i < 256; i++) cnt[i+1] += cnt[i];
+  const ord = new Int32Array(m);
+  for (let i = 0; i < m; i++) ord[cnt[ew[i]]++] = i;
+
+  const par = new Int32Array(N), sz = new Int32Array(N), thr = new Float32Array(N);
+  for (let i = 0; i < N; i++){ par[i]=i; sz[i]=1; thr[i]=k; }
+  const find = x => { while (par[x] !== x){ par[x] = par[par[x]]; x = par[x]; } return x; };
+  for (let t = 0; t < m; t++){
+    const e = ord[t]; let a = find(ea[e]), b = find(eb[e]);
+    if (a === b) continue;
+    const w = ew[e];
+    if (w <= thr[a] && w <= thr[b]){
+      if (sz[a] < sz[b]){ const q = a; a = b; b = q; }
+      par[b] = a; sz[a] += sz[b]; thr[a] = w + k / sz[a];
+    }
+  }
+  /* 小さい面は隣へ吸わせる */
+  for (let t = 0; t < m; t++){
+    const e = ord[t]; let a = find(ea[e]), b = find(eb[e]);
+    if (a === b) continue;
+    if (sz[a] < minsz || sz[b] < minsz){
+      if (sz[a] < sz[b]){ const q = a; a = b; b = q; }
+      par[b] = a; sz[a] += sz[b];
+    }
+  }
+  /* 0 から詰め直す */
+  const map = new Int32Array(N).fill(-1);
+  const lab = new Int32Array(N);
+  let n = 0;
+  for (let i = 0; i < N; i++){
+    const r = find(i);
+    if (map[r] < 0) map[r] = n++;
+    lab[i] = map[r];
+  }
+  return { lab, n };
+}
+
+/* ── 面ごとの平均色 ───────────────────────────────────────── */
+function heikin(d, lab, n, N){
+  const s = new Float64Array(n*3), c = new Int32Array(n);
+  for (let i = 0; i < N; i++){
+    const l = lab[i], i3 = i*3, l3 = l*3;
+    s[l3] += d[i3]; s[l3+1] += d[i3+1]; s[l3+2] += d[i3+2]; c[l]++;
+  }
+  const out = new Float32Array(n*3);
+  for (let l = 0; l < n; l++){
+    const k = c[l] || 1;
+    out[l*3] = s[l*3]/k; out[l*3+1] = s[l*3+1]/k; out[l*3+2] = s[l*3+2]/k;
+  }
+  return { col: out, cnt: c };
+}
+
+/* ── 彩度（明るさは動かさず、色みだけ伸ばす） ───────────────────── */
+function saido(col, n, sai){
+  if (sai === 1) return col;
+  const o = new Float32Array(col.length);
+  for (let l = 0; l < n; l++){
+    const r = col[l*3], g = col[l*3+1], b = col[l*3+2];
+    const y = 0.299*r + 0.587*g + 0.114*b;
+    o[l*3]   = Math.min(255, Math.max(0, y + (r-y)*sai));
+    o[l*3+1] = Math.min(255, Math.max(0, y + (g-y)*sai));
+    o[l*3+2] = Math.min(255, Math.max(0, y + (b-y)*sai));
+  }
+  return o;
+}
+
+/* ── 境の印（面の解像度で作る＝倍率を上げると縁も一緒に太る） ─────── */
+function fuchi(lab, W, H){
+  const e = new Uint8Array(W*H);
+  for (let y = 0; y < H; y++){
+    const o = y*W;
+    for (let x = 0; x < W; x++){
+      const l = lab[o+x];
+      if (x+1 < W && lab[o+x+1] !== l){ e[o+x] = 1; e[o+x+1] = 1; }
+      if (y+1 < H && lab[o+W+x] !== l){ e[o+x] = 1; e[o+W+x] = 1; }
+    }
+  }
+  return e;
+}
+
+/* ── ムラ（低い波）と粒（細かい波）。面の解像度で作るので倍率で一緒に伸びる ── */
+function namiLow(W, H, seed){
+  const gw = 24, gh = Math.max(2, Math.round(24*H/W));
+  const r = rng(seed);
+  const g = new Float32Array(gw*gh);
+  for (let i = 0; i < g.length; i++) g[i] = r()*2-1;
+  const out = new Float32Array(W*H);
+  for (let y = 0; y < H; y++){
+    const fy = y/(H-1)*(gh-1), y0 = Math.floor(fy), y1 = Math.min(gh-1, y0+1), ty = fy-y0;
+    for (let x = 0; x < W; x++){
+      const fx = x/(W-1)*(gw-1), x0 = Math.floor(fx), x1 = Math.min(gw-1, x0+1), tx = fx-x0;
+      const a = g[y0*gw+x0]*(1-tx) + g[y0*gw+x1]*tx;
+      const b = g[y1*gw+x0]*(1-tx) + g[y1*gw+x1]*tx;
+      out[y*W+x] = a*(1-ty) + b*ty;
+    }
+  }
+  return out;
+}
+function namiHigh(W, H, seed){
+  const r = rng(seed);
+  const out = new Float32Array(W*H);
+  for (let i = 0; i < out.length; i++) out[i] = r()*2-1;
+  return out;
+}
+
+/* ══ 一周ぶん ════════════════════════════════════════════════════ */
+function hitomawari(d, W, H, p, round, keshita){
+  const N = W*H;
+  blur(d, W, H, Math.round(p.blur * (1 + (round-1)*0.3)));
+  const k  = p.k   * Math.pow(1.8, round-1);
+  const mn = p.min * Math.pow(1.8, round-1);
+  const { lab, n } = menni(d, W, H, k, mn);
+  const { col, cnt } = heikin(d, lab, n, N);
+  const sai = Math.pow(p.sai, 1/Math.max(1,p.round));   /* ⭐ 周を増やしても効きの合計は変えない */
+  const c2 = saido(col, n, sai);
+
+  /* ③ 消す ── 自動は「大きい面から順に、割合ぶん」。手で消したものは最後の周にだけ効く */
+  const kesu = new Uint8Array(n);
+  if (p.kesu > 0){
+    const idx = Array.from({length:n}, (_,i)=>i).sort((a,b)=>cnt[b]-cnt[a]);
+    const big = idx.slice(0, Math.max(1, Math.round(n*0.5)));
+    const r = rng(p.seed + round*97);
+    const take = Math.round(big.length * p.kesu);
+    for (let i = big.length-1; i > 0; i--){ const j = (r()*(i+1))|0; const t = big[i]; big[i]=big[j]; big[j]=t; }
+    for (let i = 0; i < take; i++) kesu[big[i]] = 1;
+  }
+  if (keshita) keshita.forEach(l => { if (l < n) kesu[l] = 1; });
+
+  const kc = p.kesuiro;
+  for (let l = 0; l < n; l++){
+    if (!kesu[l]) continue;
+    if (p.kesuMode === 'flat'){ c2[l*3]=kc[0]; c2[l*3+1]=kc[1]; c2[l*3+2]=kc[2]; }
+    else { c2[l*3]*=0.25; c2[l*3+1]*=0.25; c2[l*3+2]*=0.25; }
+  }
+  return { lab, n, col: c2, kesu, edge: fuchi(lab, W, H) };
+}
+
+/* ══ 焼く ═════════════════════════════════════════════════════════
+ * ⭐ 面は【SEG で決めたものをそのまま】使う。倍率は引き伸ばすだけ。
+ * ⭐ ただし引き伸ばしは【線で繋ぐ】（最近傍だと印刷で縁が階段になる）。
+ *    面の中は元から平らなので、線で繋いでも平らなまま＝境の1画素ぶんだけが滑らかになる。
+ * ⚠️ ×1 のときは拾う位置がちょうど画素の真ん中に乗るので、1画素も変わらない（実測で確認）。
+ * ⭐ 粒だけは【出す大きさで焼く】＝A2 に伸ばしても粒が四角い塊にならない。 */
+function yaku(st, W, H, OW, OH, p, trans){
+  const N = W*H;
+  /* ① SEG の解像度で「平らな板」を1枚つくる */
+  const flat = new Float32Array(N*3), eg = new Float32Array(N), al = new Float32Array(N);
+  for (let i = 0; i < N; i++){
+    const l = st.lab[i], l3 = l*3, i3 = i*3;
+    flat[i3] = st.col[l3]; flat[i3+1] = st.col[l3+1]; flat[i3+2] = st.col[l3+2];
+    eg[i] = st.edge[i] ? 1 : 0;
+    al[i] = (trans && st.kesu[l]) ? 0 : 1;
+  }
+  const mu = p.mura > 0 ? namiLow(W, H, p.seed*13+1) : null;
+  const tb = p.tsubu > 0 ? namiHigh(OW, OH, p.seed*29+3) : null;
+
+  const img = new ImageData(OW, OH);
+  const o = img.data;
+  const rx = W/OW, ry = H/OH;
+  for (let y = 0; y < OH; y++){
+    let fy = (y+0.5)*ry - 0.5; if (fy < 0) fy = 0; if (fy > H-1) fy = H-1;
+    const y0 = fy|0, y1 = y0+1 < H ? y0+1 : y0, ty = fy-y0;
+    for (let x = 0; x < OW; x++){
+      let fx = (x+0.5)*rx - 0.5; if (fx < 0) fx = 0; if (fx > W-1) fx = W-1;
+      const x0 = fx|0, x1 = x0+1 < W ? x0+1 : x0, tx = fx-x0;
+      const a = y0*W+x0, bI = y0*W+x1, c = y1*W+x0, dI = y1*W+x1;
+      const wa = (1-tx)*(1-ty), wb = tx*(1-ty), wc = (1-tx)*ty, wd = tx*ty;
+      let r = flat[a*3]*wa + flat[bI*3]*wb + flat[c*3]*wc + flat[dI*3]*wd;
+      let g = flat[a*3+1]*wa + flat[bI*3+1]*wb + flat[c*3+1]*wc + flat[dI*3+1]*wd;
+      let bb= flat[a*3+2]*wa + flat[bI*3+2]*wb + flat[c*3+2]*wc + flat[dI*3+2]*wd;
+      /* ⭐ 縁は【太さを変えずに】滑らかにする。
+         線で繋いだだけだと縁が2倍に太る（×3 で実測）。
+         ⚠️ ×1 では eg は 0 か 1 しか来ないので、この式は素通り＝1画素も変わらない。 */
+      let e = eg[a]*wa + eg[bI]*wb + eg[c]*wc + eg[dI]*wd;
+      e = e <= 0.25 ? 0 : e >= 0.75 ? 1 : (e - 0.25) * 2;
+      if (e > 0){ const k = 1 - p.edge*e; r *= k; g *= k; bb *= k; }
+      if (mu){ const v = (mu[a]*wa + mu[bI]*wb + mu[c]*wc + mu[dI]*wd) * p.mura; r += v; g += v; bb += v; }
+      if (tb){ const v = tb[y*OW+x]*p.tsubu; r += v; g += v; bb += v; }
+      const oi = (y*OW + x) * 4;
+      o[oi]   = r < 0 ? 0 : r > 255 ? 255 : r;
+      o[oi+1] = g < 0 ? 0 : g > 255 ? 255 : g;
+      o[oi+2] = bb < 0 ? 0 : bb > 255 ? 255 : bb;
+      o[oi+3] = trans ? (al[a]*wa + al[bI]*wb + al[c]*wc + al[dI]*wd)*255 : 255;
+    }
+  }
+  return img;
+}
+
+/* ══ 走らせる ═══════════════════════════════════════════════════ */
+let SRC = null;                 /* 元の写真（Image） */
+let SW = 0, SH = 0;             /* 面の解像度での大きさ */
+let BASE = null;                /* 最後の周に入る直前の画素 */
+let LAST = null;                /* 最後の周の結果 */
+const KESHITA = new Set();      /* 手で消した面 */
+const UNDO = [];
+
+function tsumami(){
+  const g = id => +$(id).value;
+  const kc = $('c_kesu').value;
+  return {
+    k: g('r_k'), min: g('r_min'), blur: Math.round(g('r_blur')/10),
+    edge: g('r_edge')/100, kesu: g('r_kesu')/100, seed: g('r_seed'),
+    sai: g('r_sai')/100, mura: g('r_mura'), tsubu: g('r_tsubu'),
+    round: +document.querySelector('#s_round button.on').dataset.v,
+    kesuMode: document.querySelector('#s_kesuiro button.on').dataset.v,
+    kesuiro: [parseInt(kc.slice(1,3),16), parseInt(kc.slice(3,5),16), parseInt(kc.slice(5,7),16)]
+  };
+}
+
+function genga(){
+  const s = SEG / Math.max(SRC.naturalWidth, SRC.naturalHeight);
+  SW = Math.max(2, Math.round(SRC.naturalWidth * s));
+  SH = Math.max(2, Math.round(SRC.naturalHeight * s));
+  const c = document.createElement('canvas'); c.width = SW; c.height = SH;
+  const g = c.getContext('2d', { willReadFrequently:true });
+  g.drawImage(SRC, 0, 0, SW, SH);
+  const px = g.getImageData(0, 0, SW, SH).data;
+  const d = new Float32Array(SW*SH*3);
+  for (let i = 0, j = 0; i < px.length; i += 4, j += 3){ d[j]=px[i]; d[j+1]=px[i+1]; d[j+2]=px[i+2]; }
+  return d;
+}
+
+function run(){
+  if (!SRC) return;
+  const t0 = performance.now();
+  const p = tsumami();
+  let d = genga();
+  /* 最後の1周の手前まで進める */
+  for (let r = 1; r < p.round; r++){
+    const st = hitomawari(d, SW, SH, p, r, null);
+    const img = yaku(st, SW, SH, SW, SH, p, false);
+    for (let i = 0, j = 0; i < img.data.length; i += 4, j += 3){
+      d[j]=img.data[i]; d[j+1]=img.data[i+1]; d[j+2]=img.data[i+2];
+    }
+  }
+  BASE = d;
+  LAST = hitomawari(d.slice(), SW, SH, p, p.round, KESHITA);
+  paint();
+  $('stat').textContent = `面 ${LAST.n} ／ ${(performance.now()-t0)|0}ms`;
+  expNote();
+}
+
+/* ⭐ 手で消したときは【最後の周だけ】焼き直す＝待たない */
+function saiEnogu(){
+  if (!BASE) return;
+  const p = tsumami();
+  LAST = hitomawari(BASE.slice(), SW, SH, p, p.round, KESHITA);
+  paint();
+}
+
+function paint(){
+  const p = tsumami();
+  cv.width = SW; cv.height = SH;
+  cx.putImageData(yaku(LAST, SW, SH, SW, SH, p, $('k_trans').checked), 0, 0);
+  layout();
+}
+
+/* ── 盤（窓）──────────────────────────────────────────────── */
+let zoom = 1, ox = 0, oy = 0;
+function layout(){
+  cv.style.transform = `translate(${ox}px,${oy}px) scale(${zoom})`;
+  $('o_zoom').textContent = Math.round(zoom*100) + '%';
+}
+function fit(){
+  const r = stage.getBoundingClientRect();
+  if (!cv.width) return;
+  zoom = Math.min((r.width-40)/cv.width, (r.height-40)/cv.height);
+  ox = (r.width - cv.width*zoom)/2; oy = (r.height - cv.height*zoom)/2;
+  layout();
+}
+function expNote(){
+  const w = Math.round(SW*EXPK), h = Math.round(SH*EXPK);
+  $('n_exp').innerHTML = `出る大きさ <b>${w} × ${h} px</b>　⭐ 面は倍率で変わらない（引き伸ばして画素が増えるだけ）＝出る絵は同じ（縁と粒だけ、その大きさで焼き直す）。`;
+}
+
+/* ── 写真を入れる ─────────────────────────────────────────── */
+function load(src){
+  const im = new Image();
+  im.onload = () => { SRC = im; KESHITA.clear(); UNDO.length = 0; run(); fit(); };
+  im.onerror = () => { $('stat').textContent = '🔴 この写真は開けませんでした'; };
+  im.src = src;
+}
+function loadFile(f){
+  if (!f || !/^image\//.test(f.type)) { $('stat').textContent = '🔴 画像ではありません'; return; }
+  const fr = new FileReader();
+  fr.onload = () => { document.querySelectorAll('#shots button').forEach(x=>x.classList.remove('on')); load(fr.result); };
+  fr.readAsDataURL(f);
+}
+document.querySelectorAll('#shots button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#shots button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); load(b.dataset.v);
+}));
+$('b_open').addEventListener('click', () => $('f_file').click());
+$('f_file').addEventListener('change', e => loadFile(e.target.files[0]));
+['dragenter','dragover'].forEach(t => window.addEventListener(t, e => { e.preventDefault(); document.body.classList.add('dragging'); }));
+['dragleave','drop'].forEach(t => window.addEventListener(t, e => { e.preventDefault(); if (t==='drop' || e.target===document.getElementById('drop')) document.body.classList.remove('dragging'); }));
+window.addEventListener('drop', e => { e.preventDefault(); document.body.classList.remove('dragging'); loadFile(e.dataTransfer.files[0]); });
+
+/* ── つまみ ───────────────────────────────────────────────── */
+const OUT = { r_k:['o_k',1,0], r_min:['o_min',1,0], r_blur:['o_blur',0.1,1], r_edge:['o_edge',1,0],
+  r_kesu:['o_kesu',1,0], r_seed:['o_seed',1,0], r_sai:['o_sai',0.01,2], r_mura:['o_mura',1,0], r_tsubu:['o_tsubu',1,0] };
+function show(){ for (const id in OUT){ const [o,m,f] = OUT[id]; $(o).textContent = (+$(id).value*m).toFixed(f); } }
+
+let timer = null;
+function later(){
+  clearTimeout(timer);
+  document.body.classList.add('busy');
+  timer = setTimeout(() => { run(); document.body.classList.remove('busy'); }, 130);
+}
+document.querySelectorAll('#panel input[type=range]').forEach(el => {
+  el.addEventListener('input', () => { show(); later(); });
+});
+$('c_kesu').addEventListener('input', saiEnogu);
+$('k_trans').addEventListener('change', paint);
+function segWire(sel, after){
+  document.querySelectorAll(sel + ' button').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll(sel + ' button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on'); after(b);
+  }));
+}
+segWire('#s_round', later);
+segWire('#s_kesuiro', saiEnogu);
+segWire('#s_hand', b => stage.classList.toggle('erasing', b.dataset.v === 'erase'));
+segWire('#s_exp', b => { EXPK = +b.dataset.v; expNote(); });
+$('b_kesu_reset').addEventListener('click', () => { KESHITA.clear(); UNDO.length = 0; saiEnogu(); });
+
+/* ── 盤を触る（動かす／消す） ───────────────────────────────── */
+let drag = null;
+function toSeg(e){
+  const r = stage.getBoundingClientRect();
+  const x = Math.floor((e.clientX - r.left - ox) / zoom);
+  const y = Math.floor((e.clientY - r.top  - oy) / zoom);
+  if (x < 0 || y < 0 || x >= SW || y >= SH) return -1;
+  return LAST.lab[y*SW + x];
+}
+stage.addEventListener('pointerdown', e => {
+  if (stage.classList.contains('erasing')){
+    const l = toSeg(e);
+    if (l < 0) return;
+    UNDO.push(l);
+    if (KESHITA.has(l)) KESHITA.delete(l); else KESHITA.add(l);
+    saiEnogu();
+    return;
+  }
+  drag = [e.clientX - ox, e.clientY - oy];
+  stage.setPointerCapture(e.pointerId); stage.classList.add('panning');
+});
+stage.addEventListener('pointermove', e => { if (drag){ ox = e.clientX - drag[0]; oy = e.clientY - drag[1]; layout(); } });
+stage.addEventListener('pointerup', () => { drag = null; stage.classList.remove('panning'); });
+stage.addEventListener('pointercancel', () => { drag = null; stage.classList.remove('panning'); });
+stage.addEventListener('wheel', e => { e.preventDefault(); zoom *= Math.exp(-e.deltaY*0.0015); layout(); }, { passive:false });
+$('z_in').addEventListener('click', () => { zoom *= 1.2; layout(); });
+$('z_out').addEventListener('click', () => { zoom /= 1.2; layout(); });
+$('z_fit').addEventListener('click', fit);
+window.addEventListener('resize', fit);
+addEventListener('keydown', e => {
+  if ((e.metaKey||e.ctrlKey) && e.key === 'z' && UNDO.length){
+    e.preventDefault();
+    const l = UNDO.pop();
+    if (KESHITA.has(l)) KESHITA.delete(l); else KESHITA.add(l);
+    saiEnogu();
+  }
+});
+
+/* ── 出す ────────────────────────────────────────────────── */
+$('b_png').addEventListener('click', () => {
+  const p = tsumami();
+  const OW = Math.round(SW*EXPK), OH = Math.round(SH*EXPK);
+  const c = document.createElement('canvas'); c.width = OW; c.height = OH;
+  c.getContext('2d').putImageData(yaku(LAST, SW, SH, OW, OH, p, $('k_trans').checked), 0, 0);
+  c.toBlob(b => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = 'fuki.png'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+    $('stat').textContent = `出した ${OW} × ${OH} px`;
+  });
+});
+
+/* ── 補足の出し入れ ──────────────────────────────────────── */
+$('noteBtn').addEventListener('click', () => document.body.classList.toggle('shownote'));
+
+show(); load('1.jpg');
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════
+     ⭐⭐ パネルの高さを掴んで変える（他の道具と同じ掴み手）
+     ⭐ ここは【いちばん最後に足した塊】。HTML の並びは1行も触っていない。
+        この <script> ごと消せば完全に元へ戻る。
+     ══════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  'use strict';
+  const mq = window.matchMedia('(max-width: 820px), (pointer: coarse) and (max-width: 1024px)');
+  const KEY = 'fuki.panelH.v1';
+  const SNAP = [26, 42, 78];
+  let grip = null;
+  const clamp = v => { const hi = innerHeight < 500 ? 62 : 86; return Math.max(18, Math.min(hi, v)); };
+  const setH = vh => {
+    document.documentElement.style.setProperty('--panelH', clamp(vh).toFixed(1) + 'vh');
+    try{ window.dispatchEvent(new Event('resize')); }catch(_){}
+  };
+  const curH = () => (parseFloat(getComputedStyle(document.getElementById('panel')).height) || 0) / innerHeight * 100;
+  function build(){
+    if (grip) return;
+    grip = document.createElement('div');
+    grip.id = 'sheetGrip';
+    grip.setAttribute('aria-label', 'パネルの高さ');
+    grip.title = 'ドラッグで高さを変える／タップで段を切り替える';
+    document.body.appendChild(grip);
+    let drag = null;
+    grip.addEventListener('pointerdown', e => {
+      e.preventDefault(); grip.setPointerCapture(e.pointerId); grip.classList.add('dragging');
+      drag = { y:e.clientY, h:curH(), moved:false };
+    });
+    grip.addEventListener('pointermove', e => {
+      if (!drag) return;
+      const dvh = (drag.y - e.clientY) / innerHeight * 100;
+      if (Math.abs(dvh) > 1) drag.moved = true;
+      setH(drag.h + dvh);
+    });
+    const end = () => {
+      if (!drag) return;
+      grip.classList.remove('dragging');
+      if (!drag.moved){
+        const h = curH();
+        const next = SNAP.find(v => clamp(v) > h + 2);
+        setH(next === undefined ? SNAP[0] : next);
+      }
+      try{ localStorage.setItem(KEY, String(Math.round(curH()*10)/10)); }catch(_){}
+      drag = null;
+    };
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
+  }
+  function drop(){ if (!grip) return; grip.remove(); grip = null; document.documentElement.style.removeProperty('--panelH'); }
+  function sync(){
+    if (mq.matches){
+      build();
+      let v = null; try{ v = parseFloat(localStorage.getItem(KEY)); }catch(_){}
+      if (v > 0) setH(v);
+    } else drop();
+  }
+  if (mq.addEventListener) mq.addEventListener('change', sync); else if (mq.addListener) mq.addListener(sync);
+  if (document.readyState === 'loading') addEventListener('DOMContentLoaded', sync); else sync();
+})();
+</script>
+</body>
+</html>
