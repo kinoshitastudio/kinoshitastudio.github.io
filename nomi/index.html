@@ -270,6 +270,8 @@
 </div>
 
 <div id="panel">
+  <!-- ⭐ 枠のCSSに #noteBtn はあったのに【ボタンが無く】、補足が1つも出せなかった（2026-09-22 に追加） -->
+  <button id="noteBtn" title="補足を出す／しまう">ⓘ</button>
   <h1>鑿 NOMI</h1>
   <div class="sub"><b>字を描くのではなく、板を刳（えぐ）って字にする。</b>残った方が字になる ── 地と図が入れ替わった組み方。</div>
 
@@ -340,6 +342,18 @@
     <div class="btns2"><button class="btn" id="b_png">PNG</button><button class="btn" id="b_svg">SVG</button></div>
     <button class="btn" id="b_raw">素に戻す（刳らない）</button>
     <div class="note" id="stat"></div>
+  </div>
+
+  <!-- ══⭐ 設定を持ち出す（2026-09-22 木下「JSON保存できるように」）══ -->
+  <div class="grp">
+    <label class="h">設定</label>
+    <div class="btns2">
+      <button class="btn" id="s_json">保存（JSON）</button>
+      <button class="btn" id="l_json">読み込む</button>
+    </div>
+    <input type="file" id="j_file" accept="application/json,.json" hidden>
+    <div class="note">⭐ つまみ全部＋打った字＋書体＋色が入る。盤に JSON を落としても読める。<br>
+      ⚠️ 絵そのものは入らない（設定だけ）。絵は PNG／SVG で出す。</div>
   </div>
 </div>
 
@@ -808,6 +822,77 @@ stage.addEventListener('pointermove', e => { if (drag) { ox = e.clientX - drag[0
 stage.addEventListener('pointerup', () => { drag = null; stage.classList.remove('panning'); });
 stage.addEventListener('wheel', e => { e.preventDefault(); const k = Math.exp(-e.deltaY * 0.0015); zoom *= k; layout(); }, { passive: false });
 window.addEventListener('resize', fit);
+
+
+/*══════════════════════════════════════════════════════════════════════
+  ⭐⭐ 設定の出し入れ（JSON）── 2026-09-22
+  ⭐ ここは【最後に足した塊】。上の行は1つも触っていない＝消せば完全に元へ戻る。
+  🔴🔴 読むときは値を変数へ直に入れない。【つまみを触るのと同じ道】を通す。
+     この道具は input/change で「下見だけ」「本気で焼く」が分かれているので、
+     直に入れると値は合っているのに絵が違う、になる。
+  ⭐ ①書体の段を押す → ②つまみに入れて input と change を出す → ③段をもう一度押す。
+═══════════════════════════════════════════════════════════════════════*/
+(function () {
+  const $$ = id => document.getElementById(id);
+  const つまみ = () => [...document.querySelectorAll(
+    '#panel input[type=range], #panel input[type=color], #panel input[type=checkbox], #panel textarea')]
+    .filter(e => e.id);
+
+  function 写す() {
+    const t = {};
+    つまみ().forEach(e => t[e.id] = (e.type === 'checkbox') ? e.checked : e.value);
+    const on = document.querySelector('#s_font button.on');
+    return { 道具: 'nomi', 版: 1, 日付: new Date().toISOString().slice(0, 10),
+             つまみ: t, 書体: on ? on.dataset.v : null };
+  }
+  const 書体を当てる = v => {
+    if (!v) return;
+    const btn = [...document.querySelectorAll('#s_font button')].find(x => x.dataset.v === v);
+    if (btn && !btn.classList.contains('on')) btn.click();
+  };
+  function 入れる(j) {
+    if (!j || j.道具 !== 'nomi') { alert('鑿 NOMI の設定ではないようです。'); return; }
+    書体を当てる(j.書体);
+    つまみ().forEach(e => {
+      const v = (j.つまみ || {})[e.id];
+      if (v === undefined) return;
+      if (e.type === 'checkbox') {
+        if (e.checked === !!v) return;                 /* 🔴 同じなら出さない */
+        e.checked = !!v;
+      } else {
+        if (String(e.value) === String(v)) return;
+        e.value = v;
+      }
+      e.dispatchEvent(new Event('input',  { bubbles: true }));
+      e.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    書体を当てる(j.書体);                                /* ③ 色で上書きされることがある */
+    if (typeof show === 'function') show();
+    if (typeof later === 'function') later(false);       /* 下見でなく本気で焼き直す */
+  }
+  function 読む(f) {
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => { try { 入れる(JSON.parse(r.result)); }
+                       catch (e) { alert('JSON を読めませんでした：' + e.message); } };
+    r.readAsText(f);
+  }
+  $$('s_json').addEventListener('click', () => {
+    const bl = new Blob([JSON.stringify(写す(), null, 1)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(bl);
+    a.download = 'nomi_' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '.json';
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  });
+  $$('l_json').addEventListener('click', () => $$('j_file').click());
+  $$('j_file').addEventListener('change', e => { 読む(e.target.files[0]); e.target.value = ''; });
+  ['dragover', 'drop'].forEach(t => $$('stage').addEventListener(t, e => {
+    e.preventDefault();
+    if (t === 'drop') 読む([...e.dataTransfer.files].find(f => /\.json$/i.test(f.name)));
+  }));
+  /* ⭐ 補足の出し入れ（枠のCSSはあったのに、押す所が無かった） */
+  $$('noteBtn').addEventListener('click', () => document.body.classList.toggle('shownote'));
+})();
 
 /* 🔴 canvas は書体が読み込まれる前だと黙って別の書体で描く */
 (async () => {
