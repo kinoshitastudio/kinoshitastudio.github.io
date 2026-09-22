@@ -638,6 +638,11 @@
 
   <button class="big" id="resetAll">全リセット</button>
   <button class="big" id="reset">アンカー全消し</button>
+  <!-- ⭐⭐ 書き出しの倍率（2026-09-21）── 印刷に使うときだけ上げる。×1 が今までどおり。
+       ⚠️ 画面には一切触らない（出すあいだだけ盤を大きくして、finally で必ず戻す） -->
+  <div class="seg" id="expk"><button data-k="1" class="on">×1</button><button data-k="2">×2</button
+    ><button data-k="3">×3</button><button data-k="4">×4</button><button data-k="6">×6</button><button data-k="8">×8</button></div>
+  <div class="note" id="expNote">出る大きさ＝画面のまま</div>
   <button class="big" id="png">PNG</button>
   <button class="big" id="pngA">PNG（地なし）</button>
   <div class="note">⭐ <b>地なし</b>＝背景を入れずに透明のまま出す。
@@ -2058,9 +2063,33 @@ function cropToBlob(cb){
   out.getContext('2d').drawImage(canvas, x0, h - 1 - y1, cw, ch, 0, 0, cw, ch);
   out.toBlob(cb, 'image/png');
 }
+/* ══⭐⭐ 書き出しの倍率 ── 2026-09-21
+   ⭐⭐ 値の持ち主は EXPK ひとつ。既定 1 ＝ これまでと1画素も変わらない（×1かつ版面なしなら1行も通らない）。
+   ⭐ この道具はもともと【盤を大きくして描き直し、finally で戻す】型を持っていた（版面つきの書き出し）。
+      その大きさに倍率を掛けるだけで済む。
+   🔴 印刷に使うなら Photoshop で伸ばさず、ここで必要な画素数を出す。 */
+let EXPK = 1;
+function expNoteSync(){
+  const el = document.getElementById('expNote'); if(!el) return;
+  const f = (P.frameOn === 1 && typeof frameSize === 'function') ? frameSize()
+          : { w: canvas.width, h: canvas.height };
+  el.textContent = `出る大きさ ${Math.round(f.w * EXPK)} × ${Math.round(f.h * EXPK)} px`;
+}
+(function(){
+  const box = document.getElementById('expk'); if(!box) return;
+  box.querySelectorAll('button').forEach(b => b.addEventListener('click', ()=>{
+    EXPK = Math.max(1, Math.min(8, Math.round(+b.dataset.k || 1)));
+    box.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    expNoteSync();
+  }));
+  addEventListener('resize', ()=> setTimeout(expNoteSync, 80));
+  setTimeout(expNoteSync, 300);
+})();
+
 function renderToBlob(cb, noBg){
   /* ⚠️ 地なしのときも【一度描き直してから】撮る。撮ってから消しても手遅れ */
-  if(P.frameOn !== 1){
+  const k = Math.max(1, EXPK | 0);
+  if(P.frameOn !== 1 && k === 1){        /* ⭐ これまでどおりの道（1行も変えていない） */
     if(noBg){
       noBgOnce = true; render(lastT);
       cropToBlob(b => { noBgOnce = false; render(lastT); cb(b); });
@@ -2069,10 +2098,11 @@ function renderToBlob(cb, noBg){
     canvas.toBlob(b => { noBgOnce = false; render(lastT); cb(b); }, 'image/png');
     return;
   }
-  const f = frameSize();
+  /* ⭐ 版面つき、または倍率を上げたとき＝盤を作り直して描く */
+  const f = (P.frameOn === 1) ? frameSize() : { w: canvas.width, h: canvas.height };
   const kw = canvas.width, kh = canvas.height;
   try{
-    canvas.width = f.w; canvas.height = f.h;
+    canvas.width = Math.round(f.w * k); canvas.height = Math.round(f.h * k);
     noBgOnce = !!noBg; render(lastT);
     if(noBg) cropToBlob(b => { noBgOnce = false; cb(b); });
     else canvas.toBlob(b => { noBgOnce = false; cb(b); }, 'image/png');

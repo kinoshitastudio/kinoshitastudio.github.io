@@ -354,6 +354,12 @@
   <div class="row"><label>中のたて</label><input type="range" id="gakuY" min="-50" max="50" value="0"><span class="val"></span></div>
 
   <h2>出す</h2>
+  <!-- ⭐⭐ 書き出しの倍率 ── 印刷に使うときだけ上げる。×1 が今までどおり。
+       ⚠️ 表示は一切変わらない（出すあいだだけ盤を大きくして、すぐ戻す） -->
+  <div class="tag">書き出しの倍率</div>
+  <div class="seg" id="expk"><button data-k="1" class="on">×1</button><button data-k="2">×2</button
+    ><button data-k="3">×3</button><button data-k="4">×4</button><button data-k="6">×6</button><button data-k="8">×8</button></div>
+  <div class="row"><label>出る大きさ</label><span id="expSize" class="val"></span></div>
   <button class="big" id="png">PNG</button>
   <button class="big" id="pngA">PNG（地なし）</button>
   <button class="big" id="save">控えを保存</button>
@@ -1120,9 +1126,20 @@ function buildSheet(sh){
   if(sh.dir === 1 || sh.dir === 2) R = R.concat(sliceToRects(sh, mask, W2, H2, true, S));
   sh.RECTS = R; sh.ART = { w:W2, h:H2 };
 }
+/* ══⭐⭐ 書き出しの倍率 ──────────────────────────────────────
+   ⭐⭐ 値の持ち主は EXPK ひとつ。既定 1 ＝ これまでと1画素も変わらない。
+   ⭐ _expLive は「いま焼かれている倍率」。表示中は必ず 1 で、出すあいだだけ EXPK になる。
+   ⚠️ 宣言はここ（build より前）。let は先に読むと落ちる。
+   🔴 印刷に使うなら Photoshop で伸ばさず、ここで必要な画素数を出す。 */
+let EXPK = 1;
+let _expLive = 1;
+
 /* ⭐ いま触っている版だけ焼き直して描く（他の版はそのまま＝重ねても崩れない） */
 function build(){
-  const dpr = Math.min(devicePixelRatio, 2);
+  /* ⭐ _expLive＝いま焼かれている倍率。ふだんは1＝これまでどおり。
+     ⚠️ 盤だけ大きくして draw() を呼んでも、板の焼き直し（buildSheet）が古いままで絵が変わる＝実測で分かった。
+        だから盤と板を【同じ倍率で】焼き直す。 */
+  const dpr = Math.min(devicePixelRatio, 2) * _expLive;
   cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
   buildSheet(S_());
   draw();
@@ -1132,7 +1149,7 @@ function build(){
 function buildAll(){
   /* ⚠️ 動画を撮っているあいだは焼き直さない（キャンバスの大きさが変わると配置が動く） */
   if(TV.on) return;
-  const dpr = Math.min(devicePixelRatio, 2);
+  const dpr = Math.min(devicePixelRatio, 2) * _expLive;   /* ⭐ 出すあいだだけ倍率ぶん大きく焼く */
   cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
   SHEETS.forEach(buildSheet);
   draw();
@@ -1396,18 +1413,48 @@ addEventListener('keydown', e=>{
   else { if(!UNDO.length){ stat('これ以上は戻れない'); return; } REDO.push(snapObj()); applyP(UNDO.pop()); stat('戻した'); }
 });
 
+/* ══⭐⭐ 書き出しの倍率 ──────────────────────────────────────
+   ⭐ この道具は版の位置も板の太さも【盤の大きさに対する割合】で描いている
+      （`W/2 + sh.x/100*W*0.5` など）＝盤を大きくすると絵はそのまま拡大される。
+      dpr 1 と 2 で出した絵を画素で突き合わせて確かめた（差 0.5／2026-09-21）。
+   ⭐⭐ 値の持ち主は EXPK ひとつ。既定 1 ＝ これまでと1画素も変わらない。
+   ⚠️ 表示には触らない。出すあいだだけ盤を大きくして描き直し、【必ず】元に戻す。
+   🔴 印刷に使うなら、Photoshop で伸ばさずここで必要な画素数を出す。 */
+function bigOn(){
+  if(EXPK <= 1) return null;
+  _expLive = EXPK; buildAll();   /* ⭐ 盤も板も倍率ぶん大きく焼き直す */
+  return true;
+}
+function bigOff(on){ if(on){ _expLive = 1; buildAll(); } }
+function expSizeSync(){
+  const el = document.getElementById('expSize'); if(!el) return;
+  el.textContent = `${Math.round(cv.width * EXPK)} × ${Math.round(cv.height * EXPK)} px`;
+}
+function setEXPK(v){
+  EXPK = Math.max(1, Math.min(8, Math.round(+v || 1)));
+  document.getElementById('expk').querySelectorAll('button')
+    .forEach(x=> x.classList.toggle('on', +x.dataset.k === EXPK));
+  expSizeSync();
+}
+document.getElementById('expk').querySelectorAll('button').forEach(b=>
+  b.addEventListener('click', ()=> setEXPK(b.dataset.k)));
+addEventListener('resize', ()=> setTimeout(expSizeSync, 60));
+
 /* ── 出す ── ⚠️ 地なしは絵のあるところだけに切り詰める（他の道具に重ねるため） ── */
 function toBlob(noBg, cb){
+  const _big = bigOn();                       /* ⭐ ここから大きい盤 */
   noBgOnce = !!noBg; draw();
-  if(!noBg){ cv.toBlob(b=>{ noBgOnce=false; draw(); cb(b); }, 'image/png'); return; }
+  /* ⚠️ 出口は3つある。どれを通っても必ずここで元に戻す */
+  const fin = b => { noBgOnce = false; bigOff(_big); draw(); cb(b); };
+  if(!noBg){ cv.toBlob(fin, 'image/png'); return; }
   const W = cv.width, H = cv.height, d = g.getImageData(0,0,W,H).data;
   let x0=W, y0=H, x1=-1, y1=-1;
   for(let y=0;y<H;y++) for(let x=0;x<W;x++){ if(d[(y*W+x)*4+3] > 2){
     if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } }
-  if(x1 < 0){ cv.toBlob(b=>{ noBgOnce=false; draw(); cb(b); }, 'image/png'); return; }
+  if(x1 < 0){ cv.toBlob(fin, 'image/png'); return; }
   const o = document.createElement('canvas'); o.width = x1-x0+1; o.height = y1-y0+1;
   o.getContext('2d').drawImage(cv, x0, y0, o.width, o.height, 0, 0, o.width, o.height);
-  o.toBlob(b=>{ noBgOnce=false; draw(); cb(b); }, 'image/png');
+  o.toBlob(fin, 'image/png');
 }
 function savePNG(noBg){ toBlob(noBg, b=>{ if(!b) return;
   const u = URL.createObjectURL(b), a = document.createElement('a');
