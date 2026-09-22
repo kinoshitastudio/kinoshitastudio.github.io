@@ -241,6 +241,14 @@ body.help #helpBtn{background:#fff;color:#141416}
   <div class="row"><span class="n">震え（手のブレ）</span><output id="o_jit">7</output></div>
   <input type="range" id="jit" min="0" max="100" value="7">
   </div>
+  <!-- ══⭐ かすれ（2026-09-22 木下「文字にかすれがほしい」）══
+       ⚠️ 筆でもペンでも効くので【どちらの箱にも入れない】。既定 0 ＝ いままでの絵。 -->
+  <div class="row"><span class="n">かすれ</span><output id="o_kasu">0</output></div>
+  <input type="range" id="kasu" min="0" max="100" value="0">
+  <div class="row"><span class="n">かすれの細かさ</span><output id="o_kasuF">50</output></div>
+  <input type="range" id="kasuF" min="0" max="100" value="50">
+  <p class="hint">⭐ <b>走った向きに沿って</b>インクが抜ける。細い所ほど先に途切れる＝速い所からかすれる。<br>
+    ⚠️ SVG には入らない（画面と PNG だけ）。</p>
 
   <div class="sec">⑤ 走り ── 版面の上をどう走るか</div>
   <div class="seg" id="segDir">
@@ -310,6 +318,14 @@ body.help #helpBtn{background:#fff;color:#141416}
   <button class="btn go" id="ePNG">PNG で出す</button>
   <button class="btn" id="eSVG">SVG で出す</button>
   <p class="hint">SVG は<b>画面と同じ形</b>（ふちもグラデも入る）。⚠️ 震えは入るが、紙の地は入らない。</p>
+
+  <!-- ══⭐ 設定を持ち出す（2026-09-22 木下「JSON保存できるように」）══ -->
+  <div class="sec">⑩ 設定</div>
+  <button class="btn" id="sJson">設定を保存（JSON）</button>
+  <button class="btn" id="lJson">設定を読み込む</button>
+  <input type="file" id="jFile" accept="application/json,.json" hidden>
+  <p class="hint">⭐ つまみ全部＋<b>自分で置いた骨</b>＋打った字が入る。盤にJSONを落としても読める。<br>
+    ⚠️ 絵そのものは入らない（設定だけ）。絵は PNG／SVG で出す。</p>
 </div>
 <script>
 const $ = id => document.getElementById(id);
@@ -330,7 +346,8 @@ const S = {
   text: 'ファーストクラス',
   fam: 'kaku',
   pen : { tool:'fude', w:96, taper:62, miter:22, round:74, link:62, sweep:80, straight:88, vary:26, jit:7, warp:52,
-          fw:88, fvary:74, ftaper:86, renmen:58, bow:26 },
+          fw:88, fvary:74, ftaper:86, renmen:58, bow:26,
+          kasu:0, kasuF:50 },   /* ⭐ かすれ。既定 0 ＝ いままでの絵 */
   run : { size:150, adv:80, ang:-10, slant:-8, wide:62, tall:130, jr:10, x:6, y:46, seed:7,
           w:1500, h:1000 },
   /* ⭐ 既定は【黒いペン・単色】（2026-09-22 木下）。⚠️ 型 c1 はピンクのまま＝押せば戻る */
@@ -502,9 +519,16 @@ function boneOf(ch){
     const base = boneOf(d[0]);
     return base.map(l => l.map(([x,y]) => [x*0.90, y*0.94+0.04])).concat(MARK[d[1]]);
   }
-  if(KANA[ch]) return KANA[ch];
-  return boneFromFont(ch);
+  /* 🔴🔴 2026-09-22 ── ここで【元の配列をそのまま返していた】。
+     後の工程（ゆがめる・丸める・つなぐ）が点を書き換えるので、
+     KANA の表そのものが少しずつ壊れて、**同じ設定に戻しても絵が違う**になっていた。
+     ⭐ 控えと同じ話＝参照で渡すと戻らない。**必ず複製して渡す。**
+     ⚠️ 骨は1字あたり数本×数点なので、複製は測って 0ms 台。 */
+  if(KANA[ch]) return 複製(KANA[ch]);
+  return 複製(boneFromFont(ch));
 }
+/* ⭐ 骨＝線の配列の配列の[x,y]。3段とも作り直す（浅い複製だと点が共有されたまま） */
+function 複製(bone){ return bone.map(l => l.map(pt => [pt[0], pt[1]])); }
 function boneFromFont(ch){
   const key = ch + '|' + S.fam;
   if(boneCache.has(key)) return boneCache.get(key);
@@ -972,6 +996,72 @@ function place(){
   });
 }
 
+/* ══⭐⭐ かすれ ── 2026-09-22（木下「文字にかすれがほしい」）
+   ⭐⭐ しかけは単純：【紙とまったく同じ色で、細い筋を版面ぜんぶに引く】。
+      紙の上では見えない（同じ色だから）。インクの上だけが切れる＝かすれになる。
+      ＝ 切り抜きも別の板も要らない。式は1本。
+   ⭐ 筋は【走った向き】に沿う（S.run.ang）。手が走った方向に抜けるのが自然。
+   ⭐ 細い線ほど1本の筋で切れる＝**速い所（払いの先）から先にかすれる**。SEN の芯どおり。
+   ⚠️ 均一に引くと機械の絵になるので、太さ・濃さ・節の長さを全部ばらす。
+   ⚠️ SVG には入れない（筋を何百本も書くと開けないファイルになる）。
+   ⭐ 既定 0 ＝ 1画素も変わらない。 */
+function かすれ(g){
+  const k = (S.pen.kasu||0)/100;
+  if(k <= 0) return;
+  const f = (S.pen.kasuF||50)/100;                 /* 細かさ */
+  const [BW,BH] = boardSize();
+  const R = rnd(S.run.seed*331 + 17);
+  const len = Math.hypot(BW,BH);
+  const rad = ((S.run.ang||0) + (R()*2-1)*5) * Math.PI/180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  const 本 = Math.round((40 + 260*f) * (0.35 + 1.4*k));
+  const 太 = (BW/900) * (2.6 - 1.9*f);
+  g.save();
+  g.strokeStyle = S.col.bg; g.lineCap = 'round';
+  for(let i=0;i<本;i++){
+    const off = (R()*2-1) * len*0.62;
+    const px = BW/2 - sin*off, py = BH/2 + cos*off;
+    g.lineWidth = 太 * (0.5 + R()*1.8);
+    let t = -len/2;
+    while(t < len/2){
+      const seg = len * (0.015 + R()*0.13) * (1.25 - 0.6*f);
+      const gap = len * (0.010 + R()*0.10) * (1.45 - k);
+      if(R() < 0.18 + 0.72*k){
+        g.globalAlpha = 0.30 + 0.70*R();
+        g.beginPath();
+        g.moveTo(px + cos*t,         py + sin*t);
+        g.lineTo(px + cos*(t+seg),   py + sin*(t+seg));
+        g.stroke();
+      }
+      t += seg + gap;
+    }
+  }
+  g.restore();
+}
+
+/* ══⭐⭐ 塗りは【この1本】だけ ── 2026-09-22
+   🔴 元は drawGlyph の中にしか無く、【自分で置いた骨】と【連綿の渡り】は
+      `g.fillStyle = S.col.col` と単色で塗っていた＝2色のグラデが効かなかった。
+      しかも SVG 側だけ url(#sg) を書いていたので、**SVGには出るのに画面とPNGには出ない**。
+      （木下＝2026-09-22「2色のグラデがなぜかできない場合がある」）
+   ⭐ グラデは【版面ぜんぶを1本】。字ごとに作ると字の中で縞になる。
+      変形を掛ける前の行列 M0 を控えておき、盤の座標 →【いまの座標】に直して端点を置く。
+      盤の座標のまま描いている所（骨・渡り）では M0 といまの行列が同じ＝そのまま効く。 */
+function 塗り(g, svg, M0, 単色){
+  const solid = 単色 || S.col.col;
+  if(svg || !S.col.grad || !M0 || !g.getTransform) return solid;
+  try{
+    const B2L = g.getTransform().inverse().multiply(M0);
+    const [BW,BH] = boardSize();
+    const rad = (S.col.gang||0)*Math.PI/180, rr = Math.hypot(BW,BH)/2;
+    const a = new DOMPoint(BW/2 - Math.cos(rad)*rr, BH/2 - Math.sin(rad)*rr).matrixTransform(B2L);
+    const b = new DOMPoint(BW/2 + Math.cos(rad)*rr, BH/2 + Math.sin(rad)*rr).matrixTransform(B2L);
+    const gr = g.createLinearGradient(a.x, a.y, b.x, b.y);
+    gr.addColorStop(0, S.col.col); gr.addColorStop(1, S.col.col2);
+    return gr;
+  }catch(e){ return solid; }
+}
+
 function drawGlyph(g, ch, x, y, size, rot, colFill, i, svg, M0){
   const rings = glyph(ch, i);
   if(!rings.length) return;
@@ -992,22 +1082,7 @@ function drawGlyph(g, ch, x, y, size, rot, colFill, i, svg, M0){
     g.lineWidth = (S.col.edgeW||6) * 2 / (k || 1);
     g.stroke(); g.fill();
   }
-  /* ⭐⭐ グラデは【版面ぜんぶを1本】。字ごとに作ると字の中で縞になる。
-     変形を掛ける前の行列を控えておき、盤の座標 → この字の座標 に直して端点を置く。 */
-  let paint = colFill;
-  if(!svg && S.col.grad && M0 && g.getTransform){
-    try{
-      const B2L = g.getTransform().inverse().multiply(M0);
-      const [BW,BH] = boardSize();
-      const rad = (S.col.gang||0)*Math.PI/180, rr = Math.hypot(BW,BH)/2;
-      const a = new DOMPoint(BW/2 - Math.cos(rad)*rr, BH/2 - Math.sin(rad)*rr).matrixTransform(B2L);
-      const b = new DOMPoint(BW/2 + Math.cos(rad)*rr, BH/2 + Math.sin(rad)*rr).matrixTransform(B2L);
-      const gr = g.createLinearGradient(a.x, a.y, b.x, b.y);
-      gr.addColorStop(0, S.col.col); gr.addColorStop(1, S.col.col2);
-      paint = gr;
-    }catch(e){}
-  }
-  g.fillStyle = paint;
+  g.fillStyle = 塗り(g, svg, M0, colFill);
   g.fill();   /* nonzero＝帯どうしが重なっても穴が空かない */
   g.restore();
 
@@ -1101,7 +1176,7 @@ function paint(g, W, H, opt){
         g.beginPath();
         rings.forEach(r => { g.moveTo(r[0][0], r[0][1]);
           for(let j=1;j<r.length;j++) g.lineTo(r[j][0], r[j][1]); g.closePath(); });
-        g.fillStyle = S.col.col; g.fill();
+        g.fillStyle = 塗り(g, svg, M0); g.fill();      /* ⭐ 字と同じ1本のグラデ */
         if(svg) svg.push('<path d="' + rings.map(r =>
           'M' + r.map(p => p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L') + 'Z').join('') +
           '" fill="' + (S.col.grad ? 'url(#sg)' : S.col.col) + '"/>');
@@ -1128,13 +1203,14 @@ function paint(g, W, H, opt){
         g.beginPath();
         dr.forEach(r => { g.moveTo(r[0][0], r[0][1]);
           for(let j=1;j<r.length;j++) g.lineTo(r[j][0], r[j][1]); g.closePath(); });
-        g.fillStyle = S.col.col; g.fill();
+        g.fillStyle = 塗り(g, svg, M0); g.fill();      /* ⭐ 手で置いた骨にもグラデが乗る */
         if(svg) svg.push('<path d="' + dr.map(r =>
           'M' + r.map(p => p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L') + 'Z').join('') +
           '" fill="' + (S.col.grad ? 'url(#sg)' : S.col.col) + '"/>');
       }
     }
   }
+  if(!svg) かすれ(g);        /* ⭐ インクを全部描き終えた【いちばん最後】に掛ける */
   g.restore();
   return svg;
 }
@@ -1200,7 +1276,7 @@ function bindRange(id, get, set){
   el.addEventListener('input', e => { set(+e.target.value); if(o) o.textContent = e.target.value; draw(); });
 }
 [['w','pen'],['taper','pen'],['miter','pen'],['round','pen'],['link','pen'],['warp','pen'],['sweep','pen'],['straight','pen'],['vary','pen'],['jit','pen'],
- ['fw','pen'],['fvary','pen'],['ftaper','pen'],['renmen','pen'],['bow','pen']]
+ ['fw','pen'],['fvary','pen'],['ftaper','pen'],['renmen','pen'],['bow','pen'],['kasu','pen'],['kasuF','pen']]
   .forEach(([id,grp]) => bindRange(id, null, v => { S[grp][id] = v; glyphCache.clear(); }));
 [['size','run'],['adv','run'],['ang','run'],['slant','run'],['wide','run'],['tall','run'],['jr','run'],['x','run'],['y','run']]
   .forEach(([id,grp]) => bindRange(id, null, v => { S[grp][id] = v; }));
@@ -1303,7 +1379,7 @@ $('eSVG').onclick = () => {
 };
 
 function syncAll(){
-  ['w','taper','miter','round','link','warp','sweep','straight','vary','jit'].forEach(id => {
+  ['w','taper','miter','round','link','warp','sweep','straight','vary','jit','kasu','kasuF'].forEach(id => {
     const e=$(id), o=$('o_'+id); if(e){ e.value = S.pen[id]; if(o) o.textContent = S.pen[id]; } });
   ['size','adv','ang','slant','wide','tall','jr','x','y','seed'].forEach(id => {
     const e=$(id), o=$('o_'+id); if(e){ e.value = S.run[id]; if(o) o.textContent = S.run[id]; } });
@@ -1559,4 +1635,194 @@ S.vert = false;
   });
 })();
 syncAll(); toolUI(); modeUI(); layout(); fit(); draw();
+
+/* ══════════════════════════════════════════════════════════════════════
+   ⭐⭐ 盤を動かす・戻す ── 2026-09-22（木下「ズーム・移動・⌘Zできるように」）
+   ⭐ ここは【いちばん最後に足した塊】。上の行は1つも触っていない＝ここを消せば完全に元へ戻る。
+   ⭐ 同じ <script> の中に置く＝ Z / PX / PY / place2 / S / undo が見える
+      （道具の中身は window に生えていないので、別の script からは触れない）。
+
+   ① ホイール／2本指＝移動　⌘＋ホイール・ピンチ＝ズーム（Figma と同じ作法）
+   ② space を押しながらドラッグ＝移動。「打つ」ときは盤をそのまま掴んでも移動
+   ③ ⌘Z ── 🔴 元は【手で置いた骨】しか戻らず、しかも
+      つまみにフォーカスがあると `if(t==='INPUT') return;` で【何も起きなかった】。
+      ⭐ つまみ・色・書体・打った字まで、ひと操作ぶんずつ戻るようにする。
+   ══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const stage = $('stage');
+
+  /* ── ① ホイール ─────────────────────────────────────────────
+     ⚠️ ズームはカーソルの下の点を動かさない（画面を飛ばさない）。
+        拡大しても、いま見ている所がそのまま真ん中に残る。 */
+  stage.addEventListener('wheel', e => {
+    if(e.target.closest('#zoom, #modes')) return;
+    e.preventDefault();
+    if(e.ctrlKey || e.metaKey){                    /* ピンチ or ⌘＋ホイール */
+      const r = stage.getBoundingClientRect();
+      const mx = e.clientX - r.left, my = e.clientY - r.top;
+      const nz = Math.min(4, Math.max(.05, Z * Math.exp(-e.deltaY * 0.0022)));
+      PX = mx - (mx - PX) * (nz / Z);
+      PY = my - (my - PY) * (nz / Z);
+      Z = nz;
+    }else{                                          /* 2本指＝そのまま移動 */
+      PX -= e.deltaX; PY -= e.deltaY;
+    }
+    place2();
+  }, { passive:false });
+
+  /* ── ② 掴んで移動 ───────────────────────────────────────────
+     ⚠️ 「自分で置く」ときは盤のドラッグが【線を引く】なので奪わない。
+        奪ってよいのは ⓐspace中 ⓑ中ボタン ⓒ盤の外 ⓓ「打つ」モード の4つだけ。 */
+  let pan = null, spc = false;
+  const cur = () => { stage.style.cursor = pan ? 'grabbing' : (spc ? 'grab' : ''); };
+  addEventListener('keydown', e => {
+    if(e.code !== 'Space' || spc) return;
+    if(/INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    spc = true; cur(); e.preventDefault();
+  });
+  addEventListener('keyup', e => { if(e.code === 'Space'){ spc = false; cur(); } });
+  addEventListener('blur',  () => { spc = false; pan = null; cur(); });
+
+  stage.addEventListener('pointerdown', e => {
+    if(e.target.closest('#zoom, #modes')) return;
+    const 奪ってよい = spc || e.button === 1 || e.target !== cv || S.mode !== 'draw';
+    if(!奪ってよい) return;
+    e.preventDefault(); e.stopPropagation();        /* 描く処理より先に取る */
+    try{ stage.setPointerCapture(e.pointerId); }catch(_){}
+    pan = { x:e.clientX - PX, y:e.clientY - PY }; cur();
+  }, true);
+  stage.addEventListener('pointermove', e => {
+    if(!pan) return;
+    PX = e.clientX - pan.x; PY = e.clientY - pan.y; place2();
+  }, true);
+  const 離す = () => { if(pan){ pan = null; cur(); } };
+  stage.addEventListener('pointerup', 離す, true);
+  stage.addEventListener('pointercancel', 離す, true);
+
+  /* ── ③ ⌘Z ─────────────────────────────────────────────────
+     ⭐ 控えは【文字列にして持つ】。参照のまま持つと、あとで中身が書き換わって戻らない。 */
+  const 写す = () => JSON.stringify({
+    d:S.draw, p:S.pen, r:S.run, c:S.col, f:S.fam, t:S.text, v:S.vert, m:S.mode, h:S.hand, s:S.sel });
+  const 控え = [];
+  let 直前 = 写す();
+  /* ⭐ 変わった【後】に呼ぶ。中身が同じなら積まない＝空の戻しが増えない。 */
+  function 積む(){
+    const いま = 写す();
+    if(いま === 直前) return;
+    控え.push(直前); 直前 = いま;
+    if(控え.length > 120) 控え.shift();
+  }
+  undo = function(){                                 /* 元の undo を差し替える */
+    if(!控え.length) return;
+    const s = JSON.parse(控え.pop());
+    S.draw = s.d; S.fam = s.f; S.text = s.t; S.vert = s.v; S.mode = s.m; S.hand = s.h;
+    Object.assign(S.pen, s.p); Object.assign(S.run, s.r); Object.assign(S.col, s.c);
+    S.sel = Math.min(s.s, S.draw.length - 1);
+    const tt = $('tText'); if(tt && tt.value !== S.text) tt.value = S.text;
+    segOn('segFam', S.fam);
+    boneCache.clear(); glyphCache.clear();
+    直前 = 写す();
+    syncAll(); toolUI(); modeUI(); layout(); draw();
+    if(typeof syncNote === 'function') syncNote();
+  };
+  /* 🔴 元の keydown は【つまみにフォーカスがあると素通り】していた。
+     ⭐ 先に捕まえて処理し、そこで止める（二重に戻らないように）。
+     ⚠️ 打つ欄の中だけは、ブラウザの文字の取り消しに任せる。 */
+  addEventListener('keydown', e => {
+    if(!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
+    if(e.target.tagName === 'TEXTAREA') return;
+    e.preventDefault(); e.stopPropagation();
+    undo();
+  }, true);
+
+  /* ⭐ どこで積むか＝「ひと操作が終わった所」。つまみ1本ぶんで1つ積まれる。
+     ⚠️ input（動かしている最中）で積むと、1回動かすだけで何十個も積まれる。 */
+  let 待ち = 0;
+  document.addEventListener('change',    積む, true);   /* つまみ・色を離した */
+  document.addEventListener('pointerup', 積む, true);   /* 盤で引き終わった・ボタンを押した */
+  document.addEventListener('input', () => {            /* 打っている間は落ち着いてから1回 */
+    clearTimeout(待ち); 待ち = setTimeout(積む, 450);
+  }, true);
+})();
+
+/* ══════════════════════════════════════════════════════════════════════
+   ⭐⭐ 設定の出し入れ（JSON）── 2026-09-22（木下「JSON保存できるように」）
+   ⭐ ここも【最後に足した塊】。消せば完全に元へ戻る。
+
+   🔴🔴 読むときは値を S へ直に入れない。【つまみを触るのと同じ道】を通す。
+      つまみごとに効かせ方が違う（骨を作り直す／盤を組み直す／色だけ）ので、
+      直に入れると値は合っているのに絵が違う、になる。
+   ⭐ だから ①段を押す → ②つまみに入れて input/change を出す → ③段をもう一度押す。
+   ⚠️ ③が要る理由＝色の欄を触ると「色を選んだ」扱いで段の側が上書きされることがある。
+   ⚠️ 「型（ひと当て）」は押さない。押すと つまみ全部が型の値で塗り潰される。
+   ══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const 段 = ['segMode','segHand','segTyped','segFam','segTool','segDir','segGrad','segEdge','segPage'];
+  /* ⚠️ segKata（型）は入れない＝ひと当てなので押すと全部持っていかれる */
+
+  const つまみ一覧 = () =>
+    [...document.querySelectorAll('#panel input[type=range], #panel input[type=color], #panel textarea')]
+      .filter(e => e.id);
+
+  function 写す(){
+    const t = {};
+    つまみ一覧().forEach(e => t[e.id] = e.value);
+    const d = {};
+    段.forEach(id => { const on = $(id)?.querySelector('button.on'); if(on) d[id] = on.dataset.v; });
+    return {
+      道具:'sen', 版:1, 日付:new Date().toISOString().slice(0,10),
+      つまみ:t, 段:d,
+      骨:S.draw,                         /* ⭐ つまみに出ていない状態。これが無いと同じ絵に戻らない */
+      盤:{ mode:S.mode, hand:S.hand, vert:S.vert, fam:S.fam, tool:S.pen.tool, typed:S.typed }
+    };
+  }
+
+  const 押す = d => 段.forEach(id => {
+    const v = d[id]; if(v === undefined) return;
+    const btn = [...($(id)?.querySelectorAll('button') || [])].find(x => x.dataset.v === String(v));
+    if(btn && !btn.classList.contains('on')) btn.click();
+  });
+
+  function 入れる(j){
+    if(!j || j.道具 !== 'sen'){ alert('閃 SEN の設定ではないようです。'); return; }
+    押す(j.段 || {});                                   /* ① 段を先に */
+    つまみ一覧().forEach(e => {                          /* ② つまみは同じ道で */
+      const v = (j.つまみ || {})[e.id];
+      if(v === undefined || String(e.value) === String(v)) return;  /* 🔴 同じ値なら出さない */
+      e.value = v;
+      e.dispatchEvent(new Event('input',  { bubbles:true }));
+      e.dispatchEvent(new Event('change', { bubbles:true }));
+    });
+    if(Array.isArray(j.骨)) S.draw = j.骨;               /* つまみに無い状態 */
+    if(j.盤){ if(j.盤.hand) S.hand = j.盤.hand; if(j.盤.typed) S.typed = j.盤.typed; }
+    S.sel = -1;
+    押す(j.段 || {});                                   /* ③ もう一度（色で上書きされるため） */
+    boneCache.clear(); glyphCache.clear();
+    syncAll(); toolUI(); modeUI(); layout(); fit(); draw();
+    if(typeof syncNote === 'function') syncNote();
+  }
+
+  function 出す(){
+    const name = 'sen_' + new Date().toISOString().slice(0,10).replace(/-/g,'') + '.json';
+    const bl = new Blob([JSON.stringify(写す(), null, 1)], { type:'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(bl); a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  }
+  function 読む(f){
+    if(!f) return;
+    const r = new FileReader();
+    r.onload = () => { try{ 入れる(JSON.parse(r.result)); }catch(err){ alert('JSON を読めませんでした：' + err.message); } };
+    r.readAsText(f);
+  }
+
+  $('sJson').onclick = 出す;
+  $('lJson').onclick = () => $('jFile').click();
+  $('jFile').addEventListener('change', e => { 読む(e.target.files[0]); e.target.value = ''; });
+  /* ⭐ 盤に落としても読める */
+  ['dragover','drop'].forEach(t => $('stage').addEventListener(t, e => {
+    e.preventDefault();
+    if(t === 'drop') 読む([...e.dataTransfer.files].find(f => /\.json$/i.test(f.name)));
+  }));
+})();
 </script></body></html>
