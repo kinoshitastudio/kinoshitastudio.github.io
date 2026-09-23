@@ -684,6 +684,10 @@
   <button id="btn-spin">SPIN</button>
   <button id="btn-png">PNG</button>
   <button id="btn-rec" class="rec">REC</button>
+  <!-- ⭐ 控え（JSON）── 枡 MASU と同じ作法。出す／読む の2つだけ -->
+  <button id="btn-save" title="いまの設定と文章を JSON で出す">保存</button>
+  <button id="btn-load" title="JSON を読む">読む</button>
+  <input type="file" id="jfile" accept="application/json,.json" style="display:none">
 </div>
 
 <div id="hint">
@@ -784,6 +788,30 @@ const T = [
 ];
 const MUTE = [false, false, false, false];
 let SEL = 0;
+
+/* ══⭐⭐ 縦組みで【90°回す字】 ════════════════════════════
+   🔴 木下＝「縦くみにすると のばしぼうが横のままだ」。
+   ⭐ 日本語の縦組みでは、長音符・ダッシュ・括弧は【字ごと90°回る】。
+      これは飾りではなく決まり事で、回っていないと「横組みを縦に並べただけ」に見える。
+   ⚠️ 回すのはここに挙げた字だけ。ひらがな・漢字・カナは回さない。
+   ⚠️ 読点「、」句点「。」は【回すのではなく位置がずれる】（右上へ）＝別の直し。
+      今回は触っていない。 */
+/* ══⭐⭐ 縦組みで【位置がずれる字】 ════════════════════════
+   🔴 読点「、」句点「。」は回さない。**升目の右上に寄る**のが日本語の縦組みの決まり。
+   ⚠️ アトラスは字を【升目の中央】に描いている（textAlign:center / baseline:middle）ので、
+      中央から右上へ動かす量をそのまま持てばいい。
+   ⭐ 数字はここ1か所。強すぎたら 0.30 くらいに下げる。 */
+const TATE_YORU = new Map([
+  ['、', [ 0.36,  0.34]], ['。', [ 0.36,  0.34]],
+  ['，', [ 0.36,  0.34]], ['．', [ 0.36,  0.34]],
+  [',',  [ 0.36,  0.34]], ['.',  [ 0.36,  0.34]],
+]);
+const TATE_KAISU = new Set([
+  'ー','―','‐','‑','‒','–','—','〜','～','=','＝','゠',
+  '（','）','(',')','「','」','『','』','【','】','〔','〕','［','］','[',']',
+  '｛','｝','{','}','〈','〉','《','》','〘','〙','〚','〛','｟','｠',
+  '…','‥','：','；',':',';','＜','＞','<','>'
+]);
 
 /* 文字をどの層に振るか — これが SORT の中身 */
 function trackOf(ch){
@@ -1050,6 +1078,8 @@ const inkMaterial = new THREE.ShaderMaterial({
     attribute float aTrack;    // どの層の字か
     attribute float aIndex;    // 何文字目か（位相をずらす種）
     attribute vec2  aCell;     // アトラスのどこか
+    attribute float aRot90;    // ⭐ 1＝縦組みで90°回す字（長音符・ダッシュ・括弧）
+    attribute vec2  aOff;      // ⭐ 縦組みで升目の中をずらす量（、。を右上へ）
 
     uniform float uTime;
     uniform float uSink[4], uJitter[4], uRot[4], uScale[4], uWave[4], uSpeed[4], uMute[4], uBurst[4];
@@ -1097,7 +1127,14 @@ const inkMaterial = new THREE.ShaderMaterial({
       // 四隅を回して太らせる
       float a = rot + (hash(aIndex) - 0.5) * jitter * 0.06;
       float c = cos(a), s = sin(a);
-      vec2 q = aCorner * aSize * scale;
+      /* ⭐⭐ 縦組みで回す字は、四隅だけ90°回す（UVは回さない）。
+         ＝ 板が回るので、貼ってある字が回って見える。
+         ⚠️ (x,y)→(y,-x) は【時計回り】。日本語の縦組みはこちら
+            （「（」が上向きの括弧になる。逆向きだと下向きになって嘘になる）。 */
+      vec2 cq = aCorner;
+      if(aRot90 > 0.5) cq = vec2(aCorner.y, -aCorner.x);
+      /* ⭐ 、。は回さずに【升目の中で右上へ寄る】。回すと点が横を向いて嘘になる */
+      vec2 q = (cq + aOff) * aSize * scale;
       vec2 r = vec2(q.x * c - q.y * s, q.x * s + q.y * c);
 
       vec3 pos = aCenter + vec3(r, 0.0);
@@ -1198,7 +1235,7 @@ function layout(){
   const vert = P.vertical > 0.5;
   const perLine = Math.max(Math.floor(1100 / adv), 4);
 
-  const cen=[], cor=[], siz=[], trk=[], idx=[], cel=[], ind=[];
+  const cen=[], cor=[], siz=[], trk=[], idx=[], cel=[], rot=[], off=[], ind=[];
   let n = 0, col = 0, line = 0;
 
   /* ⭐⭐ KUMI（組む）── 字を【正方の格子】に嵌める。
@@ -1246,6 +1283,11 @@ function layout(){
       trk.push(trackOf(ch));
       idx.push(n);
       cel.push(ai % atlasCols, Math.floor(ai / atlasCols));
+      /* ⭐ 縦組みのときだけ回す。横組みでは1つも回さない */
+      rot.push(vert && TATE_KAISU.has(ch) ? 1 : 0);
+      /* ⭐ 縦組みのときだけ寄せる（、。）。横組みでは 0 */
+      const yo = vert ? TATE_YORU.get(ch) : null;
+      off.push(yo ? yo[0] : 0, yo ? yo[1] : 0);
     }
     ind.push(base, base+1, base+2, base, base+2, base+3);
     n++; col++;
@@ -1271,6 +1313,8 @@ function layout(){
   g.setAttribute('aTrack',  new THREE.Float32BufferAttribute(trk, 1));
   g.setAttribute('aIndex',  new THREE.Float32BufferAttribute(idx, 1));
   g.setAttribute('aCell',   new THREE.Float32BufferAttribute(cel, 2));
+  g.setAttribute('aRot90',  new THREE.Float32BufferAttribute(rot, 1));
+  g.setAttribute('aOff',    new THREE.Float32BufferAttribute(off, 2));
   g.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(cen.length), 3));
   g.setIndex(ind);
   g.computeBoundingSphere = () => { g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 4000); };
@@ -2118,6 +2162,20 @@ function setWrite(on){
   if(on && !WRITE){
     WRITE_BK = { spin, vertical:P.vertical, az:cam.tAz, el:cam.tEl, px:cam.px, py:cam.py };
     WRITE_KEYS.forEach(k => WRITE_BK[k] = P[k]);
+    /* ⭐⭐ 2026-09-22 木下＝「執筆の時 角度を変えると奥行きが変わる」
+       🔴 原因は層ごとの【沈み（sink）】。3層が別々の奥行きに置かれているので、
+          盤を回すと層が前後に離れて、読める面でなくなる。
+       ⭐ 執筆のあいだは sink を 0 にして【1枚の面】にする。
+          ⚠️ 大きさ（scale）は触らない＝漢字が大きい・カナが小さいという
+             3層の見分けは残る。平らになるのは奥行きだけ。 */
+    /* 🔴 2026-09-22 二度目 ── 沈みだけ 0 にしても【まだ揺れていた】。
+       木下＝「ところどころまっすぐになっていない。ゆらゆらと揺れているのも気になる。執筆なので」
+       ⭐ 層ごとの動きは sink だけではない。**揺らぎ・波・弾け・回り**も 0 にする。
+       ⚠️ 大きさ（scale）と速さ（speed）は触らない
+          ＝漢字が大きい・カナが小さいという3層の見分けは残る（速さは動かす物が無ければ効かない）。 */
+    WRITE_BK.tk = T.map(x => ({ sink:x.sink, jitter:x.jitter, rot:x.rot, wave:x.wave, burst:x.burst }));
+    T.forEach(x => { x.sink = 0; x.jitter = 0; x.rot = 0; x.wave = 0; x.burst = 0; });
+    if(typeof loadTrackUI === 'function') loadTrackUI();
     WRITE_KEYS.forEach(k => {                      /* 揺れを止める */
       P[k] = 0;
       const el = document.querySelector('[data-p="'+k+'"]');
@@ -2137,6 +2195,10 @@ function setWrite(on){
       const el = document.querySelector('[data-p="'+k+'"]');
       if(el){ el.value = WRITE_BK[k]; el.dispatchEvent(new Event('input', {bubbles:true})); }
     });
+    if(Array.isArray(WRITE_BK.tk)){              /* ⭐ 層ごとの動きを押す前へ戻す */
+      WRITE_BK.tk.forEach((o,i) => { if(T[i]) Object.assign(T[i], o); });
+      if(typeof loadTrackUI === 'function') loadTrackUI();
+    }
     if(WRITE_BK.vertical !== 1){
       const h = document.querySelector('[data-seg="vertical"] button[data-v="0"]');
       if(h) h.click();
@@ -2148,8 +2210,97 @@ function setWrite(on){
   if(btn){ btn.style.background = WRITE ? '#0a0a0a' : ''; btn.style.color = WRITE ? '#f4f2ee' : ''; }
 }
 document.getElementById('btn-write').onclick = () => setWrite(!WRITE);
-/* ⭐ 回したら勝手に執筆を抜ける＝「見る」に戻ったということ */
-renderer.domElement.addEventListener('pointerdown', () => { if(WRITE) setWrite(false); });
+/* 🔴 2026-09-22 ここを外した ──
+   もとは「盤を触ったら勝手に執筆を抜ける（＝見るに戻った合図）」にしていたが、
+   木下＝「執筆の時 角度を変えると奥行きが変わる」。
+   **読みながら少し角度を変えて見たい**のに、触った瞬間に抜けて揺れも奥行きも戻ってしまう。
+   ⭐ いまは【回しても執筆のまま】＝面は平らなので、どの角度から見ても読める。
+   ⭐ 抜けるのはボタンをもう一度押したときだけ。 */
+
+/* ══⭐⭐ 控え（JSON）── いまの設定と文章を1つのファイルに ══════
+   ⭐ 枡 MASU と同じ作法（出す／読む の2つだけ）。
+   ⚠️ 入るのは【設定と文章】。絵そのものは入らない（絵は PNG / REC で出す）。
+   ⭐ 何が入るか＝ P（つまみ全部）／ T（4層それぞれの値）／ MUTE・SEL（どの層を触っていたか）
+      ／ ON（どの段を点けていたか）／ 文章。
+   🔴 カメラの向きは入れない。控えは【組み方】であって【見る角度】ではない。 */
+const KUMI_JSON_V = 1;
+function kumiSnapshot(){
+  return {
+    app:'kumi', kind:'setting', v:KUMI_JSON_V,
+    note:'組 KUMI — 設定と文章の控え。絵は入っていない（絵は PNG / REC で出す）',
+    date:new Date().toISOString().slice(0,19).replace('T',' '),
+    text: document.getElementById('src-text').value || '',
+    P: JSON.parse(JSON.stringify(P)),
+    T: JSON.parse(JSON.stringify(T)),
+    MUTE: MUTE.slice(), SEL,
+    ON: JSON.parse(JSON.stringify(ON)),
+  };
+}
+function kumiStamp(){
+  const d=new Date(), z=n=>String(n).padStart(2,'0');
+  return d.getFullYear()+z(d.getMonth()+1)+z(d.getDate())+'-'+z(d.getHours())+z(d.getMinutes());
+}
+document.getElementById('btn-save').onclick = () => {
+  const b = new Blob([JSON.stringify(kumiSnapshot(), null, 1)], { type:'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(b); a.download = 'kumi-' + kumiStamp() + '.json'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+};
+document.getElementById('btn-load').onclick = () => document.getElementById('jfile').click();
+document.getElementById('jfile').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if(!f) return;
+  try{
+    const d = JSON.parse(await f.text());       /* ⚠️ atob は使わない（日本語が壊れる） */
+    /* 🔴 取り違えを黙って通さない。別の道具の控えを読むと、
+       欠けたキーはそのまま残るので「半分だけ変わった」状態になって原因が見えなくなる。 */
+    if(!d || d.app !== 'kumi' || !d.P) throw new Error('組 KUMI の控えではありません');
+
+    /* ⭐ 文章を先に入れる（layout が走るのは最後にまとめて） */
+    if(typeof d.text === 'string') document.getElementById('src-text').value = d.text;
+
+    /* ⭐⭐ P は【画面のつまみ経由】で入れる。
+       🔴 P に直接代入するだけだと、スライダーの位置と数字が古いまま残って
+          次に触った瞬間に元の値へ戻る（黙って巻き戻る）。 */
+    Object.keys(d.P).forEach(k => {
+      if(!(k in P)) return;                     /* ⚠️ 知らないキーは入れない */
+      P[k] = d.P[k];
+      const el = document.querySelector('[data-p="'+k+'"]');
+      if(el){ el.value = d.P[k]; el.dispatchEvent(new Event('input',{bubbles:true})); return; }
+      const col = document.querySelector('[data-pc="'+k+'"], [data-c="'+k+'"]');
+      if(col){
+        col.value = '#'+Number(d.P[k]).toString(16).padStart(6,'0');
+        col.dispatchEvent(new Event('input',{bubbles:true})); return;
+      }
+      const seg = document.querySelector('[data-seg="'+k+'"] button[data-v="'+d.P[k]+'"]');
+      if(seg) seg.click();
+    });
+
+    /* ⭐ 層（T）と、どの層を触っていたか */
+    if(Array.isArray(d.T)) d.T.forEach((o,i) => { if(T[i]) Object.assign(T[i], o); });
+    if(Array.isArray(d.MUTE)) d.MUTE.forEach((v,i) => { MUTE[i] = !!v; });
+    if(typeof d.SEL === 'number') SEL = d.SEL;
+    if(typeof loadTrackUI === 'function') loadTrackUI();
+
+    /* ⭐ どの段が点いていたか。ON は画面のトグル（.unit の off クラス）が持っているので、
+       ずれないように【見出しを押して】合わせる。直接 ON に入れると見た目と食い違う。
+       🔴 音（audio）だけは戻さない。指で触っていないのに鳴らそうとすると
+          ブラウザに止められる（しかも黙って止まるので原因が見えない）。 */
+    if(d.ON) Object.keys(d.ON).forEach(k => {
+      if(!(k in ON) || k === 'audio') return;
+      if(ON[k] === !!d.ON[k]) return;
+      const head = document.querySelector('.unit[data-unit="'+k+'"] .unit-head');
+      if(head) head.click(); else ON[k] = !!d.ON[k];
+    });
+
+    if(typeof syncGrad === 'function') syncGrad();
+    if(typeof syncNCol === 'function') syncNCol();
+    layout();
+    countTracks();
+  }catch(err){
+    alert('読めませんでした ── ' + (err && err.message ? err.message : err));
+  }
+});
 
 document.getElementById('btn-spin').onclick = e => {
   spin = !spin;
