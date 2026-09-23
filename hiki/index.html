@@ -156,8 +156,12 @@
      ══════════════════════════════════════════════════════════════ */
   /* ⚠️ 盤の高さを 100vh から引き算しない ── iOS Safari の 100vh は実際の見え高さと
      食い違い、パネルが画面の外へ押し出される。flex に余りを取らせる。 */
-  :root{ --panelH:38vh; --sheetGrip:22px }
-  @supports (height:1dvh){ :root{ --panelH:38dvh } }
+  /* 🔴 木下＝2026-09-23「つまみなどが一部見えない」
+     実測：窓 321px に中身 2472px ＝ **7.7画面ぶん**を巻いて探していた。
+     ⭐ この道具はつまみが多い（61個）ので、既定の窓を高くする。
+     ⚠️ 掴み手で上下できるのは今までどおり（覚えた高さは localStorage に残る）。 */
+  :root{ --panelH:52vh; --sheetGrip:22px }
+  @supports (height:1dvh){ :root{ --panelH:52dvh } }
   @media (max-width:820px){
     #stage{ flex:1 1 auto; min-height:0 }        /* ⭐ 余りは盤が取る */
     #panel{ flex:none; height:var(--panelH);
@@ -675,11 +679,26 @@ const V = { x:0, y:0, z:1 };
    ⚠️ ここは【盤の板】と【元の絵】の両方に効く＝二重に画素を持つので、欲張らない。
       1400角なら 4200＝×3（板70MB＋絵70MB）。 */
 const PXCAP = (window.matchMedia && matchMedia('(pointer:coarse)').matches) ? 2400 : 4200;
+/* ⭐⭐ 最初の1枚だけ【等倍】で焼く ── 2026-09-23
+   🔴 木下＝「モバイルだと開くのに時間がかかる」。
+      指の端末は devicePixelRatio が 3 なので、**開いた瞬間から 2400×2400（576万画素）で焼いていた**。
+      等倍なら 1400×1400（196万画素）＝**2.9倍軽い**。
+   ⭐ 盤が出てから、空き時間で本来の細かさに焼き直す＝**出来上がりの絵は1画素も変わらない**。
+   ⚠️ 焼き直しは「倍率が段をまたいだ時だけ走る」既存の仕掛け（reBake）にそのまま乗せている。 */
+let 初回 = true;
 function bakeK(){
   const { w, h } = sheet();
+  if(初回) return 1;                       /* ← 最初の1枚だけ等倍 */
   const want = (window.devicePixelRatio || 1) * Math.max(1, V.z);
   const step = [1, 1.5, 2, 3, 4].find(s => s >= want) || 4;
   return Math.max(1, Math.min(step, PXCAP / Math.max(w, h)));
+}
+function 細かく焼き直す(){
+  if(!初回) return;
+  初回 = false;
+  const go = () => { if(Math.abs(bakeK() - BAKEK) > 1e-6) renderSoon(); };
+  if(window.requestIdleCallback) requestIdleCallback(go, { timeout: 1200 });
+  else setTimeout(go, 400);
 }
 let BAKEK = 0;
 /* ⭐ 見る倍率が段をまたいだ時だけ焼き直す（またがない限り何もしない＝軽い） */
@@ -1568,7 +1587,7 @@ el('b_play').onclick = () => {
 addEventListener('resize', () => { applyView(); });
 /* ⭐ 立ち上げで【いま使う書体】を頼んでおく（届いたら描き直す） */
 needFont(P.font); if(P.ffont != null) needFont(P.ffont);
-render(); fitView();
+render(); fitView(); 細かく焼き直す();   /* ⭐ 盤が出てから本来の細かさへ（2026-09-23） */
 stat('字を打つか、写真・SVG を入れてください');
 
 /* ⭐ 補足説明の出し入れ（既定は隠す）。覚えたら消せる・忘れたら出せる。 */
@@ -1592,7 +1611,7 @@ stat('字を打つか、写真・SVG を入れてください');
 (function(){
   'use strict';
   const KEY = location.pathname.replace(/\W+/g,'_') + '.panelH.v1';
-  const SNAP = [26, 42, 78];
+  const SNAP = [30, 52, 82];   /* ⭐ 段も上げる（この道具はつまみが多い） */
   let grip = null;
 
   const panel = () => document.getElementById('panel');
