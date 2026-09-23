@@ -1259,21 +1259,33 @@ function draw(){ if(rafId) return; rafId = requestAnimationFrame(() => { rafId =
 /* ══⭐ 掴み手は【paint の外】で描く ══
    書き出しは別の canvas に paint() を呼ぶので、ここで描いた物は PNG/SVG に焼き付かない。
    （[[見せるだけの画は別の層に]]） */
+/* ══⭐⭐ 掴み手＝イラレのパスの点にする ── 2026-09-23
+   🔴 木下＝「丸が大きすぎて字体が見えない。もっと丸も小さく。イラレのパスのように」
+   ⭐⭐ 直し方の芯＝【見た目】と【掴める広さ】を分ける。
+      ・見た目 … 画面の px で固定した**小さな四角**（寄っても引いても同じ大きさ＝イラレと同じ）
+      ・掴める広さ … これまでどおり grabR（画面の24px相当）＝小さく見えても指で掴める
+   ⚠️ 前は見た目も盤の px で決めていたので、寄るほど丸が大きくなって字を覆っていた。
+   ⭐ 始点だけ塗りつぶす（どちらが書き始めか分かる）。 */
 function drawHandles(g){
   if(S.mode !== 'draw' || S.hand !== 'edit') return;
-  const [BW] = boardSize(), r = Math.max(BW*0.006, 9/Math.max(0.05, Z));   /* ⭐ 引いて見ても指で見える */
+  const 画素 = 1 / Math.max(0.05, Z);                 /* 画面の1px ＝ 盤の何px か */
+  const 指 = matchMedia('(pointer:coarse)').matches;
+  const 半 = (指 ? 4.0 : 3.0) * 画素;                  /* ⭐ 四角の半分。イラレの点と同じくらい */
+  const 細 = 1 * 画素;
   S.draw.forEach((st, i) => {
     if(st.length < 2) return;
     const on = (i === S.sel);
     g.beginPath(); g.moveTo(st[0][0], st[0][1]);
     for(let j=1;j<st.length;j++) g.lineTo(st[j][0], st[j][1]);
-    g.strokeStyle = on ? 'rgba(255,106,52,.95)' : 'rgba(255,106,52,.35)';
-    g.lineWidth = Math.max(1, BW*0.0015); g.stroke();
+    g.strokeStyle = on ? 'rgba(255,106,52,.85)' : 'rgba(255,106,52,.28)';
+    g.lineWidth = 細; g.stroke();
     if(!on) return;
+    g.lineWidth = 細;
     st.forEach((p, j) => {
-      g.beginPath(); g.arc(p[0], p[1], r, 0, 6.2832);
+      const d = 半*2;
+      g.beginPath(); g.rect(p[0]-半, p[1]-半, d, d);
       g.fillStyle = (j===0) ? '#ff6a34' : '#fff';
-      g.fill(); g.strokeStyle = '#ff6a34'; g.lineWidth = Math.max(1, BW*0.0016); g.stroke();
+      g.fill(); g.strokeStyle = '#ff6a34'; g.stroke();
     });
   });
 }
@@ -1692,8 +1704,15 @@ syncAll(); toolUI(); modeUI(); layout(); fit(); draw();
     }else{                                          /* 2本指＝そのまま移動 */
       PX -= e.deltaX; PY -= e.deltaY;
     }
-    place2();
+    place2(); 寄ったら描き直す();
   }, { passive:false });
+
+  /* 🔴 掴み手は【画面のpx】で描くので、倍率が変われば描き直さないと大きさが古いまま。
+     ⚠️ place2() は CSS の transform を変えるだけで盤は描き直さない（＝動かすだけなら描き直さなくてよい）。
+     ⭐ だから【倍率が変わった時だけ】描き直す。しかも掴み手が出ている時だけ。 */
+  function 寄ったら描き直す(){ if(S.mode === 'draw' && S.hand === 'edit') draw(); }
+  ['zi','zo','bFit'].forEach(id => $(id) && $(id).addEventListener('click', 寄ったら描き直す));
+  document.querySelectorAll('#segHand button').forEach(b => b.addEventListener('click', 寄ったら描き直す));
 
   /* ── ② 掴んで移動 ───────────────────────────────────────────
      ⚠️ 「自分で置く」ときは盤のドラッグが【線を引く】なので奪わない。
