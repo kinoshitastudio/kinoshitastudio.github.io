@@ -286,7 +286,7 @@ body.help #helpBtn{background:#fff;color:#141416}
   </div>
   <div class="two">
     <div><div class="row"><span class="n">はじめの色</span></div><input type="color" id="col" value="#000000"></div>
-    <div id="wCol2"><div class="row"><span class="n">おわりの色</span></div><input type="color" id="col2" value="#000000"></div>
+    <div id="wCol2"><div class="row"><span class="n">おわりの色</span></div><input type="color" id="col2" value="#6a2bd9"></div>
   </div>
   <div id="wGang"><div class="row"><span class="n">グラデの向き</span><output id="o_gang">14</output></div>
   <input type="range" id="gang" min="-90" max="90" value="14"></div>
@@ -350,8 +350,11 @@ const S = {
           kasu:0, kasuF:50 },   /* ⭐ かすれ。既定 0 ＝ いままでの絵 */
   run : { size:150, adv:80, ang:-10, slant:-8, wide:62, tall:130, jr:10, x:6, y:46, seed:7,
           w:1500, h:1000 },
-  /* ⭐ 既定は【黒いペン・単色】（2026-09-22 木下）。⚠️ 型 c1 はピンクのまま＝押せば戻る */
-  col : { col:'#000000', col2:'#000000', grad:0, gang:14,
+  /* ⭐ 既定は【黒いペン・単色】（2026-09-22 木下）。⚠️ 型 c1 はピンクのまま＝押せば戻る
+     🔴 2026-09-23 ── おわりの色まで黒にしていたので、
+        【2色のグラデに切り替えても黒→黒で何も起きない】＝向きを動かしても無反応に見えた。
+        ⭐ 単色のときは「おわりの色」は隠れている＝黒にする必要が無い。色に戻す。 */
+  col : { col:'#000000', col2:'#6a2bd9', grad:0, gang:14,
           edge:0, edgeW:6, edgeCol:'#2a1c33', bg:'#ffffff' },
   out : { long:2400 },
   view: 'run',
@@ -996,6 +999,27 @@ function place(){
   });
 }
 
+/* ══⭐⭐ ふちも【この1本】だけ ── 2026-09-23
+   🔴 元は drawGlyph の中にしか無く、【自分で置いた骨】と【連綿の渡り】には
+      ふちが掛かっていなかった＝「あり」にしても太さを変えても色を変えても【無反応】。
+      （木下＝2026-09-23「ふちも太さなども反応しない」。グラデとまったく同じ穴だった）
+   ⭐ 帯を1本ずつ縁取ると中の継ぎ目まで線が出るので、
+      「ふちの色で stroke＋fill」→ その上に字の色、の2枚組にする＝外側だけに線が出る。
+   ⚠️ k＝いまの座標の倍率。盤の座標のまま描いている所（骨・渡り）は k=1。 */
+function ふち(g, k){
+  if(!S.col.edge) return;
+  g.strokeStyle = S.col.edgeCol; g.fillStyle = S.col.edgeCol;
+  g.lineJoin = 'round'; g.lineCap = 'round';
+  g.lineWidth = (S.col.edgeW||6) * 2 / (k || 1);
+  g.stroke(); g.fill();
+}
+/* ⭐ SVG 側のふち。画面と同じものを出す（片方だけ書くと食い違う） */
+function ふちSVG(d){
+  return S.col.edge
+    ? `<path d="${d}" fill="${S.col.edgeCol}" stroke="${S.col.edgeCol}" stroke-width="${(S.col.edgeW||6)*2}" stroke-linejoin="round" stroke-linecap="round"/>`
+    : '';
+}
+
 /* ══⭐⭐ かすれ ── 2026-09-22（木下「文字にかすれがほしい」）
    ⭐⭐ しかけは単純：【紙とまったく同じ色で、細い筋を版面ぜんぶに引く】。
       紙の上では見えない（同じ色だから）。インクの上だけが切れる＝かすれになる。
@@ -1076,12 +1100,7 @@ function drawGlyph(g, ch, x, y, size, rot, colFill, i, svg, M0){
 
   /* ⭐⭐ ふち（袋文字）── 帯を1本ずつ縁取ると【中の継ぎ目まで線が出る】。
      だから「ふちの色で stroke＋fill」→ その上に字の色、の2枚組にする＝外側だけに線が出る。 */
-  if(S.col.edge){
-    g.strokeStyle = S.col.edgeCol; g.fillStyle = S.col.edgeCol;
-    g.lineJoin = 'round'; g.lineCap = 'round';
-    g.lineWidth = (S.col.edgeW||6) * 2 / (k || 1);
-    g.stroke(); g.fill();
-  }
+  ふち(g, k);
   g.fillStyle = 塗り(g, svg, M0, colFill);
   g.fill();   /* nonzero＝帯どうしが重なっても穴が空かない */
   g.restore();
@@ -1095,7 +1114,7 @@ function drawGlyph(g, ch, x, y, size, rot, colFill, i, svg, M0){
     };
     const d = rings.map(r => 'M' + r.map(p => tp(p).join(' ')).join('L') + 'Z').join('');
     if(S.col.edge)
-      svg.push(`<path d="${d}" fill="${S.col.edgeCol}" stroke="${S.col.edgeCol}" stroke-width="${(S.col.edgeW||6)*2}" stroke-linejoin="round" stroke-linecap="round"/>`);
+      svg.push(ふちSVG(d));   /* ⭐ 画面と同じ1本の式から出す */
     svg.push(`<path d="${d}" fill="${S.col.grad ? 'url(#sg)' : S.col.col}"/>`);
   }
 }
@@ -1176,10 +1195,13 @@ function paint(g, W, H, opt){
         g.beginPath();
         rings.forEach(r => { g.moveTo(r[0][0], r[0][1]);
           for(let j=1;j<r.length;j++) g.lineTo(r[j][0], r[j][1]); g.closePath(); });
+        ふち(g, 1);                                     /* ⭐ 字と同じふち */
         g.fillStyle = 塗り(g, svg, M0); g.fill();      /* ⭐ 字と同じ1本のグラデ */
-        if(svg) svg.push('<path d="' + rings.map(r =>
-          'M' + r.map(p => p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L') + 'Z').join('') +
-          '" fill="' + (S.col.grad ? 'url(#sg)' : S.col.col) + '"/>');
+        if(svg){
+          const d = rings.map(r => 'M' + r.map(p => p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L') + 'Z').join('');
+          svg.push(ふちSVG(d));
+          svg.push('<path d="' + d + '" fill="' + (S.col.grad ? 'url(#sg)' : S.col.col) + '"/>');
+        }
       }
     }
     /* ⭐ 打った字は【消さない】。出し方だけ選ぶ。
@@ -1203,10 +1225,13 @@ function paint(g, W, H, opt){
         g.beginPath();
         dr.forEach(r => { g.moveTo(r[0][0], r[0][1]);
           for(let j=1;j<r.length;j++) g.lineTo(r[j][0], r[j][1]); g.closePath(); });
+        ふち(g, 1);                                     /* ⭐ 手で置いた骨にもふちが付く */
         g.fillStyle = 塗り(g, svg, M0); g.fill();      /* ⭐ 手で置いた骨にもグラデが乗る */
-        if(svg) svg.push('<path d="' + dr.map(r =>
-          'M' + r.map(p => p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L') + 'Z').join('') +
-          '" fill="' + (S.col.grad ? 'url(#sg)' : S.col.col) + '"/>');
+        if(svg){
+          const d = dr.map(r => 'M' + r.map(p => p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L') + 'Z').join('');
+          svg.push(ふちSVG(d));
+          svg.push('<path d="' + d + '" fill="' + (S.col.grad ? 'url(#sg)' : S.col.col) + '"/>');
+        }
       }
     }
   }
