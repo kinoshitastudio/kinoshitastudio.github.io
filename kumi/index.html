@@ -176,6 +176,9 @@
   body:not(.ncol-5) .ncol5,body:not(.ncol-6) .ncol6{display:none;}
   /* ⚠️ ドラッグする要素はスクロールに取られないようにする */
   canvas{ touch-action:none; }
+  /* ⭐ space を押している間だけ「手」になる（Photoshop / Figma と同じ作法） */
+  canvas.grab{ cursor:grab; }
+  canvas.grabbing{ cursor:grabbing; }
   /* ⓜモバイル調整済 */
   /* ══════════════════════════════════════════════════════════════
      見た目 ── SwiftUI（Apple）の質感を、機材ラックのまま被せる   2026-07-31
@@ -1969,13 +1972,42 @@ const postCam = () => fsCam;
 /* ── INPUT ──────────────────────────────────────────────── */
 const el = renderer.domElement;
 let orbitPrev = null, pinchPrev = 0, panPrev = null, twoFinger = false;
+
+/* ── space を押している間は【盤を掴んで動かす】 ─────────────
+   ⭐ Shift+ドラッグと同じパンを、space でも出せるようにした（2026-09-23）。
+      Shift は「回さずに動かす」を一時的に借りる形だが、space は押しっぱなしにできる＝
+      Photoshop / Figma と同じ手癖でそのまま入れる。
+   🔴 文字を打っている最中に space を食うと文章に空白が入らない。
+      → 入力欄に焦点があるときは【何もしない】。
+   🔴 ボタンに焦点があると space はそのボタンを押してしまう（既定の挙動）。
+      → preventDefault で止める。ページのスクロールも同時に止まる。
+   🔴 押したまま窓の外へ行くと keyup が届かず「掴んだまま」で固まる → blur で必ず戻す。 */
+let spaceHeld = false;
+const 打っている = t => !!t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' ||
+                                t.tagName === 'SELECT'   || t.isContentEditable);
+function 手にする(on){
+  if(spaceHeld === on) return;
+  spaceHeld = on;
+  el.classList.toggle('grab', on && !orbitPrev);
+  el.classList.toggle('grabbing', on && !!orbitPrev);
+}
+addEventListener('keydown', e => {
+  if(e.code !== 'Space' || e.repeat) return;
+  if(打っている(e.target)) return;
+  e.preventDefault();
+  手にする(true);
+});
+addEventListener('keyup', e => { if(e.code === 'Space') 手にする(false); });
+addEventListener('blur', () => 手にする(false));
+
 el.addEventListener('pointerdown', e => {
   try{ el.setPointerCapture(e.pointerId); }catch(_){}
   orbitPrev = { x:e.clientX, y:e.clientY };
+  if(spaceHeld){ el.classList.remove('grab'); el.classList.add('grabbing'); }
 });
 el.addEventListener('pointermove', e => {
   if(!orbitPrev || twoFinger) return;
-  if(e.shiftKey){                 // Shift+ドラッグ＝上下左右にパン
+  if(e.shiftKey || spaceHeld){     // Shift または space ＋ドラッグ＝上下左右にパン
     const w=el.clientWidth||innerWidth, h=el.clientHeight||innerHeight, s2=VIEW.size/2;
     cam.px -= (e.clientX - orbitPrev.x) * (2*s2*projA/w);
     cam.py += (e.clientY - orbitPrev.y) * (2*s2/h);
@@ -1986,7 +2018,11 @@ el.addEventListener('pointermove', e => {
   }
   orbitPrev = { x:e.clientX, y:e.clientY };
 });
-const up = () => { orbitPrev = null; };
+const up = () => {
+  orbitPrev = null;
+  el.classList.remove('grabbing');
+  el.classList.toggle('grab', spaceHeld);
+};
 el.addEventListener('pointerup', up);
 el.addEventListener('pointercancel', up);
 el.addEventListener('touchend', e => { if(e.touches.length < 2){ twoFinger=false; panPrev=null; pinchPrev=0; } });
