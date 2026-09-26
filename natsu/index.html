@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>捺 NATSU — 刷るたびにインクが減る / 木下スタジオ</title>
+<meta name="description" content="同じ版を何度も刷る道具。刷るたびに版のインクが減り、紙の目から擦れていく。1・3・5・10回とスキャンして、回ごとに違う擦れ方をそのまま使える。文字を打つか SVG・画像を読み込み、1字ずつ動かして、PNG・SVG・JSON で出せる。木下スタジオ（木下貴博 / 滋賀・琵琶湖）制作。">
+<link rel="canonical" href="https://kinoshita.studio/natsu/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="捺 NATSU — 刷るたびにインクが減る / 木下スタジオ">
+<meta property="og:description" content="同じ版を何度も刷る。回を重ねるほど、紙の目から擦れていく。">
+<meta property="og:url" content="https://kinoshita.studio/natsu/">
+<meta property="og:image" content="https://kinoshita.studio/assets/img/img-ui-natsu.webp">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;900&family=Zen+Old+Mincho:wght@900&family=Oswald:wght@600&display=swap" rel="stylesheet">
+<style>
+  /* ⚠️ 外枠（並び方・見た目）は 掃 SOU / 累 RUI と同じ＝道具ごとに作りを変えない */
+  :root{
+    --bg:#e8e4dc; --paper:#f4f2ec; --line:rgba(28,28,30,.14);
+    --fg:#1c1c1e; --fg2:rgba(28,28,30,.62); --fg3:rgba(28,28,30,.40);
+    --fill:rgba(28,28,30,.10); --fill2:rgba(28,28,30,.07);
+    --capsule:#fffdf8; --glass:rgba(246,244,238,.84); --r:10px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans","Zen Kaku Gothic New",sans-serif;
+    font-weight:400;overflow:hidden;display:flex;align-items:stretch}
+
+  #left{flex:1;min-width:0;display:flex;flex-direction:column}
+  /* ⭐ 盤＝紙を1枚。描く絵（cv）と選んだ印（ov）は別の板＝印は書き出しに入らない */
+  #stage{flex:1;position:relative;min-height:0;overflow:hidden;touch-action:none}
+  #wrap{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
+  canvas#cv{display:block;box-shadow:0 14px 44px rgba(28,28,30,.18)}
+  canvas#ov{position:absolute;left:0;top:0;pointer-events:none}
+  #scanline{position:absolute;left:0;right:0;height:3px;top:0;display:none;pointer-events:none;
+    background:linear-gradient(180deg,transparent,rgba(120,200,255,.9),transparent);box-shadow:0 0 18px rgba(120,200,255,.8)}
+  #stat{position:absolute;left:0;right:0;bottom:0;padding:8px 14px;font-size:11px;color:var(--fg3);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;pointer-events:none;text-align:center;z-index:4}
+  /* 回ごとの一覧＝スキャンしたファイルが並ぶ棚 */
+  #strip{flex:0 0 auto;display:flex;gap:6px;overflow-x:auto;padding:8px 14px;border-top:.5px solid var(--line);
+    background:var(--glass);min-height:92px;align-items:center;overscroll-behavior:contain}
+  #strip:empty::before{content:"「スキャンする」を押すと、刷った回ごとにここへ並びます";font-size:11px;color:var(--fg3)}
+  #strip .th{flex:0 0 auto;border:0;padding:3px;border-radius:7px;background:transparent;cursor:pointer;text-align:center}
+  #strip .th canvas{display:block;height:62px;width:auto;border:.5px solid var(--line);background:#fff}
+  #strip .th span{display:block;font:10px ui-monospace,Menlo,monospace;color:var(--fg2);margin-top:2px}
+  #strip .th.on{background:var(--capsule);box-shadow:0 1px 3px rgba(28,28,30,.2)}
+  #drop{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(244,242,236,.92);border:1px dashed rgba(28,28,30,.35);
+    font-size:13px;letter-spacing:.08em;color:var(--fg2);z-index:20;text-align:center;line-height:1.8}
+  body.dragging #drop{display:flex}
+
+  #panel{width:308px;flex:0 0 308px;height:100%;overflow-y:auto;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border-left:.5px solid var(--line);padding:16px 16px 80px}
+  #panel::-webkit-scrollbar{width:0}
+  h1{font-size:12px;font-weight:590;letter-spacing:.12em;color:var(--fg);margin-bottom:2px}
+  .sub{font-size:11.5px;color:var(--fg2);margin-bottom:16px;line-height:1.6}
+  .grp{margin-bottom:20px}
+  label.h{position:sticky;top:-16px;z-index:3;display:block;margin:0 -16px 8px;padding:7px 16px 6px;
+    background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    border-bottom:.5px solid var(--line);font-size:11px;font-weight:590;letter-spacing:.04em;color:var(--fg2)}
+  .row{display:flex;align-items:center;gap:10px;padding:2px 0;margin-bottom:2px}
+  .row span.n{flex:0 0 78px;font-size:11.5px;color:var(--fg)}
+  .row output{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg2);
+    width:36px;flex:0 0 36px;text-align:right;font-variant-numeric:tabular-nums}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;min-width:0;background:none;height:26px;cursor:pointer;touch-action:pan-y}
+  input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--fill)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;
+    margin-top:-8px;border-radius:50%;background:var(--fg);border:none;
+    box-shadow:0 1px 3px rgba(28,28,30,.30), 0 0 0 .5px rgba(28,28,30,.05)}
+  textarea{width:100%;font-family:inherit;font-size:13px;line-height:1.5;padding:9px 11px;border:.5px solid var(--line);
+    border-radius:var(--r);background:var(--capsule);color:var(--fg);resize:vertical;min-height:64px}
+  .seg{display:flex;flex-wrap:wrap;background:var(--fill2);border-radius:9px;padding:2px;gap:2px;margin:6px 0 10px}
+  .seg button{flex:1 1 auto;min-width:0;border:none;border-radius:7px;background:none;
+    font-family:inherit;font-size:11.5px;font-weight:450;color:var(--fg);opacity:.72;
+    padding:6px 4px;cursor:pointer;transition:.16s;white-space:nowrap}
+  .seg button.on{opacity:1;background:var(--capsule);font-weight:590;
+    box-shadow:0 1px 3px rgba(28,28,30,.14), 0 0 0 .5px rgba(28,28,30,.04)}
+  .btn{width:100%;background:var(--fill);border:none;border-radius:var(--r);color:var(--fg);
+    font-family:inherit;font-size:12px;font-weight:500;padding:11px 0;margin-top:6px;cursor:pointer;transition:.14s}
+  .btn:hover{background:rgba(28,28,30,.16)}
+  .btn:active{transform:scale(.985);opacity:.8}
+  .btn.solid{background:var(--fg);color:var(--paper);font-weight:590;font-size:13px;padding:14px 0}
+  .btns2{display:flex;gap:6px}
+  .colors{display:flex;gap:6px}
+  .colors label{flex:1;font-size:10.5px;color:var(--fg2)}
+  input[type=color]{width:100%;height:30px;padding:0;border:.5px solid var(--line);border-radius:var(--r);background:transparent;cursor:pointer;margin-top:3px}
+  #meter{background:var(--fill2);border-radius:var(--r);color:var(--fg2);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:10.5px;line-height:1.7;padding:9px 11px;margin:8px 0;white-space:pre-line}
+  #selbox{background:var(--capsule);border-radius:var(--r);padding:10px 11px;box-shadow:0 1px 3px rgba(28,28,30,.12)}
+  #selbox .who{font-size:11.5px;color:var(--fg2);margin-bottom:4px}
+  .note{font-size:10.5px;line-height:1.65;color:var(--fg2);opacity:.75;margin-top:7px}
+  .hide{display:none!important}
+
+  @media (max-width:820px){
+    body{flex-direction:column;overscroll-behavior:none}
+    #left{flex:0 0 58vh}
+    #panel{width:100%;flex:1 1 auto;height:auto;border-left:0;border-top:.5px solid var(--line);
+      padding:16px 14px calc(80px + env(safe-area-inset-bottom));overscroll-behavior:contain}
+    label.h{margin:0 -14px 8px;padding:7px 14px 6px}
+    input[type=range]{height:40px}
+    input[type=range]::-webkit-slider-thumb{width:24px;height:24px;margin-top:-10px}
+    #strip{min-height:78px}
+    #strip .th canvas{height:50px}
+  }
+</style>
+</head>
+<body>
+<div id="left">
+  <div id="stage">
+    <div id="wrap"><canvas id="cv"></canvas><canvas id="ov"></canvas><div id="scanline"></div></div>
+    <div id="stat"></div>
+  </div>
+  <div id="strip"></div>
+</div>
+<div id="drop">SVG・PNG・JPG を置くと、版に加わります</div>
+
+<div id="panel">
+  <h1>捺 NATSU</h1>
+  <p class="sub">同じ版を何度も刷る。回を重ねるほどインクが減って、紙の目から擦れていく。</p>
+
+  <div class="grp">
+    <label class="h">スキャンする</label>
+    <div class="seg" id="passes">
+      <button data-v="1">1回</button><button data-v="3">3回</button><button data-v="5" class="on">5回</button><button data-v="10">10回</button>
+    </div>
+    <button class="btn solid" id="bScan">スキャンする</button>
+    <div id="meter">まだスキャンしていません</div>
+    <p class="note">スキャンした後もつまみは全部効きます（同じ回数で刷り直して、下の棚が入れ替わる）。</p>
+  </div>
+
+  <div class="grp">
+    <label class="h">版</label>
+    <textarea id="txt" spellcheck="false"></textarea>
+    <div class="seg" id="face">
+      <button data-v="oswald" class="on">コンデンス</button>
+      <button data-v="gothic">ゴシック</button>
+      <button data-v="mincho">明朝</button>
+    </div>
+    <div class="row"><span class="n">字間</span><input type="range" id="track" min="-10" max="60" value="12"><output></output></div>
+    <div class="row"><span class="n">行間</span><input type="range" id="lead" min="80" max="160" value="104"><output></output></div>
+    <div class="btns2">
+      <button class="btn" id="bRelayout">並べ直す</button>
+      <button class="btn" id="bImport">SVG・画像を読む</button>
+    </div>
+    <input type="file" id="file" accept=".svg,image/svg+xml,image/png,image/jpeg,image/webp" class="hide">
+    <p class="note">盤の上で字を押すと選べる。ドラッグで動かし、右下の角で大きさを変える。</p>
+  </div>
+
+  <div class="grp hide" id="selgrp">
+    <label class="h">選んだもの</label>
+    <div id="selbox">
+      <div class="who" id="selwho"></div>
+      <div class="row"><span class="n">大きさ</span><input type="range" id="selsize" min="10" max="400" value="100"><output></output></div>
+      <div class="row"><span class="n">擦れやすさ</span><input type="range" id="selwear" min="0" max="100" value="50"><output></output></div>
+      <div class="btns2">
+        <button class="btn" id="bDel">消す</button>
+        <button class="btn" id="bDesel">選ぶのをやめる</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="grp">
+    <label class="h">インク</label>
+    <div class="row"><span class="n">量</span><input type="range" id="ink0" min="30" max="150" value="100"><output></output></div>
+    <div class="row"><span class="n">移り方</span><input type="range" id="rate" min="3" max="60" value="11"><output></output></div>
+    <div class="row"><span class="n">厚み（届き）</span><input type="range" id="bridge" min="20" max="90" value="50"><output></output></div>
+    <div class="row"><span class="n">縁に溜まる</span><input type="range" id="pool" min="0" max="100" value="30"><output></output></div>
+    <div class="row"><span class="n">字ごとの差</span><input type="range" id="vary" min="0" max="100" value="70"><output></output></div>
+  </div>
+
+  <div class="grp">
+    <label class="h">紙</label>
+    <div class="row"><span class="n">目の深さ</span><input type="range" id="depth" min="10" max="90" value="45"><output></output></div>
+    <div class="row"><span class="n">目の粗さ</span><input type="range" id="grain" min="1" max="10" value="2"><output></output></div>
+    <div class="row"><span class="n">擦れの流れ</span><input type="range" id="fiber" min="10" max="80" value="26"><output></output></div>
+    <div class="seg" id="dir">
+      <button data-v="0">横に流れる</button><button data-v="90" class="on">縦に流れる</button>
+    </div>
+    <div class="row"><span class="n">むら</span><input type="range" id="mura" min="0" max="80" value="38"><output></output></div>
+    <div class="row"><span class="n">縁の荒れ</span><input type="range" id="rough" min="0" max="100" value="35"><output></output></div>
+    <div class="row"><span class="n">種</span><input type="range" id="seed" min="1" max="99" value="7"><output></output></div>
+    <div class="colors">
+      <label>インク<input type="color" id="cInk" value="#141414"></label>
+      <label>紙<input type="color" id="cPaper" value="#f6f5f1"></label>
+    </div>
+  </div>
+
+  <div class="grp">
+    <label class="h">圧</label>
+    <div class="row"><span class="n">強さ</span><input type="range" id="pressure" min="30" max="90" value="60"><output></output></div>
+    <div class="row"><span class="n">圧のむら</span><input type="range" id="pamp" min="0" max="100" value="55"><output></output></div>
+    <div class="row"><span class="n">むらの大きさ</span><input type="range" id="psize" min="10" max="100" value="40"><output></output></div>
+    <p class="note">上から押す圧は全体に均一にかからない。回ごとに違う形でまだらに抜ける（抜けたところはインクがあっても刷られない）。</p>
+    <div class="row"><span class="n">傾き</span><input type="range" id="tilt" min="0" max="80" value="25"><output></output></div>
+    <div class="row"><span class="n">版のずれ</span><input type="range" id="jit" min="0" max="12" value="2"><output></output></div>
+  </div>
+
+  <div class="grp">
+    <label class="h">保存・書き出し</label>
+    <div class="btns2">
+      <button class="btn" id="bSave">JSONで保存</button>
+      <button class="btn" id="bLoad">JSONを開く</button>
+    </div>
+    <input type="file" id="jfile" accept=".json,application/json" class="hide">
+    <button class="btn" id="bPng">いま見ている回をPNG</button>
+    <button class="btn" id="bPngT">地なしPNG</button>
+    <button class="btn" id="bSvg">SVG</button>
+    <button class="btn" id="bAll">全部の回を並べてPNG</button>
+    <p class="note">SVGは擦れた形をそのまま輪郭にする（ごく小さい粒は捨てる）。</p>
+  </div>
+</div>
+
+<script src="core.js"></script>
+<script>
+'use strict';
+const W = 1000, H = 1250;                  // 紙1枚（版・インク・刷りの画素）
+const PAD = 60;                            // 紙の地形は版より大きく作り、回ごとに切り出す位置を変える
+const PW = W + PAD * 2, PH = H + PAD * 2;
+const $ = id => document.getElementById(id);
+const cv = $('cv'), cx = cv.getContext('2d'), ov = $('ov'), ox = ov.getContext('2d');
+cv.width = W; cv.height = H;
+
+const KN = ['track','lead','ink0','rate','bridge','pool','vary','depth','grain','fiber','mura','rough','seed','pressure','pamp','psize','tilt','jit'];
+const val = k => +$(k).value;
+const FONTS = {
+  oswald: { fam: '"Oswald", "Zen Kaku Gothic New"', w: 600 },
+  gothic: { fam: '"Zen Kaku Gothic New"', w: 900 },
+  mincho: { fam: '"Zen Old Mincho"', w: 900 },
+};
+let st = { face: 'oswald', dir: 90, passes: 5 };
+let objs = [];            // 版に載っているもの { id, t:'ch'|'img', ch, x, y, size | w,h, src, wear }
+let imgs = new Map();     // id → HTMLImageElement
+let sel = -1;             // 選んでいる objs の番号
+let plate = null, edgeMap = null, inkInit = null, box = [0, 0, W, H];
+let results = [];         // 刷った回ごと { d, sum }
+let shown = -1;           // 見ている回
+let nextId = 1;
+const DEFAULT_TXT = 'ABCDE\nFGHIJK\nLMNOP\nQRSTU\nVWXYZ';
+
+// ── 並べる ──────────────────────────
+const mc = document.createElement('canvas').getContext('2d');
+function fontStr(size) { const f = FONTS[st.face]; return `${f.w} ${size}px ${f.fam}`; }
+function glyphBox(o) {
+  if (o.t === 'img') return { x0: o.x - o.w / 2, y0: o.y - o.h / 2, x1: o.x + o.w / 2, y1: o.y + o.h / 2 };
+  mc.font = fontStr(o.size);
+  const w = Math.max(o.size * 0.25, mc.measureText(o.ch).width);
+  return { x0: o.x - w / 2, y0: o.y - o.size * 0.5, x1: o.x + w / 2, y1: o.y + o.size * 0.5 };
+}
+function layout() {
+  const lines = ($('txt').value || '').split('\n');
+  const keepImgs = objs.filter(o => o.t === 'img');
+  const tr = val('track') / 100, ld = val('lead') / 100;
+  // 基準の大きさ100で幅を測り、紙の84%に収まる倍率を出す
+  mc.font = fontStr(100);
+  const widths = lines.map(L => [...L].reduce((s, c) => s + mc.measureText(c).width + 100 * tr, 0) - (L.length ? 100 * tr : 0));
+  const maxW = Math.max(1, ...widths);
+  const totalH = 100 * (1 + (lines.length - 1) * ld);
+  const k = Math.min(W * 0.84 / maxW, H * 0.8 / totalH);
+  const size = 100 * k;
+  const glyphs = [];
+  let y = H / 2 - size * (lines.length - 1) * ld / 2;
+  lines.forEach((L, li) => {
+    mc.font = fontStr(size);
+    let x = W / 2 - widths[li] * k / 2;
+    [...L].forEach(c => {
+      const w = mc.measureText(c).width;
+      if (c.trim()) glyphs.push({ id: nextId++, t: 'ch', ch: c, x: x + w / 2, y, size, wear: 50 });
+      x += w + size * tr;
+    });
+    y += size * ld;
+  });
+  objs = glyphs.concat(keepImgs);
+  sel = -1;
+}
+
+// ── 版を作る ────────────────────────
+function buildPlate() {
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  const m = document.createElement('canvas'); m.width = W; m.height = H;
+  const mg = m.getContext('2d');
+  mg.fillStyle = '#000'; mg.fillRect(0, 0, W, H);
+  const vary = val('vary') / 100, seed = val('seed');
+  objs.forEach(o => {
+    // ⭐ 字ごとのインクの乗り＝種と字のidで決まる（同じ種なら毎回同じ字が擦れる）＋手で決めた擦れやすさ
+    const r = NATSU.hash(o.id, 17, seed);
+    const bias = (o.wear - 50) / 50;                        // −1〜+1（+ほど擦れやすい）
+    // 🔴 一様に減らすと全部の字が同じだけ薄くなる。r^3＝ほとんどの字は満タン・何字かだけ大きく減る（参考の FOLLOW の O と L）
+    const q = Math.max(0.12, Math.min(1.25, 1 - vary * 0.85 * Math.pow(r, 3) - bias * 0.5));
+    const gray = Math.round(q / 1.25 * 255);
+    for (const [ctx, style] of [[g, '#000'], [mg, `rgb(${gray},${gray},${gray})`]]) {
+      ctx.fillStyle = style;
+      if (o.t === 'ch') {
+        ctx.font = fontStr(o.size); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(o.ch, o.x, o.y + o.size * 0.04);
+      } else {
+        const im = imgs.get(o.id); if (!im) continue;
+        if (ctx === g) ctx.drawImage(o.mask || im, o.x - o.w / 2, o.y - o.h / 2, o.w, o.h);
+        else ctx.fillRect(o.x - o.w / 2, o.y - o.h / 2, o.w, o.h);
+      }
+    }
+  });
+  const a = g.getImageData(0, 0, W, H).data, b = mg.getImageData(0, 0, W, H).data;
+  const raw = new Float32Array(W * H);
+  let x0 = W, y0 = H, x1 = 0, y1 = 0;
+  for (let i = 0; i < raw.length; i++) {
+    raw[i] = a[i * 4 + 3] / 255;
+    if (raw[i] > 0) { const x = i % W, y = (i / W) | 0; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  // 縁の荒れのために少しぼかしておく（締めるのは刷るとき）
+  plate = boxBlur(raw, W, H, 2);
+  // 縁からの近さ（縁=1・中へ入るほど0）＝縁に溜まる の場
+  const eb = boxBlur(boxBlur(raw, W, H, 6), W, H, 6);
+  edgeMap = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) { const v = 1 - (eb[i] - 0.5) / 0.5; edgeMap[i] = v < 0 ? 0 : v > 1 ? 1 : v; }
+  const mult = new Float32Array(W * H);
+  for (let i = 0; i < mult.length; i++) mult[i] = b[i * 4] / 255 * 1.25;
+  inkInit = mult;
+  const mg2 = 20;
+  box = x1 >= x0 ? [Math.max(0, x0 - mg2), Math.max(0, y0 - mg2), Math.min(W, x1 + mg2), Math.min(H, y1 + mg2)] : [0, 0, 0, 0];
+}
+function boxBlur(src, W, H, r) {
+  const t = new Float32Array(W * H), o = new Float32Array(W * H), n = 2 * r + 1;
+  for (let y = 0; y < H; y++) { let s = 0; const row = y * W;
+    for (let x = -r; x <= r; x++) s += src[row + Math.min(W - 1, Math.max(0, x))];
+    for (let x = 0; x < W; x++) { t[row + x] = s / n; s += src[row + Math.min(W - 1, x + r + 1)] - src[row + Math.max(0, x - r)]; } }
+  for (let x = 0; x < W; x++) { let s = 0;
+    for (let y = -r; y <= r; y++) s += t[Math.min(H - 1, Math.max(0, y)) * W + x];
+    for (let y = 0; y < H; y++) { o[y * W + x] = s / n; s += t[Math.min(H - 1, y + r + 1) * W + x] - t[Math.max(0, y - r) * W + x]; } }
+  return o;
+}
+
+// ── 紙 ──────────────────────────────
+let field = null, fieldKey = '';
+function getField() {
+  const key = [val('seed'), val('grain'), val('fiber'), st.dir].join(',');
+  if (key !== fieldKey) {
+    const ang = st.dir * Math.PI / 180;
+    field = { PW, PH,
+      paper: NATSU.makeField(PW, PH, val('seed'), val('grain'), val('fiber') / 10, ang),
+      low: NATSU.makeField(PW, PH, val('seed') + 500, 70, 1.6, ang) };
+    fieldKey = key;
+  }
+  return field;
+}
+
+// ── 刷る（1回目から n回目まで） ───────
+function scan(n) {
+  buildPlate();
+  const F = getField();
+  const q = val('ink0') / 100;
+  const ink = new Float32Array(W * H);
+  for (let i = 0; i < ink.length; i++) ink[i] = (plate[i] > 0.02 ? 1 : 0) * inkInit[i] * q;
+  results = [];
+  for (let k = 0; k < n; k++) {
+    const r = NATSU.rng(val('seed') * 7919 + k * 104729);
+    const j = val('jit');
+    const d = NATSU.press(W, H, plate, ink, F, {
+      pressure: val('pressure') / 100, tilt: val('tilt') / 100, tiltAng: r() * Math.PI * 2,
+      dx: (r() - 0.5) * 2 * j, dy: (r() - 0.5) * 2 * j,
+      px: r() * PAD * 2, py: r() * PAD * 2,
+      bridge: val('bridge') / 100, depth: val('depth') / 100, soft: 0.18, k: 1.6, rate: val('rate') / 100,
+      rough: val('rough') / 100 * 0.9, mura: val('mura') / 100,
+      // ⭐ 圧の場は回ごとに種を替える＝毎回ちがう所が抜ける
+      pf: NATSU.makePressure(W, H, val('seed') * 101 + k * 7 + 3, 120 + val('psize') * 6), pamp: val('pamp') / 100,
+      edge: edgeMap, pool: val('pool') / 100
+    }, box);
+    results.push({ d, sum: NATSU.sum(d) });
+  }
+  if (shown < 0 || shown >= n) shown = n - 1;
+}
+
+// ── 描く ────────────────────────────
+function hex(h) { return [1, 3, 5].map(i => parseInt(h.substr(i, 2), 16)); }
+function paint(ctx, d, w, h, transparent) {
+  const im = ctx.createImageData(w, h), px = im.data;
+  const pc = hex($('cPaper').value), ic = hex($('cInk').value);
+  for (let i = 0, o = 0; i < w * h; i++, o += 4) {
+    const a = d ? d[i] : 0;
+    if (transparent) { px[o] = ic[0]; px[o + 1] = ic[1]; px[o + 2] = ic[2]; px[o + 3] = Math.round(a * 255); }
+    else { px[o] = pc[0] + (ic[0] - pc[0]) * a; px[o + 1] = pc[1] + (ic[1] - pc[1]) * a; px[o + 2] = pc[2] + (ic[2] - pc[2]) * a; px[o + 3] = 255; }
+  }
+  ctx.putImageData(im, 0, 0);
+}
+function drawBoard() {
+  if (results.length && shown >= 0) paint(cx, results[shown].d, W, H, false);
+  else previewPlate();
+  drawOverlay();
+}
+// ⭐ 動かしている間は刷らずに版だけ見せる（刷りは指を離してから）
+function previewPlate() {
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  paint(cx, null, W, H, false);
+  objs.forEach(o => {
+    g.fillStyle = $('cInk').value;
+    if (o.t === 'ch') { g.font = fontStr(o.size); g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(o.ch, o.x, o.y + o.size * 0.04); }
+    else { const im = imgs.get(o.id); if (im) g.drawImage(o.mask || im, o.x - o.w / 2, o.y - o.h / 2, o.w, o.h); }
+  });
+  cx.save(); cx.globalAlpha = results.length ? 0.55 : 1; cx.drawImage(c, 0, 0); cx.restore();
+}
+let scale = 1;
+function fit() {
+  const s = $('stage').getBoundingClientRect();
+  scale = Math.min((s.width - 32) / W, (s.height - 44) / H);
+  const w = Math.round(W * scale), h = Math.round(H * scale);
+  cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  const dpr = devicePixelRatio || 1;
+  ov.width = w * dpr; ov.height = h * dpr; ov.style.width = w + 'px'; ov.style.height = h + 'px';
+  drawOverlay();
+}
+function drawOverlay() {
+  const dpr = devicePixelRatio || 1;
+  ox.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ox.clearRect(0, 0, ov.width, ov.height);
+  if (sel < 0 || !objs[sel]) return;
+  const b = glyphBox(objs[sel]);
+  const x = b.x0 * scale, y = b.y0 * scale, w = (b.x1 - b.x0) * scale, h = (b.y1 - b.y0) * scale;
+  ox.strokeStyle = '#2d7df6'; ox.lineWidth = 1; ox.setLineDash([4, 3]); ox.strokeRect(x, y, w, h);
+  ox.setLineDash([]); ox.fillStyle = '#fff'; ox.strokeStyle = '#2d7df6';
+  ox.beginPath(); ox.rect(x + w - 6, y + h - 6, 12, 12); ox.fill(); ox.stroke();
+}
+function thumbs() {
+  const s = $('strip'); s.innerHTML = '';
+  const t = document.createElement('canvas'); t.width = W; t.height = H;
+  results.forEach((r, k) => {
+    const b = document.createElement('button'); b.className = 'th' + (k === shown ? ' on' : '');
+    const c = document.createElement('canvas'); c.width = 100; c.height = 125;
+    paint(t.getContext('2d'), r.d, W, H, false);
+    const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(t, 0, 0, 100, 125);
+    const sp = document.createElement('span'); sp.textContent = String(k + 1).padStart(2, '0') + '回目';
+    b.append(c, sp); b.onclick = () => { shown = k; thumbs(); drawBoard(); meter(); stat(`${k + 1}回目を見ている`); };
+    s.appendChild(b);
+  });
+}
+function meter() {
+  if (!results.length) { $('meter').textContent = 'まだスキャンしていません'; return; }
+  let area = 0; for (let i = 0; i < plate.length; i++) if (plate[i] > 0.5) area++;
+  area = area || 1;
+  $('meter').textContent = results.map((r, k) => `${k === shown ? '▶' : ' '} ${String(k + 1).padStart(2, '0')}回目  乗った量 ${(100 * r.sum / area).toFixed(0).padStart(3)}%`).join('\n');
+}
+function stat(msg) { $('stat').textContent = msg || ''; }
+
+// ⭐ スキャンした後もつまみは効く＝同じ回数で刷り直す（重いので少し待ってから）
+let tRe = 0;
+function rescan(msg) {
+  clearTimeout(tRe);
+  tRe = setTimeout(() => {
+    if (!results.length) { drawBoard(); if (msg) stat(msg); return; }
+    const t0 = performance.now();
+    scan(results.length); thumbs(); drawBoard(); meter();
+    stat((msg ? msg + ' ／ ' : '') + `${results.length}回刷り直した（${Math.round(performance.now() - t0)}ms）`);
+  }, 80);
+}
+function doScan() {
+  const n = st.passes;
+  shown = n - 1;
+  const line = $('scanline'); line.style.display = 'block';
+  line.animate([{ top: '0%' }, { top: '100%' }], { duration: 520, easing: 'ease-in-out' }).onfinish = () => line.style.display = 'none';
+  setTimeout(() => {
+    const t0 = performance.now();
+    scan(n); thumbs(); drawBoard(); meter();
+    stat(`${n}回刷ってスキャンした ／ いま見ているのは${n}回目（${Math.round(performance.now() - t0)}ms）`);
+  }, 30);
+}
+
+// ── 盤の上で選ぶ・動かす・大きさ ──────
+function toBoard(e) { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H }; }
+let drag = null;
+$('stage').addEventListener('pointerdown', e => {
+  const p = toBoard(e);
+  const hr = (e.pointerType === 'touch' ? 26 : 12) / scale;   // 角をつかめる広さ（指は広め）
+  if (sel >= 0 && objs[sel]) {
+    const b = glyphBox(objs[sel]);
+    if (Math.abs(p.x - b.x1) < hr && Math.abs(p.y - b.y1) < hr) {
+      const o = objs[sel];
+      drag = { mode: 'size', o, cx: o.x, cy: o.y, d0: Math.hypot(p.x - o.x, p.y - o.y), s0: o.t === 'ch' ? o.size : o.w, h0: o.h };
+      $('stage').setPointerCapture(e.pointerId); return;
+    }
+  }
+  let hit = -1;
+  for (let i = objs.length - 1; i >= 0; i--) { const b = glyphBox(objs[i]); if (p.x >= b.x0 && p.x <= b.x1 && p.y >= b.y0 && p.y <= b.y1) { hit = i; break; } }
+  sel = hit; showSel();
+  if (hit >= 0) { const o = objs[hit]; drag = { mode: 'move', o, dx: p.x - o.x, dy: p.y - o.y, moved: false }; $('stage').setPointerCapture(e.pointerId); }
+  drawOverlay();
+});
+$('stage').addEventListener('pointermove', e => {
+  if (!drag) return;
+  const p = toBoard(e), o = drag.o;
+  if (drag.mode === 'move') { o.x = p.x - drag.dx; o.y = p.y - drag.dy; }
+  else {
+    const k = Math.max(0.05, Math.hypot(p.x - drag.cx, p.y - drag.cy) / Math.max(1, drag.d0));
+    if (o.t === 'ch') o.size = drag.s0 * k; else { o.w = drag.s0 * k; o.h = drag.h0 * k; }
+    syncSelSize();
+  }
+  drag.moved = true;
+  previewPlate(); drawOverlay();
+});
+function endDrag() {
+  if (!drag) return;
+  const moved = drag.moved, mode = drag.mode; drag = null;
+  if (moved) rescan(mode === 'move' ? '動かした' : '大きさを変えた');
+}
+$('stage').addEventListener('pointerup', endDrag);
+$('stage').addEventListener('pointercancel', endDrag);
+
+function showSel() {
+  const o = objs[sel];
+  $('selgrp').classList.toggle('hide', !o);
+  if (!o) return;
+  $('selwho').textContent = o.t === 'ch' ? `字「${o.ch}」` : '読み込んだ画像';
+  syncSelSize();
+  $('selwear').value = o.wear; $('selwear').nextElementSibling.textContent = o.wear;
+}
+function syncSelSize() {
+  const o = objs[sel]; if (!o) return;
+  if (!o.base) o.base = o.t === 'ch' ? o.size : o.w;
+  const v = Math.round((o.t === 'ch' ? o.size : o.w) / o.base * 100);
+  $('selsize').value = v; $('selsize').nextElementSibling.textContent = v + '%';
+}
+$('selsize').addEventListener('input', () => {
+  const o = objs[sel]; if (!o) return; const k = val('selsize') / 100;
+  if (o.t === 'ch') o.size = o.base * k; else { const r = o.h / o.w; o.w = o.base * k; o.h = o.w * r; }
+  $('selsize').nextElementSibling.textContent = val('selsize') + '%';
+  previewPlate(); drawOverlay(); rescan('大きさを変えた');
+});
+$('selwear').addEventListener('input', () => {
+  const o = objs[sel]; if (!o) return; o.wear = val('selwear');
+  $('selwear').nextElementSibling.textContent = o.wear; rescan(`擦れやすさ ${o.wear}`);
+});
+$('bDel').onclick = () => { if (sel < 0) return; const o = objs.splice(sel, 1)[0]; imgs.delete(o.id); sel = -1; showSel(); rescan('消した'); };
+$('bDesel').onclick = () => { sel = -1; showSel(); drawOverlay(); };
+
+// ── 画像・SVGを版に ──────────────────
+// 地なし（透明がある）ならその形、無ければ暗いところを版にする
+function addImage(file) {
+  const rd = new FileReader();
+  rd.onload = () => {
+    const im = new Image();
+    im.onload = () => {
+      const o = { id: nextId++, t: 'img', src: rd.result, wear: 50 };
+      prepImage(o, im);
+      const iw = im.naturalWidth || 600, ih = im.naturalHeight || 600;
+      const k = Math.min(W * 0.6 / iw, H * 0.6 / ih);
+      o.w = iw * k; o.h = ih * k; o.x = W / 2; o.y = H / 2;
+      objs.push(o); sel = objs.length - 1; showSel();
+      rescan(`${file.name} を版に加えた`);
+    };
+    im.onerror = () => stat(`${file.name} が読めませんでした`);
+    im.src = rd.result;
+  };
+  rd.readAsDataURL(file);
+}
+function prepImage(o, im) {
+  imgs.set(o.id, im);
+  // 🔴 SVGは大きさを持たないことがあるので、長い辺2000pxで描き直してから版にする
+  let w = im.naturalWidth || 1000, h = im.naturalHeight || 1000;
+  const k = 2000 / Math.max(w, h); if (k > 1) { w = Math.round(w * k); h = Math.round(h * k); }
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d'); g.drawImage(im, 0, 0, w, h);
+  const d = g.getImageData(0, 0, w, h), p = d.data;
+  let clear = false;
+  for (let i = 3; i < p.length; i += 4) if (p[i] < 250) { clear = true; break; }
+  if (!clear) {                     // 地がある画像＝暗さを版の濃さに
+    for (let i = 0; i < p.length; i += 4) { const l = (p[i] * 0.299 + p[i + 1] * 0.587 + p[i + 2] * 0.114) / 255; p[i] = p[i + 1] = p[i + 2] = 0; p[i + 3] = Math.round(Math.max(0, Math.min(1, (0.85 - l) / 0.6)) * 255); }
+    g.putImageData(d, 0, 0);
+  }
+  o.mask = c;
+}
+$('bImport').onclick = () => $('file').click();
+$('file').onchange = e => { const f = e.target.files[0]; if (f) addImage(f); e.target.value = ''; };
+addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragging'); });
+addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dragging'); });
+addEventListener('drop', e => {
+  e.preventDefault(); document.body.classList.remove('dragging');
+  const f = e.dataTransfer.files[0]; if (!f) return;
+  if (f.name.endsWith('.json')) return loadJSON(f);
+  if (f.type.startsWith('image/') || f.name.endsWith('.svg')) addImage(f);
+});
+
+// ── 保存・書き出し ──────────────────
+function stampName() { const d = new Date(), p = v => String(v).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`; }
+function download(blob, name) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 3000); }
+function snapshot() {
+  const knobs = {}; KN.forEach(k => knobs[k] = val(k));
+  return { tool: 'natsu', v: 1, board: { w: W, h: H }, text: $('txt').value, face: st.face, dir: st.dir, passes: st.passes,
+    scanned: results.length, shown, ink: $('cInk').value, paper: $('cPaper').value, knobs,
+    objs: objs.map(o => o.t === 'ch' ? { id: o.id, t: 'ch', ch: o.ch, x: o.x, y: o.y, size: o.size, base: o.base, wear: o.wear }
+                                     : { id: o.id, t: 'img', x: o.x, y: o.y, w: o.w, h: o.h, base: o.base, wear: o.wear, src: o.src }) };
+}
+async function restore(s) {
+  $('txt').value = s.text || ''; st.face = s.face || 'oswald'; st.dir = s.dir ?? 90; st.passes = s.passes || 5;
+  Object.entries(s.knobs || {}).forEach(([k, v]) => { if ($(k)) { $(k).value = v; show(k); } });
+  $('cInk').value = s.ink || '#141414'; $('cPaper').value = s.paper || '#f6f5f1';
+  segOn('face', st.face); segOn('dir', String(st.dir)); segOn('passes', String(st.passes));
+  await loadFont();
+  imgs.clear(); objs = []; nextId = 1;
+  for (const o of s.objs || []) {
+    nextId = Math.max(nextId, o.id + 1);
+    if (o.t === 'img') { const im = new Image(); await new Promise(r => { im.onload = r; im.onerror = r; im.src = o.src; }); prepImage(o, im); }
+    objs.push(o);
+  }
+  sel = -1; showSel(); results = []; shown = -1;
+  if (s.scanned) { scan(s.scanned); shown = Math.min(s.shown ?? s.scanned - 1, s.scanned - 1); }
+  thumbs(); meter(); drawBoard();
+}
+function loadJSON(f) {
+  const rd = new FileReader();
+  rd.onload = () => { let s; try { s = JSON.parse(rd.result); } catch (e) { stat('JSONが読めませんでした'); return; }
+    restore(s).then(() => stat(`${f.name} を開いた（${objs.length}個・${results.length}回刷った状態）`)); };
+  rd.readAsText(f);
+}
+$('bSave').onclick = () => { download(new Blob([JSON.stringify(snapshot(), null, 1)], { type: 'application/json' }), `natsu_${stampName()}.json`); stat('JSONで保存した（字の位置・大きさ・つまみ・読み込んだ画像まで入る）'); };
+$('bLoad').onclick = () => $('jfile').click();
+$('jfile').onchange = e => { const f = e.target.files[0]; if (f) loadJSON(f); e.target.value = ''; };
+function needScan() { if (!results.length) { stat('先に「スキャンする」を押してください'); return true; } return false; }
+$('bPng').onclick = () => { if (needScan()) return; cv.toBlob(b => download(b, `natsu_${shown + 1}回目_${stampName()}.png`)); stat(`${shown + 1}回目を ${W}×${H} で書き出した`); };
+$('bPngT').onclick = () => {
+  if (needScan()) return;
+  const c = document.createElement('canvas'); c.width = W; c.height = H; paint(c.getContext('2d'), results[shown].d, W, H, true);
+  c.toBlob(b => download(b, `natsu_${shown + 1}回目_地なし_${stampName()}.png`)); stat(`${shown + 1}回目を地なしで書き出した`);
+};
+function makeSVG(k) {
+  const d = NATSU.trace(W, H, results[k].d, 0.45, 3);
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">\n` +
+    `<rect width="${W}" height="${H}" fill="${$('cPaper').value}" id="paper"/>\n<path fill="${$('cInk').value}" fill-rule="evenodd" d="${d}"/>\n</svg>\n`;
+}
+$('bSvg').onclick = () => {
+  if (needScan()) return;
+  const t0 = performance.now(), svg = makeSVG(shown);
+  download(new Blob([svg], { type: 'image/svg+xml' }), `natsu_${shown + 1}回目_${stampName()}.svg`);
+  stat(`${shown + 1}回目をSVGにした（${(svg.length / 1024).toFixed(0)}KB・${Math.round(performance.now() - t0)}ms）`);
+};
+$('bAll').onclick = () => {
+  if (needScan()) return;
+  const n = results.length, cols = Math.min(5, n), rows = Math.ceil(n / cols), s = 0.4, gw = Math.round(W * s), gh = Math.round(H * s), gap = 24;
+  const c = document.createElement('canvas'); c.width = cols * gw + (cols + 1) * gap; c.height = rows * gh + (rows + 1) * gap;
+  const g = c.getContext('2d'); g.fillStyle = '#e8e4dc'; g.fillRect(0, 0, c.width, c.height);
+  const t = document.createElement('canvas'); t.width = W; t.height = H;
+  results.forEach((r, k) => { paint(t.getContext('2d'), r.d, W, H, false); g.drawImage(t, gap + (k % cols) * (gw + gap), gap + Math.floor(k / cols) * (gh + gap), gw, gh); });
+  c.toBlob(b => download(b, `natsu_${n}回ぶん_${stampName()}.png`)); stat(`${n}回ぶんを1枚に並べた（${c.width}×${c.height}）`);
+};
+
+// ── つまみ ──────────────────────────
+function show(k) { const o = $(k).parentNode.querySelector('output'); if (o) o.textContent = $(k).value; }
+KN.forEach(k => { show(k); $(k).addEventListener('input', () => {
+  show(k);
+  if (k === 'track' || k === 'lead') { layout(); showSel(); rescan('並べ直した'); return; }
+  rescan();
+}); });
+['cInk', 'cPaper'].forEach(k => $(k).addEventListener('input', () => { drawBoard(); if (results.length) thumbs(); }));
+function segOn(id, v) { [...$(id).children].forEach(b => b.classList.toggle('on', b.dataset.v === v)); }
+function seg(id, fn) { $(id).onclick = e => { const b = e.target.closest('button'); if (!b) return; segOn(id, b.dataset.v); fn(b.dataset.v); }; }
+function loadFont() { const f = FONTS[st.face]; return document.fonts.load(`${f.w} 100px ${f.fam}`, $('txt').value || 'A').catch(() => {}); }
+seg('passes', v => { st.passes = +v; stat(`${v}回刷る（「スキャンする」で刷る）`); });
+seg('face', v => { st.face = v; loadFont().then(() => { layout(); showSel(); rescan('書体を替えた'); }); });
+seg('dir', v => { st.dir = +v; rescan(); });
+let tTxt = 0;
+$('txt').addEventListener('input', () => { clearTimeout(tTxt); tTxt = setTimeout(() => loadFont().then(() => { layout(); showSel(); rescan('打ち直した'); }), 250); });
+$('bRelayout').onclick = () => { layout(); showSel(); rescan('並べ直した＝手で動かした位置は戻る'); };
+$('bScan').onclick = doScan;
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'TEXTAREA' || (e.target.tagName === 'INPUT' && e.target.type !== 'range')) return;
+  if (e.key === 'Enter') { e.preventDefault(); doScan(); }
+  else if ((e.key === 'Delete' || e.key === 'Backspace') && sel >= 0) { e.preventDefault(); $('bDel').click(); }
+  else if (e.key === 'Escape') { sel = -1; showSel(); drawOverlay(); }
+  else if (sel >= 0 && e.key.startsWith('Arrow')) {
+    e.preventDefault(); const o = objs[sel], s = e.shiftKey ? 10 : 1;
+    if (e.key === 'ArrowLeft') o.x -= s; if (e.key === 'ArrowRight') o.x += s; if (e.key === 'ArrowUp') o.y -= s; if (e.key === 'ArrowDown') o.y += s;
+    previewPlate(); drawOverlay(); rescan('動かした');
+  }
+});
+addEventListener('resize', fit);
+
+// ── はじめ ──────────────────────────
+$('txt').value = DEFAULT_TXT;
+loadFont().then(() => {
+  layout(); fit(); drawBoard();
+  // 確かめ用：#scan=5 でスキャンした状態から始める／&show=0 で1回目を見る
+  const m = location.hash.match(/scan=(\d+)/);
+  if (m) { st.passes = +m[1]; segOn('passes', m[1]); shown = -1; scan(+m[1]);
+    const s = location.hash.match(/show=(\d+)/); if (s) shown = +s[1];
+    thumbs(); drawBoard(); meter(); }
+});
+</script>
+</body>
+</html>
