@@ -303,51 +303,68 @@ function layout() {
 }
 
 // ── 版を作る ────────────────────────
-function buildPlate() {
-  const c = document.createElement('canvas'); c.width = W; c.height = H;
-  const g = c.getContext('2d');
-  const m = document.createElement('canvas'); m.width = W; m.height = H;
-  const mg = m.getContext('2d');
-  mg.fillStyle = '#000'; mg.fillRect(0, 0, W, H);
-  const vary = val('vary') / 100, seed = val('seed');
+// ⭐ 形（字の輪郭・縁の場）とインクの乗り（字ごとの差）を分けて作る。
+//    「字ごとの差」「種」を動かしても形は作り直さない＝スライダーが軽い
+let shapeDirty = true, inkDirty = true, plateVer = 0, plateArea = 1;
+function drawObjs(ctx, styleOf) {
   objs.forEach(o => {
-    // ⭐ 字ごとのインクの乗り＝種と字のidで決まる（同じ種なら毎回同じ字が擦れる）＋手で決めた擦れやすさ
-    const r = NATSU.hash(o.id, 17, seed);
-    const bias = (o.wear - 50) / 50;                        // −1〜+1（+ほど擦れやすい）
-    // 🔴 一様に減らすと全部の字が同じだけ薄くなる。r^3＝ほとんどの字は満タン・何字かだけ大きく減る（参考の FOLLOW の O と L）
-    const q = Math.max(0.12, Math.min(1.25, 1 - vary * 0.85 * Math.pow(r, 3) - bias * 0.5));
-    const gray = Math.round(q / 1.25 * 255);
-    for (const [ctx, style] of [[g, '#000'], [mg, `rgb(${gray},${gray},${gray})`]]) {
-      ctx.fillStyle = style;
-      if (o.t === 'ch') {
-        ctx.font = fontStr(o.size); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(o.ch, o.x, o.y + o.size * 0.04);
-      } else {
-        const im = imgs.get(o.id); if (!im) continue;
-        if (ctx === g) ctx.drawImage(o.mask || im, o.x - o.w / 2, o.y - o.h / 2, o.w, o.h);
-        else ctx.fillRect(o.x - o.w / 2, o.y - o.h / 2, o.w, o.h);
-      }
+    ctx.fillStyle = styleOf(o);
+    if (o.t === 'ch') {
+      ctx.font = fontStr(o.size); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(o.ch, o.x, o.y + o.size * 0.04);
+    } else {
+      const im = imgs.get(o.id); if (!im) return;
+      if (styleOf === SHAPE) ctx.drawImage(o.mask || im, o.x - o.w / 2, o.y - o.h / 2, o.w, o.h);
+      else ctx.fillRect(o.x - o.w / 2, o.y - o.h / 2, o.w, o.h);
     }
   });
-  const a = g.getImageData(0, 0, W, H).data, b = mg.getImageData(0, 0, W, H).data;
+}
+const SHAPE = () => '#000';
+let bc1 = null, bc2 = null;
+function boardCanvas(c) { if (!c || c.width !== W || c.height !== H) { c = document.createElement('canvas'); c.width = W; c.height = H; } return c; }
+function buildShape() {
+  bc1 = boardCanvas(bc1); const g = bc1.getContext('2d', { willReadFrequently: true });
+  g.clearRect(0, 0, W, H); drawObjs(g, SHAPE);
+  const a = g.getImageData(0, 0, W, H).data;
   const raw = new Float32Array(W * H);
-  let x0 = W, y0 = H, x1 = 0, y1 = 0;
+  let x0 = W, y0 = H, x1 = 0, y1 = 0, area = 0;
   for (let i = 0; i < raw.length; i++) {
-    raw[i] = a[i * 4 + 3] / 255;
-    if (raw[i] > 0) { const x = i % W, y = (i / W) | 0; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    const v = a[i * 4 + 3];
+    if (v) { raw[i] = v / 255; const x = i % W, y = (i / W) | 0; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (v > 127) area++; }
   }
+  plateArea = area || 1;
   // 縁の荒れのために少しぼかしておく（締めるのは刷るとき）
   plate = boxBlur(raw, W, H, 2);
   // 縁からの近さ（縁=1・中へ入るほど0）＝縁に溜まる の場
   const eb = boxBlur(boxBlur(raw, W, H, 6), W, H, 6);
   edgeMap = new Float32Array(W * H);
   for (let i = 0; i < W * H; i++) { const v = 1 - (eb[i] - 0.5) / 0.5; edgeMap[i] = v < 0 ? 0 : v > 1 ? 1 : v; }
-  const mult = new Float32Array(W * H);
-  for (let i = 0; i < mult.length; i++) mult[i] = b[i * 4] / 255 * 1.25;
-  inkInit = mult;
   const mg2 = 20;
   box = x1 >= x0 ? [Math.max(0, x0 - mg2), Math.max(0, y0 - mg2), Math.min(W, x1 + mg2), Math.min(H, y1 + mg2)] : [0, 0, 0, 0];
 }
+function buildInk() {
+  bc2 = boardCanvas(bc2); const mg = bc2.getContext('2d', { willReadFrequently: true });
+  mg.fillStyle = '#000'; mg.fillRect(0, 0, W, H);
+  const vary = val('vary') / 100, seed = val('seed');
+  drawObjs(mg, o => {
+    // ⭐ 字ごとのインクの乗り＝種と字のidで決まる（同じ種なら毎回同じ字が擦れる）＋手で決めた擦れやすさ
+    const r = NATSU.hash(o.id, 17, seed);
+    const bias = (o.wear - 50) / 50;                        // −1〜+1（+ほど擦れやすい）
+    // 🔴 一様に減らすと全部の字が同じだけ薄くなる。r^3＝ほとんどの字は満タン・何字かだけ大きく減る（参考の FOLLOW の O と L）
+    const q = Math.max(0.12, Math.min(1.25, 1 - vary * 0.85 * Math.pow(r, 3) - bias * 0.5));
+    const gray = Math.round(q / 1.25 * 255);
+    return `rgb(${gray},${gray},${gray})`;
+  });
+  const b = mg.getImageData(0, 0, W, H).data;
+  const mult = new Float32Array(W * H);
+  for (let i = 0; i < mult.length; i++) mult[i] = b[i * 4] / 255 * 1.25;
+  inkInit = mult;
+}
+function ensurePlate() {
+  if (shapeDirty) { buildShape(); shapeDirty = false; inkDirty = true; }
+  if (inkDirty) { buildInk(); inkDirty = false; plateVer++; }
+}
+function buildPlate() { shapeDirty = true; ensurePlate(); }
 function boxBlur(src, W, H, r) {
   const t = new Float32Array(W * H), o = new Float32Array(W * H), n = 2 * r + 1;
   for (let y = 0; y < H; y++) { let s = 0; const row = y * W;
@@ -359,60 +376,95 @@ function boxBlur(src, W, H, r) {
   return o;
 }
 
-// ── 紙 ──────────────────────────────
-let field = null, fieldKey = '';
-function getField() {
-  const key = [W, H, val('seed'), val('grain'), val('fiber'), st.dir].join(',');
-  if (key !== fieldKey) {
-    const ang = st.dir * Math.PI / 180;
-    field = { PW, PH,
-      paper: NATSU.makeField(PW, PH, val('seed'), val('grain'), val('fiber') / 10, ang),
-      low: NATSU.makeField(PW, PH, val('seed') + 500, 70, 1.6, ang) };
-    fieldKey = key;
-  }
-  return field;
-}
-
 // ── 刷る（1回目から n回目まで） ───────
-function scan(n) {
-  buildPlate();
-  const F = getField();
-  const q = val('ink0') / 100;
-  const ink = new Float32Array(W * H);
-  for (let i = 0; i < ink.length; i++) ink[i] = (plate[i] > 0.02 ? 1 : 0) * inkInit[i] * q;
-  results = [];
-  for (let k = 0; k < n; k++) {
-    const r = NATSU.rng(val('seed') * 7919 + k * 104729);
-    const j = val('jit');
-    const d = NATSU.press(W, H, plate, ink, F, {
-      pressure: val('pressure') / 100, tilt: val('tilt') / 100, tiltAng: r() * Math.PI * 2,
-      dx: (r() - 0.5) * 2 * j, dy: (r() - 0.5) * 2 * j,
-      px: r() * PAD * 2, py: r() * PAD * 2,
-      bridge: val('bridge') / 100, depth: val('depth') / 100, soft: 0.18, k: 1.6, rate: val('rate') / 100,
-      rough: val('rough') / 100 * 0.9, mura: val('mura') / 100,
-      // ⭐ 圧の場は回ごとに種を替える＝毎回ちがう所が抜ける
-      pf: NATSU.makePressure(W, H, val('seed') * 101 + k * 7 + 3, 120 + val('psize') * 6), pamp: val('pamp') / 100,
-      edge: edgeMap, pool: val('pool') / 100
-    }, box);
-    results.push({ d, sum: NATSU.sum(d) });
-  }
+// ⭐ 計算は刷り場（worker.js）でやる＝スライダーを動かしている間も画面は止まらない。
+//    いちばん新しい頼みだけが刷られる。1回ずつ届くので、見ている回が届いた瞬間に盤が替わる。
+// 🔴 刷り場が使えない所（file:// など）では、同じ計算を画面側でやる
+let worker = null, sentVer = -1, jobId = 0, want = null;
+function params() { const q = {}; KN.forEach(k => q[k] = val(k)); q.dir = st.dir; return q; }
+try {
+  worker = new Worker('worker.js');
+  worker.onmessage = e => received(e.data);
+  worker.onerror = e => { if (e.preventDefault) e.preventDefault(); worker = null; if (want) scanHere(want); };
+} catch (e) { worker = null; }
+function requestScan(n, msg, label) {
+  ensurePlate();
+  want = { job: ++jobId, n, msg, label, t0: performance.now() };
+  if (results.length !== n) { results = new Array(n).fill(null); buildStrip(n); }
   if (shown < 0 || shown >= n) shown = n - 1;
+  if (worker) {
+    if (sentVer !== plateVer) {
+      worker.postMessage({ type: 'plate', W, H, plate, ink0map: inkInit, edge: edgeMap, box, ver: plateVer });
+      sentVer = plateVer;
+    }
+    worker.postMessage({ type: 'scan', job: want.job, n, q: params() });
+  } else setTimeout(() => want && scanHere(want), 0);
+}
+function received(m) {
+  if (!want || m.job !== want.job || m.W !== W || m.H !== H) return;   // 古い頼みの刷りは捨てる
+  results[m.k] = { d: m.d, sum: m.sum };
+  updateThumb(m.k);
+  if (m.k === shown) paintBoard();
+  if (m.k === m.n - 1) {
+    meter();
+    const ms = Math.round(performance.now() - want.t0);
+    if (want.label === 'scan') stat(`${m.n}回刷ってスキャンした ／ いま見ているのは${shown + 1}回目（${ms}ms）`);
+    else stat((want.msg ? want.msg + ' ／ ' : '') + `${m.n}回刷り直した（${ms}ms）`);
+  }
+}
+// 画面側で刷る（刷り場が無いとき・同じ計算）
+let fieldHere = null, fieldKeyHere = '';
+function scanHere(job) {
+  const q = params(), n = job.n;
+  const key = [W, H, q.seed, q.grain, q.fiber, q.dir].join(',');
+  if (key !== fieldKeyHere) {
+    const ang = q.dir * Math.PI / 180;
+    fieldHere = { PW, PH, paper: NATSU.makeField(PW, PH, q.seed, q.grain, q.fiber / 10, ang), low: NATSU.makeField(PW, PH, q.seed + 500, 70, 1.6, ang) };
+    fieldKeyHere = key;
+  }
+  const ink = new Float32Array(W * H), k0 = q.ink0 / 100;
+  for (let i = 0; i < ink.length; i++) ink[i] = plate[i] > 0.02 ? inkInit[i] * k0 : 0;
+  for (let k = 0; k < n; k++) {
+    const r = NATSU.rng(q.seed * 7919 + k * 104729);
+    const tiltAng = r() * Math.PI * 2, dx = (r() - 0.5) * 2 * q.jit, dy = (r() - 0.5) * 2 * q.jit, px = r() * PAD * 2, py = r() * PAD * 2;
+    const d = NATSU.press(W, H, plate, ink, fieldHere, {
+      pressure: q.pressure / 100, tilt: q.tilt / 100, tiltAng, dx, dy, px, py,
+      bridge: q.bridge / 100, depth: q.depth / 100, soft: 0.18, k: 1.6, rate: q.rate / 100,
+      rough: q.rough / 100 * 0.9, mura: q.mura / 100,
+      pf: NATSU.makePressure(W, H, q.seed * 101 + k * 7 + 3, 120 + q.psize * 6), pamp: q.pamp / 100,
+      edge: edgeMap, pool: q.pool / 100
+    }, box);
+    const a = new Uint8Array(W * H); let sum = 0;
+    for (let i = 0; i < a.length; i++) { const v = d[i]; if (v > 0) { sum += v; a[i] = v >= 1 ? 255 : (v * 255 + 0.5) | 0; } }
+    received({ job: job.job, k, n, W, H, d: a, sum });
+  }
 }
 
 // ── 描く ────────────────────────────
 function hex(h) { return [1, 3, 5].map(i => parseInt(h.substr(i, 2), 16)); }
-function paint(ctx, d, w, h, transparent) {
-  const im = ctx.createImageData(w, h), px = im.data;
-  const pc = hex($('cPaper').value), ic = hex($('cInk').value);
-  for (let i = 0, o = 0; i < w * h; i++, o += 4) {
-    const a = d ? d[i] : 0;
-    if (transparent) { px[o] = ic[0]; px[o + 1] = ic[1]; px[o + 2] = ic[2]; px[o + 3] = Math.round(a * 255); }
-    else { px[o] = pc[0] + (ic[0] - pc[0]) * a; px[o + 1] = pc[1] + (ic[1] - pc[1]) * a; px[o + 2] = pc[2] + (ic[2] - pc[2]) * a; px[o + 3] = 255; }
+function lut(transparent) {
+  const pc = hex($('cPaper').value), ic = hex($('cInk').value), t = new Uint32Array(256);
+  for (let a = 0; a < 256; a++) {
+    const f = a / 255;
+    const r = transparent ? ic[0] : Math.round(pc[0] + (ic[0] - pc[0]) * f);
+    const g = transparent ? ic[1] : Math.round(pc[1] + (ic[1] - pc[1]) * f);
+    const b = transparent ? ic[2] : Math.round(pc[2] + (ic[2] - pc[2]) * f);
+    t[a] = ((transparent ? a : 255) << 24 | b << 16 | g << 8 | r) >>> 0;
   }
+  return t;
+}
+let imCache = null;
+function paint(ctx, d, w, h, transparent) {
+  // d＝0〜255（刷りの濃さ）。盤は ImageData を使い回す
+  let im = ctx === cx && imCache && imCache.width === w && imCache.height === h ? imCache : ctx.createImageData(w, h);
+  if (ctx === cx) imCache = im;
+  const u = new Uint32Array(im.data.buffer), t = lut(transparent);
+  if (d) for (let i = 0; i < u.length; i++) u[i] = t[d[i]]; else u.fill(t[0]);
   ctx.putImageData(im, 0, 0);
 }
+function paintBoard() { const r = results[shown]; if (r) { paint(cx, r.d, W, H, false); drawOverlay(); } }
 function drawBoard() {
-  if (results.length && shown >= 0) paint(cx, results[shown].d, W, H, false);
+  if (results[shown]) paint(cx, results[shown].d, W, H, false);
   else previewPlate();
   drawOverlay();
 }
@@ -477,48 +529,58 @@ function drawOverlay() {
 }
 let lastPointerType = 'mouse';
 const HANDLE_PX = () => lastPointerType === 'touch' ? 26 : 14;   // 角の大きさ（画面の点）
-function thumbs() {
+function buildStrip(n) {
   const s = $('strip'); s.innerHTML = '';
-  const t = document.createElement('canvas'); t.width = W; t.height = H;
-  results.forEach((r, k) => {
+  for (let k = 0; k < n; k++) {
     const b = document.createElement('button'); b.className = 'th' + (k === shown ? ' on' : '');
     const c = document.createElement('canvas'); c.height = 125; c.width = Math.round(125 * W / H);
-    paint(t.getContext('2d'), r.d, W, H, false);
-    const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(t, 0, 0, c.width, c.height);
     const sp = document.createElement('span'); sp.textContent = String(k + 1).padStart(2, '0') + '回目';
-    b.append(c, sp); b.onclick = () => { shown = k; thumbs(); drawBoard(); meter(); stat(`${k + 1}回目を見ている`); };
+    b.append(c, sp);
+    b.onclick = () => { if (!results[k]) return; shown = k; [...s.children].forEach((x, i) => x.classList.toggle('on', i === k)); paintBoard(); meter(); stat(`${k + 1}回目を見ている`); };
     s.appendChild(b);
-  });
+  }
 }
+function updateThumb(k) {
+  const b = $('strip').children[k], r = results[k]; if (!b || !r) return;
+  const c = b.firstChild, tw = c.width, th = c.height, g = c.getContext('2d');
+  const im = g.createImageData(tw, th), u = new Uint32Array(im.data.buffer), t = lut(false), d = r.d;
+  // 縮めるときは3×3点の平均（細い線が消えない程度に）
+  const sx = W / tw, sy = H / th;
+  for (let y = 0; y < th; y++) for (let x = 0; x < tw; x++) {
+    let s = 0;
+    for (let j = 0; j < 3; j++) { const yy = Math.min(H - 1, ((y + (j + 0.5) / 3) * sy) | 0), row = yy * W;
+      for (let i = 0; i < 3; i++) s += d[row + Math.min(W - 1, ((x + (i + 0.5) / 3) * sx) | 0)]; }
+    u[y * tw + x] = t[(s / 9) | 0];
+  }
+  g.putImageData(im, 0, 0);
+}
+function thumbs() { buildStrip(results.length); results.forEach((r, k) => updateThumb(k)); }
 function meter() {
   if (!results.length) { $('meter').textContent = 'まだスキャンしていません'; return; }
-  let area = 0; for (let i = 0; i < plate.length; i++) if (plate[i] > 0.5) area++;
-  area = area || 1;
-  $('meter').textContent = results.map((r, k) => `${k === shown ? '▶' : ' '} ${String(k + 1).padStart(2, '0')}回目  乗った量 ${(100 * r.sum / area).toFixed(0).padStart(3)}%`).join('\n');
+  $('meter').textContent = results.map((r, k) => `${k === shown ? '▶' : ' '} ${String(k + 1).padStart(2, '0')}回目  ` + (r ? `乗った量 ${(100 * r.sum / plateArea).toFixed(0).padStart(3)}%` : '刷っている…')).join('\n');
 }
 function stat(msg) { $('stat').textContent = msg || ''; }
 
-// ⭐ スキャンした後もつまみは効く＝同じ回数で刷り直す（重いので少し待ってから）
-let tRe = 0;
-function rescan(msg) {
-  clearTimeout(tRe);
-  tRe = setTimeout(() => {
-    if (!results.length) { drawBoard(); if (msg) stat(msg); return; }
-    const t0 = performance.now();
-    scan(results.length); thumbs(); drawBoard(); meter();
-    stat((msg ? msg + ' ／ ' : '') + `${results.length}回刷り直した（${Math.round(performance.now() - t0)}ms）`);
-  }, 80);
+// ⭐ スキャンした後もつまみは効く＝同じ回数で刷り直す。待たずにすぐ頼む（刷り場がいちばん新しいものだけ刷る）
+// plate＝版（形か字ごとの差）が変わったか。つまみの多くは版に触らない＝版は作り直さない
+let rafRe = 0, reMsg, reShape = false, reInk = false;
+function rescan(msg, what = 'shape') {
+  if (what === 'shape') reShape = true; else if (what === 'ink') reInk = true;
+  reMsg = msg;
+  if (rafRe) return;
+  rafRe = requestAnimationFrame(() => {
+    rafRe = 0;
+    if (reShape) shapeDirty = true; if (reInk) inkDirty = true; reShape = reInk = false;
+    if (!results.length) { drawBoard(); if (reMsg) stat(reMsg); return; }
+    requestScan(results.length, reMsg);
+  });
 }
 function doScan() {
   const n = st.passes;
   shown = n - 1;
   const line = $('scanline'); line.style.display = 'block';
   line.animate([{ top: '0%' }, { top: '100%' }], { duration: 520, easing: 'ease-in-out' }).onfinish = () => line.style.display = 'none';
-  setTimeout(() => {
-    const t0 = performance.now();
-    scan(n); thumbs(); drawBoard(); meter();
-    stat(`${n}回刷ってスキャンした ／ いま見ているのは${n}回目（${Math.round(performance.now() - t0)}ms）`);
-  }, 30);
+  results = []; requestScan(n, null, 'scan');
 }
 
 // ── 盤の上で選ぶ・動かす・大きさ・見る倍率 ──────
@@ -625,7 +687,7 @@ $('selsize').addEventListener('input', () => {
 });
 $('selwear').addEventListener('input', () => {
   const o = objs[sel]; if (!o) return; o.wear = val('selwear');
-  $('selwear').nextElementSibling.textContent = o.wear; rescan(`擦れやすさ ${o.wear}`);
+  $('selwear').nextElementSibling.textContent = o.wear; rescan(`擦れやすさ ${o.wear}`, 'ink');
 });
 $('bDel').onclick = () => { if (sel < 0) return; const o = objs.splice(sel, 1)[0]; imgs.delete(o.id); sel = -1; showSel(); rescan('消した'); };
 $('bDesel').onclick = () => { sel = -1; showSel(); drawOverlay(); };
@@ -700,10 +762,13 @@ async function restore(s) {
     if (o.t === 'img') { const im = new Image(); await new Promise(r => { im.onload = r; im.onerror = r; im.src = o.src; }); prepImage(o, im); }
     objs.push(o);
   }
-  sel = -1; showSel(); results = []; shown = -1;
-  if (s.scanned) { scan(s.scanned); shown = Math.min(s.shown ?? s.scanned - 1, s.scanned - 1); }
-  thumbs(); meter(); drawBoard();
+  sel = -1; showSel(); results = []; shown = -1; shapeDirty = true;
+  buildStrip(0);
+  if (s.scanned) { shown = Math.min(s.shown ?? s.scanned - 1, s.scanned - 1); requestScan(s.scanned, 'JSONを開いた'); await whenPrinted(); }
+  meter(); drawBoard();
 }
+// 頼んだ刷りが全部届くまで待つ（JSONを開いたとき・確かめ用）
+function whenPrinted() { return new Promise(r => { const t = () => (results.length && results.every(x => x)) ? r() : setTimeout(t, 20); t(); }); }
 function loadJSON(f) {
   const rd = new FileReader();
   rd.onload = () => { let s; try { s = JSON.parse(rd.result); } catch (e) { stat('JSONが読めませんでした'); return; }
@@ -713,7 +778,7 @@ function loadJSON(f) {
 $('bSave').onclick = () => { download(new Blob([JSON.stringify(snapshot(), null, 1)], { type: 'application/json' }), `natsu_${stampName()}.json`); stat('JSONで保存した（字の位置・大きさ・つまみ・読み込んだ画像まで入る）'); };
 $('bLoad').onclick = () => $('jfile').click();
 $('jfile').onchange = e => { const f = e.target.files[0]; if (f) loadJSON(f); e.target.value = ''; };
-function needScan() { if (!results.length) { stat('先に「スキャンする」を押してください'); return true; } return false; }
+function needScan() { if (!results[shown] || results.some(r => !r)) { stat('先に「スキャンする」を押してください'); return true; } return false; }
 $('bPng').onclick = () => { if (needScan()) return; cv.toBlob(b => download(b, `natsu_${shown + 1}回目_${stampName()}.png`)); stat(`${shown + 1}回目を ${W}×${H} で書き出した`); };
 $('bPngT').onclick = () => {
   if (needScan()) return;
@@ -721,7 +786,7 @@ $('bPngT').onclick = () => {
   c.toBlob(b => download(b, `natsu_${shown + 1}回目_地なし_${stampName()}.png`)); stat(`${shown + 1}回目を地なしで書き出した`);
 };
 function makeSVG(k) {
-  const d = NATSU.trace(W, H, results[k].d, 0.45, 3);
+  const d = NATSU.trace(W, H, results[k].d, 115, 3);   // 0〜255 の 45%
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">\n` +
     `<rect width="${W}" height="${H}" fill="${$('cPaper').value}" id="paper"/>\n<path fill="${$('cInk').value}" fill-rule="evenodd" d="${d}"/>\n</svg>\n`;
 }
@@ -751,7 +816,8 @@ function setBoard(w, h, keep) {
     objs.forEach(o => { o.x *= kx; o.y *= ky; if (o.t === 'ch') { o.size *= ks; if (o.base) o.base *= ks; } else { o.w *= ks; o.h *= ks; if (o.base) o.base *= ks; } });
   }
   W = w; H = h; PW = W + PAD * 2; PH = H + PAD * 2;
-  cv.width = W; cv.height = H; fieldKey = '';
+  cv.width = W; cv.height = H; shapeDirty = true;
+  if (results.length) { const n = results.length; results = []; buildStrip(0); results = new Array(n).fill(null); buildStrip(n); }
   $('bw').value = W; $('bh').value = H;
   segOn('boardp', `${W}x${H}`);
   view.z = 1; view.tx = 0; view.ty = 0; fit();
@@ -769,15 +835,15 @@ function show(k) { const o = $(k).parentNode.querySelector('output'); if (o) o.t
 KN.forEach(k => { show(k); $(k).addEventListener('input', () => {
   show(k);
   if (k === 'track' || k === 'lead') { layout(); showSel(); rescan('並べ直した'); return; }
-  rescan();
+  rescan(undefined, k === 'vary' || k === 'seed' ? 'ink' : 'none');
 }); });
-['cInk', 'cPaper'].forEach(k => $(k).addEventListener('input', () => { drawBoard(); if (results.length) thumbs(); }));
+['cInk', 'cPaper'].forEach(k => $(k).addEventListener('input', () => { drawBoard(); results.forEach((r, i) => updateThumb(i)); }));
 function segOn(id, v) { [...$(id).children].forEach(b => b.classList.toggle('on', b.dataset.v === v)); }
 function seg(id, fn) { $(id).onclick = e => { const b = e.target.closest('button'); if (!b) return; segOn(id, b.dataset.v); fn(b.dataset.v); }; }
 function loadFont() { const f = FONTS[st.face]; return document.fonts.load(`${f.w} 100px ${f.fam}`, $('txt').value || 'A').catch(() => {}); }
 seg('passes', v => { st.passes = +v; stat(`${v}回刷る（「スキャンする」で刷る）`); });
 seg('face', v => { st.face = v; loadFont().then(() => { layout(); showSel(); rescan('書体を替えた'); }); });
-seg('dir', v => { st.dir = +v; rescan(); });
+seg('dir', v => { st.dir = +v; rescan(undefined, 'none'); });
 let tTxt = 0;
 $('txt').addEventListener('input', () => { clearTimeout(tTxt); tTxt = setTimeout(() => loadFont().then(() => { layout(); showSel(); rescan('打ち直した'); }), 250); });
 $('bRelayout').onclick = () => { layout(); showSel(); rescan('並べ直した＝手で動かした位置は戻る'); };
@@ -801,9 +867,9 @@ loadFont().then(() => {
   layout(); fit(); drawBoard();
   // 確かめ用：#scan=5 でスキャンした状態から始める／&show=0 で1回目を見る
   const m = location.hash.match(/scan=(\d+)/);
-  if (m) { st.passes = +m[1]; segOn('passes', m[1]); shown = -1; scan(+m[1]);
-    const s = location.hash.match(/show=(\d+)/); if (s) shown = +s[1];
-    thumbs(); drawBoard(); meter(); }
+  if (m) { st.passes = +m[1]; segOn('passes', m[1]);
+    const s = location.hash.match(/show=(\d+)/); shown = s ? +s[1] : +m[1] - 1;
+    requestScan(+m[1], null, 'scan'); }
 });
 </script>
 </body>
