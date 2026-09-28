@@ -74,4 +74,4 @@
 `items` が空なら何も起きない ── 描いた物 8 つだけが並ぶ。
 
 ## 足した写真（2026-09-28）── PC
-すべて木下の Midjourney 生成物。`pc-laptop-window.jpg` `pc-laptop-evening.jpg` `pc-monitor.jpg` `pc-laptop-cafe.jpg` `pc-laptop-phone.jpg`（ノートPCとスマホの2面）。画面の四隅は faces に入れてある。
+すべて木下の Midjourney 生成物。`pc-laptop-window.jpg` `pc-laptop-evening.jpg` `pc-monitor.jpg` `pc-laptop-cafe.jpg` `pc-laptop-phone.jpg`（ノートPCとスマホの2面）・`pc-shoulder-left.jpg` `pc-shoulder-right.jpg`（肩越し）。画面の四隅は faces に入れてある。
