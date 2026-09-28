@@ -75,3 +75,6 @@
 
 ## 足した写真（2026-09-28）── PC
 すべて木下の Midjourney 生成物。`pc-laptop-window.jpg` `pc-laptop-evening.jpg` `pc-monitor.jpg` `pc-laptop-cafe.jpg` `pc-laptop-phone.jpg`（ノートPCとスマホの2面）・`pc-shoulder-left.jpg` `pc-shoulder-right.jpg`（肩越し）。画面の四隅は faces に入れてある。
+
+## 足した写真（2026-09-28）── 本
+木下の Midjourney 生成物。`book-spiral-flat.jpg`（真上の見開き）・`book-spiral-hands.jpg`（手に持った見開き）。どちらも左右2面の faces つき。
