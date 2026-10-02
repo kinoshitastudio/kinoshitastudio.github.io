@@ -1060,6 +1060,40 @@ function roundCorners(p, R){
   }
   return o.length > 3 ? o : p;
 }
+/* ⭐⭐⭐ 折れ線を【曲線】にする（2026-09-13）
+   🔴🔴 これまで d は 'M … L … L … Z' の【直線だけ】だった。
+      折れ線なので、Figma で 700% に拡大すれば【必ず面が見える】。
+      木下＝「変形してるからかあれてるな」＝伸ばしたせいではなく、そもそも曲線が無かった。
+   ⭐ Catmull-Rom を三次ベジェに置き換える（点を通る曲線）。点は1つも増えない。
+   ⚠️ 角（曲がりが急な点）は【角のまま残す】。ここを丸めると字とロゴが溶ける。 */
+function toCurve(p, cornerDeg){
+  const n = p.length;
+  if(n < 4) return null;
+  const lim = Math.cos(cornerDeg * Math.PI / 180);
+  const T = [];
+  for(let i = 0; i < n; i++){
+    const a = p[(i-1+n)%n], b = p[i], c = p[(i+1)%n];
+    const ax = a[0]-b[0], ay = a[1]-b[1], cx = c[0]-b[0], cy = c[1]-b[1];
+    const la = Math.hypot(ax, ay), lc = Math.hypot(cx, cy);
+    if(la < 1e-9 || lc < 1e-9){ T.push([0, 0]); continue; }
+    const dot = (ax*cx + ay*cy) / (la*lc);      /* −1＝まっすぐ ／ +1＝折り返し */
+    if(dot > lim){ T.push([0, 0]); continue; }  /* 鋭い角＝接線を殺して角のまま */
+    T.push([(c[0]-a[0]) / 6, (c[1]-a[1]) / 6]);
+  }
+  return { T };
+}
+function pathD(p, kk, curve){
+  const n = p.length, f = q => (q[0]*kk).toFixed(2) + ' ' + (q[1]*kk).toFixed(2);
+  if(!curve) return 'M' + p.map(f).join('L') + 'Z';
+  const T = curve.T;
+  let d = 'M' + f(p[0]);
+  for(let i = 0; i < n; i++){
+    const b = p[i], c = p[(i+1)%n], t0 = T[i], t1 = T[(i+1)%n];
+    d += 'C' + f([b[0]+t0[0], b[1]+t0[1]]) + ' '
+             + f([c[0]-t1[0], c[1]-t1[1]]) + ' ' + f(c);
+  }
+  return d + 'Z';
+}
 function silhouetteD(){
   const f = frameNow();
   const k0 = Math.min(1, TRACE_MAX / Math.max(f.w, f.h));
@@ -1082,7 +1116,7 @@ function silhouetteD(){
     p = dropStraight(p);
     if(sm === 0) return p;
     p = thin(p, (0.35 + sm * 0.30) * S);
-    p = roundCorners(p, sm * 1.2 * S);    /* ⭐ 丸めは px の半径で（割合でやると字が溶ける） */
+    p = roundCorners(p, sm * 1.2 * S);  /* ⭐ 丸めは px の半径で（割合でやると字が溶ける） */
     return thin(p, 0.22 * S);
   }).filter(p => {
     let mnx=1e9, mny=1e9, mxx=-1e9, mxy=-1e9;
@@ -1090,8 +1124,8 @@ function silhouetteD(){
                        if(q[1]<mny)mny=q[1]; if(q[1]>mxy)mxy=q[1]; }
     return (mxx-mnx) > 1.2 || (mxy-mny) > 1.2;
   });
-  return { d: loops.map(p => 'M' + p.map(q =>
-      (q[0]*kk).toFixed(2) + ' ' + (q[1]*kk).toFixed(2)).join('L') + 'Z').join(''),
+  /* ⭐ なめらかさが 0 より上なら【曲線】で出す。0 は素の折れ線のまま残す */
+  return { d: loops.map(p => pathD(p, kk, sm > 0 ? toCurve(p, 75) : null)).join(''),
     loops: loops.length, pts: loops.reduce((a,p)=>a+p.length,0) };
 }
 el('b_svg').onclick = () => {
