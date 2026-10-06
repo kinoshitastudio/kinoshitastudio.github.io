@@ -12,6 +12,17 @@
   if (location.hostname === 'localhost' ||
       location.hostname === '127.0.0.1') return; // 手元の確認では数えない
 
+  /* ⭐ 自分の閲覧を数えない（2026-10-06）
+     そのブラウザで1回だけ「?notrack」を付けて開く → 以後そのブラウザでは数えない。
+     「?track」を付けて開けば元に戻る。サイトが2つ（kinoshita.studio と kinoshitastudio.com）なので、両方で1回ずつ。
+     ⚠️ スマホ・別のブラウザは、それぞれで1回ずつ開く */
+  try {
+    var q = location.search;
+    if (/[?&]notrack\b/.test(q)) localStorage.setItem('ks_notrack', '1');
+    if (/[?&]track\b/.test(q))   localStorage.removeItem('ks_notrack');
+    if (localStorage.getItem('ks_notrack') === '1') return;
+  } catch (e) {}
+
   var s = document.createElement('script');
   s.async = true;
   s.src = 'https://www.googletagmanager.com/gtag/js?id=' + ID;
