@@ -252,14 +252,30 @@
     <button class="btn" id="bFit">版面に収める</button>
     <div class="row"><span class="n">字の色</span></div>
     <input type="color" id="col" value="#e8452a">
-    <button class="btn" id="bPhoto">写真を敷く</button>
     <input type="file" id="fPhoto" accept="image/*" hidden>
+  </div>
+
+  <div class="grp">
+    <label class="h">⑤' 背面の画像</label>
+    <div class="row"><span class="n" id="bgName">まだ置いていない（盤に落としても置ける）</span></div>
+    <div class="seg">
+      <button id="bPhoto">画像を置く</button>
+      <button id="bPhotoOff">外す</button>
+    </div>
+    <button class="btn" id="bMatch">版面を画像に合わせる</button>
+    <div class="row"><span class="n">画像の濃さ</span><output id="oBgOp">100</output></div>
+    <input type="range" id="bgOp" min="0" max="100" value="100">
+    <div class="row"><span class="n">出すとき</span></div>
+    <div class="seg" id="segBgOut">
+      <button data-v="0" class="on">字だけ（透明）</button>
+      <button data-v="1">画像ごと</button>
+    </div>
   </div>
 
   <div class="grp">
     <label class="h">⑥ 出す</label>
     <div class="row"><span class="n">長辺（px）</span><output id="oOut">2400</output></div>
-    <input type="range" id="outLong" min="600" max="6000" step="100" value="2400">
+    <input type="range" id="outLong" min="300" max="6000" step="1" value="2400">
     <div class="btns2">
       <button class="btn" id="ePNG">PNG</button>
       <button class="btn" id="eSVG">SVG</button>
@@ -332,7 +348,9 @@ const S = {
   view:'run',
   out:{ long:2400 },
 };
-let photo = null;
+let photo = null, photoName = '';
+/* ⭐ 背面の画像＝字を合わせるための下敷き。op＝濃さ／out＝出すとき画像ごと(1)か字だけ透明(0) */
+const BG = { op:100, out:0 };
 
 /* ⭐ 種で振れる乱数。🔴 素の線形合同法は【1発目が種にほぼ比例する】ので潰してから使う */
 function rnd(seed){
@@ -726,11 +744,26 @@ function runBox(size){
 function paint(g, W, H2, opt){
   const svg = (opt && opt.svg) ? [] : null;
   const [BW,BH] = boardSize(), k = W/BW;
+  /* ⭐ 背面：白→画像（濃さつき）。出すときに「字だけ」なら何も敷かない（透明）。
+     ⚠️ 画像が無いときは今までどおり白で出す */
+  const bake = opt && opt.bake;
+  const showBg = !(bake && photo && !BG.out);
   g.save(); g.scale(k,k);
   g.clearRect(0,0,BW,BH);
-  g.fillStyle = '#ffffff'; g.fillRect(0,0,BW,BH);
-  if(photo){ const kk = Math.max(BW/photo.width, BH/photo.height);
-    g.drawImage(photo, (BW-photo.width*kk)/2, (BH-photo.height*kk)/2, photo.width*kk, photo.height*kk); }
+  if(showBg){
+    g.fillStyle = '#ffffff'; g.fillRect(0,0,BW,BH);
+    if(photo && BG.op > 0){ const kk = Math.max(BW/photo.width, BH/photo.height);
+      g.globalAlpha = BG.op/100;
+      g.drawImage(photo, (BW-photo.width*kk)/2, (BH-photo.height*kk)/2, photo.width*kk, photo.height*kk);
+      g.globalAlpha = 1; }
+  }
+  /* ⭐⭐ 字は別の層に描いてから重ねる。🔴 かすれ（destination-out）を同じ層で掛けると
+     字だけでなく下の画像まで抜けて白い穴が出る */
+  const base = g;
+  let layer = null;
+  if(!svg){ layer = document.createElement('canvas');
+    layer.width = g.canvas.width; layer.height = g.canvas.height;
+    g = layer.getContext('2d'); g.setTransform(base.getTransform()); }
 
   const col = S.run.col;
   if(S.view === 'sheet'){
@@ -762,7 +795,8 @@ function paint(g, W, H2, opt){
     const B = runBox(size);
     dryOver(g, ox+B.x0-size*0.3, oy+B.y0-size*0.3, B.w+size, B.h+size, size);
   }
-  g.restore();
+  if(layer){ base.save(); base.setTransform(1,0,0,1,0,0); base.drawImage(layer,0,0); base.restore(); }
+  base.restore();
   return svg;
 }
 function drawGlyph(g, ch, x, y, size, rot, col, i, svg){
@@ -917,8 +951,29 @@ $('bFit').onclick = () => {
 };
 $('bPhoto').onclick = () => $('fPhoto').click();
 function takePhoto(f){ const img = new Image();
-  img.onload = () => { photo = img; draw(); stat('写真を敷いた'); };
+  img.onload = () => { photo = img; photoName = f.name || '';
+    $('bgName').textContent = photoName + '（' + img.width + '×' + img.height + '）';
+    matchPhoto();
+    stat('背面に置いた — 版面を画像の比率（' + img.width + '×' + img.height + '）に合わせ、出す長辺も ' + S.out.long + 'px にした'); };
   img.src = URL.createObjectURL(f); }
+/* ⭐ 版面＝画像の比率／出す長辺＝画像の長辺 → 出したPNGを元の画像にそのままピッタリ重ねられる */
+function matchPhoto(){
+  if(!photo) return;
+  S.run.w = 1000; S.run.h = Math.round(1000*photo.height/photo.width);
+  segOn('segRatio', S.run.w+','+S.run.h);
+  S.out.long = Math.max(photo.width, photo.height);
+  $('outLong').value = S.out.long; out('outLong');
+  if(S.view !== 'run'){ S.view='run'; segOn('modes','run'); }
+  layout(); fit(); draw();
+}
+$('bMatch').onclick = () => { if(!photo){ stat('🔴 先に「画像を置く」'); return; }
+  matchPhoto(); stat('版面を画像に合わせた（' + photo.width + '×' + photo.height + '）'); };
+$('bPhotoOff').onclick = () => { photo = null; photoName = '';
+  $('bgName').textContent = 'まだ置いていない（盤に落としても置ける）'; draw(); stat('背面の画像を外した'); };
+$('bgOp').addEventListener('input', e => { BG.op = +e.target.value; $('oBgOp').textContent = BG.op; draw(); });
+document.querySelectorAll('#segBgOut button').forEach(b => b.onclick = () => {
+  BG.out = +b.dataset.v; segOn('segBgOut', BG.out);
+  stat(BG.out ? '出すとき：画像ごと' : '出すとき：字だけ（透明PNG）＝元の画像に重ねる用'); });
 $('fPhoto').onchange = e => { const f = e.target.files[0]; if(f) takePhoto(f); };
 ['dragenter','dragover'].forEach(t => addEventListener(t, e => { e.preventDefault(); document.body.classList.add('dragging'); }));
 ['dragleave','drop'].forEach(t => addEventListener(t, e => { e.preventDefault(); document.body.classList.remove('dragging'); }));
@@ -930,7 +985,7 @@ function bake(long){
   const [W,H2] = boardSize(), k = long/Math.max(W,H2);
   const c = document.createElement('canvas');
   c.width = Math.round(W*k); c.height = Math.round(H2*k);
-  paint(c.getContext('2d'), c.width, c.height, null);
+  paint(c.getContext('2d'), c.width, c.height, { bake:true });
   return c;
 }
 function dl(blob,name){ const a=document.createElement('a');

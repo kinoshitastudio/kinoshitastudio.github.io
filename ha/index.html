@@ -244,6 +244,18 @@
     <h2>版</h2>
     <div class="row"><label>地</label><input type="color" id="bg" value="#d9d9d9"></div>
 
+    <h2>背面の画像</h2>
+    <div class="two">
+      <button class="btn" id="bImg">画像を置く</button>
+      <button class="btn" id="bImgOff">外す</button>
+    </div>
+    <input type="file" id="fImg" accept="image/*" hidden>
+    <div class="row"><label>濃さ</label><input type="range" id="imgOp" min="0" max="100" step="1" value="100"><span class="val" id="v_imgOp">100</span></div>
+    <div class="note" id="imgNote">
+      字を合わせるための下敷き（盤に落としても置ける）。⭐ <b>書き出しには入らない</b>。<br>
+      置くと〔出す〕が「背面の画像の範囲・×1・透明」になる＝出したPNGが元の画像にぴったり重なる。
+    </div>
+
     <h2>動かす</h2>
     <div class="seg" id="anSeg">
       <button data-v="none" class="on">止める</button>
@@ -271,7 +283,7 @@
       <select id="exScale"><option value="1">×1</option><option value="2" selected>×2</option><option value="3">×3</option><option value="4">×4</option></select>
     </div>
     <div class="row"><label>まわり</label>
-      <select id="exFit"><option value="view">いま見えている窓</option><option value="ink" selected>絵にぴったり</option></select>
+      <select id="exFit"><option value="view">いま見えている窓</option><option value="ink" selected>絵にぴったり</option><option value="img">背面の画像の範囲</option></select>
     </div>
     <div class="row"><label>余白</label><input type="range" id="exPad" min="0" max="200" step="4" value="40"><span class="val" id="v_exPad"></span></div>
     <div class="row"><label>地を出す</label>
@@ -348,6 +360,7 @@ const VIEW = { z:1, ox:0, oy:0 };
       「中を抜く」は「塗り＝なし」1つに畳まれた（つまみが1つ減って、できることが増える）。
    🔴 前は【中を抜く】と線の太さ 0 が重なると、勝手に 2 や 4 で引いていた＝つまみが嘘をつく。
       いまは 0 は本当に 0。古い控えは読むときに 2／4 を入れて【今までの絵】にする（fillOld）。 */
+let BGI = null, BGI_OP = 100;   /* 背面の画像（下で扱う） */
 const P = { pen:'blade', ang:-28, wid:54, thin:2, col:'#0a0a0a',
             tw:26, to:2, tcol:'#ffffff', ocol:'#0a0a0a',
             smooth:2.5, bg:'#d9d9d9', cell:22, fb:true, ft:true, fm:true,
@@ -661,6 +674,8 @@ function draw(){
   ctx.setTransform(1,0,0,1,0,0);
   ctx.fillStyle = P.bg; ctx.fillRect(0,0,cv.width,cv.height);
   ctx.setTransform(d*VIEW.z,0,0,d*VIEW.z, d*VIEW.ox, d*VIEW.oy);
+  /* ⭐ 背面の画像＝原点(0,0)に原寸で敷く。画面にだけ描く（shot は通らない＝書き出しに入らない） */
+  if(BGI && BGI_OP > 0){ ctx.globalAlpha = BGI_OP/100; ctx.drawImage(BGI, 0, 0); ctx.globalAlpha = 1; }
   /* 🔴🔴 2026-08-22 木下＝「刃だけなぜかきちんとボード内に描けない」
      ＝〔書いていく〕を選んでいると、引き終わった線が【途中までしか描かれない】。
         位相が頭（0）に居るときは「まだ書かれていない」ので、線が丸ごと消える。
@@ -881,6 +896,30 @@ document.querySelectorAll('#anSeg button').forEach(b => b.addEventListener('clic
 });
 ['exWhat','exScale','exFit','exBg','tvFps'].forEach(id =>
   el(id).addEventListener('change', e => { P[id]=e.target.value; tvSize(); }));
+/* ══ 背面の画像 ══ 字を合わせるための下敷き。控え（JSON）にも書き出しにも入れない */
+function takeImg(f){ const img = new Image();
+  img.onload = () => {
+    BGI = img;
+    /* ⭐ 出す設定を「画像にぴったり重なる」形にそろえる */
+    [['exFit','img'],['exScale','1'],['exBg','0']].forEach(([k,v]) => { el(k).value = v; P[k] = v; });
+    tvSize();
+    const w=cv.clientWidth, h=cv.clientHeight, m=60;
+    VIEW.z = Math.max(.05, Math.min(24, Math.min((w-m*2)/img.width, (h-m*2)/img.height)));
+    VIEW.ox = w/2-img.width/2*VIEW.z; VIEW.oy = h/2-img.height/2*VIEW.z; zSync(); draw();
+    stat('背面に置いた（'+img.width+'×'+img.height+'）— 出すと同じ大きさの透明PNGになる（画像は入らない）');
+  };
+  img.src = URL.createObjectURL(f); }
+el('bImg').onclick = () => el('fImg').click();
+el('fImg').onchange = e => { const f = e.target.files[0]; if(f) takeImg(f); e.target.value=''; };
+el('bImgOff').onclick = () => { BGI = null;
+  if(el('exFit').value==='img'){ el('exFit').value='ink'; P.exFit='ink'; tvSize(); }
+  draw(); stat('背面の画像を外した'); };
+el('imgOp').addEventListener('input', e => { BGI_OP = +e.target.value; el('v_imgOp').textContent = BGI_OP; draw(); });
+['dragover','drop'].forEach(t => addEventListener(t, e => {
+  const f = e.dataTransfer && e.dataTransfer.items && [...e.dataTransfer.items].find(x => x.kind==='file');
+  if(!f) return; e.preventDefault();
+  if(t==='drop'){ const file = e.dataTransfer.files[0]; if(file && /^image\//.test(file.type)) takeImg(file); }
+}));
 /* ⭐ 塗る／塗らないを画面に戻す（パネルが嘘をつかない）。選んだ骨からも控えからも同じ道を通る */
 function fillSync(src){
   [['fillB','fb'],['fillT','ft'],['fillM','fm']].forEach(([id,k]) => {
@@ -1052,6 +1091,7 @@ function exList(){
   return STROKES.filter(layOn);
 }
 function exBox(list){
+  if(el('exFit').value==='img' && BGI) return {x0:0, y0:0, x1:BGI.width, y1:BGI.height};
   if(el('exFit').value==='view'){
     const a=toWorld({x:0,y:0}), b=toWorld({x:cv.clientWidth,y:cv.clientHeight});
     return {x0:a.x,y0:a.y,x1:b.x,y1:b.y};
