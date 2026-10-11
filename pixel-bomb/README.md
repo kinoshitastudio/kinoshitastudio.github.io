@@ -2,7 +2,6 @@
 
 > Collapse an image into itself using ranked pixel blocks.
 
-Inspired by [Collapse](https://collapse.constraint.systems/) by Constraint Systems.
 
 ---
 
