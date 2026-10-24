@@ -41,11 +41,12 @@ button.on{background:var(--tx);color:#1b1a19}
 .pats button canvas{width:100%;height:100%;display:block}
 .pats button.on{border-color:var(--ac)}
 .pats span{display:block;font-size:10px;color:var(--sub);text-align:center;margin-top:2px}
+.thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.thumbs button{padding:0;aspect-ratio:3/4;overflow:hidden;border:2px solid transparent;background:#151413}.thumbs button img{width:100%;height:100%;object-fit:cover;display:block}.thumbs button.on{border-color:var(--ac)}
 .credit{font-size:10px;color:var(--sub);line-height:1.6;margin-top:6px}
 #stage{flex:1;display:flex;align-items:center;justify-content:center;padding:24px;overflow:hidden;position:relative}
 #cv{max-width:100%;max-height:100%;box-shadow:0 10px 40px rgba(0,0,0,.45);background:repeating-conic-gradient(#2a2826 0 25%,#232120 0 50%) 0 0/24px 24px}
 #cv.paint{cursor:crosshair}
-#hint{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);font-size:11px;color:var(--sub);background:rgba(0,0,0,.4);padding:4px 10px;border-radius:20px;pointer-events:none;white-space:nowrap}
+#hint{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);font-size:12px;color:#eee;background:rgba(0,0,0,.72);padding:4px 10px;border-radius:20px;pointer-events:none;white-space:nowrap}
 @media(max-width:760px){
   body{flex-direction:column;height:auto;overflow:auto}
   #panel{width:auto;border-right:0;padding-bottom:40px}
@@ -60,7 +61,8 @@ button.on{background:var(--tx);color:#1b1a19}
   <p class="lead">浮世絵を線画に起こし、区画を柄で塗り、枠と短冊を置いて1枚にする。人物は描かず、元の版の線を借りる。</p>
 
   <div class="grp"><div class="t">元の絵</div>
-    <select id="sample"></select>
+    <select id="sample" hidden></select>
+    <div class="thumbs" id="thumbs"></div>
     <div class="row"><button id="openimg">画像を読む</button></div>
     <input type="file" id="imgfile" accept="image/*" hidden>
     <div class="credit" id="credit"></div>
@@ -120,13 +122,16 @@ button.on{background:var(--tx);color:#1b1a19}
   <input type="file" id="jfile" accept=".json,application/json" hidden>
   <p class="lead" style="margin-top:12px">塗る＝絵の区画を押すと柄で埋まる（線が切れていると外へ漏れるので、「描く」で閉じる）。消す＝署名や要らない線を消す。</p>
 </div>
-<div id="stage"><canvas id="cv"></canvas><div id="hint">区画を押すと柄で塗る</div></div>
+<div id="stage"><canvas id="cv"></canvas><div id="hint">絵の区画を押すと柄で塗る</div></div>
 <script src="samples.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 const OW=1200, OH=1500; const cv=$('cv'); cv.width=OW; cv.height=OH; const ctx=cv.getContext('2d');
 const v=id=>+$(id).value;
 const mk=(w=OW,h=OH)=>{const c=document.createElement('canvas');c.width=w;c.height=h;return c};
+// 🔴iPhone の Safari は canvas の合計メモリに上限がある。描き直すたびに新しく作ると上限を超えて黙って描けなくなる＝名前ごとに1枚を使い回す
+const POOL={}; function pc(name,w=OW,h=OH){let c=POOL[name]; if(!c){c=POOL[name]=document.createElement('canvas');c.getContext('2d',{willReadFrequently:true})} if(c.width!==w||c.height!==h){c.width=w;c.height=h}
+  const g=c.getContext('2d'); g.setTransform(1,0,0,1,0,0); g.globalCompositeOperation='source-over'; g.globalAlpha=1; g.clearRect(0,0,w,h); return c}
 const LINE=['ta','tl','lr','thick','smooth','speck','gapc','ctol'], LAY=['fs','fx','fy','frs','fry','frw','tzs','tzx','tzy','psize','brush'];
 
 // ── 状態（設定JSONにそのまま入る） ─────────────────────────
@@ -163,7 +168,7 @@ function tile(name,s,color){const T=PATS[name]; const th=T[3]==='tall'?s/2:(T[2]
 
 // ── 元の絵を読む ─────────────────────────────────────────
 let G=null, RGB=null, SW=0, SH=0;   // 濃さ（0..255）
-function setSource(img,id,dataURL){
+function setSource(img,id,dataURL){setTimeout(()=>markThumb(),0);
   const sc=Math.min(1,1100/img.height); SW=Math.round(img.width*sc); SH=Math.round(img.height*sc);
   const c=mk(SW,SH); const g=c.getContext('2d'); g.drawImage(img,0,0,SW,SH);
   const d=g.getImageData(0,0,SW,SH).data; G=new Float32Array(SW*SH);
@@ -195,7 +200,7 @@ function dist(M,w,h,inside){const D=new Float32Array(w*h),INF=1e9;for(let i=0;i<
   for(let y=h-1;y>=0;y--)for(let x=w-1;x>=0;x--){const i=y*w+x;if(!D[i])continue;let m=D[i];
     if(x<w-1)m=Math.min(m,D[i+1]+3);if(y<h-1){m=Math.min(m,D[i+w]+3);if(x<w-1)m=Math.min(m,D[i+w+1]+4);if(x>0)m=Math.min(m,D[i+w-1]+4)}D[i]=m}
   return D}
-function strokeMask(type){const c=mk(SW,SH),g=c.getContext('2d');g.fillStyle=g.strokeStyle='#000';g.lineCap=g.lineJoin='round';let any=false;
+function strokeMask(type){const c=pc('stroke',SW,SH),g=c.getContext('2d');g.fillStyle=g.strokeStyle='#000';g.lineCap=g.lineJoin='round';let any=false;
   for(const a of acts){if(a.t!==type)continue;any=true;
     if(a.rect){const [x,y,w,h]=a.rect;g.fillRect(x*SW,y*SH,w*SW,h*SH);continue}
     g.lineWidth=a.r*SH;g.beginPath();a.pts.forEach(([x,y],i)=>i?g.lineTo(x*SW,y*SH):g.moveTo(x*SW,y*SH));if(a.pts.length===1)g.lineTo(a.pts[0][0]*SW+.01,a.pts[0][1]*SH);g.stroke()}
@@ -216,6 +221,8 @@ function buildLines(){
         for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const X=x+dx,Y=y+dy;if(X<0||Y<0||X>=w||Y>=h)continue;const q=Y*w+X;if(M[q]&&!lab[q]){lab[q]=id;st[top++]=q}}}
       size.push(n)}
     for(let i=0;i<M.length;i++)if(M[i]&&size[lab[i]]<sp)M[i]=0}
+  // 紙の縁の暗い線を拾うと、人の影が横幅いっぱいになって枠を消す＝縁の細い帯は線にしない
+  const eb=Math.round(Math.min(w,h)*0.012); for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(x<eb||y<eb||x>=w-eb||y>=h-eb)M[y*w+x]=0;
   const E=strokeMask('erase'); if(E)for(let i=0;i<M.length;i++)if(E[i])M[i]=0;
   // 太さ：線からの距離で太らせる／線の内側の距離で痩せさせる（0.1px刻みで効く）
   const t=v('thick')/10; if(t>0){const D=dist(M,w,h,0);for(let i=0;i<M.length;i++)if(D[i]<=t*3)M[i]=1}
@@ -235,14 +242,16 @@ function region(x,y){const sx=Math.round(x*SW),sy=Math.round(y*SH); if(sx<0||sy<
   const R0=region0(x,y,closedLines()); const g=v('gapc'); if(!R0||!g)return R0;
   // 太らせた分だけ広げ戻す（元の線は越えない）
   const D=dist(R0,SW,SH,0), R=new Uint8Array(R0.length); for(let i=0;i<R.length;i++)R[i]=(R0[i]||(D[i]<=g*3+3&&!LM[i]))?1:0; return R}
-function region0(x,y,LM){const w=SW,h=SH;let sx=Math.round(x*w),sy=Math.round(y*h);if(sx<0||sy<0||sx>=w||sy>=h)return null;
+function region0(x,y,LM){const w=SW,h=SH; let sx=Math.round(x*w),sy=Math.round(y*h);if(sx<0||sy<0||sx>=w||sy>=h)return null;
   const R=new Uint8Array(w*h); if(LM[sy*w+sx]){ // 線の上を押した＝線そのものを塗る
     const st=[sy*w+sx];R[st[0]]=1;while(st.length){const p=st.pop(),px=p%w,py=(p/w)|0;for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const X=px+dx,Y=py+dy;if(X<0||Y<0||X>=w||Y>=h)continue;const q=Y*w+X;if(LM[q]&&!R[q]){R[q]=1;st.push(q)}}}
     return R}
   // 走査線で塗る（線は越えない・元の絵で色が変わる所も越えない＝浮世絵は色ごとに版が分かれている）
   const tol=v('ctol'), T2=(tol*1.2)**2, [Rr,Rg,Rb]=RGB, s0=sy*w+sx, c0=[Rr[s0],Rg[s0],Rb[s0]];
-  const ok=tol>=100?(q=>!LM[q]):(q=>!LM[q]&&(Rr[q]-c0[0])**2+(Rg[q]-c0[1])**2+(Rb[q]-c0[2])**2<=T2);
-  if(!ok(s0))return R;
+  const ok2=q=>tol>=100||(Rr[q]-c0[0])**2+(Rg[q]-c0[1])**2+(Rb[q]-c0[2])**2<=T2; const ok=q=>!LM[q]&&ok2(q);
+  if(!ok(s0)){ // 押した所が線の近く（隙間を閉じる帯）なら、近くの塗れる所から始める
+    let best=-1; for(let r=1;r<=10&&best<0;r++)for(let dy=-r;dy<=r&&best<0;dy++)for(let dx=-r;dx<=r;dx++){const X=sx+dx,Y=sy+dy;if(X<0||Y<0||X>=w||Y>=h)continue;const q=Y*w+X;if(!LM[q]&&ok2(q)){best=q;break}}
+    if(best<0)return R; sx=best%w; sy=(best/w)|0}
   const st=[[sx,sy]]; while(st.length){let [px,py]=st.pop(); let i=py*w+px; if(R[i]||!ok(i))continue;
     let l=px;while(l>0&&ok(py*w+l-1)&&!R[py*w+l-1])l--; let r=px;while(r<w-1&&ok(py*w+r+1)&&!R[py*w+r+1])r++;
     for(let X=l;X<=r;X++){R[py*w+X]=1;
@@ -253,7 +262,7 @@ function buildFills(){FILLS=[];for(const a of acts){if(a.t!=='fill')continue;con
 // ── 合成（軽い段） ─────────────────────────────────────────
 let lastLayers=null;
 function place(){const s=v('fs')/100*OW*0.9/SW; const w=SW*s,h=SH*s; return {s,x:(OW-w)/2+v('fx')/100*OW, y:(OH-h)/2+v('fy')/100*OH, w,h}}
-function maskCanvas(M){const c=mk(SW,SH),g=c.getContext('2d'),id=g.createImageData(SW,SH);for(let i=0;i<M.length;i++)if(M[i])id.data[i*4+3]=255;g.putImageData(id,0,0);return c}
+function maskCanvas(M){const c=pc('mask',SW,SH),g=c.getContext('2d'),id=g.createImageData(SW,SH);for(let i=0;i<M.length;i++)if(M[i])id.data[i*4+3]=255;g.putImageData(id,0,0);return c}
 // 小さい型を引き伸ばすとぼやけるので、出す大きさで描いてから縁を 128 で切る（ガタつかない線）
 function crisp(c){const g=c.getContext('2d'),id=g.getImageData(0,0,OW,OH),d=id.data;for(let i=3;i<d.length;i+=4)d[i]=d[i]>127?255:0;g.putImageData(id,0,0);return c}
 function framePath(g){const f=$('frame').value; if(f==='none')return false; const S=v('frs')/100*OW, cx=OW/2, cy=OH/2+v('fry')/100*OH; g.beginPath();
@@ -275,34 +284,33 @@ function tanzakuDraw(g,col,paper){const t=$('tz').value.trim(); if(!t)return; co
   chars.forEach((ch,i)=>g.fillText(ch,x+w/2,y+fs*0.62+fs*0.5+i*fs*1.08)); g.restore()}
 function compose(){
   const P=place(), ink=$('ink').value, sub=$('sub').value, paper=$('paper').value;
-  const L={ink:mk(),sub:mk(),paperFill:mk()}; // 色ごとの層（SVGで色ごとに輪郭を起こす）
+  const L={ink:pc('ink'),sub:pc('sub'),paperFill:pc('pf')}; // 色ごとの層（SVGで色ごとに輪郭を起こす）
   // 1) 枠（墨の層）
   const gi=L.ink.getContext('2d'); gi.lineWidth=v('frw')*1.5; gi.strokeStyle='#000'; gi.lineJoin='round'; if(framePath(gi))gi.stroke();
   // 2) 人の影（枠の線を人の後ろに隠す）：線と塗りを合わせ、行ごとに左端〜右端を埋める
   const fig=new Uint8Array(SW*SH); for(let i=0;i<fig.length;i++)fig[i]=LM[i]; FILLS.forEach(F=>{for(let i=0;i<fig.length;i++)if(F.mask[i])fig[i]=1});
   const sil=new Uint8Array(SW*SH); for(let y=0;y<SH;y++){let l=-1,r=-1;for(let x=0;x<SW;x++)if(fig[y*SW+x]){if(l<0)l=x;r=x}if(l>=0)for(let x=l;x<=r;x++)sil[y*SW+x]=1}
-  const silC=mk(); silC.getContext('2d').drawImage(maskCanvas(sil),P.x,P.y,P.w,P.h); crisp(silC);
+  const silC=pc('sil'); silC.getContext('2d').drawImage(maskCanvas(sil),P.x,P.y,P.w,P.h); crisp(silC);
   gi.save();gi.globalCompositeOperation='destination-out';gi.drawImage(silC,0,0);gi.restore();
   // 3) 塗り（柄は出す大きさの画素で作る＝柄の大きさは絵の大きさに引っぱられない）
   for(const F of FILLS){const a=F.a; const layer=a.col==='sub'?L.sub:(a.col==='paper'?L.paperFill:L.ink);
-    const t=mk(); const tg=t.getContext('2d'); tg.fillStyle=tg.createPattern(tile(a.pat,a.size*OW/1200,'#000'),'repeat'); tg.fillRect(0,0,OW,OH);
-    const m=mk(); m.getContext('2d').drawImage(maskCanvas(F.mask),P.x,P.y,P.w,P.h); crisp(m);
+    const t=pc('t'); const tg=t.getContext('2d'); tg.fillStyle=tg.createPattern(tile(a.pat,v('psize')*OW/1200,'#000'),'repeat'); tg.fillRect(0,0,OW,OH); // 柄の大きさは塗ったもの全部に効く（柄の種類と色は最後に塗った所と次から）
+    const m=pc('m'); m.getContext('2d').drawImage(maskCanvas(F.mask),P.x,P.y,P.w,P.h); crisp(m);
     tg.globalCompositeOperation='destination-in'; tg.drawImage(m,0,0);
     const lg=layer.getContext('2d'); if(layer!==L.paperFill){for(const o of [L.ink,L.sub,L.paperFill])if(o!==layer){const og=o.getContext('2d');og.save();og.globalCompositeOperation='destination-out';og.drawImage(m,0,0);og.restore()}}
     lg.drawImage(t,0,0)}
   // 4) 線（いちばん上・墨）
-  const lc=mk(); lc.getContext('2d').drawImage(maskCanvas(LM),P.x,P.y,P.w,P.h); crisp(lc);
+  const lc=pc('lc'); lc.getContext('2d').drawImage(maskCanvas(LM),P.x,P.y,P.w,P.h); crisp(lc);
   for(const o of [L.sub,L.paperFill]){const og=o.getContext('2d');og.save();og.globalCompositeOperation='destination-out';og.drawImage(lc,0,0);og.restore()}
   gi.drawImage(lc,0,0);
   // 5) 短冊（地の色で下を抜き、墨で枠と字）
-  const tz=mk(); tanzakuDraw(tz.getContext('2d'),'#000',paper==='none'?'none':'#fff');
   for(const o of [L.ink,L.sub]){const og=o.getContext('2d');og.save();og.globalCompositeOperation='destination-out';
     // 短冊の内側を抜く
-    const tmp=mk();const tg=tmp.getContext('2d');tanzakuDraw(tg,'#000','#000');og.drawImage(tmp,0,0);og.restore()}
-  const tzInk=mk(); const tzg=tzInk.getContext('2d'); tanzakuDraw(tzg,'#000','none'); gi.drawImage(tzInk,0,0);
+    const tmp=pc('tmp');const tg=tmp.getContext('2d');tanzakuDraw(tg,'#000','#000');og.drawImage(tmp,0,0);og.restore()}
+  const tzInk=pc('tzi'); const tzg=tzInk.getContext('2d'); tanzakuDraw(tzg,'#000','none'); gi.drawImage(tzInk,0,0);
   // 刷る
   ctx.clearRect(0,0,OW,OH); if(paper!=='none'){ctx.fillStyle=paper;ctx.fillRect(0,0,OW,OH)}
-  const tint=(c,col)=>{const t=mk();const g=t.getContext('2d');g.drawImage(c,0,0);g.globalCompositeOperation='source-in';g.fillStyle=col;g.fillRect(0,0,OW,OH);return t};
+  const tint=(c,col)=>{const t=pc('tint');const g=t.getContext('2d');g.drawImage(c,0,0);g.globalCompositeOperation='source-in';g.fillStyle=col;g.fillRect(0,0,OW,OH);return t};
   if(paper!=='none')ctx.drawImage(tint(L.paperFill,paper),0,0); else {ctx.save();ctx.globalCompositeOperation='destination-out';ctx.drawImage(L.paperFill,0,0);ctx.restore()}
   ctx.drawImage(tint(L.sub,sub),0,0); ctx.drawImage(tint(L.ink,ink),0,0);
   lastLayers={ink:L.ink,sub:L.sub};
@@ -325,16 +333,20 @@ async function fontGo(){const [fam,wt]=$('tzf').value.split('|');try{await docum
 function setMode(m){mode=m;document.querySelectorAll('#modes button').forEach(b=>b.classList.toggle('on',b.dataset.m===m));
   $('fillui').style.display=m==='fill'?'':'none'; $('brushui').style.display=(m==='erase'||m==='draw')?'':'none';
   cv.classList.toggle('paint',m!=='move'); cv.style.touchAction=(m==='erase'||m==='draw')?'none':'manipulation';
-  $('hint').textContent={fill:'区画を押すと柄で塗る',erase:'なぞって消す',draw:'なぞって線を足す（漏れる所を閉じる）',move:'見るだけ'}[m]}
+  $('hint').dataset.base=$('hint').textContent={fill:'絵の区画を押すと柄で塗る',erase:'なぞって消す',draw:'なぞって線を足す（漏れる所を閉じる）',move:'見るだけ'}[m]}
 document.querySelectorAll('#modes button').forEach(b=>b.onclick=()=>setMode(b.dataset.m));
 function toSrc(e){const r=cv.getBoundingClientRect();const X=(e.clientX-r.left)/r.width*OW,Y=(e.clientY-r.top)/r.height*OH;const P=place();return [(X-P.x)/P.w,(Y-P.y)/P.h]}
-let cur=null;
+let cur=null, flashT=0;
+function flash(t){const h=$('hint');const keep=h.dataset.base||h.textContent;h.dataset.base=keep;h.textContent=t;h.style.color='#f0c97a';clearTimeout(flashT);flashT=setTimeout(()=>{h.textContent=h.dataset.base;h.style.color=''},2200)}
 cv.addEventListener('pointerdown',e=>{if(!G||mode==='move')return; const p=toSrc(e);
-  if(mode==='fill'){if(p[0]<0||p[1]<0||p[0]>1||p[1]>1)return; acts.push({t:'fill',x:p[0],y:p[1],pat,size:v('psize'),col:$('pcol').value}); dirty.fill=true; schedule(); return}
+  if(mode==='fill'){if(p[0]<0||p[1]<0||p[0]>1||p[1]>1)return;
+    const R=region(p[0],p[1]); if(!R||!R.some(x=>x)){flash('ここは線で塞がっています（「隙間を閉じる」を下げる）');return}
+    acts.push({t:'fill',x:p[0],y:p[1],pat,size:v('psize'),col:$('pcol').value}); dirty.fill=true; schedule(); return}
   cur={t:mode,r:v('brush')/1100,pts:[p]}; acts.push(cur); cv.setPointerCapture(e.pointerId); dirty.line=true; schedule()});
 cv.addEventListener('pointermove',e=>{if(!cur)return; cur.pts.push(toSrc(e)); dirty.line=true; schedule()});
 const endStroke=()=>{cur=null};
 cv.addEventListener('pointerup',endStroke); cv.addEventListener('pointercancel',endStroke);
+$('pcol').addEventListener('input',()=>{const last=[...acts].reverse().find(a=>a.t==='fill');if(last){last.col=$('pcol').value;dirty.fill=true;schedule()}});
 $('undo').onclick=()=>{const a=acts.pop(); if(!a)return; if(a.t==='fill')dirty.fill=true; else dirty.line=true; schedule()};
 $('clearfx').onclick=()=>{acts=[];dirty.line=true;schedule()};
 
@@ -342,10 +354,16 @@ $('clearfx').onclick=()=>{acts=[];dirty.line=true;schedule()};
 Object.entries(PATS).forEach(([k,[name]])=>{const b=document.createElement('button');b.dataset.p=k;b.title=name;
   const c=mk(80,80);const g=c.getContext('2d');g.fillStyle=g.createPattern(tile(k,26,'#1a1714'),'repeat');g.fillRect(0,0,80,80);b.appendChild(c);
   const w=document.createElement('div');w.appendChild(b);const s=document.createElement('span');s.textContent=name;w.appendChild(s);$('pats').appendChild(w);
-  b.onclick=()=>{pat=k;document.querySelectorAll('#pats button').forEach(x=>x.classList.toggle('on',x===b))};if(k===pat)b.classList.add('on')});
+  // 札を押したら【最後に塗った所】がその柄に変わる。まだ塗っていなければ、どこを押せばよいかを出す
+  b.onclick=()=>{pat=k;document.querySelectorAll('#pats button').forEach(x=>x.classList.toggle('on',x===b));
+    const last=[...acts].reverse().find(a=>a.t==='fill'); if(last){last.pat=k;dirty.fill=true;schedule()} else flash('絵の着物や地を押すと、この柄で塗ります');
+    if(mode!=='fill')setMode('fill')};if(k===pat)b.classList.add('on')});
 
 // ── 元の絵 ───────────────────────────────────────────────
-UTSUSHI_SAMPLES.forEach((S,i)=>{const o=document.createElement('option');o.value=i;o.textContent=S.name;$('sample').appendChild(o)});
+UTSUSHI_SAMPLES.forEach((S,i)=>{const o=document.createElement('option');o.value=i;o.textContent=S.name;$('sample').appendChild(o);
+  const b=document.createElement('button');b.title=S.name;b.dataset.i=i;const im=document.createElement('img');im.src=S.src;im.alt=S.name;b.appendChild(im);
+  b.onclick=()=>{$('sample').value=i;loadSample(i)};$('thumbs').appendChild(b)});
+function markThumb(){const i=src&&src.id!=='upload'?UTSUSHI_SAMPLES.findIndex(S=>S.id===src.id):-1;document.querySelectorAll('#thumbs button').forEach(b=>b.classList.toggle('on',+b.dataset.i===i))}
 $('sample').onchange=()=>loadSample(+$('sample').value);
 $('openimg').onclick=()=>$('imgfile').click();
 $('imgfile').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{const im=new Image();im.onload=()=>{

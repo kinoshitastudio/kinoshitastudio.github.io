@@ -83,7 +83,9 @@ let Q=1, W=1600,H=1600; const cv=$('cv'); cv.width=W; cv.height=H; const ctx=cv.
 function setQ(q){if(q===Q)return;Q=q;W=H=Math.round(1600*q);cv.width=W;cv.height=H}
 const SZ=()=>v('size')*Q;
 let rnd; function seedR(s){let a=s>>>0||1;rnd=()=>{a=(a*1664525+1013904223)>>>0;return a/4294967296}}
-const mk=()=>{const c=document.createElement('canvas');c.width=W;c.height=H;return c};
+// 🔴iPhone の Safari は canvas の合計メモリに上限がある。描き直すたびに新しく作ると上限を超えて黙って描けなくなる＝名前ごとに1枚を使い回す
+const POOL={}; const mk=(name)=>{let c=POOL[name]; if(!c){c=POOL[name]=document.createElement('canvas');c.getContext('2d',{willReadFrequently:true})} /* 何度も画素を読む＝最初からCPUで描く（途中でGPU→CPUに切り替わると縁の画素が変わり乱数の流れがずれる） */ if(c.width!==W||c.height!==H){c.width=W;c.height=H}
+  const g=c.getContext('2d'); g.setTransform(1,0,0,1,0,0); g.globalCompositeOperation='source-over'; g.globalAlpha=1; g.clearRect(0,0,W,H); return c};
 function v(id){return +$(id).value}
 
 function drawText(c){
@@ -106,9 +108,9 @@ function bbox(c){const d=c.getContext('2d').getImageData(0,0,W,H).data;let x0=W,
   return x1<x0?null:{x0,y0,x1,y1}}
 
 // 1本の刃：線で2つに割り、片側を刃の向きにずらし、通り道を楔で抜く
-function slash(src,cx,cy,th,shift,gap){
+function slash(src,cx,cy,th,shift,gap,dst){
   const dx=Math.cos(th),dy=Math.sin(th), nx=-dy,ny=dx, L=W*2;
-  const out=mk(), g=out.getContext('2d');
+  const out=mk(dst), g=out.getContext('2d'); // 刃ごとに a↔b の2枚を交互に使う
   const half=(side,ox,oy)=>{g.save();g.beginPath();
     g.moveTo(cx-dx*L,cy-dy*L);g.lineTo(cx+dx*L,cy+dy*L);g.lineTo(cx+dx*L+side*nx*L,cy+dy*L+side*ny*L);g.lineTo(cx-dx*L+side*nx*L,cy-dy*L+side*ny*L);g.closePath();g.clip();
     g.drawImage(src,ox,oy);g.restore()};
@@ -167,16 +169,16 @@ function span(d,cx,cy,th){const dx=Math.cos(th),dy=Math.sin(th);let a=null,b=nul
 
 function render(){
   seedR(v('seed')); K.forEach(k=>{const s=$(k).parentNode.querySelector('.v');if(s)s.textContent=$(k).value});
-  let m=mk(); drawText(m); sogi(m,v('sogi')/100,v('ang')*Math.PI/180,SZ()); const bb=bbox(m); if(!bb){ctx.clearRect(0,0,W,H);return}
+  let m=mk('a'); drawText(m); sogi(m,v('sogi')/100,v('ang')*Math.PI/180,SZ()); const bb=bbox(m); if(!bb){ctx.clearRect(0,0,W,H);return}
   const cuts=v('cuts'), base=v('ang')*Math.PI/180, jit=v('angj')*Math.PI/180, sh=v('shift')/100*SZ()*0.6, gp=v('gap')/100*SZ()*0.5;
   const blades=[];
   for(let i=0;i<cuts;i++){ // 刃は字の中を通るように置く（字の外を斬っても何も起きない）
     const t=(i+0.5)/cuts; const cx=bb.x0+(bb.x1-bb.x0)*(0.15+0.7*rnd()); const cy=bb.y0+(bb.y1-bb.y0)*(t*0.9+0.05+(rnd()-.5)*0.08);
     const th=base+(rnd()-.5)*2*jit; const dd=m.getContext('2d').getImageData(0,0,W,H).data; blades.push([cx,cy,th,exits(dd,cx,cy,th),span(dd,cx,cy,th)]); // 画素は刃1本につき1回だけ読む // 刃の通り道は楔で抜けるので、抜ける前に探す
-    m=slash(m,cx,cy,th,sh*(0.5+rnd()),gp*(0.4+rnd()*0.9));
+    m=slash(m,cx,cy,th,sh*(0.5+rnd()),gp*(0.4+rnd()*0.9),m===POOL.a?'b':'a');
   }
   // 飛ばす
-  const sp=mk(), sg=sp.getContext('2d'); sg.fillStyle='#000';
+  const sp=mk('sp'), sg=sp.getContext('2d'); sg.fillStyle='#000';
   const amt=v('spl')/100, force=v('force')/100*SZ()*2.2, drop=v('drop')/10*SZ()/60, mist=v('mist')/100;
   blades.forEach(([cx,cy,th,ex])=>{
     ex.forEach(([x,y])=>{
@@ -191,7 +193,7 @@ function render(){
     });
   });
   // 合成：字＋飛沫 → 1色で刷る
-  const ink=mk(), ig=ink.getContext('2d'); ig.drawImage(m,0,0); ig.drawImage(sp,0,0);
+  const ink=mk('ink'), ig=ink.getContext('2d'); ig.drawImage(m,0,0); ig.drawImage(sp,0,0);
   const id=ig.getImageData(0,0,W,H), d=id.data;
   lastA=new Uint8Array(W*H); for(let i=0;i<lastA.length;i++)lastA[i]=d[i*4+3]; lastFlash=[]; // SVG用：刷る前の墨の形
  const mura=v('mura')/100, kasu=v('kasu')/100;
