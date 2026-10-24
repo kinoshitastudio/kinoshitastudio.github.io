@@ -53,6 +53,8 @@ canvas{max-width:100%;max-height:100%;box-shadow:0 10px 40px rgba(0,0,0,.45)}
     <label>角度のぶれ<input type="range" id="angj" min="0" max="40" value="12"><span class="v"></span></label>
     <label>ずれ<input type="range" id="shift" min="0" max="30" value="10"><span class="v"></span></label>
     <label>刃の幅<input type="range" id="gap" min="0" max="16" value="3"><span class="v"></span></label>
+    <label>削ぎ<input type="range" id="sogi" min="0" max="100" value="60"><span class="v"></span></label>
+    <label>刃の光<input type="range" id="hikari" min="0" max="100" value="35"><span class="v"></span></label>
   </div>
   <div class="grp"><div class="t">飛ばす</div>
     <label>量<input type="range" id="spl" min="0" max="100" value="45"><span class="v"></span></label>
@@ -68,12 +70,12 @@ canvas{max-width:100%;max-height:100%;box-shadow:0 10px 40px rgba(0,0,0,.45)}
     <label>種<input type="range" id="seed" min="1" max="999" value="17"><span class="v"></span></label>
   </div>
   <div class="row"><button id="re">刃を振り直す</button><button class="p" id="png">PNGで保存</button></div>
-  <p class="lead" style="margin-top:12px">刃は乱数で欠けさせず、線で通す。墨は、刃が字を抜けた所から刃の向きに飛ぶ。</p>
+  <p class="lead" style="margin-top:12px">刃は乱数で欠けさせず、線で通す。墨は、刃が字を抜けた所から刃の向きに飛ぶ。削ぎは字の端（止め・はらい）を刃の側へ尖らせ、刃の光は刃の線を字の外まで伸ばす。</p>
 </div>
 <div id="stage"><canvas id="cv"></canvas></div>
 <script>
 const $=id=>document.getElementById(id);
-const K=['size','track','lead','cuts','ang','angj','shift','gap','spl','force','drop','mist','mura','kasu','seed'];
+const K=['size','track','lead','cuts','ang','angj','shift','gap','sogi','hikari','spl','force','drop','mist','mura','kasu','seed'];
 const W=1600,H=1600; const cv=$('cv'); cv.width=W; cv.height=H; const ctx=cv.getContext('2d');
 let rnd; function seedR(s){let a=s>>>0||1;rnd=()=>{a=(a*1664525+1013904223)>>>0;return a/4294967296}}
 const mk=()=>{const c=document.createElement('canvas');c.width=W;c.height=H;return c};
@@ -119,14 +121,53 @@ function exits(c,cx,cy,th){const d=c.getContext('2d').getImageData(0,0,W,H).data
   const pts=[];let prev=0;for(let t=-W;t<W;t+=3){const x=Math.round(cx+dx*t),y=Math.round(cy+dy*t);if(x<0||y<0||x>=W||y>=H){prev=0;continue}
     const a=d[(y*W+x)*4+3]>100?1:0; if(prev&&!a)pts.push([x,y]); prev=a} return pts}
 
+// 削ぎ：止め・はらいの先（字の端）を見つけ、刃で削いだように斜めの尖りに替える
+// 端＝輪郭の上で、周りの墨が少なく、墨の重心から遠い所（細い横画の脇は重心が近いので拾わない）
+function sogi(c,amt,th,sz){
+  if(amt<=0) return; const g=c.getContext('2d'); const D=g.getImageData(0,0,W,H).data;
+  const s=3, gw=Math.ceil(W/s), gh=Math.ceil(H/s), A=new Uint8Array(gw*gh);
+  for(let y=0;y<gh;y++)for(let x=0;x<gw;x++)A[y*gw+x]=D[((y*s)*W+x*s)*4+3]>100?1:0;
+  const I=new Float64Array((gw+1)*(gh+1)),IX=new Float64Array(I.length),IY=new Float64Array(I.length);
+  for(let y=0;y<gh;y++){let a=0,ax=0,ay=0;for(let x=0;x<gw;x++){const k=A[y*gw+x];a+=k;ax+=k*x;ay+=k*y;const q=(y+1)*(gw+1)+x+1;
+    I[q]=I[q-gw-1]+a;IX[q]=IX[q-gw-1]+ax;IY[q]=IY[q-gw-1]+ay}}
+  const box=(T,x0,y0,x1,y1)=>T[y1*(gw+1)+x1]-T[y0*(gw+1)+x1]-T[y1*(gw+1)+x0]+T[y0*(gw+1)+x0];
+  const R=sz*0.1, r=Math.max(3,Math.round(R/s)), cand=[];
+  for(let y=r+1;y<gh-r-1;y++)for(let x=r+1;x<gw-r-1;x++){if(!A[y*gw+x])continue;
+    if(A[y*gw+x-1]&&A[y*gw+x+1]&&A[(y-1)*gw+x]&&A[(y+1)*gw+x])continue; // 輪郭だけ
+    const x0=x-r,y0=y-r,x1=x+r+1,y1=y+r+1, n=box(I,x0,y0,x1,y1), f=n/((2*r+1)**2); if(f>0.36)continue;
+    const cx=box(IX,x0,y0,x1,y1)/n, cy=box(IY,x0,y0,x1,y1)/n, ox=x-cx, oy=y-cy, l=Math.hypot(ox,oy); if(l<r*0.42)continue;
+    cand.push([f-l/r*0.2,x*s,y*s,ox/l,oy/l])}
+  cand.sort((a,b)=>a[0]-b[0]); const tips=[];
+  for(const c0 of cand){if(tips.some(t=>Math.hypot(t[1]-c0[1],t[2]-c0[2])<R*2.2))continue;tips.push(c0);if(tips.length>160)break}
+  const ink=(x,y)=>{x=Math.round(x);y=Math.round(y);return x>=0&&y>=0&&x<W&&y<H&&D[(y*W+x)*4+3]>100};
+  const bx=Math.cos(th),by=Math.sin(th);
+  for(const [,px,py,ox,oy] of tips){ if(rnd()>amt) continue;
+    const nx=-oy,ny=ox, back=R*0.9, qx=px-ox*back, qy=py-oy*back;
+    if(!ink(qx,qy)) continue; // 端の手前が墨でない＝見誤り
+    let wp=0,wm=0; while(wp<R*1.6&&ink(qx+nx*(wp+1),qy+ny*(wp+1)))wp++; while(wm<R*1.6&&ink(qx-nx*(wm+1),qy-ny*(wm+1)))wm++;
+    if(wp+wm<3) continue;
+    // 尖りは刃の側へ寄せる（削いだ向きがそろうと、同じ1本の刃で削いだに見える）
+    const side=(bx*nx+by*ny)>=0?1:-1, len=R*(0.6+amt*1.1)*(0.7+rnd()*0.6);
+    const tx=qx+ox*len+nx*side*(side>0?wp:wm)*0.85, ty=qy+oy*len+ny*side*(side>0?wp:wm)*0.85;
+    g.save(); g.globalCompositeOperation='destination-out'; g.beginPath(); // 元の端を消す
+    g.moveTo(qx+nx*(wp+2),qy+ny*(wp+2)); g.lineTo(qx+nx*(wp+2)+ox*R*1.7,qy+ny*(wp+2)+oy*R*1.7);
+    g.lineTo(qx-nx*(wm+2)+ox*R*1.7,qy-ny*(wm+2)+oy*R*1.7); g.lineTo(qx-nx*(wm+2),qy-ny*(wm+2)); g.closePath(); g.fill(); g.restore();
+    g.fillStyle='#000'; g.beginPath(); g.moveTo(qx+nx*wp-ox,qy+ny*wp-oy); g.lineTo(tx,ty); g.lineTo(qx-nx*wm-ox,qy-ny*wm-oy); g.closePath(); g.fill();
+  }
+}
+// 刃の線が字のどこからどこまでを通るか（字の外へ光を伸ばす起点）
+function span(c,cx,cy,th){const d=c.getContext('2d').getImageData(0,0,W,H).data;const dx=Math.cos(th),dy=Math.sin(th);let a=null,b=null;
+  for(let t=-W;t<W;t+=3){const x=Math.round(cx+dx*t),y=Math.round(cy+dy*t);if(x<0||y<0||x>=W||y>=H)continue;if(d[(y*W+x)*4+3]>100){if(a===null)a=t;b=t}}
+  return a===null?null:[a,b]}
+
 function render(){
   seedR(v('seed')); K.forEach(k=>{const s=$(k).parentNode.querySelector('.v');if(s)s.textContent=$(k).value});
-  let m=mk(); drawText(m); const bb=bbox(m); if(!bb){ctx.clearRect(0,0,W,H);return}
+  let m=mk(); drawText(m); sogi(m,v('sogi')/100,v('ang')*Math.PI/180,v('size')); const bb=bbox(m); if(!bb){ctx.clearRect(0,0,W,H);return}
   const cuts=v('cuts'), base=v('ang')*Math.PI/180, jit=v('angj')*Math.PI/180, sh=v('shift')/100*v('size')*0.6, gp=v('gap')/100*v('size')*0.5;
   const blades=[];
   for(let i=0;i<cuts;i++){ // 刃は字の中を通るように置く（字の外を斬っても何も起きない）
     const t=(i+0.5)/cuts; const cx=bb.x0+(bb.x1-bb.x0)*(0.15+0.7*rnd()); const cy=bb.y0+(bb.y1-bb.y0)*(t*0.9+0.05+(rnd()-.5)*0.08);
-    const th=base+(rnd()-.5)*2*jit; blades.push([cx,cy,th,exits(m,cx,cy,th)]); // 刃の通り道は楔で抜けるので、抜ける前に探す
+    const th=base+(rnd()-.5)*2*jit; blades.push([cx,cy,th,exits(m,cx,cy,th),span(m,cx,cy,th)]); // 刃の通り道は楔で抜けるので、抜ける前に探す
     m=slash(m,cx,cy,th,sh*(0.5+rnd()),gp*(0.4+rnd()*0.9));
   }
   // 飛ばす
@@ -157,6 +198,13 @@ function render(){
   ig.putImageData(id,0,0);
   ctx.clearRect(0,0,W,H); const pp=$('paper').value; if(pp!=='none'){ctx.fillStyle=pp;ctx.fillRect(0,0,W,H)}
   ctx.drawImage(ink,0,0);
+  // 刃の光：刃の線を字の外まで細く伸ばす。字の近くで太く、外へ行くほど消える。刷りのムラは掛けない（光は版でなく刃）
+  const hk=v('hikari')/100; if(hk>0){ctx.fillStyle=col; const ext=hk*v('size')*2.4, w=Math.max(1.2,v('size')*0.007);
+    blades.forEach(([cx,cy,th,,sp])=>{if(!sp)return; const dx=Math.cos(th),dy=Math.sin(th),nx=-dy,ny=dx;
+      const P=t=>[cx+dx*t,cy+dy*t]; const [a,b]=sp; const e1=ext*(0.5+rnd()*0.7), e2=ext*(0.6+rnd()*0.9);
+      const A=P(a-e1),B=P(a),C=P(b),E=P(b+e2);
+      ctx.beginPath();ctx.moveTo(A[0],A[1]);ctx.lineTo(B[0]+nx*w*0.6,B[1]+ny*w*0.6);ctx.lineTo(C[0]+nx*w,C[1]+ny*w);ctx.lineTo(E[0],E[1]);
+      ctx.lineTo(C[0]-nx*w,C[1]-ny*w);ctx.lineTo(B[0]-nx*w*0.6,B[1]-ny*w*0.6);ctx.closePath();ctx.fill();});}
 }
 async function go(){const [fam,wt]=$('font').value.split('|');try{await document.fonts.load(`${wt} 100px "${fam}"`,$('txt').value||'字')}catch(e){}render()}
 let tm; const later=()=>{clearTimeout(tm);tm=setTimeout(go,30)};
