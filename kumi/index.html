@@ -397,7 +397,20 @@
     font-feature-settings:"palt" 0;text-orientation:mixed;hanging-punctuation:allow-end;
     font-size:var(--rd-size,19px);line-height:1.85;letter-spacing:.04em;text-align:justify;
     transition:opacity .16s;}
-  #rd-text.turn{opacity:0;}
+  #rd-text.turn,#rd-text2.turn{opacity:0;}
+  #rd-text2{display:none;}
+  /* ⭐⭐ 見開き（PC の横長画面）── 右ページ＝先、左ページ＝次（日本の本と同じ）。
+     ⭐ 1列の長さを【本の行長】に抑える＝画面の高さいっぱいに伸ばさない（約40字）。
+     ⚠️ 2枚とも同じ寸法＝ページ割りは右の箱で測れば左にもそのまま入る。 */
+  #reader.spread #rd-page{margin:48px auto 10px;width:min(100% - 56px, 1500px);}
+  #reader.spread #rd-text,#reader.spread #rd-text2{display:block;position:absolute;
+    top:0;bottom:0;margin:auto 0;height:min(100%, calc(var(--rd-size,19px) * 41));width:calc(50% - 44px);}
+  #reader.spread #rd-text{right:0;left:auto;}
+  #reader.spread #rd-text2{left:0;right:auto;writing-mode:vertical-rl;-webkit-writing-mode:vertical-rl;
+    white-space:pre-wrap;word-break:normal;line-break:strict;overflow:hidden;text-orientation:mixed;
+    font-size:var(--rd-size,19px);line-height:1.85;letter-spacing:.04em;text-align:justify;transition:opacity .16s;}
+  /* ⭐ のど（真ん中の綴じ目）にうっすら影 */
+  #reader.spread #rd-page::after{content:"";position:absolute;top:4%;bottom:4%;left:50%;width:1px;background:currentColor;opacity:.08;}
   #rd-top,#rd-bottom{display:flex;align-items:center;gap:8px;padding:0 14px;
     font-family:"Space Mono",monospace;font-size:10px;letter-spacing:.12em;opacity:.55;transition:opacity .25s;}
   #rd-top{position:absolute;top:env(safe-area-inset-top);left:0;right:0;height:42px;justify-content:space-between;}
@@ -804,6 +817,7 @@ try{ if(sessionStorage.getItem('kumi_boot_seen')){ const b=document.getElementBy
   </div>
   <div id="rd-page">
     <div id="rd-text"></div>
+    <div id="rd-text2"></div>
     <div id="rd-tapL" title="次のページ"></div>
     <div id="rd-tapR" title="前のページ"></div>
   </div>
@@ -2612,7 +2626,9 @@ document.querySelectorAll('#katsu-view button').forEach(b => b.onclick = () => {
    ⭐ 読んでいた場所は【何文字目か】で持つ＝字の大きさや画面の向きが変わっても同じ所から読める。
    ⭐ 文章ごとに覚える（先頭の数十字で見分ける）。この端末の中だけ。 */
 (function(){
-  const R = document.getElementById('reader'), box = document.getElementById('rd-text');
+  const R = document.getElementById('reader'), box = document.getElementById('rd-text'), box2 = document.getElementById('rd-text2');
+  let spread = false;
+  const setSpread = () => { spread = innerWidth >= 900 && innerWidth > innerHeight * 1.1; R.classList.toggle('spread', spread); };
   const num = document.getElementById('rd-num'), prog = document.getElementById('rd-prog');
   const THEMES = [ { name:'生成り', paper:'#f4f2ee', ink:'#1a1a1a' },
                    { name:'白',     paper:'#ffffff', ink:'#111111' },
@@ -2628,8 +2644,10 @@ document.querySelectorAll('#katsu-view button').forEach(b => b.onclick = () => {
     const t = THEMES[st.theme] || THEMES[0];
     R.style.setProperty('--rd-paper', t.paper); R.style.setProperty('--rd-ink', t.ink);
     R.style.setProperty('--rd-size', st.size + 'px');
-    box.style.fontFamily = (RD_FONT[P.font] || RD_FONT[1]) + ', serif';
-    box.style.fontWeight = P.font === 3 ? 700 : 400;
+    for(const b of [box, box2]){
+      b.style.fontFamily = (RD_FONT[P.font] || RD_FONT[1]) + ', serif';
+      b.style.fontWeight = P.font === 3 ? 700 : 400;
+    }
   }
   const fits = () => box.scrollWidth <= box.clientWidth + 1 && box.scrollHeight <= box.clientHeight + 1;
   function paginate(){
@@ -2663,31 +2681,36 @@ document.querySelectorAll('#katsu-view button').forEach(b => b.onclick = () => {
   }
   function show(i, anim){
     page = Math.max(0, Math.min(starts.length - 1, i));
+    if(spread) page -= page % 2;                    /* ⭐ 見開きは右ページ（偶数）から */
     const cps = [...text];
+    const pg = k => k < starts.length ? cps.slice(starts[k], starts[k + 1] ?? cps.length).join('') : '';
     const put = () => {
-      box.textContent = cps.slice(starts[page], starts[page + 1] ?? cps.length).join('');
-      num.textContent = (page + 1) + ' / ' + starts.length;
-      prog.style.width = ((page + 1) / starts.length * 100) + '%';
+      box.textContent = pg(page);
+      box2.textContent = spread ? pg(page + 1) : '';
+      const last = spread ? Math.min(page + 2, starts.length) : page + 1;
+      num.textContent = (spread && last > page + 1 ? (page + 1) + '–' + last : String(page + 1)) + ' / ' + starts.length;
+      prog.style.width = (last / starts.length * 100) + '%';
       try{ localStorage.setItem(posKey(), String(starts[page])); }catch(_){}
     };
-    if(anim){ box.classList.add('turn'); setTimeout(() => { put(); box.classList.remove('turn'); }, 140); } else put();
+    if(anim){ box.classList.add('turn'); box2.classList.add('turn');
+      setTimeout(() => { put(); box.classList.remove('turn'); box2.classList.remove('turn'); }, 140); } else put();
   }
   const pageOf = ch => { let i = 0; for(let k = 0; k < starts.length; k++) if(starts[k] <= ch) i = k; return i; };
   function reflow(keep){
     const ch = keep ?? starts[page] ?? 0;
-    paint(); paginate(); show(pageOf(ch), false);
+    setSpread(); paint(); paginate(); show(pageOf(ch), false);
   }
   function open(){
     text = (document.getElementById('src-text').value || '').replace(/\r/g, '');
     if(!text.trim()) return;
     R.classList.add('on'); R.classList.remove('calm');
     let saved = 0; try{ saved = +localStorage.getItem(posKey()) || 0; }catch(_){}
-    paint();
+    setSpread(); paint();
     requestAnimationFrame(() => { paginate(); show(pageOf(saved), false); });
   }
   const close = () => R.classList.remove('on');
-  const next = () => { if(page < starts.length - 1) show(page + 1, true); };
-  const prev = () => { if(page > 0) show(page - 1, true); };
+  const next = () => { const k = spread ? 2 : 1; if(page + k < starts.length) show(page + k, true); };
+  const prev = () => { const k = spread ? 2 : 1; if(page > 0) show(page - k, true); };
 
   document.getElementById('btn-read').onclick = open;
   document.getElementById('rd-close').onclick = close;
@@ -2695,6 +2718,7 @@ document.querySelectorAll('#katsu-view button').forEach(b => b.onclick = () => {
   document.getElementById('rd-tapR').onclick = () => { prev(); R.classList.add('calm'); };
   /* ⭐ 真ん中をタップ＝上のボタンを出す／隠す（Kindle と同じ） */
   box.addEventListener('click', () => R.classList.toggle('calm'));
+  box2.addEventListener('click', () => R.classList.toggle('calm'));
   document.getElementById('rd-small').onclick = () => { st.size = Math.max(13, st.size - 2); saveSt(); reflow(); };
   document.getElementById('rd-big').onclick   = () => { st.size = Math.min(40, st.size + 2); saveSt(); reflow(); };
   document.getElementById('rd-theme').onclick = () => { st.theme = (st.theme + 1) % THEMES.length; saveSt(); paint(); };
