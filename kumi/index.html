@@ -1105,18 +1105,22 @@ function buildAtlas(chars){
   const list = [...new Set(chars)].filter(c => c.trim().length);
   atlasCols = Math.ceil(Math.sqrt(list.length)) || 1;
   const rows = Math.ceil(list.length / atlasCols) || 1;
+  /* ⭐⭐ 長い原稿（字の種類が多い）でも焼けるように、1辺 4096 を超えるときだけマスを小さくする。
+     🔴 192 のままだと 21×21＝441 種で 4096 を超える＝iPhone ではキャンバスが黙って真っ白になる。
+     ⚠️ 441 種までは今までと1画素も変わらない（CELL のまま）。下限 64。 */
+  const cell = Math.max(64, Math.min(CELL, Math.floor(4096 / atlasCols)));
   const cv = document.createElement('canvas');
-  cv.width = atlasCols * CELL; cv.height = rows * CELL;
+  cv.width = atlasCols * cell; cv.height = rows * cell;
   const g = cv.getContext('2d');
   g.fillStyle = '#000'; g.fillRect(0, 0, cv.width, cv.height);
   g.fillStyle = '#fff';
   g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.font = `${FONT_W[P.font] || 500} ${CELL * 0.78}px ${FONTS[P.font]}, sans-serif`;
+  g.font = `${FONT_W[P.font] || 500} ${cell * 0.78}px ${FONTS[P.font]}, sans-serif`;
 
   atlasMap = new Map();
   list.forEach((ch, i) => {
-    const cx = (i % atlasCols) * CELL, cy = Math.floor(i / atlasCols) * CELL;
-    g.fillText(ch, cx + CELL/2, cy + CELL/2);
+    const cx = (i % atlasCols) * cell, cy = Math.floor(i / atlasCols) * cell;
+    g.fillText(ch, cx + cell/2, cy + cell/2);
     atlasMap.set(ch, i);
   });
 
@@ -2432,8 +2436,7 @@ document.getElementById('src-text').addEventListener('input', () => {
    ⭐ 揺れ（IKI＝呼吸/揺れ/ふるえ/傾ぐ/脈）を全部 0 にして、真正面・縦組みにする。
       ＝ゲラに赤を入れているときの見え方。読むあいだは動いていない方がいい。
    ⭐ もう一度押すと【押す前の値にそのまま戻る】＝控えを取ってあるので何も失わない。
-   ⚠️ 既定は今までどおり（開いた瞬間は動いている絵＝木下が当たりと言った 明朝・呼吸78・傾ぐ60）。
-      執筆は【押したときだけ】入る。 */
+   ⭐ 2026-10-25 から【開いた瞬間は執筆】（木下）。押すと動いている絵（明朝・呼吸78・傾ぐ60）へ戻る。 */
 let WRITE = false, WRITE_BK = null;
 const WRITE_KEYS = ['breath','sway','twitch','lean','rate'];
 function setWrite(on){
@@ -2777,6 +2780,17 @@ addEventListener('drop', e => {
     await document.fonts.ready;
   } catch(_){}
   layout();
+  /* ⭐⭐ 開いた瞬間は【執筆（縦組み・止まっている）】（2026-10-25 木下「最初かデフォルトで執筆の縦組みにしよう」）。
+     ⭐ 執筆ボタンをもう一度押すと、動いている絵（明朝・呼吸78・傾ぐ60）へそのまま戻る＝控えを取ってある。 */
+  setWrite(true);
+  /* ⭐ 縦組みの1列は横組みの1行と同じ長さ（1100）＝画面の高さ（780）より長く、上下が切れて始まる。
+     → 開いたときだけ、組版の全体が画面に収まる倍率から始める（並べ方は変えない・ホイールで寄れる）。 */
+  if(ATO_PTS.length){
+    let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
+    for(const q of ATO_PTS){ x0=Math.min(x0,q.x-q.s); x1=Math.max(x1,q.x+q.s); y0=Math.min(y0,q.y-q.s); y1=Math.max(y1,q.y+q.s); }
+    const z = Math.min(1, VIEW.size * 0.86 / Math.max(y1 - y0, 1), VIEW.size * projA * 0.86 / Math.max(x1 - x0, 1));
+    cam.zoom = cam.tZoom = z; camera.zoom = z; camera.updateProjectionMatrix();
+  }
   requestAnimationFrame(frame);
   document.getElementById('boot').classList.add('gone');
 })();
