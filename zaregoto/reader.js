@@ -7,7 +7,8 @@
   const src = document.getElementById('src');
   const R = document.getElementById('reader'), box = document.getElementById('rd-text'), box2 = document.getElementById('rd-text2');
   const num = document.getElementById('rd-num'), prog = document.getElementById('rd-prog');
-  const THEMES = [ { paper:'#f4f2ee', ink:'#1a1a1a' },
+  const THEMES = [ { paper:'#fbf0dc', ink:'#5c4a37' },   /* ⭐ 見本（木下 10-30）＝生成りの紙にこげ茶 */
+                   { paper:'#f4f2ee', ink:'#1a1a1a' },
                    { paper:'#ffffff', ink:'#111111' },
                    { paper:'#141414', ink:'#cfc9bd' } ];
   let st = { size: innerWidth < 760 ? 18 : 21, theme: 0 };
@@ -15,7 +16,10 @@
   const saveSt = () => { try{ localStorage.setItem('zaregoto_read_v1', JSON.stringify(st)); }catch(_){} };
 
   /* ⭐ 本文の前後の空白だけ落とす。中の改行・言い回しは触らない */
-  const text = src.textContent.replace(/\r/g, '').replace(/^\s*\n/, '').replace(/\s+$/, '');
+  const raw = src.textContent.replace(/\r/g, '').replace(/^\s*\n/, '').replace(/\s+$/, '');
+  /* ⭐ 段落の頭を1字下げる（見本と同じ）。表示のときだけ＝本文は書いたまま。
+     ⚠️ すでに空白・括弧で始まる行と、空行は下げない */
+  const text = raw.split('\n').map(l => l && !/^[\s　「『（(]/.test(l) ? '　' + l : l).join('\n');
   const cps = [...text];
   const posKey = 'zaregoto_pos_' + location.pathname;
   let spread = false, starts = [0], page = 0;
@@ -23,9 +27,10 @@
   /* ⭐ 1ページ目の頭（題・日付）。測るときも同じものを入れる＝割り方がずれない */
   function head(){
     const f = document.createDocumentFragment();
-    const t = document.createElement('span'); t.className = 'rd-title'; t.textContent = src.dataset.title || '';
-    const d = document.createElement('span'); d.className = 'rd-date'; d.textContent = src.dataset.date || '';
-    f.append(t, '\n', d, '\n\n');
+    const el = (c, s) => { const e = document.createElement('span'); e.className = c; e.textContent = s; return e; };
+    const no = (location.pathname.match(/(\d{3})\/?(index\.html)?$/) || [])[1] || '';
+    f.append(el('rd-mark', '戯言'), el('rd-rule', ''), el('rd-no', no), '　', el('rd-date', src.dataset.date || ''), '\n',
+             el('rd-title', src.dataset.title || ''), '\n\n');
     return f;
   }
   function fill(el, a, e){
