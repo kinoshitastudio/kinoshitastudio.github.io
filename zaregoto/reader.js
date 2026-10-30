@@ -95,11 +95,8 @@
   const next = () => { const k = spread ? 2 : 1; if(page + k < starts.length) show(page + k, true); };
   const prev = () => { const k = spread ? 2 : 1; if(page > 0) show(page - k, true); };
 
-  document.getElementById('rd-tapL').onclick = () => { next(); R.classList.add('calm'); };
-  document.getElementById('rd-tapR').onclick = () => { prev(); R.classList.add('calm'); };
-  /* ⭐ 真ん中をタップ＝上のボタンを出す／隠す */
-  box.addEventListener('click', () => R.classList.toggle('calm'));
-  box2.addEventListener('click', () => R.classList.toggle('calm'));
+  document.getElementById('rd-tapL').onclick = next;
+  document.getElementById('rd-tapR').onclick = prev;
   document.getElementById('rd-small').onclick = () => { st.size = Math.max(13, st.size - 2); saveSt(); reflow(); };
   document.getElementById('rd-big').onclick   = () => { st.size = Math.min(40, st.size + 2); saveSt(); reflow(); };
   document.getElementById('rd-theme').onclick = () => { st.theme = (st.theme + 1) % THEMES.length; saveSt(); paint(); };
@@ -114,7 +111,7 @@
   R.addEventListener('touchend', e => {
     if(sx === null) return;
     const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy; sx = null;
-    if(Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)){ dx > 0 ? next() : prev(); R.classList.add('calm'); }
+    if(Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)){ dx > 0 ? next() : prev(); }
   }, { passive:true });
   let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => reflow(), 200); });
 
