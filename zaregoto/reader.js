@@ -7,6 +7,9 @@
   const src = document.getElementById('src');
   const R = document.getElementById('reader'), box = document.getElementById('rd-text'), box2 = document.getElementById('rd-text2');
   const num = document.getElementById('rd-num'), prog = document.getElementById('rd-prog');
+  /* ⭐ ノンブル（ページの角の小さな斜体の数字）＝記事の HTML は触らずここで足す */
+  const nb = c => { const e = document.createElement('i'); e.className = 'rd-nb ' + c; document.getElementById('rd-page').append(e); return e; };
+  const nb1 = nb('nb1'), nb2 = nb('nb2');
   const THEMES = [ { paper:'#fbf0dc', ink:'#5c4a37' },   /* ⭐ 見本（木下 10-30）＝生成りの紙にこげ茶 */
                    { paper:'#f4f2ee', ink:'#1a1a1a' },
                    { paper:'#ffffff', ink:'#111111' },
@@ -29,8 +32,13 @@
     const f = document.createDocumentFragment();
     const el = (c, s) => { const e = document.createElement('span'); e.className = c; e.textContent = s; return e; };
     const no = (location.pathname.match(/(\d{3})\/?(index\.html)?$/) || [])[1] || '';
-    f.append(el('rd-mark', '戯言'), el('rd-rule', ''), el('rd-no', no), '　', el('rd-date', src.dataset.date || ''), '\n',
-             el('rd-title', src.dataset.title || ''), '\n\n');
+    /* ⭐ 2026-11-04 本の扉のような頭（木下「やそめさんの形で」）
+       1列目＝題（平体＝縦を詰める）／2列目＝上に「戯言―番号・日付」、下の端に名前／1列あけて本文 */
+    const ttl = el('rd-title', ''); ttl.append(el('rd-hei', src.dataset.title || ''));
+    const by = el('rd-by', '');
+    const mk = el('rd-mk', ''); mk.append(el('rd-mark', '戯言'), el('rd-rule', ''), el('rd-no', no), '　', el('rd-date', src.dataset.date || ''));
+    by.append(mk, el('rd-name', src.dataset.author || '木下貴博'));
+    f.append(ttl, by, el('rd-gap', '　'));
     return f;
   }
   function fill(el, a, e){
@@ -80,6 +88,7 @@
       fill(box, starts[page], end(page));
       if(spread && page + 1 < starts.length) fill(box2, starts[page + 1], end(page + 1)); else box2.textContent = '';
       const last = spread ? Math.min(page + 2, starts.length) : page + 1;
+      nb1.textContent = page + 1; nb2.textContent = (spread && page + 1 < starts.length) ? page + 2 : '';
       num.textContent = (spread && last > page + 1 ? (page + 1) + '–' + last : String(page + 1)) + ' / ' + starts.length;
       prog.style.width = (last / starts.length * 100) + '%';
       try{ localStorage.setItem(posKey, String(starts[page])); }catch(_){}
