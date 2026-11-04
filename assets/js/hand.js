@@ -1,5 +1,6 @@
 /* 手書きの添え書き（2026-10-26）
-   設計事例の一覧（cases.html）と各事例（case-*.html）に、手書きの一言・見出しの下線・付箋を足す。
+   設計事例の一覧（cases.html）と各事例（case-*.html）に、手書きの一言・見出しの下線・ひとことの添え書きを足す。
+   2026-11-04 付箋の見た目（紙・傾き・テープ・影・手書き書体）をやめ、左線つきの本文に。
    一言の正本はここ（NOTES）。一覧の札と記事の付箋は同じ文を使う。 */
 (function(){
   var NOTES = {
@@ -37,9 +38,8 @@
   var UL = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 14' preserveAspectRatio='none'%3E%3Cpath d='M2 9 C40 4 80 11 120 6 C150 3 176 8 198 4' fill='none' stroke='%23c9a24f' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E\")";
   var css = ''
    + '.hand-font{font-family:"Yomogi",cursive!important;letter-spacing:.02em}'
-   + '.hand-sticky{display:inline-block;margin:1.4rem 0 .4rem;background:#efe6cf;color:#2a2620;font-family:"Yomogi",cursive;font-size:1.05rem;line-height:1.55;padding:.75rem 1.1rem .85rem;transform:rotate(-1.8deg);box-shadow:0 8px 20px rgba(0,0,0,.28);position:relative;max-width:min(30rem,88vw);text-align:left;font-weight:400;letter-spacing:.02em}'
-   + '.hand-sticky::before{content:"";position:absolute;left:50%;top:-9px;width:64px;height:18px;margin-left:-32px;background:rgba(200,190,170,.55);transform:rotate(2deg)}'
-   + '.hand-sticky b{font-weight:400;color:#8a6a2a}'
+   + '.hand-sticky{display:block;margin:1.4rem 0 .4rem;padding:.15rem 0 .15rem 1rem;border-left:2px solid #a07c34;font-size:1rem;line-height:1.75;max-width:36rem;text-align:left;font-weight:400;letter-spacing:.02em;color:inherit}'
+   + '.hand-sticky b{font-weight:600;color:#8a6a2a}'
    + '.hand-u{background-image:' + UL + ';background-repeat:no-repeat;background-position:0 100%;background-size:100% .55em;padding-bottom:.28em}'
    + '.hand-tag{display:block;font-family:"Yomogi",cursive!important;color:#b08a3e!important;font-size:16px!important;line-height:1.4!important;letter-spacing:.04em;margin:0 0 .5rem;transform:rotate(-1deg);transform-origin:left;font-weight:400;text-transform:none}'
    + '.hand-card{font-family:"Yomogi",cursive;color:#a07c34;font-size:.95rem;line-height:1.5;margin-top:.45rem;transform:rotate(-.6deg);transform-origin:left}'
@@ -87,9 +87,18 @@
     document.querySelectorAll('h2.section-label').forEach(underline);
   }
   function run(){
-    addFont(); addCss();
+    /* 2026-11-04 手書きの札・波線・カードの一言・一覧の添え書きはやめた（手書きが多すぎて弱く見える）。
+       残すのは事例ページの「ひとことで：」の一行（普通の本文の書体）だけ。 */
+    addCss();
     var key=slug(location.pathname);
-    if(key==='cases') casesPage(); else if(key.indexOf('case-')===0) casePage(key);
+    if(key.indexOf('case-')===0) caseLead(key);
+  }
+  function caseLead(key){
+    var note=NOTES[key]; if(!note) return;
+    var h1=document.querySelector('h1'); if(!h1) return;
+    var st=document.createElement('div'); st.className='hand-sticky';
+    st.innerHTML='<b>ひとことで：</b>'+note;
+    h1.insertAdjacentElement('afterend', st);
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', run); else run();
 })();
