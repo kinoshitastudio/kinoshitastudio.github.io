@@ -1285,10 +1285,22 @@ function useFont(f, name, ref){
   $('stat').textContent = name + ' ／ ' + f.glyphs.length + '字';
   draw();
 }
+/* 2026-11-05 木下（スマホ）「書いた後に書体かわらない。時間かかる。切り替わった後もタブがかわらない」
+   🔴 原因3つ：①札を押すたびに 14MB の書体を取り直して parse していた ②読み終わっても札（.on）を描き直していなかった
+   ③パスにしたあと（P.baked）は書体が効かないのに、黙って何も起きなかった
+   → 読んだ書体は覚えておく／押した札はすぐ .on にして「読んでいる」を出す／後から押した方だけ効かせる／パスのあとは言う */
+const FCACHE = {}; let LOADSEQ = 0;
 async function loadURL(url, name, i){
-  $('stat').textContent='書体を読んでいる…';
-  try{ useFont(opentype.parse(await (await fetch(url)).arrayBuffer()), name, {k:'b',i}); }
-  catch(e){ $('stat').textContent='読めなかった：'+name; }
+  if (P.baked){ msg('パスにしたあとは書体を替えられない（「パスをやめて字に戻す」で戻る）'); return; }
+  const my = ++LOADSEQ;
+  P.fontRef = {k:'b',i}; rebuildFonts();
+  if (!FCACHE[url]) { $('stat').textContent='書体を読んでいる…（はじめての書体は少しかかる）'; msg('読んでいる：'+name); }
+  try{
+    const f = FCACHE[url] || (FCACHE[url] = opentype.parse(await (await fetch(url)).arrayBuffer()));
+    if (my !== LOADSEQ) return;          // あとから別の札が押された
+    useFont(f, name, {k:'b',i}); rebuildFonts();
+  }
+  catch(e){ delete FCACHE[url]; if (my===LOADSEQ) $('stat').textContent='読めなかった：'+name; }
 }
 /* ── 書体の選び（噂UWASA と同じ＝札を並べる。生の select は使わない） ── */
 let SRC = 'mine';
@@ -1318,6 +1330,7 @@ function rebuildFonts(){
 $('ffilter').addEventListener('input', rebuildFonts);
 async function pickExtra(i){
   const ent = EXTRA[i]; if (!ent) return;
+  if (P.baked){ msg('パスにしたあとは書体を替えられない（「パスをやめて字に戻す」で戻る）'); return; }
   $('stat').textContent = '書体を読んでいる…';
   try{
     const buf = ent.buf || await ent.file.arrayBuffer();
