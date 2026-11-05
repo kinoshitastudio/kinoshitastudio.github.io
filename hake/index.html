@@ -82,6 +82,8 @@ canvas#cv{touch-action:none}
     <label>種<input type="range" id="seed" min="1" max="999" value="61"><span class="v"></span></label>
   </div>
   <div class="row"><button class="p" id="png">PNGで保存</button><button id="svg">SVGで保存</button></div>
+  <div class="row"><button id="svgin">SVGを読む（線を刷毛でなぞる）</button></div>
+  <input type="file" id="svgfile" accept=".svg,image/svg+xml" hidden>
   <div class="row"><button id="jsave">設定を保存</button><button id="jload">設定を読む</button></div>
   <input type="file" id="jfile" accept=".json,application/json" hidden>
   <p class="lead" style="margin-top:12px">1画は、刷毛の幅を毛に分けて、線に沿って1本ずつ引いた跡。毛ごとに色1か色2を持ち、筋の長さが短いほど途中で色が入れ替わる。毛は1本ずつ少し早く・遅く紙に着くので、端がばらける。画ごとに上へ重ねるだけなので、重なっても濃くならない。書いた線は点の列のまま持っているので、あとから刷毛や色を替えても書き直さなくていい。</p>
@@ -216,7 +218,9 @@ function svgOut(){setQ(1);render();
     const e=C.map(c=>(c[0]-r)**2+(c[1]-g)**2+(c[2]-b)**2); m[e[1]<e[0]?1:0][i]=1}
   const pp=$('paper').value, bg=(pp!=='none'&&pp!=='img')?`<rect width="${W}" height="${H}" fill="${pp}"/>`:'';
   const paths=[0,1].map(k=>`<path fill="${cols[k]}" fill-rule="evenodd" d="${trace(m[k],W,H).map(L=>'M'+L.map(p=>p[0]+' '+p[1]).join('L')+'Z').join('')}"/>`).join('');
-  dl(new Blob([`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${bg}${paths}</svg>`],{type:'image/svg+xml'}),'hake_'+Date.now()+'.svg');
+  // 書いた線と設定を SVG の中にも入れておく＝この SVG を読み直すと、塗った形でなく【書いた線】に戻る（あとから刷毛や色を替えられる）
+  const meta=`<metadata id="hake-data">${JSON.stringify(settings()).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</metadata>`;
+  dl(new Blob([`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${meta}${bg}${paths}</svg>`],{type:'image/svg+xml'}),'hake_'+Date.now()+'.svg');
 }
 function dl(blob,name){const a=document.createElement('a');a.download=name;a.href=URL.createObjectURL(blob);document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},20000)}
 
@@ -257,7 +261,34 @@ $('jload').onclick=()=>$('jfile').click();
 $('jfile').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{try{const o=JSON.parse(t);if(o.tool&&o.tool!=='hake')throw 0;applySettings(o)}catch(_){alert('HAKEの設定ファイルではありません')}});e.target.value=''};
 // PNG：地が「画像を敷く」のときは画像ごと、「なし」は透明。下書きは入らない
 $('png').onclick=()=>{setQ(1);render();cv.toBlob(b=>{if(b)dl(b,'hake_'+Date.now()+'.png')},'image/png')};
-window.__hake={render,settings,applySettings,get hand(){return hand},set hand(h){hand=h}};
+// SVG を読む：パス・線・折れ線・円を、1本ずつ刷毛の画にする（Illustrator で引いた線を、そのまま刷毛でなぞる）
+// 面の形（字のアウトライン）を読むと、縁をなぞる画になる。中を塗りたいときは、線（中心線）で描いた SVG を渡す
+function readSVG(text){
+  const doc=new DOMParser().parseFromString(text,'image/svg+xml'), src=doc.querySelector('svg'); if(!src)throw 0;
+  const host=document.createElementNS('http://www.w3.org/2000/svg','svg'); host.setAttribute('style','position:absolute;left:-9999px;top:0;visibility:hidden');
+  host.innerHTML=src.innerHTML; const vb=(src.getAttribute('viewBox')||'').split(/[\s,]+/).map(Number);
+  document.body.appendChild(host);
+  const els=[...host.querySelectorAll('path,line,polyline,polygon,circle,ellipse,rect')], raw=[];
+  // 1本の path に M が何度あっても、長さに沿って点を取り、点と点が大きく飛んだ所（＝M で移った所）で画を分ける
+  els.forEach(el=>{let L=0; try{L=el.getTotalLength()}catch(_){} if(!(L>0))return;
+    const m=el.getCTM&&el.getCTM(), step=1, n=Math.max(2,Math.ceil(L/step)); let cur=[], prev=null;
+    for(let i=0;i<=n;i++){const q=el.getPointAtLength(L*i/n), P=m?[q.x*m.a+q.y*m.c+m.e,q.x*m.b+q.y*m.d+m.f]:[q.x,q.y];
+      if(prev&&Math.hypot(P[0]-prev[0],P[1]-prev[1])>step*4*(m?Math.hypot(m.a,m.b):1)){if(cur.length>1)raw.push({pts:cur});cur=[]}
+      cur.push(P); prev=P}
+    if(cur.length>1)raw.push({pts:cur})});
+  host.remove(); if(!raw.length)throw 1;
+  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9; raw.forEach(r=>r.pts.forEach(([x,y])=>{x0=Math.min(x0,x);y0=Math.min(y0,y);x1=Math.max(x1,x);y1=Math.max(y1,y)}));
+  if(vb.length===4&&vb.every(isFinite)&&vb[2]>0){x0=Math.min(x0,vb[0]);y0=Math.min(y0,vb[1]);x1=Math.max(x1,vb[0]+vb[2]);y1=Math.max(y1,vb[1]+vb[3])}
+  // 面の8割に収めて真ん中に置く（縦横比はそのまま）
+  const s=Math.min(0.8*BW/(x1-x0||1),0.8*BH/(y1-y0||1)), ox=(BW-(x1-x0)*s)/2, oy=(BH-(y1-y0)*s)/2;
+  return raw.map(r=>{let t=0;return{p:r.pts.map((q,i)=>{if(i){const a=r.pts[i-1];t+=Math.hypot(q[0]-a[0],q[1]-a[1])*s/1.2}
+    return[((q[0]-x0)*s+ox)/BW,((q[1]-y0)*s+oy)/BH,t]})}})}
+$('svgin').onclick=()=>$('svgfile').click();
+$('svgfile').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{try{
+    const md=new DOMParser().parseFromString(t,'image/svg+xml').querySelector('#hake-data');
+    if(md){applySettings(JSON.parse(md.textContent));return}   // HAKE で書き出した SVG＝書いた線と設定に戻す
+const st=readSVG(t);hand=hand.concat(st);$('sample').checked=false;later(1)}catch(_){alert('この SVG から線を読めませんでした')}});e.target.value=''};
+window.__hake={render,settings,applySettings,readSVG,get hand(){return hand},set hand(h){hand=h}};
 DEF=settings(); document.querySelector('#presets button').classList.add('on');
 render();
 </script>
