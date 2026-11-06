@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>裁 TACHI — 紙を裁ったような字を組む道具 / 木下スタジオ</title>
+<meta name="description" content="打った字を、紙を鋏で裁ったような角ばった字にして組む道具。横画は右上がりに起き、字ごとに回って大きさが変わり、小さい字と大きい字が斜めに流れる。60〜70年代の日本映画のポスターの題字のような組み。地なしPNG・SVGで出せる。木下スタジオ（木下貴博 / 滋賀・琵琶湖）制作。">
+<link rel="canonical" href="https://kinoshita.studio/tachi/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="裁 TACHI — 紙を裁ったような字を組む道具 / 木下スタジオ">
+<meta property="og:description" content="打った字を、紙を鋏で裁ったような角ばった字にして、斜めに流して組む道具。">
+<meta property="og:url" content="https://kinoshita.studio/tachi/">
+<meta property="og:image" content="https://kinoshita.studio/assets/img/img-ui-tachi.webp">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700;900&display=swap" rel="stylesheet">
+<!-- 2026-11-06 木下：パリのレーベルに「60年代末〜70年代はじめの字に合わせて描けるか」と聞かれ、参考の映画ポスター（1970 日活）の題字に寄せた試し描きを Python で作った
+     →「今回の出してもらったの道具として作ろうかな？」「それでいこう」。
+     仕組み（Python の nora.py と同じ）：
+       1. 書体で字を描き、縁を太らせる（漢字は中の空きが潰れないよう別の太さ）
+       2. 字の縁を画素の境でたどって輪郭にする
+       3. 輪郭を少ない点の直線でなぞり直す（＝鋏で裁った角）→ 点をゆらす（＝手で裁ったゆれ）
+       4. 斜めに歪めて横画を右上がりに起こし、字ごとに回す
+       5. 小さい字を右上に縦、大きい字を左上から右下へ流して組む
+     字の形は書体から取る。道具が持つのは「裁ち方」と「組み方」だけ。 -->
+<style>
+:root{--bg:#1b1a19;--panel:#24221f;--line:#3a3733;--tx:#e9e4da;--sub:#9a9388;--ac:#ce261e}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:"Hiragino Kaku Gothic ProN",sans-serif;display:flex;height:100vh;overflow:hidden}
+#panel{width:300px;flex:none;background:var(--panel);border-right:1px solid var(--line);padding:16px 16px 24px;overflow:auto}
+h1{font-size:15px;margin:0 0 2px;letter-spacing:.1em}h1 b{color:var(--ac)}
+.lead{font-size:11px;color:var(--sub);margin:0 0 14px;line-height:1.6}
+.grp{border-top:1px solid var(--line);padding:10px 0 4px}
+.grp>div.t{font-size:11px;letter-spacing:.16em;color:var(--sub);margin-bottom:6px}
+label{display:grid;grid-template-columns:78px 1fr 34px;gap:8px;align-items:center;font-size:12px;margin:5px 0}
+label span.v{font-size:11px;color:var(--sub);text-align:right;font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--ac)}
+input[type=text],select,input[type=color]{width:100%;background:#151413;color:var(--tx);border:1px solid var(--line);border-radius:4px;font-size:14px;padding:6px}
+.presets{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px}.presets button{padding:7px 2px;font-size:11px}.presets button.on{background:var(--tx);color:#1b1a19}
+.row{display:flex;gap:6px;margin-top:8px}
+button{flex:1;background:#33302c;color:var(--tx);border:1px solid var(--line);border-radius:4px;padding:8px 6px;font-size:12px;cursor:pointer}
+button.p{background:var(--ac);border-color:var(--ac);color:#fff}
+button:disabled{opacity:.4;cursor:default}
+#stage{flex:1;display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto;position:relative}
+#wrap{position:relative;max-width:100%;max-height:100%;display:flex}
+canvas{max-width:100%;max-height:calc(100vh - 48px);box-shadow:0 10px 40px rgba(0,0,0,.45);cursor:grab}
+#sel{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;box-shadow:none}
+#msg{font-size:11px;color:var(--sub);min-height:1.6em;margin:6px 0 0}
+@media(max-width:760px){body{flex-direction:column;height:auto;overflow:auto}#panel{width:auto;border-right:0;border-bottom:1px solid var(--line)}#stage{order:-1;position:sticky;top:0;z-index:2;background:var(--bg);padding:10px;border-bottom:1px solid var(--line)}canvas{max-height:52vh}}
+/* no-auto-zoom-2026-08-22：iOS は文字を打つ欄が16px未満だと勝手に寄る＝スマホの時だけ16pxにする（PCは変えない）。ボタンの二度押しズームも止める */
+@media (max-width:760px), (pointer:coarse) and (max-width:1024px){
+  input:not([type=range]):not([type=color]):not([type=checkbox]):not([type=radio]):not([type=file]):not([type=button]), select{ font-size:16px !important; }
+  button,input,select{ touch-action:manipulation; }
+}
+canvas#cv{touch-action:none}
+</style></head><body>
+<div id="panel">
+  <div style="font-size:11px;margin-bottom:10px"><a href="/interaction-design.html" style="color:inherit;opacity:.6;text-decoration:none">← 木下スタジオ</a></div>
+  <h1><b>裁</b> TACHI</h1>
+  <p class="lead">打った字を、紙を鋏で裁ったような角ばった字にして組む。横画は右上がりに起き、字ごとに回って大きさが変わる。小さい字を右上に、大きい字を左上から右下へ流す。</p>
+  <div class="grp"><div class="t">型（押すと、字とつまみが替わる）</div>
+    <div class="presets" id="presets"></div>
+  </div>
+  <div class="grp"><div class="t">字</div>
+    <label>小さい字<input type="text" id="small" value="私達は" style="grid-column:2/4"></label>
+    <label>大きい字<input type="text" id="big" value="音楽が欲しい" style="grid-column:2/4"></label>
+  </div>
+  <div class="grp"><div class="t">組む</div>
+    <label>紙の形<select id="ratio" style="grid-column:2/4"><option value="2:3">縦長 2:3</option><option value="1:1">正方形 1:1</option><option value="3:2">横長 3:2</option></select></label>
+    <label>小さい字の大きさ<input type="range" id="ssize" min="15" max="80" value="43"><span class="v"></span></label>
+    <label>流れ（右へ）<input type="range" id="flow" min="-40" max="60" value="23"><span class="v"></span></label>
+    <label>字の間<input type="range" id="lead" min="60" max="120" value="84"><span class="v"></span></label>
+    <label>小さい字 横<input type="range" id="sx" min="-160" max="180" value="105"><span class="v"></span></label>
+    <label>小さい字 縦<input type="range" id="sy" min="-120" max="300" value="-48"><span class="v"></span></label>
+    <label>大小の差<input type="range" id="vary" min="0" max="40" value="10"><span class="v"></span></label>
+    <label>字の回り<input type="range" id="rot" min="0" max="20" value="6"><span class="v"></span></label>
+    <label>右上がり<input type="range" id="rise" min="-10" max="25" value="9"><span class="v"></span></label>
+  </div>
+  <div class="grp"><div class="t">裁つ</div>
+    <label>かなの太さ<input type="range" id="thick" min="0" max="12" value="7"><span class="v"></span></label>
+    <label>漢字の太さ<input type="range" id="thickK" min="0" max="12" value="3"><span class="v"></span></label>
+    <label>角ばり<input type="range" id="cut" min="4" max="40" value="13"><span class="v"></span></label>
+    <label>ゆれ<input type="range" id="jit" min="0" max="30" value="10"><span class="v"></span></label>
+  </div>
+  <div class="grp"><div class="t">選んだ字（紙の上の字を押す・引くと動く）</div>
+    <label>大きさ<input type="range" id="os" min="40" max="220" value="100" disabled><span class="v"></span></label>
+    <label>回転<input type="range" id="or" min="-40" max="40" value="0" disabled><span class="v"></span></label>
+    <div class="row" style="margin-top:2px"><button id="oreset" disabled>この字を戻す</button><button id="oall">全部の字を戻す</button></div>
+  </div>
+  <div class="grp"><div class="t">色・地</div>
+    <label>字の色<input type="color" id="ink" value="#ce261e" style="grid-column:2/4;height:30px;padding:2px"></label>
+    <label>地<select id="paper" style="grid-column:2/4"><option value="#eee8dc">生成り</option><option value="#ffffff">白</option><option value="#1b1a19">墨</option><option value="none">なし（透明）</option></select></label>
+    <label>種<input type="range" id="seed" min="1" max="999" value="7"><span class="v"></span></label>
+  </div>
+  <div class="row"><button class="p" id="png">PNGで保存</button><button id="svg">SVGで保存</button></div>
+  <div class="row"><button id="svgin">SVGを読む（裁って組みに足す）</button></div>
+  <input type="file" id="svgfile" accept=".svg,image/svg+xml" hidden>
+  <div class="row"><button id="jsave">設定を保存</button><button id="jload">設定を読む</button></div>
+  <input type="file" id="jfile" accept=".json,application/json" hidden>
+  <p id="msg"></p>
+  <p class="lead" style="margin-top:12px">字の形は書体（Zen 角ゴシック New）から取る。縁を太らせ、画素の境をたどって輪郭にし、少ない点の直線でなぞり直すと、曲線が消えて鋏で裁った角になる。点を少しずつゆらすと、手で裁った感じになる。漢字は画が多く中が潰れるので、かなとは別の太さ。この道具の SVG は読むと字と設定に戻る。ほかの SVG は裁って、組みの最後に足す。</p>
+</div>
+<div id="stage"><div id="wrap"><canvas id="cv"></canvas><canvas id="sel"></canvas></div></div>
+<script>
+const $=id=>document.getElementById(id);
+const K=['ssize','flow','lead','sx','sy','vary','rot','rise','thick','thickK','cut','jit','seed'];
+const TXT=['small','big','ratio','ink','paper'];
+const RATIO={'2:3':[2000,3000],'1:1':[2600,2600],'3:2':[3000,2000]};
+const cv=$('cv'),sel=$('sel'),ctx=cv.getContext('2d');
+let BW=2000,BH=3000,Q=0.4, OV={}, EXTRA=[], SELI=-1, LAST=[];
+const v=id=>+$(id).value;
+const mkR=s=>{let a=(s>>>0)||1;return()=>{a=(a*1664525+1013904223)>>>0;return a/4294967296}};
+const FONT='"Zen Kaku Gothic New","Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif';
+const isKanji=c=>/[㐀-鿿豈-﫿々〆]/.test(c);
+const SMALLK='ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ';
+const VROT='ー〜～…‥－-─';
+const PUNC='、。，．';
+
+// ── 1字の輪郭：書体で描いて縁を太らせ、画素の境をたどる（字・太さ・回すかで覚えておく）
+const G=256, CACHE={};
+function traceMask(paint,rad=0){
+  const c=document.createElement('canvas');c.width=c.height=G;const g=c.getContext('2d');
+  g.fillStyle='#000';g.strokeStyle='#000';paint(g);
+  const d=g.getImageData(0,0,G,G).data, N=G+2, on=new Uint8Array(N*N);
+  for(let y=0;y<G;y++)for(let x=0;x<G;x++)if(d[(y*G+x)*4+3]>127)on[(y+1)*N+x+1]=1;
+  return traceGrid(rad>0?thicken(on,N,rad):on,N);
+}
+// 縁を太らせる：部品ごとに（濁点・点のような小さい部品は 1/3 だけ）＝濁点が本体に飲まれない
+function thicken(on,N,rad){
+  const lab=new Int32Array(N*N), out=new Uint8Array(N*N); let n=0;
+  for(let i=0;i<N*N;i++){if(!on[i]||lab[i])continue;n++;const st=[i],px=[];lab[i]=n;
+    while(st.length){const j=st.pop();px.push(j);const x=j%N;for(const k of [j-N,j+N,x>0?j-1:-1,x<N-1?j+1:-1])if(k>=0&&k<N*N&&on[k]&&!lab[k]){lab[k]=n;st.push(k)}}
+    const r=Math.max(1,Math.round(px.length>(N*0.22)**2?rad:rad/3));
+    // 横に広げてから縦に広げる（四角い刃で太らせる）
+    const tmp=new Uint8Array(N*N);let x0=N,x1=0,y0=N,y1=0;
+    for(const j of px){const x=j%N,y=(j/N)|0;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;for(let k=Math.max(1,x-r);k<=Math.min(N-2,x+r);k++)tmp[y*N+k]=1}
+    for(let y=Math.max(1,y0-r);y<=Math.min(N-2,y1+r);y++)for(let x=Math.max(1,x0-r);x<=Math.min(N-2,x1+r);x++){
+      let hit=0;for(let k=Math.max(0,y-r);k<=Math.min(N-1,y+r);k++)if(tmp[k*N+x]){hit=1;break}if(hit)out[y*N+x]=1}}
+  return out}
+function traceGrid(on,N){
+  // 塗った画素の4辺のうち、隣が空の辺を向きつきで集め、つないで輪にする（時計回り＝外、逆＝穴）
+  const nxt=new Map(); const key=(x,y)=>y*(N+1)+x;
+  const add=(x1,y1,x2,y2)=>{const k=key(x1,y1);let a=nxt.get(k);if(!a)nxt.set(k,a=[]);a.push([x2,y2])};
+  for(let y=1;y<N-1;y++)for(let x=1;x<N-1;x++){if(!on[y*N+x])continue;
+    if(!on[(y-1)*N+x])add(x,y,x+1,y); if(!on[y*N+x+1])add(x+1,y,x+1,y+1);
+    if(!on[(y+1)*N+x])add(x+1,y+1,x,y+1); if(!on[y*N+x-1])add(x,y+1,x,y)}
+  const loops=[];
+  for(const [k0,arr] of nxt){while(arr.length){let [x,y]=[k0%(N+1),Math.floor(k0/(N+1))];const L=[[x,y]];
+    let [nx,ny]=arr.pop();let guard=0;
+    while(guard++<200000){L.push([nx,ny]);const a=nxt.get(key(nx,ny));if(!a||!a.length)break;[nx,ny]=a.pop();if(nx===L[0][0]&&ny===L[0][1])break}
+    if(L.length>3)loops.push(L)}}
+  // 一直線に並んだ点を間引く
+  return loops.map(L=>L.filter((p,i)=>{const a=L[(i-1+L.length)%L.length],b=L[(i+1)%L.length];return (p[0]-a[0])*(b[1]-p[1])!==(p[1]-a[1])*(b[0]-p[0])}))
+    .map(L=>L.map(([x,y])=>[(x-1-G/2)/(G*0.72),(y-1-G/2)/(G*0.72)]));  // 字の大きさ＝1 の単位に
+}
+function glyphLoops(ch,thickPct){
+  const kan=isKanji(ch), w=kan?700:900, k=ch+'|'+w+'|'+thickPct;
+  if(CACHE[k])return CACHE[k];
+  const fs=G*0.72;
+  return CACHE[k]=traceMask(g=>{
+    g.translate(G/2,G/2); if(VROT.includes(ch))g.rotate(Math.PI/2);
+    g.font=`${w} ${fs}px ${FONT}`;g.textAlign='center';g.textBaseline='middle';
+    g.fillText(ch,0,fs*0.04);
+  },fs*thickPct/200);
+}
+// ── なぞり直し（少ない点の直線へ）
+function dp(P,eps){if(P.length<3)return P.slice();
+  const d2=(p,a,b)=>{const dx=b[0]-a[0],dy=b[1]-a[1],L=dx*dx+dy*dy||1e-12;let t=((p[0]-a[0])*dx+(p[1]-a[1])*dy)/L;t=Math.max(0,Math.min(1,t));const x=a[0]+t*dx-p[0],y=a[1]+t*dy-p[1];return x*x+y*y};
+  const rec=(Q,s,e,out)=>{let m=-1,mi=-1;for(let i=s+1;i<e;i++){const d=d2(Q[i],Q[s],Q[e]);if(d>m){m=d;mi=i}}
+    if(m>eps*eps){rec(Q,s,mi,out);rec(Q,mi,e,out)}else out.push(Q[s])};
+  // 輪なので、いちばん遠い2点で切ってから
+  let far=0,fd=-1;for(let i=1;i<P.length;i++){const d=(P[i][0]-P[0][0])**2+(P[i][1]-P[0][1])**2;if(d>fd){fd=d;far=i}}
+  const A=P.slice(0,far+1),B=P.slice(far).concat([P[0]]);const out=[];rec(A,0,A.length-1,out);const o2=[];rec(B,0,B.length-1,o2);
+  const r=out.concat(o2);return r.length>=3?r:P.slice()}
+
+// ── 組む：字ごとの多角形（紙の座標）を作る
+function layout(){
+  const R=mkR(v('seed')*7919+13), S=1000, ss=S*v('ssize')/100, fl=S*v('flow')/100, ld=v('lead')/100, vary=v('vary')/100, rr=v('rot'), rise=Math.tan(v('rise')*Math.PI/180);
+  const cut=v('cut')/1000, jit=v('jit')/1000, items=[];
+  const put=(loops,cx,cy,size,rot,tag,idx)=>{const o=OV[tag+idx]||{};const sz=size*(o.s||1), a=(rot+(o.r||0))*Math.PI/180, ca=Math.cos(a), sa=Math.sin(a);
+    const X=cx+(o.dx||0), Y=cy+(o.dy||0);
+    const polys=loops.map(L=>dp(L,cut).map(([x,y])=>{x+=(R()-.5)*2*jit;y+=(R()-.5)*2*jit;y=y-x*rise;return[X+(x*ca-y*sa)*sz,Y+(x*sa+y*ca)*sz]}));
+    items.push({polys,tag,idx,key:tag+idx})};
+  // 大きい字：左上から右下へ
+  let x=0,y=0; const big=[...$('big').value].filter(c=>c.trim());
+  big.forEach((ch,i)=>{const kan=isKanji(ch), size=S*(1+vary*(R()*2-1)), rot=(i%2?1:-1)*rr*(0.5+R()*0.5);
+    const sm=SMALLK.includes(ch), pu=PUNC.includes(ch);
+    const loops=glyphLoops(ch,kan?v('thickK'):v('thick'));
+    const off=sm?[size*0.14,-size*0.1]:pu?[size*0.3,-size*0.3]:[0,0];
+    put(loops,x+off[0],y+off[1],sm?size*0.8:size,rot,'b',i);
+    x+=fl*(0.85+R()*0.3); y+=size*(sm||pu?0.62:kan?ld+0.12:ld)});
+  // 小さい字：右上に縦
+  x=S*v('sx')/100; y=S*v('sy')/100; const small=[...$('small').value].filter(c=>c.trim());
+  small.forEach((ch,i)=>{const kan=isKanji(ch), sm=SMALLK.includes(ch), pu=PUNC.includes(ch), dot=ch==='・';
+    const loops=glyphLoops(ch,kan?v('thickK')*0.8:v('thick')*0.85);
+    const off=sm?[ss*0.16,-ss*0.12]:pu?[ss*0.3,-ss*0.3]:[0,0];
+    put(loops,x+off[0],y+off[1],sm?ss*0.85:ss,(R()*2-1)*rr*0.6,'s',i);
+    y+=ss*(dot?0.62:sm?0.8:pu?0.55:0.97); x+=ss*0.05});
+  // 読みこんだ SVG（裁って最後に足す）
+  EXTRA.forEach((e,i)=>{put(e.loops,x-ss,y+S*0.6+i*S*1.1,S*(e.size||1),0,'e',i)});
+  // 紙に収める（余白6%）
+  let mnx=1e9,mny=1e9,mxx=-1e9,mxy=-1e9;
+  items.forEach(it=>it.polys.forEach(P=>P.forEach(([a,b])=>{if(a<mnx)mnx=a;if(b<mny)mny=b;if(a>mxx)mxx=a;if(b>mxy)mxy=b})));
+  const m=0.06, sc=Math.min(BW*(1-2*m)/(mxx-mnx||1),BH*(1-2*m)/(mxy-mny||1)), ox=BW/2-(mnx+mxx)/2*sc, oy=BH/2-(mny+mxy)/2*sc;
+  items.forEach(it=>{it.polys=it.polys.map(P=>P.map(([a,b])=>[a*sc+ox,b*sc+oy]));
+    let a=1e9,b=1e9,c=-1e9,d=-1e9;it.polys.forEach(P=>P.forEach(([px,py])=>{if(px<a)a=px;if(py<b)b=py;if(px>c)c=px;if(py>d)d=py}));it.box=[a,b,c,d]});
+  layout.scale=sc; return items;
+}
+function pathOf(it){const p=new Path2D();it.polys.forEach(P=>{P.forEach(([x,y],i)=>i?p.lineTo(x,y):p.moveTo(x,y));p.closePath()});return p}
+function draw(g,items,q,paper){
+  g.setTransform(q,0,0,q,0,0); g.clearRect(0,0,BW,BH);
+  if(paper!=='none'){g.fillStyle=paper;g.fillRect(0,0,BW,BH)}
+  g.fillStyle=$('ink').value; items.forEach(it=>g.fill(pathOf(it),'evenodd'));
+}
+function fitQ(){const st=$('stage');const mw=Math.max(200,st.clientWidth-48),mh=Math.max(200,(innerWidth<=760?innerHeight*0.52:innerHeight-48));
+  Q=Math.min(mw/BW,mh/BH,1)*(devicePixelRatio>1?2:1)}
+let raf=0;
+function render(){cancelAnimationFrame(raf);raf=requestAnimationFrame(()=>{
+  [BW,BH]=RATIO[$('ratio').value]; fitQ();
+  cv.width=Math.round(BW*Q);cv.height=Math.round(BH*Q);sel.width=cv.width;sel.height=cv.height;
+  LAST=layout(); draw(ctx,LAST,Q,$('paper').value); drawSel();
+  K.forEach(k=>{const s=$(k).parentElement.querySelector('.v');if(s)s.textContent=$(k).value});
+  ['os','or'].forEach(k=>{const s=$(k).parentElement.querySelector('.v');s.textContent=$(k).value});
+})}
+function drawSel(){const g=sel.getContext('2d');g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,sel.width,sel.height);
+  const it=LAST.find(t=>t.key===SELK);if(!it)return;g.setTransform(Q,0,0,Q,0,0);g.strokeStyle='#3aa0ff';g.lineWidth=3/Q;g.setLineDash([12/Q,8/Q]);
+  const [a,b,c,d]=it.box;g.strokeRect(a-10,b-10,c-a+20,d-b+20)}
+let SELK=null;
+function selectKey(k){SELK=k;const on=!!k;['os','or','oreset'].forEach(id=>$(id).disabled=!on);
+  const o=OV[k]||{};$('os').value=Math.round((o.s||1)*100);$('or').value=o.r||0;render()}
+// ── 字を押して選ぶ・引いて動かす
+let drag=null;
+function toPaper(e){const r=cv.getBoundingClientRect();return[(e.clientX-r.left)/r.width*BW,(e.clientY-r.top)/r.height*BH]}
+cv.addEventListener('pointerdown',e=>{const [x,y]=toPaper(e);
+  let hit=null;for(let i=LAST.length-1;i>=0;i--){const t=LAST[i];if(ctx.isPointInPath(pathOf(t),x*Q,y*Q,'evenodd')){hit=t;break}}
+  if(!hit)for(let i=LAST.length-1;i>=0;i--){const [a,b,c,d]=LAST[i].box;if(x>=a&&x<=c&&y>=b&&y<=d){hit=LAST[i];break}}
+  if(!hit){selectKey(null);return}
+  selectKey(hit.key);const o=OV[hit.key]||(OV[hit.key]={});drag={x,y,dx:o.dx||0,dy:o.dy||0,k:hit.key};cv.setPointerCapture(e.pointerId);cv.style.cursor='grabbing'});
+cv.addEventListener('pointermove',e=>{if(!drag)return;const [x,y]=toPaper(e);const o=OV[drag.k];const sc=layout.scale||1;
+  o.dx=drag.dx+(x-drag.x)/sc;o.dy=drag.dy+(y-drag.y)/sc;render()});
+const endDrag=()=>{drag=null;cv.style.cursor='grab'};cv.addEventListener('pointerup',endDrag);cv.addEventListener('pointercancel',endDrag);
+$('os').oninput=()=>{if(!SELK)return;(OV[SELK]||(OV[SELK]={})).s=v('os')/100;render()};
+$('or').oninput=()=>{if(!SELK)return;(OV[SELK]||(OV[SELK]={})).r=v('or');render()};
+$('oreset').onclick=()=>{if(SELK){delete OV[SELK];selectKey(SELK)}};
+$('oall').onclick=()=>{OV={};selectKey(null)};
+// 字を打ち替えたら、字ごとの手直しは捨てる（並びがずれるので）
+$('big').oninput=()=>{for(const k in OV)if(k[0]==='b')delete OV[k];selectKey(null)};
+$('small').oninput=()=>{for(const k in OV)if(k[0]==='s')delete OV[k];selectKey(null)};
+K.forEach(k=>$(k).oninput=render);['ratio','ink','paper'].forEach(k=>$(k).oninput=render);
+
+// ── 型
+const PRESETS=[
+  {name:'音楽が欲しい',small:'私達は',big:'音楽が欲しい',ratio:'2:3',k:{ssize:43,flow:23,lead:84,sx:105,sy:-48,vary:10,rot:6,rise:9,thick:7,thickK:3,cut:13,jit:10,seed:7}},
+  {name:'サウンズ',small:'ウィー・ウォント',big:'サウンズ',ratio:'1:1',k:{ssize:29,flow:30,lead:80,sx:105,sy:-45,vary:8,rot:7,rise:9,thick:7,thickK:3,cut:13,jit:12,seed:7}},
+  {name:'真夜中のブルース',small:'真夜中の',big:'ブルース',ratio:'2:3',k:{ssize:34,flow:-18,lead:86,sx:-95,sy:-40,vary:14,rot:9,rise:12,thick:9,thickK:3,cut:18,jit:14,seed:21}},
+];
+const pb=$('presets');PRESETS.forEach((p,i)=>{const b=document.createElement('button');b.textContent=p.name;b.onclick=()=>{
+  pb.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+  $('small').value=p.small;$('big').value=p.big;$('ratio').value=p.ratio;for(const k in p.k)$(k).value=p.k[k];OV={};selectKey(null)};pb.appendChild(b)});
+
+// ── 設定
+function settings(){const s={tool:'tachi',v:1};K.forEach(k=>s[k]=v(k));TXT.forEach(k=>s[k]=$(k).value);s.ov=OV;s.extra=EXTRA;return s}
+function applySettings(s){K.forEach(k=>{if(s[k]!=null)$(k).value=s[k]});TXT.forEach(k=>{if(s[k]!=null)$(k).value=s[k]});OV=s.ov||{};EXTRA=s.extra||[];selectKey(null)}
+function stamp(){const d=new Date(),p=n=>String(n).padStart(2,'0');return`${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`}
+function fname(ext){return('tachi_'+($('small').value+$('big').value).replace(/[\\/:*?"<>|\s]/g,'').slice(0,20)+'_'+stamp()+'.'+ext)}
+function save(blob,name){const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(u);a.remove()},8000)}
+function msg(t){$('msg').textContent=t}
+$('png').onclick=()=>{const c=document.createElement('canvas');c.width=BW;c.height=BH;const items=layout();draw(c.getContext('2d'),items,1,$('paper').value);
+  c.toBlob(b=>{save(b,fname('png'));msg(`PNG を書き出した（${BW}×${BH}・字 ${items.length}）`)},'image/png')};
+function svgText(){const items=layout(),ink=$('ink').value,pp=$('paper').value;
+  const f=n=>Math.round(n*10)/10;
+  let s=`<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${BW} ${BH}" width="${BW}" height="${BH}">\n`;
+  s+=`<metadata id="tachi-data">${JSON.stringify(settings()).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</metadata>\n`;
+  if(pp!=='none')s+=`<rect id="地" width="${BW}" height="${BH}" fill="${pp}"/>\n`;
+  s+=`<g id="字" fill="${ink}" fill-rule="evenodd">\n`;
+  const chars={b:[...$('big').value].filter(c=>c.trim()),s:[...$('small').value].filter(c=>c.trim())};
+  items.forEach(it=>{const nm=it.tag==='e'?'SVG'+(it.idx+1):(chars[it.tag][it.idx]||'');
+    s+=`<path id="${it.tag}${it.idx+1}_${nm}" d="${it.polys.map(P=>'M'+P.map(([x,y])=>f(x)+','+f(y)).join(' L')+'Z').join(' ')}"/>\n`});
+  return s+'</g>\n</svg>\n'}
+$('svg').onclick=()=>{save(new Blob([svgText()],{type:'image/svg+xml'}),fname('svg'));msg('SVG を書き出した（1字1パス・この道具で読むと字と設定に戻る）')};
+$('jsave').onclick=()=>{save(new Blob([JSON.stringify(settings(),null,1)],{type:'application/json'}),fname('json'))};
+$('jload').onclick=()=>$('jfile').click();
+$('jfile').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{try{applySettings(JSON.parse(t));msg('設定を読んだ')}catch(_){alert('この設定は読めませんでした')}});e.target.value=''};
+// ── SVG を読む：この道具の SVG は字と設定に戻る／ほかの SVG は形を裁って足す
+$('svgin').onclick=()=>$('svgfile').click();
+$('svgfile').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{
+  const m=t.match(/<metadata id="tachi-data">([\s\S]*?)<\/metadata>/);
+  if(m){try{applySettings(JSON.parse(m[1].replace(/&lt;/g,'<').replace(/&amp;/g,'&')));msg('TACHI の SVG＝字と設定に戻した');return}catch(_){}}
+  const img=new Image();const u=URL.createObjectURL(new Blob([t],{type:'image/svg+xml'}));
+  img.onload=()=>{const loops=traceMask(g=>{const w=img.naturalWidth||img.width||G,h=img.naturalHeight||img.height||G,s=G*0.86/Math.max(w,h);g.drawImage(img,(G-w*s)/2,(G-h*s)/2,w*s,h*s)});
+    URL.revokeObjectURL(u);if(!loops.length){alert('この SVG から形を読めませんでした');return}
+    EXTRA.push({loops,size:1});msg(`SVG を裁って足した（輪郭 ${loops.length}）。押して引くと動く`);render()};
+  img.onerror=()=>{URL.revokeObjectURL(u);alert('この SVG は読めませんでした')};img.src=u});e.target.value=''};
+window.addEventListener('resize',render);
+window.__tachi={render,settings,applySettings,layout,svgText,get items(){return LAST}};
+pb.querySelector('button').classList.add('on');
+// 書体を読んでから描く（読む前に描いた輪郭は捨てる）
+render();
+Promise.all([document.fonts.load(`900 100px "Zen Kaku Gothic New"`,'音楽が欲しいサウンズ'),document.fonts.load(`700 100px "Zen Kaku Gothic New"`,'私達音楽欲')]).then(()=>{for(const k in CACHE)delete CACHE[k];render()}).catch(()=>{});
+document.fonts.addEventListener&&document.fonts.addEventListener('loadingdone',()=>{for(const k in CACHE)delete CACHE[k];render()});
+</script>
+<!-- ══════════════════════════════════════════════════════════════
+     モバイルの保存 ── 2026-08-15（KUMI と同じもの・2026-11-06 にこの道具へ入れた）
+     ⭐ 触る端末のときだけ【端末の共有シート】へファイルを渡す。無ければ今までどおり落とす。
+     🔴🔴 PC は最初の1行で必ず素通りする（pointer:coarse かつ hover が無いときだけ通る）
+     ══════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  var touchOnly = window.matchMedia
+    && matchMedia('(pointer:coarse)').matches && !matchMedia('(hover:hover)').matches;
+  if(!touchOnly) return;                       /* 🔴 PC はここで終わり */
+  if(!window.HTMLAnchorElement) return;
+  var orig = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function(){
+    var href = this.getAttribute('href') || '';
+    var name = this.getAttribute('download');
+    if(!name || href.slice(0,5) !== 'blob:' || this.dataset.plainSave)
+      return orig.apply(this, arguments);
+    var self = this, args = arguments;
+    var plain = function(){
+      try{
+        var a = document.createElement('a');
+        a.href = href; a.download = name; a.dataset.plainSave = '1';
+        document.body.appendChild(a);
+        orig.apply(a, []);
+        setTimeout(function(){ if(a.parentNode) a.remove(); }, 20000);
+      }catch(_){ try{ orig.apply(self, args); }catch(__){} }
+    };
+    fetch(href).then(function(r){ return r.blob(); }).then(function(b){
+      var f;
+      try{ f = new File([b], name, { type: b.type || 'application/octet-stream' }); }
+      catch(_){ return plain(); }
+      if(navigator.share && navigator.canShare && navigator.canShare({ files:[f] })){
+        return navigator.share({ files:[f], title:name })
+          .catch(function(err){ if(!(err && err.name === 'AbortError')) plain(); });
+      }
+      plain();
+    }).catch(plain);
+    return undefined;
+  };
+})();
+</script>
+</body></html>
