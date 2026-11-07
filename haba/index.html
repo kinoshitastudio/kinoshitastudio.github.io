@@ -197,7 +197,10 @@ function layout(){
   ensureL(); const cs=chars(); if(!FONT||!cs.length)return null;
   const wBase=v('wght'), cap=(FONT.capHeight||700), PX=400/cap, items=[];
   for(let i=0;i<cs.length;i++){
-    const p=L[i], r=solve(cs[i],p.w/100,wBase,p.t), sc=PX*p.s/100;
+    const p=L[i];
+    if(p.custom&&p.custom.box){const c=p.custom,k=p.s/(c.s0||100);   // 手で直した字＝形はそのまま（幅・太さのつまみは効かない）
+      items.push({ch:cs[i],r:{custom:true,sx:1,fix:false,stemNow:0,want:0,wd:0,wt:0},sc:PX*p.s/100,p,w:c.box.w*k,h:c.box.h*k,ck:k});continue}
+    const r=solve(cs[i],p.w/100,wBase,p.t), sc=PX*p.s/100;
     items.push({ch:cs[i],r,sc,p,w:(r.g.bb.x1-r.g.bb.x0)*r.sx*sc,h:(r.g.bb.y1-r.g.bb.y0)*sc});
   }
   const gap=v('gap'), maxH=Math.max(...items.map(t=>t.h)), M=60;
@@ -210,6 +213,7 @@ function layout(){
   if(side)side.place(M,maxH);
   const al=$('align').value;
   for(const t of items){const top=al==='top'?M:al==='middle'?M+(maxH-t.h)/2:M+maxH-t.h; t.yTop=top-t.p.y*t.sc*2;
+    if(t.r.custom)continue;   // 手で直した字は itemPath で置く
     const b=t.r.g.bb, sx=t.r.sx, sc=t.sc, X=t.x, Y=t.yTop;
     t.T=(px,py)=>[X+(px-b.x0)*sc*sx, Y+(b.y1-py)*sc]}
   return {items,W,H:Math.ceil(maxH+2*M),maxH,side};
@@ -232,7 +236,7 @@ const OC=document.createElement('canvas'),og=OC.getContext('2d',{willReadFrequen
 function opticalGaps(lay){
   const n=lay.items.length;if(n<2)return [];
   const q=Math.min(1,700/lay.W),W=Math.ceil(lay.W*q),H=Math.ceil(lay.H*q);OC.width=W;OC.height=H;
-  const prof=lay.items.map(t=>{og.setTransform(1,0,0,1,0,0);og.clearRect(0,0,W,H);og.setTransform(q,0,0,q,0,0);og.fillStyle='#000';og.fill(toPath(t.r.g.cmds,t.T),'nonzero');
+  const prof=lay.items.map(t=>{og.setTransform(1,0,0,1,0,0);og.clearRect(0,0,W,H);og.setTransform(q,0,0,q,0,0);og.fillStyle='#000';og.fill(itemPath(t),'nonzero');
     const x0=Math.max(0,Math.floor((t.x-4)*q)),x1=Math.min(W,Math.ceil((t.x+t.w+4)*q)),y0=Math.max(0,Math.floor(t.yTop*q)),y1=Math.min(H,Math.ceil((t.yTop+t.h)*q));
     const d=og.getImageData(x0,0,Math.max(1,x1-x0),H).data,w=Math.max(1,x1-x0),Lf=new Array(H).fill(null),R=new Array(H).fill(null);
     for(let y=y0;y<y1;y++){let a=-1,b=-1;for(let x=0;x<w;x++)if(d[(y*w+x)*4+3]>127){if(a<0)a=x;b=x}if(a>=0){Lf[y]=(x0+a)/q;R[y]=(x0+b)/q}}
@@ -295,6 +299,10 @@ function markControls(P){
   ids.forEach(id=>{const e=$(id);if(e&&e.closest('label'))e.closest('label').classList.add('fixme')});
 }
 function goFix(i,ctl){if(i>=0&&i!==SEL)pick(i);setTimeout(()=>{const e=$(ctl);const l=e&&e.closest('label');if(!l)return;l.scrollIntoView({behavior:'smooth',block:'center'});l.classList.remove('flash');void l.offsetWidth;l.classList.add('flash')},60)}
+/* 字の形（組みの座標の Path2D）。手で直した字は読み込んだパス×その時の変換を、いまの位置へ置き直す */
+function customMatrix(t){const c=t.p.custom,k=t.ck||1;return new DOMMatrix([k,0,0,k,t.x-c.box.x*k,t.yTop-c.box.y*k]).multiply(new DOMMatrix(c.m))}
+function customP2D(c){if(!c.__p){c.__p=new Path2D();c.ds.forEach(d=>c.__p.addPath(new Path2D(d)))}return c.__p}
+function itemPath(t){if(t.r.custom){const P=new Path2D();P.addPath(customP2D(t.p.custom),customMatrix(t));return P}return toPath(t.r.g.cmds,t.T)}
 function sideLayout(maxH){
   const cs=[...$('side').value].filter(c=>c!==' '); if(!cs.length||!FONT)return null;
   const wt=v('wght'), wd=AX.wdth?AX.wdth.min:100, cap=(FONT.capHeight||700), sp=cap*0.06;
@@ -309,7 +317,7 @@ function draw(g,lay,q,paper,showUnder){
   if(paper!=='none'){g.fillStyle=paper;g.fillRect(0,0,lay.W,lay.H)}
   if(showUnder&&UNDER&&v('uop')>0){g.globalAlpha=v('uop')/100;const M=60,w=lay.W-2*M,h=lay.maxH;g.drawImage(UNDER,M,M,w,h);g.globalAlpha=1}
   g.fillStyle=$('ink').value;
-  for(const t of lay.items)g.fill(toPath(t.r.g.cmds,t.T),'nonzero');
+  for(const t of lay.items)g.fill(itemPath(t),'nonzero');
   if(lay.side)lay.side.gs.forEach((sg2,i)=>g.fill(toPath(sg2.cmds,lay.side.T[i]),'nonzero'));
 }
 let raf=0;
@@ -330,7 +338,7 @@ function render(){cancelAnimationFrame(raf);raf=requestAnimationFrame(()=>{
   // 表
   let h='<table><tr><th>字</th><th>幅</th><th>大きさ</th><th>幅の軸</th><th>伸ばし</th><th>太さの軸</th><th>縦の線（目標→いま）</th>'+(PRO?'<th class="why" style="text-align:left">プロの目</th>':'')+'</tr>';
   lay.items.forEach((t,i)=>{const r=t.r,ext=Math.abs(r.sx-1)>.15;
-    const ng=PRO&&PRO.per[i].length;h+=`<tr class="${i===SEL?'sel':''}${ng?' ng':''}"><td><b>${t.ch}</b></td><td>${t.p.w}%</td><td>${t.p.s}%</td><td>${AX.wdth?r.wd.toFixed(0):'—'}</td><td class="${ext?'w':''}">${(r.sx*100).toFixed(0)}%</td><td>${AX.wght?r.wt.toFixed(0):'—'}</td><td>${r.fix?`${(r.want*t.sc).toFixed(1)} → ${(r.stemNow*t.sc).toFixed(1)}`:'（測らない字）'}</td>${PRO?`<td class="why">${ng?'⚠ '+PRO.per[i].map(x=>x.msg).join('／'):'<span style="color:#5fae6a">✓</span>'}</td>`:''}</tr>`});
+    const ng=PRO&&PRO.per[i].length;h+=`<tr class="${i===SEL?'sel':''}${ng?' ng':''}"><td><b>${t.ch}</b></td><td>${t.p.w}%</td><td>${t.p.s}%</td><td>${r.custom?'手':AX.wdth?r.wd.toFixed(0):'—'}</td><td class="${ext?'w':''}">${r.custom?'—':(r.sx*100).toFixed(0)+'%'}</td><td>${r.custom?'手':AX.wght?r.wt.toFixed(0):'—'}</td><td>${r.custom?'（手で直した字）':r.fix?`${(r.want*t.sc).toFixed(1)} → ${(r.stemNow*t.sc).toFixed(1)}`:'（測らない字）'}</td>${PRO?`<td class="why">${ng?'⚠ '+PRO.per[i].map(x=>x.msg).join('／'):'<span style="color:#5fae6a">✓</span>'}</td>`:''}</tr>`});
   $('info').innerHTML=h+'</table>';
   const pb2=$('probox');markControls(PRO);
   if(PRO){const rows=[];lay.items.forEach((t,i)=>PRO.per[i].forEach((x,j)=>rows.push({i,k:'p',j,html:`<b>${t.ch}</b>：${x.msg}`,ctl:x.ctl})));PRO.all.forEach((x,j)=>rows.push({i:-1,k:'a',j,html:x.msg,ctl:x.ctl}));
@@ -381,8 +389,8 @@ const pb=$('presets');PRESETS.forEach((p,i)=>{const b=document.createElement('bu
 $('font').onchange=()=>{if($('font').value==='file')$('fontfile').click();else fetch('Archivo-VF.ttf').then(r=>r.arrayBuffer()).then(b=>loadFont(b,'Archivo'))};
 $('fontfile').onchange=e=>{const f=e.target.files[0];if(!f){$('font').value='archivo';return}f.arrayBuffer().then(b=>loadFont(b,f.name.replace(/\.\w+$/,''))).catch(()=>alert('この書体は読めませんでした'));e.target.value=''};
 // ── 書き出し
-function settings(){return{tool:'haba',v:1,txt:$('txt').value,side:$('side').value,sidePos:$('sidePos').value,pro:$('pro').checked,font:FONTNAME,wght:v('wght'),gap:v('gap'),align:$('align').value,fix:$('fix').value,ink:$('ink').value,paper:$('paper').value,L}}
-function apply(s){if(s.pro!=null)$('pro').checked=!!s.pro;['txt','side','sidePos','wght','gap','align','fix','ink','paper'].forEach(k=>{if(s[k]!=null)$(k).value=s[k]});L=(s.L||[]).map(p=>({w:p.w??100,s:p.s??100,t:p.t??0,y:p.y??0,k:p.k??0,keep:!!p.keep}));pick(0)}
+function settings(){const LL=L.map(p=>p.custom?{...p,custom:{ds:p.custom.ds,m:p.custom.m,box:p.custom.box,s0:p.custom.s0}}:p);return{tool:'haba',v:1,txt:$('txt').value,side:$('side').value,sidePos:$('sidePos').value,pro:$('pro').checked,font:FONTNAME,wght:v('wght'),gap:v('gap'),align:$('align').value,fix:$('fix').value,ink:$('ink').value,paper:$('paper').value,L:LL}}
+function apply(s){if(s.pro!=null)$('pro').checked=!!s.pro;['txt','side','sidePos','wght','gap','align','fix','ink','paper'].forEach(k=>{if(s[k]!=null)$(k).value=s[k]});L=(s.L||[]).map(p=>({w:p.w??100,s:p.s??100,t:p.t??0,y:p.y??0,k:p.k??0,keep:!!p.keep,custom:p.custom&&p.custom.ds?{ds:p.custom.ds,m:p.custom.m,box:p.custom.box,s0:p.custom.s0||100}:null}));pick(0)}
 function stamp(){const d=new Date(),p=n=>String(n).padStart(2,'0');return`${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`}
 const fname=ext=>`haba_${$('txt').value.replace(/[\\/:*?"<>|\s]/g,'').slice(0,20)}_${stamp()}.${ext}`;
 function save(blob,name){const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(u);a.remove()},8000)}
@@ -390,7 +398,7 @@ function msg(t){$('msg').textContent=t}
 $('png').onclick=()=>{const lay=layout();if(!lay)return;const c=document.createElement('canvas');c.width=lay.W*2;c.height=lay.H*2;draw(c.getContext('2d'),lay,2,$('paper').value,false);c.toBlob(b=>{save(b,fname('png'));msg(`PNG を書き出した（${lay.W*2}×${lay.H*2}）`)},'image/png')};
 function svgText(){const lay=layout(),pp=$('paper').value;let s=`<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${lay.W}" height="${lay.H}" viewBox="0 0 ${lay.W} ${lay.H}">\n<metadata id="haba-data">${JSON.stringify(settings()).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</metadata>\n`;
   if(pp!=='none')s+=`<rect id="地" width="${lay.W}" height="${lay.H}" fill="${pp}"/>\n`;
-  s+=`<g id="字" fill="${$('ink').value}">\n`+lay.items.map((t,i)=>`<path id="${i+1}_${t.ch}" d="${toD(t.r.g.cmds,t.T)}"/>`).join('\n')+(lay.side?'\n'+lay.side.gs.map((g,i)=>`<path id="横倒し_${i+1}" d="${toD(g.cmds,lay.side.T[i])}"/>`).join('\n'):'')+'\n</g>\n</svg>\n';return s}
+  s+=`<g id="字" fill="${$('ink').value}">\n`+lay.items.map((t,i)=>{if(t.r.custom){const M=customMatrix(t);return `<path id="${i+1}_${t.ch}" d="${t.p.custom.ds.join(' ')}" transform="matrix(${[M.a,M.b,M.c,M.d,M.e,M.f].map(n=>Math.round(n*10000)/10000).join(' ')})"/>`}return `<path id="${i+1}_${t.ch}" d="${toD(t.r.g.cmds,t.T)}"/>`}).join('\n')+(lay.side?'\n'+lay.side.gs.map((g,i)=>`<path id="横倒し_${i+1}" d="${toD(g.cmds,lay.side.T[i])}"/>`).join('\n'):'')+'\n</g>\n</svg>\n';return s}
 $('svg').onclick=()=>{save(new Blob([svgText()],{type:'image/svg+xml'}),fname('svg'));msg('SVG を書き出した（1字1パス・HABA で読み込むと設定に戻る）')};
 $('jsave').onclick=()=>save(new Blob([JSON.stringify(settings(),null,1)],{type:'application/json'}),fname('json'));
 $('jload').onclick=()=>$('jfile').click();
@@ -398,14 +406,72 @@ $('jfile').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>
 $('svgin').onclick=()=>$('svgfile').click();
 $('svgfile').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{
   const m=t.match(/<metadata id="haba-data">([\s\S]*?)<\/metadata>/);
-  if(m){try{apply(JSON.parse(m[1].replace(/&lt;/g,'<').replace(/&amp;/g,'&')));msg('HABA の SVG＝設定に戻した');return}catch(_){}}
+  let had=false;if(m){try{apply(JSON.parse(m[1].replace(/&lt;/g,'<').replace(/&amp;/g,'&')));had=true}catch(_){}}
+  // 往復：字のパス（id＝1_B／Illustrator は _1_B）が入っていれば、形が変わった字だけ「手で直した字」として取り込む
+  const n=importEdited(t);
+  if(had||n.found){msg((had?'HABA の SVG＝設定に戻した':'いまの設定に字のパスを当てた')+(()=>{const cs=chars(),hand=L.map((p,i)=>p.custom?cs[i]:null).filter(Boolean);return hand.length?`／手で直した字＝${hand.join('・')}（形はそのまま・字間と外と黒ベタだけ判定）`:'／形を直した字は無かった'})());render();return}
   // ほかの SVG：地（白い四角）を抜いて下敷きに
   const clean=t.replace(/<rect[^>]*fill="(#fff|#ffffff|white)"[^>]*\/>/gi,'');
   const img=new Image(),u=URL.createObjectURL(new Blob([clean],{type:'image/svg+xml'}));
   img.onload=()=>{UNDER=img;msg('下敷きに敷いた（濃さは「下敷きの濃さ」）。幅の箱に合わせて伸ばして重ねている');render()};
   img.onerror=()=>alert('この SVG は読めませんでした');img.src=u});e.target.value=''};
+/* 往復の読み込み（2026-11-07 木下「形の作り込みは SVG で、HABA は組みと検品」）
+   ⚠️ Illustrator で保存すると直していない字もパスの書き方が全部変わる → 文字列でなく【絵】で比べる（96px に描いて 2% 以上ちがう字だけ）
+   ⚠️ 位置は viewBox の座標で読む（グループの transform も畳み込む）。四角・多角形はパスに直して読む */
+function shapeD(el){const tg=el.tagName.toLowerCase(),n=a=>+el.getAttribute(a)||0;
+  if(tg==='path')return el.getAttribute('d');
+  if(tg==='rect'){const x=n('x'),y=n('y'),w=n('width'),h=n('height');return `M${x} ${y}h${w}v${h}h${-w}Z`}
+  if(tg==='polygon'||tg==='polyline'){const p=(el.getAttribute('points')||'').trim().split(/[\s,]+/).map(Number);let d='';for(let i=0;i<p.length;i+=2)d+=(i?'L':'M')+p[i]+' '+p[i+1];return d+'Z'}
+  return null}
+function importEdited(text){
+  const out={found:0,edited:[]};ensureL();const lay=layout();if(!lay)return out;
+  const host=document.createElement('div');host.style.cssText='position:absolute;left:-99999px;top:0;visibility:hidden';host.innerHTML=text.replace(/<\?xml[^>]*>/,'');
+  const svg=host.querySelector('svg');if(!svg)return out;document.body.appendChild(host);
+  const vb=(svg.getAttribute('viewBox')||`0 0 ${lay.W} ${lay.H}`).split(/[\s,]+/).map(Number);svg.setAttribute('width',vb[2]);svg.setAttribute('height',vb[3]);
+  const root=svg.getScreenCTM().inverse();
+  const groups={};svg.querySelectorAll('path,rect,polygon,polyline').forEach(el=>{let e=el,id='';while(e&&e!==svg){id=e.id||'';if(/^_?\d+_/.test(id))break;e=e.parentNode}
+    const mm=id.match(/^_?(\d+)_/);if(!mm)return;const i=+mm[1]-1;if(i<0||i>=lay.items.length)return;const d=shapeD(el);if(!d)return;
+    const M=root.multiply(el.getScreenCTM()),mv=new DOMMatrix([vb[2]?1:1,0,0,1,-vb[0],-vb[1]]).multiply(M);
+    (groups[i]=groups[i]||[]).push({d,m:mv})});
+  host.remove();
+  const cmp=document.createElement('canvas');cmp.width=cmp.height=96;const cg=cmp.getContext('2d',{willReadFrequently:true});
+  for(const k in groups){const i=+k,t=lay.items[i];out.found++;
+    // 読み込んだ形を1本の Path2D に（字ごとに変換が違ってもいいように、最初の変換を基準に残りを畳む）
+    const base=groups[k][0].m,inv=base.inverse(),ds=[];const P=new Path2D();
+    groups[k].forEach(g=>{const rel=inv.multiply(g.m);const q=new Path2D();q.addPath(new Path2D(g.d),rel);P.addPath(q);ds.push(rel.isIdentity?g.d:null)});
+    // 箱：いったん描いて黒の範囲を測る
+    const bx=bboxOf(P,base,lay);if(!bx)continue;
+    // 比べる：いまの字と、読み込んだ字を同じ箱で 96px に
+    const diff=(()=>{const box={x:Math.min(bx.x,t.x),y:Math.min(bx.y,t.yTop)},W2=Math.max(bx.x+bx.w,t.x+t.w)-box.x,H2=Math.max(bx.y+bx.h,t.yTop+t.h)-box.y,sc=96/Math.max(W2,H2);
+      const px=f=>{cg.setTransform(1,0,0,1,0,0);cg.clearRect(0,0,96,96);cg.setTransform(sc,0,0,sc,-box.x*sc,-box.y*sc);f();return cg.getImageData(0,0,96,96).data};
+      const a=px(()=>cg.fill(itemPath(t),'nonzero')),b=px(()=>{cg.transform(base.a,base.b,base.c,base.d,base.e,base.f);cg.fill(P,'nonzero')});
+      let d=0,ink=0;for(let j=3;j<a.length;j+=4){const A=a[j]>127,B=b[j]>127;if(A||B)ink++;if(A!==B)d++}return ink?d/ink:0})();
+    if(diff>0.02){
+      // パスの文字列は、変換が違う部分パスも含めて基準の変換の中へ書き直す（Path2D は文字列に戻せないので、rel が恒等でない部分は d に変換を焼く）
+      const dsAll=groups[k].map(g=>{const rel=inv.multiply(g.m);return rel.isIdentity?g.d:bakeD(g.d,rel)});
+      L[i].custom={ds:dsAll,m:[base.a,base.b,base.c,base.d,base.e,base.f],box:bx,s0:L[i].s||100};out.edited.push(t.ch)}
+  }
+  return out}
+// 黒の範囲（組みの座標）：大きめのキャンバスに描いて測る
+function bboxOf(P,base,lay){const q=Math.min(1,1200/lay.W),W=Math.ceil(lay.W*q)+40,H=Math.ceil(lay.H*q)+40;OC.width=W;OC.height=H;og.setTransform(1,0,0,1,0,0);og.clearRect(0,0,W,H);
+  og.setTransform(q,0,0,q,20,20);og.transform(base.a,base.b,base.c,base.d,base.e,base.f);og.fillStyle='#000';og.fill(P,'nonzero');
+  const d=og.getImageData(0,0,W,H).data;let x0=W,y0=H,x1=-1,y1=-1;for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(d[(y*W+x)*4+3]>127){if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y}
+  if(x1<0)return null;return {x:(x0-20)/q,y:(y0-20)/q,w:(x1-x0+1)/q,h:(y1-y0+1)/q}}
+// d の座標に行列を焼く（M L H V C S Q T Z の絶対・相対。A は近似せず端点だけ変換）
+function bakeD(d,M){const tk=d.match(/[a-zA-Z]|-?\d*\.?\d+(?:e[-+]?\d+)?/g)||[];let i=0,cmd='',cx=0,cy=0,sx=0,sy=0,out='';const num=()=>+tk[i++];
+  const T=(x,y)=>{const p=new DOMPoint(x,y).matrixTransform(M);return `${Math.round(p.x*100)/100} ${Math.round(p.y*100)/100}`};
+  while(i<tk.length){if(/[a-zA-Z]/.test(tk[i]))cmd=tk[i++];const rel=cmd===cmd.toLowerCase(),C=cmd.toUpperCase();
+    if(C==='Z'){out+='Z';cx=sx;cy=sy;continue}
+    if(C==='H'){let x=num();if(rel)x+=cx;cx=x;out+='L'+T(cx,cy);continue}
+    if(C==='V'){let y=num();if(rel)y+=cy;cy=y;out+='L'+T(cx,cy);continue}
+    const nArg={M:2,L:2,T:2,C:6,S:4,Q:4,A:7}[C];if(!nArg){i++;continue}
+    const a=[];for(let k=0;k<nArg;k++)a.push(num());
+    if(C==='A'){let x=a[5],y=a[6];if(rel){x+=cx;y+=cy}cx=x;cy=y;out+='L'+T(x,y);continue}
+    const pts=[];for(let k=0;k<nArg;k+=2){let x=a[k],y=a[k+1];if(rel){x+=cx;y+=cy}pts.push(T(x,y));if(k===nArg-2){cx=x;cy=y}}
+    out+=C+pts.join(' ');if(C==='M'){sx=cx;sy=cy;if(cmd==='m')cmd='l';else cmd='L'}}
+  return out}
 window.addEventListener('resize',render);
-window.__haba={render,layout,settings,apply,svgText,get L(){return L},solve,blackTest};
+window.__haba={render,layout,settings,apply,svgText,get L(){return L},solve,blackTest,importEdited};
 // はじまり：最初の型
 fetch('Archivo-VF.ttf').then(r=>r.arrayBuffer()).then(b=>loadFont(b,'Archivo')).then(()=>pb.querySelector('button').click()).catch(()=>msg('書体を読めませんでした'));
 </script>
