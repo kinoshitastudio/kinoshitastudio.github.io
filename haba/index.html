@@ -36,7 +36,9 @@ button.p{background:var(--tx);border-color:var(--tx);color:#111}
 canvas{max-width:100%;max-height:calc(100vh - 170px);box-shadow:0 10px 40px rgba(0,0,0,.45);cursor:pointer}
 #info{width:100%;max-width:1100px;font-size:12px;color:var(--sub);font-variant-numeric:tabular-nums}
 #info table{width:100%;border-collapse:collapse}#info td,#info th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:right}#info th{color:var(--sub);font-weight:400}#info td:first-child,#info th:first-child{text-align:left}
-#info .w{color:var(--warn)}#info .sel td{color:var(--tx)}
+#info .w{color:var(--warn)}#info tr.ng td{color:#ff6b5e}#info td.why{text-align:left;color:#ff6b5e;font-size:11px}
+#probox.ng{background:#3a1d1a;border:1px solid #e0453a;color:#ffd9d4}#probox.ok{background:#1d2a1f;border:1px solid #5fae6a;color:#d4f0d8}
+#probox b{color:#fff}#info .sel td{color:var(--tx)}
 #msg{font-size:11px;color:var(--sub);min-height:1.6em;margin:6px 0 0}
 @media(max-width:760px){body{flex-direction:column;height:auto;overflow:auto}#panel{width:auto;border-right:0;border-bottom:1px solid var(--line)}#stage{order:-1;position:sticky;top:0;z-index:2;background:var(--bg);padding:10px;border-bottom:1px solid var(--line)}canvas{max-height:34vh}#info{font-size:10px}}
 /* no-auto-zoom-2026-08-22：iOS は文字を打つ欄が16px未満だと勝手に寄る＝スマホの時だけ16pxにする（PCは変えない）。ボタンの二度押しズームも止める */
@@ -57,6 +59,7 @@ canvas#cv{touch-action:manipulation}
     <input type="file" id="fontfile" accept=".ttf,.otf,.woff,.woff2" hidden>
   </div>
   <div class="grp"><div class="t">全体</div>
+    <label style="grid-template-columns:22px 1fr;cursor:pointer"><input type="checkbox" id="pro" style="width:16px;height:16px;accent-color:#e0453a"><span>会社ロゴとして見る（プロの目でずれを赤で知らせる）</span></label>
     <label>太さ<input type="range" id="wght" min="100" max="900" value="900"><span class="v"></span></label>
     <label>字の間<input type="range" id="gap" min="-40" max="120" value="12"><span class="v"></span></label>
     <label>そろえる<select id="align" style="grid-column:2/4"><option value="bottom">下でそろえる</option><option value="top">上でそろえる</option><option value="middle">真ん中でそろえる</option></select></label>
@@ -94,7 +97,7 @@ canvas#cv{touch-action:manipulation}
   <p id="msg"></p>
   <p class="lead" style="margin-top:12px">字を横に伸ばすと縦の線だけ太くなり、狭めると細くなる。1語の中で縦の線の太さがばらばらだと、引き伸ばした字だと一目で分かる。HABA は、幅の軸で形を変え、届かない分だけ伸ばし、伸ばしで変わった縦の線の太さを測って、太さの軸で元の字の太さに戻す。下の表の「伸ばし」が大きい字ほど、幅の軸だけでは足りていない。比べるときは「線をそろえる：しない」に切り替える。いまのロゴの SVG を読むと、下敷きに敷いて重ねて見られる。</p>
 </div>
-<div id="stage"><canvas id="cv"></canvas><div id="btestbox" style="display:none;width:100%;max-width:1100px;background:#fff;border-radius:4px;padding:12px 14px;color:#555;font-size:11px"></div><div id="info"></div></div>
+<div id="stage"><canvas id="cv"></canvas><div id="probox" style="display:none;width:100%;max-width:1100px;border-radius:4px;padding:10px 14px;font-size:12px;line-height:1.7"></div><div id="btestbox" style="display:none;width:100%;max-width:1100px;background:#fff;border-radius:4px;padding:12px 14px;color:#555;font-size:11px"></div><div id="info"></div></div>
 <script type="module">
 import * as fontkit from 'https://esm.sh/fontkit@2.0.4';
 const $=id=>document.getElementById(id);
@@ -191,6 +194,32 @@ function layout(){
     t.T=(px,py)=>[X+(px-b.x0)*sc*sx, Y+(b.y1-py)*sc]}
   return {items,W,H:Math.ceil(maxH+2*M),maxH,side};
 }
+/* ── 会社ロゴとして見る（2026-11-07 木下「プロとして太さが他とずれているなどを赤字やアイコンで伝えたら」）
+   ずれの見分け（しきい値は目で見て気づく境目を目安に置いた。厳しめ）：
+   1 縦の線：測れる字の「本来の太さからの比」が、全体の中央値から ±6% を超える（大きさの差は割り戻す）
+   2 伸ばし：幅の軸で届かず伸ばした割合が 115% 超 / 87% 未満
+   3 大きさ：100 でない字がある＝上下の線がそろわない（外がそろわない）
+   4 上下：丸い字（O・S・C・G・Q など）の小さなはみ出し（±3）以外のずれ
+   5 字の間：0 未満＝字がぶつかる
+   6 横倒しの語：太さが字の高さの 18% 未満＝16px で潰れる */
+const ROUND=/[OSCGQUJ0-9ＯＳＣＧＱ]/;
+function proCheck(lay){
+  const per=lay.items.map(()=>[]), all=[];
+  // ⚠️ 字どうしの線の太さを直接比べない（K など斜めの字は付け根まで測れて元から太く出る）。
+  //    「その字の本来の太さ（want）からの比」を全体の中央値と比べる＝デザインどおりの釣り合いからのずれだけを拾う
+  const st=lay.items.map(t=>t.r.fix&&t.r.stemNow&&t.r.want?(t.r.stemNow*t.sc)/(t.r.want*t.sc/t.p.s*100):null), ms=st.filter(x=>x).sort((a,b)=>a-b), med=ms.length?ms[ms.length>>1]:0;
+  lay.items.forEach((t,i)=>{
+    if(st[i]&&med&&ms.length>1){const d=st[i]/med-1;if(Math.abs(d)>0.06)per[i].push(`縦の線が他より${d>0?'太い':'細い'}（${d>0?'+':''}${(d*100).toFixed(0)}%）＝${d<0&&AX.wght&&t.r.wt>=AX.wght.max-1?'太さが上限でこれ以上戻せない。幅を少し戻す':'「太さの補正」で合わせる'}`)}
+    if(t.r.sx>1.15||t.r.sx<0.87)per[i].push(`伸ばしが目立つ（${(t.r.sx*100).toFixed(0)}%）＝幅を戻すか作字で描き分ける`);
+    if(t.p.s!==100)per[i].push(`大きさ ${t.p.s}%＝上下の線がそろわない`);
+    if(t.p.y!==0&&!(ROUND.test(t.ch)&&Math.abs(t.p.y)<=3))per[i].push(`上下に ${t.p.y} ずれている`);
+  });
+  if($('fix').value!=='1')all.push('「線をそろえる：しない」＝伸ばしただけの字。仕上げは「する」に');
+  if(v('gap')<0)all.push(`字の間が ${v('gap')}＝字がぶつかっている`);
+  if(lay.side&&lay.side.thick<lay.maxH*0.18)all.push('横倒しの語が細すぎる＝16px で潰れる（語を短くするか外す）');
+  if(!ms.length||ms.length<2)all.push('縦の線を測れる字が2つ未満＝太さは目で確かめる');
+  return {per,all,count:per.reduce((a,b)=>a+b.length,0)+all.filter(x=>!x.startsWith('縦の線を測れる')).length};
+}
 function sideLayout(maxH){
   const cs=[...$('side').value].filter(c=>c!==' '); if(!cs.length||!FONT)return null;
   const wt=v('wght'), wd=AX.wdth?AX.wdth.min:100, cap=(FONT.capHeight||700), sp=cap*0.06;
@@ -214,12 +243,21 @@ function render(){cancelAnimationFrame(raf);raf=requestAnimationFrame(()=>{
   const st=$('stage'), mw=Math.max(240,st.clientWidth-48), q=Math.min(2,mw/lay.W*(devicePixelRatio||1));
   cv.width=Math.round(lay.W*q);cv.height=Math.round(lay.H*q);cv.style.width=Math.min(mw,lay.W)+'px';
   draw(ctx,lay,q,$('paper').value,true);
+  const PRO=$('pro').checked?proCheck(lay):null; lay.pro=PRO;
+  if(PRO){ctx.setTransform(q,0,0,q,0,0);lay.items.forEach((t,i)=>{if(!PRO.per[i].length)return;
+    ctx.strokeStyle='#e0453a';ctx.lineWidth=3;ctx.setLineDash([]);ctx.strokeRect(t.x-4,t.yTop-4,t.w+8,t.h+8);
+    const cx=t.x+t.w/2,cy=t.yTop-30;ctx.fillStyle='#e0453a';ctx.beginPath();ctx.arc(cx,cy,20,0,7);ctx.fill();
+    ctx.fillStyle='#fff';ctx.font='bold 28px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('!',cx,cy+1)})}
   const s=lay.items[SEL]; if(s){ctx.setTransform(q,0,0,q,0,0);ctx.strokeStyle='#3aa0ff';ctx.lineWidth=2/q*(devicePixelRatio||1);ctx.setLineDash([8,6]);ctx.strokeRect(s.x-6,s.yTop-6,s.w+12,s.h+12);ctx.setLineDash([])}
   // 表
-  let h='<table><tr><th>字</th><th>幅</th><th>大きさ</th><th>幅の軸</th><th>伸ばし</th><th>太さの軸</th><th>縦の線（目標→いま）</th></tr>';
+  let h='<table><tr><th>字</th><th>幅</th><th>大きさ</th><th>幅の軸</th><th>伸ばし</th><th>太さの軸</th><th>縦の線（目標→いま）</th>'+(PRO?'<th style="text-align:left">プロの目</th>':'')+'</tr>';
   lay.items.forEach((t,i)=>{const r=t.r,ext=Math.abs(r.sx-1)>.15;
-    h+=`<tr class="${i===SEL?'sel':''}"><td><b>${t.ch}</b></td><td>${t.p.w}%</td><td>${t.p.s}%</td><td>${AX.wdth?r.wd.toFixed(0):'—'}</td><td class="${ext?'w':''}">${(r.sx*100).toFixed(0)}%</td><td>${AX.wght?r.wt.toFixed(0):'—'}</td><td>${r.fix?`${(r.want*t.sc).toFixed(1)} → ${(r.stemNow*t.sc).toFixed(1)}`:'（測らない字）'}</td></tr>`});
+    const ng=PRO&&PRO.per[i].length;h+=`<tr class="${i===SEL?'sel':''}${ng?' ng':''}"><td><b>${t.ch}</b></td><td>${t.p.w}%</td><td>${t.p.s}%</td><td>${AX.wdth?r.wd.toFixed(0):'—'}</td><td class="${ext?'w':''}">${(r.sx*100).toFixed(0)}%</td><td>${AX.wght?r.wt.toFixed(0):'—'}</td><td>${r.fix?`${(r.want*t.sc).toFixed(1)} → ${(r.stemNow*t.sc).toFixed(1)}`:'（測らない字）'}</td>${PRO?`<td class="why">${ng?'⚠ '+PRO.per[i].join('／'):'<span style="color:#5fae6a">✓</span>'}</td>`:''}</tr>`});
   $('info').innerHTML=h+'</table>';
+  const pb2=$('probox');if(PRO){const L2=[];lay.items.forEach((t,i)=>PRO.per[i].forEach(m=>L2.push(`<b>${t.ch}</b>：${m}`)));PRO.all.forEach(m=>L2.push(m));
+    const bad=PRO.count>0;pb2.className=bad?'ng':'ok';pb2.style.display='block';
+    pb2.innerHTML=bad?`⚠ <b>会社ロゴとしてずれ ${PRO.count} か所</b><br>`+L2.map(x=>'・'+x).join('<br>'):`✓ <b>会社ロゴとして、目立つずれは見つからない</b>${L2.length?'<br>'+L2.map(x=>'・'+x).join('<br>'):''}<br><span style="opacity:.75">最後は黒ベタの試験で 16px まで縮めて、目でも確かめる</span>`}
+  else pb2.style.display='none';
   if($('btestbox').style.display==='block')blackTest();   // 試験を開いたままなら一緒に描き直す
   ['wght','gap','uop','lw','ls','lt','ly','rw0','rw1'].forEach(k=>{const e=$(k).parentElement.querySelector('.v');if(e)e.textContent=$(k).value});
   chipsRender();
@@ -233,6 +271,7 @@ $('lreset').onclick=()=>{L[SEL]={w:100,s:100,t:0,y:0};pick(SEL)};
 $('allreset').onclick=()=>{L=L.map(()=>({w:100,s:100,t:0,y:0}));pick(SEL)};
 $('rule').onclick=()=>{ensureL();const n=L.length;L.forEach((p,i)=>p.w=Math.round(v('rw0')+(v('rw1')-v('rw0'))*(n>1?i/(n-1):0)));pick(SEL)};
 ['wght','gap','align','fix','ink','paper','uop','rw0','rw1'].forEach(k=>$(k).oninput=render);
+$('pro').onchange=render;
 $('txt').oninput=()=>{ensureL();render()};
 $('side').oninput=render;$('sidePos').oninput=render;
 // 黒ベタの試験：字の色・地・下敷きを無視して、黒1色を白地に 48・24・16px で見る（もう一度押すと閉じる）
@@ -256,8 +295,8 @@ const pb=$('presets');PRESETS.forEach((p,i)=>{const b=document.createElement('bu
 $('font').onchange=()=>{if($('font').value==='file')$('fontfile').click();else fetch('Archivo-VF.ttf').then(r=>r.arrayBuffer()).then(b=>loadFont(b,'Archivo'))};
 $('fontfile').onchange=e=>{const f=e.target.files[0];if(!f){$('font').value='archivo';return}f.arrayBuffer().then(b=>loadFont(b,f.name.replace(/\.\w+$/,''))).catch(()=>alert('この書体は読めませんでした'));e.target.value=''};
 // ── 書き出し
-function settings(){return{tool:'haba',v:1,txt:$('txt').value,side:$('side').value,sidePos:$('sidePos').value,font:FONTNAME,wght:v('wght'),gap:v('gap'),align:$('align').value,fix:$('fix').value,ink:$('ink').value,paper:$('paper').value,L}}
-function apply(s){['txt','side','sidePos','wght','gap','align','fix','ink','paper'].forEach(k=>{if(s[k]!=null)$(k).value=s[k]});L=(s.L||[]).map(p=>({w:p.w??100,s:p.s??100,t:p.t??0,y:p.y??0}));pick(0)}
+function settings(){return{tool:'haba',v:1,txt:$('txt').value,side:$('side').value,sidePos:$('sidePos').value,pro:$('pro').checked,font:FONTNAME,wght:v('wght'),gap:v('gap'),align:$('align').value,fix:$('fix').value,ink:$('ink').value,paper:$('paper').value,L}}
+function apply(s){if(s.pro!=null)$('pro').checked=!!s.pro;['txt','side','sidePos','wght','gap','align','fix','ink','paper'].forEach(k=>{if(s[k]!=null)$(k).value=s[k]});L=(s.L||[]).map(p=>({w:p.w??100,s:p.s??100,t:p.t??0,y:p.y??0}));pick(0)}
 function stamp(){const d=new Date(),p=n=>String(n).padStart(2,'0');return`${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`}
 const fname=ext=>`haba_${$('txt').value.replace(/[\\/:*?"<>|\s]/g,'').slice(0,20)}_${stamp()}.${ext}`;
 function save(blob,name){const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(u);a.remove()},8000)}
