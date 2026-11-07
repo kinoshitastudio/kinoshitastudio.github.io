@@ -38,9 +38,21 @@ canvas{max-width:100%;max-height:calc(100vh - 170px);box-shadow:0 10px 40px rgba
 #info table{width:100%;border-collapse:collapse}#info td,#info th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:right}#info th{color:var(--sub);font-weight:400}#info td:first-child,#info th:first-child{text-align:left}
 #info .w{color:var(--warn)}#info tr.ng td{color:#ff6b5e}#info td.why{text-align:left;color:#ff6b5e;font-size:11px}
 #probox.ng{background:#3a1d1a;border:1px solid #e0453a;color:#ffd9d4}#probox.ok{background:#1d2a1f;border:1px solid #5fae6a;color:#d4f0d8}
-#probox b{color:#fff}#info .sel td{color:var(--tx)}
+#probox b{color:#fff}
+#probox .ph{display:flex;align-items:center;gap:10px;margin-bottom:4px}#probox .ph button{flex:none;padding:5px 12px;background:#e0453a;border-color:#e0453a;color:#fff;font-weight:700}
+#probox .pi{display:flex;align-items:center;gap:8px;padding:3px 0;border-top:1px solid rgba(255,255,255,.08);cursor:pointer}#probox .pi span{flex:1}
+#probox .pi button{flex:none;padding:3px 10px;font-size:11px;background:transparent;border-color:#e0453a;color:#ffd9d4}
+label.fixme{position:relative;outline:2px solid #e0453a;outline-offset:3px;border-radius:3px;background:rgba(224,69,58,.12)}
+label.fixme::before{content:'ここ';position:absolute;left:-8px;top:-11px;background:#e0453a;color:#fff;font-size:9px;line-height:1.5;padding:0 5px;border-radius:3px;z-index:1}
+label.flash{animation:fl .9s 2}@keyframes fl{50%{background:rgba(224,69,58,.45)}}
+.chips button.bad{box-shadow:inset 0 -3px 0 #e0453a}#info .sel td{color:var(--tx)}
 #msg{font-size:11px;color:var(--sub);min-height:1.6em;margin:6px 0 0}
-@media(max-width:760px){body{flex-direction:column;height:auto;overflow:auto}#panel{width:auto;border-right:0;border-bottom:1px solid var(--line)}#stage{order:-1;position:sticky;top:0;z-index:2;background:var(--bg);padding:10px;border-bottom:1px solid var(--line)}canvas{max-height:34vh}#info{font-size:10px}}
+@media(max-width:760px){body{flex-direction:column;height:auto;overflow:auto}#panel{width:auto;border-right:0;border-bottom:1px solid var(--line)}#stage{order:-1;position:sticky;top:0;z-index:2;background:var(--bg);padding:10px;border-bottom:1px solid var(--line)}canvas{max-height:34vh}#info{font-size:10px}
+  /* 2026-11-07 スマホ：「会社ロゴとして見る」で赤い一覧と表が増えると、上に貼り付いた紙の欄が画面をふさいでつまみに届かなかった
+     → 紙の欄は画面の半分まで・中でスクロール。表の「プロの目」の列は赤い一覧と同じ中身なので隠す */
+  #stage{max-height:52vh;overflow-y:auto;justify-content:flex-start}
+  #probox{font-size:11px;padding:8px 10px}
+  #info .why{display:none}}
 /* no-auto-zoom-2026-08-22：iOS は文字を打つ欄が16px未満だと勝手に寄る＝スマホの時だけ16pxにする（PCは変えない）。ボタンの二度押しズームも止める */
 @media (max-width:760px), (pointer:coarse) and (max-width:1024px){
   input:not([type=range]):not([type=color]):not([type=checkbox]):not([type=radio]):not([type=file]):not([type=button]), select{ font-size:16px !important; }
@@ -203,23 +215,51 @@ function layout(){
    5 字の間：0 未満＝字がぶつかる
    6 横倒しの語：太さが字の高さの 18% 未満＝16px で潰れる */
 const ROUND=/[OSCGQUJ0-9ＯＳＣＧＱ]/;
+function stemRatios(lay){
+  // ⚠️ 字どうしの線の太さを直接比べない（K など斜めの字は付け根まで測れて元から太く出る）。
+  //    「その字の本来の太さからの比」（大きさの差も含む）を全体の中央値と比べる
+  const st=lay.items.map(t=>t.r.fix&&t.r.stemNow&&t.r.want?(t.r.stemNow*t.sc)/(t.r.want*t.sc/t.p.s*100):null);
+  const ms=st.filter(x=>x).sort((a,b)=>a-b);return {st,med:ms.length?ms[ms.length>>1]:0,n:ms.length};
+}
+function stemDev(lay,i){const {st,med,n}=stemRatios(lay);return st[i]&&med&&n>1?st[i]/med-1:null}
+/* ずれ1つ＝{msg, ctl（直す所のつまみの id）, fix（直す手順）} */
 function proCheck(lay){
   const per=lay.items.map(()=>[]), all=[];
-  // ⚠️ 字どうしの線の太さを直接比べない（K など斜めの字は付け根まで測れて元から太く出る）。
-  //    「その字の本来の太さ（want）からの比」を全体の中央値と比べる＝デザインどおりの釣り合いからのずれだけを拾う
-  const st=lay.items.map(t=>t.r.fix&&t.r.stemNow&&t.r.want?(t.r.stemNow*t.sc)/(t.r.want*t.sc/t.p.s*100):null), ms=st.filter(x=>x).sort((a,b)=>a-b), med=ms.length?ms[ms.length>>1]:0;
   lay.items.forEach((t,i)=>{
-    if(st[i]&&med&&ms.length>1){const d=st[i]/med-1;if(Math.abs(d)>0.06)per[i].push(`縦の線が他より${d>0?'太い':'細い'}（${d>0?'+':''}${(d*100).toFixed(0)}%）＝${d<0&&AX.wght&&t.r.wt>=AX.wght.max-1?'太さが上限でこれ以上戻せない。幅を少し戻す':'「太さの補正」で合わせる'}`)}
-    if(t.r.sx>1.15||t.r.sx<0.87)per[i].push(`伸ばしが目立つ（${(t.r.sx*100).toFixed(0)}%）＝幅を戻すか作字で描き分ける`);
-    if(t.p.s!==100)per[i].push(`大きさ ${t.p.s}%＝上下の線がそろわない`);
-    if(t.p.y!==0&&!(ROUND.test(t.ch)&&Math.abs(t.p.y)<=3))per[i].push(`上下に ${t.p.y} ずれている`);
+    const d=stemDev(lay,i);
+    if(d!=null&&Math.abs(d)>0.06){const top=d<0&&AX.wght&&t.r.wt>=AX.wght.max-1;
+      per[i].push({msg:`縦の線が他より${d>0?'太い':'細い'}（${d>0?'+':''}${(d*100).toFixed(0)}%）＝${top?'太さが上限でこれ以上戻せない。幅を少し戻す':'「太さの補正」で合わせる'}`,ctl:top?'lw':'lt',fix:()=>fixStem(i)})}
+    if(t.r.sx>1.15||t.r.sx<0.87)per[i].push({msg:`伸ばしが目立つ（${(t.r.sx*100).toFixed(0)}%）＝幅を戻すか作字で描き分ける`,ctl:'lw',fix:()=>fixStretch(i)});
+    if(t.p.s!==100)per[i].push({msg:`大きさ ${t.p.s}%＝上下の線がそろわない`,ctl:'ls',fix:()=>{L[i].s=100}});
+    if(t.p.y!==0&&!(ROUND.test(t.ch)&&Math.abs(t.p.y)<=3))per[i].push({msg:`上下に ${t.p.y} ずれている`,ctl:'ly',fix:()=>{L[i].y=0}});
   });
-  if($('fix').value!=='1')all.push('「線をそろえる：しない」＝伸ばしただけの字。仕上げは「する」に');
-  if(v('gap')<0)all.push(`字の間が ${v('gap')}＝字がぶつかっている`);
-  if(lay.side&&lay.side.thick<lay.maxH*0.18)all.push('横倒しの語が細すぎる＝16px で潰れる（語を短くするか外す）');
-  if(!ms.length||ms.length<2)all.push('縦の線を測れる字が2つ未満＝太さは目で確かめる');
-  return {per,all,count:per.reduce((a,b)=>a+b.length,0)+all.filter(x=>!x.startsWith('縦の線を測れる')).length};
+  if($('fix').value!=='1')all.push({msg:'「線をそろえる：しない」＝伸ばしただけの字。仕上げは「する」に',ctl:'fix',fix:()=>{$('fix').value='1'}});
+  if(v('gap')<0)all.push({msg:`字の間が ${v('gap')}＝字がぶつかっている`,ctl:'gap',fix:()=>{$('gap').value=0}});
+  if(lay.side&&lay.side.thick<lay.maxH*0.18)all.push({msg:'横倒しの語が細すぎる＝16px で潰れる（語を短くするか外す）',ctl:'side',fix:()=>{$('side').value=''}});
+  const note=(lay.items.filter(t=>t.r.fix&&t.r.stemNow).length<2)?'縦の線を測れる字が2つ未満＝太さは目で確かめる':'';
+  return {per,all,note,count:per.reduce((a,b)=>a+b.length,0)+all.length};
 }
+/* 直す手順：探して、ずれが消える所で止める（つまみを大きく動かしすぎない） */
+function fixStem(i){
+  const p=L[i]; let best=null;
+  for(let t=-200;t<=200;t+=10){p.t=t;const d=stemDev(layout(),i);if(d==null)break;const sc=Math.abs(d)+Math.abs(t)/4000;if(!best||sc<best.sc)best={sc,t}}
+  p.t=best?best.t:0;
+  let d=stemDev(layout(),i),g=0;
+  while(d!=null&&Math.abs(d)>0.06&&p.w!==100&&g++<40){p.w+=p.w>100?-5:5;if(Math.abs(p.w-100)<5)p.w=100;d=stemDev(layout(),i)}
+}
+function fixStretch(i){
+  const p=L[i];let g=0;
+  while(g++<60){const sx=layout().items[i].r.sx;if(sx<=1.15&&sx>=0.87)break;if(p.w===100)break;p.w+=p.w>100?-5:5;if(Math.abs(p.w-100)<5)p.w=100}
+}
+function applyFix(list){list.forEach(x=>x.fix());pick(SEL)}
+function fixAll(){for(let k=0;k<3;k++){const P=proCheck(layout());if(!P.count)break;P.all.forEach(x=>x.fix());P.per.forEach(a=>a.forEach(x=>x.fix()))}pick(SEL);msg('全部改善した（つまみの値は表と左のつまみで確かめる）')}
+/* 直す所のつまみに印：選んでいる字のずれ＋全体のずれ */
+function markControls(P){
+  document.querySelectorAll('label.fixme').forEach(e=>e.classList.remove('fixme'));
+  if(!P)return; const ids=new Set(P.all.map(x=>x.ctl)); (P.per[SEL]||[]).forEach(x=>ids.add(x.ctl));
+  ids.forEach(id=>{const e=$(id);if(e&&e.closest('label'))e.closest('label').classList.add('fixme')});
+}
+function goFix(i,ctl){if(i>=0&&i!==SEL)pick(i);setTimeout(()=>{const e=$(ctl);const l=e&&e.closest('label');if(!l)return;l.scrollIntoView({behavior:'smooth',block:'center'});l.classList.remove('flash');void l.offsetWidth;l.classList.add('flash')},60)}
 function sideLayout(maxH){
   const cs=[...$('side').value].filter(c=>c!==' '); if(!cs.length||!FONT)return null;
   const wt=v('wght'), wd=AX.wdth?AX.wdth.min:100, cap=(FONT.capHeight||700), sp=cap*0.06;
@@ -250,19 +290,22 @@ function render(){cancelAnimationFrame(raf);raf=requestAnimationFrame(()=>{
     ctx.fillStyle='#fff';ctx.font='bold 28px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('!',cx,cy+1)})}
   const s=lay.items[SEL]; if(s){ctx.setTransform(q,0,0,q,0,0);ctx.strokeStyle='#3aa0ff';ctx.lineWidth=2/q*(devicePixelRatio||1);ctx.setLineDash([8,6]);ctx.strokeRect(s.x-6,s.yTop-6,s.w+12,s.h+12);ctx.setLineDash([])}
   // 表
-  let h='<table><tr><th>字</th><th>幅</th><th>大きさ</th><th>幅の軸</th><th>伸ばし</th><th>太さの軸</th><th>縦の線（目標→いま）</th>'+(PRO?'<th style="text-align:left">プロの目</th>':'')+'</tr>';
+  let h='<table><tr><th>字</th><th>幅</th><th>大きさ</th><th>幅の軸</th><th>伸ばし</th><th>太さの軸</th><th>縦の線（目標→いま）</th>'+(PRO?'<th class="why" style="text-align:left">プロの目</th>':'')+'</tr>';
   lay.items.forEach((t,i)=>{const r=t.r,ext=Math.abs(r.sx-1)>.15;
-    const ng=PRO&&PRO.per[i].length;h+=`<tr class="${i===SEL?'sel':''}${ng?' ng':''}"><td><b>${t.ch}</b></td><td>${t.p.w}%</td><td>${t.p.s}%</td><td>${AX.wdth?r.wd.toFixed(0):'—'}</td><td class="${ext?'w':''}">${(r.sx*100).toFixed(0)}%</td><td>${AX.wght?r.wt.toFixed(0):'—'}</td><td>${r.fix?`${(r.want*t.sc).toFixed(1)} → ${(r.stemNow*t.sc).toFixed(1)}`:'（測らない字）'}</td>${PRO?`<td class="why">${ng?'⚠ '+PRO.per[i].join('／'):'<span style="color:#5fae6a">✓</span>'}</td>`:''}</tr>`});
+    const ng=PRO&&PRO.per[i].length;h+=`<tr class="${i===SEL?'sel':''}${ng?' ng':''}"><td><b>${t.ch}</b></td><td>${t.p.w}%</td><td>${t.p.s}%</td><td>${AX.wdth?r.wd.toFixed(0):'—'}</td><td class="${ext?'w':''}">${(r.sx*100).toFixed(0)}%</td><td>${AX.wght?r.wt.toFixed(0):'—'}</td><td>${r.fix?`${(r.want*t.sc).toFixed(1)} → ${(r.stemNow*t.sc).toFixed(1)}`:'（測らない字）'}</td>${PRO?`<td class="why">${ng?'⚠ '+PRO.per[i].map(x=>x.msg).join('／'):'<span style="color:#5fae6a">✓</span>'}</td>`:''}</tr>`});
   $('info').innerHTML=h+'</table>';
-  const pb2=$('probox');if(PRO){const L2=[];lay.items.forEach((t,i)=>PRO.per[i].forEach(m=>L2.push(`<b>${t.ch}</b>：${m}`)));PRO.all.forEach(m=>L2.push(m));
-    const bad=PRO.count>0;pb2.className=bad?'ng':'ok';pb2.style.display='block';
-    pb2.innerHTML=bad?`⚠ <b>会社ロゴとしてずれ ${PRO.count} か所</b><br>`+L2.map(x=>'・'+x).join('<br>'):`✓ <b>会社ロゴとして、目立つずれは見つからない</b>${L2.length?'<br>'+L2.map(x=>'・'+x).join('<br>'):''}<br><span style="opacity:.75">最後は黒ベタの試験で 16px まで縮めて、目でも確かめる</span>`}
+  const pb2=$('probox');markControls(PRO);
+  if(PRO){const rows=[];lay.items.forEach((t,i)=>PRO.per[i].forEach((x,j)=>rows.push({i,k:'p',j,html:`<b>${t.ch}</b>：${x.msg}`,ctl:x.ctl})));PRO.all.forEach((x,j)=>rows.push({i:-1,k:'a',j,html:x.msg,ctl:x.ctl}));
+    const bad=PRO.count>0;pb2.className=bad?'ng':'ok';pb2.style.display='block';pb2.__rows=rows;
+    pb2.innerHTML=bad?`<div class="ph"><span style="flex:1">⚠ <b>会社ロゴとしてずれ ${PRO.count} か所</b>　<span style="opacity:.7">行を押すと直す所へ</span></span><button data-all="1">全部改善</button></div>`
+      +rows.map((r,n)=>`<div class="pi" data-n="${n}"><span>・${r.html}</span><button data-fix="${n}">改善</button></div>`).join('')+(PRO.note?`<div style="opacity:.7;margin-top:4px">${PRO.note}</div>`:'')
+      :`✓ <b>会社ロゴとして、目立つずれは見つからない</b>${PRO.note?'<br>'+PRO.note:''}<br><span style="opacity:.75">最後は黒ベタの試験で 16px まで縮めて、目でも確かめる</span>`}
   else pb2.style.display='none';
   if($('btestbox').style.display==='block')blackTest();   // 試験を開いたままなら一緒に描き直す
   ['wght','gap','uop','lw','ls','lt','ly','rw0','rw1'].forEach(k=>{const e=$(k).parentElement.querySelector('.v');if(e)e.textContent=$(k).value});
   chipsRender();
 })}
-function chipsRender(){const cs=chars(),c=$('chips');c.innerHTML='';cs.forEach((ch,i)=>{const b=document.createElement('button');b.textContent=ch;if(i===SEL)b.className='on';b.onclick=()=>pick(i);c.appendChild(b)})}
+function chipsRender(){const cs=chars(),c=$('chips'),P=LAST&&LAST.pro;c.innerHTML='';cs.forEach((ch,i)=>{const b=document.createElement('button');b.textContent=ch;if(i===SEL)b.className='on';if(P&&P.per[i]&&P.per[i].length)b.classList.add('bad');b.onclick=()=>pick(i);c.appendChild(b)})}
 function pick(i){SEL=i;const p=L[i];$('lw').value=p.w;$('ls').value=p.s;$('lt').value=p.t;$('ly').value=p.y;render()}
 cv.addEventListener('click',e=>{if(!LAST)return;const r=cv.getBoundingClientRect(),x=(e.clientX-r.left)/r.width*LAST.W;
   const i=LAST.items.findIndex(t=>x>=t.x-4&&x<=t.x+t.w+4);if(i>=0)pick(i)});
@@ -272,6 +315,10 @@ $('allreset').onclick=()=>{L=L.map(()=>({w:100,s:100,t:0,y:0}));pick(SEL)};
 $('rule').onclick=()=>{ensureL();const n=L.length;L.forEach((p,i)=>p.w=Math.round(v('rw0')+(v('rw1')-v('rw0'))*(n>1?i/(n-1):0)));pick(SEL)};
 ['wght','gap','align','fix','ink','paper','uop','rw0','rw1'].forEach(k=>$(k).oninput=render);
 $('pro').onchange=render;
+$('probox').addEventListener('click',e=>{const box=$('probox'),rows=box.__rows||[];
+  if(e.target.dataset.all){fixAll();return}
+  if(e.target.dataset.fix!=null){const r=rows[+e.target.dataset.fix];if(!r)return;const P=proCheck(layout());const x=r.k==='p'?(P.per[r.i]||[])[r.j]:P.all[r.j];if(x){x.fix();if(r.i>=0)SEL=r.i;pick(SEL);msg('改善した：'+x.msg.split('＝')[0])}return}
+  const pi=e.target.closest('.pi');if(pi){const r=rows[+pi.dataset.n];if(r)goFix(r.i,r.ctl)}});
 $('txt').oninput=()=>{ensureL();render()};
 $('side').oninput=render;$('sidePos').oninput=render;
 // 黒ベタの試験：字の色・地・下敷きを無視して、黒1色を白地に 48・24・16px で見る（もう一度押すと閉じる）
