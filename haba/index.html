@@ -86,6 +86,8 @@ canvas#cv{touch-action:manipulation}
     <label>大きさ<input type="range" id="ls" min="40" max="180" value="100"><span class="v"></span></label>
     <label>太さの補正<input type="range" id="lt" min="-200" max="200" value="0"><span class="v"></span></label>
     <label>上下<input type="range" id="ly" min="-60" max="60" value="0"><span class="v"></span></label>
+    <label>右の字間<input type="range" id="lk" min="-80" max="160" value="0"><span class="v"></span></label>
+    <label style="grid-template-columns:22px 1fr;cursor:pointer"><input type="checkbox" id="lkeep" style="width:16px;height:16px;accent-color:#3aa0ff"><span>右の空白は狙い（見た目の字間のずれと見なさない）</span></label>
     <div class="row" style="margin-top:2px"><button id="lreset">この字を戻す</button><button id="allreset">全部の字を戻す</button></div>
   </div>
   <div class="grp"><div class="t">決まりで並べる（幅を順に変える）</div>
@@ -187,7 +189,7 @@ function solve(ch,mult,wBase,tweak){
 }
 // ── 組む
 function chars(){return [...$('txt').value].filter(c=>c!==' ')}
-function ensureL(){const cs=chars();while(L.length<cs.length)L.push({w:100,s:100,t:0,y:0});L.length=cs.length;if(SEL>=cs.length)SEL=Math.max(0,cs.length-1)}
+function ensureL(){const cs=chars();while(L.length<cs.length)L.push({w:100,s:100,t:0,y:0,k:0,keep:false});L.length=cs.length;if(SEL>=cs.length)SEL=Math.max(0,cs.length-1)}
 function layout(){
   ensureL(); const cs=chars(); if(!FONT||!cs.length)return null;
   const wBase=v('wght'), cap=(FONT.capHeight||700), PX=400/cap, items=[];
@@ -199,7 +201,7 @@ function layout(){
   // 横倒しの語：字の高さ maxH ぴったりの長さにして、四角の欠けを閉じる。いちばん狭い幅・同じ太さ
   const side=sideLayout(maxH), sidePos=$('sidePos').value;
   let x=M; if(side&&sidePos==='left'){side.x=M;x=M+side.thick+gap}
-  for(const t of items){t.x=x;x+=t.w+gap}
+  for(const t of items){t.x=x;x+=t.w+gap+(t.p.k||0)}
   if(side&&sidePos==='right'){side.x=x;x+=side.thick+gap}
   const W=Math.ceil(x-gap+M), H=Math.ceil(maxH+2*M+120);
   if(side)side.place(M,maxH);
@@ -218,6 +220,29 @@ function layout(){
    5 字の間：0 未満＝字がぶつかる
    6 横倒しの語：太さが字の高さの 18% 未満＝16px で潰れる */
 const ROUND=/[OSCGQUJ0-9ＯＳＣＧＱ]/;
+/* ── 見た目の字間（2026-11-07 木下「W と A の間が空いていてもエラーにならない」）
+   四角と四角の間を同じにしても、斜めの字（W・A・V・T・L）は白い面積が大きく見える＝プロが真っ先に詰める所。
+   隣り合う2字を1行ずつ見て、右の字の左の縁 − 左の字の右の縁 を測る。深いくぼみ（A の脚の間の外側など）を
+   奥まで数えると広く出すぎるので、いちばん近い所＋字の高さの 22% で打ち切る（字間の自動調整でよく使う考え方）。
+   戻り＝字の間ごとの平均の白（組みの px）。 */
+const OC=document.createElement('canvas'),og=OC.getContext('2d',{willReadFrequently:true});
+function opticalGaps(lay){
+  const n=lay.items.length;if(n<2)return [];
+  const q=Math.min(1,700/lay.W),W=Math.ceil(lay.W*q),H=Math.ceil(lay.H*q);OC.width=W;OC.height=H;
+  const prof=lay.items.map(t=>{og.setTransform(1,0,0,1,0,0);og.clearRect(0,0,W,H);og.setTransform(q,0,0,q,0,0);og.fillStyle='#000';og.fill(toPath(t.r.g.cmds,t.T),'nonzero');
+    const x0=Math.max(0,Math.floor((t.x-4)*q)),x1=Math.min(W,Math.ceil((t.x+t.w+4)*q)),y0=Math.max(0,Math.floor(t.yTop*q)),y1=Math.min(H,Math.ceil((t.yTop+t.h)*q));
+    const d=og.getImageData(x0,0,Math.max(1,x1-x0),H).data,w=Math.max(1,x1-x0),Lf=new Array(H).fill(null),R=new Array(H).fill(null);
+    for(let y=y0;y<y1;y++){let a=-1,b=-1;for(let x=0;x<w;x++)if(d[(y*w+x)*4+3]>127){if(a<0)a=x;b=x}if(a>=0){Lf[y]=(x0+a)/q;R[y]=(x0+b)/q}}
+    return {Lf,R,y0,y1,t}});
+  const out=[];
+  for(let i=0;i<n-1;i++){const A=prof[i],B=prof[i+1],ya=Math.max(A.y0,B.y0),yb=Math.min(A.y1,B.y1),gs=[];
+    for(let y=ya;y<yb;y++){const r=A.R[y]??A.t.x,l=B.Lf[y]??(B.t.x+B.t.w);gs.push(l-r)}
+    if(!gs.length){out.push(null);continue}
+    const mn=Math.min(...gs),cap=mn+lay.maxH*0.22;out.push(gs.reduce((a,g)=>a+Math.min(g,cap),0)/gs.length)}
+  return out;
+}
+function gapDevs(lay){const g=opticalGaps(lay),use=g.filter((x,i)=>x!=null&&!lay.items[i].p.keep).sort((a,b)=>a-b),med=use.length?use[use.length>>1]:0;return {g,med}}
+function fixGap(i){for(let k=0;k<4;k++){const lay=layout(),{g,med}=gapDevs(lay);if(g[i]==null)return;const dlt=med-g[i];if(Math.abs(dlt)<0.5)return;L[i].k=Math.round((L[i].k||0)+dlt)}}
 function stemRatios(lay){
   // ⚠️ 字どうしの線の太さを直接比べない（K など斜めの字は付け根まで測れて元から太く出る）。
   //    「その字の本来の太さからの比」（大きさの差も含む）を全体の中央値と比べる
@@ -236,6 +261,10 @@ function proCheck(lay){
     if(t.p.s!==100)per[i].push({msg:`大きさ ${t.p.s}%＝上下の線がそろわない`,ctl:'ls',fix:()=>{L[i].s=100}});
     if(t.p.y!==0&&!(ROUND.test(t.ch)&&Math.abs(t.p.y)<=3))per[i].push({msg:`上下に ${t.p.y} ずれている`,ctl:'ly',fix:()=>{L[i].y=0}});
   });
+  // 見た目の字間：中央値から ±25% を超え、差が字の高さの 2% より大きい組（「狙い」の印がある組は見ない）
+  {const {g,med}=gapDevs(lay);lay.gapInfo={g,med};g.forEach((x,i)=>{if(x==null||!med)return;const t=lay.items[i],u=lay.items[i+1];
+    if(t.p.keep)return;const d=x/med-1;if(Math.abs(d)>0.25&&Math.abs(x-med)>lay.maxH*0.02)
+      per[i].push({msg:`${t.ch}${u.ch} の間が他より${d>0?'広い':'狭い'}（${d>0?'+':''}${(d*100).toFixed(0)}%）＝「右の字間」で合わせる（狙いの空白なら「狙い」に印）`,ctl:'lk',fix:()=>fixGap(i),gap:i})})}
   if($('fix').value!=='1')all.push({msg:'「線をそろえる：しない」＝伸ばしただけの字。仕上げは「する」に',ctl:'fix',fix:()=>{$('fix').value='1'}});
   if(v('gap')<0)all.push({msg:`字の間が ${v('gap')}＝字がぶつかっている`,ctl:'gap',fix:()=>{$('gap').value=0}});
   if(lay.side&&lay.side.thick<lay.maxH*0.18)all.push({msg:'横倒しの語が細すぎる＝16px で潰れる（語を短くするか外す）',ctl:'side',fix:()=>{$('side').value=''}});
@@ -287,10 +316,13 @@ function render(){cancelAnimationFrame(raf);raf=requestAnimationFrame(()=>{
   cv.width=Math.round(lay.W*q);cv.height=Math.round(lay.H*q);cv.style.width=Math.min(mw,lay.W)+'px';
   draw(ctx,lay,q,$('paper').value,true);
   const PRO=$('pro').checked?proCheck(lay):null; lay.pro=PRO;
-  if(PRO){ctx.setTransform(q,0,0,q,0,0);lay.items.forEach((t,i)=>{if(!PRO.per[i].length)return;
+  if(PRO){ctx.setTransform(q,0,0,q,0,0);lay.items.forEach((t,i)=>{if(!PRO.per[i].filter(x=>x.gap==null).length)return;
     ctx.strokeStyle='#e0453a';ctx.lineWidth=3;ctx.setLineDash([]);ctx.strokeRect(t.x-4,t.yTop-4,t.w+8,t.h+8);
     const cx=t.x+t.w/2,cy=t.yTop-30;ctx.fillStyle='#e0453a';ctx.beginPath();ctx.arc(cx,cy,20,0,7);ctx.fill();
     ctx.fillStyle='#fff';ctx.font='bold 28px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('!',cx,cy+1)})}
+  if(PRO){ctx.setTransform(q,0,0,q,0,0);lay.items.forEach((t,i)=>{const u=lay.items[i+1];if(!u)return;const x1=t.x+t.w,x2=u.x,y=Math.min(t.yTop,u.yTop),hh=lay.maxH;
+    if(t.p.keep){ctx.fillStyle='rgba(58,160,255,.18)';ctx.fillRect(x1,y,Math.max(2,x2-x1),hh);ctx.fillStyle='#3aa0ff';ctx.font='bold 18px sans-serif';ctx.textAlign='center';ctx.textBaseline='top';ctx.fillText('狙い',(x1+x2)/2,y+hh+6);return}
+    if(PRO.per[i].some(x=>x.gap===i)){ctx.fillStyle='rgba(224,69,58,.22)';ctx.fillRect(x1-6,y,Math.max(2,x2-x1)+12,hh)}})}
   const s=lay.items[SEL]; if(s){ctx.setTransform(q,0,0,q,0,0);ctx.strokeStyle='#3aa0ff';ctx.lineWidth=2/q*(devicePixelRatio||1);ctx.setLineDash([8,6]);ctx.strokeRect(s.x-6,s.yTop-6,s.w+12,s.h+12);ctx.setLineDash([])}
   // 表
   let h='<table><tr><th>字</th><th>幅</th><th>大きさ</th><th>幅の軸</th><th>伸ばし</th><th>太さの軸</th><th>縦の線（目標→いま）</th>'+(PRO?'<th class="why" style="text-align:left">プロの目</th>':'')+'</tr>';
@@ -305,16 +337,17 @@ function render(){cancelAnimationFrame(raf);raf=requestAnimationFrame(()=>{
       :`✓ <b>会社ロゴとして、目立つずれは見つからない</b>${PRO.note?'<br>'+PRO.note:''}<br><span style="opacity:.75">最後は黒ベタの試験で 16px まで縮めて、目でも確かめる</span>`}
   else pb2.style.display='none';
   if($('btestbox').style.display==='block')blackTest();   // 試験を開いたままなら一緒に描き直す
-  ['wght','gap','uop','lw','ls','lt','ly','rw0','rw1'].forEach(k=>{const e=$(k).parentElement.querySelector('.v');if(e)e.textContent=$(k).value});
+  ['wght','gap','uop','lw','ls','lt','ly','lk','rw0','rw1'].forEach(k=>{const e=$(k).parentElement.querySelector('.v');if(e)e.textContent=$(k).value});
   chipsRender();
 })}
 function chipsRender(){const cs=chars(),c=$('chips'),P=LAST&&LAST.pro;c.innerHTML='';cs.forEach((ch,i)=>{const b=document.createElement('button');b.textContent=ch;if(i===SEL)b.className='on';if(P&&P.per[i]&&P.per[i].length)b.classList.add('bad');b.onclick=()=>pick(i);c.appendChild(b)})}
-function pick(i){SEL=i;const p=L[i];$('lw').value=p.w;$('ls').value=p.s;$('lt').value=p.t;$('ly').value=p.y;render()}
+function pick(i){SEL=i;const p=L[i];$('lw').value=p.w;$('ls').value=p.s;$('lt').value=p.t;$('ly').value=p.y;$('lk').value=p.k||0;$('lkeep').checked=!!p.keep;render()}
 cv.addEventListener('click',e=>{if(!LAST)return;const r=cv.getBoundingClientRect(),x=(e.clientX-r.left)/r.width*LAST.W;
   const i=LAST.items.findIndex(t=>x>=t.x-4&&x<=t.x+t.w+4);if(i>=0)pick(i)});
-[['lw','w'],['ls','s'],['lt','t'],['ly','y']].forEach(([id,k])=>$(id).oninput=()=>{ensureL();L[SEL][k]=v(id);render()});
-$('lreset').onclick=()=>{L[SEL]={w:100,s:100,t:0,y:0};pick(SEL)};
-$('allreset').onclick=()=>{L=L.map(()=>({w:100,s:100,t:0,y:0}));pick(SEL)};
+[['lw','w'],['ls','s'],['lt','t'],['ly','y'],['lk','k']].forEach(([id,k])=>$(id).oninput=()=>{ensureL();L[SEL][k]=v(id);render()});
+$('lkeep').onchange=()=>{ensureL();L[SEL].keep=$('lkeep').checked;render()};
+$('lreset').onclick=()=>{L[SEL]={w:100,s:100,t:0,y:0,k:0,keep:false};pick(SEL)};
+$('allreset').onclick=()=>{L=L.map(()=>({w:100,s:100,t:0,y:0,k:0,keep:false}));pick(SEL)};
 $('rule').onclick=()=>{ensureL();const n=L.length;L.forEach((p,i)=>p.w=Math.round(v('rw0')+(v('rw1')-v('rw0'))*(n>1?i/(n-1):0)));pick(SEL)};
 ['wght','gap','align','fix','ink','paper','uop','rw0','rw1'].forEach(k=>$(k).oninput=render);
 $('pro').onchange=render;
@@ -340,13 +373,13 @@ const PRESETS=[
 ];
 const pb=$('presets');PRESETS.forEach((p,i)=>{const b=document.createElement('button');b.textContent=p.name;b.onclick=()=>{
   pb.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
-  $('txt').value=p.txt;$('gap').value=p.gap;$('side').value=p.side||'';L=p.w.map((w,j)=>({w,s:p.s[j]||100,t:0,y:0}));pick(0)};pb.appendChild(b)});
+  $('txt').value=p.txt;$('gap').value=p.gap;$('side').value=p.side||'';L=p.w.map((w,j)=>({w,s:p.s[j]||100,t:0,y:0,k:0,keep:false}));pick(0)};pb.appendChild(b)});
 // ── 書体を読む
 $('font').onchange=()=>{if($('font').value==='file')$('fontfile').click();else fetch('Archivo-VF.ttf').then(r=>r.arrayBuffer()).then(b=>loadFont(b,'Archivo'))};
 $('fontfile').onchange=e=>{const f=e.target.files[0];if(!f){$('font').value='archivo';return}f.arrayBuffer().then(b=>loadFont(b,f.name.replace(/\.\w+$/,''))).catch(()=>alert('この書体は読めませんでした'));e.target.value=''};
 // ── 書き出し
 function settings(){return{tool:'haba',v:1,txt:$('txt').value,side:$('side').value,sidePos:$('sidePos').value,pro:$('pro').checked,font:FONTNAME,wght:v('wght'),gap:v('gap'),align:$('align').value,fix:$('fix').value,ink:$('ink').value,paper:$('paper').value,L}}
-function apply(s){if(s.pro!=null)$('pro').checked=!!s.pro;['txt','side','sidePos','wght','gap','align','fix','ink','paper'].forEach(k=>{if(s[k]!=null)$(k).value=s[k]});L=(s.L||[]).map(p=>({w:p.w??100,s:p.s??100,t:p.t??0,y:p.y??0}));pick(0)}
+function apply(s){if(s.pro!=null)$('pro').checked=!!s.pro;['txt','side','sidePos','wght','gap','align','fix','ink','paper'].forEach(k=>{if(s[k]!=null)$(k).value=s[k]});L=(s.L||[]).map(p=>({w:p.w??100,s:p.s??100,t:p.t??0,y:p.y??0,k:p.k??0,keep:!!p.keep}));pick(0)}
 function stamp(){const d=new Date(),p=n=>String(n).padStart(2,'0');return`${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`}
 const fname=ext=>`haba_${$('txt').value.replace(/[\\/:*?"<>|\s]/g,'').slice(0,20)}_${stamp()}.${ext}`;
 function save(blob,name){const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(u);a.remove()},8000)}
