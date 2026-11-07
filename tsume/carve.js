@@ -5,7 +5,7 @@
    ③ 向かい合う側の半分の太さを 27→3（線の太さ 54 のとき）まで細くし、離れるにつれて戻す＝合わさる所の太さが 1.45 倍を超えない
    ④ 角はとがらせる（マイター）。まっすぐな所は直線2点、点の少ない所はならさない（ならすと暴れる）
    ⑤ 線の中に隠れた字の部分は切る（線より上へ出る字は切らない）
-   使い方： tsumeCarve(svg文字列, {hmin, d0, d1}) → { sep: 字ごとの面の SVG, one: 1枚に合わせた SVG, report } */
+   使い方： tsumeCarve(svg文字列, {hmin, d0, d1, keepTop: ['e','a']（字の名前）か true（丸の上が線に接するだけの所）＝削らない, fillHoles: 面積＝それより小さい穴を埋める}) → { sep: 字ごとの面の SVG, one: 1枚に合わせた SVG, report } */
 window.tsumeCarve = function (svg, opt) {
   const { Path, Point, CompoundPath, Group } = paper;
   const doc = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement;
@@ -38,6 +38,7 @@ window.tsumeCarve = function (svg, opt) {
       const smp = { pt, nr, hA: P.h, hB: P.h, near: [] };
       pieces.forEach((Q, qi) => {
         if (qi === pi || P.rigid) return;
+        if ((opt.keepTop || []).includes && (opt.keepTop || []).includes(P.name) && /線|line/i.test(Q.name || '')) return;   // 線に付く所を削らない字（くびれを作らない）
         const loc = Q.q.getNearestLocation(pt); if (!loc) return; const d = loc.point.getDistance(pt); if (d > D1) return;
         const tq = Q.q.getTangentAt(loc.offset).normalize(); const wa = sm(C0, C1, Math.abs(t.cross(tq))); if (wa <= 0) return;   // 平行に寄る所ほど強く（直角のT字は触らない）
         const v = loc.point.subtract(pt); let side = 0;
@@ -48,6 +49,9 @@ window.tsumeCarve = function (svg, opt) {
     }
     // 相手は「どこかで平行に重なって合わさる」線だけ（T字・十字・直角の角は触らない）
     const merge = new Set(); P.s.forEach(x => x.near.forEach(nb => { if (nb.d < 6 && nb.par < 0.2) merge.add(nb.qi) }));
+    // keepTop:true＝丸の上が線に「接する」だけの所は削らない（線の中へ入っていく r の肩・s の始まりは削る）
+    if (opt.keepTop === true) [...merge].forEach(qi => { if (!/線|line/i.test(pieces[qi].name || '')) return; const idx = []; P.s.forEach((x, i) => { if (x.near.some(nb => nb.qi === qi && nb.d < 6)) idx.push(i) });
+      const N = P.s.length, nearEnd = idx.some(i => i < 25 || i > N - 26); if (P.ring || !nearEnd) merge.delete(qi) });
     P.s.forEach(x => { x.near = x.near.filter(nb => merge.has(nb.qi)) });
     // d<1 の所は、同じ相手の近くの点から向きを借りる
     P.s.forEach((smp, i) => smp.near.forEach(nb => { if (nb.side) return; for (let k = 1; k < 60; k++) { for (const j of [i - k, i + k]) { const o = P.s[j]; if (!o) continue; const m = o.near.find(x => x.qi === nb.qi && x.side); if (m) { nb.side = m.side; return } } } }));
@@ -114,6 +118,17 @@ window.tsumeCarve = function (svg, opt) {
   const fmt = (it, id) => { const s = smooth(it); const d = (s.pathData || '').replace(/-?\d+\.\d+/g, m => (+(+m).toFixed(2)).toString()); return `<path id="${id}" d="${d}" fill="#111"/>` };
   const attrs = `data-xh="${doc.getAttribute('data-xh')}" data-base="${doc.getAttribute('data-base')}"`;
   const vb = doc.getAttribute('viewBox');
+  // 小さな穴（白い粒・細い切り込み）を埋める：全部を合わせた形で穴を探し、いちばん重なる字に足す（字ごとの面にも反映）
+  if (opt.fillHoles) {
+    let u0 = null; names.forEach(nm => { u0 = u0 ? u0.unite(raw[nm], { insert: false }) : raw[nm].clone({ insert: false }) });
+    const kids = u0 instanceof CompoundPath ? u0.children.slice() : [];
+    kids.filter(k => Math.abs(k.area) < opt.fillHoles && kids.some(o => o !== k && o.bounds.contains(k.bounds))).forEach(k => {
+      const hole = new Path({ segments: k.segments.map(g => g.clone()), closed: true, insert: false });
+      const grow = hole.bounds.expand(4); let best = null, bs = -1;
+      names.forEach(nm => { if (nm === LN) return; const it = raw[nm].bounds.intersect(grow); const a = it.width > 0 && it.height > 0 ? it.width * it.height : 0; if (a > bs) { bs = a; best = nm } });
+      if (best) raw[best] = raw[best].unite(hole, { insert: false });
+    });
+  }
   const sep = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" ${attrs}>` + names.map(nm => fmt(raw[nm], nm)).join('') + '</svg>';
   let all = null; names.forEach(nm => { all = all ? all.unite(raw[nm], { insert: false }) : raw[nm].clone({ insert: false }) });
   const one = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">` + fmt(all, 'word') + '</svg>';
