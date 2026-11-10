@@ -1450,7 +1450,7 @@
     .hero-coords{font-family:'Space Mono',monospace;font-size:.46rem;letter-spacing:.22em;color:var(--ink-faint);opacity:0;animation:fadeUp 1.2s ease forwards 1.2s;margin-top:1rem;display:block}
 
     /* scroll progress bar */
-    #scroll-progress{position:fixed;top:0;left:0;height:2px;width:0%;background:var(--gold);z-index:10000;pointer-events:none;transition:width .05s linear;}
+    #scroll-progress{position:fixed;top:0;left:0;height:2px;width:100%;transform:scaleX(0);transform-origin:0 0;background:var(--gold);z-index:10000;pointer-events:none;}
 
 
 /* mobile tap highlight off + active feedback */
@@ -2723,6 +2723,8 @@
         dot.style.left=mx+'px'; dot.style.top=my+'px';
       });
       function lerp(a,b,t){return a+(b-a)*t;}
+      // 指で触る端末ではカーソルの輪を毎フレーム動かさない（2026-11-10）
+      if(window.matchMedia('(pointer:coarse)').matches) return;
       let curRafId;
       function tick(){
         if((window._ksCursorGen||0)>_ksGen)return;
@@ -2747,7 +2749,7 @@
       let _scrollMax=0;
       function onScroll(){
         if(!_scrollMax) _scrollMax=document.documentElement.scrollHeight-window.innerHeight;
-        if(bar) bar.style.width=(_scrollMax>0?(window.scrollY/_scrollMax*100):0)+'%';
+        if(bar) bar.style.transform='scaleX('+(_scrollMax>0?Math.min(1,window.scrollY/_scrollMax):0).toFixed(4)+')';
       }
       window.addEventListener('scroll',onScroll,{passive:true});
       window.addEventListener('resize',()=>{_scrollMax=0;},{passive:true});
@@ -3060,8 +3062,11 @@ void main(){
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
         const aspect = image.naturalWidth / image.naturalHeight;
+        let _lastW = 0;
         function resize(){
           const w = canvas.parentElement.clientWidth;
+          // 🔴 iOS はスクロールでツールバーが出入りするたびに resize が来る。幅が同じなら作り直さない（2026-11-10 スマホのスクロールが震える）
+          if (w === _lastW) return; _lastW = w;
           const h = Math.round(w / aspect);
           canvas.width = w; canvas.height = h;
           canvas.style.height = h + 'px';
@@ -3089,9 +3094,19 @@ void main(){
           }
         }
         glRafId=requestAnimationFrame(tick);
+        // 画面の外にあるあいだは描かない（スクロール中の負担を減らす・2026-11-10）
+        let _glVisible = true;
+        if('IntersectionObserver' in window){
+          new IntersectionObserver(function(en){
+            const v = en[0].isIntersecting;
+            if(v === _glVisible) return; _glVisible = v;
+            cancelAnimationFrame(glRafId);
+            if(v && !document.hidden){ fpsS=0; fpsN=0; glRafId=requestAnimationFrame(tick); }
+          },{threshold:0}).observe(canvas);
+        }
         document.addEventListener('visibilitychange',()=>{
           if(document.hidden){cancelAnimationFrame(glRafId);}
-          else{glRafId=requestAnimationFrame(tick);}
+          else if(_glVisible){fpsS=0; fpsN=0; glRafId=requestAnimationFrame(tick);}
         });
       };
     })();
