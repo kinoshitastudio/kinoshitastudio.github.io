@@ -457,6 +457,9 @@
       <!-- ⭐ 2026-11-17 粒の色をそのまま指定（刷ったような色）。「色で」のときは 色・鮮やかさ・明るさ は効かない -->
       <div class="seg" data-seg="gringOn"><button data-v="0" class="on">色相で</button><button data-v="1">色で</button></div>
       <div class="row"><label>RING<i>粒の色</i></label><input type="color" data-p="gring" value="#2648c8"></div>
+      <!-- ⭐ 2026-11-17 字の周りを抜く（チェックで出す）。幅は粒の何個ぶんか -->
+      <div class="row"><label>HALO<i>字の周りを抜く</i></label><input type="checkbox" id="haloOn" style="width:20px;height:20px"></div>
+      <div class="row" id="hwRow" style="display:none"><label>WIDTH<i>抜く幅</i></label><input type="range" data-p="hw" min="0" max="100" step="1" value="30"><span class="val"></span></div>
       </div>
       <div class="row"><label>CTR X<i>中心よこ</i></label><input type="range" data-p="gcx" min="0" max="100" step="1" value="50"><span class="val"></span></div>
       <div class="row"><label>CTR Y<i>中心たて</i></label><input type="range" data-p="gcy" min="0" max="100" step="1" value="50"><span class="val"></span></div>
@@ -596,6 +599,8 @@ const P = {
   shine:60, valley:0, grad:50, band:100, steps:0, dith:100,
   /* ⭐ 2026-11-17 刷り＝字を2色の平らな版にする（光と陰影を切る）。抜き＝波の明るい所を何%から2色目にするか */
   print:0, pcut:72,
+  /* ⭐ 2026-11-17 抜き（字の周り）＝字の外側を地の紙色で太らせて、波紋を字の周りだけ消す。halo＝入切・hw＝幅 */
+  halo:0, hw:30,
   /* 地 */
   gwave:1, gmat:1, gshape:0, gfreq:24, gcell:34, gspeed:16, gswirl:30, gdepth:38, gedge:100, gringOn:0, gring:'#2648c8',
   ghue:212, gsat:80, gval:88, gcx:50, gcy:50, gbg:'#f4f2ee',
@@ -969,7 +974,28 @@ function grainMaterial(){
 }
 
 /* ══ 粒を積む ══════════════════════════════════════════════ */
-let mesh = null, LIVE = null;
+let mesh = null, LIVE = null, halo = null;
+/* ⭐ 2026-11-17 字の周りを抜く＝同じ粒を少し太らせて【地の紙色】で先に描く（波紋の上・字の下）。
+   ⚠️ 粒の位置は本体と同じ器（instanceMatrix）を共有＝回しても積んでもずれない */
+function haloMaterial(){
+  return new THREE.ShaderMaterial({
+    uniforms:{ uHalo:{value:1.8}, uCol:{value:new THREE.Color()} },
+    depthTest:false, depthWrite:false,
+    vertexShader:`
+      uniform float uHalo;
+      void main(){
+        vec3 p = position; p.xy *= (1.0 + uHalo);
+        #ifdef USE_INSTANCING
+          gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(p, 1.0);
+        #else
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+        #endif
+      }`,
+    fragmentShader:`
+      precision highp float; uniform vec3 uCol;
+      void main(){ gl_FragColor = vec4(uCol, 1.0); }`
+  });
+}
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
 const _pos = new THREE.Vector3(), _scl = new THREE.Vector3(), _col = new THREE.Color();
 
@@ -1011,6 +1037,7 @@ function traceDots(){
 }
 
 function build(){
+  if(halo){ group.remove(halo); halo.material.dispose(); halo = null; }   /* ⚠️ 形は本体と共有＝ここでは捨てない */
   if(mesh){ group.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); mesh = null; }
   const src = traceDots();
   if(!src) return;
@@ -1154,6 +1181,9 @@ function build(){
   mat.uniforms.uPrint.value  = (on && P.print) ? 1 : 0; mat.uniforms.uCut.value = P.pcut / 100;
   mesh.instanceMatrix.needsUpdate = true;
   group.add(mesh);
+  halo = new THREE.InstancedMesh(geo, haloMaterial(), live.length);
+  halo.instanceMatrix = mesh.instanceMatrix; halo.renderOrder = -1; halo.frustumCulled = false;
+  group.add(halo);
   /* ⭐ 粒の数が決まったので、そのぶんに見合う画素密度にする。
      ⚠️ 変わるのは【描く細かさ】だけ＝形も大きさも構図も変わらない。 */
   fitPixelRatio(live.length);
@@ -1283,6 +1313,11 @@ function drawOnce(){
   renderer.setClearAlpha(noBgOnce ? 0 : 1);
   renderer.clear();
   if(!noBgOnce) renderer.render(bgScene, bgCam);   // 地
+  if(halo){   /* 抜き＝毎回いまの値を当てる（色は地の紙色と同じ変換で＝境目が出ない） */
+    halo.visible = !!P.halo && !!ON.ground; halo.count = mesh ? mesh.count : 0;
+    halo.material.uniforms.uHalo.value = P.hw / 100 * 8;
+    if(halo._bg !== P.gbg){ halo.material.uniforms.uCol.value.set(P.gbg); halo._bg = P.gbg; }
+  }
   renderer.render(scene, camera);                  // 粒
 }
 function frame(t){
@@ -1435,6 +1470,7 @@ function syncUI(){
     if(ON[u.dataset.unit] !== undefined) u.classList.toggle('off', !ON[u.dataset.unit]);
   });
   syncSpin();
+  { const h = document.getElementById('haloOn'); if(h){ h.checked = !!P.halo; document.getElementById('hwRow').style.display = P.halo ? '' : 'none'; } }
 }
 function load(){
   try{
@@ -1672,6 +1708,11 @@ document.querySelectorAll('input[type=color][data-p]').forEach(c => {
     save(); });
 });
 
+document.getElementById('haloOn').addEventListener('change', e => {
+  P.halo = e.target.checked ? 1 : 0;
+  document.getElementById('hwRow').style.display = P.halo ? '' : 'none';
+  save();
+});
 document.getElementById('txt').addEventListener('input', rebuildSoon);
 document.getElementById('fnt').addEventListener('change', rebuildSoon);
 
