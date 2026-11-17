@@ -462,6 +462,7 @@
       <div id="hwRow" style="display:none">
         <div class="seg" data-seg="hcolOn"><button data-v="0" class="on">地の色で抜く</button><button data-v="1">色で抜く</button></div>
         <div class="row"><label>COLOR<i>抜きの色</i></label><input type="color" data-p="hcol" value="#101214"></div>
+        <div class="seg" data-seg="hround"><button data-v="0" class="on">角</button><button data-v="1">丸</button></div>
         <div class="row"><label>WIDTH<i>抜く幅</i></label><input type="range" data-p="hw" min="0" max="100" step="1" value="30"><span class="val"></span></div>
         <div class="row"><label>SHIFT X<i>影のずれ よこ</i></label><input type="range" data-p="hox" min="-100" max="100" step="1" value="0"><span class="val"></span></div>
         <div class="row"><label>SHIFT Y<i>影のずれ たて</i></label><input type="range" data-p="hoy" min="-100" max="100" step="1" value="0"><span class="val"></span></div>
@@ -606,7 +607,7 @@ const P = {
   /* ⭐ 2026-11-17 刷り＝字を2色の平らな版にする（光と陰影を切る）。抜き＝波の明るい所を何%から2色目にするか */
   print:0, pcut:72,
   /* ⭐ 2026-11-17 抜き（字の周り）＝字の外側を地の紙色で太らせて、波紋を字の周りだけ消す。halo＝入切・hw＝幅 */
-  halo:0, hw:30, hox:0, hoy:0, hcolOn:0, hcol:'#101214',
+  halo:0, hw:30, hox:0, hoy:0, hcolOn:0, hcol:'#101214', hround:0,
   /* 地 */
   gwave:1, gmat:1, gshape:0, gfreq:24, gcell:34, gspeed:16, gswirl:30, gdepth:38, gedge:100, gringOn:0, gring:'#2648c8',
   ghue:212, gsat:80, gval:88, gcx:50, gcy:50, gbg:'#f4f2ee',
@@ -728,7 +729,10 @@ const key = new THREE.DirectionalLight(0xffffff, 0.95); key.position.set(-0.6, 1
 const rim = new THREE.DirectionalLight(0xffffff, 0.35); rim.position.set(0.8, -0.4, -0.7); scene.add(rim);
 
 const cam = { dist:900, tDist:900, az:0, tAz:0, el:0.24, tEl:0.24, px:0, py:0, tpx:0, tpy:0 };
-let _pendingView = null;   /* 控えから読んだ見る位置。build() の fitView のあとで当てる */
+let _pendingView = null;
+/* ⭐ 2026-11-17 自分で動かした（または控えから読んだ）見る位置は、組み直し（ボタン・つまみ）で戻さない。
+   🔴 前は「丸」などのセグを押すたびに fitView が寄せを入れ直し、真ん中に置いた字が左へ戻っていた。「中央へ」で解除 */
+let _userView = false;   /* 控えから読んだ見る位置。build() の fitView のあとで当てる */
 /* 🔴 動画の入れ物は【ここ＝先頭側】で作る。中身の実装はいちばん下だが、
    frame() と resize() が TV.on を見るので、下で const にすると
    起動の1コマ目が「初期化前に読んだ」で落ちる（TSUBU で実際に踏んだ穴）。 */
@@ -985,11 +989,12 @@ let mesh = null, LIVE = null, halo = null;
    ⚠️ 粒の位置は本体と同じ器（instanceMatrix）を共有＝回しても積んでもずれない */
 function haloMaterial(){
   return new THREE.ShaderMaterial({
-    uniforms:{ uHalo:{value:1.8}, uCol:{value:new THREE.Color()}, uOff:{value:new THREE.Vector2()} },
+    uniforms:{ uHalo:{value:1.8}, uCol:{value:new THREE.Color()}, uOff:{value:new THREE.Vector2()}, uRound:{value:0} },
     depthTest:false, depthWrite:false,
     vertexShader:`
-      uniform float uHalo; uniform vec2 uOff;
+      uniform float uHalo; uniform vec2 uOff; varying vec2 vUv;
       void main(){
+        vUv = uv;
         vec3 p = position; p.xy *= (1.0 + uHalo);
         #ifdef USE_INSTANCING
           vec4 w = instanceMatrix * vec4(p, 1.0); w.xy += uOff;   /* ⭐ ずらす＝字の後ろの影 */
@@ -999,8 +1004,11 @@ function haloMaterial(){
         #endif
       }`,
     fragmentShader:`
-      precision highp float; uniform vec3 uCol;
-      void main(){ gl_FragColor = vec4(uCol, 1.0); }`
+      precision highp float; uniform vec3 uCol; uniform float uRound; varying vec2 vUv;
+      void main(){
+        /* ⭐ 丸＝太らせた粒を円にする＝抜きの縁が角ばらず、なめらかにつながる */
+        if(uRound > 0.5 && length(vUv - 0.5) > 0.5) discard;
+        gl_FragColor = vec4(uCol, 1.0); }`
   });
 }
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
@@ -1196,11 +1204,13 @@ function build(){
   fitPixelRatio(live.length);
   /* ⭐ 組んだら画面に合わせる。⚠️ 合わせないと字が画面からはみ出して読めない
      （実際そうなった）。⚠️ 横に長い字は【幅】で決まるので、縦横比を見る。 */
+  const _keepV = _userView ? { tpx:cam.tpx, tpy:cam.tpy, tAz:cam.tAz, tEl:cam.tEl } : null;
   fitView(totalW * unit, totalH * unit);
+  if(_keepV) Object.assign(cam, _keepV);
   /* ⭐ 控えから読んだときは、合わせたあとで【控えの見る位置】に戻す（2026-11-17） */
   if(_pendingView){
     for(const k of ['tpx','tpy','tAz','tEl','tDist']) if(Number.isFinite(_pendingView[k])) cam[k] = _pendingView[k];
-    _pendingView = null;
+    _pendingView = null; _userView = true;
   }
   save();
 }
@@ -1323,7 +1333,7 @@ function drawOnce(){
   if(halo){   /* 抜き＝毎回いまの値を当てる（色は地の紙色と同じ変換で＝境目が出ない） */
     halo.visible = !!P.halo && !!ON.ground; halo.count = mesh ? mesh.count : 0;
     /* 幅は粒のいくつぶんか（100＝字の周りが塊でつながるくらい）／ずれは粒8個ぶんまで */
-    halo.material.uniforms.uHalo.value = P.hw / 100 * 16;
+    halo.material.uniforms.uHalo.value = P.hw / 100 * 16; halo.material.uniforms.uRound.value = P.hround ? 1 : 0;
     halo.material.uniforms.uOff.value.set(P.hox / 100 * 8 * (halo._unit || 1), -P.hoy / 100 * 8 * (halo._unit || 1));
     /* ⭐ 2026-11-17 抜きの色＝既定は地の紙色。「色で」なら選んだ色そのまま（変換しない＝見た目どおり） */
     const hk = P.hcolOn ? 'c' + P.hcol : 'g' + P.gbg;
@@ -1794,10 +1804,10 @@ el.addEventListener('pointermove', e => {
   if(!prev) return;
   if(mode === 'pan'){
     const k = panScale();
-    cam.tpx -= (e.clientX - prev.x) * k;
+    cam.tpx -= (e.clientX - prev.x) * k; _userView = true;
     cam.tpy += (e.clientY - prev.y) * k;
   }else{
-    cam.tAz -= (e.clientX - prev.x) * 0.006;
+    cam.tAz -= (e.clientX - prev.x) * 0.006; _userView = true;
     /* 🔴 上下が効かなかった＝ここで傾きを変えても、毎フレーム tick が
        `cam.tEl = P.tilt` で【つまみの値に戻していた】（PC のドラッグでも同じ）。
        ⭐ だから【つまみの値ごと動かす】＝ドラッグでもつまみでも同じ一つの値を触る。
@@ -1845,7 +1855,7 @@ document.getElementById('bPan').onclick = e => {
 /* ⚠️ 前は「寄せを 0 に戻す」だけだったので、動かしていないと押しても【何も起きない】
    ＝効いていないように見えた。⭐ 見る所ぜんぶを組んだ直後の状態へ戻す。 */
 document.getElementById('bCenter').onclick = () => {
-  cam.tpx = 0; cam.tpy = 0; cam.tAz = 0;
+  cam.tpx = 0; cam.tpy = 0; cam.tAz = 0; _userView = false;
   const src = DOTS;
   if(src) fitView(src.totalW * (620 / Math.max(src.totalW, src.N)), src.N * (620 / Math.max(src.totalW, src.N)));
 };
