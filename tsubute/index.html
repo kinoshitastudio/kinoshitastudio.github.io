@@ -467,6 +467,16 @@
         <div class="row"><label>SHIFT X<i>影のずれ よこ</i></label><input type="range" data-p="hox" min="-100" max="100" step="1" value="0"><span class="val"></span></div>
         <div class="row"><label>SHIFT Y<i>影のずれ たて</i></label><input type="range" data-p="hoy" min="-100" max="100" step="1" value="0"><span class="val"></span></div>
       </div>
+      <!-- ⭐ 2026-11-17 影（字の後ろ）＝抜きとは別に、太らせた字の形をずらして後ろに置く -->
+      <div class="row"><label>SHADOW<i>字の後ろの影</i></label><input type="checkbox" id="shOn" style="width:20px;height:20px"></div>
+      <div id="shRow" style="display:none">
+        <div class="seg" data-seg="shcolOn"><button data-v="0" class="on">地の色</button><button data-v="1">色で</button></div>
+        <div class="row"><label>COLOR<i>影の色</i></label><input type="color" data-p="shcol" value="#101214"></div>
+        <div class="seg" data-seg="shround"><button data-v="0">角</button><button data-v="1" class="on">丸</button></div>
+        <div class="row"><label>WIDTH<i>影の太さ</i></label><input type="range" data-p="shw" min="0" max="100" step="1" value="20"><span class="val"></span></div>
+        <div class="row"><label>SHIFT X<i>影のずれ よこ</i></label><input type="range" data-p="shx" min="-100" max="100" step="1" value="-40"><span class="val"></span></div>
+        <div class="row"><label>SHIFT Y<i>影のずれ たて</i></label><input type="range" data-p="shy" min="-100" max="100" step="1" value="-10"><span class="val"></span></div>
+      </div>
       </div>
       <div class="row"><label>CTR X<i>中心よこ</i></label><input type="range" data-p="gcx" min="0" max="100" step="1" value="50"><span class="val"></span></div>
       <div class="row"><label>CTR Y<i>中心たて</i></label><input type="range" data-p="gcy" min="0" max="100" step="1" value="50"><span class="val"></span></div>
@@ -608,6 +618,8 @@ const P = {
   print:0, pcut:72,
   /* ⭐ 2026-11-17 抜き（字の周り）＝字の外側を地の紙色で太らせて、波紋を字の周りだけ消す。halo＝入切・hw＝幅 */
   halo:0, hw:30, hox:0, hoy:0, hcolOn:0, hcol:'#101214', hround:0,
+  /* ⭐ 2026-11-17 影＝字の形を太らせて【ずらして】字の後ろに置く（抜きとは別の層）。参考＝フォレスト電流 C の「字の後ろの黒」 */
+  shOn:0, shw:20, shx:-40, shy:-10, shcolOn:0, shcol:'#101214', shround:1,
   /* 地 */
   gwave:1, gmat:1, gshape:0, gfreq:24, gcell:34, gspeed:16, gswirl:30, gdepth:38, gedge:100, gringOn:0, gring:'#2648c8',
   ghue:212, gsat:80, gval:88, gcx:50, gcy:50, gbg:'#f4f2ee',
@@ -984,7 +996,7 @@ function grainMaterial(){
 }
 
 /* ══ 粒を積む ══════════════════════════════════════════════ */
-let mesh = null, LIVE = null, halo = null;
+let mesh = null, LIVE = null, halo = null, shade = null;
 /* ⭐ 2026-11-17 字の周りを抜く＝同じ粒を少し太らせて【地の紙色】で先に描く（波紋の上・字の下）。
    ⚠️ 粒の位置は本体と同じ器（instanceMatrix）を共有＝回しても積んでもずれない */
 function haloMaterial(){
@@ -1052,7 +1064,8 @@ function traceDots(){
 }
 
 function build(){
-  if(halo){ group.remove(halo); halo.material.dispose(); halo = null; }   /* ⚠️ 形は本体と共有＝ここでは捨てない */
+  if(halo){ group.remove(halo); halo.material.dispose(); halo = null; }
+  if(shade){ group.remove(shade); shade.material.dispose(); shade = null; }   /* ⚠️ 形は本体と共有＝ここでは捨てない */
   if(mesh){ group.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); mesh = null; }
   const src = traceDots();
   if(!src) return;
@@ -1199,6 +1212,9 @@ function build(){
   halo = new THREE.InstancedMesh(geo, haloMaterial(), live.length);
   halo.instanceMatrix = mesh.instanceMatrix; halo.renderOrder = -1; halo.frustumCulled = false; halo._unit = unit;
   group.add(halo);
+  shade = new THREE.InstancedMesh(geo, haloMaterial(), live.length);   /* 影＝抜きのさらに後ろ */
+  shade.instanceMatrix = mesh.instanceMatrix; shade.renderOrder = -2; shade.frustumCulled = false; shade._unit = unit;
+  group.add(shade);
   /* ⭐ 粒の数が決まったので、そのぶんに見合う画素密度にする。
      ⚠️ 変わるのは【描く細かさ】だけ＝形も大きさも構図も変わらない。 */
   fitPixelRatio(live.length);
@@ -1330,18 +1346,21 @@ function drawOnce(){
   renderer.setClearAlpha(noBgOnce ? 0 : 1);
   renderer.clear();
   if(!noBgOnce) renderer.render(bgScene, bgCam);   // 地
-  if(halo){   /* 抜き＝毎回いまの値を当てる（色は地の紙色と同じ変換で＝境目が出ない） */
-    halo.visible = !!P.halo && !!ON.ground; halo.count = mesh ? mesh.count : 0;
-    /* 幅は粒のいくつぶんか（100＝字の周りが塊でつながるくらい）／ずれは粒8個ぶんまで */
-    halo.material.uniforms.uHalo.value = P.hw / 100 * 16; halo.material.uniforms.uRound.value = P.hround ? 1 : 0;
-    halo.material.uniforms.uOff.value.set(P.hox / 100 * 8 * (halo._unit || 1), -P.hoy / 100 * 8 * (halo._unit || 1));
-    /* ⭐ 2026-11-17 抜きの色＝既定は地の紙色。「色で」なら選んだ色そのまま（変換しない＝見た目どおり） */
-    const hk = P.hcolOn ? 'c' + P.hcol : 'g' + P.gbg;
-    if(halo._bg !== hk){ halo._bg = hk;
-      if(P.hcolOn){ const n = parseInt(String(P.hcol).slice(1), 16) || 0;
-        halo.material.uniforms.uCol.value.setRGB((n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255, THREE.LinearSRGBColorSpace); }
-      else halo.material.uniforms.uCol.value.set(P.gbg); }
-  }
+  /* 抜き・影＝毎回いまの値を当てる。色は「地の色で」なら地の紙色と同じ変換（境目が出ない）、「色で」なら変換しない */
+  const paint = (m, on, w, ox, oy, colOn, col, round, offK) => {
+    if(!m) return;
+    m.visible = !!on && !!ON.ground; m.count = mesh ? mesh.count : 0;
+    const u = m.material.uniforms, U = m._unit || 1;
+    u.uHalo.value = w / 100 * 16; u.uRound.value = round ? 1 : 0;
+    u.uOff.value.set(ox / 100 * offK * U, -oy / 100 * offK * U);
+    const hk = colOn ? 'c' + col : 'g' + P.gbg;
+    if(m._bg !== hk){ m._bg = hk;
+      if(colOn){ const n = parseInt(String(col).slice(1), 16) || 0;
+        u.uCol.value.setRGB((n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255, THREE.LinearSRGBColorSpace); }
+      else u.uCol.value.set(P.gbg); }
+  };
+  paint(halo,  P.halo, P.hw,  P.hox, P.hoy, P.hcolOn, P.hcol, P.hround, 8);
+  paint(shade, P.shOn, P.shw, P.shx, P.shy, P.shcolOn, P.shcol, P.shround, 24);
   renderer.render(scene, camera);                  // 粒
 }
 function frame(t){
@@ -1495,6 +1514,7 @@ function syncUI(){
   });
   syncSpin();
   { const h = document.getElementById('haloOn'); if(h){ h.checked = !!P.halo; document.getElementById('hwRow').style.display = P.halo ? '' : 'none'; } }
+  { const h = document.getElementById('shOn'); if(h){ h.checked = !!P.shOn; document.getElementById('shRow').style.display = P.shOn ? '' : 'none'; } }
 }
 function load(){
   try{
@@ -1732,6 +1752,11 @@ document.querySelectorAll('input[type=color][data-p]').forEach(c => {
     save(); });
 });
 
+document.getElementById('shOn').addEventListener('change', e => {
+  P.shOn = e.target.checked ? 1 : 0;
+  document.getElementById('shRow').style.display = P.shOn ? '' : 'none';
+  save();
+});
 document.getElementById('haloOn').addEventListener('change', e => {
   P.halo = e.target.checked ? 1 : 0;
   document.getElementById('hwRow').style.display = P.halo ? '' : 'none';
