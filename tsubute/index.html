@@ -707,6 +707,7 @@ const key = new THREE.DirectionalLight(0xffffff, 0.95); key.position.set(-0.6, 1
 const rim = new THREE.DirectionalLight(0xffffff, 0.35); rim.position.set(0.8, -0.4, -0.7); scene.add(rim);
 
 const cam = { dist:900, tDist:900, az:0, tAz:0, el:0.24, tEl:0.24, px:0, py:0, tpx:0, tpy:0 };
+let _pendingView = null;   /* 控えから読んだ見る位置。build() の fitView のあとで当てる */
 /* 🔴 動画の入れ物は【ここ＝先頭側】で作る。中身の実装はいちばん下だが、
    frame() と resize() が TV.on を見るので、下で const にすると
    起動の1コマ目が「初期化前に読んだ」で落ちる（TSUBU で実際に踏んだ穴）。 */
@@ -1142,6 +1143,11 @@ function build(){
   /* ⭐ 組んだら画面に合わせる。⚠️ 合わせないと字が画面からはみ出して読めない
      （実際そうなった）。⚠️ 横に長い字は【幅】で決まるので、縦横比を見る。 */
   fitView(totalW * unit, totalH * unit);
+  /* ⭐ 控えから読んだときは、合わせたあとで【控えの見る位置】に戻す（2026-11-17） */
+  if(_pendingView){
+    for(const k of ['tpx','tpy','tAz','tEl','tDist']) if(Number.isFinite(_pendingView[k])) cam[k] = _pendingView[k];
+    _pendingView = null;
+  }
   save();
 }
 
@@ -1336,8 +1342,11 @@ let _sT = 0, _loaded = false;
       道具の中に「戻す」と「持ち出す」が要る。 */
 const HKEY = KEY + '_hist';
 function stateJSON(){
+  /* ⭐ 2026-11-17 木下「移動だけさせて JSON で保存しよう」＝見る位置（寄せ・回転・傾き・距離）も控えに入れる。
+     ⚠️ 前は P・ON・字・書体だけ＝「移動」で真ん中に寄せても、読み込み直すと左寄りに戻っていた */
   return JSON.stringify({ v:VER, P, ON,
-    text: document.getElementById('txt').value, font: document.getElementById('fnt').value });
+    text: document.getElementById('txt').value, font: document.getElementById('fnt').value,
+    view: { tpx:cam.tpx, tpy:cam.tpy, tAz:cam.tAz, tEl:cam.tEl, tDist:cam.tDist } });
 }
 function pushHistory(){
   try{
@@ -1362,6 +1371,7 @@ function applyState(d){
    if(!phImg && t.value.indexOf(PHOTO_CH) >= 0) t.value = '礫';}
   if(d.font !== undefined) document.getElementById('fnt').value = d.font;
   if(P.gbg) document.getElementById('gBg').value = P.gbg;
+  _pendingView = (d.view && typeof d.view === 'object') ? d.view : null;
   syncUI(); DOTKEY = ''; build();
   /* ⚠️ 当てた直後の遅れた保存が控えを潰すので、待っている保存を取り消して自分で書く */
   clearTimeout(_sT);
@@ -1551,11 +1561,34 @@ document.querySelectorAll('.unit-head').forEach(h => h.addEventListener('click',
    ⚠️ 色は【毎フレーム触るもの】なので input で即反映。組み直さない。 */
 const note = t => { const n=document.getElementById('keepNote'); if(n) n.textContent = t; };
 document.getElementById('bUndo').onclick = () => note(undoState() ? 'ひとつ戻した' : 'これ以上戻せない');
+/* ⭐ 2026-11-17 木下「控えを出すと JSON ファイルが指定のフォルダに選択して保存できるように。他もそうだから」
+   ＝MOYA などと同じ保存ダイアログ（Chrome）。使えないブラウザ（Safari など）はダウンロードに落とす。
+   キャンセルしたら何もしない。 */
+async function saveKeepFile(){
+  const name = `tsubute_${Date.now()}.json`;
+  const blob = new Blob([stateJSON()], { type:'application/json' });
+  if(window.showSaveFilePicker){
+    try{
+      const h = await window.showSaveFilePicker({ suggestedName:name,
+        types:[{ description:'TSUBUTE の控え（JSON）', accept:{ 'application/json':['.json'] } }] });
+      const w = await h.createWritable(); await w.write(blob); await w.close();
+      note('控えを保存した：' + h.name); return;
+    }catch(e){
+      if(e && e.name === 'AbortError'){ note('保存はやめた'); return; }
+      console.warn('保存ダイアログが使えないので、そのまま落とします', e);
+    }
+  }
+  const u = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = u; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 8000);
+  note('控えをファイルに落とした');
+}
 document.getElementById('bCopy').onclick = () => {
   const b = document.getElementById('keepBox');
   b.value = stateJSON(); b.select();
-  try{ document.execCommand('copy'); note('控えを出した（コピーもした）'); }
-  catch(e){ note('控えを出した。長押しでコピーしてください'); }
+  try{ document.execCommand('copy'); }catch(e){}
+  saveKeepFile();          /* ⭐ 出したら、そのまま保存先を選んで保存できる */
 };
 document.getElementById('bLoadState').onclick = () => {
   const b = document.getElementById('keepBox');
@@ -1578,14 +1611,7 @@ function keepFromText(txt, how){
     note(how + '（ひとつ戻す で元に戻せる）'); return true;
   }catch(e){ note('読めなかった'); return false; }
 }
-document.getElementById('bSaveFile').onclick = () => {
-  const b = new Blob([stateJSON()], { type:'application/json' });
-  const u = URL.createObjectURL(b), a = document.createElement('a');
-  a.href = u; a.download = `tsubute_${Date.now()}.json`;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(u), 8000);
-  note('控えをファイルに落とした');
-};
+document.getElementById('bSaveFile').onclick = () => saveKeepFile();
 document.getElementById('bLoadFile').onclick = () => document.getElementById('keepFile').click();
 document.getElementById('keepFile').addEventListener('change', e => {
   const f = e.target.files[0]; if(!f) return;
