@@ -431,6 +431,8 @@
       <div class="row"><label>DEPTH<i>起こす</i></label><input type="range" data-p="gdepth" min="0" max="100" step="1" value="38"><span class="val"></span></div>
       <!-- ⭐ 2026-11-17 木下「調整必要なスライダーがいるなら入れてもいい」＝刷ったような平らな粒にする。起こす0＋縁0で2色刷りの見え -->
       <div class="row"><label>EDGE<i>粒の縁</i></label><input type="range" data-p="gedge" min="0" max="100" step="1" value="100"><span class="val"></span></div>
+      <!-- ⭐ 2026-11-17 紙のざらつき（地・字・抜き・影のぜんぶに） -->
+      <div class="row"><label>GRAIN<i>紙のざらつき</i></label><input type="range" data-p="grain" min="0" max="100" step="1" value="0"><span class="val"></span></div>
       </div>
       <div class="row"><label>PAPER<i>地の色</i></label><input type="color" id="gBg" data-p="gbg" value="#f4f2ee"></div>
       <div class="mod">⭐ <b>地の色</b>＝いちばん下の色。TSUBU は<b>黒</b>が既定（黒にすると粒の色がそのまま出る）</div>
@@ -476,6 +478,10 @@
         <div class="row"><label>WIDTH<i>影の太さ</i></label><input type="range" data-p="shw" min="0" max="100" step="1" value="20"><span class="val"></span></div>
         <div class="row"><label>SHIFT X<i>影のずれ よこ</i></label><input type="range" data-p="shx" min="-100" max="100" step="1" value="-40"><span class="val"></span></div>
         <div class="row"><label>SHIFT Y<i>影のずれ たて</i></label><input type="range" data-p="shy" min="-100" max="100" step="1" value="-10"><span class="val"></span></div>
+        <!-- ⭐ 2026-11-17 影のまだら（PDF の偶然）＝欠け・ばらつき・まだらの大きさ -->
+        <div class="row"><label>BREAK<i>影の欠け</i></label><input type="range" data-p="shbreak" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+        <div class="row"><label>JITTER<i>ずれのばらつき</i></label><input type="range" data-p="shjit" min="0" max="100" step="1" value="0"><span class="val"></span></div>
+        <div class="row"><label>PATCH<i>まだらの大きさ</i></label><input type="range" data-p="shpatch" min="0" max="100" step="1" value="30"><span class="val"></span></div>
       </div>
       </div>
       <div class="row"><label>CTR X<i>中心よこ</i></label><input type="range" data-p="gcx" min="0" max="100" step="1" value="50"><span class="val"></span></div>
@@ -620,8 +626,10 @@ const P = {
   halo:0, hw:30, hox:0, hoy:0, hcolOn:0, hcol:'#101214', hround:0,
   /* ⭐ 2026-11-17 影＝字の形を太らせて【ずらして】字の後ろに置く（抜きとは別の層）。参考＝フォレスト電流 C の「字の後ろの黒」 */
   shOn:0, shw:20, shx:-40, shy:-10, shcolOn:0, shcol:'#101214', shround:1,
+  /* ⭐ 影のまだら＝欠け（ところどころ影が無い）とばらつき（ところどころずれ方が違う）。PDF の偶然の手触り */
+  shbreak:0, shjit:0, shpatch:30,
   /* 地 */
-  gwave:1, gmat:1, gshape:0, gfreq:24, gcell:34, gspeed:16, gswirl:30, gdepth:38, gedge:100, gringOn:0, gring:'#2648c8',
+  gwave:1, gmat:1, gshape:0, gfreq:24, gcell:34, gspeed:16, gswirl:30, gdepth:38, gedge:100, grain:0, gringOn:0, gring:'#2648c8',
   ghue:212, gsat:80, gval:88, gcx:50, gcy:50, gbg:'#f4f2ee',
   /* 地のグラデ ── 色数 1 ＝単色（今まで通り）。2〜4 で グラデになる */
   gpn:1, gpmode:0, gpang:90, gpsteps:0,
@@ -753,10 +761,13 @@ const TV = { on:false, stop:false, mux:null };
 /* ── 地 ── 画面いっぱいの版。⭐ HORI で作った波紋をそのまま持ってきた ── */
 const bgScene = new THREE.Scene();
 const bgCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+/* ⭐ 2026-11-17 紙のざらつき＝地・字・抜き・影の全部に同じ細かい粒を足す（刷った紙の手触り）。
+   GRAINPX＝書き出しで粒の細かさを画面と同じにする倍率 */
+const GRAIN = { value:0 }, GRAINPX = { value:1 };
 const G = {
   uRes:{value:new THREE.Vector2(1,1)}, uT:{value:0},
   uMat:{value:1}, uShape:{value:0}, uFreq:{value:24}, uCell:{value:34},
-  uSpeed:{value:16}, uSwirl:{value:0.9}, uDepth:{value:0.38}, uEdge:{value:1}, uRingOn:{value:0}, uWave:{value:1}, uRing:{value:new THREE.Color('#2648c8')},
+  uSpeed:{value:16}, uSwirl:{value:0.9}, uDepth:{value:0.38}, uEdge:{value:1}, uRingOn:{value:0}, uWave:{value:1}, uRing:{value:new THREE.Color('#2648c8')}, uGrain:GRAIN, uGrainPx:GRAINPX,
   uHue:{value:212/360}, uSat:{value:0.8}, uVal:{value:0.88},
   uCx:{value:0.5}, uCy:{value:0.5}, uPaper:{value:new THREE.Color(0xf4f2ee)},
   /* ⭐ 地のグラデ ── 紙そのものを【画素ごとの色】にする。
@@ -771,7 +782,8 @@ bgScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2), new THREE.ShaderMateria
   fragmentShader:`
     varying vec2 vUv;
     uniform vec2  uRes; uniform vec3 uPaper, uPap1, uPap2, uPap3;
-    uniform float uRingOn, uWave; uniform vec3 uRing;
+    uniform float uRingOn, uWave; uniform vec3 uRing; uniform float uGrain, uGrainPx;
+    float gn_(vec2 c){ return fract(sin(dot(floor(c / max(uGrainPx, 1.0)), vec2(12.9898, 78.233))) * 43758.5453); }
     uniform float uT, uMat, uShape, uFreq, uCell, uSpeed, uSwirl, uDepth, uEdge, uHue, uSat, uVal, uCx, uCy;
     uniform float uPapN, uPapMode, uPapAng, uPapSteps;
     vec3 hsv2rgb(vec3 c){
@@ -873,7 +885,8 @@ bgScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2), new THREE.ShaderMateria
       /* ⚠️ 粒の隙間を暗い同色にすると粒に見えず縞に戻る。粒は【地の上に乗る】 */
       vec3 col = (uMat > 0.5) ? mix(paper, clamp(rc*sh,0.0,1.0), amt)
                               : clamp(rc * mix(0.30,1.10,amt) * sh, 0.0, 1.0);
-      gl_FragColor = vec4(uRingOn > 0.5 ? mix(paper, col, uWave) : mix(paper, col, uSat), 1.0);
+      vec3 outc = uRingOn > 0.5 ? mix(paper, col, uWave) : mix(paper, col, uSat);
+      gl_FragColor = vec4(outc + (gn_(gl_FragCoord.xy) - 0.5) * uGrain, 1.0);
     }`
 })));
 
@@ -891,7 +904,7 @@ function grainMaterial(){
       uA:{value:new THREE.Color()}, uB:{value:new THREE.Color()}, uBG:{value:new THREE.Color()},
       uWav:{value:0.6}, uShift:{value:0}, uShine:{value:0.6},
       uValley:{value:0}, uGrad:{value:0.5}, uLine:{value:0}, uBand:{value:1},
-      uSteps:{value:0}, uDith:{value:1}, uPrint:{value:0}, uCut:{value:0.72},
+      uSteps:{value:0}, uDith:{value:1}, uPrint:{value:0}, uCut:{value:0.72}, uGrain:GRAIN, uGrainPx:GRAINPX,
     },
     vertexShader:`
       attribute float aAng, aDens, aBig, aJit;
@@ -914,7 +927,8 @@ function grainMaterial(){
       precision highp float;
       uniform vec3  uA, uB, uBG;
       uniform float uWav, uShift, uShine, uValley, uGrad, uLine, uBand;
-      uniform float uSteps, uDith, uPrint, uCut;
+      uniform float uSteps, uDith, uPrint, uCut, uGrain, uGrainPx;
+      float gn_(vec2 c){ return fract(sin(dot(floor(c / max(uGrainPx, 1.0)), vec2(12.9898, 78.233))) * 43758.5453); }
       varying vec3  vN;
       varying vec2  vUv, vPos;
       varying float vAng, vDens, vBig, vJit;
@@ -975,7 +989,7 @@ function grainMaterial(){
           v = clamp(q, 0.0, uSteps - 1.0) / (uSteps - 1.0);
         }
         /* ⭐ 2026-11-17 刷り＝塗り色(uA)と抜き色(uB)の2色だけ。光も陰影も入れない（フォレスト電流のジャケットの見え） */
-        if(uPrint > 0.5){ gl_FragColor = vec4(v > uCut ? uB : uA, 1.0); return; }
+        if(uPrint > 0.5){ gl_FragColor = vec4((v > uCut ? uB : uA) + (gn_(gl_FragCoord.xy) - 0.5) * uGrain, 1.0); return; }
         float k  = pow(max(v, 0.0), 1.8);
         float hi = pow(max(v, 0.0), 6.0) * uShine;
         /* 🔴⭐ 塊にも【同じ波色】を使う。
@@ -1001,26 +1015,34 @@ let mesh = null, LIVE = null, halo = null, shade = null;
    ⚠️ 粒の位置は本体と同じ器（instanceMatrix）を共有＝回しても積んでもずれない */
 function haloMaterial(){
   return new THREE.ShaderMaterial({
-    uniforms:{ uHalo:{value:1.8}, uCol:{value:new THREE.Color()}, uOff:{value:new THREE.Vector2()}, uRound:{value:0} },
+    uniforms:{ uHalo:{value:1.8}, uCol:{value:new THREE.Color()}, uOff:{value:new THREE.Vector2()}, uRound:{value:0}, uGrain:GRAIN, uGrainPx:GRAINPX, uBreak:{value:0}, uJit:{value:0}, uPatch:{value:0.05} },
     depthTest:false, depthWrite:false,
     vertexShader:`
-      uniform float uHalo; uniform vec2 uOff; varying vec2 vUv;
+      uniform float uHalo, uBreak, uJit, uPatch; uniform vec2 uOff; varying vec2 vUv;
+      float h1(vec2 q){ return fract(sin(dot(q, vec2(127.1, 311.7))) * 43758.5453); }
+      float vn(vec2 q){ vec2 i = floor(q), f = fract(q); f = f*f*(3.0-2.0*f);
+        return mix(mix(h1(i), h1(i+vec2(1,0)), f.x), mix(h1(i+vec2(0,1)), h1(i+vec2(1,1)), f.x), f.y); }
       void main(){
         vUv = uv;
         vec3 p = position; p.xy *= (1.0 + uHalo);
         #ifdef USE_INSTANCING
           vec4 w = instanceMatrix * vec4(p, 1.0); w.xy += uOff;   /* ⭐ ずらす＝字の後ろの影 */
+          /* ⭐ まだら＝粒の居場所から作るゆっくりした雑音で、欠け（その辺りは描かない）とずれのばらつき */
+          vec2 c = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xy * uPatch;
+          if(uBreak > 0.0 && vn(c) < uBreak){ gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+          w.xy += (vec2(vn(c + 17.0), vn(c + 41.0)) - 0.5) * uJit;
           gl_Position = projectionMatrix * modelViewMatrix * w;
         #else
           gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
         #endif
       }`,
     fragmentShader:`
-      precision highp float; uniform vec3 uCol; uniform float uRound; varying vec2 vUv;
+      precision highp float; uniform vec3 uCol; uniform float uRound, uGrain, uGrainPx; varying vec2 vUv;
+      float gn_(vec2 c){ return fract(sin(dot(floor(c / max(uGrainPx, 1.0)), vec2(12.9898, 78.233))) * 43758.5453); }
       void main(){
         /* ⭐ 丸＝太らせた粒を円にする＝抜きの縁が角ばらず、なめらかにつながる */
         if(uRound > 0.5 && length(vUv - 0.5) > 0.5) discard;
-        gl_FragColor = vec4(uCol, 1.0); }`
+        gl_FragColor = vec4(uCol + (gn_(gl_FragCoord.xy) - 0.5) * uGrain, 1.0); }`
   });
 }
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
@@ -1347,12 +1369,13 @@ function drawOnce(){
   renderer.clear();
   if(!noBgOnce) renderer.render(bgScene, bgCam);   // 地
   /* 抜き・影＝毎回いまの値を当てる。色は「地の色で」なら地の紙色と同じ変換（境目が出ない）、「色で」なら変換しない */
-  const paint = (m, on, w, ox, oy, colOn, col, round, offK) => {
+  const paint = (m, on, w, ox, oy, colOn, col, round, offK, brk, jit, patch) => {
     if(!m) return;
     m.visible = !!on && !!ON.ground; m.count = mesh ? mesh.count : 0;
     const u = m.material.uniforms, U = m._unit || 1;
     u.uHalo.value = w / 100 * 16; u.uRound.value = round ? 1 : 0;
     u.uOff.value.set(ox / 100 * offK * U, -oy / 100 * offK * U);
+    u.uBreak.value = (brk || 0) / 100 * 0.8; u.uJit.value = (jit || 0) / 100 * 24 * U; u.uPatch.value = 1 / (U * Math.max(2, 2 + (patch ?? 30) / 100 * 40));
     const hk = colOn ? 'c' + col : 'g' + P.gbg;
     if(m._bg !== hk){ m._bg = hk;
       if(colOn){ const n = parseInt(String(col).slice(1), 16) || 0;
@@ -1360,7 +1383,7 @@ function drawOnce(){
       else u.uCol.value.set(P.gbg); }
   };
   paint(halo,  P.halo, P.hw,  P.hox, P.hoy, P.hcolOn, P.hcol, P.hround, 8);
-  paint(shade, P.shOn, P.shw, P.shx, P.shy, P.shcolOn, P.shcol, P.shround, 24);
+  paint(shade, P.shOn, P.shw, P.shx, P.shy, P.shcolOn, P.shcol, P.shround, 24, P.shbreak, P.shjit, P.shpatch);
   renderer.render(scene, camera);                  // 粒
 }
 function frame(t){
@@ -1371,7 +1394,7 @@ function frame(t){
   G.uT.value = t * 0.001;
   G.uMat.value = P.gmat; G.uShape.value = P.gshape;
   G.uFreq.value = P.gfreq; G.uCell.value = P.gcell;
-  G.uSpeed.value = P.gspeed; G.uSwirl.value = P.gswirl/100*3; G.uDepth.value = P.gdepth/100; G.uEdge.value = P.gedge/100;
+  G.uSpeed.value = P.gspeed; G.uSwirl.value = P.gswirl/100*3; G.uDepth.value = P.gdepth/100; G.uEdge.value = P.gedge/100; GRAIN.value = (P.grain || 0) / 100 * 0.3;
   G.uRingOn.value = P.gringOn ? 1 : 0; G.uWave.value = (ON.ground && P.gwave) ? 1 : 0;
   /* ⚠️ .set(色) は sRGB→リニアに変換して暗くなる（シェーダーはそのまま出す）＝指定した色そのままで刷るため変換しない */
   if(G._ringHex !== P.gring){ const n = parseInt(String(P.gring).slice(1), 16) || 0;
@@ -1425,10 +1448,11 @@ function renderToBlob(cb, noBg){
     /* ⭐ 2026-11-17 地の粒の大きさ（CELL）は画素で持っている＝大きく書き出すと粒が細かくなり輪が増えていた。
        書き出しの高さ ÷ 画面の高さ の分だけ粒も大きくする＝【画面で見ているのと同じ見え】で出る */
     G.uCell.value = P.gcell * f.h / Math.max(1, keep.h * keep.pr);
+    GRAINPX.value = f.h / Math.max(1, keep.h);   /* ざらつきの粒も画面と同じ細かさで */
     placeCamera(); drawOnce();
     el.toBlob(b => { noBgOnce = false; cb(b); }, 'image/png');
   } finally {
-    noBgOnce = false;
+    noBgOnce = false; GRAINPX.value = 1;
     renderer.setPixelRatio(keep.pr);
     renderer.setSize(keep.w, keep.h, false);
     camera.aspect = keep.w/keep.h; camera.updateProjectionMatrix();
@@ -2115,6 +2139,7 @@ async function tvRun(){
     camera.aspect = f.w/f.h; camera.updateProjectionMatrix();
     G.uRes.value.set(f.w, f.h);
     G.uCell.value = P.gcell * f.h / Math.max(1, keep.h * keep.pr);   /* ⭐ PNG と同じ＝画面と同じ粒の大きさで出す */
+    GRAINPX.value = f.h / Math.max(1, keep.h);
     noBgOnce = !!noBg;
     /* ⚠️ カメラの寄りは【追いつかせてから】撮る。撮っている間に寄り続けると絵がじわじわ動く。 */
     cam.tEl = P.tilt * Math.PI / 180;
@@ -2211,7 +2236,7 @@ async function tvRun(){
     msg = '🔴 ' + (err && err.message || err);          // 🔴 何が起きても必ず理由を出す
   }finally{
     /* 🔴 何が起きても必ず元へ戻す（renderToBlob の finally と同じ約束） */
-    noBgOnce = false;
+    noBgOnce = false; GRAINPX.value = 1;
     renderer.setPixelRatio(keep.pr);
     renderer.setSize(keep.w, keep.h, false);
     camera.aspect = keep.w/keep.h; camera.updateProjectionMatrix();
