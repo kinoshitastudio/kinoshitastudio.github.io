@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>湛 TATAE — 液体のような字が枠を縁まで満たす道具 / 木下スタジオ</title>
+<meta name="description" content="打った字を、液体のようにうねる太い字にして、枠の縁まで満たして組む道具。紙を字の数で割る・行ごとに段にする・0°と90°で回す・少し傾ける。地と2色の字で塗り分け、PNG・SVGで出せる。木下スタジオ（木下貴博 / 滋賀・琵琶湖）制作。">
+<link rel="canonical" href="https://kinoshita.studio/tatae/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="湛 TATAE — 液体のような字が枠を縁まで満たす道具 / 木下スタジオ">
+<meta property="og:description" content="打った字を液体のようにうねる太い字にして、枠の縁まで満たして組む道具。">
+<meta property="og:url" content="https://kinoshita.studio/tatae/">
+<meta property="og:image" content="https://kinoshita.studio/assets/img/img-ui-tatae.webp">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=Zen+Kaku+Gothic+New:wght@700;900&display=swap" rel="stylesheet">
+<!-- 2026-11-18 木下：「白黒でも粒としての表現で、シンプルなフォントに」を探す中で、参考（液体の字が枠を埋める・黒地に灰2色・大小の枠）を
+     Python で試した → 「丸ゴ・うねり弱」を改良 → ほかの字・色違い・xtianmiller のように字で紙を埋める →「これ道具ないよね？」「作ろう」。
+     仕組み（Python 版 make_ekitai_kana_kairyo.py と同じ順）：
+       1. 字を書体で描き、外接枠を切り出して、枠（セル）の縦横いっぱいに伸ばす
+       2. 太らせる（ぼかして低いしきい値で切る＝角が出ない太らせ）
+       3. うねらせる（ゆっくり変わる揺れで座標をずらす）
+       4. なめらかにする（ぼかして 0.5 で切る）
+       5. 縁をたどって輪郭にし、角を丸めて線にする（画面・PNG・SVG は同じ輪郭から描く）
+     字の形は書体から取る。道具が持つのは「満たし方（太さ・うねり・なめらかさ）」と「割り方・向き・色」だけ。 -->
+<style>
+:root{--bg:#161616;--panel:#202020;--line:#353535;--tx:#e8e6e1;--sub:#959189;--ac:#b8b8b8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:"Hiragino Kaku Gothic ProN",sans-serif;display:flex;height:100vh;overflow:hidden}
+#panel{width:300px;flex:none;background:var(--panel);border-right:1px solid var(--line);padding:16px 16px 24px;overflow:auto}
+h1{font-size:15px;margin:0 0 2px;letter-spacing:.1em}h1 b{color:var(--ac)}
+.lead{font-size:11px;color:var(--sub);margin:0 0 14px;line-height:1.6}
+.grp{border-top:1px solid var(--line);padding:10px 0 4px}
+.grp>div.t{font-size:11px;letter-spacing:.16em;color:var(--sub);margin-bottom:6px}
+label{display:grid;grid-template-columns:78px 1fr 34px;gap:8px;align-items:center;font-size:12px;margin:5px 0}
+label span.v{font-size:11px;color:var(--sub);text-align:right;font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--ac)}
+input[type=text],textarea,select,input[type=color]{width:100%;background:#121212;color:var(--tx);border:1px solid var(--line);border-radius:4px;font-size:14px;padding:6px;font-family:inherit}
+textarea{resize:vertical;min-height:70px;line-height:1.5}
+.presets{display:grid;grid-template-columns:repeat(2,1fr);gap:5px;margin-bottom:6px}.presets button{padding:7px 2px;font-size:11px}.presets button.on{background:var(--tx);color:#161616}
+.row{display:flex;gap:6px;margin-top:8px}
+button{flex:1;background:#2f2f2f;color:var(--tx);border:1px solid var(--line);border-radius:4px;padding:8px 6px;font-size:12px;cursor:pointer}
+button.p{background:#e8e6e1;border-color:#e8e6e1;color:#161616}
+.cols{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.cols input{height:30px;padding:2px}
+.cols div{font-size:10px;color:var(--sub);text-align:center;margin-top:2px}
+#stage{flex:1;display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto;position:relative}
+canvas{max-width:100%;max-height:calc(100vh - 48px);box-shadow:0 10px 40px rgba(0,0,0,.45)}
+#msg{font-size:11px;color:var(--sub);min-height:1.6em;margin:6px 0 0}
+#busy{position:absolute;top:12px;right:16px;font-size:11px;color:var(--sub)}
+@media(max-width:760px){body{flex-direction:column;height:auto;overflow:auto}#panel{width:auto;border-right:0;border-bottom:1px solid var(--line)}#stage{order:-1;position:sticky;top:0;z-index:2;background:var(--bg);padding:10px;border-bottom:1px solid var(--line)}canvas{max-height:52vh}}
+/* no-auto-zoom-2026-08-22：iOS は文字を打つ欄が16px未満だと勝手に寄る＝スマホの時だけ16pxにする（PCは変えない）。ボタンの二度押しズームも止める */
+@media (max-width:760px), (pointer:coarse) and (max-width:1024px){
+  input:not([type=range]):not([type=color]):not([type=checkbox]):not([type=radio]):not([type=file]):not([type=button]), select, textarea{ font-size:16px !important; }
+  button,input,select,textarea{ touch-action:manipulation; }
+}
+</style></head><body>
+<div id="panel">
+  <div style="font-size:11px;margin-bottom:10px"><a href="/interaction-design.html" style="color:inherit;opacity:.6;text-decoration:none">← 木下スタジオ</a></div>
+  <h1><b>湛</b> TATAE</h1>
+  <p class="lead">打った字を、液体のようにうねる太い字にして、枠の縁まで満たして組む。紙を字の数で割るか、行ごとに段にする。</p>
+  <div class="grp"><div class="t">型（押すと、字とつまみが替わる）</div>
+    <div class="presets" id="presets"></div>
+  </div>
+  <div class="grp"><div class="t">字（改行で段が分かれる・空白は空きの枠）</div>
+    <textarea id="txt">あいうえ
+　お
+つぶ</textarea>
+  </div>
+  <div class="grp"><div class="t">組む</div>
+    <label>割り方<select id="mode" style="grid-column:2/4"><option value="rows">段（行ごと・字の少ない行ほど高い）</option><option value="split">紙を字の数で割る</option></select></label>
+    <label>紙の形<select id="ratio" style="grid-column:2/4"><option value="4:5">縦長 4:5</option><option value="2:3">縦長 2:3</option><option value="1:1">正方形 1:1</option><option value="3:2">横長 3:2</option><option value="2:1">横長 2:1</option></select></label>
+    <label>字の向き<select id="turn" style="grid-column:2/4"><option value="0">回さない</option><option value="1">0° と ±90° をまぜる</option><option value="2">±90° を多めに</option></select></label>
+    <label>傾け<input type="range" id="tilt" min="0" max="20" value="0"><span class="v"></span></label>
+    <label>字の間<input type="range" id="gap" min="0" max="40" value="8"><span class="v"></span></label>
+    <label>紙の余白<input type="range" id="margin" min="0" max="80" value="36"><span class="v"></span></label>
+    <label>割りの偏り<input type="range" id="bias" min="0" max="24" value="12"><span class="v"></span></label>
+    <div class="row" style="margin-top:2px"><button id="reroll">割り方・向きを振り直す</button></div>
+  </div>
+  <div class="grp"><div class="t">満たす（字の形）</div>
+    <label>書体<select id="font" style="grid-column:2/4"><option value="maru">丸ゴ（Zen Maru Gothic）</option><option value="kaku">角ゴ（Zen Kaku Gothic New）</option></select></label>
+    <label>太さ<input type="range" id="fat" min="0" max="14" value="5"><span class="v"></span></label>
+    <label>うねり<input type="range" id="wob" min="0" max="20" value="5"><span class="v"></span></label>
+    <label>うねりの大きさ<input type="range" id="per" min="6" max="50" value="20"><span class="v"></span></label>
+    <label>なめらか<input type="range" id="smooth" min="0" max="8" value="3"><span class="v"></span></label>
+  </div>
+  <div class="grp"><div class="t">色</div>
+    <div class="cols"><input type="color" id="c0" value="#000000"><input type="color" id="c1" value="#767676"><input type="color" id="c2" value="#b6b6b6"></div>
+    <div class="cols"><div>地</div><div>字 1</div><div>字 2</div></div>
+    <label style="margin-top:8px">字 2 を<select id="c2rule" style="grid-column:2/4"><option value="big">大きい字に</option><option value="first">最初の1字だけ</option><option value="alt">交互に</option><option value="none">使わない（字 1 だけ）</option></select></label>
+    <div class="presets" id="palettes" style="margin-top:6px"></div>
+    <label>地<select id="paper" style="grid-column:2/4"><option value="on">地の色を敷く</option><option value="none">なし（透明）</option></select></label>
+  </div>
+  <div class="row"><button class="p" id="png">PNGで保存</button><button id="svg">SVGで保存</button></div>
+  <div class="row"><button id="svgin">SVGを読む（形を枠に足す）</button></div>
+  <input type="file" id="svgfile" accept=".svg,image/svg+xml" hidden>
+  <div class="row"><button id="jsave">設定を保存</button><button id="jload">設定を読む</button></div>
+  <input type="file" id="jfile" accept=".json,application/json" hidden>
+  <p id="msg"></p>
+  <p class="lead" style="margin-top:12px">字は書体から描き、枠の縦横いっぱいに伸ばしてから、太らせ・うねらせ・なめらかにする。太らせると字の中の空きが小さな穴になり、うねらせると液体のような形になる。画数の多い漢字は泥の塊になりやすい＝かな・カタカナ向き。この道具の SVG は読むと字と設定に戻る。ほかの SVG は形として枠に足す（字と同じように満たす）。</p>
+</div>
+<div id="stage"><canvas id="cv"></canvas><div id="busy"></div></div>
+<script>
+const $=id=>document.getElementById(id);
+const K=['tilt','gap','margin','bias','fat','wob','per','smooth'];
+const TXT=['txt','mode','ratio','turn','font','c0','c1','c2','c2rule','paper'];
+const RATIO={'4:5':[2000,2500],'2:3':[2000,3000],'1:1':[2400,2400],'3:2':[3000,2000],'2:1':[3200,1600]};
+const FONTS={maru:['"Zen Maru Gothic"',500],kaku:['"Zen Kaku Gothic New"',900]};
+const WR=0.42;                     // 形を作る細かさ（紙の 1px あたり）＝輪郭を作ってから拡大して描く
+const cv=$('cv'),ctx=cv.getContext('2d');
+let BW=2000,BH=2500,Q=0.4,SEED=7,EXTRA=[],LAST=[];
+const v=id=>+$(id).value;
+const mkR=s=>{let a=(s>>>0)||1;return()=>{a=(a*1664525+1013904223)>>>0;return a/4294967296}};
+
+// ── 1つの枠の字の形（作った輪郭は覚えておく）
+const CACHE=new Map();
+function boxBlur(src,w,h,r){if(r<1)return src;let a=src,b=new Float32Array(w*h);
+  for(let pass=0;pass<3;pass++){
+    for(let y=0;y<h;y++){let acc=0;const o=y*w;for(let i=-r;i<=r;i++)acc+=a[o+Math.min(w-1,Math.max(0,i))];
+      for(let x=0;x<w;x++){b[o+x]=acc/(2*r+1);acc+=a[o+Math.min(w-1,x+r+1)]-a[o+Math.max(0,x-r)]}}
+    for(let x=0;x<w;x++){let acc=0;for(let i=-r;i<=r;i++)acc+=b[Math.min(h-1,Math.max(0,i))*w+x];
+      for(let y=0;y<h;y++){a===src&&(a=new Float32Array(w*h));a[y*w+x]=acc/(2*r+1);acc+=b[Math.min(h-1,y+r+1)*w+x]-b[Math.max(0,y-r)*w+x]}}}
+  return a}
+function sourceMask(src){   // 字（または読んだ SVG の絵）を描いて、外接枠で切り出す
+  const S=360,c=document.createElement('canvas');c.width=c.height=S;const g=c.getContext('2d',{willReadFrequently:true});
+  g.fillStyle='#000';
+  if(typeof src==='string'){const [fam,w]=FONTS[$('font').value];g.font=`${w} ${S*0.8}px ${fam},"Hiragino Maru Gothic ProN","Hiragino Sans",sans-serif`;g.textAlign='center';g.textBaseline='middle';g.fillText(src,S/2,S/2+S*0.03)}
+  else{const im=src.img,w=im.naturalWidth||im.width||S,h=im.naturalHeight||im.height||S,s=S*0.9/Math.max(w,h);g.drawImage(im,(S-w*s)/2,(S-h*s)/2,w*s,h*s)}
+  const d=g.getImageData(0,0,S,S).data;let x0=S,y0=S,x1=-1,y1=-1;
+  for(let y=0;y<S;y++)for(let x=0;x<S;x++)if(d[(y*S+x)*4+3]>110){if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y}
+  if(x1<0)return null;return {c,x0,y0,w:x1-x0+1,h:y1-y0+1}}
+function shape(src,key,gw,gh,seed){
+  // gw,gh＝枠の大きさ（紙の px）。返すのは枠の左上を 0,0 とする輪郭（紙の px）
+  const P=[v('fat'),v('wob'),v('per'),v('smooth'),$('font').value].join(','), k=key+'|'+Math.round(gw)+'x'+Math.round(gh)+'|'+P+'|'+seed;
+  if(CACHE.has(k))return CACHE.get(k);
+  const w=Math.max(8,Math.round(gw*WR)),h=Math.max(8,Math.round(gh*WR)),s=Math.min(w,h);
+  const sm=sourceMask(src);if(!sm){CACHE.set(k,[]);return []}
+  const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d',{willReadFrequently:true});
+  g.drawImage(sm.c,sm.x0,sm.y0,sm.w,sm.h,0,0,w,h);           // 1. 枠の縦横いっぱいに伸ばす
+  const d=g.getImageData(0,0,w,h).data;let m=new Float32Array(w*h);for(let i=0;i<w*h;i++)m[i]=d[i*4+3]/255;
+  // 2. 太らせる（ぼかして低いしきい値）
+  const fr=Math.round(s*v('fat')/100*0.7);
+  if(fr>0){m=boxBlur(m,w,h,fr);for(let i=0;i<w*h;i++)m[i]=m[i]>0.2?1:0}
+  // 3. うねらせる：粗い格子の乱数をなめらかにつないだ揺れで座標をずらす
+  const amp=s*v('wob')/100, cell=Math.max(4,s*v('per')/100*2.2);   // 揺れの波長（Python 版のぼかした乱数と同じくらいの長さ）
+  if(amp>0){const R=mkR(seed*7919+101),gx=Math.ceil(w/cell)+3,gy=Math.ceil(h/cell)+3,DX=new Float32Array(gx*gy),DY=new Float32Array(gx*gy);
+    for(let i=0;i<gx*gy;i++){DX[i]=R()*2-1;DY[i]=R()*2-1}
+    const sstep=t=>t*t*(3-2*t);
+    const at=(A,x,y)=>{const fx=x/cell,fy=y/cell,ix=Math.floor(fx),iy=Math.floor(fy),tx=sstep(fx-ix),ty=sstep(fy-iy),i=iy*gx+ix;
+      return (A[i]*(1-tx)+A[i+1]*tx)*(1-ty)+(A[i+gx]*(1-tx)+A[i+gx+1]*tx)*ty};
+    const o=new Float32Array(w*h);
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){let sx=x+at(DX,x,y)*amp,sy=y+at(DY,x,y)*amp;sx=Math.min(w-1,Math.max(0,sx));sy=Math.min(h-1,Math.max(0,sy));
+      const ix=Math.floor(sx),iy=Math.floor(sy),tx=sx-ix,ty=sy-iy,ix1=Math.min(w-1,ix+1),iy1=Math.min(h-1,iy+1);
+      o[y*w+x]=(m[iy*w+ix]*(1-tx)+m[iy*w+ix1]*tx)*(1-ty)+(m[iy1*w+ix]*(1-tx)+m[iy1*w+ix1]*tx)*ty}
+    m=o}
+  // 4. なめらかに
+  const sr=Math.round(s*v('smooth')/100*1.4); if(sr>0)m=boxBlur(m,w,h,sr);
+  // 5. 縁をたどる（外側に1画素の空きを足して、枠の縁でも輪が閉じるように）
+  const N=w+2,M=h+2,on=new Uint8Array(N*M);for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(m[y*w+x]>0.5)on[(y+1)*N+x+1]=1;
+  const loops=trace(on,N,M).map(L=>rounded(simplify(L,0.6))).filter(L=>L.length>=3).map(L=>L.map(([x,y])=>[(x-1)/w*gw,(y-1)/h*gh]));
+  CACHE.set(k,loops);if(CACHE.size>600)CACHE.delete(CACHE.keys().next().value);return loops}
+function trace(on,N,M){
+  const nxt=new Map(),key=(x,y)=>y*(N+1)+x;
+  const add=(x1,y1,x2,y2)=>{const k=key(x1,y1);let a=nxt.get(k);if(!a)nxt.set(k,a=[]);a.push([x2,y2])};
+  for(let y=1;y<M-1;y++)for(let x=1;x<N-1;x++){if(!on[y*N+x])continue;
+    if(!on[(y-1)*N+x])add(x,y,x+1,y);if(!on[y*N+x+1])add(x+1,y,x+1,y+1);
+    if(!on[(y+1)*N+x])add(x+1,y+1,x,y+1);if(!on[y*N+x-1])add(x,y+1,x,y)}
+  const loops=[];
+  for(const [k0,arr] of nxt){while(arr.length){const L=[[k0%(N+1),Math.floor(k0/(N+1))]];let [nx,ny]=arr.pop(),guard=0;
+    while(guard++<400000){L.push([nx,ny]);const a=nxt.get(key(nx,ny));if(!a||!a.length)break;[nx,ny]=a.pop();if(nx===L[0][0]&&ny===L[0][1])break}
+    if(L.length>6)loops.push(L)}}
+  return loops}
+function simplify(P,eps){if(P.length<5)return P;
+  const d2=(p,a,b)=>{const dx=b[0]-a[0],dy=b[1]-a[1],L=dx*dx+dy*dy||1e-9;let t=((p[0]-a[0])*dx+(p[1]-a[1])*dy)/L;t=Math.max(0,Math.min(1,t));const x=a[0]+t*dx-p[0],y=a[1]+t*dy-p[1];return x*x+y*y};
+  const rec=(Q,s,e,out)=>{let mx=-1,mi=-1;for(let i=s+1;i<e;i++){const d=d2(Q[i],Q[s],Q[e]);if(d>mx){mx=d;mi=i}}if(mx>eps*eps){rec(Q,s,mi,out);rec(Q,mi,e,out)}else out.push(Q[s])};
+  const h=P.length>>1,A=P.slice(0,h+1),B=P.slice(h).concat([P[0]]),o1=[],o2=[];rec(A,0,A.length-1,o1);rec(B,0,B.length-1,o2);return o1.concat(o2)}
+function rounded(P){   // 角を丸める（Chaikin 2回）＝画素の階段を消す
+  for(let it=0;it<2;it++){const o=[];for(let i=0;i<P.length;i++){const a=P[i],b=P[(i+1)%P.length];o.push([a[0]*.75+b[0]*.25,a[1]*.75+b[1]*.25],[a[0]*.25+b[0]*.75,a[1]*.25+b[1]*.75])}P=o}return P}
+
+// ── 割る
+function cells(){
+  const R=mkR(SEED*104729+7),m=v('margin')/1000*Math.min(BW,BH)*2.5,bias=v('bias')/100;
+  const lines=$('txt').value.split('\n').map(l=>[...l]).filter(l=>l.length);
+  const items=[];lines.forEach(l=>l.forEach(ch=>items.push(ch)));EXTRA.forEach((e,i)=>items.push({img:e.img,id:'svg'+i}));
+  let rects=[];
+  if($('mode').value==='rows'&&!EXTRA.length){
+    const wts=lines.map(l=>1/l.length),sum=wts.reduce((a,b)=>a+b,0);let y=m;
+    lines.forEach((l,i)=>{const hh=(BH-2*m)*wts[i]/sum,ww=(BW-2*m)/l.length;l.forEach((ch,j)=>rects.push([m+j*ww,y,ww,hh]));y+=hh})}
+  else{
+    rects=[[m,m,BW-2*m,BH-2*m]];
+    while(rects.length<items.length){rects.sort((a,b)=>a[2]*a[3]-b[2]*b[3]);const [x,y,w,h]=rects.pop(),t=0.5+(R()*2-1)*bias;
+      if(w>h)rects.push([x,y,w*t,h],[x+w*t,y,w*(1-t),h]);else rects.push([x,y,w,h*t],[x,y+h*t,w,h*(1-t)])}
+    rects.sort((a,b)=>Math.round(a[1]/(BH*0.08))-Math.round(b[1]/(BH*0.08))||a[0]-b[0])}
+  const gap=v('gap')/1000*Math.min(BW,BH)*2.5,turn=+$('turn').value,tilt=v('tilt');
+  const areas=rects.map(r=>r[2]*r[3]),mean=areas.reduce((a,b)=>a+b,0)/Math.max(1,areas.length);
+  return items.map((it,i)=>{const [x,y,w,h]=rects[i];const w2=Math.max(4,w-gap),h2=Math.max(4,h-gap);
+    let rot=0;if(turn){const r=R();rot=turn===2?(r<0.25?0:r<0.62?90:-90):(r<0.5?0:r<0.75?90:-90)}
+    const ang=rot+(tilt?(R()*2-1)*tilt:0);
+    const blank=typeof it==='string'&&!it.trim();
+    return {src:it,key:typeof it==='string'?it:it.id,blank,cx:x+w/2,cy:y+h/2,gw:rot?h2:w2,gh:rot?w2:h2,ang,big:areas[i]>mean*1.05,i,seed:SEED*31+i}})}
+function colorOf(c,k){const r=$('c2rule').value;const two=r==='big'?c.big:r==='first'?k===0:r==='alt'?k%2===1:false;return two?$('c2').value:$('c1').value}
+function build(){const cs=cells();let k=0;cs.forEach(c=>{c.loops=c.blank?[]:shape(c.src,c.key,c.gw,c.gh,c.seed);if(!c.blank){c.col=colorOf(c,k);k++}});return cs}
+function pathOf(c){const p=new Path2D();c.loops.forEach(L=>{L.forEach(([x,y],i)=>i?p.lineTo(x,y):p.moveTo(x,y));p.closePath()});return p}
+function draw(g,cs,q){g.setTransform(q,0,0,q,0,0);g.clearRect(0,0,BW,BH);
+  if($('paper').value==='on'){g.fillStyle=$('c0').value;g.fillRect(0,0,BW,BH)}
+  cs.forEach(c=>{if(c.blank)return;g.save();g.translate(c.cx,c.cy);g.rotate(c.ang*Math.PI/180);g.translate(-c.gw/2,-c.gh/2);g.fillStyle=c.col;g.fill(pathOf(c),'evenodd');g.restore()})}
+function fitQ(){const st=$('stage');const mw=Math.max(200,st.clientWidth-48),mh=Math.max(200,(innerWidth<=760?innerHeight*0.52:innerHeight-48));
+  Q=Math.min(mw/BW,mh/BH,1)*(devicePixelRatio>1?2:1)}
+let raf=0;
+function render(){cancelAnimationFrame(raf);$('busy').textContent='…';raf=requestAnimationFrame(()=>{
+  [BW,BH]=RATIO[$('ratio').value];fitQ();cv.width=Math.round(BW*Q);cv.height=Math.round(BH*Q);
+  LAST=build();draw(ctx,LAST,Q);$('busy').textContent='';
+  K.forEach(k=>{const s=$(k).parentElement.querySelector('.v');if(s)s.textContent=$(k).value})})}
+K.forEach(k=>$(k).oninput=render);TXT.forEach(k=>$(k).oninput=render);
+$('reroll').onclick=()=>{SEED=(SEED*48271+11)%99991||7;render()};
+
+// ── 型と色
+const PRESETS=[
+  {name:'参考の組み（段）',txt:'あいうえ\n　お\nつぶ',mode:'rows',ratio:'4:5',turn:'0',k:{tilt:0,gap:8,margin:36,bias:12,fat:5,wob:5,per:20,smooth:3},pal:0,seed:7},
+  {name:'しずけさ＋みずうみ',txt:'しずけさ\nみず\nうみ',mode:'rows',ratio:'4:5',turn:'0',k:{tilt:0,gap:6,margin:30,bias:12,fat:5,wob:6,per:20,smooth:3},pal:5,seed:7},
+  {name:'かぜ（横長2段）',txt:'か\nぜ\nそよぐ',mode:'rows',ratio:'4:5',turn:'0',k:{tilt:0,gap:6,margin:30,bias:12,fat:5,wob:6,per:20,smooth:3},pal:6,seed:7},
+  {name:'ことばのつぶ（割る・回す）',txt:'ことばのつぶ',mode:'split',ratio:'4:5',turn:'1',k:{tilt:0,gap:10,margin:28,bias:12,fat:5,wob:6,per:20,smooth:3},pal:2,seed:5},
+  {name:'さざなみ（割る・傾け）',txt:'さざなみのしずけさ',mode:'split',ratio:'4:5',turn:'1',k:{tilt:9,gap:10,margin:28,bias:12,fat:5,wob:6,per:20,smooth:3},pal:1,seed:7},
+  {name:'うねり強め',txt:'ゆらぐ\nみなも',mode:'rows',ratio:'1:1',turn:'0',k:{tilt:0,gap:6,margin:30,bias:12,fat:8,wob:14,per:34,smooth:5},pal:3,seed:9},
+];
+const PALS=[['黒・灰',['#000000','#767676','#b6b6b6']],['黒地・生成り',['#1e2022','#8a877f','#e8e4da']],['生成り・墨＋朱',['#e8e4da','#181818','#d63e26']],
+  ['紺・水色',['#121c3e','#5068a0','#a8c8e4']],['深緑・薄荷',['#102e24','#5c8054','#aae2c4']],['生成り・青',['#eeeade','#82b4e1','#2246c8']],['黄・黒',['#f4cc28','#e8781e','#101010']],['朱・生成り',['#d63e26','#f0a0a0','#f8eede']]];
+const pb=$('presets');PRESETS.forEach(p=>{const b=document.createElement('button');b.textContent=p.name;b.onclick=()=>{
+  pb.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+  $('txt').value=p.txt;$('mode').value=p.mode;$('font').value=p.font||'maru';$('ratio').value=p.ratio;$('turn').value=p.turn;for(const k in p.k)$(k).value=p.k[k];SEED=p.seed;setPal(p.pal)};pb.appendChild(b)});
+const qb=$('palettes');function setPal(i){const c=PALS[i][1];$('c0').value=c[0];$('c1').value=c[1];$('c2').value=c[2];render()}
+PALS.forEach((p,i)=>{const b=document.createElement('button');b.textContent=p[0];b.style.background=`linear-gradient(90deg,${p[1][0]} 0 40%,${p[1][1]} 40% 70%,${p[1][2]} 70%)`;b.style.color='transparent';b.title=p[0];b.style.height='22px';b.onclick=()=>setPal(i);qb.appendChild(b)});
+
+// ── 保存・読む
+function settings(){const s={tool:'tatae',v:1,seed:SEED};K.forEach(k=>s[k]=v(k));TXT.forEach(k=>s[k]=$(k).value);s.extra=EXTRA.map(e=>e.svg);return s}
+function applySettings(s){K.forEach(k=>{if(s[k]!=null)$(k).value=s[k]});TXT.forEach(k=>{if(s[k]!=null)$(k).value=s[k]});SEED=s.seed||7;
+  EXTRA=[];const ex=s.extra||[];if(!ex.length){render();return}
+  Promise.all(ex.map(t=>loadImg(t).then(img=>({img,svg:t})).catch(()=>null))).then(a=>{EXTRA=a.filter(Boolean);render()})}
+function loadImg(t){return new Promise((ok,ng)=>{const img=new Image(),u=URL.createObjectURL(new Blob([t],{type:'image/svg+xml'}));img.onload=()=>{URL.revokeObjectURL(u);ok(img)};img.onerror=()=>{URL.revokeObjectURL(u);ng()};img.src=u})}
+function stamp(){const d=new Date(),p=n=>String(n).padStart(2,'0');return`${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`}
+function fname(ext){return 'tatae_'+$('txt').value.replace(/[\\/:*?"<>|\s]/g,'').slice(0,16)+'_'+stamp()+'.'+ext}
+function save(blob,name){const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(u);a.remove()},8000)}
+function msg(t){$('msg').textContent=t}
+$('png').onclick=()=>{const c=document.createElement('canvas');c.width=BW;c.height=BH;draw(c.getContext('2d'),LAST,1);
+  c.toBlob(b=>{save(b,fname('png'));msg(`PNG を書き出した（${BW}×${BH}）`)},'image/png')};
+function svgText(){const f=n=>Math.round(n*10)/10;
+  let s=`<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${BW} ${BH}" width="${BW}" height="${BH}">\n`;
+  s+=`<metadata id="tatae-data">${JSON.stringify(settings()).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</metadata>\n`;
+  if($('paper').value==='on')s+=`<rect id="地" width="${BW}" height="${BH}" fill="${$('c0').value}"/>\n`;
+  s+=`<g id="字" fill-rule="evenodd">\n`;
+  LAST.forEach((c,n)=>{if(c.blank)return;const a=c.ang*Math.PI/180,ca=Math.cos(a),sa=Math.sin(a);
+    const T=([x,y])=>{x-=c.gw/2;y-=c.gh/2;return[c.cx+x*ca-y*sa,c.cy+x*sa+y*ca]};   // 回転は座標に焼く（Illustrator でそのまま触れる）
+    const nm=typeof c.src==='string'?c.src:'SVG';
+    s+=`<path id="字${n+1}_${nm}" fill="${c.col}" d="${c.loops.map(L=>'M'+L.map(p=>T(p).map(f).join(',')).join(' L')+'Z').join(' ')}"/>\n`});
+  return s+'</g>\n</svg>\n'}
+$('svg').onclick=()=>{save(new Blob([svgText()],{type:'image/svg+xml'}),fname('svg'));msg('SVG を書き出した（1字1パス・この道具で読むと字と設定に戻る）')};
+$('jsave').onclick=()=>save(new Blob([JSON.stringify(settings(),null,1)],{type:'application/json'}),fname('json'));
+$('jload').onclick=()=>$('jfile').click();
+$('jfile').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{try{applySettings(JSON.parse(t));msg('設定を読んだ')}catch(_){alert('この設定は読めませんでした')}});e.target.value=''};
+$('svgin').onclick=()=>$('svgfile').click();
+$('svgfile').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{
+  const m=t.match(/<metadata id="tatae-data">([\s\S]*?)<\/metadata>/);
+  if(m){try{applySettings(JSON.parse(m[1].replace(/&lt;/g,'<').replace(/&amp;/g,'&')));msg('TATAE の SVG＝字と設定に戻した');return}catch(_){}}
+  loadImg(t).then(img=>{EXTRA.push({img,svg:t});$('mode').value='split';msg(`SVG の形を枠に足した（いま ${EXTRA.length} つ）。字と同じように満たす`);render()}).catch(()=>alert('この SVG は読めませんでした'))});e.target.value=''};
+window.addEventListener('resize',render);
+window.__tatae={render,settings,applySettings,svgText,get cells(){return LAST}};
+pb.querySelector('button').classList.add('on');
+{const q=+new URLSearchParams(location.search).get('p');if(q&&pb.children[q])pb.children[q].click();else render()}
+Promise.all([document.fonts.load('500 100px "Zen Maru Gothic"','あいうえおつぶしずけさみかぜそよぐことばのさざなみゆらぐも'),document.fonts.load('900 100px "Zen Kaku Gothic New"','あいう')]).then(()=>{CACHE.clear();render()}).catch(()=>{});
+document.fonts.addEventListener&&document.fonts.addEventListener('loadingdone',()=>{CACHE.clear();render()});
+</script>
+<!-- ══════════════════════════════════════════════════════════════
+     モバイルの保存 ── 2026-08-15（KUMI と同じもの・2026-11-18 にこの道具へ入れた）
+     ⭐ 触る端末のときだけ【端末の共有シート】へファイルを渡す。無ければ今までどおり落とす。
+     🔴🔴 PC は最初の1行で必ず素通りする（pointer:coarse かつ hover が無いときだけ通る）
+     ══════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  var touchOnly = window.matchMedia
+    && matchMedia('(pointer:coarse)').matches && !matchMedia('(hover:hover)').matches;
+  if(!touchOnly) return;                       /* 🔴 PC はここで終わり */
+  if(!window.HTMLAnchorElement) return;
+  var orig = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function(){
+    var href = this.getAttribute('href') || '';
+    var name = this.getAttribute('download');
+    if(!name || href.slice(0,5) !== 'blob:' || this.dataset.plainSave)
+      return orig.apply(this, arguments);
+    var self = this, args = arguments;
+    var plain = function(){
+      try{
+        var a = document.createElement('a');
+        a.href = href; a.download = name; a.dataset.plainSave = '1';
+        document.body.appendChild(a);
+        orig.apply(a, []);
+        setTimeout(function(){ if(a.parentNode) a.remove(); }, 20000);
+      }catch(_){ try{ orig.apply(self, args); }catch(__){} }
+    };
+    fetch(href).then(function(r){ return r.blob(); }).then(function(b){
+      var f;
+      try{ f = new File([b], name, { type: b.type || 'application/octet-stream' }); }
+      catch(_){ return plain(); }
+      if(navigator.share && navigator.canShare && navigator.canShare({ files:[f] })){
+        return navigator.share({ files:[f], title:name })
+          .catch(function(err){ if(!(err && err.name === 'AbortError')) plain(); });
+      }
+      plain();
+    }).catch(plain);
+    return undefined;
+  };
+})();
+</script>
+</body></html>
