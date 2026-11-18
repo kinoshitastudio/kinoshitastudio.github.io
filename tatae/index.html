@@ -67,7 +67,7 @@ canvas{max-width:100%;max-height:calc(100vh - 48px);box-shadow:0 10px 40px rgba(
     <label>紙の形<select id="ratio" style="grid-column:2/4"><option value="4:5">縦長 4:5</option><option value="2:3">縦長 2:3</option><option value="1:1">正方形 1:1</option><option value="3:2">横長 3:2</option><option value="2:1">横長 2:1</option></select></label>
     <label>字の向き<select id="turn" style="grid-column:2/4"><option value="0">回さない</option><option value="1">0° と ±90° をまぜる</option><option value="2">±90° を多めに</option></select></label>
     <label>傾け<input type="range" id="tilt" min="0" max="20" value="0"><span class="v"></span></label>
-    <label>字の間<input type="range" id="gap" min="0" max="40" value="8"><span class="v"></span></label>
+    <label>字の間<input type="range" id="gap" min="0" max="40" value="0"><span class="v"></span></label>
     <label>紙の余白<input type="range" id="margin" min="0" max="80" value="36"><span class="v"></span></label>
     <label>割りの偏り<input type="range" id="bias" min="0" max="24" value="12"><span class="v"></span></label>
     <div class="row" style="margin-top:2px"><button id="reroll">割り方・向きを振り直す</button></div>
@@ -75,7 +75,7 @@ canvas{max-width:100%;max-height:calc(100vh - 48px);box-shadow:0 10px 40px rgba(
   <div class="grp"><div class="t">満たす（字の形）</div>
     <label>書体<select id="font" style="grid-column:2/4"><option value="maru">丸ゴ（Zen Maru Gothic）</option><option value="kaku">角ゴ（Zen Kaku Gothic New）</option></select></label>
     <label>太さ<input type="range" id="fat" min="0" max="14" value="5"><span class="v"></span></label>
-    <label>うねり<input type="range" id="wob" min="0" max="20" value="5"><span class="v"></span></label>
+    <label>うねり<input type="range" id="wob" min="0" max="20" value="6"><span class="v"></span></label>
     <label>うねりの大きさ<input type="range" id="per" min="6" max="50" value="20"><span class="v"></span></label>
     <label>なめらか<input type="range" id="smooth" min="0" max="8" value="3"><span class="v"></span></label>
   </div>
@@ -100,8 +100,8 @@ const $=id=>document.getElementById(id);
 const K=['tilt','gap','margin','bias','fat','wob','per','smooth'];
 const TXT=['txt','mode','ratio','turn','font','c0','c1','c2','c2rule','paper'];
 const RATIO={'4:5':[2000,2500],'2:3':[2000,3000],'1:1':[2400,2400],'3:2':[3000,2000],'2:1':[3200,1600]};
-const FONTS={maru:['"Zen Maru Gothic"',500],kaku:['"Zen Kaku Gothic New"',900]};
-const WR=0.42;                     // 形を作る細かさ（紙の 1px あたり）＝輪郭を作ってから拡大して描く
+const FONTS={maru:['"Hiragino Maru Gothic ProN","Zen Maru Gothic"',500],kaku:['"Zen Kaku Gothic New"',900]};
+const WR=0.5;                      // 形を作る細かさ（紙の 1px あたり）＝輪郭を作ってから拡大して描く
 const cv=$('cv'),ctx=cv.getContext('2d');
 let BW=2000,BH=2500,Q=0.4,SEED=7,EXTRA=[],LAST=[];
 const v=id=>+$(id).value;
@@ -117,13 +117,23 @@ function boxBlur(src,w,h,r){if(r<1)return src;let a=src,b=new Float32Array(w*h);
       for(let y=0;y<h;y++){a===src&&(a=new Float32Array(w*h));a[y*w+x]=acc/(2*r+1);acc+=b[Math.min(h-1,y+r+1)*w+x]-b[Math.max(0,y-r)*w+x]}}}
   return a}
 function sourceMask(src){   // 字（または読んだ SVG の絵）を描いて、外接枠で切り出す
-  const S=360,c=document.createElement('canvas');c.width=c.height=S;const g=c.getContext('2d',{willReadFrequently:true});
+  const S=720,c=document.createElement('canvas');c.width=c.height=S;const g=c.getContext('2d',{willReadFrequently:true});
   g.fillStyle='#000';
-  if(typeof src==='string'){const [fam,w]=FONTS[$('font').value];g.font=`${w} ${S*0.8}px ${fam},"Hiragino Maru Gothic ProN","Hiragino Sans",sans-serif`;g.textAlign='center';g.textBaseline='middle';g.fillText(src,S/2,S/2+S*0.03)}
+  if(typeof src==='string'){const [fam,w]=FONTS[$('font').value];g.font=`${w} ${S*0.8}px ${fam},sans-serif`;g.textAlign='center';g.textBaseline='middle';g.fillText(src,S/2,S/2+S*0.03)}
   else{const im=src.img,w=im.naturalWidth||im.width||S,h=im.naturalHeight||im.height||S,s=S*0.9/Math.max(w,h);g.drawImage(im,(S-w*s)/2,(S-h*s)/2,w*s,h*s)}
   const d=g.getImageData(0,0,S,S).data;let x0=S,y0=S,x1=-1,y1=-1;
-  for(let y=0;y<S;y++)for(let x=0;x<S;x++)if(d[(y*S+x)*4+3]>110){if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y}
+  for(let y=0;y<S;y++)for(let x=0;x<S;x++)if(d[(y*S+x)*4+3]>127){if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y}
   if(x1<0)return null;return {c,x0,y0,w:x1-x0+1,h:y1-y0+1}}
+// 2026-11-18 木下「道具での出来とあなたが作った画像の出来が違う」→ Python 版（make_ekitai_kana_kairyo.py）と同じ計算に揃えた：
+//   太らせ＝ひし形に1画素ずつ広げる（scipy の binary_dilation と同じ）／うねり＝白色雑音をガウスでぼかした揺れ・最大で割って量をそろえる
+//   なめらか＝2倍に広げてからぼかして 0.5 で切る。つまみの値は Python の数字の100倍（太さ5＝0.05）
+function normals(R,n){const a=new Float32Array(n);for(let i=0;i<n;i+=2){const u=Math.max(1e-12,R()),t=R(),q=Math.sqrt(-2*Math.log(u));a[i]=q*Math.cos(2*Math.PI*t);if(i+1<n)a[i+1]=q*Math.sin(2*Math.PI*t)}return a}
+function dilateL1(on,w,h,r){const d=new Float32Array(w*h);for(let i=0;i<w*h;i++)d[i]=on[i]?0:1e9;
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=y*w+x;let q=d[i];if(x>0&&d[i-1]+1<q)q=d[i-1]+1;if(y>0&&d[i-w]+1<q)q=d[i-w]+1;d[i]=q}
+  for(let y=h-1;y>=0;y--)for(let x=w-1;x>=0;x--){const i=y*w+x;let q=d[i];if(x<w-1&&d[i+1]+1<q)q=d[i+1]+1;if(y<h-1&&d[i+w]+1<q)q=d[i+w]+1;d[i]=q}
+  const o=new Uint8Array(w*h);for(let i=0;i<w*h;i++)o[i]=d[i]<=r?1:0;return o}
+function bilinear(m,w,h,x,y){x=Math.min(w-1,Math.max(0,x));y=Math.min(h-1,Math.max(0,y));const ix=Math.floor(x),iy=Math.floor(y),tx=x-ix,ty=y-iy,ix1=Math.min(w-1,ix+1),iy1=Math.min(h-1,iy+1);
+  return (m[iy*w+ix]*(1-tx)+m[iy*w+ix1]*tx)*(1-ty)+(m[iy1*w+ix]*(1-tx)+m[iy1*w+ix1]*tx)*ty}
 function shape(src,key,gw,gh,seed){
   // gw,gh＝枠の大きさ（紙の px）。返すのは枠の左上を 0,0 とする輪郭（紙の px）
   const P=[v('fat'),v('wob'),v('per'),v('smooth'),$('font').value].join(','), k=key+'|'+Math.round(gw)+'x'+Math.round(gh)+'|'+P+'|'+seed;
@@ -131,28 +141,24 @@ function shape(src,key,gw,gh,seed){
   const w=Math.max(8,Math.round(gw*WR)),h=Math.max(8,Math.round(gh*WR)),s=Math.min(w,h);
   const sm=sourceMask(src);if(!sm){CACHE.set(k,[]);return []}
   const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d',{willReadFrequently:true});
-  g.drawImage(sm.c,sm.x0,sm.y0,sm.w,sm.h,0,0,w,h);           // 1. 枠の縦横いっぱいに伸ばす
-  const d=g.getImageData(0,0,w,h).data;let m=new Float32Array(w*h);for(let i=0;i<w*h;i++)m[i]=d[i*4+3]/255;
-  // 2. 太らせる（ぼかして低いしきい値）
-  const fr=Math.round(s*v('fat')/100*0.7);
-  if(fr>0){m=boxBlur(m,w,h,fr);for(let i=0;i<w*h;i++)m[i]=m[i]>0.2?1:0}
-  // 3. うねらせる：粗い格子の乱数をなめらかにつないだ揺れで座標をずらす
-  const amp=s*v('wob')/100, cell=Math.max(4,s*v('per')/100*2.2);   // 揺れの波長（Python 版のぼかした乱数と同じくらいの長さ）
-  if(amp>0){const R=mkR(seed*7919+101),gx=Math.ceil(w/cell)+3,gy=Math.ceil(h/cell)+3,DX=new Float32Array(gx*gy),DY=new Float32Array(gx*gy);
-    for(let i=0;i<gx*gy;i++){DX[i]=R()*2-1;DY[i]=R()*2-1}
-    const sstep=t=>t*t*(3-2*t);
-    const at=(A,x,y)=>{const fx=x/cell,fy=y/cell,ix=Math.floor(fx),iy=Math.floor(fy),tx=sstep(fx-ix),ty=sstep(fy-iy),i=iy*gx+ix;
-      return (A[i]*(1-tx)+A[i+1]*tx)*(1-ty)+(A[i+gx]*(1-tx)+A[i+gx+1]*tx)*ty};
-    const o=new Float32Array(w*h);
-    for(let y=0;y<h;y++)for(let x=0;x<w;x++){let sx=x+at(DX,x,y)*amp,sy=y+at(DY,x,y)*amp;sx=Math.min(w-1,Math.max(0,sx));sy=Math.min(h-1,Math.max(0,sy));
-      const ix=Math.floor(sx),iy=Math.floor(sy),tx=sx-ix,ty=sy-iy,ix1=Math.min(w-1,ix+1),iy1=Math.min(h-1,iy+1);
-      o[y*w+x]=(m[iy*w+ix]*(1-tx)+m[iy*w+ix1]*tx)*(1-ty)+(m[iy1*w+ix]*(1-tx)+m[iy1*w+ix1]*tx)*ty}
+  g.imageSmoothingQuality='high';g.drawImage(sm.c,sm.x0,sm.y0,sm.w,sm.h,0,0,w,h);           // 1. 枠の縦横いっぱいに伸ばす
+  const d=g.getImageData(0,0,w,h).data;let on=new Uint8Array(w*h);for(let i=0;i<w*h;i++)on[i]=d[i*4+3]>127?1:0;
+  // 2. 太らせる（ひし形に r 画素）
+  const r=Math.floor(s*v('fat')/100);if(r>0)on=dilateL1(on,w,h,r);
+  let m=new Float32Array(w*h);for(let i=0;i<w*h;i++)m[i]=on[i];
+  // 3. うねらせる（白色雑音をぼかした揺れ・最大で割って量をそろえる）
+  const wob=v('wob')/100;
+  if(wob>0){const R=mkR(seed*7919+101),sg=Math.max(1,Math.round(s*v('per')/100));
+    const DX=boxBlur(normals(R,w*h),w,h,sg),DY=boxBlur(normals(R,w*h),w,h,sg);let mx=1e-9;for(let i=0;i<w*h;i++){const a=Math.abs(DX[i]);if(a>mx)mx=a}
+    const kk=s*wob/mx,o=new Float32Array(w*h);
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=y*w+x;o[i]=bilinear(m,w,h,x+DX[i]*kk,y+DY[i]*kk)}
     m=o}
-  // 4. なめらかに
-  const sr=Math.round(s*v('smooth')/100*1.4); if(sr>0)m=boxBlur(m,w,h,sr);
+  // 4. なめらかに（2倍に広げてからぼかして 0.5 で切る）
+  const W2=w*2,H2=h*2;let u=new Float32Array(W2*H2);for(let y=0;y<H2;y++)for(let x=0;x<W2;x++)u[y*W2+x]=bilinear(m,w,h,(x+.5)/2-.5,(y+.5)/2-.5);
+  const sr=Math.round(2*s*v('smooth')/100);if(sr>0)u=boxBlur(u,W2,H2,sr);
   // 5. 縁をたどる（外側に1画素の空きを足して、枠の縁でも輪が閉じるように）
-  const N=w+2,M=h+2,on=new Uint8Array(N*M);for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(m[y*w+x]>0.5)on[(y+1)*N+x+1]=1;
-  const loops=trace(on,N,M).map(L=>rounded(simplify(L,0.6))).filter(L=>L.length>=3).map(L=>L.map(([x,y])=>[(x-1)/w*gw,(y-1)/h*gh]));
+  const N=W2+2,M=H2+2,bin=new Uint8Array(N*M);for(let y=0;y<H2;y++)for(let x=0;x<W2;x++)if(u[y*W2+x]>0.5)bin[(y+1)*N+x+1]=1;
+  const loops=trace(bin,N,M).map(L=>rounded(simplify(L,0.7))).filter(L=>L.length>=3).map(L=>L.map(([x,y])=>[(x-1)/W2*gw,(y-1)/H2*gh]));
   CACHE.set(k,loops);if(CACHE.size>600)CACHE.delete(CACHE.keys().next().value);return loops}
 function trace(on,N,M){
   const nxt=new Map(),key=(x,y)=>y*(N+1)+x;
@@ -174,7 +180,7 @@ function rounded(P){   // 角を丸める（Chaikin 2回）＝画素の階段を
 
 // ── 割る
 function cells(){
-  const R=mkR(SEED*104729+7),m=v('margin')/1000*Math.min(BW,BH)*2.5,bias=v('bias')/100;
+  const R=mkR(SEED*104729+7),m=v('margin')/1000*BW,bias=v('bias')/100;
   const lines=$('txt').value.split('\n').map(l=>[...l]).filter(l=>l.length);
   const items=[];lines.forEach(l=>l.forEach(ch=>items.push(ch)));EXTRA.forEach((e,i)=>items.push({img:e.img,id:'svg'+i}));
   let rects=[];
@@ -186,7 +192,7 @@ function cells(){
     while(rects.length<items.length){rects.sort((a,b)=>a[2]*a[3]-b[2]*b[3]);const [x,y,w,h]=rects.pop(),t=0.5+(R()*2-1)*bias;
       if(w>h)rects.push([x,y,w*t,h],[x+w*t,y,w*(1-t),h]);else rects.push([x,y,w,h*t],[x,y+h*t,w,h*(1-t)])}
     rects.sort((a,b)=>Math.round(a[1]/(BH*0.08))-Math.round(b[1]/(BH*0.08))||a[0]-b[0])}
-  const gap=v('gap')/1000*Math.min(BW,BH)*2.5,turn=+$('turn').value,tilt=v('tilt');
+  const gap=v('gap')/1000*BW,turn=+$('turn').value,tilt=v('tilt');
   const areas=rects.map(r=>r[2]*r[3]),mean=areas.reduce((a,b)=>a+b,0)/Math.max(1,areas.length);
   return items.map((it,i)=>{const [x,y,w,h]=rects[i];const w2=Math.max(4,w-gap),h2=Math.max(4,h-gap);
     let rot=0;if(turn){const r=R();rot=turn===2?(r<0.25?0:r<0.62?90:-90):(r<0.5?0:r<0.75?90:-90)}
@@ -211,12 +217,12 @@ $('reroll').onclick=()=>{SEED=(SEED*48271+11)%99991||7;render()};
 
 // ── 型と色
 const PRESETS=[
-  {name:'参考の組み（段）',txt:'あいうえ\n　お\nつぶ',mode:'rows',ratio:'4:5',turn:'0',k:{tilt:0,gap:8,margin:36,bias:12,fat:5,wob:5,per:20,smooth:3},pal:0,seed:7},
-  {name:'しずけさ＋みずうみ',txt:'しずけさ\nみず\nうみ',mode:'rows',ratio:'4:5',turn:'0',k:{tilt:0,gap:6,margin:30,bias:12,fat:5,wob:6,per:20,smooth:3},pal:5,seed:7},
-  {name:'かぜ（横長2段）',txt:'か\nぜ\nそよぐ',mode:'rows',ratio:'4:5',turn:'0',k:{tilt:0,gap:6,margin:30,bias:12,fat:5,wob:6,per:20,smooth:3},pal:6,seed:7},
-  {name:'ことばのつぶ（割る・回す）',txt:'ことばのつぶ',mode:'split',ratio:'4:5',turn:'1',k:{tilt:0,gap:10,margin:28,bias:12,fat:5,wob:6,per:20,smooth:3},pal:2,seed:5},
-  {name:'さざなみ（割る・傾け）',txt:'さざなみのしずけさ',mode:'split',ratio:'4:5',turn:'1',k:{tilt:9,gap:10,margin:28,bias:12,fat:5,wob:6,per:20,smooth:3},pal:1,seed:7},
-  {name:'うねり強め',txt:'ゆらぐ\nみなも',mode:'rows',ratio:'1:1',turn:'0',k:{tilt:0,gap:6,margin:30,bias:12,fat:8,wob:14,per:34,smooth:5},pal:3,seed:9},
+  {name:'参考の組み（段）',txt:'あいうえ\n　お\nつぶ',mode:'rows',ratio:'4:5',turn:'0',k:{tilt:0,gap:0,margin:36,bias:12,fat:5,wob:6,per:20,smooth:3},pal:0,seed:7},
+  {name:'しずけさ＋みずうみ',txt:'しずけさ\nみず\nうみ',mode:'rows',ratio:'4:5',turn:'0',k:{tilt:0,gap:0,margin:36,bias:12,fat:5,wob:6,per:20,smooth:3},pal:5,seed:7},
+  {name:'かぜ（横長2段）',txt:'か\nぜ\nそよぐ',mode:'rows',ratio:'4:5',turn:'0',k:{tilt:0,gap:0,margin:36,bias:12,fat:5,wob:6,per:20,smooth:3},pal:6,seed:7},
+  {name:'ことばのつぶ（割る・回す）',txt:'ことばのつぶ',mode:'split',ratio:'4:5',turn:'1',k:{tilt:0,gap:10,margin:36,bias:12,fat:5,wob:6,per:20,smooth:3},pal:2,seed:5},
+  {name:'さざなみ（割る・傾け）',txt:'さざなみのしずけさ',mode:'split',ratio:'4:5',turn:'1',k:{tilt:9,gap:10,margin:36,bias:12,fat:5,wob:6,per:20,smooth:3},pal:1,seed:7},
+  {name:'うねり強め',txt:'ゆらぐ\nみなも',mode:'rows',ratio:'1:1',turn:'0',k:{tilt:0,gap:0,margin:36,bias:12,fat:7,wob:10,per:30,smooth:4},pal:3,seed:9},
 ];
 const PALS=[['黒・灰',['#000000','#767676','#b6b6b6']],['黒地・生成り',['#1e2022','#8a877f','#e8e4da']],['生成り・墨＋朱',['#e8e4da','#181818','#d63e26']],
   ['紺・水色',['#121c3e','#5068a0','#a8c8e4']],['深緑・薄荷',['#102e24','#5c8054','#aae2c4']],['生成り・青',['#eeeade','#82b4e1','#2246c8']],['黄・黒',['#f4cc28','#e8781e','#101010']],['朱・生成り',['#d63e26','#f0a0a0','#f8eede']]];
