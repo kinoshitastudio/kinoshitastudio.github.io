@@ -36,8 +36,11 @@ button:disabled{opacity:.35;cursor:default}
 .inks{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}.inks input{height:30px;padding:2px}
 .inks div{font-size:10px;color:var(--sub);text-align:center;margin-top:2px}
 #stage{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px 20px 0;overflow:hidden;position:relative;min-width:0}
-#wrap{flex:1;display:flex;align-items:center;justify-content:center;width:100%;min-height:0}
-canvas#cv{max-width:100%;max-height:100%;box-shadow:0 10px 40px rgba(0,0,0,.45);background:#f3efe6}
+#wrap{flex:1;display:flex;width:100%;min-height:0;overflow:auto;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+canvas#cv{margin:auto;flex:none;box-shadow:0 10px 40px rgba(0,0,0,.45);background:#f3efe6}
+#zoom{position:absolute;top:8px;right:20px;display:flex;gap:4px;align-items:center;z-index:3}
+#zoom button{flex:none;width:34px;height:30px;padding:0;font-size:15px;border-radius:15px;background:rgba(32,32,32,.85)}
+#zoom #zfit{width:auto;padding:0 10px;font-size:11px;font-variant-numeric:tabular-nums}
 #bar{display:flex;align-items:center;justify-content:center;gap:18px;padding:14px 0 18px;width:100%}
 #bar button{flex:none;width:auto;padding:9px 14px;border-radius:20px;font-size:12px}
 #shutter{width:66px!important;height:66px;border-radius:50%!important;padding:0!important;background:#e8e6e1;border:4px solid #161616;outline:2px solid #e8e6e1;font-size:0!important}
@@ -50,9 +53,8 @@ video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 @media(max-width:760px){
   body{flex-direction:column;height:auto;overflow:auto}
   #panel{width:auto;border-right:0;border-bottom:1px solid var(--line);order:2}
-  #stage{position:sticky;top:0;z-index:2;background:var(--bg);padding:10px 10px 0;border-bottom:1px solid var(--line);height:auto}
-  #wrap{height:auto}
-  canvas#cv{max-height:58vh;max-height:58dvh}
+  #stage{position:sticky;top:0;z-index:2;background:var(--bg);padding:8px 10px 0;border-bottom:1px solid var(--line);height:64vh;height:64dvh;flex:none}
+  #zoom{top:4px;right:10px}
   #bar{padding:10px 0 12px;gap:12px}
   #state{position:static;align-self:flex-start;margin:0 0 6px}
 }
@@ -121,6 +123,7 @@ video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 </div>
 <div id="stage">
   <div id="state"></div>
+  <div id="zoom"><button id="zout" aria-label="縮小">−</button><button id="zfit" title="全体を見る">全体</button><button id="zin" aria-label="拡大">＋</button></div>
   <div id="wrap"><canvas id="cv"></canvas></div>
   <div id="bar"><button id="fileA2">写真を入れる</button><button id="shutter" aria-label="カメラで撮る">撮る</button><button id="reprint2">刷り直す</button></div>
   <video id="vid" playsinline muted autoplay></video>
@@ -269,13 +272,35 @@ function paint(target,out,opt){
 // ── 画面の大きさ
 function viewSize(){const img=A||SAMPLE;const cr=crop(live&&!frozen?vid:img);
   const wr=$('wrap').getBoundingClientRect();const dpr=Math.min(2,window.devicePixelRatio||1);
-  let bw=Math.max(200,wr.width),bh=Math.max(200,wr.height);if(innerWidth<=760)bh=Math.min(bh||9e9,innerHeight*.58);
+  let bw=Math.max(120,wr.width-4),bh=Math.max(120,wr.height-4);
   let w=bw,h=w/cr.ar;if(h>bh){h=bh;w=h*cr.ar}
-  const sc=Math.min(dpr,1400/Math.max(w,h));return{W:Math.round(w*sc),H:Math.round(h*sc),cssW:Math.round(w),cssH:Math.round(h)}}
+  w*=ZOOM;h*=ZOOM;   // 拡大＝板そのものを大きく刷り直す（網点がぼやけない）
+  const cap=(live&&!frozen)?1400:4200;
+  const sc=Math.min(dpr,cap/Math.max(w,h));return{W:Math.round(w*sc),H:Math.round(h*sc),cssW:Math.round(w),cssH:Math.round(h)}}
+let ZOOM=1;
 function draw(fast){const z=viewSize();const keep=A;
   if(live&&!frozen&&vid.videoWidth){A=vid}
   render(cv,z.W,z.H,{fast});A=keep;cv.style.width=z.cssW+'px';cv.style.height=z.cssH+'px'}
 let T=0;function later(){clearTimeout(T);T=setTimeout(()=>draw(false),60)}
+// ── 拡大・縮小（＋−・ピンチ・トラックパッドのつまみ）。拡大中は指やスクロールで動かす
+const wrap=$('wrap');
+function zfitLabel(){$('zfit').textContent=ZOOM<=1.001?'全体':Math.round(ZOOM*100)+'%'}
+function setZoom(z,cx,cy){ // cx,cy＝wrap の中で止めておく点（画面の座標）
+  z=Math.max(1,Math.min(8,z));const r=wrap.getBoundingClientRect();
+  if(cx==null){cx=r.left+r.width/2;cy=r.top+r.height/2}
+  const px=(wrap.scrollLeft+cx-r.left),py=(wrap.scrollTop+cy-r.top),k=z/ZOOM;
+  const w0=parseFloat(cv.style.width)||cv.clientWidth,h0=parseFloat(cv.style.height)||cv.clientHeight;
+  ZOOM=z;cv.style.width=(w0*k)+'px';cv.style.height=(h0*k)+'px';   // まず見た目だけ（速い）
+  wrap.scrollLeft=px*k-(cx-r.left);wrap.scrollTop=py*k-(cy-r.top);zfitLabel();later()}
+$('zin').onclick=()=>setZoom(ZOOM*1.6);$('zout').onclick=()=>setZoom(ZOOM/1.6);$('zfit').onclick=()=>setZoom(1);
+let pin=null;
+wrap.addEventListener('touchstart',e=>{if(e.touches.length===2){const[a,b]=e.touches;pin={d:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),z:ZOOM}}},{passive:true});
+wrap.addEventListener('touchmove',e=>{if(pin&&e.touches.length===2){e.preventDefault();const[a,b]=e.touches;const d=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+  setZoom(pin.z*d/pin.d,(a.clientX+b.clientX)/2,(a.clientY+b.clientY)/2)}},{passive:false});
+wrap.addEventListener('touchend',e=>{if(e.touches.length<2)pin=null},{passive:true});
+wrap.addEventListener('wheel',e=>{if(!e.ctrlKey)return;e.preventDefault();setZoom(ZOOM*Math.exp(-e.deltaY*.01),e.clientX,e.clientY)},{passive:false});
+// 2度たたくと 全体 ⇄ 2.5倍
+let lastTap=0;wrap.addEventListener('touchend',e=>{if(e.changedTouches.length!==1||pin)return;const t=Date.now();if(t-lastTap<300){const c=e.changedTouches[0];setZoom(ZOOM>1.2?1:2.5,c.clientX,c.clientY);lastTap=0}else lastTap=t},{passive:true});
 
 // ── 生の映像を刷りながら見る
 let lastT=0;
