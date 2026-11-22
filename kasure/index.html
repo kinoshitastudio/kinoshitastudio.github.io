@@ -66,8 +66,8 @@ canvas#cv{box-shadow:0 10px 40px rgba(0,0,0,.45);cursor:grab;touch-action:none;d
 
   <div class="grp"><div class="t">筆</div>
     <label>太さ<input type="range" id="bw" min="3" max="36" value="13"><span class="v"></span></label>
-    <label>太細の差<input type="range" id="con" min="0" max="100" value="60"><span class="v"></span></label>
-    <label>筆の角度<input type="range" id="nib" min="-90" max="90" value="35"><span class="v"></span></label>
+    <label>太細の差<input type="range" id="con" min="0" max="100" value="55"><span class="v"></span></label>
+    <label>筆の角度<input type="range" id="nib" min="-90" max="90" value="20"><span class="v"></span></label>
     <label>押し（下へ太る）<input type="range" id="push" min="0" max="100" value="45"><span class="v"></span></label>
     <label>かすれ<input type="range" id="dry" min="0" max="100" value="48"><span class="v"></span></label>
     <label>筋の長さ<input type="range" id="streak" min="0" max="100" value="45"><span class="v"></span></label>
@@ -245,7 +245,7 @@ function layout(BW,BH){
   lines.forEach((line,li)=>{
     const a=(v('ang')+v('angStep')*li)*Math.PI/180,ca=Math.cos(a),sa=Math.sin(a);
     if(li>0){const pa=(v('ang')+v('angStep')*(li-1))*Math.PI/180,nz=sz*shrink,d=lead*(.62*sz+.5*nz),ind=v('indent')/100*sz;
-      const na=a-pa,lenN=[...line].reduce((t,c)=>t+(c===' '?.32:c==='　'?.8:skeleton(c).adv*v('wide')/100)*track,0)*nz;
+      const na=a-pa,lenN=[...line].reduce((t,c)=>t+(c===' '?.32:c==='　'?.8:(skeleton(c).adv*v('wide')/100+v('bw')/100*.75))*track,0)*nz;
       const rise=Math.max(0,-Math.sin(na)*(lenN*.85+ind));   // 次の行が上がるぶん、離す（前の行に刺さらないように）
       ox+=-Math.sin(pa)*(d+rise)+Math.cos(pa)*ind;oy+=Math.cos(pa)*rise;oy+=Math.cos(pa)*d+Math.sin(pa)*ind;sz=nz}
     let pen=0;const R=rng(seed*977+li*31);
@@ -255,7 +255,7 @@ function layout(BW,BH){
       // ⭐ 傾きと大きさは行に沿ってなめらかに変える（隣の字と逆向きに傾くと縦長の字どうしが刺さる）＋少しだけ字ごと
       const fl=ci*.42+li*7.3,sk=skeleton(ch),k=sz*(1+(vn(fl,seed*7+11)*.85+(r2-.5)*.35)*js),rot=(vn(fl,seed*7+3)*.8+(r1-.5)*.3)*48*jr*Math.PI/180,dy=(r3-.5)*.42*jy*sz;
       const cxL=sk.adv*.5*v('wide')/100,cyL=-.36*v('tall')/100,cr=Math.cos(rot),sr=Math.sin(rot);
-      const hw=sk.adv*v('wide')/100*(sz+(k-sz)*.85)*.5*track/.82,px=ox+pen*ca-dy*sa+hw*ca,py=oy+pen*sa+dy*ca+hw*sa;
+      const hw=(sk.adv*v('wide')/100+v('bw')/100*.75)*(sz+(k-sz)*.85)*.5*track/.82,px=ox+pen*ca-dy*sa+hw*ca,py=oy+pen*sa+dy*ca+hw*sa;
       const key=li+':'+ci,strokes=[];
       sk.s.forEach((st,si)=>{const sd=seed*131+li*1013+ci*97+si*7;
         const wd=v('wide')/100,tl0=v('tall')/100;let p=st.p.map(([x,y])=>[(x-(y+.36)*sl)*wd,y*tl0]);   // 傾けるのは字の真ん中（x字高の中ほど）を軸に＝字が隣へずれない
@@ -274,7 +274,7 @@ function layout(BW,BH){
         p=p.map(([x,y])=>{x=(x-cxL)*k;y=(y-cyL)*k;return[px+(x*cr-y*sr)*ca-(x*sr+y*cr)*sa,py+(x*cr-y*sr)*sa+(x*sr+y*cr)*ca]});
         strokes.push({p,w:k,sd,dot:st.dot,closed:st.closed})});
       glyphs.push({key,strokes,k});
-      pen+=sk.adv*v('wide')/100*(sz+(k-sz)*.85)*track});
+      pen+=(sk.adv*v('wide')/100+v('bw')/100*.75)*(sz+(k-sz)*.85)*track});
     // 行の終わり（勢いの線のため）
     glyphs.lineEnd=glyphs.lineEnd||[];glyphs.lineEnd[li]={ox,oy,pen,a,sz}});
   // 版面に収める（動かした分は収めたあとに足す）
@@ -316,16 +316,25 @@ function brush(g,st,scale,q){
   if(R.length<2)return;
   const n=R.length,L=(n-1)*step,N=[];
   for(let i=0;i<n;i++){const a=R[Math.max(0,i-2)],b=R[Math.min(n-1,i+2)];const tx=b[0]-a[0],ty=b[1]-a[1],tl=Math.hypot(tx,ty)||1;N.push([-ty/tl,tx/tl])}
-  const tail=Math.min(L*.55,W*(.4+nuki*2.6)),head=Math.min(L*.3,W*.45);
+  const tail=Math.min(L*.38,W*(.4+nuki*2.6)),head=Math.min(L*.3,W*.45);
   const Wd=new Float32Array(n);
   // ⭐ 太細＝平らな筆を一定の角度で持つ（筆の角度に直交して走ると太い・沿って走ると細い）＋下へ引く画は押して太る
-  const con=v('con')/100,nib=-v('nib')*Math.PI/180,push=v('push')/100,DF=new Float32Array(n);
+  const con=v('con')/100*(st.slash?.25:1),nib=-v('nib')*Math.PI/180,push=v('push')/100,DF=new Float32Array(n);
   for(let i=0;i<n;i++){const a=R[Math.max(0,i-3)],b=R[Math.min(n-1,i+3)],tx=b[0]-a[0],ty=b[1]-a[1],tl=Math.hypot(tx,ty)||1,th=Math.atan2(ty,tx);
-    let f=(1-con)+con*Math.max(.07,Math.abs(Math.sin(th-nib)));const dn=ty/tl;f*=1+push*(dn>0?.55*dn:.45*dn);DF[i]=Math.max(.05,f)}
+    let f=1;const dn=ty/tl;f*=1+push*(dn>0?.55*dn:.45*dn);DF[i]=Math.max(.05,f)}
+  // ⭐⭐ 平らな筆：毛は【筆の角度の向き】に並ぶ（進む向きに直交ではない）。
+  //   ＝角度に沿って走ると毛が重なって髪の毛の細さに、直交して走ると全幅。入りと終わりは斜めに切れる。
+  //   太細の差＝丸い筆（進む向きに直交）と平らな筆の混ぜ具合。
+  const nv=[Math.cos(nib),Math.sin(nib)],OV=[];
+  for(let i=0;i<n;i++){let nx=N[i][0],ny=N[i][1];if(nx*nv[0]+ny*nv[1]<0){nx=-nx;ny=-ny}
+    let ox=(1-con)*nx+con*nv[0],oy=(1-con)*ny+con*nv[1];
+    const perp=ox*nx+oy*ny;   // 進む向きに直交する成分＝見える幅（髪の毛より細くしない）
+    if(perp<.07){ox+=nx*(.07-perp);oy+=ny*(.07-perp)}
+    OV.push([ox,oy])}
   for(let r=0;r<3;r++)for(let i=1;i<n-1;i++)DF[i]=(DF[i-1]+DF[i]*2+DF[i+1])/4;
   for(let i=0;i<n;i++){const s=i*step;let w=(1+.12*vn(s/(W*2.5),st.sd+5))*(st.slash?1:DF[i]);
     if(s<head)w*=.55+.45*Math.sqrt(s/head);
-    if(st.closed!==true&&s>L-tail){const t=(s-(L-tail))/tail;w*=1-.94*Math.pow(t,1.25)}
+    if(st.closed!==true&&s>L-tail){const t=(s-(L-tail))/tail;w*=1-.94*Math.pow(t,1.7)}
     Wd[i]=Math.max(.04,w)*W}
   const nb=Math.max(8,Math.min(q?110:70,Math.round(W/1.3))),lw0=W/nb*3.4;
   const R0=rng(st.sd*7+1);
@@ -342,7 +351,7 @@ function brush(g,st,scale,q){
       const on=s<head*.8||gate>rate*used*1.35;
       if(!on){down=false;continue}
       const jo=o*(1-.06*rough)+rough*(.05*vn(s/(W*1.6),sj+1)+.025*vn(s/(W*.5),sj+2))*e*e,ww=Wd[i];
-      const x=R[i][0]+N[i][0]*jo*ww,y=R[i][1]+N[i][1]*jo*ww;
+      const x=R[i][0]+OV[i][0]*jo*ww,y=R[i][1]+OV[i][1]*jo*ww;
       if(!down){g.moveTo(x,y);g.lineTo(x+.01,y);down=true}else g.lineTo(x,y)}
     g.stroke()}
 }
@@ -380,7 +389,7 @@ function markSw(){[...$('sw').children].forEach((e,k)=>e.classList.toggle('on',S
 $('shake').onclick=()=>{$('seed').value=(v('seed')%99)+1;$('seed').dispatchEvent(new Event('input'))};
 const PRE={calm:{jit:25,jr:20,js:20,jy:20,slant:6,over:30,nuki:45,con:35,angStep:0,tall:105,wide:95,track:82},
   fast:{jit:45,jr:40,js:40,jy:35,slant:12,over:50,nuki:65,con:60,angStep:-3,tall:112,wide:90,track:82},
-  wild:{jit:60,jr:38,js:50,jy:45,slant:26,over:85,nuki:90,con:80,angStep:-18,shrink:70,tall:130,wide:84,track:92}};
+  wild:{jit:60,jr:38,js:50,jy:45,slant:26,over:85,nuki:90,con:65,angStep:-18,shrink:70,tall:130,wide:84,track:92}};
 document.querySelectorAll('[data-pre]').forEach(b=>b.onclick=()=>{Object.entries(PRE[b.dataset.pre]).forEach(([id,x])=>{$(id).value=x;const o=$(id).parentNode.querySelector('.v');if(o)o.textContent=x});draw();stat('手の型「'+b.textContent+'」にした（つまみも動いている）')});
 $('adjClear').onclick=()=>{S.adj={};draw();stat('動かした分を全部戻した')};
 
