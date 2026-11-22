@@ -158,15 +158,17 @@ function kanjiBone(strokes,ch){
   const bw=Math.max(x1-x0,1e-6),bh=Math.max(y1-y0,1e-6),big=Math.max(bw,bh);let sx=.96/bw,sy=.984/bh,ox=x0-.02/sx,oy=y0-.008/sy;
   if(bh<big*.3){sy=.3/big;oy=(y0+y1)/2-.5/sy}if(bw<big*.3){sx=.3/big;ox=(x0+x1)/2-.5/sx}
   const k=p=>[(p.x-ox)*sx,(p.y-oy)*sy];
-  let out=S.map(s=>[...k(s.a),...k(s.b)]);
-  if(SMALL.includes(ch))out=out.map(s=>[.19+s[0]*.62,.38+s[1]*.62,.19+s[2]*.62,.38+s[3]*.62]);
-  return out}
+  const sm=SMALL.includes(ch)?q=>[.19+q[0]*.62,.38+q[1]*.62]:q=>q;
+  // 1画（一筆書き）ごとの折れ線に戻す＝描くときも1画1つの輪郭にする
+  const by=new Map();S.forEach(t=>{if(!by.has(t.s))by.set(t.s,[]);by.get(t.s).push(t)});
+  const res=[];by.forEach(L=>{const pl=[L[0].a];L.forEach(t=>{if(pl[pl.length-1]!==t.a)pl.push(t.a);pl.push(t.b)});res.push(pl.map(q=>sm(k(q))))});
+  return res}
 
 async function glyph(ch){
   if(/\s/.test(ch))return{blank:true};
   if(isKana(ch)){const raw=await loadKVG(ch);return raw?{kana:raw}:{missing:true}}
   if($('hand').value==='on'&&HAND[ch])return{segs:HAND[ch].map(([a,b,c,d])=>[a/100,b/260,c/100,d/260])};
-  const raw=await loadKVG(ch);if(!raw)return{missing:true};return{segs:kanjiBone(raw,ch)}}
+  const raw=await loadKVG(ch);if(!raw)return{missing:true};return{strokes:kanjiBone(raw,ch)}}
 
 // ── 形（_楔.py と同じ）
 const dist=(a,b)=>Math.hypot(b[0]-a[0],b[1]-a[1]);
@@ -188,7 +190,7 @@ function sweep(pa,pb,wa,wb,hw,side,bow,reach,n=48){hw=Math.min(hw,dist(pa,pb)*.3
 function hullOf(pts){const cx=pts.reduce((s,p)=>s+p[0],0)/pts.length,cy=pts.reduce((s,p)=>s+p[1],0)/pts.length;
   return pts.slice().sort((a,b)=>Math.atan2(a[1]-cy,a[0]-cx)-Math.atan2(b[1]-cy,b[0]-cx))}
 
-function boneGlyph(segs,P,H,o,out){
+function boneGlyph(segs,P,H,o,out,extra){
   const hh=o.th*H/2,hv=o.tv*H/2,hw=o.tw*H/2,hm=(o.th+o.tv)/2*H/2,tip=hh*.6;
   const key=p=>p[0].toFixed(4)+','+p[1].toFixed(4);
   // 0 骨の膝をなくす：2本だけが集まる点で、ほぼ同じ向きに続く（曲がりが小さい・どちらも横縦でない）なら1本の画にまとめる
@@ -207,7 +209,7 @@ function boneGlyph(segs,P,H,o,out){
         if(turn<[50,45,12][nAx]&&(!best||turn<best.turn))best={ix,o1,o2,turn}}
       if(best){S=S.filter((_,i)=>!best.ix.includes(i));S.push({a:best.o1[0],b:best.o2[0],pa:best.o1[1],pb:best.o2[1]});done=false;break}}
     if(done)break}
-  const deg=new Map();S.forEach(s=>[s.a,s.b].forEach(k=>deg.set(k,(deg.get(k)||0)+1)));
+  const deg=new Map();S.forEach(s=>[s.a,s.b].forEach(k=>deg.set(k,(deg.get(k)||0)+1)));if(extra)extra.forEach((n,k)=>{if(deg.has(k))deg.set(k,deg.get(k)+n)});
   const plan=[];
   S.forEach(({a,b,pa,pb})=>{let ea=deg.get(a)>1,eb=deg.get(b)>1;
     const k=kind(pa,pb),L=dist(pa,pb);
@@ -222,7 +224,8 @@ function boneGlyph(segs,P,H,o,out){
   // 1 継ぎ目：多角形で埋めず、画を相手の太さぶん相手の中へ差し込む（相手の形の中で重なる＝外に角が出ない）
   //   斜めどうし（払いでない）が2本以上集まる所だけ、端の角を結んだ面で埋める
   const ext=(q,i)=>{if(deg.get(q)<2)return[0,false];const A=at.get(q),oth=A.filter(x=>x[0]!==i&&(x[2]!=='払'||plan[i][6]));   // 幹は払い・はねの側へは伸ばさない（はねの所で幹が突き出さない）
-    return[Math.max(0,...oth.map(x=>x[1])),A.filter(x=>x[2]==='斜').length>=2]};
+    let w=Math.max(0,...oth.map(x=>x[1]));if(extra&&extra.W){const pp=plan[i][2],pq=plan[i][3],pt=plan[i][0]===q?pp:pq;const kk=kind(plan[i][2],plan[i][3]),own=kk==='横'?hh:kk==='縦'?hv:hm;w=Math.max(w,extra.W(pt,own))}
+    return[w,A.filter(x=>x[2]==='斜').length>=2]};
   const hulls=new Map(),addH=(q,pts)=>{if(!hulls.has(q))hulls.set(q,[]);hulls.get(q).push(...pts)};
   const back=(p,q,e)=>{const l=dist(p,q)||1;return[p[0]-(q[0]-p[0])/l*e,p[1]-(q[1]-p[1])/l*e]};
   plan.forEach(([a,b,pa,pb,ha,hb,cut],i)=>{const[xa,fa]=ext(a,i),[xb,fb]=ext(b,i);
@@ -232,6 +235,61 @@ function boneGlyph(segs,P,H,o,out){
     if(cut==='はね'){out.push(stroke(pa,pb,ha,hb,xa*.9,0));return}
     const q=stroke(pa,pb,ha,hb,xa,xb,cut);out.push(q);if(fa)addH(a,[q[0],q[3]]);if(fb)addH(b,[q[1],q[2]])});
   hulls.forEach(p=>out.push(hullOf(p)))}
+
+// 漢字（KanjiVG）：1画＝1つの輪郭。折れ線の画（乚・㇕・はね付き）は、折れ目を留め継ぎ（マイター）にして一筆でつなぐ
+//   1本だけの画（横・縦・払い・点）は boneGlyph の決まりのまま。ほかの画の点に乗っている端は「つながっている」
+function strokeGlyph(strokes,P,H,o,out){
+  const hh=o.th*H/2,hv=o.tv*H/2,hw=o.tw*H/2,hm=(o.th+o.tv)/2*H/2,tip=hh*.6;
+  const key=p=>p[0].toFixed(4)+','+p[1].toFixed(4);
+  const SP=strokes.map(st=>{let v=st.map(P).filter((p,i,a)=>!i||dist(p,a[i-1])>1);
+    for(let g=0;g<50;g++){let ch=false;   // ほぼまっすぐ続く点を抜く
+      for(let i=1;i<v.length-1;i++){const a=v[i-1],b=v[i],c=v[i+1],t=Math.abs(Math.atan2((b[0]-a[0])*(c[1]-b[1])-(b[1]-a[1])*(c[0]-b[0]),(b[0]-a[0])*(c[0]-b[0])+(b[1]-a[1])*(c[1]-b[1])))*180/Math.PI;
+        const k1=kind(a,b),k2=kind(b,c),nA=(k1!=='斜')+(k2!=='斜'),lA=k1!=='斜'?dist(a,b):dist(b,c),lS=k1!=='斜'?dist(b,c):dist(a,b);
+        if(t<12||(nA===0&&t<50)||(nA===1&&t<45&&lA<lS*.6)){v.splice(i,1);ch=true;break}}
+      for(let i=1;i<v.length-2&&!ch;i++){const a=v[i-1],b=v[i],c=v[i+1],d=v[i+2];   // 縦と横のあいだの短い斜め＝角の丸みの名残り→ 角1つに
+        if(kind(b,c)==='斜'&&dist(b,c)<.08*H&&kind(a,b)!=='斜'&&kind(c,d)!=='斜'&&kind(a,b)!==kind(c,d)){
+          const X=kind(a,b)==='縦'?[b[0],c[1]]:[c[0],b[1]];v.splice(i,2,X);ch=true}}
+      if(!ch)break}
+    return v});
+  const occ=new Map();SP.forEach((v,si)=>v.forEach(p=>{const k=key(p);if(!occ.has(k))occ.set(k,new Set());occ.get(k).add(si)}));
+  const conn=(p,si)=>{const s=occ.get(key(p));return s&&[...s].some(x=>x!==si)};
+  const wAt=new Map(),addW=(p,si,w)=>{const k=key(p);if(!wAt.has(k))wAt.set(k,[]);wAt.get(k).push([si,w])};
+  const wK=(a,b)=>{const k=kind(a,b);return k==='横'?hh:k==='縦'?hv:hm};
+  SP.forEach((v,si)=>{for(let i=0;i<v.length-1;i++){const w=wK(v[i],v[i+1]);addW(v[i],si,w);addW(v[i+1],si,w)}});
+  const othW=(p,si)=>Math.max(0,...(wAt.get(key(p))||[]).filter(x=>x[0]!==si).map(x=>x[1]));
+  const singles=[],extra=new Map();
+  SP.forEach((v,si)=>{if(v.length<2)return;if(v.length===2){singles.push([...v[0],...v[1]]);return}
+    v.forEach(p=>{const k=key(p);extra.set(k,(extra.get(k)||0)+1)})});
+  // 1本の画どうしのつながりも、ほかの画の点に乗っていれば数える
+  SP.forEach((v,si)=>{if(v.length!==2)return;v.forEach(p=>{const s=occ.get(key(p));if(s){const n=[...s].filter(x=>x!==si&&SP[x].length===2).length;if(s.size>1&&n===0){const k=key(p);extra.set(k,(extra.get(k)||0))}}})});
+  extra.W=(p,own)=>{const L=(wAt.get(key(p))||[]).map(x=>x[1]);const j=L.findIndex(w=>Math.abs(w-own)<1e-6);if(j>=0)L.splice(j,1);return Math.max(0,...L)};boneGlyph(singles,p=>p,H,o,out,extra);
+  SP.forEach((v0,si)=>{if(v0.length<3)return;let v=v0.slice();
+    const wOf=(a,b)=>{const k=kind(a,b);return k==='横'?hh:k==='縦'?hv:hm};
+    let A=[],B=[];for(let i=0;i<v.length-1;i++){const w=wOf(v[i],v[i+1]);A.push(w);B.push(w)}
+    const n=v.length-1,fs=!conn(v[0],si),fe=!conn(v[n],si);
+    const push=(p,q,e)=>{const l=dist(p,q)||1;return[p[0]+(p[0]-q[0])/l*e,p[1]+(p[1]-q[1])/l*e]};
+    if(!fs)v[0]=push(v[0],v[1],othW(v0[0],si));if(!fe)v[n]=push(v[n],v[n-1],othW(v0[n],si));
+    // 入り：空いた端から左下へ下りる斜め＝払いの入り（太め）
+    if(fs&&kind(v[0],v[1])==='斜'&&v[1][1]>v[0][1]&&v[1][0]<v[0][0]&&dist(v[0],v[1])>.15*H){A[0]=hw*.55;B[0]=hw*.7}
+    // 抜け：短く上へ＝はね（前の画の太さから尖る）／長く左下＝払い（尖る・反る）／長く右下＝右払い（先が太い）
+    let curve=null;const a=v[n-1],b=v[n],Ln=dist(a,b);
+    if(fe&&Ln<.14*H&&b[1]<a[1]-1){A[n-1]=B[n-2]||A[n-1];B[n-1]=tip}
+    else if(fe&&kind(a,b)==='斜'&&b[1]>a[1]&&Ln>.15*H){curve=b[0]<a[0]?'左':'右';A[n-1]=Math.max(A[n-1],B[n-2]||0);B[n-1]=curve==='左'?tip:hw}
+    if(curve){   // 最後の画を反った曲線にする（点を足す）
+      const r=Ln>.3*H?o.reach:0,ex=[b[0]+(b[0]-a[0])*r,b[1]+(b[1]-a[1])*r],L=dist(a,ex);let nx=-(ex[1]-a[1])/L,ny=(ex[0]-a[0])/L;if(ny<0){nx=-nx;ny=-ny}
+      const c=[(a[0]+ex[0])/2+nx*o.bow*L,(a[1]+ex[1])/2+ny*o.bow*L],wa=A[n-1],wb=B[n-1],m=14,pts=[],ws=[];
+      for(let i=1;i<=m;i++){const t=i/m;pts.push([(1-t)**2*a[0]+2*(1-t)*t*c[0]+t*t*ex[0],(1-t)**2*a[1]+2*(1-t)*t*c[1]+t*t*ex[1]]);
+        ws.push(curve==='左'?wb+(Math.max(wa,hw*.8)-wb)*(t<.25?1:((1-t)/.75)**1.4):wa+(wb-wa)*Math.min(1,t/.88)**1.6)}
+      v=v.slice(0,n).concat(pts);A=A.slice(0,n-1);B=B.slice(0,n-1);let pw=wa;ws.forEach(w=>{A.push(pw);B.push(w);pw=w})}
+    // 輪郭：線分ごとに左右へ太さぶんずらし、折れ目は隣の線と交わる所（遠すぎたら面取り）
+    const N=v.length-1,Lf=[],Rt=[];
+    const off=(i,s)=>{const p=v[i],q=v[i+1],l=dist(p,q)||1,nx=-(q[1]-p[1])/l,ny=(q[0]-p[0])/l;return[[p[0]+nx*A[i]*s,p[1]+ny*A[i]*s],[q[0]+nx*B[i]*s,q[1]+ny*B[i]*s]]};
+    const meet=(l1,l2,lim)=>{const[p1,p2]=l1,[p3,p4]=l2,d=(p2[0]-p1[0])*(p4[1]-p3[1])-(p2[1]-p1[1])*(p4[0]-p3[0]);if(Math.abs(d)<1e-6)return null;
+      const t=((p3[0]-p1[0])*(p4[1]-p3[1])-(p3[1]-p1[1])*(p4[0]-p3[0]))/d,X=[p1[0]+(p2[0]-p1[0])*t,p1[1]+(p2[1]-p1[1])*t];return dist(X,p2)>lim?null:X};
+    [[Lf,1],[Rt,-1]].forEach(([arr,s])=>{const L=[];for(let i=0;i<N;i++)L.push(off(i,s));arr.push(L[0][0]);
+      for(let i=0;i<N-1;i++){const X=meet(L[i],L[i+1],4*Math.max(A[i],B[i],A[i+1],hv));if(X)arr.push(X);else arr.push(L[i][1],L[i+1][0])}
+      arr.push(L[N-1][1])});
+    out.push(Lf.concat(Rt.reverse()))})}
 
 // かな：画の芯を1本の筆の道にして、向きで太さを変える。鋭い折れ（70°より急）で切って角を残す
 function kanaGlyph(strokes,P,H,o,out){
@@ -267,6 +325,7 @@ async function layout(){
     r.forEach((c,i)=>{const g=G[ri][i];
       if(g.missing)miss.push(c);
       else if(g.kana){const k=H*ks/109,cx=ox+adv(c)/2;kanaGlyph(g.kana,([x,y])=>[cx+(x-54.5)*k,oy+H/2+(y-54.5)*k],H,o,polys)}
+      else if(g.strokes)strokeGlyph(g.strokes,([x,y])=>[ox+x*Wc,oy+y*H],H,o,polys);
       else if(g.segs){const w=adv(c),sx=Wc;boneGlyph(g.segs,([x,y])=>[ox+x*sx,oy+y*H],H,o,polys)}
       ox+=adv(c)+GAP})});
   let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;polys.forEach(p=>p.forEach(([x,y])=>{x0=Math.min(x0,x);y0=Math.min(y0,y);x1=Math.max(x1,x);y1=Math.max(y1,y)}));
