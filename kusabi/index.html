@@ -184,16 +184,32 @@ function sweep(pa,pb,wa,wb,hw,side,bow,reach,n=48){hw=Math.min(hw,dist(pa,pb)*.3
     const dx=2*(1-t)*(cx-x1)+2*t*(x2-cx),dy=2*(1-t)*(cy-y1)+2*t*(y2-cy),l=Math.hypot(dx,dy)||1;
     const w=side==='左'?(t<.3?wa+(hw-wa)*(t/.3):wb+(hw-wb)*((1-t)/.7)**1.4):wa+(hw-wa)*Math.min(1,t/.88)**1.6;
     P.push([x-dy/l*w,y+dx/l*w]);Q.push([x+dy/l*w,y-dx/l*w])}
-  return P.concat(Q.reverse())}
+  const r=P.concat(Q.reverse());r.smooth=P.length;return r}
 function hullOf(pts){const cx=pts.reduce((s,p)=>s+p[0],0)/pts.length,cy=pts.reduce((s,p)=>s+p[1],0)/pts.length;
   return pts.slice().sort((a,b)=>Math.atan2(a[1]-cy,a[0]-cx)-Math.atan2(b[1]-cy,b[0]-cx))}
 
 function boneGlyph(segs,P,H,o,out){
   const hh=o.th*H/2,hv=o.tv*H/2,hw=o.tw*H/2,hm=(o.th+o.tv)/2*H/2,tip=hh*.6;
-  const key=p=>p[0].toFixed(4)+','+p[1].toFixed(4),deg=new Map();
-  segs.forEach(([a,b,c,d])=>[[a,b],[c,d]].forEach(p=>{const k=key(p);deg.set(k,(deg.get(k)||0)+1)}));
+  const key=p=>p[0].toFixed(4)+','+p[1].toFixed(4);
+  // 0 骨の膝をなくす：2本だけが集まる点で、ほぼ同じ向きに続く（曲がりが小さい・どちらも横縦でない）なら1本の画にまとめる
+  let S=segs.map(([ax,ay,bx,by])=>({a:key([ax,ay]),b:key([bx,by]),pa:P([ax,ay]),pb:P([bx,by])}));
+  for(let guard=0;guard<200;guard++){const d=new Map();S.forEach((s,i)=>[s.a,s.b].forEach(k=>{if(!d.has(k))d.set(k,[]);d.get(k).push(i)}));
+    let done=true;
+    for(const[k,all]of d){if(all.length<2)continue;   // 3本以上の継ぎ目（人の払いの付け根）でも、いちばん素直に続く2本はまとめる＝残りの画はそこから離れる
+      let best=null;
+      for(let x=0;x<all.length;x++)for(let y=x+1;y<all.length;y++){const ix=[all[x],all[y]],[s1,s2]=ix.map(i=>S[i]);
+        const o1=s1.a===k?[s1.b,s1.pb]:[s1.a,s1.pa],o2=s2.a===k?[s2.b,s2.pb]:[s2.a,s2.pa],pk=s1.a===k?s1.pa:s1.pb;
+        const v1=[pk[0]-o1[1][0],pk[1]-o1[1][1]],v2=[o2[1][0]-pk[0],o2[1][1]-pk[1]];
+        const turn=Math.abs(Math.atan2(v1[0]*v2[1]-v1[1]*v2[0],v1[0]*v2[0]+v1[1]*v2[1]))*180/Math.PI;
+        const k1=kind(o1[1],pk),k2=kind(pk,o2[1]),nAx=(k1!=='斜')+(k2!=='斜');   // 横縦どうし＝ほぼまっすぐな時だけ／片方が斜め＝45°まで
+        if(nAx===2&&all.length>2)continue;
+        if(nAx===1){const lA=k1!=='斜'?dist(o1[1],pk):dist(pk,o2[1]),lS=k1!=='斜'?dist(pk,o2[1]):dist(o1[1],pk);if(lA>lS*.6)continue}   // 広の左＝長い縦＋短い払いはまとめない（人の付け根＝短い縦＋長い払いだけ）                                     // 十字・T の横縦はまとめない（継ぎ目のまま）
+        if(turn<[50,45,12][nAx]&&(!best||turn<best.turn))best={ix,o1,o2,turn}}
+      if(best){S=S.filter((_,i)=>!best.ix.includes(i));S.push({a:best.o1[0],b:best.o2[0],pa:best.o1[1],pb:best.o2[1]});done=false;break}}
+    if(done)break}
+  const deg=new Map();S.forEach(s=>[s.a,s.b].forEach(k=>deg.set(k,(deg.get(k)||0)+1)));
   const plan=[];
-  segs.forEach(([ax,ay,bx,by])=>{let a=key([ax,ay]),b=key([bx,by]),pa=P([ax,ay]),pb=P([bx,by]);let ea=deg.get(a)>1,eb=deg.get(b)>1;
+  S.forEach(({a,b,pa,pb})=>{let ea=deg.get(a)>1,eb=deg.get(b)>1;
     const k=kind(pa,pb),L=dist(pa,pb);
     if(k==='横'){plan.push([a,b,pa,pb,hh,hh,false]);return}
     if(k==='縦'){plan.push([a,b,pa,pb,hv,hv,false]);return}
@@ -202,15 +218,18 @@ function boneGlyph(segs,P,H,o,out){
     if(pa[1]>pb[1]){[a,b,pa,pb,ea,eb]=[b,a,pb,pa,eb,ea]}
     if(!ea&&!eb&&L<.2*H){plan.push([a,b,pa,pb,tip,Math.min(hv*.95,L*.42),'点']);return}
     if(pb[0]<pa[0])plan.push([a,b,pa,pb,hw*.55,tip,'左']);else plan.push([a,b,pa,pb,ea?hh:tip,hw,'右'])});
-  const at=new Map();plan.forEach(([a,b,pa,pb,ha,hb],i)=>{const k=kind(pa,pb);[[a,ha],[b,hb]].forEach(([q,w])=>{if(!at.has(q))at.set(q,[]);at.get(q).push([i,w,k])})});
-  const ext=(q,i)=>{if(deg.get(q)<2)return[0,false];const A=at.get(q),ks=new Set(A.map(x=>x[2]));
-    if(A.length===2&&ks.size===2&&ks.has('横')&&ks.has('縦'))return[A.find(x=>x[0]!==i)[1],false];return[0,true]};
+  const at=new Map();plan.forEach(([a,b,pa,pb,ha,hb,cut],i)=>{const k=cut==='左'||cut==='右'||cut==='はね'?'払':kind(pa,pb);[[a,ha],[b,hb]].forEach(([q,w])=>{if(!at.has(q))at.set(q,[]);at.get(q).push([i,w,k])})});
+  // 1 継ぎ目：多角形で埋めず、画を相手の太さぶん相手の中へ差し込む（相手の形の中で重なる＝外に角が出ない）
+  //   斜めどうし（払いでない）が2本以上集まる所だけ、端の角を結んだ面で埋める
+  const ext=(q,i)=>{if(deg.get(q)<2)return[0,false];const A=at.get(q),oth=A.filter(x=>x[0]!==i&&(x[2]!=='払'||plan[i][6]));   // 幹は払い・はねの側へは伸ばさない（はねの所で幹が突き出さない）
+    return[Math.max(0,...oth.map(x=>x[1])),A.filter(x=>x[2]==='斜').length>=2]};
   const hulls=new Map(),addH=(q,pts)=>{if(!hulls.has(q))hulls.set(q,[]);hulls.get(q).push(...pts)};
+  const back=(p,q,e)=>{const l=dist(p,q)||1;return[p[0]-(q[0]-p[0])/l*e,p[1]-(q[1]-p[1])/l*e]};
   plan.forEach(([a,b,pa,pb,ha,hb,cut],i)=>{const[xa,fa]=ext(a,i),[xb,fb]=ext(b,i);
-    if(cut==='左'||cut==='右'){if(fa)ha=Math.max(ha,...at.get(a).filter(x=>x[0]!==i).map(x=>x[1]));
-      const q=sweep(pa,pb,ha,hb,Math.max(hw,ha),cut,o.bow,dist(pa,pb)>.3*H?o.reach:0);out.push(q);if(fa)addH(a,[q[0],q[q.length-1]]);return}
+    if(cut==='左'||cut==='右'){const p0=xa?back(pa,pb,xa*.9):pa;
+      out.push(sweep(p0,pb,ha,hb,Math.max(hw,ha),cut,o.bow,dist(pa,pb)>.3*H?o.reach:0));return}
     if(cut==='点'){const q=stroke(pa,pb,ha,hb,0,0);out.push(q);const l=dist(pa,pb),ux=(pb[0]-pa[0])/l,uy=(pb[1]-pa[1])/l;out.push([q[1],[pb[0]+ux*hb*.9,pb[1]+uy*hb*.9],q[2]]);return}
-    if(cut==='はね'){const q=stroke(pa,pb,ha,hb,0,0);out.push(q);addH(a,[q[0],q[3]]);return}
+    if(cut==='はね'){out.push(stroke(pa,pb,ha,hb,xa*.9,0));return}
     const q=stroke(pa,pb,ha,hb,xa,xb,cut);out.push(q);if(fa)addH(a,[q[0],q[3]]);if(fb)addH(b,[q[1],q[2]])});
   hulls.forEach(p=>out.push(hullOf(p)))}
 
@@ -233,7 +252,7 @@ function kanaGlyph(strokes,P,H,o,out){
       const b0=S[1],b1=S[0];
       if(freeA&&(b1[1]-b0[1])>0&&(b1[0]-b0[0])<0&&tot>H*.12){const m=Math.floor(S.length*.35);for(let k=0;k<m;k++)W[k]=tip+(W[m]-tip)*(k/m)**.8}
       const Lf=[],Rt=[];S.forEach((p,k)=>{const a=S[Math.max(0,k-1)],b=S[Math.min(S.length-1,k+1)],l=dist(a,b)||1,nx=-(b[1]-a[1])/l,ny=(b[0]-a[0])/l;Lf.push([p[0]+nx*W[k],p[1]+ny*W[k]]);Rt.push([p[0]-nx*W[k],p[1]-ny*W[k]])});
-      out.push(Lf.concat(Rt.reverse()));const R=Rt.slice().reverse();
+      {const r=Lf.concat(Rt.reverse());r.smooth=Lf.length;out.push(r)}const R=Rt.slice().reverse();
       if(!freeA)hull.push([cuts[c],[Lf[0],R[0]]]);if(!freeB)hull.push([cuts[c+1],[Lf[Lf.length-1],R[R.length-1]]])}
     const by=new Map();hull.splice(0).forEach(([i,p])=>{if(!by.has(i))by.set(i,[]);by.get(i).push(...p)});by.forEach(p=>out.push(hullOf(p)))})}
 
@@ -253,7 +272,7 @@ async function layout(){
   let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;polys.forEach(p=>p.forEach(([x,y])=>{x0=Math.min(x0,x);y0=Math.min(y0,y);x1=Math.max(x1,x);y1=Math.max(y1,y)}));
   if(!polys.length){x0=y0=0;x1=y1=100}
   // 向きをそろえる（全部を1つの道で塗る＝合体して見える・継ぎ目にすき間が出ない）
-  polys.forEach(p=>{let a=0;for(let i=0;i<p.length;i++){const q=p[i],r=p[(i+1)%p.length];a+=q[0]*r[1]-r[0]*q[1]}if(a<0)p.reverse()});
+  polys.forEach(p=>{let a=0;for(let i=0;i<p.length;i++){const q=p[i],r=p[(i+1)%p.length];a+=q[0]*r[1]-r[0]*q[1]}if(a<0){p.reverse();if(p.smooth)p.smooth=p.length-p.smooth}});
   return{polys,bb:[x0,y0,x1,y1],miss}}
 function paperOf(L){const[x0,y0,x1,y1]=L.bb,bw=x1-x0,bh=y1-y0,M=v('margin')*2,p=$('paper').value;
   if(p==='fit')return{W:bw+2*M,H:bh+2*M,dx:M-x0,dy:M-y0};
@@ -305,7 +324,13 @@ function svgText(){const L=LAST,P=paperOf(L),f=n=>Math.round(n*10)/10,W=f(P.W),H
   let s=`<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${f(W/4)}" height="${f(H/4)}">\n`;
   s+=`<metadata id="kusabi-data">${JSON.stringify(settings()).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</metadata>\n`;
   if($('bg').value==='on')s+=`<rect id="地" width="${W}" height="${H}" fill="${$('c0').value}"/>\n`;
-  s+=`<path id="字" fill="${$('c1').value}" fill-rule="nonzero" d="`+L.polys.map(p=>'M'+p.map(([x,y])=>f(x+P.dx)+' '+f(y+P.dy)).join('L')+'Z').join('')+`"/>\n`;
+  const X=p=>f(p[0]+P.dx)+' '+f(p[1]+P.dy);
+  const run=pts=>{if(pts.length<3)return pts.slice(1).map(p=>'L'+X(p)).join('');
+    const step=Math.max(1,Math.round(pts.length/7)),q=[];for(let i=0;i<pts.length-1;i+=step)q.push(pts[i]);q.push(pts[pts.length-1]);
+    let d='';for(let i=0;i<q.length-1;i++){const p0=q[Math.max(0,i-1)],p1=q[i],p2=q[i+1],p3=q[Math.min(q.length-1,i+2)];
+      d+='C'+X([p1[0]+(p2[0]-p0[0])/6,p1[1]+(p2[1]-p0[1])/6])+' '+X([p2[0]-(p3[0]-p1[0])/6,p2[1]-(p3[1]-p1[1])/6])+' '+X(p2)}return d};
+  const one=p=>{if(!p.smooth)return'M'+p.map(X).join('L')+'Z';const A=p.slice(0,p.smooth),B=p.slice(p.smooth);return'M'+X(A[0])+run(A)+'L'+X(B[0])+run(B)+'Z'};
+  s+=`<path id="字" fill="${$('c1').value}" fill-rule="nonzero" d="`+L.polys.map(one).join('')+`"/>\n`;
   return s+'</svg>\n'}
 $('svg').onclick=()=>{if(!LAST)return;save(new Blob([svgText()],{type:'image/svg+xml'}),fname('svg'));msg('SVG を書き出した（字全体で1つの塗り）')};
 $('jsave').onclick=()=>save(new Blob([JSON.stringify(settings(),null,1)],{type:'application/json'}),fname('json'));
@@ -313,6 +338,6 @@ $('jload').onclick=()=>$('jfile').click();
 $('jfile').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{try{applySettings(JSON.parse(t));msg('設定を読んだ')}catch(_){alert('この設定は読めませんでした')}});e.target.value=''};
 window.addEventListener('resize',later);
 window.__kusabi={render,settings,applySettings,svgText,layout,get last(){return LAST}};
-{const q=+new URLSearchParams(location.search).get('p');(pb.children[q]||pb.children[0]).click()}
+{const U=new URLSearchParams(location.search),q=+U.get('p');(pb.children[q]||pb.children[0]).click();if(U.get('t')){$('txt').value=U.get('t');$('paper').value='fit';later()}}
 </script>
 </body></html>
