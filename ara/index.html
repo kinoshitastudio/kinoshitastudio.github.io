@@ -69,8 +69,9 @@ canvas{max-width:100%;max-height:calc(100vh - 48px);box-shadow:0 10px 40px rgba(
   <div class="grp"><div class="t">筆（平たい筆で太らせる・字の大きさに対する ‰）</div>
     <label>筆の幅<input type="range" id="nib" min="0" max="200" value="16"><span class="v"></span></label>
     <label>筆の角度<input type="range" id="nibA" min="-90" max="90" value="-35"><span class="v"></span></label>
+    <label>細さ<input type="range" id="thin" min="0" max="100" value="0"><span class="v"></span></label>
     <label>筆の厚み<input type="range" id="nib2" min="0" max="80" value="5"><span class="v"></span></label>
-    <p class="small" style="margin:2px 0 0">字の形を、斜めに構えた平たい筆でなぞったように太らせる。払いの先は尖ったまま、入りは斜めに切れる。細い行書（さらり）なら 60〜80、太い行書（衡山）なら 10〜20 が目安。筆の角度は、幅か厚みがあるときだけ効く（幅が大きいほどよく効く）。</p>
+    <p class="small" style="margin:2px 0 0">字の形を、斜めに構えた平たい筆でなぞったように太らせる。払いの先は尖ったまま、入りは斜めに切れる。細い行書（さらり）なら 60〜80、太い行書（衡山）なら 10〜20 が目安。筆の角度は、幅か厚みがあるときだけ効く（幅が大きいほどよく効く）。細さ＝太い画はそのまま、細い画・払いの先・つなぎだけをさらに細くする（太い所と細い所の差が開く）。</p>
   </div>
 
   <div class="grp"><div class="t">インク</div>
@@ -100,7 +101,7 @@ canvas{max-width:100%;max-height:calc(100vh - 48px);box-shadow:0 10px 40px rgba(
   <div class="grp"><div class="t">出す・読む</div>
     <label class="w">字の大きさ<select id="exSize"><option value="400">400px</option><option value="800" selected>800px</option><option value="1400">1400px</option></select></label>
     <div class="row"><button class="p" id="png">PNG（地あり）</button><button class="p" id="pngA">PNG（地なし）</button></div>
-    <div class="row"><button id="sj">設定を保存</button><button id="lj">設定を読む</button><button id="undo">⌘Z</button></div>
+    <div class="row"><button id="sj">設定を保存</button><button id="lj">設定を読む</button><button id="undo">⌘Z</button><button id="reset">最初の値に</button></div>
     <input type="file" id="jf" accept=".json,application/json" hidden>
     <p id="msg"></p>
   </div>
@@ -118,8 +119,8 @@ const FONTS={
   syuku:{n:'筆・楷書（Yuji Syuku）',f:"'Yuji Syuku',serif"},
   min:{n:'明朝（ヒラギノ明朝 W6）',f:"'Hiragino Mincho ProN',serif",w:600},
   goth:{n:'ゴシック（ヒラギノ角ゴ W8）',f:"'Hiragino Sans','Hiragino Kaku Gothic ProN',sans-serif",w:800}};
-const KN=['adv','lead','stretch','jit','nib','nibA','nib2','rough','kasure','kang','splat','mura','seed','mis','misa','grain','margin'];
-const DEF={text:'算数',dir:'v',font:'kouzan',adv:92,lead:100,stretch:106,jit:3,nib:16,nibA:-35,nib2:5,rough:8,kasure:0,kang:78,splat:0,mura:0,seed:5,col:'#e86f6d',mis:0,misa:315,col2:'#2b3a8c',paper:'#dddad5',grain:45,margin:18};
+const KN=['adv','lead','stretch','jit','nib','nibA','nib2','thin','rough','kasure','kang','splat','mura','seed','mis','misa','grain','margin'];
+const DEF={text:'算数',dir:'v',font:'kouzan',adv:92,lead:100,stretch:106,jit:3,nib:16,nibA:-35,nib2:5,thin:0,rough:8,kasure:0,kang:78,splat:0,mura:0,seed:5,col:'#e86f6d',mis:0,misa:315,col2:'#2b3a8c',paper:'#dddad5',grain:45,margin:18};
 let st=Object.assign({},DEF),img=null;
 const $=id=>document.getElementById(id),cv=$('cv');
 
@@ -146,8 +147,25 @@ function shape(s){const pad=Math.ceil(s*.45),R=rng(st.seed*7919+11),j=st.jit/100
  const c=mk(bw+pad*2,bh+pad*2),g=c.getContext('2d');g.fillStyle='#fff';g.textAlign='center';g.textBaseline='middle';g.font=`${f.w||400} ${s}px ${f.f}`;
  lines.forEach((ln,li)=>[...ln].forEach((ch,i)=>{const cx0=st.dir==='v'?pad+bw-s/2-li*lead:pad+s/2+i*adv,cy0=st.dir==='v'?pad+i*adv+s*str/2:pad+s*str/2+li*lead*str;
   g.save();g.translate(cx0+(R()-.5)*s*.4*j,cy0+(R()-.5)*s*.3*j);g.rotate((R()-.5)*.7*j);const sc=1+(R()-.5)*.6*j;g.scale(sc,sc*str);g.fillText(ch,0,0);g.restore()}));
- return{c:nibbed(c,s),pad}}
+ return{c:thinned(nibbed(c,s)),pad}}
 
+// 細さ＝画の太さ（芯までの距離の近所の最大）を測り、細い画ほど外から削る。太い画（一番太い画の 75% 以上）は削らない
+function thinned(c){const k=st.thin/100;if(k<=0)return c;const w=c.width,h=c.height,g=c.getContext('2d'),d=g.getImageData(0,0,w,h),p=d.data,N=w*h;
+ const D=new Float32Array(N),INF=1e9;for(let i=0;i<N;i++)D[i]=p[i*4+3]>127?INF:0;
+ const S2=Math.SQRT2;
+ for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=y*w+x;if(!D[i])continue;let v=D[i];
+  if(x>0)v=Math.min(v,D[i-1]+1);if(y>0){v=Math.min(v,D[i-w]+1);if(x>0)v=Math.min(v,D[i-w-1]+S2);if(x<w-1)v=Math.min(v,D[i-w+1]+S2)}D[i]=v}
+ for(let y=h-1;y>=0;y--)for(let x=w-1;x>=0;x--){const i=y*w+x;if(!D[i])continue;let v=D[i];
+  if(x<w-1)v=Math.min(v,D[i+1]+1);if(y<h-1){v=Math.min(v,D[i+w]+1);if(x<w-1)v=Math.min(v,D[i+w+1]+S2);if(x>0)v=Math.min(v,D[i+w-1]+S2)}D[i]=v}
+ let mx=0;for(let i=0;i<N;i++)if(D[i]>mx)mx=D[i];if(mx<2)return c;
+ // 近所の最大（窓を倍々に広げる最大値フィルタ・横と縦）
+ const r=Math.ceil(mx);let T=D.slice(),tmp=new Float32Array(N);
+ for(const ax of[1,w]){let span=1;while(span<r){const sh=Math.min(span,r-span);for(let i=0;i<N;i++){const x=i%w,y=(i/w)|0;let v=T[i];
+    if(ax===1){if(x+sh<w)v=Math.max(v,T[i+sh]);if(x-sh>=0)v=Math.max(v,T[i-sh])}else{if(y+sh<h)v=Math.max(v,T[i+sh*w]);if(y-sh>=0)v=Math.max(v,T[i-sh*w])}tmp[i]=v}
+   [T,tmp]=[tmp,T];span+=sh}}
+ const ref=mx*.75;
+ for(let i=0;i<N;i++){if(!D[i])continue;const t=Math.min(T[i],ref),cut=k*.85*t*Math.max(0,1-t/ref);if(D[i]<=cut)p[i*4+3]=0}
+ g.putImageData(d,0,0);return c}
 // 平たい筆＝型を筆の向きの線分でなぞる（ずらして重ねる）。2本目は直交方向に薄く
 function nibbed(c,s){let out=c;for(const[L,ang]of[[st.nib/1000*s,st.nibA],[st.nib2/1000*s,st.nibA+80]]){if(L<1)continue;
   const n=mk(out.width,out.height),g=n.getContext('2d'),dx=Math.cos(ang*Math.PI/180),dy=Math.sin(ang*Math.PI/180),step=Math.max(1,L/48);
@@ -206,7 +224,8 @@ $('txt').addEventListener('focus',push);$('txt').addEventListener('input',()=>{s
 $('font').addEventListener('change',()=>{push();st.font=$('font').value;redraw()});
 document.querySelectorAll('#dir button').forEach(b=>b.onclick=()=>{push();st.dir=b.dataset.v;sync();draw()});
 function undo(){if(!hist.length)return;st=JSON.parse(hist.pop());sync();redraw()}
-$('undo').onclick=undo;addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='z'&&!/TEXTAREA|INPUT/.test(document.activeElement.tagName)){e.preventDefault();undo()}});
+$('undo').onclick=undo;
+$('reset').onclick=()=>{push();st=Object.assign({},DEF);img=null;sync();redraw();msg('最初の値に戻した（⌘Z で戻せる）')};addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='z'&&!/TEXTAREA|INPUT/.test(document.activeElement.tagName)){e.preventDefault();undo()}});
 
 // 画像を荒らす
 function loadImg(f){const im=new Image();im.onload=()=>{img=im;draw();msg('画像を荒らす：'+f.name)};im.src=URL.createObjectURL(f)}
