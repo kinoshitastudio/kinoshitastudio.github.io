@@ -31,6 +31,7 @@ input[type=range]{width:100%;accent-color:#d8d4cc}
 textarea,select,input[type=color]{width:100%;background:#121212;color:var(--tx);border:1px solid var(--line);border-radius:4px;font-size:14px;padding:6px;font-family:inherit}
 input[type=color]{height:28px;padding:2px}
 textarea{resize:vertical;min-height:64px;line-height:1.5}
+.presets{display:grid;grid-template-columns:repeat(2,1fr);gap:5px;margin-bottom:4px}.presets button{padding:7px 2px;font-size:11px}.presets button.on{background:var(--tx);color:#161616}
 .row{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
 button{flex:1;background:#2f2f2f;color:var(--tx);border:1px solid var(--line);border-radius:4px;padding:8px 6px;font-size:12px;cursor:pointer}
 button.p{background:#e8e6e1;border-color:#e8e6e1;color:#161616}
@@ -47,6 +48,9 @@ canvas{max-width:100%;max-height:calc(100vh - 48px);box-shadow:0 10px 40px rgba(
   <h1><b>刻</b> KIZAMI</h1>
   <p class="lead">打った字を粗いマス目に刻む。曲線は段々に、穴は四角に。ところどころの字を縦の細い縞に裂き、下へ垂らす。穴を1つだけ丸くもできる。</p>
 
+  <div class="grp"><div class="t">見せ方（押すと、字はそのままでつまみが替わる）</div>
+    <div class="presets" id="presets"></div>
+  </div>
   <div class="grp"><div class="t">字（改行で段が分かれる）</div>
     <textarea id="txt">KIZAMI
 LETTERS</textarea>
@@ -77,7 +81,7 @@ LETTERS</textarea>
   </div>
 
   <div class="grp"><div class="t">色</div>
-    <label class="w">塗り方<select id="tile"><option value="solid">ベタ</option><option value="grid">マスの線を見せる</option></select></label>
+    <label class="w">塗り方<select id="tile"><option value="solid">ベタ</option><option value="grid">マスの線を見せる</option><option value="dot">点（電光板）</option><option value="cross">刺し子（×）</option><option value="outline">線だけ</option><option value="stripe">縞（半分のマス）</option><option value="shadow">影（ずらした2色）</option></select></label>
     <label class="w">字<input type="color" id="ink" value="#000000"></label>
     <label class="w">マスの色<input type="color" id="fill" value="#a6a6a6"></label>
     <label>線の太さ<input type="range" id="lw" min="1" max="30" value="8"><span class="v"></span></label>
@@ -162,10 +166,11 @@ function render(out,C,withPaper){
    const L=1+Math.floor(Rd()*st.dripL);for(let y=bot+1;y<=Math.min(gh-1,bot+L);y++)G2[y*gw+x]=1}}}
  // マスを描く
  const grid_=st.tile==='grid',[ir,ig,ib]=hex(grid_?st.fill:st.ink),[pr,pg,pb]=hex(st.paper);
+ if(!['solid','grid'].includes(st.tile)){drawShapes(g,G2,gw,gh,C,withPaper)}else{
  const img=g.createImageData(W,H),p=img.data;
  for(let y=0;y<gh;y++)for(let x=0;x<gw;x++){const on=G2[y*gw+x];for(let yy=0;yy<C;yy++){let i=((y*C+yy)*W+x*C)*4;for(let xx=0;xx<C;xx++,i+=4){
   if(on){p[i]=ir;p[i+1]=ig;p[i+2]=ib;p[i+3]=255}else if(withPaper){p[i]=pr;p[i+1]=pg;p[i+2]=pb;p[i+3]=255}}}}
- g.putImageData(img,0,0);
+ g.putImageData(img,0,0);}
  // マスの線（縦につなぐ所は上下の線を引かない）
  if(grid_){const Rm=rng(st.seed*71+5),lw=Math.max(1,C*st.lw/100),on=(x,y)=>x>=0&&y>=0&&x<gw&&y<gh&&G2[y*gw+x];
   const join=new Uint8Array(gw*gh);for(let i=0;i<gw*gh;i++)join[i]=Rm()<st.merge/100?1:0;   // このマスと下のマスをつなぐ
@@ -198,6 +203,33 @@ function render(out,C,withPaper){
  if(st.frame>0){g.strokeStyle=st.ink;g.lineWidth=st.frame*C*.25;g.strokeRect(g.lineWidth/2,g.lineWidth/2,W-g.lineWidth,H-g.lineWidth)}
 }
 
+// 点・刺し子・線だけ・縞・影（マスごとに形を置く）
+function drawShapes(g,G,gw,gh,C,withPaper){const W=gw*C,H=gh*C,lw=Math.max(1,C*st.lw/100),on=(x,y)=>x>=0&&y>=0&&x<gw&&y<gh&&G[y*gw+x];
+ g.clearRect(0,0,W,H);if(withPaper){g.fillStyle=st.paper;g.fillRect(0,0,W,H)}
+ const each=f=>{for(let y=0;y<gh;y++)for(let x=0;x<gw;x++)if(G[y*gw+x])f(x*C,y*C,x,y)};
+ if(st.tile==='dot'){g.fillStyle=st.ink;g.beginPath();each((X,Y)=>{g.moveTo(X+C/2+C*.42,Y+C/2);g.arc(X+C/2,Y+C/2,C*.42,0,Math.PI*2)});g.fill();
+  if(st.fill&&withPaper){g.fillStyle=st.fill;g.globalAlpha=.18;g.beginPath();for(let y=0;y<gh;y++)for(let x=0;x<gw;x++)if(!G[y*gw+x]){g.moveTo(x*C+C/2+C*.42,y*C+C/2);g.arc(x*C+C/2,y*C+C/2,C*.42,0,Math.PI*2)}g.fill();g.globalAlpha=1}}
+ else if(st.tile==='cross'){g.strokeStyle=st.ink;g.lineWidth=lw*1.6;g.lineCap='round';g.beginPath();const m=C*.18;each((X,Y)=>{g.moveTo(X+m,Y+m);g.lineTo(X+C-m,Y+C-m);g.moveTo(X+C-m,Y+m);g.lineTo(X+m,Y+C-m)});g.stroke()}
+ else if(st.tile==='outline'){g.strokeStyle=st.ink;g.lineWidth=lw;g.beginPath();
+  each((X,Y,x,y)=>{if(!on(x-1,y)){g.moveTo(X,Y);g.lineTo(X,Y+C)}if(!on(x+1,y)){g.moveTo(X+C,Y);g.lineTo(X+C,Y+C)}if(!on(x,y-1)){g.moveTo(X,Y);g.lineTo(X+C,Y)}if(!on(x,y+1)){g.moveTo(X,Y+C);g.lineTo(X+C,Y+C)}});g.stroke()}
+ else if(st.tile==='stripe'){g.fillStyle=st.ink;each((X,Y)=>g.fillRect(X,Y,Math.ceil(C*.5),C))}
+ else if(st.tile==='shadow'){const o=Math.round(C*.6);g.fillStyle=st.fill;each((X,Y)=>g.fillRect(X+o,Y+o,C,C));g.fillStyle=st.ink;each((X,Y)=>g.fillRect(X,Y,C,C))}}
+
+// ───────── 見せ方（プリセット）＝字はそのまま ─────────
+const PRESETS=[
+ ['裂く（ベタ）',{tile:'solid',ink:'#000000',paper:'#efefef',tear:30,drip:0,round:'one',rows:15,sx:85,thr:50,chop:0}],
+ ['マスの線',{tile:'grid',ink:'#222222',paper:'#ffffff',fill:'#a6a6a6',lw:8,merge:55,tear:0,drip:0,round:'one'}],
+ ['垂れる',{tile:'solid',ink:'#000000',paper:'#efefef',tear:0,drip:60,dripL:5,round:'none'}],
+ ['縦に細く裂く',{tile:'solid',ink:'#000000',paper:'#efefef',rows:18,sx:41,tear:55,bar:30,gap:45,shift:35,shuf:60,drip:0,round:'one'}],
+ ['電光板',{tile:'dot',ink:'#ffb21e',paper:'#111111',fill:'#ffb21e',tear:0,drip:0,round:'none',rows:11,sx:90}],
+ ['刺し子',{tile:'cross',ink:'#e9e2cf',paper:'#1f2a44',lw:9,tear:0,drip:0,round:'none',rows:13}],
+ ['線だけ（設計図）',{tile:'outline',ink:'#1d4ed8',paper:'#f4f6fb',lw:6,tear:20,drip:0,round:'one'}],
+ ['縞',{tile:'stripe',ink:'#000000',paper:'#efefef',tear:0,drip:0,round:'none'}],
+ ['影（2色）',{tile:'shadow',ink:'#e8463a',paper:'#f3ecd8',fill:'#1f3c88',tear:0,drip:0,round:'one'}],
+ ['マスの線＋裂く',{tile:'grid',ink:'#222222',paper:'#ffffff',fill:'#a6a6a6',lw:8,merge:55,tear:30,drip:0,round:'one'}]];
+function buildPresets(){const w=$('presets');w.innerHTML='';PRESETS.forEach(([n,v])=>{const b=document.createElement('button');b.textContent=n;b.onclick=()=>{push();st=Object.assign({},DEF,{text:st.text,font:st.font},v);sync();redraw();
+ [...w.children].forEach(x=>x.classList.toggle('on',x===b));msg('見せ方：'+n+'（字はそのまま・⌘Z で戻せる）')};w.appendChild(b)})}
+
 // ───────── 画面 ─────────
 let raf=0;
 async function fontsReady(){const f=FONTS[st.font];await document.fonts.load(`${f.w} 40px ${f.f}`,st.text||'A').catch(()=>{})}
@@ -224,7 +256,7 @@ $('png').onclick=()=>exportPNG(true);$('pngA').onclick=()=>exportPNG(false);
 $('sj').onclick=()=>dl(new Blob([JSON.stringify({tool:'kizami',v:1,...st},null,1)],{type:'application/json'}),`kizami_${stamp()}.json`);
 $('lj').onclick=()=>$('jf').click();$('jf').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{const j=JSON.parse(t);push();delete j.tool;delete j.v;st=Object.assign({},DEF,j);sync();redraw();msg('設定を読んだ：'+f.name)}).catch(()=>msg('読めない設定ファイル'))});
 try{const s=JSON.parse(localStorage.getItem('kizami_tk')||'null');if(s)st=Object.assign({},DEF,s)}catch(e){}
-sync();document.fonts.ready.then(redraw);redraw();
+buildPresets();sync();document.fonts.ready.then(redraw);redraw();
 window.__kz={render,mk,get st(){return st},set st(v){st=v}};
 </script>
 </body></html>
